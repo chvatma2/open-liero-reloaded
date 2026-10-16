@@ -1,0 +1,39 @@
+[package]
+name = "olr-content"
+description = "Loads content packs into ready-to-run inputs: simulation mods, terrain, worlds, images and sounds."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-math.workspace = true
+olr-data.workspace = true
+olr-terrain.workspace = true
+olr-sim.workspace = true
+olr-modes.workspace = true
+olr-bots.workspace = true
+olr-replay.workspace = true
+olr-pack.workspace = true
+olr-vfs.workspace = true
+olr-import-lgs.workspace = true
+olr-import-lxl.workspace = true
+olr-import-gfx.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, features = ["std"] }
+ron.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

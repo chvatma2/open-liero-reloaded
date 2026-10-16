@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, bail};
-use rl_oracle::{Scenario, Trace};
+use olr_oracle::{Scenario, Trace};
 use sha2::{Digest, Sha256};
 
 use crate::root;
@@ -29,7 +29,7 @@ pub fn image_tag(files: &[(&str, &[u8])]) -> String {
         h.update((data.len() as u64).to_le_bytes());
         h.update(data);
     }
-    format!("rl-olx-oracle:{}", &hex::encode(h.finalize())[..12])
+    format!("olr-olx-oracle:{}", &hex::encode(h.finalize())[..12])
 }
 
 fn tail(text: &str, n: usize) -> String {
@@ -62,7 +62,7 @@ pub(crate) fn ensure_image(root: &Path) -> anyhow::Result<String> {
 }
 
 /// Which of `images` (`repo:tag` lines) to remove after building `current`:
-/// other images of `current`'s repository (`rl-olx-oracle`, `rl-nat`),
+/// other images of `current`'s repository (`olr-olx-oracle`, `olr-nat`),
 /// except the tag `dev` (kept for manual use).
 pub fn images_to_prune<'a>(images: &[&'a str], current: &str) -> Vec<&'a str> {
     let repo = format!("{}:", current.split_once(':').map_or(current, |(r, _)| r));
@@ -107,8 +107,8 @@ pub fn prune_all(build_cache: bool) {
     }
 }
 
-/// Runs [`prune_commands`] for `current` (an `rl-olx-oracle` or, for
-/// `net-nat`, an `rl-nat` image). Failures are warnings: pruning is
+/// Runs [`prune_commands`] for `current` (an `olr-olx-oracle` or, for
+/// `net-nat`, an `olr-nat` image). Failures are warnings: pruning is
 /// housekeeping and must not fail a recording.
 pub(crate) fn prune_old(current: &str, build_cache: bool) {
     let repo = current.split_once(':').map_or(current, |(r, _)| r);
@@ -237,7 +237,7 @@ pub fn run(names: &[String], check: bool) -> anyhow::Result<bool> {
         let (ta, tb) = (Trace::from_jsonl(&a)?, Trace::from_jsonl(&b)?);
         if a != b {
             let why =
-                rl_oracle::compare(&ta, &tb, &[]).err().map_or("header differs".into(), |d| d.to_string());
+                olr_oracle::compare(&ta, &tb, &[]).err().map_or("header differs".into(), |d| d.to_string());
             println!("FAIL {name}: two recordings differ, OLX is not deterministic here: {why}");
             ok = false;
             continue;
@@ -262,7 +262,7 @@ pub fn run(names: &[String], check: bool) -> anyhow::Result<bool> {
                     continue;
                 }
             };
-            match rl_oracle::compare(&committed, &ta, &[]) {
+            match olr_oracle::compare(&committed, &ta, &[]) {
                 Ok(n) if committed.header == ta.header => {
                     println!("ok   {name}: matches the committed trace ({n} frames)")
                 }
@@ -278,7 +278,7 @@ pub fn run(names: &[String], check: bool) -> anyhow::Result<bool> {
                 }
             }
         } else {
-            std::fs::write(&gz_path, rl_oracle::gzip(&a))?;
+            std::fs::write(&gz_path, olr_oracle::gzip(&a))?;
             println!("ok   {name}: recorded {} frames", ta.frames.len());
         }
     }
@@ -292,7 +292,7 @@ mod tests {
     #[test]
     fn image_tag_depends_on_names_and_contents() {
         let t = image_tag(&[("a", b"1"), ("b", b"2")]);
-        assert!(t.starts_with("rl-olx-oracle:") && t.len() == "rl-olx-oracle:".len() + 12, "{t}");
+        assert!(t.starts_with("olr-olx-oracle:") && t.len() == "olr-olx-oracle:".len() + 12, "{t}");
         assert_eq!(t, image_tag(&[("a", b"1"), ("b", b"2")]));
         assert_ne!(t, image_tag(&[("a", b"1"), ("b", b"3")]));
         assert_ne!(t, image_tag(&[("a", b"12"), ("b", b"")]));
@@ -301,21 +301,21 @@ mod tests {
     #[test]
     fn prune_keeps_current_and_dev_only() {
         let all = [
-            "rl-olx-oracle:aaa",
-            "rl-olx-oracle:bbb",
-            "rl-olx-oracle:dev",
-            "rl-olx-oracle:<none>x",
+            "olr-olx-oracle:aaa",
+            "olr-olx-oracle:bbb",
+            "olr-olx-oracle:dev",
+            "olr-olx-oracle:<none>x",
             "ubuntu:22.04",
-            "rl-olx-oracle-other:old",
+            "olr-olx-oracle-other:old",
         ];
         assert_eq!(
-            images_to_prune(&all, "rl-olx-oracle:aaa"),
-            ["rl-olx-oracle:bbb", "rl-olx-oracle:<none>x"]
+            images_to_prune(&all, "olr-olx-oracle:aaa"),
+            ["olr-olx-oracle:bbb", "olr-olx-oracle:<none>x"]
         );
-        assert!(images_to_prune(&[], "rl-olx-oracle:aaa").is_empty());
+        assert!(images_to_prune(&[], "olr-olx-oracle:aaa").is_empty());
         // `net-nat`'s images: only its own repository's.
-        let nat = ["rl-nat:aaa", "rl-nat:bbb", "rl-nat:dev", "rl-olx-oracle:ccc", "rl-nat-x:old"];
-        assert_eq!(images_to_prune(&nat, "rl-nat:aaa"), ["rl-nat:bbb"]);
+        let nat = ["olr-nat:aaa", "olr-nat:bbb", "olr-nat:dev", "olr-olx-oracle:ccc", "olr-nat-x:old"];
+        assert_eq!(images_to_prune(&nat, "olr-nat:aaa"), ["olr-nat:bbb"]);
     }
 
     /// Plan 6's final review: Docker's build cache is the machine's, not
@@ -323,10 +323,10 @@ mod tests {
     /// `oracle-record` and a plain `tidy` remove only superseded oracle images.
     #[test]
     fn build_cache_is_pruned_only_when_asked() {
-        let images = ["rl-olx-oracle:aaa", "rl-olx-oracle:bbb", "ubuntu:22.04"];
-        let plain = prune_commands(&images, Some("rl-olx-oracle:aaa"), false);
-        assert_eq!(plain, [vec!["image", "rm", "rl-olx-oracle:bbb"]]);
-        let asked = prune_commands(&images, Some("rl-olx-oracle:aaa"), true);
+        let images = ["olr-olx-oracle:aaa", "olr-olx-oracle:bbb", "ubuntu:22.04"];
+        let plain = prune_commands(&images, Some("olr-olx-oracle:aaa"), false);
+        assert_eq!(plain, [vec!["image", "rm", "olr-olx-oracle:bbb"]]);
+        let asked = prune_commands(&images, Some("olr-olx-oracle:aaa"), true);
         assert_eq!(asked[..1], plain[..]);
         assert_eq!(asked[1], ["builder", "prune", "-f", "--keep-storage", "2GB"]);
         assert_eq!(asked.len(), 2);

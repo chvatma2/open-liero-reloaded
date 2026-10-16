@@ -1,0 +1,78 @@
+[package]
+name = "olr-game"
+description = "The game binary: a winit window, the 100 Hz fixed-tick loop over the simulation with interpolated wgpu rendering, cosmetic entities, sound, input and an egui overlay; for now the M5 sandbox."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[[bin]]
+name = "olr-game"
+path = "src/main.rs"
+
+[dependencies]
+olr-math.workspace = true
+olr-data.workspace = true
+olr-terrain.workspace = true
+olr-pack.workspace = true
+olr-sim.workspace = true
+olr-content.workspace = true
+olr-modes.workspace = true
+olr-bots.workspace = true
+olr-replay.workspace = true
+olr-scene.workspace = true
+olr-fx.workspace = true
+olr-render.workspace = true
+olr-present.workspace = true
+olr-audio.workspace = true
+olr-input.workspace = true
+olr-ui.workspace = true
+olr-proto.workspace = true
+olr-netcode.workspace = true
+olr-online.workspace = true
+olr-lobby.workspace = true
+olr-net.workspace = true
+olr-discovery.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde = { workspace = true, features = ["std"] }
+ron.workspace = true
+serde_json.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
+winit.workspace = true
+gilrs.workspace = true
+egui.workspace = true
+egui-wgpu.workspace = true
+egui-winit.workspace = true
+
+[features]
+# Tests only: `Shell::test_ice` (every endpoint's ICE settings, a
+# `FakeGateway` and a loopback base, ruling NT-1). Forwards olr-online's, so
+# olr-net's port mapper refuses real routers. Enabled by this crate's own
+# dev-dependency, never by a build that ships.
+test-hooks = ["olr-online/test-hooks"]
+
+[dev-dependencies]
+tempfile.workspace = true
+olr-vfs.workspace = true
+olr-game = { path = ".", features = ["test-hooks"] }
+# The tests set a client's prompt bytes (`OnlinePeer::test_prompt_limit`).
+olr-online = { workspace = true, features = ["test-hooks"] }
+# Finding games end to end (plan 12a): the dedicated server in-process,
+# announcing to olr-discovery's in-process test relay; its `test_gateway`
+# pins a loopback base (plan 12b).
+olr-discovery = { workspace = true, features = ["test-relay"] }
+olr-server = { workspace = true, features = ["test-hooks"] }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[[test]]
+name = "soak"
+
+[lints]
+workspace = true

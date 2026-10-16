@@ -19,8 +19,8 @@ yet. A broken Dockerfile or script fails.
   unchanged; it must be Debian or derived from it, the packages come from
   apt), plus `iproute2`, `nftables` and `miniupnpd-nftables` (all in
   Ubuntu 26.04: miniupnpd 2.3.9, nftables backend, with NAT-PMP and PCP).
-  The image is `rl-nat:<first 12 hex of SHA-256(these files ++ base)>`:
-  an edit to any file here builds a new one, and the superseded `rl-nat`
+  The image is `olr-nat:<first 12 hex of SHA-256(these files ++ base)>`:
+  an edit to any file here builds a new one, and the superseded `olr-nat`
   tags are pruned like the oracle's (`cargo xtask tidy` too). Its build is
   the only network use (the base image and the packages), done once.
 - `router.sh <kind> <wan ip> <lan ip>`: finds the two interfaces by
@@ -34,10 +34,10 @@ yet. A broken Dockerfile or script fails.
   version byte, 2 for PCP and 0 for NAT-PMP, as miniupnpd switches both
   together) and, for `upnp`, `pcp` and `pmp`, starts miniupnpd from
   `miniupnpd.conf.in`; prints `router ready: ...` once miniupnpd
-  listens, then lives `RL_NAT_LIFE` seconds (120; 3600 with `--keep`).
+  listens, then lives `OLR_NAT_LIFE` seconds (120; 3600 with `--keep`).
 - `node.sh <router lan ip> <command...>`: `ip route replace default via
   <router>`, then execs the command (our binaries, in a LAN) under
-  `timeout --preserve-status -k 5 $RL_NAT_LIFE` (the exit status stays
+  `timeout --preserve-status -k 5 $OLR_NAT_LIFE` (the exit status stays
   the binary's: a host stopped with SIGTERM exits 0).
 - `miniupnpd.conf.in`: the WAN and LAN interfaces, `ext_ip` (the WAN
   address), `ext_allow_private_ipv4=yes` (203.0.113.0/24 is reserved to
@@ -47,7 +47,7 @@ yet. A broken Dockerfile or script fails.
 ## Topology
 
 Every network is `docker network create -d macvlan --internal --label
-rl-nat=<run> --subnet <subnet> rl-nat-<run>-<net>` (`Run::network_args`,
+olr-nat=<run> --subnet <subnet> olr-nat-<run>-<net>` (`Run::network_args`,
 unit-tested; `<run>` is xtask's process id, in every container's and
 network's name): Docker gives an internal macvlan network a dummy parent
 interface of its own, so nothing on it reaches the host, the user's
@@ -66,9 +66,9 @@ outside its subnet, which is all of a router's traffic.
 | `e` | 10.5.0.0/24 | E 203.0.113.105, 10.5.0.2 | cone + miniupnpd, PCP dropped: NAT-PMP only |
 | `f` | 10.6.0.0/24 | F 203.0.113.106, 10.6.0.2 | cone + a manual forward of UDP 3478 and 49160-49191 to 10.6.0.30, hairpinned (`hairpin`: the LAN reaches them at the WAN address, and so forwarded its packets come from the WAN address) |
 
-On the WAN: `infra` at 203.0.113.10 (`rl-cli nostr-relay --listen
-0.0.0.0:7777` and `rl-cli stun-server --listen 0.0.0.0:3479`), `relay` at
-.20 (`rl-server --relay`, Invite, `public_address` 203.0.113.20, STUN the
+On the WAN: `infra` at 203.0.113.10 (`olr-cli nostr-relay --listen
+0.0.0.0:7777` and `olr-cli stun-server --listen 0.0.0.0:3479`), `relay` at
+.20 (`olr-server --relay`, Invite, `public_address` 203.0.113.20, STUN the
 infra's, no port mapping; its TURN server's binding answers are the
 second STUN server; in `relay-beside` it runs instead in LAN F at
 10.6.0.30, `public_address` 203.0.113.106, behind F's forward), for
@@ -78,24 +78,24 @@ mapping: STUN sees its own address, N47-a). In a LAN, the host is `.10` and the 
 `.20`. Every config (written to `target/net-nat/configs/`) and every
 joiner uses relay `ws://203.0.113.10:7777`, STUN `203.0.113.10:3479` and
 `203.0.113.20:3478` (the relay server: the first only), and `allow_local`
-(N62). The binaries (`target/debug/rl-server` and `rl-cli` with
+(N62). The binaries (`target/debug/olr-server` and `olr-cli` with
 `nat-tools`: `e2e`'s dev builds, `e2e::build_binaries`, so `full` builds
-them once and never flips release `rl-cli`'s features), `content/packs`
+them once and never flips release `olr-cli`'s features), `content/packs`
 and the configs are mounted read-only at `/rl/bin`, `/rl/content` and
 `/rl/config`. Routers run with `--cap-add NET_ADMIN --sysctl
 net.ipv4.ip_forward=1`, nodes with `--cap-add NET_ADMIN`, everything
-with `--init` (SIGTERM reaches our processes) and `-e RL_NAT_LIFE`; our
+with `--init` (SIGTERM reaches our processes) and `-e OLR_NAT_LIFE`; our
 binaries on the WAN run under the same `timeout` as `node.sh`'s.
 
-**Lifetimes.** Every container ends by itself within `RL_NAT_LIFE`
+**Lifetimes.** Every container ends by itself within `OLR_NAT_LIFE`
 seconds (`LIFE`, 120: past the 60 s scenario bound and the host's stop),
 so a run that was killed leaves nothing running for long (its stopped
 containers and networks are removed by the next run). Ctrl+C (SIGINT,
 SIGTERM, SIGHUP, through `ctrlc`) stops the waits, removes the run's
 containers and networks and exits 130; a second Ctrl+C exits at once.
-One run at a time: a machine-wide lock, `<temp>/rl-nat.lock` (the runs
+One run at a time: a machine-wide lock, `<temp>/olr-nat.lock` (the runs
 share subnets, which Docker will not overlap), waited for at most 10
-min; holding it, a run removes anything labelled `rl-nat` first.
+min; holding it, a run removes anything labelled `olr-nat` first.
 
 Two details a real router has and the test needs:
 - **Input dropped from the WAN.** A packet that reaches the router itself
@@ -103,7 +103,7 @@ Two details a real router has and the test needs:
   confirmed. Accepted (to a closed port), the entry would stay, and the
   host's later packet to that peer would be masqueraded to another port:
   hole punching between two cone routers failed that way.
-- **One method per mapping router.** rl-net asks PCP, NAT-PMP and UPnP at
+- **One method per mapping router.** olr-net asks PCP, NAT-PMP and UPnP at
   once and keeps the first mapping; PCP answers long before UPnP's search
   ends, so a router offering all three would always show PCP. C offers
   UPnP alone, D NAT-PMP and PCP (PCP wins), E drops PCP so the client
@@ -128,7 +128,7 @@ output.
 | `relay` | Invite in LAN A | LAN B (symmetric), `--invite --matches 1` (a 0.2-minute match with one server bot) | `path: relayed`, `match 1:`, `via relayed`, `match end`, the relay's `relay: <n ≥ 1> allocations` (`allocations`), both exit 0 (the host on SIGTERM) | 22.0 s |
 | `no-relay` | Invite in LAN A | LAN B, `--invite --no-nostr-turn` | exit 1, stderr `no network path to the game` | 19.7 s |
 | `finding` | Public in LAN A, no mapping (listed without an address) | LAN B, `--listed "nat finding" --lobby-only` | `path: relayed`, `via relayed` | 7.0 s |
-| `nat-check` | `rl-server --nat-check` in LAN B | — | `NAT: symmetric NAT` | 5.4 s |
+| `nat-check` | `olr-server --nat-check` in LAN B | — | `NAT: symmetric NAT` | 5.4 s |
 | `no-nat` | Invite on the WAN at .40, no NAT (N47-a) | LAN A, `--invite --lobby-only` | `reach: No router: players reach you directly at 203.0.113.40:23400`, the code has an address, `path: direct`, `via direct` | 4.3 s |
 | `relay-beside` | Invite in LAN F, its TURN relay beside it at 10.6.0.30 (TR-5; the WAN relay not run) | LAN B (symmetric), `--invite --lobby-only` | `path: relayed`, the relay's allocation, the host's `via relayed` or `via punched` (below) | 9.3 s |
 | `migration` | Invite in LAN A (`Config::Migrate`: one fill bot, `min_players` 2, a 0.5-minute match) | `succ` in LAN C, then `other` in LAN B (symmetric), both `--invite --matches 1` | host killed 8 s after both print `match starts:`; `succ` `migrated: hosting`, `other` `migrated: succ hosts` then `path: relayed`, both exit 0, equal `checksum` lines, the relay's allocation | 48.9 s |
@@ -138,7 +138,7 @@ output.
 of the relay's own address too: the scenario checks that a relay beside
 the host carries a join through a hairpinning router (and that TR-5's
 own-port refusal, kept with `allow_local`, does not get in the way), not
-TR-5's difference, which `rl-net`'s `a_relay_reaches_hosts_at_its_public_ip_but_never_its_own_ports`
+TR-5's difference, which `olr-net`'s `a_relay_reaches_hosts_at_its_public_ip_but_never_its_own_ports`
 pins without `allow_local`. With `allow_local` the relay reaches the
 host at its LAN address, so the host sees the joiner as a
 peer-reflexive address of the relay's (10.6.0.30) and names the path
@@ -170,7 +170,7 @@ review's fix pass, 2026-10-15) 4.3 s and 9.3 s.
 ## By hand
 
 - `--keep` leaves the networks and the last scenario's containers (for
-  an hour): `docker exec -it rl-nat-<run>-router-a nft list ruleset`,
-  `docker logs rl-nat-<run>-host`. The next run removes them (and
-  anything an interrupted run left) by the label `rl-nat` first.
+  an hour): `docker exec -it olr-nat-<run>-router-a nft list ruleset`,
+  `docker logs olr-nat-<run>-host`. The next run removes them (and
+  anything an interrupted run left) by the label `olr-nat` first.
 - `--only relay --only finding` runs those (in table order).

@@ -16,14 +16,14 @@ ron.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
 quote.workspace = true
-rl-oracle.workspace = true
-rl-data.workspace = true
-rl-pack.workspace = true
-rl-vfs.workspace = true
+olr-oracle.workspace = true
+olr-data.workspace = true
+olr-pack.workspace = true
+olr-vfs.workspace = true
 sha2.workspace = true
 hex.workspace = true
 # `dist`: writes and unpacks the release zips (deflate by flate2's default
-# pure-Rust backend, which rl-pack's png and rl-oracle turn on).
+# pure-Rust backend, which olr-pack's png and olr-oracle turn on).
 zip.workspace = true
 tempfile.workspace = true
 # `net-nat`: Ctrl+C removes its containers and networks before exiting.

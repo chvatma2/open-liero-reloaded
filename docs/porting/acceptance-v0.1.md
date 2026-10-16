@@ -7,19 +7,19 @@ screenshots read afterwards.
 
 ## Method
 
-- **Build:** release `rl-game` at commit `c578b33` (plan 7 task 9's
+- **Build:** release `olr-game` at commit `c578b33` (plan 7 task 9's
   tick-percentile and autoplay label fixes, before the results-panel fix
   `20c03dd`).
 - **Window:** a real WSLg window under Wayland (the default), 1920 × 1080
   (the `W1920x1080` preset), VSync (FIFO, the compositor's 60 Hz), sharp
   filter, interpolation on. There was no sound device (`--no-sound`), to
   keep the runs off the speakers.
-- **Adapter:** every run reported `rl-game: GPU D3D12 (NVIDIA GeForce RTX
+- **Adapter:** every run reported `olr-game: GPU D3D12 (NVIDIA GeForce RTX
   5070 Ti) (Gl, Other), Fifo, Bgra8Unorm`. That is Mesa's d3d12 driver on
   the discrete card, chosen by `MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA`
   (19b152e).
 - **Machine:** AMD Ryzen 5 7600X (12 threads), WSL2.
-- **Command:** `rl-game --autoplay <script> --data-dir <fresh dir> --no-sound
+- **Command:** `olr-game --autoplay <script> --data-dir <fresh dir> --no-sound
   --stats`, on the real clock (no `--fake-clock`). Each data directory's
   `settings.ron` sets 4 bots at Medium and a 1-minute time limit. Every
   other option is the default: kill limit 15, unlimited lives, Standard

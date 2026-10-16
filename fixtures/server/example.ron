@@ -1,6 +1,6 @@
-// An rl-server config (networking spec §7.4):
-//     rl-server --config server.ron [--content content/packs] [--data-dir <dir>] [--relay]
-//     rl-server --nat-check [--config server.ron]   (checks the network, prints a report)
+// An olr-server config (networking spec §7.4):
+//     olr-server --config server.ron [--content content/packs] [--data-dir <dir>] [--relay]
+//     olr-server --nat-check [--config server.ron]   (checks the network, prints a report)
 // The data directory (the config file's own by default) keeps the server's
 // identity (server-identity.ron, made at the first start), the bans file,
 // server.log, desync bundles and downloads/ (players' skins it fetched).

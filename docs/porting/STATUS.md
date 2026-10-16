@@ -4,76 +4,76 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 
 | Area | OLX source | Rust | Status | Verified by |
 |---|---|---|---|---|
-| Gamescript v7 loader | `src/common/CGameScript.cpp:582-1152` | `rl-import-lgs` | ported | unit and property tests; Classic and MW 1.0 import exactly |
-| `.lxl` image levels | `src/common/MapLoader_LieroX.cpp` | `rl-import-lxl` | ported | unit tests; 4 levels in scope, dirt counts match |
-| Skin colorization | `src/client/CGameSkin.cpp:720-790` | `rl-data::skin`, `rl-import-gfx` | ported | unit tests; all 409 repository skins and 0.58 rc5's 309 more (`content/olx-0.58-rc5/`) import |
-| Theme loading | `src/common/CMap.cpp:308-370` | `rl-import-gfx` | ported | Dirt theme imports |
+| Gamescript v7 loader | `src/common/CGameScript.cpp:582-1152` | `olr-import-lgs` | ported | unit and property tests; Classic and MW 1.0 import exactly |
+| `.lxl` image levels | `src/common/MapLoader_LieroX.cpp` | `olr-import-lxl` | ported | unit tests; 4 levels in scope, dirt counts match |
+| Skin colorization | `src/client/CGameSkin.cpp:720-790` | `olr-data::skin`, `olr-import-gfx` | ported | unit tests; all 409 repository skins and 0.58 rc5's 309 more (`content/olx-0.58-rc5/`) import |
+| Theme loading | `src/common/CMap.cpp:308-370` | `olr-import-gfx` | ported | Dirt theme imports |
 | Gamescript v8 | `CGameScript.cpp` (v8 branches) | — | not started | no content in scope |
 | Pixmap `.lxl` | `MapLoader_LieroX.cpp:440+` | — | not started | no content in scope |
-| Fidelity oracle (test hooks) | `src/game/Game.cpp`, `src/client/CInput.cpp`, `src/common/CWormHuman.cpp` | `tools/olx-oracle`, `rl-oracle` | done (plans 2–3) | 7 movement scenarios recorded twice and identical; `cargo xtask oracle-record --check` |
-| Oracle v2: shots, weapons, bonuses, clocks (spec §18) | `src/common/CShootList.cpp`, `src/server/CServer_Send.cpp:556-569`, `src/server/CServer_Game.cpp:266-316`, `src/common/CGameScript.cpp:937,1159` | `tools/olx-oracle`, `rl-oracle` (`Fields`, `compare_fields`), `rl-scenario::CHECKED` | done (plan 4 task 1) | `fire-minigun` recorded twice and identical; the 7 M3 traces changed only in added fields |
-| Oracle v2: message delivery (spec §18 D10); weapon, damage and bonus scenarios | `src/common/CChannel.cpp:69-85`, `src/client/CClient_Parse.cpp:468`, `src/server/CServer_Parse.cpp:90` | `tools/olx-oracle`, `xtask oracle-gen-weapons`, `fixtures/oracle/weapons/` | done (plan 4 task 3) | 88 weapon scenarios and 10 special ones recorded twice and identical; `rl-oracle/tests/fixtures.rs` checks what each shows |
-| Frame and physics clocks | `src/game/Game.cpp:897-959`, `src/client/CClient_Game.cpp:60-222` | `rl-sim::World::tick` | ported | all 7 oracle scenarios, bit for bit; `docs/porting/timing.md` |
-| Worm movement and collision | `src/common/PhysicsLX56.cpp:88-469` | `rl-sim::physics` | ported | `fall`, `walk`, `jump`, `dig` |
-| Keyboard input (aim, move, jump, dig, rope) | `src/common/CWormHuman.cpp:81-560`, `src/client/CInput.cpp` | `rl-sim::physics::get_input`, `rl-sim::input` | ported (keyboard, LX56 aim) | `aim`, `tap`, `walk`, `jump`, `dig`, `rope` |
-| Ninja rope | `src/client/CNinjaRope.cpp`, `PhysicsLX56.cpp:505-604` | `rl-sim::rope` | ported | `rope` |
-| Hole carving (material) | `src/common/CMap.cpp:1005-1105`, `2172-2199` | `rl-terrain::Terrain::carve_hole` | ported | `dig` (244 dirt cells), spawn holes (`mh` at frame −1) |
-| Float `sinf`/`cosf` (aim directions) | glibc 2.35 `sysdeps/ieee754/flt-32/s_sinf.c`, `s_cosf.c` (x86-64 FMA variant) | `rl-math::trig` | ported | all 2³² inputs bit-identical to the oracle container's glibc (a throwaway FFI comparator run in `rl-olx-src`) |
-| Mod compiled to OLX's projectile tree (`SimMod`) | `src/common/CGameScript.cpp:833-1157` (`LoadProjectile` order) | `rl-sim::mod_rt` | ported (plan 4 task 4) | every scenario: indices and path names equal the trace header's (`rl-scenario` checks) |
-| Weapon slots, firing, laser sight entity | `src/common/PhysicsLX56.cpp:471-498`, `src/server/CServer_Game.cpp:366-466`, `src/client/CClient_Game.cpp:496-544`, `751-808` | `rl-sim::weapons` | ported | `s` (slots) of all 112 scenarios for the whole trace (109 match fully); `beam-burst`; the laser sight event's length by a unit test |
-| Shot list, encode/decode round trip, Model R delivery, `ProcessShot` | `src/common/CShootList.cpp`, `CClient_Game.cpp:813-946` | `rl-sim::shots`, `rl-sim::shot_codec` | ported | `s` of every scenario, `multi-shot` in particular (corrupted `spd`), `die-before-delivery` (dropped shots) |
-| Beams (`ProcessShot_Beam`, `DrawBeam`) and specials (`ShootSpecial`, the jetpack) | `CClient_Game.cpp:549-711`, `926-1055` | `rl-sim::beam` | ported (plan 4 task 8; the bonus check task 9) | `weapons/classic/laser`, `weapons/mw-1-0/laser` and `beam-burst` match fully; specials by unit tests only (`jetpack_quirks`: no special weapon in Classic or MW 1.0) |
-| Projectile pool, `Proj_SpawnInfo::apply` (shots and projectiles), `CProjectile::Spawn` | `include/FastVector.h`, `src/common/PhysicsLX56_Projectiles.cpp:495-640`, `src/common/CProjectile.cpp:43-166` | `rl-sim::projectile`, `rl-sim::spawn` | ported | every projectile field (`p`, hidden fields included) of every scenario for the whole trace; the pool limit by `pool_full_drops_new_projectiles_like_olx` |
-| Projectile motion, collision, timers, trails, animation, worm hit test, position recorder | `PhysicsLX56_Projectiles.cpp:52-491`, `1234-1411`, `src/util/VecTimeRecorder.h`, `PhysicsLX56.cpp:468` | `rl-sim::proj_sim`, `rl-sim::worm::PosRecorder` | ported (plan 4 task 5) | as above; trails and animation by every weapon scenario (`mine`, `float-mine`, `nuclear-mines`, `trap-mines`, `booby-trap`, `electro-gun`, `jet-pack`, `big-nuke` for the timers and recorder) |
-| Projectile actions (`applyTo`, `execute`): bounce, disappear, nothing, go-through, speed and heading actions, children, the junk rule | `PhysicsLX56_Projectiles.cpp:670-945`, `1115-1230`, `CProjectile.cpp:376-429` | `rl-sim::actions` | ported (plan 4 tasks 5-6) | all 88 weapon scenarios of both mods (`p`, `mh`, `dirt`, `hp`, `rc`); 109 of 112 scenarios match fully |
-| Float `atan2f` (projectile headings) | glibc 2.35 `sysdeps/ieee754/flt-32/e_atan2f.c`, `s_atanf.c` | `rl-math::atan2f` | ported | 6 million input pairs bit-identical to the oracle container's glibc; 20 pinned in a test |
-| Explosions, carve, dirt, green dirt and their dirt counts; injury actions | `CClient_Game.cpp:227-330`, `CMap.cpp:1114-1340`, `PhysicsLX56_Projectiles.cpp:781-824`, `1115-1154`, `CWorm.cpp:1381-1389` | `rl-sim::effects`, `rl-terrain::Terrain::{place_dirt, place_green_dirt}` | ported (plan 4 task 6; the bonus chain task 9) | `mh`, `dirt` and `hp` of every scenario; 109 of 112 scenarios match fully (the 3 D9 ones up to their respawn); `place_dirt_at_the_edges` and `green_dirt_at_the_edges` for the map edges |
-| Worm damage (`InjureWorm`): factors, `SelfInjure`, damage score, blood draws | `CClient_Game.cpp:335-460`, `CGameObject.cpp:35-44`, `CWorm.cpp:1600-1627` | `rl-sim::damage::injure_worm` | ported (plan 4 task 7) | `hp`, `rc`, `ents` of every weapon scenario (`classic/*`, `mw-1-0/*`); factors and `SelfInjure` by unit tests only |
-| Death, kills, deaths, suicides, lives; death draws (sound, gibs by the entity pool, blood); the exact-zero death (`CWorm::think`) | `CServer_Game.cpp:108-162`, `CGameMode.cpp:69-252`, `CWorm.cpp:1399-1449`, `src/gusanos/base_worm.cpp:365-381`, `623-659`, `src/client/Entity.cpp:161-205` | `rl-sim::damage::{kill_worm, die_at_zero_health, olx_kill_credit}` | ported (plan 4 task 7); the crediting is the game mode's since plan 6 task 1 (`GameMode::on_kill`; `OracleMode` is OLX's rule) | `explode-kill-respawn`, `die-before-delivery`, the weapon scenarios' kills; exact-zero deaths in `assassin-s-shot`, `flak`, `plasma-launcher` |
-| Bleeding | `PhysicsLX56.cpp:317-330` | `rl-sim::physics::bleed` | ported | `bleed`, `die-before-delivery` |
-| Respawn loop, `SpawnWorm`, `FindSpot`, `CWorm::Spawn` | `CServer_Game.cpp:38-104`, `200-225`, `CMap.cpp:2381-2396`, `CWorm.cpp:591-651`, `CWormHuman.cpp:115-119` | `rl-sim::respawn` | ported (DM; no predefined spawns, no team spawns) | `explode-kill-respawn` and every weapon scenario whose dummy dies (`tod`, `respawn`, positions, `mt`) |
-| Bonuses: server spawn, lifetime and grab handling; client spawn (hole), physics, pickup, health and weapon effects; the messages between them (D10); explosions and beams destroying bonuses | `src/server/CServer_Game.cpp:227-316`, `src/server/CServer_Parse.cpp:834-903`, `src/client/CClient_Parse.cpp:1464-1516`, `1977-1990`, `PhysicsLX56.cpp:619-715`, `CClient_Game.cpp:128-151`, `255-270`, `736-745`, `986-1002`, `CWorm.cpp:1454-1506` | `rl-sim::bonus`, `rl-sim::effects::explosion`, `rl-sim::beam` | ported (plan 4 task 9) | `bonus-health`, `bonus-weapon` (`b`, `sb` and every other field); natural spawning, lifetime, explosions and beams by unit tests only |
-| Acceptance: all weapons of both mods | `fixtures/oracle/weapons/` | `rl-scenario/tests/oracle.rs` (`CHECKED == Fields::ALL`) | done (plan 4 task 11) | 109 of 112 scenarios match OLX bit for bit in every field; the other 3 are pinned to their first divergence (D9, below) |
-| Tick events (sounds, map edits, explosions, cosmetics, shots, damage, kills, pickups, spawns) and the state checksum | every `StartSound`, `PlaySoundSample`, `SpawnEntity` and `SetWormBeamEntity` above; `src/game/Sounds.cpp:25-30` | `rl-sim::events`, `rl-sim::checksum` | done (plan 4 task 10) | unit tests; the oracle traces are unchanged (no draw added); `rl-scenario/tests/smoke.rs` (8 matches, clone checksum streams) |
-| Event data for rendering (spec §19 E6): explosion `shake`, the gib's worm, the dirt particle's probe pixel, each event's sub-step (entity passes before it) and `World::substeps_last_tick`, `Damage.dealt`, the `RotIncrement` 0→1 bump (`World::rot_bumped`), `World::physics_time`, `Projectile::serial`, `NinjaRope::throws` (a throw count; not OLX state) | `CClient_Game.cpp:206-208`, `229-330`, `380`, `PhysicsLX56_Projectiles.cpp:590-593`, `777`, `1115-1130`, `CMap.cpp:2172-2199`, `PhysicsLX56.cpp:595-607`, `CProjectile.cpp:291-292` | `rl-sim::events`, `rl-sim::world` | done (plan 5 task 1) | `events_carry_e6_data`, `projectile_serials_differ_across_slot_reuse`, `every_rope_throw_counts_even_while_the_rope_is_out`; the oracle traces are unchanged (no draw added); smoke matches check every event's sub-step |
-| Core pack: shared game sprites, game sounds (`.ogg`), `colours.cfg` (spec §19 E9) | `src/client/DeprecatedGUI/Graphics.cpp:56-97`, `134-321`, `src/common/CWorm.cpp:661`, `src/game/Sounds.cpp:25-30`, `src/common/StringUtils.cpp:409-447` | `rl-import-gfx::import_core`, `rl-pack::CorePack`, `rl-content::CorePack` | done (plan 5 task 1) | `rl-content/tests/content.rs` (`loads_every_manifest_item`), the corpus snapshot |
-| Colour terrain (spec §19 E7): carve (back pixels, brown rim), `PlaceDirt` (`FrontTile`), `PlaceGreenDirt` (OLX's shades), beam holes, blood and gib stains, dirty rectangles | `src/common/CMap.cpp:1005-1340`, `2355-2373`, `src/client/Entity.cpp:355-390`, `src/client/GfxPrimitives.cpp` (`DrawImageStretch2`) | `rl-terrain::ColorMap`, `rl-content::{color_edit, apply_edits}` | done (plan 5 task 2) | `rl-terrain` colour tests; `rl-content/tests/color.rs` (`color_map_agrees_with_material_after_a_match`, 3000 ticks); golden `fixtures/render/dig-color.png` (`rl-scenario/tests/render_golden.rs`) |
-| Presentation (spec §19 E1-E4): camera (hard lock, clamp, shake, dead worm, respawn), skin frames (the facing-left mirror one column off), crosshair, muzzle flash, old-style health bar, rope, laser sights, beams, projectile frames (animation, special angle, angle, rotation with the `RotIncrement` bump), bonuses (blinking), layer order; interpolation (E2) | `src/client/CViewport.cpp:118-472`, `src/common/CWorm.cpp:1016-1300`, `src/client/CGameSkin.cpp:584-600`, `src/client/CNinjaRope.cpp:132-180`, `src/common/CProjectile.cpp:227-300`, `src/common/CBonus.cpp:49-76`, `src/client/Entity.cpp:30-157`, `305-314`, `src/client/GfxPrimitives.cpp:1795-2520`, `src/gusanos/viewport.cpp:105-253` | `rl-scene` | done (plan 5 task 3) | `camera_locks_clamps_and_shakes_like_olx`, `skin_frame_matches_olx_table`, `projectile_frames_match_olx`, `interpolation_never_blends_reused_slots_or_respawns`, `draw_list_order_matches_olx_layers`, `beams_and_laser_sights_live_two_entity_passes`; scene snapshots (`rl-scene/tests/snapshots`) |
-| Renderer (spec §8.2, §19 E3): art-scale world pass (terrain, instanced sprites from one atlas, world-pixel lines), upscale (integer nearest, sharp bilinear), offscreen PNGs; OLX's corner-rule colour key for sprites | `src/client/GfxPrimitives.cpp:116-150` (`SetColorKey`); OLX blits with SDL onto a 2× screen | `rl-render`, `rl-data::image`, `rl-cli render` | done (plan 5 task 5) | `dirty_rect_upload_equals_full_upload`, `upscale_filters_are_selectable`, `missing_assets_use_placeholders`, `srgb_targets_show_the_same_colours`; goldens `fixtures/render/frame-*.png` (`rl-cli/tests/render_golden.rs`, `cargo xtask full`) |
-| Cosmetic entities (spec §19 E1, E8): the pool (OLX's 1024 slots with `olx_quirks`; 16384 with a death reserve in play since 2026-10-13, see Deliberate deviations), per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `rl-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits` |
-| Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits (a death sound steals since 2026-10-13, see Deliberate deviations), live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `rl-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
-| Whose rope throws are heard (the user's playtest report, 2026-10-16: every worm's throw played map-wide at gain 1.0, about 7 to 12 starts a second with 7 to 8 bots): only the player's own (the local slot; a replay's viewer), as OLX plays `smpNinja` only in the human input handler; a bot's or a remote worm's throw is silent. `rl-sim`'s THROW events carry no owner, so the session keeps as many as the player's `NinjaRope::throws` grew (they all play at the listener) | `src/common/CWormHuman.cpp:340-342`, `555-563`, `570-574`, `src/common/CWormBot.cpp:1753`, `3823`, `src/common/PhysicsLX56.cpp:300-303` | `rl-game::throw_sound`, `Session::sounds` | done (2026-10-16) | `only_the_players_rope_throws_are_heard`, `bots_alone_throw_silently`, `a_replay_hears_its_viewers_throws`, `an_online_match_runs_headless`; a throw while the worm may not use the rope (`can_use_ninja` false, never set today) is not heard, OLX's is |
-| Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults, trigger and stick thresholds, presses and releases latched between ticks | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226` | `rl-input` | done (plan 5 task 6) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release` |
-| Game loop and sandbox (spec §8.6, §19 E10-E12): fixed 100 Hz tick, interpolated frames, catch-up cap, window surface states, WSL GPU defaults, F5 restart from assets loaded once, overlay | `src/game/Game.cpp:897-959` (the frame clock it drives) | `rl-game` | done (plan 5 task 7) | `loop_never_runs_more_than_n_catchup_ticks`, `surface_survives_resize_and_outdated`, `sandbox_setup_spawns_targets`, `session_plays_and_restarts_from_loaded_assets`; scripted runs in a WSLg window on all 4 levels × 2 mods |
-| Long sessions (plan 5 review focus 5): 60 000 ticks (10 minutes) of the sandbox with chaos keys, `rl-fx`, mock audio and an offscreen render every 10th tick | — | `rl-game/tests/soak.rs` | done (plan 5 task 8) | `soak_sandbox_10_minutes_headless` (`cargo xtask full`, about 15 s): cosmetic entities, projectiles, entity count, audio voices, popups, instance buffer, atlas and terrain texture stay bounded, no panic |
-| Match API (spec §20 F6, F9): `MatchSetup`, `GameMode` callbacks and commands, `Message` and `GameOver` events; game over's effects on the simulation (kills ignored, no respawns or bonus spawns, no input or shooting, the client's projectiles cleared, the physics stopped after `GAMEOVER_WAIT`) | `src/server/CGameMode.cpp:69-252`, `src/server/CServer.cpp:532-625`, `src/server/CServer_Game.cpp:38-42`, `108-113`, `167-261`, `src/client/CClient_Game.cpp:76-91`, `116-117`, `src/common/PhysicsLX56.cpp:300`, `src/client/CClient_Parse.cpp:1436-1451`, `src/game/Game.cpp:1267-1276`, `include/FastVector.h:72-77`, `src/common/Physics.cpp:36-44` | `rl-sim::{setup, mode, referee}` | done (plan 6 task 1) | `oracle_mode_matches_the_hard_coded_credit` and the oracle (unchanged), `mode_commands_apply_inside_tick_deterministically`, `game_over_stops_kills_spawns_input_and_bonuses`, `give_weapon_mid_match_does_not_allocate`; the oracle scenario `dm-kill-limit` (plan 6 task 2): the end in the kill's frame, the client's projectiles cleared, input ignored, no respawn, the physics stopped 300 frames later (`physics_stops_at_exactly_three_seconds_like_olx`) |
-| Deathmatch (`rl-modes`): kill bookkeeping and texts (first blood, killing and dying sprees, out), `CheckGameOver` (kill limit, time limit, fewer than two not out), `Winner`/`HighestScoredWorm`/`CompareWormsScore`, the results order, `Lives` and the respawn gate | `src/server/CGameMode.cpp:31-434`, `src/server/CDeathMatch.cpp`, `src/server/CServer.cpp:435-625`, `src/server/CServer_Game.cpp:167-260`, `src/client/Options.cpp:243-253`, `787-822`, `src/common/MathLib.cpp:85-88`, `src/client/CClient_Draw.cpp:1840-1897` | `rl-modes::{Deathmatch, rules, text}` | done (plan 6 task 2) | `deathmatch_game_over_and_winner_like_olx`, `lives_out_removes_worm_from_respawn`, `spree_messages`, `compare_like_olx`, `check_order_like_olx`, `deathmatch_is_deterministic_and_allocation_free`; the oracle scenario `dm-kill-limit` (KillLimit 2, a double kill: the end and its winner, `go`, match OLX bit for bit) |
-| Weapon restrictions (spec §20 F4): `.wps` presets imported into mod packs (`cfg/presets/<mod dir>/`, then `cfg/presets/`), `CWpnRest` (`loadList`'s parsing and path rule, `updateList`, `findWeapon`, `isEnabled`, `getWeaponState`), natural bonuses from the weapons not banned (`goodWpns`) | `src/common/CWpnRest.cpp:59-277`, `include/CWpnRest.h:28-32`, `src/game/Game_loadWeaponRestrictions.cpp:16-28`, `src/server/CServer_Game.cpp:292-297`, `src/game/Game.cpp:1405-1420`, `src/common/CGameScript.cpp:1211-1231` | `rl-import-lgs::{parse_wps, import_presets}`, `rl-data::restrictions`, `rl-pack` (`restrictions.ron`, format 3), `rl-content` (`LoadedMod::weapon_rules`, `SandboxSetup::restrictions`), `rl-scenario` (the header's `WeaponRestrictionsFile`) | done (plan 6 task 3) | `wps_presets_enable_what_olx_enables` (every bundled Classic and MW 1.0 preset), `parses_like_load_list`, `lookups_follow_cwpnrest`, `natural_bonuses_hold_what_the_restrictions_allow`; the oracle scenarios `bonus-natural` (`Bonus only`) and `bonus-natural-default` (`Standard 100lt`, `natural_bonuses_use_default_restrictions`) match OLX bit for bit |
-| Bot loadouts (spec §20 F1): `initWeaponSelection`'s presets (rifles, 100lt, mortars by mod name, `LoadingTime` and restrictions), `GetRandomWeapons`, `getRandomEnabledWpn`; the bot's own `rand()` stream | `src/common/CWormBot.cpp:4129-4192`, `src/common/CWorm.cpp:788-844`, `src/game/Game.cpp:1405-1420`, `src/common/MathLib.cpp:71-81`, `include/Utils.h:38-43` | `rl-bots::{loadout, BotRng}` | done (plan 6 task 3) | `bot_presets_match_olx`, `random_weapons_follow_restrictions` |
-| Bot navigation, motor and aim (spec §20 F2, F3, F7): `getMaxFreeArea`, `searchpath_base` (checklist, passage rule, costs, worm-line goal test, `buildPath`, `simplifyPath`, `splitUpNodes`), `traceWormLine`/`fastTraceLine`/`simpleTraceLine`, the node advance of `AI_MoveToTarget`, `AI_SetAim`, `AI_GetAimingAngle`, `AI_Carve`/`AI_Jump` timers, `isJumpingGivingDisadvantage`; the difficulty numbers | `src/common/CWormBot.cpp:110-878`, `1022-1122`, `1651-1713`, `1896-1960`, `2834-2853`, `3304-3366`, `3578-3627`, `src/level/FastTraceLine.h:24-104`, `include/MathLib.h:140-153`, `include/CVec.h:157-185` | `rl-bots::{nav, motor, aim, Bot, Budget}` | done (plan 6 task 4; the brain is task 5) | `areas_grow_like_olx`, `search_finds_paths_and_resumes_across_ticks`, `motor_reaches_target_angle_like_olx_turning`, `motor_switches_weapons_in_two_ticks_per_slot`, `ballistic_hits_static_target`, `think_stays_within_budget`, `bots_are_deterministic`, `think_does_not_allocate`, `think_never_panics_on_odd_worlds` |
-| Bot brain, weapons, rope and chaos (spec §20 F2, F10): `getInput` (THINK ↔ MOVINGTOTARGET, re-thinking every 3 s, every 0.5 s while a search runs and at once on the target's death, the 0.4 s spawn pause, `AI_Carve`), `AI_Think` (critical health, weapon bonus, nearest enemy, health, a random high spot), `AI_CreatePath` (restart after 5 s or when worm lines break, path extension, 0.5 s between searches), `AI_Shoot` (`traceWeaponLine`, clearing weapons through dirt above, lead, feasibility, aim by distance, `weaponCanHit`, bad-aim jumps), `AI_GetBestWeapon` (buckets, change delay; 100lt, rifle and mortar tactics), `AI_ReloadWeapons`, `AI_FindClearingWeapon`, `AI_MoveToTarget` (rope timers, best rope spot, re-throws, pulling away, overshoot, dirt above, dirt ahead, jetpack, rifle reloading, mortar retreat, worms within 50 px, stuck handling), `AI_SimpleMove`, `AI_FindShootingSpot`, `isMoveGivingDisadvantage`; the chaos personality and Deathmatch's chaos rotation | `src/common/CWormBot.cpp:993-1122`, `1180-1644`, `1719-1893`, `1963-2809`, `2869-2983`, `3200-3366`, `3370-4034`, `4120-4126` | `rl-bots::{brain, moving, shoot, weapons, rope, spot, chaos, probe}`, `rl-modes::{RespawnLoadout, ChaosCycle}` | done (plan 6 task 5) | `xtreme_bot_kills_static_target_quickly`, `easy_bot_hits_less`, `bots_use_the_rope_to_climb`, `stuck_bots_stay_within_budget_and_match_ends`, `bots_survive_odd_loadouts`, `chaos_fires_every_weapon_over_a_match_grid`, `chaos_cycle_gives_the_rotation_on_every_spawn`, `bot_matches_are_deterministic_and_allocation_free`, `olx_direct_aim_still_fights`, `a_search_toward_a_moving_target_finishes`, `the_jump_check_is_never_starved`, `a_scan_cut_short_does_not_go_back` |
-| Bot aim error floor (the user's direction, plan 6 ruling R6): every difficulty's aim errors (offset, target, gravity and speed noise) scale with at least 1/6, so Xtreme keeps half of Hard's error; the fire tolerance stays OLX's | `src/common/CWormBot.cpp:1682-1706`, `1836-1850` (OLX's Xtreme has none) | `rl-bots::{Difficulty::params, AIM_ERROR_FLOOR}` | done (plan 6 task 9; a deviation, below) | `no_difficulty_aims_perfectly`, `weapon_can_hit_noise_scales_with_the_level`; kill rates measured before and after (below); goldens re-blessed (`fixtures/blessings.log`) |
-| Replays (spec §20 F8; no OLX equivalent): the setup, pack ids and content hashes, every worm's keys per tick, the viewer's slot (the player whose game made it), checksums at tick 0, every 100 ticks and the end; the `RLRP` format, version refused when unknown | — | `rl-replay::{Recorder, Replay, Player, Cursor}`, `rl-content::{replay_packs, world_for_replay, play_replay}` | done (plan 6 task 6) | `record_then_replay_gives_identical_checksums`, `replay_reports_the_first_mismatching_tick`, `replay_reports_a_different_setup_at_tick_0`, `replay_refuses_unknown_format_versions`, `replay_refuses_mismatched_content`, `bot_match_replays_from_content`, `replay_size_is_reasonable`, `decode_never_panics_on_junk`, `a_failing_tick_is_recorded_without_a_checksum`, `the_viewer_is_recorded`, `the_viewer_is_one_of_the_worms` |
-| Headless match runner (spec §7.1, §7.3; no OLX equivalent): `rl-cli match` and `replay`, one match builder shared with `rl-game` (plan 6 ruling R5), invariants every tick, tick-time percentiles, determinism and replay round trip, coverage (weapons, projectile actions, bonuses, rope), failure capture to `target/failures/`, golden checksum streams | — | `rl-cli::{spec, runner, verify, coverage, failure, golden, invariants}`, `rl-content::build_match`, `xtask bless-regression` | done (plan 6 task 7) | `classic_deathmatch_bots_are_deterministic_and_replay`, `mw_chaos_bots_are_deterministic_and_replay`, `failure_writes_replay`, `golden_match_checksums` (`fixtures/matches/`); in `cargo xtask full`: `coverage_report_lists_every_weapon` (both mods × 4 levels × 3 seeds: every weapon of both mods and every projectile action kind) and `long_bot_match_bounded` (30 minutes, review focus 5) |
-| Deathmatch against bots in the game: `--mode deathmatch`, the bots thinking on the main thread before each tick, the HUD (names, event log, time-limit clock, Tab's scoreboard), "Game Over" then the results after `GAMEOVER_WAIT`, F5's rematch, `--record` and `--replay` | `src/client/CClient_Draw.cpp:893-905`, `1840-1897`, `2211-2236` | `rl-game::{setup, session, drive, hud, panels}` | done (plan 6 task 8) | `deathmatch_session_ends_with_results`, `rematch_starts_without_the_last_ticks_events`, `bots_think_within_frame_budget`, `replay_session_matches_recorded_checksums`, `scoreboard_hides_when_the_window_loses_focus`; the user's playtest |
-| Settings and profiles files (spec §9.4, §21 G2): versioned RON in the platform data directory, atomic writes, bad or newer files set aside as `.bak` with defaults and a warning | OLX's `cfg/options.cfg` (`src/client/Options.cpp`) and `cfg/players.dat` (`src/client/ProfileSystem.cpp`), laid out anew | `rl-ui::{store, settings, profiles, match_prefs}` | done (plan 7 task 1) | `bad_user_files_fall_back_to_defaults_and_keep_a_backup`, `settings_round_trip_and_version` |
-| Menus (§21 G1): main menu, local play (mod, level grid with thumbnails, OLX's Deathmatch options and their ranges, bots, the profile), the replays list, the screen state machine; starts that fail return to the menu | `src/client/DeprecatedGUI/Menu_Main.cpp`, `Menu_Local.cpp`, `src/common/FeatureList.cpp:31-35` (laid out anew) | `rl-ui::{state, screens::{main, local_play, replays}, replays}`, `rl-game::shell` | done (plan 7 task 2) | `state_machine_navigates_and_emits_commands`, `main_to_local_play_to_match`, `local_play_builds_match_options`, `local_play_pickers_are_found_by_their_label`, `local_play_replaces_a_saved_selection_no_longer_imported`, `starting_with_missing_content_returns_to_menu`, `menu_actions_are_idempotent`, `replay_list_shows_header_problems`; the v0.1 acceptance runs (`docs/porting/acceptance-v0.1.md`) |
-| Profiles and the skin preview: create, edit, delete, select; name, colour, searchable skins; OLX's menu animation from the game's own colorization and frame cut; the human plays the profile's look, bots OLX's default skin in OLX's `cpuColours` | `src/client/DeprecatedGUI/Menu_Player.cpp:746`, `src/client/ProfileSystem.cpp:47-60`, `src/client/CGameSkin.cpp` | `rl-ui::{profiles, skin_preview, screens::profiles}`, `rl-content::skin_sprite`, `rl-game::shell` | done (plan 7 task 3; bot colours task 5) | `profile_edits_persist`, `profile_names_are_validated`, `skin_preview_uses_colorization_like_the_game`, `the_profiles_screen_gets_its_preview_textures`, `a_menu_match_plays_the_selected_profile_look` |
-| Options (§21 G3): window presets and fullscreen through the paced path, VSync, filter, interpolation, UI scale; volumes live; key and gamepad rebinding with explicit conflicts, never leaving an action unreachable (the match is set up in local play only) | `src/client/DeprecatedGUI/Menu_Options.cpp`, `src/client/Options.cpp:45-73` (laid out anew) | `rl-ui::screens::{options, keys}`, `rl-input::Capture`, `rl-game::{video, window}` | done (plan 7 task 4) | `rebinding_never_leaves_an_action_unreachable`, `options_rebind_a_key`, `options_set_video_and_audio`, `video_changes_go_through_the_paced_path`, `volume_changes_apply_live`, `the_saved_window_opens_with_the_flags_on_top_unsaved`; e2e (`fixtures/autoplay/menus.ron`: quick window-size changes) |
-| Window changes on Wayland (v0.1 playtest; no OLX equivalent): a size or mode change makes the window again at its new shape on the same device, so WSLg leaves no stale frame; X11 changes it in place | — | `rl-game::{window, gpu, app}` (`Plan`, `Shape`, `Gpu::rebind`, `App::recreate`) | done | `a_shape_says_when_the_window_shows_a_change`, `wayland_makes_the_window_again`, `a_window_made_again_keeps_the_game_ticking`; real-screen captures under WSLg (1280 × 720 → 1920 × 1080 → back; the desktop's size → fullscreen → back) and the options' autoplay on Wayland |
-| Weapon selection (§21 G4): the profile's slots by name, `findEnabledWeapon`, left/right over the enabled weapons (×6 with Select weapon), Random, Done on Fire's release, skipped with one weapon or none; the choice in `MatchOptions` and the replay | `src/common/CWormHuman.cpp:702-1000`, `src/common/CWorm.cpp:788-844` | `rl-ui::{weapon_select, screens::weapon_select}`, `rl-content::Player::HumanWith`, `rl-game::shell` | done (plan 7 task 5) | `weapon_selection_respects_restrictions`, `a_refused_choice_leaves_the_match_playable` |
-| HUD and minimap (§21 G5, Modern only): an opaque bar along the bottom fifth of the window's 16:9 frame (OLX 0.58's status bar; deviation below) with health, five weapon slots with OLX's bar states, the minimap in the centre (OLX's proportions, colours and dots; no view rectangle, the user's ruling: the player's bigger dot is enough) and the event log; clock and kill limit over the playfield, Tab's scoreboard; the game drawn above the bar | `src/client/CClient_Draw.cpp` (HUD, `:137-138` the local game's minimap, `:483-515` the bar (commented out at `d1ad953f`), `drawOnMiniMap`), `docs/porting/olx-notes/presentation.md` §2.4, §9 | `rl-ui::{hud, theme}`, `rl-game::{hud, app, gpu}`, `rl_scene::Viewport::GAME`, `rl_render::Renderer::render_in` | done (plan 7 task 5; the bar, the 16:9 frame and the side layout after the v0.1 playtest) | `hud_layout_holds_at_all_scales` (both layouts), `the_scale_follows_the_height`, `the_game_view_is_fixed`, `the_playfield_is_the_frame_above_the_bar`, `hud_paints_at_every_scale`, `log_keeps_the_last_lines_oldest_first`, `hud_hides_the_weapons_during_the_selection`, `names_stay_inside_the_view`, `hud_snapshot_1080p`, `hud_snapshot_1440p_with_scores`, `hud_snapshot_3440x1440_side_panels` (GPU tier) |
-| Pause and results: Esc's pause menu (no tick while paused), the results after `GAMEOVER_WAIT` with OLX's columns plus score, deaths and suicides; Rematch, Save replay, Back to menu | `src/client/CClient_Draw.cpp:1840-1897` | `rl-ui::screens::{ingame, results}`, `rl-game::shell` | done (plan 7 task 5) | `pause_stops_ticks_and_replays_stay_valid`, `pause_menu_holds_the_game_and_opens_the_options`, `results_match_world_scores`, `results_show_the_columns_and_their_buttons`, `save_replay_once_per_match` |
-| Level thumbnails (§21 G6, narrowed): `thumb.png` per level pack (160 × 96, box-filtered, letterboxed), pack format 4, left out of the content hash; decoded lazily and bounded in the menus | `src/game/Level.cpp:33-44` (`minimapForLevel`) | `rl-import-gfx`, `rl-pack`, `rl-ui::screens::local_play` | done (plan 7 task 6) | `thumbnails_are_imported_for_every_level`, `thumbnails_are_letterboxed_to_a_fixed_size`, `thumbnails_average_the_art`, `thumbnails_decode_lazily_and_bounded` |
-| About (§21 G9): credits (Liero, Liero Xtreme, the OpenLieroX team), licenses, each pack's recorded origin | `src/client/DeprecatedGUI/Menu_Main.cpp:276-283` | `rl-ui::screens::about` | done (plan 7 task 6) | `about_credits_the_authors_and_the_licenses` |
-| Import screen: an OLX game directory imported on a background thread into the data directory's `packs/`, layered over the bundled packs; progress, report, cancel; bounded reads and image decodes | `Menu_Local_FillModList`, `checkLXBinMod`, OLX's level list, `src/main.cpp:1003-1021` | `rl-content::import`, `rl-ui::{import, screens::import}`, `rl-pack::image_io`, `rl-game::shell` | done (plan 7 task 7) | `import_runs_off_the_ui_thread_and_reports`, `import_screen_flow`, `import_reports_every_item_and_writes_whole_packs`, `imported_packs_override_bundled`, `import_refreshes_the_menus_and_overrides_bundled`, `quitting_mid_import_leaves_whole_packs`, `a_decompression_bomb_is_refused_on_import_and_load`, `huge_images_are_refused_before_decoding` |
-| Fast-forward (the user's request; no OLX equivalent): replays and `--spectate` at 1×–16× or max, a played game always 1×, sound thinned | — | `rl-game::speed` | done (plan 7 task 8) | `fast_forward_never_changes_the_simulation`, `a_played_game_never_runs_fast`, `speeds_step_parse_and_thin_sound`, `the_fake_clock_needs_an_autoplay` |
-| Autoplay and end to end (§21 G7): `--autoplay` clicks widgets by label, holds the game's keys, takes checked screenshots and logs JSON lines; `--fake-clock` makes a run deterministic | — | `rl-game::autoplay`, `xtask e2e` | done (plan 7 task 8) | `scripts_parse_and_name_what_exists`, `steps_click_wait_and_fail_in_time`, `widgets_are_found_by_their_label`, `blank_pictures_fail_the_sanity_check`; `cargo xtask e2e` (in `full`, Xvfb) |
-| Benchmarks (§21 G8): a full 3000-projectile pool tick, 32 worms, 8 bots thinking, the draw list, an offscreen frame at 1080p and 1440p; machine-local baselines, more than 10 % slower fails | — | `rl-sim/benches/tick.rs`, `rl-cli/benches/game.rs`, `rl-render/benches/frame.rs`, `xtask bench` | done (plan 7 task 8) | `fixtures/bench/baselines.ron`; `regressions_need_more_than_the_tolerance`, `baselines_from_another_machine_only_notice` |
-| Engine stress test (the user's request): 32 chaos bots on Castle Strike, both mods, OLX's pool and 20 000; tick, think, pool, entities, events, render and memory; invariants every tick, determinism over two runs | — | `rl-cli stress`, `xtask stress` | done (plan 7 task 8) | `stress_run_is_bounded_and_deterministic`; `fixtures/bench/stress.ron` (in `full`) |
-| Performance envelope (plan 8): sweeps of worms, pool, effects, map and art; the GPU on WSL GL and Windows DX12/Vulkan with timestamps and the shader probe; OLX frame timing | `tools/olx-oracle` (`ORACLE_TIMING`) | `xtask/src/envelope/`, `rl-cli gpu-bench`, `rl-game --frame-log` | measured | `fixtures/bench/envelope/<host>.ron`, `docs/perf/envelope.md` |
+| Fidelity oracle (test hooks) | `src/game/Game.cpp`, `src/client/CInput.cpp`, `src/common/CWormHuman.cpp` | `tools/olx-oracle`, `olr-oracle` | done (plans 2–3) | 7 movement scenarios recorded twice and identical; `cargo xtask oracle-record --check` |
+| Oracle v2: shots, weapons, bonuses, clocks (spec §18) | `src/common/CShootList.cpp`, `src/server/CServer_Send.cpp:556-569`, `src/server/CServer_Game.cpp:266-316`, `src/common/CGameScript.cpp:937,1159` | `tools/olx-oracle`, `olr-oracle` (`Fields`, `compare_fields`), `olr-scenario::CHECKED` | done (plan 4 task 1) | `fire-minigun` recorded twice and identical; the 7 M3 traces changed only in added fields |
+| Oracle v2: message delivery (spec §18 D10); weapon, damage and bonus scenarios | `src/common/CChannel.cpp:69-85`, `src/client/CClient_Parse.cpp:468`, `src/server/CServer_Parse.cpp:90` | `tools/olx-oracle`, `xtask oracle-gen-weapons`, `fixtures/oracle/weapons/` | done (plan 4 task 3) | 88 weapon scenarios and 10 special ones recorded twice and identical; `olr-oracle/tests/fixtures.rs` checks what each shows |
+| Frame and physics clocks | `src/game/Game.cpp:897-959`, `src/client/CClient_Game.cpp:60-222` | `olr-sim::World::tick` | ported | all 7 oracle scenarios, bit for bit; `docs/porting/timing.md` |
+| Worm movement and collision | `src/common/PhysicsLX56.cpp:88-469` | `olr-sim::physics` | ported | `fall`, `walk`, `jump`, `dig` |
+| Keyboard input (aim, move, jump, dig, rope) | `src/common/CWormHuman.cpp:81-560`, `src/client/CInput.cpp` | `olr-sim::physics::get_input`, `olr-sim::input` | ported (keyboard, LX56 aim) | `aim`, `tap`, `walk`, `jump`, `dig`, `rope` |
+| Ninja rope | `src/client/CNinjaRope.cpp`, `PhysicsLX56.cpp:505-604` | `olr-sim::rope` | ported | `rope` |
+| Hole carving (material) | `src/common/CMap.cpp:1005-1105`, `2172-2199` | `olr-terrain::Terrain::carve_hole` | ported | `dig` (244 dirt cells), spawn holes (`mh` at frame −1) |
+| Float `sinf`/`cosf` (aim directions) | glibc 2.35 `sysdeps/ieee754/flt-32/s_sinf.c`, `s_cosf.c` (x86-64 FMA variant) | `olr-math::trig` | ported | all 2³² inputs bit-identical to the oracle container's glibc (a throwaway FFI comparator run in `rl-olx-src`) |
+| Mod compiled to OLX's projectile tree (`SimMod`) | `src/common/CGameScript.cpp:833-1157` (`LoadProjectile` order) | `olr-sim::mod_rt` | ported (plan 4 task 4) | every scenario: indices and path names equal the trace header's (`olr-scenario` checks) |
+| Weapon slots, firing, laser sight entity | `src/common/PhysicsLX56.cpp:471-498`, `src/server/CServer_Game.cpp:366-466`, `src/client/CClient_Game.cpp:496-544`, `751-808` | `olr-sim::weapons` | ported | `s` (slots) of all 112 scenarios for the whole trace (109 match fully); `beam-burst`; the laser sight event's length by a unit test |
+| Shot list, encode/decode round trip, Model R delivery, `ProcessShot` | `src/common/CShootList.cpp`, `CClient_Game.cpp:813-946` | `olr-sim::shots`, `olr-sim::shot_codec` | ported | `s` of every scenario, `multi-shot` in particular (corrupted `spd`), `die-before-delivery` (dropped shots) |
+| Beams (`ProcessShot_Beam`, `DrawBeam`) and specials (`ShootSpecial`, the jetpack) | `CClient_Game.cpp:549-711`, `926-1055` | `olr-sim::beam` | ported (plan 4 task 8; the bonus check task 9) | `weapons/classic/laser`, `weapons/mw-1-0/laser` and `beam-burst` match fully; specials by unit tests only (`jetpack_quirks`: no special weapon in Classic or MW 1.0) |
+| Projectile pool, `Proj_SpawnInfo::apply` (shots and projectiles), `CProjectile::Spawn` | `include/FastVector.h`, `src/common/PhysicsLX56_Projectiles.cpp:495-640`, `src/common/CProjectile.cpp:43-166` | `olr-sim::projectile`, `olr-sim::spawn` | ported | every projectile field (`p`, hidden fields included) of every scenario for the whole trace; the pool limit by `pool_full_drops_new_projectiles_like_olx` |
+| Projectile motion, collision, timers, trails, animation, worm hit test, position recorder | `PhysicsLX56_Projectiles.cpp:52-491`, `1234-1411`, `src/util/VecTimeRecorder.h`, `PhysicsLX56.cpp:468` | `olr-sim::proj_sim`, `olr-sim::worm::PosRecorder` | ported (plan 4 task 5) | as above; trails and animation by every weapon scenario (`mine`, `float-mine`, `nuclear-mines`, `trap-mines`, `booby-trap`, `electro-gun`, `jet-pack`, `big-nuke` for the timers and recorder) |
+| Projectile actions (`applyTo`, `execute`): bounce, disappear, nothing, go-through, speed and heading actions, children, the junk rule | `PhysicsLX56_Projectiles.cpp:670-945`, `1115-1230`, `CProjectile.cpp:376-429` | `olr-sim::actions` | ported (plan 4 tasks 5-6) | all 88 weapon scenarios of both mods (`p`, `mh`, `dirt`, `hp`, `rc`); 109 of 112 scenarios match fully |
+| Float `atan2f` (projectile headings) | glibc 2.35 `sysdeps/ieee754/flt-32/e_atan2f.c`, `s_atanf.c` | `olr-math::atan2f` | ported | 6 million input pairs bit-identical to the oracle container's glibc; 20 pinned in a test |
+| Explosions, carve, dirt, green dirt and their dirt counts; injury actions | `CClient_Game.cpp:227-330`, `CMap.cpp:1114-1340`, `PhysicsLX56_Projectiles.cpp:781-824`, `1115-1154`, `CWorm.cpp:1381-1389` | `olr-sim::effects`, `olr-terrain::Terrain::{place_dirt, place_green_dirt}` | ported (plan 4 task 6; the bonus chain task 9) | `mh`, `dirt` and `hp` of every scenario; 109 of 112 scenarios match fully (the 3 D9 ones up to their respawn); `place_dirt_at_the_edges` and `green_dirt_at_the_edges` for the map edges |
+| Worm damage (`InjureWorm`): factors, `SelfInjure`, damage score, blood draws | `CClient_Game.cpp:335-460`, `CGameObject.cpp:35-44`, `CWorm.cpp:1600-1627` | `olr-sim::damage::injure_worm` | ported (plan 4 task 7) | `hp`, `rc`, `ents` of every weapon scenario (`classic/*`, `mw-1-0/*`); factors and `SelfInjure` by unit tests only |
+| Death, kills, deaths, suicides, lives; death draws (sound, gibs by the entity pool, blood); the exact-zero death (`CWorm::think`) | `CServer_Game.cpp:108-162`, `CGameMode.cpp:69-252`, `CWorm.cpp:1399-1449`, `src/gusanos/base_worm.cpp:365-381`, `623-659`, `src/client/Entity.cpp:161-205` | `olr-sim::damage::{kill_worm, die_at_zero_health, olx_kill_credit}` | ported (plan 4 task 7); the crediting is the game mode's since plan 6 task 1 (`GameMode::on_kill`; `OracleMode` is OLX's rule) | `explode-kill-respawn`, `die-before-delivery`, the weapon scenarios' kills; exact-zero deaths in `assassin-s-shot`, `flak`, `plasma-launcher` |
+| Bleeding | `PhysicsLX56.cpp:317-330` | `olr-sim::physics::bleed` | ported | `bleed`, `die-before-delivery` |
+| Respawn loop, `SpawnWorm`, `FindSpot`, `CWorm::Spawn` | `CServer_Game.cpp:38-104`, `200-225`, `CMap.cpp:2381-2396`, `CWorm.cpp:591-651`, `CWormHuman.cpp:115-119` | `olr-sim::respawn` | ported (DM; no predefined spawns, no team spawns) | `explode-kill-respawn` and every weapon scenario whose dummy dies (`tod`, `respawn`, positions, `mt`) |
+| Bonuses: server spawn, lifetime and grab handling; client spawn (hole), physics, pickup, health and weapon effects; the messages between them (D10); explosions and beams destroying bonuses | `src/server/CServer_Game.cpp:227-316`, `src/server/CServer_Parse.cpp:834-903`, `src/client/CClient_Parse.cpp:1464-1516`, `1977-1990`, `PhysicsLX56.cpp:619-715`, `CClient_Game.cpp:128-151`, `255-270`, `736-745`, `986-1002`, `CWorm.cpp:1454-1506` | `olr-sim::bonus`, `olr-sim::effects::explosion`, `olr-sim::beam` | ported (plan 4 task 9) | `bonus-health`, `bonus-weapon` (`b`, `sb` and every other field); natural spawning, lifetime, explosions and beams by unit tests only |
+| Acceptance: all weapons of both mods | `fixtures/oracle/weapons/` | `olr-scenario/tests/oracle.rs` (`CHECKED == Fields::ALL`) | done (plan 4 task 11) | 109 of 112 scenarios match OLX bit for bit in every field; the other 3 are pinned to their first divergence (D9, below) |
+| Tick events (sounds, map edits, explosions, cosmetics, shots, damage, kills, pickups, spawns) and the state checksum | every `StartSound`, `PlaySoundSample`, `SpawnEntity` and `SetWormBeamEntity` above; `src/game/Sounds.cpp:25-30` | `olr-sim::events`, `olr-sim::checksum` | done (plan 4 task 10) | unit tests; the oracle traces are unchanged (no draw added); `olr-scenario/tests/smoke.rs` (8 matches, clone checksum streams) |
+| Event data for rendering (spec §19 E6): explosion `shake`, the gib's worm, the dirt particle's probe pixel, each event's sub-step (entity passes before it) and `World::substeps_last_tick`, `Damage.dealt`, the `RotIncrement` 0→1 bump (`World::rot_bumped`), `World::physics_time`, `Projectile::serial`, `NinjaRope::throws` (a throw count; not OLX state) | `CClient_Game.cpp:206-208`, `229-330`, `380`, `PhysicsLX56_Projectiles.cpp:590-593`, `777`, `1115-1130`, `CMap.cpp:2172-2199`, `PhysicsLX56.cpp:595-607`, `CProjectile.cpp:291-292` | `olr-sim::events`, `olr-sim::world` | done (plan 5 task 1) | `events_carry_e6_data`, `projectile_serials_differ_across_slot_reuse`, `every_rope_throw_counts_even_while_the_rope_is_out`; the oracle traces are unchanged (no draw added); smoke matches check every event's sub-step |
+| Core pack: shared game sprites, game sounds (`.ogg`), `colours.cfg` (spec §19 E9) | `src/client/DeprecatedGUI/Graphics.cpp:56-97`, `134-321`, `src/common/CWorm.cpp:661`, `src/game/Sounds.cpp:25-30`, `src/common/StringUtils.cpp:409-447` | `olr-import-gfx::import_core`, `olr-pack::CorePack`, `olr-content::CorePack` | done (plan 5 task 1) | `olr-content/tests/content.rs` (`loads_every_manifest_item`), the corpus snapshot |
+| Colour terrain (spec §19 E7): carve (back pixels, brown rim), `PlaceDirt` (`FrontTile`), `PlaceGreenDirt` (OLX's shades), beam holes, blood and gib stains, dirty rectangles | `src/common/CMap.cpp:1005-1340`, `2355-2373`, `src/client/Entity.cpp:355-390`, `src/client/GfxPrimitives.cpp` (`DrawImageStretch2`) | `olr-terrain::ColorMap`, `olr-content::{color_edit, apply_edits}` | done (plan 5 task 2) | `olr-terrain` colour tests; `olr-content/tests/color.rs` (`color_map_agrees_with_material_after_a_match`, 3000 ticks); golden `fixtures/render/dig-color.png` (`olr-scenario/tests/render_golden.rs`) |
+| Presentation (spec §19 E1-E4): camera (hard lock, clamp, shake, dead worm, respawn), skin frames (the facing-left mirror one column off), crosshair, muzzle flash, old-style health bar, rope, laser sights, beams, projectile frames (animation, special angle, angle, rotation with the `RotIncrement` bump), bonuses (blinking), layer order; interpolation (E2) | `src/client/CViewport.cpp:118-472`, `src/common/CWorm.cpp:1016-1300`, `src/client/CGameSkin.cpp:584-600`, `src/client/CNinjaRope.cpp:132-180`, `src/common/CProjectile.cpp:227-300`, `src/common/CBonus.cpp:49-76`, `src/client/Entity.cpp:30-157`, `305-314`, `src/client/GfxPrimitives.cpp:1795-2520`, `src/gusanos/viewport.cpp:105-253` | `olr-scene` | done (plan 5 task 3) | `camera_locks_clamps_and_shakes_like_olx`, `skin_frame_matches_olx_table`, `projectile_frames_match_olx`, `interpolation_never_blends_reused_slots_or_respawns`, `draw_list_order_matches_olx_layers`, `beams_and_laser_sights_live_two_entity_passes`; scene snapshots (`olr-scene/tests/snapshots`) |
+| Renderer (spec §8.2, §19 E3): art-scale world pass (terrain, instanced sprites from one atlas, world-pixel lines), upscale (integer nearest, sharp bilinear), offscreen PNGs; OLX's corner-rule colour key for sprites | `src/client/GfxPrimitives.cpp:116-150` (`SetColorKey`); OLX blits with SDL onto a 2× screen | `olr-render`, `olr-data::image`, `olr-cli render` | done (plan 5 task 5) | `dirty_rect_upload_equals_full_upload`, `upscale_filters_are_selectable`, `missing_assets_use_placeholders`, `srgb_targets_show_the_same_colours`; goldens `fixtures/render/frame-*.png` (`olr-cli/tests/render_golden.rs`, `cargo xtask full`) |
+| Cosmetic entities (spec §19 E1, E8): the pool (OLX's 1024 slots with `olx_quirks`; 16384 with a death reserve in play since 2026-10-13, see Deliberate deviations), per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `olr-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits` |
+| Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits (a death sound steals since 2026-10-13, see Deliberate deviations), live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `olr-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
+| Whose rope throws are heard (the user's playtest report, 2026-10-16: every worm's throw played map-wide at gain 1.0, about 7 to 12 starts a second with 7 to 8 bots): only the player's own (the local slot; a replay's viewer), as OLX plays `smpNinja` only in the human input handler; a bot's or a remote worm's throw is silent. `olr-sim`'s THROW events carry no owner, so the session keeps as many as the player's `NinjaRope::throws` grew (they all play at the listener) | `src/common/CWormHuman.cpp:340-342`, `555-563`, `570-574`, `src/common/CWormBot.cpp:1753`, `3823`, `src/common/PhysicsLX56.cpp:300-303` | `olr-game::throw_sound`, `Session::sounds` | done (2026-10-16) | `only_the_players_rope_throws_are_heard`, `bots_alone_throw_silently`, `a_replay_hears_its_viewers_throws`, `an_online_match_runs_headless`; a throw while the worm may not use the rope (`can_use_ninja` false, never set today) is not heard, OLX's is |
+| Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults, trigger and stick thresholds, presses and releases latched between ticks | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226` | `olr-input` | done (plan 5 task 6) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release` |
+| Game loop and sandbox (spec §8.6, §19 E10-E12): fixed 100 Hz tick, interpolated frames, catch-up cap, window surface states, WSL GPU defaults, F5 restart from assets loaded once, overlay | `src/game/Game.cpp:897-959` (the frame clock it drives) | `olr-game` | done (plan 5 task 7) | `loop_never_runs_more_than_n_catchup_ticks`, `surface_survives_resize_and_outdated`, `sandbox_setup_spawns_targets`, `session_plays_and_restarts_from_loaded_assets`; scripted runs in a WSLg window on all 4 levels × 2 mods |
+| Long sessions (plan 5 review focus 5): 60 000 ticks (10 minutes) of the sandbox with chaos keys, `olr-fx`, mock audio and an offscreen render every 10th tick | — | `olr-game/tests/soak.rs` | done (plan 5 task 8) | `soak_sandbox_10_minutes_headless` (`cargo xtask full`, about 15 s): cosmetic entities, projectiles, entity count, audio voices, popups, instance buffer, atlas and terrain texture stay bounded, no panic |
+| Match API (spec §20 F6, F9): `MatchSetup`, `GameMode` callbacks and commands, `Message` and `GameOver` events; game over's effects on the simulation (kills ignored, no respawns or bonus spawns, no input or shooting, the client's projectiles cleared, the physics stopped after `GAMEOVER_WAIT`) | `src/server/CGameMode.cpp:69-252`, `src/server/CServer.cpp:532-625`, `src/server/CServer_Game.cpp:38-42`, `108-113`, `167-261`, `src/client/CClient_Game.cpp:76-91`, `116-117`, `src/common/PhysicsLX56.cpp:300`, `src/client/CClient_Parse.cpp:1436-1451`, `src/game/Game.cpp:1267-1276`, `include/FastVector.h:72-77`, `src/common/Physics.cpp:36-44` | `olr-sim::{setup, mode, referee}` | done (plan 6 task 1) | `oracle_mode_matches_the_hard_coded_credit` and the oracle (unchanged), `mode_commands_apply_inside_tick_deterministically`, `game_over_stops_kills_spawns_input_and_bonuses`, `give_weapon_mid_match_does_not_allocate`; the oracle scenario `dm-kill-limit` (plan 6 task 2): the end in the kill's frame, the client's projectiles cleared, input ignored, no respawn, the physics stopped 300 frames later (`physics_stops_at_exactly_three_seconds_like_olx`) |
+| Deathmatch (`olr-modes`): kill bookkeeping and texts (first blood, killing and dying sprees, out), `CheckGameOver` (kill limit, time limit, fewer than two not out), `Winner`/`HighestScoredWorm`/`CompareWormsScore`, the results order, `Lives` and the respawn gate | `src/server/CGameMode.cpp:31-434`, `src/server/CDeathMatch.cpp`, `src/server/CServer.cpp:435-625`, `src/server/CServer_Game.cpp:167-260`, `src/client/Options.cpp:243-253`, `787-822`, `src/common/MathLib.cpp:85-88`, `src/client/CClient_Draw.cpp:1840-1897` | `olr-modes::{Deathmatch, rules, text}` | done (plan 6 task 2) | `deathmatch_game_over_and_winner_like_olx`, `lives_out_removes_worm_from_respawn`, `spree_messages`, `compare_like_olx`, `check_order_like_olx`, `deathmatch_is_deterministic_and_allocation_free`; the oracle scenario `dm-kill-limit` (KillLimit 2, a double kill: the end and its winner, `go`, match OLX bit for bit) |
+| Weapon restrictions (spec §20 F4): `.wps` presets imported into mod packs (`cfg/presets/<mod dir>/`, then `cfg/presets/`), `CWpnRest` (`loadList`'s parsing and path rule, `updateList`, `findWeapon`, `isEnabled`, `getWeaponState`), natural bonuses from the weapons not banned (`goodWpns`) | `src/common/CWpnRest.cpp:59-277`, `include/CWpnRest.h:28-32`, `src/game/Game_loadWeaponRestrictions.cpp:16-28`, `src/server/CServer_Game.cpp:292-297`, `src/game/Game.cpp:1405-1420`, `src/common/CGameScript.cpp:1211-1231` | `olr-import-lgs::{parse_wps, import_presets}`, `olr-data::restrictions`, `olr-pack` (`restrictions.ron`, format 3), `olr-content` (`LoadedMod::weapon_rules`, `SandboxSetup::restrictions`), `olr-scenario` (the header's `WeaponRestrictionsFile`) | done (plan 6 task 3) | `wps_presets_enable_what_olx_enables` (every bundled Classic and MW 1.0 preset), `parses_like_load_list`, `lookups_follow_cwpnrest`, `natural_bonuses_hold_what_the_restrictions_allow`; the oracle scenarios `bonus-natural` (`Bonus only`) and `bonus-natural-default` (`Standard 100lt`, `natural_bonuses_use_default_restrictions`) match OLX bit for bit |
+| Bot loadouts (spec §20 F1): `initWeaponSelection`'s presets (rifles, 100lt, mortars by mod name, `LoadingTime` and restrictions), `GetRandomWeapons`, `getRandomEnabledWpn`; the bot's own `rand()` stream | `src/common/CWormBot.cpp:4129-4192`, `src/common/CWorm.cpp:788-844`, `src/game/Game.cpp:1405-1420`, `src/common/MathLib.cpp:71-81`, `include/Utils.h:38-43` | `olr-bots::{loadout, BotRng}` | done (plan 6 task 3) | `bot_presets_match_olx`, `random_weapons_follow_restrictions` |
+| Bot navigation, motor and aim (spec §20 F2, F3, F7): `getMaxFreeArea`, `searchpath_base` (checklist, passage rule, costs, worm-line goal test, `buildPath`, `simplifyPath`, `splitUpNodes`), `traceWormLine`/`fastTraceLine`/`simpleTraceLine`, the node advance of `AI_MoveToTarget`, `AI_SetAim`, `AI_GetAimingAngle`, `AI_Carve`/`AI_Jump` timers, `isJumpingGivingDisadvantage`; the difficulty numbers | `src/common/CWormBot.cpp:110-878`, `1022-1122`, `1651-1713`, `1896-1960`, `2834-2853`, `3304-3366`, `3578-3627`, `src/level/FastTraceLine.h:24-104`, `include/MathLib.h:140-153`, `include/CVec.h:157-185` | `olr-bots::{nav, motor, aim, Bot, Budget}` | done (plan 6 task 4; the brain is task 5) | `areas_grow_like_olx`, `search_finds_paths_and_resumes_across_ticks`, `motor_reaches_target_angle_like_olx_turning`, `motor_switches_weapons_in_two_ticks_per_slot`, `ballistic_hits_static_target`, `think_stays_within_budget`, `bots_are_deterministic`, `think_does_not_allocate`, `think_never_panics_on_odd_worlds` |
+| Bot brain, weapons, rope and chaos (spec §20 F2, F10): `getInput` (THINK ↔ MOVINGTOTARGET, re-thinking every 3 s, every 0.5 s while a search runs and at once on the target's death, the 0.4 s spawn pause, `AI_Carve`), `AI_Think` (critical health, weapon bonus, nearest enemy, health, a random high spot), `AI_CreatePath` (restart after 5 s or when worm lines break, path extension, 0.5 s between searches), `AI_Shoot` (`traceWeaponLine`, clearing weapons through dirt above, lead, feasibility, aim by distance, `weaponCanHit`, bad-aim jumps), `AI_GetBestWeapon` (buckets, change delay; 100lt, rifle and mortar tactics), `AI_ReloadWeapons`, `AI_FindClearingWeapon`, `AI_MoveToTarget` (rope timers, best rope spot, re-throws, pulling away, overshoot, dirt above, dirt ahead, jetpack, rifle reloading, mortar retreat, worms within 50 px, stuck handling), `AI_SimpleMove`, `AI_FindShootingSpot`, `isMoveGivingDisadvantage`; the chaos personality and Deathmatch's chaos rotation | `src/common/CWormBot.cpp:993-1122`, `1180-1644`, `1719-1893`, `1963-2809`, `2869-2983`, `3200-3366`, `3370-4034`, `4120-4126` | `olr-bots::{brain, moving, shoot, weapons, rope, spot, chaos, probe}`, `olr-modes::{RespawnLoadout, ChaosCycle}` | done (plan 6 task 5) | `xtreme_bot_kills_static_target_quickly`, `easy_bot_hits_less`, `bots_use_the_rope_to_climb`, `stuck_bots_stay_within_budget_and_match_ends`, `bots_survive_odd_loadouts`, `chaos_fires_every_weapon_over_a_match_grid`, `chaos_cycle_gives_the_rotation_on_every_spawn`, `bot_matches_are_deterministic_and_allocation_free`, `olx_direct_aim_still_fights`, `a_search_toward_a_moving_target_finishes`, `the_jump_check_is_never_starved`, `a_scan_cut_short_does_not_go_back` |
+| Bot aim error floor (the user's direction, plan 6 ruling R6): every difficulty's aim errors (offset, target, gravity and speed noise) scale with at least 1/6, so Xtreme keeps half of Hard's error; the fire tolerance stays OLX's | `src/common/CWormBot.cpp:1682-1706`, `1836-1850` (OLX's Xtreme has none) | `olr-bots::{Difficulty::params, AIM_ERROR_FLOOR}` | done (plan 6 task 9; a deviation, below) | `no_difficulty_aims_perfectly`, `weapon_can_hit_noise_scales_with_the_level`; kill rates measured before and after (below); goldens re-blessed (`fixtures/blessings.log`) |
+| Replays (spec §20 F8; no OLX equivalent): the setup, pack ids and content hashes, every worm's keys per tick, the viewer's slot (the player whose game made it), checksums at tick 0, every 100 ticks and the end; the `RLRP` format, version refused when unknown | — | `olr-replay::{Recorder, Replay, Player, Cursor}`, `olr-content::{replay_packs, world_for_replay, play_replay}` | done (plan 6 task 6) | `record_then_replay_gives_identical_checksums`, `replay_reports_the_first_mismatching_tick`, `replay_reports_a_different_setup_at_tick_0`, `replay_refuses_unknown_format_versions`, `replay_refuses_mismatched_content`, `bot_match_replays_from_content`, `replay_size_is_reasonable`, `decode_never_panics_on_junk`, `a_failing_tick_is_recorded_without_a_checksum`, `the_viewer_is_recorded`, `the_viewer_is_one_of_the_worms` |
+| Headless match runner (spec §7.1, §7.3; no OLX equivalent): `olr-cli match` and `replay`, one match builder shared with `olr-game` (plan 6 ruling R5), invariants every tick, tick-time percentiles, determinism and replay round trip, coverage (weapons, projectile actions, bonuses, rope), failure capture to `target/failures/`, golden checksum streams | — | `olr-cli::{spec, runner, verify, coverage, failure, golden, invariants}`, `olr-content::build_match`, `xtask bless-regression` | done (plan 6 task 7) | `classic_deathmatch_bots_are_deterministic_and_replay`, `mw_chaos_bots_are_deterministic_and_replay`, `failure_writes_replay`, `golden_match_checksums` (`fixtures/matches/`); in `cargo xtask full`: `coverage_report_lists_every_weapon` (both mods × 4 levels × 3 seeds: every weapon of both mods and every projectile action kind) and `long_bot_match_bounded` (30 minutes, review focus 5) |
+| Deathmatch against bots in the game: `--mode deathmatch`, the bots thinking on the main thread before each tick, the HUD (names, event log, time-limit clock, Tab's scoreboard), "Game Over" then the results after `GAMEOVER_WAIT`, F5's rematch, `--record` and `--replay` | `src/client/CClient_Draw.cpp:893-905`, `1840-1897`, `2211-2236` | `olr-game::{setup, session, drive, hud, panels}` | done (plan 6 task 8) | `deathmatch_session_ends_with_results`, `rematch_starts_without_the_last_ticks_events`, `bots_think_within_frame_budget`, `replay_session_matches_recorded_checksums`, `scoreboard_hides_when_the_window_loses_focus`; the user's playtest |
+| Settings and profiles files (spec §9.4, §21 G2): versioned RON in the platform data directory, atomic writes, bad or newer files set aside as `.bak` with defaults and a warning | OLX's `cfg/options.cfg` (`src/client/Options.cpp`) and `cfg/players.dat` (`src/client/ProfileSystem.cpp`), laid out anew | `olr-ui::{store, settings, profiles, match_prefs}` | done (plan 7 task 1) | `bad_user_files_fall_back_to_defaults_and_keep_a_backup`, `settings_round_trip_and_version` |
+| Menus (§21 G1): main menu, local play (mod, level grid with thumbnails, OLX's Deathmatch options and their ranges, bots, the profile), the replays list, the screen state machine; starts that fail return to the menu | `src/client/DeprecatedGUI/Menu_Main.cpp`, `Menu_Local.cpp`, `src/common/FeatureList.cpp:31-35` (laid out anew) | `olr-ui::{state, screens::{main, local_play, replays}, replays}`, `olr-game::shell` | done (plan 7 task 2) | `state_machine_navigates_and_emits_commands`, `main_to_local_play_to_match`, `local_play_builds_match_options`, `local_play_pickers_are_found_by_their_label`, `local_play_replaces_a_saved_selection_no_longer_imported`, `starting_with_missing_content_returns_to_menu`, `menu_actions_are_idempotent`, `replay_list_shows_header_problems`; the v0.1 acceptance runs (`docs/porting/acceptance-v0.1.md`) |
+| Profiles and the skin preview: create, edit, delete, select; name, colour, searchable skins; OLX's menu animation from the game's own colorization and frame cut; the human plays the profile's look, bots OLX's default skin in OLX's `cpuColours` | `src/client/DeprecatedGUI/Menu_Player.cpp:746`, `src/client/ProfileSystem.cpp:47-60`, `src/client/CGameSkin.cpp` | `olr-ui::{profiles, skin_preview, screens::profiles}`, `olr-content::skin_sprite`, `olr-game::shell` | done (plan 7 task 3; bot colours task 5) | `profile_edits_persist`, `profile_names_are_validated`, `skin_preview_uses_colorization_like_the_game`, `the_profiles_screen_gets_its_preview_textures`, `a_menu_match_plays_the_selected_profile_look` |
+| Options (§21 G3): window presets and fullscreen through the paced path, VSync, filter, interpolation, UI scale; volumes live; key and gamepad rebinding with explicit conflicts, never leaving an action unreachable (the match is set up in local play only) | `src/client/DeprecatedGUI/Menu_Options.cpp`, `src/client/Options.cpp:45-73` (laid out anew) | `olr-ui::screens::{options, keys}`, `olr-input::Capture`, `olr-game::{video, window}` | done (plan 7 task 4) | `rebinding_never_leaves_an_action_unreachable`, `options_rebind_a_key`, `options_set_video_and_audio`, `video_changes_go_through_the_paced_path`, `volume_changes_apply_live`, `the_saved_window_opens_with_the_flags_on_top_unsaved`; e2e (`fixtures/autoplay/menus.ron`: quick window-size changes) |
+| Window changes on Wayland (v0.1 playtest; no OLX equivalent): a size or mode change makes the window again at its new shape on the same device, so WSLg leaves no stale frame; X11 changes it in place | — | `olr-game::{window, gpu, app}` (`Plan`, `Shape`, `Gpu::rebind`, `App::recreate`) | done | `a_shape_says_when_the_window_shows_a_change`, `wayland_makes_the_window_again`, `a_window_made_again_keeps_the_game_ticking`; real-screen captures under WSLg (1280 × 720 → 1920 × 1080 → back; the desktop's size → fullscreen → back) and the options' autoplay on Wayland |
+| Weapon selection (§21 G4): the profile's slots by name, `findEnabledWeapon`, left/right over the enabled weapons (×6 with Select weapon), Random, Done on Fire's release, skipped with one weapon or none; the choice in `MatchOptions` and the replay | `src/common/CWormHuman.cpp:702-1000`, `src/common/CWorm.cpp:788-844` | `olr-ui::{weapon_select, screens::weapon_select}`, `olr-content::Player::HumanWith`, `olr-game::shell` | done (plan 7 task 5) | `weapon_selection_respects_restrictions`, `a_refused_choice_leaves_the_match_playable` |
+| HUD and minimap (§21 G5, Modern only): an opaque bar along the bottom fifth of the window's 16:9 frame (OLX 0.58's status bar; deviation below) with health, five weapon slots with OLX's bar states, the minimap in the centre (OLX's proportions, colours and dots; no view rectangle, the user's ruling: the player's bigger dot is enough) and the event log; clock and kill limit over the playfield, Tab's scoreboard; the game drawn above the bar | `src/client/CClient_Draw.cpp` (HUD, `:137-138` the local game's minimap, `:483-515` the bar (commented out at `d1ad953f`), `drawOnMiniMap`), `docs/porting/olx-notes/presentation.md` §2.4, §9 | `olr-ui::{hud, theme}`, `olr-game::{hud, app, gpu}`, `olr_scene::Viewport::GAME`, `olr_render::Renderer::render_in` | done (plan 7 task 5; the bar, the 16:9 frame and the side layout after the v0.1 playtest) | `hud_layout_holds_at_all_scales` (both layouts), `the_scale_follows_the_height`, `the_game_view_is_fixed`, `the_playfield_is_the_frame_above_the_bar`, `hud_paints_at_every_scale`, `log_keeps_the_last_lines_oldest_first`, `hud_hides_the_weapons_during_the_selection`, `names_stay_inside_the_view`, `hud_snapshot_1080p`, `hud_snapshot_1440p_with_scores`, `hud_snapshot_3440x1440_side_panels` (GPU tier) |
+| Pause and results: Esc's pause menu (no tick while paused), the results after `GAMEOVER_WAIT` with OLX's columns plus score, deaths and suicides; Rematch, Save replay, Back to menu | `src/client/CClient_Draw.cpp:1840-1897` | `olr-ui::screens::{ingame, results}`, `olr-game::shell` | done (plan 7 task 5) | `pause_stops_ticks_and_replays_stay_valid`, `pause_menu_holds_the_game_and_opens_the_options`, `results_match_world_scores`, `results_show_the_columns_and_their_buttons`, `save_replay_once_per_match` |
+| Level thumbnails (§21 G6, narrowed): `thumb.png` per level pack (160 × 96, box-filtered, letterboxed), pack format 4, left out of the content hash; decoded lazily and bounded in the menus | `src/game/Level.cpp:33-44` (`minimapForLevel`) | `olr-import-gfx`, `olr-pack`, `olr-ui::screens::local_play` | done (plan 7 task 6) | `thumbnails_are_imported_for_every_level`, `thumbnails_are_letterboxed_to_a_fixed_size`, `thumbnails_average_the_art`, `thumbnails_decode_lazily_and_bounded` |
+| About (§21 G9): credits (Liero, Liero Xtreme, the OpenLieroX team), licenses, each pack's recorded origin | `src/client/DeprecatedGUI/Menu_Main.cpp:276-283` | `olr-ui::screens::about` | done (plan 7 task 6) | `about_credits_the_authors_and_the_licenses` |
+| Import screen: an OLX game directory imported on a background thread into the data directory's `packs/`, layered over the bundled packs; progress, report, cancel; bounded reads and image decodes | `Menu_Local_FillModList`, `checkLXBinMod`, OLX's level list, `src/main.cpp:1003-1021` | `olr-content::import`, `olr-ui::{import, screens::import}`, `olr-pack::image_io`, `olr-game::shell` | done (plan 7 task 7) | `import_runs_off_the_ui_thread_and_reports`, `import_screen_flow`, `import_reports_every_item_and_writes_whole_packs`, `imported_packs_override_bundled`, `import_refreshes_the_menus_and_overrides_bundled`, `quitting_mid_import_leaves_whole_packs`, `a_decompression_bomb_is_refused_on_import_and_load`, `huge_images_are_refused_before_decoding` |
+| Fast-forward (the user's request; no OLX equivalent): replays and `--spectate` at 1×–16× or max, a played game always 1×, sound thinned | — | `olr-game::speed` | done (plan 7 task 8) | `fast_forward_never_changes_the_simulation`, `a_played_game_never_runs_fast`, `speeds_step_parse_and_thin_sound`, `the_fake_clock_needs_an_autoplay` |
+| Autoplay and end to end (§21 G7): `--autoplay` clicks widgets by label, holds the game's keys, takes checked screenshots and logs JSON lines; `--fake-clock` makes a run deterministic | — | `olr-game::autoplay`, `xtask e2e` | done (plan 7 task 8) | `scripts_parse_and_name_what_exists`, `steps_click_wait_and_fail_in_time`, `widgets_are_found_by_their_label`, `blank_pictures_fail_the_sanity_check`; `cargo xtask e2e` (in `full`, Xvfb) |
+| Benchmarks (§21 G8): a full 3000-projectile pool tick, 32 worms, 8 bots thinking, the draw list, an offscreen frame at 1080p and 1440p; machine-local baselines, more than 10 % slower fails | — | `olr-sim/benches/tick.rs`, `olr-cli/benches/game.rs`, `olr-render/benches/frame.rs`, `xtask bench` | done (plan 7 task 8) | `fixtures/bench/baselines.ron`; `regressions_need_more_than_the_tolerance`, `baselines_from_another_machine_only_notice` |
+| Engine stress test (the user's request): 32 chaos bots on Castle Strike, both mods, OLX's pool and 20 000; tick, think, pool, entities, events, render and memory; invariants every tick, determinism over two runs | — | `olr-cli stress`, `xtask stress` | done (plan 7 task 8) | `stress_run_is_bounded_and_deterministic`; `fixtures/bench/stress.ron` (in `full`) |
+| Performance envelope (plan 8): sweeps of worms, pool, effects, map and art; the GPU on WSL GL and Windows DX12/Vulkan with timestamps and the shader probe; OLX frame timing | `tools/olx-oracle` (`ORACLE_TIMING`) | `xtask/src/envelope/`, `olr-cli gpu-bench`, `olr-game --frame-log` | measured | `fixtures/bench/envelope/<host>.ron`, `docs/perf/envelope.md` |
 | v0.1 acceptance (spec §1.3): each of the 4 levels × 2 mods from the menus against 4 Medium bots for 60 s in a real window, timings and screenshots | — | — | done (plan 7 task 9) | `docs/porting/acceptance-v0.1.md`; `cargo xtask check` and `full` |
-| Players leaving mid-match (plan 12d; user decisions, 2026-10-15): a player who leaves, times out or is kicked is withdrawn from the match at one tick on every peer, its worm gone (`CGameMode::Drop`, a kill credited to it credits nobody), fewer than 2 worms left ends the match, "<name> has left" / "<name> has timed out", the live scoreboard leaves it out and the results keep a "left" row (deviation below) | `src/server/CServer.cpp:1352-1482`, `src/server/CGameMode.cpp:254-263`, `316-336`, `src/client/CClient_Parse.cpp:1650-1680`, `src/game/Game.cpp:1359-1366`, `src/client/Options.cpp:769-770` | `rl-sim::World::withdraw`, `rl-modes` (`on_drop`), `rl-replay` (format 3), `rl-proto`/`rl-netcode` (the marks), `rl-lobby`, `rl-online`, `rl-ui`, `rl-game` | done (plan 12d) | `a_withdrawn_worm_leaves_the_board_and_the_last_one_wins`, `a_withdrawn_worm_never_wins`, `a_projectile_of_a_worm_that_left_credits_nobody`, `a_gone_worms_kill_credits_nobody`, `a_withdrawal_replays_at_its_tick`, `a_withdrawal_after_the_last_tick_replays`, `withdrawal_marks_are_bounded`, `a_withdrawal_mark_is_final`, `a_withdrawal_learned_late_rolls_back_to_it`, `a_leaving_client_is_withdrawn_at_one_tick_everywhere`, `a_leave_during_a_migration_is_withdrawn_alike`, `a_forged_withdrawal_never_removes_a_present_player`, `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`, `a_repaired_holder_that_hosts_later_withdraws_the_player_at_its_leave`, `a_member_that_times_out_is_said_to`, `the_last_opponent_leaving_ends_the_match`, `a_player_leaving_during_a_migration_is_removed_at_the_resume`, `a_leaving_player_is_removed_from_every_world`, `a_left_row_is_off_the_scoreboard_and_left_in_the_results`, `the_watched_worm_moves_on_when_it_leaves`, `an_online_watcher_moves_on_when_the_followed_worm_leaves`, `a_player_kicked_mid_match_is_withdrawn`, `a_client_crash_excuses_the_fills_stalls_until_its_timeout`, `a_client_leave_withdraws_its_worm_in_a_real_match`, `a_bundle_with_a_withdrawal_reproduces_to_the_fault` |
+| Players leaving mid-match (plan 12d; user decisions, 2026-10-15): a player who leaves, times out or is kicked is withdrawn from the match at one tick on every peer, its worm gone (`CGameMode::Drop`, a kill credited to it credits nobody), fewer than 2 worms left ends the match, "<name> has left" / "<name> has timed out", the live scoreboard leaves it out and the results keep a "left" row (deviation below) | `src/server/CServer.cpp:1352-1482`, `src/server/CGameMode.cpp:254-263`, `316-336`, `src/client/CClient_Parse.cpp:1650-1680`, `src/game/Game.cpp:1359-1366`, `src/client/Options.cpp:769-770` | `olr-sim::World::withdraw`, `olr-modes` (`on_drop`), `olr-replay` (format 3), `olr-proto`/`olr-netcode` (the marks), `olr-lobby`, `olr-online`, `olr-ui`, `olr-game` | done (plan 12d) | `a_withdrawn_worm_leaves_the_board_and_the_last_one_wins`, `a_withdrawn_worm_never_wins`, `a_projectile_of_a_worm_that_left_credits_nobody`, `a_gone_worms_kill_credits_nobody`, `a_withdrawal_replays_at_its_tick`, `a_withdrawal_after_the_last_tick_replays`, `withdrawal_marks_are_bounded`, `a_withdrawal_mark_is_final`, `a_withdrawal_learned_late_rolls_back_to_it`, `a_leaving_client_is_withdrawn_at_one_tick_everywhere`, `a_leave_during_a_migration_is_withdrawn_alike`, `a_forged_withdrawal_never_removes_a_present_player`, `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`, `a_repaired_holder_that_hosts_later_withdraws_the_player_at_its_leave`, `a_member_that_times_out_is_said_to`, `the_last_opponent_leaving_ends_the_match`, `a_player_leaving_during_a_migration_is_removed_at_the_resume`, `a_leaving_player_is_removed_from_every_world`, `a_left_row_is_off_the_scoreboard_and_left_in_the_results`, `the_watched_worm_moves_on_when_it_leaves`, `an_online_watcher_moves_on_when_the_followed_worm_leaves`, `a_player_kicked_mid_match_is_withdrawn`, `a_client_crash_excuses_the_fills_stalls_until_its_timeout`, `a_client_leave_withdraws_its_worm_in_a_real_match`, `a_bundle_with_a_withdrawal_reproduces_to_the_fault` |
 
 ## Deliberate deviations
 
@@ -82,7 +82,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   `src/game/Game.cpp:1359-1366`), so its results lose it; ours keep its
   row, its lives "left", its kills and deaths as it left (greyed). The
   live scoreboard leaves it out, as OLX.
-- `rl-sim` supports LX56 aim only (`ForceLX56Aim`). It rejects wrap-around maps
+- `olr-sim` supports LX56 aim only (`ForceLX56Aim`). It rejects wrap-around maps
   (`InfiniteMap`), Gusanos worm physics, `WormFriction > 0` and
   `ProjFriction > 0` (`SimSettings::from_olx_features` errors).
 - Projectile actions assume a deathmatch (no team game): `TeamHit` is not
@@ -90,17 +90,17 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 - The green-dirt mask, OLX's shared `data/gfx/greenball.png`, is imported
   into the theme pack (optional `green_ball.png`). Without it green dirt
   places nothing, as in OLX.
-- `rl-sim` does not keep the weapon name an injury passes on (OLX uses it only
+- `olr-sim` does not keep the weapon name an injury passes on (OLX uses it only
   for the kill message).
-- `rl-scenario` refuses a mod pack with an image projectile whose image is
+- `olr-scenario` refuses a mod pack with an image projectile whose image is
   missing; OLX would run it without an image (no `ANI_ONCE` end, the junk rule).
-- `rl-sim` rejects settings outside the ranges OLX's feature list gives
+- `olr-sim` rejects settings outside the ranges OLX's feature list gives
   (`src/common/FeatureList.cpp`), and NaN or infinite values
   (`SimSettings::validate`). Outside them the port could overflow, hang or
   recurse without bound. For hand-built settings, the physics step is at least 1 ms.
-- **Game over** (`GameServer::GameOver` and its gates) is in `rl-sim`; when
+- **Game over** (`GameServer::GameOver` and its gates) is in `olr-sim`; when
   a match ends is the mode's (`GameMode::is_over`, OLX's
-  `CGameMode::CheckGameOver`: Deathmatch in `rl-modes`). The scenarios
+  `CGameMode::CheckGameOver`: Deathmatch in `olr-modes`). The scenarios
   play `OracleMode` and reach neither limit, except `dm-kill-limit`, which
   plays Deathmatch and checks the end (the trace's `go`: the frame and
   winner OLX's `GameServer::GameOver` computed) and its effects. Only its
@@ -120,7 +120,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   count nothing while the worm's score is 0 or less without
   `AllowNegativeScore` (the default). They are scoring counters: OLX never
   shows them (`CClient::UpdateScore`, `CClient_Draw.cpp:1851-1950`, shows
-  lives, kills and damage). `rl-sim` keeps them on the worm
+  lives, kills and damage). `olr-sim` keeps them on the worm
   (`Worm::deaths`/`suicides`, the oracle's), and the score, ranking and
   winner still read them (`olx_score`). Deathmatch also counts every death
   and suicide (`died`, `killed_self`, in `Deathmatch::kill`), and the
@@ -140,7 +140,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   shown (2026-10-13; spec §18 D7 and D9, amended).** Three OLX bugs are
   fixed in play and kept only for the oracle, behind
   `SimSettings::olx_quirks` (on when the settings come from an OLX trace,
-  `SimSettings::from_olx_features`: the oracle, `rl-scenario`, `rl-cli
+  `SimSettings::from_olx_features`: the oracle, `olr-scenario`, `olr-cli
   scenario` and the render goldens drawn from scenarios; off in
   `SimSettings::lx56` and so in local play, bot matches, online matches
   and replays, which record it). Every peer of an online match plays it
@@ -163,7 +163,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     physics step, which the projectile step follows; OLX's frames-back
     would read the entry a step older most of the time), and a respawn
     fills the recorder with the spawn position, so a new life is never hit
-    where the previous one was. `rl-cli`'s `tests/hits.rs` checks, through
+    where the previous one was. `olr-cli`'s `tests/hits.rs` checks, through
     `World::hit_audit`, that no hit of seeded bot matches comes from
     outside the struck worm's current hit geometry (`|dx|, |dy| < 4 +
     radius`; explosions `d² <= 25`).
@@ -188,7 +188,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     effects and leaves the worm alive at 0, as in OLX, and its next-frame
     death plays none (`Worm::death_shown`), so no death shows twice; a
     worm left at exactly 0 then vanishes with its effects (OLX: silently).
-    `rl-cli`'s `tests/deaths.rs` checks every kill of seeded bot matches.
+    `olr-cli`'s `tests/deaths.rs` checks every kill of seeded bot matches.
   - **No death effect is dropped downstream** (amended the same day after
     review). A death's sound, 7 gibs and 150 blood events are pushed as
     the death's where they are emitted (`TickEvents::death`,
@@ -208,7 +208,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   `src/client/Entity.cpp:31-32`) and drops new ones beyond it; in a 4-bot
   MW 1.0 chaos match 6 of 24 deaths found it full of blood and showed no
   gibs. The user's ruling: OLX's count was a baseline to recreate, not a
-  limit to keep, and graphics fidelity will rise. In play (`rl_fx::Fx::for_match`
+  limit to keep, and graphics fidelity will rise. In play (`olr_fx::Fx::for_match`
   without `olx_quirks`) the pool holds `PLAY_ENTITIES` (16384), allocated
   once at match start (about 1 MB), and its last `DEATH_RESERVE` (1024)
   slots take only a death's gibs and blood (`Event::death`): other
@@ -216,7 +216,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   entities; the reserve holds six at once). The hard cap stays, with
   OLX's drop-when-full beyond it, for hostile mods. With `olx_quirks`
   (scenarios, render goldens) the pool is OLX's 1024 with no reserve. The
-  simulation's own entity counter (`rl-sim`'s `rng.rs` `MAX_ENTITIES`,
+  simulation's own entity counter (`olr-sim`'s `rng.rs` `MAX_ENTITIES`,
   the dedicated server's pool that gates the gibs' draws) is unchanged.
   Cost (`cargo xtask envelope --only fx`, 16 chaos bots on Castle Strike,
   2026-10-13): a match peaks at 7572 entities; `present` p50/p99 26.6/54.0 µs
@@ -232,7 +232,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   beyond its `maxplaying` (two of each death sound,
   `src/game/Sounds.cpp:25-30`, `src/sound/sfx.cpp:120-134`) or when no
   OpenAL source is free, so deaths close together could go unheard. The
-  user's ruling: every death plays its sound. `rl_audio::Voices::admit`
+  user's ruling: every death plays its sound. `olr_audio::Voices::admit`
   answers start, steal or skip: a death sound at its own limit takes the
   place of the oldest voice of that sound; at the global limit (256) the
   oldest of that sound, else the oldest voice that is not a death's
@@ -240,7 +240,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   the new one has started, and stops it with a 5 ms fade. Every other sound is skipped as in OLX. Audio never runs
   in the oracle, so it applies always.
 - **Exact-zero deaths' Gusanos particles (spec §18 D9).** Three scenarios stay
-  pinned in `rl-scenario/tests/oracle.rs`, the only ones that do not match
+  pinned in `olr-scenario/tests/oracle.rs`, the only ones that do not match
   bit for bit (each row there carries this reason: bit-exactness is impossible
   without porting the Gusanos particle system, whose `rnd()` draws shift the
   next random respawn spot). A worm left at exactly
@@ -251,9 +251,9 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   before the next respawn in `weapons/mw-1-0/{assassin-s-shot,flak,plasma-launcher}`),
   so later spawn and bonus positions differ. Those three scenarios diverge
   from their respawn frame on (`mt`, then the worm's position).
-- **Blood amount and particles:** `rl-sim` uses OLX's defaults, `Game.Blood`
+- **Blood amount and particles:** `olr-sim` uses OLX's defaults, `Game.Blood`
   100 and `Game.Particles` on (blood entities exist), which dedicated servers
-  keep; `rl-scenario` refuses a trace header with other values.
+  keep; `olr-scenario` refuses a trace header with other values.
 - Only deathmatch: no team protection in `InjureWorm`, no teamkills, no
   `FindSpotCloseToTeam`, and LX levels have no predefined spawn points.
 - **Weapon restrictions:** a `WeaponRestrictionsFile` that starts with `cfg/`
@@ -261,7 +261,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   enabled, as OLX does when the file is missing. Mod packs carry only the
   presets OLX finds for the mod (`cfg/presets/<mod dir>/*.wps`, then
   `cfg/presets/*.wps`).
-- **Bots draw from their own `rand()` stream** (`rl_bots::BotRng`, seeded from
+- **Bots draw from their own `rand()` stream** (`olr_bots::BotRng`, seeded from
   the match seed, the worm and the personality), not from the game's `rand()`
   as OLX's do, so loadouts and later bot decisions never shift the world's
   generators (spec §20 F7).
@@ -274,7 +274,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   areas), `simplifyPath`'s dead second loop is left out, a search visits at
   most 1024 areas, a path has at most 256 nodes, and the node advance looks
   8 nodes ahead and back (OLX: all of them).
-- **Bots press keys** (spec §20 F3; `rl_bots::Motor`): the aim turns through
+- **Bots press keys** (spec §20 F3; `olr_bots::Motor`): the aim turns through
   UP/DOWN at about 100°/s with 0.2 s to speed up and to brake (60° takes
   0.8 s; OLX's bot sets `fAngle` at 91°/s, 0.66 s, and snaps within 3°);
   turning around takes one step of walking; carving needs walking (OLX
@@ -283,7 +283,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   walking. The aim offset of a difficulty is drawn per bot from its own
   generator (OLX shares one per difficulty between all bots), and the aim is
   good only when the worm also faces the target's side.
-- **The bots' brain** (`rl-bots`, spec §5.9: parity not required):
+- **The bots' brain** (`olr-bots`, spec §5.9: parity not required):
   `findTarget` takes the nearest enemy without its line traces (OLX prefers
   one in sight only within 50 squared px); the 100lt Cannon tests
   `isAttached` where OLX tests `isReleased`; the rope spot's angle term takes
@@ -312,7 +312,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   think, moving the rest of half, and the search (OLX's thread) the rest.
 - **The chaos personality** (spec §20 F10) is no OLX bot: Deathmatch gives
   chaos bot `i` of `n` the weapons `(i·5 + r·5·n + j) mod W` on its `r`-th
-  life (`rl_modes::RespawnLoadout::ChaosCycle`, by `give_weapon`), and the
+  life (`olr_modes::RespawnLoadout::ChaosCycle`, by `give_weapon`), and the
   bot fires whatever is ready (at the nearest enemy in sight, else at a
   random angle), prefers a slot it has not fired, and walks, jumps, ropes
   and digs at random.
@@ -326,10 +326,10 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   if the worm holds fire: it acts only on a `FinalProj`, which LX56 mods do not have.
 - **`Message` events are the mode's** (`ModeCtx::message`, a text id and
   three numbers): OLX's kill and spree texts come with Deathmatch
-  (`rl-modes`); `rl-sim` sends none itself (the `GameOver` event carries
+  (`olr-modes`); `olr-sim` sends none itself (the `GameOver` event carries
   the winner).
-- **Deathmatch's texts and sounds** (`rl-modes`): the kill text's weapon is
-  always unknown (-1; OLX then drops " with <weapon>"), as `rl-sim` does not
+- **Deathmatch's texts and sounds** (`olr-modes`): the kill text's weapon is
+  always unknown (-1; OLX then drops " with <weapon>"), as `olr-sim` does not
   keep the weapon an injury came from. The end's texts ("Kill limit … hit by
   worm …", "Timelimit has been reached", "… has won the match") are queued
   in the `on_tick` of the frame that ended, so in a tick's events they come
@@ -390,7 +390,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     `BonusFrequency` (30 s), so the server never spawns one at a random spot,
     except `bonus-natural`, which sets `BonusFrequency` to 1 s.
 
-- **`SimMod` limits** (`rl-sim::mod_rt`): a pack's projectile tree may have at
+- **`SimMod` limits** (`olr-sim::mod_rt`): a pack's projectile tree may have at
   most 4096 occurrences after expansion and 128 levels, and a spawn amount at
   most 1000 (Classic and MW 1.0 use at most 150); a missing reference is an error. OLX loads anything and
   crashes on a missing projectile. A projectile that spawns an ancestor (a
@@ -398,7 +398,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 - **Spawn time past frame 819 205** (about 2.3 h): when the decoded shot time is
   later than the server time, OLX falls back to `currentTime - ping / 2`
   (`shoot_t::spawnTime`). The port takes the local client's ping as 0.
-- `rl-sim` delivers the shot list at the start of `World::tick`, before
+- `olr-sim` delivers the shot list at the start of `World::tick`, before
   `serverFrame` advances; that is the oracle's `betweenFrames` moment, and a
   frame's state is recorded before it, as in OLX's trace.
 
@@ -406,7 +406,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   files, unknown weapon or projectile types, and nesting deeper than 128 levels.
 - A missing projectile image is an import error. OLX would load the mod and draw nothing.
 - Imported level art is stored at 1×, because OLX's 2× surfaces are plain pixel doubling.
-- **Colour terrain** (`rl-terrain::ColorMap`): the map keeps its own copy of
+- **Colour terrain** (`olr-terrain::ColorMap`): the map keeps its own copy of
   the material grid and replays each edit on it after painting, so the colour
   rules read the material before the edit, as OLX's single loop does (the plan
   had `apply(edit, material_after)`, which cannot tell a carved pixel from one
@@ -417,7 +417,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   tick drops (`lost_area`) are redrawn from the material grid
   (`ColorMap::rebuild_area`): back image, `FrontTile`, level art; stains and
   the level's own dirt art there are lost.
-- **Scene** (`rl-scene`, plan 5 task 3):
+- **Scene** (`olr-scene`, plan 5 task 3):
   - *Interpolation* (E2, the default) draws positions between the last two
     ticks at sub-pixel precision, without OLX's `(int)` truncation; the
     camera follows the blended position. `Interpolation::Latest` is OLX's
@@ -441,11 +441,11 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     as drawn, and laser sights and beams start at their worm as drawn (OLX
     draws them from the worm's position in the sub-step, which matches its
     unblended worm); bonuses are blended too.
-- **Entities** (`rl-fx`, plan 5 task 4):
+- **Entities** (`olr-fx`, plan 5 task 4):
   - *Dirt colour of a bonus chain:* OLX reads an explosion's dirt colour
     before the bonuses it destroys explode, but the sim reports the chained
     explosions (and their carves) before that explosion's particles. A
-    particle whose probe is no longer dirt when `rl-fx` reaches it takes the
+    particle whose probe is no longer dirt when `olr-fx` reaches it takes the
     theme's `iDefaultColour` instead of the colour before the carve.
   - Entities are drawn at their latest state, not interpolated (E2 applies
     to worms, projectiles and bonuses).
@@ -453,7 +453,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     `(uint)` cast of NaN is undefined), so it cannot hold a slot forever.
   - Only the air jump's sparkles exist in the sim (`Color()`, fade 10), so
     the coloured-sparkle drawing (`EntityEffect`) is not ported.
-- **Sound** (`rl-audio`, plan 5 task 6):
+- **Sound** (`olr-audio`, plan 5 task 6):
   - *Pan:* OLX gets stereo from OpenAL Soft's panning of the 3D source
     direction; the remake pans by the direction's left-right component
     `dx / d` with kira's constant-power law. Gains are OpenAL's exactly.
@@ -465,7 +465,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     tick's play call, as OLX's copies count until the next `Sfx::think`.
   - The announcer, team-score and menu sounds are not played (the sim does
     not emit them yet).
-- **Input devices** (`rl-input`, plan 5 task 6):
+- **Input devices** (`olr-input`, plan 5 task 6):
   - OLX's twin-stick controls (left stick walks, right stick aims
     analogue) are not ported: the sim has 8 digital keys. The left stick's
     X axis presses Left/Right and the right stick's Y axis Up/Down, from
@@ -474,12 +474,12 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   - Between ticks, a key released and pressed again is up for one tick and
     down for the next, so the sim sees both edges (OLX's `CInput` reads the
     devices every sub-step and needs no tick latch).
-- **Game loop** (`rl-game`, plan 5 task 7): the 100 Hz ticks are drawn
+- **Game loop** (`olr-game`, plan 5 task 7): the 100 Hz ticks are drawn
   at the display's rate with interpolation (spec §8.6); at most 10 ticks
   run per drawn frame, and the rest of a longer stall is dropped. The
   sandbox HUD, names and damage popups are egui text at the display's
   resolution (E10), not OLX's bitmap fonts.
-- **Weapon name over the worm** (`rl-game`, the user's request;
+- **Weapon name over the worm** (`olr-game`, the user's request;
   `src/common/CWorm.cpp:1304-1315`, `src/gusanos/base_worm.cpp:678-684`,
   `src/common/CWormHuman.cpp:405-428`): as OLX, while the change-weapon
   key is held, and for 0.75 s (75 ticks) after a change made with it, the
@@ -494,7 +494,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   still while the game is paused (OLX's run in real time). With one local
   player (no split screen), OLX's weapon name of every local human worm in
   every viewport is the player's worm's alone.
-- **Window** (`rl-game`, plan 6 hotfix, the user's ruling): the window
+- **Window** (`olr-game`, plan 6 hotfix, the user's ruling): the window
   cannot be drag-resized or maximised; its size comes from the defaults
   (later the options menu, M7) and `--fullscreen` (borderless). The game's
   own size changes are applied at most every 250 ms, because WSLg's Weston
@@ -502,16 +502,16 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   change closes the window and opens a new one (v0.1 playtest: WSLg left
   pieces of a changed window's frame on the screen); the compositor places
   it, so the window does not keep its position.
-- **Deathmatch in the game** (`rl-game`, plan 6 task 8; full menus are M7):
+- **Deathmatch in the game** (`olr-game`, plan 6 task 8; full menus are M7):
   a command-line Deathmatch (`--mode deathmatch`) gives the human random
   weapons the restrictions enable (OLX's weapon dialog's "Random"); menu
   matches have OLX's weapon selection (plan 7 task 5, below). The HUD is egui,
   not OLX's: the time-limit clock is frozen at the end in the HUD
   (`Deathmatch::time_left_ms` keeps counting, harmlessly), kill-feed lines
-  name no weapon (`rl-sim` does not record the injuring weapon; OLX drops
+  name no weapon (`olr-sim` does not record the injuring weapon; OLX drops
   `" with <weapon>"` when it is unknown); "Game Over", then after
   `GAMEOVER_WAIT` (3 s) the results, as OLX. F5's rematch plays the next seed.
-- **Menus** (`rl-ui`, `rl-game`, plan 7 task 2): the main menu and local
+- **Menus** (`olr-ui`, `olr-game`, plan 7 task 2): the main menu and local
   play are laid out anew in egui, not OLX's `DeprecatedGUI` screens. Local
   play sets OLX's local game options (mod, level, `Lives`, `KillLimit`,
   `TimeLimit`, `LoadingTime`, `Bonuses`, `WeaponRestrictionsFile`; the
@@ -520,7 +520,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   list one by one. Esc pauses a match (a pause menu) instead of OLX's
   in-game menu; every Deathmatch played from the menus is saved as a
   replay (`replays/`, the last 20), which OLX does not do.
-- **Profiles** (`rl-ui`, `rl-game`, plan 7 task 3): OLX's player menu
+- **Profiles** (`olr-ui`, `olr-game`, plan 7 task 3): OLX's player menu
   (`Menu_Player.cpp`) laid out anew: one screen creates, edits, deletes
   (confirmed; never the last) and selects human profiles (bot profiles are
   local play's bot choices). Names are trimmed, not empty and at most 20
@@ -529,12 +529,12 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   name (ignoring case), so a name picks one profile. The skin preview
   animates OLX's menu formula (`Menu_Player.cpp:746`, 200° a second) and
   shows the worm faced left too (OLX's menu faces it right only), drawn
-  from the game's colorized sheet and frame cut (`rl_content::skin_sprite`,
+  from the game's colorized sheet and frame cut (`olr_content::skin_sprite`,
   the left-facing column quirk included). In a match the human (worm 0)
   wears the profile's skin and colour and every other worm OLX's default
   skin (OLX's bot profiles, `ProfileSystem.cpp:59`); until now every worm
   wore the player's skin.
-- **Options** (`rl-ui`, `rl-input`, `rl-game`, plan 7 task 4): OLX's
+- **Options** (`olr-ui`, `olr-input`, `olr-game`, plan 7 task 4): OLX's
   options menu (`Menu_Options.cpp`) laid out anew in four sections. Video
   offers one display list (windows of 1280 × 720, 1600 × 900 and
   1920 × 1080, or borderless fullscreen; a desktop-sized window was dropped
@@ -552,7 +552,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   cancels). The match is set up in local play only, before each game (it
   remembers the last); the options have no Gameplay tab (removed after the
   v0.1 playtest: it edited the same settings).
-- **In game** (`rl-ui`, `rl-game`, plan 7 task 5). *Weapon selection:*
+- **In game** (`olr-ui`, `olr-game`, plan 7 task 5). *Weapon selection:*
   OLX's dialog (`CWormHuman.cpp:702-1000`: the profile's slots by name, an
   unenabled one replaced by `findEnabledWeapon`, left/right over the enabled
   weapons, six at a time with Select weapon, Random, Done on Fire's
@@ -583,7 +583,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   sides). Its bottom fifth is the bar, as OLX 0.58 (98 of 480 pixels;
   its minimap 128 × 96, a fifth of the height); the minimap fills the
   bar's height less a little (OLX's 119 × 94 proportions). The playfield
-  above it (16 : 7.2) shows `rl_scene::Viewport::GAME`, 427 × 192 world
+  above it (16 : 7.2) shows `olr_scene::Viewport::GAME`, 427 × 192 world
   pixels, for every window and layout (spec §19 E4 amended: 16:9's width
   at 240, 80 % of the height, as OLX 0.58 showed 320 × 191 above its
   bar, `CClient.cpp:1712`; the fork's full-height 240 is gone). The UI's
@@ -619,7 +619,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   *Keys:* Esc and F5 ignore key repeat; a settings or profiles file that
   binds a game key (Esc, F5, F2, Tab, H, PageUp, PageDown) loses it with a warning; while the
   options capture a key, egui hears no key at all.
-- **Level thumbnails** (`rl-import-gfx`, `rl-pack`, plan 7 task 6): OLX's
+- **Level thumbnails** (`olr-import-gfx`, `olr-pack`, plan 7 task 6): OLX's
   level list previews a level by its minimap, the drawn image resampled and
   stretched into 128 × 96 (`minimapForLevel`, `src/game/Level.cpp:33-44`;
   `gusUpdateMinimap`, `src/gusanos/level.cpp:486-527`), made each time the
@@ -634,11 +634,11 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   imported or drawn: making the low-resolution art look right at every DPI,
   UI scale and window size, and keeping a second HUD in step, cost more
   than it gave. OLX's colours and information stay in the Modern HUD.
-- **About** (`rl-ui`, plan 7 task 6): OLX shows its credits in the corner
+- **About** (`olr-ui`, plan 7 task 6): OLX shows its credits in the corner
   of the main menu (`Menu_Main.cpp:276-283`); the remake has an About
   screen from the main menu with the credits, the licenses and each
   bundled pack's origin.
-- **Import screen** (`rl-content::import`, `rl-ui`, `rl-game`, plan 7
+- **Import screen** (`olr-content::import`, `olr-ui`, `olr-game`, plan 7
   task 7): OLX reads its game directory as it is; the remake imports one
   (a typed path: the `share/gamedir`, or an OpenLieroX root holding one)
   into packs in the user data's `packs/`, on a background thread, and
@@ -657,7 +657,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   imported again (the content hash leaves `pack.ron` and `thumb.png`
   out); a different item under the same id makes them refuse with the
   content-hash error. No game starts while an import runs.
-- **Fast-forward and spectating** (`rl-game`, plan 7 task 8, the user's
+- **Fast-forward and spectating** (`olr-game`, plan 7 task 8, the user's
   request; OLX has neither): a game nobody plays, a replay or a
   Deathmatch of bots alone (`--spectate`, 2 to 32 bots), runs at 1×, 2×,
   4×, 8×, 16× or max (`--speed`, PageUp and PageDown; "Fast-forward N×"
@@ -676,13 +676,13 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   game made it (`ReplaySetup::viewer`, in format version 2: the first human
   of a local match, the peer's own slot online; none for bots alone or an
   online spectator, then worm 0).
-- **Engine stress test** (`rl-cli stress`, plan 7 task 8, the user's
+- **Engine stress test** (`olr-cli stress`, plan 7 task 8, the user's
   request): its matches go past OLX's limits on purpose: 32 chaos bots,
   `LoadingTime` 0 (in OLX's range, below any menu default) and, in one
   configuration, a projectile pool of 20 000 (`MatchOptions::pool_capacity`;
   OLX's `MAX_PROJECTILES` is 3000). Every other match keeps OLX's pool and
   loading time; the oracle, match and render goldens are unchanged.
-- **Renderer** (`rl-render`, plan 5 task 5): OLX blits each sprite with SDL
+- **Renderer** (`olr-render`, plan 5 task 5): OLX blits each sprite with SDL
   onto a 2× screen; the renderer draws the same texels at art scale (at
   least 2×) and then upscales (E3). With interpolation (E2), a sprite's
   blended position snaps to the nearest art pixel. A 1× level's art is
@@ -751,7 +751,7 @@ Each decision is in spec §20; the bullets above give the details.
   spawn through Deathmatch's `give_weapon`.
 - **Bot aim error floor** (the user's direction, plan 6 ruling R6): OLX's
   Xtreme bots aim with no offset and no `weaponCanHit` noise. Here every
-  difficulty's aim errors scale with at least `rl_bots::AIM_ERROR_FLOOR` =
+  difficulty's aim errors scale with at least `olr_bots::AIM_ERROR_FLOOR` =
   1/6 of Easy's (Hard 1/3, Medium 2/3), so Xtreme keeps half of Hard's
   error: an aim offset up to ±8.3°, target noise up to ±8.3 px per axis,
   gravity ±0.83 and speed ±3.3. Its 3° fire tolerance is OLX's. Measured
@@ -786,7 +786,7 @@ Each decision is in spec §21; the bullets under "Deliberate deviations"
 give the details. OLX's menus are a 640 × 480 `DeprecatedGUI`; the remake
 keeps their options and ranges and lays the screens out anew.
 
-- **G1, `rl-ui`:** menu logic (`UiState::update`) apart from the egui
+- **G1, `olr-ui`:** menu logic (`UiState::update`) apart from the egui
   widgets, so flows are tested headless by label. A Replays screen was
   added to G1's list.
 - **G2, files:** `settings.ron`, `profiles.ron`, `replays/` and `packs/`
@@ -819,7 +819,7 @@ keeps their options and ranges and lays the screens out anew.
 Plan 8 measured and changed nothing in the simulation: no deliberate
 deviation. Its rulings (`docs/superpowers/plans/2026-10-11-plan-8-performance-envelope.md`):
 
-- **P1:** the reference configuration is `rl_cli::stress::spec` with 16
+- **P1:** the reference configuration is `olr_cli::stress::spec` with 16
   worms: chaos bots of mixed difficulty, `LoadingTime` 0, bonuses every
   5 s, no kill or time limit, seed 1.
 - **P2:** the pool axis ends at 65 536 (`MatchSetup::MAX_POOL_CAPACITY`),
@@ -829,7 +829,7 @@ deviation. Its rulings (`docs/superpowers/plans/2026-10-11-plan-8-performance-en
 - **P4:** sweeps are headless; the frame budget is judged in the GPU
   scenes (the heavy replay at four sizes, each map and art level at
   2560 × 1440 on WSL); breaking points use 144 Hz, 60 Hz beside it.
-- **P5:** windowed runs (`rl-game --frame-log`) measure wall frame times
+- **P5:** windowed runs (`olr-game --frame-log`) measure wall frame times
   only, one run each; GPU timestamps are taken offscreen.
 - **P6:** the colour-terrain edits are timed inside the presentation tick.
 - **P7:** an effects or pool cap reached at its own value is saturated, not
@@ -880,7 +880,7 @@ rulings (`docs/superpowers/plans/2026-10-12-plan-9-netcode-core.md`):
   instead of FNV over every cell (570 µs at Castle Strike, about 13 ms at
   4096²). `World::checksum` (replays, goldens, oracle) is unchanged.
 - **N5:** world-state transfer by serde: The world's dynamic state crosses
-  the network as `rl_sim::WorldState` (serde-derived, postcard, deflated),
+  the network as `olr_sim::WorldState` (serde-derived, postcard, deflated),
   decoded into a world built from the same match setup, and validated before
   use. The game mode transfers its own state through two new `GameMode`
   methods.
@@ -950,7 +950,7 @@ execution.
   unreliable: `MaxRetransmits(0)` triggers a FORWARD-TSN/SACK storm in
   sctp-proto 0.10.5) and `control` id 1, reliable and ordered. Browsers use
   the same ids (plan 13).
-- **N18:** a `rl_netcode::Session` lives for one match; the replay is made
+- **N18:** an `olr_netcode::Session` lives for one match; the replay is made
   after the match on a worker thread by re-simulating the confirmed inputs.
 - **N19:** each player picks a loadout in the lobby or keeps "Random"; the
   host's match setup carries every slot's choice, so every peer builds the
@@ -979,8 +979,8 @@ execution.
   players not ready, or without a complete setup, spectate that match. The
   Lobby has a "Force start" button for the host.
 - **N24 (T6-B):** `MAX_LOBBY` is 60 KiB, with a worst-case encoding test;
-  `rl-net`'s reliable cap is `max(MAX_CONTROL, MAX_LOBBY)` plus the tag.
-- **N25 (T13-A):** `rl-server` depends on `ctrlc` 3.5.2 (termination
+  `olr-net`'s reliable cap is `max(MAX_CONTROL, MAX_LOBBY)` plus the tag.
+- **N25 (T13-A):** `olr-server` depends on `ctrlc` 3.5.2 (termination
   feature) for a clean shutdown on Ctrl+C or SIGTERM (everyone gets `Bye`).
 - **N26 (T13-B):** `/ban` bans the key only, `/banip` the key and the
   address, `/unban` lifts either; the game's Ban button bans the key only
@@ -1011,12 +1011,12 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   compression (packs are mostly PNG and OGG). The same pack always gives
   the same bytes, so a resumed download continues byte-exactly. The
   archive's SHA-256 (the *archive hash*) identifies a partial download;
-  the *content hash* (`rl_pack::content_hash`, unchanged) identifies the
+  the *content hash* (`olr_pack::content_hash`, unchanged) identifies the
   pack. Hidden files (a path component starting with `.`) are not part of
   a pack: hashing and archiving skip them, decoding refuses them (PF11-2:
   a stray `.DS_Store` would make a pack hashable but unservable). Archive
   reading is bounded (512 MiB, 4096 files, 255-byte paths, 64 MiB a file);
-  `rl-proto` restates the archive limit without depending on `rl-pack`,
+  `olr-proto` restates the archive limit without depending on `olr-pack`,
   and a test pins the two equal (PF11-1). Paths are portable (final
   review C1: on Windows a `C:` component replaced the cache's path):
   every component a portable name (no `:`, `<>"|?*`, control characters,
@@ -1060,7 +1060,7 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   current lobby lists" holds for the whole process: every list (a host's
   member-skin fetchers and its own list, a client's fetcher, both peers
   of `--net-sim`) registers its hashes with the shared cache
-  (`rl_content::Keeper`), and every eviction keeps their union (final
+  (`olr_content::Keeper`), and every eviction keeps their union (final
   review Minor 2). Partial downloads are charged as installed packs are
   (plus a block for the meta file), at most 32 per cache (a new one
   discards the oldest not kept; when all are kept it is refused), and
@@ -1097,7 +1097,7 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   `<hash>.part` and `<hash>.part.ron` (archive hash and size) and asks
   `Want { hash, offset }`; another archive hash restarts from 0. Every
   download is verified (archive SHA-256, bounds, content hash, id, kind,
-  `rl_pack::validate`); one that fails is fetched once more from 0, then
+  `olr_pack::validate`); one that fails is fetched once more from 0, then
   failed. The host sends no list until every required archive is made; a
   required pack it cannot archive is listed with size 0 and answered
   `Unavailable`.
@@ -1158,7 +1158,7 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   then stays silent (`JOIN_DEADLINE` 10 s, "the game did not answer",
   `NO_ANSWER`; keepalives alone would keep it waiting for ever). Protocol
   stays 2 (unreleased).
-- **N38 - one Nostr core, no Nostr library.** `rl-discovery` implements the
+- **N38 - one Nostr core, no Nostr library.** `olr-discovery` implements the
   NIP-01 subset it needs (event serialization and id, BIP-340 signing
   through `Identity`, the frames `EVENT`/`REQ`/`CLOSE`/`EOSE`/`OK`/`NOTICE`/
   `CLOSED`) and NIP-40 expiration, sans-IO, so the dependency tree and the
@@ -1167,7 +1167,7 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   plan 12b's handshakes); neither is in the NIPs kinds table or the
   registry-of-kinds (checked 2026-10-13, to re-check before a release).
   The relays and STUN servers are the lists below, chosen by measurement
-  (`rl-cli nostr-probe`, `rl-cli stun-probe`, run once by hand on
+  (`olr-cli nostr-probe`, `olr-cli stun-probe`, run once by hand on
   2026-10-13 from WSL2 over IPv4, one vantage point), not by reputation.
   `DEFAULT_RELAYS` is append-only: an invite code names a relay by its
   index, so a dead relay stays in place and a test pins the released
@@ -1240,16 +1240,16 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   `created_at` is the wall clock read at each note (final review A-I2: it
   was the unix time at start plus the monotonic clock's elapsed time, so a
   suspend or an NTP step after the start dated every note expired at
-  birth); the game list's ages in rl-game use the wall clock read at each
+  birth); the game list's ages in olr-game use the wall clock read at each
   poll too. A game hosted again right after its closing note dates its
   first note 10 s after that note (final review A-M6: relays keep the
   newest note of a slot and lists refuse one older than the tombstone, so
   it stayed hidden up to a minute).
-  One builder, `GameSummary::of_lobby`, serves rl-server and rl-game and
+  One builder, `GameSummary::of_lobby`, serves olr-server and olr-game and
   also gives the LAN broadcast (`.lan()`); players and spectators are held
   to their maximums (R9-1, R9-8). **Amended 2026-10-15** (the user's report
   of 2026-10-15: "4/8 players" listed for one player who added three
-  bots, misleading joiners, since bots take no seat: rl-lobby's
+  bots, misleading joiners, since bots take no seat: olr-lobby's
   `admit_seat` counts members alone against `max_players`, and only the
   32-worm total limits bots): `players` counts the seated members only,
   and the new `bots` (the setup's bots, at most `MAX_PLAYERS`;
@@ -1353,7 +1353,7 @@ Pre-flight and process rulings:
   produces an undecodable code (it drops bad hints and truncates). If wrong:
   a custom relay URL over 64 bytes cannot be hinted (the defaults still
   can).
-- **PF12-7:** `rl-game` takes `rl-server` as a dev-dependency (same layer 6,
+- **PF12-7:** `olr-game` takes `olr-server` as a dev-dependency (same layer 6,
   tests only; `xtask layers` skips dev-dependencies): the end-to-end test of
   finding a game needs an in-process server. If wrong: one test helper to
   move.
@@ -1399,7 +1399,7 @@ Task rulings:
 - **R6-1:** `StunResponder` and `TestRelay` exist only behind the
   `test-relay` feature; STUN is IPv4 only, as `public_ip` is. If wrong:
   an IPv6-only host learns no address.
-- **R8-1:** the probe lives in the library (`rl_cli::nostr_probe`), one
+- **R8-1:** the probe lives in the library (`olr_cli::nostr_probe`), one
   fresh random key per run (never the player's identity), every event
   marked `rust-liero-probe` with a 10 minute expiry; the command publishes
   to public relays, so it is run by hand only and no test touches the
@@ -1407,8 +1407,8 @@ Task rulings:
   pool's reconnect). Order of the defaults: well-known large operators
   first, since the index is fixed by invite codes. If wrong: a relay that
   needed a second try is left out of the defaults.
-- **R9-1:** the summary builder lives in `rl-discovery` (the layer-5 crate
-  that already depends on `rl-proto`), not `rl-online`: no new same-layer
+- **R9-1:** the summary builder lives in `olr-discovery` (the layer-5 crate
+  that already depends on `olr-proto`), not `olr-online`: no new same-layer
   pair. **R9-2:** STUN runs for every visibility (see N43). **R9-3:** the
   server prints `invite code: rlx1…` once the address is settled
   (immediately when configured or when there are no STUN servers, else at
@@ -1425,7 +1425,7 @@ Task rulings:
 - **R10-1:** the game's default visibility stays Lan (see N43). **R10-2:**
   relays and STUN servers in the settings are `Option<Vec<String>>`, `None`
   meaning the defaults, so a player who never edits them follows later
-  default lists (append-only); `rl-ui` (layer 5) cannot read the defaults
+  default lists (append-only); `olr-ui` (layer 5) cannot read the defaults
   without a same-layer pair, so the app passes them through `MenuData`.
   **R10-3:** PF12-8. **R10-4:** the address and invite are for Public and
   Invite games only, and the invite is shown to the host only (a client
@@ -1468,8 +1468,8 @@ Task rulings:
   Join button on the Internet tab is labelled "Join"; the Direct tab's
   section is "Join by address or invite". **R10-10:** the pool is dropped on
   a thread (its drop can wait 2 s). **R10-11:** `hosting` (the address
-  watch, hints, invite, `Publisher`) and `ping` moved into `rl-discovery`,
-  shared by `rl-server` and `rl-game`; `rl-game/src/finding.rs` holds the
+  watch, hints, invite, `Publisher`) and `ping` moved into `olr-discovery`,
+  shared by `olr-server` and `olr-game`; `olr-game/src/finding.rs` holds the
   pool and the list. **R10-12:** an IPv6 address in a listed game still
   shows as joinable but `start_client` refuses it ("IPv6 is not supported
   yet"), as before. If wrong: a hosted game appears for a player who cannot
@@ -1520,14 +1520,14 @@ ruling changed a decision, the decision below says so and gives its final
 form. "If wrong"
 is the cost of the decision being wrong.
 
-- **N44 - handshake encryption.** NIP-44 v2 (`rl_discovery::nip44`):
+- **N44 - handshake encryption.** NIP-44 v2 (`olr_discovery::nip44`):
   secp256k1 ECDH x-coordinate, HKDF-SHA256 extract with salt `nip44-v2`,
   a per-message HKDF expand to 76 bytes, ChaCha20 (counter 0) and
   HMAC-SHA256 over nonce and ciphertext, checked in constant time. It is
   checked against the official vectors, fetched once from
   `paulmillr/nip44` (`nip44.vectors.json`, last changed in 1f8dba17,
   2023-12-19). The committed file
-  `crates/rl-discovery/tests/fixtures/nip44.vectors.json` has SHA-256
+  `crates/olr-discovery/tests/fixtures/nip44.vectors.json` has SHA-256
   `269ed0f69e4c192512cc779e78c555090cebc7c785b609e338a62afc3ce25040`, the
   checksum NIP-44's "Tests" section gives (nostr-protocol/nips `44.md` at
   733a0471). The joiner signs and encrypts with a fresh random key per
@@ -1541,7 +1541,7 @@ is the cost of the decision being wrong.
   read, which nothing needs.
 - **N45 - handshake wire.** Kind 21470, tags `["p", <recipient hex>]` and
   `["expiration", <now + 60>]`; content NIP-44 of `{"v":1,
-  "session":"<32 hex>","signal":<rl_proto::Signal>,"mapped":"<ip:port>"|
+  "session":"<32 hex>","signal":<olr_proto::Signal>,"mapped":"<ip:port>"|
   null}`, at most `MAX_HANDSHAKE_CONTENT` (16 KiB). An offer or answer
   that would not fit is never sent: the join expires, and the host
   answers `Refused(Malformed)` instead. `mapped` is always `null` from our
@@ -1560,7 +1560,7 @@ is the cost of the decision being wrong.
     and its SDP size, and only then a rate token (`OFFER_RATE` 10 a
     second, `OFFER_BURST` 20). One session per key, kept
     `SESSION_MEMORY` (2 minutes) from its offer or reply, at most
-    `MAX_SESSIONS` (4096; the oldest goes). The inbox runs on rl-online's
+    `MAX_SESSIONS` (4096; the oldest goes). The inbox runs on olr-online's
     listener thread, never the game's UI thread.
   - **Token after decryption** (Task 7 review, Important 1): the plan took
     the token before decryption, so a flood of signed but undecryptable
@@ -1607,7 +1607,7 @@ is the cost of the decision being wrong.
   evicted during a flood and retries.
 - **N46 - join order** (as amended by PF12b-3).
   - A typed address or a LAN game: direct only (plan 10). A typed name is
-    looked up on a thread (`rl-game resolve`), never on the frame.
+    looked up on a thread (`olr-game resolve`), never on the frame.
   - A listed game or an invite with an address: direct first, then
     through Nostr if the link never opened (a `Disconnected` before
     `Connected`, not a `Refused`).
@@ -1619,7 +1619,7 @@ is the cost of the decision being wrong.
     note reaches it; notes carry no handshake hints (PL12b-2).
   - With neither an address nor relays: `NO_WAY_TO_JOIN` ("this game has
     no address, and there are no relays to join it through …").
-  - Failure texts (`rl_online::join`): `NO_RELAYS` (every relay failed
+  - Failure texts (`olr_online::join`): `NO_RELAYS` (every relay failed
     before an answer), `RELAYS_REFUSED` (every reachable relay refused the
     join's events by a NIP-01 policy prefix such as `blocked:` or
     `restricted:`; `rate-limited:`, `error:` and `duplicate:` do not
@@ -1640,7 +1640,7 @@ is the cost of the decision being wrong.
   candidate, never advertised: this replaces N40's use of STUN, and
   `AddressWatch` is gone (Task 9). The first note and the invite wait for
   `Reachability::settled()` (the router answered or gave up, and the
-  first STUN round settled), at most `SETTLE_WAIT` (5 s), in rl-server
+  first STUN round settled), at most `SETTLE_WAIT` (5 s), in olr-server
   and in the game; the invite is printed again whenever `direct()`
   changes. A Public game without an address is announced all the same
   and joined through the relays. **N47-a** (final review C-I1): an
@@ -1690,7 +1690,7 @@ is the cost of the decision being wrong.
   - If wrong: a host behind a symmetric NAT whose joiner reaches no TURN
     relay fails; friends on a shared VPN connect over public paths (other
     interfaces are not offered).
-- **N49 - path names.** `rl_proto::Path { Direct, MappedPort,
+- **N49 - path names.** `olr_proto::Path { Direct, MappedPort,
   HolePunched, Relayed }`, from str0m's selected pair
   (`set_stats_interval(1 s)`), classified by `candidates::classify`:
   Relayed when either side's selected address is a TURN relay; MappedPort
@@ -1720,7 +1720,7 @@ is the cost of the decision being wrong.
   checks at a third party.
 - **N51 - port mapping** (as amended by PM-1, PM-2, RH-1 and NT-2).
   - **Protocols:** NAT-PMP (RFC 6886), PCP (RFC 6887) and UPnP-IGD, all
-    hand-written in `rl_net::portmap` (PM-1 replaced igd-next; see below).
+    hand-written in `olr_net::portmap` (PM-1 replaced igd-next; see below).
     PCP, falling back to NAT-PMP after any PCP failure (refusal,
     `UNSUPP_VERSION` or silence), on port 5351 of the default gateway, on
     one thread, races UPnP (SSDP, then HTTP) on another; each has its own
@@ -1738,7 +1738,7 @@ is the cost of the decision being wrong.
   - **Exit:** mappings are deleted within `DROP_WAIT` (1 s); see NT-2 for
     who waits.
   - **Useless mapping:** an external IP that is not global
-    (`rl_proto::is_global`), without `allow_local`, means a double NAT or
+    (`olr_proto::is_global`), without `allow_local`, means a double NAT or
     carrier-grade NAT: reported (`MappingState::Mapped { usable: false }`)
     and never advertised.
   - **State:** a mapping host is `Trying` from the endpoint's start (Task
@@ -1752,17 +1752,17 @@ is the cost of the decision being wrong.
 - **N52 - TURN relays** (as amended by TR-1 to TR-4, PF12b-4 and the Task 8
   session cap).
   - **Code:** the client is `turn-client-proto =0.7.2` (sans-IO, inside
-    `Core`); the server is our own (`rl_net::turn`, TR-2), not
+    `Core`); the server is our own (`olr_net::turn`, TR-2), not
     turn-server-proto.
   - **Who runs them:** the project runs no TURN server and ships no TURN
     list (public TURN services need paid credentials). Volunteers run
-    `rl-server --relay`, which announces a kind-31471 note `{v, addr,
+    `olr-server --relay`, which announces a kind-31471 note `{v, addr,
     port, region, capacity, load, user, pass}` with public long-term
     credentials (realm `rust-liero`, fresh each start, 16 hex characters
     each), at once and every 60 s (expiry 180 s), and a closing note
     (capacity 0, expiry 10 s) at shutdown. Players may add their own TURN
     servers (`user:pass@host:port`, Options → Online → TURN relays, at
-    most 8; `rl-cli --turn`), for joining. rl-server's config has no TURN
+    most 8; `olr-cli --turn`), for joining. olr-server's config has no TURN
     list (PF12b-4: a host never allocates).
   - **Limits per client IP:** 32 KiB/s relayed each way (a bucket holding
     2 s), 4 allocations, 20 requests a second (split 15 for requests from
@@ -1807,14 +1807,14 @@ is the cost of the decision being wrong.
   check is below ("Measured"). If wrong: a kind change before release.
 - **N54 - the host listens on Nostr.** Public and Invite games and
   servers listen on their relays with a pool of their own, on a thread
-  (`rl-online listen`) that owns the pool and the `Inbox`; LAN games and
+  (`olr-online listen`) that owns the pool and the `Inbox`; LAN games and
   Lan servers do not. Offers wait unbounded for the peer's poll (the
   inbox's rate bounds them) and one older than `OFFER_STALE` (8 s) is
   skipped. Relay edits in the game's Options move the listener at once
   (`OnlinePeer::listen_on`, Task 9). If wrong: a public host keeps two
   connections per relay (the announcing pool and the listening pool).
-- **N55 - same-layer pair** `("rl-online", "rl-discovery")`: rl-online
-  drives the handshake pool, so rl-game, rl-server and rl-cli share one
+- **N55 - same-layer pair** `("olr-online", "olr-discovery")`: olr-online
+  drives the handshake pool, so olr-game, olr-server and olr-cli share one
   join and one listener. If wrong: a pair to unwind.
 - **N56 - `Endpoint` splits into a sans-IO `Core` and its socket driver**,
   and `natsim` (feature `test-hooks`) runs `Core`s behind virtual NATs on
@@ -1826,9 +1826,9 @@ is the cost of the decision being wrong.
   the bytes differ from run to run but the outcomes do not (the Task 2
   review's reasoning: delivery does not depend on content). If wrong:
   test infrastructure to maintain.
-- **N57 - the STUN binding codec and `is_global` move to `rl-proto`**
-  (`rl_proto::stun`, `rl_proto::is_global`, `core::net`); rl-discovery
-  re-exports them. If wrong: none beyond a wider rl-proto.
+- **N57 - the STUN binding codec and `is_global` move to `olr-proto`**
+  (`olr_proto::stun`, `olr_proto::is_global`, `core::net`); olr-discovery
+  re-exports them. If wrong: none beyond a wider olr-proto.
 - **N58 - the Docker NAT tests** (`cargo xtask net-nat`, in `full`; as
   carried out in Task 11).
   - **Image:** `FROM <ID>:<VERSION_ID>` of the host's `/etc/os-release`
@@ -1846,7 +1846,7 @@ is the cost of the decision being wrong.
     between two cone routers). One method per router so both UPnP and PCP
     are exercised (D alone would always show PCP). miniupnpd needs
     `ext_ip` for a 203.0.113.x WAN.
-  - **Binaries:** `e2e`'s dev builds of `rl-server` and `rl-cli
+  - **Binaries:** `e2e`'s dev builds of `olr-server` and `olr-cli
     --features nat-tools` (libc only, so they run in the image), mounted
     read-only. Our processes run with `allow_local` (N62).
   - **Scenarios** (9): `direct`, `upnp`, `pcp`, `nat-pmp`,
@@ -1858,7 +1858,7 @@ is the cost of the decision being wrong.
     networks (the daemon's own message), a base image that cannot be
     pulled, apt offline or lacking a package, `--offline` without the
     image. A broken Dockerfile or script fails.
-  - **Cleanup:** every container ends by itself (`RL_NAT_LIFE`, 120 s);
+  - **Cleanup:** every container ends by itself (`OLR_NAT_LIFE`, 120 s);
     Ctrl+C removes containers and networks (xtask's `ctrlc` handler, only
     during a run); names carry xtask's process id; a machine-wide lock
     serialises runs.
@@ -1868,11 +1868,11 @@ is the cost of the decision being wrong.
   relay's: banning it would ban the relay for everyone.
   `LobbyHost::ban_with_address(member, by: Option<u8>)` tells the admin
   who asked (`by`; `None`: the host's own, or a server command) "reached
-  through a TURN relay: banned by key only". rl-server's `/banip` keeps no
+  through a TURN relay: banned by key only". olr-server's `/banip` keeps no
   IP for such a member, so the bans file never holds a relay's address
   across a restart. If wrong: a relayed troublemaker returns with a new
   key (bans are soft anyway).
-- **N60 - `rl-server --nat-check`.** Reports, in order: the base
+- **N60 - `olr-server --nat-check`.** Reports, in order: the base
   addresses and gateway; each configured STUN server's answer and `NAT:
   <nat_text>` ("no NAT", "a NAT that keeps ports (hole punching works)",
   "symmetric NAT", "not known yet"); the router (a random UDP port of
@@ -1882,12 +1882,12 @@ is the cost of the decision being wrong.
   whether each forwards a 16 KiB handshake from a new key (final review
   B-M3), and the TURN notes on them; `nat-check done`. Exit 0. Without
   `--config` it uses the defaults (8 relays, 5 STUN servers). It ships in
-  the release zips (it is `rl-server`); it uses public servers only when
+  the release zips (it is `olr-server`); it uses public servers only when
   run by hand. If wrong: a report that misleads a playtester; it changes
   nothing.
 - **N61 - protocol stays 2:** `Member` gains `path: Option<Path>`
   (appended; `None` for the host's own player); `Signal` is unchanged.
-- **N62 - `allow_local`.** rl-server's config `allow_local: bool`, `rl-cli
+- **N62 - `allow_local`.** olr-server's config `allow_local: bool`, `olr-cli
   --allow-local`, `TurnServerConfig::allow_local` and
   `CoreConfig::allow_local`: lists, TURN notes, mappings, a relay's peers
   and relayed addresses, and the server's own advertised address accept
@@ -1902,7 +1902,7 @@ Plan rulings:
   the user: each lies within the spec (U9 volunteer TURN relays, §5.3's
   order, §1.2's no central server). If wrong: one decision reworked,
   visible here.
-- **PL12b-1:** 12 tasks; the `rl-net` refactor (Task 1) came first, so
+- **PL12b-1:** 12 tasks; the `olr-net` refactor (Task 1) came first, so
   every later transport feature landed in sans-IO code with natsim
   tests. If wrong: none now.
 - **PL12b-2:** relay URLs are not added to announcements. Any relay that
@@ -1916,7 +1916,7 @@ Plan rulings:
 Pre-flight rulings:
 
 - **PF12b-1:** the pre-flight scan's 29 fixes were applied to the plan
-  before Task 1, among them: `is_global` moved to rl-proto; tests use
+  before Task 1, among them: `is_global` moved to olr-proto; tests use
   documentation externals only with `allow_local`; every test host sets
   `port_mapping: false` or aims at a `FakeGateway`; relay ports are never
   shifted; `relay_only` adds only relayed candidates; the signalled setup
@@ -1927,7 +1927,7 @@ Pre-flight rulings:
 - **PF12b-3:** invite hints first, then the player's own relays, cut to 8,
   everywhere (an invite's hints are the relays the host is known to use).
   If wrong: one of the player's own relays dropped from a join.
-- **PF12b-4:** no TURN servers in rl-server's config (the host never
+- **PF12b-4:** no TURN servers in olr-server's config (the host never
   allocates, N48). If wrong: a later config field.
 - **PF12b-5:** no test maps a real router port or sends SSDP to the
   multicast group: every test host sets `port_mapping: false` or targets
@@ -1937,12 +1937,12 @@ Pre-flight rulings:
 Task rulings:
 
 - **TR-1** (as amended by TR-5): a TURN relay refuses peers that are not
-  global (`rl_proto::is_global`: loopback, private, link-local, multicast,
+  global (`olr_proto::is_global`: loopback, private, link-local, multicast,
   unspecified, documentation, CGNAT …; 403, IPv6 peers 443), unless
   `allow_local` (N62): a public relay with public credentials must never
   reach its operator's network. **TR-5** (final review B-I3): TR-1 first
   refused the relay's own public IP too, so a relay could never carry a
-  game hosted behind its own router (the `rl-server --relay` beside its
+  game hosted behind its own router (the `olr-server --relay` beside its
   own game, a player hosting on its LAN), and a two-PC playtest's only
   relay was likely the user's own. The relay now refuses only its own
   sockets: its listening port and its allocations' relay ports, at its
@@ -2006,15 +2006,15 @@ Task rulings:
   a client uses reports external 127.0.0.2 with `allow_local` on both
   sides; documentation addresses only go to code that never sends to
   them. The planned TCP connect to 192.0.2.1:9 (a router that does not
-  hairpin) became rl-net's `connect_stall` test hook: the connect sends
+  hairpin) became olr-net's `connect_stall` test hook: the connect sends
   nothing and fails after `CONNECT_TIMEOUT`. If wrong: none.
 - **NT-2:** `Endpoint::shutdown(self) -> Shutdown` never blocks: it closes
   every link and hands the mapper to a thread that deletes the mappings
   and waits for the router's confirmation (`PortMapper::close`);
   `Shutdown::wait(until)` (at most 1 s) says whether the router
   confirmed, `Shutdown::poll` the same without waiting.
-  `OnlinePeer::shutdown` wraps it. rl-server waits at exit (and warns
-  when the router did not confirm), rl-cli's bot client waits, and the
+  `OnlinePeer::shutdown` wraps it. olr-server waits at exit (and warns
+  when the router did not confirm), olr-cli's bot client waits, and the
   game waits at most `UNMAP_WAIT` (1 s) after its window closed, off the
   frame; the game also prunes the shutdowns of games it left. Dropping
   the endpoint stays the fallback (nobody waits). If wrong: up to 1 s
@@ -2041,13 +2041,13 @@ Final review rulings (2026-10-14; the fix pass):
 - **FR12b-3** (B-I1): the host's side reports joins through the relays.
   Its lobby log and the server's log (`relays: …`) say each outcome:
   answered, refused (busy, or the reason), answered but not connected
-  within 15 s (rl-net's new `NetEvent::JoinFailed`, for a host's
+  within 15 s (olr-net's new `NetEvent::JoinFailed`, for a host's
   signalled setups only), and handshakes dated more than a minute off the
   host's clock ("… check both PCs' clocks"; the host's subscription now
   reaches 10 minutes back, `CLOCK_SEEN`, so a joiner whose clock is
   behind is seen); at most one line of each kind every 5 s. `NO_REPLY`
   names the clocks, and an `invalid:` refusal is `RELAYS_INVALID` (B-M2).
-  `rl-server --nat-check` prints each relay's clock against the PC's,
+  `olr-server --nat-check` prints each relay's clock against the PC's,
   from its WebSocket handshake's `Date` header (`Pool::clocks`), and
   warns past a minute. Clock skew is the likeliest silent failure at a
   playtest. If wrong: a few more log lines.
@@ -2070,7 +2070,7 @@ Review findings that changed behaviour beyond the plan:
 - TURN passwords are never printed: `FindingSettings` and
   `TurnServerSpec` have redacting `Debug`s, and warnings never quote a
   TURN entry.
-- rl-server's `/banip` on a relayed member wrote the relay's IP to the
+- olr-server's `/banip` on a relayed member wrote the relay's IP to the
   bans file, which after a restart banned the relay for everyone (N59).
 - A stalled link no longer floods its peer when it recovers (the bot-grid
   flake of 2026-10-14, f4a1f26): sctp-proto 0.10.5 starts an unreliable
@@ -2093,7 +2093,7 @@ Review findings that changed behaviour beyond the plan:
 
 Measured:
 
-- **Relay probe, 2026-10-14** (`rl-cli nostr-probe`, run once by hand on
+- **Relay probe, 2026-10-14** (`olr-cli nostr-probe`, run once by hand on
   the 8 default relays from WSL2: a fresh key, neutral content, a
   3-minute wait). It adds a kind-31471 note, read back at once and after
   the wait, and a 16 KiB kind-21470 event (`MAX_HANDSHAKE_CONTENT`) to
@@ -2162,7 +2162,7 @@ Open items (deferred minors):
   and with `public_address` set the whole relay range is handed out (the
   manual-forward case). The relay port set is fixed at start: an extra
   whose renewal later fails is still handed out.
-- rl-cli's NT-2 exit wait is untested (a client maps no port).
+- olr-cli's NT-2 exit wait is untested (a client maps no port).
 - A mapping whose answer was lost (silence, garbage) is not deleted; it
   lasts its lease (2 h at most) and points at our own port only.
 - The Video tab's rows overflow at 384 and 320 points (UI scale 3,
@@ -2191,8 +2191,8 @@ stall rules and what it found), UI-2 (the hover fix) and FR12c-1 to
 FR12c-5, with FR12c-1a and FR12c-3a (the final review's fixes). Where a ruling changed a decision, the decision below says
 so and gives its final form. "If wrong" is the cost of the decision being
 wrong. Spec §3.7 and §10 are the source; the code's constants are
-`rl_netcode::migration` (timing), `rl_online::migration` (the open
-timeout, the texts) and `rl_game::net::pump`.
+`olr_netcode::migration` (timing), `olr_online::migration` (the open
+timeout, the texts) and `olr_game::net::pump`.
 
 - **PL12c-0 - the plan's decisions are accepted** without asking the user
   (as for plan 12b: all are within the spec), with N70 sent to the
@@ -2210,7 +2210,7 @@ timeout, the texts) and `rl_game::net::pump`.
   (its first 2 Nostr relays) after each `Welcome`; the host takes at most
   one change per member per `STANDBY_WINDOW_US` (5 s) and holds a later
   one for `tick`. A client whose standby cannot bind, or that has none
-  (`MigrationConfig::standby = None`, `rl-cli net-client --no-standby`),
+  (`MigrationConfig::standby = None`, `olr-cli net-client --no-standby`),
   cannot host but still follows a migration (N79). If wrong: one more
   listening socket per client while it is online.
 - **N64 - the succession list.** Order: the match's players in join
@@ -2276,7 +2276,7 @@ timeout, the texts) and `rl_game::net::pump`.
   (worst of 12 seeds, crash and leave, from the first `HostSilent` or
   `PeerLeft` to the resume; Task 3): lan 22 ms, good 143 ms, typical
   422 ms, bad 996 ms, awful 2997 ms; the harness gates 3 s on lan, good
-  and typical and `WINDOW_US` on bad and awful. rl-online's loopback test
+  and typical and `WINDOW_US` on bad and awful. olr-online's loopback test
   (a frozen host, real clocks) bounds the resume at 2 s of silence plus
   3.5 s (its measured time was not recorded). A host that sends `Bye`
   (a leave, a step-down, a closing link: N76) is followed at once with no
@@ -2288,7 +2288,7 @@ timeout, the texts) and `rl_game::net::pump`.
   the handshake and ICE only, and the playtest gives the first number). If wrong: a
   stricter reading (3 s from the host's last message) cannot be met with
   the spec's own 2 s detection on anything but LAN.
-  **Plan 12d (`aca289a`):** rl-cli net-sim's N66 verdict (`netsim.rs`) counts only the first
+  **Plan 12d (`aca289a`):** olr-cli net-sim's N66 verdict (`netsim.rs`) counts only the first
   host and hosts that resumed as "hosts left": a successor that committed
   and crashed before its resume no longer counts (the others wait out its
   window and move on, 10 s, as designed).
@@ -2321,7 +2321,7 @@ timeout, the texts) and `rl_game::net::pump`.
   waited for. It resumes when every expected peer rejoined and reported;
   the window's end stops the wait only for peers not yet back, and the
   reports of peers already back are waited for `REPORT_WAIT` (1 s, in
-  rl-online) past it, later ones merged as late reports. A successor
+  olr-online) past it, later ones merged as late reports. A successor
   nobody rejoined by its window's end, while it expected someone, closes
   its gate (D8). **N68's case changed (FR12c-1):** a 1-vs-host match whose
   host crashes, or host plus spectator only, no longer continues for the
@@ -2336,7 +2336,7 @@ timeout, the texts) and `rl_game::net::pump`.
   returns to its old host (`HostHeard`) unless its attempt has contact
   with a hosting successor; a successor that has not committed closes its
   standby again. A follower in contact remembers the news and goes back
-  when its contact is lost (rl-online's `Planner::host_heard`; the harness
+  when its contact is lost (olr-online's `Planner::host_heard`; the harness
   does the same since `d0a1a31`, soak bug 2). **The ~3 s outage cliff:**
   a peer's own outage is covered only up to about 3 s (a transport
   cliff: longer, the peer's links close and it cannot return). **SB-2
@@ -2356,9 +2356,9 @@ timeout, the texts) and `rl_game::net::pump`.
   logs it and opens its lobby again. It does not rejoin. If wrong: a host
   whose whole machine stalled for 1.5 s loses that match.
 - **PF12c-2 - the network pump** (amended by PU-1 and PU-2, beside N70).
-  rl-game's `PeerHandle` holds each online peer (host and client alike,
+  olr-game's `PeerHandle` holds each online peer (host and client alike,
   `--net-sim`'s host too) behind one lock shared by the UI thread and a
-  thread `rl-game net`, which polls the peer whenever the UI has not for
+  thread `olr-game net`, which polls the peer whenever the UI has not for
   `PUMP_AFTER`. A Windows window drag or resize, a long match load
   (`start_online`) or a slow frame blocks the UI thread and, without it,
   silences a host for 2 s (its peers migrate away from a healthy host and
@@ -2421,7 +2421,7 @@ timeout, the texts) and `rl_game::net::pump`.
   refused for the window. **Ruling SB-1 (amends the Task 7 timeouts):**
   one open timeout for every route, `ANSWER_OPEN_TIMEOUT` **6 s** after
   the answer (Task 7 had 2 s for a direct link and 6 s through relays,
-  measured to rl-net's delayed `Connected`, up to 1.5 s after the link
+  measured to olr-net's delayed `Connected`, up to 1.5 s after the link
   opened). A direct join runs the same ICE, DTLS and SCTP handshake as a
   relayed one: on `bad` (150 ms, 5 % loss; its losses were bursty when this was
   measured, before SK-5 made them independent) str0m's lost checks go
@@ -2453,7 +2453,7 @@ timeout, the texts) and `rl_game::net::pump`.
   real-transport case on 127.0.0.1, half of them with a server freeze or
   leave (the other half a clean control run with migration off). A
   failure is kept in `target/failures/` (a `NetCase`, replayable with
-  `rl-cli net-sim --from`; a transport failure is `soak-transport-<seed>/`),
+  `olr-cli net-sim --from`; a transport failure is `soak-transport-<seed>/`),
   at most 32 per invocation, and the soak stops at the cap. A
   `bless-regression --from` makes a failing case a golden; 20 cases are
   kept in `fixtures/net/cases` (the soak's finds, each with its line in
@@ -2495,7 +2495,7 @@ timeout, the texts) and `rl_game::net::pump`.
 - **RS-1 / Task 8b - the time sync after a resume.** Task 8's review found
   that on bad links clients stalled again after a resume (clients restarted
   one trip late and `Jumped` acted on stale margins): 22 of 80 toy
-  migrations, up to 119 ticks. Fixed in rl-netcode, with Resume's wire
+  migrations, up to 119 ticks. Fixed in olr-netcode, with Resume's wire
   extended: the new host holds its first tick `D` behind R (the longest
   rejoined round trip, whole ticks, at most `MAX_RESUME_HOLD_US` 500 ms);
   `Control::Resume { tick, at_ms, first, frames }` places each player's
@@ -2531,7 +2531,7 @@ timeout, the texts) and `rl_game::net::pump`.
 - **RS-2 - net-sim's stall excusal is bounded.** `RESYNC_TICKS` is gone: a
   stall is excused only if its episode starts and ends inside the window
   from the old host's departure (less `MAX_PREDICTION`) to the resume plus
-  `MAX_PREDICTION` (`StallTracker`, rl-cli); N66 bounds the migration
+  `MAX_PREDICTION` (`StallTracker`, olr-cli); N66 bounds the migration
   itself. If wrong: unrelated stalls pass inside a long window.
 - **SB-1** is under N73. **SB-2 - a host cut off from its players leaves
   its match.** A host that hears none of its players for `HOST_SILENT_US`
@@ -2560,8 +2560,8 @@ timeout, the texts) and `rl_game::net::pump`.
   (excused), and a player that left is not judged by its last stall (SK-3).
   The soak also found harness bugs: a host cut off while its peers move on
   is "left behind" and its rows bounded like an exited host's, and the
-  harness's N69 remembers contact as rl-online does. Two flakes were fixed
-  or noted: rl-server's `nat_check` timing test (`close_within`) and the
+  harness's N69 remembers contact as olr-online does. Two flakes were fixed
+  or noted: olr-server's `nat_check` timing test (`close_within`) and the
   e2e `Click("Join")` (autoplay's `ClickUntil` waits for a click's effect;
   the mechanism is unproven). If wrong: none (rules only).
 - **SK-4 - bad-link stalls with drifting clocks: fixed or explained.**
@@ -2603,7 +2603,7 @@ timeout, the texts) and `rl_game::net::pump`.
   lan to good too, stops the check). If wrong: a stall bug that shows only
   after a profile change hides in the soak.
 - **SK-7 - unsuspend catches up the pause** (accepted, since the host ran
-  on); the API comment and rl-netcode's CLAUDE.md say so (`4613a96`).
+  on); the API comment and olr-netcode's CLAUDE.md say so (`4613a96`).
 - **SK-8 - a joining session detects host silence.** A spectator that
   joined mid-match and has no world yet finds its host silent like a
   member and ends with Host lost ("…while you were still joining the
@@ -2653,7 +2653,7 @@ timeout, the texts) and `rl_game::net::pump`.
   counts as unreachable, with a negative twin (`ce6b352`); exits are
   paired with migrations by time, `exited_us <= resumed_us` (`bd621bb`).
   Kept soak cases: `good-15s2c0v-seed960552337`, `lan-4s2c2v-seed723619267`
-  (no split), `typical-14s4c1v-seed1857358438`. rl-online has no test for
+  (no split), `typical-14s4c1v-seed1857358438`. olr-online has no test for
   "a client crashes, then the host's `Bye`" (deferred).
   **Amended by FR12d-Q, FR12d-Q1 (plan 12d), kept above as history:** the
   commit rule is no longer "at least one rejoin" (FR12c-1) nor "expects
@@ -2690,7 +2690,7 @@ timeout, the texts) and `rl_game::net::pump`.
 **Measurements.**
 - Harness resume after detection per profile: see N66 (Task 3's table),
   and Task 8b's `bad` figures under RS-1.
-- rl-online's loopback tests (real clocks, `127.0.0.0/8`, in `check`):
+- olr-online's loopback tests (real clocks, `127.0.0.0/8`, in `check`):
   4-17 s each (the frozen host 16.7 s with the match's end and results;
   D8's 15.2 s; host lost 11.9-13.5 s after the freeze); a slow relayed
   link opened about 3.75 s after the answer and the resume came about
@@ -2734,7 +2734,7 @@ Open items (deferred minors):
   seconds.
 - Task 6: the dead-successor timeout (6 s after SB-1) and the resume's
   one-poll commit check are the residuals under N65; the resume's report
-  deadline `REPORT_WAIT` is decided in rl-online, not rl-netcode.
+  deadline `REPORT_WAIT` is decided in olr-online, not olr-netcode.
 
 ## Players leaving mid-match (plan 12d)
 
@@ -2797,7 +2797,7 @@ player's own rope throws are heard (the porting table).
 - **PF12d-8a (amends PF12d-8's cost):** an honest refused mark (the old
   host timed out a client that was alive, then vanished, and the client
   rejoined the new host) costs **each survivor that held the mark one
-  desync and one state repair** (and a desync bundle in rl-online), not
+  desync and one state repair** (and a desync bundle in olr-online), not
   only an `Inconsistent`. The player stays. The refused mark's values are
   kept and taken unmarked, so the holders' rows agree and exactly one
   repair mends them; the SK verdict accepts exactly that one repair
@@ -2833,13 +2833,13 @@ player's own rope throws are heard (the porting table).
   member, so a match continues on one side at most. It replaces FR12c-1's
   "at least one rejoin" and its exception, keeps FR12c-1 (a two-peer blip
   is a stall) and FR12c-1b (the lone survivor of three is host lost).
-  `rl_netcode::migration::quorum`, called by the harness and rl-online:
-  a join to an uncommitted successor is held (rl-online holds the
+  `olr_netcode::migration::quorum`, called by the harness and olr-online:
+  a join to an uncommitted successor is held (olr-online holds the
   member's `Welcome` and what follows), the commit takes every held join
   in. Pinned by `only_the_majority_side_of_a_partition_continues`,
   `an_even_split_continues_on_neither_side`,
-  `a_successor_short_of_a_quorum_is_host_lost_legitimately` (rl-netcode)
-  and `a_successor_without_a_quorum_never_hosts` (rl-online). SK-10 accepts
+  `a_successor_short_of_a_quorum_is_host_lost_legitimately` (olr-netcode)
+  and `a_successor_without_a_quorum_never_hosts` (olr-online). SK-10 accepts
   an all-lost match whose reached successors could not gather a quorum
   (`lacked_quorum`, generous). **Cost:** an even split continues on
   neither side, and a crashed host still counts: in a match of a host and
@@ -2857,19 +2857,19 @@ player's own rope throws are heard (the porting table).
   and the denominator, so the majority property holds. A host, one player
   and mid-match spectators whose host crashes now plays on when the
   spectators reach the player (`a_player_and_its_followers_carry_on_when_the_host_crashes`,
-  rl-online's `a_player_and_its_spectators_carry_on_when_the_host_crashes`).
+  olr-online's `a_player_and_its_spectators_carry_on_when_the_host_crashes`).
   The harness counts only followers that were in the match (a spectator
-  whose join tick never came is not); rl-online counts its migrated
+  whose join tick never came is not); olr-online counts its migrated
   lobby's `away()` at the turn's opening (every succession member). Cost:
   a member that cannot come back (a spectator still loading, SK-8) still
-  counts (rl-online's `a_joiner_still_loading_when_its_host_crashes_is_host_lost`
+  counts (olr-online's `a_joiner_still_loading_when_its_host_crashes_is_host_lost`
   now has a third watcher). Net-soak's `bad-10s1c2v-seed1616063176`: the
   player now takes the match over with both spectators at 15.55 s.
 - **FR12d-Q2 - an unreached successor is asked again** (controller's
   ruling, amends N73). An ask not reached (no answer, a connect that
   failed or timed out, a link that never opened, a relayed join that
   failed) is made again `REASK_US` (1 s) later, within its window
-  (`rl_netcode::migration::REASK_US`; harness `Stage::Retry`; rl-online's
+  (`olr_netcode::migration::REASK_US`; harness `Stage::Retry`; olr-online's
   `Planner`: a direct route again after 1 s, the relays meanwhile, both
   again after 1 s when the relays fail). An attempt under way is never
   doubled. FR12c-3's `could_join` slack is `REASK_US` (was `RETRY_US`),
@@ -2882,7 +2882,7 @@ player's own rope throws are heard (the porting table).
   at most once per second within its window, 20 joins over two windows).
   Net-soak's `lan-16s7c0v-seed2762456828`: player 2 rejoins player 1 at
   8.7 s, player 6 at 10.8 s just after the resume (a late rejoiner, N72).
-  Not covered end to end in rl-online: its blackout hook drops datagrams
+  Not covered end to end in olr-online: its blackout hook drops datagrams
   only, so a direct join's TCP answer still comes and the link opens on
   ICE's resend (`a_slow_direct_link_is_waited_for`); an ask that fails
   outright on loopback is the planner's tests'. Cost: up to one join a
@@ -2981,7 +2981,7 @@ player's own rope throws are heard (the porting table).
   no damage factor, no damage score; final review A-M2). Cost if wrong:
   none known.
 - **N85 - the scoreboard** (the deviation). `Score::left` marks a gone
-  worm's row (hashed only when true). The live scoreboard (`rl_ui::hud::rows`)
+  worm's row (hashed only when true). The live scoreboard (`olr_ui::hud::rows`)
   leaves it out; the results (`Results`) keep it, its lives reading "left",
   greyed, ranked as an out worm by `CompareWormsScore`. `MatchEndWire` is
   unchanged. Cost if wrong: one table row.
@@ -2991,7 +2991,7 @@ player's own rope throws are heard (the porting table).
   `Notice::TimedOut` is new (appended). Kicks and bans keep their own
   notices. At a resume see PF12d-3. Cost if wrong: one log line.
 - **N87 - the crash timeout stays 10 s** (`SILENCE_TIMEOUT_US` in the
-  session, `SILENCE_TIMEOUT` in rl-net). Until it fires, the lagging rule
+  session, `SILENCE_TIMEOUT` in olr-net). Until it fires, the lagging rule
   repeats the slot's last final keys (a crashed player's worm keeps its
   last move for up to 10 s); at it the worm is withdrawn. Those fills
   stall players whose link cannot bear them (`fills_stall`, true on
@@ -3043,15 +3043,15 @@ Open items (deferred minors):
   board's counts are at least the worm's gated ones.
 - Task 6: no replay test reaches the results screen with a left row;
   `follow_next` has no test for "all but the followed worm left" or "all
-  gone"; the rl-ui unit test's RED was only a compile error.
-- FR12c-1b: no rl-online test pins "a client crashes, then the host's
+  gone"; the olr-ui unit test's RED was only a compile error.
+- FR12c-1b: no olr-online test pins "a client crashes, then the host's
   `Bye`" (the lone survivor's Host lost).
 - Task 7: `reproduce` filters `gone` per tick (O(inputs x gone)); no twin
   for a profile where `fills_stall` is false; the crash window does not
   model migrations.
 - Final: minor (deferred): a member that can never come back (a spectator
   still loading) counts against the quorum.
-- Final: minor (deferred): FR12d-Q2 has no end-to-end rl-online test (the
+- Final: minor (deferred): FR12d-Q2 has no end-to-end olr-online test (the
   outage hook drops UDP only; the planner's tests and the harness cover it).
 - Final: minor (deferred): SK-10's reach model stays generous
   (`lacked_quorum`, `reaches`).
@@ -3068,7 +3068,7 @@ net-feel 43 s, determinism-windows 121 s).
   healing weapons) with no cap, unlike a health bonus; `InjureWorm` caps a
   heal only when the worm's `shieldFactor` is 0
   (`src/client/CClient_Game.cpp:350-357`). The
-  headless matches' invariants (`rl-cli::invariants`) only require health to
+  headless matches' invariants (`olr-cli::invariants`) only require health to
   be a number of at least 0.
 - **A worm can be wedged in a rock ceiling:** standing half in dirt under a
   low rock ceiling, a jump makes `moveAndCheckWormCollision` take the dirt
@@ -3077,7 +3077,7 @@ net-feel 43 s, determinism-windows 121 s).
   its centre then sits in rock, stuck until it dies (seed 303 of the bot
   grid, Classic on FossilFacility: 686 ticks). The headless invariants
   allow a centre in rock but not a worm buried in it, with rock over its
-  whole collision cross (`rl_cli::invariants::buried_in_rock`).
+  whole collision cross (`olr_cli::invariants::buried_in_rock`).
 - **The physics step is 11 ms** (`1000 / 84`, integer division), not 1/84 s.
 - **The lossy per-frame Gusanos speed round trip** (`GusSpeedScope`) on worm and
   rope velocities, from `gusLogicFrame()` (`docs/porting/timing.md`).
@@ -3101,7 +3101,7 @@ net-feel 43 s, determinism-windows 121 s).
   toward zero.
 - **`(Uint64)` of a float** (`TimeDiff(float)`, `AbsTime + float`) is GCC's
   x86-64 sequence: negative values and NaN wrap through a 64-bit `cvttss2si`,
-  infinity and values from 2^64 on give 0 (`rl-sim::projectile::c_u64`).
+  infinity and values from 2^64 on give 0 (`olr-sim::projectile::c_u64`).
 - **`VecTimeRecorder::get(0)` is the oldest entry** (spec §18 D7): with the
   pinned clock, a projectile step at exactly the frame time hit-tests worms
   where they were 100 physics steps ago, or at a stale or zero position in
@@ -3112,7 +3112,7 @@ net-feel 43 s, determinism-windows 121 s).
   `vPos = v` and `vVelocity = v` of a projectile or worm do nothing when `v`
   compares equal, so a zero keeps its old sign. A reused projectile slot can
   start with the previous projectile's `-0` velocity (`nuclear-mines`, frame 206).
-  `rl-sim` follows this for projectiles (`attr_set`).
+  `olr-sim` follows this for projectiles (`attr_set`).
 - **LX56's `Bounce`:** each collision side sets both factors, and left/right
   override top/bottom (`CProjectile.cpp:376-429`).
 - **Wall shooting:** for the first 10-12 ms a projectile ignores the terrain and
@@ -3164,13 +3164,13 @@ net-feel 43 s, determinism-windows 121 s).
   (`SetColorKey`, `src/client/GfxPrimitives.cpp:116-150`).
   - Skins: applied at import.
   - Core sprites, mod projectile images and gibs: stored raw and keyed when
-    `rl-scene`/`rl-fx` load them (`RgbaImage::key_transparent`, the same rule).
+    `olr-scene`/`olr-fx` load them (`RgbaImage::key_transparent`, the same rule).
     One affected file in scope is `skins/Wario.png`; no core sprite, mod image
     or theme image at `d1ad953f` has a (254,0,254) corner.
 - **Hi-res level art.** With an "OLX hi-res data" chunk, the front 2×2 block
   becomes the back block wherever `PX_EMPTY` is set, and PNG alpha is ignored
   (`LoadLevelImageHiRes`, `MapLoader_LieroX.cpp:285-360`).
-- **Entities** (`rl-fx`): a large explosion (size > 15) starts before the
+- **Entities** (`olr-fx`): a large explosion (size > 15) starts before the
   image and stays invisible (10 sub-steps for size 20); frame sums are
   floats and drift low (a size-8 explosion is at frame 10 after 10 passes);
   chemsmoke's and spawn's last frames are past their images and draw

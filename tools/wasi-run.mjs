@@ -4,7 +4,7 @@ import { WASI } from 'node:wasi';
 import { argv, exit } from 'node:process';
 
 const [wasmPath, root, ...args] = argv.slice(2);
-const wasi = new WASI({ version: 'preview1', args: ['rl-detcheck', ...args], preopens: { '/': root }, returnOnExit: true });
+const wasi = new WASI({ version: 'preview1', args: ['olr-detcheck', ...args], preopens: { '/': root }, returnOnExit: true });
 const module = await WebAssembly.compile(await readFile(wasmPath));
 const instance = await WebAssembly.instantiate(module, wasi.getImportObject());
 exit(wasi.start(instance));

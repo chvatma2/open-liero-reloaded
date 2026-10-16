@@ -1,0 +1,23 @@
+---
+source: crates/olr-scene/tests/snapshots.rs
+expression: text
+---
+view 0,235 320x240 map 1200x480
+[entities]
+[beams]
+[projectiles]
+px 97.5,349.5 #b0b0b0
+px 161.5,347.5 #d0d7d0
+px 103.5,353.5 #b0b0b0
+px 124.5,348.5 #b0b0b0
+px 145.5,350.5 #b0b0b0
+px 139.5,349.5 #d0d7d0
+px 153.5,352.5 #d0d7d0
+px 131.5,352.5 #b0b0b0
+px 109.5,353.5 #b0b0b0
+px 116.5,351.5 #d0d7d0
+px 261.5,332.5 #b0b0b0
+[bonuses]
+[worms]
+crosshair 0,0 6x6 at 49,354 3x3
+skin:0 132,0 20x18 at 29,350.5 10x9

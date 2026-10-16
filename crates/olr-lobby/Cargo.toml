@@ -1,0 +1,27 @@
+[package]
+name = "olr-lobby"
+description = "Online lobby logic: identity keys, and the lobby's host and client (sans-IO)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+olr-proto.workspace = true
+olr-netcode.workspace = true
+k256.workspace = true
+# no_std: the workspace entry enables the default features.
+sha2 = { version = "0.11.0", default-features = false }
+
+[features]
+# Test-only API (the in-process `harness`): enabled by this crate's own
+# tests, never by a build that ships.
+test-hooks = []
+
+[dev-dependencies]
+proptest.workspace = true
+olr-lobby = { workspace = true, features = ["test-hooks"] }
+
+[lints]
+workspace = true

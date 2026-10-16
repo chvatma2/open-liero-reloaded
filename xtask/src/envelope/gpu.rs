@@ -1,7 +1,7 @@
 //! The GPU paths (spec §5): the heavy replay and the map and art points'
-//! replays drawn by `rl-cli gpu-bench` (offscreen, hardware adapter,
+//! replays drawn by `olr-cli gpu-bench` (offscreen, hardware adapter,
 //! timestamps when there are any) and played windowed and uncapped by
-//! `rl-game --frame-log`, on WSL (GL over Mesa's d3d12 driver) and on
+//! `olr-game --frame-log`, on WSL (GL over Mesa's d3d12 driver) and on
 //! Windows (DX12 and Vulkan, through interop). A part that cannot run here
 //! is a notice (Review Focus 2, ruling PF5: `super::execute`); nothing
 //! here fails the command.
@@ -12,7 +12,7 @@
 //! and fails when there is none, and `super::adapter_problem` refuses a
 //! path whose report still names a `Cpu` device or a software rasteriser
 //! by name (`super::software_name`: WARP behind Mesa's d3d12 comes back as
-//! `Other`). `rl-game` picks its own adapter, so a windowed run on one is
+//! `Other`). `olr-game` picks its own adapter, so a windowed run on one is
 //! a note, not a row (`windowed_row`).
 
 use std::path::{Path, PathBuf};
@@ -25,7 +25,7 @@ use crate::{root, winbuild};
 
 const HEAVY: &str = "heavy.rlrp";
 
-/// The environment that puts WSL's GL on the real GPU (as `rl-game` sets
+/// The environment that puts WSL's GL on the real GPU (as `olr-game` sets
 /// for itself), naming NVIDIA's adapter when its WSL driver is there.
 pub fn wsl_env(nvidia: bool) -> Vec<(String, String)> {
     let mut v =
@@ -104,15 +104,15 @@ impl Runner<'_> {
                 for (k, v) in wsl_env(nvidia()) {
                     c.env(k, v);
                 }
-                let out = c.output().map_err(|e| format!("cannot run rl-cli: {e}"))?;
-                read_ron("rl-cli gpu-bench", &out, &file)
+                let out = c.output().map_err(|e| format!("cannot run olr-cli: {e}"))?;
+                read_ron("olr-cli gpu-bench", &out, &file)
             }
             Runner::Windows { stage, backend } => {
                 let file = stage.dir.join("gpu.ron");
                 let _ = std::fs::remove_file(&file);
                 args.extend(sv(&["--content", "content", "--backend", backend, "--out", "gpu.ron"]));
-                let out = winbuild::run(stage, "rl-cli.exe", &args, &[], winbuild::RUN_TIMEOUT)?;
-                read_ron("rl-cli.exe gpu-bench", &out, &file)
+                let out = winbuild::run(stage, "olr-cli.exe", &args, &[], winbuild::RUN_TIMEOUT)?;
+                read_ron("olr-cli.exe gpu-bench", &out, &file)
             }
         }
     }
@@ -120,7 +120,7 @@ impl Runner<'_> {
     fn windowed(&self, size: (u32, u32), seconds: f64) -> Result<FrameLogOut, String> {
         let script = format!("0 size {} {}\n", size.0, size.1);
         let common = |replay: &str, log: &str, script_file: &str, content: &str, data: &str| {
-            // `--frame-log-skip` is seconds, which rl-game turns into ticks at
+            // `--frame-log-skip` is seconds, which olr-game turns into ticks at
             // 100 a second: the replay plays at 1× here, so they are the
             // window's first 3 wall-clock seconds too (its settling, the size
             // change).
@@ -160,8 +160,8 @@ impl Runner<'_> {
                 let mut c = Command::new(game);
                 // The game puts itself on the GPU (wsl.rs) only when these are unset.
                 c.current_dir(root()).args(&args).env_remove("WGPU_BACKEND").env_remove("GALLIUM_DRIVER");
-                let out = c.output().map_err(|e| format!("cannot run rl-game: {e}"))?;
-                read_ron("rl-game", &out, &log)
+                let out = c.output().map_err(|e| format!("cannot run olr-game: {e}"))?;
+                read_ron("olr-game", &out, &log)
             }
             Runner::Windows { stage, backend } => {
                 let log = stage.dir.join("frame-log.ron");
@@ -169,8 +169,8 @@ impl Runner<'_> {
                 std::fs::write(stage.dir.join("size.txt"), script).map_err(|e| e.to_string())?;
                 let args = common(&self.replay(HEAVY), "frame-log.ron", "size.txt", "content", "game-data");
                 let env = [("WGPU_BACKEND", *backend)];
-                let out = winbuild::run(stage, "rl-game.exe", &args, &env, winbuild::RUN_TIMEOUT)?;
-                read_ron("rl-game.exe", &out, &log)
+                let out = winbuild::run(stage, "olr-game.exe", &args, &env, winbuild::RUN_TIMEOUT)?;
+                read_ron("olr-game.exe", &out, &log)
             }
         }
     }
@@ -197,8 +197,8 @@ fn heavy_replay(cli: &Path, content: &Path, plan: &Plan) -> Result<PathBuf, Stri
         .arg("--record")
         .arg(&file)
         .output()
-        .map_err(|e| format!("cannot run rl-cli: {e}"))?;
-    if out.status.success() { Ok(file) } else { Err(sweeps::failure("rl-cli stress --record", &out)) }
+        .map_err(|e| format!("cannot run olr-cli: {e}"))?;
+    if out.status.success() { Ok(file) } else { Err(sweeps::failure("olr-cli stress --record", &out)) }
 }
 
 /// The scenes: the heavy replay, recorded now, and the map and art points'
@@ -326,7 +326,7 @@ fn measure(
     Ok(path)
 }
 
-/// A windowed run's row, unless a software rasteriser drew it: `rl-game`
+/// A windowed run's row, unless a software rasteriser drew it: `olr-game`
 /// picks its own adapter, and its line (`<adapter> (<backend>, <type>),
 /// <present mode>, <format>`) says which (Review Focus 2).
 pub fn windowed_row(requested: (u32, u32), log: FrameLogOut) -> Result<Windowed, String> {
@@ -356,10 +356,10 @@ pub fn wsl(
     b: &Budgets,
 ) -> Result<GpuPath, String> {
     if windowed {
-        sweeps::build_release(&["rl-game"])
-            .map_err(|e| format!("rl-game does not build: {}", last_line(&e)))?;
+        sweeps::build_release(&["olr-game"])
+            .map_err(|e| format!("olr-game does not build: {}", last_line(&e)))?;
     }
-    let r = Runner::Wsl { cli, game: root().join("target/release/rl-game"), content };
+    let r = Runner::Wsl { cli, game: root().join("target/release/olr-game"), content };
     measure(&r, levels, windowed, plan, b)
 }
 
@@ -395,7 +395,7 @@ mod tests {
         }
     }
 
-    /// Review Focus 2: `rl-game` picks its own adapter, so a windowed run
+    /// Review Focus 2: `olr-game` picks its own adapter, so a windowed run
     /// on a software rasteriser is a note, never a row.
     #[test]
     fn a_windowed_run_on_a_software_adapter_is_left_out() {

@@ -1,4 +1,4 @@
-//! The headless sweeps (spec §4): each point is `rl-cli stress` in its own
+//! The headless sweeps (spec §4): each point is `olr-cli stress` in its own
 //! process (its peak memory is its own), `runs` times, from the reference
 //! configuration (ruling P1) with one axis changed. The map and art points'
 //! first runs record their replays for the GPU scenes (ruling P4). Every
@@ -52,7 +52,7 @@ pub struct Value {
     pub n: f64,
     pub mod_id: &'static str,
     pub level: String,
-    /// `rl-cli stress --personality`.
+    /// `olr-cli stress --personality`.
     pub personality: &'static str,
     pub worms: u32,
     pub pool: u32,
@@ -130,9 +130,9 @@ fn stress(
     if let Some(r) = record {
         c.arg("--record").arg(r);
     }
-    let o = c.output().map_err(|e| format!("cannot run rl-cli: {e}"))?;
+    let o = c.output().map_err(|e| format!("cannot run olr-cli: {e}"))?;
     if !o.status.success() {
-        return Err(failure("rl-cli stress", &o));
+        return Err(failure("olr-cli stress", &o));
     }
     let text = std::fs::read_to_string(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     ron::from_str(&text).map_err(|e| format!("{}: {e}", out.display()))
@@ -235,9 +235,9 @@ fn rollback_cost(
         .arg("--out")
         .arg(&out)
         .output()
-        .map_err(|e| format!("cannot run rl-cli: {e}"))?;
+        .map_err(|e| format!("cannot run olr-cli: {e}"))?;
     if !o.status.success() {
-        return Err(failure("rl-cli rollback-cost", &o));
+        return Err(failure("olr-cli rollback-cost", &o));
     }
     let text = std::fs::read_to_string(&out).map_err(|e| format!("{}: {e}", out.display()))?;
     ron::from_str(&text).map_err(|e| format!("{}: {e}", out.display()))

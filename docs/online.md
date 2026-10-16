@@ -12,7 +12,7 @@ password, then Start hosting. The Lobby opens: pick the map and the rules
 (only the host can), your weapons ("Random" or the weapon screen), Ready, and
 chat with Enter after pressing the chat key (T; rebind it in Options, Keys,
 "Chat"). The host can kick, ban, move players to spectators and "Force start"
-(players not ready then spectate that match). `rl-game --host [NAME]`
+(players not ready then spectate that match). `olr-game --host [NAME]`
 opens the Lobby straight away; `--port` changes the port.
 
 ## Join
@@ -24,7 +24,7 @@ uses port 23400) or an invite code in the Direct tab and Join; a password is ask
 Three wrong passwords from one address within a minute hold that address
 off for a minute ("too many wrong passwords: try again in a minute"),
 everyone behind the same public address included.
-`rl-game --join ADDR` (an address or an invite code) does the same from the command line. You can also join
+`olr-game --join ADDR` (an address or an invite code) does the same from the command line. You can also join
 mid-match as a spectator, and see each player's key fingerprint (8
 characters) in the Lobby.
 
@@ -61,7 +61,7 @@ address or an invite code.
 case). The host's lobby shows it with a Copy button, and a server prints
 `invite code: rlx1…` in its log (and answers `/invite` in chat: anyone in a
 Public game, admins otherwise). Send the code by any chat. The joiner pastes it into Direct (or
-`rl-game --join rlx1…`) and Joins: the code holds the host's key, address
+`olr-game --join rlx1…`) and Joins: the code holds the host's key, address
 and a few relay hints, and the game only joins a host with that key ("this
 is not the game you were invited to" otherwise). A code carries an
 address only when players can reach the host directly: its router opened
@@ -124,12 +124,12 @@ counts as public, since the game cannot tell where it is without looking
 it up: name an office relay by its IP address.
 
 **Privacy.** Opening Multiplayer (the Internet tab is the first;
-`rl-game --join` goes through it too) connects to the relays in Options, 8 public
+`olr-game --join` goes through it too) connects to the relays in Options, 8 public
 relays by default, which then see your IP address; a hosted Public game
 is announced there with its public address. Remove every relay in
 Options → Online to keep the game off the relays entirely (the Internet
 tab then says "No relay reachable"; LAN and Direct work as before). A
-`rl-server` without `visibility` is Public: an older config without it
+`olr-server` without `visibility` is Public: an older config without it
 now announces the server on the default public relays (set
 `visibility: Lan` or `Invite` to keep it off). A hosted Public or Invite
 game also stays connected to its relays to take joins. A join through the
@@ -193,7 +193,7 @@ fails when one router gives every destination another port (a
 "symmetric NAT", common on mobile networks and some ISPs' routers) and
 the other side has no open port. Such a pair needs the host's open port
 or a TURN relay. The project runs no TURN relay of its own: volunteers
-run them (`rl-server --relay`, below), or you add your own in Options →
+run them (`olr-server --relay`, below), or you add your own in Options →
 Online → TURN relays. Until someone runs one, such pairs cannot connect.
 
 ### What the host's lobby says
@@ -240,13 +240,13 @@ A server logs the reach lines as `reach: …`, the join lines as
 `invite code (joins through the relays): rlx1…`, and each join as
 `join: <name> (<fingerprint>) from <ip> via <tag> key <key>`.
 
-`rl-game` prints on its console (stdout): when hosting, each new reach
-line (`rl-game: reach: …`), each join line (`rl-game: relays: …`), each
-relay it listens on as it connects or fails (`rl-game: relay <url>:
-connected` or `… unreachable: …`) and each member's path (`rl-game:
-join: <name> via <tag>`, then `rl-game: path: <name> now via <tag>` when
-it changes); when joining, each step (`rl-game: Asking the game through
-the relays…`) and the connection line (`rl-game: connected …`). The
+`olr-game` prints on its console (stdout): when hosting, each new reach
+line (`olr-game: reach: …`), each join line (`olr-game: relays: …`), each
+relay it listens on as it connects or fails (`olr-game: relay <url>:
+connected` or `… unreachable: …`) and each member's path (`olr-game:
+join: <name> via <tag>`, then `olr-game: path: <name> now via <tag>` when
+it changes); when joining, each step (`olr-game: Asking the game through
+the relays…`) and the connection line (`olr-game: connected …`). The
 invite code is not printed: copy it from the lobby.
 
 ### When a join fails
@@ -260,7 +260,7 @@ The joiner's Multiplayer screen says why:
 | "the relays refused this join's handshake as invalid: is this PC's clock right? (set it automatically)" | a relay found the join's events invalid, most often dated too far from its clock: set this PC's clock automatically (the network check prints each relay's clock) |
 | "the game did not answer through the relays (it may have closed, its relays may differ from yours, or one of the two PCs' clocks is off by more than a minute)" | is the game still hosted? Do you share a relay with the host? An invite names the host's relays; a listed game is found on yours. Are both PCs' clocks right (set automatically)? The host's lobby says "Ignored a join … dated …" when they are not |
 | "the game is busy with other joins: try again in a moment" | the host is answering 8 other joins; try again |
-| "no network path to the game: hole punching failed and no TURN relay could be used. The host can open port N (TCP and UDP) on their router (UPnP, or port forwarding) or use a dedicated server; anyone can run a TURN relay (rl-server --relay)" | see below |
+| "no network path to the game: hole punching failed and no TURN relay could be used. The host can open port N (TCP and UDP) on their router (UPnP, or port forwarding) or use a dedicated server; anyone can run a TURN relay (olr-server --relay)" | see below |
 | "no network path to the game, not even through the TURN relay …: try again, or ask the host to open port N on their router" | the relay was found but did not connect; try again, or open the port |
 | "this game has no address, and there are no relays to join it through (set relays in Options → Online)" | put relays back in Options |
 
@@ -275,26 +275,26 @@ Fix one of these:
    (see "Open the port"), set the Public address in Options → Online, and
    host again.
 3. Or host on a dedicated server with a public address.
-4. Or get a TURN relay: someone with an open port runs `rl-server
+4. Or get a TURN relay: someone with an open port runs `olr-server
    --relay`, or you add one you run in Options → Online → TURN relays.
-5. Run `rl-server --nat-check` on both machines (below) to see which
+5. Run `olr-server --nat-check` on both machines (below) to see which
    side is the problem.
 
 ### Windows Firewall
 
-The first time `rl-game` (or `rl-server`) opens its port, Windows asks
+The first time `olr-game` (or `olr-server`) opens its port, Windows asks
 whether to allow it on the network. Allow it on **private and public**
 networks: Windows calls many home networks "public". Hole punching and
 relays work without that permission, since Windows lets in the replies to
 what the game sent out. An open port needs it: a joiner's connection to
 the router's opened or forwarded port arrives unasked, and the firewall
-drops it. If you once clicked Cancel, allow `rl-game` in Windows Security
+drops it. If you once clicked Cancel, allow `olr-game` in Windows Security
 → Firewall & network protection → "Allow an app through firewall".
 
 ### Run a TURN relay
 
 ```
-rl-server --config server.ron --relay
+olr-server --config server.ron --relay
 ```
 
 A relay lets players whose routers cannot meet play through it. It
@@ -345,10 +345,10 @@ for an office relay), and never to its own ports. Its credentials are public by 
 use it within those limits. It sees the IP addresses of the players it
 relays.
 
-### Check the network: `rl-server --nat-check`
+### Check the network: `olr-server --nat-check`
 
 ```
-rl-server --nat-check [--config server.ron]
+olr-server --nat-check [--config server.ron]
 ```
 
 It prints what stands between this machine and the players, then exits.
@@ -421,11 +421,11 @@ more than a minute.
 
 | | Linux (a terminal) | Windows (PowerShell) |
 |---|---|---|
-| the game, keeping its output | `./rl-game \| tee rl-game.txt` | `.\rl-game.exe \| Tee-Object -FilePath rl-game.txt` |
-| the network check | `./rl-server --nat-check > nat-check-host.txt` | `.\rl-server.exe --nat-check > nat-check-host.txt` |
+| the game, keeping its output | `./olr-game \| tee olr-game.txt` | `.\olr-game.exe \| Tee-Object -FilePath olr-game.txt` |
+| the network check | `./olr-server --nat-check > nat-check-host.txt` | `.\olr-server.exe --nat-check > nat-check-host.txt` |
 
 On the joining PC, name the check's file `nat-check-joiner.txt`. (In
-cmd.exe, `rl-game.exe` and `rl-server.exe --nat-check > nat-check-host.txt`
+cmd.exe, `olr-game.exe` and `olr-server.exe --nat-check > nat-check-host.txt`
 work as written. Windows PowerShell 5.1 writes the `>` file as UTF-16:
 harmless, but open it with an editor rather than `type`.)
 
@@ -457,7 +457,7 @@ harmless, but open it with an editor rather than `type`.)
    "When a join fails") and the host's join lines. Then run the network
    check on both PCs (the command above): its `NAT:` line is
    each router's kind, its `relay …:` lines each relay's clock against
-   that PC's. Keep both files with both `rl-game.txt` outputs, then try
+   that PC's. Keep both files with both `olr-game.txt` outputs, then try
    the fixes under "No network path".
 
 To exercise hole punching even when the host's router opens the port,
@@ -493,7 +493,7 @@ the last two: see "Two players only" below). If the host quits, crashes, loses
 its network or freezes during a match, the players who are left move the
 game to a new host and play on, provided there are enough of them (see
 "Two players only" below). This works in a hosted game and on a dedicated
-server (`rl-server`), over the LAN, direct links and the relays.
+server (`olr-server`), over the LAN, direct links and the relays.
 
 **What you see.** The top line of the match reads "The host is gone:
 finding who takes over…" and then, depending on who you are:
@@ -593,9 +593,9 @@ plays on and the blip stays a stall). It shows when the host sees it:
 while it is still cut off. Its replay is kept too.
 
 **If a migration fails: the attempt lines.** The console (the terminal
-where you started `./rl-game | tee rl-game.txt`) and the log file say
-what each try to reach a successor did, as `rl-game: migration: …`
-(`migration: …` in `rl-server`'s log and `rl-cli`'s stderr). These lines
+where you started `./olr-game | tee olr-game.txt`) and the log file say
+what each try to reach a successor did, as `olr-game: migration: …`
+(`migration: …` in `olr-server`'s log and `olr-cli`'s stderr). These lines
 include the address of the player tried, so they appear only on your own
 PC: they are never sent to another player. Each line is said once per
 successor, route and window:
@@ -648,27 +648,27 @@ lines with the test report.
   through the relays (or fails without them). See "Windows Firewall".
 
 **Trying it.** `cargo xtask net-soak` plays seeded online cases with host
-crashes, departures and freezes; `rl-cli net-sim --exit 0:600:crash`,
-`--host-freeze from:until` and `--profile-change` make such a case, `rl-cli
+crashes, departures and freezes; `olr-cli net-sim --exit 0:600:crash`,
+`--host-freeze from:until` and `--profile-change` make such a case, `olr-cli
 net-sim --from <case>` replays a kept one (`fixtures/net/cases`), and
-`rl-cli net-client --no-standby` is a follower that never takes over.
+`olr-cli net-client --no-standby` is a follower that never takes over.
 
 ### Try a migration (playtest)
 
 This adds to "Two PCs across home routers" and needs three players: three
-PCs, or two PCs and a dedicated server (`rl-server`, see "Dedicated
+PCs, or two PCs and a dedicated server (`olr-server`, see "Dedicated
 server") on a third machine or a VPS. Use the release zips. A migration
 through the public relays is unmeasured, so with PCs on different
 networks note how long each step took.
 
 1. **Three PCs:** the first hosts (Multiplayer → Host a game, Invite
    only), the other two join with the invite code. Start the game with
-   `./rl-game | tee rl-game.txt` (Windows: `.\rl-game.exe | Tee-Object
-   -FilePath rl-game.txt`) on all three so the output is kept. On
+   `./olr-game | tee olr-game.txt` (Windows: `.\olr-game.exe | Tee-Object
+   -FilePath olr-game.txt`) on all three so the output is kept. On
    Windows, allow rust-liero through the firewall when asked (private
    networks): every PC opens a standby port on joining, and without it a
    migration to that PC can only go through the relays.
-   **Two PCs and a server:** run `rl-server` with `visibility: Invite`,
+   **Two PCs and a server:** run `olr-server` with `visibility: Invite`,
    `fill_bots: 1` and `min_players: 2` (see "Dedicated server" and
    `fixtures/server/example.ron`: with 1 it would start with the first
    player alone), the two PCs join it with the invite code and both press
@@ -693,7 +693,7 @@ networks note how long each step took.
    scores). The online results' scores are equal on both PCs.
 6. **If anything differs** (a stall of more than a few seconds, the
    screens, the replays, a desync, or a Host lost screen), keep both PCs'
-   `desyncs/` folders and `rl-game.txt` files and note what the top line
+   `desyncs/` folders and `olr-game.txt` files and note what the top line
    said and for how long, and the `migration:` lines of both PCs (the
    attempt lines above give the reason).
 7. **Also try, each in its own match:**
@@ -755,8 +755,8 @@ once your content is complete.
 ## Dedicated server
 
 ```
-rl-server --config server.ron [--content content/packs] [--data-dir <dir>] [--relay]
-rl-server --nat-check [--config server.ron]
+olr-server --config server.ron [--content content/packs] [--data-dir <dir>] [--relay]
+olr-server --nat-check [--config server.ron]
 ```
 
 Without `--content` the server uses the `content/packs` beside it (an
@@ -804,7 +804,7 @@ own by default) holds `server-identity.ron`, the bans file, `server.log`
 (clear it by deleting it while the server is stopped). Two servers on one
 data directory cannot share `downloads/`: the second says so in its log
 and runs without one (players' skins it lacks are drawn as the default).
-A bot client, `rl-cli net-client --join ADDR --bot`, downloads what its
+A bot client, `olr-cli net-client --join ADDR --bot`, downloads what its
 `--content` lacks into `--cache DIR` (a temporary directory by default).
 Ctrl+C, SIGTERM or typing `quit` stops it cleanly.
 
@@ -837,7 +837,7 @@ port): STUN finds its address.
 
 ## Testing a bad network
 
-`rl-game --net-sim <profile>` hosts with three bots in the same process and
+`olr-game --net-sim <profile>` hosts with three bots in the same process and
 joins over a loopback link impaired as the profile: `lan`, `good`, `typical`,
 `bad` or `awful`. Press **F3** in any online match for the network overlay
 (ping, input delay, rollback, loss).
@@ -855,5 +855,5 @@ WSL2's default NAT networking hides the Linux side from your LAN, so a host
 or server run inside WSL2 is not reachable by other machines and does not
 see LAN announcements. Either set `networkingMode=mirrored` in
 `%UserProfile%\.wslconfig` under `[wsl2]` and run `wsl --shutdown`, or play
-with the Windows build (`cargo xtask windows` cross-compiles `rl-cli` and
-`rl-game`) for real games.
+with the Windows build (`cargo xtask windows` cross-compiles `olr-cli` and
+`olr-game`) for real games.

@@ -1,0 +1,51 @@
+[package]
+name = "olr-discovery"
+description = "Finding games: the Nostr core (events, relay frames), and what later builds on it."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-proto.workspace = true
+olr-lobby.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+thiserror.workspace = true
+# Invite codes (N42): bech32m; the payload is postcard.
+bech32.workspace = true
+postcard.workspace = true
+# Relay connections (`ws://` and `wss://`): rustls with the aws-lc-rs
+# provider and webpki-roots (workspace pins); tungstenite's rustls feature
+# lets `client_tls_with_config` take our rustls `ClientConfig`.
+rustls.workspace = true
+webpki-roots.workspace = true
+tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
+# NIP-44 v2 (N44): secp256k1 ECDH, HKDF-SHA256, ChaCha20, HMAC-SHA256, base64.
+k256.workspace = true
+hkdf.workspace = true
+hmac.workspace = true
+chacha20.workspace = true
+base64.workspace = true
+# The test relay's certificates (feature `test-relay`): the version already
+# in the lockfile.
+rcgen = { version = "=0.14.10", optional = true, default-features = false, features = ["aws_lc_rs"] }
+
+[features]
+test-relay = ["dep:rcgen"]
+
+[dev-dependencies]
+proptest.workspace = true
+# The integration tests exercise the test relay.
+olr-discovery = { path = ".", features = ["test-relay"] }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

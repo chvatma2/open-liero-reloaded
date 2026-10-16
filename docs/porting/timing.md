@@ -1,4 +1,4 @@
-# OLX timing, as ported in `rl-sim`
+# OLX timing, as ported in `olr-sim`
 
 Spec §5.2 asked for this to be settled before any physics. Everything below
 was confirmed bit for bit by the oracle (`fixtures/oracle`); sources are at
@@ -8,11 +8,11 @@ OLX commit `d1ad953f`.
 
 - `AbsTime` and `TimeDiff` are whole **milliseconds** in a `u64` (`include/olx-types.h:29-100`).
 - **Seconds** are `ms * 0.001f`. So 20 ms is `20 * 0.001f`, which is **not** the
-  same float as `0.02f`. `rl_math::TimeDiff::seconds` reproduces this.
+  same float as `0.02f`. `olr_math::TimeDiff::seconds` reproduces this.
 
 ## The two clocks
 
-| Clock | OLX | Step | `rl-sim` |
+| Clock | OLX | Step | `olr-sim` |
 |---|---|---|---|
 | **Frame clock** | `Game::simulationTime`, read by `GetPhysicsTime()` | `Game::FixedFrameTime` = 10 ms | `World::time` |
 | **Physics clock** | `CClient::fLastSimulationTime` | `LX56PhysicsDT` = `TimeDiff(1000 / LX56PhysicsFPS)` | `World::physics_time` |

@@ -38,7 +38,7 @@ pub fn run(offline: bool) -> anyhow::Result<bool> {
 
 /// `cargo xtask full`: `check`, then the bot-match grid ([`FULL_TESTS`]),
 /// then the GPU tier (the renderer's GPU tests,
-/// the render goldens and the HUD snapshots, with `RL_GPU_TESTS` set), skipped with a notice
+/// the render goldens and the HUD snapshots, with `OLR_GPU_TESTS` set), skipped with a notice
 /// when no graphics adapter opens, the audio device check (OLX sounds
 /// on the default output), skipped with a notice when no device opens,
 /// the end-to-end autoplay on Xvfb (`e2e.rs`; skipped without Xvfb), the
@@ -51,43 +51,43 @@ pub fn full(offline: bool) -> anyhow::Result<bool> {
 }
 
 /// The full tier's long CPU tests as `(package, test target)`, run with
-/// `RL_FULL_TESTS` set: the headless bot-match grid (both mods × 4 levels ×
+/// `OLR_FULL_TESTS` set: the headless bot-match grid (both mods × 4 levels ×
 /// 3 seeds, chaos and Deathmatch bots, with its coverage) and the
 /// 30-minute bounded match (spec §7.1, plan 6 Review Focus 5), and the
 /// online grid of bots over the network profiles (`net_sim`, plan 9), the
-/// 10 000 unreliable datagrams over real sockets (`rl-net`'s `link`,
-/// 2 000 in `check`), and real-transport matches of `rl-server` and 8 bot
+/// 10 000 unreliable datagrams over real sockets (`olr-net`'s `link`,
+/// 2 000 in `check`), and real-transport matches of `olr-server` and 8 bot
 /// clients per network profile and a spectator joining mid-match
-/// (`rl-cli`'s `transport`, spec §9.4; two clients in `check`), and
-/// rl-game's integration tests again for its full-tier migration case
+/// (`olr-cli`'s `transport`, spec §9.4; two clients in `check`), and
+/// olr-game's integration tests again for its full-tier migration case
 /// (plan 12c Task 9: `a_client_whose_frames_stop_stays_joined_with_migration`).
 ///
 /// [`TIMED_TESTS`] are not in this list: they run first and alone.
 pub const FULL_TESTS: &[(&str, &str)] =
-    &[("rl-cli", "net_sim"), ("rl-cli", "transport"), ("rl-net", "link"), ("rl-game", "integration")];
+    &[("olr-cli", "net_sim"), ("olr-cli", "transport"), ("olr-net", "link"), ("olr-game", "integration")];
 
 /// The full tier's tests that assert wall-clock budgets (`grid`'s p99 tick
 /// of 10 ms): a budget measures the code only when nothing else runs, so
 /// `bot-grid` runs these in their own nextest invocation, one test at a
 /// time, before [`FULL_TESTS`] (beside the online tests the grid's p99
 /// doubled, from 4.3 ms to 9 ms, and went over 10 ms in `full`).
-pub const TIMED_TESTS: &[(&str, &str)] = &[("rl-cli", "grid")];
+pub const TIMED_TESTS: &[(&str, &str)] = &[("olr-cli", "grid")];
 
 /// The test targets of the GPU tier as `(package, test target)`.
 pub const GPU_TESTS: &[(&str, &str)] = &[
-    ("rl-render", "gpu"),
-    ("rl-cli", "render_golden"),
-    ("rl-cli", "gpu_bench"),
-    ("rl-game", "soak"),
-    ("rl-ui", "hud_snapshots"),
+    ("olr-render", "gpu"),
+    ("olr-cli", "render_golden"),
+    ("olr-cli", "gpu_bench"),
+    ("olr-game", "soak"),
+    ("olr-ui", "hud_snapshots"),
 ];
 
-/// Whether `rl-render`'s `adapter` example opens a graphics adapter:
+/// Whether `olr-render`'s `adapter` example opens a graphics adapter:
 /// `Ok(Ok(adapter))` when it does, `Ok(Err(notice))` when none opens, `Err`
 /// when the probe itself fails.
 pub fn probe_adapter() -> Result<Result<String, String>, String> {
     let probe = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-        .args(["run", "--quiet", "-p", "rl-render", "--example", "adapter"])
+        .args(["run", "--quiet", "-p", "olr-render", "--example", "adapter"])
         .current_dir(root())
         .output()
         .map_err(|e| format!("cannot run cargo: {e}"))?;
@@ -116,7 +116,7 @@ fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
         args.extend(["-p", package, "--test", test]);
     }
     let mut envs = envs.to_vec();
-    envs.push(("RL_GPU_TESTS", PathBuf::from("1")));
+    envs.push(("OLR_GPU_TESTS", PathBuf::from("1")));
     cargo(&args, &envs)
 }
 
@@ -124,7 +124,7 @@ fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
 /// then [`FULL_TESTS`] together.
 fn full_cpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
     let mut envs = envs.to_vec();
-    envs.push(("RL_FULL_TESTS", PathBuf::from("1")));
+    envs.push(("OLR_FULL_TESTS", PathBuf::from("1")));
     let nextest = has_nextest();
     for (tests, serial) in [(TIMED_TESTS, true), (FULL_TESTS, false)] {
         let mut args = if nextest {
@@ -143,11 +143,11 @@ fn full_cpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
     Ok(())
 }
 
-/// `rl-audio`'s `device_check` example: plays two OLX sounds on the default
+/// `olr-audio`'s `device_check` example: plays two OLX sounds on the default
 /// output device. Exit 3 means no device opened (the game runs silently).
 fn audio_step(envs: &[(&str, PathBuf)]) -> StepResult {
     let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-    cmd.args(["run", "--quiet", "-p", "rl-audio", "--example", "device_check"]).current_dir(root());
+    cmd.args(["run", "--quiet", "-p", "olr-audio", "--example", "device_check"]).current_dir(root());
     for (k, v) in envs {
         cmd.env(k, v);
     }
@@ -201,7 +201,7 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
     } else {
         step("olx-content", &mut || match fetch::verify() {
             Ok(paths) => {
-                envs = vec![("RL_OLX_GAMEDIR", paths.gamedir), ("RL_CONTENT_DIR", paths.content)];
+                envs = vec![("OLR_OLX_GAMEDIR", paths.gamedir), ("OLR_CONTENT_DIR", paths.content)];
                 Ok(())
             }
             Err(e) => Err(format!("{e:#}")),
@@ -233,7 +233,7 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
         step("bot-grid", &mut || full_cpu_step(&envs));
         step("gpu", &mut || gpu_step(&envs));
         step("audio", &mut || audio_step(&envs));
-        let content = envs.iter().find(|(k, _)| *k == "RL_CONTENT_DIR").map(|(_, v)| v.clone());
+        let content = envs.iter().find(|(k, _)| *k == "OLR_CONTENT_DIR").map(|(_, v)| v.clone());
         step("e2e", &mut || crate::e2e::run(content.as_deref()));
         let t = Instant::now();
         finish("net-nat", t, crate::nat::step(offline));

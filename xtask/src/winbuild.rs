@@ -1,4 +1,4 @@
-//! The native Windows build (plan 8): `rl-cli` and `rl-game`
+//! The native Windows build (plan 8): `olr-cli` and `olr-game`
 //! cross-compiled for `x86_64-pc-windows-gnu` with mingw-w64, staged with
 //! the content in Windows' temp directory (`%TEMP%\rust-liero-envelope`)
 //! and run from WSL through interop: nothing is installed on Windows.
@@ -22,19 +22,19 @@ pub const CMD: &str = "/mnt/c/Windows/System32/cmd.exe";
 /// Windows PowerShell (part of Windows), to stop a run's processes.
 pub const POWERSHELL: &str = "/mnt/c/Windows/System32/WindowsPowerShell/v1.0/powershell.exe";
 /// The variable that hands the stage's Windows path to `STOP_SCRIPT`.
-pub const STAGE_VAR: &str = "RL_STAGE";
-/// Force-stops every process whose image lies under `$env:RL_STAGE` and
+pub const STAGE_VAR: &str = "OLR_STAGE";
+/// Force-stops every process whose image lies under `$env:OLR_STAGE` and
 /// prints how many: matched by path prefix, never by image name, so the
 /// user's own processes are never touched. The path stays out of the
 /// script's source (PowerShell takes `'` and U+2018-U+201B as quotes).
-pub const STOP_SCRIPT: &str = "if (-not $env:RL_STAGE) { exit 2 }; \
-    $p = $env:RL_STAGE + '\\'; \
+pub const STOP_SCRIPT: &str = "if (-not $env:OLR_STAGE) { exit 2 }; \
+    $p = $env:OLR_STAGE + '\\'; \
     $s = @(Get-Process | Where-Object { $_.Path -and $_.Path.StartsWith($p, [StringComparison]::OrdinalIgnoreCase) }); \
     $s | Stop-Process -Force; $s.Count";
 /// A generous bound for one run (an envelope point takes a minute or two):
 /// past it `run` stops the process and fails.
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-pub const EXES: [&str; 3] = ["rl-cli.exe", "rl-game.exe", "rl-detcheck.exe"];
+pub const EXES: [&str; 3] = ["olr-cli.exe", "olr-game.exe", "olr-detcheck.exe"];
 /// mingw's runtime DLLs an exe may import; copied beside it when it does.
 pub const MINGW_DLLS: [&str; 3] = ["libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"];
 /// The stage's directory name in `%TEMP%`.
@@ -92,7 +92,7 @@ pub fn build_missing() -> Option<String> {
     None
 }
 
-/// Builds `rl-cli`, `rl-game` and `rl-detcheck` for Windows (release); gives their directory.
+/// Builds `olr-cli`, `olr-game` and `olr-detcheck` for Windows (release); gives their directory.
 pub fn build() -> Result<PathBuf, String> {
     let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
         .current_dir(root())
@@ -103,11 +103,11 @@ pub fn build() -> Result<PathBuf, String> {
             "--target",
             TARGET,
             "-p",
-            "rl-cli",
+            "olr-cli",
             "-p",
-            "rl-game",
+            "olr-game",
             "-p",
-            "rl-detcheck",
+            "olr-detcheck",
         ])
         .env("CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER", LINKER)
         .output()
@@ -423,14 +423,14 @@ pub fn command() -> anyhow::Result<bool> {
         println!("FAIL windows: {why}");
         return Ok(false);
     }
-    println!("building rl-cli and rl-game for {TARGET} (release; the first build takes minutes)...");
+    println!("building olr-cli and olr-game for {TARGET} (release; the first build takes minutes)...");
     let release = build().map_err(anyhow::Error::msg)?;
     let stage = stage(&release, &root().join("content/packs"), &[]).map_err(anyhow::Error::msg)?;
     println!("staged in {}", stage.dir.display());
     let mut ok = true;
     for backend in ["dx12", "vulkan"] {
         let args = ["gpu-bench", "--list-adapters", "--backend", backend].map(String::from);
-        match run(&stage, "rl-cli.exe", &args, &[], RUN_TIMEOUT) {
+        match run(&stage, "olr-cli.exe", &args, &[], RUN_TIMEOUT) {
             Ok(out) => println!(
                 "{backend}:\n{}{}",
                 String::from_utf8_lossy(&out.stdout),
@@ -482,9 +482,9 @@ mod tests {
     fn the_stop_script_targets_only_the_stage() {
         // Only processes whose image lies under the stage, never by image name.
         assert!(STOP_SCRIPT.contains("$_.Path.StartsWith($p, [StringComparison]::OrdinalIgnoreCase)"));
-        assert!(STOP_SCRIPT.contains("$p = $env:RL_STAGE + '\\'"));
+        assert!(STOP_SCRIPT.contains("$p = $env:OLR_STAGE + '\\'"));
         assert!(STOP_SCRIPT.contains("Stop-Process -Force"));
-        assert!(!STOP_SCRIPT.contains("rl-") && !STOP_SCRIPT.contains("-Name"));
+        assert!(!STOP_SCRIPT.contains("olr-") && !STOP_SCRIPT.contains("-Name"));
         // Every quote PowerShell knows in the path: it goes through the
         // variable, never into the script's source.
         for q in ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
@@ -526,11 +526,11 @@ mod tests {
     fn runs_fail_on_a_bad_exit_and_are_stopped_past_their_timeout() {
         let stage = Stage { dir: windows_temp().unwrap().join(STAGE) };
         let bad = ["gpu-bench", "--backend", "nope"].map(String::from);
-        let err = run(&stage, "rl-cli.exe", &bad, &[], RUN_TIMEOUT).unwrap_err();
+        let err = run(&stage, "olr-cli.exe", &bad, &[], RUN_TIMEOUT).unwrap_err();
         assert!(err.contains("failed (exit status: "), "{err}");
 
         let game = ["--no-sound", "--content", "content", "--data-dir", "data"].map(String::from);
-        let err = run(&stage, "rl-game.exe", &game, &[], Duration::from_secs(5)).unwrap_err();
+        let err = run(&stage, "olr-game.exe", &game, &[], Duration::from_secs(5)).unwrap_err();
         assert!(err.ends_with("did not finish within 5 s; stopped 1 process(es) under the stage"), "{err}");
         // Nothing is left: another stop finds none.
         assert_eq!(stop_stage_processes(&stage.dir), Ok(0));

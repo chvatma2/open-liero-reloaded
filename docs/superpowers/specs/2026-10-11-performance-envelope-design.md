@@ -37,7 +37,7 @@ Missing:
 - every render number comes from llvmpipe (the CPU); nothing from the
   user's RTX 5070 Ti, under WSL or natively;
 - one map (1350 × 550); no large maps, no art scale above the packs';
-- the effects cap (`rl_fx::MAX_ENTITIES`, 1024) is hit in every stress run,
+- the effects cap (`olr_fx::MAX_ENTITIES`, 1024) is hit in every stress run,
   so its true cost is unknown;
 - no breaking points: every run is a single load;
 - no OLX numbers at all.
@@ -68,18 +68,18 @@ one axis from it; each point runs 3 times and keeps the medians.
 |---|---|---|
 | Worms | 2, 4, 8, 16, 24, 32 | 32 is OLX's `MAX_WORMS` and ours. Raising it is a separate decision; the report gives the cost per worm and a projection past 32. |
 | Projectile pool | 3000, 10 000, 20 000, 50 000, 100 000 | MW 1.0 (the heavy mod); `MatchOptions::pool_capacity` exists. |
-| Effects cap | 1024, 4096, 16 384, 65 536 | Made a bench-only option (as the pool), default unchanged. Steps `rl_fx` and builds the draw list. |
+| Effects cap | 1024, 4096, 16 384, 65 536 | Made a bench-only option (as the pool), default unchanged. Steps `olr_fx` and builds the draw list. |
 | Map size | 1024², 2048², 4096 × 2048, 4096² | Generated in memory (noise caves, seeded), no pack written. 4096 is OLX's largest side. Bots' route cache (`AreaCache`) build and update cost, carving, the colour terrain. |
 | Art scale | 1, 2, 4, 8 at 2048² | The colour map and its dirty-rectangle uploads; memory. 8 is `MAX_ART_SCALE`. |
 
 Measured per point: tick p50/p99/max split into simulation and bots'
 thinking, entities and events, the draw-list build, the colour terrain
-edits, memory peak, and any cap reached. This extends `rl-cli stress`
+edits, memory peak, and any cap reached. This extends `olr-cli stress`
 (new options) rather than adding a second runner.
 
 ## 5. The GPU (the user's machine)
 
-- **Real GPU time:** `rl-render` measures each pass with wgpu timestamp
+- **Real GPU time:** `olr-render` measures each pass with wgpu timestamp
   queries when the adapter offers them (`Features::TIMESTAMP_QUERY`), else
   reports CPU-side frame time only, saying so. WSL's GL path is expected to
   lack them.
@@ -106,7 +106,7 @@ edits, memory peak, and any cap reached. This extends `rl-cli stress`
   gets a timing hook that writes each simulated frame's physics time to a
   separate file (the traces stay byte-identical). Scenarios: the existing
   oracle scenarios plus new heavy ones (worms firing to fill OLX's 3000
-  projectiles). `rl-cli scenario` times the same scenarios in `rl-sim`,
+  projectiles). `olr-cli scenario` times the same scenarios in `olr-sim`,
   which reproduces them bit-exactly, so the work is identical. Same machine,
   the Docker overhead noted.
 - **Rendering:** OLX draws on the CPU at 640 × 480 (SDL, 2×); its frame time
@@ -140,8 +140,8 @@ edits, memory peak, and any cap reached. This extends `rl-cli stress`
 - No change to the simulation's behaviour: oracle traces, match goldens and
   render goldens stay byte-identical. New knobs (effects cap, generated
   levels, the probe pass) are bench-only options with today's defaults.
-- The simulation stays `no_std` and WASM-clean; timing lives in `rl-cli`,
-  `rl-render` (behind an option) and `xtask`.
+- The simulation stays `no_std` and WASM-clean; timing lives in `olr-cli`,
+  `olr-render` (behind an option) and `xtask`.
 - Measurements on the user's machine need it otherwise idle; the command
   says so and records the load average before each point.
 - WSL and Windows interop: the Windows build and its runs need nothing

@@ -1,7 +1,7 @@
 //! `cargo xtask oracle-gen-weapons`: writes one oracle scenario per weapon of
 //! every mod that `content/olx-manifest.ron` imports, to
 //! `fixtures/oracle/weapons/<mod slug>/<weapon id>.ron`. The weapon names come
-//! from the imported packs (`RL_CONTENT_DIR`, default `content/packs`). Record
+//! from the imported packs (`OLR_CONTENT_DIR`, default `content/packs`). Record
 //! the traces afterwards with `cargo xtask oracle-record`.
 //!
 //! Every scenario is the same apart from the weapon. On FossilFacility's dirt
@@ -19,8 +19,8 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, bail};
-use rl_oracle::{Scenario, WEAPON_SLOTS};
-use rl_vfs::DirFs;
+use olr_oracle::{Scenario, WEAPON_SLOTS};
+use olr_vfs::DirFs;
 
 use crate::{fetch, root};
 
@@ -79,9 +79,9 @@ pub fn scenario_text(mod_dir: &str, weapon: &str) -> String {
     )
 }
 
-/// The imported packs: `RL_CONTENT_DIR`, or `content/packs`.
+/// The imported packs: `OLR_CONTENT_DIR`, or `content/packs`.
 fn content_dir() -> PathBuf {
-    std::env::var_os("RL_CONTENT_DIR").map_or_else(|| root().join("content/packs"), PathBuf::from)
+    std::env::var_os("OLR_CONTENT_DIR").map_or_else(|| root().join("content/packs"), PathBuf::from)
 }
 
 /// Writes every mod's weapon scenarios and removes those of weapons that no
@@ -90,9 +90,9 @@ pub fn run() -> anyhow::Result<bool> {
     let content = content_dir();
     let fixtures = root().join("fixtures/oracle").join(DIR);
     for mod_dir in fetch::mods()? {
-        let slug = rl_data::slug::slug(&mod_dir);
+        let slug = olr_data::slug::slug(&mod_dir);
         let pack = content.join(format!("olx-{slug}"));
-        let m = rl_pack::read_mod(&DirFs::new(&pack))
+        let m = olr_pack::read_mod(&DirFs::new(&pack))
             .with_context(|| format!("reading {} (run `cargo xtask fetch-olx-content`)", pack.display()))?;
         let out = fixtures.join(&slug);
         std::fs::create_dir_all(&out)?;

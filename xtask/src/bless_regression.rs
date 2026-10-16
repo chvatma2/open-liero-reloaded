@@ -1,10 +1,10 @@
 //! `cargo xtask bless-regression --reason <text> [--from <failure>]`
 //! (spec §7.2, §7.3): re-records the golden checksum streams in
-//! `fixtures/matches/` (by running `rl-cli`'s `golden` test with
-//! `RL_BLESS_REGRESSION` set) and records why in `fixtures/blessings.log`.
+//! `fixtures/matches/` (by running `olr-cli`'s `golden` test with
+//! `OLR_BLESS_REGRESSION` set) and records why in `fixtures/blessings.log`.
 //! `--from target/failures/<name>.ron` first adds that failed match as a new
 //! golden (its record names the match; the stream is recorded now, once
-//! the failure is fixed). A record named `net-*.ron` (`rl-cli net-sim`'s) is
+//! the failure is fixed). A record named `net-*.ron` (`olr-cli net-sim`'s) is
 //! kept as a net case in `fixtures/net/cases/` instead, and the run checks
 //! the cases rather than re-recording goldens.
 
@@ -53,7 +53,7 @@ pub fn add_failure(dir: &Path, from: &Path) -> anyhow::Result<(PathBuf, Kept)> {
 pub fn run(reason: &str, from: Option<&Path>) -> anyhow::Result<bool> {
     ensure!(!reason.trim().is_empty(), "--reason must say why the matches change");
     let root = root();
-    let content = std::env::var_os("RL_CONTENT_DIR").map_or_else(|| root.join("content/packs"), Into::into);
+    let content = std::env::var_os("OLR_CONTENT_DIR").map_or_else(|| root.join("content/packs"), Into::into);
     if !content.is_dir() {
         bail!("{} not found: run `cargo xtask fetch-olx-content` first", content.display());
     }
@@ -68,20 +68,20 @@ pub fn run(reason: &str, from: Option<&Path>) -> anyhow::Result<bool> {
             let changed = changed_files(NET_DIR, &before_net, &snapshot(&root.join(NET_DIR))?);
             log_blessing("bless-regression", reason, &changed)?;
             let status = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-                .args(["test", "--quiet", "-p", "rl-cli", "--test", "net_cases"])
+                .args(["test", "--quiet", "-p", "olr-cli", "--test", "net_cases"])
                 .current_dir(&root)
-                .env("RL_CONTENT_DIR", &content)
+                .env("OLR_CONTENT_DIR", &content)
                 .status()
                 .context("cannot run cargo")?;
-            ensure!(status.success(), "rl-cli --test net_cases failed: the case still fails");
+            ensure!(status.success(), "olr-cli --test net_cases failed: the case still fails");
             return Ok(true);
         }
     }
     let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
-        .args(["test", "--quiet", "-p", "rl-cli", "--test", "golden"])
+        .args(["test", "--quiet", "-p", "olr-cli", "--test", "golden"])
         .current_dir(&root)
-        .env("RL_BLESS_REGRESSION", "1")
-        .env("RL_CONTENT_DIR", &content)
+        .env("OLR_BLESS_REGRESSION", "1")
+        .env("OLR_CONTENT_DIR", &content)
         .output()
         .context("cannot run cargo")?;
     // A failing run must not leave a changed golden unlogged.
@@ -91,7 +91,7 @@ pub fn run(reason: &str, from: Option<&Path>) -> anyhow::Result<bool> {
     }
     if !out.status.success() {
         eprintln!("{}{}", String::from_utf8_lossy(&out.stdout), String::from_utf8_lossy(&out.stderr));
-        bail!("rl-cli --test golden failed while blessing");
+        bail!("olr-cli --test golden failed while blessing");
     }
     if changed.is_empty() {
         println!("the golden matches are unchanged: nothing to bless");

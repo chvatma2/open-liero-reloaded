@@ -2,8 +2,8 @@
 //! render goldens in `fixtures/render/` and the HUD snapshots in
 //! `fixtures/ui/`, and records why in `fixtures/blessings.log` (spec §7.2),
 //! with the date and the files that changed. Each golden test writes its
-//! PNGs when `RL_BLESS_RENDER` is set; the GPU goldens (`rl-cli render`
-//! frames, `rl-ui`'s HUD snapshots) need a graphics adapter.
+//! PNGs when `OLR_BLESS_RENDER` is set; the GPU goldens (`olr-cli render`
+//! frames, `olr-ui`'s HUD snapshots) need a graphics adapter.
 
 use std::collections::BTreeMap;
 use std::io::Write as _;
@@ -16,12 +16,12 @@ use anyhow::{Context, bail, ensure};
 use crate::root;
 
 /// The golden tests as `(package, test target, needs a graphics adapter)`:
-/// the colour terrain (CPU), `rl-cli render`'s frames and the HUD's image
+/// the colour terrain (CPU), `olr-cli render`'s frames and the HUD's image
 /// snapshots (GPU).
 const GOLDEN_TESTS: &[(&str, &str, bool)] = &[
-    ("rl-scenario", "render_golden", false),
-    ("rl-cli", "render_golden", true),
-    ("rl-ui", "hud_snapshots", true),
+    ("olr-scenario", "render_golden", false),
+    ("olr-cli", "render_golden", true),
+    ("olr-ui", "hud_snapshots", true),
 ];
 /// Where they write.
 const GOLDEN_DIRS: &[&str] = &["fixtures/render", "fixtures/ui"];
@@ -108,7 +108,7 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
     let reason = reason.trim();
     ensure!(!reason.is_empty(), "--reason must say why the goldens change");
     let root = root();
-    let content = std::env::var_os("RL_CONTENT_DIR").map_or_else(|| root.join("content/packs"), Into::into);
+    let content = std::env::var_os("OLR_CONTENT_DIR").map_or_else(|| root.join("content/packs"), Into::into);
     if !content.is_dir() {
         bail!("{} not found: run `cargo xtask fetch-olx-content` first", content.display());
     }
@@ -133,9 +133,9 @@ pub fn run(reason: &str) -> anyhow::Result<bool> {
         let out = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
             .args(["test", "--quiet", "-p", package, "--test", test])
             .current_dir(&root)
-            .env("RL_BLESS_RENDER", "1")
-            .env("RL_GPU_TESTS", "1")
-            .env("RL_CONTENT_DIR", &content)
+            .env("OLR_BLESS_RENDER", "1")
+            .env("OLR_GPU_TESTS", "1")
+            .env("OLR_CONTENT_DIR", &content)
             .output()
             .context("cannot run cargo")?;
         if !out.status.success() {
@@ -173,7 +173,7 @@ mod tests {
 
     #[test]
     fn without_an_adapter_only_the_cpu_goldens_run() {
-        assert_eq!(super::tests_to_run(false), [("rl-scenario", "render_golden")]);
+        assert_eq!(super::tests_to_run(false), [("olr-scenario", "render_golden")]);
         assert_eq!(super::tests_to_run(true).len(), 3);
     }
 

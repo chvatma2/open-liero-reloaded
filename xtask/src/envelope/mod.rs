@@ -189,7 +189,7 @@ fn display_missing() -> Option<String> {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Step {
     Sweep(Axis),
-    /// The rollback cost (`rl-cli rollback-cost`, plan 9).
+    /// The rollback cost (`olr-cli rollback-cost`, plan 9).
     Rollback,
     /// The WSL GPU path; windowed runs too when a window can open.
     GpuWsl {
@@ -239,7 +239,7 @@ pub fn steps(axes: &[Axis], gpu: GpuPaths, pre: &Prereqs) -> Vec<Step> {
 /// Mesa's offscreen, SwiftShader and llvmpipe as `Cpu`, so WARP behind
 /// Mesa's d3d12 driver ("D3D12 (Microsoft Basic Render Driver)"), softpipe
 /// and the like come back as `Other`. The same list as
-/// `rl_cli::gpu_bench::software_name` (`xtask` does not link `rl-cli`).
+/// `olr_cli::gpu_bench::software_name` (`xtask` does not link `olr-cli`).
 pub fn software_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower.contains("basic render driver")
@@ -403,8 +403,8 @@ pub fn run(o: &Opts) -> anyhow::Result<bool> {
         results::load_average().unwrap_or(0.0),
         if plan.quick { 2 } else { 7 }
     );
-    sweeps::build_release(&["rl-cli"]).map_err(anyhow::Error::msg)?;
-    let cli = root().join("target/release/rl-cli");
+    sweeps::build_release(&["olr-cli"]).map_err(anyhow::Error::msg)?;
+    let cli = root().join("target/release/olr-cli");
     let secs = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
     let mut env = Envelope {
         note: "`cargo xtask envelope` (plan 8): medians of `runs` runs; valid on `host` only.".into(),

@@ -1,0 +1,579 @@
+//! `olr-server --nat-check` (N60): what stands between this machine and
+//! the players, step by step, for a playtester to read or send: the base
+//! address and the gateway, the configured STUN servers' answers and the
+//! router's NAT behaviour, the router's port mapping (a mapping made on a
+//! random high port, then deleted), and the configured Nostr relays (each
+//! one's status and the TURN relay notes seen on them). It always ends
+//! with "nat-check done" (exit 0).
+//!
+//! It uses the config's servers: public ones only when run by hand; the
+//! tests point it at in-process ones (`run_with` and a `FakeGateway`).
+//! Its wording is stable: `NAT: symmetric NAT` is grepped by the Docker
+//! tests (plan 12b Task 11).
+
+use std::collections::BTreeMap;
+use std::io::Write;
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4, ToSocketAddrs as _, UdpSocket};
+use std::time::{Duration, Instant};
+
+use olr_discovery::handshake::MAX_SKEW;
+use olr_discovery::list::is_global;
+use olr_discovery::turn_note::{TurnList, parse_turn_note};
+use olr_discovery::{Pool, PoolConfig, PoolEvent, RelayStatus, binding_request, parse_binding_response};
+use olr_net::portmap::{MapRequest, MappingState, PortMapper, UPNP_DEADLINE};
+use olr_net::probe::NatBehaviour;
+use olr_online::join::nat_text;
+use olr_proto::PublicKey;
+
+use crate::config::Config;
+#[cfg(feature = "test-hooks")]
+use crate::config::TestGateway;
+use crate::unix_now;
+
+/// How long `olr-server --nat-check` waits at each step at most (STUN
+/// answers, the relays' answers).
+pub const NAT_CHECK_WAIT: Duration = Duration::from_secs(5);
+/// An unanswered STUN request is sent once more after this long.
+const STUN_RETRY: Duration = Duration::from_millis(500);
+/// The router gets its mapper's longest deadline and a second more.
+const ROUTER_WAIT: Duration = Duration::from_secs(UPNP_DEADLINE.as_secs() + 1);
+/// The subscription id for TURN notes.
+const TURN_SUB: &str = "turn";
+
+/// Where the checks aim instead of the machine's own network (tests).
+struct Hooks {
+    pmp: SocketAddr,
+    ssdp: SocketAddr,
+    base: Ipv4Addr,
+}
+
+/// A test's fake router always confirms a deletion: the check waits for it
+/// up to this, not `DROP_WAIT`'s 1 s, which a loaded machine's threads can
+/// overrun (a flake of `nat_check_reports_every_step` under `check`).
+#[cfg(feature = "test-hooks")]
+const TEST_CLOSE_WAIT: Duration = Duration::from_secs(30);
+
+/// Runs every check with the config's servers and writes the report to
+/// `out`; each wait is bounded by `deadline` (the binary passes
+/// [`NAT_CHECK_WAIT`]) but the router's (5 s). An error only when `out`
+/// cannot be written.
+pub fn run(config: &Config, deadline: Duration, out: &mut dyn Write) -> anyhow::Result<()> {
+    check(config, None, deadline, out)
+}
+
+/// [`run`] aimed at a `FakeGateway` and a pinned base address (tests).
+#[cfg(feature = "test-hooks")]
+pub fn run_with(
+    config: &Config,
+    hooks: Option<&TestGateway>,
+    deadline: Duration,
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let hooks = hooks.map(|h| Hooks { pmp: h.pmp, ssdp: h.ssdp, base: h.base });
+    check(config, hooks, deadline, out)
+}
+
+fn check(
+    config: &Config,
+    hooks: Option<Hooks>,
+    deadline: Duration,
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
+    writeln!(out, "nat-check: what stands between this machine and the players")?;
+    let servers: Vec<(String, Option<SocketAddr>)> =
+        config.stun.iter().map(|s| (s.clone(), resolve(s))).collect();
+    // The base address and the gateway.
+    let (bases, gateway) = match &hooks {
+        Some(h) => (vec![h.base], ip4(h.pmp.ip())),
+        None => olr_net::local::base_addresses(servers.iter().find_map(|(_, a)| *a)),
+    };
+    let list: Vec<String> = bases.iter().map(ToString::to_string).collect();
+    writeln!(out, "base address: {}", if list.is_empty() { "none found".into() } else { list.join(", ") })?;
+    match gateway {
+        Some(g) => writeln!(out, "gateway: {g}")?,
+        None => writeln!(out, "gateway: none found (PCP and NAT-PMP cannot be asked)")?,
+    }
+    let base = bases.first().copied();
+    stun(&servers, base.filter(|_| hooks.is_some()), base, deadline, out)?;
+    router(config, &hooks, base, gateway, out)?;
+    relays(config, deadline, out)?;
+    writeln!(out, "nat-check done")?;
+    Ok(())
+}
+
+fn ip4(ip: IpAddr) -> Option<Ipv4Addr> {
+    match ip {
+        IpAddr::V4(ip) => Some(ip),
+        IpAddr::V6(_) => None,
+    }
+}
+
+/// A `host:port`'s first IPv4 address.
+fn resolve(server: &str) -> Option<SocketAddr> {
+    server.to_socket_addrs().ok()?.find(SocketAddr::is_ipv4)
+}
+
+/// Asks every STUN server from one socket (each once more after 500 ms),
+/// says each answer, then the NAT behaviour: `Open` when an answer is our
+/// own address, else from the first two answers (N48).
+fn stun(
+    servers: &[(String, Option<SocketAddr>)],
+    bind: Option<Ipv4Addr>,
+    base: Option<Ipv4Addr>,
+    deadline: Duration,
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
+    if servers.is_empty() {
+        writeln!(out, "STUN: no servers configured")?;
+        writeln!(out, "NAT: {}", nat_text(NatBehaviour::Unknown))?;
+        return Ok(());
+    }
+    let socket = match UdpSocket::bind((bind.unwrap_or(Ipv4Addr::UNSPECIFIED), 0)) {
+        Ok(s) => s,
+        Err(e) => {
+            writeln!(out, "STUN: no socket ({e})")?;
+            return Ok(());
+        }
+    };
+    let local = socket.local_addr().ok().zip(base).map(|(l, b)| SocketAddr::from((b, l.port())));
+    let mut asks: Vec<(SocketAddr, [u8; 12], Option<SocketAddr>)> = Vec::new();
+    for (_, addr) in servers {
+        if let Some(a) = addr
+            && !asks.iter().any(|(s, ..)| s == a)
+        {
+            asks.push((*a, olr_net::random_bytes::<12>().unwrap_or([0; 12]), None));
+        }
+    }
+    let begun = Instant::now();
+    let mut sent = 0;
+    let mut buf = [0u8; 1500];
+    while asks.iter().any(|a| a.2.is_none()) && begun.elapsed() < deadline {
+        let due = if sent == 0 { true } else { sent == 1 && begun.elapsed() >= STUN_RETRY };
+        if due {
+            sent += 1;
+            for (to, t, answer) in &asks {
+                if answer.is_none() {
+                    let _ = socket.send_to(&binding_request(*t), to);
+                }
+            }
+        }
+        let _ = socket.set_read_timeout(Some(Duration::from_millis(20)));
+        let Ok((len, from)) = socket.recv_from(&mut buf) else { continue };
+        if let Some(ask) = asks.iter_mut().find(|a| a.0 == from && a.2.is_none()) {
+            ask.2 = parse_binding_response(&buf[..len], &ask.1);
+        }
+    }
+    let mut answers = Vec::new();
+    for (name, addr) in servers {
+        match addr.and_then(|a| asks.iter().find(|x| x.0 == a)) {
+            None => writeln!(out, "STUN {name}: cannot resolve (no IPv4 address)")?,
+            Some((_, _, Some(mapped))) => {
+                writeln!(out, "STUN {name}: {mapped}")?;
+                answers.push(*mapped);
+            }
+            Some(_) => writeln!(out, "STUN {name}: no answer")?,
+        }
+    }
+    let nat = judge(&answers, local);
+    writeln!(out, "NAT: {}", nat_text(nat))?;
+    if nat == NatBehaviour::Unknown {
+        writeln!(out, "(two STUN servers must answer to tell the router's behaviour)")?;
+    }
+    Ok(())
+}
+
+/// N48's judgement of one round: our own address seen means no NAT; two
+/// answers alike, a NAT that keeps ports; different, a symmetric NAT.
+fn judge(answers: &[SocketAddr], local: Option<SocketAddr>) -> NatBehaviour {
+    if answers.iter().any(|a| Some(*a) == local) {
+        return NatBehaviour::Open;
+    }
+    match answers {
+        [a, b, ..] if a == b => NatBehaviour::Preserving,
+        [_, _, ..] => NatBehaviour::Symmetric,
+        _ => NatBehaviour::Unknown,
+    }
+}
+
+/// A mapping of a random high UDP port, its result, then its deletion.
+fn router(
+    config: &Config,
+    hooks: &Option<Hooks>,
+    base: Option<Ipv4Addr>,
+    gateway: Option<Ipv4Addr>,
+    out: &mut dyn Write,
+) -> anyhow::Result<()> {
+    let Some(base) = base else {
+        writeln!(out, "router: not asked (no local address)")?;
+        return Ok(());
+    };
+    let random = olr_net::random_bytes::<2>().map_or(0, u16::from_le_bytes);
+    let port = 49152 + random % 16384;
+    writeln!(out, "router: asking it to open UDP port {port}")?;
+    let mut req = MapRequest::new(SocketAddrV4::new(base, port), false, gateway);
+    req.exact = true;
+    req.allow_local = config.allow_local;
+    if let Some(h) = hooks {
+        req.pmp_port = h.pmp.port();
+        req.ssdp = h.ssdp;
+    }
+    let mut mapper = PortMapper::start(req);
+    let begun = Instant::now();
+    while *mapper.state() == MappingState::Trying && begun.elapsed() < ROUTER_WAIT {
+        let _ = mapper.poll();
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    let state = mapper.state().clone();
+    match &state {
+        MappingState::Mapped { method, external, usable, .. } => {
+            writeln!(out, "router: port {port} opened ({method}) at {external}")?;
+            if !usable {
+                writeln!(
+                    out,
+                    "router: but its address {} is not public (double NAT or carrier-grade NAT): players cannot \
+                     reach the opened port",
+                    external.ip()
+                )?;
+            }
+        }
+        MappingState::Failed(why) => writeln!(out, "router: port {port} not opened: {why}")?,
+        MappingState::Trying | MappingState::Off => {
+            writeln!(out, "router: no answer within {} s", ROUTER_WAIT.as_secs())?
+        }
+    }
+    // Deleted, waiting at most 1 s for the router to confirm it.
+    #[cfg(feature = "test-hooks")]
+    let confirmed = if hooks.is_some() { mapper.close_within(TEST_CLOSE_WAIT) } else { mapper.close() };
+    #[cfg(not(feature = "test-hooks"))]
+    let confirmed = mapper.close();
+    match (&state, confirmed) {
+        (MappingState::Mapped { .. }, true) => writeln!(out, "router: the mapping is deleted")?,
+        (MappingState::Mapped { .. }, false) => {
+            writeln!(out, "router: deleting the mapping: the router did not confirm it within 1 s")?
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// Each relay's status within `deadline` (sooner once every relay
+/// answered), and the TURN relays announced on them.
+fn relays(config: &Config, deadline: Duration, out: &mut dyn Write) -> anyhow::Result<()> {
+    if config.relays.is_empty() {
+        writeln!(out, "relays: none configured")?;
+        return Ok(());
+    }
+    let mut pool = Pool::start(PoolConfig { relays: config.relays.clone(), ..PoolConfig::default() });
+    pool.subscribe(TURN_SUB, vec![TurnList::filter(unix_now())]);
+    let mut probes: Vec<Probe> = config.relays.iter().map(|url| Probe::start(url)).collect();
+    let n = config.relays.len();
+    let mut status: Vec<Option<String>> = vec![None; n];
+    let mut eose = vec![false; n];
+    // Each relay's latest note by key: its time and the note.
+    let mut notes: BTreeMap<PublicKey, (u64, olr_discovery::TurnNote)> = BTreeMap::new();
+    let mut events = Vec::new();
+    let begun = Instant::now();
+    let settled = |status: &[Option<String>], eose: &[bool]| {
+        status.iter().zip(eose).all(|(s, e)| matches!(s.as_deref(), Some(s) if s != "connected") || *e)
+    };
+    while begun.elapsed() < deadline && !(settled(&status, &eose) && probes.iter().all(Probe::done)) {
+        for p in &mut probes {
+            p.poll();
+        }
+        pool.poll(&mut events);
+        for e in events.drain(..) {
+            match e {
+                PoolEvent::Status { relay, status: s } if relay < n => match s {
+                    RelayStatus::Connected => status[relay] = Some("connected".into()),
+                    RelayStatus::Failed(why) | RelayStatus::Dropped(why) if status[relay].is_none() => {
+                        status[relay] = Some(format!("unreachable: {why}"));
+                    }
+                    _ => {}
+                },
+                PoolEvent::Eose { relay, .. } if relay < n => eose[relay] = true,
+                PoolEvent::Event { event, .. } => {
+                    if let Ok(note) = parse_turn_note(&event)
+                        && notes.get(&event.pubkey).is_none_or(|(t, _)| *t < event.created_at)
+                    {
+                        notes.insert(event.pubkey, (event.created_at, note));
+                    }
+                }
+                _ => {}
+            }
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    // Each relay's clock against this PC's (its handshake's `Date`): joins
+    // through the relays fail when two PCs' clocks differ by more than a
+    // minute (FR12b-3).
+    let clocks = pool.clocks();
+    let mut off = false;
+    for ((url, s), clock) in config.relays.iter().zip(&status).zip(clocks) {
+        match (s.as_deref(), clock) {
+            (Some("connected"), Some(by)) => {
+                off |= by.unsigned_abs() > MAX_SKEW;
+                writeln!(out, "relay {url}: connected, {}", clock_words(by))?;
+            }
+            (Some(s), _) => writeln!(out, "relay {url}: {s}")?,
+            (None, _) => writeln!(out, "relay {url}: no answer within {} s", deadline.as_secs_f32())?,
+        }
+    }
+    if off {
+        writeln!(
+            out,
+            "clock: this PC's clock differs from a relay's by more than a minute: joins through the relays fail \
+             when two PCs' clocks differ by that much; set this PC's clock"
+        )?;
+    }
+    // Whether each reachable relay forwards a joiner's handshake (B-M3).
+    for ((url, s), probe) in config.relays.iter().zip(&status).zip(probes) {
+        if s.as_deref() != Some("connected") {
+            continue;
+        }
+        match probe.verdict {
+            Some(Ok(())) => writeln!(out, "relay {url}: forwards handshakes from new keys")?,
+            Some(Err(why)) => {
+                writeln!(out, "relay {url}: does not forward handshakes from new keys ({why})")?
+            }
+            None => writeln!(
+                out,
+                "relay {url}: does not forward handshakes from new keys (no echo within {} s)",
+                deadline.as_secs_f32()
+            )?,
+        }
+    }
+    let open: Vec<&olr_discovery::TurnNote> =
+        notes.values().map(|(_, n)| n).filter(|n| n.capacity > 0).collect();
+    writeln!(out, "TURN notes: {}", open.len())?;
+    for note in open {
+        let local = if is_global(IpAddr::V4(note.addr)) { "" } else { " [not a public address]" };
+        writeln!(
+            out,
+            "TURN relay {}:{} ({:?}, {} of {} in use){local}",
+            note.addr, note.port, note.region, note.load, note.capacity
+        )?;
+    }
+    Ok(())
+}
+
+/// One relay's handshake probe (final review B-M3: two default relays
+/// refuse events from keys they do not know, which every joiner's is): a
+/// pool of its own, a fresh key, and a kind-21470 event of 16 KiB to that
+/// key once the subscription to it is up. The verdict: forwarded back, or
+/// refused with the relay's message.
+struct Probe {
+    pool: Pool,
+    me: Option<olr_lobby::Identity>,
+    sent: Option<[u8; 32]>,
+    verdict: Option<Result<(), String>>,
+}
+
+/// The probe's subscription id.
+const PROBE_SUB: &str = "probe";
+
+impl Probe {
+    fn start(url: &str) -> Probe {
+        let mut pool = Pool::start(PoolConfig { relays: vec![url.to_string()], ..PoolConfig::default() });
+        let me = olr_net::random_bytes::<32>().ok().and_then(olr_lobby::Identity::from_secret);
+        if let Some(me) = &me {
+            let filter = olr_discovery::Filter {
+                kinds: vec![olr_discovery::KIND_HANDSHAKE],
+                tags: vec![('p', vec![crate::files::hex(&me.public())])],
+                since: Some(unix_now().saturating_sub(MAX_SKEW)),
+                ..olr_discovery::Filter::default()
+            };
+            pool.subscribe(PROBE_SUB, vec![filter]);
+        }
+        let verdict = me.is_none().then(|| Err("no randomness for a key".to_string()));
+        Probe { pool, me, sent: None, verdict }
+    }
+
+    fn done(&self) -> bool {
+        self.verdict.is_some()
+    }
+
+    fn poll(&mut self) {
+        let mut events = Vec::new();
+        self.pool.poll(&mut events);
+        for e in events {
+            match e {
+                PoolEvent::Eose { .. } if self.sent.is_none() => self.send(),
+                PoolEvent::Event { event, .. } if Some(event.id) == self.sent => {
+                    self.verdict.get_or_insert(Ok(()));
+                }
+                PoolEvent::Ok { id, accepted: false, message, .. } if Some(id) == self.sent => {
+                    self.verdict.get_or_insert(Err(message));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// The handshake-sized event to our own key.
+    fn send(&mut self) {
+        let Some(me) = &self.me else { return };
+        let unix = unix_now();
+        let tags = vec![
+            vec!["p".to_string(), crate::files::hex(&me.public())],
+            vec!["expiration".to_string(), (unix + MAX_SKEW).to_string()],
+        ];
+        let content = "x".repeat(olr_discovery::handshake::MAX_HANDSHAKE_CONTENT - 64);
+        let aux = olr_net::random_bytes::<32>().unwrap_or([0; 32]);
+        let event = olr_discovery::Event::sign(me, unix, olr_discovery::KIND_HANDSHAKE, tags, content, aux);
+        self.sent = Some(event.id);
+        self.pool.publish(event);
+    }
+}
+
+/// A relay's clock against this PC's, `by` seconds (ahead when positive).
+fn clock_words(by: i64) -> String {
+    match by {
+        -1..=1 => "its clock agrees with this PC's".into(),
+        by if by > 0 => format!("its clock {by} s ahead of this PC's"),
+        by => format!("its clock {} s behind this PC's", by.unsigned_abs()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use olr_discovery::announce::ANNOUNCE_TTL;
+    use olr_discovery::turn_note::{TURN_NOTE_V, TurnNote, turn_note};
+    use olr_discovery::{Region, StunResponder, TestRelay};
+    use olr_lobby::Identity;
+    use olr_net::portmap::fake::{FakeGateway, Misbehaviour};
+    use olr_net::turn::{RelayPorts, TurnLimits, TurnServer, TurnServerConfig};
+
+    fn hooks(gw: &FakeGateway) -> TestGateway {
+        TestGateway { pmp: gw.pmp(), ssdp: gw.ssdp(), base: Ipv4Addr::LOCALHOST, lifetime: None }
+    }
+
+    fn report(config: &Config, gw: &FakeGateway) -> String {
+        let mut out = Vec::new();
+        run_with(config, Some(&hooks(gw)), Duration::from_secs(3), &mut out).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    /// N60 with in-process fakes only: the base and gateway, STUN (a
+    /// `TurnServer` answers our own address: no NAT), the router (a
+    /// `FakeGateway`'s mapping made and deleted), a relay and the TURN
+    /// note on it; then two STUN servers seeing different ports:
+    /// "NAT: symmetric NAT" (Task 11 greps it).
+    #[test]
+    fn nat_check_reports_every_step() {
+        let relay = TestRelay::start();
+        let note = TurnNote {
+            v: TURN_NOTE_V,
+            addr: Ipv4Addr::new(81, 2, 69, 142),
+            port: 3478,
+            region: Region::Europe,
+            capacity: 32,
+            load: 3,
+            user: "u".into(),
+            pass: "p".into(),
+        };
+        let event =
+            turn_note(&Identity::from_secret([5; 32]).unwrap(), &note, unix_now(), ANNOUNCE_TTL, [1; 32]);
+        let mut publisher = Pool::start(PoolConfig { relays: vec![relay.url()], ..PoolConfig::default() });
+        publisher.publish(event.clone());
+        let begun = Instant::now();
+        while !relay.events().iter().any(|e| e.id == event.id) {
+            assert!(begun.elapsed() < Duration::from_secs(5), "the note is stored");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let turn = TurnServer::start(TurnServerConfig {
+            listen: SocketAddr::from((Ipv4Addr::LOCALHOST, 0)),
+            public: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            ports: RelayPorts::Ephemeral,
+            user: "u".into(),
+            pass: "p".into(),
+            limits: TurnLimits::generous(),
+            allow_local: true,
+        })
+        .unwrap();
+        let gw = FakeGateway::start(true, true, true, Ipv4Addr::new(203, 0, 113, 7), Misbehaviour::Honest);
+        // A relay whose clock is 2 minutes ahead (FR12b-3; it refuses the
+        // probe as expired), and one refusing handshakes (B-M3).
+        let ahead = TestRelay::start();
+        ahead.set_time(unix_now() + 120);
+        let refusing = TestRelay::start();
+        refusing.set_misbehaviour(olr_discovery::Misbehaviour::RefuseKind(olr_discovery::KIND_HANDSHAKE));
+        let config = Config {
+            stun: vec![turn.local_addr().to_string()],
+            relays: vec![relay.url(), ahead.url(), refusing.url()],
+            ..Config::default()
+        };
+        let text = report(&config, &gw);
+        for want in [
+            "base address: 127.0.0.1\n",
+            "gateway: 127.0.0.1\n",
+            &format!("STUN {}: 127.0.0.1:", turn.local_addr()),
+            "NAT: no NAT\n",
+            "router: asking it to open UDP port ",
+            "opened (",
+            "router: but its address 203.0.113.7 is not public",
+            "router: the mapping is deleted\n",
+            &format!("relay {}: connected, its clock agrees with this PC's\n", relay.url()),
+            "clock: this PC's clock differs from a relay's by more than a minute: joins through the relays fail \
+             when two PCs' clocks differ by that much; set this PC's clock\n",
+            &format!("relay {}: forwards handshakes from new keys\n", relay.url()),
+            &format!(
+                "relay {}: does not forward handshakes from new keys (invalid: event expired)\n",
+                ahead.url()
+            ),
+            &format!("relay {}: does not forward handshakes from new keys (blocked: ", refusing.url()),
+            "TURN notes: 1\n",
+            "TURN relay 81.2.69.142:3478 (Europe, 3 of 32 in use)\n",
+            "nat-check done\n",
+        ] {
+            assert!(text.contains(want), "{want:?} in:\n{text}");
+        }
+        let ahead_line = format!("relay {}: connected, its clock ", ahead.url());
+        let by = text.lines().find_map(|l| {
+            l.strip_prefix(&ahead_line)?.strip_suffix(" s ahead of this PC's")?.parse::<i64>().ok()
+        });
+        assert!(by.is_some_and(|by| (118..=121).contains(&by)), "{text}");
+        assert!(gw.mappings().is_empty(), "deleted: {:?}", gw.mappings());
+
+        // Two servers, two mapped ports: a symmetric NAT. No relays.
+        let a = StunResponder::start(SocketAddr::from(([81, 2, 69, 142], 40000)));
+        let b = StunResponder::start(SocketAddr::from(([81, 2, 69, 142], 40001)));
+        let config = Config { stun: vec![a.server(), b.server()], relays: vec![], ..Config::default() };
+        let text = report(&config, &gw);
+        for want in [
+            &format!("STUN {}: 81.2.69.142:40000\n", a.server()),
+            &format!("STUN {}: 81.2.69.142:40001\n", b.server()),
+            "NAT: symmetric NAT\n",
+            "relays: none configured\n",
+            "nat-check done\n",
+        ] {
+            assert!(text.contains(want), "{want:?} in:\n{text}");
+        }
+        // A router that deletes only `LATE` after the request: "deleted" is
+        // said once it confirmed, and nothing is left then.
+        let late =
+            FakeGateway::start(true, false, false, Ipv4Addr::new(203, 0, 113, 7), Misbehaviour::LateUpnp);
+        let config = Config { stun: vec![], relays: vec![], allow_local: true, ..Config::default() };
+        let text = report(&config, &late);
+        assert!(
+            text.contains("opened (UPnP)") && text.contains("router: the mapping is deleted\n"),
+            "{text}"
+        );
+        assert!(late.mappings().is_empty(), "{:?}", late.mappings());
+        // No STUN server: said, and the NAT not known.
+        let config = Config { stun: vec![], relays: vec![], ..Config::default() };
+        let text = report(&config, &gw);
+        assert!(text.contains("STUN: no servers configured\nNAT: not known yet\n"), "{text}");
+    }
+
+    #[test]
+    fn the_nat_is_judged_from_two_answers() {
+        let a = |s: &str| s.parse::<SocketAddr>().unwrap();
+        let local = Some(a("192.168.1.5:5000"));
+        assert_eq!(judge(&[a("192.168.1.5:5000")], local), NatBehaviour::Open);
+        assert_eq!(judge(&[a("81.2.69.142:5000"), a("81.2.69.142:5000")], local), NatBehaviour::Preserving);
+        assert_eq!(judge(&[a("81.2.69.142:5000"), a("81.2.69.142:6000")], local), NatBehaviour::Symmetric);
+        assert_eq!(judge(&[a("81.2.69.142:5000")], local), NatBehaviour::Unknown);
+        assert_eq!(judge(&[], local), NatBehaviour::Unknown);
+    }
+}

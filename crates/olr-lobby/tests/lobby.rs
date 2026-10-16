@@ -1,0 +1,2090 @@
+//! The lobby's rules (networking spec §4, §5.2, §5.4, §7.2), one test per
+//! rule, played through the in-process harness: every message is encoded
+//! and decoded with olr-proto's codec on the way.
+
+use std::collections::BTreeMap;
+use std::net::{IpAddr, Ipv4Addr};
+
+use olr_lobby::harness::{FINGERPRINTS, Net};
+use olr_lobby::*;
+use olr_proto::*;
+use proptest::prelude::*;
+
+const HOST: u8 = 100;
+const DELAY_US: u64 = 20_000;
+
+fn ident(n: u8) -> Identity {
+    Identity::from_secret([n; 32]).unwrap()
+}
+
+fn key(n: u8) -> PublicKey {
+    ident(n).public()
+}
+
+fn look(name: &str) -> Look {
+    Look {
+        name: name.into(),
+        colour: [1, 2, 3],
+        skin: "olx-skin-afro".into(),
+        skin_hash: olr_proto::NO_HASH.into(),
+    }
+}
+
+fn setup(bots: usize) -> MatchSetupWire {
+    MatchSetupWire {
+        mod_id: "olx-classic".into(),
+        level_id: "olx-level-dirt-level".into(),
+        packs: vec![("olx-classic".into(), "ab".repeat(32))],
+        rules: RulesWire {
+            lives: 10,
+            kill_limit: -1,
+            time_limit_min: 5.0,
+            allow_negative_score: true,
+            death_decreases_score: 0.5,
+            suicide_decreases_score: false,
+            sprees: [1, 2, 3, 4, 5],
+            dying_sprees: [5, 4, 3, 2, 1],
+        },
+        bonuses: true,
+        loading_time: 100,
+        restrictions: String::new(),
+        bots: (0..bots)
+            .map(|i| BotWire { difficulty: 1, personality: 0, loadout: 0, look: look(&format!("Bot {i}")) })
+            .collect(),
+    }
+}
+
+fn cfg() -> HostConfig {
+    HostConfig { name: "Office".into(), password: None, max_players: 8, max_spectators: 4, admins: vec![] }
+}
+
+fn ip(n: u8) -> IpAddr {
+    IpAddr::V4(Ipv4Addr::new(10, 0, 0, n))
+}
+
+fn lobby_with(cfg: HostConfig, bots: usize) -> Net {
+    Net::new(LobbyHost::new(cfg, ident(HOST), Some(look("Host")), setup(bots)).unwrap(), DELAY_US)
+}
+
+fn lobby() -> Net {
+    lobby_with(cfg(), 0)
+}
+
+/// A client with key `n` joins from `10.0.0.n` and the exchange settles.
+fn join(net: &mut Net, n: u8, name: &str) -> usize {
+    let c = net.join(LobbyClient::new(ident(n), look(name), None, None), ip(n));
+    net.settle();
+    c
+}
+
+fn id_of(net: &Net, c: usize) -> u8 {
+    net.host.member_of(net.peers[c].peer).expect("a member")
+}
+
+fn member(net: &Net, c: usize) -> Member {
+    member_by_id(net, id_of(net, c))
+}
+
+fn member_by_id(net: &Net, id: u8) -> Member {
+    net.host.state().members.iter().find(|m| m.id == id).cloned().expect("in the lobby")
+}
+
+fn host_id(net: &Net) -> u8 {
+    net.host.state().members.iter().find(|m| m.key == key(HOST)).unwrap().id
+}
+
+fn got(net: &Net, c: usize, e: &ClientEvent) -> bool {
+    net.peers[c].events.contains(e)
+}
+
+fn chats(net: &Net, c: usize, from: u8) -> Vec<String> {
+    net.peers[c]
+        .events
+        .iter()
+        .filter_map(|e| match e {
+            ClientEvent::Chat { from: f, text } if *f == from => Some(text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+/// No message failed to decode, and every joined client sees the host's state.
+fn consistent(net: &Net) {
+    assert!(net.errors.is_empty(), "{:?}", net.errors);
+    let state = net.host.state();
+    assert_eq!(
+        decode_to_client(&encode_to_client(&ToClient::Lobby(state.clone()))),
+        Ok(ToClient::Lobby(state.clone()))
+    );
+    for (i, p) in net.peers.iter().enumerate() {
+        if let Some(client) = &p.client
+            && p.open
+            && client.joined()
+        {
+            assert_eq!(client.state(), Some(state), "client {i}");
+            assert_eq!(client.me(), net.host.member_of(p.peer), "client {i}");
+        }
+    }
+}
+
+fn seat(net: &Net, c: usize) -> SeatWire {
+    member(net, c).seat
+}
+
+/// `Member::path` shows how each member's link reaches the host (the
+/// transport's `Connected { path }`); the host's own player has none.
+#[test]
+fn a_members_path_is_shown() {
+    let mut host = LobbyHost::new(cfg(), ident(HOST), Some(look("Host")), setup(0)).unwrap();
+    let nonce = [3; 32];
+    host.connected(1, ip(1), Path::Relayed, 0, nonce, FINGERPRINTS);
+    let me = ident(1);
+    host.receive(1, ToHost::Hello { key: me.public(), look: look("Ann"), nonce: [0; 32] }, 0);
+    let signature = me.sign(&challenge_message(&nonce, &key(HOST), &FINGERPRINTS), [0; 32]);
+    host.receive(1, ToHost::Prove { signature, password: None }, 0);
+    let members = host.state().members.clone();
+    let path = |k| members.iter().find(|m| m.key == key(k)).map(|m| m.path);
+    assert_eq!(path(1), Some(Some(Path::Relayed)), "{members:?}");
+    assert_eq!(path(HOST), Some(None));
+    // The harness's links are direct.
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    assert_eq!(member(&net, a).path, Some(Path::Direct));
+}
+
+/// Final review B-M1: a member's path follows its link (ICE moved to
+/// another pair after `Connected`), so the tags and N59's ban decision use
+/// the path now: a member whose link became relayed is banned by key only.
+#[test]
+fn a_members_path_follows_its_link() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    assert_eq!(member(&net, a).path, Some(Path::Direct));
+    let peer = net.peers[a].peer;
+    assert!(net.host.set_path(peer, Path::Relayed), "a change");
+    assert!(!net.host.set_path(peer, Path::Relayed), "the same path");
+    net.settle();
+    assert_eq!(member(&net, a).path, Some(Path::Relayed));
+    assert!(net.host.set_path(peer, Path::HolePunched));
+    assert!(net.host.set_path(peer, Path::Relayed));
+    net.host.ban_with_address(id_of(&net, a), None);
+    net.settle();
+    assert!(net.host.banned(&key(1)));
+    assert!(!net.host.banned_ip(ip(1)), "its address is the relay's now");
+    assert!(!net.host.set_path(999, Path::Direct), "no such link");
+}
+
+#[test]
+fn three_players_and_a_spectator_gather_ready_and_start() {
+    let mut net = lobby_with(HostConfig { max_players: 4, max_spectators: 2, ..cfg() }, 0);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    let s = join(&mut net, 4, "Sam");
+    for x in [a, b, c, s] {
+        assert!(matches!(net.peers[x].received[0], ToClient::Challenge { .. }));
+        assert!(matches!(net.peers[x].events[0], ClientEvent::Welcome { .. }));
+    }
+    assert_eq!(member_by_id(&net, host_id(&net)).seat, SeatWire::Player { slot: 0 });
+    assert_eq!(seat(&net, a), SeatWire::Player { slot: 1 });
+    assert_eq!(seat(&net, b), SeatWire::Player { slot: 2 });
+    assert_eq!(seat(&net, c), SeatWire::Player { slot: 3 });
+    assert_eq!(seat(&net, s), SeatWire::Spectator, "the players' seats are full");
+    assert!(got(&net, a, &ClientEvent::Notice(Notice::Joined(id_of(&net, s)))));
+    let waiting = vec![id_of(&net, a), id_of(&net, b), id_of(&net, c)];
+    assert_eq!(net.host.can_start(), Err(NotStartable::NotReady(waiting)));
+    assert!(!net.host_events.contains(&HostEvent::StartRequested));
+
+    for x in [a, b, c] {
+        net.client(x).set_ready(true);
+    }
+    net.settle();
+    assert_eq!(net.host.can_start(), Ok(()));
+    assert!(net.host_events.contains(&HostEvent::StartRequested));
+    consistent(&net);
+
+    let wire = net.start(7, 0xfeed).unwrap();
+    assert_eq!(wire.start_checksum, 0xfeed);
+    assert_eq!(wire.slots.len(), 4);
+    for x in [a, b, c, s] {
+        assert!(got(&net, x, &ClientEvent::Start(wire.clone())), "client {x}");
+    }
+    assert_eq!(net.host.state().phase, Phase::Starting);
+    net.host.playing(1);
+    net.settle();
+    assert_eq!(net.host.state().phase, Phase::Playing { tick: 1 });
+    consistent(&net);
+}
+
+#[test]
+fn a_forged_signature_is_refused() {
+    let mut net = lobby();
+    for case in 0..3 {
+        let r = net.join_raw(ip(1));
+        net.settle();
+        let ToClient::Challenge { nonce, host_key, needs_password } = net.peers[r].received[0].clone() else {
+            panic!("no challenge: {:?}", net.peers[r].received)
+        };
+        assert_eq!(host_key, key(HOST));
+        assert!(!needs_password);
+        let me = ident(1);
+        let signature = match case {
+            0 => ident(2).sign(&challenge_message(&nonce, &host_key, &FINGERPRINTS), [0; 32]),
+            1 => me.sign(&challenge_message(&[9; 32], &host_key, &FINGERPRINTS), [0; 32]),
+            _ => me.sign(&challenge_message(&nonce, &key(7), &FINGERPRINTS), [0; 32]),
+        };
+        net.send_raw(r, ToHost::Hello { key: me.public(), look: look("Eve"), nonce: [0; 32] });
+        net.send_raw(r, ToHost::Prove { signature, password: None });
+        net.settle();
+        assert_eq!(net.peers[r].received.last(), Some(&ToClient::Refused(Refusal::Malformed)), "case {case}");
+        assert!(net.host_events.contains(&HostEvent::Kick { peer: net.peers[r].peer, ban: false }));
+        assert!(!net.peers[r].open, "the transport closes");
+        assert_eq!(net.host.state().members.len(), 1, "case {case}");
+    }
+    // The genuine signature joins.
+    let r = net.join_raw(ip(1));
+    net.settle();
+    let ToClient::Challenge { nonce, host_key, .. } = net.peers[r].received[0].clone() else { panic!() };
+    net.send_raw(r, ToHost::Hello { key: key(1), look: look("Eve"), nonce: [0; 32] });
+    net.send_raw(
+        r,
+        ToHost::Prove {
+            signature: ident(1).sign(&challenge_message(&nonce, &host_key, &FINGERPRINTS), [3; 32]),
+            password: None,
+        },
+    );
+    net.settle();
+    assert!(matches!(net.peers[r].received.last(), Some(ToClient::Notice(Notice::Joined(_)))));
+    assert!(net.peers[r].received.iter().any(|m| matches!(m, ToClient::Welcome { .. })));
+    assert_eq!(net.host.state().members.len(), 2);
+    consistent(&net);
+}
+
+#[test]
+fn bans_given_by_key_or_address_are_refused_and_listed() {
+    let mut net = lobby();
+    // A dedicated server's bans file: a key and an address, before anyone joins.
+    net.host.ban_key(key(1));
+    net.host.ban_ip(ip(9));
+    let a = net.join(LobbyClient::new(ident(1), look("Ann"), None, None), ip(1));
+    net.settle();
+    assert!(got(&net, a, &ClientEvent::Refused(Refusal::Banned)));
+    let b = net.join(LobbyClient::new(ident(2), look("Bob"), None, None), ip(9));
+    net.settle();
+    assert_eq!(net.peers[b].received, vec![ToClient::Refused(Refusal::Banned)]);
+    let c = join(&mut net, 3, "Cid");
+    assert!(matches!(net.peers[c].events[0], ClientEvent::Welcome { .. }));
+    // A ban with the address joins both lists, in order.
+    net.host.ban_with_address(id_of(&net, c), None);
+    net.settle();
+    assert!(got(&net, c, &ClientEvent::Kicked { banned: true }));
+    let mut keys = vec![key(1), key(3)];
+    keys.sort();
+    assert_eq!(net.host.banned_keys().copied().collect::<Vec<_>>(), keys);
+    assert_eq!(net.host.banned_ips().copied().collect::<Vec<_>>(), vec![ip(3), ip(9)]);
+    // Lifted: the key and the address join again.
+    assert!(net.host.unban_key(&key(3)) && net.host.unban_ip(ip(3)));
+    assert!(!net.host.unban_key(&key(3)) && !net.host.unban_ip(ip(3)), "once");
+    let back = join(&mut net, 3, "Cid");
+    assert!(matches!(net.peers[back].events[0], ClientEvent::Welcome { .. }));
+    consistent(&net);
+}
+
+/// N59: a member reached through a TURN relay comes from the relay's
+/// address, so banning "its" address would ban the relay for everyone: its
+/// key alone is banned, and whoever asked is told (an admin by a notice,
+/// the host's own button or a server command by a `HostEvent`).
+#[test]
+fn a_relayed_member_is_banned_by_key_only() {
+    let mut net = lobby_with(HostConfig { admins: vec![key(2)], ..cfg() }, 0);
+    let admin = join(&mut net, 2, "Bob");
+    let relayed = net.join_via(LobbyClient::new(ident(1), look("Ann"), None, None), ip(7), Path::Relayed);
+    net.settle();
+    let (admin_id, ann) = (id_of(&net, admin), id_of(&net, relayed));
+    assert_eq!(member(&net, relayed).path, Some(Path::Relayed));
+    net.host.ban_with_address(ann, Some(admin_id));
+    net.settle();
+    assert!(got(&net, relayed, &ClientEvent::Kicked { banned: true }));
+    assert!(net.host.banned(&key(1)));
+    assert!(!net.host.banned_ip(ip(7)), "the relay's address stays open");
+    let told = ClientEvent::Notice(Notice::Message(RELAYED_BAN.into()));
+    assert!(got(&net, admin, &told), "the admin is told");
+    assert!(!net.host_events.contains(&HostEvent::Notice(RELAYED_BAN.into())));
+    assert_eq!(RELAYED_BAN, "reached through a TURN relay: banned by key only");
+
+    // Another player through the same relay joins; the host's own button.
+    let cid = net.join_via(LobbyClient::new(ident(3), look("Cid"), None, None), ip(7), Path::Relayed);
+    net.settle();
+    assert!(matches!(net.peers[cid].events[0], ClientEvent::Welcome { .. }), "the relay is not banned");
+    net.host.ban_with_address(id_of(&net, cid), None);
+    net.settle();
+    assert!(net.host.banned(&key(3)) && !net.host.banned_ip(ip(7)));
+    assert!(net.host_events.contains(&HostEvent::Notice(RELAYED_BAN.into())), "the host is told");
+    assert_eq!(net.peers[admin].events.iter().filter(|e| **e == told).count(), 1, "the admin once");
+
+    // A direct member's ban still takes its address.
+    let dan = join(&mut net, 4, "Dan");
+    net.host.ban_with_address(id_of(&net, dan), Some(admin_id));
+    net.settle();
+    assert!(net.host.banned(&key(4)) && net.host.banned_ip(ip(4)));
+    consistent(&net);
+}
+
+#[test]
+fn a_wrong_password_is_refused() {
+    let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
+    let wrong = net.join(LobbyClient::new(ident(1), look("Ann"), Some("wrong".into()), None), ip(1));
+    let none = net.join(LobbyClient::new(ident(2), look("Bob"), None, None), ip(2));
+    let right = net.join(LobbyClient::new(ident(3), look("Cid"), Some("secret".into()), None), ip(3));
+    net.settle();
+    for c in [wrong, none] {
+        assert!(matches!(net.peers[c].received[0], ToClient::Challenge { needs_password: true, .. }));
+        assert!(got(&net, c, &ClientEvent::Refused(Refusal::Password)), "client {c}");
+        assert!(!net.peers[c].open);
+        assert_eq!(net.host.member_of(net.peers[c].peer), None);
+    }
+    assert!(matches!(net.peers[right].events[0], ClientEvent::Welcome { .. }));
+    assert_eq!(net.host.state().members.len(), 2);
+    consistent(&net);
+}
+
+/// The password proof is bound to the joiner's key and the link's DTLS
+/// fingerprints: an impostor between a player and the host (a forged
+/// invite or a direct join, the impostor proving its own key to the player)
+/// that replays the player's proof under its own key, on its own link to
+/// the host, is refused.
+#[test]
+fn a_relayed_password_proof_is_refused() {
+    let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
+    // Eve's own link to the host.
+    let eve = net.join_raw(ip(9));
+    net.settle();
+    let ToClient::Challenge { nonce, host_key, needs_password } = net.peers[eve].received[0].clone() else {
+        panic!("no challenge: {:?}", net.peers[eve].received)
+    };
+    assert!(needs_password);
+    // Bob, on his link to Eve (other fingerprints), answers the host's
+    // nonce under Eve's key, and Eve proves her key to him.
+    let me = ident(9);
+    let bob_link = ([0xb1; 32], [0xb2; 32]);
+    let mut bob = LobbyClient::new(ident(2), look("Bob"), Some("secret".into()), None);
+    bob.connected(bob_link);
+    bob.receive(ToClient::Challenge { nonce, host_key: me.public(), needs_password }, [4; 32]);
+    let out = bob.outgoing();
+    let [ToHost::Hello { nonce: bobs, .. }] = out[..] else { panic!("Bob's hello: {out:?}") };
+    let signature = me.sign(&host_proof_message(&bobs, &key(2), &bob_link), [0; 32]);
+    bob.receive(ToClient::HostProof { signature }, [6; 32]);
+    let out = bob.outgoing();
+    let [ToHost::Prove { password: Some(proof), .. }] = out[..] else { panic!("Bob's proof: {out:?}") };
+    // Eve replays it under her own key.
+    net.send_raw(eve, ToHost::Hello { key: me.public(), look: look("Eve"), nonce: [5; 32] });
+    let signature = me.sign(&challenge_message(&nonce, &host_key, &FINGERPRINTS), [0; 32]);
+    net.send_raw(eve, ToHost::Prove { signature, password: Some(proof) });
+    net.settle();
+    assert_eq!(net.peers[eve].received.last(), Some(&ToClient::Refused(Refusal::Password)));
+    assert_eq!(net.host.state().members.len(), 1, "Eve is not admitted");
+    consistent(&net);
+}
+
+/// The password proof goes only to a host that proved its key (`Prove`,
+/// after `HostProof`): an impostor relaying the real host's challenge gets
+/// nothing to guess the password from offline, and its unproven password
+/// refusal is not believed (it would prompt the player for the password).
+#[test]
+fn an_unproven_host_gets_no_password_proof() {
+    let challenge = ToClient::Challenge { nonce: [1; 32], host_key: key(HOST), needs_password: true };
+    let mut c = LobbyClient::new(ident(1), look("Ann"), Some("secret".into()), Some(key(HOST)));
+    c.connected(FINGERPRINTS);
+    c.receive(challenge.clone(), [2; 32]);
+    let out = c.outgoing();
+    assert!(matches!(out[..], [ToHost::Hello { .. }]), "{out:?}");
+    assert!(!format!("{out:?}").contains("password: Some"), "no proof before the host's: {out:?}");
+    c.receive(ToClient::Refused(Refusal::Password), [0; 32]);
+    assert_eq!(c.events(), vec![ClientEvent::Closed], "an unproven password refusal");
+}
+
+/// Guessing the password: after `PASSWORD_TRIES` (3) wrong proofs from an
+/// IP within `PASSWORD_WINDOW_US` (a minute), that IP's joins are refused
+/// (`Refusal::Throttled`) for `PASSWORD_LOCKOUT_US` (a minute); other
+/// addresses are not touched, and no password (the empty one's proof) is
+/// no guess.
+#[test]
+fn password_guessers_are_held_off_for_a_minute() {
+    let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
+    let joiner = |net: &mut Net, i: u8, pw: Option<&str>, from: u8| {
+        let c = net.join(LobbyClient::new(ident(i), look("Ann"), pw.map(Into::into), None), ip(from));
+        net.settle();
+        c
+    };
+    let none = joiner(&mut net, 1, None, 1);
+    assert!(got(&net, none, &ClientEvent::Refused(Refusal::Password)));
+    for _ in 0..PASSWORD_TRIES - 1 {
+        let c = joiner(&mut net, 1, Some("guess"), 1);
+        assert!(got(&net, c, &ClientEvent::Refused(Refusal::Password)));
+    }
+    // Two wrong guesses and a missing proof: the right one still works.
+    let right = joiner(&mut net, 1, Some("secret"), 1);
+    assert!(
+        matches!(net.peers[right].events[0], ClientEvent::Welcome { .. }),
+        "{:?}",
+        net.peers[right].events
+    );
+    let c = joiner(&mut net, 2, Some("guess"), 1);
+    assert!(got(&net, c, &ClientEvent::Refused(Refusal::Password)), "the third wrong guess");
+    let held = joiner(&mut net, 3, Some("secret"), 1);
+    assert!(got(&net, held, &ClientEvent::Refused(Refusal::Throttled)), "held off, even with the password");
+    assert!(!net.peers[held].received.iter().any(|m| matches!(m, ToClient::Challenge { .. })));
+    let other = joiner(&mut net, 4, Some("secret"), 2);
+    assert!(matches!(net.peers[other].events[0], ClientEvent::Welcome { .. }), "another address joins");
+    net.run(PASSWORD_LOCKOUT_US - 1_000_000);
+    let still = joiner(&mut net, 3, Some("secret"), 1);
+    assert!(got(&net, still, &ClientEvent::Refused(Refusal::Throttled)));
+    net.run(1_000_000);
+    let back = joiner(&mut net, 3, Some("secret"), 1);
+    assert!(matches!(net.peers[back].events[0], ClientEvent::Welcome { .. }), "after a minute");
+    consistent(&net);
+}
+
+/// Links opened before the guessing starts (all challenged, none held off
+/// yet) get no more than `PASSWORD_TRIES` guesses between them: the hold
+/// is checked at each join attempt (`Hello`), not only when a link opens.
+#[test]
+fn links_opened_early_get_no_more_guesses() {
+    let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
+    let links: Vec<usize> = (0..10)
+        .map(|i| net.join(LobbyClient::new(ident(10 + i), look("Ann"), Some("guess".into()), None), ip(1)))
+        .collect();
+    net.settle();
+    let refused = |r: Refusal| links.iter().filter(|&&c| got(&net, c, &ClientEvent::Refused(r))).count();
+    assert!(
+        links.iter().all(|&c| net.peers[c].received.iter().any(|m| matches!(m, ToClient::Challenge { .. })))
+    );
+    assert_eq!(refused(Refusal::Password), PASSWORD_TRIES, "guesses answered");
+    assert_eq!(refused(Refusal::Throttled), links.len() - PASSWORD_TRIES, "the rest held off");
+    consistent(&net);
+}
+
+/// Guesses spread over more than a minute never hold anyone off.
+#[test]
+fn slow_password_mistakes_are_forgiven() {
+    let mut net = lobby_with(HostConfig { password: Some("secret".into()), ..cfg() }, 0);
+    for _ in 0..2 * PASSWORD_TRIES {
+        let c = net.join(LobbyClient::new(ident(1), look("Ann"), Some("typo".into()), None), ip(1));
+        net.settle();
+        assert!(got(&net, c, &ClientEvent::Refused(Refusal::Password)));
+        net.run(PASSWORD_WINDOW_US / 2 + 1_000);
+    }
+    let right = net.join(LobbyClient::new(ident(1), look("Ann"), Some("secret".into()), None), ip(1));
+    net.settle();
+    assert!(matches!(net.peers[right].events[0], ClientEvent::Welcome { .. }));
+}
+
+#[test]
+fn banned_keys_and_ips_are_refused() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let a_id = id_of(&net, a);
+    net.host.kick(a_id, true);
+    net.settle();
+    assert!(got(&net, a, &ClientEvent::Kicked { banned: true }));
+    assert!(!net.peers[a].open);
+    assert!(got(&net, b, &ClientEvent::Notice(Notice::Banned(a_id))));
+    assert!(net.host_events.contains(&HostEvent::Kick { peer: net.peers[a].peer, ban: true }));
+    // Spec §5.2: by key; the address stays open.
+    assert!(net.host.banned(&key(1)));
+    assert!(!net.host.banned_ip(ip(1)));
+    assert!(!net.host.banned(&key(2)) && !net.host.banned_ip(ip(2)));
+
+    // The same key from another address.
+    let again = net.join(LobbyClient::new(ident(1), look("Ann"), None, None), ip(50));
+    net.settle();
+    assert!(got(&net, again, &ClientEvent::Refused(Refusal::Banned)));
+    // Another key from the same address: welcome.
+    let other = join(&mut net, 3, "Cid");
+    assert!(matches!(net.peers[other].events[0], ClientEvent::Welcome { .. }));
+    // Banned with the address: another key from it is refused at once.
+    let c_id = id_of(&net, other);
+    net.host.ban_with_address(c_id, None);
+    net.settle();
+    assert!(net.host.banned(&key(3)) && net.host.banned_ip(ip(3)));
+    let from_there = net.join(LobbyClient::new(ident(4), look("Dan"), None, None), ip(3));
+    net.settle();
+    assert_eq!(net.peers[from_there].received, vec![ToClient::Refused(Refusal::Banned)]);
+    assert!(!net.peers[from_there].open);
+
+    // A plain kick does not ban.
+    let b_id = id_of(&net, b);
+    net.host.kick(b_id, false);
+    net.settle();
+    assert!(got(&net, b, &ClientEvent::Kicked { banned: false }));
+    assert!(!net.host.banned(&key(2)));
+    let back = join(&mut net, 2, "Bob");
+    assert!(matches!(net.peers[back].events[0], ClientEvent::Welcome { .. }));
+    // The host cannot kick itself.
+    net.host.kick(host_id(&net), true);
+    net.settle();
+    assert_eq!(net.host.state().members.len(), 2);
+    consistent(&net);
+}
+
+#[test]
+fn duplicate_names_get_a_suffix() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Martin");
+    let b = join(&mut net, 2, "martin");
+    let c = join(&mut net, 3, "MARTIN");
+    let d = join(&mut net, 4, "abcdefghijklmnopqrst");
+    let e = join(&mut net, 5, "ABCDEFGHIJKLMNOPQRST");
+    let f = join(&mut net, 6, "Émile");
+    let g = join(&mut net, 7, "émile");
+    let name = |net: &Net, c| member(net, c).look.name;
+    assert_eq!(name(&net, a), "Martin");
+    assert_eq!(name(&net, b), "martin (2)");
+    assert_eq!(name(&net, c), "MARTIN (3)");
+    assert_eq!(name(&net, d), "abcdefghijklmnopqrst");
+    assert_eq!(name(&net, e), "ABCDEFGHIJKLMNOP (2)", "cut to fit 20 characters");
+    assert_eq!(name(&net, f), "Émile");
+    assert_eq!(name(&net, g), "émile (2)");
+    // Re-setting one's own name keeps it; taking another's gets a suffix.
+    net.client(a).set_look(look("Martin"));
+    net.client(b).set_look(look("host"));
+    net.settle();
+    assert_eq!(name(&net, a), "Martin");
+    assert_eq!(name(&net, b), "host (2)");
+    // A name freed by a leaver can be taken.
+    net.client(a).leave();
+    net.settle();
+    net.client(c).set_look(look("Martin"));
+    net.settle();
+    assert_eq!(name(&net, c), "Martin");
+    consistent(&net);
+}
+
+#[test]
+fn setup_changes_clear_ready() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    for x in [a, b] {
+        net.client(x).set_ready(true);
+    }
+    net.settle();
+    assert!(member(&net, a).ready && member(&net, b).ready);
+    assert!(member_by_id(&net, host_id(&net)).ready, "the host is ready");
+
+    let mut changed = setup(0);
+    changed.rules.lives = 3;
+    net.host.set_setup(changed.clone()).unwrap();
+    net.settle();
+    assert!(!member(&net, a).ready && !member(&net, b).ready);
+    assert!(member_by_id(&net, host_id(&net)).ready, "the host's own ready stays");
+    assert_eq!(net.peers[a].client.as_ref().unwrap().state().unwrap().setup, changed);
+
+    // Only the bots changed (a server's fill bots, Add/Remove bot): the
+    // ready marks stay.
+    for x in [a, b] {
+        net.client(x).set_ready(true);
+    }
+    net.settle();
+    let mut more_bots = changed.clone();
+    more_bots.bots = setup(2).bots;
+    net.host.set_setup(more_bots.clone()).unwrap();
+    net.settle();
+    assert!(member(&net, a).ready && member(&net, b).ready, "bots alone keep ready");
+    assert_eq!(net.host.state().setup, more_bots);
+    net.host.set_setup(changed.clone()).unwrap();
+    net.settle();
+    assert!(member(&net, a).ready && member(&net, b).ready);
+
+    // The same setup again changes nothing.
+    for x in [a, b] {
+        net.client(x).set_ready(true);
+    }
+    net.settle();
+    net.host.set_setup(changed.clone()).unwrap();
+    net.settle();
+    assert!(member(&net, a).ready && member(&net, b).ready);
+    // An invalid setup is refused and changes nothing.
+    let mut bad = changed.clone();
+    bad.mod_id = "../x".into();
+    assert_eq!(net.host.set_setup(bad), Err(LobbyError::InvalidSetup));
+    assert!(member(&net, a).ready);
+    assert_eq!(net.host.state().setup, changed);
+    consistent(&net);
+}
+
+/// The setup changes only while the lobby gathers: during a match (and its
+/// results) the running match's setup stays what the lobby shows (an
+/// admin's `/settings` on a server targets the next rotation entry).
+#[test]
+fn the_setup_cannot_change_outside_gathering() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    net.start(1, 2).unwrap();
+    let mut changed = setup(0);
+    changed.rules.lives = 3;
+    assert_eq!(net.host.set_setup(changed.clone()), Err(LobbyError::NotGathering), "starting");
+    net.host.playing(0);
+    assert_eq!(net.host.set_setup(changed.clone()), Err(LobbyError::NotGathering), "playing");
+    assert_eq!(net.host.state().setup, setup(0));
+    net.settle();
+    consistent(&net);
+}
+
+#[test]
+fn chat_is_cut_and_rate_limited() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let a_id = id_of(&net, a);
+    net.client(a).chat(&"x".repeat(250));
+    net.client(a).chat("hi\u{7} \u{202E}there");
+    net.settle();
+    let expected = vec!["x".repeat(MAX_CHAT), "hi there".to_string()];
+    assert_eq!(chats(&net, b, a_id), expected);
+    assert_eq!(chats(&net, a, a_id), expected, "the sender sees its line");
+    assert!(net.host_events.contains(&HostEvent::Chat { from: a_id, text: "hi there".into() }));
+
+    net.run(CHAT_WINDOW_US + 1);
+    for i in 0..7 {
+        net.client(a).chat(&format!("line {i}"));
+    }
+    net.settle();
+    let lines: Vec<String> = (0..CHAT_LINES).map(|i| format!("line {i}")).collect();
+    assert_eq!(chats(&net, b, a_id)[2..], lines[..]);
+    let slow = ClientEvent::Notice(Notice::Message(SLOW_DOWN.into()));
+    assert_eq!(net.peers[a].events.iter().filter(|e| **e == slow).count(), 2);
+    assert!(!got(&net, b, &slow), "only the sender is told");
+
+    net.run(CHAT_WINDOW_US);
+    net.client(a).chat("again");
+    net.host.chat(&"y".repeat(300));
+    net.settle();
+    assert_eq!(chats(&net, b, a_id).last().unwrap(), "again");
+    assert_eq!(chats(&net, b, host_id(&net)), vec!["y".repeat(MAX_CHAT)]);
+    consistent(&net);
+}
+
+/// Plan 11 review (Minor 3, C2): at most `LOOK_CHANGES` look changes per
+/// member within `LOOK_WINDOW_US` are taken (each rebuilds the host's
+/// content list and can start a skin fetch). The latest look beyond them
+/// is held and taken once the window allows: a colour slider dragged
+/// through 20 looks in 100 ms ends on the 20th, in a few changes.
+#[test]
+fn look_changes_are_rate_limited_and_the_latest_wins() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let a_id = id_of(&net, a);
+    let seen_before = net.peers[b].received.len();
+    let coloured = |i: u8| Look { colour: [i, 0, 0], ..look("Ann") };
+    for i in 1..=20 {
+        net.send_raw(a, ToHost::SetLook(coloured(i)));
+        net.run(5_000);
+    }
+    let last = LOOK_CHANGES as u8;
+    assert_eq!(member(&net, a).look.colour, [last, 0, 0], "the first {LOOK_CHANGES} at once");
+    net.run(LOOK_WINDOW_US + 100_000);
+    net.settle();
+    assert_eq!(member(&net, a).look.colour, [20, 0, 0], "the latest, once the window allows");
+    // The looks the others saw: the window's few, then the latest.
+    let mut shown: Vec<[u8; 3]> = Vec::new();
+    for m in &net.peers[b].received[seen_before..] {
+        if let ToClient::Lobby(state) = m
+            && let Some(m) = state.members.iter().find(|m| m.id == a_id)
+            && shown.last() != Some(&m.look.colour)
+        {
+            shown.push(m.look.colour);
+        }
+    }
+    assert!(shown.len() <= LOOK_CHANGES + 1, "{shown:?}");
+    assert_eq!(shown.last(), Some(&[20, 0, 0]));
+    net.send_raw(a, ToHost::SetLook(coloured(42)));
+    net.settle();
+    assert_eq!(member(&net, a).look.colour, [42, 0, 0], "a window later, at once");
+    consistent(&net);
+}
+
+#[test]
+fn only_admins_kick() {
+    let mut net = lobby_with(HostConfig { admins: vec![key(1)], ..cfg() }, 0);
+    let a = join(&mut net, 1, "Admin");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    assert!(member(&net, a).admin);
+    assert!(!member(&net, b).admin);
+    assert!(member_by_id(&net, host_id(&net)).admin, "the host is an admin");
+
+    let not_admin = ClientEvent::Notice(Notice::Message(NOT_ADMIN.into()));
+    for cmd in [AdminCommand::Kick(key(3)), AdminCommand::Ban(key(3)), AdminCommand::Next] {
+        net.client(b).admin(cmd);
+    }
+    net.settle();
+    assert_eq!(net.peers[b].events.iter().filter(|e| **e == not_admin).count(), 3);
+    assert!(net.host.member_of(net.peers[c].peer).is_some());
+    assert!(!net.host_events.iter().any(|e| matches!(e, HostEvent::Admin { .. } | HostEvent::Kick { .. })));
+
+    // Nobody kicks the host.
+    net.client(a).admin(AdminCommand::Kick(key(HOST)));
+    net.settle();
+    assert_eq!(net.host.state().members.len(), 4);
+
+    net.client(a).admin(AdminCommand::Kick(key(3)));
+    net.settle();
+    assert!(got(&net, c, &ClientEvent::Kicked { banned: false }));
+    assert!(got(&net, b, &ClientEvent::Notice(Notice::Kicked(member_id_from_events(&net, c)))));
+    net.client(a).admin(AdminCommand::Ban(key(2)));
+    net.settle();
+    assert!(got(&net, b, &ClientEvent::Kicked { banned: true }));
+    assert!(net.host.banned(&key(2)) && !net.host.banned_ip(ip(2)), "an admin's ban is by key");
+    // A key not in the lobby is banned all the same.
+    net.client(a).admin(AdminCommand::Ban(key(9)));
+    net.client(a).admin(AdminCommand::Next);
+    net.settle();
+    assert!(net.host.banned(&key(9)));
+    assert!(net.host_events.contains(&HostEvent::Admin { from: id_of(&net, a), cmd: AdminCommand::Next }));
+    assert_eq!(net.host.state().members.len(), 2);
+    consistent(&net);
+}
+
+/// The member id a client was welcomed with.
+fn member_id_from_events(net: &Net, c: usize) -> u8 {
+    net.peers[c]
+        .events
+        .iter()
+        .find_map(|e| match e {
+            ClientEvent::Welcome { you } => Some(*you),
+            _ => None,
+        })
+        .unwrap()
+}
+
+#[test]
+fn missing_content_prevents_ready() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let a_id = id_of(&net, a);
+    net.client(a).have(0, vec!["olx-skin-x".into()]);
+    net.client(a).set_ready(true);
+    net.settle();
+    assert_eq!(member(&net, a).missing, vec!["olx-skin-x".to_string()]);
+    assert!(!member(&net, a).ready);
+    assert!(got(&net, a, &ClientEvent::Notice(Notice::Message(MISSING_CONTENT.into()))));
+    assert_eq!(net.host.can_start(), Err(NotStartable::NotReady(vec![a_id])));
+    // Content arriving does not make a player ready by itself.
+    net.client(a).have(0, vec![]);
+    net.settle();
+    assert!(!member(&net, a).ready);
+    net.client(a).set_ready(true);
+    net.settle();
+    assert!(member(&net, a).ready);
+    assert_eq!(net.host.can_start(), Ok(()));
+    // Losing content clears ready.
+    net.client(a).have(0, vec!["olx-skin-y".into()]);
+    net.settle();
+    assert!(!member(&net, a).ready);
+    // Invalid ids are dropped by the client, the rest is bounded.
+    net.client(a).have(0, (0..20).map(|i| format!("p{i}")).chain(["Bad/Id".into()]).collect());
+    net.settle();
+    assert_eq!(member(&net, a).missing.len(), MAX_MISSING);
+    consistent(&net);
+}
+
+#[test]
+fn joiners_during_a_match_wait_and_get_seats_after() {
+    let mut net = lobby_with(HostConfig { max_players: 3, max_spectators: 2, ..cfg() }, 0);
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    net.start(1, 2).unwrap();
+    net.host.playing(0);
+    net.settle();
+
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    let d = join(&mut net, 4, "Dan");
+    let e = join(&mut net, 5, "Eve");
+    assert_eq!(seat(&net, b), SeatWire::Waiting);
+    assert_eq!(seat(&net, c), SeatWire::Spectator, "no seat left for the next match");
+    assert_eq!(seat(&net, d), SeatWire::Spectator);
+    assert!(got(&net, e, &ClientEvent::Refused(Refusal::Full)));
+    for x in [b, c, d] {
+        assert!(!net.peers[x].events.iter().any(|e| matches!(e, ClientEvent::Start(_))));
+    }
+    // A player leaves mid-match: the next match has a seat for one more.
+    let a_id = id_of(&net, a);
+    net.disconnect(a);
+    net.settle();
+    assert!(got(&net, b, &ClientEvent::Notice(Notice::Left(a_id))));
+
+    let end = MatchEndWire { reason: "time".into(), rows: vec![(0, 1, 1, 0, 0)], last_tick: 900 };
+    net.host.match_ended(end.clone(), net.now_us);
+    net.settle();
+    assert_eq!(net.host.state().phase, Phase::Results);
+    for x in [b, c, d] {
+        assert!(got(&net, x, &ClientEvent::Ended(end.clone())));
+    }
+    net.run(RESULTS_US - 2 * DELAY_US);
+    assert_eq!(net.host.state().phase, Phase::Results);
+    net.run(2 * DELAY_US);
+    net.settle();
+    assert_eq!(net.host.state().phase, Phase::Gathering);
+    assert_eq!(member_by_id(&net, host_id(&net)).seat, SeatWire::Player { slot: 0 });
+    assert_eq!(seat(&net, b), SeatWire::Player { slot: 1 }, "in join order");
+    assert_eq!(seat(&net, c), SeatWire::Player { slot: 2 });
+    assert_eq!(seat(&net, d), SeatWire::Spectator);
+    assert!(net.host.state().members.iter().filter(|m| m.key != key(HOST)).all(|m| !m.ready));
+    // A spectator by choice keeps watching when a seat frees up.
+    net.client(d).set_spectate(true);
+    net.client(c).set_spectate(true);
+    net.settle();
+    assert_eq!(seat(&net, c), SeatWire::Spectator);
+    assert_eq!(seat(&net, d), SeatWire::Spectator);
+    net.client(d).set_spectate(false);
+    net.settle();
+    assert_eq!(seat(&net, d), SeatWire::Player { slot: 2 });
+    consistent(&net);
+}
+
+/// `watcher` was told `id` left, the host reported it, and it is gone.
+fn left(net: &Net, watcher: usize, id: u8) {
+    assert!(got(net, watcher, &ClientEvent::Notice(Notice::Left(id))), "{id} left");
+    assert!(net.host_events.contains(&HostEvent::Left(id)));
+    assert!(net.host.state().members.iter().all(|m| m.id != id));
+    consistent(net);
+}
+
+#[test]
+fn leaving_at_every_stage() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    let d = join(&mut net, 4, "Dan");
+    let w = join(&mut net, 6, "Wes");
+    let ids: Vec<u8> = [a, b, c, d].iter().map(|&x| id_of(&net, x)).collect();
+
+    // Before the proof, saying goodbye: the link closes.
+    let bye = net.join_raw(ip(8));
+    net.send_raw(bye, ToHost::Bye);
+    net.settle();
+    assert!(!net.peers[bye].open);
+    assert!(net.host_events.contains(&HostEvent::Close { peer: net.peers[bye].peer }));
+    net.host_events.clear();
+
+    // Before the proof: nobody hears of it, and no timeout fires later.
+    let r = net.join_raw(ip(9));
+    net.settle();
+    net.disconnect(r);
+    net.run(PROOF_TIMEOUT_US + 1);
+    assert_eq!(net.host.state().members.len(), 6);
+    assert!(!net.peers[w].events.iter().any(|e| matches!(e, ClientEvent::Notice(Notice::Left(_)))));
+    assert!(!net.host_events.iter().any(|e| matches!(e, HostEvent::Kick { .. } | HostEvent::Left(_))));
+
+    // After the welcome, by saying goodbye: the host closes the link.
+    net.client(a).leave();
+    net.settle();
+    left(&net, w, ids[0]);
+    assert!(!net.peers[a].open);
+    assert!(net.host_events.contains(&HostEvent::Close { peer: net.peers[a].peer }));
+
+    // While starting, by losing the connection.
+    for x in [b, c, d, w] {
+        net.client(x).set_ready(true);
+    }
+    net.settle();
+    net.start(5, 6).unwrap();
+    net.disconnect(b);
+    net.settle();
+    left(&net, w, ids[1]);
+    assert_eq!(net.host.state().phase, Phase::Starting);
+
+    // While playing.
+    net.host.playing(3);
+    net.client(c).leave();
+    net.settle();
+    left(&net, w, ids[2]);
+    assert_eq!(net.host.state().phase, Phase::Playing { tick: 3 });
+
+    // During the results.
+    net.host.match_ended(MatchEndWire { reason: "kills".into(), rows: vec![], last_tick: 900 }, net.now_us);
+    net.settle();
+    net.disconnect(d);
+    net.settle();
+    left(&net, w, ids[3]);
+    assert_eq!(net.host.state().phase, Phase::Results);
+
+    net.run(RESULTS_US);
+    net.settle();
+    assert_eq!(net.host.state().phase, Phase::Gathering);
+    assert_eq!(net.host.state().members.len(), 2);
+    assert_eq!(seat(&net, w), SeatWire::Player { slot: 5 });
+    assert!(net.host.peer_of(ids[0]).is_none());
+    consistent(&net);
+}
+
+#[test]
+fn unproven_peers_are_dropped() {
+    let mut net = lobby();
+    // No proof within 10 s.
+    let r = net.join_raw(ip(1));
+    net.settle();
+    net.run(PROOF_TIMEOUT_US - 2 * DELAY_US);
+    assert!(net.peers[r].open);
+    net.run(2 * DELAY_US);
+    net.settle();
+    assert!(!net.peers[r].open);
+    assert!(net.host_events.contains(&HostEvent::Kick { peer: net.peers[r].peer, ban: false }));
+
+    // Anything but Hello and Prove before the proof.
+    for msg in [
+        ToHost::Chat("hi".into()),
+        ToHost::Ready(true),
+        ToHost::Prove { signature: [1; 64], password: None },
+        ToHost::Admin(AdminCommand::Next),
+    ] {
+        let r = net.join_raw(ip(2));
+        net.send_raw(r, msg.clone());
+        net.settle();
+        assert_eq!(net.peers[r].received.last(), Some(&ToClient::Refused(Refusal::Malformed)), "{msg:?}");
+        assert!(!net.peers[r].open);
+    }
+    // A second Hello.
+    let r = net.join_raw(ip(3));
+    let hello = ToHost::Hello { key: key(3), look: look("Cid"), nonce: [0; 32] };
+    net.send_raw(r, hello.clone());
+    net.send_raw(r, hello.clone());
+    net.settle();
+    assert_eq!(net.peers[r].received.last(), Some(&ToClient::Refused(Refusal::Malformed)));
+
+    // A proven member sending a Hello again is kicked.
+    let a = join(&mut net, 4, "Ann");
+    net.send_raw(a, ToHost::Hello { key: key(4), look: look("Ann"), nonce: [0; 32] });
+    net.settle();
+    assert!(got(&net, a, &ClientEvent::Kicked { banned: false }));
+    assert_eq!(net.host.state().members.len(), 1);
+    // A second connection with a member's key is refused.
+    let b = join(&mut net, 5, "Bob");
+    let twin = net.join(LobbyClient::new(ident(5), look("Bob"), None, None), ip(6));
+    net.settle();
+    assert!(got(&net, twin, &ClientEvent::Refused(Refusal::Busy)));
+    assert!(net.peers[b].open);
+    consistent(&net);
+}
+
+#[test]
+fn the_start_message_assigns_slots_and_delays() {
+    let mut net = lobby_with(cfg(), 2);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    let s = join(&mut net, 4, "Sam");
+    net.client(s).set_spectate(true);
+    net.client(b).leave();
+    net.client(a).set_loadout(Some([1, 2, 3, 4, 5]));
+    for x in [a, c] {
+        net.client(x).set_ready(true);
+    }
+    net.settle();
+    assert_eq!(seat(&net, c), SeatWire::Player { slot: 3 }, "slot 2 is free");
+    let (host, a_id, c_id) = (host_id(&net), id_of(&net, a), id_of(&net, c));
+
+    // Cid's round trip is not measured yet: the largest delay.
+    let rtts = BTreeMap::from([(net.peers[a].peer, 50), (net.peers[s].peer, 10)]);
+    let wire = net.host.start(9, &rtts).unwrap();
+    assert_eq!(wire.seed, 9);
+    assert_eq!(wire.start_checksum, 0, "filled in by the match layer");
+    assert_eq!(wire.setup, setup(2));
+    let members: Vec<Option<u8>> = wire.slots.iter().map(|x| x.member).collect();
+    assert_eq!(members, [Some(host), Some(a_id), Some(c_id), None, None]);
+    let bots: Vec<Option<u8>> = wire.slots.iter().map(|x| x.bot).collect();
+    assert_eq!(bots, [None, None, None, Some(0), Some(1)]);
+    let names: Vec<&str> = wire.slots.iter().map(|x| x.look.name.as_str()).collect();
+    assert_eq!(names, ["Host", "Ann", "Cid", "Bot 0", "Bot 1"]);
+    assert_eq!(wire.slots[1].loadout, Some([1, 2, 3, 4, 5]));
+    assert_eq!(wire.slots[2].loadout, None);
+    assert_eq!(wire.input_delay, vec![(host, 0), (a_id, 1), (c_id, MAX_INPUT_DELAY)]);
+    assert_eq!(net.host.state().phase, Phase::Gathering, "nothing is sent yet");
+    net.settle();
+    assert!(!net.peers[a].events.iter().any(|e| matches!(e, ClientEvent::Start(_))));
+
+    let mut announced = wire.clone();
+    announced.start_checksum = 0xabc;
+    net.host.announce_start(announced.clone()).unwrap();
+    net.settle();
+    for x in [a, c, s] {
+        assert!(net.peers[x].received.contains(&ToClient::Start(announced.clone())));
+    }
+    assert_eq!(net.host.state().phase, Phase::Starting);
+    assert_eq!(net.host.start(9, &rtts), Err(NotStartable::Phase));
+    assert_eq!(net.host.announce_start(announced), Err(NotStartable::Phase));
+    consistent(&net);
+}
+
+#[test]
+fn member_ids_of_the_match_are_not_reused() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    let wire = net.start(1, 2).unwrap();
+    let in_match: Vec<u8> = wire.slots.iter().filter_map(|s| s.member).collect();
+    net.client(a).leave();
+    net.settle();
+    // Member ids wrap after 256: none of the running match's is handed out.
+    for _ in 0..300 {
+        let c = join(&mut net, 2, "Bob");
+        assert!(!in_match.contains(&id_of(&net, c)));
+        net.client(c).leave();
+        net.settle();
+    }
+    consistent(&net);
+}
+
+#[test]
+fn a_start_made_before_a_change_is_not_announced() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    let rtts = net.rtts();
+    let wire = net.host.start(1, &rtts).unwrap();
+    net.client(a).set_loadout(Some([5, 4, 3, 2, 1]));
+    net.settle();
+    assert_eq!(net.host.announce_start(wire), Err(NotStartable::Stale));
+    let wire = net.host.start(1, &rtts).unwrap();
+    assert_eq!(wire.slots[1].loadout, Some([5, 4, 3, 2, 1]));
+    // A ping is not a change a start depends on.
+    net.host.set_ping(net.peers[a].peer, 33);
+    assert_eq!(net.host.announce_start(wire), Ok(()));
+    net.settle();
+    consistent(&net);
+}
+
+#[test]
+fn a_forced_start_seats_only_the_ready() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    net.client(a).set_ready(true);
+    net.client(c).have(0, vec!["olx-skin-x".into()]);
+    net.settle();
+    let (a_id, b_id, c_id) = (id_of(&net, a), id_of(&net, b), id_of(&net, c));
+    assert_eq!(net.host.can_start(), Err(NotStartable::NotReady(vec![b_id, c_id])));
+
+    let rtts = net.rtts();
+    let mut wire = net.host.force_start(4, &rtts).unwrap();
+    let members: Vec<Option<u8>> = wire.slots.iter().map(|x| x.member).collect();
+    assert_eq!(members, [Some(host_id(&net)), Some(a_id)]);
+    assert_eq!(seat(&net, b), SeatWire::Spectator);
+    assert_eq!(seat(&net, c), SeatWire::Waiting, "lacking content (N33)");
+    wire.start_checksum = 1;
+    net.host.announce_start(wire.clone()).unwrap();
+    net.settle();
+    assert!(got(&net, b, &ClientEvent::Start(wire)), "spectators watch");
+    consistent(&net);
+
+    // Back in their seats for the next match.
+    net.host.playing(0);
+    net.host.match_ended(MatchEndWire { reason: "time".into(), rows: vec![], last_tick: 900 }, net.now_us);
+    net.run(RESULTS_US + 1);
+    net.settle();
+    assert_eq!(seat(&net, b), SeatWire::Player { slot: 2 });
+    assert_eq!(seat(&net, c), SeatWire::Player { slot: 3 });
+    consistent(&net);
+}
+
+#[test]
+fn a_forced_start_needs_ready_worms() {
+    // A dedicated server whose only player is not ready.
+    let host = LobbyHost::new(cfg(), ident(HOST), None, setup(0)).unwrap();
+    let mut net = Net::new(host, DELAY_US);
+    let a = join(&mut net, 1, "Ann");
+    assert_eq!(net.host.force_start(1, &net.rtts()), Err(NotStartable::NoPlayers));
+    net.client(a).set_ready(true);
+    net.settle();
+    assert_eq!(net.host.force_start(1, &net.rtts()), Err(NotStartable::TooFewWorms));
+    assert_eq!(seat(&net, a), SeatWire::Player { slot: 0 }, "nobody moved");
+    net.host.set_setup(setup(1)).unwrap();
+    net.client(a).set_ready(true);
+    net.settle();
+    assert!(net.host.force_start(1, &net.rtts()).is_ok());
+}
+
+#[test]
+fn a_dedicated_server_with_bots_only_does_not_start() {
+    let host = LobbyHost::new(cfg(), ident(HOST), None, setup(4)).unwrap();
+    let mut net = Net::new(host, DELAY_US);
+    assert_eq!(net.host.can_start(), Err(NotStartable::NoPlayers));
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    assert_eq!(net.host.can_start(), Ok(()));
+    assert_eq!(net.host_events.iter().filter(|e| **e == HostEvent::StartRequested).count(), 1);
+    net.client(a).leave();
+    net.settle();
+    assert_eq!(net.host.can_start(), Err(NotStartable::NoPlayers));
+    net.host.events();
+    assert_eq!(net.host_events.iter().filter(|e| **e == HostEvent::StartRequested).count(), 1);
+}
+
+/// `revision` changes with every change of the state and only then (a
+/// dedicated server compares it instead of cloning the state each poll).
+#[test]
+fn the_revision_follows_the_state() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    net.settle();
+    let (rev, state) = (net.host.revision(), net.host.state().clone());
+    net.run(1_000_000);
+    net.host.tick(net.now_us);
+    assert_eq!(net.host.revision(), rev, "nothing changed");
+    net.host.set_ping(net.peers[a].peer, 77);
+    assert_ne!(net.host.revision(), rev, "a ping is a change");
+    let rev = net.host.revision();
+    net.host.set_ping(net.peers[a].peer, 77);
+    assert_eq!(net.host.revision(), rev, "the same ping is not");
+    net.client(a).set_ready(true);
+    net.settle();
+    assert_ne!(net.host.revision(), rev, "ready is a change");
+    assert_ne!(net.host.state(), &state);
+}
+
+#[test]
+fn pings_show_in_the_lobby() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    net.host.set_ping(net.peers[a].peer, 42);
+    net.host.set_ping(net.peers[b].peer, 1_000_000);
+    net.settle();
+    assert_eq!(member(&net, a).ping_ms, Some(42));
+    assert_eq!(member(&net, b).ping_ms, Some(u16::MAX));
+    assert_eq!(member_by_id(&net, host_id(&net)).ping_ms, None);
+    consistent(&net);
+}
+
+#[test]
+fn state_changes_are_coalesced() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let lobbies =
+        |net: &Net| net.peers[a].received.iter().filter(|m| matches!(m, ToClient::Lobby(_))).count();
+    let before = lobbies(&net);
+    // A burst arriving together is one Lobby to everyone.
+    // (At most `LOOK_CHANGES` look changes a window are taken.)
+    for i in 0..LOOK_CHANGES {
+        net.client(b).set_look(look(&format!("Bob {i}")));
+    }
+    net.client(b).set_ready(true);
+    net.client(b).have(0, vec![]);
+    net.client(b).set_spectate(false);
+    net.settle();
+    assert_eq!(lobbies(&net), before + 1);
+    assert_eq!(member(&net, b).look.name, format!("Bob {}", LOOK_CHANGES - 1));
+    consistent(&net);
+}
+
+#[test]
+fn a_client_leaves_a_host_that_breaks_the_protocol() {
+    let lobby_state = |ids: &[u8]| LobbyState {
+        name: "Office".into(),
+        phase: Phase::Gathering,
+        setup: setup(0),
+        members: ids
+            .iter()
+            .map(|&id| Member {
+                id,
+                key: key(id + 1),
+                look: look("X"),
+                seat: SeatWire::Spectator,
+                ready: false,
+                missing: vec![],
+                ping_ms: None,
+                admin: false,
+                download: None,
+                path: None,
+            })
+            .collect(),
+    };
+    let challenge = ToClient::Challenge { nonce: [1; 32], host_key: key(HOST), needs_password: false };
+    let fresh = |expected| {
+        let mut c = LobbyClient::new(ident(1), look("Ann"), None, expected);
+        c.connected(FINGERPRINTS);
+        c
+    };
+    // The host's proof of its key for the client's Hello.
+    let proof = |c: &mut LobbyClient| {
+        let out = c.outgoing();
+        let [ToHost::Hello { nonce, .. }] = &out[..] else { panic!("Hello alone: {out:?}") };
+        let signature = ident(HOST).sign(&host_proof_message(nonce, &key(1), &FINGERPRINTS), [0; 32]);
+        ToClient::HostProof { signature }
+    };
+    // A welcome naming a member that is not in its lobby.
+    let mut c = fresh(None);
+    c.receive(challenge.clone(), [0; 32]);
+    let p = proof(&mut c);
+    c.receive(p, [0; 32]);
+    c.receive(ToClient::Welcome { you: 9, lobby: lobby_state(&[0, 1]) }, [0; 32]);
+    assert_eq!(c.events(), vec![ClientEvent::Closed]);
+    assert!(!c.joined());
+    // A lobby without this member, with no kick.
+    let mut c = fresh(Some(key(HOST)));
+    c.receive(challenge.clone(), [0; 32]);
+    let p = proof(&mut c);
+    c.receive(p, [0; 32]);
+    assert!(matches!(c.outgoing()[..], [ToHost::Prove { .. }]), "Prove to the expected host");
+    c.receive(ToClient::Welcome { you: 1, lobby: lobby_state(&[0, 1]) }, [0; 32]);
+    c.receive(ToClient::Lobby(lobby_state(&[0])), [0; 32]);
+    assert_eq!(c.events(), vec![ClientEvent::Welcome { you: 1 }, ClientEvent::Closed]);
+    assert!(!c.joined());
+    // A welcome before the host's proof is not taken.
+    let mut c = fresh(None);
+    c.receive(challenge.clone(), [0; 32]);
+    c.outgoing();
+    c.receive(ToClient::Welcome { you: 1, lobby: lobby_state(&[0, 1]) }, [0; 32]);
+    assert!(!c.joined() && c.events().is_empty() && c.outgoing().is_empty());
+    // A challenge from another host than expected is not answered.
+    let mut c = fresh(Some(key(7)));
+    c.receive(challenge, [0; 32]);
+    assert!(c.outgoing().is_empty());
+    assert_eq!(c.events(), vec![ClientEvent::WrongHost { key: key(HOST) }]);
+}
+
+/// The host proves it holds the key its challenge names (carried ruling
+/// F-B, N37): it signs the joiner's nonce and key and both DTLS
+/// fingerprints, right after the joiner's `Hello`, before any `Welcome`;
+/// the joiner proves itself only once that proof verifies.
+#[test]
+fn the_host_proof_verifies() {
+    let mut net = lobby();
+    let r = net.join_raw(ip(1));
+    net.settle();
+    let me = ident(1);
+    let mine = [0x3c; 32];
+    net.send_raw(r, ToHost::Hello { key: me.public(), look: look("Eve"), nonce: mine });
+    net.settle();
+    let [ToClient::Challenge { .. }, ToClient::HostProof { signature }] = net.peers[r].received[..] else {
+        panic!("the challenge, then the proof: {:?}", net.peers[r].received)
+    };
+    assert!(verify(&key(HOST), &host_proof_message(&mine, &me.public(), &FINGERPRINTS), &signature));
+    let swapped = (FINGERPRINTS.1, FINGERPRINTS.0);
+    for (what, message) in [
+        ("another nonce", host_proof_message(&[0; 32], &me.public(), &FINGERPRINTS)),
+        ("another joiner", host_proof_message(&mine, &key(2), &FINGERPRINTS)),
+        ("other fingerprints", host_proof_message(&mine, &me.public(), &swapped)),
+    ] {
+        assert!(!verify(&key(HOST), &message, &signature), "{what}");
+    }
+    // A client joins: challenge, proof, then the welcome; its Prove only
+    // after the proof.
+    let c = join(&mut net, 2, "Bob");
+    assert!(
+        matches!(
+            net.peers[c].received[..],
+            [ToClient::Challenge { .. }, ToClient::HostProof { .. }, ToClient::Welcome { .. }, ..]
+        ),
+        "{:?}",
+        net.peers[c].received
+    );
+    assert!(got(&net, c, &ClientEvent::Welcome { you: id_of(&net, c) }));
+    assert_eq!(net.client(c).host_key(), Some(key(HOST)));
+    // A joiner expecting this host's key joins too.
+    let d = net.join(LobbyClient::new(ident(3), look("Cid"), None, Some(key(HOST))), ip(3));
+    net.settle();
+    assert!(net.client(d).joined());
+    // A forged proof (the challenge names the host's key, another key signs).
+    let mut fake = LobbyClient::new(ident(4), look("Dan"), None, Some(key(HOST)));
+    fake.connected(FINGERPRINTS);
+    fake.receive(ToClient::Challenge { nonce: [1; 32], host_key: key(HOST), needs_password: false }, [2; 32]);
+    let out = fake.outgoing();
+    let [ToHost::Hello { nonce, .. }] = &out[..] else { panic!("{out:?}") };
+    let signature = ident(7).sign(&host_proof_message(nonce, &key(4), &FINGERPRINTS), [0; 32]);
+    fake.receive(ToClient::HostProof { signature }, [0; 32]);
+    assert!(fake.outgoing().is_empty(), "no Prove for a forged proof");
+    assert_eq!(fake.events(), vec![ClientEvent::WrongHost { key: key(HOST) }]);
+    assert!(!fake.joined());
+    consistent(&net);
+}
+
+/// A man in the middle relaying the signalling presents its own DTLS
+/// certificates, so the fingerprints the two ends saw differ: the joiner
+/// refuses the host's proof, and the host refuses a joiner's proof made
+/// over other fingerprints.
+#[test]
+fn swapped_dtls_fingerprints_fail_the_proof() {
+    let mut net = lobby();
+    let swapped = (FINGERPRINTS.1, FINGERPRINTS.0);
+    let c = net.join_seeing(LobbyClient::new(ident(1), look("Ann"), None, None), ip(1), swapped);
+    net.settle();
+    assert!(net.peers[c].received.iter().any(|m| matches!(m, ToClient::HostProof { .. })));
+    assert_eq!(net.peers[c].events, vec![ClientEvent::WrongHost { key: key(HOST) }]);
+    assert!(!net.client(c).joined());
+    // It never proved itself: the host drops it after the proof timeout.
+    net.run(PROOF_TIMEOUT_US + DELAY_US);
+    net.settle();
+    assert!(!net.peers[c].open);
+    assert_eq!(net.host.state().members.len(), 1);
+    // A joiner's proof over other fingerprints than the host saw.
+    let r = net.join_raw(ip(2));
+    net.settle();
+    let ToClient::Challenge { nonce, host_key, .. } = net.peers[r].received[0].clone() else { panic!() };
+    let me = ident(2);
+    net.send_raw(r, ToHost::Hello { key: me.public(), look: look("Bob"), nonce: [0; 32] });
+    let signature = me.sign(&challenge_message(&nonce, &host_key, &swapped), [0; 32]);
+    net.send_raw(r, ToHost::Prove { signature, password: None });
+    net.settle();
+    assert_eq!(net.peers[r].received.last(), Some(&ToClient::Refused(Refusal::Malformed)));
+    assert!(!net.peers[r].open);
+    assert_eq!(net.host.state().members.len(), 1);
+    consistent(&net);
+}
+
+#[test]
+fn worm_counts_bound_the_start() {
+    let mut net = lobby_with(cfg(), 0);
+    assert_eq!(net.host.can_start(), Err(NotStartable::TooFewWorms));
+    net.host.set_setup(setup(1)).unwrap();
+    assert_eq!(net.host.can_start(), Ok(()), "the host and a bot");
+    net.host.set_setup(setup(MAX_BOTS)).unwrap();
+    assert_eq!(net.host.can_start(), Ok(()), "32 worms");
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    assert_eq!(net.host.can_start(), Err(NotStartable::TooManyWorms));
+    // Not-ready players are named to everyone when a start fails (a
+    // change of bots alone keeps Ann's ready mark: she takes it back).
+    net.host.set_setup(setup(0)).unwrap();
+    net.client(a).set_ready(false);
+    net.settle();
+    assert_eq!(net.host.start(1, &BTreeMap::new()), Err(NotStartable::NotReady(vec![id_of(&net, a)])));
+    net.settle();
+    assert!(got(&net, a, &ClientEvent::Notice(Notice::NotReady(vec![id_of(&net, a)]))));
+    consistent(&net);
+}
+
+#[test]
+fn a_dedicated_server_has_no_player_but_a_key() {
+    let host = LobbyHost::new(cfg(), ident(HOST), None, setup(0)).unwrap();
+    let mut net = Net::new(host, DELAY_US);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    assert!(
+        matches!(net.peers[a].received[0], ToClient::Challenge { host_key, .. } if host_key == key(HOST))
+    );
+    assert_eq!(seat(&net, a), SeatWire::Player { slot: 0 });
+    assert_eq!(seat(&net, b), SeatWire::Player { slot: 1 });
+    net.host.chat("welcome");
+    net.settle();
+    assert!(got(&net, b, &ClientEvent::Notice(Notice::Message("welcome".into()))));
+    for x in [a, b] {
+        net.client(x).set_ready(true);
+    }
+    net.settle();
+    let wire = net.start(3, 4).unwrap();
+    assert_eq!(wire.input_delay.len(), 2);
+    consistent(&net);
+}
+
+// ---- plan 12c: the succession order and the migrated lobby ----
+
+fn member_by_id_in(state: &LobbyState, id: u8) -> Member {
+    state.members.iter().find(|m| m.id == id).cloned().expect("in the state")
+}
+
+/// Starts a match of the host, Ann and Bob (players) and Cid (spectator):
+/// Ann and Cid report standbys, Bob none.
+fn started_with_standbys() -> (Net, [usize; 3]) {
+    let mut net = lobby_with(HostConfig { max_players: 3, max_spectators: 2, ..cfg() }, 1);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    net.client(a).standby(40_001, vec!["wss://a.example".into()]);
+    net.client(c).standby(40_003, vec![]);
+    for x in [a, b] {
+        net.client(x).set_ready(true);
+    }
+    net.settle();
+    net.start(7, 0).unwrap();
+    net.settle();
+    (net, [a, b, c])
+}
+
+#[test]
+fn the_succession_lists_players_then_spectators_in_join_order() {
+    let (net, [a, b, c]) = started_with_standbys();
+    let list = net.host.succession();
+    let ids: Vec<u8> = list.iter().map(|s| s.member).collect();
+    assert_eq!(ids, vec![id_of(&net, a), id_of(&net, b), id_of(&net, c)]);
+    assert_eq!(list[0].direct, Some(([10, 0, 0, 1], 40_001)), "a private address: direct");
+    assert_eq!(list[0].relays, vec!["wss://a.example".to_string()]);
+    assert!(list[0].can_host && !list[1].can_host && list[2].can_host, "Bob reported no standby");
+    assert!(list.iter().all(|s| s.key != key(HOST)), "the host is no successor");
+    for x in [a, b, c] {
+        assert_eq!(net.peers[x].client.as_ref().unwrap().succession(), &list[..], "client {x}");
+    }
+}
+
+#[test]
+fn the_succession_is_sent_with_the_start_and_on_change_only() {
+    let mut net = lobby_with(HostConfig { max_players: 3, ..cfg() }, 1);
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).standby(40_001, vec![]);
+    net.settle();
+    let sent =
+        |net: &Net| net.peers[a].received.iter().filter(|m| matches!(m, ToClient::Succession(_))).count();
+    assert_eq!(sent(&net), 0, "nothing while gathering");
+    net.client(a).set_ready(true);
+    net.settle();
+    net.start(7, 0).unwrap();
+    net.settle();
+    assert_eq!(sent(&net), 1);
+    net.run(2_000_000);
+    assert_eq!(sent(&net), 1, "unchanged: not sent again");
+    net.client(a).standby(40_002, vec![]);
+    net.run(STANDBY_WINDOW_US);
+    net.settle();
+    assert_eq!(sent(&net), 2);
+}
+
+#[test]
+fn standby_changes_during_a_match_are_bounded() {
+    let mut net = lobby_with(HostConfig { max_players: 3, ..cfg() }, 1);
+    // A member seen at a global address, and one reached through a relay,
+    // get no direct entry.
+    let g = net.join(
+        LobbyClient::new(ident(7), look("Gus"), None, None),
+        IpAddr::V4(Ipv4Addr::new(93, 184, 216, 34)),
+    );
+    let r = net.join_via(LobbyClient::new(ident(8), look("Rex"), None, None), ip(8), Path::Relayed);
+    net.settle();
+    for (c, port) in [(g, 40_007), (r, 40_008)] {
+        net.client(c).standby(port, vec![]);
+        net.client(c).set_ready(true);
+    }
+    net.settle();
+    net.start(7, 0).unwrap();
+    net.host.playing(1);
+    net.settle();
+    let list = net.host.succession();
+    assert_eq!(list.len(), 2);
+    assert!(list.iter().all(|s| s.direct.is_none() && s.can_host), "{list:?}");
+    // During the match, Gus alternates its endpoint 200 times within 2 s
+    // (the relay is what the wire shows of a global member).
+    let sent = |net: &Net, c: usize| {
+        net.peers[c].received.iter().filter(|m| matches!(m, ToClient::Succession(_))).count()
+    };
+    let before = sent(&net, r);
+    for i in 0..200u16 {
+        let relay = if i % 2 == 0 { "wss://b.example" } else { "wss://c.example" };
+        net.send_raw(g, ToHost::Standby { port: 41_000 + i % 2, relays: vec![relay.into()] });
+        net.run(10_000);
+    }
+    net.settle();
+    assert!(sent(&net, r) - before <= 2, "{} successions in one window", sent(&net, r) - before);
+    // The latest is taken once the window allows.
+    net.run(STANDBY_WINDOW_US);
+    net.settle();
+    assert_eq!(net.host.succession()[0].relays, vec!["wss://c.example".to_string()], "the latest wins");
+    assert!(valid_succession(&net.host.succession()));
+    assert!(net.errors.is_empty(), "{:?}", net.errors);
+}
+
+#[test]
+fn hostile_standbys_are_ignored() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    for (port, relays) in [(80, vec![]), (40_000, vec!["ws://".into()]), (40_000, vec!["wss://x".into(); 3])]
+    {
+        net.host.receive(net.peers[a].peer, ToHost::Standby { port, relays }, net.now_us);
+    }
+    assert!(!net.host.succession()[0].can_host);
+    consistent(&net);
+}
+
+#[test]
+fn a_migrated_lobby_takes_back_its_members_by_key() {
+    let (net, [a, b, c]) = started_with_standbys();
+    let state = net.host.state().clone();
+    let list = net.host.succession();
+    let (bob, cid) = (id_of(&net, b), id_of(&net, c));
+    let _ = a;
+    // Ann takes over.
+    let cfg = HostConfig {
+        name: state.name.clone(),
+        password: None,
+        max_players: 3,
+        max_spectators: 16,
+        admins: vec![],
+    };
+    let mut next =
+        Net::new(LobbyHost::migrated(ident(1), &state, &list, &[], cfg.clone()).unwrap(), DELAY_US);
+    assert_eq!(next.host.state().phase, state.phase);
+    assert!(next.host.state().members.iter().all(|m| m.key != key(HOST)), "the old host is gone");
+    assert_eq!(next.host.away(), vec![bob, cid]);
+    assert_eq!(
+        next.host.away_in_match(),
+        vec![bob, cid],
+        "Bob holds a slot, Cid a spectator seat from the start"
+    );
+    let nb = next.join(LobbyClient::new(ident(2), look("Bob"), None, Some(key(1))), ip(2));
+    next.settle();
+    assert!(next.host_events.contains(&HostEvent::Rejoined(bob)));
+    assert!(got(&next, nb, &ClientEvent::Welcome { you: bob }), "its old id");
+    assert_eq!(member_by_id(&next, bob).seat, member_by_id_in(&state, bob).seat, "its seat");
+    assert_eq!(next.host.away(), vec![cid]);
+    // A stranger is refused.
+    let x = next.join(LobbyClient::new(ident(9), look("Xan"), None, Some(key(1))), ip(9));
+    next.settle();
+    assert!(got(&next, x, &ClientEvent::Refused(Refusal::Closed)));
+    // The resume: Cid did not come back; later it joins as a mid-match joiner.
+    next.host.drop_away();
+    next.settle();
+    assert!(got(&next, nb, &ClientEvent::Notice(Notice::Left(cid))));
+    let nc = next.join(LobbyClient::new(ident(3), look("Cid"), None, Some(key(1))), ip(3));
+    next.settle();
+    assert_eq!(member(&next, nc).seat, SeatWire::Waiting);
+    assert!(!next.host_events.contains(&HostEvent::Rejoined(cid)));
+    assert!(next.host.away().is_empty());
+    assert_ne!(id_of(&next, nc), bob, "ids stay unique");
+    assert!(LobbyHost::migrated(ident(9), &state, &list, &[], cfg).is_err(), "not a successor");
+    consistent(&next);
+}
+
+#[test]
+fn a_spectator_successor_hosts_as_a_spectator_and_is_seated_next_gathering() {
+    let (net, [_, _, c]) = started_with_standbys();
+    let state = net.host.state().clone();
+    let cid = id_of(&net, c);
+    let cfg = HostConfig {
+        name: state.name.clone(),
+        password: None,
+        max_players: 3,
+        max_spectators: 16,
+        admins: vec![],
+    };
+    let mut next = LobbyHost::migrated(ident(3), &state, &net.host.succession(), &[], cfg).unwrap();
+    let me = |h: &LobbyHost| h.state().members.iter().find(|m| m.id == cid).cloned().unwrap();
+    assert_eq!(me(&next).seat, SeatWire::Spectator);
+    assert!(me(&next).ready && me(&next).admin);
+    next.playing(5);
+    next.match_ended(MatchEndWire { reason: "x".into(), rows: vec![], last_tick: 9 }, 0);
+    next.tick(RESULTS_US + 1);
+    assert_eq!(me(&next).seat, SeatWire::Player { slot: 0 }, "free: the away players left slot 1 and 2 held");
+}
+
+fn migrate_cfg(state: &LobbyState, max_players: u8) -> HostConfig {
+    HostConfig { name: state.name.clone(), password: None, max_players, max_spectators: 16, admins: vec![] }
+}
+
+/// The ids of the match's slots, as the online layer has them from the start.
+fn match_ids(wire: &MatchStartWire) -> Vec<u8> {
+    wire.slots.iter().filter_map(|s| s.member).collect()
+}
+
+/// Ids count up through a lobby's life (reconnects included): members past
+/// `MAX_MEMBERS` are still successors and rejoin a migrated lobby.
+#[test]
+fn members_with_high_ids_are_successors_and_rejoin() {
+    let mut net = lobby();
+    for round in 0..50u8 {
+        let c = join(&mut net, 100 + round % 40, "Tmp");
+        net.disconnect(c);
+        net.settle();
+    }
+    let a = join(&mut net, 60, "Ann");
+    let b = join(&mut net, 61, "Bob");
+    let (ann, bob) = (id_of(&net, a), id_of(&net, b));
+    assert!(ann >= MAX_MEMBERS as u8 && bob > ann, "ids {ann} {bob}");
+    net.client(a).standby(40_001, vec![]);
+    net.client(a).set_ready(true);
+    net.client(b).set_ready(true);
+    net.settle();
+    let wire = net.start(7, 0).unwrap();
+    net.settle();
+    let list = net.host.succession();
+    assert_eq!(list.iter().map(|s| s.member).collect::<Vec<_>>(), vec![ann, bob]);
+    assert_eq!(net.peers[a].client.as_ref().unwrap().succession(), &list[..], "it decodes");
+    let state = net.host.state().clone();
+    let host =
+        LobbyHost::migrated(ident(60), &state, &list, &match_ids(&wire), migrate_cfg(&state, 8)).unwrap();
+    let mut next = Net::new(host, DELAY_US);
+    assert_eq!(next.host.away(), vec![bob]);
+    let nb = next.join(LobbyClient::new(ident(61), look("Bob"), None, Some(key(60))), ip(61));
+    next.settle();
+    assert!(next.host_events.contains(&HostEvent::Rejoined(bob)));
+    assert!(got(&next, nb, &ClientEvent::Welcome { you: bob }));
+}
+
+/// A player who left before the migration still holds its slot: its id is
+/// not given to anyone while the match runs.
+#[test]
+fn a_departed_players_id_is_not_reused_after_a_migration() {
+    let mut net = lobby_with(HostConfig { max_players: 4, ..cfg() }, 0);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let d = join(&mut net, 3, "Dan");
+    let dan = id_of(&net, d);
+    for x in [a, b, d] {
+        net.client(x).set_ready(true);
+    }
+    net.client(a).standby(40_001, vec![]);
+    net.settle();
+    let wire = net.start(7, 0).unwrap();
+    net.host.playing(1);
+    net.settle();
+    net.disconnect(d);
+    net.settle();
+    let (state, list) = (net.host.state().clone(), net.host.succession());
+    assert!(match_ids(&wire).contains(&dan) && state.members.iter().all(|m| m.id != dan));
+    let host =
+        LobbyHost::migrated(ident(1), &state, &list, &match_ids(&wire), migrate_cfg(&state, 4)).unwrap();
+    let mut next = Net::new(host, DELAY_US);
+    next.host.drop_away();
+    let nb = next.join(LobbyClient::new(ident(2), look("Bob"), None, Some(key(1))), ip(2));
+    next.settle();
+    assert_ne!(id_of(&next, nb), dan, "Dan's slot is still in the match");
+    assert!(match_ids(&wire).iter().all(|&m| m != id_of(&next, nb)), "no match id is given out");
+}
+
+/// A spectator welcomed mid-match has no world: no successor and nobody the
+/// new host waits for.
+#[test]
+fn a_mid_match_spectator_is_a_follower() {
+    let mut net = lobby_with(HostConfig { max_players: 3, ..cfg() }, 0);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    for x in [a, b] {
+        net.client(x).set_ready(true);
+    }
+    net.client(a).standby(40_001, vec![]);
+    net.settle();
+    let wire = net.start(7, 0).unwrap();
+    net.host.playing(1);
+    net.settle();
+    let s = join(&mut net, 3, "Sam"); // the player seats are full: a spectator at once
+    net.client(s).standby(40_003, vec![]);
+    net.settle();
+    let sam = id_of(&net, s);
+    let list = net.host.succession();
+    assert!(!list.iter().find(|e| e.member == sam).unwrap().can_host, "{list:?}");
+    let state = net.host.state().clone();
+    let next =
+        LobbyHost::migrated(ident(1), &state, &list, &match_ids(&wire), migrate_cfg(&state, 3)).unwrap();
+    assert!(next.away().contains(&sam));
+    assert_eq!(next.away_in_match(), vec![id_of(&net, b)], "Bob only");
+}
+
+// ---- robustness: any sequence of messages and host actions ----
+
+/// Peers in the proptest: more than a full lobby.
+const PEERS: u8 = 56;
+
+#[derive(Clone, Debug)]
+enum Op {
+    Join(u8, Look),
+    /// Every peer joins with the longest look and missing list.
+    Crowd,
+    Connect(u8),
+    Disconnect(u8),
+    Send(u8, ToHost),
+    Kick(u8, bool),
+    Move(u8, bool),
+    Setup(usize, bool),
+    Start(bool),
+    Playing(u32),
+    Ended,
+    Wait(u64),
+    /// The content list's revision changes.
+    Revision(u32),
+    /// Peer `p`'s member takes over as a migrated lobby (if it can).
+    Migrate(u8),
+    DropAway,
+}
+
+fn to_host() -> impl Strategy<Value = ToHost> {
+    let long_name = "\u{1F600}".repeat(MAX_NAME);
+    let name = prop_oneof![
+        Just("Ann".to_string()),
+        Just("ann".to_string()),
+        Just("Host".to_string()),
+        Just(long_name),
+        "[a-zA-Z]{1,20}",
+    ];
+    let skin = prop_oneof![Just("olx-skin-afro".to_string()), "[a-z0-9-]{64}"];
+    let look = (name, skin).prop_map(|(name, skin)| Look {
+        name,
+        colour: [1, 2, 3],
+        skin,
+        skin_hash: olr_proto::NO_HASH.into(),
+    });
+    prop_oneof![
+        (0u8..PEERS, look.clone()).prop_map(|(k, l)| ToHost::Hello {
+            key: key(k + 1),
+            look: l,
+            nonce: [k; 32],
+        }),
+        any::<u8>().prop_map(|b| ToHost::Prove { signature: [b; 64], password: Some([b; 32]) }),
+        look.prop_map(ToHost::SetLook),
+        any::<bool>().prop_map(ToHost::Ready),
+        any::<bool>().prop_map(ToHost::Spectate),
+        Just(ToHost::Loadout(Some([1, 2, 3, 4, 5]))),
+        "[a-z ]{0,200}".prop_map(ToHost::Chat),
+        (0u32..3, prop::collection::vec("[a-z]{1,8}|[a-z0-9-]{64}", 0..=MAX_MISSING))
+            .prop_map(|(revision, missing)| ToHost::Have { revision, missing }),
+        (0u8..PEERS).prop_map(|k| ToHost::Admin(AdminCommand::Kick(key(k + 1)))),
+        (0u8..PEERS).prop_map(|k| ToHost::Admin(AdminCommand::Ban(key(k + 1)))),
+        Just(ToHost::Admin(AdminCommand::Next)),
+        (any::<u16>(), prop::collection::vec("(wss?://[a-z.]{1,12})|ws://|[a-z ]{0,9}", 0..=3))
+            .prop_map(|(port, relays)| ToHost::Standby { port, relays }),
+        (1024u16..1030, prop::collection::vec("wss://[a-z]{1,8}", 0..=2))
+            .prop_map(|(port, relays)| ToHost::Standby { port, relays }),
+        Just(ToHost::Bye),
+    ]
+}
+
+/// A look as long as the wire allows.
+fn long_look(p: u8) -> Look {
+    let mut skin = format!("skin-{p}-");
+    skin.extend(std::iter::repeat_n('x', MAX_ID - skin.len()));
+    Look {
+        name: format!("{p}{}", "\u{1F600}".repeat(MAX_NAME - 2)),
+        colour: [9, 9, 9],
+        skin,
+        skin_hash: olr_proto::NO_HASH.into(),
+    }
+}
+
+/// A setup as large as the wire allows.
+fn long_setup(bots: usize) -> MatchSetupWire {
+    let mut s = setup(0);
+    s.packs = (0..MAX_PACKS).map(|i| (format!("{i}{}", "p".repeat(MAX_ID - 1)), "ab".repeat(32))).collect();
+    s.restrictions = "r".repeat(MAX_RESTRICTIONS);
+    s.bots = (0..bots)
+        .map(|i| BotWire { difficulty: 3, personality: 2, loadout: 1, look: long_look(i as u8) })
+        .collect();
+    s
+}
+
+fn op() -> impl Strategy<Value = Op> {
+    prop_oneof![
+        6 => (0u8..PEERS, prop::bool::ANY).prop_map(|(p, long)| Op::Join(p, if long { long_look(p) } else { look("Ann") })),
+        1 => (0u8..PEERS).prop_map(Op::Connect),
+        1 => (0u8..PEERS).prop_map(Op::Disconnect),
+        4 => ((0u8..PEERS), to_host()).prop_map(|(p, m)| Op::Send(p, m)),
+        1 => (0u8..64, any::<bool>()).prop_map(|(m, b)| Op::Kick(m, b)),
+        1 => (0u8..64, any::<bool>()).prop_map(|(m, b)| Op::Move(m, b)),
+        1 => (0usize..=MAX_BOTS, any::<bool>()).prop_map(|(b, long)| Op::Setup(b, long)),
+        1 => any::<bool>().prop_map(Op::Start),
+        1 => any::<u32>().prop_map(Op::Playing),
+        1 => Just(Op::Ended),
+        1 => (0u64..12_000_000).prop_map(Op::Wait),
+        1 => (0u32..3).prop_map(Op::Revision),
+        1 => (0u8..PEERS).prop_map(Op::Migrate),
+        1 => Just(Op::DropAway),
+    ]
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig { cases: 256, failure_persistence: None, ..ProptestConfig::default() })]
+
+    /// Whatever arrives, the host never panics and never sends a message
+    /// that fails to decode: its state keeps every wire invariant.
+    #[test]
+    fn random_messages_keep_the_lobby_valid(
+        max_players in 1u8..=40,
+        max_spectators in 0u8..=20,
+        ops in prop::collection::vec(op(), 1..120),
+        crowd_at in prop::option::of(0usize..120),
+    ) {
+        let cfg = HostConfig { max_players, max_spectators, admins: vec![key(1)], ..cfg() };
+        let mut host = LobbyHost::new(cfg.clone(), ident(HOST), Some(look("Host")), setup(0)).unwrap();
+        // The key the host proves (a migrated lobby's is its successor's).
+        let mut host_key = key(HOST);
+        let mut now = 0u64;
+        let mut nonces: BTreeMap<u32, [u8; 32]> = BTreeMap::new();
+        let mut serial = 0u8;
+        for (i, op) in ops.into_iter().enumerate() {
+            let op = if crowd_at == Some(i) { Op::Crowd } else { op };
+            match op {
+                Op::Join(p, _) | Op::Connect(p) => {
+                    serial = serial.wrapping_add(1);
+                    let nonce = [serial; 32];
+                    let peer = u32::from(p);
+                    host.connected(peer, ip(p), Path::Direct, now, nonce, FINGERPRINTS);
+                    nonces.insert(peer, nonce);
+                    if let Op::Join(p, look) = op {
+                        let me = ident(p + 1);
+                        host.receive(peer, ToHost::Hello { key: me.public(), look, nonce: [0; 32] }, now);
+                        let signature = me.sign(&challenge_message(&nonce, &host_key, &FINGERPRINTS), [0; 32]);
+                        host.receive(peer, ToHost::Prove { signature, password: None }, now);
+                    }
+                }
+                Op::Crowd => {
+                    for p in 0..PEERS {
+                        serial = serial.wrapping_add(1);
+                        let (peer, nonce, me) = (u32::from(p), [serial; 32], ident(p + 1));
+                        host.connected(peer, ip(p), Path::Direct, now, nonce, FINGERPRINTS);
+                        host.receive(peer, ToHost::Hello { key: me.public(), look: long_look(p), nonce: [0; 32] }, now);
+                        let signature = me.sign(&challenge_message(&nonce, &host_key, &FINGERPRINTS), [0; 32]);
+                        host.receive(peer, ToHost::Prove { signature, password: None }, now);
+                        let missing = (0..MAX_MISSING).map(|i| format!("{i}{}", "m".repeat(MAX_ID - 1))).collect();
+                        host.receive(peer, ToHost::Have { revision: 0, missing }, now);
+                    }
+                }
+                Op::Disconnect(p) => host.disconnected(u32::from(p)),
+                Op::Send(p, m) => host.receive(u32::from(p), m, now),
+                Op::Kick(m, b) => host.kick(m, b),
+                Op::Move(m, b) => host.move_seat(m, b),
+                Op::Setup(bots, long) => {
+                    let gathering = host.state().phase == Phase::Gathering;
+                    let set = host.set_setup(if long { long_setup(bots) } else { setup(bots) });
+                    assert_eq!(set.is_ok(), gathering, "{set:?}");
+                }
+                Op::Start(force) => {
+                    let rtts = BTreeMap::from([(1u32, 900u32), (2, 0)]);
+                    let started = if force { host.force_start(1, &rtts) } else { host.start(1, &rtts) };
+                    if let Ok(mut w) = started {
+                        w.start_checksum = 5;
+                        let wire = encode_to_client(&ToClient::Start(w.clone()));
+                        prop_assert!(decode_to_client(&wire).is_ok());
+                        host.announce_start(w).unwrap();
+                    }
+                }
+                Op::Playing(t) => host.playing(t),
+                Op::Ended => host.match_ended(MatchEndWire { reason: "x\u{7}".repeat(150), rows: vec![(0, 0, 0, 0, 0); 40], last_tick: 900 }, now),
+                Op::Wait(us) => {
+                    now += us;
+                    host.tick(now);
+                }
+                Op::Revision(r) => host.set_content_revision(r),
+                Op::Migrate(p) => {
+                    let (state, list) = (host.state().clone(), host.succession());
+                    prop_assert!(valid_succession(&list));
+                    if let Ok(next) = LobbyHost::migrated(ident(p + 1), &state, &list, &[], cfg.clone()) {
+                        host = next;
+                        host_key = key(p + 1);
+                        nonces.clear();
+                        prop_assert_eq!(host.state().phase, state.phase);
+                    }
+                }
+                Op::DropAway => host.drop_away(),
+            }
+            prop_assert!(valid_succession(&host.succession()));
+            // A broadcast is a run of one message to many peers: check it once.
+            let mut last = None;
+            for (_, m) in host.outgoing() {
+                if last.as_ref() != Some(&m) {
+                    prop_assert_eq!(decode_to_client(&encode_to_client(&m)), Ok(m.clone()));
+                    last = Some(m);
+                }
+            }
+            host.events();
+            let state = host.state().clone();
+            let players = state.members.iter().filter(|m| matches!(m.seat, SeatWire::Player { .. })).count();
+            prop_assert!(players <= usize::from(max_players.clamp(1, 32)));
+            prop_assert!(state.members.len() <= usize::from(max_players.clamp(1, 32)) + usize::from(max_spectators.min(16)));
+            let slots_in_range = state.members.iter().all(|m| match m.seat {
+                SeatWire::Player { slot } => slot < max_players.clamp(1, 32),
+                _ => true,
+            });
+            prop_assert!(slots_in_range);
+            let msg = ToClient::Lobby(state);
+            prop_assert_eq!(decode_to_client(&encode_to_client(&msg)), Ok(msg));
+        }
+    }
+}
+
+#[test]
+fn a_spectator_lacking_content_waits_at_the_start() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    net.client(a).set_ready(true);
+    net.client(b).set_spectate(true);
+    net.client(c).set_spectate(true);
+    net.client(b).have(0, vec!["olx-skin-x".into()]);
+    net.settle();
+    assert_eq!(net.host.lacking(), vec![id_of(&net, b)]);
+    let wire = net.start(1, 2).unwrap();
+    assert_eq!(seat(&net, b), SeatWire::Waiting);
+    assert_eq!(seat(&net, c), SeatWire::Spectator);
+    assert!(got(&net, c, &ClientEvent::Start(wire)), "the complete spectator watches");
+    assert!(!net.peers[b].events.iter().any(|e| matches!(e, ClientEvent::Start(_))), "no start for b");
+    assert!(net.peers[b].open, "it stays connected");
+    consistent(&net);
+}
+
+#[test]
+fn force_start_makes_lacking_players_wait() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    let c = join(&mut net, 3, "Cid");
+    net.client(a).set_ready(true);
+    net.client(c).have(0, vec!["olx-skin-x".into()]);
+    net.settle();
+    let rtts = net.rtts();
+    let wire = net.host.force_start(4, &rtts).unwrap();
+    assert_eq!(seat(&net, b), SeatWire::Spectator, "not ready, content complete");
+    assert_eq!(seat(&net, c), SeatWire::Waiting, "lacking content");
+    net.host.announce_start(wire.clone()).unwrap();
+    net.settle();
+    assert!(got(&net, b, &ClientEvent::Start(wire)));
+    assert!(!net.peers[c].events.iter().any(|e| matches!(e, ClientEvent::Start(_))));
+    assert!(net.peers[c].open);
+    // Back in its seat at the next gathering.
+    net.host.playing(0);
+    net.host.match_ended(MatchEndWire { reason: "time".into(), rows: vec![], last_tick: 900 }, net.now_us);
+    net.run(RESULTS_US + 1);
+    net.settle();
+    assert_eq!(seat(&net, c), SeatWire::Player { slot: 3 });
+    consistent(&net);
+}
+
+#[test]
+fn a_mid_match_joiner_spectates_once_complete() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    net.client(a).set_ready(true);
+    net.settle();
+    net.start(1, 2).unwrap();
+    net.host.playing(0);
+    net.settle();
+    let b = join(&mut net, 2, "Bob");
+    let b_id = id_of(&net, b);
+    let complete =
+        |net: &Net| net.host_events.iter().filter(|e| **e == HostEvent::ContentComplete(b_id)).count();
+    assert!(net.host_events.contains(&HostEvent::Joined(b_id)));
+    assert_eq!(complete(&net), 0, "nothing reported yet");
+    net.client(b).have(0, vec!["olx-skin-x".into()]);
+    net.settle();
+    assert_eq!(complete(&net), 0, "still lacking");
+    assert_eq!(seat(&net, b), SeatWire::Waiting);
+    net.client(b).have(0, vec![]);
+    net.settle();
+    assert_eq!(complete(&net), 1);
+    net.client(b).have(0, vec![]);
+    net.settle();
+    assert_eq!(complete(&net), 1, "reported once");
+    consistent(&net);
+}
+
+#[test]
+fn download_progress_is_published_and_coalesced() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let a_id = id_of(&net, a);
+    net.client(a).have(0, vec!["olx-skin-x".into()]);
+    net.settle();
+    let progress = |net: &Net| member_by_id(net, a_id).download;
+    let before = net.host.revision();
+    net.host.set_download(a_id, Some(10));
+    assert_eq!(progress(&net), Some(10));
+    assert_eq!(net.host.revision(), before + 1);
+    // Within 250 ms: held back.
+    net.run(100_000);
+    net.host.set_download(a_id, Some(20));
+    net.host.set_download(a_id, Some(30));
+    assert_eq!(progress(&net), Some(10));
+    assert_eq!(net.host.revision(), before + 1);
+    // Due: the latest goes out, once.
+    net.run(150_000);
+    assert_eq!(progress(&net), Some(30));
+    assert_eq!(net.host.revision(), before + 2);
+    net.run(1_000_000);
+    assert_eq!(net.host.revision(), before + 2);
+    // Over 100 is cut; complete content clears it.
+    net.host.set_download(a_id, Some(250));
+    assert_eq!(progress(&net), Some(100));
+    net.client(a).have(0, vec![]);
+    net.settle();
+    assert_eq!(progress(&net), None);
+    net.host.set_download(99, Some(5));
+    consistent(&net);
+}
+
+/// A spectator by choice made `Waiting` at a start (it lacked content)
+/// holds no seat for the next match: a mid-match joiner still waits for
+/// one.
+#[test]
+fn a_waiting_spectator_holds_no_seat() {
+    let mut net = lobby_with(HostConfig { max_players: 3, ..cfg() }, 0);
+    let a = join(&mut net, 1, "Ann");
+    let b = join(&mut net, 2, "Bob");
+    net.client(a).set_ready(true);
+    net.client(b).set_spectate(true);
+    net.client(b).have(0, vec!["olx-skin-x".into()]);
+    net.settle();
+    net.start(1, 2).unwrap();
+    net.host.playing(0);
+    net.settle();
+    assert_eq!(seat(&net, b), SeatWire::Waiting);
+    let c = join(&mut net, 3, "Cid");
+    assert_eq!(seat(&net, c), SeatWire::Waiting, "a seat is free for the next match");
+    consistent(&net);
+}
+
+/// A member is lacking until its `Have` answers the host's current content
+/// list (`set_content_revision`): before its first, and after a setup change
+/// until the new list's. A `Have` for another list is ignored.
+#[test]
+fn a_member_is_lacking_until_its_have_answers_the_current_list() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let a_id = id_of(&net, a);
+    net.host.set_content_revision(1);
+    net.client(a).set_ready(true);
+    net.settle();
+    assert!(!member_by_id(&net, a_id).ready, "no `Have` yet");
+    assert_eq!(net.host.lacking(), vec![a_id]);
+    assert!(matches!(net.start(1, 2), Err(NotStartable::NotReady(_))));
+    net.client(a).have(1, vec![]);
+    net.settle();
+    assert!(member_by_id(&net, a_id).ready, "said ready, content known complete");
+    assert!(net.host.lacking().is_empty());
+    // The setup changes: a new list.
+    let mut other = setup(0);
+    other.level_id = "olx-level-castlestrike".into();
+    net.host.set_setup(other).unwrap();
+    net.host.set_content_revision(2);
+    net.client(a).set_ready(true);
+    net.settle();
+    assert!(!member_by_id(&net, a_id).ready, "the new list is not answered");
+    net.client(a).have(1, vec![]);
+    net.settle();
+    assert!(!member_by_id(&net, a_id).ready, "an answer to the old list is ignored");
+    assert!(matches!(net.start(1, 2), Err(NotStartable::NotReady(_))));
+    net.client(a).have(2, vec![]);
+    net.settle();
+    assert!(member_by_id(&net, a_id).ready);
+    assert!(net.start(1, 2).is_ok());
+    consistent(&net);
+}
+
+/// N86: a member whose link timed out is announced as timed out, not left.
+#[test]
+fn a_timed_out_member_is_announced_as_such() {
+    let mut net = lobby();
+    let a = join(&mut net, 1, "Ann");
+    let w = join(&mut net, 2, "Wat");
+    let id = id_of(&net, a);
+    net.time_out(a);
+    net.settle();
+    assert!(got(&net, w, &ClientEvent::Notice(Notice::TimedOut(id))));
+    assert!(!got(&net, w, &ClientEvent::Notice(Notice::Left(id))), "no Left as well");
+    assert_eq!(
+        net.peers[w].events.iter().filter(|e| matches!(e, ClientEvent::Notice(Notice::TimedOut(_)))).count(),
+        1
+    );
+    assert!(net.host_events.contains(&HostEvent::TimedOut(id)));
+    assert!(!net.host_events.contains(&HostEvent::Left(id)));
+    assert!(net.host.state().members.iter().all(|m| m.id != id));
+    consistent(&net);
+}

@@ -1,0 +1,37 @@
+[package]
+name = "olr-scenario"
+description = "Replays oracle scenarios in the simulation and records traces to compare with OLX."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-math.workspace = true
+olr-data.workspace = true
+olr-terrain.workspace = true
+olr-sim.workspace = true
+olr-modes.workspace = true
+olr-oracle.workspace = true
+olr-content.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+olr-pack.workspace = true
+allocation-counter.workspace = true
+tempfile.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[[test]]
+name = "no_alloc"
+
+[[test]]
+name = "render_golden"
+
+[lints]
+workspace = true

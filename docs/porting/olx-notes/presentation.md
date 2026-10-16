@@ -393,7 +393,7 @@ blit 20x18 at (x - 10, y - 9)               // vertically half a world px off th
 ```
 
 The skin is colorized with the worm's game colour (already ported:
-`rl-data::skin::colorize`, `CGameSkin.cpp:720-790`). The bot icon is not drawn
+`olr-data::skin::colorize`, `CGameSkin.cpp:720-790`). The bot icon is not drawn
 in game (`draw_cpu = false`).
 
 ### 3.2 Gibs image
@@ -624,8 +624,8 @@ loaded mod's life (`PhysicsLX56_Projectiles.cpp:589-595`).
   requires `RotIncrement != 0`.
 - After it, they draw frame `(int)rotation` (degrees!) modulo the frame count.
 
-`rl-sim` uses the 1 for its draw but **does not keep the mutation**
-(`crates/rl-sim/src/spawn.rs:91-97`). The renderer must track it itself; see the
+`olr-sim` uses the 1 for its draw but **does not keep the mutation**
+(`crates/olr-sim/src/spawn.rs:91-97`). The renderer must track it itself; see the
 open questions.
 
 `DrawShadow` is a no-op (§2.3). Circle, rect and polygon types are not used by
@@ -774,7 +774,7 @@ starts negative. `int(fFrame) ≤ −1` blits from `x < 0`, and SDL clips that a
 (`DrawImageAdv` uses `SDL_BlitSurface`, `GfxPrimitives.cpp:742-754`). So a
 damage-20 explosion is **invisible for 10 sub-steps (about 0.11 s)** before playing frames
 0..15: after 10 passes `fFrame` is `−0.9999991` in floats, which truncates to 0
-(`rl-fx`'s `explosion_frames_and_invisible_start`). The float sums drift low
+(`olr-fx`'s `explosion_frames_and_invisible_start`). The float sums drift low
 elsewhere too: a size-8 explosion is still at frame 10 after 10 passes.
 
 **Dirt-particle colour.** It is read from the colour image **before** the carve
@@ -792,7 +792,7 @@ pixel:
   `FrontTile`'s top-left pixel, replaced by the first pixel neither black nor
   pink of every row of `hole1` that has one, so the last such row wins), which
   never shows: particles spawn only when the scan read a dirt pixel. The sim
-  reports the chained explosions' carves before these particles, so `rl-fx`
+  reports the chained explosions' carves before these particles, so `olr-fx`
   gives a probe that is no longer dirt this default colour.
 - **Rope hook landing in diggable material** (`PhysicsLX56.cpp:600-607`). The
   colour at the wrapped hook position. 5 particles at `hook + (0,2)` with
@@ -872,10 +872,10 @@ The old `ENT_BEAM` path is dead code (`CClient_Game.cpp:1049-1054`).
 OLX has one global `rand()` (`GetRandomNum`, `GetRandomInt` and `GetRandomVec`,
 `src/common/MathLib.cpp:58-130`). Every draw below advances it.
 
-- **Already drawn by `rl-sim`** in OLX's order, because the dedicated server
+- **Already drawn by `olr-sim`** in OLX's order, because the dedicated server
   makes the same calls:
   - particle, blood, dropper and gib **velocities**;
-  - a gib's two spin draws (`crates/rl-sim/src/damage.rs:140-145`);
+  - a gib's two spin draws (`crates/olr-sim/src/damage.rs:140-145`);
   - the death-sound pick.
 - **Client-only in OLX**, so the remake must use its own RNG:
   - the dropper's per-drip `GetRandomInt(1)` and `GetRandomVec()`
@@ -1021,7 +1021,7 @@ moved them onto the playfield, at the viewport's bottom-left
 Player 1's keyboard defaults are slot 0, with gamepad `j1_*` in slot 1
 (`src/client/Options.cpp:44-51`, `291-321`):
 
-| OLX control | Player 1 (non-Apple) | Player 1 (Apple) | Player 2 | `rl-sim` key |
+| OLX control | Player 1 (non-Apple) | Player 1 (Apple) | Player 2 | `olr-sim` key |
 |---|---|---|---|---|
 | Up | `up` | `up` | `kp 8` | `UP` (aim up) |
 | Down | `down` | `down` | `kp 5` | `DOWN` (aim down) |
@@ -1054,7 +1054,7 @@ The general keys are (`Options.cpp:82-83`):
 ### 10.2 How the controls drive the worm
 
 From `CWormHumanInputHandler::getInput`, `src/common/CWormHuman.cpp:81-592`,
-which `rl-sim::physics::get_input` ports:
+which `olr-sim::physics::get_input` ports:
 
 - **Aim.** Up and Down change the aim speed (LX56 aim).
 - **Moving and facing.** Left and Right set facing and move, unless
@@ -1148,7 +1148,7 @@ listed under `shared` in `content/olx-manifest.ron`.
 | `data/gfx/health.png` | 10×10 | health bonus |
 | `data/gfx/greenball.png` | 8×9 | green dirt; already imported into theme packs |
 | `data/gfx/infinite.png`, `font.png`, `out_font.png` | | HUD reference: lives ∞, normal and outline fonts |
-| `data/sounds/throw.ogg`, `pickup.ogg`, `bump.ogg`, `death1.ogg`, `death2.ogg`, `death3.ogg` | | game sounds; `rl-sim::GAME_SOUNDS` names them `.wav`, so map them to `.ogg` |
+| `data/sounds/throw.ogg`, `pickup.ogg`, `bump.ogg`, `death1.ogg`, `death2.ogg`, `death3.ogg` | | game sounds; `olr-sim::GAME_SOUNDS` names them `.wav`, so map them to `.ogg` |
 | `data/sounds/teamscore.ogg`, `data/sounds/game/*.ogg` | | optional: teams, announcer |
 | `data/sounds/<name>` | | fallback for mod sound names, such as Classic's weapon sounds |
 | `data/themes/<Theme>/FrontTile.png` | | `PlaceDirt` colours; the Rust `Theme` already has `front_tile` |
@@ -1172,7 +1172,7 @@ Not needed:
 
 1. **Explosion shake is not reported.** `Event::Explosion { pos, damage }` lacks
    OLX's `shake` argument: the action's `Shake`, or 5 for bonus chain and beam
-   bonus explosions. Add `shake: i32` to the event (`rl-sim::effects`,
+   bonus explosions. Add `shake: i32` to the event (`olr-sim::effects`,
    `actions.rs:112-148` already tracks `info.shake`).
    **Resolved** (spec §19 E6): `Explosion { pos, damage, shake }`.
 2. **The gib's owner is not reported.** `CosmeticKind::Gib` has no worm, but each

@@ -54,15 +54,15 @@ inputs, rewinds and re-simulates, and connects the peers.
 
 | Crate | Layer | Job | WASM |
 |---|---|---|---|
-| `rl-proto` | 4, `no_std` | The wire format: versioned messages with size limits, decoding that never panics; the simulation fingerprint (§2.2). | yes |
-| `rl-netcode` | 4, `no_std` | The rollback session (§3): tick stamps, input prediction, snapshots, re-simulation, the host's input ordering, checksum comparison, desync repair, host migration. **Sans-IO**: no sockets and no clock; it takes messages and a time and returns messages and ticks to run. | yes |
-| `rl-net` | 5 | Transport and connection setup (§5): WebRTC data channels, the handshake over a host's WebSocket, LAN or Nostr, UPnP/NAT-PMP/PCP, STUN and TURN; the network impairment layer (§9.4). | yes (WebRTC, WebSocket and Nostr parts) |
-| `rl-discovery` | 5 | Game announcements and lookup on Nostr relays, LAN broadcast, invite codes (§6). | yes (Nostr, invite codes) |
-| `rl-server` | 6 | The headless dedicated server (§7.4), optionally a TURN relay. | no |
+| `olr-proto` | 4, `no_std` | The wire format: versioned messages with size limits, decoding that never panics; the simulation fingerprint (§2.2). | yes |
+| `olr-netcode` | 4, `no_std` | The rollback session (§3): tick stamps, input prediction, snapshots, re-simulation, the host's input ordering, checksum comparison, desync repair, host migration. **Sans-IO**: no sockets and no clock; it takes messages and a time and returns messages and ticks to run. | yes |
+| `olr-net` | 5 | Transport and connection setup (§5): WebRTC data channels, the handshake over a host's WebSocket, LAN or Nostr, UPnP/NAT-PMP/PCP, STUN and TURN; the network impairment layer (§9.4). | yes (WebRTC, WebSocket and Nostr parts) |
+| `olr-discovery` | 5 | Game announcements and lookup on Nostr relays, LAN broadcast, invite codes (§6). | yes (Nostr, invite codes) |
+| `olr-server` | 6 | The headless dedicated server (§7.4), optionally a TURN relay. | no |
 
-`rl-netcode` and `rl-proto` are a same-layer pair in `xtask/layers.ron`;
-both depend on `rl-sim` and `rl-modes`. `rl-ui` gains the multiplayer
-menus and the lobby (§7); `rl-game` the online session; `rl-cli` the
+`olr-netcode` and `olr-proto` are a same-layer pair in `xtask/layers.ron`;
+both depend on `olr-sim` and `olr-modes`. `olr-ui` gains the multiplayer
+menus and the lobby (§7); `olr-game` the online session; `olr-cli` the
 test commands (§9).
 
 ### 2.1 One transport: WebRTC
@@ -85,8 +85,8 @@ own `RTCPeerConnection`.
 
 Rollback needs bit-identical simulations. Every build carries a
 **simulation fingerprint**: a hash, computed at build time, of the source
-of the simulation crates (`rl-math`, `rl-data`, `rl-terrain`, `rl-sim`,
-`rl-modes`) and the protocol version. Games announce it; a client only
+of the simulation crates (`olr-math`, `olr-data`, `olr-terrain`, `olr-sim`,
+`olr-modes`) and the protocol version. Games announce it; a client only
 joins a game with its own fingerprint, and the game list shows other
 versions greyed out ("needs version X").
 
@@ -161,11 +161,11 @@ A desync can only be a bug of ours (non-deterministic code). Still:
 - every 10 confirmed ticks each peer sends the host its checksum
   (`World::checksum`); the host's is the reference;
 - on a mismatch the host sends that peer its world state (encoded by
-  `rl-sim`, checksum-verified after decoding), and the peer continues from
+  `olr-sim`, checksum-verified after decoding), and the peer continues from
   it;
 - both sides save a **desync bundle**: the match's start state, every
   final input up to the mismatch, both checksum streams, the build
-  fingerprint and the platform. `rl-cli net-repro` reads it (§9.6).
+  fingerprint and the platform. `olr-cli net-repro` reads it (§9.6).
 
 ### 3.6 Bots, spectators, replays
 
@@ -174,7 +174,7 @@ A desync can only be a bug of ours (non-deterministic code). Still:
 - **Spectators** receive the final inputs and simulate confirmed ticks
   only (no prediction, no rollback). A spectator who arrives mid-match
   first receives the world state.
-- Every peer saves the match as an `rl-replay` replay of the final inputs.
+- Every peer saves the match as an `olr-replay` replay of the final inputs.
 
 ### 3.7 Host migration
 
@@ -232,7 +232,7 @@ In order:
    (UPnP-IGD, NAT-PMP, PCP).
 2. **Hole punching:** ICE with public STUN servers (an editable list from
    several operators).
-3. **Volunteer TURN relays:** `rl-server --relay` announces itself on
+3. **Volunteer TURN relays:** `olr-server --relay` announces itself on
    Nostr with its region and capacity; peers try the nearest few. Each
    relay limits every user to about 32 KB/s and a few sessions, so it
    cannot serve as a free general proxy.
@@ -317,7 +317,7 @@ In order:
 
 ### 7.4 The dedicated server
 
-- `rl-server --config server.ron`: name, visibility, password, ports,
+- `olr-server --config server.ron`: name, visibility, password, ports,
   relays and STUN servers, a map rotation (mod, level, match settings),
   bots to fill empty slots, admin keys.
 - Admins use chat commands: `/kick`, `/ban`, `/next`, `/settings`.
@@ -347,11 +347,11 @@ In order:
 The aim (U11): nearly every networking bug is a failing test with a seed
 and a one-line command that reproduces it, found in the agentic loop
 rather than in a playtest. Everything that decides behaviour is sans-IO
-(`rl-netcode`, `rl-proto`, ideally the WebRTC stack), so whole online
+(`olr-netcode`, `olr-proto`, ideally the WebRTC stack), so whole online
 matches run in one process on a virtual clock, deterministically, in
 seconds.
 
-### 9.1 The simulated network (`rl-netcode` tests, `rl-cli net-sim`)
+### 9.1 The simulated network (`olr-netcode` tests, `olr-cli net-sim`)
 
 - N peers (host, players, spectators, bots) in one process with a virtual
   clock; every link has its own latency, jitter, loss, reordering,
@@ -369,7 +369,7 @@ seconds.
   players; message size and rate limits hold.
 - `check` runs a few hundred seeds (seconds); `full` thousands. A failure
   writes `target/failures/net-<seed>.ron` (the seed, profile, peers and
-  events); `rl-cli net-sim --from <file>` replays it exactly, and
+  events); `olr-cli net-sim --from <file>` replays it exactly, and
   `cargo xtask bless-regression --from` keeps it as a golden case.
 
 ### 9.2 Feel numbers (gated)
@@ -389,8 +389,8 @@ memory), and encode-decode round trips: short in `check`, long in `full`.
 
 ### 9.4 Real transport on one machine
 
-`rl-server` and 8 headless bot clients (`rl-cli net-client --bot`) over
-real WebRTC on localhost, through an impairment layer in `rl-net` using
+`olr-server` and 8 headless bot clients (`olr-cli net-client --bot`) over
+real WebRTC on localhost, through an impairment layer in `olr-net` using
 the profiles of §9.1. Checks the verdict, replays and checksums. In
 `full`.
 
@@ -403,8 +403,8 @@ assumption rollback rests on (the simulation's `libm` maths).
 
 ### 9.6 Desync bundles
 
-`rl-cli net-repro <bundle>` replays a bundle (§3.5) and names the first
-diverging tick and the first differing part of the world, as `rl-cli
+`olr-cli net-repro <bundle>` replays a bundle (§3.5) and names the first
+diverging tick and the first differing part of the world, as `olr-cli
 scenario` does for the oracle. A test plants deliberate nondeterminism
 behind a test-only hook and checks the bundle pinpoints it. Bundles from
 real games are sent to the developer and become tests.
@@ -413,7 +413,7 @@ real games are sent to the developer and become tests.
 
 A Docker topology: two simulated home routers (one port-restricted cone
 NAT, one symmetric NAT that defeats hole punching), a router with UPnP, a
-local Nostr relay and an `rl-server --relay`. Scenarios: direct, port
+local Nostr relay and an `olr-server --relay`. Scenarios: direct, port
 mapping, hole punching, relay fallback, announcing and finding a game,
 invite codes, a browser host. `cargo xtask net-nat`, in `full`; skipped
 with a notice without Docker.
@@ -433,7 +433,7 @@ in-process host, in `check`.
 ### 9.10 Playtest aids and soak
 
 - The network overlay (§7.3).
-- `rl-game --net-sim <profile>` starts a host and a client on one machine
+- `olr-game --net-sim <profile>` starts a host and a client on one machine
   with a chosen profile.
 - Every desync in a real game saves a bundle.
 - `cargo xtask net-soak [--minutes N]`: long runs of §9.1 and §9.4 with
@@ -464,10 +464,10 @@ in-process host, in `check`.
 
 | Plan | Delivers (each ends playable or testable on its own) |
 |---|---|
-| 9 | `rl-proto`, `rl-netcode` (§3) with the snapshot undo journal, world encoding, the simulated network (§9.1), feel numbers (§9.2), fuzzing (§9.3), cross-platform determinism (§9.5), desync bundles (§9.6), `rl-cli net-sim` and `net-repro`. |
-| 10 | `rl-net` with WebRTC (spike first, §2.1), direct and LAN play, the lobby and menus (§7), chat, spectators, bots, kick and ban, `rl-server` (§7.4), real-transport tests (§9.4), `--net-sim` and the overlay. |
+| 9 | `olr-proto`, `olr-netcode` (§3) with the snapshot undo journal, world encoding, the simulated network (§9.1), feel numbers (§9.2), fuzzing (§9.3), cross-platform determinism (§9.5), desync bundles (§9.6), `olr-cli net-sim` and `net-repro`. |
+| 10 | `olr-net` with WebRTC (spike first, §2.1), direct and LAN play, the lobby and menus (§7), chat, spectators, bots, kick and ban, `olr-server` (§7.4), real-transport tests (§9.4), `--net-sim` and the overlay. |
 | 11 | Content download (§8). |
-| 12 | Split into 12a (finding games: the Nostr list, invite codes, host-key proof, STUN address; implemented), 12b (through routers: Nostr handshakes, ICE, port mapping, TURN relays, the Docker NAT tests; implemented; §9.7's browser host moved to plan 13, STATUS PL12b-3) and 12c (host migration, `net-soak`; implemented, STATUS "Host migration decisions (plan 12c)") (STATUS PL12-1). `rl-discovery`: Nostr announcements and handshakes, invite codes, port mapping, hole punching, volunteer relays (§5-6), host migration (§3.7), the Docker NAT tests (§9.7), `net-soak`. |
+| 12 | Split into 12a (finding games: the Nostr list, invite codes, host-key proof, STUN address; implemented), 12b (through routers: Nostr handshakes, ICE, port mapping, TURN relays, the Docker NAT tests; implemented; §9.7's browser host moved to plan 13, STATUS PL12b-3) and 12c (host migration, `net-soak`; implemented, STATUS "Host migration decisions (plan 12c)") (STATUS PL12-1). `olr-discovery`: Nostr announcements and handshakes, invite codes, port mapping, hole punching, volunteer relays (§5-6), host migration (§3.7), the Docker NAT tests (§9.7), `net-soak`. |
 | 13 | The browser build (§10), including hosting and local play, and its tests (§9.8). |
 
 ## 12. Risks
@@ -476,7 +476,7 @@ in-process host, in `check`.
 |---|---|
 | The simulation differs across platforms (floats, WASM) | `libm` everywhere already; §9.5 compares checksum streams on Linux, WASM and Windows from plan 9. |
 | Snapshots too slow on large maps | The terrain undo journal (§3.3); a measured budget in plan 9. |
-| Native WebRTC libraries are young | A spike in plan 10 compares the candidates against §9.4 before committing; the transport sits behind `rl-net`'s interface. |
+| Native WebRTC libraries are young | A spike in plan 10 compares the candidates against §9.4 before committing; the transport sits behind `olr-net`'s interface. |
 | Public Nostr relays drop notes, block kinds or ask for payment | About 8 relays from different operators, measured before choosing; an editable list; re-publishing every minute; anyone can run a relay. |
 | Some NATs defeat hole punching | Volunteer relays (§5.3), a dedicated server, clear failure messages; §9.7 tests both NAT kinds. |
 | Browser background throttling breaks a browser host | The host's netcode in a Web Worker; a warning while hidden; §9.8 tests a browser host. |

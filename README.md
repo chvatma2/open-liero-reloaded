@@ -37,7 +37,7 @@ leaves out.
    ```
 
    `xvfb` is optional: `cargo xtask full` runs its end-to-end test on it.
-3. **Build:** `cargo build --release -p rl-game` (or let `cargo run` below
+3. **Build:** `cargo build --release -p olr-game` (or let `cargo run` below
    build it).
 
 ### Get the content
@@ -63,15 +63,15 @@ more:
 ### Run
 
 ```sh
-cargo run --release -p rl-game                 # the menus
+cargo run --release -p olr-game                 # the menus
 ```
 
-Useful flags (`rl-game --help` lists them all):
+Useful flags (`olr-game --help` lists them all):
 
 | Flag | What it does |
 |---|---|
 | `--fullscreen` | borderless fullscreen for this run (not saved; the options also have it) |
-| `--window-system x11` | X11 instead of Wayland (also `RL_WINDOW_SYSTEM=x11`); try it if the Wayland compositor drops the game |
+| `--window-system x11` | X11 instead of Wayland (also `OLR_WINDOW_SYSTEM=x11`); try it if the Wayland compositor drops the game |
 | `--uncapped`, `--filter nearest\|sharp`, `--no-interp` | no VSync; the upscale filter; OLX's whole-pixel drawing of the latest tick (for this run) |
 | `--hud-layout auto\|bar\|sides` | where the HUD goes on a window wider than 16:9 (for this run) |
 | `--spectate --bots N` | a Deathmatch of 2 to 32 bots alone, watched (no menus) |
@@ -79,7 +79,7 @@ Useful flags (`rl-game --help` lists them all):
 | `--replay f.rlrp` | watch a replay |
 | `--mode deathmatch ...`, `--record f.rlrp` | a command-line Deathmatch without the menus (below), saving its replay |
 | `--data-dir <dir>` | settings, profiles, replays and imported packs here instead of the platform's directory |
-| `--content <dir>` | the imported content (default `content/packs` beside `rl-game`, else in the working directory) |
+| `--content <dir>` | the imported content (default `content/packs` beside `olr-game`, else in the working directory) |
 | `--no-sound` | open no audio device |
 
 ### The menus
@@ -168,7 +168,7 @@ defaults, saves nothing to it that session, and says so on the main menu.
   (`MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA`), since Mesa otherwise takes the
   first adapter Windows lists, often the integrated GPU. Set
   `MESA_D3D12_DEFAULT_ADAPTER_NAME` to part of another adapter's name to
-  choose it; the startup line `rl-game: GPU …` names the one in use.
+  choose it; the startup line `olr-game: GPU …` names the one in use.
 - WSLg presents at the compositor's 60 Hz under Wayland; under X11
   (`--window-system x11`) it draws without VSync.
 
@@ -180,14 +180,14 @@ the menus (for scripted runs and tests).
 ### The sandbox
 
 ```sh
-cargo run --release -p rl-game -- --level <id> --mod <id> [--skin <id>] [--targets N] [--seed N] [--bonuses]
+cargo run --release -p olr-game -- --level <id> --mod <id> [--skin <id>] [--targets N] [--seed N] [--bonuses]
 ```
 
 `--level` and `--mod` take a pack id or an OLX name or prefix (levels: `Liero
 Factory`, `Dirt Level`, `FossilFacility`, `CastleStrike`; mods: `Classic`, `MW
 1.0`). Other options: `--fullscreen`, `--uncapped` (no VSync), `--no-interp`
 (OLX's whole-pixel latest-state drawing), `--filter nearest|sharp`, `--content
-<dir>`. Run `rl-game --help` for all of them, including the agent helpers
+<dir>`. Run `olr-game --help` for all of them, including the agent helpers
 `--demo`, `--script`, `--shot`, `--autoquit-after` and `--stats`.
 
 The controls are those above, but Esc quits (there is no pause menu) and
@@ -197,7 +197,7 @@ stand around to shoot at (default 3).
 ### Deathmatch against bots
 
 ```sh
-cargo run --release -p rl-game -- --mode deathmatch --bots 3 --difficulty medium \
+cargo run --release -p olr-game -- --mode deathmatch --bots 3 --difficulty medium \
     --level CastleStrike --mod "MW 1.0" [--lives L] [--kill-limit K] [--time-limit M] \
     [--seed S] [--record match.rlrp]
 ```
@@ -220,8 +220,8 @@ the worm the camera follows.
 (bots too), and checksums of the world, so the same build replays it exactly:
 
 ```sh
-cargo run --release -p rl-game -- --replay f.rlrp     # watch it
-cargo run --release -p rl-cli -- replay f.rlrp        # check it headless
+cargo run --release -p olr-game -- --replay f.rlrp     # watch it
+cargo run --release -p olr-cli -- replay f.rlrp        # check it headless
 ```
 
 A replay names its mod and level packs by content hash and is refused on
@@ -230,12 +230,12 @@ other content; a divergence is reported at the first checksum that differs.
 ### Headless bot matches
 
 ```sh
-cargo run --release -p rl-cli -- match --mod olx-classic --level olx-level-dirt-level \
+cargo run --release -p olr-cli -- match --mod olx-classic --level olx-level-dirt-level \
     --bots 8 --difficulty mixed --seed 1 --ticks 6000 [--personality chaos] \
     [--coverage] [--record f.rlrp]
 ```
 
-`rl-cli match` plays bots against each other without a window, checks the
+`olr-cli match` plays bots against each other without a window, checks the
 invariants every tick, plays the match again (determinism) and replays its
 recording (round trip), and prints tick times. `--personality chaos` bots
 fire every weapon they get; `--coverage` lists the weapons, actions and
@@ -248,7 +248,7 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
   variable. On a PC with integrated graphics and an NVIDIA card it asks for
   the NVIDIA card; to choose another adapter, set
   `MESA_D3D12_DEFAULT_ADAPTER_NAME` to part of its name (the startup line
-  `rl-game: GPU …` shows the one in use). Software rendering works too: `WGPU_BACKEND=vulkan` uses lavapipe.
+  `olr-game: GPU …` shows the one in use). Software rendering works too: `WGPU_BACKEND=vulkan` uses lavapipe.
 - **Sound** needs the ALSA PulseAudio plugin: `sudo apt install
   libasound2-plugins`, and an `~/.asoundrc` with
 
@@ -263,9 +263,9 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
   (Weston) crashes when a window is resized quickly, which ends every WSLg
   app; the game then says the window system stopped it.
   The game runs under Wayland by default; `--window-system x11` (or
-  `RL_WINDOW_SYSTEM=x11`) runs it under X11 instead, which needs
+  `OLR_WINDOW_SYSTEM=x11`) runs it under X11 instead, which needs
   `libxkbcommon-x11-0` and draws without VSync on WSLg.
-- **The Windows build:** `cargo xtask windows` builds `rl-cli` and `rl-game`
+- **The Windows build:** `cargo xtask windows` builds `olr-cli` and `olr-game`
   for Windows with mingw-w64 (`rustup target add x86_64-pc-windows-gnu`
   once) and runs them through interop; nothing is installed on Windows.
   They are staged with the content in `%TEMP%\rust-liero-envelope`, and
@@ -275,7 +275,7 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
   `target/` plus Docker images can fill it. The dev profile keeps only line
   tables for the workspace (`debug = "line-tables-only"`; backtraces still
   show file:line in our crates) and no debug info for dependencies. `cargo xtask
-  oracle-record` removes superseded `rl-olx-oracle:*` images (it keeps the
+  oracle-record` removes superseded `olr-olx-oracle:*` images (it keeps the
   current one and `:dev`). `cargo xtask tidy` removes superseded builds from
   `target/` (the older hashes cargo leaves beside each rebuilt artifact, and
   old incremental sessions) and prunes the images (never `content/packs` or
@@ -290,22 +290,22 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
 `cargo xtask dist` builds portable zips for Linux and Windows in one run:
 `target/release-zips/rust-liero-<version>-linux-x64.zip` and
 `target/release-zips/rust-liero-<version>-windows-x64.zip`. Each holds one folder,
-`rust-liero-<version>/`, with `rl-game` and `rl-server` (`.exe` on
+`rust-liero-<version>/`, with `olr-game` and `olr-server` (`.exe` on
 Windows, built in the `dist` profile: release without symbols), the
 content in `content/packs/`, this README, the license, the changelog,
 `docs/online.md` and `server.example.ron`. Copy a zip anywhere, unpack it
-and run `rl-game`: without `--content` both programs use the
+and run `olr-game`: without `--content` both programs use the
 `content/packs` beside them. Settings, profiles and replays stay in the
 user's profile directory, as with any build. The Linux programs need
-`libasound2` and `libudev1` (`rl-game` only) and a glibc at least as new
+`libasound2` and `libudev1` (`olr-game` only) and a glibc at least as new
 as the building machine's; the Windows ones need no extra DLLs.
 
 The Windows build needs mingw-w64 and the Rust target (`sudo apt install
 mingw-w64`, `rustup target add x86_64-pc-windows-gnu`). At the end each
 zip is unpacked into a fresh directory and run from another one: on Linux
-`rl-game --help` and an `rl-server` match with a bot client, on Windows
-(through WSL interop; skipped with a notice without it) `rl-game.exe
---help` and `rl-server.exe` loading its map. `--no-verify` skips that.
+`olr-game --help` and an `olr-server` match with a bot client, on Windows
+(through WSL interop; skipped with a notice without it) `olr-game.exe
+--help` and `olr-server.exe` loading its map. `--no-verify` skips that.
 The two whole-program-optimised builds take several minutes from cold.
 
 ## Checks
@@ -319,9 +319,9 @@ The two whole-program-optimised builds take several minutes from cold.
   (`fixtures/render/`), the 10-minute headless sandbox soak (60 000 ticks,
   memory and entity counts must stay bounded), the HUD snapshots and a
   short sound on the default output; then the end-to-end runs on Xvfb
-  with software GL (`fixtures/autoplay/menus.ron`, `rl-game --autoplay
+  with software GL (`fixtures/autoplay/menus.ron`, `olr-game --autoplay
   --fake-clock`, and the online run `fixtures/autoplay/online.ron`
-  against an `rl-server` and a local Nostr relay: a typed join, then the
+  against an `olr-server` and a local Nostr relay: a typed join, then the
   same server from the Internet tab), `cargo xtask net-nat` (joins across
   Docker routers: port-restricted, symmetric, UPnP, PCP, NAT-PMP, a TURN
   relay; skipped with a notice without Docker), the benchmarks and short

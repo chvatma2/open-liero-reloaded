@@ -1,0 +1,55 @@
+[package]
+name = "olr-online"
+description = "Online play over real connections: the lobby, the match and its replay, from the first handshake back to the lobby."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-net.workspace = true
+# The joiner's and the host's Nostr handshakes (N45, N54; same-layer pair
+# N55): the relay pool, `Inbox`/`Asker`, TURN notes.
+olr-discovery.workspace = true
+olr-netcode.workspace = true
+olr-proto.workspace = true
+olr-lobby.workspace = true
+olr-content.workspace = true
+olr-pack.workspace = true
+olr-data.workspace = true
+olr-vfs.workspace = true
+olr-sim.workspace = true
+olr-bots.workspace = true
+olr-modes.workspace = true
+olr-replay.workspace = true
+olr-terrain.workspace = true
+anyhow.workspace = true
+serde = { workspace = true, features = ["std"] }
+postcard.workspace = true
+sha2.workspace = true
+hex.workspace = true
+
+[features]
+# Test-only API (OnlinePeer::test_seed_override): enabled by this crate's
+# own tests, never by a build that ships. Forwards olr-net's, so a per-crate
+# test run keeps olr-net's port-mapping guard on (tests never map a real
+# router).
+test-hooks = ["olr-net/test-hooks"]
+
+[dev-dependencies]
+proptest.workspace = true
+tempfile.workspace = true
+olr-online = { workspace = true, features = ["test-hooks"] }
+# `TestRelay` for the joins through Nostr (`tests/through.rs`).
+olr-discovery = { workspace = true, features = ["test-relay"] }
+# `IceConfig::{base_override, relay_only, gateway, ssdp}` and `FakeGateway`.
+olr-net = { workspace = true, features = ["test-hooks"] }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

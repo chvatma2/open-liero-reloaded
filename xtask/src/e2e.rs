@@ -7,11 +7,11 @@
 //! script names was written, and stderr has no warning, error or panic.
 //!
 //! Then the online run (plan 10 task 15, plan 12b task 10): a Nostr relay
-//! of its own on loopback (`rl-cli nostr-relay --listen 127.0.0.1:0`,
-//! built with `nat-tools`; its URL read from its first line), `rl-server`
+//! of its own on loopback (`olr-cli nostr-relay --listen 127.0.0.1:0`,
+//! built with `nat-tools`; its URL read from its first line), `olr-server`
 //! with `fixtures/server/e2e.ron` (Public on that relay at 127.0.0.1,
 //! `allow_local`; port 0: the port is read from its log's "listening on
-//! port N", so runs never collide), a bot client (`rl-cli net-client
+//! port N", so runs never collide), a bot client (`olr-cli net-client
 //! --bot`) joined, and the game (its settings naming the relay) plays
 //! `fixtures/autoplay/online.ron` (its `{port}` replaced) on the real
 //! clock: joining by the typed address, leaving, joining again as listed
@@ -24,7 +24,7 @@
 //! are killed whatever happens.
 //!
 //! Rendering is forced onto Mesa's software rasteriser, so the run is the
-//! same on every machine and the WSL relaunch (`rl-game`'s `wsl.rs`, which
+//! same on every machine and the WSL relaunch (`olr-game`'s `wsl.rs`, which
 //! would pick the real GPU through d3d12) never happens: `WGPU_BACKEND=gl`,
 //! `LIBGL_ALWAYS_SOFTWARE=1`, `GALLIUM_DRIVER=llvmpipe`, no Wayland, and
 //! `--window-system x11`. Sound is off (`--no-sound`). Without Xvfb the
@@ -141,14 +141,14 @@ pub fn bad_lines(stderr: &str) -> Vec<&str> {
         .collect()
 }
 
-/// The dev builds `e2e` and `net-nat` run (`target/debug`): `rl-game` and
-/// `rl-server`, then `rl-cli` with its dev tools (`nostr-relay`,
+/// The dev builds `e2e` and `net-nat` run (`target/debug`): `olr-game` and
+/// `olr-server`, then `olr-cli` with its dev tools (`nostr-relay`,
 /// `stun-server`) in a cargo run of its own: in one run, feature
-/// unification would give rl-game and rl-server rl-discovery's test relay
+/// unification would give olr-game and olr-server olr-discovery's test relay
 /// too. Both steps build exactly these, so in `full` the second finds
 /// them built (no feature flips between them).
 pub fn build_binaries(root: &Path) -> Result<(), String> {
-    for args in [&["-p", "rl-game", "-p", "rl-server"][..], &["-p", "rl-cli", "--features", "nat-tools"]] {
+    for args in [&["-p", "olr-game", "-p", "olr-server"][..], &["-p", "olr-cli", "--features", "nat-tools"]] {
         let build = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
             .args(["build", "--quiet"])
             .args(args)
@@ -187,7 +187,7 @@ pub fn run(content: Option<&Path>) -> Result<(), String> {
     );
     let online = online(&x, content, &settings, &out.join("online"))?;
     println!(
-        "     e2e: {ONLINE_SCRIPT} passed against rl-server on port {} in {:.1} s ({} frames); both runs {:.1} s",
+        "     e2e: {ONLINE_SCRIPT} passed against olr-server on port {} in {:.1} s ({} frames); both runs {:.1} s",
         online.port,
         online.game.secs,
         online.game.frames,
@@ -223,7 +223,7 @@ fn play(
     let script_file = out.join("script.ron");
     std::fs::write(&script_file, script).map_err(|e| format!("{}: {e}", script_file.display()))?;
 
-    let mut cmd = Command::new(root.join("target/debug/rl-game"));
+    let mut cmd = Command::new(root.join("target/debug/olr-game"));
     cmd.args(["--window-system", "x11", "--no-sound"]);
     if fake_clock {
         cmd.arg("--fake-clock");
@@ -244,7 +244,7 @@ fn play(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let started = Instant::now();
-    let child = cmd.spawn().map_err(|e| format!("cannot start rl-game: {e}"))?;
+    let child = cmd.spawn().map_err(|e| format!("cannot start olr-game: {e}"))?;
     let output = wait(child, TIMEOUT)?;
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -259,7 +259,7 @@ fn play(
         )
     };
     if !output.status.success() {
-        return Err(report(&format!("rl-game exited with {}", output.status)));
+        return Err(report(&format!("olr-game exited with {}", output.status)));
     }
     if !log.lines().last().is_some_and(|l| l.contains("\"event\":\"pass\"")) {
         return Err(report("the autoplay log does not end in a pass"));
@@ -394,7 +394,7 @@ const POLL: Duration = Duration::from_millis(50);
 /// The longest the server may take to listen and the bot client to join.
 const READY_WITHIN: Duration = Duration::from_secs(30);
 
-/// The first line of `rl-cli nostr-relay`, before its URL.
+/// The first line of `olr-cli nostr-relay`, before its URL.
 const RELAY_LINE: &str = "nostr relay: ";
 
 /// [`SETTINGS`]' text with the relay `url` in place of its empty relay
@@ -410,9 +410,9 @@ pub fn online_settings(settings: &str, url: &str) -> Result<String, String> {
 /// The chat line `ONLINE_SCRIPT` types, which the server must log.
 const CHAT: &str = "hello from the e2e run";
 
-/// The online run in `out`: `rl-cli nostr-relay` on loopback, `rl-server`
+/// The online run in `out`: `olr-cli nostr-relay` on loopback, `olr-server`
 /// with [`SERVER_CONFIG`] (`{relay}` replaced; port 0, its data in
-/// `<out>/server`), `rl-cli net-client --bot` joined (named [`BOT`]), then
+/// `<out>/server`), `olr-cli net-client --bot` joined (named [`BOT`]), then
 /// the game plays [`ONLINE_SCRIPT`] with the server's port on the real
 /// clock, from `settings` naming the relay ([`online_settings`]). Passes
 /// when the game passed (as [`play`] checks), the bot client played its
@@ -427,7 +427,7 @@ fn online(x: &Xvfb, content: &Path, settings: &str, out: &Path) -> Result<Online
     // The run's own relay: loopback only, nothing leaves the machine.
     let mut relay = Helper::start(
         "relay",
-        Command::new(root.join("target/debug/rl-cli"))
+        Command::new(root.join("target/debug/olr-cli"))
             .args(["nostr-relay", "--listen", "127.0.0.1:0"])
             .current_dir(&root),
         out,
@@ -441,7 +441,7 @@ fn online(x: &Xvfb, content: &Path, settings: &str, out: &Path) -> Result<Online
     let settings = online_settings(settings, &url)?;
     let mut server = Helper::start(
         "server",
-        Command::new(root.join("target/debug/rl-server"))
+        Command::new(root.join("target/debug/olr-server"))
             .arg("--config")
             .arg(&config_file)
             .arg("--content")
@@ -458,7 +458,7 @@ fn online(x: &Xvfb, content: &Path, settings: &str, out: &Path) -> Result<Online
     let port: u16 = port.parse().map_err(|_| server.report(&format!("a bad port {port:?}")))?;
     let mut bot = Helper::start(
         "bot",
-        Command::new(root.join("target/debug/rl-cli"))
+        Command::new(root.join("target/debug/olr-cli"))
             .args(["net-client", "--join", &format!("127.0.0.1:{port}"), "--bot", "--name", BOT])
             .args(["--timeout", &TIMEOUT.as_secs().to_string()])
             .arg("--content")
@@ -559,10 +559,10 @@ fn wait(child: Child, timeout: Duration) -> Result<std::process::Output, String>
         let _ = tx.send(child.wait_with_output());
     });
     match rx.recv_timeout(timeout) {
-        Ok(out) => out.map_err(|e| format!("waiting for rl-game: {e}")),
+        Ok(out) => out.map_err(|e| format!("waiting for olr-game: {e}")),
         Err(_) => {
             let _ = Command::new("kill").args(["-9", &id.to_string()]).status();
-            Err(format!("rl-game ran over {} s: killed", timeout.as_secs()))
+            Err(format!("olr-game ran over {} s: killed", timeout.as_secs()))
         }
     }
 }
@@ -587,7 +587,8 @@ mod tests {
         assert!(online.contains(r#"ClickUntil("e2e server", "Join")"#));
         assert!(online.contains(&format!("Type({CHAT:?})")));
         assert!(shots(&online).contains(&"online".to_string()));
-        let err = "rl-game: GPU x\nwarning: no gamepads\nthread 'main' panicked at x\nerror: y\nMesa: fine\n";
+        let err =
+            "olr-game: GPU x\nwarning: no gamepads\nthread 'main' panicked at x\nerror: y\nMesa: fine\n";
         assert_eq!(bad_lines(err), ["warning: no gamepads", "thread 'main' panicked at x", "error: y"]);
     }
 

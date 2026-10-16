@@ -1,0 +1,20 @@
+[package]
+name = "olr-import-lgs"
+description = "Imports OpenLieroX script.lgs (gamescript v7) mods into native mod packs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+olr-data.workspace = true
+olr-vfs.workspace = true
+olr-pack.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true

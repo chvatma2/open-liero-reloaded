@@ -850,7 +850,7 @@ index 0000000..e552e46
 +	fputc('"', o);
 +}
 +
-+// rl-data's slug(): lowercase ASCII letters and digits, one '-' for each run of anything else.
++// olr-data's slug(): lowercase ASCII letters and digits, one '-' for each run of anything else.
 +static std::string slug(const std::string& s) {
 +	std::string out;
 +	bool dash = false;
@@ -867,7 +867,7 @@ index 0000000..e552e46
 +	return out.empty() ? "unnamed" : out;
 +}
 +
-+// Names a projectile and its children by their path, as rl-import-lgs does
++// Names a projectile and its children by their path, as olr-import-lgs does
 +// before it shares identical definitions: "<weapon id>", then ".spawn" or ".trail".
 +static void nameProjectile(const proj_t* p, const std::string& name, std::map<const proj_t*, std::string>& out) {
 +	if(!p || out.count(p)) return;
@@ -904,7 +904,7 @@ index 0000000..e552e46
 +	for(int i = 0; i < gs->GetNumWeapons(); i++) {
 +		const weapon_t& wpn = gs->GetWeapons()[i];
 +		weapons.push_back(wpn.Name);
-+		// rl-import-lgs's weapon id: the slug, made unique with "-2", "-3", ...
++		// olr-import-lgs's weapon id: the slug, made unique with "-2", "-3", ...
 +		std::string id = slug(wpn.Name);
 +		for(int n = 2; std::find(ids.begin(), ids.end(), id) != ids.end(); n++)
 +			id = slug(wpn.Name) + "-" + itoa(n);

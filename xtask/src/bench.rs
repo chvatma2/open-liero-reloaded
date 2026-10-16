@@ -1,14 +1,14 @@
 //! Benchmarks with stored baselines (spec §7, §21 G8): `cargo xtask bench`
 //! and `full`'s `bench` step.
 //!
-//! - **divan benchmarks** ([`BENCHES`]: `rl-sim`'s tick with the pool
-//!   full and 32 worms, `rl-render`'s offscreen frame at 1080p and 1440p,
-//!   `rl-cli`'s 8-bot tick and draw-list build on the imported content),
+//! - **divan benchmarks** ([`BENCHES`]: `olr-sim`'s tick with the pool
+//!   full and 32 worms, `olr-render`'s offscreen frame at 1080p and 1440p,
+//!   `olr-cli`'s 8-bot tick and draw-list build on the imported content),
 //!   run in the bench (release) profile [`RUNS`] times; each one's median
 //!   of the runs' medians is compared with `fixtures/bench/baselines.ron`.
 //! - **the short stress run** ([`STRESS`]: both mods × OLX's pool and a
 //!   raised one, [`STRESS_SECONDS`] of a 32-chaos-bot match each, through
-//!   `rl-cli stress`, determinism checked on the first run); the median
+//!   `olr-cli stress`, determinism checked on the first run); the median
 //!   tick time and offscreen frame time against `fixtures/bench/stress.ron`.
 //!
 //! **Noise guard.** A measurement fails only above the baseline by more
@@ -51,7 +51,7 @@ use crate::root;
 
 /// The divan benchmarks as `(package, bench target)`.
 pub const BENCHES: &[(&str, &str)] =
-    &[("rl-sim", "tick"), ("rl-render", "frame"), ("rl-cli", "game"), ("rl-cli", "rollback")];
+    &[("olr-sim", "tick"), ("olr-render", "frame"), ("olr-cli", "game"), ("olr-cli", "rollback")];
 
 pub const BASELINES: &str = "fixtures/bench/baselines.ron";
 pub const STRESS_BASELINE: &str = "fixtures/bench/stress.ron";
@@ -89,7 +89,7 @@ pub struct Host {
     pub cpus: usize,
     /// The CPU's model name (`/proc/cpuinfo`).
     pub cpu: String,
-    /// The graphics adapter offscreen renders use (`rl-render`'s `adapter`
+    /// The graphics adapter offscreen renders use (`olr-render`'s `adapter`
     /// example), or `none`.
     pub adapter: String,
 }
@@ -188,7 +188,7 @@ pub struct StressBaseline {
     pub events_max: usize,
 }
 
-/// What `rl-cli stress --out` writes, the parts read here (`rl_cli::stress::Report`).
+/// What `olr-cli stress --out` writes, the parts read here (`olr_cli::stress::Report`).
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default)]
 pub struct Report {
@@ -472,15 +472,15 @@ fn measure_benches(
     Ok(Measurement { bins, runs: all, skipped, busy })
 }
 
-/// `rl-cli` in the release profile, built.
-pub fn rl_cli() -> Result<PathBuf, String> {
-    rl_cli_with(false)
+/// `olr-cli` in the release profile, built.
+pub fn olr_cli() -> Result<PathBuf, String> {
+    olr_cli_with(false)
 }
 
-/// [`rl_cli`]; `offline` builds without the network (cargo's `--offline`).
-pub fn rl_cli_with(offline: bool) -> Result<PathBuf, String> {
+/// [`olr_cli`]; `offline` builds without the network (cargo's `--offline`).
+pub fn olr_cli_with(offline: bool) -> Result<PathBuf, String> {
     let mut build = cargo();
-    build.args(["build", "--quiet", "--release", "-p", "rl-cli"]);
+    build.args(["build", "--quiet", "--release", "-p", "olr-cli"]);
     if offline {
         build.arg("--offline");
     }
@@ -488,10 +488,10 @@ pub fn rl_cli_with(offline: bool) -> Result<PathBuf, String> {
     if !out.status.success() {
         return Err(String::from_utf8_lossy(&out.stderr).into_owned());
     }
-    Ok(root().join("target/release/rl-cli"))
+    Ok(root().join("target/release/olr-cli"))
 }
 
-/// One stress configuration through `rl-cli stress`: its report. With
+/// One stress configuration through `olr-cli stress`: its report. With
 /// `stream`, its progress and report are shown as it plays.
 pub fn stress_run(
     cli: &Path,
@@ -517,12 +517,12 @@ pub fn stress_run(
         c.arg("--no-verify");
     }
     let ok = if stream {
-        c.status().map_err(|e| format!("cannot run rl-cli: {e}"))?.success()
+        c.status().map_err(|e| format!("cannot run olr-cli: {e}"))?.success()
     } else {
-        let out = c.output().map_err(|e| format!("cannot run rl-cli: {e}"))?;
+        let out = c.output().map_err(|e| format!("cannot run olr-cli: {e}"))?;
         if !out.status.success() {
             return Err(format!(
-                "rl-cli stress {mod_id} pool {pool} failed:\n{}{}",
+                "olr-cli stress {mod_id} pool {pool} failed:\n{}{}",
                 String::from_utf8_lossy(&out.stdout),
                 String::from_utf8_lossy(&out.stderr)
             ));
@@ -530,7 +530,7 @@ pub fn stress_run(
         true
     };
     if !ok {
-        return Err(format!("rl-cli stress {mod_id} pool {pool} failed"));
+        return Err(format!("olr-cli stress {mod_id} pool {pool} failed"));
     }
     let text = std::fs::read_to_string(&out_file).map_err(|e| format!("{}: {e}", out_file.display()))?;
     ron::from_str(&text).map_err(|e| format!("{}: {e}", out_file.display()))
@@ -825,7 +825,7 @@ pub fn stress_step(content: Option<&Path>, verbose: bool) -> Result<(), String> 
         return Ok(());
     };
     let base: StressBaselines = read_ron(STRESS_BASELINE)?;
-    let cli = rl_cli()?;
+    let cli = olr_cli()?;
     let runs = measure_stress(&cli, content, RUNS)?;
     if let Some(n) = host_notice(&base.host, &Host::here()) {
         println!("     notice: {STRESS_BASELINE}: {n}");
@@ -864,7 +864,7 @@ pub fn stress_step(content: Option<&Path>, verbose: bool) -> Result<(), String> 
 /// (determinism checked), each report as it comes, then a summary.
 pub fn stress_command(seconds: f32) -> anyhow::Result<bool> {
     let paths = crate::fetch::verify()?;
-    let cli = rl_cli().map_err(anyhow::Error::msg)?;
+    let cli = olr_cli().map_err(anyhow::Error::msg)?;
     let mut done = Vec::new();
     for &cfg in STRESS {
         println!("== {} on {STRESS_LEVEL}, 32 chaos bots, pool {}, {seconds} s", cfg.0, cfg.1);
@@ -899,7 +899,7 @@ pub fn stress_command(seconds: f32) -> anyhow::Result<bool> {
 /// and logged.
 pub fn run(bless: Option<&str>, offline: bool) -> anyhow::Result<bool> {
     let paths = if offline { None } else { Some(crate::fetch::verify()?) };
-    let envs: Vec<(&str, PathBuf)> = paths.iter().map(|p| ("RL_CONTENT_DIR", p.content.clone())).collect();
+    let envs: Vec<(&str, PathBuf)> = paths.iter().map(|p| ("OLR_CONTENT_DIR", p.content.clone())).collect();
     let content = paths.as_ref().map(|p| p.content.as_path());
     let Some(reason) = bless else {
         let mut ok = true;
@@ -933,7 +933,7 @@ pub fn run(bless: Option<&str>, offline: bool) -> anyhow::Result<bool> {
     write_ron(BASELINES, &new)?;
     if let Some(content) = content {
         println!("measuring the stress runs ({RUNS} runs)...");
-        let cli = rl_cli().map_err(anyhow::Error::msg)?;
+        let cli = olr_cli().map_err(anyhow::Error::msg)?;
         let runs = measure_stress(&cli, content, RUNS).map_err(anyhow::Error::msg)?;
         let configs = runs.iter().map(|(k, (_, r))| (k.clone(), stress_medians(r))).collect();
         let note =
@@ -966,10 +966,10 @@ tick               fastest       │ slowest       │ median        │ mean   
 
     #[test]
     fn divan_tables_parse() {
-        let m = parse_divan(DIVAN, "rl-sim/tick");
+        let m = parse_divan(DIVAN, "olr-sim/tick");
         assert_eq!(m.len(), 2);
-        assert!((m["rl-sim/tick/tick_32_worms"] - 3135.0).abs() < 1e-6);
-        assert!((m["rl-sim/tick/tick_full_pool"] - 226_100.0).abs() < 1e-6);
+        assert!((m["olr-sim/tick/tick_32_worms"] - 3135.0).abs() < 1e-6);
+        assert!((m["olr-sim/tick/tick_full_pool"] - 226_100.0).abs() < 1e-6);
         assert_eq!(parse_time("4.414 ms"), Some(4_414_000.0));
         assert_eq!(parse_time("12 ns"), Some(12.0));
         assert_eq!(parse_time("x"), None);
@@ -994,15 +994,18 @@ tick               fastest       │ slowest       │ median        │ mean   
     /// target said it skipped (no adapter, no content): then a notice.
     #[test]
     fn a_baseline_measured_by_nothing_fails_unless_skipped() {
-        let base: BTreeMap<String, f64> =
-            [("rl-sim/tick/a".into(), 1.0), ("rl-render/frame/f".into(), 1.0), ("rl-cli/game/g".into(), 1.0)]
-                .into();
-        let now: BTreeMap<String, f64> = [("rl-sim/tick/a".into(), 1.0)].into();
-        let skipped: BTreeSet<String> = ["rl-render/frame".to_string()].into();
+        let base: BTreeMap<String, f64> = [
+            ("olr-sim/tick/a".into(), 1.0),
+            ("olr-render/frame/f".into(), 1.0),
+            ("olr-cli/game/g".into(), 1.0),
+        ]
+        .into();
+        let now: BTreeMap<String, f64> = [("olr-sim/tick/a".into(), 1.0)].into();
+        let skipped: BTreeSet<String> = ["olr-render/frame".to_string()].into();
         let c = compare(&base, &now, &skipped);
-        assert_eq!(c.missing, ["rl-cli/game/g"]);
-        assert!(c.notices.iter().any(|n| n.starts_with("rl-render/frame/f")), "{:?}", c.notices);
-        assert!(report("t", &c, "ns", 1.0, false).unwrap_err().contains("rl-cli/game/g"));
+        assert_eq!(c.missing, ["olr-cli/game/g"]);
+        assert!(c.notices.iter().any(|n| n.starts_with("olr-render/frame/f")), "{:?}", c.notices);
+        assert!(report("t", &c, "ns", 1.0, false).unwrap_err().contains("olr-cli/game/g"));
     }
 
     /// Peak memory has a wider tolerance than times.
@@ -1023,29 +1026,29 @@ tick               fastest       │ slowest       │ median        │ mean   
     #[test]
     fn bless_keeps_what_it_could_not_measure() {
         let old = Baselines {
-            benches: [("rl-render/frame/f".into(), 5.0), ("rl-sim/tick/a".into(), 1.0)].into(),
+            benches: [("olr-render/frame/f".into(), 5.0), ("olr-sim/tick/a".into(), 1.0)].into(),
             ..Baselines::default()
         };
-        let new: BTreeMap<String, f64> = [("rl-sim/tick/a".into(), 2.0)].into();
+        let new: BTreeMap<String, f64> = [("olr-sim/tick/a".into(), 2.0)].into();
         let b = blessed(&old, new, Host::default());
-        assert_eq!(b.benches["rl-sim/tick/a"], 2.0);
-        assert_eq!(b.benches["rl-render/frame/f"], 5.0, "kept");
-        assert_eq!(b.kept, ["rl-render/frame/f"]);
-        let again = blessed(&b, [("rl-render/frame/f".into(), 6.0)].into(), Host::default());
-        assert_eq!(again.kept, ["rl-sim/tick/a"], "the frame measured again is no longer kept");
-        assert_eq!(again.benches["rl-render/frame/f"], 6.0);
+        assert_eq!(b.benches["olr-sim/tick/a"], 2.0);
+        assert_eq!(b.benches["olr-render/frame/f"], 5.0, "kept");
+        assert_eq!(b.kept, ["olr-render/frame/f"]);
+        let again = blessed(&b, [("olr-render/frame/f".into(), 6.0)].into(), Host::default());
+        assert_eq!(again.kept, ["olr-sim/tick/a"], "the frame measured again is no longer kept");
+        assert_eq!(again.benches["olr-render/frame/f"], 6.0);
     }
 
     /// The bench target's executable is read from cargo's JSON messages.
     #[test]
     fn bench_executables_come_from_cargos_messages() {
-        let json = r#"{"reason":"compiler-artifact","package_id":"path+file:///w/crates/rl-sim#0.1.0","manifest_path":"/w/crates/rl-sim/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"rl_sim","src_path":"/w/crates/rl-sim/src/lib.rs","edition":"2024","doc":true,"doctest":true,"test":true},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":false},"features":[],"filenames":["/w/target/release/deps/librl_sim-1.rlib"],"executable":null,"fresh":true}
-{"reason":"compiler-artifact","package_id":"path+file:///w/crates/rl-sim#0.1.0","manifest_path":"/w/crates/rl-sim/Cargo.toml","target":{"kind":["bench"],"crate_types":["bin"],"name":"tick","src_path":"/w/crates/rl-sim/benches/tick.rs","edition":"2024","doc":false,"doctest":false,"test":false},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":true},"features":[],"filenames":["/w/target/release/deps/tick-e23f"],"executable":"/w/target/release/deps/tick-e23f","fresh":false}
+        let json = r#"{"reason":"compiler-artifact","package_id":"path+file:///w/crates/olr-sim#0.1.0","manifest_path":"/w/crates/olr-sim/Cargo.toml","target":{"kind":["lib"],"crate_types":["lib"],"name":"olr_sim","src_path":"/w/crates/olr-sim/src/lib.rs","edition":"2024","doc":true,"doctest":true,"test":true},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":false},"features":[],"filenames":["/w/target/release/deps/libolr_sim-1.rlib"],"executable":null,"fresh":true}
+{"reason":"compiler-artifact","package_id":"path+file:///w/crates/olr-sim#0.1.0","manifest_path":"/w/crates/olr-sim/Cargo.toml","target":{"kind":["bench"],"crate_types":["bin"],"name":"tick","src_path":"/w/crates/olr-sim/benches/tick.rs","edition":"2024","doc":false,"doctest":false,"test":false},"profile":{"opt_level":"3","debuginfo":0,"debug_assertions":false,"overflow_checks":false,"test":true},"features":[],"filenames":["/w/target/release/deps/tick-e23f"],"executable":"/w/target/release/deps/tick-e23f","fresh":false}
 {"reason":"build-finished","success":true}
 "#;
         let (exe, dir) = bench_executable(json.as_bytes(), "tick").expect("the bench artifact");
         assert_eq!(exe, Path::new("/w/target/release/deps/tick-e23f"));
-        assert_eq!(dir, Path::new("/w/crates/rl-sim"));
+        assert_eq!(dir, Path::new("/w/crates/olr-sim"));
         assert_eq!(bench_executable(json.as_bytes(), "frame"), None);
         assert_eq!(bench_executable(b"not json", "tick"), None);
     }
@@ -1053,7 +1056,7 @@ tick               fastest       │ slowest       │ median        │ mean   
     /// A retry runs the benchmark's target: `<package>/<bench target>`.
     #[test]
     fn retries_run_the_benchmarks_target() {
-        assert_eq!(split_name("rl-cli/game/bots_8_tick"), ("rl-cli", "game"));
+        assert_eq!(split_name("olr-cli/game/bots_8_tick"), ("olr-cli", "game"));
     }
 
     /// The machine's load from two `/proc/stat` readings, in busy CPUs.
@@ -1079,7 +1082,7 @@ tick               fastest       │ slowest       │ median        │ mean   
     #[test]
     fn the_best_retry_window_counts() {
         let idle = Settle::Idle(SETTLE_SAMPLE);
-        let v = |measured| Verdict { name: "rl-sim/tick/t".into(), baseline: 100.0, measured };
+        let v = |measured| Verdict { name: "olr-sim/tick/t".into(), baseline: 100.0, measured };
         let noisy = best_window(114.0, &[(104.0, idle), (112.0, idle)]);
         assert!(!v(noisy).regressed(), "a burst of other work: {noisy}");
         let real = best_window(118.0, &[(115.0, idle), (116.0, Settle::Busy(3.0))]);
@@ -1088,7 +1091,7 @@ tick               fastest       │ slowest       │ median        │ mean   
         let n = window_notice(&v(104.0), 114.0, &[(104.0, idle), (112.0, Settle::Busy(2.5))]);
         assert_eq!(
             n,
-            "rl-sim/tick/t: +14.0 %, then +4.0 %, +12.0 % (busy: 2.5 CPUs) in 2 later window(s) of 3 runs"
+            "olr-sim/tick/t: +14.0 %, then +4.0 %, +12.0 % (busy: 2.5 CPUs) in 2 later window(s) of 3 runs"
         );
     }
 

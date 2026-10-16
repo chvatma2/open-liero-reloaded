@@ -1,0 +1,28 @@
+[package]
+name = "olr-fx"
+description = "OLX's cosmetic entities: blood, dirt, gibs, explosions, smoke, sparkles and spawn effects, stepped per physics sub-step with their own generator."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-math.workspace = true
+olr-data.workspace = true
+olr-terrain.workspace = true
+olr-sim.workspace = true
+olr-content.workspace = true
+olr-scene.workspace = true
+
+[dev-dependencies]
+olr-scenario.workspace = true
+allocation-counter.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

@@ -11,7 +11,7 @@ modernized for current displays.
 
 1. **Run `cargo xtask check` before every commit.** It prints only failures.
    Without network access, use `cargo xtask check --offline`. `cargo xtask
-   full` adds the bot-match grid (`bot-grid`: `rl-cli`'s `tests/grid.rs`, both
+   full` adds the bot-match grid (`bot-grid`: `olr-cli`'s `tests/grid.rs`, both
    mods × 4 levels × 3 seeds, every weapon and action covered, a 30-minute
    match bounded), the device tier (renderer GPU tests, render goldens,
    the 10-minute soak, the audio device check), the end-to-end autoplay on
@@ -39,7 +39,7 @@ modernized for current displays.
    must also build for `wasm32-unknown-unknown`.
 6. **Never panic on content.** Inputs from mods, levels and packs are untrusted.
 7. **Keep output deterministic.** Use no `HashMap` iteration in output, and no wall clock in logic.
-8. **Commits:** small, imperative subject (`rl-pack: validate projectile cycles`).
+8. **Commits:** small, imperative subject (`olr-pack: validate projectile cycles`).
 9. **Release zips:** `cargo xtask dist` builds and runs `target/release-zips/rust-liero-<version>-{linux,windows}-x64.zip`.
 
 ## Oracle
@@ -48,8 +48,8 @@ modernized for current displays.
 traces recorded from a patched OLX (`tools/olx-oracle/`).
 - `cargo xtask oracle-record [name...]` re-records them; it needs Docker.
 - `--check` compares fresh recordings with the committed traces.
-- The simulation must reproduce the traces bit-exactly (crate `rl-oracle`).
-- `rl-cli scenario [name...] [--dump <frame>]` replays scenarios in `rl-sim`
+- The simulation must reproduce the traces bit-exactly (crate `olr-oracle`).
+- `olr-cli scenario [name...] [--dump <frame>]` replays scenarios in `olr-sim`
   and reports the first divergence. Use it when a change breaks the oracle.
 
 ## Render goldens
@@ -61,8 +61,8 @@ reason in `fixtures/blessings.log`.
 
 ## Match goldens
 
-`fixtures/matches/*.ron` are golden bot matches: a `rl-cli match` spec and
-the world's checksum stream (`rl-cli`'s `tests/golden.rs`, in `check`). Any
+`fixtures/matches/*.ron` are golden bot matches: an `olr-cli match` spec and
+the world's checksum stream (`olr-cli`'s `tests/golden.rs`, in `check`). Any
 change to the simulation, the modes or the bots' decisions changes them.
 When the change is intended, `cargo xtask bless-regression --reason "<why>"`
 re-records them and logs the reason in `fixtures/blessings.log`;
@@ -80,4 +80,4 @@ an importer, and commit the result. `check` imports afresh into
 The render goldens in `fixtures/render/` are drawn from them at test time
 (scenario, level and art scale from the packs); the goldens are accepted
 fixtures, changed only with `cargo xtask bless-render --reason "<why>"`.
-`rl-cli render <scenario> --frame N --out f.png` draws any scenario frame.
+`olr-cli render <scenario> --frame N --out f.png` draws any scenario frame.

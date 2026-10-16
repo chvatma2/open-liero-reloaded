@@ -14,11 +14,11 @@
 #              the LAN reaches them at the WAN address too, and its
 #              packets so forwarded come from the WAN address (TR-5: a
 #              relay beside the host)
-# (rl-net asks every method at once and keeps the first mapping: PCP
+# (olr-net asks every method at once and keeps the first mapping: PCP
 # answers before UPnP's search ends, so a router offering both would
 # never show UPnP.)
 # Prints "router ready" once it routes (and miniupnpd listens), then
-# runs until stopped or for RL_NAT_LIFE seconds (default 120): a run
+# runs until stopped or for OLR_NAT_LIFE seconds (default 120): a run
 # that was interrupted leaves no router running for long.
 set -eu
 kind=$1
@@ -115,7 +115,7 @@ if [ "$kind" = upnp ] || [ "$kind" = pcp ] || [ "$kind" = pmp ]; then
         upnp=no pcp=yes port=5351
     fi
     sed -e "s|@WAN@|$wan|g" -e "s|@WAN_IP@|$wan_ip|g" -e "s|@LAN@|$lan|g" -e "s|@LAN_NET@|$lan_net|g" -e "s|@UPNP@|$upnp|g" \
-        -e "s|@PCP@|$pcp|g" /rl-nat/miniupnpd.conf.in >/tmp/miniupnpd.conf
+        -e "s|@PCP@|$pcp|g" /olr-nat/miniupnpd.conf.in >/tmp/miniupnpd.conf
     miniupnpd -d -f /tmp/miniupnpd.conf -P /tmp/miniupnpd.pid &
     # Ready once it listens: SSDP (UDP 1900) for UPnP, else NAT-PMP and
     # PCP (UDP 5351).
@@ -131,4 +131,4 @@ if [ "$kind" = upnp ] || [ "$kind" = pcp ] || [ "$kind" = pmp ]; then
 fi
 echo "router ready: $kind, WAN $wan $wan_ip, LAN $lan $lan_ip ($lan_net)"
 # Until stopped (docker stop: --init forwards SIGTERM) or its lifetime ends.
-sleep "${RL_NAT_LIFE:-120}"
+sleep "${OLR_NAT_LIFE:-120}"

@@ -111,8 +111,8 @@ pub fn profile_dirs(target: &Path) -> Vec<PathBuf> {
 }
 
 /// A `deps/` file name split as `(stem, hash, extension)`: `libsyn-<16
-/// hex>.rlib` is `("syn", hash, ".rlib")`, `rl_cli-<16 hex>` is
-/// `("rl_cli", hash, "")`. `None` for names without the hash.
+/// hex>.rlib` is `("syn", hash, ".rlib")`, `olr_cli-<16 hex>` is
+/// `("olr_cli", hash, "")`. `None` for names without the hash.
 pub fn split_artifact(name: &str) -> Option<(&str, &str, &str)> {
     let (front, rest) = name.rsplit_once('-')?;
     let hash = rest.get(..16)?;
@@ -215,8 +215,8 @@ fn fingerprint_dirs(profile: &Path) -> BTreeMap<String, PathBuf> {
 }
 
 /// What cargo's fingerprint (`.fingerprint/<package>-<hash>/<unit>.json`)
-/// says about a build: its unit (`lib-syn`, `bin-rl-cli`,
-/// `test-bin-rl-cli`, `test-integration-test-soak`) and its features.
+/// says about a build: its unit (`lib-syn`, `bin-olr-cli`,
+/// `test-bin-olr-cli`, `test-integration-test-soak`) and its features.
 /// Empty when there is none to read.
 fn fingerprint(dir: Option<&PathBuf>) -> (String, String) {
     let Some(dir) = dir else { return Default::default() };
@@ -520,14 +520,14 @@ mod tests {
             Some(("syn", "95ae3d892da4cdb2", ".rlib"))
         );
         assert_eq!(split_artifact("syn-95ae3d892da4cdb2.d"), Some(("syn", "95ae3d892da4cdb2", ".d")));
-        assert_eq!(split_artifact("rl_cli-b6d7acdba407c3c6"), Some(("rl_cli", "b6d7acdba407c3c6", "")));
+        assert_eq!(split_artifact("olr_cli-b6d7acdba407c3c6"), Some(("olr_cli", "b6d7acdba407c3c6", "")));
         assert_eq!(
             split_artifact("libserde_derive-0011223344556677.so"),
             Some(("serde_derive", "0011223344556677", ".so"))
         );
         assert_eq!(
-            split_artifact("rl_game-0011223344556677.exe"),
-            Some(("rl_game", "0011223344556677", ".exe"))
+            split_artifact("olr_game-0011223344556677.exe"),
+            Some(("olr_game", "0011223344556677", ".exe"))
         );
         for other in ["rustcyq1ZPn", "x-0011.rlib", "-0011223344556677", "a-001122334455667g", "notes.txt"] {
             assert_eq!(split_artifact(other), None, "{other}");
@@ -554,8 +554,8 @@ mod tests {
             format!("{reg}/bar-1/src/lib.rs")
         );
         assert_eq!(
-            version_series("crates/rl-cli/tests/integration.rs"),
-            "crates/rl-cli/tests/integration.rs"
+            version_series("crates/olr-cli/tests/integration.rs"),
+            "crates/olr-cli/tests/integration.rs"
         );
     }
 
@@ -578,17 +578,17 @@ mod tests {
         let (lib, exe) = (&[".rlib", ".rmeta"][..], &[""][..]);
         let h = 3 * 3600;
         // Test binaries named alike in two crates: both are live.
-        build(&p, "integration", "00000000000000a1", exe, "crates/rl-cli/tests/integration.rs", None, h);
-        build(&p, "integration", "00000000000000a2", exe, "crates/rl-game/tests/integration.rs", None, 0);
+        build(&p, "integration", "00000000000000a1", exe, "crates/olr-cli/tests/integration.rs", None, h);
+        build(&p, "integration", "00000000000000a2", exe, "crates/olr-game/tests/integration.rs", None, 0);
         // One crate's test binary rebuilt for new configurations: the old
         // ones go, also the one built only 30 minutes before.
-        build(&p, "rl_ui", "00000000000000b1", exe, "crates/rl-ui/src/lib.rs", None, 0);
-        build(&p, "rl_ui", "00000000000000b3", exe, "crates/rl-ui/src/lib.rs", None, h - 1800);
-        build(&p, "rl_ui", "00000000000000b2", exe, "crates/rl-ui/src/lib.rs", None, h);
+        build(&p, "olr_ui", "00000000000000b1", exe, "crates/olr-ui/src/lib.rs", None, 0);
+        build(&p, "olr_ui", "00000000000000b3", exe, "crates/olr-ui/src/lib.rs", None, h - 1800);
+        build(&p, "olr_ui", "00000000000000b2", exe, "crates/olr-ui/src/lib.rs", None, h);
         // A binary and its test harness, built at different times: both stay.
-        let (bin, harness) = (Some(("bin-rl-cli", "[]")), Some(("test-bin-rl-cli", "[]")));
-        build(&p, "rl_cli", "00000000000000c1", exe, "crates/rl-cli/src/main.rs", bin, h);
-        build(&p, "rl_cli", "00000000000000c2", exe, "crates/rl-cli/src/main.rs", harness, 0);
+        let (bin, harness) = (Some(("bin-olr-cli", "[]")), Some(("test-bin-olr-cli", "[]")));
+        build(&p, "olr_cli", "00000000000000c1", exe, "crates/olr-cli/src/main.rs", bin, h);
+        build(&p, "olr_cli", "00000000000000c2", exe, "crates/olr-cli/src/main.rs", harness, 0);
         // syn 2 in two feature sets built at different times, an old patch
         // release, syn 3 and a check build (metadata only): only the old
         // patch release goes.
@@ -606,7 +606,7 @@ mod tests {
         build(&p, "quote", "00000000000000e3", lib, &quote, fp, 0);
         // A build without its `.d`, older than one with.
         build(&p, "soak", "00000000000000f0", exe, "", None, 0);
-        build(&p, "soak", "00000000000000f1", exe, "crates/rl-game/tests/soak.rs", None, h);
+        build(&p, "soak", "00000000000000f1", exe, "crates/olr-game/tests/soak.rs", None, h);
         // Files without a hash stay.
         file(&p, "deps/rustcyq1ZPn/x.o", 0, "");
         file(&p, "deps/notes.txt", 0, "");
@@ -618,11 +618,11 @@ mod tests {
                 "libquote-00000000000000e3.rmeta",
                 "libsyn-00000000000000d3.rlib",
                 "libsyn-00000000000000d3.rmeta",
+                "olr_ui-00000000000000b1",
+                "olr_ui-00000000000000b1.d",
+                "olr_ui-00000000000000b3",
+                "olr_ui-00000000000000b3.d",
                 "quote-00000000000000e3.d",
-                "rl_ui-00000000000000b1",
-                "rl_ui-00000000000000b1.d",
-                "rl_ui-00000000000000b3",
-                "rl_ui-00000000000000b3.d",
                 "soak-00000000000000f0",
                 "syn-00000000000000d3.d",
             ]
@@ -640,15 +640,15 @@ mod tests {
             let d = std::fs::File::open(inc.join(format!("{dir}/{s}-svh"))).unwrap();
             d.set_modified(t0() + Duration::from_secs(secs)).unwrap();
         };
-        // rl_game: an old configuration's directory, and an old session beside a new one.
-        session("rl_game-1abc", "s-old-a", 0);
-        session("rl_game-2def", "s-old-b", 0);
-        session("rl_game-2def", "s-new-c", h);
-        // rl_cli: two directories written in the same run (lib and bin).
-        session("rl_cli-3ghi", "s-new-d", h);
-        session("rl_cli-4jkl", "s-new-e", h - 480);
+        // olr_game: an old configuration's directory, and an old session beside a new one.
+        session("olr_game-1abc", "s-old-a", 0);
+        session("olr_game-2def", "s-old-b", 0);
+        session("olr_game-2def", "s-new-c", h);
+        // olr_cli: two directories written in the same run (lib and bin).
+        session("olr_cli-3ghi", "s-new-d", h);
+        session("olr_cli-4jkl", "s-new-e", h - 480);
         let stale = names(&inc, stale_sessions(&inc, WINDOW));
-        assert_eq!(stale, ["rl_game-1abc", "rl_game-2def/s-old-b-svh", "rl_game-2def/s-old-b.lock"]);
+        assert_eq!(stale, ["olr_game-1abc", "olr_game-2def/s-old-b-svh", "olr_game-2def/s-old-b.lock"]);
     }
 
     #[test]
@@ -709,11 +709,11 @@ mod tests {
     fn measures_hard_linked_files_once() {
         let t = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(t.path().join("debug/deps")).unwrap();
-        std::fs::write(t.path().join("debug/deps/rl_game-0000000000000001"), [0u8; 1000]).unwrap();
+        std::fs::write(t.path().join("debug/deps/olr_game-0000000000000001"), [0u8; 1000]).unwrap();
         std::fs::write(t.path().join("debug/other"), [0u8; 10]).unwrap();
         std::fs::hard_link(
-            t.path().join("debug/deps/rl_game-0000000000000001"),
-            t.path().join("debug/rl-game"),
+            t.path().join("debug/deps/olr_game-0000000000000001"),
+            t.path().join("debug/olr-game"),
         )
         .unwrap();
         assert_eq!(dir_size(t.path(), Duration::from_secs(5)), Some(1010));

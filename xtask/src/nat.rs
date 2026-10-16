@@ -2,10 +2,10 @@
 //! N58): the Docker NAT tests. Home routers in containers (nftables
 //! masquerade, `masquerade fully-random`, miniupnpd) between isolated LANs
 //! and a test WAN on documentation addresses (203.0.113.0/24), a Nostr
-//! relay, a STUN server and a TURN relay (`rl-server --relay`) on the WAN,
+//! relay, a STUN server and a TURN relay (`olr-server --relay`) on the WAN,
 //! and our host-built binaries playing each scenario of [`SCENARIOS`]: a
 //! direct join, port mapping (UPnP, PCP, NAT-PMP), hole punching, the TURN
-//! relay, its absence, finding a listed game, `rl-server --nat-check`, a
+//! relay, its absence, finding a listed game, `olr-server --nat-check`, a
 //! host with no NAT (N47-a) and a relay beside the host (TR-5).
 //! Every network is `--internal` with a dummy parent (macvlan): nothing
 //! reaches the host, its router or the Internet. The image build
@@ -31,7 +31,7 @@ pub const TOOL_DIR: &str = "tools/net-nat";
 /// The files the image is made from (with the base, its tag's hash).
 pub const TOOL_FILES: [&str; 4] = ["Dockerfile", "router.sh", "node.sh", "miniupnpd.conf.in"];
 /// The image repository; superseded tags are pruned like the oracle's.
-pub const REPO: &str = "rl-nat";
+pub const REPO: &str = "olr-nat";
 /// The configs (`configs/`) and each scenario's container logs (`<scenario>/`).
 pub const OUT: &str = "target/net-nat";
 /// The content mounted at `/rl/content`.
@@ -40,13 +40,13 @@ pub const CONTENT: &str = "content/packs";
 /// ([`e2e::build_binaries`]), so `full` builds them once.
 pub const BIN: &str = "target/debug";
 /// The label key of every container and network (its value: the run's
-/// id); a scenario's containers also carry `rl-nat.scenario`.
-const LABEL: &str = "rl-nat";
+/// id); a scenario's containers also carry `olr-nat.scenario`.
+const LABEL: &str = "olr-nat";
 /// Each scenario's bound, from its first container to its verdict.
 pub const LIMIT: Duration = Duration::from_secs(60);
 /// The migration's bound: the match (0.5 minutes) plays on after the crash.
 pub const MIGRATION_LIMIT: Duration = Duration::from_secs(90);
-/// Every container's own lifetime in seconds (`RL_NAT_LIFE`, `timeout`):
+/// Every container's own lifetime in seconds (`OLR_NAT_LIFE`, `timeout`):
 /// past [`LIMIT`] and the host's stop, so a run that was killed leaves
 /// nothing running for long.
 pub const LIFE: u32 = 120;
@@ -175,7 +175,7 @@ impl Config {
         ][self as usize]
     }
 
-    /// The config's text (RON, `rl-server`'s `Config`): every one on the
+    /// The config's text (RON, `olr-server`'s `Config`): every one on the
     /// WAN's relay with `allow_local`, one short Classic match on Dirt
     /// Level that starts when the players are ready (a bot fills the
     /// second seat of a LAN host).
@@ -210,18 +210,18 @@ impl Config {
 /// The game host of a scenario.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Host {
-    /// `rl-server` on the WAN at 203.0.113.30 ([`Config::Public`]).
+    /// `olr-server` on the WAN at 203.0.113.30 ([`Config::Public`]).
     Public,
-    /// `rl-server` in a LAN (at `.10`).
+    /// `olr-server` in a LAN (at `.10`).
     Server(Lan, Config),
-    /// `rl-server --nat-check` in a LAN, no joiner.
+    /// `olr-server --nat-check` in a LAN, no joiner.
     NatCheck(Lan),
-    /// `rl-server` on the WAN at 203.0.113.40 with no NAT and no
+    /// `olr-server` on the WAN at 203.0.113.40 with no NAT and no
     /// configured address ([`Config::Open`], N47-a).
     Open,
 }
 
-/// Where the scenario's TURN relay (`rl-server --relay`) runs.
+/// Where the scenario's TURN relay (`olr-server --relay`) runs.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RelayAt {
     /// On the WAN at 203.0.113.20 ([`Config::Relay`]).
@@ -243,7 +243,7 @@ pub enum Way {
     Listed(&'static str),
 }
 
-/// `rl-cli net-client` in a LAN (at `.20`).
+/// `olr-cli net-client` in a LAN (at `.20`).
 #[derive(Clone, Copy, Debug)]
 pub struct Joiner {
     /// Its `--name`.
@@ -554,7 +554,7 @@ pub fn base_image(os_release: &str) -> Result<String, String> {
     Ok(format!("{id}:{version}"))
 }
 
-/// `rl-nat:<the first 12 hex of SHA-256(files ++ base)>`: an edit to any
+/// `olr-nat:<the first 12 hex of SHA-256(files ++ base)>`: an edit to any
 /// file, or another base, builds a new image.
 pub fn image_tag(files: &[(&str, &[u8])], base: &str) -> String {
     let mut h = Sha256::new();
@@ -613,7 +613,7 @@ pub fn network_skip(err: &str) -> Option<String> {
     })
 }
 
-/// The last invite code `rl-server` logged, and whether it carries an
+/// The last invite code `olr-server` logged, and whether it carries an
 /// address (`invite code: rlx1…`, not `invite code (joins through the
 /// relays): rlx1…`).
 pub fn invite_code(log: &str) -> Option<(String, bool)> {
@@ -771,7 +771,7 @@ pub enum Ready {
 #[derive(Clone, Debug)]
 pub struct Unit {
     /// Its role (`infra`, `relay`, `router-a`, `host`, `joiner`, ...):
-    /// the container is `rl-nat-<run>-<role>`.
+    /// the container is `olr-nat-<run>-<role>`.
     pub role: String,
     /// Units start in stages; a stage starts once the last is ready.
     pub stage: u8,
@@ -832,7 +832,7 @@ impl Run {
 /// relay and STUN server); the TURN relay, the routers of the LANs used
 /// and the public server; the host; the joiner. Every one joins only our
 /// networks (never Docker's default bridge), carries the run's labels and
-/// ends by itself within `run.life` seconds (`RL_NAT_LIFE` for the
+/// ends by itself within `run.life` seconds (`OLR_NAT_LIFE` for the
 /// scripts, `timeout` around our binaries).
 pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
     let strings = |items: &[&str]| items.iter().map(|s| s.to_string()).collect::<Vec<String>>();
@@ -841,9 +841,9 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
         let bin = |name: &str| format!("{}:/rl/bin/{name}:ro", run.bin.join(name).display());
         vec![
             "-v".to_string(),
-            bin("rl-server"),
+            bin("olr-server"),
             "-v".into(),
-            bin("rl-cli"),
+            bin("olr-cli"),
             "-v".into(),
             format!("{}:/rl/content:ro", run.content.display()),
             "-v".into(),
@@ -856,7 +856,7 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
             args.push(format!("{LABEL}={}", run.id));
             args.push("--label".into());
             args.push(format!("{LABEL}.scenario={}", sc.name));
-            args.extend(strings(&["--init", "-e", &format!("RL_NAT_LIFE={life}")]));
+            args.extend(strings(&["--init", "-e", &format!("OLR_NAT_LIFE={life}")]));
             for (net, ip) in nets {
                 args.push("--network".into());
                 args.push(format!("name={net},ip={ip}"));
@@ -879,7 +879,7 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
     let server = |config: Config| {
         let config = format!("/rl/config/{}", config.file());
         strings(&[
-            "/rl/bin/rl-server",
+            "/rl/bin/olr-server",
             "--config",
             &config,
             "--content",
@@ -889,7 +889,7 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
         ])
     };
     let on_lan = |lan: Lan, cmd: Vec<String>| {
-        let mut all = vec!["/rl-nat/node.sh".to_string(), lan.router()];
+        let mut all = vec!["/olr-nat/node.sh".to_string(), lan.router()];
         all.extend(cmd);
         all
     };
@@ -904,8 +904,8 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
         strings(&[
             "sh",
             "-c",
-            "timeout --preserve-status -k 5 \"$RL_NAT_LIFE\" /rl/bin/rl-cli nostr-relay --listen 0.0.0.0:7777 & \
-             exec timeout --preserve-status -k 5 \"$RL_NAT_LIFE\" /rl/bin/rl-cli stun-server --listen 0.0.0.0:3479",
+            "timeout --preserve-status -k 5 \"$OLR_NAT_LIFE\" /rl/bin/olr-cli nostr-relay --listen 0.0.0.0:7777 & \
+             exec timeout --preserve-status -k 5 \"$OLR_NAT_LIFE\" /rl/bin/olr-cli stun-server --listen 0.0.0.0:3479",
         ]),
         Ready::Lines(vec!["nostr relay:", "stun server:"]),
     )];
@@ -958,7 +958,7 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
             1,
             &[(run.network("wan"), lan.router_wan()), (run.lan(lan), lan.router())],
             &strings(&["--cap-add", "NET_ADMIN", "--sysctl", "net.ipv4.ip_forward=1"]),
-            strings(&["/rl-nat/router.sh", lan.kind(), &lan.router_wan(), &lan.router()]),
+            strings(&["/olr-nat/router.sh", lan.kind(), &lan.router_wan(), &lan.router()]),
             Ready::Lines(vec!["router ready"]),
         ));
     }
@@ -995,7 +995,7 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
             on_lan(
                 lan,
                 strings(&[
-                    "/rl/bin/rl-server",
+                    "/rl/bin/olr-server",
                     "--nat-check",
                     "--config",
                     &format!("/rl/config/{}", Config::Invite.file()),
@@ -1012,7 +1012,7 @@ pub fn units(sc: &Scenario, run: &Run) -> Vec<Unit> {
     let others = sc.migration.map(|m| (m.other, "other", 4, Ready::Lines(vec!["path:"])));
     for (j, role, stage, ready) in clients.into_iter().chain(others) {
         let mut cmd = strings(&[
-            "/rl/bin/rl-cli",
+            "/rl/bin/olr-cli",
             "net-client",
             "--bot",
             "--name",
@@ -1054,7 +1054,7 @@ static INTERRUPTED: AtomicBool = AtomicBool::new(false);
 /// A run is active (outside one, or at a second Ctrl+C, the signal exits at once).
 static ACTIVE: AtomicBool = AtomicBool::new(false);
 
-/// Installs the handler once per process (`ctrlc`, as `rl-server`).
+/// Installs the handler once per process (`ctrlc`, as `olr-server`).
 fn watch_interrupts() {
     static ONCE: Once = Once::new();
     ONCE.call_once(|| {
@@ -1110,8 +1110,8 @@ fn exited(container: &str) -> Option<i64> {
     (running == "false").then(|| code.parse().ok()).flatten()
 }
 
-/// Removes every container whose label `filter` matches (`rl-nat`: any
-/// run's; `rl-nat=<id>`: one run's).
+/// Removes every container whose label `filter` matches (`olr-nat`: any
+/// run's; `olr-nat=<id>`: one run's).
 fn remove_containers(filter: &str) {
     if let Ok(ids) = docker(&["ps", "-aq", "--filter", &format!("label={filter}")]) {
         let ids: Vec<&str> = ids.split_whitespace().collect();
@@ -1137,11 +1137,11 @@ fn remove_networks(filter: &str) {
     }
 }
 
-/// The machine-wide lock (`<temp>/rl-nat.lock`): one run at a time, as
+/// The machine-wide lock (`<temp>/olr-nat.lock`): one run at a time, as
 /// the runs share subnets (Docker refuses overlapping ones) and the
 /// leftover cleanup. Waits for another run at most [`LOCK_WAIT`].
 fn lock() -> Result<File, String> {
-    let path = std::env::temp_dir().join("rl-nat.lock");
+    let path = std::env::temp_dir().join("olr-nat.lock");
     let file = File::options()
         .create(true)
         .truncate(false)
@@ -1414,7 +1414,7 @@ fn prerequisites(root: &Path) -> Result<String, String> {
 }
 
 /// The image for `base`, built when its tag is missing (the only network
-/// use: the base and the packages), then the superseded `rl-nat` images
+/// use: the base and the packages), then the superseded `olr-nat` images
 /// pruned. `Ok(Err(why))`: a skip (N58): offline without the image, a
 /// base that cannot be pulled, apt offline or a package missing.
 fn ensure_image(root: &Path, base: &str, offline: bool) -> Result<Result<String, String>, String> {
@@ -1494,7 +1494,7 @@ fn run_locked(
         Err(why) => return Ok(Outcome::Skipped(why)),
     };
     let _lock = lock()?;
-    // Anything labelled `rl-nat` now is an interrupted run's (the lock is ours).
+    // Anything labelled `olr-nat` now is an interrupted run's (the lock is ours).
     remove_networks(LABEL);
     let out = root.join(OUT);
     let configs = out.join("configs");
@@ -1566,7 +1566,7 @@ fn scenarios(n: usize) -> String {
     format!("{n} scenario{}", if n == 1 { "" } else { "s" })
 }
 
-/// `tidy`: removes superseded `rl-nat` images (none when the current tag
+/// `tidy`: removes superseded `olr-nat` images (none when the current tag
 /// cannot be computed here).
 pub fn prune() {
     let root = root();
@@ -1703,7 +1703,7 @@ mod tests {
             bin: "/repo/target/debug".into(),
             content: "/repo/content/packs".into(),
             configs: "/repo/target/net-nat/configs".into(),
-            image: "rl-nat:0123456789ab".into(),
+            image: "olr-nat:0123456789ab".into(),
         }
     }
 
@@ -1730,12 +1730,12 @@ mod tests {
                             .map(|w| w[1].clone())
                             .collect::<Vec<_>>()
                     };
-                    assert_eq!(at("--name"), [format!("rl-nat-4242-{}", u.role)], "{what}");
+                    assert_eq!(at("--name"), [format!("olr-nat-4242-{}", u.role)], "{what}");
                     assert_eq!(
                         at("--label"),
-                        ["rl-nat=4242".to_string(), format!("rl-nat.scenario={}", sc.name)]
+                        ["olr-nat=4242".to_string(), format!("olr-nat.scenario={}", sc.name)]
                     );
-                    assert_eq!(at("-e"), [format!("RL_NAT_LIFE={life}")], "{what}");
+                    assert_eq!(at("-e"), [format!("OLR_NAT_LIFE={life}")], "{what}");
                     let attached = at("--network");
                     assert!(!attached.is_empty(), "{what}");
                     for a in attached {
@@ -1753,11 +1753,11 @@ mod tests {
                     let mounts = at("-v");
                     assert!(mounts.iter().all(|m| m.ends_with(":ro")), "read-only mounts: {mounts:?}");
                     // The command after the image is bounded: node.sh and
-                    // router.sh by RL_NAT_LIFE, the rest by `timeout`.
+                    // router.sh by OLR_NAT_LIFE, the rest by `timeout`.
                     let cmd = &u.args[image + 1..];
                     let life = life.to_string();
                     match cmd[0].as_str() {
-                        "/rl-nat/node.sh" | "/rl-nat/router.sh" => {}
+                        "/olr-nat/node.sh" | "/olr-nat/router.sh" => {}
                         "timeout" => {
                             assert_eq!(cmd[1..5], ["--preserve-status", "-k", "5", life.as_str()], "{what}")
                         }
@@ -1766,7 +1766,7 @@ mod tests {
                             for program in cmd[2].split('&') {
                                 let p = program.trim().trim_start_matches("exec ");
                                 assert!(
-                                    p.starts_with("timeout --preserve-status -k 5 \"$RL_NAT_LIFE\" "),
+                                    p.starts_with("timeout --preserve-status -k 5 \"$OLR_NAT_LIFE\" "),
                                     "{what}: {p}"
                                 );
                             }
@@ -1797,18 +1797,18 @@ mod tests {
         let upnp = units(scenario("upnp"), &run(LIFE));
         let host = upnp.iter().find(|u| u.role == "host").unwrap();
         assert_eq!(host.ready, Ready::Invite(Some(Code::Address)), "the code with the mapped address");
-        assert!(host.args.windows(2).any(|w| w == ["/rl-nat/node.sh", "10.3.0.2"]));
+        assert!(host.args.windows(2).any(|w| w == ["/olr-nat/node.sh", "10.3.0.2"]));
         let pmp = units(scenario("nat-pmp"), &run(LIFE));
         let router = pmp.iter().find(|u| u.role == "router-e").unwrap();
-        assert!(router.args.windows(2).any(|w| w == ["/rl-nat/router.sh", "pmp"]));
+        assert!(router.args.windows(2).any(|w| w == ["/olr-nat/router.sh", "pmp"]));
         // TR-5: the relay beside the host, behind router F's hairpinning
         // forward; the WAN relay does not run.
         let beside = units(scenario("relay-beside"), &run(LIFE));
         let relay = beside.iter().find(|u| u.role == "relay").unwrap();
-        assert!(relay.args.windows(2).any(|w| w == ["/rl-nat/node.sh", "10.6.0.2"]), "{:?}", relay.args);
+        assert!(relay.args.windows(2).any(|w| w == ["/olr-nat/node.sh", "10.6.0.2"]), "{:?}", relay.args);
         assert!(relay.args.iter().any(|a| a.ends_with(",ip=10.6.0.30")));
         let router = beside.iter().find(|u| u.role == "router-f").unwrap();
-        assert!(router.args.windows(2).any(|w| w == ["/rl-nat/router.sh", "hairpin"]));
+        assert!(router.args.windows(2).any(|w| w == ["/olr-nat/router.sh", "hairpin"]));
         // N47-a: the open host on the WAN, its code with an address.
         let open = units(scenario("no-nat"), &run(LIFE));
         let host = open.iter().find(|u| u.role == "host").unwrap();
@@ -1837,10 +1837,10 @@ mod tests {
             ]
         );
         for (name, subnet) in &nets {
-            assert!(name.starts_with("rl-nat-4242-"), "{name}");
+            assert!(name.starts_with("olr-nat-4242-"), "{name}");
             let args = run.network_args(name, subnet);
             assert_eq!(args[..5], ["network", "create", "-d", "macvlan", "--internal"]);
-            assert!(args.windows(2).any(|w| w == ["--label", "rl-nat=4242"]));
+            assert!(args.windows(2).any(|w| w == ["--label", "olr-nat=4242"]));
             assert!(args.windows(2).any(|w| w[0] == "--subnet" && w[1] == *subnet));
             assert_eq!(args.last(), Some(name));
             assert!(
@@ -1989,7 +1989,7 @@ mod tests {
     /// daemon's saying macvlan is unavailable skips.
     fn network_failures_that_skip() {
         let run = run(LIFE);
-        let args = run.network_args("rl-nat-4242-a", "10.1.0.0/24");
+        let args = run.network_args("olr-nat-4242-a", "10.1.0.0/24");
         let failed = |daemon: &str| format!("`docker {}` failed: {daemon}", args.join(" "));
         let why = network_skip(&failed("Error response from daemon: plugin \"macvlan\" not found")).unwrap();
         assert!(why.contains("macvlan") && why.contains("modprobe"), "{why}");
@@ -1999,7 +1999,7 @@ mod tests {
         assert!(network_skip(&no_module).is_some());
         for other in [
             "Error response from daemon: Pool overlaps with other one on this address space",
-            "Error response from daemon: network with name rl-nat-4242-a already exists",
+            "Error response from daemon: network with name olr-nat-4242-a already exists",
             "permission denied while trying to connect to the Docker daemon socket",
         ] {
             assert_eq!(network_skip(&failed(other)), None, "fails, not a skip: {other}");
@@ -2010,7 +2010,7 @@ mod tests {
     fn image_tag_changes_with_the_scripts() {
         let files = [("Dockerfile", &b"FROM x"[..]), ("router.sh", b"a"), ("node.sh", b"b")];
         let tag = image_tag(&files, "ubuntu:26.04");
-        assert!(tag.starts_with("rl-nat:") && tag.len() == "rl-nat:".len() + 12, "{tag}");
+        assert!(tag.starts_with("olr-nat:") && tag.len() == "olr-nat:".len() + 12, "{tag}");
         assert_eq!(tag, image_tag(&files, "ubuntu:26.04"));
         let edited = [("Dockerfile", &b"FROM x"[..]), ("router.sh", b"a "), ("node.sh", b"b")];
         assert_ne!(tag, image_tag(&edited, "ubuntu:26.04"));

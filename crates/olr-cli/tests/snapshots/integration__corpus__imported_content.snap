@@ -1,0 +1,24 @@
+---
+source: crates/olr-cli/tests/corpus.rs
+expression: summary
+---
+mod olx-classic: "Liero v1.0", 38 weapons, 58 projectiles, 39 assets, rope RopeParams { max_length: 300, rest_length: 27, strength: 4.5 }
+  preset "Bonus only": 38 entries, 0 enabled, 38 in bonuses
+  preset "Firebird": 38 entries, 11 enabled, 11 in bonuses
+  preset "Restricted 100lt": 38 entries, 6 enabled, 6 in bonuses
+  preset "Retro Classic": 38 entries, 15 enabled, 15 in bonuses
+  preset "Retro Combo": 38 entries, 2 enabled, 2 in bonuses
+  preset "Retro Combo Unlimited": 38 entries, 7 enabled, 7 in bonuses
+  preset "Rifle only": 38 entries, 1 enabled, 1 in bonuses
+  preset "Standard 100lt": 215 entries, 12 enabled, 12 in bonuses
+  preset "Standard 20lt": 215 entries, 2 enabled, 2 in bonuses
+core olx-core: sprites ["bonus", "chemsmoke", "crosshair", "explosion", "giblets", "health", "hook", "muzzle", "smoke", "sparkle", "spawn"], sounds ["bump.ogg", "death1.ogg", "death2.ogg", "death3.ogg", "pickup.ogg", "throw.ogg"], 83 colours, rope [Some((160, 80, 0)), Some((200, 100, 0))]
+level olx-level-castlestrike: "Castle Strike" 1350x550 art x1, dirt 5536, rock 147603, theme olx-theme-dirt, thumb 160x96
+level olx-level-dirt-level: "Dirt Level" 504x350 art x1, dirt 159596, rock 4949, theme olx-theme-dirt, thumb 160x96
+level olx-level-fossilfacility: "Fossil Facility" 640x480 art x1, dirt 19261, rock 79490, theme olx-theme-dirt, thumb 160x96
+level olx-level-liero-factory: "Liero Factory" 1200x480 art x1, dirt 24490, rock 102337, theme olx-theme-dirt, thumb 160x96
+mod olx-mw-1-0: "Modern Warfare1.0", 50 weapons, 302 projectiles, 129 assets, rope RopeParams { max_length: 300, rest_length: 30, strength: 3.5 }
+  preset "Mortar Only": 50 entries, 1 enabled, 1 in bonuses
+  preset "Standard 100lt": 276 entries, 15 enabled, 15 in bonuses
+theme olx-theme-dirt: 5 holes, 8 stones, 8 misc, green ball 8x9
+skins: 718

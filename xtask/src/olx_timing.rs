@@ -2,14 +2,14 @@
 //! patched OLX (Docker) plays a scenario with `ORACLE_TIMING` (each frame's
 //! wall time, projectile count and `rand()` calls, to a file of its own:
 //! the trace is untouched) and `ORACLE_HEADER_ONLY` (the trace keeps the
-//! header and frame -1, which `rl-cli scenario --time` needs to build the
+//! header and frame -1, which `olr-cli scenario --time` needs to build the
 //! same world). OLX runs in a container on WSL's own kernel: no extra
 //! virtualisation, the same clock.
 
 use std::path::Path;
 
 use anyhow::Context as _;
-use rl_oracle::Scenario;
+use olr_oracle::Scenario;
 
 use crate::{oracle, root};
 
@@ -103,7 +103,7 @@ impl Olx {
     }
 
     /// Plays `sc` in OLX with timing on: its frames; the header-only trace
-    /// gzipped to `out_gz` when given (for `rl-cli scenario --time`).
+    /// gzipped to `out_gz` when given (for `olr-cli scenario --time`).
     pub fn time(&self, name: &str, sc: &Scenario, out_gz: Option<&Path>) -> anyhow::Result<Vec<OlxFrame>> {
         let work = root().join("target/envelope/olx-work").join(name);
         let env = [("ORACLE_TIMING", "/work/timing.txt"), ("ORACLE_HEADER_ONLY", "1")];
@@ -113,7 +113,7 @@ impl Olx {
             if let Some(dir) = gz.parent() {
                 std::fs::create_dir_all(dir)?;
             }
-            std::fs::write(gz, rl_oracle::gzip(&trace))?;
+            std::fs::write(gz, olr_oracle::gzip(&trace))?;
         }
         let text = std::fs::read_to_string(work.join("timing.txt")).context("OLX wrote no timing file")?;
         let frames = parse_timing(&text).map_err(anyhow::Error::msg)?;

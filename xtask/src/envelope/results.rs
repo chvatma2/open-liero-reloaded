@@ -1,5 +1,5 @@
 //! The performance envelope's results (plan 8, spec §3 and §7): the RON
-//! `rl-cli stress`, `gpu-bench`, `scenario --time` and `rl-game
+//! `olr-cli stress`, `gpu-bench`, `scenario --time` and `olr-game
 //! --frame-log` write (read here as `*Out`), what `cargo xtask envelope`
 //! keeps of them (`Envelope`, the file `fixtures/bench/envelope/<host>.ron`)
 //! and the pure arithmetic: medians of runs, budgets, breaking points,
@@ -35,8 +35,8 @@ pub struct Spread {
 impl Spread {
     /// Of `values` (any order), nearest rank: the value at rank
     /// `ceil(n * q)` (at least 1). The one definition of every percentile
-    /// in plan 8 (ruling PF8): `rl_cli::stress::Spread::of` and `rl-game`'s
-    /// `stats::percentile` agree (`xtask` does not link `rl-cli`).
+    /// in plan 8 (ruling PF8): `olr_cli::stress::Spread::of` and `olr-game`'s
+    /// `stats::percentile` agree (`xtask` does not link `olr-cli`).
     pub fn of(values: &[f64]) -> Spread {
         if values.is_empty() {
             return Spread::default();
@@ -81,7 +81,7 @@ impl Default for Budgets {
 // a measured 0; `tool_outputs_parse` ties these to the tools' own output.
 // Only the kept results below are lenient (older files still read).
 
-/// `rl-cli stress --out` (`rl_cli::stress::Report`).
+/// `olr-cli stress --out` (`olr_cli::stress::Report`).
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct StressOut {
     pub tick_us: Spread,
@@ -101,7 +101,7 @@ pub struct StressOut {
     pub caps: Vec<String>,
 }
 
-/// `rl-cli rollback-cost --out` (`rl_cli::rollback_cost::RollbackCost`).
+/// `olr-cli rollback-cost --out` (`olr_cli::rollback_cost::RollbackCost`).
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct RollbackOut {
     pub level: String,
@@ -116,7 +116,7 @@ pub struct RollbackOut {
     pub journal_bytes_max: usize,
 }
 
-/// `rl-cli gpu-bench --out` (`rl_cli::gpu_bench::GpuReport`).
+/// `olr-cli gpu-bench --out` (`olr_cli::gpu_bench::GpuReport`).
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct GpuReportOut {
     pub adapter: String,
@@ -147,7 +147,7 @@ pub struct ProbeOut {
     pub gpu_dropped: u32,
 }
 
-/// `rl-game --frame-log` (`rl_game::stats::FrameLog`).
+/// `olr-game --frame-log` (`olr_game::stats::FrameLog`).
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct FrameLogOut {
     pub size: (u32, u32),
@@ -158,7 +158,7 @@ pub struct FrameLogOut {
     pub busy_ms: Spread,
 }
 
-/// `rl-cli scenario --time` (`rl_cli::timing`).
+/// `olr-cli scenario --time` (`olr_cli::timing`).
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct ScenarioTimingOut {
     pub name: String,
@@ -282,7 +282,7 @@ pub struct GpuSize {
     pub passes_60: u32,
 }
 
-/// A windowed, uncapped `rl-game` run (one run, ruling P5).
+/// A windowed, uncapped `olr-game` run (one run, ruling P5).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Windowed {
@@ -334,8 +334,8 @@ pub struct OlxRow {
     pub frames: usize,
     pub projectiles_peak: u32,
     pub olx_us: Spread,
-    pub rl_us: Spread,
-    /// rl-sim's p50 over OLX's.
+    pub olr_us: Spread,
+    /// olr-sim's p50 over OLX's.
     pub ratio_p50: f64,
     /// The same projectiles and `rand()` calls every frame.
     pub same_work: bool,
@@ -623,13 +623,13 @@ pub fn gpu_size(runs: &[SizeOut], b: &Budgets) -> GpuSize {
     }
 }
 
-/// OLX's runs and rl-sim's of one scenario, in µs.
+/// OLX's runs and olr-sim's of one scenario, in µs.
 pub fn olx_row(name: &str, olx: &[Vec<OlxFrame>], rl: &[ScenarioTimingOut]) -> OlxRow {
     let us = |ns: &[u64]| Spread::of(&ns.iter().map(|&n| n as f64 / 1000.0).collect::<Vec<_>>());
     let olx_us = Spread::median_of(
         &olx.iter().map(|r| us(&r.iter().map(|f| f.ns).collect::<Vec<_>>())).collect::<Vec<_>>(),
     );
-    let rl_us = Spread::median_of(&rl.iter().map(|r| us(&r.tick_ns)).collect::<Vec<_>>());
+    let olr_us = Spread::median_of(&rl.iter().map(|r| us(&r.tick_ns)).collect::<Vec<_>>());
     let (o, r) = (olx.first().cloned().unwrap_or_default(), rl.first().cloned().unwrap_or_default());
     let same_work = o.len() == r.projectiles.len()
         && o.len() == r.rand_calls.len()
@@ -640,8 +640,8 @@ pub fn olx_row(name: &str, olx: &[Vec<OlxFrame>], rl: &[ScenarioTimingOut]) -> O
         frames: o.len(),
         projectiles_peak: o.iter().map(|f| f.projectiles).max().unwrap_or(0),
         olx_us,
-        rl_us,
-        ratio_p50: if olx_us.p50 > 0.0 { rl_us.p50 / olx_us.p50 } else { 0.0 },
+        olr_us,
+        ratio_p50: if olx_us.p50 > 0.0 { olr_us.p50 / olx_us.p50 } else { 0.0 },
         same_work,
         matches_olx: r.matches_olx,
     }
@@ -814,7 +814,7 @@ pub fn incomparable(stored: &Envelope, now: &Envelope) -> Option<String> {
 
 /// The file name's host part: the CPU model's slug and the CPU count.
 pub fn host_key(host: &Host) -> String {
-    format!("{}-{}cpus", rl_data::slug::slug(&host.cpu), host.cpus)
+    format!("{}-{}cpus", olr_data::slug::slug(&host.cpu), host.cpus)
 }
 
 /// `fixtures/bench/envelope/<host>.ron`.
@@ -960,11 +960,11 @@ mod tests {
         let b = Budgets::default();
         let points = vec![
             pt("1", 1.0, 100.0),
-            failed_point("8", 8.0, "rl-cli stress: 16400 MiB resident, over 16384", 0.0),
+            failed_point("8", 8.0, "olr-cli stress: 16400 MiB resident, over 16384", 0.0),
         ];
         let br = breaking(&points, &b, b.frame_144_ms).unwrap();
         assert_eq!(br.value, "8");
-        assert!(br.causes[0].contains("failed: rl-cli stress: 16400 MiB"), "{:?}", br.causes);
+        assert!(br.causes[0].contains("failed: olr-cli stress: 16400 MiB"), "{:?}", br.causes);
         assert!(fit(&points, &b).is_none(), "one measured point fits nothing");
     }
 
@@ -1094,7 +1094,7 @@ mod tests {
     }
 
     /// The tools' own output (`fixtures/bench/tool-output/`, kept equal to
-    /// what `rl-cli` and `rl-game` write by their `tool_output` and
+    /// what `olr-cli` and `olr-game` write by their `tool_output` and
     /// `frame_log_sample` tests) reads with every field xtask uses set:
     /// none of them is a default 0.
     #[test]
@@ -1237,9 +1237,9 @@ mod tests {
             stdout: vec![],
             stderr: vec![],
         };
-        let p = failed_point("8", 8.0, &crate::envelope::sweeps::failure("rl-cli stress", &killed), 0.0);
+        let p = failed_point("8", 8.0, &crate::envelope::sweeps::failure("olr-cli stress", &killed), 0.0);
         assert!(
-            p.caps[0].starts_with("failed: rl-cli stress (signal: 9") && p.caps[0].ends_with("no output"),
+            p.caps[0].starts_with("failed: olr-cli stress (signal: 9") && p.caps[0].ends_with("no output"),
             "{:?}",
             p.caps
         );
@@ -1248,8 +1248,8 @@ mod tests {
             stdout: b"report\n".to_vec(),
             stderr: b"error: 16400 MiB resident, over 16384\n\n".to_vec(),
         };
-        let why = crate::envelope::sweeps::failure("rl-cli stress", &exited);
-        assert_eq!(why, "rl-cli stress (exit status: 1): error: 16400 MiB resident, over 16384");
+        let why = crate::envelope::sweeps::failure("olr-cli stress", &exited);
+        assert_eq!(why, "olr-cli stress (exit status: 1): error: 16400 MiB resident, over 16384");
     }
 
     /// A bless of some parts keeps the others, and the kept sweeps' frames

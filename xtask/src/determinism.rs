@@ -1,6 +1,6 @@
 //! `cargo xtask determinism [--windows] [--arm64] [--all]` (networking spec
 //! §9.5): rollback rests on identical simulation everywhere, so golden bot
-//! matches are recorded natively and `rl-detcheck` (replays: keys only, the
+//! matches are recorded natively and `olr-detcheck` (replays: keys only, the
 //! bots' own maths is not under test) prints the world's checksum stream on
 //! native Linux, on WASI (`wasm32-wasip1` under Node.js,
 //! `tools/wasi-run.mjs`), on Windows (plan 8's interop runner) and on arm64
@@ -36,7 +36,7 @@ pub struct Opts {
     pub all: bool,
 }
 
-/// The flags of `rl-cli match` a golden's spec names (other fields are ignored).
+/// The flags of `olr-cli match` a golden's spec names (other fields are ignored).
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 #[allow(dead_code, reason = "named so that deny_unknown_fields accepts the golden's own fields")]
@@ -71,7 +71,7 @@ struct Spec {
     pool_capacity: Option<usize>,
 }
 
-/// `rl-cli`'s `Mode`: only Deathmatch exists; another mode fails parsing.
+/// `olr-cli`'s `Mode`: only Deathmatch exists; another mode fails parsing.
 #[derive(Deserialize, Default)]
 enum Mode {
     #[default]
@@ -94,7 +94,7 @@ enum Personality {
 }
 
 impl Spec {
-    /// The `rl-cli match` arguments that play this spec.
+    /// The `olr-cli match` arguments that play this spec.
     fn flags(&self) -> Vec<String> {
         let difficulty = match self.difficulty {
             Difficulty::Easy => "easy",
@@ -245,23 +245,23 @@ fn goldens(all: bool) -> Result<Vec<(String, Spec)>, String> {
 fn record(goldens: &[(String, Spec)]) -> Result<Vec<PathBuf>, String> {
     std::fs::create_dir_all(root().join(OUT)).map_err(|e| format!("{OUT}: {e}"))?;
     let mut build = cargo();
-    build.args(["build", "--quiet", "--release", "-p", "rl-cli", "-p", "rl-detcheck"]);
-    ok_output(build, "cargo build rl-cli and rl-detcheck")?;
+    build.args(["build", "--quiet", "--release", "-p", "olr-cli", "-p", "olr-detcheck"]);
+    ok_output(build, "cargo build olr-cli and olr-detcheck")?;
     let mut files = Vec::new();
     for (stem, spec) in goldens {
         let file = PathBuf::from(OUT).join(format!("{stem}.rlrp"));
-        let mut c = Command::new(root().join("target/release/rl-cli"));
+        let mut c = Command::new(root().join("target/release/olr-cli"));
         c.current_dir(root()).arg("match").args(spec.flags()).args(["--no-verify", "--record"]).arg(&file);
-        ok_output(c, &format!("rl-cli match ({stem})"))?;
+        ok_output(c, &format!("olr-cli match ({stem})"))?;
         files.push(file);
     }
     Ok(files)
 }
 
 fn native_stream(replays: &[PathBuf]) -> Result<String, String> {
-    let mut c = Command::new(root().join("target/release/rl-detcheck"));
+    let mut c = Command::new(root().join("target/release/olr-detcheck"));
     c.current_dir(root()).args(["--content", "content/packs"]).args(replays);
-    ok_output(c, "rl-detcheck (native)")
+    ok_output(c, "olr-detcheck (native)")
 }
 
 type Leg = fn(&str, &[PathBuf]) -> Result<(), String>;
@@ -296,16 +296,16 @@ fn wasm_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
         );
     }
     let mut build = cargo();
-    build.args(["build", "--quiet", "--release", "-p", "rl-detcheck", "--target", WASM_TARGET]);
-    ok_output(build, "cargo build rl-detcheck for WASI")?;
+    build.args(["build", "--quiet", "--release", "-p", "olr-detcheck", "--target", WASM_TARGET]);
+    ok_output(build, "cargo build olr-detcheck for WASI")?;
     let mut c = Command::new("node");
     c.current_dir(root())
         .arg("tools/wasi-run.mjs")
-        .arg(format!("target/{WASM_TARGET}/release/rl-detcheck.wasm"))
+        .arg(format!("target/{WASM_TARGET}/release/olr-detcheck.wasm"))
         .arg(root())
         .args(["--content", "/content/packs"])
         .args(replays.iter().map(|r| format!("/{}", r.display())));
-    let wasm = ok_output(c, "rl-detcheck under Node.js WASI")?;
+    let wasm = ok_output(c, "olr-detcheck under Node.js WASI")?;
     compare(native, &wasm, "wasm").map_err(|e| format!("WASM differs from native: {e}"))
 }
 
@@ -322,15 +322,15 @@ fn arm64_missing() -> Option<String> {
 
 fn arm64_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
     let mut build = cargo();
-    build.args(["build", "--quiet", "--release", "-p", "rl-detcheck", "--target", ARM64_TARGET]);
-    ok_output(build, "cargo build rl-detcheck for arm64")?;
+    build.args(["build", "--quiet", "--release", "-p", "olr-detcheck", "--target", ARM64_TARGET]);
+    ok_output(build, "cargo build olr-detcheck for arm64")?;
     let mut c = Command::new("qemu-aarch64");
     c.current_dir(root())
         .args(["-L", ARM64_SYSROOT])
-        .arg(format!("target/{ARM64_TARGET}/release/rl-detcheck"))
+        .arg(format!("target/{ARM64_TARGET}/release/olr-detcheck"))
         .args(["--content", "content/packs"])
         .args(replays);
-    let arm = ok_output(c, "rl-detcheck under qemu-aarch64")?;
+    let arm = ok_output(c, "olr-detcheck under qemu-aarch64")?;
     compare(native, &arm, "arm64").map_err(|e| format!("arm64 differs from native: {e}"))
 }
 
@@ -342,7 +342,7 @@ fn windows_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
     args.extend(
         files.iter().map(|f| format!("replays/{}", f.file_name().unwrap_or_default().to_string_lossy())),
     );
-    let out = winbuild::run(&stage, "rl-detcheck.exe", &args, &[], winbuild::RUN_TIMEOUT)?;
+    let out = winbuild::run(&stage, "olr-detcheck.exe", &args, &[], winbuild::RUN_TIMEOUT)?;
     compare(native, &String::from_utf8_lossy(&out.stdout), "windows")
         .map_err(|e| format!("Windows differs from native: {e}"))
 }

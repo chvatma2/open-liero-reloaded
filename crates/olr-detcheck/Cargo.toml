@@ -1,0 +1,18 @@
+[package]
+name = "olr-detcheck"
+description = "Prints replays' world checksum streams, to compare platforms (native, WASI, Windows, arm64)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+olr-content.workspace = true
+olr-replay.workspace = true
+olr-sim.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+
+[lints]
+workspace = true

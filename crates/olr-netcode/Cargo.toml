@@ -1,0 +1,27 @@
+[package]
+name = "olr-netcode"
+description = "The rollback netcode: a sans-IO session over a Simulation trait, and a deterministic network model."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-math.workspace = true
+olr-modes.workspace = true
+olr-sim.workspace = true
+olr-proto.workspace = true
+olr-terrain.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+olr-content.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

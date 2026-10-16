@@ -1,5 +1,5 @@
-//! `cargo xtask dist`: the portable release zips. `rl-game` and
-//! `rl-server` are built in the `dist` profile (release without symbols or
+//! `cargo xtask dist`: the portable release zips. `olr-game` and
+//! `olr-server` are built in the `dist` profile (release without symbols or
 //! debug info) for Linux and for Windows (mingw-w64, as `winbuild`), each
 //! staged under one folder `rust-liero-<version>/` with the content, the
 //! docs and an example server config (the mingw DLLs only when an exe
@@ -8,11 +8,11 @@
 //! (0755 for the executables), so the same inputs give the same zip.
 //!
 //! Then, unless `--no-verify`, each zip is unpacked into a fresh directory
-//! and its `rl-server` runs from another working directory without
+//! and its `olr-server` runs from another working directory without
 //! `--content` (invite only, no relays, no STUN: nothing leaves the
 //! machine) until its log shows the rotation's map loaded from the content
-//! beside it; on Linux a bot client (`rl-cli net-client --bot`, the dev
-//! build) joins and the server must start a match. `rl-game --help` must
+//! beside it; on Linux a bot client (`olr-cli net-client --bot`, the dev
+//! build) joins and the server must start a match. `olr-game --help` must
 //! name the content beside it as the default. The Windows zip runs in
 //! `%TEMP%\rust-liero-envelope\dist` through WSL interop (skipped with a
 //! notice without it) and is stopped by `winbuild`'s stage-scoped stop.
@@ -33,7 +33,7 @@ pub const PROFILE: &str = "dist";
 /// `tidy` sweeps that and never this (`tidy::KEPT`).
 pub const ZIP_DIR: &str = "release-zips";
 /// The programs a zip holds (`.exe` on Windows).
-pub const EXES: [&str; 2] = ["rl-game", "rl-server"];
+pub const EXES: [&str; 2] = ["olr-game", "olr-server"];
 /// Documents copied from the repository, at the same path in the folder.
 pub const DOCS: [&str; 4] = ["README.md", "LICENSE", "CHANGELOG.md", "docs/online.md"];
 /// The documented server config, and its name in the folder.
@@ -228,7 +228,7 @@ pub fn unpack(zip: &Path, into: &Path) -> Result<(), String> {
     archive.extract(into).map_err(|e| format!("unpacking {} into {}: {e}", zip.display(), into.display()))
 }
 
-/// Builds `rl-game` and `rl-server` for `platform` in the `dist` profile;
+/// Builds `olr-game` and `olr-server` for `platform` in the `dist` profile;
 /// gives cargo's output directory.
 fn build(platform: Platform) -> Result<PathBuf, String> {
     let mut c = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
@@ -411,16 +411,16 @@ fn verify_linux(zip: &Path) -> Result<String, String> {
         }
     }
     let folder = folder.canonicalize().map_err(|e| format!("{}: {e}", folder.display()))?;
-    let help = Command::new(folder.join("rl-game"))
+    let help = Command::new(folder.join("olr-game"))
         .arg("--help")
         .current_dir(&run)
         .output()
-        .map_err(|e| format!("cannot run rl-game --help: {e}"))?;
+        .map_err(|e| format!("cannot run olr-game --help: {e}"))?;
     let text = String::from_utf8_lossy(&help.stdout);
     let beside = format!("[default: {}]", folder.join("content").join("packs").display());
     if !help.status.success() || !text.contains(&beside) {
         return Err(format!(
-            "rl-game --help ({}) does not show {beside}:\n{text}{}",
+            "olr-game --help ({}) does not show {beside}:\n{text}{}",
             help.status,
             String::from_utf8_lossy(&help.stderr)
         ));
@@ -430,22 +430,22 @@ fn verify_linux(zip: &Path) -> Result<String, String> {
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
     let built = Command::new(cargo)
         .current_dir(root())
-        .args(["build", "--quiet", "-p", "rl-cli"])
+        .args(["build", "--quiet", "-p", "olr-cli"])
         .status()
         .map_err(|e| format!("cannot run cargo: {e}"))?;
     if !built.success() {
-        return Err(format!("building rl-cli failed ({built})"));
+        return Err(format!("building olr-cli failed ({built})"));
     }
     let mut server = Watched::start(
-        "rl-server",
-        Command::new(folder.join("rl-server")).args(["--config", "server.ron"]).current_dir(&run),
+        "olr-server",
+        Command::new(folder.join("olr-server")).args(["--config", "server.ron"]).current_dir(&run),
     )?;
     let port = server.wait_for("listening line", READY_WITHIN, listening_port)?;
     let map =
         server.wait_for("rotation", READY_WITHIN, |l| l.strip_prefix("next map: ").map(String::from))?;
     let mut bot = Watched::start(
         "the bot client",
-        Command::new(root().join("target/debug/rl-cli"))
+        Command::new(root().join("target/debug/olr-cli"))
             .args(["net-client", "--join", &format!("127.0.0.1:{port}"), "--bot", "--name", "dist bot"])
             .args(["--timeout", &MATCH_WITHIN.as_secs().to_string()])
             .arg("--content")
@@ -475,15 +475,15 @@ fn verify_linux(zip: &Path) -> Result<String, String> {
     server.drain();
     match status {
         Some(s) if s.success() => {}
-        Some(s) => return Err(server.report(&format!("rl-server exited with {s} on SIGTERM"))),
-        None => return Err(server.report("rl-server did not stop on SIGTERM: killed")),
+        Some(s) => return Err(server.report(&format!("olr-server exited with {s} on SIGTERM"))),
+        None => return Err(server.report("olr-server did not stop on SIGTERM: killed")),
     }
     let bad = server.bad_lines();
     if !bad.is_empty() {
-        return Err(server.report(&format!("rl-server's output is not clean: {bad:?}")));
+        return Err(server.report(&format!("olr-server's output is not clean: {bad:?}")));
     }
     Ok(format!(
-        "rl-game --help names the content beside it; rl-server loaded {map} and started a match ({started})"
+        "olr-game --help names the content beside it; olr-server loaded {map} and started a match ({started})"
     ))
 }
 
@@ -502,7 +502,7 @@ fn verify_windows(zip: &Path) -> Result<Option<String>, String> {
     let (folder, run) = unpack_fresh(zip, &stage.dir.join("dist"))?;
     let help = winbuild::run_in(
         &stage,
-        &folder.join("rl-game.exe"),
+        &folder.join("olr-game.exe"),
         &run,
         &["--help".to_string()],
         &[],
@@ -511,11 +511,11 @@ fn verify_windows(zip: &Path) -> Result<Option<String>, String> {
     let text = String::from_utf8_lossy(&help.stdout);
     let beside = format!("{}\\content\\packs]", self::folder(VERSION));
     if !text.lines().any(|l| l.contains("[default: ") && l.trim_end().ends_with(&beside)) {
-        return Err(format!("rl-game.exe --help does not show the content beside it (…{beside}):\n{text}"));
+        return Err(format!("olr-game.exe --help does not show the content beside it (…{beside}):\n{text}"));
     }
     let mut server = Watched::start(
-        "rl-server.exe",
-        Command::new(folder.join("rl-server.exe")).args(["--config", "server.ron"]).current_dir(&run),
+        "olr-server.exe",
+        Command::new(folder.join("olr-server.exe")).args(["--config", "server.ron"]).current_dir(&run),
     )?;
     let ready = server.wait_for("listening line", READY_WITHIN, listening_port).and_then(|_| {
         server.wait_for("rotation", READY_WITHIN, |l| l.strip_prefix("next map: ").map(String::from))
@@ -529,9 +529,9 @@ fn verify_windows(zip: &Path) -> Result<Option<String>, String> {
     server.drain();
     let bad = server.bad_lines();
     if !bad.is_empty() {
-        return Err(server.report(&format!("rl-server.exe's output is not clean: {bad:?}")));
+        return Err(server.report(&format!("olr-server.exe's output is not clean: {bad:?}")));
     }
-    Ok(Some(format!("rl-game.exe --help names the content beside it; rl-server.exe loaded {map}")))
+    Ok(Some(format!("olr-game.exe --help names the content beside it; olr-server.exe loaded {map}")))
 }
 
 /// `cargo xtask dist`: both zips, then (unless `verify` is off) their checks.
@@ -545,7 +545,7 @@ pub fn command(verify: bool) -> anyhow::Result<bool> {
     let mut zips = Vec::new();
     for platform in Platform::ALL {
         println!(
-            "building rl-game and rl-server for {} (the {PROFILE} profile: LTO, minutes from cold)...",
+            "building olr-game and olr-server for {} (the {PROFILE} profile: LTO, minutes from cold)...",
             platform.suffix()
         );
         let build = build(platform).map_err(anyhow::Error::msg)?;
@@ -605,8 +605,8 @@ mod tests {
         let dlls = [("libwinpthread-1.dll".to_string(), PathBuf::from("/m/libwinpthread-1.dll"))];
         let got = files(Platform::Windows, Path::new("/b"), &dlls, Path::new("/r"));
         let want: Vec<(PathBuf, String)> = [
-            ("/b/rl-game.exe", "rl-game.exe"),
-            ("/b/rl-server.exe", "rl-server.exe"),
+            ("/b/olr-game.exe", "olr-game.exe"),
+            ("/b/olr-server.exe", "olr-server.exe"),
             ("/m/libwinpthread-1.dll", "libwinpthread-1.dll"),
             ("/r/README.md", "README.md"),
             ("/r/LICENSE", "LICENSE"),
@@ -622,13 +622,13 @@ mod tests {
         assert_eq!(
             linux[..2],
             [
-                (PathBuf::from("/b/rl-game"), "rl-game".into()),
-                (PathBuf::from("/b/rl-server"), "rl-server".into())
+                (PathBuf::from("/b/olr-game"), "olr-game".into()),
+                (PathBuf::from("/b/olr-server"), "olr-server".into())
             ]
         );
         assert_eq!(linux.len(), 7);
-        assert_eq!(executables(Platform::Windows), ["rl-game.exe", "rl-server.exe"]);
-        assert_eq!(executables(Platform::Linux), ["rl-game", "rl-server"]);
+        assert_eq!(executables(Platform::Windows), ["olr-game.exe", "olr-server.exe"]);
+        assert_eq!(executables(Platform::Linux), ["olr-game", "olr-server"]);
     }
 
     #[test]
@@ -653,8 +653,8 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let dir = t.path().join("rust-liero-9.9.9");
         for (path, text) in [
-            ("rl-server", "server"),
-            ("rl-game", "game"),
+            ("olr-server", "server"),
+            ("olr-game", "game"),
             ("README.md", "readme"),
             ("docs/online.md", "online"),
             ("content/packs/olx-core/pack.ron", "core"),
@@ -687,8 +687,8 @@ mod tests {
             ("rust-liero-9.9.9/content/packs/b/x.png", 0o644, "png"),
             ("rust-liero-9.9.9/content/packs/olx-core/pack.ron", 0o644, "core"),
             ("rust-liero-9.9.9/docs/online.md", 0o644, "online"),
-            ("rust-liero-9.9.9/rl-game", 0o755, "game"),
-            ("rust-liero-9.9.9/rl-server", 0o755, "server"),
+            ("rust-liero-9.9.9/olr-game", 0o755, "game"),
+            ("rust-liero-9.9.9/olr-server", 0o755, "server"),
             ("rust-liero-9.9.9/server.example.ron", 0o644, "()"),
         ]
         .map(|(n, m, t)| (n.to_string(), m, t.to_string()));
@@ -705,7 +705,7 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt as _;
             let mode = |p: &str| std::fs::metadata(out.join(p)).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode("rust-liero-9.9.9/rl-server"), 0o755);
+            assert_eq!(mode("rust-liero-9.9.9/olr-server"), 0o755);
             assert_eq!(mode("rust-liero-9.9.9/README.md"), 0o644);
         }
     }

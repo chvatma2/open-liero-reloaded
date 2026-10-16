@@ -37,7 +37,7 @@ fn count(n: u32, thing: &str) -> String {
     format!("{n} {thing}{}", if n == 1 { "" } else { "s" })
 }
 
-/// The present mode in `rl-game`'s adapter line (`<adapter> (<backend>,
+/// The present mode in `olr-game`'s adapter line (`<adapter> (<backend>,
 /// <type>), <present mode>, <format>`).
 fn present_mode(gpu: &str) -> &str {
     gpu.rsplit(", ").nth(1).unwrap_or("—")
@@ -80,7 +80,7 @@ fn sweep(o: &mut String, s: &Sweep, b: &Budgets) {
     if let Some(f) = s.points.iter().find_map(|p| p.frame.as_ref()) {
         let _ = writeln!(
             o,
-            "\nFrame with bots: the point's level drawn offscreen at {} on {} (`rl-cli gpu-bench`: a tick and a \
+            "\nFrame with bots: the point's level drawn offscreen at {} on {} (`olr-cli gpu-bench`: a tick and a \
              frame; it replays recorded inputs, so its tick has no bots' thinking) plus the point's bots p99 \
              above: a sum of p99s, so a bound. This is the frame the 144 Hz and 60 Hz budgets judge.",
             size(f.size),
@@ -172,7 +172,7 @@ fn windowed(o: &mut String, g: &GpuPath, b: &Budgets, holding: &[&str]) {
     let rows = &g.windowed;
     let _ = writeln!(
         o,
-        "\nWindowed, asked for uncapped (`rl-game --frame-log --uncapped`, HUD included). Frame is frame to frame \
+        "\nWindowed, asked for uncapped (`olr-game --frame-log --uncapped`, HUD included). Frame is frame to frame \
          (what the player sees); busy is a frame's CPU time without waiting to present.\n"
     );
     let fifo: Vec<String> =
@@ -299,7 +299,7 @@ fn gpu(o: &mut String, key: &str, g: &GpuPath, b: &Budgets, holding: &[&str]) {
     }
     let _ = writeln!(
         o,
-        "\nShader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU time one pass \
+        "\nShader headroom, GPU side (a full-screen blur pass, `olr_render::Probe`): the GPU time one pass \
          costs, and how many passes fit beside the frame's GPU p99 (its frame p99 without timestamps) within \
          the {:.1} ms (144 Hz) and {:.1} ms (60 Hz) budgets. This is GPU-side headroom, not the whole frame: \
          the tick and the draw list run on the CPU beside it.\n\n\
@@ -399,8 +399,8 @@ fn olx(o: &mut String, c: &OlxComparison) {
         "Image `{}`, built {}. OLX runs in a Docker container on WSL's own kernel (no extra virtualisation, the \
          same clock). Its timed span is the gus logic and the client's and the server's frame, without the \
          trace writing; shot-list delivery and message parsing run in OLX's `betweenFrames()`, outside that \
-         span, while rl-sim does the equivalent inside `World::tick`, so the comparison slightly flatters OLX. \
-         rl-sim's span (`rl-cli scenario --time`) also holds a scenario's bonus placement (none in these \
+         span, while olr-sim does the equivalent inside `World::tick`, so the comparison slightly flatters OLX. \
+         olr-sim's span (`olr-cli scenario --time`) also holds a scenario's bonus placement (none in these \
          scenarios). OLX draws on the CPU at 640 × 480 and is not timed here (not comparable like for like).\n",
         c.image, c.build
     );
@@ -434,7 +434,7 @@ fn olx(o: &mut String, c: &OlxComparison) {
     );
     let _ = writeln!(
         o,
-        "| scenario | frames | peak projectiles | OLX p50 / p99 (µs) | rl-sim p50 / p99 (µs) | rl-sim / OLX (p50) | same work | matches OLX |\n\
+        "| scenario | frames | peak projectiles | OLX p50 / p99 (µs) | olr-sim p50 / p99 (µs) | olr-sim / OLX (p50) | same work | matches OLX |\n\
          |---|---|---|---|---|---|---|---|"
     );
     for r in &c.rows {
@@ -446,8 +446,8 @@ fn olx(o: &mut String, c: &OlxComparison) {
             r.projectiles_peak,
             r.olx_us.p50,
             r.olx_us.p99,
-            r.rl_us.p50,
-            r.rl_us.p99,
+            r.olr_us.p50,
+            r.olr_us.p99,
             r.ratio_p50,
             if r.same_work { "yes" } else { "no" },
             r.matches_olx.map_or("— (timing trace)", |m| if m { "yes" } else { "no" })
@@ -489,20 +489,20 @@ pub fn render(env: &Envelope, summary: &str) -> String {
          - Budgets: tick p99 ≤ {} ms (OLX's 100 Hz frame), frame p99 ≤ {:.1} ms (144 Hz) and ≤ {:.1} ms (60 Hz), \
          peak memory below {:.0} MiB. A point holds when all of them do; the breaking point is the first value that \
          does not, with the cause (tick, frame, memory, or a cap).\n\
-         - Sweeps: `rl-cli stress`, one process a point, medians of the runs; the reference is Classic on Castle \
+         - Sweeps: `olr-cli stress`, one process a point, medians of the runs; the reference is Classic on Castle \
          Strike, 16 bots of mixed difficulty (chaos bots; Deathmatch bots on the map and art sweeps, so route \
          finding counts), OLX's pool, {} s, seed 1, `LoadingTime` 0, bonuses every 5 s. The pool sweep plays \
          MW 1.0. Map and art levels are generated in memory (`gen-<w>x<h>-a<scale>-s1`).\n\
-         - Frames: `rl-cli gpu-bench` offscreen on the hardware adapter (timestamps when the adapter has them), and \
-         `rl-game --frame-log --uncapped` windowed; on WSL (GL over Mesa's d3d12, presented through WSLg) and \
+         - Frames: `olr-cli gpu-bench` offscreen on the hardware adapter (timestamps when the adapter has them), and \
+         `olr-game --frame-log --uncapped` windowed; on WSL (GL over Mesa's d3d12, presented through WSLg) and \
          native Windows (DX12, Vulkan) built with mingw-w64 and run through interop.\n\
-         - Rollback: `rl-cli rollback-cost`, a Classic match of 16 chaos bots (500 ticks of warm-up, then a \
+         - Rollback: `olr-cli rollback-cost`, a Classic match of 16 chaos bots (500 ticks of warm-up, then a \
          sample every 10 ticks of play): save, play `depth` ticks, then time the restore and the re-simulation \
          of those ticks with their recorded keys (the bots' thinking is not timed: online, bots think on the host \
          only). Budgets: restore plus 12 ticks p99 ≤ 2 ms at the reference (Castle Strike) and ≤ 4 ms at \
          4096 × 4096; depth 28 (`MAX_PREDICTION`) is information.\n\
          - OLX: the oracle's patched OLX (Docker; a Release build, -O3) timing each simulated frame to a file of \
-         its own; rl-sim timed on the same scenarios, the same work checked frame by frame.\n",
+         its own; olr-sim timed on the same scenarios, the same work checked frame by frame.\n",
         b.tick_ms, b.frame_144_ms, b.frame_60_ms, b.memory_mib, env.seconds
     );
     let _ = writeln!(o, "## The machine\n\n- CPU: {} ({} logical CPUs)", env.host.cpu, env.host.cpus);
@@ -536,10 +536,10 @@ pub fn render(env: &Envelope, summary: &str) -> String {
     let _ = writeln!(
         o,
         "\n### Limits\n\n| | OLX (`d1ad953f`) | rust-liero |\n|---|---|---|\n\
-         | Worms | 32 (`MAX_WORMS`, `include/Consts.h:34`) | 32 (`rl_sim::MAX_WORMS`) |\n\
+         | Worms | 32 (`MAX_WORMS`, `include/Consts.h:34`) | 32 (`olr_sim::MAX_WORMS`) |\n\
          | Projectiles | 3000 (`MAX_PROJECTILES`, `include/CProjectile.h:36`) | 3000 by default, up to 65 536 (`MatchSetup::MAX_POOL_CAPACITY`) |\n\
-         | Map side | 4096 (12-bit worm positions) | 4096 for imported levels (`rl-import-lxl`) |\n\
-         | Effects | 1024 (`MAX_ENTITIES`, `include/Entity.h:30`) | 16 384 in play, 1024 of them kept for deaths (`rl_fx::PLAY_ENTITIES`, `DEATH_RESERVE`); OLX's 1024 with `olx_quirks` (`rl_fx::MAX_ENTITIES`); `Fx::with_capacity` in benches |\n\
+         | Map side | 4096 (12-bit worm positions) | 4096 for imported levels (`olr-import-lxl`) |\n\
+         | Effects | 1024 (`MAX_ENTITIES`, `include/Entity.h:30`) | 16 384 in play, 1024 of them kept for deaths (`olr_fx::PLAY_ENTITIES`, `DEATH_RESERVE`); OLX's 1024 with `olx_quirks` (`olr_fx::MAX_ENTITIES`); `Fx::with_capacity` in benches |\n\
          | Colour image | — | 256 MiB (`MAX_COLOR_MAP_BYTES`), art scale at most 8 |"
     );
     o

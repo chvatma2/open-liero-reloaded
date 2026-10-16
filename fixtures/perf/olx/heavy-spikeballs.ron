@@ -1,5 +1,5 @@
 (
-    description: "Performance envelope (plan 8), not an oracle fixture: eight worms in Castle Strike's great hall (four at each of castle-shoot-rope's spots, 10000 hp so nobody dies) hold fire with Classic's Spikeballs and LoadingTime 0 for 8 s, to fill OLX's 3000 projectiles. Timed in OLX and in rl-sim; the same work is checked frame by frame by projectile counts and rand() calls.",
+    description: "Performance envelope (plan 8), not an oracle fixture: eight worms in Castle Strike's great hall (four at each of castle-shoot-rope's spots, 10000 hp so nobody dies) hold fire with Classic's Spikeballs and LoadingTime 0 for 8 s, to fill OLX's 3000 projectiles. Timed in OLX and in olr-sim; the same work is checked frame by frame by projectile counts and rand() calls.",
     level: "CastleStrike.lxl",
     mod: "Classic",
     seed: 12345,

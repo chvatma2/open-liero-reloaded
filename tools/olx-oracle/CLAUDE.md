@@ -41,11 +41,11 @@ you rarely need to touch these files.
   bonus schedule nor the trace line is timed), the client's used
   projectiles and `rand()` calls since the seed. Shot-list delivery and
   message parsing run in `betweenFrames()`, after `afterFrame()`, so they
-  fall outside OLX's timed span, while `rl-sim` does the equivalent inside
-  `World::tick`: the comparison slightly flatters OLX. `rl-sim`'s span
-  (`rl-cli scenario --time`) also includes a scenario's bonus placement
+  fall outside OLX's timed span, while `olr-sim` does the equivalent inside
+  `World::tick`: the comparison slightly flatters OLX. `olr-sim`'s span
+  (`olr-cli scenario --time`) also includes a scenario's bonus placement
   (none in the timed scenarios). With `ORACLE_HEADER_ONLY`
-  the trace keeps only the header and frame −1 (what `rl-cli scenario
+  the trace keeps only the header and frame −1 (what `olr-cli scenario
   --time` needs to build the same world). Unset, nothing changes: the
   traces are byte-identical, which `cargo xtask oracle-record --check`
   proved when they were added.
@@ -96,7 +96,7 @@ you rarely need to touch these files.
 
 - **Header:** `olx` (version), `features` (every feature value), `weapons`
   (names by OLX weapon id), `projectiles` (by OLX projectile index: the path
-  `rl-import-lgs` derives, `<weapon id>[.spawn|.trail]...`), `options`
+  `olr-import-lgs` derives, `<weapon id>[.spawn|.trail]...`), `options`
   (`Game.Blood`, `Game.Particles`, `DoProjectileSimulationInDedicated`, `K` = 10,
   `T0` = frame −1's absolute `simulationTime`), `seed`.
 - **Frame:** `f`, `sf` (`serverFrame`), `st` (`simulationTime`), `ct`
@@ -113,7 +113,7 @@ you rarely need to touch these files.
   alive. A shot's `t` is its absolute server time (`serverFrame * 10`), and a
   projectile's `ws` is a duration in seconds.
 - Floats use `%.9g`. Field meanings are documented on the Rust types in
-  `crates/rl-oracle/src/trace.rs`.
+  `crates/olr-oracle/src/trace.rs`.
 
 ## The recording sequence (`oracle_control.py`)
 

@@ -1,0 +1,28 @@
+[package]
+name = "olr-render"
+description = "The wgpu renderer: colour terrain and an instanced sprite atlas drawn at art scale, then upscaled; offscreen rendering to PNG for goldens."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+olr-data.workspace = true
+olr-terrain.workspace = true
+olr-scene.workspace = true
+olr-pack.workspace = true
+wgpu.workspace = true
+bytemuck.workspace = true
+pollster.workspace = true
+
+[dev-dependencies]
+allocation-counter.workspace = true
+divan.workspace = true
+
+[[bench]]
+name = "frame"
+harness = false
+
+[lints]
+workspace = true

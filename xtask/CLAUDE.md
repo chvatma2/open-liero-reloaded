@@ -10,26 +10,26 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   also `bench`, `stress`, `e2e`) imports into `target/content-fresh` and
   fails listing the files (`differences`) if `content/packs` is stale.
   `--offline` skips it: the tests run on the committed packs.
-- `full` runs `check`, then `bot-grid` (`check::TIMED_TESTS`: `rl-cli`'s
+- `full` runs `check`, then `bot-grid` (`check::TIMED_TESTS`: `olr-cli`'s
   `tests/grid.rs`, alone and one test at a time, its p99 tick budget being
   wall time; then `check::FULL_TESTS`: `tests/net_sim.rs`' online grid and `tests/transport.rs`'
-  real-transport matches (spec §9.4), `rl-net`'s `link`, and `rl-game`'s
+  real-transport matches (spec §9.4), `olr-net`'s `link`, and `olr-game`'s
   `integration` again for its full-tier migration case, with
-  `RL_FULL_TESTS=1`), then the GPU step
-  (`check::GPU_TESTS` with `RL_GPU_TESTS=1`: `rl-render`'s `gpu`,
-  `rl-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the
-  software adapter), `rl-game`'s `soak`, `rl-ui`'s `hud_snapshots`) and the
+  `OLR_FULL_TESTS=1`), then the GPU step
+  (`check::GPU_TESTS` with `OLR_GPU_TESTS=1`: `olr-render`'s `gpu`,
+  `olr-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the
+  software adapter), `olr-game`'s `soak`, `olr-ui`'s `hud_snapshots`) and the
   audio step, then `e2e`, `net-nat`, `bench`, `stress` and `net-feel`.
   Each step prints `ok   <name> (<s>s)` (`net-nat`: `ok   net-nat (12
   scenarios, <s>s)`, `run_with`'s `finish` with a detail) or `FAIL` and
   its output.
 - `bench` (`bench.rs`, also `cargo xtask bench [--offline]`, spec §21 G8):
-  the divan benchmarks (`BENCHES`: `rl-sim/benches/tick.rs`,
-  `rl-render/benches/frame.rs`, `rl-cli/benches/game.rs` and `rollback.rs`; bench profile)
+  the divan benchmarks (`BENCHES`: `olr-sim/benches/tick.rs`,
+  `olr-render/benches/frame.rs`, `olr-cli/benches/game.rs` and `rollback.rs`; bench profile)
   `RUNS` (3) times, each one's median of the runs' medians against
   `fixtures/bench/baselines.ron` (ns); then `stress`: the short stress run
   (`STRESS`: MW 1.0 and Classic × pool 3000 and 20 000 on Castle Strike,
-  32 chaos bots, `STRESS_SECONDS` (20) each, `rl-cli stress` in release,
+  32 chaos bots, `STRESS_SECONDS` (20) each, `olr-cli stress` in release,
   determinism checked on the first run) `RUNS` times, the median tick p50,
   frame p50 and peak MiB against `fixtures/bench/stress.ron`. Noise guard:
   a measurement fails only over `TOLERANCE` (+10 %; peak memory
@@ -67,11 +67,11 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   from the old file and listed in `kept`, and offline the stress file
   stays as it was. About 35 s once built.
 - `stress [--seconds 180]` (`bench::stress_command`): the long stress
-  run, every `STRESS` configuration through `rl-cli stress` (progress and
+  run, every `STRESS` configuration through `olr-cli stress` (progress and
   each report as it plays, determinism checked), then a summary table
   (tick µs, projectiles, entities, frame ms, MiB) and the adapter.
 - `net-feel [--bless --reason "<why>"]` (`net.rs`, plan 9, spec §9.2;
-  also `full`'s last step): builds `rl-cli` in release, runs `net-sim
+  also `full`'s last step): builds `olr-cli` in release, runs `net-sim
   --feel target/net/feel.ron` (every network profile × seeds 1 and 2 and
   the 32-worm bandwidth run; virtual time, so host-independent) and reads
   it strictly (`FeelReport`, unknown fields refused; the sample
@@ -87,25 +87,25 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   pass (else the netcode has a problem to fix, not the gate) and logs the
   reason in `fixtures/blessings.log`. About 40 s once built.
 - `net-soak [--minutes 10] [--seed S] [--offline]` (`net::soak`, plan 12c,
-  N77, spec §9.10; **not** a `full` step): builds `rl-cli` in release
-  (`bench::rl_cli_with`; `--offline` builds with cargo's `--offline`) and
-  runs `rl-cli net-soak --minutes M --seed S --content content/packs
+  N77, spec §9.10; **not** a `full` step): builds `olr-cli` in release
+  (`bench::olr_cli_with`; `--offline` builds with cargo's `--offline`) and
+  runs `olr-cli net-soak --minutes M --seed S --content content/packs
   --failures target/failures` (`soak_args`), its output streaming (one line
   per case, a summary), and exits 1 if a case failed. Seeded host crashes,
   departures and freezes, outages, profile changes and spectators over
   `net-sim`'s virtual time, every 5th case a real-transport match on
   127.0.0.1 (nothing leaves the machine). Each failure is kept in
-  `target/failures` as a case (`net-<stem>.ron`: replay it with `rl-cli
+  `target/failures` as a case (`net-<stem>.ron`: replay it with `olr-cli
   net-sim --from`, keep it with `bless-regression --from`) or, for a
   transport case, `soak-transport-<seed>/` (spec, verdict, server log);
   at most 32, then it stops. A failure is a finding to fix in its task,
   not a gate to loosen. Unit test `net_soak_args_are_parsed`.
 - `e2e` (`e2e.rs`, also `cargo xtask e2e [--offline]`): builds
-  (`build_binaries`, shared with `net-nat`) `rl-game`
-  and `rl-server` (dev profile), and `rl-cli --features nat-tools` in a
-  cargo run of its own (one run would give the others rl-discovery's
-  test relay too; `target/debug/rl-cli` is then the feature build, and
-  `dist`'s plain `cargo build -p rl-cli` and this step rebuild it in turn
+  (`build_binaries`, shared with `net-nat`) `olr-game`
+  and `olr-server` (dev profile), and `olr-cli --features nat-tools` in a
+  cargo run of its own (one run would give the others olr-discovery's
+  test relay too; `target/debug/olr-cli` is then the feature build, and
+  `dist`'s plain `cargo build -p olr-cli` and this step rebuild it in turn
   in `full`: harmless, each builds right before its use), starts Xvfb on the first display from `:90` without a
   lock file (`-displayfd` says when it is ready; stopped with SIGTERM so
   its lock goes; WSLg mounts `/tmp/.X11-unix` read-only, Xvfb then listens
@@ -118,15 +118,15 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   ending in `pass`, every screenshot the script names, and no `warning:`,
   `error:` or panic line on stderr (`bad_lines`). Then the online run
   (plan 10 task 15, plan 12b task 10, `online`, in `target/e2e/online`):
-  the run's own Nostr relay, `rl-cli nostr-relay --listen 127.0.0.1:0`
+  the run's own Nostr relay, `olr-cli nostr-relay --listen 127.0.0.1:0`
   (its URL read from its first line, `nostr relay: ws://…`; nothing
-  leaves the machine), `rl-server --config` with
+  leaves the machine), `olr-server --config` with
   `fixtures/server/e2e.ron`'s `{relay}` replaced by that URL (written to
   `online/server.ron`: Public on that relay at `public_address`
   127.0.0.1 with `allow_local`, no STUN, no port mapping, port 0, no fill
   bots, one 0.2-minute Classic match on Dirt Level that starts when both
   players are ready; its port read from the log's "listening on port N",
-  `unstamped`), `rl-cli net-client --bot --name "e2e bot" --join
+  `unstamped`), `olr-cli net-client --bot --name "e2e bot" --join
   127.0.0.1:<port>` waited for in the server's log (so the game's lobby
   has both members at once), then the game plays
   `fixtures/autoplay/online.ron` (`{port}` replaced) on the real clock (no
@@ -156,22 +156,22 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   fix>)`, a pass): `olx_timing::docker_missing`, `/etc/os-release` with
   `ID` and `VERSION_ID` of a Debian-like distribution (`base_image`),
   the content (`content/packs`). The binaries are `e2e`'s dev builds
-  (`e2e::build_binaries`: `rl-game` and `rl-server`, then `rl-cli
+  (`e2e::build_binaries`: `olr-game` and `olr-server`, then `olr-cli
   --features nat-tools` in a cargo run of its own, as feature
-  unification would give the others rl-discovery's test relay; both
+  unification would give the others olr-discovery's test relay; both
   steps run exactly these, so `full` builds them once), mounted from
-  `target/debug`. `ensure_image`: `rl-nat:<image_tag>` (SHA-256 of
+  `target/debug`. `ensure_image`: `olr-nat:<image_tag>` (SHA-256 of
   `TOOL_FILES` and the base) built when missing (`docker build
   --progress=plain --build-arg BASE=<ID>:<VERSION_ID>`), then
-  `oracle::prune_old` removes the other `rl-nat` tags; skips (N58):
+  `oracle::prune_old` removes the other `olr-nat` tags; skips (N58):
   `--offline` without the image, a base that cannot be pulled, and
   `build_skip` (apt offline: `Failed to fetch`, `Temporary failure
   resolving`; a missing package: `Unable to locate package`, `has no
   installation candidate`); any other build failure fails. Then the
-  machine-wide `lock` (`<temp>/rl-nat.lock`, at most 10 min), the
-  removal of anything labelled `rl-nat` (an interrupted run's), the
+  machine-wide `lock` (`<temp>/olr-nat.lock`, at most 10 min), the
+  removal of anything labelled `olr-nat` (an interrupted run's), the
   configs (`Config::text`) in `target/net-nat/configs/`, and a `Run`
-  (id: the process id, in every name and the label `rl-nat=<id>`;
+  (id: the process id, in every name and the label `olr-nat=<id>`;
   `life`: `LIFE` 120 s, `KEEP_LIFE` 3600 with `--keep`) whose networks
   (`Run::networks`, `network_args`: macvlan `--internal`, no parent;
   `network_skip`: a Docker without macvlan skips, judged from the
@@ -180,8 +180,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   go when it ends (`Networks`' `Drop`) unless `--keep`. Each of
   `SCENARIOS` (`select`: `--only`, table order, an unknown name an
   error) is `play`ed: `units` (the pure plan: per container its stage,
-  `docker run` arguments (`--name rl-nat-<id>-<role>`, the labels
-  `rl-nat=<id>` and `rl-nat.scenario=<name>`, `-e RL_NAT_LIFE`, our
+  `docker run` arguments (`--name olr-nat-<id>-<role>`, the labels
+  `olr-nat=<id>` and `olr-nat.scenario=<name>`, `-e OLR_NAT_LIFE`, our
   networks only, the command bounded by `node.sh`, `router.sh` or
   `timeout --preserve-status -k 5 <life>`) and `Ready`: lines, an
   invite code (`invite_code`, with an address when `Code::Address`), or
@@ -206,7 +206,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `scenario_names_are_unique_and_selectable`,
   `image_tag_changes_with_the_scripts`,
   `every_container_stays_on_our_networks_and_ends_by_itself` (names,
-  labels, `RL_NAT_LIFE`, networks and their subnets, read-only mounts,
+  labels, `OLR_NAT_LIFE`, networks and their subnets, read-only mounts,
   no host network, every command bounded, for `LIFE` and `KEEP_LIFE`),
   `the_networks_are_internal_macvlan_without_a_parent`,
   `configs_are_ron_on_our_servers_only`,
@@ -225,7 +225,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   Windows PowerShell, the rustup target `x86_64-pc-windows-gnu` absent,
   no mingw-w64 linker or objdump), a notice, not a failure, for
   `envelope`. `build()` runs `cargo
-  build --release --target x86_64-pc-windows-gnu -p rl-cli -p rl-game`
+  build --release --target x86_64-pc-windows-gnu -p olr-cli -p olr-game`
   with `CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER=x86_64-w64-mingw32-gcc`
   (about 1 min from cold here; no `crt-static` needed). `stage()` copies
   the exes, any `MINGW_DLLS` an exe imports (`objdump -p`: today none,
@@ -244,7 +244,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   stopped): Windows PowerShell's `STOP_SCRIPT` force-stops every process
   whose image path lies under the stage (by path prefix, never by image
   name), then the interop child is killed. The stage's path reaches the
-  script in `RL_STAGE` through `WSLENV`, never in its source (PowerShell
+  script in `OLR_STAGE` through `WSLENV`, never in its source (PowerShell
   also takes U+2018-U+201B as quotes), and `stop_target` refuses a path
   that is not a `rust-liero-envelope` directory, so the user's own
   processes are never touched. The ignored test
@@ -254,12 +254,12 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   and `vulkan`, failing when either run fails. On the user's machine: DX12
   and Vulkan both see the RTX 5070 Ti (and the AMD iGPU; DX12 also
   Microsoft's Basic Render Driver, a `Cpu` adapter), with timestamps on
-  both; `rl-game.exe --demo` writes its shots under the stage's `target/`. Nothing is left running; the
+  both; `olr-game.exe --demo` writes its shots under the stage's `target/`. Nothing is left running; the
   stage stays for the next run.
 - `dist [--no-verify]` (`dist.rs`): the portable release zips,
   `target/release-zips/rust-liero-<version>-{linux,windows}-x64.zip` (`ZIP_DIR`; `VERSION`:
-  xtask's, the workspace's; `zip_name`, `folder`). `rl-game` and
-  `rl-server` are built with `cargo build --profile dist` (workspace
+  xtask's, the workspace's; `zip_name`, `folder`). `olr-game` and
+  `olr-server` are built with `cargo build --profile dist` (workspace
   `Cargo.toml`: release, `strip`, no debug info, panics unwinding),
   natively and for `winbuild::TARGET` (`winbuild::build_missing()` fails
   the command: both zips or none), staged in `target/dist-stage/` (removed
@@ -273,15 +273,15 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   from cargo's `dist` profile output (`target/dist/`, swept by `tidy` as
   any profile). Verification (unless
   `--no-verify`): the Linux zip is unpacked into a fresh temporary
-  directory, `rl-game --help` run from another directory must show the
-  content beside it as `--content`'s default, and `rl-server` (config
+  directory, `olr-game --help` run from another directory must show the
+  content beside it as `--content`'s default, and `olr-server` (config
   `CHECK_CONFIG`: invite only, no relays, no STUN, port 0, two fill seats (the client and a bot),
   `min_players: 1`) must log its map (`next map:`), then start a match
-  with the dev `rl-cli net-client --bot` joined (`match start:`), and stop
+  with the dev `olr-cli net-client --bot` joined (`match start:`), and stop
   cleanly on SIGTERM with no `bad_lines`. The Windows zip is unpacked into
   `%TEMP%\rust-liero-envelope\dist` (`winbuild`'s stage, so
   `stop_stage_processes` reaches it) and run through interop
-  (`winbuild::run_in` for `rl-game.exe --help`; `rl-server.exe` until it
+  (`winbuild::run_in` for `olr-game.exe --help`; `olr-server.exe` until it
   logs its map, then stopped by path; no client: WSL cannot reach a
   Windows listener reliably); without interop (`winbuild::interop_missing`)
   a `skip` notice. Prints each zip's path and size.
@@ -293,7 +293,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   goes on this machine before the tick (10 ms p99), frame (6.9 / 16.7 ms
   p99) or memory (2 GiB) budget breaks. The parts (`Axis`, `--only`,
   repeatable; all by default): the sweeps `worms`, `pool`, `fx`, `map`,
-  `art`, then `rollback` (plan 9: `rl-cli rollback-cost` at Castle Strike
+  `art`, then `rollback` (plan 9: `olr-cli rollback-cost` at Castle Strike
   depth 12 and 28 and `gen-4096x4096-a1-s1` depth 12, 16 worms; `RollbackOut`
   strict, `Envelope::rollback` lenient and merged like `olx`; total p99
   against 2000 µs / 4000 µs at depth 12, flagged in the report's Rollback
@@ -305,16 +305,16 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `*Out` with only the fields used and no defaults, so a field renamed
   in a tool is a failed point saying why, never a measured 0; the
   samples in `fixtures/bench/tool-output/` are kept equal to the tools'
-  output by `rl-cli`'s `tests/tool_output.rs` and `rl-game`'s
+  output by `olr-cli`'s `tests/tool_output.rs` and `olr-game`'s
   `frame_log_sample`, and `tool_outputs_parse` reads them; the kept
   `Envelope`, lenient so older files read; the pure
   arithmetic, unit-tested: medians of runs, `Spread::of` nearest rank as
-  `rl-cli`'s and `rl-game`'s (ruling PF8), breaking points per budget
+  `olr-cli`'s and `olr-game`'s (ruling PF8), breaking points per budget
   (a map or art point's frame is `Point::frame_p99_ms`: its level's
   `gpu-bench` tick and frame, which replay recorded inputs and so hold
   no route finding, plus the point's bots' think p99), the
   least-squares cost per unit, probe passes that fit, `compare`,
-  `merged`); `sweeps.rs` (each point is `rl-cli stress` in release in its
+  `merged`); `sweeps.rs` (each point is `olr-cli stress` in release in its
   own process, from the reference configuration: Classic on Castle
   Strike, 16 bots of mixed difficulties, pool 3000, effects 1024, seed 1;
   every run `--no-verify` (ruling P9: verifying art 8 would hold about
@@ -325,11 +325,11 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   output line (`failure`: a run the OOM killer stops says `signal: 9`); the map and art points record replays
   in `target/envelope/replays`); `gpu.rs` (the heavy replay, MW 1.0 with
   32 chaos bots and a 20 000 pool, and the levels' replays through
-  `rl-cli gpu-bench --adapter hardware` offscreen, then `rl-game
+  `olr-cli gpu-bench --adapter hardware` offscreen, then `olr-game
   --frame-log` windowed and uncapped at each size; on WSL with GL over
   Mesa's d3d12 driver (`wsl_env`), on Windows through `winbuild` for
   `dx12` and `vulkan`, each run bounded by `winbuild::RUN_TIMEOUT`);
-  `olx.rs` (`olx_timing` for OLX and `rl-cli scenario --time` for rl-sim,
+  `olx.rs` (`olx_timing` for OLX and `olr-cli scenario --time` for olr-sim,
   the same work checked frame by frame, `projectiles` and `rand_calls`
   the same length as OLX's frames; a scenario that fails is one of the
   table's `notes` and the others go on; OLX's build named as Release,
@@ -377,7 +377,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   variables) with `ORACLE_TIMING` and `ORACLE_HEADER_ONLY`
   (`tools/olx-oracle/CLAUDE.md`) in `target/envelope/olx-work/<name>`,
   parses the `frame ns projectiles rc` lines (`parse_timing`) and can
-  write the header-only trace (gzipped) for `rl-cli scenario --time`;
+  write the header-only trace (gzipped) for `olr-cli scenario --time`;
   `build_info` names the image's release flags and compiler (the build is
   Release, `-O3`, from `CMakeOlxCommon.cmake:43-47`; the cache's
   `CMAKE_BUILD_TYPE` is empty and never reported, ruling T6-A). The
@@ -390,13 +390,13 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `docker info` fails), for `envelope` to turn into a notice (ruling PF5);
   `Olx::open` fails with that reason before building anything.
 - `bless-render --reason <why>` re-draws `fixtures/render/` (the render
-  goldens) and `fixtures/ui/` (the HUD snapshots, `rl-ui`'s
-  `hud_snapshots`) with `RL_BLESS_RENDER=1`; the GPU ones need an adapter.
+  goldens) and `fixtures/ui/` (the HUD snapshots, `olr-ui`'s
+  `hud_snapshots`) with `OLR_BLESS_RENDER=1`; the GPU ones need an adapter.
 - `bless-regression --reason <why> [--from target/failures/<name>.ron]`
-  re-records `fixtures/matches/*.ron` (runs `rl-cli --test golden` with
-  `RL_BLESS_REGRESSION=1`); `--from` first copies a failure record in as a
-  new golden; a `net-*.ron` record (`rl-cli net-sim`'s) is kept in
-  `fixtures/net/cases/` instead (logged with the reason) and `rl-cli --test
+  re-records `fixtures/matches/*.ron` (runs `olr-cli --test golden` with
+  `OLR_BLESS_REGRESSION=1`); `--from` first copies a failure record in as a
+  new golden; a `net-*.ron` record (`olr-cli net-sim`'s) is kept in
+  `fixtures/net/cases/` instead (logged with the reason) and `olr-cli --test
   net_cases` runs. Like `bless-render`, it appends the date, the reason and the
   changed files to `fixtures/blessings.log` (`bless::log_blessing`).
 
@@ -411,14 +411,14 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   not stripped). Nobody steps a debugger; if a debugger session or a
   dependency's lines are ever needed, set `debug = true` for that crate
   locally (do not commit it).
-- `oracle-record` prunes after building a new `rl-olx-oracle:<hash>` image:
-  it removes every other `rl-olx-oracle:*` image except the current tag and
+- `oracle-record` prunes after building a new `olr-olx-oracle:<hash>` image:
+  it removes every other `olr-olx-oracle:*` image except the current tag and
   `:dev`. Pruning failures only warn. `images_to_prune` (the current tag's
   repository) and `prune_commands` (unit-tested) pick the tags and the
-  commands; `net-nat` prunes its `rl-nat:*` images the same way
+  commands; `net-nat` prunes its `olr-nat:*` images the same way
   (`oracle::prune_old`). The base image it builds on (`ubuntu:26.04`
   here, 162 MB) stays for the next build.
-- `tidy` (`tidy.rs`) sweeps `target/` and prunes oracle and `rl-nat`
+- `tidy` (`tidy.rs`) sweeps `target/` and prunes oracle and `olr-nat`
   images as above (`nat::prune`: none when the current tag cannot be
   computed);
   `tidy --docker-cache` also runs `docker builder prune -f --keep-storage
@@ -434,8 +434,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   executable, metadata only), crate root (the `.d` file's first source, a
   registry `name-x.y.z` reduced to its semver series by `version_series`,
   so `syn` 2 and 3 both stay but 2.0.118 is superseded by 2.0.119) and,
-  from `.fingerprint/<package>-<hash>/<unit>.json`, unit (`bin-rl-cli`
-  vs `test-bin-rl-cli`) and features (so a crate built with two feature
+  from `.fingerprint/<package>-<hash>/<unit>.json`, unit (`bin-olr-cli`
+  vs `test-bin-olr-cli`) and features (so a crate built with two feature
   sets keeps both). It removes every build older than its key's newest by
   more than `SAME_RUN` (10 min: one run's builds alike but for their
   dependencies, e.g. for build scripts and for the game, stay); a build
@@ -463,17 +463,17 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `cargo xtask determinism [--wasm] [--windows] [--arm64] [--all]`: the golden
 bot matches of `fixtures/matches/` (`check`: only `mw-castlestrike-8chaos`;
 `--all` and the Windows and arm64 legs: all three) are recorded natively
-(`rl-cli match ... --record target/determinism/<stem>.rlrp --no-verify`,
-flags read from the golden's `spec`), `rl-detcheck` prints their checksum
+(`olr-cli match ... --record target/determinism/<stem>.rlrp --no-verify`,
+flags read from the golden's `spec`), `olr-detcheck` prints their checksum
 streams (tick 0, every 10 ticks, the last) and each leg's stream must equal
 the native one (`compare`: the first differing `<file> <tick>`, or a length
 difference). No leg flag means the WASM leg; a flag runs that leg only.
-- WASM (`check`'s `determinism` step, one replay, about 15 s warm): `rl-detcheck`
+- WASM (`check`'s `determinism` step, one replay, about 15 s warm): `olr-detcheck`
   for `wasm32-wasip1` run by `node tools/wasi-run.mjs` (Node's built-in WASI,
   the repository root preopened as `/`). Needs `sudo apt install nodejs`.
 - Windows (`full`'s `determinism-windows`): plan 8's `winbuild` (`EXES` and
-  `build()` include `rl-detcheck`), `stage`, `run` with `RUN_TIMEOUT`.
-- arm64 (`full`'s `determinism-arm64`): `rl-detcheck` for
+  `build()` include `olr-detcheck`), `stage`, `run` with `RUN_TIMEOUT`.
+- arm64 (`full`'s `determinism-arm64`): `olr-detcheck` for
   `aarch64-unknown-linux-gnu` (linker `aarch64-linux-gnu-gcc`, `.cargo/config.toml`)
   under `qemu-aarch64 -L /usr/aarch64-linux-gnu`. Needs `sudo apt install
   qemu-user gcc-aarch64-linux-gnu` and the rustup target.
@@ -482,5 +482,5 @@ before anything is recorded; a differing stream fails the step (a real
 finding: rollback would desync across those platforms).
 `rust-toolchain.toml`'s `targets` name `wasm32-wasip1` and
 `aarch64-unknown-linux-gnu` on purpose: a fresh clone downloads them (keep them).
-`Spec`/`Golden` deny unknown fields, so a field added to `rl-cli`'s `MatchSpec`
+`Spec`/`Golden` deny unknown fields, so a field added to `olr-cli`'s `MatchSpec`
 fails the step until `flags` passes it on.

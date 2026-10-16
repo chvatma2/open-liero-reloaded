@@ -1,0 +1,39 @@
+[package]
+name = "olr-ui"
+description = "Menu and HUD logic: the screen state machine, view models, settings and profiles persisted in the platform data directory, and the egui theme."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-sim.workspace = true
+olr-modes.workspace = true
+olr-bots.workspace = true
+olr-content.workspace = true
+olr-data.workspace = true
+olr-input.workspace = true
+olr-replay.workspace = true
+serde = { workspace = true, features = ["std"] }
+ron.workspace = true
+directories.workspace = true
+egui.workspace = true
+anyhow.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+olr-scene.workspace = true
+olr-pack.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[[test]]
+name = "hud_snapshots"
+
+[lints]
+workspace = true

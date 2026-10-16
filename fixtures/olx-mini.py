@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Writes fixtures/olx-mini/: a tiny OpenLieroX game directory for the import
-tests (rl-content, rl-ui, rl-game), so they need no OLX download.
+tests (olr-content, olr-ui, olr-game), so they need no OLX download.
 
 - `Tiny Mod/`: a gamescript v7 mod, one weapon of pixel projectiles; its sound
   `boom.wav` is missing (an import warning, as OLX drops it).
@@ -12,7 +12,7 @@ tests (rl-content, rl-ui, rl-game), so they need no OLX download.
 - `skins/default.png`: a 672 x 36 skin sheet.
 - `data/frontend/colours.cfg`: one of the core pack's files only (no core pack).
 
-The byte layouts follow rl-import-lgs's and rl-import-lxl's test builders.
+The byte layouts follow olr-import-lgs's and olr-import-lxl's test builders.
 Run from the repository root: python3 fixtures/olx-mini.py
 """
 import os

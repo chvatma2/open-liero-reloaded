@@ -10,36 +10,36 @@ rust-version = "1.99"
 publish = false
 
 [workspace.dependencies]
-rl-math = { path = "crates/rl-math" }
-rl-data = { path = "crates/rl-data" }
-rl-terrain = { path = "crates/rl-terrain" }
-rl-sim = { path = "crates/rl-sim" }
-rl-modes = { path = "crates/rl-modes" }
-rl-bots = { path = "crates/rl-bots" }
-rl-replay = { path = "crates/rl-replay" }
-rl-proto = { path = "crates/rl-proto" }
-rl-netcode = { path = "crates/rl-netcode" }
-rl-lobby = { path = "crates/rl-lobby" }
-rl-scenario = { path = "crates/rl-scenario" }
-rl-content = { path = "crates/rl-content" }
-rl-scene = { path = "crates/rl-scene" }
-rl-fx = { path = "crates/rl-fx" }
-rl-render = { path = "crates/rl-render" }
-rl-present = { path = "crates/rl-present" }
-rl-audio = { path = "crates/rl-audio" }
-rl-input = { path = "crates/rl-input" }
-rl-vfs = { path = "crates/rl-vfs" }
-rl-pack = { path = "crates/rl-pack" }
-rl-import-lgs = { path = "crates/rl-import-lgs" }
-rl-import-lxl = { path = "crates/rl-import-lxl" }
-rl-import-gfx = { path = "crates/rl-import-gfx" }
-rl-oracle = { path = "crates/rl-oracle" }
-rl-ui = { path = "crates/rl-ui" }
-rl-detcheck = { path = "crates/rl-detcheck" }
-rl-net = { path = "crates/rl-net" }
-rl-discovery = { path = "crates/rl-discovery" }
-rl-online = { path = "crates/rl-online" }
-rl-server = { path = "crates/rl-server" }
+olr-math = { path = "crates/olr-math" }
+olr-data = { path = "crates/olr-data" }
+olr-terrain = { path = "crates/olr-terrain" }
+olr-sim = { path = "crates/olr-sim" }
+olr-modes = { path = "crates/olr-modes" }
+olr-bots = { path = "crates/olr-bots" }
+olr-replay = { path = "crates/olr-replay" }
+olr-proto = { path = "crates/olr-proto" }
+olr-netcode = { path = "crates/olr-netcode" }
+olr-lobby = { path = "crates/olr-lobby" }
+olr-scenario = { path = "crates/olr-scenario" }
+olr-content = { path = "crates/olr-content" }
+olr-scene = { path = "crates/olr-scene" }
+olr-fx = { path = "crates/olr-fx" }
+olr-render = { path = "crates/olr-render" }
+olr-present = { path = "crates/olr-present" }
+olr-audio = { path = "crates/olr-audio" }
+olr-input = { path = "crates/olr-input" }
+olr-vfs = { path = "crates/olr-vfs" }
+olr-pack = { path = "crates/olr-pack" }
+olr-import-lgs = { path = "crates/olr-import-lgs" }
+olr-import-lxl = { path = "crates/olr-import-lxl" }
+olr-import-gfx = { path = "crates/olr-import-gfx" }
+olr-oracle = { path = "crates/olr-oracle" }
+olr-ui = { path = "crates/olr-ui" }
+olr-detcheck = { path = "crates/olr-detcheck" }
+olr-net = { path = "crates/olr-net" }
+olr-discovery = { path = "crates/olr-discovery" }
+olr-online = { path = "crates/olr-online" }
+olr-server = { path = "crates/olr-server" }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
 ron = "0.12.2"
 # Replays (plan 6): exact pins, the encoding is the replay format.
@@ -84,7 +84,7 @@ directories = "=6.0.0"
 # Needs no system C libraries, but dimpl's `rcgen` builds aws-lc-sys from C
 # source (cc/cmake); the mingw cross-build handles it (ruling T1-C).
 str0m = { version = "=0.24.0", default-features = false, features = ["rust-crypto"] }
-# Signalling over a WebSocket (plan 10, spec §5.1): no TLS. rl-discovery's
+# Signalling over a WebSocket (plan 10, spec §5.1): no TLS. olr-discovery's
 # relay pool turns on its rustls feature for `wss://` (plan 12a).
 tungstenite = "=0.30.0"
 # TLS for Nostr relays (plan 12a): rustls 0.23.45 (2026-09-14) with its default
@@ -102,7 +102,7 @@ ctrlc = { version = "=3.5.2", features = ["termination"] }
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2"] }
 # TURN relays (plan 12b, decision N52): the sans-IO client, pure Rust, an
 # exact pin (2026-08-05); default features keep `std`. Cargo.lock pins its
-# stun-proto, stun-types and turn-types back (rl-net's CLAUDE.md). The relay
+# stun-proto, stun-types and turn-types back (olr-net's CLAUDE.md). The relay
 # server is our own (ruling TR-2): long-term credentials need MD5, HMAC-SHA1
 # and CRC-32 (FINGERPRINT); hmac 0.13.0 (2026-03-29) is also NIP-44's.
 turn-client-proto = "=0.7.2"

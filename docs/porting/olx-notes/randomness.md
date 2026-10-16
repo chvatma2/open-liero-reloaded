@@ -420,7 +420,7 @@ srand(2147483648): 1336741213 1210407648 1447044896 337392383 82502902
   - `GetRandomVec() = (cosf(a)*n, sinf(a)*n)`, where:
     - `a = (PosNum * 2.0f) * 3.14159274f`, i.e. `(float)PI`, left-to-right.
     - `n = GetRandomNum()`, drawn after `a`.
-    - `cosf` and `sinf` are glibc 2.35 (already ported in `rl-math`).
+    - `cosf` and `sinf` are glibc 2.35 (already ported in `olr-math`).
     - `CVec * float` multiplies component-wise (`include/CVec.h:112`).
 
 Sample outputs (container, `-O3`):
@@ -493,8 +493,8 @@ Boost (only for `FindSpot`, if it is ever ported):
 
 1. **Where the generator lives.**
    - Put one `GlibcRand` (TYPE_3 state: `[i32; 31]` + `f`, `r` indices) in the
-     **simulation state**, not a global, in a `no_std` crate. It could be `rl-math`
-     next to the ported `sinf`/`cosf`, or a new `rl-rand` in the same layer.
+     **simulation state**, not a global, in a `no_std` crate. It could be `olr-math`
+     next to the ported `sinf`/`cosf`, or a new `olr-rand` in the same layer.
    - API: `seed(u32)`, `next() -> i32` (0..=RAND_MAX), plus the OLX wrappers
      `num()`, `pos_num()`, `int(max)`, `long(max)`, `vec()`, `choice_index(len)`.
      Each wrapper cites `MathLib.cpp` lines.
@@ -572,7 +572,7 @@ Boost (only for `FindSpot`, if it is ever ported):
 2. **Answered (plan 4 task 7): non-NULL; gibs draw 4 `rand()` with room in the pool (`explode-kill-respawn`'s 580 draws).** **Gib images in dedicated mode.** Is `bmpGibs` non-NULL? That decides whether
    gibs take a pool slot and draw 2 more. Check with a scenario that kills a worm
    plus the RNG probe, or log `getGibimg().get()` once.
-3. **Answered (plan 4): `Game.Particles` is on and `Game.Blood` 100 in the traces; `rl-scenario` refuses a header with other values.** **`bParticles` in the container's options.** It defaults to true; confirm that
+3. **Answered (plan 4): `Game.Particles` is on and `Game.Blood` 100 in the traces; `olr-scenario` refuses a header with other values.** **`bParticles` in the container's options.** It defaults to true; confirm that
    the dedicated server's `cfg/options.cfg` does not override it. It gates the
    pool accounting of `ENT_PARTICLE`/`ENT_BLOOD`, not the argument draws.
 4. **Answered (plan 4, D2): the oracle pins `currentTime = simulationTime + 10 ms`; respawn and bonus timers read it.** **Wall-clock gated server logic.** Respawn (`tLX->currentTime >

@@ -1,12 +1,12 @@
 //! The OLX comparison (spec §6, ruling P8): each scenario timed in OLX
-//! (Docker, `crate::olx_timing`) and in rl-sim (`rl-cli scenario --time`),
+//! (Docker, `crate::olx_timing`) and in olr-sim (`olr-cli scenario --time`),
 //! `runs` times each, medians, and the same work checked frame by frame.
 
 use std::path::Path;
 use std::process::Command;
 
 use anyhow::Context as _;
-use rl_oracle::Scenario;
+use olr_oracle::Scenario;
 
 use super::Plan;
 use super::results::{self, OlxComparison, OlxRow, ScenarioTimingOut, TimingReportOut};
@@ -15,7 +15,7 @@ use crate::root;
 
 const TIMED_DIR: &str = "target/envelope/olx";
 
-fn rl_time(cli: &Path, content: &Path, name: &str, fixtures: &Path) -> anyhow::Result<ScenarioTimingOut> {
+fn olr_time(cli: &Path, content: &Path, name: &str, fixtures: &Path) -> anyhow::Result<ScenarioTimingOut> {
     let out = root().join("target/envelope/olx-time.ron");
     let _ = std::fs::remove_file(&out);
     let o = Command::new(cli)
@@ -27,12 +27,13 @@ fn rl_time(cli: &Path, content: &Path, name: &str, fixtures: &Path) -> anyhow::R
         .arg("--time")
         .arg(&out)
         .output()
-        .context("running rl-cli scenario")?;
-    let text = std::fs::read_to_string(&out)
-        .with_context(|| format!("rl-cli scenario wrote no times: {}", String::from_utf8_lossy(&o.stderr)))?;
+        .context("running olr-cli scenario")?;
+    let text = std::fs::read_to_string(&out).with_context(|| {
+        format!("olr-cli scenario wrote no times: {}", String::from_utf8_lossy(&o.stderr))
+    })?;
     let r: TimingReportOut = ron::from_str(&text)?;
     let t = r.scenarios.into_iter().next().context("no scenario timed")?;
-    anyhow::ensure!(t.name == name, "rl-cli scenario timed {:?}, not {name:?}", t.name);
+    anyhow::ensure!(t.name == name, "olr-cli scenario timed {:?}, not {name:?}", t.name);
     Ok(t)
 }
 
@@ -55,7 +56,7 @@ pub fn run(cli: &Path, content: &Path, plan: &Plan) -> anyhow::Result<OlxCompari
                 std::fs::copy(&src, timed.join(format!("{name}.ron")))?;
             }
             let fixtures = if heavy { timed.clone() } else { root().join("fixtures/oracle") };
-            r_runs.push(rl_time(cli, content, name, &fixtures)?);
+            r_runs.push(olr_time(cli, content, name, &fixtures)?);
         }
         Ok(results::olx_row(name, &o_runs, &r_runs))
     });
@@ -76,8 +77,8 @@ fn table(
         match time(name, heavy) {
             Ok(row) => {
                 println!(
-                    "  {name}: OLX p50 {:.1} µs, rl-sim p50 {:.1} µs (×{:.2}), peak {} projectiles, same work: {}",
-                    row.olx_us.p50, row.rl_us.p50, row.ratio_p50, row.projectiles_peak, row.same_work
+                    "  {name}: OLX p50 {:.1} µs, olr-sim p50 {:.1} µs (×{:.2}), peak {} projectiles, same work: {}",
+                    row.olx_us.p50, row.olr_us.p50, row.ratio_p50, row.projectiles_peak, row.same_work
                 );
                 rows.push(row);
             }

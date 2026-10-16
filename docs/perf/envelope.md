@@ -17,9 +17,9 @@ Rollback: restoring and re-simulating 12 ticks costs 1.26 ms p99 at the referenc
 
 **More detailed art.** At 2048 × 2048, memory peaks at 113 MiB (art scale 1), 353 MiB (2), 1313 MiB (4) and 5153 MiB (8), against the 2048 MiB budget. Art scale 8 is the breaking point for two reasons: memory (5153 MiB) and the content cap, since its colour image is 1024 MiB, four times `MAX_COLOR_MAP_BYTES` (256 MiB), so the game would refuse such a level today (the sweep generates it in memory to measure it anyway). Drawing is not the problem: the whole frame with the bots' thinking at 2560 × 1440 is 1.22, 1.11, 1.23 and 2.82 ms p99 on WSL (the level drawn 0.89–1.02 ms up to art scale 4 and 2.60 ms at scale 8, the bots 0.21 ms), the level drawn 0.36–0.44 ms on DX12 and 0.27–0.31 ms on Vulkan, the GPU p99 at most 0.06 ms; the tick does not change (0.21–0.22 ms p99). Raising the cap needs memory work first: the peak is about five times the colour image, likely because the full-size art is held several times over (an inference from the code, not measured: the colour map's picture, its front and back art, and the loaded level's own copy); keeping fewer copies, or tiling the art, would bring art scale 8 towards the budget. What this means: art four times as detailed as the packs' fits today in about 1.3 GiB; eight times needs a memory diet before the cap can be lifted, not a faster GPU.
 
-**More players.** Each worm adds about 5 µs of tick at p50 and 12 µs at p99 (the worms sweep, chaos bots on Castle Strike). At 32 worms, OLX's and our `MAX_WORMS`, the tick p99 is 0.36 ms, 4 % of the budget. At that rate the tick p99 would reach 10 ms at about 870 worms (the report's least-squares line over the sweep's p99s): a projection only, `MAX_WORMS` stays 32. More players fire more. The projectile-pool sweep (MW 1.0, 16 bots) holds at every pool size up to 65 536, its tick p99 0.51–0.59 ms, but its bots never had more than 4324 projectiles alive at once, so the larger pools were not filled; OLX's full 3000-projectile pool (heavy-spikeballs) costs rl-sim 154.3 µs at p50 and 503.5 µs at p99 per tick. The effects sweep holds at every cap up to 65 536: with the cap lifted the game reaches 7572 live effects, the presentation p99 rises from 0.02 to 0.05 ms and the draw list's p99 from 0.03 to 0.08 ms. None of these three sweeps (worms, pool, effects) has a breaking point; only the art sweep breaks, at a8 (above). What this means: 32 players use 4 % of the tick, and neither more projectiles nor more effects came near the budget; the simulation is not what would stop a bigger game.
+**More players.** Each worm adds about 5 µs of tick at p50 and 12 µs at p99 (the worms sweep, chaos bots on Castle Strike). At 32 worms, OLX's and our `MAX_WORMS`, the tick p99 is 0.36 ms, 4 % of the budget. At that rate the tick p99 would reach 10 ms at about 870 worms (the report's least-squares line over the sweep's p99s): a projection only, `MAX_WORMS` stays 32. More players fire more. The projectile-pool sweep (MW 1.0, 16 bots) holds at every pool size up to 65 536, its tick p99 0.51–0.59 ms, but its bots never had more than 4324 projectiles alive at once, so the larger pools were not filled; OLX's full 3000-projectile pool (heavy-spikeballs) costs olr-sim 154.3 µs at p50 and 503.5 µs at p99 per tick. The effects sweep holds at every cap up to 65 536: with the cap lifted the game reaches 7572 live effects, the presentation p99 rises from 0.02 to 0.05 ms and the draw list's p99 from 0.03 to 0.08 ms. None of these three sweeps (worms, pool, effects) has a breaking point; only the art sweep breaks, at a8 (above). What this means: 32 players use 4 % of the tick, and neither more projectiles nor more effects came near the budget; the simulation is not what would stop a bigger game.
 
-**Against OLX.** On the same scenarios rl-sim's tick takes 0.15 to 0.49 of OLX's frame time at p50, two to seven times faster. On heavy-spikeballs, which fills OLX's 3000-projectile pool, OLX takes 426.8 / 1372.9 µs (p50 / p99) and rl-sim 154.3 / 503.5 µs (ratio 0.36); heavy-napalm is a mid-load point at 829 projectiles (ratio 0.30). The work was the same: in all eight scenarios both had the same projectiles and `rand()` calls every frame, and the six with a full trace match OLX. OLX is a Release build at -O3 running in Docker on WSL's own kernel (no extra virtualisation, the same clock); its timed span leaves out the shot-list delivery and message parsing that rl-sim does inside its tick, so the comparison slightly flatters OLX. OLX's rendering is not timed. What this means: the port does exactly OLX's work faster than OLX does, so being faithful costs no speed.
+**Against OLX.** On the same scenarios olr-sim's tick takes 0.15 to 0.49 of OLX's frame time at p50, two to seven times faster. On heavy-spikeballs, which fills OLX's 3000-projectile pool, OLX takes 426.8 / 1372.9 µs (p50 / p99) and olr-sim 154.3 / 503.5 µs (ratio 0.36); heavy-napalm is a mid-load point at 829 projectiles (ratio 0.30). The work was the same: in all eight scenarios both had the same projectiles and `rand()` calls every frame, and the six with a full trace match OLX. OLX is a Release build at -O3 running in Docker on WSL's own kernel (no extra virtualisation, the same clock); its timed span leaves out the shot-list delivery and message parsing that olr-sim does inside its tick, so the comparison slightly flatters OLX. OLX's rendering is not timed. What this means: the port does exactly OLX's work faster than OLX does, so being faithful costs no speed.
 
 **Cheap fixes noticed (for a later plan).**
 
@@ -34,10 +34,10 @@ Rollback: restoring and re-simulating 12 ticks costs 1.26 ms p99 at the referenc
 ## Method
 
 - Budgets: tick p99 ≤ 10 ms (OLX's 100 Hz frame), frame p99 ≤ 6.9 ms (144 Hz) and ≤ 16.7 ms (60 Hz), peak memory below 2048 MiB. A point holds when all of them do; the breaking point is the first value that does not, with the cause (tick, frame, memory, or a cap).
-- Sweeps: `rl-cli stress`, one process a point, medians of the runs; the reference is Classic on Castle Strike, 16 bots of mixed difficulty (chaos bots; Deathmatch bots on the map and art sweeps, so route finding counts), OLX's pool, 20 s, seed 1, `LoadingTime` 0, bonuses every 5 s. The pool sweep plays MW 1.0. Map and art levels are generated in memory (`gen-<w>x<h>-a<scale>-s1`).
-- Frames: `rl-cli gpu-bench` offscreen on the hardware adapter (timestamps when the adapter has them), and `rl-game --frame-log --uncapped` windowed; on WSL (GL over Mesa's d3d12, presented through WSLg) and native Windows (DX12, Vulkan) built with mingw-w64 and run through interop.
-- Rollback: `rl-cli rollback-cost`, a Classic match of 16 chaos bots (500 ticks of warm-up, then a sample every 10 ticks of play): save, play `depth` ticks, then time the restore and the re-simulation of those ticks with their recorded keys (the bots' thinking is not timed: online, bots think on the host only). Budgets: restore plus 12 ticks p99 ≤ 2 ms at the reference (Castle Strike) and ≤ 4 ms at 4096 × 4096; depth 28 (`MAX_PREDICTION`) is information.
-- OLX: the oracle's patched OLX (Docker; a Release build, -O3) timing each simulated frame to a file of its own; rl-sim timed on the same scenarios, the same work checked frame by frame.
+- Sweeps: `olr-cli stress`, one process a point, medians of the runs; the reference is Classic on Castle Strike, 16 bots of mixed difficulty (chaos bots; Deathmatch bots on the map and art sweeps, so route finding counts), OLX's pool, 20 s, seed 1, `LoadingTime` 0, bonuses every 5 s. The pool sweep plays MW 1.0. Map and art levels are generated in memory (`gen-<w>x<h>-a<scale>-s1`).
+- Frames: `olr-cli gpu-bench` offscreen on the hardware adapter (timestamps when the adapter has them), and `olr-game --frame-log --uncapped` windowed; on WSL (GL over Mesa's d3d12, presented through WSLg) and native Windows (DX12, Vulkan) built with mingw-w64 and run through interop.
+- Rollback: `olr-cli rollback-cost`, a Classic match of 16 chaos bots (500 ticks of warm-up, then a sample every 10 ticks of play): save, play `depth` ticks, then time the restore and the re-simulation of those ticks with their recorded keys (the bots' thinking is not timed: online, bots think on the host only). Budgets: restore plus 12 ticks p99 ≤ 2 ms at the reference (Castle Strike) and ≤ 4 ms at 4096 × 4096; depth 28 (`MAX_PREDICTION`) is information.
+- OLX: the oracle's patched OLX (Docker; a Release build, -O3) timing each simulated frame to a file of its own; olr-sim timed on the same scenarios, the same work checked frame by frame.
 
 ## The machine
 
@@ -59,7 +59,7 @@ art varies; otherwise 16 Deathmatch bots (OLX's bot: routes through the area cac
 | a4 | 0.04 / 0.21 | 2 % | 0.01 | 0.21 | 0.02 | 0.01 | 76 | 959 | 1313 | 1.23 | yes |
 | a8 | 0.05 / 0.22 | 2 % | 0.02 | 0.21 | 0.04 | 0.01 | 76 | 959 | 5153 | 2.82 | memory 5153 MiB > 2048 MiB; cap: the content loader refuses a 2048x2048 level at art scale 8: a 1024 MiB colour image, above MAX_COLOR_MAP_BYTES (256 MiB) |
 
-Frame with bots: the point's level drawn offscreen at 2560×1440 on wsl-gl (`rl-cli gpu-bench`: a tick and a frame; it replays recorded inputs, so its tick has no bots' thinking) plus the point's bots p99 above: a sum of p99s, so a bound. This is the frame the 144 Hz and 60 Hz budgets judge.
+Frame with bots: the point's level drawn offscreen at 2560×1440 on wsl-gl (`olr-cli gpu-bench`: a tick and a frame; it replays recorded inputs, so its tick has no bots' thinking) plus the point's bots p99 above: a sum of p99s, so a bound. This is the frame the 144 Hz and 60 Hz budgets judge.
 
 Breaking point (144 Hz): **a8** (memory 5153 MiB > 2048 MiB; cap: the content loader refuses a 2048x2048 level at art scale 8: a 1024 MiB colour image, above MAX_COLOR_MAP_BYTES (256 MiB)). Breaking point (60 Hz): **a8** (memory 5153 MiB > 2048 MiB; cap: the content loader refuses a 2048x2048 level at art scale 8: a 1024 MiB colour image, above MAX_COLOR_MAP_BYTES (256 MiB)).
 
@@ -91,7 +91,7 @@ map varies; otherwise 16 Deathmatch bots (OLX's bot: routes through the area cac
 | 4096x2048 | 0.06 / 0.57 | 6 % | 0.01 | 0.57 | 0.02 | 0.01 | 77 | 960 | 213 | 1.40 | yes |
 | 4096x4096 | 0.34 / 1.28 | 13 % | 0.01 | 1.27 | 0.02 | 0.01 | 86 | 892 | 413 | 2.12 | yes |
 
-Frame with bots: the point's level drawn offscreen at 2560×1440 on wsl-gl (`rl-cli gpu-bench`: a tick and a frame; it replays recorded inputs, so its tick has no bots' thinking) plus the point's bots p99 above: a sum of p99s, so a bound. This is the frame the 144 Hz and 60 Hz budgets judge.
+Frame with bots: the point's level drawn offscreen at 2560×1440 on wsl-gl (`olr-cli gpu-bench`: a tick and a frame; it replays recorded inputs, so its tick has no bots' thinking) plus the point's bots p99 above: a sum of p99s, so a bound. This is the frame the 144 Hz and 60 Hz budgets judge.
 
 Breaking point (144 Hz): none: every value holds. Breaking point (60 Hz): none: every value holds.
 
@@ -155,7 +155,7 @@ The heavy replay (MW 1.0, 32 chaos bots, a 20 000 pool) offscreen, a tick and a 
 | 3440×1440 | 1.99 / 3.50 | 1.62 | 0.03 |
 | 3840×2160 | 2.03 / 4.19 | 1.97 | 0.04 |
 
-Shader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU time one pass costs, and how many passes fit beside the frame's GPU p99 (its frame p99 without timestamps) within the 6.9 ms (144 Hz) and 16.7 ms (60 Hz) budgets. This is GPU-side headroom, not the whole frame: the tick and the draw list run on the CPU beside it.
+Shader headroom, GPU side (a full-screen blur pass, `olr_render::Probe`): the GPU time one pass costs, and how many passes fit beside the frame's GPU p99 (its frame p99 without timestamps) within the 6.9 ms (144 Hz) and 16.7 ms (60 Hz) budgets. This is GPU-side headroom, not the whole frame: the tick and the draw list run on the CPU beside it.
 
 | size | GPU ms per pass | passes that fit at 144 Hz | at 60 Hz |
 |---|---|---|---|
@@ -164,7 +164,7 @@ Shader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU
 | 3440×1440 | 0.080 | 86 | 208 |
 | 3840×2160 | 0.133 | 51 | 124 |
 
-Windowed, asked for uncapped (`rl-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
+Windowed, asked for uncapped (`olr-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
 
 Against the budgets (frame p99): 144 Hz (6.9 ms) holds at every size; 60 Hz (16.7 ms) holds at every size.
 
@@ -201,7 +201,7 @@ The heavy replay (MW 1.0, 32 chaos bots, a 20 000 pool) offscreen, a tick and a 
 | 3440×1440 | 1.59 / 2.85 | 1.01 | 0.03 |
 | 3840×2160 | 1.61 / 2.80 | 0.98 | 0.04 |
 
-Shader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU time one pass costs, and how many passes fit beside the frame's GPU p99 (its frame p99 without timestamps) within the 6.9 ms (144 Hz) and 16.7 ms (60 Hz) budgets. This is GPU-side headroom, not the whole frame: the tick and the draw list run on the CPU beside it.
+Shader headroom, GPU side (a full-screen blur pass, `olr_render::Probe`): the GPU time one pass costs, and how many passes fit beside the frame's GPU p99 (its frame p99 without timestamps) within the 6.9 ms (144 Hz) and 16.7 ms (60 Hz) budgets. This is GPU-side headroom, not the whole frame: the tick and the draw list run on the CPU beside it.
 
 | size | GPU ms per pass | passes that fit at 144 Hz | at 60 Hz |
 |---|---|---|---|
@@ -210,7 +210,7 @@ Shader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU
 | 3440×1440 | 0.065 | 107 | 257 |
 | 3840×2160 | 0.108 | 63 | 153 |
 
-Windowed, asked for uncapped (`rl-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
+Windowed, asked for uncapped (`olr-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
 
 Against the budgets (frame p99): 144 Hz (6.9 ms) holds at every size; 60 Hz (16.7 ms) holds at every size.
 
@@ -247,7 +247,7 @@ The heavy replay (MW 1.0, 32 chaos bots, a 20 000 pool) offscreen, a tick and a 
 | 3440×1440 | 3.03 / 4.69 | 3.03 | 0.05 |
 | 3840×2160 | 3.03 / 4.75 | 3.09 | 0.20 |
 
-Shader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU time one pass costs, and how many passes fit beside the frame's GPU p99 (its frame p99 without timestamps) within the 6.9 ms (144 Hz) and 16.7 ms (60 Hz) budgets. This is GPU-side headroom, not the whole frame: the tick and the draw list run on the CPU beside it.
+Shader headroom, GPU side (a full-screen blur pass, `olr_render::Probe`): the GPU time one pass costs, and how many passes fit beside the frame's GPU p99 (its frame p99 without timestamps) within the 6.9 ms (144 Hz) and 16.7 ms (60 Hz) budgets. This is GPU-side headroom, not the whole frame: the tick and the draw list run on the CPU beside it.
 
 | size | GPU ms per pass | passes that fit at 144 Hz | at 60 Hz |
 |---|---|---|---|
@@ -256,7 +256,7 @@ Shader headroom, GPU side (a full-screen blur pass, `rl_render::Probe`): the GPU
 | 3440×1440 | 0.062 | 111 | 269 |
 | 3840×2160 | 0.102 | 65 | 160 |
 
-Windowed, asked for uncapped (`rl-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
+Windowed, asked for uncapped (`olr-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
 
 Every run presented with Fifo: the surface offered no uncapped mode, so a frame also waits for the display's refresh and the frame rate is at most the refresh rate.
 
@@ -287,11 +287,11 @@ The sweeps' levels drawn offscreen (their replays: the tick has no bots' thinkin
 
 ## OLX
 
-Image `rl-olx-oracle:1958255f9797`, built Release, -O3 (CMakeOlxCommon.cmake:43-47, :369); CMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG; c++ (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0. OLX runs in a Docker container on WSL's own kernel (no extra virtualisation, the same clock). Its timed span is the gus logic and the client's and the server's frame, without the trace writing; shot-list delivery and message parsing run in OLX's `betweenFrames()`, outside that span, while rl-sim does the equivalent inside `World::tick`, so the comparison slightly flatters OLX. rl-sim's span (`rl-cli scenario --time`) also holds a scenario's bonus placement (none in these scenarios). OLX draws on the CPU at 640 × 480 and is not timed here (not comparable like for like).
+Image `olr-olx-oracle:1958255f9797`, built Release, -O3 (CMakeOlxCommon.cmake:43-47, :369); CMAKE_CXX_FLAGS_RELEASE:STRING=-O3 -DNDEBUG; c++ (Ubuntu 11.4.0-1ubuntu1~22.04.3) 11.4.0. OLX runs in a Docker container on WSL's own kernel (no extra virtualisation, the same clock). Its timed span is the gus logic and the client's and the server's frame, without the trace writing; shot-list delivery and message parsing run in OLX's `betweenFrames()`, outside that span, while olr-sim does the equivalent inside `World::tick`, so the comparison slightly flatters OLX. olr-sim's span (`olr-cli scenario --time`) also holds a scenario's bonus placement (none in these scenarios). OLX draws on the CPU at 640 × 480 and is not timed here (not comparable like for like).
 
 Load: heavy-spikeballs fills OLX's 3000-projectile pool (`MAX_PROJECTILES`); heavy-napalm is a mid-load point (829 projectiles at its peak). The others are the busiest oracle fixtures. Same work: the same projectiles and `rand()` calls every frame in both.
 
-| scenario | frames | peak projectiles | OLX p50 / p99 (µs) | rl-sim p50 / p99 (µs) | rl-sim / OLX (p50) | same work | matches OLX |
+| scenario | frames | peak projectiles | OLX p50 / p99 (µs) | olr-sim p50 / p99 (µs) | olr-sim / OLX (p50) | same work | matches OLX |
 |---|---|---|---|---|---|---|---|
 | two-worms-fire | 200 | 114 | 11.1 / 55.4 | 3.8 / 17.4 | 0.35 | yes | yes |
 | multi-shot | 150 | 114 | 6.1 / 18.5 | 2.7 / 14.0 | 0.44 | yes | yes |
@@ -306,8 +306,8 @@ Load: heavy-spikeballs fills OLX's 3000-projectile pool (`MAX_PROJECTILES`); hea
 
 | | OLX (`d1ad953f`) | rust-liero |
 |---|---|---|
-| Worms | 32 (`MAX_WORMS`, `include/Consts.h:34`) | 32 (`rl_sim::MAX_WORMS`) |
+| Worms | 32 (`MAX_WORMS`, `include/Consts.h:34`) | 32 (`olr_sim::MAX_WORMS`) |
 | Projectiles | 3000 (`MAX_PROJECTILES`, `include/CProjectile.h:36`) | 3000 by default, up to 65 536 (`MatchSetup::MAX_POOL_CAPACITY`) |
-| Map side | 4096 (12-bit worm positions) | 4096 for imported levels (`rl-import-lxl`) |
-| Effects | 1024 (`MAX_ENTITIES`, `include/Entity.h:30`) | 16 384 in play, 1024 of them kept for deaths (`rl_fx::PLAY_ENTITIES`, `DEATH_RESERVE`); OLX's 1024 with `olx_quirks` (`rl_fx::MAX_ENTITIES`); `Fx::with_capacity` in benches |
+| Map side | 4096 (12-bit worm positions) | 4096 for imported levels (`olr-import-lxl`) |
+| Effects | 1024 (`MAX_ENTITIES`, `include/Entity.h:30`) | 16 384 in play, 1024 of them kept for deaths (`olr_fx::PLAY_ENTITIES`, `DEATH_RESERVE`); OLX's 1024 with `olx_quirks` (`olr_fx::MAX_ENTITIES`); `Fx::with_capacity` in benches |
 | Colour image | — | 256 MiB (`MAX_COLOR_MAP_BYTES`), art scale at most 8 |

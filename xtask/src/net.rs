@@ -1,5 +1,5 @@
 //! `cargo xtask net-feel`: the feel numbers of online play (networking
-//! spec §9.2), measured by `rl-cli net-sim --feel` from seeded runs in
+//! spec §9.2), measured by `olr-cli net-sim --feel` from seeded runs in
 //! virtual time (the same on every host), gated against
 //! `fixtures/net/feel.ron`.
 //!
@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::root;
 
-/// Where `rl-cli net-sim --feel` writes the measurement.
+/// Where `olr-cli net-sim --feel` writes the measurement.
 pub const REPORT: &str = "target/net/feel.ron";
 /// The committed baseline.
 pub const BASELINE: &str = "fixtures/net/feel.ron";
@@ -30,7 +30,7 @@ pub const NO_STALLS: [&str; 4] = ["lan", "good", "typical", "bad"];
 /// A metric fails when worse than its baseline by more than this share (and its floor).
 pub const TOLERANCE: f64 = 0.10;
 
-/// `rl_cli::feel::ProfileFeel`, read strictly: a renamed field fails
+/// `olr_cli::feel::ProfileFeel`, read strictly: a renamed field fails
 /// instead of reading as 0.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -45,7 +45,7 @@ pub struct ProfileFeel {
     pub up_bytes_per_s: u32,
 }
 
-/// `rl_cli::feel::FeelReport`, read strictly.
+/// `olr_cli::feel::FeelReport`, read strictly.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FeelReport {
@@ -141,9 +141,9 @@ fn read_report(path: &Path) -> Result<FeelReport, String> {
     ron::from_str(&text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Builds `rl-cli` in release and measures: the report and what it printed.
+/// Builds `olr-cli` in release and measures: the report and what it printed.
 fn measure(content: Option<&Path>) -> Result<(FeelReport, String), String> {
-    let cli = crate::bench::rl_cli()?;
+    let cli = crate::bench::olr_cli()?;
     let out_file = root().join(REPORT);
     let mut c = Command::new(&cli);
     c.args(["net-sim", "--feel"]).arg(&out_file).current_dir(root());
@@ -220,7 +220,7 @@ pub fn run(bless: Option<&str>) -> anyhow::Result<bool> {
     Ok(true)
 }
 
-/// `rl-cli net-soak`'s command line for `cargo xtask net-soak`: the
+/// `olr-cli net-soak`'s command line for `cargo xtask net-soak`: the
 /// packs in `content/packs` and the failures in `target/failures`
 /// (relative: the command runs in the workspace root).
 pub fn soak_args(minutes: f64, seed: Option<u64>) -> Vec<String> {
@@ -235,13 +235,13 @@ pub fn soak_args(minutes: f64, seed: Option<u64>) -> Vec<String> {
 }
 
 /// `cargo xtask net-soak [--minutes N] [--seed S] [--offline]` (plan 12c,
-/// N77; not a `full` step): builds `rl-cli` in release and runs `net-soak`
+/// N77; not a `full` step): builds `olr-cli` in release and runs `net-soak`
 /// on `content/packs`, its output streaming; failures are kept as cases in
-/// `target/failures` (`rl-cli net-sim --from <case>` replays one, `cargo
+/// `target/failures` (`olr-cli net-sim --from <case>` replays one, `cargo
 /// xtask bless-regression --from` keeps it). Nothing leaves the machine.
 pub fn soak(minutes: f64, seed: Option<u64>, offline: bool) -> anyhow::Result<bool> {
     anyhow::ensure!(minutes.is_finite() && minutes > 0.0, "--minutes {minutes} is not a duration");
-    let cli = crate::bench::rl_cli_with(offline).map_err(anyhow::Error::msg)?;
+    let cli = crate::bench::olr_cli_with(offline).map_err(anyhow::Error::msg)?;
     let status = Command::new(&cli)
         .args(soak_args(minutes, seed))
         .current_dir(root())

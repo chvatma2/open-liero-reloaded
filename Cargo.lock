@@ -3266,6 +3266,534 @@ dependencies = [
 ]
 
 [[package]]
+name = "olr-audio"
+version = "0.1.0"
+dependencies = [
+ "kira",
+ "olr-content",
+ "olr-data",
+ "olr-math",
+ "olr-sim",
+]
+
+[[package]]
+name = "olr-bots"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "libm",
+ "olr-content",
+ "olr-data",
+ "olr-math",
+ "olr-modes",
+ "olr-sim",
+ "olr-terrain",
+]
+
+[[package]]
+name = "olr-cli"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "anyhow",
+ "base64 0.22.1",
+ "clap",
+ "divan",
+ "insta",
+ "olr-bots",
+ "olr-cli",
+ "olr-content",
+ "olr-data",
+ "olr-discovery",
+ "olr-fx",
+ "olr-lobby",
+ "olr-modes",
+ "olr-net",
+ "olr-netcode",
+ "olr-online",
+ "olr-oracle",
+ "olr-pack",
+ "olr-present",
+ "olr-proto",
+ "olr-render",
+ "olr-replay",
+ "olr-scenario",
+ "olr-scene",
+ "olr-server",
+ "olr-sim",
+ "olr-terrain",
+ "olr-vfs",
+ "postcard",
+ "proptest",
+ "ron",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "wgpu",
+]
+
+[[package]]
+name = "olr-content"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "olr-bots",
+ "olr-data",
+ "olr-import-gfx",
+ "olr-import-lgs",
+ "olr-import-lxl",
+ "olr-math",
+ "olr-modes",
+ "olr-pack",
+ "olr-replay",
+ "olr-sim",
+ "olr-terrain",
+ "olr-vfs",
+ "ron",
+ "serde",
+ "sha2 0.11.0",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "olr-data"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "ron",
+ "serde",
+]
+
+[[package]]
+name = "olr-detcheck"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "olr-content",
+ "olr-replay",
+ "olr-sim",
+]
+
+[[package]]
+name = "olr-discovery"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "bech32",
+ "chacha20 0.10.2",
+ "hex",
+ "hkdf 0.13.0",
+ "hmac 0.13.0",
+ "k256",
+ "olr-discovery",
+ "olr-lobby",
+ "olr-proto",
+ "postcard",
+ "proptest",
+ "rcgen",
+ "rustls",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+ "tungstenite",
+ "webpki-roots 1.0.9",
+]
+
+[[package]]
+name = "olr-fx"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "olr-content",
+ "olr-data",
+ "olr-math",
+ "olr-scenario",
+ "olr-scene",
+ "olr-sim",
+ "olr-terrain",
+]
+
+[[package]]
+name = "olr-game"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "gilrs",
+ "olr-audio",
+ "olr-bots",
+ "olr-content",
+ "olr-data",
+ "olr-discovery",
+ "olr-fx",
+ "olr-game",
+ "olr-input",
+ "olr-lobby",
+ "olr-math",
+ "olr-modes",
+ "olr-net",
+ "olr-netcode",
+ "olr-online",
+ "olr-pack",
+ "olr-present",
+ "olr-proto",
+ "olr-render",
+ "olr-replay",
+ "olr-scene",
+ "olr-server",
+ "olr-sim",
+ "olr-terrain",
+ "olr-ui",
+ "olr-vfs",
+ "pollster",
+ "ron",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "olr-import-gfx"
+version = "0.1.0"
+dependencies = [
+ "olr-data",
+ "olr-pack",
+ "olr-vfs",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "olr-import-lgs"
+version = "0.1.0"
+dependencies = [
+ "olr-data",
+ "olr-pack",
+ "olr-vfs",
+ "proptest",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "olr-import-lxl"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "olr-data",
+ "olr-pack",
+ "olr-vfs",
+ "proptest",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "olr-input"
+version = "0.1.0"
+dependencies = [
+ "gilrs",
+ "olr-sim",
+ "ron",
+ "serde",
+ "winit",
+]
+
+[[package]]
+name = "olr-lobby"
+version = "0.1.0"
+dependencies = [
+ "k256",
+ "olr-lobby",
+ "olr-netcode",
+ "olr-proto",
+ "proptest",
+ "sha2 0.11.0",
+]
+
+[[package]]
+name = "olr-math"
+version = "0.1.0"
+dependencies = [
+ "libm",
+ "serde",
+]
+
+[[package]]
+name = "olr-modes"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "libm",
+ "olr-data",
+ "olr-math",
+ "olr-sim",
+ "olr-terrain",
+ "postcard",
+ "serde",
+]
+
+[[package]]
+name = "olr-net"
+version = "0.1.0"
+dependencies = [
+ "crc32fast",
+ "getrandom 0.4.3",
+ "hmac 0.13.0",
+ "md-5 0.11.0",
+ "netdev",
+ "olr-net",
+ "olr-netcode",
+ "olr-proto",
+ "proptest",
+ "sha1 0.11.0",
+ "str0m",
+ "tungstenite",
+ "turn-client-proto",
+]
+
+[[package]]
+name = "olr-netcode"
+version = "0.1.0"
+dependencies = [
+ "olr-content",
+ "olr-math",
+ "olr-modes",
+ "olr-proto",
+ "olr-sim",
+ "olr-terrain",
+ "proptest",
+]
+
+[[package]]
+name = "olr-online"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "hex",
+ "olr-bots",
+ "olr-content",
+ "olr-data",
+ "olr-discovery",
+ "olr-lobby",
+ "olr-modes",
+ "olr-net",
+ "olr-netcode",
+ "olr-online",
+ "olr-pack",
+ "olr-proto",
+ "olr-replay",
+ "olr-sim",
+ "olr-terrain",
+ "olr-vfs",
+ "postcard",
+ "proptest",
+ "serde",
+ "sha2 0.11.0",
+ "tempfile",
+]
+
+[[package]]
+name = "olr-oracle"
+version = "0.1.0"
+dependencies = [
+ "flate2",
+ "ron",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "olr-pack"
+version = "0.1.0"
+dependencies = [
+ "hex",
+ "olr-data",
+ "olr-vfs",
+ "png",
+ "proptest",
+ "ron",
+ "serde",
+ "sha2 0.11.0",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "olr-present"
+version = "0.1.0"
+dependencies = [
+ "olr-content",
+ "olr-data",
+ "olr-fx",
+ "olr-math",
+ "olr-netcode",
+ "olr-oracle",
+ "olr-render",
+ "olr-scenario",
+ "olr-scene",
+ "olr-sim",
+ "olr-terrain",
+]
+
+[[package]]
+name = "olr-proto"
+version = "0.1.0"
+dependencies = [
+ "postcard",
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "olr-render"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "bytemuck",
+ "divan",
+ "olr-data",
+ "olr-pack",
+ "olr-scene",
+ "olr-terrain",
+ "pollster",
+ "wgpu",
+]
+
+[[package]]
+name = "olr-replay"
+version = "0.1.0"
+dependencies = [
+ "miniz_oxide 0.9.1",
+ "olr-bots",
+ "olr-content",
+ "olr-data",
+ "olr-math",
+ "olr-modes",
+ "olr-pack",
+ "olr-sim",
+ "olr-terrain",
+ "olr-vfs",
+ "postcard",
+ "proptest",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
+name = "olr-scenario"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "anyhow",
+ "olr-content",
+ "olr-data",
+ "olr-math",
+ "olr-modes",
+ "olr-oracle",
+ "olr-pack",
+ "olr-sim",
+ "olr-terrain",
+ "tempfile",
+]
+
+[[package]]
+name = "olr-scene"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "insta",
+ "olr-content",
+ "olr-data",
+ "olr-math",
+ "olr-scenario",
+ "olr-sim",
+]
+
+[[package]]
+name = "olr-server"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ctrlc",
+ "olr-bots",
+ "olr-content",
+ "olr-discovery",
+ "olr-lobby",
+ "olr-modes",
+ "olr-net",
+ "olr-online",
+ "olr-proto",
+ "olr-server",
+ "olr-sim",
+ "ron",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
+name = "olr-sim"
+version = "0.1.0"
+dependencies = [
+ "allocation-counter",
+ "divan",
+ "libm",
+ "miniz_oxide 0.9.1",
+ "olr-data",
+ "olr-math",
+ "olr-terrain",
+ "postcard",
+ "proptest",
+ "serde",
+]
+
+[[package]]
+name = "olr-terrain"
+version = "0.1.0"
+dependencies = [
+ "olr-data",
+ "proptest",
+]
+
+[[package]]
+name = "olr-ui"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "directories",
+ "egui",
+ "egui_kittest",
+ "olr-bots",
+ "olr-content",
+ "olr-data",
+ "olr-input",
+ "olr-modes",
+ "olr-pack",
+ "olr-replay",
+ "olr-scene",
+ "olr-sim",
+ "ron",
+ "serde",
+ "tempfile",
+]
+
+[[package]]
+name = "olr-vfs"
+version = "0.1.0"
+dependencies = [
+ "proptest",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3935,534 +4463,6 @@ dependencies = [
  "libc",
  "untrusted 0.9.0",
  "windows-sys 0.52.0",
-]
-
-[[package]]
-name = "rl-audio"
-version = "0.1.0"
-dependencies = [
- "kira",
- "rl-content",
- "rl-data",
- "rl-math",
- "rl-sim",
-]
-
-[[package]]
-name = "rl-bots"
-version = "0.1.0"
-dependencies = [
- "allocation-counter",
- "libm",
- "rl-content",
- "rl-data",
- "rl-math",
- "rl-modes",
- "rl-sim",
- "rl-terrain",
-]
-
-[[package]]
-name = "rl-cli"
-version = "0.1.0"
-dependencies = [
- "allocation-counter",
- "anyhow",
- "base64 0.22.1",
- "clap",
- "divan",
- "insta",
- "postcard",
- "proptest",
- "rl-bots",
- "rl-cli",
- "rl-content",
- "rl-data",
- "rl-discovery",
- "rl-fx",
- "rl-lobby",
- "rl-modes",
- "rl-net",
- "rl-netcode",
- "rl-online",
- "rl-oracle",
- "rl-pack",
- "rl-present",
- "rl-proto",
- "rl-render",
- "rl-replay",
- "rl-scenario",
- "rl-scene",
- "rl-server",
- "rl-sim",
- "rl-terrain",
- "rl-vfs",
- "ron",
- "serde",
- "serde_json",
- "tempfile",
- "wgpu",
-]
-
-[[package]]
-name = "rl-content"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "rl-bots",
- "rl-data",
- "rl-import-gfx",
- "rl-import-lgs",
- "rl-import-lxl",
- "rl-math",
- "rl-modes",
- "rl-pack",
- "rl-replay",
- "rl-sim",
- "rl-terrain",
- "rl-vfs",
- "ron",
- "serde",
- "sha2 0.11.0",
- "tempfile",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rl-data"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "ron",
- "serde",
-]
-
-[[package]]
-name = "rl-detcheck"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "rl-content",
- "rl-replay",
- "rl-sim",
-]
-
-[[package]]
-name = "rl-discovery"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "bech32",
- "chacha20 0.10.2",
- "hex",
- "hkdf 0.13.0",
- "hmac 0.13.0",
- "k256",
- "postcard",
- "proptest",
- "rcgen",
- "rl-discovery",
- "rl-lobby",
- "rl-proto",
- "rustls",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "thiserror 2.0.21",
- "tungstenite",
- "webpki-roots 1.0.9",
-]
-
-[[package]]
-name = "rl-fx"
-version = "0.1.0"
-dependencies = [
- "allocation-counter",
- "rl-content",
- "rl-data",
- "rl-math",
- "rl-scenario",
- "rl-scene",
- "rl-sim",
- "rl-terrain",
-]
-
-[[package]]
-name = "rl-game"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "gilrs",
- "pollster",
- "rl-audio",
- "rl-bots",
- "rl-content",
- "rl-data",
- "rl-discovery",
- "rl-fx",
- "rl-game",
- "rl-input",
- "rl-lobby",
- "rl-math",
- "rl-modes",
- "rl-net",
- "rl-netcode",
- "rl-online",
- "rl-pack",
- "rl-present",
- "rl-proto",
- "rl-render",
- "rl-replay",
- "rl-scene",
- "rl-server",
- "rl-sim",
- "rl-terrain",
- "rl-ui",
- "rl-vfs",
- "ron",
- "serde",
- "serde_json",
- "tempfile",
- "wgpu",
- "winit",
-]
-
-[[package]]
-name = "rl-import-gfx"
-version = "0.1.0"
-dependencies = [
- "rl-data",
- "rl-pack",
- "rl-vfs",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rl-import-lgs"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "rl-data",
- "rl-pack",
- "rl-vfs",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rl-import-lxl"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "proptest",
- "rl-data",
- "rl-pack",
- "rl-vfs",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rl-input"
-version = "0.1.0"
-dependencies = [
- "gilrs",
- "rl-sim",
- "ron",
- "serde",
- "winit",
-]
-
-[[package]]
-name = "rl-lobby"
-version = "0.1.0"
-dependencies = [
- "k256",
- "proptest",
- "rl-lobby",
- "rl-netcode",
- "rl-proto",
- "sha2 0.11.0",
-]
-
-[[package]]
-name = "rl-math"
-version = "0.1.0"
-dependencies = [
- "libm",
- "serde",
-]
-
-[[package]]
-name = "rl-modes"
-version = "0.1.0"
-dependencies = [
- "allocation-counter",
- "libm",
- "postcard",
- "rl-data",
- "rl-math",
- "rl-sim",
- "rl-terrain",
- "serde",
-]
-
-[[package]]
-name = "rl-net"
-version = "0.1.0"
-dependencies = [
- "crc32fast",
- "getrandom 0.4.3",
- "hmac 0.13.0",
- "md-5 0.11.0",
- "netdev",
- "proptest",
- "rl-net",
- "rl-netcode",
- "rl-proto",
- "sha1 0.11.0",
- "str0m",
- "tungstenite",
- "turn-client-proto",
-]
-
-[[package]]
-name = "rl-netcode"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "rl-content",
- "rl-math",
- "rl-modes",
- "rl-proto",
- "rl-sim",
- "rl-terrain",
-]
-
-[[package]]
-name = "rl-online"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "hex",
- "postcard",
- "proptest",
- "rl-bots",
- "rl-content",
- "rl-data",
- "rl-discovery",
- "rl-lobby",
- "rl-modes",
- "rl-net",
- "rl-netcode",
- "rl-online",
- "rl-pack",
- "rl-proto",
- "rl-replay",
- "rl-sim",
- "rl-terrain",
- "rl-vfs",
- "serde",
- "sha2 0.11.0",
- "tempfile",
-]
-
-[[package]]
-name = "rl-oracle"
-version = "0.1.0"
-dependencies = [
- "flate2",
- "ron",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rl-pack"
-version = "0.1.0"
-dependencies = [
- "hex",
- "png",
- "proptest",
- "rl-data",
- "rl-vfs",
- "ron",
- "serde",
- "sha2 0.11.0",
- "thiserror 2.0.21",
-]
-
-[[package]]
-name = "rl-present"
-version = "0.1.0"
-dependencies = [
- "rl-content",
- "rl-data",
- "rl-fx",
- "rl-math",
- "rl-netcode",
- "rl-oracle",
- "rl-render",
- "rl-scenario",
- "rl-scene",
- "rl-sim",
- "rl-terrain",
-]
-
-[[package]]
-name = "rl-proto"
-version = "0.1.0"
-dependencies = [
- "postcard",
- "proptest",
- "serde",
-]
-
-[[package]]
-name = "rl-render"
-version = "0.1.0"
-dependencies = [
- "allocation-counter",
- "bytemuck",
- "divan",
- "pollster",
- "rl-data",
- "rl-pack",
- "rl-scene",
- "rl-terrain",
- "wgpu",
-]
-
-[[package]]
-name = "rl-replay"
-version = "0.1.0"
-dependencies = [
- "miniz_oxide 0.9.1",
- "postcard",
- "proptest",
- "rl-bots",
- "rl-content",
- "rl-data",
- "rl-math",
- "rl-modes",
- "rl-pack",
- "rl-sim",
- "rl-terrain",
- "rl-vfs",
- "serde",
- "tempfile",
-]
-
-[[package]]
-name = "rl-scenario"
-version = "0.1.0"
-dependencies = [
- "allocation-counter",
- "anyhow",
- "rl-content",
- "rl-data",
- "rl-math",
- "rl-modes",
- "rl-oracle",
- "rl-pack",
- "rl-sim",
- "rl-terrain",
- "tempfile",
-]
-
-[[package]]
-name = "rl-scene"
-version = "0.1.0"
-dependencies = [
- "allocation-counter",
- "insta",
- "rl-content",
- "rl-data",
- "rl-math",
- "rl-scenario",
- "rl-sim",
-]
-
-[[package]]
-name = "rl-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "ctrlc",
- "rl-bots",
- "rl-content",
- "rl-discovery",
- "rl-lobby",
- "rl-modes",
- "rl-net",
- "rl-online",
- "rl-proto",
- "rl-server",
- "rl-sim",
- "ron",
- "serde",
- "tempfile",
-]
-
-[[package]]
-name = "rl-sim"
-version = "0.1.0"
-dependencies = [
- "allocation-counter",
- "divan",
- "libm",
- "miniz_oxide 0.9.1",
- "postcard",
- "proptest",
- "rl-data",
- "rl-math",
- "rl-terrain",
- "serde",
-]
-
-[[package]]
-name = "rl-terrain"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "rl-data",
-]
-
-[[package]]
-name = "rl-ui"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "directories",
- "egui",
- "egui_kittest",
- "rl-bots",
- "rl-content",
- "rl-data",
- "rl-input",
- "rl-modes",
- "rl-pack",
- "rl-replay",
- "rl-scene",
- "rl-sim",
- "ron",
- "serde",
- "tempfile",
-]
-
-[[package]]
-name = "rl-vfs"
-version = "0.1.0"
-dependencies = [
- "proptest",
- "tempfile",
- "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -6519,12 +6519,12 @@ dependencies = [
  "clap",
  "ctrlc",
  "hex",
+ "olr-data",
+ "olr-oracle",
+ "olr-pack",
+ "olr-vfs",
  "prettyplease",
  "quote",
- "rl-data",
- "rl-oracle",
- "rl-pack",
- "rl-vfs",
  "ron",
  "serde",
  "sha2 0.11.0",

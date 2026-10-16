@@ -3,7 +3,7 @@
 Scope: the LX56 bot (`CWormBotInputHandler`), the weapon selection of bots at
 game start (random weapons and `.wps` restriction files), and the Deathmatch
 rules: settings, scoring, game over, the results screen. It ends with a design
-for `rl-bots` (spec §5.9, §7.1, §12.1 H3).
+for `olr-bots` (spec §5.9, §7.1, §12.1 H3).
 
 All OLX paths are relative to the OLX checkout (`scratchpad/openlierox`) at
 commit `d1ad953f`. Line numbers are at that commit. `CWormBot.cpp` means
@@ -180,7 +180,7 @@ AI_Think():
   The `traceLine(...) >= 40` test truncates a float length of about 40 to an
   int. It may fail often, which would make the fallback the usual case (open question 6).
   On a dirt level `AI_IsInAir` (no rock or dirt in 15×15 px) fails anyway, so the
-  spot is the fallback's, as deep in the dirt as the target (`rl-bots` digs on to
+  spot is the fallback's, as deep in the dirt as the target (`olr-bots` digs on to
   the worm from there: `STATUS.md`).
 
 ### 1.4 Pathfinding (`searchpath_base`, `CWormBot.cpp:110-878`)
@@ -222,7 +222,7 @@ cost is about the area's pixel count, because each probed line is new.
       if left + right >= 7:  addAreaNode(pt' + dist, this)   // pt' = the last probed point
   ```
   So a passage must be at least 7 px wide and 5 px deep beyond the edge.
-  Precisely (checked in `rl-bots`' `areas_grow_like_olx`): `pt` itself is
+  Precisely (checked in `olr-bots`' `areas_grow_like_olx`): `pt` itself is
   never traced, so a gap of 7 passes only when the checkpoint is on the row
   just outside it (7 traces on one side), one of 8 or more always passes,
   6 never; and the new area is grown at `pt + dist`, one step past the last
@@ -763,10 +763,10 @@ for slot i in 0..slots:
     MW `Standard 100lt`). The `\r` stays on the state field, and
     `from_string<int>` (`src/util/StringConv.h:44-48`, an `istringstream >> int`)
     stops at it, so `"2\r"` gives 2. A state without digits gives 0 (enabled),
-    and overflow the nearest `int` limit. The port (`rl_import_lgs::parse_wps`)
+    and overflow the nearest `int` limit. The port (`olr_import_lgs::parse_wps`)
     reads the state the same way and keeps names as written.
   - The file name: `.wps` is appended only to a name **longer than 4 bytes**
-    that lacks it, and a name starting with `cfg/` is a path (`rl-data`'s
+    that lacks it, and a name starting with `cfg/` is a path (`olr-data`'s
     `WeaponRules` finds no imported preset for it: all enabled).
   - The files list weapons of **many** mods (Classic `Standard 100lt.wps` has
     215 lines). Entries for other mods are harmless.
@@ -820,7 +820,7 @@ missing from a file as enabled.)
 
 The mechanics are in `damage-death-bonuses.md`: kills (§2.3-2.5), score helpers
 (§2.8), respawn (§3), bonuses (§4), the Deathmatch rules (§5) and the settings
-table (§7). This section collects what a `rl-modes` Deathmatch needs, and adds
+table (§7). This section collects what an `olr-modes` Deathmatch needs, and adds
 the game-over flow, messages and results screen.
 
 ### 3.1 Settings (defaults from `src/common/FeatureList.cpp`)
@@ -983,20 +983,20 @@ After game over:
 - Local game: an OK button. Network: Leave, and "Returning to Lobby in N" with
   `N = 5 + GAMEOVER_WAIT - elapsed`.
 
-What `rl-modes` should emit as `GameOver` (spec §5.7): the winner id (or none),
+What `olr-modes` should emit as `GameOver` (spec §5.7): the winner id (or none),
 the reason (kill limit, time limit, last worm standing), and per worm the
 lives, kills, score, deaths, suicides and damage, in comparator order.
 
 ---
 
-## 4. Recommendations for `rl-bots`
+## 4. Recommendations for `olr-bots`
 
 ### 4.1 Crate shape
 
-- A new crate `rl-bots`, registered in `xtask/layers.ron` at layer 3 with the
-  same-layer pair `rl-bots → rl-sim` (plan 6; this note first said layer 4). Make it `#![no_std]` + `alloc` and build it
+- A new crate `olr-bots`, registered in `xtask/layers.ron` at layer 3 with the
+  same-layer pair `olr-bots → olr-sim` (plan 6; this note first said layer 4). Make it `#![no_std]` + `alloc` and build it
   for `wasm32`: bots must run in browser clients too (spec §12.2).
-  It depends on `rl-sim`, `rl-terrain`, `rl-math` and `rl-data`.
+  It depends on `olr-sim`, `olr-terrain`, `olr-math` and `olr-data`.
 - API sketch:
   ```rust
   pub struct BotConfig {               // H3 (§12.1): data, not code
@@ -1076,8 +1076,8 @@ The brain produces an `Intent`, for example:
 - move, jump, fire, rope shoot or release, carve;
 - a wanted slot.
 
-The motor turns it into the 8 key bits under `rl-sim`'s rules
-(`crates/rl-sim/src/physics.rs:36-132`, `input.rs` latches):
+The motor turns it into the 8 key bits under `olr-sim`'s rules
+(`crates/olr-sim/src/physics.rs:36-132`, `input.rs` latches):
 
 | OLX bot action | Keys | Caveats |
 |---|---|---|
@@ -1128,7 +1128,7 @@ projectile action type the mods use.
 - **Coverage bookkeeping:**
   - The bot tracks which weapon ids it has fired, from `WeaponFired` events.
   - It prefers unfired weapons when the mode allows choosing.
-  - `rl-cli match` reports the union across bots.
+  - `olr-cli match` reports the union across bots.
 
 ### 4.7 Loadout at match start (`choose_loadout`)
 

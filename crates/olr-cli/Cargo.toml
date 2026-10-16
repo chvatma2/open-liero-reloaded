@@ -1,0 +1,108 @@
+[package]
+name = "olr-cli"
+description = "Headless command-line tool: import OLX content, validate packs, replay and render oracle scenarios, play headless bot matches and replays."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "olr-cli"
+path = "src/main.rs"
+
+[dependencies]
+olr-data.workspace = true
+olr-vfs.workspace = true
+olr-pack.workspace = true
+olr-oracle.workspace = true
+olr-scenario.workspace = true
+olr-content.workspace = true
+olr-terrain.workspace = true
+olr-scene.workspace = true
+olr-fx.workspace = true
+olr-render.workspace = true
+olr-present.workspace = true
+olr-sim.workspace = true
+olr-modes.workspace = true
+olr-bots.workspace = true
+olr-replay.workspace = true
+olr-netcode.workspace = true
+olr-proto.workspace = true
+olr-online.workspace = true
+olr-net.workspace = true
+olr-lobby.workspace = true
+olr-server.workspace = true
+olr-discovery.workspace = true
+# The relay probe's random 16 KiB handshake content (plan 12b).
+base64.workspace = true
+serde_json.workspace = true
+postcard.workspace = true
+wgpu.workspace = true
+anyhow.workspace = true
+clap.workspace = true
+serde = { workspace = true, features = ["std"] }
+ron.workspace = true
+tempfile.workspace = true
+
+[features]
+# The Docker NAT tests' dev tools (plan 12b Task 10): `olr-cli nostr-relay`
+# and `olr-cli stun-server`. Never in a release build (`xtask dist` does not
+# build olr-cli).
+nat-tools = ["olr-discovery/test-relay"]
+
+[dev-dependencies]
+# Tests build this crate with `nat-tools` (olr-discovery's pattern), so
+# `check`'s plain `nextest --workspace` runs the dev tools' test.
+olr-cli = { path = ".", features = ["nat-tools"] }
+proptest.workspace = true
+allocation-counter.workspace = true
+insta.workspace = true
+divan.workspace = true
+# The relay probe's tests run against the in-process test relay.
+olr-discovery = { workspace = true, features = ["test-relay"] }
+# olr-net's test hooks: its port mapper refuses real routers in tests.
+olr-net = { workspace = true, features = ["test-hooks"] }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[[test]]
+name = "golden"
+
+[[test]]
+name = "gpu_bench"
+
+[[test]]
+name = "grid"
+
+[[test]]
+name = "net_cases"
+
+[[test]]
+name = "net_sim"
+
+[[test]]
+name = "net_soak_memory"
+
+[[test]]
+name = "render_golden"
+
+[[test]]
+name = "transport"
+
+[[bench]]
+name = "game"
+harness = false
+
+[[bench]]
+name = "rollback"
+harness = false
+
+[lints]
+workspace = true

@@ -24,7 +24,7 @@ No tracked file was changed. The logs and scripts are in `target/bot-baseline/`.
 
 ### OLX (`target/bot-baseline/olx_bots.py`, `run_olx.sh`, `batch.sh`)
 
-- **Server.** Image `rl-olx-oracle:3c714fd09a0b`, run as
+- **Server.** Image `olr-olx-oracle:3c714fd09a0b`, run as
   `openlierox -dedicated -script`. The control script never calls `simStep`,
   so OLX runs in real time at 100 frames/s (checked with `getFrame`: 100.0 fps
   in every run). The bots read the wall clock and run their pathfinding
@@ -61,12 +61,12 @@ No tracked file was changed. The logs and scripts are in `target/bot-baseline/`.
 ### Ours (`target/bot-baseline/probe`, `run_ours.sh`)
 
 - **Probe.** A throwaway crate outside the workspace, with path dependencies on
-  `rl-content`, `rl-bots`, `rl-sim` and `rl-modes`. It builds the match exactly
-  as `rl-cli match` does (`Content::build_match`, `SimSettings::lx56()`,
+  `olr-content`, `olr-bots`, `olr-sim` and `olr-modes`. It builds the match exactly
+  as `olr-cli match` does (`Content::build_match`, `SimSettings::lx56()`,
   `DEFAULT_PRESET`, no bonuses), with the kill and time limits turned off.
   - It writes a per-tick log in the shape of the OLX trace, so one analyser
     (`analyze.py`) measures both sides the same way.
-  - Check against `rl-cli match ... --seed 1 --coverage`: the same 602 shots
+  - Check against `olr-cli match ... --seed 1 --coverage`: the same 602 shots
     and 16 kill events.
 - **Runs.** 18000 ticks (3 min), seeds 1-10, for every OLX config.
 - **Variants** (`ours_var/`): Easy and Hard, `AimModel::OlxDirect`, and a 4×

@@ -120,7 +120,7 @@ enum Command {
         from: Option<PathBuf>,
     },
     /// The feel numbers of online play (plan 9): every network profile's rollback depth,
-    /// corrections, stalls and bytes from seeded `rl-cli net-sim --feel` runs, gated against
+    /// corrections, stalls and bytes from seeded `olr-cli net-sim --feel` runs, gated against
     /// fixtures/net/feel.ron (also a step of `full`).
     NetFeel {
         /// Measure and write the baseline instead, logged in fixtures/blessings.log.
@@ -190,10 +190,10 @@ enum Command {
         #[arg(long)]
         from: Option<PathBuf>,
     },
-    /// Build rl-cli and rl-game for Windows (x86_64-pc-windows-gnu), stage them with the
+    /// Build olr-cli and olr-game for Windows (x86_64-pc-windows-gnu), stage them with the
     /// content in Windows' temp directory and list the adapters each backend sees (plan 8).
     Windows,
-    /// Portable release zips: rl-game and rl-server (the `dist` profile) with the content,
+    /// Portable release zips: olr-game and olr-server (the `dist` profile) with the content,
     /// docs and an example server config, for Linux and Windows, in
     /// target/release-zips/rust-liero-<version>-<platform>.zip; then each is unpacked and run.
     Dist {
@@ -202,7 +202,7 @@ enum Command {
         no_verify: bool,
     },
     /// Cross-platform determinism (plan 9, spec §9.5): golden bot matches' replays are played
-    /// by `rl-detcheck` natively and on another platform; the checksum streams must be equal.
+    /// by `olr-detcheck` natively and on another platform; the checksum streams must be equal.
     /// With no leg flag the WASM leg (Node.js WASI) runs; a flag runs that leg only.
     Determinism {
         /// The Windows leg (plan 8's interop runner); every golden match.
@@ -232,9 +232,9 @@ fn main() -> ExitCode {
         Command::Layers => layers::run().map(|()| true),
         Command::Api => api::run().map(|()| true),
         Command::FetchOlxContent { no_import } => fetch::run(!no_import).map(|p| {
-            println!("RL_OLX_GAMEDIR={}", p.gamedir.display());
+            println!("OLR_OLX_GAMEDIR={}", p.gamedir.display());
             if !no_import {
-                println!("RL_CONTENT_DIR={}", p.content.display());
+                println!("OLR_CONTENT_DIR={}", p.content.display());
             }
             true
         }),

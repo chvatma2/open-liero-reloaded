@@ -222,7 +222,7 @@ This belongs to the projectile area; it is noted here because it decides bit-exa
 
 ## 2. The fire key (`CWormHumanInputHandler::getInput`, `src/common/CWormHuman.cpp:81-591`)
 
-Already ported (`rl-sim/src/physics.rs::get_input`). The firing-relevant lines:
+Already ported (`olr-sim/src/physics.rs::get_input`). The firing-relevant lines:
 
 ```
 // 401-403
@@ -475,7 +475,7 @@ rest of the list.
     (wrapped when negative), which the reader adds on top of the
     `SHF_NG_SPEEDOFF` byte it subtracts.
 
-  `rl-sim::shot_codec` ports the bytes, not a formula.
+  `olr-sim::shot_codec` ports the bytes, not a formula.
 - **Position:** x and y offsets are read, negated, and **never applied to `cPos`**. Every
   small shot keeps the first shot's decoded position.
 - **Velocity:** `cWormVel.x -= byte` only when `SHF_NG_XWRMVEL` is set, i.e.
@@ -723,7 +723,7 @@ carves a `Damage`-sized hole there), or at the first other alive worm within 5 p
 - **No recoil** is ever applied for beams (`ProcessShot` returns before the recoil code).
 - **No randomness** in the beam itself; only `InjureWorm`'s blood calls `rand()`
   (`CClient_Game.cpp:451-458`, damage report).
-- **Classic Laser** (rl-data `laser.ron`): Damage 0, so every shot still carves the smallest
+- **Classic Laser** (olr-data `laser.ron`): Damage 0, so every shot still carves the smallest
   theme hole (`bmpHoles[0]`). PlyDamage 1, Length 999999, ROF 0.009 s, Drain 1.25,
   Recharge 0.18.
 
@@ -914,7 +914,7 @@ from the trace header.
 | `ProjRelativeVel` (181) | `addShoot` 97/101 (`gameSettings`) | true | true |
 | `ShootSpawnDistance` (184) | `Proj_SpawnParent::position` 525 | 8.0 | 8 |
 | `LX56WallShooting` (183) | `CProjectile::Spawn` 101 | true | true |
-| `InfiniteMap` (170) | beam `CarveHole` wrap | false | false (rl-sim rejects true) |
+| `InfiniteMap` (170) | beam `CarveHole` wrap | false | false (olr-sim rejects true) |
 | `WeaponSlotsNum` (160) | `Prepare` | 5 | 5 |
 | `ForceRandomWeapons` (11) | `PrepareWorm`, `bServerChoosesWeapons` | false | **true** |
 | `SameWeaponsAsHostWorm` (12) | `PrepareWorm`, `initWeaponSelection` | false | false |
@@ -938,11 +938,11 @@ Client options that matter (`Options.cpp`):
 
 ---
 
-## 11. Mod data used (`rl-data/src/mod_def.rs` ↔ OLX)
+## 11. Mod data used (`olr-data/src/mod_def.rs` ↔ OLX)
 
 `WeaponDef` ↔ `weapon_t` (`include/WeaponDesc.h:96-133`), loaded at `CGameScript.cpp:687-781`:
 
-| rl-data | OLX | Used by |
+| olr-data | OLX | Used by |
 |---|---|---|
 | `rof` (already /1000) | `ROF` | `WormShoot` 392, `PlayerShoot` 529 |
 | `recharge` (already /10) | `Recharge` | `simulateWormWeapon` 491 |
@@ -1116,7 +1116,7 @@ require every scenario to list every worm.
    - Both models need the free parameter δ in `tLX->currentTime := simulationTime + δ`. Real
      play has δ ∈ (0, 10] ms; δ = 10 is the "frame loop just caught up" steady state.
    - δ shifts every projectile's clock origin, and thus which frame it first moves in.
-   - The oracle hook and `rl-sim` must use the same model and δ. This decision belongs to the
+   - The oracle hook and `olr-sim` must use the same model and δ. This decision belongs to the
      user and lead.
 2. **Answered (plan 4, D1): no; one frame per main-loop iteration, recorded in STATUS.** **Should the port model iterations that run two frames, or a delivery that slips a frame?**
    Real play has them (95 FPS cap with 100 Hz frames). The recommendation is no: assume the
@@ -1135,11 +1135,11 @@ require every scenario to list every worm.
    loop. That is risky: the time goes backwards against the real clock used by `CChannel` and
    ping code, but asserts are off in the Release build.
 5. **Answered (plan 4): weapon ids are `ModDef` order, and the trace header's names are checked against `SimMod` in every scenario.** **Weapon id order:** `content/packs/olx-classic/mod.ron` lists weapons alphabetically. This
-   was not verified against OLX's gamescript load order. If `rl-import-lgs` preserves file
+   was not verified against OLX's gamescript load order. If `olr-import-lgs` preserves file
    order, the two agree. Recording weapon names in the header (§13.4) settles it.
 6. **Still open: the specials are covered by unit tests only (STATUS).** **Jetpack and other specials** cannot be checked against the oracle with Classic or MW 1.0,
    which contain none. A test mod would be needed if the port must be verified there.
-7. **Answered (plan 4, D4): a saturating dedicated-server entity counter (`rl-sim::rng::Draws`).** **Entity pool saturation in dedicated mode** (1024 slots never freed) changes the `rand()`
+7. **Answered (plan 4, D4): a saturating dedicated-server entity counter (`olr-sim::rng::Draws`).** **Entity pool saturation in dedicated mode** (1024 slots never freed) changes the `rand()`
    count of later gib spawns, so oracle and local play differ. The death report should confirm
    it and decide how the port models it, probably as a dedicated-only counter of entity slots.
 8. **Answered (plan 4 tasks 7-8): beam hits injure through `damage::injure_worm`.** **`InjureWorm` from beam hits** (damage report, `QueueReportDamage`, kills via

@@ -51,7 +51,7 @@ with a `shoot_t` parent) is only summarised where it fixes projectile state.
    `framesBack = ms_back / 11`, so in real play (`ms_back` in about `(0, 21]`)
    the worm hitbox is often the 1.1 s old position. Port the ring buffer
    exactly (100 entries, `cur`, `count`, stale contents survive `clear`).
-   (2026-10-13: `rl-sim` keeps this only for the oracle; play hit-tests
+   (2026-10-13: `olr-sim` keeps this only for the oracle; play hit-tests
    the newest entry. See `docs/porting/STATUS.md`, "Hits test the worm's
    current position".)
 5. **Explosions do not fall off.** Every alive worm with
@@ -432,7 +432,7 @@ if PlyHit.Type != PJ_NOTHING:
         if id >= 0:
             if PlyHit.Type != PJ_GOTHROUGH: pos = curpos; vOldPos = curpos; vel = vFrameOldVel
             return Worm(id)                                    // overrides any terrain result
-(InfiniteMap wrapping of pos/vOldPos: rejected by rl-sim)
+(InfiniteMap wrapping of pos/vOldPos: rejected by olr-sim)
 return cur
 ```
 
@@ -761,7 +761,7 @@ iteration, 20 iterations (`PhysicsLX56.cpp:318-327`).
 
 ### 5.3 `CMap::CarveHole(size, pos)` (`src/common/CMap.cpp:1007-1106`)
 
-Already ported (`rl-terrain::Terrain::carve_hole`). `size = clamp(size, 0, 4)`;
+Already ported (`olr-terrain::Terrain::carve_hole`). `size = clamp(size, 0, 4)`;
 stamp `Theme.bmpHoles[size]` = `Hole{size+1}.png` (`CMap.cpp:332-336`,
 colour key black). Top-left `((int)pos.x - w/2, (int)pos.y - h/2)`; clip with
 the stamp **not** offset (kept quirk). Material: dirt under magenta (255,0,255)
@@ -828,7 +828,7 @@ surface is opaque, so they are plain RGB compares.
 
 `Hole1` 5x5, `Hole2` 7x7, `Hole3` 9x9, `Hole4` 11x11, `Hole5` 15x15; colours:
 black `(0,0,0)` (key), magenta `(255,0,255)`, edge `(108,56,0)`. The importer
-already turns these into `rl_terrain::Stamp` (`Carve`/`Skip`/`Paint`);
+already turns these into `olr_terrain::Stamp` (`Carve`/`Skip`/`Paint`);
 `PlaceDirt` needs the same classes (`Skip` = transparent, `Carve` = pink,
 `Paint` = other). The green-dirt mask needs a separate 3-class stamp
 (green/pink/other), and it is not a theme image.
@@ -899,7 +899,7 @@ screen, `GfxPrimitives.cpp:2958-2967`), so gibs are not filtered.
 | `ProjGravityFactor` (182) | 1.0 | gravity |
 | `ProjFriction` (180) | 0.0 | friction (off) |
 | `LX56WallShooting` (183) | true | wallshoot window at spawn |
-| `InfiniteMap` (170) | false | wrap paths (rl-sim rejects) |
+| `InfiniteMap` (170) | false | wrap paths (olr-sim rejects) |
 | `TeamHit` (101), `SelfHit` (103) | true, true | `ProjWormColl` |
 | `TeamInjure` (100), `SelfInjure` (102) | true, true | `InjureWorm` |
 | `WormDamageFactor` (152), `WormShieldFactor` (153) | 1.0, 1.0 | via worm prepare |
@@ -911,9 +911,9 @@ screen, `GfxPrimitives.cpp:2958-2967`), so gibs are not filtered.
 
 ---
 
-## 8. Mod fields used, mapped to `rl-data::mod_def`
+## 8. Mod fields used, mapped to `olr-data::mod_def`
 
-| OLX `proj_t` / `Proj_*` | rl-data | used for |
+| OLX `proj_t` / `Proj_*` | olr-data | used for |
 |---|---|---|
 | `Type` (PIXEL/IMAGE) | `ProjectileDef::gfx` variant | worm-hit shape (rect), colour `rand()` |
 | `Colour` | `ProjectileGfx::Pixel { colours }` | `rand()` count only (`len > 0`) |
@@ -1006,7 +1006,7 @@ current projectile frees its own slot last.
    deleted after one step and `ANI_ONCE` never ends anything. The same applies
    to the entity-pool gating of gib draws (a client frees entities). Matching
    the oracle means porting dedicated behaviour; feel-wise the client matters.
-3. **Answered (plan 4, D7): the `get(0)` quirk is kept (`VecTimeRecorder`, `rl-sim::worm::PosRecorder`).** **The `get(0)` recorder bug**: should the port keep it for the oracle and
+3. **Answered (plan 4, D7): the `get(0)` quirk is kept (`VecTimeRecorder`, `olr-sim::worm::PosRecorder`).** **The `get(0)` recorder bug**: should the port keep it for the oracle and
    offer a fixed variant later? A scenario where a bullet hits a walking worm
    will show it immediately.
 4. **Answered (plan 4, D1/D10): Model R shot delivery at the start of `tick`, and the reliable messages arrive a frame after being queued; the weapon scenarios pin projectile spawn times and death draws.** Does the shared host client also receive and parse its own `WormDied` /

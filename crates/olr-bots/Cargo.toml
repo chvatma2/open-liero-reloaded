@@ -1,0 +1,28 @@
+[package]
+name = "olr-bots"
+description = "OLX's bots for olr-sim matches: loadouts, navigation over free rectangles, the motor that presses keys, and aim."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-sim.workspace = true
+olr-data.workspace = true
+olr-math.workspace = true
+olr-terrain.workspace = true
+libm.workspace = true
+
+[dev-dependencies]
+allocation-counter.workspace = true
+olr-content.workspace = true
+olr-modes.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

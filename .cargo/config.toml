@@ -4,7 +4,7 @@ xtask = "run --quiet --package xtask --"
 # Tests that need imported OLX content find it here (the committed packs).
 # A value already in the environment wins.
 [env]
-RL_CONTENT_DIR = { value = "content/packs", relative = true }
+OLR_CONTENT_DIR = { value = "content/packs", relative = true }
 
 [target.aarch64-unknown-linux-gnu]
 linker = "aarch64-linux-gnu-gcc"

@@ -1,5 +1,5 @@
 (
-    description: "Performance envelope (plan 8), not an oracle fixture: eight worms on Liero Factory's floor (four at each of two spots, 10000 hp so nobody dies) hold fire with Classic's Napalm and LoadingTime 0 for 8 s: a mid-load point, peaking at about 830 projectiles (Napalm's fire is short-lived; heavy-spikeballs is the one that reaches OLX's 3000 cap). Timed in OLX and in rl-sim; the same work is checked frame by frame by projectile counts and rand() calls.",
+    description: "Performance envelope (plan 8), not an oracle fixture: eight worms on Liero Factory's floor (four at each of two spots, 10000 hp so nobody dies) hold fire with Classic's Napalm and LoadingTime 0 for 8 s: a mid-load point, peaking at about 830 projectiles (Napalm's fire is short-lived; heavy-spikeballs is the one that reaches OLX's 3000 cap). Timed in OLX and in olr-sim; the same work is checked frame by frame by projectile counts and rand() calls.",
     level: "Liero Factory.lxl",
     mod: "Classic",
     seed: 12345,

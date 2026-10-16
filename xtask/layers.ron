@@ -4,83 +4,83 @@
 // #![no_std]; `wasm` crates must build for wasm32-unknown-unknown.
 (
     layers: {
-        "rl-math": 0,
-        "rl-data": 1,
-        "rl-terrain": 1,
-        "rl-vfs": 1,
-        "rl-pack": 2,
-        "rl-import-lgs": 2,
-        "rl-import-lxl": 2,
-        "rl-import-gfx": 2,
-        "rl-oracle": 2,
-        "rl-sim": 3,
-        "rl-modes": 3,
-        "rl-bots": 3,
-        "rl-replay": 3,
-        "rl-proto": 4,
-        "rl-netcode": 4,
-        "rl-lobby": 4,
-        "rl-scenario": 4,
-        "rl-content": 4,
-        "rl-scene": 5,
-        "rl-fx": 5,
-        "rl-render": 5,
-        "rl-present": 5,
-        "rl-audio": 5,
-        "rl-input": 5,
-        "rl-ui": 5,
-        "rl-net": 5,
-        "rl-discovery": 5,
-        "rl-online": 5,
-        "rl-cli": 6,
-        "rl-server": 6,
-        "rl-game": 6,
-        "rl-detcheck": 6,
+        "olr-math": 0,
+        "olr-data": 1,
+        "olr-terrain": 1,
+        "olr-vfs": 1,
+        "olr-pack": 2,
+        "olr-import-lgs": 2,
+        "olr-import-lxl": 2,
+        "olr-import-gfx": 2,
+        "olr-oracle": 2,
+        "olr-sim": 3,
+        "olr-modes": 3,
+        "olr-bots": 3,
+        "olr-replay": 3,
+        "olr-proto": 4,
+        "olr-netcode": 4,
+        "olr-lobby": 4,
+        "olr-scenario": 4,
+        "olr-content": 4,
+        "olr-scene": 5,
+        "olr-fx": 5,
+        "olr-render": 5,
+        "olr-present": 5,
+        "olr-audio": 5,
+        "olr-input": 5,
+        "olr-ui": 5,
+        "olr-net": 5,
+        "olr-discovery": 5,
+        "olr-online": 5,
+        "olr-cli": 6,
+        "olr-server": 6,
+        "olr-game": 6,
+        "olr-detcheck": 6,
         "xtask": 6,
     },
     same_layer: [
-        ("rl-terrain", "rl-data"),
+        ("olr-terrain", "olr-data"),
         // Game modes implement the simulation's `GameMode` (spec §20 F6).
-        ("rl-modes", "rl-sim"),
+        ("olr-modes", "olr-sim"),
         // Bots read a `World` and press its `Keys` (spec §20 F3, F7).
-        ("rl-bots", "rl-sim"),
+        ("olr-bots", "olr-sim"),
         // Replays rebuild a `World` and its game mode (spec §20 F8).
-        ("rl-replay", "rl-sim"),
-        ("rl-replay", "rl-modes"),
-        ("rl-import-lgs", "rl-pack"),
-        ("rl-import-lxl", "rl-pack"),
-        ("rl-import-gfx", "rl-pack"),
+        ("olr-replay", "olr-sim"),
+        ("olr-replay", "olr-modes"),
+        ("olr-import-lgs", "olr-pack"),
+        ("olr-import-lxl", "olr-pack"),
+        ("olr-import-gfx", "olr-pack"),
         // The oracle replays worlds built from packs the way the game loads them.
-        ("rl-scenario", "rl-content"),
+        ("olr-scenario", "olr-content"),
         // Cosmetic entities draw into the scene's draw list with its atlas ids.
-        ("rl-fx", "rl-scene"),
+        ("olr-fx", "olr-scene"),
         // The renderer draws the scene's draw list from its atlas images.
-        ("rl-render", "rl-scene"),
+        ("olr-render", "olr-scene"),
         // One viewport's presentation wires the scene, the entities and their
         // upload to the renderer in the frame loop's order, once for every
-        // mode (sandbox, matches, replays, `rl-cli render`).
-        ("rl-present", "rl-scene"),
-        ("rl-present", "rl-fx"),
-        ("rl-present", "rl-render"),
+        // mode (sandbox, matches, replays, `olr-cli render`).
+        ("olr-present", "olr-scene"),
+        ("olr-present", "olr-fx"),
+        ("olr-present", "olr-render"),
         // The options menu edits the key bindings (plan 7 task 1).
-        ("rl-ui", "rl-input"),
+        ("olr-ui", "olr-input"),
         // The session speaks the wire format.
-        ("rl-netcode", "rl-proto"),
+        ("olr-netcode", "olr-proto"),
         // The lobby's identity signs the wire format's keys and signatures.
-        ("rl-lobby", "rl-proto"),
+        ("olr-lobby", "olr-proto"),
         // The lobby addresses peers by the netcode's ids and computes their
         // input delay with it (peer ids and input delay).
-        ("rl-lobby", "rl-netcode"),
+        ("olr-lobby", "olr-netcode"),
         // Online play drives the real transport's endpoint.
-        ("rl-online", "rl-net"),
+        ("olr-online", "olr-net"),
         // Online play drives the Nostr handshakes too (ruling N55): the
         // joiner's relay pool and `Asker`, the host's `Inbox`, TURN notes;
-        // one join and one listener for the game, the server and rl-cli.
-        ("rl-online", "rl-discovery"),
+        // one join and one listener for the game, the server and olr-cli.
+        ("olr-online", "olr-discovery"),
         // The real-transport tests run the dedicated server in-process
         // (plan 10 ruling PF2).
-        ("rl-cli", "rl-server"),
+        ("olr-cli", "olr-server"),
     ],
-    no_std: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-netcode", "rl-lobby"],
-    wasm: ["rl-math", "rl-data", "rl-terrain", "rl-sim", "rl-modes", "rl-bots", "rl-replay", "rl-proto", "rl-netcode", "rl-lobby", "rl-vfs", "rl-pack", "rl-import-lgs", "rl-import-lxl", "rl-import-gfx"],
+    no_std: ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby"],
+    wasm: ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby", "olr-vfs", "olr-pack", "olr-import-lgs", "olr-import-lxl", "olr-import-gfx"],
 )

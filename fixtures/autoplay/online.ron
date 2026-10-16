@@ -4,8 +4,8 @@
 // own Nostr relay; its address, directly), chats in its lobby, readies,
 // plays the server's short match against a bot client, sees the results,
 // goes back to the lobby, leaves and quits. `xtask e2e` starts the relay
-// (`rl-cli nostr-relay`), the server (`fixtures/server/e2e.ron`, port 0)
-// and `rl-cli net-client --bot`, waits until the bot is in the lobby,
+// (`olr-cli nostr-relay`), the server (`fixtures/server/e2e.ron`, port 0)
+// and `olr-cli net-client --bot`, waits until the bot is in the lobby,
 // replaces `{port}` with the server's port and runs this with the real
 // clock (the netcode keeps real time, so no --fake-clock): every wait is
 // in frames, so the long ones are generous.

@@ -1,0 +1,211 @@
+# olr-lobby
+
+Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
+
+- **Layer 4, `#![no_std]` + `alloc`, wasm32.** Depends on `olr-proto` (same
+  layer: the lobby messages, their validators), `olr-netcode` (same layer:
+  `PeerId`, `input_delay`), `k256` (BIP-340 Schnorr, exact pin) and `sha2`
+  (crate-local, no default features). Time and randomness come from the
+  caller (`now_us`, nonces, signing `aux`); there is no clock and no
+  `getrandom` here. `BTreeMap`/`BTreeSet` only.
+- **Identity** (`identity.rs`): `Identity::from_secret(secret)` (`None` for
+  an invalid scalar), `public()` (x-only, 32 bytes), `sign(message, aux)`
+  (BIP-340 with the caller's 32 aux bytes), `verify(key, message, sig)`
+  (false for any bad input, never a panic). `fingerprint(key)` is 8
+  characters: lowercase unpadded base32 of `SHA-256(key)[..5]`; the format
+  is pinned by a test. `DtlsFingerprints` = (offer side's, answer
+  side's) SHA-256 certificate fingerprints, the same at both ends of a
+  link (olr-net's `dtls_fingerprints`). `challenge_message(nonce, host,
+  fps)` is `b"rust-liero join v1" ++ host nonce ++ host key ++ fps.0 ++
+  fps.1`, what a joiner signs; `host_proof_message(client_nonce, client,
+  fps)` is `b"rust-liero host v1" ++ joiner nonce ++ joiner key ++ fps.0
+  ++ fps.1`, what the host signs (N37); `password_proof(nonce, client,
+  fps, password)` is `SHA-256(host nonce ++ joiner key ++ fps.0 ++ fps.1
+  ++ password)`, bound to the joiner and the link so a relayed proof fails
+  (plan 12a final review B-I1).
+- The secret lives in `<data>/identity.ron` (olr-ui's `Store::load_identity`).
+- **Host** (`host.rs`, `LobbyHost`): transport events, messages and time in;
+  `outgoing()` (peer, `ToClient`) and `events()` (`HostEvent`) out. State
+  changes are coalesced: `state()` is always current, and one `Lobby` per
+  `outgoing()` drain goes to every member (also flushed right before a
+  `Notice(Joined)`, so the others know the member it names).
+  - Join: `connected(peer, ip, path, now, nonce, fingerprints)` (`path`:
+    how the transport reaches the joiner, olr-net's `Connected { path }`,
+    kept as the member's `Member::path`; the host's own player has `None`)
+    sends `Challenge` (a banned IP:
+    `Refused(Banned)`; an IP held off for guessing: `Refused(Throttled)`);
+    `Hello` is checked for the guessing hold again (`Throttled`: links
+    opened before it get no more guesses), bans (`Banned`), a key already
+    in the lobby or the host's (`Busy`) and room (`Full`); a `Hello`
+    passing them is answered at once with `HostProof`, the host's
+    signature of `host_proof_message(Hello's nonce, joiner key,
+    fingerprints)` (BIP-340 aux: the challenge's nonce, fresh per link);
+    `Prove` must verify over `challenge_message(nonce, host key,
+    fingerprints)` (else `Malformed`), then the hold again and its password
+    proof (`Password`; `password_proof(nonce, joiner key, fingerprints,
+    password)`, so a proof relayed from another link or key fails;
+    `PASSWORD_TRIES` (3) wrong proofs from one IP within
+    `PASSWORD_WINDOW_US` (60 s) hold it off for `PASSWORD_LOCKOUT_US`
+    (60 s); the empty password's proof is no guess; at most
+    `PASSWORD_ADDRESSES` (1024) addresses remembered, the oldest
+    forgotten) and the bans and room again; then `Welcome` to the joiner,
+    `Lobby` to the others, `Notice(Joined)` to all. Anything else before the proof, a second `Hello`, or no proof
+    within `PROOF_TIMEOUT_US` (10 s): dropped. Every refusal and drop is
+    `HostEvent::Kick` (close the transport); a member sending
+    `Hello`/`Prove` again is kicked. `Bye` (before or after the proof) is
+    `HostEvent::Close` (close the transport; a member also `Left`).
+  - Seats: players take the lowest free slot below `max_players`; when
+    full, spectators (members ≤ `max_players + max_spectators` ≤ 48). A
+    joiner during a match is `Waiting` while a seat is free for the next
+    match (a waiting member holds a seat only if it wants to play, not a
+    spectator made to wait for its content). While gathering, members who want to play (not spectating by
+    choice) take free seats in join order (`reseat`). Names are sanitized
+    and made unique ignoring case with " (n)" (cut to 20 characters).
+  - Ready: said ready with nothing `missing`; `Ready(true)` with missing
+    content is refused (`MISSING_CONTENT` notice), missing content clears
+    it, a setup change clears every member's but the host's (the host
+    starts ready) unless only its bots changed (ruling T13-C: a server's
+    fill bots, Add/Remove bot), and so does the return to gathering.
+    `set_setup` outside gathering is `LobbyError::NotGathering` (the
+    running match's setup stays what the lobby shows). `LobbyError` and
+    `NotStartable` display as words for players (`Display`), never their
+    Rust names.
+  - `ip_of(member)`: the address it joined from (the content side counts
+    skin fetches by address).
+  - `revision()` changes whenever `state()` does (compare it instead of
+    cloning the state: the dedicated server's poll).
+  - Chat: sanitized and cut to 200 characters; `CHAT_LINES` (5) per
+    `CHAT_WINDOW_US` (5 s) per member, beyond: dropped and `SLOW_DOWN` to
+    the sender. Relayed as `Chat` to all and `HostEvent::Chat`. A dedicated
+    server's `chat` is a `Notice::Message`.
+  - Looks: `LOOK_CHANGES` (4) `SetLook`s per `LOOK_WINDOW_US` (1 s) per
+    member are taken (each rebuilds the host's content list and may
+    start a skin fetch; plan 11 review C2); beyond them only the latest is
+    held (`look_held`) and `tick` takes it once the window allows, so the
+    member's last look always wins (a dragged colour slider).
+  - Kick/ban: the host (`kick`) or an admin key (`AdminCommand::Kick/Ban`);
+    the host is never kicked; a ban stores the key for the lobby's life
+    (spec §5.2, ruling T13-B: by key); `ban_with_address(member, by)` (the
+    host's, a server's `/banip`; `by`: the acting admin's member id, `None`
+    for the host's own Ban button or a server command) also bans the
+    member's IP (`banned`, `banned_ip` for the endpoint's gate;
+    `banned_keys`/`banned_ips` list them, `ban_key`/`ban_ip` add a bans
+    file's, `unban_key`/`unban_ip` lift them). N59: a member whose `path`
+    is `Relayed` comes from its TURN relay's address, so only its key is
+    banned, and `RELAYED_BAN` ("reached through a TURN relay: banned by
+    key only") goes to `by` as a `Notice::Message`, or with `None` as
+    `HostEvent::Notice` (olr-online's `OnlineEvent::Notice`).
+    `Next`/`Settings` from an admin are `HostEvent::Admin`; non-admins get
+    `NOT_ADMIN`.
+  - Start (ruling PF1): `can_start` (gathering, at least one player —
+    a member or the host's, `NoPlayers` — 2..=32 worms with bots, every
+    player ready; `StartRequested` when it turns `Ok`) → `start(seed,
+    rtts)` returns `MatchStartWire` (players by slot, then `setup.bots` in
+    order; `input_delay(rtt)` per player, the host 0, an unmeasured one
+    `MAX_INPUT_DELAY`; `start_checksum: 0`) and sends nothing but a
+    `Notice::NotReady` on failure → the match layer fills the checksum →
+    `announce_start(wire)` (`Stale` if anything a start depends on changed
+    since `start`: a generation counter; pings do not count): `Start` to
+    everyone, `Phase::Starting` →
+    `playing(tick)`: `Phase::Playing`. `match_ended(end, now)`: `Ended` to
+    all, `Phase::Results` for `RESULTS_US` (5 s, in `tick`), then gathering.
+    Ids of the running match's members are not reused until it ends.
+    `force_start` (ruling T6-A, spec §7.2): players not ready watch this
+    match as spectators and get seats back at the next gathering; nobody
+    moves when the ready players alone cannot start.
+  - Content (N33): `lacking()` lists the members whose last `Have` named
+    something missing, or that have not answered the current content list:
+    `set_content_revision(r)` (the online layer's `ContentMsg::List`
+    revision) makes every member lacking until its `Have { revision: r }`
+    (one for another revision is ignored; without a revision every
+    `Have` counts). A lacking member is not ready (a `Ready(true)` while
+    only unanswered is kept and counts once answered). At a start (`announce_start`; `force_start` for
+    players) a lacking member is `SeatWire::Waiting`: no `Start`, still
+    connected, seated again at the next gathering. A member welcomed during
+    a match is waiting too. Either way `HostEvent::ContentComplete(id)`
+    fires once, on the `Have` that empties its list (so a client sends
+    `Have` after the welcome, empty or not); the online layer lets it
+    spectate then, not at `Joined`. `set_download(member, percent)`
+    publishes `Member::download` (cut to 100), at most once per member per
+    `DOWNLOAD_EVERY_US` (250 ms) of the latest time given to the host; a
+    held-back value is shown by `tick`; an empty `Have` clears it.
+  - `set_ping(peer, ms)`: the transport's round trip in `Member.ping_ms`
+    (a change is a `Lobby`: call it every few seconds).
+  - `set_path(peer, path)`: the link's path now (ICE moved to another
+    pair): the member's `path` (or a pending link's) follows, a change is
+    a `Lobby`, and N59's ban decision reads it (final review B-M1);
+    whether it changed.
+  - Leaving (`Bye`, `disconnected`): removed, `Notice(Left)`,
+    `HostEvent::Left`; `timed_out` (a link that timed out; N86):
+    `Notice(TimedOut)`, `HostEvent::TimedOut`; during a match the slot's worm
+    is withdrawn (olr-netcode). A migrated lobby never keeps the old host's
+    member and drops players not back as `Left` (PF12d-3).
+  - Standby and succession (plan 12c): `ToHost::Standby { port, relays }`
+    is kept per member (invalid ones ignored); a change is taken at most
+    once per `STANDBY_WINDOW_US` (5 s), a later one is held, the latest
+    wins, and `tick` takes it (as `SetLook`: a member alternating its
+    endpoint makes the host send at most one `Succession` per window).
+    `succession()` (N64): the match's players in join order, then
+    spectators, then waiting members; the host's own member is left out.
+    `can_host` needs a standby and the member's `Start` of this match (a
+    player or a spectator from the start; a mid-match joiner follows only). `direct` is the address the member joined from when IPv4, not
+    global, its `path` is not `Relayed` (N59/C5) and its port is
+    >= `MIN_STANDBY_PORT`. `Succession` goes to every member after the
+    `Start` and, while `Starting`/`Playing`, whenever the list differs from
+    the last sent (coalesced into `outgoing()`); never while gathering.
+  - Migrated lobby (`host/migrated.rs`, N72): `LobbyHost::migrated(key,
+    state, succession, match_ids, cfg)` (`NotASuccessor` unless `key` is in both): the
+    successor is the host's own member (ready, admin, its seat); every
+    other member the succession names is kept, away (no link), with its
+    id, look, seat and admin mark; the old host and unnamed members are
+    gone; `cfg.password` is ignored; `match_ids` (the `MatchStartWire`'s
+    member ids) and the state's players' ids stay reserved and `next_id`
+    starts past the highest, so a departed player's id is not reused. The
+    successor should be a `can_host` entry. The state does not say who got
+    the `Start`: a player did, and a spectator did if its entry was
+    `can_host` (`away_in_match` uses it). A spectator successor
+    keeps its seat and `wants_play` (seated at the next gathering); other
+    spectators keep watching (the wire does not say whether they chose).
+    Closed: a `Hello` whose key is not in the succession is
+    `Refused(Closed)`; an away member's key goes through the usual proofs
+    and `rejoin`s (old id, current state, `HostEvent::Rejoined`,
+    `Notice(Joined)`; its standby stays what the old list said until it
+    reports). `away()`, `away_in_match()` (seat Player or Spectator: the
+    ones N68 waits for) and `drop_away()` (`Left` for each; their keys then
+    join as mid-match joiners).
+  - The state never breaks olr-proto's decoders (looks, names, chat, end
+    reasons sanitized; setups validated: `LobbyError::InvalidSetup`).
+- **Client** (`client.rs`, `LobbyClient`): `new(.., expected_host)`,
+  `connected(fingerprints)` (the link's, as this end saw them); on
+  `Challenge` sends `Hello` (the `aux` given with the challenge as its
+  nonce); on `HostProof` that verifies under the challenge's key over
+  `host_proof_message(its nonce, its key, fingerprints)` sends `Prove`,
+  with the password proof when the challenge asked for one: only a host
+  that proved its key gets it, and a `Refused(Password)` before that
+  proof closes (`Closed`), unbelieved, so an impostor can neither guess
+  the password from a proof nor prompt the player for it. A challenge naming another key
+  than `expected_host` (nothing sent) or a proof that fails (`Hello`
+  alone sent) is `WrongHost` (carried ruling F-B, N37): a man in the
+  middle presents its own DTLS certificates, so the fingerprints differ
+  and both proofs fail; without `expected_host`, an impostor proving its
+  own key is not caught (invites pass the key). A `Welcome` before the
+  proof is ignored; a `Welcome` or `Lobby` without
+  this member closes (`Closed`); `ClientEvent`s for the welcome, refusals, lobby
+  changes, chat, notices, start, end, kicks and closing. Actions are sent
+  only once joined; `leave()` sends `Bye`. `standby(port, relays)` reports
+  the member's standby endpoint (now if joined, and again after every
+  welcome); `succession()` is the host's latest order (empty before the
+  first).
+- **Harness** (`harness.rs`, `Net`; behind the `test-hooks` feature,
+  enabled by this crate's own dev-dependency): the host and clients in one process,
+  messages tagged and encoded through olr-proto, a fixed one-way delay
+  (what arrives at one instant is delivered before the drain: one poll),
+  virtual time (`settle`, `run`), raw peers for forged messages
+  (`join_raw`, `send_raw`), every link's DTLS fingerprints `FINGERPRINTS`
+  (`join_seeing`: a client seeing others, a man in the middle;
+  `join_via`: a link reached by another `Path`, such as `Relayed`),
+  `disconnect`, and the match layer's `start`.
+
+Test: `cargo nextest run -p olr-lobby` (`tests/lobby.rs`: one test per rule
+and a proptest of random messages and host actions — a crowd of worst-case
+members included — keeping every sent message decodable).

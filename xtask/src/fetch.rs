@@ -1,6 +1,6 @@
 //! `cargo xtask fetch-olx-content`: sparse-clones the pinned OpenLieroX commit
 //! listed in `content/olx-manifest.ron` (git verifies integrity by hash) and
-//! imports the listed items with `rl-cli import`.
+//! imports the listed items with `olr-cli import`.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -70,7 +70,7 @@ fn patterns(m: &Manifest) -> Vec<String> {
 
 fn checkout(m: &Manifest, dir: &Path) -> anyhow::Result<()> {
     let pats = patterns(m);
-    let stamp = dir.join(".rl-fetched");
+    let stamp = dir.join(".olr-fetched");
     let want = format!("{}\n{}", m.commit, pats.join("\n"));
     if std::fs::read_to_string(&stamp).is_ok_and(|s| s == want) {
         return Ok(());
@@ -110,7 +110,7 @@ pub const PACKS: &str = "content/packs";
 const FRESH: &str = "target/content-fresh";
 
 /// Fetches the pinned checkout and, if `import` is set, imports it with
-/// `rl-cli` into [`PACKS`] (`cargo xtask fetch-olx-content`; commit the
+/// `olr-cli` into [`PACKS`] (`cargo xtask fetch-olx-content`; commit the
 /// result).
 pub fn run(import: bool) -> anyhow::Result<Paths> {
     let root = root();
@@ -199,7 +199,7 @@ fn files(dir: &Path) -> anyhow::Result<std::collections::BTreeMap<String, Vec<u8
 /// this import's).
 fn import_into(root: &Path, m: &Manifest, gamedir: &Path, out: &Path) -> anyhow::Result<()> {
     let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-    cmd.current_dir(root).args(["run", "--quiet", "-p", "rl-cli", "--", "import", "--olx"]);
+    cmd.current_dir(root).args(["run", "--quiet", "-p", "olr-cli", "--", "import", "--olx"]);
     cmd.arg(gamedir).arg("--out").arg(out).args(["--revision", &m.commit]);
     for x in &m.mods {
         cmd.args(["--mod", x]);
@@ -220,10 +220,10 @@ fn import_into(root: &Path, m: &Manifest, gamedir: &Path, out: &Path) -> anyhow:
         cmd.arg("--extra-skins").arg(&e.dir);
         cmd.args(["--extra-skins-source", &e.source, "--extra-skins-revision", &e.revision]);
     }
-    let out = cmd.output().context("running rl-cli import")?;
+    let out = cmd.output().context("running olr-cli import")?;
     if !out.status.success() {
         bail!(
-            "rl-cli import failed:\n{}{}",
+            "olr-cli import failed:\n{}{}",
             String::from_utf8_lossy(&out.stdout),
             String::from_utf8_lossy(&out.stderr)
         );

@@ -1,0 +1,893 @@
+# olr-game
+
+The game binary (spec §8.6, §19 E10-E12, §21): a winit window, the 100 Hz
+fixed-tick loop, interpolated wgpu rendering with cosmetic entities, sound,
+input, an egui overlay and the menus (`olr-ui`). It plays the M5 sandbox
+(E11: the player and N idle targets on a level with a mod's first five
+weapons), a Deathmatch against bots (M6) and replays.
+
+```
+cargo run --release -p olr-game                      # the menus
+cargo run --release -p olr-game -- --level "CastleStrike" --mod "MW 1.0" --targets 3
+cargo run --release -p olr-game -- --mode deathmatch --bots 4 --difficulty medium \
+    [--lives L] [--kill-limit K] [--time-limit M] [--seed S] [--record f.rlrp]
+cargo run --release -p olr-game -- --replay f.rlrp [--speed 1|2|4|8|16|max]
+cargo run --release -p olr-game -- --spectate --bots 8 [--speed 16]   # bots alone, watched
+cargo run --release -p olr-game -- --host [name] [--port 23400]        # host online, the Lobby opens
+cargo run --release -p olr-game -- --join 192.168.1.20[:23400]         # join online
+cargo run --release -p olr-game -- --join rlx1…                         # join by invite code
+cargo run --release -p olr-game -- --net-sim typical                   # feel a network (spec §9.10)
+```
+
+- **Layer 6.** Uses `olr-ui`, `olr-content`, `olr-present`, `olr-scene`, `olr-fx`, `olr-render`,
+  `olr-audio`, `olr-input`, `olr-sim`, `olr-modes`, `olr-bots`, `olr-replay`,
+  `olr-terrain`, `olr-pack`, `olr-online`, `olr-netcode`, `olr-proto`,
+  `olr-lobby` (identities, host settings), `olr-net` (endpoint settings,
+  LAN announcements, `IceConfig`), `olr-discovery` (the hosted lobby's summary,
+  `GameSummary::of_lobby`, and `hosting`, shared with olr-server; the
+  relay pool, the game list, pings, invites), plus winit,
+  wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
+  are `eprintln!("warning: ...")`, each once.
+- **Menus first** (`main.rs`, `shell.rs`, plan 7 task 2): without a flag
+  that chooses a game (`GAME_FLAGS`: `--mode`, `--replay`, `--level`,
+  `--mod`, `--targets`, `--seed`, `--script`, `--demo`, ...) the game opens
+  the main menu, with `settings.ron`/`profiles.ron` from the data directory
+  (`olr_ui::Store::platform`; warnings logged; `Store::notices`, a newer
+  game's file left untouched, on the main menu) and the first match seed
+  from the clock (each seed is in its replay). With such a flag it plays
+  that game at once as before (scripted runs and tests: Esc quits, F5
+  restarts, `--record`). `--shot`, `--autoquit-after` and `--stats` work
+  in both. `Shell` holds the `UiState`, the menus' data, the store and the
+  game playing (`Playing { assets, session }`); `app.rs` draws
+  `olr_ui::screens::show` over the overlay, feeds the actions to
+  `Shell::act` and does the `Outcome`s (`app/menus.rs`: quit, bindings,
+  video through `video::Video` and the paced window requests, a started
+  game's upload). A
+  start is loaded by `Shell::poll` after the frame that showed "Loading…";
+  a failure (a pack missing or broken: `setup::load_match`, `load`,
+  `load_replay`) returns to the menu with the reason (Review Focus 3).
+  A replay file (a typed path too) is read by `setup::read_replay_file`:
+  a regular file only (a FIFO never blocks), its header checked first, at
+  most `MAX_REPLAY_BYTES` (twice `MAX_TICKS` × `MAX_WORMS` key bytes plus
+  16 MiB).
+  Esc and F5 are the menus' there: Esc pauses (ticks stop; the pause menu
+  resumes, opens the options or leaves), F5 restarts in place. A
+  Deathmatch starts on the weapon selection (`shell::weapon_menu` gives
+  `MenuData::weapons`; skipped when there is no choice): no tick until
+  Done, whose `ArmPlayer` puts `Player::HumanWith` in the assets' options
+  and rebuilds the world (`Session::rebuild`). `Shell::tick(keys)` ticks
+  only when neither the pause nor the selection holds the game (the loop
+  calls it; replays record ticks only). The app feeds the game's keys
+  held (`MenuData::held`) every frame. Results show → `MatchOver`
+  (`Session::results_shown`; `MenuData::results` set); Save replay keeps
+  `Session::replay` with `olr_ui::replays::save_kept`. Every Deathmatch's replay is saved in the
+  data directory's `replays/` when it ends, restarts or the game quits
+  (`olr_ui::replays::auto_save`, none of no tick); the Replays screen plays
+  them. Settings are written at most once a second (`Shell::flush`) and
+  at exit. The human's profile names and colours the local slot's worm
+  (`PlayerLook`) and its skin is that worm's (`Assets::skin`); every
+  other worm, and every worm of a replay, wears OLX's default skin
+  (`Assets::bot_skin`, as OLX's bot profiles) in OLX's bot colours away
+  from the player's (`olr_ui::bot_colours`; a replay's worms in the
+  default colours). Weapon selection's Done arms the local slot.
+  The menus list and play `--content` with the data directory's `packs/`
+  over it (`Content::open_layers`, spec §9.4; the command line's games
+  use `--content` alone; without the flag `olr_content::default_content_dir`:
+  `content/packs` beside the executable, else in the working directory). **Import** (plan 7 task 7): `StartImport`
+  spawns an `olr_ui::import::ImportJob` (one at a time; without a data
+  directory the screen says so), `Shell::poll` feeds its reports to
+  `MenuData::import` every frame, and when it ends lists the content again
+  (`list_content`: the catalog, `MenuData::set_catalog` so re-imported
+  thumbnails are made again, the skin preview reloaded) and reports
+  `ImportFinished`; no game starts meanwhile (`UiState`); `finish` (quit)
+  stops it, waiting at most `IMPORT_STOP_WAIT` (2 s).
+  `Shell::update_preview(ctx)`, after the menus are drawn,
+  uploads the profiles screen's skin preview (`MenuData::preview_wanted`,
+  `olr_ui::skin_preview::frames`) as egui textures (`MenuData::preview`,
+  from the next frame), loading the skin once while it stays the same.
+- **Options** (`video.rs`, plan 7 task 4): `Video::change` asks the
+  window requests for a size or mode only when the preset or fullscreen
+  changed (fullscreen keeps its size for later) and returns the rest to
+  apply at once (`Live`: UI scale; VSync or uncapped, `Gpu::set_uncapped`
+  re-configuring the surface when the present mode changes; the filter,
+  `renderer.settings`); interpolation is the shell's
+  (`Shell::interpolation`, new games and the one playing). The window opens
+  at the saved preset and mode (`Video::opening`, physical pixels;
+  fullscreen keeps the preset for when it ends), so no resize follows its
+  creation. `--fullscreen`, `--uncapped`, `--filter`, `--no-interp`,
+  `--hud-layout` given
+  on the command line win for the run (`video::Overrides`, applied before
+  the `UiState` is made, so the options show them); `Shell::set_overrides`
+  keeps the file's values for them until the player changes them in the
+  options. Volumes: `master * sfx` to the menus' or the game's
+  `Audio::set_volume` at once (`Shell::volume`). While the options capture
+  a key, the app feeds `MenuData::capture` every window and gilrs event,
+  and egui hears no key (`app::egui_hears`).
+- **Single thread** (spec §8.6): the device is created and used only on
+  the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
+  used the device crashes when it exits. kira runs its own audio thread;
+  an import runs on its own (`olx-import`), which touches no device, and
+  each online peer's network pump on its own (`olr-game net`, below),
+  which touches no device either.
+- **WSL** (`wsl.rs`): on a WSL kernel, unless the user set `WGPU_BACKEND`
+  or `GALLIUM_DRIVER`, the game starts itself again with
+  `GALLIUM_DRIVER=d3d12 WGPU_BACKEND=gl` (Mesa reads the variable when the
+  driver loads, and `set_var` is unsafe). With NVIDIA's WSL driver present
+  (`/usr/lib/wsl/lib/libcuda.so.1`) it also sets
+  `MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA`, unless the user set it: Mesa
+  otherwise takes the first adapter Windows lists, often the CPU's
+  integrated GPU. WSLg presents through GL at the
+  compositor's 60 Hz with FIFO only.
+- **Playfield and scale** (`app.rs`, the user's rulings after the v0.1
+  playtest): the game is designed for 16:9. `playfield(size)` is the
+  window's centred 16:9 frame above the HUD bar (`olr_ui::hud::playfield`,
+  whole pixels); `Gpu::draw` renders the world there
+  (`Renderer::render_in`, black around it) and the egui overlay paints
+  the bar (and the side layout's columns) over the rest; the names'
+  `ScreenMap` uses the same rectangle (`olr_render::dest_rect_in`). The
+  view is `olr_scene::Viewport::GAME` (427 × 192 world pixels) for every
+  window and HUD layout (spec §19 E4 amended): resizes do not touch it.
+  The UI's scale: every frame `olr_ui::theme::set_scale` with the
+  display's scale factor, `scale_height(size, in_game)` (the frame's
+  height in game, the window's in the menus) and the options' UI scale
+  (`App::ui_scale`; 1 for the command line's games).
+  `olr-render`'s goldens do not change.
+- **Loop** (`app.rs`): each frame first acquires the surface texture
+  (`Gpu::acquire`), so a VSync wait comes before the input is read, not
+  between reading and drawing it. Then `TickClock` (`clock.rs`) runs the
+  ticks owed, at most `MAX_CATCHUP_TICKS` (10) per frame, dropping the
+  rest. egui hears each frame's real time (`app::egui_frame_time`, its
+  `predicted_dt`: the game never asks egui for a repaint, so egui's
+  `stable_dt`, which menu animations and the skin preview step by, would
+  otherwise be 1/60 s at any frame rate). Per tick: script steps, `input.latch_tick()`, `Session::tick` (`world.tick` →
+  its sounds, without others' rope throws, `audio.play` at the view centre → `Presentation::on_tick`, see
+  `olr-present` → damage popups). Per frame: `Session::build` (scene,
+  entities), the overlay, `Presentation::upload` (atlas if a worm was
+  added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
+  one is due (one that fails is a warning, never the end of the game).
+- **Fast-forward** (`speed.rs`, plan 7 task 8, the user's request): a
+  game nobody plays (`Session::human()` false, worked out again at each
+  restart: a replay, or `--spectate`'s
+  bots alone, `Assets::human_plays`) runs at `Speed` 1×, 2×, 4×, 8×,
+  16× or max: `--speed`, PageUp/PageDown (`App::change_speed`; both in
+  `olr_ui::GAME_KEYS`), "Fast-forward N×" as a HUD notice, with the speed
+  reached when short of it ("16× (≈9×)"; always at max: `speed::Rate`
+  over the last `RATE_FRAMES`, `speed::shown`). A game a person
+  plays runs at 1× (`Speed::for_game`; `--speed` refused at start, the
+  keys ignored). `speed::run_frame` (the app's loop and `tests/speed.rs`'s)
+  runs exactly the `due` ticks at 1× (ticking or not: the script's clock
+  and the input latch keep real time in the menus and the pause); faster,
+  the `due` ticks times the factor, stopping at a tick that does not
+  happen and, once the real-time ticks ran, when the frame's `MAX_BUDGET`
+  (12 ms) is spent, so the window stays responsive; at max until that
+  budget (`MAX_TICKS_PER_FRAME`). It draws only the last;
+  `Speed::sound` thins the sounds (`Session::sound`: every tick up to
+  2×, the frame's last from 4×, none at max). The world never sees the
+  speed: `tests/speed.rs` plays bots alone at 1×, 4×, 16× and max to the
+  same world and replay bytes and replays them at max. A menu start
+  resets the speed to `--speed`. Spectating from the menus and replay
+  seeking are not there yet.
+- **Latency** (`latency.rs`): the exit summary's `input to present` is a
+  key press to the present call of the first frame drawing a tick that
+  read it; `--latency-probe <ms>` adds probes on a wall-clock grid (they
+  press nothing) for scripted runs. `acquire` and `present` are the swap
+  chain's waits. One frame in flight (`desired_maximum_frame_latency` 1;
+  wgpu's GL backend ignores it). Under WSLg the 60 Hz pacing is Wayland's
+  frame callback, before a frame starts: acquire takes ~0.01 ms.
+- **Session** (`session.rs`): the match without a window, so it is tested
+  headless; its presentation is one `olr_present::Presentation` (a worm a
+  mode spawns mid-match gets `add_worm`, which marks the atlas for upload).
+  What it plays is `setup::Game` (`Sandbox`, `Deathmatch`, `Replay`,
+  `Online`), loaded once into `setup::Assets`; who presses the keys is
+  `session::Driver` (`drive.rs`): the player alone, the player and
+  `MatchDriver`'s bots, `ReplayDriver` (an `olr_replay::Cursor` checking
+  every checksum; a divergence is shown and logged once, the replay stops
+  at its end), or `Online` (`online.rs`).
+  **The local slot** (`Session::local`, `Assets::local_slot`: the
+  sandbox's 0, a Deathmatch's first player that is not a bot, an online
+  match's own slot; `None` for a replay, bots alone and an online match
+  watched) gets the player's keys, name, look, the crosshair (the scene's
+  `local`; with no local slot a local game's worm 0 keeps it, as OLX's
+  local worms, and an online match watched has none), the camera
+  (`Presentation::follow`), the HUD, the big minimap dot, the highlighted scoreboard and results row (`Row::followed`), the
+  tally's player kills and `player_deaths`/`player_spawns`. Without one
+  the camera and the HUD follow the worm chosen (`follow`, `follow_next`,
+  worm 0 at first; `follow_next` skips worms that left, `World::gone`, and `after_tick` moves a watcher on from a followed worm that
+  left, N89: `watch::the_watched_worm_moves_on_when_it_leaves` through a recorded replay with `Recorder::withdraw`, and
+  `online::an_online_watcher_moves_on_when_the_followed_worm_leaves`, a
+  spectator in an online match); the left and right arrows choose it in any game nobody
+  plays (`Session::spectating`, `app::watch_key`: not in a menu, never a
+  played game's; "Watching <name>" on the HUD; `app::game_has_screen`: a
+  command-line `--spectate` or `--replay` always has the screen, though
+  its menus' state stays on the main menu, final review B-I4). **Per-worm
+  looks** (`session::WormLook { name, colour, skin }`, one per worm,
+  registered in worm order): local play's as above, an online match's the
+  lobby's (`setup::load_online` loads every slot's skin once by id from
+  the peer's content, downloads laid over, `Assets::skins`; one still
+  missing is the default skin).
+  `restart` (F5) builds the world from the assets loaded once: the
+  sandbox again, a Deathmatch's rematch (seed + rematch number; the
+  previous match's replay is handed back to save), a replay from the
+  start; the worms are the same, so the atlas stays and only the terrain is
+  uploaded again. It clears the last tick's events (the rematch's bots
+  think first, on the new world). Debug builds assert every `DRIFT_CHECK_TICKS` (100) that
+  the colour terrain's material is the world's (`session_catches_terrain_drift`).
+  A tick's bookkeeping (`after_tick`: clock, tally, log, end and results,
+  popups) reads a `TickView`: a local tick's world and events, or an
+  online match's `ConfirmedTick`.
+  **Whose rope throws are heard** (`throw_sound.rs`, the user's playtest
+  report 2026-10-16): only the player's own, as OLX plays `smpNinja` in
+  the human input handler alone (a bot's or a remote worm's throw is
+  silent): the local slot's, a replay's viewer's, nobody's for bots
+  alone or an online match watched. The simulation's THROW sounds carry
+  no owner, so `ThrowSounds::retain` keeps as many as that worm's
+  `NinjaRope::throws` grew since the last tick or poll (on the newest
+  predicted world online, inside `OnlineDriver::present`; a rollback that
+  takes throws back plays none); every other sound plays as before.
+  `Session::sounds` is what the last tick or poll played (or would have,
+  with `sound` off).
+- **Online** (`online.rs`, plan 10 task 10; spec §3.4, decision N20):
+  `Session::online(assets, OnlineDriver::new(handle, &start), ..)` after the
+  peer's `MatchStarting` (`handle`: the peer's `net::PeerHandle`, below;
+  the events after it in that poll go to `Session::present_events`, or
+  `present_polled` with that poll's `pumped`); then
+  `Session::frame(now, local_keys)` once a frame instead of
+  `Session::tick`: one `PeerHandle::poll` (`OnlinePeer::poll` with the
+  pump's queued events first; the local keys
+  from `local_keys`, which the netcode calls once per new tick: the input
+  latch; the scene reads every simulated tick inside it,
+  `after_tick_resimulated` for a re-simulated one), then the poll's events
+  in a fixed order whatever their order in the poll (`online::present_poll`,
+  pinned by `a_loaded_state_is_presented_before_the_polls_ticks`): a
+  loaded state (`OnlineEvent::StateLoaded`: `Presentation::state_loaded`,
+  `NetPresenter::reset`; also when the pump ran ticks, `OnlineDriver::
+  present`: a `StateLoaded` at the pumped tick and the whole map restored
+  come first, and ticks the pump ran after the poll, `PeerHandle::
+  with_pumped` under the same lock, drop the poll's own ticks), the
+  restored areas and ticks
+  (`NetPresenter::apply`, its sounds at the camera; debug builds check the
+  colour terrain after every advance, about 1 ms a frame at worst in
+  `an_online_match_runs_headless`), `NetPresenter::confirmed`, and the
+  confirmed ticks through `after_tick` (log, tally, results, clock,
+  popups: never a predicted tick, so a damage popup comes late, at the
+  confirmed tick's positions). The HUD's scoreboard and the followed
+  worm's lives, kills and deaths are the last confirmed tick's
+  (`Session::scores`); the newest predicted world is drawn
+  (`Session::with_world(f)`: `f` reads it under the peer's lock, so it
+  must not use the peer or `with_world` again: a nested lock panics
+  instead of deadlocking; one frame's reads may straddle a pump poll, which
+  the scene and HUD bear: they look worms up by index with `get`, and the
+  next poll starts the presentation again). At `MatchEnded` the peer stops presenting while its
+  session goes on to confirm and drain: `present_events` takes the world
+  presented last once (`OnlinePeer::take_ended_world`) into
+  `Session::world` and freezes there (`frozen`; no clone per frame),
+  pinned by `an_online_match_runs_headless` (when the pump ran ticks, the
+  frozen world's colour terrain is rebuilt from it); so too at a late
+  rejoiner's `Migrated { me: false }` (plan 12c, N72: its peer dropped
+  the match it played and kept its world, `take_ended_world`), until the
+  new host's start replaces the view (it watches; never its start world:
+  `a_late_rejoiner_watches_until_the_next_match`). The other events (lobby,
+  chat, end, connection) are handed back for the shell. On
+  `Disconnected`, `Kicked` or `Refused` the peer has dropped its match,
+  so the session would draw its start world: the shell must leave the
+  match view before the next build; `OnlineDriver::into_handle`
+  gives the peer back (its pump still running). An online match is never fast-forwarded (`human()`).
+  A `MatchStarting` among a poll's events and everything after it are
+  handed back unpresented (`present_events`): they are the next match's.
+- **Online from the menus** (`shell/online.rs`, `net.rs`; plan
+  10 task 12): `HostGame`/`JoinGame` make the `OnlinePeer` (the identity
+  from `Store::load_identity`, a fresh key with a warning when the file's
+  is no valid key; the selected profile's look, its skin by pack id; a
+  `Content` of the shell's roots; the host's setup from the saved match,
+  `net::setup_of`, bots "Bot N" in OLX's bot colours, never through
+  `MatchPrefs::sanitize`: a lobby may have no bot). The host is in its
+  lobby at once (`LobbyJoined`); a client when its first lobby names it.
+  A typed address goes through `shell::resolve`: a name's first IPv4
+  address (`choose_address`; an IPv4-mapped one counts); an IPv6 literal
+  or an IPv6-only name is refused with `IPV6_UNSUPPORTED` (the host binds
+  `0.0.0.0`, the client's UDP socket is IPv4).
+  **The network pump** (`net/pump.rs`, plan 12c Task 5, rulings PF12c-2,
+  PU-1, PU-2):
+  every online peer (a host's, a client's, `--net-sim`'s host) lives
+  behind a `PeerHandle` (`Net::peer`, then the match's `OnlineDriver`,
+  `Shell::sim_host`) from its start (`PeerHandle::pumped`) to its release
+  (`into_peer`: the pump stopped and joined within one of its polls, then
+  `release`'s leave, replay and NT-2 shutdown as before). Its thread
+  `olr-game net` wakes every `PUMP_EVERY` (10 ms) and polls the peer
+  whenever the UI thread has not for `PUMP_AFTER` (100 ms; the UI's last
+  poll an atomic): a dragged window (Windows' modal loop blocks winit) or
+  a long match load no longer silences the peer, while a slow frame (any
+  above 10 fps) is no stall and plays exactly as before (PU-1:
+  `frames_every_30_ms_play_as_before`, `..._45_ms_...`). Meanwhile the
+  local player presses the keys the UI last latched and still held then
+  (`PeerHandle::poll` keeps the last its `local_keys` gave, masked by
+  `PeerHandle::set_held`: `App::net_step` gives `InputState::held` through
+  `Shell::set_held_keys` before each network frame, so a tap is not
+  repeated) for `PUMP_HOLD` (250 ms) of the
+  stall, then `Keys(0)` (a long drag does not keep firing); the input
+  latch is untouched, nothing is drawn, the host's bots think inside the
+  peer; its events wait for the UI's next poll, except the presentation's
+  (`Ticked`, `Restored`, `StateLoaded`), which are dropped: that poll's
+  `PolledEvents::pumped` (the newest pumped tick) starts the presentation
+  again as after a loaded state (`OnlineDriver::resyncs` counts it; never
+  once the session froze its ended world). At most `PUMP_QUEUE` (4 096)
+  events wait: beyond it the oldest two neighbouring `Confirmed` with no
+  control event between them (never across a match's end or start; the
+  newest never thinned) are thinned into one (only the ticks with a kill,
+  spawn, message or the end, without
+  damage or positions; scores only with the end), so the HUD's log, the
+  tally's kills and the results survive a stall of any length (bound:
+  the exit summary's match time misses the thinned ticks, and their damage
+  popups are gone); then the oldest chat-like event goes (`Chat`,
+  `Notice`, `Left`, `TimedOut`, `Downloads`, `Reachability`, `RelayJoin`,
+  `ListenRelay`); control events (all others: a match's start and end,
+  the lobby, lagging, a lost connection, a replay) never go (PU-2), so
+  only they can pass the bound; each loss counted, the first logged. A
+  pump poll that panics stops the pump at once: a console warning, a
+  lobby/HUD notice at the UI's next poll, `is_pumped` false; the frames
+  poll on. The F2 meter counts only the ticks a frame's own poll ran
+  (`Session::polled_ticks`). One
+  `Mutex`, held for one poll (the UI's or the pump's) or one
+  `PeerHandle::with` (lobby actions, stats, the world read), never across
+  rendering and never while waiting on anything else: the UI waits at most
+  one pump poll. A peer locked again on a thread that holds it (directly
+  or through another peer's lock) panics instead of deadlocking.
+  `PeerHandle::with_pumped` hands the pending pumped tick to the
+  presentation and takes it, so a frame starts again once. The pump's time goes on from the UI's last `now` (a
+  test's clock too), and no poll is given a time before the last one
+  given. `Shell::with_peer(f)` is the peer's lock (tests:
+  `test_prompt_limit`); `Shell::pumped()` whether it has a pump,
+  `Shell::pump_polls()` its polls; `App::press(action, down)` presses a
+  bound key through the input path (autoplay's `Press`, tests),
+  `App::ticks_measured()` the meter's ticks.
+  `start_online` takes the content from the peer (`with`: an `Arc`) and
+  loads without the lock, so the pump keeps the match's network alive
+  meanwhile (`Shell::test_slow_load(d)`, `test-hooks`: each load `d`
+  longer). The ticks the pump runs are the netcode's like any other
+  (`olr-online`'s `OnlinePeer: Send`, pinned there): the peer cannot tell
+  which thread polled it. The hidden window (N21) is unchanged: while
+  hidden and online it still runs `hidden_frame` every `HIDDEN_FRAME`, so
+  the UI keeps polling and the pump stays idle; a hidden frame does more
+  than the peer's poll (the LAN announcer, a Public game's notes, the
+  replays, `--net-sim`'s host's start, the lobby and match flow), and a
+  slower wake would make every hidden frame rebuild the colour terrain
+  after pumped ticks.
+  `Shell::net_frame(now, keys)` (every frame, before the ticks; while an
+  online match plays its peer runs the ticks and the local clock rests)
+  polls `--net-sim`'s host, the LAN `Listener` on `LAN_PORT` while the
+  Multiplayer screen shows (games of another `FINGERPRINT` hidden), then
+  the peer once: through `Session::frame` while a match plays (the
+  input latch; `Keys(0)` while the match's menu, the chat or another
+  screen has the keys), else `PeerHandle::poll`. Events: `Lobby` →
+  `MenuData::lobby` (`net::lobby_view`: `PHASE_LOBBY` while gathering or
+  showing results, `SEAT_SPECTATOR`, the host's `can_start` reason, a
+  client's "Waiting for the host"; the peer sends its `Have` itself), the
+  weapon screen's menu for the lobby's mod (`net::weapon_menu`, decision
+  N19, from the peer's content, made again when it changes: a downloaded
+  mod counts, `net::WeaponsKey`), the host's LAN
+  announcement (`Announcer`, for `Visibility::Public` and `Lan`; `GameSummary::of_lobby(..).lan()`,
+  the level's name from the peer's content); `Chat` ("name: text",
+  `LineKind::Chat`), `Notice`, `Left` ("name has left") and `TimedOut` ("name has timed out"; OLX HasLeft/HasTimedOut) → the lobby's chat
+  (`net::CHAT_KEEP` lines) and the HUD log; `MatchStarting` → the last
+  match's view ends, `setup::load_online` (from `OnlinePeer::content`,
+  the content the match was built from), `Session::try_online` (a
+  failure hands the peer back to say goodbye) with the
+  events after it, `MatchStarted` (InGame), `Outcome::Started`;
+  (the delivering poll's `pumped` with them: `present_polled`);
+  `MatchEnded` → the results if they did not show yet; `Results`' Back →
+  `EndMatch`: the peer back to `Net` (`end`), the Lobby; `Lagging` → the
+  warning; `Kicked`/`Refused`/`Disconnected` → the match view goes at
+  once (`lost`), then `OnlineFailed` (Multiplayer with the reason);
+  **host migration** (plan 12c Task 9, spec §3.7): `Migrating(step)` →
+  `Net::migrating`, the step's text (olr-online's `MigrationStep`: "The
+  host is gone: moving the game to Anna…") as the playfield's top line
+  (`Shell::migration_line`, in place of "Connection problem"; amber,
+  wrapped to the picture) and `olr-game: migration: …` on
+  the console; a successor join's `Joining` steps meanwhile only on the
+  console (the menus wait for no join); `Migrated { host, me }` → the line
+  goes, "<host> is now hosting" or "You are now hosting" in the HUD and
+  lobby log and on the console; `me`: `Net::host`, `Net::migrated` (no
+  announcer, no `Hosted`, no connection line: the migrated game is closed,
+  N72; its lobby view, made again at once, the host's with `listing`
+  `MIGRATED_LISTING`); a late rejoiner (the peer without its match) also
+  logs `late_rejoin(host, playing)` ("You reached Anna after the match
+  resumed: you watch until the next match"; its lobby past the match:
+  "…after the match ended: you play the next one"): while the lobby still
+  plays, `Net::late` and its view stays frozen until the new host's start
+  lets it watch (`MatchStarting` clears it); when the lobby is past the
+  match, at once or with a later `Lobby` state (Results, Gathering),
+  `leave_late_view`: the view goes, `UiAction::MatchLeft`, the Lobby (a
+  host whose match ended sends no start: review Important 1); the
+  `HOST_BACK` notice (N69, called off) clears the
+  line; each `MigrationLog` (ruling FR12c-4: an attempt to reach a
+  successor, its name, address and outcome) only as `olr-game: migration:
+  …` on the console; `HostLost(why)` (`LostWhy`, its text on the screen:
+  FR12c-4) → `host_lost`: the match view goes at once, the
+  peer is let go (`release`: its replay to `Shell::replays`, saved by
+  `auto_save`), `MenuData::host_lost` (why), `host_lost_hosting` (this
+  player hosted: its own step-down, or `CUT_OFF`, ruling SB-2: it heard
+  none of its players), `host_lost_replay` set once the
+  replay is saved (`Shell::host_lost_pending`, that replay's number in
+  `Shell::replays`, so an earlier match's replay finishing first does not
+  say it: `save_online_replay`; none
+  for a mid-match watcher or without a data directory), then
+  `UiAction::HostLost` (the Host lost screen), never `OnlineFailed`.
+  The playfield's top line is `overlay::top_line(migrating, lagging)`.
+  Every client the shell starts takes part (`joining::migration_config`,
+  N81): `MigrationConfig { standby: a port-0 endpoint (the settings'
+  STUN, no port mapping, `allow_local` when every relay is local, the
+  `--net-sim` impairment, `Shell::ice`), relays: the settings' (none:
+  `None`), ice: STUN and the player's TURN (`Shell::ice`), region,
+  turn_from_nostr, allow_local, enabled }`; test hooks (`test-hooks`):
+  `test_migration(on)` (off: `MigrationConfig::off()`, D7),
+  `test_no_standby()` (N79: it follows, never hosts), `test_stop_pump()`
+  (`PeerHandle::stop_pump`: with no frames, as silent as a crashed game);
+  `ReplayReady` → `replays::auto_save` (a peer let go, `release`, its pump
+  stopped first, hands
+  its replay being made to `Shell::replays`, polled every frame and
+  waited for at quitting, at most `REPLAY_STOP_WAIT` 2 s: leaving right
+  after a match keeps its replay); `DesyncBundle` → `<data>/desyncs/
+  desync-<unix s>-<n>.rldg` (`net::save_bundle`, olr-online's bounded
+  `bundle::save`: 4 MiB a bundle, 64 MiB in all; olr-online's `GameBundle`:
+  the start, the confirmed input rows from tick 0, both checksums, the
+  build fingerprint, the platform; a `net-repro` for game bundles is
+  still to come). The lobby's commands (`lobby_command`): Start and Force
+  start take `UiState::take_seed`; a refusal shows as
+  `MenuData::online_status`. Leaving (`LeaveOnline`, the match menu's
+  Leave the game, quitting) says goodbye (`OnlinePeer::leave`).
+  **Downloads** (plan 11): `Shell::new` opens one `DownloadCache` in
+  `Store::cache_dir()` (`net::open_download_cache`: while another game
+  holds it, `InstallError::Locked`, `downloads-2` to `-4`; `Err(why)`
+  without one, logged once: downloads off, the peer's notice in the lobby
+  says why) and every peer it starts gets it (`PeerContent { cache,
+  upload_rate: HOST_RATE }`, `--net-sim`'s host and client the same one,
+  ruling PF11-4). `Downloads` → `Net::downloads` (`net::download_view`:
+  `queued`, `downloading`, `checking`, `done`, `failed: <why>`, `not
+  available`) and `LobbyView::downloads`; the prompt is
+  `OnlinePeer::download_prompt` (`DownloadPrompt` refreshes it), its
+  Download `approve_downloads`, its Leave leaves. A replay's packs
+  (`setup::load_replay`, the Replays screen's and `--replay`'s) come from
+  the roots, else from any of the cache directories (`net::cache_dirs`:
+  `downloads`, `-2` .. `-4`) by content hash, read without opening the
+  cache (`DownloadCache::lookup`: no lock, nothing written; N36), laid
+  over (`with_cached_packs`, `Content::with_packs`), then
+  `check_replay_packs` as before: a replay plays while a game holds the
+  cache, and `--replay` creates, locks and writes none. The
+  options' download cache row (`MenuData::download_cache`, kept current
+  by `Shell::poll` while the options show: packs and partials, read at
+  most every `CACHE_READ_EVERY` (1 s; at once on opening the options),
+  whether Clear may run every frame; its lock tried, never waited for;
+  `Shell::download_cache()` is the shared cache) and its Clear (`clear(&[])`: the menus keep
+  nothing), refused while an online game is on (`net` or `--net-sim`'s
+  host: "leave the online game first").
+  **The network's gate** (Task 9 review Critical 1): one predicate,
+  `Shell::network_live` (an online game, `online_active`; the Multiplayer
+  or Host screen; the LAN listener or the relays not yet let go; a typed
+  name being looked up). `App::network_frame` (every drawn frame, and the
+  hidden window's) runs the network frame while it holds, and
+  `Shell::net_frame` itself returns at once otherwise, so the tests'
+  frames go through the same gate (before, only an online game opened
+  it: the Internet tab and the LAN list stayed empty, a typed name hung
+  on "Looking up …"). **Hidden window** (decision N21): while
+  `Shell::network_live`, `about_to_wait` runs `App::hidden_frame` (the
+  network and the match's ticks, no drawing) every `Shell::hidden_wake`
+  (`WaitUntil`: not a spinning `Poll`): `net::HIDDEN_FRAME` (4 ms) while
+  an online game is live, `net::HIDDEN_IDLE_FRAME` (60 ms) for the lists,
+  lingering relays, a lookup or a replay being made alone
+  (`a_hidden_window_wakes_by_what_is_live`). **In-game chat**: the options' `online.chat_key` (T)
+  opens olr-ui's field over the playfield (`Shell::open_chat`, from
+  `App::key`); while it is open no key reaches the game (`handler.rs`,
+  `App::key`) and those held are released. **Network
+  overlay** (F3, spec §7.3, `overlay::network`): ping, input delay,
+  rollback depth last and p99 over 5 s (`net::NetMeter` on the session's
+  depth histogram), the last second's deepest, loss, corrections per
+  second, the frontier lag (`current_tick - frontier`); "Connection
+  problem" at the playfield's top while `Lagging` (a migration's line
+  instead while one is under way: `Overlay::migrating`). Online frames are
+  interpolated by the pace's own tick phase (`Session::online_alpha` →
+  `OnlineDriver::alpha` → `OnlinePeer::tick_phase`; the local clock's
+  phase is not the netcode's), 1 (the newest tick as it is) while the
+  match stalls or catches up, while its pace is held (a migration's
+  resume hold, a jump back: `tick_phase` `None`, plan 12c Task 8b), for a spectator, on the frame after a
+  loaded state or a rollback (`Presented::jumped`) and once it ended. The
+  host's setup packs are hashed once per mod and level (`Net::packs`);
+  `--net-sim` readies again whenever the lobby gathers. **Flags**: `--host [name]` and `--join <addr>` act through
+  the menus (`host_from_flag`, `join_from_flag`; nothing they change is
+  remembered: `UiState::restore_online`, so no later save writes it),
+  `--port <n>` hosts there and joins an address without a port
+  there (`Shell::set_port`; tests host on 0), `--net-sim <profile>`
+  (`start_net_sim`: a host in this process with `NET_SIM_BOTS` (3) bots
+  on the saved match, watching; this player joins it over a loopback
+  link impaired both ways, `EndpointConfig::impair`; the client readies
+  itself and the host starts whenever every player is ready).
+  **Finding games** (`finding.rs`, plan 12a Task 10, N39-N43): the shell
+  owns one `finding::Internet` while the Multiplayer or Host screen shows
+  or a hosted game is Public (`poll_internet`; otherwise it lingers
+  `RELAY_LINGER` (30 s, unsubscribed, still drained: a visit within it
+  reuses the pool, `relay_pools_opened`, `relays_open`), then closes and
+  clears `selected_game`, its pool
+  dropped on a thread of its own, `relays-closing`, so the UI never waits;
+  at quitting, `close_internet` waits so a closing note leaves): a `Pool`
+  on the settings' relays (`relays_of`: else `DEFAULT_RELAYS`; none: no
+  pool, "No relay reachable"; relays edited in Options close the open
+  pool, lingering or in use, and open one on the new list, final review
+  B-I2), a `GameList` (the settings' blocked keys, kept in step with
+  Options every frame, `Internet::set_blocked`: a block hides at once, an
+  unblocked host's game shows with its next note;
+  `allow_local` when every relay is local, `local_relays`, olr-discovery's
+  `hosting`: one's own or the tests' relay) subscribed (`GAMES_SUB`, `filter_since`) while the
+  screens show, the selected game pinged (`Pinger`, a TCP connect on a
+  thread, only games the list accepted with an address), the view
+  (`internet_entry`: the mod's name from the catalog, the region
+  converted naming every variant, the seated players and the bots apart
+  as the note gives them; the LAN list's `net::lan_entry` alike) made again only when something changed
+  (a note the list refused changes nothing: `GameList::offer`'s result).
+  The list's ages and the subscription's `since` use the wall clock read
+  at each poll (`unix_now`; never the frames' monotonic clock, which
+  stands still while the machine sleeps).
+  `InternetStatus`: `NoRelay` without relays or when none is connected
+  and each failed since the start, `Searching` until the list's first
+  `EOSE`, else `Listed`. `BlockHost` drops the key's games at once.
+  **Joining** (plan 12b, N46): `JoinGame { addr: Option<String>,
+  password, expected_host }` → `start_client`. Text that `is_invite` is
+  decoded (`Invite::decode`: "this invite code is damaged", …) and joined
+  with `Join { direct: invite.addr, nostr }`, its key expected, the
+  relays `join_relays(invite.relay_urls(), settings')` (hints first, at
+  most 8); a typed address or a LAN game is `Join::direct`; a listed
+  game's Join expects its key (N37: another is `WRONG_HOST`), its address
+  directly first then through the settings' relays, and without an
+  address through the relays alone (`listed_join`, `nostr_join`:
+  `NostrJoin { host, pool, region: the settings', turn_from_nostr: true,
+  allow_local: local_relays }`, `None` without relays; neither address nor
+  relays: `NO_WAY_TO_JOIN`). A join through Nostr's endpoint asks the
+  settings' STUN servers and their own TURN servers (`turn_of`:
+  `TurnServerSpec`s of `user:pass@host:port`, olr-online uses the first 2);
+  a direct-only join asks nothing. A typed host name is looked up on a
+  thread (`shell/joining.rs`, with the joins' building and `Unmapping`:
+  `Resolving`, `olr-game resolve`; `literal` takes an IP address
+  at once), polled by `net_frame` (`poll_resolving`; "Looking up …" the
+  waiting text; Back gives it up): no DNS on the UI thread. Every
+  `OnlineEvent::Joining(step)` is `MenuData::joining` (the Multiplayer
+  screen's waiting text) and a log line; `Connected` and
+  `OnlinePeer::connection` (following ICE, `poll_connection`) are the
+  client's `LobbyView::connection` (`path_text`); every member's
+  `Member::path` its `MemberView::path` (`path_tag`, `net::member_view`).
+  **Hosting** (`finding::Hosted`, in `Net::hosted`): the LAN announcer for
+  Public and Lan; for Public and Invite the endpoint asks the router to
+  open its port (`IceConfig { stun: the settings', port_mapping: the
+  settings', allow_local: local_relays }`) and listens on the settings'
+  relays (`HostListen { pool, public_address: the setting }`, N54; Lan
+  neither); relays edited in Options are listened on at once
+  (`OnlinePeer::listen_on`) and hinted by the invite. Its
+  `OnlineEvent::Reachability` is kept (`Hosted::set_reach`, each new line
+  logged "reach: …"): its address is `Reachability::direct()` (N47: the
+  router's usable mapping, else the public address setting; never STUN's)
+  on the invite (`LobbyView::invite`, the host's only) and, for Public, in
+  the notes (`Hosted::announced`: IPv4, and not a private one on public
+  relays, final review B-M2; with its external port); its lines are
+  `LobbyView::reach` under `listing`. Each `OnlineEvent::RelayJoin`
+  (ruling FR12b-3: what became of a join through the relays) is a line
+  in the host's lobby log (`chat_line`) and `olr-game: relays: …` on the
+  console; each `OnlineEvent::ListenRelay` (B-M4) is `olr-game: relay
+  <url>: connected|unreachable: …` on the console; each member's path
+  (`net::path_news`, final review C-M1) is `olr-game: join: <name> via
+  <tag>` when it first shows, `olr-game: path: <name> now via <tag>` when it
+  changes. A Public game's `Publisher` signs
+  with the install's identity: notes once the reachability settled, at
+  most `SETTLE_WAIT` (5 s) after hosting (`created_at` the wall clock; the
+  first note dated 10 s after this game's last closing note,
+  `Shell::closed_note`, A-M6), address or not (N46: joined through the
+  relays); none with an unreachable public address setting on public
+  relays (`Hosted::publishes`); the closing note when the lobby is left
+  or lost (`close_hosted`). `LobbyView::listing`: `FINDING_ADDRESS`
+  ("Checking how players can reach you…") until settled, `UNREACHABLE_ADDRESS`, "Not listed: no relays
+  …", "Not listed: no relay reachable" (checked before "Listed": all
+  relays dropped), "Announcing on the Internet…", "Listed on the Internet"
+  (a relay's `OK` for one of this game's notes: `Internet::forget_ours` at
+  each hosting, B-M1). An Invite game's line is about its code (B-I3):
+  `FINDING_ADDRESS`, then none with an address, else "This
+  code joins through the relays" (`INVITE_THROUGH_RELAYS`), or without
+  relays `INVITE_JOINS_NOTHING`. A Public game's pool opened on edited
+  relays gets the last note again at once (`Hosted::last_note`, `pool`).
+  **Leaving** (ruling NT-2): a peer let go (`release`: leave, its replay
+  taken, `OnlinePeer::shutdown`; `--net-sim`'s host too) never blocks;
+  its `Shutdown` (the router mapping being deleted, olr-net's confirming
+  `PortMapper::close` on a thread) is kept while the router is asked
+  (`prune_unmapping` at each push and network frame, `Shutdown::poll`:
+  finished ones go, one the router did not confirm warned about then;
+  `unmapping_pending`), `Shell::take_unmapping` hands them over as an
+  `Unmapping`, and `main` waits on it (`UNMAP_WAIT`, 1 s in all) after
+  `App` (the window) is dropped, warning when the router did not confirm.
+- **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
+  worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
+  restrictions) feeds `olr_content::build_match`, the same assembly as
+  `olr-cli match` (loadouts, the Deathmatch and its respawn loadout, the
+  shared area cache, the recorder). The command line's human gets random
+  enabled weapons (`olr_content::Player::Human`). The bots think on
+  the main thread inside `Session::tick`, in worm order, before the world
+  ticks; `MatchDriver` times each tick's thinking (`think_ns`, the F2 panel
+  and the exit summary's p50/p99) and counts thinks over budget (none, by
+  design). The recording ends `RECORD_AFTER_END` (3 s) after the game over
+  or at `MAX_TICKS`; `--record f` saves it at exit and on each rematch
+  (`f`, `f-2`, ... : `drive::record_path`).
+- **Match HUD** (`olr_ui::hud`, an opaque bar along the bottom, or the
+  side layout: `Frame::arrangement`, the options' `hud_layout`;
+  `hud::view(session, &Frame)` builds its `HudView` from
+  the session and the frame; no weapon rows
+  while the selection is open, `Shell::selecting`, the world's being a
+  placeholder until Done): names ("You", "Bot N"; a replay's "Worm N",
+  over the worms on screen: `worms_on_screen`), the event log
+  (`Session::log`, an `olr_ui::hud::Log`) from `Message` events (OLX's
+  texts, the last 64 lines; kills show
+  no weapon: `olr-sim` does not record the injuring weapon, and OLX drops
+  `" with <weapon>"` then), the time-limit clock (red in the last 10 s; it
+  stops at the end, as `Deathmatch::time_left_ms` does) and kill limit,
+  the minimap (`hud::MinimapTexture`: the colour terrain as an egui
+  texture, made again every `MINIMAP_TICKS`), Tab's scoreboard
+  (`World::scores`, the mode's order; `hud::ScoreKey` hides it when the
+  window loses focus, which never delivers Tab's release), and on
+  `GameOver` "Game Over", then after OLX's `GAMEOVER_WAIT` (3 s) the
+  results (the menus' screen; the command line's:
+  `olr_ui::screens::results::panel` with F5 rematch, Esc quit). `Session::tally` counts kills by bots,
+  the player and suicides (Kill events) over the run's match time.
+- **Window** (`window.rs`, the user's ruling after the plan 6 playtest):
+  not resizable, no maximise button; `--fullscreen` is borderless. Size
+  and mode changes come only from the game (`size`, `fullscreen` script
+  commands, the options menu: `video.rs`) through `window::Requests`: the latest
+  wins, applied at the start of a frame before `acquire`, at most once
+  every `MIN_CHANGE_INTERVAL` (250 ms, creating the window counts as a
+  change: `Requests::opened`). How a change reaches the window is
+  `window::plan`: on Wayland the window is **made again** (`App::recreate`:
+  a new winit window at the new `window::Shape`, its surface on the same
+  device by `Gpu::rebind`, which keeps the format and every GPU resource,
+  egui's window state on the same context; keys held released; events of
+  the closed window ignored, `App::current`; if the new window cannot be
+  made, the old one takes the change in place), because WSLg left pieces of
+  a changed window's client-side frame on the screen and a window made at
+  its size never did (`window.rs` module docs: placement, the first frame
+  callback's wait, why no window has the desktop's size). On X11 and elsewhere it
+  changes in place, and a fixed window's min and max move with it
+  (`window::apply`). While the window is hidden (minimised or
+  occluded: no frames) pending changes wait; they apply, still paced, when
+  frames resume. Why: WSLg's Weston 9 segfaults when winit's
+  client-side decorations are resized quickly (their `wl_shm` pool grows
+  while the compositor still reads it): resizes 50 ms apart crashed it
+  every run, 250 ms apart never. `--window-system auto|wayland|x11` (or
+  `OLR_WINDOW_SYSTEM`) picks the window system; auto stays Wayland on WSL
+  (paced at 60 Hz; WSLg's X11 path is robust but draws uncapped). When
+  winit ends its loop with an exit failure the game did not ask for, the
+  display server probably dropped the connection: `window::lost_connection`
+  says so and names the other window system.
+- **Surface** (`surface.rs`, Review Focus 4): a state machine over a
+  `Surface` trait: no frame while minimised or occluded (`drawable`),
+  configure on resize (once a frame, at the latest size), reconfigure and
+  retry on `Outdated` (Wayland's first frame), recreate on `Lost`, bounded
+  retries; every frame it gives is presented (a suboptimal one too; the
+  surface is configured again before the next). While not drawable the
+  loop stops redrawing and waits for window events (`ControlFlow::Wait`):
+  the sandbox pauses, and the hidden time is not caught up.
+  `gpu.rs` clamps every surface and screenshot size to the device's
+  `max_texture_dimension_2d` (`clamp_size`), picks 8-bit RGBA (gamma
+  space first: egui wants it, the readback reads 4 bytes a pixel) and
+  Mailbox when there is one, else FIFO; `--uncapped` prefers Immediate.
+- **egui textures** (`gpu::with_textures`): each frame's `TexturesDelta`
+  is applied (set before drawing, free after) and drained whether or not
+  a frame is drawn; egui hands each change out once (a lost font-atlas
+  delta makes egui-wgpu panic on the next patch) and debug builds assert
+  every delta was handled.
+- **Overlay** (`overlay.rs`): names over worms (inside the picture at
+  its edges: `name_rect`; only in game and not paused, `Shell::names_shown`,
+  never through the selection, the pause menu or the results); the
+  player's worm's label is its current weapon's name, in white, while the
+  change key is held now (`Overlay::changing`, the input's) or for
+  `WEAPON_NAME_TICKS` (OLX's 0.75 s) after a change made with it
+  (`Session::weapon_name`, `worm_label`; the change noted by
+  `Session::tick` and `Session::frame` from the player's keys,
+  `tests/weapon_name.rs`), summed damage popups
+  (`Damage.dealt`), the HUD (OLX's kills; the board's deaths and
+  suicides, every one, not the worm's score-gated counters), and F2's counters: FPS, frame and *busy* ms
+  (the frame without the VSync wait), tick ms, entities, projectiles,
+  voices. egui allocates per frame; the world path does not.
+- **Scripts** (`script.rs`): `--script <file>` or `--demo` press keys
+  through the input path at given ticks, plus `shot`, `restart`, `quit`,
+  `scores on|off` (Tab), `size <w> <h>`, `fullscreen on|off` (window changes wait out
+  `MIN_CHANGE_INTERVAL`, so a `shot` within 250 ms may show the old
+  size); `--shot <tick>`, `--autoquit-after <s>`, `--stats` (counters
+  each second) and the exit summary let an agent run the game in a real
+  window and read the PNGs (plan 5 ruling R3). `--frame-log F
+  [--frame-log-skip S]` (plan 8; S 3 s by default) writes `stats::FrameLog`
+  as RON at exit, for `cargo xtask envelope`: the frames after the first S
+  seconds (frame-to-frame and busy ms, `Pct`: p50, p99, max), the ticks
+  after S × 100, the frames per second, the surface's size at the last
+  frame (`App::drawn_size`: a `size` script command that did not take
+  shows here) and the GPU line (adapter, backend, present mode); the
+  test `frame_log_sample` keeps `fixtures/bench/tool-output/frame-log.ron`
+  equal to what it writes (xtask reads it strictly; rewrite with
+  `OLR_BLESS_TOOL_OUTPUT=1`). Every
+  percentile is nearest rank (`stats::percentile`: rank `ceil(n × p)`,
+  plan 8 ruling PF8; the exit summary's too).
+
+- **Autoplay** (`autoplay.rs`, spec §21 G7, plan 7 task 8): `--autoplay
+  script.ron` drives the real app from a RON script of steps (`at_frame`,
+  `ui`, `within`): `Click(label)` (the widget found by label in egui's
+  AccessKit tree, enabled for the run: `widgets`, `click_point`; a pointer
+  press and release injected into the next two frames' `RawInput`),
+  `ClickUntil(label, shows)` (clicks `label` until an enabled widget
+  `shows` appears, again every `RECLICK_FRAMES` (30) frames while it has
+  not: the effect, not the sending, ends the step; the e2e's Internet
+  tab row, whose Join once never showed after one click on a loaded
+  machine, `click_until_clicks_again_until_its_effect_shows`),
+  `Key(name)` (egui and `App::key`, as the window delivers a key),
+  `Type(text)` (egui's text event to the focused field: click it first),
+  `Press`/`Release(action)` (the input path), `WaitFor(screen)`,
+  `Wait(frames)`, `Screenshot(name)` (`<shot dir>/<name>.png`, checked not
+  blank: `sanity`), `Assert(Screen | Label | WindowSize | Speed | Playing
+  | TicksAtLeast | Lobby(members: n))` (the online lobby's members), `Quit`, `WaitForExit` (the menus' Quit). A step that
+  waits fails the run after `within` frames (`DEFAULT_WITHIN`); the game
+  then exits with the error. Each step is a JSON line in `<shot
+  dir>/autoplay.jsonl`, the last `pass` or `fail`. `--fake-clock` (only
+  with `--autoplay`: clap requires it, and the app ignores it without
+  one, since a fixed tick count a frame would change a played game's
+  speed; `tests/speed.rs`): every
+  frame is `FAKE_FRAME` (20 ms) and runs `FAKE_TICKS_PER_FRAME` (2) ticks
+  (max speed `FAKE_MAX_TICKS`), egui's time and the window pacing follow
+  it (`App::now`), the first menu seed is 1: a run gives the same frames,
+  replay and screenshots every time. `--data-dir` (a data directory
+  instead of the platform's) and `--no-sound` (no device) keep a run
+  away from the user's files and speakers. `fixtures/autoplay/menus.ron`
+  (with `settings.ron`) is `cargo xtask e2e`'s script, on Xvfb in `full`;
+  `fixtures/autoplay/online.ron` its online run against `olr-server` (real
+  clock).
+- **Soak** (`tests/soak.rs`, `cargo xtask full`): `soak_sandbox_10_minutes_headless`
+  plays 60 000 ticks of `Session` with chaos keys, an offscreen render every
+  10th tick (main thread only) and a kira mock device for sound, and bounds
+  the counters; it needs `OLR_GPU_TESTS`, content and an adapter, else skips.
+
+Test: `cargo nextest run -p olr-game` (the pure parts; `setup`, `session`,
+`tests/finding.rs` (plans 12a, 12b; olr-discovery's in-process
+`TestRelay`, the server in-process (`olr-server` a dev-dependency with its
+`test-hooks`: `test_gateway` pins its base to 127.0.0.1; `allow_local`,
+since its joiners' candidates are loopback ones, final review A-M4), no STUN, every
+endpoint's candidates on 127.0.0.1 (`Shell::test_ice`, this crate's
+`test-hooks` feature, enabled by its own dev-dependency, ruling NT-1):
+nothing leaves the machine, and `online::menus` sets no relay, no STUN
+server and no port mapping for every other test, as
+`fixtures/autoplay/settings.ron` does, and turns host migration off,
+`test_migration(false)`, D7):
+`a_listed_server_is_joined_from_the_internet_tab` (listed with its name,
+map, region and address, pinged, an impostor key refused, the listed
+key's lobby, the server's invite in upper case joins, blocked),
+`a_public_game_without_an_address_is_joined_through_the_relays` (the
+lobby's listing and reach lines, the invite without an address, listed
+without one, its invite joining through Nostr with the steps as the
+waiting text, the client's "connected directly to 127.0.0.1:…" and the
+host's "direct" tag, the listed game joined through the relays, a
+damaged code, a direct join, the closing note takes it off the list),
+`a_listed_server_without_an_address_is_joined_through_nostr` (Task 9's
+end to end), `the_internet_tab_without_relays` (a closed port: "No relay
+reachable", no frame over 250 ms, hosting and a direct join unaffected;
+none set: at once), `the_relays_linger_after_the_multiplayer_screen` (a
+fake clock: reused within 30 s, closed after, the selection cleared),
+`relay_edits_apply_to_the_open_pool`, `block_edits_apply_to_the_open_list`,
+`a_public_host_follows_relay_edits` (announced and listened on the new
+relay: its invite joins through it alone),
+the app's own frame path (`App::network_frame` on `online::app_of`, an
+`App` without a GPU backend; RED against the old gate):
+`the_apps_internet_tab_lists_games_without_an_online_game`,
+`the_apps_lan_list_fills_without_an_online_game` (`Shell::test_lan_port(0)`:
+the announcement sent to 127.0.0.1, never broadcast),
+`the_app_joins_a_typed_host_name` ("Looking up localhost:…", then the
+lobby), `finished_shutdowns_are_forgotten`,
+`a_typed_name_is_looked_up_off_the_frame` (`localhost`: no peer at the
+Join, the lobby frames later; Back gives the lookup up),
+`an_invite_only_game_without_an_address_says_so` (final review B-I2,
+B-I3; through the relays, or joining nothing without them),
+`quitting_deletes_the_router_mapping` (NT-2: a loopback `FakeGateway`,
+`LateUpnp`, external 127.0.0.2: the reach line and the invite's mapped
+address, leaving returns at once with the mapping still there, the
+`Unmapping` wait sees it deleted),
+`hosting_again_on_the_same_port_keeps_its_mapping` (ruling RH-1: a
+`LateDelete` router, leave and host again at once on the same port: the
+new game's TCP and UDP mapping still there after the old deletion took
+effect; the port is one below the ephemeral range, `unclaimable_port`, so
+no other test's port-0 bind takes it between the leave and the new host),
+`tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
+budget, a recording replayed through a replay session),
+`tests/throw_sound.rs` (only the player's rope throws are heard against
+seven bots, none for bots alone, a replay's viewer's; online, in
+`an_online_match_runs_headless`: the client's own only), `tests/menu.rs`
+(starts with missing or broken content, rapid menu actions) and
+`tests/profiles.rs` (the preview's textures; a menu match wears the
+profile's look), `tests/online.rs` (a local match whose player is slot 2,
+a watcher following any worm, a `Driver::Online` session against a host
+on 127.0.0.1: 300 frames on a fake 10 ms clock, the HUD's scores the
+host's confirmed ones, the end from a confirmed tick; two `Shell`s, one
+hosting on port 0 and one joining, to the lobby, a bot, ready, start,
+equal confirmed scores, the results, the replay saved, back to the
+lobby and leaving; chat in game reaching the other's HUD log; the
+hidden window's `App::hidden_frame` ticking the match; the network pump
+through the apps' frames (`App::hidden_frame`, real clock, a 0.2-minute
+match with a bot): `a_host_whose_frames_stop_keeps_hosting` (3 s without
+the host's frames: the client confirms 250 ticks more, the host's first
+frame after counts fewer than 50 ticks on the meter, then both reach the
+same results, no colour drift), `a_client_whose_frames_stop_stays_joined`
+(3 s without the client's: the host fills fewer than 50 of its inputs, no
+"Connection problem" on any frame, still in), `a_match_load_does_not_silence_the_host`
+(`test_slow_load` 2.5 s: the client confirmed 150 ticks during it), each
+RED without the pump; `frames_every_30_ms_play_as_before` and `_45_ms_`
+(both players hold Right: every confirmed final input of both slots
+holds it, no pump poll, no resync; RED at the old 20 ms); `net/pump.rs`'
+unit tests on a fake peer (a `Poll`): the pump stands back while the UI
+polls every 5, 30 and 45 ms and polls about every 10 ms once it stops,
+each at least `PUMP_AFTER` after the UI's; it presses the last latched
+keys for `PUMP_HOLD`, then none, and only those still held; the queue's
+bound (confirmed ticks thinned first, every kill and chat kept, never
+across a control event); control events never let go;
+`a_tap_before_a_stall_is_not_repeated` (app path: a Fire tapped before
+the host's frames stop shows on one tick, the held Right on all);
+plan 12c Task 9's host migration through the apps' frames, against an
+in-process `olr-server` (port 0, no relay or STUN, no port mapping, its
+base 127.0.0.1, one bot; `MigrationRig`: each player welcomed before the
+next joins, so the first is the first successor):
+`a_frozen_server_hands_the_match_to_the_first_player` (the server no
+longer polled 3 s in: Anna's HUD line "The host is gone: you are taking
+over the game…", then "You are now hosting", Bert's "Anna is now
+hosting" within 8 s; both to the results with equal confirmed scores and
+results, both replays saved and the same match (`same_match`: but for
+the viewer), Anna's lobby a host's with `MIGRATED_LISTING`; about 12 s),
+`the_host_lost_screen_shows_and_the_replay_is_saved` (the server and
+Anna frozen, her pump stopped; Bert without a standby gets the Host lost
+screen with `HOST_LOST` within 13 s and his replay saved; about 16 s),
+`a_late_rejoiner_watches_until_the_next_match` (a fourth player, Dan,
+makes Anna's quorum while Cid is away, ruling FR12d-Q, in this and the
+next; Cid's rejoin held 6 s:
+`late_rejoin` in his log, his view kept as last seen until the new
+host's start, then he watches; RED without the freeze or olr-online's
+kept world; about 11 s), `a_late_rejoiner_after_the_match_goes_to_the_lobby`
+(held 7 s while Anna ends the match early, `end_match`: Cid's Lobby
+shows, he is seated at the gathering and his Ready reaches Anna; RED: the
+frozen view stayed; about 15 s), `a_host_heard_again_calls_the_migration_off`
+(Bert's datagrams dropped 3.5 s, `test_outage`: his migration line, then
+`HOST_BACK` in his log and HUD, the line gone, the match on, nobody took
+over; about 9 s), `a_host_cut_off_from_its_players_shows_why` (ruling
+SB-2: the hosting game with two players, Anna and Bert (FR12c-1: with
+one it plays on), its network blacked out 6 s: its Host lost screen,
+`CUT_OFF`, `host_lost_hosting`, its replay saved, while Anna takes over
+and plays on; RED without olr-online's `cut_off_check`; about 5 s), and
+the pump's two tests run again with
+migration on, `a_host_whose_frames_stop_keeps_hosting_with_migration`
+and, in the full tier only (`OLR_FULL_TESTS`: its migration checks pass
+without the pump, a poll receives before it judges the host silent),
+`a_client_whose_frames_stop_stays_joined_with_migration` (ruling
+PF12c-2: no migration line, handover, call-off or Host lost on either
+during or after the 3 s, the match to its results; the host's RED
+without the pump: the client's "finding who takes over…" line);
+`overlay`'s `the_top_line_is_the_migrations_else_lagging`;
+`with_pumped` takes the mark; a panicking pump poll said at once; the
+UI's poll, called while a pump poll holds the peer (gated by the test,
+so every round is contended), begins after it and before any other pump
+poll (order, not milliseconds: review Important 2; the latched keys
+judged on the time the pump gave each poll, the waits bounded by counts
+with generous deadlines); stopping joins (1 s bound) and gives the peer
+back, nothing polling it after; a nested lock panics, through another
+peer's too; `--net-sim
+typical`'s setup playing and starting the next match; leaving right
+after the end keeps both replays; the flags not remembered; LAN off:
+`Shell::set_lan(false)`; each under 20 s), `tests/downloads.rs` (a
+joiner whose content lacks Dirt Level downloads it in the lobby into its
+`Store::open` cache and plays the match from it; over the prompt
+(`OnlinePeer::test_prompt_limit` through `Shell::with_peer`: olr-online's
+`test-hooks` in the dev-dependencies) it waits, queued, until Download;
+a replay of that level,
+the level only in the cache (`downloads`, or `downloads-2` while the
+shell holds `downloads`), plays back from the Replays screen and is
+refused, naming it, without; a command-line replay finds it while
+another holder locks the cache, and makes, locks and writes no cache; the options' Clear, refused while a match
+is online, empties the cache), `tests/ingame.rs` (the weapon selection, the pause and a
+valid replay, the results against the world's scores), `tests/options.rs`
+(video through the paced requests,
+a window made again keeps the game ticking, volumes live, the saved window with the flags on top) play the imported
+levels when `OLR_CONTENT_DIR` is set, as does `tests/speed.rs` (fast-forward
+never changes the simulation; a played game refuses it); `tests/import.rs` imports
+`fixtures/olx-mini` through the shell: the menus refreshed, the imported
+pack over the bundled one, a quit mid-import).

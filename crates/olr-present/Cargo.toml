@@ -1,0 +1,31 @@
+[package]
+name = "olr-present"
+description = "One viewport's presentation of a match: the scene, the cosmetic entities, the colour terrain and the atlas images, wired in the frame loop's order, and their upload to the renderer."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-data.workspace = true
+olr-terrain.workspace = true
+olr-sim.workspace = true
+olr-content.workspace = true
+olr-scene.workspace = true
+olr-fx.workspace = true
+olr-render.workspace = true
+olr-netcode.workspace = true
+
+[dev-dependencies]
+olr-scenario.workspace = true
+olr-oracle.workspace = true
+olr-math.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true
