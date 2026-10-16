@@ -238,8 +238,8 @@ look/          optional images for the look (glow mask, …): graphics sub-proje
     art_scale: 1,
     theme: "olx-theme-dirt",
     objects: [
-        Spawn((140, 312)),
-        Spawn((1050, 96), notes: "top right ledge"),
+        Spawn(at: (140, 312)),
+        Spawn(at: (1050, 96), notes: "top right ledge"),
     ],
     look: ( /* graphics sub-project */ ),
 )
@@ -260,8 +260,9 @@ look/          optional images for the look (glow mask, …): graphics sub-proje
 - **`front.png` and `back.png`** have exactly `size × art_scale`
   (`art_scale` 1..=8). A size mismatch is an error, never a panic.
 - **Objects** are one typed list.
-  - The 0.2 simulation reads only `Spawn`. No spawn means OLX's random
-    spawning.
+  - `Spawn` compiles to `LevelDef::spawns`. The 0.2 runtime does not read
+    spawns yet: worms spawn with OLX's `FindSpot`, as OLX's `.lxl` levels
+    carry no spawns (amended by plan 13b).
   - The graphics sub-project adds look objects (light sources, emitters).
     The editor may add `Region` (named rectangles or polygons; notes now,
     triggers later).
@@ -289,9 +290,14 @@ left.png   optional: explicit left-facing frames; without it the right-facing fr
 ```
 
 ```ron
-(name: "afro", art_scale: 1, frame_size: (20, 18), aim_frames: 7, walk_frames: 3)
+(name: "afro", art_scale: 2, frame_size: (20, 18), aim_frames: 7, walk_frames: 3)
 ```
 
+- **OLX skins are 2× art** (drawn at two art pixels per world pixel).
+- **What the 0.2 runtime draws:** OLX's layout only (art scale 2, 20 × 18
+  frames, 7 aim and 3 walk frames), full tint only, no `left.png`.
+  Anything else is a compile error ("not supported by this runtime yet")
+  until the graphics work extends the renderer (amended by plan 13b).
 - **Finer skins** are `art_scale` and more frames. The renderer picks a
   frame from the continuous aim angle and the walk phase. Skins are
   presentation only: the worm's size in the simulation is independent of
@@ -316,12 +322,23 @@ left.png   optional: explicit left-facing frames; without it the right-facing fr
 ### Themes
 
 ```
-theme.ron                          name, default dirt colour (hex), stamp lists
-holes/<n>.png + holes/<n>.mask.png paint colours (RGBA) + meanings (indexed: untouched / carve / paint)
-stones/<n>.png, misc/<n>.png       RGBA with alpha
-front_tile.png, back_tile.png      the tiles for placed dirt and for dug background
-green_ball.png                     the green dirt shape
+theme.ron                                    name, image counts
+holes/<n>.png + holes/<n>.mask.png           paint colours (RGBA) + meanings (indexed: untouched / carve / paint)
+green_ball.png + green_ball.mask.png         rim colours (RGBA) + meanings (indexed: untouched / green / rim)
+stones/<n>.png, misc/<n>.png                 RGBA with alpha
+front_tile.png, back_tile.png                the tiles for placed dirt and for dug background
 ```
+
+Amended by plan 13b:
+
+- **Theme images are world pixels.** Stamps and tiles apply per world
+  pixel, so they declare no art scale.
+- **There is no dirt colour field in 0.2.** OLX derives the dirt
+  particles' colour from `front_tile` and the first hole, and so does
+  `olr-fx`. A field can come with the graphics work.
+- **Paint colours that would change meaning are errors:** black or
+  magenta in a hole, or exactly `#00ff00ff` or `#ff00ffff` in the green
+  ball's rim.
 
 The stamps keep their exact effect on carving and on dirt counts, which
 the simulation uses (`olr-terrain`'s stamp, carve and dirt code).
@@ -333,6 +350,9 @@ the simulation uses (`olr-terrain`'s stamp, carve and dirt code).
   `bonus`, …), the game sounds and the UI colours.
 - **Conversion:** sprites get alpha and declared frame grids and art scale
   (the `explosion` strip is described in `core.ron` rather than guessed).
+  OLX's `giblets.png` holds two grids at two scales. It is split into
+  `giblets` (8 × 8 frames at 2×) and `giblet-stains` (4 × 4 frames at
+  1×), which `compile` composes back (amended by plan 13b).
   `colours.cfg` values become hex.
 - **Later art:** the graphics sub-project may add new engine art, for
   example as an `olr-core` pack beside the imported `olx-core`; the format
@@ -368,6 +388,7 @@ asset correctly.
 | `colours.cfg` RGB triples | Hex strings |
 | Colour space unstated | Images are sRGB (any change to blending belongs to the graphics sub-project) |
 | Sounds | Ogg Vorbis as today; WAV accepted; nothing re-encoded lossily |
+| PNG encoding | Canonical, through one encoder; the `png` crate is pinned exactly, because encoded bytes are content (plan 13b) |
 | OLX file and folder names | Lowercase kebab-case ids, a fixed folder layout per pack kind |
 
 **Audit task.** The spec phase checks the remaining OLX conventions in
