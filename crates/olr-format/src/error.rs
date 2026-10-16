@@ -16,7 +16,6 @@ pub enum FormatError {
 }
 
 impl FormatError {
-    #[allow(dead_code)] // used by the mod compiler (plan 13a)
     pub(crate) fn invalid(file: &str, path: &str, message: impl Into<String>) -> Self {
         Self::Invalid { file: file.into(), path: path.into(), message: message.into() }
     }
