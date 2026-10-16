@@ -1,0 +1,226 @@
+//! The level authoring format: `level.ron`, `material.png`, `front.png`,
+//! `back.png` and an optional `thumb.png` (spec §6).
+
+mod files;
+
+use olr_data::image::RgbaImage;
+use olr_data::level::{Level, LevelDef, Material, MaterialGrid, SpawnPoint};
+use serde::{Deserialize, Serialize};
+
+pub use files::{read_level_files, write_level_files};
+
+use crate::{FormatError, LiftError};
+
+/// The largest `art_scale` (a level's art pixels per world pixel).
+pub const MAX_ART_SCALE: u32 = 8;
+/// The most objects in `level.ron`.
+pub const MAX_OBJECTS: usize = 4096;
+/// The largest level side in world pixels (OLX's 12-bit positions).
+pub const MAX_SIDE: u32 = 4096;
+/// `material.png`'s palette, indexed by `Material as u8`: rock grey,
+/// background black, dirt brown.
+pub const MATERIAL_PALETTE: [u8; 9] = [128, 128, 128, 0, 0, 0, 139, 90, 43];
+
+pub(crate) const LEVEL_FILE: &str = "level.ron";
+pub(crate) const MATERIAL_FILE: &str = "material.png";
+pub(crate) const FRONT_FILE: &str = "front.png";
+pub(crate) const BACK_FILE: &str = "back.png";
+pub(crate) const THUMB_FILE: &str = "thumb.png";
+
+/// A level as its files hold it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LevelSource {
+    pub name: String,
+    pub notes: String,
+    /// World pixels.
+    pub size: (u32, u32),
+    /// `1..=MAX_ART_SCALE`.
+    pub art_scale: u32,
+    /// Theme pack id.
+    pub theme: String,
+    pub objects: Vec<LevelObject>,
+    /// `size.0 * size.1`, row-major.
+    pub material: Vec<Material>,
+    /// `size` × `art_scale`.
+    pub front: RgbaImage,
+    /// `size` × `art_scale`.
+    pub back: RgbaImage,
+    /// `thumb.png`'s bytes, passed through (presentation only).
+    pub thumb: Option<Vec<u8>>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub enum LevelObject {
+    /// A spawn point (world pixels). The 0.2 runtime does not read spawns yet.
+    Spawn {
+        at: (i32, i32),
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        notes: String,
+    },
+}
+
+/// The checks `compile_level` and the writer share.
+pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
+    let (w, h) = src.size;
+    if !(1..=MAX_SIDE).contains(&w) || !(1..=MAX_SIDE).contains(&h) {
+        return Err(FormatError::invalid(
+            LEVEL_FILE,
+            "size",
+            format!("{w}x{h}, not within 1x1 to {MAX_SIDE}x{MAX_SIDE}"),
+        ));
+    }
+    if !(1..=MAX_ART_SCALE).contains(&src.art_scale) {
+        return Err(FormatError::invalid(
+            LEVEL_FILE,
+            "art_scale",
+            format!("{}, not within 1 to {MAX_ART_SCALE}", src.art_scale),
+        ));
+    }
+    if src.objects.len() > MAX_OBJECTS {
+        return Err(FormatError::invalid(
+            LEVEL_FILE,
+            "objects",
+            format!("{} objects, above {MAX_OBJECTS}", src.objects.len()),
+        ));
+    }
+    let cells = w as usize * h as usize;
+    if src.material.len() != cells {
+        return Err(FormatError::invalid(
+            MATERIAL_FILE,
+            "material",
+            format!("{} cells, the level needs {cells} ({w}x{h})", src.material.len()),
+        ));
+    }
+    let (Some(aw), Some(ah)) = (w.checked_mul(src.art_scale), h.checked_mul(src.art_scale)) else {
+        return Err(FormatError::invalid(LEVEL_FILE, "size", "size × art_scale is too large"));
+    };
+    for (file, img) in [(FRONT_FILE, &src.front), (BACK_FILE, &src.back)] {
+        if (img.width(), img.height()) != (aw, ah) {
+            return Err(FormatError::invalid(
+                file,
+                "",
+                format!(
+                    "{file} is {}x{}, the level needs {aw}x{ah} (size × art_scale)",
+                    img.width(),
+                    img.height()
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Makes the runtime level.
+pub fn compile_level(src: &LevelSource) -> Result<Level, FormatError> {
+    check(src)?;
+    let spawns = src
+        .objects
+        .iter()
+        .map(|o| match o {
+            LevelObject::Spawn { at, .. } => SpawnPoint { x: at.0, y: at.1 },
+        })
+        .collect();
+    let def = LevelDef {
+        name: src.name.clone(),
+        width: src.size.0,
+        height: src.size.1,
+        art_scale: src.art_scale,
+        theme: src.theme.clone(),
+        spawns,
+    };
+    let material = MaterialGrid::from_cells(src.size.0, src.size.1, src.material.clone())
+        .ok_or_else(|| FormatError::invalid(MATERIAL_FILE, "material", "wrong cell count"))?;
+    Ok(Level { def, material, front: src.front.clone(), back: src.back.clone() })
+}
+
+/// The inverse of [`compile_level`]; `notes` stay empty.
+pub fn lift_level(level: &Level, thumb: Option<Vec<u8>>) -> Result<LevelSource, LiftError> {
+    let d = &level.def;
+    let src = LevelSource {
+        name: d.name.clone(),
+        notes: String::new(),
+        size: (d.width, d.height),
+        art_scale: d.art_scale,
+        theme: d.theme.clone(),
+        objects: d
+            .spawns
+            .iter()
+            .map(|s| LevelObject::Spawn { at: (s.x, s.y), notes: String::new() })
+            .collect(),
+        material: level.material.cells().to_vec(),
+        front: level.front.clone(),
+        back: level.back.clone(),
+        thumb,
+    };
+    if (level.material.width(), level.material.height()) != src.size {
+        return Err(LiftError {
+            item: format!("level {:?}", d.name),
+            message: "the material grid is not the level's size".into(),
+        });
+    }
+    check(&src).map_err(|e| LiftError { item: format!("level {:?}", d.name), message: e.to_string() })?;
+    Ok(src)
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use olr_data::image::Rgba;
+
+    pub(crate) fn tiny(art_scale: u32) -> LevelSource {
+        let (w, h) = (3, 2);
+        let mut front = RgbaImage::new(w * art_scale, h * art_scale);
+        front.set(0, 0, Rgba::rgb(1, 2, 3));
+        LevelSource {
+            name: "Tiny".into(),
+            notes: String::new(),
+            size: (w, h),
+            art_scale,
+            theme: "olx-theme-dirt".into(),
+            objects: vec![LevelObject::Spawn { at: (1, 1), notes: "here".into() }],
+            material: vec![
+                Material::Rock,
+                Material::Background,
+                Material::Dirt,
+                Material::Dirt,
+                Material::Background,
+                Material::Rock,
+            ],
+            front,
+            back: RgbaImage::new(w * art_scale, h * art_scale),
+            thumb: None,
+        }
+    }
+
+    #[test]
+    fn compile_and_lift_are_inverse() {
+        for scale in [1, 2] {
+            let src = tiny(scale);
+            let level = compile_level(&src).unwrap();
+            assert_eq!(level.def.spawns, vec![olr_data::level::SpawnPoint { x: 1, y: 1 }]);
+            assert_eq!(level.material.get(2, 0), Material::Dirt);
+            let mut back = lift_level(&level, None).unwrap();
+            assert_eq!(back.objects, vec![LevelObject::Spawn { at: (1, 1), notes: String::new() }]);
+            back.objects = src.objects.clone(); // notes are authoring-only
+            assert_eq!(back, src);
+        }
+    }
+
+    #[test]
+    fn sizes_must_agree() {
+        let mut s = tiny(1);
+        s.material.pop();
+        assert!(compile_level(&s).unwrap_err().to_string().contains("material"));
+        let mut s = tiny(2);
+        s.front = RgbaImage::new(6, 3);
+        let e = compile_level(&s).unwrap_err().to_string();
+        assert!(e.contains("front.png") && e.contains("6x4"), "{e}");
+        let mut s = tiny(1);
+        s.art_scale = 9;
+        assert!(compile_level(&s).is_err());
+        let mut s = tiny(1);
+        s.size = (5000, 1);
+        assert!(compile_level(&s).is_err());
+    }
+}

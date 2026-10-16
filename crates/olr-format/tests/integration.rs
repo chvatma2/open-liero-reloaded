@@ -2,4 +2,5 @@
 
 mod equivalence;
 mod hostile;
+mod levels;
 mod roundtrip;
