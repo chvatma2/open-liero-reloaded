@@ -2252,11 +2252,14 @@ timeout, the texts) and `rl_game::net::pump`.
     ended still commits (one poll more; the mutation "commit outside the
     turn" survives the suite).
   - Two successors can each commit only if their peers reached them in
-    disjoint windows with each failing to reach the other. That needs a
-    network partition between peers, which the harness does not model.
-    The same is the D8 residual: a successor reachable by some peers
-    only (A reachable by C but not by B or D) splits the match; the
-    peers' contact ordering decides.
+    disjoint windows with each failing to reach the other. This was
+    thought to need a network partition between peers; net-soak's
+    `lan-16s7c0v-seed2762456828` (plan 12d) split a match without one:
+    two peers cut off during the first successor's window never asked it
+    again and met in the second's. **Closed by ruling FR12d-Q** (plan
+    12d): a successor commits only with a majority quorum, so the match
+    continues on one side at most; the harness now models partitions
+    (`MigrationPlan::partitions`).
   - Through relays D8's closed gate is learned only when the open timeout
     lapses (6 s, ruling SB-1), so a failed successor costs liveness, not a
     split. A slow relayed follower makes "reachable by some peers only"
@@ -2327,6 +2330,8 @@ timeout, the texts) and `rl_game::net::pump`.
   no last try, as the player's own turn found nobody). A host that quits
   or steps down sends its `Bye`, so the player still takes over at once.
   If wrong: a crash in a two-peer match ends it, for the survivor too.
+  **Replaced by ruling FR12d-Q (plan 12d):** the successor commits only
+  with a majority quorum, not at the first rejoin (see there).
 - **N69 - the old host speaks again.** A peer that has not committed
   returns to its old host (`HostHeard`) unless its attempt has contact
   with a hosting successor; a successor that has not committed closes its
@@ -2796,6 +2801,51 @@ player's own rope throws are heard (the porting table).
 - **RS-1a:** see plan 12c's RS-1a: the new host's R is the later of its
   tick and the log frontier after the merge (a new host behind the match
   catches up through its final rows).
+- **FR12d-Q - a successor's majority quorum** (net-soak's
+  `lan-16s7c0v-seed2762456828`, kept). A host and seven players; players
+  2 and 6 lost their links before the host left, so its `Bye` reached the
+  other five. Player 1 took the match over with 3, 4, 5 and 7 at its first
+  rejoin. Players 2 and 6 found the host silent, asked player 1 while
+  still cut off, and an unreached successor is not asked again in its
+  window (N73), so they never learned it hosted although their outages
+  ended inside that window. In player 2's own window player 6 reached it,
+  and the first rejoin committed player 2 too: a split, without any
+  partition at that moment. Not asking again would not have closed it (an
+  outage over the whole first window does the same). The ruling: a
+  successor commits only when it and the members back with it are
+  strictly more than half of the match's members not known gone (the
+  players and spectators it expects back, itself, and the old host unless
+  its `Bye`/`Closed` came; followers do not count). Two quorums share a
+  member, so a match continues on one side at most. It replaces FR12c-1's
+  "at least one rejoin" and its exception, keeps FR12c-1 (a two-peer blip
+  is a stall) and FR12c-1b (the lone survivor of three is host lost).
+  `rl_netcode::migration::quorum`, called by the harness and rl-online:
+  a join to an uncommitted successor is held (rl-online holds the
+  member's `Welcome` and what follows), the commit takes every held join
+  in. Pinned by `only_the_majority_side_of_a_partition_continues`,
+  `an_even_split_continues_on_neither_side`,
+  `a_successor_short_of_a_quorum_is_host_lost_legitimately` (rl-netcode)
+  and `a_successor_without_a_quorum_never_hosts` (rl-online). SK-10 accepts
+  an all-lost match whose reached successors could not gather a quorum
+  (`lacked_quorum`, generous). **Cost:** an even split continues on
+  neither side, and a crashed host still counts: in a match of a host and
+  three players, the host's crash with one more player out of reach (dead,
+  slow, cut off) is host lost for the other two (before, they played on);
+  a host plus one player plus mid-match spectators whose host crashed is
+  host lost even if the spectators reach the player. The players cut off
+  in the soak case end host lost, as FR12c-3 judges them (their asks were
+  unanswered); asking an unreached successor again in its window would
+  bring them back, a change to N73 not made here.
+- **SK-10b - a joined spectator among the lost** (net-soak's
+  `bad-10s1c2v-seed1616063176`, kept). The host crashed with one player
+  and two mid-match spectators, each spectator cut off when it asked the
+  player: all three gave up. Legitimate (FR12d-Q: the player alone, the
+  crashed host counting, has no quorum; the spectators are followers), but
+  SK-10 compared every survivor's rows from tick 0 and a joined
+  spectator's log has zeros before its state. It now compares those rows
+  from the spectator's last state on, as the rest of the verdict does
+  (`a_joined_spectator_among_the_lost_is_compared_from_its_state` with its
+  twin).
 
 **Decisions.**
 - **N82 - withdrawal, not deletion.** `World::withdraw(i)` keeps worm `i`

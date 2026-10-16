@@ -355,18 +355,33 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       `HostConfig`: the state's name, the start's member slots,
       `MAX_SPECTATORS`, the marked admins, no password, A13) taking
       members back on the standby (their proofs answered at once):
-      `Migrating(TakingOver)`. It commits at the first `Rejoined` within
-      its turn (the standby answers nothing in the poll its window ended), or at
-      once when `away_in_match()` is empty (N68) and the old host is known
-      gone (`Migrating::gone`: the session's `PeerLeft` or the lobby's
-      `Closed`, its `Bye`, came; `begin_migration(gone)`). Ruling FR12c-1:
-      in a two-peer match its own blip looks like the host's loss, so it
-      waits for a `Bye`, a rejoin or the old host heard again (N69); a host
-      that crashed without one leaves its player host lost
-      (`a_blip_in_a_two_peer_match_is_a_stall`,
-      `a_players_blip_beside_a_spectator_is_a_stall`). Not committed when the
-      step leaves `Host`, the gate closes (D8: answered joins refused
-      `NotHost`, links not welcomed closed, the lobby gone). The commit:
+      `Migrating(TakingOver)`. **Ruling FR12d-Q** (`commit_if_quorum`,
+      `rl_netcode::migration::quorum`): it commits within its turn (the
+      standby answers nothing in the poll its window ended) once it and the
+      members back (`Standby::expected`, `away_in_match()` as its turn
+      opened, less those still away) are strictly more than half of the
+      members not known gone (those, itself, and the old host unless
+      `Migrating::gone`: the session's `PeerLeft` or the lobby's `Closed`,
+      its `Bye`, came; `begin_migration(gone)`). Until then a member's
+      `Welcome` and everything the lobby sends it after (`Standby::held`),
+      and the lobby's events from the first `Rejoined` on
+      (`held_events`), wait: the member follows no host yet. At the commit
+      they leave first, then the events are a host's. With nobody
+      expected its quorum is itself once its old host is known gone
+      (FR12c-1: in a two-peer match its own blip looks like the host's
+      loss, so it waits for a `Bye` or the old host heard again, N69; a
+      host that crashed without one leaves its player host lost,
+      `a_blip_in_a_two_peer_match_is_a_stall`,
+      `a_players_blip_beside_a_spectator_is_a_stall`). It replaces
+      FR12c-1's commit at the first rejoin, which split net-soak's
+      `lan-16s7c0v-seed2762456828`. Cost: an even split, or a crashed host
+      and one more member out of reach in a match of four, ends host lost
+      (`a_successor_without_a_quorum_never_hosts`: the host frozen, Cid cut
+      off, Anna's turn holding Bert's welcome, then Bert's holding Anna's,
+      all three host lost; fails committing at the first rejoin). Not
+      committed when the step leaves `Host`, the gate closes (D8: answered
+      joins refused `NotHost`, links not welcomed or held closed, the held
+      messages and the lobby gone). The commit:
       the old endpoint shuts down on a thread, the standby is the peer's
       endpoint, the side a `HostSide` (`HostReach` with `HostListen {
       pool: migration.relays }`), the content a host's
@@ -733,7 +748,9 @@ lobby's `Bye` (A7); a host stalled 1.7 s steps down
 (`HostLost("Your game stopped…")`, its replay, its lobby emptied) and the
 match moves; the only successor frozen too: host lost 11.9-13.5 s after the
 freeze, with a replay; a successor's own 2.5 s outage called off in its
-turn (`HOST_BACK` within 4 s), nobody migrated; D8: a successor cut off
+turn (`HOST_BACK` within 4 s), nobody migrated; D8 (four clients from
+here on where a crashed host and one more member are out of reach, so
+three of five make a quorum, FR12d-Q): a successor cut off
 on UDP answers joins it cannot open, and the next one takes the match,
 the survivors' records equal (fails without the lost contact); D8 with
 open links: a join whose `Hello` is held past the successor's window is
@@ -775,7 +792,7 @@ fourth to Anna counted by `take_over` and `rejoin`, the fifth host lost
 at once with replays (fails without the counts); a successor gone with
 its standby (its port held by a listener that never accepts, so no other
 test's standby can take it: a free port answered `NotHost` 19 times) costs
-Bert and Cid one direct connect each
+Bert, Cid and Dan one direct connect each
 in its window (`test_joins`), then the match moves to Bert, Cid's two
 `Joining(Direct)` said; the planner with a fake connector and clock: 48
 hostile entries, every direct connect refused, the relays silent or

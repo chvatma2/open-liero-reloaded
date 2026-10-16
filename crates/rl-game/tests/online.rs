@@ -1645,11 +1645,14 @@ fn a_host_cut_off_from_its_players_shows_why() {
 /// the match (his rejoin held 6 s): he lost his place in it. His log says
 /// who hosts and why he watches (`late_rejoin`), his view keeps the match
 /// as he last saw it (never its start) until the new host's state comes,
-/// then he watches the match from it.
+/// then he watches the match from it. Dan makes Anna's quorum while Cid is
+/// away (ruling FR12d-Q: the frozen server still counts, so Anna and Bert
+/// alone are two of four).
 #[test]
 fn a_late_rejoiner_watches_until_the_next_match() {
     let Some(dir) = content_dir() else { return };
-    let mut rig = MigrationRig::new(&dir, 0.3, &[("Anna", true), ("Bert", true), ("Cid", true)]);
+    let players = [("Anna", true), ("Bert", true), ("Cid", true), ("Dan", true)];
+    let mut rig = MigrationRig::new(&dir, 0.3, &players);
     rig.apps[2].shell().with_peer(|p| p.test_delay_rejoin(Duration::from_secs(6)));
     rig.run(Duration::from_secs(2), |_| {});
     let time = |a: &App| a.shell().session().map(|s| s.with_world(|w| w.time()));
@@ -1686,11 +1689,13 @@ fn a_late_rejoiner_watches_until_the_next_match() {
 /// the match, which the new host ends early (`end_match`, a server's
 /// `/next`): no start will come for him to watch. His match view goes
 /// and the Lobby shows, where he readies for the next match as anyone
-/// does. RED before the fix: he stays on the match's frozen view.
+/// does. RED before the fix: he stays on the match's frozen view. Dan
+/// makes Anna's quorum while Cid is away (ruling FR12d-Q).
 #[test]
 fn a_late_rejoiner_after_the_match_goes_to_the_lobby() {
     let Some(dir) = content_dir() else { return };
-    let mut rig = MigrationRig::new(&dir, 0.3, &[("Anna", true), ("Bert", true), ("Cid", true)]);
+    let players = [("Anna", true), ("Bert", true), ("Cid", true), ("Dan", true)];
+    let mut rig = MigrationRig::new(&dir, 0.3, &players);
     rig.apps[2].shell().with_peer(|p| p.test_delay_rejoin(Duration::from_secs(7)));
     rig.run(Duration::from_secs(2), |_| {});
     rig.server_frozen = true;

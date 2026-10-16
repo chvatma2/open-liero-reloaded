@@ -128,3 +128,5 @@
   fixtures/net/cases/net-classic-castlestrike-typical-14s4c1v-seed1857358438-8e88effe.ron
 2026-10-16 bless-regression: SK-10 compares a joined spectator's rows from its state (net-soak bad-10s1c2v-seed1616063176: all host lost, legitimately)
   fixtures/net/cases/net-mw-1-0-liero-factory-bad-10s1c2v-seed1616063176-398ebb6f.ron
+2026-10-16 bless-regression: FR12d-Q: a successor commits only with a majority quorum (net-soak lan-16s7c0v-seed2762456828 split the match)
+  fixtures/net/cases/net-mw-1-0-liero-factory-lan-16s7c0v-seed2762456828-44060749.ron

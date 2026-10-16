@@ -377,27 +377,47 @@ fn started3_at(content: rl_content::Content, minutes: f32, tick: u32) -> (Net, [
     (net, [a, b, c])
 }
 
+/// A host and four clients (Anna, Bert, Cid, Dan), welcomed in order, in a
+/// match of `minutes`, returned once the host is past `tick`. Ruling
+/// FR12d-Q: a crashed host still counts as a member, so with one more
+/// player out of reach the other three are a majority of five (of four, two
+/// would be none).
+fn started4_at(content: rl_content::Content, minutes: f32, tick: u32) -> (Net, [usize; 4]) {
+    let mut net = Net::new(content, minutes);
+    let a = net.join_with_migration("Anna", direct());
+    let b = net.join_with_migration("Bert", direct());
+    let c = net.join_with_migration("Cid", direct());
+    let d = net.join_with_migration("Dan", direct());
+    net.ready(&[a, b, c, d]);
+    net.host().peer().lobby().start(7).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() > tick);
+    (net, [a, b, c, d])
+}
+
 /// D8: a successor whose window ends before anyone rejoined it closes its
 /// gate, and the joins it answered fail: their peers lose contact and move
 /// to the next window. Anna, the first successor, hears nobody on UDP (an
 /// outage longer than everything): Bert and Cid reach her signalling
 /// (contact) but no link can open. Without losing that contact they keep
 /// trying Anna until the give-up (host lost); with it Bert takes over in
-/// his window, Cid follows, and their records agree.
+/// his window, Cid and Dan follow (three of five members, a quorum: ruling
+/// FR12d-Q), and their records agree.
 #[test]
 fn an_uncommitted_successor_closes_at_its_windows_end() {
     let Some(content) = content() else { return };
-    let (mut net, [a, b, c]) = started3(content, 0.15);
+    let (mut net, [a, b, c, d]) = started4_at(content, 0.15, 200);
     net.peers[0].frozen = true;
     net.outage(a, Duration::from_secs(60));
     let froze = Instant::now();
-    net.run_until(Duration::from_secs(16), "Bert hosts and Cid follows", |n| {
+    net.run_until(Duration::from_secs(16), "Bert hosts and Cid and Dan follow", |n| {
         n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
-            && n.peers[c].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Bert"))
+            && [c, d].iter().all(|&i| {
+                n.peers[i].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Bert"))
+            })
     });
     // Past Anna's window (2 s of silence, then her 5 s).
     assert!(froze.elapsed() > Duration::from_secs(7), "{:?}", froze.elapsed());
-    for i in [b, c] {
+    for i in [b, c, d] {
         assert!(
             net.peers[i]
                 .has(|e| matches!(e, OnlineEvent::Migrating(MigrationStep::Moving(n)) if n == "Anna"))
@@ -407,6 +427,35 @@ fn an_uncommitted_successor_closes_at_its_windows_end() {
     assert!(net.peers[b].peer().is_host());
     assert!(!net.peers[a].peer().is_host(), "Anna never took the match");
     records_agree(&mut net, [b, c]);
+}
+
+/// Ruling FR12d-Q on the real path: the host freezes (no `Bye`: it still
+/// counts) and Cid's network goes down for good, so Anna's turn gathers
+/// only Bert: two of four members, no majority. She holds his welcome and
+/// never hosts; her gate closes at her window's end, Bert's turn gathers
+/// Anna (two of four again), and every player ends host lost, the ruling's
+/// cost (from where they stand, Cid and the host may play on). Before,
+/// Bert's rejoin committed Anna at once.
+#[test]
+fn a_successor_without_a_quorum_never_hosts() {
+    let Some(content) = content() else { return };
+    let (mut net, [a, b, c]) = started3(content, 0.3);
+    net.peers[0].frozen = true;
+    net.outage(c, Duration::from_secs(60));
+    net.run_until(Duration::from_secs(20), "every player is host lost", |n| {
+        [a, b, c].iter().all(|&i| n.peers[i].has(|e| matches!(e, OnlineEvent::HostLost(_))))
+    });
+    for i in [a, b] {
+        assert!(
+            net.peers[i].has(|e| *e == OnlineEvent::Migrating(MigrationStep::TakingOver)),
+            "its turn came"
+        );
+        assert!(!net.peers[i].has(migrated), "nobody moved: {:?}", net.peers[i].events);
+    }
+    assert!(
+        net.peers[b].has(|e| matches!(e, OnlineEvent::Migrating(MigrationStep::Moving(n)) if n == "Anna")),
+        "Bert reached Anna"
+    );
 }
 
 /// D8, links open: Bert's join to Anna opens but its `Hello` comes only 6 s
@@ -441,16 +490,16 @@ fn a_successors_unwelcomed_links_close_at_its_windows_end() {
 /// contact lapses `ANSWER_OPEN_TIMEOUT` (6 s, ruling SB-1) after the
 /// answer, past her window's end, so they move on in Bert's window and
 /// within the give-up, not to a false host lost once their setups time
-/// out past it.
+/// out past it. Dan makes Bert's quorum (ruling FR12d-Q: three of five).
 #[test]
 fn a_successor_dead_after_its_answer_is_left() {
     let Some(content) = content() else { return };
-    let (mut net, [a, b, c]) = started3(content, 0.5);
+    let (mut net, [a, b, c, d]) = started4_at(content, 0.5, 200);
     net.peers[0].frozen = true;
     let froze = Instant::now();
     net.outage(a, Duration::from_secs(60));
-    net.run_until(Duration::from_secs(5), "both try Anna", |n| {
-        [b, c].iter().all(|&i| {
+    net.run_until(Duration::from_secs(5), "all try Anna", |n| {
+        [b, c, d].iter().all(|&i| {
             n.peers[i].has(|e| matches!(e, OnlineEvent::Migrating(MigrationStep::Moving(n)) if n == "Anna"))
         })
     });
@@ -467,12 +516,14 @@ fn a_successor_dead_after_its_answer_is_left() {
     assert!(lapsed > ANSWER_OPEN_TIMEOUT - Duration::from_secs(1), "{lapsed:?} after her answers");
     // He resumes at his window's end (Anna, expected, never comes back),
     // before anyone's give-up.
-    net.run_until(Duration::from_secs(8), "Bert hosts and Cid follows", |n| {
+    net.run_until(Duration::from_secs(8), "Bert hosts and Cid and Dan follow", |n| {
         n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
-            && n.peers[c].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Bert"))
+            && [c, d].iter().all(|&i| {
+                n.peers[i].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Bert"))
+            })
     });
     assert!(froze.elapsed() < Duration::from_secs(14), "{:?}", froze.elapsed());
-    for i in [b, c] {
+    for i in [b, c, d] {
         assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::HostLost(_))));
     }
 }
@@ -596,14 +647,15 @@ fn a_host_cut_off_from_its_players_ends_its_match() {
 
 /// N72: a member welcomed after the new host's resume is a mid-match
 /// joiner. Bert keeps contact with Anna but sends his `Hello` 6 s after his
-/// link opened (`test_delay_rejoin`), so Anna, committed by Cid's rejoin,
-/// resumes without him at her window's end. Bert is welcomed `Waiting`,
-/// drops his old session, watches from a state, and plays the next match;
-/// his slot stays `Keys(0)` from the resume.
+/// link opened (`test_delay_rejoin`), so Anna, committed by Cid's and
+/// Dan's rejoins (three of five members, ruling FR12d-Q), resumes without
+/// him at her window's end. Bert is welcomed `Waiting`, drops his old
+/// session, watches from a state, and plays the next match; his slot stays
+/// `Keys(0)` from the resume.
 #[test]
 fn a_late_rejoiner_watches_from_a_state() {
     let Some(content) = content() else { return };
-    let (mut net, [a, b, c]) = started3_at(content, 0.1, 120);
+    let (mut net, [a, b, c, d]) = started4_at(content, 0.1, 120);
     let bert_slot = net.peers[b].peer().my_slot().unwrap() as usize;
     let bert_key = net.peers[b].key;
     net.peers[b].peer().test_delay_rejoin(Duration::from_secs(6));
@@ -650,7 +702,7 @@ fn a_late_rejoiner_watches_from_a_state() {
                     .any(|m| m.key == bert_key && matches!(m.seat, rl_proto::SeatWire::Player { .. }))
         })
     });
-    for i in [b, c] {
+    for i in [b, c, d] {
         net.peers[i].peer().lobby().set_ready(true);
     }
     net.run_until(Duration::from_secs(10), "Anna can start", |n| {
@@ -1039,9 +1091,9 @@ fn hostile_succession(relays_refuse: bool) {
 }
 
 /// The bound on the real path (127.0.0.1): Anna, the first successor, is
-/// gone with her standby, so nobody answers at its port. Bert and Cid each
-/// try her address once in her window (not tried again), then the match
-/// moves to Bert in his.
+/// gone with her standby, so nobody answers at its port. Bert, Cid and Dan
+/// each try her address once in her window (not tried again), then the
+/// match moves to Bert in his (three of five members, ruling FR12d-Q).
 ///
 /// The port stays ours: a free ephemeral port could be taken by another
 /// test's standby (its closed gate answers `NotHost`, asked again every
@@ -1051,7 +1103,7 @@ fn hostile_succession(relays_refuse: bool) {
 #[test]
 fn a_successor_gone_costs_one_connect_each() {
     let Some(content) = content() else { return };
-    let (mut net, [a, b, c]) = started3(content, 0.3);
+    let (mut net, [a, b, c, d]) = started4_at(content, 0.3, 200);
     let [anna, bert] = [a, b].map(|i| net.peers[i].key);
     let anna = net.peers[b].member_id(anna).unwrap();
     let bert = net.peers[c].member_id(bert).unwrap();
@@ -1067,9 +1119,11 @@ fn a_successor_gone_costs_one_connect_each() {
         Box::new(|_, _| Err(rl_proto::Refusal::NotHost)),
     );
     assert!(usurper.is_err(), "the held port is bound once");
-    net.run_until(Duration::from_secs(16), "Bert hosts and Cid follows", |n| {
+    net.run_until(Duration::from_secs(16), "Bert hosts and Cid and Dan follow", |n| {
         n.peers[b].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
-            && n.peers[c].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Bert"))
+            && [c, d].iter().all(|&i| {
+                n.peers[i].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Bert"))
+            })
     });
     assert_eq!(net.peers[b].peer().test_joins(), [(anna, true)]);
     assert_eq!(net.peers[c].peer().test_joins(), [(anna, true), (bert, true)]);
@@ -1113,7 +1167,9 @@ fn a_joiner_still_loading_when_its_host_crashes_is_host_lost() {
 /// N86, N88, Review Focus 2: Cid leaves while the match moves from a frozen
 /// host to Anna; Anna and Bert remove Cid's worm and the old host's, their
 /// records and replays agree, and only Cid is said to have left (the old
-/// host goes silently, ruling PF12d-3).
+/// host goes silently, ruling PF12d-3). Nobody hears Cid's `Bye` (his host
+/// is the frozen one), so he still counts as a member: Dan makes Anna's
+/// quorum (ruling FR12d-Q: three of five).
 #[test]
 fn a_player_leaving_during_a_migration_is_removed_at_the_resume() {
     let Some(content) = content() else { return };
@@ -1121,7 +1177,8 @@ fn a_player_leaving_during_a_migration_is_removed_at_the_resume() {
     let a = net.join_with_migration("Anna", direct());
     let b = net.join_with_migration("Bert", direct());
     let c = net.join_with_migration("Cid", direct());
-    net.ready(&[a, b, c]);
+    let d = net.join_with_migration("Dan", direct());
+    net.ready(&[a, b, c, d]);
     net.host().peer().lobby().start(7).unwrap();
     net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() > 300);
     let sc = net.peers[c].started()[0].unwrap();

@@ -837,7 +837,9 @@ the viewer), Anna's lobby a host's with `MIGRATED_LISTING`; about 12 s),
 `the_host_lost_screen_shows_and_the_replay_is_saved` (the server and
 Anna frozen, her pump stopped; Bert without a standby gets the Host lost
 screen with `HOST_LOST` within 13 s and his replay saved; about 16 s),
-`a_late_rejoiner_watches_until_the_next_match` (Cid's rejoin held 6 s:
+`a_late_rejoiner_watches_until_the_next_match` (a fourth player, Dan,
+makes Anna's quorum while Cid is away, ruling FR12d-Q, in this and the
+next; Cid's rejoin held 6 s:
 `late_rejoin` in his log, his view kept as last seen until the new
 host's start, then he watches; RED without the freeze or rl-online's
 kept world; about 11 s), `a_late_rejoiner_after_the_match_goes_to_the_lobby`

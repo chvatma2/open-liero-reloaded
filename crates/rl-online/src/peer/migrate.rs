@@ -13,7 +13,7 @@
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use rl_net::endpoint::IceConfig;
-use rl_netcode::migration::{HOST_SILENT_US, MAX_MIGRATIONS, STEP_DOWN_US, Step};
+use rl_netcode::migration::{HOST_SILENT_US, MAX_MIGRATIONS, STEP_DOWN_US, Step, quorum};
 use rl_proto::{MAX_MEMBERS, MAX_SPECTATORS, SuccessorWire};
 
 use super::relays::MigrationRelays;
@@ -34,10 +34,21 @@ pub(super) struct Standby {
     banned: Arc<Mutex<BTreeSet<IpAddr>>>,
     port: u16,
     /// Its turn: the migrated lobby taking the match's members back, until
-    /// the first rejoin commits it (or its window ends, D8).
+    /// a quorum commits it (ruling FR12d-Q), or its window ends (D8).
     taking: Option<Box<HostSide>>,
     /// Links refused before the commit, closed once their refusal left.
     closing: BTreeMap<PeerId, Instant>,
+    /// Ruling FR12d-Q, while its turn's lobby waits for a quorum: the
+    /// members it expects back (`away_in_match` as its turn opened)...
+    expected: usize,
+    /// ...the members it took back (their `Welcome` and everything after
+    /// it held: they follow no host yet, so a gate closing uncommitted
+    /// leaves them free to follow the next window, D8)...
+    welcomed: BTreeSet<PeerId>,
+    held: Vec<(PeerId, ToClient)>,
+    /// ...and the lobby's events from the first rejoin on, a host's once it
+    /// commits.
+    held_events: Vec<HostEvent>,
 }
 
 /// One client's migration, from the host's loss until a new host welcomed
@@ -496,7 +507,18 @@ impl OnlinePeer {
                 let Side::Client(c) = &mut self.side else { return };
                 c.lobby.standby(port, c.migration.reported_relays());
                 let closing = BTreeMap::new();
-                c.standby = Some(Box::new(Standby { out, open, banned, port, taking: None, closing }));
+                c.standby = Some(Box::new(Standby {
+                    out,
+                    open,
+                    banned,
+                    port,
+                    taking: None,
+                    closing,
+                    expected: 0,
+                    welcomed: BTreeSet::new(),
+                    held: Vec::new(),
+                    held_events: Vec::new(),
+                }));
             }
             Err(e) => self.events.push(OnlineEvent::Notice(format!(
                 "this game cannot take the match over if the host leaves: {e}"
@@ -601,13 +623,14 @@ impl OnlinePeer {
     }
 
     /// The standby, polled every poll: closed, no link stays; on its turn
-    /// the migrated lobby takes members back (their proofs, at once), and
-    /// the first rejoin commits (N68: [`OnlinePeer::take_over`]).
+    /// the migrated lobby takes members back (their proofs, at once, their
+    /// welcomes held), and a quorum of them commits (N68, ruling FR12d-Q:
+    /// [`OnlinePeer::commit_if_quorum`]).
     fn standby_tasks(&mut self, now: Instant) {
         let now_us = self.now_us;
         let Side::Client(c) = &mut self.side else { return };
-        // A rejoin commits only within this peer's turn: one handled in the
-        // poll its window ended is not (the gate closes after it, D8).
+        // A rejoin counts only within this peer's turn: one handled in the
+        // poll its window ended does not (the gate closes after it, D8).
         let its_turn = c.migrating.as_mut().is_some_and(|mg| mg.plan.peek(now_us) == Step::Host);
         let Some(sb) = c.standby.as_deref_mut() else { return };
         let mut net = Vec::new();
@@ -690,8 +713,9 @@ impl OnlinePeer {
             }
         }
         t.lobby.tick(now_us);
-        // The handshake's answers leave at once (the host's proof, a
-        // rejoiner's welcome before anything the commit sends it).
+        // The handshake's answers leave at once (the host's proof); a
+        // rejoiner's welcome, and everything after it, waits for the commit
+        // (ruling FR12d-Q), so it comes before anything the commit sends.
         for (peer, msg) in t.lobby.outgoing() {
             if matches!(msg, ToClient::Challenge { .. }) {
                 t.challenged.insert(peer, now);
@@ -703,26 +727,61 @@ impl OnlinePeer {
                 let text = format!("taking over: refused a join from {from}: {}", refusal_text(*why));
                 self.events.push(OnlineEvent::MigrationLog(text));
             }
-            send_tagged(&mut sb.out, peer, TAG_TO_CLIENT, &encode_to_client(&msg));
-        }
-        t.last_drain = Some(now);
-        let mut events = t.lobby.events().into_iter();
-        while let Some(e) = events.next() {
-            match e {
-                HostEvent::Rejoined(_) => {
-                    // The first rejoin commits: this peer hosts from now
-                    // on, and its lobby's events are a host's.
-                    self.take_over(now);
-                    let rest: Vec<HostEvent> = std::iter::once(e).chain(events).collect();
-                    self.on_host_events(rest, now);
-                    return;
-                }
-                HostEvent::Kick { peer, .. } | HostEvent::Close { peer } => {
-                    sb.closing.entry(peer).or_insert(now + CLOSE_LINGER);
-                }
-                _ => {}
+            if matches!(msg, ToClient::Welcome { .. }) {
+                sb.welcomed.insert(peer);
+            }
+            if sb.welcomed.contains(&peer) {
+                sb.held.push((peer, msg));
+            } else {
+                send_tagged(&mut sb.out, peer, TAG_TO_CLIENT, &encode_to_client(&msg));
             }
         }
+        t.last_drain = Some(now);
+        for e in t.lobby.events() {
+            // From the first rejoin on its lobby's events are a host's, once
+            // it commits.
+            if matches!(e, HostEvent::Rejoined(_)) || !sb.held_events.is_empty() {
+                sb.held_events.push(e);
+                continue;
+            }
+            if let HostEvent::Kick { peer, .. } | HostEvent::Close { peer } = e {
+                sb.closing.entry(peer).or_insert(now + CLOSE_LINGER);
+            }
+        }
+        self.commit_if_quorum(now);
+    }
+
+    /// Ruling FR12d-Q: in its turn, the successor commits only once it and
+    /// the members back with it are strictly more than half of the match's
+    /// members not known gone (`rl_netcode::migration::quorum`: the members
+    /// it expected as its turn opened, itself, and its old host unless its
+    /// `Bye` or the lobby's `Closed` came); with nobody expected, once its
+    /// old host is known gone (FR12c-1). Then the welcomes it held leave
+    /// and the lobby's events since the first rejoin are a host's. This
+    /// replaces FR12c-1's commit at the first rejoin: two successors'
+    /// quorums share a member, so a match continues on one side of a
+    /// partition at most.
+    fn commit_if_quorum(&mut self, now: Instant) {
+        let now_us = self.now_us;
+        let Side::Client(c) = &mut self.side else { return };
+        let Some(mg) = c.migrating.as_deref_mut() else { return };
+        if mg.plan.peek(now_us) != Step::Host {
+            return;
+        }
+        let gone = mg.gone;
+        let Some(sb) = c.standby.as_deref_mut() else { return };
+        let Some(t) = sb.taking.as_deref() else { return };
+        let back = sb.expected.saturating_sub(t.lobby.away_in_match().len());
+        if !quorum(sb.expected, back, gone) {
+            return;
+        }
+        let held = std::mem::take(&mut sb.held);
+        let events = std::mem::take(&mut sb.held_events);
+        self.take_over(now);
+        for (peer, msg) in held {
+            send_tagged(&mut self.endpoint, peer, TAG_TO_CLIENT, &encode_to_client(&msg));
+        }
+        self.on_host_events(events, now);
     }
 
     /// The attempt's endpoint and lobby: the host's answer is contact
@@ -846,10 +905,10 @@ impl OnlinePeer {
     }
 
     /// The migration's step now: give up (host lost), host (the gate open;
-    /// committed at once when it expects nobody and its old host is known
-    /// gone, N68 and ruling FR12c-1; else at the first rejoin), try a
-    /// successor, or wait. A gate open uncommitted closes once the step is
-    /// no longer `Host` (D8).
+    /// committed with a quorum, ruling FR12d-Q: at once when it expects
+    /// nobody and its old host is known gone, N68 and FR12c-1; else once
+    /// enough members rejoined), try a successor, or wait. A gate open
+    /// uncommitted closes once the step is no longer `Host` (D8).
     fn step_migration(&mut self, now: Instant) {
         let now_us = self.now_us;
         let outage = self.outage();
@@ -899,7 +958,6 @@ impl OnlinePeer {
             Step::Try(i) => mg.plan.order().get(i).map(|e| e.member),
             _ => None,
         };
-        let gone = mg.gone;
         let last = mg.last.clone();
         if step != Step::Host {
             self.close_gate();
@@ -909,12 +967,11 @@ impl OnlinePeer {
             Step::Wait => self.report_step(MigrationStep::Finding),
             Step::Host => {
                 self.report_step(MigrationStep::TakingOver);
-                // Expecting nobody, it commits on its own say only when its
-                // old host said `Bye`: in a two-peer match its own blip
-                // looks like the host's loss (ruling FR12c-1).
-                if self.open_gate() && gone {
-                    self.take_over(now);
-                }
+                // Expecting nobody, its quorum is its own only when its old
+                // host said `Bye`: in a two-peer match its own blip looks
+                // like the host's loss (ruling FR12c-1).
+                self.open_gate();
+                self.commit_if_quorum(now);
             }
             Step::Try(_) => {
                 if let Some(member) = moving {
@@ -938,15 +995,15 @@ impl OnlinePeer {
     /// state's name, its player slots, `MAX_SPECTATORS`, the admins from
     /// the members' marks, no password) waits for the members; with
     /// `migration.relays` it listens on them from now (N73, A15; answered
-    /// in `standby_tasks`). `true` when it
-    /// expects nobody (no member holding a slot or a seat from the start).
-    fn open_gate(&mut self) -> bool {
-        let Side::Client(c) = &mut self.side else { return false };
-        let Some(sb) = c.standby.as_deref_mut() else { return false };
-        if let Some(t) = &sb.taking {
-            return t.lobby.away_in_match().is_empty();
+    /// in `standby_tasks`). The members it expects back (holding a slot or
+    /// a seat from the start) are its quorum's (ruling FR12d-Q).
+    fn open_gate(&mut self) {
+        let Side::Client(c) = &mut self.side else { return };
+        let Some(sb) = c.standby.as_deref_mut() else { return };
+        if sb.taking.is_some() {
+            return;
         }
-        let (Some(state), Some(g)) = (c.lobby.state(), self.game.as_ref()) else { return false };
+        let (Some(state), Some(g)) = (c.lobby.state(), self.game.as_ref()) else { return };
         let match_ids: Vec<u8> = g.start.slots.iter().filter_map(|s| s.member).collect();
         let cfg = HostConfig {
             name: state.name.clone(),
@@ -958,7 +1015,7 @@ impl OnlinePeer {
         let Ok(lobby) = LobbyHost::migrated(c.me.clone(), state, c.lobby.succession(), &match_ids, cfg)
         else {
             // It cannot host: its window passes.
-            return false;
+            return;
         };
         // Its listener on the standing relays' pool, connected since the
         // match's start (FR12c-5); without them, a pool of its own.
@@ -973,9 +1030,12 @@ impl OnlinePeer {
             }
         };
         let Ok(reach) = reach.or_else(|_| HostReach::start(HostListen::off(), &c.me)) else {
-            return false;
+            return;
         };
-        let nobody = lobby.away_in_match().is_empty();
+        sb.expected = lobby.away_in_match().len();
+        sb.welcomed.clear();
+        sb.held.clear();
+        sb.held_events.clear();
         sb.taking = Some(Box::new(HostSide {
             lobby,
             banned: Arc::clone(&sb.banned),
@@ -988,7 +1048,6 @@ impl OnlinePeer {
             reach,
         }));
         sb.open.store(true, Ordering::Relaxed);
-        nobody
     }
 
     /// The gate closes (an uncommitted successor's window ended, D8; the
@@ -1000,6 +1059,10 @@ impl OnlinePeer {
         let Some(sb) = c.standby.as_deref_mut() else { return };
         sb.open.store(false, Ordering::Relaxed);
         let Some(mut t) = sb.taking.take() else { return };
+        // The members it held follow no host: their links close below.
+        sb.welcomed.clear();
+        sb.held.clear();
+        sb.held_events.clear();
         t.reach.stop();
         if let Some(ep) = sb.out.endpoint_mut() {
             ep.refuse_pending(Refusal::NotHost);
@@ -1011,7 +1074,7 @@ impl OnlinePeer {
         sb.closing.clear();
     }
 
-    /// The successor commits (N68: its first rejoin, or nobody expected):
+    /// The successor commits (N68, ruling FR12d-Q: its quorum back):
     /// the old endpoint shuts down on a thread and the standby becomes the
     /// peer's endpoint, the migrated lobby a host's side, the content side
     /// a host's; the session takes over with the bot slots and the bots

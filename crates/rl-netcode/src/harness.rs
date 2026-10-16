@@ -13,7 +13,9 @@ use alloc::vec::Vec;
 
 use rl_sim::Keys;
 
-use crate::migration::{GIVE_UP_US, MAX_MIGRATIONS, Migration, RETRY_US, STEP_DOWN_US, Step, WINDOW_US};
+use crate::migration::{
+    GIVE_UP_US, MAX_MIGRATIONS, Migration, RETRY_US, STEP_DOWN_US, Step, WINDOW_US, quorum,
+};
 use crate::netsim::{LinkStats, Network, Profile};
 use crate::{
     Channel, Config, Driver, Event, PeerId, Role, Seat, Session, Simulation, Stats, TICK_US, TickInfo,
@@ -124,6 +126,40 @@ pub struct MigrationPlan {
     /// (their succession entry cannot), and a new host still waits for them
     /// (final review A-M4).
     pub no_standby: Vec<PeerId>,
+    /// Network partitions (ruling FR12d-Q's tests): peers on either side
+    /// reach nobody on the other, links and a migration's asks alike.
+    pub partitions: Vec<Partition>,
+}
+
+/// From the current host's tick `from_tick` (in virtual time, as an
+/// outage) to `until_tick`, the peers in `side` and every other peer (the
+/// first host included) are cut off from each other; each side still
+/// reaches its own.
+#[derive(Clone, Debug)]
+pub struct Partition {
+    pub side: Vec<PeerId>,
+    pub from_tick: u32,
+    pub until_tick: u32,
+}
+
+impl Partition {
+    /// `a` and `b` are on its two sides at virtual time `t_us`.
+    fn separates(&self, a: PeerId, b: PeerId, t_us: u64) -> bool {
+        let (from, until) = (self.from_tick as u64 * TICK_US, self.until_tick as u64 * TICK_US);
+        t_us >= from && t_us < until && self.side.contains(&a) != self.side.contains(&b)
+    }
+
+    /// `a` and `b` are on its two sides throughout `[from_us, until_us]`.
+    fn separates_over(&self, a: PeerId, b: PeerId, from_us: u64, until_us: u64) -> bool {
+        self.from_tick as u64 * TICK_US <= from_us
+            && self.until_tick as u64 * TICK_US >= until_us
+            && self.side.contains(&a) != self.side.contains(&b)
+    }
+}
+
+/// `a` and `b` are partitioned from each other at virtual time `t_us`.
+fn separated(sc: &Scenario, a: PeerId, b: PeerId, t_us: u64) -> bool {
+    sc.migration.as_ref().is_some_and(|m| m.partitions.iter().any(|p| p.separates(a, b, t_us)))
 }
 
 /// From the current host's tick `tick`, `peer`'s link to whoever hosts
@@ -185,11 +221,15 @@ pub trait Observer<S: Simulation> {
 ///   a window (an unreached one is not asked again in it), so an outage
 ///   over the ask is one over the window. Ruling FR12c-1b: nor was a
 ///   successor that had exited (crashed or left) by then: a survivor whose
-///   old host said `Bye` commits only at a rejoin while it expects others
-///   (D8: no split), so with every other successor gone it is host lost,
-///   FR12c-1's cost (net-soak's `good-15s2c0v-seed960552337`). No other
-///   cause counts: a frozen successor, or a link on any profile (`awful`
-///   connects), leaves it reachable.
+///   old host said `Bye` commits only with a quorum while it expects
+///   others (D8, FR12d-Q: no split), so with every other successor gone it
+///   is host lost, FR12c-1's cost (net-soak's
+///   `good-15s2c0v-seed960552337`). A
+///   partition between the two over the ask is a cut too. Ruling FR12d-Q:
+///   nor was a successor reached that could not commit for want of a
+///   quorum ([`lacked_quorum`]). No other cause counts: a frozen
+///   successor, or a link on any profile (`awful` connects), leaves it
+///   reachable.
 /// - **Their confirmed rows agree** with the last host's and with each
 ///   other's as far as each goes (a spectator that joined or came late:
 ///   from its last state on, as everywhere in the verdict).
@@ -211,7 +251,10 @@ fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
                 && !o.one_way
                 && o.from_tick as u64 * TICK_US <= from_us
                 && o.until_tick as u64 * TICK_US >= until_us
-        })
+        }) || sc
+            .migration
+            .as_ref()
+            .is_some_and(|m| m.partitions.iter().any(|p| p.separates_over(a, b, from_us, until_us)))
     };
     for &q in &survivors {
         let Some(g) = r.gave_up.get(&q) else { return false };
@@ -228,7 +271,7 @@ fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
             }
             let asked = start + ping_us(q) + 50_000;
             let exited = r.exited_us.get(&s).is_some_and(|&us| us <= asked);
-            if s != q && !cut(q, s, start, asked) && !exited {
+            if s != q && !cut(q, s, start, asked) && !exited && !lacked_quorum(sc, r, s) {
                 return false;
             }
         }
@@ -260,6 +303,61 @@ fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
     logs.iter().all(|&(sa, a)| {
         logs.iter().all(|&(sb, b)| a.iter().zip(b.iter()).skip(sa.max(sb)).all(|(x, y)| x == y))
     })
+}
+
+/// Ruling FR12d-Q in SK-10: successor `s`, a survivor that gave up, could
+/// not commit in its own window for want of a quorum. Its members are the
+/// match's start in its old host's succession (itself aside, not late) and
+/// that host unless `s` heard its `Bye`; a member `m` that also gave up
+/// counts as having reached `s` when its window for `s` (as the attempts
+/// run: asked, refused while `s` is not yet open, asked again) overlaps
+/// `s`'s own with room for an ask after `s` opens (`RETRY_US`, `m`'s
+/// slowest ping and 50 ms) and a join (two pings, or its slow join) before
+/// `s` closes, and no outage of either or partition between them touches
+/// `m`'s window up to that ask (an ask cut off is not repeated in its
+/// window). Generous on purpose, as SK-10 is: a member possibly kept away
+/// is not counted, so a run is failed only when a quorum surely reached
+/// `s`.
+fn lacked_quorum(sc: &Scenario, r: &Report, s: PeerId) -> bool {
+    let Some(gs) = r.gave_up.get(&s) else { return false };
+    let Some(k_s) = gs.order.iter().filter(|e| e.1).position(|e| e.0 == s) else { return false };
+    let s_start = gs.began_us + k_s as u64 * WINDOW_US;
+    let s_end = (s_start + WINDOW_US).min(gs.at_us);
+    let start_member = |p: PeerId| sc.peers.iter().any(|x| x.id == p && x.join_tick.is_none());
+    let expected: Vec<PeerId> =
+        gs.order.iter().map(|e| e.0).filter(|&m| m != s && start_member(m) && !r.late.contains(&m)).collect();
+    let gone = r.events.get(&s).is_some_and(|e| e.contains(&Event::PeerLeft { peer: gs.from }));
+    let touched = |a: PeerId, b: PeerId, from_us: u64, until_us: u64| {
+        sc.outages.iter().any(|o| {
+            (o.peer == a || o.peer == b)
+                && !o.one_way
+                && (o.from_tick as u64 * TICK_US) < until_us
+                && (o.until_tick as u64 * TICK_US) > from_us
+        }) || sc.migration.as_ref().is_some_and(|mp| {
+            mp.partitions.iter().any(|p| {
+                (p.from_tick as u64 * TICK_US) < until_us
+                    && (p.until_tick as u64 * TICK_US) > from_us
+                    && p.side.contains(&a) != p.side.contains(&b)
+            })
+        })
+    };
+    let reached = |m: PeerId| {
+        let Some(gm) = r.gave_up.get(&m) else { return false };
+        let Some(k_m) = gm.order.iter().filter(|e| e.1).position(|e| e.0 == s) else { return false };
+        let m_start = gm.began_us + k_m as u64 * WINDOW_US;
+        let ping = slowest_ping_us(sc, m);
+        let join = sc
+            .migration
+            .as_ref()
+            .and_then(|mp| mp.slow_joins.iter().find(|j| j.0 == m).map(|j| j.1))
+            .unwrap_or(2 * ping);
+        let ask = m_start.max(s_start) + RETRY_US + ping + 50_000;
+        ask < (m_start + WINDOW_US).min(gm.at_us)
+            && ask + join + step_us(sc) < s_end
+            && !touched(m, s, m_start, ask)
+    };
+    let back = expected.iter().filter(|&&m| reached(m)).count();
+    !quorum(expected.len(), back, gone)
 }
 
 /// The harness's step: steps come with frames, so a give-up lands up to a
@@ -526,6 +624,10 @@ enum Stage {
     Silent,
     /// Contact: the join completes at this time.
     Join(u64),
+    /// Joined an uncommitted successor: in contact, held until it commits
+    /// (ruling FR12d-Q: it counts towards the successor's quorum), or its
+    /// gate closes (lost contact, D8).
+    Held,
 }
 
 /// A successor that took over from `from`, collecting until its resume.
@@ -704,19 +806,24 @@ fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
 ///   open answers after one ping (contact) and welcomes it two pings later
 ///   (or `slow_joins`' time); one alive but not hosting refuses after one
 ///   ping, asked again [`RETRY_US`] later; a dead or frozen one, or one
-///   across an outage, does not answer until the window moves on. A
-///   successor whose gate closes (its window ended uncommitted, N69, give-up)
-///   breaks the contacts with it (`lost_contact`).
-/// - **A rejoin:** a link to the successor; the successor commits at the
-///   first (`take_over` with the bots, `host_driver`), `rejoined`; the peer
-///   `rehost`s and drops its migration. After the resume `rejoined` is
-///   false: the peer gets a new `Role::Joining` session and the host's
-///   `add_spectator` (N72).
+///   across an outage or a partition, does not answer until the window
+///   moves on. A successor whose gate closes (its window ended uncommitted,
+///   N69, give-up) breaks the contacts with it (`lost_contact`), the joins
+///   it held too.
+/// - **The commit (ruling FR12d-Q):** a join to an uncommitted successor
+///   is held (in contact) until the successor and the members it holds are
+///   a majority of the members not known gone ([`quorum`]: the members it
+///   expects back, itself, its old host unless its `Bye` came); with
+///   nobody expected, once its old host is known gone (FR12c-1). It then
+///   commits (`take_over` with the bots, `host_driver`) and takes in every
+///   join it held, followers too.
+/// - **A rejoin** (to a committed successor): a link to it, `rejoined`;
+///   the peer `rehost`s and drops its migration. After the resume
+///   `rejoined` is false: the peer gets a new `Role::Joining` session and
+///   the host's `add_spectator` (N72).
 /// - **The resume:** when every expected peer is back and every peer back
 ///   reported, or at the successor's window's end with every peer back
-///   reported (N68, C1). A successor that expects nobody commits and
-///   resumes at once only once its old host is known gone (its `Bye` came,
-///   ruling FR12c-1); else at a rejoin (a follower's), or never.
+///   reported (N68, C1).
 /// - **N69:** a peer neither committed nor in contact that hears its old
 ///   host again (`HostHeard`) unsuspends and drops its migration; one in
 ///   contact remembers it and does so when that contact is lost (the
@@ -765,6 +872,8 @@ struct Shared {
     left_from: BTreeMap<PeerId, PeerId>,
     /// Per old host, when each peer found it gone.
     began: BTreeMap<PeerId, BTreeMap<PeerId, u64>>,
+    /// The scenario's partitions (virtual times): `(side, from, until)`.
+    partitions: Vec<(Vec<PeerId>, u64, u64)>,
 }
 
 impl Shared {
@@ -782,6 +891,16 @@ impl Shared {
                 } else {
                     self.net.outage(peer, host, a, b);
                 }
+            }
+        }
+        self.partition(peer, host);
+    }
+
+    /// The partitions to come that separate `a` and `b` cut their link.
+    fn partition(&mut self, a: PeerId, b: PeerId) {
+        for (side, from, until) in &self.partitions {
+            if side.contains(&a) != side.contains(&b) {
+                self.net.outage(a, b, *from, *until);
             }
         }
     }
@@ -878,7 +997,18 @@ pub fn run_observed<S: Simulation>(
         late: BTreeSet::new(),
         left_from: BTreeMap::new(),
         began: BTreeMap::new(),
+        partitions: plan
+            .map(|m| {
+                m.partitions
+                    .iter()
+                    .map(|p| (p.side.clone(), p.from_tick as u64 * TICK_US, p.until_tick as u64 * TICK_US))
+                    .collect()
+            })
+            .unwrap_or_default(),
     };
+    for p in &sc.peers {
+        w.partition(HOST, p.id);
+    }
 
     let end = sc.ticks.saturating_add(sc.settle_ticks);
     let limit_us = (end as u64 * TICK_US).saturating_mul(4).saturating_add(60_000_000);
@@ -1260,7 +1390,7 @@ fn begin<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, now: u64, gone: bool) {
 /// contact is lost ([`lost_contact`]).
 fn give_back<S: Simulation>(p: &mut Peer<S>, w: &mut Shared) {
     let Some(m) = p.migrating.as_mut() else { return };
-    if matches!(m.attempt, Some(Attempt { stage: Stage::Join(_), .. })) {
+    if matches!(m.attempt, Some(Attempt { stage: Stage::Join(_) | Stage::Held, .. })) {
         m.heard = true;
         return;
     }
@@ -1290,8 +1420,7 @@ fn migrate<S: Simulation>(
     now: u64,
 ) {
     // Steps: give-up, the successor's own turn, the successor to try.
-    let mut commits = Vec::new();
-    for (i, p) in peers.iter_mut().enumerate() {
+    for p in peers.iter_mut() {
         if p.gone || p.frozen_at.is_some() {
             continue;
         }
@@ -1313,13 +1442,6 @@ fn migrate<S: Simulation>(
             Step::Host => {
                 mg.gate = true;
                 mg.attempt = None;
-                // Ruling FR12c-1: it commits at a rejoin, or expecting
-                // nobody once its old host is known gone; never on its own
-                // say (its own drop looks like the host's).
-                let nobody = mg.order.iter().all(|e| !e.1 || e.0 == p.id);
-                if nobody && mg.gone {
-                    commits.push(i);
-                }
             }
             Step::Try(to) => {
                 mg.gate = false;
@@ -1329,17 +1451,13 @@ fn migrate<S: Simulation>(
             }
         }
     }
-    // A successor expecting nobody, its old host known gone, commits and
-    // resumes at once (N68, FR12c-1).
-    for i in commits {
-        commit(f, peers, w, i, now);
-    }
     // A gate closed (an uncommitted successor's window ended, its old host
-    // came back, it gave up or crashed): its contacts break (D8).
+    // came back, it gave up or crashed): its contacts break (D8), the
+    // joins it held too.
     let open: BTreeSet<PeerId> = peers.iter().filter(|p| p.hosting()).map(|p| p.id).collect();
     for p in peers.iter_mut() {
         let Some(mg) = p.migrating.as_ref() else { continue };
-        if let Some(Attempt { to, stage: Stage::Join(_) }) = mg.attempt
+        if let Some(Attempt { to, stage: Stage::Join(_) | Stage::Held }) = mg.attempt
             && !open.contains(&mg.order[to].0)
         {
             lost_contact(p, w, to);
@@ -1354,6 +1472,7 @@ fn migrate<S: Simulation>(
                 && now < o.until_tick as u64 * TICK_US
         })
     };
+    let committed = |p: &Peer<S>| p.taking.is_some() || p.session.is_host();
     for i in 0..peers.len() {
         let p = &peers[i];
         if p.gone || p.frozen_at.is_some() {
@@ -1366,7 +1485,8 @@ fn migrate<S: Simulation>(
         let si = index.get(&s).copied();
         let reachable = si.is_some_and(|si| !peers[si].gone && peers[si].frozen_at.is_none())
             && !outage(p.id)
-            && !outage(s);
+            && !outage(s)
+            && !separated(sc, p.id, s, now);
         let ping = w.profiles.get(&p.id).map_or(1_000, |pr| pr.ping_ms as u64 * 1_000);
         let join = plan.slow_joins.iter().find(|j| j.0 == p.id).map_or(2 * ping, |j| j.1);
         let next = match stage {
@@ -1379,13 +1499,23 @@ fn migrate<S: Simulation>(
             }),
             Stage::Retry(at) if now >= at => Some(Stage::Ask(now + ping)),
             Stage::Join(at) if now >= at => None,
+            // Held: taken in once its successor committed (below).
+            Stage::Held => match si {
+                Some(si) if committed(&peers[si]) => None,
+                _ => continue,
+            },
             _ => continue,
         };
-        // The join completes, or fails (lost contact).
+        // The join completes (taken in by a committed successor, else held
+        // for its quorum), or fails (lost contact).
         if next.is_none()
             && let Some(si) = si.filter(|&si| reachable && peers[si].hosting())
         {
-            rejoin(sc, f, peers, w, i, si, now);
+            if committed(&peers[si]) {
+                rejoin(sc, f, peers, w, i, si, now);
+            } else if let Some(a) = peers[i].migrating.as_mut().and_then(|mg| mg.attempt.as_mut()) {
+                a.stage = Stage::Held;
+            }
             continue;
         }
         let Some(mg) = peers[i].migrating.as_mut() else { continue };
@@ -1397,6 +1527,37 @@ fn migrate<S: Simulation>(
                 mg.attempt = Some(Attempt { to, stage });
             }
             None => lost_contact(&mut peers[i], w, to),
+        }
+    }
+    // Ruling FR12d-Q: an uncommitted successor commits once it and the
+    // members it holds are a majority of the members not known gone (with
+    // nobody expected, once its old host is known gone: FR12c-1); then it
+    // takes in every join it held, members and followers.
+    for i in 0..peers.len() {
+        let p = &peers[i];
+        if p.gone || p.frozen_at.is_some() {
+            continue;
+        }
+        let Some(mg) = p.migrating.as_ref().filter(|mg| mg.gate) else { continue };
+        let id = p.id;
+        let expected = expected_of(w, id, &mg.order);
+        let held: Vec<usize> = (0..peers.len())
+            .filter(|&j| {
+                let q = &peers[j];
+                !q.gone
+                    && q.frozen_at.is_none()
+                    && q.migrating.as_ref().is_some_and(|m| {
+                        matches!(m.attempt, Some(Attempt { to, stage: Stage::Held }) if m.order[to].0 == id)
+                    })
+            })
+            .collect();
+        let back = held.iter().filter(|&&j| expected.contains(&peers[j].id)).count();
+        if !quorum(expected.len(), back, mg.gone) {
+            continue;
+        }
+        commit(f, peers, w, i, now);
+        for j in held {
+            rejoin(sc, f, peers, w, j, i, now);
         }
     }
     // Ruling FR12c-3: a peer asking a hosting successor it can reach (not
@@ -1412,7 +1573,9 @@ fn migrate<S: Simulation>(
             Some(Attempt { to, stage: Stage::Ask(_) | Stage::Retry(_) }) => Some(mg.order[*to].0),
             _ => None,
         };
-        let within = asking.filter(|&s| !frozen && open.contains(&s) && !outage(id) && !outage(s));
+        let within = asking.filter(|&s| {
+            !frozen && open.contains(&s) && !outage(id) && !outage(s) && !separated(sc, id, s, now)
+        });
         mg.reach = match (within, mg.reach) {
             (Some(s), Some((r, since))) if r == s => Some((s, since)),
             (Some(s), _) => Some((s, now)),
@@ -1451,19 +1614,25 @@ fn lost_contact<S: Simulation>(p: &mut Peer<S>, w: &mut Shared, to: usize) {
     }
 }
 
+/// The members successor `me` expects back (N68): every other member of
+/// the match's start in its old host's succession `order`, not seated late
+/// (rl-lobby's `away_in_match`), one without a standby too (final review
+/// A-M4); dead ones too (it cannot know). Ruling FR12d-Q's members, itself
+/// and its old host aside.
+fn expected_of(w: &Shared, me: PeerId, order: &[(PeerId, bool)]) -> BTreeSet<PeerId> {
+    order
+        .iter()
+        .filter(|e| e.0 != me && w.start.contains(&e.0) && !w.late.contains(&e.0))
+        .map(|e| e.0)
+        .collect()
+}
+
 /// Successor `peers[i]` commits: it takes over from its old host, plays
 /// the bots, and collects until its resume.
 fn commit<S: Simulation>(f: &mut dyn Factory<S>, peers: &mut [Peer<S>], w: &mut Shared, i: usize, now: u64) {
     let p = &mut peers[i];
     let Some(mg) = p.migrating.take() else { return };
-    // Every other member of the match's start not seated late (rl-lobby's
-    // `away_in_match`): one without a standby too (final review A-M4).
-    let expected = mg
-        .order
-        .iter()
-        .filter(|e| e.0 != p.id && w.start.contains(&e.0) && !w.late.contains(&e.0))
-        .map(|e| e.0)
-        .collect();
+    let expected = expected_of(w, p.id, &mg.order);
     let deadline = mg.m.window_end(now);
     let own = match p.seat {
         Some(Seat::Player(s)) => Some(s),
@@ -1485,9 +1654,9 @@ fn commit<S: Simulation>(f: &mut dyn Factory<S>, peers: &mut [Peer<S>], w: &mut 
     p.taking = Some(Taking { from: mg.from, expected, back: BTreeSet::new(), deadline, held });
 }
 
-/// `peers[pi]`'s join to `peers[si]` completes: the successor commits on
-/// the first, then takes the peer back (or, after its resume, as a
-/// spectator arriving mid-match, N72).
+/// `peers[pi]`'s join to `peers[si]`, a committed successor, completes: it
+/// takes the peer back (or, after its resume, as a spectator arriving
+/// mid-match, N72).
 fn rejoin<S: Simulation>(
     sc: &Scenario,
     f: &mut dyn Factory<S>,
@@ -1497,9 +1666,6 @@ fn rejoin<S: Simulation>(
     si: usize,
     now: u64,
 ) {
-    if peers[si].migrating.is_some() {
-        commit(f, peers, w, si, now);
-    }
     let (p, s) = if pi < si {
         let (a, b) = peers.split_at_mut(si);
         (&mut a[pi], &mut b[0])

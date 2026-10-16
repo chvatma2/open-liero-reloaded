@@ -863,7 +863,7 @@ proptest! {
 
 use rl_netcode::SILENCE_TIMEOUT_US;
 use rl_netcode::harness::{
-    self, Exit, ExitHow, HOST, MigrationPlan, Outage, PeerPlan, ProfileChange, Report, Scenario,
+    self, Exit, ExitHow, HOST, MigrationPlan, Outage, Partition, PeerPlan, ProfileChange, Report, Scenario,
 };
 use rl_netcode::migration::{GIVE_UP_US, STEP_DOWN_US, WINDOW_US};
 use rl_netcode::netsim::Profile;
@@ -1220,17 +1220,98 @@ fn profiles_change_mid_run() {
     assert!(got * 4 < all * 3, "{got} dropped, {all} with awful links to the end");
 }
 
+/// The D8 run: a host, players 1 and 2 and spectator 100; the host goes
+/// at tick 400 (`how`), and the joins of peers 2 and 100 take 6 s.
+fn d8_run(how: ExitHow) -> Scenario {
+    let mut sc = mscenario(17, Profile::GOOD, 2);
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how });
+    sc.migration.as_mut().unwrap().slow_joins.extend([(2, 6_000_000), (100, 6_000_000)]);
+    sc
+}
+
 #[test]
 fn a_successor_nobody_joined_in_its_window_takes_no_one_after_it() {
     // D8: peers 2 and 100 reach successor 1 at once, but their joins take
     // 6 s: it closes at its window's end, uncommitted, and they follow
-    // the next window (peer 2's own), which peer 1 joins in time.
-    let mut sc = mscenario(17, Profile::GOOD, 2);
-    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
-    sc.migration.as_mut().unwrap().slow_joins.extend([(2, 6_000_000), (100, 6_000_000)]);
-    let r = run_checked(&sc);
+    // the next window (peer 2's own), which peer 1 joins in time. The host
+    // left (its `Bye`): three members, so peers 2 and 1 are a majority
+    // (ruling FR12d-Q).
+    let r = run_checked(&d8_run(ExitHow::Leave));
     assert_eq!(r.hosts, vec![HOST, 2]);
     assert_eq!(r.host_lost, [100].into(), "its join to peer 2 would end past the give-up");
+}
+
+/// A host and `clients` players on LAN, no spectator, the host leaving at
+/// tick 400 and `side` cut off from the others from `from_tick` to the end.
+fn partitioned(seed: u64, clients: u8, side: Vec<u32>, from_tick: u32) -> Scenario {
+    let mut sc = mscenario(seed, Profile::LAN, clients);
+    sc.peers.retain(|p| p.seat != Seat::Spectator);
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Leave });
+    sc.migration.as_mut().unwrap().partitions.push(Partition { side, from_tick, until_tick: 10_000 });
+    sc
+}
+
+/// Ruling FR12d-Q (net-soak's `lan-16s7c0v-seed2762456828`): players 2
+/// and 4 are cut off from the rest a second before the host leaves, so its
+/// `Bye` reaches only players 1, 3 and 5. Successor 1 takes them back:
+/// three of the five members, a majority. Players 2 and 4 find the host
+/// silent, cannot reach successor 1, and in player 2's window player 4
+/// joins it: two of six members (their old host never said `Bye` to them),
+/// no majority, so player 2 never hosts and both are host lost. Before, the
+/// first rejoin committed a successor, and player 2 took the match over a
+/// second time: a split.
+#[test]
+fn only_the_majority_side_of_a_partition_continues() {
+    let r = run_checked(&partitioned(51, 5, vec![2, 4], 300));
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    assert_eq!(r.host_lost, [2, 4].into());
+    let g = &r.gave_up[&4];
+    assert_eq!(g.from, HOST, "it found the first host gone");
+}
+
+/// Ruling FR12d-Q's stated cost: the host leaves (every player hears its
+/// `Bye`), then players 1 and 3 and players 2 and 4 are cut off from each
+/// other. Each side is two of the four members: neither has a majority, so
+/// neither continues and every player is host lost (SK-10 accepts it: no
+/// successor could gather a quorum). Before, each side took the match over.
+#[test]
+fn an_even_split_continues_on_neither_side() {
+    let mut sc = partitioned(52, 4, vec![2, 4], 402);
+    // Every join takes 300 ms: none completes before the cut, 20 ms after
+    // the `Bye`.
+    sc.migration.as_mut().unwrap().slow_joins.extend([
+        (1, 300_000),
+        (2, 300_000),
+        (3, 300_000),
+        (4, 300_000),
+    ]);
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST], "nobody committed");
+    assert_eq!(r.host_lost, [1, 2, 3, 4].into());
+    for p in [1, 2, 3, 4] {
+        assert!(r.events[&p].contains(&Event::PeerLeft { peer: HOST }), "peer {p} heard the Bye");
+    }
+}
+
+/// Ruling FR12d-Q's cost in the D8 run: the host crashed (no `Bye`), so it
+/// still counts. Peers 2 and 1 are two of four members, no majority: peer
+/// 2's window ends uncommitted too and every survivor is host lost. SK-10
+/// accepts it: no successor could gather a quorum (peer 100's joins end
+/// past each window). The twin: peer 100's joins as fast as the others'
+/// (a quorum within peer 2's reach): not accepted.
+#[test]
+fn a_successor_short_of_a_quorum_is_host_lost_legitimately() {
+    let sc = d8_run(ExitHow::Crash);
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let r = harness::run(&sc, &mut f).unwrap();
+    assert_eq!(r.hosts, vec![HOST], "nobody committed");
+    assert_eq!(r.host_lost, [1, 2, 100].into());
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    assert!(r.could_join.is_empty(), "{:?}", r.could_join);
+    let mut quick = sc.clone();
+    quick.migration.as_mut().unwrap().slow_joins.retain(|j| j.0 != 100);
+    let e = harness::verdict(&quick, &r, &mut f).unwrap_err();
+    assert!(e.what.contains("the host confirmed"), "{e:?}");
 }
 
 #[test]
@@ -1280,9 +1361,7 @@ fn the_verdict_bounds_exited_and_lost_peers_rows() {
     let mut dead = mscenario(5, Profile::TYPICAL, 3);
     dead.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
     dead.exits.push(Exit { peer: 1, tick: 400, after_us: 0, how: ExitHow::Crash });
-    let mut lost = mscenario(17, Profile::GOOD, 2);
-    lost.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
-    lost.migration.as_mut().unwrap().slow_joins.extend([(2, 6_000_000), (100, 6_000_000)]);
+    let lost = d8_run(ExitHow::Leave);
     for (sc, peer) in [(dead, 1), (lost, 100)] {
         let mut r = run_checked(&sc);
         assert!(r.exited.contains(&peer) || r.host_lost.contains(&peer));
@@ -1679,9 +1758,7 @@ fn a_lone_survivor_whose_other_successors_exited_is_host_lost_legitimately() {
 /// that went on passed unjudged.
 #[test]
 fn every_host_lost_peer_is_judged() {
-    let mut sc = mscenario(17, Profile::GOOD, 2);
-    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
-    sc.migration.as_mut().unwrap().slow_joins.extend([(2, 6_000_000), (100, 6_000_000)]);
+    let sc = d8_run(ExitHow::Leave);
     let r = run_checked(&sc);
     assert_eq!(r.host_lost, [100].into());
     let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
@@ -1747,8 +1824,10 @@ fn a_new_host_waits_for_a_player_without_a_standby() {
     let m = &r.migrations[0];
     assert!(m.resumed_us - m.silent_us >= 3_000_000, "{m:?}");
     // It never hosts: with successor 1 dead too, the spectator takes over.
+    // The host left (its `Bye`): peers 2 and 100 are two of three members
+    // (ruling FR12d-Q; with the host crashed too, two of four, no match).
     let mut sc = mscenario(40, Profile::GOOD, 2);
-    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Leave });
     sc.exits.push(Exit { peer: 1, tick: 400, after_us: 0, how: ExitHow::Crash });
     sc.migration.as_mut().unwrap().no_standby.push(2);
     let r = run_checked(&sc);

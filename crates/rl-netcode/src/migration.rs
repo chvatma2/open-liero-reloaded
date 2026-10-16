@@ -41,6 +41,28 @@ pub const MAX_RESUME_HOLD_US: u64 = 500_000;
 /// too).
 pub const RESUME_REPEAT_US: u64 = 2_000_000;
 
+/// Ruling FR12d-Q, a successor's majority quorum: it commits (takes the
+/// match over) only when it and the members back with it are strictly
+/// more than half of the match's members not known gone. The members are
+/// the players and spectators it expects back (`expected`: the match's
+/// start, itself aside, as N68's expected peers; followers are none), itself,
+/// and its old host unless that host is known gone (`old_host_gone`: its
+/// `Bye` or the lobby's `Closed` came). `back` counts the expected members
+/// that rejoined it, held until the commit.
+///
+/// Two successors' quorums always share a member, so a match continues on
+/// one side of a partition at most (net-soak's `lan-16s7c0v-seed2762456828`:
+/// two members cut off while the first successor took the match found each
+/// other in the second's window and split it). It keeps FR12c-1 (a two-peer
+/// blip is a stall: one member of two is no majority) and FR12c-1b (the lone
+/// survivor of three whose old host said `Bye` is host lost). Its cost: an
+/// even split continues on neither side, and a crashed host counts against
+/// its successor as an unreachable member does.
+pub fn quorum(expected: usize, back: usize, old_host_gone: bool) -> bool {
+    let members = expected.saturating_add(1).saturating_add(usize::from(!old_host_gone));
+    back.min(expected).saturating_add(1).saturating_mul(2) > members
+}
+
 /// What a peer in a migration does now ([`Migration::step`]).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Step {
@@ -105,8 +127,8 @@ impl Migration {
         }
     }
 
-    /// This peer, the successor, committed (its first rejoin, or nobody
-    /// expected): `Host` for good.
+    /// This peer, the successor, committed (its [`quorum`] back, ruling
+    /// FR12d-Q): `Host` for good.
     pub fn committed(&mut self) {
         self.hosting = true;
     }
@@ -255,6 +277,29 @@ mod tests {
         m.lost_contact(0);
         assert_eq!(m.step(7 * S), Step::Try(1));
         assert_eq!(m.step(10 * S), Step::GiveUp);
+    }
+
+    #[test]
+    fn a_successor_commits_with_a_strict_majority_of_the_members() {
+        // FR12c-1: a two-peer match. The host crashed (not known gone): one
+        // of two is no majority, so a blip stays a stall; its `Bye` makes
+        // the lone player the whole match.
+        assert!(!quorum(0, 0, false));
+        assert!(quorum(0, 0, true));
+        // FR12c-1b: the lone survivor of three, its old host said `Bye`, the
+        // other player never back.
+        assert!(!quorum(1, 0, true));
+        assert!(quorum(1, 1, true));
+        // A host and three players, the host crashed: four members.
+        assert!(!quorum(2, 1, false), "two of four: an even split");
+        assert!(quorum(2, 2, false));
+        // Net-soak's lan-16s7c0v: a host and seven players. The host left
+        // (said `Bye`) to the first successor's side: 5 of 7.
+        assert!(quorum(6, 4, true));
+        // The two cut off never heard it: 2 of 8.
+        assert!(!quorum(6, 1, false));
+        // More back than expected counts no further.
+        assert!(!quorum(0, 5, false));
     }
 
     #[test]

@@ -304,7 +304,8 @@ The headless command-line tool. Its commands:
   behaviour: a client whose server stops or restarts mid-match no longer
   ends with "disconnected" (exit 1) but carries the match on with the
   others, or takes it over as the first successor (alone, if it was the
-  only client, only when the server said `Bye`: ruling FR12c-1, a lone
+  only client, only when the server said `Bye`: ruling FR12c-1, kept by
+  FR12d-Q's majority quorum, a lone
   client cannot tell a crashed server from its own drop and is host lost);
   `--no-standby` never takes it over but still follows it
   to another player. Its configuration (`migration_config`): a standby on port 0 (through `--impair`) asking

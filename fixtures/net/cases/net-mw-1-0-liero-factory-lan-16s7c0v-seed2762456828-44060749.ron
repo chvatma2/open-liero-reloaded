@@ -1,0 +1,32 @@
+(
+    spec: (
+        mod_id: "olx-mw-1-0",
+        level_id: "olx-level-liero-factory",
+        seed: 2762456828,
+        slots: 16,
+        clients: 7,
+        spectators: 0,
+        join_tick: None,
+        profile: "lan",
+        drift_ppm: 2000,
+        ticks: 2280,
+        outages: [
+            (2, 473, 780),
+            (6, 482, 999),
+        ],
+        net_seed: 3733351202444803016,
+        difficulty: Some("easy"),
+        faults: [],
+        exits: [
+            (0, 564, "leave"),
+        ],
+        host_freeze: None,
+        profile_changes: [
+            (1437, 2, "bad"),
+            (1467, 7, "typical"),
+            (1623, 6, "lan"),
+        ],
+        migration: false,
+    ),
+    failure: Some("peer 1 held 0x2 for slot 0 at migration 0, the last host confirmed 0x0 at tick 481"),
+)
