@@ -28,6 +28,13 @@ pub const GIVE_UP_US: u64 = 10_000_000;
 /// N65: a successor that refused (`Refusal::NotHost`: not its turn yet) is
 /// tried again this much later, within its window.
 pub const RETRY_US: u64 = 250_000;
+/// Ruling FR12d-Q2 (amends N73): a successor not reached (no answer, a
+/// connect that failed or timed out, a link that never opened) is asked
+/// again this much later, within its window, so a peer whose link returns
+/// mid-window still joins (net-soak's `lan-16s7c0v-seed2762456828` and
+/// `bad-10s1c2v-seed1616063176`: peers cut off at their only ask stayed
+/// out though their links came back in time).
+pub const REASK_US: u64 = 1_000_000;
 /// N74: at most this many migrations per match (the driver's count); past
 /// it, the host is lost.
 pub const MAX_MIGRATIONS: u32 = 4;
@@ -44,11 +51,12 @@ pub const RESUME_REPEAT_US: u64 = 2_000_000;
 /// Ruling FR12d-Q, a successor's majority quorum: it commits (takes the
 /// match over) only when it and the members back with it are strictly
 /// more than half of the match's members not known gone. The members are
-/// the players and spectators it expects back (`expected`: the match's
-/// start, itself aside, as N68's expected peers; followers are none), itself,
-/// and its old host unless that host is known gone (`old_host_gone`: its
-/// `Bye` or the lobby's `Closed` came). `back` counts the expected members
-/// that rejoined it, held until the commit.
+/// the others of its old host's succession (`others`: the players and
+/// spectators of the match's start and, ruling FR12d-Q1, its followers,
+/// spectators that joined mid-match, counted alike on both sides of the
+/// ratio), itself, and its old host unless that host is known gone
+/// (`old_host_gone`: its `Bye` or the lobby's `Closed` came). `back` counts
+/// the members that rejoined it, held until the commit.
 ///
 /// Two successors' quorums always share a member, so a match continues on
 /// one side of a partition at most (net-soak's `lan-16s7c0v-seed2762456828`:
@@ -58,9 +66,9 @@ pub const RESUME_REPEAT_US: u64 = 2_000_000;
 /// survivor of three whose old host said `Bye` is host lost). Its cost: an
 /// even split continues on neither side, and a crashed host counts against
 /// its successor as an unreachable member does.
-pub fn quorum(expected: usize, back: usize, old_host_gone: bool) -> bool {
-    let members = expected.saturating_add(1).saturating_add(usize::from(!old_host_gone));
-    back.min(expected).saturating_add(1).saturating_mul(2) > members
+pub fn quorum(others: usize, back: usize, old_host_gone: bool) -> bool {
+    let members = others.saturating_add(1).saturating_add(usize::from(!old_host_gone));
+    back.min(others).saturating_add(1).saturating_mul(2) > members
 }
 
 /// What a peer in a migration does now ([`Migration::step`]).

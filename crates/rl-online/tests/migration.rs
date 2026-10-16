@@ -9,7 +9,7 @@ use std::net::Ipv4Addr;
 use std::time::{Duration, Instant};
 
 use rl_discovery::{PoolConfig, Region, TestRelay};
-use rl_netcode::migration::{GIVE_UP_US, HOST_SILENT_US, Step, WINDOW_US};
+use rl_netcode::migration::{GIVE_UP_US, HOST_SILENT_US, REASK_US, Step, WINDOW_US};
 use rl_online::migration::{ANSWER_OPEN_TIMEOUT, Connector, Failure, HOST_BACK, Planner, Route};
 use rl_online::{
     HOST_LOST, Join, JoinStep, LostWhy, MigrationConfig, MigrationStep, OnlineEvent, StartError,
@@ -456,6 +456,37 @@ fn a_successor_without_a_quorum_never_hosts() {
         net.peers[b].has(|e| matches!(e, OnlineEvent::Migrating(MigrationStep::Moving(n)) if n == "Anna")),
         "Bert reached Anna"
     );
+}
+
+/// Ruling FR12d-Q1 on the real path: followers count in the quorum. A
+/// host, one player (Anna) and two spectators that joined mid-match (Sam,
+/// Tom); the host freezes (no `Bye`: it still counts). Anna with both
+/// spectators back is three of four: she takes the match over and they
+/// watch on under her. Before, followers counted for nothing: one of two,
+/// all host lost.
+#[test]
+fn a_player_and_its_spectators_carry_on_when_the_host_crashes() {
+    let Some(content) = content() else { return };
+    let mut net = Net::new(content, 0.2);
+    let a = net.join_with_migration("Anna", direct());
+    net.run_until(Duration::from_secs(10), "Anna joined", |n| n.members() == 2);
+    net.ready(&[a]);
+    net.host().peer().lobby().start(7).unwrap();
+    net.run_until(Duration::from_secs(10), "the match runs", |n| n.host_tick() > 200);
+    let watchers = [net.join_with_migration("Sam", direct()), net.join_with_migration("Tom", direct())];
+    net.run_until(Duration::from_secs(10), "both watch", |n| {
+        watchers.iter().all(|&i| n.peers[i].has(|e| matches!(e, OnlineEvent::StateLoaded { .. })))
+    });
+    net.peers[0].frozen = true;
+    net.run_until(Duration::from_secs(14), "Anna hosts and both watch on", |n| {
+        n.peers[a].has(|e| matches!(e, OnlineEvent::Migrated { me: true, .. }))
+            && watchers.iter().all(|&i| {
+                n.peers[i].has(|e| matches!(e, OnlineEvent::Migrated { host, me: false } if host == "Anna"))
+            })
+    });
+    for i in [a, watchers[0], watchers[1]] {
+        assert!(!net.peers[i].has(|e| matches!(e, OnlineEvent::HostLost(_))));
+    }
 }
 
 /// D8, links open: Bert's join to Anna opens but its `Hello` comes only 6 s
@@ -1030,18 +1061,30 @@ impl Connector for Fake {
     }
 }
 
-/// Review Focus 3: a hostile succession (48 entries, each with an address
-/// and 2 relays) whose every direct connect is refused and whose relays
-/// never answer, or answer `NotHost` at once, over 10 s of a fake clock:
-/// one attempt at a time, each route of an entry once per window, at most
-/// 8 relays a join, nothing past the give-up, and the host lost.
-#[test]
-fn a_hostile_succession_is_bounded() {
-    hostile_succession(false);
-    hostile_succession(true);
+/// How a hostile succession's relays answer a join.
+#[derive(Clone, Copy, PartialEq)]
+enum Relays {
+    Silent,
+    NotHost,
+    /// The join fails at once, not reached: asked again (FR12d-Q2).
+    Unreached,
 }
 
-fn hostile_succession(relays_refuse: bool) {
+/// Review Focus 3: a hostile succession (48 entries, each with an address
+/// and 2 relays) whose every direct connect is refused and whose relays
+/// never answer, answer `NotHost` at once, or fail at once, over 10 s of a
+/// fake clock: one attempt at a time, at most 8 relays a join, nothing
+/// past the give-up, and the host lost. Each route of an entry is asked
+/// once per window, but a route not reached (ruling FR12d-Q2, amending
+/// N73) once per `REASK_US` at most within its window.
+#[test]
+fn a_hostile_succession_is_bounded() {
+    hostile_succession(Relays::Silent);
+    hostile_succession(Relays::NotHost);
+    hostile_succession(Relays::Unreached);
+}
+
+fn hostile_succession(relays_answer: Relays) {
     let order: Vec<SuccessorWire> = (0..48u8)
         .map(|i| SuccessorWire {
             member: i,
@@ -1068,8 +1111,11 @@ fn hostile_succession(relays_refuse: bool) {
         // or say `NotHost` (a key the hostile host holds).
         match plan.attempt() {
             Some((_, Route::Direct)) => assert!(!plan.failed(t, Failure::Unreached, &mut fake)),
-            Some((_, Route::Relays)) if relays_refuse => {
+            Some((_, Route::Relays)) if relays_answer == Relays::NotHost => {
                 assert!(!plan.failed(t, Failure::NotHost, &mut fake))
+            }
+            Some((_, Route::Relays)) if relays_answer == Relays::Unreached => {
+                assert!(!plan.failed(t, Failure::Unreached, &mut fake))
             }
             _ => {}
         }
@@ -1080,26 +1126,41 @@ fn hostile_succession(relays_refuse: bool) {
     assert!(fake.joins.iter().all(|&(t, ..)| t < GIVE_UP_US), "nothing past the give-up");
     assert!(fake.joins.iter().all(|&(.., relays)| relays <= 8), "{:?}", fake.joins);
     assert!(fake.joins.iter().any(|&(.., relays)| relays == 8), "the entry's 2 and 6 of its own");
-    let mut routes: BTreeMap<(u64, u8, bool), u32> = BTreeMap::new();
+    let mut routes: BTreeMap<(u64, u8, bool), Vec<u64>> = BTreeMap::new();
     for &(t, member, is_direct, _) in &fake.joins {
-        *routes.entry((t / WINDOW_US, member, is_direct)).or_default() += 1;
+        routes.entry((t / WINDOW_US, member, is_direct)).or_default().push(t);
     }
-    assert!(routes.values().all(|&n| n == 1), "{routes:?}");
-    // Two windows in 10 s: the first two entries, each once directly, then
-    // once through the relays.
-    assert_eq!(fake.joins.len(), 4, "{:?}", fake.joins);
+    // Two windows in 10 s: the first two entries.
+    assert!(routes.keys().all(|&(w, member, _)| u64::from(member) == w), "{routes:?}");
+    if relays_answer == Relays::Unreached {
+        // Asked again, each route at most once per `REASK_US`, within the
+        // window: 5 a route a window.
+        for times in routes.values() {
+            assert!(times.windows(2).all(|p| p[1] - p[0] >= REASK_US), "{routes:?}");
+        }
+        assert!(routes.values().all(|t| t.len() > 1), "asked again: {routes:?}");
+        assert_eq!(fake.joins.len(), 2 * 2 * (WINDOW_US / REASK_US) as usize, "{:?}", fake.joins);
+    } else {
+        // Each once directly, then once through the relays (a silent
+        // relay join is never given up in its window; `NotHost` through
+        // the relays is a refusal).
+        assert!(routes.values().all(|t| t.len() == 1), "{routes:?}");
+        assert_eq!(fake.joins.len(), 4, "{:?}", fake.joins);
+    }
 }
 
 /// The bound on the real path (127.0.0.1): Anna, the first successor, is
 /// gone with her standby, so nobody answers at its port. Bert, Cid and Dan
-/// each try her address once in her window (not tried again), then the
-/// match moves to Bert in his (three of five members, ruling FR12d-Q).
+/// each try her address once in her window: the connect waits in the
+/// held port's backlog unanswered until her turn ends (an attempt under
+/// way is never doubled; ruling FR12d-Q2 asks again only after one that
+/// failed), then the match moves to Bert in his (three of five members,
+/// ruling FR12d-Q).
 ///
 /// The port stays ours: a free ephemeral port could be taken by another
 /// test's standby (its closed gate answers `NotHost`, asked again every
 /// `RETRY_US`: 19 joins instead of one), so a listener that never accepts
-/// holds it. The connects wait in its backlog and give up at
-/// `MIGRATION_CONNECT_TIMEOUT`.
+/// holds it.
 #[test]
 fn a_successor_gone_costs_one_connect_each() {
     let Some(content) = content() else { return };
@@ -1136,11 +1197,18 @@ fn a_successor_gone_costs_one_connect_each() {
 /// Ruling SK-8: a spectator joining mid-match whose host crashes before its
 /// state loads has no world to follow the migration with: it finds its
 /// host silent and ends with `HostLost` (the text the UI already shows),
-/// instead of waiting on its join for ever.
+/// instead of waiting on its join for ever. Ruling FR12d-Q1: Cleo, a
+/// member of the succession, counts in Anna's quorum though she cannot
+/// come back, so Dan, a spectator watching already, makes it (three of
+/// five; Anna and Bert alone are two of four).
 #[test]
 fn a_joiner_still_loading_when_its_host_crashes_is_host_lost() {
     let Some(content) = content() else { return };
     let (mut net, [a, _]) = started(content);
+    let d = net.join_with_migration("Dan", direct());
+    net.run_until(Duration::from_secs(10), "Dan watches", |n| {
+        n.peers[d].has(|e| matches!(e, OnlineEvent::StateLoaded { .. }))
+    });
     let c = net.join_with_migration("Cleo", direct());
     net.run_until(Duration::from_secs(10), "the joiner's match starts", |n| {
         n.peers[c].has(|e| matches!(e, OnlineEvent::MatchStarting { .. }))

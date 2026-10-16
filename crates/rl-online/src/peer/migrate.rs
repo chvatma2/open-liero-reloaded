@@ -39,8 +39,9 @@ pub(super) struct Standby {
     /// Links refused before the commit, closed once their refusal left.
     closing: BTreeMap<PeerId, Instant>,
     /// Ruling FR12d-Q, while its turn's lobby waits for a quorum: the
-    /// members it expects back (`away_in_match` as its turn opened)...
-    expected: usize,
+    /// other members of the succession (`away` as its turn opened:
+    /// followers too, FR12d-Q1)...
+    members: usize,
     /// ...the members it took back (their `Welcome` and everything after
     /// it held: they follow no host yet, so a gate closing uncommitted
     /// leaves them free to follow the next window, D8)...
@@ -514,7 +515,7 @@ impl OnlinePeer {
                     port,
                     taking: None,
                     closing,
-                    expected: 0,
+                    members: 0,
                     welcomed: BTreeSet::new(),
                     held: Vec::new(),
                     held_events: Vec::new(),
@@ -753,10 +754,11 @@ impl OnlinePeer {
 
     /// Ruling FR12d-Q: in its turn, the successor commits only once it and
     /// the members back with it are strictly more than half of the match's
-    /// members not known gone (`rl_netcode::migration::quorum`: the members
-    /// it expected as its turn opened, itself, and its old host unless its
-    /// `Bye` or the lobby's `Closed` came); with nobody expected, once its
-    /// old host is known gone (FR12c-1). Then the welcomes it held leave
+    /// members not known gone (`rl_netcode::migration::quorum`: the other
+    /// members of the succession as its turn opened, followers too, ruling
+    /// FR12d-Q1; itself; and its old host unless its `Bye` or the lobby's
+    /// `Closed` came); with nobody else, once its old host is known gone
+    /// (FR12c-1). Then the welcomes it held leave
     /// and the lobby's events since the first rejoin are a host's. This
     /// replaces FR12c-1's commit at the first rejoin: two successors'
     /// quorums share a member, so a match continues on one side of a
@@ -771,8 +773,8 @@ impl OnlinePeer {
         let gone = mg.gone;
         let Some(sb) = c.standby.as_deref_mut() else { return };
         let Some(t) = sb.taking.as_deref() else { return };
-        let back = sb.expected.saturating_sub(t.lobby.away_in_match().len());
-        if !quorum(sb.expected, back, gone) {
+        let back = sb.members.saturating_sub(t.lobby.away().len());
+        if !quorum(sb.members, back, gone) {
             return;
         }
         let held = std::mem::take(&mut sb.held);
@@ -995,8 +997,8 @@ impl OnlinePeer {
     /// state's name, its player slots, `MAX_SPECTATORS`, the admins from
     /// the members' marks, no password) waits for the members; with
     /// `migration.relays` it listens on them from now (N73, A15; answered
-    /// in `standby_tasks`). The members it expects back (holding a slot or
-    /// a seat from the start) are its quorum's (ruling FR12d-Q).
+    /// in `standby_tasks`). Every other member of the succession, away
+    /// until it rejoins, is its quorum's (rulings FR12d-Q, FR12d-Q1).
     fn open_gate(&mut self) {
         let Side::Client(c) = &mut self.side else { return };
         let Some(sb) = c.standby.as_deref_mut() else { return };
@@ -1032,7 +1034,7 @@ impl OnlinePeer {
         let Ok(reach) = reach.or_else(|_| HostReach::start(HostListen::off(), &c.me)) else {
             return;
         };
-        sb.expected = lobby.away_in_match().len();
+        sb.members = lobby.away().len();
         sb.welcomed.clear();
         sb.held.clear();
         sb.held_events.clear();

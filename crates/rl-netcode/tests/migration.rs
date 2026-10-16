@@ -1127,6 +1127,57 @@ fn a_blip_beside_a_spectator_is_a_stall_unless_it_is_the_hosts() {
     assert!(r.exited.contains(&HOST) && r.host_lost.is_empty());
 }
 
+/// Ruling FR12d-Q1: followers count in the quorum. A host, one player and
+/// two spectators that joined mid-match; the host crashes (no `Bye`: it
+/// still counts). The player alone is one of four members, with both
+/// spectators back three: it takes the match over and they follow it.
+/// Before (followers counted for nothing), one of two, host lost for all.
+#[test]
+fn a_player_and_its_followers_carry_on_when_the_host_crashes() {
+    let followers = |late: Option<u32>| {
+        let mut sc = two_peers(43, Profile::GOOD);
+        for (id, join) in [(100, Some(100)), (101, late)] {
+            let mut p = plan(id, Seat::Spectator, Profile::GOOD);
+            p.join_tick = join;
+            sc.peers.push(p);
+        }
+        sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+        sc
+    };
+    let r = run_checked(&followers(Some(150)));
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    assert!(r.host_lost.is_empty(), "{:?}", r.host_lost);
+    // The second spectator's join tick never comes: it was never in the
+    // match, so the player and one follower are two of three.
+    let r = run_checked(&followers(Some(1_000)));
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    assert!(r.host_lost.is_empty(), "{:?}", r.host_lost);
+}
+
+/// Ruling FR12d-Q2 (amends N73): a successor not reached is asked again
+/// every second of its window. The host crashes; player 2's network is down
+/// from before it finds the host gone until 1.5 s into successor 1's
+/// window, so its first asks go unanswered. Its link back, its next ask
+/// reaches player 1, which (two of three with the crashed host) takes the
+/// match over, and both play on. Before, its one ask was never repeated:
+/// player 1 was short of a quorum and both were host lost.
+#[test]
+fn a_successor_is_asked_again_once_the_askers_link_returns() {
+    let mut sc = two_peers(44, Profile::GOOD);
+    sc.peers.push(plan(2, Seat::Player(3), Profile::GOOD));
+    sc.slots = 4;
+    sc.ticks = 2_000;
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.outages.push(Outage { peer: 2, from_tick: 550, until_tick: 750, one_way: false });
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    assert!(r.host_lost.is_empty() && r.late.is_empty(), "{:?} {:?}", r.host_lost, r.late);
+    let began = r.began[&HOST][&2];
+    assert!(began < 7_500_000, "it found the host gone before its link returned: {began}");
+    let m = &r.migrations[0];
+    assert!(m.resumed_us > 7_500_000, "player 2 rejoined after its link returned: {m:?}");
+}
+
 /// N68's 1-vs-host case under ruling FR12c-1: the host of a two-peer match
 /// crashes (no `Bye`), and its one player cannot tell that from its own
 /// drop: its turn commits to nobody and it is host lost when it gives up
@@ -1733,13 +1784,13 @@ fn a_spectator_whose_join_never_came_is_no_survivor() {
 /// Net-soak's `awful-6s3c1v-seed1453819890`: the host leaves; players 2
 /// and 3 (LAN) hear its `Bye` at once, player 1 (`bad`) later, so they ask
 /// successor 1 before its turn opened, are refused and ask again. By then
-/// player 2's network is down for good: that ask is unanswered and not
-/// repeated. Player 1 takes the match over with player 3 (two of three),
-/// then leaves too: player 3, alone with the unreachable player 2, is no
-/// majority, and every survivor is host lost. SK-10 accepts it: the outage
-/// touched player 2's asks before successor 1 opened (before, only an
-/// outage covering its first ask counted). The twin: the outage beginning
-/// after successor 1 opened and was asked again: not accepted.
+/// player 2's network is down for good: its asks go unanswered. Player 1
+/// takes the match over with player 3 (two of three), then leaves too:
+/// player 3, alone with the unreachable player 2, is no majority, and
+/// every survivor is host lost. SK-10 accepts it: the outage cut player 2
+/// off from successor 1's opening on (before, only an outage covering its
+/// first ask counted). The twin: the outage beginning 2 s after successor
+/// 1 opened, time enough to ask it and join: not accepted.
 #[test]
 fn an_asker_cut_off_before_its_successor_opens_is_host_lost_legitimately() {
     let mut sc = two_peers(42, Profile::BAD);
@@ -1758,7 +1809,7 @@ fn an_asker_cut_off_before_its_successor_opens_is_host_lost_legitimately() {
     assert!(b2 < b1, "player 2 found the host gone first: {b2} {b1}");
     harness::verdict(&sc, &r, &mut f).unwrap();
     let mut later = sc.clone();
-    later.outages[0].from_tick = 450;
+    later.outages[0].from_tick = 600;
     let e = harness::verdict(&later, &r, &mut f).unwrap_err();
     assert!(e.what.contains("the host confirmed"), "{e:?}");
 }
@@ -1800,7 +1851,8 @@ fn a_lone_survivor_whose_other_successors_exited_is_host_lost_legitimately() {
     assert_eq!(g.order.iter().map(|e| e.0).collect::<Vec<_>>(), [1, 2]);
     let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
     let mut alive = r.clone();
-    alive.exited_us.insert(2, g.began_us + WINDOW_US + 1_000_000);
+    // Alive 3 s into its window: time for an ask and a join (FR12d-Q2).
+    alive.exited_us.insert(2, g.began_us + WINDOW_US + 3_000_000);
     let e = harness::verdict(&sc, &alive, &mut f).unwrap_err();
     assert!(e.what.contains("the host confirmed"), "{e:?}");
 }

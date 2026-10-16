@@ -2835,7 +2835,43 @@ player's own rope throws are heard (the porting table).
   host lost even if the spectators reach the player. The players cut off
   in the soak case end host lost, as FR12c-3 judges them (their asks were
   unanswered); asking an unreached successor again in its window would
-  bring them back, a change to N73 not made here.
+  bring them back, a change to N73 not made here (then made: FR12d-Q2).
+- **FR12d-Q1 - followers count in the quorum** (controller's ruling).
+  The quorum's members are the old host's whole succession, followers
+  (spectators that joined mid-match) too, counted alike in the numerator
+  and the denominator, so the majority property holds. A host, one player
+  and mid-match spectators whose host crashes now plays on when the
+  spectators reach the player (`a_player_and_its_followers_carry_on_when_the_host_crashes`,
+  rl-online's `a_player_and_its_spectators_carry_on_when_the_host_crashes`).
+  The harness counts only followers that were in the match (a spectator
+  whose join tick never came is not); rl-online counts its migrated
+  lobby's `away()` at the turn's opening (every succession member). Cost:
+  a member that cannot come back (a spectator still loading, SK-8) still
+  counts (rl-online's `a_joiner_still_loading_when_its_host_crashes_is_host_lost`
+  now has a third watcher). Net-soak's `bad-10s1c2v-seed1616063176`: the
+  player now takes the match over with both spectators at 15.55 s.
+- **FR12d-Q2 - an unreached successor is asked again** (controller's
+  ruling, amends N73). An ask not reached (no answer, a connect that
+  failed or timed out, a link that never opened, a relayed join that
+  failed) is made again `REASK_US` (1 s) later, within its window
+  (`rl_netcode::migration::REASK_US`; harness `Stage::Retry`; rl-online's
+  `Planner`: a direct route again after 1 s, the relays meanwhile, both
+  again after 1 s when the relays fail). An attempt under way is never
+  doubled. FR12c-3's `could_join` slack is `REASK_US` (was `RETRY_US`),
+  and SK-10's reach model (`reaches`) now asks for a cut-free span long
+  enough for an ask and a join while the successor is open. Pinned by
+  `a_successor_is_asked_again_once_the_askers_link_returns` (harness: the
+  asker cut off past its first asks joins, the match goes on; RED
+  without re-asks), the planner's unit tests and
+  `a_hostile_succession_is_bounded` (relays failing at once: each route
+  at most once per second within its window, 20 joins over two windows).
+  Net-soak's `lan-16s7c0v-seed2762456828`: player 2 rejoins player 1 at
+  8.7 s, player 6 at 10.8 s just after the resume (a late rejoiner, N72).
+  Not covered end to end in rl-online: its blackout hook drops datagrams
+  only, so a direct join's TCP answer still comes and the link opens on
+  ICE's resend (`a_slow_direct_link_is_waited_for`); an ask that fails
+  outright on loopback is the planner's tests'. Cost: up to one join a
+  second per successor while it is not reached.
 - **SK-10b - a joined spectator among the lost** (net-soak's
   `bad-10s1c2v-seed1616063176`, kept). The host crashed with one player
   and two mid-match spectators, each spectator cut off when it asked the

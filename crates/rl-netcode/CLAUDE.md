@@ -420,12 +420,16 @@ model that tests it in one process (spec §9.1).
   `GiveUp` or `lost_contact(i)`. `window_end(now)`: the deadline for peers
   not yet back. `RETRY_US` (250 ms): a refusal's retry; `MAX_MIGRATIONS`
   (4): the driver's count per match. A peer welcomed by a new host drops
-  its `Migration` (A9). **Ruling FR12d-Q** (net-soak's
-  `lan-16s7c0v-seed2762456828`, plan 12d): `quorum(expected, back,
-  old_host_gone)`: a successor commits only when it and the expected
-  members back with it are strictly more than half of the members not
-  known gone (the members it expects back, N68's, followers none; itself;
-  its old host unless its `Bye`/`Closed` came). It replaces FR12c-1's
+  its `Migration` (A9). `REASK_US` (1 s, ruling FR12d-Q2, amending N73): a
+  successor not reached is asked again this much later within its window
+  (before, never again in it: a peer cut off at its ask stayed out though
+  its link came back mid-window). **Ruling FR12d-Q** (net-soak's
+  `lan-16s7c0v-seed2762456828`, plan 12d): `quorum(others, back,
+  old_host_gone)`: a successor commits only when it and the members back
+  with it are strictly more than half of the members not known gone (the
+  others of its old host's succession, followers too, ruling FR12d-Q1,
+  counted alike on both sides; itself; its old host unless its
+  `Bye`/`Closed` came). It replaces FR12c-1's
   "at least one rejoin" and its exception: two quorums share a member, so
   a match continues on one side of a partition at most; a two-peer blip
   stays a stall (one of two), the lone survivor of three is host lost
@@ -434,9 +438,11 @@ model that tests it in one process (spec §9.1).
   one player gone: two of four, host lost). Both drivers (the harness,
   rl-online) call it. In the soak case two players cut off while successor
   1 took the match (5 of 7 back, the host's `Bye` heard) never re-asked it
-  after their outages (an unreached successor is not asked again in its
-  window), and in player 2's turn player 6 joined it: 2 of 8, no longer a
-  second host.
+  after their outages (then an unreached successor was not asked again in
+  its window), and in player 2's turn player 6 joined it: 2 of 8, no
+  longer a second host. Since FR12d-Q2 player 2 rejoins player 1 at 8.7 s
+  (its outage over at 7.8 s) and player 6 at 10.8 s, just after the
+  resume, as a late rejoiner.
 - **WorldSim** (`world_sim.rs`): the `rl_sim::World` adapter, rollback
   on (`enable_rollback`); `save`/`restore`/`forget_before` are the
   world's (`restore` refused is a session bug: `expect`); `checksum` is
@@ -524,17 +530,24 @@ model that tests it in one process (spec §9.1).
       welcomes it two pings later (or `slow_joins`' time); one alive but
       not hosting refuses after one ping, asked again `RETRY_US` later; a
       dead or frozen one, or across an outage or a partition, gives no
-      answer until the window moves on; a gate that closes (window end
+      answer and is asked again `REASK_US` later in the window (ruling
+      FR12d-Q2; `a_successor_is_asked_again_once_the_askers_link_returns`:
+      a player cut off from before it found the host gone until 1.5 s
+      into successor 1's window joins it, and the match goes on; RED with
+      no re-ask); a gate that closes (window end
       uncommitted, N69, give-up, crash) breaks its contacts at once
       (`lost_contact`), the joins it held too;
     - the commit (ruling FR12d-Q): a join completing at an uncommitted
       successor is held (`Stage::Held`, in contact) until the successor's
-      `quorum` holds over the expected members it holds; it then commits
+      `quorum` holds over the members it holds (its old host's succession,
+      followers too, ruling FR12d-Q1, each that was in the match: a
+      spectator whose join tick never came was not; pinned by
+      `a_player_and_its_followers_carry_on_when_the_host_crashes`); it then commits
       (`committed`, `take_over` with the bot slots: every slot no player
       holds but `host_human`; `Factory::host_driver` replaces its driver,
       `ToyFactory` keeps the default `driver(peer, None)`) and takes in
-      every join it held (followers too, which do not count). Expecting
-      nobody, its quorum is itself once its old host is known gone (its
+      every join it held. With nobody else, its quorum is itself once its
+      old host is known gone (its
       `Bye`, `PeerLeft`, came before or during the migration: FR12c-1),
       else never (its window ends uncommitted and it gives up: a two-peer
       match whose host crashed is host lost,
@@ -580,8 +593,9 @@ model that tests it in one process (spec §9.1).
     - ruling FR12c-3: a migrating peer asking its window's successor (its
       attempt not unanswered, not in contact) while that successor hosts
       (gate open, alive, not frozen) with no outage of either, for longer
-      than an honest ask takes (`RETRY_US`, two of its slowest pings, two
-      steps and 50 ms), is `Report::could_join` (the successor, since
+      than an honest ask takes (`REASK_US`, the wait after an ask not
+      reached, two of its slowest pings, two steps and 50 ms), is
+      `Report::could_join` (the successor, since
       when): an honest run has none (`run_checked` asserts it in every
       migration test; a retry that never comes fills it).
   - `Report` gains `hosts` (in order, `HOST` first), `lost_capped`,
@@ -649,30 +663,29 @@ model that tests it in one process (spec §9.1).
     confirmed fewer than `ticks` passes only when every survivor is host
     lost legitimately (`every_survivor_lost_legitimately`): each gave up
     (`gave_up`) within `GIVE_UP_US` plus a frame; in each of its windows
-    before then, the window's successor (if another peer) was cut off from
-    it by a two-way outage of either from the window's start until its ask
-    was answered (the asker's slowest ping in the run plus 50 ms: an
-    unreached successor is not asked again in its window, here and in
-    rl-online), or had exited (crashed or left, `exited_us`) by then
-    (ruling FR12c-1b: a successor whose old host said `Bye` still commits
-    only with a quorum while it expects others, D8, FR12d-Q, so the match
-    never splits; with every other successor gone it is host lost,
-    FR12c-1's cost: net-soak's `good-15s2c0v-seed960552337`,
-    `a_lone_survivor_whose_other_successors_exited_is_host_lost_legitimately`
-    with its twin, the successor alive when asked), or was partitioned
-    from it over the ask, or, when it found the host gone later (its turn
-    opening later, `Report::began`: per old host, when each peer found it
-    gone), an outage or partition touched the asks until it opened (they
-    are refused and made again until then; net-soak's
+    before then, the window's successor (if another peer) was out of its
+    reach (`reaches`, ruling FR12d-Q2: asked from the window's start,
+    refused until the successor's own turn opens, `Report::began`, asked
+    again `REASK_US` after an ask not reached; so it is reached when, while
+    the window lasts, the asker has not given up and the successor is open
+    (its window, for good once it hosted, until it exited), a span with no
+    two-way outage of either and no partition between them is long enough
+    for the next ask, `REASK_US`, the asker's slowest ping and 50 ms, a
+    join, two pings or its slow join, and a step; net-soak's
     `awful-6s3c1v-seed1453819890`,
     `an_asker_cut_off_before_its_successor_opens_is_host_lost_legitimately`
-    with its twin), or (ruling FR12d-Q, `lacked_quorum`) was reached
-    but could not gather a quorum in its own window: a member counts as
-    having reached it when that member also gave up, its window for the
-    successor overlaps the successor's own with room for an ask
-    (`RETRY_US`, its slowest ping, 50 ms) after the gate opened and a join
-    (two pings or its slow join) before it closed, and no outage or
-    partition touches its window up to that ask; generous, as SK-10 is
+    with its twin, the outage 2 s after the successor opened), or had
+    exited (crashed or left, `exited_us`) by then
+    (ruling FR12c-1b: a successor whose old host said `Bye` still commits
+    only with a quorum while others may come back, D8, FR12d-Q, so the
+    match never splits; with every other successor gone it is host lost,
+    FR12c-1's cost: net-soak's `good-15s2c0v-seed960552337`,
+    `a_lone_survivor_whose_other_successors_exited_is_host_lost_legitimately`
+    with its twin, the successor alive 3 s into its window), or (ruling
+    FR12d-Q, `lacked_quorum`) was reached but could not gather a quorum:
+    its members (its old host's succession, followers too, each that was
+    in the match) that also gave up and `reaches` it in their window for
+    it, with itself, are no majority; generous, as SK-10 is
     (`a_successor_short_of_a_quorum_is_host_lost_legitimately` with its
     twin, the slow joiner quick); and every survivor's
     confirmed rows agree with the last host's and each other's (a joined

@@ -297,7 +297,9 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       `LobbyClient::succession()` (`can_host` as listed, its own entry
       only with a standby; past `MAX_MIGRATIONS` in the match, or a
       spectator still joining (`Session::is_joining`, ruling SK-8: no world
-      to follow it with; `a_joiner_still_loading_when_its_host_crashes_is_host_lost`):
+      to follow it with; `a_joiner_still_loading_when_its_host_crashes_is_host_lost`,
+      where Dan, a spectator already watching, makes the players' quorum:
+      the joiner still counts, FR12d-Q1):
       host lost at once): `Migrating(Finding)`. Off, outside a match or without a
       succession: the old ending. The old endpoint stays, polled and fed
       to the session (`HostHeard`). A later migration (N74) starts the
@@ -328,12 +330,16 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       `NetEvent::Answered` (direct: the TCP answer; relays: the answer
       taken, `Connecting`) is contact. `Refused(NotHost)` directly is asked
       again `RETRY_US` later (through the relays it is no honest answer: a
-      successor listens there only in its turn, so it is a refusal); an unreached direct route (a connect refused or
-      timed out, a link closed before it opened, an answered link not
-      open in time) is not tried again in its window and the relays are
-      next; any other failure (a refusal, a failed join through the
-      relays, a closed link) is not that entry again in its window
-      (N73), nor is an entry with no route; a failure after contact is
+      successor listens there only in its turn, so it is a refusal); a
+      route that did not reach it (a connect refused or timed out, a link
+      closed before it opened, an answered link not open in time, a join
+      through the relays that failed) is tried again `REASK_US` (1 s)
+      later within its window (ruling FR12d-Q2, amending N73: a peer whose
+      link returns mid-window still joins), the relays meanwhile after a
+      direct one; any other failure (a refusal, a closed link) is not that
+      entry again in its window (N73), nor is an entry with no route; an
+      attempt under way is never doubled (a connect waiting unanswered in
+      a backlog holds its entry until the window moves on); a failure after contact is
       `lost_contact` (D8: a successor whose window ends uncommitted
       refuses its answered TCP joins, `Endpoint::refuse_pending`, drops
       its signalled ones and closes the links it did not welcome, so
@@ -358,9 +364,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       `Migrating(TakingOver)`. **Ruling FR12d-Q** (`commit_if_quorum`,
       `rl_netcode::migration::quorum`): it commits within its turn (the
       standby answers nothing in the poll its window ended) once it and the
-      members back (`Standby::expected`, `away_in_match()` as its turn
-      opened, less those still away) are strictly more than half of the
-      members not known gone (those, itself, and the old host unless
+      members back (`Standby::members`, `away()` as its turn opened: every
+      other member of the succession, followers too, ruling FR12d-Q1; less
+      those still away) are strictly more than half of the members not
+      known gone (those, itself, and the old host unless
       `Migrating::gone`: the session's `PeerLeft` or the lobby's `Closed`,
       its `Bye`, came; `begin_migration(gone)`). Until then a member's
       `Welcome` and everything the lobby sends it after (`Standby::held`),
@@ -378,7 +385,11 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       and one more member out of reach in a match of four, ends host lost
       (`a_successor_without_a_quorum_never_hosts`: the host frozen, Cid cut
       off, Anna's turn holding Bert's welcome, then Bert's holding Anna's,
-      all three host lost; fails committing at the first rejoin). Not
+      all three host lost; fails committing at the first rejoin;
+      `a_player_and_its_spectators_carry_on_when_the_host_crashes`: a host,
+      Anna and two spectators that joined mid-match, the host frozen: Anna
+      takes the match over with them, three of four; fails without the
+      followers counted). Not
       committed when the step leaves `Host`, the gate closes (D8: answered
       joins refused `NotHost`, links not welcomed or held closed, the held
       messages and the lobby gone). The commit:
@@ -793,17 +804,21 @@ at once with replays (fails without the counts); a successor gone with
 its standby (its port held by a listener that never accepts, so no other
 test's standby can take it: a free port answered `NotHost` 19 times) costs
 Bert, Cid and Dan one direct connect each
-in its window (`test_joins`), then the match moves to Bert, Cid's two
+in its window (`test_joins`: each waits unanswered in the held port's
+backlog, never doubled), then the match moves to Bert, Cid's two
 `Joining(Direct)` said; the planner with a fake connector and clock: 48
 hostile entries, every direct connect refused, the relays silent or
-answering `NotHost`, over 11 s: one attempt at a time, each route of an
-entry once a window, at most 8 relays a join, four joins in all, nothing
-past the give-up, `GiveUp` at 10 s (fails retrying a failed direct
-route, or `NotHost` through the relays).
+answering `NotHost`, or failing at once, over 11 s: one attempt at a
+time, at most 8 relays a join, nothing past the give-up, `GiveUp` at 10
+s; each route of an entry once a window (four joins in all), but a route
+not reached at most once per `REASK_US` within it (FR12d-Q2: 20 joins
+when the relays fail at once; fails retrying `NotHost` through the
+relays).
 `migrate.rs`' unit test: `stall_gap` (C3); `migration.rs`': the texts,
 the planner's routes (direct, then the relays: the entry's first, each
-once; neither again in its window; direct only without relays; the
-relays alone without an address), N64's direct addresses (a global one
+once; neither again before `REASK_US`, then direct first again, within
+the window only; direct only without relays, asked again after
+`REASK_US`, a refusal not; the relays alone without an address), N64's direct addresses (a global one
 or a port below 1024 never connected), `NotHost` asked again after
 `RETRY_US` directly and not through the relays, the lapse (alike on every route),
 N69's remembered `HostHeard`.

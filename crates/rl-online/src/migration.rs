@@ -10,7 +10,7 @@ use std::time::Duration;
 
 use rl_discovery::{PoolConfig, Region};
 use rl_net::endpoint::{EndpointConfig, IceConfig};
-use rl_netcode::migration::{MAX_MIGRATIONS, Migration, RETRY_US, Step};
+use rl_netcode::migration::{MAX_MIGRATIONS, Migration, REASK_US, RETRY_US, Step};
 use rl_proto::SuccessorWire;
 
 use crate::join::{Join, NostrJoin, join_relays};
@@ -232,9 +232,9 @@ pub enum Failure {
     /// Refused `NotHost` (not its turn yet): asked again `RETRY_US` later.
     NotHost,
     /// Its route did not reach it: a connect refused or timed out, no
-    /// reply through the relays, an answered link that never opened. A
-    /// direct route is not tried again in its window (N73): the relays are
-    /// next, when there are any.
+    /// reply through the relays, an answered link that never opened. That
+    /// route is tried again `REASK_US` later within its window (ruling
+    /// FR12d-Q2, amending N73), the relays meanwhile after a direct one.
     Unreached,
     /// Anything else (a refusal, a link closed, another host's key): not
     /// tried again in its window.
@@ -281,8 +281,11 @@ struct Live<A> {
 ///   expecting the entry's key. Without relays on either side: direct
 ///   only.
 /// - `NotHost` directly is asked again `RETRY_US` later (not its turn
-///   yet); through the relays, and any other failure, is not tried again
-///   in its window; an entry with no route left waits for the next window.
+///   yet); a route that did not reach it, `REASK_US` later (ruling
+///   FR12d-Q2, amending N73: a peer whose link returns mid-window still
+///   joins), the relays meanwhile after a direct one; `NotHost` through the
+///   relays, and any other failure, is not tried again in its window; an
+///   entry with no route left waits for the next window.
 /// - An answered join whose link does not open within
 ///   [`ANSWER_OPEN_TIMEOUT`] lapses (lost contact).
 #[doc(hidden)]
@@ -298,9 +301,11 @@ pub struct Planner<A> {
     /// A loopback direct address is tried ([`Planner::loopback_host`]).
     loopback_ok: bool,
     attempt: Option<Live<A>>,
-    /// Entries not tried again before this time (their window's end).
+    /// Entries not tried again before this time (their window's end, or a
+    /// re-ask's time after the relays did not reach them).
     failed: BTreeMap<usize, u64>,
-    /// Entries whose direct route is not tried again before this time.
+    /// Entries whose direct route is not tried again before this time (a
+    /// re-ask's time).
     direct_failed: BTreeMap<usize, u64>,
     /// An entry that refused `NotHost`, asked again at this time.
     retry: Option<(usize, u64)>,
@@ -407,20 +412,25 @@ impl<A> Planner<A> {
         let (route, join) = match (direct, self.nostr(entry)) {
             (Some(addr), _) => (Route::Direct, Join::direct(addr)),
             (None, Some(nostr)) => (Route::Relays, Join { direct: None, nostr: Some(nostr) }),
+            // Its direct route waits for its re-ask: nothing until then.
+            (None, None) if until(&self.direct_failed) => return,
             (None, None) => {
                 self.failed.insert(i, window_end);
                 return;
             }
         };
+        // A join that cannot start is a route not reached: asked again
+        // `REASK_US` later, within the window (FR12d-Q2).
+        let reask = now_us.saturating_add(REASK_US).min(window_end);
         match c.connect(entry, join) {
             Some(attempt) => {
                 self.attempt = Some(Live { to: i, route, attempt, answered_us: None, opened: false })
             }
             None if route == Route::Direct => {
-                self.direct_failed.insert(i, window_end);
+                self.direct_failed.insert(i, reask);
             }
             None => {
-                self.failed.insert(i, window_end);
+                self.failed.insert(i, reask);
             }
         }
     }
@@ -495,9 +505,9 @@ impl<A> Planner<A> {
     }
 
     /// The attempt failed (`why`): discarded, its contact lost; `NotHost`
-    /// asked again `RETRY_US` later, an unreached direct route not tried
-    /// again in its window (the relays next), anything else not that entry
-    /// in its window. `true`: call the migration off (N69: the old host
+    /// directly asked again `RETRY_US` later, an unreached route `REASK_US`
+    /// later within its window (FR12d-Q2; after a direct one the relays
+    /// next), anything else not that entry in its window. `true`: call the migration off (N69: the old host
     /// was heard while this contact held it).
     pub fn failed(&mut self, now_us: u64, why: Failure, c: &mut impl Connector<Attempt = A>) -> bool {
         let Some(l) = self.attempt.take() else { return false };
@@ -512,8 +522,15 @@ impl<A> Planner<A> {
             // through them is no honest answer (a hostile key's), so not
             // asked again in the window.
             (Failure::NotHost, Route::Direct) => self.retry = Some((l.to, now_us.saturating_add(RETRY_US))),
-            (Failure::Unreached, Route::Direct) => {
-                self.direct_failed.insert(l.to, until);
+            (Failure::Unreached, route) => {
+                let reask = now_us.saturating_add(REASK_US).min(until);
+                if route == Route::Direct {
+                    self.direct_failed.insert(l.to, reask);
+                } else {
+                    // Both routes again together, directly first.
+                    self.failed.insert(l.to, reask);
+                    self.direct_failed.insert(l.to, reask);
+                }
             }
             _ => {
                 self.failed.insert(l.to, until);
@@ -681,11 +698,20 @@ mod tests {
         assert_eq!(p.attempt(), Some((0, Route::Relays)));
         // The entry's relays first, then its own, each once.
         assert_eq!(c.0[1], (None, vec!["ws://a".to_string(), "ws://own".to_string()]));
+        // Ruling FR12d-Q2: not reached either way, it is asked again
+        // `REASK_US` later (directly first), within its window only.
         p.failed(2 * S, Failure::Unreached, &mut c);
-        p.step(2 * S, &mut c);
-        assert_eq!(c.0.len(), 2, "neither route again in its window");
+        p.step(2 * S + REASK_US - 1, &mut c);
+        assert_eq!(c.0.len(), 2, "not again before its re-ask");
+        p.step(2 * S + REASK_US, &mut c);
+        assert_eq!(c.0.len(), 3, "asked again");
+        assert_eq!(p.attempt(), Some((0, Route::Direct)));
+        p.failed(4 * S, Failure::Unreached, &mut c);
+        p.step(4 * S, &mut c);
+        assert_eq!(p.attempt(), Some((0, Route::Relays)));
+        p.failed(5 * S - 1, Failure::Unreached, &mut c);
         p.step(5 * S, &mut c);
-        assert_eq!(c.0.len(), 2, "its window is over: nobody's turn");
+        assert_eq!(c.0.len(), 4, "its window is over: nobody's turn");
     }
 
     #[test]
@@ -696,7 +722,12 @@ mod tests {
         p.failed(1, Failure::Unreached, &mut c);
         p.step(2, &mut c);
         assert_eq!(c.0.len(), 1);
-        assert!(p.attempt().is_none());
+        assert!(p.attempt().is_none(), "waiting for its re-ask");
+        p.step(1 + REASK_US, &mut c);
+        assert_eq!(c.0.len(), 2, "asked again directly (FR12d-Q2)");
+        p.failed(2 * S, Failure::Refused, &mut c);
+        p.step(3 * S, &mut c);
+        assert_eq!(c.0.len(), 2, "a refusal is not asked again in its window");
         // Without an address: the relays alone; without either, nothing.
         let mut p = planner(entry(false, &["ws://a"]), &[]);
         p.step(0, &mut c);
@@ -704,7 +735,7 @@ mod tests {
         let mut p = planner(entry(false, &[]), &[]);
         p.step(0, &mut c);
         assert!(p.attempt().is_none());
-        assert_eq!(c.0.len(), 2);
+        assert_eq!(c.0.len(), 3);
     }
 
     #[test]
