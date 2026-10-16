@@ -2849,7 +2849,13 @@ player's own rope throws are heard (the porting table).
   before FR12d-Q too): a spectator due to join at a tick the match never
   reached, its host crashed before, had no session, yet the verdict asked
   it for a state; a peer without a log is now no survivor and not judged
-  (`a_spectator_whose_join_never_came_is_no_survivor`).
+  (`a_spectator_whose_join_never_came_is_no_survivor`). And (net-soak's
+  `awful-6s3c1v-seed1453819890`, kept; it failed before FR12d-Q too): a
+  player that found the host gone before its successor did asked it
+  before its turn opened, was refused, asked again and was cut off by
+  then; SK-10 judged only the first ask. An outage or partition touching
+  the asks until the successor's turn opened (`Report::began`) now counts
+  as a cut (`an_asker_cut_off_before_its_successor_opens_is_host_lost_legitimately`).
 
 **Decisions.**
 - **N82 - withdrawal, not deletion.** `World::withdraw(i)` keeps worm `i`

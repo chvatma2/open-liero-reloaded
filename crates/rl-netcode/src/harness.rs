@@ -225,7 +225,9 @@ pub trait Observer<S: Simulation> {
 ///   others (D8, FR12d-Q: no split), so with every other successor gone it
 ///   is host lost, FR12c-1's cost (net-soak's
 ///   `good-15s2c0v-seed960552337`). A
-///   partition between the two over the ask is a cut too. Ruling FR12d-Q:
+///   partition between the two over the ask is a cut too, and when the
+///   successor found the host gone later (its turn opening later), an
+///   outage or partition touching the asks until it opened. Ruling FR12d-Q:
 ///   nor was a successor reached that could not commit for want of a
 ///   quorum ([`lacked_quorum`]). No other cause counts: a frozen
 ///   successor, or a link on any profile (`awful` connects), leaves it
@@ -277,7 +279,16 @@ fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
             }
             let asked = start + ping_us(q) + 50_000;
             let exited = r.exited_us.get(&s).is_some_and(|&us| us <= asked);
-            if s != q && !cut(q, s, start, asked) && !exited && !lacked_quorum(sc, r, s) {
+            // A successor that found the host gone after `q` opens its turn
+            // later: `q`'s asks are refused and made again until then, and
+            // one cut off is not repeated, so an outage or partition
+            // touching that span cuts it (net-soak's
+            // `awful-6s3c1v-seed1453819890`).
+            let opens = r.began.get(&g.from).and_then(|b| b.get(&s)).map(|&b| b + k as u64 * WINDOW_US);
+            let cut_waiting = opens
+                .filter(|&o| o > start)
+                .is_some_and(|o| touched(sc, q, s, start, o + RETRY_US + ping_us(q) + 50_000));
+            if s != q && !cut(q, s, start, asked) && !cut_waiting && !exited && !lacked_quorum(sc, r, s) {
                 return false;
             }
         }
@@ -333,20 +344,6 @@ fn lacked_quorum(sc: &Scenario, r: &Report, s: PeerId) -> bool {
     let expected: Vec<PeerId> =
         gs.order.iter().map(|e| e.0).filter(|&m| m != s && start_member(m) && !r.late.contains(&m)).collect();
     let gone = r.events.get(&s).is_some_and(|e| e.contains(&Event::PeerLeft { peer: gs.from }));
-    let touched = |a: PeerId, b: PeerId, from_us: u64, until_us: u64| {
-        sc.outages.iter().any(|o| {
-            (o.peer == a || o.peer == b)
-                && !o.one_way
-                && (o.from_tick as u64 * TICK_US) < until_us
-                && (o.until_tick as u64 * TICK_US) > from_us
-        }) || sc.migration.as_ref().is_some_and(|mp| {
-            mp.partitions.iter().any(|p| {
-                (p.from_tick as u64 * TICK_US) < until_us
-                    && (p.until_tick as u64 * TICK_US) > from_us
-                    && p.side.contains(&a) != p.side.contains(&b)
-            })
-        })
-    };
     let reached = |m: PeerId| {
         let Some(gm) = r.gave_up.get(&m) else { return false };
         let Some(k_m) = gm.order.iter().filter(|e| e.1).position(|e| e.0 == s) else { return false };
@@ -360,10 +357,27 @@ fn lacked_quorum(sc: &Scenario, r: &Report, s: PeerId) -> bool {
         let ask = m_start.max(s_start) + RETRY_US + ping + 50_000;
         ask < (m_start + WINDOW_US).min(gm.at_us)
             && ask + join + step_us(sc) < s_end
-            && !touched(m, s, m_start, ask)
+            && !touched(sc, m, s, m_start, ask)
     };
     let back = expected.iter().filter(|&&m| reached(m)).count();
     !quorum(expected.len(), back, gone)
+}
+
+/// A two-way outage of `a` or `b`, or a partition between them, overlaps
+/// `[from_us, until_us)`.
+fn touched(sc: &Scenario, a: PeerId, b: PeerId, from_us: u64, until_us: u64) -> bool {
+    sc.outages.iter().any(|o| {
+        (o.peer == a || o.peer == b)
+            && !o.one_way
+            && (o.from_tick as u64 * TICK_US) < until_us
+            && (o.until_tick as u64 * TICK_US) > from_us
+    }) || sc.migration.as_ref().is_some_and(|mp| {
+        mp.partitions.iter().any(|p| {
+            (p.from_tick as u64 * TICK_US) < until_us
+                && (p.until_tick as u64 * TICK_US) > from_us
+                && p.side.contains(&a) != p.side.contains(&b)
+        })
+    })
 }
 
 /// The harness's step: steps come with frames, so a give-up lands up to a
@@ -506,6 +520,9 @@ pub struct Report {
     /// peers' slots. Not survivors, as an exited host. (A host cut off from
     /// its players leaves, SB-2: only one that never heard a player stays.)
     pub left_behind: BTreeSet<PeerId>,
+    /// Per old host, when each peer found it gone (virtual µs; a migration
+    /// called off, N69, forgets it): when each successor's turns opened.
+    pub began: BTreeMap<PeerId, BTreeMap<PeerId, u64>>,
 }
 
 /// A peer's migration that ended in `Step::GiveUp`.
@@ -1310,6 +1327,7 @@ pub fn run_observed<S: Simulation>(
         held: w.held,
         left_from: w.left_from,
         left_behind,
+        began: w.began,
     };
     for p in peers {
         let log = p.session.input_log();

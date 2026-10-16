@@ -1730,6 +1730,39 @@ fn a_spectator_whose_join_never_came_is_no_survivor() {
     assert!(harness::verdict(&sc, &joined, &mut f).is_err(), "a joiner with a session is judged");
 }
 
+/// Net-soak's `awful-6s3c1v-seed1453819890`: the host leaves; players 2
+/// and 3 (LAN) hear its `Bye` at once, player 1 (`bad`) later, so they ask
+/// successor 1 before its turn opened, are refused and ask again. By then
+/// player 2's network is down for good: that ask is unanswered and not
+/// repeated. Player 1 takes the match over with player 3 (two of three),
+/// then leaves too: player 3, alone with the unreachable player 2, is no
+/// majority, and every survivor is host lost. SK-10 accepts it: the outage
+/// touched player 2's asks before successor 1 opened (before, only an
+/// outage covering its first ask counted). The twin: the outage beginning
+/// after successor 1 opened and was asked again: not accepted.
+#[test]
+fn an_asker_cut_off_before_its_successor_opens_is_host_lost_legitimately() {
+    let mut sc = two_peers(42, Profile::BAD);
+    sc.peers.push(plan(2, Seat::Player(3), Profile::LAN));
+    sc.peers.push(plan(3, Seat::Player(4), Profile::LAN));
+    sc.slots = 5;
+    sc.ticks = 2_000;
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Leave });
+    sc.exits.push(Exit { peer: 1, tick: 700, after_us: 0, how: ExitHow::Leave });
+    sc.outages.push(Outage { peer: 2, from_tick: 410, until_tick: 10_000, one_way: false });
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let r = harness::run(&sc, &mut f).unwrap();
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    assert_eq!(r.host_lost, [2, 3].into());
+    let (b1, b2) = (r.began[&HOST][&1], r.began[&HOST][&2]);
+    assert!(b2 < b1, "player 2 found the host gone first: {b2} {b1}");
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    let mut later = sc.clone();
+    later.outages[0].from_tick = 450;
+    let e = harness::verdict(&later, &r, &mut f).unwrap_err();
+    assert!(e.what.contains("the host confirmed"), "{e:?}");
+}
+
 /// SK-10's other side: every survivor host lost, but the scenario's links
 /// show a successor reachable when asked (peer 2 in its window): not a
 /// legitimate end, the verdict fails as before.

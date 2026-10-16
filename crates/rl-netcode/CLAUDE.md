@@ -660,7 +660,13 @@ model that tests it in one process (spec §9.1).
     FR12c-1's cost: net-soak's `good-15s2c0v-seed960552337`,
     `a_lone_survivor_whose_other_successors_exited_is_host_lost_legitimately`
     with its twin, the successor alive when asked), or was partitioned
-    from it over the ask, or (ruling FR12d-Q, `lacked_quorum`) was reached
+    from it over the ask, or, when it found the host gone later (its turn
+    opening later, `Report::began`: per old host, when each peer found it
+    gone), an outage or partition touched the asks until it opened (they
+    are refused and made again until then; net-soak's
+    `awful-6s3c1v-seed1453819890`,
+    `an_asker_cut_off_before_its_successor_opens_is_host_lost_legitimately`
+    with its twin), or (ruling FR12d-Q, `lacked_quorum`) was reached
     but could not gather a quorum in its own window: a member counts as
     having reached it when that member also gave up, its window for the
     successor overlaps the successor's own with room for an ask
