@@ -3411,6 +3411,7 @@ dependencies = [
  "olr-data",
  "olr-pack",
  "olr-sim",
+ "olr-terrain",
  "olr-vfs",
  "png",
  "proptest",
