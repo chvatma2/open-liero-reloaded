@@ -4,6 +4,7 @@ use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 
+use olr_data::mod_def::{RopeParams, WormParams};
 use olr_math::TimeDiff;
 
 /// Typed gameplay settings. [`SimSettings::lx56`] is OLX's "LieroX 0.56"
@@ -165,6 +166,28 @@ impl SimSettings {
             bonus_life: 60.0,
             bonus_health_to_weapon_chance: 0.5,
             olx_quirks: false,
+        }
+    }
+
+    /// These settings with the mod's worm and rope physics. OLX copies five
+    /// worm and three rope values from the mod into its bottom settings
+    /// layer (`lx56modSettings`), and the "LieroX 0.56" preset does not
+    /// override them, so every match plays its own mod's physics (Classic's
+    /// equal [`SimSettings::lx56`]'s). The mod's angle speed and ground
+    /// friction are read but ignored by OLX, as here.
+    ///
+    /// OLX: src/common/CGameScript.cpp:798-817, src/game/Game.cpp:477
+    pub fn with_mod_physics(self, worm: &WormParams, rope: &RopeParams) -> Self {
+        Self {
+            worm_ground_speed: worm.ground_speed,
+            worm_air_speed: worm.air_speed,
+            worm_gravity: worm.gravity,
+            worm_jump_force: worm.jump_force,
+            worm_air_friction: worm.air_friction,
+            rope_max_length: rope.max_length,
+            rope_rest_length: rope.rest_length,
+            rope_strength: rope.strength,
+            ..self
         }
     }
 
@@ -425,5 +448,63 @@ mod tests {
             let err = SimSettings::from_olx_features(&f).unwrap_err().0;
             assert!(err.contains(k) && err.contains("outside"), "{k}={v}: {err}");
         }
+    }
+
+    /// Every match plays its own mod's worm and rope physics (OLX's
+    /// `lx56modSettings` layer); Classic's are `lx56`'s.
+    #[test]
+    fn a_mod_brings_its_worm_and_rope_physics() {
+        use olr_data::mod_def::{RopeParams, WormParams};
+        let classic = WormParams {
+            angle_speed: 150.0,
+            ground_speed: 8.0,
+            air_speed: 4.0,
+            gravity: 100.0,
+            jump_force: -65.0,
+            air_friction: 0.0,
+            ground_friction: 0.4,
+        };
+        let classic_rope = RopeParams { max_length: 300, rest_length: 27, strength: 4.5 };
+        let lx56 = SimSettings::lx56();
+        assert_eq!(
+            lx56.clone().with_mod_physics(&classic, &classic_rope),
+            lx56,
+            "Classic's physics are lx56's"
+        );
+        let mw = WormParams {
+            gravity: 50.0,
+            jump_force: -75.0,
+            ground_speed: 9.0,
+            air_speed: 3.0,
+            air_friction: 0.25,
+            ground_friction: 0.5,
+            ..classic
+        };
+        let mw_rope = RopeParams { max_length: 310, rest_length: 30, strength: 3.5 };
+        let s = lx56.clone().with_mod_physics(&mw, &mw_rope);
+        assert_eq!(
+            (s.worm_gravity, s.worm_jump_force, s.worm_ground_speed, s.worm_air_speed, s.worm_air_friction),
+            (50.0, -75.0, 9.0, 3.0, 0.25)
+        );
+        assert_eq!((s.rope_max_length, s.rope_rest_length, s.rope_strength), (310, 30, 3.5));
+        assert_eq!(
+            s.worm_ground_friction, lx56.worm_ground_friction,
+            "OLX ignores the mod's ground friction"
+        );
+        assert_eq!(
+            SimSettings {
+                worm_gravity: 100.0,
+                worm_jump_force: -65.0,
+                worm_ground_speed: 8.0,
+                worm_air_speed: 4.0,
+                worm_air_friction: 0.0,
+                rope_max_length: 300,
+                rope_rest_length: 27,
+                rope_strength: 4.5,
+                ..s
+            },
+            lx56,
+            "nothing else changes"
+        );
     }
 }

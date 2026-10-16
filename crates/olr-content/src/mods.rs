@@ -6,7 +6,7 @@ use std::sync::Arc;
 use anyhow::Context as _;
 use olr_data::image::RgbaImage;
 use olr_data::manifest::PackKind;
-use olr_data::mod_def::ProjectileGfx;
+use olr_data::mod_def::{ProjectileGfx, RopeParams, WormParams};
 use olr_data::restrictions::{Preset, WeaponRules};
 use olr_sim::{GAME_SOUND_PREFIX, SimMod};
 use olr_vfs::VPath;
@@ -32,6 +32,11 @@ pub struct LoadedMod {
     pub name: String,
     /// The mod's weapon restriction presets (`ModDef::restrictions`).
     pub restrictions: BTreeMap<String, Preset>,
+    /// The mod's worm physics (`ModDef::worm`): every match of the mod plays
+    /// with them ([`crate::match_setup`], `SimSettings::with_mod_physics`).
+    pub worm: WormParams,
+    /// The mod's ninja rope (`ModDef::rope`), applied the same way.
+    pub rope: RopeParams,
 }
 
 impl LoadedMod {
@@ -149,7 +154,8 @@ impl Content {
             }
         }
         let (name, restrictions) = (pack.def.name, pack.def.restrictions);
-        Ok(LoadedMod { sim: Arc::new(sim), images, sounds, warnings, name, restrictions })
+        let (worm, rope) = (pack.def.worm, pack.def.rope);
+        Ok(LoadedMod { sim: Arc::new(sim), images, sounds, warnings, name, restrictions, worm, rope })
     }
 }
 

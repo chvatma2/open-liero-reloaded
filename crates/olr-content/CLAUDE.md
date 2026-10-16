@@ -52,7 +52,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   spawn in order; a worm without a position draws one from the world's
   `FindSpot` when it spawns, so the same setup gives the same world. Worms
   get the mod's first five weapons unless the spec names them. The clock
-  starts at `SANDBOX_START` (`MatchSetup::T0`).
+  starts at `SANDBOX_START` (`MatchSetup::T0`). The settings take the
+  mod's worm and rope physics (`LoadedMod::worm`/`rope`,
+  `SimSettings::with_mod_physics`, OLX's `lx56modSettings` layer): MW 1.0
+  plays its own gravity, jump and rope, not Classic's.
 - **Colour terrain** (`color.rs`, plan 5 ruling R1): `LoadedTheme::art()`,
   `LoadedLevel::color_map(&theme)` (before any edit; spawn holes come with
   the first tick), `color_edit(&EventKind)` converts a `TerrainEdit`, and

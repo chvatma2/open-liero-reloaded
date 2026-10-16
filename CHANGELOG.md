@@ -10,6 +10,13 @@ Work towards 0.2.0: new formats, level, mod and skin editors, a modern look,
 and Liero Factory Reloaded and Liero v1.0 Reloaded
 (`docs/superpowers/specs/2026-10-16-milestone-0.2-scope.md`).
 
+### Fixed
+
+- Each mod now plays with its own worm and rope physics, as in OpenLieroX.
+  Modern Warfare 1.0 had been playing with Liero v1.0's gravity, jump and
+  ninja rope; its worms now fall more slowly, jump higher and its rope pulls
+  as MW intends.
+
 ## 0.1.0 - 2026-10-16
 
 The baseline for later work: Open Liero Reloaded's first release under its

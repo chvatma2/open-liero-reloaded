@@ -134,3 +134,5 @@
   fixtures/net/cases/net-classic-dirt-level-awful-8s1c1v-seed963469720-0fe4696f.ron
 2026-10-16 bless-regression: SK-10 counts an outage touching the asks made before a later successor opened (net-soak awful-6s3c1v-seed1453819890)
   fixtures/net/cases/net-classic-dirt-level-awful-6s3c1v-seed1453819890-24f7410a.ron
+2026-10-16 bless-regression: Each mod now plays its own worm and rope physics (OLX's lx56modSettings layer); MW 1.0 had played Classic's
+  fixtures/matches/mw-castlestrike-8chaos.ron

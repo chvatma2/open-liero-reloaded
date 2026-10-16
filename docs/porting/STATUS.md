@@ -99,6 +99,18 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   (`src/common/FeatureList.cpp`), and NaN or infinite values
   (`SimSettings::validate`). Outside them the port could overflow, hang or
   recurse without bound. For hand-built settings, the physics step is at least 1 ms.
+- **Each mod's worm and rope physics (fixed 2026-10-16).** OLX copies five
+  worm values (ground and air speed, gravity, jump force, air friction) and
+  three rope values (max and rest length, strength) from the mod into its
+  bottom settings layer, `lx56modSettings` (`src/common/CGameScript.cpp:798-817`,
+  `src/game/Game.cpp:477`), which the "LieroX 0.56" preset does not override.
+  Until this fix every game played Classic's (`SimSettings::lx56`), so MW 1.0
+  had gravity 100, jump -65, rope rest 27 and strength 4.5 instead of its own
+  50, -75, 30 and 3.5. `olr-content::match_setup` now applies them
+  (`SimSettings::with_mod_physics`) for local, bot and online matches; replays
+  record the result. The oracle was never affected: a trace's settings come
+  from its header. Classic's values equal `lx56`'s, so only MW's match golden
+  changed.
 - **Game over** (`GameServer::GameOver` and its gates) is in `olr-sim`; when
   a match ends is the mode's (`GameMode::is_over`, OLX's
   `CGameMode::CheckGameOver`: Deathmatch in `olr-modes`). The scenarios

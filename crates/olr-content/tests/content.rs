@@ -458,6 +458,33 @@ fn oversized_sounds_are_silent() {
     );
 }
 
+/// Every match plays its own mod's worm and rope physics, as OLX does
+/// (`SimSettings::with_mod_physics`): MW 1.0's are not Classic's.
+#[test]
+fn worlds_play_their_mods_physics() {
+    let Some(dir) = content_dir() else { return };
+    let content = Content::open(Path::new(&dir)).unwrap();
+    for (mod_id, gravity, jump, rest, strength) in
+        [("olx-classic", 100.0, -65.0, 27, 4.5), ("olx-mw-1-0", 50.0, -75.0, 30, 3.5)]
+    {
+        let s = SandboxSetup {
+            mod_id: mod_id.into(),
+            level_id: "olx-level-dirt-level".into(),
+            seed: 1,
+            settings: SimSettings::lx56(),
+            worms: vec![SpawnSpec::default()],
+            restrictions: olr_content::DEFAULT_PRESET.into(),
+        };
+        let world = content.new_world(&s).unwrap();
+        let st = world.settings();
+        assert_eq!(
+            (st.worm_gravity, st.worm_jump_force, st.rope_rest_length, st.rope_strength),
+            (gravity, jump, rest, strength),
+            "{mod_id}"
+        );
+    }
+}
+
 /// A restart builds its world from the assets loaded once, the same world
 /// `new_world` loads from the packs.
 #[test]

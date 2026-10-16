@@ -131,6 +131,7 @@ pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<Built
     let mut setup = match_setup(a.m, a.level, a.theme, &sandbox)?;
     setup.pool_capacity = o.pool_capacity;
     let rules = a.m.weapon_rules(&o.restrictions);
+    let settings = setup.settings.clone(); // `o.settings` with the mod's physics
     for (i, (w, p)) in setup.worms.iter_mut().zip(&o.players).enumerate() {
         let cfg = match p {
             Player::Bot(cfg) => *cfg,
@@ -144,12 +145,12 @@ pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<Built
                         o.mod_id
                     );
                 }
-                w.loadout = Loadout::new(ids.iter().map(|&id| Slot::ready(id)).collect(), &o.settings);
+                w.loadout = Loadout::new(ids.iter().map(|&id| Slot::ready(id)).collect(), &settings);
                 continue;
             }
         };
         let mut rng = BotRng::new(o.seed, i, cfg.personality);
-        w.loadout = choose_loadout(&cfg, &rules, &o.settings, &mut rng);
+        w.loadout = choose_loadout(&cfg, &rules, &settings, &mut rng);
     }
     let chaos: Vec<usize> = (0..n)
         .filter(|&i| matches!(o.players[i], Player::Bot(c) if c.personality == Personality::Chaos))
