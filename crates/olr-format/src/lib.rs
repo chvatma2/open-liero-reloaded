@@ -9,6 +9,7 @@ pub mod image_io;
 pub mod levels;
 pub mod mods;
 pub mod ron_io;
+pub mod skins;
 pub mod themes;
 
 pub use colour::Colour;

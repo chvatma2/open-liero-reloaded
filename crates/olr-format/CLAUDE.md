@@ -61,3 +61,4 @@ compilers to `olr-data`'s runtime structs; lifts back. Plan 13a: mods.
     files give errors, never panics. Unit tests in `compile.rs`, `lift.rs`,
     `files.rs` and `types.rs` cover their rules (spawn defaults are tested
     in `types.rs`).
+- **Skins** (`skins/`): `SkinSource` is `skin.ron` (all layout fields written), `skin.png` (a grid of frames, aim columns × walk rows), `tint.png` (grey: 0 keep, 255 player colour) and an optional `left.png`. `compile_skin` builds OLX's 672 × 18 sheet; only OLX's layout, no `left.png` and no partial tint compile ("not supported by this runtime yet"). `lift_skin` is exact for every bundled skin (tests/skins.rs).
