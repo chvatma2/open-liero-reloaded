@@ -789,7 +789,8 @@ address, leaving returns at once with the mapping still there, the
 `hosting_again_on_the_same_port_keeps_its_mapping` (ruling RH-1: a
 `LateDelete` router, leave and host again at once on the same port: the
 new game's TCP and UDP mapping still there after the old deletion took
-effect),
+effect; the port is one below the ephemeral range, `unclaimable_port`, so
+no other test's port-0 bind takes it between the leave and the new host),
 `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
 budget, a recording replayed through a replay session),
 `tests/throw_sound.rs` (only the player's rope throws are heard against

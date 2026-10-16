@@ -739,10 +739,35 @@ fn finished_shutdowns_are_forgotten() {
     }
 }
 
+/// A port below the system's ephemeral range (Linux's
+/// `ip_local_port_range`; elsewhere below 32768) and above the game's own
+/// fixed ports, free for TCP and UDP now: no port-0 bind (every other test's
+/// endpoints, standbys and relays) can be handed it, so a game that leaves
+/// it and hosts there again finds it still free.
+fn unclaimable_port() -> u16 {
+    let low = std::fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+        .ok()
+        .and_then(|s| s.split_whitespace().next()?.parse::<u16>().ok())
+        .unwrap_or(32_768);
+    let (first, last) = (24_000u16, low.max(24_001));
+    let span = last - first;
+    let offset = (std::process::id() % u32::from(span)) as u16;
+    (0..span)
+        .map(|k| first + (offset + k) % span)
+        .find(|&p| {
+            TcpListener::bind((Ipv4Addr::UNSPECIFIED, p)).is_ok()
+                && std::net::UdpSocket::bind((Ipv4Addr::UNSPECIFIED, p)).is_ok()
+        })
+        .expect("a free port below the ephemeral range")
+}
+
 /// Ruling RH-1: hosting again at once on the same port, while the router
 /// still deletes the last game's mapping (`LateDelete`: a deletion takes
 /// effect 300 ms late, an addition at once), leaves the new game mapped:
-/// the new mapping is not added until the old deletion is done.
+/// the new mapping is not added until the old deletion is done. The port
+/// is one no port-0 bind can take (`unclaimable_port`): an ephemeral one,
+/// freed at the leave, was once handed to another test's endpoint before
+/// the game hosted again ("Address already in use").
 #[test]
 fn hosting_again_on_the_same_port_keeps_its_mapping() {
     use rl_net::portmap::fake::{FakeGateway, LATE, Misbehaviour};
@@ -759,15 +784,16 @@ fn hosting_again_on_the_same_port_keeps_its_mapping() {
     });
     let f = FindingSettings { port_mapping: true, ..h.ui.settings().online.finding.clone() };
     h.act(UiAction::SetFinding(f));
+    let port = unclaimable_port();
+    h.set_port(Some(port));
     host_as(&mut h, Visibility::Invite);
-    let port = h.local_port().unwrap();
+    assert_eq!(h.local_port(), Some(port));
     let open =
         format!("Port {port} is open on your router (UPnP): players join directly at 127.0.0.2:{port}");
     let mapped = |s: &[&mut Shell]| s[0].data.lobby.as_ref().is_some_and(|l| l.reach.contains(&open));
     run_until("the port mapped", Duration::from_secs(10), &mut [&mut h], None, |s| mapped(s));
     assert_eq!(gw.mappings().len(), 2, "TCP and UDP");
     // Leave, and host again at once on the same port.
-    h.set_port(Some(port));
     h.act(UiAction::LeaveLobby);
     host_as(&mut h, Visibility::Invite);
     assert_eq!(h.local_port(), Some(port), "the same port");
