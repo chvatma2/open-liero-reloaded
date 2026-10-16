@@ -90,7 +90,8 @@ gfx/, sfx/           assets
 - **Events:** `hit_terrain`, `hit_worm`, `timer` (delay and variation) and
   `trail` (periodic, with its kind).
 - **Effects:** every OLX action kind under a readable name: `Explode`,
-  `Carve`, `Bounce`, `Dirt`, `GreenDirt`, `Injure`, `Disappear`,
+  `Carve`, `Bounce`, `Dirt`, `GreenDirt`, `Injure`, `Halt` (OLX's
+  `Disappear`, which does not remove the projectile), `Remove`,
   `GoThrough`, `Sound`, `Spawn(<name>)`, and OLX's speed, heading and
   radius actions.
 - **LX56 is a restricted case.** An event's effect list compiles to LX56's

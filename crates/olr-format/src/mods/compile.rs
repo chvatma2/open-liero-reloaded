@@ -436,7 +436,7 @@ fn apply(a: &mut rt::ActionDef, e: &Effect) {
             a.sound = file.clone();
             K::PlaySound
         }
-        Effect::Disappear => K::Disappear,
+        Effect::Halt => K::Disappear,
         Effect::Remove => K::Disappear2,
         Effect::GoThrough => K::GoThrough,
         Effect::InjureProjectile => K::InjureProj,

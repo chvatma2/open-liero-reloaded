@@ -38,8 +38,8 @@ compilers to `olr-data`'s runtime structs; lifts back. Plan 13a: mods.
     files carry none of them.
   - `LIFTED_SPAWN` (`"spawn"`) is the name `lift_mod` gives a projectile's
     event spawn.
-  - `Effect::Disappear` is OLX's `Disappear`, which does not remove the
-    projectile; `Effect::Remove` does.
+  - `Effect::Halt` is OLX's `Disappear` (7), renamed because it does not
+    remove the projectile; `Effect::Remove` (OLX's `Disappear2`) does.
   - **Bounds** (errors, never panics): `MAX_INLINE_DEPTH` (32),
     `MAX_WEAPONS` (512), `MAX_SHARED` (4096), `MAX_EFFECTS` (16 per event),
     `MAX_COLOURS` (256), `MAX_AMOUNT` (1000, a spawn's `amount`; mirrors

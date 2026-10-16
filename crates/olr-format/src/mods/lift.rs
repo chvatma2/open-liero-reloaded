@@ -327,7 +327,7 @@ fn action(a: &rt::ActionDef) -> Result<Vec<Effect>, String> {
         K::Dirt => Some(Effect::Dirt { shake: a.shake }),
         K::GreenDirt => Some(Effect::GreenDirt { shake: a.shake }),
         K::PlaySound => Some(Effect::Sound { file: a.sound.clone() }),
-        K::Disappear => Some(Effect::Disappear),
+        K::Disappear => Some(Effect::Halt),
         K::Disappear2 => Some(Effect::Remove),
         K::GoThrough => Some(Effect::GoThrough),
         K::InjureProj => Some(Effect::InjureProjectile),

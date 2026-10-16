@@ -54,7 +54,7 @@ fn effect_inner() -> impl Strategy<Value = Effect> {
         any::<i32>().prop_map(|shake| Effect::Dirt { shake }),
         any::<i32>().prop_map(|damage| Effect::InjureWorm { damage }),
         prop::sample::select(vec![
-            Effect::Disappear,
+            Effect::Halt,
             Effect::Remove,
             Effect::GoThrough,
             Effect::InjureProjectile,

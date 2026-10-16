@@ -340,7 +340,7 @@ pub enum Effect {
         explode: i32,
     },
     /// On a worm: injures, then the projectile dies. On terrain it behaves
-    /// like `Disappear`: it stops and dies only at the map border.
+    /// like `Halt`: it stops and dies only at the map border.
     Injure {
         /// Health points.
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
@@ -365,9 +365,10 @@ pub enum Effect {
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         shake: i32,
     },
-    /// OLX's `Disappear` (7): mostly ignored in LX56, it does **not** remove
-    /// the projectile. `Remove` does.
-    Disappear,
+    /// OLX's `Disappear` (7), renamed for what it does: mostly ignored in
+    /// LX56, the projectile stops but is **not** removed (it dies only at the
+    /// map border); on a worm it only pushes. `Remove` removes it.
+    Halt,
     /// OLX's `Disappear2` (9): the projectile dies.
     Remove,
     /// Passes through terrain (`hit_terrain`) or worms (`hit_worm`).

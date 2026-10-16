@@ -635,7 +635,7 @@ and at most one `Spawn`.
 | `Carve`: `damage` | `Carve(size)` | 0 |
 | `Dirt`: `shake` | `Dirt(shake)` | 0 |
 | `GreenDirt`: `shake` | `GreenDirt(shake)` | 0 |
-| `Disappear` | `Disappear` (does not remove the projectile) | |
+| `Disappear` | `Halt` (renamed 2026-10-16: it does not remove the projectile) | |
 | `Disappear2` | `Remove` | |
 | `GoThrough` | `GoThrough` | |
 | `InjureProj` | `InjureProjectile` | |
