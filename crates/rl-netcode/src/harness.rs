@@ -476,7 +476,7 @@ struct Migrating {
     /// (ruling FR12c-3, `Report::could_join`), and which.
     reach: Option<(PeerId, u64)>,
     /// Its old host is known gone: its `Bye` came (ruling FR12c-1: a
-    /// successor expecting nobody commits only then).
+    /// successor nobody rejoined commits only then).
     gone: bool,
 }
 
@@ -684,9 +684,10 @@ fn check_scenario(sc: &Scenario) -> Result<(), Failure> {
 ///   `add_spectator` (N72).
 /// - **The resume:** when every expected peer is back and every peer back
 ///   reported, or at the successor's window's end with every peer back
-///   reported (N68, C1). A successor that expects nobody commits and
-///   resumes at once only once its old host is known gone (its `Bye` came,
-///   ruling FR12c-1); else at a rejoin (a follower's), or never.
+///   reported (N68, C1). A successor commits in its turn at once only once
+///   its old host is known gone (its `Bye` came, ruling FR12c-1; expecting
+///   nobody, it resumes at once too, else at its window's end at the
+///   latest); else at a rejoin (a follower's), or never.
 /// - **N69:** a peer neither committed nor in contact that hears its old
 ///   host again (`HostHeard`) unsuspends and drops its migration; one in
 ///   contact remembers it and does so when that contact is lost (the
@@ -1283,11 +1284,11 @@ fn migrate<S: Simulation>(
             Step::Host => {
                 mg.gate = true;
                 mg.attempt = None;
-                // Ruling FR12c-1: it commits at a rejoin, or expecting
-                // nobody once its old host is known gone; never on its own
-                // say (its own drop looks like the host's).
-                let nobody = mg.order.iter().all(|e| !e.1 || e.0 == p.id);
-                if nobody && mg.gone {
+                // Ruling FR12c-1: it commits at a rejoin, or at once once
+                // its old host is known gone, whoever it still expects
+                // (they are waited for until its window's end); never on
+                // its own say (its own drop looks like the host's).
+                if mg.gone {
                     commits.push(i);
                 }
             }
@@ -1299,8 +1300,8 @@ fn migrate<S: Simulation>(
             }
         }
     }
-    // A successor expecting nobody, its old host known gone, commits and
-    // resumes at once (N68, FR12c-1).
+    // A successor whose old host is known gone commits at once (FR12c-1);
+    // expecting nobody, it resumes at once too (N68).
     for i in commits {
         commit(f, peers, w, i, now);
     }

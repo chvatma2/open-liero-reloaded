@@ -1150,6 +1150,44 @@ fn a_two_peer_match_whose_host_crashes_is_host_lost() {
     assert!(m.resumed_us - m.silent_us < 500_000, "at once: {m:?}");
 }
 
+/// Ruling FR12c-1 with a peer still expected (net-soak's
+/// `good-15s2c0v-seed960552337`): client 2 crashes, and the host leaves
+/// (`Bye`) before its timeout dropped client 2. Its old host known gone,
+/// successor 1 commits in its turn though it expects client 2, waits for
+/// it until its window's end, resumes, and client 2's slot is abandoned
+/// there. Before, it waited for a rejoin that never came, passed its turn
+/// on to the dead client 2 and was host lost. Its twin: the host crashes
+/// instead (no `Bye`), so nothing tells peer 1 its own drop from the
+/// host's: host lost, the ruling's cost.
+#[test]
+fn a_leaving_host_is_replaced_while_a_crashed_peer_is_still_expected() {
+    let mut sc = two_peers(39, Profile::GOOD);
+    sc.peers.push(plan(2, Seat::Player(3), Profile::GOOD));
+    sc.slots = 4;
+    sc.ticks = 2_000;
+    sc.exits.push(Exit { peer: 2, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 600, after_us: 0, how: ExitHow::Leave });
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    assert!(r.host_lost.is_empty(), "{:?}", r.gave_up);
+    let m = &r.migrations[0];
+    assert!(
+        m.resumed_us >= m.silent_us + WINDOW_US - 100_000,
+        "it waited for peer 2 until its window's end: {m:?}"
+    );
+    assert!(m.resumed_us <= m.silent_us + WINDOW_US + 300_000, "and no longer: {m:?}");
+    let t = withdrawn(&r, 3);
+    assert!(t <= m.tick && r.host_log[t as usize..].iter().all(|row| row[3] == 0), "{t} {m:?}");
+    withdrawn(&r, 0); // the old host's player, abandoned at the resume
+
+    let mut sc = sc.clone();
+    sc.exits[1].how = ExitHow::Crash;
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let r = harness::run(&sc, &mut f).unwrap();
+    assert_eq!(r.hosts, vec![HOST]);
+    assert_eq!(r.host_lost, [1].into());
+}
+
 #[test]
 fn profiles_change_mid_run() {
     let mut sc = mscenario(14, Profile::GOOD, 3);
@@ -1501,16 +1539,19 @@ fn a_spectator_whose_state_just_loaded_follows_the_migration() {
 }
 
 /// Ruling SK-10 (net-soak's `typical-16s3c0v-seed2454863382`): the host
-/// freezes and steps down; the first successor's link is cut through the
-/// asks of its window, the second's through its own; every survivor gives
-/// up (N68). A legitimate end: the verdict accepts it when the scenario's
-/// outages show no successor was reachable when asked, the survivors'
-/// confirmed rows agree and each gave up within `GIVE_UP_US`.
+/// crashes; the first successor's link is cut through the asks of its
+/// window, the second's through its own; every survivor gives up (N68). A
+/// legitimate end: the verdict accepts it when the scenario's outages show
+/// no successor was reachable when asked, the survivors' confirmed rows
+/// agree and each gave up within `GIVE_UP_US`. (The soak case's host froze
+/// and stepped down, saying `Bye`: known gone, each successor now commits
+/// in its turn, ruling FR12c-1, and nobody is host lost; a crash keeps the
+/// case.)
 fn all_host_lost() -> Scenario {
     let mut sc = mscenario(7, Profile::TYPICAL, 3);
     sc.peers.retain(|p| p.seat != Seat::Spectator);
-    sc.host_freeze = Some((400, 600));
-    // Found gone about 2 s into the freeze (virtual tick 600): peer 1's
+    sc.exits.push(Exit { peer: HOST, tick: 400, after_us: 0, how: ExitHow::Crash });
+    // Found gone 2 s after the crash (virtual tick 600): peer 1's
     // window runs 6-11 s, peer 2's 11-16 s, the give-up at 16 s.
     sc.outages.push(Outage { peer: 1, from_tick: 580, until_tick: 1_050, one_way: false });
     sc.outages.push(Outage { peer: 2, from_tick: 1_050, until_tick: 1_580, one_way: false });
@@ -1523,7 +1564,7 @@ fn every_survivor_host_lost_is_accepted_when_no_successor_was_reachable() {
     let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
     let r = harness::run(&sc, &mut f).unwrap();
     assert_eq!(r.host_lost, [1, 2, 3].into(), "every survivor gave up");
-    assert!(r.exited.contains(&HOST), "the frozen host stepped down");
+    assert!(r.exited.contains(&HOST), "the host crashed");
     harness::verdict(&sc, &r, &mut f).unwrap();
     // One survivor's rows differ: not accepted.
     let mut odd = r.clone();

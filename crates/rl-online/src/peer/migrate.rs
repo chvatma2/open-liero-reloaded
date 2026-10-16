@@ -53,7 +53,7 @@ pub(super) struct Migrating {
     joining: Option<JoinStep>,
     joining_to: Option<usize>,
     /// The old host is known gone: its `Bye` (the session's or the
-    /// lobby's) came. Ruling FR12c-1: a successor expecting nobody commits
+    /// lobby's) came. Ruling FR12c-1: a successor nobody rejoined commits
     /// only then; its own drop would look the same.
     gone: bool,
     /// The last attempt to reach a successor, how it ended (ruling
@@ -846,8 +846,8 @@ impl OnlinePeer {
     }
 
     /// The migration's step now: give up (host lost), host (the gate open;
-    /// committed at once when it expects nobody and its old host is known
-    /// gone, N68 and ruling FR12c-1; else at the first rejoin), try a
+    /// committed at once when its old host is known gone, ruling FR12c-1,
+    /// whoever it still expects; else at the first rejoin), try a
     /// successor, or wait. A gate open uncommitted closes once the step is
     /// no longer `Host` (D8).
     fn step_migration(&mut self, now: Instant) {
@@ -909,9 +909,11 @@ impl OnlinePeer {
             Step::Wait => self.report_step(MigrationStep::Finding),
             Step::Host => {
                 self.report_step(MigrationStep::TakingOver);
-                // Expecting nobody, it commits on its own say only when its
-                // old host said `Bye`: in a two-peer match its own blip
-                // looks like the host's loss (ruling FR12c-1).
+                // Nobody rejoined yet, it commits on its own say only when
+                // its old host said `Bye`, whoever it still expects (they
+                // are waited for until its window's end): in a two-peer
+                // match its own blip looks like the host's loss (ruling
+                // FR12c-1).
                 if self.open_gate() && gone {
                     self.take_over(now);
                 }
@@ -938,13 +940,13 @@ impl OnlinePeer {
     /// state's name, its player slots, `MAX_SPECTATORS`, the admins from
     /// the members' marks, no password) waits for the members; with
     /// `migration.relays` it listens on them from now (N73, A15; answered
-    /// in `standby_tasks`). `true` when it
-    /// expects nobody (no member holding a slot or a seat from the start).
+    /// in `standby_tasks`). `true` when the gate is open (`false`: it
+    /// cannot host, and its window passes).
     fn open_gate(&mut self) -> bool {
         let Side::Client(c) = &mut self.side else { return false };
         let Some(sb) = c.standby.as_deref_mut() else { return false };
-        if let Some(t) = &sb.taking {
-            return t.lobby.away_in_match().is_empty();
+        if sb.taking.is_some() {
+            return true;
         }
         let (Some(state), Some(g)) = (c.lobby.state(), self.game.as_ref()) else { return false };
         let match_ids: Vec<u8> = g.start.slots.iter().filter_map(|s| s.member).collect();
@@ -975,7 +977,6 @@ impl OnlinePeer {
         let Ok(reach) = reach.or_else(|_| HostReach::start(HostListen::off(), &c.me)) else {
             return false;
         };
-        let nobody = lobby.away_in_match().is_empty();
         sb.taking = Some(Box::new(HostSide {
             lobby,
             banned: Arc::clone(&sb.banned),
@@ -988,7 +989,7 @@ impl OnlinePeer {
             reach,
         }));
         sb.open.store(true, Ordering::Relaxed);
-        nobody
+        true
     }
 
     /// The gate closes (an uncommitted successor's window ended, D8; the
@@ -1011,7 +1012,8 @@ impl OnlinePeer {
         sb.closing.clear();
     }
 
-    /// The successor commits (N68: its first rejoin, or nobody expected):
+    /// The successor commits (N68: its first rejoin, or its old host known
+    /// gone, FR12c-1):
     /// the old endpoint shuts down on a thread and the standby becomes the
     /// peer's endpoint, the migrated lobby a host's side, the content side
     /// a host's; the session takes over with the bot slots and the bots

@@ -502,10 +502,14 @@ model that tests it in one process (spec §9.1).
       `a_new_host_waits_for_a_player_without_a_standby`; dead ones too: it
       cannot know) is
       back and every peer back reported, or at its window's end with every
-      peer back reported (N68, C1); expecting nobody, it commits and
-      resumes at once only when its old host is known gone (its `Bye`,
-      `PeerLeft`, came before or during the migration: ruling FR12c-1),
-      else at a follower's rejoin, or never (its window ends uncommitted
+      peer back reported (N68, C1); nobody rejoined, it commits in its turn
+      at once only when its old host is known gone (its `Bye`, `PeerLeft`,
+      came before or during the migration: ruling FR12c-1), whoever it
+      still expects (expecting nobody it resumes at once, else at its
+      window's end: `a_leaving_host_is_replaced_while_a_crashed_peer_is_
+      still_expected`, net-soak's `good-15s2c0v-seed960552337`, where it
+      waited for a crashed peer's rejoin and was host lost), else at a
+      rejoin, or never (its window ends uncommitted
       and it gives up: a two-peer match whose host crashed is host lost,
       `a_two_peer_match_whose_host_crashes_is_host_lost`; a blip is a
       stall, `a_blip_in_a_two_peer_match_is_a_stall`,

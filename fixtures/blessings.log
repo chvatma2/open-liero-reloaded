@@ -118,3 +118,5 @@
   fixtures/matches/classic-dirt-level-8dm.ron
   fixtures/matches/classic-fossilfacility-4xtreme-kill-limit.ron
   fixtures/matches/mw-castlestrike-8chaos.ron
+2026-10-16 bless-regression: plan 12d soak: a successor whose old host said Bye commits in its turn though a crashed peer is still expected (FR12c-1)
+  fixtures/net/cases/net-mw-1-0-liero-factory-good-15s2c0v-seed960552337-c6b621bc.ron
