@@ -191,7 +191,8 @@ pub trait Observer<S: Simulation> {
 ///   cause counts: a frozen successor, or a link on any profile (`awful`
 ///   connects), leaves it reachable.
 /// - **Their confirmed rows agree** with the last host's and with each
-///   other's as far as each goes.
+///   other's as far as each goes (a spectator that joined or came late:
+///   from its last state on, as everywhere in the verdict).
 /// - **Each gave up within N68's bound**: at most `GIVE_UP_US` (plus a
 ///   frame, the harness's step) after it found its host gone.
 fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
@@ -232,10 +233,33 @@ fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
             }
         }
     }
+    // A spectator that joined mid-match or came late holds rows from its
+    // last state on (zeros before): compared from there (net-soak's
+    // `bad-10s1c2v-seed1616063176`, two joined spectators among the lost).
     let rows = |p: PeerId| r.logs.get(&p).map_or(&[][..], |v| &v[..]);
-    let mut logs: Vec<&[[u8; 32]]> = survivors.iter().map(|&p| rows(p)).collect();
-    logs.push(&r.host_log[..]);
-    logs.iter().all(|a| logs.iter().all(|b| a.iter().zip(b.iter()).all(|(x, y)| x == y)))
+    let mut logs: Vec<(usize, &[[u8; 32]])> = Vec::new();
+    for &p in &survivors {
+        let start = if sc.peers.iter().any(|x| x.id == p && x.join_tick.is_some()) || r.late.contains(&p) {
+            let loaded = r.events.get(&p).and_then(|e| {
+                e.iter().rev().find_map(|e| match *e {
+                    Event::StateLoaded { tick } => Some(tick as usize + 1),
+                    _ => None,
+                })
+            });
+            match loaded {
+                Some(t) => t,
+                // It never watched: it holds no row of the match.
+                None => continue,
+            }
+        } else {
+            0
+        };
+        logs.push((start, rows(p)));
+    }
+    logs.push((0, &r.host_log[..]));
+    logs.iter().all(|&(sa, a)| {
+        logs.iter().all(|&(sb, b)| a.iter().zip(b.iter()).skip(sa.max(sb)).all(|(x, y)| x == y))
+    })
 }
 
 /// The harness's step: steps come with frames, so a give-up lands up to a

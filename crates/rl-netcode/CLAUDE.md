@@ -631,7 +631,11 @@ model that tests it in one process (spec §9.1).
     cost: net-soak's `good-15s2c0v-seed960552337`,
     `a_lone_survivor_whose_other_successors_exited_is_host_lost_legitimately`
     with its twin, the successor alive when asked); and every survivor's
-    confirmed rows agree with the last host's and each other's. Nothing
+    confirmed rows agree with the last host's and each other's (a joined
+    or late spectator's from its last state on: its log has zeros before,
+    net-soak's `bad-10s1c2v-seed1616063176`,
+    `a_joined_spectator_among_the_lost_is_compared_from_its_state` with its
+    twin). Nothing
     else makes a successor unreachable (a frozen one, `awful` links).
     Pinned by
     `every_survivor_host_lost_is_accepted_when_no_successor_was_reachable`

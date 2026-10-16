@@ -1593,6 +1593,41 @@ fn every_survivor_host_lost_is_accepted_when_no_successor_was_reachable() {
     assert!(harness::verdict(&sc, &slow, &mut f).is_err(), "gave up too late");
 }
 
+/// Net-soak's `bad-10s1c2v-seed1616063176`: a spectator that joined
+/// mid-match is host lost with everyone else. Its log holds no row before
+/// its state (zeros), so SK-10 compares its rows from its state on, as the
+/// verdict does everywhere else; before, the zeros failed the run. The
+/// twin: a row past its state that differs still fails it.
+#[test]
+fn a_joined_spectator_among_the_lost_is_compared_from_its_state() {
+    let mut sc = all_host_lost();
+    let mut spectator = plan(100, Seat::Spectator, Profile::TYPICAL);
+    spectator.join_tick = Some(200);
+    sc.peers.push(spectator);
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let r = harness::run(&sc, &mut f).unwrap();
+    assert_eq!(r.host_lost, [1, 2, 3, 100].into(), "every survivor gave up");
+    let from = r.events[&100]
+        .iter()
+        .rev()
+        .find_map(|e| match *e {
+            Event::StateLoaded { tick } => Some(tick as usize + 1),
+            _ => None,
+        })
+        .expect("it watched from a state");
+    let rows = &r.logs[&100];
+    assert!(rows.len() > from + 10, "it confirmed rows past its state");
+    assert!(
+        (0..from).any(|t| rows[t] != r.host_log[t]),
+        "before its state its rows are not the match's (the case the check skips)"
+    );
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    let mut odd = r.clone();
+    odd.logs.get_mut(&100).unwrap()[from + 10][0] ^= 1;
+    let e = harness::verdict(&sc, &odd, &mut f).unwrap_err();
+    assert!(e.what.contains("the host confirmed"), "{e:?}");
+}
+
 /// SK-10's other side: every survivor host lost, but the scenario's links
 /// show a successor reachable when asked (peer 2 in its window): not a
 /// legitimate end, the verdict fails as before.

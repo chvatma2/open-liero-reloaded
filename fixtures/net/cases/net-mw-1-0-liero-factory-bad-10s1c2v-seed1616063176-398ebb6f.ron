@@ -1,0 +1,28 @@
+(
+    spec: (
+        mod_id: "olx-mw-1-0",
+        level_id: "olx-level-liero-factory",
+        seed: 1616063176,
+        slots: 10,
+        clients: 1,
+        spectators: 2,
+        join_tick: Some(611),
+        profile: "bad",
+        drift_ppm: 2000,
+        ticks: 1560,
+        outages: [
+            (100, 929, 1324),
+            (101, 1080, 1432),
+        ],
+        net_seed: 2953452388073943154,
+        difficulty: Some("hard"),
+        faults: [],
+        exits: [
+            (0, 1105, "crash"),
+        ],
+        host_freeze: None,
+        profile_changes: [],
+        migration: false,
+    ),
+    failure: Some("the host confirmed 1105 ticks at tick 1105"),
+)
