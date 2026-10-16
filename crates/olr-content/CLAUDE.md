@@ -101,8 +101,9 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   that changed since (bounded read, header checked again before decoding).
 - **Skins** (`skins.rs`, plan 7 task 3): OLX's frame layout
   (`FRAME_WIDTH`, `SKIN_WIDTH`, ..., `SHEET_FRAMES`), `skin_source(f,
-  face)` (a frame's rectangle; facing left OLX shows the columns one to the
-  right, mirrored), `LoadedSkin::colorized(colour)` and `skin_sprite(sheet,
+  face)` (a frame's rectangle; facing left is the exact mirror of the
+  right-facing frame: OLX's one-column offset quirk was dropped
+  2026-10-16), `LoadedSkin::colorized(colour)` and `skin_sprite(sheet,
   f, face)`: the one source the game (`olr-scene`) and the profiles' preview
   (`olr-ui`) draw skins from. `Content::skins()` and `Catalog::skins` list
   them by manifest name; `resolve_id(given, prefix, ids)` (an id, or an

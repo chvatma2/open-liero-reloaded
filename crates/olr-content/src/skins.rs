@@ -36,7 +36,7 @@ pub struct SkinSource {
 /// spacing and losing one of the sprite; that offset is dropped (spec
 /// 2026-10-16 formats §4).
 ///
-/// OLX: src/client/CGameSkin.cpp:584-600
+/// OLX: src/client/CGameSkin.cpp:584-601
 pub fn skin_source(f: u32, face: Dir) -> SkinSource {
     let sx = f * FRAME_WIDTH + FRAME_SPACING;
     let (x, mirrored) = match face {
@@ -117,8 +117,8 @@ mod tests {
     use super::*;
 
     /// A left-facing frame is the exact mirror of the right-facing one
-    /// (OLX's one-column offset, `CGameSkin.cpp:597-601`, dropped: spec
-    /// 2026-10-16 formats §4).
+    /// (OLX's one-column offset, `src/client/CGameSkin.cpp:584-601`,
+    /// dropped: spec 2026-10-16 formats §4).
     #[test]
     fn left_is_the_mirror_of_right() {
         let mut sheet = RgbaImage::new(672, 18);

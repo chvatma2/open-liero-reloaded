@@ -4,7 +4,8 @@ The native pack format (spec §9.1): `pack.ron` plus kind-specific files, for
 mod, level, skin, theme and core packs; PNG helpers (`image_io`, re-exported from `olr-format`; `png_size` reads a
 header's size); content hashing; validation.
 
-- **Layer 2.** Depends on `olr-data`, `olr-vfs`, `ron`, `png`, `sha2`.
+- **Layer 2.** Depends on `olr-data`, `olr-format` (`image_io` is
+  re-exported from it), `olr-vfs`, `ron`, `png`, `sha2`.
 - **Deterministic output.** Writing the same value twice gives byte-identical
   files. Never introduce `HashMap` iteration or timestamps into output.
 - **Layouts:**

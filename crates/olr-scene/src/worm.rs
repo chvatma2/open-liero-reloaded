@@ -23,7 +23,7 @@ const LEFT_MUZZLE: [i32; 14] = [4, -12, -1, -12, -1, -9, -3, -8, -2, 0, -2, 4, 1
 /// and whether it is drawn mirrored (`olr_content::skin_source`, which the
 /// profiles' preview draws from too).
 ///
-/// OLX: src/common/CWorm.cpp:1225-1244, src/client/CGameSkin.cpp:584-600
+/// OLX: src/common/CWorm.cpp:1225-1244, src/client/CGameSkin.cpp:584-601
 pub fn skin_frame(angle: f32, face: Dir, walk: f32, frame_count: u32) -> (Rect, bool) {
     let ang = (((angle + 90.0) / 151.0 * 7.0) as i32).min(6);
     let f = (walk as i32).wrapping_mul(7).wrapping_add(ang);

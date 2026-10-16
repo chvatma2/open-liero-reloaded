@@ -307,7 +307,7 @@ left.png   optional: explicit left-facing frames; without it the right-facing fr
   imported skins.
 - **OLX's mirrored-frame quirk is dropped.** OLX draws a left-facing worm
   from the source columns one to the right
-  (`src/client/CGameSkin.cpp:584-600`); 0.2 mirrors exactly. This is
+  (`src/client/CGameSkin.cpp:584-601`); 0.2 mirrors exactly. This is
   recorded as a deviation in `docs/porting/STATUS.md`, and the render
   goldens are re-blessed for it.
 - **Skins are never downloaded** (the user's ruling, 2026-10-16). A player

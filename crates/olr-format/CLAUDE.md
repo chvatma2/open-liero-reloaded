@@ -63,7 +63,12 @@ Plan 13b: levels, themes, skins and the core pack.
     files give errors, never panics. Unit tests in `compile.rs`, `lift.rs`,
     `files.rs` and `types.rs` cover their rules (spawn defaults are tested
     in `types.rs`).
-- **Skins** (`skins/`): `SkinSource` is `skin.ron` (all layout fields written), `skin.png` (a grid of frames, aim columns × walk rows), `tint.png` (grey: 0 keep, 255 player colour) and an optional `left.png`. `compile_skin` builds OLX's 672 × 18 sheet; only OLX's layout, no `left.png` and no partial tint compile ("not supported by this runtime yet"). `lift_skin` is exact for every bundled skin (tests/skins.rs).
+- **Skins** (`skins/`): `SkinSource` is `skin.ron` (all layout fields
+  written), `skin.png` (a grid of frames, aim columns × walk rows),
+  `tint.png` (grey: 0 keep, 255 player colour) and an optional `left.png`.
+  `compile_skin` builds OLX's 672 × 18 sheet; only OLX's layout, no
+  `left.png` and no partial tint compile ("not supported by this runtime
+  yet"). `lift_skin` is exact for every bundled skin (tests/skins.rs).
 - **Core** (`core_pack/`, not `core`: that name would shadow the `core` crate):
   `CoreSource` is `core.ron` (per sprite `frames` and `art_scale`, a `sounds`
   list, `colours` by OLX's key), `gfx/<id>.png` (alpha) and `sounds/<file>`.
@@ -104,4 +109,6 @@ Plan 13b: levels, themes, skins and the core pack.
   lift every bundled pack, write, read and compile it and compare with the
   import; `skins.rs` checks every bundled skin draws the same after a
   lift. Unit tests in each module's files cover its checks. The
-  bundled-content tests skip when `content/packs` is absent.
+  bundled-content tests skip when `OLR_CONTENT_DIR` is not a directory.
+  Every `check()` applies the pixel bound its reader decodes with
+  (`image_io::check_size`), so a saved file always reopens.
