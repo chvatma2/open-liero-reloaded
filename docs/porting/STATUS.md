@@ -2785,6 +2785,12 @@ player's own rope throws are heard (the porting table).
   repair mends them; the SK verdict accepts exactly that one repair
   (`repaired_withdrawals`). Pinned by
   `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`.
+  The repair's state also drops the refused mark from the holder's log,
+  with its checksums confirmed from it (final review A-I1:
+  `Event::WithdrawalUndone`): before, the holder's record and replay
+  withdrew the player at the old host's tick, and a holder that hosted
+  later never marked that player's real leave (`fill` saw it withdrawn).
+  Pinned by `a_repaired_holder_that_hosts_later_withdraws_the_player_at_its_leave`.
 - **FR12c-1b:** see plan 12c's FR12c-1. The lone survivor ends Host lost
   about 12 s after the host left, when an expected peer had crashed.
 - **RS-1a:** see plan 12c's RS-1a: the new host's R is the later of its

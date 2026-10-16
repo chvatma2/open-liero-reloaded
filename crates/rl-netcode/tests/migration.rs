@@ -9,8 +9,8 @@ use rl_netcode::harness::Factory;
 use rl_netcode::migration::{HOST_SILENT_US, fit_report};
 use rl_netcode::toy::ToyFactory;
 use rl_netcode::{
-    Channel, Config, Driver, Event, MAX_PREDICTION, PeerId, Role, Seat, Session, TARGET_MARGIN, ToySim,
-    input_delay,
+    Channel, Config, Driver, Event, MAX_PREDICTION, PeerId, Role, Seat, Session, Simulation, TARGET_MARGIN,
+    ToySim, input_delay,
 };
 use rl_proto::{
     Control, Datagram, Frame, HostInputs, InputsReport, MAX_CONTROL, MAX_REPORT_FRAMES, MAX_REPORT_OWN,
@@ -1996,7 +1996,8 @@ fn a_spectator_joining_after_a_withdrawal_loads_it_with_the_state() {
 /// player. The client rejoins: present, it stays (its mark refused, a
 /// conflict). Every survivor that withdrew it is repaired by one state
 /// transfer and ends with the player in the match, checksums equal (the
-/// verdict accepts that repair in this case alone).
+/// verdict accepts that repair in this case alone); the state drops the
+/// mark from its log (final review A-I1).
 #[test]
 fn a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired() {
     let mut sc = mscenario(2, Profile::GOOD, 3);
@@ -2008,13 +2009,20 @@ fn a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired()
     sc.exits.push(Exit { peer: HOST, tick: 1_320, after_us: 0, how: ExitHow::Crash });
     let r = run_checked(&sc);
     assert_eq!(r.hosts, vec![HOST, 1]);
-    let held: Vec<PeerId> =
-        r.gone.iter().filter(|(_, g)| g.iter().any(|m| m.1 == 3)).map(|(&p, _)| p).collect();
+    let held: Vec<PeerId> = r
+        .events
+        .iter()
+        .filter(|(_, e)| e.iter().any(|e| matches!(e, Event::WithdrawalUndone { slot: 3, .. })))
+        .map(|(&p, _)| p)
+        .collect();
     assert!(held.contains(&3), "a survivor held the old host's mark: {held:?}");
+    for p in &held {
+        assert!(r.gone[p].iter().all(|g| g.1 != 3), "peer {p}: its state undid the mark");
+    }
     assert!(r.host_gone.iter().all(|g| g.1 != 3), "the new host keeps the rejoined player");
     assert!(r.stats[&1].report_conflicts >= 1, "its mark refused");
     assert!(!r.dropped.contains(&2), "back in the match");
-    for p in held.iter().filter(|&&p| p != HOST) {
+    for p in &held {
         let loads = r.events[p].iter().filter(|e| matches!(e, Event::StateLoaded { .. })).count();
         assert_eq!(loads, 1, "peer {p}: one repair");
     }
@@ -2028,4 +2036,53 @@ fn a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired()
     let mut unrefused = r.clone();
     unrefused.stats.get_mut(&1).unwrap().report_conflicts = 0;
     assert!(harness::verdict(&sc, &unrefused, &mut f).is_err(), "no refusal");
+}
+
+/// Final review A-I1: a survivor repaired from the old host's refused mark
+/// (PF12d-8a) later hosts (B, peer 2, has no standby, so peer 3, a holder,
+/// follows A), and B then really leaves: B's worm is withdrawn at its leave
+/// on every peer, and the holder's record (its rows and marks, what its
+/// replay re-simulates) is the match's, every confirmed checksum of its own
+/// equal to a replay of it. RED: the holder's log kept the refused mark, so
+/// as host it never marked B's leave, and its resume sent that mark.
+#[test]
+fn a_repaired_holder_that_hosts_later_withdraws_the_player_at_its_leave() {
+    let mut sc = mscenario(2, Profile::GOOD, 3);
+    sc.ticks = 3_000;
+    sc.peers.iter_mut().filter(|p| p.id == 2).for_each(|p| p.freeze = Some((290, 1_300)));
+    sc.outages.push(Outage { peer: 1, from_tick: 1_282, until_tick: 1_400, one_way: true });
+    sc.exits.push(Exit { peer: HOST, tick: 1_320, after_us: 0, how: ExitHow::Crash });
+    sc.migration.as_mut().unwrap().no_standby = vec![2];
+    sc.exits.push(Exit { peer: 1, tick: 2_000, after_us: 0, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: 2, tick: 2_400, after_us: 0, how: ExitHow::Leave });
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST, 1, 3]);
+    assert!(r.stats[&1].report_conflicts >= 1, "the old host's mark refused");
+    let loads = r.events[&3].iter().filter(|e| matches!(e, Event::StateLoaded { .. })).count();
+    assert_eq!(loads, 1, "the holder was repaired once");
+    let t = r.host_gone.iter().find(|g| g.1 == 3).map(|g| g.0).expect("B is withdrawn");
+    assert!(t >= 2_400 - 20, "B is withdrawn at its leave, not at the old host's mark: {t}");
+    // On every peer still in the match (the holder and the spectator).
+    let kept: Vec<PeerId> = r.gone.keys().copied().filter(|p| !r.exited.contains(p)).collect();
+    assert_eq!(kept, [3, 100]);
+    for (peer, marks) in r.gone.iter().filter(|(p, _)| kept.contains(p)) {
+        assert_eq!(marks.iter().find(|g| g.1 == 3).map(|g| g.0), Some(t), "peer {peer}");
+    }
+    // The holder's record is the match's, and its confirmed checksums are a
+    // replay's of it (rl-online's `record_of` and `replay::make`).
+    assert_eq!(r.gone[&3], r.host_gone, "its marks");
+    assert_eq!(r.logs[&3][..sc.ticks as usize], r.host_log[..sc.ticks as usize], "its rows");
+    let mut sim = ToySim::new(sc.slots as usize);
+    let mut replay = BTreeMap::new();
+    for (t, row) in r.logs[&3].iter().enumerate() {
+        for &(_, s) in r.gone[&3].iter().filter(|g| g.0 as usize == t) {
+            sim.withdraw(s);
+        }
+        let keys: Vec<Keys> = row[..sc.slots as usize].iter().map(|&k| Keys(k)).collect();
+        sim.tick(&keys);
+        replay.insert(t as u32, sim.checksum());
+    }
+    for &(t, got) in &r.checksums[&3] {
+        assert_eq!(replay.get(&t), Some(&got), "its confirmed checksum of tick {t}");
+    }
 }

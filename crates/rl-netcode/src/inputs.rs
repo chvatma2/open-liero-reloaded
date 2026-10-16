@@ -121,6 +121,15 @@ impl InputLog {
         SetResult::New
     }
 
+    /// Drops `slot`'s withdrawal mark: a loaded state, the match's, does not
+    /// hold it (final review A-I1, `Session::state_arrived`). The tick's
+    /// value stays final.
+    pub(crate) fn unmark(&mut self, slot: u8) {
+        if let Some(g) = self.gone.get_mut(slot as usize) {
+            *g = NONE;
+        }
+    }
+
     /// The tick `slot`'s worm is withdrawn at, if it is.
     pub fn gone_at(&self, slot: u8) -> Option<u32> {
         self.gone.get(slot as usize).copied().filter(|&t| slot < self.slots && t != NONE)

@@ -254,6 +254,9 @@ impl Simulation for Faulty {
     fn withdraw(&mut self, slot: u8) {
         self.toy.withdraw(slot);
     }
+    fn withdrawn(&self) -> u32 {
+        self.toy.gone()
+    }
 }
 
 /// The toy match where peer 1's simulation has `fault`.

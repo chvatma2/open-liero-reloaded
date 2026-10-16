@@ -10,7 +10,8 @@ model that tests it in one process (spec §9.1).
 - **Sans-IO**: no sockets, no clock, no threads; time is an argument
   (`now_us`).
 - **`Simulation`** is what the session drives (tick, save/restore,
-  checksum, state transfer, `withdraw`); `ToySim` is a tiny deterministic implementation
+  checksum, state transfer, `withdraw`, `withdrawn`: the mask a loaded
+  state holds); `ToySim` is a tiny deterministic implementation
   for the session's tests. `decode_state` never panics: it returns
   `StateRejected`. `withdraw(slot)` (plan 12d, N83) takes a slot's worm out
   for good before the next tick; called again after a rollback, it changes
@@ -225,7 +226,10 @@ model that tests it in one process (spec §9.1).
   loaded, `StateLoaded` and the timeline restarts after it: no
   snapshots, the **state floor** at `tick + 1` (ticks below it count as
   confirmed for rollback and checksums; their inputs still arrive and are
-  recorded, never rolling back), the ticks we had run simulated again at
+  recorded, never rolling back; our withdrawal marks below it that the
+  state lacks, `Simulation::withdrawn`, are dropped with our checksums
+  confirmed from them, `Event::WithdrawalUndone` before `StateLoaded`:
+  final review A-I1, ruling PF12d-8a's holders), the ticks we had run simulated again at
   the next advance (a client behind the state skips to it); a client or
   spectator then sends `Control::StateLoaded`. `sim_mut` (doc-hidden:
   tests and the harness only) also moves the floor to the current tick
@@ -326,7 +330,11 @@ model that tests it in one process (spec §9.1).
     client rejoined) leaves each survivor that held the mark with the
     player withdrawn alone; its rows agree (the values were taken), its
     world does not: a desync, one state repair, a desync bundle in
-    rl-online. `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`. A report that does not decode for
+    rl-online. `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`.
+    The state drops the refused mark from the holder's log (final review
+    A-I1, above), so its record, its replay and, if it hosts later, its
+    fills agree with the match:
+    `a_repaired_holder_that_hosts_later_withdraws_the_player_at_its_leave`. A report that does not decode for
     the match's slots (the decoder cannot check a frame's `known` bits
     against them) or starts below our log's origin is `Malformed`, takes
     nothing and ends the wait for it. A report from a peer not rejoined, or
@@ -577,9 +585,10 @@ model that tests it in one process (spec §9.1).
     equal the last host's there, a peer that went agrees with the last
     host's within the bounds of its rows, and the offline replay withdraws
     at the last host's marks before their ticks. Ruling PF12d-8a: a kept
-    peer holding a mark the last host refused (its player came back at the
-    last migration, the last host counted a report conflict) and exactly
-    one loaded state is compared from that state, its held values and its
+    peer whose one loaded state undid a mark (`Event::WithdrawalUndone`)
+    the last host lacks, for a slot whose player came back at a migration
+    whose new host counted a report conflict, has its checksums compared
+    from that state (its rows and marks from 0), its held values and its
     desync excused (`repaired_withdrawals`); a second repair, or no refusal,
     fails (pinned by
     `a_leaving_client_is_withdrawn_at_one_tick_everywhere`, every profile,
@@ -588,7 +597,9 @@ model that tests it in one process (spec §9.1).
     `a_leave_just_before_the_host_crashes_is_kept`,
     `a_leave_after_a_migration_is_withdrawn_by_the_new_host`,
     `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`
-    with its negative twins). Pinned by `a_host_cut_off_from_its_players_leaves_the_match`
+    with its negative twins,
+    `a_repaired_holder_that_hosts_later_withdraws_the_player_at_its_leave`).
+    Pinned by `a_host_cut_off_from_its_players_leaves_the_match`
     (as the first host and as the second, net-soak's
     `lan-8s2c0v-seed1433102928`). A host gone stalls its
     clients at the prediction limit: `expect_no_stalls` flags those too.

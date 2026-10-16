@@ -1553,36 +1553,45 @@ fn resume<S: Simulation>(
 /// Every host-lost peer lost its host legitimately (ruling FR12c-3,
 /// [`every_host_lost_is_legitimate`]); a match every survivor lost
 /// (SK-10) skips only the confirmed ticks and the replay (A-M1).
-/// Ruling PF12d-8a: survivors that withdrew a player the last host kept.
+/// Ruling PF12d-8a: survivors that withdrew a player a later host kept.
 /// The old host timed out a client that was alive, marked it and went; a
 /// survivor holding that mark withdrew the player, but the player came
-/// back (it rejoined the last migration and is kept), so the last host
-/// refused the mark (`report_conflicts`) and kept it. One repair (a state
-/// transfer) brings such a survivor back to the match: each kept peer with
-/// such a mark and exactly one loaded state, with its mark `(tick, slot)`.
-/// Any other mark that differs from the last host's still fails.
+/// back (it rejoined that migration), so the new host refused the mark
+/// (`report_conflicts`) and kept it. One repair (a state transfer) brings
+/// such a survivor back to the match, and the state drops the mark from
+/// its log (`Event::WithdrawalUndone`, final review A-I1): each kept peer
+/// with exactly one loaded state that undid such a mark (one the last host
+/// does not hold), with that mark `(tick, slot)`. Any other mark that
+/// differs from the last host's still fails.
 fn repaired_withdrawals(
     sc: &Scenario,
     r: &Report,
     kept: &dyn Fn(&PeerId) -> bool,
 ) -> BTreeMap<PeerId, (u32, u8)> {
-    let last_host = r.hosts.last().copied().unwrap_or(HOST);
-    let Some(last) = r.migrations.len().checked_sub(1) else { return BTreeMap::new() };
-    if r.stats.get(&last_host).is_none_or(|s| s.report_conflicts == 0) {
-        return BTreeMap::new();
-    }
     let seat = |p: PeerId| sc.peers.iter().find(|x| x.id == p).map(|x| x.seat);
-    let came_back = |s: u8| {
-        r.held.iter().any(|h| h.migration == last && kept(&h.peer) && seat(h.peer) == Some(Seat::Player(s)))
+    // The slot's player came back at a migration whose new host refused a mark.
+    let refused = |s: u8| {
+        r.migrations.iter().enumerate().any(|(k, m)| {
+            r.stats.get(&m.to).is_some_and(|st| st.report_conflicts > 0)
+                && r.held.iter().any(|h| h.migration == k && seat(h.peer) == Some(Seat::Player(s)))
+        })
     };
-    let refused = |s: u8| came_back(s) && !r.host_gone.iter().any(|g| g.1 == s);
     let loads = |p: PeerId| {
         r.events.get(&p).map_or(0, |e| e.iter().filter(|e| matches!(e, Event::StateLoaded { .. })).count())
     };
-    r.gone
+    r.events
         .iter()
         .filter(|(p, _)| kept(p) && loads(**p) == 1)
-        .filter_map(|(&p, marks)| marks.iter().find(|g| refused(g.1)).map(|&g| (p, g)))
+        .filter_map(|(&p, events)| {
+            events.iter().find_map(|e| match *e {
+                Event::WithdrawalUndone { tick, slot }
+                    if refused(slot) && !r.host_gone.contains(&(tick, slot)) =>
+                {
+                    Some((p, (tick, slot)))
+                }
+                _ => None,
+            })
+        })
         .collect()
 }
 
@@ -1611,9 +1620,12 @@ pub fn verdict<S: Simulation>(sc: &Scenario, r: &Report, f: &mut dyn Factory<S>)
         let need = joined(peer) || corrupted(peer) || late(peer) || excused(peer);
         let (inputs, sums) = match (need, first, last) {
             (false, ..) => (0, 0),
-            // A late peer's old session's loads came before its new one's;
-            // a repaired withdrawal (PF12d-8a) is the match's from its state.
-            (true, Some(_), Some(b)) if late(peer) || excused(peer) => (b, b),
+            // A late peer's old session's loads came before its new one's.
+            (true, Some(_), Some(b)) if late(peer) => (b, b),
+            // A repaired withdrawal (PF12d-8a): its checksums are the match's
+            // from its state on; its rows and marks are the match's
+            // throughout (the state undid the mark: final review A-I1).
+            (true, Some(_), Some(b)) if excused(peer) => (0, b),
             (true, Some(a), Some(b)) => (if joined(peer) { a } else { 0 }, b),
             _ => return Err(fail(0, format!("peer {peer} never loaded a state"))),
         };

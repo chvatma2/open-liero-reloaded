@@ -22,6 +22,10 @@ pub trait Simulation {
     /// session simulates next (decision N83). Called again for that tick
     /// after a rollback: it must change nothing the second time.
     fn withdraw(&mut self, slot: u8);
+    /// The withdrawn slots, a bit each (bit `i` for slot `i`): what a
+    /// loaded state holds (final review A-I1: the session drops its own
+    /// marks below the state that it lacks).
+    fn withdrawn(&self) -> u32;
 }
 
 /// A tiny deterministic simulation for the session's own tests: each slot
@@ -123,6 +127,10 @@ impl Simulation for ToySim {
         if usize::from(slot) < self.pos.len().min(32) {
             self.gone |= 1 << slot;
         }
+    }
+
+    fn withdrawn(&self) -> u32 {
+        self.gone
     }
 }
 

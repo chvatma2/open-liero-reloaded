@@ -482,7 +482,10 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       member id, direct or not). `migrations()`: the running match's count.
 - **`replay.rs`**: `MatchRecord { start, rows, checksums, gone }` (rows below the
   last tick, the session's confirmed checksums, the withdrawals at ticks
-  of those rows, `(tick, slot)`: `InputLog::gone_marks`, plan 12d N83);
+  of those rows, `(tick, slot)`: `InputLog::gone_marks`, plan 12d N83; a
+  repaired holder of a refused mark has neither the mark nor its
+  checksums from it, the session drops them with the state: final review
+  A-I1);
   `make` re-simulates the rows from `build_match`'s start world with its
   `Recorder`, each withdrawal (`Recorder::withdraw`, an error as `push`'s)
   before its tick, and returns the

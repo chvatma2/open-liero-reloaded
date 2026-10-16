@@ -119,6 +119,11 @@ impl Simulation for WorldSim {
     fn withdraw(&mut self, slot: u8) {
         self.world.withdraw(usize::from(slot));
     }
+
+    /// `World::gone`.
+    fn withdrawn(&self) -> u32 {
+        self.world.gone()
+    }
 }
 
 /// One simulated tick for the presentation (plan 10's sounds, effects and

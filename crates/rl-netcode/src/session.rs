@@ -230,6 +230,12 @@ pub enum Event {
     /// The timeline resumed after a migration at `tick` (the new host's
     /// [`Session::resume`]; a client's `Control::Resume`).
     Resumed { tick: u32 },
+    /// Client or spectator: a loaded state holds `slot`'s worm, which our
+    /// log withdrew at `tick`, below the state (ruling PF12d-8a: the old
+    /// host's mark, which the new host refused). The state is the match's:
+    /// the mark is dropped, and so are our checksums confirmed from `tick`
+    /// (final review A-I1). Pushed before `StateLoaded`.
+    WithdrawalUndone { tick: u32, slot: u8 },
 }
 
 #[derive(Clone, Debug)]
@@ -1961,6 +1967,21 @@ impl<S: Simulation> Session<S> {
         // so it would end a repair without showing that we simulate on
         // correctly from the state. Our first report after the floor does.
         let hash = floor.is_multiple_of(self.checksum_every()).then(|| self.sim.checksum());
+        // Final review A-I1: our marks below the state agree with it. A mark
+        // the state lacks (PF12d-8a's refused one) would otherwise stay in our
+        // record and replay, and, were we to host later, keep `fill` from ever
+        // marking that player's real leave. Our checksums from it on were of
+        // a world the match did not have.
+        let held = self.sim.withdrawn();
+        for slot in 0..self.log.slots() {
+            if let Some(at) = self.log.gone_at(slot).filter(|&t| t < floor)
+                && held & (1 << slot) == 0
+            {
+                self.log.unmark(slot);
+                self.checks.restart(at, None);
+                self.events.push(Event::WithdrawalUndone { tick: at, slot });
+            }
+        }
         self.checks.restart(tick, hash);
         match self.role {
             Role::Joining { host } => {
@@ -2573,6 +2594,9 @@ mod tests {
             Ok(())
         }
         fn withdraw(&mut self, _slot: u8) {}
+        fn withdrawn(&self) -> u32 {
+            0
+        }
     }
 
     #[test]
