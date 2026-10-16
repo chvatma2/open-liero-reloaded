@@ -304,7 +304,7 @@ Load: heavy-spikeballs fills OLX's 3000-projectile pool (`MAX_PROJECTILES`); hea
 
 ### Limits
 
-| | OLX (`d1ad953f`) | rust-liero |
+| | OLX (`d1ad953f`) | OLR |
 |---|---|---|
 | Worms | 32 (`MAX_WORMS`, `include/Consts.h:34`) | 32 (`olr_sim::MAX_WORMS`) |
 | Projectiles | 3000 (`MAX_PROJECTILES`, `include/CProjectile.h:36`) | 3000 by default, up to 65 536 (`MatchSetup::MAX_POOL_CAPACITY`) |

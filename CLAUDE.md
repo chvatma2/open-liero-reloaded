@@ -1,4 +1,4 @@
-# rust-liero
+# Open Liero Reloaded (OLR)
 
 A Rust reimplementation of OpenLieroX (OLX) that feels identical and is
 modernized for current displays.

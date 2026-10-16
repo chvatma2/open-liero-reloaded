@@ -1,10 +1,23 @@
 # Changelog
 
-All notable changes to rust-liero are recorded here. The format follows
+All notable changes to Open Liero Reloaded (OLR) are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
 ## Unreleased
+
+### Changed — the name
+
+- The project is now **Open Liero Reloaded** (OLR; its working name was
+  rust-liero). The game is `olr` (`olr.exe`), the server `olr-server`, the
+  tools `olr-cli`, and the release zips
+  `open-liero-reloaded-<version>-{linux,windows}-x64.zip`.
+- Settings, profiles, replays and downloads live in an
+  `open-liero-reloaded` data folder (`~/.local/share/open-liero-reloaded` on
+  Linux). Move the old `rust-liero` folder's contents there to keep them.
+- Replays are `.olrp` files and invite codes start `olr1`. Older replays,
+  pack archives and invite codes, and older builds online, do not work
+  with this version.
 
 ### Fixed — players leaving a match
 

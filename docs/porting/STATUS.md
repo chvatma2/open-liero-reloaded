@@ -1163,7 +1163,7 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   through `Identity`, the frames `EVENT`/`REQ`/`CLOSE`/`EOSE`/`OK`/`NOTICE`/
   `CLOSED`) and NIP-40 expiration, sans-IO, so the dependency tree and the
   WASM build (plan 13) stay small. Event kinds: 31470 (addressable
-  announcement, tag `d` = `rust-liero`) and 21470 (ephemeral, reserved for
+  announcement, tag `d` = `open-liero-reloaded`) and 21470 (ephemeral, reserved for
   plan 12b's handshakes); neither is in the NIPs kinds table or the
   registry-of-kinds (checked 2026-10-13, to re-check before a release).
   The relays and STUN servers are the lists below, chosen by measurement
@@ -1231,7 +1231,7 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
 - **N39 - the announcement.** The content is JSON (`serde_json`, at most
   4 KiB): `{v, name, mode, map, map_name, mod, mod_hash, players,
   max_players, bots, spectators, max_spectators, password, region,
-  playing, addr, port}`. Tags: `["d","rust-liero"]`, `["t","rust-liero"]`,
+  playing, addr, port}`. Tags: `["d","open-liero-reloaded"]`, `["t","open-liero-reloaded"]`,
   `["f","<fingerprint, 16 hex>"]`, `["expiration","<unix+180>"]`. A note is
   re-published every 60 s and when the lobby changes (at most every 12 s,
   R5-3). On close the host publishes a note with `"closed": true` and an
@@ -1758,7 +1758,7 @@ is the cost of the decision being wrong.
     list (public TURN services need paid credentials). Volunteers run
     `olr-server --relay`, which announces a kind-31471 note `{v, addr,
     port, region, capacity, load, user, pass}` with public long-term
-    credentials (realm `rust-liero`, fresh each start, 16 hex characters
+    credentials (realm `olr`, fresh each start, 16 hex characters
     each), at once and every 60 s (expiry 180 s), and a closing note
     (capacity 0, expiry 10 s) at shutdown. Players may add their own TURN
     servers (`user:pass@host:port`, Options → Online → TURN relays, at
@@ -1989,7 +1989,7 @@ Task rulings:
   bodies 64 KiB, `Content-Length`, chunked or close framing, deadlines
   between every read); a flat, linear scan of the description for
   WANIPConnection:1/2 or WANPPPConnection:1 `controlURL`s; SOAP
-  `GetExternalIPAddress`, `AddPortMapping` (description `rust-liero`)
+  `GetExternalIPAddress`, `AddPortMapping` (description `Open Liero Reloaded`)
   and `DeletePortMapping` in the namespace found. igd-next parsed a LAN
   device's XML recursively (a 35 KB nested description overflowed the
   stack: an uncatchable abort), read bodies without a cap, followed

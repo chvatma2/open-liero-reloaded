@@ -59,7 +59,7 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
     are ignored; `#x` filters need a single character `x`. Authors in
     filters are full 32-byte keys (no prefixes). `encode_from_relay` and
     `decode_to_relay` exist for the test relay.
-  - Kinds: `KIND_ANNOUNCE` 31470 (addressable, tag `d` = `rust-liero`),
+  - Kinds: `KIND_ANNOUNCE` 31470 (addressable, tag `d` = `open-liero-reloaded`),
     `KIND_HANDSHAKE` 21470 (ephemeral, plan 12b). `MAX_CONTENT` (4 KiB) is
     the limit for our own events' content; callers enforce it.
 - **Kinds registry check, 2026-10-13.** `schema.yaml` of
@@ -154,7 +154,7 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   gap by arrival or date, staleness, a full list of `MAX_RELAYS` 64), then
   the signature, the note and the address (global unless `allow_local`).
   A closing note (capacity 0, recognised before the signature by
-  `"capacity":0,`, our own serde encoding: only rust-liero writes notes;
+  `"capacity":0,`, our own serde encoding: only OLR writes notes;
   the parsed capacity decides) is exempt from the gap, removes the relay
   and leaves a tombstone. At 4096 remembered keys, stale ones go, then the
   oldest never listed (a flood of closing notes from fresh keys), then the

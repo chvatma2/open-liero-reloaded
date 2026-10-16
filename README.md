@@ -1,9 +1,10 @@
-# rust-liero
+# Open Liero Reloaded (OLR)
 
 A Rust reimplementation of [OpenLieroX](https://github.com/openlierox/openlierox),
 built so physics, movement and shooting feel identical, and modernized for
 today's displays. It loads classic OLX mods and levels by importing them into
-an open, text-based pack format.
+an open, text-based pack format. OLR is its own game, not a version of
+OLX: it plays neither OLX's network games nor its replays.
 
 Status: **v0.1, playable local Deathmatch against bots.** OLX content
 imports, the simulation reproduces OLX's traces bit for bit, and you start

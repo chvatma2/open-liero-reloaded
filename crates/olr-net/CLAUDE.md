@@ -241,7 +241,7 @@ for tests.
   REQUESTED-ADDRESS-FAMILY IPv4); Refresh (0 deletes); CreatePermission
   (at most 8 peers per request); ChannelBind (0x4000-0x7fff); Send and
   Data indications; ChannelData (unpadded). Long-term credentials: realm
-  `REALM` `"rust-liero"`, one user, MESSAGE-INTEGRITY HMAC-SHA1 under
+  `REALM` `"olr"`, one user, MESSAGE-INTEGRITY HMAC-SHA1 under
   MD5(user:realm:pass) and FINGERPRINT on every authenticated answer; a
   stateless nonce (16 hex digits: the 10-minute period, wrapping, and a
   48-bit HMAC tag of the source address and the period under a
@@ -412,7 +412,7 @@ for tests.
       absolute paths, or relative to the base's directory. Each is tried
       with `GetExternalIPAddress`.
     - **SOAP:** `GetExternalIPAddress`, `AddPortMapping` (the 8 standard
-      arguments, escaped; description `"rust-liero"`) and
+      arguments, escaped; description `"Open Liero Reloaded"`) and
       `DeletePortMapping`, in the found service's namespace. 725 → lease
       0 (never renewed); 718/724 → the next port; other UPnP errors →
       `Fatal`; no usable answer → `Silent`. A deletion has 450 ms. The

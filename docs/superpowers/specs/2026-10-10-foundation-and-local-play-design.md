@@ -1,4 +1,4 @@
-# rust-liero: Foundation and Local Play Design
+# Open Liero Reloaded: Foundation and Local Play Design
 
 - **Date:** 2026-10-10
 - **Status:** Draft, awaiting review
@@ -6,9 +6,9 @@
 
 ## 1. Purpose
 
-rust-liero is a Rust reimplementation of [OpenLieroX](https://github.com/openlierox/openlierox) (OLX), modernized for current hardware.
+Open Liero Reloaded (OLR) is a Rust reimplementation of [OpenLieroX](https://github.com/openlierox/openlierox) (OLX), modernized for current hardware.
 It is also the author's first game in Rust.
-The working name is `rust-liero`, and crates use the prefix `rl-`.
+Its working name was `rust-liero` (crate prefix `rl-`); it was renamed Open Liero Reloaded (OLR) on 2026-10-16, and crates use the prefix `olr-`.
 The final name must not contain "LieroX" or "Liero Xtreme", because the original LX license forbids it (see §11).
 
 ### 1.1 What the user asked for
@@ -615,7 +615,7 @@ This spec includes three hooks for it:
 
 ## 14. Open decisions (not blocking this spec)
 
-- **Final project name**, which renames the crate prefix `rl-` mechanically.
+- ~~**Final project name**~~: decided 2026-10-16, Open Liero Reloaded (OLR); the crate prefix became `olr-`.
 - **Default bot difficulty**, and whether difficulty presets copy OLX's (Easy to Xtreme).
   This will be decided in M6 from playtesting.
 
@@ -940,7 +940,7 @@ difficulties, none aiming perfectly (§20).
 | # | Decision | Reason |
 |---|---|---|
 | G1 | **`olr-ui` (L5): screen logic and view models separate from egui widgets.** Screens: Main, LocalPlay, Profiles, Options, WeaponSelect, InGame (HUD + pause), Results, Import, About. | Spec §8.3; testable by `egui_kittest` and plain unit tests. |
-| G2 | **Persistence** through `directories` (`ProjectDirs` "rust-liero"): `settings.ron`, `profiles.ron`, `replays/` (auto-saved last matches, capped by count). Every format is versioned; an unknown version means defaults plus a warning. | Spec §9.4. |
+| G2 | **Persistence** through `directories` (`ProjectDirs` "open-liero-reloaded"): `settings.ron`, `profiles.ron`, `replays/` (auto-saved last matches, capped by count). Every format is versioned; an unknown version means defaults plus a warning. | Spec §9.4. |
 | G3 | **Window size** comes from options presets (e.g. 1280×720, 1600×900, 1920×1080) plus borderless fullscreen in the same list (the user's ruling after the v0.1 playtest replaced the native desktop size and the separate toggle: a desktop-sized window's bottom sat under the taskbar), applied at most every 250 ms through the existing window code, and remembered. | User decision; the WSLg compositor crash. |
 | G4 | **OLX's weapon selection before the match** (and when OLX allows re-selection): five slots, restricted by the preset, with a "random" button and keyboard/gamepad navigation. Bots keep their loadouts (F1). | OLX feel; replaces the random human loadout. |
 | G5 | **HUD:** health, the five weapon slots with charge and reload, a kill feed, a Tab scoreboard, a time and kill-limit readout, and a minimap (OLX's colours and scale from `presentation.md` §2.4). Two styles: **Modern** (egui, the default) and **Classic** (OLX's bitmap fonts and layout). | Spec §8.3. |

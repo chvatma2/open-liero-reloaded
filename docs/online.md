@@ -1,6 +1,6 @@
 # Playing online
 
-rust-liero plays over WebRTC data channels (TCP for the handshake, UDP for
+Open Liero Reloaded (OLR) plays over WebRTC data channels (TCP for the handshake, UDP for
 the game), both on port **23400** by default. Everything below is the same
 on Linux and Windows. Players behind ordinary home routers need no port
 forwarding: see "Through routers".
@@ -643,7 +643,7 @@ lines with the test report.
   game with no relays at all (a LAN game) migrates only to players it
   reaches directly.
 - On Windows, every PC opens a standby port when it joins a lobby, so the
-  first time Windows may ask whether to allow rust-liero on the network:
+  first time Windows may ask whether to allow Open Liero Reloaded on the network:
   allow it (private networks), or migration to that PC can only go
   through the relays (or fails without them). See "Windows Firewall".
 
@@ -665,7 +665,7 @@ networks note how long each step took.
    only), the other two join with the invite code. Start the game with
    `./olr | tee olr.txt` (Windows: `.\olr.exe | Tee-Object
    -FilePath olr.txt`) on all three so the output is kept. On
-   Windows, allow rust-liero through the firewall when asked (private
+   Windows, allow Open Liero Reloaded through the firewall when asked (private
    networks): every PC opens a standby port on joining, and without it a
    migration to that PC can only go through the relays.
    **Two PCs and a server:** run `olr-server` with `visibility: Invite`,
