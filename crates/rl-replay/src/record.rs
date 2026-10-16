@@ -172,7 +172,17 @@ impl Recorder {
         if self.ticks >= MAX_TICKS {
             return Err(RecordError::Full);
         }
+        // A withdrawal after the last pushed tick is no longer trailing: the
+        // failing tick follows, so it is played before that tick, after the
+        // checksum at it, which is then the world's before it (final review
+        // A-M1): `push`'s periodic one (or `start`'s), never `finish`'s.
+        let trailing = self.withdrawals.last().is_some_and(|w| w.0 == self.ticks);
+        let before = self.checksums.last().copied().filter(|c| c.0 == self.ticks);
         let mut r = self.finish(world)?;
+        if trailing {
+            r.checksums.pop();
+            r.checksums.extend(before);
+        }
         let failing = &failing[..failing.len().min(MAX_WORMS)];
         if failing.len() > r.width {
             let wide = failing.len();

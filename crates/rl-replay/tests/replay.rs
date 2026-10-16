@@ -126,6 +126,36 @@ fn a_withdrawal_after_the_last_tick_replays() {
     assert_eq!(back.play(new_world()).unwrap().world.gone(), 1);
 }
 
+/// Final review A-M1: a failing tick after a trailing withdrawal. The
+/// withdrawal is no longer after the last tick (the failing one follows),
+/// so it is played before that tick, and the checksum at it is the world's
+/// before it: the replay plays into the failure without a false `Mismatch`.
+#[test]
+fn a_failing_tick_after_a_trailing_withdrawal_replays() {
+    let (setup, mode) = deathmatch(4, 4);
+    let new_world = || World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
+    let failing = [Keys(Keys::FIRE), Keys(Keys::LEFT)];
+    for ticks in [0u32, 150, 200] {
+        let mut world = new_world();
+        let mut rec = Recorder::new(packs(), &setup, &mode);
+        rec.start(&world).unwrap();
+        let mut keys = KeyGen::new(4, 4, 12);
+        let mut out = TickEvents::new();
+        for _ in 0..ticks {
+            let row = keys.row();
+            world.tick(&row, &mut out);
+            rec.push(&row, &world).unwrap();
+        }
+        rec.withdraw(&mut world, 2).unwrap();
+        let replay = rec.finish_failed(&world, &failing).unwrap();
+        assert_eq!(replay.withdrawals, [(ticks, 2)]);
+        let back = Replay::decode(&replay.encode()).unwrap();
+        let run = back.play(new_world()).unwrap_or_else(|m| panic!("{ticks}: {m:?}"));
+        world.tick(&failing, &mut out);
+        assert_eq!(run.world, world, "{ticks}");
+    }
+}
+
 /// Stepping a `Player` across a withdrawal withdraws at its tick, not before.
 #[test]
 fn stepping_across_a_withdrawal() {

@@ -37,7 +37,10 @@ ticks and at the end.
   `finish_failed(&world, &failing_keys)` saves a match whose next tick
   failed (spec §7.3): that tick's keys with no checksum after them, so the
   replay plays into the failure (`rl-cli match` rebuilds the world by
-  replaying when a panic in `World::tick` left it broken).
+  replaying when a panic in `World::tick` left it broken). A trailing
+  withdrawal then plays before the failing tick, and the checksum at it is
+  the one before it, or none (final review A-M1,
+  `a_failing_tick_after_a_trailing_withdrawal_replays`).
 - **Replaying** (`play.rs`): `Replay::world(Assets)` rebuilds the world
   (`rl-content`'s `Content::world_for_replay` resolves the packs and refuses
   other content hashes); `Replay::play(world)` or a `Player` stepping a tick
