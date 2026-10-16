@@ -11,6 +11,8 @@ expression: "String::from_utf8_lossy(bytes)"
         recoil: 10,
         sound: "sfx/missile2.ogg",
         shot: (
+            speed: 300,
+            spread: 3.0,
             projectile: (
                 gfx: Image(
                     file: "gfx/none.png",
@@ -33,6 +35,8 @@ expression: "String::from_utf8_lossy(bytes)"
                 ],
                 spawns: {
                     "spawn": (
+                        speed: 100,
+                        relative_to_parent: true,
                         projectile: (
                             gfx: Image(
                                 file: "gfx/missile7.png",
@@ -74,6 +78,9 @@ expression: "String::from_utf8_lossy(bytes)"
                             ],
                             spawns: {
                                 "spawn": (
+                                    speed: 100,
+                                    relative_to_parent: true,
+                                    angle: 180,
                                     projectile: (
                                         gfx: Image(
                                             file: "gfx/none.png",
@@ -110,6 +117,9 @@ expression: "String::from_utf8_lossy(bytes)"
                                         ],
                                         spawns: {
                                             "spawn": (
+                                                speed: 100,
+                                                relative_to_parent: true,
+                                                angle: 180,
                                                 projectile: (
                                                     gfx: Image(
                                                         file: "gfx/none.png",
@@ -127,6 +137,10 @@ expression: "String::from_utf8_lossy(bytes)"
                                                     trail: Projectile(
                                                         every_s: 1.0,
                                                         spawn: (
+                                                            amount: 10,
+                                                            speed: 25,
+                                                            speed_var: 15.0,
+                                                            spread: 360.0,
                                                             projectile: (
                                                                 gfx: Image(
                                                                     file: "gfx/flame.png",
@@ -141,10 +155,6 @@ expression: "String::from_utf8_lossy(bytes)"
                                                                     ),
                                                                 ],
                                                             ),
-                                                            amount: 10,
-                                                            speed: 25,
-                                                            speed_var: 15.0,
-                                                            spread: 360.0,
                                                         ),
                                                     ),
                                                     hit_terrain: [
@@ -161,6 +171,10 @@ expression: "String::from_utf8_lossy(bytes)"
                                                     ],
                                                     spawns: {
                                                         "spawn": (
+                                                            amount: 20,
+                                                            speed: 65,
+                                                            speed_var: 20.0,
+                                                            spread: 360.0,
                                                             projectile: (
                                                                 gfx: Pixels([
                                                                     "#efb000",
@@ -179,32 +193,18 @@ expression: "String::from_utf8_lossy(bytes)"
                                                                     ),
                                                                 ],
                                                             ),
-                                                            amount: 20,
-                                                            speed: 65,
-                                                            speed_var: 20.0,
-                                                            spread: 360.0,
                                                         ),
                                                     },
                                                 ),
-                                                speed: 100,
-                                                relative_to_parent: true,
-                                                angle: 180,
                                             ),
                                         },
                                     ),
-                                    speed: 100,
-                                    relative_to_parent: true,
-                                    angle: 180,
                                 ),
                             },
                         ),
-                        speed: 100,
-                        relative_to_parent: true,
                     ),
                 },
             ),
-            speed: 300,
-            spread: 3.0,
         ),
     ),
 )

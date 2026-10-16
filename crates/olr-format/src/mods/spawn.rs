@@ -64,11 +64,6 @@ pub type TrailSpawn = Spawn<TrailContext>;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "SpawnWire", into = "SpawnWire", bound = "C: SpawnContext")]
 pub struct Spawn<C: SpawnContext> {
-    /// The id of a shared projectile (`projectiles/<id>.ron`). Exactly one
-    /// of `shared` and `projectile` is set.
-    pub shared: Option<String>,
-    /// The spawned projectile, defined here.
-    pub projectile: Option<Box<Projectile>>,
     /// Children per spawn. Default 1.
     pub amount: i32,
     /// px/s (unitless when `parent_velocity_as_direction`).
@@ -95,6 +90,11 @@ pub struct Spawn<C: SpawnContext> {
     pub inherit_velocity: bool,
     /// Default 1.0.
     pub inherit_velocity_factor: f32,
+    /// The id of a shared projectile (`projectiles/<id>.ron`). Exactly one
+    /// of `shared` and `projectile` is set.
+    pub shared: Option<String>,
+    /// The spawned projectile, defined here.
+    pub projectile: Option<Box<Projectile>>,
     /// Zero-sized marker selecting the context's defaults; never written.
     pub context: PhantomData<C>,
 }
@@ -127,10 +127,6 @@ impl<C: SpawnContext> Default for Spawn<C> {
 #[serde(deny_unknown_fields)]
 struct SpawnWire {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    shared: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    projectile: Option<Box<Projectile>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
     amount: Option<i32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     speed: Option<i32>,
@@ -154,6 +150,10 @@ struct SpawnWire {
     inherit_velocity: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     inherit_velocity_factor: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shared: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    projectile: Option<Box<Projectile>>,
 }
 
 fn differs<T: PartialEq>(v: T, d: T) -> Option<T> {

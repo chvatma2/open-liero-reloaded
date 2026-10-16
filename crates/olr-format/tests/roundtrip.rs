@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use olr_data::image::Rgba;
+use olr_data::restrictions::{Preset, WeaponState};
 use olr_format::Colour;
 use olr_format::mods::*;
 use olr_vfs::MemFs;
@@ -34,7 +35,11 @@ fn colour() -> impl Strategy<Value = Colour> {
     any::<[u8; 4]>().prop_map(|[r, g, b, a]| Colour(Rgba { r, g, b, a }))
 }
 
-fn effect() -> impl Strategy<Value = Effect> {
+fn effect() -> BoxedStrategy<Effect> {
+    effect_inner().boxed()
+}
+
+fn effect_inner() -> impl Strategy<Value = Effect> {
     prop_oneof![
         (any::<i32>(), any::<i32>(), option::of(text())).prop_map(|(damage, shake, sound)| Effect::Explode {
             damage,
@@ -54,7 +59,11 @@ fn effect() -> impl Strategy<Value = Effect> {
     ]
 }
 
-fn gfx() -> impl Strategy<Value = Gfx> {
+fn gfx() -> BoxedStrategy<Gfx> {
+    gfx_inner().boxed()
+}
+
+fn gfx_inner() -> impl Strategy<Value = Gfx> {
     prop_oneof![
         vec(colour(), 0..3).prop_map(Gfx::Pixels),
         (
@@ -93,28 +102,37 @@ fn spawn_fields<C: SpawnContext>(p: Option<Projectile>) -> impl Strategy<Value =
         any::<i32>(),
         f32_any(),
         f32_any(),
-        option::of(name()),
+        name(),
     )
-        .prop_map(move |(amount, speed, speed_var, spread, b, angle, scale, factor, shared)| Spawn {
-            shared,
-            projectile: p.clone().map(Box::new),
-            amount,
-            speed,
-            speed_var,
-            spread,
-            relative_to_parent: b[0],
-            angle,
-            parent_velocity_as_direction: b[1],
-            parent_velocity_direction_scale: scale,
-            speed_var_diagonal: b[2],
-            random_rotation: b[3],
-            inherit_velocity: b[4],
-            inherit_velocity_factor: factor,
-            context: Default::default(),
+        .prop_map(move |(amount, speed, speed_var, spread, b, angle, scale, factor, shared_name)| {
+            // Exactly one of `shared` and `projectile`, both shapes.
+            let (shared, projectile) =
+                if b[5] { (Some(shared_name), None) } else { (None, p.clone().map(Box::new)) };
+            Spawn {
+                shared,
+                projectile,
+                amount,
+                speed,
+                speed_var,
+                spread,
+                relative_to_parent: b[0],
+                angle,
+                parent_velocity_as_direction: b[1],
+                parent_velocity_direction_scale: scale,
+                speed_var_diagonal: b[2],
+                random_rotation: b[3],
+                inherit_velocity: b[4],
+                inherit_velocity_factor: factor,
+                context: Default::default(),
+            }
         })
 }
 
-fn leaf() -> impl Strategy<Value = Projectile> {
+fn leaf() -> BoxedStrategy<Projectile> {
+    leaf_inner().boxed()
+}
+
+fn leaf_inner() -> impl Strategy<Value = Projectile> {
     (
         option::of(name()),
         text(),
@@ -126,9 +144,22 @@ fn leaf() -> impl Strategy<Value = Projectile> {
         vec(effect(), 0..3),
         vec(effect(), 0..3),
         0..6u8,
+        any::<i32>(),
     )
         .prop_map(
-            |(id, notes, gfx, size, gravity, velocity_factor, timer, hit_terrain, hit_worm, trail)| {
+            |(
+                id,
+                notes,
+                gfx,
+                size,
+                gravity,
+                velocity_factor,
+                timer,
+                hit_terrain,
+                hit_worm,
+                trail,
+                trail_unknown,
+            )| {
                 Projectile {
                     id,
                     notes,
@@ -147,7 +178,7 @@ fn leaf() -> impl Strategy<Value = Projectile> {
                         2 => Trail::ChemSmoke,
                         3 => Trail::Doomsday,
                         4 => Trail::Explosive,
-                        _ => Trail::Unknown(7),
+                        _ => Trail::Unknown(trail_unknown),
                     },
                     hit_terrain,
                     hit_worm,
@@ -157,7 +188,11 @@ fn leaf() -> impl Strategy<Value = Projectile> {
         )
 }
 
-fn projectile() -> impl Strategy<Value = Projectile> {
+fn projectile() -> BoxedStrategy<Projectile> {
+    projectile_inner().boxed()
+}
+
+fn projectile_inner() -> impl Strategy<Value = Projectile> {
     leaf().prop_recursive(3, 12, 2, |inner| {
         // `shape`: bit 0 adds an event spawn, bit 1 a projectile trail.
         (leaf(), inner.clone(), inner, name(), f32_any(), 0..4u8)
@@ -183,41 +218,141 @@ fn projectile() -> impl Strategy<Value = Projectile> {
     })
 }
 
-fn weapon() -> impl Strategy<Value = Weapon> {
-    (text(), f32_any(), f32_any(), f32_any(), any::<bool>(), projectile(), 0..3u8, colour(), any::<u32>())
-        .prop_flat_map(move |(name, recharge, drain, rof, laser, p, kind, colour, thrust)| {
-            (spawn_fields::<ShotContext>(Some(p)), any::<i32>()).prop_map(move |(shot, n)| Weapon {
-                name: name.clone(),
-                notes: String::new(),
-                recharge,
-                drain,
-                between_shots_s: rof,
-                laser_sight: laser,
-                fire: match kind {
-                    0 => Fire::Projectile { class: WeaponClass::Unknown(n), recoil: n, sound: None, shot },
-                    1 => Fire::Beam {
-                        recoil: n,
-                        colour,
-                        hole_size: n,
-                        worm_damage: n,
-                        length: n,
-                        width: n,
-                        width_growth: drain,
-                        split_damage_over_width: laser,
-                    },
-                    _ => Fire::Special { kind: SpecialKind::Jetpack, thrust },
-                },
-            })
-        })
+fn weapon_class() -> impl Strategy<Value = WeaponClass> {
+    prop_oneof![
+        Just(WeaponClass::Automatic),
+        Just(WeaponClass::PowerGun),
+        Just(WeaponClass::Grenade),
+        Just(WeaponClass::Missile),
+        Just(WeaponClass::CloseRange),
+        any::<i32>().prop_map(WeaponClass::Unknown),
+    ]
+}
+
+fn special_kind() -> impl Strategy<Value = SpecialKind> {
+    prop_oneof![
+        Just(SpecialKind::Off),
+        Just(SpecialKind::Jetpack),
+        any::<i32>().prop_map(SpecialKind::Unknown)
+    ]
+}
+
+fn fire() -> BoxedStrategy<Fire> {
+    fire_inner().boxed()
+}
+
+fn fire_inner() -> impl Strategy<Value = Fire> {
+    let projectile_fire = (
+        weapon_class(),
+        any::<i32>(),
+        option::of(text()),
+        projectile().prop_flat_map(|p| spawn_fields::<ShotContext>(Some(p))),
+    )
+        .prop_map(|(class, recoil, sound, shot)| Fire::Projectile { class, recoil, sound, shot });
+    let beam = (
+        (any::<i32>(), colour(), any::<i32>(), any::<i32>()),
+        (any::<i32>(), any::<i32>(), f32_any(), any::<bool>()),
+    )
+        .prop_map(
+            |(
+                (recoil, colour, hole_size, worm_damage),
+                (length, width, width_growth, split_damage_over_width),
+            )| {
+                Fire::Beam {
+                    recoil,
+                    colour,
+                    hole_size,
+                    worm_damage,
+                    length,
+                    width,
+                    width_growth,
+                    split_damage_over_width,
+                }
+            },
+        );
+    let special = (special_kind(), any::<u32>()).prop_map(|(kind, thrust)| Fire::Special { kind, thrust });
+    prop_oneof![projectile_fire, beam, special]
+}
+
+fn weapon() -> BoxedStrategy<Weapon> {
+    weapon_inner().boxed()
+}
+
+fn weapon_inner() -> impl Strategy<Value = Weapon> {
+    (text(), text(), f32_any(), f32_any(), f32_any(), any::<bool>(), fire()).prop_map(
+        |(name, notes, recharge, drain, between_shots_s, laser_sight, fire)| Weapon {
+            name,
+            notes,
+            recharge,
+            drain,
+            between_shots_s,
+            laser_sight,
+            fire,
+        },
+    )
+}
+
+fn worm() -> BoxedStrategy<Worm> {
+    worm_inner().boxed()
+}
+
+fn worm_inner() -> impl Strategy<Value = Worm> {
+    (f32_any(), f32_any(), f32_any(), f32_any(), f32_any(), f32_any(), f32_any()).prop_map(
+        |(
+            ground_acceleration,
+            air_acceleration,
+            gravity,
+            jump_speed,
+            air_drag,
+            unused_angle_speed,
+            unused_ground_friction,
+        )| {
+            Worm {
+                ground_acceleration,
+                air_acceleration,
+                gravity,
+                jump_speed,
+                air_drag,
+                unused_angle_speed,
+                unused_ground_friction,
+            }
+        },
+    )
+}
+
+fn rope() -> BoxedStrategy<Rope> {
+    rope_inner().boxed()
+}
+
+fn rope_inner() -> impl Strategy<Value = Rope> {
+    (any::<i32>(), any::<i32>(), f32_any()).prop_map(|(max_length, rest_length, strength)| Rope {
+        max_length,
+        rest_length,
+        strength,
+    })
+}
+
+fn restrictions() -> BoxedStrategy<BTreeMap<String, Preset>> {
+    restrictions_inner().boxed()
+}
+
+fn restrictions_inner() -> impl Strategy<Value = BTreeMap<String, Preset>> {
+    let state = prop_oneof![Just(WeaponState::Enabled), Just(WeaponState::Bonus), Just(WeaponState::Banned)];
+    btree_map(name(), btree_map(text(), state, 0..4), 0..3)
 }
 
 fn mod_source() -> impl Strategy<Value = ModSource> {
-    (text(), f32_any(), any::<i32>(), btree_map(name(), weapon(), 1..3), btree_map(name(), leaf(), 0..2))
-        .prop_map(|(name, gravity, rest, weapons, shared)| ModSource {
+    (
+        (text(), text(), worm(), rope()),
+        btree_map(name(), weapon(), 1..3),
+        btree_map(name(), leaf(), 0..2),
+        restrictions(),
+    )
+        .prop_map(|((name, notes, worm, rope), weapons, shared, restrictions)| ModSource {
             name,
-            notes: String::new(),
-            worm: Worm { gravity, ..Worm::default() },
-            rope: Rope { rest_length: rest, ..Rope::default() },
+            notes,
+            worm,
+            rope,
             weapons: weapons.into_iter().collect(),
             shared: shared
                 .into_iter()
@@ -226,7 +361,7 @@ fn mod_source() -> impl Strategy<Value = ModSource> {
                     (k, p)
                 })
                 .collect(),
-            restrictions: BTreeMap::new(),
+            restrictions,
         })
 }
 

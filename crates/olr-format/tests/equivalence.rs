@@ -61,6 +61,13 @@ fn bundled_mods_survive_lift_write_read_and_compile() {
         assert_eq!(back, src, "{id}: read differs from what was written");
         let def = compile_mod(&back).unwrap_or_else(|e| panic!("{id}: {e}"));
         assert_same(id, &def, &pack.def);
+        // `==` on floats cannot see a lost -0.0 or a changed NaN payload; the
+        // RON text of both can.
+        assert_eq!(
+            ron::ser::to_string(&def).unwrap(),
+            ron::ser::to_string(&pack.def).unwrap(),
+            "{id}: ModDef text"
+        );
         let f = frames(&pack);
         assert_eq!(
             olr_sim::SimMod::compile(&def, &f).unwrap(),
@@ -80,15 +87,19 @@ fn canonical_files_of_the_bundled_mods() {
         return;
     };
     let picks = [
-        ("olx-classic", ["mod.ron", "weapons/bazooka.ron", "weapons/bouncy-larpa.ron"]),
-        ("olx-mw-1-0", ["mod.ron", "weapons/rocket-launcher.ron", "weapons/floating-bomber.ron"]),
+        (
+            "olx-classic",
+            &["mod.ron", "weapons/bazooka.ron", "weapons/bouncy-larpa.ron", "projectiles/bazooka.spawn.ron"]
+                [..],
+        ),
+        ("olx-mw-1-0", &["mod.ron", "weapons/rocket-launcher.ron", "weapons/floating-bomber.ron"][..]),
     ];
     for (id, files) in picks {
         let pack = olr_pack::read_mod(&DirFs::new(root.join(id))).unwrap();
         let mut fs = MemFs::new();
         write_mod_files(&mut fs, &lift_mod(&pack.def).unwrap()).unwrap();
         for f in files {
-            let Some((_, bytes)) = fs.files().find(|(p, _)| p.as_str() == f) else {
+            let Some((_, bytes)) = fs.files().find(|(p, _)| p.as_str() == *f) else {
                 panic!("{id}: no {f}; pick another weapon that exists in the pack");
             };
             insta::assert_snapshot!(

@@ -1,0 +1,22 @@
+---
+source: crates/olr-format/tests/equivalence.rs
+expression: "String::from_utf8_lossy(bytes)"
+---
+(
+    gfx: Pixels([
+        "#b0b0b0",
+    ]),
+    gravity: 70,
+    hit_terrain: [
+        Explode(
+            damage: 2,
+            shake: 1,
+            sound: "sfx/exp3a.ogg",
+        ),
+    ],
+    hit_worm: [
+        Injure(
+            damage: 2,
+        ),
+    ],
+)

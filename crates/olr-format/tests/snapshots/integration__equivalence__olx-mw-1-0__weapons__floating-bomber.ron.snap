@@ -12,6 +12,8 @@ expression: "String::from_utf8_lossy(bytes)"
         recoil: 10,
         sound: "sfx/throw.ogg",
         shot: (
+            speed: 60,
+            spread: 5.0,
             projectile: (
                 gfx: Image(
                     file: "gfx/bomber.png",
@@ -38,6 +40,8 @@ expression: "String::from_utf8_lossy(bytes)"
                 ],
                 spawns: {
                     "spawn": (
+                        speed: 50,
+                        relative_to_parent: true,
                         projectile: (
                             gfx: Image(
                                 file: "gfx/bomber.png",
@@ -61,6 +65,9 @@ expression: "String::from_utf8_lossy(bytes)"
                             trail: Projectile(
                                 every_s: 0.075,
                                 spawn: (
+                                    speed: 15,
+                                    speed_var: 5.0,
+                                    spread: 360.0,
                                     projectile: (
                                         gfx: Pixels([
                                             "#ffffff",
@@ -77,9 +84,6 @@ expression: "String::from_utf8_lossy(bytes)"
                                             ),
                                         ],
                                     ),
-                                    speed: 15,
-                                    speed_var: 5.0,
-                                    spread: 360.0,
                                 ),
                             ),
                             hit_terrain: [
@@ -106,10 +110,10 @@ expression: "String::from_utf8_lossy(bytes)"
                                         trail: Projectile(
                                             every_s: 0.15,
                                             spawn: (
-                                                shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
                                                 speed: 5,
                                                 speed_var: 5.0,
                                                 spread: 360.0,
+                                                shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
                                             ),
                                         ),
                                         hit_terrain: [
@@ -120,6 +124,9 @@ expression: "String::from_utf8_lossy(bytes)"
                                         ],
                                         spawns: {
                                             "spawn": (
+                                                speed: 150,
+                                                spread: 90.0,
+                                                angle: -90,
                                                 projectile: (
                                                     gfx: Image(
                                                         file: "gfx/bomber2.png",
@@ -141,14 +148,19 @@ expression: "String::from_utf8_lossy(bytes)"
                                                     trail: Projectile(
                                                         every_s: 0.15,
                                                         spawn: (
-                                                            shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
                                                             speed: 5,
                                                             speed_var: 5.0,
                                                             spread: 360.0,
+                                                            shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
                                                         ),
                                                     ),
                                                     spawns: {
                                                         "spawn": (
+                                                            amount: 5,
+                                                            speed: 80,
+                                                            speed_var: 10.0,
+                                                            spread: 90.0,
+                                                            angle: -90,
                                                             projectile: (
                                                                 gfx: Image(
                                                                     file: "gfx/metalsmall.png",
@@ -159,9 +171,9 @@ expression: "String::from_utf8_lossy(bytes)"
                                                                 trail: Projectile(
                                                                     every_s: 0.15,
                                                                     spawn: (
-                                                                        shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
                                                                         speed: 1,
                                                                         spread: 360.0,
+                                                                        shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
                                                                     ),
                                                                 ),
                                                                 hit_terrain: [
@@ -177,30 +189,18 @@ expression: "String::from_utf8_lossy(bytes)"
                                                                     ),
                                                                 ],
                                                             ),
-                                                            amount: 5,
-                                                            speed: 80,
-                                                            speed_var: 10.0,
-                                                            spread: 90.0,
-                                                            angle: -90,
                                                         ),
                                                     },
                                                 ),
-                                                speed: 150,
-                                                spread: 90.0,
-                                                angle: -90,
                                             ),
                                         },
                                     ),
                                 ),
                             },
                         ),
-                        speed: 50,
-                        relative_to_parent: true,
                     ),
                 },
             ),
-            speed: 60,
-            spread: 5.0,
         ),
     ),
 )

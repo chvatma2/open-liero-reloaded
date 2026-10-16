@@ -11,6 +11,7 @@ expression: "String::from_utf8_lossy(bytes)"
         recoil: 15,
         sound: "sfx/bazooka.ogg",
         shot: (
+            speed: 140,
             projectile: (
                 gfx: Image(
                     file: "gfx/missile.png",
@@ -36,15 +37,14 @@ expression: "String::from_utf8_lossy(bytes)"
                 ],
                 spawns: {
                     "spawn": (
-                        shared: "bazooka.spawn",
                         amount: 12,
                         speed: 105,
                         speed_var: 14.0,
                         spread: 360.0,
+                        shared: "bazooka.spawn",
                     ),
                 },
             ),
-            speed: 140,
         ),
     ),
 )
