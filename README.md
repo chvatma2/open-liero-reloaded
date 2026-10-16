@@ -6,12 +6,13 @@ today's displays. It loads classic OLX mods and levels by importing them into
 an open, text-based pack format. OLR is its own game, not a version of
 OLX: it plays neither OLX's network games nor its replays.
 
-Status: **v0.1, playable local Deathmatch against bots.** OLX content
+Status: **v0.1, Deathmatch against bots, locally and online.** OLX content
 imports, the simulation reproduces OLX's traces bit for bit, and you start
 the game from menus: set up a Deathmatch against OLX's bots on any of the 4
 levels with either mod, choose your weapons, play, see the results, watch
-the replay. No network play yet. See `CHANGELOG.md` for what v0.1 holds and
-leaves out.
+the replay; or host and join games online (`docs/online.md`). See
+`CHANGELOG.md` for what v0.1 holds and leaves out; 0.2 is the graphics
+milestone.
 
 ## Playing v0.1
 

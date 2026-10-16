@@ -4,7 +4,15 @@ All notable changes to Open Liero Reloaded (OLR) are recorded here. The format f
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
-## Unreleased
+## 0.1.0 - 2026-10-16
+
+The baseline for later work: Open Liero Reloaded's first release under its
+own name. It plays a Deathmatch against OLX's bots locally and online: games
+are found on Nostr relays, LAN and invite codes, connect through routers
+(UPnP, hole punching, TURN relays), survive their host leaving (host
+migration), download missing content and keep players who leave from
+freezing the match. Physics, movement and shooting still reproduce OLX's
+own recorded traces bit for bit. Graphics work starts in 0.2.
 
 ### Changed — the name
 
@@ -456,15 +464,27 @@ All notable changes to Open Liero Reloaded (OLR) are recorded here. The format f
   leaves pieces of the old window frame on the screen: the window is made
   again at its new size.
 
-## 0.1.0 - 2026-10-11
+### Known limitations
+
+- **Graphics** are OLX's look, drawn sharp at any size; lighting, glow and
+  richer effects are the 0.2 milestone.
+- **Bot skill** is OLX's, with the aim-error floor; the difficulty redesign
+  is a later milestone.
+- **Game modes:** Deathmatch only, with no teams.
+- **No level editor or map making yet.**
+- **No browser version** (deferred; the simulation still builds for WASM).
+- **No Classic HUD:** OLX's bitmap fonts and HUD images are not imported.
+
+### The first playable build (2026-10-11, tag `v0.1.0-local-play`)
 
 The first playable release: a local Deathmatch against OLX's bots, started
 from menus, on any of the 4 bundled levels with either mod (spec §1.3,
 milestone M7). It is a Rust reimplementation of OpenLieroX (OLX, commit
 `d1ad953f`). Physics, movement and shooting reproduce OLX's own recorded
-traces bit for bit.
+traces bit for bit. Where the entries above changed something, they win over
+the notes below, which describe that build.
 
-### Added
+#### Added
 
 - **Content import (M1).**
   - Importers for OLX's gamescript v7 mods (`script.lgs`), image `.lxl`
@@ -570,7 +590,7 @@ traces bit for bit.
     re-recorded golden.
   - `tidy` reclaims disk space.
 
-### Deviations from OLX
+#### Deviations from OLX
 
 The full list, with reasons, is in `docs/porting/STATUS.md`.
 
@@ -607,7 +627,7 @@ The full list, with reasons, is in `docs/porting/STATUS.md`.
 - **OLX content is converted, not read in place.** Liero `.lev` levels,
   Gusanos mods and levels, and non-PNG skins are not imported.
 
-### Known limitations
+#### Known limitations
 
 - **No network play.** Its model, with no master server, is a later
   design.
