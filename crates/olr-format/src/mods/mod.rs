@@ -19,14 +19,20 @@ pub use types::*;
 /// A mod as its authoring files hold it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModSource {
+    /// Shown in menus; bot loadouts and weapon restrictions match on it
+    /// (OLX lgs header `ModName`).
     pub name: String,
+    /// Free text for authors; ignored by the game.
     pub notes: String,
+    /// Worm physics (`mod-fields.md` §3).
     pub worm: Worm,
+    /// Ninja rope (`mod-fields.md` §4).
     pub rope: Rope,
     /// In order: a weapon's index is its id in the game.
     pub weapons: Vec<(String, Weapon)>,
-    /// `projectiles/<id>.ron`: projectiles several places use.
+    /// `projectiles/<id>.ron`: projectiles several places use, by id.
     pub shared: BTreeMap<String, Projectile>,
+    /// `restrictions.ron`: named weapon-restriction presets (`WeaponRules`).
     pub restrictions: BTreeMap<String, Preset>,
 }
 
@@ -35,25 +41,29 @@ pub struct ModSource {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Worm {
-    /// × 90 px/s² while walking on the ground.
+    /// × 90 px/s² while walking on the ground, until the max ground speed
+    /// (OLX `ground_speed`; FeatureList `WormGroundSpeed`).
     #[serde(default = "d::worm_ground_acceleration", skip_serializing_if = "d::is_worm_ground_acceleration")]
     pub ground_acceleration: f32,
-    /// × 90 px/s² while moving in the air.
+    /// × 90 px/s² while moving in the air, up to the max air speed
+    /// (OLX `air_speed`; FeatureList `WormAirSpeed`).
     #[serde(default = "d::worm_air_acceleration", skip_serializing_if = "d::is_worm_air_acceleration")]
     pub air_acceleration: f32,
-    /// px/s².
+    /// px/s² added to the vertical velocity (OLX `gravity`; FeatureList `WormGravity`).
     #[serde(default = "d::worm_gravity", skip_serializing_if = "d::is_worm_gravity")]
     pub gravity: f32,
-    /// px/s, negative = up: a ground jump sets the vertical speed to it.
+    /// px/s, negative = up: a ground jump sets the vertical speed to it
+    /// (OLX `jump_force`; FeatureList `WormJumpForce`).
     #[serde(default = "d::worm_jump_speed", skip_serializing_if = "d::is_worm_jump_speed")]
     pub jump_speed: f32,
-    /// Quadratic drag in the air, 1/px.
+    /// Quadratic drag in the air, 1/px (OLX `air_friction`; FeatureList `WormAirFriction`).
     #[serde(default, skip_serializing_if = "d::is_zero")]
     pub air_drag: f32,
-    /// Ignored by OLX ("was always ignored", `CGameScript.cpp:45`).
+    /// Unit: none (would be deg/s). Ignored by OLX ("was always ignored",
+    /// `CGameScript.cpp:45`); kept for losslessness.
     #[serde(default = "d::worm_unused_angle_speed", skip_serializing_if = "d::is_worm_unused_angle_speed")]
     pub unused_angle_speed: f32,
-    /// Ignored by OLX (`CGameScript.cpp:53`).
+    /// Unit: none. Ignored by OLX (`CGameScript.cpp:53`); kept for losslessness.
     #[serde(
         default = "d::worm_unused_ground_friction",
         skip_serializing_if = "d::is_worm_unused_ground_friction"
@@ -92,13 +102,14 @@ impl Worm {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Rope {
-    /// px: a flying hook farther than this stops and falls.
+    /// px: a flying hook farther than this stops and falls (FeatureList
+    /// `RopeMaxLength`; OLX `CNinjaRope.cpp`).
     #[serde(default = "d::rope_max_length", skip_serializing_if = "d::is_rope_max_length")]
     pub max_length: i32,
-    /// px: no pull while the worm is closer.
+    /// px: no pull while the worm is closer (FeatureList `RopeRestLength`).
     #[serde(default = "d::rope_rest_length", skip_serializing_if = "d::is_rope_rest_length")]
     pub rest_length: i32,
-    /// × 100 px/s² toward the hook.
+    /// × 100 px/s² toward the hook (FeatureList `RopeStrength`).
     #[serde(default = "d::rope_strength", skip_serializing_if = "d::is_rope_strength")]
     pub strength: f32,
 }

@@ -79,7 +79,7 @@ pub struct Spawn<C: SpawnContext> {
     pub spread: f32,
     /// Adds the parent's heading to `angle`.
     pub relative_to_parent: bool,
-    /// Degrees; 0 = right, 90 = down.
+    /// Degrees (integer): 0 = +x (right), 90 = +y (down).
     pub angle: i32,
     /// Direction from the parent's velocity instead of an angle.
     pub parent_velocity_as_direction: bool,
@@ -89,10 +89,13 @@ pub struct Spawn<C: SpawnContext> {
     pub speed_var_diagonal: bool,
     /// A random start rotation for a rotating child.
     pub random_rotation: bool,
-    /// Adds `inherit_velocity_factor` × the parent's velocity.
+    /// Adds `inherit_velocity_factor` × the parent's velocity. For a shot
+    /// the parent is the worm, whose velocity counts as zero unless the
+    /// game's `ProjRelativeVel` setting is on.
     pub inherit_velocity: bool,
     /// Default 1.0.
     pub inherit_velocity_factor: f32,
+    /// Zero-sized marker selecting the context's defaults; never written.
     pub context: PhantomData<C>,
 }
 
