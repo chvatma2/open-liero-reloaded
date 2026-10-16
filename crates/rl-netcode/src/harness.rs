@@ -183,9 +183,13 @@ pub trait Observer<S: Simulation> {
 ///   start until its ask was answered: the asker's slowest ping in the run
 ///   plus 50 ms. The harness and rl-online's `Planner` ask a successor once
 ///   a window (an unreached one is not asked again in it), so an outage
-///   over the ask is one over the window. No other cause counts: a dead or
-///   frozen successor, or a link on any profile (`awful` connects),
-///   leaves it reachable.
+///   over the ask is one over the window. Ruling FR12c-1b: nor was a
+///   successor that had exited (crashed or left) by then: a survivor whose
+///   old host said `Bye` commits only at a rejoin while it expects others
+///   (D8: no split), so with every other successor gone it is host lost,
+///   FR12c-1's cost (net-soak's `good-15s2c0v-seed960552337`). No other
+///   cause counts: a frozen successor, or a link on any profile (`awful`
+///   connects), leaves it reachable.
 /// - **Their confirmed rows agree** with the last host's and with each
 ///   other's as far as each goes.
 /// - **Each gave up within N68's bound**: at most `GIVE_UP_US` (plus a
@@ -221,7 +225,9 @@ fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
             if start >= end {
                 break;
             }
-            if s != q && !cut(q, s, start, start + ping_us(q) + 50_000) {
+            let asked = start + ping_us(q) + 50_000;
+            let exited = r.exited_us.get(&s).is_some_and(|&us| us <= asked);
+            if s != q && !cut(q, s, start, asked) && !exited {
                 return false;
             }
         }

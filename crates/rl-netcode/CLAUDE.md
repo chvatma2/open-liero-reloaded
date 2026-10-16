@@ -610,9 +610,16 @@ model that tests it in one process (spec §9.1).
     it by a two-way outage of either from the window's start until its ask
     was answered (the asker's slowest ping in the run plus 50 ms: an
     unreached successor is not asked again in its window, here and in
-    rl-online); and every survivor's confirmed rows agree with the last
-    host's and each other's. Nothing else makes a successor unreachable (a
-    dead one, `awful` links). Pinned by
+    rl-online), or had exited (crashed or left, `exited_us`) by then
+    (ruling FR12c-1b: a successor whose old host said `Bye` still commits
+    only at a rejoin while it expects others, D8, so the match never
+    splits; with every other successor gone it is host lost, FR12c-1's
+    cost: net-soak's `good-15s2c0v-seed960552337`,
+    `a_lone_survivor_whose_other_successors_exited_is_host_lost_legitimately`
+    with its twin, the successor alive when asked); and every survivor's
+    confirmed rows agree with the last host's and each other's. Nothing
+    else makes a successor unreachable (a frozen one, `awful` links).
+    Pinned by
     `every_survivor_host_lost_is_accepted_when_no_successor_was_reachable`
     and `every_survivor_host_lost_with_a_reachable_successor_fails`.
   - `ToyFactory` drives `ToySim` with seeded keys; its fault moves slot 0.

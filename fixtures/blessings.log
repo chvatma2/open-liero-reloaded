@@ -120,3 +120,7 @@
   fixtures/matches/mw-castlestrike-8chaos.ron
 2026-10-16 bless-regression: plan 12d soak: a new host its own outage held behind the match resumes at its log's frontier and catches up, instead of replaying final rows at real-time pace while a peer ahead stalls
   fixtures/net/cases/net-mw-1-0-dirt-level-good-3s2c0v-seed1857283410-a769a127.ron
+2026-10-16 bless-regression: ruling FR12c-1b: a lone survivor whose old host said Bye while its other successor had crashed is host lost (D8 kept), and SK-10 accepts it
+  fixtures/net/cases/net-mw-1-0-liero-factory-good-15s2c0v-seed960552337-c6b621bc.ron
+2026-10-16 bless-regression: ruling FR12c-1b: a successor that learns of its old host's Bye only after its outage never commits alone, so the match does not split
+  fixtures/net/cases/net-classic-castlestrike-lan-4s2c2v-seed723619267-94bb5058.ron

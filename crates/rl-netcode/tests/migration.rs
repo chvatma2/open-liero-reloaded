@@ -1607,6 +1607,34 @@ fn every_survivor_host_lost_with_a_reachable_successor_fails() {
     assert!(e.what.contains("the host confirmed"), "{e:?}");
 }
 
+/// Ruling FR12c-1b (net-soak's `good-15s2c0v-seed960552337`): client 2
+/// crashes, and the host leaves (`Bye`) before its timeout dropped client
+/// 2. Successor 1, still expecting client 2, commits to nobody (D8: a
+/// successor nobody rejoined never hosts, so the match cannot split),
+/// follows client 2's dead window and is host lost: FR12c-1's cost. SK-10
+/// accepts it, as every other successor had exited before its window was
+/// asked. The twin: client 2 still alive when its window is asked (its exit
+/// moved past the ask): not accepted.
+#[test]
+fn a_lone_survivor_whose_other_successors_exited_is_host_lost_legitimately() {
+    let mut sc = two_peers(39, Profile::GOOD);
+    sc.peers.push(plan(2, Seat::Player(3), Profile::GOOD));
+    sc.slots = 4;
+    sc.ticks = 2_000;
+    sc.exits.push(Exit { peer: 2, tick: 400, after_us: 0, how: ExitHow::Crash });
+    sc.exits.push(Exit { peer: HOST, tick: 600, after_us: 0, how: ExitHow::Leave });
+    let r = run_checked(&sc);
+    assert_eq!(r.hosts, vec![HOST]);
+    assert_eq!(r.host_lost, [1].into());
+    let g = &r.gave_up[&1];
+    assert_eq!(g.order.iter().map(|e| e.0).collect::<Vec<_>>(), [1, 2]);
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let mut alive = r.clone();
+    alive.exited_us.insert(2, g.began_us + WINDOW_US + 1_000_000);
+    let e = harness::verdict(&sc, &alive, &mut f).unwrap_err();
+    assert!(e.what.contains("the host confirmed"), "{e:?}");
+}
+
 /// Ruling FR12c-3 (final review A-I2): the verdict judges every host-lost
 /// peer, the match going on or not. Peer 100's join to peer 2 takes 6 s, so
 /// it gives up (the D8 run): legitimate, it asked a successor it could join

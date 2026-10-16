@@ -1,0 +1,32 @@
+(
+    spec: (
+        mod_id: "olx-classic",
+        level_id: "olx-level-castlestrike",
+        seed: 723619267,
+        slots: 4,
+        clients: 2,
+        spectators: 2,
+        join_tick: Some(1075),
+        profile: "lan",
+        drift_ppm: 1500,
+        ticks: 5964,
+        outages: [
+            (1, 2584, 2874),
+            (2, 3135, 3699),
+        ],
+        net_seed: 10916495970990563866,
+        difficulty: None,
+        faults: [],
+        exits: [
+            (0, 3452, "leave"),
+        ],
+        host_freeze: None,
+        profile_changes: [
+            (2976, 101, "bad"),
+            (5290, 100, "typical"),
+            (5361, 100, "awful"),
+        ],
+        migration: false,
+    ),
+    failure: Some("peer 1 held 0x9 for slot 0 at migration 0, the last host confirmed 0x0 at tick 3135"),
+)
