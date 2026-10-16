@@ -514,6 +514,24 @@ its standby port (a "follower") never takes over but follows. Each gets 5
 seconds in turn. A match moves at most 4 times; after that, or when nobody
 can take over within 10 seconds, the match ends with "Host lost".
 
+**Who goes on: a majority.** A successor takes the match over only when it
+and the players it reaches are more than half of the match: every player
+and spectator who was in it counts, and so does the old host, unless it
+said goodbye (a host that quits is counted out; a host that crashed still
+counts). This keeps a cut network from making two matches out of one: at
+most one side goes on. What you may see:
+- An even split (two and two) goes on on neither side: both see **Host
+  lost**.
+- A host and three players: if the host crashes and one more player is out
+  of reach, the other two are **Host lost**, because two of four is not
+  more than half.
+- A spectator who is still loading counts as a member that has not come
+  back, and counts against the majority.
+
+A successor that could not be reached is asked again every second during
+its 5 seconds, so a player whose connection comes back in the middle of
+its turn still joins.
+
 **How long it takes.** A host that quits (or whose game window you close)
 is followed at once. A host that just vanished (a crash, a pulled cable)
 is noticed after 2 seconds of silence, then the match resumes about half a

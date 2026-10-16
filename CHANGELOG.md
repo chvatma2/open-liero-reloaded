@@ -60,6 +60,12 @@ All notable changes to rust-liero are recorded here. The format follows
     stall, not a migration; a host that crashes leaves the player on the
     Host lost screen after about 12 s (a host that quits hands over at
     once; with no bots the match then ends, and the player left wins).
+  - **Who goes on:** the new host needs a majority of the match (players
+    and spectators who were in it, and the old host unless it said
+    goodbye). An even split goes on on neither side; with a host and
+    three players, a host crash plus one more player out of reach is
+    "Host lost" for the other two. A new host that was not reached is
+    asked again every second within its turn.
   - **Known limit:** a host that quits just after a player crashed leaves
     the last player at "Host lost" about 12 seconds later: it still waits
     for the crashed player, so the match never splits in two.

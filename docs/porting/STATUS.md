@@ -2412,7 +2412,9 @@ timeout, the texts) and `rl_game::net::pump`.
   new players need a fresh hosted game.
 - **N73 - the joins to a successor.** Direct first when the entry has an
   address (`MIGRATION_CONNECT_TIMEOUT`, 1 s; a failed direct connect is
-  not tried again within the window), then through Nostr (the entry's
+  not tried again within the window; **amended by FR12d-Q2 (plan 12d):**
+  an unreached successor is asked again every 1 s within its window, an
+  attempt under way never doubled), then through Nostr (the entry's
   relays first, then the peer's own, cut to 8, with the successor's key
   expected). A successor listens on its own relays from the moment its
   gate opens and stops if it cancels. A `NotHost` through the relays is
@@ -2613,7 +2615,8 @@ timeout, the texts) and `rl_game::net::pump`.
   encoded against a base it never had (4,433 `Malformed`); the new host's
   first frames to it are sent without a base (`78985f1`). Appended to a
   protocol that is unreleased.
-- **SK-10 - the verdict accepts "every survivor host lost"** only when the
+- **SK-10 (amended by plan 12d: FR12d-Q's `lacked_quorum`, SK-10b's
+  three additions, FR12d-Q2's `reaches`; below) - the verdict accepts "every survivor host lost"** only when the
   harness's own link model shows no successor was reachable through its
   window, the survivors' rows agree as far as they go, and every survivor
   gave up within N68's bound (`34d0f30`). FR12c-3 generalises it.
@@ -2652,6 +2655,16 @@ timeout, the texts) and `rl_game::net::pump`.
   Kept soak cases: `good-15s2c0v-seed960552337`, `lan-4s2c2v-seed723619267`
   (no split), `typical-14s4c1v-seed1857358438`. rl-online has no test for
   "a client crashes, then the host's `Bye`" (deferred).
+  **Amended by FR12d-Q, FR12d-Q1 (plan 12d), kept above as history:** the
+  commit rule is no longer "at least one rejoin" (FR12c-1) nor "expects
+  nobody" (FR12c-1b) but a majority quorum. The members are the old
+  host's whole succession (players, spectators and followers alike,
+  followers in the numerator and the denominator); the old host counts as
+  a member unless its `Bye`/`Closed` arrived. A successor commits when it
+  and the members back with it are more than half. The two cases above
+  still end as before (a two-peer blip is a stall; the lone survivor of
+  three is Host lost), but a crashed host counts, see the costs under
+  FR12d-Q.
 - **FR12c-2 - a rehost drops what belongs to the old host:** `suspend`,
   `rehost` and `take_over` clear the ahead buffer and `rehost` clears the
   queue (final review A-I1; `28f9cca`). If wrong: none.
@@ -2815,7 +2828,8 @@ player's own rope throws are heard (the porting table).
   successor commits only when it and the members back with it are
   strictly more than half of the match's members not known gone (the
   players and spectators it expects back, itself, and the old host unless
-  its `Bye`/`Closed` came; followers do not count). Two quorums share a
+  its `Bye`/`Closed` came; followers did not count, **amended by FR12d-Q1:**
+  they count in both numerator and denominator). Two quorums share a
   member, so a match continues on one side at most. It replaces FR12c-1's
   "at least one rejoin" and its exception, keeps FR12c-1 (a two-peer blip
   is a stall) and FR12c-1b (the lone survivor of three is host lost).
@@ -2832,7 +2846,8 @@ player's own rope throws are heard (the porting table).
   three players, the host's crash with one more player out of reach (dead,
   slow, cut off) is host lost for the other two (before, they played on);
   a host plus one player plus mid-match spectators whose host crashed is
-  host lost even if the spectators reach the player. The players cut off
+  host lost even if the spectators reach the player (**amended by
+  FR12d-Q1:** it now plays on). The players cut off
   in the soak case end host lost, as FR12c-3 judges them (their asks were
   unanswered); asking an unreached successor again in its window would
   bring them back, a change to N73 not made here (then made: FR12d-Q2).
@@ -2892,6 +2907,40 @@ player's own rope throws are heard (the porting table).
   then; SK-10 judged only the first ask. An outage or partition touching
   the asks until the successor's turn opened (`Report::began`) now counts
   as a cut (`an_asker_cut_off_before_its_successor_opens_is_host_lost_legitimately`).
+- **A-I1 (final review A, fixed, `1fd255f`) - a repaired holder's log.**
+  After PF12d-8a's repair a survivor that held the refused mark kept it in
+  its input log: its replay showed a withdrawal the match did not have, and
+  if it hosted later, `fill` never marked that player's real leave (a
+  frozen worm again). `Session::state_arrived` now drops each of its marks
+  below the state's floor whose bit the loaded world lacks
+  (`Simulation::withdrawn()`, `InputLog::unmark`), with its checksums
+  confirmed from that tick, and pushes `Event::WithdrawalUndone { tick,
+  slot }` before `StateLoaded`. Not done: adding marks the state has and
+  the log lacks (the state carries no tick to place them at). Pinned by
+  `a_repaired_holder_that_hosts_later_withdraws_the_player_at_its_leave`.
+- **FR12d-B5 - no client-side de-duplication of leave lines** (final
+  review B, ruling). A "<name> has left" notice is not de-duplicated:
+  member ids are a wrapping `u8` reused across joins, so it could hide a
+  real second departure, and it cannot fix the reverse (a survivor that
+  never reads the notice). The window is a host crash within a resend of a
+  `Bye`; the worlds stay right, the marks decide them. **Cost if wrong:**
+  one duplicated or missing "<name> has left" log line in that rare window.
+- **FR12d-B9 - the crash window keeps PF12d-5's recovery term** (final
+  review B, ruling). The stall window after a client's crash (the timeout
+  plus `outage_recovery_ticks`) models a peer that comes back; narrowing it
+  to two trips and ending it at a migration's resume is a verdict change
+  against a ruled text, left with the deferred "the crash window does not
+  model migrations". **Cost if wrong:** about 0.8 s more excused stalls on
+  `bad` after a crashed client's withdrawal, so a stall bug there hides.
+- **FR12d-Q, Q1, Q2 - the quorum's costs, together** (plan 12d, accepted):
+  - An even partition continues on neither side (both Host lost).
+  - A crashed host counts as a member: with a host and three players, a
+    host crash plus one more player out of reach is Host lost for the
+    other two.
+  - A member that can never come back (a spectator still loading, SK-8)
+    counts against the quorum.
+  - Cost of Q2: up to one join a second per successor while it is not
+    reached.
 
 **Decisions.**
 - **N82 - withdrawal, not deletion.** `World::withdraw(i)` keeps worm `i`
@@ -3000,6 +3049,14 @@ Open items (deferred minors):
 - Task 7: `reproduce` filters `gone` per tick (O(inputs x gone)); no twin
   for a profile where `fills_stall` is false; the crash window does not
   model migrations.
+- Final: minor (deferred): a member that can never come back (a spectator
+  still loading) counts against the quorum.
+- Final: minor (deferred): FR12d-Q2 has no end-to-end rl-online test (the
+  outage hook drops UDP only; the planner's tests and the harness cover it).
+- Final: minor (deferred): SK-10's reach model stays generous
+  (`lacked_quorum`, `reaches`).
+
+**Re-run full after the final fixes, at (pending):**
 
 ## Kept OLX quirks
 
