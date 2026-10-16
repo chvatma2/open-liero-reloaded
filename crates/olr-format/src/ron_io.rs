@@ -26,6 +26,7 @@ fn options() -> Options {
 
 fn pretty() -> PrettyConfig {
     PrettyConfig::default()
+        .new_line("\n".to_string())
         .indentor("    ".to_string())
         .struct_names(false)
         .extensions(Extensions::IMPLICIT_SOME)
@@ -86,6 +87,13 @@ mod tests {
         assert!(!text.contains("#!["), "{text}");
         assert!(text.ends_with(")\n"), "{text}");
         assert_eq!(from_canonical::<Sample>("t.ron", &text).unwrap(), s);
+    }
+
+    #[test]
+    fn the_line_break_is_lf_on_every_platform() {
+        // `PrettyConfig::default()` uses CRLF on Windows.
+        assert_eq!(pretty().new_line, "\n");
+        assert_eq!(pretty().indentor, "    ");
     }
 
     #[test]

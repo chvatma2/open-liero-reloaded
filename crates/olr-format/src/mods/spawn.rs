@@ -124,7 +124,7 @@ impl<C: SpawnContext> Default for Spawn<C> {
 /// The text form: a field is written only when it differs from its
 /// context's default (floats by bits).
 #[derive(Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[serde(deny_unknown_fields, rename = "Spawn")]
 struct SpawnWire {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     amount: Option<i32>,

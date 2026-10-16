@@ -28,6 +28,25 @@ struct ModFile {
 }
 
 pub fn write_mod_files(sink: &mut dyn ContentSink, m: &ModSource) -> Result<(), FormatError> {
+    // Validate every id before the first write, so a failure leaves the sink alone.
+    let mut ids = BTreeSet::new();
+    for (id, _) in &m.weapons {
+        if !valid_id(id) {
+            return Err(FormatError::invalid(MOD_FILE, "weapons", format!("invalid weapon id {id:?}")));
+        }
+        if !ids.insert(id.as_str()) {
+            return Err(FormatError::invalid(
+                MOD_FILE,
+                "weapons",
+                format!("weapon id {id:?} is listed twice"),
+            ));
+        }
+    }
+    for id in m.shared.keys() {
+        if !valid_id(id) {
+            return Err(FormatError::invalid(&shared_file(id), "", format!("invalid projectile id {id:?}")));
+        }
+    }
     let file = ModFile {
         name: m.name.clone(),
         notes: m.notes.clone(),
@@ -37,16 +56,10 @@ pub fn write_mod_files(sink: &mut dyn ContentSink, m: &ModSource) -> Result<(), 
     };
     write_text(sink, MOD_FILE, &to_canonical(MOD_FILE, &file)?)?;
     for (id, w) in &m.weapons {
-        if !valid_id(id) {
-            return Err(FormatError::invalid(MOD_FILE, "weapons", format!("invalid weapon id {id:?}")));
-        }
         let f = weapon_file(id);
         write_text(sink, &f, &to_canonical(&f, w)?)?;
     }
     for (id, p) in &m.shared {
-        if !valid_id(id) {
-            return Err(FormatError::invalid(&shared_file(id), "", format!("invalid projectile id {id:?}")));
-        }
         let f = shared_file(id);
         write_text(sink, &f, &to_canonical(&f, p)?)?;
     }
@@ -195,6 +208,23 @@ mod tests {
         assert!(read_mod_files(&nested).unwrap_err().to_string().contains("projectiles/a/b.ron"));
         let stray = fs.with("projectiles/notes.txt", "hi");
         assert!(read_mod_files(&stray).is_err());
+    }
+
+    #[test]
+    fn bad_ids_fail_before_anything_is_written() {
+        let mut dup = sample();
+        dup.weapons.push(dup.weapons[0].clone());
+        let mut fs = MemFs::new();
+        assert!(write_mod_files(&mut fs, &dup).unwrap_err().to_string().contains("twice"));
+        assert!(files(&fs).is_empty());
+        let mut bad = sample();
+        bad.weapons[0].0 = "../evil".into();
+        assert!(write_mod_files(&mut fs, &bad).is_err());
+        assert!(files(&fs).is_empty());
+        let mut bad = sample();
+        bad.shared.insert("Bad Id".into(), Projectile::new(Gfx::Pixels(vec![])));
+        assert!(write_mod_files(&mut fs, &bad).is_err());
+        assert!(files(&fs).is_empty());
     }
 
     #[test]

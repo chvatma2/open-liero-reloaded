@@ -18,6 +18,8 @@ pub const MAX_WEAPONS: usize = 512;
 pub const MAX_SHARED: usize = 4096;
 pub const MAX_EFFECTS: usize = 16;
 pub const MAX_COLOURS: usize = 256;
+/// The most children one spawn makes at once (`olr-sim`'s `MAX_AMOUNT`).
+pub const MAX_AMOUNT: i32 = 1000;
 
 pub(crate) const MOD_FILE: &str = "mod.ron";
 
@@ -65,7 +67,7 @@ pub fn compile_mod(src: &ModSource) -> Result<rt::ModDef, FormatError> {
         if p.id.is_some() {
             return Err(c.err("id", "a shared projectile's id is its file name: remove `id`"));
         }
-        c.projectile(p, id, "", 0)?;
+        c.projectile(p, id, "", 1)?;
     }
     let mut weapons = Vec::with_capacity(src.weapons.len());
     let mut ids = BTreeSet::new();
@@ -170,6 +172,12 @@ impl Compiler<'_> {
         path: &str,
         depth: usize,
     ) -> Result<rt::SpawnDef, FormatError> {
+        if s.amount > MAX_AMOUNT {
+            return Err(self.err(
+                &at(path, "amount"),
+                format!("amount {} is above {MAX_AMOUNT}, the most one spawn makes", s.amount),
+            ));
+        }
         let projectile = match (&s.shared, &s.projectile) {
             (Some(id), None) => {
                 if !self.src.shared.contains_key(id) {
@@ -219,7 +227,7 @@ impl Compiler<'_> {
         }
         let timed = p.timer.as_ref().filter(|t| t.after_s > 0.0);
         if let Some(t) = &p.timer
-            && t.after_s <= 0.0
+            && (t.after_s.is_nan() || t.after_s <= 0.0)
             && !t.effects.is_empty()
         {
             return Err(self.err(
@@ -488,7 +496,7 @@ fn check_cycles(src: &ModSource) -> Result<(), FormatError> {
         .iter()
         .map(|(id, p)| {
             let mut refs = BTreeSet::new();
-            shared_refs(p, &mut refs, 0);
+            shared_refs(p, &mut refs, 1);
             (id.as_str(), refs)
         })
         .collect();
@@ -731,6 +739,52 @@ mod tests {
         let t = &def.projectiles["gun"].timer;
         assert_eq!((t.time, t.time_var), (2.0, 0.5));
         assert_eq!(t.action.as_ref().unwrap().kind, rt::ActionKind::Nothing);
+    }
+
+    #[test]
+    fn a_nan_timer_with_effects_is_an_error_and_without_them_no_action() {
+        let mut p = pixel();
+        p.timer = Some(Timer { after_s: f32::NAN, variation_s: 0.0, effects: vec![Effect::Remove] });
+        let e = compile_mod(&one_weapon(ShotSpawn { projectile: inline(p), ..ShotSpawn::default() }))
+            .unwrap_err();
+        assert!(e.to_string().contains("timer.effects"), "{e}");
+        let mut q = pixel();
+        q.timer = Some(Timer { after_s: f32::NAN, variation_s: 0.0, effects: vec![] });
+        let def =
+            compile_mod(&one_weapon(ShotSpawn { projectile: inline(q), ..ShotSpawn::default() })).unwrap();
+        assert!(def.projectiles["gun"].timer.action.is_none());
+    }
+
+    #[test]
+    fn an_absurd_spawn_amount_is_an_error_with_its_path() {
+        let ok = ShotSpawn { amount: MAX_AMOUNT, projectile: inline(pixel()), ..ShotSpawn::default() };
+        assert!(compile_mod(&one_weapon(ok)).is_ok());
+        let bad = ShotSpawn { amount: MAX_AMOUNT + 1, projectile: inline(pixel()), ..ShotSpawn::default() };
+        let e = compile_mod(&one_weapon(bad)).unwrap_err();
+        assert!(e.to_string().contains("fire.shot.amount"), "{e}");
+    }
+
+    #[test]
+    fn a_shared_projectile_nests_as_deep_as_a_shot() {
+        // Both roots are depth 1, so MAX_INLINE_DEPTH levels compile and one more does not.
+        let chain = |levels: usize| {
+            let mut p = pixel();
+            for _ in 1..levels {
+                let mut parent = pixel();
+                parent
+                    .spawns
+                    .insert("s".into(), EventSpawn { projectile: inline(p), ..EventSpawn::default() });
+                p = parent;
+            }
+            p
+        };
+        let with = |levels| {
+            let mut src = one_weapon(ShotSpawn { shared: Some("root".into()), ..ShotSpawn::default() });
+            src.shared.insert("root".into(), chain(levels));
+            compile_mod(&src)
+        };
+        assert!(with(MAX_INLINE_DEPTH).is_ok());
+        assert!(with(MAX_INLINE_DEPTH + 1).is_err());
     }
 
     #[test]

@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use olr_data::mod_def as rt;
 
-use super::compile::MAX_INLINE_DEPTH;
+use super::compile::{MAX_INLINE_DEPTH, valid_id};
 use super::spawn::{Spawn, SpawnContext};
 use super::types::*;
 use super::{ModSource, Rope, Worm};
@@ -19,8 +19,8 @@ struct Lifter<'a> {
     shared: BTreeSet<&'a str>,
     emitted: BTreeSet<&'a str>,
     stack: Vec<&'a str>,
-    /// Compile's depth of the projectile at the bottom of `stack`: 1 under a
-    /// weapon's shot, 0 for a shared projectile.
+    /// Compile's depth of the projectile at the bottom of `stack`: 1, under a
+    /// weapon's shot and for a shared projectile alike.
     base: usize,
 }
 
@@ -30,11 +30,24 @@ fn err(item: impl Into<String>, message: impl Into<String>) -> LiftError {
 
 /// Lifts a runtime mod to its authoring form, so that `compile_mod` of the
 /// result gives `def` back. `Err` when the mod cannot be written that way: a
-/// projectile key that is missing, in a cycle, unreachable from any weapon or
+/// weapon id or projectile key that is not a valid id (it names a file), a
+/// projectile key that is missing, in a cycle of single references (a cycle
+/// through a shared projectile lifts `Ok`, and `compile_mod` rejects it),
+/// unreachable from any weapon or
 /// nested deeper than `MAX_INLINE_DEPTH` (counted as `compile_mod` does); an
 /// action with a field its kind does not use set to a non-default value; an
 /// inconsistent timer or trail.
 pub fn lift_mod(def: &rt::ModDef) -> Result<ModSource, LiftError> {
+    for w in &def.weapons {
+        if !valid_id(&w.id) {
+            return Err(err(format!("weapon {:?}", w.id), "not a valid id"));
+        }
+    }
+    for k in def.projectiles.keys() {
+        if !valid_id(k) {
+            return Err(err(format!("projectile {k:?}"), "not a valid id"));
+        }
+    }
     let mut refs: BTreeMap<&str, usize> = def.projectiles.keys().map(|k| (k.as_str(), 0)).collect();
     for w in &def.weapons {
         if let Some(p) = w.projectile() {
@@ -53,7 +66,6 @@ pub fn lift_mod(def: &rt::ModDef) -> Result<ModSource, LiftError> {
     for w in &def.weapons {
         weapons.push((w.id.clone(), l.weapon(w)?));
     }
-    l.base = 0;
     let mut shared_out = BTreeMap::new();
     let ids: Vec<&str> = l.shared.iter().copied().collect();
     for id in ids {
@@ -477,6 +489,19 @@ mod tests {
         def.projectiles.insert("b".into(), b);
         let e = lift_mod(&def).unwrap_err();
         assert!(e.to_string().contains("in a cycle"), "{e}");
+    }
+
+    #[test]
+    fn invalid_ids_are_lift_errors() {
+        let mut def = sample();
+        def.weapons[0].id = "../evil".into();
+        let e = lift_mod(&def).unwrap_err();
+        assert!(e.to_string().contains("weapon") && e.to_string().contains("evil"), "{e}");
+        let mut def = sample();
+        let p = def.projectiles["bits"].clone();
+        def.projectiles.insert("Bad Key".into(), p);
+        let e = lift_mod(&def).unwrap_err();
+        assert!(e.to_string().contains("Bad Key"), "{e}");
     }
 
     fn weapon_with(def: &mut ModDef, projectile: &str) {

@@ -9,7 +9,9 @@ compilers to `olr-data`'s runtime structs; lifts back. Plan 13a: mods.
 - **Canonical text** (`ron_io`): `to_canonical`/`from_canonical` are the only
   path between values and text: 4-space indent, no struct names,
   `implicit_some` with no header, defaults left out, a trailing newline.
-  Reading canonical text and writing it again gives the same bytes.
+  Reading canonical text and writing it again gives the same bytes. The
+  line break is LF on every platform (`new_line` is set; ron's default is
+  CRLF on Windows).
 - **Defaults compare floats by bits** (`defaults.rs`): `-0.0` is not `0.0`.
 - **Never panic on content**; errors are `FormatError` with the file and a
   line and column (parse) or a field path (invalid values).
@@ -40,7 +42,17 @@ compilers to `olr-data`'s runtime structs; lifts back. Plan 13a: mods.
     projectile; `Effect::Remove` does.
   - **Bounds** (errors, never panics): `MAX_INLINE_DEPTH` (32),
     `MAX_WEAPONS` (512), `MAX_SHARED` (4096), `MAX_EFFECTS` (16 per event),
-    `MAX_COLOURS` (256).
+    `MAX_COLOURS` (256), `MAX_AMOUNT` (1000, a spawn's `amount`; mirrors
+    `olr-sim`'s). Shared roots and weapon shots both start at depth 1.
+    Depth and occurrence limits after expansion are left to plan 13c.
+  - **`lift_mod(compile_mod(src))` is not the identity:** notes are dropped,
+    spawn names become `"spawn"`, and sharing, effect order, an explicit
+    default size and zero timers are normalised. Editors edit `ModSource`
+    and never round-trip through `ModDef`.
+  - **`write_mod_files` never deletes** files no longer in the `ModSource`:
+    writing into an existing directory after removing a weapon leaves its
+    file, which the next read rejects as "not listed". Plan 13c's save path
+    must clear the mod files first. It validates every id before writing.
   - **Tests.** `tests/equivalence.rs`: the bundled mods, lifted, written,
     read and compiled, give the import back exactly, the same `SimMod`, and
     the same RON text (with snapshots of some files in `tests/snapshots/`).

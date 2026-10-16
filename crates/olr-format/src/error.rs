@@ -8,11 +8,15 @@ pub enum FormatError {
     Parse { file: String, line: usize, col: usize, message: String },
     /// The value is valid RON but not a valid pack: `path` is the field
     /// path inside the file, such as `fire.shot.projectile.hit_worm[1]`.
-    #[error("{file}: {path}: {message}")]
+    #[error("{}", fmt_invalid(file, path, message))]
     Invalid { file: String, path: String, message: String },
     /// The file could not be read or written.
     #[error("{file}: {message}")]
     Io { file: String, message: String },
+}
+
+fn fmt_invalid(file: &str, path: &str, message: &str) -> String {
+    if path.is_empty() { format!("{file}: {message}") } else { format!("{file}: {path}: {message}") }
 }
 
 impl FormatError {
@@ -29,4 +33,15 @@ pub struct LiftError {
     /// Such as `weapon "bazooka"` or `projectile "bazooka.spawn"`.
     pub item: String,
     pub message: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_empty_path_is_left_out() {
+        assert_eq!(FormatError::invalid("a.ron", "", "bad").to_string(), "a.ron: bad");
+        assert_eq!(FormatError::invalid("a.ron", "x.y", "bad").to_string(), "a.ron: x.y: bad");
+    }
 }

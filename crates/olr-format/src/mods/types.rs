@@ -426,6 +426,12 @@ mod tests {
     use crate::ron_io::{from_canonical, to_canonical};
     use olr_data::image::Rgba;
 
+    #[test]
+    fn a_misspelt_spawn_field_names_the_field_not_the_wire_type() {
+        let e = from_canonical::<crate::mods::ShotSpawn>("t.ron", "(amout: 2)").unwrap_err().to_string();
+        assert!(e.contains("amout") && !e.contains("SpawnWire"), "{e}");
+    }
+
     fn bazooka() -> Weapon {
         let shrapnel = Projectile {
             gfx: Gfx::Pixels(vec![Colour(Rgba::rgb(0x94, 0x88, 0x00))]),
