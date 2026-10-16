@@ -689,16 +689,20 @@ fn n66(spec: &NetSpec, r: &Report) -> Result<(), Failure> {
 
 /// The ticks within which each migration excuses a stall episode: from its
 /// old host's departure (its exit's tick, or the host freeze's start; else
-/// the resume tick) less `MAX_PREDICTION` to the resume tick plus
-/// `MAX_PREDICTION`.
+/// the resume tick) less `MAX_PREDICTION` to the later of the departure and
+/// the resume tick plus `MAX_PREDICTION`. The exit is the migration's when
+/// its old host went before the resume (`Report::exited_us`): a new host
+/// behind the match resumes at its log's frontier, which can be below the
+/// departure tick (RS-1a, net-soak's `good-3s2c0v-seed1857283410`).
 fn migration_windows(spec: &NetSpec, r: &Report) -> Vec<core::ops::RangeInclusive<u32>> {
     r.migrations
         .iter()
         .map(|m| {
-            let exit = spec.exits.iter().filter(|e| e.0 == m.from && e.1 <= m.tick).map(|e| e.1).max();
+            let went = r.exited_us.get(&m.from).is_some_and(|&us| us <= m.resumed_us);
+            let exit = spec.exits.iter().filter(|e| e.0 == m.from && went).map(|e| e.1).max();
             let freeze = spec.host_freeze.filter(|f| m.from == HOST && f.0 <= m.tick).map(|f| f.0);
             let gone = exit.into_iter().chain(freeze).max().unwrap_or(m.tick);
-            gone.saturating_sub(MAX_PREDICTION)..=m.tick.saturating_add(MAX_PREDICTION)
+            gone.saturating_sub(MAX_PREDICTION)..=gone.max(m.tick).saturating_add(MAX_PREDICTION)
         })
         .collect()
 }
@@ -1011,7 +1015,18 @@ mod tests {
     fn migrated(spec: &NetSpec, stalls: &[(PeerId, u32, Option<u32>)]) -> Result<(), Failure> {
         let mut r = empty_report();
         r.hosts = vec![HOST, 1];
-        r.migrations.push(harness::Migrated { from: HOST, to: 1, silent_us: 0, resumed_us: 0, tick: R });
+        // Exits went at their tick's time, before the resume.
+        for &(peer, tick, _) in &spec.exits {
+            r.exited.insert(peer);
+            r.exited_us.insert(peer, u64::from(tick) * TICK_US);
+        }
+        r.migrations.push(harness::Migrated {
+            from: HOST,
+            to: 1,
+            silent_us: 0,
+            resumed_us: u64::from(R + 200) * TICK_US,
+            tick: R,
+        });
         let episodes: Vec<StallEpisode> =
             stalls.iter().map(|&(peer, tick, ended)| StallEpisode { peer, tick, ended }).collect();
         stalls_within_windows(spec, &r, &episodes)
@@ -1045,6 +1060,41 @@ mod tests {
         assert!(migrated(&f, &[(1, 300 - MAX_PREDICTION - 1, Some(R))]).is_err());
         // A spectator never stalls the verdict.
         assert!(migrated(&s, &[(FIRST_SPECTATOR, 10, None)]).is_ok());
+    }
+
+    /// A new host behind the match resumes at its log's frontier (RS-1a),
+    /// which can be below its old host's departure tick (net-soak's
+    /// `good-3s2c0v-seed1857283410`: frontier 1302, exit 1314). The exit
+    /// is the migration's by time (it went before the resume), not by tick:
+    /// the window runs from the departure less `MAX_PREDICTION` to the later
+    /// of the departure and the resume tick plus `MAX_PREDICTION`. An exit
+    /// after the resume is not this migration's.
+    #[test]
+    fn a_migration_resumed_below_its_departure_tick_keeps_its_departure() {
+        let (exit, resumed) = (1_314, 1_302);
+        let s = NetSpec { exits: vec![(0, exit, "crash".into())], ..spec() };
+        let mut r = empty_report();
+        r.hosts = vec![HOST, 1];
+        r.exited.insert(HOST);
+        r.exited_us.insert(HOST, u64::from(exit) * TICK_US);
+        r.migrations.push(harness::Migrated {
+            from: HOST,
+            to: 1,
+            silent_us: u64::from(exit + 200) * TICK_US,
+            resumed_us: u64::from(exit + 500) * TICK_US,
+            tick: resumed,
+        });
+        let judge = |r: &Report, tick: u32, ended: u32| {
+            stalls_within_windows(&s, r, &[StallEpisode { peer: 2, tick, ended: Some(ended) }])
+        };
+        let end = exit + MAX_PREDICTION;
+        assert!(judge(&r, exit + 16, end).is_ok(), "a peer ahead runs on by the departure plus the limit");
+        assert!(judge(&r, exit - MAX_PREDICTION - 1, exit).is_err(), "before the departure's window");
+        assert!(judge(&r, exit + 16, end + 1).unwrap_err().what.contains("past its window"));
+        // The same exit after the resume: the window is the resume tick's alone.
+        r.exited_us.insert(HOST, u64::from(exit + 600) * TICK_US);
+        assert!(judge(&r, exit + 16, end).is_err());
+        assert!(judge(&r, resumed, resumed + MAX_PREDICTION).is_ok());
     }
 
     /// Task 11's SK-1: an outage excuses the stalls of the peer it cuts off

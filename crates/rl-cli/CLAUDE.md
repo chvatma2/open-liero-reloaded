@@ -127,8 +127,11 @@ The headless command-line tool. Its commands:
   `lan-10s1c0v-seed3202236798`). An episode must begin and end inside one
   excused window (`excused_windows`, `stalls_within_windows`): a migration's,
   from the departure (the exit's tick or the freeze's start) less
-  `MAX_PREDICTION` to the resume tick plus `MAX_PREDICTION`, excusing every
-  player; or an outage's, `from - MAX_PREDICTION ..= until + recovery`
+  `MAX_PREDICTION` to the later of the departure and the resume tick plus
+  `MAX_PREDICTION`, excusing every player (the exit is the migration's when
+  its peer went before the resume, `Report::exited_us`: a new host behind
+  the match resumes at its log's frontier, below the departure tick,
+  RS-1a; `a_migration_resumed_below_its_departure_tick_keeps_its_departure`); or an outage's, `from - MAX_PREDICTION ..= until + recovery`
   (a peer's overlapping outages joined first, `merged_outages`: the
   network cuts the link until the last is over; SK-4's
   `typical-8s4c0v-seed2732616080`)
