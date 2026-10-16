@@ -3404,6 +3404,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "olr-format"
+version = "0.2.0"
+dependencies = [
+ "insta",
+ "olr-data",
+ "olr-pack",
+ "olr-sim",
+ "olr-vfs",
+ "proptest",
+ "ron",
+ "serde",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "olr-fx"
 version = "0.2.0"
 dependencies = [
