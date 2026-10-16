@@ -465,6 +465,27 @@ untick "Open the game's port on my router (UPnP/NAT-PMP/PCP)" in Options
 → Online on the host and host again: the lobby then says "Port mapping
 is off: …", and the joiner's tag should be `punched`.
 
+## When a player leaves
+
+A player who quits, closes the game, is kicked or loses the connection is
+taken out of the match for everyone at the same moment, as in
+OpenLieroX. What you see:
+- the log says "Anna has left", or "Anna has timed out" when the game
+  stopped answering;
+- the worm is gone, with its rope and its shots' credit;
+- the Tab scoreboard no longer lists the player. The results screen keeps
+  a row for it, its lives reading "left" and greyed, with the kills and
+  deaths it had (OpenLieroX would drop the row);
+- a match left with fewer than 2 worms ends at once and the last worm
+  wins. A 1-vs-1 ends when the opponent leaves;
+- a spectator who followed that worm moves on to the next one.
+
+A game that crashed or lost its network is noticed after 10 seconds; until
+then its worm keeps its last move. On a poor link those seconds can make
+the others stall briefly. A player who leaves while the host is being
+replaced (see below) is removed when the match resumes; a player who does
+not come back to the new host is too ("Anna has left").
+
 ## When the host leaves
 
 A match does not end when its host does. If the host quits, crashes, loses
@@ -514,6 +535,10 @@ game over at once. A host that crashes leaves the player with the
 **Host lost** screen about 12 seconds later (2 s of silence, then the 10 s
 it waits for somebody to take over): with nobody else, nobody can. With
 two or more other players the match moves as described above.
+If a player crashed shortly before a host that quits (inside the 10 seconds
+the host waits for a silent player), the last player cannot tell that
+player is gone, waits for it, and also ends at **Host lost** about 12
+seconds after the host left: the match never splits in two.
 
 **The new host's game is closed.** It takes back only this match's
 members, the players and the spectators, with the same names and seats
@@ -521,8 +546,9 @@ and nobody else: no password, not listed, no router port opened. Its
 lobby reads "Taken over from the host: closed to new players". A player
 who comes back after the handover (a slow link, a long outage) is let in
 and, in the log, "You reached Anna after the match resumed: you watch
-until the next match"; its worm stays idle for the rest of this one
-(after the match ended: "…after the match ended: you play the next one").
+until the next match"; its worm left the match when the game resumed, so
+you watch until the next one (after the match ended: "…after the match
+ended: you play the next one").
 
 **Host lost** is a screen with the reason and, when the match's replay is
 saved, "The match's replay is saved in Replays." Replays opens the Replays

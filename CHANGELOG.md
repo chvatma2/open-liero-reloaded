@@ -6,6 +6,36 @@ All notable changes to rust-liero are recorded here. The format follows
 
 ## Unreleased
 
+### Fixed — players leaving a match
+
+- A player who leaves, times out or is kicked is removed from the match at
+  once on every screen, as in OpenLieroX: no frozen worm is left to shoot,
+  and its rope, shots in flight and score credit go with it.
+- The log says "<name> has left" or "<name> has timed out".
+- The live scoreboard drops the player; the final results keep a "left"
+  row with its kills and deaths so far (OpenLieroX loses the row; see the
+  deviations in `docs/porting/STATUS.md`). Replays show it.
+- If fewer than 2 worms are left, the match ends.
+- A player whose game crashed or lost its network keeps its last move for
+  up to 10 seconds, then goes. A player who leaves while the host is being
+  replaced is removed when the match resumes.
+- A spectator, a replay or a bots-only game that follows a worm which left
+  moves on to the next one.
+- Only your own rope throws are heard (OpenLieroX plays the throw sound
+  for the local player only): eight bots no longer fill the mix with them.
+- The results and the Tab scoreboard count every death and suicide: with 10
+  lives a worm that is out shows 11 deaths, never fewer than it died
+  (OpenLieroX counted none while a worm's score was 0 or below).
+- A host that quits just after a player crashed leaves the last player at
+  "Host lost" about 12 seconds later, instead of risking two hosts for one
+  match.
+
+### Changed — leaving players
+
+- Replays (format 3) and desync bundles from earlier builds no longer
+  open, and earlier builds cannot join a game of this one (proof-of-concept
+  stage). Online play uses about 100 bytes a second more.
+
 ### Added — host migration
 
 - A match goes on when its host crashes, leaves or freezes: the players

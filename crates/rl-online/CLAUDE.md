@@ -416,8 +416,8 @@ endpoint, each match through `rl-netcode`'s session, its replay after it.
       its mid-match session (cleared at the match's `Ended`, so the next
       match counts from 0), and watches as a mid-match joiner (its content list,
       `Have`, `ContentComplete`, `Start`, `Role::Joining`, a state); the
-      next gathering seats it. Its old slot stays `Keys(0)` (abandoned at
-      the resume).
+      next gathering seats it. Its old slot's worm is withdrawn at
+      the resume (N88).
     - **Resume**: first the lobby's pending events are handled (a member
       taken back in the poll the window ends is rejoined in the session,
       its `Collect` sent, not left without one), then when
@@ -759,7 +759,7 @@ equal (fails with 2 s; it also lands Bert's rejoin in
 Anna's resume poll: fails without the lobby's events before the resume);
 a late rejoiner (its `Hello` held 6 s) welcomed `Waiting` after Anna's
 resume makes its replay of what it played, watches from a state counting
-the migration, its slot `Keys(0)` from the resume, seated and playing
+the migration, its old slot's worm withdrawn at the resume, seated and playing
 Anna's next match with a count of 0, never host lost (fails while the
 state loads into the old rehosted session; without the replay; with the
 count carried on); a second migration (Anna freezes 4 s after her

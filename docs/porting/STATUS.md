@@ -73,9 +73,15 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Engine stress test (the user's request): 32 chaos bots on Castle Strike, both mods, OLX's pool and 20 000; tick, think, pool, entities, events, render and memory; invariants every tick, determinism over two runs | — | `rl-cli stress`, `xtask stress` | done (plan 7 task 8) | `stress_run_is_bounded_and_deterministic`; `fixtures/bench/stress.ron` (in `full`) |
 | Performance envelope (plan 8): sweeps of worms, pool, effects, map and art; the GPU on WSL GL and Windows DX12/Vulkan with timestamps and the shader probe; OLX frame timing | `tools/olx-oracle` (`ORACLE_TIMING`) | `xtask/src/envelope/`, `rl-cli gpu-bench`, `rl-game --frame-log` | measured | `fixtures/bench/envelope/<host>.ron`, `docs/perf/envelope.md` |
 | v0.1 acceptance (spec §1.3): each of the 4 levels × 2 mods from the menus against 4 Medium bots for 60 s in a real window, timings and screenshots | — | — | done (plan 7 task 9) | `docs/porting/acceptance-v0.1.md`; `cargo xtask check` and `full` |
+| Players leaving mid-match (plan 12d; user decisions, 2026-10-15): a player who leaves, times out or is kicked is withdrawn from the match at one tick on every peer, its worm gone (`CGameMode::Drop`, a kill credited to it credits nobody), fewer than 2 worms left ends the match, "<name> has left" / "<name> has timed out", the live scoreboard leaves it out and the results keep a "left" row (deviation below) | `src/server/CServer.cpp:1352-1482`, `src/game/CGameMode.cpp:254-263`, `316-336`, `src/client/CClient_Parse.cpp:1650-1680`, `src/game/Game.cpp:1359-1366`, `src/game/Options.cpp:769-770` | `rl-sim::World::withdraw`, `rl-modes` (`on_drop`), `rl-replay` (format 3), `rl-proto`/`rl-netcode` (the marks), `rl-lobby`, `rl-online`, `rl-ui`, `rl-game` | done (plan 12d) | `a_withdrawn_worm_leaves_the_board_and_the_last_one_wins`, `a_withdrawn_worm_never_wins`, `a_projectile_of_a_worm_that_left_credits_nobody`, `a_gone_worms_kill_credits_nobody`, `a_withdrawal_replays_at_its_tick`, `a_withdrawal_after_the_last_tick_replays`, `withdrawal_marks_are_bounded`, `a_withdrawal_mark_is_final`, `a_withdrawal_learned_late_rolls_back_to_it`, `a_leaving_client_is_withdrawn_at_one_tick_everywhere`, `a_leave_during_a_migration_is_withdrawn_alike`, `a_forged_withdrawal_never_removes_a_present_player`, `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`, `a_member_that_times_out_is_said_to`, `the_last_opponent_leaving_ends_the_match`, `a_player_leaving_during_a_migration_is_removed_at_the_resume`, `a_leaving_player_is_removed_from_every_world`, `a_left_row_is_off_the_scoreboard_and_left_in_the_results`, `the_watched_worm_moves_on_when_it_leaves`, `a_client_crash_excuses_the_fills_stalls_until_its_timeout`, `a_client_leave_withdraws_its_worm_in_a_real_match`, `a_bundle_with_a_withdrawal_reproduces_to_the_fault` |
 
 ## Deliberate deviations
 
+- **Results keep a "left" row** (N85, user decision 2026-10-15): OLX
+  deletes a leaving client's worm (`Game::removeWorm`,
+  `src/game/Game.cpp:1359-1366`), so its results lose it; ours keep its
+  row, its lives "left", its kills and deaths as it left (greyed). The
+  live scoreboard leaves it out, as OLX.
 - `rl-sim` supports LX56 aim only (`ForceLX56Aim`). It rejects wrap-around maps
   (`InfiniteMap`), Gusanos worm physics, `WormFriction > 0` and
   `ProjFriction > 0` (`SimSettings::from_olx_features` errors).
@@ -882,6 +888,11 @@ rulings (`docs/superpowers/plans/2026-10-12-plan-9-netcode-core.md`):
   host fills its slot with `Keys(0)` until the match ends; what happens to
   the worm (removal, a bot taking over) is decided with the lobby in plan
   10.
+  **Amended by plan 12d (N83):** the slot is still filled with `Keys(0)`
+  (until the host's 10 s timeout the lagging rule repeats its last final
+  keys instead, N87), and from its first unknown tick its worm is
+  withdrawn from the match (`World::withdraw`); the user decided removal
+  over a bot (2026-10-15).
 - **N7:** time sync by arrival margin: The host measures, for each client,
   how many ticks before it needs them the client's inputs arrive, and
   reports the median of the last 16 samples; the client runs up to 1 %
@@ -2274,6 +2285,10 @@ timeout, the texts) and `rl_game::net::pump`.
   the handshake and ICE only, and the playtest gives the first number). If wrong: a
   stricter reading (3 s from the host's last message) cannot be met with
   the spec's own 2 s detection on anything but LAN.
+  **Plan 12d (`aca289a`):** the harness's N66 bound counts only the first
+  host and hosts that resumed as "hosts left": a successor that committed
+  and crashed before its resume no longer counts (the others wait out its
+  window and move on, 10 s, as designed).
 - **N67 - the merge.** The new host takes, per slot, the union of every
   report's final inputs; all came from the old host, so they cannot differ
   (a differing value is ignored and counted in `Stats::report_conflicts`;
@@ -2377,7 +2392,9 @@ timeout, the texts) and `rl_game::net::pump`.
   else (`Refusal::Closed`); it has no password, is not announced and maps
   no port. A member rejoining after the resume is welcomed as a mid-match
   joiner (waiting, then watching from a state, then playing the next
-  match; its slot stays `Keys(0)`), keeps its replay, and its migration
+  match; **plan 12d (N88): its old slot's worm was withdrawn at the
+  resume and it watches until the next match; the slot only ever reads
+  `Keys(0)`**), keeps its replay, and its migration
   count is cleared at `Ended`. A late rejoiner welcomed after the new
   host's match has ended goes to the lobby (`UiAction::MatchLeft`).
   **Ruling MG-2** (amends the brief's signature): `LobbyHost::migrated`
@@ -2611,6 +2628,25 @@ timeout, the texts) and `rl_game::net::pump`.
   reading, accepted): spectators count among the members that must all be
   silent, else host, player and spectator could never be a stall. Code:
   `Migrating::gone`, `Session::members_silent`.
+  **FR12c-1b (plan 12d's soak, ruling, option B):** the code never did
+  what the sentence above says for a `Bye` in general: "known gone"
+  commits at once only when the successor **expects nobody** (D8 keeps
+  its no-split protection). A literal reading (commit at once on a known
+  `Bye` whoever is expected; commit `8b83a4f`, reverted in `bfb6237`)
+  split a match in the next soak (`lan-4s2c2v-seed723619267`: a client
+  in an outage heard the resent `Bye` late and committed alone beside the
+  first successor). So when the old host said `Bye` but an expected peer
+  never rejoins (it crashed within the host's 10 s timeout, N87), the lone
+  survivor ends Host lost about 12 s after the host left. Cost: a rare
+  lone survivor sees Host lost instead of playing on (three players, one
+  crashes, the host quits within 10 s); a split match is worse and no
+  option avoids both. The SK-10 verdict accepts it narrowly: a successor
+  that had exited (crashed or left) by the time its ask was answered
+  counts as unreachable, with a negative twin (`ce6b352`); exits are
+  paired with migrations by time, `exited_us <= resumed_us` (`bd621bb`).
+  Kept soak cases: `good-15s2c0v-seed960552337`, `lan-4s2c2v-seed723619267`
+  (no split), `typical-14s4c1v-seed1857358438`. rl-online has no test for
+  "a client crashes, then the host's `Bye`" (deferred).
 - **FR12c-2 - a rehost drops what belongs to the old host:** `suspend`,
   `rehost` and `take_over` clear the ahead buffer and `rehost` clears the
   queue (final review A-I1; `28f9cca`). If wrong: none.
@@ -2681,6 +2717,182 @@ Open items (deferred minors):
 - Task 6: the dead-successor timeout (6 s after SB-1) and the resume's
   one-poll commit check are the residuals under N65; the resume's report
   deadline `REPORT_WAIT` is decided in rl-online, not rl-netcode.
+
+## Players leaving mid-match (plan 12d)
+
+Decided in `docs/superpowers/plans/2026-10-15-plan-12d-leaving-players.md`
+(N82-N89) after the user's playtest report: a player who left a match
+stayed in game as a frozen worm. Compatibility with older builds was not a
+goal (proof of concept): the replay format is 3, the game bundle 2, the
+net-sim bundle 3, the build fingerprint changed; protocol stays 2.
+
+**The user's decisions (2026-10-15).**
+1. A leaving player's worm is removed, as OLX does, not handed to a bot.
+2. The final results keep a "left" row for it (N85; the deviation under
+   "Deliberate deviations").
+3. Fewer than 2 worms left ends the match (Deathmatch's `CheckGameOver`;
+   a 2-worm match whose host leaves with migration on resumes with one
+   worm and ends `LastStanding`).
+4. The 10 s crash timeout stays (N87).
+5. Slots a migration abandons are removed at the resume (N88; the
+   controller's default, accepted).
+Also the user's: the results count every death (below) and only the
+player's own rope throws are heard (the porting table).
+
+**Rulings.**
+- **PL12d-0:** N82-N89 accepted without asking (within OLX parity and the
+  user's decisions). Cost if wrong: rework of one decision.
+- **PF12d-1:** every pre-flight fix accepted and the plan amended before
+  Task 1. Cost: plan rework only.
+- **PF12d-2:** N84's projectile-in-flight claim keeps its own test
+  (`a_projectile_of_a_worm_that_left_credits_nobody`, a projectile in the
+  air when its worm is withdrawn). Cost: none.
+- **PF12d-3:** at a migration's resume the old host is withdrawn silently
+  (the migration's lines say it); players who did not come back get
+  "<name> has left" (`MigratedLobby::drop_away`, `Gone::Left`). Cost: one
+  log line.
+- **PF12d-4:** the marks travel once per datagram as a compact `(slot,
+  tick)` list (`gone`), not a bit on every frame. Measured (Task 3,
+  net-feel): about +1 B per host datagram, **about +100 B/s down** on every
+  profile (lan 9248 to 9348, good 12405 to 12505, typical 12799 to 12898,
+  bad 32085 to 32181, awful 55354 to 55443, bandwidth32 16565 to 16663),
+  up unchanged, rollbacks, corrections and stalls identical; inside the
+  gate's 10 %, so `fixtures/net/feel.ron` was not re-blessed. Cost: a
+  slightly more complex encoder.
+- **PF12d-5:** a client crash's 10 s of host fills (`fills_stall`, true on
+  `bad`) gets an excused window in net-sim, from the crash tick to the
+  timeout plus the recovery, with a negative twin. Cost: a stall bug
+  inside that window hides.
+- **PF12d-6:** `GameMode::on_drop` must not queue commands (enforced in
+  `World::withdraw`: `CommandError::Closed`); carrying them would put
+  `Command` on the wire. Cost: a future mode needs another hook.
+- **PF12d-7:** a replay's decode accepts withdrawals at `t <= ticks`;
+  `Cursor` applies trailing ones before the final checksum, and `finish`
+  replaces a periodic checksum at `ticks` (a leave after the final push is
+  reachable). Cost: none.
+- **PF12d-8:** a withdrawal mark a new host reads from a report is held
+  until the resume and applies only to slots whose player is not present
+  (not rejoined, not the new host's own); a mark for a present player is
+  refused and counted in `Stats::report_conflicts`, after the resume too.
+  A forged mark must never remove a live player. Cost: an absent slot's
+  exact withdrawal tick may be the resume's instead of the old host's.
+- **PF12d-8a (amends PF12d-8's cost):** an honest refused mark (the old
+  host timed out a client that was alive, then vanished, and the client
+  rejoined the new host) costs **each survivor that held the mark one
+  desync and one state repair** (and a desync bundle in rl-online), not
+  only an `Inconsistent`. The player stays. The refused mark's values are
+  kept and taken unmarked, so the holders' rows agree and exactly one
+  repair mends them; the SK verdict accepts exactly that one repair
+  (`repaired_withdrawals`). Pinned by
+  `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`.
+- **FR12c-1b:** see plan 12c's FR12c-1. The lone survivor ends Host lost
+  about 12 s after the host left, when an expected peer had crashed.
+- **RS-1a:** see plan 12c's RS-1a: the new host's R is the later of its
+  tick and the log frontier after the merge (a new host behind the match
+  catches up through its final rows).
+
+**Decisions.**
+- **N82 - withdrawal, not deletion.** `World::withdraw(i)` keeps worm `i`
+  in `World::worms()` (slot `i` stays worm `i`, which the netcode, replays
+  and the presentation index by) and makes it dead with `lives = WRM_OUT`,
+  its rope, latches and state cleared; the mask is `World::gone()`, in the
+  world state (refused if it names no worm or a living one) and hashed
+  only when not 0, so a match nobody left hashes as before. Every
+  gameplay path already ignores a dead `WRM_OUT` worm. OLX deletes the
+  worm (`Game::removeWorm`, `src/game/Game.cpp:1359-1366`; the server side
+  `CServer.cpp:1352-1482`). Cost if wrong: a reader of `World::worms()`
+  must skip gone worms, as it skips dead ones.
+- **N83 - the withdrawal tick and how it travels.** The tick is the slot's
+  first unknown tick when the host abandons it (`Session::peer_lost`: a
+  `Bye`, a timeout, a kick or a failed repair; at a resume, absent
+  players); N6's `Keys(0)` begins there. The log stores the mark with the
+  slot's value (`InputLog::set_final(T, s, 0, true)`), final like the
+  input. On the wire it is a `(slot, tick)` entry of `gone` beside the
+  frames of `HostInputs`, `HostResume`, `InputsReport` and `Control::Resume`
+  (1 byte when empty), bounded by `valid_marks` (at most `MAX_SLOTS`, each
+  slot once, ticks within the frames); a mark without its value in the
+  frames is dropped. Frames kept ahead keep their marks. Every peer (host,
+  clients, spectators, the replay) withdraws before simulating T; one that
+  simulated T or later rolls back to T. A spectator that joins later
+  learns the mask with the world state. Cost if wrong: one byte per
+  datagram and a more complex encoder.
+- **N84 - the mode's side, as OLX.** `GameMode::on_drop` is
+  `CGameMode::Drop` (`CGameMode.cpp:254-263`): Deathmatch zeroes the
+  worm's kills and deaths in its row (`drop_worm`). The game over below two
+  worms is the existing `CheckGameOver` port (`CGameMode.cpp:316-336`): a
+  gone worm is out of lives, no longer counted, and never the winner or
+  the highest (OLX's `HighestScoredWorm` sees none removed). A kill
+  credited to a gone worm (its projectile in flight, its damage leaving a
+  worm at 0 health) credits nobody (`wormById` is null,
+  `CServer_Game.cpp:126-127`; `kill_worm` maps it to -1). Cost if wrong:
+  none known.
+- **N85 - the scoreboard** (the deviation). `Score::left` marks a gone
+  worm's row (hashed only when true). The live scoreboard (`rl_ui::hud::rows`)
+  leaves it out; the results (`Results`) keep it, its lives reading "left",
+  greyed, ranked as an out worm by `CompareWormsScore`. `MatchEndWire` is
+  unchanged. Cost if wrong: one table row.
+- **N86 - the texts.** OLX's `NetworkTexts` (`Options.cpp:769-770`):
+  "<name> has left" (a `Bye` or a closed link) and "<name> has timed out"
+  (the session's `PeerTimedOut` or the link's `Why::Timeout`);
+  `Notice::TimedOut` is new (appended). Kicks and bans keep their own
+  notices. At a resume see PF12d-3. Cost if wrong: one log line.
+- **N87 - the crash timeout stays 10 s** (`SILENCE_TIMEOUT_US` in the
+  session, `SILENCE_TIMEOUT` in rl-net). Until it fires, the lagging rule
+  repeats the slot's last final keys (a crashed player's worm keeps its
+  last move for up to 10 s); at it the worm is withdrawn. Those fills
+  stall players whose link cannot bear them (`fills_stall`, true on
+  `bad`); net-sim excuses them in a window (PF12d-5). Cost if wrong: a
+  stall bug inside that window hides.
+- **N88 - migrations.** Slots a resume abandons (the old host's player,
+  players not back) are withdrawn at their first unknown tick, by the same
+  fill (that tick may lie before R: every peer rolls back to it). The
+  merge **does not** take every reported mark at once (the plan's text):
+  marks are held and decided at the resume (PF12d-8, PF12d-8a), so a
+  survivor's mark for an absent slot is kept and a forged one never
+  removes a present player. A peer that rejoins and then leaves is
+  withdrawn at the resume's fill; a late rejoiner's old slot is withdrawn
+  at the resume and it watches until the next match. Cost if wrong: none
+  known.
+- **N89 - a watcher's camera** (a spectator, a replay or bots alone)
+  skips gone worms; when the one it follows is withdrawn it moves on to the
+  next worm not gone (`follow_next`, `after_tick`). Cost if wrong: a
+  watcher presses an arrow key once.
+
+**Also done in this plan (recorded in the porting table and deviations
+above).** The results and the Tab board count every death and suicide
+(`953565a`, user decision 2026-10-15; OLX's gated counters still drive the
+score, ranking and winner, so the oracle is unchanged and the match goldens'
+checksum lines were re-blessed). Only the player's own rope throws are
+heard (`e55299b`, OLX `CWormHuman.cpp:340-342`, `555-563`, `570-574`).
+Open and the user's call: the online pickup sound still plays for every
+worm on every peer; OLX plays it for local worms only
+(`CClient_Game.cpp:136-142`).
+
+**Soak and feel.** `net-soak` found two real faults after Task 7: a new host
+behind the match (RS-1a, fixed, `c7d74d7`) and a lone survivor's Host lost
+(FR12c-1b, accepted as a cost, `aca289a`). After the fixes the soaks ran
+18 + 20 (HEAD) and 20 + 24 runs with 0 failures (about 3 minutes each, four
+transport cases each); `net-feel` passes every profile, rollbacks,
+corrections and stalls equal the baseline, down bytes +100 B/s as Task 3.
+Net-sim's soak cases draw a client departure in one case of four.
+
+**The plan's full run, at (pending):** (the controller fills this after
+`cargo xtask full`.)
+
+Open items (deferred minors):
+
+- Task 1: a command a mode queues in `on_drop` is not carried by world
+  state transfer (Deathmatch queues none; PF12d-6 forbids it).
+- Deaths fix: `ingame::results_match_world_scores` asserts only that the
+  board's counts are at least the worm's gated ones.
+- Task 6: no replay test reaches the results screen with a left row;
+  `follow_next` has no test for "all but the followed worm left" or "all
+  gone"; the rl-ui unit test's RED was only a compile error.
+- FR12c-1b: no rl-online test pins "a client crashes, then the host's
+  `Bye`" (the lone survivor's Host lost).
+- Task 7: `reproduce` filters `gone` per tick (O(inputs x gone)); no twin
+  for a profile where `fills_stall` is false; the crash window does not
+  model migrations.
 
 ## Kept OLX quirks
 
