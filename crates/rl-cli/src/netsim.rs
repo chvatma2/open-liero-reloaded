@@ -660,11 +660,14 @@ fn stalls_within_windows(spec: &NetSpec, r: &Report, episodes: &[StallEpisode]) 
 
 /// Each migration within [`N66_US`] on LAN, good and typical links (else
 /// `WINDOW_US`), when only hosts left: no other exit, outage or profile
-/// change (a successor waits for a departed peer up to its window).
+/// change (a successor waits for a departed peer up to its window). A host
+/// is the first one or one that resumed: a successor that committed and
+/// went before its resume makes the others wait out its window (net-soak's
+/// `typical-14s4c1v-seed1857358438`).
 fn n66(spec: &NetSpec, r: &Report) -> Result<(), Failure> {
-    let clean = spec.outages.is_empty()
-        && spec.profile_changes.is_empty()
-        && spec.exits.iter().all(|e| r.hosts.contains(&e.0));
+    let hosted = |p: PeerId| p == HOST || r.migrations.iter().any(|m| m.to == p);
+    let clean =
+        spec.outages.is_empty() && spec.profile_changes.is_empty() && spec.exits.iter().all(|e| hosted(e.0));
     if clean {
         let fast = matches!(spec.profile.as_str(), "lan" | "good" | "typical");
         let bound = if fast { N66_US } else { WINDOW_US };
@@ -1285,6 +1288,20 @@ mod tests {
         assert!(n66(&bad, &r).is_ok(), "bad links: the first successor's window");
         r.migrations = vec![m(WINDOW_US + 1_000)];
         assert!(n66(&bad, &r).is_err());
+        // net-soak's `typical-14s4c1v-seed1857358438`: successor 1 committed
+        // at a rejoin, then crashed before its resume; the others waited out
+        // its window and moved on to peer 2. A host gone, but no resumed one:
+        // the migration counts two departures, and N66 does not bound it.
+        let mut twice = empty_report();
+        twice.hosts = vec![HOST, 1, 2];
+        twice.migrations = vec![harness::Migrated { to: 2, ..m(2 * WINDOW_US) }];
+        let crashed =
+            NetSpec { exits: vec![(1, 400, "crash".into())], host_freeze: Some((390, 600)), ..spec() };
+        assert!(n66(&crashed, &twice).is_ok());
+        // A resumed host's crash, with nothing else, is bounded as before.
+        twice.migrations.insert(0, m(N66_US));
+        twice.migrations[1].from = 1;
+        assert!(n66(&crashed, &twice).unwrap_err().what.contains("from peer 1 to peer 2"));
     }
 
     #[test]

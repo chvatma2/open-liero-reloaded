@@ -166,7 +166,10 @@ The headless command-line tool. Its commands:
   other stall, a longer one or one that never ends fails. Since
   rl-netcode's resume settles the time sync (RS-1), no profile stalls after a
   resume. `n66` always runs (bounds each migration by N66 (`N66_US`) when
-  nothing but hosts left: no other exit, outage or profile change; within
+  nothing but hosts left (the first host or one that resumed: a successor
+  that committed and crashed before its resume makes the others wait out
+  its window, soak case `typical-14s4c1v-seed1857358438`): no other exit,
+  outage or profile change; within
   3 s from the first `HostSilent` or `PeerLeft` to the resume on `lan`,
   `good` and `typical`, within `WINDOW_US` on `bad` and `awful`). Only a
   profile change to `awful` (or an `awful` base) turns the stall rule off

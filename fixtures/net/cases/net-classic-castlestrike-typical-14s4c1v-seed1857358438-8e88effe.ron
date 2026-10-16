@@ -1,0 +1,25 @@
+(
+    spec: (
+        mod_id: "olx-classic",
+        level_id: "olx-level-castlestrike",
+        seed: 1857358438,
+        slots: 14,
+        clients: 4,
+        spectators: 1,
+        join_tick: Some(1986),
+        profile: "typical",
+        drift_ppm: 1500,
+        ticks: 4415,
+        outages: [],
+        net_seed: 753432221001658544,
+        difficulty: Some("easy"),
+        faults: [],
+        exits: [
+            (1, 2525, "crash"),
+        ],
+        host_freeze: Some((2504, 2720)),
+        profile_changes: [],
+        migration: false,
+    ),
+    failure: Some("migration 0 from peer 0 to peer 2 took 10015 ms, over 3000 ms (N66) at tick 2532"),
+)
