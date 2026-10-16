@@ -389,4 +389,8 @@ fn a_projectile_of_a_worm_that_left_credits_nobody() {
     let kills: Vec<(i32, i32)> = r.kills().iter().map(|k| (k.1, k.2)).collect();
     assert!(kills.contains(&(1, -1)), "the bomb killed worm 1, credited to nobody: {kills:?}");
     assert_eq!(r.w.worms()[0].kills, 0);
+    // Final review A-M2: nor its damage (OLX's `wormById` is null for a
+    // removed worm: no damage factor, no `addDamage`).
+    assert_eq!(r.w.worms()[0].damage, 0.0, "the damage score of a worm that left");
+    assert_eq!(r.w.worms()[1].last_damager, -1);
 }

@@ -2830,7 +2830,9 @@ player's own rope throws are heard (the porting table).
   the highest (OLX's `HighestScoredWorm` sees none removed). A kill
   credited to a gone worm (its projectile in flight, its damage leaving a
   worm at 0 health) credits nobody (`wormById` is null,
-  `CServer_Game.cpp:126-127`; `kill_worm` maps it to -1). Cost if wrong:
+  `CServer_Game.cpp:126-127`; `kill_worm` maps it to -1), and neither does
+  its damage (`CClient::InjureWorm`, `CClient_Game.cpp:340-349`, `401-404`:
+  no damage factor, no damage score; final review A-M2). Cost if wrong:
   none known.
 - **N85 - the scoreboard** (the deviation). `Score::left` marks a gone
   worm's row (hashed only when true). The live scoreboard (`rl_ui::hud::rows`)

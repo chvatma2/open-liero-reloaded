@@ -140,13 +140,17 @@ fn blood_round(d: &mut Draws, pos: Vec2, sp: f32, dropper_y: f32, reds: [u8; 2],
 ///
 /// The damage report to the server (`QueueReportDamage`) and its late second
 /// count of the damage score are not ported (`docs/porting/STATUS.md`).
+/// An owner withdrawn from the match ([`crate::World::withdraw`]) is no
+/// owner: OLX's `game.wormById(owner, false)` is null for a removed worm
+/// (`src/client/CClient_Game.cpp:340-349`, `401-404`), so neither its damage factor
+/// nor its damage score applies (final review A-M2, decision N84).
 pub(crate) fn injure_worm(h: &mut Harm, id: i32, damage: f32, owner: i32) {
     let Some(vi) = index(h.worms, id) else { return };
     if !h.worms[vi].alive {
         return;
     }
     let s = h.settings;
-    let oi = index(h.worms, owner);
+    let oi = index(h.worms, owner).filter(|&o| h.referee.gone & (1 << o) == 0);
     let me = oi == Some(vi);
     let mut damage = damage;
     if let Some(o) = oi {

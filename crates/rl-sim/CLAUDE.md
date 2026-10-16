@@ -42,7 +42,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   stays) and hashed **only when not 0**, so a match nobody left hashes as
   before (match goldens, oracle). Every `ModeCtx` carries it
   (`ModeCtx::gone`). A gone killer is nobody: `kill_worm` maps it to -1
-  (decision N84), for the mode and the `Kill` event alike.
+  (decision N84), for the mode and the `Kill` event alike; a gone owner of
+  damage is none in `injure_worm` (no damage factor, no damage score, no
+  `last_damager`: final review A-M2).
 - **Rollback** (`snapshot.rs`, networking spec §3.3): `enable_rollback` +
   `save`/`restore`/`forget_before`; `sync_checksum` is `checksum` with the
   terrain's cell hash. Snapshots carry no events; the caller re-runs ticks
