@@ -9,6 +9,7 @@
         "olr-terrain": 1,
         "olr-vfs": 1,
         "olr-pack": 2,
+        "olr-format": 2,
         "olr-import-lgs": 2,
         "olr-import-lxl": 2,
         "olr-import-gfx": 2,
