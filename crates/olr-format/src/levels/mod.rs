@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 pub use files::{read_level_files, write_level_files};
 
+use crate::image_io::{LEVEL_ART, check_size};
 use crate::{FormatError, LiftError};
 
 /// The largest `art_scale` (a level's art pixels per world pixel).
@@ -60,9 +61,15 @@ pub enum LevelObject {
     },
 }
 
-/// The checks `compile_level` and the writer share.
-pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
-    let (w, h) = src.size;
+/// What `level.ron` alone says: size, art scale, objects, and the art size
+/// they imply, which must be within what the reader decodes
+/// ([`LEVEL_ART`]). Returns the art size.
+pub(crate) fn check_header(
+    size: (u32, u32),
+    art_scale: u32,
+    objects: usize,
+) -> Result<(u32, u32), FormatError> {
+    let (w, h) = size;
     if !(1..=MAX_SIDE).contains(&w) || !(1..=MAX_SIDE).contains(&h) {
         return Err(FormatError::invalid(
             LEVEL_FILE,
@@ -70,20 +77,36 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
             format!("{w}x{h}, not within 1x1 to {MAX_SIDE}x{MAX_SIDE}"),
         ));
     }
-    if !(1..=MAX_ART_SCALE).contains(&src.art_scale) {
+    if !(1..=MAX_ART_SCALE).contains(&art_scale) {
         return Err(FormatError::invalid(
             LEVEL_FILE,
             "art_scale",
-            format!("{}, not within 1 to {MAX_ART_SCALE}", src.art_scale),
+            format!("{art_scale}, not within 1 to {MAX_ART_SCALE}"),
         ));
     }
-    if src.objects.len() > MAX_OBJECTS {
+    if objects > MAX_OBJECTS {
         return Err(FormatError::invalid(
             LEVEL_FILE,
             "objects",
-            format!("{} objects, above {MAX_OBJECTS}", src.objects.len()),
+            format!("{objects} objects, above {MAX_OBJECTS}"),
         ));
     }
+    // Both are bounded above, so this cannot overflow.
+    let (aw, ah) = (w * art_scale, h * art_scale);
+    check_size(aw, ah, LEVEL_ART).map_err(|e| {
+        FormatError::invalid(
+            LEVEL_FILE,
+            "size",
+            format!("size {w}x{h} at art_scale {art_scale} makes art of {aw}x{ah}: {e}"),
+        )
+    })?;
+    Ok((aw, ah))
+}
+
+/// The checks `compile_level` and the writer share.
+pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
+    let (aw, ah) = check_header(src.size, src.art_scale, src.objects.len())?;
+    let (w, h) = src.size;
     let cells = w as usize * h as usize;
     if src.material.len() != cells {
         return Err(FormatError::invalid(
@@ -92,9 +115,6 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
             format!("{} cells, the level needs {cells} ({w}x{h})", src.material.len()),
         ));
     }
-    let (Some(aw), Some(ah)) = (w.checked_mul(src.art_scale), h.checked_mul(src.art_scale)) else {
-        return Err(FormatError::invalid(LEVEL_FILE, "size", "size × art_scale is too large"));
-    };
     for (file, img) in [(FRONT_FILE, &src.front), (BACK_FILE, &src.back)] {
         if (img.width(), img.height()) != (aw, ah) {
             return Err(FormatError::invalid(
@@ -222,5 +242,22 @@ pub(crate) mod tests {
         let mut s = tiny(1);
         s.size = (5000, 1);
         assert!(compile_level(&s).is_err());
+    }
+
+    /// A saved file must reopen: the reader decodes art within `LEVEL_ART`,
+    /// so the check refuses what it would refuse (the art is a mismatch
+    /// here, but the bound is reported first, so no big image is built).
+    #[test]
+    fn art_above_the_decode_bound_is_refused() {
+        let mut s = tiny(8);
+        s.size = (1100, 1000);
+        s.material = vec![Material::Rock; 1_100_000];
+        let e = compile_level(&s).unwrap_err().to_string();
+        assert!(e.contains("level.ron") && e.contains("1100x1000") && e.contains("art_scale 8"), "{e}");
+        assert!(e.contains("pixels"), "{e}");
+        let mut out = olr_vfs::MemFs::new();
+        assert!(write_level_files(&mut out, &s).is_err());
+        // Just inside: 1000 x 1000 at 8 is 64 Mpx, exactly the bound.
+        assert!(check_header((1000, 1000), 8, 0).is_ok());
     }
 }

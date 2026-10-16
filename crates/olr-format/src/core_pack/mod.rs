@@ -13,7 +13,7 @@ use olr_data::image::{Rgba, RgbaImage};
 
 pub use files::{read_core_files, write_core_files};
 
-use crate::image_io::olx_sprite_to_alpha;
+use crate::image_io::{IMAGES, check_size, olx_sprite_to_alpha};
 use crate::{Colour, FormatError, LiftError};
 
 /// The largest `art_scale`.
@@ -110,6 +110,8 @@ pub(crate) fn check(src: &CoreSource) -> Result<(), FormatError> {
                 format!("{}, not within 1 to {MAX_ART_SCALE}", s.art_scale),
             ));
         }
+        check_size(s.image.width(), s.image.height(), IMAGES)
+            .map_err(|e| FormatError::invalid(&file, "", e))?;
         let ((c, r), (w, h)) = (s.frames, (s.image.width(), s.image.height()));
         if c == 0 || r == 0 || w % c != 0 || h % r != 0 {
             return Err(FormatError::invalid(
@@ -374,5 +376,16 @@ pub(crate) mod tests {
         let (def, mut sprites, sounds) = compile_core(&sample()).unwrap();
         sprites.insert("giblets".into(), RgbaImage::new(32, 8));
         assert!(lift_core(&def, &sprites, &sounds).is_err());
+    }
+
+    /// 16385 × 1 is above `IMAGES`' side, and cheap to build.
+    #[test]
+    fn a_sprite_above_the_decode_bound_is_refused() {
+        let mut src = sample();
+        let s = src.sprites.get_mut("extra").unwrap();
+        s.image = RgbaImage::new(IMAGES.max_side + 1, 1);
+        s.frames = (1, 1);
+        let e = check(&src).unwrap_err().to_string();
+        assert!(e.contains("gfx/extra.png") && e.contains("a side above"), "{e}");
     }
 }

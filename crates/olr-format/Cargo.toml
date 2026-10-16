@@ -22,6 +22,7 @@ olr-sim.workspace = true
 olr-terrain.workspace = true
 proptest.workspace = true
 insta.workspace = true
+sha2.workspace = true
 
 [[test]]
 name = "integration"

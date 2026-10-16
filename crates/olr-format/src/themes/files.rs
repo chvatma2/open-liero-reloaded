@@ -258,6 +258,16 @@ mod tests {
     }
 
     #[test]
+    fn the_most_holes_write_and_read() {
+        let mut src = crate::themes::tests::sample();
+        src.holes = vec![src.holes[0].clone(); MAX_HOLES];
+        let mut fs = MemFs::new();
+        write_theme_files(&mut fs, &src).unwrap();
+        assert!(fs.files().any(|(p, _)| p.as_str() == "holes/16.mask.png"));
+        assert_eq!(read_theme_files(&fs).unwrap(), src);
+    }
+
+    #[test]
     fn theme_ron_is_short() {
         let mut src = crate::themes::tests::sample();
         src.notes.clear();

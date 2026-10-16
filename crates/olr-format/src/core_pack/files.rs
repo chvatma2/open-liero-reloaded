@@ -69,6 +69,16 @@ pub fn write_core_files(sink: &mut dyn ContentSink, src: &CoreSource) -> Result<
 
 pub fn read_core_files(src: &dyn ContentSource) -> Result<CoreSource, FormatError> {
     let file: CoreFile = from_canonical(CORE_FILE, &read_text(src, CORE_FILE)?)?;
+    // The counts are checked before any file is read.
+    for (name, n, max) in [
+        ("sprites", file.sprites.len(), super::MAX_SPRITES),
+        ("sounds", file.sounds.len(), super::MAX_SOUNDS),
+        ("colours", file.colours.len(), super::MAX_COLOURS),
+    ] {
+        if n > max {
+            return Err(FormatError::invalid(CORE_FILE, name, format!("more than {max} {name}")));
+        }
+    }
     let mut sprites = BTreeMap::new();
     for (id, e) in file.sprites {
         // Names are checked before they become paths.
@@ -139,6 +149,15 @@ mod tests {
         );
         assert!(text.contains("frames: (2, 1)") && text.contains("\"RopeColour1\": \"#948800\""), "{text}");
         assert!(!text.contains("notes"), "{text}");
+    }
+
+    #[test]
+    fn a_thousand_sprites_are_refused_before_any_file() {
+        let list: Vec<String> =
+            (0..300).map(|i| format!("\"s{i}\": (frames: (1, 1), art_scale: 1)")).collect();
+        let fs = MemFs::new().with("core.ron", format!("(sprites: {{{}}})\n", list.join(", ")).into_bytes());
+        let e = read_core_files(&fs).unwrap_err().to_string();
+        assert!(e.contains("core.ron") && e.contains("256 sprites"), "{e}");
     }
 
     #[test]

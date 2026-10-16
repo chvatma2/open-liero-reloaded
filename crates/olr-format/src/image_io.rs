@@ -53,6 +53,19 @@ pub const IMAGES: ImageBound = ImageBound { max_side: MAX_IMAGE_SIDE, max_pixels
 /// level art in scope is 1350 × 550.
 pub const LEVEL_ART: ImageBound = ImageBound { max_side: 4096 * 8, max_pixels: 64 << 20 };
 
+/// `Ok` when a `w` × `h` image is within `bound`. Decoders apply it to the
+/// header; each format's `check` applies it to what it would write, so a
+/// saved file always reopens.
+pub fn check_size(w: u32, h: u32, bound: ImageBound) -> Result<(), String> {
+    if w.max(h) > bound.max_side {
+        return Err(format!("{w}x{h} image: a side above {}", bound.max_side));
+    }
+    if u64::from(w) * u64::from(h) > bound.max_pixels {
+        return Err(format!("{w}x{h} image: above {} pixels", bound.max_pixels));
+    }
+    Ok(())
+}
+
 /// A decoder for `bytes` whose header is within `bound`: refused from
 /// the header, before the image is allocated.
 fn reader(
@@ -63,13 +76,7 @@ fn reader(
     let mut dec = png::Decoder::new(std::io::Cursor::new(bytes));
     dec.set_transformations(t);
     let reader = dec.read_info().map_err(|e| e.to_string())?;
-    let (w, h) = (reader.info().width, reader.info().height);
-    if w.max(h) > bound.max_side {
-        return Err(format!("{w}x{h} image: a side above {}", bound.max_side));
-    }
-    if u64::from(w) * u64::from(h) > bound.max_pixels {
-        return Err(format!("{w}x{h} image: above {} pixels", bound.max_pixels));
-    }
+    check_size(reader.info().width, reader.info().height, bound)?;
     Ok(reader)
 }
 
@@ -218,7 +225,10 @@ pub fn decode_grey_within(bytes: &[u8], bound: ImageBound) -> Result<(u32, u32, 
 /// OLX's colour key applied once (`RgbaImage::key_transparent`: the corner
 /// rule per image, `src/client/GfxPrimitives.cpp:114-150`): key pixels
 /// become `(0, 0, 0, 0)`, everything else is unchanged. Importers use it;
-/// nothing applies it at load once plan 13c switches the loaders.
+/// nothing applies it at load once plan 13c switches the loaders. Apply it
+/// only once: a second application to a `(254, 0, 254)`-keyed result clears
+/// real pure magenta (its corners are now transparent, so the key falls
+/// back to magenta).
 pub fn olx_sprite_to_alpha(img: &RgbaImage) -> RgbaImage {
     let mut out = img.clone();
     out.key_transparent();
@@ -264,6 +274,49 @@ mod tests {
         img.set(0, 0, Rgba::rgb(1, 2, 3));
         img.set(2, 1, Rgba { r: 4, g: 5, b: 6, a: 7 });
         assert_eq!(decode_rgba(&encode_rgba(&img)).unwrap(), img);
+    }
+
+    /// Encoded bytes are content: packs hash them. The `png` crate is
+    /// pinned and its compressors live only in Cargo.lock, so this test
+    /// catches drift (a bump that changes the bytes must re-bless packs).
+    #[test]
+    fn encoded_bytes_are_pinned() {
+        use sha2::{Digest, Sha256};
+        let hex = |b: &[u8]| Sha256::digest(b).iter().map(|v| format!("{v:02x}")).collect::<String>();
+        let mut img = RgbaImage::new(4, 3);
+        for y in 0..3 {
+            for x in 0..4 {
+                img.set(
+                    x,
+                    y,
+                    Rgba {
+                        r: (x * 60) as u8,
+                        g: (y * 100) as u8,
+                        b: (x * y * 20) as u8,
+                        a: 255 - (x * 30) as u8,
+                    },
+                );
+            }
+        }
+        let rgba = encode_rgba(&img);
+        let indexed = encode_indexed(4, 2, &[0, 1, 2, 1, 2, 0, 1, 2], &[0, 0, 0, 255, 0, 255, 9, 9, 9]);
+        assert_eq!(
+            hex(&rgba),
+            "936d16d4c55a5afacb280b6d8c5aea092d7da375fa10fb1e25fcaeee8ab00995",
+            "encode_rgba drifted"
+        );
+        assert_eq!(
+            hex(&indexed),
+            "530c48c7404e0348e66925fec624737aa47373f9896391cda98a695588574b47",
+            "encode_indexed drifted"
+        );
+    }
+
+    #[test]
+    fn check_size_applies_both_limits() {
+        assert!(check_size(IMAGES.max_side, 1, IMAGES).is_ok());
+        assert!(check_size(IMAGES.max_side + 1, 1, IMAGES).unwrap_err().contains("a side above"));
+        assert!(check_size(4097, 4096, IMAGES).unwrap_err().contains("pixels"));
     }
 
     #[test]

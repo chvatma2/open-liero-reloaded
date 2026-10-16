@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BACK_FILE, FRONT_FILE, LEVEL_FILE, LevelObject, LevelSource, MATERIAL_FILE, MATERIAL_PALETTE, THUMB_FILE,
-    check,
+    check, check_header,
 };
 use crate::FormatError;
 use crate::image_io::{self, LEVEL_ART};
@@ -74,22 +74,48 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
     Ok(())
 }
 
-fn read_art(src: &dyn ContentSource, file: &str) -> Result<olr_data::image::RgbaImage, FormatError> {
+/// Reads an art PNG, checking its header size against `level.ron`'s before
+/// decoding.
+fn read_art(
+    src: &dyn ContentSource,
+    file: &str,
+    expected: (u32, u32),
+) -> Result<olr_data::image::RgbaImage, FormatError> {
     let bytes = read_bytes(src, file)?;
+    if let Some((w, h)) = image_io::png_size(&bytes)
+        && (w, h) != expected
+    {
+        return Err(FormatError::invalid(
+            file,
+            "",
+            format!("{file} is {w}x{h}, {LEVEL_FILE}'s size × art_scale is {}x{}", expected.0, expected.1),
+        ));
+    }
     image_io::decode_rgba_within(&bytes, LEVEL_ART)
         .map_err(|message| FormatError::Io { file: file.into(), message })
 }
 
 pub fn read_level_files(src: &dyn ContentSource) -> Result<LevelSource, FormatError> {
     let file: LevelFile = from_canonical(LEVEL_FILE, &read_text(src, LEVEL_FILE)?)?;
+    // level.ron is validated before any image is read.
+    let art = check_header(file.size, file.art_scale, file.objects.len())?;
     let bytes = read_bytes(src, MATERIAL_FILE)?;
+    if let Some((w, h)) = image_io::png_size(&bytes)
+        && (w, h) != file.size
+    {
+        return Err(FormatError::invalid(
+            MATERIAL_FILE,
+            "",
+            format!("{MATERIAL_FILE} is {w}x{h}, {LEVEL_FILE}'s size is {}x{}", file.size.0, file.size.1),
+        ));
+    }
     let (w, h, indices) = image_io::decode_indexed_within(&bytes, LEVEL_ART)
         .map_err(|message| FormatError::Io { file: MATERIAL_FILE.into(), message })?;
     if (w, h) != file.size {
         return Err(FormatError::invalid(
             MATERIAL_FILE,
             "",
-            format!("{MATERIAL_FILE} is {w}x{h}, level.ron's size is {}x{}", file.size.0, file.size.1),
+            format!("{MATERIAL_FILE} is {w}x{h}, {LEVEL_FILE}'s size is {}x{}", file.size.0, file.size.1),
         ));
     }
     let mut material = Vec::with_capacity(indices.len());
@@ -100,8 +126,8 @@ pub fn read_level_files(src: &dyn ContentSource) -> Result<LevelSource, FormatEr
         })?;
         material.push(m);
     }
-    let front = read_art(src, FRONT_FILE)?;
-    let back = read_art(src, BACK_FILE)?;
+    let front = read_art(src, FRONT_FILE, art)?;
+    let back = read_art(src, BACK_FILE, art)?;
     let thumb_path = VPath::new(THUMB_FILE)
         .map_err(|e| FormatError::Io { file: THUMB_FILE.into(), message: e.to_string() })?;
     let thumb = if src.exists(&thumb_path) { Some(read_bytes(src, THUMB_FILE)?) } else { None };
@@ -149,6 +175,21 @@ mod tests {
         let fs = fs.with("material.png", bad);
         let e = read_level_files(&fs).unwrap_err().to_string();
         assert!(e.contains("material.png") && e.contains("index 7 at (0, 1)"), "{e}");
+    }
+
+    #[test]
+    fn level_ron_is_validated_and_sizes_compared_before_decoding() {
+        // An absurd size in level.ron is refused with no image present.
+        let fs = MemFs::new()
+            .with("level.ron", b"(name: \"x\", size: (4096, 4096), art_scale: 8, theme: \"t\")\n".to_vec());
+        let e = read_level_files(&fs).unwrap_err().to_string();
+        assert!(e.contains("level.ron") && e.contains("art_scale 8"), "{e}");
+        // A bomb front.png (huge header) is refused naming both files.
+        let mut fs = MemFs::new();
+        write_level_files(&mut fs, &crate::levels::tests::tiny(1)).unwrap();
+        let fs = fs.with("front.png", image_io::declared_png(8, 8, false));
+        let e = read_level_files(&fs).unwrap_err().to_string();
+        assert!(e.contains("front.png") && e.contains("level.ron") && e.contains("8x8"), "{e}");
     }
 
     #[test]

@@ -10,6 +10,7 @@ use olr_data::skin::{FrameLayout, MaskKind, Skin, SkinDef};
 
 pub use files::{read_skin_files, write_skin_files};
 
+use crate::image_io::{IMAGES, check_size};
 use crate::{FormatError, LiftError};
 
 /// The largest `art_scale`.
@@ -76,6 +77,10 @@ pub(crate) fn check(src: &SkinSource) -> Result<(), FormatError> {
     }
     // Bounded above, so these cannot overflow.
     let (w, h) = (fw * src.aim_frames, fh * src.walk_frames);
+    // The reader decodes within IMAGES: a layout above it could not reopen.
+    check_size(w, h, IMAGES).map_err(|e| {
+        FormatError::invalid(SKIN_FILE, "frame_size", format!("the layout needs {w}x{h}: {e}"))
+    })?;
     let img = &src.image;
     if (img.width(), img.height()) != (w, h) {
         return Err(FormatError::invalid(
@@ -318,5 +323,17 @@ pub(crate) mod tests {
         let mut skin = compile_skin(&sample()).unwrap();
         skin.image = RgbaImage::new(10, 10);
         assert!(lift_skin(&skin).is_err());
+    }
+
+    /// 64 × 64 frames of 256 px is a 16384² layout, above `IMAGES`: refused
+    /// from the numbers, before the (tiny, mismatched) image is compared.
+    #[test]
+    fn a_layout_above_the_decode_bound_is_refused() {
+        let mut s = sample();
+        s.frame_size = (256, 256);
+        s.aim_frames = 64;
+        s.walk_frames = 64;
+        let e = check(&s).unwrap_err().to_string();
+        assert!(e.contains("skin.ron") && e.contains("16384x16384") && e.contains("pixels"), "{e}");
     }
 }

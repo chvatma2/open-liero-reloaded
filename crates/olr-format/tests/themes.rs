@@ -13,23 +13,38 @@ fn content() -> Option<PathBuf> {
     dir.is_dir().then_some(dir)
 }
 
+/// Every `<prefix>*` pack directory of the content root, sorted.
+fn packs(root: &std::path::Path, prefix: &str) -> Vec<String> {
+    let mut ids: Vec<String> = std::fs::read_dir(root)
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with(prefix))
+        .collect();
+    ids.sort();
+    ids
+}
+
 #[test]
 fn the_bundled_theme_survives_lift_write_read_and_compile() {
     let Some(root) = content() else {
         eprintln!("skip: OLR_CONTENT_DIR is not a directory");
         return;
     };
-    let pack = olr_pack::read_theme(&DirFs::new(root.join("olx-theme-dirt"))).unwrap();
-    let src = lift_theme(&pack.theme).unwrap();
-    let mut fs = MemFs::new();
-    write_theme_files(&mut fs, &src).unwrap();
-    let back = read_theme_files(&fs).unwrap();
-    assert_eq!(back, src);
-    let theme = compile_theme(&back).unwrap();
-    assert_eq!(theme, pack.theme, "Theme");
-    for (a, b) in theme.holes.iter().zip(&pack.theme.holes) {
-        assert_eq!(Stamp::from_image(a), Stamp::from_image(b));
+    let ids = packs(&root, "olx-theme-");
+    assert!(!ids.is_empty(), "no themes found");
+    for id in ids {
+        let pack = olr_pack::read_theme(&DirFs::new(root.join(&id))).unwrap();
+        let src = lift_theme(&pack.theme).unwrap();
+        let mut fs = MemFs::new();
+        write_theme_files(&mut fs, &src).unwrap();
+        let back = read_theme_files(&fs).unwrap();
+        assert_eq!(back, src);
+        let theme = compile_theme(&back).unwrap();
+        assert_eq!(theme, pack.theme, "Theme");
+        for (a, b) in theme.holes.iter().zip(&pack.theme.holes) {
+            assert_eq!(Stamp::from_image(a), Stamp::from_image(b));
+        }
+        let gm = |t: &olr_data::theme::Theme| t.green_ball.as_ref().map(GreenMask::from_image);
+        assert_eq!(gm(&theme), gm(&pack.theme));
     }
-    let gm = |t: &olr_data::theme::Theme| t.green_ball.as_ref().map(GreenMask::from_image);
-    assert_eq!(gm(&theme), gm(&pack.theme));
 }

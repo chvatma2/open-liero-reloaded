@@ -13,7 +13,7 @@ use olr_data::theme::{Theme, ThemeDef};
 
 pub use files::{read_theme_files, write_theme_files};
 
-use crate::image_io::olx_sprite_to_alpha;
+use crate::image_io::{IMAGES, check_size, olx_sprite_to_alpha};
 use crate::{FormatError, LiftError};
 
 /// The longest side of a hole or green-ball stamp, in world pixels.
@@ -132,6 +132,15 @@ pub(crate) fn check(src: &ThemeSource) -> Result<(), FormatError> {
             if m == 2 {
                 let (x, y) = (p as u32 % s.paint.width(), p as u32 / s.paint.width());
                 let c = s.paint.get(x, y);
+                if c.a == 0 {
+                    return Err(FormatError::invalid(
+                        &hole_file(i),
+                        &path,
+                        format!(
+                            "paint pixel ({x}, {y}) is transparent: the paint layer is empty where the mask says paint"
+                        ),
+                    ));
+                }
                 if c.same_rgb(BLACK) || c.same_rgb(MAGENTA) {
                     return Err(FormatError::invalid(
                         &hole_file(i),
@@ -144,12 +153,23 @@ pub(crate) fn check(src: &ThemeSource) -> Result<(), FormatError> {
             }
         }
     }
+    check_art(FRONT_TILE_FILE, "front_tile", &src.front_tile)?;
+    check_art(BACK_TILE_FILE, "back_tile", &src.back_tile)?;
     if let Some(g) = &src.green_ball {
         check_stamp(GREEN_FILE, "green_ball", g)?;
         for (p, &m) in g.mask.iter().enumerate() {
             if m == 2 {
                 let (x, y) = (p as u32 % g.paint.width(), p as u32 / g.paint.width());
                 let c = g.paint.get(x, y);
+                if c.a == 0 {
+                    return Err(FormatError::invalid(
+                        GREEN_FILE,
+                        "green_ball",
+                        format!(
+                            "rim pixel ({x}, {y}) is transparent: the paint layer is empty where the mask says rim"
+                        ),
+                    ));
+                }
                 if c == GREEN || c == MAGENTA {
                     return Err(FormatError::invalid(
                         GREEN_FILE,
@@ -165,10 +185,16 @@ pub(crate) fn check(src: &ThemeSource) -> Result<(), FormatError> {
     Ok(())
 }
 
+/// The reader decodes a theme image within [`IMAGES`]; a saved one must reopen.
+fn check_art(file: &str, path: &str, img: &RgbaImage) -> Result<(), FormatError> {
+    check_size(img.width(), img.height(), IMAGES).map_err(|e| FormatError::invalid(file, path, e))
+}
+
 /// OLX keys a sprite by RGB alone, so a visible pixel must not look like the
 /// key, and no corner may be (254, 0, 254) (`RgbaImage::olx_color_key`).
 fn check_sprite(dir: &str, i: usize, img: &RgbaImage) -> Result<(), FormatError> {
     let (file, path) = (image_file(dir, i), format!("{dir}[{i}]"));
+    check_art(&file, &path, img)?;
     for y in 0..img.height() {
         for x in 0..img.width() {
             let c = img.get(x, y);
@@ -491,6 +517,46 @@ pub(crate) mod tests {
         let mut big = RgbaImage::new(3, 3);
         big.set(1, 1, Rgba::rgb(254, 0, 254));
         src.stones = vec![big];
+        compile_theme(&src).unwrap();
+    }
+
+    #[test]
+    fn mask_paint_with_no_paint_layer_is_an_error() {
+        let mut src = sample();
+        src.holes[0].paint.set(2, 2, Rgba::TRANSPARENT);
+        let e = compile_theme(&src).unwrap_err().to_string();
+        assert!(e.contains("holes[0]") && e.contains("(2, 2)") && e.contains("paint layer is empty"), "{e}");
+        let mut src = sample();
+        src.green_ball.as_mut().unwrap().paint.set(0, 2, Rgba::TRANSPARENT);
+        let e = compile_theme(&src).unwrap_err().to_string();
+        assert!(
+            e.contains("green_ball") && e.contains("(0, 2)") && e.contains("paint layer is empty"),
+            "{e}"
+        );
+    }
+
+    /// 16385 × 1 is above `IMAGES`' side, and cheap to build.
+    #[test]
+    fn images_above_the_decode_bound_are_refused() {
+        let big = || RgbaImage::new(IMAGES.max_side + 1, 1);
+        let mut src = sample();
+        src.stones = vec![big()];
+        assert!(compile_theme(&src).unwrap_err().to_string().contains("stones/1.png"));
+        let mut src = sample();
+        src.misc = vec![big()];
+        assert!(compile_theme(&src).unwrap_err().to_string().contains("misc/1.png"));
+        let mut src = sample();
+        src.front_tile = big();
+        assert!(compile_theme(&src).unwrap_err().to_string().contains("front_tile.png"));
+        let mut src = sample();
+        src.back_tile = big();
+        assert!(compile_theme(&src).unwrap_err().to_string().contains("back_tile.png"));
+    }
+
+    #[test]
+    fn a_theme_of_the_most_holes_compiles() {
+        let mut src = sample();
+        src.holes = vec![src.holes[0].clone(); MAX_HOLES];
         compile_theme(&src).unwrap();
     }
 }
