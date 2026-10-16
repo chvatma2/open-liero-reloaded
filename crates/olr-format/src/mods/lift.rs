@@ -19,12 +19,21 @@ struct Lifter<'a> {
     shared: BTreeSet<&'a str>,
     emitted: BTreeSet<&'a str>,
     stack: Vec<&'a str>,
+    /// Compile's depth of the projectile at the bottom of `stack`: 1 under a
+    /// weapon's shot, 0 for a shared projectile.
+    base: usize,
 }
 
 fn err(item: impl Into<String>, message: impl Into<String>) -> LiftError {
     LiftError { item: item.into(), message: message.into() }
 }
 
+/// Lifts a runtime mod to its authoring form, so that `compile_mod` of the
+/// result gives `def` back. `Err` when the mod cannot be written that way: a
+/// projectile key that is missing, in a cycle, unreachable from any weapon or
+/// nested deeper than `MAX_INLINE_DEPTH` (counted as `compile_mod` does); an
+/// action with a field its kind does not use set to a non-default value; an
+/// inconsistent timer or trail.
 pub fn lift_mod(def: &rt::ModDef) -> Result<ModSource, LiftError> {
     let mut refs: BTreeMap<&str, usize> = def.projectiles.keys().map(|k| (k.as_str(), 0)).collect();
     for w in &def.weapons {
@@ -39,11 +48,12 @@ pub fn lift_mod(def: &rt::ModDef) -> Result<ModSource, LiftError> {
     }
     let shared =
         refs.iter().filter(|(k, n)| **n != 1 && def.projectiles.contains_key(**k)).map(|(k, _)| *k).collect();
-    let mut l = Lifter { def, shared, emitted: BTreeSet::new(), stack: Vec::new() };
+    let mut l = Lifter { def, shared, emitted: BTreeSet::new(), stack: Vec::new(), base: 1 };
     let mut weapons = Vec::with_capacity(def.weapons.len());
     for w in &def.weapons {
         weapons.push((w.id.clone(), l.weapon(w)?));
     }
+    l.base = 0;
     let mut shared_out = BTreeMap::new();
     let ids: Vec<&str> = l.shared.iter().copied().collect();
     for id in ids {
@@ -162,10 +172,9 @@ impl<'a> Lifter<'a> {
         if self.stack.contains(&key) {
             return Err(err(item(), "spawns one of its own ancestors"));
         }
-        if self.stack.len() > MAX_INLINE_DEPTH {
+        if self.base + self.stack.len() > MAX_INLINE_DEPTH {
             return Err(err(item(), format!("nested deeper than {MAX_INLINE_DEPTH}")));
         }
-        let key = self.def.projectiles.get_key_value(key).map(|(k, _)| k.as_str()).unwrap_or(key);
         self.emitted.insert(key);
         self.stack.push(key);
         let result = self.projectile_body(key, p);
@@ -337,8 +346,8 @@ mod tests {
     use super::*;
     use crate::mods::compile_mod;
     use olr_data::image::Rgba;
-    use olr_data::mod_def::WeaponClass;
     use olr_data::mod_def::*;
+    use olr_data::mod_def::{AnimKind, SpecialKind, WeaponClass};
 
     /// Like `olr-pack`'s sample: a rocket spawning bits, and bits shared by
     /// a second weapon.
@@ -453,7 +462,8 @@ mod tests {
     fn a_missing_key_is_a_lift_error() {
         let mut def = sample();
         def.projectiles.remove("bits");
-        assert!(lift_mod(&def).is_err());
+        let e = lift_mod(&def).unwrap_err();
+        assert!(e.to_string().contains("no such projectile"), "{e}");
     }
 
     #[test]
@@ -465,6 +475,187 @@ mod tests {
         b.event_spawn = Some(SpawnDef::olx_default("a".into()));
         def.projectiles.insert("a".into(), a);
         def.projectiles.insert("b".into(), b);
-        assert!(lift_mod(&def).is_err());
+        let e = lift_mod(&def).unwrap_err();
+        assert!(e.to_string().contains("in a cycle"), "{e}");
+    }
+
+    fn weapon_with(def: &mut ModDef, projectile: &str) {
+        let mut w = def.weapons[0].clone();
+        w.id = "deep".into();
+        if let WeaponKind::Projectile { spawn, .. } = &mut w.kind {
+            spawn.projectile = projectile.into();
+        }
+        def.weapons = vec![w];
+    }
+
+    /// A chain `c0 -> c1 -> ... -> c<n-1>` of single references under one weapon.
+    fn chain(n: usize) -> ModDef {
+        let mut def = sample();
+        let leaf = def.projectiles["bits"].clone();
+        def.projectiles.clear();
+        for i in 0..n {
+            let mut p = leaf.clone();
+            if i + 1 < n {
+                p.event_spawn = Some(SpawnDef::olx_default(format!("c{}", i + 1)));
+            }
+            def.projectiles.insert(format!("c{i}"), p);
+        }
+        weapon_with(&mut def, "c0");
+        def
+    }
+
+    #[test]
+    fn the_depth_limit_matches_compiles() {
+        // A weapon-rooted projectile is compile depth 1; the limit is MAX.
+        let ok = chain(MAX_INLINE_DEPTH);
+        assert_eq!(compile_mod(&lift_mod(&ok).unwrap()).unwrap(), ok);
+        let deep = chain(MAX_INLINE_DEPTH + 1);
+        let e = lift_mod(&deep).unwrap_err();
+        assert!(e.to_string().contains("nested deeper"), "{e}");
+        // The same source compile gets without the lift's check is rejected too.
+        let mut src = lift_mod(&ok).unwrap();
+        let mut leaf = Projectile { id: None, ..src_leaf(&src) };
+        leaf.spawns.clear();
+        let Fire::Projectile { shot, .. } = &mut src.weapons[0].1.fire else { panic!() };
+        let mut cur = shot.projectile.as_mut().unwrap();
+        while cur.spawns.contains_key(LIFTED_SPAWN) {
+            cur = cur.spawns.get_mut(LIFTED_SPAWN).unwrap().projectile.as_mut().unwrap();
+        }
+        cur.spawns
+            .insert(LIFTED_SPAWN.into(), Spawn { projectile: Some(Box::new(leaf)), ..Spawn::default() });
+        assert!(compile_mod(&src).is_err());
+    }
+
+    fn src_leaf(src: &ModSource) -> Projectile {
+        let Fire::Projectile { shot, .. } = &src.weapons[0].1.fire else { panic!() };
+        let mut cur = shot.projectile.as_ref().unwrap();
+        while let Some(s) = cur.spawns.get(LIFTED_SPAWN) {
+            cur = s.projectile.as_ref().unwrap();
+        }
+        (**cur).clone()
+    }
+
+    fn round_trip(def: &ModDef) -> ModSource {
+        let src = lift_mod(def).unwrap();
+        assert_eq!(&compile_mod(&src).unwrap(), def);
+        src
+    }
+
+    #[test]
+    fn a_key_that_is_not_the_derived_one_is_written_as_id() {
+        let mut def = sample();
+        let r = def.projectiles.remove("rocket").unwrap();
+        def.projectiles.insert("missile".into(), r);
+        weapon_with(&mut def, "missile");
+        let src = round_trip(&def);
+        let Fire::Projectile { shot, .. } = &src.weapons[0].1.fire else { panic!() };
+        assert_eq!(shot.projectile.as_ref().unwrap().id.as_deref(), Some("missile"));
+    }
+
+    #[test]
+    fn a_projectile_trail_lifts_with_its_interval() {
+        let mut def = sample();
+        let mut trailer = def.projectiles["bits"].clone();
+        trailer.trail = TrailDef {
+            kind: TrailKind::Projectile,
+            delay: 0.3,
+            spawn: Some(SpawnDef::olx_default("puff".into())),
+        };
+        def.projectiles.insert("trailer".into(), trailer);
+        let mut puff = def.projectiles["bits"].clone();
+        puff.gfx = ProjectileGfx::Pixel { colours: vec![Rgba::rgb(1, 2, 3)] };
+        def.projectiles.insert("puff".into(), puff);
+        weapon_with(&mut def, "trailer");
+        def.projectiles.remove("rocket");
+        let src = round_trip(&def);
+        let Fire::Projectile { shot, .. } = &src.weapons[0].1.fire else { panic!() };
+        let Trail::Projectile { every_s, spawn } = &shot.projectile.as_ref().unwrap().trail else { panic!() };
+        assert_eq!(*every_s, 0.3);
+        assert_eq!(
+            spawn.projectile.as_ref().unwrap().id.as_deref(),
+            Some("puff"),
+            "the derived key is trailer.trail"
+        );
+    }
+
+    #[test]
+    fn timers_with_and_without_an_action_round_trip() {
+        let mut def = sample();
+        let bits = def.projectiles.get_mut("bits").unwrap();
+        bits.timer = TimerDef {
+            time: 1.5,
+            time_var: 0.25,
+            action: Some(ActionDef { damage: 4, ..ActionDef::olx_default(ActionKind::Injure) }),
+        };
+        let src = round_trip(&def);
+        assert!(
+            src.shared["bits"]
+                .timer
+                .as_ref()
+                .is_some_and(|t| t.effects == vec![Effect::Injure { damage: 4 }])
+        );
+        let bits = def.projectiles.get_mut("bits").unwrap();
+        bits.timer = TimerDef { time: 0.0, time_var: 0.5, action: None };
+        let src = round_trip(&def);
+        let t = src.shared["bits"].timer.as_ref().unwrap();
+        assert!(t.effects.is_empty() && t.variation_s == 0.5);
+    }
+
+    #[test]
+    fn a_player_hit_spawn_lists_the_spawn_effect() {
+        let mut def = sample();
+        let rocket = def.projectiles.get_mut("rocket").unwrap();
+        rocket.hit = ActionDef::olx_default(ActionKind::Bounce);
+        rocket.player_hit =
+            ActionDef { damage: 2, spawns_projectiles: true, ..ActionDef::olx_default(ActionKind::Injure) };
+        let src = round_trip(&def);
+        let Fire::Projectile { shot, .. } = &src.weapons[0].1.fire else { panic!() };
+        assert_eq!(
+            shot.projectile.as_ref().unwrap().hit_worm,
+            vec![Effect::Injure { damage: 2 }, Effect::Spawn(LIFTED_SPAWN.into())]
+        );
+    }
+
+    #[test]
+    fn beam_and_special_weapons_round_trip() {
+        let mut def = sample();
+        let base = def.weapons[0].clone();
+        def.weapons.push(WeaponDef {
+            id: "beam".into(),
+            kind: WeaponKind::Beam {
+                recoil: 3,
+                beam: BeamDef {
+                    colour: Rgba::rgb(9, 8, 7),
+                    damage: 5,
+                    player_damage: 6,
+                    length: 70,
+                    init_width: 2,
+                    width_increase: 1.0,
+                    distribute_damage_over_width: true,
+                },
+            },
+            ..base.clone()
+        });
+        def.weapons.push(WeaponDef {
+            id: "jet".into(),
+            kind: WeaponKind::Special { special: SpecialKind::Jetpack, thrust: 7 },
+            ..base
+        });
+        let src = round_trip(&def);
+        assert!(matches!(src.weapons[2].1.fire, Fire::Beam { .. }));
+        assert!(matches!(src.weapons[3].1.fire, Fire::Special { .. }));
+    }
+
+    #[test]
+    fn an_animated_image_round_trips() {
+        let mut def = sample();
+        let rocket = def.projectiles.get_mut("rocket").unwrap();
+        if let ProjectileGfx::Image { animation, .. } = &mut rocket.gfx {
+            *animation = Some(olr_data::mod_def::Animation { rate: 12.0, kind: AnimKind::PingPong });
+        }
+        let src = round_trip(&def);
+        let Fire::Projectile { shot, .. } = &src.weapons[0].1.fire else { panic!() };
+        let Gfx::Image { animation, .. } = &shot.projectile.as_ref().unwrap().gfx else { panic!() };
+        assert_eq!(animation.as_ref().unwrap().mode, AnimMode::PingPong);
     }
 }
