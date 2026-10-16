@@ -488,3 +488,174 @@ Caveat: NaN payloads are not guaranteed to round-trip; only "is NaN" is tested
     `grep` finds no use in `crates/olr-sim/src`.
 - **Pixel gfx.** One `rand()` per spawned projectile picks the colour (`spawn.rs:246-254`). The
   renderer takes alpha from the matching list entry (`olr-scene/src/projectile.rs:100-112`).
+
+## 13. Final names (plan 13a)
+
+The names the authoring types use (`crates/olr-format/src/mods/`: `mod.rs`,
+`types.rs`, `spawn.rs`). Every type has `deny_unknown_fields`. "Required"
+means the file must carry the field; any other field is left out when it
+equals its default. Floats compare by bits. Where the research (§2-§12)
+proposed another name, the last column says so.
+
+### `ModDef` (§2) and `WormParams`, `RopeParams` (§3, §4)
+
+| Runtime type.field | Authoring field | Default | Note |
+|---|---|---|---|
+| `ModDef.name` | `ModSource.name` (`mod.ron`) | required | |
+| (none) | `ModSource.notes` | empty | free text; the game ignores it |
+| `ModDef.worm` | `worm` in `mod.ron` | all fields default | |
+| `ModDef.rope` | `rope` in `mod.ron` | all fields default | |
+| `ModDef.weapons` | `weapons` in `mod.ron`: weapon ids in order; one `weapons/<id>.ron` each | required | the id is the file name |
+| `ModDef.projectiles` | inline `projectile`, or `projectiles/<id>.ron` for a shared one (`shared`) | | see the key rule below |
+| `ModDef.restrictions` | `restrictions.ron` | none | as before |
+| `WormParams.angle_speed` | `Worm.unused_angle_speed` | 150.0 | research: not named; OLX ignores it |
+| `WormParams.ground_speed` | `Worm.ground_acceleration` | 8.0 | as proposed |
+| `WormParams.air_speed` | `Worm.air_acceleration` | 4.0 | as proposed |
+| `WormParams.gravity` | `Worm.gravity` | 50.0 | |
+| `WormParams.jump_force` | `Worm.jump_speed` | -75.0 | as proposed |
+| `WormParams.air_friction` | `Worm.air_drag` | 0.0 | as proposed |
+| `WormParams.ground_friction` | `Worm.unused_ground_friction` | 0.4 | OLX ignores it |
+| `RopeParams.max_length` | `Rope.max_length` | 300 | |
+| `RopeParams.rest_length` | `Rope.rest_length` | 30 | |
+| `RopeParams.strength` | `Rope.strength` | 3.5 | research offered `pull` or `strength`: `strength` |
+
+### `WeaponDef` and `WeaponKind` (§5, §6)
+
+| Runtime type.field | Authoring field | Default | Note |
+|---|---|---|---|
+| `WeaponDef.id` | the file name `weapons/<id>.ron` | | |
+| `WeaponDef.name` | `Weapon.name` | required | |
+| (none) | `Weapon.notes` | empty | |
+| `WeaponDef.recharge` | `Weapon.recharge` | required | |
+| `WeaponDef.drain` | `Weapon.drain` | required | |
+| `WeaponDef.rof` | `Weapon.between_shots_s` | required | as proposed |
+| `WeaponDef.laser_sight` | `Weapon.laser_sight` | false | |
+| `WeaponDef.kind` | `Weapon.fire: Fire` | required | |
+| `Projectile.class` | `Fire::Projectile.class` | `Automatic` | |
+| `Projectile.recoil` | `Fire::Projectile.recoil` | 0 | |
+| `Projectile.sound` | `Fire::Projectile.sound` | none | |
+| `Projectile.spawn` | `Fire::Projectile.shot` (a `ShotSpawn`) | required | as proposed |
+| `Beam.recoil` | `Fire::Beam.recoil` | 0 | |
+| `Beam.beam`, flattened | the fields of `Fire::Beam` | | research offered flattening: flattened |
+| `Special.special` | `Fire::Special.kind` | required | research: positional; `kind` is named |
+| `Special.thrust` | `Fire::Special.thrust` | 0 | |
+| `WeaponClass::{Automatic, PowerGun, Grenade, Missile, CloseRange, Other(i)}` | `WeaponClass::{..., Unknown(i)}` | | |
+| `SpecialKind::{None, Jetpack, Other(i)}` | `SpecialKind::{Off, Jetpack, Unknown(i)}` | | `Off`, not `None` |
+| `BeamDef.colour` | `Fire::Beam.colour` | required | |
+| `BeamDef.damage` | `Fire::Beam.hole_size` | 0 | research: `hole_size` (or `carve`) |
+| `BeamDef.player_damage` | `Fire::Beam.worm_damage` | 0 | as proposed |
+| `BeamDef.length` | `Fire::Beam.length` | 0 | |
+| `BeamDef.init_width` | `Fire::Beam.width` | 1 | |
+| `BeamDef.width_increase` | `Fire::Beam.width_growth` | 0.0 | as proposed |
+| `BeamDef.distribute_damage_over_width` | `Fire::Beam.split_damage_over_width` | false | as proposed |
+
+### `ProjectileDef`, `ProjectileGfx`, `Animation` (§7, §8)
+
+| Runtime type.field | Authoring field | Default | Note |
+|---|---|---|---|
+| (the map key) | `Projectile.id` | none: the key is derived from its place | never set in `projectiles/` files |
+| (none) | `Projectile.notes` | empty | |
+| `ProjectileDef.gfx` | `Projectile.gfx` | required | not `look` (§1.2) |
+| `ProjectileDef.width`, `.height` | `Projectile.size: (w, h)` | (2, 2) for `Pixels`, (4, 4) for `Image` | |
+| `ProjectileDef.gravity` | `Projectile.gravity` | none: world gravity | `Some(100)` is kept (§1.4) |
+| `ProjectileDef.dampening` | `Projectile.velocity_factor` | 1.0 | research offered `dampening`: `velocity_factor` |
+| `ProjectileDef.timer` | `Projectile.timer` | none | |
+| `ProjectileDef.trail` | `Projectile.trail` | `Off` | |
+| `ProjectileDef.hit` | `Projectile.hit_terrain` | empty list | as proposed |
+| `ProjectileDef.player_hit` | `Projectile.hit_worm` | empty list | as proposed |
+| `ProjectileDef.event_spawn` | `Projectile.spawns`: a map from name to `EventSpawn` | empty | at most one entry compiles |
+| `Pixel.colours` | `Gfx::Pixels([colour, ...])` | | at most 256 |
+| `Image.file` | `Gfx::Image.file` | required | research: positional; named |
+| `Image.rotating` | `Gfx::Image.rotating` | false | |
+| `Image.rot_increment` | `Gfx::Image.rotation_step_deg` | 0 | as proposed |
+| `Image.rot_speed` | `Gfx::Image.rotation_speed` | 0 | as proposed |
+| `Image.use_angle` | `Gfx::Image.frames_follow_heading` | false | |
+| `Image.use_spec_angle` | `Gfx::Image.frames_follow_heading_mirrored` | false | |
+| `Image.angle_images` | `Gfx::Image.heading_frames` | 0 | |
+| `Image.animation` | `Gfx::Image.animation` | none | |
+| `Animation.rate` | `Animation.fps` | 0.0 | |
+| `Animation.kind` | `Animation.mode` | `Once` | research offered `end`: `mode` |
+| `AnimKind::{Once, Loop, PingPong, Other(i)}` | `AnimMode::{..., Unknown(i)}` | | |
+
+### `SpawnDef` (§9)
+
+One type, `Spawn<C>`, with three contexts: `ShotSpawn` (a weapon's shot),
+`EventSpawn` (`Projectile.spawns`) and `TrailSpawn` (`Trail::Projectile.spawn`).
+Four defaults depend on the context, because LX56 fixes them there (§1.5):
+
+| Field | Shot | Event | Trail |
+|---|---|---|---|
+| `relative_to_parent` | true | false | false |
+| `speed_var_diagonal` | false | false | true |
+| `random_rotation` | true | false | false |
+| `inherit_velocity` | true | false | false |
+
+| Runtime type.field | Authoring field | Default | Note |
+|---|---|---|---|
+| `SpawnDef.projectile` | `shared` (a shared id) or `projectile` (inline); exactly one | required | research: `projectile` for both |
+| `SpawnDef.amount` | `amount` | 1 | OLX's constructor has 0 (§1.6) |
+| `SpawnDef.speed` | `speed` | 0 | |
+| `SpawnDef.speed_var` | `speed_var` | 0.0 | |
+| `SpawnDef.spread` | `spread` | 0.0 | |
+| `SpawnDef.use_angle` | `relative_to_parent` | by context | research offered `add_parent_heading` too |
+| `SpawnDef.angle` | `angle` | 0 | |
+| `SpawnDef.use_parent_velocity_for_spread` | `parent_velocity_as_direction` | false | as proposed |
+| `SpawnDef.parent_vel_spread_factor` | `parent_velocity_direction_scale` | 0.3 | as proposed |
+| `SpawnDef.use_special11_vec_for_speed_var` | `speed_var_diagonal` | by context | true in trails, false elsewhere |
+| `SpawnDef.use_random_rot` | `random_rotation` | by context | |
+| `SpawnDef.add_parent_vel` | `inherit_velocity` | by context | |
+| `SpawnDef.parent_vel_factor` | `inherit_velocity_factor` | 1.0 | |
+
+The canonical writer puts a spawn's parameters before `shared` or
+`projectile`.
+
+### `TimerDef`, `TrailDef` (§10, §11)
+
+| Runtime type.field | Authoring field | Default | Note |
+|---|---|---|---|
+| `TimerDef.time` | `Timer.after_s` | required | |
+| `TimerDef.time_var` | `Timer.variation_s` | 0.0 | |
+| `TimerDef.action` | `Timer.effects` | empty list | needs `after_s` above 0 |
+| `TrailDef.kind` | `Projectile.trail: Trail` | `Off` | |
+| `TrailDef.delay` | `Trail::Projectile.every_s` | 0.1 | |
+| `TrailDef.spawn` | `Trail::Projectile.spawn` (a `TrailSpawn`, inline or shared) | required | research: `spawn: <name>`; it is a spawn here |
+| `TrailKind::{None, Smoke, ChemSmoke, Projectile, Doomsday, Explosive, Other(i)}` | `Trail::{Off, Smoke, ChemSmoke, Projectile{..}, Doomsday, Explosive, Unknown(i)}` | | `Off`, not absent; `Explosive` as proposed |
+
+### `ActionDef` (§12)
+
+An event (`hit_terrain`, `hit_worm`, `Timer.effects`) is a list of effects.
+It compiles to LX56's single action: at most one effect besides `Spawn`,
+and at most one `Spawn`.
+
+| Runtime kind and fields | `Effect` variant | Default |
+|---|---|---|
+| `Bounce`: `bounce_coeff`, `bounce_explode` | `Bounce(factor, explode)` | 0.5, 0 |
+| `Explode`: `damage`, `shake`, `sound` | `Explode(damage, shake, sound)` | 0, 0, none |
+| `Injure`: `damage` | `Injure(damage)` | 0 |
+| `Carve`: `damage` | `Carve(size)` | 0 |
+| `Dirt`: `shake` | `Dirt(shake)` | 0 |
+| `GreenDirt`: `shake` | `GreenDirt(shake)` | 0 |
+| `Disappear` | `Disappear` (does not remove the projectile) | |
+| `Disappear2` | `Remove` | |
+| `GoThrough` | `GoThrough` | |
+| `InjureProj` | `InjureProjectile` | |
+| `PlaySound`: `sound` | `Sound(file)` | none |
+| `InjureWorm`: `damage` | `InjureWorm(damage)` | 0 |
+| `ChangeRadius` | `ChangeRadius` | |
+| `OverwriteOwnSpeed`, `MultiplyOwnSpeed`, `DiffOwnSpeed` | `SetSpeed`, `MultiplySpeed`, `AddSpeed` | |
+| `OverwriteTargetSpeed`, `MultiplyTargetSpeed`, `DiffTargetSpeed` | `SetTargetSpeed`, `MultiplyTargetSpeed`, `AddTargetSpeed` | |
+| `HeadingToNextWorm`, `HeadingToOwner` | `HomeOnNearestWorm`, `HomeOnOwner` | |
+| `HeadingToNextOtherWorm`, `HeadingToNextEnemyWorm`, `HeadingToNextTeamMate` | `HomeOnNearestOtherWorm`, `HomeOnNearestEnemy`, `HomeOnNearestTeamMate` | |
+| `HeadTargetToUs` | `PullTargetsToUs` | |
+| `Other(i)` | `Unknown(i)` | |
+| `Nothing` | an empty list | |
+| `spawns_projectiles` | `Spawn(name)`, naming a key of `Projectile.spawns` | |
+
+Research offered `Hurt` for `InjureWorm` and `Sparks` for `Explosive`; the names above were used.
+
+### Projectile keys
+
+A shared projectile's key is its file id. An inline projectile's key is its
+`id` when it has one, otherwise one derived from its place: the weapon id for
+a shot, then `<parent key>.spawn` or `<parent key>.trail`. An event spawn
+is always named `spawn` when lifted (`LIFTED_SPAWN`).

@@ -114,7 +114,7 @@ gfx/, sfx/           assets
     flags (amended 2026-10-16 from the research,
     `docs/porting/olx-notes/mod-fields.md` §1.5).
 
-### Example: OLX's bazooka (today 70 lines and 2 files)
+### Example: OLX's bazooka (today 131 lines in 3 files; now one file)
 
 ```ron
 (
@@ -128,21 +128,44 @@ gfx/, sfx/           assets
         shot: (
             speed: 140,
             projectile: (
-                gfx: Image(file: "gfx/missile.png", frames_follow_heading: true, heading_frames: 18),
+                gfx: Image(
+                    file: "gfx/missile.png",
+                    frames_follow_heading: true,
+                    heading_frames: 18,
+                ),
                 gravity: 0,
                 velocity_factor: 1.001,
                 trail: Smoke,
-                hit_terrain: [Explode(damage: 4, shake: 2, sound: "sfx/exp2.ogg"), Spawn("spawn")],
-                hit_worm: [Explode(damage: 27), Spawn("spawn")],
-                spawns: {"spawn": (amount: 12, speed: 105, speed_var: 14.0, spread: 360.0,
-                    projectile: (gfx: Pixels(["#948800"]) /* … */))},
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 2,
+                        sound: "sfx/exp2.ogg",
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 27,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 12,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        shared: "bazooka.spawn",
+                    ),
+                },
             ),
         ),
     ),
 )
 ```
 
-The canonical writer puts one field per line. The names follow plan
+This is the canonical writer's output (plan 13a's snapshot). `bazooka.spawn` is shared because nine places use it, so it lives in `projectiles/bazooka.spawn.ron`. A spawn's parameters come before its projectile. The names follow plan
 13a's final table (`docs/porting/olx-notes/mod-fields.md` §13).
 
 ### Rules
