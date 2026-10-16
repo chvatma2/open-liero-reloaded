@@ -4,6 +4,10 @@ All notable changes to Open Liero Reloaded (OLR) are recorded here. The format f
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow
 [Semantic Versioning](https://semver.org/).
 
+## Unreleased
+
+Work towards 0.2.0, the graphics milestone.
+
 ## 0.1.0 - 2026-10-16
 
 The baseline for later work: Open Liero Reloaded's first release under its
