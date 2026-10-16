@@ -6,7 +6,9 @@ All notable changes to Open Liero Reloaded (OLR) are recorded here. The format f
 
 ## Unreleased
 
-Work towards 0.2.0, the graphics milestone.
+Work towards 0.2.0: new formats, level, mod and skin editors, a modern look,
+and Liero Factory Reloaded and Liero v1.0 Reloaded
+(`docs/superpowers/specs/2026-10-16-milestone-0.2-scope.md`).
 
 ## 0.1.0 - 2026-10-16
 
