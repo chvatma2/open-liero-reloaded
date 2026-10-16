@@ -538,7 +538,7 @@ proposed another name, the last column says so.
 | `Beam.recoil` | `Fire::Beam.recoil` | 0 | |
 | `Beam.beam`, flattened | the fields of `Fire::Beam` | | research offered flattening: flattened |
 | `Special.special` | `Fire::Special.kind` | required | research: positional; `kind` is named |
-| `Special.thrust` | `Fire::Special.thrust` | 0 | |
+| `Special.thrust` | `Fire::Special.thrust` | required | |
 | `WeaponClass::{Automatic, PowerGun, Grenade, Missile, CloseRange, Other(i)}` | `WeaponClass::{..., Unknown(i)}` | | |
 | `SpecialKind::{None, Jetpack, Other(i)}` | `SpecialKind::{Off, Jetpack, Unknown(i)}` | | `Off`, not `None` |
 | `BeamDef.colour` | `Fire::Beam.colour` | required | |

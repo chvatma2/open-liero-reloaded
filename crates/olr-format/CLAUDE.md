@@ -47,4 +47,5 @@ compilers to `olr-data`'s runtime structs; lifts back. Plan 13a: mods.
     `tests/roundtrip.rs`: a proptest that any authoring value round-trips
     through canonical text. `tests/hostile.rs`: deep nesting and mutated
     files give errors, never panics. Unit tests in `compile.rs`, `lift.rs`,
-    `files.rs`, `types.rs` and `spawn.rs` cover their rules.
+    `files.rs` and `types.rs` cover their rules (spawn defaults are tested
+    in `types.rs`).

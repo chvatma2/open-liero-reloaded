@@ -165,7 +165,12 @@ gfx/, sfx/           assets
 )
 ```
 
-This is the canonical writer's output (plan 13a's snapshot). `bazooka.spawn` is shared because nine places use it, so it lives in `projectiles/bazooka.spawn.ron`. A spawn's parameters come before its projectile. The names follow plan
+This is the canonical writer's output (plan 13a's snapshot).
+`bazooka.spawn` is shared because nine places use it, so it lives in
+`projectiles/bazooka.spawn.ron`. A spawn's parameters come before its
+projectile.
+
+The names follow plan
 13a's final table (`docs/porting/olx-notes/mod-fields.md` §13).
 
 ### Rules
