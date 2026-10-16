@@ -3,9 +3,11 @@
 Pack authoring formats (spec `docs/superpowers/specs/2026-10-16-formats-design.md`):
 the readable files editors, agents and people write; their canonical text;
 compilers to `olr-data`'s runtime structs; lifts back. Plan 13a: mods.
+Plan 13b: levels, themes, skins and the core pack.
 
 - **Layer 2, `std`.** Depends on `olr-data`, `olr-vfs`, `serde`, `ron`,
-  `thiserror`, `png` (`image_io`: PNG codec moved from `olr-pack`, plan 13b; `olr-pack` re-exports it). Tests also use `olr-pack` and `olr-sim` (dev-dependencies).
+  `thiserror`, `png`. Tests also use `olr-pack` and `olr-sim`
+  (dev-dependencies).
 - **Canonical text** (`ron_io`): `to_canonical`/`from_canonical` are the only
   path between values and text: 4-space indent, no struct names,
   `implicit_some` with no header, defaults left out, a trailing newline.
@@ -71,3 +73,35 @@ compilers to `olr-data`'s runtime structs; lifts back. Plan 13a: mods.
   (`image_io::olx_sprite_to_alpha`). `compile_core` checks that the grid divides
   the image; the drawing code keeps its own constants. tests/core_pack.rs also
   checks that the bundled mods' gfx key to alpha without change.
+- **Levels** (`levels/`): `LevelSource` is `level.ron` (name, notes, `size`
+  in world pixels, `art_scale`, theme id, `objects`), `material.png` (an
+  indexed grid, `MATERIAL_PALETTE`: rock grey, background black, dirt brown,
+  indexed by `Material as u8`), `front.png`, `back.png` (each `size` ×
+  `art_scale`) and an optional `thumb.png`, passed through as bytes.
+  `LevelObject::Spawn` is the only object; the runtime does not read it
+  (spawns are `FindSpot`'s). Bounds: `MAX_SIDE` (4096), `MAX_ART_SCALE` (8),
+  `MAX_OBJECTS` (4096); a material or art size that does not match is an
+  error. Art decodes within `image_io::LEVEL_ART`.
+- **Themes** (`themes/`): `ThemeSource` is `theme.ron`, `holes/<i>.png` with
+  `holes/<i>.mask.png`, `green_ball.png` with `green_ball.mask.png`,
+  `stones/`, `misc/`, `front_tile.png` and `back_tile.png`. A stamp is a
+  meaning mask (`HOLE_PALETTE`: 0 untouched, 1 carve, 2 paint;
+  `GREEN_PALETTE`: 0 untouched, 1 green, 2 rim) plus a paint layer.
+  `compile_theme` writes OLX's colour-coded images back (black untouched,
+  magenta carve, green, the paint colour), so `olr-terrain` and the
+  simulation stay unchanged. Colour errors: paint that is black or magenta
+  (it would read back as untouched or carve), a rim exactly green or
+  magenta, a visible magenta sprite pixel or a `(254, 0, 254)` corner (it
+  would change OLX's colour key). Bounds: `MAX_STAMP_SIDE` (64),
+  `MAX_HOLES` (16), `MAX_THEME_IMAGES` (64, stones and misc each).
+- **Images** (`image_io`, moved from `olr-pack`, which re-exports it): the
+  PNG codec, every decode bounded from the header (`IMAGES`, `LEVEL_ART`).
+  `decode_indexed` takes 1, 2, 4 and 8-bit palettes and gives one byte per
+  index; `encode_grey` and `decode_grey_within` serve the tint mask;
+  `olx_sprite_to_alpha` applies OLX's colour key once. `png` is pinned to
+  an exact version in the workspace: encoded bytes are content (hashes).
+- **Tests of 13b** (`tests/`): `levels.rs`, `themes.rs` and `core_pack.rs`
+  lift every bundled pack, write, read and compile it and compare with the
+  import; `skins.rs` checks every bundled skin draws the same after a
+  lift. Unit tests in each module's files cover its checks. The
+  bundled-content tests skip when `content/packs` is absent.

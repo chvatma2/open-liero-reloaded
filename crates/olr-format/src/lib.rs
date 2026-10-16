@@ -1,6 +1,7 @@
 //! Pack authoring formats (spec `docs/superpowers/specs/2026-10-16-formats-design.md`):
 //! the files editors, agents and people write, their canonical text, and
-//! their compilers to `olr-data`'s runtime structs. Plan 13a: mods.
+//! their compilers to `olr-data`'s runtime structs. Plan 13a: mods; plan 13b: levels,
+//! themes, skins and the core pack.
 
 mod colour;
 pub mod core_pack;
