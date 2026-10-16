@@ -1188,6 +1188,60 @@ fn a_leaving_host_is_replaced_while_a_crashed_peer_is_still_expected() {
     assert_eq!(r.host_lost, [1].into());
 }
 
+/// Peer 2's frames from its `Resumed` until it runs a tick again.
+#[derive(Default)]
+struct AfterResume {
+    at: Option<u32>,
+    frames: u32,
+    ran: bool,
+}
+
+impl harness::Observer<ToySim> for AfterResume {
+    fn on_event(&mut self, peer: PeerId, event: &Event, session: &mut Session<ToySim>) {
+        if peer == 2 && matches!(event, Event::Resumed { .. }) {
+            self.at = Some(session.current_tick());
+        }
+    }
+
+    fn on_frame(&mut self, peer: PeerId, session: &mut Session<ToySim>) {
+        let Some(at) = self.at.filter(|_| peer == 2 && !self.ran) else { return };
+        if session.current_tick() > at {
+            self.ran = true;
+        } else {
+            self.frames += 1;
+        }
+    }
+}
+
+/// Plan 12d's soak (`good-3s2c0v-seed1857283410`): the first successor's
+/// own outage stalls its tick 300 ticks behind the match before the host
+/// crashes; it takes over when its link returns, and peer 2's report gives
+/// it the final rows it lacked. It resumes no earlier than their end and
+/// catches up through them (they are final: nothing to wait for), so peer
+/// 2, which ran ahead to its prediction limit, runs on within a few ticks.
+/// Before, the new host resumed at its own tick and played those rows at
+/// real-time pace while peer 2 stood still for 3 s.
+#[test]
+fn a_new_host_behind_the_match_catches_up_through_its_final_rows() {
+    let mut sc = two_peers(40, Profile::GOOD);
+    sc.peers.push(plan(2, Seat::Player(3), Profile::GOOD));
+    sc.slots = 4;
+    sc.ticks = 2_000;
+    sc.outages.push(Outage { peer: 1, from_tick: 500, until_tick: 1_000, one_way: false });
+    sc.exits.push(Exit { peer: HOST, tick: 800, after_us: 0, how: ExitHow::Crash });
+    let mut f = ToyFactory { slots: sc.slots, seed: sc.seed };
+    let mut after = AfterResume::default();
+    let r = harness::run_observed(&sc, &mut f, &mut after).unwrap();
+    harness::verdict(&sc, &r, &mut f).unwrap();
+    assert_eq!(r.hosts, vec![HOST, 1]);
+    let m = &r.migrations[0];
+    let held = r.held.iter().find(|h| h.peer == 2 && h.migration == 0).expect("peer 2 rejoined");
+    let rows = held.origin + held.slots.iter().map(|v| v.len() as u32).min().unwrap_or(0);
+    assert!(rows > 700 && m.tick >= rows, "resumed at {} below peer 2's final rows {rows}", m.tick);
+    // A hold and a prediction limit's worth at most (about 0.3 s), not 3 s.
+    assert!(after.ran && after.frames < 60, "peer 2 stood {} frames after the resume", after.frames);
+}
+
 #[test]
 fn profiles_change_mid_run() {
     let mut sc = mscenario(14, Profile::GOOD, 3);

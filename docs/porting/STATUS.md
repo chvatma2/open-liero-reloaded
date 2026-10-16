@@ -2495,6 +2495,18 @@ timeout, the texts) and `rl_game::net::pump`.
   departure, 2413 migrated). The integral term is still zeroed at a rehost
   (keeping it left 3 stall episodes in 400 runs). If wrong: a medium change
   to Task 2's code.
+- **RS-1a (plan 12d's soak) - a new host behind the match catches up.**
+  A survivor whose own outage stalled it before its host went could take
+  over 300+ ticks behind the rows the others reported (net-soak's
+  `good-3s2c0v-seed1857283410`: its tick 964, the reports final to 1302).
+  It resumed at its own tick and played those final rows at real-time
+  pace, so the peer that had run ahead stood still 3.7 s after the resume.
+  R is now the later of its tick and its log's frontier after the merge;
+  its pace starts that far ahead and it catches up at `MAX_CATCHUP` a call
+  (a few hundred ms), as a client does after an outage. Normal migrations
+  (R already past the frontier) are unchanged; net-feel unchanged. If
+  wrong: the new host's player sees a short fast-forward of the ticks it
+  missed.
 - **RS-2 - net-sim's stall excusal is bounded.** `RESYNC_TICKS` is gone: a
   stall is excused only if its episode starts and ends inside the window
   from the old host's departure (less `MAX_PREDICTION`) to the resume plus

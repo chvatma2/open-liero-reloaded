@@ -226,9 +226,11 @@ impl<S: Simulation> Session<S> {
     /// New host: the merge ends (N67; the order matters). Reported own
     /// inputs extend their slots; bot slots' missing ticks below R get their
     /// previous final value, its own slot its pressed keys; awaited slots
-    /// nobody took become abandoned (`Keys(0)`, decision N6). Returns the
-    /// current tick, R. Once only: later calls, and calls on a session that
-    /// did not take over, change nothing and return the current tick.
+    /// nobody took become abandoned (`Keys(0)`, decision N6). Returns R:
+    /// the current tick, or the log's frontier once the reports are merged
+    /// if later (a new host behind the match catches up through rows that
+    /// are final). Once only: later calls, and calls on a session that did
+    /// not take over, change nothing and return the current tick.
     ///
     /// The time sync (ruling RS-1): every input in flight before the
     /// migration is gone, so tick R waits for the rejoined players' first
@@ -243,11 +245,10 @@ impl<S: Simulation> Session<S> {
     /// `Resume` delivered late (a reliable message lost once) is no later
     /// for it.
     pub fn resume(&mut self, now_us: u64) -> u32 {
-        let r = self.current;
         let host = self.is_host();
-        let Some(c) = self.collection.as_mut() else { return r };
+        let Some(c) = self.collection.as_mut() else { return self.current };
         if c.resumed || !host {
-            return r;
+            return self.current;
         }
         c.resumed = true;
         // Reports first: each rejoined player's own inputs.
@@ -285,6 +286,14 @@ impl<S: Simulation> Session<S> {
         for (s, own_first, own) in owns {
             self.extend_own(s, own_first, &own);
         }
+        // R: our current tick, or the end of the final rows we now hold if
+        // later. A new host its own outage held back before its host went
+        // catches up through them (they are final: nothing waits for
+        // them), as a client does after an outage; resumed at its own tick
+        // it played them at real-time pace while every peer ahead stood
+        // still (plan 12d's soak, `good-3s2c0v-seed1857283410`: 3.7 s).
+        let r = self.current.max(self.log.frontier());
+        let behind = r - self.current;
         // Then the fills: the bots' previous final values (what every peer
         // predicted), our own pressed keys.
         for i in 0..self.local.len() {
@@ -343,7 +352,7 @@ impl<S: Simulation> Session<S> {
             }
         }
         self.suspended = false;
-        self.restart_pace(now_us, -(hold as i64));
+        self.restart_pace(now_us, i64::from(behind) - hold as i64);
         self.events.push(Event::Resumed { tick: r });
         self.stats.migrations += 1;
         r

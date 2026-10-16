@@ -335,8 +335,15 @@ model that tests it in one process (spec §9.1).
     member's report sets final values for any slot it names, every tick
     the new host lacks up to `current + MAX_AHEAD`; an honest one never
     reaches past the old host's horizon.
-  - `resume(now)` (once) returns R, our current tick: reported own inputs
-    extend their slots, then bot slots below R get their previous final
+  - `resume(now)` (once) returns R, our current tick or, if later, our
+    log's frontier once the reports are merged (plan 12d's soak,
+    `good-3s2c0v-seed1857283410`: a new host its own outage had stalled
+    3.7 s behind the match resumed at its own tick and played the final
+    rows it held at real-time pace while the peer ahead stood still; now
+    its pace starts that far ahead and it catches up through them at
+    `MAX_CATCHUP` a call, as a client after an outage;
+    `a_new_host_behind_the_match_catches_up_through_its_final_rows`):
+    reported own inputs extend their slots, then bot slots below R get their previous final
     value and our own slot our pressed keys (the held marks first, above);
     awaited slots nobody took are abandoned (withdrawn at their first
     unknown tick and `Keys(0)` from there, as a lost peer's, N6, N88: the

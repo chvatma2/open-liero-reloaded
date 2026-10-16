@@ -120,3 +120,5 @@
   fixtures/matches/mw-castlestrike-8chaos.ron
 2026-10-16 bless-regression: plan 12d soak: a successor whose old host said Bye commits in its turn though a crashed peer is still expected (FR12c-1)
   fixtures/net/cases/net-mw-1-0-liero-factory-good-15s2c0v-seed960552337-c6b621bc.ron
+2026-10-16 bless-regression: plan 12d soak: a new host its own outage held behind the match resumes at its log's frontier and catches up, instead of replaying final rows at real-time pace while a peer ahead stalls
+  fixtures/net/cases/net-mw-1-0-dirt-level-good-3s2c0v-seed1857283410-a769a127.ron
