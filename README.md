@@ -66,7 +66,7 @@ more:
 cargo run --release -p olr-game                 # the menus
 ```
 
-Useful flags (`olr-game --help` lists them all):
+Useful flags (`olr --help` lists them all):
 
 | Flag | What it does |
 |---|---|
@@ -76,8 +76,8 @@ Useful flags (`olr-game --help` lists them all):
 | `--hud-layout auto\|bar\|sides` | where the HUD goes on a window wider than 16:9 (for this run) |
 | `--spectate --bots N` | a Deathmatch of 2 to 32 bots alone, watched (no menus) |
 | `--speed 1\|2\|4\|8\|16\|max` | how fast a watched game runs: a replay or `--spectate` (PageUp/PageDown change it); a game you play is always 1× |
-| `--replay f.rlrp` | watch a replay |
-| `--mode deathmatch ...`, `--record f.rlrp` | a command-line Deathmatch without the menus (below), saving its replay |
+| `--replay f.olrp` | watch a replay |
+| `--mode deathmatch ...`, `--record f.olrp` | a command-line Deathmatch without the menus (below), saving its replay |
 | `--data-dir <dir>` | settings, profiles, replays and imported packs here instead of the platform's directory |
 | `--content <dir>` | the imported content (default `content/packs` beside `olr-game`, else in the working directory) |
 | `--no-sound` | open no audio device |
@@ -143,13 +143,13 @@ These keys are fixed (they cannot be bound to actions):
 
 ### Where things are kept
 
-The data directory is `~/.local/share/rust-liero/` on Linux (another with
+The data directory is `~/.local/share/open-liero-reloaded/` on Linux (another with
 `--data-dir`):
 
 - `settings.ron`: the options and the last local-play setup;
 - `profiles.ron`: the profiles;
-- `replays/`: `match-NNNNNN.rlrp` (every menu Deathmatch, the last 20 kept)
-  and `replay-NNN.rlrp` (saved from the results, never removed);
+- `replays/`: `match-NNNNNN.olrp` (every menu Deathmatch, the last 20 kept)
+  and `replay-NNN.olrp` (saved from the results, never removed);
 - `packs/`: content imported from the menu.
 
 A broken settings or profiles file is set aside as `<name>.bak` and the
@@ -168,7 +168,7 @@ defaults, saves nothing to it that session, and says so on the main menu.
   (`MESA_D3D12_DEFAULT_ADAPTER_NAME=NVIDIA`), since Mesa otherwise takes the
   first adapter Windows lists, often the integrated GPU. Set
   `MESA_D3D12_DEFAULT_ADAPTER_NAME` to part of another adapter's name to
-  choose it; the startup line `olr-game: GPU …` names the one in use.
+  choose it; the startup line `olr: GPU …` names the one in use.
 - WSLg presents at the compositor's 60 Hz under Wayland; under X11
   (`--window-system x11`) it draws without VSync.
 
@@ -187,7 +187,7 @@ cargo run --release -p olr-game -- --level <id> --mod <id> [--skin <id>] [--targ
 Factory`, `Dirt Level`, `FossilFacility`, `CastleStrike`; mods: `Classic`, `MW
 1.0`). Other options: `--fullscreen`, `--uncapped` (no VSync), `--no-interp`
 (OLX's whole-pixel latest-state drawing), `--filter nearest|sharp`, `--content
-<dir>`. Run `olr-game --help` for all of them, including the agent helpers
+<dir>`. Run `olr --help` for all of them, including the agent helpers
 `--demo`, `--script`, `--shot`, `--autoquit-after` and `--stats`.
 
 The controls are those above, but Esc quits (there is no pause menu) and
@@ -199,7 +199,7 @@ stand around to shoot at (default 3).
 ```sh
 cargo run --release -p olr-game -- --mode deathmatch --bots 3 --difficulty medium \
     --level CastleStrike --mod "MW 1.0" [--lives L] [--kill-limit K] [--time-limit M] \
-    [--seed S] [--record match.rlrp]
+    [--seed S] [--record match.olrp]
 ```
 
 You (worm 0) play OLX's Deathmatch against 1 to 31 of OLX's bots, ported
@@ -215,13 +215,13 @@ the worm the camera follows.
 
 #### Replays
 
-`--record f.rlrp` saves the match's replay when you quit and on each rematch
-(`f-2.rlrp`, `f-3.rlrp`, ...). A replay stores the setup and every worm's keys
+`--record f.olrp` saves the match's replay when you quit and on each rematch
+(`f-2.olrp`, `f-3.olrp`, ...). A replay stores the setup and every worm's keys
 (bots too), and checksums of the world, so the same build replays it exactly:
 
 ```sh
-cargo run --release -p olr-game -- --replay f.rlrp     # watch it
-cargo run --release -p olr-cli -- replay f.rlrp        # check it headless
+cargo run --release -p olr-game -- --replay f.olrp     # watch it
+cargo run --release -p olr-cli -- replay f.olrp        # check it headless
 ```
 
 A replay names its mod and level packs by content hash and is refused on
@@ -232,7 +232,7 @@ other content; a divergence is reported at the first checksum that differs.
 ```sh
 cargo run --release -p olr-cli -- match --mod olx-classic --level olx-level-dirt-level \
     --bots 8 --difficulty mixed --seed 1 --ticks 6000 [--personality chaos] \
-    [--coverage] [--record f.rlrp]
+    [--coverage] [--record f.olrp]
 ```
 
 `olr-cli match` plays bots against each other without a window, checks the
@@ -248,7 +248,7 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
   variable. On a PC with integrated graphics and an NVIDIA card it asks for
   the NVIDIA card; to choose another adapter, set
   `MESA_D3D12_DEFAULT_ADAPTER_NAME` to part of its name (the startup line
-  `olr-game: GPU …` shows the one in use). Software rendering works too: `WGPU_BACKEND=vulkan` uses lavapipe.
+  `olr: GPU …` shows the one in use). Software rendering works too: `WGPU_BACKEND=vulkan` uses lavapipe.
 - **Sound** needs the ALSA PulseAudio plugin: `sudo apt install
   libasound2-plugins`, and an `~/.asoundrc` with
 
@@ -268,7 +268,7 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
 - **The Windows build:** `cargo xtask windows` builds `olr-cli` and `olr-game`
   for Windows with mingw-w64 (`rustup target add x86_64-pc-windows-gnu`
   once) and runs them through interop; nothing is installed on Windows.
-  They are staged with the content in `%TEMP%\rust-liero-envelope`, and
+  They are staged with the content in `%TEMP%\olr-envelope`, and
   the command lists the adapters DX12 and Vulkan see.
 
 - **Disk:** WSL's virtual disk lives on the Windows drive, and a full debug
@@ -288,9 +288,9 @@ bonuses used. A failure saves its replay and seed to `target/failures/`.
 ## Building a release zip
 
 `cargo xtask dist` builds portable zips for Linux and Windows in one run:
-`target/release-zips/rust-liero-<version>-linux-x64.zip` and
-`target/release-zips/rust-liero-<version>-windows-x64.zip`. Each holds one folder,
-`rust-liero-<version>/`, with `olr-game` and `olr-server` (`.exe` on
+`target/release-zips/open-liero-reloaded-<version>-linux-x64.zip` and
+`target/release-zips/open-liero-reloaded-<version>-windows-x64.zip`. Each holds one folder,
+`open-liero-reloaded-<version>/`, with `olr-game` and `olr-server` (`.exe` on
 Windows, built in the `dist` profile: release without symbols), the
 content in `content/packs/`, this README, the license, the changelog,
 `docs/online.md` and `server.example.ron`. Copy a zip anywhere, unpack it
@@ -303,8 +303,8 @@ as the building machine's; the Windows ones need no extra DLLs.
 The Windows build needs mingw-w64 and the Rust target (`sudo apt install
 mingw-w64`, `rustup target add x86_64-pc-windows-gnu`). At the end each
 zip is unpacked into a fresh directory and run from another one: on Linux
-`olr-game --help` and an `olr-server` match with a bot client, on Windows
-(through WSL interop; skipped with a notice without it) `olr-game.exe
+`olr --help` and an `olr-server` match with a bot client, on Windows
+(through WSL interop; skipped with a notice without it) `olr.exe
 --help` and `olr-server.exe` loading its map. `--no-verify` skips that.
 The two whole-program-optimised builds take several minutes from cold.
 
@@ -319,7 +319,7 @@ The two whole-program-optimised builds take several minutes from cold.
   (`fixtures/render/`), the 10-minute headless sandbox soak (60 000 ticks,
   memory and entity counts must stay bounded), the HUD snapshots and a
   short sound on the default output; then the end-to-end runs on Xvfb
-  with software GL (`fixtures/autoplay/menus.ron`, `olr-game --autoplay
+  with software GL (`fixtures/autoplay/menus.ron`, `olr --autoplay
   --fake-clock`, and the online run `fixtures/autoplay/online.ron`
   against an `olr-server` and a local Nostr relay: a typed join, then the
   same server from the Internet tab), `cargo xtask net-nat` (joins across

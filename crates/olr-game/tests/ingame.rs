@@ -162,11 +162,11 @@ fn results_match_world_scores() {
     // Save replay keeps it under its own name; Back to menu leaves.
     sh.act(UiAction::SaveReplay);
     let m = sh.ui.message().unwrap_or_default().to_string();
-    assert!(m.contains("replay-001.rlrp"), "{m}");
+    assert!(m.contains("replay-001.olrp"), "{m}");
     sh.act(UiAction::SaveReplay);
-    assert!(!tmp.path().join(olr_ui::REPLAYS_DIR).join("replay-002.rlrp").exists(), "kept once");
+    assert!(!tmp.path().join(olr_ui::REPLAYS_DIR).join("replay-002.olrp").exists(), "kept once");
     assert!(sh.ui.replay_saved());
-    let kept = tmp.path().join(olr_ui::REPLAYS_DIR).join("replay-001.rlrp");
+    let kept = tmp.path().join(olr_ui::REPLAYS_DIR).join("replay-001.olrp");
     let replay = olr_replay::Replay::decode(&std::fs::read(&kept).unwrap()).unwrap();
     assert_eq!(replay.ticks() as u64, ended + olr_game::drive::RECORD_AFTER_END, "the match and its end");
     // Rematch: the weapons are chosen again.

@@ -51,7 +51,7 @@ pub struct Made {
 }
 
 /// Re-simulates `record` from its start world and returns the encoded
-/// `.rlrp`, whose viewer is `viewer`: the slot of the peer that made it
+/// `.olrp`, whose viewer is `viewer`: the slot of the peer that made it
 /// (`None`: a spectator, or nobody).
 pub fn make(content: &Content, record: &MatchRecord, viewer: Option<u8>) -> anyhow::Result<Made> {
     let options = matches::resolve(content, &record.start)?;

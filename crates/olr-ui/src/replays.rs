@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use olr_replay::{HEADER_BYTES, Replay};
 
 /// A replay file's extension (`olr-replay`'s format).
-pub const EXTENSION: &str = "rlrp";
+pub const EXTENSION: &str = "olrp";
 
 /// Matches saved automatically, at most (the oldest go first).
 pub const MAX_AUTO_REPLAYS: usize = 20;
@@ -19,7 +19,7 @@ pub const MAX_LISTED: usize = 500;
 
 const AUTO_PREFIX: &str = "match-";
 
-/// Replays the player kept (the results' Save replay): `replay-NNN.rlrp`,
+/// Replays the player kept (the results' Save replay): `replay-NNN.olrp`,
 /// never removed automatically.
 const KEPT_PREFIX: &str = "replay-";
 
@@ -52,7 +52,7 @@ fn auto_number(name: &str) -> Option<u32> {
     if n.len() == 6 && n.bytes().all(|b| b.is_ascii_digit()) { n.parse().ok() } else { None }
 }
 
-/// The `.rlrp` files in `dir`, newest automatic saves first, then the
+/// The `.olrp` files in `dir`, newest automatic saves first, then the
 /// others by name, each with its header's problem; nothing when `dir`
 /// cannot be read.
 pub fn list(dir: &Path) -> Vec<ReplayFile> {
@@ -106,7 +106,7 @@ pub fn auto_save(dir: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
 }
 
 /// Saves `bytes` as a replay the player keeps in `dir` (created if
-/// missing): `replay-001.rlrp`, then the first number free. The automatic
+/// missing): `replay-001.olrp`, then the first number free. The automatic
 /// saves' cap never removes it.
 pub fn save_kept(dir: &Path, bytes: &[u8]) -> std::io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
@@ -130,8 +130,8 @@ mod tests {
         let dir = tmp.path().join("replays");
         let a = save_kept(&dir, b"a").unwrap();
         let b = save_kept(&dir, b"b").unwrap();
-        assert_eq!(a.file_name().unwrap(), "replay-001.rlrp");
-        assert_eq!(b.file_name().unwrap(), "replay-002.rlrp");
+        assert_eq!(a.file_name().unwrap(), "replay-001.olrp");
+        assert_eq!(b.file_name().unwrap(), "replay-002.olrp");
         for _ in 0..MAX_AUTO_REPLAYS + 3 {
             auto_save(&dir, b"m").unwrap();
         }
@@ -145,19 +145,19 @@ mod tests {
         let dir = tmp.path().join("replays");
         assert!(list(&dir).is_empty(), "no directory yet");
         std::fs::create_dir(&dir).unwrap();
-        std::fs::write(dir.join("mine.rlrp"), b"x").unwrap();
+        std::fs::write(dir.join("mine.olrp"), b"x").unwrap();
         std::fs::write(dir.join("notes.txt"), b"x").unwrap();
         for i in 0..MAX_AUTO_REPLAYS + 3 {
             let p = auto_save(&dir, &[i as u8; 3]).unwrap();
-            assert_eq!(p.file_name().unwrap(), format!("match-{:06}.rlrp", i + 1).as_str());
+            assert_eq!(p.file_name().unwrap(), format!("match-{:06}.olrp", i + 1).as_str());
         }
         let l = list(&dir);
         assert_eq!(l.len(), MAX_AUTO_REPLAYS + 1, "the player's file stays");
-        assert_eq!(l[0].name, format!("match-{:06}.rlrp", MAX_AUTO_REPLAYS + 3));
+        assert_eq!(l[0].name, format!("match-{:06}.olrp", MAX_AUTO_REPLAYS + 3));
         assert_eq!(l[0].bytes, 3);
-        assert_eq!(l.last().unwrap().name, "mine.rlrp");
-        assert_eq!(auto_number("match-000012.rlrp"), Some(12));
-        assert_eq!(auto_number("match-12.rlrp"), None);
+        assert_eq!(l.last().unwrap().name, "mine.olrp");
+        assert_eq!(auto_number("match-000012.olrp"), Some(12));
+        assert_eq!(auto_number("match-12.olrp"), None);
     }
 
     #[test]
@@ -168,10 +168,10 @@ mod tests {
         future.extend_from_slice(&(olr_replay::FORMAT_VERSION + 1).to_le_bytes());
         let mut good = olr_replay::MAGIC.to_vec();
         good.extend_from_slice(&olr_replay::FORMAT_VERSION.to_le_bytes());
-        std::fs::write(dir.join("a-future.rlrp"), &future).unwrap();
-        std::fs::write(dir.join("b-junk.rlrp"), b"junk").unwrap();
-        std::fs::write(dir.join("c-short.rlrp"), b"RLRP").unwrap();
-        std::fs::write(dir.join("d-good.rlrp"), &good).unwrap();
+        std::fs::write(dir.join("a-future.olrp"), &future).unwrap();
+        std::fs::write(dir.join("b-junk.olrp"), b"junk").unwrap();
+        std::fs::write(dir.join("c-short.olrp"), b"OLRP").unwrap();
+        std::fs::write(dir.join("d-good.olrp"), &good).unwrap();
         let l = list(dir);
         let problems: Vec<_> = l.iter().map(|r| r.problem.clone()).collect();
         assert!(problems[0].as_ref().is_some_and(|p| p.contains("version")), "{problems:?}");

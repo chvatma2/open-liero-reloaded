@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 use crate::nostr::{Event, KIND_ANNOUNCE, MAX_CONTENT};
 
 /// The `d` and `t` tag value of every announcement.
-pub const APP_TAG: &str = "rust-liero";
+pub const APP_TAG: &str = "open-liero-reloaded";
 /// How long an announcement lives (its NIP-40 expiration), in seconds.
 pub const ANNOUNCE_TTL: u64 = 180;
 /// How long a closing note lives, in seconds.

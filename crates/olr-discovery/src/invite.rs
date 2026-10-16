@@ -1,4 +1,4 @@
-//! Invite codes (N42): `rlx1…`, bech32m with HRP `rlx`.
+//! Invite codes (N42): `olr1…`, bech32m with HRP `olr`.
 //!
 //! The payload is postcard: `version: u8 = 1`, the host's 32-byte key, the
 //! relay hints and an optional IPv4 address (4 bytes and a 2-byte port).
@@ -23,7 +23,7 @@ use crate::defaults::DEFAULT_RELAYS;
 /// The longest invite code `decode` takes, in characters.
 pub const MAX_CODE: usize = 200;
 const VERSION: u8 = 1;
-const HRP: &str = "rlx";
+const HRP: &str = "olr";
 /// At most this many `Url` hints.
 pub const MAX_URL_HINTS: usize = 1;
 /// A `Url` hint is at most this many bytes.
@@ -123,14 +123,14 @@ impl Invite {
     pub fn decode(text: &str) -> Result<Invite, InviteError> {
         let text = text.trim();
         let prefix = text.get(..HRP.len() + 1).unwrap_or("");
-        if !prefix.eq_ignore_ascii_case("rlx1") {
+        if !prefix.eq_ignore_ascii_case("olr1") {
             return Err(InviteError::NotInvite);
         }
         if text.len() > MAX_CODE {
             return Err(InviteError::Invalid);
         }
         let checked = CheckedHrpstring::new::<Bech32m>(text).map_err(|_| InviteError::Damaged)?;
-        // `rlx1foo1…` with a valid checksum for HRP `rlx1foo` (bech32's
+        // `olr1foo1…` with a valid checksum for HRP `olr1foo` (bech32's
         // separator is the last `1`) is not ours.
         if !checked.hrp().as_str().eq_ignore_ascii_case(HRP) {
             return Err(InviteError::Damaged);

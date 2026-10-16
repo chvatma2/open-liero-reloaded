@@ -1,5 +1,5 @@
 # OpenLieroX at the commit pinned in content/olx-manifest.ron, plus the
-# rust-liero oracle test hooks (oracle-hooks.patch), built as a headless
+# OLR oracle test hooks (oracle-hooks.patch), built as a headless
 # dedicated server. `cargo xtask oracle-record` builds and runs this image.
 FROM ubuntu:22.04
 

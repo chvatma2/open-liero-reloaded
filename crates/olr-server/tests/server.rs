@@ -1038,7 +1038,7 @@ fn a_public_server_is_listed() {
     assert!(stun.answered() >= 1, "STUN asked from the game socket");
     let log = rig.log_text();
     assert!(!log.contains("81.2.69.142"), "never advertised: {log}");
-    assert!(log.contains("invite code (joins through the relays): rlx1"), "{log}");
+    assert!(log.contains("invite code (joins through the relays): olr1"), "{log}");
     let invite = printed_invite(&log).expect("the invite printed once settled");
     assert_eq!((invite.key, invite.addr), (key, None));
     assert_eq!(invite.relay_urls(), vec![relay.url()], "the configured relay");
@@ -1083,7 +1083,7 @@ fn the_invite_joins_the_server() {
         )),
         "{log}"
     );
-    assert!(log.contains("invite code: rlx1"), "{log}");
+    assert!(log.contains("invite code: olr1"), "{log}");
     let invite = printed_invite(&log).unwrap();
     assert_eq!(invite.key, key);
     assert_eq!(invite.addr, Some(SocketAddr::from(([127, 0, 0, 1], port))));
@@ -1134,7 +1134,7 @@ fn an_invite_server_is_not_announced() {
     let mut rig = Rig::new(dir, cfg);
     rig.run_until(Duration::from_secs(10), "the invite printed", |r| printed_invite(&r.log_text()).is_some());
     let log = rig.log_text();
-    assert!(log.contains("invite code (joins through the relays): rlx1"), "{log}");
+    assert!(log.contains("invite code (joins through the relays): olr1"), "{log}");
     assert_eq!(printed_invite(&log).unwrap().addr, None);
     assert!(!log.contains("10.1.2.3"), "STUN's answer is never advertised: {log}");
     assert!(stun.answered() >= 1);
@@ -1265,7 +1265,7 @@ fn an_invite_server_without_an_address_is_joined_through_nostr() {
     let key = rig.server().key();
     rig.run_until(Duration::from_secs(10), "the invite", |r| printed_invite(&r.log_text()).is_some());
     let log = rig.log_text();
-    assert!(log.contains("invite code (joins through the relays): rlx1"), "{log}");
+    assert!(log.contains("invite code (joins through the relays): olr1"), "{log}");
     let invite = printed_invite(&log).unwrap();
     assert_eq!((invite.key, invite.addr, invite.relay_urls()), (key, None, vec![relay.url()]));
     let c = rig.join_nostr(identity(), "Anna", &invite, false);
@@ -1589,12 +1589,12 @@ fn the_invite_waits_at_most_settle_wait_and_follows_the_address() {
     server.poll(later(), log);
     let first = String::from_utf8_lossy(log).into_owned();
     assert!(
-        first.contains("invite code (joins through the relays): rlx1"),
+        first.contains("invite code (joins through the relays): olr1"),
         "printed at SETTLE_WAIT: {first}"
     );
     assert!(!first.contains("reach: Port"), "before the router answered: {first}");
     let begun = Instant::now();
-    while !String::from_utf8_lossy(log).contains("\ninvite code: rlx1") {
+    while !String::from_utf8_lossy(log).contains("\ninvite code: olr1") {
         assert!(
             begun.elapsed() < Duration::from_secs(10),
             "the second invite: {}",

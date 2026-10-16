@@ -435,7 +435,7 @@ impl App {
         let path = crate::drive::record_path(base, self.saved);
         self.saved += 1;
         match std::fs::write(&path, r.encode()) {
-            Ok(()) => println!("olr-game: recorded {} ({} ticks)", path.display(), r.ticks()),
+            Ok(()) => println!("olr: recorded {} ({} ticks)", path.display(), r.ticks()),
             Err(e) => eprintln!("warning: recording {}: {e}", path.display()),
         }
     }
@@ -491,7 +491,7 @@ impl App {
             s.present.invalidate_gpu();
         }
         let egui = self.egui_state(&window, &gpu);
-        println!("olr-game: GPU {}", gpu.info);
+        println!("olr: GPU {}", gpu.info);
         self.stats.gpu = gpu.info.clone();
         self.win = Some(Shown { window, gpu, egui });
         // Creating the window counts as a change: a scripted `size` right
@@ -872,7 +872,7 @@ impl App {
             // (an autoplay's is: it checks what the picture shows).
             let shot = w.gpu.screenshot(world, &paint, &path);
             match &shot {
-                Ok(_) => println!("olr-game: wrote {} (tick {})", path.display(), self.ticks),
+                Ok(_) => println!("olr: wrote {} (tick {})", path.display(), self.ticks),
                 Err(e) => eprintln!("warning: screenshot {}: {e:#}", path.display()),
             }
             if let (Some(name), Some(a)) = (&name, &mut self.autoplay) {
@@ -909,7 +909,7 @@ impl App {
         }
         self.speed = if faster { self.speed.faster() } else { self.speed.slower() };
         self.rate.clear();
-        println!("olr-game: speed {}", self.speed.label());
+        println!("olr: speed {}", self.speed.label());
     }
 
     fn on_key(&mut self, el: &ActiveEventLoop, ev: &KeyEvent) -> anyhow::Result<()> {
@@ -986,7 +986,7 @@ impl App {
             }
             Effect::Action(a, pressed) => self.press(a, pressed),
             Effect::Quit => {
-                println!("olr-game: autoplay passed ({} frames)", self.frames);
+                println!("olr: autoplay passed ({} frames)", self.frames);
                 el.exit();
             }
             Effect::Fail(why) => self.fail(el, anyhow::anyhow!(why)),

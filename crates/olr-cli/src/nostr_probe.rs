@@ -5,9 +5,9 @@
 //! `StunResponder`.
 //!
 //! Every event the relay probe publishes is a probe event: a fresh random key
-//! per run (never the player's identity), the content `"rust-liero relay
-//! probe"`, tags `d` and `t` = `rust-liero-probe` (not the game's
-//! `rust-liero`, so game lists ignore it) and an expiration 10 minutes ahead.
+//! per run (never the player's identity), the content `"OLR relay
+//! probe"`, tags `d` and `t` = `open-liero-reloaded-probe` (not the game's
+//! `open-liero-reloaded`, so game lists ignore it) and an expiration 10 minutes ahead.
 //! Per relay the probe opens two connections and publishes two notes and one
 //! ephemeral event:
 //! 1. connects both;
@@ -41,10 +41,10 @@ use olr_discovery::{
 use olr_lobby::Identity;
 
 /// The content of every probe event.
-pub const PROBE_CONTENT: &str = "rust-liero relay probe";
+pub const PROBE_CONTENT: &str = "olr relay probe";
 /// The `d` and `t` tag of every probe event (game lists filter on
-/// `rust-liero`, so they never see it).
-pub const PROBE_TAG: &str = "rust-liero-probe";
+/// `open-liero-reloaded`, so they never see it).
+pub const PROBE_TAG: &str = "open-liero-reloaded-probe";
 /// Probe events expire this many seconds after their `created_at`.
 pub const PROBE_EXPIRY: u64 = 600;
 /// Between two polls of a pool.

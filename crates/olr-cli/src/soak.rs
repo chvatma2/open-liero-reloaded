@@ -378,7 +378,7 @@ fn keep_transport(
     std::fs::write(dir.join("failure.txt"), format!("{what}\n"))?;
     std::fs::write(dir.join("server.log"), log)?;
     for (i, bundle) in desync_bundles(data).iter().enumerate().take(8) {
-        let _ = std::fs::copy(bundle, dir.join(format!("desync-{i}.rlds")));
+        let _ = std::fs::copy(bundle, dir.join(format!("desync-{i}.olds")));
     }
     Ok(())
 }
@@ -392,7 +392,7 @@ fn desync_bundles(dir: &Path) -> Vec<PathBuf> {
         for p in paths {
             if p.is_dir() && depth < 4 {
                 walk(&p, depth + 1, found);
-            } else if p.extension().is_some_and(|e| e == "rlds") {
+            } else if p.extension().is_some_and(|e| e == "olds") {
                 found.push(p);
             }
         }

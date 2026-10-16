@@ -181,7 +181,7 @@ fn a_hostile_feed_is_filtered_and_bounded() {
         &key(2),
         now,
         KIND_ANNOUNCE,
-        vec![vec!["d".into(), "rust-liero".into()], vec!["f".into(), format!("{FP:016x}")]],
+        vec![vec!["d".into(), "open-liero-reloaded".into()], vec!["f".into(), format!("{FP:016x}")]],
         "x".repeat(MAX_CONTENT + 1),
         [1; 32],
     );
@@ -192,7 +192,7 @@ fn a_hostile_feed_is_filtered_and_bounded() {
         &key(3),
         now,
         KIND_ANNOUNCE,
-        vec![vec!["d".into(), "rust-liero".into()], vec!["f".into(), format!("{FP:016x}")]],
+        vec![vec!["d".into(), "open-liero-reloaded".into()], vec!["f".into(), format!("{FP:016x}")]],
         format!("{}{}", "[".repeat(2000), "]".repeat(2000)),
         [1; 32],
     );
@@ -240,7 +240,7 @@ fn sorting_sinks_no_answer() {
 fn the_subscription_filter_selects_announcements() {
     let f = GameList::filter();
     assert_eq!(f.kinds, [KIND_ANNOUNCE]);
-    assert_eq!(f.tags, [('t', vec!["rust-liero".to_string()])]);
+    assert_eq!(f.tags, [('t', vec!["open-liero-reloaded".to_string()])]);
     assert_eq!(f.since, None);
     assert_eq!(GameList::filter_since(1000).since, Some(820));
 }

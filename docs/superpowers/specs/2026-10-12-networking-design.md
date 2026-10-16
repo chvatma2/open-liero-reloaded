@@ -278,9 +278,9 @@ In order:
 
 ### 6.3 Invite codes and links
 
-- A short code (`rlx1…`, checksummed) holds the host's key, relay hints
+- A short code (`olr1…`, checksummed) holds the host's key, relay hints
   and optionally a direct address.
-- The same code in a link to the web build (`…/#rlx1…`) opens it and
+- The same code in a link to the web build (`…/#olr1…`) opens it and
   joins.
 - A game is **public** (announced), **LAN only** or **invite only**, with
   or without a password.
@@ -433,7 +433,7 @@ in-process host, in `check`.
 ### 9.10 Playtest aids and soak
 
 - The network overlay (§7.3).
-- `olr-game --net-sim <profile>` starts a host and a client on one machine
+- `olr --net-sim <profile>` starts a host and a client on one machine
   with a chosen profile.
 - Every desync in a real game saves a bundle.
 - `cargo xtask net-soak [--minutes N]`: long runs of §9.1 and §9.4 with

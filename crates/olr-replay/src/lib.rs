@@ -39,7 +39,7 @@ pub use record::Recorder;
 pub const FORMAT_VERSION: u16 = 3;
 
 /// The first bytes of every replay file.
-pub const MAGIC: [u8; 4] = *b"RLRP";
+pub const MAGIC: [u8; 4] = *b"OLRP";
 
 /// The header's size: [`MAGIC`] and the format version
 /// ([`Replay::check_header`]).

@@ -251,7 +251,7 @@ fn the_viewer_is_recorded() {
 fn replay_refuses_unknown_format_versions() {
     let (replay, _, _) = record(120, 5);
     let bytes = replay.encode();
-    assert_eq!(&bytes[..4], b"RLRP");
+    assert_eq!(&bytes[..4], b"OLRP");
     assert_eq!(u16::from_le_bytes([bytes[4], bytes[5]]), FORMAT_VERSION);
     let mut other = bytes.clone();
     other[4..6].copy_from_slice(&(FORMAT_VERSION + 1).to_le_bytes());
@@ -464,7 +464,7 @@ mod corrupt {
         /// Any bytes after a good header.
         #[test]
         fn decode_never_panics_on_junk(body in prop::collection::vec(any::<u8>(), 0..600)) {
-            let mut bytes = b"RLRP".to_vec();
+            let mut bytes = b"OLRP".to_vec();
             bytes.extend_from_slice(&FORMAT_VERSION.to_le_bytes());
             bytes.extend_from_slice(&body);
             let _ = Replay::decode(&bytes);

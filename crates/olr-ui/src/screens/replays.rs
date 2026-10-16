@@ -21,7 +21,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
             let label = ui.label("File");
             let w = (ui.available_width() - 100.0).max(80.0);
             let field =
-                egui::TextEdit::singleline(&mut data.replay_path).desired_width(w).hint_text("a .rlrp path");
+                egui::TextEdit::singleline(&mut data.replay_path).desired_width(w).hint_text("a .olrp path");
             ui.add(field).labelled_by(label.id);
             let path = data.replay_path.trim();
             play = ui.add_enabled(!path.is_empty(), egui::Button::new("Play file")).clicked();

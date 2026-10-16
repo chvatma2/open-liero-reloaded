@@ -837,12 +837,12 @@ mod tests {
         use crate::nostr::{FromRelay, encode_from_relay};
         let link = Link::new(0, "ws://x".into());
         let mut s = Session::new(&link, Timings::default());
-        let t = vec!["t".to_string(), "rust-liero".to_string()];
+        let t = vec!["t".to_string(), "open-liero-reloaded".to_string()];
         s.sent.insert(
             "s".into(),
             vec![Filter {
                 kinds: vec![31470],
-                tags: vec![('t', vec!["rust-liero".into()])],
+                tags: vec![('t', vec!["open-liero-reloaded".into()])],
                 ..Filter::default()
             }],
         );

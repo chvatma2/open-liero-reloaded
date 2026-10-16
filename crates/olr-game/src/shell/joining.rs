@@ -34,7 +34,7 @@ impl Shell {
     /// Joining from the Multiplayer screen (N46): `addr` is `host[:port]`
     /// as typed (the port defaults to the options' or `--port`; a name is
     /// looked up on a thread, [`Shell::poll_resolving`]), or an invite code
-    /// (`rlx1…`: its address first, then through its relays and this
+    /// (`olr1…`: its address first, then through its relays and this
     /// player's; its key expected, N42); none: through the relays alone to
     /// `expected_host` (a listed game without an address). With
     /// `expected_host` (a listed game's), a host of another key is refused
@@ -105,7 +105,7 @@ impl Shell {
         let endpoint =
             EndpointConfig { port: 0, impair: self.impair, ice: self.ice(ice), ..EndpointConfig::default() };
         let peer = OnlinePeer::start(role, endpoint, id, look, content, None, self.peer_content())?;
-        println!("olr-game: joining {what}");
+        println!("olr: joining {what}");
         self.net = Some(Net::new(peer, false));
         Ok(())
     }
@@ -185,7 +185,7 @@ impl Shell {
 }
 
 /// The invite code `text`, which the menus took for one (`is_invite`): a
-/// code with a typo in its `rlx1` prefix is damaged, not "not an invite
+/// code with a typo in its `olr1` prefix is damaged, not "not an invite
 /// code".
 fn decode_invite(text: &str) -> Result<Invite, olr_discovery::InviteError> {
     Invite::decode(text).map_err(|e| match e {
@@ -340,13 +340,13 @@ mod tests {
         list.iter().map(|a| a.parse().unwrap()).collect()
     }
 
-    /// Text the menus take for an invite code (olr-ui's `is_invite`: `rlx1`
-    /// or a long run of letters and digits) without the `rlx1` prefix has
+    /// Text the menus take for an invite code (olr-ui's `is_invite`: `olr1`
+    /// or a long run of letters and digits) without the `olr1` prefix has
     /// a typo there: "damaged", never "not an invite code".
     #[test]
     fn a_code_with_a_typo_in_its_prefix_is_damaged() {
         let code = olr_discovery::invite([1; 32], &[], None, 23400).encode();
-        let typo = code.replacen("rlx1", "rkx1", 1);
+        let typo = code.replacen("olr1", "okr1", 1);
         assert!(olr_ui::is_invite(&typo));
         assert_eq!(decode_invite(&typo).unwrap_err().to_string(), "this invite code is damaged");
         assert_eq!(decode_invite(&code).unwrap().key, [1; 32]);

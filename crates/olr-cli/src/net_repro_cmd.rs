@@ -1,4 +1,4 @@
-//! `olr-cli net-repro`: replays a desync bundle (`.rlds`) and names the first
+//! `olr-cli net-repro`: replays a desync bundle (`.olds`) and names the first
 //! diverging tick and world field.
 
 use std::path::PathBuf;

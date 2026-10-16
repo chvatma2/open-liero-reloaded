@@ -141,7 +141,7 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
     by the pool's per-relay limits (200 frames/s): call it from the host's
     network thread (olr-online's listener thread), never the UI thread.
 - **`turn_note`** (N52, N53): `KIND_TURN` 31471 (addressable), `TURN_TAG`
-  `rust-liero-turn` (tags `d` and `t`), `TurnNote { v (TURN_NOTE_V = 1),
+  `open-liero-reloaded-turn` (tags `d` and `t`), `TurnNote { v (TURN_NOTE_V = 1),
   addr (IPv4), port, region, capacity, load, user, pass }` as JSON.
   `turn_note(identity, note, now, ttl, aux)` (expiration now + ttl:
   `ANNOUNCE_TTL` for a live relay, `CLOSE_TTL` with capacity 0 when it
@@ -295,13 +295,13 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   `answered()`) is the test server;
   `stun::response` (same feature) is `olr_proto::stun::binding_response`.
 - **`invite`** (N42) and **`defaults`**: `Invite::{encode, decode, relay_urls}`,
-  `rlx1…` bech32m of a postcard `Wire` (version byte 1, key, `RelayHint`s,
+  `olr1…` bech32m of a postcard `Wire` (version byte 1, key, `RelayHint`s,
   IPv4 addr as 4 bytes + port). `decode` trims, takes all upper case (not
   mixed), refuses text over `MAX_CODE` (200) as `Invalid` (the `bech32`
   0.12 crate's own Bech32m limit is 1023, so the 90 limit is simply not
-  applied), text without the `rlx1` prefix is `NotInvite`, any checksum or
-  case failure, a plain-bech32 checksum or an HRP other than exactly `rlx`
-  (`rlx1foo1…` is HRP `rlx1foo`) `Damaged`, version above 1 `Newer` (checked before parsing),
+  applied), text without the `olr1` prefix is `NotInvite`, any checksum or
+  case failure, a plain-bech32 checksum or an HRP other than exactly `olr`
+  (`olr1foo1…` is HRP `olr1foo`) `Damaged`, version above 1 `Newer` (checked before parsing),
   version 0, bad postcard, trailing bytes or bad hints `Invalid`. Hints (PF12-6): at most
   3 `Default` and 1 `Url` (`wss://`/`ws://`, at most 64 bytes); a
   `Default` index beyond this build's list (a newer build's code) is

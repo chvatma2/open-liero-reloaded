@@ -266,9 +266,9 @@ pub struct Migration {
 /// Which invite line the host prints.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Code {
-    /// `invite code: rlx1…`: the code carries an address (waited for).
+    /// `invite code: olr1…`: the code carries an address (waited for).
     Address,
-    /// `invite code (joins through the relays): rlx1…`.
+    /// `invite code (joins through the relays): olr1…`.
     Relays,
 }
 
@@ -614,8 +614,8 @@ pub fn network_skip(err: &str) -> Option<String> {
 }
 
 /// The last invite code `olr-server` logged, and whether it carries an
-/// address (`invite code: rlx1…`, not `invite code (joins through the
-/// relays): rlx1…`).
+/// address (`invite code: olr1…`, not `invite code (joins through the
+/// relays): olr1…`).
 pub fn invite_code(log: &str) -> Option<(String, bool)> {
     log.lines().rev().find_map(|l| {
         let rest = &l[l.find("invite code")? + "invite code".len()..];
@@ -624,7 +624,7 @@ pub fn invite_code(log: &str) -> Option<(String, bool)> {
             None => (false, rest.strip_prefix(" (joins through the relays): ")?),
         };
         let code = code.split_whitespace().next()?;
-        code.starts_with("rlx1").then(|| (code.to_string(), with_address))
+        code.starts_with("olr1").then(|| (code.to_string(), with_address))
     })
 }
 
@@ -1612,10 +1612,10 @@ mod tests {
     #[test]
     fn invite_code_is_read_from_the_log() {
         let log = "2026-10-14 15:31:03 listening on port 23400 (TCP and UDP)\n\
-                   2026-10-14 15:31:04 invite code (joins through the relays): rlx1aaa\n";
-        assert_eq!(invite_code(log), Some(("rlx1aaa".to_string(), false)));
-        let later = format!("{log}2026-10-14 15:31:05 invite code: rlx1bbb\n");
-        assert_eq!(invite_code(&later), Some(("rlx1bbb".to_string(), true)));
+                   2026-10-14 15:31:04 invite code (joins through the relays): olr1aaa\n";
+        assert_eq!(invite_code(log), Some(("olr1aaa".to_string(), false)));
+        let later = format!("{log}2026-10-14 15:31:05 invite code: olr1bbb\n");
+        assert_eq!(invite_code(&later), Some(("olr1bbb".to_string(), true)));
         assert_eq!(invite_code("listening on port 23400\n"), None);
     }
 
@@ -1874,7 +1874,7 @@ mod tests {
         let mut seen = Seen {
             exit: Some(0),
             stdout: "path: relayed\nmatch 1: olx-classic\n".into(),
-            host_log: "x invite code (joins through the relays): rlx1a\njoin: b via relayed\nmatch end (time limit)\n"
+            host_log: "x invite code (joins through the relays): olr1a\njoin: b via relayed\nmatch end (time limit)\n"
                 .into(),
             relay_log: "t relay: TURN on port 3478\nt relay: 2 allocations\nt relay: 0 allocations\n".into(),
             host_exit: Some(0),
@@ -1898,7 +1898,7 @@ mod tests {
             exit: Some(0),
             stdout: "path: direct\n".into(),
             host_log:
-                "reach: Port 23400 is open on your router (PCP): x\ninvite code: rlx1b\nvia open port\n"
+                "reach: Port 23400 is open on your router (PCP): x\ninvite code: olr1b\nvia open port\n"
                     .into(),
             ..Seen::default()
         };
@@ -1906,7 +1906,7 @@ mod tests {
         let pmp = &scenario("nat-pmp").expect;
         let wrong = verdict(pmp, &mapped).join("; ");
         assert!(wrong.contains("(NAT-PMP)"), "PCP is not NAT-PMP: {wrong}");
-        let unmapped = Seen { host_log: "invite code (joins through the relays): rlx1c\n".into(), ..mapped };
+        let unmapped = Seen { host_log: "invite code (joins through the relays): olr1c\n".into(), ..mapped };
         let wrong = verdict(pcp, &unmapped).join("; ");
         assert!(wrong.contains("(PCP)") && wrong.contains("lacks an address"), "{wrong}");
     }
@@ -1923,7 +1923,7 @@ mod tests {
             other_exit: Some(0),
             other_stdout:
                 "path: relayed\nmigrated: succ hosts\npath: relayed\nmatch 1: x\n  checksum 10 aa\n  checksum 20 bb\n".into(),
-            host_log: "invite code (joins through the relays): rlx1a\n".into(),
+            host_log: "invite code (joins through the relays): olr1a\n".into(),
             relay_log: "relay: 1 allocations\n".into(),
             ..Seen::default()
         };

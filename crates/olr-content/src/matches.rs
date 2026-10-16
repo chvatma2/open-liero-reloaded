@@ -1,5 +1,5 @@
 //! Matches of humans and bots (plan 6 ruling R5): the one place a Deathmatch
-//! is assembled, so `olr-cli match` and `olr-game --mode deathmatch` cannot
+//! is assembled, so `olr-cli match` and `olr --mode deathmatch` cannot
 //! drift. A [`MatchOptions`] names the packs, the seed, the rules and who
 //! plays each worm; [`build_match`] gives the world, its bots (one shared
 //! area cache, thinking in worm order) and a started [`Recorder`].

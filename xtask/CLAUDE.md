@@ -232,7 +232,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   the toolchain links mingw's runtime statically; only system DLLs) and
   the content (re-copied only when `content.stamp`, its file count,
   bytes and newest modification time, changes) to
-  `%TEMP%\rust-liero-envelope` (`windows_temp()`: `cmd.exe /d /c echo
+  `%TEMP%\olr-envelope` (`windows_temp()`: `cmd.exe /d /c echo
   %TEMP%`, started in `/mnt/c`), the given files into its `replays/`;
   first it stops any process left running from the stage (an interrupted
   run would hold the exes). `run()` starts an exe there (the stage as its
@@ -246,7 +246,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   name), then the interop child is killed. The stage's path reaches the
   script in `OLR_STAGE` through `WSLENV`, never in its source (PowerShell
   also takes U+2018-U+201B as quotes), and `stop_target` refuses a path
-  that is not a `rust-liero-envelope` directory, so the user's own
+  that is not a `olr-envelope` directory, so the user's own
   processes are never touched. The ignored test
   `runs_fail_on_a_bad_exit_and_are_stopped_past_their_timeout` checks
   both on the real machine (`--run-ignored only`, after a stage). The
@@ -254,16 +254,16 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   and `vulkan`, failing when either run fails. On the user's machine: DX12
   and Vulkan both see the RTX 5070 Ti (and the AMD iGPU; DX12 also
   Microsoft's Basic Render Driver, a `Cpu` adapter), with timestamps on
-  both; `olr-game.exe --demo` writes its shots under the stage's `target/`. Nothing is left running; the
+  both; `olr.exe --demo` writes its shots under the stage's `target/`. Nothing is left running; the
   stage stays for the next run.
 - `dist [--no-verify]` (`dist.rs`): the portable release zips,
-  `target/release-zips/rust-liero-<version>-{linux,windows}-x64.zip` (`ZIP_DIR`; `VERSION`:
+  `target/release-zips/open-liero-reloaded-<version>-{linux,windows}-x64.zip` (`ZIP_DIR`; `VERSION`:
   xtask's, the workspace's; `zip_name`, `folder`). `olr-game` and
   `olr-server` are built with `cargo build --profile dist` (workspace
   `Cargo.toml`: release, `strip`, no debug info, panics unwinding),
   natively and for `winbuild::TARGET` (`winbuild::build_missing()` fails
   the command: both zips or none), staged in `target/dist-stage/` (removed
-  after) under one folder `rust-liero-<version>/`: the exes, the mingw
+  after) under one folder `open-liero-reloaded-<version>/`: the exes, the mingw
   DLLs an exe imports (`winbuild::mingw_imports`), `DOCS`, the example
   server config as `server.example.ron` (`files`) and `content/packs`
   without `import-report.ron` (`copy_content`). `write_zip` (the `zip`
@@ -273,15 +273,15 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   from cargo's `dist` profile output (`target/dist/`, swept by `tidy` as
   any profile). Verification (unless
   `--no-verify`): the Linux zip is unpacked into a fresh temporary
-  directory, `olr-game --help` run from another directory must show the
+  directory, `olr --help` run from another directory must show the
   content beside it as `--content`'s default, and `olr-server` (config
   `CHECK_CONFIG`: invite only, no relays, no STUN, port 0, two fill seats (the client and a bot),
   `min_players: 1`) must log its map (`next map:`), then start a match
   with the dev `olr-cli net-client --bot` joined (`match start:`), and stop
   cleanly on SIGTERM with no `bad_lines`. The Windows zip is unpacked into
-  `%TEMP%\rust-liero-envelope\dist` (`winbuild`'s stage, so
+  `%TEMP%\olr-envelope\dist` (`winbuild`'s stage, so
   `stop_stage_processes` reaches it) and run through interop
-  (`winbuild::run_in` for `olr-game.exe --help`; `olr-server.exe` until it
+  (`winbuild::run_in` for `olr.exe --help`; `olr-server.exe` until it
   logs its map, then stopped by path; no client: WSL cannot reach a
   Windows listener reliably); without interop (`winbuild::interop_missing`)
   a `skip` notice. Prints each zip's path and size.
@@ -463,7 +463,7 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `cargo xtask determinism [--wasm] [--windows] [--arm64] [--all]`: the golden
 bot matches of `fixtures/matches/` (`check`: only `mw-castlestrike-8chaos`;
 `--all` and the Windows and arm64 legs: all three) are recorded natively
-(`olr-cli match ... --record target/determinism/<stem>.rlrp --no-verify`,
+(`olr-cli match ... --record target/determinism/<stem>.olrp --no-verify`,
 flags read from the golden's `spec`), `olr-detcheck` prints their checksum
 streams (tick 0, every 10 ticks, the last) and each leg's stream must equal
 the native one (`compare`: the first differing `<file> <tick>`, or a length

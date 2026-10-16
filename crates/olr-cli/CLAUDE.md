@@ -40,7 +40,7 @@ The headless command-line tool. Its commands:
   from the content (round trip). `--coverage` prints weapons fired, actions
   triggered, events, bonuses, rope attachments and kills by the killer's
   selected weapon. A failure (a panic in a bot or the tick, an invariant, a
-  budget, a divergence) writes `<stem>.rlrp` and `<stem>.ron` (the spec, so
+  budget, a divergence) writes `<stem>.olrp` and `<stem>.ron` (the spec, so
   the seed, and the tick) to `target/failures/` (spec §7.3) and exits 1.
 - `olr-cli replay <file> [--until N] [--dump]` plays a replay on its content,
   checking every checksum; `--dump` prints the world (before tick N) as JSON.
@@ -52,7 +52,7 @@ The headless command-line tool. Its commands:
 - `olr-cli stress [--mod M] [--level L] [--worms 32] [--pool 3000] [--seconds
   180] [--seed S] [--render-every 100] [--render-width W --render-height H]
   [--no-verify] [--fx-cap 16384] [--build-every 0] [--memory-ceiling-mib
-  4096] [--record f.rlrp] [--personality chaos|dm] [--out report.ron]`: the
+  4096] [--record f.olrp] [--personality chaos|dm] [--out report.ron]`: the
   engine stress test (plan 7 task 8, `stress.rs`;
   `stress::Config::new(spec)` gives the defaults): `stress::spec` (32 bots,
   mixed difficulties, `LoadingTime` 0, bonuses every `BONUS_FREQUENCY` s, no
@@ -261,7 +261,7 @@ The headless command-line tool. Its commands:
   summary, a failing case kept and counted (and the cap), the error
   writer's round trip, `TransportSpec` through RON and a real outage match; `netsim`'s unit
   tests pin the excused windows, the negative twins included.
-- `olr-cli net-client --bot (--join <host[:port]> | --invite rlx1… | --key
+- `olr-cli net-client --bot (--join <host[:port]> | --invite olr1… | --key
   <64 hex> | --listed "<name>") [--relay URL]... [--stun host:port]...
   [--turn user:pass@host:port]... [--no-nostr-turn] [--region R]
   [--allow-local] [--lobby-only] [--no-standby] [--difficulty
@@ -386,8 +386,8 @@ The headless command-line tool. Its commands:
   `MAX_HANDSHAKE_CONTENT` (16 KiB of random base64, `probe_handshake`)
   forwarded from the first to the second. Every event is a
   probe event: a fresh random key per run (`probe_key`, never the player's
-  identity), content `"rust-liero relay probe"` (the handshake's random),
-  tags `d` and `t` = `rust-liero-probe`, expiry 10 minutes ahead
+  identity), content `"olr relay probe"` (the handshake's random),
+  tags `d` and `t` = `open-liero-reloaded-probe`, expiry 10 minutes ahead
   (`probe_event`). A relay passes when it accepts both notes, keeps them
   (both reads), forwards and refuses nothing
   for payment or auth (`needs_payment_or_auth`: `restricted:`,
@@ -592,4 +592,4 @@ one migration named alike by all to a client, the bots playing on there,
 the verdict above, the server's rows as it went at least 500 ticks;
 about 24 s each (fails with the clients' migration off: all dropped).
 
-**Desync bundles** (`bundle.rs`, `BUNDLE_VERSION` 3: 2 for `NetSpec`'s migration fields, 3 for withdrawals, plan 12d): `.rlds` files from `net-sim` (and, in plan 10, real games); `olr-cli net-repro <file>` names the first diverging tick and world field. `net-sim` writes them to `--failures` when a client reports a desync (`netsim::run_with`; `NetSpec::faults` plants one: `(peer, host tick, worm, health)`). A bundle's `gone` holds the peer's withdrawals below its rows' end (`InputLog::gone_marks`, taken at the desync and again when the state loads, with the rows); `reproduce` withdraws each before its tick, as the harness's offline replay does. A state diff lists the first differing path of every differing `WorldState` field, in its declaration order (`worms[3].health, ents`; `bundle::FIELDS`, kept equal to the real field set by a test), so the cause is read from the whole list, not the first entry.
+**Desync bundles** (`bundle.rs`, `BUNDLE_VERSION` 3: 2 for `NetSpec`'s migration fields, 3 for withdrawals, plan 12d): `.olds` files from `net-sim` (and, in plan 10, real games); `olr-cli net-repro <file>` names the first diverging tick and world field. `net-sim` writes them to `--failures` when a client reports a desync (`netsim::run_with`; `NetSpec::faults` plants one: `(peer, host tick, worm, health)`). A bundle's `gone` holds the peer's withdrawals below its rows' end (`InputLog::gone_marks`, taken at the desync and again when the state loads, with the rows); `reproduce` withdraws each before its tick, as the harness's offline replay does. A state diff lists the first differing path of every differing `WorldState` field, in its declaration order (`worms[3].health, ents`; `bundle::FIELDS`, kept equal to the real field set by a test), so the cause is read from the whole list, not the first entry.

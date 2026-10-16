@@ -1,6 +1,6 @@
 //! The native Windows build (plan 8): `olr-cli` and `olr-game`
 //! cross-compiled for `x86_64-pc-windows-gnu` with mingw-w64, staged with
-//! the content in Windows' temp directory (`%TEMP%\rust-liero-envelope`)
+//! the content in Windows' temp directory (`%TEMP%\olr-envelope`)
 //! and run from WSL through interop: nothing is installed on Windows.
 //! Interop forwards only the variables `WSLENV` names, so `run` adds them.
 //! A run that outlives its timeout is stopped on the Windows side too, by
@@ -34,11 +34,11 @@ pub const STOP_SCRIPT: &str = "if (-not $env:OLR_STAGE) { exit 2 }; \
 /// A generous bound for one run (an envelope point takes a minute or two):
 /// past it `run` stops the process and fails.
 pub const RUN_TIMEOUT: Duration = Duration::from_secs(10 * 60);
-pub const EXES: [&str; 3] = ["olr-cli.exe", "olr-game.exe", "olr-detcheck.exe"];
+pub const EXES: [&str; 3] = ["olr-cli.exe", "olr.exe", "olr-detcheck.exe"];
 /// mingw's runtime DLLs an exe may import; copied beside it when it does.
 pub const MINGW_DLLS: [&str; 3] = ["libwinpthread-1.dll", "libgcc_s_seh-1.dll", "libstdc++-6.dll"];
 /// The stage's directory name in `%TEMP%`.
-pub const STAGE: &str = "rust-liero-envelope";
+pub const STAGE: &str = "olr-envelope";
 
 fn tail(text: &str, n: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
@@ -251,7 +251,7 @@ pub struct Stage {
 }
 
 /// Copies the exes (with any mingw DLL they import), the content (when it
-/// changed) and `files` (into `replays/`) to `%TEMP%\rust-liero-envelope`.
+/// changed) and `files` (into `replays/`) to `%TEMP%\olr-envelope`.
 pub fn stage(release: &Path, content: &Path, files: &[PathBuf]) -> Result<Stage, String> {
     let dir = windows_temp()?.join(STAGE);
     std::fs::create_dir_all(dir.join("replays")).map_err(|e| format!("{}: {e}", dir.display()))?;
@@ -469,9 +469,8 @@ mod tests {
     #[test]
     fn stage_paths_map_back_to_windows() {
         assert_eq!(
-            to_windows_path(Path::new("/mnt/c/Users/Martin/AppData/Local/Temp/rust-liero-envelope"))
-                .as_deref(),
-            Some("C:\\Users\\Martin\\AppData\\Local\\Temp\\rust-liero-envelope")
+            to_windows_path(Path::new("/mnt/c/Users/Martin/AppData/Local/Temp/olr-envelope")).as_deref(),
+            Some("C:\\Users\\Martin\\AppData\\Local\\Temp\\olr-envelope")
         );
         assert_eq!(to_windows_path(Path::new("/mnt/d")).as_deref(), Some("D:\\"));
         assert_eq!(to_windows_path(Path::new("/home/martin")), None);
@@ -488,7 +487,7 @@ mod tests {
         // Every quote PowerShell knows in the path: it goes through the
         // variable, never into the script's source.
         for q in ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'] {
-            let path = format!("C:\\Users\\O{q}Neil{q}) }} | % {{ 1 }} #\\Temp\\rust-liero-envelope\\");
+            let path = format!("C:\\Users\\O{q}Neil{q}) }} | % {{ 1 }} #\\Temp\\olr-envelope\\");
             assert_eq!(stop_target(&path), Some(&path[..path.len() - 1]));
             assert!(!STOP_SCRIPT.contains("Neil"), "{q}");
         }
@@ -496,7 +495,7 @@ mod tests {
         // Never a drive or any directory that is not a stage.
         assert_eq!(stop_target("C:\\"), None);
         assert_eq!(stop_target("C:\\Users\\Martin\\AppData\\Local\\Temp"), None);
-        assert_eq!(stop_target("C:\\x\\rust-liero-envelope-not"), None);
+        assert_eq!(stop_target("C:\\x\\olr-envelope-not"), None);
     }
 
     #[test]
@@ -530,7 +529,7 @@ mod tests {
         assert!(err.contains("failed (exit status: "), "{err}");
 
         let game = ["--no-sound", "--content", "content", "--data-dir", "data"].map(String::from);
-        let err = run(&stage, "olr-game.exe", &game, &[], Duration::from_secs(5)).unwrap_err();
+        let err = run(&stage, "olr.exe", &game, &[], Duration::from_secs(5)).unwrap_err();
         assert!(err.ends_with("did not finish within 5 s; stopped 1 process(es) under the stage"), "{err}");
         // Nothing is left: another stop finds none.
         assert_eq!(stop_stage_processes(&stage.dir), Ok(0));

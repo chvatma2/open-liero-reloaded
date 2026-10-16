@@ -225,7 +225,7 @@ pub const MAX_RELAYS: usize = 32;
 impl Default for Config {
     fn default() -> Self {
         Config {
-            name: "rust-liero server".into(),
+            name: "OLR server".into(),
             visibility: Visibility::Public,
             password: None,
             port: DEFAULT_PORT,

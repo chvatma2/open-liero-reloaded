@@ -67,7 +67,7 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
   world as `match_setup` does (the mod from `load_mod`).
 - **Matches** (`matches.rs`, plan 6 ruling R5): `build_match(MatchAssets,
   &MatchOptions) -> BuiltMatch` (or `Content::build_match`) is the one
-  assembly of a Deathmatch, used by `olr-cli match` and `olr-game --mode
+  assembly of a Deathmatch, used by `olr-cli match` and `olr --mode
   deathmatch`: `players[i]` is `Player::Human` (random enabled weapons:
   the command line's games), `Player::HumanWith(weapons)` (the weapon
   selection's choice, refused unless the restrictions enable each; the

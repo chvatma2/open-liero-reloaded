@@ -1,6 +1,6 @@
 //! `olr-game`: the menus (M7), or straight into the sandbox (spec §19 E11),
 //! a Deathmatch against bots (M6) or a replay when the command line names
-//! one. Run `olr-game --help`.
+//! one. Run `olr --help`.
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -64,7 +64,7 @@ enum Filter {
     Sharp,
 }
 
-/// rust-liero: the menus; or, when a flag below chooses a game, straight
+/// OLR: the menus; or, when a flag below chooses a game, straight
 /// into the sandbox (you and idle targets on a level, with a mod's
 /// weapons), a Deathmatch against bots (`--mode deathmatch`) or a replay
 /// (`--replay`). Arrows move and aim, Ctrl fires, Alt jumps, X throws the
@@ -73,7 +73,7 @@ enum Filter {
 /// or quits. With the menus, --fullscreen, --uncapped, --filter and
 /// --no-interp win over the options for the run (they are not saved).
 #[derive(clap::Parser)]
-#[command(name = "olr-game")]
+#[command(name = "olr")]
 struct Args {
     /// What to play (the sandbox when another flag chooses a game).
     #[arg(long, value_enum)]
@@ -323,7 +323,7 @@ fn direct(
         Game::Replay(r) => format!("replay of {:.1} s", f64::from(r.ticks()) / 100.0),
         Game::Online { start, .. } => format!("online match seed {}", start.seed),
     };
-    println!("olr-game: {what}: {} on {}, {} worms", assets.mod_id, assets.level_id, assets.worms());
+    println!("olr: {what}: {} on {}, {} worms", assets.mod_id, assets.level_id, assets.worms());
     let mut shell = Shell::playing(cfg, assets, session);
     // The HUD's layout flag (no file: the other video flags are the
     // config's).
@@ -381,7 +381,7 @@ fn menus(args: &Args, audio: olr_audio::Audio, mut cfg: ShellConfig, flags: Over
             .map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32)
     };
     let data = store.dir().map_or("none (nothing is saved)".to_string(), |d| d.display().to_string());
-    println!("olr-game: menus; content {}, data {data}", args.content.display());
+    println!("olr: menus; content {}, data {data}", args.content.display());
     let file = settings.value.video.clone();
     flags.apply(&mut settings.value.video);
     cfg.interpolation = video::interpolation(settings.value.video.interpolation);
@@ -442,7 +442,7 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     } else {
         menus(&args, audio, shell_cfg, flags)
     };
-    println!("olr-game: audio {}", if silent { "silent" } else { "opened" });
+    println!("olr: audio {}", if silent { "silent" } else { "opened" });
     let osrelease = wsl::osrelease();
     let backend = std::env::var("WGPU_BACKEND").ok();
     let mut filter = match args.filter {
@@ -482,11 +482,11 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     let wayland = is_wayland(&event_loop);
     let mut app = App::new(cfg, shell, silent, gilrs, autoplay);
     let ran = event_loop.run_app(&mut app);
-    println!("olr-game: {}", app.summary());
+    println!("olr: {}", app.summary());
     if let Some(m) = app.match_summary() {
-        println!("olr-game: {m}");
+        println!("olr: {m}");
     }
-    println!("olr-game: {}", app.latency_summary());
+    println!("olr: {}", app.latency_summary());
     if let Some(path) = &args.frame_log {
         let log = app.frame_log(args.frame_log_skip);
         let text = ron::ser::to_string_pretty(&log, ron::ser::PrettyConfig::default())?;
@@ -515,7 +515,7 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
                 return Err(e);
             }
             match autoplay {
-                Some(Ok(())) => println!("olr-game: autoplay passed"),
+                Some(Ok(())) => println!("olr: autoplay passed"),
                 Some(Err(why)) => anyhow::bail!(why),
                 None => {}
             }

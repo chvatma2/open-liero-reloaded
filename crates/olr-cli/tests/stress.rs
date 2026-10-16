@@ -50,7 +50,7 @@ fn the_bench_knobs_measure_without_changing_the_match() {
     let plain =
         stress::run(&content, &Config { verify: false, ..Config::new(spec.clone()) }, &mut |_| {}).unwrap();
     let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("stress.rlrp");
+    let file = dir.path().join("stress.olrp");
     let cfg = Config {
         verify: false,
         fx_capacity: olr_fx::MAX_ENTITIES,
@@ -131,7 +131,7 @@ fn a_replay_plays_only_on_its_own_assets() {
     for (level, other) in
         [("olx-level-dirt-level", "olx-level-castlestrike"), ("gen-256x256-a1-s1", "gen-256x256-a1-s2")]
     {
-        let file = tmp.path().join(format!("{level}.rlrp"));
+        let file = tmp.path().join(format!("{level}.olrp"));
         let spec = stress::spec("olx-classic", level, 2, 3000, 0.5, 1);
         stress::run(
             &content,

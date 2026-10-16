@@ -1,9 +1,9 @@
-//! The `.rlpk` pack archive (plan 11 decision N29): a pack as one byte
+//! The `.olpk` pack archive (plan 11 decision N29): a pack as one byte
 //! stream, for download.
 //!
 //! Format, all integers little-endian:
 //!
-//! - the magic [`MAGIC`] (`RLPK1\n`);
+//! - the magic [`MAGIC`] (`OLPK1\n`);
 //! - a `u32` file count;
 //! - per file, sorted by path in strictly increasing byte order: a `u16`
 //!   path length, the UTF-8 [`VPath`], a `u64` length and the bytes.
@@ -47,7 +47,7 @@ use olr_vfs::{ContentSink, ContentSource, VPath, non_portable, walk};
 use crate::{MAX_FILE_BYTES, PackError};
 
 /// The first bytes of every archive.
-pub const MAGIC: &[u8; 6] = b"RLPK1\n";
+pub const MAGIC: &[u8; 6] = b"OLPK1\n";
 /// The most bytes an archive may have (a skin's archive has a smaller limit,
 /// the caller's [`Limits`]).
 pub const MAX_ARCHIVE: u64 = 512 << 20;

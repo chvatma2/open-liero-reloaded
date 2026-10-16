@@ -9,7 +9,7 @@ publish.workspace = true
 autotests = false
 
 [[bin]]
-name = "olr-game"
+name = "olr"
 path = "src/main.rs"
 
 [dependencies]

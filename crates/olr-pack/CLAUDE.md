@@ -51,7 +51,7 @@ header's size); content hashing; validation.
   level's `thumb.png` (plan 7 G6).
 
 - **Archive** (`archive`, plan 11 N29): `encode(src)` / `decode(reader, sink, &Limits)`
-  of the `.rlpk` format (`RLPK1\n`, `u32` count, then per file sorted by path a
+  of the `.olpk` format (`OLPK1\n`, `u32` count, then per file sorted by path a
   `u16` path length, the path, a `u64` length and the bytes; no compression;
   deterministic). `decode` streams (one file in memory), refuses bad paths
   (backslash, `..`, absolute, a name starting with `.`, over `MAX_ARCHIVE_PATH`,

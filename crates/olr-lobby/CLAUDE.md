@@ -16,9 +16,9 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
   is pinned by a test. `DtlsFingerprints` = (offer side's, answer
   side's) SHA-256 certificate fingerprints, the same at both ends of a
   link (olr-net's `dtls_fingerprints`). `challenge_message(nonce, host,
-  fps)` is `b"rust-liero join v1" ++ host nonce ++ host key ++ fps.0 ++
+  fps)` is `b"olr join v1" ++ host nonce ++ host key ++ fps.0 ++
   fps.1`, what a joiner signs; `host_proof_message(client_nonce, client,
-  fps)` is `b"rust-liero host v1" ++ joiner nonce ++ joiner key ++ fps.0
+  fps)` is `b"olr host v1" ++ joiner nonce ++ joiner key ++ fps.0
   ++ fps.1`, what the host signs (N37); `password_proof(nonce, client,
   fps, password)` is `SHA-256(host nonce ++ joiner key ++ fps.0 ++ fps.1
   ++ password)`, bound to the joiner and the link so a relayed proof fails

@@ -1,4 +1,4 @@
-//! The `.rlpk` pack archive (plan 11 decision N29).
+//! The `.olpk` pack archive (plan 11 decision N29).
 
 use olr_pack::archive::{self, ArchiveError};
 use olr_vfs::{ContentSource, DirFs, MemFs};

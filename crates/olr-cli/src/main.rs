@@ -1,4 +1,4 @@
-//! `olr-cli`: headless tools for rust-liero. Run `olr-cli --help`.
+//! `olr-cli`: headless tools for OLR. Run `olr-cli --help`.
 
 mod gpu_bench_cmd;
 mod import;
@@ -22,7 +22,7 @@ use std::process::ExitCode;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
-#[command(name = "olr-cli", about = "Headless tools for rust-liero")]
+#[command(name = "olr-cli", about = "Headless tools for Open Liero Reloaded")]
 struct Cli {
     #[command(subcommand)]
     command: Command,
@@ -50,7 +50,7 @@ enum Command {
     /// code, key or listed name), plays its matches, prints its path and each match's
     /// confirmed checksums; exits with status 1 if it was dropped.
     NetClient(net_client_cmd::Args),
-    /// Replays a desync bundle (`.rlds`) and names the first diverging tick and world field;
+    /// Replays a desync bundle (`.olds`) and names the first diverging tick and world field;
     /// exits with status 1 if anything differs from the recording.
     NetRepro(net_repro_cmd::Args),
     /// Play a recorded match, checking its checksums; exits with status 1 on a mismatch.

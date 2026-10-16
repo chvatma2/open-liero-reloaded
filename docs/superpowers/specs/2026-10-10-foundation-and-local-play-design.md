@@ -381,7 +381,7 @@ There are two tiers:
 | Render goldens | Offscreen wgpu rendering with a software adapter (lavapipe/llvmpipe) of fixed scenario states: each level, skin colorization, HUD states, classic effects. Perceptual diff against committed PNGs; diff images written on failure | full |
 | Scene snapshots | `olr-scene` `DrawList` snapshots, which need no GPU | check |
 | GUI flows | `egui_kittest` drives menus by label: Local Play → mod → level → bots → start; then the results screen. Asserts app state and takes snapshot images | full |
-| End to end | `olr-game --autoplay <script.ron> --fake-clock` on a virtual display (Xvfb): menu → bot match → results, with screenshots at checkpoints. Asserts a clean structured log | full |
+| End to end | `olr --autoplay <script.ron> --fake-clock` on a virtual display (Xvfb): menu → bot match → results, with screenshots at checkpoints. Asserts a clean structured log | full |
 | Benchmarks | `divan`: tick time with 3000 projectiles, `DrawList` build, render frame time. CI fails on a regression over 10% against the stored baseline | full |
 
 ### 7.1 Bot matches
@@ -911,7 +911,7 @@ Made precise while implementing replays (plan 6 task 6):
   world for that last checksum and checks it saw every tick. A mismatch at
   tick 0 is a different setup or content; a later one reports the
   checksum's tick: the divergence is in the 100 ticks before it.
-- **Format:** `RLRP`, a `u16` version (1), postcard; keys stored by worm and
+- **Format:** `OLRP`, a `u16` version (1), postcard; keys stored by worm and
   deflated. One minute of 8 worms is at most 50 000 bytes whatever the keys
   (8 bots on Classic: about 12.6 KB). Other versions are refused.
 
@@ -1002,10 +1002,10 @@ task 2):
   commands without a window, so starts with missing content and rapid
   actions are tested headless. Esc is Back everywhere (in game it pauses);
   F5 restarts in place.
-- **Replays screen** (not in G1's list): the `.rlrp` files in the data
+- **Replays screen** (not in G1's list): the `.olrp` files in the data
   directory's `replays/` and any file by path, played with the game's
   replay session. Every Deathmatch played from the menus is saved there
-  when it ends, restarts or the game quits (`match-NNNNNN.rlrp`, the last
+  when it ends, restarts or the game quits (`match-NNNNNN.olrp`, the last
   20; a player's own files are never removed).
 - **Local play** sets the mod, the level (a grid of thumbnails; a level
   without `thumb.png` shows its name and size), OLX's `Lives`,

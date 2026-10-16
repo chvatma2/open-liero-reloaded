@@ -38,7 +38,7 @@ pub const CREDITS: &[(&str, &[&str])] = &[
 
 /// The licenses (spec §11).
 pub const LICENSES: &[&str] = &[
-    "rust-liero is free software under the GNU General Public License, version 3 or later \
+    "Open Liero Reloaded is free software under the GNU General Public License, version 3 or later \
      (GPL-3.0-or-later).",
     "OpenLieroX's code is under the GNU Lesser General Public License (LGPL, version 2 or later), \
      which permits its use under the GPL.",
@@ -94,7 +94,7 @@ pub(super) fn show(ui: &mut Ui, data: &MenuData, out: &mut Vec<UiAction>) {
     let mut ui = page(ui, "About", WIDTH, out);
     ScrollArea::vertical().id_salt("about").show(&mut ui, |ui| {
         ui.vertical_centered(|ui| {
-            let version = format!("rust-liero {}", env!("CARGO_PKG_VERSION"));
+            let version = format!("Open Liero Reloaded {}", env!("CARGO_PKG_VERSION"));
             ui.label(RichText::new(version).size(22.0).strong());
             ui.label("A remake of OpenLieroX in Rust: its levels, mods and skins, played as it plays them.");
         });

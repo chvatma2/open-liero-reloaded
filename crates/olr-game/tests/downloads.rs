@@ -196,7 +196,7 @@ fn a_replay_of_a_downloaded_level_plays_back() {
 
     // Not downloaded: refused, naming the level.
     let bare = tempfile::tempdir().unwrap();
-    let file = bare.path().join("match.rlrp");
+    let file = bare.path().join("match.olrp");
     std::fs::write(&file, replay.encode()).unwrap();
     let mut sh = shell(bare.path());
     play(&mut sh, &file);
@@ -244,7 +244,7 @@ fn a_command_line_replay_reads_the_caches_without_opening_them() {
     }
     let replay = s.take_replay().expect("a Deathmatch records");
     let partial = partial_content(&dir, &[LEVEL]);
-    let file = partial.path().join("match.rlrp");
+    let file = partial.path().join("match.olrp");
     std::fs::write(&file, replay.encode()).unwrap();
 
     let data = tempfile::tempdir().unwrap();

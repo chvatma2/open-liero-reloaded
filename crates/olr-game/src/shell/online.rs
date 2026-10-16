@@ -309,7 +309,7 @@ impl Shell {
         )?;
         host.lobby().set_spectate(true);
         let port = host.local_port();
-        println!("olr-game: net-sim {}: a host on port {port} with {NET_SIM_BOTS} bots", profile.name);
+        println!("olr: net-sim {}: a host on port {port} with {NET_SIM_BOTS} bots", profile.name);
         self.sim_host = Some(PeerHandle::pumped(host));
         self.impair = Some(profile);
         self.join_from_flag(&format!("127.0.0.1:{port}"));
@@ -429,7 +429,7 @@ impl Shell {
             self.peer_content(),
         )
         .map_err(|e| anyhow::anyhow!("cannot host on port {port}: {e}"))?;
-        println!("olr-game: hosting on port {}", peer.local_port());
+        println!("olr: hosting on port {}", peer.local_port());
         let mut n = Net::new(peer, true);
         n.setup_packs = Some((key, packs));
         n.password = !prefs.password.is_empty();
@@ -640,7 +640,7 @@ impl Shell {
     /// would draw its start world), then the menus return to Multiplayer
     /// with `why`.
     fn lost(&mut self, why: String, out: &mut Vec<Outcome>) {
-        eprintln!("olr-game: online: {why}");
+        eprintln!("olr: online: {why}");
         self.end();
         self.close_hosted();
         if let Some(p) = self.net.take().and_then(|n| n.peer) {
@@ -667,7 +667,7 @@ impl Shell {
     /// watches until the next one.
     fn migrated(&mut self, host: &str, me: bool, out: &mut Vec<Outcome>) {
         let text = if me { "You are now hosting".to_string() } else { format!("{host} is now hosting") };
-        println!("olr-game: migration: {text}");
+        println!("olr: migration: {text}");
         let late =
             !me && self.plays_online() && self.with_peer(|p| p.match_session().is_none()) == Some(true);
         // The new host's lobby: still in its match (a start will come to
@@ -692,7 +692,7 @@ impl Shell {
         self.chat_line(LogLine::event(text));
         if late {
             let text = late_rejoin(host, playing);
-            println!("olr-game: migration: {text}");
+            println!("olr: migration: {text}");
             self.chat_line(LogLine::event(text));
             if playing {
                 if let Some(n) = &mut self.net {
@@ -731,7 +731,7 @@ impl Shell {
     fn host_lost(&mut self, why: olr_online::LostWhy, out: &mut Vec<Outcome>) {
         // Ruling FR12c-4: each reason its own text on the Host lost screen.
         let why = why.to_string();
-        println!("olr-game: migration: host lost: {why}");
+        println!("olr: migration: host lost: {why}");
         // A host lost is this player's own step-down (N70) or cut-off (SB-2).
         let hosting = self.net.as_ref().is_some_and(|n| n.host);
         self.end();
@@ -827,7 +827,7 @@ impl Shell {
                         && let Some(n) = self.net.as_mut().filter(|n| n.migrating.is_some())
                     {
                         n.migrating = None;
-                        println!("olr-game: migration: {text}");
+                        println!("olr: migration: {text}");
                     }
                     self.chat_line(LogLine::event(text));
                 }
@@ -877,10 +877,10 @@ impl Shell {
                 // A join to a successor during a migration (plan 12c Task
                 // 7) is the console's: the menus wait for no join.
                 OnlineEvent::Joining(step) if self.net.as_ref().is_some_and(|n| n.migrating.is_some()) => {
-                    println!("olr-game: migration: {step}");
+                    println!("olr: migration: {step}");
                 }
                 OnlineEvent::Joining(step) => {
-                    println!("olr-game: {step}");
+                    println!("olr: {step}");
                     self.data.joining = Some(step.to_string());
                 }
                 OnlineEvent::Reachability(r) => self.reached(r),
@@ -888,20 +888,20 @@ impl Shell {
                 // the host's lobby and on its console.
                 OnlineEvent::RelayJoin { join, more } => {
                     let text = join.line(more);
-                    println!("olr-game: relays: {text}");
+                    println!("olr: relays: {text}");
                     self.chat_line(LogLine::event(text));
                 }
                 // B-M4: which of the hosted game's relays fails.
-                OnlineEvent::ListenRelay { url, status } => println!("olr-game: relay {url}: {status}"),
+                OnlineEvent::ListenRelay { url, status } => println!("olr: relay {url}: {status}"),
                 OnlineEvent::Connected { path, remote } => {
-                    println!("olr-game: {}", path_text(path, remote));
+                    println!("olr: {}", path_text(path, remote));
                     self.poll_connection();
                 }
                 // Plan 12c: the host is gone and the match moves; the HUD's
                 // top line says where to, until the handover.
                 OnlineEvent::Migrating(step) => {
                     let text = step.to_string();
-                    println!("olr-game: migration: {text}");
+                    println!("olr: migration: {text}");
                     if let Some(n) = &mut self.net {
                         n.migrating = Some(text);
                     }
@@ -910,7 +910,7 @@ impl Shell {
                 OnlineEvent::HostLost(why) => return self.host_lost(why, out),
                 // Ruling FR12c-4: each attempt to reach a successor, and a
                 // join the migrated lobby refused, on the console only.
-                OnlineEvent::MigrationLog(text) => println!("olr-game: migration: {text}"),
+                OnlineEvent::MigrationLog(text) => println!("olr: migration: {text}"),
             }
         }
     }
@@ -951,7 +951,7 @@ impl Shell {
         let downloads = n.downloads.clone();
         if host {
             for line in net::path_news(&mut n.paths_said, &state.members) {
-                println!("olr-game: {line}");
+                println!("olr: {line}");
             }
             // The level's name from the peer's content (`weapons` holds it).
             let level = &state.setup.level_id;
@@ -1093,7 +1093,7 @@ impl Shell {
             n.meter.clear();
         }
         let watch = if my_slot.is_some() { "plays" } else { "watches" };
-        println!("olr-game: online match seed {}: this player {watch}", start.seed);
+        println!("olr: online match seed {}: this player {watch}", start.seed);
         out.extend(self.act(UiAction::MatchStarted));
         out.push(Outcome::Started);
         rest
@@ -1105,7 +1105,7 @@ impl Shell {
         let Some(dir) = self.store.replays_dir() else { return };
         match olr_ui::replays::auto_save(&dir, bytes) {
             Ok(path) => {
-                println!("olr-game: saved replay {}", path.display());
+                println!("olr: saved replay {}", path.display());
                 // The Host lost screen says so once it is there.
                 if id.is_some() && self.host_lost_pending == id {
                     self.host_lost_pending = None;
@@ -1300,7 +1300,7 @@ impl Shell {
     fn reached(&mut self, r: Reachability) {
         let Some(h) = self.net.as_mut().and_then(|n| n.hosted.as_mut()) else { return };
         for line in h.set_reach(r) {
-            println!("olr-game: reach: {line}");
+            println!("olr: reach: {line}");
         }
     }
 

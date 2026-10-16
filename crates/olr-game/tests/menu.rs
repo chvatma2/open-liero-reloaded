@@ -70,17 +70,17 @@ fn starting_with_missing_content_returns_to_menu() {
     assert!(!message(&sh).is_empty());
     // A replay file that is gone, or is not a replay.
     sh.act(UiAction::Open(Screen::Replays));
-    let gone = tmp.path().join("gone.rlrp");
+    let gone = tmp.path().join("gone.olrp");
     sh.act(UiAction::PlayReplay(gone));
     sh.poll();
     assert_eq!(sh.ui.screen(), Screen::Replays);
-    assert!(message(&sh).contains("gone.rlrp"), "{}", message(&sh));
-    let junk = tmp.path().join("junk.rlrp");
+    assert!(message(&sh).contains("gone.olrp"), "{}", message(&sh));
+    let junk = tmp.path().join("junk.olrp");
     std::fs::write(&junk, b"junk").unwrap();
     sh.act(UiAction::PlayReplay(junk));
     sh.poll();
     assert_eq!(sh.ui.screen(), Screen::Replays);
-    assert!(message(&sh).contains("junk.rlrp"), "{}", message(&sh));
+    assert!(message(&sh).contains("junk.olrp"), "{}", message(&sh));
     assert!(sh.play.is_none());
 
     #[cfg(unix)]
@@ -132,11 +132,11 @@ fn menu_actions_are_idempotent() {
     // The same for a replay.
     sh.act(UiAction::Back);
     sh.act(UiAction::Open(Screen::Replays));
-    sh.act(UiAction::PlayReplay(tmp.path().join("a.rlrp")));
-    sh.act(UiAction::PlayReplay(tmp.path().join("b.rlrp")));
+    sh.act(UiAction::PlayReplay(tmp.path().join("a.olrp")));
+    sh.act(UiAction::PlayReplay(tmp.path().join("b.olrp")));
     sh.poll();
     assert_eq!(sh.launches(), 2);
-    assert!(message(&sh).contains("a.rlrp"), "{}", message(&sh));
+    assert!(message(&sh).contains("a.olrp"), "{}", message(&sh));
 
     let Some(content) = content_dir() else { return };
     let data = tempfile::tempdir().unwrap();

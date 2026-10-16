@@ -1,7 +1,7 @@
 //! The GPU paths (spec §5): the heavy replay and the map and art points'
 //! replays drawn by `olr-cli gpu-bench` (offscreen, hardware adapter,
 //! timestamps when there are any) and played windowed and uncapped by
-//! `olr-game --frame-log`, on WSL (GL over Mesa's d3d12 driver) and on
+//! `olr --frame-log`, on WSL (GL over Mesa's d3d12 driver) and on
 //! Windows (DX12 and Vulkan, through interop). A part that cannot run here
 //! is a notice (Review Focus 2, ruling PF5: `super::execute`); nothing
 //! here fails the command.
@@ -23,7 +23,7 @@ use super::results::{self, Budgets, FrameLogOut, GpuLevel, GpuPath, GpuReportOut
 use super::sweeps::{self, REPLAYS};
 use crate::{root, winbuild};
 
-const HEAVY: &str = "heavy.rlrp";
+const HEAVY: &str = "heavy.olrp";
 
 /// The environment that puts WSL's GL on the real GPU (as `olr-game` sets
 /// for itself), naming NVIDIA's adapter when its WSL driver is there.
@@ -160,8 +160,8 @@ impl Runner<'_> {
                 let mut c = Command::new(game);
                 // The game puts itself on the GPU (wsl.rs) only when these are unset.
                 c.current_dir(root()).args(&args).env_remove("WGPU_BACKEND").env_remove("GALLIUM_DRIVER");
-                let out = c.output().map_err(|e| format!("cannot run olr-game: {e}"))?;
-                read_ron("olr-game", &out, &log)
+                let out = c.output().map_err(|e| format!("cannot run olr: {e}"))?;
+                read_ron("olr", &out, &log)
             }
             Runner::Windows { stage, backend } => {
                 let log = stage.dir.join("frame-log.ron");
@@ -169,8 +169,8 @@ impl Runner<'_> {
                 std::fs::write(stage.dir.join("size.txt"), script).map_err(|e| e.to_string())?;
                 let args = common(&self.replay(HEAVY), "frame-log.ron", "size.txt", "content", "game-data");
                 let env = [("WGPU_BACKEND", *backend)];
-                let out = winbuild::run(stage, "olr-game.exe", &args, &env, winbuild::RUN_TIMEOUT)?;
-                read_ron("olr-game.exe", &out, &log)
+                let out = winbuild::run(stage, "olr.exe", &args, &env, winbuild::RUN_TIMEOUT)?;
+                read_ron("olr.exe", &out, &log)
             }
         }
     }
@@ -359,7 +359,7 @@ pub fn wsl(
         sweeps::build_release(&["olr-game"])
             .map_err(|e| format!("olr-game does not build: {}", last_line(&e)))?;
     }
-    let r = Runner::Wsl { cli, game: root().join("target/release/olr-game"), content };
+    let r = Runner::Wsl { cli, game: root().join("target/release/olr"), content };
     measure(&r, levels, windowed, plan, b)
 }
 

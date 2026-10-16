@@ -98,7 +98,7 @@ fn a_replay_hears_its_viewers_throws() {
     let mut replay = s.take_replay().expect("a Deathmatch records");
     assert_eq!(replay.setup.viewer, Some(0));
     let tmp = tempfile::tempdir().unwrap();
-    let file = tmp.path().join("match.rlrp");
+    let file = tmp.path().join("match.olrp");
     let mut heard = |viewer: Option<u8>| {
         replay.setup.viewer = viewer;
         std::fs::write(&file, replay.encode()).unwrap();

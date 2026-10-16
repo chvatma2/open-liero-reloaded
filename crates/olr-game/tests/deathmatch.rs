@@ -180,7 +180,7 @@ fn replay_session_matches_recorded_checksums() {
     assert_eq!(replay.ticks(), 750);
     assert!(s.take_replay().is_none(), "taken once");
     let tmp = tempfile::tempdir().unwrap();
-    let file = tmp.path().join("match.rlrp");
+    let file = tmp.path().join("match.olrp");
     std::fs::write(&file, replay.encode()).unwrap();
 
     let a = setup::load_replay(&[dir.as_path()], &file, "default", &[]).unwrap();

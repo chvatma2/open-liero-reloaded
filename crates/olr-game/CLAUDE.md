@@ -10,12 +10,12 @@ weapons), a Deathmatch against bots (M6) and replays.
 cargo run --release -p olr-game                      # the menus
 cargo run --release -p olr-game -- --level "CastleStrike" --mod "MW 1.0" --targets 3
 cargo run --release -p olr-game -- --mode deathmatch --bots 4 --difficulty medium \
-    [--lives L] [--kill-limit K] [--time-limit M] [--seed S] [--record f.rlrp]
-cargo run --release -p olr-game -- --replay f.rlrp [--speed 1|2|4|8|16|max]
+    [--lives L] [--kill-limit K] [--time-limit M] [--seed S] [--record f.olrp]
+cargo run --release -p olr-game -- --replay f.olrp [--speed 1|2|4|8|16|max]
 cargo run --release -p olr-game -- --spectate --bots 8 [--speed 16]   # bots alone, watched
 cargo run --release -p olr-game -- --host [name] [--port 23400]        # host online, the Lobby opens
 cargo run --release -p olr-game -- --join 192.168.1.20[:23400]         # join online
-cargo run --release -p olr-game -- --join rlx1…                         # join by invite code
+cargo run --release -p olr-game -- --join olr1…                         # join by invite code
 cargo run --release -p olr-game -- --net-sim typical                   # feel a network (spec §9.10)
 ```
 
@@ -382,7 +382,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `Net::migrating`, the step's text (olr-online's `MigrationStep`: "The
   host is gone: moving the game to Anna…") as the playfield's top line
   (`Shell::migration_line`, in place of "Connection problem"; amber,
-  wrapped to the picture) and `olr-game: migration: …` on
+  wrapped to the picture) and `olr: migration: …` on
   the console; a successor join's `Joining` steps meanwhile only on the
   console (the menus wait for no join); `Migrated { host, me }` → the line
   goes, "<host> is now hosting" or "You are now hosting" in the HUD and
@@ -400,7 +400,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   host whose match ended sends no start: review Important 1); the
   `HOST_BACK` notice (N69, called off) clears the
   line; each `MigrationLog` (ruling FR12c-4: an attempt to reach a
-  successor, its name, address and outcome) only as `olr-game: migration:
+  successor, its name, address and outcome) only as `olr: migration:
   …` on the console; `HostLost(why)` (`LostWhy`, its text on the screen:
   FR12c-4) → `host_lost`: the match view goes at once, the
   peer is let go (`release`: its replay to `Shell::replays`, saved by
@@ -427,7 +427,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   its replay being made to `Shell::replays`, polled every frame and
   waited for at quitting, at most `REPLAY_STOP_WAIT` 2 s: leaving right
   after a match keeps its replay); `DesyncBundle` → `<data>/desyncs/
-  desync-<unix s>-<n>.rldg` (`net::save_bundle`, olr-online's bounded
+  desync-<unix s>-<n>.oldg` (`net::save_bundle`, olr-online's bounded
   `bundle::save`: 4 MiB a bundle, 64 MiB in all; olr-online's `GameBundle`:
   the start, the confirmed input rows from tick 0, both checksums, the
   build fingerprint, the platform; a `net-repro` for game bundles is
@@ -567,11 +567,11 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   relays, final review B-M2; with its external port); its lines are
   `LobbyView::reach` under `listing`. Each `OnlineEvent::RelayJoin`
   (ruling FR12b-3: what became of a join through the relays) is a line
-  in the host's lobby log (`chat_line`) and `olr-game: relays: …` on the
-  console; each `OnlineEvent::ListenRelay` (B-M4) is `olr-game: relay
+  in the host's lobby log (`chat_line`) and `olr: relays: …` on the
+  console; each `OnlineEvent::ListenRelay` (B-M4) is `olr: relay
   <url>: connected|unreachable: …` on the console; each member's path
-  (`net::path_news`, final review C-M1) is `olr-game: join: <name> via
-  <tag>` when it first shows, `olr-game: path: <name> now via <tag>` when it
+  (`net::path_news`, final review C-M1) is `olr: join: <name> via
+  <tag>` when it first shows, `olr: path: <name> now via <tag>` when it
   changes. A Public game's `Publisher` signs
   with the install's identity: notes once the reachability settled, at
   most `SETTLE_WAIT` (5 s) after hosting (`created_at` the wall clock; the

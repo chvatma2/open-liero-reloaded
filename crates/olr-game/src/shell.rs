@@ -411,7 +411,7 @@ impl Shell {
             return;
         };
         let path = olr_ui::import::expand_typed_path(&path.to_string_lossy());
-        println!("olr-game: importing {} into {}", path.display(), packs.display());
+        println!("olr: importing {} into {}", path.display(), packs.display());
         self.data.import = ImportProgress::started();
         self.import = Some(ImportJob::spawn(path, packs));
     }
@@ -426,7 +426,7 @@ impl Shell {
         self.import = None;
         match &self.data.import.result {
             Some(olr_ui::import::ImportResult::Failed(why)) => eprintln!("warning: import: {why}"),
-            Some(r) => println!("olr-game: import done: {r:?}"),
+            Some(r) => println!("olr: import done: {r:?}"),
             None => {}
         }
         self.list_content();
@@ -666,7 +666,7 @@ impl Shell {
         let Ok(cache) = &self.cache else { return };
         let cleared = cache.lock().unwrap_or_else(PoisonError::into_inner).clear(&[]);
         match cleared {
-            Ok(()) => println!("olr-game: download cache cleared"),
+            Ok(()) => println!("olr: download cache cleared"),
             Err(e) => eprintln!("warning: clearing the download cache: {e}"),
         }
         self.show_download_cache();
@@ -757,7 +757,7 @@ impl Shell {
         let dir = self.store.replays_dir().ok_or("there is no data directory")?;
         let r = self.play.as_mut().and_then(|p| p.session.replay()).ok_or("there is no replay")?;
         let path = olr_ui::replays::save_kept(&dir, &r.encode()).map_err(|e| e.to_string())?;
-        println!("olr-game: kept replay {}", path.display());
+        println!("olr: kept replay {}", path.display());
         Ok(path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned()))
     }
 
@@ -810,7 +810,7 @@ impl Shell {
     fn save_replay(&mut self, r: &olr_replay::Replay) {
         let Some(dir) = self.store.replays_dir().filter(|_| r.ticks() > 0) else { return };
         match olr_ui::replays::auto_save(&dir, &r.encode()) {
-            Ok(path) => println!("olr-game: saved replay {} ({} ticks)", path.display(), r.ticks()),
+            Ok(path) => println!("olr: saved replay {} ({} ticks)", path.display(), r.ticks()),
             Err(e) => eprintln!("warning: saving the replay in {}: {e}", dir.display()),
         }
     }

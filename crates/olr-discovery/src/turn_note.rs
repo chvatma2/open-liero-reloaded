@@ -19,7 +19,7 @@ use crate::nostr::{Event, Filter, MAX_CONTENT};
 /// TURN relay notes: addressable, tag `d` = [`TURN_TAG`] (N53).
 pub const KIND_TURN: u32 = 31471;
 /// The `d` and `t` tag value of every TURN note.
-pub const TURN_TAG: &str = "rust-liero-turn";
+pub const TURN_TAG: &str = "open-liero-reloaded-turn";
 /// The note format this build writes.
 pub const TURN_NOTE_V: u16 = 1;
 /// Most relays listed.
@@ -35,7 +35,7 @@ const MAX_FUTURE: u64 = 60;
 
 /// What a relay announces: where it listens, its region, how many
 /// allocations it takes and holds, and its public long-term credentials
-/// (realm `rust-liero`).
+/// (realm `olr`).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TurnNote {
     /// The note format, [`TURN_NOTE_V`].
@@ -194,7 +194,7 @@ impl TurnList {
                 || e.created_at >= l.created_at.saturating_add(MIN_NOTE_GAP)
         });
         // A closing note is recognised by our compact encoding before the
-        // signature check (serde's field order, no spaces): only rust-liero
+        // signature check (serde's field order, no spaces): only OLR
         // writes these notes. Another encoder's closing note inside the gap
         // would be refused, which costs nothing but a late removal. The
         // parsed capacity decides below.

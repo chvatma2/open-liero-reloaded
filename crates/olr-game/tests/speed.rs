@@ -93,7 +93,7 @@ fn fast_forward_never_changes_the_simulation() {
     }
 
     // The replay plays back at max with every checksum reproduced.
-    let file = std::env::temp_dir().join(format!("olr-game-speed-{}.rlrp", std::process::id()));
+    let file = std::env::temp_dir().join(format!("olr-game-speed-{}.olrp", std::process::id()));
     std::fs::write(&file, &base.replay).unwrap();
     let r = setup::load_replay(&[dir.as_path()], &file, "default", &[]);
     std::fs::remove_file(&file).unwrap();
@@ -171,7 +171,7 @@ fn a_restart_knows_who_plays() {
 /// autoplay, never for a person (it would speed a played game up).
 #[test]
 fn the_fake_clock_needs_an_autoplay() {
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_olr-game"))
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_olr"))
         .args(["--fake-clock", "--mode", "deathmatch"])
         .env("WGPU_BACKEND", "vulkan")
         .output()
@@ -184,7 +184,7 @@ fn the_fake_clock_needs_an_autoplay() {
 /// The game binary with `args` on content `dir`, no relaunch (the
 /// backend chosen), no window system needed for what fails first.
 fn game(dir: &Path, args: &[&str]) -> std::process::Output {
-    std::process::Command::new(env!("CARGO_BIN_EXE_olr-game"))
+    std::process::Command::new(env!("CARGO_BIN_EXE_olr"))
         .args(args)
         .arg("--content")
         .arg(dir)

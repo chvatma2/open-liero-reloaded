@@ -35,7 +35,7 @@ mod tests {
     #[test]
     fn without_it_the_working_directory_is_used() {
         let dir = tempfile::tempdir().unwrap();
-        let exe = dir.path().join("olr-game");
+        let exe = dir.path().join("olr");
         assert_eq!(default_content_dir(Some(&exe)), PathBuf::from(CONTENT_DIR));
         assert_eq!(default_content_dir(None), PathBuf::from(CONTENT_DIR));
         // A file named like the directory is not content.
@@ -43,6 +43,6 @@ mod tests {
         std::fs::write(dir.path().join("content").join("packs"), "x").unwrap();
         assert_eq!(default_content_dir(Some(&exe)), PathBuf::from(CONTENT_DIR));
         // An executable path without a directory (never current_exe's).
-        assert_eq!(default_content_dir(Some(Path::new("olr-game"))), PathBuf::from(CONTENT_DIR));
+        assert_eq!(default_content_dir(Some(Path::new("olr"))), PathBuf::from(CONTENT_DIR));
     }
 }

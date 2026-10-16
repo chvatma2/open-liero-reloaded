@@ -538,12 +538,12 @@ mod tests {
         let d = tmp.path();
         let e = load_replay_soon(d).expect("a directory returns");
         assert!(e.contains("not a regular file"), "{e}");
-        std::fs::write(d.join("text.rlrp"), b"hello, not a replay at all").unwrap();
-        let e = load_replay_soon(&d.join("text.rlrp")).unwrap();
+        std::fs::write(d.join("text.olrp"), b"hello, not a replay at all").unwrap();
+        let e = load_replay_soon(&d.join("text.olrp")).unwrap();
         assert!(e.contains("not a replay"), "{e}");
         // A file with a good header but far too large: refused by its
         // length, unread (sparse, so the test writes nothing).
-        let big = d.join("big.rlrp");
+        let big = d.join("big.olrp");
         let mut head = olr_replay::MAGIC.to_vec();
         head.extend_from_slice(&olr_replay::FORMAT_VERSION.to_le_bytes());
         std::fs::write(&big, &head).unwrap();
@@ -552,12 +552,12 @@ mod tests {
         assert!(e.contains("too large"), "{e}");
         assert!(MAX_REPLAY_BYTES >= 2 * u64::from(olr_replay::MAX_TICKS) * MAX_WORMS as u64);
         // A good header, the size allowed: read, then refused by its body.
-        std::fs::write(d.join("short.rlrp"), &head).unwrap();
-        let e = load_replay_soon(&d.join("short.rlrp")).unwrap();
+        std::fs::write(d.join("short.olrp"), &head).unwrap();
+        let e = load_replay_soon(&d.join("short.olrp")).unwrap();
         assert!(e.contains("malformed"), "{e}");
         #[cfg(unix)]
         {
-            let fifo = d.join("fifo.rlrp");
+            let fifo = d.join("fifo.olrp");
             let made = std::process::Command::new("mkfifo").arg(&fifo).status();
             if made.is_ok_and(|s| s.success()) {
                 let e = load_replay_soon(&fifo).expect("a FIFO never blocks the read");

@@ -409,7 +409,7 @@ pub fn run(content: &Content, spec: &NetSpec) -> anyhow::Result<NetRun> {
 }
 
 /// [`run`]; with `bundles` set, a client that reports a desync writes a
-/// bundle to `<dir>/net-<stem>-peer<k>.rlds`.
+/// bundle to `<dir>/net-<stem>-peer<k>.olds`.
 pub fn run_with(content: &Content, spec: &NetSpec, bundles: Option<&Path>) -> anyhow::Result<NetRun> {
     let scenario = spec.scenario()?;
     let mut factory = WorldFactory::new(content, spec)?;
@@ -724,7 +724,7 @@ struct BundleRecorder<'a> {
 impl BundleRecorder<'_> {
     fn write(&mut self, peer: PeerId) {
         let (Some(dir), Some(b)) = (self.dir, self.pending.remove(&peer)) else { return };
-        let path = dir.join(format!("net-{}-peer{peer}.rlds", self.spec.stem()));
+        let path = dir.join(format!("net-{}-peer{peer}.olds", self.spec.stem()));
         let result = std::fs::create_dir_all(dir)
             .and_then(|()| std::fs::write(&path, b.encode()))
             .map(|()| path.clone())

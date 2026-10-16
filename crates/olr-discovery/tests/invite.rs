@@ -25,7 +25,7 @@ fn invites_round_trip() {
     ];
     for inv in cases {
         let text = inv.encode();
-        assert!(text.starts_with("rlx1"), "{text}");
+        assert!(text.starts_with("olr1"), "{text}");
         assert!(text.len() <= 200, "{} chars", text.len());
         assert_eq!(Invite::decode(&text).unwrap(), inv, "{text}");
     }
@@ -76,7 +76,7 @@ fn damaged_codes_are_refused_clearly() {
 #[test]
 fn other_text_is_not_an_invite() {
     for s in
-        ["", "hello", "https://example.org", "npub1qqqq", "rlx", "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"]
+        ["", "hello", "https://example.org", "npub1qqqq", "olr", "bc1qar0srrr7xfkvy5l643lydnw9re59gtzzwf5mdq"]
     {
         assert!(matches!(Invite::decode(s), Err(InviteError::NotInvite)), "{s}");
     }
@@ -88,7 +88,7 @@ fn other_text_is_not_an_invite() {
 
 fn code(payload: &[u8]) -> String {
     use bech32::{Bech32m, Hrp};
-    bech32::encode::<Bech32m>(Hrp::parse("rlx").unwrap(), payload).unwrap()
+    bech32::encode::<Bech32m>(Hrp::parse("olr").unwrap(), payload).unwrap()
 }
 
 #[test]
@@ -146,14 +146,14 @@ fn hints_are_validated() {
 
 #[test]
 fn the_hrp_is_exactly_rlx() {
-    // `rlx1foo1…`: bech32's separator is the last `1`, so its HRP is
-    // `rlx1foo`; a valid checksum for that HRP is still not an invite.
+    // `olr1foo1…`: bech32's separator is the last `1`, so its HRP is
+    // `olr1foo`; a valid checksum for that HRP is still not an invite.
     let mut p = vec![1u8];
     p.extend_from_slice(&[7; 32]);
     p.extend_from_slice(&[0, 0]);
     use bech32::{Bech32m, Hrp};
-    let other = bech32::encode::<Bech32m>(Hrp::parse("rlx1foo").unwrap(), &p).unwrap();
-    assert!(other.starts_with("rlx1foo1"), "{other}");
+    let other = bech32::encode::<Bech32m>(Hrp::parse("olr1foo").unwrap(), &p).unwrap();
+    assert!(other.starts_with("olr1foo1"), "{other}");
     assert!(matches!(Invite::decode(&other), Err(InviteError::Damaged)), "{other}");
     assert!(matches!(Invite::decode(&other.to_uppercase()), Err(InviteError::Damaged)));
     assert!(Invite::decode(&code(&p)).is_ok());
@@ -165,7 +165,7 @@ fn a_plain_bech32_checksum_is_damage() {
     p.extend_from_slice(&[7; 32]);
     p.extend_from_slice(&[0, 0]);
     use bech32::{Bech32, Hrp};
-    let plain = bech32::encode::<Bech32>(Hrp::parse("rlx").unwrap(), &p).unwrap();
+    let plain = bech32::encode::<Bech32>(Hrp::parse("olr").unwrap(), &p).unwrap();
     assert!(matches!(Invite::decode(&plain), Err(InviteError::Damaged)), "{plain}");
 }
 
@@ -255,7 +255,7 @@ proptest! {
     #[test]
     fn arbitrary_text_never_panics(s in ".{0,300}", bytes in proptest::collection::vec(any::<u8>(), 0..150)) {
         let _ = Invite::decode(&s);
-        let _ = Invite::decode(&format!("rlx1{s}"));
+        let _ = Invite::decode(&format!("olr1{s}"));
         let _ = Invite::decode(&code(&bytes));
         let mut v = vec![1u8];
         v.extend_from_slice(&bytes);

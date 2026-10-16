@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use crate::runner::Failure;
 use crate::spec::MatchSpec;
 
-/// What `<stem>.ron` holds next to `<stem>.rlrp`.
+/// What `<stem>.ron` holds next to `<stem>.olrp`.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FailureRecord {
     /// The match (its seed included): `olr-cli match` with these options plays it again.
@@ -38,7 +38,7 @@ impl FailureRecord {
 pub fn write(dir: &Path, spec: &MatchSpec, failure: &Failure, replay: &Replay) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let stem = format!("{}-{:?}-tick{}", spec.stem(), failure.kind, failure.tick).to_lowercase();
-    let replay_path = dir.join(format!("{stem}.rlrp"));
+    let replay_path = dir.join(format!("{stem}.olrp"));
     std::fs::write(&replay_path, replay.encode())
         .with_context(|| format!("writing {}", replay_path.display()))?;
     let record = FailureRecord {
@@ -46,7 +46,7 @@ pub fn write(dir: &Path, spec: &MatchSpec, failure: &Failure, replay: &Replay) -
         tick: failure.tick,
         kind: format!("{:?}", failure.kind),
         message: failure.message.clone(),
-        replay: format!("{stem}.rlrp"),
+        replay: format!("{stem}.olrp"),
     };
     let text = ron::ser::to_string_pretty(&record, ron::ser::PrettyConfig::default())?;
     let path = dir.join(format!("{stem}.ron"));

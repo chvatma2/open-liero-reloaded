@@ -1,4 +1,4 @@
-//! rust-liero's game (spec §8.6): a winit window, the 100 Hz fixed-tick
+//! OLR's game (spec §8.6): a winit window, the 100 Hz fixed-tick
 //! loop over the simulation, interpolated wgpu rendering with cosmetic
 //! entities, sound, input and an egui overlay. It plays the M5 sandbox
 //! (spec §19 E11: one player and idle targets on any level and mod), a

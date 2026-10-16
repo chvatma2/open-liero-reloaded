@@ -2,9 +2,9 @@
 //! in a real game saves one): what this peer knew when its simulation and
 //! the host's differed, so the developer can make a test of it.
 //!
-//! The file is the magic [`GAME_BUNDLE_MAGIC`] (`RLDG`), the version (u16
+//! The file is the magic [`GAME_BUNDLE_MAGIC`] (`OLDG`), the version (u16
 //! little-endian) and a postcard body ([`GameBundle`]). It is not
-//! `olr-cli`'s `.rlds` (a `net-sim` run's, which rebuilds its world from a
+//! `olr-cli`'s `.olds` (a `net-sim` run's, which rebuilds its world from a
 //! `NetSpec`): this one carries the lobby's match start instead. A
 //! `net-repro` for game bundles comes later; until then the bundle holds
 //! everything one needs (the start, the final inputs from tick 0, both
@@ -20,11 +20,11 @@ use serde::{Deserialize, Serialize};
 use crate::replay::MatchRecord;
 
 /// The first bytes of a game desync bundle.
-pub const GAME_BUNDLE_MAGIC: [u8; 4] = *b"RLDG";
+pub const GAME_BUNDLE_MAGIC: [u8; 4] = *b"OLDG";
 /// The format's version.
 pub const GAME_BUNDLE_VERSION: u16 = 2;
 /// The extension of a game desync bundle's file.
-pub const GAME_BUNDLE_EXTENSION: &str = "rldg";
+pub const GAME_BUNDLE_EXTENSION: &str = "oldg";
 /// At most this many bundles a match, per peer (a desync the host repairs
 /// may come back; a lobby of many peers could make one per peer).
 pub const MAX_BUNDLES_PER_MATCH: u32 = 3;
@@ -107,7 +107,7 @@ impl GameBundle {
 }
 
 /// Saves bundle `bytes` in `dir` (made if missing) as
-/// `desync-<unix_secs>-<n>.rldg`, the first `n` free, written to a
+/// `desync-<unix_secs>-<n>.oldg`, the first `n` free, written to a
 /// temporary file and renamed; returns the file. Bounded: a bundle above
 /// [`MAX_BUNDLE_BYTES`] is refused, and the oldest bundles of this naming
 /// (by their seconds, then `n`; other files are never touched) are removed
@@ -159,7 +159,7 @@ fn save_within(
     Ok(path)
 }
 
-/// `(seconds, n)` of a `desync-<seconds>-<n>.rldg` name.
+/// `(seconds, n)` of a `desync-<seconds>-<n>.oldg` name.
 fn bundle_order(name: &str) -> Option<(u64, u32)> {
     let stem = name.strip_prefix("desync-")?.strip_suffix(&format!(".{GAME_BUNDLE_EXTENSION}"))?;
     let (secs, n) = stem.split_once('-')?;
@@ -181,8 +181,8 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         let a = save(&tmp, b"one", 1_700_000_000).unwrap();
         let b = save(&tmp, b"two", 1_700_000_000).unwrap();
-        assert_eq!(a.file_name().unwrap(), "desync-1700000000-1.rldg");
-        assert_eq!(b.file_name().unwrap(), "desync-1700000000-2.rldg");
+        assert_eq!(a.file_name().unwrap(), "desync-1700000000-1.oldg");
+        assert_eq!(b.file_name().unwrap(), "desync-1700000000-2.oldg");
         assert!(save(&tmp, &vec![0; MAX_BUNDLE_BYTES + 1], 1).is_err(), "too large");
         // Another file stays whatever happens.
         std::fs::write(tmp.join("notes.txt"), b"mine").unwrap();
@@ -224,9 +224,9 @@ mod tests {
         let mut b = GameBundle::of(record, "desync".into(), false, Some(1));
         b.mismatch = Some((9, 77, 78));
         let bytes = b.encode();
-        assert_eq!(&bytes[..4], b"RLDG");
+        assert_eq!(&bytes[..4], b"OLDG");
         assert_eq!(GameBundle::decode(&bytes).unwrap(), b);
-        assert!(GameBundle::decode(b"RLDS\x01\x00").is_err(), "olr-cli's bundles are another format");
+        assert!(GameBundle::decode(b"OLDS\x01\x00").is_err(), "olr-cli's bundles are another format");
         assert!(GameBundle::decode(&bytes[..5]).is_err());
         let mut newer = bytes.clone();
         newer[4] = 3;

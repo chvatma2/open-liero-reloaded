@@ -99,7 +99,7 @@ mod tests {
             tick: 12,
             kind: "Panic".into(),
             message: "boom".into(),
-            replay: "x.rlrp".into(),
+            replay: "x.olrp".into(),
         };
         let text = ron::ser::to_string_pretty(&record, ron::ser::PrettyConfig::default()).unwrap();
         let golden: Golden = ron::from_str(&text).unwrap();

@@ -223,7 +223,7 @@ fn play(
     let script_file = out.join("script.ron");
     std::fs::write(&script_file, script).map_err(|e| format!("{}: {e}", script_file.display()))?;
 
-    let mut cmd = Command::new(root.join("target/debug/olr-game"));
+    let mut cmd = Command::new(root.join("target/debug/olr"));
     cmd.args(["--window-system", "x11", "--no-sound"]);
     if fake_clock {
         cmd.arg("--fake-clock");
@@ -244,7 +244,7 @@ fn play(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     let started = Instant::now();
-    let child = cmd.spawn().map_err(|e| format!("cannot start olr-game: {e}"))?;
+    let child = cmd.spawn().map_err(|e| format!("cannot start olr: {e}"))?;
     let output = wait(child, TIMEOUT)?;
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
@@ -559,7 +559,7 @@ fn wait(child: Child, timeout: Duration) -> Result<std::process::Output, String>
         let _ = tx.send(child.wait_with_output());
     });
     match rx.recv_timeout(timeout) {
-        Ok(out) => out.map_err(|e| format!("waiting for olr-game: {e}")),
+        Ok(out) => out.map_err(|e| format!("waiting for olr: {e}")),
         Err(_) => {
             let _ = Command::new("kill").args(["-9", &id.to_string()]).status();
             Err(format!("olr-game ran over {} s: killed", timeout.as_secs()))
@@ -587,8 +587,7 @@ mod tests {
         assert!(online.contains(r#"ClickUntil("e2e server", "Join")"#));
         assert!(online.contains(&format!("Type({CHAT:?})")));
         assert!(shots(&online).contains(&"online".to_string()));
-        let err =
-            "olr-game: GPU x\nwarning: no gamepads\nthread 'main' panicked at x\nerror: y\nMesa: fine\n";
+        let err = "olr: GPU x\nwarning: no gamepads\nthread 'main' panicked at x\nerror: y\nMesa: fine\n";
         assert_eq!(bad_lines(err), ["warning: no gamepads", "thread 'main' panicked at x", "error: y"]);
     }
 

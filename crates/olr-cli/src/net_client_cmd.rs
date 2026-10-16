@@ -33,7 +33,7 @@ pub struct Args {
     /// joined directly only.
     #[arg(long)]
     join: Option<String>,
-    /// An invite code (`rlx1…`): its address first (when it has one), then
+    /// An invite code (`olr1…`): its address first (when it has one), then
     /// through its relays and the `--relay`s.
     #[arg(long)]
     invite: Option<String>,
@@ -537,7 +537,7 @@ mod tests {
             panic!("a join")
         };
         assert!(join.direct.is_some() && join.nostr.is_none());
-        assert!(resolved(&["--bot", "--invite", "rlx1nonsense"]).is_err());
+        assert!(resolved(&["--bot", "--invite", "olr1nonsense"]).is_err());
     }
 
     #[test]

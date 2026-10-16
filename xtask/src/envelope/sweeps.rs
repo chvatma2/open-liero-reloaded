@@ -24,9 +24,9 @@ const REF_FX: u32 = 1024;
 /// Ruling P13: past the 2 GiB budget, below this machine's memory.
 const MEMORY_CEILING_MIB: u32 = 16_384;
 
-/// `<axis>-<label>.rlrp`.
+/// `<axis>-<label>.olrp`.
 pub fn replay_name(axis: &str, label: &str) -> String {
-    format!("{axis}-{label}.rlrp")
+    format!("{axis}-{label}.olrp")
 }
 
 /// Builds `packages` in the release profile.

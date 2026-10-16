@@ -163,7 +163,7 @@ pub enum UiAction {
     /// The Host screen's Start hosting.
     Host(HostPrefs),
     /// The Multiplayer screen's Direct Join: `host[:port]` or an invite
-    /// code (`rlx1…`) as typed, and the password (none when empty).
+    /// code (`olr1…`) as typed, and the password (none when empty).
     Join {
         addr: String,
         password: Option<Password>,

@@ -71,7 +71,7 @@ pub fn attributes(size: (u32, u32), physical: bool, fullscreen: bool) -> WindowA
     let size: winit::dpi::Size =
         if physical { PhysicalSize::new(w, h).into() } else { winit::dpi::LogicalSize::new(w, h).into() };
     Window::default_attributes()
-        .with_title("rust-liero")
+        .with_title("Open Liero Reloaded")
         .with_inner_size(size)
         .with_resizable(false)
         .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE)

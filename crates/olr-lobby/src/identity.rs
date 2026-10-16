@@ -10,9 +10,9 @@ use olr_proto::{PublicKey, Signature};
 use sha2::{Digest as _, Sha256};
 
 /// The domain prefix of a join challenge's signed message.
-pub const CHALLENGE_PREFIX: &[u8] = b"rust-liero join v1";
+pub const CHALLENGE_PREFIX: &[u8] = b"olr join v1";
 /// The domain prefix of the host's proof of its key.
-pub const HOST_PROOF_PREFIX: &[u8] = b"rust-liero host v1";
+pub const HOST_PROOF_PREFIX: &[u8] = b"olr host v1";
 
 /// The SHA-256 DTLS certificate fingerprints of a connection: the offer
 /// side's (the joiner's), then the answer side's (the host's). Both ends
@@ -81,13 +81,13 @@ pub fn fingerprint(key: &PublicKey) -> String {
     (0..8).map(|i| char::from(ALPHABET[((bits >> (35 - 5 * i)) & 31) as usize])).collect()
 }
 
-/// What a joiner signs: `b"rust-liero join v1" ++ host nonce ++ host key
+/// What a joiner signs: `b"olr join v1" ++ host nonce ++ host key
 /// ++ offer fingerprint ++ answer fingerprint`.
 pub fn challenge_message(nonce: &[u8; 32], host: &PublicKey, fps: &DtlsFingerprints) -> Vec<u8> {
     signed_message(CHALLENGE_PREFIX, nonce, host, fps)
 }
 
-/// What the host signs to prove its key (N37): `b"rust-liero host v1" ++
+/// What the host signs to prove its key (N37): `b"olr host v1" ++
 /// joiner nonce ++ joiner key ++ offer fingerprint ++ answer fingerprint`.
 pub fn host_proof_message(client_nonce: &[u8; 32], client: &PublicKey, fps: &DtlsFingerprints) -> Vec<u8> {
     signed_message(HOST_PROOF_PREFIX, client_nonce, client, fps)
@@ -211,24 +211,26 @@ mod tests {
     fn challenge_message_layout() {
         let (nonce, host, fps) = ([1u8; 32], [2u8; 32], ([3u8; 32], [4u8; 32]));
         let m = challenge_message(&nonce, &host, &fps);
-        assert_eq!(m.len(), 18 + 4 * 32);
-        assert_eq!(&m[..18], b"rust-liero join v1");
-        assert_eq!(&m[18..50], &nonce);
-        assert_eq!(&m[50..82], &host);
-        assert_eq!(&m[82..114], &fps.0, "the offer side's fingerprint");
-        assert_eq!(&m[114..], &fps.1, "the answer side's fingerprint");
+        let p = CHALLENGE_PREFIX.len();
+        assert_eq!(m.len(), p + 4 * 32);
+        assert_eq!(&m[..p], b"olr join v1");
+        assert_eq!(&m[p..p + 32], &nonce);
+        assert_eq!(&m[p + 32..p + 64], &host);
+        assert_eq!(&m[p + 64..p + 96], &fps.0, "the offer side's fingerprint");
+        assert_eq!(&m[p + 96..], &fps.1, "the answer side's fingerprint");
     }
 
     #[test]
     fn host_proof_message_layout() {
         let (nonce, client, fps) = ([5u8; 32], [6u8; 32], ([7u8; 32], [8u8; 32]));
         let m = host_proof_message(&nonce, &client, &fps);
-        assert_eq!(m.len(), 18 + 4 * 32);
-        assert_eq!(&m[..18], b"rust-liero host v1");
-        assert_eq!(&m[18..50], &nonce);
-        assert_eq!(&m[50..82], &client);
-        assert_eq!(&m[82..114], &fps.0, "the offer side's fingerprint");
-        assert_eq!(&m[114..], &fps.1, "the answer side's fingerprint");
+        let p = HOST_PROOF_PREFIX.len();
+        assert_eq!(m.len(), p + 4 * 32);
+        assert_eq!(&m[..p], b"olr host v1");
+        assert_eq!(&m[p..p + 32], &nonce);
+        assert_eq!(&m[p + 32..p + 64], &client);
+        assert_eq!(&m[p + 64..p + 96], &fps.0, "the offer side's fingerprint");
+        assert_eq!(&m[p + 96..], &fps.1, "the answer side's fingerprint");
         // The two proofs never sign the same message (domain separation).
         assert_ne!(m, challenge_message(&nonce, &client, &fps));
     }

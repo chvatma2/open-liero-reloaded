@@ -68,7 +68,7 @@ pub struct MapRequest {
     /// The default gateway (Task 5's `local::gateway`).
     pub gateway: Option<Ipv4Addr>,
     pub allow_local: bool,
-    /// The mapping's description at the router: `"rust-liero"`, never a name.
+    /// The mapping's description at the router: `"Open Liero Reloaded"`, never a name.
     pub description: &'static str,
     /// The external port must equal the local one (a relay's ports: no +1 … +7 shift).
     pub exact: bool,
@@ -116,7 +116,7 @@ impl MapRequest {
             tcp,
             gateway,
             allow_local: false,
-            description: "rust-liero",
+            description: "Open Liero Reloaded",
             exact: false,
             extra: Vec::new(),
             lifetime: None,

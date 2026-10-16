@@ -226,8 +226,8 @@ beside the executable, else in the working directory).
   Invite server without `--relay`; final review B-M4). The invite is printed once
   `Reachability::settled()` (the router answered or gave up, and STUN's
   first round) or `SETTLE_WAIT` (5 s) after the start, and again whenever
-  `direct()` changes: `"invite code: rlx1…"` with an address, `"invite
-  code (joins through the relays): rlx1…"` without (`"(no address and no
+  `direct()` changes: `"invite code: olr1…"` with an address, `"invite
+  code (joins through the relays): olr1…"` without (`"(no address and no
   relays: it joins nothing)"` when it has neither). Announcements:
   `GameSummary::of_lobby` with `Hosting` (the level's pack name, the
   config's maximums, password flag, region, `direct()`'s IP as `addr` and

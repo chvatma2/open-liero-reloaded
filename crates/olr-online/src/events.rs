@@ -58,7 +58,7 @@ pub enum OnlineEvent {
     Refused(String),
     /// The connection to the host is gone.
     Disconnected(String),
-    /// The finished match as an `.rlrp` replay (decision N18), made after
+    /// The finished match as an `.olrp` replay (decision N18), made after
     /// the match from its confirmed inputs.
     ReplayReady(Vec<u8>),
     /// A desync (spec §3.5, §9.10): this peer's simulation and another's

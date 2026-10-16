@@ -53,7 +53,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Bot navigation, motor and aim (spec §20 F2, F3, F7): `getMaxFreeArea`, `searchpath_base` (checklist, passage rule, costs, worm-line goal test, `buildPath`, `simplifyPath`, `splitUpNodes`), `traceWormLine`/`fastTraceLine`/`simpleTraceLine`, the node advance of `AI_MoveToTarget`, `AI_SetAim`, `AI_GetAimingAngle`, `AI_Carve`/`AI_Jump` timers, `isJumpingGivingDisadvantage`; the difficulty numbers | `src/common/CWormBot.cpp:110-878`, `1022-1122`, `1651-1713`, `1896-1960`, `2834-2853`, `3304-3366`, `3578-3627`, `src/level/FastTraceLine.h:24-104`, `include/MathLib.h:140-153`, `include/CVec.h:157-185` | `olr-bots::{nav, motor, aim, Bot, Budget}` | done (plan 6 task 4; the brain is task 5) | `areas_grow_like_olx`, `search_finds_paths_and_resumes_across_ticks`, `motor_reaches_target_angle_like_olx_turning`, `motor_switches_weapons_in_two_ticks_per_slot`, `ballistic_hits_static_target`, `think_stays_within_budget`, `bots_are_deterministic`, `think_does_not_allocate`, `think_never_panics_on_odd_worlds` |
 | Bot brain, weapons, rope and chaos (spec §20 F2, F10): `getInput` (THINK ↔ MOVINGTOTARGET, re-thinking every 3 s, every 0.5 s while a search runs and at once on the target's death, the 0.4 s spawn pause, `AI_Carve`), `AI_Think` (critical health, weapon bonus, nearest enemy, health, a random high spot), `AI_CreatePath` (restart after 5 s or when worm lines break, path extension, 0.5 s between searches), `AI_Shoot` (`traceWeaponLine`, clearing weapons through dirt above, lead, feasibility, aim by distance, `weaponCanHit`, bad-aim jumps), `AI_GetBestWeapon` (buckets, change delay; 100lt, rifle and mortar tactics), `AI_ReloadWeapons`, `AI_FindClearingWeapon`, `AI_MoveToTarget` (rope timers, best rope spot, re-throws, pulling away, overshoot, dirt above, dirt ahead, jetpack, rifle reloading, mortar retreat, worms within 50 px, stuck handling), `AI_SimpleMove`, `AI_FindShootingSpot`, `isMoveGivingDisadvantage`; the chaos personality and Deathmatch's chaos rotation | `src/common/CWormBot.cpp:993-1122`, `1180-1644`, `1719-1893`, `1963-2809`, `2869-2983`, `3200-3366`, `3370-4034`, `4120-4126` | `olr-bots::{brain, moving, shoot, weapons, rope, spot, chaos, probe}`, `olr-modes::{RespawnLoadout, ChaosCycle}` | done (plan 6 task 5) | `xtreme_bot_kills_static_target_quickly`, `easy_bot_hits_less`, `bots_use_the_rope_to_climb`, `stuck_bots_stay_within_budget_and_match_ends`, `bots_survive_odd_loadouts`, `chaos_fires_every_weapon_over_a_match_grid`, `chaos_cycle_gives_the_rotation_on_every_spawn`, `bot_matches_are_deterministic_and_allocation_free`, `olx_direct_aim_still_fights`, `a_search_toward_a_moving_target_finishes`, `the_jump_check_is_never_starved`, `a_scan_cut_short_does_not_go_back` |
 | Bot aim error floor (the user's direction, plan 6 ruling R6): every difficulty's aim errors (offset, target, gravity and speed noise) scale with at least 1/6, so Xtreme keeps half of Hard's error; the fire tolerance stays OLX's | `src/common/CWormBot.cpp:1682-1706`, `1836-1850` (OLX's Xtreme has none) | `olr-bots::{Difficulty::params, AIM_ERROR_FLOOR}` | done (plan 6 task 9; a deviation, below) | `no_difficulty_aims_perfectly`, `weapon_can_hit_noise_scales_with_the_level`; kill rates measured before and after (below); goldens re-blessed (`fixtures/blessings.log`) |
-| Replays (spec §20 F8; no OLX equivalent): the setup, pack ids and content hashes, every worm's keys per tick, the viewer's slot (the player whose game made it), checksums at tick 0, every 100 ticks and the end; the `RLRP` format, version refused when unknown | — | `olr-replay::{Recorder, Replay, Player, Cursor}`, `olr-content::{replay_packs, world_for_replay, play_replay}` | done (plan 6 task 6) | `record_then_replay_gives_identical_checksums`, `replay_reports_the_first_mismatching_tick`, `replay_reports_a_different_setup_at_tick_0`, `replay_refuses_unknown_format_versions`, `replay_refuses_mismatched_content`, `bot_match_replays_from_content`, `replay_size_is_reasonable`, `decode_never_panics_on_junk`, `a_failing_tick_is_recorded_without_a_checksum`, `the_viewer_is_recorded`, `the_viewer_is_one_of_the_worms` |
+| Replays (spec §20 F8; no OLX equivalent): the setup, pack ids and content hashes, every worm's keys per tick, the viewer's slot (the player whose game made it), checksums at tick 0, every 100 ticks and the end; the `OLRP` format, version refused when unknown | — | `olr-replay::{Recorder, Replay, Player, Cursor}`, `olr-content::{replay_packs, world_for_replay, play_replay}` | done (plan 6 task 6) | `record_then_replay_gives_identical_checksums`, `replay_reports_the_first_mismatching_tick`, `replay_reports_a_different_setup_at_tick_0`, `replay_refuses_unknown_format_versions`, `replay_refuses_mismatched_content`, `bot_match_replays_from_content`, `replay_size_is_reasonable`, `decode_never_panics_on_junk`, `a_failing_tick_is_recorded_without_a_checksum`, `the_viewer_is_recorded`, `the_viewer_is_one_of_the_worms` |
 | Headless match runner (spec §7.1, §7.3; no OLX equivalent): `olr-cli match` and `replay`, one match builder shared with `olr-game` (plan 6 ruling R5), invariants every tick, tick-time percentiles, determinism and replay round trip, coverage (weapons, projectile actions, bonuses, rope), failure capture to `target/failures/`, golden checksum streams | — | `olr-cli::{spec, runner, verify, coverage, failure, golden, invariants}`, `olr-content::build_match`, `xtask bless-regression` | done (plan 6 task 7) | `classic_deathmatch_bots_are_deterministic_and_replay`, `mw_chaos_bots_are_deterministic_and_replay`, `failure_writes_replay`, `golden_match_checksums` (`fixtures/matches/`); in `cargo xtask full`: `coverage_report_lists_every_weapon` (both mods × 4 levels × 3 seeds: every weapon of both mods and every projectile action kind) and `long_bot_match_bounded` (30 minutes, review focus 5) |
 | Deathmatch against bots in the game: `--mode deathmatch`, the bots thinking on the main thread before each tick, the HUD (names, event log, time-limit clock, Tab's scoreboard), "Game Over" then the results after `GAMEOVER_WAIT`, F5's rematch, `--record` and `--replay` | `src/client/CClient_Draw.cpp:893-905`, `1840-1897`, `2211-2236` | `olr-game::{setup, session, drive, hud, panels}` | done (plan 6 task 8) | `deathmatch_session_ends_with_results`, `rematch_starts_without_the_last_ticks_events`, `bots_think_within_frame_budget`, `replay_session_matches_recorded_checksums`, `scoreboard_hides_when_the_window_loses_focus`; the user's playtest |
 | Settings and profiles files (spec §9.4, §21 G2): versioned RON in the platform data directory, atomic writes, bad or newer files set aside as `.bak` with defaults and a warning | OLX's `cfg/options.cfg` (`src/client/Options.cpp`) and `cfg/players.dat` (`src/client/ProfileSystem.cpp`), laid out anew | `olr-ui::{store, settings, profiles, match_prefs}` | done (plan 7 task 1) | `bad_user_files_fall_back_to_defaults_and_keep_a_backup`, `settings_round_trip_and_version` |
@@ -71,7 +71,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Autoplay and end to end (§21 G7): `--autoplay` clicks widgets by label, holds the game's keys, takes checked screenshots and logs JSON lines; `--fake-clock` makes a run deterministic | — | `olr-game::autoplay`, `xtask e2e` | done (plan 7 task 8) | `scripts_parse_and_name_what_exists`, `steps_click_wait_and_fail_in_time`, `widgets_are_found_by_their_label`, `blank_pictures_fail_the_sanity_check`; `cargo xtask e2e` (in `full`, Xvfb) |
 | Benchmarks (§21 G8): a full 3000-projectile pool tick, 32 worms, 8 bots thinking, the draw list, an offscreen frame at 1080p and 1440p; machine-local baselines, more than 10 % slower fails | — | `olr-sim/benches/tick.rs`, `olr-cli/benches/game.rs`, `olr-render/benches/frame.rs`, `xtask bench` | done (plan 7 task 8) | `fixtures/bench/baselines.ron`; `regressions_need_more_than_the_tolerance`, `baselines_from_another_machine_only_notice` |
 | Engine stress test (the user's request): 32 chaos bots on Castle Strike, both mods, OLX's pool and 20 000; tick, think, pool, entities, events, render and memory; invariants every tick, determinism over two runs | — | `olr-cli stress`, `xtask stress` | done (plan 7 task 8) | `stress_run_is_bounded_and_deterministic`; `fixtures/bench/stress.ron` (in `full`) |
-| Performance envelope (plan 8): sweeps of worms, pool, effects, map and art; the GPU on WSL GL and Windows DX12/Vulkan with timestamps and the shader probe; OLX frame timing | `tools/olx-oracle` (`ORACLE_TIMING`) | `xtask/src/envelope/`, `olr-cli gpu-bench`, `olr-game --frame-log` | measured | `fixtures/bench/envelope/<host>.ron`, `docs/perf/envelope.md` |
+| Performance envelope (plan 8): sweeps of worms, pool, effects, map and art; the GPU on WSL GL and Windows DX12/Vulkan with timestamps and the shader probe; OLX frame timing | `tools/olx-oracle` (`ORACLE_TIMING`) | `xtask/src/envelope/`, `olr-cli gpu-bench`, `olr --frame-log` | measured | `fixtures/bench/envelope/<host>.ron`, `docs/perf/envelope.md` |
 | v0.1 acceptance (spec §1.3): each of the 4 levels × 2 mods from the menus against 4 Medium bots for 60 s in a real window, timings and screenshots | — | — | done (plan 7 task 9) | `docs/porting/acceptance-v0.1.md`; `cargo xtask check` and `full` |
 | Players leaving mid-match (plan 12d; user decisions, 2026-10-15): a player who leaves, times out or is kicked is withdrawn from the match at one tick on every peer, its worm gone (`CGameMode::Drop`, a kill credited to it credits nobody), fewer than 2 worms left ends the match, "<name> has left" / "<name> has timed out", the live scoreboard leaves it out and the results keep a "left" row (deviation below) | `src/server/CServer.cpp:1352-1482`, `src/server/CGameMode.cpp:254-263`, `316-336`, `src/client/CClient_Parse.cpp:1650-1680`, `src/game/Game.cpp:1359-1366`, `src/client/Options.cpp:769-770` | `olr-sim::World::withdraw`, `olr-modes` (`on_drop`), `olr-replay` (format 3), `olr-proto`/`olr-netcode` (the marks), `olr-lobby`, `olr-online`, `olr-ui`, `olr-game` | done (plan 12d) | `a_withdrawn_worm_leaves_the_board_and_the_last_one_wins`, `a_withdrawn_worm_never_wins`, `a_projectile_of_a_worm_that_left_credits_nobody`, `a_gone_worms_kill_credits_nobody`, `a_withdrawal_replays_at_its_tick`, `a_withdrawal_after_the_last_tick_replays`, `withdrawal_marks_are_bounded`, `a_withdrawal_mark_is_final`, `a_withdrawal_learned_late_rolls_back_to_it`, `a_leaving_client_is_withdrawn_at_one_tick_everywhere`, `a_leave_during_a_migration_is_withdrawn_alike`, `a_forged_withdrawal_never_removes_a_present_player`, `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`, `a_repaired_holder_that_hosts_later_withdraws_the_player_at_its_leave`, `a_member_that_times_out_is_said_to`, `the_last_opponent_leaving_ends_the_match`, `a_player_leaving_during_a_migration_is_removed_at_the_resume`, `a_leaving_player_is_removed_from_every_world`, `a_left_row_is_off_the_scoreboard_and_left_in_the_results`, `the_watched_worm_moves_on_when_it_leaves`, `an_online_watcher_moves_on_when_the_followed_worm_leaves`, `a_player_kicked_mid_match_is_withdrawn`, `a_client_crash_excuses_the_fills_stalls_until_its_timeout`, `a_client_leave_withdraws_its_worm_in_a_real_match`, `a_bundle_with_a_withdrawal_reproduces_to_the_fault` |
 
@@ -611,7 +611,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   *Pause:* Resume, Options (the match stays paused) and Quit to menu; no
   tick runs while paused or during the weapon selection, so replays hold
   only played ticks. *Results:* OLX's columns plus score, deaths and
-  suicides; Rematch, Save replay (`replays/replay-NNN.rlrp`, never pruned)
+  suicides; Rematch, Save replay (`replays/replay-NNN.olrp`, never pruned)
   and Back to menu. *Bot colours:* OLX's seven `cpuColours`
   (`ProfileSystem.cpp:47-59`) in turn, skipping those within 120 (RGB
   distance) of the human's colour; OLX gives each bot profile its colour
@@ -829,7 +829,7 @@ deviation. Its rulings (`docs/superpowers/plans/2026-10-11-plan-8-performance-en
 - **P4:** sweeps are headless; the frame budget is judged in the GPU
   scenes (the heavy replay at four sizes, each map and art level at
   2560 × 1440 on WSL); breaking points use 144 Hz, 60 Hz beside it.
-- **P5:** windowed runs (`olr-game --frame-log`) measure wall frame times
+- **P5:** windowed runs (`olr --frame-log`) measure wall frame times
   only, one run each; GPU timestamps are taken offscreen.
 - **P6:** the colour-terrain edits are timed inside the presentation tick.
 - **P7:** an effects or pool cap reached at its own value is saturated, not
@@ -846,7 +846,7 @@ deviation. Its rulings (`docs/superpowers/plans/2026-10-11-plan-8-performance-en
 - **P11:** GPU scenes draw `Viewport::GAME` over the whole target with the
   default filter, no HUD.
 - **P12:** the Windows binaries and a content copy are staged in
-  `%TEMP%\rust-liero-envelope` and run there; `WGPU_BACKEND` goes through
+  `%TEMP%\olr-envelope` and run there; `WGPU_BACKEND` goes through
   `WSLENV`.
 - **P13:** sweep runs pass `--memory-ceiling-mib 16384`, so points past
   2 GiB are measured.
@@ -1005,8 +1005,8 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
 ("Decisions this plan makes") and by rulings during its execution
 (PF11-1 to PF11-6, R4-*, R6-*, Task 8's).
 
-- **N29 - pack archives.** A pack travels as a `.rlpk` archive: magic
-  `RLPK1\n`, a `u32` file count, then per file, sorted by path, a `u16`
+- **N29 - pack archives.** A pack travels as a `.olpk` archive: magic
+  `OLPK1\n`, a `u32` file count, then per file, sorted by path, a `u16`
   path length, the UTF-8 `VPath`, a `u64` length and the bytes. No
   compression (packs are mostly PNG and OGG). The same pack always gives
   the same bytes, so a resumed download continues byte-exactly. The
@@ -1140,7 +1140,7 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
 
 - **N37 - the host proves its key.** The joiner sends its own 32-byte
   nonce in `Hello`; the host answers `ToClient::HostProof { signature }`
-  over `b"rust-liero host v1" ++ client nonce ++ client key ++ offer DTLS
+  over `b"olr host v1" ++ client nonce ++ client key ++ offer DTLS
   fingerprint ++ answer DTLS fingerprint`. The joiner's own proof
   (`challenge_message`) covers both fingerprints too, so a relayed or
   swapped handshake fails both proofs. The fingerprints come from the
@@ -1289,7 +1289,7 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-12a-finding-games.md`
   to `addr:port`, timed, 2 s timeout, at most 4 at once, on a game's first
   selection; a failed ping sinks the game to the bottom for the life of the
   list.
-- **N42 - invite codes.** bech32m with HRP exactly `rlx` (`rlx1…`, any one
+- **N42 - invite codes.** bech32m with HRP exactly `olr` (`olr1…`, any one
   case); the payload is postcard `{version: u8 = 1, key: [u8;32], relays:
   Vec<RelayHint>, addr: Option<(IPv4, u16)>}`. `RelayHint` is `Default(u8)`,
   an index into the append-only default relay list, or `Url(String)`.
@@ -1401,7 +1401,7 @@ Task rulings:
   an IPv6-only host learns no address.
 - **R8-1:** the probe lives in the library (`olr_cli::nostr_probe`), one
   fresh random key per run (never the player's identity), every event
-  marked `rust-liero-probe` with a 10 minute expiry; the command publishes
+  marked `open-liero-reloaded-probe` with a 10 minute expiry; the command publishes
   to public relays, so it is run by hand only and no test touches the
   internet. A relay's first connection failure fails it (no waiting for the
   pool's reconnect). Order of the defaults: well-known large operators
@@ -1410,12 +1410,12 @@ Task rulings:
 - **R9-1:** the summary builder lives in `olr-discovery` (the layer-5 crate
   that already depends on `olr-proto`), not `olr-online`: no new same-layer
   pair. **R9-2:** STUN runs for every visibility (see N43). **R9-3:** the
-  server prints `invite code: rlx1…` once the address is settled
+  server prints `invite code: olr1…` once the address is settled
   (immediately when configured or when there are no STUN servers, else at
   the first answer, at most ~3 s) and again whenever it changes. (Amended
   by plan 12b, N47: the invite waits for the reachability to settle, at
   most 5 s; one without an address reads `invite code (joins through the
-  relays): rlx1…`.) **R9-4:**
+  relays): olr1…`.) **R9-4:**
   see N40. **R9-5:** the closing note is forced newer (see N39).
   **R9-6:** `/invite` is admins-only in a Lan or Invite game. **R9-7:** an
   unknown `region` in a config reads as `Unknown`. **R9-8:** the server's
@@ -1797,7 +1797,7 @@ is the cost of the decision being wrong.
     join (a symmetric NAT against anything but an open port) cannot
     connect; content downloads through a relay run at about 32 KiB/s; a
     match on one relay ends after 6 h.
-- **N53 - kind 31471** (addressable, `d` and `t` = `rust-liero-turn`,
+- **N53 - kind 31471** (addressable, `d` and `t` = `open-liero-reloaded-turn`,
   `v` checked) for TURN relay notes. `TurnList` validates like the game
   list: addresses global unless `allow_local`, never unspecified,
   multicast or broadcast; credentials 1-64 printable ASCII; capacity at

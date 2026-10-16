@@ -21,7 +21,7 @@ pub enum DecodeError {
 impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DecodeError::Magic => write!(f, "not a replay (no RLRP header)"),
+            DecodeError::Magic => write!(f, "not a replay (no OLRP header)"),
             DecodeError::Version { found, supported } => {
                 write!(f, "replay format version {found}, this build reads only version {supported}")
             }

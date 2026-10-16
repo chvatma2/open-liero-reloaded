@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Records one rust-liero oracle scenario in a dedicated OpenLieroX.
+"""Records one OLR oracle scenario in a dedicated OpenLieroX.
 
 OLX runs this script with `-dedicated -script` and talks to it over the
 line protocol of tests/headless/control/_olx_pipe.py: we print a console

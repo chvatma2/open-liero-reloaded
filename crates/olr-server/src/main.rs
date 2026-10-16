@@ -26,7 +26,7 @@ const LOG_FILE: &str = "server.log";
 static STOP: AtomicBool = AtomicBool::new(false);
 
 #[derive(Parser)]
-#[command(name = "olr-server", about = "The rust-liero dedicated server")]
+#[command(name = "olr-server", about = "The Open Liero Reloaded dedicated server")]
 struct Args {
     /// The server's config (RON; see fixtures/server/example.ron).
     #[arg(long, required_unless_present = "nat_check")]

@@ -112,8 +112,8 @@ mod tests {
         assert_eq!(dest, dir.join("classic-x-panic-tick5.ron"));
         assert!(std::fs::read_to_string(&dest).unwrap().contains("olx-classic"));
         assert!(super::add_failure(&dir, &failure).is_err(), "an existing golden is kept");
-        let replay = tmp.path().join("x.rlrp");
-        std::fs::write(&replay, b"RLRP").unwrap();
+        let replay = tmp.path().join("x.olrp");
+        std::fs::write(&replay, b"OLRP").unwrap();
         assert!(super::add_failure(&dir, &replay).is_err(), "only a record names the match");
     }
 

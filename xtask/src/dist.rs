@@ -1,9 +1,9 @@
 //! `cargo xtask dist`: the portable release zips. `olr-game` and
 //! `olr-server` are built in the `dist` profile (release without symbols or
 //! debug info) for Linux and for Windows (mingw-w64, as `winbuild`), each
-//! staged under one folder `rust-liero-<version>/` with the content, the
+//! staged under one folder `open-liero-reloaded-<version>/` with the content, the
 //! docs and an example server config (the mingw DLLs only when an exe
-//! imports them), and zipped into `target/release-zips/rust-liero-<version>-
+//! imports them), and zipped into `target/release-zips/open-liero-reloaded-<version>-
 //! <platform>.zip`: deflate, entries in byte order, fixed times and modes
 //! (0755 for the executables), so the same inputs give the same zip.
 //!
@@ -12,9 +12,9 @@
 //! `--content` (invite only, no relays, no STUN: nothing leaves the
 //! machine) until its log shows the rotation's map loaded from the content
 //! beside it; on Linux a bot client (`olr-cli net-client --bot`, the dev
-//! build) joins and the server must start a match. `olr-game --help` must
+//! build) joins and the server must start a match. `olr --help` must
 //! name the content beside it as the default. The Windows zip runs in
-//! `%TEMP%\rust-liero-envelope\dist` through WSL interop (skipped with a
+//! `%TEMP%\olr-envelope\dist` through WSL interop (skipped with a
 //! notice without it) and is stopped by `winbuild`'s stage-scoped stop.
 
 use std::io::{BufRead as _, BufReader, Read, Write as _};
@@ -33,7 +33,9 @@ pub const PROFILE: &str = "dist";
 /// `tidy` sweeps that and never this (`tidy::KEPT`).
 pub const ZIP_DIR: &str = "release-zips";
 /// The programs a zip holds (`.exe` on Windows).
-pub const EXES: [&str; 2] = ["olr-game", "olr-server"];
+pub const EXES: [&str; 2] = ["olr", "olr-server"];
+/// The packages that build [`EXES`], in the same order.
+pub const PACKAGES: [&str; 2] = ["olr-game", "olr-server"];
 /// Documents copied from the repository, at the same path in the folder.
 pub const DOCS: [&str; 4] = ["README.md", "LICENSE", "CHANGELOG.md", "docs/online.md"];
 /// The documented server config, and its name in the folder.
@@ -103,7 +105,7 @@ impl Platform {
 
 /// The zip's one top folder.
 pub fn folder(version: &str) -> String {
-    format!("rust-liero-{version}")
+    format!("open-liero-reloaded-{version}")
 }
 
 /// The zip's file name.
@@ -233,8 +235,8 @@ pub fn unpack(zip: &Path, into: &Path) -> Result<(), String> {
 fn build(platform: Platform) -> Result<PathBuf, String> {
     let mut c = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     c.current_dir(root()).args(["build", "--quiet", "--profile", PROFILE]);
-    for exe in EXES {
-        c.args(["-p", exe]);
+    for package in PACKAGES {
+        c.args(["-p", package]);
     }
     if let Some(target) = platform.target() {
         c.args(["--target", target]).env("CARGO_TARGET_X86_64_PC_WINDOWS_GNU_LINKER", winbuild::LINKER);
@@ -397,7 +399,7 @@ fn unpack_fresh(zip: &Path, base: &Path) -> Result<(PathBuf, PathBuf), String> {
 /// The Linux zip, unpacked in a temporary directory and run from another.
 fn verify_linux(zip: &Path) -> Result<String, String> {
     let tmp = tempfile::Builder::new()
-        .prefix("rust-liero-dist-")
+        .prefix("olr-dist-")
         .tempdir()
         .map_err(|e| format!("a temporary directory: {e}"))?;
     let (folder, run) = unpack_fresh(zip, tmp.path())?;
@@ -411,16 +413,16 @@ fn verify_linux(zip: &Path) -> Result<String, String> {
         }
     }
     let folder = folder.canonicalize().map_err(|e| format!("{}: {e}", folder.display()))?;
-    let help = Command::new(folder.join("olr-game"))
+    let help = Command::new(folder.join("olr"))
         .arg("--help")
         .current_dir(&run)
         .output()
-        .map_err(|e| format!("cannot run olr-game --help: {e}"))?;
+        .map_err(|e| format!("cannot run olr --help: {e}"))?;
     let text = String::from_utf8_lossy(&help.stdout);
     let beside = format!("[default: {}]", folder.join("content").join("packs").display());
     if !help.status.success() || !text.contains(&beside) {
         return Err(format!(
-            "olr-game --help ({}) does not show {beside}:\n{text}{}",
+            "olr --help ({}) does not show {beside}:\n{text}{}",
             help.status,
             String::from_utf8_lossy(&help.stderr)
         ));
@@ -483,7 +485,7 @@ fn verify_linux(zip: &Path) -> Result<String, String> {
         return Err(server.report(&format!("olr-server's output is not clean: {bad:?}")));
     }
     Ok(format!(
-        "olr-game --help names the content beside it; olr-server loaded {map} and started a match ({started})"
+        "olr --help names the content beside it; olr-server loaded {map} and started a match ({started})"
     ))
 }
 
@@ -500,18 +502,12 @@ fn verify_windows(zip: &Path) -> Result<Option<String>, String> {
     // A run an interrupted xtask left behind would hold the files.
     winbuild::stop_stage_processes(&stage.dir)?;
     let (folder, run) = unpack_fresh(zip, &stage.dir.join("dist"))?;
-    let help = winbuild::run_in(
-        &stage,
-        &folder.join("olr-game.exe"),
-        &run,
-        &["--help".to_string()],
-        &[],
-        READY_WITHIN,
-    )?;
+    let help =
+        winbuild::run_in(&stage, &folder.join("olr.exe"), &run, &["--help".to_string()], &[], READY_WITHIN)?;
     let text = String::from_utf8_lossy(&help.stdout);
     let beside = format!("{}\\content\\packs]", self::folder(VERSION));
     if !text.lines().any(|l| l.contains("[default: ") && l.trim_end().ends_with(&beside)) {
-        return Err(format!("olr-game.exe --help does not show the content beside it (…{beside}):\n{text}"));
+        return Err(format!("olr.exe --help does not show the content beside it (…{beside}):\n{text}"));
     }
     let mut server = Watched::start(
         "olr-server.exe",
@@ -531,7 +527,7 @@ fn verify_windows(zip: &Path) -> Result<Option<String>, String> {
     if !bad.is_empty() {
         return Err(server.report(&format!("olr-server.exe's output is not clean: {bad:?}")));
     }
-    Ok(Some(format!("olr-game.exe --help names the content beside it; olr-server.exe loaded {map}")))
+    Ok(Some(format!("olr.exe --help names the content beside it; olr-server.exe loaded {map}")))
 }
 
 /// `cargo xtask dist`: both zips, then (unless `verify` is off) their checks.
@@ -586,15 +582,15 @@ mod tests {
 
     #[test]
     fn names_carry_the_workspace_version() {
-        assert_eq!(folder("1.2.3"), "rust-liero-1.2.3");
-        assert_eq!(zip_name("1.2.3", Platform::Windows), "rust-liero-1.2.3-windows-x64.zip");
-        assert_eq!(zip_name("1.2.3", Platform::Linux), "rust-liero-1.2.3-linux-x64.zip");
+        assert_eq!(folder("1.2.3"), "open-liero-reloaded-1.2.3");
+        assert_eq!(zip_name("1.2.3", Platform::Windows), "open-liero-reloaded-1.2.3-windows-x64.zip");
+        assert_eq!(zip_name("1.2.3", Platform::Linux), "open-liero-reloaded-1.2.3-linux-x64.zip");
         let meta = cargo_metadata::MetadataCommand::new()
             .manifest_path(root().join("Cargo.toml"))
             .no_deps()
             .exec()
             .unwrap();
-        for name in EXES {
+        for name in PACKAGES {
             let p = meta.packages.iter().find(|p| p.name.as_str() == name).unwrap();
             assert_eq!(p.version.to_string(), VERSION, "{name}");
         }
@@ -605,7 +601,7 @@ mod tests {
         let dlls = [("libwinpthread-1.dll".to_string(), PathBuf::from("/m/libwinpthread-1.dll"))];
         let got = files(Platform::Windows, Path::new("/b"), &dlls, Path::new("/r"));
         let want: Vec<(PathBuf, String)> = [
-            ("/b/olr-game.exe", "olr-game.exe"),
+            ("/b/olr.exe", "olr.exe"),
             ("/b/olr-server.exe", "olr-server.exe"),
             ("/m/libwinpthread-1.dll", "libwinpthread-1.dll"),
             ("/r/README.md", "README.md"),
@@ -621,14 +617,11 @@ mod tests {
         let linux = files(Platform::Linux, Path::new("/b"), &[], Path::new("/r"));
         assert_eq!(
             linux[..2],
-            [
-                (PathBuf::from("/b/olr-game"), "olr-game".into()),
-                (PathBuf::from("/b/olr-server"), "olr-server".into())
-            ]
+            [(PathBuf::from("/b/olr"), "olr".into()), (PathBuf::from("/b/olr-server"), "olr-server".into())]
         );
         assert_eq!(linux.len(), 7);
-        assert_eq!(executables(Platform::Windows), ["olr-game.exe", "olr-server.exe"]);
-        assert_eq!(executables(Platform::Linux), ["olr-game", "olr-server"]);
+        assert_eq!(executables(Platform::Windows), ["olr.exe", "olr-server.exe"]);
+        assert_eq!(executables(Platform::Linux), ["olr", "olr-server"]);
     }
 
     #[test]
@@ -651,10 +644,10 @@ mod tests {
     #[test]
     fn the_zip_is_ordered_dated_and_moded_the_same_every_time() {
         let t = tempfile::tempdir().unwrap();
-        let dir = t.path().join("rust-liero-9.9.9");
+        let dir = t.path().join("open-liero-reloaded-9.9.9");
         for (path, text) in [
             ("olr-server", "server"),
-            ("olr-game", "game"),
+            ("olr", "game"),
             ("README.md", "readme"),
             ("docs/online.md", "online"),
             ("content/packs/olx-core/pack.ron", "core"),
@@ -683,13 +676,13 @@ mod tests {
             entries.push((f.name().to_string(), f.unix_mode().unwrap() & 0o777, text));
         }
         let want = [
-            ("rust-liero-9.9.9/README.md", 0o644, "readme"),
-            ("rust-liero-9.9.9/content/packs/b/x.png", 0o644, "png"),
-            ("rust-liero-9.9.9/content/packs/olx-core/pack.ron", 0o644, "core"),
-            ("rust-liero-9.9.9/docs/online.md", 0o644, "online"),
-            ("rust-liero-9.9.9/olr-game", 0o755, "game"),
-            ("rust-liero-9.9.9/olr-server", 0o755, "server"),
-            ("rust-liero-9.9.9/server.example.ron", 0o644, "()"),
+            ("open-liero-reloaded-9.9.9/README.md", 0o644, "readme"),
+            ("open-liero-reloaded-9.9.9/content/packs/b/x.png", 0o644, "png"),
+            ("open-liero-reloaded-9.9.9/content/packs/olx-core/pack.ron", 0o644, "core"),
+            ("open-liero-reloaded-9.9.9/docs/online.md", 0o644, "online"),
+            ("open-liero-reloaded-9.9.9/olr", 0o755, "game"),
+            ("open-liero-reloaded-9.9.9/olr-server", 0o755, "server"),
+            ("open-liero-reloaded-9.9.9/server.example.ron", 0o644, "()"),
         ]
         .map(|(n, m, t)| (n.to_string(), m, t.to_string()));
         assert_eq!(entries, want);
@@ -705,8 +698,8 @@ mod tests {
         {
             use std::os::unix::fs::PermissionsExt as _;
             let mode = |p: &str| std::fs::metadata(out.join(p)).unwrap().permissions().mode() & 0o777;
-            assert_eq!(mode("rust-liero-9.9.9/olr-server"), 0o755);
-            assert_eq!(mode("rust-liero-9.9.9/README.md"), 0o644);
+            assert_eq!(mode("open-liero-reloaded-9.9.9/olr-server"), 0o755);
+            assert_eq!(mode("open-liero-reloaded-9.9.9/README.md"), 0o644);
         }
     }
 }

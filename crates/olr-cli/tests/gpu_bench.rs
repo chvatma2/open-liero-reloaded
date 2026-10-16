@@ -24,7 +24,7 @@ fn a_recorded_match_is_drawn_timed_and_probed() {
     }
     let content = olr_content::Content::open(&dir).unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let file = tmp.path().join("m.rlrp");
+    let file = tmp.path().join("m.olrp");
     let spec = stress::spec("olx-classic", "olx-level-dirt-level", 8, 3000, 3.0, 1);
     stress::run(
         &content,

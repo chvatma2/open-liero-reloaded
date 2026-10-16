@@ -224,7 +224,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   → `AppCommand::BlockHost`, the hex key saved in
   `online.finding.blocked`)), **LAN** (today's list; `LanEntry`'s
   `players_text()` and `is_full()` as the Internet tab's) and **Direct**
-  ("Address or invite code": `Join` as before, `is_invite` text, `rlx1`
+  ("Address or invite code": `Join` as before, `is_invite` text, `olr1`
   any case or at least 60 letters and digits (a typo in the prefix: the
   app then says "damaged", never looks it up as a name), said to be an
   invite; the app decodes it). While a join waits, the footer says its
@@ -296,11 +296,11 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `UiState` keeps the path cleaned), `resolve_typed_path(typed, home,
   cwd)` / `expand_typed_path` (`~` the home directory, a relative path the
   working directory's; the app expands before importing).
-- **Replays** (`replays.rs`): `list(dir)` (the `.rlrp` files, automatic
+- **Replays** (`replays.rs`): `list(dir)` (the `.olrp` files, automatic
   saves newest first, each with `header_problem`: 6 bytes read),
-  `auto_save(dir, bytes)` (`match-NNNNNN.rlrp`, the last
+  `auto_save(dir, bytes)` (`match-NNNNNN.olrp`, the last
   `MAX_AUTO_REPLAYS` kept; a player's own files are never removed),
-  `save_kept(dir, bytes)` (the results' Save replay: `replay-NNN.rlrp`).
+  `save_kept(dir, bytes)` (the results' Save replay: `replay-NNN.olrp`).
 - **HUD** (`hud/`, §21 G5; one style, the Classic one was dropped): `model.rs` (names, OLX's
   message texts, `Log` of `LogLine { text, kind: LineKind::{Event, Chat} }`
   (the last `LOG_KEEP` 64; `Chat` is for a multiplayer chat later),

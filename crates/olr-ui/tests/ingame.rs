@@ -410,9 +410,9 @@ fn results_show_the_columns_and_their_buttons() {
     h.get_by_label("Save replay").click();
     h.run();
     assert_eq!(h.state().commands.last(), Some(&AppCommand::SaveReplay));
-    h.state_mut().ui.update(UiAction::ReplaySaved(Ok("replay-001.rlrp".into())));
+    h.state_mut().ui.update(UiAction::ReplaySaved(Ok("replay-001.olrp".into())));
     h.run();
-    h.get_by_label_contains("replay-001.rlrp");
+    h.get_by_label_contains("replay-001.olrp");
     h.get_by_label("Rematch").click();
     h.run();
     let c = &h.state().commands;
@@ -424,7 +424,7 @@ fn results_show_the_columns_and_their_buttons() {
     // A replay's results: watch it again, no saving.
     let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
     ui.update(UiAction::Open(Screen::Replays));
-    ui.update(UiAction::PlayReplay("r.rlrp".into()));
+    ui.update(UiAction::PlayReplay("r.olrp".into()));
     ui.update(UiAction::MatchStarted);
     assert_eq!((ui.screen(), ui.game()), (Screen::InGame, Some(Game::Replay)));
     ui.update(UiAction::MatchOver);
@@ -564,7 +564,7 @@ fn save_replay_once_per_match() {
     let mut h = harness(ui, data);
     h.get_by_label("Save replay").click();
     h.run();
-    h.state_mut().ui.update(UiAction::ReplaySaved(Ok("replay-001.rlrp".into())));
+    h.state_mut().ui.update(UiAction::ReplaySaved(Ok("replay-001.olrp".into())));
     h.run();
     assert!(h.query_by_label("Save replay").is_none());
     h.get_by_label("Saved").click();
@@ -580,7 +580,7 @@ fn save_replay_once_per_match() {
     ui.update(UiAction::ReplaySaved(Err("disk full".into())));
     assert_eq!(ui.update(UiAction::SaveReplay), [AppCommand::SaveReplay]);
     // The next match saves anew.
-    ui.update(UiAction::ReplaySaved(Ok("replay-001.rlrp".into())));
+    ui.update(UiAction::ReplaySaved(Ok("replay-001.olrp".into())));
     ui.update(UiAction::StartMatch);
     ui.update(UiAction::MatchStarted);
     ui.update(UiAction::ChooseWeapons { weapons: [0; MAX_SLOTS], names: vec![] });

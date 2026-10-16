@@ -39,8 +39,8 @@ fn announcements_round_trip() {
     let e = announcement(&host(), &s, 0xdead_beef_0123_4567, 1000, [1; 32]);
     assert!(e.verify());
     assert_eq!(e.kind, KIND_ANNOUNCE);
-    assert_eq!(e.tag("d"), Some("rust-liero"));
-    assert_eq!(e.tag("t"), Some("rust-liero"));
+    assert_eq!(e.tag("d"), Some("open-liero-reloaded"));
+    assert_eq!(e.tag("t"), Some("open-liero-reloaded"));
     assert_eq!(e.tag("f"), Some("deadbeef01234567"));
     assert_eq!(e.expiration(), Some(1180));
     assert!(e.content.len() <= MAX_CONTENT);

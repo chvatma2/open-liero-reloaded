@@ -692,7 +692,7 @@ mod tests {
             build(&p, "a", "0000000000000001", &[".rlib"], &format!("{reg}/a-1.0.0/src/lib.rs"), None, 0);
             build(&p, "a", "0000000000000002", &[".rlib"], &format!("{reg}/a-1.0.1/src/lib.rs"), None, 7200);
         }
-        let zip = target.join("release-zips/rust-liero-0.1.0-linux-x64.zip");
+        let zip = target.join("release-zips/open-liero-reloaded-0.1.0-linux-x64.zip");
         std::fs::write(&zip, "zip").unwrap();
         assert_eq!(names(&target, profile_dirs(&target)), ["dist", "x86_64-pc-windows-gnu/dist"]);
         sweep(&target, WINDOW);

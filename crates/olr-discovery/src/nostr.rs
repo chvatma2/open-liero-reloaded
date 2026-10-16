@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 /// Announcements: addressable (parameterized replaceable), tag `d` =
-/// `"rust-liero"` (ruling PL12-2).
+/// `"open-liero-reloaded"` (ruling PL12-2).
 pub const KIND_ANNOUNCE: u32 = 31470;
 /// Ephemeral handshake events (plan 12b, N45): NIP-44 encrypted offers
 /// and answers, `p`-tagged to their recipient (`handshake`).

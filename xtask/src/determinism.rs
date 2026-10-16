@@ -241,7 +241,7 @@ fn goldens(all: bool) -> Result<Vec<(String, Spec)>, String> {
     Ok(out)
 }
 
-/// Records each golden's replay natively into `target/determinism/<stem>.rlrp`.
+/// Records each golden's replay natively into `target/determinism/<stem>.olrp`.
 fn record(goldens: &[(String, Spec)]) -> Result<Vec<PathBuf>, String> {
     std::fs::create_dir_all(root().join(OUT)).map_err(|e| format!("{OUT}: {e}"))?;
     let mut build = cargo();
@@ -249,7 +249,7 @@ fn record(goldens: &[(String, Spec)]) -> Result<Vec<PathBuf>, String> {
     ok_output(build, "cargo build olr-cli and olr-detcheck")?;
     let mut files = Vec::new();
     for (stem, spec) in goldens {
-        let file = PathBuf::from(OUT).join(format!("{stem}.rlrp"));
+        let file = PathBuf::from(OUT).join(format!("{stem}.olrp"));
         let mut c = Command::new(root().join("target/release/olr-cli"));
         c.current_dir(root()).arg("match").args(spec.flags()).args(["--no-verify", "--record"]).arg(&file);
         ok_output(c, &format!("olr-cli match ({stem})"))?;
@@ -398,7 +398,7 @@ pub fn command(mut opts: Opts) -> anyhow::Result<bool> {
 mod tests {
     use super::*;
 
-    const A: &str = "m.rlrp 0 00000000000000aa\nm.rlrp 10 00000000000000bb\nm.rlrp 20 00000000000000cc\n";
+    const A: &str = "m.olrp 0 00000000000000aa\nm.olrp 10 00000000000000bb\nm.olrp 20 00000000000000cc\n";
 
     #[test]
     fn equal_streams_pass() {
@@ -411,7 +411,7 @@ mod tests {
         let b = A.replace("bb", "bd");
         assert_eq!(
             compare(A, &b, "wasm"),
-            Err("m.rlrp 10: native 00000000000000bb, wasm 00000000000000bd".into())
+            Err("m.olrp 10: native 00000000000000bb, wasm 00000000000000bd".into())
         );
     }
 
@@ -474,7 +474,7 @@ mod tests {
 
     #[test]
     fn a_missing_tail_is_reported() {
-        let short = "m.rlrp 0 00000000000000aa\n";
+        let short = "m.olrp 0 00000000000000aa\n";
         assert!(compare(A, short, "arm64").unwrap_err().starts_with("arm64 stream ends after 1 lines"));
         assert!(compare(short, A, "arm64").unwrap_err().starts_with("native stream ends after 1 lines"));
     }

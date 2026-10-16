@@ -105,7 +105,7 @@ fn state_machine_navigates_and_emits_commands() {
 
     // Replays play from the replays screen; one that fails returns there.
     ui.update(UiAction::Open(Screen::Replays));
-    let file = std::path::PathBuf::from("a.rlrp");
+    let file = std::path::PathBuf::from("a.olrp");
     assert_eq!(ui.update(UiAction::PlayReplay(file.clone())), [AppCommand::PlayReplay(file.clone())]);
     assert!(ui.update(UiAction::PlayReplay(file.clone())).is_empty());
     ui.update(UiAction::MatchFailed("no".into()));

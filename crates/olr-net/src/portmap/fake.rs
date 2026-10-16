@@ -726,7 +726,7 @@ fn device(d: Description, inner_device: &str) -> String {
     );
     format!(
         "<device><deviceType>urn:schemas-upnp-org:device:InternetGatewayDevice:1</deviceType>\
-         <friendlyName>FakeGateway</friendlyName><manufacturer>rust-liero tests</manufacturer>\
+         <friendlyName>FakeGateway</friendlyName><manufacturer>olr tests</manufacturer>\
          <serviceList><service><serviceType>urn:schemas-upnp-org:service:Layer3Forwarding:1</serviceType>\
          <serviceId>urn:upnp-org:serviceId:L3Forwarding1</serviceId><SCPDURL>/l3f.xml</SCPDURL>\
          <controlURL>/l3f</controlURL><eventSubURL>/l3f-evt</eventSubURL></service></serviceList>\
@@ -875,7 +875,7 @@ fn respond(inner: &Inner, head: &str, body: &str) -> (&'static str, String) {
             let (Some(port), Some((ip, internal_port))) = (port, internal) else {
                 return soap_fault(402, "Invalid Args");
             };
-            if arg(body, "NewPortMappingDescription") != Some("rust-liero") {
+            if arg(body, "NewPortMappingDescription") != Some("Open Liero Reloaded") {
                 return soap_fault(402, "Invalid Args");
             }
             let internal = SocketAddrV4::new(ip, internal_port);

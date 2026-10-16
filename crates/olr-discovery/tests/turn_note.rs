@@ -25,7 +25,7 @@ fn relay(region: Region, load: u16, capacity: u16) -> TurnNote {
         region,
         capacity,
         load,
-        user: "rust-liero".into(),
+        user: "open-liero-reloaded".into(),
         pass: "open sesame".into(),
     }
 }
@@ -52,7 +52,7 @@ fn turn_notes_round_trip() {
     assert_eq!(picks.len(), 1);
     assert_eq!(picks[0].key, key(1).public());
     assert_eq!(picks[0].addr, "198.20.0.10:3478".parse().unwrap());
-    assert_eq!((picks[0].user.as_str(), picks[0].pass.as_str()), ("rust-liero", "open sesame"));
+    assert_eq!((picks[0].user.as_str(), picks[0].pass.as_str()), ("open-liero-reloaded", "open sesame"));
     assert!(TurnList::filter(NOW).matches(&e));
     assert_eq!(TurnList::filter(NOW).since, Some(NOW - ANNOUNCE_TTL));
 }
@@ -86,7 +86,7 @@ fn invalid_turn_notes_are_refused() {
         &key(1),
         NOW,
         KIND_TURN,
-        vec![vec!["d".into(), "rust-liero".into()]],
+        vec![vec!["d".into(), "open-liero-reloaded".into()]],
         "{}".into(),
         [0; 32],
     );

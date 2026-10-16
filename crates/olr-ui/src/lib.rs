@@ -1,4 +1,4 @@
-//! Menu and HUD logic for rust-liero (spec §8.3, §21 G1-G2): the screen
+//! Menu and HUD logic for OLR (spec §8.3, §21 G1-G2): the screen
 //! state machine, the settings and profiles and their files, and the egui
 //! theme. No GPU handle and no window: the widgets (and `olr-game`, which
 //! hosts them) drive [`UiState`] with [`UiAction`]s and carry out its

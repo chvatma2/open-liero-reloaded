@@ -521,7 +521,7 @@ impl NetMeter {
 }
 
 /// Saves desync bundle `bytes` in `dir` (made if missing) as
-/// `desync-<unix seconds>-<n>.rldg`, the first `n` free; returns the file.
+/// `desync-<unix seconds>-<n>.oldg`, the first `n` free; returns the file.
 /// Bounded by olr-online's `bundle::save`: 4 MiB a bundle, 64 MiB of
 /// bundles (the oldest go).
 pub fn save_bundle(dir: &Path, bytes: &[u8], unix_secs: u64) -> io::Result<PathBuf> {
@@ -648,8 +648,8 @@ mod tests {
         let dir = tmp.path().join(DESYNCS_DIR);
         let a = save_bundle(&dir, b"one", 1_700_000_000).unwrap();
         let b = save_bundle(&dir, b"two", 1_700_000_000).unwrap();
-        assert_eq!(a.file_name().unwrap(), "desync-1700000000-1.rldg");
-        assert_eq!(b.file_name().unwrap(), "desync-1700000000-2.rldg");
+        assert_eq!(a.file_name().unwrap(), "desync-1700000000-1.oldg");
+        assert_eq!(b.file_name().unwrap(), "desync-1700000000-2.oldg");
         assert_eq!(std::fs::read(&b).unwrap(), b"two");
     }
 

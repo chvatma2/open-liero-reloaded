@@ -264,7 +264,7 @@ pub enum FrameRate {
     /// Mailbox when available, else FIFO.
     #[default]
     VSync,
-    /// Present as fast as the GPU draws (`olr-game --uncapped`).
+    /// Present as fast as the GPU draws (`olr --uncapped`).
     Uncapped,
 }
 

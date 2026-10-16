@@ -108,7 +108,7 @@ impl GameList {
         self.seen.len()
     }
 
-    /// The relay subscription: announcements tagged `rust-liero`.
+    /// The relay subscription: announcements tagged `open-liero-reloaded`.
     pub fn filter() -> Filter {
         Filter {
             kinds: vec![KIND_ANNOUNCE],

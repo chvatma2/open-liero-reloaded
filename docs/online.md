@@ -12,7 +12,7 @@ password, then Start hosting. The Lobby opens: pick the map and the rules
 (only the host can), your weapons ("Random" or the weapon screen), Ready, and
 chat with Enter after pressing the chat key (T; rebind it in Options, Keys,
 "Chat"). The host can kick, ban, move players to spectators and "Force start"
-(players not ready then spectate that match). `olr-game --host [NAME]`
+(players not ready then spectate that match). `olr --host [NAME]`
 opens the Lobby straight away; `--port` changes the port.
 
 ## Join
@@ -24,7 +24,7 @@ uses port 23400) or an invite code in the Direct tab and Join; a password is ask
 Three wrong passwords from one address within a minute hold that address
 off for a minute ("too many wrong passwords: try again in a minute"),
 everyone behind the same public address included.
-`olr-game --join ADDR` (an address or an invite code) does the same from the command line. You can also join
+`olr --join ADDR` (an address or an invite code) does the same from the command line. You can also join
 mid-match as a spectator, and see each player's key fingerprint (8
 characters) in the Lobby.
 
@@ -57,11 +57,11 @@ a private address.
 counted as on the Internet tab. **Direct** takes an
 address or an invite code.
 
-**Invite codes.** A code starts with `rlx1` (letters and digits, in one
+**Invite codes.** A code starts with `olr1` (letters and digits, in one
 case). The host's lobby shows it with a Copy button, and a server prints
-`invite code: rlx1…` in its log (and answers `/invite` in chat: anyone in a
+`invite code: olr1…` in its log (and answers `/invite` in chat: anyone in a
 Public game, admins otherwise). Send the code by any chat. The joiner pastes it into Direct (or
-`olr-game --join rlx1…`) and Joins: the code holds the host's key, address
+`olr --join olr1…`) and Joins: the code holds the host's key, address
 and a few relay hints, and the game only joins a host with that key ("this
 is not the game you were invited to" otherwise). A code carries an
 address only when players can reach the host directly: its router opened
@@ -124,7 +124,7 @@ counts as public, since the game cannot tell where it is without looking
 it up: name an office relay by its IP address.
 
 **Privacy.** Opening Multiplayer (the Internet tab is the first;
-`olr-game --join` goes through it too) connects to the relays in Options, 8 public
+`olr --join` goes through it too) connects to the relays in Options, 8 public
 relays by default, which then see your IP address; a hosted Public game
 is announced there with its public address. Remove every relay in
 Options → Online to keep the game off the relays entirely (the Internet
@@ -236,17 +236,17 @@ relays…" means the offer never arrived: the two sides share no relay,
 or the relays refused it.
 
 A server logs the reach lines as `reach: …`, the join lines as
-`relays: …`, its invite as `invite code: rlx1…` (with an address) or
-`invite code (joins through the relays): rlx1…`, and each join as
+`relays: …`, its invite as `invite code: olr1…` (with an address) or
+`invite code (joins through the relays): olr1…`, and each join as
 `join: <name> (<fingerprint>) from <ip> via <tag> key <key>`.
 
 `olr-game` prints on its console (stdout): when hosting, each new reach
-line (`olr-game: reach: …`), each join line (`olr-game: relays: …`), each
-relay it listens on as it connects or fails (`olr-game: relay <url>:
+line (`olr: reach: …`), each join line (`olr: relays: …`), each
+relay it listens on as it connects or fails (`olr: relay <url>:
 connected` or `… unreachable: …`) and each member's path (`olr-game:
-join: <name> via <tag>`, then `olr-game: path: <name> now via <tag>` when
-it changes); when joining, each step (`olr-game: Asking the game through
-the relays…`) and the connection line (`olr-game: connected …`). The
+join: <name> via <tag>`, then `olr: path: <name> now via <tag>` when
+it changes); when joining, each step (`olr: Asking the game through
+the relays…`) and the connection line (`olr: connected …`). The
 invite code is not printed: copy it from the lobby.
 
 ### When a join fails
@@ -417,15 +417,15 @@ Linux (not WSL2, see "WSL2 and Windows"). Both PCs' clocks must be right
 more than a minute.
 
 **Commands.** Unpack the zip, open a terminal in its folder
-(`rust-liero-<version>`), and start the programs from there:
+(`open-liero-reloaded-<version>`), and start the programs from there:
 
 | | Linux (a terminal) | Windows (PowerShell) |
 |---|---|---|
-| the game, keeping its output | `./olr-game \| tee olr-game.txt` | `.\olr-game.exe \| Tee-Object -FilePath olr-game.txt` |
+| the game, keeping its output | `./olr \| tee olr.txt` | `.\olr.exe \| Tee-Object -FilePath olr.txt` |
 | the network check | `./olr-server --nat-check > nat-check-host.txt` | `.\olr-server.exe --nat-check > nat-check-host.txt` |
 
 On the joining PC, name the check's file `nat-check-joiner.txt`. (In
-cmd.exe, `olr-game.exe` and `olr-server.exe --nat-check > nat-check-host.txt`
+cmd.exe, `olr.exe` and `olr-server.exe --nat-check > nat-check-host.txt`
 work as written. Windows PowerShell 5.1 writes the `>` file as UTF-16:
 harmless, but open it with an editor rather than `type`.)
 
@@ -457,7 +457,7 @@ harmless, but open it with an editor rather than `type`.)
    "When a join fails") and the host's join lines. Then run the network
    check on both PCs (the command above): its `NAT:` line is
    each router's kind, its `relay …:` lines each relay's clock against
-   that PC's. Keep both files with both `olr-game.txt` outputs, then try
+   that PC's. Keep both files with both `olr.txt` outputs, then try
    the fixes under "No network path".
 
 To exercise hole punching even when the host's router opens the port,
@@ -593,8 +593,8 @@ plays on and the blip stays a stall). It shows when the host sees it:
 while it is still cut off. Its replay is kept too.
 
 **If a migration fails: the attempt lines.** The console (the terminal
-where you started `./olr-game | tee olr-game.txt`) and the log file say
-what each try to reach a successor did, as `olr-game: migration: …`
+where you started `./olr | tee olr.txt`) and the log file say
+what each try to reach a successor did, as `olr: migration: …`
 (`migration: …` in `olr-server`'s log and `olr-cli`'s stderr). These lines
 include the address of the player tried, so they appear only on your own
 PC: they are never sent to another player. Each line is said once per
@@ -663,8 +663,8 @@ networks note how long each step took.
 
 1. **Three PCs:** the first hosts (Multiplayer → Host a game, Invite
    only), the other two join with the invite code. Start the game with
-   `./olr-game | tee olr-game.txt` (Windows: `.\olr-game.exe | Tee-Object
-   -FilePath olr-game.txt`) on all three so the output is kept. On
+   `./olr | tee olr.txt` (Windows: `.\olr.exe | Tee-Object
+   -FilePath olr.txt`) on all three so the output is kept. On
    Windows, allow rust-liero through the firewall when asked (private
    networks): every PC opens a standby port on joining, and without it a
    migration to that PC can only go through the relays.
@@ -693,7 +693,7 @@ networks note how long each step took.
    scores). The online results' scores are equal on both PCs.
 6. **If anything differs** (a stall of more than a few seconds, the
    screens, the replays, a desync, or a Host lost screen), keep both PCs'
-   `desyncs/` folders and `olr-game.txt` files and note what the top line
+   `desyncs/` folders and `olr.txt` files and note what the top line
    said and for how long, and the `migration:` lines of both PCs (the
    attempt lines above give the reason).
 7. **Also try, each in its own match:**
@@ -742,8 +742,8 @@ once your content is complete.
   (a server's `upload_kib_s`); 256 KB/s while a match runs, so the game
   keeps its bandwidth.
 - **Where the cache lives.** The game keeps downloads in its download
-  cache: `~/.cache/rust-liero/downloads` on Linux,
-  `%LOCALAPPDATA%\rust-liero\cache\downloads` on Windows (with
+  cache: `~/.cache/open-liero-reloaded/downloads` on Linux,
+  `%LOCALAPPDATA%\open-liero-reloaded\cache\downloads` on Windows (with
   `--data-dir D`: `D/cache/downloads`). A second game running on the same
   machine uses `downloads-2` (up to `downloads-4`). The cache holds at
   most 1 GB; the packs used least recently go first. Replays of matches
@@ -837,7 +837,7 @@ port): STUN finds its address.
 
 ## Testing a bad network
 
-`olr-game --net-sim <profile>` hosts with three bots in the same process and
+`olr --net-sim <profile>` hosts with three bots in the same process and
 joins over a loopback link impaired as the profile: `lan`, `good`, `typical`,
 `bad` or `awful`. Press **F3** in any online match for the network overlay
 (ping, input delay, rollback, loss).

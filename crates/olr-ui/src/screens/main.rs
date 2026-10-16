@@ -17,7 +17,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, notices: &[String], out: &mut V
             ui.label(RichText::new(n).color(Color32::from_rgb(255, 200, 80)));
         }
         ui.add_space((ui.available_height() * 0.12).max(8.0));
-        ui.label(RichText::new("rust-liero").size(44.0).strong());
+        ui.label(RichText::new("Open Liero Reloaded").size(44.0).strong());
         ui.label(RichText::new("Liero Xtreme as OpenLieroX plays it").weak());
         ui.add_space(28.0);
         let mut button = |ui: &mut Ui, text: &str, action: UiAction| {

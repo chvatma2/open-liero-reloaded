@@ -6,14 +6,14 @@
 // server.log, desync bundles and downloads/ (players' skins it fetched).
 // Fields left out take the default shown.
 (
-    // The lobby's name in the game lists. Default "rust-liero server".
+    // The lobby's name in the game lists. Default "OLR server".
     name: "Office Liero",
     // Who can find it. Public: announced on the Nostr relays below (every
     // minute) and on the LAN. Lan: announced on the LAN only (UDP 23401,
     // every 2 s). Invite: not announced. Public and Invite servers also take
     // joins through the relays below, so players outside the LAN reach them
     // without an open port. Every server prints its invite code at the
-    // start (rlx1...: its key, relays and, when players can reach it
+    // start (olr1...: its key, relays and, when players can reach it
     // directly, its address); anyone joins with it, or with the address.
     // Default Public.
     visibility: Public,

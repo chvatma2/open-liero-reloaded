@@ -23,7 +23,7 @@ fn sample() -> Event {
         &alice(),
         1_790_000_000,
         KIND_ANNOUNCE,
-        tags(&[&["d", "rust-liero"], &["expiration", "1790000180"]]),
+        tags(&[&["d", "open-liero-reloaded"], &["expiration", "1790000180"]]),
         "hello \"world\"\n".into(),
         [3; 32],
     )
@@ -52,7 +52,7 @@ fn signing_round_trips() {
     let e = sample();
     assert!(e.verify());
     assert_eq!(e.pubkey, alice().public());
-    assert_eq!(e.tag("d"), Some("rust-liero"));
+    assert_eq!(e.tag("d"), Some("open-liero-reloaded"));
     assert_eq!(e.tag("nope"), None);
     assert_eq!(e.expiration(), Some(1_790_000_180));
     let wire = encode_to_relay(&ToRelay::Event(e.clone()));
@@ -132,7 +132,7 @@ fn frames_round_trip() {
             Filter {
                 kinds: vec![KIND_ANNOUNCE],
                 authors: vec![e.pubkey],
-                tags: vec![('t', vec!["rust-liero".into()])],
+                tags: vec![('t', vec!["open-liero-reloaded".into()])],
                 since: Some(100),
                 limit: Some(50),
             },

@@ -68,7 +68,7 @@ fn failure_writes_replay() {
     assert!(!out.status.success(), "a failing match exits with status 1\n{stdout}");
     assert!(stdout.contains("failed at tick 150"), "{stdout}");
     let files: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().path()).collect();
-    let replay_file = files.iter().find(|p| p.extension().is_some_and(|e| e == "rlrp")).expect("a replay");
+    let replay_file = files.iter().find(|p| p.extension().is_some_and(|e| e == "olrp")).expect("a replay");
     let info = files.iter().find(|p| p.extension().is_some_and(|e| e == "ron")).expect("the failure");
     let info = std::fs::read_to_string(info).unwrap();
     assert!(info.contains("seed: 77") && info.contains("tick: 150"), "{info}");

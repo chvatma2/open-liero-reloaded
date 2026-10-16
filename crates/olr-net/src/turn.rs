@@ -36,8 +36,8 @@ mod msg;
 
 pub use driver::{RelayPorts, TurnServer, TurnServerConfig, TurnStats};
 
-/// The realm of every rust-liero relay (N52: the credentials are public).
-pub const REALM: &str = "rust-liero";
+/// The realm of every OLR relay (N52: the credentials are public).
+pub const REALM: &str = "olr";
 
 /// At most this many client IPs are tracked; a new one evicts the one
 /// idle longest among those holding no allocation.

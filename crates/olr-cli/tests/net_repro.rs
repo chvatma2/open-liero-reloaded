@@ -34,7 +34,7 @@ fn bundles_round_trip_and_bad_ones_are_named() {
         gone: vec![(2, 0)],
     };
     let bytes = b.encode();
-    assert_eq!(&bytes[..4], b"RLDS");
+    assert_eq!(&bytes[..4], b"OLDS");
     assert_eq!(DesyncBundle::decode(&bytes).unwrap(), b);
     let mut bad = bytes.clone();
     bad[0] = b'X';
@@ -75,7 +75,7 @@ fn a_planted_desync_is_repaired_and_pinpointed() {
     let path = std::fs::read_dir(dir.path())
         .unwrap()
         .map(|e| e.unwrap().path())
-        .find(|p| p.extension().is_some_and(|e| e == "rlds"))
+        .find(|p| p.extension().is_some_and(|e| e == "olds"))
         .expect("a bundle was written");
     assert_eq!(r.bundles[0], path);
     let b = DesyncBundle::decode(&std::fs::read(&path).unwrap()).unwrap();
@@ -135,7 +135,7 @@ proptest! {
     #[test]
     fn decoding_arbitrary_bytes_never_panics(bytes in proptest::collection::vec(any::<u8>(), 0..400)) {
         let _ = DesyncBundle::decode(&bytes);
-        let mut with_header = b"RLDS\x01\x00".to_vec();
+        let mut with_header = b"OLDS\x01\x00".to_vec();
         with_header.extend(&bytes);
         let _ = DesyncBundle::decode(&with_header);
     }

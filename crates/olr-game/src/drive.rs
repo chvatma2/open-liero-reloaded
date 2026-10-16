@@ -206,9 +206,9 @@ mod tests {
 
     #[test]
     fn rematches_record_next_to_the_first() {
-        let base = Path::new("out/dm.rlrp");
-        assert_eq!(record_path(base, 0), PathBuf::from("out/dm.rlrp"));
-        assert_eq!(record_path(base, 1), PathBuf::from("out/dm-2.rlrp"));
+        let base = Path::new("out/dm.olrp");
+        assert_eq!(record_path(base, 0), PathBuf::from("out/dm.olrp"));
+        assert_eq!(record_path(base, 1), PathBuf::from("out/dm-2.olrp"));
         assert_eq!(record_path(Path::new("dm"), 2), PathBuf::from("dm-3"));
     }
 }

@@ -195,7 +195,7 @@ enum Command {
     Windows,
     /// Portable release zips: olr-game and olr-server (the `dist` profile) with the content,
     /// docs and an example server config, for Linux and Windows, in
-    /// target/release-zips/rust-liero-<version>-<platform>.zip; then each is unpacked and run.
+    /// target/release-zips/open-liero-reloaded-<version>-<platform>.zip; then each is unpacked and run.
     Dist {
         /// Only build the zips: do not unpack and run them.
         #[arg(long)]

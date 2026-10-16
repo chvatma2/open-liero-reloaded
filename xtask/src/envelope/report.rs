@@ -172,7 +172,7 @@ fn windowed(o: &mut String, g: &GpuPath, b: &Budgets, holding: &[&str]) {
     let rows = &g.windowed;
     let _ = writeln!(
         o,
-        "\nWindowed, asked for uncapped (`olr-game --frame-log --uncapped`, HUD included). Frame is frame to frame \
+        "\nWindowed, asked for uncapped (`olr --frame-log --uncapped`, HUD included). Frame is frame to frame \
          (what the player sees); busy is a frame's CPU time without waiting to present.\n"
     );
     let fifo: Vec<String> =
@@ -494,7 +494,7 @@ pub fn render(env: &Envelope, summary: &str) -> String {
          finding counts), OLX's pool, {} s, seed 1, `LoadingTime` 0, bonuses every 5 s. The pool sweep plays \
          MW 1.0. Map and art levels are generated in memory (`gen-<w>x<h>-a<scale>-s1`).\n\
          - Frames: `olr-cli gpu-bench` offscreen on the hardware adapter (timestamps when the adapter has them), and \
-         `olr-game --frame-log --uncapped` windowed; on WSL (GL over Mesa's d3d12, presented through WSLg) and \
+         `olr --frame-log --uncapped` windowed; on WSL (GL over Mesa's d3d12, presented through WSLg) and \
          native Windows (DX12, Vulkan) built with mingw-w64 and run through interop.\n\
          - Rollback: `olr-cli rollback-cost`, a Classic match of 16 chaos bots (500 ticks of warm-up, then a \
          sample every 10 ticks of play): save, play `depth` ticks, then time the restore and the re-simulation \
@@ -535,7 +535,7 @@ pub fn render(env: &Envelope, summary: &str) -> String {
     }
     let _ = writeln!(
         o,
-        "\n### Limits\n\n| | OLX (`d1ad953f`) | rust-liero |\n|---|---|---|\n\
+        "\n### Limits\n\n| | OLX (`d1ad953f`) | OLR |\n|---|---|---|\n\
          | Worms | 32 (`MAX_WORMS`, `include/Consts.h:34`) | 32 (`olr_sim::MAX_WORMS`) |\n\
          | Projectiles | 3000 (`MAX_PROJECTILES`, `include/CProjectile.h:36`) | 3000 by default, up to 65 536 (`MatchSetup::MAX_POOL_CAPACITY`) |\n\
          | Map side | 4096 (12-bit worm positions) | 4096 for imported levels (`olr-import-lxl`) |\n\
@@ -842,7 +842,7 @@ mod tests {
     fn the_olx_comparison_says_what_it_measured() {
         let mut e = env();
         e.olx = Some(OlxComparison {
-            image: "rust-liero/olx-oracle:d1ad953f".into(),
+            image: "olr-olx-oracle:d1ad953f".into(),
             build: "Release, -O3 (CMakeOlxCommon.cmake:43-47, :369)".into(),
             rows: vec![row("two-worms-fire", 4), row("heavy-spikeballs", 3000), row("heavy-napalm", 829)],
             notes: vec!["multi-shot: OLX timed 3 frames of 200".into()],

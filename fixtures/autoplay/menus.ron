@@ -52,7 +52,7 @@
         // The match's replay, saved when it ended, watched fast.
         (ui: Click("Replays")),
         (ui: WaitFor("Replays")),
-        (ui: Click("match-000001.rlrp")),
+        (ui: Click("match-000001.olrp")),
         (ui: WaitFor("InGame"), within: 300),
         (ui: Key("PageUp")),
         (ui: Key("PageUp")),

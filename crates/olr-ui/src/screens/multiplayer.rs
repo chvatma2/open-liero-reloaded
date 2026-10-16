@@ -16,7 +16,7 @@
 //!   locked one asks for its password in the Direct tab; players as on
 //!   the Internet tab). A game is full when its seats are: bots never
 //!   fill one.
-//! - **Direct:** an address or an invite code (`rlx1…`, any case; the app
+//! - **Direct:** an address or an invite code (`olr1…`, any case; the app
 //!   tells them apart) and a password (the last one typed remembered).
 //!
 //! "Host a game" below, and while a join waits, its step (the app's
@@ -373,7 +373,7 @@ fn direct(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<UiAc
     form_row(ui, "Address or invite code", |ui, label| {
         let field = TextEdit::singleline(&mut v.address)
             .char_limit(ADDRESS_CHARS)
-            .hint_text("host[:port] or rlx1…")
+            .hint_text("host[:port] or olr1…")
             .desired_width(380.0);
         let r = ui.add(field).labelled_by(label);
         join |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));

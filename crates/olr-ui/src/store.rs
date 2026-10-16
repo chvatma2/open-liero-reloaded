@@ -150,11 +150,11 @@ impl Store {
     }
 
     /// The platform data directory (`directories`' `ProjectDirs` for
-    /// "rust-liero": `~/.local/share/rust-liero` on Linux; its cache
-    /// directory `~/.cache/rust-liero`), or, when the
+    /// "open-liero-reloaded": `~/.local/share/open-liero-reloaded` on Linux; its cache
+    /// directory `~/.cache/open-liero-reloaded`), or, when the
     /// platform has none, [`Store::in_memory`] and a warning.
     pub fn platform() -> (Store, Option<String>) {
-        match directories::ProjectDirs::from("", "", "rust-liero") {
+        match directories::ProjectDirs::from("", "", "open-liero-reloaded") {
             Some(d) => {
                 (Store { cache: Some(d.cache_dir().to_path_buf()), ..Store::open(d.data_dir()) }, None)
             }

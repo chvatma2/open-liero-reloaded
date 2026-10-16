@@ -44,7 +44,7 @@ fn replay_viewed_by(dir: &Path, ticks: u64, viewer: Option<u8>) -> Assets {
     let mut replay = s.take_replay().expect("a Deathmatch records");
     assert_eq!(replay.setup.viewer, Some(0), "recorded from the human's slot");
     replay.setup.viewer = viewer;
-    let file = std::env::temp_dir().join(format!("olr-game-watch-{}-{viewer:?}.rlrp", std::process::id()));
+    let file = std::env::temp_dir().join(format!("olr-game-watch-{}-{viewer:?}.olrp", std::process::id()));
     std::fs::write(&file, replay.encode()).unwrap();
     let r = setup::load_replay(&[dir], &file, "default", &[]);
     std::fs::remove_file(&file).unwrap();
@@ -69,7 +69,7 @@ fn replay_withdrawing(dir: &Path, k: u32, ticks: u32) -> Assets {
         rec.push(&keys, &world).unwrap();
     }
     let replay = rec.finish(&world).unwrap();
-    let file = std::env::temp_dir().join(format!("olr-game-watch-gone-{}.rlrp", std::process::id()));
+    let file = std::env::temp_dir().join(format!("olr-game-watch-gone-{}.olrp", std::process::id()));
     std::fs::write(&file, replay.encode()).unwrap();
     let r = setup::load_replay(&[dir], &file, "default", &[]);
     std::fs::remove_file(&file).unwrap();

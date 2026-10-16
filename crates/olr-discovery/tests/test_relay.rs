@@ -179,7 +179,13 @@ fn ev(who: u8, at: u64, kind: u32, t: &[&[&str]], content: &str) -> Event {
 
 fn announce(who: u8, at: u64, content: &str) -> Event {
     let exp = (at + 180).to_string();
-    ev(who, at, KIND_ANNOUNCE, &[&["d", "rust-liero"], &["t", "rust-liero"], &["expiration", &exp]], content)
+    ev(
+        who,
+        at,
+        KIND_ANNOUNCE,
+        &[&["d", "open-liero-reloaded"], &["t", "open-liero-reloaded"], &["expiration", &exp]],
+        content,
+    )
 }
 
 fn kinds(k: u32) -> Filter {
@@ -282,10 +288,10 @@ fn filters_select_by_kind_author_and_tags() {
     let relay = TestRelay::start();
     relay.set_time(1000);
     let mut c = Client::connect(&relay);
-    let e1 = ev(1, 100, 1, &[&["t", "rust-liero"], &["f", "aaaa"]], "e1");
+    let e1 = ev(1, 100, 1, &[&["t", "open-liero-reloaded"], &["f", "aaaa"]], "e1");
     let e2 = ev(2, 200, 1, &[&["t", "other"], &["f", "bbbb"]], "e2");
     let e3 = ev(1, 300, 2, &[&["p", "pk"], &["d", "x"]], "e3");
-    let e4 = ev(2, 400, 30000, &[&["d", "slot"], &["t", "rust-liero"]], "e4");
+    let e4 = ev(2, 400, 30000, &[&["d", "slot"], &["t", "open-liero-reloaded"]], "e4");
     for e in [&e1, &e2, &e3, &e4] {
         assert!(c.publish(e).0);
     }
@@ -300,8 +306,8 @@ fn filters_select_by_kind_author_and_tags() {
         tags: vec![(c, v.iter().map(|s| s.to_string()).collect())],
         ..Filter::default()
     };
-    assert_eq!(q(&mut c, tag('t', &["rust-liero"])), ["e4", "e1"]);
-    assert_eq!(q(&mut c, tag('t', &["rust-liero", "other"])), ["e4", "e2", "e1"]);
+    assert_eq!(q(&mut c, tag('t', &["open-liero-reloaded"])), ["e4", "e1"]);
+    assert_eq!(q(&mut c, tag('t', &["open-liero-reloaded", "other"])), ["e4", "e2", "e1"]);
     assert_eq!(q(&mut c, tag('f', &["bbbb"])), ["e2"]);
     assert_eq!(q(&mut c, tag('p', &["pk"])), ["e3"]);
     assert_eq!(q(&mut c, tag('d', &["x"])), ["e3"]);

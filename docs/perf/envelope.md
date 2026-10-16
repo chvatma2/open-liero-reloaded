@@ -35,7 +35,7 @@ Rollback: restoring and re-simulating 12 ticks costs 1.26 ms p99 at the referenc
 
 - Budgets: tick p99 ≤ 10 ms (OLX's 100 Hz frame), frame p99 ≤ 6.9 ms (144 Hz) and ≤ 16.7 ms (60 Hz), peak memory below 2048 MiB. A point holds when all of them do; the breaking point is the first value that does not, with the cause (tick, frame, memory, or a cap).
 - Sweeps: `olr-cli stress`, one process a point, medians of the runs; the reference is Classic on Castle Strike, 16 bots of mixed difficulty (chaos bots; Deathmatch bots on the map and art sweeps, so route finding counts), OLX's pool, 20 s, seed 1, `LoadingTime` 0, bonuses every 5 s. The pool sweep plays MW 1.0. Map and art levels are generated in memory (`gen-<w>x<h>-a<scale>-s1`).
-- Frames: `olr-cli gpu-bench` offscreen on the hardware adapter (timestamps when the adapter has them), and `olr-game --frame-log --uncapped` windowed; on WSL (GL over Mesa's d3d12, presented through WSLg) and native Windows (DX12, Vulkan) built with mingw-w64 and run through interop.
+- Frames: `olr-cli gpu-bench` offscreen on the hardware adapter (timestamps when the adapter has them), and `olr --frame-log --uncapped` windowed; on WSL (GL over Mesa's d3d12, presented through WSLg) and native Windows (DX12, Vulkan) built with mingw-w64 and run through interop.
 - Rollback: `olr-cli rollback-cost`, a Classic match of 16 chaos bots (500 ticks of warm-up, then a sample every 10 ticks of play): save, play `depth` ticks, then time the restore and the re-simulation of those ticks with their recorded keys (the bots' thinking is not timed: online, bots think on the host only). Budgets: restore plus 12 ticks p99 ≤ 2 ms at the reference (Castle Strike) and ≤ 4 ms at 4096 × 4096; depth 28 (`MAX_PREDICTION`) is information.
 - OLX: the oracle's patched OLX (Docker; a Release build, -O3) timing each simulated frame to a file of its own; olr-sim timed on the same scenarios, the same work checked frame by frame.
 
@@ -164,7 +164,7 @@ Shader headroom, GPU side (a full-screen blur pass, `olr_render::Probe`): the GP
 | 3440×1440 | 0.080 | 86 | 208 |
 | 3840×2160 | 0.133 | 51 | 124 |
 
-Windowed, asked for uncapped (`olr-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
+Windowed, asked for uncapped (`olr --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
 
 Against the budgets (frame p99): 144 Hz (6.9 ms) holds at every size; 60 Hz (16.7 ms) holds at every size.
 
@@ -210,7 +210,7 @@ Shader headroom, GPU side (a full-screen blur pass, `olr_render::Probe`): the GP
 | 3440×1440 | 0.065 | 107 | 257 |
 | 3840×2160 | 0.108 | 63 | 153 |
 
-Windowed, asked for uncapped (`olr-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
+Windowed, asked for uncapped (`olr --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
 
 Against the budgets (frame p99): 144 Hz (6.9 ms) holds at every size; 60 Hz (16.7 ms) holds at every size.
 
@@ -256,7 +256,7 @@ Shader headroom, GPU side (a full-screen blur pass, `olr_render::Probe`): the GP
 | 3440×1440 | 0.062 | 111 | 269 |
 | 3840×2160 | 0.102 | 65 | 160 |
 
-Windowed, asked for uncapped (`olr-game --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
+Windowed, asked for uncapped (`olr --frame-log --uncapped`, HUD included). Frame is frame to frame (what the player sees); busy is a frame's CPU time without waiting to present.
 
 Every run presented with Fifo: the surface offered no uncapped mode, so a frame also waits for the display's refresh and the frame rate is at most the refresh rate.
 

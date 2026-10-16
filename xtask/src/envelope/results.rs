@@ -147,7 +147,7 @@ pub struct ProbeOut {
     pub gpu_dropped: u32,
 }
 
-/// `olr-game --frame-log` (`olr_game::stats::FrameLog`).
+/// `olr --frame-log` (`olr_game::stats::FrameLog`).
 #[derive(Clone, Debug, Default, Deserialize)]
 pub struct FrameLogOut {
     pub size: (u32, u32),

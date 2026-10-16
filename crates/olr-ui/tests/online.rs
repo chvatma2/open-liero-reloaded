@@ -854,7 +854,7 @@ fn tabs_and_direct_invite() {
     // Direct: an invite code in upper case.
     h.get_by_label("Direct").click();
     settle(&mut h);
-    let code = "RLX1QQQSYQCYQ5RQWZQFPG9SCRGWPUGPZYSNSQQQQQQQQQQQQ";
+    let code = "OLR1QQQSYQCYQ5RQWZQFPG9SCRGWPUGPZYSNSQQQQQQQQQQQQ";
     h.get_by_role_and_label(Role::TextInput, ADDRESS).focus();
     settle(&mut h);
     h.get_by_role_and_label(Role::TextInput, ADDRESS).type_text(code);
@@ -868,14 +868,14 @@ fn tabs_and_direct_invite() {
             if addr == code && s.online.last_address == code),
         "{cmds:?}"
     );
-    assert!(olr_ui::is_invite(" rlx1abc") && olr_ui::is_invite("Rlx1") && !olr_ui::is_invite("rlx"));
+    assert!(olr_ui::is_invite(" olr1abc") && olr_ui::is_invite("Olr1") && !olr_ui::is_invite("olr"));
     assert!(!olr_ui::is_invite("192.168.1.5"));
     // A typo in the prefix still reads as a code (the game then says it is
     // damaged), never as an address to look up: a code is at least 60
     // letters and digits, no host name a single label that long.
-    let typo = code.replacen("RLX1", "RKX1", 1);
+    let typo = code.replacen("OLR1", "OKR1", 1);
     assert!(olr_ui::is_invite(&format!("{typo}{}", "Q".repeat(20))));
-    assert!(olr_ui::is_invite(&format!("rlz1{}", "q".repeat(60))));
+    assert!(olr_ui::is_invite(&format!("olz1{}", "q".repeat(60))));
     for address in ["localhost", "my-server.example.org:23400", "office", &"a".repeat(59), "[::1]:23400"] {
         assert!(!olr_ui::is_invite(address), "{address}");
     }
@@ -1042,23 +1042,23 @@ fn the_internet_tab_says_no_relay_reachable() {
 fn the_lobby_shows_the_invite_and_copies_it() {
     let mut h = harness();
     let mut v = lobby_view(true);
-    v.invite = Some("rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn".into());
+    v.invite = Some("olr1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn".into());
     v.listing = Some("Listed on the Internet".into());
     in_lobby(h.state_mut(), v);
     settle(&mut h);
-    h.get_by_label("rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn");
+    h.get_by_label("olr1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn");
     h.get_by_label("Listed on the Internet");
     h.get_by_label("Copy").click();
     h.step();
     let copied = h.output().platform_output.commands.iter().any(
-        |c| matches!(c, egui::OutputCommand::CopyText(t) if t == "rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn"),
+        |c| matches!(c, egui::OutputCommand::CopyText(t) if t == "olr1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn"),
     );
     assert!(copied, "{:?}", h.output().platform_output.commands);
     // An Invite game whose code has no address says so beside its Copy
     // (final review B-I3).
     let mut h = harness();
     let mut v = lobby_view(true);
-    v.invite = Some("rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn".into());
+    v.invite = Some("olr1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn".into());
     v.listing =
         Some("This code has no address: forward port 23400 or set the public address in Options".into());
     in_lobby(h.state_mut(), v);
@@ -1134,7 +1134,7 @@ fn an_addressless_internet_game_is_joinable() {
 fn the_lobby_shows_reach_lines_and_path_tags() {
     let mut h = harness();
     let mut v = lobby_view(true);
-    v.invite = Some("rlx1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn".into());
+    v.invite = Some("olr1qqqsyqcyq5rqwzqfpg9scrgwpugpzysn".into());
     v.listing = Some("Listed on the Internet".into());
     v.reach = vec![
         "Your router did not open port 23400 (no router answered): players connect by hole punching or a TURN relay"

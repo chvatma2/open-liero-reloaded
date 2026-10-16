@@ -517,7 +517,7 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
   `make` re-simulates the rows from `build_match`'s start world with its
   `Recorder`, each withdrawal (`Recorder::withdraw`, an error as `push`'s)
   before its tick, and returns the
-  `.rlrp` bytes, with a warning when a confirmed checksum differs (the
+  `.olrp` bytes, with a warning when a confirmed checksum differs (the
   replay is kept; the peer reports it as a `Notice`); `ReplayJob::spawn`
   runs it on a thread (`olr-online-replay`); a peer runs one at a time (a
   match ending while one is made gets `REPLAY_SKIPPED`, so a hostile host
@@ -532,14 +532,14 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
   checksums, the other side's stream (`other_checksums`: on the host the
   peer's compared reports, `Session::peer_checksums`; on a client the
   host's checksum of the mismatch), the mismatch `(tick, local,
-  remote)`), encoded as `RLDG`, a
-  u16 LE version and postcard (`.rldg`; not `olr-cli`'s `.rlds`, which
+  remote)`), encoded as `OLDG`, a
+  u16 LE version and postcard (`.oldg`; not `olr-cli`'s `.olds`, which
   rebuilds its world from a `NetSpec`). The session's `Desync` (both
   sides: a client's when the host reports it, the host's per peer) and a
   replay's checksum warning (its record) each give an
   `OnlineEvent::DesyncBundle(bytes)`, at most `MAX_BUNDLES_PER_MATCH` (3)
   desyncs a match; the game and the server save them with `bundle::save`
-  (`desync-<unix s>-<n>.rldg`, the caller's time; at most
+  (`desync-<unix s>-<n>.oldg`, the caller's time; at most
   `MAX_BUNDLE_BYTES` 4 MiB a bundle and `MAX_BUNDLES_DIR_BYTES` 64 MiB of
   bundles in the directory, the oldest removed; other files untouched).
 - **`content/`** (plan 11, N32): pack downloads over `TAG_CONTENT`,
