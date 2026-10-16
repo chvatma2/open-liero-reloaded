@@ -427,7 +427,19 @@ fn garbage_input_is_answered_not_fatal() {
         c.0.send(Message::text(junk)).unwrap();
         assert!(matches!(c.recv(), FromRelay::Notice(m) if m.starts_with("error")), "{junk}");
     }
-    c.0.send(Message::text("x".repeat(MAX_FRAME + 10))).unwrap();
+    // The relay closes as soon as it reads the frame's length, which may be
+    // before this side wrote all of it: then the send itself finds the
+    // connection closed (a broken pipe under load), which is the same
+    // state, so it is waited for by reading, not by the send's result.
+    match c.0.send(Message::text("x".repeat(MAX_FRAME + 10))) {
+        Ok(()) => {}
+        Err(tungstenite::Error::Io(e))
+            if matches!(
+                e.kind(),
+                ErrorKind::BrokenPipe | ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted
+            ) => {}
+        Err(e) => panic!("the oversized frame's send: {e}"),
+    }
     assert_eq!(c.next(), Next::Closed, "an oversized frame closes the connection");
     // The relay itself lives on.
     assert!(Client::connect(&relay).query("s", vec![kinds(1)]).is_empty());

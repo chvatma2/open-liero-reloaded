@@ -201,7 +201,11 @@ the handshake events (`handshake`) and TURN relay notes (`turn_note`).
   wins; ephemeral 20000-29999 only forwarded; expired events are refused on
   publish and not served. REQ: kinds, authors, `#x`, since, limit (per
   filter, newest first), then EOSE; no filters select nothing. Frames are
-  limited to `MAX_FRAME`. One thread per connection; drop stops it (joins
+  limited to `MAX_FRAME`: a longer one closes the connection as soon as
+  its length is read, often while its sender still writes it, so
+  `garbage_input_is_answered_not_fatal` takes a broken pipe on that send
+  as the close it waits for (under load the send failed and the test
+  panicked). One thread per connection; drop stops it (joins
   bounded at 2 s). Tests that keep a subscription must say so: the test
   client's `query` CLOSEs after EOSE, `subscribe` does not.
 - **`pool`** and **`relay`** (its driver): `Pool::start(PoolConfig {
