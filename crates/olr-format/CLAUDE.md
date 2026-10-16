@@ -62,3 +62,12 @@ compilers to `olr-data`'s runtime structs; lifts back. Plan 13a: mods.
     `files.rs` and `types.rs` cover their rules (spawn defaults are tested
     in `types.rs`).
 - **Skins** (`skins/`): `SkinSource` is `skin.ron` (all layout fields written), `skin.png` (a grid of frames, aim columns × walk rows), `tint.png` (grey: 0 keep, 255 player colour) and an optional `left.png`. `compile_skin` builds OLX's 672 × 18 sheet; only OLX's layout, no `left.png` and no partial tint compile ("not supported by this runtime yet"). `lift_skin` is exact for every bundled skin (tests/skins.rs).
+- **Core** (`core_pack/`, not `core`: that name would shadow the `core` crate):
+  `CoreSource` is `core.ron` (per sprite `frames` and `art_scale`, a `sounds`
+  list, `colours` by OLX's key), `gfx/<id>.png` (alpha) and `sounds/<file>`.
+  `CORE_LAYOUT` holds OLX's frame grids and art scales. `giblets` (32 × 8) and
+  `giblet-stains` (16 × 4) are two sprites that `compile_core` composes into
+  OLX's 32 × 12 `giblets`; `lift_core` splits it and keys each sprite once
+  (`image_io::olx_sprite_to_alpha`). `compile_core` checks that the grid divides
+  the image; the drawing code keeps its own constants. tests/core_pack.rs also
+  checks that the bundled mods' gfx key to alpha without change.

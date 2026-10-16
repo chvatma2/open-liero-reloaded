@@ -3,6 +3,7 @@
 //! their compilers to `olr-data`'s runtime structs. Plan 13a: mods.
 
 mod colour;
+pub mod core_pack;
 pub(crate) mod defaults;
 mod error;
 pub mod image_io;
