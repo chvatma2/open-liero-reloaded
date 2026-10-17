@@ -72,7 +72,9 @@ pub enum Shape {
         h: i32,
     },
     /// Pixels whose centre lies within `width / 2` of the segment between
-    /// the centres of pixels `from` and `to`; `width` 0 covers nothing.
+    /// the centres of pixels `from` and `to`; `width` 0 covers nothing. Across
+    /// a straight line that is `width` pixels for an odd width and
+    /// `width + 1` for an even one, as a circle of radius `width / 2`.
     Line {
         from: (i32, i32),
         to: (i32, i32),

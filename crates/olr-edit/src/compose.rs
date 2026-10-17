@@ -47,15 +47,19 @@ pub enum ComposeError {
 
 /// Originals decoded once per source, and processed grids per (source,
 /// box art size, pixelation), at most `GRIDS_PER_SOURCE` per source, the
-/// least recently used dropped (plan 14b ruling R3). A source's bytes
-/// never change under the same name within one cache's life: sources are
-/// only added, under new names (plan 14a ruling R7).
+/// least recently used dropped (plan 14b ruling R3). Originals are kept
+/// within `ORIGINAL_PIXELS`, the least recently used dropped. Each source's
+/// entries carry its bytes' fingerprint: bytes that change under the same
+/// name are decoded and processed afresh, never served stale.
 #[derive(Default)]
 pub struct ImageCache {
-    originals: BTreeMap<String, Arc<RgbaImage>>,
-    /// Per source, the most recently used grid last.
-    grids: BTreeMap<String, Vec<(GridKey, Arc<RgbaImage>)>>,
+    /// Per source: its bytes' fingerprint, the decoded original, its last use.
+    originals: BTreeMap<String, (u64, Arc<RgbaImage>, u64)>,
+    /// Per source: its bytes' fingerprint and its grids, the most recently used last.
+    grids: BTreeMap<String, (u64, Vec<(GridKey, Arc<RgbaImage>)>)>,
     processed: usize,
+    /// Uses so far: the originals' recency.
+    tick: u64,
 }
 
 /// A processed grid's key besides its source: the box's art size and the pixelation.
@@ -63,6 +67,22 @@ type GridKey = ((u32, u32), Pixelation);
 
 /// Processed grids each source keeps.
 pub const GRIDS_PER_SOURCE: usize = 4;
+
+/// The decoded originals' pixels an `ImageCache` holds at most (the least
+/// recently used dropped first; the newest is kept alone when larger).
+pub const ORIGINAL_PIXELS: u64 = 4 * IMAGES.max_pixels;
+
+/// `bytes`' length and FNV-1a hash, combined.
+fn fingerprint(bytes: &[u8]) -> u64 {
+    let hash = bytes
+        .iter()
+        .fold(0xcbf2_9ce4_8422_2325u64, |h, &b| (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3));
+    hash ^ (bytes.len() as u64).rotate_left(32)
+}
+
+fn pixels(img: &RgbaImage) -> u64 {
+    u64::from(img.width()) * u64::from(img.height())
+}
 
 impl ImageCache {
     pub fn new() -> ImageCache {
@@ -72,13 +92,34 @@ impl ImageCache {
     /// The decoded original (within `IMAGES`, EXIF-oriented) of `source`
     /// whose bytes are `bytes`, decoded on first use.
     pub fn original(&mut self, source: &str, bytes: &[u8]) -> Result<Arc<RgbaImage>, ComposeError> {
-        if let Some(img) = self.originals.get(source) {
+        self.original_fp(source, bytes, fingerprint(bytes))
+    }
+
+    fn original_fp(&mut self, source: &str, bytes: &[u8], fp: u64) -> Result<Arc<RgbaImage>, ComposeError> {
+        self.tick += 1;
+        if let Some((f, img, used)) = self.originals.get_mut(source)
+            && *f == fp
+        {
+            *used = self.tick;
             return Ok(img.clone());
         }
         let img = image_io::decode_image_within(bytes, IMAGES)
             .map_err(|message| ComposeError::File { file: image_file(source), message })?;
         let img = Arc::new(img);
-        self.originals.insert(source.into(), img.clone());
+        self.originals.insert(source.into(), (fp, img.clone(), self.tick));
+        // Drop the least recently used others while over the budget.
+        while self.original_pixels() > ORIGINAL_PIXELS {
+            let oldest = self
+                .originals
+                .iter()
+                .filter(|(k, _)| k.as_str() != source)
+                .min_by_key(|(_, (_, _, used))| *used)
+                .map(|(k, _)| k.clone());
+            match oldest {
+                Some(k) => self.originals.remove(&k),
+                None => break,
+            };
+        }
         Ok(img)
     }
 
@@ -91,23 +132,32 @@ impl ImageCache {
         art_box: (u32, u32),
         p: &Pixelation,
     ) -> Result<Arc<RgbaImage>, ComposeError> {
+        let fp = fingerprint(original);
         let key = (art_box, *p);
-        let grids = self.grids.entry(source.into()).or_default();
+        let (f, grids) = self.grids.entry(source.into()).or_default();
+        if *f != fp {
+            (*f, *grids) = (fp, Vec::new());
+        }
         if let Some(i) = grids.iter().position(|(k, _)| *k == key) {
             let hit = grids.remove(i);
             let grid = hit.1.clone();
             grids.push(hit);
             return Ok(grid);
         }
-        let img = self.original(source, original)?;
+        let img = self.original_fp(source, original, fp)?;
         let grid = Arc::new(process_grid(&img, art_box, p));
         self.processed += 1;
-        let grids = self.grids.entry(source.into()).or_default();
+        let (_, grids) = self.grids.entry(source.into()).or_default();
         if grids.len() >= GRIDS_PER_SOURCE {
             grids.remove(0);
         }
         grids.push((key, grid.clone()));
         Ok(grid)
+    }
+
+    /// The decoded originals' pixels held.
+    pub fn original_pixels(&self) -> u64 {
+        self.originals.values().map(|(_, img, _)| pixels(img)).sum()
     }
 
     /// How many grids were processed since `new` (tests: a move never processes).
@@ -438,14 +488,16 @@ pub fn decode_element(
 
 /// The files a drawn or raster element's decoded data encodes to (as
 /// `write_level_files` encodes art and material; a raster's material is a
-/// level of `size`); none for an image (its original is kept) or data of
-/// another kind than the element.
+/// level of `size`); none for an image (its original is kept), data of
+/// another kind than the element, or a raster's material not of `size`.
 pub fn encode_decoded(e: &Element, d: &Decoded, size: (u32, u32)) -> Vec<(String, Vec<u8>)> {
     match (&e.kind, d) {
         (ElementKind::Drawn { .. }, Decoded::Drawn { art }) => {
             vec![(layer_file(&e.id), image_io::encode_rgba(art))]
         }
-        (ElementKind::Raster, Decoded::Raster { material, front, back }) => {
+        (ElementKind::Raster, Decoded::Raster { material, front, back })
+            if material.len() as u64 == u64::from(size.0) * u64::from(size.1) =>
+        {
             let [m, f, b] = raster_files(&e.id);
             vec![
                 (m, encode_material(size, material)),
@@ -495,6 +547,23 @@ pub fn resize_decoded(
     material: Material,
     paint: &Paint,
 ) -> Result<(), EditError> {
+    let art = (u64::from(old.0) * u64::from(art_scale), u64::from(old.1) * u64::from(art_scale));
+    let dims = |i: &RgbaImage| (u64::from(i.width()), u64::from(i.height()));
+    let wrong = |what: &RgbaImage| {
+        EditError::Art(what.width(), what.height(), format!("{:?} is not the level's art size", e.id))
+    };
+    match d {
+        Decoded::Drawn { art: a } if dims(a) != art => return Err(wrong(a)),
+        Decoded::Raster { front, back, .. } if dims(front) != art || dims(back) != art => {
+            return Err(wrong(if dims(front) != art { front } else { back }));
+        }
+        Decoded::Raster { material, front, .. }
+            if material.len() as u64 != u64::from(old.0) * u64::from(old.1) =>
+        {
+            return Err(wrong(front));
+        }
+        _ => {}
+    }
     match (&mut e.kind, d) {
         (ElementKind::Image { at, .. }, _) => {
             let moved = |v: i32, by: i32| v.checked_add(by).ok_or_else(|| EditError::Moved(e.id.clone()));

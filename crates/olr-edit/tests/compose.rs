@@ -513,3 +513,63 @@ proptest! {
         prop_assert!(part.material == full.material && part.front == full.front && part.back == full.back);
     }
 }
+
+/// Batch A review: the cache keeps originals within `ORIGINAL_PIXELS`,
+/// the least recently used dropped.
+#[test]
+fn the_cache_bounds_its_originals() {
+    let mut cache = ImageCache::new();
+    let png = image_io::encode_rgba(&RgbaImage::new(2048, 2048));
+    let n = olr_edit::compose::ORIGINAL_PIXELS / (2048 * 2048) + 3;
+    for i in 0..n {
+        cache.original(&format!("{i}.png"), &png).unwrap();
+        assert!(cache.original_pixels() <= olr_edit::compose::ORIGINAL_PIXELS);
+    }
+}
+
+/// Batch A review: a source whose bytes change under the same name is
+/// decoded again, never served from the cache.
+#[test]
+fn the_cache_notices_new_bytes_under_an_old_name() {
+    let mut cache = ImageCache::new();
+    let a = image_io::encode_rgba(&solid(2, 2, BLUE));
+    let b = image_io::encode_rgba(&solid(3, 1, BROWN));
+    assert_eq!(cache.original("a.png", &a).unwrap().width(), 2);
+    assert_eq!(cache.original("a.png", &b).unwrap().width(), 3);
+    let p = olr_edit::pixelate::Pixelation {
+        pixel_size: 1,
+        colours: None,
+        dither: Dither::None,
+        alpha_threshold: 128,
+    };
+    assert_eq!(cache.grid("a.png", &a, (2, 2), &p).unwrap().get(0, 0), BLUE);
+    assert_eq!(cache.grid("a.png", &b, (2, 2), &p).unwrap().get(0, 0), BROWN);
+}
+
+/// Batch A review: data of the wrong size is refused or encodes to
+/// nothing, never a panic.
+#[test]
+fn mismatched_decoded_data_never_panics() {
+    use olr_edit::compose::resize_decoded;
+    use olr_edit::level::Paint;
+    let e = element("r", ElementKind::Raster);
+    let d = Decoded::Raster {
+        material: vec![Material::Dirt; 3],
+        front: solid(2, 2, BLUE),
+        back: solid(2, 2, BLUE),
+    };
+    assert!(encode_decoded(&e, &d, (5, 5)).is_empty());
+    let (mut e2, mut d2) = (e.clone(), d.clone());
+    assert!(
+        resize_decoded(&mut e2, &mut d2, (2, 2), 1, (4, 4), (0, 0), Material::Rock, &Paint::Colour(BLUE))
+            .is_err()
+    );
+    assert_eq!(d2, d);
+    let drawn = element("d", ElementKind::Drawn { material: ElementMaterial::Dirt });
+    let mut art = Decoded::Drawn { art: solid(3, 3, BLUE) };
+    let mut e3 = drawn.clone();
+    assert!(
+        resize_decoded(&mut e3, &mut art, (2, 2), 1, (4, 4), (0, 0), Material::Rock, &Paint::Colour(BLUE))
+            .is_err()
+    );
+}
