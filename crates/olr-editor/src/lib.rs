@@ -11,6 +11,7 @@ pub mod ops;
 mod pointer;
 pub mod state;
 pub mod tools;
+pub mod ui;
 pub mod view;
 
 pub use catalog::{Catalog, EditorSettings, ModEntry, ThemeEntry};

@@ -310,15 +310,13 @@ impl EditorState {
             EditorAction::Choose(choice) => self.choose(choice),
             EditorAction::ImportImage { file_name, bytes } => {
                 let centre = self.import_centre();
-                self.edit(|d| d.add_image(&file_name, bytes, centre))
+                let cmds = self.edit(|d| d.add_image(&file_name, bytes, centre));
+                self.select_top(&cmds);
+                cmds
             }
             EditorAction::AddLayer => {
                 let cmds = self.edit(|d| d.add_layer(ElementMaterial::Dirt, "Layer"));
-                if !cmds.is_empty()
-                    && let Some(top) = self.doc.as_ref().and_then(|d| d.items().last())
-                {
-                    self.selection = Selection::Element(top.element.id.clone());
-                }
+                self.select_top(&cmds);
                 cmds
             }
             EditorAction::Select(selection) => {
@@ -405,6 +403,15 @@ impl EditorState {
                 self.grid = on;
                 Vec::new()
             }
+        }
+    }
+
+    /// Selects the top element after an add (`cmds` not empty: it was made).
+    fn select_top(&mut self, cmds: &[EditorCommand]) {
+        if !cmds.is_empty()
+            && let Some(top) = self.doc.as_ref().and_then(|d| d.items().last())
+        {
+            self.selection = Selection::Element(top.element.id.clone());
         }
     }
 
