@@ -327,9 +327,7 @@ fn edit(dir: &Path, op: impl FnOnce(&mut LevelSource) -> anyhow::Result<()>) -> 
     op(&mut l)?;
     level::refresh_thumb(&mut l);
     pack.source = Source::Level(l);
-    for w in save(dir, &pack).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))? {
-        eprintln!("warning: {w}");
-    }
+    crate::pack_cmd::warn(&save(dir, &pack).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?);
     Ok(true)
 }
 

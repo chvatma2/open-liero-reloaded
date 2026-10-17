@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Subcommand, ValueEnum};
 use olr_data::manifest::PackKind;
+use olr_edit::fmt::Formatted;
 use olr_edit::new::{Template, new_pack};
 use olr_pack::Severity;
 use olr_vfs::DirFs;
@@ -104,15 +105,19 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
 }
 
 /// Pack directories under `path`: `path` itself if it has `pack.ron`, else its
-/// immediate subdirectories that do.
-fn packs(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
+/// immediate subdirectories that do, but hidden ones (an interrupted save's
+/// or import's `.import-<id>` and `.replaced-<id>`).
+pub(crate) fn packs(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     if path.join(olr_pack::MANIFEST).is_file() {
         return Ok(vec![path.to_path_buf()]);
     }
     let mut out = Vec::new();
-    for entry in std::fs::read_dir(path)? {
-        let p = entry?.path();
-        if p.join(olr_pack::MANIFEST).is_file() {
+    let read = |e| anyhow::anyhow!("{}: {e}", path.display());
+    for entry in std::fs::read_dir(path).map_err(read)? {
+        let entry = entry.map_err(read)?;
+        let hidden = entry.file_name().to_string_lossy().starts_with('.');
+        let p = entry.path();
+        if !hidden && p.join(olr_pack::MANIFEST).is_file() {
             out.push(p);
         }
     }
@@ -141,36 +146,45 @@ fn check(paths: &[PathBuf]) -> anyhow::Result<bool> {
     Ok(errors == 0)
 }
 
-/// `pack fmt`: a pack that does not load is an error and stays untouched.
+/// `pack fmt`: a pack that does not load, or would not check, is an error
+/// (on stderr) and stays untouched.
 fn fmt(paths: &[PathBuf], check_only: bool) -> anyhow::Result<bool> {
     let mut ok = true;
     for path in paths {
         for pack in packs(path)? {
             let result = if check_only {
-                olr_edit::fmt::unformatted(&pack).map_err(anyhow::Error::from)
+                olr_edit::fmt::unformatted(&pack).map(|files| Formatted { files, warnings: Vec::new() })
             } else {
-                olr_edit::fmt::format(&pack).map_err(anyhow::Error::from)
+                olr_edit::fmt::format(&pack)
             };
             match result {
-                Ok(files) if check_only => {
+                Ok(Formatted { files, .. }) if check_only => {
                     for file in &files {
                         println!("{}/{file}: not canonical", pack.display());
                     }
                     ok &= files.is_empty();
                 }
-                Ok(files) => {
+                Ok(Formatted { files, warnings }) => {
                     if !files.is_empty() {
                         println!("formatted {}: {} files", pack.display(), files.len());
                     }
+                    warn(&warnings);
                 }
                 Err(e) => {
-                    println!("{}: error: {e:#}", pack.display());
+                    eprintln!("{}: error: {e:#}", pack.display());
                     ok = false;
                 }
             }
         }
     }
     Ok(ok)
+}
+
+/// A save's warnings, on stderr.
+pub(crate) fn warn(warnings: &[String]) {
+    for w in warnings {
+        eprintln!("warning: {w}");
+    }
 }
 
 fn new(
@@ -195,7 +209,7 @@ fn new(
             anyhow::bail!("{} packs start from an existing pack: pass --from <pack dir>", kind.name())
         }
     };
-    new_pack(out, kind.pack_kind(), id, name, template)?;
+    warn(&new_pack(out, kind.pack_kind(), id, name, template)?);
     println!("made {} pack {id} in {}", kind.name(), out.display());
     Ok(true)
 }

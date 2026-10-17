@@ -145,6 +145,30 @@ fn pack_fmt_check_exits_1_on_a_dirty_pack() {
     assert_eq!(std::fs::read(pack.join("level.ron")).unwrap(), original);
 }
 
+/// Review minors A-3, A-4, A-10: errors go to stderr naming the path, and
+/// a hidden leftover of an interrupted save or import is no pack.
+#[test]
+fn pack_tools_report_errors_and_skip_leftovers() {
+    let Some(content) = content_dir() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let missing = tmp.path().join("nowhere");
+    let out = olr_cli().args(["pack", "check"]).arg(&missing).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains(&missing.display().to_string()), "{out:?}");
+
+    let packs = tmp.path().join("packs");
+    copy_dir(&Path::new(&content).join("olx-level-dirt-level"), &packs.join("dirt"));
+    copy_dir(&Path::new(&content).join("olx-level-dirt-level"), &packs.join(".replaced-dirt"));
+    let out = olr_cli().args(["pack", "check"]).arg(&packs).output().unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("checked 1 packs"), "{out:?}");
+
+    std::fs::write(packs.join("dirt/level.ron"), "(oops").unwrap();
+    let out = olr_cli().args(["pack", "fmt"]).arg(&packs).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty(), "{}", String::from_utf8_lossy(&out.stdout));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("level.ron"), "{out:?}");
+}
+
 #[test]
 fn pack_new_level_then_check() {
     let tmp = tempfile::tempdir().unwrap();
