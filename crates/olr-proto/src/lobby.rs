@@ -6,7 +6,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
-use olr_data::text::{is_bidi, valid_name, valid_text};
+pub use olr_data::text::valid_name;
+use olr_data::text::{is_bidi, valid_text};
 
 use crate::content::{TAG_CONTENT, valid_hash};
 use crate::signal::Refusal;
