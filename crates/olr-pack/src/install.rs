@@ -97,7 +97,7 @@ fn replace_dir_with(
         return Err(context(e, format!("moving {} into place", dir.display())));
     }
     Ok(match old.map(|o| remove_dir(&o)) {
-        Some(Err(e)) => vec![format!("{e}: the next import removes it")],
+        Some(Err(e)) => vec![format!("{e}: the next save or import of this pack tries again")],
         _ => Vec::new(),
     })
 }
@@ -160,6 +160,25 @@ mod tests {
                 std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
             assert_eq!(names, vec![std::ffi::OsString::from("p")], "rename {failing}: nothing hidden left");
         }
+    }
+
+    /// An old copy that cannot be removed is a warning, worded for any
+    /// caller (an import or an editor's save).
+    #[cfg(unix)]
+    #[test]
+    fn an_old_copy_left_behind_is_a_warning() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("p");
+        std::fs::create_dir_all(dir.join("locked")).unwrap();
+        std::fs::write(dir.join("locked/x"), b"x").unwrap();
+        std::fs::set_permissions(dir.join("locked"), std::fs::Permissions::from_mode(0o555)).unwrap();
+        let warnings = replace_dir(&dir, |d| std::fs::write(d.join("new.txt"), b"new")).unwrap();
+        let aside = tmp.path().join(".replaced-p");
+        std::fs::set_permissions(aside.join("locked"), std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(warnings[0].ends_with(": the next save or import of this pack tries again"), "{warnings:?}");
+        assert_eq!(std::fs::read(dir.join("new.txt")).unwrap(), b"new");
     }
 
     #[test]
