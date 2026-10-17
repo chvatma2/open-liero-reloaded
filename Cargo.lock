@@ -3374,8 +3374,12 @@ dependencies = [
  "anyhow",
  "clap",
  "olr-content",
+ "olr-edit",
+ "olr-format",
  "olr-replay",
  "olr-sim",
+ "olr-vfs",
+ "sha2 0.11.0",
 ]
 
 [[package]]

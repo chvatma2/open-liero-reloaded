@@ -340,3 +340,14 @@ fn theme_back_tile_finds_the_theme_by_id() {
     let e = olr_edit::compose::theme_back_tile(&root, "nope").unwrap_err().to_string();
     assert!(e.contains("nope"), "{e}");
 }
+
+/// `fixtures/edit/composed-level` (plan 14a Task 9) is baked: a change to
+/// the pipeline or the bake that changes its bytes fails here.
+#[test]
+fn the_fixture_is_baked() {
+    let Some(content) = content() else { return };
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/edit/composed-level");
+    let pack = olr_edit::pack::load(&fixture).unwrap();
+    let tile = olr_edit::compose::theme_back_tile(&content, "olx-theme-dirt").unwrap();
+    assert_eq!(olr_edit::compose::stale(&pack, &tile).unwrap(), Vec::<String>::new());
+}

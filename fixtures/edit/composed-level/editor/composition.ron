@@ -1,0 +1,54 @@
+(
+    elements: [
+        (
+            id: "base",
+            name: "Base",
+            kind: Raster,
+        ),
+        (
+            id: "tiny",
+            name: "Tiny",
+            kind: Image(
+                material: Rock,
+                source: "tiny.jpg",
+                at: (40, 30),
+                size: (60, 45),
+                pixel_size: 3,
+                colours: 4,
+                dither: Ordered,
+            ),
+        ),
+        (
+            id: "gradient",
+            name: "Gradient",
+            kind: Image(
+                material: Dirt,
+                source: "gradient.jpg",
+                at: (300, 200),
+                size: (64, 48),
+                pixel_size: 2,
+                colours: 16,
+                dither: Ordered,
+            ),
+        ),
+        (
+            id: "badge",
+            name: "Badge",
+            kind: Image(
+                material: Dirt,
+                source: "badge.png",
+                at: (-6, 100),
+                size: (48, 48),
+                colours: 8,
+                dither: Diffusion,
+            ),
+        ),
+        (
+            id: "tunnels",
+            name: "Tunnels",
+            kind: Drawn(
+                material: Background,
+            ),
+        ),
+    ],
+)

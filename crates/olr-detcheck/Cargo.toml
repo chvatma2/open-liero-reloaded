@@ -9,10 +9,14 @@ publish.workspace = true
 
 [dependencies]
 olr-content.workspace = true
+olr-edit.workspace = true
+olr-format.workspace = true
+olr-vfs.workspace = true
 olr-replay.workspace = true
 olr-sim.workspace = true
 anyhow.workspace = true
 clap.workspace = true
+sha2.workspace = true
 
 [lints]
 workspace = true

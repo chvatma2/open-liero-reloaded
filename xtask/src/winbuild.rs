@@ -166,7 +166,7 @@ fn copy(from: &Path, to: &Path) -> Result<(), String> {
         .map_err(|e| format!("copying {} to {}: {e}", from.display(), to.display()))
 }
 
-fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+pub(crate) fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::create_dir_all(to).map_err(|e| format!("{}: {e}", to.display()))?;
     for e in std::fs::read_dir(from).map_err(|e| format!("{}: {e}", from.display()))? {
         let e = e.map_err(|e| e.to_string())?;

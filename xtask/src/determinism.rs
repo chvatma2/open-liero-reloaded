@@ -18,6 +18,10 @@ use crate::root;
 use crate::winbuild;
 
 const MATCHES: &str = "fixtures/matches";
+/// A composed level (plan 14a): every leg also prints its bake's digest
+/// (`olr-detcheck --bake`), so the image pipeline and the bake are
+/// compared across platforms with the simulation.
+const BAKE: &str = "fixtures/edit/composed-level";
 const OUT: &str = "target/determinism";
 /// The golden `check` replays; `--all` (and `full`'s legs) replay every golden.
 const CHECK_GOLDEN: &str = "mw-castlestrike-8chaos";
@@ -260,7 +264,7 @@ fn record(goldens: &[(String, Spec)]) -> Result<Vec<PathBuf>, String> {
 
 fn native_stream(replays: &[PathBuf]) -> Result<String, String> {
     let mut c = Command::new(root().join("target/release/olr-detcheck"));
-    c.current_dir(root()).args(["--content", "content/packs"]).args(replays);
+    c.current_dir(root()).args(["--content", "content/packs", "--bake", BAKE]).args(replays);
     ok_output(c, "olr-detcheck (native)")
 }
 
@@ -304,6 +308,7 @@ fn wasm_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
         .arg(format!("target/{WASM_TARGET}/release/olr-detcheck.wasm"))
         .arg(root())
         .args(["--content", "/content/packs"])
+        .args(["--bake".to_string(), format!("/{BAKE}")])
         .args(replays.iter().map(|r| format!("/{}", r.display())));
     let wasm = ok_output(c, "olr-detcheck under Node.js WASI")?;
     compare(native, &wasm, "wasm").map_err(|e| format!("WASM differs from native: {e}"))
@@ -328,7 +333,7 @@ fn arm64_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
     c.current_dir(root())
         .args(["-L", ARM64_SYSROOT])
         .arg(format!("target/{ARM64_TARGET}/release/olr-detcheck"))
-        .args(["--content", "content/packs"])
+        .args(["--content", "content/packs", "--bake", BAKE])
         .args(replays);
     let arm = ok_output(c, "olr-detcheck under qemu-aarch64")?;
     compare(native, &arm, "arm64").map_err(|e| format!("arm64 differs from native: {e}"))
@@ -338,7 +343,14 @@ fn windows_leg(native: &str, replays: &[PathBuf]) -> Result<(), String> {
     let release = winbuild::build()?;
     let files: Vec<PathBuf> = replays.iter().map(|r| root().join(r)).collect();
     let stage = winbuild::stage(&release, &root().join("content/packs"), &files)?;
-    let mut args: Vec<String> = vec!["--content".into(), "content".into()];
+    let bake = stage.dir.join("bake");
+    match std::fs::remove_dir_all(&bake) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => return Err(format!("{}: {e}", bake.display())),
+        _ => {}
+    }
+    winbuild::copy_dir(&root().join(BAKE), &bake.join("composed-level"))?;
+    let mut args: Vec<String> =
+        vec!["--content".into(), "content".into(), "--bake".into(), "bake/composed-level".into()];
     args.extend(
         files.iter().map(|f| format!("replays/{}", f.file_name().unwrap_or_default().to_string_lossy())),
     );
@@ -404,6 +416,12 @@ mod tests {
     fn equal_streams_pass() {
         assert_eq!(compare(A, A, "wasm"), Ok(()));
         assert_eq!(compare(A, &A.replace('\n', "\r\n"), "windows"), Ok(()));
+    }
+
+    #[test]
+    fn a_differing_bake_digest_is_named() {
+        let (a, b) = (format!("{A}bake 00ff\n"), format!("{A}bake 00fe\n"));
+        assert_eq!(compare(&a, &b, "wasm"), Err("line 4: native `bake 00ff`, wasm `bake 00fe`".into()));
     }
 
     #[test]
