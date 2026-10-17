@@ -3186,13 +3186,18 @@ reads, plays and saves exactly as before.
   back, else the theme's back tile; then `front := back` on background
   blocks. Image, drawn and tile colours are baked opaque; a raster's art
   is kept as stored, so a level composed of its raster base bakes back to
-  its own bytes.
+  its own bytes. That holds for levels that keep the front/back invariant
+  (every import, `olr-cli` level and bundled level): a hand-painted
+  `front.png` that differs from `back.png` on background bakes to the back
+  there (invisible in play, since the game shows the back on background).
 - **R6 - the raster base is `base`** ("Base"), its files encoded as
   `write_level_files` encodes the level's.
 - **R7, R8 - names.** Originals keep their bytes and name
   (`editor/images/<name>`, `-2`, `-3` … before the extension when taken,
-  case aside); ids are slugs of the name or file stem, skipping taken ids,
-  ids whose files another element uses, and Windows device names.
+  case aside, or a Windows device name); two originals differing only in
+  case are refused. Ids are slugs of the name or file stem, at most 64
+  bytes, skipping taken ids, ids whose files another element uses, and
+  Windows device names. `editor/` is authoring in any case (`Editor/`).
 - **R9 - the back tile** is the theme pack's (by manifest id) in
   `--content`, `content/packs` by default.
 - **The image pipeline** is integer only: area resample, alpha threshold,
