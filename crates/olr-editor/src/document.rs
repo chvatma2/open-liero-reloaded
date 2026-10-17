@@ -161,6 +161,11 @@ impl Document {
         &self.dir
     }
 
+    /// The pack's manifest (its id names the recovery copy, plan 14c).
+    pub fn manifest(&self) -> &PackManifest {
+        &self.manifest
+    }
+
     pub fn level(&self) -> &LevelSource {
         &self.level
     }

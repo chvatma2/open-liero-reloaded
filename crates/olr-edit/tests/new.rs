@@ -92,3 +92,23 @@ fn refuses_an_existing_directory_and_a_bad_id() {
     assert!(new_pack(&skin, PackKind::Skin, "skin", "Skin", Template::From(&level)).is_err());
     assert!(!skin.exists());
 }
+
+/// Plan 14c R5: the editor's new packs are named after the level.
+#[test]
+fn pack_id_slugs_the_name() {
+    use olr_edit::new::pack_id;
+    assert_eq!(pack_id("My Office!", |_| false), "my-office");
+    assert_eq!(pack_id("My Office!", |id| id == "my-office"), "my-office-2");
+    assert_eq!(pack_id("My Office!", |id| id == "my-office" || id == "my-office-2"), "my-office-3");
+    assert_eq!(pack_id("", |_| false), "level");
+    assert_eq!(pack_id("!!!", |_| false), "level");
+    assert_eq!(pack_id("Dirt_Level  copy.v2", |_| false), "dirt-level-copy-v2");
+    assert_eq!(pack_id("Zámek", |_| false), "z-mek");
+    let long = pack_id(&"a".repeat(200), |id| id.len() == 64 && !id.contains('-'));
+    assert!(long.len() <= 64 && long.ends_with("-2"), "{long}");
+    for name in ["My Office!", "", "Dirt_Level  copy.v2", "-x-", "Zámek"] {
+        let id = pack_id(name, |_| false);
+        assert!(!id.starts_with('-') && !id.ends_with('-'), "{id}");
+        assert!(id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-'), "{id}");
+    }
+}

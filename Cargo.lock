@@ -3489,6 +3489,7 @@ dependencies = [
  "olr-content",
  "olr-data",
  "olr-discovery",
+ "olr-edit",
  "olr-editor",
  "olr-format",
  "olr-fx",

@@ -31,6 +31,8 @@ olr-input.workspace = true
 olr-ui.workspace = true
 olr-format.workspace = true
 olr-editor.workspace = true
+olr-edit.workspace = true
+olr-vfs.workspace = true
 olr-proto.workspace = true
 olr-netcode.workspace = true
 olr-online.workspace = true
@@ -59,7 +61,6 @@ test-hooks = ["olr-online/test-hooks"]
 
 [dev-dependencies]
 tempfile.workspace = true
-olr-vfs.workspace = true
 olr-game = { path = ".", features = ["test-hooks"] }
 # The tests set a client's prompt bytes (`OnlinePeer::test_prompt_limit`).
 olr-online = { workspace = true, features = ["test-hooks"] }

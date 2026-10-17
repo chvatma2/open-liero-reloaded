@@ -7,6 +7,7 @@
 
 mod deathmatch;
 mod downloads;
+mod editor_host;
 mod finding;
 mod ingame;
 mod menu;

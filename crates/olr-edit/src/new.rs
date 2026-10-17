@@ -54,6 +54,37 @@ fn is_slug(id: &str) -> bool {
     !id.is_empty() && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
+/// The longest id [`pack_id`] makes.
+const MAX_PACK_ID: usize = 64;
+
+/// A pack id from `name` (the editor's new and copied packs, plan 14c R5):
+/// lowercase, every run of other characters than `a-z` and `0-9` one `-`,
+/// leading and trailing `-` trimmed, at most 64 bytes; then `-2`, `-3`, …
+/// appended until `taken` is false. `level` when the name gives nothing.
+pub fn pack_id(name: &str, taken: impl Fn(&str) -> bool) -> String {
+    let mut base = String::new();
+    for c in name.chars().map(|c| c.to_ascii_lowercase()) {
+        if c.is_ascii_lowercase() || c.is_ascii_digit() {
+            base.push(c);
+        } else if !base.ends_with('-') {
+            base.push('-');
+        }
+    }
+    base.truncate(MAX_PACK_ID);
+    let base = match base.trim_matches('-') {
+        "" => "level".to_string(),
+        b => b.to_string(),
+    };
+    std::iter::once(base.clone())
+        .chain((2u32..).map(|i| {
+            let suffix = format!("-{i}");
+            let head = base[..base.len().min(MAX_PACK_ID - suffix.len())].trim_end_matches('-');
+            format!("{head}{suffix}")
+        }))
+        .find(|c| !taken(c))
+        .unwrap_or_default()
+}
+
 /// Writes a new pack `id` (name `name`) into `dir`, which must not exist
 /// or be empty. Kind `kind`; `Template::From` must name a pack of `kind`.
 /// Returns the save's warnings.
