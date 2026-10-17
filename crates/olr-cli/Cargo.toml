@@ -62,6 +62,7 @@ olr-cli = { path = ".", features = ["nat-tools"] }
 proptest.workspace = true
 allocation-counter.workspace = true
 insta.workspace = true
+sha2.workspace = true
 divan.workspace = true
 # The relay probe's tests run against the in-process test relay.
 olr-discovery = { workspace = true, features = ["test-relay"] }
