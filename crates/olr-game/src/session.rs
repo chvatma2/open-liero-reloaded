@@ -30,7 +30,7 @@ use olr_ui::hud::{Log, LogLine, Names, Results, message_text};
 use crate::drive::{MatchDriver, ReplayDriver};
 use crate::net::PolledEvents;
 use crate::online::OnlineDriver;
-use crate::setup::{Assets, Game};
+use crate::setup::{Assets, DEFAULT_SKIN, Game};
 use crate::throw_sound::ThrowSounds;
 
 /// How often (ticks) debug builds check that the colour terrain's material
@@ -181,7 +181,9 @@ fn start(a: &Assets, n: u32) -> anyhow::Result<(World, Driver)> {
         Game::Deathmatch { options, packs } => {
             let o = olr_content::MatchOptions { seed: options.seed.wrapping_add(n), ..(**options).clone() };
             let assets = MatchAssets { m: &a.m, level: &a.level, theme: &a.theme, packs };
-            let (world, d) = MatchDriver::new(olr_content::build_match(assets, &o)?);
+            let mut built = olr_content::build_match(assets, &o)?;
+            built.recorder.set_looks(replay_looks(a, o.players.len()));
+            let (world, d) = MatchDriver::new(built);
             (world, Driver::Match(Box::new(d)))
         }
         Game::Replay(r) => {
@@ -196,27 +198,30 @@ fn rgb(c: olr_data::image::Rgba) -> [u8; 3] {
     [c.r, c.g, c.b]
 }
 
-/// The looks of `a`'s first `n` worms. An online match's are the lobby's
-/// (every member's and bot's name, colour and skin). Otherwise the player
-/// (the local slot) has the profile's name ("You" without one), colour
-/// (else the default first colour) and skin; the others are numbered from
-/// 1 in worm order ("Target N" in the sandbox, "Bot N"), in OLX's bot
-/// colours away from the player's and the default skin; a game nobody
-/// plays numbers every worm from 1 ("Worm N" in a replay, whose looks are
-/// not recorded) in the default colours.
-fn looks(a: &Assets, n: usize) -> Vec<WormLook> {
-    let default = |i: usize| WormLook {
-        name: format!("Worm {}", i + 1),
-        colour: rgb(default_colour(i)),
-        skin: a.bot_skin.clone(),
+/// A worm's name and colour, and whether it is the local player's.
+struct Named {
+    name: String,
+    colour: [u8; 3],
+    local: bool,
+}
+
+/// The names and colours of `a`'s first `n` worms. An online match's are
+/// the lobby's (every member's and bot's), a replay's the recorded ones
+/// (olr-replay's format 4). Otherwise the player (the local slot) has the
+/// profile's name ("You" without one) and colour (else the default first
+/// colour); the others are numbered from 1 in worm order ("Target N" in the
+/// sandbox, "Bot N"), in OLX's bot colours away from the player's; a game
+/// nobody plays numbers every worm from 1 in the default colours.
+fn named(a: &Assets, n: usize) -> Vec<Named> {
+    let default = |i: usize| Named { name: format!("Worm {}", i + 1), colour: rgb(default_colour(i)), local: false };
+    let recorded: Vec<(&str, [u8; 3])> = match &a.game {
+        Game::Online { start, .. } => start.slots.iter().map(|s| (s.look.name.as_str(), s.look.colour)).collect(),
+        Game::Replay(r) => r.setup.looks.iter().map(|l| (l.name.as_str(), l.colour)).collect(),
+        _ => Vec::new(),
     };
-    if let Game::Online { start, .. } = &a.game {
-        let lobby = start.slots.iter().enumerate().map(|(i, s)| WormLook {
-            name: s.look.name.clone(),
-            colour: s.look.colour,
-            skin: a.skin_of_slot(i).clone(),
-        });
-        return lobby.chain((start.slots.len()..n).map(default)).collect();
+    if matches!(a.game, Game::Online { .. } | Game::Replay(_)) {
+        let known = recorded.iter().map(|&(name, colour)| Named { name: name.into(), colour, local: false });
+        return known.chain((recorded.len()..n).map(default)).take(n).collect();
     }
     let local = a.local_slot().map(usize::from).filter(|&i| i < n);
     let mine = a.player.as_ref().map_or_else(|| rgb(default_colour(0)), |p| p.colour);
@@ -226,17 +231,47 @@ fn looks(a: &Assets, n: usize) -> Vec<WormLook> {
         .map(|i| {
             if Some(i) == local {
                 let name = a.player.as_ref().map_or_else(|| "You".into(), |p| p.name.clone());
-                return WormLook { name, colour: mine, skin: a.skin.clone() };
+                return Named { name, colour: mine, local: true };
             }
             other += 1;
             let name = match a.game {
-                Game::Replay(_) => format!("Worm {}", i + 1),
                 _ if local.is_none() => format!("Bot {}", i + 1),
                 Game::Sandbox(_) => format!("Target {other}"),
                 _ => format!("Bot {other}"),
             };
             let colour = others.get(other - 1).copied().unwrap_or_else(|| rgb(default_colour(i)));
-            WormLook { name, colour, skin: a.bot_skin.clone() }
+            Named { name, colour, local: false }
+        })
+        .collect()
+}
+
+/// The looks of `a`'s first `n` worms ([`named`]): the local player's skin is
+/// the profile's, every other worm's its slot's (an online match's or a
+/// replay's: [`Assets::skin_of_slot`]) or OLX's default skin.
+fn looks(a: &Assets, n: usize) -> Vec<WormLook> {
+    named(a, n)
+        .into_iter()
+        .enumerate()
+        .map(|(i, w)| {
+            let skin = if w.local { a.skin.clone() } else { a.skin_of_slot(i).clone() };
+            WormLook { name: w.name, colour: w.colour, skin }
+        })
+        .collect()
+}
+
+/// What a Deathmatch's replay records of its `n` worms' looks: [`named`]
+/// with the local player's skin pack and content hash, the default skin
+/// for every other worm (as the live game shows them).
+fn replay_looks(a: &Assets, n: usize) -> Vec<olr_replay::WormLook> {
+    named(a, n)
+        .into_iter()
+        .map(|w| {
+            let (skin, skin_hash) = if w.local {
+                (a.skin_id.clone(), a.skin_hash.clone())
+            } else {
+                (DEFAULT_SKIN.into(), olr_content::NO_SKIN_HASH.into())
+            };
+            olr_replay::WormLook { name: w.name, colour: w.colour, skin, skin_hash }
         })
         .collect()
 }

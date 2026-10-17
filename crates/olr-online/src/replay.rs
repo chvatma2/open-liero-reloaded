@@ -58,6 +58,21 @@ pub fn make(content: &Content, record: &MatchRecord, viewer: Option<u8>) -> anyh
     let built = content.build_match(&options)?;
     let (mut world, mut recorder) = (built.world, built.recorder);
     recorder.set_viewer(viewer);
+    // The lobby's looks of each slot as the match started (members' and
+    // bots'), the same on every peer.
+    recorder.set_looks(
+        record
+            .start
+            .slots
+            .iter()
+            .map(|s| olr_replay::WormLook {
+                name: s.look.name.clone(),
+                colour: s.look.colour,
+                skin: s.look.skin.clone(),
+                skin_hash: s.look.skin_hash.clone(),
+            })
+            .collect(),
+    );
     let slots = record.start.slots.len();
     let expected: BTreeMap<u32, u64> = record.checksums.iter().copied().collect();
     let mut events = TickEvents::new();

@@ -66,7 +66,11 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   a match's packs (the level's theme too) with their `olr_pack::content_hash`;
   `replay_assets`, `world_for_replay` and `play_replay` refuse a replay whose
   packs are missing or hash differently (Review Focus 3), then rebuild its
-  world as `match_setup` does (the mod from `load_mod`).
+  world as `match_setup` does (the mod from `load_mod`). `build_match`'s
+  recorder starts with `default_looks(players)` ("Bot N" in OLX's bot
+  colours, "Player N" grey, the default skin: what `olr-cli match` and
+  stress record); a caller that knows better calls
+  `BuiltMatch::recorder.set_looks` (`olr-game`).
 - **Matches** (`matches.rs`, plan 6 ruling R5): `build_match(MatchAssets,
   &MatchOptions) -> BuiltMatch` (or `Content::build_match`) is the one
   assembly of a Deathmatch, used by `olr-cli match` and `olr --mode

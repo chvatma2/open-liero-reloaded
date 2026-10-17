@@ -66,10 +66,15 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   them. Settings are written at most once a second (`Shell::flush`) and
   at exit. The human's profile names and colours the local slot's worm
   (`PlayerLook`) and its skin is that worm's (`Assets::skin`); every
-  other worm, and every worm of a replay, wears OLX's default skin
-  (`Assets::bot_skin`, as OLX's bot profiles) in OLX's bot colours away
-  from the player's (`olr_ui::bot_colours`; a replay's worms in the
-  default colours). Weapon selection's Done arms the local slot.
+  other worm wears OLX's default skin (`Assets::bot_skin`, as OLX's bot
+  profiles) in OLX's bot colours away from the player's
+  (`olr_ui::bot_colours`). A Deathmatch's recorder gets those same names
+  and colours, the player's skin pack and hash and the default skin for
+  the bots (`session::replay_looks`); a replay plays with its recorded
+  names, colours and skins (`load_replay` fills `Assets::slot_skins` with
+  `Content::skin_matching(id, hash)` for every worm, there being no own
+  slot: a skin this install lacks, or has with other content, is the
+  default skin, with a warning). Weapon selection's Done arms the local slot.
   The menus list and play `--content` with the data directory's `packs/`
   over it (`Content::open_layers`, spec §9.4; the command line's games
   use `--content` alone; without the flag `olr_content::default_content_dir`:
@@ -610,7 +615,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `hud::view(session, &Frame)` builds its `HudView` from
   the session and the frame; no weapon rows
   while the selection is open, `Shell::selecting`, the world's being a
-  placeholder until Done): names ("You", "Bot N"; a replay's "Worm N",
+  placeholder until Done): names ("You", "Bot N"; a replay's recorded names,
   over the worms on screen: `worms_on_screen`), the event log
   (`Session::log`, an `olr_ui::hud::Log`) from `Message` events (OLX's
   texts, the last 64 lines; kills show

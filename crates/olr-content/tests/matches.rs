@@ -52,6 +52,10 @@ fn match_builder_seats_humans_and_bots() {
     assert!(human.iter().all(|w| enabled.contains(w)), "{human:?} of {enabled:?}");
     let replay = m.recorder.clone().finish(&m.world).unwrap();
     assert_eq!((replay.ticks(), replay.checksums.len()), (0, 1), "tick 0's checksum");
+    // Without better looks the replay names the bots, in OLX's bot colours.
+    let looks: Vec<_> = replay.setup.looks.iter().map(|l| (l.name.as_str(), l.colour)).collect();
+    assert_eq!(looks, [("Player 1", [160, 160, 160]), ("Bot 2", [255, 0, 0]), ("Bot 3", [0, 255, 0])]);
+    assert!(replay.setup.looks.iter().all(|l| l.skin == olr_content::DEFAULT_SKIN));
     let again = c.build_match(&o).unwrap();
     assert_eq!(again.world, m.world);
     assert_eq!(again.setup.worms[0].loadout, m.setup.worms[0].loadout);

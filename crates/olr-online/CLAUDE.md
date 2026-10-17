@@ -104,7 +104,8 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
   session's, for the game's interpolation); `take_replay` (the
   `replay::PendingReplay` being made, handed out so it outlives the peer;
   a client closing once its match has a result makes it first from what
-  it confirmed); `take_ended_world` (the
+  it confirmed; `replay::make` records each slot's lobby look, name,
+  colour, skin id and hash as the match started); `take_ended_world` (the
   match's world as last presented, kept at its end: the host's after the
   presented advance, a client's at `Ended`, before the poll's unpresented
   advance; cleared at the next start); `stats` (`NetStats`, per second);

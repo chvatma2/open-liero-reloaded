@@ -171,22 +171,47 @@ fn replay_session_matches_recorded_checksums() {
         difficulty: Difficulty::Xtreme,
         ..DeathmatchOptions::default()
     };
-    let (_a, mut s) = session(&dir, "MW 1.0", "Liero Factory", &o);
+    let mut a = setup::load_deathmatch(&[dir.as_path()], "MW 1.0", "Liero Factory", "default", &o).unwrap();
+    a.player = Some(setup::PlayerLook { name: "Ann".into(), colour: [10, 20, 30] });
+    let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
+    let mut s = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
     for t in 0..750 {
         s.tick(player_keys(t));
     }
     let end = s.world.checksum();
     let replay = s.take_replay().expect("a Deathmatch records");
     assert_eq!(replay.ticks(), 750);
+    // The replay records the looks the live game showed.
+    let live: Vec<_> = s.looks().iter().map(|l| (l.name.clone(), l.colour)).collect();
+    let recorded: Vec<_> = replay.setup.looks.iter().map(|l| (l.name.clone(), l.colour)).collect();
+    assert_eq!(recorded, live);
+    assert_eq!(recorded[0], ("Ann".to_string(), [10, 20, 30]));
+    assert_eq!(recorded[1].0, "Bot 1");
+    assert_eq!(replay.setup.looks[0].skin, olr_replay::DEFAULT_SKIN);
+    assert_ne!(replay.setup.looks[0].skin_hash, olr_replay::NO_SKIN_HASH, "the player's skin has a hash");
+    assert_eq!(replay.setup.looks[1].skin_hash, olr_replay::NO_SKIN_HASH, "a bot's skin has none");
     assert!(s.take_replay().is_none(), "taken once");
     let tmp = tempfile::tempdir().unwrap();
     let file = tmp.path().join("match.olrp");
     std::fs::write(&file, replay.encode()).unwrap();
 
     let a = setup::load_replay(&[dir.as_path()], &file, "default", &[]).unwrap();
-    let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
     let mut r = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
-    assert_eq!((r.names.of(0), r.names.of(1)), ("Worm 1".into(), "Worm 2".into()));
+    // Playback shows the recorded names and colours, not "Worm N".
+    assert_eq!((r.names.of(0), r.names.of(1)), ("Ann".into(), "Bot 1".into()));
+    let shown: Vec<_> = r.looks().iter().map(|l| (l.name.clone(), l.colour)).collect();
+    assert_eq!(shown, live);
+    assert!(a.warnings.iter().all(|w| !w.contains("skin:")), "{:?}", a.warnings);
+    // A skin this install lacks plays as the default skin, with a warning.
+    let mut other = replay.clone();
+    other.setup.looks[1].skin = "olx-skin-nowhere".into();
+    std::fs::write(&file, other.encode()).unwrap();
+    let b = setup::load_replay(&[dir.as_path()], &file, "default", &[]).unwrap();
+    assert!(b.warnings.iter().any(|w| w.contains("Bot 1's skin")), "{:?}", b.warnings);
+    let r2 = Session::new(&b, vp, Interpolation::Linear, Audio::silent()).unwrap();
+    assert_eq!(r2.looks()[1].skin.skin.def.name, r.looks()[0].skin.skin.def.name);
+    assert_eq!(r2.looks()[1].name, "Bot 1");
+    std::fs::write(&file, replay.encode()).unwrap();
     for _ in 0..800 {
         r.tick(Keys(Keys::FIRE)); // ignored: the replay plays its own keys
     }

@@ -157,6 +157,11 @@ pub struct Assets {
     pub theme: LoadedTheme,
     /// The human's skin (its slot's when a human plays).
     pub skin: LoadedSkin,
+    /// The pack id and content hash of [`Assets::skin`], as a replay
+    /// records them (the default skin and `NO_SKIN_HASH` when the profile's
+    /// skin is no skin pack here).
+    pub skin_id: String,
+    pub skin_hash: String,
     /// Everyone else's: OLX's default skin, as OLX's bot profiles have
     /// (`src/client/ProfileSystem.cpp:59`).
     pub bot_skin: LoadedSkin,
@@ -168,9 +173,10 @@ pub struct Assets {
     pub warnings: Vec<String>,
     /// The human's look (a profile's); `None`: "You" in the default colour.
     pub player: Option<PlayerLook>,
-    /// An online match's skin of every slot, by slot (two slots may wear
-    /// skins of one id and different content): the local player's by its
-    /// id, every other by id and content hash
+    /// An online match's or a replay's skin of every slot, by slot (two
+    /// slots may wear skins of one id and different content): the local
+    /// player's by its id, every other (and every worm of a replay, whose
+    /// viewer has no own slot) by id and content hash
     /// (`Content::skin_matching`), the default skin when it does not
     /// match. Empty in every other game.
     pub slot_skins: Vec<LoadedSkin>,
@@ -190,6 +196,13 @@ fn open(
     let lvl = content.load_level(&level_id)?;
     let theme = content.load_theme(&lvl.theme).with_context(|| format!("level {level_id}"))?;
     let skin = content.skin_or_default(&skin_id);
+    let (skin_id, skin_hash) = match content.pack_kind(&skin_id) {
+        Some(PackKind::Skin) => match content.pack_hash(&skin_id, PackKind::Skin) {
+            Ok(h) => (skin_id.clone(), h),
+            Err(_) => (DEFAULT_SKIN.to_string(), olr_content::NO_SKIN_HASH.to_string()),
+        },
+        _ => (DEFAULT_SKIN.to_string(), olr_content::NO_SKIN_HASH.to_string()),
+    };
     let bot_skin = if skin_id == DEFAULT_SKIN { skin.clone() } else { content.skin_or_default(DEFAULT_SKIN) };
     let mut warnings = content.warnings().to_vec();
     let loaded = m.warnings.iter().chain(&theme.warnings).chain(&skin.warnings).chain(&bot_skin.warnings);
@@ -200,6 +213,8 @@ fn open(
         level: lvl,
         theme,
         skin,
+        skin_id,
+        skin_hash,
         bot_skin,
         game,
         mod_id,
@@ -278,23 +293,29 @@ pub fn load_online(
         let skin = if my_slot.is_some_and(|m| usize::from(m) == i) {
             a.skin.clone()
         } else {
-            let (skin, why) = a.content.skin_matching(&w.look.skin, &w.look.skin_hash);
-            let who = &w.look.name;
-            let said: Vec<String> = why
-                .into_iter()
-                .map(|why| format!("{who}'s skin: {why}"))
-                .chain(skin.warnings.iter().cloned())
-                .collect();
-            for line in said {
-                if !a.warnings.contains(&line) {
-                    a.warnings.push(line);
-                }
-            }
-            skin
+            slot_skin(&mut a, &w.look.name, &w.look.skin, &w.look.skin_hash)
         };
         a.slot_skins.push(skin);
     }
     Ok(a)
+}
+
+/// The skin of a worm that is not the local player's (`Content::skin_matching`:
+/// the exact id and content hash, else the default skin); what it said
+/// about `who`'s skin goes to `a.warnings`, each line once.
+fn slot_skin(a: &mut Assets, who: &str, id: &str, hash: &str) -> LoadedSkin {
+    let (skin, why) = a.content.skin_matching(id, hash);
+    let said: Vec<String> = why
+        .into_iter()
+        .map(|why| format!("{who}'s skin: {why}"))
+        .chain(skin.warnings.iter().cloned())
+        .collect();
+    for line in said {
+        if !a.warnings.contains(&line) {
+            a.warnings.push(line);
+        }
+    }
+    skin
 }
 
 /// The largest replay file read: [`olr_replay::MAX_TICKS`] ticks of
@@ -379,7 +400,15 @@ pub fn load_replay(
         file.display(),
         p.theme.id
     );
-    open(Arc::new(content), mod_id, level_id, skin, Game::Replay(Box::new(replay)))
+    let looks = replay.setup.looks.clone();
+    let mut a = open(Arc::new(content), mod_id, level_id, skin, Game::Replay(Box::new(replay)))?;
+    // A replay's viewer has no own slot: every worm's skin is its recorded
+    // id and content hash, else the default skin (never downloaded).
+    for l in &looks {
+        let skin = slot_skin(&mut a, &l.name, &l.skin, &l.skin_hash);
+        a.slot_skins.push(skin);
+    }
+    Ok(a)
 }
 
 impl Assets {

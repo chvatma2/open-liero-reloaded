@@ -86,3 +86,55 @@ fn the_replay_starts_on_the_peers_own_slot() {
     assert_eq!(viewer(Some(1)), Some(1));
     assert_eq!(viewer(None), None, "a spectator's");
 }
+
+/// The replay carries each slot's lobby look as the match started: name,
+/// colour and skin id and hash.
+#[test]
+fn the_replay_carries_the_lobby_looks() {
+    let Some(c) = content() else { return };
+    let mut r = record(&c);
+    r.start.slots[0].look = olr_proto::Look {
+        name: "Ann".into(),
+        colour: [9, 8, 7],
+        skin: "olx-skin-default".into(),
+        skin_hash: "ab".repeat(32),
+    };
+    r.start.slots[1].look.name = "Bob".into();
+    let made = make(&c, &r, Some(0)).unwrap();
+    let replay = Replay::decode(&made.bytes).unwrap();
+    let want: Vec<_> = r
+        .start
+        .slots
+        .iter()
+        .map(|s| (s.look.name.clone(), s.look.colour, s.look.skin.clone(), s.look.skin_hash.clone()))
+        .collect();
+    let got: Vec<_> = replay
+        .setup
+        .looks
+        .iter()
+        .map(|l| (l.name.clone(), l.colour, l.skin.clone(), l.skin_hash.clone()))
+        .collect();
+    assert_eq!(got, want);
+    assert_eq!(got[0].0, "Ann");
+}
+
+/// olr-replay cannot call olr-proto's `valid_name` (a higher layer), so its
+/// `sanitise_name` must agree with it: whatever it gives, a lobby accepts.
+#[test]
+fn a_sanitised_name_is_a_valid_lobby_name() {
+    for raw in [
+        "Ann",
+        "  padded  ",
+        "tab\tand\nnewline",
+        "bidi\u{202E}override",
+        "zero\u{200B}width\u{FEFF}",
+        "\u{00AD}soft\u{2028}hyphen",
+        "twenty-one characters!!",
+        "ééééééééééééééééééééééééé",
+        "\u{1}\u{2}",
+        "",
+    ] {
+        let clean = olr_replay::sanitise_name(raw, 4);
+        assert!(olr_proto::valid_name(&clean, olr_proto::MAX_NAME), "{raw:?} -> {clean:?}");
+    }
+}
