@@ -54,8 +54,9 @@ pub struct EditorData {
     canvas_drag: bool,
     /// The world pixel last reported to the state.
     last_world: Option<(i32, i32)>,
-    /// The level settings' resize fields: width, height, offset x and y.
-    resize: Option<[i64; 4]>,
+    /// The level settings' resize fields (width, height, offset x and y)
+    /// and the level size they started from: a new size resets them.
+    resize: Option<([i64; 4], (u32, u32))>,
     /// The new area's material for a resize: 0 rock, 1 dirt, 2 background.
     resize_material: usize,
     /// The open level's directory: drafts belong to it.
@@ -207,7 +208,9 @@ pub(crate) fn text(
             return None;
         }
         data.texts.remove(key);
-        (r.lost_focus() && v != current).then_some(v)
+        // Escape drops what was typed.
+        let escaped = ui.input(|i| i.key_pressed(egui::Key::Escape));
+        (r.lost_focus() && !escaped && v != current).then_some(v)
     })
     .inner
 }

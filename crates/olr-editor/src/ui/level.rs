@@ -40,7 +40,10 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     }
     ui.separator();
     ui.label(format!("Size: {} × {}", l.size.0, l.size.1));
-    let mut fields = data.resize.unwrap_or([l.size.0.into(), l.size.1.into(), 0, 0]);
+    let mut fields = match data.resize {
+        Some((fields, from)) if from == l.size => fields,
+        _ => [l.size.0.into(), l.size.1.into(), 0, 0],
+    };
     let side = 1..=i64::from(MAX_SIDE);
     let offset = -i64::from(MAX_SIDE)..=i64::from(MAX_SIDE);
     let names = [
@@ -55,7 +58,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
             fields[i] = v;
         }
     }
-    data.resize = Some(fields);
+    data.resize = Some((fields, l.size));
     let (material, name) = NEW_AREA[data.resize_material.min(2)];
     egui::ComboBox::from_label("New area").selected_text(name).show_ui(ui, |ui| {
         for (i, (_, n)) in NEW_AREA.iter().enumerate() {

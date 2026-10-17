@@ -84,7 +84,8 @@ templates and the level operations.
     `(Element, Decoded)` pairs and calls it), `encode_decoded` (a drawn
     or raster element's files), `resize_decoded` (`element::resize` uses
     it), and `ImageCache` (originals decoded once within `ORIGINAL_PIXELS`,
-    4 grids per source by box art size and pixelation, entries
+    4 grids per source by box art size and pixelation and `GRID_PIXELS` in
+    all, entries
     fingerprinted by their bytes; `Baker::new_cached` shares one);
     `stale(pack, tile)` lists
     the baked files that differ from the composition's bake.
@@ -93,7 +94,8 @@ templates and the level operations.
     several, checked once), `remove`,
     `raise`, `lower`, `draw`, `erase`, `resize` (before `level::resize`),
     `ensure_composed`; `new_element_id` and `new_source_name` (ruling R7
-    and R8 of 14a over plain data, for the editor). Each edits a copy and keeps it only when
+    and R8 of 14a over plain data, for the editor). New ids and names skip
+    the pack's stray files (`other`): one in `editor/` is never overwritten. Each edits a copy and keeps it only when
     `check_composition` passes (`ElementError::BadValue`, prefixed with
     the edit's property or file only when the composition checked before
     it). A locked element refuses `set` (but `Locked`), `remove`, `draw`

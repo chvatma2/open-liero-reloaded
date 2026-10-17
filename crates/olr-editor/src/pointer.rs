@@ -436,7 +436,7 @@ impl EditorState {
             }
             Drag::Stroke { id, before, rect, .. } => {
                 let Some(rect) = rect else { return Vec::new() };
-                let edit = doc.stroke_edit(&id, rect, &before);
+                let Some(edit) = doc.stroke_edit(&id, rect, &before) else { return Vec::new() };
                 self.history.push(vec![edit]);
                 self.committed(NOTHING)
             }
@@ -450,7 +450,7 @@ impl EditorState {
                 let Some(before) = doc.layer_art(&id).cloned() else { return Vec::new() };
                 match doc.paint(&id, &shape, &paint) {
                     Ok(Some(rect)) => {
-                        let edit = doc.stroke_edit(&id, rect, &before);
+                        let Some(edit) = doc.stroke_edit(&id, rect, &before) else { return Vec::new() };
                         self.history.push(vec![edit]);
                         self.committed(rect)
                     }

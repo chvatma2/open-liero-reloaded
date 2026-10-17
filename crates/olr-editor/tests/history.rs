@@ -11,16 +11,18 @@ use olr_format::levels::{ElementKind, ElementMaterial};
 use proptest::prelude::*;
 
 use crate::common::{catalog, content, files, open_fixture};
+use olr_edit::compose::Decoded;
+use std::sync::Arc;
 
 /// Reverts one recorded step (last edit first).
 fn undo(doc: &mut Document, h: &mut History) {
-    for e in h.undo().expect("a step to undo").iter().rev() {
+    for e in h.undo().expect("a step to undo").to_vec().iter().rev() {
         doc.apply(e, false);
     }
 }
 
 fn redo(doc: &mut Document, h: &mut History) {
-    for e in &h.redo().expect("a step to redo") {
+    for e in h.redo().expect("a step to redo").to_vec().iter() {
         doc.apply(e, true);
     }
 }
@@ -49,12 +51,36 @@ fn undo_and_redo_restore_everything_exactly() {
     assert!(!h.can_redo(), "a new edit clears the redo list");
 }
 
+/// The fixture's catalog with a second theme, for theme changes.
+fn two_themes() -> olr_editor::Catalog {
+    let mut cat = catalog(&content().unwrap());
+    let mut tile = RgbaImage::new(3, 3);
+    tile.set(1, 1, Rgba::rgb(200, 10, 10));
+    cat.themes.push(olr_editor::ThemeEntry {
+        id: "test-theme".into(),
+        name: "Test".into(),
+        front_tile: tile.clone(),
+        back_tile: tile,
+    });
+    cat
+}
+
 /// One random operation on the fixture document, recorded as one step.
-fn operate(doc: &mut Document, h: &mut History, op: (u8, i32, i32)) {
+fn operate(doc: &mut Document, h: &mut History, cat: &olr_editor::Catalog, op: (u8, i32, i32)) {
     let (kind, a, b) = op;
-    let cat = catalog(&content().unwrap());
     let ids: Vec<String> = doc.items().iter().map(|i| i.element.id.clone()).collect();
     let id = ids[a.unsigned_abs() as usize % ids.len()].clone();
+    let objects = doc.level().objects.len().max(1);
+    let stroke = |doc: &mut Document, erase: bool| -> Result<Vec<Edit>, DocError> {
+        let before = doc.layer_art("tunnels").unwrap().clone();
+        let shape = Shape::Circle { cx: a, cy: b, r: 6 };
+        let r = if erase {
+            doc.erase("tunnels", &shape)
+        } else {
+            doc.paint("tunnels", &shape, &Paint::Colour(Rgba::rgb(1, 2, 3)))
+        };
+        Ok(r?.and_then(|rect| doc.stroke_edit("tunnels", rect, &before)).into_iter().collect())
+    };
     let result: Result<Vec<Edit>, DocError> = match kind {
         0 => doc.set(&id, Property::Name(format!("n{b}"))).map(|c| vec![c.edit]),
         1 => doc.set(&id, Property::Visible(b % 2 == 0)).map(|c| vec![c.edit]),
@@ -63,24 +89,19 @@ fn operate(doc: &mut Document, h: &mut History, op: (u8, i32, i32)) {
         4 => doc.set(&id, Property::Colours(Some(b.unsigned_abs() as u16 % 30 + 2))).map(|c| vec![c.edit]),
         5 => doc.move_to(&id, b.unsigned_abs() as usize % ids.len()).map(|c| vec![c.edit]),
         6 => doc.add_layer(ElementMaterial::Rock, "L").map(|c| vec![c.edit]),
-        7 => {
-            let before = doc.layer_art("tunnels").unwrap().clone();
-            let shape = Shape::Circle { cx: a, cy: b, r: 6 };
-            match doc.paint("tunnels", &shape, &Paint::Colour(Rgba::rgb(1, 2, 3))) {
-                Ok(Some(rect)) => Ok(vec![doc.stroke_edit("tunnels", rect, &before)]),
-                Ok(None) => Ok(vec![]),
-                Err(e) => Err(e),
-            }
+        7 => stroke(doc, false),
+        8 => stroke(doc, true),
+        9 => doc.add_spawn((a, b)).map(|c| vec![c.edit]),
+        10 => doc.move_object(b.unsigned_abs() as usize % objects, (b, a)).map(|c| vec![c.edit]),
+        11 => doc.remove_object(a.unsigned_abs() as usize % objects).map(|c| vec![c.edit]),
+        12 => {
+            let theme = if b % 2 == 0 { "test-theme" } else { "olx-theme-dirt" };
+            let meta =
+                LevelMeta { name: format!("N{a}"), notes: doc.level().notes.clone(), theme: theme.into() };
+            doc.set_meta(meta, cat).map(|c| vec![c.edit])
         }
-        8 => doc.add_spawn((a, b)).map(|c| vec![c.edit]),
-        9 => {
-            let meta = LevelMeta {
-                name: format!("N{a}"),
-                notes: doc.level().notes.clone(),
-                theme: doc.level().theme.clone(),
-            };
-            doc.set_meta(meta, &cat).map(|c| vec![c.edit])
-        }
+        13 => doc.remove(&id).map(|c| vec![c.edit]),
+        14 => doc.set_art_scale(b.unsigned_abs() % 2 + 1).map(|c| vec![c.edit]),
         _ => doc
             .resize(
                 (504 + a.unsigned_abs() % 20, 350 + b.unsigned_abs() % 20),
@@ -101,30 +122,36 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(24))]
     #[test]
     fn every_operation_undoes_to_the_same_files(
-        ops in prop::collection::vec((0u8..11, -20i32..520, -20i32..360), 1..=6),
+        ops in prop::collection::vec((0u8..16, -20i32..520, -20i32..360), 1..=6),
     ) {
         let Some(root) = content() else { return Ok(()) };
         let (_tmp, mut doc) = open_fixture(&root);
+        let cat = two_themes();
         let mut h = History::new();
         let start = files(&doc);
         for op in ops {
-            operate(&mut doc, &mut h, op);
+            operate(&mut doc, &mut h, &cat, op);
         }
+        let end = files(&doc);
+        let mut steps = 0;
         while h.can_undo() {
             undo(&mut doc, &mut h);
+            steps += 1;
         }
         prop_assert!(files(&doc) == start);
+        for _ in 0..steps {
+            redo(&mut doc, &mut h);
+        }
+        prop_assert!(files(&doc) == end, "redo gives back the end");
     }
 }
 
-/// A step of one `Pixels` edit whose before and after are `w` × `h`.
+/// A step of one `Pixels` edit whose before and after are `w` × `h` (and
+/// differ: a step of no change is not recorded).
 fn pixels(w: u32, h: u32) -> Vec<Edit> {
-    vec![Edit::Pixels {
-        id: "x".into(),
-        rect: Rect { x: 0, y: 0, w, h },
-        before: RgbaImage::new(w, h),
-        after: RgbaImage::new(w, h),
-    }]
+    let mut after = RgbaImage::new(w, h);
+    after.set(0, 0, Rgba::rgb(1, 2, 3));
+    vec![Edit::Pixels { id: "x".into(), rect: Rect { x: 0, y: 0, w, h }, before: RgbaImage::new(w, h), after }]
 }
 
 #[test]
@@ -244,4 +271,67 @@ fn a_resize_past_the_pixel_budget_is_refused() {
     let e = doc.resize((4096, 4096), (0, 0), Material::Rock, Rgba::rgb(1, 1, 1)).unwrap_err().to_string();
     assert!(e.contains("pixels"), "{e}");
     assert!(files(&doc) == a);
+}
+
+/// An image grid shared by several steps (and the cache) counts once.
+#[test]
+fn a_shared_grid_counts_once() {
+    let Some(root) = content() else { return };
+    let (_tmp, doc) = open_fixture(&root);
+    let item = doc.items()[doc.index_of("gradient").unwrap()].clone();
+    let Decoded::Image { grid: Some(grid) } = &item.decoded else { panic!("a shown image") };
+    let grid_bytes = grid.as_raw().len();
+    let snapshot =
+        |item: &olr_editor::Item| olr_editor::history::Snapshot { item: item.clone(), original: None };
+    let mut h = History::new();
+    h.push(vec![Edit::Remove { index: 2, item: Box::new(snapshot(&item)) }]);
+    let one = h.bytes();
+    h.push(vec![Edit::Insert { index: 2, item: Box::new(snapshot(&item)) }]);
+    assert!(h.bytes() < one + grid_bytes, "{} then {}", one, h.bytes());
+    assert!(Arc::strong_count(grid) >= 3);
+}
+
+/// A `Pixels` edit naming a rectangle far outside the layer changes
+/// nothing, never a panic.
+#[test]
+fn a_forged_pixels_edit_never_panics() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    let a = files(&doc);
+    let edit = Edit::Pixels {
+        id: "tunnels".into(),
+        rect: Rect { x: u32::MAX, y: u32::MAX - 1, w: 2, h: 2 },
+        before: RgbaImage::new(2, 2),
+        after: RgbaImage::new(2, 2),
+    };
+    doc.apply(&edit, true);
+    doc.apply(&edit, false);
+    assert!(files(&doc) == a);
+}
+
+/// A stroke's `before` of another size than the layer gives no edit.
+#[test]
+fn a_stale_stroke_before_gives_no_edit() {
+    let Some(root) = content() else { return };
+    let (_tmp, doc) = open_fixture(&root);
+    let rect = Rect { x: 1, y: 1, w: 4, h: 4 };
+    assert!(doc.stroke_edit("tunnels", rect, &RgbaImage::new(3, 3)).is_none());
+    assert!(doc.stroke_edit("nope", rect, doc.layer_art("tunnels").unwrap()).is_none());
+    assert!(doc.stroke_edit("tunnels", rect, doc.layer_art("tunnels").unwrap()).is_some());
+}
+
+/// An edit that changes nothing says so.
+#[test]
+fn unchanged_edits_are_no_ops() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    assert!(doc.set("tiny", Property::Name("Tiny".into())).unwrap().edit.is_noop());
+    let i = doc.index_of("tiny").unwrap();
+    assert!(doc.move_to("tiny", i).unwrap().edit.is_noop());
+    let s = doc.level().art_scale;
+    assert!(doc.set_art_scale(s).unwrap().edit.is_noop());
+    assert!(!doc.set("tiny", Property::Name("Small".into())).unwrap().edit.is_noop());
+    let mut h = History::new();
+    h.push(vec![doc.move_to("tiny", i).unwrap().edit]);
+    assert!(!h.can_undo(), "a step of no-ops is not recorded");
 }

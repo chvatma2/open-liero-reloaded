@@ -7,7 +7,7 @@ use crate::state::{Choice, Dialog, EditorAction, EditorState, Pending};
 
 pub(super) fn show(ctx: &Context, state: &EditorState, out: &mut Vec<EditorAction>) {
     let Some(dialog) = state.dialog() else { return };
-    egui::Modal::new(egui::Id::new("olr-editor-dialog")).show(ctx, |ui| {
+    let modal = egui::Modal::new(egui::Id::new("olr-editor-dialog")).show(ctx, |ui| {
         let choose = |out: &mut Vec<EditorAction>, c| out.push(EditorAction::Choose(c));
         match dialog {
             Dialog::Unsaved { then } => {
@@ -50,4 +50,8 @@ pub(super) fn show(ctx: &Context, state: &EditorState, out: &mut Vec<EditorActio
             }
         }
     });
+    // Escape or a click on the backdrop cancels, unless a button answered.
+    if modal.should_close() && !out.iter().any(|a| matches!(a, EditorAction::Choose(_))) {
+        out.push(EditorAction::Choose(Choice::Cancel));
+    }
 }

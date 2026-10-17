@@ -132,7 +132,15 @@ impl Document {
         bytes: Vec<u8>,
         centre: (i32, i32),
     ) -> Result<Change, DocError> {
-        let source = new_source_name(self.originals.keys().map(String::as_str), file_name);
+        // Stray files in `editor/images/` (in `other`) keep their names too.
+        let stray = self.stray_files();
+        let dir = olr_format::levels::image_file("");
+        let names = self
+            .originals
+            .keys()
+            .map(String::as_str)
+            .chain(stray.iter().filter_map(|f| f.strip_prefix(dir.as_str())));
+        let source = new_source_name(names, file_name);
         let original = self.cache.original(&source, &bytes)?;
         let s = self.level.art_scale.max(1);
         let size = (original.width().div_ceil(s).max(1), original.height().div_ceil(s).max(1));
@@ -144,7 +152,7 @@ impl Document {
         let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
         let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         let element = Element {
-            id: new_element_id(&elements, &Default::default(), stem, "image"),
+            id: new_element_id(&elements, &stray, stem, "image"),
             name: stem.into(),
             visible: true,
             locked: false,
@@ -195,7 +203,7 @@ impl Document {
     pub fn add_layer(&mut self, material: ElementMaterial, name: &str) -> Result<Change, DocError> {
         let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         let element = Element {
-            id: new_element_id(&elements, &Default::default(), name, "layer"),
+            id: new_element_id(&elements, &self.stray_files(), name, "layer"),
             name: name.into(),
             visible: true,
             locked: false,
@@ -283,16 +291,19 @@ impl Document {
     }
 
     /// The `Pixels` edit of a finished stroke: `before` is the layer as the
-    /// stroke began, `rect` (clipped to the level) what it changed.
-    pub fn stroke_edit(&self, id: &str, rect: Rect, before: &RgbaImage) -> Edit {
+    /// stroke began, `rect` (clipped to the level) what it changed. `None`
+    /// when `id` is no drawn layer or `before` is not its size (a stale copy:
+    /// its step could restore nothing).
+    pub fn stroke_edit(&self, id: &str, rect: Rect, before: &RgbaImage) -> Option<Edit> {
         let rect = self.clip(rect);
         let s = self.level.art_scale;
-        let crop = |img: &RgbaImage| {
-            let fits = (img.width(), img.height()) == (self.level.size.0 * s, self.level.size.1 * s);
-            if fits { img.crop(rect.x * s, rect.y * s, rect.w * s, rect.h * s) } else { RgbaImage::new(0, 0) }
-        };
-        let after = self.layer_art(id).map(crop).unwrap_or_else(|| RgbaImage::new(0, 0));
-        Edit::Pixels { id: id.into(), rect, before: crop(before), after }
+        let art = self.layer_art(id)?;
+        let dims = |i: &RgbaImage| (i.width(), i.height());
+        if dims(before) != dims(art) || dims(art) != (self.level.size.0 * s, self.level.size.1 * s) {
+            return None;
+        }
+        let crop = |img: &RgbaImage| img.crop(rect.x * s, rect.y * s, rect.w * s, rect.h * s);
+        Some(Edit::Pixels { id: id.into(), rect, before: crop(before), after: crop(art) })
     }
 
     /// `rect` clipped to the level.
@@ -497,10 +508,14 @@ impl Document {
                 let s = self.level.art_scale;
                 let Some(i) = self.index_of(id) else { return NOTHING };
                 let Decoded::Drawn { art } = &mut self.items[i].decoded else { return NOTHING };
-                let (ox, oy) = (rect.x * s, rect.y * s);
-                if ox + img.width() > art.width() || oy + img.height() > art.height() {
+                // A rectangle off the layer (a forged edit) changes nothing.
+                let fits = |o: u32, side: u32, layer: u32| {
+                    o.checked_mul(s).and_then(|o| o.checked_add(side)).is_some_and(|end| end <= layer)
+                };
+                if !fits(rect.x, img.width(), art.width()) || !fits(rect.y, img.height(), art.height()) {
                     return NOTHING;
                 }
+                let (ox, oy) = (rect.x * s, rect.y * s);
                 for y in 0..img.height() {
                     for x in 0..img.width() {
                         art.set(ox + x, oy + y, img.get(x, y));

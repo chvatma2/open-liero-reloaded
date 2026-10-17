@@ -139,3 +139,45 @@ fn an_edit_during_a_save_stays_unsaved() {
     s.update(A::Saved(Ok(Vec::new())));
     assert!(s.dirty(), "the second layer was not in the saved pack");
 }
+
+/// A second save sent before the first one's answer keeps the first's
+/// follow-up (the Close it was asked for).
+#[test]
+fn a_second_save_keeps_the_first_ones_follow_up() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::AddLayer);
+    run(&mut s, A::Close);
+    assert!(matches!(s.update(A::Choose(Choice::Save)).as_slice(), [C::Save { .. }]));
+    assert!(matches!(s.update(A::Save).as_slice(), [C::Save { .. }]));
+    assert_eq!(s.update(A::Saved(Ok(Vec::new()))), vec![C::Close]);
+    assert!(s.update(A::Saved(Ok(Vec::new()))).is_empty());
+}
+
+/// While a dialog is open only its answer, the host's answers and the view
+/// act: edits wait.
+#[test]
+fn edits_wait_behind_a_dialog() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::AddLayer);
+    run(&mut s, A::Close);
+    assert!(s.dialog().is_some());
+    let items = s.document().unwrap().items().len();
+    assert!(run(&mut s, A::Set("tiny".into(), Property::Name("x".into()))).is_empty());
+    assert!(run(&mut s, A::AddLayer).is_empty());
+    assert!(run(&mut s, A::Undo).is_empty());
+    assert_eq!(s.document().unwrap().items().len(), items);
+    run(&mut s, A::Choose(Choice::Cancel));
+    assert!(!run(&mut s, A::Undo).is_empty(), "after the dialog, edits act again");
+}
+
+/// An edit that changes nothing records no step and leaves the level clean.
+#[test]
+fn an_unchanged_value_is_no_step() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    assert!(run(&mut s, A::Set("tiny".into(), Property::Name("Tiny".into()))).is_empty());
+    assert!(run(&mut s, A::MoveElement { id: "tiny".into(), to: 1 }).is_empty());
+    assert!(!s.can_undo() && !s.dirty());
+}

@@ -17,19 +17,28 @@ drives. Plan 14c hosts it in `olr-game`.
   (`Upload` a world rectangle of the bake, `Open`, `Create`, `Save`,
   `Play`, `SaveSettings`, `Close`) and answers (`Opened`, `OpenFailed`,
   `Saved`, `PlayEnded`). While playing, every action but `PlayEnded` is
-  ignored. Open, New and Close ask first when there are unsaved changes.
+  ignored; while a dialog is open only its answer, the host's answers and
+  the view act. Open, New and Close ask first when there are unsaved
+  changes. Saves are answered in order (`saves`: each one's follow-up and
+  the change count it was sent at), so an edit made meanwhile stays unsaved.
 - **Catalog** (`catalog.rs`): the installed themes (with their tiles) and
   mods the host passes in; `EditorSettings` (Play's mod and bots, R9).
 - **Document** (`document.rs`, R2): the open level pack, each element
   decoded (`olr_edit::compose::Decoded`) through one `ImageCache` (R3).
   `open` composes a plain level (a raster `base`) and rebakes; `to_pack`
   encodes the composition and keeps the bake, refreshing the thumbnail
-  only when the bake changed; `diagnostics` are R6's cheap checks.
+  only when the bake changed; a layer file whose pixels did not change is
+  saved as opened (another program's encoding kept); stray files in
+  `editor/` are never overwritten by a new element's (ids and names skip
+  them); `diagnostics` are R6's cheap checks.
 - **Edits** (`ops.rs`, `history.rs`): every operation checks first, then
   builds an `Edit` and runs it through `Document::apply`, the one path
-  undo and redo take (a refusal changes nothing). Painting is recorded per
-  stroke (`stroke_edit`). `History` holds steps within `MAX_BYTES`
-  (256 MiB), the oldest dropped first, a larger step kept alone. Originals
+  undo and redo take (a refusal changes nothing; an edit of no change,
+  `Edit::is_noop`, is no step). Painting is recorded per stroke
+  (`stroke_edit`, `None` for a stale copy). `History` holds steps within
+  `MAX_BYTES` (256 MiB, a running total counting each shared image grid
+  once), the oldest dropped first, a larger step kept alone; `undo` and
+  `redo` lend the step rather than copy it. Originals
   stay in the document by source name (new names never reuse one), and
   leave the pack when no element names them.
 - **Tools** (`tools.rs`, `pointer.rs`, `view.rs`): pointer actions are in
@@ -41,8 +50,12 @@ drives. Plan 14c hosts it in `olr-game`.
 - **Panels** (`ui/`): toolbar, element list (drag a name to reorder),
   properties or level settings, status bar, canvas (an empty frame in 14b
   under the overlays), dialogs; shortcuts when no text field has the
-  keyboard. Widgets are found by `ui::labels`; a `DragValue` or text field
-  commits once, when a drag stops or typing ends (`EditorData` drafts).
+  keyboard or a widget is dragged. Widgets are found by `ui::labels`; a
+  `DragValue` or text field commits once, when a drag stops or typing ends
+  (`EditorData` drafts; Escape drops a text draft), the properties'
+  commits before the frame's other actions. Escape or the backdrop cancels
+  a dialog; each wheel event zooms one step; the resize fields follow the
+  level's size.
 - **Tests** (`tests/`, one binary): `document.rs`, `history.rs` (the
   undo proptest, the cap), `state.rs` (a synchronous test host in
   `common.rs`), `tools.rs` (the ignored `brush_dab_speed`: about 2 ms in

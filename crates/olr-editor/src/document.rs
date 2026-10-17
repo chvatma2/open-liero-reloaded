@@ -74,6 +74,10 @@ pub struct Document {
     /// The tiles of every theme the level has had this session, by id (an
     /// undone theme change takes its tiles back).
     pub(crate) themes: BTreeMap<String, (RgbaImage, RgbaImage)>,
+    /// The drawn and raster layers' files as opened, by path: a file whose
+    /// pixels did not change is saved as it was (another program's encoding
+    /// is kept).
+    pub(crate) stored: BTreeMap<String, Vec<u8>>,
     /// Whether anything was rebaked since `open` (the thumbnail is then stale).
     pub(crate) rebaked: bool,
 }
@@ -125,7 +129,16 @@ impl Document {
                 _ => None,
             })
             .collect();
+        let stored = src
+            .composition
+            .elements
+            .iter()
+            .filter(|e| !matches!(e.kind, ElementKind::Image { .. }))
+            .flat_map(olr_format::levels::element_files)
+            .filter_map(|f| Some((f.clone(), src.files.get(&f)?.clone())))
+            .collect();
         let mut doc = Document {
+            stored,
             dir,
             manifest,
             other,
@@ -182,6 +195,12 @@ impl Document {
         Rect { x: 0, y: 0, w: self.level.size.0, h: self.level.size.1 }
     }
 
+    /// The pack's files outside the composition (stray ones in `editor/`
+    /// among them), by path: a new element's file never overwrites one.
+    pub(crate) fn stray_files(&self) -> std::collections::BTreeSet<String> {
+        self.other.keys().map(|p| p.as_str().to_string()).collect()
+    }
+
     /// The composition as `composition.ron` holds it.
     pub(crate) fn composition(&self) -> Composition {
         Composition { elements: self.items.iter().map(|i| i.element.clone()).collect() }
@@ -199,7 +218,12 @@ impl Document {
                         files.insert(image_file(source), bytes.as_ref().clone());
                     }
                 }
-                _ => files.extend(encode_decoded(&i.element, &i.decoded, self.level.size)),
+                _ => {
+                    for (path, bytes) in encode_decoded(&i.element, &i.decoded, self.level.size) {
+                        let kept = self.stored.get(&path).filter(|old| same_pixels(&path, old, &bytes));
+                        files.insert(path, kept.cloned().unwrap_or(bytes));
+                    }
+                }
             }
         }
         let mut level = self.level.clone();
@@ -245,5 +269,20 @@ impl Document {
             });
         }
         out
+    }
+}
+
+/// Whether layer file `path`'s stored bytes `old` hold the pixels `new`
+/// encodes (equal bytes, or both decoding alike: a material as indices,
+/// art as RGBA).
+fn same_pixels(path: &str, old: &[u8], new: &[u8]) -> bool {
+    use olr_format::image_io::{LEVEL_ART, decode_indexed_within, decode_rgba_within};
+    if old == new {
+        return true;
+    }
+    if path.ends_with(".material.png") {
+        matches!((decode_indexed_within(old, LEVEL_ART), decode_indexed_within(new, LEVEL_ART)), (Ok(a), Ok(b)) if a == b)
+    } else {
+        matches!((decode_rgba_within(old, LEVEL_ART), decode_rgba_within(new, LEVEL_ART)), (Ok(a), Ok(b)) if a == b)
     }
 }

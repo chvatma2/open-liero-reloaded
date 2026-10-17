@@ -306,3 +306,72 @@ fn delete_waits_while_a_field_is_dragged() {
     press(&mut h, x + egui::vec2(20.0, 0.0), false);
     assert!(h.state().state.document().unwrap().index_of("gradient").is_some());
 }
+
+/// The resize fields follow the level's size (after a resize elsewhere, or
+/// an undo): Resize with nothing changed changes nothing.
+#[test]
+fn the_resize_fields_follow_the_level() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    act(&mut h, A::Select(Selection::None));
+    let black = olr_data::image::Rgba::BLACK;
+    act(
+        &mut h,
+        A::Resize {
+            size: (600, 400),
+            offset: (0, 0),
+            material: olr_data::level::Material::Rock,
+            colour: black,
+        },
+    );
+    h.get_by_label("Resize").click();
+    h.run();
+    assert_eq!(h.state().state.document().unwrap().level().size, (600, 400));
+}
+
+/// Each wheel event zooms one step, however many arrive in a frame.
+#[test]
+fn each_wheel_event_zooms_one_step() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    let p = canvas_point(&h, (0.0, 0.0));
+    hover(&mut h, p);
+    let zoom = h.state().state.view().zoom;
+    // Both in one frame (`Harness::event` would run a frame per event).
+    for _ in 0..2 {
+        h.input_mut().events.push(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Line,
+            delta: egui::vec2(0.0, 1.0),
+            phase: egui::TouchPhase::Move,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run();
+    assert_eq!(h.state().state.view().zoom, zoom + 2);
+}
+
+/// Escape cancels a dialog.
+#[test]
+fn escape_cancels_a_dialog() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    act(&mut h, A::AddLayer);
+    act(&mut h, A::Close);
+    assert!(h.state().state.dialog().is_some());
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().state.dialog().is_none());
+    assert!(!h.state().commands.contains(&C::Close));
+}
+
+/// Escape in a text field drops what was typed.
+#[test]
+fn escape_reverts_a_text_field() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    act(&mut h, A::Select(Selection::Element("tiny".into())));
+    h.get_by_role_and_label(Role::TextInput, labels::NAME).focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, labels::NAME).type_text("zzz");
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    let d = h.state().state.document().unwrap();
+    assert_eq!(d.items()[d.index_of("tiny").unwrap()].element.name, "Tiny");
+}

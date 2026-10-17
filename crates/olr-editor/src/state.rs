@@ -3,6 +3,7 @@
 //! host carries out the commands (open, save, play) and answers with
 //! actions (`Opened`, `Saved`, `PlayEnded`).
 
+use std::collections::VecDeque;
 use std::path::PathBuf;
 
 use olr_data::image::Rgba;
@@ -190,8 +191,9 @@ pub struct EditorState {
     pub(crate) dialog: Option<Dialog>,
     pub(crate) status: Status,
     pub(crate) selection: Selection,
-    /// What a save in progress carries out once it succeeds.
-    pub(crate) after_save: Option<Pending>,
+    /// The saves in progress, oldest first: `changes` when each was sent,
+    /// and what it carries out once it succeeds.
+    pub(crate) saves: VecDeque<(u64, Option<Pending>)>,
     pub(crate) tool: Tool,
     /// The tool the eyedropper returns to.
     pub(crate) prev_tool: Tool,
@@ -208,8 +210,6 @@ pub struct EditorState {
     pub(crate) drag: Option<Drag>,
     /// Changes committed so far (and undone or redone).
     pub(crate) changes: u64,
-    /// `changes` when the save in progress was sent.
-    pub(crate) saving: u64,
 }
 
 impl EditorState {
@@ -224,7 +224,7 @@ impl EditorState {
             dialog: None,
             status: Status::default(),
             selection: Selection::None,
-            after_save: None,
+            saves: VecDeque::new(),
             tool: Tool::Select,
             prev_tool: Tool::Select,
             brush: Brush::default(),
@@ -236,7 +236,6 @@ impl EditorState {
             grid: false,
             drag: None,
             changes: 0,
-            saving: 0,
         }
     }
 
@@ -286,6 +285,25 @@ impl EditorState {
             if matches!(action, EditorAction::PlayEnded) {
                 self.playing = false;
             }
+            return Vec::new();
+        }
+        // While a dialog is open only its answer, the host's answers and the
+        // view act (a pointer's Up still ends a drag).
+        let waits = !matches!(
+            action,
+            EditorAction::Choose(_)
+                | EditorAction::Opened(_)
+                | EditorAction::OpenFailed(_)
+                | EditorAction::Saved(_)
+                | EditorAction::PlayEnded
+                | EditorAction::Pointer { .. }
+                | EditorAction::Canvas(_)
+                | EditorAction::Pan(_)
+                | EditorAction::Zoom { .. }
+                | EditorAction::MaterialView(_)
+                | EditorAction::Grid(_)
+        );
+        if self.dialog.is_some() && waits {
             return Vec::new();
         }
         // An action that can change the document ends a drag first, so the
@@ -500,6 +518,8 @@ impl EditorState {
     ) -> Vec<EditorCommand> {
         let Some(doc) = self.doc.as_mut() else { return Vec::new() };
         match op(doc) {
+            // A change of nothing is no step and leaves the level clean.
+            Ok(change) if change.edit.is_noop() => Vec::new(),
             Ok(change) => {
                 self.history.push(vec![change.edit]);
                 self.committed(change.dirty)
@@ -571,17 +591,17 @@ impl EditorState {
 
     fn save(&mut self, then: Option<Pending>) -> Vec<EditorCommand> {
         let Some(doc) = &self.doc else { return Vec::new() };
-        self.after_save = then;
-        self.saving = self.changes;
+        self.saves.push_back((self.changes, then));
         vec![EditorCommand::Save { dir: doc.dir().to_path_buf(), pack: Box::new(doc.to_pack()) }]
     }
 
     fn saved(&mut self, result: Result<Vec<String>, String>) -> Vec<EditorCommand> {
-        let then = self.after_save.take();
+        // Answers come in the order the saves were sent.
+        let (sent, then) = self.saves.pop_front().unwrap_or((self.changes, None));
         match result {
             Ok(warnings) => {
                 // A change made after the save was sent is not in the saved pack.
-                self.dirty = self.changes != self.saving;
+                self.dirty = self.changes != sent;
                 self.status.message = Some(if warnings.is_empty() {
                     "saved".into()
                 } else {

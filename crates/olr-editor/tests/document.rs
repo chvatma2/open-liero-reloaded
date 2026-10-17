@@ -67,3 +67,65 @@ fn diagnostics_list_spawns_outside_and_none() {
     );
     assert!(!outside.iter().any(|p| p.text.contains("no spawn")), "{outside:?}");
 }
+
+/// The CRC-32 of PNG chunks (ISO 3309).
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut c = 0xFFFF_FFFFu32;
+    for &b in bytes {
+        c ^= u32::from(b);
+        for _ in 0..8 {
+            c = if c & 1 != 0 { 0xEDB8_8320 ^ (c >> 1) } else { c >> 1 };
+        }
+    }
+    !c
+}
+
+/// `png` with a `tEXt` chunk before its `IEND`: the same pixels, other bytes.
+fn with_text(png: &[u8]) -> Vec<u8> {
+    let (body, iend) = png.split_at(png.len() - 12);
+    let data = b"Comment\0from another editor";
+    let mut chunk = (data.len() as u32).to_be_bytes().to_vec();
+    let mut typed = b"tEXt".to_vec();
+    typed.extend_from_slice(data);
+    chunk.extend_from_slice(&typed);
+    chunk.extend_from_slice(&crc32(&typed).to_be_bytes());
+    [body, &chunk, iend].concat()
+}
+
+/// A layer another program wrote (other bytes, same pixels) is saved as it
+/// was until it changes.
+#[test]
+fn a_foreign_layer_file_is_kept_until_changed() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, &fixture());
+    let path = dir.join("editor/layers/tunnels.png");
+    let foreign = with_text(&std::fs::read(&path).unwrap());
+    std::fs::write(&path, &foreign).unwrap();
+    let mut doc = Document::open(olr_edit::pack::load(&dir).unwrap(), dir.clone(), &catalog(&root)).unwrap();
+    assert!(files(&doc)["editor/layers/tunnels.png"] == foreign);
+    doc.paint(
+        "tunnels",
+        &olr_edit::level::Shape::Rect { x: 0, y: 0, w: 2, h: 2 },
+        &olr_edit::level::Paint::Colour(olr_data::image::Rgba::rgb(1, 2, 3)),
+    )
+    .unwrap();
+    assert!(files(&doc)["editor/layers/tunnels.png"] != foreign);
+}
+
+/// Stray files in `editor/` are kept, and new elements' files go beside them.
+#[test]
+fn stray_editor_files_are_never_overwritten() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, &fixture());
+    std::fs::write(dir.join("editor/images/photo.jpg"), b"not mine to replace").unwrap();
+    std::fs::write(dir.join("editor/layers/layer.png"), b"nor this").unwrap();
+    let mut doc = Document::open(olr_edit::pack::load(&dir).unwrap(), dir.clone(), &catalog(&root)).unwrap();
+    let jpeg = std::fs::read(fixture().join("editor/images/tiny.jpg")).unwrap();
+    doc.add_image("photo.jpg", jpeg, (10, 10)).unwrap();
+    doc.add_layer(olr_format::levels::ElementMaterial::Dirt, "Layer").unwrap();
+    let f = files(&doc);
+    assert_eq!(f["editor/images/photo.jpg"], b"not mine to replace");
+    assert_eq!(f["editor/layers/layer.png"], b"nor this");
+    assert!(f.contains_key("editor/images/photo-2.jpg"));
+    assert!(f.contains_key("editor/layers/layer-2.png"));
+}

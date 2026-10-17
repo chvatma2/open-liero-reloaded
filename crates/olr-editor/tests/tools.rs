@@ -292,3 +292,17 @@ fn a_tool_change_mid_drag_keeps_the_move_undoable() {
     run(&mut s, A::Undo);
     assert_eq!(image_box(&s, "tiny").0, at);
 }
+
+/// The view maps the largest levels both ways: 4096 world pixels at art
+/// scale 8 and every zoom, with a fractional offset.
+#[test]
+fn view_maps_the_largest_levels() {
+    for zoom in 0..ZOOMS.len() {
+        for offset in [[0.0, 0.0], [-123_456.25, 98_765.5], [0.3, -0.7]] {
+            let view = View { zoom, offset };
+            for p in [(4095, 4095), (4095, 0), (-4096, 2048), (1, 4094)] {
+                assert_eq!(view.to_world(view.to_screen(p, 8), 8), p, "zoom {zoom}, offset {offset:?}");
+            }
+        }
+    }
+}

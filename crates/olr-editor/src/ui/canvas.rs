@@ -42,10 +42,11 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
             i.events
                 .iter()
                 .map(|e| match e {
-                    egui::Event::MouseWheel { delta, .. } => delta.y,
-                    _ => 0.0,
+                    // One zoom step per wheel event.
+                    egui::Event::MouseWheel { delta, .. } if delta.y != 0.0 => delta.y.signum() as i32,
+                    _ => 0,
                 })
-                .sum::<f32>(),
+                .sum::<i32>(),
             i.key_down(Key::Space),
         )
     });
@@ -76,13 +77,10 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         data.last_world = Some(w);
     }
     if over
-        && scroll != 0.0
+        && scroll != 0
         && let Some(p) = pos
     {
-        out.push(EditorAction::Zoom {
-            steps: scroll.signum() as i32,
-            about: [p.x - rect.min.x, p.y - rect.min.y],
-        });
+        out.push(EditorAction::Zoom { steps: scroll, about: [p.x - rect.min.x, p.y - rect.min.y] });
     }
 
     // The level's frame (the host draws the level itself) and the overlays.
