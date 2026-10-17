@@ -289,6 +289,7 @@ pub fn check_composition(
     }
     let art = (size.0.saturating_mul(art_scale), size.1.saturating_mul(art_scale));
     let mut ids = BTreeSet::new();
+    let mut layers = BTreeMap::new();
     for (i, e) in elements.iter().enumerate() {
         let at = |field: &str| format!("elements[{i}].{field}");
         let bad = |field: &str, message: String| FormatError::invalid(COMPOSITION_FILE, &at(field), message);
@@ -320,7 +321,18 @@ pub fn check_composition(
                 return Err(bad("colours", format!("{n}: 2 to 256")));
             }
         }
-        for file in element_files(e) {
+        let image = matches!(e.kind, ElementKind::Image { .. });
+        for (part, file) in element_files(e).into_iter().enumerate() {
+            if !image {
+                // Ids are unique, their files need not be (`a` and `a.front`).
+                if let Some(j) = layers.insert(file.clone(), i) {
+                    return Err(bad("id", format!("{file} is used by two elements (elements[{j}])")));
+                }
+                let name = file.rsplit('/').next().unwrap_or(&file);
+                if let Some(why) = olr_vfs::non_portable(name) {
+                    return Err(bad("id", format!("{:?}: its file {file} {why}", e.id)));
+                }
+            }
             let Some(bytes) = src.files.get(&file) else {
                 return Err(FormatError::invalid(
                     COMPOSITION_FILE,
@@ -328,35 +340,31 @@ pub fn check_composition(
                     format!("{file}: missing"),
                 ));
             };
-            check_file(e, &file, bytes, size, art)?;
+            // A raster's files are its material, then its front and back.
+            let expected = match e.kind {
+                ElementKind::Image { .. } => None,
+                ElementKind::Raster if part == 0 => Some((size, "the level's size")),
+                _ => Some((art, "the level's size × art_scale")),
+            };
+            check_file(&file, bytes, expected)?;
         }
     }
     Ok(())
 }
 
-/// One element file's size from its header.
-fn check_file(
-    e: &Element,
-    file: &str,
-    bytes: &[u8],
-    size: (u32, u32),
-    art: (u32, u32),
-) -> Result<(), FormatError> {
+/// One element file's size from its header: an original within
+/// `IMAGES` (`expected` none), a layer of exactly `expected`, a size and
+/// what it is (a raster's material the level's size, other layers its
+/// size × `art_scale`).
+fn check_file(file: &str, bytes: &[u8], expected: Option<((u32, u32), &str)>) -> Result<(), FormatError> {
     let invalid = |message: String| FormatError::invalid(file, "", message);
-    if let ElementKind::Image { .. } = e.kind {
+    let Some(((ew, eh), what)) = expected else {
         let (w, h) = image_io::image_size(bytes).ok_or_else(|| invalid("not a PNG or JPEG".into()))?;
         return image_io::check_size(w, h, IMAGES).map_err(invalid);
-    }
+    };
     let (w, h) = image_io::png_size(bytes).ok_or_else(|| invalid("not a PNG".into()))?;
-    if file.ends_with(".material.png") {
-        if (w, h) != size {
-            return Err(invalid(format!("{file} is {w}x{h}, the level's size is {}x{}", size.0, size.1)));
-        }
-    } else if (w, h) != art {
-        return Err(invalid(format!(
-            "{file} is {w}x{h}, the level's size × art_scale is {}x{}",
-            art.0, art.1
-        )));
+    if (w, h) != (ew, eh) {
+        return Err(invalid(format!("{file} is {w}x{h}, {what} is {ew}x{eh}")));
     }
     Ok(())
 }
@@ -495,6 +503,36 @@ mod tests {
             let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
             assert!(e.contains(want), "{want}: {e}");
         }
+    }
+
+    /// Review A-1: a file's size rule comes from the element, not from
+    /// the file name's suffix, and two elements never share a layer file.
+    #[test]
+    fn layer_files_follow_their_element_and_never_collide() {
+        let mut s = sample();
+        s.composition.elements[2].id = "x.material".into();
+        let art = s.files.remove(&layer_file("ground")).unwrap();
+        s.files.insert(layer_file("x.material"), art);
+        check_composition(&s, (4, 3), 2).unwrap();
+        let mut s = sample();
+        s.composition.elements[2].id = "base.front".into();
+        let art = s.files.remove(&layer_file("ground")).unwrap();
+        s.files.insert(layer_file("base.front"), art);
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("editor/layers/base.front.png") && e.contains("two elements"), "{e}");
+    }
+
+    /// Review A-1 (re-graded): an id whose files no file system can hold
+    /// on every platform (a Windows device name) is refused by the check,
+    /// not only when the save writes it.
+    #[test]
+    fn an_id_naming_a_device_is_refused() {
+        let mut s = sample();
+        s.composition.elements[2].id = "aux".into();
+        let art = s.files.remove(&layer_file("ground")).unwrap();
+        s.files.insert(layer_file("aux"), art);
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("elements[2].id") && e.contains("device"), "{e}");
     }
 
     /// Spec §2: an image's processed art (its box × art scale) is within

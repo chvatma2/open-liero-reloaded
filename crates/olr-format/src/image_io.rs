@@ -132,25 +132,38 @@ pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
     if !is_jpeg(bytes) {
         return png_size(bytes);
     }
-    // Walk the marker segments after SOI up to the first start of frame.
+    let (i, marker) = jpeg_marker(bytes, |m| is_sof(m) || matches!(m, 0xD9 | 0xDA))?;
+    if !is_sof(marker) {
+        // The end of the image or the scan before any frame header.
+        return None;
+    }
+    let be = |at: usize| Some(u32::from(u16::from_be_bytes([*bytes.get(at)?, *bytes.get(at + 1)?])));
+    Some((be(i + 7)?, be(i + 5)?))
+}
+
+/// A JPEG start-of-frame marker (not DHT `C4`, JPG `C8` or DAC `CC`).
+fn is_sof(m: u8) -> bool {
+    matches!(m, 0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF)
+}
+
+/// The offset and code of the first marker after SOI for which `stop`
+/// holds, walking the marker segments; every index is checked.
+fn jpeg_marker(bytes: &[u8], stop: impl Fn(u8) -> bool) -> Option<(usize, u8)> {
     let mut i = 2;
     loop {
         if *bytes.get(i)? != 0xFF {
             return None;
         }
         let marker = *bytes.get(i + 1)?;
+        if stop(marker) {
+            return Some((i, marker));
+        }
         match marker {
             // Fill bytes before a marker.
             0xFF => i += 1,
             // Markers without a segment.
             0x01 | 0xD0..=0xD7 => i += 2,
-            0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF => {
-                let be =
-                    |at: usize| Some(u32::from(u16::from_be_bytes([*bytes.get(at)?, *bytes.get(at + 1)?])));
-                return Some((be(i + 7)?, be(i + 5)?));
-            }
-            // The end of the image or the scan before any frame header.
-            0xD9 | 0xDA => return None,
+            0xD9 => return None,
             _ => {
                 let len = usize::from(u16::from_be_bytes([*bytes.get(i + 2)?, *bytes.get(i + 3)?]));
                 if len < 2 {
@@ -160,6 +173,15 @@ pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
             }
         }
     }
+}
+
+/// Whether the JPEG's data holds an end-of-image marker after its first
+/// scan: in entropy-coded data `FF` is stuffed (`FF 00`), so `FF D9`
+/// there is the real end. A file cut inside its scans has none (the
+/// decoder would fill the rest in grey); bytes after the end are allowed.
+fn jpeg_complete(bytes: &[u8]) -> bool {
+    jpeg_marker(bytes, |m| m == 0xDA)
+        .is_some_and(|(sos, _)| bytes[sos..].windows(2).any(|w| w == [0xFF, 0xD9]))
 }
 
 /// A PNG or a JPEG (by its first bytes: `\x89PNG` or `FF D8 FF`) decoded
@@ -174,6 +196,9 @@ pub fn decode_image_within(bytes: &[u8], bound: ImageBound) -> Result<RgbaImage,
     }
     let (w, h) = image_size(bytes).ok_or("a JPEG without a frame header")?;
     check_size(w, h, bound)?;
+    if !jpeg_complete(bytes) {
+        return Err("a JPEG cut short: no end of image after its scan".into());
+    }
     let options = zune_core::options::DecoderOptions::default()
         .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGB)
         .set_max_width(w as usize)
@@ -333,6 +358,7 @@ mod tests {
 
     const TINY_JPG: &[u8] = include_bytes!("../tests/data/tiny.jpg");
     const TRUNCATED_JPG: &[u8] = include_bytes!("../tests/data/truncated.jpg");
+    const GRADIENT_JPG: &[u8] = include_bytes!("../tests/data/gradient.jpg");
 
     #[test]
     fn decodes_png_and_jpeg() {
@@ -359,6 +385,10 @@ mod tests {
         assert_eq!(image_size(&big), Some((60_000, 60_000)));
         assert!(decode_image_within(&big, IMAGES).is_err());
         assert!(decode_image_within(TRUNCATED_JPG, IMAGES).is_err());
+        // Cut inside its scan data: the decoder would fill the rest in grey.
+        assert!(decode_image_within(GRADIENT_JPG, IMAGES).is_ok());
+        let half = &GRADIENT_JPG[..GRADIENT_JPG.len() / 2];
+        assert!(decode_image_within(half, IMAGES).unwrap_err().contains("cut short"));
         assert!(decode_image_within(b"GIF89a....", IMAGES).unwrap_err().contains("not a PNG or JPEG"));
         assert_eq!(image_size(b"nope"), None);
     }
