@@ -71,7 +71,11 @@ Layer 2, beside `olr-pack`, registered in `xtask/layers.ron`. It holds:
   - A pack of another version is refused with "re-import the pack".
   - There are no migrations (compatibility breaks are fine at this stage).
   - Content hashes change, so any replay, fixture or match golden that
-    pins a hash is re-blessed once, with that reason.
+    pins a hash is re-blessed once, with that reason. Amended by plan 13c
+    (D15): nothing committed pins a pack content hash and no replay is
+    committed, so nothing needed a re-bless. Old replays and cached packs
+    are refused or dropped, because the format version and the protocol
+    version both changed.
 
 ## 2. The mod format
 
@@ -389,7 +393,7 @@ asset correctly.
 | Colour space unstated | Images are sRGB (any change to blending belongs to the graphics sub-project) |
 | Sounds | Ogg Vorbis as today; WAV accepted; nothing re-encoded lossily |
 | PNG encoding | Canonical, through one encoder; the `png` crate is pinned exactly, because encoded bytes are content (plan 13b) |
-| OLX file and folder names | Lowercase kebab-case ids, a fixed folder layout per pack kind |
+| OLX file and folder names | Lowercase kebab-case ids, a fixed folder layout per pack kind (amended by plan 13c, Ruling 14: asset files keep OLX's lowercased names, such as `cluster_bits.png`; renaming them to kebab-case is deferred, since it changes no behaviour and would churn snapshots) |
 
 **Audit task.** The spec phase checks the remaining OLX conventions in
 the same way (the dirt tiles, the green dirt shades, `iDefaultColour`,
@@ -514,6 +518,10 @@ Probably three plans, settled when they are written:
    - the importers write format 5, and `content/packs` is re-imported;
    - loaders read only the native format, and the Import screen,
      load-time keying and skin fetching are removed;
-   - `olr-cli pack check|fmt|new`, the level operations and the schema
-     docs;
-   - the hash re-bless and the STATUS and CHANGELOG entries.
+   - the STATUS and CHANGELOG entries.
+
+   Amended by plan 13c: `olr-cli pack check|fmt|new`, the level operations
+   and the schema docs move to plan 13d, and there is no hash re-bless
+   (§1). Keying moved to the importers, skins are matched by id and
+   content hash and never transferred (protocol 3), and the import
+   pipeline lives in the new crate `olr-import`.

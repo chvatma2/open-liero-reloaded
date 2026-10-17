@@ -8,7 +8,8 @@ The headless command-line tool. Its commands:
   It exits with status 1 if any item failed, and still imports the rest.
   The pipeline is `olr_import` (plan 7 ruling Q3; the game's Import screen is gone), with `prune`: `<out>` is this import's.
 - `olr-cli validate <pack-or-parent-dir>...` prints diagnostics and exits with
-  status 1 on any error.
+  status 1 on any error. It runs `olr_pack::validate` over the format-5
+  readers (plan 13c; the name stays until plan 13d).
 - `olr-cli scenario [name...] [--dump F] [--all | --fields a+b] [--time F.ron]` replays oracle
   scenarios in `olr-sim` and prints the first divergence of each. `--time`
   (plan 8, `timing.rs`: `time_scenario`, `TimingReport`) instead times each
@@ -524,7 +525,10 @@ configuration (a standby unless `--no-standby`) and the printed lines. The tests
 `net_soak_memory` (it reads the process's memory): one module's
 tests are `cargo nextest run -p olr-cli --test integration corpus::`.
 `tests/corpus.rs` checks every imported
-pack when `OLR_CONTENT_DIR` is set. To accept a reviewed snapshot change, run
+pack when `OLR_CONTENT_DIR` is set. `tests/digest.rs` pins a SHA-256 of what
+the game receives from every bundled pack (each skin's drawn frames, the
+images the runtime uses, level and theme data; plan 13c): a pack format or
+importer change that alters a drawn pixel changes the snapshot. To accept a reviewed snapshot change, run
 `INSTA_UPDATE=always cargo test -p olr-cli --test integration corpus::`.
 `MatchSpec`'s `--loading-time` and `--pool-capacity` (serialized only when
 given, so goldens and failure records keep their form) are the stress

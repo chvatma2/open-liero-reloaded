@@ -605,7 +605,7 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
     downloaded ones laid over (`Content::with_packs`, their verified
     hashes remembered).
     - **Host**: the list is the setup's packs, all required; skins never
-      travel (plan 13c, ruling N31 removed: a skin is matched by id and
+      travel (plan 13c, ruling N31 replaced: a skin is matched by id and
       hash, by `olr-game`). Each item is listed once archived; no list
       goes out until every item is archived (one that cannot be is listed
       with size 0 and refused when asked). A changed list goes to every

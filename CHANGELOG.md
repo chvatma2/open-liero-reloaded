@@ -18,6 +18,11 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 - Worms facing left are drawn as the exact mirror of facing right, without
   OLX's one-pixel offset.
 
+- Content packs are in the new format, version 5. Re-import packs you
+  made with `cargo xtask fetch-olx-content` or `olr-cli import`; packs of
+  another version are refused. Content hashes changed, so 0.1 replays and
+  cached downloads no longer open.
+
 ### Removed
 
 - The Import screen; import OLX content with `olr-cli import`, and later in

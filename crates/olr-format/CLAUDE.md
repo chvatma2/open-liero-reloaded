@@ -3,7 +3,8 @@
 Pack authoring formats (spec `docs/superpowers/specs/2026-10-16-formats-design.md`):
 the readable files editors, agents and people write; their canonical text;
 compilers to `olr-data`'s runtime structs; lifts back. Plan 13a: mods.
-Plan 13b: levels, themes, skins and the core pack.
+Plan 13b: levels, themes, skins and the core pack. Plan 13c: these are the
+packs' format (version 5); `olr-pack` reads and writes through them.
 
 - **Layer 2, `std`.** Depends on `olr-data`, `olr-vfs`, `serde`, `ron`,
   `thiserror`, `png`. Tests also use `olr-pack` and `olr-sim`
@@ -46,14 +47,14 @@ Plan 13b: levels, themes, skins and the core pack.
     `MAX_WEAPONS` (512), `MAX_SHARED` (4096), `MAX_EFFECTS` (16 per event),
     `MAX_COLOURS` (256), `MAX_AMOUNT` (1000, a spawn's `amount`; mirrors
     `olr-sim`'s). Shared roots and weapon shots both start at depth 1.
-    Depth and occurrence limits after expansion are left to plan 13c.
+    Depth and occurrence limits after expansion are left to a later plan.
   - **`lift_mod(compile_mod(src))` is not the identity:** notes are dropped,
     spawn names become `"spawn"`, and sharing, effect order, an explicit
     default size and zero timers are normalised. Editors edit `ModSource`
     and never round-trip through `ModDef`.
   - **`write_mod_files` never deletes** files no longer in the `ModSource`:
     writing into an existing directory after removing a weapon leaves its
-    file, which the next read rejects as "not listed". Plan 13c's save path
+    file, which the next read rejects as "not listed". A later save path (plan 13d)
     must clear the mod files first. It validates every id before writing.
   - **Tests.** `tests/equivalence.rs`: the bundled mods, lifted, written,
     read and compiled, give the import back exactly, the same `SimMod`, and
