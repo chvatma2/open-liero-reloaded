@@ -74,15 +74,19 @@ Plan 13b: levels, themes, skins and the core pack.
   list, `colours` by OLX's key), `gfx/<id>.png` (alpha) and `sounds/<file>`.
   `CORE_LAYOUT` holds OLX's frame grids and art scales. `giblets` (32 × 8) and
   `giblet-stains` (16 × 4) are two sprites that `compile_core` composes into
-  OLX's 32 × 12 `giblets`; `lift_core` splits it and keys each sprite once
-  (`image_io::olx_sprite_to_alpha`). `compile_core` checks that the grid divides
-  the image; the drawing code keeps its own constants. tests/core_pack.rs also
+  OLX's 32 × 12 `giblets`; `lift_core` splits it and is purely structural: the
+  importer keys the old sprites once (`image_io::olx_sprite_to_alpha`) before
+  lifting. `read_core_files_tolerant` leaves out a bad sprite or missing sound
+  with its error, and drops the giblets pair together. `compile_core` checks that the grid divides
+  the image; the drawing code keeps its own constants. tests/core_pack.rs keys the old sprites before lifting and also
   checks that the bundled mods' gfx key to alpha without change.
 - **Levels** (`levels/`): `LevelSource` is `level.ron` (name, notes, `size`
   in world pixels, `art_scale`, theme id, `objects`), `material.png` (an
   indexed grid, `MATERIAL_PALETTE`: rock grey, background black, dirt brown,
   indexed by `Material as u8`), `front.png`, `back.png` (each `size` ×
-  `art_scale`) and an optional `thumb.png`, passed through as bytes.
+  `art_scale`) and an optional `thumb.png`, passed through as bytes (read tolerantly: at most
+  `MAX_THUMB_BYTES`, undecodable or larger is `None`; `read_level_header` reads
+  `level.ron` only; `read_level_files_without_thumb` skips the thumbnail).
   `LevelObject::Spawn` is the only object; the runtime does not read it
   (spawns are `FindSpot`'s). Bounds: `MAX_SIDE` (4096), `MAX_ART_SCALE` (8),
   `MAX_OBJECTS` (4096); a material or art size that does not match is an

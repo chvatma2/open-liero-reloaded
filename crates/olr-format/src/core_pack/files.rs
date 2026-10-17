@@ -6,7 +6,10 @@ use std::collections::BTreeMap;
 use olr_vfs::{ContentSink, ContentSource, VPath};
 use serde::{Deserialize, Serialize};
 
-use super::{CORE_FILE, CoreSource, SpriteSource, check, sound_file, sprite_file};
+use super::{
+    CORE_FILE, CoreSource, GIBLET_PART, GIBLETS, STAINS, STAINS_PART, SpriteSource, check, check_sprite,
+    size_is, sound_file, sprite_file,
+};
 use crate::image_io::{self, IMAGES};
 use crate::ron_io::{from_canonical, read_text, to_canonical, write_text};
 use crate::{Colour, FormatError};
@@ -67,7 +70,8 @@ pub fn write_core_files(sink: &mut dyn ContentSink, src: &CoreSource) -> Result<
     Ok(())
 }
 
-pub fn read_core_files(src: &dyn ContentSource) -> Result<CoreSource, FormatError> {
+/// Reads `core.ron` and bounds its counts; the one place both readers share.
+fn read_core_ron(src: &dyn ContentSource) -> Result<CoreFile, FormatError> {
     let file: CoreFile = from_canonical(CORE_FILE, &read_text(src, CORE_FILE)?)?;
     // The counts are checked before any file is read.
     for (name, n, max) in [
@@ -79,16 +83,25 @@ pub fn read_core_files(src: &dyn ContentSource) -> Result<CoreSource, FormatErro
             return Err(FormatError::invalid(CORE_FILE, name, format!("more than {max} {name}")));
         }
     }
+    Ok(file)
+}
+
+fn read_sprite(src: &dyn ContentSource, id: &str, e: &SpriteEntry) -> Result<SpriteSource, FormatError> {
+    // Names are checked before they become paths.
+    if !super::valid_name(id) {
+        return Err(FormatError::invalid(CORE_FILE, "sprites", format!("invalid sprite id {id:?}")));
+    }
+    let name = sprite_file(id);
+    let image = image_io::decode_rgba_within(&read_bytes(src, &name)?, IMAGES)
+        .map_err(|message| FormatError::Io { file: name.clone(), message })?;
+    Ok(SpriteSource { image, frames: e.frames, art_scale: e.art_scale })
+}
+
+pub fn read_core_files(src: &dyn ContentSource) -> Result<CoreSource, FormatError> {
+    let file = read_core_ron(src)?;
     let mut sprites = BTreeMap::new();
-    for (id, e) in file.sprites {
-        // Names are checked before they become paths.
-        if !super::valid_name(&id) {
-            return Err(FormatError::invalid(CORE_FILE, "sprites", format!("invalid sprite id {id:?}")));
-        }
-        let name = sprite_file(&id);
-        let image = image_io::decode_rgba_within(&read_bytes(src, &name)?, IMAGES)
-            .map_err(|message| FormatError::Io { file: name.clone(), message })?;
-        sprites.insert(id, SpriteSource { image, frames: e.frames, art_scale: e.art_scale });
+    for (id, e) in &file.sprites {
+        sprites.insert(id.clone(), read_sprite(src, id, e)?);
     }
     let mut sounds = BTreeMap::new();
     for name in file.sounds {
@@ -103,6 +116,88 @@ pub fn read_core_files(src: &dyn ContentSource) -> Result<CoreSource, FormatErro
     let core = CoreSource { notes: file.notes, sprites, sounds, colours: file.colours };
     check(&core)?;
     Ok(core)
+}
+
+/// Like [`read_core_files`], but a bad sprite or a missing sound is left
+/// out and reported, so the game can run with what is there. `giblets` and
+/// `giblet-stains` drop together (OLX draws them from one image). The
+/// `Err` is only for a `core.ron` that cannot be read (or whose counts are
+/// out of bounds); the errors come in a stable order.
+pub fn read_core_files_tolerant(
+    src: &dyn ContentSource,
+) -> (Result<CoreSource, FormatError>, Vec<FormatError>) {
+    let file = match read_core_ron(src) {
+        Ok(f) => f,
+        Err(e) => return (Err(e), Vec::new()),
+    };
+    let mut errors = Vec::new();
+    let mut sprites = BTreeMap::new();
+    for (id, e) in &file.sprites {
+        match read_sprite(src, id, e).and_then(|s| check_sprite(id, &s).map(|()| s)) {
+            Ok(s) => {
+                sprites.insert(id.clone(), s);
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+    // The pair stands or falls together, and each part must be its size.
+    let pair_ok = match (sprites.get(GIBLETS), sprites.get(STAINS)) {
+        (None, None) => true,
+        (Some(g), Some(st)) => size_is(&g.image, GIBLET_PART) && size_is(&st.image, STAINS_PART),
+        _ => false,
+    };
+    if !pair_ok {
+        let (had_g, had_s) = (sprites.remove(GIBLETS).is_some(), sprites.remove(STAINS).is_some());
+        if had_g && had_s {
+            errors.push(FormatError::invalid(
+                &sprite_file(GIBLETS),
+                "",
+                format!(
+                    "{GIBLETS} and {STAINS} must be {}x{} and {}x{}",
+                    GIBLET_PART.0, GIBLET_PART.1, STAINS_PART.0, STAINS_PART.1
+                ),
+            ));
+        } else if had_g || had_s {
+            let (here, gone) = if had_g { (GIBLETS, STAINS) } else { (STAINS, GIBLETS) };
+            errors.push(FormatError::invalid(
+                &sprite_file(here),
+                "",
+                format!("{here} needs {gone} beside it, so it is left out"),
+            ));
+        }
+    }
+    let mut sounds = BTreeMap::new();
+    for name in file.sounds {
+        if !super::valid_name(&name) {
+            errors.push(FormatError::invalid(CORE_FILE, "sounds", format!("invalid sound name {name:?}")));
+            continue;
+        }
+        match read_bytes(src, &sound_file(&name)) {
+            Ok(bytes) => {
+                if sounds.insert(name.clone(), bytes).is_some() {
+                    errors.push(FormatError::invalid(
+                        CORE_FILE,
+                        "sounds",
+                        format!("{name:?} is listed twice"),
+                    ));
+                }
+            }
+            Err(e) => errors.push(e),
+        }
+    }
+    let mut colours = file.colours;
+    colours.retain(|key, _| {
+        let keep = !key.is_empty();
+        if !keep {
+            errors.push(FormatError::invalid(CORE_FILE, "colours", "an empty colour key"));
+        }
+        keep
+    });
+    let core = CoreSource { notes: file.notes, sprites, sounds, colours };
+    match check(&core) {
+        Ok(()) => (Ok(core), errors),
+        Err(e) => (Err(e), errors),
+    }
 }
 
 #[cfg(test)]
@@ -170,5 +265,61 @@ mod tests {
         }
         let e = read_core_files(&broken).unwrap_err().to_string();
         assert!(e.contains("sounds/bump.ogg"), "{e}");
+    }
+
+    fn sample_fs() -> MemFs {
+        let mut fs = MemFs::new();
+        write_core_files(&mut fs, &crate::core_pack::tests::sample()).unwrap();
+        fs
+    }
+
+    fn without(fs: &MemFs, gone: &[&str]) -> MemFs {
+        let mut out = MemFs::new();
+        for (p, d) in fs.files().filter(|(p, _)| !gone.contains(&p.as_str())) {
+            out = out.with(p.as_str(), d.to_vec());
+        }
+        out
+    }
+
+    #[test]
+    fn the_tolerant_read_of_a_good_core_is_the_strict_read() {
+        let fs = sample_fs();
+        let (core, errors) = read_core_files_tolerant(&fs);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(core.unwrap(), read_core_files(&fs).unwrap());
+    }
+
+    #[test]
+    fn the_tolerant_read_leaves_out_a_bad_sprite_and_a_missing_sound() {
+        let fs = without(&sample_fs(), &["sounds/bump.ogg"]).with("gfx/spawn.png", b"not a png".to_vec());
+        let (core, errors) = read_core_files_tolerant(&fs);
+        let core = core.unwrap();
+        assert!(!core.sprites.contains_key("spawn") && core.sprites.contains_key("crosshair"));
+        assert_eq!(core.sounds.keys().collect::<Vec<_>>(), ["throw.ogg"]);
+        let text: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(text.len(), 2, "{text:?}");
+        assert!(text.iter().any(|t| t.contains("gfx/spawn.png")), "{text:?}");
+        assert!(text.iter().any(|t| t.contains("sounds/bump.ogg")), "{text:?}");
+    }
+
+    #[test]
+    fn the_tolerant_read_drops_the_giblets_pair_together() {
+        for gone in ["gfx/giblets.png", "gfx/giblet-stains.png"] {
+            let (core, errors) = read_core_files_tolerant(&without(&sample_fs(), &[gone]));
+            let core = core.unwrap();
+            assert!(!core.sprites.contains_key("giblets") && !core.sprites.contains_key("giblet-stains"));
+            assert!(core.sprites.contains_key("crosshair"));
+            assert_eq!(errors.len(), 2, "{errors:?}");
+            // The result compiles.
+            super::super::compile_core(&core).unwrap();
+        }
+    }
+
+    #[test]
+    fn the_tolerant_read_of_an_unreadable_core_ron_is_the_err() {
+        let (core, errors) = read_core_files_tolerant(&MemFs::new());
+        assert!(core.is_err() && errors.is_empty());
+        let fs = MemFs::new().with("core.ron", b"(sprites: ".to_vec());
+        assert!(matches!(read_core_files_tolerant(&fs).0, Err(FormatError::Parse { .. })));
     }
 }

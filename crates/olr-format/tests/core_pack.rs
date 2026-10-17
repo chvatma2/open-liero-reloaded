@@ -25,7 +25,10 @@ fn the_bundled_core_pack_survives_lift_write_read_and_compile() {
         return;
     };
     let pack = olr_pack::read_core(&DirFs::new(root.join("olx-core"))).unwrap();
-    let src = lift_core(&pack.def, &pack.sprites, &pack.sounds).unwrap();
+    // The importer keys the old sprites once; lifting is structural.
+    let keyed_sprites: std::collections::BTreeMap<_, _> =
+        pack.sprites.iter().map(|(k, v)| (k.clone(), olx_sprite_to_alpha(v))).collect();
+    let src = lift_core(&pack.def, &keyed_sprites, &pack.sounds).unwrap();
     let mut fs = MemFs::new();
     write_core_files(&mut fs, &src).unwrap();
     let back = read_core_files(&fs).unwrap();

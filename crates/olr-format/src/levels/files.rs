@@ -1,16 +1,16 @@
 //! A level's files. Other paths (`pack.ron`, ...) belong to `olr-pack`
 //! and are ignored here.
 
-use olr_data::level::Material;
+use olr_data::level::{Material, SpawnPoint};
 use olr_vfs::{ContentSink, ContentSource, VPath};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BACK_FILE, FRONT_FILE, LEVEL_FILE, LevelObject, LevelSource, MATERIAL_FILE, MATERIAL_PALETTE, THUMB_FILE,
-    check, check_header,
+    BACK_FILE, FRONT_FILE, LEVEL_FILE, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE,
+    MATERIAL_PALETTE, MAX_THUMB_BYTES, THUMB_FILE, check, check_header,
 };
 use crate::FormatError;
-use crate::image_io::{self, LEVEL_ART};
+use crate::image_io::{self, IMAGES, LEVEL_ART};
 use crate::ron_io::{from_canonical, read_text, to_canonical, write_text};
 
 /// The largest file read (a PNG or the thumbnail), as `olr-pack` reads.
@@ -95,8 +95,51 @@ fn read_art(
         .map_err(|message| FormatError::Io { file: file.into(), message })
 }
 
+/// Reads and validates `level.ron` only; no image is touched.
+pub fn read_level_header(src: &dyn ContentSource) -> Result<LevelHeader, FormatError> {
+    let file = read_level_ron(src)?;
+    check_header(file.size, file.art_scale, file.objects.len())?;
+    Ok(LevelHeader {
+        name: file.name,
+        size: file.size,
+        art_scale: file.art_scale,
+        theme: file.theme,
+        spawns: file
+            .objects
+            .iter()
+            .map(|o| match o {
+                LevelObject::Spawn { at, .. } => SpawnPoint { x: at.0, y: at.1 },
+            })
+            .collect(),
+    })
+}
+
+fn read_level_ron(src: &dyn ContentSource) -> Result<LevelFile, FormatError> {
+    from_canonical(LEVEL_FILE, &read_text(src, LEVEL_FILE)?)
+}
+
+/// The thumbnail, tolerantly: absent, above [`MAX_THUMB_BYTES`] or not a
+/// decodable PNG all give `None`. The bytes are passed through.
+fn read_thumb(src: &dyn ContentSource) -> Option<Vec<u8>> {
+    let path = VPath::new(THUMB_FILE).ok()?;
+    if !src.exists(&path) {
+        return None;
+    }
+    let bytes = src.read_max(&path, MAX_THUMB_BYTES).ok()?;
+    image_io::decode_rgba_within(&bytes, IMAGES).ok()?;
+    Some(bytes)
+}
+
+/// The level with its thumbnail read tolerantly (never an error).
 pub fn read_level_files(src: &dyn ContentSource) -> Result<LevelSource, FormatError> {
-    let file: LevelFile = from_canonical(LEVEL_FILE, &read_text(src, LEVEL_FILE)?)?;
+    let mut level = read_level_files_without_thumb(src)?;
+    level.thumb = read_thumb(src);
+    Ok(level)
+}
+
+/// The level with `thumb` always `None`: the thumbnail is never read.
+pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSource, FormatError> {
+    let file = read_level_ron(src)?;
     // level.ron is validated before any image is read.
     let art = check_header(file.size, file.art_scale, file.objects.len())?;
     let bytes = read_bytes(src, MATERIAL_FILE)?;
@@ -128,9 +171,6 @@ pub fn read_level_files(src: &dyn ContentSource) -> Result<LevelSource, FormatEr
     }
     let front = read_art(src, FRONT_FILE, art)?;
     let back = read_art(src, BACK_FILE, art)?;
-    let thumb_path = VPath::new(THUMB_FILE)
-        .map_err(|e| FormatError::Io { file: THUMB_FILE.into(), message: e.to_string() })?;
-    let thumb = if src.exists(&thumb_path) { Some(read_bytes(src, THUMB_FILE)?) } else { None };
     let level = LevelSource {
         name: file.name,
         notes: file.notes,
@@ -141,7 +181,7 @@ pub fn read_level_files(src: &dyn ContentSource) -> Result<LevelSource, FormatEr
         material,
         front,
         back,
-        thumb,
+        thumb: None,
     };
     check(&level)?;
     Ok(level)
@@ -155,7 +195,7 @@ mod tests {
     #[test]
     fn files_round_trip_byte_stably() {
         let mut src = crate::levels::tests::tiny(2);
-        src.thumb = Some(b"not even a png".to_vec());
+        src.thumb = Some(image_io::encode_rgba(&olr_data::image::RgbaImage::new(2, 2)));
         let mut a = MemFs::new();
         write_level_files(&mut a, &src).unwrap();
         let names: Vec<String> = a.files().map(|(p, _)| p.to_string()).collect();
@@ -165,6 +205,42 @@ mod tests {
         let mut b = MemFs::new();
         write_level_files(&mut b, &back).unwrap();
         assert_eq!(a, b);
+    }
+
+    fn with_thumb(bytes: Vec<u8>) -> MemFs {
+        let mut fs = MemFs::new();
+        write_level_files(&mut fs, &crate::levels::tests::tiny(1)).unwrap();
+        fs.with("thumb.png", bytes)
+    }
+
+    #[test]
+    fn a_thumbnail_that_is_too_big_or_undecodable_is_left_out() {
+        let good = image_io::encode_rgba(&olr_data::image::RgbaImage::new(4, 4));
+        assert_eq!(read_level_files(&with_thumb(good.clone())).unwrap().thumb, Some(good));
+        let big = vec![0u8; 2 << 20];
+        assert_eq!(read_level_files(&with_thumb(big)).unwrap().thumb, None);
+        assert_eq!(read_level_files(&with_thumb(b"not a png".to_vec())).unwrap().thumb, None);
+    }
+
+    #[test]
+    fn the_read_without_thumb_ignores_the_thumbnail() {
+        let good = image_io::encode_rgba(&olr_data::image::RgbaImage::new(4, 4));
+        assert_eq!(read_level_files_without_thumb(&with_thumb(good)).unwrap().thumb, None);
+    }
+
+    #[test]
+    fn the_header_read_touches_no_image() {
+        let fs = MemFs::new().with(
+            "level.ron",
+            b"(name: \"x\", size: (8, 6), art_scale: 2, theme: \"t\", objects: [Spawn(at: (1, 2))])\n"
+                .to_vec(),
+        );
+        let h = read_level_header(&fs).unwrap();
+        assert_eq!((h.name.as_str(), h.size, h.art_scale, h.theme.as_str()), ("x", (8, 6), 2, "t"));
+        assert_eq!(h.spawns, [SpawnPoint { x: 1, y: 2 }]);
+        // It validates level.ron all the same.
+        let bad = MemFs::new().with("level.ron", b"(name: \"x\", size: (0, 6), theme: \"t\")\n".to_vec());
+        assert!(read_level_header(&bad).unwrap_err().to_string().contains("size"));
     }
 
     #[test]

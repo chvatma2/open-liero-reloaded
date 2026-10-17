@@ -20,7 +20,7 @@ pub const BACK_FILE: &str = "back.png";
 /// The level's thumbnail for the menus (spec §21 G6), optional: made from
 /// the art at import. Presentation only: [`crate::content_hash`] leaves it
 /// out (plan 7 ruling Q4), so adding or changing it keeps replays valid.
-pub const THUMB_FILE: &str = "thumb.png";
+pub use olr_format::levels::THUMB_FILE;
 
 /// The size importers make thumbnails at: the level letterboxed into it.
 pub const THUMB_SIZE: (u32, u32) = (160, 96);

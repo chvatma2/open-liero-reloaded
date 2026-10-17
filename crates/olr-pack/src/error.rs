@@ -1,3 +1,4 @@
+use olr_format::FormatError;
 use olr_vfs::VfsError;
 
 #[derive(Debug, thiserror::Error)]
@@ -10,6 +11,9 @@ pub enum PackError {
     Image { file: String, message: String },
     #[error("{file}: {message}")]
     Invalid { file: String, message: String },
+    /// An authoring-format error, from `olr-format`.
+    #[error(transparent)]
+    Format(#[from] olr_format::FormatError),
 }
 
 impl PackError {
@@ -22,6 +26,11 @@ impl PackError {
         match self {
             Self::Vfs(_) => None,
             Self::Ron { file, .. } | Self::Image { file, .. } | Self::Invalid { file, .. } => Some(file),
+            Self::Format(
+                FormatError::Parse { file, .. }
+                | FormatError::Invalid { file, .. }
+                | FormatError::Io { file, .. },
+            ) => Some(file),
         }
     }
 }

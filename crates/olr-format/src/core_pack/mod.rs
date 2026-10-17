@@ -11,9 +11,9 @@ use std::collections::BTreeMap;
 use olr_data::core_pack::CoreDef;
 use olr_data::image::{Rgba, RgbaImage};
 
-pub use files::{read_core_files, write_core_files};
+pub use files::{read_core_files, read_core_files_tolerant, write_core_files};
 
-use crate::image_io::{IMAGES, check_size, olx_sprite_to_alpha};
+use crate::image_io::{IMAGES, check_size};
 use crate::{Colour, FormatError, LiftError};
 
 /// The largest `art_scale`.
@@ -43,12 +43,12 @@ pub const CORE_LAYOUT: [(&str, (u32, u32), u32); 12] = [
     ("spawn", (5, 1), 2),
 ];
 
-const GIBLETS: &str = "giblets";
-const STAINS: &str = "giblet-stains";
+pub(crate) const GIBLETS: &str = "giblets";
+pub(crate) const STAINS: &str = "giblet-stains";
 /// OLX's runtime `giblets` image, and its two parts.
 const GIBLETS_SIZE: (u32, u32) = (32, 12);
-const GIBLET_PART: (u32, u32) = (32, 8);
-const STAINS_PART: (u32, u32) = (16, 4);
+pub(crate) const GIBLET_PART: (u32, u32) = (32, 8);
+pub(crate) const STAINS_PART: (u32, u32) = (16, 4);
 
 /// A sprite as its file holds it.
 #[derive(Clone, Debug, PartialEq)]
@@ -81,10 +81,35 @@ pub(crate) fn sound_file(name: &str) -> String {
 }
 
 /// A sprite id or sound file name: one lowercase file name.
-fn valid_name(name: &str) -> bool {
+pub(crate) fn valid_name(name: &str) -> bool {
     !name.is_empty()
         && !name.starts_with('.')
         && name.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"-_.".contains(&b))
+}
+
+/// One sprite's checks: its id, art scale, size and frame grid.
+pub(crate) fn check_sprite(id: &str, s: &SpriteSource) -> Result<(), FormatError> {
+    if !valid_name(id) {
+        return Err(FormatError::invalid(CORE_FILE, "sprites", format!("invalid sprite id {id:?}")));
+    }
+    let file = sprite_file(id);
+    if !(1..=MAX_ART_SCALE).contains(&s.art_scale) {
+        return Err(FormatError::invalid(
+            &file,
+            "art_scale",
+            format!("{}, not within 1 to {MAX_ART_SCALE}", s.art_scale),
+        ));
+    }
+    check_size(s.image.width(), s.image.height(), IMAGES).map_err(|e| FormatError::invalid(&file, "", e))?;
+    let ((c, r), (w, h)) = (s.frames, (s.image.width(), s.image.height()));
+    if c == 0 || r == 0 || w % c != 0 || h % r != 0 {
+        return Err(FormatError::invalid(
+            &file,
+            "frames",
+            format!("{c}x{r} frames do not divide the {w}x{h} image"),
+        ));
+    }
+    Ok(())
 }
 
 /// The checks the compiler, the writer and the reader share.
@@ -99,27 +124,7 @@ pub(crate) fn check(src: &CoreSource) -> Result<(), FormatError> {
         return Err(FormatError::invalid(CORE_FILE, "colours", format!("more than {MAX_COLOURS} colours")));
     }
     for (id, s) in &src.sprites {
-        if !valid_name(id) {
-            return Err(FormatError::invalid(CORE_FILE, "sprites", format!("invalid sprite id {id:?}")));
-        }
-        let file = sprite_file(id);
-        if !(1..=MAX_ART_SCALE).contains(&s.art_scale) {
-            return Err(FormatError::invalid(
-                &file,
-                "art_scale",
-                format!("{}, not within 1 to {MAX_ART_SCALE}", s.art_scale),
-            ));
-        }
-        check_size(s.image.width(), s.image.height(), IMAGES)
-            .map_err(|e| FormatError::invalid(&file, "", e))?;
-        let ((c, r), (w, h)) = (s.frames, (s.image.width(), s.image.height()));
-        if c == 0 || r == 0 || w % c != 0 || h % r != 0 {
-            return Err(FormatError::invalid(
-                &file,
-                "frames",
-                format!("{c}x{r} frames do not divide the {w}x{h} image"),
-            ));
-        }
+        check_sprite(id, s)?;
     }
     for name in src.sounds.keys() {
         if !valid_name(name) {
@@ -134,7 +139,7 @@ pub(crate) fn check(src: &CoreSource) -> Result<(), FormatError> {
     Ok(())
 }
 
-fn size_is(img: &RgbaImage, (w, h): (u32, u32)) -> bool {
+pub(crate) fn size_is(img: &RgbaImage, (w, h): (u32, u32)) -> bool {
     (img.width(), img.height()) == (w, h)
 }
 
@@ -202,8 +207,10 @@ pub fn compile_core(
     Ok((def, sprites, src.sounds.clone()))
 }
 
-/// The inverse of [`compile_core`]; `notes` stay empty. Each sprite gets
-/// OLX's colour key applied once.
+/// The inverse of [`compile_core`]; `notes` stay empty. Purely structural:
+/// no colour keying. The sprites must already carry alpha, so the importer
+/// keys the old sprites once (`image_io::olx_sprite_to_alpha`, plan 13c
+/// Ruling 3) before lifting; `read_core_files(write_core_files(p)) == p`.
 pub fn lift_core(
     def: &CoreDef,
     sprites: &BTreeMap<String, RgbaImage>,
@@ -219,7 +226,7 @@ pub fn lift_core(
     };
     for (id, img) in sprites {
         let fail = |message: String| LiftError { item: format!("sprite \"{id}\""), message };
-        let img = olx_sprite_to_alpha(img);
+        let img = img.clone();
         if id == STAINS {
             return Err(fail(format!("{STAINS} is not a runtime sprite")));
         }
@@ -354,17 +361,15 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn lifting_keys_once_and_keeps_pure_magenta_of_a_254_keyed_sprite() {
+    fn lifting_does_not_key() {
         let (def, mut sprites, sounds) = compile_core(&sample()).unwrap();
         let mut img = RgbaImage::new(3, 1);
         img.set(0, 0, Rgba::rgb(254, 0, 254));
         img.set(1, 0, Rgba::rgb(255, 0, 255));
         img.set(2, 0, Rgba::rgb(1, 2, 3));
-        sprites.insert("extra".into(), img);
+        sprites.insert("extra".into(), img.clone());
         let src = lift_core(&def, &sprites, &sounds).unwrap();
-        let got = &src.sprites["extra"].image;
-        assert_eq!(got.get(0, 0), Rgba::TRANSPARENT);
-        assert_eq!(got.get(1, 0), Rgba::rgb(255, 0, 255));
+        assert_eq!(src.sprites["extra"].image, img, "the importer keys; lifting keeps every pixel");
     }
 
     #[test]

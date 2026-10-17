@@ -7,7 +7,7 @@ use olr_data::image::RgbaImage;
 use olr_data::level::{Level, LevelDef, Material, MaterialGrid, SpawnPoint};
 use serde::{Deserialize, Serialize};
 
-pub use files::{read_level_files, write_level_files};
+pub use files::{read_level_files, read_level_files_without_thumb, read_level_header, write_level_files};
 
 use crate::image_io::{LEVEL_ART, check_size};
 use crate::{FormatError, LiftError};
@@ -26,7 +26,23 @@ pub(crate) const LEVEL_FILE: &str = "level.ron";
 pub(crate) const MATERIAL_FILE: &str = "material.png";
 pub(crate) const FRONT_FILE: &str = "front.png";
 pub(crate) const BACK_FILE: &str = "back.png";
-pub(crate) const THUMB_FILE: &str = "thumb.png";
+/// The thumbnail's file name; `olr-pack` re-exports it.
+pub const THUMB_FILE: &str = "thumb.png";
+/// The largest `thumb.png` read, in bytes. A larger or undecodable one is
+/// left out, never an error (presentation only).
+pub const MAX_THUMB_BYTES: u64 = 1 << 20;
+
+/// What `level.ron` alone says, read without touching any image.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LevelHeader {
+    pub name: String,
+    /// World pixels.
+    pub size: (u32, u32),
+    pub art_scale: u32,
+    /// Theme pack id.
+    pub theme: String,
+    pub spawns: Vec<SpawnPoint>,
+}
 
 /// A level as its files hold it.
 #[derive(Clone, Debug, PartialEq)]

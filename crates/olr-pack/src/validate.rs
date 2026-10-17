@@ -5,6 +5,7 @@ use std::fmt;
 
 use olr_data::manifest::PackKind;
 use olr_data::mod_def::ModDef;
+use olr_format::FormatError;
 use olr_vfs::{ContentSource, VPath};
 
 use crate::{
@@ -41,6 +42,22 @@ impl Diagnostic {
                 message: message.clone(),
             },
             PackError::Image { file, message } | PackError::Invalid { file, message } => {
+                Self::new(Severity::Error, file.clone(), message.clone())
+            }
+            PackError::Format(FormatError::Parse { file, line, col, message }) => Self {
+                severity: Severity::Error,
+                file: Some(file.clone()),
+                line: Some(*line),
+                col: Some(*col),
+                message: message.clone(),
+            },
+            // The field path stays in the message.
+            PackError::Format(FormatError::Invalid { file, path, message }) => Self::new(
+                Severity::Error,
+                file.clone(),
+                if path.is_empty() { message.clone() } else { format!("{path}: {message}") },
+            ),
+            PackError::Format(FormatError::Io { file, message }) => {
                 Self::new(Severity::Error, file.clone(), message.clone())
             }
             PackError::Vfs(v) => {
@@ -221,6 +238,32 @@ mod tests {
     use crate::{write_level, write_mod};
     use olr_data::mod_def::SpawnDef;
     use olr_vfs::MemFs;
+
+    #[test]
+    fn a_format_error_maps_to_a_diagnostic() {
+        let parse = PackError::Format(FormatError::Parse {
+            file: "level.ron".into(),
+            line: 3,
+            col: 7,
+            message: "bad".into(),
+        });
+        let d = Diagnostic::from_error(&parse);
+        assert_eq!(
+            (d.file.as_deref(), d.line, d.col, d.message.as_str()),
+            (Some("level.ron"), Some(3), Some(7), "bad")
+        );
+        let invalid = PackError::Format(FormatError::Invalid {
+            file: "core.ron".into(),
+            path: "sprites".into(),
+            message: "too many".into(),
+        });
+        let d = Diagnostic::from_error(&invalid);
+        assert_eq!(
+            (d.file.as_deref(), d.line, d.message.as_str()),
+            (Some("core.ron"), None, "sprites: too many")
+        );
+        assert_eq!(invalid.file(), Some("core.ron"));
+    }
 
     fn written(pack: &ModPack) -> MemFs {
         let mut fs = MemFs::new();
