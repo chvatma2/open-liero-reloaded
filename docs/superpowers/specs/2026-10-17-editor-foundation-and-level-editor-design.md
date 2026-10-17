@@ -93,9 +93,11 @@ The file has room for the look properties sub-project 3 adds.
   a bake that differs from what the composition bakes to as an error, so a
   hand edit is never silently lost at the next save.
 - **CLI edits on a composed level.** `olr-cli level carve|fill|paint|stamp`
-  edit a drawn element named "CLI edits", added at the top when missing,
-  then rebake. `level resize` resizes the whole composition. A level
-  without `editor/` behaves as it does today.
+  are refused on a composed level (plan 14a ruling R1: carve and paint
+  act on several materials at once, which one drawn element cannot hold);
+  agents paint drawn elements with `level element draw|erase` (§7).
+  `level resize` resizes the whole composition. A level without `editor/`
+  behaves as it does today.
 - **One canonical form.** `composition.ron` is canonical RON like every
   authoring file: `pack check` validates it, `pack fmt` formats it, and
   `format-docs` documents it.
@@ -253,8 +255,14 @@ olr-cli level element add-image <pack> <file> --at X,Y --size WxH [--pixel-size 
 olr-cli level element add-layer <pack> --material M [--name N]
 olr-cli level element set       <pack> <id> --<property> <value>
 olr-cli level element remove|raise|lower <pack> <id>
+olr-cli level element draw      <pack> <id> (--rect X,Y,W,H | --circle X,Y,R) (--colour RRGGBB | --tile F.png)
+olr-cli level element erase     <pack> <id> (--rect X,Y,W,H | --circle X,Y,R)
 olr-cli level bake              <pack>
 ```
+
+Each command takes `--content DIR` (default `content/packs`) for the
+theme's back tile. `level carve|fill|paint|stamp` are refused on a
+composed level (§2).
 
 ## 8. Testing
 
@@ -287,7 +295,9 @@ olr-cli level bake              <pack>
   - `pack check`'s stale-bake check;
   - the CLI element commands and `level bake`.
 
-  No GUI; it is useful to agents on its own.
+  No GUI; it is useful to agents on its own. Done
+  (`docs/superpowers/plans/2026-10-17-plan-14a-level-composition.md`;
+  decisions in `docs/porting/STATUS.md`, "Level composition decisions").
 - **14b:** `olr-editor`: the framework and the level editor's state and
   panels, all tested headless.
 - **14c:**

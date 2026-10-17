@@ -1,6 +1,7 @@
 //! The formats guide's examples (`docs/formats/README.md`, plan 13d Task 9)
 //! are real: each parses as the file it names and is canonical, and the
-//! mod and level examples make packs that check clean.
+//! mod and level examples (the level's composition included) make packs
+//! that check clean.
 
 use std::collections::BTreeSet;
 
@@ -143,6 +144,22 @@ fn the_guide_examples_make_packs_that_check_clean() {
     let art = olr_format::image_io::encode_rgba(&olr_data::image::RgbaImage::new(w * s, h * s));
     for (path, bytes) in [("material.png", &material), ("front.png", &art), ("back.png", &art)] {
         fs.write(&VPath::new(path).unwrap(), bytes).unwrap();
+    }
+    // The composition's files: a 4 × 4 original per image, level-sized
+    // layers and raster files (plan 14a).
+    let composition = blocks.iter().find(|b| b.path == olr_format::levels::COMPOSITION_FILE).unwrap();
+    let composition: olr_format::levels::Composition =
+        olr_format::ron_io::from_canonical(&composition.path, &composition.text).unwrap();
+    let original = olr_format::image_io::encode_rgba(&olr_data::image::RgbaImage::new(4, 4));
+    for e in &composition.elements {
+        for (i, file) in olr_format::levels::element_files(e).into_iter().enumerate() {
+            let bytes = match e.kind {
+                olr_format::levels::ElementKind::Image { .. } => &original,
+                olr_format::levels::ElementKind::Raster if i == 0 => &material,
+                _ => &art,
+            };
+            fs.write(&VPath::new(&file).unwrap(), bytes).unwrap();
+        }
     }
     let d = olr_pack::validate(&fs);
     assert!(d.iter().all(|d| d.severity != olr_pack::Severity::Error), "the level example: {d:?}");

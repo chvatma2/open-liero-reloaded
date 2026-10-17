@@ -77,6 +77,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Mod authoring format (spec 2026-10-16 formats §2): authoring types, canonical writer, compile to `ModDef`, lift from it | — | `olr-format::mods` | done (plan 13a); the packs' format (plan 13c) | `bundled_mods_survive_lift_write_read_and_compile`, `authoring_values_round_trip_canonically`, `mutated_files_never_panic`, the compile and lift unit tests |
 | Level, theme, skin and core-pack authoring formats (spec 2026-10-16 formats §§3-6): authoring types, canonical files, compile to the runtime structs, lift from them | — | `olr-format::{levels, themes, skins, core_pack, image_io}` | done (plan 13b); the packs' format (plan 13c) | `bundled_levels_survive_lift_write_read_and_compile`, `the_bundled_theme_survives_lift_write_read_and_compile`, `the_bundled_core_pack_survives_lift_write_read_and_compile`, `every_bundled_skin_draws_the_same` |
 | Pack tooling (spec 2026-10-16 formats §6): `olr-cli pack check\|fmt\|new`, the level operations and preview, the schema docs | — | `olr-edit`, `olr-cli` (`pack_cmd.rs`, `level_cmd.rs`), `xtask format-docs` | done (plan 13d) | `load_then_files_reproduces_every_bundled_pack`, `bundled_packs_are_canonical`, `the_background_invariant_holds_at_every_art_scale`, `every_guide_example_parses_and_is_canonical`, `format-docs` check step |
+| Level composition (spec 2026-10-17 editor §1-3, §7): `editor/composition.ron` of image, drawn and raster elements, baked into `material.png`, `front.png`, `back.png` and `thumb.png`; JPEG originals; `olr-cli level element …`, `level bake`, stale bakes in `pack check` | — | `olr-format` (`levels::composition`, `image_io::decode_image_within`), `olr-pack` (`is_authoring`), `olr-edit` (`pixelate`, `compose`, `element`), `olr-cli` (`element_cmd.rs`), `olr-detcheck --bake` | done (plan 14a) | `every_bundled_level_round_trips_through_a_raster_base`, `region_bakes_equal_the_full_bake_and_keep_the_invariant`, `editor_files_are_not_content`, `the_fixture_is_baked`, `cargo xtask determinism`'s bake digest |
 
 ## Deliberate deviations
 
@@ -3162,6 +3163,54 @@ These are tools, not OLX behaviour; none changes the simulation or a pack.
 - **A mod's stray files are warnings.** In `weapons/` and `projectiles/`,
   only `.ron` files that are not hidden are definitions; an editor's backup
   or `.DS_Store` there is "not read by the format", as anywhere else.
+
+## Level composition decisions (plan 14a)
+
+Decided in `docs/superpowers/plans/2026-10-17-plan-14a-level-composition.md`
+and its batch reviews. Tools, not OLX behaviour: a level without `editor/`
+reads, plays and saves exactly as before.
+
+- **R1 - raster operations on a composed level are refused.** `olr-cli
+  level carve|fill|paint|stamp` exit 1 on a composed level (the spec had
+  them edit a drawn element "CLI edits", but carve and paint act on
+  several materials at once, which one drawn element cannot hold); agents
+  paint with `level element draw|erase`. Object commands keep the
+  composition; `level resize` resizes it too.
+- **R2 - `editor/` is authoring.** `olr_pack::is_authoring`: never in the
+  content hash or an archive (`decode` refuses one), so a player downloads
+  only the bake.
+- **R3, R4, R5 - the bake.** A world pixel's material is the topmost
+  visible element covering the centre art pixel of its block; an art
+  pixel's front the topmost covering it, else its back; its back the
+  topmost background image or drawn element covering it, or a raster's
+  back, else the theme's back tile; then `front := back` on background
+  blocks. Image, drawn and tile colours are baked opaque; a raster's art
+  is kept as stored, so a level composed of its raster base bakes back to
+  its own bytes.
+- **R6 - the raster base is `base`** ("Base"), its files encoded as
+  `write_level_files` encodes the level's.
+- **R7, R8 - names.** Originals keep their bytes and name
+  (`editor/images/<name>`, `-2`, `-3` … before the extension when taken,
+  case aside); ids are slugs of the name or file stem, skipping taken ids,
+  ids whose files another element uses, and Windows device names.
+- **R9 - the back tile** is the theme pack's (by manifest id) in
+  `--content`, `content/packs` by default.
+- **The image pipeline** is integer only: area resample, alpha threshold,
+  median cut (the exact colours when they fit; splits moved to a boundary
+  between channel values, so a rare colour is not averaged away),
+  Bayer 8 × 8 or Floyd-Steinberg in sixteenths, nearest colour exact
+  (ties: the lowest index).
+- **Bounds.** At most 256 elements; an image box's art (size × art scale)
+  within `LEVEL_ART`; all elements' decoded pixels together within
+  `MAX_COMPOSED_PIXELS` (256 Mi); originals within `IMAGES`. A JPEG must
+  end its scan (EOI): a cut file is refused rather than filled in grey.
+- **JPEG decoding** (`zune-jpeg` 0.5.15, pinned) runs its AVX2/NEON paths
+  when another dependency (`image` through `olr-game`) enables them;
+  measured bit-identical to the scalar decode on this machine (AVX2) for
+  baseline, 4:2:0 and greyscale JPEGs. NEON is unverified: `cargo xtask
+  determinism`'s arm64 leg compares the bake digest, but `olr-detcheck`
+  alone builds without those features. EXIF orientation is not applied:
+  a photo imports as its stored pixels.
 
 ## Kept OLX quirks
 

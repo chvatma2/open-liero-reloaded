@@ -5,7 +5,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `e2e`, `net-nat`, `bench`, `stress`, `net-feel`, `net-soak`, `windows`, `envelope`,
 `determinism`, `dist`, `format-docs`.
 
-- `format-docs [--check]` (`format_docs.rs`, plan 13d R4) writes
+- `format-docs [--check]` (`format_docs.rs`, plan 13d R4; the level page
+  also documents `editor/composition.ron`, plan 14a) writes
   `docs/formats/{mod,level,skin,theme,core,pack}.md` from the authoring
   types (`PAGES`: each page's sources, file types and map files), read
   with `syn`: each serialized field's name, type ("list of T", "map of name
@@ -501,6 +502,9 @@ difference). No leg flag means the WASM leg; a flag runs that leg only.
   `aarch64-unknown-linux-gnu` (linker `aarch64-linux-gnu-gcc`, `.cargo/config.toml`)
   under `qemu-aarch64 -L /usr/aarch64-linux-gnu`. Needs `sudo apt install
   qemu-user gcc-aarch64-linux-gnu` and the rustup target.
+Every leg also passes `--bake fixtures/edit/composed-level` (`BAKE`;
+WASI `/fixtures/…`, Windows a copy in the stage's `bake/`), so the last
+line, the level composition's bake digest (plan 14a), must be equal too.
 A leg whose tool or target is missing prints `skip <step> (<why and the fix>)`
 before anything is recorded; a differing stream fails the step (a real
 finding: rollback would desync across those platforms).

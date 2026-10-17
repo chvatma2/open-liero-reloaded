@@ -1,5 +1,6 @@
 //! The level authoring format: `level.ron`, `material.png`, `front.png`,
-//! `back.png` and an optional `thumb.png` (spec §6).
+//! `back.png` and an optional `thumb.png` (spec §6), and an optional
+//! composition under `editor/` that bakes into them (plan 14a).
 
 mod composition;
 pub use composition::*;

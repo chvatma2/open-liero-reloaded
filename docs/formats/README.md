@@ -122,6 +122,37 @@ has been carved away. Wherever the material is background, `front`
 equals `back`. The level operations keep it so: carving copies the back
 to the front, and painting the back also paints the front there.
 
+### Composed levels
+
+A level can be composed of **elements**, stacked bottom to top in
+`editor/composition.ron`, and **baked** into the files the game reads:
+`material.png`, `front.png`, `back.png` and `thumb.png`. An element is:
+
+- an **image**: a PNG or JPEG kept as imported in `editor/images/`,
+  placed in a box (`at`, `size`, world pixels; it may reach outside the
+  level) and pixelated (`pixel_size`, `colours`, `dither`,
+  `alpha_threshold`);
+- a **drawn** layer, `editor/layers/<id>.png`, art of the level's size
+  whose alpha says which pixels it covers;
+- a **raster** element, a whole level's own material, front and back
+  (`editor/layers/<id>.material.png`, `.front.png`, `.back.png`). A level
+  first composed (an OLX level, a `pack new` level) becomes one raster
+  element, `base`, so its bake gives back its own files byte for byte.
+
+Image and drawn elements have one material each: rock, dirt or
+background. **Topmost wins:** a world pixel's material is the topmost
+visible element covering it, and its art the topmost covering each art
+pixel. **Background elements are the backdrop:** where dirt is carved in
+play, the topmost background element beneath shows, else a raster's
+back, else the theme's back tile. Hidden elements are left out.
+
+`editor/` is the pack's authoring folder: it is never part of the
+content hash and never in an archive, so players download only the
+bake. The composition is the source of truth: `olr-cli pack check`
+reports a baked file that differs from what the composition bakes to,
+and `olr-cli level bake` rebakes it. The bake is integer arithmetic
+only, the same bytes on every platform.
+
 ### Meaning masks
 
 Theme stamps and skins mark what each pixel means in a separate mask:
@@ -264,6 +295,42 @@ weapon (by its `name`) is `Enabled`, `Bonus` (only from bonuses) or
 )
 ```
 
+A composed level adds `editor/`: its raster base (the level as it was),
+an imported sign and a tunnel drawn as background:
+
+<!-- file: level/editor/composition.ron -->
+```ron
+(
+    elements: [
+        (
+            id: "base",
+            name: "Base",
+            kind: Raster,
+        ),
+        (
+            id: "sign",
+            name: "Sign",
+            kind: Image(
+                material: Rock,
+                source: "sign.png",
+                at: (140, 60),
+                size: (40, 20),
+                pixel_size: 2,
+                colours: 8,
+                dither: Ordered,
+            ),
+        ),
+        (
+            id: "tunnel",
+            name: "Tunnel",
+            kind: Drawn(
+                material: Background,
+            ),
+        ),
+    ],
+)
+```
+
 ### A skin
 
 OLX's layout: 7 aim columns by 3 walk rows of 20 × 18 frames at art
@@ -365,9 +432,28 @@ OLX shares between mods.
    Each operation saves the whole pack at once (the old pack or the new
    one, never a mix) and refreshes `thumb.png`; an operation whose result
    would not check writes nothing.
-6. **See it.** `olr-cli level preview <pack> --out preview.png --scale 2`
+6. **Compose a level.** The first `level element` command on a plain
+   level makes it one raster element, `base`; each command then bakes
+   and saves (`--content` names the theme packs, `content/packs` by
+   default):
+   - `olr-cli level element add-image <pack> photo.jpg --at 0,0 --size
+     320x200 --pixel-size 2 --colours 16 --dither ordered --material dirt`
+     imports a picture;
+   - `olr-cli level element add-layer <pack> --material background --name
+     Caves` adds a drawn layer, and `level element draw|erase <pack> caves
+     --circle 100,100,20 [--colour 202020]` paints it;
+   - `olr-cli level element set <pack> <id> --visible false` (and `--name`,
+     `--locked`, `--material`, `--at`, `--size`, `--pixel-size`,
+     `--colours N|none`, `--dither`, `--threshold`), `level element
+     raise|lower|remove <pack> <id>`;
+   - `olr-cli level element list <pack>` prints the stack, bottom first;
+   - `olr-cli level bake <pack>` rebakes after a hand edit.
+
+   On a composed level `level carve|fill|paint|stamp` are refused (edit
+   its elements instead); `level resize` resizes the composition too.
+7. **See it.** `olr-cli level preview <pack> --out preview.png --scale 2`
    draws the level with its spawns marked (`--material` draws the
    material instead). `olr-cli render` draws a frame of a scenario.
-7. **Import OLX content.** `olr-cli import --olx <OpenLieroX share/gamedir>
+8. **Import OLX content.** `olr-cli import --olx <OpenLieroX share/gamedir>
    --out <dir> --all` converts OLX mods, levels, themes, skins and the
    core files into packs, offline.

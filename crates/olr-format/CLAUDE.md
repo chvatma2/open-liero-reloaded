@@ -7,7 +7,8 @@ Plan 13b: levels, themes, skins and the core pack. Plan 13c: these are the
 packs' format (version 5); `olr-pack` reads and writes through them.
 
 - **Layer 2, `std`.** Depends on `olr-data`, `olr-vfs`, `serde`, `ron`,
-  `thiserror`, `png`. Tests also use `olr-pack` and `olr-sim`
+  `thiserror`, `png`, `zune-jpeg` and `zune-core` (exact pins, default
+  features off). Tests also use `olr-pack` and `olr-sim`
   (dev-dependencies).
 - **Canonical text** (`ron_io`): `to_canonical`/`from_canonical` are the only
   path between values and text: 4-space indent, no struct names,
@@ -101,6 +102,24 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   (spawns are `FindSpot`'s). Bounds: `MAX_SIDE` (4096), `MAX_ART_SCALE` (8),
   `MAX_OBJECTS` (4096); a material or art size that does not match is an
   error. Art decodes within `image_io::LEVEL_ART`.
+- **Level composition** (`levels/composition.rs`, plan 14a): `Composition`
+  is `editor/composition.ron` (`COMPOSITION_FILE`; `EDITOR_DIR` is
+  `editor`), its `Element`s bottom to top (`id` a `valid_id` slug, `name`,
+  `visible`, `locked`, `ElementKind::Image { material, source, at, size,
+  pixel_size, colours, dither, alpha_threshold } | Drawn { material } |
+  Raster`). `CompositionSource` adds the files' bytes by pack path
+  (`image_file`, `layer_file`, `raster_files`, `element_files`,
+  `composition_paths`). `read_composition_files` gives `None` without the
+  file, refuses more than `MAX_ELEMENTS` before reading any element file
+  and a missing file; `write_composition_files` writes only the files the
+  elements name. `check_composition(src, size, art_scale)` checks without
+  decoding pixels: count, ids (valid, unique, their layer files unshared
+  and portable), image fields (`MAX_SIDE`, `MAX_PIXEL_SIZE`, colours 2-256,
+  the box's art within `LEVEL_ART`), the elements' pixels together within
+  `MAX_COMPOSED_PIXELS` (256 Mi), every file present, originals' header
+  size within `IMAGES`, layers' exact size (a raster's material the
+  level's, others size × art scale). A missing file is an error on
+  `composition.ron`; a wrong size on the file itself.
 - **Themes** (`themes/`): `ThemeSource` is `theme.ron`, `holes/<i>.png` with
   `holes/<i>.mask.png`, `green_ball.png` with `green_ball.mask.png`,
   `stones/`, `misc/`, `front_tile.png` and `back_tile.png`. A stamp is a
@@ -135,6 +154,11 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   index; `encode_grey` and `decode_grey_within` serve the tint mask;
   `olx_sprite_to_alpha` applies OLX's colour key once. `png` is pinned to
   an exact version in the workspace: encoded bytes are content (hashes).
+  `image_size` reads a PNG's or JPEG's size from its header (a JPEG's
+  marker walk, every index checked); `decode_image_within` decodes either
+  (JPEG through `zune-jpeg`, capped to the header's size, opaque RGBA) and
+  refuses a JPEG with no end of image after its scan (zune would fill a
+  cut scan in grey). Test data in `tests/data/` (README).
 - **Tests** (`tests/`): `levels.rs`, `themes.rs`, `core_pack.rs` and
   `skins.rs` read every bundled pack in `content/packs` (format 5) and check
   it is canonical: written again, the same bytes. Unit tests in each module's files cover its checks. The

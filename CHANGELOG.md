@@ -20,6 +20,10 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   whole pack at once; `olr-cli level preview` draws a level to a PNG.
 - Format documentation in `docs/formats/`: a guide with a checked example
   of each pack kind, and reference pages generated from the code.
+- Levels can be composed of elements (imported images, drawn layers) and
+  baked: `olr-cli level element …` and `level bake`. PNG and JPEG pictures
+  are pixelated, colour-reduced and dithered; `pack check` reports a bake
+  that no longer matches its composition.
 
 ### Changed
 

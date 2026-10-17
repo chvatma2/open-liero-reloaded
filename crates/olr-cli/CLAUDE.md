@@ -44,6 +44,24 @@ The headless command-line tool. Its commands:
   cross outlined in black on each spawn, bounded by `LEVEL_ART`, and
   refuses an `--out` inside the pack. Tests: `tests/level.rs`, and `tests/cli.rs`'s `pack_check_*`,
   `pack_fmt_*` and `pack_new_*`.
+- `olr-cli level element list|add-image|add-layer|set|remove|raise|lower|draw|erase
+  <pack> …` and `level bake <pack>` (`element_cmd.rs`, plan 14a): the
+  `olr_edit::element` operations on a level's composition. Each loads the
+  pack, applies, bakes (`compose::bake`, the back tile of the level's
+  theme in `--content`, `content/packs` by default) and saves; the first
+  on a plain level composes it (raster `base`). `list` prints `<i>: <id>
+  <Image|Drawn|Raster> <material|->[ "<name>"][ hidden][ locked]`, bottom
+  first, from `composition.ron` alone; `add-image` reads its file bounded
+  (`level_cmd::read_bounded`) and prints `added element <id>`; `set`
+  unlocks first and locks last; `bake` prints `baked <pack>` and refuses a
+  level without a composition. `level carve|fill|paint|stamp` refuse a
+  composed level (ruling R1, message naming `level element draw|erase`);
+  object commands keep its composition; `level resize --content` resizes
+  the composition first (`element::resize`), then the level, then bakes.
+  `pack check --content DIR` adds, for each valid composed level, an
+  error per stale baked file (`<file>: differs from the composition's
+  bake (run olr-cli level bake)`) or a warning when its theme is missing;
+  both count in the summary. Tests: `tests/element.rs`.
 - `olr-cli scenario [name...] [--dump F] [--all | --fields a+b] [--time F.ron]` replays oracle
   scenarios in `olr-sim` and prints the first divergence of each. `--time`
   (plan 8, `timing.rs`: `time_scenario`, `TimingReport`) instead times each

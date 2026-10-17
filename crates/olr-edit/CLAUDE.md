@@ -56,13 +56,38 @@ templates and the level operations.
   `refresh_thumb`. Every touched world pixel changes its whole art block,
   and `front == back` wherever the material is background, before and
   after every operation.
+- **Level composition** (plan 14a; decisions in `docs/porting/STATUS.md`,
+  "Level composition decisions"). `Pack::composition` holds a level's
+  `editor/` (`None` for the other kinds; `files` refuses one there).
+  - **`pixelate`**: `process(original, art_size, Pixelation)` (and the
+    crate's `process_grid`, the unscaled element grid): area resample,
+    alpha threshold, median cut (exact colours when they fit; splits at a
+    channel-value boundary), Bayer 8 × 8 or Floyd-Steinberg in sixteenths
+    (two rows of errors), nearest colour by an exact pruned search
+    (`Palette`). Integer only.
+  - **`compose`**: `Baker::new(src, size, art_scale, back_tile)` checks
+    (`check_composition`), decodes and processes once; `bake_region` never
+    fails and equals the full bake by construction; `bake` adds the
+    thumbnail; `compose_from` makes a plain level one raster element
+    `base`; `theme_back_tile(content, theme)`; `stale(pack, tile)` lists
+    the baked files that differ from the composition's bake.
+  - **`element`**: `add_image`, `add_layer`, `set(Property)`, `remove`,
+    `raise`, `lower`, `draw`, `erase`, `resize` (before `level::resize`),
+    `ensure_composed`. Each edits a copy and keeps it only when
+    `check_composition` passes (`ElementError::BadValue` otherwise). A
+    locked element refuses `set` (but `Locked(false)`), `remove`, `draw`
+    and `erase`. None bakes: callers do.
 - **Tests** (`tests/`, one binary): `pack.rs` (every bundled pack loads and
   writes back byte for byte; foreign files kept; invalid results refused;
   saves through `x/..` and a symbolic link; a name a save would lose),
   `fmt.rs` (`bundled_packs_are_canonical`, R5's `check` guard), `new.rs`,
   `level.rs` (a proptest of the background invariant at art scales 1-4)
   and `guide.rs` (`docs/formats/README.md`'s examples parse, are canonical
-  and check clean). The bundled-content tests skip without
+  and check clean, the composed level's files generated); `pixelate.rs`,
+  `compose.rs` (the raster round trip of every bundled level, the region
+  proptest, `the_fixture_is_baked` over `fixtures/edit/composed-level`, the
+  ignored `bake_speed`: about 0.3-0.4 s in release for a full-level
+  256-colour diffused image) and `element.rs`. The bundled-content tests skip without
   `OLR_CONTENT_DIR`.
 
 Test: `cargo nextest run -p olr-edit`.
