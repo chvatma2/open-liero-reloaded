@@ -4,6 +4,7 @@
 //! pipeline of level composition ([`pixelate`], plan 14a).
 
 pub mod compose;
+pub mod element;
 pub mod fmt;
 pub mod level;
 pub mod new;

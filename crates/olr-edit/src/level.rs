@@ -81,7 +81,7 @@ pub enum EditError {
 
 impl Paint {
     /// The colour of art pixel `(ax, ay)`; `None` for an empty tile.
-    fn at(&self, ax: u32, ay: u32) -> Option<Rgba> {
+    pub(crate) fn at(&self, ax: u32, ay: u32) -> Option<Rgba> {
         match self {
             Paint::Colour(c) => Some(*c),
             Paint::Tile(t) if t.width() == 0 || t.height() == 0 => None,
