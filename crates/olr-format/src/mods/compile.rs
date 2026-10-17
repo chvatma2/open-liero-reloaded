@@ -683,6 +683,37 @@ mod tests {
         assert!(e.to_string().contains("projectiles/nope.ron"), "{e}");
     }
 
+    /// `MAX_SHARED` shared projectiles chained by name (each spawns the
+    /// next): `check_cycles` is iterative, so the length costs no stack,
+    /// whether the chain ends (a mod) or closes (a cycle, refused).
+    #[test]
+    fn a_chain_of_max_shared_shared_projectiles_neither_crashes_nor_overflows() {
+        let id = |i: usize| format!("p{i:05}");
+        let chained = |close: bool| {
+            let mut src = one_weapon(ShotSpawn { shared: Some(id(0)), ..ShotSpawn::default() });
+            for i in 0..MAX_SHARED {
+                let mut p = pixel();
+                let next = if i + 1 < MAX_SHARED {
+                    Some(id(i + 1))
+                } else if close {
+                    Some(id(0))
+                } else {
+                    None
+                };
+                if let Some(next) = next {
+                    p.hit_terrain = vec![Effect::Spawn("s".into())];
+                    p.spawns.insert("s".into(), EventSpawn { shared: Some(next), ..EventSpawn::default() });
+                }
+                src.shared.insert(id(i), p);
+            }
+            src
+        };
+        let def = compile_mod(&chained(false)).expect("an open chain compiles");
+        assert_eq!(def.projectiles.len(), MAX_SHARED);
+        let e = compile_mod(&chained(true)).unwrap_err().to_string();
+        assert!(e.contains("cycle"), "{e}");
+    }
+
     #[test]
     fn a_key_used_twice_is_an_error() {
         let mut p = pixel();
