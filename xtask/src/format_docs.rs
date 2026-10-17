@@ -30,6 +30,8 @@ struct Page {
 const DEFAULTS: &str = "crates/olr-format/src/defaults.rs";
 /// The hand-written guide, whose checked blocks are the pages' examples.
 const GUIDE: &str = "docs/formats/README.md";
+/// The guide's name in errors.
+const GUIDE_NAME: &str = "README.md";
 
 const PAGES: &[Page] = &[
     Page {
@@ -125,6 +127,22 @@ const PAGES: &[Page] = &[
 
 /// `cargo xtask format-docs [--check]`.
 pub fn run(check: bool) -> anyhow::Result<bool> {
+    let stale = pages(check)?;
+    if !stale.is_empty() {
+        println!("{}", stale_message(&stale));
+    }
+    Ok(stale.is_empty())
+}
+
+/// What `--check` says of the pages `stale`.
+fn stale_message(stale: &[String]) -> String {
+    let verb = if stale.len() == 1 { "differs" } else { "differ" };
+    format!("{} {verb} from the code: run cargo xtask format-docs", stale.join(", "))
+}
+
+/// Writes the pages, or with `check` compares them; returns the pages that
+/// differ (with `check`).
+fn pages(check: bool) -> anyhow::Result<Vec<String>> {
     let root = crate::root();
     let dir = root.join("docs/formats");
     let mut stale = Vec::new();
@@ -150,18 +168,14 @@ pub fn run(check: bool) -> anyhow::Result<bool> {
     if !errors.is_empty() {
         bail!("{}", errors.join("\n"));
     }
-    if !stale.is_empty() {
-        println!("{} differ from the code: run cargo xtask format-docs", stale.join(", "));
-        return Ok(false);
-    }
-    Ok(true)
+    Ok(stale)
 }
 
-/// The `check` step: `format-docs --check`.
+/// The `check` step: `format-docs --check`, its failure naming each stale page.
 pub fn step() -> Result<(), String> {
-    match run(true) {
-        Ok(true) => Ok(()),
-        Ok(false) => Err("docs/formats/ differs from the code: run cargo xtask format-docs".into()),
+    match pages(true) {
+        Ok(stale) if stale.is_empty() => Ok(()),
+        Ok(stale) => Err(stale_message(&stale)),
         Err(e) => Err(format!("{e:#}")),
     }
 }
@@ -188,7 +202,7 @@ fn render_page(root: &Path, page: &Page) -> anyhow::Result<String> {
         out += "\n\n";
     }
     let guide = std::fs::read_to_string(root.join(GUIDE)).with_context(|| format!("reading {GUIDE}"))?;
-    let examples = guide_examples(&guide, page.kind, page.roots, page.maps);
+    let examples = guide_examples(&guide, page.kind, page.roots, page.maps)?;
     out += &sources.sections_with(page.roots, page.maps, &examples)?;
     Ok(out)
 }
@@ -202,7 +216,7 @@ fn guide_examples(
     kind: &str,
     roots: &[(&str, &str)],
     maps: &[(&str, &str, &str)],
-) -> BTreeMap<String, String> {
+) -> anyhow::Result<BTreeMap<String, String>> {
     // `weapons/<id>.ron` matches `weapons/gun.ron`.
     let matches = |pattern: &str, path: &str| match pattern.split_once("<id>") {
         Some((head, tail)) => {
@@ -214,6 +228,9 @@ fn guide_examples(
     let mut out = BTreeMap::new();
     for (i, l) in lines.iter().enumerate() {
         let Some(file) = l.trim().strip_prefix("<!-- file: ").and_then(|r| r.strip_suffix(" -->")) else {
+            if l.contains("<!--") && l.contains("file:") {
+                bail!("{GUIDE_NAME}:{}: a malformed marker (`<!-- file: <kind>/<path> -->`): {l}", i + 1);
+            }
             continue;
         };
         let Some(path) = file.strip_prefix(kind).and_then(|r| r.strip_prefix('/')) else { continue };
@@ -231,7 +248,12 @@ fn guide_examples(
             out.entry(key).or_insert(text);
         }
     }
-    out
+    for file in roots.iter().map(|(t, f)| (*t, *f)).chain(maps.iter().map(|(f, _, _)| (*f, *f))) {
+        if !out.contains_key(file.0) {
+            bail!("{GUIDE_NAME} has no example of `{}` for the {kind} page", file.1);
+        }
+    }
+    Ok(out)
 }
 
 /// The lines of the doc comments in `attrs`, one leading space removed.
@@ -1380,9 +1402,10 @@ pub enum State {
         let examples = guide_examples(
             guide,
             "mod",
-            &[("ModFile", "mod.ron"), ("Weapon", "weapons/<id>.ron")],
+            &[("Weapon", "weapons/<id>.ron")],
             &[("restrictions.ron", "BTreeMap<String, Preset>", "")],
-        );
+        )
+        .unwrap();
         assert_eq!(
             examples,
             BTreeMap::from([
@@ -1434,5 +1457,32 @@ pub enum State {
             let e = s.sections(&[("A", "a.ron")], &BTreeMap::new()).unwrap_err().to_string();
             assert!(e.contains(want), "{want}\n got: {e}");
         }
+    }
+
+    /// Review C-1: the check's failure names each stale page.
+    #[test]
+    fn the_stale_message_names_the_pages() {
+        assert_eq!(
+            stale_message(&["docs/formats/mod.md".into()]),
+            "docs/formats/mod.md differs from the code: run cargo xtask format-docs"
+        );
+        assert_eq!(
+            stale_message(&["docs/formats/a.md".into(), "docs/formats/b.md".into()]),
+            "docs/formats/a.md, docs/formats/b.md differ from the code: run cargo xtask format-docs"
+        );
+    }
+
+    /// Review C-3: a malformed marker, and a file type without an example,
+    /// are errors.
+    #[test]
+    fn the_guide_must_cover_every_file() {
+        let roots = [("Weapon", "weapons/<id>.ron")];
+        let ok = "<!-- file: mod/weapons/gun.ron -->\n```ron\n()\n```\n";
+        assert!(guide_examples(ok, "mod", &roots, &[]).is_ok());
+        let e = guide_examples("Nothing here.\n", "mod", &roots, &[]).unwrap_err().to_string();
+        assert!(e.contains("no example of `weapons/<id>.ron`"), "{e}");
+        let bad = format!("{ok}<!--file: mod/mod.ron-->\n```ron\n()\n```\n");
+        let e = guide_examples(&bad, "mod", &roots, &[]).unwrap_err().to_string();
+        assert!(e.contains("README.md:5: a malformed marker"), "{e}");
     }
 }
