@@ -56,7 +56,7 @@ pub struct ImageCache {
     /// Per source: its bytes' fingerprint, the decoded original, its last use.
     originals: BTreeMap<String, (u64, Arc<RgbaImage>, u64)>,
     /// Per source: its bytes' fingerprint and its grids, the most recently used last.
-    grids: BTreeMap<String, (u64, Vec<(GridKey, Arc<RgbaImage>)>)>,
+    grids: BTreeMap<String, (u64, Vec<Grid>)>,
     processed: usize,
     /// Uses so far: the originals' recency.
     tick: u64,
@@ -64,6 +64,9 @@ pub struct ImageCache {
 
 /// A processed grid's key besides its source: the box's art size and the pixelation.
 type GridKey = ((u32, u32), Pixelation);
+
+/// A processed grid with its key.
+type Grid = (GridKey, Arc<RgbaImage>);
 
 /// Processed grids each source keeps.
 pub const GRIDS_PER_SOURCE: usize = 4;
