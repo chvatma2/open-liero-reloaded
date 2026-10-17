@@ -72,7 +72,8 @@ fn operate(doc: &mut Document, h: &mut History, cat: &olr_editor::Catalog, op: (
     let id = ids[a.unsigned_abs() as usize % ids.len()].clone();
     let objects = doc.level().objects.len().max(1);
     let stroke = |doc: &mut Document, erase: bool| -> Result<Vec<Edit>, DocError> {
-        let before = doc.layer_art("tunnels").unwrap().clone();
+        // An earlier operation may have removed the layer.
+        let Some(before) = doc.layer_art("tunnels").cloned() else { return Ok(Vec::new()) };
         let shape = Shape::Circle { cx: a, cy: b, r: 6 };
         let r = if erase {
             doc.erase("tunnels", &shape)
