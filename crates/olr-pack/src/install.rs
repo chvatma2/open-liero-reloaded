@@ -35,10 +35,19 @@ pub fn newest_aside_first(paths: &mut [PathBuf]) {
 /// Replaces the directory `dir` with what `write` puts into a fresh
 /// hidden sibling (`<parent>/.import-<name>`): the old directory is
 /// renamed aside (`.replaced-<name>`, `~k` when taken), the new one
-/// renamed into place, the old one removed. `write` failing removes the
-/// sibling and leaves `dir` untouched. Returns warnings (an old copy that
-/// could not be removed).
+/// renamed into place, the old one removed. `write` or a rename failing
+/// removes the sibling and leaves `dir` the old directory (renamed back).
+/// Returns warnings (an old copy that could not be removed).
 pub fn replace_dir(dir: &Path, write: impl FnOnce(&Path) -> io::Result<()>) -> io::Result<Vec<String>> {
+    replace_dir_with(dir, write, |from, to| std::fs::rename(from, to))
+}
+
+/// [`replace_dir`] with its renames done by `rename` (tests fail them).
+fn replace_dir_with(
+    dir: &Path,
+    write: impl FnOnce(&Path) -> io::Result<()>,
+    mut rename: impl FnMut(&Path, &Path) -> io::Result<()>,
+) -> io::Result<Vec<String>> {
     let name = dir.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
         io::Error::new(io::ErrorKind::InvalidInput, format!("{}: not a directory name", dir.display()))
     })?;
@@ -50,6 +59,8 @@ pub fn replace_dir(dir: &Path, write: impl FnOnce(&Path) -> io::Result<()>) -> i
         let _ = std::fs::remove_dir_all(&tmp);
         return Err(context(e, format!("writing {}", dir.display())));
     }
+    // From here on a failure puts the old directory back and removes the
+    // hidden copy: `dir` is the old pack or the new one, never neither.
     let mut old = None;
     if dir.exists() {
         // `.replaced-<name>`, or `.replaced-<name>~2`, ... when an earlier
@@ -63,13 +74,28 @@ pub fn replace_dir(dir: &Path, write: impl FnOnce(&Path) -> io::Result<()>) -> i
                 })
             })
             .take(100)
-            .find(|p| remove_dir(p).is_ok())
-            .ok_or_else(|| io::Error::other(format!("no place to move the old {} aside", dir.display())))?;
-        std::fs::rename(dir, &aside)
-            .map_err(|e| context(e, format!("moving the old {} aside", dir.display())))?;
-        old = Some(aside);
+            .find(|p| remove_dir(p).is_ok());
+        let moved = match aside {
+            None => Err(io::Error::other(format!("no place to move the old {} aside", dir.display()))),
+            Some(aside) => rename(dir, &aside)
+                .map(|()| aside)
+                .map_err(|e| context(e, format!("moving the old {} aside", dir.display()))),
+        };
+        match moved {
+            Ok(aside) => old = Some(aside),
+            Err(e) => {
+                let _ = std::fs::remove_dir_all(&tmp);
+                return Err(e);
+            }
+        }
     }
-    std::fs::rename(&tmp, dir).map_err(|e| context(e, format!("moving {} into place", dir.display())))?;
+    if let Err(e) = rename(&tmp, dir) {
+        if let Some(aside) = &old {
+            let _ = rename(aside, dir);
+        }
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(context(e, format!("moving {} into place", dir.display())));
+    }
     Ok(match old.map(|o| remove_dir(&o)) {
         Some(Err(e)) => vec![format!("{e}: the next import removes it")],
         _ => Vec::new(),
@@ -107,6 +133,33 @@ mod tests {
         assert_eq!(std::fs::read(dir.join("new.txt")).unwrap(), b"new");
         let names: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
         assert_eq!(names, vec![std::ffi::OsString::from("p")], "no hidden sibling left");
+    }
+
+    /// Review A-2: the new pack cannot be renamed into place: the old one
+    /// goes back, and nothing hidden is left.
+    #[test]
+    fn a_failed_swap_puts_the_old_pack_back() {
+        for failing in [1, 2] {
+            let tmp = tempfile::tempdir().unwrap();
+            let dir = tmp.path().join("p");
+            std::fs::create_dir(&dir).unwrap();
+            std::fs::write(dir.join("old.txt"), b"old").unwrap();
+            let mut calls = 0;
+            let result = replace_dir_with(
+                &dir,
+                |d| std::fs::write(d.join("new.txt"), b"new"),
+                |from, to| {
+                    calls += 1;
+                    if calls == failing { Err(io::Error::other("busy")) } else { std::fs::rename(from, to) }
+                },
+            );
+            assert!(result.is_err(), "rename {failing}");
+            assert_eq!(std::fs::read(dir.join("old.txt")).unwrap(), b"old", "rename {failing}");
+            assert!(!dir.join("new.txt").exists());
+            let names: Vec<_> =
+                std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+            assert_eq!(names, vec![std::ffi::OsString::from("p")], "rename {failing}: nothing hidden left");
+        }
     }
 
     #[test]
