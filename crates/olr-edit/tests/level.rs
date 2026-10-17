@@ -381,12 +381,24 @@ fn far_lines_are_clipped_and_exact() {
 fn any_shape() -> impl Strategy<Value = Shape> {
     let c = -10_000i32..10_000;
     prop_oneof![
-        (c.clone(), c.clone(), -100i32..10_000, -100i32..10_000).prop_map(|(x, y, w, h)| Shape::Rect { x, y, w, h }),
+        (c.clone(), c.clone(), -100i32..10_000, -100i32..10_000).prop_map(|(x, y, w, h)| Shape::Rect {
+            x,
+            y,
+            w,
+            h
+        }),
         (c.clone(), c.clone(), -100i32..10_000).prop_map(|(cx, cy, r)| Shape::Circle { cx, cy, r }),
-        (c.clone(), c.clone(), -100i32..10_000, -100i32..10_000)
-            .prop_map(|(x, y, w, h)| Shape::Ellipse { x, y, w, h }),
-        (c.clone(), c.clone(), c.clone(), c, 0u32..300)
-            .prop_map(|(a, b, d, e, width)| Shape::Line { from: (a, b), to: (d, e), width }),
+        (c.clone(), c.clone(), -100i32..10_000, -100i32..10_000).prop_map(|(x, y, w, h)| Shape::Ellipse {
+            x,
+            y,
+            w,
+            h
+        }),
+        (c.clone(), c.clone(), c.clone(), c, 0u32..300).prop_map(|(a, b, d, e, width)| Shape::Line {
+            from: (a, b),
+            to: (d, e),
+            width
+        }),
     ]
 }
 

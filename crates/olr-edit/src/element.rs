@@ -4,7 +4,7 @@
 //! `check_composition`; a refused operation changes nothing. None bakes:
 //! the caller bakes (`compose::bake`) before saving.
 
-use olr_data::image::{Rgba, RgbaImage};
+use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
@@ -12,7 +12,7 @@ use olr_format::levels::{
     check_composition, element_files, image_file, layer_file, raster_files,
 };
 
-use crate::compose::compose_from;
+use crate::compose::{Decoded, ImageCache, compose_from, decode_element, encode_decoded, resize_decoded};
 use crate::level::{Paint, Shape, draw_art, erase_art};
 use crate::pack::{Pack, Source};
 
@@ -132,37 +132,43 @@ fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
         .unwrap_or_default()
 }
 
-/// A new element id from `name` (ruling R8): not an id in use, and its
-/// files (`<id>.png` and a raster's) neither another element's nor a
-/// name some file system refuses.
-fn new_id(src: &CompositionSource, name: &str, fallback: &str) -> String {
-    let used: std::collections::BTreeSet<String> =
-        src.composition.elements.iter().flat_map(element_files).chain(src.files.keys().cloned()).collect();
+/// A new id from `name` (ruling R8 of plan 14a, at most 64 bytes) not
+/// taken by `elements`: not an id in use, and its files (`<id>.png` and a
+/// raster's) neither another element's nor a name some file system refuses.
+pub fn new_element_id(elements: &[Element], name: &str, fallback: &str) -> String {
+    let used: std::collections::BTreeSet<String> = elements.iter().flat_map(element_files).collect();
     unique(&slug(name, fallback), |c| {
         let mut files = vec![layer_file(c)];
         files.extend(raster_files(c));
-        src.composition.elements.iter().any(|e| e.id == c)
+        elements.iter().any(|e| e.id == c)
             || files.iter().any(|f| {
                 used.contains(f) || olr_vfs::non_portable(f.rsplit('/').next().unwrap_or(f)).is_some()
             })
     })
 }
 
-/// `file_name` with `-2`, `-3`, … before its extension until no stored
-/// original has that name, case aside, and the name is not one some file
-/// system refuses (a Windows device: `CON.png` becomes `CON-2.png`; ruling
-/// R7). A name no suffix makes portable (a colon) is kept, for the check
-/// to refuse.
-fn new_source(src: &CompositionSource, file_name: &str) -> String {
+fn new_id(src: &CompositionSource, name: &str, fallback: &str) -> String {
+    new_element_id(&src.composition.elements, name, fallback)
+}
+
+/// `file_name`, or `-2`, `-3`, … before its extension, until it is not
+/// among `sources` (the originals' names), case aside, and not a name some
+/// file system refuses (a Windows device: `CON.png` becomes `CON-2.png`;
+/// ruling R7 of plan 14a). A name no suffix makes portable (a colon) is
+/// kept, for the check to refuse.
+pub fn new_source_name<'a>(sources: impl Iterator<Item = &'a str> + Clone, file_name: &str) -> String {
     let (stem, ext) = file_name.rsplit_once('.').unwrap_or((file_name, ""));
-    let taken = |c: &str| {
-        let path = image_file(c).to_ascii_lowercase();
-        olr_vfs::non_portable(c).is_some() || src.files.keys().any(|k| k.to_ascii_lowercase() == path)
-    };
+    let taken =
+        |c: &str| olr_vfs::non_portable(c).is_some() || sources.clone().any(|s| s.eq_ignore_ascii_case(c));
     if !taken(file_name) {
         return file_name.into();
     }
     (2u32..=1000).map(|i| format!("{stem}-{i}.{ext}")).find(|c| !taken(c)).unwrap_or_else(|| file_name.into())
+}
+
+fn new_source(src: &CompositionSource, file_name: &str) -> String {
+    let dir = image_file("");
+    new_source_name(src.files.keys().filter_map(|k| k.strip_prefix(dir.as_str())), file_name)
 }
 
 fn push(src: &mut CompositionSource, element: Element) -> Result<(), ElementError> {
@@ -406,17 +412,12 @@ pub fn erase(pack: &mut Pack, id: &str, shape: &Shape) -> Result<(), ElementErro
     })
 }
 
-/// A level source holding `front` and `back` (and `material`) at the
-/// pack's size, for `level::resize` to re-lay.
-fn as_level(l: &LevelSource, material: Vec<Material>, front: RgbaImage, back: RgbaImage) -> LevelSource {
-    LevelSource { objects: Vec::new(), material, front, back, thumb: None, ..l.clone() }
-}
-
 /// Resizes the composition with the level (as `level::resize`): image boxes
 /// move by `offset`; drawn layers are re-laid (the new area uncovered);
-/// raster layers are re-laid with `material` and `paint` in the new area.
-/// Reads the old size from the pack's level source, so callers run it
-/// before `level::resize`. A level without a composition is left as it is.
+/// raster layers are re-laid with `material` and `paint` in the new area
+/// (`compose::resize_decoded`). Reads the old size from the pack's level
+/// source, so callers run it before `level::resize`. A level without a
+/// composition is left as it is.
 pub fn resize(
     pack: &mut Pack,
     size: (u32, u32),
@@ -424,58 +425,27 @@ pub fn resize(
     material: Material,
     paint: &Paint,
 ) -> Result<(), ElementError> {
-    let l = level(pack)?.clone();
+    let l = level(pack)?;
+    let (old, s) = (l.size, l.art_scale);
     let Some(mut src) = pack.composition.clone() else { return Ok(()) };
     // Every layer the re-lay reads is the level's size (a hand edit may
     // have broken that).
-    check_composition(&src, l.size, l.art_scale).map_err(|e| ElementError::BadValue(e.to_string()))?;
-    let bad = |file: &str, why: String| ElementError::BadValue(format!("{file}: {why}"));
-    let relay =
-        |mut tmp: LevelSource, paint: &Paint, material: Material| -> Result<LevelSource, ElementError> {
-            crate::level::resize(&mut tmp, size, offset, material, paint)
-                .map_err(|e| ElementError::BadValue(e.to_string()))?;
-            Ok(tmp)
-        };
-    let cells = vec![Material::Background; l.size.0 as usize * l.size.1 as usize];
+    check_composition(&src, old, s).map_err(|e| ElementError::BadValue(e.to_string()))?;
+    let bad = |e: String| ElementError::BadValue(e);
+    let mut cache = ImageCache::new();
+    let before = src.clone();
     for e in &mut src.composition.elements {
-        match &mut e.kind {
-            ElementKind::Image { at, .. } => {
-                let moved = (i64::from(at.0) + i64::from(offset.0), i64::from(at.1) + i64::from(offset.1));
-                *at = (
-                    i32::try_from(moved.0).map_err(|_| bad(&e.id, "moved out of range".into()))?,
-                    i32::try_from(moved.1).map_err(|_| bad(&e.id, "moved out of range".into()))?,
-                );
-            }
-            ElementKind::Drawn { .. } => {
-                let file = layer_file(&e.id);
-                let bytes = src.files.get(&file).ok_or_else(|| bad(&file, "missing".into()))?;
-                let art = image_io::decode_rgba_within(bytes, LEVEL_ART).map_err(|why| bad(&file, why))?;
-                let tmp = relay(
-                    as_level(&l, cells.clone(), art.clone(), art),
-                    &Paint::Colour(Rgba::TRANSPARENT),
-                    material,
-                )?;
-                src.files.insert(file, image_io::encode_rgba(&tmp.front));
-            }
-            ElementKind::Raster => {
-                let [m, f, b] = raster_files(&e.id);
-                let get = |file: &str| src.files.get(file).ok_or_else(|| bad(file, "missing".into()));
-                let (_, _, indices) =
-                    image_io::decode_indexed_within(get(&m)?, LEVEL_ART).map_err(|why| bad(&m, why))?;
-                let cells = indices
-                    .iter()
-                    .map(|&i| Material::from_index(i).ok_or_else(|| bad(&m, format!("palette index {i}"))))
-                    .collect::<Result<Vec<_>, _>>()?;
-                let front = image_io::decode_rgba_within(get(&f)?, LEVEL_ART).map_err(|why| bad(&f, why))?;
-                let back = image_io::decode_rgba_within(get(&b)?, LEVEL_ART).map_err(|why| bad(&b, why))?;
-                let tmp = relay(as_level(&l, cells, front, back), paint, material)?;
-                src.files.insert(m, olr_format::levels::encode_material(size, &tmp.material));
-                src.files.insert(f, image_io::encode_rgba(&tmp.front));
-                src.files.insert(b, image_io::encode_rgba(&tmp.back));
-            }
+        // An image's pixels are not re-laid: only its box moves.
+        let mut d = match e.kind {
+            ElementKind::Image { .. } => Decoded::Image { grid: None },
+            _ => decode_element(&before, e, old, s, &mut cache).map_err(|e| bad(e.to_string()))?,
+        };
+        resize_decoded(e, &mut d, old, s, size, offset, material, paint).map_err(|e| bad(e.to_string()))?;
+        for (path, bytes) in encode_decoded(e, &d, size) {
+            src.files.insert(path, bytes);
         }
     }
-    check_composition(&src, size, l.art_scale).map_err(|e| ElementError::BadValue(e.to_string()))?;
+    check_composition(&src, size, s).map_err(|e| ElementError::BadValue(e.to_string()))?;
     pack.composition = Some(src);
     Ok(())
 }

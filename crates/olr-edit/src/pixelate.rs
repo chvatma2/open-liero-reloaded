@@ -8,7 +8,7 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_format::levels::Dither;
 
 /// An image element's pixelation settings.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pixelation {
     /// Art pixels per element pixel, at least 1.
     pub pixel_size: u32,

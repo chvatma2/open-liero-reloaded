@@ -3,7 +3,10 @@
 
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
-use olr_edit::compose::{Baker, Rect, bake, compose_from};
+use olr_edit::compose::{
+    Baker, Decoded, GRIDS_PER_SOURCE, ImageCache, Rect, bake, bake_elements, compose_from, decode_element,
+    encode_decoded,
+};
 use olr_format::image_io;
 use olr_format::levels::{
     CompositionSource, Dither, Element, ElementKind, ElementMaterial, LevelSource, image_file, layer_file,
@@ -408,4 +411,105 @@ fn a_hidden_image_still_decodes() {
     src.files.insert(image_file("x.png"), GRADIENT[..GRADIENT.len() / 2].to_vec());
     let e = bake(&mut level(4, 3, 1), &src, &back_tile()).unwrap_err().to_string();
     assert!(e.contains("editor/images/x.png") && e.contains("cut short"), "{e}");
+}
+
+/// A 16 × 12 composition at art scale 2: a drawn layer, then an image.
+fn image_and_layer() -> CompositionSource {
+    let mut src = CompositionSource::default();
+    with_drawn(&mut src, "ground", &solid(32, 24, BROWN), ElementMaterial::Dirt);
+    let mut img = solid(6, 4, BLUE);
+    img.set(1, 1, BROWN);
+    with_image(&mut src, "photo", img, (2, 3), (5, 4), ElementMaterial::Rock);
+    src
+}
+
+fn set_image(src: &mut CompositionSource, mut f: impl FnMut(&mut (i32, i32), &mut u32)) {
+    for e in &mut src.composition.elements {
+        if let ElementKind::Image { at, pixel_size, .. } = &mut e.kind {
+            f(at, pixel_size);
+        }
+    }
+}
+
+#[test]
+fn a_move_never_reprocesses() {
+    let mut cache = ImageCache::new();
+    let mut src = image_and_layer();
+    let new = |src: &CompositionSource, cache: &mut ImageCache| {
+        Baker::new_cached(src, (16, 12), 2, &back_tile(), cache).unwrap();
+    };
+    new(&src, &mut cache);
+    assert_eq!(cache.processed(), 1);
+    set_image(&mut src, |at, _| *at = (7, -1));
+    new(&src, &mut cache);
+    assert_eq!(cache.processed(), 1, "a move");
+    src.composition.elements.swap(0, 1);
+    new(&src, &mut cache);
+    assert_eq!(cache.processed(), 1, "a reorder");
+    set_image(&mut src, |_, ps| *ps = 2);
+    new(&src, &mut cache);
+    assert_eq!(cache.processed(), 2, "a new pixel size");
+    set_image(&mut src, |_, ps| *ps = 1);
+    new(&src, &mut cache);
+    assert_eq!(cache.processed(), 2, "the cached grid");
+}
+
+#[test]
+fn the_cache_keeps_four_grids_per_source() {
+    assert_eq!(GRIDS_PER_SOURCE, 4);
+    let mut cache = ImageCache::new();
+    let mut src = image_and_layer();
+    for ps in [1, 2, 3, 4, 5, 1] {
+        set_image(&mut src, |_, p| *p = ps);
+        Baker::new_cached(&src, (16, 12), 2, &back_tile(), &mut cache).unwrap();
+    }
+    assert_eq!(cache.processed(), 6);
+}
+
+/// Each drawn and raster element of `fixtures/edit/composed-level`,
+/// decoded and encoded again, gives back its files byte for byte.
+#[test]
+fn encode_decoded_round_trips() {
+    let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/edit/composed-level");
+    let pack = olr_edit::pack::load(&fixture).unwrap();
+    let olr_edit::pack::Source::Level(level) = &pack.source else { panic!("a level") };
+    let src = pack.composition.as_ref().unwrap();
+    let mut cache = ImageCache::new();
+    let mut encoded = 0;
+    for e in &src.composition.elements {
+        let d = decode_element(src, e, level.size, level.art_scale, &mut cache).unwrap();
+        let files = encode_decoded(e, &d, level.size);
+        if matches!(e.kind, ElementKind::Image { .. }) {
+            assert!(files.is_empty());
+        }
+        for (path, bytes) in files {
+            assert!(src.files[&path] == bytes, "{path}");
+            encoded += 1;
+        }
+    }
+    assert_eq!(encoded, 4, "the raster's three files and the drawn layer");
+}
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(32))]
+    #[test]
+    fn bake_elements_equals_the_baker(
+        s in 1u32..=3, w in 1u32..=12, h in 1u32..=12,
+        stack in prop::collection::vec((0u8..3, 0u8..3, -4i32..14, -4i32..14, 1u32..16, 1u32..16, any::<bool>()), 0..6),
+    ) {
+        let src = random_stack(&stack, (w, h), s);
+        let mut full = level(w, h, s);
+        bake(&mut full, &src, &back_tile()).unwrap();
+        let mut cache = ImageCache::new();
+        let decoded: Vec<Decoded> = src
+            .composition
+            .elements
+            .iter()
+            .map(|e| decode_element(&src, e, (w, h), s, &mut cache).unwrap())
+            .collect();
+        let items: Vec<_> = src.composition.elements.iter().zip(&decoded).collect();
+        let mut part = level(w, h, s);
+        bake_elements(&mut part, &items, &back_tile(), Rect { x: 0, y: 0, w, h });
+        prop_assert!(part.material == full.material && part.front == full.front && part.back == full.back);
+    }
 }

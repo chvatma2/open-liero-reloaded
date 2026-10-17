@@ -311,3 +311,48 @@ fn add_image_refuses_a_cut_or_huge_jpeg() {
         assert_eq!(p.composition, None);
     }
 }
+
+#[test]
+fn new_element_id_and_source_name_follow_r7_r8() {
+    let mut p = pack(8, 6, 1);
+    add_layer(&mut p, ElementMaterial::Dirt, "Ground").unwrap();
+    let ground: Vec<_> = p
+        .composition
+        .as_ref()
+        .unwrap()
+        .composition
+        .elements
+        .iter()
+        .filter(|e| e.id == "ground")
+        .cloned()
+        .collect();
+    assert_eq!(new_element_id(&ground, "Ground", "layer"), "ground-2");
+    assert_eq!(new_source_name(["a.png"].into_iter(), "A.PNG"), "A-2.PNG");
+    assert_eq!(new_source_name([].into_iter(), "CON.png"), "CON-2.png");
+}
+
+/// Plan 14b Task 3: re-laying each decoded element gives the files
+/// `element::resize` writes.
+#[test]
+fn resize_decoded_matches_element_resize() {
+    use olr_edit::compose::{ImageCache, decode_element, encode_decoded, resize_decoded};
+    let mut p = pack(8, 6, 1);
+    add_image(&mut p, "a.png", png(2, 2), (3, 2), (2, 2), ElementMaterial::Rock, "").unwrap();
+    let l = add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
+    draw(&mut p, &l, &Shape::Rect { x: 0, y: 0, w: 1, h: 1 }, &Paint::Colour(RED)).unwrap();
+    let before = p.composition.clone().unwrap();
+    let paint = Paint::Colour(RED);
+    resize(&mut p, (13, 9), (5, 3), Material::Rock, &paint).unwrap();
+    let want = p.composition.unwrap();
+    let mut got = before.clone();
+    let mut cache = ImageCache::new();
+    for e in &mut got.composition.elements {
+        let mut d = decode_element(&before, e, (8, 6), 1, &mut cache).unwrap();
+        resize_decoded(e, &mut d, (8, 6), 1, (13, 9), (5, 3), Material::Rock, &paint).unwrap();
+        for (path, bytes) in encode_decoded(e, &d, (13, 9)) {
+            got.files.insert(path, bytes);
+        }
+    }
+    assert_eq!(got.composition, want.composition);
+    assert!(got.files == want.files);
+}

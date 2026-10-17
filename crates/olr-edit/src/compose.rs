@@ -15,20 +15,22 @@
 //! Integer arithmetic only: the same composition bakes to the same bytes
 //! on every platform.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+use std::sync::Arc;
 
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
-    Composition, CompositionSource, Element, ElementKind, LevelSource, check_composition, element_files,
-    encode_material, raster_files, write_level_files,
+    Composition, CompositionSource, Element, ElementKind, LevelSource, check_composition, encode_material,
+    image_file, layer_file, raster_files, write_level_files,
 };
 use olr_format::themes::read_theme_files;
 use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
 
-use crate::level::refresh_thumb;
+use crate::level::{self, EditError, Paint, refresh_thumb};
 use crate::pack::{Pack, Source};
 use crate::pixelate::{Pixelation, process_grid};
 
@@ -43,16 +45,118 @@ pub enum ComposeError {
     Format(#[from] olr_format::FormatError),
 }
 
-/// One element, decoded and processed.
-enum Layer {
+/// Originals decoded once per source, and processed grids per (source,
+/// box art size, pixelation), at most `GRIDS_PER_SOURCE` per source, the
+/// least recently used dropped (plan 14b ruling R3). A source's bytes
+/// never change under the same name within one cache's life: sources are
+/// only added, under new names (plan 14a ruling R7).
+#[derive(Default)]
+pub struct ImageCache {
+    originals: BTreeMap<String, Arc<RgbaImage>>,
+    /// Per source, the most recently used grid last.
+    grids: BTreeMap<String, Vec<(GridKey, Arc<RgbaImage>)>>,
+    processed: usize,
+}
+
+/// A processed grid's key besides its source: the box's art size and the pixelation.
+type GridKey = ((u32, u32), Pixelation);
+
+/// Processed grids each source keeps.
+pub const GRIDS_PER_SOURCE: usize = 4;
+
+impl ImageCache {
+    pub fn new() -> ImageCache {
+        ImageCache::default()
+    }
+
+    /// The decoded original (within `IMAGES`, EXIF-oriented) of `source`
+    /// whose bytes are `bytes`, decoded on first use.
+    pub fn original(&mut self, source: &str, bytes: &[u8]) -> Result<Arc<RgbaImage>, ComposeError> {
+        if let Some(img) = self.originals.get(source) {
+            return Ok(img.clone());
+        }
+        let img = image_io::decode_image_within(bytes, IMAGES)
+            .map_err(|message| ComposeError::File { file: image_file(source), message })?;
+        let img = Arc::new(img);
+        self.originals.insert(source.into(), img.clone());
+        Ok(img)
+    }
+
+    /// The processed element grid (`pixelate::process_grid`) for `source`
+    /// whose bytes are `original`.
+    pub fn grid(
+        &mut self,
+        source: &str,
+        original: &[u8],
+        art_box: (u32, u32),
+        p: &Pixelation,
+    ) -> Result<Arc<RgbaImage>, ComposeError> {
+        let key = (art_box, *p);
+        let grids = self.grids.entry(source.into()).or_default();
+        if let Some(i) = grids.iter().position(|(k, _)| *k == key) {
+            let hit = grids.remove(i);
+            let grid = hit.1.clone();
+            grids.push(hit);
+            return Ok(grid);
+        }
+        let img = self.original(source, original)?;
+        let grid = Arc::new(process_grid(&img, art_box, p));
+        self.processed += 1;
+        let grids = self.grids.entry(source.into()).or_default();
+        if grids.len() >= GRIDS_PER_SOURCE {
+            grids.remove(0);
+        }
+        grids.push((key, grid.clone()));
+        Ok(grid)
+    }
+
+    /// How many grids were processed since `new` (tests: a move never processes).
+    pub fn processed(&self) -> usize {
+        self.processed
+    }
+
+    /// Drops everything of sources not in `keep`.
+    pub fn retain_sources(&mut self, keep: &BTreeSet<String>) {
+        self.originals.retain(|k, _| keep.contains(k));
+        self.grids.retain(|k, _| keep.contains(k));
+    }
+}
+
+/// An element's data decoded for baking.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Decoded {
+    /// The processed element grid; `None`: hidden and not processed (its
+    /// original decoded, for its errors).
+    Image { grid: Option<Arc<RgbaImage>> },
+    /// A level-sized art layer.
+    Drawn { art: RgbaImage },
+    /// A whole level.
+    Raster { material: Vec<Material>, front: RgbaImage, back: RgbaImage },
+}
+
+impl Decoded {
+    /// The memory held, in bytes (for the editor's history cap).
+    pub fn bytes(&self) -> usize {
+        let img = |i: &RgbaImage| i.as_raw().len();
+        match self {
+            Decoded::Image { grid } => grid.as_deref().map_or(0, img),
+            Decoded::Drawn { art } => img(art),
+            Decoded::Raster { material, front, back } => material.len() + img(front) + img(back),
+        }
+    }
+}
+
+/// One visible element as the bake reads it, borrowed from its element
+/// and decoded data.
+enum Layer<'a> {
     /// An image's element grid, placed at `origin` (art pixels) with
     /// `size` art pixels; art pixel `(x, y)` of the box is grid pixel
     /// `(x / pixel_size, y / pixel_size)`, covered where its alpha is 255.
-    Image { material: Material, grid: RgbaImage, pixel_size: u32, origin: (i64, i64), size: (i64, i64) },
+    Image { material: Material, grid: &'a RgbaImage, pixel_size: u32, origin: (i64, i64), size: (i64, i64) },
     /// A level-sized art layer, covered where its alpha is not 0.
-    Drawn { material: Material, art: RgbaImage },
+    Drawn { material: Material, art: &'a RgbaImage },
     /// A whole level: it covers everything.
-    Raster { material: Vec<Material>, front: RgbaImage, back: RgbaImage },
+    Raster { material: &'a [Material], front: &'a RgbaImage, back: &'a RgbaImage },
 }
 
 /// Opaque: the colour's RGB.
@@ -60,7 +164,48 @@ fn opaque(c: Rgba) -> Rgba {
     Rgba { a: 255, ..c }
 }
 
-impl Layer {
+impl<'a> Layer<'a> {
+    /// The bake's view of a visible element, `None` when hidden, not
+    /// processed, or (by a caller's mistake) of a size the level's art
+    /// (`art`) or the element's box does not match: never a panic.
+    fn new(e: &Element, d: &'a Decoded, art: (u32, u32), s: u32) -> Option<Layer<'a>> {
+        if !e.visible {
+            return None;
+        }
+        let dims = |i: &RgbaImage| (i.width(), i.height());
+        Some(match (&e.kind, d) {
+            (
+                ElementKind::Image { material, at, size, pixel_size, .. },
+                Decoded::Image { grid: Some(grid) },
+            ) => {
+                let ps = (*pixel_size).max(1);
+                let box_art = (u64::from(size.0) * u64::from(s), u64::from(size.1) * u64::from(s));
+                let need = (box_art.0.div_ceil(u64::from(ps)), box_art.1.div_ceil(u64::from(ps)));
+                if (u64::from(grid.width()), u64::from(grid.height())) != need {
+                    return None;
+                }
+                Layer::Image {
+                    material: (*material).into(),
+                    grid,
+                    pixel_size: ps,
+                    origin: (i64::from(at.0) * i64::from(s), i64::from(at.1) * i64::from(s)),
+                    size: (box_art.0 as i64, box_art.1 as i64),
+                }
+            }
+            (ElementKind::Drawn { material }, Decoded::Drawn { art: a }) if dims(a) == art => {
+                Layer::Drawn { material: (*material).into(), art: a }
+            }
+            (ElementKind::Raster, Decoded::Raster { material, front, back })
+                if dims(front) == art
+                    && dims(back) == art
+                    && material.len() as u64 == u64::from(art.0 / s) * u64::from(art.1 / s) =>
+            {
+                Layer::Raster { material, front, back }
+            }
+            _ => return None,
+        })
+    }
+
     /// The element's colour at art pixel `(ax, ay)` when it covers it.
     fn front(&self, ax: u32, ay: u32) -> Option<Rgba> {
         match self {
@@ -104,127 +249,145 @@ impl Layer {
     }
 }
 
-/// Decoded layers and processed images of one composition, ready to bake
-/// any region. `bake_region` never fails: everything was checked here.
+/// The back of art pixel `(ax, ay)` (R4).
+fn back_at(layers: &[Layer], back_tile: &RgbaImage, ax: u32, ay: u32) -> Rgba {
+    if let Some(c) = layers.iter().rev().find_map(|l| l.back(ax, ay)) {
+        return c;
+    }
+    let t = back_tile;
+    if t.width() == 0 || t.height() == 0 {
+        return Rgba::BLACK;
+    }
+    opaque(t.get(ax % t.width(), ay % t.height()))
+}
+
+/// Rebakes `rect` (clipped) of `level`'s material, front and back from
+/// decoded elements, bottom to top (rulings R3-R5 of plan 14a). A visible
+/// image whose grid is `None`, and data of a size the level or the
+/// element's box does not match, are left out; a level whose own layers
+/// do not match its size is left as it is. Never fails or panics.
+pub fn bake_elements(
+    level: &mut LevelSource,
+    items: &[(&Element, &Decoded)],
+    back_tile: &RgbaImage,
+    rect: Rect,
+) {
+    let (w, h) = level.size;
+    let s = level.art_scale;
+    let (Some(aw), Some(ah)) = (w.checked_mul(s), h.checked_mul(s)) else { return };
+    let fits = s > 0
+        && level.material.len() as u64 == u64::from(w) * u64::from(h)
+        && (level.front.width(), level.front.height()) == (aw, ah)
+        && (level.back.width(), level.back.height()) == (aw, ah);
+    if !fits {
+        return;
+    }
+    let layers: Vec<Layer> = items.iter().filter_map(|(e, d)| Layer::new(e, d, (aw, ah), s)).collect();
+    let x1 = rect.x.saturating_add(rect.w).min(w);
+    let y1 = rect.y.saturating_add(rect.h).min(h);
+    for y in rect.y.min(h)..y1 {
+        for x in rect.x.min(w)..x1 {
+            let cell = y as usize * w as usize + x as usize;
+            let (cx, cy) = (x * s + s / 2, y * s + s / 2);
+            let material =
+                layers.iter().rev().find_map(|l| l.material(cell, cx, cy)).unwrap_or(Material::Background);
+            level.material[cell] = material;
+            for ay in y * s..(y + 1) * s {
+                for ax in x * s..(x + 1) * s {
+                    let back = back_at(&layers, back_tile, ax, ay);
+                    let front = if material == Material::Background {
+                        back
+                    } else {
+                        layers.iter().rev().find_map(|l| l.front(ax, ay)).unwrap_or(back)
+                    };
+                    level.back.set(ax, ay, back);
+                    level.front.set(ax, ay, front);
+                }
+            }
+        }
+    }
+}
+
+/// Decoded elements and processed images of one composition, ready to
+/// bake any region. `bake_region` never fails: everything was checked here.
 pub struct Baker {
     size: (u32, u32),
     art_scale: u32,
     back_tile: RgbaImage,
-    /// The visible elements, bottom to top.
-    layers: Vec<Layer>,
+    /// Every element with its decoded data, bottom to top.
+    items: Vec<(Element, Decoded)>,
 }
 
 impl Baker {
     /// Checks `src` against a level of `size` at `art_scale`
     /// (`check_composition`), then decodes its layers and originals and
     /// processes its images: originals within `IMAGES`, layers within
-    /// `LEVEL_ART`.
+    /// `LEVEL_ART`. A fresh `ImageCache` each time.
     pub fn new(
         src: &CompositionSource,
         size: (u32, u32),
         art_scale: u32,
         back_tile: &RgbaImage,
     ) -> Result<Baker, ComposeError> {
+        Baker::new_cached(src, size, art_scale, back_tile, &mut ImageCache::new())
+    }
+
+    /// `new` through `cache`: an image whose original and settings it
+    /// holds is not processed again.
+    pub fn new_cached(
+        src: &CompositionSource,
+        size: (u32, u32),
+        art_scale: u32,
+        back_tile: &RgbaImage,
+        cache: &mut ImageCache,
+    ) -> Result<Baker, ComposeError> {
         let s = art_scale;
-        let art = match (size.0.checked_mul(s), size.1.checked_mul(s)) {
-            (Some(w), Some(h)) if image_io::check_size(w, h, LEVEL_ART).is_ok() => (w, h),
+        match (size.0.checked_mul(s), size.1.checked_mul(s)) {
+            (Some(w), Some(h)) if image_io::check_size(w, h, LEVEL_ART).is_ok() => {}
             _ => {
                 return Err(ComposeError::File {
                     file: "level.ron".into(),
                     message: format!("{}x{} at art scale {s}: art beyond the level bound", size.0, size.1),
                 });
             }
-        };
+        }
         check_composition(src, size, art_scale)?;
-        let mut layers = Vec::new();
-        for e in &src.composition.elements {
-            match (&e.kind, e.visible) {
-                (_, true) => layers.push(decode(src, e, size, art, s)?),
-                // A hidden image's original is decoded for its errors, not
-                // processed: it is left out of the bake.
-                (ElementKind::Image { .. }, false) => {
-                    let file = &element_files(e)[0];
-                    let bytes = src.files.get(file).map(Vec::as_slice).unwrap_or_default();
-                    image_io::decode_image_within(bytes, IMAGES)
-                        .map_err(|message| ComposeError::File { file: file.clone(), message })?;
-                }
-                (_, false) => {
-                    decode(src, e, size, art, s)?;
-                }
-            }
-        }
-        Ok(Baker { size, art_scale, back_tile: back_tile.clone(), layers })
-    }
-
-    /// The back of art pixel `(ax, ay)` (R4).
-    fn back(&self, ax: u32, ay: u32) -> Rgba {
-        if let Some(c) = self.layers.iter().rev().find_map(|l| l.back(ax, ay)) {
-            return c;
-        }
-        let t = &self.back_tile;
-        if t.width() == 0 || t.height() == 0 {
-            return Rgba::BLACK;
-        }
-        opaque(t.get(ax % t.width(), ay % t.height()))
+        let items = src
+            .composition
+            .elements
+            .iter()
+            .map(|e| Ok((e.clone(), decode_element(src, e, size, s, cache)?)))
+            .collect::<Result<_, ComposeError>>()?;
+        Ok(Baker { size, art_scale, back_tile: back_tile.clone(), items })
     }
 
     /// Rebakes `rect` (clipped to the level) of `level`'s material, front
     /// and back. A level of another size or art scale than the baker's is
     /// left as it is.
     pub fn bake_region(&self, level: &mut LevelSource, rect: Rect) {
-        let (w, h) = self.size;
-        let s = self.art_scale;
-        let fits = level.size == self.size
-            && level.art_scale == s
-            && level.material.len() == w as usize * h as usize
-            && (level.front.width(), level.front.height()) == (w * s, h * s)
-            && (level.back.width(), level.back.height()) == (w * s, h * s);
-        if !fits {
+        if level.size != self.size || level.art_scale != self.art_scale {
             return;
         }
-        let x1 = rect.x.saturating_add(rect.w).min(w);
-        let y1 = rect.y.saturating_add(rect.h).min(h);
-        for y in rect.y.min(h)..y1 {
-            for x in rect.x.min(w)..x1 {
-                let cell = y as usize * w as usize + x as usize;
-                let (cx, cy) = (x * s + s / 2, y * s + s / 2);
-                let material = self
-                    .layers
-                    .iter()
-                    .rev()
-                    .find_map(|l| l.material(cell, cx, cy))
-                    .unwrap_or(Material::Background);
-                level.material[cell] = material;
-                for ay in y * s..(y + 1) * s {
-                    for ax in x * s..(x + 1) * s {
-                        let back = self.back(ax, ay);
-                        let front = if material == Material::Background {
-                            back
-                        } else {
-                            self.layers.iter().rev().find_map(|l| l.front(ax, ay)).unwrap_or(back)
-                        };
-                        level.back.set(ax, ay, back);
-                        level.front.set(ax, ay, front);
-                    }
-                }
-            }
-        }
+        let items: Vec<(&Element, &Decoded)> = self.items.iter().map(|(e, d)| (e, d)).collect();
+        bake_elements(level, &items, &self.back_tile, rect);
     }
 }
 
-/// One element's files decoded (and an image processed), each checked
-/// against the level's size.
-fn decode(
+/// One element's files decoded (and an image processed through `cache`
+/// when visible; a hidden image's original is decoded for its errors),
+/// each checked against a level of `size` at art scale `s`.
+pub fn decode_element(
     src: &CompositionSource,
     e: &Element,
     size: (u32, u32),
-    art: (u32, u32),
     s: u32,
-) -> Result<Layer, ComposeError> {
+    cache: &mut ImageCache,
+) -> Result<Decoded, ComposeError> {
     let bytes = |file: &str| {
         src.files.get(file).ok_or_else(|| ComposeError::File { file: file.into(), message: "missing".into() })
     };
     let fail = |file: &str, message: String| ComposeError::File { file: file.into(), message };
+    let art = (size.0.saturating_mul(s), size.1.saturating_mul(s));
     let rgba = |file: &str, expected: (u32, u32)| -> Result<RgbaImage, ComposeError> {
         let img = image_io::decode_rgba_within(bytes(file)?, LEVEL_ART).map_err(|m| fail(file, m))?;
         if (img.width(), img.height()) != expected {
@@ -237,35 +400,23 @@ fn decode(
     };
     Ok(match &e.kind {
         ElementKind::Image {
-            material,
-            size: (bw, bh),
-            at,
-            pixel_size,
-            colours,
-            dither,
-            alpha_threshold,
-            ..
+            source, size: (bw, bh), pixel_size, colours, dither, alpha_threshold, ..
         } => {
-            let file = &element_files(e)[0];
-            let original = image_io::decode_image_within(bytes(file)?, IMAGES).map_err(|m| fail(file, m))?;
-            let box_art = (bw * s, bh * s);
+            let original = bytes(&image_file(source))?;
+            if !e.visible {
+                cache.original(source, original)?;
+                return Ok(Decoded::Image { grid: None });
+            }
             let p = Pixelation {
                 pixel_size: *pixel_size,
                 colours: *colours,
                 dither: *dither,
                 alpha_threshold: *alpha_threshold,
             };
-            Layer::Image {
-                material: (*material).into(),
-                grid: process_grid(&original, box_art, &p),
-                pixel_size: (*pixel_size).max(1),
-                origin: (i64::from(at.0) * i64::from(s), i64::from(at.1) * i64::from(s)),
-                size: (i64::from(box_art.0), i64::from(box_art.1)),
-            }
+            let box_art = (bw.saturating_mul(s), bh.saturating_mul(s));
+            Decoded::Image { grid: Some(cache.grid(source, original, box_art, &p)?) }
         }
-        ElementKind::Drawn { material } => {
-            Layer::Drawn { material: (*material).into(), art: rgba(&element_files(e)[0], art)? }
-        }
+        ElementKind::Drawn { .. } => Decoded::Drawn { art: rgba(&layer_file(&e.id), art)? },
         ElementKind::Raster => {
             let [m, f, b] = raster_files(&e.id);
             let (mw, mh, indices) =
@@ -280,9 +431,90 @@ fn decode(
                         .ok_or_else(|| fail(&m, format!("palette index {i}: not a material")))
                 })
                 .collect::<Result<Vec<_>, _>>()?;
-            Layer::Raster { material, front: rgba(&f, art)?, back: rgba(&b, art)? }
+            Decoded::Raster { material, front: rgba(&f, art)?, back: rgba(&b, art)? }
         }
     })
+}
+
+/// The files a drawn or raster element's decoded data encodes to (as
+/// `write_level_files` encodes art and material; a raster's material is a
+/// level of `size`); none for an image (its original is kept) or data of
+/// another kind than the element.
+pub fn encode_decoded(e: &Element, d: &Decoded, size: (u32, u32)) -> Vec<(String, Vec<u8>)> {
+    match (&e.kind, d) {
+        (ElementKind::Drawn { .. }, Decoded::Drawn { art }) => {
+            vec![(layer_file(&e.id), image_io::encode_rgba(art))]
+        }
+        (ElementKind::Raster, Decoded::Raster { material, front, back }) => {
+            let [m, f, b] = raster_files(&e.id);
+            vec![
+                (m, encode_material(size, material)),
+                (f, image_io::encode_rgba(front)),
+                (b, image_io::encode_rgba(back)),
+            ]
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// A level source holding `front` and `back` (and `material`) at `size`,
+/// for `level::resize` to re-lay.
+fn as_level(
+    size: (u32, u32),
+    art_scale: u32,
+    material: Vec<Material>,
+    front: RgbaImage,
+    back: RgbaImage,
+) -> LevelSource {
+    LevelSource {
+        name: String::new(),
+        notes: String::new(),
+        size,
+        art_scale,
+        theme: String::new(),
+        objects: Vec::new(),
+        material,
+        front,
+        back,
+        thumb: None,
+    }
+}
+
+/// Re-lays a drawn or raster element's decoded data for a level resize
+/// from `old` to `size` (as `level::resize`: the new area uncovered for
+/// drawn layers, `material` and `paint` for rasters); moves an image's
+/// `at` by `offset`. A refusal changes nothing.
+#[allow(clippy::too_many_arguments)]
+pub fn resize_decoded(
+    e: &mut Element,
+    d: &mut Decoded,
+    old: (u32, u32),
+    art_scale: u32,
+    size: (u32, u32),
+    offset: (i32, i32),
+    material: Material,
+    paint: &Paint,
+) -> Result<(), EditError> {
+    match (&mut e.kind, d) {
+        (ElementKind::Image { at, .. }, _) => {
+            let moved = |v: i32, by: i32| v.checked_add(by).ok_or_else(|| EditError::Moved(e.id.clone()));
+            *at = (moved(at.0, offset.0)?, moved(at.1, offset.1)?);
+        }
+        (ElementKind::Drawn { .. }, Decoded::Drawn { art }) => {
+            let cells = vec![Material::Background; old.0 as usize * old.1 as usize];
+            let mut tmp = as_level(old, art_scale, cells, art.clone(), RgbaImage::new(0, 0));
+            tmp.back = tmp.front.clone();
+            level::resize(&mut tmp, size, offset, material, &Paint::Colour(Rgba::TRANSPARENT))?;
+            *art = tmp.front;
+        }
+        (ElementKind::Raster, Decoded::Raster { material: cells, front, back }) => {
+            let mut tmp = as_level(old, art_scale, cells.clone(), front.clone(), back.clone());
+            level::resize(&mut tmp, size, offset, material, paint)?;
+            (*cells, *front, *back) = (tmp.material, tmp.front, tmp.back);
+        }
+        _ => {}
+    }
+    Ok(())
 }
 
 /// The whole bake: material, front, back and the thumbnail (`refresh_thumb`).

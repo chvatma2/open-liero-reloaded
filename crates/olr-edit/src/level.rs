@@ -52,14 +52,32 @@ impl Rect {
 /// in doubled coordinates so halves stay integers (plan 14b ruling R10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shape {
-    Rect { x: i32, y: i32, w: i32, h: i32 },
-    Circle { cx: i32, cy: i32, r: i32 },
+    Rect {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
+    Circle {
+        cx: i32,
+        cy: i32,
+        r: i32,
+    },
     /// The ellipse inscribed in the box; covers a pixel by its centre
     /// (`w <= 0` or `h <= 0` covers nothing).
-    Ellipse { x: i32, y: i32, w: i32, h: i32 },
+    Ellipse {
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    },
     /// Pixels whose centre lies within `width / 2` of the segment between
     /// the centres of pixels `from` and `to`; `width` 0 covers nothing.
-    Line { from: (i32, i32), to: (i32, i32), width: u32 },
+    Line {
+        from: (i32, i32),
+        to: (i32, i32),
+        width: u32,
+    },
 }
 
 /// What an art pixel is painted with, composited over the art (straight
@@ -106,6 +124,8 @@ pub enum EditError {
     TooManyObjects,
     #[error("no object {index} (the level has {len})")]
     NoObject { index: usize, len: usize },
+    #[error("element {0:?} moved out of range")]
+    Moved(String),
 }
 
 impl Paint {
