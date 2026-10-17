@@ -287,6 +287,54 @@ mod tests {
         assert_eq!(m.pack.assets[&VPath::new("gfx/shared.png").unwrap()], b"mod-image");
     }
 
+    /// A mod with one image projectile that uses `gfx/<name>`.
+    fn image_mod(name: &str) -> Vec<u8> {
+        let script = Lgs::header("Tiny", 1).projectile_weapon("Gun", None);
+        let script = script.i(1).f(0.0).f(0.0).i(0).i(0).f(1.0).s(name);
+        let script = script.i(0).i(0).i(0).i(0).i(0).i(0);
+        script.i(8).i(8).i(0).i(0).i(0).i(0).i(0).i(0).i(0).i(0).footer().0
+    }
+
+    /// Review Focus 4 for mod images: a `(254,0,254)`-cornered image keys that
+    /// colour once, at import, and keeps its pure magenta through write and read.
+    #[test]
+    fn mod_images_are_keyed_once_and_keep_real_magenta() {
+        use olr_data::image::{Rgba, RgbaImage};
+        let bugged = Rgba::rgb(254, 0, 254);
+        let mut img = RgbaImage::new(4, 2);
+        for (x, y) in [(0, 0), (3, 0), (0, 1), (3, 1)] {
+            img.set(x, y, bugged);
+        }
+        img.set(1, 0, Rgba::MAGENTA);
+        img.set(2, 0, Rgba::rgb(1, 2, 3));
+        let fs = MemFs::new()
+            .with("Tiny/SCRIPT.LGS", image_mod("x.png"))
+            .with("Tiny/gfx/x.png", olr_pack::image_io::encode_rgba(&img));
+        let m = import_mod(&fs, &VPath::new("Tiny").unwrap(), origin()).unwrap();
+        let mut out = MemFs::new();
+        olr_pack::write_mod(&mut out, &m.pack).unwrap();
+        let read = olr_pack::read_mod(&out).unwrap();
+        let bytes = &read.assets[&VPath::new("gfx/x.png").unwrap()];
+        let got = olr_pack::image_io::decode_rgba(bytes).unwrap();
+        for (x, y) in [(0, 0), (3, 0), (0, 1), (3, 1)] {
+            assert_eq!(got.get(x, y), Rgba::TRANSPARENT, "({x},{y})");
+        }
+        assert_eq!(got.get(1, 0), Rgba::MAGENTA, "the real magenta survives");
+        assert_eq!(got.get(2, 0), Rgba::rgb(1, 2, 3));
+    }
+
+    #[test]
+    fn a_gfx_file_that_is_not_an_image_is_kept_with_a_warning() {
+        let fs = MemFs::new().with("Tiny/SCRIPT.LGS", image_mod("x.png")).with("Tiny/gfx/x.png", "not a png");
+        let m = import_mod(&fs, &VPath::new("Tiny").unwrap(), origin()).unwrap();
+        assert_eq!(m.pack.assets[&VPath::new("gfx/x.png").unwrap()], b"not a png");
+        assert!(
+            m.warnings.iter().any(|w| w.contains("x.png") && w.contains("not an image")),
+            "{:?}",
+            m.warnings
+        );
+    }
+
     #[test]
     fn missing_image_is_an_error() {
         let script = Lgs::header("Tiny", 1).projectile_weapon("Gun", None);

@@ -225,7 +225,7 @@ pub fn decode_grey_within(bytes: &[u8], bound: ImageBound) -> Result<(u32, u32, 
 /// OLX's colour key applied once (`RgbaImage::key_transparent`: the corner
 /// rule per image, `src/client/GfxPrimitives.cpp:114-150`): key pixels
 /// become `(0, 0, 0, 0)`, everything else is unchanged. Importers use it;
-/// nothing applies it at load once plan 13c switches the loaders. Apply it
+/// nothing applies it at load (plan 13c). Apply it
 /// only once: a second application to a `(254, 0, 254)`-keyed result clears
 /// real pure magenta (its corners are now transparent, so the key falls
 /// back to magenta).
