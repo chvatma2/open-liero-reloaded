@@ -9,7 +9,8 @@ use crate::{MANIFEST, PackError, THUMB_FILE};
 pub const PRESENTATION_FILES: &[&str] = &[THUMB_FILE];
 
 /// SHA-256 over every file of the pack except `pack.ron`, the
-/// [`PRESENTATION_FILES`] and hidden files (a path with a component starting
+/// [`PRESENTATION_FILES`], authoring files ([`crate::is_authoring`]:
+/// `editor/`, plan 14a) and hidden files (a path with a component starting
 /// with `.`, plan 11 ruling PF11-2: the archive leaves them out too), as
 /// lowercase hex.
 /// Files are taken in sorted path order; each contributes its path, a 0 byte,
@@ -19,6 +20,7 @@ pub fn content_hash(src: &dyn ContentSource) -> Result<String, PackError> {
     let mut h = Sha256::new();
     for path in walk(src, &VPath::root())? {
         if crate::archive::is_hidden(path.as_str())
+            || crate::is_authoring(path.as_str())
             || path.as_str() == MANIFEST
             || PRESENTATION_FILES.contains(&path.as_str())
         {
@@ -48,6 +50,15 @@ mod tests {
         assert_ne!(content_hash(&a).unwrap(), content_hash(&c).unwrap());
         assert_ne!(content_hash(&a).unwrap(), content_hash(&d).unwrap());
         assert_eq!(content_hash(&a).unwrap().len(), 64);
+    }
+
+    #[test]
+    fn editor_files_are_not_content() {
+        let a = MemFs::new().with("pack.ron", "x").with("level.ron", "1");
+        let b = a.clone().with("editor/composition.ron", "(elements: [])").with("editor/images/a.png", "x");
+        assert_eq!(content_hash(&a).unwrap(), content_hash(&b).unwrap());
+        let c = a.clone().with("editors/x", "content");
+        assert_ne!(content_hash(&a).unwrap(), content_hash(&c).unwrap());
     }
 
     /// Plan 7 ruling Q4: a level's thumbnail is presentation only; adding

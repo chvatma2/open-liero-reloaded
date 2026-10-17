@@ -119,6 +119,7 @@ pub fn validate(src: &dyn ContentSource) -> Vec<Diagnostic> {
                 out.push(Diagnostic::new(Severity::Warning, THUMB_FILE, format!("{e}: not shown")));
             }
             out.extend(check_level(&p));
+            out.extend(check_composition(src, &p));
         }),
         PackKind::Skin => read_skin(src).map(|_| ()),
         PackKind::Theme => read_theme(src).map(|_| ()),
@@ -146,7 +147,14 @@ fn unread(src: &dyn ContentSource, kind: PackKind) -> Vec<Diagnostic> {
             paths.push(mods::RESTRICTIONS_FILE.into());
             paths
         }),
-        PackKind::Level => levels::read_level_files_without_thumb(src).map(|s| levels::file_paths(&s)),
+        PackKind::Level => levels::read_level_files_without_thumb(src).map(|s| {
+            let mut paths = levels::file_paths(&s);
+            // A composition that does not read is `check_composition`'s error.
+            if let Ok(Some(c)) = levels::read_composition_files(src) {
+                paths.extend(levels::composition_paths(&c));
+            }
+            paths
+        }),
         PackKind::Skin => skins::read_skin_files(src).map(|s| skins::file_paths(&s)),
         PackKind::Theme => themes::read_theme_files(src).map(|s| themes::file_paths(&s)),
         PackKind::Core => core_pack::read_core_files(src).map(|s| core_pack::file_paths(&s)),
@@ -162,6 +170,17 @@ fn unread(src: &dyn ContentSource, kind: PackKind) -> Vec<Diagnostic> {
         .filter(|p| !(kind == PackKind::Mod && !is_definition(p)))
         .map(|p| Diagnostic::new(Severity::Warning, p, NOT_READ))
         .collect()
+}
+
+/// The level's composition (`editor/`, plan 14a), if it has one: an error
+/// when it does not read or does not fit the level.
+fn check_composition(src: &dyn ContentSource, pack: &LevelPack) -> Option<Diagnostic> {
+    let def = &pack.level.def;
+    let checked = olr_format::levels::read_composition_files(src).and_then(|c| match c {
+        Some(c) => olr_format::levels::check_composition(&c, (def.width, def.height), def.art_scale),
+        None => Ok(()),
+    });
+    checked.err().map(|e| Diagnostic::from_error(&PackError::Format(e)))
 }
 
 /// Objects outside the level (warnings): the runtime places worms itself.
@@ -376,6 +395,50 @@ mod tests {
         let mut fs = MemFs::new();
         write_level(&mut fs, &pack).unwrap();
         fs
+    }
+
+    /// `level_with_spawn((1, 1))` (8 × 8, art scale 1) composed of its own raster base.
+    fn composed_level() -> MemFs {
+        let fs = level_with_spawn((1, 1));
+        let level = olr_format::levels::read_level_files(&fs).unwrap();
+        let mut base = std::collections::BTreeMap::new();
+        let indices: Vec<u8> = level.material.iter().map(|m| *m as u8).collect();
+        let [m, f, b] = olr_format::levels::raster_files("base");
+        base.insert(
+            m,
+            crate::image_io::encode_indexed(8, 8, &indices, &olr_format::levels::MATERIAL_PALETTE),
+        );
+        base.insert(f, crate::image_io::encode_rgba(&level.front));
+        base.insert(b, crate::image_io::encode_rgba(&level.back));
+        let element = olr_format::levels::Element {
+            id: "base".into(),
+            name: String::new(),
+            visible: true,
+            locked: false,
+            kind: olr_format::levels::ElementKind::Raster,
+        };
+        let src = olr_format::levels::CompositionSource {
+            composition: olr_format::levels::Composition { elements: vec![element] },
+            files: base,
+        };
+        let mut fs = fs;
+        olr_format::levels::write_composition_files(&mut fs, &src).unwrap();
+        fs
+    }
+
+    #[test]
+    fn a_composition_is_validated() {
+        assert_eq!(validate(&composed_level()), vec![]);
+        let small = crate::image_io::encode_rgba(&olr_data::image::RgbaImage::new(4, 4));
+        let d = validate(&composed_level().with("editor/layers/base.front.png", small));
+        assert!(
+            d.iter().any(|d| d.severity == Severity::Error
+                && d.file.as_deref() == Some("editor/layers/base.front.png")),
+            "{d:?}"
+        );
+        let d: Vec<String> =
+            validate(&composed_level().with("editor/notes.txt", "x")).iter().map(|d| d.to_string()).collect();
+        assert_eq!(d, ["warning: editor/notes.txt: not read by the format"]);
     }
 
     #[test]

@@ -85,6 +85,22 @@ fn raw(files: &[(&str, &[u8])]) -> Vec<u8> {
     a
 }
 
+/// Plan 14a ruling R2: `editor/` is authoring: never in an archive.
+#[test]
+fn editor_files_never_enter_an_archive() {
+    let src = MemFs::new().with("pack.ron", "x").with("editor/x.png", "y").with("a.txt", "z");
+    let bytes = archive::encode(&src).unwrap();
+    let mut out = MemFs::new();
+    archive::decode(&mut &bytes[..], &mut out, &archive::Limits::PACK).unwrap();
+    let paths: Vec<&str> = out.files().map(|(p, _)| p.as_str()).collect();
+    assert_eq!(paths, ["a.txt", "pack.ron"]);
+
+    // A hand-made archive that holds one anyway is refused.
+    let forged = raw(&[("editor/x", b"y")]);
+    let e = archive::decode(&mut &forged[..], &mut MemFs::new(), &archive::Limits::PACK).unwrap_err();
+    assert!(matches!(&e, ArchiveError::BadPath(p) if p.contains("editor/x")), "{e:?}");
+}
+
 /// Review C1: paths Windows reads otherwise (a drive, a stream, a device,
 /// a dropped trailing dot or space) or folds together (case) are refused
 /// before they are written, and refused by `encode` too.

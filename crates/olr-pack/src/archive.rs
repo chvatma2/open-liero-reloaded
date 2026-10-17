@@ -132,7 +132,8 @@ pub enum ArchiveError {
 /// The archive of every file under `src`'s root (sorted by path, `pack.ron`
 /// and presentation files included), deterministic.
 ///
-/// Hidden files ([`is_hidden`]) are left out. Fails on what [`decode`] would
+/// Hidden files ([`is_hidden`]) and authoring files
+/// ([`crate::is_authoring`]: `editor/`, plan 14a) are left out. Fails on what [`decode`] would
 /// refuse with [`Limits::PACK`]: more than [`MAX_ARCHIVE_FILES`] files, a
 /// path over [`MAX_ARCHIVE_PATH`] bytes or not portable, paths alike but
 /// for case, a path deeper than [`MAX_DEPTH`], more directories than
@@ -140,7 +141,7 @@ pub enum ArchiveError {
 /// [`MAX_ARCHIVE`] or a disk charge over [`MAX_UNPACKED`].
 pub fn encode(src: &dyn ContentSource) -> Result<Vec<u8>, PackError> {
     let mut paths = walk(src, &VPath::root())?;
-    paths.retain(|p| !is_hidden(p.as_str()));
+    paths.retain(|p| !is_hidden(p.as_str()) && !crate::is_authoring(p.as_str()));
     if paths.len() > MAX_ARCHIVE_FILES as usize {
         return Err(PackError::invalid("archive", format!("more than {MAX_ARCHIVE_FILES} files")));
     }
@@ -353,6 +354,9 @@ pub fn decode(
             .map_err(|e| ArchiveError::BadPath(String::from_utf8_lossy(e.as_bytes()).into_owned()))?;
         if let Some(why) = path_problem(&path) {
             return Err(ArchiveError::BadPath(format!("{path} ({why})")));
+        }
+        if crate::is_authoring(&path) {
+            return Err(ArchiveError::BadPath(format!("{path}: authoring files are never in an archive")));
         }
         if previous.as_ref().is_some_and(|p| path <= *p) {
             return Err(ArchiveError::Order(path));
