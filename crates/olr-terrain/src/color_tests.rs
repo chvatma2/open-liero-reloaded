@@ -415,3 +415,84 @@ fn odd_inputs_never_panic() {
         assert!(c.pixels().chunks(4).all(|p| p[3] == 255), "the composite is opaque");
     }
 }
+
+fn solid(w: u32, h: u32, c: Rgba) -> RgbaImage {
+    image(w, h, |_, _| c)
+}
+
+#[test]
+fn replace_rect_copies_and_marks_dirty() {
+    let t = map(&["RRRR", "RRRR", "RRRR"]);
+    let mut c = color_map(&t, 2, theme(vec![], None));
+    let before = c.pixels().to_vec();
+    let (red, blue) = (Rgba::rgb(255, 0, 0), Rgba::rgb(0, 0, 255));
+    let mat = map(&["....", "....", "...."]);
+    let r = Rect { x: 2, y: 2, w: 4, h: 2 };
+    c.replace_rect(r, &solid(8, 6, red), &solid(8, 6, blue), &mat);
+    for y in 0..6 {
+        for x in 0..8 {
+            let inside = (2..6).contains(&x) && (2..4).contains(&y);
+            let want = if inside {
+                red
+            } else {
+                let i = ((y * 8 + x) * 4) as usize;
+                Rgba { r: before[i], g: before[i + 1], b: before[i + 2], a: before[i + 3] }
+            };
+            assert_eq!(px(&c, x, y), want, "art pixel ({x}, {y})");
+        }
+    }
+    let dirty: Vec<Rect> = c.take_dirty().collect();
+    assert!(
+        dirty.iter().any(|d| d.x <= r.x && d.y <= r.y && d.x + d.w >= r.x + r.w && d.y + d.h >= r.y + r.h),
+        "{dirty:?} holds {r:?}"
+    );
+    assert_eq!(c.color_at(1, 1), Some(red));
+    assert_eq!(c.material().material(1, 1), Some(Material::Background));
+    assert_eq!(c.material().material(0, 0), Some(Material::Rock), "cells outside r keep their material");
+    // A carve there now reveals the replaced back image.
+    let mut c2 = c.clone();
+    c2.rebuild_area(Area { x0: 1, y0: 1, x1: 2, y1: 2 }, c.material());
+    assert_eq!(c2.color_at(1, 1), Some(blue));
+}
+
+#[test]
+fn replace_rect_of_another_size_changes_nothing() {
+    let t = map(&["RRRR", "RRRR", "RRRR"]);
+    let mut c = color_map(&t, 2, theme(vec![], None));
+    let before = c.pixels().to_vec();
+    let red = Rgba::rgb(255, 0, 0);
+    let r = Rect { x: 0, y: 0, w: 8, h: 6 };
+    let mat = map(&["....", "....", "...."]);
+    c.replace_rect(r, &solid(7, 6, red), &solid(8, 6, red), &mat);
+    c.replace_rect(r, &solid(8, 6, red), &solid(8, 5, red), &mat);
+    c.replace_rect(r, &solid(8, 6, red), &solid(8, 6, red), &map(&["...", "..."]));
+    assert_eq!(c.pixels(), &before[..]);
+    assert_eq!(c.take_dirty().count(), 0);
+    assert_eq!(c.material().material(0, 0), Some(Material::Rock));
+}
+
+#[test]
+fn replace_rect_clips() {
+    let t = map(&["RRRR", "RRRR", "RRRR"]);
+    let mut c = color_map(&t, 2, theme(vec![], None));
+    let red = Rgba::rgb(255, 0, 0);
+    let mat = map(&["....", "....", "...."]);
+    c.replace_rect(Rect { x: 6, y: 4, w: 100, h: 100 }, &solid(8, 6, red), &solid(8, 6, red), &mat);
+    for y in 0..6 {
+        for x in 0..8 {
+            assert_eq!(px(&c, x, y) == red, x >= 6 && y >= 4, "art pixel ({x}, {y})");
+        }
+    }
+    assert_eq!(c.material().material(3, 2), Some(Material::Background));
+    assert_eq!(c.material().material(2, 2), Some(Material::Rock));
+    let dirty: Vec<Rect> = c.take_dirty().collect();
+    assert!(dirty.iter().all(|d| d.x + d.w <= 8 && d.y + d.h <= 6), "{dirty:?} inside the map");
+    for r in [
+        Rect { x: u32::MAX, y: u32::MAX, w: u32::MAX, h: u32::MAX },
+        Rect { x: 8, y: 0, w: 1, h: 1 },
+        Rect { x: 0, y: 0, w: 0, h: 0 },
+    ] {
+        c.replace_rect(r, &solid(8, 6, red), &solid(8, 6, red), &mat);
+    }
+    assert_eq!(c.take_dirty().count(), 0);
+}

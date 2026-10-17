@@ -278,6 +278,51 @@ impl ColorMap {
         self.mark(x0, y0, x1, y1);
     }
 
+    /// Copies art rectangle `r` of `front` and `back` (images of this map's
+    /// art size) into the map's own front, back and composited pixels (the
+    /// composite takes `front`), and the world cells under `r` from
+    /// `material` (the level's size), then marks `r` dirty. Images or a
+    /// material of another size change nothing. `r` is clipped to the map.
+    /// The editor's canvas uploads an edit's bake this way.
+    pub fn replace_rect(&mut self, r: Rect, front: &RgbaImage, back: &RgbaImage, material: &Terrain) {
+        let art = (self.width, self.height);
+        if (front.width(), front.height()) != art
+            || (back.width(), back.height()) != art
+            || (material.width(), material.height()) != (self.material.width(), self.material.height())
+        {
+            return;
+        }
+        let (x0, y0) = (r.x.min(self.width), r.y.min(self.height));
+        let (x1, y1) = (r.x.saturating_add(r.w).min(self.width), r.y.saturating_add(r.h).min(self.height));
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let w = self.width as usize;
+        for y in y0..y1 {
+            let (a, b) = ((y as usize * w + x0 as usize) * 4, (y as usize * w + x1 as usize) * 4);
+            self.front[a..b].copy_from_slice(&front.as_raw()[a..b]);
+            self.back[a..b].copy_from_slice(&back.as_raw()[a..b]);
+            for p in self.front[a..b]
+                .as_chunks_mut::<4>()
+                .0
+                .iter_mut()
+                .chain(self.back[a..b].as_chunks_mut::<4>().0)
+            {
+                p[3] = 255;
+            }
+            self.pixels[a..b].copy_from_slice(&self.front[a..b]);
+        }
+        let s = self.scale;
+        let mw = self.material.width() as usize;
+        for wy in y0 / s..y1.div_ceil(s) {
+            for wx in x0 / s..x1.div_ceil(s) {
+                let i = wy as usize * mw + wx as usize;
+                self.material.cells[i] = material.cells[i];
+            }
+        }
+        self.push_dirty(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
+    }
+
     /// OLX `CMap::CarveHole` (`CMap.cpp:1005-1105`), hi-res branch: under a
     /// magenta stamp pixel dirt becomes background and shows the back image
     /// (`CopyPixel2x2`); under any other non-black pixel it stays dirt,
@@ -398,7 +443,16 @@ impl ColorMap {
             return;
         }
         let s = self.scale;
-        let r = Rect { x: x0 as u32 * s, y: y0 as u32 * s, w: (x1 - x0) as u32 * s, h: (y1 - y0) as u32 * s };
+        self.push_dirty(Rect {
+            x: x0 as u32 * s,
+            y: y0 as u32 * s,
+            w: (x1 - x0) as u32 * s,
+            h: (y1 - y0) as u32 * s,
+        });
+    }
+
+    /// Adds art rectangle `r` (inside the map) to the dirty list.
+    fn push_dirty(&mut self, r: Rect) {
         if self.dirty.len() >= Self::MAX_DIRTY {
             let all = self.dirty.drain(..).fold(r, Rect::union);
             self.dirty.push(all);
