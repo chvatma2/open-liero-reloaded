@@ -17,8 +17,9 @@ pub fn canonical_text(path: &str, text: &str) -> Result<String, FormatError> {
     fn again<T: Serialize + DeserializeOwned>(path: &str, text: &str) -> Result<String, FormatError> {
         to_canonical(path, &from_canonical::<T>(path, text)?)
     }
+    // As the mod reader: `<id>.ron` directly in the folder, `id` valid.
     let definition = |dir: &str| {
-        path.strip_prefix(dir).and_then(|r| r.strip_suffix(".ron")).is_some_and(|id| !id.contains('/'))
+        path.strip_prefix(dir).and_then(|r| r.strip_suffix(".ron")).is_some_and(crate::mods::valid_id)
     };
     match path {
         "mod.ron" => again::<crate::mods::ModFile>(path, text),
@@ -57,5 +58,10 @@ mod tests {
         assert!(e.to_string().contains("skin.ron"), "{e}");
         assert!(canonical_text("notes.txt", "hi").is_err());
         assert!(canonical_text("projectiles/a/b.ron", "()").is_err());
+        // Review C-4: as the mod reader, only a valid id's file is a definition.
+        for path in ["weapons/.ron", "weapons/.x.ron", "projectiles/Bad Id.ron"] {
+            let e = canonical_text(path, "()").unwrap_err();
+            assert!(e.to_string().contains("not an authoring file"), "{path}: {e}");
+        }
     }
 }
