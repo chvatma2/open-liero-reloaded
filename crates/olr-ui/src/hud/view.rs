@@ -50,15 +50,14 @@ pub struct WormHud {
     pub slots: Vec<SlotHud>,
     /// The slot in hand.
     pub current: usize,
-    /// While dead: what the player can do ("Jump to respawn"), or that it
-    /// is out of the game.
+    /// While dead: "Dead" (the worm respawns by itself), or that it is out
+    /// of the game.
     pub status: Option<String>,
 }
 
 impl WormHud {
-    /// Worm `i` of `world`, named from `names`; `can_respawn` says whether
-    /// a dead worm's player may press Jump (not in a replay).
-    pub fn of(world: &World, i: usize, names: &Names, can_respawn: bool) -> Option<WormHud> {
+    /// Worm `i` of `world`, named from `names`.
+    pub fn of(world: &World, i: usize, names: &Names) -> Option<WormHud> {
         let w = world.worms().get(i)?;
         let m = world.sim_mod();
         let slots = w
@@ -82,8 +81,6 @@ impl WormHud {
             None
         } else if w.lives == OUT {
             Some("Out of the game".to_string())
-        } else if can_respawn {
-            Some("Dead: Jump to respawn".to_string())
         } else {
             Some("Dead".to_string())
         };

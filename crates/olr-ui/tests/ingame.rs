@@ -524,7 +524,7 @@ fn hud_paints_at_every_scale() {
             suicides: 0,
             slots: vec![slot; MAX_SLOTS],
             current: 9,
-            status: Some("Dead: Jump to respawn".into()),
+            status: Some("Dead".into()),
         }),
         log: vec![LogLine::event("A killed B"); 80],
         time_left_ms: Some(9_000),

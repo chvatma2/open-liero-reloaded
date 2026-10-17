@@ -134,9 +134,7 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
     let local = s.local().map(i32::from);
     // The world read once, under an online peer's lock.
     let (mut worm, map, dots) = s.with_world(|world| {
-        let worm = usize::try_from(followed)
-            .ok()
-            .and_then(|i| WormHud::of(world, i, &s.names, local == Some(followed)));
+        let worm = usize::try_from(followed).ok().and_then(|i| WormHud::of(world, i, &s.names));
         let t = world.terrain();
         let map = vec2(t.width() as f32, t.height() as f32);
         let dots: Vec<Dot> = minimap
