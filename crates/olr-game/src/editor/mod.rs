@@ -136,13 +136,13 @@ impl EditorHost {
     /// directory's `packs/`, then opens it. A failure is a `Message` and
     /// opens nothing.
     pub fn open_from_menu(&mut self, c: &AppCommand) -> Vec<HostOut> {
-        match self.from_menu(c) {
+        match self.menu_command(c) {
             Ok(out) => out,
             Err(e) => vec![HostOut::Message(format!("{e:#}"))],
         }
     }
 
-    fn from_menu(&mut self, c: &AppCommand) -> anyhow::Result<Vec<HostOut>> {
+    fn menu_command(&mut self, c: &AppCommand) -> anyhow::Result<Vec<HostOut>> {
         let packs = self
             .packs_dir
             .clone()
