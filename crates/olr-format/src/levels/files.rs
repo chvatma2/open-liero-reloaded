@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{
     BACK_FILE, FRONT_FILE, LEVEL_FILE, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE,
-    MATERIAL_PALETTE, MAX_THUMB_BYTES, THUMB_FILE, check, check_header,
+    MATERIAL_PALETTE, MAX_THUMB_BYTES, THUMB_FILE, check, check_header, check_thumb,
 };
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, LEVEL_ART};
@@ -118,14 +118,17 @@ fn read_level_ron(src: &dyn ContentSource) -> Result<LevelFile, FormatError> {
     from_canonical(LEVEL_FILE, &read_text(src, LEVEL_FILE)?)
 }
 
-/// The thumbnail, tolerantly: absent, above [`MAX_THUMB_BYTES`] or not a
-/// decodable PNG all give `None`. The bytes are passed through.
+/// The thumbnail, tolerantly: absent, above [`MAX_THUMB_BYTES`] or
+/// `MAX_THUMB_SIDE` (by the PNG header) or not a decodable PNG all give
+/// `None`. The bytes are passed through.
 fn read_thumb(src: &dyn ContentSource) -> Option<Vec<u8>> {
     let path = VPath::new(THUMB_FILE).ok()?;
     if !src.exists(&path) {
         return None;
     }
     let bytes = src.read_max(&path, MAX_THUMB_BYTES).ok()?;
+    // The header says the size: a large image is never decoded.
+    check_thumb(&bytes).ok()?;
     image_io::decode_rgba_within(&bytes, IMAGES).ok()?;
     Some(bytes)
 }
@@ -190,6 +193,7 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::levels::MAX_THUMB_SIDE;
     use olr_vfs::MemFs;
 
     #[test]
@@ -219,6 +223,16 @@ mod tests {
         assert_eq!(read_level_files(&with_thumb(good.clone())).unwrap().thumb, Some(good));
         let big = vec![0u8; 2 << 20];
         assert_eq!(read_level_files(&with_thumb(big)).unwrap().thumb, None);
+        // A header past the side bound is refused without decoding (the
+        // body is not even valid PNG data).
+        let mut wide = image_io::encode_rgba(&olr_data::image::RgbaImage::new(4, 4));
+        wide[16..20].copy_from_slice(&(MAX_THUMB_SIDE + 1).to_be_bytes());
+        assert!(check_thumb(&wide).is_err());
+        assert_eq!(read_level_files(&with_thumb(wide)).unwrap().thumb, None);
+        // The writer refuses what the reader would leave out.
+        let mut src = crate::levels::tests::tiny(1);
+        src.thumb = Some(b"not a png".to_vec());
+        assert!(write_level_files(&mut MemFs::new(), &src).is_err());
         assert_eq!(read_level_files(&with_thumb(b"not a png".to_vec())).unwrap().thumb, None);
     }
 

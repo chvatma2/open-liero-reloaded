@@ -75,7 +75,7 @@ impl ThumbRef {
             return Ok(None);
         }
         let len = src.file_len(&path).map_err(|e| e.to_string())?;
-        if len > MAX_THUMB_BYTES as u64 {
+        if len > MAX_THUMB_BYTES {
             return Err(format!("{len} bytes, above {MAX_THUMB_BYTES}"));
         }
         let header = src.read_prefix(&path, 24).map_err(|e| e.to_string())?;
@@ -97,7 +97,7 @@ impl ThumbRef {
     pub fn load(&self) -> Result<RgbaImage, String> {
         let path = VPath::new(olr_pack::THUMB_FILE).map_err(|e| e.to_string())?;
         let bytes =
-            DirFs::new(&self.dir).read_max(&path, MAX_THUMB_BYTES as u64).map_err(|e| e.to_string())?;
+            DirFs::new(&self.dir).read_max(&path, MAX_THUMB_BYTES).map_err(|e| e.to_string())?;
         if olr_pack::image_io::png_size(&bytes) != Some((self.width, self.height)) {
             return Err(format!("no longer the {}x{} PNG listed", self.width, self.height));
         }

@@ -102,7 +102,7 @@ fn catalog_lists_mods_and_levels_without_loading_them() {
     let big = olr_pack::image_io::encode_rgba(&RgbaImage::new(MAX_THUMB_SIDE + 1, 2));
     write(&mut thumbed, olr_pack::THUMB_FILE, &big);
     assert!(thumb.load().unwrap_err().contains("no longer"));
-    write(&mut thumbed, olr_pack::THUMB_FILE, &vec![0u8; olr_content::MAX_THUMB_BYTES + 10]);
+    write(&mut thumbed, olr_pack::THUMB_FILE, &vec![0u8; olr_content::MAX_THUMB_BYTES as usize + 10]);
     assert!(thumb.load().is_err());
     std::fs::remove_file(root.join("lvl-thumb").join(olr_pack::THUMB_FILE)).unwrap();
     assert!(thumb.load().is_err());

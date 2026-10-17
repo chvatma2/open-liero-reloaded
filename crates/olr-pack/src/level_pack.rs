@@ -22,14 +22,7 @@ pub use olr_format::levels::THUMB_FILE;
 /// The size importers make thumbnails at: the level letterboxed into it.
 pub const THUMB_SIZE: (u32, u32) = (160, 96);
 
-/// The widest and tallest `thumb.png` read; a larger one is refused before
-/// it is decoded (a pack must not make the menus decode a huge image).
-pub const MAX_THUMB_SIDE: u32 = 512;
-
-/// The largest `thumb.png` read, in bytes. A 512 × 512 thumbnail that
-/// compresses badly may exceed it and be refused (not shown), which is
-/// harmless: importers write 160 × 96.
-pub const MAX_THUMB_BYTES: usize = 1 << 20;
+pub use olr_format::levels::{MAX_THUMB_BYTES, MAX_THUMB_SIDE};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LevelPack {
@@ -77,7 +70,7 @@ pub fn read_level_thumb(src: &dyn ContentSource) -> Result<Option<RgbaImage>, Pa
     if !src.exists(&path) {
         return Ok(None);
     }
-    decode_thumb(&src.read_max(&path, MAX_THUMB_BYTES as u64)?).map(Some)
+    decode_thumb(&src.read_max(&path, MAX_THUMB_BYTES)?).map(Some)
 }
 
 /// Decodes `thumb.png`'s bytes after checking their length and the size the
@@ -85,7 +78,7 @@ pub fn read_level_thumb(src: &dyn ContentSource) -> Result<Option<RgbaImage>, Pa
 /// unbounded image.
 pub fn decode_thumb(bytes: &[u8]) -> Result<RgbaImage, PackError> {
     let invalid = |message: String| PackError::invalid(THUMB_FILE, message);
-    if bytes.len() > MAX_THUMB_BYTES {
+    if bytes.len() as u64 > MAX_THUMB_BYTES {
         return Err(invalid(format!("{} bytes, above {MAX_THUMB_BYTES}", bytes.len())));
     }
     let (w, h) = png_size(bytes).ok_or_else(|| invalid("not a PNG".into()))?;
@@ -183,7 +176,7 @@ pub(crate) mod tests {
         pack.thumb = thumb;
         // Not a PNG, too large by its header or by its length: the level
         // still reads, the thumbnail does not.
-        let huge = vec![0u8; MAX_THUMB_BYTES + 1];
+        let huge = vec![0u8; MAX_THUMB_BYTES as usize + 1];
         for bad in [b"not a png".to_vec(), encode_rgba(&RgbaImage::new(MAX_THUMB_SIDE + 1, 1)), huge.clone()]
         {
             let fs = fs.clone().with(THUMB_FILE, bad.clone());

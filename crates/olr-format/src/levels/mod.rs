@@ -28,9 +28,14 @@ pub(crate) const FRONT_FILE: &str = "front.png";
 pub(crate) const BACK_FILE: &str = "back.png";
 /// The thumbnail's file name; `olr-pack` re-exports it.
 pub const THUMB_FILE: &str = "thumb.png";
-/// The largest `thumb.png` read, in bytes. A larger or undecodable one is
-/// left out, never an error (presentation only).
+/// The largest `thumb.png` read, in bytes. The reader leaves a larger or
+/// undecodable one out (presentation only); the writer refuses it.
+/// `olr-pack` re-exports it.
 pub const MAX_THUMB_BYTES: u64 = 1 << 20;
+/// The widest and tallest `thumb.png` read, checked on the PNG header
+/// before any decoding (a pack must not make the menus decode a huge
+/// image). `olr-pack` re-exports it.
+pub const MAX_THUMB_SIDE: u32 = 512;
 
 /// What `level.ron` alone says, read without touching any image.
 #[derive(Clone, Debug, PartialEq)]
@@ -119,6 +124,19 @@ pub(crate) fn check_header(
     Ok((aw, ah))
 }
 
+/// Whether `thumb.png`'s bytes are within [`MAX_THUMB_BYTES`] and
+/// [`MAX_THUMB_SIDE`], from the PNG header alone (nothing is decoded).
+pub(crate) fn check_thumb(bytes: &[u8]) -> Result<(), String> {
+    if bytes.len() as u64 > MAX_THUMB_BYTES {
+        return Err(format!("{} bytes, above {MAX_THUMB_BYTES}", bytes.len()));
+    }
+    let (w, h) = crate::image_io::png_size(bytes).ok_or("not a PNG")?;
+    if w == 0 || h == 0 || w > MAX_THUMB_SIDE || h > MAX_THUMB_SIDE {
+        return Err(format!("{w}x{h}, not within 1x1 to {MAX_THUMB_SIDE}x{MAX_THUMB_SIDE}"));
+    }
+    Ok(())
+}
+
 /// The checks `compile_level` and the writer share.
 pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
     let (aw, ah) = check_header(src.size, src.art_scale, src.objects.len())?;
@@ -130,6 +148,9 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
             "material",
             format!("{} cells, the level needs {cells} ({w}x{h})", src.material.len()),
         ));
+    }
+    if let Some(t) = &src.thumb {
+        check_thumb(t).map_err(|m| FormatError::invalid(THUMB_FILE, "", m))?;
     }
     for (file, img) in [(FRONT_FILE, &src.front), (BACK_FILE, &src.back)] {
         if (img.width(), img.height()) != (aw, ah) {
