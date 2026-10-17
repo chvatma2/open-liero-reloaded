@@ -15,6 +15,8 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 - Skins are no longer downloaded. A player whose skin you don't have, or
   whose skin differs from yours, appears with the default skin. The
   network protocol version is 3: 0.1 clients cannot join 0.2 games.
+- Replays record each worm's name, colour and skin, so a replay shows the
+  players apart. Replay format 4: older replays no longer open.
 - Worms facing left are drawn as the exact mirror of facing right, without
   OLX's one-pixel offset.
 

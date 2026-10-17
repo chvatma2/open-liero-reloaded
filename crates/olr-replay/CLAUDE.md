@@ -13,7 +13,12 @@ ticks and at the end.
 - **What a replay holds** (`lib.rs`): `ReplaySetup` (the `MatchSetup`'s
   settings, start, seed, worms, pool size, bonus weapons and the `viewer`,
   the slot of the player whose game made it, `Recorder::set_viewer`, none
-  for bots alone or a spectator, a slot that is no worm refused by decode; its mod,
+  for bots alone or a spectator, a slot that is no worm refused by decode;
+  `looks`, one `WormLook` (name, colour, skin pack id and content hash) per
+  worm, `looks.rs`: presentation only, never in `MatchSetup`, the world or
+  its checksums; `Recorder::new(.., looks)` and `set_looks` fit them to the
+  worms (extra dropped, missing `WormLook::numbered`) and sanitise them;
+  every recorder passes the looks it shows; its mod,
   terrain, holes and green mask are named by `Packs`, ids and content
   hashes, never stored; the setup calls), `ModeSpec` (`Oracle` or
   `Deathmatch(DeathmatchSettings)`; `ModeSpec::game_mode(&settings)` makes
@@ -52,13 +57,21 @@ ticks and at the end.
 - **Withdrawals in play:** `Cursor::step` withdraws every `(t, worm)` with
   `t` the tick about to be played, in order, before `World::tick`; those
   with `t == ticks` after the last tick, before its checksum is checked.
-- **Format** (`wire.rs`, `mirror.rs`): `OLRP`, `FORMAT_VERSION` (u16 LE; 3 since
-  withdrawals),
+- **Format** (`wire.rs`, `mirror.rs`): `OLRP`, `FORMAT_VERSION` (u16 LE; 4 since the
+  looks, 3 withdrawals),
   then postcard; keys by worm, deflated. Other versions are refused, never
   migrated, while no replay is published. The format has its own copies of
   `SimSettings`, `WormSetup`, `Loadout`, `Slot` and `DeathmatchSettings`,
   converted by naming every field: a new field there does not compile until
   it is recorded and `FORMAT_VERSION` is bumped.
+- **Looks on decode:** the count must equal the worms' (`Invalid`); a name
+  goes through `sanitise_name` (no control, hidden or bidi character,
+  trimmed, `MAX_NAME_CHARS` 20, "Worm N" when empty: olr-proto's
+  `valid_name` rules, which this layer cannot call; olr-online's test
+  `a_sanitised_name_is_a_valid_lobby_name` keeps them equal); a skin id
+  must be a pack id (`[a-z0-9-]`, at most `MAX_SKIN_ID` 64) and its hash 64
+  lowercase hex, else `Invalid`. A viewer picks skins with
+  `Content::skin_matching(id, hash)`: never downloaded.
 - **Never panic on a replay:** `decode` checks every bound (`MAX_TICKS`,
   `MAX_WORMS`, `MAX_SLOTS`, `MAX_SETUP_CALLS`, ordered checksums,
   withdrawals (at most `MAX_WORMS`, `t` ascending and at most `ticks`, worm
