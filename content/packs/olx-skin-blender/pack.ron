@@ -1,5 +1,5 @@
 (
-    format_version: 4,
+    format_version: 5,
     id: "olx-skin-blender",
     name: "blender",
     version: "1",

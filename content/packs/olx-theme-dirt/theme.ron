@@ -3,4 +3,5 @@
     holes: 5,
     stones: 8,
     misc: 8,
+    green_ball: true,
 )

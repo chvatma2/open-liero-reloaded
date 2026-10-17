@@ -1,5 +1,5 @@
 (
-    format_version: 4,
+    format_version: 5,
     id: "olx-level-liero-factory",
     name: "Liero Factory",
     version: "1",
