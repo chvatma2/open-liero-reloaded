@@ -42,7 +42,7 @@ pub fn write_mod(sink: &mut dyn ContentSink, pack: &ModPack) -> Result<(), PackE
 }
 
 /// True for the files `olr-format` owns (everything else is an asset).
-fn is_definition(path: &str) -> bool {
+pub(crate) fn is_definition(path: &str) -> bool {
     path == MANIFEST
         || path == MOD_FILE
         || path == RESTRICTIONS_FILE

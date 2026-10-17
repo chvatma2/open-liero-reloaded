@@ -5,11 +5,21 @@ use std::fmt;
 
 use olr_data::manifest::PackKind;
 use olr_format::FormatError;
-use olr_vfs::{ContentSource, VPath};
+use olr_vfs::{ContentSource, MemFs, VPath, walk};
 
+use crate::level_pack::LEVEL_FILE;
+use crate::mod_pack::is_definition;
 use crate::{
-    ModPack, PackError, THUMB_FILE, read_core, read_level, read_manifest, read_mod, read_skin, read_theme,
+    LevelPack, MANIFEST, ModPack, PackError, THUMB_FILE, read_core, read_level, read_manifest, read_mod,
+    read_skin, read_theme,
 };
+
+/// A mod's asset directories: a file elsewhere that nothing names is not
+/// read by the format (a file in them is an unused asset).
+const MOD_ASSET_DIRS: [&str; 2] = ["gfx/", "sfx/"];
+
+/// The warning for a file the pack's format does not read.
+const NOT_READ: &str = "not read by the format";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
@@ -103,26 +113,80 @@ pub fn validate(src: &dyn ContentSource) -> Vec<Diagnostic> {
     }
     let result = match manifest.kind {
         PackKind::Mod => read_mod(src).map(|p| out.extend(check_mod(&p))),
-        PackKind::Level => read_level(src).map(|_| {
+        PackKind::Level => read_level(src).map(|p| {
             // Presentation only: the level plays without it.
             if let Err(e) = crate::read_level_thumb(src) {
                 out.push(Diagnostic::new(Severity::Warning, THUMB_FILE, format!("{e}: not shown")));
             }
+            out.extend(check_level(&p));
         }),
         PackKind::Skin => read_skin(src).map(|_| ()),
         PackKind::Theme => read_theme(src).map(|_| ()),
         PackKind::Core => read_core(src).map(|_| ()),
     };
-    if let Err(e) = result {
-        out.push(Diagnostic::from_error(&e));
+    match result {
+        Ok(()) => out.extend(unread(src, manifest.kind)),
+        Err(e) => out.push(Diagnostic::from_error(&e)),
     }
     out.sort_by_key(|d| d.severity);
     out
 }
 
+/// A warning for each file of a pack that reads cleanly which its format
+/// does not read, by path: the format's files are those its `olr-format`
+/// writer produces from the source read, plus `pack.ron` and a level's
+/// `thumb.png`. A mod's other files are assets, which `check_mod` covers.
+fn unread(src: &dyn ContentSource, kind: PackKind) -> Vec<Diagnostic> {
+    use olr_format::{core_pack, levels, mods, skins, themes};
+    let mut owned = MemFs::new();
+    let written = match kind {
+        PackKind::Mod => mods::read_mod_files(src).and_then(|s| mods::write_mod_files(&mut owned, &s)),
+        PackKind::Level => levels::read_level_files_without_thumb(src)
+            .and_then(|s| levels::write_level_files(&mut owned, &s)),
+        PackKind::Skin => skins::read_skin_files(src).and_then(|s| skins::write_skin_files(&mut owned, &s)),
+        PackKind::Theme => {
+            themes::read_theme_files(src).and_then(|s| themes::write_theme_files(&mut owned, &s))
+        }
+        PackKind::Core => {
+            core_pack::read_core_files(src).and_then(|s| core_pack::write_core_files(&mut owned, &s))
+        }
+    };
+    // The reader above already accepted the pack; nothing to add if not.
+    let (Ok(()), Ok(paths)) = (written, walk(src, &VPath::root())) else { return Vec::new() };
+    let owned: BTreeSet<&str> = owned.files().map(|(p, _)| p.as_str()).collect();
+    paths
+        .iter()
+        .map(VPath::as_str)
+        .filter(|p| *p != MANIFEST && !owned.contains(p))
+        .filter(|p| !(kind == PackKind::Level && *p == THUMB_FILE))
+        .filter(|p| !(kind == PackKind::Mod && !is_definition(p)))
+        .map(|p| Diagnostic::new(Severity::Warning, p, NOT_READ))
+        .collect()
+}
+
+/// Objects outside the level (warnings): the runtime places worms itself.
+fn check_level(pack: &LevelPack) -> Vec<Diagnostic> {
+    let def = &pack.level.def;
+    let (w, h) = (def.width, def.height);
+    let inside = |v: i32, side: u32| u32::try_from(v).is_ok_and(|v| v < side);
+    def.spawns
+        .iter()
+        .enumerate()
+        .filter(|(_, s)| !(inside(s.x, w) && inside(s.y, h)))
+        .map(|(i, s)| {
+            Diagnostic::new(
+                Severity::Warning,
+                LEVEL_FILE,
+                format!("objects[{i}]: spawn at ({}, {}) is outside the level ({w}×{h})", s.x, s.y),
+            )
+        })
+        .collect()
+}
+
 /// What the readers cannot see, on the compiled mod: assets the definitions
-/// name but the pack lacks (error), assets nothing names (warning), and
-/// shared projectiles (`projectiles/<name>.ron`) nothing spawns (warning).
+/// name but the pack lacks (error), assets nothing names (warning; outside
+/// [`MOD_ASSET_DIRS`] a file not read by the format), and shared
+/// projectiles (`projectiles/<name>.ron`) nothing spawns (warning).
 /// `read_mod` has already refused duplicate weapons, unknown projectile
 /// names and spawn cycles.
 fn check_mod(pack: &ModPack) -> Vec<Diagnostic> {
@@ -153,7 +217,12 @@ fn check_mod(pack: &ModPack) -> Vec<Diagnostic> {
     }
     for path in pack.assets.keys() {
         if !used_assets.contains(path.as_str()) {
-            out.push(Diagnostic::new(Warning, path.as_str(), "asset is never used"));
+            let asset = MOD_ASSET_DIRS.iter().any(|d| path.as_str().starts_with(d));
+            out.push(Diagnostic::new(
+                Warning,
+                path.as_str(),
+                if asset { "asset is never used" } else { NOT_READ },
+            ));
         }
     }
     out
@@ -283,6 +352,67 @@ mod tests {
         let d = validate(&fs);
         assert_eq!(d.len(), 1);
         assert_eq!((d[0].file.as_deref(), d[0].line), (Some("mod.ron"), Some(2)));
+    }
+
+    fn tiny_level_pack() -> MemFs {
+        let mut fs = MemFs::new();
+        write_level(&mut fs, &sample_level()).unwrap();
+        fs
+    }
+
+    /// An 8×8 level with one spawn at `at`.
+    fn level_with_spawn(at: (i32, i32)) -> MemFs {
+        let mut pack = sample_level();
+        let level = &mut pack.level;
+        level.def.width = 8;
+        level.def.height = 8;
+        level.def.art_scale = 1;
+        level.def.spawns = vec![olr_data::level::SpawnPoint { x: at.0, y: at.1 }];
+        level.material =
+            olr_data::level::MaterialGrid::from_cells(8, 8, vec![olr_data::level::Material::Dirt; 64])
+                .unwrap();
+        level.front = olr_data::image::RgbaImage::new(8, 8);
+        level.back = olr_data::image::RgbaImage::new(8, 8);
+        let mut fs = MemFs::new();
+        write_level(&mut fs, &pack).unwrap();
+        fs
+    }
+
+    #[test]
+    fn warns_about_files_the_format_does_not_read() {
+        let mut fs = tiny_level_pack();
+        fs = fs.with("level.ron~", "backup").with("art/.DS_Store", "x");
+        let d = validate(&fs);
+        let warned: Vec<_> =
+            d.iter().filter(|d| d.severity == Severity::Warning).map(|d| d.file.clone().unwrap()).collect();
+        assert_eq!(warned, ["art/.DS_Store", "level.ron~"]);
+        assert!(d.iter().all(|d| d.severity == Severity::Warning));
+        assert_eq!(d[1].to_string(), "warning: level.ron~: not read by the format");
+    }
+
+    #[test]
+    fn a_mod_warns_once_about_a_file_outside_its_asset_directories() {
+        let d: Vec<String> = validate(&written(&sample_mod()).with("README.txt", "hi"))
+            .iter()
+            .map(|d| d.to_string())
+            .collect();
+        assert_eq!(d, ["warning: README.txt: not read by the format"]);
+    }
+
+    #[test]
+    fn warns_about_a_spawn_outside_the_level() {
+        assert_eq!(validate(&level_with_spawn((7, 7))), vec![]);
+        let d = validate(&level_with_spawn((8, 3)));
+        assert!(
+            d.iter().any(|d| d.severity == Severity::Warning
+                && d.message.contains("objects[0]")
+                && d.message.contains("outside the level")),
+            "{d:?}"
+        );
+        assert_eq!(
+            d[0].to_string(),
+            "warning: level.ron: objects[0]: spawn at (8, 3) is outside the level (8×8)"
+        );
     }
 
     #[test]
