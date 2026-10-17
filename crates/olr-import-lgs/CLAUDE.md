@@ -9,6 +9,9 @@ Imports OLX `script.lgs` gamescript **version 7** mods into `ModPack`s.
 - **Asset lookup is OLX's:** `<mod>/gfx/` then `data/gfx/`; `<mod>/sfx/` then
   `data/sounds/`, case-insensitive, and sounds also try `.ogg`. A missing sound
   is dropped with a warning (OLX does the same); a missing image is an error.
+- **Mod images are keyed once, here** (`keyed_image`): a `gfx/` file is decoded, OLX's
+  colour key (`olx_sprite_to_alpha`) made transparent and written as an alpha PNG; nothing
+  keys at load. A file that does not decode is kept as it is, with a warning.
 - **Portable pack names** (plan 11 review C1): a weapon id that is a
   Windows device name gets `-2` (`con-2`), and an asset whose OLX file name
   is not portable (`olr_vfs::non_portable`) is not taken (a warning; a

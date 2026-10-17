@@ -33,7 +33,7 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   olr-fx's play pool), so frames do not allocate
   (`tests/no_alloc.rs`).
 - **`SceneAssets`** (`assets.rs`): core sprites and mod projectile images
-  (OLX's magenta keyed to transparent at load), and per worm a colorized
+  (already alpha: the importers key OLX's magenta once, nothing keys at load), and per worm a colorized
   skin (`add_worm`: `olr_content::LoadedSkin::colorized`; `skin_frame` cuts
   with `olr_content::skin_source`, as the profiles' preview does). Unknown ids and missing images never panic.
 - **Interpolation** (`snapshot.rs`, Review Focus 1): `Interpolation::Linear`

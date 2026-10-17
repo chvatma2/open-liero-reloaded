@@ -1,23 +1,22 @@
-//! Mod packs: `mod.ron`, `weapons/<id>.ron`, `projectiles/<name>.ron`, the
-//! weapon restriction presets (`restrictions.ron`, when the mod has any) and
-//! the asset files (`gfx/`, `sfx/`) the definitions reference.
+//! Mod packs (format 5, over `olr-format`): `mod.ron`, `weapons/<id>.ron`,
+//! `projectiles/<id>.ron` (shared projectiles), the weapon restriction
+//! presets (`restrictions.ron`, when the mod has any) and the asset files
+//! (`gfx/`, `sfx/`) the definitions reference. `gfx/*.png` are alpha
+//! images: the importer keys them once, nothing keys at load.
 
 use std::collections::BTreeMap;
 
 use olr_data::manifest::{PackKind, PackManifest};
-use olr_data::mod_def::{ModDef, ProjectileDef, RopeParams, WeaponDef, WormParams};
+use olr_data::mod_def::ModDef;
+use olr_format::mods::{compile_mod, lift_mod, read_mod_files, write_mod_files};
 use olr_vfs::{ContentSink, ContentSource, VPath, walk};
-use serde::{Deserialize, Serialize};
 
-use crate::ron_io::{read_ron, write_ron};
 use crate::{MANIFEST, PackError, read_manifest, write_manifest};
 
 pub const MOD_FILE: &str = "mod.ron";
 /// The mod's weapon restriction presets ([`ModDef::restrictions`]), written
 /// only when it has any; a pack without it has none.
-pub const RESTRICTIONS_FILE: &str = "restrictions.ron";
-const WEAPONS_DIR: &str = "weapons";
-const PROJECTILES_DIR: &str = "projectiles";
+pub const RESTRICTIONS_FILE: &str = olr_format::mods::RESTRICTIONS_FILE;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct ModPack {
@@ -27,53 +26,28 @@ pub struct ModPack {
     pub assets: BTreeMap<VPath, Vec<u8>>,
 }
 
-/// On-disk form of `mod.ron`: everything but the weapon and projectile bodies.
-#[derive(Serialize, Deserialize)]
-struct ModFile {
-    name: String,
-    worm: WormParams,
-    rope: RopeParams,
-    /// Weapon ids in order; each is a file `weapons/<id>.ron`.
-    weapons: Vec<String>,
-}
-
-fn check_name(file: &str, kind: &str, name: &str) -> Result<(), PackError> {
-    let ok = !name.is_empty()
-        && name
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-' || b == b'.' || b == b'_')
-        && !name.starts_with('.');
-    if ok { Ok(()) } else { Err(PackError::invalid(file, format!("invalid {kind} name {name:?}"))) }
-}
-
+/// Writes the pack in format 5 (`olr-format`'s mod files); the assets are
+/// written as they are.
 pub fn write_mod(sink: &mut dyn ContentSink, pack: &ModPack) -> Result<(), PackError> {
     if pack.manifest.kind != PackKind::Mod {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Mod"));
     }
+    let src = lift_mod(&pack.def).map_err(|e| PackError::invalid(MOD_FILE, e.to_string()))?;
     write_manifest(sink, &pack.manifest)?;
-    let def = &pack.def;
-    let file = ModFile {
-        name: def.name.clone(),
-        worm: def.worm,
-        rope: def.rope,
-        weapons: def.weapons.iter().map(|w| w.id.clone()).collect(),
-    };
-    write_ron(sink, MOD_FILE, &file)?;
-    if !def.restrictions.is_empty() {
-        write_ron(sink, RESTRICTIONS_FILE, &def.restrictions)?;
-    }
-    for w in &def.weapons {
-        check_name(MOD_FILE, "weapon", &w.id)?;
-        write_ron(sink, &format!("{WEAPONS_DIR}/{}.ron", w.id), w)?;
-    }
-    for (name, p) in &def.projectiles {
-        check_name(MOD_FILE, "projectile", name)?;
-        write_ron(sink, &format!("{PROJECTILES_DIR}/{name}.ron"), p)?;
-    }
+    write_mod_files(sink, &src)?;
     for (path, data) in &pack.assets {
         sink.write(path, data)?;
     }
     Ok(())
+}
+
+/// True for the files `olr-format` owns (everything else is an asset).
+fn is_definition(path: &str) -> bool {
+    path == MANIFEST
+        || path == MOD_FILE
+        || path == RESTRICTIONS_FILE
+        || path.starts_with("weapons/")
+        || path.starts_with("projectiles/")
 }
 
 pub fn read_mod(src: &dyn ContentSource) -> Result<ModPack, PackError> {
@@ -81,39 +55,13 @@ pub fn read_mod(src: &dyn ContentSource) -> Result<ModPack, PackError> {
     if manifest.kind != PackKind::Mod {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Mod"));
     }
-    let file: ModFile = read_ron(src, MOD_FILE)?;
-    let mut weapons = Vec::with_capacity(file.weapons.len());
-    for id in &file.weapons {
-        check_name(MOD_FILE, "weapon", id)?;
-        let mut w: WeaponDef = read_ron(src, &format!("{WEAPONS_DIR}/{id}.ron"))?;
-        w.id = id.clone();
-        weapons.push(w);
-    }
-    let mut projectiles = BTreeMap::new();
+    let def = compile_mod(&read_mod_files(src)?)?;
     let mut assets = BTreeMap::new();
-    let mut restrictions = BTreeMap::new();
     for path in walk(src, &VPath::root())? {
-        let s = path.as_str();
-        if s == MANIFEST || s == MOD_FILE || s.starts_with("weapons/") {
-            continue;
-        }
-        if s == RESTRICTIONS_FILE {
-            restrictions = read_ron(src, s)?;
-            continue;
-        }
-        if let Some(rest) = s.strip_prefix("projectiles/") {
-            let name = rest
-                .strip_suffix(".ron")
-                .ok_or_else(|| PackError::invalid(s, "projectile files must end in .ron"))?;
-            check_name(s, "projectile", name)?;
-            let p: ProjectileDef = read_ron(src, s)?;
-            projectiles.insert(name.to_string(), p);
-        } else {
+        if !is_definition(path.as_str()) {
             assets.insert(path.clone(), crate::ron_io::read_file(src, &path)?);
         }
     }
-    let def =
-        ModDef { name: file.name, worm: file.worm, rope: file.rope, weapons, projectiles, restrictions };
     Ok(ModPack { manifest, def, assets })
 }
 
@@ -125,10 +73,14 @@ pub fn read_preset_names(src: &dyn ContentSource) -> Result<Vec<String>, PackErr
     if manifest.kind != PackKind::Mod {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Mod"));
     }
-    if !src.exists(&VPath::new(RESTRICTIONS_FILE)?) {
+    let path = VPath::new(RESTRICTIONS_FILE)?;
+    if !src.exists(&path) {
         return Ok(Vec::new());
     }
-    let presets: BTreeMap<String, olr_data::restrictions::Preset> = read_ron(src, RESTRICTIONS_FILE)?;
+    let text = String::from_utf8(src.read_max(&path, olr_format::ron_io::MAX_RON_BYTES)?)
+        .map_err(|_| PackError::invalid(RESTRICTIONS_FILE, "not UTF-8"))?;
+    let presets: BTreeMap<String, olr_data::restrictions::Preset> =
+        olr_format::ron_io::from_canonical(RESTRICTIONS_FILE, &text)?;
     Ok(presets.into_keys().collect())
 }
 
@@ -256,8 +208,6 @@ pub(crate) mod tests {
                 "gfx/missile.png",
                 "mod.ron",
                 "pack.ron",
-                "projectiles/bits.ron",
-                "projectiles/rocket.ron",
                 "restrictions.ron",
                 "sfx/boom.ogg",
                 "weapons/rocket.ron"
@@ -309,7 +259,7 @@ pub(crate) mod tests {
         write_mod(&mut fs, &sample_mod()).unwrap();
         let fs = fs.with("weapons/rocket.ron", "(\n  name: 5,\n)");
         match read_mod(&fs).unwrap_err() {
-            PackError::Ron { file, line, .. } => {
+            PackError::Format(olr_format::FormatError::Parse { file, line, .. }) => {
                 assert_eq!(file, "weapons/rocket.ron");
                 assert_eq!(line, 2);
             }

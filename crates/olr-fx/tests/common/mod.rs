@@ -98,13 +98,13 @@ impl Images {
 }
 
 /// A gib sheet whose every pixel is traceable: `(100 + x, 50 + 10 * y, 30)`,
-/// with a magenta key and a gun grey in the first column of each row.
+/// with a keyed (transparent) pixel and a gun grey in the first column of each row.
 pub fn giblets() -> RgbaImage {
     let mut img = RgbaImage::new(32, 12);
     for y in 0..12 {
         for x in 0..32 {
             let c = match x {
-                0 => Rgba::MAGENTA,
+                0 => Rgba::TRANSPARENT,
                 1 => Rgba::rgb(180, 180, 180),
                 _ => Rgba::rgb(100 + x as u8, 50 + 10 * y as u8, 30),
             };

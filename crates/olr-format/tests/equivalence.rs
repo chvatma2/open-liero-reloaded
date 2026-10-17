@@ -1,13 +1,13 @@
-//! The bundled OLX mods, read by today's `olr-pack`, lifted, written as
-//! authoring files, read back and compiled, give the import back exactly,
-//! and the same `SimMod` (spec §6).
+//! The bundled OLX mods are format 5: read as authoring files and written
+//! again they give the committed bytes, and they compile to the same
+//! `ModDef` and `SimMod` the runtime reads (spec §6).
 
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use olr_data::mod_def::ModDef;
 use olr_format::mods::{compile_mod, lift_mod, read_mod_files, write_mod_files};
-use olr_vfs::{DirFs, MemFs};
+use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
 
 const MODS: [&str; 2] = ["olx-classic", "olx-mw-1-0"];
 
@@ -46,37 +46,68 @@ fn assert_same(id: &str, got: &ModDef, want: &ModDef) {
     }
 }
 
+/// Every file of the pack that `olr-format` owns (all but `pack.ron` and
+/// the assets), as `(path, bytes)`.
+fn definition_files(root: &Path) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for e in std::fs::read_dir(&dir).unwrap() {
+            let path = e.unwrap().path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            let rel = path.strip_prefix(root).unwrap().to_string_lossy().replace('\\', "/");
+            let owned = rel == "mod.ron"
+                || rel == "restrictions.ron"
+                || rel.starts_with("weapons/")
+                || rel.starts_with("projectiles/");
+            if owned {
+                out.push((rel, std::fs::read(&path).unwrap()));
+            }
+        }
+    }
+    out.sort();
+    out
+}
+
+/// The committed mods are format 5: read as files and written again they
+/// give the same bytes, and they compile to the `ModDef` and `SimMod` the
+/// runtime reads (spec §6).
 #[test]
-fn bundled_mods_survive_lift_write_read_and_compile() {
+fn bundled_mods_are_canonical_format_5() {
     let Some(root) = content() else {
         eprintln!("skip: OLR_CONTENT_DIR is not a directory");
         return;
     };
     for id in MODS {
-        let pack = olr_pack::read_mod(&DirFs::new(root.join(id))).unwrap();
-        let src = lift_mod(&pack.def).unwrap_or_else(|e| panic!("{id}: {e}"));
+        let dir = DirFs::new(root.join(id));
+        let src = read_mod_files(&dir).unwrap_or_else(|e| panic!("{id}: {e}"));
         let mut fs = MemFs::new();
         write_mod_files(&mut fs, &src).unwrap();
-        let back = read_mod_files(&fs).unwrap_or_else(|e| panic!("{id}: {e}"));
-        assert_eq!(back, src, "{id}: read differs from what was written");
-        let def = compile_mod(&back).unwrap_or_else(|e| panic!("{id}: {e}"));
+        // The same bytes: the committed files are what the writer writes.
+        let committed = definition_files(&root.join(id));
+        let written: Vec<String> =
+            fs.files().map(|(p, _)| p.to_string()).filter(|p| p != "pack.ron").collect();
+        assert_eq!(written, committed.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>(), "{id}: files");
+        for (name, bytes) in &committed {
+            let again = fs.read(&VPath::new(name).unwrap()).unwrap();
+            assert!(again == *bytes, "{id}/{name}: written bytes differ from the committed file");
+        }
+        let pack = olr_pack::read_mod(&dir).unwrap();
+        let def = compile_mod(&src).unwrap_or_else(|e| panic!("{id}: {e}"));
         assert_same(id, &def, &pack.def);
+        assert_eq!(lift_mod(&def).unwrap(), src, "{id}: lift(compile(read)) is what was read");
         // `==` on floats cannot see a lost -0.0 or a changed NaN payload; the
         // RON text of both can.
-        assert_eq!(
-            ron::ser::to_string(&def).unwrap(),
-            ron::ser::to_string(&pack.def).unwrap(),
-            "{id}: ModDef text"
-        );
+        assert_eq!(ron::ser::to_string(&def).unwrap(), ron::ser::to_string(&pack.def).unwrap());
         let f = frames(&pack);
         assert_eq!(
             olr_sim::SimMod::compile(&def, &f).unwrap(),
             olr_sim::SimMod::compile(&pack.def, &f).unwrap(),
             "{id}: SimMod"
         );
-        let mut again = MemFs::new();
-        write_mod_files(&mut again, &back).unwrap();
-        assert_eq!(again, fs, "{id}: writing what was read changed bytes");
     }
 }
 
@@ -95,16 +126,14 @@ fn canonical_files_of_the_bundled_mods() {
         ("olx-mw-1-0", &["mod.ron", "weapons/rocket-launcher.ron", "weapons/floating-bomber.ron"][..]),
     ];
     for (id, files) in picks {
-        let pack = olr_pack::read_mod(&DirFs::new(root.join(id))).unwrap();
-        let mut fs = MemFs::new();
-        write_mod_files(&mut fs, &lift_mod(&pack.def).unwrap()).unwrap();
         for f in files {
-            let Some((_, bytes)) = fs.files().find(|(p, _)| p.as_str() == *f) else {
+            let path = root.join(id).join(f);
+            let Ok(bytes) = std::fs::read(&path) else {
                 panic!("{id}: no {f}; pick another weapon that exists in the pack");
             };
             insta::assert_snapshot!(
                 format!("{id}__{}", f.replace('/', "__")),
-                String::from_utf8_lossy(bytes)
+                String::from_utf8_lossy(&bytes)
             );
         }
     }

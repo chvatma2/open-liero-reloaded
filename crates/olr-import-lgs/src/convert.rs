@@ -147,6 +147,23 @@ impl Converter<'_> {
         Ok(found)
     }
 
+    /// An image as the pack holds it: colour-keyed once, here (OLX's magenta
+    /// or `(254,0,254)` key becomes transparent, `olx_sprite_to_alpha`), and
+    /// written as an alpha PNG; nothing keys at load. A file that does not
+    /// decode is kept as it is, with a warning (the loader shows a
+    /// placeholder, as OLX does for an image it cannot load).
+    ///
+    /// OLX: src/client/GfxPrimitives.cpp:116-150
+    fn keyed_image(&mut self, found: &VPath, bytes: Vec<u8>) -> Vec<u8> {
+        match olr_pack::image_io::decode_rgba(&bytes) {
+            Ok(img) => olr_pack::image_io::encode_rgba(&olr_pack::image_io::olx_sprite_to_alpha(&img)),
+            Err(e) => {
+                self.warnings.push(format!("{found}: not an image ({e}); kept as it is"));
+                bytes
+            }
+        }
+    }
+
     /// Finds an OLX asset, copies it into the pack, and returns its pack path.
     fn asset(&mut self, kind: AssetKind, name: &str) -> Result<Option<String>, LgsError> {
         let Ok(rel) = VPath::from_olx(name) else {
@@ -183,7 +200,12 @@ impl Converter<'_> {
             Some(prev) if *prev != found => return Err(LgsError::AssetConflict(pack_path.to_string())),
             Some(_) => {}
             None => {
-                self.assets.insert(pack_path.clone(), self.olx.read(&found)?);
+                let bytes = self.olx.read(&found)?;
+                let bytes = match kind {
+                    AssetKind::Image => self.keyed_image(&found, bytes),
+                    AssetKind::Sound => bytes,
+                };
+                self.assets.insert(pack_path.clone(), bytes);
                 self.sources.insert(pack_path.clone(), found);
             }
         }

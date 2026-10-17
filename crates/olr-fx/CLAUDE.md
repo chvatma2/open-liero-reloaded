@@ -38,7 +38,8 @@ is `docs/porting/olx-notes/presentation.md` §7 (and §2.2 for stains).
   worm's colorized gibs (`CWorm::ColorizeImage`, floats) in any `Atlas`
   (`SceneAssets` in the game), sharing the atlas's white pixel
   (`Atlas::white`); `default_dirt_colour` is the theme's `iDefaultColour`.
-  Sprites are keyed with OLX's corner rule (`RgbaImage::key_transparent`).
+  Sprites arrive keyed: the importers apply OLX's corner rule once
+  (`image_io::olx_sprite_to_alpha`), nothing keys at load (plan 13c).
 - **Registration before upload.** `FxAssets::add_worm` keeps its own list
   parallel to `SceneAssets::add_worm` (same order: the worm's index in
   `World::worms`). Register every worm in both, then call

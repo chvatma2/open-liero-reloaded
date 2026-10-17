@@ -78,8 +78,9 @@ Plan 13b: levels, themes, skins and the core pack.
   importer keys the old sprites once (`image_io::olx_sprite_to_alpha`) before
   lifting. `read_core_files_tolerant` leaves out a bad sprite or missing sound
   with its error, and drops the giblets pair together. `compile_core` checks that the grid divides
-  the image; the drawing code keeps its own constants. tests/core_pack.rs keys the old sprites before lifting and also
-  checks that the bundled mods' gfx key to alpha without change.
+  the image; the drawing code keeps its own constants. tests/core_pack.rs checks the committed
+  core pack is canonical (written again, the same bytes) and that the bundled mods' gfx
+  are the PNGs the importer writes; nothing keys at load (plan 13c Task 8).
 - **Levels** (`levels/`): `LevelSource` is `level.ron` (name, notes, `size`
   in world pixels, `art_scale`, theme id, `objects`), `material.png` (an
   indexed grid, `MATERIAL_PALETTE`: rock grey, background black, dirt brown,

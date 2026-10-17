@@ -88,7 +88,8 @@ pub fn import_core(
         if let Some(stem) = name.strip_suffix(".png") {
             match decode(olx, &path) {
                 Ok(img) if !sprites.contains_key(stem) => {
-                    sprites.insert(stem.to_string(), img);
+                    // Keyed once, here: the pack holds alpha, nothing keys at load.
+                    sprites.insert(stem.to_string(), olr_pack::image_io::olx_sprite_to_alpha(&img));
                 }
                 Ok(_) => warnings.push(format!("{path}: a second sprite {stem:?}, skipped")),
                 Err(e) => warnings.push(format!("{e}: skipped")),
@@ -176,6 +177,30 @@ mod tests {
         let mut out = MemFs::new();
         olr_pack::write_core(&mut out, &c.pack).unwrap();
         assert_eq!(olr_pack::read_core(&out).unwrap(), c.pack);
+    }
+
+    /// Review Focus 4: a sprite whose corner is `(254, 0, 254)` keys that
+    /// colour once, at import, and keeps its pure magenta; reading the pack
+    /// back (the load) keys nothing, so the magenta is still there. Keying
+    /// again would wrongly clear it.
+    #[test]
+    fn a_254_keyed_sprite_keeps_its_real_magenta() {
+        let mut img = RgbaImage::new(4, 1);
+        img.set(0, 0, Rgba::rgb(254, 0, 254));
+        img.set(1, 0, Rgba::MAGENTA);
+        img.set(2, 0, Rgba::rgb(1, 2, 3));
+        img.set(3, 0, Rgba::rgb(254, 0, 254));
+        let fs = MemFs::new().with("data/gfx/crosshair.png", olr_pack::image_io::encode_rgba(&img));
+        let files = [VPath::new("data/gfx/crosshair.png").unwrap()];
+        let imported = import_core(&fs, &files, origin()).unwrap();
+        let mut out = MemFs::new();
+        olr_pack::write_core(&mut out, &imported.pack).unwrap();
+        let loaded = olr_pack::read_core(&out).unwrap();
+        let sprite = &loaded.sprites["crosshair"];
+        assert_eq!(sprite.get(0, 0), Rgba::TRANSPARENT);
+        assert_eq!(sprite.get(3, 0), Rgba::TRANSPARENT);
+        assert_eq!(sprite.get(1, 0), Rgba::MAGENTA, "the real magenta survives import and load");
+        assert_eq!(sprite.get(2, 0), Rgba::rgb(1, 2, 3));
     }
 
     /// A source whose files exist but cannot be read, except `readable`.

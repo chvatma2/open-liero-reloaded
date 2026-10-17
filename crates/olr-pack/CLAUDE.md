@@ -10,8 +10,6 @@ header's size); content hashing; validation.
 - **Deterministic output.** Writing the same value twice gives byte-identical
   files. Never introduce `HashMap` iteration or timestamps into output.
 - **Layouts:**
-  - mod: `mod.ron`, `weapons/<id>.ron`, `projectiles/<name>.ron`, `restrictions.ron`
-    (the `.wps` presets, written only when the mod has any), assets (`gfx/`, `sfx/`)
   - level (format 5, `olr-format`'s `levels`): `level.ron`, `material.png` (8-bit palette; index = `Material`), `front.png`, `back.png`,
     optional `thumb.png` (`THUMB_FILE`, `LevelPack::thumb`: the menus' thumbnail, made at
     import at `THUMB_SIZE` 160 × 96; read bounded by `MAX_THUMB_SIDE` and `MAX_THUMB_BYTES`
@@ -20,8 +18,11 @@ header's size); content hashing; validation.
   - skin (format 5, `olr-format`'s `skins`): `skin.ron`, `skin.png` (a 140x54 grid), `tint.png` (0 keep, 255 colour); compiled to the 672x18 OLX sheet
   - theme (format 5, `olr-format`'s `themes`): `theme.ron`, `holes/N.png` + `holes/N.mask.png`, `stones/N.png`,
     `misc/N.png`, `front_tile.png`, `back_tile.png`, optional `green_ball.png` + `green_ball.mask.png`
-  - core (OLX's shared game assets, spec §19 E9): `core.ron` (sprite and sound
-    lists, `colours.cfg` values), `gfx/<sprite>.png`, `sounds/<file>` (raw Ogg bytes)
+  - mod (format 5, `olr-format`'s `mods`): `mod.ron`, `weapons/<id>.ron`, `projectiles/<id>.ron`
+    (shared projectiles), `restrictions.ron`, assets (`gfx/` alpha PNGs, keyed once at import; `sfx/`)
+  - core (format 5, `olr-format`'s `core_pack`; OLX's shared game assets, spec §19 E9): `core.ron`
+    (per sprite frames and art scale, sound list, `colours.cfg` values), `gfx/<sprite>.png`
+    (alpha; `giblets` and `giblet-stains` are two files that `read_core` composes), `sounds/<file>`
 - **Bounded reads:** every pack file is read with `read_max`: at most
   `MAX_FILE_BYTES` (64 MiB; OLX's largest level art is under 1 MB encoded,
   and `png` decodes at most 64 MiB), RON at most `MAX_RON_BYTES` (4 MiB),
@@ -50,10 +51,11 @@ header's size); content hashing; validation.
   are no migrations while all packs are imports in `content/packs` (until packs are
   published). Version 2 added the theme's `green_ball.png`, which a version-1 import
   may lack although OLX has it; version 3 the mod's `restrictions.ron`; version 4 the
-  level's `thumb.png` (plan 7 G6); version 5 the level and theme packs' native authoring format
-  (plan 13c; one constant, so skin, mod and core packs carry 5 in `pack.ron` with their format-4
-  layout until their switch). `read_level`/`write_level`, `read_theme`/`write_theme` are built over
-  `olr-format`'s `read_*_files`/`compile_*`/`lift_*`/`write_*_files`.
+  level's `thumb.png` (plan 7 G6); version 5 every pack kind's native authoring format
+  (plan 13c). `read_*`/`write_*` are built over `olr-format`'s `read_*_files`/`compile_*`/`lift_*`/
+  `write_*_files`. Colour keying happens once, in the importers: mod gfx and core sprites are alpha
+  images, and no loader keys them (a second keying would clear real magenta of a `(254,0,254)`-keyed
+  sprite).
 
 - **Archive** (`archive`, plan 11 N29): `encode(src)` / `decode(reader, sink, &Limits)`
   of the `.olpk` format (`OLPK1\n`, `u32` count, then per file sorted by path a

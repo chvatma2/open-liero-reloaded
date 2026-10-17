@@ -262,11 +262,11 @@ fn an_undecodable_core_sprite_is_a_placeholder_alone() {
     pack.def.sprites = vec!["crosshair".into(), "hook".into()];
     pack.sprites.insert("crosshair".into(), filled(12, 6, Rgba::rgb(0, 255, 0)));
     pack.sprites.insert("hook".into(), filled(6, 6, Rgba::rgb(255, 0, 0)));
+    pack.def.sounds = vec!["throw.ogg".into()];
+    pack.sounds.insert("throw.ogg".into(), b"OggS".to_vec());
     olr_pack::write_core(&mut DirFs::new(&dir), &pack).unwrap();
     std::fs::write(dir.join("gfx/hook.png"), b"not a png").unwrap();
-    let mut def = pack.def.clone();
-    def.sounds.push("throw.ogg".into());
-    std::fs::write(dir.join("core.ron"), ron::to_string(&def).unwrap()).unwrap();
+    std::fs::remove_file(dir.join("sounds/throw.ogg")).unwrap();
 
     let content = Content::open(tmp.path()).unwrap();
     let core = content.core();

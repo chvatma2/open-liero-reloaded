@@ -279,18 +279,19 @@ mod tests {
         assert_eq!(validate(&fs), vec![]);
     }
 
+    /// Format 5 inlines every projectile, so an unknown projectile or a
+    /// cycle cannot be written at all: the lift refuses it.
     #[test]
-    fn reports_unknown_projectile() {
+    fn an_unknown_projectile_cannot_be_written() {
         let mut pack = sample_mod();
         pack.def.projectiles.get_mut("rocket").unwrap().event_spawn =
             Some(SpawnDef::olx_default("nope".into()));
-        let d = validate(&written(&pack));
-        assert!(
-            d.iter().any(|d| d.to_string() == "error: projectiles/rocket.ron: unknown projectile \"nope\""),
-            "{d:?}"
-        );
+        let e = write_mod(&mut MemFs::new(), &pack).unwrap_err().to_string();
+        assert!(e.contains("nope"), "{e}");
     }
 
+    /// The lift writes a cycle (as shared projectiles); reading it back
+    /// reports the cycle, and `validate` says so.
     #[test]
     fn reports_cycles() {
         let mut pack = sample_mod();
@@ -299,7 +300,7 @@ mod tests {
         let d = validate(&written(&pack));
         let msg = d.iter().find(|d| d.message.contains("cycle")).expect("cycle reported");
         assert_eq!(msg.severity, Severity::Error);
-        assert!(msg.message.contains("bits -> rocket -> bits"), "{}", msg.message);
+        assert!(msg.message.contains("rocket -> rocket"), "{}", msg.message);
     }
 
     #[test]

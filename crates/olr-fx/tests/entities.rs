@@ -140,7 +140,7 @@ fn gibs_use_the_victims_colour() {
     let src = Rect { x: gib.rotation as u32 * 8, y: 0, w: 8, h: 8 };
     assert_eq!((drawn[0].src, drawn[0].pos, drawn[0].size), (src, [39.5, 54.0], [4.0, 4.0]));
     // `CWorm::ColorizeImage`: `min(255, colour * c / (96, 156, 252))` in
-    // floats, truncated; the gun greys and the colour key are kept.
+    // floats, truncated; the gun greys and the keyed (transparent) pixels are kept.
     let tinted = |c: Rgba| {
         let f = |c: u8, k: u8, d: f32| (k as f32 * (c as f32 / d)).min(255.0) as u8;
         Rgba::rgb(f(c.r, 48, 96.0), f(c.g, 78, 156.0), f(c.b, 126, 252.0))
@@ -151,7 +151,7 @@ fn gibs_use_the_victims_colour() {
     assert_eq!(image.get(1, 3), Rgba::rgb(180, 180, 180));
     let drawn_image = s.atlas.image(id);
     assert_eq!(drawn_image.get(5, 3), tinted(raw.get(5, 3)));
-    assert_eq!(drawn_image.get(0, 3).a, 0, "magenta is transparent in the atlas");
+    assert_eq!(drawn_image.get(0, 3).a, 0, "a keyed pixel is transparent in the atlas");
 
     // A slow gib sticks to the rock and stamps its 4 × 4 frame at `(int)pos - 1`.
     s.passes(100);
@@ -160,7 +160,7 @@ fn gibs_use_the_victims_colour() {
     for j in 0..4 {
         for i in 0..4 {
             let c = image.get(r + i, 8 + j);
-            if !c.same_rgb(Rgba::MAGENTA) {
+            if c.a != 0 {
                 assert_eq!(art(&s.map, 39 + i, 59 + j), [tinted(raw.get(r + i, 8 + j)); 4], "{i},{j}");
             }
         }

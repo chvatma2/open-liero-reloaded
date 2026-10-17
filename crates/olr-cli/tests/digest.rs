@@ -2,8 +2,9 @@
 //! the renderer for every bundled pack (plan 13c Task 1), so the pack format
 //! switch can be shown to leave it byte-identical. One line per pack, by
 //! kind then id: its SHA-256 over what `olr_content::Content` loads, with
-//! today's load-time colour keying (`RgbaImage::key_transparent`, once per
-//! image, as `olr-scene` and `olr-fx` apply it) on mod and core images.
+//! the loaded images as they are: the packs are colour-keyed at import
+//! (plan 13c Task 8), and nothing keys at load. The snapshot is the proof
+//! that the switch changed no pixel the game receives.
 
 use std::collections::BTreeSet;
 use std::fmt::Write;
@@ -27,12 +28,6 @@ fn content_dir() -> Option<String> {
         eprintln!("skip: {dir} not found (run `cargo xtask fetch-olx-content`)");
         None
     }
-}
-
-fn keyed(img: &RgbaImage) -> RgbaImage {
-    let mut img = img.clone();
-    img.key_transparent();
-    img
 }
 
 /// A tagged, length-prefixed hash input, so no two fields run together.
@@ -70,7 +65,7 @@ fn mod_digest(content: &Content, id: &str) -> String {
     let def = olr_pack::read_mod(&DirFs::new(content.pack_dir(id).unwrap())).unwrap().def;
     d.text("def", &ron::ser::to_string(&def).unwrap());
     let loaded = content.load_mod(id).unwrap();
-    // Exactly the images the renderer uses: `SceneAssets::new` keys each
+    // Exactly the images the renderer uses: `SceneAssets::new` draws each
     // projectile image file once (a missing one is a 4x4 placeholder); files no
     // projectile references never reach it.
     let files: BTreeSet<&str> = def
@@ -83,7 +78,7 @@ fn mod_digest(content: &Content, id: &str) -> String {
         .collect();
     for file in files {
         let img = loaded.images.get(file).cloned().unwrap_or_else(|| placeholder_image(4, 4));
-        d.image(&format!("image:{file}"), &keyed(&img));
+        d.image(&format!("image:{file}"), &img);
     }
     for (name, bytes) in &loaded.sounds {
         d.bytes(&format!("sound:{name}"), bytes);
@@ -147,7 +142,7 @@ fn core_digest(content: &Content, id: &str) -> String {
     let core = content.core();
     let def = olr_pack::read_core(&DirFs::new(content.pack_dir(id).unwrap())).unwrap().def;
     for name in &def.sprites {
-        d.image(&format!("sprite:{name}"), &keyed(core.sprite(name)));
+        d.image(&format!("sprite:{name}"), core.sprite(name));
     }
     for name in &def.sounds {
         match core.sound(name) {
@@ -198,20 +193,4 @@ fn bundled_content_digest() {
     assert!(counts[3] >= 700, "skins: {}", counts[3]);
     assert!(counts[4] >= 1, "core packs: {}", counts[4]);
     insta::assert_snapshot!(out);
-}
-
-/// Dropping the keying at load (plan 13c Task 8) keeps the gibs and their
-/// stains: keying before or after colorizing gives the same pixels.
-#[test]
-fn the_colorized_gibs_do_not_depend_on_when_they_are_keyed() {
-    let Some(dir) = content_dir() else { return };
-    let content = Content::open(Path::new(&dir)).unwrap();
-    let raw = content.core().sprite("giblets");
-    assert!(content.core().has_sprite("giblets"));
-    for (r, g, b) in COLOURS {
-        let c = Rgba::rgb(r, g, b);
-        let early = keyed(&olr_fx::colorize_gibs(raw, c));
-        let late = olr_fx::colorize_gibs(&keyed(raw), c);
-        assert_eq!(early, late, "gibs differ for colour ({r},{g},{b})");
-    }
 }

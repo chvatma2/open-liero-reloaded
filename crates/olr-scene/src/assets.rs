@@ -38,8 +38,9 @@ const LASER_COLOURS: [(&str, Rgba); 2] =
     [("LaserSightColour1", Rgba::rgb(0xbe, 0, 0)), ("LaserSightColour2", Rgba::rgb(0xa0, 0, 0))];
 
 /// The scene's images: core sprites, the mod's projectile images and each
-/// worm's colorized skin. Images are colour-keyed at load (OLX's magenta
-/// becomes transparent), so drawing is plain alpha blending.
+/// worm's colorized skin. The packs are colour-keyed at import (OLX's
+/// magenta is already transparent in them), so nothing keys at load and
+/// drawing is plain alpha blending.
 #[derive(Clone, Debug)]
 pub struct SceneAssets {
     images: Vec<AtlasImage>,
@@ -61,13 +62,6 @@ pub struct SceneAssets {
     default_look: WormLook,
 }
 
-/// OLX's colour key (magenta, or (254,0,254) by the corner rule of
-/// [`RgbaImage::olx_color_key`]), made transparent.
-fn keyed(mut img: RgbaImage) -> RgbaImage {
-    img.key_transparent();
-    img
-}
-
 impl SceneAssets {
     /// The core sprites and `m`'s projectile images. A projectile image the
     /// mod lacks gets a one-frame placeholder, so nothing ever panics.
@@ -80,7 +74,7 @@ impl SceneAssets {
         let mut white_img = RgbaImage::new(1, 1);
         white_img.set(0, 0, Rgba::rgb(255, 255, 255));
         let white = add("white", white_img, 1);
-        let mut sprite = |name: &str, px_per_world| add(name, keyed(core.sprite(name).clone()), px_per_world);
+        let mut sprite = |name: &str, px_per_world| add(name, core.sprite(name).clone(), px_per_world);
         let (crosshair, muzzle, hook) = (sprite("crosshair", 2), sprite("muzzle", 1), sprite("hook", 2));
         let (bonus, health) = (sprite("bonus", 2), sprite("health", 2));
         let skin = add("skin:placeholder", LoadedSkin::placeholder().colorized(Rgba::rgb(255, 255, 255)), 2);
@@ -93,7 +87,7 @@ impl SceneAssets {
             };
             let id = *by_file.entry(file).or_insert_with(|| {
                 let image = m.images.get(file).cloned().unwrap_or_else(|| placeholder_image(4, 4));
-                add(&format!("mod:{file}"), keyed(image), 2)
+                add(&format!("mod:{file}"), image, 2)
             });
             projectiles.push(Some(id));
         }
@@ -125,7 +119,7 @@ impl SceneAssets {
         i
     }
 
-    /// Adds an image (already colour-keyed) and returns its id: for other
+    /// Adds an image (already carrying alpha) and returns its id: for other
     /// drawers such as `olr-fx`.
     pub fn add_image(&mut self, name: impl Into<String>, image: RgbaImage, px_per_world: u32) -> AtlasId {
         self.images.push(AtlasImage { name: name.into(), image, px_per_world: px_per_world.max(1) });
@@ -151,33 +145,5 @@ impl SceneAssets {
     /// Worm `i`'s look; a worm without one gets a placeholder skin.
     pub fn worm(&self, i: usize) -> WormLook {
         self.worms.get(i).copied().unwrap_or(self.default_look)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use olr_content::PLACEHOLDER;
-
-    #[test]
-    fn keying_clears_only_magenta() {
-        let mut img = RgbaImage::new(2, 1);
-        img.set(0, 0, Rgba::MAGENTA);
-        img.set(1, 0, PLACEHOLDER);
-        let img = keyed(img);
-        assert_eq!(img.get(0, 0), Rgba::TRANSPARENT);
-        assert_eq!(img.get(1, 0), PLACEHOLDER);
-    }
-
-    #[test]
-    fn keying_follows_olx_corner_rule() {
-        let bugged = Rgba::rgb(254, 0, 254);
-        let mut img = RgbaImage::new(3, 3);
-        img.set(2, 2, bugged);
-        img.set(1, 1, bugged);
-        img.set(0, 1, Rgba::MAGENTA);
-        let img = keyed(img);
-        assert_eq!(img.get(1, 1), Rgba::TRANSPARENT, "a bugged corner makes (254,0,254) the key");
-        assert_eq!(img.get(0, 1), Rgba::MAGENTA, "and magenta an ordinary colour");
     }
 }

@@ -8,6 +8,8 @@ thumbnails.
   - the top 18 rows are the image and the next 18 rows the mask;
   - a black mask pixel keeps the pixel, magenta hides it, any other color tints it;
   - magenta or alpha-0 image pixels are always transparent;
+  - only each frame's 20-pixel worm window (from `frame_spacing`) is kept: the rest of the
+    32-pixel pitch is hidden, so `read_skin(write_skin(s)) == s`;
   - sheets larger than 672×36 are cropped with a warning.
 - **Themes** follow `CMap::LoadTheme` (OLX `src/common/CMap.cpp:308-370`):
   5 holes, plus `NumStones` and `NumMisc` from `theme.txt`, plus the tiles,
@@ -15,7 +17,9 @@ thumbnails.
   Stamp colors are kept raw, because their colors carry meaning when carving.
 - **Core pack** `olx-core` (spec §19 E9, `import_core`): the files that
   `content/olx-manifest.ron` lists under `core`. Each `.png` becomes a sprite
-  named by its lowercase stem (raw colors, like stamps), each `.ogg` a game
+  named by its lowercase stem and colour-keyed once here (`olx_sprite_to_alpha`: OLX's
+  magenta, or `(254,0,254)` by the corner rule, becomes transparent; nothing keys again
+  at load, Review Focus 4: `a_254_keyed_sprite_keeps_its_real_magenta`), each `.ogg` a game
   sound kept as bytes, and `colours.cfg` the `[Colours]` values (`StrToCol`'s
   `#rrggbb` and `r,g,b` forms). A missing or broken file is a warning.
 

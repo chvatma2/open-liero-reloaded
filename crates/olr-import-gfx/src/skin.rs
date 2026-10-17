@@ -56,6 +56,13 @@ pub fn import_skin(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Res
             if px.same_rgb(key) || px.a == 0 || m.a == 0 {
                 kind = MaskKind::Transparent;
             }
+            // Only the worm's window of each frame is ever drawn (`frame_spacing`
+            // in, `worm_width` wide); the rest of the 32-pixel pitch is hidden, so
+            // the pack (which holds just the windows) reads back as written.
+            let col = x % layout.frame_width;
+            if !(layout.frame_spacing..layout.frame_spacing + layout.worm_width).contains(&col) {
+                kind = MaskKind::Transparent;
+            }
             if kind == MaskKind::Transparent {
                 // Hidden pixels are fully transparent (plan 13c ruling 4), so
                 // the pack reads back as written.
@@ -88,15 +95,16 @@ mod tests {
                 img.set(x, y, Rgba::rgb(100, 100, 100));
             }
         }
-        // Mask row 0 (sheet row 18): x=0 black, x=1 magenta, x=2 white.
-        img.set(0, 18, Rgba::BLACK);
-        img.set(1, 18, Rgba::MAGENTA);
-        img.set(2, 18, Rgba::rgb(255, 255, 255));
-        // Image pixel x=3 is magenta with a colorize mask: still transparent.
+        // Mask row 0 (sheet row 18), in frame 0's window (it starts at x=4):
+        // x=4 black, x=5 magenta, x=6 white.
+        img.set(4, 18, Rgba::BLACK);
+        img.set(5, 18, Rgba::MAGENTA);
+        img.set(6, 18, Rgba::rgb(255, 255, 255));
+        // Image pixel x=7 is magenta with a colorize mask: still transparent.
         // OLX's SetColorKey_Alpha (src/client/GfxPrimitives.cpp:88-141) gives
         // key-coloured pixels alpha 0 before Colorize_Execute, which keeps
         // alpha (plan 13c ruling 5).
-        img.set(3, 0, Rgba::MAGENTA);
+        img.set(7, 0, Rgba::MAGENTA);
         img
     }
 
@@ -113,11 +121,17 @@ mod tests {
         let skin = &s.pack.skin;
         assert_eq!(s.pack.manifest.id, "olx-skin-cool-worm");
         assert_eq!((skin.image.width(), skin.image.height()), (672, 18));
-        assert_eq!(skin.mask_at(0, 0), MaskKind::Keep);
-        assert_eq!(skin.mask_at(1, 0), MaskKind::Transparent);
-        assert_eq!(skin.mask_at(2, 0), MaskKind::Colorize);
-        assert_eq!(skin.mask_at(3, 0), MaskKind::Transparent);
-        assert_eq!(skin.image.get(1, 0).a, 0);
+        assert_eq!(skin.mask_at(4, 0), MaskKind::Keep);
+        assert_eq!(skin.mask_at(5, 0), MaskKind::Transparent);
+        assert_eq!(skin.mask_at(6, 0), MaskKind::Colorize);
+        assert_eq!(skin.mask_at(7, 0), MaskKind::Transparent);
+        assert_eq!(skin.image.get(5, 0).a, 0);
+        // Outside the worm's window of a frame nothing is drawn: hidden.
+        for x in [0, 3, 24, 31, 32 + 3, 32 + 24] {
+            assert_eq!(skin.mask_at(x, 0), MaskKind::Transparent, "x = {x}");
+            assert_eq!(skin.image.get(x, 0), Rgba::TRANSPARENT, "x = {x}");
+        }
+        assert_eq!(skin.mask_at(23, 0), MaskKind::Colorize, "the window's last column");
     }
 
     #[test]

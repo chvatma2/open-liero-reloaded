@@ -10,7 +10,8 @@ use olr_scene::{AtlasId, SceneAssets};
 /// (`olr_render::Renderer::upload_atlas`): an image added later (a worm's
 /// gibs) is drawn only after the atlas is uploaded again.
 pub trait Atlas {
-    /// Adds `image` (already colour-keyed) and returns its id.
+    /// Adds `image` (already carrying alpha: the packs are keyed at import)
+    /// and returns its id.
     fn add_image(&mut self, name: String, image: RgbaImage, px_per_world: u32) -> AtlasId;
 
     /// A 1 × 1 white image (tinted, a solid pixel block): the atlas's own
@@ -78,7 +79,8 @@ struct Gibs {
 
 /// The atlas ids entities draw with, each worm's gib image, and the theme's
 /// default dirt colour. Sprites are OLX's 2× art (2 image pixels a world
-/// pixel), colour-keyed: magenta is transparent.
+/// pixel), as the packs hold them: colour-keyed at import, so OLX's
+/// magenta is already transparent and nothing keys at load.
 #[derive(Clone, Debug)]
 pub struct FxAssets {
     /// A 1 × 1 white image: tinted, a solid pixel block.
@@ -95,13 +97,6 @@ pub struct FxAssets {
     dirt_default: Rgba,
 }
 
-/// OLX's colour key (magenta, or (254,0,254) by the corner rule of
-/// [`RgbaImage::olx_color_key`]), made transparent.
-fn keyed(mut img: RgbaImage) -> RgbaImage {
-    img.key_transparent();
-    img
-}
-
 impl FxAssets {
     /// Registers `images` in `atlas`. `dirt_default` is the theme's
     /// [`default_dirt_colour`].
@@ -109,7 +104,7 @@ impl FxAssets {
         let white = atlas.white();
         let mut add = |name: &str, image: RgbaImage| {
             let (w, h) = (image.width(), image.height());
-            FxSprite { atlas: atlas.add_image(format!("fx:{name}"), keyed(image), 2), w, h }
+            FxSprite { atlas: atlas.add_image(format!("fx:{name}"), image, 2), w, h }
         };
         let explosion = add("explosion", images.explosion);
         let smoke = add("smoke", images.smoke);
@@ -138,13 +133,13 @@ impl FxAssets {
     pub fn add_worm(&mut self, colour: Rgba, atlas: &mut impl Atlas) -> usize {
         let i = self.gibs.len();
         let image = colorize_gibs(&self.giblets, colour);
-        let id = atlas.add_image(format!("fx:gibs:{i}"), keyed(image.clone()), 2);
+        let id = atlas.add_image(format!("fx:gibs:{i}"), image.clone(), 2);
         self.gibs.push(Gibs { atlas: id, image });
         i
     }
 
-    /// Worm `worm`'s gib atlas id and colorized sheet (magenta kept); the
-    /// plain sheet for a worm without one.
+    /// Worm `worm`'s gib atlas id and colorized sheet; the plain sheet for a
+    /// worm without one.
     pub fn gibs(&self, worm: i32) -> (AtlasId, &RgbaImage) {
         let g = usize::try_from(worm).ok().and_then(|i| self.gibs.get(i)).unwrap_or(&self.default_gibs);
         (g.atlas, &g.image)
@@ -222,21 +217,6 @@ mod tests {
             }
         }
         img
-    }
-
-    #[test]
-    fn keying_follows_olx_corner_rule() {
-        let bugged = Rgba::rgb(254, 0, 254);
-        let img = image(3, 3, |x, y| match (x, y) {
-            (0, 0) | (1, 1) => bugged,
-            (2, 1) => Rgba::MAGENTA,
-            _ => Rgba::BLACK,
-        });
-        let img = keyed(img);
-        assert_eq!(img.get(1, 1), Rgba::TRANSPARENT, "a bugged corner makes (254,0,254) the key");
-        assert_eq!(img.get(2, 1), Rgba::MAGENTA, "and magenta an ordinary colour");
-        let img = keyed(image(2, 1, |x, _| [Rgba::MAGENTA, Rgba::BLACK][x as usize]));
-        assert_eq!(img.get(0, 0), Rgba::TRANSPARENT);
     }
 
     #[test]
