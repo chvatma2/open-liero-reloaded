@@ -8,7 +8,10 @@ pub mod catalog;
 pub mod document;
 pub mod history;
 pub mod ops;
+mod pointer;
 pub mod state;
+pub mod tools;
+pub mod view;
 
 pub use catalog::{Catalog, EditorSettings, ModEntry, ThemeEntry};
 pub use document::{DocError, Document, Item, Problem};

@@ -156,6 +156,16 @@ impl Document {
         &self.items
     }
 
+    /// The theme's front tile (`PaintChoice::FrontTile`).
+    pub fn front_tile(&self) -> &RgbaImage {
+        &self.front_tile
+    }
+
+    /// The theme's back tile (`PaintChoice::BackTile`, the bake's backdrop).
+    pub fn back_tile(&self) -> &RgbaImage {
+        &self.back_tile
+    }
+
     pub fn index_of(&self, id: &str) -> Option<usize> {
         self.items.iter().position(|i| i.element.id == id)
     }

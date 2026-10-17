@@ -16,6 +16,9 @@ use crate::catalog::{Catalog, EditorSettings};
 use crate::document::{DocError, Document, Problem};
 use crate::history::{History, LevelMeta};
 use crate::ops::Change;
+use crate::pointer::Drag;
+use crate::tools::{Brush, MAX_BRUSH, PaintChoice, PointerKind, Tool};
+use crate::view::View;
 
 /// What is selected.
 #[derive(Clone, Debug, PartialEq)]
@@ -121,6 +124,30 @@ pub enum EditorAction {
     Play,
     PlayMod(String),
     PlayBots(u8),
+    // Canvas and tools.
+    Tool(Tool),
+    Brush(Brush),
+    Paint(PaintChoice),
+    /// A pointer event on the canvas, in world pixels (ruling R7).
+    Pointer {
+        kind: PointerKind,
+        world: (i32, i32),
+        shift: bool,
+    },
+    /// Moves the selected image's box (the arrow keys).
+    Nudge {
+        dx: i32,
+        dy: i32,
+    },
+    /// The canvas's size in points.
+    Canvas([f32; 2]),
+    Pan([f32; 2]),
+    Zoom {
+        steps: i32,
+        about: [f32; 2],
+    },
+    MaterialView(bool),
+    Grid(bool),
 }
 
 /// What the host carries out.
@@ -154,17 +181,31 @@ pub enum EditorCommand {
 pub const MAX_BOTS: u8 = 8;
 
 pub struct EditorState {
-    settings: EditorSettings,
-    catalog: Catalog,
-    doc: Option<Document>,
-    history: History,
-    dirty: bool,
-    playing: bool,
-    dialog: Option<Dialog>,
-    status: Status,
-    selection: Selection,
+    pub(crate) settings: EditorSettings,
+    pub(crate) catalog: Catalog,
+    pub(crate) doc: Option<Document>,
+    pub(crate) history: History,
+    pub(crate) dirty: bool,
+    pub(crate) playing: bool,
+    pub(crate) dialog: Option<Dialog>,
+    pub(crate) status: Status,
+    pub(crate) selection: Selection,
     /// What a save in progress carries out once it succeeds.
-    after_save: Option<Pending>,
+    pub(crate) after_save: Option<Pending>,
+    pub(crate) tool: Tool,
+    /// The tool the eyedropper returns to.
+    pub(crate) prev_tool: Tool,
+    pub(crate) brush: Brush,
+    pub(crate) paint: PaintChoice,
+    pub(crate) view: View,
+    /// The canvas's size in points, once the UI reported it.
+    pub(crate) canvas: Option<[f32; 2]>,
+    /// The view fits the level on the next `Canvas`.
+    pub(crate) fit_pending: bool,
+    pub(crate) material_view: bool,
+    pub(crate) grid: bool,
+    /// The pointer drag in progress.
+    pub(crate) drag: Option<Drag>,
 }
 
 impl EditorState {
@@ -180,6 +221,16 @@ impl EditorState {
             status: Status::default(),
             selection: Selection::None,
             after_save: None,
+            tool: Tool::Select,
+            prev_tool: Tool::Select,
+            brush: Brush::default(),
+            paint: PaintChoice::default(),
+            view: View { zoom: 2, offset: [0.0, 0.0] },
+            canvas: None,
+            fit_pending: false,
+            material_view: false,
+            grid: false,
+            drag: None,
         }
     }
 
@@ -235,6 +286,9 @@ impl EditorState {
             EditorAction::Opened(doc) => {
                 let all = doc.all();
                 self.doc = Some(*doc);
+                self.drag = None;
+                self.fit_pending = true;
+                self.fit();
                 self.history = History::new();
                 self.selection = Selection::None;
                 self.dirty = false;
@@ -312,15 +366,92 @@ impl EditorState {
                 self.settings.play_bots = n.min(MAX_BOTS);
                 vec![EditorCommand::SaveSettings(self.settings.clone())]
             }
+            EditorAction::Tool(tool) => {
+                if tool == Tool::Eyedropper && self.tool != Tool::Eyedropper {
+                    self.prev_tool = self.tool;
+                }
+                self.tool = tool;
+                self.drag = None;
+                Vec::new()
+            }
+            EditorAction::Brush(b) => {
+                self.brush = Brush { shape: b.shape, size: b.size.clamp(1, MAX_BRUSH) };
+                Vec::new()
+            }
+            EditorAction::Paint(p) => {
+                self.paint = p;
+                Vec::new()
+            }
+            EditorAction::Pointer { kind, world, shift } => self.pointer(kind, world, shift),
+            EditorAction::Nudge { dx, dy } => self.nudge(dx, dy),
+            EditorAction::Canvas(size) => {
+                self.canvas = Some(size);
+                self.fit();
+                Vec::new()
+            }
+            EditorAction::Pan(delta) => {
+                self.view.pan(delta);
+                Vec::new()
+            }
+            EditorAction::Zoom { steps, about } => {
+                self.view.zoom_about(steps, about);
+                Vec::new()
+            }
+            EditorAction::MaterialView(on) => {
+                self.material_view = on;
+                Vec::new()
+            }
+            EditorAction::Grid(on) => {
+                self.grid = on;
+                Vec::new()
+            }
         }
     }
 
-    /// Where an imported image's box is centred: the level's centre.
+    /// Fits the view to the level once a canvas size is known after `Opened`.
+    fn fit(&mut self) {
+        if let (true, Some(canvas), Some(doc)) = (self.fit_pending, self.canvas, &self.doc) {
+            let l = doc.level();
+            self.view = View::fit(canvas, (l.size.0 * l.art_scale, l.size.1 * l.art_scale));
+            self.fit_pending = false;
+        }
+    }
+
+    /// Where an imported image's box is centred: the world point at the
+    /// canvas's centre, or the level's centre before the first `Canvas`.
     fn import_centre(&self) -> (i32, i32) {
-        self.doc.as_ref().map_or((0, 0), |d| {
-            let (w, h) = d.level().size;
-            ((w / 2) as i32, (h / 2) as i32)
-        })
+        let Some(d) = &self.doc else { return (0, 0) };
+        match self.canvas {
+            Some(c) => self.view.to_world([c[0] / 2.0, c[1] / 2.0], d.level().art_scale),
+            None => {
+                let (w, h) = d.level().size;
+                ((w / 2) as i32, (h / 2) as i32)
+            }
+        }
+    }
+
+    pub fn tool(&self) -> Tool {
+        self.tool
+    }
+
+    pub fn brush(&self) -> Brush {
+        self.brush
+    }
+
+    pub fn paint(&self) -> PaintChoice {
+        self.paint
+    }
+
+    pub fn view(&self) -> View {
+        self.view
+    }
+
+    pub fn material_view(&self) -> bool {
+        self.material_view
+    }
+
+    pub fn grid(&self) -> bool {
+        self.grid
     }
 
     fn refresh_problems(&mut self) {
