@@ -7,7 +7,6 @@
 #![forbid(unsafe_code)]
 
 pub mod hud;
-pub mod import;
 pub mod match_prefs;
 pub mod online;
 pub mod profiles;
@@ -36,8 +35,8 @@ pub use profiles::{
     Profile, Profiles, bot_colours,
 };
 pub use settings::{
-    AudioSettings, FrameRate, GAME_KEYS, GameplaySettings, HudArrangement, ImportSettings, SETTINGS_VERSION,
-    Settings, UI_SCALE_RANGE, UpscaleFilter, VideoSettings, WindowPreset, clamp_scale, sanitize_bindings,
+    AudioSettings, FrameRate, GAME_KEYS, GameplaySettings, HudArrangement, SETTINGS_VERSION, Settings,
+    UI_SCALE_RANGE, UpscaleFilter, VideoSettings, WindowPreset, clamp_scale, sanitize_bindings,
 };
 pub use state::{AppCommand, Game, Screen, UiAction, UiState};
 pub use store::{

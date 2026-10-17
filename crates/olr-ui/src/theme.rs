@@ -15,7 +15,7 @@ pub const BACKGROUND: Color32 = Color32::from_rgb(16, 16, 20);
 /// A section's title colour (OLX's menu yellow).
 pub const ACCENT: Color32 = Color32::from_rgb(255, 200, 80);
 
-/// A page's primary action's fill (Start, Import): egui's selection blue.
+/// A page's primary action's fill (Start): egui's selection blue.
 pub const PRIMARY: Color32 = Color32::from_rgb(0, 92, 128);
 
 /// The frame a menu groups a section's widgets in: a panel a shade

@@ -193,7 +193,7 @@ struct Args {
     /// game's speed.
     #[arg(long, requires = "autoplay")]
     fake_clock: bool,
-    /// The data directory (settings, profiles, replays, imported packs)
+    /// The data directory (settings, profiles, replays, user packs)
     /// instead of the platform's.
     #[arg(long)]
     data_dir: Option<PathBuf>,

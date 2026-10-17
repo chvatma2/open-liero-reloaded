@@ -47,7 +47,7 @@ const INPUT_FRAMES: u64 = 3;
 const RECLICK_FRAMES: u64 = 30;
 
 /// The screens' names, as `WaitFor` and `Assert(Screen(..))` give them.
-pub const SCREENS: [(&str, Screen); 13] = [
+pub const SCREENS: [(&str, Screen); 12] = [
     ("Main", Screen::Main),
     ("LocalPlay", Screen::LocalPlay),
     ("Profiles", Screen::Profiles),
@@ -56,7 +56,6 @@ pub const SCREENS: [(&str, Screen); 13] = [
     ("InGame", Screen::InGame),
     ("Results", Screen::Results),
     ("Replays", Screen::Replays),
-    ("Import", Screen::Import),
     ("About", Screen::About),
     ("Multiplayer", Screen::Multiplayer),
     ("Host", Screen::Host),

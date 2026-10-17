@@ -13,7 +13,6 @@
 pub mod about;
 mod host;
 mod host_lost;
-mod import;
 mod ingame;
 mod keys;
 mod lobby;
@@ -42,7 +41,6 @@ use olr_sim::{Keys, MAX_SLOTS};
 
 use crate::hud::LogLine;
 use crate::hud::Results;
-use crate::import::ImportProgress;
 use crate::online::{DownloadCacheView, InternetView, LanEntry, LobbyView};
 use crate::replays::ReplayFile;
 use crate::skin_preview::{PreviewKey, PreviewTextures};
@@ -84,13 +82,6 @@ pub struct MenuData {
     pub held: Keys,
     /// The finished match's results (the app sets them when they show).
     pub results: Option<Results>,
-    /// The Import screen's path field (the last path imported when it
-    /// first opens).
-    pub import_path: String,
-    /// Where imports go: the data directory's `packs/` (none: no import).
-    pub packs_dir: Option<PathBuf>,
-    /// The import running or done (the app updates it every frame).
-    pub import: ImportProgress,
     /// The games announced on the network (the app keeps it current).
     pub lan_games: Vec<LanEntry>,
     /// The games announced on the Internet (the app keeps it current
@@ -162,9 +153,6 @@ impl MenuData {
             weapons: None,
             held: Keys(0),
             results: None,
-            import_path: String::new(),
-            packs_dir: None,
-            import: ImportProgress::default(),
             lan_games: Vec::new(),
             internet: InternetView::default(),
             selected_game: None,
@@ -193,7 +181,7 @@ impl MenuData {
         }
     }
 
-    /// The content changed (an import): new lists, thumbnails made again.
+    /// The content changed (listed again): new lists, thumbnails made again.
     pub fn set_catalog(&mut self, catalog: Catalog) {
         self.catalog = catalog;
         self.thumbs.clear();
@@ -275,9 +263,6 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
             Screen::Replays => data.refresh_replays(),
             Screen::Profiles => data.profiles = profiles::View::new(state.profiles().selected),
             Screen::Options => data.options = options::View::default(),
-            Screen::Import if data.import_path.is_empty() => {
-                data.import_path = state.settings().import.last_path.clone();
-            }
             Screen::WeaponSelect => {
                 let remembered = state.profiles().selected().map(|p| p.weapons.as_slice()).unwrap_or(&[]);
                 data.select = data.weapons.as_ref().map(|m| WeaponSelect::new(m, remembered));
@@ -314,7 +299,6 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
                 Screen::Replays => replays::show(ui, state, data, &mut out),
                 Screen::Options => options::show(ui, state, data, &mut out),
                 Screen::About => about::show(ui, data, &mut out),
-                Screen::Import => import::show(ui, state, data, &mut out),
                 Screen::Multiplayer => multiplayer::show(ui, state, data, &mut out),
                 Screen::Host => host::show(ui, state, data, &mut out),
                 Screen::Lobby => lobby::show(ui, state, data, &mut out),

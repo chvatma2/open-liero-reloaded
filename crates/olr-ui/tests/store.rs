@@ -103,6 +103,18 @@ fn settings_round_trip_and_version() {
     assert_eq!(loaded.value.gameplay.match_prefs.bots, 5);
     assert!(!dir.path().join("data/settings.ron.bak").exists());
 
+    // A file from before the Import screen was removed (plan 13c) still
+    // loads: its `import` block is ignored, the rest kept, no backup.
+    let old = format!(
+        "(version: {SETTINGS_VERSION}, settings: (import: (last_path: \"/x\"), \
+         video: (fullscreen: true)))"
+    );
+    fs::write(&path, old).unwrap();
+    let loaded = store.load_settings();
+    assert!(loaded.warnings.is_empty(), "{:?}", loaded.warnings);
+    assert!(loaded.value.video.fullscreen);
+    assert!(!dir.path().join("data/settings.ron.bak").exists());
+
     // v0.1.0's window of the desktop's size is fullscreen now (the v0.1
     // playtest): it loads as fullscreen over the default window size, the
     // rest kept, no warning, no backup.

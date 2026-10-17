@@ -57,15 +57,12 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     let ui = &mut ui;
     // Start, and why the last start failed, always in view.
     let mut ui = footer(ui, "local play", |ui| {
-        let (starting, importing) = (state.is_starting(), state.is_importing());
-        if primary(ui, "Start", !starting && !importing).clicked() {
+        let starting = state.is_starting();
+        if primary(ui, "Start", !starting).clicked() {
             start = true;
         }
         if starting {
             ui.label("Loading…");
-        } else if importing {
-            // Its packs are being written (plan 7 task 7).
-            ui.label("Importing content…");
         }
         message(ui, state);
     });
@@ -140,7 +137,7 @@ pub(super) fn mod_picker(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
             .labelled_by(label.id);
     });
     if data.catalog.mods.is_empty() {
-        ui.label(RichText::new("No mods: import OLX's content first.").weak());
+        ui.label(RichText::new("No mods: import OLX's content with `olr-cli import`.").weak());
     }
 }
 

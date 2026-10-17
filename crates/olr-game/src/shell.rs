@@ -21,13 +21,10 @@
 //! (`olr_ui::replays::save_kept`).
 //!
 //! The menus list and play the bundled content (`--content`) with the
-//! user data's `packs/` layered over it (spec §9.4: an imported pack
-//! replaces the bundled one of its id). The Import screen's import runs
-//! on its own thread (`olr_ui::import::ImportJob`), polled each frame by
-//! [`Shell::poll`]; when it ends the content is listed again, so new and
-//! re-imported packs show (their thumbnails made again) without a restart.
-//! No game starts while it runs (`UiState` refuses), and a game playing
-//! keeps the packs it loaded.
+//! user data's `packs/` layered over it (spec §9.4: a user pack
+//! replaces the bundled one of its id; `olr-cli import` writes them).
+//! The content is listed once at start-up; a game playing keeps the packs
+//! it loaded.
 //!
 //! **Online** (plan 10 task 12, `net.rs`): `HostGame` and `JoinGame` make
 //! the `olr_online::OnlinePeer` (the identity from `Store::load_identity`,
@@ -71,7 +68,6 @@ use olr_online::Shutdown;
 use olr_online::replay::PendingReplay;
 use olr_scene::{Interpolation, Viewport};
 use olr_sim::{Keys, MAX_SLOTS};
-use olr_ui::import::{ImportJob, ImportProgress};
 use olr_ui::screens::MenuData;
 use olr_ui::skin_preview::{self, PreviewKey, PreviewTextures};
 use olr_ui::weapon_select::{WeaponMenu, WeaponSelect};
@@ -157,8 +153,8 @@ pub struct Shell {
     /// The command line's video flags over the saved options, and the
     /// options as loaded (`video::Overrides`).
     overrides: Option<(VideoSettings, Overrides)>,
-    /// The Import screen's import while it runs.
-    import: Option<ImportJob>,
+    /// The user packs layer (`<data>/packs`), over the bundled content.
+    packs_dir: Option<PathBuf>,
     /// The online game (its lobby and match), if any.
     net: Option<Net>,
     /// `--net-sim`'s host, in this process (spec §9.10), with its pump.
@@ -242,16 +238,13 @@ pub const NET_SIM_BOTS: u8 = 3;
 /// Spectators a hosted lobby takes (spec §7.2).
 pub const MAX_SPECTATORS: u8 = 16;
 
-/// How long quitting waits for an import to stop after its item.
-pub const IMPORT_STOP_WAIT: Duration = Duration::from_secs(2);
-
 impl Shell {
     /// The main menu over content directory `cfg.content` with the data
-    /// directory's imported packs over it (listed for the menus now), with
+    /// directory's user packs over it (listed for the menus now), with
     /// `audio` for every game.
     pub fn new(cfg: ShellConfig, ui: UiState, store: Store, audio: Audio) -> Shell {
         let mut data = MenuData::new(Default::default(), store.replays_dir());
-        data.packs_dir = store.packs_dir();
+        let packs_dir = store.packs_dir();
         data.notices = store.notices();
         let mut shell = Shell {
             ui,
@@ -271,7 +264,7 @@ impl Shell {
             preview_skin: None,
             preview_textures: Vec::new(),
             overrides: None,
-            import: None,
+            packs_dir,
             net: None,
             sim_host: None,
             identity: None,
@@ -334,7 +327,7 @@ impl Shell {
             preview_skin: None,
             preview_textures: Vec::new(),
             overrides: None,
-            import: None,
+            packs_dir: None,
             net: None,
             sim_host: None,
             identity: None,
@@ -365,12 +358,12 @@ impl Shell {
     }
 
     /// The content directories, highest priority first: the data
-    /// directory's imported packs, then the bundled content.
+    /// directory's user packs, then the bundled content.
     fn roots(&self) -> Vec<PathBuf> {
-        self.data.packs_dir.iter().cloned().chain([self.cfg.content.clone()]).collect()
+        self.packs_dir.iter().cloned().chain([self.cfg.content.clone()]).collect()
     }
 
-    /// Lists the content for the menus (again, after an import): the
+    /// Lists the content for the menus : the
     /// catalog, its thumbnails made again (`MenuData::set_catalog`), the
     /// skin preview loaded again.
     fn list_content(&mut self) {
@@ -390,47 +383,6 @@ impl Shell {
         self.preview_skin = None;
         self.data.preview = None;
         self.preview_textures.clear();
-    }
-
-    /// The import running, if any.
-    pub fn importing(&self) -> bool {
-        self.import.is_some()
-    }
-
-    /// The Import screen's Import: the job started on its own thread
-    /// (one at a time; without a data directory, the reason shown).
-    fn start_import(&mut self, path: PathBuf, out: &mut Vec<Outcome>) {
-        if self.import.is_some() {
-            return;
-        }
-        let Some(packs) = self.data.packs_dir.clone() else {
-            self.data.import = ImportProgress::failed("there is no data directory to import into".into());
-            for c in self.ui.update(UiAction::ImportFinished) {
-                self.carry(c, out);
-            }
-            return;
-        };
-        let path = olr_ui::import::expand_typed_path(&path.to_string_lossy());
-        println!("olr: importing {} into {}", path.display(), packs.display());
-        self.data.import = ImportProgress::started();
-        self.import = Some(ImportJob::spawn(path, packs));
-    }
-
-    /// The import's reports since the last frame; when it has ended, the
-    /// content listed again and the menus told.
-    fn poll_import(&mut self) -> Vec<Outcome> {
-        let Some(job) = &mut self.import else { return Vec::new() };
-        if !job.poll(&mut self.data.import) {
-            return Vec::new();
-        }
-        self.import = None;
-        match &self.data.import.result {
-            Some(olr_ui::import::ImportResult::Failed(why)) => eprintln!("warning: import: {why}"),
-            Some(r) => println!("olr: import done: {r:?}"),
-            None => {}
-        }
-        self.list_content();
-        self.act(UiAction::ImportFinished)
     }
 
     /// The profiles screen's skin preview (plan 7 ruling Q2: the menus
@@ -563,12 +515,6 @@ impl Shell {
                 self.unsaved_settings = Some(s);
             }
             AppCommand::SaveProfiles(p) => self.unsaved_profiles = Some(p),
-            AppCommand::StartImport(path) => self.start_import(path, out),
-            AppCommand::CancelImport => {
-                if let Some(job) = &self.import {
-                    job.cancel();
-                }
-            }
             AppCommand::HostGame(prefs) => {
                 let started = self.start_host(&prefs);
                 self.connected(started.map(|()| true), out);
@@ -585,8 +531,7 @@ impl Shell {
         }
     }
 
-    /// The import's progress (and, when it ends, the content listed
-    /// again); then loads the game asked for in an earlier frame, if any,
+    /// Loads the game asked for in an earlier frame, if any,
     /// and reports to the menus whether it started.
     pub fn poll(&mut self) -> Vec<Outcome> {
         if self.ui.screen() != Screen::Options {
@@ -600,10 +545,8 @@ impl Shell {
                 view.clear = clear;
             }
         }
-        let mut out = self.poll_import();
-        let Some(launch) = self.pending.take() else { return out };
-        out.extend(self.launch_reported(launch));
-        out
+        let Some(launch) = self.pending.take() else { return Vec::new() };
+        self.launch_reported(launch)
     }
 
     fn launch_reported(&mut self, launch: Launch) -> Vec<Outcome> {
@@ -892,17 +835,10 @@ impl Shell {
     }
 
     /// At exit: the playing game's replay saved, the settings written, an
-    /// import stopped after its item (waited for at most
-    /// [`IMPORT_STOP_WAIT`]; a pack it was writing stays hidden), the
     /// online game left (its router mapping's deletion started: the
     /// caller waits for it with [`Shell::take_unmapping`] once the window
     /// closed).
     pub fn finish(&mut self) {
-        if let Some(mut job) = self.import.take()
-            && !job.stop(IMPORT_STOP_WAIT)
-        {
-            eprintln!("warning: quitting during an import: its last pack is not imported");
-        }
         self.leave_online();
         self.end();
         self.close_internet();

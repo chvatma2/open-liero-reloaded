@@ -1,6 +1,6 @@
 //! The menus' page frame: every sub-screen (local play, the options and
 //! each of their tabs, the Multiplayer screen's tabs, profiles, replays,
-//! import, about) draws one column centred in the window, whatever its
+//! about) draws one column centred in the window, whatever its
 //! size, with its title centred above
 //! and Back at the column's left edge; nothing hugs a corner of a big
 //! screen.
@@ -84,7 +84,7 @@ fn widgets(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
 
 /// The screens to check: each opened from the main menu, then the
 /// options' and the Multiplayer screen's tabs clicked.
-const SCREENS: [(Screen, Option<&str>); 15] = [
+const SCREENS: [(Screen, Option<&str>); 14] = [
     (Screen::LocalPlay, None),
     (Screen::Options, None),
     (Screen::Options, Some("Audio")),
@@ -92,7 +92,6 @@ const SCREENS: [(Screen, Option<&str>); 15] = [
     (Screen::Options, Some("Online")),
     (Screen::Profiles, None),
     (Screen::Replays, None),
-    (Screen::Import, None),
     (Screen::About, None),
     (Screen::Options, Some("Video")),
     (Screen::Multiplayer, None),
@@ -175,7 +174,6 @@ fn title_of(screen: Screen) -> &'static str {
         Screen::Options => "Options",
         Screen::Profiles => "Profiles",
         Screen::Replays => "Replays",
-        Screen::Import => "Import OLX content",
         Screen::About => "About",
         Screen::Multiplayer => "Multiplayer",
         Screen::Host => "Host a game",
@@ -192,7 +190,6 @@ fn the_primary_action_is_centred_below() {
         let mut harness = harness(egui::vec2(w, h), 1.0);
         for (screen, label) in [
             (Screen::LocalPlay, "Start"),
-            (Screen::Import, "Import"),
             (Screen::Multiplayer, "Host a game"),
             (Screen::Host, "Start hosting"),
         ] {

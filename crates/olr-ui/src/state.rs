@@ -3,7 +3,7 @@
 //! [`UiAction`]s in (from the widgets, and its own reports such as a match
 //! having started) and carries out the [`AppCommand`]s that come back.
 //!
-//! - **Menus:** Main opens LocalPlay, Profiles, Options, Replays, Import
+//! - **Menus:** Main opens LocalPlay, Profiles, Options, Replays
 //!   and About; Back (Esc) returns to Main.
 //! - **Online** (plan 10 task 11): Main opens Multiplayer, which opens
 //!   Host (Back returns there). `Host(prefs)` and `Join`/`JoinLan` emit
@@ -48,11 +48,6 @@
 //! - **Options** apply and save only what changed; their Clear of the
 //!   download cache is `ClearDownloadCache` (the app refuses it while an
 //!   online game is on).
-//! - **Import** (plan 7 task 7): the Import screen's Import starts one
-//!   import (`StartImport`; the path remembered in the settings) until
-//!   the app reports `ImportFinished`; another press does nothing. The
-//!   import runs on while the player leaves the screen, but no game
-//!   starts until it ends (the packs it writes are not loaded half-way).
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -81,8 +76,6 @@ pub enum Screen {
     Results,
     /// The replays saved in the data directory (and any file).
     Replays,
-    /// Content import.
-    Import,
     /// Credits and licenses (§21 G9).
     About,
     /// Games on the network, joining by address (plan 10 task 11).
@@ -98,13 +91,12 @@ pub enum Screen {
 
 impl Screen {
     /// The screens the main menu opens.
-    pub const MENUS: [Screen; 7] = [
+    pub const MENUS: [Screen; 6] = [
         Screen::LocalPlay,
         Screen::Multiplayer,
         Screen::Profiles,
         Screen::Options,
         Screen::Replays,
-        Screen::Import,
         Screen::About,
     ];
 }
@@ -154,12 +146,6 @@ pub enum UiAction {
     MatchFailed(String),
     /// The app: the match is over and its results are ready.
     MatchOver,
-    /// The Import screen's Import: the OLX game directory typed.
-    StartImport(String),
-    /// The Import screen's Cancel.
-    CancelImport,
-    /// The app: the import has ended (its report is the screen's data).
-    ImportFinished,
     /// The Host screen's Start hosting.
     Host(HostPrefs),
     /// The Multiplayer screen's Direct Join: `host[:port]` or an invite
@@ -257,13 +243,6 @@ pub enum AppCommand {
     SaveSettings(Settings),
     /// Write `profiles.ron` (`Store::save_profiles`).
     SaveProfiles(Profiles),
-    /// Import the OLX game directory at this path (as typed, cleaned:
-    /// `~` and a relative path are the app's, `import::expand_typed_path`)
-    /// into the user data's packs off the UI thread, then report
-    /// [`UiAction::ImportFinished`].
-    StartImport(PathBuf),
-    /// Stop the import after the item it is on.
-    CancelImport,
     /// Host a game with these choices, then report [`UiAction::LobbyJoined`]
     /// or [`UiAction::OnlineFailed`].
     HostGame(HostPrefs),
@@ -330,8 +309,6 @@ pub struct UiState {
     seed: u32,
     /// Shown on the screen: why the last start failed, or a replay saved.
     message: Option<String>,
-    /// An import runs (`StartImport` until `ImportFinished`).
-    importing: bool,
     /// Hosting or joining was asked for from this screen and the app has
     /// not answered (`LobbyJoined` or `OnlineFailed`).
     connecting: Option<Screen>,
@@ -353,7 +330,6 @@ impl UiState {
             replay_saved: false,
             seed,
             message: None,
-            importing: false,
             connecting: None,
             online: false,
         }
@@ -387,11 +363,6 @@ impl UiState {
             Play::None => None,
             Play::Starting { game, .. } | Play::Running(game) => Some(game),
         }
-    }
-
-    /// An import runs: no game starts.
-    pub fn is_importing(&self) -> bool {
-        self.importing
     }
 
     /// Hosting or joining was asked for and the app has not answered.
@@ -459,7 +430,7 @@ impl UiState {
             UiAction::Back => self.back(),
             UiAction::StartMatch => self.start_match(),
             UiAction::StartSandbox => {
-                if self.screen != Screen::Main || self.play != Play::None || self.refused_while_importing() {
+                if self.screen != Screen::Main || self.play != Play::None {
                     return Vec::new();
                 }
                 self.message = None;
@@ -467,8 +438,7 @@ impl UiState {
                 vec![AppCommand::StartSandbox]
             }
             UiAction::PlayReplay(path) => {
-                if self.screen != Screen::Replays || self.play != Play::None || self.refused_while_importing()
-                {
+                if self.screen != Screen::Replays || self.play != Play::None {
                     return Vec::new();
                 }
                 self.message = None;
@@ -602,18 +572,6 @@ impl UiState {
                 self.go(Screen::Results);
                 // The app's pause and this state never disagree.
                 if std::mem::take(&mut self.paused) { vec![AppCommand::SetPaused(false)] } else { Vec::new() }
-            }
-            UiAction::StartImport(path) => self.start_import(path),
-            UiAction::CancelImport => {
-                if self.importing {
-                    vec![AppCommand::CancelImport]
-                } else {
-                    Vec::new()
-                }
-            }
-            UiAction::ImportFinished => {
-                self.importing = false;
-                Vec::new()
             }
             UiAction::Host(prefs) => self.host(prefs),
             UiAction::Join { addr, password } => self.join_at(Some(addr), password, true, None),
@@ -787,32 +745,6 @@ impl UiState {
         vec![AppCommand::LeaveOnline]
     }
 
-    /// Import's button: one import at a time, from the Import screen, with
-    /// no game playing; the path is remembered.
-    fn start_import(&mut self, path: String) -> Vec<AppCommand> {
-        let path = crate::import::clean_typed_path(&path).to_string();
-        if self.screen != Screen::Import || self.importing || self.play != Play::None || path.is_empty() {
-            return Vec::new();
-        }
-        self.importing = true;
-        self.message = None;
-        let mut out = vec![AppCommand::StartImport(PathBuf::from(&path))];
-        if self.settings.import.last_path != path {
-            self.settings.import.last_path = path;
-            out.push(self.save_settings());
-        }
-        out
-    }
-
-    /// A start while an import runs is refused with a message (its packs
-    /// are being written).
-    fn refused_while_importing(&mut self) -> bool {
-        if self.importing {
-            self.message = Some("An import is running: start when it is done.".into());
-        }
-        self.importing
-    }
-
     fn go(&mut self, s: Screen) {
         self.screen = s;
         self.message = None;
@@ -925,9 +857,6 @@ impl UiState {
     }
 
     fn start_match(&mut self) -> Vec<AppCommand> {
-        if self.refused_while_importing() {
-            return Vec::new();
-        }
         let mut out = match (self.screen, self.play) {
             (Screen::LocalPlay, Play::None) => Vec::new(),
             // A rematch: the match over ends first.

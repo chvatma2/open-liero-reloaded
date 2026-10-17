@@ -43,7 +43,7 @@ pub const IDENTITY_FILE: &str = "identity.ron";
 pub const IDENTITY_VERSION: u32 = 1;
 /// Auto-saved replays of the last matches (§21 G2).
 pub const REPLAYS_DIR: &str = "replays";
-/// Imported packs (spec §9.4), layered over the bundled ones.
+/// The user's packs (spec §9.4: written by `olr-cli import`), layered over the bundled ones.
 pub const PACKS_DIR: &str = "packs";
 /// Downloaded content in the cache directory (plan 11, ruling N30).
 pub const DOWNLOADS_DIR: &str = "downloads";
@@ -186,7 +186,7 @@ impl Store {
         self.cache.as_ref().map(|d| d.join(DOWNLOADS_DIR))
     }
 
-    /// Where the Import screen writes packs (spec §9.4), if there is a
+    /// The user packs layer (spec §9.4), if there is a
     /// data directory.
     pub fn packs_dir(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join(PACKS_DIR))

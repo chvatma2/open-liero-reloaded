@@ -8,7 +8,6 @@
 mod deathmatch;
 mod downloads;
 mod finding;
-mod import;
 mod ingame;
 mod menu;
 mod online;
@@ -16,5 +15,6 @@ mod options;
 mod profiles;
 mod speed;
 mod throw_sound;
+mod user_packs;
 mod watch;
 mod weapon_name;
