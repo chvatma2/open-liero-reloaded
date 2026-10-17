@@ -272,3 +272,45 @@ fn set_colours_and_none() {
     );
     assert_eq!(out.status.code(), Some(2), "a clap error: {out:?}");
 }
+
+/// Deferred minors: `list` reads `composition.ron` alone, so it still lists
+/// a composition whose file is missing (when an agent most needs it).
+#[test]
+fn list_works_with_a_missing_file() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    std::fs::remove_file(pack.join("editor/layers/cave.png")).unwrap();
+    let list = ok(&cli(&["level", "element", "list", "{pack}"], &pack, &content));
+    assert!(list.contains("2: cave Drawn Background"), "{list}");
+}
+
+/// Deferred minors: a JPEG cut in its scan is refused through the CLI too.
+#[test]
+fn add_image_refuses_a_cut_jpeg() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    let jpeg =
+        std::fs::read(concat!(env!("CARGO_MANIFEST_DIR"), "/../olr-format/tests/data/gradient.jpg")).unwrap();
+    let cut = tmp.path().join("cut.jpg");
+    std::fs::write(&cut, &jpeg[..jpeg.len() / 2]).unwrap();
+    let before = tree(&pack);
+    let out = cli(
+        &[
+            "level",
+            "element",
+            "add-image",
+            "{pack}",
+            cut.to_str().unwrap(),
+            "--at",
+            "0,0",
+            "--size",
+            "4x4",
+            "--content",
+            "{content}",
+        ],
+        &pack,
+        &content,
+    );
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("cut.jpg"), "{out:?}");
+    assert_eq!(tree(&pack), before);
+}

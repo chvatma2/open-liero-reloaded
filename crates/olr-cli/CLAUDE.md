@@ -51,9 +51,11 @@ The headless command-line tool. Its commands:
   theme in `--content`, `content/packs` by default) and saves; the first
   on a plain level composes it (raster `base`). `list` prints `<i>: <id>
   <Image|Drawn|Raster> <material|->[ "<name>"][ hidden][ locked]`, bottom
-  first, from `composition.ron` alone; `add-image` reads its file bounded
-  (`level_cmd::read_bounded`) and prints `added element <id>`; `set`
-  unlocks first and locks last; `bake` prints `baked <pack>` and refuses a
+  first, from `composition.ron` alone (`read_composition`); `add-image`
+  reads its file bounded (`level_cmd::read_bounded`), applies its settings
+  with the image (`add_image_with`) and prints `added element <id>`; `set`
+  applies its flags in one step (`set_all`), unlocking first and locking
+  last; `bake` prints `baked <pack>` and refuses a
   level without a composition. `level carve|fill|paint|stamp` refuse a
   composed level (ruling R1, message naming `level element draw|erase`);
   object commands keep its composition; `level resize --content` resizes

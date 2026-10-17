@@ -224,9 +224,11 @@ fn material_name(m: ElementMaterial) -> &'static str {
 }
 
 fn list(dir: &Path) -> anyhow::Result<bool> {
-    let src = olr_format::levels::read_composition_files(&olr_vfs::DirFs::new(dir))
+    // `composition.ron` alone: the list still shows a stack whose files
+    // are broken.
+    let composition = olr_format::levels::read_composition(&olr_vfs::DirFs::new(dir))
         .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
-    for (i, e) in src.iter().flat_map(|s| s.composition.elements.iter()).enumerate() {
+    for (i, e) in composition.iter().flat_map(|c| c.elements.iter()).enumerate() {
         let (kind, material) = match &e.kind {
             ElementKind::Image { material, .. } => ("Image", material_name(*material)),
             ElementKind::Drawn { material } => ("Drawn", material_name(*material)),
@@ -266,16 +268,26 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             let bytes = read_bounded(file).map_err(|e| anyhow::anyhow!(e))?;
             let file_name = file.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             edit(pack, content, |p| {
-                let id = element::add_image(p, &file_name, bytes, *at, *size, material.element(), name)?;
-                let settings = [
+                let settings: Vec<Property> = [
                     (*pixel_size != 1).then_some(Property::PixelSize(*pixel_size)),
                     colours.map(|n| Property::Colours(Some(n))),
                     Some(Property::Dither(dither.dither())).filter(|d| *d != Property::Dither(Dither::None)),
                     (*threshold != 128).then_some(Property::Threshold(*threshold)),
-                ];
-                for property in settings.into_iter().flatten() {
-                    element::set(p, &id, property)?;
-                }
+                ]
+                .into_iter()
+                .flatten()
+                .collect();
+                // The settings apply with the image, checked together.
+                let id = element::add_image_with(
+                    p,
+                    &file_name,
+                    bytes,
+                    *at,
+                    *size,
+                    material.element(),
+                    name,
+                    &settings,
+                )?;
                 Ok(vec![format!("added element {id}")])
             })
         }
@@ -298,8 +310,8 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             threshold,
             content,
         } => edit(pack, content, |p| {
-            // Unlocking first and locking last, so one command can do both
-            // and change the element in between.
+            // Unlocking first and locking last, so one command can unlock,
+            // change and lock again; all in one step, checked together.
             let properties = [
                 locked.filter(|l| !l).map(Property::Locked),
                 name.clone().map(Property::Name),
@@ -313,9 +325,8 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
                 threshold.map(Property::Threshold),
                 locked.filter(|l| *l).map(Property::Locked),
             ];
-            for property in properties.into_iter().flatten() {
-                element::set(p, id, property)?;
-            }
+            let properties: Vec<Property> = properties.into_iter().flatten().collect();
+            element::set_all(p, id, &properties)?;
             Ok(Vec::new())
         }),
         ElementCommand::Remove { pack, id, content } => edit(pack, content, |p| {
