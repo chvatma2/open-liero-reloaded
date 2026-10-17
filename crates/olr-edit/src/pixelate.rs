@@ -115,7 +115,7 @@ fn resample(img: &RgbaImage, gw: u32, gh: u32) -> RgbaImage {
                     n += 1;
                 }
             }
-            let c = |sum: u64| if a == 0 { 0 } else { (sum / a) as u8 };
+            let c = |sum: u64| sum.checked_div(a).unwrap_or(0) as u8;
             out.set(gx, gy, Rgba { r: c(r), g: c(g), b: c(b), a: (a / n.max(1)) as u8 });
         }
     }
