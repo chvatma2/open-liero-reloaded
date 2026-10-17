@@ -149,7 +149,7 @@ fn record(c: &Content) -> Replay {
     let mode = ModeSpec::Deathmatch(dm.clone());
     let game = Deathmatch::prepare(dm, &mut setup).unwrap();
     let mut world = World::new(setup.clone(), Box::new(game)).unwrap();
-    let mut rec = Recorder::new(c.replay_packs(&sandbox.mod_id, &sandbox.level_id).unwrap(), &setup, &mode);
+    let mut rec = Recorder::new(c.replay_packs(&sandbox.mod_id, &sandbox.level_id).unwrap(), &setup, &mode, vec![]);
     rec.apply(&mut world, SetupCall::AlignPhysicsClock).unwrap();
     rec.start(&world).unwrap();
     let mut out = TickEvents::new();
@@ -257,7 +257,7 @@ fn bot_match_replays_from_content() {
     let mode = ModeSpec::Deathmatch(dm.clone());
     let game = Deathmatch::prepare(dm, &mut setup).unwrap();
     let mut world = World::new(setup.clone(), Box::new(game)).unwrap();
-    let mut rec = Recorder::new(c.replay_packs(mod_id, level_id).unwrap(), &setup, &mode);
+    let mut rec = Recorder::new(c.replay_packs(mod_id, level_id).unwrap(), &setup, &mode, vec![]);
     rec.start(&world).unwrap();
     let cache = AreaCache::new(world.terrain());
     let mut bots: Vec<Bot> =

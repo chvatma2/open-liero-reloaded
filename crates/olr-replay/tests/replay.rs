@@ -7,7 +7,7 @@ use crate::common;
 use common::*;
 use olr_replay::{
     CHECKSUM_EVERY, DecodeError, FORMAT_VERSION, Mismatch, ModeSpec, RecordError, Recorder, Replay,
-    ReplayError, SetupCall,
+    ReplayError, SetupCall, WormLook,
 };
 use olr_sim::{BonusItem, Keys, TickEvents, World};
 
@@ -17,7 +17,7 @@ use olr_sim::{BonusItem, Keys, TickEvents, World};
 fn record(ticks: u32, seed: u32) -> (Replay, World, World) {
     let (setup, mode) = deathmatch(4, seed);
     let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
-    let mut rec = Recorder::new(packs(), &setup, &mode);
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
     rec.apply(&mut world, SetupCall::AlignPhysicsClock).unwrap();
     rec.apply(&mut world, SetupCall::SetHealth { worm: 1, health: 30.0 }).unwrap();
     rec.apply(&mut world, SetupCall::PlaceBonus { x: 160, y: 100, item: BonusItem::Weapon(1) }).unwrap();
@@ -61,7 +61,7 @@ fn a_withdrawal_replays_at_its_tick() {
     let (setup, mode) = deathmatch(4, 9);
     let new_world = || World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
     let mut world = new_world();
-    let mut rec = Recorder::new(packs(), &setup, &mode);
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
     assert_eq!(rec.withdraw(&mut world, 1), Err(RecordError::NotStarted));
     rec.start(&world).unwrap();
     let mut keys = KeyGen::new(9, 4, 12);
@@ -98,7 +98,7 @@ fn a_withdrawal_after_the_last_tick_replays() {
     let new_world = || World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
     for ticks in [150u32, 200] {
         let mut world = new_world();
-        let mut rec = Recorder::new(packs(), &setup, &mode);
+        let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
         rec.start(&world).unwrap();
         let mut keys = KeyGen::new(4, 4, 12);
         let mut out = TickEvents::new();
@@ -119,7 +119,7 @@ fn a_withdrawal_after_the_last_tick_replays() {
     }
     // No ticks at all.
     let mut world = new_world();
-    let mut rec = Recorder::new(packs(), &setup, &mode);
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
     rec.start(&world).unwrap();
     rec.withdraw(&mut world, 0).unwrap();
     let back = Replay::decode(&rec.finish(&world).unwrap().encode()).unwrap();
@@ -137,7 +137,7 @@ fn a_failing_tick_after_a_trailing_withdrawal_replays() {
     let failing = [Keys(Keys::FIRE), Keys(Keys::LEFT)];
     for ticks in [0u32, 150, 200] {
         let mut world = new_world();
-        let mut rec = Recorder::new(packs(), &setup, &mode);
+        let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
         rec.start(&world).unwrap();
         let mut keys = KeyGen::new(4, 4, 12);
         let mut out = TickEvents::new();
@@ -162,7 +162,7 @@ fn stepping_across_a_withdrawal() {
     let (setup, mode) = deathmatch(4, 9);
     let new_world = || World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
     let mut world = new_world();
-    let mut rec = Recorder::new(packs(), &setup, &mode);
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
     rec.start(&world).unwrap();
     let mut keys = KeyGen::new(9, 4, 12);
     let mut out = TickEvents::new();
@@ -235,7 +235,7 @@ fn the_viewer_is_recorded() {
     let (setup, mode) = deathmatch(4, 6);
     let make = |viewer: Option<u8>| {
         let world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
-        let mut rec = Recorder::new(packs(), &setup, &mode);
+        let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
         rec.set_viewer(viewer);
         rec.start(&world).unwrap();
         Replay::decode(&rec.finish(&world).unwrap().encode()).unwrap()
@@ -272,7 +272,7 @@ fn replay_refuses_unknown_format_versions() {
 fn bad_setup_calls_are_errors() {
     let (setup, mode) = deathmatch(2, 1);
     let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
-    let mut rec = Recorder::new(packs(), &setup, &mode);
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
     assert!(rec.apply(&mut world, SetupCall::SetHealth { worm: 2, health: 1.0 }).is_err());
     assert!(rec.apply(&mut world, SetupCall::PlaceBonus { x: 1, y: 1, item: BonusItem::Weapon(9) }).is_err());
     rec.start(&world).unwrap();
@@ -298,7 +298,7 @@ fn recorder_refuses_ticks_it_did_not_see() {
     let new = || {
         (
             World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap(),
-            Recorder::new(packs(), &setup, &mode),
+            Recorder::new(packs(), &setup, &mode, vec![]),
         )
     };
     let mut out = TickEvents::new();
@@ -347,7 +347,7 @@ fn replay_reports_a_different_setup_at_tick_0() {
     // A setup call made on the world directly, not through the recorder.
     let (setup, mode) = deathmatch(2, 1);
     let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
-    let mut rec = Recorder::new(packs(), &setup, &mode);
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
     world.set_health(1, 40.0);
     rec.start(&world).unwrap();
     let mut out = TickEvents::new();
@@ -371,7 +371,7 @@ fn replay_size_is_reasonable() {
     let size = |hold: u32| {
         let (setup, mode) = deathmatch(8, 2);
         let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
-        let mut rec = Recorder::new(packs(), &setup, &mode);
+        let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
         rec.start(&world).unwrap();
         let mut keys = KeyGen::new(9, 8, hold);
         let mut out = TickEvents::new();
@@ -387,7 +387,8 @@ fn replay_size_is_reasonable() {
     let random = size(1);
     let held = size(20);
     eprintln!("one minute of 8 worms: {random} bytes with new keys every tick, {held} held 1-20 ticks");
-    assert!(random <= 50_000, "{random} bytes");
+    // The looks add about 90 bytes a worm (a skin id and a hash each).
+    assert!(random <= 51_000, "{random} bytes");
     assert!(held <= 16_000, "{held} bytes");
 }
 
@@ -480,7 +481,7 @@ mod corrupt {
 fn a_failing_tick_is_recorded_without_a_checksum() {
     let (setup, mode) = deathmatch(4, 9);
     let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
-    let mut rec = Recorder::new(packs(), &setup, &mode);
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
     rec.start(&world).unwrap();
     let mut keys = KeyGen::new(9, 4, 12);
     let mut out = TickEvents::new();
@@ -504,10 +505,52 @@ fn a_failing_tick_is_recorded_without_a_checksum() {
 
     // Failing before any tick: rows as wide as the failing keys.
     let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
-    let mut rec = Recorder::new(packs(), &setup, &mode);
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
     rec.start(&world).unwrap();
     let replay = rec.finish_failed(&world, &failing).unwrap();
     assert_eq!((replay.ticks(), replay.width()), (1, 2));
     world.tick(&failing, &mut out);
     assert_eq!(replay.play(replay.world(assets()).unwrap()).unwrap().world, world);
+}
+
+fn finish_now(mut rec: Recorder, setup: &olr_sim::MatchSetup, mode: &ModeSpec) -> Replay {
+    let world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
+    rec.start(&world).unwrap();
+    rec.finish(&world).unwrap()
+}
+
+/// The worms' looks are recorded and survive encode and decode; a recorder
+/// handed too few or too many looks fits them to the worms.
+#[test]
+fn the_looks_round_trip() {
+    let (setup, mode) = deathmatch(4, 3);
+    let looks = vec![
+        WormLook { name: "Ann".into(), colour: [1, 2, 3], skin: "skin-a".into(), skin_hash: "ab".repeat(32) },
+        WormLook::plain("Bot 1", [255, 0, 0]),
+        WormLook::plain("Bot 2", [0, 255, 0]),
+        WormLook::plain("Bot 3", [0, 0, 255]),
+    ];
+    let rec = Recorder::new(packs(), &setup, &mode, looks.clone());
+    let replay = finish_now(rec, &setup, &mode);
+    assert_eq!(replay.setup.looks, looks);
+    assert_eq!(Replay::decode(&replay.encode()).unwrap().setup.looks, looks);
+
+    let few = Recorder::new(packs(), &setup, &mode, looks[..1].to_vec());
+    let got = finish_now(few, &setup, &mode).setup.looks;
+    assert_eq!((got.len(), got[0].clone(), got[3].name.as_str()), (4, looks[0].clone(), "Worm 4"));
+    let many = Recorder::new(packs(), &setup, &mode, vec![looks[0].clone(); 9]);
+    assert_eq!(finish_now(many, &setup, &mode).setup.looks.len(), 4);
+}
+
+/// A format-3 file (before the looks) is refused with the version error.
+#[test]
+fn a_format_3_replay_is_refused() {
+    let (replay, ..) = record(10, 1);
+    let mut bytes = replay.encode();
+    bytes[4..6].copy_from_slice(&3u16.to_le_bytes());
+    assert_eq!(
+        Replay::decode(&bytes).unwrap_err(),
+        DecodeError::Version { found: 3, supported: FORMAT_VERSION }
+    );
+    assert_eq!(FORMAT_VERSION, 4);
 }

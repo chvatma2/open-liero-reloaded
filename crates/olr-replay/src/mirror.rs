@@ -11,7 +11,7 @@ use olr_modes::{ChaosCycle, DeathmatchSettings, RespawnLoadout};
 use olr_sim::{BonusItem, Loadout, SimSettings, Slot, WormSetup};
 use serde::{Deserialize, Serialize};
 
-use crate::{ModeSpec, PackRef, Packs, SetupCall};
+use crate::{ModeSpec, PackRef, Packs, SetupCall, WormLook};
 
 /// A copy of a struct whose fields are all `Copy`, converted both ways.
 macro_rules! mirror {
@@ -286,5 +286,29 @@ impl From<ModeW> for ModeSpec {
             dying_sprees,
             respawn_loadout,
         })
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+pub(crate) struct LookW {
+    pub(crate) name: String,
+    colour: [u8; 3],
+    pub(crate) skin: String,
+    pub(crate) skin_hash: String,
+}
+
+impl From<&WormLook> for LookW {
+    fn from(l: &WormLook) -> Self {
+        let WormLook { name, colour, skin, skin_hash } = l;
+        LookW { name: name.clone(), colour: *colour, skin: skin.clone(), skin_hash: skin_hash.clone() }
+    }
+}
+
+impl LookW {
+    /// Worm `i`'s look: the name sanitised, the skin as recorded (the
+    /// caller checked it).
+    pub(crate) fn into_look(self, i: usize) -> WormLook {
+        let LookW { name, colour, skin, skin_hash } = self;
+        WormLook { name: crate::sanitise_name(&name, i), colour, skin, skin_hash }
     }
 }

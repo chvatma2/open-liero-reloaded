@@ -13,6 +13,7 @@
 extern crate alloc;
 
 mod error;
+mod looks;
 mod mirror;
 mod play;
 mod record;
@@ -26,6 +27,7 @@ use olr_math::AbsTime;
 use olr_modes::{Deathmatch, DeathmatchError, DeathmatchSettings};
 use olr_sim::{BonusItem, GameMode, Keys, MatchSetup, OracleMode, SimSettings, WormSetup};
 
+pub use looks::{DEFAULT_SKIN, MAX_NAME_CHARS, MAX_SKIN_ID, NO_SKIN_HASH, WormLook, sanitise_name};
 pub use error::{DecodeError, Mismatch, RecordError, ReplayError};
 pub use play::{Assets, Cursor, Player, ReplayRun};
 pub use record::Recorder;
@@ -36,7 +38,8 @@ pub use record::Recorder;
 /// replay is published, other versions are refused, not migrated.
 ///
 /// 3: withdrawals (plan 12d).
-pub const FORMAT_VERSION: u16 = 3;
+/// 4: each worm's looks (name, colour, skin).
+pub const FORMAT_VERSION: u16 = 4;
 
 /// The first bytes of every replay file.
 pub const MAGIC: [u8; 4] = *b"OLRP";
@@ -102,12 +105,15 @@ pub struct ReplaySetup {
     /// The worm of the player whose game made the replay (a watcher
     /// starts on it); `None` for bots alone or an online spectator.
     pub viewer: Option<u8>,
+    /// Each worm's name, colour and skin, by worm (as many as `worms`).
+    /// Presentation only: not part of the simulation or its checksums.
+    pub looks: Vec<WormLook>,
 }
 
 impl ReplaySetup {
     /// `setup` (as `World::new` gets it: after `Deathmatch::prepare`) made
     /// of `packs`. Its content is named by `packs`, not stored.
-    pub fn new(packs: Packs, setup: &MatchSetup) -> Self {
+    pub fn new(packs: Packs, setup: &MatchSetup, looks: Vec<WormLook>) -> Self {
         // Exhaustive: a new field of `MatchSetup` must be recorded (or come
         // from the packs) and bump `FORMAT_VERSION`.
         let MatchSetup {
@@ -132,6 +138,7 @@ impl ReplaySetup {
             bonus_weapons: bonus_weapons.clone(),
             calls: Vec::new(),
             viewer: None,
+            looks: looks::fit(looks, worms.len()),
         }
     }
 

@@ -12,7 +12,7 @@ use olr_math::AbsTime;
 use olr_sim::{Keys, MAX_SLOTS, MAX_WORMS};
 use serde::{Deserialize, Serialize};
 
-use crate::mirror::{CallW, ModeW, PacksW, RespawnW, SettingsW, WormW};
+use crate::mirror::{CallW, LookW, ModeW, PacksW, RespawnW, SettingsW, WormW};
 use crate::{
     DecodeError, FORMAT_VERSION, HEADER_BYTES, MAGIC, MAX_SETUP_CALLS, MAX_TICKS, Replay, ReplaySetup,
 };
@@ -28,6 +28,7 @@ struct SetupW {
     bonus_weapons: Option<Vec<i32>>,
     calls: Vec<CallW>,
     viewer: Option<u8>,
+    looks: Vec<LookW>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -68,6 +69,7 @@ impl Replay {
                 bonus_weapons: s.bonus_weapons.clone(),
                 calls: s.calls.iter().map(|&c| c.into()).collect(),
                 viewer: s.viewer,
+                looks: s.looks.iter().map(LookW::from).collect(),
             },
             mode: (&self.mode).into(),
             ticks: self.ticks(),
@@ -150,7 +152,7 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
         seen |= 1 << worm;
         prev = t;
     }
-    let SetupW { packs, settings, start, seed, worms, pool_capacity, bonus_weapons, calls, viewer } = setup;
+    let SetupW { packs, settings, start, seed, worms, pool_capacity, bonus_weapons, calls, viewer, looks } = setup;
     if worms.len() > MAX_WORMS {
         return invalid(format!("{} worms, at most {MAX_WORMS}", worms.len()));
     }
@@ -159,6 +161,14 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
     }
     if let Some(v) = viewer.filter(|&v| usize::from(v) >= worms.len()) {
         return invalid(format!("viewer {v} is no worm of {}", worms.len()));
+    }
+    if looks.len() != worms.len() {
+        return invalid(format!("{} looks for {} worms", looks.len(), worms.len()));
+    }
+    if let Some(i) = looks.iter().position(|l| {
+        !crate::looks::valid_skin(&l.skin, &l.skin_hash)
+    }) {
+        return invalid(format!("worm {i}: skin id or hash out of bounds"));
     }
     if calls.len() > MAX_SETUP_CALLS {
         return invalid(format!("{} setup calls, at most {MAX_SETUP_CALLS}", calls.len()));
@@ -191,6 +201,7 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
         bonus_weapons,
         calls: calls.into_iter().map(Into::into).collect(),
         viewer,
+        looks: looks.into_iter().enumerate().map(|(i, l)| l.into_look(i)).collect(),
     };
     // NaN, infinities and values outside OLX's ranges, before anything
     // computes with them (`World::new` and `Replay::world` check them again).
@@ -203,6 +214,7 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::WormLook;
     use crate::mirror::SlotW;
     use alloc::vec;
     use olr_sim::{Loadout, SimSettings, Slot, WormSetup};
@@ -227,6 +239,7 @@ mod tests {
                 bonus_weapons: None,
                 calls: vec![],
                 viewer: None,
+                looks: vec![(&WormLook::numbered(0)).into()],
             },
             mode: ModeW::Oracle,
             ticks,
@@ -277,5 +290,31 @@ mod tests {
         let mut w = wire(0, 0, &[]);
         w.setup.viewer = Some(1);
         assert!(matches!(err(w), DecodeError::Invalid(_)), "worm 1 of 1");
+    }
+
+    #[test]
+    fn looks_are_sanitised_and_bounded() {
+        let mut w = wire(0, 0, &[]);
+        w.setup.looks[0].name = format!(" \u{7}{}\u{202E}", "n".repeat(100));
+        let r = from_wire(w).unwrap();
+        assert_eq!(r.setup.looks[0].name, "n".repeat(crate::MAX_NAME_CHARS));
+        let mut w = wire(0, 0, &[]);
+        w.setup.looks[0].name = "\u{1}".into();
+        assert_eq!(from_wire(w).unwrap().setup.looks[0].name, "Worm 1");
+        let mut w = wire(0, 0, &[]);
+        w.setup.looks[0].skin = "a".repeat(crate::MAX_SKIN_ID + 1);
+        assert!(matches!(err(w), DecodeError::Invalid(_)), "skin id too long");
+        let mut w = wire(0, 0, &[]);
+        w.setup.looks[0].skin_hash = "f".repeat(65);
+        assert!(matches!(err(w), DecodeError::Invalid(_)), "hash too long");
+        let mut w = wire(0, 0, &[]);
+        w.setup.looks[0].skin = "Not A Pack".into();
+        assert!(matches!(err(w), DecodeError::Invalid(_)), "skin id is no pack id");
+        let mut w = wire(0, 0, &[]);
+        w.setup.looks.clear();
+        assert!(matches!(err(w), DecodeError::Invalid(_)), "no looks for one worm");
+        let mut w = wire(0, 0, &[]);
+        w.setup.looks.push((&WormLook::numbered(1)).into());
+        assert!(matches!(err(w), DecodeError::Invalid(_)), "two looks for one worm");
     }
 }

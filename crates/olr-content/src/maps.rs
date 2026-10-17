@@ -12,11 +12,11 @@ use crate::placeholder::placeholder_image;
 
 /// OLX's default skin pack, what a skin that cannot be matched falls back
 /// to (olr-lobby's `DEFAULT_SKIN`).
-pub const DEFAULT_SKIN: &str = "olx-skin-default";
+pub const DEFAULT_SKIN: &str = olr_replay::DEFAULT_SKIN;
 /// The "content hash unknown" of a look (a bot's), restating olr-proto's
 /// `NO_HASH` (olr-content is below olr-proto; a test in olr-game asserts
 /// the two are equal).
-pub const NO_SKIN_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+pub const NO_SKIN_HASH: &str = olr_replay::NO_SKIN_HASH;
 
 /// A level: its material grid and its art (`art_scale` art pixels per
 /// material pixel, as the level pack guarantees).

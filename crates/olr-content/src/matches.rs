@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::{Context as _, anyhow, ensure};
 use olr_bots::{AreaCache, Bot, BotConfig, BotRng, LoadoutPolicy, Personality, choose_loadout};
 use olr_modes::{ChaosCycle, Deathmatch, DeathmatchSettings, RespawnLoadout};
-use olr_replay::{ModeSpec, Packs, Recorder};
+use olr_replay::{ModeSpec, Packs, Recorder, WormLook};
 use olr_sim::{Loadout, MAX_SLOTS, MAX_WORMS, MatchSetup, SimSettings, Slot, World};
 
 use crate::{Content, LoadedLevel, LoadedMod, LoadedTheme, SandboxSetup, SpawnSpec, match_setup};
@@ -71,6 +71,31 @@ impl MatchOptions {
             pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
         }
     }
+}
+
+/// OLX's bot profiles' colours, CPU 1 to CPU 7 (`olr-ui`'s `CPU_COLOURS`,
+/// a higher layer).
+/// OLX: src/client/ProfileSystem.cpp:47-59.
+const CPU_COLOURS: [[u8; 3]; 7] =
+    [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 0, 255], [0, 255, 255], [128, 128, 128], [128, 255, 0]];
+
+/// The looks a match is recorded with unless its caller sets better ones
+/// (`Recorder::set_looks`): "Bot N" in OLX's bot colours for a bot (the
+/// worm's number in the match), "Player N" in grey for a human, all with the
+/// default skin.
+pub fn default_looks(players: &[Player]) -> Vec<WormLook> {
+    let mut bots = 0;
+    players
+        .iter()
+        .enumerate()
+        .map(|(i, p)| match p {
+            Player::Bot(_) => {
+                bots += 1;
+                WormLook::plain(&format!("Bot {}", i + 1), CPU_COLOURS[(bots - 1) % CPU_COLOURS.len()])
+            }
+            Player::Human | Player::HumanWith(_) => WormLook::plain(&format!("Player {}", i + 1), [160, 160, 160]),
+        })
+        .collect()
 }
 
 /// The assets a match is made of, loaded once (a rematch decodes nothing
@@ -164,7 +189,7 @@ pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<Built
     let mode = ModeSpec::Deathmatch(dm.clone());
     let game = Deathmatch::prepare(dm, &mut setup).map_err(|e| anyhow!("{e}"))?;
     let world = World::new(setup.clone(), Box::new(game)).map_err(|e| anyhow!("{e}"))?;
-    let mut recorder = Recorder::new(a.packs.clone(), &setup, &mode);
+    let mut recorder = Recorder::new(a.packs.clone(), &setup, &mode, default_looks(&o.players));
     // The first human's worm: where a watcher of the replay starts.
     recorder.set_viewer(
         o.players.iter().position(|p| !matches!(p, Player::Bot(_))).and_then(|i| u8::try_from(i).ok()),

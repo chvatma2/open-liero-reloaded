@@ -7,7 +7,7 @@ use olr_sim::{Keys, MAX_WORMS, MatchSetup, World};
 
 use crate::play::apply_call;
 use crate::{
-    CHECKSUM_EVERY, MAX_SETUP_CALLS, MAX_TICKS, ModeSpec, Packs, RecordError, Replay, ReplaySetup, SetupCall,
+    CHECKSUM_EVERY, MAX_SETUP_CALLS, MAX_TICKS, ModeSpec, Packs, RecordError, WormLook, Replay, ReplaySetup, SetupCall,
 };
 
 /// Follows a match: its setup calls, the world's checksum before the first
@@ -16,7 +16,7 @@ use crate::{
 ///
 /// ```text
 /// let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings)?)?;
-/// let mut rec = Recorder::new(packs, &setup, &mode);
+/// let mut rec = Recorder::new(packs, &setup, &mode, looks);
 /// rec.apply(&mut world, SetupCall::AlignPhysicsClock)?;   // instead of world.align_physics_clock()
 /// rec.start(&world)?;                                    // after the last setup call
 /// loop { world.tick(&keys, &mut out); rec.push(&keys, &world)?; }
@@ -38,11 +38,13 @@ pub struct Recorder {
 impl Recorder {
     /// A recorder for the match `World::new(setup.clone(), mode.game_mode(&setup.settings)?)`
     /// starts, `setup` being made of `packs` (`olr_content::Content::replay_packs`
-    /// gives them with their hashes). For a Deathmatch, `setup` is the one
+    /// gives them with their hashes), `looks` the worms' looks in worm order
+    /// (made as many as the worms: extra ones are dropped, missing ones are
+    /// [`WormLook::numbered`], names and skins sanitised). For a Deathmatch, `setup` is the one
     /// `Deathmatch::prepare` changed.
-    pub fn new(packs: Packs, setup: &MatchSetup, mode: &ModeSpec) -> Self {
+    pub fn new(packs: Packs, setup: &MatchSetup, mode: &ModeSpec, looks: Vec<WormLook>) -> Self {
         Recorder {
-            setup: ReplaySetup::new(packs, setup),
+            setup: ReplaySetup::new(packs, setup, looks),
             mode: mode.clone(),
             ticks: 0,
             base_frame: None,
@@ -50,6 +52,13 @@ impl Recorder {
             checksums: Vec::new(),
             withdrawals: Vec::new(),
         }
+    }
+
+    /// Replaces the worms' looks (`set_looks` after `new`, for a recorder
+    /// made before the looks were known): fitted to the worms as in
+    /// [`Recorder::new`].
+    pub fn set_looks(&mut self, looks: Vec<WormLook>) {
+        self.setup.looks = crate::looks::fit(looks, self.setup.worms.len());
     }
 
     /// Records the worm of the player whose game this is (`None`: nobody
