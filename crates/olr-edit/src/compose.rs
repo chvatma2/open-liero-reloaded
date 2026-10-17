@@ -22,8 +22,8 @@ use olr_data::level::Material;
 use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
-    Composition, CompositionSource, Element, ElementKind, LevelSource, MATERIAL_PALETTE, check_composition,
-    element_files, raster_files, write_level_files,
+    Composition, CompositionSource, Element, ElementKind, LevelSource, check_composition, element_files,
+    encode_material, raster_files, write_level_files,
 };
 use olr_format::themes::read_theme_files;
 use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
@@ -132,14 +132,32 @@ impl Baker {
         art_scale: u32,
         back_tile: &RgbaImage,
     ) -> Result<Baker, ComposeError> {
-        check_composition(src, size, art_scale)?;
         let s = art_scale;
-        let art = (size.0 * s, size.1 * s);
+        let art = match (size.0.checked_mul(s), size.1.checked_mul(s)) {
+            (Some(w), Some(h)) if image_io::check_size(w, h, LEVEL_ART).is_ok() => (w, h),
+            _ => {
+                return Err(ComposeError::File {
+                    file: "level.ron".into(),
+                    message: format!("{}x{} at art scale {s}: art beyond the level bound", size.0, size.1),
+                });
+            }
+        };
+        check_composition(src, size, art_scale)?;
         let mut layers = Vec::new();
         for e in &src.composition.elements {
-            let layer = decode(src, e, size, art, s)?;
-            if e.visible {
-                layers.push(layer);
+            match (&e.kind, e.visible) {
+                (_, true) => layers.push(decode(src, e, size, art, s)?),
+                // A hidden image's original is decoded for its errors, not
+                // processed: it is left out of the bake.
+                (ElementKind::Image { .. }, false) => {
+                    let file = &element_files(e)[0];
+                    let bytes = src.files.get(file).map(Vec::as_slice).unwrap_or_default();
+                    image_io::decode_image_within(bytes, IMAGES)
+                        .map_err(|message| ComposeError::File { file: file.clone(), message })?;
+                }
+                (_, false) => {
+                    decode(src, e, size, art, s)?;
+                }
             }
         }
         Ok(Baker { size, art_scale, back_tile: back_tile.clone(), layers })
@@ -296,10 +314,9 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         locked: false,
         kind: ElementKind::Raster,
     };
-    let indices: Vec<u8> = level.material.iter().map(|m| *m as u8).collect();
     let [m, f, b] = raster_files(&element.id);
     let files = [
-        (m, image_io::encode_indexed(level.size.0, level.size.1, &indices, &MATERIAL_PALETTE)),
+        (m, encode_material(level.size, &level.material)),
         (f, image_io::encode_rgba(&level.front)),
         (b, image_io::encode_rgba(&level.back)),
     ]
@@ -317,7 +334,9 @@ pub fn theme_back_tile(content: &Path, theme: &str) -> Result<RgbaImage, Compose
         .map_err(|e| fail(e.to_string()))?
         .filter_map(Result::ok)
         .filter(|e| {
-            e.file_type().is_ok_and(|t| t.is_dir()) && !e.file_name().to_string_lossy().starts_with('.')
+            // A linked pack counts: `metadata` follows the link.
+            std::fs::metadata(e.path()).is_ok_and(|m| m.is_dir())
+                && !e.file_name().to_string_lossy().starts_with('.')
         })
         .map(|e| e.path())
         .collect();

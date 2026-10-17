@@ -167,7 +167,13 @@ fn colour_box(colours: &[[u8; 3]], from: usize, to: usize) -> ColourBox {
 /// Each box's colour is its integer mean. Empty when nothing is covered.
 fn median_cut(img: &RgbaImage, n: usize) -> Vec<[u8; 3]> {
     let mut colours: Vec<[u8; 3]> = covered(img).collect();
-    let distinct: std::collections::BTreeSet<[u8; 3]> = colours.iter().copied().collect();
+    // The distinct colours, as far as `n + 1` of them: past that, median cut.
+    let mut distinct = std::collections::BTreeSet::new();
+    for c in &colours {
+        if distinct.insert(*c) && distinct.len() > n {
+            break;
+        }
+    }
     if distinct.len() <= n {
         return distinct.into_iter().collect();
     }

@@ -69,14 +69,19 @@ templates and the level operations.
     (`check_composition`), decodes and processes once; `bake_region` never
     fails and equals the full bake by construction; `bake` adds the
     thumbnail; `compose_from` makes a plain level one raster element
-    `base`; `theme_back_tile(content, theme)`; `stale(pack, tile)` lists
+    `base`; a hidden image is decoded (its errors) but not processed;
+    `theme_back_tile(content, theme)` (linked pack directories count);
+    `stale(pack, tile)` lists
     the baked files that differ from the composition's bake.
-  - **`element`**: `add_image`, `add_layer`, `set(Property)`, `remove`,
+  - **`element`**: `add_image` (`add_image_with` takes settings applied
+    in the same step), `add_layer`, `set(Property)` (`set_all` for
+    several, checked once), `remove`,
     `raise`, `lower`, `draw`, `erase`, `resize` (before `level::resize`),
     `ensure_composed`. Each edits a copy and keeps it only when
-    `check_composition` passes (`ElementError::BadValue` otherwise). A
-    locked element refuses `set` (but `Locked(false)`), `remove`, `draw`
-    and `erase`. None bakes: callers do.
+    `check_composition` passes (`ElementError::BadValue`, prefixed with
+    the edit's property or file only when the composition checked before
+    it). A locked element refuses `set` (but `Locked`), `remove`, `draw`
+    and `erase`. Ids are at most 64 bytes. None bakes: callers do.
 - **Tests** (`tests/`, one binary): `pack.rs` (every bundled pack loads and
   writes back byte for byte; foreign files kept; invalid results refused;
   saves through `x/..` and a symbolic link; a name a save would lose),

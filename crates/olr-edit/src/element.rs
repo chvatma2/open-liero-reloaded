@@ -8,8 +8,8 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
-    CompositionSource, Dither, Element, ElementKind, ElementMaterial, LevelSource, MATERIAL_PALETTE,
-    MAX_ELEMENTS, check_composition, element_files, image_file, layer_file, raster_files,
+    CompositionSource, Dither, Element, ElementKind, ElementMaterial, LevelSource, MAX_ELEMENTS,
+    check_composition, element_files, image_file, layer_file, raster_files,
 };
 
 use crate::compose::compose_from;
@@ -63,7 +63,9 @@ pub fn ensure_composed(pack: &mut Pack) -> Result<(), ElementError> {
 
 /// Applies `edit` to a copy of the pack's composition and keeps the copy
 /// only when it still checks: the composition is never left invalid. A
-/// check error is `BadValue`, prefixed by `context` when given.
+/// check error is `BadValue`, prefixed by `context` when given and the
+/// composition checked before the edit (an error already there is not the
+/// edit's; an edit that repairs it still applies).
 fn commit<T>(
     pack: &mut Pack,
     context: &str,
@@ -71,10 +73,15 @@ fn commit<T>(
 ) -> Result<T, ElementError> {
     let l = level(pack)?;
     let (size, art_scale) = (l.size, l.art_scale);
+    let was_valid = pack.composition.as_ref().is_none_or(|c| check_composition(c, size, art_scale).is_ok());
     let mut src = pack.composition.clone().unwrap_or_else(|| compose_from(l));
     let out = edit(&mut src)?;
     check_composition(&src, size, art_scale).map_err(|e| {
-        ElementError::BadValue(if context.is_empty() { e.to_string() } else { format!("{context}: {e}") })
+        ElementError::BadValue(if context.is_empty() || !was_valid {
+            e.to_string()
+        } else {
+            format!("{context}: {e}")
+        })
     })?;
     pack.composition = Some(src);
     Ok(out)
@@ -94,8 +101,12 @@ fn unlocked(src: &CompositionSource, id: &str) -> Result<usize, ElementError> {
     Ok(i)
 }
 
+/// The longest element id made from a name, in bytes: an id names files.
+const MAX_ID: usize = 64;
+
 /// `base` made a slug (ruling R8): lowercase, every character outside
-/// `[a-z0-9_.-]` a `-`, not starting with `.`; `fallback` when empty.
+/// `[a-z0-9_.-]` a `-`, not starting with `.`, at most `MAX_ID` bytes;
+/// `fallback` when empty.
 fn slug(base: &str, fallback: &str) -> String {
     let s: String = base
         .chars()
@@ -104,14 +115,19 @@ fn slug(base: &str, fallback: &str) -> String {
             if c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '_' | '.' | '-') { c } else { '-' }
         })
         .collect();
-    let s = s.trim_start_matches('.').to_string();
+    let mut s = s.trim_start_matches('.').to_string();
+    s.truncate(MAX_ID);
     if s.is_empty() { fallback.into() } else { s }
 }
 
-/// `base`, or `base-2`, `base-3`, … : the first that is not `taken`.
+/// `base`, or `base-2`, `base-3`, … (`base` shortened so the whole stays
+/// within `MAX_ID` bytes): the first that is not `taken`.
 fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
     std::iter::once(base.to_string())
-        .chain((2u32..).map(|i| format!("{base}-{i}")))
+        .chain((2u32..).map(|i| {
+            let suffix = format!("-{i}");
+            format!("{}{suffix}", &base[..base.len().min(MAX_ID - suffix.len())])
+        }))
         .find(|c| !taken(c))
         .unwrap_or_default()
 }
@@ -133,17 +149,20 @@ fn new_id(src: &CompositionSource, name: &str, fallback: &str) -> String {
 }
 
 /// `file_name` with `-2`, `-3`, … before its extension until no stored
-/// original has that name, case aside (ruling R7).
+/// original has that name, case aside, and the name is not one some file
+/// system refuses (a Windows device: `CON.png` becomes `CON-2.png`; ruling
+/// R7). A name no suffix makes portable (a colon) is kept, for the check
+/// to refuse.
 fn new_source(src: &CompositionSource, file_name: &str) -> String {
     let (stem, ext) = file_name.rsplit_once('.').unwrap_or((file_name, ""));
     let taken = |c: &str| {
         let path = image_file(c).to_ascii_lowercase();
-        src.files.keys().any(|k| k.to_ascii_lowercase() == path)
+        olr_vfs::non_portable(c).is_some() || src.files.keys().any(|k| k.to_ascii_lowercase() == path)
     };
     if !taken(file_name) {
         return file_name.into();
     }
-    (2u32..).map(|i| format!("{stem}-{i}.{ext}")).find(|c| !taken(c)).unwrap_or_default()
+    (2u32..=1000).map(|i| format!("{stem}-{i}.{ext}")).find(|c| !taken(c)).unwrap_or_else(|| file_name.into())
 }
 
 fn push(src: &mut CompositionSource, element: Element) -> Result<(), ElementError> {
@@ -163,6 +182,23 @@ pub fn add_image(
     size: (u32, u32),
     material: ElementMaterial,
     name: &str,
+) -> Result<String, ElementError> {
+    add_image_with(pack, file_name, bytes, at, size, material, name, &[])
+}
+
+/// [`add_image`] with `settings` applied to the new element in the same
+/// step, the result checked once: a pixel size that keeps the
+/// composition within its pixel budget counts from the start.
+#[allow(clippy::too_many_arguments)]
+pub fn add_image_with(
+    pack: &mut Pack,
+    file_name: &str,
+    bytes: Vec<u8>,
+    at: (i32, i32),
+    size: (u32, u32),
+    material: ElementMaterial,
+    name: &str,
+    settings: &[Property],
 ) -> Result<String, ElementError> {
     let bad = |why: String| ElementError::BadValue(format!("{file_name}: {why}"));
     let (w, h) = image_io::image_size(&bytes).ok_or_else(|| bad("not a PNG or JPEG".into()))?;
@@ -192,6 +228,9 @@ pub fn add_image(
                 },
             },
         )?;
+        for p in settings {
+            apply(src, &id, p.clone())?;
+        }
         Ok(id)
     })
 }
@@ -234,13 +273,29 @@ fn field(p: &Property) -> &'static str {
 }
 
 /// Sets `property` of element `id`, validated as `check_composition` does.
-/// A locked element takes only `Locked(false)`.
+/// A locked element takes only `Locked` (unlocking, or no change).
 pub fn set(pack: &mut Pack, id: &str, property: Property) -> Result<(), ElementError> {
-    let context = field(&property);
-    commit(pack, context, |src| {
+    set_all(pack, id, &[property])
+}
+
+/// Sets `properties` of element `id` in order, in one step: the result is
+/// checked once, as `set` checks one.
+pub fn set_all(pack: &mut Pack, id: &str, properties: &[Property]) -> Result<(), ElementError> {
+    let context: Vec<&str> = properties.iter().map(field).collect();
+    commit(pack, &context.join(", "), |src| {
+        for p in properties {
+            apply(src, id, p.clone())?;
+        }
+        Ok(())
+    })
+}
+
+/// Sets one property of element `id` in `src`, unchecked.
+fn apply(src: &mut CompositionSource, id: &str, property: Property) -> Result<(), ElementError> {
+    {
         let i = find(src, id)?;
         let e = &mut src.composition.elements[i];
-        if e.locked && property != Property::Locked(false) {
+        if e.locked && !matches!(property, Property::Locked(_)) {
             return Err(ElementError::Locked(id.into()));
         }
         let wrong = |want| ElementError::WrongKind { id: id.into(), want };
@@ -270,7 +325,7 @@ pub fn set(pack: &mut Pack, id: &str, property: Property) -> Result<(), ElementE
             }
         }
         Ok(())
-    })
+    }
 }
 
 /// Removes element `id` and the files no other element uses.
@@ -424,8 +479,7 @@ pub fn resize(
                 let front = image_io::decode_rgba_within(get(&f)?, LEVEL_ART).map_err(|why| bad(&f, why))?;
                 let back = image_io::decode_rgba_within(get(&b)?, LEVEL_ART).map_err(|why| bad(&b, why))?;
                 let tmp = relay(as_level(&l, cells, front, back), paint, material)?;
-                let indices: Vec<u8> = tmp.material.iter().map(|c| *c as u8).collect();
-                src.files.insert(m, image_io::encode_indexed(size.0, size.1, &indices, &MATERIAL_PALETTE));
+                src.files.insert(m, olr_format::levels::encode_material(size, &tmp.material));
                 src.files.insert(f, image_io::encode_rgba(&tmp.front));
                 src.files.insert(b, image_io::encode_rgba(&tmp.back));
             }

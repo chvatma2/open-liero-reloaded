@@ -249,7 +249,40 @@ fn elements_outside_the_level_are_clipped() {
     with_image(&mut src, "edge", solid(3, 3, BLUE), (3, 2), (3, 3), ElementMaterial::Rock);
     let mut l = level(4, 3, 2);
     bake(&mut l, &src, &back_tile()).unwrap();
-    assert_eq!(l.material[(2 * 4 + 3) as usize], Material::Rock, "the edge's one inside pixel");
+    // `far` reaches nothing; `big`, clipped, covers all but the edge's one
+    // inside pixel with its colour.
+    for y in 0..3u32 {
+        for x in 0..4u32 {
+            let edge = (x, y) == (3, 2);
+            assert_eq!(
+                l.material[(y * 4 + x) as usize],
+                if edge { Material::Rock } else { Material::Dirt },
+                "({x}, {y})"
+            );
+            for (ax, ay) in [(x * 2, y * 2), (x * 2 + 1, y * 2 + 1)] {
+                assert_eq!(l.front.get(ax, ay), if edge { BLUE } else { BROWN }, "({ax}, {ay})");
+            }
+        }
+    }
+}
+
+/// Deferred minors: a size whose art overflows is an error, never a panic.
+#[test]
+fn a_baker_refuses_an_overflowing_size() {
+    let e = Baker::new(&CompositionSource::default(), (70_000, 70_000), 70_000, &back_tile());
+    assert!(e.is_err());
+}
+
+/// Deferred minors: a theme pack linked into the content directory is found.
+#[cfg(unix)]
+#[test]
+fn theme_back_tile_follows_links() {
+    let Some(root) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(root.join("olx-theme-dirt").canonicalize().unwrap(), tmp.path().join("dirt"))
+        .unwrap();
+    let tile = olr_edit::compose::theme_back_tile(tmp.path(), "olx-theme-dirt").unwrap();
+    assert!(tile == olr_edit::compose::theme_back_tile(&root, "olx-theme-dirt").unwrap());
 }
 
 #[test]
@@ -361,4 +394,18 @@ fn the_fixture_is_baked() {
     let pack = olr_edit::pack::load(&fixture).unwrap();
     let tile = olr_edit::compose::theme_back_tile(&content, "olx-theme-dirt").unwrap();
     assert_eq!(olr_edit::compose::stale(&pack, &tile).unwrap(), Vec::<String>::new());
+}
+
+/// A hidden image is not processed, but its original still decodes: an
+/// undecodable one is an error naming it.
+#[test]
+fn a_hidden_image_still_decodes() {
+    const GRADIENT: &[u8] = include_bytes!("../../olr-format/tests/data/gradient.jpg");
+    let mut src = CompositionSource::default();
+    with_image(&mut src, "x", solid(1, 1, BLUE), (0, 0), (1, 1), ElementMaterial::Dirt);
+    src.composition.elements[0].visible = false;
+    bake(&mut level(4, 3, 1), &src, &back_tile()).unwrap();
+    src.files.insert(image_file("x.png"), GRADIENT[..GRADIENT.len() / 2].to_vec());
+    let e = bake(&mut level(4, 3, 1), &src, &back_tile()).unwrap_err().to_string();
+    assert!(e.contains("editor/images/x.png") && e.contains("cut short"), "{e}");
 }

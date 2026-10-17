@@ -211,3 +211,103 @@ fn resize_refuses_a_wrong_sized_layer() {
         assert_eq!(p.composition, before);
     }
 }
+
+/// A pack whose drawn layer `l` was hand-edited to the wrong size.
+fn broken() -> Pack {
+    let mut p = pack(8, 6, 1);
+    add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
+    add_layer(&mut p, ElementMaterial::Dirt, "M").unwrap();
+    p.composition.as_mut().unwrap().files.insert(layer_file("l"), png(3, 3));
+    p
+}
+
+/// Deferred minors: an error already in the composition is not labelled
+/// with the property being set; an edit that repairs it works.
+#[test]
+fn an_existing_error_is_not_labelled_as_the_edit() {
+    let mut p = broken();
+    let e = set(&mut p, "m", Property::Name("x".into())).unwrap_err().to_string();
+    assert!(e.starts_with("editor/layers/l.png"), "{e}");
+    remove(&mut p, "l").unwrap();
+}
+
+/// Deferred minors: an original named like a Windows device is renamed.
+#[test]
+fn a_device_named_original_is_renamed() {
+    let mut p = pack(8, 6, 1);
+    add_image(&mut p, "CON.png", png(2, 2), (0, 0), (2, 2), ElementMaterial::Rock, "").unwrap();
+    let src = p.composition.as_ref().unwrap();
+    assert!(src.files.contains_key(&olr_format::levels::image_file("CON-2.png")), "{:?}", src.files.keys());
+}
+
+/// Deferred minors: ids are at most 64 bytes.
+#[test]
+fn long_names_make_short_ids() {
+    let mut p = pack(8, 6, 1);
+    let id = add_layer(&mut p, ElementMaterial::Dirt, &"a".repeat(300)).unwrap();
+    assert_eq!(id.len(), 64);
+    let id2 = add_layer(&mut p, ElementMaterial::Dirt, &"a".repeat(300)).unwrap();
+    assert!(id2.len() <= 64 && id2 != id, "{id2}");
+}
+
+/// Deferred minors: an image's settings apply with it, checked together:
+/// a pixel size that brings the composition within its pixel budget
+/// counts from the start.
+#[test]
+fn settings_apply_together() {
+    let mut p = pack(8, 6, 1);
+    // The base and 15 boxes of 4096² (16 Mi grid pixels each at art scale
+    // 1) nearly fill the 256 Mi budget.
+    for i in 0..15 {
+        add_image(&mut p, &format!("{i}.png"), png(2, 2), (0, 0), (4096, 4096), ElementMaterial::Dirt, "")
+            .unwrap();
+    }
+    assert!(add_image(&mut p, "x.png", png(2, 2), (0, 0), (4096, 4096), ElementMaterial::Dirt, "").is_err());
+    add_image_with(
+        &mut p,
+        "x.png",
+        png(2, 2),
+        (0, 0),
+        (4096, 4096),
+        ElementMaterial::Dirt,
+        "",
+        &[Property::PixelSize(2)],
+    )
+    .unwrap();
+    // A 2048² box fits; growing it to 4096² fits only with pixel size 2,
+    // set in the same step.
+    let id = add_image(&mut p, "z.png", png(2, 2), (0, 0), (2048, 2048), ElementMaterial::Dirt, "").unwrap();
+    assert!(set(&mut p, &id, Property::Size((4096, 4096))).is_err());
+    set_all(&mut p, &id, &[Property::Size((4096, 4096)), Property::PixelSize(2)]).unwrap();
+}
+
+/// Deferred minors: locking a locked element is no change, not an error;
+/// a locked element refuses `remove`, `draw` and `erase`.
+#[test]
+fn locks() {
+    let mut p = pack(8, 6, 1);
+    let id = add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
+    set(&mut p, &id, Property::Locked(true)).unwrap();
+    set(&mut p, &id, Property::Locked(true)).unwrap();
+    let locked = Err(ElementError::Locked(id.clone()));
+    let rect = Shape::Rect { x: 0, y: 0, w: 1, h: 1 };
+    assert_eq!(draw(&mut p, &id, &rect, &Paint::Colour(RED)), locked);
+    assert_eq!(erase(&mut p, &id, &rect), locked);
+    assert_eq!(remove(&mut p, &id), locked);
+}
+
+/// Deferred minors: a JPEG cut in its scan, or declaring a huge frame, is
+/// refused by `add_image` naming the file.
+#[test]
+fn add_image_refuses_a_cut_or_huge_jpeg() {
+    const GRADIENT: &[u8] = include_bytes!("../../olr-format/tests/data/gradient.jpg");
+    let mut huge = include_bytes!("../../olr-format/tests/data/tiny.jpg").to_vec();
+    let sof = huge.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
+    huge[sof + 5..sof + 9].copy_from_slice(&[0xEA, 0x60, 0xEA, 0x60]);
+    let mut p = pack(8, 6, 1);
+    for (name, bytes) in [("cut.jpg", GRADIENT[..GRADIENT.len() / 2].to_vec()), ("huge.jpg", huge)] {
+        let e = add_image(&mut p, name, bytes, (0, 0), (4, 4), ElementMaterial::Dirt, "").unwrap_err();
+        assert!(matches!(&e, ElementError::BadValue(m) if m.contains(name)), "{e}");
+        assert_eq!(p.composition, None);
+    }
+}
