@@ -32,14 +32,7 @@ use crate::level::refresh_thumb;
 use crate::pack::{Pack, Source};
 use crate::pixelate::{Pixelation, process_grid};
 
-/// A rectangle of world pixels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct Rect {
-    pub x: u32,
-    pub y: u32,
-    pub w: u32,
-    pub h: u32,
-}
+pub use crate::level::Rect;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ComposeError {

@@ -3,8 +3,8 @@
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_edit::level::{
-    Layer, Paint, Shape, Solid, add_spawn, carve, fill, move_object, paint, refresh_thumb, remove_object,
-    resize, stamp,
+    Layer, Paint, Rect, Shape, Solid, add_spawn, carve, draw_art, erase_art, fill, move_object, paint,
+    refresh_thumb, remove_object, rescale_art, resize, shape_bounds, stamp,
 };
 use olr_format::levels::{LevelObject, LevelSource, MAX_OBJECTS, THUMB_SIZE, compile_level};
 use proptest::prelude::*;
@@ -297,6 +297,99 @@ fn refresh_thumb_draws_the_front() {
 }
 
 /// One random operation.
+/// The world pixels `shape` covers on a `w` × `h` level, drawn at art scale 1.
+fn coverage(shape: &Shape, w: u32, h: u32) -> Vec<(u32, u32)> {
+    let mut art = RgbaImage::new(w, h);
+    draw_art(&mut art, 1, (w, h), shape, &Paint::Colour(RED));
+    (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).filter(|&(x, y)| art.get(x, y).a != 0).collect()
+}
+
+#[test]
+fn ellipse_and_line_cover_by_centre() {
+    let all = |xs: std::ops::Range<u32>, ys: std::ops::Range<u32>| -> Vec<(u32, u32)> {
+        ys.flat_map(|y| xs.clone().map(move |x| (x, y))).collect()
+    };
+    // A 4 × 4 ellipse: its box without the four corners.
+    let want: Vec<_> =
+        all(0..4, 0..4).into_iter().filter(|&(x, y)| !matches!((x, y), (0 | 3, 0 | 3))).collect();
+    assert_eq!(coverage(&Shape::Ellipse { x: 0, y: 0, w: 4, h: 4 }, 8, 8), want);
+    // A 4 × 2 one: every pixel centre lies inside, corners too.
+    assert_eq!(coverage(&Shape::Ellipse { x: 0, y: 0, w: 4, h: 2 }, 8, 8), all(0..4, 0..2));
+    assert_eq!(coverage(&Shape::Line { from: (0, 0), to: (4, 0), width: 1 }, 8, 8), all(0..5, 0..1));
+    assert_eq!(coverage(&Shape::Line { from: (0, 0), to: (0, 0), width: 3 }, 8, 8), all(0..2, 0..2));
+    assert_eq!(coverage(&Shape::Line { from: (0, 0), to: (4, 4), width: 0 }, 8, 8), vec![]);
+    assert_eq!(coverage(&Shape::Ellipse { x: 1, y: 1, w: 0, h: 3 }, 8, 8), vec![]);
+}
+
+#[test]
+fn draw_and_erase_art_return_their_rectangles() {
+    let mut art = RgbaImage::new(16, 12);
+    let shape = Shape::Rect { x: 1, y: 1, w: 2, h: 2 };
+    let rect = Some(Rect { x: 1, y: 1, w: 2, h: 2 });
+    assert_eq!(draw_art(&mut art, 2, (8, 6), &shape, &Paint::Colour(Rgba { a: 9, ..RED })), rect);
+    for ay in 0..12 {
+        for ax in 0..16 {
+            let inside = (2..6).contains(&ax) && (2..6).contains(&ay);
+            assert_eq!(art.get(ax, ay), if inside { RED } else { Rgba::TRANSPARENT }, "({ax}, {ay})");
+        }
+    }
+    assert_eq!(erase_art(&mut art, 2, (8, 6), &shape), rect);
+    assert_eq!(art, RgbaImage::new(16, 12));
+    assert_eq!(shape_bounds(&Shape::Rect { x: 9, y: 0, w: 2, h: 2 }, (8, 6)), None);
+}
+
+#[test]
+fn rescale_art_is_nearest() {
+    let colours = [RED, Rgba::rgb(0, 255, 0), Rgba::rgb(0, 0, 255), Rgba::rgb(9, 9, 9)];
+    let mut img = RgbaImage::new(2, 2);
+    for (i, c) in colours.iter().enumerate() {
+        img.set(i as u32 % 2, i as u32 / 2, *c);
+    }
+    let big = rescale_art(&img, 1, 2);
+    assert_eq!((big.width(), big.height()), (4, 4));
+    for ay in 0..4 {
+        for ax in 0..4 {
+            assert_eq!(big.get(ax, ay), colours[(ay / 2 * 2 + ax / 2) as usize]);
+        }
+    }
+    assert_eq!(rescale_art(&big, 2, 1), img);
+}
+
+#[test]
+fn far_lines_are_clipped_and_exact() {
+    let mut art = RgbaImage::new(16, 16);
+    let far = Shape::Line { from: (i32::MIN, i32::MIN), to: (i32::MAX, i32::MAX), width: 1 };
+    let rect = draw_art(&mut art, 1, (16, 16), &far, &Paint::Colour(RED)).expect("the diagonal crosses");
+    assert_eq!(rect, Rect { x: 0, y: 0, w: 16, h: 16 });
+    // The diagonal through the level, one pixel wide: each pixel centre on it.
+    for y in 0..16 {
+        for x in 0..16 {
+            assert_eq!(art.get(x, y).a != 0, x == y, "({x}, {y})");
+        }
+    }
+    let mut art = RgbaImage::new(16, 16);
+    for shape in [
+        Shape::Line { from: (i32::MIN, 0), to: (i32::MIN, 5), width: u32::MAX },
+        Shape::Ellipse { x: i32::MIN, y: i32::MIN, w: i32::MAX, h: i32::MAX },
+        Shape::Ellipse { x: i32::MAX, y: 0, w: i32::MAX, h: 3 },
+    ] {
+        draw_art(&mut art, 1, (16, 16), &shape, &Paint::Colour(RED));
+        erase_art(&mut art, 1, (16, 16), &shape);
+    }
+}
+
+fn any_shape() -> impl Strategy<Value = Shape> {
+    let c = -10_000i32..10_000;
+    prop_oneof![
+        (c.clone(), c.clone(), -100i32..10_000, -100i32..10_000).prop_map(|(x, y, w, h)| Shape::Rect { x, y, w, h }),
+        (c.clone(), c.clone(), -100i32..10_000).prop_map(|(cx, cy, r)| Shape::Circle { cx, cy, r }),
+        (c.clone(), c.clone(), -100i32..10_000, -100i32..10_000)
+            .prop_map(|(x, y, w, h)| Shape::Ellipse { x, y, w, h }),
+        (c.clone(), c.clone(), c.clone(), c, 0u32..300)
+            .prop_map(|(a, b, d, e, width)| Shape::Line { from: (a, b), to: (d, e), width }),
+    ]
+}
+
 fn op() -> impl Strategy<Value = (u8, i32, i32, i32, i32, u8)> {
     (0u8..5, -10i32..30, -10i32..30, -5i32..30, -5i32..30, 0u8..3)
 }
@@ -335,5 +428,41 @@ proptest! {
             prop_assert!(background_invariant(&l));
         }
         prop_assert!(compile_level(&l).is_ok());
+    }
+
+    #[test]
+    fn art_painting_is_clipped_and_total(
+        shape in any_shape(),
+        w in 1u32..=16,
+        h in 1u32..=16,
+        scale in 1u32..=3,
+        erase in any::<bool>(),
+    ) {
+        let mut art = RgbaImage::new(w * scale, h * scale);
+        if erase {
+            for y in 0..h * scale {
+                for x in 0..w * scale {
+                    art.set(x, y, RED);
+                }
+            }
+        }
+        let before = art.clone();
+        let rect = if erase {
+            erase_art(&mut art, scale, (w, h), &shape)
+        } else {
+            draw_art(&mut art, scale, (w, h), &shape, &Paint::Colour(Rgba::rgb(1, 2, 3)))
+        };
+        prop_assert_eq!(rect, shape_bounds(&shape, (w, h)));
+        if let Some(r) = rect {
+            prop_assert!(r.w > 0 && r.h > 0 && r.x + r.w <= w && r.y + r.h <= h, "{:?}", r);
+        }
+        for ay in 0..h * scale {
+            for ax in 0..w * scale {
+                if art.get(ax, ay) != before.get(ax, ay) {
+                    let r = rect.expect("a change inside a rectangle");
+                    prop_assert!(in_rect(ax / scale, ay / scale, (r.x, r.y, r.w, r.h)));
+                }
+            }
+        }
     }
 }

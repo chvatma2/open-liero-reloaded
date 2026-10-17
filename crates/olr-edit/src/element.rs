@@ -13,7 +13,7 @@ use olr_format::levels::{
 };
 
 use crate::compose::compose_from;
-use crate::level::{Paint, Shape, art_block, covered};
+use crate::level::{Paint, Shape, draw_art, erase_art};
 use crate::pack::{Pack, Source};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -395,24 +395,14 @@ fn paint_layer(
 /// tile leaves it).
 pub fn draw(pack: &mut Pack, id: &str, shape: &Shape, paint: &Paint) -> Result<(), ElementError> {
     paint_layer(pack, id, |art, size, s| {
-        covered(shape, size, |x, y| {
-            for (ax, ay) in art_block(s, x, y) {
-                if let Some(c) = paint.at(ax, ay).filter(|c| c.a != 0) {
-                    art.set(ax, ay, Rgba { a: 255, ..c });
-                }
-            }
-        })
+        draw_art(art, s, size, shape, paint);
     })
 }
 
 /// Clears `shape` in drawn layer `id` (alpha 0).
 pub fn erase(pack: &mut Pack, id: &str, shape: &Shape) -> Result<(), ElementError> {
     paint_layer(pack, id, |art, size, s| {
-        covered(shape, size, |x, y| {
-            for (ax, ay) in art_block(s, x, y) {
-                art.set(ax, ay, Rgba::TRANSPARENT);
-            }
-        })
+        erase_art(art, s, size, shape);
     })
 }
 

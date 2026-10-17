@@ -14,23 +14,52 @@
 //! `art_scale × art_scale` art block, so `front` equals `back` wherever
 //! the material is background, before and after every operation. Shapes
 //! are clipped to the level before iterating: a huge shape costs at most
-//! the level's area, and no arithmetic overflows (`i64`).
+//! the level's area, and no arithmetic overflows (`i64`, `i128`, and 256
+//! bits for a line's distance).
 
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_format::image_io::{LEVEL_ART, check_size};
 use olr_format::levels::{LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, thumbnail};
 
+/// A rectangle of world pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rect {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
+
+impl Rect {
+    /// The smallest rectangle holding both; `None` and `b` give `b`.
+    pub fn union(a: Option<Rect>, b: Rect) -> Rect {
+        let Some(a) = a else { return b };
+        let (x0, y0) = (a.x.min(b.x), a.y.min(b.y));
+        let x1 = a.x.saturating_add(a.w).max(b.x.saturating_add(b.w));
+        let y1 = a.y.saturating_add(a.h).max(b.y.saturating_add(b.h));
+        Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+    }
+}
+
 /// World pixels, origin top-left, y down. May extend past the level.
 ///
 /// A shape covers the world pixels whose position `(px, py)` lies inside
 /// it: for a `Rect`, `x <= px < x + w` and `y <= py < y + h` (`w <= 0` or
 /// `h <= 0` covers nothing); for a `Circle`,
-/// `(px - cx)² + (py - cy)² <= r²` (`r < 0` covers nothing).
+/// `(px - cx)² + (py - cy)² <= r²` (`r < 0` covers nothing). An `Ellipse`
+/// and a `Line` cover a pixel by its centre (`px + ½, py + ½`), measured
+/// in doubled coordinates so halves stay integers (plan 14b ruling R10).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Shape {
     Rect { x: i32, y: i32, w: i32, h: i32 },
     Circle { cx: i32, cy: i32, r: i32 },
+    /// The ellipse inscribed in the box; covers a pixel by its centre
+    /// (`w <= 0` or `h <= 0` covers nothing).
+    Ellipse { x: i32, y: i32, w: i32, h: i32 },
+    /// Pixels whose centre lies within `width / 2` of the segment between
+    /// the centres of pixels `from` and `to`; `width` 0 covers nothing.
+    Line { from: (i32, i32), to: (i32, i32), width: u32 },
 }
 
 /// What an art pixel is painted with, composited over the art (straight
@@ -90,11 +119,11 @@ impl Paint {
     }
 }
 
-/// Calls `f(px, py)` for each world pixel of `shape` inside a `w` × `h`
-/// level, row by row.
-pub(crate) fn covered(shape: &Shape, (w, h): (u32, u32), mut f: impl FnMut(u32, u32)) {
-    let (x0, y0, x1, y1) = match *shape {
-        Shape::Rect { x, y, w, h } => {
+/// The box holding every world pixel `shape` covers, `x0..x1` × `y0..y1`
+/// (unclipped, `i64`; empty when it covers nothing).
+fn extent(shape: &Shape) -> (i64, i64, i64, i64) {
+    match *shape {
+        Shape::Rect { x, y, w, h } | Shape::Ellipse { x, y, w, h } => {
             let (x, y) = (i64::from(x), i64::from(y));
             (x, y, x + i64::from(w), y + i64::from(h))
         }
@@ -103,25 +132,158 @@ pub(crate) fn covered(shape: &Shape, (w, h): (u32, u32), mut f: impl FnMut(u32, 
             let (cx, cy, r) = (i64::from(cx), i64::from(cy), i64::from(r));
             (cx - r, cy - r, cx + r + 1, cy + r + 1)
         }
-    };
-    let (x0, y0) = (x0.max(0), y0.max(0));
-    let (x1, y1) = (x1.min(i64::from(w)), y1.min(i64::from(h)));
-    for py in y0..y1 {
-        for px in x0..x1 {
-            let inside = match *shape {
-                Shape::Rect { .. } => true,
-                Shape::Circle { cx, cy, r } => {
-                    // Inside the clipped box |dx|, |dy| <= r < 2^31.
-                    let (dx, dy) = (px - i64::from(cx), py - i64::from(cy));
-                    i128::from(dx * dx) + i128::from(dy * dy) <= i128::from(r) * i128::from(r)
-                }
-            };
-            if inside {
-                // Within 0..w and 0..h: the casts are lossless.
-                f(px as u32, py as u32);
+        Shape::Line { width: 0, .. } => (0, 0, 0, 0),
+        Shape::Line { from, to, width } => {
+            // A centre within width / 2 of the segment is within
+            // width / 2 + 1 pixels of an endpoint's column or row.
+            let pad = i64::from(width / 2) + 1;
+            let (ax, bx) = (i64::from(from.0), i64::from(to.0));
+            let (ay, by) = (i64::from(from.1), i64::from(to.1));
+            (ax.min(bx) - pad, ay.min(by) - pad, ax.max(bx) + pad + 1, ay.max(by) + pad + 1)
+        }
+    }
+}
+
+/// `shape`'s extent clipped to a `w` × `h` level, as `x0..x1` × `y0..y1`.
+fn clipped(shape: &Shape, (w, h): (u32, u32)) -> (u32, u32, u32, u32) {
+    let (x0, y0, x1, y1) = extent(shape);
+    let clip = |v: i64, side: u32| v.clamp(0, i64::from(side)) as u32;
+    (clip(x0, w), clip(y0, h), clip(x1, w), clip(y1, h))
+}
+
+/// A rectangle holding the world pixels `shape` covers, clipped to a
+/// level of `size`: `None` when that leaves nothing.
+pub fn shape_bounds(shape: &Shape, size: (u32, u32)) -> Option<Rect> {
+    let (x0, y0, x1, y1) = clipped(shape, size);
+    (x0 < x1 && y0 < y1).then(|| Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 })
+}
+
+/// `a × b` as 256 bits, (high, low).
+fn mul_wide(a: u128, b: u128) -> (u128, u128) {
+    const M: u128 = u64::MAX as u128;
+    let (a1, a0, b1, b0) = (a >> 64, a & M, b >> 64, b & M);
+    let (p00, p01, p10, p11) = (a0 * b0, a0 * b1, a1 * b0, a1 * b1);
+    let mid = (p00 >> 64) + (p01 & M) + (p10 & M);
+    ((p11 + (p01 >> 64) + (p10 >> 64) + (mid >> 64)), (p00 & M) | (mid << 64))
+}
+
+/// Whether world pixel `(px, py)` is covered by `shape` (in its extent).
+fn inside(shape: &Shape, px: i64, py: i64) -> bool {
+    match *shape {
+        Shape::Rect { .. } => true,
+        Shape::Circle { cx, cy, r } => {
+            // Inside the clipped box |dx|, |dy| <= r < 2^31.
+            let (dx, dy) = (px - i64::from(cx), py - i64::from(cy));
+            i128::from(dx * dx) + i128::from(dy * dy) <= i128::from(r) * i128::from(r)
+        }
+        Shape::Ellipse { x, y, w, h } => {
+            // Doubled: the centre (2px + 1) against the box's (2x + w);
+            // inside the box |dx| <= w, |dy| <= h, so every term < 2^125.
+            let (w, h) = (i128::from(w), i128::from(h));
+            let dx = (i128::from(2 * px + 1) - 2 * i128::from(x) - w) * h;
+            let dy = (i128::from(2 * py + 1) - 2 * i128::from(y) - h) * w;
+            dx * dx + dy * dy <= (w * h) * (w * h)
+        }
+        Shape::Line { from, to, width } => {
+            let doubled = |v: i64| 2 * i128::from(v) + 1;
+            let (cx, cy) = (doubled(px), doubled(py));
+            let (ax, ay) = (doubled(from.0.into()), doubled(from.1.into()));
+            let (bx, by) = (doubled(to.0.into()), doubled(to.1.into()));
+            // Every coordinate below 2^34: squares and products below 2^69.
+            let (dx, dy, vx, vy) = (bx - ax, by - ay, cx - ax, cy - ay);
+            let len2 = dx * dx + dy * dy;
+            let t = vx * dx + vy * dy;
+            let w2 = i128::from(width) * i128::from(width);
+            if t <= 0 {
+                vx * vx + vy * vy <= w2
+            } else if t >= len2 {
+                let (qx, qy) = (cx - bx, cy - by);
+                qx * qx + qy * qy <= w2
+            } else {
+                // The distance² is cross² / len²: compare cross² with
+                // width² × len² in 256 bits.
+                let cross = (vx * dy - vy * dx).unsigned_abs();
+                mul_wide(cross, cross) <= mul_wide(w2.unsigned_abs(), len2.unsigned_abs())
             }
         }
     }
+}
+
+/// Calls `f(px, py)` for each world pixel of `shape` inside a `w` × `h`
+/// level, row by row. Only the shape's extent clipped to the level is
+/// visited: a huge or far-off shape costs at most the level.
+pub(crate) fn covered(shape: &Shape, size: (u32, u32), mut f: impl FnMut(u32, u32)) {
+    let (x0, y0, x1, y1) = clipped(shape, size);
+    for py in y0..y1 {
+        for px in x0..x1 {
+            if inside(shape, px.into(), py.into()) {
+                f(px, py);
+            }
+        }
+    }
+}
+
+/// Whether `art` is a level of `size` at art scale `s`.
+fn fits(art: &RgbaImage, s: u32, size: (u32, u32)) -> bool {
+    s > 0 && size.0.checked_mul(s) == Some(art.width()) && size.1.checked_mul(s) == Some(art.height())
+}
+
+/// Paints `shape`'s whole art blocks into a level-sized art layer, opaque:
+/// each art pixel takes the paint's RGB (a transparent paint pixel leaves
+/// the art). Returns the world rectangle changed (`shape_bounds`); `None`
+/// and nothing painted when `art` is not `size` × `art_scale`.
+pub fn draw_art(
+    art: &mut RgbaImage,
+    art_scale: u32,
+    size: (u32, u32),
+    shape: &Shape,
+    paint: &Paint,
+) -> Option<Rect> {
+    if !fits(art, art_scale, size) {
+        return None;
+    }
+    covered(shape, size, |x, y| {
+        for (ax, ay) in art_block(art_scale, x, y) {
+            if let Some(c) = paint.at(ax, ay).filter(|c| c.a != 0) {
+                art.set(ax, ay, Rgba { a: 255, ..c });
+            }
+        }
+    });
+    shape_bounds(shape, size)
+}
+
+/// Clears `shape`'s art blocks (alpha 0); the world rectangle changed, as
+/// `draw_art`.
+pub fn erase_art(art: &mut RgbaImage, art_scale: u32, size: (u32, u32), shape: &Shape) -> Option<Rect> {
+    if !fits(art, art_scale, size) {
+        return None;
+    }
+    covered(shape, size, |x, y| {
+        for (ax, ay) in art_block(art_scale, x, y) {
+            art.set(ax, ay, Rgba::TRANSPARENT);
+        }
+    });
+    shape_bounds(shape, size)
+}
+
+/// `img` (a layer at art scale `from`) at art scale `to`, nearest
+/// neighbour: new pixel `(ax, ay)` takes old `(ax * from / to, ay * from / to)`.
+/// Scales outside `1..=MAX_ART_SCALE` leave it as it is.
+pub fn rescale_art(img: &RgbaImage, from: u32, to: u32) -> RgbaImage {
+    let scales = 1..=olr_format::levels::MAX_ART_SCALE;
+    if !scales.contains(&from) || !scales.contains(&to) || from == to {
+        return img.clone();
+    }
+    let side = |v: u32| (u64::from(v) * u64::from(to) / u64::from(from)) as u32;
+    let (w, h) = (side(img.width()), side(img.height()));
+    let mut out = RgbaImage::new(w, h);
+    for ay in 0..h {
+        for ax in 0..w {
+            let old = |v: u32| (u64::from(v) * u64::from(from) / u64::from(to)) as u32;
+            out.set(ax, ay, img.get(old(ax), old(ay)));
+        }
+    }
+    out
 }
 
 /// The art pixels of world pixel `(x, y)`'s block at art scale `s`.
