@@ -326,7 +326,11 @@ fn new_element_id_and_source_name_follow_r7_r8() {
         .filter(|e| e.id == "ground")
         .cloned()
         .collect();
-    assert_eq!(new_element_id(&ground, "Ground", "layer"), "ground-2");
+    let none = std::collections::BTreeSet::new();
+    assert_eq!(new_element_id(&ground, &none, "Ground", "layer"), "ground-2");
+    // A stray file a new element would overwrite is skipped too.
+    let stray: std::collections::BTreeSet<String> = ["editor/layers/ground-2.png".to_string()].into();
+    assert_eq!(new_element_id(&ground, &stray, "Ground", "layer"), "ground-3");
     assert_eq!(new_source_name(["a.png"].into_iter(), "A.PNG"), "A-2.PNG");
     assert_eq!(new_source_name([].into_iter(), "CON.png"), "CON-2.png");
 }
@@ -355,4 +359,18 @@ fn resize_decoded_matches_element_resize() {
     }
     assert_eq!(got.composition, want.composition);
     assert!(got.files == want.files);
+}
+
+/// A stray file in `editor/` (in `other`) is never overwritten by a new
+/// element's file.
+#[test]
+fn new_elements_skip_stray_editor_files() {
+    let mut p = pack(8, 6, 1);
+    let stray = |p: &str| olr_vfs::VPath::new(p).unwrap();
+    p.other.insert(stray("editor/layers/ground.png"), b"mine".to_vec());
+    p.other.insert(stray("editor/images/a.png"), b"also mine".to_vec());
+    assert_eq!(add_layer(&mut p, ElementMaterial::Dirt, "Ground").unwrap(), "ground-2");
+    add_image(&mut p, "a.png", png(2, 2), (0, 0), (2, 2), ElementMaterial::Rock, "").unwrap();
+    let src = p.composition.as_ref().unwrap();
+    assert!(src.files.contains_key("editor/images/a-2.png"), "{:?}", src.files.keys());
 }

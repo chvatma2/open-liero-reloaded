@@ -4,6 +4,8 @@
 //! `check_composition`; a refused operation changes nothing. None bakes:
 //! the caller bakes (`compose::bake`) before saving.
 
+use std::collections::BTreeSet;
+
 use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
@@ -134,9 +136,11 @@ fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
 
 /// A new id from `name` (ruling R8 of plan 14a, at most 64 bytes) not
 /// taken by `elements`: not an id in use, and its files (`<id>.png` and a
-/// raster's) neither another element's nor a name some file system refuses.
-pub fn new_element_id(elements: &[Element], name: &str, fallback: &str) -> String {
-    let used: std::collections::BTreeSet<String> = elements.iter().flat_map(element_files).collect();
+/// raster's) neither another element's, nor among `files` (the pack's
+/// others, stray ones included), nor a name some file system refuses.
+pub fn new_element_id(elements: &[Element], files: &BTreeSet<String>, name: &str, fallback: &str) -> String {
+    let used: BTreeSet<String> =
+        elements.iter().flat_map(element_files).chain(files.iter().cloned()).collect();
     unique(&slug(name, fallback), |c| {
         let mut files = vec![layer_file(c)];
         files.extend(raster_files(c));
@@ -147,8 +151,15 @@ pub fn new_element_id(elements: &[Element], name: &str, fallback: &str) -> Strin
     })
 }
 
-fn new_id(src: &CompositionSource, name: &str, fallback: &str) -> String {
-    new_element_id(&src.composition.elements, name, fallback)
+/// The pack's files outside the composition (in `other`): a stray file in
+/// `editor/` a new element's file must not overwrite.
+fn stray(pack: &Pack) -> BTreeSet<String> {
+    pack.other.keys().map(|p| p.as_str().to_string()).collect()
+}
+
+fn new_id(src: &CompositionSource, stray: &BTreeSet<String>, name: &str, fallback: &str) -> String {
+    let files: BTreeSet<String> = src.files.keys().chain(stray).cloned().collect();
+    new_element_id(&src.composition.elements, &files, name, fallback)
 }
 
 /// `file_name`, or `-2`, `-3`, … before its extension, until it is not
@@ -166,9 +177,9 @@ pub fn new_source_name<'a>(sources: impl Iterator<Item = &'a str> + Clone, file_
     (2u32..=1000).map(|i| format!("{stem}-{i}.{ext}")).find(|c| !taken(c)).unwrap_or_else(|| file_name.into())
 }
 
-fn new_source(src: &CompositionSource, file_name: &str) -> String {
+fn new_source(src: &CompositionSource, stray: &BTreeSet<String>, file_name: &str) -> String {
     let dir = image_file("");
-    new_source_name(src.files.keys().filter_map(|k| k.strip_prefix(dir.as_str())), file_name)
+    new_source_name(src.files.keys().chain(stray).filter_map(|k| k.strip_prefix(dir.as_str())), file_name)
 }
 
 fn push(src: &mut CompositionSource, element: Element) -> Result<(), ElementError> {
@@ -210,10 +221,11 @@ pub fn add_image_with(
     let (w, h) = image_io::image_size(&bytes).ok_or_else(|| bad("not a PNG or JPEG".into()))?;
     image_io::check_size(w, h, IMAGES).map_err(bad)?;
     image_io::decode_image_within(&bytes, IMAGES).map_err(bad)?;
+    let stray = stray(pack);
     commit(pack, file_name, |src| {
-        let source = new_source(src, file_name);
+        let source = new_source(src, &stray, file_name);
         let stem = file_name.rsplit_once('.').map_or(file_name, |(s, _)| s);
-        let id = new_id(src, if name.is_empty() { stem } else { name }, "image");
+        let id = new_id(src, &stray, if name.is_empty() { stem } else { name }, "image");
         src.files.insert(image_file(&source), bytes);
         push(
             src,
@@ -245,8 +257,9 @@ pub fn add_image_with(
 pub fn add_layer(pack: &mut Pack, material: ElementMaterial, name: &str) -> Result<String, ElementError> {
     let l = level(pack)?;
     let empty = image_io::encode_rgba(&RgbaImage::new(l.size.0 * l.art_scale, l.size.1 * l.art_scale));
+    let stray = stray(pack);
     commit(pack, "", |src| {
-        let id = new_id(src, name, "layer");
+        let id = new_id(src, &stray, name, "layer");
         src.files.insert(layer_file(&id), empty);
         push(
             src,

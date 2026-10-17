@@ -573,3 +573,26 @@ fn mismatched_decoded_data_never_panics() {
             .is_err()
     );
 }
+
+/// The cache keeps its grids within `GRID_PIXELS` altogether, the least
+/// recently used dropped (besides `GRIDS_PER_SOURCE` per source).
+#[test]
+fn the_cache_bounds_its_grids() {
+    let mut cache = ImageCache::new();
+    let png = image_io::encode_rgba(&solid(2, 2, BLUE));
+    let p = olr_edit::pixelate::Pixelation {
+        pixel_size: 1,
+        colours: None,
+        dither: Dither::None,
+        alpha_threshold: 128,
+    };
+    let n = olr_edit::compose::GRID_PIXELS / (2048 * 2048) + 3;
+    for i in 0..n {
+        cache.grid(&format!("{i}.png"), &png, (2048, 2048), &p).unwrap();
+        assert!(cache.grid_pixels() <= olr_edit::compose::GRID_PIXELS);
+    }
+    // The newest is kept.
+    let before = cache.processed();
+    cache.grid(&format!("{}.png", n - 1), &png, (2048, 2048), &p).unwrap();
+    assert_eq!(cache.processed(), before);
+}

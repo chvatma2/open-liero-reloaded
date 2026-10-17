@@ -144,7 +144,7 @@ impl Document {
         let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
         let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         let element = Element {
-            id: new_element_id(&elements, stem, "image"),
+            id: new_element_id(&elements, &Default::default(), stem, "image"),
             name: stem.into(),
             visible: true,
             locked: false,
@@ -195,7 +195,7 @@ impl Document {
     pub fn add_layer(&mut self, material: ElementMaterial, name: &str) -> Result<Change, DocError> {
         let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         let element = Element {
-            id: new_element_id(&elements, name, "layer"),
+            id: new_element_id(&elements, &Default::default(), name, "layer"),
             name: name.into(),
             visible: true,
             locked: false,

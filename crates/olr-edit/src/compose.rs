@@ -46,8 +46,8 @@ pub enum ComposeError {
 }
 
 /// Originals decoded once per source, and processed grids per (source,
-/// box art size, pixelation), at most `GRIDS_PER_SOURCE` per source, the
-/// least recently used dropped (plan 14b ruling R3). Originals are kept
+/// box art size, pixelation), at most `GRIDS_PER_SOURCE` per source and
+/// `GRID_PIXELS` in all, the least recently used dropped (plan 14b ruling R3). Originals are kept
 /// within `ORIGINAL_PIXELS`, the least recently used dropped. Each source's
 /// entries carry its bytes' fingerprint: bytes that change under the same
 /// name are decoded and processed afresh, never served stale.
@@ -60,15 +60,15 @@ pub struct ImageCache {
     processed: usize,
     /// `original` and `grid` calls so far.
     lookups: usize,
-    /// Uses so far: the originals' recency.
+    /// Uses so far: the originals' and grids' recency.
     tick: u64,
 }
 
 /// A processed grid's key besides its source: the box's art size and the pixelation.
 type GridKey = ((u32, u32), Pixelation);
 
-/// A processed grid with its key.
-type Grid = (GridKey, Arc<RgbaImage>);
+/// A processed grid with its key and its last use.
+type Grid = (GridKey, Arc<RgbaImage>, u64);
 
 /// Processed grids each source keeps.
 pub const GRIDS_PER_SOURCE: usize = 4;
@@ -76,6 +76,11 @@ pub const GRIDS_PER_SOURCE: usize = 4;
 /// The decoded originals' pixels an `ImageCache` holds at most (the least
 /// recently used dropped first; the newest is kept alone when larger).
 pub const ORIGINAL_PIXELS: u64 = 4 * IMAGES.max_pixels;
+
+/// The processed grids' pixels an `ImageCache` holds at most, all sources
+/// together (the least recently used dropped first; the newest is kept
+/// alone when larger).
+pub const GRID_PIXELS: u64 = 4 * IMAGES.max_pixels;
 
 /// `bytes`' length and FNV-1a hash, combined.
 fn fingerprint(bytes: &[u8]) -> u64 {
@@ -141,25 +146,46 @@ impl ImageCache {
         self.lookups += 1;
         let fp = fingerprint(original);
         let key = (art_box, *p);
+        self.tick += 1;
+        let tick = self.tick;
         let (f, grids) = self.grids.entry(source.into()).or_default();
         if *f != fp {
             (*f, *grids) = (fp, Vec::new());
         }
-        if let Some(i) = grids.iter().position(|(k, _)| *k == key) {
-            let hit = grids.remove(i);
-            let grid = hit.1.clone();
-            grids.push(hit);
+        if let Some(i) = grids.iter().position(|(k, ..)| *k == key) {
+            let (k, grid, _) = grids.remove(i);
+            grids.push((k, grid.clone(), tick));
             return Ok(grid);
         }
         let img = self.original_fp(source, original, fp)?;
         let grid = Arc::new(process_grid(&img, art_box, p));
         self.processed += 1;
+        let tick = self.tick;
         let (_, grids) = self.grids.entry(source.into()).or_default();
         if grids.len() >= GRIDS_PER_SOURCE {
             grids.remove(0);
         }
-        grids.push((key, grid.clone()));
+        grids.push((key, grid.clone(), tick));
+        // Drop the least recently used others while over the budget.
+        while self.grid_pixels() > GRID_PIXELS {
+            let oldest = self
+                .grids
+                .iter()
+                .flat_map(|(s, (_, g))| g.iter().map(move |(k, _, used)| (*used, s, *k)))
+                .filter(|(used, ..)| *used != tick)
+                .min_by_key(|(used, ..)| *used)
+                .map(|(_, s, k)| (s.clone(), k));
+            let Some((s, k)) = oldest else { break };
+            if let Some((_, g)) = self.grids.get_mut(&s) {
+                g.retain(|(gk, ..)| *gk != k);
+            }
+        }
         Ok(grid)
+    }
+
+    /// The processed grids' pixels held.
+    pub fn grid_pixels(&self) -> u64 {
+        self.grids.values().flat_map(|(_, g)| g).map(|(_, img, _)| pixels(img)).sum()
     }
 
     /// The decoded originals' pixels held.
