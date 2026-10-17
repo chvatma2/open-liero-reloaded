@@ -13,7 +13,7 @@ pub enum PackError {
     Invalid { file: String, message: String },
     /// An authoring-format error, from `olr-format`.
     #[error(transparent)]
-    Format(#[from] olr_format::FormatError),
+    Format(#[from] FormatError),
 }
 
 impl PackError {

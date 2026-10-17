@@ -94,25 +94,14 @@ fn read_sprite(src: &dyn ContentSource, id: &str, e: &SpriteEntry) -> Result<Spr
     Ok(SpriteSource { image, frames: e.frames, art_scale: e.art_scale })
 }
 
+/// The core pack's files, strictly: the tolerant read's result, and its
+/// first error if it had any (the errors come in a stable order).
 pub fn read_core_files(src: &dyn ContentSource) -> Result<CoreSource, FormatError> {
-    let file = read_core_ron(src)?;
-    let mut sprites = BTreeMap::new();
-    for (id, e) in &file.sprites {
-        sprites.insert(id.clone(), read_sprite(src, id, e)?);
+    let (core, errors) = read_core_files_tolerant(src);
+    match errors.into_iter().next() {
+        Some(e) => Err(e),
+        None => core,
     }
-    let mut sounds = BTreeMap::new();
-    for name in file.sounds {
-        if !super::valid_name(&name) {
-            return Err(FormatError::invalid(CORE_FILE, "sounds", format!("invalid sound name {name:?}")));
-        }
-        let bytes = read_bytes(src, &sound_file(&name))?;
-        if sounds.insert(name.clone(), bytes).is_some() {
-            return Err(FormatError::invalid(CORE_FILE, "sounds", format!("{name:?} is listed twice")));
-        }
-    }
-    let core = CoreSource { notes: file.notes, sprites, sounds, colours: file.colours };
-    check(&core)?;
-    Ok(core)
 }
 
 /// Like [`read_core_files`], but a bad sprite or a missing sound is left
@@ -318,5 +307,35 @@ mod tests {
         assert!(core.is_err() && errors.is_empty());
         let fs = MemFs::new().with("core.ron", b"(sprites: ".to_vec());
         assert!(matches!(read_core_files_tolerant(&fs).0, Err(FormatError::Parse { .. })));
+    }
+
+    #[test]
+    fn the_tolerant_read_drops_wrong_size_giblets_together() {
+        // Divisible by the sample's 4x1 frames, but not the giblets' size.
+        let small = image_io::encode_rgba(&olr_data::image::RgbaImage::new(4, 2));
+        let fs = sample_fs().with("gfx/giblets.png", small);
+        let (core, errors) = read_core_files_tolerant(&fs);
+        let core = core.unwrap();
+        assert!(!core.sprites.contains_key("giblets") && !core.sprites.contains_key("giblet-stains"));
+        assert!(core.sprites.contains_key("crosshair"));
+        assert_eq!(errors.len(), 1, "{errors:?}");
+        assert!(errors[0].to_string().contains("must be"), "{}", errors[0]);
+        super::super::compile_core(&core).unwrap();
+        // The strict read reports it.
+        assert!(read_core_files(&fs).is_err());
+    }
+
+    #[test]
+    fn the_errors_come_in_order_sprites_then_sounds_and_the_strict_read_gives_the_first() {
+        let fs = without(&sample_fs(), &["sounds/bump.ogg", "gfx/crosshair.png"])
+            .with("gfx/spawn.png", b"not a png".to_vec());
+        let (_, errors) = read_core_files_tolerant(&fs);
+        let text: Vec<String> = errors.iter().map(|e| e.to_string()).collect();
+        assert_eq!(text.len(), 3, "{text:?}");
+        // Sprites by id (crosshair, spawn), then the sounds.
+        assert!(text[0].contains("gfx/crosshair.png"), "{text:?}");
+        assert!(text[1].contains("gfx/spawn.png"), "{text:?}");
+        assert!(text[2].contains("sounds/bump.ogg"), "{text:?}");
+        assert_eq!(read_core_files(&fs).unwrap_err().to_string(), text[0]);
     }
 }

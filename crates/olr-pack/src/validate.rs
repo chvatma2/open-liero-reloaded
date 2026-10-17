@@ -229,6 +229,7 @@ mod tests {
         let d = validate(&written(&pack));
         let msg = d.iter().find(|d| d.message.contains("cycle")).expect("cycle reported");
         assert_eq!(msg.severity, Severity::Error);
+        assert!(msg.file.as_deref().is_some_and(|f| f.starts_with("projectiles/")), "{msg:?}");
     }
 
     #[test]

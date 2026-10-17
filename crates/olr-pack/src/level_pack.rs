@@ -123,12 +123,13 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
 pub(crate) mod tests {
     use super::*;
     use crate::image_io::encode_indexed;
-    use olr_data::level::{Material, MaterialGrid};
-    const MATERIAL_FILE: &str = "material.png";
-    const FRONT_FILE: &str = "front.png";
     use crate::mod_pack::tests::manifest;
     use olr_data::image::Rgba;
+    use olr_data::level::{Material, MaterialGrid};
     use olr_vfs::MemFs;
+
+    const MATERIAL_FILE: &str = "material.png";
+    const FRONT_FILE: &str = "front.png";
 
     pub(crate) fn sample_level() -> LevelPack {
         let cells = vec![Material::Rock, Material::Background, Material::Dirt, Material::Dirt];

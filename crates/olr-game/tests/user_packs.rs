@@ -95,6 +95,16 @@ fn user_packs_layer_over_the_bundled_content() {
         olr_ui::screens::show(ui, &sh.ui, &mut sh.data);
     });
     out.textures_delta.clear(); // no renderer here
+    let drawn: String = out
+        .shapes
+        .iter()
+        .filter_map(|s| match &s.shape {
+            egui::epaint::Shape::Text(t) => Some(t.galley.text().to_owned()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(drawn.contains("User only"), "the user's level is drawn: {drawn}");
 
     // Without a data directory the bundled content shows alone.
     let sh = shell(content.path(), Store::in_memory());

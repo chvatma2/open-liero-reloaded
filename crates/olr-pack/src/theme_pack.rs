@@ -87,21 +87,17 @@ mod tests {
     #[test]
     fn roundtrip_in_format_five_layout() {
         let has = |fs: &MemFs, f: &str| fs.exists(&VPath::new(f).unwrap());
-        let pack = pack(false);
+        let plain = pack(false);
         let mut fs = MemFs::new();
-        write_theme(&mut fs, &pack).unwrap();
+        write_theme(&mut fs, &plain).unwrap();
         assert!(has(&fs, "holes/2.png") && has(&fs, "holes/2.mask.png"));
         assert!(!has(&fs, "green_ball.png") && !has(&fs, "green_ball.mask.png"));
-        assert_eq!(read_theme(&fs).unwrap(), pack);
-        let pack = pack_with_green();
+        assert_eq!(read_theme(&fs).unwrap(), plain);
+        let green = pack(true);
         let mut fs = MemFs::new();
-        write_theme(&mut fs, &pack).unwrap();
+        write_theme(&mut fs, &green).unwrap();
         assert!(has(&fs, "green_ball.png") && has(&fs, "green_ball.mask.png"));
-        assert_eq!(read_theme(&fs).unwrap(), pack);
-    }
-
-    fn pack_with_green() -> ThemePack {
-        pack(true)
+        assert_eq!(read_theme(&fs).unwrap(), green);
     }
 
     #[test]

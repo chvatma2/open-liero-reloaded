@@ -471,6 +471,14 @@ mod tests {
         }
     }
 
+    /// The skin constants olr-content and olr-proto/olr-game each define
+    /// agree (no content needed).
+    #[test]
+    fn the_skin_constants_agree() {
+        assert_eq!(olr_content::NO_SKIN_HASH, olr_proto::NO_HASH);
+        assert_eq!(olr_content::DEFAULT_SKIN, DEFAULT_SKIN);
+    }
+
     /// Plan 13c, ruling 9: online skins by slot, id and hash. Two slots
     /// wearing one id with different hashes do not collide: the one whose
     /// hash is this install's gets the skin, the other the default skin
@@ -483,8 +491,6 @@ mod tests {
             eprintln!("OLR_CONTENT_DIR not set; skipping");
             return;
         };
-        assert_eq!(olr_content::NO_SKIN_HASH, olr_proto::NO_HASH);
-        assert_eq!(olr_content::DEFAULT_SKIN, DEFAULT_SKIN);
         let content = Arc::new(Content::open(Path::new(&dir)).unwrap());
         let ant = "olx-skin-ant";
         let ant_hash = content.pack_hash(ant, PackKind::Skin).unwrap();
@@ -518,6 +524,9 @@ mod tests {
                 slot("Cleo", ant, &ant_hash),
                 slot("Bot", ant, olr_proto::NO_HASH),
                 slot("Dan", "olx-skin-nobody", &other),
+                // A second Bert with the same mismatch: the warning's
+                // deduplication is what keeps it said once.
+                slot("Bert", ant, &other),
             ],
             input_delay: vec![],
             start_checksum: 0,
@@ -525,15 +534,16 @@ mod tests {
         let name = |a: &Assets, i: usize| a.skin_of_slot(i).skin.def.name.clone();
         // Watching: everyone by id and hash.
         let a = load_online(Arc::clone(&content), &start, None).unwrap();
-        assert_eq!(a.slot_skins.len(), 5);
-        let got: Vec<String> = (0..5).map(|i| name(&a, i)).collect();
-        assert_eq!(got, ["Ant", DEFAULT_NAME, "Ant", DEFAULT_NAME, DEFAULT_NAME], "{got:?}");
+        assert_eq!(a.slot_skins.len(), 6);
+        let got: Vec<String> = (0..6).map(|i| name(&a, i)).collect();
+        assert_eq!(got, ["Ant", DEFAULT_NAME, "Ant", DEFAULT_NAME, DEFAULT_NAME, DEFAULT_NAME], "{got:?}");
         assert_eq!(a.warnings.iter().filter(|w| w.contains("Bert's skin")).count(), 1, "{:?}", a.warnings);
         // Bert plays slot 1: his own skin by id, whatever his hash says.
         let a = load_online(Arc::clone(&content), &start, Some(1)).unwrap();
-        let got: Vec<String> = (0..5).map(|i| name(&a, i)).collect();
-        assert_eq!(got, ["Ant", "Ant", "Ant", DEFAULT_NAME, DEFAULT_NAME], "{got:?}");
-        assert!(a.warnings.iter().all(|w| !w.contains("Bert's skin")), "{:?}", a.warnings);
+        let got: Vec<String> = (0..6).map(|i| name(&a, i)).collect();
+        assert_eq!(got, ["Ant", "Ant", "Ant", DEFAULT_NAME, DEFAULT_NAME, DEFAULT_NAME], "{got:?}");
+        // The other Bert (slot 5) still warns, once.
+        assert_eq!(a.warnings.iter().filter(|w| w.contains("Bert's skin")).count(), 1, "{:?}", a.warnings);
         assert!(a.warnings.iter().any(|w| w.contains("Bot's skin")), "{:?}", a.warnings);
     }
 
