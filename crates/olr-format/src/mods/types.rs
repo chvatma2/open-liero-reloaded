@@ -15,7 +15,7 @@ use crate::defaults as d;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Weapon {
-    /// Shown in menus; restrictions and bot loadouts match on it (text).
+    /// Shown in menus; restrictions and bot loadouts match on it (OLX `name`).
     pub name: String,
     /// Free text for authors; ignored by the game.
     #[serde(default, skip_serializing_if = "String::is_empty")]
@@ -23,7 +23,8 @@ pub struct Weapon {
     /// Full magazines per second at LoadingTime 100 % (OLX stores the
     /// file's value ÷ 10, `CGameScript.cpp:777`; this is that value).
     pub recharge: f32,
-    /// Percent of a full magazine used per shot (> 100 empties it).
+    /// Percent of a full magazine used per shot (> 100 empties it) (OLX
+    /// `drain`, `CServer_Game.cpp:395-410`).
     pub drain: f32,
     /// Seconds between shots (OLX's `ROF` ÷ 1000, `CGameScript.cpp:776`).
     pub between_shots_s: f32,
@@ -49,7 +50,7 @@ pub enum Fire {
         /// (OLX `CClient_Game.cpp:909-914`); bots read a negative value as a jetpack.
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         recoil: i32,
-        /// Pack path of the firing sound, played at the shot position.
+        /// Pack path of the firing sound, played at the shot position (OLX `sound`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sound: Option<String>,
         /// What the shot spawns (OLX `Proj_SpawnInfo` of the weapon; shot context).
@@ -204,7 +205,8 @@ pub enum Gfx {
     Pixels(Vec<Colour>),
     /// An image strip (OLX `Image`).
     Image {
-        /// Pack path. Frames are square: frame count = width ÷ height.
+        /// Pack path of the image strip. Frames are square: frame count =
+        /// width ÷ height (`mod-fields.md` §8).
         file: String,
         /// Spins at `rotation_speed` and gets a random start rotation when a
         /// shot spawns it (OLX `Rotating`).
@@ -318,13 +320,13 @@ pub enum Effect {
     Explode {
         /// Health points to every living worm within 5 px (no falloff) and
         /// the hole size `clamp(damage, 0, 4)`; -1 = no blast (still dies
-        /// and spawns).
+        /// and spawns) (OLX `damage`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         damage: i32,
-        /// World px of camera shake (cosmetic, ±shake for 200 ms).
+        /// World px of camera shake (cosmetic, ±shake for 200 ms) (OLX `shake`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         shake: i32,
-        /// Pack path of the explosion sound, played at the position.
+        /// Pack path of the explosion sound, played at the position (OLX `sound`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         sound: Option<String>,
     },
@@ -335,33 +337,33 @@ pub enum Effect {
         #[serde(default = "d::half", skip_serializing_if = "d::is_half")]
         factor: f32,
         /// Blast damage on every colliding step (health points and hole
-        /// size, as `Explode`); 0 = none. Not on a timer.
+        /// size, as `Explode`); 0 = none. Not on a timer (OLX `bounce_explode`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         explode: i32,
     },
     /// On a worm: injures, then the projectile dies. On terrain it behaves
     /// like `Halt`: it stops and dies only at the map border.
     Injure {
-        /// Health points.
+        /// Health points (OLX `damage`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         damage: i32,
     },
     /// A hole at once (before the move on a timer), then the projectile dies.
     /// Against a worm it only pushes.
     Carve {
-        /// Hole size (0..4).
+        /// Hole size, 0 to 4 (OLX `damage`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         size: i32,
     },
     /// Three dirt balls, then the projectile dies.
     Dirt {
-        /// World px of camera shake; applies on a timer only.
+        /// World px of camera shake; applies on a timer only (OLX `shake`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         shake: i32,
     },
     /// Green dirt, then the projectile dies.
     GreenDirt {
-        /// World px of camera shake; applies on a timer only.
+        /// World px of camera shake; applies on a timer only (OLX `shake`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         shake: i32,
     },
@@ -377,13 +379,13 @@ pub enum Effect {
     InjureProjectile,
     /// Plays a sound (OLX `PlaySound`; LX56 files never set one).
     Sound {
-        /// Pack path.
+        /// Pack path of the sound (OLX `sound`).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         file: Option<String>,
     },
     /// On a worm: injures; the projectile keeps flying.
     InjureWorm {
-        /// Health points.
+        /// Health points (OLX `damage`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         damage: i32,
     },

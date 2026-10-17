@@ -14,16 +14,25 @@ use crate::ron_io::{from_canonical, read_text, to_canonical, write_text};
 
 pub const RESTRICTIONS_FILE: &str = "restrictions.ron";
 
+/// `mod.ron`: the mod's name, physics and weapon list (OLX `script.lgs`'s
+/// header and `gs_worm_t`, `CGameScript.cpp`).
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ModFile {
+    /// Shown in menus; bot loadouts and weapon restrictions match on it
+    /// (OLX: the lgs header's `ModName`, `CGameScript.cpp`, header bytes 24..88).
     name: String,
+    /// Free text for authors; ignored by the game.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     notes: String,
+    /// Worm physics (`mod-fields.md` §3).
     #[serde(default, skip_serializing_if = "Worm::is_default")]
     worm: Worm,
+    /// Ninja rope (`mod-fields.md` §4).
     #[serde(default, skip_serializing_if = "Rope::is_default")]
     rope: Rope,
+    /// The weapon ids, in order: `weapons/<id>.ron` each; a weapon's index is
+    /// its id in the game. At most `MAX_WEAPONS` (512).
     weapons: Vec<String>,
 }
 

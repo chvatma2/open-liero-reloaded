@@ -61,39 +61,47 @@ pub type TrailSpawn = Spawn<TrailContext>;
 /// speed_var * r2 + (inherit_velocity ? inherit_velocity_factor * parent.vel : 0)`,
 /// with r1, r2 in [-1, 1] (OLX `PhysicsLX56_Projectiles.cpp:562-640`,
 /// `olr-sim/src/spawn.rs`).
+///
+/// LX56 fixes four flags per context, so their defaults depend on where the
+/// spawn is (`mod-fields.md` §9; a file writes them only when they differ):
+/// `relative_to_parent` is true for a weapon's shot and false for an event
+/// spawn and a trail; `speed_var_diagonal` is true for a trail only;
+/// `random_rotation` and `inherit_velocity` are true for a shot only.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(from = "SpawnWire", into = "SpawnWire", bound = "C: SpawnContext")]
 pub struct Spawn<C: SpawnContext> {
-    /// Children per spawn. Default 1.
+    /// Children per spawn, at most `MAX_AMOUNT` (1000) (OLX `amount`). Default 1.
     pub amount: i32,
-    /// px/s (unitless when `parent_velocity_as_direction`).
+    /// px/s, an integer; unitless when `parent_velocity_as_direction` (OLX `speed`).
     pub speed: i32,
-    /// px/s, ± range.
+    /// px/s, ± range (OLX `speed_var`).
     pub speed_var: f32,
-    /// Degrees, ± half-width (360 = any direction).
+    /// Degrees, ± half-width (360 = any direction) (OLX `spread`).
     pub spread: f32,
-    /// Adds the parent's heading to `angle`.
+    /// Adds the parent's heading to `angle` (OLX `use_angle`).
     pub relative_to_parent: bool,
-    /// Degrees (integer): 0 = +x (right), 90 = +y (down).
+    /// Degrees (integer): 0 = +x (right), 90 = +y (down) (OLX `angle`).
     pub angle: i32,
-    /// Direction from the parent's velocity instead of an angle.
+    /// Direction from the parent's velocity instead of an angle (OLX
+    /// `use_parent_velocity_for_spread`; LX56 reads it for trails only).
     pub parent_velocity_as_direction: bool,
-    /// Scale of that velocity. Default 0.3.
+    /// Unitless scale of that velocity (OLX `parent_vel_spread_factor`). Default 0.3.
     pub parent_velocity_direction_scale: f32,
-    /// Speed variation along (1, 1) instead of the direction.
+    /// Speed variation along (1, 1) instead of the direction (OLX
+    /// `use_special11_vec_for_speed_var`).
     pub speed_var_diagonal: bool,
-    /// A random start rotation for a rotating child.
+    /// A random start rotation for a rotating child (OLX `use_random_rot`).
     pub random_rotation: bool,
     /// Adds `inherit_velocity_factor` × the parent's velocity. For a shot
     /// the parent is the worm, whose velocity counts as zero unless the
-    /// game's `ProjRelativeVel` setting is on.
+    /// game's `ProjRelativeVel` setting is on (OLX `add_parent_vel`).
     pub inherit_velocity: bool,
-    /// Default 1.0.
+    /// Unitless factor on the parent's velocity (OLX `parent_vel_factor`). Default 1.0.
     pub inherit_velocity_factor: f32,
     /// The id of a shared projectile (`projectiles/<id>.ron`). Exactly one
-    /// of `shared` and `projectile` is set.
+    /// of `shared` and `projectile` is set (OLX `proj`).
     pub shared: Option<String>,
-    /// The spawned projectile, defined here.
+    /// The spawned projectile, defined here (OLX `proj`).
     pub projectile: Option<Box<Projectile>>,
     /// Zero-sized marker selecting the context's defaults; never written.
     pub context: PhantomData<C>,
