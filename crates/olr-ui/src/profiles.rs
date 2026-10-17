@@ -33,10 +33,7 @@ pub const MAX_WEAPON_NAME: usize = 64;
 pub const DEFAULT_WEAPONS: [&str; MAX_SLOTS] =
     ["minigun", "super shotgun", "blaster", "gauss gun", "big nuke"];
 
-/// OLX's bot profiles' colours, CPU 1 to CPU 7 (`AddDefaultBotPlayers`).
-/// OLX: src/client/ProfileSystem.cpp:47-59.
-pub const CPU_COLOURS: [[u8; 3]; 7] =
-    [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 0, 255], [0, 255, 255], [128, 128, 128], [128, 255, 0]];
+pub use olr_content::CPU_COLOURS;
 
 /// Colours closer than this (RGB distance) to the human's are not given
 /// to a bot, so the player's worm stands out.

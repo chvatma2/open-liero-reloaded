@@ -73,10 +73,10 @@ impl MatchOptions {
     }
 }
 
-/// OLX's bot profiles' colours, CPU 1 to CPU 7 (`olr-ui`'s `CPU_COLOURS`,
-/// a higher layer).
+/// OLX's bot profiles' colours, CPU 1 to CPU 7 (`AddDefaultBotPlayers`);
+/// `olr-ui` re-exports it.
 /// OLX: src/client/ProfileSystem.cpp:47-59.
-const CPU_COLOURS: [[u8; 3]; 7] =
+pub const CPU_COLOURS: [[u8; 3]; 7] =
     [[255, 0, 0], [0, 255, 0], [0, 0, 255], [255, 0, 255], [0, 255, 255], [128, 128, 128], [128, 255, 0]];
 
 /// The looks a match is recorded with unless its caller sets better ones

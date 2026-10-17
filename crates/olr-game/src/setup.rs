@@ -381,11 +381,7 @@ pub fn with_cached_packs(content: Content, packs: &Packs, cache_dirs: &[PathBuf]
 /// it names: this install's, else the download caches' in `cache_dirs` by
 /// content hash ([`with_cached_packs`]); refused when they are missing or
 /// differ from the recorded ones.
-pub fn load_replay(
-    roots: &[&Path],
-    file: &Path,
-    cache_dirs: &[PathBuf],
-) -> anyhow::Result<Assets> {
+pub fn load_replay(roots: &[&Path], file: &Path, cache_dirs: &[PathBuf]) -> anyhow::Result<Assets> {
     let bytes = read_replay_file(file).with_context(|| format!("{}", file.display()))?;
     let replay = Replay::decode(&bytes).with_context(|| format!("{}", file.display()))?;
     let content = Content::open_layers(roots)?;
