@@ -18,6 +18,7 @@ mod cli;
 mod corpus;
 mod deaths;
 mod digest;
+mod element;
 mod feel;
 mod hits;
 mod level;

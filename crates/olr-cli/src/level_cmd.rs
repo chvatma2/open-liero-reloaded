@@ -13,11 +13,12 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_data::manifest::PackManifest;
 use olr_edit::level::{self, Layer, Paint, Shape, Solid};
-use olr_edit::pack::{Pack, Source, load, save};
+use olr_edit::pack::{Pack, Source, load};
 use olr_format::image_io::{IMAGES, LEVEL_ART, check_size, decode_rgba_within, encode_rgba};
 use olr_format::levels::{LevelObject, LevelSource, MATERIAL_PALETTE};
 use olr_vfs::VPath;
 
+use crate::element_cmd::{self, ContentArg, ElementCommand};
 use crate::pack_cmd::parse_size;
 
 #[derive(clap::Args)]
@@ -81,6 +82,19 @@ enum LevelCommand {
         /// The new area's colour, front and back, RRGGBB.
         #[arg(long, value_parser = parse_colour, default_value = "000000")]
         colour: Rgba,
+        #[command(flatten)]
+        content: ContentArg,
+    },
+    /// A composed level's elements (plan 14a): list, add, set, reorder, draw.
+    Element {
+        #[command(subcommand)]
+        command: ElementCommand,
+    },
+    /// Rebake a composed level's material, front, back and thumbnail.
+    Bake {
+        pack: PathBuf,
+        #[command(flatten)]
+        content: ContentArg,
     },
     /// The level's objects: list, add, move, remove.
     Object {
@@ -128,7 +142,7 @@ enum ObjectCommand {
 /// One shape, in world pixels.
 #[derive(clap::Args)]
 #[group(required = true, multiple = false)]
-struct ShapeArgs {
+pub(crate) struct ShapeArgs {
     /// A rectangle X,Y,W,H.
     #[arg(long, value_parser = parse_ints::<4>, allow_hyphen_values = true)]
     rect: Option<[i32; 4]>,
@@ -138,7 +152,7 @@ struct ShapeArgs {
 }
 
 impl ShapeArgs {
-    fn shape(&self) -> Shape {
+    pub(crate) fn shape(&self) -> Shape {
         match (self.rect, self.circle) {
             (Some([x, y, w, h]), _) => Shape::Rect { x, y, w, h },
             (None, Some([cx, cy, r])) => Shape::Circle { cx, cy, r },
@@ -151,7 +165,7 @@ impl ShapeArgs {
 /// One paint.
 #[derive(clap::Args)]
 #[group(required = true, multiple = false)]
-struct PaintArgs {
+pub(crate) struct PaintArgs {
     /// A colour, RRGGBB (a leading # is allowed).
     #[arg(long, value_parser = parse_colour)]
     colour: Option<Rgba>,
@@ -161,7 +175,7 @@ struct PaintArgs {
 }
 
 impl PaintArgs {
-    fn paint(&self) -> Paint {
+    pub(crate) fn paint(&self) -> Paint {
         match (&self.tile, self.colour) {
             (Some(t), _) => Paint::Tile(t.clone()),
             (None, Some(c)) => Paint::Colour(c),
@@ -177,7 +191,7 @@ enum SolidArg {
 }
 
 #[derive(Clone, Copy, ValueEnum)]
-enum MaterialArg {
+pub(crate) enum MaterialArg {
     Rock,
     Dirt,
     Background,
@@ -211,7 +225,7 @@ fn parse_ints<const N: usize>(s: &str) -> Result<[i32; N], String> {
     Ok(out)
 }
 
-fn parse_point(s: &str) -> Result<(i32, i32), String> {
+pub(crate) fn parse_point(s: &str) -> Result<(i32, i32), String> {
     parse_ints::<2>(s).map(|[x, y]| (x, y))
 }
 
@@ -225,10 +239,10 @@ fn parse_colour(s: &str) -> Result<Rgba, String> {
     Ok(Rgba::rgb(byte(0)?, byte(2)?, byte(4)?))
 }
 
-/// A PNG file, read and decoded within the image bounds.
-fn parse_image(s: &str) -> Result<RgbaImage, String> {
+/// A regular file's bytes, at most `MAX_FILE_BYTES`.
+pub(crate) fn read_bounded(path: &Path) -> Result<Vec<u8>, String> {
     use std::io::Read as _;
-    let path = Path::new(s);
+    let s = path.display();
     // A device or FIFO reports no length and may never end.
     if !std::fs::metadata(path).map_err(|e| format!("{s}: {e}"))?.is_file() {
         return Err(format!("{s}: not a file"));
@@ -241,6 +255,12 @@ fn parse_image(s: &str) -> Result<RgbaImage, String> {
     if bytes.len() as u64 > limit {
         return Err(format!("{s}: above {limit} bytes"));
     }
+    Ok(bytes)
+}
+
+/// A PNG file, read and decoded within the image bounds.
+fn parse_image(s: &str) -> Result<RgbaImage, String> {
+    let bytes = read_bounded(Path::new(s))?;
     let img = decode_rgba_within(&bytes, IMAGES).map_err(|e| format!("{s}: {e}"))?;
     if img.width() == 0 || img.height() == 0 {
         return Err(format!("{s}: an empty image"));
@@ -250,11 +270,11 @@ fn parse_image(s: &str) -> Result<RgbaImage, String> {
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
     match &args.command {
-        LevelCommand::Carve { pack, shape } => edit(pack, |l| {
+        LevelCommand::Carve { pack, shape } => edit_raster(pack, |l| {
             level::carve(l, &shape.shape());
             Ok(Vec::new())
         }),
-        LevelCommand::Fill { pack, shape, material, paint } => edit(pack, |l| {
+        LevelCommand::Fill { pack, shape, material, paint } => edit_raster(pack, |l| {
             let solid = match material {
                 SolidArg::Rock => Solid::Rock,
                 SolidArg::Dirt => Solid::Dirt,
@@ -262,23 +282,36 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             level::fill(l, &shape.shape(), solid, &paint.paint());
             Ok(Vec::new())
         }),
-        LevelCommand::Paint { pack, shape, layer, paint } => edit(pack, |l| {
+        LevelCommand::Paint { pack, shape, layer, paint } => edit_raster(pack, |l| {
             level::paint(l, &shape.shape(), layer.layer(), &paint.paint());
             Ok(Vec::new())
         }),
-        LevelCommand::Stamp { pack, at, image, layer } => edit(pack, |l| {
+        LevelCommand::Stamp { pack, at, image, layer } => edit_raster(pack, |l| {
             level::stamp(l, *at, image, layer.layer());
             Ok(Vec::new())
         }),
-        LevelCommand::Resize { pack, size, offset, material, colour } => edit(pack, |l| {
+        LevelCommand::Resize { pack, size, offset, material, colour, content } => {
             let material = match material {
                 MaterialArg::Rock => Material::Rock,
                 MaterialArg::Dirt => Material::Dirt,
                 MaterialArg::Background => Material::Background,
             };
-            let dropped = level::resize(l, *size, *offset, material, &Paint::Colour(*colour))?;
-            Ok(dropped.iter().map(|o| format!("dropped: {}", describe(o))).collect())
-        }),
+            let paint = Paint::Colour(*colour);
+            let mut p = element_cmd::load_level(pack)?;
+            // The composition first: it reads the old size from the level.
+            olr_edit::element::resize(&mut p, *size, *offset, material, &paint)
+                .map_err(|e| anyhow::anyhow!("{}: {e}", pack.display()))?;
+            let Source::Level(l) = &mut p.source else {
+                anyhow::bail!("{}: not a level pack", pack.display())
+            };
+            let dropped = level::resize(l, *size, *offset, material, &paint)?;
+            level::refresh_thumb(l);
+            element_cmd::bake_pack(pack, &mut p, &content.content)?;
+            let messages: Vec<String> = dropped.iter().map(|o| format!("dropped: {}", describe(o))).collect();
+            element_cmd::save_and_print(pack, &p, &messages)
+        }
+        LevelCommand::Element { command } => element_cmd::run(command),
+        LevelCommand::Bake { pack, content } => element_cmd::bake_cmd(pack, content),
         LevelCommand::Object { command } => match command {
             ObjectCommand::List { pack } => {
                 // `level.ron` alone: no image is decoded.
@@ -370,20 +403,32 @@ fn read(dir: &Path) -> anyhow::Result<(PackManifest, BTreeMap<VPath, Vec<u8>>, L
 
 /// Loads the level pack at `dir`, applies `op`, refreshes the thumbnail and
 /// saves, then prints `op`'s messages; an error from `op` or the save
-/// leaves the pack as it was and prints none.
+/// leaves the pack as it was and prints none. A composed level keeps its
+/// composition (`op` changes no art the bake makes).
 fn edit(
     dir: &Path,
     op: impl FnOnce(&mut LevelSource) -> anyhow::Result<Vec<String>>,
 ) -> anyhow::Result<bool> {
-    let (manifest, other, mut l) = read(dir)?;
-    let messages = op(&mut l)?;
-    level::refresh_thumb(&mut l);
-    let pack = Pack { manifest, source: Source::Level(l), composition: None, other };
-    crate::pack_cmd::warn(&save(dir, &pack).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?);
-    for m in messages {
-        println!("{m}");
+    let mut pack = element_cmd::load_level(dir)?;
+    let Source::Level(l) = &mut pack.source else { anyhow::bail!("{}: not a level pack", dir.display()) };
+    let messages = op(l)?;
+    level::refresh_thumb(l);
+    element_cmd::save_and_print(dir, &pack, &messages)
+}
+
+/// [`edit`] for an operation on the level's raster: refused on a composed
+/// level, whose art is its elements' bake (plan 14a ruling R1).
+fn edit_raster(
+    dir: &Path,
+    op: impl FnOnce(&mut LevelSource) -> anyhow::Result<Vec<String>>,
+) -> anyhow::Result<bool> {
+    if dir.join(olr_format::levels::COMPOSITION_FILE).exists() {
+        anyhow::bail!(
+            "{}: a composed level: edit its elements with olr-cli level element draw|erase, or in the editor",
+            dir.display()
+        );
     }
-    Ok(true)
+    edit(dir, op)
 }
 
 /// The front (or the material through `MATERIAL_PALETTE`) at `scale`

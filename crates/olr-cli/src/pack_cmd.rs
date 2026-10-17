@@ -22,6 +22,10 @@ enum PackCommand {
         /// Pack directories, or directories containing pack directories.
         #[arg(required = true)]
         paths: Vec<PathBuf>,
+        /// The content directory with the theme packs a composed level's
+        /// bake needs (its stale-bake check).
+        #[arg(long, default_value = "content/packs")]
+        content: PathBuf,
     },
     /// Rewrite packs' files in canonical form; foreign files are kept as they are.
     Fmt {
@@ -95,7 +99,7 @@ pub(crate) fn parse_size(s: &str) -> Result<(u32, u32), String> {
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
     match &args.command {
-        PackCommand::Check { paths } => check(paths),
+        PackCommand::Check { paths, content } => check(paths, content),
         PackCommand::Fmt { check, paths } => fmt(paths, *check),
         PackCommand::New { kind, id, out, name, size, theme, from } => {
             let out = out.clone().unwrap_or_else(|| PathBuf::from(id));
@@ -128,22 +132,59 @@ pub(crate) fn packs(path: &Path) -> anyhow::Result<Vec<PathBuf>> {
     Ok(out)
 }
 
-fn check(paths: &[PathBuf]) -> anyhow::Result<bool> {
+fn check(paths: &[PathBuf], content: &Path) -> anyhow::Result<bool> {
     let (mut checked, mut errors, mut warnings) = (0, 0, 0);
     for path in paths {
         for pack in packs(path)? {
             checked += 1;
-            for d in olr_pack::validate(&DirFs::new(&pack)) {
-                match d.severity {
+            let diagnostics = olr_pack::validate(&DirFs::new(&pack));
+            let valid = diagnostics.iter().all(|d| d.severity != Severity::Error);
+            let mut lines: Vec<(Severity, String)> =
+                diagnostics.iter().map(|d| (d.severity, d.to_string())).collect();
+            if valid {
+                lines.extend(stale_bake(&pack, content));
+            }
+            for (severity, line) in lines {
+                match severity {
                     Severity::Error => errors += 1,
                     Severity::Warning => warnings += 1,
                 }
-                println!("{}: {d}", pack.display());
+                println!("{}: {line}", pack.display());
             }
         }
     }
     println!("checked {checked} packs: {errors} errors, {warnings} warnings");
     Ok(errors == 0)
+}
+
+/// A valid composed level's baked files that differ from its
+/// composition's bake (plan 14a: the composition is the source of truth),
+/// as errors; a theme not found in `content` is a warning.
+fn stale_bake(dir: &Path, content: &Path) -> Vec<(Severity, String)> {
+    if !dir.join(olr_format::levels::COMPOSITION_FILE).is_file() {
+        return Vec::new();
+    }
+    let pack = match olr_edit::pack::load(dir) {
+        Ok(p) => p,
+        Err(e) => return vec![(Severity::Error, format!("error: {e}"))],
+    };
+    let olr_edit::pack::Source::Level(level) = &pack.source else { return Vec::new() };
+    let tile = match olr_edit::compose::theme_back_tile(content, &level.theme) {
+        Ok(t) => t,
+        Err(e) => return vec![(Severity::Warning, format!("warning: cannot check the bake: {e}"))],
+    };
+    match olr_edit::compose::stale(&pack, &tile) {
+        Ok(files) => files
+            .iter()
+            .map(|f| {
+                (
+                    Severity::Error,
+                    format!("error: {f}: differs from the composition's bake (run olr-cli level bake)"),
+                )
+            })
+            .collect(),
+        Err(e) => vec![(Severity::Error, format!("error: {e}"))],
+    }
 }
 
 /// `pack fmt`: a pack that does not load, or would not check, is an error

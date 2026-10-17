@@ -1,5 +1,6 @@
 //! `olr-cli`: headless tools for OLR. Run `olr-cli --help`.
 
+mod element_cmd;
 mod gpu_bench_cmd;
 mod import;
 mod level_cmd;
