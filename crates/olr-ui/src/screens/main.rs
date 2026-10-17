@@ -1,5 +1,5 @@
 //! The main menu (OLX's `src/client/DeprecatedGUI/Menu_Main.cpp`, laid
-//! out anew): local play, the sandbox, profiles, options, replays,
+//! out anew): local play, the sandbox, the editor, profiles, options, replays,
 //! about and quit.
 
 use egui::{Button, Color32, RichText, Ui};
@@ -28,6 +28,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, notices: &[String], out: &mut V
         button(ui, "Local Play", UiAction::Open(Screen::LocalPlay));
         button(ui, "Multiplayer", UiAction::Open(Screen::Multiplayer));
         button(ui, "Sandbox", UiAction::StartSandbox);
+        button(ui, "Editor", UiAction::Open(Screen::Editor));
         button(ui, "Profiles", UiAction::Open(Screen::Profiles));
         button(ui, "Options", UiAction::Open(Screen::Options));
         button(ui, "Replays", UiAction::Open(Screen::Replays));

@@ -46,6 +46,10 @@ pub const REPLAYS_DIR: &str = "replays";
 /// The user's packs (spec §9.4: written by `olr-cli import`), layered over
 /// the bundled ones.
 pub const PACKS_DIR: &str = "packs";
+/// The level editor's recovery copies (plan 14c R7), in the data directory.
+pub const RECOVERY_DIR: &str = "recovery";
+/// The version of a file [`Store::save_file`] writes.
+pub const FILE_VERSION: u32 = 1;
 /// Downloaded content in the cache directory (plan 11, ruling N30).
 pub const DOWNLOADS_DIR: &str = "downloads";
 /// A data directory's own cache directory ([`Store::open`]).
@@ -102,6 +106,13 @@ struct SettingsFile {
 struct ProfilesFile {
     version: u32,
     profiles: Profiles,
+}
+
+/// A file of [`Store::save_file`]: its value under a version, as the others.
+#[derive(Serialize, Deserialize)]
+struct ValueFile<T> {
+    version: u32,
+    value: T,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -190,6 +201,32 @@ impl Store {
     /// The user packs layer (spec §9.4), if there is a data directory.
     pub fn packs_dir(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join(PACKS_DIR))
+    }
+
+    /// The level editor's recovery copies (plan 14c R7), if there is a
+    /// data directory.
+    pub fn recovery_dir(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join(RECOVERY_DIR))
+    }
+
+    /// A RON file of the data directory (`name`, such as `editor.ron`)
+    /// that [`Store::save_file`] wrote: `None` when absent (no warning), in
+    /// memory, or bad (a warning; the file is moved aside as the settings'
+    /// are, and a newer game's left untouched).
+    pub fn load_file<T: serde::de::DeserializeOwned>(&mut self, name: &str) -> Loaded<Option<T>> {
+        self.load(
+            name,
+            FILE_VERSION,
+            |t| ron::from_str::<ValueFile<T>>(t).map(|f| Some(f.value)),
+            |_| Vec::new(),
+            |_, _| Ok(()),
+        )
+    }
+
+    /// Writes `value` to `name` in the data directory as the settings are
+    /// written: atomically, versioned ([`FILE_VERSION`]); nothing in memory.
+    pub fn save_file<T: Serialize>(&mut self, name: &str, value: &T) -> anyhow::Result<()> {
+        self.save(name, &ValueFile { version: FILE_VERSION, value })
     }
 
     /// What the player should know of the files, one line each, for the

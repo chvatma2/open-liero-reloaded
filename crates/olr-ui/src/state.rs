@@ -87,13 +87,16 @@ pub enum Screen {
     /// The match ended because its host was lost and nobody could take it
     /// over (plan 12c): why, and where its replay is.
     HostLost,
+    /// The level editor's packs: edit, copy, new, recoveries (plan 14c).
+    Editor,
 }
 
 impl Screen {
     /// The screens the main menu opens.
-    pub const MENUS: [Screen; 6] = [
+    pub const MENUS: [Screen; 7] = [
         Screen::LocalPlay,
         Screen::Multiplayer,
+        Screen::Editor,
         Screen::Profiles,
         Screen::Options,
         Screen::Replays,
@@ -208,6 +211,22 @@ pub enum UiAction {
     /// late rejoiner's, plan 12c N72: the match it reached is over): the
     /// Lobby shows.
     MatchLeft,
+    /// The Editor screen's Edit (a pack of the data directory's).
+    EditLevel(String),
+    /// The Editor screen's Edit a copy: level pack `from` copied as `name`.
+    CopyLevel {
+        from: String,
+        name: String,
+    },
+    /// The Editor screen's New level.
+    NewLevel {
+        name: String,
+        size: (u32, u32),
+        theme: String,
+    },
+    /// The Editor screen's Recover and Discard of a recovery copy.
+    Recover(String),
+    DiscardRecovery(String),
 }
 
 /// What the app must do.
@@ -266,6 +285,23 @@ pub enum AppCommand {
     /// Empty the download cache (the options; never while an online game
     /// is on: the app refuses then).
     ClearDownloadCache,
+    /// Open the editor on level pack `id` (one of `MenuData::editable`).
+    EditLevel(String),
+    /// Copy level pack `from` into the data directory's packs as `name`
+    /// (plan 14c R5), then edit it.
+    CopyLevel {
+        from: String,
+        name: String,
+    },
+    /// Make a new level pack (`olr_edit::new::Template::Level`), then edit it.
+    NewLevel {
+        name: String,
+        size: (u32, u32),
+        theme: String,
+    },
+    /// Reopen recovery `id` (its unsaved changes), or remove it.
+    Recover(String),
+    DiscardRecovery(String),
     Quit,
 }
 
@@ -427,6 +463,11 @@ impl UiState {
                 }
                 Vec::new()
             }
+            UiAction::EditLevel(_)
+            | UiAction::CopyLevel { .. }
+            | UiAction::NewLevel { .. }
+            | UiAction::Recover(_)
+            | UiAction::DiscardRecovery(_) => self.editor(action),
             UiAction::Back => self.back(),
             UiAction::StartMatch => self.start_match(),
             UiAction::StartSandbox => {
@@ -749,6 +790,21 @@ impl UiState {
         self.screen = s;
         self.message = None;
         self.options_in_game &= s == Screen::Options;
+    }
+
+    /// The Editor screen's commands, only from it and with nothing playing.
+    fn editor(&mut self, a: UiAction) -> Vec<AppCommand> {
+        if self.screen != Screen::Editor || self.play != Play::None {
+            return Vec::new();
+        }
+        vec![match a {
+            UiAction::EditLevel(id) => AppCommand::EditLevel(id),
+            UiAction::CopyLevel { from, name } => AppCommand::CopyLevel { from, name },
+            UiAction::NewLevel { name, size, theme } => AppCommand::NewLevel { name, size, theme },
+            UiAction::Recover(id) => AppCommand::Recover(id),
+            UiAction::DiscardRecovery(id) => AppCommand::DiscardRecovery(id),
+            _ => return Vec::new(),
+        }]
     }
 
     fn back(&mut self) -> Vec<AppCommand> {

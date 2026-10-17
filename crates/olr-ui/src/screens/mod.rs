@@ -11,6 +11,7 @@
 //! key, egui hears no key at all: the capture has it alone.
 
 pub mod about;
+mod editor;
 mod host;
 mod host_lost;
 mod ingame;
@@ -28,7 +29,7 @@ mod weapon_select;
 pub use host_lost::{HOST_LOST_REPLAY, HOST_LOST_TITLE, STEPPED_DOWN_TITLE};
 pub use keys::GAME_KEYS;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
 use egui::{
@@ -119,6 +120,14 @@ pub struct MenuData {
     /// This player was the match's host and stepped down (its game
     /// stalled, N70): the screen's title is [`STEPPED_DOWN_TITLE`].
     pub host_lost_hosting: bool,
+    /// The level packs of the data directory's `packs/` (the Editor
+    /// screen's Edit; every other level is edited as a copy), by id.
+    pub editable: BTreeSet<String>,
+    /// The editor's recovery copies: (id, level name, damaged).
+    pub recoveries: Vec<(String, String, bool)>,
+    /// What the app said of the editor's last command (a copy or a new
+    /// level that failed), on the Editor screen.
+    pub editor_message: Option<String>,
     /// A text field had the focus as the last frame ended.
     typing: bool,
     /// The weapon selection in progress.
@@ -135,6 +144,7 @@ pub struct MenuData {
     lobby_ui: lobby::View,
     profiles: profiles::View,
     options: options::View,
+    editor: editor::View,
     /// The screen shown last frame (a screen reads its files on entry).
     shown: Option<Screen>,
 }
@@ -167,6 +177,9 @@ impl MenuData {
             host_lost: None,
             host_lost_replay: false,
             host_lost_hosting: false,
+            editable: BTreeSet::new(),
+            recoveries: Vec::new(),
+            editor_message: None,
             typing: false,
             select: None,
             thumbs: BTreeMap::new(),
@@ -177,6 +190,7 @@ impl MenuData {
             lobby_ui: lobby::View::default(),
             profiles: profiles::View::default(),
             options: options::View::default(),
+            editor: editor::View::default(),
             shown: None,
         }
     }
@@ -185,6 +199,14 @@ impl MenuData {
     pub fn set_catalog(&mut self, catalog: Catalog) {
         self.catalog = catalog;
         self.thumbs.clear();
+    }
+
+    /// The level packs in the data directory's packs (editable in place)
+    /// and the recoveries (`(id, level name, damaged)`), for the Editor
+    /// screen (the app's, whenever they change).
+    pub fn set_editor_packs(&mut self, editable: BTreeSet<String>, recoveries: Vec<(String, String, bool)>) {
+        self.editable = editable;
+        self.recoveries = recoveries;
     }
 
     /// The weapons the selection shows now, by mod id (`None` when no
@@ -263,6 +285,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
             Screen::Replays => data.refresh_replays(),
             Screen::Profiles => data.profiles = profiles::View::new(state.profiles().selected),
             Screen::Options => data.options = options::View::default(),
+            Screen::Editor => data.editor = editor::View::default(),
             Screen::WeaponSelect => {
                 let remembered = state.profiles().selected().map(|p| p.weapons.as_slice()).unwrap_or(&[]);
                 data.select = data.weapons.as_ref().map(|m| WeaponSelect::new(m, remembered));
@@ -303,6 +326,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
                 Screen::Host => host::show(ui, state, data, &mut out),
                 Screen::Lobby => lobby::show(ui, state, data, &mut out),
                 Screen::HostLost => host_lost::show(ui, data, &mut out),
+                Screen::Editor => editor::show(ui, data, &mut out),
                 _ => {}
             });
         }

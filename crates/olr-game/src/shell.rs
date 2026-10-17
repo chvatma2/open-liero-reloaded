@@ -498,6 +498,12 @@ impl Shell {
             AppCommand::StartSandbox => self.pending = Some(Launch::Sandbox),
             AppCommand::PlayReplay(path) => self.pending = Some(Launch::Replay(path)),
             AppCommand::EndMatch => self.end(),
+            // The editor's host carries these out (plan 14c Task 6).
+            AppCommand::EditLevel(_)
+            | AppCommand::CopyLevel { .. }
+            | AppCommand::NewLevel { .. }
+            | AppCommand::Recover(_)
+            | AppCommand::DiscardRecovery(_) => {}
             AppCommand::SetPaused(on) => self.paused = on,
             AppCommand::ArmPlayer(weapons) => self.arm(weapons),
             AppCommand::SaveReplay => {

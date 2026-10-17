@@ -5,6 +5,7 @@
 //! Kept as their own binaries:
 //! - `hud_snapshots`: the GPU tier (`check::GPU_TESTS`) and `bless-render`.
 
+mod editor;
 mod flows;
 mod ingame;
 mod layout;

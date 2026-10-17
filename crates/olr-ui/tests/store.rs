@@ -421,3 +421,30 @@ fn the_download_cache_has_its_own_directory() {
         assert!(!cache.starts_with(data.join("packs")), "never among the imported packs");
     }
 }
+
+/// Plan 14c R8: a RON file of the data directory's own (such as the
+/// editor's `editor.ron`), versioned and atomic like the others; a garbage
+/// one gives `None` and a warning, and is kept aside.
+#[test]
+fn files_round_trip() {
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct Prefs {
+        bots: u8,
+        dir: Option<std::path::PathBuf>,
+    }
+    let tmp = tempfile::tempdir().unwrap();
+    let mut store = Store::open(tmp.path());
+    let none = store.load_file::<Prefs>("editor.ron");
+    assert_eq!((none.value, none.warnings.len()), (None, 0), "no file: nothing, quietly");
+    let x = Prefs { bots: 3, dir: Some("/home/someone/Pictures".into()) };
+    store.save_file("editor.ron", &x).unwrap();
+    assert_eq!(Store::open(tmp.path()).load_file::<Prefs>("editor.ron").value, Some(x));
+    fs::write(tmp.path().join("editor.ron"), "garbage(").unwrap();
+    let bad = store.load_file::<Prefs>("editor.ron");
+    assert_eq!(bad.value, None);
+    assert_eq!(bad.warnings.len(), 1, "{:?}", bad.warnings);
+    assert!(tmp.path().join("editor.ron.bak").exists(), "kept aside");
+    assert!(Store::in_memory().load_file::<Prefs>("editor.ron").value.is_none());
+    assert_eq!(Store::open(tmp.path()).recovery_dir(), Some(tmp.path().join("recovery")));
+    assert_eq!(Store::in_memory().recovery_dir(), None);
+}

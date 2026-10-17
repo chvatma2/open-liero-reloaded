@@ -84,7 +84,7 @@ fn widgets(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
 
 /// The screens to check: each opened from the main menu, then the
 /// options' and the Multiplayer screen's tabs clicked.
-const SCREENS: [(Screen, Option<&str>); 14] = [
+const SCREENS: [(Screen, Option<&str>); 15] = [
     (Screen::LocalPlay, None),
     (Screen::Options, None),
     (Screen::Options, Some("Audio")),
@@ -99,6 +99,7 @@ const SCREENS: [(Screen, Option<&str>); 14] = [
     (Screen::Multiplayer, Some("Direct")),
     (Screen::Host, None),
     (Screen::Lobby, None),
+    (Screen::Editor, None),
 ];
 
 #[test]
@@ -178,6 +179,7 @@ fn title_of(screen: Screen) -> &'static str {
         Screen::Multiplayer => "Multiplayer",
         Screen::Host => "Host a game",
         Screen::Lobby => "Lobby",
+        Screen::Editor => "Editor",
         _ => "",
     }
 }
