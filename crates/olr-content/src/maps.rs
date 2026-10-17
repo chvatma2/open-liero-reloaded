@@ -150,22 +150,12 @@ impl Content {
         })
     }
 
-    /// Skin pack `id` (such as `olx-skin-default`). A sheet that is not
-    /// OLX's 672 × 18 in its layout is replaced by [`LoadedSkin::placeholder`].
+    /// Skin pack `id` (such as `olx-skin-default`). `read_skin` compiles
+    /// every skin to OLX's 672 x 18 sheet, so there is no size to check.
     pub fn load_skin(&self, id: &str) -> anyhow::Result<LoadedSkin> {
         let skin = olr_pack::read_skin(&self.pack(id, PackKind::Skin)?)
             .with_context(|| format!("skin pack {id}"))?
             .skin;
-        let (w, h) = (skin.image.width(), skin.image.height());
-        let layout = FrameLayout::OLX;
-        if skin.def.layout != layout || (w, h) != (SHEET_WIDTH, layout.frame_height) {
-            let mut p = LoadedSkin::placeholder();
-            p.warnings.push(format!(
-                "{id}: a {w}x{h} sheet, not OLX's {SHEET_WIDTH}x{}: a placeholder instead",
-                layout.frame_height
-            ));
-            return Ok(p);
-        }
         Ok(LoadedSkin { skin, warnings: vec![] })
     }
 
