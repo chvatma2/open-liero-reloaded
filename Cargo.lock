@@ -3306,6 +3306,7 @@ dependencies = [
  "olr-data",
  "olr-discovery",
  "olr-edit",
+ "olr-format",
  "olr-fx",
  "olr-import",
  "olr-lobby",

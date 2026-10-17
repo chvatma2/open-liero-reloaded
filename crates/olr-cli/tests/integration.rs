@@ -20,6 +20,7 @@ mod deaths;
 mod digest;
 mod feel;
 mod hits;
+mod level;
 mod matches;
 mod net_repro;
 mod net_soak;

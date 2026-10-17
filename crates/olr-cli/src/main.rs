@@ -2,6 +2,7 @@
 
 mod gpu_bench_cmd;
 mod import;
+mod level_cmd;
 mod match_cmd;
 #[cfg(feature = "nat-tools")]
 mod nat_tools;
@@ -31,8 +32,10 @@ struct Cli {
 enum Command {
     /// Import OpenLieroX content into native packs (one directory per pack).
     Import(import::Args),
-    /// Author native packs: check them.
+    /// Author native packs: check, format and make them.
     Pack(pack_cmd::Args),
+    /// Edit a level pack: carve, fill, paint, stamp, resize, its objects; preview it.
+    Level(level_cmd::Args),
     /// Replay oracle scenarios in the simulation and compare them with OLX's traces;
     /// exits with status 1 if any diverges.
     Scenario(scenario::Args),
@@ -84,6 +87,7 @@ fn main() -> ExitCode {
     let result = match cli.command {
         Command::Import(args) => import::run(&args),
         Command::Pack(args) => pack_cmd::run(&args),
+        Command::Level(args) => level_cmd::run(&args),
         Command::Scenario(args) => scenario::run(&args),
         Command::Render(args) => render::run(&args),
         Command::Match(args) => match_cmd::run(&args),
