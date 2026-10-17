@@ -285,7 +285,6 @@ pub fn download_view(d: &Download) -> DownloadView {
         ItemKind::Mod => "mod",
         ItemKind::Level => "level",
         ItemKind::Theme => "theme",
-        ItemKind::Skin => "skin",
     };
     let state = match &d.state {
         DownloadState::Queued => "queued".to_string(),
@@ -634,9 +633,9 @@ mod tests {
             (DownloadState::Unavailable, "not available"),
         ];
         for (state, text) in states {
-            assert_eq!(d(ItemKind::Skin, state).state, text);
+            assert_eq!(d(ItemKind::Level, state).state, text);
         }
-        let kinds = [(ItemKind::Mod, "mod"), (ItemKind::Theme, "theme"), (ItemKind::Skin, "skin")];
+        let kinds = [(ItemKind::Mod, "mod"), (ItemKind::Theme, "theme")];
         for (kind, text) in kinds {
             assert_eq!(d(kind, DownloadState::Done).kind, text);
         }

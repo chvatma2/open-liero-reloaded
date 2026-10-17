@@ -211,10 +211,10 @@ fn looks(a: &Assets, n: usize) -> Vec<WormLook> {
         skin: a.bot_skin.clone(),
     };
     if let Game::Online { start, .. } = &a.game {
-        let lobby = start.slots.iter().map(|s| WormLook {
+        let lobby = start.slots.iter().enumerate().map(|(i, s)| WormLook {
             name: s.look.name.clone(),
             colour: s.look.colour,
-            skin: a.skin_of(&s.look.skin).clone(),
+            skin: a.skin_of_slot(i).clone(),
         });
         return lobby.chain((start.slots.len()..n).map(default)).collect();
     }

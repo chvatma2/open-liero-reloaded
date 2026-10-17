@@ -2,7 +2,6 @@
 //! bots; a replay): which packs to load, the match to build, and the
 //! assets loaded once for every restart.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -169,10 +168,12 @@ pub struct Assets {
     pub warnings: Vec<String>,
     /// The human's look (a profile's); `None`: "You" in the default colour.
     pub player: Option<PlayerLook>,
-    /// Every skin loaded, by the id asked for: the human's and the
-    /// default one, an online match's every slot's (a skin missing here
-    /// is the default skin: `Content::skin_or_default`).
-    pub skins: BTreeMap<String, LoadedSkin>,
+    /// An online match's skin of every slot, by slot (two slots may wear
+    /// skins of one id and different content): the local player's by its
+    /// id, every other by id and content hash
+    /// (`Content::skin_matching`), the default skin when it does not
+    /// match. Empty in every other game.
+    pub slot_skins: Vec<LoadedSkin>,
 }
 
 /// The packs `mod_id`, `level_id` (with its theme) and skin `skin` (a
@@ -193,7 +194,6 @@ fn open(
     let mut warnings = content.warnings().to_vec();
     let loaded = m.warnings.iter().chain(&theme.warnings).chain(&skin.warnings).chain(&bot_skin.warnings);
     warnings.extend(loaded.cloned());
-    let skins = BTreeMap::from([(skin_id, skin.clone()), (DEFAULT_SKIN.to_string(), bot_skin.clone())]);
     Ok(Assets {
         content,
         m,
@@ -206,7 +206,7 @@ fn open(
         level_id,
         warnings,
         player: None,
-        skins,
+        slot_skins: Vec::new(),
     })
 }
 
@@ -260,8 +260,11 @@ pub fn load_match(roots: &[&Path], o: &MatchOptions, skin: &str) -> anyhow::Resu
 /// played as slot `my_slot` (`None`: watching), from `content`, the peer's
 /// (`OnlinePeer::content`: this install's packs with the downloads laid
 /// over, the match's world was built from it): its mod, level and theme,
-/// and every slot's skin by id, once each (a skin still missing is the
-/// default skin, with a warning). The peer already checked the packs.
+/// and every slot's skin (spec §4, plan 13c): the local player's by its
+/// id, every other slot's by id and content hash, so a skin this install
+/// lacks or has with other content is the default skin, with a warning
+/// (each said once; skins are never downloaded). The peer already checked
+/// the packs.
 pub fn load_online(
     content: Arc<Content>,
     start: &MatchStartWire,
@@ -271,13 +274,25 @@ pub fn load_online(
     let mine = my_slot.and_then(|i| start.slots.get(usize::from(i))).map_or(DEFAULT_SKIN, |w| &w.look.skin);
     let game = Game::Online { start: Box::new(start.clone()), my_slot };
     let mut a = open(content, s.mod_id.clone(), s.level_id.clone(), mine, game)?;
-    for w in &start.slots {
-        if !a.skins.contains_key(&w.look.skin) {
-            let id = a.content.skin_id(&w.look.skin).unwrap_or_else(|| w.look.skin.clone());
-            let skin = a.content.skin_or_default(&id);
-            a.warnings.extend(skin.warnings.iter().cloned());
-            a.skins.insert(w.look.skin.clone(), skin);
-        }
+    for (i, w) in start.slots.iter().enumerate() {
+        let skin = if my_slot.is_some_and(|m| usize::from(m) == i) {
+            a.skin.clone()
+        } else {
+            let (skin, why) = a.content.skin_matching(&w.look.skin, &w.look.skin_hash);
+            let who = &w.look.name;
+            let said: Vec<String> = why
+                .into_iter()
+                .map(|why| format!("{who}'s skin: {why}"))
+                .chain(skin.warnings.iter().cloned())
+                .collect();
+            for line in said {
+                if !a.warnings.contains(&line) {
+                    a.warnings.push(line);
+                }
+            }
+            skin
+        };
+        a.slot_skins.push(skin);
     }
     Ok(a)
 }
@@ -409,9 +424,9 @@ impl Assets {
         }
     }
 
-    /// The skin loaded as `id`, else the default skin.
-    pub fn skin_of(&self, id: &str) -> &LoadedSkin {
-        self.skins.get(id).unwrap_or(&self.bot_skin)
+    /// The skin of online slot `slot`, else the default skin.
+    pub fn skin_of_slot(&self, slot: usize) -> &LoadedSkin {
+        self.slot_skins.get(slot).unwrap_or(&self.bot_skin)
     }
 
     /// How many worms the game starts with.
@@ -429,6 +444,9 @@ impl Assets {
 mod tests {
     use super::*;
 
+    /// The default skin's name (OLX's "default").
+    const DEFAULT_NAME: &str = "default";
+
     fn options(targets: usize) -> SandboxOptions {
         SandboxOptions {
             mod_id: "olx-classic".into(),
@@ -437,6 +455,86 @@ mod tests {
             targets,
             bonuses: false,
         }
+    }
+
+    fn slot(name: &str, skin: &str, hash: &str) -> olr_proto::SlotWire {
+        olr_proto::SlotWire {
+            member: None,
+            bot: None,
+            look: olr_proto::Look {
+                name: name.into(),
+                colour: [1, 2, 3],
+                skin: skin.into(),
+                skin_hash: hash.into(),
+            },
+            loadout: None,
+        }
+    }
+
+    /// Plan 13c, ruling 9: online skins by slot, id and hash. Two slots
+    /// wearing one id with different hashes do not collide: the one whose
+    /// hash is this install's gets the skin, the other the default skin
+    /// (never the local pack of that name); the local player's own slot
+    /// uses its skin by id; a bot's `NO_HASH` gets only the default skin;
+    /// the warning is said once.
+    #[test]
+    fn online_skins_are_matched_by_id_and_hash_per_slot() {
+        let Some(dir) = std::env::var_os("OLR_CONTENT_DIR").filter(|d| Path::new(d).is_dir()) else {
+            eprintln!("OLR_CONTENT_DIR not set; skipping");
+            return;
+        };
+        assert_eq!(olr_content::NO_SKIN_HASH, olr_proto::NO_HASH);
+        assert_eq!(olr_content::DEFAULT_SKIN, DEFAULT_SKIN);
+        let content = Arc::new(Content::open(Path::new(&dir)).unwrap());
+        let ant = "olx-skin-ant";
+        let ant_hash = content.pack_hash(ant, PackKind::Skin).unwrap();
+        let other = "ab".repeat(32);
+        assert_ne!(ant_hash, other);
+        let setup = olr_proto::MatchSetupWire {
+            mod_id: "olx-classic".into(),
+            level_id: "olx-level-dirt-level".into(),
+            packs: vec![],
+            rules: olr_proto::RulesWire {
+                lives: 10,
+                kill_limit: 0,
+                time_limit_min: 0.0,
+                allow_negative_score: false,
+                death_decreases_score: 0.0,
+                suicide_decreases_score: false,
+                sprees: [0; 5],
+                dying_sprees: [0; 5],
+            },
+            bonuses: false,
+            loading_time: 100,
+            restrictions: String::new(),
+            bots: vec![],
+        };
+        let start = MatchStartWire {
+            seed: 1,
+            setup,
+            slots: vec![
+                slot("Anna", ant, &ant_hash),
+                slot("Bert", ant, &other),
+                slot("Cleo", ant, &ant_hash),
+                slot("Bot", ant, olr_proto::NO_HASH),
+                slot("Dan", "olx-skin-nobody", &other),
+            ],
+            input_delay: vec![],
+            start_checksum: 0,
+        };
+        let name = |a: &Assets, i: usize| a.skin_of_slot(i).skin.def.name.clone();
+        // Watching: everyone by id and hash.
+        let a = load_online(Arc::clone(&content), &start, None).unwrap();
+        assert_eq!(a.slot_skins.len(), 5);
+        let got: Vec<String> = (0..5).map(|i| name(&a, i)).collect();
+        assert_eq!(got, ["Ant", DEFAULT_NAME, "Ant", DEFAULT_NAME, DEFAULT_NAME], "{got:?}");
+        assert_eq!(a.warnings.iter().filter(|w| w.contains("Bert's skin")).count(), 1, "{:?}", a.warnings);
+        // Bert plays slot 1: his own skin by id, whatever his hash says.
+        let a = load_online(Arc::clone(&content), &start, Some(1)).unwrap();
+        let got: Vec<String> = (0..5).map(|i| name(&a, i)).collect();
+        assert_eq!(got, ["Ant", "Ant", "Ant", DEFAULT_NAME, DEFAULT_NAME], "{got:?}");
+        assert!(a.warnings.iter().all(|w| !w.contains("Bert's skin")), "{:?}", a.warnings);
+        assert!(a.warnings.iter().any(|w| w.contains("Bot's skin")), "{:?}", a.warnings);
     }
 
     #[test]

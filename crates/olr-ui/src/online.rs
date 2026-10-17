@@ -594,8 +594,8 @@ pub struct LobbyView {
     pub setup: MatchPrefs,
     /// Whether the host may start now, else why not.
     pub can_start: Result<(), String>,
-    /// The content downloads: a client's from its host (a host's: its
-    /// members' skins), one row each.
+    /// The content downloads: a client's from its host (a host has
+    /// none), one row each.
     pub downloads: Vec<DownloadView>,
     /// The content this game lacks is this many bytes, over the prompt:
     /// nothing downloads until the player says Download (or leaves).
@@ -619,7 +619,7 @@ pub struct LobbyView {
 pub struct DownloadView {
     /// The pack's id.
     pub name: String,
-    /// "mod", "level", "theme" or "skin".
+    /// "mod", "level" or "theme".
     pub kind: String,
     /// Bytes received of `size`.
     pub have: u64,
@@ -657,7 +657,7 @@ pub struct MemberView {
     /// "Player 1", ..., or [`SEAT_SPECTATOR`].
     pub seat: String,
     pub ready: bool,
-    /// Content (mods, levels, skins) this member lacks.
+    /// Content (mods, levels, themes) this member lacks.
     pub missing: Vec<String>,
     /// Percent of the missing content received, while it downloads.
     pub download: Option<u8>,

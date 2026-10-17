@@ -741,23 +741,22 @@ fn lobby_shows_downloads_and_the_prompt() {
     v.downloads = vec![
         download("olx-level-dirt-level", "level", 32768, 131_072, "downloading"),
         download("olx-theme-dirt", "theme", 0, 2048, "queued"),
-        download("test-skin", "skin", 0, 900, "failed: the host stopped sending"),
+        download("test-mod", "mod", 0, 900, "failed: the host stopped sending"),
     ];
     v.members[1].missing = vec!["olx-level-dirt-level".into()];
     v.members[1].download = Some(45);
-    v.members[0].missing = vec!["olx-skin-x".into()];
+    v.members[0].missing = vec!["olx-mod-x".into()];
     v.prompt = Some(73 << 20 | 400 << 10);
     in_lobby(h.state_mut(), v);
     settle(&mut h);
     h.get_by_label("Downloads");
-    for text in ["olx-level-dirt-level", "level", "olx-theme-dirt", "theme", "queued", "downloading", "skin"]
-    {
+    for text in ["olx-level-dirt-level", "level", "olx-theme-dirt", "theme", "queued", "downloading", "mod"] {
         h.get_by_label(text);
     }
     h.get_by_label("failed: the host stopped sending");
     assert_eq!(h.get_all_by_role(Role::ProgressIndicator).count(), 3, "a progress bar a row");
     h.get_by_label("downloading 45%");
-    h.get_by_label("missing: olx-skin-x");
+    h.get_by_label("missing: olx-mod-x");
     assert!(h.query_by_label("missing: olx-level-dirt-level").is_none(), "the percent instead");
     // The prompt.
     h.get_by_label("This game needs 73.4 MB of content from the host.");
@@ -802,7 +801,7 @@ fn ready_is_disabled_while_content_is_missing() {
     h.get_by_label("get the missing content first");
     // The host's own missing list is not this player's.
     h.state_mut().data.lobby.as_mut().unwrap().members[1].missing.clear();
-    h.state_mut().data.lobby.as_mut().unwrap().members[0].missing = vec!["olx-skin-x".into()];
+    h.state_mut().data.lobby.as_mut().unwrap().members[0].missing = vec!["olx-mod-x".into()];
     settle(&mut h);
     assert!(!h.get_by_label("Ready").accesskit_node().is_disabled());
     h.get_by_label("Ready").click();

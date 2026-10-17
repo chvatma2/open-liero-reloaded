@@ -202,9 +202,11 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   its menus' state stays on the main menu, final review B-I4). **Per-worm
   looks** (`session::WormLook { name, colour, skin }`, one per worm,
   registered in worm order): local play's as above, an online match's the
-  lobby's (`setup::load_online` loads every slot's skin once by id from
-  the peer's content, downloads laid over, `Assets::skins`; one still
-  missing is the default skin).
+  lobby's (`setup::load_online` loads every slot's skin by slot,
+  `Assets::slot_skins`: the local player's by its id, every other slot's
+  by pack id and content hash, `Content::skin_matching`; one this install
+  lacks or has with other content is the default skin, with a warning
+  logged once: skins are never downloaded, plan 13c).
   `restart` (F5) builds the world from the assets loaded once: the
   sandbox again, a Deathmatch's rematch (seed + rematch number; the
   previous match's replay is handed back to save), a replay from the
