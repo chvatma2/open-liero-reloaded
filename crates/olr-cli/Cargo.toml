@@ -23,6 +23,7 @@ olr-oracle.workspace = true
 olr-scenario.workspace = true
 olr-content.workspace = true
 olr-import.workspace = true
+olr-edit.workspace = true
 olr-terrain.workspace = true
 olr-scene.workspace = true
 olr-fx.workspace = true

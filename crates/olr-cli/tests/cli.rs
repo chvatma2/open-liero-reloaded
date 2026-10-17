@@ -120,6 +120,31 @@ fn pack_check_reports_and_exits() {
 }
 
 #[test]
+fn pack_fmt_check_exits_1_on_a_dirty_pack() {
+    let Some(content) = content_dir() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let pack = tmp.path().join("level");
+    copy_dir(&Path::new(&content).join("olx-level-dirt-level"), &pack);
+    let clean = olr_cli().args(["pack", "fmt", "--check"]).arg(&pack).output().unwrap();
+    assert!(clean.status.success() && clean.stdout.is_empty(), "{}", String::from_utf8_lossy(&clean.stdout));
+
+    let original = std::fs::read(pack.join("level.ron")).unwrap();
+    std::fs::write(pack.join("level.ron"), "(name:\"Dirt Level\",size:(504,350),theme:\"olx-theme-dirt\")")
+        .unwrap();
+    let out = olr_cli().args(["pack", "fmt", "--check"]).arg(&pack).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout),
+        format!("{}/level.ron: not canonical\n", pack.display())
+    );
+
+    let out = olr_cli().args(["pack", "fmt"]).arg(&pack).output().unwrap();
+    assert!(out.status.success());
+    assert_eq!(String::from_utf8_lossy(&out.stdout), format!("formatted {}: 1 files\n", pack.display()));
+    assert_eq!(std::fs::read(pack.join("level.ron")).unwrap(), original);
+}
+
+#[test]
 fn reimport_replaces_stale_files() {
     let tmp = tempfile::tempdir().unwrap();
     let (src, out) = (tmp.path().join("gamedir"), tmp.path().join("packs"));

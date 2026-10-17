@@ -1,4 +1,4 @@
-//! `olr-cli pack …`: checking packs (plan 13d).
+//! `olr-cli pack …`: checking and formatting packs (plan 13d).
 
 use std::path::{Path, PathBuf};
 
@@ -20,11 +20,21 @@ enum PackCommand {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
+    /// Rewrite packs' files in canonical form; foreign files are kept as they are.
+    Fmt {
+        /// Only list the files that are not canonical; exits with status 1 if any are.
+        #[arg(long)]
+        check: bool,
+        /// Pack directories, or directories containing pack directories.
+        #[arg(required = true)]
+        paths: Vec<PathBuf>,
+    },
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
     match &args.command {
         PackCommand::Check { paths } => check(paths),
+        PackCommand::Fmt { check, paths } => fmt(paths, *check),
     }
 }
 
@@ -64,4 +74,36 @@ fn check(paths: &[PathBuf]) -> anyhow::Result<bool> {
     }
     println!("checked {checked} packs: {errors} errors, {warnings} warnings");
     Ok(errors == 0)
+}
+
+/// `pack fmt`: a pack that does not load is an error and stays untouched.
+fn fmt(paths: &[PathBuf], check_only: bool) -> anyhow::Result<bool> {
+    let mut ok = true;
+    for path in paths {
+        for pack in packs(path)? {
+            let result = if check_only {
+                olr_edit::fmt::unformatted(&pack).map_err(anyhow::Error::from)
+            } else {
+                olr_edit::fmt::format(&pack).map_err(anyhow::Error::from)
+            };
+            match result {
+                Ok(files) if check_only => {
+                    for file in &files {
+                        println!("{}/{file}: not canonical", pack.display());
+                    }
+                    ok &= files.is_empty();
+                }
+                Ok(files) => {
+                    if !files.is_empty() {
+                        println!("formatted {}: {} files", pack.display(), files.len());
+                    }
+                }
+                Err(e) => {
+                    println!("{}: error: {e:#}", pack.display());
+                    ok = false;
+                }
+            }
+        }
+    }
+    Ok(ok)
 }
