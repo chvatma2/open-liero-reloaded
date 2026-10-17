@@ -579,3 +579,47 @@ fn a_format_4_pack_in_a_user_layer_is_skipped_with_a_re_import_warning() {
     let hash = olr_pack::content_hash(&DirFs::new(bundled.path().join("test-level"))).unwrap();
     assert!(content.has("test-level", &hash));
 }
+
+#[test]
+fn from_source_equals_load_level() {
+    let Some(dir) = content_dir() else { return };
+    let content = Content::open(Path::new(&dir)).unwrap();
+    let id = "olx-level-dirt-level";
+    let src = olr_format::levels::read_level_files(&DirFs::new(Path::new(&dir).join(id))).unwrap();
+    let a = olr_content::LoadedLevel::from_source(&src).unwrap();
+    let b = content.load_level(id).unwrap();
+    assert_eq!(a.name, b.name);
+    assert_eq!(a.material, b.material);
+    assert_eq!(a.front, b.front);
+    assert_eq!(a.back, b.back);
+    assert_eq!(a.art_scale, b.art_scale);
+    assert_eq!(a.theme, b.theme);
+    assert_eq!(a.spawns, b.spawns);
+    let mut bad = src.clone();
+    bad.material.pop();
+    assert!(olr_content::LoadedLevel::from_source(&bad).is_err(), "a source that does not compile");
+}
+
+#[test]
+fn the_first_spawn_is_used_only_when_inside_the_level() {
+    use olr_data::level::SpawnPoint;
+    let mut cells = vec![Material::Background; 1200];
+    cells[5 * 40 + 20] = Material::Rock;
+    let level = |spawns: &[(i32, i32)]| olr_content::LoadedLevel {
+        name: "l".into(),
+        material: MaterialGrid::from_cells(40, 30, cells.clone()).unwrap(),
+        front: RgbaImage::new(40, 30),
+        back: RgbaImage::new(40, 30),
+        art_scale: 1,
+        theme: "t".into(),
+        spawns: spawns.iter().map(|&(x, y)| SpawnPoint { x, y }).collect(),
+    };
+    assert_eq!(level(&[(-1, 5), (10, 10)]).first_spawn(), None, "only the first one counts");
+    assert_eq!(level(&[(10, 10)]).first_spawn(), Some((10, 10)));
+    assert_eq!(level(&[]).first_spawn(), None);
+    assert_eq!(level(&[(40, 0)]).first_spawn(), None);
+    assert_eq!(level(&[(0, 30)]).first_spawn(), None);
+    assert_eq!(level(&[(39, 29)]).first_spawn(), Some((39, 29)));
+    assert_eq!(level(&[(20, 5)]).first_spawn(), None, "inside rock: a free spot");
+    assert_eq!(level(&[(i32::MIN, i32::MAX)]).first_spawn(), None);
+}

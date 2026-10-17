@@ -12,6 +12,7 @@ use olr_content::{
     SandboxSetup, SpawnSpec,
 };
 use olr_data::manifest::PackKind;
+use olr_format::levels::LevelSource;
 use olr_modes::DeathmatchSettings;
 use olr_proto::MatchStartWire;
 use olr_replay::{Packs, Replay};
@@ -129,8 +130,9 @@ pub enum Game {
     /// The sandbox (spec §19 E11).
     Sandbox(SandboxSetup),
     /// A Deathmatch, the human (any slot) against bots; `packs` are its mod,
-    /// level and theme for the replay.
-    Deathmatch { options: Box<MatchOptions>, packs: Packs },
+    /// level and theme for the replay; `spawn` is where the human worm
+    /// first spawns (`None`: a free spot; only the editor's Play sets it).
+    Deathmatch { options: Box<MatchOptions>, packs: Packs, spawn: Option<(i32, i32)> },
     /// A replay, played with the normal renderer.
     Replay(Box<Replay>),
     /// An online match (plan 10): its world is the netcode's (an
@@ -191,9 +193,21 @@ fn open(
     skin: &str,
     game: Game,
 ) -> anyhow::Result<Assets> {
+    let lvl = content.load_level(&level_id)?;
+    open_level(content, mod_id, level_id, lvl, skin, game)
+}
+
+/// [`open`] with the level given (the editor's, loaded from no pack).
+fn open_level(
+    content: Arc<Content>,
+    mod_id: String,
+    level_id: String,
+    lvl: LoadedLevel,
+    skin: &str,
+    game: Game,
+) -> anyhow::Result<Assets> {
     let skin_id = content.skin_id(skin).unwrap_or_else(|| skin.to_string());
     let m = content.load_mod(&mod_id)?;
-    let lvl = content.load_level(&level_id)?;
     let theme = content.load_theme(&lvl.theme).with_context(|| format!("level {level_id}"))?;
     let skin = content.skin_or_default(&skin_id);
     let (skin_id, skin_hash) = match content.pack_kind(&skin_id) {
@@ -259,7 +273,7 @@ pub fn load_deathmatch(
     let (mod_id, level_id) = resolve(&content, mod_name, level)?;
     let packs = content.replay_packs(&mod_id, &level_id)?;
     let options = Box::new(match_options(o, &mod_id, &level_id));
-    open(Arc::new(content), mod_id, level_id, skin, Game::Deathmatch { options, packs })
+    open(Arc::new(content), mod_id, level_id, skin, Game::Deathmatch { options, packs, spawn: None })
 }
 
 /// The Deathmatch `o` describes (the menus' local play), its packs by id.
@@ -268,7 +282,70 @@ pub fn load_match(roots: &[&Path], o: &MatchOptions, skin: &str) -> anyhow::Resu
     let content = Content::open_layers(roots)?;
     let packs = content.replay_packs(&o.mod_id, &o.level_id)?;
     let options = Box::new(o.clone());
-    open(Arc::new(content), o.mod_id.clone(), o.level_id.clone(), skin, Game::Deathmatch { options, packs })
+    let game = Game::Deathmatch { options, packs, spawn: None };
+    open(Arc::new(content), o.mod_id.clone(), o.level_id.clone(), skin, game)
+}
+
+/// What the level editor's Play asks for (plan 14c R3): the edited level
+/// itself (no pack), the mod by pack id, and 0 to `olr_editor::MAX_BOTS`
+/// bots.
+#[derive(Clone, Debug, PartialEq)]
+pub struct EditedPlay {
+    pub level: LevelSource,
+    pub mod_id: String,
+    pub bots: u8,
+}
+
+/// The level id an edited play's assets carry: the level is the editor's,
+/// in no pack.
+pub const EDITED_LEVEL: &str = "edited level";
+
+/// The editor's Play (plan 14c R3, R4) on the edited level: the sandbox
+/// for 0 bots (the player alone, no targets), else a Deathmatch against
+/// that many bots (capped at `olr_editor::MAX_BOTS`) of the Local Play
+/// screen's saved level, personality and loadout (`prefs`), under OLX's
+/// Deathmatch defaults. The human worm first spawns at the level's first
+/// spawn when it lies inside the level and out of rock
+/// (`LoadedLevel::first_spawn`), else at a free spot. The mod, theme,
+/// core and skin `skin` come by id from `roots`. Its replay is never
+/// saved (the shell's `Launch::Edited`), so its level pack ref has no hash.
+pub fn load_edited(
+    roots: &[&Path],
+    play: &EditedPlay,
+    skin: &str,
+    prefs: &olr_ui::MatchPrefs,
+) -> anyhow::Result<Assets> {
+    let content = Content::open_layers(roots)?;
+    let level = LoadedLevel::from_source(&play.level).context("the edited level")?;
+    let spawn = level.first_spawn();
+    let (mod_id, level_id) = (play.mod_id.clone(), EDITED_LEVEL.to_string());
+    let bots = play.bots.min(olr_editor::MAX_BOTS);
+    let game = if bots == 0 {
+        let o = SandboxOptions {
+            mod_id: mod_id.clone(),
+            level_id: level_id.clone(),
+            seed: 1,
+            targets: 0,
+            bonuses: prefs.bonuses,
+        };
+        let mut setup = sandbox_setup(&o);
+        setup.worms[0].pos = spawn;
+        Game::Sandbox(setup)
+    } else {
+        let p = olr_ui::MatchPrefs {
+            mod_id: mod_id.clone(),
+            level_id: level_id.clone(),
+            bots,
+            per_bot: None,
+            rules: olr_ui::MatchPrefs::default().rules,
+            restrictions: olr_content::DEFAULT_PRESET.into(),
+            ..prefs.clone()
+        };
+        let r = |id: &str| olr_replay::PackRef { id: id.into(), hash: String::new() };
+        let packs = Packs { mod_pack: r(&mod_id), level: r(&level_id), theme: r(&level.theme) };
+        Game::Deathmatch { options: Box::new(p.options(1)), packs, spawn }
+    };
+    open_level(Arc::new(content), mod_id, level_id, level, skin, game)
 }
 
 /// The online match `start` describes (`olr_online`'s `MatchStarting`),
@@ -414,6 +491,12 @@ impl Assets {
         olr_content::new_world_from(&self.m, &self.level, &self.theme, setup)
     }
 
+    /// Whether this is the level editor's Play (`load_edited`), whose
+    /// replay is never saved.
+    pub fn edited(&self) -> bool {
+        self.level_id == EDITED_LEVEL
+    }
+
     /// Whether a person plays the game: the sandbox, a Deathmatch with a
     /// human; not a replay, nor a match of bots alone. Only a game nobody
     /// plays may run fast (`speed.rs`), so an online match counts as
@@ -493,6 +576,82 @@ mod tests {
             },
             loadout: None,
         }
+    }
+
+    /// Plan 14c R3, R4: the editor's Play, a sandbox for 0 bots, else a
+    /// Deathmatch; the human worm first spawns at the level's first spawn
+    /// (a free spot without one).
+    #[test]
+    fn edited_play_builds_a_sandbox_or_a_match() {
+        use olr_format::levels::LevelObject;
+        let Some(dir) = std::env::var_os("OLR_CONTENT_DIR").filter(|d| Path::new(d).is_dir()) else {
+            eprintln!("OLR_CONTENT_DIR not set; skipping");
+            return;
+        };
+        let root = Path::new(&dir);
+        let fs = olr_vfs::DirFs::new(root.join("olx-level-dirt-level"));
+        let mut level = olr_format::levels::read_level_files(&fs).unwrap();
+        // A background cell with room around it.
+        let (w, h) = (level.size.0 as i32, level.size.1 as i32);
+        let open = |x: i32, y: i32| {
+            (y - 6..y + 6).all(|yy| {
+                (x - 6..x + 6).all(|xx| {
+                    (0..w).contains(&xx)
+                        && (0..h).contains(&yy)
+                        && level.material[(yy * w + xx) as usize] == olr_data::level::Material::Background
+                })
+            })
+        };
+        let at = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).find(|&(x, y)| open(x, y)).unwrap();
+        level.objects = vec![LevelObject::Spawn { at, notes: String::new() }];
+        let play = |level: &olr_format::levels::LevelSource, bots| EditedPlay {
+            level: level.clone(),
+            mod_id: "olx-classic".into(),
+            bots,
+        };
+        let prefs = olr_ui::MatchPrefs::default();
+        let spawned = |a: &Assets| {
+            let vp = olr_scene::Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
+            let mut s = crate::session::Session::new(
+                a,
+                vp,
+                olr_scene::Interpolation::Linear,
+                olr_audio::Audio::silent(),
+            )
+            .unwrap();
+            s.tick(olr_sim::Keys(0));
+            let p = s.world.worms()[0].pos;
+            (p.x as i32, p.y as i32)
+        };
+
+        let a = load_edited(&[root], &play(&level, 0), DEFAULT_SKIN, &prefs).unwrap();
+        let Game::Sandbox(setup) = &a.game else { panic!("0 bots is the sandbox") };
+        assert_eq!(setup.worms.len(), 1, "no targets");
+        assert!(a.edited(), "its replay is never saved");
+        assert_eq!(setup.worms[0].pos, Some(at));
+        let p = spawned(&a);
+        assert!((p.0 - at.0).abs() <= 2 && (p.1 - at.1).abs() <= 2, "{p:?} near {at:?}");
+
+        let a = load_edited(&[root], &play(&level, 3), DEFAULT_SKIN, &prefs).unwrap();
+        let Game::Deathmatch { options, spawn, .. } = &a.game else { panic!("bots: a Deathmatch") };
+        assert_eq!(options.players.len(), 4);
+        assert!(matches!(options.players[0], Player::Human));
+        assert_eq!(*spawn, Some(at));
+        let p = spawned(&a);
+        assert!((p.0 - at.0).abs() <= 2 && (p.1 - at.1).abs() <= 2, "{p:?} near {at:?}");
+
+        level.objects.clear();
+        let a = load_edited(&[root], &play(&level, 0), DEFAULT_SKIN, &prefs).unwrap();
+        let Game::Sandbox(setup) = &a.game else { panic!() };
+        assert_eq!(setup.worms[0].pos, None);
+        let a = load_edited(&[root], &play(&level, 2), DEFAULT_SKIN, &prefs).unwrap();
+        let Game::Deathmatch { spawn, .. } = &a.game else { panic!() };
+        assert_eq!(*spawn, None);
+        // More bots than Play allows are capped; a missing mod is an error.
+        let a = load_edited(&[root], &play(&level, 200), DEFAULT_SKIN, &prefs).unwrap();
+        assert_eq!(a.worms(), 1 + usize::from(olr_editor::MAX_BOTS));
+        let bad = EditedPlay { mod_id: "no-such-mod".into(), ..play(&level, 0) };
+        assert!(load_edited(&[root], &bad, DEFAULT_SKIN, &prefs).is_err());
     }
 
     /// The skin constants olr-content and olr-proto/olr-game each define

@@ -2,9 +2,10 @@
 
 use anyhow::Context as _;
 use olr_data::image::RgbaImage;
-use olr_data::level::{MaterialGrid, SpawnPoint};
+use olr_data::level::{Level, Material, MaterialGrid, SpawnPoint};
 use olr_data::manifest::PackKind;
 use olr_data::skin::{FrameLayout, MaskKind, Skin, SkinDef};
+use olr_format::levels::LevelSource;
 use olr_terrain::{GreenMask, Stamp};
 
 use crate::Content;
@@ -30,6 +31,38 @@ pub struct LoadedLevel {
     /// The theme pack's id, such as `olx-theme-dirt`.
     pub theme: String,
     pub spawns: Vec<SpawnPoint>,
+}
+
+impl LoadedLevel {
+    /// An edited level (the editor's `LevelSource`, compiled as a level
+    /// pack's files are) as a match loads it, under the art bound
+    /// [`Content::load_level`] applies.
+    pub fn from_source(src: &LevelSource) -> anyhow::Result<LoadedLevel> {
+        LoadedLevel::from_level(olr_format::levels::compile_level(src)?)
+    }
+
+    fn from_level(l: Level) -> anyhow::Result<LoadedLevel> {
+        check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
+        Ok(LoadedLevel {
+            name: l.def.name,
+            material: l.material,
+            front: l.front,
+            back: l.back,
+            art_scale: l.def.art_scale,
+            theme: l.def.theme,
+            spawns: l.def.spawns,
+        })
+    }
+
+    /// The first spawn point when it lies inside the level (`0..size`)
+    /// and not in rock, else `None` (a free spot): a worm placed there
+    /// would start outside the map or stuck.
+    pub fn first_spawn(&self) -> Option<(i32, i32)> {
+        let s = self.spawns.first()?;
+        let (x, y) = (u32::try_from(s.x).ok()?, u32::try_from(s.y).ok()?);
+        let inside = x < self.material.width() && y < self.material.height();
+        (inside && self.material.get(x, y) != Material::Rock).then_some((s.x, s.y))
+    }
 }
 
 /// A theme: the stamps the map is edited with and the tiles dirt is drawn
@@ -112,18 +145,7 @@ impl Content {
     pub fn load_level(&self, id: &str) -> anyhow::Result<LoadedLevel> {
         let pack = olr_pack::read_level(&self.pack(id, PackKind::Level)?)
             .with_context(|| format!("level pack {id}"))?;
-        let l = pack.level;
-        check_art_size(l.material.width(), l.material.height(), l.def.art_scale)
-            .with_context(|| format!("level pack {id}"))?;
-        Ok(LoadedLevel {
-            name: l.def.name,
-            material: l.material,
-            front: l.front,
-            back: l.back,
-            art_scale: l.def.art_scale,
-            theme: l.def.theme,
-            spawns: l.def.spawns,
-        })
+        LoadedLevel::from_level(pack.level).with_context(|| format!("level pack {id}"))
     }
 
     /// Theme pack `id` (such as `olx-theme-dirt`). Fewer than five holes, or

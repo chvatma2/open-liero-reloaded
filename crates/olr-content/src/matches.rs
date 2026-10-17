@@ -140,6 +140,18 @@ impl BuiltMatch {
 /// - chaos bots' loadouts rotate on every spawn (spec §20 F10);
 /// - natural bonuses and the bots' choices follow `o.restrictions`.
 pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<BuiltMatch> {
+    build_match_spawning(a, o, None)
+}
+
+/// [`build_match`] whose first human worm (not a bot) first spawns at
+/// `human_spawn` (`WormSetup::spawn`; `None`: a free spot, as
+/// `build_match`): the level editor's Play starts the player at the
+/// level's first spawn.
+pub fn build_match_spawning(
+    a: MatchAssets<'_>,
+    o: &MatchOptions,
+    human_spawn: Option<(i32, i32)>,
+) -> anyhow::Result<BuiltMatch> {
     let n = o.players.len();
     ensure!((2..=MAX_WORMS).contains(&n), "a Deathmatch of 2 to {MAX_WORMS} worms, not {n}");
     for (i, p) in o.players.iter().enumerate() {
@@ -157,6 +169,10 @@ pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<Built
     };
     let mut setup = match_setup(a.m, a.level, a.theme, &sandbox)?;
     setup.pool_capacity = o.pool_capacity;
+    let human = o.players.iter().position(|p| !matches!(p, Player::Bot(_)));
+    if let Some(w) = human.and_then(|i| setup.worms.get_mut(i)) {
+        w.spawn = human_spawn;
+    }
     let rules = a.m.weapon_rules(&o.restrictions);
     let settings = setup.settings.clone(); // `o.settings` with the mod's physics
     for (i, (w, p)) in setup.worms.iter_mut().zip(&o.players).enumerate() {

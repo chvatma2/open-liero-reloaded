@@ -178,10 +178,10 @@ fn hears_throws_of(a: &Assets) -> Option<u8> {
 fn start(a: &Assets, n: u32) -> anyhow::Result<(World, Driver)> {
     Ok(match &a.game {
         Game::Sandbox(_) => (a.new_world()?, Driver::Sandbox),
-        Game::Deathmatch { options, packs } => {
+        Game::Deathmatch { options, packs, spawn } => {
             let o = olr_content::MatchOptions { seed: options.seed.wrapping_add(n), ..(**options).clone() };
             let assets = MatchAssets { m: &a.m, level: &a.level, theme: &a.theme, packs };
-            let mut built = olr_content::build_match(assets, &o)?;
+            let mut built = olr_content::build_match_spawning(assets, &o, *spawn)?;
             built.recorder.set_looks(replay_looks(a, o.players.len()));
             let (world, d) = MatchDriver::new(built);
             (world, Driver::Match(Box::new(d)))

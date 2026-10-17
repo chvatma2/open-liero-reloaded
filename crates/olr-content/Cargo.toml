@@ -17,6 +17,7 @@ olr-modes.workspace = true
 olr-bots.workspace = true
 olr-replay.workspace = true
 olr-pack.workspace = true
+olr-format.workspace = true
 olr-vfs.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true

@@ -45,7 +45,10 @@ pub use locate::{CONTENT_DIR, default_content_dir};
 pub use maps::{
     DEFAULT_SKIN, LoadedLevel, LoadedSkin, LoadedTheme, MAX_ART_SCALE, MAX_COLOR_MAP_BYTES, NO_SKIN_HASH,
 };
-pub use matches::{BuiltMatch, CPU_COLOURS, MatchAssets, MatchOptions, Player, build_match, default_looks};
+pub use matches::{
+    BuiltMatch, CPU_COLOURS, MatchAssets, MatchOptions, Player, build_match, build_match_spawning,
+    default_looks,
+};
 pub use mods::{LoadedMod, check_frames};
 pub use placeholder::{PLACEHOLDER, placeholder_image};
 pub use replay::replay_assets_from;

@@ -79,7 +79,7 @@ use olr_ui::{
 use crate::finding::Internet;
 use crate::net::{self, Net, SharedCache};
 use crate::session::{Driver, Session};
-use crate::setup::{self, Assets, Game, PlayerLook, SandboxOptions};
+use crate::setup::{self, Assets, EditedPlay, Game, PlayerLook, SandboxOptions};
 use crate::video::{self, Overrides};
 
 mod joining;
@@ -121,6 +121,8 @@ enum Launch {
     Match(Box<MatchOptions>),
     Sandbox,
     Replay(PathBuf),
+    /// The level editor's Play (plan 14c): no replay is saved.
+    Edited(Box<EditedPlay>),
 }
 
 /// The sandbox's idle targets when started from the menu.
@@ -484,6 +486,12 @@ impl Shell {
         out
     }
 
+    /// The level editor's Play: loaded by the next [`Shell::poll`], as a
+    /// menu start is.
+    pub fn play_edited(&mut self, play: EditedPlay) {
+        self.pending = Some(Launch::Edited(Box::new(play)));
+    }
+
     fn carry(&mut self, c: AppCommand, out: &mut Vec<Outcome>) {
         match c {
             AppCommand::StartMatch(o) => self.pending = Some(Launch::Match(Box::new(o))),
@@ -651,6 +659,10 @@ impl Shell {
             Launch::Replay(path) => {
                 setup::load_replay(&root, &path, &net::cache_dirs(self.store.cache_dir()))?
             }
+            Launch::Edited(play) => {
+                let prefs = &self.ui.settings().gameplay.match_prefs;
+                setup::load_edited(&root, &play, &profile.skin_id, prefs)?
+            }
         };
         assets.player = Some(PlayerLook { name: profile.name, colour: profile.colour });
         self.log(std::mem::take(&mut assets.warnings));
@@ -698,7 +710,12 @@ impl Shell {
     /// in the data directory's `replays/` (never removed automatically).
     fn keep_replay(&mut self) -> Result<String, String> {
         let dir = self.store.replays_dir().ok_or("there is no data directory")?;
-        let r = self.play.as_mut().and_then(|p| p.session.replay()).ok_or("there is no replay")?;
+        let r = self
+            .play
+            .as_mut()
+            .filter(|p| !p.assets.edited())
+            .and_then(|p| p.session.replay())
+            .ok_or("there is no replay")?;
         let path = olr_ui::replays::save_kept(&dir, &r.encode()).map_err(|e| e.to_string())?;
         println!("olr: kept replay {}", path.display());
         Ok(path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned()))
@@ -716,7 +733,7 @@ impl Shell {
     /// The game ends: its replay saved, the sound output kept.
     fn end(&mut self) {
         if let Some(mut p) = self.play.take() {
-            if let Some(r) = p.session.take_replay() {
+            if let Some(r) = p.session.take_replay().filter(|_| !p.assets.edited()) {
                 self.save_replay(&r);
             }
             // An online match's peer goes back to the lobby.
@@ -742,8 +759,8 @@ impl Shell {
     fn restart(&mut self) {
         let Some(p) = &mut self.play else { return };
         match p.session.restart(&p.assets) {
-            Ok(Some(r)) => self.save_replay(&r),
-            Ok(None) => {}
+            Ok(Some(r)) if !p.assets.edited() => self.save_replay(&r),
+            Ok(_) => {}
             Err(e) => eprintln!("warning: restarting: {e:#}"),
         }
         self.over_reported = false;
