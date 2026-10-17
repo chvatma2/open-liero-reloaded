@@ -281,13 +281,16 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   Microsoft's Basic Render Driver, a `Cpu` adapter), with timestamps on
   both; `olr.exe --demo` writes its shots under the stage's `target/`. Nothing is left running; the
   stage stays for the next run.
-- `dist [--no-verify]` (`dist.rs`): the portable release zips,
-  `target/release-zips/open-liero-reloaded-<version>-{linux,windows}-x64.zip` (`ZIP_DIR`; `VERSION`:
-  xtask's, the workspace's; `zip_name`, `folder`). `olr-game` and
+- `dist [--no-verify]` (`dist.rs`): the releases (`release_name`): the
+  Linux Flatpak, `target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak`
+  (`flatpak::bundle`; there is no Linux zip, and an old one there is
+  removed), and the Windows zip, `…-windows-x64.zip` (`ZIP_DIR`; `VERSION`:
+  xtask's, the workspace's; `zip_name`, `folder`). Without the Flatpak
+  tools (`flatpak::tools_missing`) the command fails before building. `olr-game` and
   `olr-server` are built with `cargo build --profile dist` (workspace
   `Cargo.toml`: release, `strip`, no debug info, panics unwinding),
   natively and for `winbuild::TARGET` (`winbuild::build_missing()` fails
-  the command: both zips or none), staged in `target/dist-stage/` (removed
+  the command: both releases or none), staged in `target/dist-stage/` (removed
   after) under one folder `open-liero-reloaded-<version>/`: the exes, the mingw
   DLLs an exe imports (`winbuild::mingw_imports`), `DOCS`, the example
   server config as `server.example.ron` (`files`) and `content/packs`
@@ -297,8 +300,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   same inputs give the same bytes (tested). The zips are kept apart
   from cargo's `dist` profile output (`target/dist/`, swept by `tidy` as
   any profile). Verification (unless
-  `--no-verify`): the Linux zip is unpacked into a fresh temporary
-  directory, `olr --help` run from another directory must show the
+  `--no-verify`): the Flatpak's staged folder (`flatpak::staged_app`,
+  what the bundle's `/app/lib/olr/` holds; its programs mode 0755), with
+  `olr --help` run from a temporary directory, must show the
   content beside it as `--content`'s default, and `olr-server` (config
   `CHECK_CONFIG`: invite only, no relays, no STUN, port 0, two fill seats (the client and a bot),
   `min_players: 1`) must log its map (`next map:`), then start a match
@@ -309,9 +313,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   (`winbuild::run_in` for `olr.exe --help`; `olr-server.exe` until it
   logs its map, then stopped by path; no client: WSL cannot reach a
   Windows listener reliably); without interop (`winbuild::interop_missing`)
-  a `skip` notice. Prints each zip's path and size.
-- `flatpak` (`flatpak.rs`): the Linux release build (`dist::build`,
-  `dist::stage`) repackaged as
+  a `skip` notice. Prints each release's path and size.
+- `flatpak` (`flatpak.rs`): the Linux release alone, unchecked (`dist`
+  makes it with the Windows zip and checks both): the build (`dist::build`,
+  `dist::stage`) repackaged by `bundle` as
   `target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak`
   (`bundle_name`) with `tools/flatpak/`'s manifest, desktop entry,
   metainfo and icon (`APP_ID`); details in `tools/flatpak/CLAUDE.md`.

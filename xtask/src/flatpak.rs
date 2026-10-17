@@ -1,5 +1,6 @@
-//! `cargo xtask flatpak`: the Linux release build repackaged as a Flatpak
-//! bundle, `target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak`.
+//! The Linux release: the release build repackaged as a Flatpak bundle,
+//! `target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak`
+//! (`cargo xtask dist`, with the Windows zip; `cargo xtask flatpak` alone).
 //! The programs are `dist`'s (the `dist` profile, built on this machine),
 //! staged as in the zip under `target/flatpak/src/app/` beside copies of
 //! `tools/flatpak/`'s manifest, desktop entry, metainfo (`@VERSION@`
@@ -33,7 +34,7 @@ fn packaging_text(text: &str, version: &str) -> String {
 }
 
 /// Why the Flatpak tools cannot be used, if they cannot.
-fn tools_missing() -> Option<String> {
+pub fn tools_missing() -> Option<String> {
     let missing: Vec<&str> = ["flatpak", "flatpak-builder"]
         .into_iter()
         .filter(|t| Command::new(t).arg("--version").output().is_err())
@@ -68,18 +69,24 @@ fn stage(build: &Path, src: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// `cargo xtask flatpak`.
-pub fn command() -> anyhow::Result<bool> {
-    if let Some(why) = tools_missing() {
-        println!("FAIL flatpak: {why}");
-        return Ok(false);
-    }
-    let target = root().join("target");
-    let work = target.join("flatpak");
+/// The work directory: the staged sources, the build, the repository.
+fn work() -> PathBuf {
+    root().join("target").join("flatpak")
+}
+
+/// The release folder staged for the Flatpak (as in the bundle's
+/// `/app/lib/olr/`), after `bundle`.
+pub fn staged_app() -> PathBuf {
+    work().join("src").join("app")
+}
+
+/// The Flatpak of `build` (`dist::build`'s Linux output): staged, built by
+/// `flatpak-builder` and written as `target/release-zips/<bundle_name>`;
+/// returns the bundle's path. The staged folder stays (`staged_app`).
+pub fn bundle(build: &Path) -> Result<PathBuf, String> {
+    let work = work();
     let (src, repo) = (work.join("src"), work.join("repo"));
-    println!("building olr-game and olr-server (the {} profile: LTO, minutes from cold)...", dist::PROFILE);
-    let build = dist::build(Platform::Linux).map_err(anyhow::Error::msg)?;
-    stage(&build, &src).map_err(anyhow::Error::msg)?;
+    stage(build, &src)?;
     println!("building the Flatpak (the first run downloads the 26.08 runtime from Flathub)...");
     run(
         "flatpak-builder",
@@ -91,9 +98,11 @@ pub fn command() -> anyhow::Result<bool> {
             .arg(&repo)
             .arg(work.join("build"))
             .arg(src.join(format!("{APP_ID}.yml"))),
-    )
-    .map_err(anyhow::Error::msg)?;
-    let bundle: PathBuf = target.join(ZIP_DIR).join(bundle_name(VERSION));
+    )?;
+    let bundle = root().join("target").join(ZIP_DIR).join(bundle_name(VERSION));
+    if let Some(dir) = bundle.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
     run(
         "flatpak build-bundle",
         Command::new("flatpak")
@@ -101,8 +110,20 @@ pub fn command() -> anyhow::Result<bool> {
             .arg(&repo)
             .arg(&bundle)
             .arg(APP_ID),
-    )
-    .map_err(anyhow::Error::msg)?;
+    )?;
+    Ok(bundle)
+}
+
+/// `cargo xtask flatpak`: the Linux release alone, unchecked (`dist` builds
+/// it with the Windows zip and checks both).
+pub fn command() -> anyhow::Result<bool> {
+    if let Some(why) = tools_missing() {
+        println!("FAIL flatpak: {why}");
+        return Ok(false);
+    }
+    println!("building olr-game and olr-server (the {} profile: LTO, minutes from cold)...", dist::PROFILE);
+    let build = dist::build(Platform::Linux).map_err(anyhow::Error::msg)?;
+    let bundle = bundle(&build).map_err(anyhow::Error::msg)?;
     let bytes = std::fs::metadata(&bundle).map_or(0, |m| m.len());
     println!("{}  {:.1} MiB", bundle.display(), bytes as f64 / (1024.0 * 1024.0));
     println!("install: flatpak install --user {}", bundle.display());

@@ -396,13 +396,16 @@ fn unpack_fresh(zip: &Path, base: &Path) -> Result<(PathBuf, PathBuf), String> {
     Ok((unpacked.join(folder(VERSION)), run))
 }
 
-/// The Linux zip, unpacked in a temporary directory and run from another.
-fn verify_linux(zip: &Path) -> Result<String, String> {
+/// The release folder the Linux Flatpak holds (`flatpak::staged_app`), run
+/// from a temporary directory.
+fn verify_linux(folder: &Path) -> Result<String, String> {
     let tmp = tempfile::Builder::new()
         .prefix("olr-dist-")
         .tempdir()
         .map_err(|e| format!("a temporary directory: {e}"))?;
-    let (folder, run) = unpack_fresh(zip, tmp.path())?;
+    let run = tmp.path().join("run");
+    std::fs::create_dir_all(&run).map_err(|e| format!("{}: {e}", run.display()))?;
+    std::fs::write(run.join("server.ron"), CHECK_CONFIG).map_err(|e| format!("{}: {e}", run.display()))?;
     #[cfg(unix)]
     for exe in executables(Platform::Linux) {
         use std::os::unix::fs::PermissionsExt as _;
@@ -530,34 +533,56 @@ fn verify_windows(zip: &Path) -> Result<Option<String>, String> {
     Ok(Some(format!("olr.exe --help names the content beside it; olr-server.exe loaded {map}")))
 }
 
-/// `cargo xtask dist`: both zips, then (unless `verify` is off) their checks.
+/// A platform's release file: the Windows zip, the Linux Flatpak.
+pub fn release_name(version: &str, platform: Platform) -> String {
+    match platform {
+        Platform::Windows => zip_name(version, platform),
+        Platform::Linux => crate::flatpak::bundle_name(version),
+    }
+}
+
+/// `cargo xtask dist`: the releases (the Windows zip, the Linux Flatpak),
+/// then (unless `verify` is off) their checks.
 pub fn command(verify: bool) -> anyhow::Result<bool> {
     if let Some(why) = winbuild::build_missing() {
         println!("FAIL dist: the Windows build cannot be made here: {why}");
         return Ok(false);
     }
+    if let Some(why) = crate::flatpak::tools_missing() {
+        println!("FAIL dist: the Linux Flatpak cannot be made here: {why}");
+        return Ok(false);
+    }
     let target = root().join("target");
     let staging = target.join("dist-stage");
-    let mut zips = Vec::new();
+    // The Linux zip is no longer a release: an old one would mislead.
+    let _ = std::fs::remove_file(target.join(ZIP_DIR).join(zip_name(VERSION, Platform::Linux)));
+    let mut releases = Vec::new();
     for platform in Platform::ALL {
         println!(
             "building olr-game and olr-server for {} (the {PROFILE} profile: LTO, minutes from cold)...",
             platform.suffix()
         );
         let build = build(platform).map_err(anyhow::Error::msg)?;
-        let folder = stage(platform, &build, &staging.join(platform.suffix())).map_err(anyhow::Error::msg)?;
-        let zip = target.join(ZIP_DIR).join(zip_name(VERSION, platform));
-        write_zip(&folder, &executables(platform), &zip).map_err(anyhow::Error::msg)?;
-        zips.push((platform, zip));
+        let file = match platform {
+            Platform::Linux => crate::flatpak::bundle(&build).map_err(anyhow::Error::msg)?,
+            Platform::Windows => {
+                let folder =
+                    stage(platform, &build, &staging.join(platform.suffix())).map_err(anyhow::Error::msg)?;
+                let zip = target.join(ZIP_DIR).join(release_name(VERSION, platform));
+                write_zip(&folder, &executables(platform), &zip).map_err(anyhow::Error::msg)?;
+                zip
+            }
+        };
+        releases.push((platform, file));
     }
     let _ = std::fs::remove_dir_all(&staging);
     let mut ok = true;
     if verify {
-        for (platform, zip) in &zips {
-            println!("checking {} ...", zip.display());
+        for (platform, file) in &releases {
+            println!("checking {} ...", file.display());
             let result = match platform {
-                Platform::Linux => verify_linux(zip).map(Some),
-                Platform::Windows => verify_windows(zip),
+                Platform::Linux => verify_linux(&crate::flatpak::staged_app()).map(Some),
+                Platform::Windows => verify_windows(file),
             };
             match result {
                 Ok(Some(what)) => println!("ok   dist {}: {what}", platform.suffix()),
@@ -569,9 +594,9 @@ pub fn command(verify: bool) -> anyhow::Result<bool> {
             }
         }
     }
-    for (_, zip) in &zips {
-        let bytes = std::fs::metadata(zip).map_or(0, |m| m.len());
-        println!("{}  {:.1} MiB", zip.display(), bytes as f64 / (1024.0 * 1024.0));
+    for (_, file) in &releases {
+        let bytes = std::fs::metadata(file).map_or(0, |m| m.len());
+        println!("{}  {:.1} MiB", file.display(), bytes as f64 / (1024.0 * 1024.0));
     }
     Ok(ok)
 }
@@ -585,6 +610,9 @@ mod tests {
         assert_eq!(folder("1.2.3"), "open-liero-reloaded-1.2.3");
         assert_eq!(zip_name("1.2.3", Platform::Windows), "open-liero-reloaded-1.2.3-windows-x64.zip");
         assert_eq!(zip_name("1.2.3", Platform::Linux), "open-liero-reloaded-1.2.3-linux-x64.zip");
+        // The releases: the Windows zip and the Linux Flatpak.
+        assert_eq!(release_name("1.2.3", Platform::Windows), "open-liero-reloaded-1.2.3-windows-x64.zip");
+        assert_eq!(release_name("1.2.3", Platform::Linux), "open-liero-reloaded-1.2.3-linux-x64.flatpak");
         let meta = cargo_metadata::MetadataCommand::new()
             .manifest_path(root().join("Cargo.toml"))
             .no_deps()

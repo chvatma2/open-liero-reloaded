@@ -1,7 +1,8 @@
 # tools/flatpak
 
-The Flatpak of the Linux release, built by `cargo xtask flatpak`
-(`xtask/src/flatpak.rs`) into
+The Linux release is this Flatpak (there is no Linux zip), built by
+`cargo xtask dist` with the Windows zip, which checks its staged folder,
+or alone by `cargo xtask flatpak` (`xtask/src/flatpak.rs`), into
 `target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak`.
 
 - **Repackaged, not built from source.** The programs are `dist`'s

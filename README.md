@@ -301,28 +301,46 @@ olr-cli level preview my-level --out preview.png --scale 2
   (WSL's disk file does not shrink by itself; `wsl --manage <distro>
   --set-sparse true` after `wsl --shutdown` helps.)
 
-## Building a release zip
+## Building the releases
 
-`cargo xtask dist` builds portable zips for Linux and Windows in one run:
-`target/release-zips/open-liero-reloaded-<version>-linux-x64.zip` and
-`target/release-zips/open-liero-reloaded-<version>-windows-x64.zip`. Each holds one folder,
-`open-liero-reloaded-<version>/`, with `olr-game` and `olr-server` (`.exe` on
-Windows, built in the `dist` profile: release without symbols), the
-content in `content/packs/`, this README, the license, the changelog,
-`docs/online.md` and `server.example.ron`. Copy a zip anywhere, unpack it
-and run `olr-game`: without `--content` both programs use the
-`content/packs` beside them. Settings, profiles and replays stay in the
-user's profile directory, as with any build. The Linux programs need
-`libasound2` and `libudev1` (`olr-game` only) and a glibc at least as new
-as the building machine's; the Windows ones need no extra DLLs.
+`cargo xtask dist` builds both releases in one run:
 
-The Windows build needs mingw-w64 and the Rust target (`sudo apt install
-mingw-w64`, `rustup target add x86_64-pc-windows-gnu`). At the end each
-zip is unpacked into a fresh directory and run from another one: on Linux
-`olr --help` and an `olr-server` match with a bot client, on Windows
-(through WSL interop; skipped with a notice without it) `olr.exe
---help` and `olr-server.exe` loading its map. `--no-verify` skips that.
-The two whole-program-optimised builds take several minutes from cold.
+- **Linux: a Flatpak,**
+  `target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak`.
+  Install it with `flatpak install --user <file>`; the game appears in the
+  desktop's menu (`flatpak run io.github.openlieroreloaded.OpenLieroReloaded`),
+  and the server runs with `flatpak run
+  --command=olr-server io.github.openlieroreloaded.OpenLieroReloaded --config <file>`.
+  It runs on the `org.freedesktop.Platform` 26.08 runtime from Flathub,
+  so it needs no libraries from the system. Packaging details are in
+  `tools/flatpak/CLAUDE.md`.
+- **Windows: a portable zip,**
+  `target/release-zips/open-liero-reloaded-<version>-windows-x64.zip`.
+  It holds one folder, `open-liero-reloaded-<version>/`, with `olr.exe` and
+  `olr-server.exe`, the content in `content/packs/`, this README, the
+  license, the changelog, `docs/online.md` and `server.example.ron`. Unpack
+  it anywhere and run `olr.exe`. Without `--content`, both programs use the
+  `content/packs` beside them. No extra DLLs are needed.
+
+Both are built in the `dist` profile (release without symbols), and the
+Flatpak holds the same folder as the zip. Settings, profiles and replays
+stay in the user's profile directory, as with any build; the Flatpak's is
+`~/.var/app/io.github.openlieroreloaded.OpenLieroReloaded/`.
+
+The Linux release needs `flatpak` and `flatpak-builder` (`sudo apt install
+flatpak flatpak-builder`, then `flatpak remote-add --user --if-not-exists
+flathub https://dl.flathub.org/repo/flathub.flatpakrepo`). The first run
+downloads the runtime. The Windows build needs mingw-w64 and the Rust
+target (`sudo apt install mingw-w64`, `rustup target add
+x86_64-pc-windows-gnu`). Without either, the command fails before it
+builds anything: both releases or none.
+
+At the end, the Flatpak's folder runs from another directory: `olr --help`,
+and an `olr-server` match with a bot client. The Windows zip is unpacked
+into a fresh directory and runs `olr.exe --help` and `olr-server.exe`
+loading its map, through WSL interop (skipped with a notice without it).
+`--no-verify` skips the checks. The two whole-program-optimised builds take
+several minutes from cold.
 
 ## Checks
 

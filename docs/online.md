@@ -411,8 +411,8 @@ How to read it:
 
 A playtest of the whole chain: two PCs on two different home networks
 (for example, at two homes, or one on a phone's hotspot), with no ports
-forwarded by hand. Use the release zips and play on Windows or native
-Linux (not WSL2, see "WSL2 and Windows"). Both PCs' clocks must be right
+forwarded by hand. Use the releases (the Windows zip, the Linux Flatpak)
+and play on Windows or native Linux (not WSL2, see "WSL2 and Windows"). Both PCs' clocks must be right
 (set automatically): joins through the relays fail when they differ by
 more than a minute.
 
@@ -657,7 +657,7 @@ net-sim --from <case>` replays a kept one (`fixtures/net/cases`), and
 
 This adds to "Two PCs across home routers" and needs three players: three
 PCs, or two PCs and a dedicated server (`olr-server`, see "Dedicated
-server") on a third machine or a VPS. Use the release zips. A migration
+server") on a third machine or a VPS. Use the releases. A migration
 through the public relays is unmeasured, so with PCs on different
 networks note how long each step took.
 
@@ -760,7 +760,9 @@ olr-server --nat-check [--config server.ron]
 ```
 
 Without `--content` the server uses the `content/packs` beside it (an
-unpacked release zip), else the one in the working directory. `--relay`
+unpacked release zip, or the Flatpak's), else the one in the working
+directory. In the Flatpak it runs with `flatpak run
+--command=olr-server io.github.openlieroreloaded.OpenLieroReloaded`. `--relay`
 also runs a volunteer TURN relay, and `--nat-check` checks the network
 and exits (see "Through routers").
 
