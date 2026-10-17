@@ -14,7 +14,7 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_discovery::{GameList, Invite, Pool, PoolConfig, PoolEvent, TestRelay};
 use olr_server::config::{Config, Visibility};
 
-use crate::common::content_dir;
+use crate::common::{content_dir, copy_dir};
 
 fn png(w: u32, h: u32, c: Rgba) -> Vec<u8> {
     let mut img = RgbaImage::new(w, h);
@@ -50,7 +50,7 @@ fn olr_cli() -> Command {
 }
 
 #[test]
-fn import_then_validate() {
+fn import_then_check() {
     let tmp = tempfile::tempdir().unwrap();
     let (src, out) = (tmp.path().join("gamedir"), tmp.path().join("packs"));
     gamedir(&src);
@@ -74,23 +74,49 @@ fn import_then_validate() {
     let report = std::fs::read_to_string(out.join("import-report.ron")).unwrap();
     assert!(report.contains("skins/broken.png") && report.contains("error: Some("), "{report}");
 
-    let status = olr_cli().arg("validate").arg(&out).status().unwrap();
+    let status = olr_cli().args(["pack", "check"]).arg(&out).status().unwrap();
     assert!(status.success());
 }
 
 #[test]
-fn validate_fails_on_broken_pack() {
+fn pack_check_fails_on_broken_pack() {
     let tmp = tempfile::tempdir().unwrap();
     let pack = tmp.path().join("bad");
     std::fs::create_dir_all(&pack).unwrap();
     std::fs::write(pack.join("pack.ron"), "(oops").unwrap();
-    let out = olr_cli().arg("validate").arg(&pack).output().unwrap();
+    let out = olr_cli().args(["pack", "check"]).arg(&pack).output().unwrap();
     assert!(!out.status.success());
     assert!(
         String::from_utf8_lossy(&out.stdout).contains("pack.ron:1:"),
         "{}",
         String::from_utf8_lossy(&out.stdout)
     );
+}
+
+#[test]
+fn pack_check_reports_and_exits() {
+    let Some(content) = content_dir() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let pack = tmp.path().join("level");
+    copy_dir(&Path::new(&content).join("olx-level-dirt-level"), &pack);
+    let mut text = std::fs::read(pack.join("level.ron")).unwrap();
+    text.push(b'x');
+    std::fs::write(pack.join("level.ron"), text).unwrap();
+    let out = olr_cli().args(["pack", "check"]).arg(&pack).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(1), "{stdout}");
+    let line = stdout.lines().find(|l| l.contains("level.ron:")).unwrap_or_else(|| panic!("{stdout}"));
+    let after = line.split("level.ron:").nth(1).unwrap();
+    let mut pos = after.split(':');
+    assert!(
+        pos.next().unwrap().parse::<usize>().is_ok() && pos.next().unwrap().parse::<usize>().is_ok(),
+        "{line}"
+    );
+    assert!(stdout.contains("checked 1 packs: 1 errors, 0 warnings"), "{stdout}");
+
+    let out = olr_cli().arg("validate").arg(&pack).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "a clap usage error");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("unrecognized subcommand"));
 }
 
 #[test]

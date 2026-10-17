@@ -9,14 +9,13 @@ mod net_client_cmd;
 mod net_repro_cmd;
 mod net_sim_cmd;
 mod net_soak_cmd;
+mod pack_cmd;
 mod render;
 mod replay_cmd;
 mod rollback_cost_cmd;
 mod scenario;
 mod stress_cmd;
-mod validate;
 
-use std::path::PathBuf;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
@@ -32,6 +31,8 @@ struct Cli {
 enum Command {
     /// Import OpenLieroX content into native packs (one directory per pack).
     Import(import::Args),
+    /// Author native packs: check them.
+    Pack(pack_cmd::Args),
     /// Replay oracle scenarios in the simulation and compare them with OLX's traces;
     /// exits with status 1 if any diverges.
     Scenario(scenario::Args),
@@ -76,17 +77,13 @@ enum Command {
     /// until killed; prints its address first.
     #[cfg(feature = "nat-tools")]
     StunServer(nat_tools::StunArgs),
-    /// Validate packs; exits with status 1 if any pack has errors.
-    Validate {
-        /// Pack directories, or directories containing pack directories.
-        paths: Vec<PathBuf>,
-    },
 }
 
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
         Command::Import(args) => import::run(&args),
+        Command::Pack(args) => pack_cmd::run(&args),
         Command::Scenario(args) => scenario::run(&args),
         Command::Render(args) => render::run(&args),
         Command::Match(args) => match_cmd::run(&args),
@@ -104,7 +101,6 @@ fn main() -> ExitCode {
         Command::NostrRelay(args) => nat_tools::run_relay(&args),
         #[cfg(feature = "nat-tools")]
         Command::StunServer(args) => nat_tools::run_stun(&args),
-        Command::Validate { paths } => validate::run(&paths),
     };
     match result {
         Ok(true) => ExitCode::SUCCESS,

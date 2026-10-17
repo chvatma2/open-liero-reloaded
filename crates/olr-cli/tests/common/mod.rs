@@ -55,7 +55,8 @@ pub fn failures_dir() -> std::path::PathBuf {
 pub const MATCH_PACKS: [&str; 5] =
     ["olx-core", "olx-classic", "olx-theme-dirt", "olx-level-dirt-level", "olx-skin-default"];
 
-fn copy_dir(from: &Path, to: &Path) {
+/// Copies the directory tree `from` to `to`.
+pub fn copy_dir(from: &Path, to: &Path) {
     std::fs::create_dir_all(to).unwrap();
     for e in std::fs::read_dir(from).unwrap() {
         let e = e.unwrap();
