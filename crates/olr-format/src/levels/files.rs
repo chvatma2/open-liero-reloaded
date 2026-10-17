@@ -24,7 +24,7 @@ fn is_one(v: &u32) -> bool {
 /// `level.ron`: what the level is, besides its images.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct LevelFile {
+pub(crate) struct LevelFile {
     /// Shown in menus.
     name: String,
     /// Free text for authors; ignored by the game.

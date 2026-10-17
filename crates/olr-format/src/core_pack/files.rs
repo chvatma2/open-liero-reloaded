@@ -17,7 +17,7 @@ use crate::{Colour, FormatError};
 /// One sprite's frame grid.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SpriteEntry {
+pub(crate) struct SpriteEntry {
     /// Columns and rows of frames; they must divide the image.
     frames: (u32, u32),
     /// Art pixels per world pixel, 1 to `MAX_ART_SCALE` (8).
@@ -27,7 +27,7 @@ struct SpriteEntry {
 /// `core.ron`: OLX's shared game assets (`CORE_LAYOUT` lists OLX's sprites).
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct CoreFile {
+pub(crate) struct CoreFile {
     /// Free text for authors; ignored by the game.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     notes: String,

@@ -7,6 +7,7 @@
 //! and the simulation read them unchanged (`docs/porting/olx-notes/asset-formats.md` §4).
 
 mod files;
+pub(crate) use files::ThemeFile;
 
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::theme::{Theme, ThemeDef};

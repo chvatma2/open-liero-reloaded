@@ -18,7 +18,7 @@ pub const RESTRICTIONS_FILE: &str = "restrictions.ron";
 /// header and `gs_worm_t`, `CGameScript.cpp`).
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ModFile {
+pub(crate) struct ModFile {
     /// Shown in menus; bot loadouts and weapon restrictions match on it
     /// (OLX: the lgs header's `ModName`, `CGameScript.cpp`, header bytes 24..88).
     name: String,

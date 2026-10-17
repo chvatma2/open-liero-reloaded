@@ -15,7 +15,7 @@ use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, wri
 /// scale 2, 20 × 18 frames, 7 aim columns by 3 walk rows) compiles today.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct SkinFile {
+pub(crate) struct SkinFile {
     /// Shown in menus.
     name: String,
     /// Free text for authors; ignored by the game.

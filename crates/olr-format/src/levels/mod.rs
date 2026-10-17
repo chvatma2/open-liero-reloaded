@@ -2,6 +2,7 @@
 //! `back.png` and an optional `thumb.png` (spec §6).
 
 mod files;
+pub(crate) use files::LevelFile;
 mod thumb;
 
 use olr_data::image::RgbaImage;

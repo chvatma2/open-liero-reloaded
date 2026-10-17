@@ -5,6 +5,7 @@
 //! crate-root module of that name would shadow the `core` crate.
 
 mod files;
+pub(crate) use files::CoreFile;
 
 use std::collections::BTreeMap;
 

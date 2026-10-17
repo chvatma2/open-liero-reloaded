@@ -10,6 +10,7 @@ use crate::defaults as d;
 
 mod compile;
 mod files;
+pub(crate) use files::ModFile;
 mod lift;
 mod spawn;
 mod types;

@@ -4,6 +4,7 @@
 //! sheet and lifted from it (docs/porting/olx-notes/asset-formats.md §3).
 
 mod files;
+pub(crate) use files::SkinFile;
 
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::skin::{FrameLayout, MaskKind, Skin, SkinDef};

@@ -24,7 +24,7 @@ fn is_zero(v: &u32) -> bool {
 /// `theme.ron`: the theme's name and how many of each image it has.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-struct ThemeFile {
+pub(crate) struct ThemeFile {
     /// Shown in menus.
     name: String,
     /// Free text for authors; ignored by the game.

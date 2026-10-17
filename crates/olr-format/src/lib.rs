@@ -12,7 +12,9 @@ pub mod levels;
 pub mod mods;
 pub mod ron_io;
 pub mod skins;
+mod text;
 pub mod themes;
 
 pub use colour::Colour;
 pub use error::{FormatError, LiftError};
+pub use text::canonical_text;
