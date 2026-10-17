@@ -73,14 +73,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   The menus list and play `--content` with the data directory's `packs/`
   over it (`Content::open_layers`, spec §9.4; the command line's games
   use `--content` alone; without the flag `olr_content::default_content_dir`:
-  `content/packs` beside the executable, else in the working directory). **Import** (plan 7 task 7): `StartImport`
-  spawns an `olr_ui::import::ImportJob` (one at a time; without a data
-  directory the screen says so), `Shell::poll` feeds its reports to
-  `MenuData::import` every frame, and when it ends lists the content again
-  (`list_content`: the catalog, `MenuData::set_catalog` so re-imported
-  thumbnails are made again, the skin preview reloaded) and reports
-  `ImportFinished`; no game starts meanwhile (`UiState`); `finish` (quit)
-  stops it, waiting at most `IMPORT_STOP_WAIT` (2 s).
+  `content/packs` beside the executable, else in the working directory). The shell keeps the layer's directory itself (`packs_dir`, `Store::packs_dir()`): `Shell::roots()`, no
+  import screen (`olr-cli import` writes the packs; `tests/user_packs.rs`).
   `Shell::update_preview(ctx)`, after the menus are drawn,
   uploads the profiles screen's skin preview (`MenuData::preview_wanted`,
   `olr_ui::skin_preview::frames`) as egui textures (`MenuData::preview`,
@@ -106,7 +100,6 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
 - **Single thread** (spec §8.6): the device is created and used only on
   the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
   used the device crashes when it exits. kira runs its own audio thread;
-  an import runs on its own (`olx-import`), which touches no device, and
   each online peer's network pump on its own (`olr-game net`, below),
   which touches no device either.
 - **WSL** (`wsl.rs`): on a WSL kernel, unless the user set `WGPU_BACKEND`
@@ -890,6 +883,5 @@ valid replay, the results against the world's scores), `tests/options.rs`
 (video through the paced requests,
 a window made again keeps the game ticking, volumes live, the saved window with the flags on top) play the imported
 levels when `OLR_CONTENT_DIR` is set, as does `tests/speed.rs` (fast-forward
-never changes the simulation; a played game refuses it); `tests/import.rs` imports
-`fixtures/olx-mini` through the shell: the menus refreshed, the imported
-pack over the bundled one, a quit mid-import).
+never changes the simulation; a played game refuses it); `tests/user_packs.rs`: a user pack
+in `<data>/packs` over the bundled one of its id, a new one added).

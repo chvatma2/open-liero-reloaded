@@ -66,7 +66,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Pause and results: Esc's pause menu (no tick while paused), the results after `GAMEOVER_WAIT` with OLX's columns plus score, deaths and suicides; Rematch, Save replay, Back to menu | `src/client/CClient_Draw.cpp:1840-1897` | `olr-ui::screens::{ingame, results}`, `olr-game::shell` | done (plan 7 task 5) | `pause_stops_ticks_and_replays_stay_valid`, `pause_menu_holds_the_game_and_opens_the_options`, `results_match_world_scores`, `results_show_the_columns_and_their_buttons`, `save_replay_once_per_match` |
 | Level thumbnails (§21 G6, narrowed): `thumb.png` per level pack (160 × 96, box-filtered, letterboxed), pack format 4, left out of the content hash; decoded lazily and bounded in the menus | `src/game/Level.cpp:33-44` (`minimapForLevel`) | `olr-import-gfx`, `olr-pack`, `olr-ui::screens::local_play` | done (plan 7 task 6) | `thumbnails_are_imported_for_every_level`, `thumbnails_are_letterboxed_to_a_fixed_size`, `thumbnails_average_the_art`, `thumbnails_decode_lazily_and_bounded` |
 | About (§21 G9): credits (Liero, Liero Xtreme, the OpenLieroX team), licenses, each pack's recorded origin | `src/client/DeprecatedGUI/Menu_Main.cpp:276-283` | `olr-ui::screens::about` | done (plan 7 task 6) | `about_credits_the_authors_and_the_licenses` |
-| Import screen: an OLX game directory imported on a background thread into the data directory's `packs/`, layered over the bundled packs; progress, report, cancel; bounded reads and image decodes | `Menu_Local_FillModList`, `checkLXBinMod`, OLX's level list, `src/main.cpp:1003-1021` | `olr-content::import`, `olr-ui::{import, screens::import}`, `olr-pack::image_io`, `olr-game::shell` | done (plan 7 task 7) | `import_runs_off_the_ui_thread_and_reports`, `import_screen_flow`, `import_reports_every_item_and_writes_whole_packs`, `imported_packs_override_bundled`, `import_refreshes_the_menus_and_overrides_bundled`, `quitting_mid_import_leaves_whole_packs`, `a_decompression_bomb_is_refused_on_import_and_load`, `huge_images_are_refused_before_decoding` |
+| Import (the Import screen was removed in plan 13c; `olr-cli import`, and later the editors, import OLX content into `packs/`, layered over the bundled packs): bounded reads and image decodes | `Menu_Local_FillModList`, `checkLXBinMod`, OLX's level list, `src/main.cpp:1003-1021` | `olr-content::import`, `olr-pack::image_io`, `olr-game::shell` (`packs_dir`) | done (plan 7 task 7; the screen removed in plan 13c) | `import_reports_every_item_and_writes_whole_packs`, `imported_packs_override_bundled`, `user_packs_layer_over_the_bundled_content`, `a_decompression_bomb_is_refused_on_import_and_load`, `huge_images_are_refused_before_decoding` |
 | Fast-forward (the user's request; no OLX equivalent): replays and `--spectate` at 1×–16× or max, a played game always 1×, sound thinned | — | `olr-game::speed` | done (plan 7 task 8) | `fast_forward_never_changes_the_simulation`, `a_played_game_never_runs_fast`, `speeds_step_parse_and_thin_sound`, `the_fake_clock_needs_an_autoplay` |
 | Autoplay and end to end (§21 G7): `--autoplay` clicks widgets by label, holds the game's keys, takes checked screenshots and logs JSON lines; `--fake-clock` makes a run deterministic | — | `olr-game::autoplay`, `xtask e2e` | done (plan 7 task 8) | `scripts_parse_and_name_what_exists`, `steps_click_wait_and_fail_in_time`, `widgets_are_found_by_their_label`, `blank_pictures_fail_the_sanity_check`; `cargo xtask e2e` (in `full`, Xvfb) |
 | Benchmarks (§21 G8): a full 3000-projectile pool tick, 32 worms, 8 bots thinking, the draw list, an offscreen frame at 1080p and 1440p; machine-local baselines, more than 10 % slower fails | — | `olr-sim/benches/tick.rs`, `olr-cli/benches/game.rs`, `olr-render/benches/frame.rs`, `xtask bench` | done (plan 7 task 8) | `fixtures/bench/baselines.ron`; `regressions_need_more_than_the_tolerance`, `baselines_from_another_machine_only_notice` |
@@ -667,11 +667,12 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   of the main menu (`Menu_Main.cpp:276-283`); the remake has an About
   screen from the main menu with the credits, the licenses and each
   bundled pack's origin.
-- **Import screen** (`olr-content::import`, `olr-ui`, `olr-game`, plan 7
-  task 7): OLX reads its game directory as it is; the remake imports one
-  (a typed path: the `share/gamedir`, or an OpenLieroX root holding one)
-  into packs in the user data's `packs/`, on a background thread, and
-  layers them over the bundled packs (spec §9.4): a pack id in `packs/`
+- **Import** (`olr-content::import`, `olr-cli import`; plan 7 task 7's
+  Import screen was removed in plan 13c, imports are `olr-cli import`'s
+  and later the editors'): OLX reads its game directory as it is; the
+  remake imports one (the `share/gamedir`, or an OpenLieroX root holding
+  one) into packs, and the game layers the user data's `packs/` over the
+  bundled packs (spec §9.4): a pack id in `packs/`
   replaces the bundled pack of that id (an OLX item always imports to the
   same id), and an imported pack this build cannot read hides nothing.
   What is imported is found where OLX's menus look: the directories with a
@@ -685,7 +686,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   Replays recorded on a bundled pack stay valid when the same OLX item is
   imported again (the content hash leaves `pack.ron` and `thumb.png`
   out); a different item under the same id makes them refuse with the
-  content-hash error. No game starts while an import runs.
+  content-hash error.
 - **Fast-forward and spectating** (`olr-game`, plan 7 task 8, the user's
   request; OLX has neither): a game nobody plays, a replay or a
   Deathmatch of bots alone (`--spectate`, 2 to 32 bots), runs at 1×, 2×,

@@ -18,6 +18,11 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 - Worms facing left are drawn as the exact mirror of facing right, without
   OLX's one-pixel offset.
 
+### Removed
+
+- The Import screen; import OLX content with `olr-cli import`, and later in
+  the editors.
+
 ### Fixed
 
 - Each mod now plays with its own worm and rope physics, as in OpenLieroX.

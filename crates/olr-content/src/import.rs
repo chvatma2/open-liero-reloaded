@@ -1,6 +1,6 @@
 //! Importing OLX content into packs (spec §9.3, §9.4; plan 7 ruling Q3):
 //! the one pipeline `olr-cli import` (and so `cargo xtask
-//! fetch-olx-content`) and the game's Import screen run. It reads an OLX
+//! fetch-olx-content`) run. It reads an OLX
 //! game directory (`share/gamedir`) through the importers (`olr-import-lgs`,
 //! `olr-import-lxl`, `olr-import-gfx`) and writes one pack per item to
 //! `<out>/<pack id>/`, plus `import-report.ron`.
@@ -121,8 +121,8 @@ pub struct ImportOptions {
     pub revision: String,
     /// The output directory is this import's alone: packs of earlier runs
     /// that this run did not produce are removed (`olr-cli import`, whose
-    /// `content/packs` is the manifest's). Off for the game's user
-    /// `packs/`, which collects every import.
+    /// `content/packs` is the manifest's). Off to collect several imports
+    /// in one directory, such as a user `packs/`.
     pub prune: bool,
 }
 

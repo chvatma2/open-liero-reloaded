@@ -6,8 +6,7 @@ The headless command-line tool. Its commands:
   [--core F]... [--extra-skins DIR --extra-skins-source S --extra-skins-revision R]` writes one pack per item to `<out>/<pack id>/`, plus `import-report.ron`;
   the `--core` files (shared sprites, game sounds, `colours.cfg`) make one pack, `olx-core`.
   It exits with status 1 if any item failed, and still imports the rest.
-  The pipeline is `olr_content::import` (shared with the game's Import
-  screen, plan 7 ruling Q3), with `prune`: `<out>` is this import's.
+  The pipeline is `olr_content::import` (plan 7 ruling Q3; the game's Import screen is gone), with `prune`: `<out>` is this import's.
 - `olr-cli validate <pack-or-parent-dir>...` prints diagnostics and exits with
   status 1 on any error.
 - `olr-cli scenario [name...] [--dump F] [--all | --fields a+b] [--time F.ron]` replays oracle

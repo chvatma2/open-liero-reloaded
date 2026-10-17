@@ -104,7 +104,7 @@ impl Content {
 
     /// The packs of several content directories, layered (spec §9.4):
     /// `roots` from the highest priority down, such as the user data's
-    /// `packs/` (the game's imports) before the bundled content. A pack id
+    /// `packs/` (written by `olr-cli import`) before the bundled content. A pack id
     /// found in a higher layer hides the same id below it, whatever its
     /// kind, so an imported pack replaces the bundled one (the core pack
     /// too); a pack of a higher layer that cannot be read hides nothing

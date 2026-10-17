@@ -36,13 +36,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `Set*` actions sanitize, then apply (`ApplyVideo`, `ApplyAudio`,
   `ApplyBindings`) and save (`SaveSettings`, `SaveProfiles`) only what
   changed (`SetBindings`: `sanitize_bindings`). `bindings()` is the
-  selected profile's, else the options'. Import: `StartImport(path)` on
-  the Import screen with no game playing emits `StartImport(PathBuf)`
-  (and saves the path as `settings.import.last_path`), once until the app
-  reports `ImportFinished` (`is_importing()`); `CancelImport` emits
-  `CancelImport`. While it runs every start (`StartMatch`, `StartSandbox`,
-  `PlayReplay`) is refused with a message; Back and the other screens
-  work (the import runs on).
+  selected profile's, else the options'.
 - **Settings** (`settings.rs`): video (`WindowPreset`: 1280 × 720,
   1600 × 900, 1920 × 1080; fullscreen, borderless at the monitor's size,
   offered in the same "Display" list; v0.1.0's `window: Desktop` loads as
@@ -51,7 +45,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `UI_SCALE_RANGE` 0.5-3 (on top of the height's scale), `hud_layout`:
   `HudArrangement::{Auto, Bar, Sides}`, Auto when an old file lacks it), audio volumes 0-1, `Bindings`, gameplay
   (`MatchPrefs`: local play's last setup; the HUD has one style: an old file's `hud:` is ignored),
-  `import` (`ImportSettings::last_path`, default empty).
+  an old file's `import:` block (the removed Import screen's) is ignored.
   `sanitize()` fixes out-of-range values and
   keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, F3 (the network
   panel), Tab, H and
@@ -83,8 +77,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `page(ui, title, width, out)` returns a column at most `width` points
   wide and `PAGE_HEIGHT` (900) high centred in the window (the window less `PAGE_MARGIN` each side
   when narrower), the title centred on top, Back at its left edge;
-  `footer` puts the primary action (`primary`: a large button; Start,
-  Import) and its status centred at the column's bottom and returns the
+  `footer` puts the primary action (`primary`: a large button; Start) and its status centred at the column's bottom and returns the
   rest; `columns` splits that rest (egui's own `columns` would reach
   under the footer); `tab_row(ui, size, n)` sizes and centres a screen's
   tab row (Options, Multiplayer), each tab an equal share of a column too
@@ -146,14 +139,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   small screen);
   About (`about.rs`, §21 G9: `CREDITS`, `LICENSES`, every imported
   pack's recorded origin, `sources`: skins grouped by directory,
-  `origin_text`); Import (`import.rs`, plan 7 task 7: the directory
-  field, `MenuData::import_path`, filled with the last path when the
-  screen first opens; a relative path says what it is relative to; Import, disabled while one runs or without
-  `MenuData::packs_dir`; Cancel; a progress bar from
-  `MenuData::import`, repainting while it runs; the result, the notes and
-  every item's pack or error and warnings, one line a row laid out only
-  in view (`ScrollArea::show_rows`); local play's Start is disabled
-  with "Importing content…"). Esc is `Back` and
+  `origin_text`). Esc is `Back` and
   F5 `Restart` on every screen, a held key's repeats ignored
   (`pressed_once`); in the options Esc first closes an open dialog.
 - **Online screens** (`online.rs`, `screens/{multiplayer,host,lobby}.rs`,
@@ -282,20 +268,6 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   (`LobbyDownload(false)`: leaves as Back does). `megabytes(bytes)`:
   "73.4 MB", "312 MB", in MiB shown as "MB" (the prompt's 50 MiB
   threshold reads "50.0 MB").
-- **Import job** (`import.rs`, plan 7 task 7): `ImportJob::spawn(path,
-  packs)` runs `olr_content::import::discover` and `import` (no prune,
-  revision `LOCAL_REVISION`) on a thread named `olx-import` and returns at
-  once; `poll(&mut ImportProgress)` drains its channel into the screen's
-  view (`true` once, when it ended: `ImportResult::Done { imported,
-  failed, warnings, tried, total, cancelled }` or `Failed(why)`; a thread
-  gone silent is a failure too); `cancel` stops it between items,
-  `stop(timeout)` cancels and waits (quitting), dropping the job cancels
-  it; a panic inside is caught and reported, never propagated. `worker()`
-  is the thread's id (tests). Discovery stops on a cancel too.
-  `clean_typed_path` (whitespace and one pair of surrounding quotes off;
-  `UiState` keeps the path cleaned), `resolve_typed_path(typed, home,
-  cwd)` / `expand_typed_path` (`~` the home directory, a relative path the
-  working directory's; the app expands before importing).
 - **Replays** (`replays.rs`): `list(dir)` (the `.olrp` files, automatic
   saves newest first, each with `header_problem`: 6 bytes read),
   `auto_save(dir, bytes)` (`match-NNNNNN.olrp`, the last
@@ -362,7 +334,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   The app uploads the frames (`PreviewTextures`): no GPU handle here.
 - **Store** (`store.rs`, Review Focus 1): `Store::platform()` (the
   `ProjectDirs` data directory, else `in_memory` and a warning;
-  `replays_dir()`, `packs_dir()`: `packs/`, the imports; `cache_dir()`:
+  `replays_dir()`, `packs_dir()`: `packs/`, the user packs layer (written by `olr-cli import`); `cache_dir()`:
   `ProjectDirs::cache_dir()/downloads`, a `Store::open(dir)`'s
   `<dir>/cache/downloads`, none in memory: plan 11's download cache),
   `Store::open(dir)`, `load_*` (`Loaded { value, warnings }`) and
@@ -429,8 +401,7 @@ same sizes and 4K, headers on wide screens, two lines on narrow: long names, "8/
 every widget in the window, a game selected and joined);
 `tests/ingame.rs`: the HUD layout,
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
-`tests/import.rs`: `import_runs_off_the_ui_thread_and_reports` on
-`fixtures/olx-mini`, and the screen's flow; `tests/hud_snapshots.rs`
+`tests/hud_snapshots.rs`
 with `OLR_GPU_TESTS`).
 - **Identity file** (`identity.ron`, plan 10): `Store::load_identity(fresh)`
   returns the install's 32-byte secret key, calling `fresh` (the caller's

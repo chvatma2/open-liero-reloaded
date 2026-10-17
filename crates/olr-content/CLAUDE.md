@@ -110,7 +110,7 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   OLX name's import id such as `default.png` → `olx-skin-default`),
   `Content::skin_id`, `Catalog::skin`.
 - **Import** (`import.rs`, plan 7 ruling Q3): the one OLX import
-  pipeline, `olr-cli import`'s and the game's Import screen's.
+  pipeline, `olr-cli import`'s.
   `import(olx, &ImportPlan, out, &ImportOptions, progress)` imports the
   plan's mods, levels (with their thumbnail), themes, core files and
   skins one by one (`Progress::Item`/`Done`; the callback returning

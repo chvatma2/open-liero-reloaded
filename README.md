@@ -55,12 +55,10 @@ more:
   manifest gives the 4 levels, Classic and MW 1.0, the Dirt theme, 718 skins (409 from the repository, 309 more from
   OpenLieroX 0.58 rc5's release, committed in `content/olx-0.58-rc5/`) and
   the core sprites and sounds; or
-- **Import** in the main menu: type the path of an OLX game directory (its
-  `share/gamedir`, or an OpenLieroX directory holding one) and press
-  Import. The packs go to the data directory's `packs/` (below) and are
-  listed over `--content`'s: a pack of the same id there wins. Mods with a
-  `script.lgs`, `levels/*.lxl`, themes and PNG skins are imported; the core
-  pack only when all its 18 files are there.
+- `olr-cli import --olx <game directory> --out <data>/packs`: imports an
+  OLX game directory into the data directory's `packs/` (below), listed over
+  `--content`'s: a pack of the same id there wins. The game has no Import
+  screen; the editors will import too, later.
 
 ### Run
 
@@ -80,7 +78,7 @@ Useful flags (`olr --help` lists them all):
 | `--speed 1\|2\|4\|8\|16\|max` | how fast a watched game runs: a replay or `--spectate` (PageUp/PageDown change it); a game you play is always 1× |
 | `--replay f.olrp` | watch a replay |
 | `--mode deathmatch ...`, `--record f.olrp` | a command-line Deathmatch without the menus (below), saving its replay |
-| `--data-dir <dir>` | settings, profiles, replays and imported packs here instead of the platform's directory |
+| `--data-dir <dir>` | settings, profiles, replays and user packs here instead of the platform's directory |
 | `--content <dir>` | the imported content (default `content/packs` beside `olr-game`, else in the working directory) |
 | `--no-sound` | open no audio device |
 
@@ -103,7 +101,7 @@ Useful flags (`olr --help` lists them all):
   and log can move into the space beside the picture (Options → Video →
   HUD layout).
 - **Sandbox:** you and idle targets on a level, to try weapons.
-- **Profiles:** your name, colour and skin (all imported skins, searchable,
+- **Profiles:** your name, colour and skin (all skins, searchable,
   with an animated preview); the one marked plays.
 - **Options:** Video (display: a 1280 × 720, 1600 × 900 or 1920 × 1080
   window, or borderless fullscreen; VSync or uncapped, upscale filter, interpolation, HUD
@@ -113,7 +111,7 @@ Useful flags (`olr --help` lists them all):
   The match is set up in Local Play, which remembers the last one.
 - **Replays:** every Deathmatch played from the menus (the last 20) and the
   ones you saved; click one to watch it.
-- **Import** (above) and **About** (credits, licenses, each pack's origin).
+- **About** (credits, licenses, each pack's origin).
 
 ### Controls
 
@@ -152,7 +150,7 @@ The data directory is `~/.local/share/open-liero-reloaded/` on Linux (another wi
 - `profiles.ron`: the profiles;
 - `replays/`: `match-NNNNNN.olrp` (every menu Deathmatch, the last 20 kept)
   and `replay-NNN.olrp` (saved from the results, never removed);
-- `packs/`: content imported from the menu.
+- `packs/`: user packs (for example `olr-cli import`'s output), layered over `--content`.
 
 A broken settings or profiles file is set aside as `<name>.bak` and the
 game starts with defaults (and says so in its log). One from a newer
