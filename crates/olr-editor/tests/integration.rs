@@ -4,3 +4,4 @@
 mod common;
 mod document;
 mod history;
+mod state;

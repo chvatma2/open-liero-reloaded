@@ -90,3 +90,60 @@ pub fn files(doc: &olr_editor::Document) -> std::collections::BTreeMap<String, V
         .map(|(p, b)| (p.as_str().to_string(), b))
         .collect()
 }
+
+/// Carries out `action` and every command it leads to as the host would,
+/// synchronously, feeding the answers back; returns every command emitted.
+pub fn run(
+    state: &mut olr_editor::EditorState,
+    action: olr_editor::EditorAction,
+) -> Vec<olr_editor::EditorCommand> {
+    use olr_editor::{EditorAction, EditorCommand};
+    let mut out = Vec::new();
+    let mut queue = std::collections::VecDeque::from([action]);
+    while let Some(action) = queue.pop_front() {
+        for command in state.update(action) {
+            match &command {
+                EditorCommand::Open(dir) => queue.push_back(open(state.catalog(), dir)),
+                EditorCommand::Create(n) => {
+                    let made = olr_edit::new::new_pack(
+                        &n.dir,
+                        olr_data::manifest::PackKind::Level,
+                        &n.id,
+                        &n.name,
+                        olr_edit::new::Template::Level { size: n.size, theme: &n.theme },
+                    );
+                    queue.push_back(match made {
+                        Ok(_) => open(state.catalog(), &n.dir),
+                        Err(e) => EditorAction::OpenFailed(e.to_string()),
+                    });
+                }
+                EditorCommand::Save { dir, pack } => queue.push_back(EditorAction::Saved(
+                    olr_edit::pack::save(dir, pack).map_err(|e| e.to_string()),
+                )),
+                _ => {}
+            }
+            out.push(command);
+        }
+    }
+    out
+}
+
+fn open(catalog: &olr_editor::Catalog, dir: &Path) -> olr_editor::EditorAction {
+    use olr_editor::EditorAction;
+    match olr_edit::pack::load(dir) {
+        Ok(pack) => match olr_editor::Document::open(pack, dir.to_path_buf(), catalog) {
+            Ok(doc) => EditorAction::Opened(Box::new(doc)),
+            Err(e) => EditorAction::OpenFailed(e.to_string()),
+        },
+        Err(e) => EditorAction::OpenFailed(e.to_string()),
+    }
+}
+
+/// An editor state with a copy of the fixture open.
+pub fn editor(root: &Path) -> (tempfile::TempDir, olr_editor::EditorState) {
+    let (tmp, dir) = copy_pack(root, &fixture());
+    let mut state = olr_editor::EditorState::new(olr_editor::EditorSettings::default(), catalog(root));
+    run(&mut state, olr_editor::EditorAction::Open(dir));
+    assert!(state.document().is_some());
+    (tmp, state)
+}
