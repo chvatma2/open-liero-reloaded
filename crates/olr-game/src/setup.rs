@@ -384,7 +384,6 @@ pub fn with_cached_packs(content: Content, packs: &Packs, cache_dirs: &[PathBuf]
 pub fn load_replay(
     roots: &[&Path],
     file: &Path,
-    skin: &str,
     cache_dirs: &[PathBuf],
 ) -> anyhow::Result<Assets> {
     let bytes = read_replay_file(file).with_context(|| format!("{}", file.display()))?;
@@ -401,7 +400,7 @@ pub fn load_replay(
         p.theme.id
     );
     let looks = replay.setup.looks.clone();
-    let mut a = open(Arc::new(content), mod_id, level_id, skin, Game::Replay(Box::new(replay)))?;
+    let mut a = open(Arc::new(content), mod_id, level_id, DEFAULT_SKIN, Game::Replay(Box::new(replay)))?;
     // A replay's viewer has no own slot: every worm's skin is its recorded
     // id and content hash, else the default skin (never downloaded).
     for l in &looks {
@@ -660,7 +659,7 @@ mod tests {
         let file = file.to_path_buf();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || {
-            let r = load_replay(&[], &file, "default", &[]).err().map(|e| format!("{e:#}"));
+            let r = load_replay(&[], &file, &[]).err().map(|e| format!("{e:#}"));
             let _ = tx.send(r.unwrap_or_default());
         });
         rx.recv_timeout(std::time::Duration::from_secs(10)).ok()

@@ -102,7 +102,7 @@ fn a_replay_hears_its_viewers_throws() {
     let mut heard = |viewer: Option<u8>| {
         replay.setup.viewer = viewer;
         std::fs::write(&file, replay.encode()).unwrap();
-        let mut r = session(&setup::load_replay(&[dir.as_path()], &file, "default", &[]).unwrap());
+        let mut r = session(&setup::load_replay(&[dir.as_path()], &file, &[]).unwrap());
         assert_eq!(r.local(), None, "nobody plays a replay");
         let mut heard = 0;
         while r.tick(Keys(0)) {

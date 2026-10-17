@@ -195,7 +195,7 @@ fn replay_session_matches_recorded_checksums() {
     let file = tmp.path().join("match.olrp");
     std::fs::write(&file, replay.encode()).unwrap();
 
-    let a = setup::load_replay(&[dir.as_path()], &file, "default", &[]).unwrap();
+    let a = setup::load_replay(&[dir.as_path()], &file, &[]).unwrap();
     let mut r = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
     // Playback shows the recorded names and colours, not "Worm N".
     assert_eq!((r.names.of(0), r.names.of(1)), ("Ann".into(), "Bot 1".into()));
@@ -206,7 +206,7 @@ fn replay_session_matches_recorded_checksums() {
     let mut other = replay.clone();
     other.setup.looks[1].skin = "olx-skin-nowhere".into();
     std::fs::write(&file, other.encode()).unwrap();
-    let b = setup::load_replay(&[dir.as_path()], &file, "default", &[]).unwrap();
+    let b = setup::load_replay(&[dir.as_path()], &file, &[]).unwrap();
     assert!(b.warnings.iter().any(|w| w.contains("Bot 1's skin")), "{:?}", b.warnings);
     let r2 = Session::new(&b, vp, Interpolation::Linear, Audio::silent()).unwrap();
     assert_eq!(r2.looks()[1].skin.skin.def.name, r.looks()[0].skin.skin.def.name);
@@ -232,7 +232,7 @@ fn replay_session_matches_recorded_checksums() {
     let mut bad = replay.clone();
     bad.row_mut(50)[0] = Keys(Keys::JUMP | Keys::FIRE | Keys::LEFT);
     std::fs::write(&file, bad.encode()).unwrap();
-    let a = setup::load_replay(&[dir.as_path()], &file, "default", &[]).unwrap();
+    let a = setup::load_replay(&[dir.as_path()], &file, &[]).unwrap();
     let mut r = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
     for _ in 0..800 {
         r.tick(Keys(0));

@@ -278,7 +278,7 @@ fn direct(
         // without opening them: a game running meanwhile keeps its cache,
         // and this run creates, locks and writes none.
         let caches = olr_game::net::cache_dirs(store(args).0.cache_dir());
-        setup::load_replay(&[args.content.as_path()], file, &args.skin, &caches)?
+        setup::load_replay(&[args.content.as_path()], file, &caches)?
     } else if mode == Mode::Deathmatch {
         let o = DeathmatchOptions {
             seed: args.seed,

@@ -252,14 +252,14 @@ fn a_command_line_replay_reads_the_caches_without_opening_them() {
     let dirs = olr_game::net::cache_dirs(Some(base.clone()));
     let roots = [partial.path()];
     // No cache at all: refused, naming the level, and none made.
-    let e = setup::load_replay(&roots, &file, "default", &dirs).err().expect("refused");
+    let e = setup::load_replay(&roots, &file, &dirs).err().expect("refused");
     assert!(format!("{e:#}").contains(LEVEL), "{e:#}");
     assert!(!base.parent().unwrap().exists(), "no cache directory is made");
     // The level downloaded; a game holds the cache while the replay loads.
     install(&base, &Content::open(&dir).unwrap(), LEVEL, PackKind::Level);
     let index = std::fs::read(base.join("index.ron")).unwrap();
     let game = DownloadCache::open(&base).unwrap();
-    let a = setup::load_replay(&roots, &file, "default", &dirs).unwrap();
+    let a = setup::load_replay(&roots, &file, &dirs).unwrap();
     assert!(a.content.pack_dir(LEVEL).unwrap().starts_with(&base), "the level from the cache");
     drop(game);
     assert_eq!(std::fs::read(base.join("index.ron")).unwrap(), index, "the index is not written");

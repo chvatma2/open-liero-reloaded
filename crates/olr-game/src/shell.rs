@@ -649,7 +649,7 @@ impl Shell {
                 setup::load(&root, &m.mod_id, &m.level_id, &profile.skin_id, o)?
             }
             Launch::Replay(path) => {
-                setup::load_replay(&root, &path, &profile.skin_id, &net::cache_dirs(self.store.cache_dir()))?
+                setup::load_replay(&root, &path, &net::cache_dirs(self.store.cache_dir()))?
             }
         };
         assets.player = Some(PlayerLook { name: profile.name, colour: profile.colour });

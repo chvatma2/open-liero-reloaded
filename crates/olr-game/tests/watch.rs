@@ -46,7 +46,7 @@ fn replay_viewed_by(dir: &Path, ticks: u64, viewer: Option<u8>) -> Assets {
     replay.setup.viewer = viewer;
     let file = std::env::temp_dir().join(format!("olr-game-watch-{}-{viewer:?}.olrp", std::process::id()));
     std::fs::write(&file, replay.encode()).unwrap();
-    let r = setup::load_replay(&[dir], &file, "default", &[]);
+    let r = setup::load_replay(&[dir], &file, &[]);
     std::fs::remove_file(&file).unwrap();
     r.unwrap()
 }
@@ -71,7 +71,7 @@ fn replay_withdrawing(dir: &Path, k: u32, ticks: u32) -> Assets {
     let replay = rec.finish(&world).unwrap();
     let file = std::env::temp_dir().join(format!("olr-game-watch-gone-{}.olrp", std::process::id()));
     std::fs::write(&file, replay.encode()).unwrap();
-    let r = setup::load_replay(&[dir], &file, "default", &[]);
+    let r = setup::load_replay(&[dir], &file, &[]);
     std::fs::remove_file(&file).unwrap();
     r.unwrap()
 }
