@@ -69,6 +69,15 @@ pub fn write_mod_files(sink: &mut dyn ContentSink, m: &ModSource) -> Result<(), 
     Ok(())
 }
 
+/// `rest` (a path inside `weapons/` or `projectiles/`) without `.ron`, when
+/// it is a definition's file: a `.ron` file that is not hidden. `None` for
+/// anything else (an editor's backup, `.DS_Store`, notes): the format does
+/// not read it, and `olr_pack::validate` warns about it.
+fn definition_name(rest: &str) -> Option<&str> {
+    let hidden = rest.rsplit('/').next().is_some_and(|name| name.starts_with('.'));
+    rest.strip_suffix(".ron").filter(|_| !hidden)
+}
+
 pub fn read_mod_files(src: &dyn ContentSource) -> Result<ModSource, FormatError> {
     let file: ModFile = from_canonical(MOD_FILE, &read_text(src, MOD_FILE)?)?;
     let mut listed = BTreeSet::new();
@@ -93,14 +102,20 @@ pub fn read_mod_files(src: &dyn ContentSource) -> Result<ModSource, FormatError>
     for path in walk(src, &VPath::root()).map_err(|e| io("", e.to_string()))? {
         let s = path.as_str();
         if let Some(rest) = s.strip_prefix("weapons/") {
-            let id = rest.strip_suffix(".ron").unwrap_or(rest);
+            // Only `<name>.ron` directly in the folder can be a weapon file;
+            // anything else (an editor's backup, `.DS_Store`) is not read.
+            let Some(id) = definition_name(rest) else { continue };
             if !listed.contains(id) {
                 return Err(io(s, "not listed in mod.ron's weapons".into()));
             }
         } else if let Some(rest) = s.strip_prefix("projectiles/") {
-            let id = rest.strip_suffix(".ron").filter(|id| !id.contains('/')).ok_or_else(|| {
-                io(s, "shared projectiles are `projectiles/<id>.ron`, directly in the folder".into())
-            })?;
+            let Some(id) = definition_name(rest) else { continue };
+            if id.contains('/') {
+                return Err(io(
+                    s,
+                    "shared projectiles are `projectiles/<id>.ron`, directly in the folder".into(),
+                ));
+            }
             if !valid_id(id) {
                 return Err(io(s, format!("invalid projectile id {id:?}")));
             }
@@ -206,8 +221,9 @@ mod tests {
         assert!(read_mod_files(&dup).unwrap_err().to_string().contains("twice"));
         let nested = fs.clone().with("projectiles/a/b.ron", "(gfx: Pixels([]))");
         assert!(read_mod_files(&nested).unwrap_err().to_string().contains("projectiles/a/b.ron"));
-        let stray = fs.with("projectiles/notes.txt", "hi");
-        assert!(read_mod_files(&stray).is_err());
+        // Not a definition: not read (plan 13d; `validate` warns about it).
+        let stray = fs.with("projectiles/notes.txt", "hi").with("weapons/gun.ron~", "x");
+        assert_eq!(read_mod_files(&stray).unwrap(), sample());
     }
 
     #[test]

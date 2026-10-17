@@ -399,6 +399,24 @@ mod tests {
         assert_eq!(d, ["warning: README.txt: not read by the format"]);
     }
 
+    /// Review A-5: an editor's leftovers inside a mod's folders.
+    #[test]
+    fn a_mod_warns_about_leftovers_in_its_folders() {
+        let fs = written(&sample_mod())
+            .with("weapons/rocket.ron~", "backup")
+            .with("weapons/.rocket.ron.swp", "x")
+            .with("projectiles/.DS_Store", "x");
+        let d: Vec<String> = validate(&fs).iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            d,
+            [
+                "warning: projectiles/.DS_Store: not read by the format",
+                "warning: weapons/.rocket.ron.swp: not read by the format",
+                "warning: weapons/rocket.ron~: not read by the format",
+            ]
+        );
+    }
+
     #[test]
     fn warns_about_a_spawn_outside_the_level() {
         assert_eq!(validate(&level_with_spawn((7, 7))), vec![]);
