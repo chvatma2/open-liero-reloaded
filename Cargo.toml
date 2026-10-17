@@ -32,6 +32,7 @@ olr-vfs = { path = "crates/olr-vfs" }
 olr-pack = { path = "crates/olr-pack" }
 olr-format = { path = "crates/olr-format" }
 olr-import = { path = "crates/olr-import" }
+olr-edit = { path = "crates/olr-edit" }
 olr-import-lgs = { path = "crates/olr-import-lgs" }
 olr-import-lxl = { path = "crates/olr-import-lxl" }
 olr-import-gfx = { path = "crates/olr-import-gfx" }
