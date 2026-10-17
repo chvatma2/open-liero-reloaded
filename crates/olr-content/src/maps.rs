@@ -90,9 +90,10 @@ pub use olr_pack::MAX_ART_SCALE;
 /// scale): 256 MiB, about 12 times Castle Strike at 2×.
 pub const MAX_COLOR_MAP_BYTES: u64 = 256 << 20;
 
-/// Refuses (the reader has already bounded the art scale and the size) art that would make the colour map (`olr_terrain::ColorMap`,
-/// which keeps three images of this size) allocate absurd amounts: a
-/// hostile pack must fail to load, not exhaust memory.
+/// Refuses (the reader has already bounded the art scale and the size)
+/// art that would make the colour map (`olr_terrain::ColorMap`, which
+/// keeps three images of this size) allocate absurd amounts: a hostile
+/// pack must fail to load, not exhaust memory.
 fn check_art_size(width: u32, height: u32, art_scale: u32) -> anyhow::Result<()> {
     let s = art_scale as u128;
     let bytes = width as u128 * s * height as u128 * s * 4;
