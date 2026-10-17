@@ -5,16 +5,18 @@
 
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::manifest::PackKind;
+use olr_data::skin::FrameLayout;
 use olr_sim::Dir;
 
 use crate::{Content, LoadedSkin};
 
 /// OLX's skin layout (`include/CGameSkin.h:36-41`): frames 32 pixels
 /// apart, each a 20 × 18 sprite 4 pixels in.
-pub const FRAME_WIDTH: u32 = 32;
-pub const FRAME_SPACING: u32 = 4;
-pub const SKIN_WIDTH: u32 = 20;
-pub const SKIN_HEIGHT: u32 = 18;
+/// Derived from [`FrameLayout::OLX`], the one definition.
+pub const FRAME_WIDTH: u32 = FrameLayout::OLX.frame_width;
+pub const FRAME_SPACING: u32 = FrameLayout::OLX.frame_spacing;
+pub const SKIN_WIDTH: u32 = FrameLayout::OLX.worm_width;
+pub const SKIN_HEIGHT: u32 = FrameLayout::OLX.worm_height;
 
 /// The frames of an OLX sheet: three walk frames of seven aim angles.
 pub const SHEET_FRAMES: u32 = 21;

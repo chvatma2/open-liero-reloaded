@@ -11,10 +11,7 @@ use super::{
 };
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, LEVEL_ART};
-use crate::ron_io::{from_canonical, read_text, to_canonical, write_text};
-
-/// The largest file read (a PNG or the thumbnail), as `olr-pack` reads.
-const MAX_FILE_BYTES: u64 = 64 << 20;
+use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
 
 fn default_scale() -> u32 {
     1

@@ -22,7 +22,7 @@ pub use olr_format::levels::THUMB_FILE;
 /// The size importers make thumbnails at: the level letterboxed into it.
 pub const THUMB_SIZE: (u32, u32) = (160, 96);
 
-pub use olr_format::levels::{MAX_THUMB_BYTES, MAX_THUMB_SIDE};
+pub use olr_format::levels::{MAX_ART_SCALE, MAX_THUMB_BYTES, MAX_THUMB_SIDE};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct LevelPack {

@@ -82,20 +82,18 @@ impl LoadedSkin {
     }
 }
 
-/// The largest art scale a level may have (OLX's levels use 1 or 2).
-pub const MAX_ART_SCALE: u32 = 8;
+/// The largest art scale a level may have (OLX's levels use 1 or 2):
+/// `olr-pack`'s (`olr-format`'s), which the level reader enforces.
+pub use olr_pack::MAX_ART_SCALE;
 
 /// The largest colour image a level may need, in bytes (RGBA at art
 /// scale): 256 MiB, about 12 times Castle Strike at 2×.
 pub const MAX_COLOR_MAP_BYTES: u64 = 256 << 20;
 
-/// Refuses art that would make the colour map (`olr_terrain::ColorMap`,
+/// Refuses (the reader has already bounded the art scale and the size) art that would make the colour map (`olr_terrain::ColorMap`,
 /// which keeps three images of this size) allocate absurd amounts: a
 /// hostile pack must fail to load, not exhaust memory.
 fn check_art_size(width: u32, height: u32, art_scale: u32) -> anyhow::Result<()> {
-    if art_scale > MAX_ART_SCALE {
-        anyhow::bail!("art scale {art_scale} is above {MAX_ART_SCALE}");
-    }
     let s = art_scale as u128;
     let bytes = width as u128 * s * height as u128 * s * 4;
     if bytes > MAX_COLOR_MAP_BYTES as u128 {
@@ -108,7 +106,8 @@ fn check_art_size(width: u32, height: u32, art_scale: u32) -> anyhow::Result<()>
 
 impl Content {
     /// Level pack `id` (such as `olx-level-castlestrike`). Art above
-    /// [`MAX_ART_SCALE`] or [`MAX_COLOR_MAP_BYTES`] is an error.
+    /// [`MAX_ART_SCALE`] (the reader refuses it) or [`MAX_COLOR_MAP_BYTES`] is
+    /// an error.
     pub fn load_level(&self, id: &str) -> anyhow::Result<LoadedLevel> {
         let pack = olr_pack::read_level(&self.pack(id, PackKind::Level)?)
             .with_context(|| format!("level pack {id}"))?;
@@ -215,6 +214,5 @@ mod tests {
         assert!(check_art_size(4096, 4096, 2).is_ok());
         assert!(check_art_size(2048, 2048, 8).is_err());
         assert!(check_art_size(u32::MAX, u32::MAX, MAX_ART_SCALE).is_err());
-        assert!(check_art_size(4, 4, 9).is_err());
     }
 }

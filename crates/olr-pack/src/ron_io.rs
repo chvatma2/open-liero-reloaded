@@ -4,16 +4,7 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use crate::{MANIFEST, PackError};
 
-/// The longest file any pack read takes, in bytes: a longer one is refused
-/// unread ([`olr_vfs::ContentSource::read_max`]). OLX's largest imported
-/// level art is under 1 MB encoded (Liero Factory's `front.png`, 585 KB),
-/// and `png` refuses to decode more than 64 MiB anyway, so 64 MiB leaves a
-/// margin of about 100.
-pub const MAX_FILE_BYTES: u64 = 64 << 20;
-
-/// The longest RON file read (the largest import, a mod's
-/// `restrictions.ron`, is about 21 KB).
-pub const MAX_RON_BYTES: u64 = 4 << 20;
+pub use olr_format::ron_io::{MAX_FILE_BYTES, MAX_RON_BYTES};
 
 /// The bytes of pack file `path`, at most [`MAX_FILE_BYTES`].
 pub(crate) fn read_file(src: &dyn ContentSource, path: &VPath) -> Result<Vec<u8>, PackError> {

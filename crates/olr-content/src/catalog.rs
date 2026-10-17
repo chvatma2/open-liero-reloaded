@@ -96,8 +96,7 @@ impl ThumbRef {
     /// and the header must still give the listed size before decoding).
     pub fn load(&self) -> Result<RgbaImage, String> {
         let path = VPath::new(olr_pack::THUMB_FILE).map_err(|e| e.to_string())?;
-        let bytes =
-            DirFs::new(&self.dir).read_max(&path, MAX_THUMB_BYTES).map_err(|e| e.to_string())?;
+        let bytes = DirFs::new(&self.dir).read_max(&path, MAX_THUMB_BYTES).map_err(|e| e.to_string())?;
         if olr_pack::image_io::png_size(&bytes) != Some((self.width, self.height)) {
             return Err(format!("no longer the {}x{} PNG listed", self.width, self.height));
         }

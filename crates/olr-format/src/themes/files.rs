@@ -12,10 +12,7 @@ use super::{
 };
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, ImageBound};
-use crate::ron_io::{from_canonical, read_text, to_canonical, write_text};
-
-/// The largest file read (a PNG), as `olr-pack` reads.
-const MAX_FILE_BYTES: u64 = 64 << 20;
+use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
 
 const STAMP_BOUND: ImageBound =
     ImageBound { max_side: MAX_STAMP_SIDE, max_pixels: (MAX_STAMP_SIDE * MAX_STAMP_SIDE) as u64 };

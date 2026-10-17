@@ -11,11 +11,8 @@ use super::{
     size_is, sound_file, sprite_file,
 };
 use crate::image_io::{self, IMAGES};
-use crate::ron_io::{from_canonical, read_text, to_canonical, write_text};
+use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
 use crate::{Colour, FormatError};
-
-/// The largest file read (a PNG or a sound), as `olr-pack` reads.
-const MAX_FILE_BYTES: u64 = 64 << 20;
 
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]

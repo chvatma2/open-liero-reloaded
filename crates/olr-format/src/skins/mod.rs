@@ -30,9 +30,10 @@ pub(crate) const LEFT_FILE: &str = "left.png";
 
 /// OLX's sheet: 21 frames (7 aim × 3 walk), 32 px apart, 4 px of spacing
 /// before each 20-px worm window.
-const SHEET: (u32, u32) = (672, 18);
-const FRAME_PITCH: u32 = 32;
-const FRAME_LEFT: u32 = 4;
+/// Derived from [`FrameLayout::OLX`], the one definition.
+const SHEET: (u32, u32) = (FrameLayout::OLX.frame_width * 21, FrameLayout::OLX.frame_height);
+const FRAME_PITCH: u32 = FrameLayout::OLX.frame_width;
+const FRAME_LEFT: u32 = FrameLayout::OLX.frame_spacing;
 
 /// A skin as its files hold it.
 #[derive(Clone, Debug, PartialEq)]
@@ -53,16 +54,23 @@ pub struct SkinSource {
     pub left: Option<RgbaImage>,
 }
 
-/// The checks the compiler, the writer and the reader share.
-pub(crate) fn check(src: &SkinSource) -> Result<(), FormatError> {
-    if !(1..=MAX_ART_SCALE).contains(&src.art_scale) {
+/// What `skin.ron` alone says: the layout's bounds, and the sheet size it
+/// implies, which must be within what the reader decodes ([`IMAGES`]).
+/// Returns the sheet size. The reader calls it before decoding any image.
+pub(crate) fn check_layout(
+    art_scale: u32,
+    frame_size: (u32, u32),
+    aim_frames: u32,
+    walk_frames: u32,
+) -> Result<(u32, u32), FormatError> {
+    if !(1..=MAX_ART_SCALE).contains(&art_scale) {
         return Err(FormatError::invalid(
             SKIN_FILE,
             "art_scale",
-            format!("{}, not within 1 to {MAX_ART_SCALE}", src.art_scale),
+            format!("{art_scale}, not within 1 to {MAX_ART_SCALE}"),
         ));
     }
-    let (fw, fh) = src.frame_size;
+    let (fw, fh) = frame_size;
     if !(1..=MAX_FRAME_SIDE).contains(&fw) || !(1..=MAX_FRAME_SIDE).contains(&fh) {
         return Err(FormatError::invalid(
             SKIN_FILE,
@@ -70,17 +78,23 @@ pub(crate) fn check(src: &SkinSource) -> Result<(), FormatError> {
             format!("{fw}x{fh}, not within 1x1 to {MAX_FRAME_SIDE}x{MAX_FRAME_SIDE}"),
         ));
     }
-    for (path, n) in [("aim_frames", src.aim_frames), ("walk_frames", src.walk_frames)] {
+    for (path, n) in [("aim_frames", aim_frames), ("walk_frames", walk_frames)] {
         if !(1..=MAX_FRAMES).contains(&n) {
             return Err(FormatError::invalid(SKIN_FILE, path, format!("{n}, not within 1 to {MAX_FRAMES}")));
         }
     }
     // Bounded above, so these cannot overflow.
-    let (w, h) = (fw * src.aim_frames, fh * src.walk_frames);
+    let (w, h) = (fw * aim_frames, fh * walk_frames);
     // The reader decodes within IMAGES: a layout above it could not reopen.
     check_size(w, h, IMAGES).map_err(|e| {
         FormatError::invalid(SKIN_FILE, "frame_size", format!("the layout needs {w}x{h}: {e}"))
     })?;
+    Ok((w, h))
+}
+
+/// The checks the compiler, the writer and the reader share.
+pub(crate) fn check(src: &SkinSource) -> Result<(), FormatError> {
+    let (w, h) = check_layout(src.art_scale, src.frame_size, src.aim_frames, src.walk_frames)?;
     let img = &src.image;
     if (img.width(), img.height()) != (w, h) {
         return Err(FormatError::invalid(

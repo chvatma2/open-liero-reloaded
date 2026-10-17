@@ -22,8 +22,8 @@ pub use core_pack::{CorePack, read_core, read_core_tolerant, write_core};
 pub use error::PackError;
 pub use hash::{PRESENTATION_FILES, content_hash};
 pub use level_pack::{
-    LevelPack, MAX_THUMB_BYTES, MAX_THUMB_SIDE, THUMB_FILE, THUMB_SIZE, decode_thumb, read_level,
-    read_level_def, read_level_thumb, write_level,
+    LevelPack, MAX_ART_SCALE, MAX_THUMB_BYTES, MAX_THUMB_SIDE, THUMB_FILE, THUMB_SIZE, decode_thumb,
+    read_level, read_level_def, read_level_thumb, write_level,
 };
 pub use mod_pack::{ModPack, RESTRICTIONS_FILE, read_mod, read_preset_names, write_mod};
 pub use ron_io::{MAX_FILE_BYTES, MAX_RON_BYTES, read_manifest, write_manifest};
