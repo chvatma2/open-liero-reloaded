@@ -6,8 +6,8 @@ use std::path::PathBuf;
 
 /// A pack being written.
 pub const TMP_PREFIX: &str = ".import-";
-/// A pack being replaced (`Content::open_layers` lists one whose id has
-/// no other pack: an import killed between its two renames).
+/// A pack being replaced (`olr_content::Content::open_layers` lists one
+/// whose id has no other pack: an import killed between its two renames).
 pub const OLD_PREFIX: &str = ".replaced-";
 
 /// Sorts `paths` so the packs moved aside (`.replaced-<id>`,

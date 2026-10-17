@@ -1,4 +1,4 @@
-//! A skin's files. Other paths (`pack.ron`, `mask.png`, ...) belong to
+//! A skin's files. Other paths (`pack.ron`, ...) belong to
 //! `olr-pack` and are ignored here.
 
 use olr_data::image::RgbaImage;

@@ -7,8 +7,8 @@ server and the UI do not link it (`xtask/layers.ron` `forbidden`, spec §5).
 - **Layer 3, uses `std`.** Depends on `olr-data`, `olr-vfs`, `olr-pack`,
   the importers (`olr-import-lgs`, `olr-import-lxl`, `olr-import-gfx`),
   `anyhow`, `thiserror`, `serde` and `ron`. `olr-content`, `olr-sim`,
-  `olr-modes` and `olr-bots` are dev-dependencies only (the tests open imported
-  packs and play a match on them).
+  `olr-modes` and `olr-bots` are dev-dependencies only (the tests open
+  imported packs and play a match on them).
 - **The prefixes** `.import-` and `.replaced-` and `newest_aside_first` live
   in `olr_pack::install`, shared with `olr-content`'s `open_layers`.
 - **Never panic on content**; output is deterministic.

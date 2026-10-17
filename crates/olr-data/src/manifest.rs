@@ -12,10 +12,10 @@ use serde::{Deserialize, Serialize};
 /// - 2: theme packs carry the optional `green_ball.png`.
 /// - 3: mod packs carry their weapon restriction presets (`restrictions.ron`).
 /// - 4: level packs carry a `thumb.png` made at import (plan 7 G6).
-/// - 5: level and theme packs are in the native authoring format
-///   (`olr-format`: canonical `level.ron`/`theme.ron`, theme stamps as a
-///   meaning mask plus a paint layer). Skin, mod and core packs keep their
-///   format-4 layout until their own switch; the version is this build's.
+/// - 5: every pack kind is in the native authoring format (plan 13c;
+///   `olr-format`: canonical RON, images keyed once by the importers, theme
+///   stamps as a meaning mask plus a paint layer, skins as a frame grid
+///   plus a tint); the version is this build's.
 pub const PACK_FORMAT_VERSION: u32 = 5;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

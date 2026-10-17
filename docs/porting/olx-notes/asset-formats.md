@@ -199,11 +199,11 @@ Plus `objects: [Spawn((x, y), notes?)]` and the reserved `look`. Files: `materia
 - `skin_sprite` (:60-73) cuts and mirrors; pixels outside the sheet are transparent.
 - `olr-scene::skin_frame` (`worm.rs:26-32`): `ang = min(6, int((angle+90)/151*7))`, `f = walk*7 + ang`, clamped to
   `frame_count-1`, where `frame_count = sheet.width / 32` = 21 (`worm.rs:160`). The blit is at px_per_world 2 (`worm.rs:162`).
-- `LoadedSkin` (`maps.rs:56-59`). `load_skin` (:147-162) **falls back to a placeholder** (warning) unless
+- (pre-13c, format 4) `LoadedSkin` (`maps.rs:56-59`). `load_skin` (:147-162) **falls back to a placeholder** (warning) unless
   `layout == OLX` and the sheet is exactly 672×18. `skin_or_default` (:166-174) falls back to `olx-skin-default`, then the placeholder.
   `LoadedSkin::placeholder` (:66-74) is all `Colorize` in `PLACEHOLDER` (255,0,220).
 
-### 3.2 Today's pack (`crates/olr-pack/src/skin_pack.rs`)
+### 3.2 The format-4 pack (pre-13c; `crates/olr-pack/src/skin_pack.rs`, removed)
 - `skin.ron` holds `SkinDef`.
 - `skin.png` is RGBA8.
 - `mask.png` is 8-bit indexed, palette `[black, white, magenta]`: 0 = Keep, 1 = Colorize, 2 = Transparent (:16, :24-30, :64-72).
@@ -242,9 +242,9 @@ Proposed `compile` to today's `Skin`:
 | Spacing pixels (offsets 0..4, 24..32) | **no**: 401/718 skins have visible pixels there. They are never drawn once the quirk is dropped. |
 | RGB under alpha 0 | Lost if the canonical PNG zeroes it (recommended). `colorize` output is unchanged (`skin.rs:67`). |
 | `MaskKind` from tint | Exact for 0 and 255. **Tint 1..=254 ("partial tint", spec) has no runtime representation.** In 13b it must be an error, or the runtime gains a tint amount (a renderer-side change; `olr-sim` never sees skins). |
-| `art_scale ≠ 2`, `frame_size ≠ (20,18)`, `aim_frames ≠ 7`, `walk_frames ≠ 3`, `left.png` | Not representable at runtime (constants above). Options: a compile error, or what `load_skin` does today (a placeholder with a warning). |
+| `art_scale ≠ 2`, `frame_size ≠ (20,18)`, `aim_frames ≠ 7`, `walk_frames ≠ 3`, `left.png` | Not representable at runtime (constants above). Options: a compile error, or what `load_skin` did before 13c (a placeholder with a warning). |
 
-Bundled skin data (all 718, measured):
+Bundled skin data (all 718, measured before 13c, in format 4):
 - every `skin.png` is RGBA8 672×18; every `mask.png` is indexed 3-entry 672×18;
 - alpha is only 0 or 255, and alpha 0 ⇔ mask Transparent (0 mismatches);
 - kinds: Keep 1,386,695, Colorize 1,012,072, Transparent 6,286,161 px;

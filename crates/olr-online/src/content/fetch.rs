@@ -1,5 +1,5 @@
 //! Fetching what a content list lacks (plan 11, N32): from one source peer,
-//! one item at a time (required items first, skins after), resumable from
+//! one item at a time (required items first, optional ones after), resumable from
 //! the download cache's partials, verified and installed by the worker.
 
 use std::collections::BTreeSet;

@@ -363,7 +363,7 @@ impl Shell {
         self.packs_dir.iter().cloned().chain([self.cfg.content.clone()]).collect()
     }
 
-    /// Lists the content for the menus : the
+    /// Lists the content for the menus: the
     /// catalog, its thumbnails made again (`MenuData::set_catalog`), the
     /// skin preview loaded again.
     fn list_content(&mut self) {

@@ -10,14 +10,18 @@ header's size); content hashing; validation.
 - **Deterministic output.** Writing the same value twice gives byte-identical
   files. Never introduce `HashMap` iteration or timestamps into output.
 - **Layouts:**
-  - level (format 5, `olr-format`'s `levels`): `level.ron`, `material.png` (8-bit palette; index = `Material`), `front.png`, `back.png`,
-    optional `thumb.png` (`THUMB_FILE`, `LevelPack::thumb`: the menus' thumbnail, made at
-    import at `THUMB_SIZE` 160 × 96; read bounded by `MAX_THUMB_SIDE` and `MAX_THUMB_BYTES`
-    from the PNG header before decoding: `read_level_thumb`, `decode_thumb`; `read_level`
-    leaves it out; a bad one is a warning of `validate`)
-  - skin (format 5, `olr-format`'s `skins`): `skin.ron`, `skin.png` (a 140x54 grid), `tint.png` (0 keep, 255 colour); compiled to the 672x18 OLX sheet
-  - theme (format 5, `olr-format`'s `themes`): `theme.ron`, `holes/N.png` + `holes/N.mask.png`, `stones/N.png`,
-    `misc/N.png`, `front_tile.png`, `back_tile.png`, optional `green_ball.png` + `green_ball.mask.png`
+  - level (format 5, `olr-format`'s `levels`): `level.ron`, `material.png`
+    (8-bit palette; index = `Material`), `front.png`, `back.png`, optional
+    `thumb.png` (`THUMB_FILE`, `LevelPack::thumb`: the menus' thumbnail, made
+    at import at `THUMB_SIZE` 160 × 96; read bounded by `MAX_THUMB_SIDE` and
+    `MAX_THUMB_BYTES` (defined in `olr-format`, re-exported here) from the
+    PNG header before decoding: `read_level_thumb`, `decode_thumb`;
+    `read_level` leaves it out; a bad one is a warning of `validate`)
+  - skin (format 5, `olr-format`'s `skins`): `skin.ron`, `skin.png` (a
+    140x54 grid), `tint.png` (0 keep, 255 colour); compiled to the 672x18
+    OLX sheet
+  - theme (format 5, `olr-format`'s `themes`): `theme.ron`, `holes/N.png` +
+    `holes/N.mask.png`, `stones/N.png`, `misc/N.png`, `front_tile.png`, `back_tile.png`, optional `green_ball.png` + `green_ball.mask.png`
   - mod (format 5, `olr-format`'s `mods`): `mod.ron`, `weapons/<id>.ron`, `projectiles/<id>.ron`
     (shared projectiles), `restrictions.ron`, assets (`gfx/` alpha PNGs, keyed once at import; `sfx/`)
   - core (format 5, `olr-format`'s `core_pack`; OLX's shared game assets, spec §19 E9): `core.ron`

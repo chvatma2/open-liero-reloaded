@@ -10,6 +10,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   also `bench`, `stress`, `e2e`) imports into `target/content-fresh` and
   fails listing the files (`differences`) if `content/packs` is stale.
   `--offline` skips it: the tests run on the committed packs.
+- `layers` also enforces `forbidden` in `layers.ron`: no crate listed on the
+  left may depend, directly or transitively, on the one on the right (the
+  game, the server and the UI never link the legacy importers).
 - `full` runs `check`, then `bot-grid` (`check::TIMED_TESTS`: `olr-cli`'s
   `tests/grid.rs`, alone and one test at a time, its p99 tick budget being
   wall time; then `check::FULL_TESTS`: `tests/net_sim.rs`' online grid and `tests/transport.rs`'

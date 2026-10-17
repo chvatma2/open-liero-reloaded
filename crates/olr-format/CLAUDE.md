@@ -78,10 +78,12 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   OLX's 32 × 12 `giblets`; `lift_core` splits it and is purely structural: the
   importer keys the old sprites once (`image_io::olx_sprite_to_alpha`) before
   lifting. `read_core_files_tolerant` leaves out a bad sprite or missing sound
-  with its error, and drops the giblets pair together. `compile_core` checks that the grid divides
-  the image; the drawing code keeps its own constants. tests/core_pack.rs checks the committed
-  core pack is canonical (written again, the same bytes) and that the bundled mods' gfx
-  are the PNGs the importer writes; nothing keys at load (plan 13c Task 8).
+  with its error, and drops the giblets pair together. `compile_core`
+  checks that the grid divides the image; the drawing code keeps its own
+  constants. tests/core_pack.rs checks the committed core pack is
+  canonical (written again, the same bytes) and that the bundled mods'
+  gfx are the PNGs the importer writes; nothing keys at load (plan 13c
+  Task 8).
 - **Levels** (`levels/`): `LevelSource` is `level.ron` (name, notes, `size`
   in world pixels, `art_scale`, theme id, `objects`), `material.png` (an
   indexed grid, `MATERIAL_PALETTE`: rock grey, background black, dirt brown,
@@ -111,10 +113,9 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   index; `encode_grey` and `decode_grey_within` serve the tint mask;
   `olx_sprite_to_alpha` applies OLX's colour key once. `png` is pinned to
   an exact version in the workspace: encoded bytes are content (hashes).
-- **Tests of 13b** (`tests/`): `levels.rs`, `themes.rs` and `core_pack.rs`
-  lift every bundled pack, write, read and compile it and compare with the
-  import; `skins.rs` checks every bundled skin draws the same after a
-  lift. Unit tests in each module's files cover its checks. The
+- **Tests** (`tests/`): `levels.rs`, `themes.rs`, `core_pack.rs` and
+  `skins.rs` read every bundled pack in `content/packs` (format 5) and check
+  it is canonical: written again, the same bytes. Unit tests in each module's files cover its checks. The
   bundled-content tests skip when `OLR_CONTENT_DIR` is not a directory.
   Every `check()` applies the pixel bound its reader decodes with
   (`image_io::check_size`), so a saved file always reopens.

@@ -1,6 +1,7 @@
-//! Theme packs: `theme.ron`, `holes/<n>.png`, `stones/<n>.png`, `misc/<n>.png`
-//! (numbered from 1), `front_tile.png`, `back_tile.png`, and optionally
-//! `green_ball.png`.
+//! Theme packs (format 5, `olr-format`'s `themes`): `theme.ron`,
+//! `holes/<n>.png` with `holes/<n>.mask.png`, `stones/<n>.png`,
+//! `misc/<n>.png` (numbered from 1), `front_tile.png`, `back_tile.png`, and
+//! optionally `green_ball.png` with `green_ball.mask.png`.
 
 use olr_data::manifest::{PackKind, PackManifest};
 use olr_data::theme::Theme;
