@@ -10,6 +10,7 @@ mod core_pack;
 mod error;
 mod hash;
 pub mod image_io;
+pub mod install;
 mod level_pack;
 mod mod_pack;
 mod ron_io;

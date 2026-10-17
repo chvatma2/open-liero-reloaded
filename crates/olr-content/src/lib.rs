@@ -138,12 +138,12 @@ impl Content {
                 .filter(|p| p.join(olr_pack::MANIFEST).is_file())
                 .filter(|p| {
                     let name = p.file_name().and_then(|n| n.to_str()).unwrap_or_default();
-                    !name.starts_with('.') || name.starts_with(import::OLD_PREFIX)
+                    !name.starts_with('.') || name.starts_with(olr_pack::install::OLD_PREFIX)
                 })
                 .partition(|p| !p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.starts_with('.')));
             dirs.sort();
             // The newest of an id's, as the next import puts back.
-            import::newest_aside_first(&mut aside);
+            olr_pack::install::newest_aside_first(&mut aside);
             for dir in dirs {
                 match olr_pack::read_manifest(&DirFs::new(&dir)) {
                     Ok(m) => match (packs.get(&m.id), layer_of.get(&m.id)) {
