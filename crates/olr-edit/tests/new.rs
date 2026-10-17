@@ -60,6 +60,19 @@ fn a_skin_from_the_default_skin() {
     assert!(made.skin.image == original.skin.image, "the compiled sheet differs");
 }
 
+/// Review A-5: a failed save leaves no directory it made, parents included.
+#[test]
+fn a_failed_new_pack_leaves_no_directory() {
+    let Some(root) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let broken = tmp.path().join("broken");
+    crate::common::copy_dir(&root.join("olx-classic"), &broken);
+    std::fs::remove_file(broken.join("gfx/missile.png")).unwrap();
+    let dir = tmp.path().join("a/b/mine");
+    assert!(new_pack(&dir, PackKind::Mod, "mine", "Mine", Template::From(&broken)).is_err());
+    assert!(!tmp.path().join("a").exists(), "no parent left behind");
+}
+
 #[test]
 fn refuses_an_existing_directory_and_a_bad_id() {
     let tmp = tempfile::tempdir().unwrap();

@@ -119,6 +119,7 @@ pub fn load(dir: &Path) -> Result<Pack, PackError> {
         });
     }
     let src = DirFs::new(dir);
+    bounded(&src)?;
     let manifest = olr_pack::read_manifest(&src)?;
     let source = Source::read(manifest.kind, &src)?;
     let reads = source.reads();
@@ -131,6 +132,26 @@ pub fn load(dir: &Path) -> Result<Pack, PackError> {
         }
     }
     Ok(Pack { manifest, source, other })
+}
+
+/// A pack is bounded as a whole as its archive would be: at most
+/// `MAX_ARCHIVE_FILES` files and `MAX_UNPACKED` bytes, from the file
+/// lengths alone, before anything is read.
+fn bounded(src: &DirFs) -> Result<(), PackError> {
+    use olr_pack::archive::{MAX_ARCHIVE_FILES, MAX_UNPACKED};
+    let paths = walk(src, &VPath::root())?;
+    let too_large = |message: String| PackError::Invalid { file: String::new(), message };
+    if paths.len() > MAX_ARCHIVE_FILES as usize {
+        return Err(too_large(format!("{} files, above {MAX_ARCHIVE_FILES}", paths.len())));
+    }
+    let mut bytes = 0u64;
+    for p in &paths {
+        bytes = bytes.saturating_add(src.file_len(p)?);
+    }
+    if bytes > MAX_UNPACKED {
+        return Err(too_large(format!("{bytes} bytes, above {MAX_UNPACKED}")));
+    }
+    Ok(())
 }
 
 /// The first entry under `dir` (by path, relative to `root`) whose name

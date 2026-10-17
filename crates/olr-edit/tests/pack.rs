@@ -69,6 +69,30 @@ fn a_mod_saved_without_a_weapon_loses_its_file() {
     assert!(errors.is_empty(), "{errors:?}");
 }
 
+/// Review A-6: a pack is bounded as a whole, as its archive would be: at
+/// most `MAX_ARCHIVE_FILES` files and `MAX_UNPACKED` bytes, checked from
+/// the file lengths before anything is read.
+#[test]
+fn a_pack_too_large_as_a_whole_does_not_load() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, "olx-level-dirt-level");
+    std::fs::create_dir(dir.join("big")).unwrap();
+    for i in 0..9 {
+        // Sparse: nothing is written to disk.
+        std::fs::File::create(dir.join(format!("big/{i}.bin"))).unwrap().set_len(60 << 20).unwrap();
+    }
+    let e = load(&dir).unwrap_err().to_string();
+    assert!(e.contains("bytes"), "{e}");
+
+    let (_tmp, dir) = copy_pack(&root, "olx-level-dirt-level");
+    std::fs::create_dir(dir.join("many")).unwrap();
+    for i in 0..olr_pack::archive::MAX_ARCHIVE_FILES {
+        std::fs::write(dir.join(format!("many/{i}")), b"").unwrap();
+    }
+    let e = load(&dir).unwrap_err().to_string();
+    assert!(e.contains("files"), "{e}");
+}
+
 /// Review A-3: a result the writers accept but `validate` refuses.
 #[test]
 fn save_refuses_a_result_that_does_not_validate() {

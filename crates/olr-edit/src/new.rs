@@ -91,11 +91,13 @@ pub fn new_pack(
     pack.manifest.name = name.into();
     pack.manifest.origin = None;
     rename(&mut pack.source, name);
-    // `replace_dir` swaps the new pack in over an empty directory.
+    // `replace_dir` swaps the new pack in over an empty directory. A failed
+    // save removes what this made: `dir` and the parents it lacked.
+    let made = dir.ancestors().take_while(|a| !a.as_os_str().is_empty() && !a.exists()).last();
     std::fs::create_dir_all(dir)?;
     save(dir, &pack).map_err(|e| {
-        if !existed {
-            let _ = std::fs::remove_dir_all(dir);
+        if let Some(made) = made {
+            let _ = std::fs::remove_dir_all(made);
         }
         e.into()
     })
