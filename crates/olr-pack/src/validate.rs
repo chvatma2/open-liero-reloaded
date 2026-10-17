@@ -1,10 +1,9 @@
 //! Pack validation with file and position information (spec §9.1).
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt;
 
 use olr_data::manifest::PackKind;
-use olr_data::mod_def::ModDef;
 use olr_format::FormatError;
 use olr_vfs::{ContentSource, VPath};
 
@@ -121,40 +120,24 @@ pub fn validate(src: &dyn ContentSource) -> Vec<Diagnostic> {
     out
 }
 
+/// What the readers cannot see, on the compiled mod: assets the definitions
+/// name but the pack lacks (error), assets nothing names (warning), and
+/// shared projectiles (`projectiles/<name>.ron`) nothing spawns (warning).
+/// `read_mod` has already refused duplicate weapons, unknown projectile
+/// names and spawn cycles.
 fn check_mod(pack: &ModPack) -> Vec<Diagnostic> {
     use Severity::*;
     let def = &pack.def;
     let mut out = Vec::new();
 
-    let mut ids = BTreeSet::new();
-    for w in &def.weapons {
-        if !ids.insert(w.id.as_str()) {
-            out.push(Diagnostic::new(Error, "mod.ron", format!("weapon {:?} is listed twice", w.id)));
-        }
-    }
-
     let mut referenced: BTreeSet<&str> = BTreeSet::new();
     let mut used_assets: BTreeSet<&str> = BTreeSet::new();
     for w in &def.weapons {
-        let file = format!("weapons/{}.ron", w.id);
-        if let Some(p) = w.projectile() {
-            referenced.insert(p);
-            if !def.projectiles.contains_key(p) {
-                out.push(Diagnostic::new(Error, &file, format!("unknown projectile {p:?}")));
-            }
-        }
-        if let Some(s) = w.sound() {
-            used_assets.insert(s);
-        }
+        referenced.extend(w.projectile());
+        used_assets.extend(w.sound());
     }
-    for (name, p) in &def.projectiles {
-        let file = format!("projectiles/{name}.ron");
-        for c in p.children() {
-            referenced.insert(c);
-            if !def.projectiles.contains_key(c) {
-                out.push(Diagnostic::new(Error, &file, format!("unknown projectile {c:?}")));
-            }
-        }
+    for p in def.projectiles.values() {
+        referenced.extend(p.children());
         used_assets.extend(p.assets());
     }
     for asset in &used_assets {
@@ -173,61 +156,7 @@ fn check_mod(pack: &ModPack) -> Vec<Diagnostic> {
             out.push(Diagnostic::new(Warning, path.as_str(), "asset is never used"));
         }
     }
-    if let Some(cycle) = find_cycle(def) {
-        out.push(Diagnostic::new(
-            Error,
-            format!("projectiles/{}.ron", cycle[0]),
-            format!("projectiles spawn each other in a cycle: {}", cycle.join(" -> ")),
-        ));
-    }
     out
-}
-
-/// Returns the first cycle in the projectile spawn graph, if any, as a list of
-/// names starting and ending with the same projectile. Iterative, so a crafted
-/// pack with a very long spawn chain cannot overflow the stack.
-fn find_cycle(def: &ModDef) -> Option<Vec<String>> {
-    #[derive(Clone, Copy, PartialEq)]
-    enum State {
-        Visiting,
-        Done,
-    }
-    let mut state: BTreeMap<&str, State> = BTreeMap::new();
-    for root in def.projectiles.keys() {
-        if state.contains_key(root.as_str()) {
-            continue;
-        }
-        // Path from `root` to the current node, each with the index of its next child.
-        let mut path: Vec<(&str, usize)> = vec![(root.as_str(), 0)];
-        state.insert(root.as_str(), State::Visiting);
-        while let Some(&mut (name, ref mut next)) = path.last_mut() {
-            let child = def.projectiles.get(name).and_then(|p| p.children().nth(*next));
-            *next += 1;
-            match child {
-                None => {
-                    state.insert(name, State::Done);
-                    path.pop();
-                }
-                Some(c) => match state.get(c) {
-                    Some(State::Done) => {}
-                    Some(State::Visiting) => {
-                        let start =
-                            path.iter().position(|(n, _)| *n == c).expect("visiting nodes are on the path");
-                        let mut cycle: Vec<String> =
-                            path[start..].iter().map(|(n, _)| n.to_string()).collect();
-                        cycle.push(c.to_string());
-                        return Some(cycle);
-                    }
-                    None if def.projectiles.contains_key(c) => {
-                        state.insert(c, State::Visiting);
-                        path.push((c, 0));
-                    }
-                    None => {} // unknown projectile: reported separately
-                },
-            }
-        }
-    }
-    None
 }
 
 #[cfg(test)]
@@ -279,8 +208,8 @@ mod tests {
         assert_eq!(validate(&fs), vec![]);
     }
 
-    /// Format 5 inlines every projectile, so an unknown projectile or a
-    /// cycle cannot be written at all: the lift refuses it.
+    /// Format 5 inlines every projectile, so the lift refuses an unknown
+    /// projectile at write time.
     #[test]
     fn an_unknown_projectile_cannot_be_written() {
         let mut pack = sample_mod();
@@ -290,8 +219,8 @@ mod tests {
         assert!(e.contains("nope"), "{e}");
     }
 
-    /// The lift writes a cycle (as shared projectiles); reading it back
-    /// reports the cycle, and `validate` says so.
+    /// The lift writes a cycle (as shared projectiles); `read_mod` refuses it
+    /// when compiling, and `validate` reports that error.
     #[test]
     fn reports_cycles() {
         let mut pack = sample_mod();
@@ -300,24 +229,41 @@ mod tests {
         let d = validate(&written(&pack));
         let msg = d.iter().find(|d| d.message.contains("cycle")).expect("cycle reported");
         assert_eq!(msg.severity, Severity::Error);
-        assert!(msg.message.contains("rocket -> rocket"), "{}", msg.message);
     }
 
     #[test]
-    fn long_spawn_chain_does_not_overflow_the_stack() {
+    fn an_unused_shared_projectile_is_a_warning() {
         let mut pack = sample_mod();
-        let n = 200_000;
-        let template = pack.def.projectiles["bits"].clone();
-        for i in 0..n {
-            let mut p = template.clone();
-            p.event_spawn = (i + 1 < n).then(|| SpawnDef::olx_default(format!("c{}", i + 1)));
-            pack.def.projectiles.insert(format!("c{i}"), p);
-        }
-        assert!(find_cycle(&pack.def).is_none());
-        let last = format!("c{}", n - 1);
-        pack.def.projectiles.get_mut(&last).unwrap().event_spawn = Some(SpawnDef::olx_default("c0".into()));
-        let cycle = find_cycle(&pack.def).expect("cycle found");
-        assert_eq!((cycle.first(), cycle.len()), (Some(&"c0".to_string()), n + 1));
+        let extra = pack.def.projectiles["bits"].clone();
+        pack.def.projectiles.insert("spare".into(), extra);
+        let d: Vec<String> = validate(&written(&pack)).iter().map(|d| d.to_string()).collect();
+        assert_eq!(d, vec!["warning: projectiles/spare.ron: projectile is never used".to_string()]);
+    }
+
+    #[test]
+    fn an_invalid_weapon_value_is_reported_with_its_file() {
+        let fs = written(&sample_mod());
+        let path = VPath::new("weapons/rocket.ron").unwrap();
+        let text = String::from_utf8(fs.read(&path).unwrap()).unwrap();
+        let bad = text.replace("speed: 100,", "speed: \"fast\",");
+        assert_ne!(text, bad);
+        let d = validate(&fs.with("weapons/rocket.ron", bad.as_str()));
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!(d[0].file.as_deref(), Some("weapons/rocket.ron"));
+        assert_eq!((d[0].line, d[0].col), (Some(11), Some(19)));
+    }
+
+    #[test]
+    fn an_invalid_weapon_value_names_its_field_path() {
+        let fs = written(&sample_mod());
+        let path = VPath::new("weapons/rocket.ron").unwrap();
+        let text = String::from_utf8(fs.read(&path).unwrap()).unwrap();
+        let bad = text.replace("speed: 100,", "speed: 100,\n amount: 99999999,");
+        assert_ne!(text, bad);
+        let d = validate(&fs.with("weapons/rocket.ron", bad.as_str()));
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert_eq!((d[0].file.as_deref(), d[0].line), (Some("weapons/rocket.ron"), None));
+        assert!(d[0].message.contains("fire.shot.amount"), "{}", d[0].message);
     }
 
     #[test]
