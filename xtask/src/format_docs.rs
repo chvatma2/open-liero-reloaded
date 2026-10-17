@@ -356,6 +356,33 @@ struct Sources {
     field_defaults: BTreeMap<(String, String), String>,
     /// `type A = T;`: the target and the doc comment.
     aliases: BTreeMap<String, (Type, Vec<String>)>,
+    /// What the sources hold that the generator cannot document: reported
+    /// with the page's errors.
+    problems: Vec<String>,
+}
+
+/// The serde attributes the generator understands, on a container and on
+/// a field; any other (on a variant: any) is an error, as it would change
+/// the text form unseen.
+const CONTAINER_SERDE: &[&str] = &["deny_unknown_fields", "rename", "from", "into", "bound"];
+const FIELD_SERDE: &[&str] = &["default", "skip", "skip_serializing_if"];
+
+/// The serde attribute names in `attrs` that `allowed` does not list.
+fn unsupported_serde(attrs: &[Attribute], allowed: &[&str]) -> Vec<String> {
+    let mut out = Vec::new();
+    for a in attrs.iter().filter(|a| a.path().is_ident("serde")) {
+        let _ = a.parse_nested_meta(|meta| {
+            let name = meta.path.to_token_stream().to_string();
+            if !allowed.contains(&name.as_str()) {
+                out.push(name);
+            }
+            if meta.input.peek(syn::Token![=]) {
+                meta.value()?.parse::<Expr>()?;
+            }
+            Ok(())
+        });
+    }
+    out
 }
 
 /// A container's `#[serde(from = "W")]`.
@@ -432,6 +459,15 @@ impl Sources {
                     };
                     let doc = doc_lines(&s.attrs);
                     let from = serde_from(&s.attrs)?;
+                    if derives_serde(&s.attrs) {
+                        self.check_serde(label, &name, &s.attrs, CONTAINER_SERDE);
+                        if let Fields::Named(f) = &s.fields {
+                            for field in &f.named {
+                                self.check_serde(label, &name, &field.attrs, FIELD_SERDE);
+                            }
+                        }
+                    }
+                    self.check_unique(label, &name);
                     self.items.insert(
                         name.clone(),
                         Item { name, file: label.into(), doc, body, default: None, from },
@@ -461,6 +497,14 @@ impl Sources {
                         variants.push(Variant { name: vname, doc: doc_lines(&v.attrs), fields, line });
                     }
                     let doc = doc_lines(&e.attrs);
+                    self.check_serde(label, &name, &e.attrs, CONTAINER_SERDE);
+                    for v in &e.variants {
+                        self.check_serde(label, &name, &v.attrs, &[]);
+                        for field in &v.fields {
+                            self.check_serde(label, &name, &field.attrs, FIELD_SERDE);
+                        }
+                    }
+                    self.check_unique(label, &name);
                     self.items.insert(
                         name.clone(),
                         Item {
@@ -496,6 +540,19 @@ impl Sources {
             }
         }
         Ok(())
+    }
+
+    fn check_serde(&mut self, label: &str, item: &str, attrs: &[Attribute], allowed: &[&str]) {
+        for a in unsupported_serde(attrs, allowed) {
+            self.problems
+                .push(format!("{label}: `{item}`: serde attribute `{a}` is not supported by format-docs"));
+        }
+    }
+
+    fn check_unique(&mut self, label: &str, name: &str) {
+        if self.items.contains_key(name) || self.aliases.contains_key(name) {
+            self.problems.push(format!("{label}: type `{name}` is declared twice"));
+        }
     }
 
     /// The serialized fields of a struct (or struct variant) declared at
@@ -634,14 +691,17 @@ impl Sources {
         let mut queue: VecDeque<String> = roots.iter().map(|(t, _)| t.to_string()).collect();
         let mut seen: BTreeSet<String> = queue.iter().cloned().collect();
         let mut out = Vec::new();
-        let mut errors = Vec::new();
+        let mut errors = self.problems.clone();
         let mut refs = Vec::new();
         for (file, ty, doc) in maps {
             let ty: Type = syn::parse_str(ty).with_context(|| format!("{file}: parsing {ty}"))?;
+            let before = refs.len();
+            let label = self.label(&ty, &mut refs);
+            self.check_refs(&mut refs, before, &format!("`{file}`"), &mut errors);
             let mut s = format!(
                 "<a id=\"{}\"></a>\n\n## `{file}`\n\n{doc}\n\nType: {}.\n",
                 file.replace('.', "-"),
-                self.label(&ty, &mut refs)
+                label
             );
             if let Some(example) = examples.get(*file) {
                 s += &format!("\nExample:\n\n```ron\n{example}```\n");
@@ -753,7 +813,13 @@ impl Sources {
                     let fields = match &v.fields {
                         VariantFields::Unit => "—".to_string(),
                         VariantFields::Tuple(types) => {
-                            types.iter().map(|t| self.label(t, refs)).collect::<Vec<_>>().join(", ")
+                            let before = refs.len();
+                            let label =
+                                types.iter().map(|t| self.label(t, refs)).collect::<Vec<_>>().join(", ");
+                            let at =
+                                format!("{}:{}: variant `{}` of `{}`", item.file, v.line, v.name, item.name);
+                            self.check_refs(refs, before, &at, errors);
+                            label
                         }
                         VariantFields::Named(fields) => {
                             subtables += &format!("\n### `{}::{}`\n\n", item.name, v.name);
@@ -788,19 +854,35 @@ impl Sources {
                     item.file, f.line, f.name, item.name
                 ));
             }
-            s += &format!(
-                "| `{}` | {} | {} | {} |\n",
-                f.name,
-                self.label(&f.ty, refs),
-                self.default_of(f),
-                cell(&f.doc)
-            );
+            let at = format!("{}:{}: field `{}` of `{}`", item.file, f.line, f.name, item.name);
+            let before = refs.len();
+            let label = self.label(&f.ty, refs);
+            self.check_refs(refs, before, &at, errors);
+            let default = self.default_of(f).unwrap_or_else(|e| {
+                errors.push(format!("{at}: {e}"));
+                String::new()
+            });
+            s += &format!("| `{}` | {label} | {default} | {} |\n", f.name, cell(&f.doc));
         }
         s
     }
 
-    fn default_of(&self, f: &Field) -> String {
-        match &f.default {
+    /// Reports (and drops) the unresolved type markers `label` left in
+    /// `refs` from `from` on.
+    fn check_refs(&self, refs: &mut Vec<String>, from: usize, at: &str, errors: &mut Vec<String>) {
+        let mut kept = refs.split_off(from);
+        kept.retain(|r| match r.strip_prefix('?') {
+            Some(n) => {
+                errors.push(format!("{at}: type `{n}` is not in the page's sources"));
+                false
+            }
+            None => true,
+        });
+        refs.extend(kept);
+    }
+
+    fn default_of(&self, f: &Field) -> Result<String, String> {
+        Ok(match &f.default {
             Default::None if outer(&f.ty).is_some_and(|(n, _)| n == "Option") => "none".into(),
             Default::None => "required".into(),
             // A value already rendered (`text_fields`).
@@ -809,16 +891,19 @@ impl Sources {
                 let name = path.rsplit("::").next().unwrap_or(path);
                 match self.values.get(name) {
                     Some(v) => format!("`{v}`"),
-                    None => format!("see `{name}()`"),
+                    None => return Err(format!("no value for default `{path}`")),
                 }
             }
             Default::Bare => match self.zero(&f.ty) {
                 Some(z) => format!("`{z}`"),
                 None if outer(&f.ty).is_some_and(|(n, _)| n == "Option") => "none".into(),
                 None if self.every_field_defaults(&f.ty) => "each field's default".into(),
-                None => format!("see `{}::default`", outer(&f.ty).map_or_else(|| "?".into(), |(n, _)| n)),
+                None => {
+                    let ty = outer(&f.ty).map_or_else(|| f.ty.to_token_stream().to_string(), |(n, _)| n);
+                    return Err(format!("no default value known for `{ty}`"));
+                }
             },
-        }
+        })
     }
 
     /// Whether `ty` is a struct whose every field has a serde default.
@@ -891,7 +976,12 @@ impl Sources {
                 match self.items.get(n) {
                     Some(Item { body: Body::Custom, .. }) => format!("[{0}](#{0})", n.to_lowercase()),
                     Some(_) => format!("[{n}](#{})", n.to_lowercase()),
-                    None => format!("`{n}`"),
+                    None => {
+                        // Not documented here: `check_refs` reports it.
+                        refs.pop();
+                        refs.push(format!("?{n}"));
+                        format!("`{n}`")
+                    }
                 }
             }
         }
@@ -1042,9 +1132,6 @@ struct W {
     /// Mode.
     #[serde(default)]
     mode: Mode,
-    /// Other.
-    #[serde(default)]
-    other: Other,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1070,22 +1157,11 @@ enum Mode {
     Off,
 }
 
-#[derive(Serialize, Deserialize)]
-struct Other {
-    /// X.
-    x: i32,
-}
-
-impl Default for Other {
-    fn default() -> Self {
-        Self { x: compute() }
-    }
-}
 "#,
             ),
         ]);
         let md = s.sections(&[("W", "w.ron")], &BTreeMap::new()).unwrap();
-        let rows: Vec<&str> = md.lines().filter(|l| l.starts_with("| `")).take(7).collect();
+        let rows: Vec<&str> = md.lines().filter(|l| l.starts_with("| `")).take(6).collect();
         assert_eq!(
             rows,
             [
@@ -1095,7 +1171,6 @@ impl Default for Other {
                 "| `scale` | integer | `1` | Scale. |",
                 "| `inner` | [Inner](#inner) | `(a: 2, b: -0.5)` | Inner. |",
                 "| `mode` | [Mode](#mode) | `Off` | Mode. |",
-                "| `other` | [Other](#other) | see `Other::default` | Other. |",
             ]
         );
     }
@@ -1321,5 +1396,43 @@ pub enum State {
         )]);
         let md = s.sections(&[("Weapon", "weapons/<id>.ron")], &examples).unwrap();
         assert!(md.ends_with("| `name` | string | required | Its name. |\n\nExample:\n\n```ron\n(\n    name: \"Gun\",\n)\n```\n"), "{md}");
+    }
+
+    /// Review C-2: nothing the generator cannot resolve passes silently.
+    #[test]
+    fn what_cannot_be_documented_is_an_error() {
+        let cases = [
+            (
+                "#[derive(Serialize, Deserialize)]\nstruct A {\n    /// X.\n    x: Elsewhere,\n}\n",
+                "src/a.rs:4: field `x` of `A`: type `Elsewhere` is not in the page's sources",
+            ),
+            (
+                "#[derive(Serialize, Deserialize)]\nstruct A {\n    /// X.\n    #[serde(default = \"d::nowhere\")]\n    x: i32,\n}\n",
+                "src/a.rs:5: field `x` of `A`: no value for default `d::nowhere`",
+            ),
+            (
+                "#[derive(Serialize, Deserialize)]\nstruct A {\n    /// X.\n    #[serde(default)]\n    x: B,\n}\n\
+                 #[derive(Serialize, Deserialize)]\nstruct B {\n    /// Y.\n    y: i32,\n}\n\
+                 impl Default for B {\n    fn default() -> Self {\n        Self { y: compute() }\n    }\n}\n",
+                "src/a.rs:5: field `x` of `A`: no default value known for `B`",
+            ),
+            (
+                "#[derive(Serialize, Deserialize)]\nstruct A {\n    /// X.\n    #[serde(rename = \"y\")]\n    x: i32,\n}\n",
+                "src/a.rs: `A`: serde attribute `rename` is not supported by format-docs",
+            ),
+            (
+                "#[derive(Serialize, Deserialize)]\n#[serde(rename_all = \"snake_case\")]\nenum A {\n    /// X.\n    X,\n}\n",
+                "src/a.rs: `A`: serde attribute `rename_all` is not supported by format-docs",
+            ),
+            (
+                "#[derive(Serialize, Deserialize)]\nstruct A {\n    /// X.\n    x: i32,\n}\nmod m {\n    #[derive(Serialize, Deserialize)]\n    struct A {\n        /// Y.\n        y: i32,\n    }\n}\n",
+                "src/a.rs: type `A` is declared twice",
+            ),
+        ];
+        for (src, want) in cases {
+            let s = sources(&[("src/a.rs", src)]);
+            let e = s.sections(&[("A", "a.ron")], &BTreeMap::new()).unwrap_err().to_string();
+            assert!(e.contains(want), "{want}\n got: {e}");
+        }
     }
 }
