@@ -18,3 +18,15 @@ The skin authoring format: `skin.ron`, `skin.png` (a grid of frames, aim columns
 | `frame_size` | (integer, integer) | required | One frame's width and height in art pixels, each 1 to `MAX_FRAME_SIDE` (256); OLX's are 20 × 18. |
 | `aim_frames` | integer | required | Columns of `skin.png`, one per aim angle, 1 to `MAX_FRAMES` (64); OLX's skins have 7. |
 | `walk_frames` | integer | required | Rows of `skin.png`, one per walk frame, 1 to `MAX_FRAMES` (64); OLX's skins have 3. |
+
+Example:
+
+```ron
+(
+    name: "Explorer",
+    art_scale: 2,
+    frame_size: (20, 18),
+    aim_frames: 7,
+    walk_frames: 3,
+)
+```

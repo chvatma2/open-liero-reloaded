@@ -12,6 +12,16 @@ The mod's weapon-restriction presets by name (OLX's `.wps` files), optional; the
 
 Type: map of name → [Preset](#preset).
 
+Example:
+
+```ron
+{
+    "Standard 100lt": {
+        "Bazooka": Enabled,
+    },
+}
+```
+
 <a id="modfile"></a>
 
 ## ModFile (`mod.ron`)
@@ -25,6 +35,22 @@ Type: map of name → [Preset](#preset).
 | `worm` | [Worm](#worm) | each field's default | Worm physics (`mod-fields.md` §3). |
 | `rope` | [Rope](#rope) | `(max_length: 300, rest_length: 30, strength: 3.5)` | Ninja rope (`mod-fields.md` §4). |
 | `weapons` | list of string | required | The weapon ids, in order: `weapons/<id>.ron` each; a weapon's index is its id in the game. At most `MAX_WEAPONS` (512). |
+
+Example:
+
+```ron
+(
+    name: "Rocket Mod",
+    notes: "One weapon, to start from.",
+    worm: (
+        gravity: 100.0,
+        jump_speed: -65.0,
+    ),
+    weapons: [
+        "bazooka",
+    ],
+)
+```
 
 <a id="weapon"></a>
 
@@ -41,6 +67,57 @@ Type: map of name → [Preset](#preset).
 | `between_shots_s` | number | required | Seconds between shots (OLX's `ROF` ÷ 1000, `CGameScript.cpp:776`). |
 | `laser_sight` | boolean | `false` | Spawns a laser-sight entity every sub-step while the weapon is not reloading; the entity takes an entity-pool slot, so it counts in the simulation (OLX `CClient_Game.cpp:751-808`). |
 | `fire` | [Fire](#fire) | required | What a shot does. |
+
+Example:
+
+```ron
+(
+    name: "Bazooka",
+    recharge: 0.171,
+    drain: 33.334,
+    between_shots_s: 1.071,
+    fire: Projectile(
+        recoil: 15,
+        sound: "sfx/bazooka.ogg",
+        shot: (
+            speed: 140,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/missile.png",
+                    frames_follow_heading: true,
+                    heading_frames: 18,
+                ),
+                gravity: 0,
+                velocity_factor: 1.001,
+                trail: Smoke,
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 2,
+                        sound: "sfx/exp2.ogg",
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 27,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 12,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        shared: "shrapnel",
+                    ),
+                },
+            ),
+        ),
+    ),
+)
+```
 
 <a id="projectile"></a>
 
@@ -61,6 +138,28 @@ A projectile (OLX `proj_t`, `include/ProjectileDesc.h:80-121`), inline in a spaw
 | `hit_terrain` | list of [Effect](#effect) | `[]` | When the projectile hits rock or dirt (OLX `Hit`). `[]` = OLX's `Nothing`. The effect kind also selects the collision physics: `Bounce`, `Nothing` (half-move), `GoThrough` (no stop), `Explode` in dirt only (keeps position); everything else stops at the last safe position (`mod-fields.md` §7). |
 | `hit_worm` | list of [Effect](#effect) | `[]` | When it hits a worm (OLX `PlayerHit`). `[]` = `Nothing`, which also turns worm collision off; `GoThrough` hits but does not stop. |
 | `spawns` | map of name → [EventSpawn](#spawn) | `{}` | Named spawns that `Spawn(<name>)` effects use. This runtime takes at most one, shared by all events (OLX `GeneralSpawnInfo`, expanded as `<path>.spawn`). |
+
+Example:
+
+```ron
+(
+    gfx: Pixels([
+        "#b0b0b0",
+    ]),
+    gravity: 70,
+    hit_terrain: [
+        Explode(
+            damage: 2,
+            shake: 1,
+        ),
+    ],
+    hit_worm: [
+        Injure(
+            damage: 2,
+        ),
+    ],
+)
+```
 
 <a id="preset"></a>
 

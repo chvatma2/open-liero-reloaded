@@ -20,3 +20,15 @@ A stamp (hole or green ball) is a meaning mask plus a paint layer; `compile_them
 | `stones` | integer | `0` | The images `stones/<i>.png`, `i` from 1, at most `MAX_THEME_IMAGES` (64): OLX's map-editor art, which the game does not read yet. |
 | `misc` | integer | `0` | The images `misc/<i>.png`, as `stones`. |
 | `green_ball` | boolean | `false` | Whether `green_ball.png` and `green_ball.mask.png` exist: the green dirt stamp. |
+
+Example:
+
+```ron
+(
+    name: "Dirt",
+    holes: 5,
+    stones: 8,
+    misc: 8,
+    green_ball: true,
+)
+```

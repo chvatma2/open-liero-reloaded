@@ -19,6 +19,26 @@ The level authoring format: `level.ron`, `material.png`, `front.png`, `back.png`
 | `theme` | string | required | The id of the theme pack whose holes and green dirt the level uses. |
 | `objects` | list of [LevelObject](#levelobject) | `[]` | Things placed in the level, at most `MAX_OBJECTS` (4096); an editor addresses them by index. |
 
+Example:
+
+```ron
+(
+    name: "Twin Caves",
+    notes: "Two caves joined by a tunnel.",
+    size: (320, 200),
+    theme: "olx-theme-dirt",
+    objects: [
+        Spawn(
+            at: (40, 150),
+        ),
+        Spawn(
+            at: (280, 150),
+            notes: "the right cave",
+        ),
+    ],
+)
+```
+
 <a id="levelobject"></a>
 
 ## LevelObject (enum)

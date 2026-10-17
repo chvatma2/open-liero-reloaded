@@ -17,6 +17,26 @@ The core pack's authoring format: `core.ron`, `gfx/<id>.png` (RGBA with alpha), 
 | `sounds` | list of string | `[]` | The sound files `sounds/<file>`, such as `throw.ogg`, at most `MAX_SOUNDS` (1024). |
 | `colours` | map of name → [colour](#colour) | `{}` | OLX's `colours.cfg` values by its key, such as `RopeColour1`, at most `MAX_COLOURS` (1024). |
 
+Example:
+
+```ron
+(
+    notes: "An excerpt of the core pack.",
+    sprites: {
+        "crosshair": (
+            frames: (2, 1),
+            art_scale: 2,
+        ),
+    },
+    sounds: [
+        "throw.ogg",
+    ],
+    colours: {
+        "RopeColour1": "#a05000",
+    },
+)
+```
+
 <a id="spriteentry"></a>
 
 ## SpriteEntry

@@ -10,6 +10,8 @@ use syn::{Attribute, Expr, Fields, GenericArgument, Lit, PathArguments, Type};
 
 /// One generated page: a pack kind's files and the types they hold.
 struct Page {
+    /// The kind's name in the guide's `<!-- file: <kind>/<path> -->` markers.
+    kind: &'static str,
     /// Under `docs/formats/`.
     out: &'static str,
     title: &'static str,
@@ -26,9 +28,12 @@ struct Page {
 }
 
 const DEFAULTS: &str = "crates/olr-format/src/defaults.rs";
+/// The hand-written guide, whose checked blocks are the pages' examples.
+const GUIDE: &str = "docs/formats/README.md";
 
 const PAGES: &[Page] = &[
     Page {
+        kind: "mod",
         out: "mod.md",
         title: "Mod packs",
         module: "crates/olr-format/src/mods/mod.rs",
@@ -54,6 +59,7 @@ const PAGES: &[Page] = &[
         files: &["gfx/<file>.png", "sfx/<file>"],
     },
     Page {
+        kind: "level",
         out: "level.md",
         title: "Level packs",
         module: "crates/olr-format/src/levels/mod.rs",
@@ -63,6 +69,7 @@ const PAGES: &[Page] = &[
         files: &["material.png", "front.png", "back.png", "thumb.png"],
     },
     Page {
+        kind: "skin",
         out: "skin.md",
         title: "Skin packs",
         module: "crates/olr-format/src/skins/mod.rs",
@@ -72,6 +79,7 @@ const PAGES: &[Page] = &[
         files: &["skin.png", "tint.png", "left.png"],
     },
     Page {
+        kind: "theme",
         out: "theme.md",
         title: "Theme packs",
         module: "crates/olr-format/src/themes/mod.rs",
@@ -90,6 +98,7 @@ const PAGES: &[Page] = &[
         ],
     },
     Page {
+        kind: "core",
         out: "core.md",
         title: "The core pack",
         module: "crates/olr-format/src/core_pack/mod.rs",
@@ -103,6 +112,7 @@ const PAGES: &[Page] = &[
         files: &["gfx/<sprite>.png", "sounds/<file>"],
     },
     Page {
+        kind: "pack",
         out: "pack.md",
         title: "Pack manifests",
         module: "crates/olr-data/src/manifest.rs",
@@ -177,8 +187,51 @@ fn render_page(root: &Path, page: &Page) -> anyhow::Result<String> {
         out += &p;
         out += "\n\n";
     }
-    out += &sources.sections_with(page.roots, page.maps, &BTreeMap::new())?;
+    let guide = std::fs::read_to_string(root.join(GUIDE)).with_context(|| format!("reading {GUIDE}"))?;
+    let examples = guide_examples(&guide, page.kind, page.roots, page.maps);
+    out += &sources.sections_with(page.roots, page.maps, &examples)?;
     Ok(out)
+}
+
+/// The guide's blocks of `kind` (`<!-- file: <kind>/<path> -->` then a
+/// fenced `ron` block), by the type of the file they hold (a root's type,
+/// or a map file's name). A type nested in a file shows no example of
+/// its own: the file's block covers it.
+fn guide_examples(
+    guide: &str,
+    kind: &str,
+    roots: &[(&str, &str)],
+    maps: &[(&str, &str, &str)],
+) -> BTreeMap<String, String> {
+    // `weapons/<id>.ron` matches `weapons/gun.ron`.
+    let matches = |pattern: &str, path: &str| match pattern.split_once("<id>") {
+        Some((head, tail)) => {
+            path.len() > head.len() + tail.len() && path.starts_with(head) && path.ends_with(tail)
+        }
+        None => pattern == path,
+    };
+    let lines: Vec<&str> = guide.lines().collect();
+    let mut out = BTreeMap::new();
+    for (i, l) in lines.iter().enumerate() {
+        let Some(file) = l.trim().strip_prefix("<!-- file: ").and_then(|r| r.strip_suffix(" -->")) else {
+            continue;
+        };
+        let Some(path) = file.strip_prefix(kind).and_then(|r| r.strip_prefix('/')) else { continue };
+        if lines.get(i + 1) != Some(&"```ron") {
+            continue;
+        }
+        let Some(len) = lines[i + 2..].iter().position(|l| *l == "```") else { continue };
+        let text: String = lines[i + 2..i + 2 + len].iter().map(|l| format!("{l}\n")).collect();
+        let key = roots
+            .iter()
+            .find(|(_, f)| matches(f, path))
+            .map(|(t, _)| t.to_string())
+            .or_else(|| maps.iter().find(|(f, _, _)| *f == path).map(|(f, _, _)| f.to_string()));
+        if let Some(key) = key {
+            out.entry(key).or_insert(text);
+        }
+    }
+    out
 }
 
 /// The lines of the doc comments in `attrs`, one leading space removed.
@@ -585,11 +638,15 @@ impl Sources {
         let mut refs = Vec::new();
         for (file, ty, doc) in maps {
             let ty: Type = syn::parse_str(ty).with_context(|| format!("{file}: parsing {ty}"))?;
-            out.push(format!(
+            let mut s = format!(
                 "<a id=\"{}\"></a>\n\n## `{file}`\n\n{doc}\n\nType: {}.\n",
                 file.replace('.', "-"),
                 self.label(&ty, &mut refs)
-            ));
+            );
+            if let Some(example) = examples.get(*file) {
+                s += &format!("\nExample:\n\n```ron\n{example}```\n");
+            }
+            out.push(s);
         }
         let enqueue = |refs: Vec<String>, queue: &mut VecDeque<String>, seen: &mut BTreeSet<String>| {
             for r in refs {
@@ -1238,5 +1295,31 @@ pub enum State {
             "{md}"
         );
         assert!(md.contains("## State (enum)"), "{md}");
+    }
+
+    #[test]
+    fn examples_come_from_the_guide() {
+        let guide = "Text.\n\n<!-- file: mod/weapons/gun.ron -->\n```ron\n(\n    name: \"Gun\",\n)\n```\n\n\
+            <!-- file: mod/restrictions.ron -->\n```ron\n{}\n```\n\n\
+            <!-- file: level/level.ron -->\n```ron\n(\n    name: \"L\",\n)\n```\n";
+        let examples = guide_examples(
+            guide,
+            "mod",
+            &[("ModFile", "mod.ron"), ("Weapon", "weapons/<id>.ron")],
+            &[("restrictions.ron", "BTreeMap<String, Preset>", "")],
+        );
+        assert_eq!(
+            examples,
+            BTreeMap::from([
+                ("Weapon".to_string(), "(\n    name: \"Gun\",\n)\n".to_string()),
+                ("restrictions.ron".to_string(), "{}\n".to_string()),
+            ])
+        );
+        let s = sources(&[(
+            "src/w.rs",
+            "#[derive(Serialize, Deserialize)]\nstruct Weapon {\n    /// Its name.\n    name: String,\n}\n",
+        )]);
+        let md = s.sections(&[("Weapon", "weapons/<id>.ron")], &examples).unwrap();
+        assert!(md.ends_with("| `name` | string | required | Its name. |\n\nExample:\n\n```ron\n(\n    name: \"Gun\",\n)\n```\n"), "{md}");
     }
 }

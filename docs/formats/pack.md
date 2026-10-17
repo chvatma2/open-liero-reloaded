@@ -21,6 +21,23 @@ Files: `pack.ron` ([PackManifest](#packmanifest)).
 | `origin` | [Origin](#origin) (optional) | none | Where imported content came from; none for a pack made here. |
 | `license` | string (optional) | none | The pack's license, such as an SPDX id. |
 
+Example:
+
+```ron
+(
+    format_version: 5,
+    id: "twin-caves",
+    name: "Twin Caves",
+    version: "0.1.0",
+    kind: Level,
+    authors: [
+        "You",
+    ],
+    origin: None,
+    license: Some("CC-BY-4.0"),
+)
+```
+
 <a id="packkind"></a>
 
 ## PackKind (enum)
