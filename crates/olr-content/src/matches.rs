@@ -93,7 +93,9 @@ pub fn default_looks(players: &[Player]) -> Vec<WormLook> {
                 bots += 1;
                 WormLook::plain(&format!("Bot {}", i + 1), CPU_COLOURS[(bots - 1) % CPU_COLOURS.len()])
             }
-            Player::Human | Player::HumanWith(_) => WormLook::plain(&format!("Player {}", i + 1), [160, 160, 160]),
+            Player::Human | Player::HumanWith(_) => {
+                WormLook::plain(&format!("Player {}", i + 1), [160, 160, 160])
+            }
         })
         .collect()
 }

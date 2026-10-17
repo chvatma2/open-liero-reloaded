@@ -136,7 +136,8 @@ mod tests {
 
     #[test]
     fn a_bad_skin_becomes_the_default() {
-        let l = WormLook { name: "a".into(), colour: [1, 2, 3], skin: "Bad Skin".into(), skin_hash: "x".into() };
+        let l =
+            WormLook { name: "a".into(), colour: [1, 2, 3], skin: "Bad Skin".into(), skin_hash: "x".into() };
         let l = l.sanitised(0);
         assert_eq!((l.skin.as_str(), l.skin_hash.as_str()), (DEFAULT_SKIN, NO_SKIN_HASH));
         assert_eq!(l.colour, [1, 2, 3]);

@@ -27,8 +27,8 @@ use olr_math::AbsTime;
 use olr_modes::{Deathmatch, DeathmatchError, DeathmatchSettings};
 use olr_sim::{BonusItem, GameMode, Keys, MatchSetup, OracleMode, SimSettings, WormSetup};
 
-pub use looks::{DEFAULT_SKIN, MAX_NAME_CHARS, MAX_SKIN_ID, NO_SKIN_HASH, WormLook, sanitise_name};
 pub use error::{DecodeError, Mismatch, RecordError, ReplayError};
+pub use looks::{DEFAULT_SKIN, MAX_NAME_CHARS, MAX_SKIN_ID, NO_SKIN_HASH, WormLook, sanitise_name};
 pub use play::{Assets, Cursor, Player, ReplayRun};
 pub use record::Recorder;
 

@@ -152,7 +152,8 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
         seen |= 1 << worm;
         prev = t;
     }
-    let SetupW { packs, settings, start, seed, worms, pool_capacity, bonus_weapons, calls, viewer, looks } = setup;
+    let SetupW { packs, settings, start, seed, worms, pool_capacity, bonus_weapons, calls, viewer, looks } =
+        setup;
     if worms.len() > MAX_WORMS {
         return invalid(format!("{} worms, at most {MAX_WORMS}", worms.len()));
     }
@@ -165,9 +166,7 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
     if looks.len() != worms.len() {
         return invalid(format!("{} looks for {} worms", looks.len(), worms.len()));
     }
-    if let Some(i) = looks.iter().position(|l| {
-        !crate::looks::valid_skin(&l.skin, &l.skin_hash)
-    }) {
+    if let Some(i) = looks.iter().position(|l| !crate::looks::valid_skin(&l.skin, &l.skin_hash)) {
         return invalid(format!("worm {i}: skin id or hash out of bounds"));
     }
     if calls.len() > MAX_SETUP_CALLS {

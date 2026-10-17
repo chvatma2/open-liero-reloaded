@@ -213,9 +213,12 @@ struct Named {
 /// sandbox, "Bot N"), in OLX's bot colours away from the player's; a game
 /// nobody plays numbers every worm from 1 in the default colours.
 fn named(a: &Assets, n: usize) -> Vec<Named> {
-    let default = |i: usize| Named { name: format!("Worm {}", i + 1), colour: rgb(default_colour(i)), local: false };
+    let default =
+        |i: usize| Named { name: format!("Worm {}", i + 1), colour: rgb(default_colour(i)), local: false };
     let recorded: Vec<(&str, [u8; 3])> = match &a.game {
-        Game::Online { start, .. } => start.slots.iter().map(|s| (s.look.name.as_str(), s.look.colour)).collect(),
+        Game::Online { start, .. } => {
+            start.slots.iter().map(|s| (s.look.name.as_str(), s.look.colour)).collect()
+        }
         Game::Replay(r) => r.setup.looks.iter().map(|l| (l.name.as_str(), l.colour)).collect(),
         _ => Vec::new(),
     };

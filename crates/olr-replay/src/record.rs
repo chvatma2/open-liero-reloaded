@@ -7,7 +7,8 @@ use olr_sim::{Keys, MAX_WORMS, MatchSetup, World};
 
 use crate::play::apply_call;
 use crate::{
-    CHECKSUM_EVERY, MAX_SETUP_CALLS, MAX_TICKS, ModeSpec, Packs, RecordError, WormLook, Replay, ReplaySetup, SetupCall,
+    CHECKSUM_EVERY, MAX_SETUP_CALLS, MAX_TICKS, ModeSpec, Packs, RecordError, Replay, ReplaySetup, SetupCall,
+    WormLook,
 };
 
 /// Follows a match: its setup calls, the world's checksum before the first
