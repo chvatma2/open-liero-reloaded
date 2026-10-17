@@ -186,7 +186,7 @@ pub fn decode_image_within(bytes: &[u8], bound: ImageBound) -> Result<RgbaImage,
         return Err("decoded size mismatch".into());
     }
     let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
-    for p in rgb.chunks_exact(3) {
+    for p in rgb.as_chunks::<3>().0 {
         rgba.extend_from_slice(&[p[0], p[1], p[2], 255]);
     }
     RgbaImage::from_raw(w, h, rgba).ok_or_else(|| "decoded size mismatch".into())
