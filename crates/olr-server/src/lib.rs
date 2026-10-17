@@ -65,8 +65,7 @@ pub const BANS_EVERY: Duration = Duration::from_secs(1);
 pub const BANS_WARN_EVERY: Duration = Duration::from_secs(60);
 /// Said to an admin who tries to kick or ban an admin (or themselves).
 pub const NOT_AN_ADMIN_TARGET: &str = "admins cannot kick or ban admins (or themselves)";
-/// The download cache (members' skins the server lacks, plan 11 ruling
-/// N30), in the data directory.
+/// The download cache (plan 11 ruling N30), in the data directory.
 pub const DOWNLOADS_DIR: &str = "downloads";
 /// The first note and the printed invite wait this long at most for the
 /// reachability to settle (`Reachability::settled`: the router answered or
@@ -1045,8 +1044,7 @@ fn map_target(config: &Config) -> Option<MapTarget> {
 /// The server's download cache in `dir` (`<data dir>/downloads`, ruling
 /// N30). One the server cannot open (another server on the same data
 /// directory holds it: `InstallError::Locked`; or it cannot be made) is
-/// a warning: the server runs without, still serving its own packs, and
-/// draws members' skins it lacks with the default skin.
+/// a warning: the server runs without, still serving its own packs.
 fn open_downloads(dir: &Path, log: &mut dyn Write) -> Result<Arc<Mutex<DownloadCache>>, String> {
     match DownloadCache::open(dir) {
         Ok(cache) => {
@@ -1057,9 +1055,7 @@ fn open_downloads(dir: &Path, log: &mut dyn Write) -> Result<Arc<Mutex<DownloadC
             let why = format!("{}: {e}", dir.display());
             line(
                 log,
-                format_args!(
-                    "warning: no download cache ({why}); members' skins the server lacks are drawn with the default skin"
-                ),
+                format_args!("warning: no download cache ({why}); the server still serves its own packs"),
             );
             Err(why)
         }

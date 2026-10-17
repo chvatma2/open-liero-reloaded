@@ -106,8 +106,8 @@ pub struct Config {
     /// Bans kept across restarts (keys and addresses), relative to the
     /// data directory; `None`: bans last until the server stops.
     pub bans_file: Option<PathBuf>,
-    /// KiB per second the server sends content in all (packs and skins to
-    /// members who lack them; plan 11), held to [`UPLOAD_KIB_S`] by
+    /// KiB per second the server sends content in all (packs to members
+    /// who lack them; plan 11), held to [`UPLOAD_KIB_S`] by
     /// [`Config::upload_rate`]; during a match `olr_online`'s `MATCH_RATE`.
     pub upload_kib_s: u32,
     /// Nostr relays (`wss://` or `ws://`) a public server announces on;

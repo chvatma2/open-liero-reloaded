@@ -3,7 +3,7 @@
 //     olr-server --nat-check [--config server.ron]   (checks the network, prints a report)
 // The data directory (the config file's own by default) keeps the server's
 // identity (server-identity.ron, made at the first start), the bans file,
-// server.log, desync bundles and downloads/ (players' skins it fetched).
+// server.log, desync bundles and downloads/ (its download cache).
 // Fields left out take the default shown.
 (
     // The lobby's name in the game lists. Default "OLR server".
@@ -55,8 +55,7 @@
     // directory. None: bans last until the server stops. Default None.
     bans_file: Some("bans.ron"),
     // KiB per second the server sends content in all: its packs to players
-    // who lack them, players' skins to the others (256 KiB/s while a match
-    // runs). Held to 64..65536. Default 4096.
+    // who lack them (256 KiB/s while a match runs). Held to 64..65536. Default 4096.
     upload_kib_s: 4096,
     // Nostr relays (wss:// or ws://, at most 32) a Public server announces
     // on; the invite names them too. Default: the game's default relays,

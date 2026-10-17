@@ -183,11 +183,10 @@ beside the executable, else in the working directory).
   `Relay` when `relay` is set (not started without relays); the download cache
   `<data>/downloads`, `DOWNLOADS_DIR`, logged, shared with the peer as
   `PeerContent { cache, upload_rate }`: the server serves its packs to
-  members lacking them and fetches members' skins it lacks into it;
+  members lacking them (skins are never transferred: plan 13c);
   when it cannot be opened (`InstallError::Locked`: another server on
   the data directory) a warning line, and the server runs without one,
-  still serving its packs, members' skins it lacks drawn as the
-  default), `poll(now, log)`, `shutdown(self, log)` (the bans saved; a
+  still serving its packs), `poll(now, log)`, `shutdown(self, log)` (the bans saved; a
   public server's closing note, `created_at` after the last note's, and
   the relay's; `OnlinePeer::shutdown` — `Bye` to everyone, listening
   stopped, the endpoint's mapping deleted on a thread —, the pool dropped,
@@ -318,9 +317,8 @@ log counts 2 once; the server not polled for 1.7 s steps down, its
 its host; about 2.5 s); the example and e2e configs parse and their
 rotations are in the committed packs; `upload_kib_s` (default, clamped);
 a member lacking Dirt Level downloads it from the server and plays,
-another's skin the server lacks lands in `<data>/downloads` (held:
-`Locked`); with that cache held by another, a warning, the level still
-served, no skin fetched; finding the server (plan 12a, with olr-discovery's
+the server's `<data>/downloads` held (`Locked`); with that cache held by
+another, a warning, the level still served; finding the server (plan 12a, with olr-discovery's
 in-process `TestRelay` and `StunResponder`: nothing leaves the machine, so
 the shared `config` is `Invite` with `relays: []`, `stun: []` and
 `port_mapping: false`): a public server listed by

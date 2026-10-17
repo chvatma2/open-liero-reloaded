@@ -841,20 +841,11 @@ fn server_config_reads_upload_rate() {
 /// The packs a match of Classic on Dirt Level needs, and the default skin.
 const MATCH_PACKS: [&str; 5] = ["olx-core", "olx-classic", "olx-theme-dirt", DIRT, "olx-skin-default"];
 
-/// A content directory of [`MATCH_PACKS`] from `dir` but `leave_out`,
-/// plus `skin`: a skin pack of that id the server lacks (the default
-/// skin's files under another id: another content hash).
-fn partial_content(dir: &Path, leave_out: &[&str], skin: Option<&str>) -> tempfile::TempDir {
+/// A content directory of [`MATCH_PACKS`] from `dir` but `leave_out`.
+fn partial_content(dir: &Path, leave_out: &[&str]) -> tempfile::TempDir {
     let to = tempfile::tempdir().unwrap();
     for id in MATCH_PACKS.iter().filter(|id| !leave_out.contains(id)) {
         copy_dir(&dir.join(id), &to.path().join(id));
-    }
-    if let Some(id) = skin {
-        let pack = to.path().join(id);
-        copy_dir(&dir.join("olx-skin-default"), &pack);
-        let manifest = std::fs::read_to_string(pack.join("pack.ron")).unwrap();
-        std::fs::write(pack.join("pack.ron"), manifest.replace("\"olx-skin-default\"", &format!("{id:?}")))
-            .unwrap();
     }
     to
 }
@@ -868,18 +859,16 @@ fn client_cache() -> (tempfile::TempDir, PeerContent) {
     (dir, cfg)
 }
 
-/// Anna lacks Dirt Level, Bert wears a skin the server lacks: Anna
-/// downloads the level from the server and both play. Returns the rig
+/// Anna lacks Dirt Level: she downloads it from the server and both play. Returns the rig
 /// and the directories to keep while it runs.
 fn a_match_on_downloaded_content(data: tempfile::TempDir, dir: PathBuf) -> (Rig, Vec<tempfile::TempDir>) {
     let mut rig = Rig::new_in(data, dir.clone(), dir.clone(), config(&[], 0, true, 1.0));
-    let anna_packs = partial_content(&dir, &[DIRT], None);
-    let bert_packs = partial_content(&dir, &[], Some("test-skin"));
+    let anna_packs = partial_content(&dir, &[DIRT]);
+    let bert_packs = partial_content(&dir, &[]);
     let (anna_cache, anna_cfg) = client_cache();
     let (bert_cache, bert_cfg) = client_cache();
     let anna = rig.join_with(identity(), look("Anna"), content(anna_packs.path()), anna_cfg);
-    let bert_look = Look { skin: "test-skin".into(), ..look("Bert") };
-    let bert = rig.join_with(identity(), bert_look, content(bert_packs.path()), bert_cfg);
+    let bert = rig.join_with(identity(), look("Bert"), content(bert_packs.path()), bert_cfg);
     rig.run_until(Duration::from_secs(10), "Anna downloads the level", |r| {
         r.clients[anna].p.downloads().iter().any(|d| d.item.id == DIRT && d.state == DownloadState::Done)
     });
@@ -895,27 +884,13 @@ fn a_match_on_downloaded_content(data: tempfile::TempDir, dir: PathBuf) -> (Rig,
     (rig, vec![anna_packs, bert_packs, anna_cache, bert_cache])
 }
 
-/// The skin packs in the server's download cache, by id.
-fn cached_skins(data: &Path) -> Vec<String> {
-    let Ok(rd) = std::fs::read_dir(data.join(olr_server::DOWNLOADS_DIR).join("packs")) else { return vec![] };
-    let mut ids: Vec<String> = rd
-        .filter_map(|e| std::fs::read_to_string(e.unwrap().path().join("pack.ron")).ok())
-        .filter_map(|m| m.split("id: \"").nth(1).and_then(|t| t.split('"').next()).map(String::from))
-        .collect();
-    ids.sort();
-    ids
-}
-
-/// The server serves its packs to a member lacking the level, and keeps a
-/// member's skin it lacks in `<data dir>/downloads`, which it holds.
+/// The server serves its packs to a member lacking the level, and holds
+/// its cache `<data dir>/downloads`.
 #[test]
-fn the_server_serves_content_and_keeps_skins_in_its_cache() {
+fn the_server_serves_content_and_holds_its_cache() {
     let Some(dir) = content_dir() else { return };
-    let (mut rig, _keep) = a_match_on_downloaded_content(tempfile::tempdir().unwrap(), dir);
+    let (rig, _keep) = a_match_on_downloaded_content(tempfile::tempdir().unwrap(), dir);
     let downloads = rig.data.path().join(olr_server::DOWNLOADS_DIR);
-    rig.run_until(Duration::from_secs(10), "the server fetches Bert's skin", |r| {
-        cached_skins(r.data.path()) == ["test-skin"]
-    });
     assert!(
         matches!(olr_content::DownloadCache::open(&downloads), Err(olr_content::InstallError::Locked)),
         "the server holds its cache"
@@ -925,21 +900,16 @@ fn the_server_serves_content_and_keeps_skins_in_its_cache() {
 
 /// A server whose cache another holds (another server on the same data
 /// directory) says so and runs without one: it still serves its own
-/// packs; members' skins it lacks are not fetched (drawn as the default).
+/// packs.
 #[test]
 fn a_server_without_its_cache_still_serves_its_packs() {
     let Some(dir) = content_dir() else { return };
     let data = tempfile::tempdir().unwrap();
     let held = olr_content::DownloadCache::open(&data.path().join(olr_server::DOWNLOADS_DIR)).unwrap();
-    let (mut rig, _keep) = a_match_on_downloaded_content(data, dir);
+    let (rig, _keep) = a_match_on_downloaded_content(data, dir);
     let log = rig.log_text();
     assert_eq!(log.matches("warning: no download cache").count(), 1, "{log}");
     assert!(log.contains("in use"), "{log}");
-    for _ in 0..300 {
-        rig.poll();
-        std::thread::sleep(Duration::from_millis(1));
-    }
-    assert!(cached_skins(rig.data.path()).is_empty(), "nothing fetched");
     drop(held);
 }
 
