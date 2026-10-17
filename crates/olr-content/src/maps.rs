@@ -10,6 +10,14 @@ use olr_terrain::{GreenMask, Stamp};
 use crate::Content;
 use crate::placeholder::placeholder_image;
 
+/// OLX's default skin pack, what a skin that cannot be matched falls back
+/// to (olr-lobby's `DEFAULT_SKIN`).
+pub const DEFAULT_SKIN: &str = "olx-skin-default";
+/// The "content hash unknown" of a look (a bot's), restating olr-proto's
+/// `NO_HASH` (olr-content is below olr-proto; a test in olr-game asserts
+/// the two are equal).
+pub const NO_SKIN_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
 /// A level: its material grid and its art (`art_scale` art pixels per
 /// material pixel, as the level pack guarantees).
 #[derive(Clone, Debug)]
@@ -168,9 +176,41 @@ impl Content {
             Ok(s) => return s,
             Err(e) => format!("{e:#}"),
         };
-        let mut s = self.load_skin("olx-skin-default").unwrap_or_else(|_| LoadedSkin::placeholder());
+        let mut s = self.load_skin(DEFAULT_SKIN).unwrap_or_else(|_| LoadedSkin::placeholder());
         s.warnings.insert(0, format!("{err}: using {} instead", s.skin.def.name));
         s
+    }
+
+    /// The skin a match draws for a member's look (spec §4, plan 13c ruling
+    /// 9): the pack `id` exactly (no name resolution) when it is a skin
+    /// pack whose content hash is `hash`; with `hash == NO_SKIN_HASH` (a
+    /// bot's) only [`DEFAULT_SKIN`]; otherwise the default skin, and the
+    /// warning says why. A skin pack is never transferred, so one that is
+    /// missing here or has other content is not the player's own skin.
+    pub fn skin_matching(&self, id: &str, hash: &str) -> (LoadedSkin, Option<String>) {
+        let is_skin = self.pack_kind(id) == Some(PackKind::Skin);
+        let why = if !is_skin {
+            Some(format!("{id}: no such skin pack here"))
+        } else if hash == NO_SKIN_HASH {
+            (id != DEFAULT_SKIN)
+                .then(|| format!("{id}: its content is unknown (a bot's), not the default skin"))
+        } else if !self.has(id, hash) {
+            Some(format!("{id}: this skin has other content here than the player's"))
+        } else {
+            None
+        };
+        if why.is_none() {
+            match self.load_skin(id) {
+                Ok(s) => return (s, None),
+                Err(e) => {
+                    return (
+                        self.skin_or_default(DEFAULT_SKIN),
+                        Some(format!("{e:#}: using the default skin")),
+                    );
+                }
+            }
+        }
+        (self.skin_or_default(DEFAULT_SKIN), why.map(|w| format!("{w}: using the default skin")))
     }
 }
 

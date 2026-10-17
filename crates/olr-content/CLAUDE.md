@@ -9,7 +9,7 @@ same id below it, the core pack too; an unreadable higher pack hides
 nothing; a missing root is skipped); then `load_mod` (`SimMod` +
 decoded images + sound bytes keyed by `SimMod::sounds()` names, `olx:` game
 sounds from the core pack), `load_level`, `load_theme` (holes, green ball,
-tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `core()`
+tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matching(id, hash)` (plan 13c: the pack id exactly and its content hash, `NO_SKIN_HASH` only for `DEFAULT_SKIN`, else the default skin and a warning), `core()`
 (sprites by name, game sounds, `colours.cfg`) and `new_world(&SandboxSetup)`.
 
 - **Layer 4, uses `std`.** Depends on `olr-sim`, `olr-modes`, `olr-bots`,

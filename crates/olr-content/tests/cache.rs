@@ -28,16 +28,21 @@ fn manifest(id: &str, kind: PackKind) -> PackManifest {
 
 /// A valid skin pack `id`; `shade` makes its content differ.
 fn skin_pack(id: &str, shade: u8) -> MemFs {
-    let mut img = RgbaImage::new(32, 18);
+    sized_skin_pack(id, shade, 32)
+}
+
+/// `skin_pack` with a sheet `width` wide (OLX's is 672).
+fn sized_skin_pack(id: &str, shade: u8, width: u32) -> MemFs {
+    let mut img = RgbaImage::new(width, 18);
     for y in 0..18 {
-        for x in 0..32 {
+        for x in 0..width {
             img.set(x, y, Rgba::rgb(shade, 100, 10));
         }
     }
     let skin = Skin {
         def: SkinDef { name: id.into(), layout: FrameLayout::OLX },
         image: img,
-        mask: vec![MaskKind::Keep; 32 * 18],
+        mask: vec![MaskKind::Keep; width as usize * 18],
     };
     let mut fs = MemFs::new();
     olr_pack::write_skin(&mut fs, &olr_pack::SkinPack { manifest: manifest(id, PackKind::Skin), skin })
@@ -635,4 +640,49 @@ fn keepers_keep_their_hashes_from_every_eviction() {
     let evicted = cache.lock().unwrap().evict(&[], 0);
     assert_eq!(evicted.evicted, [hashes[0].clone()]);
     assert!(cache.lock().unwrap().contains(&hashes[1]));
+}
+
+/// Plan 13c, ruling 9: a skin is drawn only when its pack id and content
+/// hash both match; anything else is the default skin and a warning.
+#[test]
+fn skin_matching_needs_the_id_and_the_hash() {
+    use olr_content::{DEFAULT_SKIN, NO_SKIN_HASH};
+    let root = tempfile::tempdir().unwrap();
+    let default = sized_skin_pack(DEFAULT_SKIN, 1, 672);
+    let mine = sized_skin_pack("mine", 2, 672);
+    write_pack(root.path(), DEFAULT_SKIN, &default);
+    write_pack(root.path(), "mine", &mine);
+    write_pack(root.path(), "lvl", &level_pack("lvl"));
+    let content = Content::open_layers(&[root.path()]).unwrap();
+    let hash = |fs: &MemFs| olr_pack::content_hash(fs).unwrap();
+    let name = |s: &olr_content::LoadedSkin| s.skin.def.name.clone();
+
+    // The exact id and hash: that skin, no warning.
+    let (skin, why) = content.skin_matching("mine", &hash(&mine));
+    assert_eq!((name(&skin).as_str(), why), ("mine", None));
+    // The same id with another hash: the default skin, and why.
+    let other = hash(&sized_skin_pack("mine", 3, 672));
+    let (skin, why) = content.skin_matching("mine", &other);
+    assert_eq!(name(&skin), DEFAULT_SKIN);
+    assert!(why.is_some_and(|w| w.contains("mine") && w.contains("other content")));
+    // An unknown id, and a pack that is not a skin.
+    let (skin, why) = content.skin_matching("nobody", &hash(&mine));
+    assert_eq!(name(&skin), DEFAULT_SKIN);
+    assert!(why.is_some_and(|w| w.contains("no such skin")));
+    let (skin, why) = content.skin_matching("lvl", &other);
+    assert_eq!(name(&skin), DEFAULT_SKIN);
+    assert!(why.is_some());
+    // An OLX skin name is not resolved: the id is exact.
+    let (skin, why) = content.skin_matching("default", &hash(&default));
+    assert_eq!(name(&skin), DEFAULT_SKIN);
+    assert!(why.is_some());
+    // No hash (a bot's): the default skin is the only one named.
+    let (skin, why) = content.skin_matching(DEFAULT_SKIN, NO_SKIN_HASH);
+    assert_eq!((name(&skin).as_str(), why), (DEFAULT_SKIN, None));
+    let (skin, why) = content.skin_matching("mine", NO_SKIN_HASH);
+    assert_eq!(name(&skin), DEFAULT_SKIN);
+    assert!(why.is_some_and(|w| w.contains("unknown")));
+    // The default skin by its real hash matches too.
+    let (skin, why) = content.skin_matching(DEFAULT_SKIN, &hash(&default));
+    assert_eq!((name(&skin).as_str(), why), (DEFAULT_SKIN, None));
 }

@@ -630,9 +630,8 @@ impl DownloadCache {
 }
 
 /// Keeps a list's hashes in a shared cache from eviction while it lives
-/// (review Minor 2): every list of a process (a host's member-skin
-/// fetchers and its own list, a client's fetcher, both peers of
-/// `--net-sim`) registers with the one cache they share, and each
+/// (review Minor 2): every list of a process (a host's own list, a
+/// client's fetcher, both peers of `--net-sim`) registers with the one cache they share, and each
 /// eviction keeps their union, whoever evicts.
 pub struct Keeper {
     cache: Arc<Mutex<DownloadCache>>,
