@@ -39,7 +39,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use olr_data::manifest::Origin;
-use olr_pack::install::{OLD_PREFIX, TMP_PREFIX, newest_aside_first};
+use olr_pack::install::{OLD_PREFIX, TMP_PREFIX, newest_aside_first, replace_dir};
 use olr_vfs::{ContentSource, DirFs, VPath, VfsError, find_ci};
 use serde::Serialize;
 
@@ -230,41 +230,13 @@ impl Imported {
     }
 
     /// Writes the pack as `<out>/<id>/`, replacing an older one: written
-    /// hidden, then renamed into place (module docs). The old pack that
-    /// cannot be removed once replaced is a warning (returned): the new
-    /// one is in place, and the next import tries again.
+    /// hidden, then renamed into place (`olr_pack::install::replace_dir`).
+    /// The old pack that cannot be removed once replaced is a warning
+    /// (returned): the new one is in place, and the next import tries again.
     fn write(&self, out: &Path, id: &str) -> anyhow::Result<Vec<String>> {
-        let tmp = out.join(format!("{TMP_PREFIX}{id}"));
-        let dir = out.join(id);
-        remove_dir(&tmp)?;
-        if let Err(e) = self.write_to(&tmp) {
-            let _ = std::fs::remove_dir_all(&tmp);
-            return Err(e.context(format!("writing {}", dir.display())));
-        }
-        let mut old = None;
-        if dir.exists() {
-            // `.replaced-<id>`, or `.replaced-<id>~2`, ... when an earlier
-            // one could not be removed.
-            let aside = (1..)
-                .map(|k| {
-                    out.join(if k == 1 {
-                        format!("{OLD_PREFIX}{id}")
-                    } else {
-                        format!("{OLD_PREFIX}{id}~{k}")
-                    })
-                })
-                .take(100)
-                .find(|p| remove_dir(p).is_ok())
-                .with_context(|| format!("no place to move the old {} aside", dir.display()))?;
-            std::fs::rename(&dir, &aside)
-                .with_context(|| format!("moving the old {} aside", dir.display()))?;
-            old = Some(aside);
-        }
-        std::fs::rename(&tmp, &dir).with_context(|| format!("moving {} into place", dir.display()))?;
-        Ok(match old.map(|o| remove_dir(&o)) {
-            Some(Err(e)) => vec![format!("{e:#}: the next import removes it")],
-            _ => Vec::new(),
-        })
+        Ok(replace_dir(&out.join(id), |d| {
+            self.write_to(d).map_err(|e| std::io::Error::other(format!("{e:#}")))
+        })?)
     }
 }
 

@@ -1,8 +1,11 @@
 //! The names an import leaves in a content directory while it replaces a
 //! pack (plan 13c task 4): `olr-import` writes them and `olr-content`'s
 //! `open_layers` lists a pack an import killed halfway left aside.
+//! `replace_dir` is that swap, shared by the importer and `olr-edit`'s
+//! save (plan 13d R2).
 
-use std::path::PathBuf;
+use std::io;
+use std::path::{Path, PathBuf};
 
 /// A pack being written.
 pub const TMP_PREFIX: &str = ".import-";
@@ -27,4 +30,98 @@ pub fn newest_aside_first(paths: &mut [PathBuf]) {
     };
     // `None` (not moved aside) sorts after every `Some`.
     paths.sort_by_cached_key(|p| (key(p).is_none(), key(p), p.clone()));
+}
+
+/// Replaces the directory `dir` with what `write` puts into a fresh
+/// hidden sibling (`<parent>/.import-<name>`): the old directory is
+/// renamed aside (`.replaced-<name>`, `~k` when taken), the new one
+/// renamed into place, the old one removed. `write` failing removes the
+/// sibling and leaves `dir` untouched. Returns warnings (an old copy that
+/// could not be removed).
+pub fn replace_dir(dir: &Path, write: impl FnOnce(&Path) -> io::Result<()>) -> io::Result<Vec<String>> {
+    let name = dir.file_name().and_then(|n| n.to_str()).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::InvalidInput, format!("{}: not a directory name", dir.display()))
+    })?;
+    let parent = dir.parent().unwrap_or(Path::new(""));
+    let tmp = parent.join(format!("{TMP_PREFIX}{name}"));
+    remove_dir(&tmp)?;
+    let written = std::fs::create_dir_all(&tmp).and_then(|()| write(&tmp));
+    if let Err(e) = written {
+        let _ = std::fs::remove_dir_all(&tmp);
+        return Err(context(e, format!("writing {}", dir.display())));
+    }
+    let mut old = None;
+    if dir.exists() {
+        // `.replaced-<name>`, or `.replaced-<name>~2`, ... when an earlier
+        // one could not be removed.
+        let aside = (1..)
+            .map(|k| {
+                parent.join(if k == 1 {
+                    format!("{OLD_PREFIX}{name}")
+                } else {
+                    format!("{OLD_PREFIX}{name}~{k}")
+                })
+            })
+            .take(100)
+            .find(|p| remove_dir(p).is_ok())
+            .ok_or_else(|| io::Error::other(format!("no place to move the old {} aside", dir.display())))?;
+        std::fs::rename(dir, &aside)
+            .map_err(|e| context(e, format!("moving the old {} aside", dir.display())))?;
+        old = Some(aside);
+    }
+    std::fs::rename(&tmp, dir).map_err(|e| context(e, format!("moving {} into place", dir.display())))?;
+    Ok(match old.map(|o| remove_dir(&o)) {
+        Some(Err(e)) => vec![format!("{e}: the next import removes it")],
+        _ => Vec::new(),
+    })
+}
+
+/// Removes `dir` and everything in it; a directory that is not there is fine.
+fn remove_dir(dir: &Path) -> io::Result<()> {
+    match std::fs::remove_dir_all(dir) {
+        Err(e) if e.kind() != io::ErrorKind::NotFound => {
+            Err(context(e, format!("removing {}", dir.display())))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// `e` with `what` in front of its message, as `anyhow`'s `{:#}` prints a context.
+fn context(e: io::Error, what: String) -> io::Error {
+    io::Error::new(e.kind(), format!("{what}: {e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replace_dir_swaps_in_the_new_contents() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("p");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("old.txt"), b"old").unwrap();
+        let warnings = replace_dir(&dir, |d| std::fs::write(d.join("new.txt"), b"new")).unwrap();
+        assert!(warnings.is_empty());
+        assert!(!dir.join("old.txt").exists());
+        assert_eq!(std::fs::read(dir.join("new.txt")).unwrap(), b"new");
+        let names: Vec<_> = std::fs::read_dir(tmp.path()).unwrap().map(|e| e.unwrap().file_name()).collect();
+        assert_eq!(names, vec![std::ffi::OsString::from("p")], "no hidden sibling left");
+    }
+
+    #[test]
+    fn a_failed_write_leaves_the_old_pack() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("p");
+        std::fs::create_dir(&dir).unwrap();
+        std::fs::write(dir.join("old.txt"), b"old").unwrap();
+        let err = replace_dir(&dir, |d| {
+            std::fs::write(d.join("half.txt"), b"x")?;
+            Err(std::io::Error::other("disk full"))
+        });
+        assert!(err.is_err());
+        assert_eq!(std::fs::read(dir.join("old.txt")).unwrap(), b"old");
+        assert!(!dir.join("half.txt").exists());
+        assert_eq!(std::fs::read_dir(tmp.path()).unwrap().count(), 1);
+    }
 }
