@@ -2,4 +2,5 @@
 
 mod common;
 mod fmt;
+mod new;
 mod pack;
