@@ -64,7 +64,7 @@ pub const SCREENS: [(&str, Screen); 13] = [
 ];
 
 /// The keys a script may tap, by name: egui's key and the window's.
-const KEYS: [(&str, egui::Key, KeyCode); 13] = [
+const KEYS: [(&str, egui::Key, KeyCode); 16] = [
     ("Escape", egui::Key::Escape, KeyCode::Escape),
     ("Enter", egui::Key::Enter, KeyCode::Enter),
     ("Space", egui::Key::Space, KeyCode::Space),
@@ -78,7 +78,13 @@ const KEYS: [(&str, egui::Key, KeyCode); 13] = [
     ("ArrowDown", egui::Key::ArrowDown, KeyCode::ArrowDown),
     ("ArrowLeft", egui::Key::ArrowLeft, KeyCode::ArrowLeft),
     ("ArrowRight", egui::Key::ArrowRight, KeyCode::ArrowRight),
+    ("Delete", egui::Key::Delete, KeyCode::Delete),
+    ("B", egui::Key::B, KeyCode::KeyB),
+    ("P", egui::Key::P, KeyCode::KeyP),
 ];
+
+/// The frames a `Drag` moves in, one move a frame.
+pub const DRAG_STEPS: u64 = 8;
 
 /// A script.
 #[derive(Clone, Debug, Deserialize)]
@@ -109,6 +115,12 @@ pub struct Step {
 pub enum Do {
     /// Clicks the widget with this label (waiting for it to show).
     Click(String),
+    /// Presses at `.1` and releases at `.2` (fractions 0..=1 of the
+    /// labelled widget's rect), moving in `DRAG_STEPS` steps, one a frame
+    /// (the editor's canvas: a brush stroke).
+    Drag(String, (f32, f32), (f32, f32)),
+    /// A click at a fraction of the labelled widget's rect.
+    ClickAt(String, (f32, f32)),
     /// Clicks the widget labelled `.0` until a widget labelled `.1` shows
     /// (enabled): the click's effect, not its sending, ends the step. A
     /// click can be lost in a frame egui discards (a `Grid` laid out anew
@@ -146,6 +158,8 @@ pub enum Check {
     Screen(String),
     /// A widget with this label shows.
     Label(String),
+    /// A widget whose label holds this text shows.
+    LabelContains(String),
     /// The window's inner size in pixels.
     WindowSize(u32, u32),
     /// The game playing runs at this speed (`--speed`'s names).
@@ -192,6 +206,16 @@ pub fn parse(text: &str) -> Result<Vec<Step>, String> {
             }
             Do::ClickUntil(a, b) if a.trim().is_empty() || b.trim().is_empty() => {
                 return bad("an empty name");
+            }
+            Do::Drag(l, ..) | Do::ClickAt(l, _) | Do::Assert(Check::LabelContains(l))
+                if l.trim().is_empty() =>
+            {
+                return bad("an empty name");
+            }
+            Do::Drag(_, a, b) | Do::ClickAt(_, a @ b)
+                if ![a.0, a.1, b.0, b.1].iter().all(|f| (0.0..=1.0).contains(f)) =>
+            {
+                return bad("a point is a fraction of the widget, 0 to 1");
             }
             Do::Screenshot(name) if !name.chars().all(|c| c.is_ascii_alphanumeric() || "-_".contains(c)) => {
                 return bad(&format!("{name:?}: a screenshot name is letters, digits, - and _"));
@@ -300,6 +324,15 @@ pub fn click_point(widgets: &[Widget], label: &str) -> Option<Pos2> {
     Some(Pos2::new(((x0 + x1) / 2.0) as f32, ((y0 + y1) / 2.0) as f32))
 }
 
+/// The point at fraction `f` of the rect of the first widget labelled
+/// `label` that has bounds (enabled; the canvas is no button).
+pub fn point_in(widgets: &[Widget], label: &str, f: (f32, f32)) -> Option<Pos2> {
+    let w = widgets.iter().find(|w| w.name == label && !w.disabled && w.bounds.is_some())?;
+    let [x0, y0, x1, y1] = w.bounds?;
+    let lerp = |a: f64, b: f64, t: f32| (a + (b - a) * f64::from(t)) as f32;
+    Some(Pos2::new(lerp(x0, x1, f.0), lerp(y0, y1, f.1)))
+}
+
 /// Whether a screenshot shows something: at least 16 colours, and no
 /// colour on more than 99.5 % of it (a menu is mostly its background).
 /// Gives the numbers for the log.
@@ -354,9 +387,8 @@ pub struct Autoplay {
     busy_until: u64,
     /// A `ClickUntil`'s last click, in this frame.
     clicked_at: Option<u64>,
-    /// egui events for the next frame, and for the one after.
-    pending: Vec<Event>,
-    later: Vec<Event>,
+    /// egui events for the coming frames, the next first.
+    queue: std::collections::VecDeque<Vec<Event>>,
     /// Game keys to let go next frame.
     keys_later: Vec<KeyCode>,
     log: Log,
@@ -388,8 +420,7 @@ impl Autoplay {
             since: None,
             busy_until: 0,
             clicked_at: None,
-            pending: Vec::new(),
-            later: Vec::new(),
+            queue: std::collections::VecDeque::new(),
             keys_later: Vec::new(),
             log,
             result: None,
@@ -398,18 +429,40 @@ impl Autoplay {
 
     /// Before a frame's menus run: the events the script sends them.
     pub fn input(&mut self, raw: &mut RawInput) {
-        raw.events.append(&mut self.pending);
-        self.pending = std::mem::take(&mut self.later);
+        raw.events.extend(self.queue.pop_front().unwrap_or_default());
+    }
+
+    /// Events for the frame `n` frames from the next one.
+    fn at(&mut self, n: usize) -> &mut Vec<Event> {
+        while self.queue.len() <= n {
+            self.queue.push_back(Vec::new());
+        }
+        &mut self.queue[n]
     }
 
     /// A primary click at `at`: pressed in the next frame, released in the
     /// one after.
     fn click(&mut self, at: Pos2) {
+        self.drag(at, at, 0);
+    }
+
+    /// A press at `from`, `steps` moves (one a frame, the last at `to`),
+    /// then the release at `to` the frame after.
+    fn drag(&mut self, from: Pos2, to: Pos2, steps: u64) {
         let m = Modifiers::NONE;
         let button = PointerButton::Primary;
-        self.pending.push(Event::PointerMoved(at));
-        self.pending.push(Event::PointerButton { pos: at, button, pressed: true, modifiers: m });
-        self.later.push(Event::PointerButton { pos: at, button, pressed: false, modifiers: m });
+        self.at(0).push(Event::PointerMoved(from));
+        self.at(0).push(Event::PointerButton { pos: from, button, pressed: true, modifiers: m });
+        for i in 1..=steps {
+            let p = from + (to - from) * (i as f32 / steps as f32);
+            self.at(i as usize).push(Event::PointerMoved(p));
+        }
+        self.at(steps as usize + 1).push(Event::PointerButton {
+            pos: to,
+            button,
+            pressed: false,
+            modifiers: m,
+        });
     }
 
     /// The step being played (for messages).
@@ -524,6 +577,29 @@ impl Autoplay {
                     }
                     return out;
                 }
+                Do::Drag(label, from, to) | Do::ClickAt(label, from @ to) => {
+                    let ws = widgets.as_deref().unwrap_or_default();
+                    match (point_in(ws, label, *from), point_in(ws, label, *to)) {
+                        (Some(a), Some(b)) => {
+                            let steps = if matches!(step.ui, Do::Drag(..)) { DRAG_STEPS } else { 0 };
+                            self.drag(a, b, steps);
+                            self.done(
+                                seen.frame,
+                                &format!("({:.0}, {:.0}) to ({:.0}, {:.0})", a.x, a.y, b.x, b.y),
+                            );
+                            self.busy_until = seen.frame + INPUT_FRAMES + steps;
+                        }
+                        _ if late => {
+                            let mut names: Vec<String> = ws.iter().map(|w| w.name.clone()).collect();
+                            names.dedup();
+                            out.extend(
+                                self.fail(seen.frame, format!("no {label:?} shows; showing: {names:?}")),
+                            );
+                        }
+                        _ => {}
+                    }
+                    return out;
+                }
                 Do::Key(name) => {
                     let Some((k, code)) = key(name) else {
                         return self.fail(seen.frame, format!("no key {name}"));
@@ -535,8 +611,8 @@ impl Autoplay {
                         repeat: false,
                         modifiers: Modifiers::NONE,
                     };
-                    self.pending.push(ev(true));
-                    self.later.push(ev(false));
+                    self.at(0).push(ev(true));
+                    self.at(1).push(ev(false));
                     out.push(Effect::Key(code, true));
                     self.keys_later.push(code);
                     self.done(seen.frame, "tapped");
@@ -544,7 +620,7 @@ impl Autoplay {
                     return out;
                 }
                 Do::Type(text) => {
-                    self.pending.push(Event::Text(text.clone()));
+                    self.at(0).push(Event::Text(text.clone()));
                     self.done(seen.frame, "typed");
                     self.busy_until = seen.frame + INPUT_FRAMES;
                     return out;
@@ -620,6 +696,10 @@ fn check(c: &Check, seen: &Seen, widgets: Option<&[Widget]>) -> Result<(), Strin
         Check::Label(label) => {
             let found = widgets.is_some_and(|w| w.iter().any(|w| w.name == *label));
             found.then_some(()).ok_or_else(|| format!("no {label:?} shows"))
+        }
+        Check::LabelContains(part) => {
+            let found = widgets.is_some_and(|w| w.iter().any(|w| w.name.contains(part.as_str())));
+            found.then_some(()).ok_or_else(|| format!("no label holding {part:?} shows"))
         }
         Check::WindowSize(w, h) => {
             (seen.window == (*w, *h)).then_some(()).ok_or_else(|| format!("the window is {:?}", seen.window))
@@ -745,6 +825,88 @@ mod tests {
         combo.set_labelled_by(vec![NodeId(1)]);
         let w = widgets(&tree(vec![(1, label), (2, combo)]));
         assert_eq!(click_point(&w, "Mod"), Some(Pos2::new(60.0, 50.0)), "the combo below its label");
+    }
+
+    /// Plan 14c Task 7: the editor's steps parse, and bad fractions do not.
+    #[test]
+    fn drags_and_clicks_at_parse() {
+        let steps = parse(
+            r#"(steps: [
+                (ui: Drag("Canvas", (0.3, 0.5), (0.6, 0.5))),
+                (ui: ClickAt("Canvas", (0.5, 0.4))),
+                (ui: Key("Delete")),
+                (ui: Key("B")),
+                (ui: Key("P")),
+                (ui: Assert(LabelContains("Spawn 1 at"))),
+            ])"#,
+        )
+        .unwrap();
+        assert_eq!(steps[0].ui, Do::Drag("Canvas".into(), (0.3, 0.5), (0.6, 0.5)));
+        assert_eq!(steps[1].ui, Do::ClickAt("Canvas".into(), (0.5, 0.4)));
+        for bad in [
+            r#"(steps: [(ui: Drag("Canvas", (1.5, 0.5), (0.6, 0.5)))])"#,
+            r#"(steps: [(ui: ClickAt("Canvas", (0.5, -0.1)))])"#,
+            r#"(steps: [(ui: ClickAt("", (0.5, 0.5)))])"#,
+            r#"(steps: [(ui: Assert(LabelContains("")))])"#,
+        ] {
+            assert!(parse(bad).is_err(), "{bad}");
+        }
+    }
+
+    /// A drag presses at its start, moves in `DRAG_STEPS` frames, one a
+    /// frame, and releases at its end; a click at a fraction lands there.
+    #[test]
+    fn a_drag_moves_one_step_a_frame() {
+        let t = tree(vec![(1, node(Role::Unknown, Some("Canvas"), None, (100.0, 100.0)))]);
+        let steps = parse(r#"(steps: [(ui: Drag("Canvas", (0.0, 0.5), (1.0, 0.5))), (ui: ClickAt("Canvas", (0.5, 0.25)))])"#)
+            .unwrap();
+        let mut a = Autoplay::from_steps(steps);
+        assert!(a.step(&seen(0, Some(Screen::Editor), Some(&t))).is_empty());
+        let mut frames = Vec::new();
+        for _ in 0..DRAG_STEPS + 2 {
+            let mut raw = RawInput::default();
+            a.input(&mut raw);
+            frames.push(raw.events);
+        }
+        let at = |x, y| Pos2::new(x, y);
+        assert!(
+            matches!(
+                frames[0][..],
+                [Event::PointerMoved(p), Event::PointerButton { pressed: true, pos, .. }] if p == at(100.0, 110.0) && pos == p
+            ),
+            "{:?}",
+            frames[0]
+        );
+        for (i, f) in frames[1..=DRAG_STEPS as usize].iter().enumerate() {
+            let x = 100.0 + 100.0 * (i + 1) as f32 / DRAG_STEPS as f32;
+            assert_eq!(f[..], [Event::PointerMoved(at(x, 110.0))], "frame {}", i + 1);
+        }
+        assert!(matches!(
+            frames[DRAG_STEPS as usize + 1][..],
+            [Event::PointerButton { pressed: false, pos, .. }] if pos == at(200.0, 110.0)
+        ));
+        // Busy until the drag is delivered, then the click at a fraction.
+        assert!(a.step(&seen(DRAG_STEPS, Some(Screen::Editor), Some(&t))).is_empty());
+        assert!(a.step(&seen(DRAG_STEPS + 3, Some(Screen::Editor), Some(&t))).is_empty());
+        let mut raw = RawInput::default();
+        a.input(&mut raw);
+        assert!(
+            matches!(raw.events[..], [Event::PointerMoved(p), ..] if p == at(150.0, 105.0)),
+            "{:?}",
+            raw.events
+        );
+    }
+
+    #[test]
+    fn labels_are_found_by_part() {
+        let t = tree(vec![(1, node(Role::Button, Some("Spawn 1 at (10, 20)"), None, (0.0, 0.0)))]);
+        let steps = parse(
+            r#"(steps: [(ui: Assert(LabelContains("Spawn 1 at"))), (ui: Assert(LabelContains("Spawn 2")))])"#,
+        )
+        .unwrap();
+        let mut a = Autoplay::from_steps(steps);
+        let out = a.step(&seen(0, Some(Screen::Editor), Some(&t)));
+        assert!(matches!(&out[..], [Effect::Fail(m)] if m.contains("Spawn 2")), "{out:?}");
     }
 
     fn seen(frame: u64, screen: Option<Screen>, tree: Option<&TreeUpdate>) -> Seen<'_> {

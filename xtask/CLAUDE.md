@@ -141,7 +141,13 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `GALLIUM_DRIVER=llvmpipe`; setting `WGPU_BACKEND` also stops the WSL
   relaunch onto the real GPU). It passes on exit 0, an `autoplay.jsonl`
   ending in `pass`, every screenshot the script names, and no `warning:`,
-  `error:` or panic line on stderr (`bad_lines`). Then the online run
+  `error:` or panic line on stderr (`bad_lines`). Then the editor run
+  (plan 14c, `editor`, in `target/e2e/editor`): `fixtures/autoplay/editor.ron`
+  the same way in a data directory of its own (a new level "E2E Level", a
+  drawn layer painted, a spawn, Play and Esc, Save, Close), then the pack it
+  saved, `data/packs/e2e-level` (`editor_pack_problems`: a `Drawn` layer in
+  `editor/composition.ron`, `level.ron` named "E2E Level" with one spawn)
+  and `olr-cli pack check` on it exiting 0. Then the online run
   (plan 10 task 15, plan 12b task 10, `online`, in `target/e2e/online`):
   the run's own Nostr relay, `olr-cli nostr-relay --listen 127.0.0.1:0`
   (its URL read from its first line, `nostr relay: ws://…`; nothing
@@ -171,8 +177,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   end, and no `bad_lines` in any helper's output (`Helper`: output in
   `<name>.out`/`.err` files, killed when dropped, so a failing run leaves
   nothing running; a failure's report includes all three). Skipped
-  without Xvfb or content; each game killed after 240 s. Both runs about
-  27 s (local 10 s, online 16 s) once built.
+  without Xvfb or content; each game killed after 240 s. The runs about
+  29 s (local 10 s, editor 1 s, online 16 s) once built.
 - `net-nat [--keep] [--offline] [--only <scenario>]...` (`nat.rs`, plan
   12b Task 11, spec §9.7, ruling N58; also `full`'s step after `e2e`,
   `nat::step(offline)`): the Docker NAT tests; topology, scenarios,

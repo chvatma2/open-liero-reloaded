@@ -40,6 +40,12 @@ use crate::root;
 pub const SCRIPT: &str = "fixtures/autoplay/menus.ron";
 pub const SETTINGS: &str = "fixtures/autoplay/settings.ron";
 
+/// The level editor's script (plan 14c), the level it makes, and that
+/// level's pack in the run's data directory.
+pub const EDITOR_SCRIPT: &str = "fixtures/autoplay/editor.ron";
+pub const EDITOR_LEVEL: &str = "E2E Level";
+pub const EDITOR_PACK: &str = "packs/e2e-level";
+
 /// The online run's script (`{port}` stands for the server's port) and
 /// the server's config.
 pub const ONLINE_SCRIPT: &str = "fixtures/autoplay/online.ron";
@@ -185,6 +191,11 @@ pub fn run(content: Option<&Path>) -> Result<(), String> {
         "     e2e: {SCRIPT} passed on Xvfb {} in {:.1} s ({} frames)",
         x.display, local.secs, local.frames
     );
+    let editor = editor(&x, content, &settings, &out.join("editor"))?;
+    println!(
+        "     e2e: {EDITOR_SCRIPT} passed in {:.1} s ({} frames), its pack checks clean",
+        editor.secs, editor.frames
+    );
     let online = online(&x, content, &settings, &out.join("online"))?;
     println!(
         "     e2e: {ONLINE_SCRIPT} passed against olr-server on port {} in {:.1} s ({} frames); both runs {:.1} s",
@@ -280,6 +291,60 @@ fn play(
         .and_then(|l| l.split("\"frame\":").nth(1))
         .and_then(|r| r.split(|c: char| !c.is_ascii_digit()).next().map(str::to_string));
     Ok(Played { secs: started.elapsed().as_secs_f32(), frames: frames.unwrap_or_default() })
+}
+
+/// The editor's run (plan 14c Task 7): `EDITOR_SCRIPT` in a data
+/// directory of its own (`<out>/data`), then the pack it saved: a drawn
+/// layer in its composition, one spawn, and `olr-cli pack check` clean.
+fn editor(x: &Xvfb, content: &Path, settings: &str, out: &Path) -> Result<Played, String> {
+    let script =
+        std::fs::read_to_string(root().join(EDITOR_SCRIPT)).map_err(|e| format!("{EDITOR_SCRIPT}: {e}"))?;
+    let played = play(x, content, &script, settings, out, true)?;
+    let pack = out.join("data").join(EDITOR_PACK);
+    let read = |f: &str| std::fs::read_to_string(pack.join(f)).ok();
+    let problems =
+        editor_pack_problems(read("editor/composition.ron").as_deref(), read("level.ron").as_deref());
+    if !problems.is_empty() {
+        return Err(format!("{}: {}", pack.display(), problems.join("; ")));
+    }
+    let check = Command::new(root().join("target/debug/olr-cli"))
+        .args(["pack", "check"])
+        .arg(&pack)
+        .output()
+        .map_err(|e| format!("cannot run olr-cli: {e}"))?;
+    if !check.status.success() {
+        return Err(format!(
+            "olr-cli pack check {}: {}\n{}",
+            pack.display(),
+            String::from_utf8_lossy(&check.stdout).trim(),
+            String::from_utf8_lossy(&check.stderr).trim()
+        ));
+    }
+    Ok(played)
+}
+
+/// What is wrong with the editor run's saved pack, by its composition and
+/// `level.ron` (`None`: the file is missing).
+pub fn editor_pack_problems(composition: Option<&str>, level: Option<&str>) -> Vec<String> {
+    let mut out = Vec::new();
+    match composition {
+        None => out.push("no editor/composition.ron".to_string()),
+        Some(c) if !c.contains("Drawn(") => out.push("the composition names no drawn layer".into()),
+        Some(_) => {}
+    }
+    match level {
+        None => out.push("no level.ron".into()),
+        Some(l) => {
+            if !l.contains(&format!("name: {EDITOR_LEVEL:?}")) {
+                out.push(format!("level.ron is not named {EDITOR_LEVEL:?}"));
+            }
+            match l.matches("Spawn(").count() {
+                1 => {}
+                n => out.push(format!("level.ron holds {n} spawns, not 1")),
+            }
+        }
+    }
+    out
 }
 
 /// The online run's outcome.
@@ -601,6 +666,29 @@ mod tests {
         assert!(online_settings("(settings: ())", "ws://x").is_err());
         let server = std::fs::read_to_string(root().join(SERVER_CONFIG)).unwrap();
         assert!(server.contains(r#"relays: ["{relay}"]"#) && server.contains("visibility: Public"));
+    }
+
+    /// Plan 14c Task 7: the editor run's pack is checked, each problem named.
+    #[test]
+    fn editor_pack_checks_name_what_is_missing() {
+        let drawn =
+            "(elements: [(id: \"base\", kind: Raster), (id: \"layer\", kind: Drawn(material: Dirt))])";
+        let one = "(name: \"E2E Level\", objects: [Spawn(at: (1, 2))])";
+        assert!(editor_pack_problems(Some(drawn), Some(one)).is_empty());
+        assert_eq!(editor_pack_problems(None, None), ["no editor/composition.ron", "no level.ron"]);
+        let raster = "(elements: [(id: \"base\", kind: Raster)])";
+        let two = "(objects: [Spawn(at: (1, 2)), Spawn(at: (3, 4))])";
+        assert_eq!(
+            editor_pack_problems(Some(raster), Some(two)),
+            [
+                "the composition names no drawn layer",
+                "level.ron is not named \"E2E Level\"",
+                "level.ron holds 2 spawns, not 1"
+            ]
+        );
+        let script = std::fs::read_to_string(root().join(EDITOR_SCRIPT)).unwrap();
+        assert!(script.contains(&format!("Type({EDITOR_LEVEL:?})")), "the script makes the level checked");
+        assert!(shots(&script).contains(&"editor".to_string()));
     }
 
     #[test]

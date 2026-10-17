@@ -1,0 +1,45 @@
+// The level editor end to end (plan 14c Task 7, spec §8): from the main
+// menu's Editor, a new level; a drawn layer painted with the brush, a
+// spawn placed, Play and Esc back, Save, Close. `xtask e2e` runs it after
+// the menus script in a data directory of its own, then checks the saved
+// pack `packs/e2e-level/`: a drawn layer in its composition, one spawn in
+// `level.ron`, and `olr-cli pack check` clean.
+(
+    steps: [
+        (ui: WaitFor("Main")),
+        (ui: Click("Editor")),
+        (ui: WaitFor("Editor")),
+        (ui: Click("New level")),
+        (ui: Click("Name")),
+        (ui: Type("E2E Level")),
+        (ui: Click("Create")),
+        // The editor opens on the new level: its canvas, then a layer.
+        (ui: Click("Add layer")),
+        (ui: Click("Brush")),
+        (ui: Click("Back tile")),
+        (ui: Drag("Canvas", (0.3, 0.5), (0.6, 0.5))),
+        (ui: Wait(3)),
+        (ui: Click("Spawn")),
+        (ui: ClickAt("Canvas", (0.5, 0.4))),
+        (ui: Wait(3)),
+        (ui: Assert(LabelContains("Spawn 1 at"))),
+        (ui: Screenshot("editor-painted")),
+        // Play the level, then Esc returns to the editor as it was.
+        (ui: Click("Play")),
+        (ui: Wait(30)),
+        (ui: Assert(Playing(true))),
+        (ui: Screenshot("editor-play")),
+        (ui: Key("Escape")),
+        (ui: Wait(5)),
+        (ui: Assert(Playing(false))),
+        (ui: Assert(LabelContains("Spawn 1 at"))),
+        (ui: Click("Save")),
+        (ui: Wait(3)),
+        (ui: Screenshot("editor")),
+        (ui: Click("Close")),
+        (ui: Wait(5)),
+        (ui: WaitFor("Editor")),
+        (ui: Assert(Label("New level"))),
+        (ui: Quit),
+    ],
+)
