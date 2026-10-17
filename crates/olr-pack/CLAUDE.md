@@ -17,7 +17,7 @@ header's size); content hashing; validation.
     import at `THUMB_SIZE` 160 × 96; read bounded by `MAX_THUMB_SIDE` and `MAX_THUMB_BYTES`
     from the PNG header before decoding: `read_level_thumb`, `decode_thumb`; `read_level`
     leaves it out; a bad one is a warning of `validate`)
-  - skin: `skin.ron`, `skin.png`, `mask.png` (palette: 0 keep, 1 colorize, 2 transparent)
+  - skin (format 5, `olr-format`'s `skins`): `skin.ron`, `skin.png` (a 140x54 grid), `tint.png` (0 keep, 255 colour); compiled to the 672x18 OLX sheet
   - theme (format 5, `olr-format`'s `themes`): `theme.ron`, `holes/N.png` + `holes/N.mask.png`, `stones/N.png`,
     `misc/N.png`, `front_tile.png`, `back_tile.png`, optional `green_ball.png` + `green_ball.mask.png`
   - core (OLX's shared game assets, spec §19 E9): `core.ron` (sprite and sound

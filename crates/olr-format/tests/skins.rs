@@ -1,62 +1,54 @@
-//! Every bundled skin: lifted from today's pack, written, read and
-//! compiled, it draws the same: the same frame windows (masks, and pixels
-//! where visible) and the same colorized frames.
+//! Bundled skins are format 5: read as files, written again, they give the
+//! same bytes, and compile to the skin the runtime reads (spec §4).
 
 use std::path::PathBuf;
 
-use olr_data::image::Rgba;
-use olr_data::skin::MaskKind;
-use olr_format::skins::{compile_skin, lift_skin, read_skin_files, write_skin_files};
-use olr_vfs::{DirFs, MemFs};
+use olr_format::skins::{compile_skin, read_skin_files, write_skin_files};
+use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
+
+fn content() -> Option<PathBuf> {
+    let dir = PathBuf::from(std::env::var_os("OLR_CONTENT_DIR")?);
+    dir.is_dir().then_some(dir)
+}
+
+/// Every file of the pack except `pack.ron`, as `(path, bytes)`.
+fn files(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(root).unwrap() {
+        let name = e.unwrap().file_name().into_string().unwrap();
+        if name != "pack.ron" {
+            out.push((name.clone(), std::fs::read(root.join(&name)).unwrap()));
+        }
+    }
+    out.sort();
+    out
+}
 
 #[test]
-fn every_bundled_skin_draws_the_same() {
-    let Some(root) = std::env::var_os("OLR_CONTENT_DIR").map(PathBuf::from).filter(|d| d.is_dir()) else {
+fn bundled_skins_are_canonical_format_5() {
+    let Some(root) = content() else {
         eprintln!("skip: OLR_CONTENT_DIR is not a directory");
         return;
     };
-    let colours = [Rgba::rgb(255, 0, 0), Rgba::rgb(96, 128, 252), Rgba::rgb(10, 200, 30)];
-    let mut n = 0;
-    for entry in std::fs::read_dir(&root).unwrap() {
-        let path = entry.unwrap().path();
-        let id = path.file_name().unwrap().to_string_lossy().into_owned();
-        if !id.starts_with("olx-skin-") {
-            continue;
-        }
-        let old = olr_pack::read_skin(&DirFs::new(&path)).unwrap().skin;
-        let src = lift_skin(&old).unwrap_or_else(|e| panic!("{id}: {e}"));
+    let mut ids: Vec<String> = std::fs::read_dir(&root)
+        .unwrap()
+        .filter_map(|e| e.ok()?.file_name().into_string().ok())
+        .filter(|n| n.starts_with("olx-skin-"))
+        .collect();
+    ids.sort();
+    assert!(ids.len() >= 700, "only {} skins found", ids.len());
+    for id in ids {
+        let dir = DirFs::new(root.join(&id));
+        let src = read_skin_files(&dir).unwrap_or_else(|e| panic!("{id}: {e}"));
         let mut fs = MemFs::new();
         write_skin_files(&mut fs, &src).unwrap();
-        let back = read_skin_files(&fs).unwrap_or_else(|e| panic!("{id}: {e}"));
+        // The same bytes: the committed files are what the writer writes.
+        for (name, bytes) in files(&root.join(&id)) {
+            let again = fs.read(&VPath::new(&name).unwrap()).unwrap_or_else(|e| panic!("{id}/{name}: {e}"));
+            assert!(again == bytes, "{id}/{name}: written bytes differ from the committed file");
+        }
+        let back = read_skin_files(&fs).unwrap();
         assert_eq!(back, src, "{id}");
-        let new = compile_skin(&back).unwrap_or_else(|e| panic!("{id}: {e}"));
-        for f in 0..21u32 {
-            for y in 0..18 {
-                for x in 0..20 {
-                    let sx = f * 32 + 4 + x;
-                    let (mo, mn) = (old.mask_at(sx, y), new.mask_at(sx, y));
-                    assert_eq!(mo, mn, "{id}: mask frame {f} ({x}, {y})");
-                    if mo != MaskKind::Transparent {
-                        assert_eq!(
-                            old.image.get(sx, y),
-                            new.image.get(sx, y),
-                            "{id}: pixel frame {f} ({x}, {y})"
-                        );
-                    }
-                }
-            }
-        }
-        for c in colours {
-            let (a, b) = (old.colorize(c), new.colorize(c));
-            for f in 0..21u32 {
-                assert_eq!(
-                    a.crop(f * 32 + 4, 0, 20, 18),
-                    b.crop(f * 32 + 4, 0, 20, 18),
-                    "{id}: colour {c:?} frame {f}"
-                );
-            }
-        }
-        n += 1;
+        assert_eq!(compile_skin(&back).unwrap(), olr_pack::read_skin(&dir).unwrap().skin, "{id}: Skin");
     }
-    assert!(n >= 700, "only {n} skins found");
 }

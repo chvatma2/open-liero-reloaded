@@ -57,7 +57,9 @@ pub fn import_skin(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Res
                 kind = MaskKind::Transparent;
             }
             if kind == MaskKind::Transparent {
-                image.set(x, y, Rgba { a: 0, ..px });
+                // Hidden pixels are fully transparent (plan 13c ruling 4), so
+                // the pack reads back as written.
+                image.set(x, y, Rgba::TRANSPARENT);
             } else {
                 image.set(x, y, Rgba { a: 255, ..px });
             }
@@ -91,6 +93,9 @@ mod tests {
         img.set(1, 18, Rgba::MAGENTA);
         img.set(2, 18, Rgba::rgb(255, 255, 255));
         // Image pixel x=3 is magenta with a colorize mask: still transparent.
+        // OLX's SetColorKey_Alpha (src/client/GfxPrimitives.cpp:88-141) gives
+        // key-coloured pixels alpha 0 before Colorize_Execute, which keeps
+        // alpha (plan 13c ruling 5).
         img.set(3, 0, Rgba::MAGENTA);
         img
     }

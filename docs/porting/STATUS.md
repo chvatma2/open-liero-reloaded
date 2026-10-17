@@ -79,9 +79,15 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 
 ## Deliberate deviations
 
-- **The skin importer hides a key-colour pixel under a tint mask.** OLX's
-  `Colorize_Execute` draws it colorized (69 OLX source skins, e.g.
-  `CT Cat.png`). To be fixed when plan 13c re-imports the skins.
+- **Not a deviation: the skin importer hides a key-colour pixel under a
+  tint mask.** OLX's `SetColorKey_Alpha` gives key-coloured pixels alpha 0
+  before `Colorize_Execute`, which keeps alpha, so OLX hides them as the
+  importer does (corrected by plan 13c). Mask-alpha edge cases that differ
+  from OLX and are left as they are: OLX tests a black mask by RGB only, so
+  a black mask pixel with alpha 0 still copies its pixel, and it treats any
+  non-opaque non-black mask pixel as transparent; the importer hides a pixel
+  only when the mask alpha is 0. Partial image alpha is dropped (format 5
+  cannot express it either).
 
 - **`LevelDef::spawns` is not read by the runtime.** Spawns are
   `FindSpot`'s; `LevelObject::Spawn` in the level format is not read by

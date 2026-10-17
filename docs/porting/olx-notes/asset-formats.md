@@ -219,11 +219,11 @@ Plus `objects: [Spawn((x, y), notes?)]` and the reserved `look`. Files: `materia
   - mask RGB = key → Transparent;
   - otherwise Colorize;
   - **then** an image pixel with RGB = key, or image alpha 0, or mask alpha 0, forces Transparent.
-- Transparent pixels are stored as `a = 0` with **RGB kept**. All others get `a = 255`, so partial alpha is dropped.
+- Transparent pixels are stored as `a = 0` (RGB kept before plan 13c, zeroed since). All others get `a = 255`, so partial alpha is dropped.
 - **Kept OLX conventions:** the 672×18 strip of 21 frames of 32 px with a 4 px inset, and the binary mask.
-- **Pre-existing deviation, not in STATUS:** OLX colorizes an image pixel that is the key colour when its mask is a tint colour.
-  `Colorize_Execute` reads the pixel raw, so it is drawn unless the result is exactly magenta. The importer hides it instead.
-  Measured: 69 of the OLX source skins have such pixels, for example `CT Cat.png` with 49.
+- Not a deviation: OLX's `SetColorKey_Alpha` gives key-coloured pixels alpha 0 before `Colorize_Execute`, which keeps alpha, so OLX hides them as the importer does (corrected by plan 13c).
+  Mask-alpha edge cases, unchanged: OLX tests a black mask by RGB only (a black mask pixel with alpha 0 still copies its pixel) and treats any non-opaque non-black mask pixel as transparent, where the importer requires mask alpha 0; OLX keys a re-cut sheet twice, the importer once.
+- Since plan 13c the importer stores every hidden pixel as `Rgba::TRANSPARENT` (RGB zeroed), so `read_skin(write_skin(s)) == s`.
 
 ### 3.4 Proposed authoring form and exactness
 Spec §4: `skin.ron (name, art_scale, frame_size, aim_frames, walk_frames)`. `skin.png` is an RGBA grid with columns =
@@ -543,5 +543,4 @@ The import report (`content/packs/import-report.ron`) has no warnings for levels
 18. **Image byte stability:** pass through unedited image files byte for byte, or re-encode canonically on every save (and pin
     the `png` version)? This affects the "load then save gives the same bytes" test for PNGs.
 19. **Test fixtures:** synthetic art-scale-2 level, 254-keyed sprite, partial-alpha and more-than-5-holes cases, since nothing bundled covers them.
-20. **Pre-existing skin deviation:** the importer hides key-coloured image pixels under tint masks, where OLX colorizes and draws them
-    (69 source skins). Record it in STATUS or fix it in the importer. Fixing it changes skins and needs a re-bless.
+20. **Retracted (plan 13c):** the importer's hiding of key-coloured image pixels under tint masks matches OLX (`SetColorKey_Alpha`).

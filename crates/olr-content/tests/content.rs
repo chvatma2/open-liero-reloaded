@@ -154,14 +154,18 @@ fn thin_core() -> olr_pack::CorePack {
     }
 }
 
-/// A skin too narrow for OLX's frame layout.
-fn narrow_skin() -> olr_pack::SkinPack {
+/// A skin pack whose `skin.png` is too small for OLX's frame layout (format
+/// 5 cannot write one: the pack is made valid, then its image replaced).
+fn narrow_skin(dir: &Path) {
     let skin = Skin {
         def: SkinDef { name: "narrow".into(), layout: FrameLayout::OLX },
-        image: filled(100, 18, Rgba::rgb(10, 200, 10)),
-        mask: vec![MaskKind::Keep; 100 * 18],
+        image: RgbaImage::new(672, 18),
+        mask: vec![MaskKind::Transparent; 672 * 18],
     };
-    olr_pack::SkinPack { manifest: manifest("narrow-skin", PackKind::Skin), skin }
+    let pack = olr_pack::SkinPack { manifest: manifest("narrow-skin", PackKind::Skin), skin };
+    olr_pack::write_skin(&mut DirFs::new(dir), &pack).unwrap();
+    let small = olr_pack::image_io::encode_rgba(&filled(100, 18, Rgba::rgb(10, 200, 10)));
+    std::fs::write(dir.join("skin.png"), small).unwrap();
 }
 
 /// Writes the synthetic packs into `dir`.
@@ -171,7 +175,7 @@ fn synthetic(dir: &Path) {
     olr_pack::write_level(&mut sink("test-level"), &room_level()).unwrap();
     olr_pack::write_theme(&mut sink("test-theme"), &theme()).unwrap();
     olr_pack::write_core(&mut sink("olx-core"), &thin_core()).unwrap();
-    olr_pack::write_skin(&mut sink("narrow-skin"), &narrow_skin()).unwrap();
+    narrow_skin(&dir.join("narrow-skin"));
     // Not a pack, and a pack this build cannot read: listed as warnings, never fatal.
     std::fs::create_dir_all(dir.join("junk")).unwrap();
     std::fs::create_dir_all(dir.join("future")).unwrap();
@@ -226,8 +230,10 @@ fn missing_assets_use_placeholders() {
     // The oracle's strict loader still refuses it, as OLX's client would not run it.
     assert!(content.sim_mod("broken-mod").is_err());
 
-    // A skin of the wrong size, or none at all, is a placeholder sheet.
-    let skin = content.load_skin("narrow-skin").unwrap();
+    // A skin of the wrong size (format 5's reader refuses it), or none at
+    // all, falls back to the default or a placeholder sheet.
+    assert!(content.load_skin("narrow-skin").is_err());
+    let skin = content.skin_or_default("narrow-skin");
     assert_eq!((skin.skin.image.width(), skin.skin.image.height()), (672, 18));
     assert!(!skin.warnings.is_empty());
     let fallback = content.skin_or_default("no-such-skin");

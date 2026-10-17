@@ -1,19 +1,15 @@
-//! Skin packs: `skin.ron`, `skin.png` (RGBA sheet) and `mask.png`, an 8-bit
-//! palette PNG with index 0 = keep (black), 1 = colorize (white),
-//! 2 = transparent (magenta), matching OLX's mask colors.
+//! Skin packs (format 5, over `olr-format`): `skin.ron`, `skin.png` (a grid
+//! of frames), `tint.png` (greyscale: 0 keep, 255 player colour) and an
+//! optional `left.png`, compiled to the 672 x 18 OLX sheet.
 
 use olr_data::manifest::{PackKind, PackManifest};
-use olr_data::skin::{MaskKind, Skin, SkinDef};
-use olr_vfs::{ContentSink, ContentSource, VPath};
+use olr_data::skin::Skin;
+use olr_format::skins::{compile_skin, lift_skin, read_skin_files, write_skin_files};
+use olr_vfs::{ContentSink, ContentSource};
 
-use crate::image_io::{decode_indexed, decode_rgba, encode_indexed, encode_rgba};
-use crate::ron_io::{read_ron, write_ron};
 use crate::{MANIFEST, PackError, read_manifest, write_manifest};
 
-pub const SKIN_FILE: &str = "skin.ron";
-pub const IMAGE_FILE: &str = "skin.png";
-pub const MASK_FILE: &str = "mask.png";
-const MASK_PALETTE: [u8; 9] = [0, 0, 0, 255, 255, 255, 255, 0, 255];
+const SKIN_FILE: &str = "skin.ron";
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct SkinPack {
@@ -21,30 +17,14 @@ pub struct SkinPack {
     pub skin: Skin,
 }
 
-fn mask_index(m: MaskKind) -> u8 {
-    match m {
-        MaskKind::Keep => 0,
-        MaskKind::Colorize => 1,
-        MaskKind::Transparent => 2,
-    }
-}
-
+/// Writes the pack in format 5 (`olr-format`'s skin files).
 pub fn write_skin(sink: &mut dyn ContentSink, pack: &SkinPack) -> Result<(), PackError> {
     if pack.manifest.kind != PackKind::Skin {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Skin"));
     }
-    let s = &pack.skin;
-    if s.mask.len() != s.image.width() as usize * s.image.height() as usize {
-        return Err(PackError::invalid(MASK_FILE, "mask size does not match skin.png"));
-    }
+    let src = lift_skin(&pack.skin).map_err(|e| PackError::invalid(SKIN_FILE, e.to_string()))?;
     write_manifest(sink, &pack.manifest)?;
-    write_ron(sink, SKIN_FILE, &s.def)?;
-    sink.write(&VPath::new(IMAGE_FILE)?, &encode_rgba(&s.image))?;
-    let idx: Vec<u8> = s.mask.iter().map(|m| mask_index(*m)).collect();
-    sink.write(
-        &VPath::new(MASK_FILE)?,
-        &encode_indexed(s.image.width(), s.image.height(), &idx, &MASK_PALETTE),
-    )?;
+    write_skin_files(sink, &src)?;
     Ok(())
 }
 
@@ -53,24 +33,8 @@ pub fn read_skin(src: &dyn ContentSource) -> Result<SkinPack, PackError> {
     if manifest.kind != PackKind::Skin {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Skin"));
     }
-    let def: SkinDef = read_ron(src, SKIN_FILE)?;
-    let image = decode_rgba(&crate::ron_io::read_file(src, &VPath::new(IMAGE_FILE)?)?)
-        .map_err(|message| PackError::Image { file: IMAGE_FILE.into(), message })?;
-    let (w, h, idx) = decode_indexed(&crate::ron_io::read_file(src, &VPath::new(MASK_FILE)?)?)
-        .map_err(|message| PackError::Image { file: MASK_FILE.into(), message })?;
-    if (w, h) != (image.width(), image.height()) {
-        return Err(PackError::invalid(MASK_FILE, "mask size does not match skin.png"));
-    }
-    let mask = idx
-        .iter()
-        .map(|v| match v {
-            0 => Ok(MaskKind::Keep),
-            1 => Ok(MaskKind::Colorize),
-            2 => Ok(MaskKind::Transparent),
-            v => Err(PackError::invalid(MASK_FILE, format!("unknown mask index {v}"))),
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    Ok(SkinPack { manifest, skin: Skin { def, image, mask } })
+    let skin = compile_skin(&read_skin_files(src)?)?;
+    Ok(SkinPack { manifest, skin })
 }
 
 #[cfg(test)]
@@ -78,23 +42,38 @@ mod tests {
     use super::*;
     use crate::mod_pack::tests::manifest;
     use olr_data::image::{Rgba, RgbaImage};
-    use olr_data::skin::FrameLayout;
-    use olr_vfs::MemFs;
+    use olr_data::skin::{FrameLayout, MaskKind, SkinDef};
+    use olr_vfs::{MemFs, VPath};
+
+    fn pack() -> SkinPack {
+        let mut image = RgbaImage::new(672, 18);
+        let mut mask = vec![MaskKind::Transparent; 672 * 18];
+        // Frame 0's window starts at x = 4.
+        image.set(4, 0, Rgba::rgb(9, 8, 7));
+        mask[4] = MaskKind::Keep;
+        image.set(5, 0, Rgba::rgb(1, 2, 3));
+        mask[5] = MaskKind::Colorize;
+        SkinPack {
+            manifest: manifest(PackKind::Skin),
+            skin: Skin { def: SkinDef { name: "s".into(), layout: FrameLayout::OLX }, image, mask },
+        }
+    }
 
     #[test]
-    fn roundtrip() {
-        let mut image = RgbaImage::new(3, 1);
-        image.set(1, 0, Rgba::rgb(9, 8, 7));
-        let pack = SkinPack {
-            manifest: manifest(PackKind::Skin),
-            skin: Skin {
-                def: SkinDef { name: "s".into(), layout: FrameLayout::OLX },
-                image,
-                mask: vec![MaskKind::Keep, MaskKind::Colorize, MaskKind::Transparent],
-            },
-        };
+    fn roundtrip_in_format_five_layout() {
+        let pack = pack();
         let mut fs = MemFs::new();
         write_skin(&mut fs, &pack).unwrap();
+        for f in ["skin.ron", "skin.png", "tint.png"] {
+            assert!(fs.exists(&VPath::new(f).unwrap()), "{f}");
+        }
         assert_eq!(read_skin(&fs).unwrap(), pack);
+    }
+
+    #[test]
+    fn a_wrong_kind_is_refused() {
+        let mut p = pack();
+        p.manifest.kind = PackKind::Level;
+        assert!(write_skin(&mut MemFs::new(), &p).is_err());
     }
 }

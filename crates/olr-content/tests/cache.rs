@@ -28,10 +28,10 @@ fn manifest(id: &str, kind: PackKind) -> PackManifest {
 
 /// A valid skin pack `id`; `shade` makes its content differ.
 fn skin_pack(id: &str, shade: u8) -> MemFs {
-    sized_skin_pack(id, shade, 32)
+    sized_skin_pack(id, shade, 672)
 }
 
-/// `skin_pack` with a sheet `width` wide (OLX's is 672).
+/// `skin_pack` with a sheet `width` wide (OLX's is 672, the only width format 5 writes).
 fn sized_skin_pack(id: &str, shade: u8, width: u32) -> MemFs {
     let mut img = RgbaImage::new(width, 18);
     for y in 0..18 {
