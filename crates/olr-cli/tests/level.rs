@@ -190,3 +190,67 @@ fn negative_coordinates_are_values() {
         "the bad value is the image, not -1,-1"
     );
 }
+
+/// Review B-1: a spawn placed outside the level is saved with a warning.
+#[test]
+fn a_spawn_outside_the_level_warns() {
+    let Some((_tmp, pack)) = dirt_level() else { return };
+    let out = object(&["add", "--at", "1000,20"], &pack);
+    assert!(out.status.success());
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("objects[0]: spawn at (1000, 20) is outside the level (504×350)"), "{stderr}");
+    let out = object(&["move", "0", "--at", "10,20"], &pack);
+    assert!(out.stderr.is_empty(), "{}", String::from_utf8_lossy(&out.stderr));
+}
+
+/// Review B-2: an image argument is read bounded and only from a file.
+#[cfg(unix)]
+#[test]
+fn an_image_that_is_no_file_is_refused() {
+    let Some((_tmp, pack)) = dirt_level() else { return };
+    let out = olr_cli(&["stamp", "--at", "1,1", "--image", "/dev/zero", "--layer", "back"], &pack);
+    assert_eq!(out.status.code(), Some(2));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not a file"), "{out:?}");
+}
+
+/// Review B-3: what an operation did is printed only once it is saved.
+#[cfg(unix)]
+#[test]
+fn nothing_is_reported_when_the_save_fails() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some((tmp, pack)) = dirt_level() else { return };
+    std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o555)).unwrap();
+    let out = object(&["add", "--at", "10,20"], &pack);
+    std::fs::set_permissions(tmp.path(), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(out.stdout.is_empty(), "{}", stdout(&out));
+}
+
+/// Review B-4: the preview never writes into the pack.
+#[test]
+fn a_preview_into_the_pack_is_refused() {
+    let Some((_tmp, pack)) = dirt_level() else { return };
+    let before = tree(&pack);
+    let out = Command::new(env!("CARGO_BIN_EXE_olr-cli"))
+        .args(["level", "preview"])
+        .arg(&pack)
+        .arg("--out")
+        .arg(pack.join("front.png"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("inside the pack"), "{out:?}");
+    assert_eq!(tree(&pack), before);
+}
+
+/// Review B-5, B-6: `object list` reads `level.ron` alone, and notes print
+/// on one line.
+#[test]
+fn object_list_reads_level_ron_alone() {
+    let Some((_tmp, pack)) = dirt_level() else { return };
+    assert!(object(&["add", "--at", "1,2", "--notes", "two\nlines"], &pack).status.success());
+    std::fs::write(pack.join("front.png"), b"not a png").unwrap();
+    let out = object(&["list"], &pack);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(stdout(&out), "0: Spawn at (1, 2) — two\\nlines\n");
+}

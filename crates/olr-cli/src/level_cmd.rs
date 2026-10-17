@@ -5,15 +5,18 @@
 //! Every argument is parsed strictly: a bad value is a clap error naming
 //! its flag. Coordinates may be negative (`--offset -4,0`).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use clap::{Subcommand, ValueEnum};
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
+use olr_data::manifest::PackManifest;
 use olr_edit::level::{self, Layer, Paint, Shape, Solid};
 use olr_edit::pack::{Pack, Source, load, save};
 use olr_format::image_io::{IMAGES, LEVEL_ART, check_size, decode_rgba_within, encode_rgba};
 use olr_format::levels::{LevelObject, LevelSource, MATERIAL_PALETTE};
+use olr_vfs::VPath;
 
 use crate::pack_cmd::parse_size;
 
@@ -224,12 +227,20 @@ fn parse_colour(s: &str) -> Result<Rgba, String> {
 
 /// A PNG file, read and decoded within the image bounds.
 fn parse_image(s: &str) -> Result<RgbaImage, String> {
+    use std::io::Read as _;
     let path = Path::new(s);
-    let len = std::fs::metadata(path).map_err(|e| format!("{s}: {e}"))?.len();
-    if len > olr_pack::MAX_FILE_BYTES {
-        return Err(format!("{s}: {len} bytes is above {}", olr_pack::MAX_FILE_BYTES));
+    // A device or FIFO reports no length and may never end.
+    if !std::fs::metadata(path).map_err(|e| format!("{s}: {e}"))?.is_file() {
+        return Err(format!("{s}: not a file"));
     }
-    let bytes = std::fs::read(path).map_err(|e| format!("{s}: {e}"))?;
+    let limit = olr_pack::MAX_FILE_BYTES;
+    let mut bytes = Vec::new();
+    std::fs::File::open(path)
+        .and_then(|f| f.take(limit + 1).read_to_end(&mut bytes))
+        .map_err(|e| format!("{s}: {e}"))?;
+    if bytes.len() as u64 > limit {
+        return Err(format!("{s}: above {limit} bytes"));
+    }
     let img = decode_rgba_within(&bytes, IMAGES).map_err(|e| format!("{s}: {e}"))?;
     if img.width() == 0 || img.height() == 0 {
         return Err(format!("{s}: an empty image"));
@@ -241,7 +252,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     match &args.command {
         LevelCommand::Carve { pack, shape } => edit(pack, |l| {
             level::carve(l, &shape.shape());
-            Ok(())
+            Ok(Vec::new())
         }),
         LevelCommand::Fill { pack, shape, material, paint } => edit(pack, |l| {
             let solid = match material {
@@ -249,15 +260,15 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
                 SolidArg::Dirt => Solid::Dirt,
             };
             level::fill(l, &shape.shape(), solid, &paint.paint());
-            Ok(())
+            Ok(Vec::new())
         }),
         LevelCommand::Paint { pack, shape, layer, paint } => edit(pack, |l| {
             level::paint(l, &shape.shape(), layer.layer(), &paint.paint());
-            Ok(())
+            Ok(Vec::new())
         }),
         LevelCommand::Stamp { pack, at, image, layer } => edit(pack, |l| {
             level::stamp(l, *at, image, layer.layer());
-            Ok(())
+            Ok(Vec::new())
         }),
         LevelCommand::Resize { pack, size, offset, material, colour } => edit(pack, |l| {
             let material = match material {
@@ -265,33 +276,37 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
                 MaterialArg::Dirt => Material::Dirt,
                 MaterialArg::Background => Material::Background,
             };
-            for o in level::resize(l, *size, *offset, material, &Paint::Colour(*colour))? {
-                println!("dropped: {}", describe(&o));
-            }
-            Ok(())
+            let dropped = level::resize(l, *size, *offset, material, &Paint::Colour(*colour))?;
+            Ok(dropped.iter().map(|o| format!("dropped: {}", describe(o))).collect())
         }),
         LevelCommand::Object { command } => match command {
             ObjectCommand::List { pack } => {
-                let (_, l) = read(pack)?;
-                for (i, o) in l.objects.iter().enumerate() {
+                // `level.ron` alone: no image is decoded.
+                let header = olr_format::levels::read_level_header(&olr_vfs::DirFs::new(pack))
+                    .map_err(|e| anyhow::anyhow!("{}: {e}", pack.display()))?;
+                for (i, o) in header.objects.iter().enumerate() {
                     println!("{i}: {}", describe(o));
                 }
                 Ok(true)
             }
             ObjectCommand::Add { pack, at, notes } => edit(pack, |l| {
-                println!("added object {}", level::add_spawn(l, *at, notes)?);
-                Ok(())
+                let i = level::add_spawn(l, *at, notes)?;
+                warn_outside(l, i);
+                Ok(vec![format!("added object {i}")])
             }),
-            ObjectCommand::Move { pack, index, at } => {
-                edit(pack, |l| Ok(level::move_object(l, *index, *at)?))
-            }
+            ObjectCommand::Move { pack, index, at } => edit(pack, |l| {
+                level::move_object(l, *index, *at)?;
+                warn_outside(l, *index);
+                Ok(Vec::new())
+            }),
             ObjectCommand::Remove { pack, index } => edit(pack, |l| {
                 level::remove_object(l, *index)?;
-                Ok(())
+                Ok(Vec::new())
             }),
         },
         LevelCommand::Preview { pack, out, scale, material } => {
-            let (_, l) = read(pack)?;
+            refuse_inside(pack, out)?;
+            let (_, _, l) = read(pack)?;
             let img = preview(&l, *scale, *material)?;
             std::fs::write(out, encode_rgba(&img))
                 .map_err(|e| anyhow::anyhow!("writing {}: {e}", out.display()))?;
@@ -300,34 +315,74 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     }
 }
 
-/// `Spawn at (x, y)[ — notes]`.
+/// `Spawn at (x, y)[ — notes]`, on one line: control characters in the
+/// notes are escaped (`\n`).
 fn describe(o: &LevelObject) -> String {
     match o {
         LevelObject::Spawn { at, notes } if notes.is_empty() => format!("Spawn at ({}, {})", at.0, at.1),
-        LevelObject::Spawn { at, notes } => format!("Spawn at ({}, {}) — {notes}", at.0, at.1),
+        LevelObject::Spawn { at, notes } => {
+            let notes: String = notes
+                .chars()
+                .map(|c| if c.is_control() { c.escape_default().to_string() } else { c.to_string() })
+                .collect();
+            format!("Spawn at ({}, {}) — {notes}", at.0, at.1)
+        }
     }
 }
 
-/// The pack at `dir` and its level source.
-fn read(dir: &Path) -> anyhow::Result<(Pack, LevelSource)> {
-    let pack = load(dir).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
-    match &pack.source {
-        Source::Level(l) => {
-            let l = l.clone();
-            Ok((pack, l))
-        }
+/// A warning (stderr) when object `i` lies outside the level, as
+/// `olr-cli pack check` words it.
+fn warn_outside(l: &LevelSource, i: usize) {
+    let Some(LevelObject::Spawn { at, .. }) = l.objects.get(i) else { return };
+    let (w, h) = l.size;
+    let inside = |v: i32, side: u32| u32::try_from(v).is_ok_and(|v| v < side);
+    if !(inside(at.0, w) && inside(at.1, h)) {
+        eprintln!(
+            "warning: level.ron: objects[{i}]: spawn at ({}, {}) is outside the level ({w}×{h})",
+            at.0, at.1
+        );
+    }
+}
+
+/// Refuses an `--out` inside the pack: the preview never writes into it.
+fn refuse_inside(pack: &Path, out: &Path) -> anyhow::Result<()> {
+    let pack = pack.canonicalize().map_err(|e| anyhow::anyhow!("{}: {e}", pack.display()))?;
+    let parent = match out.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    if parent.canonicalize().is_ok_and(|p| p.starts_with(&pack)) {
+        anyhow::bail!("{}: inside the pack; write the preview elsewhere", out.display());
+    }
+    Ok(())
+}
+
+/// The pack at `dir`, taken apart: its manifest, its other files and its
+/// level source.
+fn read(dir: &Path) -> anyhow::Result<(PackManifest, BTreeMap<VPath, Vec<u8>>, LevelSource)> {
+    let Pack { manifest, source, other } =
+        load(dir).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
+    match source {
+        Source::Level(l) => Ok((manifest, other, l)),
         _ => anyhow::bail!("{}: not a level pack", dir.display()),
     }
 }
 
 /// Loads the level pack at `dir`, applies `op`, refreshes the thumbnail and
-/// saves; an error from `op` or the save leaves the pack as it was.
-fn edit(dir: &Path, op: impl FnOnce(&mut LevelSource) -> anyhow::Result<()>) -> anyhow::Result<bool> {
-    let (mut pack, mut l) = read(dir)?;
-    op(&mut l)?;
+/// saves, then prints `op`'s messages; an error from `op` or the save
+/// leaves the pack as it was and prints none.
+fn edit(
+    dir: &Path,
+    op: impl FnOnce(&mut LevelSource) -> anyhow::Result<Vec<String>>,
+) -> anyhow::Result<bool> {
+    let (manifest, other, mut l) = read(dir)?;
+    let messages = op(&mut l)?;
     level::refresh_thumb(&mut l);
-    pack.source = Source::Level(l);
+    let pack = Pack { manifest, source: Source::Level(l), other };
     crate::pack_cmd::warn(&save(dir, &pack).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?);
+    for m in messages {
+        println!("{m}");
+    }
     Ok(true)
 }
 
