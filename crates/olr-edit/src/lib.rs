@@ -3,5 +3,6 @@
 //! canonical formatter ([`fmt`]) and pack templates ([`new`]).
 
 pub mod fmt;
+pub mod level;
 pub mod new;
 pub mod pack;

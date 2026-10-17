@@ -162,7 +162,7 @@ fn mod_template(name: &str) -> ModSource {
 }
 
 /// Dirt inside a one-pixel rock border, art scale 1: front dirt-brown
-/// (rock grey on the border), back near-black.
+/// (rock grey on the border), back near-black; with its thumbnail.
 fn level_template(name: &str, (w, h): (u32, u32), theme: &str) -> Result<LevelSource, NewError> {
     if !(1..=MAX_SIDE).contains(&w) || !(1..=MAX_SIDE).contains(&h) {
         return Err(NewError::Size(w, h));
@@ -179,7 +179,7 @@ fn level_template(name: &str, (w, h): (u32, u32), theme: &str) -> Result<LevelSo
             back_art.set(x, y, back);
         }
     }
-    Ok(LevelSource {
+    let mut level = LevelSource {
         name: name.into(),
         notes: String::new(),
         size: (w, h),
@@ -190,5 +190,7 @@ fn level_template(name: &str, (w, h): (u32, u32), theme: &str) -> Result<LevelSo
         front,
         back: back_art,
         thumb: None,
-    })
+    };
+    crate::level::refresh_thumb(&mut level);
+    Ok(level)
 }

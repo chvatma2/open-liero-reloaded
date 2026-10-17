@@ -31,6 +31,8 @@ fn a_new_level_checks_clean() {
     assert_eq!(olr_pack::validate(&src), vec![]);
     let level = olr_pack::read_level(&src).unwrap().level;
     assert_eq!((level.def.width, level.def.height), (64, 48));
+    let thumb = olr_pack::read_level_thumb(&src).unwrap().expect("a thumbnail for the menus");
+    assert!(thumb == olr_format::levels::thumbnail(&level.front));
     for y in 0..48 {
         for x in 0..64 {
             let border = x == 0 || y == 0 || x == 63 || y == 47;
