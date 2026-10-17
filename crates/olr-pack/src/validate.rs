@@ -5,7 +5,7 @@ use std::fmt;
 
 use olr_data::manifest::PackKind;
 use olr_format::FormatError;
-use olr_vfs::{ContentSource, MemFs, VPath, walk};
+use olr_vfs::{ContentSource, VPath, walk};
 
 use crate::level_pack::LEVEL_FILE;
 use crate::mod_pack::is_definition;
@@ -138,22 +138,22 @@ pub fn validate(src: &dyn ContentSource) -> Vec<Diagnostic> {
 /// `thumb.png`. A mod's other files are assets, which `check_mod` covers.
 fn unread(src: &dyn ContentSource, kind: PackKind) -> Vec<Diagnostic> {
     use olr_format::{core_pack, levels, mods, skins, themes};
-    let mut owned = MemFs::new();
-    let written = match kind {
-        PackKind::Mod => mods::read_mod_files(src).and_then(|s| mods::write_mod_files(&mut owned, &s)),
-        PackKind::Level => levels::read_level_files_without_thumb(src)
-            .and_then(|s| levels::write_level_files(&mut owned, &s)),
-        PackKind::Skin => skins::read_skin_files(src).and_then(|s| skins::write_skin_files(&mut owned, &s)),
-        PackKind::Theme => {
-            themes::read_theme_files(src).and_then(|s| themes::write_theme_files(&mut owned, &s))
-        }
-        PackKind::Core => {
-            core_pack::read_core_files(src).and_then(|s| core_pack::write_core_files(&mut owned, &s))
-        }
+    let owned = match kind {
+        // The reader reads `restrictions.ron` even when the writer would
+        // leave it out (no presets).
+        PackKind::Mod => mods::read_mod_files(src).map(|s| {
+            let mut paths = mods::file_paths(&s);
+            paths.push(mods::RESTRICTIONS_FILE.into());
+            paths
+        }),
+        PackKind::Level => levels::read_level_files_without_thumb(src).map(|s| levels::file_paths(&s)),
+        PackKind::Skin => skins::read_skin_files(src).map(|s| skins::file_paths(&s)),
+        PackKind::Theme => themes::read_theme_files(src).map(|s| themes::file_paths(&s)),
+        PackKind::Core => core_pack::read_core_files(src).map(|s| core_pack::file_paths(&s)),
     };
     // The reader above already accepted the pack; nothing to add if not.
-    let (Ok(()), Ok(paths)) = (written, walk(src, &VPath::root())) else { return Vec::new() };
-    let owned: BTreeSet<&str> = owned.files().map(|(p, _)| p.as_str()).collect();
+    let (Ok(owned), Ok(paths)) = (owned, walk(src, &VPath::root())) else { return Vec::new() };
+    let owned: BTreeSet<&str> = owned.iter().map(String::as_str).collect();
     paths
         .iter()
         .map(VPath::as_str)
@@ -397,6 +397,15 @@ mod tests {
             .map(|d| d.to_string())
             .collect();
         assert_eq!(d, ["warning: README.txt: not read by the format"]);
+    }
+
+    /// Review A-9: the reader reads an empty `restrictions.ron` (the
+    /// writer leaves it out): it is no foreign file.
+    #[test]
+    fn an_empty_restrictions_file_is_read() {
+        let mut pack = sample_mod();
+        pack.def.restrictions.clear();
+        assert_eq!(validate(&written(&pack).with("restrictions.ron", "{}\n")), vec![]);
     }
 
     /// Review A-5: an editor's leftovers inside a mod's folders.
