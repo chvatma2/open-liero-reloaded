@@ -121,6 +121,75 @@ pub fn decode_rgba_within(bytes: &[u8], bound: ImageBound) -> Result<RgbaImage, 
     RgbaImage::from_raw(info.width, info.height, buf).ok_or_else(|| "decoded size mismatch".into())
 }
 
+/// Whether `bytes` starts like a JPEG (an SOI marker, then another marker).
+fn is_jpeg(bytes: &[u8]) -> bool {
+    bytes.starts_with(&[0xFF, 0xD8, 0xFF])
+}
+
+/// The width and height a PNG's `IHDR` or a JPEG's frame header gives,
+/// read without decoding pixels; `None` for anything else.
+pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
+    if !is_jpeg(bytes) {
+        return png_size(bytes);
+    }
+    // Walk the marker segments after SOI up to the first start of frame.
+    let mut i = 2;
+    loop {
+        if *bytes.get(i)? != 0xFF {
+            return None;
+        }
+        let marker = *bytes.get(i + 1)?;
+        match marker {
+            // Fill bytes before a marker.
+            0xFF => i += 1,
+            // Markers without a segment.
+            0x01 | 0xD0..=0xD7 => i += 2,
+            0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF => {
+                let be = |at: usize| Some(u32::from(u16::from_be_bytes([*bytes.get(at)?, *bytes.get(at + 1)?])));
+                return Some((be(i + 7)?, be(i + 5)?));
+            }
+            // The end of the image or the scan before any frame header.
+            0xD9 | 0xDA => return None,
+            _ => {
+                let len = usize::from(u16::from_be_bytes([*bytes.get(i + 2)?, *bytes.get(i + 3)?]));
+                if len < 2 {
+                    return None;
+                }
+                i += 2 + len;
+            }
+        }
+    }
+}
+
+/// A PNG or a JPEG (by its first bytes: `\x89PNG` or `FF D8 FF`) decoded
+/// to RGBA8 within `bound`, the size checked from the header before any
+/// pixel is decoded. A JPEG is opaque (alpha 255).
+pub fn decode_image_within(bytes: &[u8], bound: ImageBound) -> Result<RgbaImage, String> {
+    if png_size(bytes).is_some() {
+        return decode_rgba_within(bytes, bound);
+    }
+    if !is_jpeg(bytes) {
+        return Err("not a PNG or JPEG".into());
+    }
+    let (w, h) = image_size(bytes).ok_or("a JPEG without a frame header")?;
+    check_size(w, h, bound)?;
+    let options = zune_core::options::DecoderOptions::default()
+        .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGB)
+        .set_max_width(w as usize)
+        .set_max_height(h as usize);
+    let mut dec = zune_jpeg::JpegDecoder::new_with_options(zune_core::bytestream::ZCursor::new(bytes), options);
+    let rgb = dec.decode().map_err(|e| format!("{e:?}"))?;
+    let info = dec.info().ok_or("a JPEG without a frame header")?;
+    if (u32::from(info.width), u32::from(info.height)) != (w, h) || rgb.len() != w as usize * h as usize * 3 {
+        return Err("decoded size mismatch".into());
+    }
+    let mut rgba = Vec::with_capacity(rgb.len() / 3 * 4);
+    for p in rgb.chunks_exact(3) {
+        rgba.extend_from_slice(&[p[0], p[1], p[2], 255]);
+    }
+    RgbaImage::from_raw(w, h, rgba).ok_or_else(|| "decoded size mismatch".into())
+}
+
 /// Encodes an 8-bit palette PNG. `palette` holds RGB triples; every index must be
 /// smaller than `palette.len() / 3`.
 pub fn encode_indexed(width: u32, height: u32, indices: &[u8], palette: &[u8]) -> Vec<u8> {
@@ -259,6 +328,38 @@ pub fn declared_png(width: u32, height: u32, indexed: bool) -> Vec<u8> {
 mod tests {
     use super::*;
     use olr_data::image::Rgba;
+
+    const TINY_JPG: &[u8] = include_bytes!("../tests/data/tiny.jpg");
+    const TRUNCATED_JPG: &[u8] = include_bytes!("../tests/data/truncated.jpg");
+
+    #[test]
+    fn decodes_png_and_jpeg() {
+        let png = encode_rgba(&RgbaImage::new(5, 2));
+        assert_eq!(image_size(&png), Some((5, 2)));
+        let img = decode_image_within(&png, IMAGES).unwrap();
+        assert_eq!((img.width(), img.height()), (5, 2));
+        assert_eq!(image_size(TINY_JPG), Some((4, 3)));
+        let img = decode_image_within(TINY_JPG, IMAGES).unwrap();
+        assert_eq!((img.width(), img.height()), (4, 3));
+        let p = img.get(1, 1);
+        assert!(p.r > 200 && p.g < 40 && p.b < 40 && p.a == 255, "{p:?}");
+    }
+
+    #[test]
+    fn a_hostile_image_is_refused_before_decoding() {
+        // A PNG declaring 100 000 × 100 000 (no pixel data).
+        let huge = declared_png(100_000, 100_000, false);
+        assert!(decode_image_within(&huge, IMAGES).unwrap_err().contains("100000"));
+        // A JPEG whose frame header declares 60 000 × 60 000: patch tiny.jpg's SOF0 size.
+        let mut big = TINY_JPG.to_vec();
+        let sof = big.windows(2).position(|w| w == [0xFF, 0xC0]).expect("baseline SOF0");
+        big[sof + 5..sof + 9].copy_from_slice(&[0xEA, 0x60, 0xEA, 0x60]);
+        assert_eq!(image_size(&big), Some((60_000, 60_000)));
+        assert!(decode_image_within(&big, IMAGES).is_err());
+        assert!(decode_image_within(TRUNCATED_JPG, IMAGES).is_err());
+        assert!(decode_image_within(b"GIF89a....", IMAGES).unwrap_err().contains("not a PNG or JPEG"));
+        assert_eq!(image_size(b"nope"), None);
+    }
 
     #[test]
     fn png_size_reads_the_header() {

@@ -53,6 +53,10 @@ libm = "0.2.16"
 serde_json = "1.0.151"
 # Exact: encoded PNG bytes are content (hashes).
 png = "=0.18.1"
+# JPEG originals for level composition (plan 14a): exact pins, already
+# locked through another dependency.
+zune-jpeg = { version = "=0.5.15", default-features = false, features = ["std"] }
+zune-core = "=0.5.3"
 flate2 = "1.1.10"
 sha2 = "0.11.0"
 hex = "0.4.3"
