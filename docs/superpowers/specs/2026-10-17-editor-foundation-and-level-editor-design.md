@@ -127,7 +127,9 @@ theme. For each world pixel:
 
 **The image pipeline** runs when an image element's settings change. Its
 result is cached until they change again: moving or reordering an element
-never reprocesses it. The steps:
+never reprocesses it. The cache (plan 14b ruling R3) keeps each original
+decoded once and each source's 4 most recently used grids, keyed by the
+box's art size and the pixelation. The steps:
 1. Decode the original (PNG; JPEG through one new, exactly pinned decoder).
 2. Resample into the element's pixel grid (box size × art scale ÷
    `pixel_size`) with an area filter.
@@ -299,7 +301,9 @@ composed level (§2).
   (`docs/superpowers/plans/2026-10-17-plan-14a-level-composition.md`;
   decisions in `docs/porting/STATUS.md`, "Level composition decisions").
 - **14b:** `olr-editor`: the framework and the level editor's state and
-  panels, all tested headless.
+  panels, all tested headless. Done
+  (`docs/superpowers/plans/2026-10-17-plan-14b-level-editor.md`; decisions
+  in `docs/porting/STATUS.md`, "Level editor decisions").
 - **14c:**
   - hosting in `olr-game`: the menu entry, the canvas, Play, the file
     browser, recovery;

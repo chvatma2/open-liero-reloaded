@@ -24,6 +24,9 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   baked: `olr-cli level element …` and `level bake`. PNG and JPEG pictures
   are pixelated, colour-reduced and dithered; `pack check` reports a bake
   that no longer matches its composition.
+- The level editor's core (`olr-editor`): elements, painting, spawns,
+  undo and redo, tested headless; the game hosts it in a later step.
+  Imported JPEG photos are turned by their EXIF orientation.
 
 ### Changed
 

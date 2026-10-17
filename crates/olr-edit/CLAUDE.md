@@ -44,9 +44,15 @@ templates and the level operations.
   non-empty `dir` or a template of another kind is refused before anything
   is written, and a failed save removes the directories it made (parents
   included).
-- **`level`** (R3), on a `LevelSource` in world pixels: `Shape` (`Rect`,
-  `Circle`; clipped to the level before iterating, in `i64`/`i128`, so a
-  huge or far shape costs at most the level and never overflows), `Paint`
+- **`level`** (R3), on a `LevelSource` in world pixels: `Rect` (a world
+  rectangle; `compose` re-exports it), `Shape` (`Rect`, `Circle`,
+  `Ellipse` and `Line` (plan 14b R10: by pixel centre, in doubled
+  coordinates, a line's distance compared in 256 bits); clipped to the
+  level before iterating, so a huge or far shape costs at most the level
+  and never overflows; `shape_bounds`), `draw_art`/`erase_art` (paint a
+  level-sized art layer in memory, opaque, returning the world rectangle;
+  `element::draw|erase` use them), `rescale_art` (nearest neighbour
+  between art scales), `Paint`
   (a colour, or a tile repeating from the art origin; composited over the
   art, so a transparent pixel leaves it; an empty tile paints nothing),
   `carve`, `fill`, `paint`, `stamp` (an image in art pixels at world ×
@@ -71,13 +77,23 @@ templates and the level operations.
     thumbnail; `compose_from` makes a plain level one raster element
     `base`; a hidden image is decoded (its errors) but not processed;
     `theme_back_tile(content, theme)` (linked pack directories count);
+    plan 14b: `Decoded` (an element's data decoded: an image's processed
+    grid, a drawn layer's art, a raster's material, front and back),
+    `decode_element`, `bake_elements` (the one bake, from decoded items;
+    data of a wrong size is left out, never a panic; `Baker` keeps
+    `(Element, Decoded)` pairs and calls it), `encode_decoded` (a drawn
+    or raster element's files), `resize_decoded` (`element::resize` uses
+    it), and `ImageCache` (originals decoded once within `ORIGINAL_PIXELS`,
+    4 grids per source by box art size and pixelation, entries
+    fingerprinted by their bytes; `Baker::new_cached` shares one);
     `stale(pack, tile)` lists
     the baked files that differ from the composition's bake.
   - **`element`**: `add_image` (`add_image_with` takes settings applied
     in the same step), `add_layer`, `set(Property)` (`set_all` for
     several, checked once), `remove`,
     `raise`, `lower`, `draw`, `erase`, `resize` (before `level::resize`),
-    `ensure_composed`. Each edits a copy and keeps it only when
+    `ensure_composed`; `new_element_id` and `new_source_name` (ruling R7
+    and R8 of 14a over plain data, for the editor). Each edits a copy and keeps it only when
     `check_composition` passes (`ElementError::BadValue`, prefixed with
     the edit's property or file only when the composition checked before
     it). A locked element refuses `set` (but `Locked`), `remove`, `draw`

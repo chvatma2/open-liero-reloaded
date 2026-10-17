@@ -151,7 +151,8 @@ content hash and never in an archive, so players download only the
 bake. The composition is the source of truth: `olr-cli pack check`
 reports a baked file that differs from what the composition bakes to,
 and `olr-cli level bake` rebakes it. The bake is integer arithmetic
-only, the same bytes on every platform.
+only, the same bytes on every platform. A JPEG original is turned by its
+EXIF orientation when baked; the file keeps its bytes.
 
 ### Meaning masks
 

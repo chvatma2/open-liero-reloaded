@@ -123,7 +123,9 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `MAX_COMPOSED_PIXELS` (256 Mi), every file present, originals' header
   size within `IMAGES`, layers' exact size (a raster's material the
   level's, others size × art scale). A missing file is an error on
-  `composition.ron`; a wrong size on the file itself.
+  `composition.ron`; a wrong size on the file itself. `check_elements(c,
+  size, art_scale)` is its metadata part without the files (the editor's
+  live check, plan 14b); `check_composition` calls it first.
 - **Themes** (`themes/`): `ThemeSource` is `theme.ron`, `holes/<i>.png` with
   `holes/<i>.mask.png`, `green_ball.png` with `green_ball.mask.png`,
   `stones/`, `misc/`, `front_tile.png` and `back_tile.png`. A stamp is a
@@ -162,7 +164,10 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   marker walk, every index checked); `decode_image_within` decodes either
   (JPEG through `zune-jpeg`, capped to the header's size, opaque RGBA) and
   refuses a JPEG with no end of image after its scan (zune would fill a
-  cut scan in grey). Test data in `tests/data/` (README).
+  cut scan in grey). A JPEG is turned by its EXIF `Orientation`
+  (`jpeg_orientation` reads IFD0 of the first Exif APP1, both byte orders,
+  every index checked; `orient` turns; plan 14b ruling R5); `image_size`
+  stays the stored frame's size. Test data in `tests/data/` (README).
 - **Tests** (`tests/`): `levels.rs`, `themes.rs`, `core_pack.rs` and
   `skins.rs` read every bundled pack in `content/packs` (format 5) and check
   it is canonical: written again, the same bytes. Unit tests in each module's files cover its checks. The

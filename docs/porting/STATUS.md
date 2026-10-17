@@ -78,6 +78,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Level, theme, skin and core-pack authoring formats (spec 2026-10-16 formats §§3-6): authoring types, canonical files, compile to the runtime structs, lift from them | — | `olr-format::{levels, themes, skins, core_pack, image_io}` | done (plan 13b); the packs' format (plan 13c) | `bundled_levels_survive_lift_write_read_and_compile`, `the_bundled_theme_survives_lift_write_read_and_compile`, `the_bundled_core_pack_survives_lift_write_read_and_compile`, `every_bundled_skin_draws_the_same` |
 | Pack tooling (spec 2026-10-16 formats §6): `olr-cli pack check\|fmt\|new`, the level operations and preview, the schema docs | — | `olr-edit`, `olr-cli` (`pack_cmd.rs`, `level_cmd.rs`), `xtask format-docs` | done (plan 13d) | `load_then_files_reproduces_every_bundled_pack`, `bundled_packs_are_canonical`, `the_background_invariant_holds_at_every_art_scale`, `every_guide_example_parses_and_is_canonical`, `format-docs` check step |
 | Level composition (spec 2026-10-17 editor §1-3, §7): `editor/composition.ron` of image, drawn and raster elements, baked into `material.png`, `front.png`, `back.png` and `thumb.png`; JPEG originals; `olr-cli level element …`, `level bake`, stale bakes in `pack check` | — | `olr-format` (`levels::composition`, `image_io::decode_image_within`), `olr-pack` (`is_authoring`), `olr-edit` (`pixelate`, `compose`, `element`), `olr-cli` (`element_cmd.rs`), `olr-detcheck --bake` | done (plan 14a) | `every_bundled_level_round_trips_through_a_raster_base`, `region_bakes_equal_the_full_bake_and_keep_the_invariant`, `editor_files_are_not_content`, `the_fixture_is_baked`, `cargo xtask determinism`'s bake digest |
+| Level editor core (spec 2026-10-17 editor §4-§5, §8): the document (elements decoded, an image cache, one bake), reversible edits and a 256 MiB history, the tools (select, brush, eraser, rectangle, ellipse, line, spawn, eyedropper), the panels and shortcuts, tested headless; the game hosts it in plan 14c | — | `olr-format` (`image_io::jpeg_orientation`, `levels::check_elements`), `olr-edit` (`level::{draw_art, erase_art, rescale_art, Shape::{Ellipse, Line}}`, `compose::{Decoded, ImageCache, bake_elements}`), `olr-editor` | done (plan 14b) | `undo_and_redo_restore_everything_exactly`, `every_operation_undoes_to_the_same_files`, `opening_and_saving_changes_nothing`, `art_painting_is_clipped_and_total`, `a_brush_stroke_is_one_step`, `locked_elements_are_not_changed_by_the_canvas`, `history_drops_the_oldest_steps_over_the_cap`, the `flows` tests |
 
 ## Deliberate deviations
 
@@ -3214,8 +3215,56 @@ reads, plays and saves exactly as before.
   measured bit-identical to the scalar decode on this machine (AVX2) for
   baseline, 4:2:0 and greyscale JPEGs. NEON is unverified: `cargo xtask
   determinism`'s arm64 leg compares the bake digest, but `olr-detcheck`
-  alone builds without those features. EXIF orientation is not applied:
-  a photo imports as its stored pixels.
+  alone builds without those features. EXIF orientation is applied at
+  decode since plan 14b (ruling R5 below).
+
+## Level editor decisions (plan 14b)
+
+Decided in `docs/superpowers/plans/2026-10-17-plan-14b-level-editor.md`
+and its batch reviews. Tools, not OLX behaviour.
+
+- **R1 - 14b's scope.** `olr-editor` holds the document, the history, the
+  tools, the panels, the shortcuts, New/Open/Save/Close with the
+  unsaved-changes dialog, and Play as a command. Plan 14c hosts it in
+  `olr-game` (the canvas drawn by `olr-present`), adds the file browser
+  (14b takes image and pack paths through actions), the 2-minute recovery
+  copy, the bundled-pack copy offer, `olr --edit` and the e2e script.
+- **R2 - the document works on decoded data.** Each element is kept
+  decoded (`olr_edit::compose::Decoded`); a dab changes a drawn layer in
+  memory and rebakes one world rectangle; PNGs are encoded only on save
+  (`Document::to_pack`). Opening rebakes from the elements; the thumbnail
+  is refreshed only when the bake differs from the stored one, so an
+  unedited composed pack saves byte-identical.
+- **R3 - the image cache.** `ImageCache` keeps each original decoded once
+  (at most `ORIGINAL_PIXELS`, 64 Mi, the least recently used dropped) and
+  each source's 4 most recently used processed grids, keyed by box art size
+  and pixelation. Entries carry their bytes' fingerprint, so bytes changed
+  under the same name are processed afresh. A move, a reorder or a
+  material change looks nothing up.
+- **R4 - locks protect content, not order.** A locked element refuses
+  property changes (except `Locked`), canvas moves and resizes, painting
+  and Delete; raise, lower and drag-to-reorder still work. Resize and art
+  scale, level-wide, change locked layers too.
+- **R5 - EXIF orientation is applied at decode** (`image_io::jpeg_orientation`,
+  `orient`): a JPEG turns by its `Orientation` (2-8); the original keeps
+  its bytes; `image_size` stays the stored frame's size.
+- **R6 - live diagnostics are cheap checks**: `check_elements` (the
+  composition's metadata), spawns outside the level, a level without
+  spawns (warnings). `pack::save` runs the full validation.
+- **R7 - pointer actions are in world pixels**; only the view (`View`)
+  maps screen points, with floats.
+- **R8 - a resize previews** its outline and applies on release (one
+  reprocess); a move is live (no reprocess, the old and new boxes
+  rebaked). Every action that can change the document ends a drag first,
+  so a drag's step is recorded against the document it changed.
+- **R9 - Play defaults**: `olx-classic` and 1 bot (0-8), remembered in
+  `EditorSettings` (the host stores them).
+- **R10 - shapes.** `Shape::Ellipse` covers a pixel by its centre;
+  `Shape::Line` covers centres within `width / 2` of the segment (an even
+  width covers `width + 1` across, as a circle of radius `width / 2`).
+  Both are integer, in doubled coordinates (a line's distance compared in
+  256 bits), clipped to the level before iterating. A brush stroke is dabs
+  joined by lines of the brush's width.
 
 ## Kept OLX quirks
 
