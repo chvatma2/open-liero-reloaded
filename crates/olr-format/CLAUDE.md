@@ -101,7 +101,8 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `LevelObject::Spawn` is the only object; the runtime does not read it
   (spawns are `FindSpot`'s). Bounds: `MAX_SIDE` (4096), `MAX_ART_SCALE` (8),
   `MAX_OBJECTS` (4096); a material or art size that does not match is an
-  error. Art decodes within `image_io::LEVEL_ART`.
+  error. Art decodes within `image_io::LEVEL_ART`. `encode_material` is
+  `material.png`'s encoding, shared with a raster element's.
 - **Level composition** (`levels/composition.rs`, plan 14a): `Composition`
   is `editor/composition.ron` (`COMPOSITION_FILE`; `EDITOR_DIR` is
   `editor`), its `Element`s bottom to top (`id` a `valid_id` slug, `name`,
@@ -109,13 +110,16 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   pixel_size, colours, dither, alpha_threshold } | Drawn { material } |
   Raster`). `CompositionSource` adds the files' bytes by pack path
   (`image_file`, `layer_file`, `raster_files`, `element_files`,
-  `composition_paths`). `read_composition_files` gives `None` without the
+  `composition_paths`). `read_composition` reads `composition.ron` alone
+  (`olr-cli level element list`, `validate`'s read paths);
+  `read_composition_files` gives `None` without the
   file, refuses more than `MAX_ELEMENTS` before reading any element file
-  and a missing file; `write_composition_files` writes only the files the
-  elements name. `check_composition(src, size, art_scale)` checks without
+  and a missing file; `write_composition_files` refuses a bad id or source
+  before writing anything, then writes only the files the elements name. `check_composition(src, size, art_scale)` checks without
   decoding pixels: count, ids (valid, unique, their layer files unshared
   and portable), image fields (`MAX_SIDE`, `MAX_PIXEL_SIZE`, colours 2-256,
-  the box's art within `LEVEL_ART`), the elements' pixels together within
+  the box's art within `LEVEL_ART`, sources unique case aside), the
+  elements' pixels together within
   `MAX_COMPOSED_PIXELS` (256 Mi), every file present, originals' header
   size within `IMAGES`, layers' exact size (a raster's material the
   level's, others size × art scale). A missing file is an error on

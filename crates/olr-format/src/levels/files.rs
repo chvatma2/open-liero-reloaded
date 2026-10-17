@@ -6,8 +6,8 @@ use olr_vfs::{ContentSink, ContentSource, VPath};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BACK_FILE, FRONT_FILE, LEVEL_FILE, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE,
-    MATERIAL_PALETTE, MAX_THUMB_BYTES, THUMB_FILE, check, check_header, check_thumb,
+    BACK_FILE, FRONT_FILE, LEVEL_FILE, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_THUMB_BYTES,
+    THUMB_FILE, check, check_header, check_thumb,
 };
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, LEVEL_ART};
@@ -76,12 +76,7 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
         objects: src.objects.clone(),
     };
     write_text(sink, LEVEL_FILE, &to_canonical(LEVEL_FILE, &file)?)?;
-    let indices: Vec<u8> = src.material.iter().map(|m| *m as u8).collect();
-    write_bytes(
-        sink,
-        MATERIAL_FILE,
-        &image_io::encode_indexed(src.size.0, src.size.1, &indices, &MATERIAL_PALETTE),
-    )?;
+    write_bytes(sink, MATERIAL_FILE, &super::encode_material(src.size, &src.material))?;
     write_bytes(sink, FRONT_FILE, &image_io::encode_rgba(&src.front))?;
     write_bytes(sink, BACK_FILE, &image_io::encode_rgba(&src.back))?;
     if let Some(t) = &src.thumb {

@@ -45,6 +45,15 @@ pub const MAX_THUMB_BYTES: u64 = 1 << 20;
 /// image). `olr-pack` re-exports it.
 pub const MAX_THUMB_SIDE: u32 = 512;
 
+/// `material` (`size`, row-major) as `material.png` holds it: an 8-bit
+/// palette PNG of `MATERIAL_PALETTE`, indexed by `Material as u8`. The
+/// writer and a raster element's material (`olr_edit::compose`) share it,
+/// so a level composed of its raster base bakes back to its own bytes.
+pub fn encode_material(size: (u32, u32), material: &[Material]) -> Vec<u8> {
+    let indices: Vec<u8> = material.iter().map(|m| *m as u8).collect();
+    crate::image_io::encode_indexed(size.0, size.1, &indices, &MATERIAL_PALETTE)
+}
+
 /// What `level.ron` alone says, read without touching any image.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LevelHeader {

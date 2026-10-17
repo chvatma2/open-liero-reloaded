@@ -211,9 +211,9 @@ fn too_many(n: usize) -> Option<FormatError> {
     })
 }
 
-/// `None` when the pack has no `editor/composition.ron`. Reads every
-/// referenced file (at most `MAX_FILE_BYTES` each); refuses a missing one.
-pub fn read_composition_files(src: &dyn ContentSource) -> Result<Option<CompositionSource>, FormatError> {
+/// `editor/composition.ron` alone, without its elements' files: `None`
+/// when the pack has none; more than `MAX_ELEMENTS` is an error.
+pub fn read_composition(src: &dyn ContentSource) -> Result<Option<Composition>, FormatError> {
     let path = VPath::new(COMPOSITION_FILE).map_err(|e| io(COMPOSITION_FILE, e.to_string()))?;
     if !src.exists(&path) {
         return Ok(None);
@@ -222,6 +222,13 @@ pub fn read_composition_files(src: &dyn ContentSource) -> Result<Option<Composit
     if let Some(e) = too_many(composition.elements.len()) {
         return Err(e);
     }
+    Ok(Some(composition))
+}
+
+/// `None` when the pack has no `editor/composition.ron`. Reads every
+/// referenced file (at most `MAX_FILE_BYTES` each); refuses a missing one.
+pub fn read_composition_files(src: &dyn ContentSource) -> Result<Option<CompositionSource>, FormatError> {
+    let Some(composition) = read_composition(src)? else { return Ok(None) };
     let mut files = BTreeMap::new();
     for e in &composition.elements {
         for file in element_files(e) {
@@ -247,13 +254,23 @@ pub fn write_composition_files(
     sink: &mut dyn ContentSink,
     src: &CompositionSource,
 ) -> Result<(), FormatError> {
-    // Ids name files: a bad one is refused before anything is written.
+    // Ids and sources name files: a bad one is refused before anything
+    // is written.
     for (i, e) in src.composition.elements.iter().enumerate() {
         if !crate::mods::valid_id(&e.id) {
             return Err(FormatError::invalid(
                 COMPOSITION_FILE,
                 &format!("elements[{i}].id"),
                 format!("{:?} is not a valid id", e.id),
+            ));
+        }
+        if let ElementKind::Image { source, .. } = &e.kind
+            && !valid_source(source)
+        {
+            return Err(FormatError::invalid(
+                COMPOSITION_FILE,
+                &format!("elements[{i}].source"),
+                format!("{source:?} is not one portable file name ending .png, .jpg or .jpeg"),
             ));
         }
     }
@@ -295,6 +312,8 @@ pub fn check_composition(
     let art = (size.0.saturating_mul(art_scale), size.1.saturating_mul(art_scale));
     let mut ids = BTreeSet::new();
     let mut layers = BTreeMap::new();
+    // Each original's name folded to lowercase, with its spelling.
+    let mut sources: BTreeMap<String, &str> = BTreeMap::new();
     let mut pixels = 0u64;
     let art_pixels = u64::from(art.0) * u64::from(art.1);
     for (i, e) in elements.iter().enumerate() {
@@ -312,6 +331,15 @@ pub fn check_composition(
                     "source",
                     format!("{source:?} is not one portable file name ending .png, .jpg or .jpeg"),
                 ));
+            }
+            match sources.insert(source.to_ascii_lowercase(), source) {
+                Some(other) if other != source => {
+                    return Err(bad(
+                        "source",
+                        format!("{source:?} and {other:?} differ only in case: one file on some systems"),
+                    ));
+                }
+                _ => {}
             }
             if !(1..=MAX_SIDE).contains(&size.0) || !(1..=MAX_SIDE).contains(&size.1) {
                 return Err(bad("size", format!("{}x{}: each side 1 to {MAX_SIDE}", size.0, size.1)));
@@ -388,7 +416,7 @@ fn check_file(file: &str, bytes: &[u8], expected: Option<((u32, u32), &str)>) ->
     };
     let (w, h) = image_io::png_size(bytes).ok_or_else(|| invalid("not a PNG".into()))?;
     if (w, h) != (ew, eh) {
-        return Err(invalid(format!("{file} is {w}x{h}, {what} is {ew}x{eh}")));
+        return Err(invalid(format!("{w}x{h}, {what} is {ew}x{eh}")));
     }
     Ok(())
 }
@@ -575,6 +603,62 @@ mod tests {
         s.composition.elements.push(Element { id: "e4".into(), ..one });
         let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
         assert!(e.contains("elements[4]") && e.contains("pixels"), "{e}");
+    }
+
+    /// Deferred minors: two originals whose names differ only in case
+    /// would be one file on Windows and macOS.
+    #[test]
+    fn sources_alike_but_for_case_are_refused() {
+        let mut s = sample();
+        let mut e = s.composition.elements[1].clone();
+        e.id = "sky2".into();
+        if let ElementKind::Image { source, .. } = &mut e.kind {
+            *source = "SKY.png".into();
+        }
+        s.files.insert(image_file("SKY.png"), image_io::encode_rgba(&RgbaImage::new(2, 2)));
+        s.composition.elements.push(e.clone());
+        let err = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(err.contains("elements[3].source") && err.contains("case"), "{err}");
+        // The same original twice is one file: allowed.
+        if let ElementKind::Image { source, .. } = &mut s.composition.elements[3].kind {
+            *source = "sky.png".into();
+        }
+        check_composition(&s, (4, 3), 2).unwrap();
+    }
+
+    /// Deferred minors: a source that is no portable file name is refused
+    /// before anything is written.
+    #[test]
+    fn write_refuses_a_bad_source_before_writing() {
+        let mut s = sample();
+        if let ElementKind::Image { source, .. } = &mut s.composition.elements[1].kind {
+            *source = "a/b.png".into();
+        }
+        let mut fs = MemFs::new();
+        let e = write_composition_files(&mut fs, &s).unwrap_err().to_string();
+        assert!(e.contains("elements[1].source"), "{e}");
+        assert_eq!(fs.files().count(), 0);
+    }
+
+    /// Deferred minors: a size error names its file once.
+    #[test]
+    fn a_size_error_names_its_file_once() {
+        let mut s = sample();
+        s.files.insert(layer_file("ground"), image_io::encode_rgba(&RgbaImage::new(4, 3)));
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert_eq!(e.matches("editor/layers/ground.png").count(), 1, "{e}");
+    }
+
+    /// `read_composition` reads `composition.ron` alone: a missing element
+    /// file is not its concern.
+    #[test]
+    fn read_composition_reads_the_text_alone() {
+        let mut fs = MemFs::new();
+        let mut src = sample();
+        src.files.remove(&layer_file("ground"));
+        write_composition_files(&mut fs, &src).unwrap();
+        assert_eq!(read_composition(&fs).unwrap(), Some(src.composition));
+        assert_eq!(read_composition(&MemFs::new()).unwrap(), None);
     }
 
     /// Spec §2: an image's processed art (its box × art scale) is within
