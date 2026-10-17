@@ -259,7 +259,9 @@ fn a_decompression_bomb_is_refused_on_import_and_load() {
     std::fs::write(out.path().join("olx-tiny-mod/gfx/bomb.png"), &bomb).unwrap();
     let c = Content::open(out.path()).unwrap();
     let e = format!("{:#}", c.load_skin("olx-skin-default").unwrap_err());
-    assert!(e.contains("above"), "{e}");
+    // The skin reader compares the header with the layout first (plan 13c
+    // fix wave): refused from the header either way.
+    assert!(e.contains("layout needs") && e.contains("12000x12000"), "{e}");
     let m = c.load_mod("olx-tiny-mod").unwrap();
     assert!(m.warnings.iter().any(|w| w.contains("bomb.png") && w.contains("above")), "{:?}", m.warnings);
 }
