@@ -118,7 +118,6 @@ impl Fetcher {
                 None => missing.push(it.clone()),
             }
         }
-        missing.sort_by_key(|i| !i.required); // stable: list order within
         self.cached = cached;
 
         // The transfer goes on only for the same item from the same source.
@@ -525,8 +524,7 @@ mod tests {
     }
 
     /// Review Minor 2: what any fetcher on a cache lists is kept by every
-    /// eviction and trim of that cache (a host's member-skin fetchers, a
-    /// client's, both `--net-sim` peers'), not only by the fetcher's own;
+    /// eviction and trim of that cache (a client's, both `--net-sim` peers'), not only by the fetcher's own;
     /// a fetcher dropped keeps nothing.
     #[test]
     fn every_fetchers_list_is_kept() {
@@ -534,7 +532,7 @@ mod tests {
         let mut other = Fetcher::new(s.cache.clone());
         let mut first = Fetcher::new(s.cache.clone());
         first.list(SRC, &[item('a', ItemKind::Level, 10, true)], &s.local);
-        other.list(SRC + 1, &[item('b', ItemKind::Skin, 10, false)], &s.local);
+        other.list(SRC + 1, &[item('b', ItemKind::Mod, 10, true)], &s.local);
         {
             let mut c = s.cache.lock().unwrap();
             for h in ['a', 'b', 'c'] {
@@ -549,19 +547,14 @@ mod tests {
     }
 
     #[test]
-    fn required_items_come_first_and_skins_after() {
+    fn items_are_fetched_in_list_order() {
         let mut s = setup();
-        let mut unknown = item('d', ItemKind::Skin, 10, false);
+        let mut unknown = item('d', ItemKind::Level, 10, true);
         unknown.hash = NO_HASH.into();
-        let items = [
-            item('a', ItemKind::Skin, 10, false),
-            item('b', ItemKind::Level, 10, true),
-            unknown,
-            item('c', ItemKind::Mod, 10, true),
-        ];
+        let items = [item('b', ItemKind::Level, 10, true), unknown, item('c', ItemKind::Mod, 10, true)];
         let missing = s.fetcher.list(SRC, &items, &s.local);
         let order: Vec<&str> = missing.iter().map(|i| i.id.as_str()).collect();
-        assert_eq!(order, ["pack-b", "pack-c", "pack-a"]);
+        assert_eq!(order, ["pack-b", "pack-c"]);
         assert_eq!(s.fetcher.missing_required(), ["pack-b", "pack-c"]);
         assert_eq!(s.poll(0), vec![want('b', 0)]);
         // Unavailable: that item is given up, the next one starts.
@@ -583,13 +576,6 @@ mod tests {
             assert!(matches!(s.state('a'), DownloadState::Failed(_)), "{size} {offset}");
             assert_eq!(s.poll(10), vec![(SRC, ContentMsg::Cancel { hash: sha('a') })]);
         }
-        // A skin's archive is held to the skin limit.
-        let mut s = setup();
-        let big = olr_content::MAX_SKIN_ARCHIVE + 1;
-        s.fetcher.list(SRC, &[item('a', ItemKind::Skin, big, false)], &s.local);
-        s.poll(0);
-        s.send(begin('a', 'f', big, 0));
-        assert!(matches!(s.state('a'), DownloadState::Failed(_)));
     }
 
     #[test]
@@ -724,7 +710,7 @@ mod tests {
         // one alone, its number unchanged while the others download.
         s.fetcher.approve();
         let mut more = items.to_vec();
-        more.push(item('c', ItemKind::Skin, 10, false));
+        more.push(item('c', ItemKind::Mod, 10, true));
         s.fetcher.list(SRC, &more, &s.local);
         assert_eq!(s.fetcher.waiting_approval(), None);
         more.push(item('d', ItemKind::Theme, 101, true));

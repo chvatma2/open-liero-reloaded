@@ -67,8 +67,7 @@ pub enum OnlineEvent {
     /// [`crate::GameBundle`] for the game to save; at most
     /// [`crate::bundle::MAX_BUNDLES_PER_MATCH`] a match.
     DesyncBundle(Vec<u8>),
-    /// The content downloads changed (a client's from its host, a host's
-    /// skins from its members): every item, at most every
+    /// The content downloads changed (a client's from its host): every item, at most every
     /// [`crate::content::REPORT_EVERY_US`] (4 a second).
     Downloads(Vec<Download>),
     /// The content this client lacks is more than the prompt's bytes

@@ -27,16 +27,8 @@ pub const PEER_RATE: u64 = 2 << 20;
 pub const HOST_RATE: u64 = 4 << 20;
 /// Bytes per second a host sends in all while a match starts or runs.
 pub const MATCH_RATE: u64 = 256 << 10;
-/// Bytes per second a client sends serving its own skin.
-pub const SKIN_RATE: u64 = 128 << 10;
 /// Bytes a peer's outbox may hold before it gets more chunks.
 pub const QUEUED: usize = 256 << 10;
-/// A host starts at most one new skin fetch from a member this often
-/// (review C2: a member cycling skins cannot cycle installs).
-pub const SKIN_FETCH_EVERY_US: u64 = 5_000_000;
-/// A host starts at most this many member-skin fetches a minute, all
-/// members together (review R2).
-pub const SKIN_FETCHES_PER_MINUTE: usize = 12;
 /// A source that sends no chunk for this long is asked again once, then
 /// the download fails.
 pub const SILENCE_US: u64 = 10_000_000;
@@ -47,12 +39,10 @@ pub fn pack_kind(kind: ItemKind) -> PackKind {
         ItemKind::Mod => PackKind::Mod,
         ItemKind::Level => PackKind::Level,
         ItemKind::Theme => PackKind::Theme,
-        ItemKind::Skin => PackKind::Skin,
     }
 }
 
-/// The largest archive of a content item: `MAX_SKIN_ARCHIVE` for a skin,
-/// `olr_pack::archive::MAX_ARCHIVE` otherwise (`archive_limits(..).bytes`).
+/// The largest archive of a content item (`archive_limits(..).bytes`).
 pub fn archive_limit(kind: ItemKind) -> u64 {
     archive_limits(pack_kind(kind)).bytes
 }

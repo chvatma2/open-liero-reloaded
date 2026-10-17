@@ -354,7 +354,7 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
       the wait), the old endpoint shuts down on a thread, the attempt's
       endpoint and lobby client are the peer's, `rehost(HOST)`, the
       content follows the new host (`ContentSide::host_changed`:
-      `source_left`, its skin offered again); at `Resumed`,
+      `source_left`); at `Resumed`,
       `Migrated { host, me: false }` and the new link's `Connected`.
     - **`Host`** (its turn): the gate opens over a `LobbyHost::migrated`
       (the client lobby's state and succession, the start's member ids,
@@ -544,9 +544,8 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
   bundles in the directory, the oldest removed; other files untouched).
 - **`content/`** (plan 11, N32): pack downloads over `TAG_CONTENT`,
   sans-IO (time is `now_us`). `PROMPT_BYTES`, the rates (`PEER_RATE`,
-  `HOST_RATE`, `MATCH_RATE`, `SKIN_RATE`), `QUEUED`, `SILENCE_US` (10 s);
-  `pack_kind(ItemKind)`, `archive_limit` (`MAX_SKIN_ARCHIVE` for skins,
-  else `MAX_ARCHIVE`: `olr_content::archive_limits(kind).bytes`; an
+  `HOST_RATE`, `MATCH_RATE`), `QUEUED`, `SILENCE_US` (10 s);
+  `pack_kind(ItemKind)`, `archive_limit` (`olr_content::archive_limits(kind).bytes`; an
   install is held to the whole `archive_limits`).
   - `serve.rs`, `Server::new(rate)`: `offer(hash, Arc<PackArchive>)`,
     `withdraw`, `receive(peer, Want|Cancel)`, `peer_left`, `poll(now_us,
@@ -565,8 +564,8 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
     sending bounds them.
   - `fetch.rs`, `Fetcher::new(Arc<Mutex<DownloadCache>>)`: `list(source,
     items, local)` returns the missing items (not in `local` by
-    `Content::has`, not in the cache; `NO_HASH` never fetched), required
-    first, skins after; a transfer the new list drops gets `Cancel` (its
+    `Content::has`, not in the cache; `NO_HASH` never fetched), in list order
+    (every item is required); a transfer the new list drops gets `Cancel` (its
     partial stays; the same hash listed with another size is cancelled,
     its partial discarded, and fetched afresh); a `Failed` item is tried
     again at each new list (`Unavailable` stays). Items not approved before
@@ -605,45 +604,28 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
     over the prompt. The content of matches is this peer's packs with the
     downloaded ones laid over (`Content::with_packs`, their verified
     hashes remembered).
-    - **Host**: the list is the setup's packs (required) and every
-      member's and bot's skin it has, once by hash and once by id (the
-      first: a match loads skins by id, so another of the id is never
-      shown; review Minor 1) (a bot's skin as the
-      host has it, ruling R6-2), each listed once archived; no list
-      goes out until every required item is archived (one that cannot be
-      is listed with size 0 and refused when asked). A changed list goes
-      to every member, the current one to each joiner after its
-      `Welcome`; each list has a revision (1, then one more per change
-      of its required items: a skin change keeps it, as `Have` names
-      required items only) given to the lobby (`set_content_revision`),
-      so a member is lacking (not ready, waiting at a start) until its
-      `Have` answers the current list. The host lists an optional item
-      never under a required id or one of its packs of another kind
-      (`may_list`); it fetches or lays over one only when it has no pack
-      of that id at all (`may_take`; ruling PF11-5: local packs win, so a
-      member's other `olx-skin-default` is drawn as this peer's own). An
-      offer its member no longer wears is dropped, fetched skins the list
-      no longer names are forgotten, and progress is kept only for what
-      the list names. Served at `upload_rate`, `MATCH_RATE` while the phase is
-      `Starting`/`Playing`. `Member::download` from the archive bytes sent
-      to each member of what its `Have` names (queued, not delivered; a
-      `Want` from an offset starts its count there). The list is built
-      again only when the lobby's revision or what it is made of changed
-      (worker results, offers, fetched skins, peers leaving). A member offers its own
-      skin with a one-item `List` (ruling R6-1: id and hash its look's);
-      a skin the host lacks is fetched from that member (one fetch per
-      hash; a new fetch from one member's address at most every
-      `SKIN_FETCH_EVERY_US`, 5 s, kept that long after it leaves, and at
-      most `SKIN_FETCHES_PER_MINUTE` (12) for all members together: an
-      offer waits, and only the look worn then counts; a dropped,
-      refused or failed offer's partial is discarded), installed, then listed and served to the others. Its own
-      look's skin hash is filled from its content.
+    - **Host**: the list is the setup's packs, all required; skins never
+      travel (plan 13c, ruling N31 removed: a skin is matched by id and
+      hash, by `olr-game`). Each item is listed once archived; no list
+      goes out until every item is archived (one that cannot be is listed
+      with size 0 and refused when asked). A changed list goes to every
+      member, the current one to each joiner after its `Welcome`; each
+      list has a revision (1, then one more per change) given to the
+      lobby (`set_content_revision`), so a member is lacking (not ready,
+      waiting at a start) until its `Have` answers the current list.
+      Progress is kept only for what the list names. A member's `List`
+      (what a 0.1 client offered) and its `Begin`/`Chunk`/`Unavailable`
+      are ignored: only `Want` and `Cancel` count. Served at
+      `upload_rate`, `MATCH_RATE` while the phase is `Starting`/`Playing`.
+      `Member::download` from the archive bytes sent to each member of
+      what its `Have` names (queued, not delivered; a `Want` from an
+      offset starts its count there). The list is built again only when
+      the lobby's revision or what it is made of changed (worker results,
+      peers leaving). Its own look's skin hash is filled from its content.
     - **Client**: its look's skin hash filled once hashed (in `Hello`
-      when it comes first, else a `SetLook`); its skin's archive offered
-      to the host and served at `SKIN_RATE` (that hash only). A host's
-      `List` goes to its `Fetcher` (its own content and the cache; its
-      optional items that `may_take` refuses are dropped: under a
-      required id or an id it has a pack of), then `Have {
+      when it comes first, else a `SetLook`): the hash is the key other
+      peers match the skin by; the skin is never offered. A host's `List`
+      goes to its `Fetcher` (its own content and the cache), then `Have {
       revision, missing: missing_required }` after every list and whenever
       that changes; installs are routed to `Fetcher::finished`.
   - `worker.rs`, `Worker::start(cache)` (`None`: installs fail): one thread (`olr-online-content`)
@@ -830,9 +812,9 @@ Content (each peer a cache in a temporary directory; `common::
 partial_content` copies the match's packs but some, `with_test_skin`
 adds a skin pack of another hash): a client without the level, or the mod,
 downloads it (reports coalesced, ending in `Done`), is ready, plays and
-makes the host's replay; a member's skin the host lacks travels through
-the host to another client; a skin change keeps every ready player
-ready; a member's skin pack under the level's id
+makes the host's replay; a member's skin the host lacks never
+travels (only its look does); a member joining with a skin keeps every
+ready player ready; a member's skin pack under the level's id
 is never fetched or listed, and the host's match still builds; another
 pack's archive served for the level
 fails after one retry, the client stays, not ready, lacking it; a
@@ -909,9 +891,7 @@ item retried once a list, the prompt counting only the bytes still to
 download of items not approved. `worker.rs`' unit test: a panicking job
 (a `#[cfg(test)]` hook in `run`) fails and the next job completes.
 `peer_side.rs`' unit tests: a list waits for the worker's hashes (nothing
-hashed on the caller's thread); a list's optional items under a required
-id or a local pack of another kind are refused; `Want`s for unlisted
-hashes keep no progress; an offer its member no longer wears is dropped
-and the list rests; a skin under a local id is neither fetched by a
-client nor by a host (PF11-5); an outbox that never drains holds at most
+hashed on the caller's thread); `Want`s for unlisted
+hashes keep no progress; the host ignores a member's skin `List` (no
+fetch, no download, the list its setup's packs only); an outbox that never drains holds at most
 `QUEUED` of content.

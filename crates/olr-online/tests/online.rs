@@ -675,10 +675,10 @@ fn a_client_without_the_mod_downloads_it() {
     downloads_and_plays(MOD);
 }
 
-/// N31: a member's skin the host lacks is fetched from that member, then
-/// served to the others (never required).
+/// Plan 13c: a member's skin the host lacks is never fetched or listed:
+/// only its look (id and hash) travels, and nobody lays the pack over.
 #[test]
-fn a_skin_travels_through_the_host() {
+fn a_skin_never_travels() {
     let Some(content) = content() else { return };
     let (dir, _) = partial_content(&[]);
     let anna_content = with_test_skin(dir.path());
@@ -690,29 +690,31 @@ fn a_skin_travels_through_the_host() {
     let a = net.join_with(identity(), anna, anna_content, None);
     let b = net.join("Bert");
     let a_key = net.peers[a].key;
-    net.run_until(Duration::from_secs(15), "Bert has Anna's skin", |n| {
-        reported_state(&n.peers[b], TEST_SKIN) == Some(DownloadState::Done)
+    net.run_until(Duration::from_secs(15), "the host knows Anna's look", |n| {
+        member_of(n, a_key).is_some_and(|m| m.look.skin_hash == skin_hash)
     });
-    assert!(in_cache(&net.peers[0], &skin_hash), "the host fetched it from Anna");
-    assert!(in_cache(&net.peers[b], &skin_hash), "Bert's cache holds it");
-    assert!(
-        net.host()
-            .peer()
-            .downloads()
-            .iter()
-            .any(|d| d.item.hash == skin_hash && d.state == DownloadState::Done)
-    );
+    // Long enough for a fetch of a few KB, had it started.
+    let until = Instant::now() + Duration::from_millis(1500);
+    while Instant::now() < until {
+        net.poll();
+        std::thread::sleep(Duration::from_millis(2));
+    }
     let look = member_of(&mut net, a_key).unwrap().look;
     assert_eq!((look.skin.as_str(), look.skin_hash.as_str()), (TEST_SKIN, skin_hash.as_str()), "Anna's look");
-    // A skin never makes anyone lack content.
+    assert!(!in_cache(&net.peers[0], &skin_hash), "the host did not fetch it");
+    assert!(!in_cache(&net.peers[b], &skin_hash), "Bert did not either");
+    assert!(net.host().peer().downloads().is_empty());
+    assert!(reported(&net.peers[b]).iter().all(|d| d.item.hash != skin_hash), "never listed");
+    assert!(net.peers[b].peer().content().pack_dir(TEST_SKIN).is_none(), "Bert does not have it");
     let host_state = net.host().peer().lobby().state().unwrap().clone();
-    assert!(host_state.members.iter().all(|m| m.missing.is_empty()));
-    assert!(net.peers[b].peer().content().pack_dir(TEST_SKIN).is_some(), "Bert draws it");
+    assert!(
+        host_state.members.iter().all(|m| m.missing.is_empty()),
+        "a skin never makes anyone lack content"
+    );
 }
 
-/// A change to the list's skins alone (a member joins with a skin the
-/// host fetches, then lists) asks no one to answer again: a ready player
-/// stays ready all along, and the match starts.
+/// A member joining with a skin (never fetched) asks no one to answer
+/// again: a ready player stays ready all along, and the match starts.
 #[test]
 fn a_skin_change_keeps_everyone_ready() {
     let Some(content) = content() else { return };
@@ -727,8 +729,10 @@ fn a_skin_change_keeps_everyone_ready() {
     let mut bert = look("Bert");
     bert.skin = TEST_SKIN.into();
     let b = net.join_with(identity(), bert, skinned, None);
-    net.run_until(Duration::from_secs(15), "the host lists Bert's skin", |n| {
-        reported_state(&n.peers[a], TEST_SKIN) == Some(DownloadState::Done)
+    let b_key = net.peers[b].key;
+    net.run_until(Duration::from_secs(15), "the host knows Bert's look", |n| {
+        member_of(n, b_key).is_some_and(|m| m.look.skin == TEST_SKIN)
+            && n.peers[b].peer().lobby().state().is_some()
     });
     let lobbies: Vec<bool> = net.host().events[ready_from..]
         .iter()
@@ -739,7 +743,6 @@ fn a_skin_change_keeps_everyone_ready() {
         .collect();
     assert!(!lobbies.is_empty() && lobbies.iter().all(|&r| r), "Anna stayed ready: {lobbies:?}");
     net.peers[b].peer().lobby().set_spectate(true);
-    let b_key = net.peers[b].key;
     net.run_until(Duration::from_secs(10), "Bert watches", |n| {
         member_of(n, b_key).is_some_and(|m| m.seat == SeatWire::Spectator)
     });

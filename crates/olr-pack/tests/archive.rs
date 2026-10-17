@@ -185,7 +185,11 @@ fn every_committed_pack_round_trips() {
         archive::decode(&mut a.as_slice(), &mut out, &archive::Limits::PACK).unwrap();
         assert_eq!(olr_pack::content_hash(&src).unwrap(), olr_pack::content_hash(&out).unwrap(), "{name}");
         if name == "olx-skin-default" {
-            assert!(a.len() <= 64 * 1024, "{name} archive is {} bytes: N31's skin limit is wrong", a.len());
+            assert!(
+                a.len() <= 64 * 1024,
+                "{name} archive is {} bytes: the skin archive limit is wrong",
+                a.len()
+            );
         }
     }
 }

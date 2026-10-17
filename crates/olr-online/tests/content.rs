@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use olr_content::{Content, DownloadCache, MAX_SKIN_ARCHIVE};
+use olr_content::{Content, DownloadCache};
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::{Level, LevelDef, Material, MaterialGrid};
 use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
@@ -24,7 +24,6 @@ const ROOM: usize = 1 << 20;
 fn archive_limits_agree() {
     // Ruling PF11-1: olr-proto restates olr-pack's limits.
     assert_eq!(olr_proto::MAX_ARCHIVE_BYTES, olr_pack::archive::MAX_ARCHIVE);
-    assert_eq!(olr_proto::MAX_SKIN_BYTES, MAX_SKIN_ARCHIVE);
 }
 
 fn manifest(id: &str) -> PackManifest {

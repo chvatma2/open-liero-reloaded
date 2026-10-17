@@ -640,8 +640,7 @@ impl OnlinePeer {
         self.content.content()
     }
 
-    /// The content downloads: a client's from its host, a host's skins
-    /// from its members.
+    /// The content downloads: a client's from its host (a host has none).
     pub fn downloads(&self) -> Vec<Download> {
         self.content.downloads()
     }
@@ -744,13 +743,10 @@ impl OnlinePeer {
                         Err(_) => self.drop_peer(peer),
                     },
                     Some(Tagged::Content(b)) => match decode_content(b) {
-                        // Only members fetch and offer content.
+                        // Only members fetch content.
                         Ok(msg) => {
-                            let look = h.lobby.member_of(peer).and_then(|id| {
-                                h.lobby.state().members.iter().find(|m| m.id == id).map(|m| m.look.clone())
-                            });
-                            if look.is_some() {
-                                self.content.receive(peer, msg, look.as_ref());
+                            if h.lobby.member_of(peer).is_some() {
+                                self.content.receive(peer, msg);
                             }
                         }
                         Err(_) => self.drop_peer(peer),
@@ -813,7 +809,7 @@ impl OnlinePeer {
                             .end_with(OnlineEvent::Disconnected("the host sent a malformed message".into())),
                     },
                     Some(Tagged::Content(b)) => match decode_content(b) {
-                        Ok(msg) => self.content.receive(HOST, msg, None),
+                        Ok(msg) => self.content.receive(HOST, msg),
                         Err(_) => self
                             .end_with(OnlineEvent::Disconnected("the host sent a malformed message".into())),
                     },
