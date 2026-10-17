@@ -23,6 +23,11 @@ pub const COMPOSITION_FILE: &str = "editor/composition.ron";
 pub const MAX_ELEMENTS: usize = 256;
 /// The largest `pixel_size` of an image element.
 pub const MAX_PIXEL_SIZE: u32 = 64;
+/// The most pixels a composition's elements decode to together (each
+/// image's element grid, each drawn layer, each raster's front, back and
+/// material): four times `LEVEL_ART`'s pixels, 256 Mi. A bake holds them
+/// all at once.
+pub const MAX_COMPOSED_PIXELS: u64 = 4 * LEVEL_ART.max_pixels;
 
 fn yes() -> bool {
     true
@@ -290,6 +295,8 @@ pub fn check_composition(
     let art = (size.0.saturating_mul(art_scale), size.1.saturating_mul(art_scale));
     let mut ids = BTreeSet::new();
     let mut layers = BTreeMap::new();
+    let mut pixels = 0u64;
+    let art_pixels = u64::from(art.0) * u64::from(art.1);
     for (i, e) in elements.iter().enumerate() {
         let at = |field: &str| format!("elements[{i}].{field}");
         let bad = |field: &str, message: String| FormatError::invalid(COMPOSITION_FILE, &at(field), message);
@@ -320,6 +327,21 @@ pub fn check_composition(
             {
                 return Err(bad("colours", format!("{n}: 2 to 256")));
             }
+        }
+        pixels = pixels.saturating_add(match &e.kind {
+            ElementKind::Image { size, pixel_size, .. } => {
+                let side = |v: u32| u64::from(v.saturating_mul(art_scale).div_ceil((*pixel_size).max(1)));
+                side(size.0) * side(size.1)
+            }
+            ElementKind::Drawn { .. } => art_pixels,
+            ElementKind::Raster => 2 * art_pixels + u64::from(size.0) * u64::from(size.1),
+        });
+        if pixels > MAX_COMPOSED_PIXELS {
+            return Err(FormatError::invalid(
+                COMPOSITION_FILE,
+                &format!("elements[{i}]"),
+                format!("the elements up to this one decode to {pixels} pixels, more than {MAX_COMPOSED_PIXELS}"),
+            ));
         }
         let image = matches!(e.kind, ElementKind::Image { .. });
         for (part, file) in element_files(e).into_iter().enumerate() {
@@ -533,6 +555,24 @@ mod tests {
         s.files.insert(layer_file("aux"), art);
         let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
         assert!(e.contains("elements[2].id") && e.contains("device"), "{e}");
+    }
+
+    /// Batch B review: the elements' decoded pixels together stay within
+    /// `MAX_COMPOSED_PIXELS`, so a small `composition.ron` cannot make a
+    /// bake hold or process unbounded memory.
+    #[test]
+    fn the_elements_pixels_together_are_bounded() {
+        let mut s = sample();
+        s.composition.elements.retain(|e| e.id == "sky");
+        if let ElementKind::Image { size, .. } = &mut s.composition.elements[0].kind {
+            *size = (4096, 4096);
+        }
+        let one = s.composition.elements[0].clone();
+        s.composition.elements = (0..4).map(|i| Element { id: format!("e{i}"), ..one.clone() }).collect();
+        check_composition(&s, (4, 3), 2).unwrap();
+        s.composition.elements.push(Element { id: "e4".into(), ..one });
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("elements[4]") && e.contains("pixels"), "{e}");
     }
 
     /// Spec §2: an image's processed art (its box × art scale) is within

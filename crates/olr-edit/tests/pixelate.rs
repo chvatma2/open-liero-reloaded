@@ -64,20 +64,23 @@ fn reduction_never_exceeds_n_and_tolerates_empty_input() {
     }
 }
 
-/// Mid grey reduced to two colours: without dither it all rounds to one
-/// colour; ordered and diffusion dither mix both.
+/// A grey band between black and white columns, reduced to two colours:
+/// median cut keeps black and the mean of grey and white (165), so the
+/// grey (120) lies between them. Without dither the band is one colour;
+/// ordered and diffusion dither mix both.
 #[test]
 fn dither_mixes_the_two_nearest_colours() {
     let mut img = RgbaImage::new(16, 16);
     for y in 0..16 {
         for x in 0..16 {
-            img.set(x, y, Rgba::rgb(120, 120, 120));
+            let v = match x {
+                0..4 => 0,
+                12.. => 255,
+                _ => 120,
+            };
+            img.set(x, y, Rgba::rgb(v, v, v));
         }
     }
-    // One black and one white pixel split median cut's box in two: the
-    // means of each half lie just below and just above the grey (119, 121).
-    img.set(0, 0, Rgba::rgb(0, 0, 0));
-    img.set(15, 15, Rgba::rgb(255, 255, 255));
     let interior = |out: &RgbaImage| {
         let mut seen = std::collections::BTreeSet::new();
         for y in 4..12 {
@@ -107,4 +110,34 @@ proptest! {
         prop_assert!(out.as_raw().chunks(4).all(|px| px[3] == 0 || px[3] == 255));
         if let Some(n) = n { prop_assert!(palette_of(&out).len() <= n as usize); }
     }
+}
+
+/// Batch B review: median cut with skewed counts (one colour far more
+/// common) keeps every colour when they fit, exactly.
+#[test]
+fn skewed_counts_keep_every_colour_that_fits() {
+    for (reds, n) in [(3u32, 2u16), (1000, 2), (1000, 4)] {
+        let mut img = RgbaImage::new(reds + 1, 1);
+        for x in 0..reds {
+            img.set(x, 0, Rgba::rgb(255, 0, 0));
+        }
+        img.set(reds, 0, Rgba::rgb(0, 0, 255));
+        let out = process(&img, (reds + 1, 1), &p(1, Some(n), Dither::None, 1));
+        assert_eq!(
+            palette_of(&out),
+            [Rgba::rgb(0, 0, 255), Rgba::rgb(255, 0, 0)],
+            "{reds} reds, {n} colours"
+        );
+        assert_eq!(out.get(reds, 0), Rgba::rgb(0, 0, 255));
+    }
+    // More colours than asked: no box of a split shares a channel value
+    // with the other, so a rare colour is not averaged into a common one.
+    let mut img = RgbaImage::new(1002, 1);
+    for x in 0..1000 {
+        img.set(x, 0, Rgba::rgb(255, 0, 0));
+    }
+    img.set(1000, 0, Rgba::rgb(0, 0, 255));
+    img.set(1001, 0, Rgba::rgb(0, 255, 0));
+    let out = process(&img, (1002, 1), &p(1, Some(2), Dither::None, 1));
+    assert!(palette_of(&out).contains(&Rgba::rgb(255, 0, 0)), "{:?}", palette_of(&out));
 }

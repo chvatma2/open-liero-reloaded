@@ -262,26 +262,37 @@ fn a_bad_original_is_an_error_naming_it() {
 }
 
 /// The spec's speed target (§3): a full bake of an OLX-sized level well
-/// under a second in release. Run by hand:
-/// `cargo nextest run -p olr-edit --release --run-ignored only bake_speed`.
+/// under a second in release, here with one full-level image at the
+/// costliest settings (256 colours, diffusion). Run by hand:
+/// `cargo nextest run -p olr-edit --release --run-ignored only bake_speed --no-capture`.
 #[test]
 #[ignore]
 fn bake_speed() {
     let Some(root) = content() else { return };
-    let original =
-        olr_format::levels::read_level_files(&olr_vfs::DirFs::new(root.join("olx-level-liero-factory")))
-            .unwrap();
-    let mut src = compose_from(&original);
-    let (w, h) = original.size;
-    with_image(&mut src, "photo", solid(640, 480, BLUE), (0, 0), (w, h), ElementMaterial::Dirt);
-    if let ElementKind::Image { colours, dither, .. } = &mut src.composition.elements[1].kind {
-        *colours = Some(16);
-        *dither = Dither::Diffusion;
+    for id in ["olx-level-liero-factory", "olx-level-castlestrike"] {
+        let original = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(root.join(id))).unwrap();
+        let mut src = compose_from(&original);
+        let (w, h) = original.size;
+        let mut photo = RgbaImage::new(640, 480);
+        for y in 0..480 {
+            for x in 0..640 {
+                photo.set(
+                    x,
+                    y,
+                    Rgba::rgb((x * 255 / 640) as u8, (y * 255 / 480) as u8, ((x ^ y) & 255) as u8),
+                );
+            }
+        }
+        with_image(&mut src, "photo", photo, (0, 0), (w, h), ElementMaterial::Dirt);
+        if let ElementKind::Image { colours, dither, .. } = &mut src.composition.elements[1].kind {
+            *colours = Some(256);
+            *dither = Dither::Diffusion;
+        }
+        let mut level = original.clone();
+        let start = std::time::Instant::now();
+        bake(&mut level, &src, &back_tile()).unwrap();
+        println!("{id}: bake of {w}x{h} at art scale {}: {:?}", original.art_scale, start.elapsed());
     }
-    let mut level = original.clone();
-    let start = std::time::Instant::now();
-    bake(&mut level, &src, &back_tile()).unwrap();
-    println!("bake of {w}x{h} at art scale {}: {:?}", original.art_scale, start.elapsed());
 }
 
 proptest! {
