@@ -360,7 +360,7 @@ fn refuse_inside(pack: &Path, out: &Path) -> anyhow::Result<()> {
 /// The pack at `dir`, taken apart: its manifest, its other files and its
 /// level source.
 fn read(dir: &Path) -> anyhow::Result<(PackManifest, BTreeMap<VPath, Vec<u8>>, LevelSource)> {
-    let Pack { manifest, source, other } =
+    let Pack { manifest, source, other, .. } =
         load(dir).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
     match source {
         Source::Level(l) => Ok((manifest, other, l)),
@@ -378,7 +378,7 @@ fn edit(
     let (manifest, other, mut l) = read(dir)?;
     let messages = op(&mut l)?;
     level::refresh_thumb(&mut l);
-    let pack = Pack { manifest, source: Source::Level(l), other };
+    let pack = Pack { manifest, source: Source::Level(l), composition: None, other };
     crate::pack_cmd::warn(&save(dir, &pack).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?);
     for m in messages {
         println!("{m}");

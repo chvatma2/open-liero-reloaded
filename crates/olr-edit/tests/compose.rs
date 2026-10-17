@@ -306,3 +306,37 @@ proptest! {
         prop_assert!(part.material == full.material && part.front == full.front && part.back == full.back);
     }
 }
+
+#[test]
+fn stale_lists_the_files_a_hand_edit_changed() {
+    let Some(root) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("dirt");
+    crate::common::copy_dir(&root.join("olx-level-dirt-level"), &dir);
+    let tile = olr_edit::compose::theme_back_tile(&root, "olx-theme-dirt").unwrap();
+    let mut pack = olr_edit::pack::load(&dir).unwrap();
+    let olr_edit::pack::Source::Level(level) = &mut pack.source else { panic!() };
+    let src = compose_from(level);
+    bake(level, &src, &tile).unwrap();
+    pack.composition = Some(src);
+    olr_edit::pack::save(&dir, &pack).unwrap();
+    let pack = olr_edit::pack::load(&dir).unwrap();
+    assert_eq!(olr_edit::compose::stale(&pack, &tile).unwrap(), Vec::<String>::new());
+    let front = image_io::decode_rgba(&std::fs::read(dir.join("front.png")).unwrap()).unwrap();
+    std::fs::write(dir.join("front.png"), image_io::encode_rgba(&solid(front.width(), front.height(), BLUE)))
+        .unwrap();
+    let stale = olr_edit::compose::stale(&olr_edit::pack::load(&dir).unwrap(), &tile).unwrap();
+    assert!(stale.contains(&"front.png".to_string()), "{stale:?}");
+    assert!(!stale.contains(&"material.png".to_string()), "{stale:?}");
+}
+
+#[test]
+fn theme_back_tile_finds_the_theme_by_id() {
+    let Some(root) = content() else { return };
+    let tile = olr_edit::compose::theme_back_tile(&root, "olx-theme-dirt").unwrap();
+    let theme =
+        olr_format::themes::read_theme_files(&olr_vfs::DirFs::new(root.join("olx-theme-dirt"))).unwrap();
+    assert!(tile == theme.back_tile);
+    let e = olr_edit::compose::theme_back_tile(&root, "nope").unwrap_err().to_string();
+    assert!(e.contains("nope"), "{e}");
+}

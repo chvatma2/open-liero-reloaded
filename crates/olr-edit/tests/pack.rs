@@ -148,3 +148,58 @@ fn a_file_the_format_cannot_name_refuses_the_load() {
     let e = load(&dir).unwrap_err().to_string();
     assert!(e.contains("a\\b.txt"), "{e}");
 }
+
+/// Dirt Level, composed of its raster base and one drawn dirt layer.
+fn composed(dir: &std::path::Path) -> olr_edit::pack::Pack {
+    let mut pack = load(dir).unwrap();
+    let Source::Level(level) = &pack.source else { panic!("not a level") };
+    let mut src = olr_edit::compose::compose_from(level);
+    let (w, h) = (level.front.width(), level.front.height());
+    src.files.insert(
+        olr_format::levels::layer_file("ground"),
+        olr_format::image_io::encode_rgba(&olr_data::image::RgbaImage::new(w, h)),
+    );
+    src.composition.elements.push(olr_format::levels::Element {
+        id: "ground".into(),
+        name: "Ground".into(),
+        visible: true,
+        locked: false,
+        kind: olr_format::levels::ElementKind::Drawn { material: olr_format::levels::ElementMaterial::Dirt },
+    });
+    pack.composition = Some(src);
+    pack
+}
+
+#[test]
+fn a_composition_survives_load_and_save() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, "olx-level-dirt-level");
+    let pack = composed(&dir);
+    let written = files(&pack).unwrap();
+    assert!(written.contains_key(&olr_vfs::VPath::new("editor/composition.ron").unwrap()));
+    assert!(written.contains_key(&olr_vfs::VPath::new("editor/layers/ground.png").unwrap()));
+    save(&dir, &pack).unwrap();
+    assert_eq!(load(&dir).unwrap().composition, pack.composition);
+    assert_eq!(olr_pack::validate(&olr_vfs::DirFs::new(&dir)), vec![]);
+}
+
+#[test]
+fn a_pack_without_editor_loads_with_none() {
+    let Some(root) = content() else { return };
+    assert_eq!(load(&root.join("olx-level-dirt-level")).unwrap().composition, None);
+}
+
+/// `pack fmt` canonicalises `composition.ron` like any authoring file.
+#[test]
+fn fmt_rewrites_a_hand_edited_composition() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, "olx-level-dirt-level");
+    save(&dir, &composed(&dir)).unwrap();
+    let canonical = std::fs::read_to_string(dir.join("editor/composition.ron")).unwrap();
+    std::fs::write(dir.join("editor/composition.ron"), canonical.replace("    ", "  ")).unwrap();
+    let listed: Vec<String> =
+        olr_edit::fmt::unformatted(&dir).unwrap().iter().map(|p| p.as_str().to_string()).collect();
+    assert_eq!(listed, ["editor/composition.ron"]);
+    olr_edit::fmt::format(&dir).unwrap();
+    assert_eq!(std::fs::read_to_string(dir.join("editor/composition.ron")).unwrap(), canonical);
+}

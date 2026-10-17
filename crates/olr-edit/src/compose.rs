@@ -15,15 +15,21 @@
 //! Integer arithmetic only: the same composition bakes to the same bytes
 //! on every platform.
 
+use std::path::Path;
+
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
+use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
     Composition, CompositionSource, Element, ElementKind, LevelSource, MATERIAL_PALETTE, check_composition,
-    element_files, raster_files,
+    element_files, raster_files, write_level_files,
 };
+use olr_format::themes::read_theme_files;
+use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
 
 use crate::level::refresh_thumb;
+use crate::pack::{Pack, Source};
 use crate::pixelate::{Pixelation, process_grid};
 
 /// A rectangle of world pixels.
@@ -300,4 +306,57 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
     .into_iter()
     .collect();
     CompositionSource { composition: Composition { elements: vec![element] }, files }
+}
+
+/// The `back_tile` of the theme pack whose manifest id is `theme` among
+/// `content`'s immediate subdirectories (ruling R9), taken in name order;
+/// hidden directories and directories that are not packs are skipped.
+pub fn theme_back_tile(content: &Path, theme: &str) -> Result<RgbaImage, ComposeError> {
+    let fail = |message: String| ComposeError::File { file: content.display().to_string(), message };
+    let mut dirs: Vec<_> = std::fs::read_dir(content)
+        .map_err(|e| fail(e.to_string()))?
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_type().is_ok_and(|t| t.is_dir()) && !e.file_name().to_string_lossy().starts_with('.')
+        })
+        .map(|e| e.path())
+        .collect();
+    dirs.sort();
+    for dir in dirs {
+        let src = DirFs::new(&dir);
+        let Ok(manifest) = olr_pack::read_manifest(&src) else { continue };
+        if manifest.kind == PackKind::Theme && manifest.id == theme {
+            return Ok(read_theme_files(&src)?.back_tile);
+        }
+    }
+    Err(ComposeError::File {
+        file: theme.into(),
+        message: format!("no theme pack with this id in {}", content.display()),
+    })
+}
+
+/// The files a bake writes that it can leave stale.
+const BAKED: [&str; 4] = ["material.png", "front.png", "back.png", "thumb.png"];
+
+/// The baked files of `pack` (a composed level) that differ from what its
+/// composition bakes to: `material.png`, `front.png`, `back.png`,
+/// `thumb.png`, in that order. Empty for any other pack.
+pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeError> {
+    let (Source::Level(level), Some(src)) = (&pack.source, &pack.composition) else { return Ok(Vec::new()) };
+    let mut baked = level.clone();
+    bake(&mut baked, src, back_tile)?;
+    let files = |l: &LevelSource| -> Result<MemFs, ComposeError> {
+        let mut fs = MemFs::new();
+        write_level_files(&mut fs, l)?;
+        Ok(fs)
+    };
+    let (now, then) = (files(level)?, files(&baked)?);
+    Ok(BAKED
+        .iter()
+        .filter(|f| {
+            let path = VPath::new(f).expect("a valid path");
+            now.read(&path).ok() != then.read(&path).ok()
+        })
+        .map(|f| f.to_string())
+        .collect())
 }

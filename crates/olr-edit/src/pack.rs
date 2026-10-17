@@ -14,7 +14,10 @@ use std::path::Path;
 use olr_data::manifest::{PackKind, PackManifest};
 use olr_format::FormatError;
 use olr_format::core_pack::{CoreSource, read_core_files, write_core_files};
-use olr_format::levels::{LevelSource, read_level_files, write_level_files};
+use olr_format::levels::{
+    CompositionSource, LevelSource, composition_paths, read_composition_files, read_level_files,
+    write_composition_files, write_level_files,
+};
 use olr_format::mods::{ModSource, read_mod_files, write_mod_files};
 use olr_format::skins::{SkinSource, read_skin_files, write_skin_files};
 use olr_format::themes::{ThemeSource, read_theme_files, write_theme_files};
@@ -88,6 +91,9 @@ impl Source {
 pub struct Pack {
     pub manifest: PackManifest,
     pub source: Source,
+    /// A level's composition (its `editor/` folder, plan 14a); always
+    /// `None` for the other kinds.
+    pub composition: Option<CompositionSource>,
     /// Files the format does not read (foreign files, and a mod's
     /// gfx/sounds assets), by path, kept byte for byte.
     pub other: BTreeMap<VPath, Vec<u8>>,
@@ -122,7 +128,12 @@ pub fn load(dir: &Path) -> Result<Pack, PackError> {
     bounded(&src)?;
     let manifest = olr_pack::read_manifest(&src)?;
     let source = Source::read(manifest.kind, &src)?;
-    let reads = source.reads();
+    let composition = match source {
+        Source::Level(_) => read_composition_files(&src)?,
+        _ => None,
+    };
+    let mut reads = source.reads();
+    reads.extend(composition.iter().flat_map(composition_paths));
     let owned: BTreeSet<&str> = reads.iter().map(String::as_str).collect();
     let mut other = BTreeMap::new();
     for path in walk(&src, &VPath::root())? {
@@ -131,7 +142,7 @@ pub fn load(dir: &Path) -> Result<Pack, PackError> {
             other.insert(path, bytes);
         }
     }
-    Ok(Pack { manifest, source, other })
+    Ok(Pack { manifest, source, composition, other })
 }
 
 /// A pack is bounded as a whole as its archive would be: at most
@@ -178,7 +189,8 @@ fn unaddressable(root: &Path, dir: &Path) -> Result<Option<String>, PackError> {
 }
 
 /// Every file of `pack` as its canonical writer produces it
-/// (`pack.ron` and the kind's files), plus `other` as it is.
+/// (`pack.ron`, the kind's files and a level's composition), plus `other`
+/// as it is.
 pub fn files(pack: &Pack) -> Result<BTreeMap<VPath, Vec<u8>>, PackError> {
     if pack.manifest.kind != pack.source.kind() {
         return Err(PackError::Invalid {
@@ -197,6 +209,15 @@ pub fn files(pack: &Pack) -> Result<BTreeMap<VPath, Vec<u8>>, PackError> {
     }
     olr_pack::write_manifest(&mut fs, &pack.manifest)?;
     pack.source.write(&mut fs)?;
+    if let Some(c) = &pack.composition {
+        if pack.source.kind() != PackKind::Level {
+            return Err(PackError::Invalid {
+                file: olr_format::levels::COMPOSITION_FILE.into(),
+                message: "only a level pack has a composition".into(),
+            });
+        }
+        write_composition_files(&mut fs, c)?;
+    }
     Ok(fs.files().map(|(p, b)| (p.clone(), b.to_vec())).collect())
 }
 
