@@ -381,6 +381,9 @@ pub fn resize(
 ) -> Result<(), ElementError> {
     let l = level(pack)?.clone();
     let Some(mut src) = pack.composition.clone() else { return Ok(()) };
+    // Every layer the re-lay reads is the level's size (a hand edit may
+    // have broken that).
+    check_composition(&src, l.size, l.art_scale).map_err(|e| ElementError::BadValue(e.to_string()))?;
     let bad = |file: &str, why: String| ElementError::BadValue(format!("{file}: {why}"));
     let relay =
         |mut tmp: LevelSource, paint: &Paint, material: Material| -> Result<LevelSource, ElementError> {

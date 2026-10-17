@@ -244,3 +244,31 @@ fn resize_a_composed_level() {
     assert!(text.contains("at: (11, 10)"), "{text}");
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
 }
+
+/// Batch C review: `set --colours N|none` (an optional value of an optional
+/// flag) parses and applies.
+#[test]
+fn set_colours_and_none() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    ok(&cli(
+        &["level", "element", "set", "{pack}", "sign", "--colours", "4", "--content", "{content}"],
+        &pack,
+        &content,
+    ));
+    let text = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    assert!(text.contains("colours: 4"), "{text}");
+    ok(&cli(
+        &["level", "element", "set", "{pack}", "sign", "--colours", "none", "--content", "{content}"],
+        &pack,
+        &content,
+    ));
+    let text = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    assert!(!text.contains("colours"), "{text}");
+    let out = cli(
+        &["level", "element", "set", "{pack}", "sign", "--colours", "x", "--content", "{content}"],
+        &pack,
+        &content,
+    );
+    assert_eq!(out.status.code(), Some(2), "a clap error: {out:?}");
+}

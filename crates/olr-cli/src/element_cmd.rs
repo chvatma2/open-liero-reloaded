@@ -51,12 +51,17 @@ impl MaterialArg {
     }
 }
 
-/// `none`, or a number of colours.
-fn parse_colours(s: &str) -> Result<Option<u16>, String> {
+/// `--colours`' value on `set`: a number of colours, or none (no
+/// reduction). A type of its own: clap reads `Option<Option<T>>` as a flag
+/// with an optional value.
+#[derive(Clone, Copy)]
+pub(crate) struct Colours(Option<u16>);
+
+fn parse_colours(s: &str) -> Result<Colours, String> {
     if s == "none" {
-        return Ok(None);
+        return Ok(Colours(None));
     }
-    s.parse().map(Some).map_err(|_| format!("{s:?}: a number of colours or none"))
+    s.parse().map(|n| Colours(Some(n))).map_err(|_| format!("{s:?}: a number of colours or none"))
 }
 
 #[derive(Subcommand)]
@@ -121,7 +126,7 @@ pub(crate) enum ElementCommand {
         pixel_size: Option<u32>,
         /// A number of colours, or none.
         #[arg(long, value_parser = parse_colours)]
-        colours: Option<Option<u16>>,
+        colours: Option<Colours>,
         #[arg(long)]
         dither: Option<DitherArg>,
         #[arg(long)]
@@ -303,7 +308,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
                 at.map(Property::At),
                 size.map(Property::Size),
                 pixel_size.map(Property::PixelSize),
-                colours.map(Property::Colours),
+                colours.map(|Colours(n)| Property::Colours(n)),
                 dither.map(|d| Property::Dither(d.dither())),
                 threshold.map(Property::Threshold),
                 locked.filter(|l| *l).map(Property::Locked),

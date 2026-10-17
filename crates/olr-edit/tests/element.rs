@@ -192,3 +192,22 @@ fn resize_moves_boxes_and_relays_layers() {
     assert_eq!(material.2[0], Material::Rock as u8, "the raster's new area is the given material");
     check_composition(src, (13, 9), 1).unwrap();
 }
+
+/// Batch C review: a hand-edited layer of the wrong size is refused by
+/// `resize`, never a panic, and nothing changes.
+#[test]
+fn resize_refuses_a_wrong_sized_layer() {
+    for file in [
+        layer_file("l"),
+        "editor/layers/base.front.png".to_string(),
+        "editor/layers/base.material.png".into(),
+    ] {
+        let mut p = pack(8, 6, 1);
+        add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
+        p.composition.as_mut().unwrap().files.insert(file.clone(), png(3, 3));
+        let before = p.composition.clone();
+        let e = resize(&mut p, (10, 9), (1, 1), Material::Rock, &Paint::Colour(RED)).unwrap_err();
+        assert!(matches!(&e, ElementError::BadValue(m) if m.contains(&file)), "{file}: {e}");
+        assert_eq!(p.composition, before);
+    }
+}
