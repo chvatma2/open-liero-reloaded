@@ -12,7 +12,7 @@ header's size); content hashing; validation.
   `write` fills a fresh `<parent>/.import-<name>`, the old directory moves
   to `.replaced-<name>` (`~k` when taken, at most 100), the new one is
   renamed into place and the old one removed (a failure to remove it is a
-  warning). A failed write or rename removes the hidden copy and leaves
+  warning: "the next save or import of this pack tries again"). A failed write or rename removes the hidden copy and leaves
   `dir` the old directory (renamed back).
 - **Deterministic output.** Writing the same value twice gives byte-identical
   files. Never introduce `HashMap` iteration or timestamps into output.
@@ -58,8 +58,8 @@ header's size); content hashing; validation.
 - `validate` never panics and reports `file:line:col` for RON errors.
   Errors: unknown references, cycles, missing assets. Warnings: unused items;
   `<path>: not read by the format` for each file outside the kind's
-  format files (those its `olr-format` writer produces, plus `pack.ron` and
-  a level's `thumb.png`; for a mod, files outside `gfx/` and `sfx/` that
+  format files (`olr-format`'s `file_paths` of the source read, plus
+  `pack.ron`, a level's `thumb.png` and a mod's `restrictions.ron`; for a mod, files outside `gfx/` and `sfx/` that
   nothing names, plan 13d); `level.ron: objects[i]: spawn at (x, y) is
   outside the level (W×H)`.
 - Bump `PACK_FORMAT_VERSION` (in `olr-data`) when a layout changes. Packs of any other

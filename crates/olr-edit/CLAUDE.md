@@ -14,7 +14,11 @@ templates and the level operations.
   `other` holds every file the kind's writer would not produce (foreign
   files such as `level.ron~` or a README, and a mod's assets), byte for
   byte. A pack holding a name `DirFs` cannot address (not UTF-8, or one
-  `VPath` refuses) does not load: the whole-pack save would lose it.
+  `VPath` refuses) does not load: the whole-pack save would lose it. Nor
+  does one above `MAX_ARCHIVE_FILES` files or `MAX_UNPACKED` bytes in all
+  (an archive's bounds), checked from the file lengths before any read.
+  The format's files are `Source::reads()` (`olr-format`'s `file_paths`,
+  no image encoded, and a mod's `restrictions.ron`).
   `files(pack)` is every file as its canonical writer gives it, plus
   `other` (a format file wins a clash). `save(dir, pack)` validates
   `files(pack)` in a `MemFs` with `olr_pack::validate` (an error is
@@ -25,15 +29,21 @@ templates and the level operations.
   new one, never a mix. Files the source no longer has are gone (a removed
   weapon's file). Empty directories and file permissions are not kept.
 - **`fmt`**: `unformatted(dir)` lists the format files whose bytes differ
-  from their canonical form (never a foreign file); `format(dir)` saves
-  when any do. Behind `olr-cli pack fmt`.
+  from their canonical form, and those the writer leaves out (an empty
+  `restrictions.ron`, which a save removes), never a foreign file; when it
+  lists any, a pack that would not check is `SaveError::Invalid`, as
+  `format` would refuse it. `format(dir)` saves when any differ and
+  returns `Formatted { files, warnings }` (the save's warnings). `save`'s
+  validation is `pack::check(files)`. Behind `olr-cli pack fmt`.
 - **`new`** (R6): `new_pack(dir, kind, id, name, Template)`. `Mod` is the
   smallest mod that compiles (one weapon, `gun`, and a `Standard` preset
   enabling it); `Level { size, theme }` is dirt in a one-pixel rock border
   with a thumbnail; `From(dir)` copies a pack of the same kind, replacing
   the id, the name (the manifest's and the source's) and clearing the
-  origin. A non-slug id, an existing non-empty `dir` or a template of
-  another kind is refused before anything is written.
+  origin; it returns the save's warnings. A non-slug id, an existing
+  non-empty `dir` or a template of another kind is refused before anything
+  is written, and a failed save removes the directories it made (parents
+  included).
 - **`level`** (R3), on a `LevelSource` in world pixels: `Shape` (`Rect`,
   `Circle`; clipped to the level before iterating, in `i64`/`i128`, so a
   huge or far shape costs at most the level and never overflows), `Paint`

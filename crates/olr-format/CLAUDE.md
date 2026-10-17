@@ -118,8 +118,13 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `THUMB_SIZE` (160 × 96, `olr-pack` re-exports it), `letterbox`ed; the
   importer and `olr_edit::level::refresh_thumb` both use it.
 - **`canonical_text(path, text)`** (plan 13d): one authoring file (by its
-  path in the pack: `mod.ron`, `weapons/<id>.ron`, `level.ron`, ...) parsed
-  as its type and written again canonically; it checks that file alone.
+  path in the pack: `mod.ron`, `weapons/<id>.ron` with a valid id,
+  `level.ron`, ...) parsed as its type and written again canonically; it
+  checks that file alone.
+- **`file_paths(source)`** in each kind's module: the paths its writer
+  writes, without encoding anything (`tests/paths.rs` holds them equal for
+  every bundled pack). `read_level_header` also gives `level.ron`'s
+  `objects`.
 - **Doc comments are the schema docs' source.** Every serialized field and
   variant has one stating its meaning, unit, limits and OLX source;
   `cargo xtask format-docs` turns them into `docs/formats/*.md`, fails on a

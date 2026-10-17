@@ -22,8 +22,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   doc comment is an error naming `file:line`. Each file type shows its
   example: the guide's block (`docs/formats/README.md`, `<!-- file:
   <kind>/<path> -->` then a `ron` block), so editing the guide means
-  regenerating. `--check` compares instead and fails naming each stale
-  page; `check`'s `format-docs` step (before `test`, offline too) runs it.
+  regenerating; a malformed marker, or a file type without its example, is
+  an error. `--check` compares instead and fails naming each stale page; `check`'s `format-docs` step (before `test`, offline too) runs it.
   Unit tests on inline sources.
 
 - `fetch-olx-content` (`fetch.rs`) imports the manifest into the

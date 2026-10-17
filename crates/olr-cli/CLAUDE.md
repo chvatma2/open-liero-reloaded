@@ -12,11 +12,14 @@ The headless command-line tool. Its commands:
   plan 13d) runs `olr_pack::validate` on a pack, or on each pack directly
   under a directory, prints `<pack dir>: <severity>: <file>[:line:col]:
   <message>` per diagnostic and `checked N packs: E errors, W warnings`,
-  and exits with status 1 on any error. `pack fmt [--check] <path>...`
+  and exits with status 1 on any error. Discovery skips hidden directories
+  (an interrupted save's or import's `.import-<id>`/`.replaced-<id>`) and
+  names the path it cannot read. `pack fmt [--check] <path>...`
   (`olr_edit::fmt`) rewrites packs in canonical form (`formatted <pack
   dir>: N files` for each pack it changed) or, with `--check`, lists
   `<pack dir>/<file>: not canonical` and exits 1 if any; a pack that does
-  not load is an error and stays untouched. `pack new
+  not load, or would not check, is an error on stderr and stays untouched.
+  A save's warnings print on stderr as `warning: …`. `pack new
   <mod|level|skin|theme|core> <id> [--out DIR] [--name N] [--size WxH]
   [--theme ID] [--from PACK]` (`olr_edit::new`): `--out` defaults to
   `./<id>`, `--size` (640x480) and `--theme` (`olx-theme-dirt`) are a
@@ -30,12 +33,16 @@ The headless command-line tool. Its commands:
   are strict clap values naming their flag on error: `--rect X,Y,W,H`,
   `--circle X,Y,R`, `--at X,Y`, `--offset DX,DY` (negative values
   allowed), colours `RRGGBB` or `#RRGGBB`, `--tile`/`--image` PNGs read
-  and decoded within `IMAGES` while parsing. `resize` prints `dropped:
-  Spawn at (x, y)` per object it drops, `object list` prints `<i>: Spawn
-  at (x, y)[ — notes]`, and `preview` draws `front` (or the material
-  through `MATERIAL_PALETTE`) at art pixels × `--scale`, a white cross
-  outlined in black on each spawn, bounded by `LEVEL_ART`; it does not
-  save the pack (an `--out` inside the pack is not refused). Tests: `tests/level.rs`, and `tests/cli.rs`'s `pack_check_*`,
+  and decoded within `IMAGES` while parsing (regular files only, read at
+  most `MAX_FILE_BYTES`). Messages print only once the save succeeded:
+  `resize` prints `dropped: Spawn at (x, y)` per object it drops,
+  `object add` `added object <i>`; `object add|move` warn on stderr about
+  a spawn outside the level. `object list` reads `level.ron` alone
+  (`read_level_header`) and prints `<i>: Spawn at (x, y)[ — notes]`, the
+  notes' control characters escaped. `preview` draws `front` (or the
+  material through `MATERIAL_PALETTE`) at art pixels × `--scale`, a white
+  cross outlined in black on each spawn, bounded by `LEVEL_ART`, and
+  refuses an `--out` inside the pack. Tests: `tests/level.rs`, and `tests/cli.rs`'s `pack_check_*`,
   `pack_fmt_*` and `pack_new_*`.
 - `olr-cli scenario [name...] [--dump F] [--all | --fields a+b] [--time F.ron]` replays oracle
   scenarios in `olr-sim` and prints the first divergence of each. `--time`
