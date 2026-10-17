@@ -149,8 +149,10 @@ fn unread(src: &dyn ContentSource, kind: PackKind) -> Vec<Diagnostic> {
         }),
         PackKind::Level => levels::read_level_files_without_thumb(src).map(|s| {
             let mut paths = levels::file_paths(&s);
-            // A composition that does not read is `check_composition`'s error.
-            if let Ok(Some(c)) = levels::read_composition_files(src) {
+            // `composition.ron` alone names them (a missing file is
+            // `check_composition`'s error, once).
+            if let Ok(Some(composition)) = levels::read_composition(src) {
+                let c = levels::CompositionSource { composition, files: Default::default() };
                 paths.extend(levels::composition_paths(&c));
             }
             paths
@@ -439,6 +441,22 @@ mod tests {
         let d: Vec<String> =
             validate(&composed_level().with("editor/notes.txt", "x")).iter().map(|d| d.to_string()).collect();
         assert_eq!(d, ["warning: editor/notes.txt: not read by the format"]);
+    }
+
+    /// Deferred minors: a missing composition file is one error, not also
+    /// a "not read" warning for every other `editor/` file.
+    #[test]
+    fn a_missing_composition_file_is_one_error() {
+        use olr_vfs::ContentSink as _;
+        let mut fs = MemFs::new();
+        for (p, b) in composed_level().files() {
+            if p.as_str() != "editor/layers/base.front.png" {
+                fs.write(p, b).unwrap();
+            }
+        }
+        let d: Vec<String> = validate(&fs).iter().map(|d| d.to_string()).collect();
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].contains("editor/layers/base.front.png"), "{d:?}");
     }
 
     #[test]

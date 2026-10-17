@@ -31,11 +31,11 @@ pub use skin_pack::{SkinPack, read_skin, write_skin};
 pub use theme_pack::{ThemePack, read_theme, write_theme};
 pub use validate::{Diagnostic, Severity, validate};
 
-/// Whether `path` lies under a pack's authoring folder (`editor/`): the
-/// editors' sources, never content (not hashed, never in an archive; plan
-/// 14a ruling R2).
+/// Whether `path` lies under a pack's authoring folder (`editor/`, any
+/// case: one folder on Windows and macOS): the editors' sources, never
+/// content (not hashed, never in an archive; plan 14a ruling R2).
 pub fn is_authoring(path: &str) -> bool {
-    path.split('/').next() == Some(olr_format::levels::EDITOR_DIR)
+    path.split('/').next().is_some_and(|c| c.eq_ignore_ascii_case(olr_format::levels::EDITOR_DIR))
 }
 
 /// Path of the manifest inside every pack.

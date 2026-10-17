@@ -61,6 +61,15 @@ mod tests {
         assert_ne!(content_hash(&a).unwrap(), content_hash(&c).unwrap());
     }
 
+    /// Deferred minors: `Editor/` is the same folder on Windows and macOS.
+    #[test]
+    fn authoring_is_case_insensitive() {
+        assert!(crate::is_authoring("Editor/composition.ron") && crate::is_authoring("EDITOR/x"));
+        assert!(!crate::is_authoring("editors/x") && !crate::is_authoring("x/editor/y"));
+        let a = MemFs::new().with("pack.ron", "x").with("level.ron", "1");
+        assert_eq!(content_hash(&a).unwrap(), content_hash(&a.clone().with("Editor/x", "y")).unwrap());
+    }
+
     /// Plan 7 ruling Q4: a level's thumbnail is presentation only; adding
     /// or changing it keeps the hash (and every replay) as it was. The
     /// same name deeper in a pack is content.

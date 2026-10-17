@@ -48,12 +48,13 @@ header's size); content hashing; validation.
   256 MiB, `olr-content`'s `MAX_COLOR_MAP_BYTES`). Decoding expands in
   place: 4 bytes a pixel at most. `declared_png` makes a bomb for tests.
 - **Authoring files** (`is_authoring`, plan 14a ruling R2): a path whose
-  first component is `editor` (a level's composition). `content_hash` and
+  first component is `editor` in any case (a level's composition). `content_hash` and
   `archive::encode` leave them out, `archive::decode` refuses one
   (`BadPath`), so players download only the bake. `validate` on a level
   reads its composition (`read_composition_files`, `check_composition`):
-  an error is a diagnostic; its files count as read, any other `editor/`
-  file is "not read by the format".
+  an error is a diagnostic; the files `composition.ron` names count as
+  read (`read_composition`, so a missing one is one error), any other
+  `editor/` file is "not read by the format".
 - **Presentation-only files** (`PRESENTATION_FILES`: `thumb.png`) are left out of
   `content_hash` like `pack.ron` (plan 7 ruling Q4): adding or changing a thumbnail
   keeps every replay of the pack valid (`hash::thumbnails_are_not_content`).
