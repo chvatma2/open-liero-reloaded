@@ -5,12 +5,14 @@
 //! today's load-time colour keying (`RgbaImage::key_transparent`, once per
 //! image, as `olr-scene` and `olr-fx` apply it) on mod and core images.
 
+use std::collections::BTreeSet;
 use std::fmt::Write;
 use std::path::Path;
 
-use olr_content::Content;
+use olr_content::{Content, placeholder_image};
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::manifest::PackKind;
+use olr_data::mod_def::ProjectileGfx;
 use olr_vfs::DirFs;
 use sha2::{Digest, Sha256};
 
@@ -68,8 +70,20 @@ fn mod_digest(content: &Content, id: &str) -> String {
     let def = olr_pack::read_mod(&DirFs::new(content.pack_dir(id).unwrap())).unwrap().def;
     d.text("def", &ron::ser::to_string(&def).unwrap());
     let loaded = content.load_mod(id).unwrap();
-    for (path, img) in &loaded.images {
-        d.image(&format!("image:{path}"), &keyed(img));
+    // Exactly the images the renderer uses: `SceneAssets::new` keys each
+    // projectile image file once (a missing one is a 4x4 placeholder); files no
+    // projectile references never reach it.
+    let files: BTreeSet<&str> = def
+        .projectiles
+        .values()
+        .filter_map(|p| match &p.gfx {
+            ProjectileGfx::Image { file, .. } => Some(file.as_str()),
+            _ => None,
+        })
+        .collect();
+    for file in files {
+        let img = loaded.images.get(file).cloned().unwrap_or_else(|| placeholder_image(4, 4));
+        d.image(&format!("image:{file}"), &keyed(&img));
     }
     for (name, bytes) in &loaded.sounds {
         d.bytes(&format!("sound:{name}"), bytes);
@@ -81,6 +95,12 @@ fn level_digest(content: &Content, id: &str) -> String {
     let mut d = Digest256::new();
     let l = content.load_level(id).unwrap();
     let cells: Vec<u8> = l.material.cells().iter().map(|m| *m as u8).collect();
+    d.text("name", &l.name);
+    d.text("art_scale", &l.art_scale.to_string());
+    d.text("theme", &l.theme);
+    for (i, sp) in l.spawns.iter().enumerate() {
+        d.text(&format!("spawn:{i}"), &format!("{sp:?}"));
+    }
     d.text("size", &format!("{}x{}", l.material.width(), l.material.height()));
     d.bytes("material", &cells);
     d.image("front", &l.front);
@@ -91,6 +111,7 @@ fn level_digest(content: &Content, id: &str) -> String {
 fn theme_digest(content: &Content, id: &str) -> String {
     let mut d = Digest256::new();
     let t = content.load_theme(id).unwrap();
+    d.text("name", &t.name);
     d.text("holes", &t.holes.len().to_string());
     for (i, h) in t.holes.iter().enumerate() {
         d.image(&format!("hole:{i}"), h);
@@ -107,6 +128,7 @@ fn theme_digest(content: &Content, id: &str) -> String {
 fn skin_digest(content: &Content, id: &str) -> String {
     let mut d = Digest256::new();
     let s = content.load_skin(id).unwrap();
+    d.text("def", &format!("{:?}", s.skin.def));
     for (r, g, b) in COLOURS {
         d.image(&format!("colorized:{r},{g},{b}"), &s.colorized(Rgba::rgb(r, g, b)));
     }
@@ -126,6 +148,7 @@ fn core_digest(content: &Content, id: &str) -> String {
             None => d.text(&format!("sound:{name}"), "none"),
         }
     }
+    // `colours` is a BTreeMap: key order.
     for key in def.colours.keys() {
         d.text(&format!("colour:{key}"), &format!("{:?}", core.colour(key)));
     }
@@ -182,6 +205,6 @@ fn the_colorized_gibs_do_not_depend_on_when_they_are_keyed() {
         let c = Rgba::rgb(r, g, b);
         let early = keyed(&olr_fx::colorize_gibs(raw, c));
         let late = olr_fx::colorize_gibs(&keyed(raw), c);
-        assert!(early == late, "gibs differ for colour ({r},{g},{b})");
+        assert_eq!(early, late, "gibs differ for colour ({r},{g},{b})");
     }
 }
