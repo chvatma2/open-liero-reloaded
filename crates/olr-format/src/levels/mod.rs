@@ -2,12 +2,14 @@
 //! `back.png` and an optional `thumb.png` (spec §6).
 
 mod files;
+mod thumb;
 
 use olr_data::image::RgbaImage;
 use olr_data::level::{Level, LevelDef, Material, MaterialGrid, SpawnPoint};
 use serde::{Deserialize, Serialize};
 
 pub use files::{read_level_files, read_level_files_without_thumb, read_level_header, write_level_files};
+pub use thumb::{THUMB_SIZE, letterbox, thumbnail};
 
 use crate::image_io::{LEVEL_ART, check_size};
 use crate::{FormatError, LiftError};

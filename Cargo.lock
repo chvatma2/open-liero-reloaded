@@ -3519,6 +3519,7 @@ name = "olr-import-gfx"
 version = "0.2.0"
 dependencies = [
  "olr-data",
+ "olr-format",
  "olr-pack",
  "olr-vfs",
  "thiserror 2.0.21",

@@ -55,6 +55,8 @@
         ("olr-import-lgs", "olr-pack"),
         ("olr-import-lxl", "olr-pack"),
         ("olr-import-gfx", "olr-pack"),
+        // The importer makes level thumbnails with the authoring crate's (plan 13d).
+        ("olr-import-gfx", "olr-format"),
         // The oracle replays worlds built from packs the way the game loads them.
         ("olr-scenario", "olr-content"),
         // Cosmetic entities draw into the scene's draw list with its atlas ids.

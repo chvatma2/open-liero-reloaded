@@ -11,6 +11,7 @@ publish.workspace = true
 olr-data.workspace = true
 olr-vfs.workspace = true
 olr-pack.workspace = true
+olr-format.workspace = true
 thiserror.workspace = true
 
 [lints]

@@ -19,8 +19,8 @@ pub const LEVEL_FILE: &str = "level.ron";
 /// out (plan 7 ruling Q4), so adding or changing it keeps replays valid.
 pub use olr_format::levels::THUMB_FILE;
 
-/// The size importers make thumbnails at: the level letterboxed into it.
-pub const THUMB_SIZE: (u32, u32) = (160, 96);
+/// The size thumbnails are made at: the level letterboxed into it.
+pub use olr_format::levels::THUMB_SIZE;
 
 pub use olr_format::levels::{MAX_ART_SCALE, MAX_THUMB_BYTES, MAX_THUMB_SIDE};
 
