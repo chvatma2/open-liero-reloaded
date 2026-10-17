@@ -1081,48 +1081,43 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   one process share one cache. A peer without a cache (none opens:
   PF11-4) has downloads off and the lobby says why; a server whose cache
   is held (another server on the same data directory) logs a warning and
-  runs without one: it still serves its own packs, and members' skins it
-  lacks draw as the default skin. The Options' Online tab shows the
+  runs without one: it still serves its own packs. The Options' Online tab shows the
   cache's size and clears it, refused while an online game is on. The
   cache counts each pack by its disk charge (N29), not its bytes, so the
   budget and eviction see real disk use (final review C2). "Never one the
   current lobby lists" holds for the whole process: every list (a host's
-  member-skin fetchers and its own list, a client's fetcher, both peers
-  of `--net-sim`) registers its hashes with the shared cache
+  own list, a client's fetcher, both peers of `--net-sim`) registers its hashes with the shared cache
   (`olr_content::Keeper`), and every eviction keeps their union (final
   review Minor 2). Partial downloads are charged as installed packs are
   (plus a block for the meta file), at most 32 per cache (a new one
   discards the oldest not kept; when all are kept it is refused), and
   indexed in memory, so no fetch start scans the directory (final
   re-review R1).
-- **N31 - skins by hash.** `Look` gains `skin_hash` (64 lowercase hex).
-  A client offers its own skin to the host with a one-item content list
-  (R6-1; accepted only for its look's id and hash); the host fetches a
-  member's skin it lacks from that member and serves it to the others.
-  Bots' looks in the setup keep `NO_HASH`; the host lists a bot's skin
-  with its own pack's hash (R6-2: filling them would change the setup
-  under its owner). A skin is laid over only when no local pack has its
-  id: local packs win (PF11-5), and a skin is never taken under the id
-  of a required pack. Skins never block the ready mark: one that cannot
-  be fetched draws as the default skin. Mod, level and theme are
-  *required*. A host starts at most one new skin fetch from a member
-  every 5 s (an offer waits; only the look then worn counts), and takes
-  at most 4 `SetLook`s a second from a member (final review C2); the
-  latest look beyond them is held and taken once the window allows, so a
-  member's last look is never lost. The 5 s interval is kept by the
-  member's address for 5 s after it leaves, all members together start
-  at most 12 skin fetches a minute, and a member-skin partial is
-  discarded when its offer is dropped (final re-review R1, R2). The
-  host lists one skin per id, the first member's (final review Minor 1:
-  a match loads skins by id, so another of the same id is never shown).
+- **N31 - skins by id and hash, never transferred (plan 13c, spec §4;
+  replaces plan 11's skin download).** `Look` carries `skin_hash` (64
+  lowercase hex), the match key. A match draws the local player's own slot
+  by its skin id; every other slot by the skin pack whose id is exactly
+  the look's `skin` and whose content hash is `skin_hash`
+  (`Content::skin_matching`, `setup::load_online`, keyed by slot so two
+  slots of one id and different hashes do not collide). A skin this
+  install lacks, or has with other content, draws as the default skin, with
+  a warning logged once; it never blocks the ready mark. A bot's look keeps
+  `NO_HASH` and gets only the default skin. Nothing offers, fetches, serves
+  or lays over a skin: the host lists only the setup's packs (mod, level,
+  theme: all *required*, and `valid_content` refuses an optional item), and
+  ignores a member's `List`. The host still takes at most 4 `SetLook`s a
+  second from a member; the latest beyond them is held and taken once the
+  window allows (final review C2). `SKIN_LIMITS` and `MAX_SKIN_ARCHIVE`
+  stay as the small-archive limits the tests use. The network protocol
+  version goes 2 to 3, so a 0.1 client is refused at the handshake ("the
+  host plays another version").
 - **N32 - transfers.** Reliable-channel tag `TAG_CONTENT = 3` carries
   `ContentMsg` both ways (`List`, `Want`, `Begin`, `Chunk`,
   `Unavailable`, `Cancel`); chunks are 32 KiB. A peer serves one archive
   at a time to each peer and queues the other wants. Pacing: at most
   2 MiB/s to each receiving client, 4 MiB/s host-wide (the server's
   `upload_kib_s`, default 4096, clamped to 64..=65536), 256 KiB/s
-  host-wide while a match starts or runs, 128 KiB/s for a client serving
-  its own skin, at most 256 KiB queued per peer. Resume: the fetcher keeps
+  host-wide while a match starts or runs, at most 256 KiB queued per peer. Resume: the fetcher keeps
   `<hash>.part` and `<hash>.part.ron` (archive hash and size) and asks
   `Want { hash, offset }`; another archive hash restarts from 0. Every
   download is verified (archive SHA-256, bounds, content hash, id, kind,
@@ -1137,17 +1132,16 @@ Decided in `docs/superpowers/plans/2026-10-13-plan-11-content-download.md`
   is complete, then spectates. This replaces plan 10's "a spectator
   lacking content is dropped at every start". A member counts as lacking
   (not ready, waiting at a start) until its `Have` answers the host's
-  current list (each list has a revision, raised only when its required
-  items change: a skin change keeps every ready mark). A waiting member
+  current list (each list has a revision, raised when the list changes). A waiting member
   counts toward `max_players` only if it wants to play.
-- **N34 - protocol version 2.** `PROTOCOL_VERSION` becomes 2, because
+- **N34 - protocol version 2 (3 since plan 13c, N31).** `PROTOCOL_VERSION` becomes 2, because
   `Look`, `Member` and the reliable tags change.
 - **N35 (PF11-6) - the download prompt.** A list whose missing items not
   yet approved need more than `PROMPT_BYTES` (50 MiB) still to download
   waits for the player's Download (or Leave). The bytes counted are each
   item's size less what its partial download already holds ("missing
   bytes" is what the player will wait for), and items approved before are
-  not asked about again: a re-sent list (a skin change, a new member)
+  not asked about again: a re-sent list (a new member)
   never re-prompts for an approved download, and the prompt's number does
   not change while approved items download. A list under the limit
   approves itself. Sizes show in MiB as "MB", the threshold's unit, so
