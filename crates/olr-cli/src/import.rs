@@ -1,6 +1,7 @@
 //! `olr-cli import`: `olr_import` (the OLX import pipeline, plan 7 ruling
 //! Q3; only the CLI uses it since plan 13c) with the items the flags name,
-//! into a directory this import owns (`prune`).
+//! into `--out`. Packs already there stay unless `--prune` says `--out` is
+//! this import's alone.
 
 use std::path::PathBuf;
 
@@ -17,6 +18,20 @@ pub struct Args {
     /// Source revision recorded in each pack's origin, such as a git commit.
     #[arg(long, default_value = "unknown")]
     revision: String,
+    /// Import everything found in `--olx` (every mod, level, theme and skin,
+    /// as the removed Import screen did). Cannot be combined with the item
+    /// flags (`--mod`, `--level`, `--theme`, `--skins`, `--core`,
+    /// `--extra-skins`).
+    #[arg(
+        long,
+        conflicts_with_all = ["mods", "levels", "themes", "skins", "core", "extra_skins"]
+    )]
+    all: bool,
+    /// Remove the packs in `--out` that this run did not produce, so `--out`
+    /// is exactly this import (`cargo xtask fetch-olx-content` for
+    /// `content/packs`). Without it, an import only adds or replaces packs.
+    #[arg(long)]
+    prune: bool,
     /// Mod directories relative to the game directory, such as "MW 1.0".
     #[arg(long = "mod")]
     mods: Vec<String>,
@@ -48,7 +63,24 @@ pub struct Args {
 
 /// Returns `Ok(false)` if any item failed; the report lists every item either way.
 pub fn run(args: &Args) -> anyhow::Result<bool> {
-    let plan = ImportPlan {
+    let mut olx = args.olx.clone();
+    let plan = if args.all {
+        let found = olr_import::discover(&args.olx)?;
+        for n in &found.notes {
+            eprintln!("note: {n}");
+        }
+        olx = found.gamedir;
+        found.plan
+    } else {
+        item_plan(args)
+    };
+    let options = ImportOptions { revision: args.revision.clone(), prune: args.prune };
+    run_plan(&olx, &plan, args, &options)
+}
+
+/// The plan the item flags name.
+fn item_plan(args: &Args) -> ImportPlan {
+    ImportPlan {
         mods: args.mods.clone(),
         levels: args.levels.clone(),
         themes: args.themes.clone(),
@@ -63,9 +95,16 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
                 revision: args.extra_skins_revision.clone().unwrap_or_default(),
             })
             .collect(),
-    };
-    let options = ImportOptions { revision: args.revision.clone(), prune: true };
-    let report = olr_import::import(&args.olx, &plan, &args.out, &options, &mut |p| {
+    }
+}
+
+fn run_plan(
+    olx: &std::path::Path,
+    plan: &ImportPlan,
+    args: &Args,
+    options: &ImportOptions,
+) -> anyhow::Result<bool> {
+    let report = olr_import::import(olx, plan, &args.out, options, &mut |p| {
         if let Progress::Done { entry, .. } = p
             && let Some(e) = &entry.error
         {

@@ -3,10 +3,11 @@
 The headless command-line tool. Its commands:
 
 - `olr-cli import --olx <share/gamedir> --out <dir> [--mod D]... [--level F]... [--theme D]... [--skins]
-  [--core F]... [--extra-skins DIR --extra-skins-source S --extra-skins-revision R]` writes one pack per item to `<out>/<pack id>/`, plus `import-report.ron`;
+  [--core F]... [--extra-skins DIR --extra-skins-source S --extra-skins-revision R] [--prune]`
+  or `--all` (everything `olr_import::discover` finds; an error with item flags) writes one pack per item to `<out>/<pack id>/`, plus `import-report.ron`;
   the `--core` files (shared sprites, game sounds, `colours.cfg`) make one pack, `olx-core`.
   It exits with status 1 if any item failed, and still imports the rest.
-  The pipeline is `olr_import` (plan 7 ruling Q3; the game's Import screen is gone), with `prune`: `<out>` is this import's.
+  The pipeline is `olr_import` (plan 7 ruling Q3; the game's Import screen is gone), without `--prune` an import only adds or replaces packs and keeps the others; with it (as `cargo xtask fetch-olx-content` passes) `<out>` is exactly this import.
 - `olr-cli validate <pack-or-parent-dir>...` prints diagnostics and exits with
   status 1 on any error. It runs `olr_pack::validate` over the format-5
   readers (plan 13c; the name stays until plan 13d).

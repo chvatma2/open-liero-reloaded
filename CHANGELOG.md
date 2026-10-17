@@ -25,7 +25,7 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 
 ### Removed
 
-- The Import screen; import OLX content with `olr-cli import`, and later in
+- The Import screen; import OLX content with `olr-cli import --all` (it adds packs; `--prune` removes the others), and later in
   the editors.
 
 ### Fixed

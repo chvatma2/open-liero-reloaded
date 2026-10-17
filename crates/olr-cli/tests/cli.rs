@@ -126,7 +126,7 @@ fn reimport_removes_packs_no_longer_imported() {
             .arg(&src)
             .arg("--out")
             .arg(&out)
-            .args(["--theme", "data/themes/Dirt"])
+            .args(["--theme", "data/themes/Dirt", "--prune"])
             .args(extra)
             .status()
             .unwrap()
@@ -139,6 +139,79 @@ fn reimport_removes_packs_no_longer_imported() {
     assert!(!out.join("olx-skin-default").exists(), "packs dropped from the import must be removed");
     assert!(out.join("olx-theme-dirt/pack.ron").is_file());
     assert!(unrelated.exists(), "only pack directories are removed");
+}
+
+#[test]
+fn imports_into_one_out_keep_both_packs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, out) = (tmp.path().join("gamedir"), tmp.path().join("packs"));
+    gamedir(&src);
+    let import = |flag: &[&str]| {
+        olr_cli().args(["import", "--olx"]).arg(&src).arg("--out").arg(&out).args(flag).status().unwrap()
+    };
+    assert!(import(&["--theme", "data/themes/Dirt"]).success());
+    assert!(import(&["--core", "data/gfx/crosshair.png"]).success());
+    assert!(out.join("olx-theme-dirt/pack.ron").is_file(), "the first import's pack stays");
+    assert!(out.join("olx-core/pack.ron").is_file());
+}
+
+#[test]
+fn a_hand_made_pack_survives_an_import_without_prune() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, out) = (tmp.path().join("gamedir"), tmp.path().join("packs"));
+    gamedir(&src);
+    let mine = out.join("my-pack");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(mine.join("pack.ron"), b"(hand made)").unwrap();
+    let status = olr_cli()
+        .args(["import", "--olx"])
+        .arg(&src)
+        .arg("--out")
+        .arg(&out)
+        .args(["--theme", "data/themes/Dirt"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert_eq!(std::fs::read(mine.join("pack.ron")).unwrap(), b"(hand made)");
+    // With no item flags nothing is imported and nothing is removed.
+    assert!(olr_cli().args(["import", "--olx"]).arg(&src).arg("--out").arg(&out).status().unwrap().success());
+    assert!(mine.join("pack.ron").is_file() && out.join("olx-theme-dirt/pack.ron").is_file());
+}
+
+#[test]
+fn prune_removes_packs_the_run_did_not_produce() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, out) = (tmp.path().join("gamedir"), tmp.path().join("packs"));
+    gamedir(&src);
+    let mine = out.join("my-pack");
+    std::fs::create_dir_all(&mine).unwrap();
+    std::fs::write(mine.join("pack.ron"), b"(hand made)").unwrap();
+    let status = olr_cli()
+        .args(["import", "--prune", "--olx"])
+        .arg(&src)
+        .arg("--out")
+        .arg(&out)
+        .args(["--theme", "data/themes/Dirt"])
+        .status()
+        .unwrap();
+    assert!(status.success());
+    assert!(!mine.exists(), "--prune removes the pack this run did not produce");
+    assert!(out.join("olx-theme-dirt/pack.ron").is_file());
+}
+
+#[test]
+fn all_imports_what_discovery_finds_and_excludes_item_flags() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (src, out) = (tmp.path().join("gamedir"), tmp.path().join("packs"));
+    gamedir(&src);
+    let run = |extra: &[&str]| {
+        olr_cli().args(["import", "--olx"]).arg(&src).arg("--out").arg(&out).args(extra).status().unwrap()
+    };
+    // The broken skin makes the run exit 1, but the rest is imported.
+    run(&["--all"]);
+    assert!(out.join("olx-theme-dirt/pack.ron").is_file());
+    assert!(out.join("olx-skin-default/pack.ron").is_file());
+    assert!(!run(&["--all", "--skins"]).success(), "--all and item flags conflict");
 }
 
 /// `olr-server` in a thread of this process, until dropped.

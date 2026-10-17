@@ -3111,7 +3111,12 @@ Decided in `docs/superpowers/plans/2026-10-17-plan-13c-format-switch.md`
 - **D14 - asset names are kept.** Asset files keep OLX's lowercased names
   (such as `cluster_bits.png`); renaming them to kebab-case is deferred.
 - **D6 - the import pipeline is `olr-import`** (layer 3). `olr-cli import
-  --out <data>/packs` fills the user layer that the game still reads.
+  --out <data>/packs` fills the user layer that the game still reads. It
+  only adds or replaces packs; `--prune` (which `cargo xtask
+  fetch-olx-content` passes, so `content/packs` is exactly the manifest's
+  import) also removes the packs the run did not produce, and `--all`
+  imports everything `olr_import::discover` finds (an error with item
+  flags).
 - **`olr-cli validate` is rebuilt on the format-5 readers** (D13: the name
   stays until plan 13d).
 

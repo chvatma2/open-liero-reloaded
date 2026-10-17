@@ -55,10 +55,12 @@ more:
   manifest gives the 4 levels, Classic and MW 1.0, the Dirt theme, 718 skins (409 from the repository, 309 more from
   OpenLieroX 0.58 rc5's release, committed in `content/olx-0.58-rc5/`) and
   the core sprites and sounds; or
-- `olr-cli import --olx <game directory> --out <data>/packs`: imports an
-  OLX game directory into the data directory's `packs/` (below), listed over
-  `--content`'s: a pack of the same id there wins. The game has no Import
-  screen; the editors will import too, later.
+- `olr-cli import --olx <game directory> --out <data>/packs --all`: imports
+  everything in an OLX game directory (or name items with `--mod`, `--level`,
+  `--theme`, `--skins`, `--core`) into the data directory's `packs/` (below),
+  listed over `--content`'s: a pack of the same id there wins. It adds or
+  replaces packs and never removes others (`--prune` does). The game has no
+  Import screen; the editors will import too, later.
 
 ### Run
 

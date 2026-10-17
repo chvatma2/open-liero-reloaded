@@ -195,11 +195,11 @@ fn files(dir: &Path) -> anyhow::Result<std::collections::BTreeMap<String, Vec<u8
     Ok(out)
 }
 
-/// Imports the manifest's items from `gamedir` into `out` (pruned: `out` is
-/// this import's).
+/// Imports the manifest's items from `gamedir` into `out` (`--prune`: `out`
+/// is this import's alone).
 fn import_into(root: &Path, m: &Manifest, gamedir: &Path, out: &Path) -> anyhow::Result<()> {
     let mut cmd = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
-    cmd.current_dir(root).args(["run", "--quiet", "-p", "olr-cli", "--", "import", "--olx"]);
+    cmd.current_dir(root).args(["run", "--quiet", "-p", "olr-cli", "--", "import", "--prune", "--olx"]);
     cmd.arg(gamedir).arg("--out").arg(out).args(["--revision", &m.commit]);
     for x in &m.mods {
         cmd.args(["--mod", x]);
