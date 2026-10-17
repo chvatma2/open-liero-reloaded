@@ -127,6 +127,7 @@ pub fn read_level_header(src: &dyn ContentSource) -> Result<LevelHeader, FormatE
                 LevelObject::Spawn { at, .. } => SpawnPoint { x: at.0, y: at.1 },
             })
             .collect(),
+        objects: file.objects,
     })
 }
 

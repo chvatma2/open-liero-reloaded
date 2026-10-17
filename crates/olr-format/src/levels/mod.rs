@@ -52,6 +52,8 @@ pub struct LevelHeader {
     /// Theme pack id.
     pub theme: String,
     pub spawns: Vec<SpawnPoint>,
+    /// `level.ron`'s objects as written (with their notes).
+    pub objects: Vec<LevelObject>,
 }
 
 /// A level as its files hold it.
