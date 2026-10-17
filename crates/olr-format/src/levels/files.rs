@@ -21,16 +21,26 @@ fn is_one(v: &u32) -> bool {
     *v == 1
 }
 
+/// `level.ron`: what the level is, besides its images.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct LevelFile {
+    /// Shown in menus.
     name: String,
+    /// Free text for authors; ignored by the game.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     notes: String,
+    /// Width and height in world pixels, each 1 to `MAX_SIDE` (4096);
+    /// `material.png` is this size.
     size: (u32, u32),
+    /// Art pixels per world pixel, 1 to `MAX_ART_SCALE` (8): `front.png`
+    /// and `back.png` are `size` × `art_scale` (at most 64 Mi pixels).
     #[serde(default = "default_scale", skip_serializing_if = "is_one")]
     art_scale: u32,
+    /// The id of the theme pack whose holes and green dirt the level uses.
     theme: String,
+    /// Things placed in the level, at most `MAX_OBJECTS` (4096); an editor
+    /// addresses them by index.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     objects: Vec<LevelObject>,
 }

@@ -21,17 +21,27 @@ fn is_zero(v: &u32) -> bool {
     *v == 0
 }
 
+/// `theme.ron`: the theme's name and how many of each image it has.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct ThemeFile {
+    /// Shown in menus.
     name: String,
+    /// Free text for authors; ignored by the game.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     notes: String,
+    /// The hole stamps `holes/<i>.png` with `holes/<i>.mask.png`, `i` from 1
+    /// (OLX's `Hole1`…: stamp `i` is hole size `i - 1`), at most `MAX_HOLES` (16).
     holes: u32,
+    /// The images `stones/<i>.png`, `i` from 1, at most `MAX_THEME_IMAGES` (64):
+    /// OLX's map-editor art, which the game does not read yet.
     #[serde(default, skip_serializing_if = "is_zero")]
     stones: u32,
+    /// The images `misc/<i>.png`, as `stones`.
     #[serde(default, skip_serializing_if = "is_zero")]
     misc: u32,
+    /// Whether `green_ball.png` and `green_ball.mask.png` exist: the green
+    /// dirt stamp.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     green_ball: bool,
 }

@@ -18,11 +18,16 @@ use serde::{Deserialize, Serialize};
 ///   plus a tint); the version is this build's.
 pub const PACK_FORMAT_VERSION: u32 = 5;
 
+/// What a pack holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum PackKind {
+    /// Weapons, projectiles and physics (`docs/formats/mod.md`).
     Mod,
+    /// A level (`docs/formats/level.md`).
     Level,
+    /// A worm skin (`docs/formats/skin.md`).
     Skin,
+    /// A level theme: holes, green dirt, tiles (`docs/formats/theme.md`).
     Theme,
     /// OLX's shared game assets ([`crate::core_pack::CoreDef`]).
     Core,
@@ -39,15 +44,24 @@ pub struct Origin {
     pub revision: String,
 }
 
+/// `pack.ron`: every pack's identity, whatever its kind.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PackManifest {
+    /// The pack format, [`PACK_FORMAT_VERSION`] (5); any other is refused
+    /// ("re-import the pack").
     pub format_version: u32,
     /// Lowercase slug, unique among installed packs, such as `"olx-mw-1-0"`.
     pub id: String,
+    /// Shown in menus.
     pub name: String,
+    /// The pack's own version, free text such as `"0.1.0"`.
     pub version: String,
+    /// What the pack holds.
     pub kind: PackKind,
+    /// Who made it.
     pub authors: Vec<String>,
+    /// Where imported content came from; none for a pack made here.
     pub origin: Option<Origin>,
+    /// The pack's license, such as an SPDX id.
     pub license: Option<String>,
 }

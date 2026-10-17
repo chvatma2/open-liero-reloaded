@@ -10,16 +10,25 @@ use crate::FormatError;
 use crate::image_io::{self, IMAGES};
 use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
 
-/// Every field is written: the layout is the point of the file.
+/// `skin.ron`: the skin's name and the layout of `skin.png`. Every field is
+/// written: the layout is the point of the file. Only OLX's layout (art
+/// scale 2, 20 × 18 frames, 7 aim columns by 3 walk rows) compiles today.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SkinFile {
+    /// Shown in menus.
     name: String,
+    /// Free text for authors; ignored by the game.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     notes: String,
+    /// Art pixels per world pixel, 1 to `MAX_ART_SCALE` (8); OLX's skins are 2.
     art_scale: u32,
+    /// One frame's width and height in art pixels, each 1 to
+    /// `MAX_FRAME_SIDE` (256); OLX's are 20 × 18.
     frame_size: (u32, u32),
+    /// Columns of `skin.png`, one per aim angle, 1 to `MAX_FRAMES` (64); OLX's skins have 7.
     aim_frames: u32,
+    /// Rows of `skin.png`, one per walk frame, 1 to `MAX_FRAMES` (64); OLX's skins have 3.
     walk_frames: u32,
 }
 

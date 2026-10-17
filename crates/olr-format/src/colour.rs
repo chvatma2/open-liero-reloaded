@@ -3,7 +3,9 @@
 use olr_data::image::Rgba;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
-/// A colour in an authoring file. Written lowercase; read in any case.
+/// A colour in an authoring file: `"#rrggbb"` (opaque) or `"#rrggbbaa"`
+/// (alpha 00 transparent to ff opaque), hex digits read in any case.
+/// Written lowercase, without the alpha when opaque.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Colour(pub Rgba);
 

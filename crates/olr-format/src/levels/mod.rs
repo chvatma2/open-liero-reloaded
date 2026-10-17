@@ -73,12 +73,16 @@ pub struct LevelSource {
     pub thumb: Option<Vec<u8>>,
 }
 
+/// A thing placed in a level.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub enum LevelObject {
     /// A spawn point (world pixels). The 0.2 runtime does not read spawns yet.
     Spawn {
+        /// World pixels (x, y), origin top-left, y down; outside the level
+        /// is a warning of `olr-cli pack check`.
         at: (i32, i32),
+        /// Free text for authors; ignored by the game.
         #[serde(default, skip_serializing_if = "String::is_empty")]
         notes: String,
     },

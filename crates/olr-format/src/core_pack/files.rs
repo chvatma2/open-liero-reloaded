@@ -14,22 +14,32 @@ use crate::image_io::{self, IMAGES};
 use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
 use crate::{Colour, FormatError};
 
+/// One sprite's frame grid.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct SpriteEntry {
+    /// Columns and rows of frames; they must divide the image.
     frames: (u32, u32),
+    /// Art pixels per world pixel, 1 to `MAX_ART_SCALE` (8).
     art_scale: u32,
 }
 
+/// `core.ron`: OLX's shared game assets (`CORE_LAYOUT` lists OLX's sprites).
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct CoreFile {
+    /// Free text for authors; ignored by the game.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     notes: String,
+    /// Each sprite `gfx/<id>.png` by id, such as `crosshair`, at most
+    /// `MAX_SPRITES` (256).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     sprites: BTreeMap<String, SpriteEntry>,
+    /// The sound files `sounds/<file>`, such as `throw.ogg`, at most `MAX_SOUNDS` (1024).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     sounds: Vec<String>,
+    /// OLX's `colours.cfg` values by its key, such as `RopeColour1`, at most
+    /// `MAX_COLOURS` (1024).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     colours: BTreeMap<String, Colour>,
 }
