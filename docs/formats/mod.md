@@ -66,7 +66,7 @@ Example:
 | `drain` | number | required | Percent of a full magazine used per shot (> 100 empties it) (OLX `drain`, `CServer_Game.cpp:395-410`). |
 | `between_shots_s` | number | required | Seconds between shots (OLX's `ROF` ÷ 1000, `CGameScript.cpp:776`). |
 | `laser_sight` | boolean | `false` | Spawns a laser-sight entity every sub-step while the weapon is not reloading; the entity takes an entity-pool slot, so it counts in the simulation (OLX `CClient_Game.cpp:751-808`). |
-| `fire` | [Fire](#fire) | required | What a shot does. |
+| `fire` | [Fire](#fire) | required | What a shot does (OLX `Wpn_Type` and its payload, `mod-fields.md` §5). |
 
 Example:
 
@@ -123,7 +123,7 @@ Example:
 
 ## Projectile (`projectiles/<id>.ron`)
 
-A projectile (OLX `proj_t`, `include/ProjectileDesc.h:80-121`), inline in a spawn or in `projectiles/<id>.ron` (shared).
+A projectile (OLX `proj_t`, `include/ProjectileDesc.h:80-121`), inline in a spawn or in `projectiles/<id>.ron` (shared); at most `MAX_SHARED` (4096) shared ones.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -134,9 +134,9 @@ A projectile (OLX `proj_t`, `include/ProjectileDesc.h:80-121`), inline in a spaw
 | `gravity` | integer (optional) | none | px/s² added to the vertical velocity (OLX `ProjGravity`); absent = the world's gravity (100). `0` and `100` are written: they are not "absent" (`mod-fields.md` §1.4). |
 | `velocity_factor` | number | `1.0` | Velocity × this once per 11 ms physics step (> 1 accelerates). OLX's `Dampening`. |
 | `timer` | [Timer](#timer) (optional) | none | The timed event (OLX `Timer`); absent = none. |
-| `trail` | [Trail](#trail) | `Off` | What the projectile leaves behind while flying. |
-| `hit_terrain` | list of [Effect](#effect) | `[]` | When the projectile hits rock or dirt (OLX `Hit`). `[]` = OLX's `Nothing`. The effect kind also selects the collision physics: `Bounce`, `Nothing` (half-move), `GoThrough` (no stop), `Explode` in dirt only (keeps position); everything else stops at the last safe position (`mod-fields.md` §7). |
-| `hit_worm` | list of [Effect](#effect) | `[]` | When it hits a worm (OLX `PlayerHit`). `[]` = `Nothing`, which also turns worm collision off; `GoThrough` hits but does not stop. |
+| `trail` | [Trail](#trail) | `Off` | What the projectile leaves behind while flying (OLX `Trail`, `mod-fields.md` §11). |
+| `hit_terrain` | list of [Effect](#effect) | `[]` | When the projectile hits rock or dirt (OLX `Hit`). `[]` = OLX's `Nothing`. The effect kind also selects the collision physics: `Bounce`, `Nothing` (half-move), `GoThrough` (no stop), `Explode` in dirt only (keeps position); everything else stops at the last safe position (`mod-fields.md` §7). At most `MAX_EFFECTS` (16). |
+| `hit_worm` | list of [Effect](#effect) | `[]` | When it hits a worm (OLX `PlayerHit`). `[]` = `Nothing`, which also turns worm collision off; `GoThrough` hits but does not stop. At most `MAX_EFFECTS` (16). |
 | `spawns` | map of name → [EventSpawn](#spawn) | `{}` | Named spawns that `Spawn(<name>)` effects use. This runtime takes at most one, shared by all events (OLX `GeneralSpawnInfo`, expanded as `<path>.spawn`). |
 
 Example:
@@ -222,14 +222,14 @@ How a weapon fires (OLX `Wpn_Type`; `docs/porting/olx-notes/mod-fields.md` §5).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `recoil` | integer | `0` | px/s; unused by the simulation (bots read its sign). |
-| `colour` | [colour](#colour) | required | `#rrggbb`. The beam is not drawn when it is `#ff00ff`. |
+| `recoil` | integer | `0` | px/s; unused by the simulation (bots read its sign) (OLX `recoil`). |
+| `colour` | [colour](#colour) | required | `#rrggbb`. The beam is not drawn when it is `#ff00ff` (OLX `colour`). |
 | `hole_size` | integer | `0` | Hole size carved at the first dirt or rock pixel (0..4); -1 = none (OLX `damage`). |
 | `worm_damage` | integer | `0` | Health points to the first other worm within 5 px of the trace (OLX `player_damage`). |
-| `length` | integer | `0` | Maximum trace length in px (one step = 1 px along the aim). |
+| `length` | integer | `0` | Maximum trace length in px (one step = 1 px along the aim) (OLX `length`). |
 | `width` | integer | `1` | Parts side by side at the start, px. Default 1 (OLX `init_width`). |
 | `width_growth` | number | `0.0` | px of width added per px of length (OLX `width_increase`). |
-| `split_damage_over_width` | boolean | `false` | Divides both damages over the beam's width (at least 1 per part). |
+| `split_damage_over_width` | boolean | `false` | Divides both damages over the beam's width (at least 1 per part) (OLX `distribute_damage_over_width`). |
 
 ### `Fire::Special`
 
@@ -246,7 +246,7 @@ How a projectile looks (and what it costs the simulation); OLX `ProjectileGfx`, 
 
 | Variant | Fields | Meaning |
 |---|---|---|
-| `Pixels` | list of [colour](#colour) | A 1 px square. One of the `#rrggbb` colours is drawn at spawn (one `rand()`; none when the list is empty). OLX `Pixel.colours`. |
+| `Pixels` | list of [colour](#colour) | A 1 px square. One of the `#rrggbb` colours is drawn at spawn (one `rand()`; none when the list is empty). OLX `Pixel.colours`. At most `MAX_COLOURS` (256). |
 | `Image` | `file`, `rotating`, `rotation_step_deg`, `rotation_speed`, `frames_follow_heading`, `frames_follow_heading_mirrored`, `heading_frames`, `animation` | An image strip (OLX `Image`). |
 
 ### `Gfx::Image`
@@ -272,7 +272,7 @@ OLX `Proj_LX56Timer` (`ProjAction.h:452-468`). It fires every step once its time
 |---|---|---|---|
 | `after_s` | number | required | Seconds of projectile life (OLX `time`). The effects need `after_s > 0`. |
 | `variation_s` | number | `0.0` | Seconds, ± range (× the projectile's fixed random in [-1, 1]; OLX `time_var`). |
-| `effects` | list of [Effect](#effect) | `[]` | What fires. `[]` = `Nothing`, which also cancels a spawn on a timer. |
+| `effects` | list of [Effect](#effect) | `[]` | What fires. `[]` = `Nothing`, which also cancels a spawn on a timer (OLX `action`; at most `MAX_EFFECTS` (16)). |
 
 <a id="trail"></a>
 
@@ -283,11 +283,11 @@ OLX `Proj_Trail` (`ProjAction.h:131-138`).
 | Variant | Fields | Meaning |
 |---|---|---|
 | `Off` | — | `TRL_NONE`: no trail. |
-| `Smoke` | — | A smoke entity every 75 ms. |
-| `ChemSmoke` | — | A chemical-smoke entity every 75 ms. |
-| `Doomsday` | — | A doomsday entity every 50 ms. |
-| `Explosive` | — | A cosmetic explosion entity (size 10) every 50 ms. |
-| `Projectile` | `every_s`, `spawn` | A spawn every `every_s` seconds (whole ms), the first on the first step. |
+| `Smoke` | — | A smoke entity every 75 ms (OLX trail type 1). |
+| `ChemSmoke` | — | A chemical-smoke entity every 75 ms (OLX trail type 2). |
+| `Doomsday` | — | A doomsday entity every 50 ms (OLX trail type 4). |
+| `Explosive` | — | A cosmetic explosion entity (size 10) every 50 ms (OLX trail type 5). |
+| `Projectile` | `every_s`, `spawn` | A spawn every `every_s` seconds (whole ms), the first on the first step (OLX trail type 3). |
 | `Unknown` | integer | An OLX trail type this format has no name for: no trail. |
 
 ### `Trail::Projectile`
@@ -407,7 +407,7 @@ LX56 fixes four flags per context, so their defaults depend on where the spawn i
 | `inherit_velocity` | boolean | by context | Adds `inherit_velocity_factor` × the parent's velocity. For a shot the parent is the worm, whose velocity counts as zero unless the game's `ProjRelativeVel` setting is on (OLX `add_parent_vel`). |
 | `inherit_velocity_factor` | number | `1.0` | Unitless factor on the parent's velocity (OLX `parent_vel_factor`). Default 1.0. |
 | `shared` | string (optional) | none | The id of a shared projectile (`projectiles/<id>.ron`). Exactly one of `shared` and `projectile` is set (OLX `proj`). |
-| `projectile` | [Projectile](#projectile) (optional) | none | The spawned projectile, defined here (OLX `proj`). |
+| `projectile` | [Projectile](#projectile) (optional) | none | The spawned projectile, defined here (OLX `proj`); inline projectiles nest at most `MAX_INLINE_DEPTH` (32) deep. |
 
 <a id="weaponstate"></a>
 
@@ -463,7 +463,7 @@ A projectile's frame animation (OLX `Animating`, `AnimRate`, `AnimType`).
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `fps` | number | `0.0` | Frames per second (OLX `rate`). |
-| `mode` | [AnimMode](#animmode) | `Once` | What happens at the last frame. `Once` removes the projectile. |
+| `mode` | [AnimMode](#animmode) | `Once` | What happens at the last frame. `Once` removes the projectile (OLX `AnimType`). |
 
 <a id="animmode"></a>
 

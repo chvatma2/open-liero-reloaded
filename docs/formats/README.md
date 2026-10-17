@@ -45,7 +45,11 @@ changed. `olr-cli pack fmt` rewrites a pack's files in canonical form, and
 
 Comments are not kept: the writer makes the text from the values, so a
 comment would vanish at the next save. Write notes in the `notes:` field
-that every authoring file has instead; the game ignores them.
+instead, which every file but `pack.ron` and `restrictions.ron` has; the
+game ignores them.
+
+`pack.ron` is the exception: it is plain RON, every field written and an
+optional value spelled `Some(…)` or `None` (see the manifest example).
 
 ### Units
 
@@ -58,13 +62,19 @@ Names carry the unit where it helps (`between_shots_s`, `every_s`,
 
 ### Events and effects
 
-A projectile reacts to events, each a list of effects:
+A projectile reacts to events, each with a list of effects:
 
 - `hit_terrain`: it touches rock or dirt;
 - `hit_worm`: it touches a worm;
-- `timer`: its `after_s` seconds of life have passed.
+- `timer: (after_s: …, variation_s: …, effects: [...])`: its `after_s`
+  seconds of life (± `variation_s`) have passed.
 
-An empty list does nothing. An effect such as `Explode(damage: 4)` acts
+An empty list is OLX's `Nothing`, which still shapes the physics:
+`hit_terrain: []` moves the projectile half a step into the terrain, and
+`hit_worm: []` turns its worm collision off. The effect kind on
+`hit_terrain` also chooses how the projectile collides (`Bounce`
+bounces, `GoThrough` passes); the reference's `Projectile` fields say
+how. An effect such as `Explode(damage: 4)` acts
 on the projectile and around it; `Spawn("<name>")` makes the named entry
 of the projectile's `spawns` (a child spawn: how many children, how fast,
 in which directions, and which projectile). The runtime follows OLX
@@ -75,9 +85,9 @@ projectile has at most one named spawn.
 
 A spawn's projectile is either defined in place (`projectile: (...)`) or
 shared: `shared: "<id>"` names `projectiles/<id>.ron`, for a projectile
-that several spawns make. Every projectile has a key, which replays and
-the simulation use to tell projectiles apart: a shared projectile's key
-is its file id; an inline projectile's key is its `id` when set, and
+that several spawns make. Every projectile has a key, by which the
+compiled mod's definitions name their children (the simulation never
+reads the key strings): a shared projectile's key is its file id; an inline projectile's key is its `id` when set, and
 otherwise comes from its place: the weapon id for a shot, then
 `<parent>.spawn` for an event spawn and `<parent>.trail` for a trail. Two
 projectiles with the same key, and cycles between shared projectiles, are

@@ -16,7 +16,7 @@ A stamp (hole or green ball) is a meaning mask plus a paint layer; `compile_them
 |---|---|---|---|
 | `name` | string | required | Shown in menus. |
 | `notes` | string | `""` | Free text for authors; ignored by the game. |
-| `holes` | integer | required | The hole stamps `holes/<i>.png` with `holes/<i>.mask.png`, `i` from 1 (OLX's `Hole1`…: stamp `i` is hole size `i - 1`), at most `MAX_HOLES` (16). |
+| `holes` | integer | required | The hole stamps `holes/<i>.png` with `holes/<i>.mask.png`, `i` from 1 (OLX's `Hole1`…: stamp `i` is hole size `i - 1`), at most `MAX_HOLES` (16); each stamp at most `MAX_STAMP_SIDE` (64) pixels a side. |
 | `stones` | integer | `0` | The images `stones/<i>.png`, `i` from 1, at most `MAX_THEME_IMAGES` (64): OLX's map-editor art, which the game does not read yet. |
 | `misc` | integer | `0` | The images `misc/<i>.png`, as `stones`. |
 | `green_ball` | boolean | `false` | Whether `green_ball.png` and `green_ball.mask.png` exist: the green dirt stamp. |

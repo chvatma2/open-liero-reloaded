@@ -8,7 +8,7 @@ The skin authoring format: `skin.ron`, `skin.png` (a grid of frames, aim columns
 
 ## SkinFile (`skin.ron`)
 
-`skin.ron`: the skin's name and the layout of `skin.png`. Every field is written: the layout is the point of the file. Only OLX's layout (art scale 2, 20 × 18 frames, 7 aim columns by 3 walk rows) compiles today.
+`skin.ron`: the skin's name and the layout of `skin.png`. Every field is written: the layout is the point of the file. Only OLX's layout (art scale 2, 20 × 18 frames, 7 aim columns by 3 walk rows) compiles today, with a `tint.png` of 0 and 255 only.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|

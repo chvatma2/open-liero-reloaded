@@ -4,6 +4,8 @@ Files: `pack.ron` ([PackManifest](#packmanifest)).
 
 `pack.ron`: what every pack declares about itself.
 
+Unlike the authoring files, `pack.ron` is plain RON: every field is written, an optional value as `Some(…)` or `None`, and it has no `notes`.
+
 <a id="packmanifest"></a>
 
 ## PackManifest (`pack.ron`)
