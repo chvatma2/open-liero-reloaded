@@ -125,12 +125,19 @@ fn theme_digest(content: &Content, id: &str) -> String {
     d.hex()
 }
 
+/// Hashes the frames as the game cuts them: the sheet's spacing columns are
+/// never drawn, and format 5 drops them.
 fn skin_digest(content: &Content, id: &str) -> String {
     let mut d = Digest256::new();
     let s = content.load_skin(id).unwrap();
     d.text("def", &format!("{:?}", s.skin.def));
     for (r, g, b) in COLOURS {
-        d.image(&format!("colorized:{r},{g},{b}"), &s.colorized(Rgba::rgb(r, g, b)));
+        let sheet = s.colorized(Rgba::rgb(r, g, b));
+        for (face, name) in [(olr_sim::Dir::Right, "right"), (olr_sim::Dir::Left, "left")] {
+            for f in 0..olr_content::SHEET_FRAMES {
+                d.image(&format!("frame:{r},{g},{b}:{name}:{f}"), &olr_content::skin_sprite(&sheet, f, face));
+            }
+        }
     }
     d.hex()
 }
