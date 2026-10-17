@@ -79,6 +79,16 @@ pub struct Config {
 }
 
 /// What exists once the window does.
+/// Shows `window` (made hidden: `window::attributes`) once it has drawn a
+/// frame, or once it cannot draw one (minimised or occluded while hidden:
+/// it would never show otherwise). A no-op where windows have no
+/// visibility (Wayland) and once shown.
+pub(crate) fn show_window(window: &Window) {
+    if window.is_visible() == Some(false) {
+        window.set_visible(true);
+    }
+}
+
 struct Shown {
     window: Arc<Window>,
     gpu: Gpu,
@@ -856,6 +866,9 @@ impl App {
             eprintln!("warning: {warning}");
         }
         let timing = w.gpu.present(frame, world, &paint, &mut out.textures_delta);
+        if timing.is_some() {
+            show_window(&w.window);
+        }
         if let Some(t) = timing {
             self.latency.presented(Instant::now(), t);
         }

@@ -90,11 +90,13 @@ impl ApplicationHandler for App {
             el.set_control_flow(ControlFlow::Poll);
             w.window.request_redraw();
         } else if let Some(wake) = self.shell.hidden_wake() {
+            super::show_window(&w.window);
             self.paused = true;
             let out = self.hidden_frame();
             self.outcomes(el, out);
             el.set_control_flow(ControlFlow::WaitUntil(std::time::Instant::now() + wake));
         } else {
+            super::show_window(&w.window);
             self.paused = true;
             el.set_control_flow(ControlFlow::Wait);
         }

@@ -69,7 +69,11 @@ pub const MIN_CHANGE_INTERVAL: Duration = Duration::from_millis(250);
 
 /// The window as created: `size` logical pixels (`physical`: physical
 /// pixels, an options preset), borderless fullscreen when asked, neither
-/// resizable nor maximisable (the size is the game's).
+/// resizable nor maximisable (the size is the game's), and hidden until
+/// its first frame is drawn (`App::show_window`): setting the GPU up takes
+/// a while, and a window shown meanwhile showed its unpainted inside (the
+/// user's report of 2026-10-18: a white rectangle). Wayland has no hidden
+/// windows: a window there shows with its first frame anyway.
 pub fn attributes(size: (u32, u32), physical: bool, fullscreen: bool) -> WindowAttributes {
     let (w, h) = (size.0.max(1), size.1.max(1));
     let size: winit::dpi::Size =
@@ -78,6 +82,7 @@ pub fn attributes(size: (u32, u32), physical: bool, fullscreen: bool) -> WindowA
         .with_title("Open Liero Reloaded")
         .with_inner_size(size)
         .with_resizable(false)
+        .with_visible(false)
         .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE)
         .with_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
     // One field for both window systems: the app ID, and the X11 class.
@@ -263,6 +268,15 @@ pub fn lost_connection(wayland: bool) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The user's report of 2026-10-18: a white rectangle showed in the
+    /// window while the GPU was being set up. The window opens hidden and
+    /// shows once its first frame is drawn (`App::show_window`).
+    #[test]
+    fn the_window_opens_hidden() {
+        assert!(!attributes(DEFAULT_SIZE, false, false).visible);
+        assert!(!attributes(DEFAULT_SIZE, true, true).visible);
+    }
 
     #[test]
     fn the_window_is_fixed_size_and_cannot_be_maximised() {
