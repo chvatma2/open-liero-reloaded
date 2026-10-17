@@ -16,6 +16,7 @@ ron.workspace = true
 syn.workspace = true
 prettyplease.workspace = true
 quote.workspace = true
+proc-macro2.workspace = true
 olr-oracle.workspace = true
 olr-data.workspace = true
 olr-pack.workspace = true

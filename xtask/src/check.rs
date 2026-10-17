@@ -207,6 +207,7 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
             Err(e) => Err(format!("{e:#}")),
         });
     }
+    step("format-docs", &mut crate::format_docs::step);
     step("test", &mut || {
         if has_nextest() {
             let args = [

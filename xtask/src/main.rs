@@ -10,6 +10,7 @@ mod dist;
 mod e2e;
 mod envelope;
 mod fetch;
+mod format_docs;
 mod layers;
 mod nat;
 mod net;
@@ -49,6 +50,12 @@ enum Command {
     },
     /// Check crate layering rules from xtask/layers.ron.
     Layers,
+    /// Write the schema pages in docs/formats/ from olr-format's authoring types.
+    FormatDocs {
+        /// Only compare: exit 1 naming each page that differs from the code.
+        #[arg(long)]
+        check: bool,
+    },
     /// Write public API summaries to target/api/<crate>.txt.
     Api,
     /// Download the pinned OLX content and import it into content/packs.
@@ -230,6 +237,7 @@ fn main() -> ExitCode {
         Command::Check { offline } => check::run(offline),
         Command::Full { offline } => check::full(offline),
         Command::Layers => layers::run().map(|()| true),
+        Command::FormatDocs { check } => format_docs::run(check),
         Command::Api => api::run().map(|()| true),
         Command::FetchOlxContent { no_import } => fetch::run(!no_import).map(|p| {
             println!("OLR_OLX_GAMEDIR={}", p.gamedir.display());
