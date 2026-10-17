@@ -92,7 +92,7 @@ impl Paint {
 
 /// Calls `f(px, py)` for each world pixel of `shape` inside a `w` × `h`
 /// level, row by row.
-fn covered(shape: &Shape, (w, h): (u32, u32), mut f: impl FnMut(u32, u32)) {
+pub(crate) fn covered(shape: &Shape, (w, h): (u32, u32), mut f: impl FnMut(u32, u32)) {
     let (x0, y0, x1, y1) = match *shape {
         Shape::Rect { x, y, w, h } => {
             let (x, y) = (i64::from(x), i64::from(y));
@@ -125,7 +125,7 @@ fn covered(shape: &Shape, (w, h): (u32, u32), mut f: impl FnMut(u32, u32)) {
 }
 
 /// The art pixels of world pixel `(x, y)`'s block at art scale `s`.
-fn art_block(s: u32, x: u32, y: u32) -> impl Iterator<Item = (u32, u32)> {
+pub(crate) fn art_block(s: u32, x: u32, y: u32) -> impl Iterator<Item = (u32, u32)> {
     (y * s..(y + 1) * s).flat_map(move |ay| (x * s..(x + 1) * s).map(move |ax| (ax, ay)))
 }
 

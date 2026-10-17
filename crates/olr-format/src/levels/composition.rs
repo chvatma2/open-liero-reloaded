@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::MAX_SIDE;
 use crate::FormatError;
 use crate::defaults as d;
-use crate::image_io::{self, IMAGES};
+use crate::image_io::{self, IMAGES, LEVEL_ART};
 use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
 
 /// A pack's authoring folder: the editors' sources, never content.
@@ -308,6 +308,9 @@ pub fn check_composition(
             if !(1..=MAX_SIDE).contains(&size.0) || !(1..=MAX_SIDE).contains(&size.1) {
                 return Err(bad("size", format!("{}x{}: each side 1 to {MAX_SIDE}", size.0, size.1)));
             }
+            let (aw, ah) = (size.0.saturating_mul(art_scale), size.1.saturating_mul(art_scale));
+            image_io::check_size(aw, ah, LEVEL_ART)
+                .map_err(|why| bad("size", format!("its art at art scale {art_scale}: {why}")))?;
             if !(1..=MAX_PIXEL_SIZE).contains(pixel_size) {
                 return Err(bad("pixel_size", format!("{pixel_size}: 1 to {MAX_PIXEL_SIZE}")));
             }
@@ -492,6 +495,20 @@ mod tests {
             let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
             assert!(e.contains(want), "{want}: {e}");
         }
+    }
+
+    /// Spec §2: an image's processed art (its box × art scale) is within
+    /// `LEVEL_ART`, so the bake never allocates more than a level's art.
+    #[test]
+    fn an_image_box_beyond_level_art_is_refused() {
+        let mut s = sample();
+        s.composition.elements.retain(|e| e.id == "sky");
+        if let ElementKind::Image { size, .. } = &mut s.composition.elements[0].kind {
+            *size = (4096, 4096);
+        }
+        check_composition(&s, (4, 3), 2).unwrap();
+        let e = check_composition(&s, (4, 3), 3).unwrap_err().to_string();
+        assert!(e.contains("elements[0].size") && e.contains("art"), "{e}");
     }
 
     #[test]
