@@ -70,13 +70,13 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   (`encode_content` with the tag, `decode_content` without; `valid_content`);
   `MAX_CONTENT` (`CONTENT_CHUNK` + 256) bounds one message (a worst-case
   64-item `List` fits). `List { revision, items }`: `ToHost::Have {
-  revision, missing }` answers that revision (a client's one-item skin
-  offer to the host is revision 0). `Item { kind, id, hash, size,
-  required }`; a list has no hash twice, skins are <= 64 KiB and never
-  required.
+  revision, missing }` answers that revision (only the host lists). `Item
+  { kind, id, hash, size, required }`; a list has no hash twice and every
+  item is `required` (`valid_content` refuses an optional one; skins are
+  never listed, plan 13c).
   `MAX_ARCHIVE_BYTES` restates olr-pack's `MAX_ARCHIVE`. `valid_hash` is 64
   lowercase hex; `NO_HASH` is valid and means unknown. `Look::skin_hash`
-  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 2.
+  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 3 (plan 13c: skins are matched by id and hash, never transferred).
 - **LAN** (`lan.rs`): `LanAnnounce` on UDP `LAN_PORT` (23401), `MAX_LAN`;
   `players` the seated members (at most `max_players`, itself at most
   `MAX_PLAYERS`), `bots` apart (appended; at most `MAX_PLAYERS`: bots take

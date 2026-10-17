@@ -20,8 +20,6 @@ pub const MAX_ITEMS: usize = 64;
 /// Largest archive, restating olr-pack's `MAX_ARCHIVE` (olr-proto cannot
 /// depend on olr-pack; a test in olr-online asserts the two are equal).
 pub const MAX_ARCHIVE_BYTES: u64 = 512 << 20;
-/// Largest skin archive in a `List`.
-pub const MAX_SKIN_BYTES: u64 = 64 * 1024;
 /// "Unknown" hash: valid, and never fetched.
 pub const NO_HASH: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 
@@ -30,7 +28,6 @@ pub enum ItemKind {
     Mod,
     Level,
     Theme,
-    Skin,
 }
 
 /// One pack of the match's content.
@@ -48,9 +45,8 @@ pub struct Item {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ContentMsg {
     /// The match's content (host to client), whole, on every change, under
-    /// a new `revision` (a client's `ToHost::Have` answers it); a client's
-    /// own skin, one item (client to host, revision 0: the archive size the
-    /// host's fetch checks, olr-online's ruling R6-1).
+    /// a new `revision` (a client's `ToHost::Have` answers it). Only the
+    /// host lists; skins are never listed or transferred (plan 13c).
     List { revision: u32, items: Vec<Item> },
     /// Send the archive of `hash` from byte `offset`.
     Want { hash: String, offset: u64 },
@@ -78,7 +74,7 @@ pub fn valid_content(m: &ContentMsg) -> bool {
                     valid_pack_id(&it.id)
                         && valid_hash(&it.hash)
                         && it.size <= MAX_ARCHIVE_BYTES
-                        && (it.kind != ItemKind::Skin || (it.size <= MAX_SKIN_BYTES && !it.required))
+                        && it.required
                         && items[..i].iter().all(|o| o.hash != it.hash)
                 })
         }
@@ -142,7 +138,6 @@ mod tests {
             item(ItemKind::Mod, 'a', 1 << 20, true),
             item(ItemKind::Level, 'b', 5, true),
             item(ItemKind::Theme, 'c', 0, true),
-            item(ItemKind::Skin, 'd', MAX_SKIN_BYTES, false),
         ]));
         round(ContentMsg::List { revision: u32::MAX, items: vec![] });
         round(ContentMsg::Want { hash: h('a'), offset: u64::MAX });
@@ -165,8 +160,8 @@ mod tests {
         let mut twice = item(ItemKind::Level, 'a', 1, true);
         twice.id = "other".into();
         refused(list(vec![item(ItemKind::Mod, 'a', 1, true), twice]));
-        refused(list(vec![item(ItemKind::Skin, 'a', 1, true)]));
-        refused(list(vec![item(ItemKind::Skin, 'a', MAX_SKIN_BYTES + 1, false)]));
+        refused(list(vec![item(ItemKind::Mod, 'a', 1, false)]));
+        refused(list(vec![item(ItemKind::Mod, 'a', 1, true), item(ItemKind::Level, 'b', 1, false)]));
         refused(list(vec![item(ItemKind::Mod, 'a', MAX_ARCHIVE_BYTES + 1, true)]));
         let mut bad_id = item(ItemKind::Mod, 'a', 1, true);
         bad_id.id = "Bad Id".into();

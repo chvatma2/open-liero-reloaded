@@ -97,6 +97,20 @@ fn admit_checks_version_fingerprint_and_capacity() {
     assert_eq!(core.admit(&old), Err(olr_proto::Refusal::Version));
 }
 
+/// Plan 13c: a 0.1 client (protocol 2) offering to a protocol-3 host is
+/// refused at the handshake, `Version` (the game shows "the host plays
+/// another version"), whether or not its fingerprint happens to match; the
+/// host builds no link for it.
+#[test]
+fn a_protocol_2_client_is_refused_at_the_handshake() {
+    assert_eq!(olr_proto::PROTOCOL_VERSION, 3, "protocol 3 is 0.2's");
+    let core = Core::new(CoreConfig::host(), Instant::now());
+    for fingerprint in [olr_proto::FINGERPRINT, olr_proto::FINGERPRINT ^ 1] {
+        let old = olr_proto::Signal::Offer { protocol: 2, fingerprint, sdp: String::new() };
+        assert_eq!(core.admit(&old), Err(olr_proto::Refusal::Version), "{fingerprint}");
+    }
+}
+
 /// Two cores with the client's offer answered and taken.
 fn set_up(t0: Instant, client_at: SocketAddr, host_at: SocketAddr) -> (Core, Core, u64) {
     let mut host = Core::new(CoreConfig::host(), t0);

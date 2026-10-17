@@ -128,7 +128,7 @@ fn samples() -> Vec<Vec<u8>> {
     for m in [
         ContentMsg::List {
             revision: 3,
-            items: vec![item(ItemKind::Mod, "a", true), item(ItemKind::Skin, "b", false)],
+            items: vec![item(ItemKind::Mod, "a", true), item(ItemKind::Level, "b", true)],
         },
         ContentMsg::Want { hash: "a".repeat(64), offset: 10 },
         ContentMsg::Begin { hash: "a".repeat(64), archive: "b".repeat(64), size: 100, offset: 10 },
