@@ -138,9 +138,10 @@ fn pack_fmt_check_exits_1_on_a_dirty_pack() {
         format!("{}/level.ron: not canonical\n", pack.display())
     );
 
-    let out = olr_cli().args(["pack", "fmt"]).arg(&pack).output().unwrap();
-    assert!(out.status.success());
-    assert_eq!(String::from_utf8_lossy(&out.stdout), format!("formatted {}: 1 files\n", pack.display()));
+    // Review A-1: the pack one stands in, as `.`.
+    let out = olr_cli().args(["pack", "fmt", "."]).current_dir(&pack).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "formatted .: 1 files\n");
     assert_eq!(std::fs::read(pack.join("level.ron")).unwrap(), original);
 }
 
