@@ -16,5 +16,8 @@ skins with colorization masks, themes, and pack manifests.
   `updateList`, `findWeapon`'s trimmed case-insensitive lookup), with the
   enabled ids (bots), the not-banned ids (natural bonuses) and
   `find_enabled_weapon` (the weapon selection's fallback).
+- **Names** (`text.rs`): `valid_name`, `is_hidden`, `sanitise_name`, the
+  one rule for players' names: olr-proto refuses lobby names that break it,
+  olr-replay cleans recorded ones with it.
 
 Test: `cargo nextest run -p olr-data`. Build for the web: `cargo build -p olr-data --target wasm32-unknown-unknown`.

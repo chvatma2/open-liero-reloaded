@@ -10,6 +10,7 @@ build = "build.rs"
 autotests = false
 
 [dependencies]
+olr-data.workspace = true
 serde.workspace = true
 postcard.workspace = true
 

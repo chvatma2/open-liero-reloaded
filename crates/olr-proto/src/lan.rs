@@ -4,7 +4,9 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
-use crate::lobby::{MAX_NAME, valid_name, valid_pack_id};
+use olr_data::text::valid_name;
+
+use crate::lobby::{MAX_NAME, valid_pack_id};
 use crate::{ProtoError, decode_exact};
 
 /// UDP port hosts announce on.

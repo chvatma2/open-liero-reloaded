@@ -3685,6 +3685,7 @@ dependencies = [
 name = "olr-proto"
 version = "0.2.0"
 dependencies = [
+ "olr-data",
  "postcard",
  "proptest",
  "serde",

@@ -117,24 +117,3 @@ fn the_replay_carries_the_lobby_looks() {
     assert_eq!(got, want);
     assert_eq!(got[0].0, "Ann");
 }
-
-/// olr-replay cannot call olr-proto's `valid_name` (a higher layer), so its
-/// `sanitise_name` must agree with it: whatever it gives, a lobby accepts.
-#[test]
-fn a_sanitised_name_is_a_valid_lobby_name() {
-    for raw in [
-        "Ann",
-        "  padded  ",
-        "tab\tand\nnewline",
-        "bidi\u{202E}override",
-        "zero\u{200B}width\u{FEFF}",
-        "\u{00AD}soft\u{2028}hyphen",
-        "twenty-one characters!!",
-        "ééééééééééééééééééééééééé",
-        "\u{1}\u{2}",
-        "",
-    ] {
-        let clean = olr_replay::sanitise_name(raw, 4);
-        assert!(olr_proto::valid_name(&clean, olr_proto::MAX_NAME), "{raw:?} -> {clean:?}");
-    }
-}

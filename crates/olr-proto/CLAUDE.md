@@ -4,7 +4,7 @@ The network wire format (networking spec §2, §3.1, §5.4): inputs datagrams,
 control messages, the frame delta codec and the simulation fingerprint;
 plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
 
-- **Layer 4, `#![no_std]` + `alloc`, wasm32.** Depends on serde and postcard
+- **Layer 4, `#![no_std]` + `alloc`, wasm32.** Depends on `olr-data` (`text`: name rules), serde and postcard
   only (keys are plain bytes).
 - **Datagrams** (unreliable inputs channel): `Datagram::Client(ClientInputs)`
   carries the sender's own keys for ticks `first..`, its `ack` and next

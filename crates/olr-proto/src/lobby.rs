@@ -6,6 +6,8 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
+use olr_data::text::{is_bidi, valid_name, valid_text};
+
 use crate::content::{TAG_CONTENT, valid_hash};
 use crate::signal::Refusal;
 use crate::{ProtoError, decode_exact};
@@ -347,38 +349,6 @@ pub fn tag(bytes: &[u8]) -> Option<Tagged<'_>> {
 }
 
 // ---- validation ----
-
-/// At most `max` characters, no control characters.
-pub(crate) fn valid_text(s: &str, max: usize) -> bool {
-    s.chars().count() <= max && !s.chars().any(char::is_control)
-}
-
-/// Bidi overrides, isolates and marks: refused in chat and names.
-fn is_bidi(c: char) -> bool {
-    matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
-}
-
-/// Unicode format (Cf) and separator code points that make names
-/// ambiguous: bidi controls, zero-width characters, line and paragraph
-/// separators, the BOM.
-fn is_hidden(c: char) -> bool {
-    is_bidi(c)
-        || matches!(
-            c,
-            '\u{00AD}'
-                | '\u{200B}'..='\u{200D}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{2060}'..='\u{2064}'
-                | '\u{FEFF}'
-        )
-}
-
-/// A name: 1 to `max` characters, no control, hidden or bidi characters,
-/// not blank, no leading or trailing whitespace.
-pub fn valid_name(s: &str, max: usize) -> bool {
-    valid_text(s, max) && !s.is_empty() && s.trim() == s && !s.chars().any(is_hidden)
-}
 
 /// A pack id: ASCII `[a-z0-9-]` (olr-pack's manifest rule), 1 to `MAX_ID` bytes.
 pub fn valid_pack_id(s: &str) -> bool {

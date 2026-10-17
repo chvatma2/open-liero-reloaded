@@ -15,4 +15,5 @@ pub mod mod_def;
 pub mod restrictions;
 pub mod skin;
 pub mod slug;
+pub mod text;
 pub mod theme;
