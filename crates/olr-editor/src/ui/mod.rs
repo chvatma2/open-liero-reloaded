@@ -3,6 +3,7 @@
 //! them from the state and returns the frame's actions, as
 //! `olr_ui::screens::show` does; the host applies `olr_ui::theme`.
 
+mod browser;
 mod canvas;
 mod dialogs;
 mod elements;
@@ -25,7 +26,13 @@ pub mod labels {
     pub const SAVE: &str = "Save";
     pub const PLAY: &str = "Play";
     pub const ADD_LAYER: &str = "Add layer";
-    pub const IMPORT_IMAGE: &str = "Import image";
+    pub const IMPORT_IMAGE: &str = "Import image…";
+    pub const OPEN: &str = "Open…";
+    pub const CLOSE: &str = "Close";
+    /// The canvas's accessible name (the e2e script drags on it).
+    pub const CANVAS: &str = "Canvas";
+    pub const BROWSER_PATH: &str = "Path";
+    pub const CHOOSE: &str = "Choose";
     pub const OBJECTS: &str = "Objects";
     pub const PIXEL_SIZE: &str = "Pixel size";
     pub const COLOURS: &str = "Colours";
@@ -63,6 +70,16 @@ pub struct EditorData {
     dir: Option<std::path::PathBuf>,
     /// The draft keys of the fields drawn this frame.
     drawn: std::collections::BTreeSet<String>,
+    /// The file browser's typed path and selection, while it is open.
+    browser: Option<BrowserDraft>,
+}
+
+/// The file browser's drafts, for the directory shown.
+#[derive(Default)]
+struct BrowserDraft {
+    dir: Option<std::path::PathBuf>,
+    path: String,
+    selected: Option<String>,
 }
 
 impl EditorData {
@@ -100,7 +117,11 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
             _ => properties::show(ui, state, data, &mut fields),
         })
     });
-    egui::CentralPanel::default().show(ui, |ui| canvas::show(ui, state, data, &mut canvas));
+    // No fill: the host draws the bake under the canvas (plan 14c).
+    egui::CentralPanel::default()
+        .frame(egui::Frame::NONE)
+        .show(ui, |ui| canvas::show(ui, state, data, &mut canvas));
+    browser::show(ui.ctx(), state, data, &mut dialogs);
     dialogs::show(ui.ctx(), state, &mut dialogs);
     // A draft whose field was not drawn this frame is dropped, never
     // committed later to whatever shows that field again.
@@ -118,7 +139,11 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
 fn shortcuts(ui: &Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     // Not while typing, nor while a widget is dragged (its draft would
     // outlive the change a shortcut makes).
-    if state.dialog().is_some() || ui.ctx().egui_wants_keyboard_input() || ui.ctx().dragged_id().is_some() {
+    if state.dialog().is_some()
+        || state.browser().is_some()
+        || ui.ctx().egui_wants_keyboard_input()
+        || ui.ctx().dragged_id().is_some()
+    {
         return;
     }
     ui.input_mut(|i| {

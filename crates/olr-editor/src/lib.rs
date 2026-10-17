@@ -4,6 +4,7 @@
 //! as pure state a host drives (`olr-game`, plan 14c).
 #![forbid(unsafe_code)]
 
+pub mod browser;
 pub mod catalog;
 pub mod document;
 pub mod history;

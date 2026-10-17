@@ -6,6 +6,7 @@ use olr_edit::element::Property;
 use olr_format::levels::{ElementKind, LevelObject};
 
 use super::labels;
+use crate::browser::Purpose;
 use crate::state::{EditorAction, EditorState, Selection};
 
 pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
@@ -53,8 +54,9 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>
         if ui.button(labels::ADD_LAYER).clicked() {
             out.push(EditorAction::AddLayer);
         }
-        ui.add_enabled(false, egui::Button::new(labels::IMPORT_IMAGE))
-            .on_disabled_hover_text("the file browser comes with the game's editor");
+        if ui.button(labels::IMPORT_IMAGE).clicked() {
+            out.push(EditorAction::Browse(Purpose::ImportImage));
+        }
     });
     ui.separator();
     ui.heading(labels::OBJECTS);

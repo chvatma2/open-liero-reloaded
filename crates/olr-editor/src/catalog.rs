@@ -1,6 +1,8 @@
 //! What the host knows about installed packs, and the settings it keeps
 //! for the editor between sessions.
 
+use std::path::PathBuf;
+
 use olr_data::image::RgbaImage;
 use serde::{Deserialize, Serialize};
 
@@ -35,10 +37,12 @@ pub struct EditorSettings {
     pub play_mod: String,
     /// Bots in a Play match, 0 to 8.
     pub play_bots: u8,
+    /// The file browser's folder last chosen from (plan 14c R8).
+    pub browse_dir: Option<PathBuf>,
 }
 
 impl Default for EditorSettings {
     fn default() -> EditorSettings {
-        EditorSettings { play_mod: "olx-classic".into(), play_bots: 1 }
+        EditorSettings { play_mod: "olx-classic".into(), play_bots: 1, browse_dir: None }
     }
 }

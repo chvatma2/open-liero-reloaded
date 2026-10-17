@@ -38,13 +38,13 @@ fn unsaved_changes_ask_before_close() {
     assert!(run(&mut s, A::Choose(Choice::Cancel)).is_empty());
     assert!(s.dialog().is_none());
     run(&mut s, A::Close);
-    assert_eq!(run(&mut s, A::Choose(Choice::Discard)), vec![C::Close]);
+    assert_eq!(run(&mut s, A::Choose(Choice::Discard)), vec![C::RecoveryDone, C::Close]);
 
     let (_tmp, mut s) = editor(&root);
     run(&mut s, A::AddLayer);
     run(&mut s, A::Close);
     let cmds = run(&mut s, A::Choose(Choice::Save));
-    assert!(matches!(cmds.as_slice(), [C::Save { .. }, C::Close]), "{cmds:?}");
+    assert!(matches!(cmds.as_slice(), [C::Save { .. }, C::RecoveryDone, C::Close]), "{cmds:?}");
     assert!(!s.dirty());
 }
 
@@ -150,8 +150,8 @@ fn a_second_save_keeps_the_first_ones_follow_up() {
     run(&mut s, A::Close);
     assert!(matches!(s.update(A::Choose(Choice::Save)).as_slice(), [C::Save { .. }]));
     assert!(matches!(s.update(A::Save).as_slice(), [C::Save { .. }]));
-    assert_eq!(s.update(A::Saved(Ok(Vec::new()))), vec![C::Close]);
-    assert!(s.update(A::Saved(Ok(Vec::new()))).is_empty());
+    assert_eq!(s.update(A::Saved(Ok(Vec::new()))), vec![C::RecoveryDone, C::Close]);
+    assert_eq!(s.update(A::Saved(Ok(Vec::new()))), vec![C::RecoveryDone]);
 }
 
 /// While a dialog is open only its answer, the host's answers and the view

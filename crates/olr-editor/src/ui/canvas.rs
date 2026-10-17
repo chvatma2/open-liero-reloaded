@@ -1,11 +1,11 @@
-//! The canvas: an empty frame in 14b (the host draws the bake under it in
-//! 14c) with the overlays on top. Pointer events become world-pixel
+//! The canvas: a frame without fill (the host draws the bake under it,
+//! plan 14c) with the overlays on top. Pointer events become world-pixel
 //! `Pointer` actions through the view (ruling R7); Space and a drag pans,
 //! the wheel zooms.
 
 use egui::{Color32, Key, Pos2, Sense, Stroke, StrokeKind, Ui};
 
-use super::EditorData;
+use super::{EditorData, labels};
 use crate::state::{EditorAction, EditorState};
 use crate::tools::{BrushShape, Overlay, PointerKind};
 
@@ -15,6 +15,7 @@ const GRID_FROM: f32 = 8.0;
 pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     let Some(doc) = state.document() else { return };
     let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Other, true, labels::CANVAS));
     data.canvas_rect = Some(rect);
     let size = [rect.width(), rect.height()];
     if data.canvas_size != Some(size) {
@@ -66,7 +67,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     } else if let Some(p) = pos {
         let w = world(p);
         let mut send = |kind| out.push(EditorAction::Pointer { kind, world: w, shift });
-        if pressed && over && state.dialog().is_none() {
+        if pressed && over && state.dialog().is_none() && state.browser().is_none() {
             data.canvas_drag = true;
             send(PointerKind::Down);
         } else if released {

@@ -1,9 +1,10 @@
-//! The toolbar: the tools, the brush, the paint, undo and redo, save,
-//! play, and the view toggles.
+//! The toolbar: the tools, the brush, the paint, undo and redo, open,
+//! save and close, play, and the view toggles.
 
 use egui::Ui;
 
 use super::{EditorData, labels, number};
+use crate::browser::Purpose;
 use crate::state::{EditorAction, EditorState, MAX_BOTS};
 use crate::tools::{Brush, BrushShape, MAX_BRUSH, PaintChoice, Tool};
 
@@ -53,8 +54,14 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         {
             out.push(EditorAction::Redo);
         }
+        if ui.button(labels::OPEN).clicked() {
+            out.push(EditorAction::Browse(Purpose::OpenPack));
+        }
         if ui.button(labels::SAVE).on_hover_text("Ctrl+S").clicked() {
             out.push(EditorAction::Save);
+        }
+        if ui.button(labels::CLOSE).clicked() {
+            out.push(EditorAction::Close);
         }
         if state.dirty() {
             ui.weak("unsaved changes");

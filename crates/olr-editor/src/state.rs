@@ -13,6 +13,7 @@ use olr_edit::element::Property;
 use olr_edit::pack::Pack;
 use olr_format::levels::{ElementMaterial, LevelSource};
 
+use crate::browser::{Browser, DirEntry, Purpose};
 use crate::catalog::{Catalog, EditorSettings};
 use crate::document::{DocError, Document, Problem};
 use crate::history::{History, LevelMeta};
@@ -90,6 +91,25 @@ pub enum EditorAction {
     /// A save's warnings, or why it failed.
     Saved(Result<Vec<String>, String>),
     PlayEnded,
+    /// As `Opened`, but the document holds unsaved changes (a recovery
+    /// copy reopened, plan 14c R7).
+    Recovered(Box<Document>),
+    /// A directory's entries (`List`'s answer), or why it cannot be read.
+    Listed {
+        dir: PathBuf,
+        entries: Result<Vec<DirEntry>, String>,
+    },
+    /// Why the image `ReadImage` asked for cannot be imported.
+    ImportFailed(String),
+    // The file browser (R9).
+    /// Opens the browser at the remembered folder, else the home directory.
+    Browse(Purpose),
+    /// A folder clicked, `..`, or a typed path (relative to the browser's).
+    BrowseTo(PathBuf),
+    /// An entry chosen: a file to import, or a pack folder to open (another
+    /// folder is entered).
+    Pick(String),
+    CloseBrowser,
     // Files.
     Open(PathBuf),
     New(NewLevel),
@@ -174,6 +194,13 @@ pub enum EditorCommand {
         bots: u8,
     },
     SaveSettings(EditorSettings),
+    /// List this directory; answer `Listed`.
+    List(PathBuf),
+    /// Read this image (bounded); answer `ImportImage` or `ImportFailed`.
+    ReadImage(PathBuf),
+    /// The document was saved, or is being closed or left: drop its
+    /// recovery copy (R7).
+    RecoveryDone,
     /// The editor is done (after any unsaved-changes dialog).
     Close,
 }
@@ -210,6 +237,8 @@ pub struct EditorState {
     pub(crate) drag: Option<Drag>,
     /// Changes committed so far (and undone or redone).
     pub(crate) changes: u64,
+    /// The file browser, while it is open.
+    pub(crate) browser: Option<Browser>,
 }
 
 impl EditorState {
@@ -236,6 +265,7 @@ impl EditorState {
             grid: false,
             drag: None,
             changes: 0,
+            browser: None,
         }
     }
 
@@ -262,6 +292,11 @@ impl EditorState {
 
     pub fn dialog(&self) -> Option<&Dialog> {
         self.dialog.as_ref()
+    }
+
+    /// The file browser, while it is open.
+    pub fn browser(&self) -> Option<&Browser> {
+        self.browser.as_ref()
     }
 
     pub fn status(&self) -> &Status {
@@ -296,6 +331,9 @@ impl EditorState {
                 | EditorAction::OpenFailed(_)
                 | EditorAction::Saved(_)
                 | EditorAction::PlayEnded
+                | EditorAction::Recovered(_)
+                | EditorAction::Listed { .. }
+                | EditorAction::ImportFailed(_)
                 | EditorAction::Pointer { .. }
                 | EditorAction::Canvas(_)
                 | EditorAction::Pan(_)
@@ -321,6 +359,10 @@ impl EditorState {
                 | EditorAction::Select(_)
                 | EditorAction::PlayMod(_)
                 | EditorAction::PlayBots(_)
+                | EditorAction::Listed { .. }
+                | EditorAction::Browse(_)
+                | EditorAction::BrowseTo(_)
+                | EditorAction::CloseBrowser
         );
         let mut cmds = if view_only { Vec::new() } else { self.release() };
         cmds.extend(self.act(action));
@@ -329,18 +371,35 @@ impl EditorState {
 
     fn act(&mut self, action: EditorAction) -> Vec<EditorCommand> {
         match action {
-            EditorAction::Opened(doc) => {
-                let all = doc.all();
-                self.doc = Some(*doc);
-                self.fit_pending = true;
-                self.fit();
-                self.history = History::new();
-                self.selection = Selection::None;
-                self.dirty = false;
-                self.dialog = None;
-                self.status.message = None;
-                self.refresh_problems();
-                vec![EditorCommand::Upload(all)]
+            EditorAction::Opened(doc) => self.opened(doc),
+            EditorAction::Recovered(doc) => {
+                let cmds = self.opened(doc);
+                self.dirty = true;
+                cmds
+            }
+            EditorAction::Listed { dir, entries } => {
+                if let Some(b) = &mut self.browser {
+                    b.listed(dir, entries);
+                }
+                Vec::new()
+            }
+            EditorAction::ImportFailed(why) => {
+                self.dialog = Some(Dialog::Error(why));
+                Vec::new()
+            }
+            EditorAction::Browse(purpose) => {
+                let dir = self.settings.browse_dir.clone().unwrap_or_else(home);
+                self.browser = Some(Browser::new(purpose, dir.clone()));
+                vec![EditorCommand::List(dir)]
+            }
+            EditorAction::BrowseTo(path) => match &self.browser {
+                Some(b) => vec![EditorCommand::List(b.resolve(&path))],
+                None => Vec::new(),
+            },
+            EditorAction::Pick(name) => self.pick(&name),
+            EditorAction::CloseBrowser => {
+                self.browser = None;
+                Vec::new()
             }
             EditorAction::OpenFailed(why) => {
                 self.dialog = Some(Dialog::Error(why));
@@ -448,6 +507,46 @@ impl EditorState {
                 Vec::new()
             }
         }
+    }
+
+    /// A document opened (or recovered): a fresh history and view.
+    fn opened(&mut self, doc: Box<Document>) -> Vec<EditorCommand> {
+        let all = doc.all();
+        self.doc = Some(*doc);
+        self.fit_pending = true;
+        self.fit();
+        self.history = History::new();
+        self.selection = Selection::None;
+        self.dirty = false;
+        self.dialog = None;
+        self.status.message = None;
+        self.refresh_problems();
+        vec![EditorCommand::Upload(all)]
+    }
+
+    /// The browser's `Pick`: a file to import is read (its folder
+    /// remembered), a pack folder to open is opened as `Open` is (the
+    /// unsaved-changes dialog first), any other folder is entered.
+    fn pick(&mut self, name: &str) -> Vec<EditorCommand> {
+        let Some(b) = &self.browser else { return Vec::new() };
+        let Some(e) = b.entry(name) else { return Vec::new() };
+        let (dir, path) = (b.dir().to_path_buf(), b.dir().join(name));
+        let take = match b.purpose() {
+            Purpose::ImportImage => !e.is_dir,
+            Purpose::OpenPack => e.is_pack,
+        };
+        if !take {
+            return if e.is_dir { vec![EditorCommand::List(path)] } else { Vec::new() };
+        }
+        let purpose = b.purpose();
+        self.browser = None;
+        self.settings.browse_dir = Some(dir);
+        let mut cmds = vec![EditorCommand::SaveSettings(self.settings.clone())];
+        match purpose {
+            Purpose::ImportImage => cmds.insert(0, EditorCommand::ReadImage(path)),
+            Purpose::OpenPack => cmds.extend(self.leave(Pending::Open(path))),
+        }
+        cmds
     }
 
     /// Selects the top element after an add (`cmds` not empty: it was made).
@@ -581,12 +680,16 @@ impl EditorState {
         self.carry_out(then)
     }
 
+    /// What `then` asks of the host; the document left behind (closed, or
+    /// replaced by another) drops its recovery copy first.
     fn carry_out(&mut self, then: Pending) -> Vec<EditorCommand> {
-        match then {
-            Pending::Open(dir) => vec![EditorCommand::Open(dir)],
-            Pending::New(n) => vec![EditorCommand::Create(n)],
-            Pending::Close => vec![EditorCommand::Close],
-        }
+        let mut cmds = if self.doc.is_some() { vec![EditorCommand::RecoveryDone] } else { Vec::new() };
+        cmds.push(match then {
+            Pending::Open(dir) => EditorCommand::Open(dir),
+            Pending::New(n) => EditorCommand::Create(n),
+            Pending::Close => EditorCommand::Close,
+        });
+        cmds
     }
 
     fn save(&mut self, then: Option<Pending>) -> Vec<EditorCommand> {
@@ -607,7 +710,10 @@ impl EditorState {
                 } else {
                     format!("saved; {}", warnings.join("; "))
                 });
-                then.map(|t| self.carry_out(t)).unwrap_or_default()
+                let mut cmds = vec![EditorCommand::RecoveryDone];
+                cmds.extend(then.map(|t| self.carry_out(t)).unwrap_or_default());
+                cmds.dedup();
+                cmds
             }
             Err(e) => {
                 self.dialog = Some(Dialog::Error(e));
@@ -630,4 +736,10 @@ impl EditorState {
             }
         }
     }
+}
+
+/// Where the browser opens when no folder is remembered: the home
+/// directory, else the working directory.
+fn home() -> PathBuf {
+    std::env::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
