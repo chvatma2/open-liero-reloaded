@@ -223,6 +223,25 @@ fn a_property_change_reprocesses_only_its_image() {
     doc.set("tiny", Property::At((1, 2))).unwrap();
     assert!(matches!(element(&doc, "tiny").kind, ElementKind::Image { at: (1, 2), .. }));
     assert_eq!(doc.cache_processed(), n, "a move never reprocesses");
+    let looked = doc.cache_lookups();
+    doc.set("tiny", Property::At((3, 4))).unwrap();
+    doc.set("tiny", Property::Material(olr_format::levels::ElementMaterial::Dirt)).unwrap();
+    assert_eq!(doc.cache_lookups(), looked, "a move or a material keeps the grid: no lookup, no hashing");
     doc.set("tiny", Property::PixelSize(5)).unwrap();
     assert_eq!(doc.cache_processed(), n + 1);
+}
+
+/// Batch B review: a resize past the composed-pixel budget is refused from
+/// the elements' metadata, before any layer is re-laid.
+#[test]
+fn a_resize_past_the_pixel_budget_is_refused() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    for _ in 0..16 {
+        doc.add_layer(ElementMaterial::Dirt, "L").unwrap();
+    }
+    let a = files(&doc);
+    let e = doc.resize((4096, 4096), (0, 0), Material::Rock, Rgba::rgb(1, 1, 1)).unwrap_err().to_string();
+    assert!(e.contains("pixels"), "{e}");
+    assert!(files(&doc) == a);
 }

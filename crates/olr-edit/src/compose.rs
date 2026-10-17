@@ -58,6 +58,8 @@ pub struct ImageCache {
     /// Per source: its bytes' fingerprint and its grids, the most recently used last.
     grids: BTreeMap<String, (u64, Vec<Grid>)>,
     processed: usize,
+    /// `original` and `grid` calls so far.
+    lookups: usize,
     /// Uses so far: the originals' recency.
     tick: u64,
 }
@@ -95,6 +97,7 @@ impl ImageCache {
     /// The decoded original (within `IMAGES`, EXIF-oriented) of `source`
     /// whose bytes are `bytes`, decoded on first use.
     pub fn original(&mut self, source: &str, bytes: &[u8]) -> Result<Arc<RgbaImage>, ComposeError> {
+        self.lookups += 1;
         self.original_fp(source, bytes, fingerprint(bytes))
     }
 
@@ -135,6 +138,7 @@ impl ImageCache {
         art_box: (u32, u32),
         p: &Pixelation,
     ) -> Result<Arc<RgbaImage>, ComposeError> {
+        self.lookups += 1;
         let fp = fingerprint(original);
         let key = (art_box, *p);
         let (f, grids) = self.grids.entry(source.into()).or_default();
@@ -161,6 +165,12 @@ impl ImageCache {
     /// The decoded originals' pixels held.
     pub fn original_pixels(&self) -> u64 {
         self.originals.values().map(|(_, img, _)| pixels(img)).sum()
+    }
+
+    /// How many `original` and `grid` calls were made since `new` (each
+    /// hashes the original's bytes; tests: a move looks nothing up).
+    pub fn lookups(&self) -> usize {
+        self.lookups
     }
 
     /// How many grids were processed since `new` (tests: a move never processes).

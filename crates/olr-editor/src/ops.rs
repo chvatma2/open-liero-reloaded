@@ -23,6 +23,7 @@ use crate::document::{DocError, Document, Item};
 use crate::history::{Edit, LevelMeta, Snapshot, Whole};
 
 /// A change made: its edit, and the world rectangle rebaked (to upload).
+#[derive(Debug)]
 pub struct Change {
     pub edit: Edit,
     pub dirty: Rect,
@@ -30,6 +31,25 @@ pub struct Change {
 
 /// An empty rectangle: nothing rebaked.
 pub(crate) const NOTHING: Rect = Rect { x: 0, y: 0, w: 0, h: 0 };
+
+/// What an image's processed grid depends on: its original, its box's
+/// size, its pixelation, and whether it is shown (a hidden one has none).
+fn grid_key(e: &Element) -> Option<(&str, (u32, u32), Pixelation, bool)> {
+    match &e.kind {
+        ElementKind::Image { source, size, pixel_size, colours, dither, alpha_threshold, .. } => Some((
+            source,
+            *size,
+            Pixelation {
+                pixel_size: *pixel_size,
+                colours: *colours,
+                dither: *dither,
+                alpha_threshold: *alpha_threshold,
+            },
+            e.visible,
+        )),
+        _ => None,
+    }
+}
 
 /// Sets one property of `e`, as `olr_edit::element::set` does (a locked
 /// element takes only `Locked`).
@@ -351,6 +371,17 @@ impl Document {
     ) -> Result<Change, DocError> {
         let paint = Paint::Colour(colour);
         let (old, s) = (self.level.size, self.level.art_scale);
+        // The budget from the metadata first: no layer is re-laid for a
+        // resize that is refused.
+        let mut moved: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
+        for e in &mut moved {
+            if let ElementKind::Image { at, .. } = &mut e.kind {
+                let shift =
+                    |v: i32, by: i32| v.checked_add(by).ok_or_else(|| level::EditError::Moved(e.id.clone()));
+                *at = (shift(at.0, offset.0)?, shift(at.1, offset.1)?);
+            }
+        }
+        self.check(&moved, size, s)?;
         let mut level = self.level.clone();
         level::resize(&mut level, size, offset, material, &paint)?;
         let mut items = self.items.clone();
@@ -414,6 +445,12 @@ impl Document {
             ElementKind::Image { source, .. } => self.originals.get(source).cloned(),
             _ => None,
         }
+    }
+
+    /// The cache's `lookups()` (tests: a move keeps its grid).
+    #[doc(hidden)]
+    pub fn cache_lookups(&self) -> usize {
+        self.cache.lookups()
     }
 
     /// The cache's `processed()` (tests: a move never reprocesses).
@@ -480,7 +517,10 @@ impl Document {
                 if same == *to {
                     return NOTHING;
                 }
-                self.redecode(*index);
+                // A move or a material change keeps the grid: no lookup.
+                if grid_key(from) != grid_key(to) {
+                    self.redecode(*index);
+                }
                 Rect::union(Some(self.element_rect(from)), self.element_rect(to))
             }
             Edit::Insert { index, item } | Edit::Remove { index, item } => {
