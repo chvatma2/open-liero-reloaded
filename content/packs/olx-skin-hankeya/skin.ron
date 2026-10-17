@@ -1,10 +1,7 @@
 (
     name: "HankeyA",
-    layout: (
-        frame_width: 32,
-        frame_height: 18,
-        frame_spacing: 4,
-        worm_width: 20,
-        worm_height: 18,
-    ),
+    art_scale: 2,
+    frame_size: (20, 18),
+    aim_frames: 7,
+    walk_frames: 3,
 )
