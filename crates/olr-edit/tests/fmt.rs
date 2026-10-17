@@ -27,7 +27,7 @@ fn fmt_rewrites_a_hand_edited_file() {
         "(\n  theme: \"olx-theme-dirt\",\n  size: (504, 350),\n  art_scale: 1,\n  name: \"Dirt Level\",\n)\n";
     std::fs::write(dir.join("level.ron"), edited).unwrap();
     assert_eq!(paths(&unformatted(&dir).unwrap()), ["level.ron"]);
-    assert_eq!(paths(&format(&dir).unwrap()), ["level.ron"]);
+    assert_eq!(paths(&format(&dir).unwrap().files), ["level.ron"]);
     assert_eq!(std::fs::read(dir.join("level.ron")).unwrap(), original);
     assert!(unformatted(&dir).unwrap().is_empty());
 }
@@ -56,9 +56,43 @@ fn fmt_removes_an_empty_restrictions_file() {
     let (_tmp, dir) = copy_pack(&root, "olx-classic");
     std::fs::write(dir.join("restrictions.ron"), "{}\n").unwrap();
     assert_eq!(paths(&unformatted(&dir).unwrap()), ["restrictions.ron"]);
-    assert_eq!(paths(&format(&dir).unwrap()), ["restrictions.ron"]);
+    assert_eq!(paths(&format(&dir).unwrap().files), ["restrictions.ron"]);
     assert!(!dir.join("restrictions.ron").exists());
     assert!(unformatted(&dir).unwrap().is_empty());
+}
+
+/// Review A-1: the save's warnings reach the caller.
+#[cfg(unix)]
+#[test]
+fn fmt_returns_the_saves_warnings() {
+    use std::os::unix::fs::PermissionsExt;
+    let Some(root) = content() else { return };
+    let (tmp, dir) = copy_pack(&root, "olx-level-dirt-level");
+    std::fs::create_dir(dir.join("locked")).unwrap();
+    std::fs::write(dir.join("locked/x"), b"x").unwrap();
+    std::fs::set_permissions(dir.join("locked"), std::fs::Permissions::from_mode(0o555)).unwrap();
+    std::fs::write(dir.join("level.ron"), "(name:\"Dirt Level\",size:(504,350),theme:\"olx-theme-dirt\")")
+        .unwrap();
+    let formatted = format(&dir).unwrap();
+    let aside = tmp.path().join(".replaced-olx-level-dirt-level");
+    std::fs::set_permissions(aside.join("locked"), std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert_eq!(paths(&formatted.files), ["level.ron"]);
+    assert_eq!(formatted.warnings.len(), 1, "{:?}", formatted.warnings);
+}
+
+/// Review A-2: `unformatted` and `format` agree on a pack that loads but
+/// would not check: both refuse it, naming the problem.
+#[test]
+fn an_invalid_pack_is_refused_by_both() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, "olx-classic");
+    std::fs::remove_file(dir.join("gfx/missile.png")).unwrap();
+    let text = std::fs::read_to_string(dir.join("mod.ron")).unwrap();
+    std::fs::write(dir.join("mod.ron"), text.replace("    ", "  ")).unwrap();
+    let e = unformatted(&dir).unwrap_err();
+    assert!(matches!(e, olr_edit::pack::SaveError::Invalid(_)), "{e}");
+    assert!(e.to_string().contains("gfx/missile.png"), "{e}");
+    assert!(matches!(format(&dir).unwrap_err(), olr_edit::pack::SaveError::Invalid(_)));
 }
 
 #[test]

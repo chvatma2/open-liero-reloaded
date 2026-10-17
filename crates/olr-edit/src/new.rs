@@ -56,13 +56,14 @@ fn is_slug(id: &str) -> bool {
 
 /// Writes a new pack `id` (name `name`) into `dir`, which must not exist
 /// or be empty. Kind `kind`; `Template::From` must name a pack of `kind`.
+/// Returns the save's warnings.
 pub fn new_pack(
     dir: &Path,
     kind: PackKind,
     id: &str,
     name: &str,
     template: Template<'_>,
-) -> Result<(), NewError> {
+) -> Result<Vec<String>, NewError> {
     if !is_slug(id) {
         return Err(NewError::BadId(id.into()));
     }
@@ -92,7 +93,7 @@ pub fn new_pack(
     rename(&mut pack.source, name);
     // `replace_dir` swaps the new pack in over an empty directory.
     std::fs::create_dir_all(dir)?;
-    save(dir, &pack).map(|_| ()).map_err(|e| {
+    save(dir, &pack).map_err(|e| {
         if !existed {
             let _ = std::fs::remove_dir_all(dir);
         }

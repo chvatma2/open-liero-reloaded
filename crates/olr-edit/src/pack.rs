@@ -179,6 +179,18 @@ pub fn files(pack: &Pack) -> Result<BTreeMap<VPath, Vec<u8>>, PackError> {
     Ok(fs.files().map(|(p, b)| (p.clone(), b.to_vec())).collect())
 }
 
+/// Whether a pack of `files` would check: its `olr_pack::validate` errors
+/// (never warnings) as `SaveError::Invalid`.
+pub fn check(files: &BTreeMap<VPath, Vec<u8>>) -> Result<(), SaveError> {
+    let mut mem = MemFs::new();
+    for (path, bytes) in files {
+        mem.write(path, bytes).map_err(PackError::from)?;
+    }
+    let errors: Vec<Diagnostic> =
+        olr_pack::validate(&mem).into_iter().filter(|d| d.severity == Severity::Error).collect();
+    if errors.is_empty() { Ok(()) } else { Err(SaveError::Invalid(errors)) }
+}
+
 /// `files(pack)` written through `replace_dir`; the result is read
 /// back with `olr_pack::validate` before the swap, and an error there
 /// aborts the save (the old pack stays). Returns `replace_dir`'s warnings.
@@ -188,15 +200,7 @@ pub fn files(pack: &Pack) -> Result<BTreeMap<VPath, Vec<u8>>, PackError> {
 /// link stays).
 pub fn save(dir: &Path, pack: &Pack) -> Result<Vec<String>, SaveError> {
     let files = files(pack)?;
-    let mut mem = MemFs::new();
-    for (path, bytes) in &files {
-        mem.write(path, bytes).map_err(PackError::from)?;
-    }
-    let errors: Vec<Diagnostic> =
-        olr_pack::validate(&mem).into_iter().filter(|d| d.severity == Severity::Error).collect();
-    if !errors.is_empty() {
-        return Err(SaveError::Invalid(errors));
-    }
+    check(&files)?;
     let dir = dir.canonicalize()?;
     Ok(olr_pack::install::replace_dir(&dir, |d| {
         let mut sink = DirFs::new(d);
