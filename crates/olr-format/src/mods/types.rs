@@ -33,7 +33,7 @@ pub struct Weapon {
     /// simulation (OLX `CClient_Game.cpp:751-808`).
     #[serde(default, skip_serializing_if = "d::is_false")]
     pub laser_sight: bool,
-    /// What a shot does.
+    /// What a shot does (OLX `Wpn_Type` and its payload, `mod-fields.md` §5).
     pub fire: Fire,
 }
 
@@ -58,10 +58,10 @@ pub enum Fire {
     },
     /// `WPN_BEAM` (`include/WeaponDesc.h:71-85`): an instant trace.
     Beam {
-        /// px/s; unused by the simulation (bots read its sign).
+        /// px/s; unused by the simulation (bots read its sign) (OLX `recoil`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         recoil: i32,
-        /// `#rrggbb`. The beam is not drawn when it is `#ff00ff`.
+        /// `#rrggbb`. The beam is not drawn when it is `#ff00ff` (OLX `colour`).
         colour: Colour,
         /// Hole size carved at the first dirt or rock pixel (0..4); -1 = none
         /// (OLX `damage`).
@@ -71,7 +71,7 @@ pub enum Fire {
         /// (OLX `player_damage`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         worm_damage: i32,
-        /// Maximum trace length in px (one step = 1 px along the aim).
+        /// Maximum trace length in px (one step = 1 px along the aim) (OLX `length`).
         #[serde(default, skip_serializing_if = "d::is_zero_i32")]
         length: i32,
         /// Parts side by side at the start, px. Default 1 (OLX `init_width`).
@@ -80,7 +80,7 @@ pub enum Fire {
         /// px of width added per px of length (OLX `width_increase`).
         #[serde(default, skip_serializing_if = "d::is_zero")]
         width_growth: f32,
-        /// Divides both damages over the beam's width (at least 1 per part).
+        /// Divides both damages over the beam's width (at least 1 per part) (OLX `distribute_damage_over_width`).
         #[serde(default, skip_serializing_if = "d::is_false")]
         split_damage_over_width: bool,
     },
@@ -124,7 +124,7 @@ pub enum SpecialKind {
 }
 
 /// A projectile (OLX `proj_t`, `include/ProjectileDesc.h:80-121`), inline in
-/// a spawn or in `projectiles/<id>.ron` (shared).
+/// a spawn or in `projectiles/<id>.ron` (shared); at most `MAX_SHARED` (4096) shared ones.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Projectile {
@@ -155,18 +155,18 @@ pub struct Projectile {
     /// The timed event (OLX `Timer`); absent = none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timer: Option<Timer>,
-    /// What the projectile leaves behind while flying.
+    /// What the projectile leaves behind while flying (OLX `Trail`, `mod-fields.md` §11).
     #[serde(default, skip_serializing_if = "Trail::is_off")]
     pub trail: Trail,
     /// When the projectile hits rock or dirt (OLX `Hit`). `[]` = OLX's
     /// `Nothing`. The effect kind also selects the collision physics:
     /// `Bounce`, `Nothing` (half-move), `GoThrough` (no stop), `Explode` in
     /// dirt only (keeps position); everything else stops at the last safe
-    /// position (`mod-fields.md` §7).
+    /// position (`mod-fields.md` §7). At most `MAX_EFFECTS` (16).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hit_terrain: Vec<Effect>,
     /// When it hits a worm (OLX `PlayerHit`). `[]` = `Nothing`, which also
-    /// turns worm collision off; `GoThrough` hits but does not stop.
+    /// turns worm collision off; `GoThrough` hits but does not stop. At most `MAX_EFFECTS` (16).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hit_worm: Vec<Effect>,
     /// Named spawns that `Spawn(<name>)` effects use. This runtime takes at
@@ -201,7 +201,7 @@ impl Projectile {
 #[serde(deny_unknown_fields)]
 pub enum Gfx {
     /// A 1 px square. One of the `#rrggbb` colours is drawn at spawn (one
-    /// `rand()`; none when the list is empty). OLX `Pixel.colours`.
+    /// `rand()`; none when the list is empty). OLX `Pixel.colours`. At most `MAX_COLOURS` (256).
     Pixels(Vec<Colour>),
     /// An image strip (OLX `Image`).
     Image {
@@ -242,7 +242,7 @@ pub struct Animation {
     /// Frames per second (OLX `rate`).
     #[serde(default, skip_serializing_if = "d::is_zero")]
     pub fps: f32,
-    /// What happens at the last frame. `Once` removes the projectile.
+    /// What happens at the last frame. `Once` removes the projectile (OLX `AnimType`).
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub mode: AnimMode,
 }
@@ -271,7 +271,7 @@ pub struct Timer {
     /// Seconds, ± range (× the projectile's fixed random in [-1, 1]; OLX `time_var`).
     #[serde(default, skip_serializing_if = "d::is_zero")]
     pub variation_s: f32,
-    /// What fires. `[]` = `Nothing`, which also cancels a spawn on a timer.
+    /// What fires. `[]` = `Nothing`, which also cancels a spawn on a timer (OLX `action`; at most `MAX_EFFECTS` (16)).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub effects: Vec<Effect>,
 }
@@ -283,15 +283,15 @@ pub enum Trail {
     /// `TRL_NONE`: no trail.
     #[default]
     Off,
-    /// A smoke entity every 75 ms.
+    /// A smoke entity every 75 ms (OLX trail type 1).
     Smoke,
-    /// A chemical-smoke entity every 75 ms.
+    /// A chemical-smoke entity every 75 ms (OLX trail type 2).
     ChemSmoke,
-    /// A doomsday entity every 50 ms.
+    /// A doomsday entity every 50 ms (OLX trail type 4).
     Doomsday,
-    /// A cosmetic explosion entity (size 10) every 50 ms.
+    /// A cosmetic explosion entity (size 10) every 50 ms (OLX trail type 5).
     Explosive,
-    /// A spawn every `every_s` seconds (whole ms), the first on the first step.
+    /// A spawn every `every_s` seconds (whole ms), the first on the first step (OLX trail type 3).
     Projectile {
         /// Seconds between spawns (OLX `delay`). Default 0.1.
         #[serde(default = "d::tenth", skip_serializing_if = "d::is_tenth")]

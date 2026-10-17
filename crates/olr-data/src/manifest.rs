@@ -1,4 +1,8 @@
 //! `pack.ron`: what every pack declares about itself.
+//!
+//! Unlike the authoring files, `pack.ron` is plain RON: every field is
+//! written, an optional value as `Some(…)` or `None`, and it has no
+//! `notes`.
 
 use alloc::string::String;
 use alloc::vec::Vec;

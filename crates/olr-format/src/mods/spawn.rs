@@ -101,7 +101,7 @@ pub struct Spawn<C: SpawnContext> {
     /// The id of a shared projectile (`projectiles/<id>.ron`). Exactly one
     /// of `shared` and `projectile` is set (OLX `proj`).
     pub shared: Option<String>,
-    /// The spawned projectile, defined here (OLX `proj`).
+    /// The spawned projectile, defined here (OLX `proj`); inline projectiles nest at most `MAX_INLINE_DEPTH` (32) deep.
     pub projectile: Option<Box<Projectile>>,
     /// Zero-sized marker selecting the context's defaults; never written.
     pub context: PhantomData<C>,
