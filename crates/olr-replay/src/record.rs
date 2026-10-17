@@ -41,8 +41,8 @@ impl Recorder {
     /// starts, `setup` being made of `packs` (`olr_content::Content::replay_packs`
     /// gives them with their hashes), `looks` the worms' looks in worm order
     /// (made as many as the worms: extra ones are dropped, missing ones are
-    /// [`WormLook::numbered`], names and skins sanitised). For a Deathmatch, `setup` is the one
-    /// `Deathmatch::prepare` changed.
+    /// [`WormLook::numbered`], names and skins sanitised). For a
+    /// Deathmatch, `setup` is the one `Deathmatch::prepare` changed.
     pub fn new(packs: Packs, setup: &MatchSetup, mode: &ModeSpec, looks: Vec<WormLook>) -> Self {
         Recorder {
             setup: ReplaySetup::new(packs, setup, looks),

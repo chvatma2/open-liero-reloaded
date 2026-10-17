@@ -10,6 +10,7 @@ autotests = false
 
 [dependencies]
 olr-math.workspace = true
+olr-data.workspace = true
 olr-terrain.workspace = true
 olr-sim.workspace = true
 olr-modes.workspace = true
@@ -20,7 +21,6 @@ miniz_oxide.workspace = true
 [dev-dependencies]
 proptest.workspace = true
 tempfile.workspace = true
-olr-data.workspace = true
 olr-pack.workspace = true
 olr-vfs.workspace = true
 olr-content.workspace = true

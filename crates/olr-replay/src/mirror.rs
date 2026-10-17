@@ -289,26 +289,57 @@ impl From<ModeW> for ModeSpec {
     }
 }
 
+/// A look on the wire: the skin's content hash as its 32 raw bytes
+/// (`NO_SKIN_HASH` is all zeros), hex only at the edges.
 #[derive(Serialize, Deserialize)]
 pub(crate) struct LookW {
     pub(crate) name: String,
     colour: [u8; 3],
     pub(crate) skin: String,
-    pub(crate) skin_hash: String,
+    skin_hash: [u8; 32],
+}
+
+/// The 32 bytes of 64 lowercase hex digits; zeros for anything else (a
+/// recorder sanitises, so only a hand-made replay gets here).
+fn hash_bytes(hex: &str) -> [u8; 32] {
+    let nibble = |b: u8| match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        _ => None,
+    };
+    let mut out = [0u8; 32];
+    if hex.len() == 64 {
+        for (o, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+            match (nibble(pair[0]), nibble(pair[1])) {
+                (Some(h), Some(l)) => *o = h << 4 | l,
+                _ => return [0; 32],
+            }
+        }
+    }
+    out
+}
+
+fn hash_hex(bytes: &[u8; 32]) -> String {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    bytes
+        .iter()
+        .flat_map(|&b| [DIGITS[usize::from(b >> 4)], DIGITS[usize::from(b & 15)]])
+        .map(char::from)
+        .collect()
 }
 
 impl From<&WormLook> for LookW {
     fn from(l: &WormLook) -> Self {
         let WormLook { name, colour, skin, skin_hash } = l;
-        LookW { name: name.clone(), colour: *colour, skin: skin.clone(), skin_hash: skin_hash.clone() }
+        LookW { name: name.clone(), colour: *colour, skin: skin.clone(), skin_hash: hash_bytes(skin_hash) }
     }
 }
 
 impl LookW {
     /// Worm `i`'s look: the name sanitised, the skin as recorded (the
-    /// caller checked it).
+    /// caller checked its id).
     pub(crate) fn into_look(self, i: usize) -> WormLook {
         let LookW { name, colour, skin, skin_hash } = self;
-        WormLook { name: crate::sanitise_name(&name, i), colour, skin, skin_hash }
+        WormLook { name: crate::sanitise_name(&name, i), colour, skin, skin_hash: hash_hex(&skin_hash) }
     }
 }

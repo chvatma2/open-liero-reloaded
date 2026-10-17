@@ -72,37 +72,12 @@ pub(crate) fn fit(looks: Vec<WormLook>, n: usize) -> Vec<WormLook> {
     looks
 }
 
-/// Bidi overrides, isolates and marks.
-fn is_bidi(c: char) -> bool {
-    matches!(c, '\u{061C}' | '\u{200E}' | '\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
-}
-
-/// Control characters and the format and separator code points that make a
-/// name ambiguous: olr-proto's `valid_name` refuses exactly these in a
-/// lobby (olr-replay is a lower layer and cannot call it; olr-online's
-/// tests check that this agrees with it).
-fn is_hidden(c: char) -> bool {
-    c.is_control()
-        || is_bidi(c)
-        || matches!(
-            c,
-            '\u{00AD}'
-                | '\u{200B}'..='\u{200D}'
-                | '\u{2028}'
-                | '\u{2029}'
-                | '\u{2060}'..='\u{2064}'
-                | '\u{FEFF}'
-        )
-}
-
-/// A name a lobby would accept: no control, hidden or bidi character,
-/// trimmed, at most [`MAX_NAME_CHARS`] characters (cut, then trimmed
-/// again); "Worm N" for worm `i` when nothing is left.
+/// A name a lobby would accept ([`olr_data::text::sanitise_name`], the rule
+/// olr-proto's `valid_name` checks), at most [`MAX_NAME_CHARS`] characters;
+/// "Worm N" for worm `i` when nothing is left.
 pub fn sanitise_name(name: &str, i: usize) -> String {
-    let kept: String = name.chars().filter(|&c| !is_hidden(c)).collect();
-    let cut: String = kept.trim().chars().take(MAX_NAME_CHARS).collect();
-    let cut = cut.trim();
-    if cut.is_empty() { format!("Worm {}", i + 1) } else { cut.into() }
+    let clean = olr_data::text::sanitise_name(name, MAX_NAME_CHARS);
+    if clean.is_empty() { format!("Worm {}", i + 1) } else { clean }
 }
 
 /// Whether `id` and `hash` are a skin pack id and a content hash.
@@ -111,7 +86,7 @@ pub(crate) fn valid_skin(id: &str, hash: &str) -> bool {
 }
 
 /// A pack id: ASCII `[a-z0-9-]`, 1 to [`MAX_SKIN_ID`] bytes.
-fn valid_pack_id(s: &str) -> bool {
+pub(crate) fn valid_pack_id(s: &str) -> bool {
     !s.is_empty()
         && s.len() <= MAX_SKIN_ID
         && s.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')

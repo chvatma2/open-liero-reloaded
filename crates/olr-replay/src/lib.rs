@@ -38,7 +38,7 @@ pub use record::Recorder;
 /// replay is published, other versions are refused, not migrated.
 ///
 /// 3: withdrawals (plan 12d).
-/// 4: each worm's looks (name, colour, skin).
+/// 4: each worm's looks (name, colour, skin id, the hash as 32 bytes).
 pub const FORMAT_VERSION: u16 = 4;
 
 /// The first bytes of every replay file.

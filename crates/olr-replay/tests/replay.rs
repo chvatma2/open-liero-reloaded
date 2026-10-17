@@ -387,8 +387,7 @@ fn replay_size_is_reasonable() {
     let random = size(1);
     let held = size(20);
     eprintln!("one minute of 8 worms: {random} bytes with new keys every tick, {held} held 1-20 ticks");
-    // The looks add about 90 bytes a worm (a skin id and a hash each).
-    assert!(random <= 51_000, "{random} bytes");
+    assert!(random <= 50_000, "{random} bytes");
     assert!(held <= 16_000, "{held} bytes");
 }
 

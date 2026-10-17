@@ -166,8 +166,8 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
     if looks.len() != worms.len() {
         return invalid(format!("{} looks for {} worms", looks.len(), worms.len()));
     }
-    if let Some(i) = looks.iter().position(|l| !crate::looks::valid_skin(&l.skin, &l.skin_hash)) {
-        return invalid(format!("worm {i}: skin id or hash out of bounds"));
+    if let Some(i) = looks.iter().position(|l| !crate::looks::valid_pack_id(&l.skin)) {
+        return invalid(format!("worm {i}: skin id out of bounds"));
     }
     if calls.len() > MAX_SETUP_CALLS {
         return invalid(format!("{} setup calls, at most {MAX_SETUP_CALLS}", calls.len()));
@@ -304,11 +304,14 @@ mod tests {
         w.setup.looks[0].skin = "a".repeat(crate::MAX_SKIN_ID + 1);
         assert!(matches!(err(w), DecodeError::Invalid(_)), "skin id too long");
         let mut w = wire(0, 0, &[]);
-        w.setup.looks[0].skin_hash = "f".repeat(65);
-        assert!(matches!(err(w), DecodeError::Invalid(_)), "hash too long");
-        let mut w = wire(0, 0, &[]);
         w.setup.looks[0].skin = "Not A Pack".into();
         assert!(matches!(err(w), DecodeError::Invalid(_)), "skin id is no pack id");
+        let hash = "ab".repeat(32);
+        let mut look = WormLook::numbered(0);
+        look.skin_hash = hash.clone();
+        let mut w = wire(0, 0, &[]);
+        w.setup.looks = vec![(&look).into()];
+        assert_eq!(from_wire(w).unwrap().setup.looks[0].skin_hash, hash, "hex at the edges, bytes inside");
         let mut w = wire(0, 0, &[]);
         w.setup.looks.clear();
         assert!(matches!(err(w), DecodeError::Invalid(_)), "no looks for one worm");

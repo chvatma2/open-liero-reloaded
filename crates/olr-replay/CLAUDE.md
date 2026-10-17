@@ -5,7 +5,7 @@ keys for every tick (bots included: bots are not replayed, their keys are),
 and the world's checksum before the first tick, every `CHECKSUM_EVERY` (100)
 ticks and at the end.
 
-- **Layer 3, `#![no_std]` + `alloc`, wasm32.** Depends on `olr-sim` and
+- **Layer 3, `#![no_std]` + `alloc`, wasm32.** Depends on `olr-data` (`text`: names), `olr-sim` and
   `olr-modes` (same-layer pairs in `xtask/layers.ron`), `olr-math`,
   `olr-terrain`, `serde`, `postcard` and `miniz_oxide` (both pinned exactly:
   the encoding is the format). Learn the match API from
@@ -65,12 +65,11 @@ ticks and at the end.
   converted by naming every field: a new field there does not compile until
   it is recorded and `FORMAT_VERSION` is bumped.
 - **Looks on decode:** the count must equal the worms' (`Invalid`); a name
-  goes through `sanitise_name` (no control, hidden or bidi character,
-  trimmed, `MAX_NAME_CHARS` 20, "Worm N" when empty: olr-proto's
-  `valid_name` rules, which this layer cannot call; olr-online's test
-  `a_sanitised_name_is_a_valid_lobby_name` keeps them equal); a skin id
-  must be a pack id (`[a-z0-9-]`, at most `MAX_SKIN_ID` 64) and its hash 64
-  lowercase hex, else `Invalid`. A viewer picks skins with
+  goes through `sanitise_name` (`olr_data::text::sanitise_name`, the rule
+  olr-proto's `valid_name` checks: no control, hidden or bidi character,
+  trimmed, `MAX_NAME_CHARS` 20, "Worm N" when empty); the skin hash is 32
+  raw bytes on the wire (hex in `WormLook`, `NO_SKIN_HASH` all zeros); a skin id
+  must be a pack id (`[a-z0-9-]`, at most `MAX_SKIN_ID` 64), else `Invalid`. A viewer picks skins with
   `Content::skin_matching(id, hash)`: never downloaded.
 - **Never panic on a replay:** `decode` checks every bound (`MAX_TICKS`,
   `MAX_WORMS`, `MAX_SLOTS`, `MAX_SETUP_CALLS`, ordered checksums,
