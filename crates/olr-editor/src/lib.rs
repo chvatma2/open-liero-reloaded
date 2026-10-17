@@ -6,7 +6,11 @@
 
 pub mod catalog;
 pub mod document;
+pub mod history;
+pub mod ops;
 
 pub use catalog::{Catalog, EditorSettings, ModEntry, ThemeEntry};
 pub use document::{DocError, Document, Item, Problem};
+pub use history::{Edit, History, LevelMeta};
 pub use olr_pack::Severity;
+pub use ops::Change;

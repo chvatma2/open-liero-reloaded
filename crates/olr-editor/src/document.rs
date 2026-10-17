@@ -8,7 +8,9 @@ use std::sync::Arc;
 
 use olr_data::image::RgbaImage;
 use olr_data::manifest::PackManifest;
-use olr_edit::compose::{Decoded, ImageCache, Rect, bake_elements, compose_from, decode_element, encode_decoded};
+use olr_edit::compose::{
+    Decoded, ImageCache, Rect, bake_elements, compose_from, decode_element, encode_decoded,
+};
 use olr_edit::level::refresh_thumb;
 use olr_edit::pack::{Pack, Source};
 use olr_format::levels::{
@@ -69,6 +71,9 @@ pub struct Document {
     pub(crate) cache: ImageCache,
     pub(crate) front_tile: RgbaImage,
     pub(crate) back_tile: RgbaImage,
+    /// The tiles of every theme the level has had this session, by id (an
+    /// undone theme change takes its tiles back).
+    pub(crate) themes: BTreeMap<String, (RgbaImage, RgbaImage)>,
     /// Whether anything was rebaked since `open` (the thumbnail is then stale).
     pub(crate) rebaked: bool,
 }
@@ -130,6 +135,7 @@ impl Document {
             cache,
             front_tile: theme.front_tile.clone(),
             back_tile: theme.back_tile.clone(),
+            themes: [(theme.id.clone(), (theme.front_tile.clone(), theme.back_tile.clone()))].into(),
             rebaked: false,
         };
         doc.rebake(doc.all());

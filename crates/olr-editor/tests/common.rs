@@ -17,7 +17,8 @@ pub fn fixture() -> PathBuf {
 
 /// The installed packs the editor knows: `olx-theme-dirt` and the two mods.
 pub fn catalog(root: &Path) -> Catalog {
-    let theme = olr_format::themes::read_theme_files(&olr_vfs::DirFs::new(root.join("olx-theme-dirt"))).unwrap();
+    let theme =
+        olr_format::themes::read_theme_files(&olr_vfs::DirFs::new(root.join("olx-theme-dirt"))).unwrap();
     Catalog {
         themes: vec![ThemeEntry {
             id: "olx-theme-dirt".into(),
@@ -83,5 +84,9 @@ pub fn open_fixture(root: &Path) -> (tempfile::TempDir, olr_editor::Document) {
 
 /// `pack::files` of the document's pack, by path string.
 pub fn files(doc: &olr_editor::Document) -> std::collections::BTreeMap<String, Vec<u8>> {
-    olr_edit::pack::files(&doc.to_pack()).unwrap().into_iter().map(|(p, b)| (p.as_str().to_string(), b)).collect()
+    olr_edit::pack::files(&doc.to_pack())
+        .unwrap()
+        .into_iter()
+        .map(|(p, b)| (p.as_str().to_string(), b))
+        .collect()
 }

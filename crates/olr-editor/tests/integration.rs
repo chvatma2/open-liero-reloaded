@@ -3,3 +3,4 @@
 
 mod common;
 mod document;
+mod history;
