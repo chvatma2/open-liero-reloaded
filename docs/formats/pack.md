@@ -52,7 +52,7 @@ What a pack holds.
 | `Level` | — | A level (`docs/formats/level.md`). |
 | `Skin` | — | A worm skin (`docs/formats/skin.md`). |
 | `Theme` | — | A level theme: holes, green dirt, tiles (`docs/formats/theme.md`). |
-| `Core` | — | OLX's shared game assets (`crate::core_pack::CoreDef`). |
+| `Core` | — | OLX's shared game assets: sprites, sounds, colours (`docs/formats/core.md`). |
 
 <a id="origin"></a>
 

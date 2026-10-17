@@ -33,7 +33,7 @@ pub enum PackKind {
     Skin,
     /// A level theme: holes, green dirt, tiles (`docs/formats/theme.md`).
     Theme,
-    /// OLX's shared game assets ([`crate::core_pack::CoreDef`]).
+    /// OLX's shared game assets: sprites, sounds, colours (`docs/formats/core.md`).
     Core,
 }
 
