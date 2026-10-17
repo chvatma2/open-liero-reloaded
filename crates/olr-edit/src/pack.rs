@@ -94,6 +94,12 @@ fn list(diagnostics: &[Diagnostic]) -> String {
 /// Reads the pack at `dir`: its manifest, its kind's files, and every other
 /// file as it is.
 pub fn load(dir: &Path) -> Result<Pack, PackError> {
+    if let Some(name) = unaddressable(dir, dir)? {
+        return Err(PackError::Invalid {
+            file: name,
+            message: "a name a pack path cannot hold: a save would lose the file; rename or remove it".into(),
+        });
+    }
     let src = DirFs::new(dir);
     let manifest = olr_pack::read_manifest(&src)?;
     let source = Source::read(manifest.kind, &src)?;
@@ -108,6 +114,29 @@ pub fn load(dir: &Path) -> Result<Pack, PackError> {
         }
     }
     Ok(Pack { manifest, source, other })
+}
+
+/// The first entry under `dir` (by path, relative to `root`) whose name
+/// `DirFs` cannot address (not UTF-8, or refused by `VPath`): `walk` skips
+/// such a name, so the whole-pack save would drop it.
+fn unaddressable(root: &Path, dir: &Path) -> Result<Option<String>, PackError> {
+    let io =
+        |e: std::io::Error| PackError::Invalid { file: dir.display().to_string(), message: e.to_string() };
+    let mut entries: Vec<_> = std::fs::read_dir(dir).map_err(io)?.collect::<Result<_, _>>().map_err(io)?;
+    entries.sort_by_key(|e| e.file_name());
+    for e in entries {
+        let rel = e.path().strip_prefix(root).unwrap_or(&e.path()).to_string_lossy().into_owned();
+        if e.file_name().to_str().is_none_or(|n| VPath::new(n).is_err()) {
+            return Ok(Some(rel));
+        }
+        // As `DirFs::list`: a symbolic link is not followed.
+        if e.file_type().map_err(io)?.is_dir()
+            && let Some(found) = unaddressable(root, &e.path())?
+        {
+            return Ok(Some(found));
+        }
+    }
+    Ok(None)
 }
 
 /// Every file of `pack` as its canonical writer produces it
@@ -136,6 +165,10 @@ pub fn files(pack: &Pack) -> Result<BTreeMap<VPath, Vec<u8>>, PackError> {
 /// `files(pack)` written through `replace_dir`; the result is read
 /// back with `olr_pack::validate` before the swap, and an error there
 /// aborts the save (the old pack stays). Returns `replace_dir`'s warnings.
+///
+/// The directory is resolved first, so `.` or `pack/sub/..` names the pack
+/// itself, and a symbolic link to a pack is saved where it points (the
+/// link stays).
 pub fn save(dir: &Path, pack: &Pack) -> Result<Vec<String>, SaveError> {
     let files = files(pack)?;
     let mut mem = MemFs::new();
@@ -147,7 +180,8 @@ pub fn save(dir: &Path, pack: &Pack) -> Result<Vec<String>, SaveError> {
     if !errors.is_empty() {
         return Err(SaveError::Invalid(errors));
     }
-    Ok(olr_pack::install::replace_dir(dir, |d| {
+    let dir = dir.canonicalize()?;
+    Ok(olr_pack::install::replace_dir(&dir, |d| {
         let mut sink = DirFs::new(d);
         for (path, bytes) in &files {
             sink.write(path, bytes).map_err(|e| std::io::Error::other(e.to_string()))?;
