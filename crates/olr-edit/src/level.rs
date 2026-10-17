@@ -33,7 +33,8 @@ pub enum Shape {
     Circle { cx: i32, cy: i32, r: i32 },
 }
 
-/// What an art pixel is painted with.
+/// What an art pixel is painted with, composited over the art (straight
+/// alpha): a transparent pixel leaves the art as it was.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Paint {
     Colour(Rgba),
@@ -152,6 +153,7 @@ pub fn fill(level: &mut LevelSource, shape: &Shape, solid: Solid, paint: &Paint)
         level.material[i] = solid.into();
         for (ax, ay) in art_block(s, x, y) {
             if let Some(c) = paint.at(ax, ay) {
+                let c = over(c, level.front.get(ax, ay));
                 level.front.set(ax, ay, c);
             }
         }
@@ -166,12 +168,16 @@ pub fn paint(level: &mut LevelSource, shape: &Shape, layer: Layer, paint: &Paint
             let Some(c) = paint.at(ax, ay) else { continue };
             match layer {
                 Layer::Back => {
+                    let c = over(c, level.back.get(ax, ay));
                     level.back.set(ax, ay, c);
                     if background {
                         level.front.set(ax, ay, c);
                     }
                 }
-                Layer::Front if !background => level.front.set(ax, ay, c),
+                Layer::Front if !background => {
+                    let c = over(c, level.front.get(ax, ay));
+                    level.front.set(ax, ay, c);
+                }
                 Layer::Front => {}
             }
         }

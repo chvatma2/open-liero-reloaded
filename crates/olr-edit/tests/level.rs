@@ -151,6 +151,23 @@ fn a_tile_repeats_from_the_art_origin() {
     assert_eq!(l, before, "an empty tile paints nothing");
 }
 
+/// Review B-3: a tile's transparent pixels leave the art as it was.
+#[test]
+fn a_tile_composites_over_the_art() {
+    let mut l = level(4, 4, 1);
+    let before = l.clone();
+    let mut tile = RgbaImage::new(2, 1);
+    tile.set(0, 0, RED);
+    // (1, 0) stays transparent.
+    fill(&mut l, &Shape::Rect { x: 0, y: 0, w: 4, h: 4 }, Solid::Rock, &Paint::Tile(tile.clone()));
+    paint(&mut l, &Shape::Rect { x: 0, y: 0, w: 4, h: 4 }, Layer::Back, &Paint::Tile(tile));
+    for (ax, ay, _, _) in art_pixels(&l) {
+        let (front, back) =
+            if ax % 2 == 0 { (RED, RED) } else { (before.front.get(ax, ay), before.back.get(ax, ay)) };
+        assert_eq!((l.front.get(ax, ay), l.back.get(ax, ay)), (front, back), "({ax}, {ay})");
+    }
+}
+
 #[test]
 fn stamp_alpha_composites() {
     let mut l = level(4, 4, 2);
