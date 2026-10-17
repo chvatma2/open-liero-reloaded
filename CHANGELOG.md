@@ -10,6 +10,17 @@ Work towards 0.2.0: new formats, level, mod and skin editors, a modern look,
 and Liero Factory Reloaded and Liero v1.0 Reloaded
 (`docs/superpowers/specs/2026-10-16-milestone-0.2-scope.md`).
 
+### Added
+
+- Pack authoring tools: `olr-cli pack check` (validate packs), `pack fmt`
+  (rewrite them in canonical form; `--check` lists what is not) and `pack
+  new` (start a mod or a level, or copy any pack).
+- Level operations: `olr-cli level carve|fill|paint|stamp|resize` and
+  `level object list|add|move|remove`, in world pixels, each saving the
+  whole pack at once; `olr-cli level preview` draws a level to a PNG.
+- Format documentation in `docs/formats/`: a guide with a checked example
+  of each pack kind, and reference pages generated from the code.
+
 ### Changed
 
 - Skins are no longer downloaded. A player whose skin you don't have, or
@@ -27,6 +38,7 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 
 ### Removed
 
+- `olr-cli validate`: use `olr-cli pack check`.
 - The Import screen; import OLX content with `olr-cli import --all` (it adds packs; `--prune` removes the others), and later in
   the editors.
 

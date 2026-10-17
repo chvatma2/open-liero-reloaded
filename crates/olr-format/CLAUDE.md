@@ -54,8 +54,14 @@ packs' format (version 5); `olr-pack` reads and writes through them.
     and never round-trip through `ModDef`.
   - **`write_mod_files` never deletes** files no longer in the `ModSource`:
     writing into an existing directory after removing a weapon leaves its
-    file, which the next read rejects as "not listed". A later save path (plan 13d)
-    must clear the mod files first. It validates every id before writing.
+    file, which the next read rejects as "not listed". The editors' save,
+    `olr_edit::pack::save`, writes the whole pack afresh, so the file goes.
+    It validates every id before writing.
+  - **`read_mod_files` reads only definitions** in `weapons/` and
+    `projectiles/`: a `.ron` file that is not hidden (plan 13d). Anything
+    else there (`gun.ron~`, `.DS_Store`) is not read, and
+    `olr_pack::validate` warns about it; a `.ron` in a subfolder of
+    `projectiles/` is an error.
   - **Tests.** `tests/equivalence.rs`: the bundled mods, lifted, written,
     read and compiled, give the import back exactly, the same `SimMod`, and
     the same RON text (with snapshots of some files in `tests/snapshots/`).
@@ -107,6 +113,17 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   magenta, a visible magenta sprite pixel or a `(254, 0, 254)` corner (it
   would change OLX's colour key). Bounds: `MAX_STAMP_SIDE` (64),
   `MAX_HOLES` (16), `MAX_THEME_IMAGES` (64, stones and misc each).
+- **Level thumbnails** (`levels/thumb.rs`, moved from `olr-import-gfx` in
+  plan 13d): `thumbnail(front)` box-filters a level's front art into
+  `THUMB_SIZE` (160 × 96, `olr-pack` re-exports it), `letterbox`ed; the
+  importer and `olr_edit::level::refresh_thumb` both use it.
+- **`canonical_text(path, text)`** (plan 13d): one authoring file (by its
+  path in the pack: `mod.ron`, `weapons/<id>.ron`, `level.ron`, ...) parsed
+  as its type and written again canonically; it checks that file alone.
+- **Doc comments are the schema docs' source.** Every serialized field and
+  variant has one stating its meaning, unit, limits and OLX source;
+  `cargo xtask format-docs` turns them into `docs/formats/*.md`, fails on a
+  missing one, and `check` fails when the pages drift.
 - **Images** (`image_io`, moved from `olr-pack`, which re-exports it): the
   PNG codec, every decode bounded from the header (`IMAGES`, `LEVEL_ART`).
   `decode_indexed` takes 1, 2, 4 and 8-bit palettes and gives one byte per

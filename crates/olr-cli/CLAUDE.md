@@ -8,9 +8,35 @@ The headless command-line tool. Its commands:
   the `--core` files (shared sprites, game sounds, `colours.cfg`) make one pack, `olx-core`.
   It exits with status 1 if any item failed, and still imports the rest.
   The pipeline is `olr_import` (plan 7 ruling Q3; the game's Import screen is gone), without `--prune` an import only adds or replaces packs and keeps the others; with it (as `cargo xtask fetch-olx-content` passes) `<out>` is exactly this import.
-- `olr-cli validate <pack-or-parent-dir>...` prints diagnostics and exits with
-  status 1 on any error. It runs `olr_pack::validate` over the format-5
-  readers (plan 13c; the name stays until plan 13d).
+- `olr-cli pack check <path>...` (`pack_cmd.rs`; it replaced `validate` in
+  plan 13d) runs `olr_pack::validate` on a pack, or on each pack directly
+  under a directory, prints `<pack dir>: <severity>: <file>[:line:col]:
+  <message>` per diagnostic and `checked N packs: E errors, W warnings`,
+  and exits with status 1 on any error. `pack fmt [--check] <path>...`
+  (`olr_edit::fmt`) rewrites packs in canonical form (`formatted <pack
+  dir>: N files` for each pack it changed) or, with `--check`, lists
+  `<pack dir>/<file>: not canonical` and exits 1 if any; a pack that does
+  not load is an error and stays untouched. `pack new
+  <mod|level|skin|theme|core> <id> [--out DIR] [--name N] [--size WxH]
+  [--theme ID] [--from PACK]` (`olr_edit::new`): `--out` defaults to
+  `./<id>`, `--size` (640x480) and `--theme` (`olx-theme-dirt`) are a
+  level's, and skin, theme and core packs need `--from`.
+- `olr-cli level carve|fill|paint|stamp|resize <pack> …`, `level object
+  list|add|move|remove <pack> …` and `level preview <pack> --out F.png
+  [--scale 1..8] [--material]` (`level_cmd.rs`, plan 13d): the
+  `olr_edit::level` operations. Each loads the pack, applies the
+  operation, refreshes `thumb.png` and saves through
+  `olr_edit::pack::save`; a refused operation writes nothing. Arguments
+  are strict clap values naming their flag on error: `--rect X,Y,W,H`,
+  `--circle X,Y,R`, `--at X,Y`, `--offset DX,DY` (negative values
+  allowed), colours `RRGGBB` or `#RRGGBB`, `--tile`/`--image` PNGs read
+  and decoded within `IMAGES` while parsing. `resize` prints `dropped:
+  Spawn at (x, y)` per object it drops, `object list` prints `<i>: Spawn
+  at (x, y)[ — notes]`, and `preview` draws `front` (or the material
+  through `MATERIAL_PALETTE`) at art pixels × `--scale`, a white cross
+  outlined in black on each spawn, bounded by `LEVEL_ART`; it does not
+  save the pack (an `--out` inside the pack is not refused). Tests: `tests/level.rs`, and `tests/cli.rs`'s `pack_check_*`,
+  `pack_fmt_*` and `pack_new_*`.
 - `olr-cli scenario [name...] [--dump F] [--all | --fields a+b] [--time F.ron]` replays oracle
   scenarios in `olr-sim` and prints the first divergence of each. `--time`
   (plan 8, `timing.rs`: `time_scenario`, `TimingReport`) instead times each

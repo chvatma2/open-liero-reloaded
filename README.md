@@ -243,6 +243,20 @@ recording (round trip), and prints tick times. `--personality chaos` bots
 fire every weapon they get; `--coverage` lists the weapons, actions and
 bonuses used. A failure saves its replay and seed to `target/failures/`.
 
+### Authoring packs
+
+Packs are readable RON files and PNG images; [`docs/formats/README.md`](docs/formats/README.md)
+explains the model with one complete example of each kind, and the pages
+beside it list every field.
+
+```sh
+olr-cli pack new level my-level --size 640x480   # also: mod, or skin/theme/core --from <pack>
+olr-cli pack check my-level                      # parse, compile, validate
+olr-cli pack fmt my-level                        # canonical form (--check to list)
+olr-cli level carve my-level --circle 100,100,20 # also fill, paint, stamp, resize, object
+olr-cli level preview my-level --out preview.png --scale 2
+```
+
 ## Windows Subsystem for Linux (development)
 
 - **GPU:** on WSL the game picks the GL backend through Mesa's d3d12 driver by

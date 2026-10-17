@@ -29,7 +29,9 @@ thumbnails.
   bits; compressed is an error), within `olr_pack::image_io::IMAGES`.
 
 - **Level thumbnails** (`thumb.rs`, plan 7 G6): `level_thumbnail(&Level)`
-  box-filters the level's `front` art (at most 8 × 8 samples a pixel) into
+  is `olr_format::levels::thumbnail` of the level's front (moved there in
+  plan 13d, so the level operations make them too; `letterbox` is
+  re-exported). It box-filters the `front` art (at most 8 × 8 samples a pixel) into
   `olr_pack::THUMB_SIZE` (160 × 96), `letterbox`ed with transparent bars so
   it keeps its aspect. OLX's menu preview is the minimap stretched into
   128 × 96 (`minimapForLevel`, `src/game/Level.cpp:33-44`): a deviation in

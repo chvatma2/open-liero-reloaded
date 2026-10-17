@@ -76,6 +76,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Players leaving mid-match (plan 12d; user decisions, 2026-10-15): a player who leaves, times out or is kicked is withdrawn from the match at one tick on every peer, its worm gone (`CGameMode::Drop`, a kill credited to it credits nobody), fewer than 2 worms left ends the match, "<name> has left" / "<name> has timed out", the live scoreboard leaves it out and the results keep a "left" row (deviation below) | `src/server/CServer.cpp:1352-1482`, `src/server/CGameMode.cpp:254-263`, `316-336`, `src/client/CClient_Parse.cpp:1650-1680`, `src/game/Game.cpp:1359-1366`, `src/client/Options.cpp:769-770` | `olr-sim::World::withdraw`, `olr-modes` (`on_drop`), `olr-replay` (format 3), `olr-proto`/`olr-netcode` (the marks), `olr-lobby`, `olr-online`, `olr-ui`, `olr-game` | done (plan 12d) | `a_withdrawn_worm_leaves_the_board_and_the_last_one_wins`, `a_withdrawn_worm_never_wins`, `a_projectile_of_a_worm_that_left_credits_nobody`, `a_gone_worms_kill_credits_nobody`, `a_withdrawal_replays_at_its_tick`, `a_withdrawal_after_the_last_tick_replays`, `withdrawal_marks_are_bounded`, `a_withdrawal_mark_is_final`, `a_withdrawal_learned_late_rolls_back_to_it`, `a_leaving_client_is_withdrawn_at_one_tick_everywhere`, `a_leave_during_a_migration_is_withdrawn_alike`, `a_forged_withdrawal_never_removes_a_present_player`, `a_rejoined_player_marked_by_the_old_host_stays_and_its_holders_are_repaired`, `a_repaired_holder_that_hosts_later_withdraws_the_player_at_its_leave`, `a_member_that_times_out_is_said_to`, `the_last_opponent_leaving_ends_the_match`, `a_player_leaving_during_a_migration_is_removed_at_the_resume`, `a_leaving_player_is_removed_from_every_world`, `a_left_row_is_off_the_scoreboard_and_left_in_the_results`, `the_watched_worm_moves_on_when_it_leaves`, `an_online_watcher_moves_on_when_the_followed_worm_leaves`, `a_player_kicked_mid_match_is_withdrawn`, `a_client_crash_excuses_the_fills_stalls_until_its_timeout`, `a_client_leave_withdraws_its_worm_in_a_real_match`, `a_bundle_with_a_withdrawal_reproduces_to_the_fault` |
 | Mod authoring format (spec 2026-10-16 formats §2): authoring types, canonical writer, compile to `ModDef`, lift from it | — | `olr-format::mods` | done (plan 13a); the packs' format (plan 13c) | `bundled_mods_survive_lift_write_read_and_compile`, `authoring_values_round_trip_canonically`, `mutated_files_never_panic`, the compile and lift unit tests |
 | Level, theme, skin and core-pack authoring formats (spec 2026-10-16 formats §§3-6): authoring types, canonical files, compile to the runtime structs, lift from them | — | `olr-format::{levels, themes, skins, core_pack, image_io}` | done (plan 13b); the packs' format (plan 13c) | `bundled_levels_survive_lift_write_read_and_compile`, `the_bundled_theme_survives_lift_write_read_and_compile`, `the_bundled_core_pack_survives_lift_write_read_and_compile`, `every_bundled_skin_draws_the_same` |
+| Pack tooling (spec 2026-10-16 formats §6): `olr-cli pack check\|fmt\|new`, the level operations and preview, the schema docs | — | `olr-edit`, `olr-cli` (`pack_cmd.rs`, `level_cmd.rs`), `xtask format-docs` | done (plan 13d) | `load_then_files_reproduces_every_bundled_pack`, `bundled_packs_are_canonical`, `the_background_invariant_holds_at_every_art_scale`, `every_guide_example_parses_and_is_canonical`, `format-docs` check step |
 
 ## Deliberate deviations
 
@@ -3118,7 +3119,49 @@ Decided in `docs/superpowers/plans/2026-10-17-plan-13c-format-switch.md`
   imports everything `olr_import::discover` finds (an error with item
   flags).
 - **`olr-cli validate` is rebuilt on the format-5 readers** (D13: the name
-  stays until plan 13d).
+  stays until plan 13d; plan 13d replaced it with `olr-cli pack check`).
+
+## Pack tooling decisions (plan 13d)
+
+Decided in `docs/superpowers/plans/2026-10-17-plan-13d-pack-tooling.md`.
+These are tools, not OLX behaviour; none changes the simulation or a pack.
+
+- **R2 - a save replaces the whole pack.** `olr_edit::pack::save` writes the
+  complete new pack beside the old one and swaps it in
+  (`olr_pack::install::replace_dir`, the importer's procedure): the pack on
+  disk is the old one or the new one. Files the format does not read are
+  copied byte for byte; a name a save could not copy (not UTF-8, or one
+  `VPath` refuses) makes the pack refuse to load instead. Empty directories
+  and file permissions are not kept.
+- **R3 - what the level operations mean** (spec §6 named them only).
+  They work in world pixels on the level's source:
+  - `carve`: the material becomes background, and the front shows the
+    back there;
+  - `fill`: rock or dirt, the front painted with a colour or a tile;
+  - `paint`: art only; painting the back also paints the front where the
+    material is background, painting the front touches solid pixels only;
+  - `stamp`: an image composited onto an art layer, the same layer rule
+    (the spec's `stamp` was open; a theme's stamps are the simulation's
+    carving shapes, so the image stamp is the editor's tool);
+  - `resize`: a new size and an offset for the old content; objects move
+    with it, and those left outside are dropped and reported;
+  - `object add|move|remove|list`, by index.
+  A touched world pixel changes its whole art block, so `front` equals
+  `back` wherever the material is background, and every operation
+  regenerates `thumb.png` (a hand-made thumbnail is replaced).
+- **R4 - schema pages show one example per type, not per field** (spec §6
+  asked for an example per field; it would repeat the default or the
+  type). Each file type shows the guide's checked block of that file.
+  The pages are generated from the doc comments, which state each field's
+  unit and OLX source (`mod-fields.md`); OLX names the research left open
+  are not guessed.
+- **`pack new` templates (R6).** A mod (one weapon, `gun`, enabled by a
+  `Standard` preset) and a level (dirt in a rock border, with a
+  thumbnail) are made in code; skin, theme and core packs start from a copy
+  (`--from`), which gets the new id and name and loses its origin.
+- **A mod's stray files are warnings.** In `weapons/` and `projectiles/`,
+  only `.ron` files that are not hidden are definitions; an editor's backup
+  or `.DS_Store` there is "not read by the format", as anywhere else.
 
 ## Kept OLX quirks
 

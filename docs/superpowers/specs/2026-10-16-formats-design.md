@@ -452,7 +452,9 @@ explicit form. OLX's bitmap fonts and HUD images stay unimported.
 - **Generated reference:** `docs/formats/` holds one page per pack kind,
   generated from the authoring types. Each field gets its meaning, unit,
   default, limits, OLX source and an example. `cargo xtask check` fails
-  when the pages drift from the code.
+  when the pages drift from the code. Amended by plan 13d (R4): the
+  example is one per type (each file type shows the guide's checked
+  block), not one per field.
 - **Hand-written guide:** `docs/formats/README.md` explains the model
   (events and effects, objects, sprites, canonical form, `notes`) with one
   complete example per pack kind. An agent can learn the format from
@@ -466,6 +468,12 @@ undo stack comes with the editor sub-project):
 - `olr-cli pack new <kind> <id>`
 - `olr-cli level carve|fill|paint|stamp|resize <pack> …`: shapes and
   coordinates in world pixels; the art layers follow the art scale.
+  Amended by plan 13d (R3): `carve` makes background and shows the back,
+  `fill` lays rock or dirt and paints the front, `paint` paints an art
+  layer (the back shows through on background), `stamp` composites an
+  image onto an art layer, `resize` moves the content and objects by an
+  offset; every operation keeps `front` equal to `back` on background and
+  regenerates the thumbnail.
 - `olr-cli level object add|move|remove <pack> …`
 - `olr-cli render` (as today) and a level preview to PNG, so an agent can
   see its result.
@@ -525,3 +533,6 @@ Probably three plans, settled when they are written:
    (§1). Keying moved to the importers, skins are matched by id and
    content hash and never transferred (protocol 3), and the import
    pipeline lives in the new crate `olr-import`.
+4. **13d** (done): `olr-cli pack check|fmt|new`, the level operations and
+   preview in the new crate `olr-edit`, and the schema docs
+   (`cargo xtask format-docs`, `docs/formats/`).

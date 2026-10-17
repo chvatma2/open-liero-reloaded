@@ -3,7 +3,28 @@
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
 `e2e`, `net-nat`, `bench`, `stress`, `net-feel`, `net-soak`, `windows`, `envelope`,
-`determinism`, `dist`.
+`determinism`, `dist`, `format-docs`.
+
+- `format-docs [--check]` (`format_docs.rs`, plan 13d R4) writes
+  `docs/formats/{mod,level,skin,theme,core,pack}.md` from the authoring
+  types (`PAGES`: each page's sources, file types and map files), read
+  with `syn`: each serialized field's name, type ("list of T", "map of name
+  → T", "T (optional)", a link to a named type's section; a hand-serialized
+  type such as `Colour` is a section of its doc comment), default
+  (`required`; a `default = "d::…"` value from `defaults.rs`' macros or a
+  local function; a type's zero, an `impl Default` literal or an enum's
+  `#[default]`; "none" for an `Option`) and doc comment, which states the
+  unit, limits and OLX source. Enums list their variants, struct variants
+  in a sub-table; `#[serde(from = "W")]` documents `W`'s fields with the
+  struct's docs and defaults (`Spawn`: "by context"); type aliases link
+  to their target or get a section. Sections follow first reference from
+  the file types (deterministic). A serialized field or variant without a
+  doc comment is an error naming `file:line`. Each file type shows its
+  example: the guide's block (`docs/formats/README.md`, `<!-- file:
+  <kind>/<path> -->` then a `ron` block), so editing the guide means
+  regenerating. `--check` compares instead and fails naming each stale
+  page; `check`'s `format-docs` step (before `test`, offline too) runs it.
+  Unit tests on inline sources.
 
 - `fetch-olx-content` (`fetch.rs`) imports the manifest into the
   committed `content/packs`; `check`'s `olx-content` step (`fetch::verify`,
