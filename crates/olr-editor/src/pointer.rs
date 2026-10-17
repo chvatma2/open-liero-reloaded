@@ -24,7 +24,7 @@ const HANDLE_REACH: f32 = 5.0;
 #[derive(Clone, Debug)]
 pub(crate) enum Drag {
     /// An image's box follows the pointer, live.
-    Move { index: usize, before: Element, from: (i32, i32) },
+    Move { before: Element, from: (i32, i32) },
     /// A handle drags an outline; the box changes on release (ruling R8).
     Resize { id: String, handle: (u8, u8), at: (i32, i32), size: (u32, u32), now: ((i32, i32), (u32, u32)) },
     /// A spawn follows the pointer, live.
@@ -208,7 +208,8 @@ impl EditorState {
         shift: bool,
     ) -> Vec<EditorCommand> {
         if self.dialog.is_some() {
-            return Vec::new();
+            // A drag still ends on its Up.
+            return if kind == PointerKind::Up { self.release() } else { Vec::new() };
         }
         let Some(doc) = &self.doc else { return Vec::new() };
         let l = doc.level();
@@ -229,7 +230,13 @@ impl EditorState {
     }
 
     fn down(&mut self, world: (i32, i32)) -> Vec<EditorCommand> {
-        self.drag = None;
+        // A drag whose Up never came ends here.
+        let mut cmds = self.release();
+        cmds.extend(self.press(world));
+        cmds
+    }
+
+    fn press(&mut self, world: (i32, i32)) -> Vec<EditorCommand> {
         match self.tool {
             Tool::Select => self.select_down(world),
             Tool::Brush | Tool::Eraser => {
@@ -313,13 +320,13 @@ impl EditorState {
             item.element.visible && image_box(&item.element).is_some_and(|b| contains(b, world))
         });
         match hit {
-            Some((index, item)) => {
+            Some((_, item)) => {
                 let e = item.element.clone();
                 self.selection = Selection::Element(e.id.clone());
                 if e.locked {
                     self.status.message = Some(format!("element {:?} is locked", e.id));
                 } else {
-                    self.drag = Some(Drag::Move { index, before: e, from: world });
+                    self.drag = Some(Drag::Move { before: e, from: world });
                 }
             }
             None => self.selection = Selection::None,
@@ -330,12 +337,12 @@ impl EditorState {
     fn drag_to(&mut self, world: (i32, i32), shift: bool) -> Vec<EditorCommand> {
         let Some(drag) = self.drag.clone() else { return Vec::new() };
         match drag {
-            Drag::Move { index, before, from } => {
+            Drag::Move { before, from } => {
                 let Some((at, _)) = image_box(&before) else { return Vec::new() };
                 let (dx, dy) = sub(world, from);
                 let to = (add(at.0, dx), add(at.1, dy));
                 let Some(doc) = self.doc.as_mut() else { return Vec::new() };
-                let current = doc.items().get(index).and_then(|i| image_box(&i.element));
+                let current = doc.index_of(&before.id).and_then(|i| image_box(&doc.items()[i].element));
                 if current.map(|b| b.0) == Some(to) {
                     return Vec::new();
                 }
@@ -381,15 +388,14 @@ impl EditorState {
     }
 
     /// Ends the drag: one history step for what it changed.
-    fn release(&mut self) -> Vec<EditorCommand> {
+    pub(crate) fn release(&mut self) -> Vec<EditorCommand> {
         let Some(drag) = self.drag.take() else { return Vec::new() };
         let Some(paint) = self.doc.as_ref().map(|d| self.paint_of(d)) else { return Vec::new() };
         let Some(doc) = self.doc.as_mut() else { return Vec::new() };
         match drag {
-            Drag::Move { index, before, .. } => {
-                let Some(after) = doc.items().get(index).map(|i| i.element.clone()) else {
-                    return Vec::new();
-                };
+            Drag::Move { before, .. } => {
+                let Some(index) = doc.index_of(&before.id) else { return Vec::new() };
+                let after = doc.items()[index].element.clone();
                 if after == before {
                     return Vec::new();
                 }

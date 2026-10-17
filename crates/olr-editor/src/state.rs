@@ -282,11 +282,32 @@ impl EditorState {
             }
             return Vec::new();
         }
+        // An action that can change the document ends a drag first, so the
+        // drag's step is recorded against the document it changed.
+        let view_only = matches!(
+            action,
+            EditorAction::Pointer { .. }
+                | EditorAction::Canvas(_)
+                | EditorAction::Pan(_)
+                | EditorAction::Zoom { .. }
+                | EditorAction::MaterialView(_)
+                | EditorAction::Grid(_)
+                | EditorAction::Brush(_)
+                | EditorAction::Paint(_)
+                | EditorAction::Select(_)
+                | EditorAction::PlayMod(_)
+                | EditorAction::PlayBots(_)
+        );
+        let mut cmds = if view_only { Vec::new() } else { self.release() };
+        cmds.extend(self.act(action));
+        cmds
+    }
+
+    fn act(&mut self, action: EditorAction) -> Vec<EditorCommand> {
         match action {
             EditorAction::Opened(doc) => {
                 let all = doc.all();
                 self.doc = Some(*doc);
-                self.drag = None;
                 self.fit_pending = true;
                 self.fit();
                 self.history = History::new();
@@ -369,7 +390,6 @@ impl EditorState {
                     self.prev_tool = self.tool;
                 }
                 self.tool = tool;
-                self.drag = None;
                 Vec::new()
             }
             EditorAction::Brush(b) => {

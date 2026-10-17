@@ -237,3 +237,58 @@ fn brush_dab_speed() {
     println!("one size-16 dab and its rebake on Castle Strike: {:?}", start.elapsed());
     pointer(&mut s, PointerKind::Up, (300, 200), false);
 }
+
+/// Batch C review: an action that changes the document ends the drag
+/// first, so the drag's step is recorded against the document it changed.
+#[test]
+fn a_remove_mid_drag_records_the_move_first() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let ids = |s: &EditorState| -> Vec<String> {
+        s.document().unwrap().items().iter().map(|i| i.element.id.clone()).collect()
+    };
+    let start = ids(&s);
+    let (at, _) = image_box(&s, "tiny");
+    pointer(&mut s, PointerKind::Down, (50, 40), false);
+    pointer(&mut s, PointerKind::Move, (60, 50), false);
+    run(&mut s, A::Remove);
+    pointer(&mut s, PointerKind::Up, (60, 50), false);
+    assert!(!ids(&s).contains(&"tiny".to_string()));
+    run(&mut s, A::Undo);
+    assert_eq!(ids(&s), start, "the removal undone");
+    assert_eq!(image_box(&s, "tiny").0, (at.0 + 10, at.1 + 10));
+    run(&mut s, A::Undo);
+    assert_eq!(ids(&s), start);
+    assert_eq!(image_box(&s, "tiny").0, at, "the move undone");
+}
+
+#[test]
+fn an_undo_mid_stroke_ends_the_stroke_first() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Select(Selection::Element("tunnels".into())));
+    run(&mut s, A::Tool(Tool::Brush));
+    let before = layer(&s, "tunnels");
+    drag(&mut s, (20, 10), (30, 10), false);
+    // The second stroke overlaps the first.
+    pointer(&mut s, PointerKind::Down, (25, 10), false);
+    pointer(&mut s, PointerKind::Move, (30, 12), false);
+    run(&mut s, A::Undo);
+    pointer(&mut s, PointerKind::Move, (35, 12), false);
+    pointer(&mut s, PointerKind::Up, (35, 12), false);
+    run(&mut s, A::Undo);
+    assert!(layer(&s, "tunnels") == before, "both strokes undone, nothing comes back");
+}
+
+#[test]
+fn a_tool_change_mid_drag_keeps_the_move_undoable() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let (at, _) = image_box(&s, "tiny");
+    pointer(&mut s, PointerKind::Down, (50, 40), false);
+    pointer(&mut s, PointerKind::Move, (60, 50), false);
+    run(&mut s, A::Tool(Tool::Brush));
+    assert!(s.dirty() && s.can_undo());
+    run(&mut s, A::Undo);
+    assert_eq!(image_box(&s, "tiny").0, at);
+}
