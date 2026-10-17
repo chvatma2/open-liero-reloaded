@@ -53,6 +53,24 @@ impl Source {
         })
     }
 
+    /// The files the kind's reader reads: what its writer writes (no image
+    /// is encoded), and a mod's `restrictions.ron`, read even when the writer
+    /// would leave it out.
+    pub fn reads(&self) -> Vec<String> {
+        use olr_format::{core_pack, levels, mods, skins, themes};
+        match self {
+            Source::Mod(s) => {
+                let mut paths = mods::file_paths(s);
+                paths.push(mods::RESTRICTIONS_FILE.into());
+                paths
+            }
+            Source::Level(s) => levels::file_paths(s),
+            Source::Skin(s) => skins::file_paths(s),
+            Source::Theme(s) => themes::file_paths(s),
+            Source::Core(s) => core_pack::file_paths(s),
+        }
+    }
+
     /// Writes the kind's files (not `pack.ron`) with its canonical writer.
     pub fn write(&self, sink: &mut dyn ContentSink) -> Result<(), FormatError> {
         match self {
@@ -103,12 +121,11 @@ pub fn load(dir: &Path) -> Result<Pack, PackError> {
     let src = DirFs::new(dir);
     let manifest = olr_pack::read_manifest(&src)?;
     let source = Source::read(manifest.kind, &src)?;
-    let mut format_files = MemFs::new();
-    source.write(&mut format_files)?;
-    let owned: BTreeSet<&VPath> = format_files.files().map(|(p, _)| p).collect();
+    let reads = source.reads();
+    let owned: BTreeSet<&str> = reads.iter().map(String::as_str).collect();
     let mut other = BTreeMap::new();
     for path in walk(&src, &VPath::root())? {
-        if path.as_str() != MANIFEST && !owned.contains(&path) {
+        if path.as_str() != MANIFEST && !owned.contains(path.as_str()) {
             let bytes = src.read_max(&path, MAX_FILE_BYTES)?;
             other.insert(path, bytes);
         }

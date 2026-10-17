@@ -5,7 +5,7 @@
 use std::path::Path;
 
 use olr_pack::PackError;
-use olr_vfs::{ContentSource, DirFs, VPath};
+use olr_vfs::{ContentSource, DirFs, VPath, walk};
 
 use crate::pack::{Pack, SaveError, files, load, save};
 
@@ -26,11 +26,17 @@ pub fn format(dir: &Path) -> Result<Vec<VPath>, SaveError> {
     Ok(changed)
 }
 
-/// The format files of `pack` (loaded from `dir`) that differ on disk.
+/// The format files of `pack` (loaded from `dir`) that differ on disk,
+/// and those on disk the canonical writer leaves out (an empty
+/// `restrictions.ron`), which a save removes.
 fn changed(dir: &Path, pack: &Pack) -> Result<Vec<VPath>, PackError> {
     let disk = DirFs::new(dir);
-    let mut out = Vec::new();
-    for (path, bytes) in files(pack)? {
+    let files = files(pack)?;
+    let mut out: Vec<VPath> = walk(&disk, &VPath::root())?
+        .into_iter()
+        .filter(|p| p.as_str() != olr_pack::MANIFEST && !pack.other.contains_key(p) && !files.contains_key(p))
+        .collect();
+    for (path, bytes) in files {
         if pack.other.contains_key(&path) {
             continue;
         }
@@ -39,5 +45,6 @@ fn changed(dir: &Path, pack: &Pack) -> Result<Vec<VPath>, PackError> {
             out.push(path);
         }
     }
+    out.sort();
     Ok(out)
 }

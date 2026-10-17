@@ -48,6 +48,19 @@ fn fmt_keeps_foreign_files() {
     assert!(unformatted(&dir).unwrap().is_empty());
 }
 
+/// Review A-9: a format file the canonical writer leaves out (an empty
+/// `restrictions.ron`) is not canonical, and `format` removes it.
+#[test]
+fn fmt_removes_an_empty_restrictions_file() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, "olx-classic");
+    std::fs::write(dir.join("restrictions.ron"), "{}\n").unwrap();
+    assert_eq!(paths(&unformatted(&dir).unwrap()), ["restrictions.ron"]);
+    assert_eq!(paths(&format(&dir).unwrap()), ["restrictions.ron"]);
+    assert!(!dir.join("restrictions.ron").exists());
+    assert!(unformatted(&dir).unwrap().is_empty());
+}
+
 #[test]
 fn fmt_leaves_an_unloadable_pack_untouched() {
     let Some(root) = content() else { return };
