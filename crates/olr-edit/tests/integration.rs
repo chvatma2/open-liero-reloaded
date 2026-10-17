@@ -6,3 +6,4 @@ mod guide;
 mod level;
 mod new;
 mod pack;
+mod pixelate;

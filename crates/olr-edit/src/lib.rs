@@ -1,8 +1,10 @@
 //! Pack authoring operations shared by `olr-cli` and the editors (plan 13d):
 //! a pack's authoring source loaded and saved whole ([`pack`]), the
-//! canonical formatter ([`fmt`]) and pack templates ([`new`]).
+//! canonical formatter ([`fmt`]), pack templates ([`new`]) and the image
+//! pipeline of level composition ([`pixelate`], plan 14a).
 
 pub mod fmt;
 pub mod level;
 pub mod new;
 pub mod pack;
+pub mod pixelate;
