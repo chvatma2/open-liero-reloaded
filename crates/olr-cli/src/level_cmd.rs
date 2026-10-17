@@ -3,7 +3,7 @@
 //! operation, refreshes the thumbnail and saves through
 //! `olr_edit::pack::save` (the pack on disk is the old one or the new one).
 //! Every argument is parsed strictly: a bad value is a clap error naming
-//! its flag.
+//! its flag. Coordinates may be negative (`--offset -4,0`).
 
 use std::path::{Path, PathBuf};
 
@@ -55,7 +55,7 @@ enum LevelCommand {
     Stamp {
         pack: PathBuf,
         /// World pixels X,Y.
-        #[arg(long, value_parser = parse_point)]
+        #[arg(long, value_parser = parse_point, allow_hyphen_values = true)]
         at: (i32, i32),
         /// A PNG, in art pixels.
         #[arg(long, value_parser = parse_image)]
@@ -70,7 +70,7 @@ enum LevelCommand {
         #[arg(long, value_parser = parse_size)]
         size: (u32, u32),
         /// Where the old content's top-left lands, DX,DY.
-        #[arg(long, value_parser = parse_point, default_value = "0,0")]
+        #[arg(long, value_parser = parse_point, allow_hyphen_values = true, default_value = "0,0")]
         offset: (i32, i32),
         /// The new area's material.
         #[arg(long, default_value = "background")]
@@ -106,7 +106,7 @@ enum ObjectCommand {
     /// Add a spawn point at world X,Y.
     Add {
         pack: PathBuf,
-        #[arg(long, value_parser = parse_point)]
+        #[arg(long, value_parser = parse_point, allow_hyphen_values = true)]
         at: (i32, i32),
         #[arg(long, default_value = "")]
         notes: String,
@@ -115,7 +115,7 @@ enum ObjectCommand {
     Move {
         pack: PathBuf,
         index: usize,
-        #[arg(long, value_parser = parse_point)]
+        #[arg(long, value_parser = parse_point, allow_hyphen_values = true)]
         at: (i32, i32),
     },
     /// Remove the object at INDEX.
@@ -127,10 +127,10 @@ enum ObjectCommand {
 #[group(required = true, multiple = false)]
 struct ShapeArgs {
     /// A rectangle X,Y,W,H.
-    #[arg(long, value_parser = parse_ints::<4>)]
+    #[arg(long, value_parser = parse_ints::<4>, allow_hyphen_values = true)]
     rect: Option<[i32; 4]>,
     /// A circle X,Y,R.
-    #[arg(long, value_parser = parse_ints::<3>)]
+    #[arg(long, value_parser = parse_ints::<3>, allow_hyphen_values = true)]
     circle: Option<[i32; 3]>,
 }
 

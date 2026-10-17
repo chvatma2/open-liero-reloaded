@@ -166,3 +166,27 @@ fn stamp_and_paint_round_trip_through_fmt() {
     assert!(out.status.success(), "{}", stdout(&out));
     assert!(check(&pack).status.success());
 }
+
+/// Review B-1: negative values are values, not flags; review B-9: a shape
+/// wholly outside the level saves an unchanged pack.
+#[test]
+fn negative_coordinates_are_values() {
+    let Some((_tmp, pack)) = dirt_level() else { return };
+    let before = tree(&pack);
+    let out = olr_cli(&["carve", "--rect", "-100,-100,5,5"], &pack);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(tree(&pack), before, "an empty intersection changes nothing");
+    let out = olr_cli(&["carve", "--rect", "-10,-10,30,30"], &pack);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = olr_cli(&["carve", "--circle", "-5,-5,20"], &pack);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert!(object(&["add", "--at", "-3,-4"], &pack).status.success());
+    let out = olr_cli(&["resize", "--size", "500x350", "--offset", "-4,0"], &pack);
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    assert_eq!(stdout(&out), "dropped: Spawn at (-3, -4)\n");
+    let out = olr_cli(&["stamp", "--at", "-1,-1", "--image", "/no/such.png", "--layer", "back"], &pack);
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("--image"),
+        "the bad value is the image, not -1,-1"
+    );
+}
