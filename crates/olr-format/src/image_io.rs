@@ -149,7 +149,11 @@ fn is_sof(m: u8) -> bool {
 /// The offset and code of the first marker after SOI for which `stop`
 /// holds, walking the marker segments; every index is checked.
 fn jpeg_marker(bytes: &[u8], stop: impl Fn(u8) -> bool) -> Option<(usize, u8)> {
-    let mut i = 2;
+    jpeg_marker_from(bytes, 2, stop)
+}
+
+/// `jpeg_marker` from offset `i`, a marker's start.
+fn jpeg_marker_from(bytes: &[u8], mut i: usize, stop: impl Fn(u8) -> bool) -> Option<(usize, u8)> {
     loop {
         if *bytes.get(i)? != 0xFF {
             return None;
@@ -175,6 +179,86 @@ fn jpeg_marker(bytes: &[u8], stop: impl Fn(u8) -> bool) -> Option<(usize, u8)> {
     }
 }
 
+/// The EXIF `Orientation` (1-8) of a JPEG's APP1 segment; `None` when absent,
+/// out of range, or not a JPEG. Reads only the first IFD; every index checked.
+pub fn jpeg_orientation(bytes: &[u8]) -> Option<u8> {
+    if !is_jpeg(bytes) {
+        return None;
+    }
+    let mut from = 2;
+    loop {
+        // Metadata segments come before the first scan.
+        let (i, marker) = jpeg_marker_from(bytes, from, |m| matches!(m, 0xE1 | 0xDA))?;
+        if marker != 0xE1 {
+            return None;
+        }
+        let len = usize::from(u16::from_be_bytes([*bytes.get(i + 2)?, *bytes.get(i + 3)?]));
+        let data = bytes.get(i + 4..(i + 2).checked_add(len)?)?;
+        if let Some(tiff) = data.strip_prefix(b"Exif\0\0") {
+            return exif_orientation(tiff);
+        }
+        from = i + 2 + len;
+    }
+}
+
+/// The `Orientation` tag (0x0112, a SHORT) of a TIFF header's IFD0.
+fn exif_orientation(tiff: &[u8]) -> Option<u8> {
+    let big = match tiff.get(..2)? {
+        b"II" => false,
+        b"MM" => true,
+        _ => return None,
+    };
+    let u16_at = |at: usize| {
+        let b = [*tiff.get(at)?, *tiff.get(at.checked_add(1)?)?];
+        Some(if big { u16::from_be_bytes(b) } else { u16::from_le_bytes(b) })
+    };
+    let u32_at = |at: usize| {
+        let b: [u8; 4] = tiff.get(at..at.checked_add(4)?)?.try_into().ok()?;
+        Some(if big { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) })
+    };
+    if u16_at(2)? != 0x2A {
+        return None;
+    }
+    let ifd = usize::try_from(u32_at(4)?).ok()?;
+    let count = usize::from(u16_at(ifd)?);
+    for k in 0..count {
+        let entry = ifd.checked_add(2 + 12 * k)?;
+        if u16_at(entry)? == 0x0112 {
+            if u16_at(entry + 2)? != 3 {
+                return None;
+            }
+            return u8::try_from(u16_at(entry + 8)?).ok().filter(|o| (1..=8).contains(o));
+        }
+    }
+    None
+}
+
+/// `img` turned as EXIF orientation `o` asks (1 unchanged; 5-8 swap width and
+/// height); an orientation outside 1-8 leaves it unchanged.
+pub fn orient(img: &RgbaImage, o: u8) -> RgbaImage {
+    let (w, h) = (img.width(), img.height());
+    if !(2..=8).contains(&o) {
+        return img.clone();
+    }
+    let (nw, nh) = if o >= 5 { (h, w) } else { (w, h) };
+    let mut out = RgbaImage::new(nw, nh);
+    for y in 0..nh {
+        for x in 0..nw {
+            let (ox, oy) = match o {
+                2 => (w - 1 - x, y),
+                3 => (w - 1 - x, h - 1 - y),
+                4 => (x, h - 1 - y),
+                5 => (y, x),
+                6 => (y, h - 1 - x),
+                7 => (w - 1 - y, h - 1 - x),
+                _ => (w - 1 - y, x),
+            };
+            out.set(x, y, img.get(ox, oy));
+        }
+    }
+    out
+}
+
 /// Whether the JPEG's data holds an end-of-image marker after its first
 /// scan: in entropy-coded data `FF` is stuffed (`FF 00`), so `FF D9`
 /// there is the real end. A file cut inside its scans has none (the
@@ -186,7 +270,8 @@ fn jpeg_complete(bytes: &[u8]) -> bool {
 
 /// A PNG or a JPEG (by its first bytes: `\x89PNG` or `FF D8 FF`) decoded
 /// to RGBA8 within `bound`, the size checked from the header before any
-/// pixel is decoded. A JPEG is opaque (alpha 255).
+/// pixel is decoded. A JPEG is opaque (alpha 255) and turned by its EXIF
+/// `Orientation` (`jpeg_orientation`, `orient`).
 pub fn decode_image_within(bytes: &[u8], bound: ImageBound) -> Result<RgbaImage, String> {
     if png_size(bytes).is_some() {
         return decode_rgba_within(bytes, bound);
@@ -214,7 +299,11 @@ pub fn decode_image_within(bytes: &[u8], bound: ImageBound) -> Result<RgbaImage,
     for p in rgb.as_chunks::<3>().0 {
         rgba.extend_from_slice(&[p[0], p[1], p[2], 255]);
     }
-    RgbaImage::from_raw(w, h, rgba).ok_or_else(|| "decoded size mismatch".into())
+    let img = RgbaImage::from_raw(w, h, rgba).ok_or("decoded size mismatch")?;
+    Ok(match jpeg_orientation(bytes) {
+        Some(o) => orient(&img, o),
+        None => img,
+    })
 }
 
 /// Encodes an 8-bit palette PNG. `palette` holds RGB triples; every index must be
@@ -359,6 +448,72 @@ mod tests {
     const TINY_JPG: &[u8] = include_bytes!("../tests/data/tiny.jpg");
     const TRUNCATED_JPG: &[u8] = include_bytes!("../tests/data/truncated.jpg");
     const GRADIENT_JPG: &[u8] = include_bytes!("../tests/data/gradient.jpg");
+
+    /// `jpeg` with an APP1 segment right after SOI holding one IFD0 entry,
+    /// `Orientation` (0x0112) = `o`.
+    fn with_orientation(jpeg: &[u8], o: u8, big_endian: bool) -> Vec<u8> {
+        let u16b = |v: u16| if big_endian { v.to_be_bytes() } else { v.to_le_bytes() };
+        let u32b = |v: u32| if big_endian { v.to_be_bytes() } else { v.to_le_bytes() };
+        let mut tiff = Vec::new();
+        tiff.extend_from_slice(if big_endian { b"MM" } else { b"II" });
+        tiff.extend_from_slice(&u16b(0x2A));
+        tiff.extend_from_slice(&u32b(8));
+        tiff.extend_from_slice(&u16b(1));
+        tiff.extend_from_slice(&u16b(0x0112));
+        tiff.extend_from_slice(&u16b(3));
+        tiff.extend_from_slice(&u32b(1));
+        tiff.extend_from_slice(&u16b(u16::from(o)));
+        tiff.extend_from_slice(&[0, 0]);
+        tiff.extend_from_slice(&u32b(0));
+        let mut data = b"Exif\0\0".to_vec();
+        data.extend_from_slice(&tiff);
+        let mut out = jpeg[..2].to_vec();
+        out.extend_from_slice(&[0xFF, 0xE1]);
+        out.extend_from_slice(&u16::try_from(data.len() + 2).unwrap().to_be_bytes());
+        out.extend_from_slice(&data);
+        out.extend_from_slice(&jpeg[2..]);
+        out
+    }
+
+    #[test]
+    fn jpeg_orientation_is_read_in_both_byte_orders() {
+        assert_eq!(jpeg_orientation(&with_orientation(GRADIENT_JPG, 6, false)), Some(6));
+        assert_eq!(jpeg_orientation(&with_orientation(GRADIENT_JPG, 6, true)), Some(6));
+        assert_eq!(jpeg_orientation(GRADIENT_JPG), None);
+        assert_eq!(jpeg_orientation(&with_orientation(GRADIENT_JPG, 9, false)), None);
+        let full = with_orientation(GRADIENT_JPG, 3, true);
+        for n in 0..=full.len() {
+            let _ = jpeg_orientation(&full[..n]);
+        }
+    }
+
+    #[test]
+    fn decoding_applies_every_orientation() {
+        let plain = decode_image_within(GRADIENT_JPG, IMAGES).unwrap();
+        let (w, h) = (plain.width(), plain.height());
+        assert_eq!((w, h), (64, 48));
+        // The old pixel a new (x, y) takes, per orientation (the plan's table).
+        let old = |o: u8, x: u32, y: u32| match o {
+            1 => (x, y),
+            2 => (w - 1 - x, y),
+            3 => (w - 1 - x, h - 1 - y),
+            4 => (x, h - 1 - y),
+            5 => (y, x),
+            6 => (y, h - 1 - x),
+            7 => (w - 1 - y, h - 1 - x),
+            _ => (w - 1 - y, x),
+        };
+        for o in 1..=8u8 {
+            let turned = decode_image_within(&with_orientation(GRADIENT_JPG, o, false), IMAGES).unwrap();
+            assert_eq!(turned, orient(&plain, o), "orientation {o}");
+            let want = if o >= 5 { (h, w) } else { (w, h) };
+            assert_eq!((turned.width(), turned.height()), want, "orientation {o}");
+            for (x, y) in [(0, 0), (1, 0)] {
+                let (ox, oy) = old(o, x, y);
+                assert_eq!(turned.get(x, y), plain.get(ox, oy), "orientation {o} at ({x}, {y})");
+            }
+        }
+    }
 
     #[test]
     fn decodes_png_and_jpeg() {

@@ -141,7 +141,7 @@ impl From<ElementMaterial> for olr_data::level::Material {
 }
 
 /// Dithering of an image element's colour reduction.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Dither {
     /// Nearest colour.
     #[default]
@@ -297,15 +297,42 @@ fn valid_source(source: &str) -> bool {
         && VPath::new(&image_file(source)).is_ok()
 }
 
-/// Everything checkable without decoding pixels: the element count, ids,
-/// image settings, that every file is present, and each file's size from
-/// its header (`size` a level of `art_scale`).
+/// Everything checkable without decoding pixels: `check_elements`, then
+/// that every file is present, and each file's size from its header
+/// (`size` a level of `art_scale`).
 pub fn check_composition(
     src: &CompositionSource,
     size: (u32, u32),
     art_scale: u32,
 ) -> Result<(), FormatError> {
-    let elements = &src.composition.elements;
+    check_elements(&src.composition, size, art_scale)?;
+    let art = (size.0.saturating_mul(art_scale), size.1.saturating_mul(art_scale));
+    for (i, e) in src.composition.elements.iter().enumerate() {
+        for (part, file) in element_files(e).into_iter().enumerate() {
+            let Some(bytes) = src.files.get(&file) else {
+                return Err(FormatError::invalid(
+                    COMPOSITION_FILE,
+                    &format!("elements[{i}]"),
+                    format!("{file}: missing"),
+                ));
+            };
+            // A raster's files are its material, then its front and back.
+            let expected = match e.kind {
+                ElementKind::Image { .. } => None,
+                ElementKind::Raster if part == 0 => Some((size, "the level's size")),
+                _ => Some((art, "the level's size × art_scale")),
+            };
+            check_file(&file, bytes, expected)?;
+        }
+    }
+    Ok(())
+}
+
+/// `check_composition` without the files: the count, ids (valid, unique,
+/// their layer files unshared and portable), image fields, sources unique
+/// case aside, each box's art within `LEVEL_ART`, the pixel budget.
+pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Result<(), FormatError> {
+    let elements = &c.elements;
     if let Some(e) = too_many(elements.len()) {
         return Err(e);
     }
@@ -373,9 +400,8 @@ pub fn check_composition(
                 ),
             ));
         }
-        let image = matches!(e.kind, ElementKind::Image { .. });
-        for (part, file) in element_files(e).into_iter().enumerate() {
-            if !image {
+        if !matches!(e.kind, ElementKind::Image { .. }) {
+            for file in element_files(e) {
                 // Ids are unique, their files need not be (`a` and `a.front`).
                 if let Some(j) = layers.insert(file.clone(), i) {
                     return Err(bad("id", format!("{file} is used by two elements (elements[{j}])")));
@@ -385,20 +411,6 @@ pub fn check_composition(
                     return Err(bad("id", format!("{:?}: its file {file} {why}", e.id)));
                 }
             }
-            let Some(bytes) = src.files.get(&file) else {
-                return Err(FormatError::invalid(
-                    COMPOSITION_FILE,
-                    &format!("elements[{i}]"),
-                    format!("{file}: missing"),
-                ));
-            };
-            // A raster's files are its material, then its front and back.
-            let expected = match e.kind {
-                ElementKind::Image { .. } => None,
-                ElementKind::Raster if part == 0 => Some((size, "the level's size")),
-                _ => Some((art, "the level's size × art_scale")),
-            };
-            check_file(&file, bytes, expected)?;
         }
     }
     Ok(())
