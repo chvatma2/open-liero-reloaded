@@ -1,10 +1,10 @@
-//! `olr-cli import`: `olr_content::import` (the pipeline the game's Import
-//! screen shares, plan 7 ruling Q3) with the items the flags name, into a
-//! directory this import owns (`prune`).
+//! `olr-cli import`: `olr_import` (the OLX import pipeline, plan 7 ruling
+//! Q3; only the CLI uses it since plan 13c) with the items the flags name,
+//! into a directory this import owns (`prune`).
 
 use std::path::PathBuf;
 
-use olr_content::import::{ImportOptions, ImportPlan, Progress, SkinSource};
+use olr_import::{ImportOptions, ImportPlan, Progress, SkinSource};
 
 #[derive(clap::Args)]
 pub struct Args {
@@ -65,7 +65,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             .collect(),
     };
     let options = ImportOptions { revision: args.revision.clone(), prune: true };
-    let report = olr_content::import::import(&args.olx, &plan, &args.out, &options, &mut |p| {
+    let report = olr_import::import(&args.olx, &plan, &args.out, &options, &mut |p| {
         if let Progress::Done { entry, .. } = p
             && let Some(e) = &entry.error
         {

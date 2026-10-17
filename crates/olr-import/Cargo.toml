@@ -1,0 +1,35 @@
+[package]
+name = "olr-import"
+description = "Imports an OpenLieroX game directory into native content packs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-data.workspace = true
+olr-vfs.workspace = true
+olr-pack.workspace = true
+olr-import-lgs.workspace = true
+olr-import-lxl.workspace = true
+olr-import-gfx.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+serde = { workspace = true, features = ["std"] }
+ron.workspace = true
+
+[dev-dependencies]
+olr-content.workspace = true
+olr-sim.workspace = true
+olr-modes.workspace = true
+olr-bots.workspace = true
+tempfile.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

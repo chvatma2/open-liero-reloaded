@@ -13,8 +13,7 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
 (sprites by name, game sounds, `colours.cfg`) and `new_world(&SandboxSetup)`.
 
 - **Layer 4, uses `std`.** Depends on `olr-sim`, `olr-modes`, `olr-bots`,
-  `olr-replay`, `olr-pack`, `sha2`, `hex`, `olr-terrain`, `olr-data`, `olr-vfs`, the
-  importers (`olr-import-lgs`, `olr-import-lxl`, `olr-import-gfx`), `anyhow`,
+  `olr-replay`, `olr-pack`, `sha2`, `hex`, `olr-terrain`, `olr-data`, `olr-vfs`, `anyhow`,
   `serde` and `ron`.
   `olr-scenario` (same layer) uses it.
 - **Never panic on content** (spec §19, Review Focus 3): a missing or odd
@@ -109,37 +108,6 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   them by manifest name; `resolve_id(given, prefix, ids)` (an id, or an
   OLX name's import id such as `default.png` → `olx-skin-default`),
   `Content::skin_id`, `Catalog::skin`.
-- **Import** (`import.rs`, plan 7 ruling Q3): the one OLX import
-  pipeline, `olr-cli import`'s.
-  `import(olx, &ImportPlan, out, &ImportOptions, progress)` imports the
-  plan's mods, levels (with their thumbnail), themes, core files and
-  skins one by one (`Progress::Item`/`Done`; the callback returning
-  `false` cancels between items), writes each pack hidden
-  (`.import-<id>`) and renames it into place (the old one renamed aside
-  to `.replaced-<id>`, then removed: a failure is that item's warning; a
-  `.replaced-<id>` without its `<id>`, from an import killed between the
-  renames, is listed by `open_layers` and put back by the next import,
-  the newest of an id's (`.replaced-<id>~k` too: `newest_aside_first`, by
-  the manifest's time, then the highest `k`);
-  other leftovers removed, or `ImportReport::notes`), symlinked mod,
-  level, skin, data and theme directories followed one level, ids
-  colliding in a run get `-2`, ..., and writes `import-report.ron`
-  (`ImportEntry`: source, pack, error, warnings; byte-identical to the
-  CLI's before the move). `ImportPlan::extra_skins` (`SkinSource`: a
-  directory of skin PNGs with its own origin source and revision) adds
-  skins from outside the game directory in the same run (the manifest's
-  `extra_skins`: OLX 0.58 rc5's release skins). `prune` (the CLI's) removes packs of earlier
-  runs. Every file is read at most `MAX_SOURCE_BYTES`, every image
-  decoded within `olr_pack::image_io`'s bounds. A failed item is in
-  the report; a failed write (permission, full disk) is the import's
-  error. `discover(path)` lists what an OLX game directory (or its
-  `share/gamedir`) holds where OLX's menus look (directories with a
-  `script.lgs`, `levels/*.lxl`, `data/themes/*`, `skins/`; the core pack
-  only when all of `OLX_CORE_FILES` are there), case-insensitively, with
-  `notes` for what it skips; not an OLX directory is an error;
-  `discover_until(path, stop)` stops with `Cancelled`.
-  `tests/import.rs` runs on `fixtures/olx-mini` (made by
-  `fixtures/olx-mini.py`).
 - **Download cache** (`cache.rs`, plan 11 ruling N30): `DownloadCache::open(dir)`
   keeps packs a host sent in `packs/<content hash>/` (`get` touches the
   LRU use counter, saved with the next install, eviction or clear or when
@@ -203,5 +171,4 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
 Test: `cargo nextest run -p olr-content` (`loads_every_manifest_item` and the
 real-level part of `new_world_spawns_worms_on_free_spots`, `tests/color.rs`'s
 matches, `tests/matches.rs` and the imported part of `tests/catalog.rs` need
-`OLR_CONTENT_DIR`; `tests/import.rs` uses `fixtures/olx-mini` and
-`imported_packs_override_bundled` the layers).
+`OLR_CONTENT_DIR`; `olr-import`'s tests cover the layers).

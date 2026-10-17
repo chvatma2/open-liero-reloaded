@@ -14,6 +14,7 @@
         "olr-import-lxl": 2,
         "olr-import-gfx": 2,
         "olr-oracle": 2,
+        "olr-import": 3,
         "olr-sim": 3,
         "olr-modes": 3,
         "olr-bots": 3,

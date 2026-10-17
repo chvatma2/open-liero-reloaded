@@ -18,9 +18,6 @@ olr-bots.workspace = true
 olr-replay.workspace = true
 olr-pack.workspace = true
 olr-vfs.workspace = true
-olr-import-lgs.workspace = true
-olr-import-lxl.workspace = true
-olr-import-gfx.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde = { workspace = true, features = ["std"] }

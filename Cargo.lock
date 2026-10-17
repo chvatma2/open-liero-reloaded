@@ -3306,6 +3306,7 @@ dependencies = [
  "olr-data",
  "olr-discovery",
  "olr-fx",
+ "olr-import",
  "olr-lobby",
  "olr-modes",
  "olr-net",
@@ -3341,9 +3342,6 @@ dependencies = [
  "hex",
  "olr-bots",
  "olr-data",
- "olr-import-gfx",
- "olr-import-lgs",
- "olr-import-lxl",
  "olr-math",
  "olr-modes",
  "olr-pack",
@@ -3478,6 +3476,27 @@ dependencies = [
  "tempfile",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "olr-import"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "olr-bots",
+ "olr-content",
+ "olr-data",
+ "olr-import-gfx",
+ "olr-import-lgs",
+ "olr-import-lxl",
+ "olr-modes",
+ "olr-pack",
+ "olr-sim",
+ "olr-vfs",
+ "ron",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

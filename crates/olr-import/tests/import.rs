@@ -1,4 +1,4 @@
-//! The OLX import pipeline (`olr_content::import`, plan 7 ruling Q3) on the
+//! The OLX import pipeline (`olr_import`, plan 7 ruling Q3) on the
 //! committed tiny OLX game directory `fixtures/olx-mini` (made by
 //! `fixtures/olx-mini.py`), and the layered content directories it feeds
 //! (spec §9.4: user packs over the bundled ones).
@@ -6,7 +6,7 @@
 use std::path::{Path, PathBuf};
 
 use olr_content::Content;
-use olr_content::import::{self, ImportOptions, ImportPlan, OLX_CORE_FILES, Progress, REPORT_FILE};
+use olr_import::{self as import, ImportOptions, ImportPlan, OLX_CORE_FILES, Progress, REPORT_FILE};
 use olr_data::image::RgbaImage;
 use olr_data::level::{Level, LevelDef, Material, MaterialGrid};
 use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};

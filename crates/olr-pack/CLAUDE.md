@@ -6,6 +6,7 @@ header's size); content hashing; validation.
 
 - **Layer 2.** Depends on `olr-data`, `olr-format` (`image_io` is
   re-exported from it), `olr-vfs`, `ron`, `png`, `sha2`.
+- **Install names** (`install.rs`): `TMP_PREFIX`, `OLD_PREFIX` and `newest_aside_first`, shared by `olr-import` and `olr-content`'s `open_layers`.
 - **Deterministic output.** Writing the same value twice gives byte-identical
   files. Never introduce `HashMap` iteration or timestamps into output.
 - **Layouts:**

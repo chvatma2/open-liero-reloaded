@@ -16,7 +16,6 @@ mod cache;
 mod catalog;
 mod color;
 mod core_assets;
-pub mod import;
 mod locate;
 mod maps;
 mod matches;

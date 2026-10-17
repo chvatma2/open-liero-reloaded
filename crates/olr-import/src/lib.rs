@@ -13,7 +13,7 @@
 //!   fails is an [`ImportEntry`] with its error; the rest still import.
 //!   Ids that collide within one run get `-2`, `-3`, ... in turn.
 //! - **No half-written pack is ever visible:** a pack is written to a
-//!   hidden directory (`.import-<id>`; [`Content::open`](crate::Content::open)
+//!   hidden directory (`.import-<id>`; `olr_content::Content::open`
 //!   skips names starting with `.`) and renamed into place; the pack it
 //!   replaces is first renamed aside (`.replaced-<id>`) and then removed
 //!   (one that cannot be is a warning: the new pack is in place). An
