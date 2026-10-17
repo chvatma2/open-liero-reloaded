@@ -78,21 +78,37 @@ pub struct Config {
     pub fake_clock: bool,
 }
 
-/// What exists once the window does.
-/// Shows `window` (made hidden: `window::attributes`) once it has drawn a
-/// frame, or once it cannot draw one (minimised or occluded while hidden:
-/// it would never show otherwise). A no-op where windows have no
-/// visibility (Wayland) and once shown.
+/// Shows `window` (made hidden: `window::attributes`). A no-op where
+/// windows have no visibility (Wayland) and once shown.
 pub(crate) fn show_window(window: &Window) {
     if window.is_visible() == Some(false) {
         window.set_visible(true);
     }
 }
 
+/// The frames a hidden window draws at most before it shows anyway.
+pub(crate) const REVEAL_AFTER_FRAMES: u32 = 30;
+
+/// Whether a hidden window shows after its `attempts`-th frame: once one
+/// was presented, or by the deadline whatever they gave (a surface that
+/// never presents while hidden must not keep the window hidden).
+pub(crate) fn reveal_now(presented: bool, attempts: u32) -> bool {
+    presented || attempts >= REVEAL_AFTER_FRAMES
+}
+
+/// Whether `window` is still hidden (`window::attributes`), waiting for its
+/// first frame. Never on Wayland, whose windows have no visibility.
+pub(crate) fn hidden(window: &Window) -> bool {
+    window.is_visible() == Some(false)
+}
+
+/// What exists once the window does.
 struct Shown {
     window: Arc<Window>,
     gpu: Gpu,
     egui: egui_winit::State,
+    /// The frames drawn while hidden (`reveal_now`).
+    hidden_frames: u32,
 }
 
 pub struct App {
@@ -503,7 +519,7 @@ impl App {
         let egui = self.egui_state(&window, &gpu);
         println!("olr: GPU {}", gpu.info);
         self.stats.gpu = gpu.info.clone();
-        self.win = Some(Shown { window, gpu, egui });
+        self.win = Some(Shown { window, gpu, egui, hidden_frames: 0 });
         // Creating the window counts as a change: a scripted `size` right
         // away waits out the interval (`window::MIN_CHANGE_INTERVAL`).
         self.requests.opened(self.now());
@@ -528,7 +544,7 @@ impl App {
     /// stays and takes the change in place.
     fn recreate(&mut self, el: &ActiveEventLoop, change: window::Change) {
         let Some(old) = self.win.take() else { return };
-        let Shown { window: old_window, mut gpu, egui: old_egui } = old;
+        let Shown { window: old_window, mut gpu, egui: old_egui, .. } = old;
         let made = el
             .create_window(self.shape.attributes())
             .map_err(anyhow::Error::from)
@@ -539,7 +555,7 @@ impl App {
             Err(e) => {
                 eprintln!("warning: making the window again: {e:#}; changing it in place");
                 let size = window::apply(&old_window, change);
-                self.win = Some(Shown { window: old_window, gpu, egui: old_egui });
+                self.win = Some(Shown { window: old_window, gpu, egui: old_egui, hidden_frames: 0 });
                 if let Some(size) = size {
                     self.resized((size.width, size.height));
                 }
@@ -547,7 +563,7 @@ impl App {
             }
         };
         let egui = self.egui_state(&window, &gpu);
-        self.win = Some(Shown { window, gpu, egui });
+        self.win = Some(Shown { window, gpu, egui, hidden_frames: 0 });
         drop((old_egui, old_window));
         self.input.release_keys();
         self.scores.focus(false);
@@ -866,8 +882,11 @@ impl App {
             eprintln!("warning: {warning}");
         }
         let timing = w.gpu.present(frame, world, &paint, &mut out.textures_delta);
-        if timing.is_some() {
-            show_window(&w.window);
+        if hidden(&w.window) {
+            w.hidden_frames += 1;
+            if reveal_now(timing.is_some(), w.hidden_frames) {
+                show_window(&w.window);
+            }
         }
         if let Some(t) = timing {
             self.latency.presented(Instant::now(), t);
@@ -1022,6 +1041,20 @@ fn egui_frame_time(input: &mut egui::RawInput, elapsed: f64) {
 #[cfg(test)]
 mod tests {
     use winit::event::{Ime, WindowEvent};
+
+    use super::{REVEAL_AFTER_FRAMES, reveal_now};
+
+    /// Review of the window fix (Critical 1): a hidden window shows with its
+    /// first presented frame, and after `REVEAL_AFTER_FRAMES` attempts
+    /// whatever they gave, so a surface that never presents while hidden
+    /// cannot keep it hidden.
+    #[test]
+    fn a_hidden_window_shows_by_its_deadline() {
+        assert!(reveal_now(true, 1));
+        assert!(!reveal_now(false, 1));
+        assert!(!reveal_now(false, REVEAL_AFTER_FRAMES - 1));
+        assert!(reveal_now(false, REVEAL_AFTER_FRAMES));
+    }
 
     /// The lobby's Copy (the invite code) and pasting into a text field go
     /// through egui-winit's clipboard, a feature its default features

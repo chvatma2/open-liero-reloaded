@@ -88,7 +88,16 @@ impl ApplicationHandler for App {
                 self.last = None;
             }
             el.set_control_flow(ControlFlow::Poll);
-            w.window.request_redraw();
+            if super::hidden(&w.window) {
+                // A hidden window gets no redraw on Windows (no `WM_PAINT`
+                // while invisible): its frames until it shows are drawn
+                // from here (as eframe does).
+                if let Err(e) = self.frame(el) {
+                    self.fail(el, e);
+                }
+            } else {
+                w.window.request_redraw();
+            }
         } else if let Some(wake) = self.shell.hidden_wake() {
             super::show_window(&w.window);
             self.paused = true;

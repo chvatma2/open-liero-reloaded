@@ -70,10 +70,12 @@ pub const MIN_CHANGE_INTERVAL: Duration = Duration::from_millis(250);
 /// The window as created: `size` logical pixels (`physical`: physical
 /// pixels, an options preset), borderless fullscreen when asked, neither
 /// resizable nor maximisable (the size is the game's), and hidden until
-/// its first frame is drawn (`App::show_window`): setting the GPU up takes
-/// a while, and a window shown meanwhile showed its unpainted inside (the
-/// user's report of 2026-10-18: a white rectangle). Wayland has no hidden
-/// windows: a window there shows with its first frame anyway.
+/// its first frame is presented: setting the GPU up takes a while, and a
+/// window shown meanwhile showed its unpainted inside (the user's report
+/// of 2026-10-18: a white rectangle). A hidden window's frames are drawn
+/// from `about_to_wait` (Windows sends no redraw to an invisible window),
+/// and it shows after `app::REVEAL_AFTER_FRAMES` at the latest. Wayland
+/// has no hidden windows: a window there shows with its first frame anyway.
 pub fn attributes(size: (u32, u32), physical: bool, fullscreen: bool) -> WindowAttributes {
     let (w, h) = (size.0.max(1), size.1.max(1));
     let size: winit::dpi::Size =
@@ -271,7 +273,7 @@ mod tests {
 
     /// The user's report of 2026-10-18: a white rectangle showed in the
     /// window while the GPU was being set up. The window opens hidden and
-    /// shows once its first frame is drawn (`App::show_window`).
+    /// shows once its first frame is presented (`app::reveal_now`).
     #[test]
     fn the_window_opens_hidden() {
         assert!(!attributes(DEFAULT_SIZE, false, false).visible);
