@@ -12,7 +12,7 @@ use std::collections::BTreeMap;
 use olr_data::core_pack::CoreDef;
 use olr_data::image::{Rgba, RgbaImage};
 
-pub use files::{read_core_files, read_core_files_tolerant, write_core_files};
+pub use files::{file_paths, read_core_files, read_core_files_tolerant, write_core_files};
 
 use crate::image_io::{IMAGES, check_size};
 use crate::{Colour, FormatError, LiftError};

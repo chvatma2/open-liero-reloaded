@@ -55,6 +55,14 @@ fn read_bytes(src: &dyn ContentSource, file: &str) -> Result<Vec<u8>, FormatErro
     src.read_max(&path, MAX_FILE_BYTES).map_err(|e| io(e.to_string()))
 }
 
+/// The paths the writer writes for `src`, without encoding anything.
+pub fn file_paths(src: &CoreSource) -> Vec<String> {
+    let mut out = vec![CORE_FILE.to_string()];
+    out.extend(src.sprites.keys().map(|id| sprite_file(id)));
+    out.extend(src.sounds.keys().map(|name| sound_file(name)));
+    out
+}
+
 pub fn write_core_files(sink: &mut dyn ContentSink, src: &CoreSource) -> Result<(), FormatError> {
     check(src)?;
     let file = CoreFile {

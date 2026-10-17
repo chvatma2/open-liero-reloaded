@@ -36,6 +36,17 @@ pub(crate) struct ModFile {
     weapons: Vec<String>,
 }
 
+/// The paths the writer writes for `src`, without encoding anything.
+pub fn file_paths(m: &ModSource) -> Vec<String> {
+    let mut out = vec![MOD_FILE.to_string()];
+    out.extend(m.weapons.iter().map(|(id, _)| weapon_file(id)));
+    out.extend(m.shared.keys().map(|id| shared_file(id)));
+    if !m.restrictions.is_empty() {
+        out.push(RESTRICTIONS_FILE.into());
+    }
+    out
+}
+
 pub fn write_mod_files(sink: &mut dyn ContentSink, m: &ModSource) -> Result<(), FormatError> {
     // Validate every id before the first write, so a failure leaves the sink alone.
     let mut ids = BTreeSet::new();

@@ -44,6 +44,15 @@ fn read_bytes(src: &dyn ContentSource, file: &str) -> Result<Vec<u8>, FormatErro
     src.read_max(&path, MAX_FILE_BYTES).map_err(|e| io(e.to_string()))
 }
 
+/// The paths the writer writes for `src`, without encoding anything.
+pub fn file_paths(src: &SkinSource) -> Vec<String> {
+    let mut out: Vec<String> = [SKIN_FILE, IMAGE_FILE, TINT_FILE].map(String::from).into();
+    if src.left.is_some() {
+        out.push(LEFT_FILE.into());
+    }
+    out
+}
+
 pub fn write_skin_files(sink: &mut dyn ContentSink, src: &SkinSource) -> Result<(), FormatError> {
     check(src)?;
     let file = SkinFile {

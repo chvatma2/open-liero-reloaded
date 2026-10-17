@@ -12,7 +12,7 @@ pub(crate) use files::ThemeFile;
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::theme::{Theme, ThemeDef};
 
-pub use files::{read_theme_files, write_theme_files};
+pub use files::{file_paths, read_theme_files, write_theme_files};
 
 use crate::image_io::{IMAGES, check_size, olx_sprite_to_alpha};
 use crate::{FormatError, LiftError};

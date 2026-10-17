@@ -76,6 +76,22 @@ fn write_stamp(
     write_bytes(sink, mask_file, &image_io::encode_indexed(paint.width(), paint.height(), &s.mask, palette))
 }
 
+/// The paths the writer writes for `src`, without encoding anything.
+pub fn file_paths(src: &ThemeSource) -> Vec<String> {
+    let mut out = vec![THEME_FILE.to_string()];
+    for i in 0..src.holes.len() {
+        out.extend([hole_file(i), hole_mask_file(i)]);
+    }
+    if src.green_ball.is_some() {
+        out.extend([GREEN_FILE.to_string(), GREEN_MASK_FILE.to_string()]);
+    }
+    for (dir, imgs) in [("stones", &src.stones), ("misc", &src.misc)] {
+        out.extend((0..imgs.len()).map(|i| image_file(dir, i)));
+    }
+    out.extend([FRONT_TILE_FILE.to_string(), BACK_TILE_FILE.to_string()]);
+    out
+}
+
 pub fn write_theme_files(sink: &mut dyn ContentSink, src: &ThemeSource) -> Result<(), FormatError> {
     check(src)?;
     let file = ThemeFile {

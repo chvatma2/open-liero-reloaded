@@ -18,7 +18,7 @@ mod types;
 pub use compile::{
     MAX_AMOUNT, MAX_COLOURS, MAX_EFFECTS, MAX_INLINE_DEPTH, MAX_SHARED, MAX_WEAPONS, compile_mod,
 };
-pub use files::{RESTRICTIONS_FILE, read_mod_files, write_mod_files};
+pub use files::{RESTRICTIONS_FILE, file_paths, read_mod_files, write_mod_files};
 pub use lift::{LIFTED_SPAWN, lift_mod};
 pub use spawn::{
     EventContext, EventSpawn, ShotContext, ShotSpawn, Spawn, SpawnContext, TrailContext, TrailSpawn,

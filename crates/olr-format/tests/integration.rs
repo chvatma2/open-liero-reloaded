@@ -4,6 +4,7 @@ mod core_pack;
 mod equivalence;
 mod hostile;
 mod levels;
+mod paths;
 mod roundtrip;
 mod skins;
 mod themes;

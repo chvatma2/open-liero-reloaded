@@ -56,6 +56,15 @@ fn read_bytes(src: &dyn ContentSource, file: &str) -> Result<Vec<u8>, FormatErro
     src.read_max(&path, MAX_FILE_BYTES).map_err(|e| io(e.to_string()))
 }
 
+/// The paths the writer writes for `src`, without encoding anything.
+pub fn file_paths(src: &LevelSource) -> Vec<String> {
+    let mut out: Vec<String> = [LEVEL_FILE, MATERIAL_FILE, FRONT_FILE, BACK_FILE].map(String::from).into();
+    if src.thumb.is_some() {
+        out.push(THUMB_FILE.into());
+    }
+    out
+}
+
 pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Result<(), FormatError> {
     check(src)?;
     let file = LevelFile {

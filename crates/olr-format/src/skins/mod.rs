@@ -9,7 +9,7 @@ pub(crate) use files::SkinFile;
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::skin::{FrameLayout, MaskKind, Skin, SkinDef};
 
-pub use files::{read_skin_files, write_skin_files};
+pub use files::{file_paths, read_skin_files, write_skin_files};
 
 use crate::image_io::{IMAGES, check_size};
 use crate::{FormatError, LiftError};
