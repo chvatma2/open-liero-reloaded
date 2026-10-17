@@ -340,7 +340,9 @@ pub fn check_composition(
             return Err(FormatError::invalid(
                 COMPOSITION_FILE,
                 &format!("elements[{i}]"),
-                format!("the elements up to this one decode to {pixels} pixels, more than {MAX_COMPOSED_PIXELS}"),
+                format!(
+                    "the elements up to this one decode to {pixels} pixels, more than {MAX_COMPOSED_PIXELS}"
+                ),
             ));
         }
         let image = matches!(e.kind, ElementKind::Image { .. });

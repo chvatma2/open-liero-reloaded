@@ -139,7 +139,10 @@ fn compose_a_level_from_an_image_and_a_layer() {
     let original = std::fs::read(pack.join("material.png")).unwrap();
     compose(tmp.path(), &pack, &content);
     let list = ok(&cli(&["level", "element", "list", "{pack}"], &pack, &content));
-    assert_eq!(list, "0: base Raster - \"Base\"\n1: sign Image Rock \"Sign\"\n2: cave Drawn Background \"Cave\"\n");
+    assert_eq!(
+        list,
+        "0: base Raster - \"Base\"\n1: sign Image Rock \"Sign\"\n2: cave Drawn Background \"Cave\"\n"
+    );
     let check = ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
     assert!(check.contains("0 errors"), "{check}");
     assert_ne!(std::fs::read(pack.join("material.png")).unwrap(), original);
