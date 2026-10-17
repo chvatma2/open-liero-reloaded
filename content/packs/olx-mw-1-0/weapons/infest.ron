@@ -2,26 +2,294 @@
     name: "Infest",
     recharge: 0.5,
     drain: 51.0,
-    rof: 0.15,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 0.15,
+    fire: Projectile(
         class: Grenade,
         recoil: 5,
-        sound: Some("sfx/infest.ogg"),
-        spawn: (
-            projectile: "infest",
-            amount: 1,
+        sound: "sfx/infest.ogg",
+        shot: (
             speed: 150,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.05,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 10,
+                        speed: 125,
+                        speed_var: 50.0,
+                        spread: 8.0,
+                        relative_to_parent: true,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/insect.png",
+                                animation: (
+                                    fps: 15.0,
+                                    mode: Loop,
+                                ),
+                            ),
+                            gravity: 15,
+                            timer: (
+                                after_s: 0.75,
+                                variation_s: 0.25,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            hit_terrain: [
+                                Bounce(
+                                    factor: 1.0,
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 6,
+                                ),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    speed: 125,
+                                    speed_var: 50.0,
+                                    spread: 8.0,
+                                    relative_to_parent: true,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/insect.png",
+                                            animation: (
+                                                fps: 15.0,
+                                                mode: Loop,
+                                            ),
+                                        ),
+                                        gravity: 15,
+                                        timer: (
+                                            after_s: 0.75,
+                                            variation_s: 0.25,
+                                            effects: [
+                                                Explode(
+                                                    damage: -1,
+                                                ),
+                                                Spawn("spawn"),
+                                            ],
+                                        ),
+                                        hit_terrain: [
+                                            Bounce(
+                                                factor: 1.0,
+                                            ),
+                                        ],
+                                        hit_worm: [
+                                            Injure(
+                                                damage: 6,
+                                            ),
+                                        ],
+                                        spawns: {
+                                            "spawn": (
+                                                speed: 125,
+                                                speed_var: 50.0,
+                                                spread: 8.0,
+                                                relative_to_parent: true,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/insect.png",
+                                                        animation: (
+                                                            fps: 15.0,
+                                                            mode: Loop,
+                                                        ),
+                                                    ),
+                                                    gravity: 15,
+                                                    timer: (
+                                                        after_s: 0.75,
+                                                        variation_s: 0.25,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: -1,
+                                                            ),
+                                                            Spawn("spawn"),
+                                                        ],
+                                                    ),
+                                                    hit_terrain: [
+                                                        Bounce(
+                                                            factor: 1.0,
+                                                        ),
+                                                    ],
+                                                    hit_worm: [
+                                                        Injure(
+                                                            damage: 6,
+                                                        ),
+                                                    ],
+                                                    spawns: {
+                                                        "spawn": (
+                                                            speed: 125,
+                                                            speed_var: 50.0,
+                                                            spread: 8.0,
+                                                            relative_to_parent: true,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/insect.png",
+                                                                    animation: (
+                                                                        fps: 15.0,
+                                                                        mode: Loop,
+                                                                    ),
+                                                                ),
+                                                                gravity: 15,
+                                                                timer: (
+                                                                    after_s: 0.75,
+                                                                    variation_s: 0.25,
+                                                                    effects: [
+                                                                        Explode(
+                                                                            damage: -1,
+                                                                        ),
+                                                                        Spawn("spawn"),
+                                                                    ],
+                                                                ),
+                                                                hit_terrain: [
+                                                                    Bounce(
+                                                                        factor: 1.0,
+                                                                    ),
+                                                                ],
+                                                                hit_worm: [
+                                                                    Injure(
+                                                                        damage: 7,
+                                                                    ),
+                                                                ],
+                                                                spawns: {
+                                                                    "spawn": (
+                                                                        speed: 125,
+                                                                        speed_var: 50.0,
+                                                                        spread: 8.0,
+                                                                        relative_to_parent: true,
+                                                                        projectile: (
+                                                                            gfx: Image(
+                                                                                file: "gfx/insect.png",
+                                                                                animation: (
+                                                                                    fps: 15.0,
+                                                                                    mode: Loop,
+                                                                                ),
+                                                                            ),
+                                                                            gravity: 15,
+                                                                            timer: (
+                                                                                after_s: 0.75,
+                                                                                variation_s: 0.25,
+                                                                                effects: [
+                                                                                    Explode(
+                                                                                        damage: -1,
+                                                                                    ),
+                                                                                    Spawn("spawn"),
+                                                                                ],
+                                                                            ),
+                                                                            hit_terrain: [
+                                                                                Bounce(
+                                                                                    factor: 1.0,
+                                                                                ),
+                                                                            ],
+                                                                            hit_worm: [
+                                                                                Injure(
+                                                                                    damage: 7,
+                                                                                ),
+                                                                            ],
+                                                                            spawns: {
+                                                                                "spawn": (
+                                                                                    speed: 125,
+                                                                                    speed_var: 50.0,
+                                                                                    spread: 8.0,
+                                                                                    relative_to_parent: true,
+                                                                                    projectile: (
+                                                                                        gfx: Image(
+                                                                                            file: "gfx/insect.png",
+                                                                                            animation: (
+                                                                                                fps: 15.0,
+                                                                                                mode: Loop,
+                                                                                            ),
+                                                                                        ),
+                                                                                        gravity: 15,
+                                                                                        timer: (
+                                                                                            after_s: 0.75,
+                                                                                            variation_s: 0.25,
+                                                                                            effects: [
+                                                                                                Explode(
+                                                                                                    damage: -1,
+                                                                                                ),
+                                                                                                Spawn("spawn"),
+                                                                                            ],
+                                                                                        ),
+                                                                                        hit_terrain: [
+                                                                                            Bounce(
+                                                                                                factor: 1.0,
+                                                                                            ),
+                                                                                        ],
+                                                                                        hit_worm: [
+                                                                                            Injure(
+                                                                                                damage: 6,
+                                                                                            ),
+                                                                                        ],
+                                                                                        spawns: {
+                                                                                            "spawn": (
+                                                                                                speed: 125,
+                                                                                                speed_var: 50.0,
+                                                                                                spread: 8.0,
+                                                                                                relative_to_parent: true,
+                                                                                                projectile: (
+                                                                                                    gfx: Image(
+                                                                                                        file: "gfx/insectdead.png",
+                                                                                                    ),
+                                                                                                    gravity: 45,
+                                                                                                    timer: (
+                                                                                                        after_s: 5.0,
+                                                                                                        variation_s: 2.5,
+                                                                                                        effects: [
+                                                                                                            Explode(
+                                                                                                                damage: -1,
+                                                                                                            ),
+                                                                                                        ],
+                                                                                                    ),
+                                                                                                    hit_terrain: [
+                                                                                                        Bounce(),
+                                                                                                    ],
+                                                                                                    hit_worm: [
+                                                                                                        Explode(
+                                                                                                            damage: -1,
+                                                                                                        ),
+                                                                                                    ],
+                                                                                                ),
+                                                                                            ),
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

@@ -2,26 +2,77 @@
     name: "Mini Nuke",
     recharge: 0.16499999,
     drain: 50.01,
-    rof: 0.475,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 0.475,
+    fire: Projectile(
         class: Grenade,
         recoil: 20,
-        sound: Some("sfx/throw.ogg"),
-        spawn: (
-            projectile: "mini-nuke",
-            amount: 1,
+        sound: "sfx/throw.ogg",
+        shot: (
             speed: 180,
-            speed_var: 0.0,
             spread: 4.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/mininuke.png",
+                ),
+                timer: (
+                    after_s: 1.1,
+                    effects: [
+                        Explode(
+                            damage: 4,
+                            shake: 4,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.75,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 6,
+                        speed: 150,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Pixels([
+                                "#948800",
+                            ]),
+                            timer: (
+                                after_s: 1.1,
+                                variation_s: 0.5,
+                                effects: [
+                                    Explode(
+                                        damage: 4,
+                                        shake: 4,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: ChemSmoke,
+                            hit_terrain: [
+                                Bounce(
+                                    factor: 0.6,
+                                ),
+                            ],
+                            hit_worm: [
+                                Explode(
+                                    damage: 9,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    amount: 6,
+                                    speed: 50,
+                                    spread: 360.0,
+                                    shared: "big-nuke.spawn.spawn",
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

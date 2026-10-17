@@ -2,26 +2,150 @@
     name: "Napalm Grenade",
     recharge: 0.5,
     drain: 101.0,
-    rof: 0.5,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 0.5,
+    fire: Projectile(
         class: Grenade,
         recoil: 5,
-        sound: Some("sfx/bazooka.ogg"),
-        spawn: (
-            projectile: "napalm-grenade",
-            amount: 1,
+        sound: "sfx/bazooka.ogg",
+        shot: (
             speed: 150,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/mininuke.png",
+                ),
+                timer: (
+                    after_s: 1.0,
+                    effects: [
+                        Explode(
+                            damage: 10,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                trail: Smoke,
+                hit_terrain: [
+                    Bounce(),
+                ],
+                spawns: {
+                    "spawn": (
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/mininuke.png",
+                            ),
+                            timer: (
+                                after_s: 0.01,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: Projectile(
+                                every_s: 10.0,
+                                spawn: (
+                                    speed: 1000,
+                                    spread: 360.0,
+                                    shared: "petrol-bomb.spawn.spawn.trail",
+                                ),
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: 5,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    amount: 10,
+                                    speed: 75,
+                                    spread: 360.0,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/mininuke.png",
+                                        ),
+                                        timer: (
+                                            after_s: 1.0,
+                                            effects: [
+                                                Explode(
+                                                    damage: 5,
+                                                ),
+                                                Spawn("spawn"),
+                                            ],
+                                        ),
+                                        trail: Projectile(
+                                            every_s: 0.125,
+                                            spawn: (
+                                                speed: 1,
+                                                parent_velocity_as_direction: true,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/flame.png",
+                                                        animation: (
+                                                            fps: 2.0,
+                                                        ),
+                                                    ),
+                                                    gravity: 50,
+                                                    hit_terrain: [
+                                                        Bounce(
+                                                            factor: 0.0,
+                                                        ),
+                                                    ],
+                                                    hit_worm: [
+                                                        Injure(
+                                                            damage: 5,
+                                                        ),
+                                                    ],
+                                                ),
+                                            ),
+                                        ),
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: 5,
+                                            ),
+                                            Spawn("spawn"),
+                                        ],
+                                        hit_worm: [
+                                            Explode(
+                                                damage: 5,
+                                            ),
+                                            Spawn("spawn"),
+                                        ],
+                                        spawns: {
+                                            "spawn": (
+                                                amount: 5,
+                                                speed: 25,
+                                                speed_var: 15.0,
+                                                spread: 360.0,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/flame.png",
+                                                        animation: (
+                                                            fps: 10.0,
+                                                        ),
+                                                    ),
+                                                    gravity: -10,
+                                                    hit_terrain: [
+                                                        Carve(
+                                                            size: 2,
+                                                        ),
+                                                    ],
+                                                    hit_worm: [
+                                                        Injure(
+                                                            damage: 3,
+                                                        ),
+                                                    ],
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

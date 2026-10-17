@@ -2,26 +2,220 @@
     name: "NW Bomb",
     recharge: 0.15,
     drain: 101.0,
-    rof: 5.0,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 5.0,
+    fire: Projectile(
         class: CloseRange,
-        recoil: 0,
-        sound: Some("sfx/throw.ogg"),
-        spawn: (
-            projectile: "nw-bomb",
-            amount: 1,
+        sound: "sfx/throw.ogg",
+        shot: (
             speed: 50,
             speed_var: 15.0,
             spread: 5.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/nukewastebomb.png",
+                ),
+                gravity: 50,
+                timer: (
+                    after_s: 1.5,
+                    variation_s: 0.25,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                trail: ChemSmoke,
+                hit_terrain: [
+                    Bounce(),
+                ],
+                spawns: {
+                    "spawn": (
+                        spread: 360.0,
+                        angle: -90,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/nukewastebomb.png",
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.01,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: Projectile(
+                                every_s: 10.0,
+                                spawn: (
+                                    speed: 1000,
+                                    spread: 360.0,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/none.png",
+                                        ),
+                                        gravity: 0,
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: -1,
+                                                sound: "sfx/chat.ogg",
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            ),
+                            spawns: {
+                                "spawn": (
+                                    spread: 360.0,
+                                    angle: -90,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/nukewastebomb3.png",
+                                        ),
+                                        gravity: 0,
+                                        timer: (
+                                            after_s: 1.0,
+                                            effects: [
+                                                Explode(
+                                                    damage: 5,
+                                                ),
+                                            ],
+                                        ),
+                                        trail: Projectile(
+                                            every_s: 10.0,
+                                            spawn: (
+                                                amount: 12,
+                                                speed: 85,
+                                                speed_var: 35.0,
+                                                spread: 360.0,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/nukewaste.png",
+                                                        animation: (
+                                                            fps: 20.0,
+                                                            mode: Loop,
+                                                        ),
+                                                    ),
+                                                    gravity: 50,
+                                                    trail: Projectile(
+                                                        every_s: 0.025,
+                                                        spawn: (
+                                                            speed: 300,
+                                                            speed_var: 75.0,
+                                                            spread: 360.0,
+                                                            shared: "nw-bomb.spawn.spawn.trail.spawn.spawn.trail",
+                                                        ),
+                                                    ),
+                                                    hit_terrain: [
+                                                        Explode(
+                                                            damage: -1,
+                                                        ),
+                                                        Spawn("spawn"),
+                                                    ],
+                                                    hit_worm: [
+                                                        Injure(
+                                                            damage: 11,
+                                                        ),
+                                                    ],
+                                                    spawns: {
+                                                        "spawn": (
+                                                            spread: 360.0,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/nukewaste.png",
+                                                                    animation: (
+                                                                        fps: 20.0,
+                                                                        mode: Loop,
+                                                                    ),
+                                                                ),
+                                                                gravity: 50,
+                                                                timer: (
+                                                                    after_s: 2.0,
+                                                                    variation_s: 1.5,
+                                                                    effects: [
+                                                                        Explode(
+                                                                            damage: -1,
+                                                                        ),
+                                                                        Spawn("spawn"),
+                                                                    ],
+                                                                ),
+                                                                trail: Projectile(
+                                                                    every_s: 0.025,
+                                                                    spawn: (
+                                                                        speed: 400,
+                                                                        speed_var: 100.0,
+                                                                        spread: 360.0,
+                                                                        shared: "nw-bomb.spawn.spawn.trail.spawn.spawn.trail",
+                                                                    ),
+                                                                ),
+                                                                hit_terrain: [
+                                                                    Bounce(
+                                                                        factor: 0.0,
+                                                                    ),
+                                                                ],
+                                                                hit_worm: [
+                                                                    Injure(
+                                                                        damage: 5,
+                                                                    ),
+                                                                ],
+                                                                spawns: {
+                                                                    "spawn": (
+                                                                        spread: 360.0,
+                                                                        projectile: (
+                                                                            gfx: Image(
+                                                                                file: "gfx/nukewaste.png",
+                                                                                animation: (
+                                                                                    fps: 20.0,
+                                                                                    mode: Loop,
+                                                                                ),
+                                                                            ),
+                                                                            gravity: 50,
+                                                                            timer: (
+                                                                                after_s: 2.0,
+                                                                                variation_s: 1.5,
+                                                                                effects: [
+                                                                                    Explode(
+                                                                                        damage: -1,
+                                                                                    ),
+                                                                                ],
+                                                                            ),
+                                                                            trail: Projectile(
+                                                                                every_s: 0.05,
+                                                                                spawn: (
+                                                                                    speed: 400,
+                                                                                    speed_var: 100.0,
+                                                                                    spread: 360.0,
+                                                                                    shared: "nw-bomb.spawn.spawn.trail.spawn.spawn.trail",
+                                                                                ),
+                                                                            ),
+                                                                            hit_terrain: [
+                                                                                Bounce(
+                                                                                    factor: 0.0,
+                                                                                ),
+                                                                            ],
+                                                                            hit_worm: [
+                                                                                Injure(
+                                                                                    damage: 5,
+                                                                                ),
+                                                                            ],
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

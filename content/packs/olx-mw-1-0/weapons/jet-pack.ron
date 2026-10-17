@@ -2,26 +2,72 @@
     name: "Jet Pack",
     recharge: 1.0,
     drain: 2.0,
-    rof: 0.001,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 0.001,
+    fire: Projectile(
         class: Grenade,
         recoil: -8,
-        sound: Some("sfx/flames2.ogg"),
-        spawn: (
-            projectile: "jet-pack",
-            amount: 1,
+        sound: "sfx/flames2.ogg",
+        shot: (
             speed: 300,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.01,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                spawns: {
+                    "spawn": (
+                        speed: 500,
+                        relative_to_parent: true,
+                        angle: 180,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/none.png",
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.01,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            spawns: {
+                                "spawn": (
+                                    speed: 65,
+                                    speed_var: 15.0,
+                                    spread: 25.0,
+                                    relative_to_parent: true,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/flame.png",
+                                            animation: (
+                                                fps: 15.0,
+                                            ),
+                                        ),
+                                        gravity: 0,
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: -1,
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

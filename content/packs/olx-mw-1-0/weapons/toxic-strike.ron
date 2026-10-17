@@ -2,26 +2,247 @@
     name: "Toxic Strike",
     recharge: 0.15,
     drain: 101.0,
-    rof: 0.45,
-    laser_sight: false,
-    kind: Projectile(
-        class: Automatic,
+    between_shots_s: 0.45,
+    fire: Projectile(
         recoil: 20,
-        sound: Some("sfx/jet.ogg"),
-        spawn: (
-            projectile: "toxic-strike",
-            amount: 1,
+        sound: "sfx/jet.ogg",
+        shot: (
             speed: 150,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/fighter2.png",
+                    frames_follow_heading: true,
+                    heading_frames: 10,
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.1,
+                    effects: [
+                        Explode(
+                            damage: 5,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 150,
+                        relative_to_parent: true,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/fighter2.png",
+                                frames_follow_heading: true,
+                                heading_frames: 10,
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.75,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                        shake: 1,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: Projectile(
+                                every_s: 0.065,
+                                spawn: (
+                                    speed: 3,
+                                    speed_var: 3.0,
+                                    spread: 5.0,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/bomb2.png",
+                                            animation: (
+                                                fps: 10.0,
+                                                mode: Loop,
+                                            ),
+                                        ),
+                                        gravity: 50,
+                                        timer: (
+                                            after_s: 1.5,
+                                            variation_s: 0.5,
+                                            effects: [
+                                                Explode(
+                                                    damage: -1,
+                                                ),
+                                                Spawn("spawn"),
+                                            ],
+                                        ),
+                                        trail: Projectile(
+                                            every_s: 5.0,
+                                            spawn: (
+                                                shared: "shockstrike.spawn.trail.trail",
+                                            ),
+                                        ),
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: -1,
+                                                sound: "sfx/exp2.ogg",
+                                            ),
+                                            Spawn("spawn"),
+                                        ],
+                                        hit_worm: [
+                                            Explode(
+                                                damage: 5,
+                                            ),
+                                            Spawn("spawn"),
+                                        ],
+                                        spawns: {
+                                            "spawn": (
+                                                amount: 3,
+                                                speed: 40,
+                                                spread: 100.0,
+                                                angle: 90,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/waste2.png",
+                                                        rotating: true,
+                                                        rotation_step_deg: 90,
+                                                        rotation_speed: 400,
+                                                    ),
+                                                    timer: (
+                                                        after_s: 4.5,
+                                                        variation_s: 1.0,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: -1,
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    trail: ChemSmoke,
+                                                    hit_terrain: [
+                                                        Bounce(
+                                                            factor: 0.8,
+                                                        ),
+                                                    ],
+                                                    hit_worm: [
+                                                        Injure(
+                                                            damage: 13,
+                                                        ),
+                                                    ],
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: 5,
+                                    shake: 5,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    speed: 150,
+                                    relative_to_parent: true,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/fighter2.png",
+                                            frames_follow_heading: true,
+                                            heading_frames: 10,
+                                        ),
+                                        trail: Projectile(
+                                            every_s: 0.05,
+                                            spawn: (
+                                                speed: 25,
+                                                speed_var: 20.0,
+                                                spread: 360.0,
+                                                shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                            ),
+                                        ),
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: 5,
+                                                shake: 5,
+                                            ),
+                                            Spawn("spawn"),
+                                        ],
+                                        spawns: {
+                                            "spawn": (
+                                                speed: 100,
+                                                relative_to_parent: true,
+                                                angle: 180,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/none.png",
+                                                        frames_follow_heading: true,
+                                                        heading_frames: 10,
+                                                    ),
+                                                    timer: (
+                                                        after_s: 0.05,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: -1,
+                                                            ),
+                                                            Spawn("spawn"),
+                                                        ],
+                                                    ),
+                                                    trail: Projectile(
+                                                        every_s: 0.035,
+                                                        spawn: (
+                                                            speed: 25,
+                                                            speed_var: 20.0,
+                                                            spread: 360.0,
+                                                            shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                        ),
+                                                    ),
+                                                    spawns: {
+                                                        "spawn": (
+                                                            amount: 15,
+                                                            speed: 100,
+                                                            speed_var: 25.0,
+                                                            spread: 360.0,
+                                                            angle: -90,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/metal2.png",
+                                                                    frames_follow_heading: true,
+                                                                    heading_frames: 6,
+                                                                ),
+                                                                gravity: 150,
+                                                                trail: Projectile(
+                                                                    every_s: 0.15,
+                                                                    spawn: (
+                                                                        speed: 1,
+                                                                        spread: 360.0,
+                                                                        shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                                    ),
+                                                                ),
+                                                                hit_terrain: [
+                                                                    Explode(
+                                                                        damage: 5,
+                                                                        shake: 1,
+                                                                        sound: "sfx/exp2.ogg",
+                                                                    ),
+                                                                ],
+                                                                hit_worm: [
+                                                                    Injure(
+                                                                        damage: 5,
+                                                                    ),
+                                                                ],
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

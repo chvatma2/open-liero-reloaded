@@ -2,26 +2,35 @@
     name: "Sunray Beamer",
     recharge: 0.3,
     drain: 51.0,
-    rof: 0.3,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 0.3,
+    fire: Projectile(
         class: Grenade,
         recoil: 10,
-        sound: Some("sfx/beam.ogg"),
-        spawn: (
-            projectile: "sunray-beamer",
-            amount: 1,
+        sound: "sfx/beam.ogg",
+        shot: (
             speed: 350,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.001,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                spawns: {
+                    "spawn": (
+                        speed: 1,
+                        relative_to_parent: true,
+                        shared: "sunray-beamer.spawn",
+                    ),
+                },
+            ),
         ),
     ),
 )

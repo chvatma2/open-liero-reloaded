@@ -2,26 +2,68 @@
     name: "Shockrifle",
     recharge: 0.3,
     drain: 26.0,
-    rof: 0.125,
+    between_shots_s: 0.125,
     laser_sight: true,
-    kind: Projectile(
-        class: Automatic,
+    fire: Projectile(
         recoil: 5,
-        sound: Some("sfx/shcklnch.ogg"),
-        spawn: (
-            projectile: "shockrifle",
-            amount: 1,
+        sound: "sfx/shcklnch.ogg",
+        shot: (
             speed: 250,
-            speed_var: 0.0,
             spread: 3.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/shockbombs.png",
+                    animation: (
+                        fps: 10.0,
+                        mode: Loop,
+                    ),
+                ),
+                gravity: 0,
+                hit_terrain: [
+                    Explode(
+                        damage: 5,
+                        sound: "sfx/jolt.ogg",
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 25,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 20,
+                        speed: 225,
+                        spread: 360.0,
+                        angle: 90,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/shock2.png",
+                            ),
+                            timer: (
+                                after_s: 0.15,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                ],
+                            ),
+                            hit_worm: [
+                                Injure(
+                                    damage: 7,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    shared: "electro-gun.spawn",
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

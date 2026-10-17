@@ -1,18 +1,7 @@
 (
     name: "Modern Warfare1.0",
     worm: (
-        angle_speed: 150.0,
-        ground_speed: 8.0,
-        air_speed: 4.0,
-        gravity: 50.0,
-        jump_force: -75.0,
-        air_friction: 0.0,
-        ground_friction: 0.5,
-    ),
-    rope: (
-        max_length: 300,
-        rest_length: 30,
-        strength: 3.5,
+        unused_ground_friction: 0.5,
     ),
     weapons: [
         "acid-gun",

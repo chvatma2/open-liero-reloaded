@@ -2,26 +2,161 @@
     name: "Plasma Launcher",
     recharge: 0.2,
     drain: 51.0,
-    rof: 0.15,
+    between_shots_s: 0.15,
     laser_sight: true,
-    kind: Projectile(
-        class: Automatic,
+    fire: Projectile(
         recoil: 15,
-        sound: Some("sfx/beam.ogg"),
-        spawn: (
-            projectile: "plasma-launcher",
-            amount: 1,
+        sound: "sfx/beam.ogg",
+        shot: (
             speed: 500,
-            speed_var: 0.0,
             spread: 1.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/plasma.png",
+                ),
+                gravity: 5,
+                trail: Projectile(
+                    every_s: 0.015,
+                    spawn: (
+                        speed: 30,
+                        speed_var: 10.0,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Pixels([
+                                "#ff3232",
+                            ]),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.5,
+                                effects: [
+                                    Explode(),
+                                ],
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: -1,
+                                ),
+                            ],
+                            hit_worm: [
+                                Explode(
+                                    damage: -1,
+                                ),
+                            ],
+                        ),
+                    ),
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 5,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 250,
+                        relative_to_parent: true,
+                        angle: 180,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/plasma.png",
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.01,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: Projectile(
+                                every_s: 100.0,
+                                spawn: (
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/plasmaexp2.png",
+                                            animation: (
+                                                fps: 10.0,
+                                            ),
+                                        ),
+                                        gravity: 0,
+                                    ),
+                                ),
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: -1,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            hit_worm: [
+                                Explode(
+                                    damage: -1,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    amount: 30,
+                                    speed: 150,
+                                    spread: 100.0,
+                                    relative_to_parent: true,
+                                    projectile: (
+                                        gfx: Pixels([
+                                            "#ff6464",
+                                        ]),
+                                        gravity: 0,
+                                        timer: (
+                                            after_s: 1.5,
+                                            variation_s: 1.5,
+                                            effects: [
+                                                Explode(
+                                                    damage: -1,
+                                                ),
+                                            ],
+                                        ),
+                                        trail: Projectile(
+                                            every_s: 100.0,
+                                            spawn: (
+                                                speed: 1,
+                                                parent_velocity_as_direction: true,
+                                                projectile: (
+                                                    gfx: Pixels([
+                                                        "#ff0000",
+                                                    ]),
+                                                    gravity: 50,
+                                                    hit_terrain: [
+                                                        Explode(
+                                                            damage: -1,
+                                                        ),
+                                                    ],
+                                                    hit_worm: [
+                                                        Injure(
+                                                            damage: 3,
+                                                        ),
+                                                    ],
+                                                ),
+                                            ),
+                                        ),
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: -1,
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

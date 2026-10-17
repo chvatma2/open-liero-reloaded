@@ -2,26 +2,40 @@
     name: "Rifle",
     recharge: 0.26,
     drain: 100.001,
-    rof: 0.1,
+    between_shots_s: 0.1,
     laser_sight: true,
-    kind: Projectile(
-        class: Automatic,
+    fire: Projectile(
         recoil: 70,
-        sound: Some("sfx/rifle.ogg"),
-        spawn: (
-            projectile: "rifle",
-            amount: 1,
+        sound: "sfx/rifle.ogg",
+        shot: (
             speed: 700,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Pixels([
+                    "#d0d7d0",
+                ]),
+                gravity: 1,
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 34,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 4,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        shared: "bazooka.spawn",
+                    ),
+                },
+            ),
         ),
     ),
 )

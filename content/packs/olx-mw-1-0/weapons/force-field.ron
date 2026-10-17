@@ -2,26 +2,208 @@
     name: "Force Field",
     recharge: 0.5,
     drain: 101.0,
-    rof: 0.1,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 0.1,
+    fire: Projectile(
         class: Grenade,
         recoil: 5,
-        sound: Some("sfx/throw.ogg"),
-        spawn: (
-            projectile: "force-field",
-            amount: 1,
-            speed: 0,
-            speed_var: 0.0,
+        sound: "sfx/throw.ogg",
+        shot: (
             spread: 360.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.01,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 150,
+                        speed: 200,
+                        spread: 360.0,
+                        relative_to_parent: true,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/none.png",
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.1,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: -1,
+                                ),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    speed: 1,
+                                    relative_to_parent: true,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/none.png",
+                                        ),
+                                        gravity: 0,
+                                        timer: (
+                                            after_s: 0.01,
+                                            effects: [
+                                                Explode(
+                                                    damage: -1,
+                                                ),
+                                                Spawn("spawn"),
+                                            ],
+                                        ),
+                                        trail: Projectile(
+                                            every_s: 1.0,
+                                            spawn: (
+                                                speed: 1,
+                                                parent_velocity_as_direction: true,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/none.png",
+                                                    ),
+                                                    gravity: 0,
+                                                    timer: (
+                                                        after_s: 0.05,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: -1,
+                                                            ),
+                                                            Spawn("spawn"),
+                                                        ],
+                                                    ),
+                                                    hit_worm: [
+                                                        Injure(
+                                                            damage: 5,
+                                                        ),
+                                                    ],
+                                                    spawns: {
+                                                        "spawn": (
+                                                            speed: 500,
+                                                            relative_to_parent: true,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/none.png",
+                                                                ),
+                                                                gravity: 0,
+                                                                timer: (
+                                                                    after_s: 0.05,
+                                                                    effects: [
+                                                                        Explode(
+                                                                            damage: -1,
+                                                                        ),
+                                                                        Spawn("spawn"),
+                                                                    ],
+                                                                ),
+                                                                hit_worm: [
+                                                                    Injure(
+                                                                        damage: 5,
+                                                                    ),
+                                                                ],
+                                                                spawns: {
+                                                                    "spawn": (
+                                                                        speed: 150,
+                                                                        relative_to_parent: true,
+                                                                        projectile: (
+                                                                            gfx: Image(
+                                                                                file: "gfx/shock2.png",
+                                                                                animation: (
+                                                                                    fps: 20.0,
+                                                                                    mode: Loop,
+                                                                                ),
+                                                                            ),
+                                                                            gravity: 10,
+                                                                            timer: (
+                                                                                after_s: 2.5,
+                                                                                variation_s: 2.5,
+                                                                                effects: [
+                                                                                    Explode(
+                                                                                        damage: -1,
+                                                                                    ),
+                                                                                ],
+                                                                            ),
+                                                                            hit_terrain: [
+                                                                                Explode(
+                                                                                    damage: -1,
+                                                                                ),
+                                                                            ],
+                                                                            hit_worm: [
+                                                                                Injure(
+                                                                                    damage: 5,
+                                                                                ),
+                                                                            ],
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                        spawns: {
+                                            "spawn": (
+                                                relative_to_parent: true,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/none.png",
+                                                    ),
+                                                    gravity: 0,
+                                                    timer: (
+                                                        after_s: 0.01,
+                                                        effects: [
+                                                            GreenDirt(),
+                                                        ],
+                                                    ),
+                                                    trail: Projectile(
+                                                        every_s: 1.0,
+                                                        spawn: (
+                                                            parent_velocity_as_direction: true,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/power3.png",
+                                                                ),
+                                                                gravity: 0,
+                                                                timer: (
+                                                                    after_s: 1.0,
+                                                                    effects: [
+                                                                        Explode(
+                                                                            damage: 10,
+                                                                        ),
+                                                                    ],
+                                                                ),
+                                                            ),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

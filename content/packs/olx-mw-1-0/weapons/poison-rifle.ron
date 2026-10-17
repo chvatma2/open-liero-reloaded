@@ -2,26 +2,135 @@
     name: "Poison Rifle",
     recharge: 0.3,
     drain: 51.0,
-    rof: 0.35,
+    between_shots_s: 0.35,
     laser_sight: true,
-    kind: Projectile(
-        class: Automatic,
+    fire: Projectile(
         recoil: 5,
-        sound: Some("sfx/rifle.ogg"),
-        spawn: (
-            projectile: "poison-rifle",
-            amount: 1,
+        sound: "sfx/rifle.ogg",
+        shot: (
             speed: 500,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.05,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 500,
+                        spread: 1.0,
+                        relative_to_parent: true,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/poison.png",
+                                frames_follow_heading: true,
+                                heading_frames: 18,
+                            ),
+                            gravity: 0,
+                            trail: ChemSmoke,
+                            hit_terrain: [
+                                Explode(
+                                    damage: 5,
+                                    shake: 1,
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 50,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    projectile: (
+                                        gfx: Pixels([
+                                            "#00c000",
+                                        ]),
+                                        gravity: 0,
+                                        timer: (
+                                            after_s: 0.2,
+                                            variation_s: 0.1,
+                                            effects: [
+                                                Explode(
+                                                    damage: -1,
+                                                ),
+                                                Spawn("spawn"),
+                                            ],
+                                        ),
+                                        trail: ChemSmoke,
+                                        spawns: {
+                                            "spawn": (
+                                                projectile: (
+                                                    gfx: Pixels([
+                                                        "#00c000",
+                                                    ]),
+                                                    gravity: 0,
+                                                    timer: (
+                                                        after_s: 2.5,
+                                                        variation_s: 0.5,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: -1,
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    trail: Projectile(
+                                                        every_s: 0.01,
+                                                        spawn: (
+                                                            speed: 75,
+                                                            speed_var: 10.0,
+                                                            spread: 360.0,
+                                                            projectile: (
+                                                                gfx: Pixels([
+                                                                    "#00c000",
+                                                                ]),
+                                                                timer: (
+                                                                    after_s: 1.5,
+                                                                    variation_s: 0.5,
+                                                                    effects: [
+                                                                        Explode(
+                                                                            damage: -1,
+                                                                        ),
+                                                                    ],
+                                                                ),
+                                                                trail: ChemSmoke,
+                                                                hit_terrain: [
+                                                                    Bounce(
+                                                                        factor: 1.0,
+                                                                    ),
+                                                                ],
+                                                                hit_worm: [
+                                                                    Injure(
+                                                                        damage: 2,
+                                                                    ),
+                                                                ],
+                                                            ),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

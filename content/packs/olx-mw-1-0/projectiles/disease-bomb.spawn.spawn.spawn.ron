@@ -1,81 +1,170 @@
 (
     gfx: Image(
         file: "gfx/none.png",
-        rotating: false,
-        rot_increment: 0,
-        rot_speed: 0,
-        use_angle: true,
-        use_spec_angle: false,
-        angle_images: 18,
-        animation: None,
+        frames_follow_heading: true,
+        heading_frames: 18,
     ),
-    gravity: Some(0),
-    dampening: 1.0,
-    width: 4,
-    height: 4,
+    gravity: 0,
     timer: (
-        time: 2.0,
-        time_var: 0.5,
-        action: Some((
-            kind: Explode,
-            damage: -1,
-            spawns_projectiles: true,
-            sound: None,
-            shake: 0,
-            bounce_coeff: 0.5,
-            bounce_explode: 0,
-        )),
+        after_s: 2.0,
+        variation_s: 0.5,
+        effects: [
+            Explode(
+                damage: -1,
+            ),
+            Spawn("spawn"),
+        ],
     ),
-    trail: (
-        kind: Projectile,
-        delay: 0.75,
-        spawn: Some((
-            projectile: "disease-bomb.spawn.spawn.spawn.trail",
-            amount: 1,
+    trail: Projectile(
+        every_s: 0.75,
+        spawn: (
             speed: 5,
-            speed_var: 0.0,
             spread: 360.0,
-            use_angle: false,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: true,
-            use_random_rot: false,
-            add_parent_vel: false,
-            parent_vel_factor: 1.0,
-        )),
+            projectile: (
+                gfx: Image(
+                    file: "gfx/diseasesmoke.png",
+                    animation: (
+                        fps: 5.0,
+                    ),
+                ),
+                gravity: 0,
+                trail: Projectile(
+                    every_s: 0.15,
+                    spawn: (
+                        speed: 3,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/none.png",
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.1,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                ],
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: -1,
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 1,
+                                ),
+                            ],
+                        ),
+                    ),
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                ],
+            ),
+        ),
     ),
-    hit: (
-        kind: Explode,
-        damage: -1,
-        spawns_projectiles: true,
-        sound: None,
-        shake: 0,
-        bounce_coeff: 0.5,
-        bounce_explode: 0,
-    ),
-    player_hit: (
-        kind: Explode,
-        damage: -1,
-        spawns_projectiles: true,
-        sound: None,
-        shake: 0,
-        bounce_coeff: 0.5,
-        bounce_explode: 0,
-    ),
-    event_spawn: Some((
-        projectile: "disease-bomb.spawn.spawn.spawn.spawn",
-        amount: 2,
-        speed: 10,
-        speed_var: 0.0,
-        spread: 360.0,
-        use_angle: true,
-        angle: 180,
-        use_parent_velocity_for_spread: false,
-        parent_vel_spread_factor: 0.3,
-        use_special11_vec_for_speed_var: false,
-        use_random_rot: false,
-        add_parent_vel: false,
-        parent_vel_factor: 1.0,
-    )),
+    hit_terrain: [
+        Explode(
+            damage: -1,
+        ),
+        Spawn("spawn"),
+    ],
+    hit_worm: [
+        Explode(
+            damage: -1,
+        ),
+        Spawn("spawn"),
+    ],
+    spawns: {
+        "spawn": (
+            amount: 2,
+            speed: 10,
+            spread: 360.0,
+            relative_to_parent: true,
+            angle: 180,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                    frames_follow_heading: true,
+                    heading_frames: 18,
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 2.0,
+                    variation_s: 0.5,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                trail: Projectile(
+                    every_s: 0.75,
+                    spawn: (
+                        speed: 5,
+                        spread: 360.0,
+                        shared: "disease-bomb.spawn.spawn.spawn.spawn.spawn.trail",
+                    ),
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 10,
+                        spread: 360.0,
+                        relative_to_parent: true,
+                        angle: 180,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/none.png",
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 2.0,
+                                variation_s: 0.5,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                ],
+                            ),
+                            trail: Projectile(
+                                every_s: 0.75,
+                                spawn: (
+                                    speed: 5,
+                                    spread: 360.0,
+                                    shared: "disease-bomb.spawn.spawn.spawn.spawn.spawn.trail",
+                                ),
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: -1,
+                                ),
+                            ],
+                            hit_worm: [
+                                Explode(
+                                    damage: -1,
+                                ),
+                            ],
+                        ),
+                    ),
+                },
+            ),
+        ),
+    },
 )

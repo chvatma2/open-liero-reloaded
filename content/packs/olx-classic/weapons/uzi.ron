@@ -2,26 +2,33 @@
     name: "Uzi",
     recharge: 0.505,
     drain: 6.667,
-    rof: 0.035,
-    laser_sight: false,
-    kind: Projectile(
-        class: Automatic,
+    between_shots_s: 0.035,
+    fire: Projectile(
         recoil: 2,
-        sound: Some("sfx/shot.ogg"),
-        spawn: (
-            projectile: "uzi",
-            amount: 1,
+        sound: "sfx/shot.ogg",
+        shot: (
             speed: 220,
             speed_var: 20.0,
             spread: 1.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Pixels([
+                    "#efb000",
+                    "#cf8800",
+                ]),
+                gravity: 70,
+                hit_terrain: [
+                    Explode(
+                        damage: 3,
+                        shake: 1,
+                        sound: "sfx/sm_explode.ogg",
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 2,
+                    ),
+                ],
+            ),
         ),
     ),
 )

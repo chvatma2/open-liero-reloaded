@@ -2,26 +2,133 @@
     name: "Twin Rockets",
     recharge: 0.8,
     drain: 51.0,
-    rof: 0.35,
-    laser_sight: false,
-    kind: Projectile(
-        class: Automatic,
+    between_shots_s: 0.35,
+    fire: Projectile(
         recoil: 15,
-        sound: Some("sfx/bazooka.ogg"),
-        spawn: (
-            projectile: "twin-rockets",
-            amount: 1,
+        sound: "sfx/bazooka.ogg",
+        shot: (
             speed: 450,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.01,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                trail: Projectile(
+                    every_s: 10.0,
+                    spawn: (
+                        speed: 1,
+                        parent_velocity_as_direction: true,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/none.png",
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.01,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: -1,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    speed: 150,
+                                    relative_to_parent: true,
+                                    angle: -90,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/none.png",
+                                        ),
+                                        gravity: 0,
+                                        timer: (
+                                            after_s: 0.01,
+                                            effects: [
+                                                Explode(
+                                                    damage: -1,
+                                                ),
+                                                Spawn("spawn"),
+                                            ],
+                                        ),
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: -1,
+                                            ),
+                                            Spawn("spawn"),
+                                        ],
+                                        spawns: {
+                                            "spawn": (
+                                                speed: 100,
+                                                relative_to_parent: true,
+                                                angle: 90,
+                                                shared: "twin-rockets.spawn.spawn",
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 150,
+                        relative_to_parent: true,
+                        angle: 90,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/none.png",
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.01,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: -1,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    speed: 100,
+                                    relative_to_parent: true,
+                                    angle: -90,
+                                    shared: "twin-rockets.spawn.spawn",
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

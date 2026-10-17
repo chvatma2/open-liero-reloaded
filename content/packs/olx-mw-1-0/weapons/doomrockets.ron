@@ -2,26 +2,96 @@
     name: "DoomRockets",
     recharge: 0.7,
     drain: 21.0,
-    rof: 0.125,
-    laser_sight: false,
-    kind: Projectile(
-        class: Automatic,
+    between_shots_s: 0.125,
+    fire: Projectile(
         recoil: 10,
-        sound: Some("sfx/bazooka.ogg"),
-        spawn: (
-            projectile: "doomrockets",
-            amount: 1,
+        sound: "sfx/bazooka.ogg",
+        shot: (
             speed: 300,
-            speed_var: 0.0,
             spread: 3.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                    frames_follow_heading: true,
+                    heading_frames: 18,
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.01,
+                    effects: [
+                        Explode(),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 175,
+                        relative_to_parent: true,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/missile7.png",
+                                frames_follow_heading: true,
+                                heading_frames: 18,
+                            ),
+                            gravity: 0,
+                            velocity_factor: 1.01,
+                            trail: Projectile(
+                                every_s: 0.05,
+                                spawn: (
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/missilesmoke.png",
+                                            animation: (
+                                                fps: 20.0,
+                                            ),
+                                        ),
+                                        gravity: 0,
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: -1,
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: 5,
+                                    shake: 1,
+                                    sound: "sfx/expshort.ogg",
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            hit_worm: [
+                                Explode(
+                                    damage: 5,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    speed: 150,
+                                    relative_to_parent: true,
+                                    angle: 180,
+                                    shared: "doomrockets.spawn.spawn",
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

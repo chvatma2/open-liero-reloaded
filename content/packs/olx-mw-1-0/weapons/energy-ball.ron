@@ -2,26 +2,133 @@
     name: "Energy Ball",
     recharge: 0.15,
     drain: 101.0,
-    rof: 5.0,
-    laser_sight: false,
-    kind: Projectile(
-        class: Automatic,
+    between_shots_s: 5.0,
+    fire: Projectile(
         recoil: 50,
-        sound: Some("sfx/beam.ogg"),
-        spawn: (
-            projectile: "energy-ball",
-            amount: 1,
+        sound: "sfx/beam.ogg",
+        shot: (
             speed: 150,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.05,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 150,
+                        speed_var: 25.0,
+                        spread: 10.0,
+                        relative_to_parent: true,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/power2.png",
+                            ),
+                            gravity: 0,
+                            trail: Projectile(
+                                every_s: 0.005,
+                                spawn: (
+                                    speed: 100,
+                                    spread: 360.0,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/shock2.png",
+                                            animation: (
+                                                fps: 10.0,
+                                                mode: Loop,
+                                            ),
+                                        ),
+                                        gravity: 10,
+                                        timer: (
+                                            after_s: 2.0,
+                                            variation_s: 0.5,
+                                            effects: [
+                                                Explode(
+                                                    damage: -1,
+                                                ),
+                                            ],
+                                        ),
+                                        hit_terrain: [
+                                            Explode(
+                                                damage: -1,
+                                            ),
+                                        ],
+                                        hit_worm: [
+                                            Injure(
+                                                damage: 5,
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: 5,
+                                    shake: 2,
+                                    sound: "sfx/exp2.ogg",
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            hit_worm: [
+                                Explode(
+                                    damage: 5,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    amount: 50,
+                                    speed: 115,
+                                    spread: 360.0,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/shock2.png",
+                                            animation: (
+                                                fps: 10.0,
+                                                mode: Loop,
+                                            ),
+                                        ),
+                                        gravity: 0,
+                                        timer: (
+                                            after_s: 5.0,
+                                            variation_s: 2.5,
+                                            effects: [
+                                                Explode(
+                                                    damage: -1,
+                                                ),
+                                            ],
+                                        ),
+                                        hit_terrain: [
+                                            Carve(
+                                                size: 3,
+                                            ),
+                                        ],
+                                        hit_worm: [
+                                            Injure(
+                                                damage: 15,
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

@@ -2,26 +2,71 @@
     name: "Big Nuke",
     recharge: 0.1,
     drain: 100.001,
-    rof: 0.05,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 0.05,
+    fire: Projectile(
         class: Grenade,
-        recoil: 0,
-        sound: Some("sfx/throw.ogg"),
-        spawn: (
-            projectile: "big-nuke",
-            amount: 1,
+        sound: "sfx/throw.ogg",
+        shot: (
             speed: 119,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/nuke.png",
+                ),
+                timer: (
+                    after_s: 2.43,
+                    variation_s: 0.29,
+                    effects: [
+                        Explode(
+                            shake: 4,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.65,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 50,
+                        speed: 140,
+                        speed_var: 56.0,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Pixels([
+                                "#948800",
+                            ]),
+                            timer: (
+                                after_s: 2.86,
+                                variation_s: 0.71,
+                                effects: [
+                                    Explode(
+                                        damage: 15,
+                                        shake: 4,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: ChemSmoke,
+                            hit_terrain: [
+                                Bounce(
+                                    factor: 0.6,
+                                ),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    amount: 3,
+                                    speed: 154,
+                                    speed_var: 28.0,
+                                    spread: 360.0,
+                                    shared: "big-nuke.spawn.spawn",
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

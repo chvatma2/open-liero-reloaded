@@ -2,23 +2,12 @@
     name: "Laser",
     recharge: 0.5,
     drain: 3.0,
-    rof: 0.001,
-    laser_sight: false,
-    kind: Beam(
+    between_shots_s: 0.001,
+    fire: Beam(
         recoil: 5,
-        beam: (
-            colour: (
-                r: 0,
-                g: 0,
-                b: 255,
-                a: 255,
-            ),
-            damage: 1,
-            player_damage: 3,
-            length: 999999,
-            init_width: 1,
-            width_increase: 0.0,
-            distribute_damage_over_width: false,
-        ),
+        colour: "#0000ff",
+        hole_size: 1,
+        worm_damage: 3,
+        length: 999999,
     ),
 )

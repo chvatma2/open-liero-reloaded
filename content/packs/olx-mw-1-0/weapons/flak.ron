@@ -2,26 +2,62 @@
     name: "Flak",
     recharge: 0.5,
     drain: 51.0,
-    rof: 0.35,
-    laser_sight: false,
-    kind: Projectile(
-        class: Automatic,
+    between_shots_s: 0.35,
+    fire: Projectile(
         recoil: 10,
-        sound: Some("sfx/blaster.ogg"),
-        spawn: (
-            projectile: "flak",
-            amount: 1,
+        sound: "sfx/blaster.ogg",
+        shot: (
             speed: 250,
-            speed_var: 0.0,
             spread: 5.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/flak.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.05,
+                    effects: [
+                        Explode(
+                            damage: 5,
+                            shake: 1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: 5,
+                        shake: 1,
+                        sound: "sfx/exp2.ogg",
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 25,
+                        speed: 150,
+                        spread: 20.0,
+                        relative_to_parent: true,
+                        projectile: (
+                            gfx: Pixels([
+                                "#bebe32",
+                            ]),
+                            gravity: 10,
+                            trail: Doomsday,
+                            hit_terrain: [
+                                Explode(
+                                    damage: 2,
+                                    sound: "sfx/sm_explode.ogg",
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 5,
+                                ),
+                            ],
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

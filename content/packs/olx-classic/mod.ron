@@ -1,16 +1,10 @@
 (
     name: "Liero v1.0",
     worm: (
-        angle_speed: 150.0,
-        ground_speed: 8.0,
-        air_speed: 4.0,
         gravity: 100.0,
-        jump_force: -65.0,
-        air_friction: 0.0,
-        ground_friction: 0.4,
+        jump_speed: -65.0,
     ),
     rope: (
-        max_length: 300,
         rest_length: 27,
         strength: 4.5,
     ),

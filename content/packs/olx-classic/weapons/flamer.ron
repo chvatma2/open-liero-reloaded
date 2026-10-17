@@ -2,26 +2,33 @@
     name: "Flamer",
     recharge: 0.21900001,
     drain: 1.001,
-    rof: 0.003,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 0.003,
+    fire: Projectile(
         class: CloseRange,
-        recoil: 0,
-        sound: None,
-        spawn: (
-            projectile: "flamer",
+        shot: (
             amount: 2,
             speed: 98,
             speed_var: 10.0,
             spread: 5.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/flame.png",
+                    animation: (
+                        fps: 10.0,
+                    ),
+                ),
+                gravity: -30,
+                hit_terrain: [
+                    Carve(
+                        size: 1,
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 1,
+                    ),
+                ],
+            ),
         ),
     ),
 )

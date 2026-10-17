@@ -2,26 +2,573 @@
     name: "Nuclear Bomb",
     recharge: 0.2,
     drain: 101.0,
-    rof: 5.5,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 5.5,
+    fire: Projectile(
         class: Grenade,
         recoil: 5,
-        sound: Some("sfx/nuclear.ogg"),
-        spawn: (
-            projectile: "nuclear-bomb",
-            amount: 1,
+        sound: "sfx/nuclear.ogg",
+        shot: (
             speed: 50,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/nuclearbomb2.png",
+                    animation: (
+                        fps: 7.0,
+                        mode: Loop,
+                    ),
+                ),
+                timer: (
+                    after_s: 2.25,
+                    variation_s: 0.25,
+                    effects: [
+                        Explode(
+                            damage: 5,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                trail: Projectile(
+                    every_s: 0.001,
+                    spawn: (
+                        speed: 250,
+                        speed_var: 150.0,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/neutron.png",
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.1,
+                                effects: [
+                                    Explode(
+                                        damage: -1,
+                                    ),
+                                ],
+                            ),
+                            hit_worm: [
+                                Injure(
+                                    damage: 1,
+                                ),
+                            ],
+                        ),
+                    ),
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.3,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        angle: -90,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/none.png",
+                            ),
+                            gravity: 0,
+                            timer: (
+                                after_s: 0.001,
+                                effects: [
+                                    Explode(
+                                        damage: 5,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: Projectile(
+                                every_s: 10.0,
+                                spawn: (
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/none.png",
+                                        ),
+                                        gravity: 0,
+                                        timer: (
+                                            after_s: 0.001,
+                                            effects: [
+                                                Explode(
+                                                    damage: -1,
+                                                ),
+                                                Spawn("spawn"),
+                                            ],
+                                        ),
+                                        trail: Projectile(
+                                            every_s: 10.0,
+                                            spawn: (
+                                                amount: 8,
+                                                speed: 50,
+                                                spread: 360.0,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/none.png",
+                                                    ),
+                                                    gravity: 0,
+                                                    timer: (
+                                                        after_s: 0.75,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: 5,
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    trail: Projectile(
+                                                        every_s: 0.001,
+                                                        spawn: (
+                                                            speed: 350,
+                                                            speed_var: 200.0,
+                                                            spread: 360.0,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/none.png",
+                                                                ),
+                                                                timer: (
+                                                                    after_s: 0.1,
+                                                                    variation_s: 0.1,
+                                                                    effects: [
+                                                                        Explode(
+                                                                            damage: 5,
+                                                                        ),
+                                                                        Spawn("spawn"),
+                                                                    ],
+                                                                ),
+                                                                trail: Projectile(
+                                                                    every_s: 10.0,
+                                                                    spawn: (
+                                                                        speed: 10000,
+                                                                        spread: 360.0,
+                                                                        shared: "nuclear-bomb.spawn.trail.spawn.trail.trail",
+                                                                    ),
+                                                                ),
+                                                                hit_worm: [
+                                                                    Injure(
+                                                                        damage: 51,
+                                                                    ),
+                                                                ],
+                                                                spawns: {
+                                                                    "spawn": (
+                                                                        spread: 360.0,
+                                                                        shared: "nuclear-bomb.spawn.trail.spawn.trail.spawn",
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        ),
+                                        spawns: {
+                                            "spawn": (
+                                                angle: -90,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/none.png",
+                                                    ),
+                                                    gravity: 0,
+                                                    timer: (
+                                                        after_s: 1.0,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: 5,
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    trail: Projectile(
+                                                        every_s: 0.001,
+                                                        spawn: (
+                                                            amount: 2,
+                                                            speed: 400,
+                                                            speed_var: 200.0,
+                                                            spread: 360.0,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/none.png",
+                                                                ),
+                                                                timer: (
+                                                                    after_s: 0.1,
+                                                                    variation_s: 0.1,
+                                                                    effects: [
+                                                                        Explode(
+                                                                            damage: 5,
+                                                                        ),
+                                                                        Spawn("spawn"),
+                                                                    ],
+                                                                ),
+                                                                trail: Projectile(
+                                                                    every_s: 10.0,
+                                                                    spawn: (
+                                                                        speed: 10000,
+                                                                        spread: 360.0,
+                                                                        shared: "nuclear-bomb.spawn.trail.spawn.trail.trail",
+                                                                    ),
+                                                                ),
+                                                                hit_worm: [
+                                                                    Injure(
+                                                                        damage: 51,
+                                                                    ),
+                                                                    Spawn("spawn"),
+                                                                ],
+                                                                spawns: {
+                                                                    "spawn": (
+                                                                        spread: 360.0,
+                                                                        shared: "nuclear-bomb.spawn.trail.spawn.trail.spawn",
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ),
+                                                    ),
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            ),
+                            spawns: {
+                                "spawn": (
+                                    angle: -90,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/none.png",
+                                        ),
+                                        gravity: 0,
+                                        timer: (
+                                            after_s: 0.001,
+                                            effects: [
+                                                Explode(
+                                                    damage: 5,
+                                                ),
+                                                Spawn("spawn"),
+                                            ],
+                                        ),
+                                        trail: Projectile(
+                                            every_s: 10.0,
+                                            spawn: (
+                                                amount: 75,
+                                                speed: 150,
+                                                spread: 180.0,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/waves.png",
+                                                        frames_follow_heading: true,
+                                                        heading_frames: 18,
+                                                    ),
+                                                    gravity: 0,
+                                                    timer: (
+                                                        after_s: 0.5,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: -1,
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    hit_terrain: [
+                                                        Explode(
+                                                            damage: -1,
+                                                        ),
+                                                        Spawn("spawn"),
+                                                    ],
+                                                    hit_worm: [
+                                                        Injure(
+                                                            damage: 10,
+                                                        ),
+                                                    ],
+                                                    spawns: {
+                                                        "spawn": (
+                                                            amount: 3,
+                                                            speed: 50,
+                                                            spread: 35.0,
+                                                            relative_to_parent: true,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/none.png",
+                                                                ),
+                                                                gravity: 0,
+                                                                timer: (
+                                                                    after_s: 0.25,
+                                                                    effects: [
+                                                                        Explode(
+                                                                            damage: -1,
+                                                                        ),
+                                                                    ],
+                                                                ),
+                                                                hit_terrain: [
+                                                                    Explode(
+                                                                        damage: 5,
+                                                                        shake: 10,
+                                                                    ),
+                                                                ],
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                            ),
+                                        ),
+                                        spawns: {
+                                            "spawn": (
+                                                angle: -90,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/nuke2.png",
+                                                    ),
+                                                    gravity: 0,
+                                                    timer: (
+                                                        after_s: 0.12,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: -1,
+                                                            ),
+                                                            Spawn("spawn"),
+                                                        ],
+                                                    ),
+                                                    trail: Projectile(
+                                                        every_s: 10.0,
+                                                        spawn: (
+                                                            speed: 1000,
+                                                            spread: 360.0,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/none.png",
+                                                                ),
+                                                                gravity: 0,
+                                                                hit_terrain: [
+                                                                    Explode(
+                                                                        damage: -1,
+                                                                        shake: 25,
+                                                                        sound: "sfx/exp6.ogg",
+                                                                    ),
+                                                                ],
+                                                            ),
+                                                        ),
+                                                    ),
+                                                    spawns: {
+                                                        "spawn": (
+                                                            angle: -90,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/nuke3.png",
+                                                                ),
+                                                                gravity: 0,
+                                                                timer: (
+                                                                    after_s: 0.12,
+                                                                    effects: [
+                                                                        Explode(
+                                                                            damage: -1,
+                                                                        ),
+                                                                        Spawn("spawn"),
+                                                                    ],
+                                                                ),
+                                                                spawns: {
+                                                                    "spawn": (
+                                                                        angle: -90,
+                                                                        projectile: (
+                                                                            gfx: Image(
+                                                                                file: "gfx/nuke4.png",
+                                                                            ),
+                                                                            gravity: 0,
+                                                                            timer: (
+                                                                                after_s: 0.12,
+                                                                                effects: [
+                                                                                    Explode(
+                                                                                        damage: -1,
+                                                                                    ),
+                                                                                    Spawn("spawn"),
+                                                                                ],
+                                                                            ),
+                                                                            spawns: {
+                                                                                "spawn": (
+                                                                                    angle: -90,
+                                                                                    projectile: (
+                                                                                        gfx: Image(
+                                                                                            file: "gfx/nuke5.png",
+                                                                                        ),
+                                                                                        gravity: 0,
+                                                                                        timer: (
+                                                                                            after_s: 0.12,
+                                                                                            effects: [
+                                                                                                Explode(
+                                                                                                    damage: -1,
+                                                                                                ),
+                                                                                                Spawn("spawn"),
+                                                                                            ],
+                                                                                        ),
+                                                                                        spawns: {
+                                                                                            "spawn": (
+                                                                                                angle: -90,
+                                                                                                projectile: (
+                                                                                                    gfx: Image(
+                                                                                                        file: "gfx/nuke6.png",
+                                                                                                    ),
+                                                                                                    gravity: 0,
+                                                                                                    timer: (
+                                                                                                        after_s: 0.12,
+                                                                                                        effects: [
+                                                                                                            Explode(
+                                                                                                                damage: -1,
+                                                                                                            ),
+                                                                                                            Spawn("spawn"),
+                                                                                                        ],
+                                                                                                    ),
+                                                                                                    spawns: {
+                                                                                                        "spawn": (
+                                                                                                            angle: -90,
+                                                                                                            projectile: (
+                                                                                                                gfx: Image(
+                                                                                                                    file: "gfx/nuke7.png",
+                                                                                                                ),
+                                                                                                                gravity: 0,
+                                                                                                                timer: (
+                                                                                                                    after_s: 0.12,
+                                                                                                                    effects: [
+                                                                                                                        Explode(
+                                                                                                                            damage: -1,
+                                                                                                                        ),
+                                                                                                                        Spawn("spawn"),
+                                                                                                                    ],
+                                                                                                                ),
+                                                                                                                spawns: {
+                                                                                                                    "spawn": (
+                                                                                                                        angle: -90,
+                                                                                                                        projectile: (
+                                                                                                                            gfx: Image(
+                                                                                                                                file: "gfx/nuke8.png",
+                                                                                                                            ),
+                                                                                                                            gravity: 0,
+                                                                                                                            timer: (
+                                                                                                                                after_s: 0.12,
+                                                                                                                                effects: [
+                                                                                                                                    Explode(
+                                                                                                                                        damage: -1,
+                                                                                                                                    ),
+                                                                                                                                    Spawn("spawn"),
+                                                                                                                                ],
+                                                                                                                            ),
+                                                                                                                            spawns: {
+                                                                                                                                "spawn": (
+                                                                                                                                    angle: -90,
+                                                                                                                                    projectile: (
+                                                                                                                                        gfx: Image(
+                                                                                                                                            file: "gfx/nuke09.png",
+                                                                                                                                        ),
+                                                                                                                                        gravity: 0,
+                                                                                                                                        timer: (
+                                                                                                                                            after_s: 0.12,
+                                                                                                                                            effects: [
+                                                                                                                                                Explode(
+                                                                                                                                                    damage: -1,
+                                                                                                                                                ),
+                                                                                                                                                Spawn("spawn"),
+                                                                                                                                            ],
+                                                                                                                                        ),
+                                                                                                                                        spawns: {
+                                                                                                                                            "spawn": (
+                                                                                                                                                angle: -90,
+                                                                                                                                                projectile: (
+                                                                                                                                                    gfx: Image(
+                                                                                                                                                        file: "gfx/nuke10.png",
+                                                                                                                                                    ),
+                                                                                                                                                    gravity: 0,
+                                                                                                                                                    timer: (
+                                                                                                                                                        after_s: 0.12,
+                                                                                                                                                        effects: [
+                                                                                                                                                            Explode(
+                                                                                                                                                                damage: -1,
+                                                                                                                                                            ),
+                                                                                                                                                            Spawn("spawn"),
+                                                                                                                                                        ],
+                                                                                                                                                    ),
+                                                                                                                                                    spawns: {
+                                                                                                                                                        "spawn": (
+                                                                                                                                                            angle: -90,
+                                                                                                                                                            projectile: (
+                                                                                                                                                                gfx: Image(
+                                                                                                                                                                    file: "gfx/nuke11.png",
+                                                                                                                                                                ),
+                                                                                                                                                                gravity: 0,
+                                                                                                                                                                timer: (
+                                                                                                                                                                    after_s: 0.12,
+                                                                                                                                                                    effects: [
+                                                                                                                                                                        Explode(
+                                                                                                                                                                            damage: -1,
+                                                                                                                                                                        ),
+                                                                                                                                                                        Spawn("spawn"),
+                                                                                                                                                                    ],
+                                                                                                                                                                ),
+                                                                                                                                                                spawns: {
+                                                                                                                                                                    "spawn": (
+                                                                                                                                                                        angle: -90,
+                                                                                                                                                                        projectile: (
+                                                                                                                                                                            gfx: Image(
+                                                                                                                                                                                file: "gfx/nuke12.png",
+                                                                                                                                                                            ),
+                                                                                                                                                                            gravity: 0,
+                                                                                                                                                                            timer: (
+                                                                                                                                                                                after_s: 0.12,
+                                                                                                                                                                                effects: [
+                                                                                                                                                                                    Explode(
+                                                                                                                                                                                        damage: -1,
+                                                                                                                                                                                    ),
+                                                                                                                                                                                    Spawn("spawn"),
+                                                                                                                                                                                ],
+                                                                                                                                                                            ),
+                                                                                                                                                                            spawns: {
+                                                                                                                                                                                "spawn": (
+                                                                                                                                                                                    angle: -90,
+                                                                                                                                                                                    projectile: (
+                                                                                                                                                                                        gfx: Image(
+                                                                                                                                                                                            file: "gfx/nuke13.png",
+                                                                                                                                                                                        ),
+                                                                                                                                                                                        gravity: 0,
+                                                                                                                                                                                        timer: (
+                                                                                                                                                                                            after_s: 0.12,
+                                                                                                                                                                                            effects: [
+                                                                                                                                                                                                Explode(
+                                                                                                                                                                                                    damage: -1,
+                                                                                                                                                                                                ),
+                                                                                                                                                                                            ],
+                                                                                                                                                                                        ),
+                                                                                                                                                                                    ),
+                                                                                                                                                                                ),
+                                                                                                                                                                            },
+                                                                                                                                                                        ),
+                                                                                                                                                                    ),
+                                                                                                                                                                },
+                                                                                                                                                            ),
+                                                                                                                                                        ),
+                                                                                                                                                    },
+                                                                                                                                                ),
+                                                                                                                                            ),
+                                                                                                                                        },
+                                                                                                                                    ),
+                                                                                                                                ),
+                                                                                                                            },
+                                                                                                                        ),
+                                                                                                                    ),
+                                                                                                                },
+                                                                                                            ),
+                                                                                                        ),
+                                                                                                    },
+                                                                                                ),
+                                                                                            ),
+                                                                                        },
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

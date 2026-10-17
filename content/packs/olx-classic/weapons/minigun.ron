@@ -2,26 +2,31 @@
     name: "Minigun",
     recharge: 0.14,
     drain: 1.43,
-    rof: 0.015,
-    laser_sight: false,
-    kind: Projectile(
-        class: Automatic,
+    between_shots_s: 0.015,
+    fire: Projectile(
         recoil: 6,
-        sound: Some("sfx/shot.ogg"),
-        spawn: (
-            projectile: "minigun",
-            amount: 1,
+        sound: "sfx/shot.ogg",
+        shot: (
             speed: 250,
-            speed_var: 0.0,
             spread: 3.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Pixels([
+                    "#d0d7d0",
+                    "#b0b0b0",
+                ]),
+                gravity: 70,
+                hit_terrain: [
+                    Explode(
+                        damage: 3,
+                        shake: 1,
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 2,
+                    ),
+                ],
+            ),
         ),
     ),
 )

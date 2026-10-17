@@ -2,26 +2,45 @@
     name: "Bazooka",
     recharge: 0.171,
     drain: 33.334,
-    rof: 1.071,
-    laser_sight: false,
-    kind: Projectile(
-        class: Automatic,
+    between_shots_s: 1.071,
+    fire: Projectile(
         recoil: 15,
-        sound: Some("sfx/bazooka.ogg"),
-        spawn: (
-            projectile: "bazooka",
-            amount: 1,
+        sound: "sfx/bazooka.ogg",
+        shot: (
             speed: 140,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/missile.png",
+                    frames_follow_heading: true,
+                    heading_frames: 18,
+                ),
+                gravity: 0,
+                velocity_factor: 1.001,
+                trail: Smoke,
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 2,
+                        sound: "sfx/exp2.ogg",
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 27,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 12,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        shared: "bazooka.spawn",
+                    ),
+                },
+            ),
         ),
     ),
 )

@@ -2,26 +2,140 @@
     name: "Petrol Bomb",
     recharge: 0.4,
     drain: 101.0,
-    rof: 1.0,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 1.0,
+    fire: Projectile(
         class: Grenade,
         recoil: 5,
-        sound: Some("sfx/blaster.ogg"),
-        spawn: (
-            projectile: "petrol-bomb",
-            amount: 1,
+        sound: "sfx/blaster.ogg",
+        shot: (
             speed: 150,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                ),
+                timer: (
+                    after_s: 0.05,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 150,
+                        spread: 1.0,
+                        relative_to_parent: true,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/goldenball.png",
+                            ),
+                            timer: (
+                                after_s: 2.0,
+                                variation_s: 0.25,
+                                effects: [
+                                    Explode(
+                                        damage: 5,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: Smoke,
+                            hit_terrain: [
+                                Explode(
+                                    damage: 10,
+                                    shake: 2,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            hit_worm: [
+                                Explode(
+                                    damage: 5,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    speed: 100,
+                                    relative_to_parent: true,
+                                    angle: 180,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/none.png",
+                                        ),
+                                        timer: (
+                                            after_s: 0.01,
+                                            effects: [
+                                                Explode(
+                                                    damage: 5,
+                                                ),
+                                                Spawn("spawn"),
+                                            ],
+                                        ),
+                                        trail: Projectile(
+                                            every_s: 5.5,
+                                            spawn: (
+                                                speed: 1000,
+                                                spread: 360.0,
+                                                shared: "petrol-bomb.spawn.spawn.trail",
+                                            ),
+                                        ),
+                                        hit_worm: [
+                                            Explode(
+                                                damage: 5,
+                                            ),
+                                            Spawn("spawn"),
+                                        ],
+                                        spawns: {
+                                            "spawn": (
+                                                amount: 35,
+                                                speed: 75,
+                                                speed_var: 50.0,
+                                                spread: 360.0,
+                                                angle: -90,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/flames2.png",
+                                                        animation: (
+                                                            fps: 5.0,
+                                                            mode: Loop,
+                                                        ),
+                                                    ),
+                                                    gravity: 25,
+                                                    timer: (
+                                                        after_s: 1.0,
+                                                        variation_s: 0.25,
+                                                        effects: [
+                                                            Explode(),
+                                                        ],
+                                                    ),
+                                                    hit_terrain: [
+                                                        Bounce(
+                                                            factor: 0.0,
+                                                        ),
+                                                    ],
+                                                    hit_worm: [
+                                                        Injure(
+                                                            damage: 8,
+                                                        ),
+                                                    ],
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

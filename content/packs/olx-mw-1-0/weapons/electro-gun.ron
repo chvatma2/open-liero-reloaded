@@ -2,26 +2,43 @@
     name: "Electro Gun",
     recharge: 1.0,
     drain: 3.0,
-    rof: 0.005,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 0.005,
+    fire: Projectile(
         class: CloseRange,
-        recoil: 0,
-        sound: None,
-        spawn: (
-            projectile: "electro-gun",
-            amount: 1,
+        shot: (
             speed: 250,
-            speed_var: 0.0,
             spread: 10.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Pixels([
+                    "#94c2f6",
+                ]),
+                gravity: 0,
+                timer: (
+                    after_s: 0.05,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 15,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        shared: "electro-gun.spawn",
+                    ),
+                },
+            ),
         ),
     ),
 )

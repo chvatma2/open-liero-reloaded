@@ -2,26 +2,106 @@
     name: "Bazooka",
     recharge: 0.35,
     drain: 34.0,
-    rof: 0.5,
-    laser_sight: false,
-    kind: Projectile(
-        class: Automatic,
+    between_shots_s: 0.5,
+    fire: Projectile(
         recoil: 10,
-        sound: Some("sfx/missile.ogg"),
-        spawn: (
-            projectile: "bazooka",
-            amount: 1,
+        sound: "sfx/missile.ogg",
+        shot: (
             speed: 150,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.05,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 100,
+                        spread: 5.0,
+                        relative_to_parent: true,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/missile5.png",
+                                frames_follow_heading: true,
+                                heading_frames: 18,
+                            ),
+                            gravity: 0,
+                            trail: Projectile(
+                                every_s: 0.025,
+                                spawn: (
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/icesmoke.png",
+                                            animation: (
+                                                fps: 10.0,
+                                            ),
+                                        ),
+                                        gravity: 0,
+                                        hit_terrain: [
+                                            Explode(),
+                                        ],
+                                    ),
+                                ),
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: 3,
+                                    shake: 1,
+                                    sound: "sfx/exp2.ogg",
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            hit_worm: [
+                                Explode(
+                                    damage: 3,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    amount: 20,
+                                    speed: 30,
+                                    speed_var: 20.0,
+                                    spread: 360.0,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/flame.png",
+                                            animation: (
+                                                fps: 5.0,
+                                            ),
+                                        ),
+                                        gravity: -10,
+                                        hit_terrain: [
+                                            Carve(
+                                                size: 1,
+                                            ),
+                                        ],
+                                        hit_worm: [
+                                            Injure(
+                                                damage: 5,
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

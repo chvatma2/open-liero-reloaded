@@ -2,26 +2,56 @@
     name: "Zimm",
     recharge: 0.129,
     drain: 50.001,
-    rof: 0.975,
-    laser_sight: false,
-    kind: Projectile(
-        class: Automatic,
+    between_shots_s: 0.975,
+    fire: Projectile(
         recoil: 30,
-        sound: Some("sfx/larpa.ogg"),
-        spawn: (
-            projectile: "zimm",
-            amount: 1,
+        sound: "sfx/larpa.ogg",
+        shot: (
             speed: 210,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/zimm.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 13.0,
+                    effects: [
+                        Explode(
+                            damage: 2,
+                            shake: 2,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 1.0,
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 49,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/zimmflash.png",
+                                animation: (
+                                    fps: 20.0,
+                                ),
+                            ),
+                            gravity: 0,
+                            hit_terrain: [
+                                Bounce(
+                                    factor: 0.0,
+                                ),
+                            ],
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

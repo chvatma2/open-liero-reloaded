@@ -2,26 +2,84 @@
     name: "Smoking Bomb",
     recharge: 0.2,
     drain: 101.0,
-    rof: 5.0,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 5.0,
+    fire: Projectile(
         class: Grenade,
         recoil: 5,
-        sound: Some("sfx/throw.ogg"),
-        spawn: (
-            projectile: "smoking-bomb",
-            amount: 1,
+        sound: "sfx/throw.ogg",
+        shot: (
             speed: 100,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/smokebomb3.png",
+                    animation: (
+                        fps: 10.0,
+                        mode: Loop,
+                    ),
+                ),
+                timer: (
+                    after_s: 0.5,
+                    effects: [
+                        Explode(
+                            damage: 4,
+                            shake: 4,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 15,
+                        angle: 90,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/gauss.png",
+                            ),
+                            gravity: -15,
+                            timer: (
+                                after_s: 5.0,
+                                effects: [
+                                    Explode(
+                                        damage: 3,
+                                        shake: 2,
+                                    ),
+                                ],
+                            ),
+                            trail: Projectile(
+                                every_s: 0.0075,
+                                spawn: (
+                                    speed: 60,
+                                    speed_var: 15.0,
+                                    spread: 360.0,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/blacksmoke.png",
+                                            animation: (
+                                                fps: 10.0,
+                                            ),
+                                        ),
+                                        gravity: -30,
+                                        hit_terrain: [
+                                            Bounce(),
+                                        ],
+                                        hit_worm: [
+                                            Injure(
+                                                damage: 15,
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            ),
+                            hit_terrain: [
+                                Bounce(),
+                            ],
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )

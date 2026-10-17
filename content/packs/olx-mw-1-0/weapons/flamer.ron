@@ -2,26 +2,60 @@
     name: "Flamer",
     recharge: 0.5,
     drain: 3.0,
-    rof: 0.002,
-    laser_sight: false,
-    kind: Projectile(
+    between_shots_s: 0.002,
+    fire: Projectile(
         class: CloseRange,
-        recoil: 0,
-        sound: Some("sfx/flames2.ogg"),
-        spawn: (
-            projectile: "flamer",
-            amount: 1,
+        sound: "sfx/flames2.ogg",
+        shot: (
             speed: 150,
-            speed_var: 0.0,
-            spread: 0.0,
-            use_angle: true,
-            angle: 0,
-            use_parent_velocity_for_spread: false,
-            parent_vel_spread_factor: 0.3,
-            use_special11_vec_for_speed_var: false,
-            use_random_rot: true,
-            add_parent_vel: true,
-            parent_vel_factor: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/none.png",
+                ),
+                gravity: 0,
+                timer: (
+                    after_s: 0.05,
+                    effects: [
+                        Explode(
+                            damage: -1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: -1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 2,
+                        speed: 75,
+                        spread: 20.0,
+                        relative_to_parent: true,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/flames.png",
+                                animation: (
+                                    fps: 13.0,
+                                ),
+                            ),
+                            gravity: -10,
+                            hit_terrain: [
+                                Carve(
+                                    size: 2,
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 5,
+                                ),
+                            ],
+                        ),
+                    ),
+                },
+            ),
         ),
     ),
 )
