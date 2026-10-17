@@ -884,11 +884,6 @@ impl LobbyHost {
         self.index(member).and_then(|i| self.members[i].peer)
     }
 
-    /// The address member `member` joined from (none for the host's own).
-    pub fn ip_of(&self, member: u8) -> Option<IpAddr> {
-        self.index(member).and_then(|i| self.members[i].addr)
-    }
-
     pub fn member_of(&self, peer: PeerId) -> Option<u8> {
         match self.links.get(&peer) {
             Some(&Link::Member(id)) => Some(id),
@@ -1144,9 +1139,9 @@ impl LobbyHost {
                 self.drop_member(id, Gone::Kicked { ban: Ban::No })
             }
             ToHost::SetLook(look) => {
-                // Each change rebuilds the content list and may start a
-                // skin fetch: beyond the window's changes, only the latest
-                // is held, and `tick` takes it once the window allows.
+                // Each change republishes the lobby: beyond the window's
+                // changes, only the latest is held, and `tick` takes it
+                // once the window allows.
                 let m = &mut self.members[i];
                 if m.look_change_allowed(now_us) {
                     m.look_held = None;

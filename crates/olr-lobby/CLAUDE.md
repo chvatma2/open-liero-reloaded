@@ -70,8 +70,6 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     running match's setup stays what the lobby shows). `LobbyError` and
     `NotStartable` display as words for players (`Display`), never their
     Rust names.
-  - `ip_of(member)`: the address it joined from (the content side counts
-    skin fetches by address).
   - `revision()` changes whenever `state()` does (compare it instead of
     cloning the state: the dedicated server's poll).
   - Chat: sanitized and cut to 200 characters; `CHAT_LINES` (5) per
@@ -79,8 +77,8 @@ Online lobby logic (networking spec §4, §5.2, §5.4, §7.2), sans-IO.
     the sender. Relayed as `Chat` to all and `HostEvent::Chat`. A dedicated
     server's `chat` is a `Notice::Message`.
   - Looks: `LOOK_CHANGES` (4) `SetLook`s per `LOOK_WINDOW_US` (1 s) per
-    member are taken (each rebuilds the host's content list and may
-    start a skin fetch; plan 11 review C2); beyond them only the latest is
+    member are taken (each republishes the lobby; plan 11 review C2);
+    beyond them only the latest is
     held (`look_held`) and `tick` takes it once the window allows, so the
     member's last look always wins (a dragged colour slider).
   - Kick/ban: the host (`kick`) or an admin key (`AdminCommand::Kick/Ban`);
