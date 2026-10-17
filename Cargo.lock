@@ -3423,6 +3423,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "olr-editor"
+version = "0.2.0"
+dependencies = [
+ "egui",
+ "egui_kittest",
+ "olr-data",
+ "olr-edit",
+ "olr-format",
+ "olr-pack",
+ "olr-vfs",
+ "proptest",
+ "serde",
+ "tempfile",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "olr-format"
 version = "0.2.0"
 dependencies = [

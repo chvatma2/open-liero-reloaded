@@ -1,0 +1,31 @@
+[package]
+name = "olr-editor"
+description = "The level editor: its document, undo history, tools and egui panels, as pure state a host drives (tested headless)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-data.workspace = true
+olr-vfs.workspace = true
+olr-format.workspace = true
+olr-pack.workspace = true
+olr-edit.workspace = true
+egui.workspace = true
+serde = { workspace = true, features = ["std"] }
+thiserror.workspace = true
+
+[dev-dependencies]
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+tempfile.workspace = true
+proptest.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

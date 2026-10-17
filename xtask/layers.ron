@@ -32,6 +32,7 @@
         "olr-audio": 5,
         "olr-input": 5,
         "olr-ui": 5,
+        "olr-editor": 5,
         "olr-net": 5,
         "olr-discovery": 5,
         "olr-online": 5,
