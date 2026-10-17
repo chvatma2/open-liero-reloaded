@@ -232,7 +232,7 @@ pub fn unpack(zip: &Path, into: &Path) -> Result<(), String> {
 
 /// Builds `olr-game` and `olr-server` for `platform` in the `dist` profile;
 /// gives cargo's output directory.
-fn build(platform: Platform) -> Result<PathBuf, String> {
+pub fn build(platform: Platform) -> Result<PathBuf, String> {
     let mut c = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     c.current_dir(root()).args(["build", "--quiet", "--profile", PROFILE]);
     for package in PACKAGES {
@@ -254,7 +254,7 @@ fn build(platform: Platform) -> Result<PathBuf, String> {
 
 /// Stages the folder for `platform` in `dir` (emptied first) from cargo's
 /// output directory `build`; gives the folder.
-fn stage(platform: Platform, build: &Path, dir: &Path) -> Result<PathBuf, String> {
+pub fn stage(platform: Platform, build: &Path, dir: &Path) -> Result<PathBuf, String> {
     match std::fs::remove_dir_all(dir) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
             return Err(format!("{}: {e}", dir.display()));

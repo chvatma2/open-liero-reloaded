@@ -41,6 +41,7 @@ modernized for current displays.
 7. **Keep output deterministic.** Use no `HashMap` iteration in output, and no wall clock in logic.
 8. **Commits:** small, imperative subject (`olr-pack: validate projectile cycles`).
 9. **Release zips:** `cargo xtask dist` builds and runs `target/release-zips/open-liero-reloaded-<version>-{linux,windows}-x64.zip`.
+   `cargo xtask flatpak` repackages the Linux build as a `.flatpak` beside them (`tools/flatpak/`).
 
 ## Oracle
 

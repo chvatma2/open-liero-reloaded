@@ -3,7 +3,7 @@
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
 `e2e`, `net-nat`, `bench`, `stress`, `net-feel`, `net-soak`, `windows`, `envelope`,
-`determinism`, `dist`, `format-docs`.
+`determinism`, `dist`, `flatpak`, `format-docs`.
 
 - `format-docs [--check]` (`format_docs.rs`, plan 13d R4; the level page
   also documents `editor/composition.ron`, plan 14a) writes
@@ -310,6 +310,15 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   logs its map, then stopped by path; no client: WSL cannot reach a
   Windows listener reliably); without interop (`winbuild::interop_missing`)
   a `skip` notice. Prints each zip's path and size.
+- `flatpak` (`flatpak.rs`): the Linux release build (`dist::build`,
+  `dist::stage`) repackaged as
+  `target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak`
+  (`bundle_name`) with `tools/flatpak/`'s manifest, desktop entry,
+  metainfo and icon (`APP_ID`); details in `tools/flatpak/CLAUDE.md`.
+  Without `flatpak` and `flatpak-builder` it fails naming them. Nothing
+  is run. Unit tests: the bundle's name; the files name `APP_ID`, as
+  `olr-game`'s `window::APP_ID`; the manifest installs every file and
+  links both programs.
 - `envelope` (`envelope/`, plan 8, spec
   `docs/superpowers/specs/2026-10-11-performance-envelope-design.md`;
   `cargo xtask envelope [--quick] [--only <part>]... [--gpu

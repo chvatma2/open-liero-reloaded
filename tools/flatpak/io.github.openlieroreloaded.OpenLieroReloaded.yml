@@ -1,0 +1,35 @@
+# `cargo xtask flatpak`: the Linux release build repackaged as a Flatpak.
+# xtask copies this file, the desktop entry, the metainfo and the icon
+# beside the staged release folder (`app/`, as in the zip) and runs
+# flatpak-builder on the copy; see tools/flatpak/CLAUDE.md.
+id: io.github.openlieroreloaded.OpenLieroReloaded
+# 26.08: glibc 2.44; the binaries built on Ubuntu 26.04 need 2.43.
+runtime: org.freedesktop.Platform
+runtime-version: '26.08'
+sdk: org.freedesktop.Sdk
+command: olr
+finish-args:
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  # The GPU, and gamepads (gilrs reads /dev/input through udev).
+  - --device=all
+  - --socket=pulseaudio
+  # Online and LAN play, hosting included.
+  - --share=network
+modules:
+  - name: olr
+    buildsystem: simple
+    build-commands:
+      # The programs find the content beside them (`/proc/self/exe`
+      # resolves the symbolic links in /app/bin).
+      - mkdir -p /app/lib/olr /app/bin
+      - cp -r app/. /app/lib/olr/
+      - ln -s ../lib/olr/olr /app/bin/olr
+      - ln -s ../lib/olr/olr-server /app/bin/olr-server
+      - install -Dm644 io.github.openlieroreloaded.OpenLieroReloaded.desktop -t /app/share/applications
+      - install -Dm644 io.github.openlieroreloaded.OpenLieroReloaded.metainfo.xml -t /app/share/metainfo
+      - install -Dm644 io.github.openlieroreloaded.OpenLieroReloaded.svg -t /app/share/icons/hicolor/scalable/apps
+    sources:
+      - type: dir
+        path: .

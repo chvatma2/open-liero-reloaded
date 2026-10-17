@@ -60,6 +60,10 @@ use winit::window::{Fullscreen, Window, WindowAttributes, WindowButtons};
 /// The window's size before the player chooses one (logical pixels).
 pub const DEFAULT_SIZE: (u32, u32) = (1280, 720);
 
+/// The window's Wayland app ID and X11 class: the Flatpak's application
+/// ID, which its desktop entry is named after (`tools/flatpak/`).
+pub const APP_ID: &str = "io.github.openlieroreloaded.OpenLieroReloaded";
+
 /// The least time between two applied size or mode changes.
 pub const MIN_CHANGE_INTERVAL: Duration = Duration::from_millis(250);
 
@@ -70,12 +74,17 @@ pub fn attributes(size: (u32, u32), physical: bool, fullscreen: bool) -> WindowA
     let (w, h) = (size.0.max(1), size.1.max(1));
     let size: winit::dpi::Size =
         if physical { PhysicalSize::new(w, h).into() } else { winit::dpi::LogicalSize::new(w, h).into() };
-    Window::default_attributes()
+    let attributes = Window::default_attributes()
         .with_title("Open Liero Reloaded")
         .with_inner_size(size)
         .with_resizable(false)
         .with_enabled_buttons(WindowButtons::CLOSE | WindowButtons::MINIMIZE)
-        .with_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)))
+        .with_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+    // One field for both window systems: the app ID, and the X11 class.
+    #[cfg(target_os = "linux")]
+    let attributes =
+        winit::platform::wayland::WindowAttributesExtWayland::with_name(attributes, APP_ID, APP_ID);
+    attributes
 }
 
 /// A size or mode change for the window.

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Open Liero Reloaded
+GenericName=Worm combat game
+Comment=Real-time worm combat on destructible terrain, a remake of OpenLieroX
+Exec=olr
+Icon=io.github.openlieroreloaded.OpenLieroReloaded
+StartupWMClass=io.github.openlieroreloaded.OpenLieroReloaded
+Terminal=false
+Categories=Game;ActionGame;
+Keywords=liero;lierox;openlierox;worms;

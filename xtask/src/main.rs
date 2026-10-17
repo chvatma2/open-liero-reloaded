@@ -10,6 +10,7 @@ mod dist;
 mod e2e;
 mod envelope;
 mod fetch;
+mod flatpak;
 mod format_docs;
 mod layers;
 mod nat;
@@ -208,6 +209,11 @@ enum Command {
         #[arg(long)]
         no_verify: bool,
     },
+    /// The Linux release build repackaged as a Flatpak bundle (runtime
+    /// org.freedesktop.Platform 26.08), in
+    /// target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak. Needs flatpak and
+    /// flatpak-builder; nothing is run.
+    Flatpak,
     /// Cross-platform determinism (plan 9, spec §9.5): golden bot matches' replays are played
     /// by `olr-detcheck` natively and on another platform; the checksum streams must be equal.
     /// With no leg flag the WASM leg (Node.js WASI) runs; a flag runs that leg only.
@@ -263,6 +269,7 @@ fn main() -> ExitCode {
         Command::BlessRegression { reason, from } => bless_regression::run(&reason, from.as_deref()),
         Command::Windows => winbuild::command(),
         Command::Dist { no_verify } => dist::command(!no_verify),
+        Command::Flatpak => flatpak::command(),
         Command::Determinism { windows, arm64, wasm, all } => {
             determinism::command(determinism::Opts { wasm, windows, arm64, all })
         }

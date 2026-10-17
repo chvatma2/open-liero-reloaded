@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.openlieroreloaded.OpenLieroReloaded</id>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  <name>Open Liero Reloaded</name>
+  <summary>Real-time worm combat on destructible terrain</summary>
+  <description>
+    <p>
+      A Rust remake of OpenLieroX whose physics, movement and shooting feel
+      identical, modernized for today's displays. Play Deathmatch against
+      bots on your own, or host and join games online.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.openlieroreloaded.OpenLieroReloaded.desktop</launchable>
+  <provides>
+    <binary>olr</binary>
+    <binary>olr-server</binary>
+  </provides>
+  <content_rating type="oars-1.1">
+    <content_attribute id="violence-cartoon">intense</content_attribute>
+    <content_attribute id="violence-bloodshed">mild</content_attribute>
+    <content_attribute id="social-chat">intense</content_attribute>
+  </content_rating>
+  <releases>
+    <release version="@VERSION@"/>
+  </releases>
+</component>

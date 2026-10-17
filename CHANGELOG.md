@@ -24,6 +24,9 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   baked: `olr-cli level element …` and `level bake`. PNG and JPEG pictures
   are pixelated, colour-reduced and dithered; `pack check` reports a bake
   that no longer matches its composition.
+- A Flatpak for Linux beside the release zips (`cargo xtask flatpak`):
+  `flatpak install --user open-liero-reloaded-<version>-linux-x64.flatpak`
+  puts the game in the desktop's menu.
 - The level editor's core (`olr-editor`): elements, painting, spawns,
   undo and redo, tested headless; the game hosts it in a later step.
   Imported JPEG photos are turned by their EXIF orientation.

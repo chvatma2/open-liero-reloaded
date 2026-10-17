@@ -631,7 +631,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `olr_ui::screens::results::panel` with F5 rematch, Esc quit). `Session::tally` counts kills by bots,
   the player and suicides (Kill events) over the run's match time.
 - **Window** (`window.rs`, the user's ruling after the plan 6 playtest):
-  not resizable, no maximise button; `--fullscreen` is borderless. Size
+  not resizable, no maximise button; `--fullscreen` is borderless. On
+  Linux its Wayland app ID and X11 class are `APP_ID`, the Flatpak's
+  application ID (`tools/flatpak/`). Size
   and mode changes come only from the game (`size`, `fullscreen` script
   commands, the options menu: `video.rs`) through `window::Requests`: the latest
   wins, applied at the start of a frame before `acquire`, at most once
