@@ -418,13 +418,18 @@ fn scaled_level(id: &str, size: u32, art_scale: u32) -> olr_pack::LevelPack {
 #[test]
 fn hostile_art_scale_is_refused() {
     let tmp = tempfile::tempdir().unwrap();
-    for (id, scale) in [("scale-8", 8), ("scale-9", 9)] {
-        olr_pack::write_level(&mut DirFs::new(tmp.path().join(id)), &scaled_level(id, 4, scale)).unwrap();
+    // The writer refuses scale 9, so the hostile pack is an 8 edited by hand.
+    for id in ["scale-8", "scale-9"] {
+        olr_pack::write_level(&mut DirFs::new(tmp.path().join(id)), &scaled_level(id, 4, 8)).unwrap();
     }
+    let ron = tmp.path().join("scale-9/level.ron");
+    let text = std::fs::read_to_string(&ron).unwrap();
+    assert!(text.contains("art_scale: 8"), "{text}");
+    std::fs::write(&ron, text.replace("art_scale: 8", "art_scale: 9")).unwrap();
     let content = Content::open(tmp.path()).unwrap();
     assert_eq!(content.load_level("scale-8").unwrap().art_scale, 8);
     let err = format!("{:#}", content.load_level("scale-9").unwrap_err());
-    assert!(err.contains("art scale 9"), "{err}");
+    assert!(err.contains("art_scale") && err.contains("9"), "{err}");
 }
 
 /// Hostile packs: a sound too large or too long is never handed to the
@@ -545,4 +550,26 @@ fn every_bundled_skin_mirrors() {
             }
         }
     }
+}
+
+/// Pack format 5 replaced 4: a format-4 pack in a user layer is skipped with
+/// a "re-import" warning, hides nothing and never fails the open.
+#[test]
+fn a_format_4_pack_in_a_user_layer_is_skipped_with_a_re_import_warning() {
+    let bundled = tempfile::tempdir().unwrap();
+    synthetic(bundled.path());
+    let user = tempfile::tempdir().unwrap();
+    olr_pack::write_level(&mut DirFs::new(user.path().join("test-level")), &room_level()).unwrap();
+    let old = PackManifest { format_version: 4, ..manifest("test-level", PackKind::Level) };
+    olr_pack::write_manifest(&mut DirFs::new(user.path().join("test-level")), &old).unwrap();
+    let content = Content::open_layers(&[user.path(), bundled.path()]).unwrap();
+    let warning = content
+        .warnings()
+        .iter()
+        .find(|w| w.contains("test-level") && w.contains("skipped"))
+        .unwrap_or_else(|| panic!("no warning in {:?}", content.warnings()));
+    assert!(warning.contains("re-import") && warning.contains("format_version 4"), "{warning}");
+    // The bundled level of the same id still plays.
+    let hash = olr_pack::content_hash(&DirFs::new(bundled.path().join("test-level"))).unwrap();
+    assert!(content.has("test-level", &hash));
 }

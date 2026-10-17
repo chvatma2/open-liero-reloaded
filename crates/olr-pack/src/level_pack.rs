@@ -1,22 +1,19 @@
-//! Level packs: `level.ron`, `material.png` (8-bit palette PNG whose indices are
-//! [`Material`] values), `front.png` / `back.png` at `art_scale`, and the
+//! Level packs (format 5, over `olr-format`): `level.ron`, `material.png` (8-bit palette PNG whose indices are
+//! `Material` values), `front.png` / `back.png` at `art_scale`, and the
 //! optional menu thumbnail `thumb.png`.
 
 use olr_data::image::RgbaImage;
-use olr_data::level::{Level, LevelDef, Material, MaterialGrid};
+use olr_data::level::{Level, LevelDef};
 use olr_data::manifest::{PackKind, PackManifest};
+use olr_format::levels::{
+    compile_level, lift_level, read_level_files_without_thumb, read_level_header, write_level_files,
+};
 use olr_vfs::{ContentSink, ContentSource, VPath};
 
-use crate::image_io::{
-    LEVEL_ART, decode_indexed_within, decode_rgba, decode_rgba_within, encode_indexed, encode_rgba, png_size,
-};
-use crate::ron_io::{read_file, read_ron, write_ron};
+use crate::image_io::{decode_rgba, encode_rgba, png_size};
 use crate::{MANIFEST, PackError, read_manifest, write_manifest};
 
 pub const LEVEL_FILE: &str = "level.ron";
-pub const MATERIAL_FILE: &str = "material.png";
-pub const FRONT_FILE: &str = "front.png";
-pub const BACK_FILE: &str = "back.png";
 /// The level's thumbnail for the menus (spec §21 G6), optional: made from
 /// the art at import. Presentation only: [`crate::content_hash`] leaves it
 /// out (plan 7 ruling Q4), so adding or changing it keeps replays valid.
@@ -34,10 +31,6 @@ pub const MAX_THUMB_SIDE: u32 = 512;
 /// harmless: importers write 160 × 96.
 pub const MAX_THUMB_BYTES: usize = 1 << 20;
 
-/// Palette for `material.png`, indexed by `Material as u8`: rock is gray,
-/// background black, dirt brown, so the file is readable in any image viewer.
-const MATERIAL_PALETTE: [u8; 9] = [128, 128, 128, 0, 0, 0, 139, 90, 43];
-
 #[derive(Clone, Debug, PartialEq)]
 pub struct LevelPack {
     pub manifest: PackManifest,
@@ -47,42 +40,22 @@ pub struct LevelPack {
     pub thumb: Option<RgbaImage>,
 }
 
-fn check_dims(level: &Level) -> Result<(), PackError> {
-    let d = &level.def;
-    if d.art_scale == 0 {
-        return Err(PackError::invalid(LEVEL_FILE, "art_scale must be at least 1"));
-    }
-    if (level.material.width(), level.material.height()) != (d.width, d.height) {
-        return Err(PackError::invalid(MATERIAL_FILE, format!("material must be {}x{}", d.width, d.height)));
-    }
-    let (Some(aw), Some(ah)) = (d.width.checked_mul(d.art_scale), d.height.checked_mul(d.art_scale)) else {
-        return Err(PackError::invalid(LEVEL_FILE, "size x art_scale is too large"));
-    };
-    for (file, img) in [(FRONT_FILE, &level.front), (BACK_FILE, &level.back)] {
-        if (img.width(), img.height()) != (aw, ah) {
-            return Err(PackError::invalid(file, format!("art must be {aw}x{ah} (size x art_scale)")));
-        }
-    }
-    Ok(())
-}
-
+/// Writes the pack in format 5 (`olr-format`'s level files), the
+/// thumbnail encoded from `pack.thumb`.
 pub fn write_level(sink: &mut dyn ContentSink, pack: &LevelPack) -> Result<(), PackError> {
     if pack.manifest.kind != PackKind::Level {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Level"));
     }
-    check_dims(&pack.level)?;
-    let l = &pack.level;
+    let thumb = match &pack.thumb {
+        Some(t) => {
+            check_thumb_size(t.width(), t.height())?;
+            Some(encode_rgba(t))
+        }
+        None => None,
+    };
+    let src = lift_level(&pack.level, thumb).map_err(|e| PackError::invalid(LEVEL_FILE, e.to_string()))?;
     write_manifest(sink, &pack.manifest)?;
-    write_ron(sink, LEVEL_FILE, &l.def)?;
-    let indices: Vec<u8> = l.material.cells().iter().map(|m| *m as u8).collect();
-    let mat_png = encode_indexed(l.material.width(), l.material.height(), &indices, &MATERIAL_PALETTE);
-    sink.write(&VPath::new(MATERIAL_FILE)?, &mat_png)?;
-    sink.write(&VPath::new(FRONT_FILE)?, &encode_rgba(&l.front))?;
-    sink.write(&VPath::new(BACK_FILE)?, &encode_rgba(&l.back))?;
-    if let Some(t) = &pack.thumb {
-        check_thumb_size(t.width(), t.height())?;
-        sink.write(&VPath::new(THUMB_FILE)?, &encode_rgba(t))?;
-    }
+    write_level_files(sink, &src)?;
     Ok(())
 }
 
@@ -120,12 +93,6 @@ pub fn decode_thumb(bytes: &[u8]) -> Result<RgbaImage, PackError> {
     decode_rgba(bytes).map_err(|message| PackError::Image { file: THUMB_FILE.into(), message })
 }
 
-/// A level's art, within [`LEVEL_ART`].
-fn read_png(src: &dyn ContentSource, file: &str) -> Result<RgbaImage, PackError> {
-    let bytes = read_file(src, &VPath::new(file)?)?;
-    decode_rgba_within(&bytes, LEVEL_ART).map_err(|message| PackError::Image { file: file.into(), message })
-}
-
 /// The manifest and `level.ron` alone, decoding no image: what a menu
 /// lists (name, size) without loading the level.
 pub fn read_level_def(src: &dyn ContentSource) -> Result<(PackManifest, LevelDef), PackError> {
@@ -133,7 +100,16 @@ pub fn read_level_def(src: &dyn ContentSource) -> Result<(PackManifest, LevelDef
     if manifest.kind != PackKind::Level {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Level"));
     }
-    Ok((manifest, read_ron(src, LEVEL_FILE)?))
+    let h = read_level_header(src)?;
+    let def = LevelDef {
+        name: h.name,
+        width: h.size.0,
+        height: h.size.1,
+        art_scale: h.art_scale,
+        theme: h.theme,
+        spawns: h.spawns,
+    };
+    Ok((manifest, def))
 }
 
 /// Reads a level pack, every file bounded ([`crate::MAX_FILE_BYTES`]).
@@ -146,29 +122,17 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     if manifest.kind != PackKind::Level {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Level"));
     }
-    let def: LevelDef = read_ron(src, LEVEL_FILE)?;
-    let bytes = read_file(src, &VPath::new(MATERIAL_FILE)?)?;
-    let (w, h, indices) = decode_indexed_within(&bytes, LEVEL_ART)
-        .map_err(|message| PackError::Image { file: MATERIAL_FILE.into(), message })?;
-    let cells = indices
-        .iter()
-        .enumerate()
-        .map(|(i, &v)| {
-            Material::from_index(v).ok_or_else(|| {
-                let (x, y) = (i as u32 % w.max(1), i as u32 / w.max(1));
-                PackError::invalid(MATERIAL_FILE, format!("unknown material index {v} at ({x},{y})"))
-            })
-        })
-        .collect::<Result<Vec<_>, _>>()?;
-    let material = MaterialGrid::from_cells(w, h, cells).expect("decoder returns w*h indices");
-    let level = Level { def, material, front: read_png(src, FRONT_FILE)?, back: read_png(src, BACK_FILE)? };
-    check_dims(&level)?;
+    let level = compile_level(&read_level_files_without_thumb(src)?)?;
     Ok(LevelPack { manifest, level, thumb: None })
 }
 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    use crate::image_io::encode_indexed;
+    use olr_data::level::{Material, MaterialGrid};
+    const MATERIAL_FILE: &str = "material.png";
+    const FRONT_FILE: &str = "front.png";
     use crate::mod_pack::tests::manifest;
     use olr_data::image::Rgba;
     use olr_vfs::MemFs;
@@ -286,7 +250,7 @@ pub(crate) mod tests {
         pack.level.def.art_scale = 70_000;
         pack.level.material = MaterialGrid::new(70_000, 1, Material::Dirt);
         let err = write_level(&mut MemFs::new(), &pack).unwrap_err().to_string();
-        assert!(err.contains("too large"), "{err}");
+        assert!(err.contains("not within"), "{err}");
     }
 
     #[test]
@@ -296,7 +260,7 @@ pub(crate) mod tests {
         let bad = encode_indexed(2, 2, &[0, 1, 2, 7], &[0; 24]);
         let fs = fs.with(MATERIAL_FILE, bad);
         let err = read_level(&fs).unwrap_err().to_string();
-        assert!(err.contains("unknown material index 7 at (1,1)"), "{err}");
+        assert!(err.contains("unknown material index 7 at (1, 1)"), "{err}");
     }
 
     #[test]

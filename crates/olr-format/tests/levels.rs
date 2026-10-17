@@ -1,10 +1,10 @@
-//! Bundled levels: today's `olr_pack::read_level`, lifted, written, read
-//! and compiled, give the same `Level` (spec §6).
+//! Bundled levels are format 5: read as files, written again, they give the
+//! same bytes, and compile to the level the runtime reads (spec §6).
 
 use std::path::PathBuf;
 
-use olr_format::levels::{compile_level, lift_level, read_level_files, write_level_files};
-use olr_vfs::{DirFs, MemFs};
+use olr_format::levels::{compile_level, read_level_files, write_level_files};
+use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
 
 fn content() -> Option<PathBuf> {
     let dir = PathBuf::from(std::env::var_os("OLR_CONTENT_DIR")?);
@@ -22,8 +22,21 @@ fn packs(root: &std::path::Path, prefix: &str) -> Vec<String> {
     ids
 }
 
+/// Every file of the pack except `pack.ron`, as `(path, bytes)`.
+fn files(root: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    for e in std::fs::read_dir(root).unwrap() {
+        let name = e.unwrap().file_name().into_string().unwrap();
+        if name != "pack.ron" {
+            out.push((name.clone(), std::fs::read(root.join(&name)).unwrap()));
+        }
+    }
+    out.sort();
+    out
+}
+
 #[test]
-fn bundled_levels_survive_lift_write_read_and_compile() {
+fn bundled_levels_are_canonical_format_5() {
     let Some(root) = content() else {
         eprintln!("skip: OLR_CONTENT_DIR is not a directory");
         return;
@@ -32,14 +45,17 @@ fn bundled_levels_survive_lift_write_read_and_compile() {
     assert!(ids.len() >= 4, "only {} levels found", ids.len());
     for id in ids {
         let dir = DirFs::new(root.join(&id));
-        let pack = olr_pack::read_level(&dir).unwrap();
-        let thumb = std::fs::read(root.join(&id).join("thumb.png")).ok();
-        let src = lift_level(&pack.level, thumb.clone()).unwrap_or_else(|e| panic!("{id}: {e}"));
+        let src = read_level_files(&dir).unwrap_or_else(|e| panic!("{id}: {e}"));
         let mut fs = MemFs::new();
         write_level_files(&mut fs, &src).unwrap();
-        let back = read_level_files(&fs).unwrap_or_else(|e| panic!("{id}: {e}"));
+        // The same bytes: the committed files are what the writer writes.
+        for (name, bytes) in files(&root.join(&id)) {
+            let again = fs.read(&VPath::new(&name).unwrap()).unwrap_or_else(|e| panic!("{id}/{name}: {e}"));
+            assert!(again == bytes, "{id}/{name}: written bytes differ from the committed file");
+        }
+        let back = read_level_files(&fs).unwrap();
         assert_eq!(back, src, "{id}");
-        assert_eq!(compile_level(&back).unwrap(), pack.level, "{id}: Level");
-        assert_eq!(back.thumb, thumb, "{id}: thumbnail passes through");
+        assert_eq!(compile_level(&back).unwrap(), olr_pack::read_level(&dir).unwrap().level, "{id}: Level");
+        assert!(src.thumb.is_some(), "{id}: thumbnail passes through");
     }
 }

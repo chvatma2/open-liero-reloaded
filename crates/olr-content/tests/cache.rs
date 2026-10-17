@@ -686,3 +686,24 @@ fn skin_matching_needs_the_id_and_the_hash() {
     let (skin, why) = content.skin_matching(DEFAULT_SKIN, &hash(&default));
     assert_eq!((name(&skin).as_str(), why), (DEFAULT_SKIN, None));
 }
+
+/// Pack format 5 replaced 4: a cached pack of the old format is dropped when
+/// the cache opens, never served.
+#[test]
+fn open_drops_a_format_4_entry() {
+    let root = tempfile::tempdir().unwrap();
+    let old = "a".repeat(64);
+    let dir = root.path().join("packs").join(&old);
+    let fs = skin_pack("old-skin", 7);
+    olr_pack::write_manifest(
+        &mut DirFs::new(&dir),
+        &PackManifest { format_version: 4, ..manifest("old-skin", PackKind::Skin) },
+    )
+    .unwrap();
+    let _ = fs;
+    assert!(dir.is_dir());
+    let mut cache = DownloadCache::open(root.path()).unwrap();
+    assert!(!cache.contains(&old));
+    assert!(cache.get(&old).is_none());
+    assert!(!dir.exists(), "the stale pack is removed");
+}
