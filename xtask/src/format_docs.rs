@@ -19,6 +19,8 @@ struct Page {
     sources: &'static [&'static str],
     /// The file types, with the file each one is.
     roots: &'static [(&'static str, &'static str)],
+    /// Files whose type is no item: `(file, type, doc)`.
+    maps: &'static [(&'static str, &'static str, &'static str)],
     /// The kind's other files.
     files: &'static [&'static str],
 }
@@ -27,11 +29,37 @@ const DEFAULTS: &str = "crates/olr-format/src/defaults.rs";
 
 const PAGES: &[Page] = &[
     Page {
+        out: "mod.md",
+        title: "Mod packs",
+        module: "crates/olr-format/src/mods/mod.rs",
+        sources: &[
+            "crates/olr-format/src/mods/mod.rs",
+            "crates/olr-format/src/mods/files.rs",
+            "crates/olr-format/src/mods/types.rs",
+            "crates/olr-format/src/mods/spawn.rs",
+            "crates/olr-format/src/colour.rs",
+            "crates/olr-data/src/restrictions.rs",
+        ],
+        roots: &[
+            ("ModFile", "mod.ron"),
+            ("Weapon", "weapons/<id>.ron"),
+            ("Projectile", "projectiles/<id>.ron"),
+        ],
+        maps: &[(
+            "restrictions.ron",
+            "BTreeMap<String, Preset>",
+            "The mod's weapon-restriction presets by name (OLX's `.wps` files), optional; the game's \
+             default is `Standard 100lt`.",
+        )],
+        files: &["gfx/<file>.png", "sfx/<file>"],
+    },
+    Page {
         out: "level.md",
         title: "Level packs",
         module: "crates/olr-format/src/levels/mod.rs",
         sources: &["crates/olr-format/src/levels/mod.rs", "crates/olr-format/src/levels/files.rs"],
         roots: &[("LevelFile", "level.ron")],
+        maps: &[],
         files: &["material.png", "front.png", "back.png", "thumb.png"],
     },
     Page {
@@ -40,6 +68,7 @@ const PAGES: &[Page] = &[
         module: "crates/olr-format/src/skins/mod.rs",
         sources: &["crates/olr-format/src/skins/mod.rs", "crates/olr-format/src/skins/files.rs"],
         roots: &[("SkinFile", "skin.ron")],
+        maps: &[],
         files: &["skin.png", "tint.png", "left.png"],
     },
     Page {
@@ -48,6 +77,7 @@ const PAGES: &[Page] = &[
         module: "crates/olr-format/src/themes/mod.rs",
         sources: &["crates/olr-format/src/themes/mod.rs", "crates/olr-format/src/themes/files.rs"],
         roots: &[("ThemeFile", "theme.ron")],
+        maps: &[],
         files: &[
             "holes/<i>.png",
             "holes/<i>.mask.png",
@@ -69,6 +99,7 @@ const PAGES: &[Page] = &[
             "crates/olr-format/src/colour.rs",
         ],
         roots: &[("CoreFile", "core.ron")],
+        maps: &[],
         files: &["gfx/<sprite>.png", "sounds/<file>"],
     },
     Page {
@@ -77,6 +108,7 @@ const PAGES: &[Page] = &[
         module: "crates/olr-data/src/manifest.rs",
         sources: &["crates/olr-data/src/manifest.rs"],
         roots: &[("PackManifest", "pack.ron")],
+        maps: &[],
         files: &[],
     },
 ];
@@ -137,6 +169,7 @@ fn render_page(root: &Path, page: &Page) -> anyhow::Result<String> {
         .roots
         .iter()
         .map(|(ty, file)| format!("`{file}` ([{ty}](#{}))", ty.to_lowercase()))
+        .chain(page.maps.iter().map(|(file, _, _)| format!("[`{file}`](#{})", file.replace('.', "-"))))
         .chain(page.files.iter().map(|f| format!("`{f}`")))
         .collect();
     out += &format!("Files: {}.\n\n", files.join(", "));
@@ -144,7 +177,7 @@ fn render_page(root: &Path, page: &Page) -> anyhow::Result<String> {
         out += &p;
         out += "\n\n";
     }
-    out += &sources.sections(page.roots, &BTreeMap::new())?;
+    out += &sources.sections_with(page.roots, page.maps, &BTreeMap::new())?;
     Ok(out)
 }
 
@@ -254,6 +287,8 @@ struct Item {
     body: Body,
     /// `Default`: an enum's `#[default]` variant, or a struct literal.
     default: Option<String>,
+    /// `#[serde(from = "W")]`: the text form is `W`'s fields.
+    from: Option<String>,
 }
 
 /// The types and default values of a set of sources.
@@ -264,6 +299,29 @@ struct Sources {
     values: BTreeMap<String, String>,
     /// `impl Default for T` whose value is not a literal.
     opaque_defaults: BTreeSet<String>,
+    /// `impl Default for T`'s value of each field: `(T, field)`.
+    field_defaults: BTreeMap<(String, String), String>,
+    /// `type A = T;`: the target and the doc comment.
+    aliases: BTreeMap<String, (Type, Vec<String>)>,
+}
+
+/// A container's `#[serde(from = "W")]`.
+fn serde_from(attrs: &[Attribute]) -> anyhow::Result<Option<String>> {
+    let mut from = None;
+    for a in attrs.iter().filter(|a| a.path().is_ident("serde")) {
+        a.parse_nested_meta(|meta| {
+            let value = if meta.input.peek(syn::Token![=]) {
+                Some(meta.value()?.parse::<syn::LitStr>()?.value())
+            } else {
+                None
+            };
+            if meta.path.is_ident("from") {
+                from = value;
+            }
+            Ok(())
+        })?;
+    }
+    Ok(from)
 }
 
 /// Whether `attrs` derive serde.
@@ -320,8 +378,11 @@ impl Sources {
                         _ => Body::Custom,
                     };
                     let doc = doc_lines(&s.attrs);
-                    self.items
-                        .insert(name.clone(), Item { name, file: label.into(), doc, body, default: None });
+                    let from = serde_from(&s.attrs)?;
+                    self.items.insert(
+                        name.clone(),
+                        Item { name, file: label.into(), doc, body, default: None, from },
+                    );
                 }
                 syn::Item::Enum(e) if derives_serde(&e.attrs) => {
                     let name = e.ident.to_string();
@@ -349,10 +410,20 @@ impl Sources {
                     let doc = doc_lines(&e.attrs);
                     self.items.insert(
                         name.clone(),
-                        Item { name, file: label.into(), doc, body: Body::Enum(variants), default },
+                        Item {
+                            name,
+                            file: label.into(),
+                            doc,
+                            body: Body::Enum(variants),
+                            default,
+                            from: None,
+                        },
                     );
                 }
                 syn::Item::Impl(i) => self.add_default_impl(i),
+                syn::Item::Type(t) => {
+                    self.aliases.insert(t.ident.to_string(), ((*t.ty).clone(), doc_lines(&t.attrs)));
+                }
                 syn::Item::Fn(f) if f.sig.inputs.is_empty() => {
                     if let [syn::Stmt::Expr(e, None)] = f.block.stmts.as_slice()
                         && let Some(v) = literal(e)
@@ -424,6 +495,28 @@ impl Sources {
         }
         let Type::Path(ty) = &*i.self_ty else { return };
         let Some(name) = ty.path.segments.last().map(|s| s.ident.to_string()) else { return };
+        let generics: BTreeSet<String> = i.generics.type_params().map(|p| p.ident.to_string()).collect();
+        for it in &i.items {
+            if let syn::ImplItem::Fn(f) = it
+                && let [syn::Stmt::Expr(Expr::Struct(st), None)] = f.block.stmts.as_slice()
+            {
+                for fv in &st.fields {
+                    let value = match (&fv.expr, literal(&fv.expr)) {
+                        (_, Some(v)) => format!("`{v}`"),
+                        // `C::RELATIVE_TO_PARENT`: the generic context's.
+                        (Expr::Path(p), None)
+                            if p.path.segments.len() > 1
+                                && generics.contains(&p.path.segments[0].ident.to_string()) =>
+                        {
+                            "by context".into()
+                        }
+                        _ => continue,
+                    };
+                    self.field_defaults
+                        .insert((name.clone(), fv.member.to_token_stream().to_string()), value);
+                }
+            }
+        }
         let value = i.items.iter().find_map(|it| match it {
             syn::ImplItem::Fn(f) => match f.block.stmts.as_slice() {
                 [syn::Stmt::Expr(Expr::Struct(s), None)] if s.rest.is_none() => s
@@ -467,9 +560,21 @@ impl Sources {
 
     /// The sections for `roots` and every type they reach, in order of
     /// first reference; `examples` by type name.
+    #[cfg(test)]
     fn sections(
         &self,
         roots: &[(&str, &str)],
+        examples: &BTreeMap<String, String>,
+    ) -> anyhow::Result<String> {
+        self.sections_with(roots, &[], examples)
+    }
+
+    /// As [`Sources::sections`], after a section for each file whose type is
+    /// no item (`(file, type, doc)`, such as a map).
+    fn sections_with(
+        &self,
+        roots: &[(&str, &str)],
+        maps: &[(&str, &str, &str)],
         examples: &BTreeMap<String, String>,
     ) -> anyhow::Result<String> {
         let files: BTreeMap<&str, &str> = roots.iter().copied().collect();
@@ -477,20 +582,83 @@ impl Sources {
         let mut seen: BTreeSet<String> = queue.iter().cloned().collect();
         let mut out = Vec::new();
         let mut errors = Vec::new();
-        while let Some(name) = queue.pop_front() {
-            let item = self.items.get(&name).with_context(|| format!("no type `{name}` in the sources"))?;
-            let mut refs = Vec::new();
-            out.push(self.section(item, files.get(name.as_str()).copied(), examples, &mut refs, &mut errors));
+        let mut refs = Vec::new();
+        for (file, ty, doc) in maps {
+            let ty: Type = syn::parse_str(ty).with_context(|| format!("{file}: parsing {ty}"))?;
+            out.push(format!(
+                "<a id=\"{}\"></a>\n\n## `{file}`\n\n{doc}\n\nType: {}.\n",
+                file.replace('.', "-"),
+                self.label(&ty, &mut refs)
+            ));
+        }
+        let enqueue = |refs: Vec<String>, queue: &mut VecDeque<String>, seen: &mut BTreeSet<String>| {
             for r in refs {
-                if self.items.contains_key(&r) && seen.insert(r.clone()) {
+                if self.has_section(&r) && seen.insert(r.clone()) {
                     queue.push_back(r);
                 }
             }
+        };
+        enqueue(std::mem::take(&mut refs), &mut queue, &mut seen);
+        while let Some(name) = queue.pop_front() {
+            let mut refs = Vec::new();
+            if let Some((target, doc)) = self.aliases.get(&name) {
+                let mut s = format!("<a id=\"{}\"></a>\n\n## {name}\n\n", name.to_lowercase());
+                for p in paragraphs(doc) {
+                    s += &p;
+                    s += "\n\n";
+                }
+                s += &format!("Type: {}.\n", self.label(target, &mut refs));
+                out.push(s);
+            } else {
+                let item =
+                    self.items.get(&name).with_context(|| format!("no type `{name}` in the sources"))?;
+                out.push(self.section(
+                    item,
+                    files.get(name.as_str()).copied(),
+                    examples,
+                    &mut refs,
+                    &mut errors,
+                ));
+            }
+            enqueue(refs, &mut queue, &mut seen);
         }
         if !errors.is_empty() {
             bail!("{}", errors.join("\n"));
         }
         Ok(out.join("\n"))
+    }
+
+    /// Whether `name` has a section: an item, or an alias of no item.
+    fn has_section(&self, name: &str) -> bool {
+        self.items.contains_key(name) || self.aliases.get(name).is_some_and(|(t, _)| !self.aliases_item(t))
+    }
+
+    /// Whether an alias's target is an item (its section serves the alias).
+    fn aliases_item(&self, target: &Type) -> bool {
+        outer(target).is_some_and(|(n, _)| self.items.contains_key(&n))
+    }
+
+    /// `item`'s fields as its text holds them: with `from = "W"`, `W`'s
+    /// fields, each documented, typed and defaulted by `item`'s field of the
+    /// same name when there is one.
+    fn text_fields(&self, item: &Item, fields: &[Field]) -> Vec<Field> {
+        let Some(Item { body: Body::Struct(wire), .. }) = item.from.as_ref().and_then(|w| self.items.get(w))
+        else {
+            return fields.to_vec();
+        };
+        wire.iter()
+            .map(|w| match fields.iter().find(|f| f.name == w.name) {
+                Some(f) => Field {
+                    doc: if w.doc.is_empty() { f.doc.clone() } else { w.doc.clone() },
+                    default: match self.field_defaults.get(&(item.name.clone(), f.name.clone())) {
+                        Some(v) => Default::Fn(format!("={v}")),
+                        None => w.default.clone(),
+                    },
+                    ..f.clone()
+                },
+                None => w.clone(),
+            })
+            .collect()
     }
 
     fn section(
@@ -514,7 +682,7 @@ impl Sources {
             s += "\n\n";
         }
         match &item.body {
-            Body::Struct(fields) => s += &self.table(item, fields, refs, errors),
+            Body::Struct(fields) => s += &self.table(item, &self.text_fields(item, fields), refs, errors),
             Body::Enum(variants) => {
                 s += "| Variant | Fields | Meaning |\n|---|---|---|\n";
                 let mut subtables = String::new();
@@ -578,6 +746,8 @@ impl Sources {
         match &f.default {
             Default::None if outer(&f.ty).is_some_and(|(n, _)| n == "Option") => "none".into(),
             Default::None => "required".into(),
+            // A value already rendered (`text_fields`).
+            Default::Fn(v) if v.starts_with('=') => v[1..].to_string(),
             Default::Fn(path) => {
                 let name = path.rsplit("::").next().unwrap_or(path);
                 match self.values.get(name) {
@@ -588,9 +758,18 @@ impl Sources {
             Default::Bare => match self.zero(&f.ty) {
                 Some(z) => format!("`{z}`"),
                 None if outer(&f.ty).is_some_and(|(n, _)| n == "Option") => "none".into(),
+                None if self.every_field_defaults(&f.ty) => "each field's default".into(),
                 None => format!("see `{}::default`", outer(&f.ty).map_or_else(|| "?".into(), |(n, _)| n)),
             },
         }
+    }
+
+    /// Whether `ty` is a struct whose every field has a serde default.
+    fn every_field_defaults(&self, ty: &Type) -> bool {
+        matches!(
+            outer(ty).and_then(|(n, _)| self.items.get(&n)),
+            Some(Item { body: Body::Struct(fields), .. }) if fields.iter().all(|f| f.default != Default::None)
+        )
     }
 
     /// The default value of `ty` as written in RON, when known.
@@ -640,6 +819,16 @@ impl Sources {
             }
             "Option" => format!("{} (optional)", arg(0, refs)),
             "Box" => arg(0, refs),
+            "PhantomData" => "—".into(),
+            n if self.aliases.get(n).is_some_and(|(t, _)| self.aliases_item(t)) => {
+                let target = outer(&self.aliases[n].0).map(|(t, _)| t).unwrap_or_default();
+                refs.push(target.clone());
+                format!("[{n}](#{})", target.to_lowercase())
+            }
+            n if self.aliases.contains_key(n) => {
+                refs.push(n.to_string());
+                format!("[{n}](#{})", n.to_lowercase())
+            }
             n => {
                 refs.push(n.to_string());
                 match self.items.get(n) {
@@ -945,5 +1134,109 @@ A colour, `"#rrggbb"`.
 "##
         );
         assert!(md.contains("| `colour` | [colour](#colour) | required | Its colour. |"), "{md}");
+    }
+
+    #[test]
+    fn follows_serde_from() {
+        let s = sources(&[(
+            "src/s.rs",
+            r#"
+pub type ShotSpawn = Spawn<ShotContext>;
+
+/// How children are made.
+///
+/// Context defaults: shot true, event false.
+#[derive(Serialize, Deserialize)]
+#[serde(from = "SpawnWire", into = "SpawnWire")]
+pub struct Spawn<C: SpawnContext> {
+    /// Children per spawn.
+    pub amount: i32,
+    /// Adds the parent's heading.
+    pub relative_to_parent: bool,
+    /// Never written.
+    pub context: PhantomData<C>,
+}
+
+impl<C: SpawnContext> Default for Spawn<C> {
+    fn default() -> Self {
+        Self { amount: 1, relative_to_parent: C::RELATIVE_TO_PARENT, context: PhantomData }
+    }
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields, rename = "Spawn")]
+struct SpawnWire {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    amount: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    relative_to_parent: Option<bool>,
+    /// A shared projectile's id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shared: Option<String>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Weapon {
+    /// What a shot spawns.
+    shot: ShotSpawn,
+}
+"#,
+        )]);
+        let md = s.sections(&[("Weapon", "w.ron")], &BTreeMap::new()).unwrap();
+        assert!(md.contains("| `shot` | [ShotSpawn](#spawn) | required | What a shot spawns. |"), "{md}");
+        let spawn = &md[md.find("<a id=\"spawn\">").unwrap()..];
+        assert_eq!(
+            spawn,
+            r#"<a id="spawn"></a>
+
+## Spawn
+
+How children are made.
+
+Context defaults: shot true, event false.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `amount` | integer | `1` | Children per spawn. |
+| `relative_to_parent` | boolean | by context | Adds the parent's heading. |
+| `shared` | string (optional) | none | A shared projectile's id. |
+"#
+        );
+        assert!(!md.contains("spawnwire"), "the wire type has no section of its own");
+    }
+
+    #[test]
+    fn a_map_file_gets_a_section() {
+        let s = sources(&[(
+            "src/r.rs",
+            r#"
+pub type Preset = BTreeMap<String, State>;
+
+/// A weapon's state.
+#[derive(Serialize, Deserialize)]
+pub enum State {
+    /// On.
+    On,
+}
+"#,
+        )]);
+        let md = s
+            .sections_with(
+                &[],
+                &[("restrictions.ron", "BTreeMap<String, Preset>", "Named presets.")],
+                &BTreeMap::new(),
+            )
+            .unwrap();
+        assert!(
+            md.starts_with(
+                "<a id=\"restrictions-ron\"></a>\n\n## `restrictions.ron`\n\nNamed presets.\n\nType: map of name → [Preset](#preset).\n"
+            ),
+            "{md}"
+        );
+        assert!(
+            md.contains("<a id=\"preset\"></a>\n\n## Preset\n\nType: map of name → [State](#state).\n"),
+            "{md}"
+        );
+        assert!(md.contains("## State (enum)"), "{md}");
     }
 }
