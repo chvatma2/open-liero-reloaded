@@ -220,3 +220,89 @@ fn shortcuts_select_tools() {
     h.run();
     assert_eq!(ids(&h).len(), 5, "Ctrl+Z undoes");
 }
+
+/// Final review: a mouse release during a Space pan still ends the stroke;
+/// hovering afterwards paints nothing.
+#[test]
+fn a_release_while_panning_ends_the_stroke() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    act(&mut h, A::Select(Selection::Element("tunnels".into())));
+    act(&mut h, A::Tool(Tool::Brush));
+    let p = canvas_point(&h, (0.0, 0.0));
+    hover(&mut h, p);
+    press(&mut h, p, true);
+    h.key_down(egui::Key::Space);
+    h.run();
+    press(&mut h, p, false);
+    h.key_up(egui::Key::Space);
+    h.run();
+    assert!(h.state().state.can_undo(), "the stroke was recorded on its release");
+    let after_stroke = h.state().state.document().unwrap().layer_art("tunnels").unwrap().clone();
+    let q = canvas_point(&h, (60.0, 30.0));
+    hover(&mut h, q);
+    assert!(
+        *h.state().state.document().unwrap().layer_art("tunnels").unwrap() == after_stroke,
+        "a hover paints nothing"
+    );
+}
+
+/// Final review: a field being typed into commits before the toolbar's
+/// click that ended it.
+#[test]
+fn a_typed_value_commits_before_the_toolbar_click() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    act(&mut h, A::Select(Selection::Element("gradient".into())));
+    act(&mut h, A::Nudge { dx: 1, dy: 0 });
+    let at = |h: &Harness<'static, App>| {
+        let d = h.state().state.document().unwrap();
+        match &d.items()[d.index_of("gradient").unwrap()].element.kind {
+            ElementKind::Image { at, .. } => *at,
+            _ => panic!(),
+        }
+    };
+    let nudged = at(&h);
+    let before = pixel_size(&h, "gradient");
+    h.get_by_role_and_label(Role::SpinButton, labels::PIXEL_SIZE).focus();
+    h.run();
+    h.get_by_label(labels::PIXEL_SIZE).type_text("4");
+    h.run();
+    h.get_by_label(labels::UNDO).click();
+    h.run();
+    assert_eq!(pixel_size(&h, "gradient"), before, "the typed value is what Undo undid");
+    assert_eq!(at(&h), nudged, "the nudge stays");
+}
+
+/// Final review: a value draft whose field is no longer drawn is dropped,
+/// never committed later to the element showing that field again.
+#[test]
+fn a_hidden_fields_draft_is_dropped() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    act(&mut h, A::Select(Selection::Element("gradient".into())));
+    let x = h.get_by_role_and_label(Role::SpinButton, "X").rect().center();
+    hover(&mut h, x);
+    press(&mut h, x, true);
+    for d in [10.0, 30.0, 60.0] {
+        hover(&mut h, x + egui::vec2(d, 0.0));
+    }
+    act(&mut h, A::Select(Selection::None));
+    press(&mut h, x + egui::vec2(60.0, 0.0), false);
+    let can_undo = h.state().state.can_undo();
+    act(&mut h, A::Select(Selection::Element("gradient".into())));
+    h.run();
+    assert_eq!(h.state().state.can_undo(), can_undo, "nothing committed on reselecting");
+}
+
+/// Final review: shortcuts wait while a widget is dragged.
+#[test]
+fn delete_waits_while_a_field_is_dragged() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    act(&mut h, A::Select(Selection::Element("gradient".into())));
+    let x = h.get_by_role_and_label(Role::SpinButton, "X").rect().center();
+    hover(&mut h, x);
+    press(&mut h, x, true);
+    hover(&mut h, x + egui::vec2(20.0, 0.0));
+    h.key_press(egui::Key::Delete);
+    h.run();
+    press(&mut h, x + egui::vec2(20.0, 0.0), false);
+    assert!(h.state().state.document().unwrap().index_of("gradient").is_some());
+}

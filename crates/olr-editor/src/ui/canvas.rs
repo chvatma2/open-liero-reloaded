@@ -50,6 +50,14 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         )
     });
     let over = pos.is_some_and(|p| rect.contains(p)) && ui.rect_contains_pointer(rect);
+    // A drag ends when the button is up, whatever else happens this frame
+    // (a Space pan, the pointer gone): it never follows a mere hover.
+    if data.canvas_drag && !down {
+        data.canvas_drag = false;
+        if let Some(w) = pos.map(world).or(data.last_world) {
+            out.push(EditorAction::Pointer { kind: PointerKind::Up, world: w, shift });
+        }
+    }
     if space && !ui.ctx().egui_wants_keyboard_input() {
         if response.dragged() && delta != egui::Vec2::ZERO {
             out.push(EditorAction::Pan([delta.x, delta.y]));
@@ -60,9 +68,8 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         if pressed && over && state.dialog().is_none() {
             data.canvas_drag = true;
             send(PointerKind::Down);
-        } else if released && data.canvas_drag {
-            data.canvas_drag = false;
-            send(PointerKind::Up);
+        } else if released {
+            // Ended above.
         } else if (down && data.canvas_drag || over) && data.last_world != Some(w) {
             send(PointerKind::Move);
         }

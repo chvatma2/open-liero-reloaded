@@ -58,6 +58,10 @@ pub struct EditorData {
     resize: Option<[i64; 4]>,
     /// The new area's material for a resize: 0 rock, 1 dirt, 2 background.
     resize_material: usize,
+    /// The open level's directory: drafts belong to it.
+    dir: Option<std::path::PathBuf>,
+    /// The draft keys of the fields drawn this frame.
+    drawn: std::collections::BTreeSet<String>,
 }
 
 impl EditorData {
@@ -67,33 +71,53 @@ impl EditorData {
     }
 }
 
-/// Draws the editor into `ui` and returns the actions of this frame.
+/// Draws the editor into `ui` and returns the actions of this frame. The
+/// properties' commits come first: a field's last value is in before a
+/// toolbar or list click that ended its edit (Undo, Save) acts.
 pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<EditorAction> {
-    let mut out = Vec::new();
-    if state.document().is_none() {
+    let Some(doc) = state.document() else {
         ui.centered_and_justified(|ui| ui.label("No level is open."));
-        return out;
+        return Vec::new();
+    };
+    // Drafts belong to the open level.
+    if data.dir.as_deref() != Some(doc.dir()) {
+        let canvas = (data.canvas_rect, data.canvas_size);
+        *data = EditorData { dir: Some(doc.dir().to_path_buf()), ..EditorData::default() };
+        (data.canvas_rect, data.canvas_size) = canvas;
     }
-    shortcuts(ui, state, &mut out);
-    egui::Panel::top("olr-editor-toolbar").show(ui, |ui| toolbar::show(ui, state, data, &mut out));
+    data.drawn.clear();
+    let (mut toolbar, mut list, mut fields, mut canvas, mut dialogs) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    egui::Panel::top("olr-editor-toolbar").show(ui, |ui| toolbar::show(ui, state, data, &mut toolbar));
     egui::Panel::bottom("olr-editor-status").show(ui, |ui| status::show(ui, state));
     egui::Panel::left("olr-editor-elements")
         .default_size(220.0)
-        .show(ui, |ui| elements::show(ui, state, &mut out));
+        .show(ui, |ui| elements::show(ui, state, &mut list));
     egui::Panel::right("olr-editor-properties").default_size(260.0).show(ui, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| match state.selection() {
-            Selection::None => level::show(ui, state, data, &mut out),
-            _ => properties::show(ui, state, data, &mut out),
+            Selection::None => level::show(ui, state, data, &mut fields),
+            _ => properties::show(ui, state, data, &mut fields),
         })
     });
-    egui::CentralPanel::default().show(ui, |ui| canvas::show(ui, state, data, &mut out));
-    dialogs::show(ui.ctx(), state, &mut out);
+    egui::CentralPanel::default().show(ui, |ui| canvas::show(ui, state, data, &mut canvas));
+    dialogs::show(ui.ctx(), state, &mut dialogs);
+    // A draft whose field was not drawn this frame is dropped, never
+    // committed later to whatever shows that field again.
+    let drawn = std::mem::take(&mut data.drawn);
+    data.drafts.retain(|k, _| drawn.contains(k));
+    data.texts.retain(|k, _| drawn.contains(k));
+    data.drawn = drawn;
+    let mut out = fields;
+    shortcuts(ui, state, &mut out);
+    out.extend(list.into_iter().chain(canvas).chain(toolbar).chain(dialogs));
     out
 }
 
 /// The shortcuts, when no text field has the keyboard and no dialog is open.
 fn shortcuts(ui: &Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
-    if state.dialog().is_some() || ui.ctx().egui_wants_keyboard_input() {
+    // Not while typing, nor while a widget is dragged (its draft would
+    // outlive the change a shortcut makes).
+    if state.dialog().is_some() || ui.ctx().egui_wants_keyboard_input() || ui.ctx().dragged_id().is_some() {
         return;
     }
     ui.input_mut(|i| {
@@ -134,6 +158,7 @@ pub(crate) fn number(
     current: i64,
     range: std::ops::RangeInclusive<i64>,
 ) -> Option<i64> {
+    data.drawn.insert(key.into());
     ui.horizontal(|ui| {
         let l = ui.label(label);
         let mut v = data.drafts.get(key).copied().unwrap_or(current as f64);
@@ -167,6 +192,7 @@ pub(crate) fn text(
     current: &str,
     multiline: bool,
 ) -> Option<String> {
+    data.drawn.insert(key.into());
     ui.horizontal(|ui| {
         let l = ui.label(label);
         let mut v = data.texts.get(key).cloned().unwrap_or_else(|| current.to_string());

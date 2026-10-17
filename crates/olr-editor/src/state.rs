@@ -206,6 +206,10 @@ pub struct EditorState {
     pub(crate) grid: bool,
     /// The pointer drag in progress.
     pub(crate) drag: Option<Drag>,
+    /// Changes committed so far (and undone or redone).
+    pub(crate) changes: u64,
+    /// `changes` when the save in progress was sent.
+    pub(crate) saving: u64,
 }
 
 impl EditorState {
@@ -231,6 +235,8 @@ impl EditorState {
             material_view: false,
             grid: false,
             drag: None,
+            changes: 0,
+            saving: 0,
         }
     }
 
@@ -508,6 +514,7 @@ impl EditorState {
     /// After a committed change: dirty, the diagnostics, an upload.
     pub(crate) fn committed(&mut self, dirty: Rect) -> Vec<EditorCommand> {
         self.dirty = true;
+        self.changes += 1;
         self.status.message = None;
         self.refresh_problems();
         vec![EditorCommand::Upload(dirty)]
@@ -565,6 +572,7 @@ impl EditorState {
     fn save(&mut self, then: Option<Pending>) -> Vec<EditorCommand> {
         let Some(doc) = &self.doc else { return Vec::new() };
         self.after_save = then;
+        self.saving = self.changes;
         vec![EditorCommand::Save { dir: doc.dir().to_path_buf(), pack: Box::new(doc.to_pack()) }]
     }
 
@@ -572,7 +580,8 @@ impl EditorState {
         let then = self.after_save.take();
         match result {
             Ok(warnings) => {
-                self.dirty = false;
+                // A change made after the save was sent is not in the saved pack.
+                self.dirty = self.changes != self.saving;
                 self.status.message = Some(if warnings.is_empty() {
                     "saved".into()
                 } else {

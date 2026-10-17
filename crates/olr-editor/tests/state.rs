@@ -125,3 +125,17 @@ fn new_creates_and_opens_a_level() {
     assert_eq!(s.document().unwrap().level().size, (64, 48));
     assert!(!s.dirty());
 }
+
+/// Final review: an edit made after a Save was sent stays unsaved when the
+/// save's answer arrives.
+#[test]
+fn an_edit_during_a_save_stays_unsaved() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::AddLayer);
+    let cmds = s.update(A::Save);
+    assert!(matches!(cmds.as_slice(), [C::Save { .. }]));
+    run(&mut s, A::AddLayer);
+    s.update(A::Saved(Ok(Vec::new())));
+    assert!(s.dirty(), "the second layer was not in the saved pack");
+}
