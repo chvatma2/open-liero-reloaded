@@ -151,7 +151,12 @@ proptest! {
 fn pixels(w: u32, h: u32) -> Vec<Edit> {
     let mut after = RgbaImage::new(w, h);
     after.set(0, 0, Rgba::rgb(1, 2, 3));
-    vec![Edit::Pixels { id: "x".into(), rect: Rect { x: 0, y: 0, w, h }, before: RgbaImage::new(w, h), after }]
+    vec![Edit::Pixels {
+        id: "x".into(),
+        rect: Rect { x: 0, y: 0, w, h },
+        before: RgbaImage::new(w, h),
+        after,
+    }]
 }
 
 #[test]
