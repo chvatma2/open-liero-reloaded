@@ -27,7 +27,11 @@ and the colour image that follows it (`ColorMap`).
   (gibs, OLX's `DrawImageStretch2` clipping quirk) change only colour.
   `take_dirty()` drains art-px rectangles covering every change (at most
   `MAX_DIRTY`, merged beyond). `rebuild_area(area, &material)` is the only
-  fallback for edits a tick dropped (`lost_area`). The image is always
+  fallback for edits a tick dropped (`lost_area`). `replace_rect(r, front,
+  back, material)` (the level editor's canvas, plan 14c) copies art
+  rectangle `r` of new art (front into the composite too) and the world
+  cells under it, then marks it dirty; images or a material of another size
+  change nothing, `r` is clipped. The image is always
   opaque; odd art sizes are cropped or padded, never a panic.
 - **Journal** (`journal.rs`, networking spec §3.3): off by default; `start_journal` records each mutator's clipped pre-image and keeps the order-independent cell hash. Every new write to `cells` must go through `set_cell` after `record`, or rollback breaks.
 - **Restored areas**: `undo_to` reports each undone edit's rectangle and a `load_cells` the whole map; `take_restored_areas()` drains them (`Area`, world px, at most `MAX_RESTORED`, merged into the bounding box beyond), so the colour map, which only replays the ticks' edits, can `rebuild_area` what an undo or a load changed.

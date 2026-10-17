@@ -29,10 +29,21 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   puts the game in the desktop's menu. It replaces the Linux zip; Windows
   keeps its zip.
 - The level editor's core (`olr-editor`): elements, painting, spawns,
-  undo and redo, tested headless; the game hosts it in a later step.
-  Imported JPEG photos are turned by their EXIF orientation.
+  undo and redo, tested headless. Imported JPEG photos are turned by their
+  EXIF orientation.
+- The level editor in the game: Editor in the main menu (and `olr --edit
+  <dir>`), painting, images, spawns, Play and recovery. Levels you make
+  live in the data directory's `packs/`; a bundled level is edited as a
+  copy. Play tries the level at once (alone, or against up to 8 bots);
+  Esc or Stop returns to the editor as it was. Unsaved changes are kept
+  in a recovery copy every 2 minutes and offered after a crash.
 
 ### Changed
+
+- The HUD no longer says "Jump to respawn" while you are dead: the worm
+  respawns by itself.
+- The game's window shows only once its first frame is drawn (no white
+  rectangle while it starts).
 
 - Skins are no longer downloaded. A player whose skin you don't have, or
   whose skin differs from yours, appears with the default skin. The

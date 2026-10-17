@@ -21,7 +21,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
 
 - **Layer 6.** Uses `olr-ui`, `olr-content`, `olr-present`, `olr-scene`, `olr-fx`, `olr-render`,
   `olr-audio`, `olr-input`, `olr-sim`, `olr-modes`, `olr-bots`, `olr-replay`,
-  `olr-terrain`, `olr-pack`, `olr-online`, `olr-netcode`, `olr-proto`,
+  `olr-terrain`, `olr-pack`, `olr-editor`, `olr-edit`, `olr-format`,
+  `olr-vfs` (the level editor), `olr-online`, `olr-netcode`, `olr-proto`,
   `olr-lobby` (identities, host settings), `olr-net` (endpoint settings,
   LAN announcements, `IceConfig`), `olr-discovery` (the hosted lobby's summary,
   `GameSummary::of_lobby`, and `hosting`, shared with olr-server; the
@@ -598,6 +599,47 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `unmapping_pending`), `Shell::take_unmapping` hands them over as an
   `Unmapping`, and `main` waits on it (`UNMAP_WAIT`, 1 s in all) after
   `App` (the window) is dropped, warning when the router did not confirm.
+- **Level editor** (`editor/`, `shell/editing.rs`, plan 14c; decisions in
+  `docs/porting/STATUS.md`, "Level editor decisions (plan 14c)"):
+  `EditorHost` holds `olr-editor`'s state and carries out its commands:
+  the Editor screen's `AppCommand`s (`open_from_menu`: Edit a pack of the
+  data directory's `packs/` (`level_dirs`, by manifest id), Copy a level
+  (`new_pack` `Template::From`), New level, Recover; ids `pack_id`
+  slugs unique against the catalog and `packs/`), `open_dir` (`olr --edit`),
+  `act` (a frame's actions, the answers fed back in order: `Open`,
+  `Create`, `Save` (a missing directory made first), `List`
+  (`files::list`, at most `MAX_ENTRIES`), `ReadImage` (`files::read_image`:
+  metadata above `MAX_IMPORT_BYTES`, 64 MiB, or no regular file refused
+  before opening, a non-PNG/JPEG signature before reading the rest),
+  `SaveSettings` (`EDITOR_FILE` through `Store::save_file`), `RecoveryDone`)
+  and `tick(now)` (the recovery copy, `recovery.rs`: `recovery/<id>/`, the
+  pack's files and `recovery.ron`, `replace_dir`-atomic, when unsaved
+  changes have waited `RECOVERY_INTERVAL`, 120 s, since the first tick that
+  saw them; each session's id unique against `recovery/`, so a crash's copy
+  survives; `list_recoveries` (damaged ones listed), `discard_recovery`
+  (ids are plain names)). Bundled roots (every root but `packs/`) and
+  `recovery/` are refused for Open, Create and Save (`BUNDLED`,
+  `RECOVERY_IN_PLACE`). `HostOut::{Upload, FullUpload, Play, Closed,
+  Message}` is what the app does. The shell owns the host (`Shell::editor`):
+  while it is open `App::frame` draws `olr_editor::ui::show` instead of the
+  menus, `Shell::editor_frame` runs it (Play becomes `Launch::Edited`:
+  `setup::load_edited`, no replay, `Assets::edited`; Closed brings the
+  Editor screen back with the content listed again), and the app's
+  `editor::canvas::Canvas` (the bake's `ColorMap`, or the material view's
+  at art scale 1) gets its uploads (`replace_rect`, then `update_terrain`;
+  whole after a new document, a resize, a material-view toggle or a Play,
+  whose session had the renderer's terrain) and draws a terrain-only list
+  into its part of the window (`Gpu::present`'s world is `(list, area)`;
+  games pass `playfield(size)`), with SharpBilinear for that frame. During
+  an edited Play the HUD draws with a Stop button (`overlay::stop_button`)
+  and Esc or Stop ends it (`Shell::stop_edited`). Closing the window asks
+  the editor first (`editor::on_close_request`, `CloseDecision::Wait`: the
+  window closes when the editor does; a Cancel lets it stay).
+  `olr --edit <dir>` (`main.rs`'s `edit_target`, R6) refuses `--content`'s
+  directories with status 2. Tests: `tests/editor_host.rs`,
+  `editor::canvas`'s unit tests, `tests/canvas_gpu.rs` (`OLR_GPU_TESTS`:
+  a rectangle upload draws as a full one), `main.rs`'s argument tests,
+  `fixtures/autoplay/editor.ron` in `cargo xtask e2e`.
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
   restrictions) feeds `olr_content::build_match`, the same assembly as
@@ -631,7 +673,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `olr_ui::screens::results::panel` with F5 rematch, Esc quit). `Session::tally` counts kills by bots,
   the player and suicides (Kill events) over the run's match time.
 - **Window** (`window.rs`, the user's ruling after the plan 6 playtest):
-  not resizable, no maximise button; `--fullscreen` is borderless. On
+  not resizable, no maximise button; `--fullscreen` is borderless. It opens
+  hidden and shows with its first presented frame (`app::reveal_now`, at
+  the latest after `REVEAL_AFTER_FRAMES`; the user's report of a white
+  rectangle while the GPU was set up); while hidden its frames are drawn
+  from `about_to_wait` (Windows sends no redraw to an invisible window).
+  Wayland has no hidden windows. On
   Linux its Wayland app ID and X11 class are `APP_ID`, the Flatpak's
   application ID (`tools/flatpak/`). Size
   and mode changes come only from the game (`size`, `fullscreen` script
@@ -722,9 +769,11 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `Key(name)` (egui and `App::key`, as the window delivers a key),
   `Type(text)` (egui's text event to the focused field: click it first),
   `Press`/`Release(action)` (the input path), `WaitFor(screen)`,
-  `Wait(frames)`, `Screenshot(name)` (`<shot dir>/<name>.png`, checked not
+  `Wait(frames)`, `Drag(label, from, to)` and `ClickAt(label, at)`
+(fractions of the widget's rect, written `(0.3, 0.5)`; a drag moves in
+`DRAG_STEPS`, 8, one a frame: the editor's canvas), `Screenshot(name)` (`<shot dir>/<name>.png`, checked not
   blank: `sanity`), `Assert(Screen | Label | WindowSize | Speed | Playing
-  | TicksAtLeast | Lobby(members: n))` (the online lobby's members), `Quit`, `WaitForExit` (the menus' Quit). A step that
+  | TicksAtLeast | Lobby(members: n) | LabelContains(text))` (the online lobby's members), `Quit`, `WaitForExit` (the menus' Quit). A step that
   waits fails the run after `within` frames (`DEFAULT_WITHIN`); the game
   then exits with the error. Each step is a JSON line in `<shot
   dir>/autoplay.jsonl`, the last `pass` or `fail`. `--fake-clock` (only

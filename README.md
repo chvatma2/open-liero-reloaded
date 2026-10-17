@@ -103,6 +103,7 @@ Useful flags (`olr --help` lists them all):
   and log can move into the space beside the picture (Options → Video →
   HUD layout).
 - **Sandbox:** you and idle targets on a level, to try weapons.
+- **Editor:** make and edit levels (below, "Editing levels").
 - **Profiles:** your name, colour and skin (all skins, searchable,
   with an animated preview); the one marked plays.
 - **Options:** Video (display: a 1280 × 720, 1600 × 900 or 1920 × 1080
@@ -152,12 +153,44 @@ The data directory is `~/.local/share/open-liero-reloaded/` on Linux (another wi
 - `profiles.ron`: the profiles;
 - `replays/`: `match-NNNNNN.olrp` (every menu Deathmatch, the last 20 kept)
   and `replay-NNN.olrp` (saved from the results, never removed);
-- `packs/`: user packs (for example `olr-cli import`'s output), layered over `--content`.
+- `packs/`: user packs (for example `olr-cli import`'s output, and the
+  levels you make in the editor), layered over `--content`;
+- `editor.ron`: the editor's Play mod and bots and the file browser's last folder;
+- `recovery/`: the editor's recovery copies of unsaved levels.
 
 A broken settings or profiles file is set aside as `<name>.bak` and the
 game starts with defaults (and says so in its log). One from a newer
 version of the game is left where it is, untouched: the game uses
 defaults, saves nothing to it that session, and says so on the main menu.
+
+### Editing levels
+
+**Editor** in the main menu lists every level: **Edit** for the levels in
+the data directory's `packs/` (the ones you made), **Edit a copy** for the
+bundled ones (they are never changed in place: the copy goes to `packs/`),
+and **New level** (a name, a size up to 4096 × 4096, a theme).
+`olr --edit <pack dir>` opens a pack directly (bundled content is refused:
+copy it from the menu).
+
+- **Elements** (left): drawn layers (**Add layer**), imported pictures
+  (**Import image…**: PNG or JPEG, at most 64 MiB, through the editor's own
+  file browser; type any path, a Windows drive or a WSL path too), and the
+  level's spawns under Objects. Drag a name to reorder; the eye and the
+  lock hide and protect.
+- **Tools** (top): Select (V), Brush (B), Eraser (E), Rectangle (R), Ellipse
+  (O), Line (L), Spawn (P), Eyedropper (I); paint a colour or the theme's
+  front or back tile. Ctrl+Z / Ctrl+Y undo and redo, Ctrl+S saves, Delete
+  removes, Space-drag pans, the wheel zooms. **Material view** shows rock,
+  dirt and background.
+- **Play** tries the level as it is: alone (0 bots) or a Deathmatch
+  against up to 8 bots, the mod chosen beside it. Your worm starts at the
+  first spawn (or a free spot). **Esc** or **Stop** returns to the editor
+  exactly as it was; the match's damage is thrown away.
+- **Saving and safety:** Save writes the whole pack at once and checks it.
+  Open, New, Close and closing the window ask first when there are
+  unsaved changes. Every 2 minutes unsaved changes are copied to the data
+  directory's `recovery/`; after a crash the Editor screen offers
+  **Recover** (or **Discard**).
 
 ### Known notes for WSL
 

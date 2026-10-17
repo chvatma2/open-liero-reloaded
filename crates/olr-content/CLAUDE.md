@@ -24,6 +24,12 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   caller logs each once. A missing pack or unreadable definition is an `Err`.
   The core pack is read tolerantly (`olr_pack::read_core_tolerant`): an
   undecodable sprite or a missing sound file costs only that asset.
+- **Edited levels** (plan 14c): `LoadedLevel::from_source(&LevelSource)`
+  is `load_level` on the editor's level (compiled, the same art bound);
+  `first_spawn()` is the first spawn point when it lies inside the level and
+  not in rock, else `None`; `build_match_spawning(assets, options,
+  human_spawn)` is `build_match` with the first human worm's
+  `WormSetup::spawn` set (`build_match` passes `None`: unchanged).
 - **Hostile levels:** `load_level` refuses an art scale above
   `MAX_ART_SCALE` (8) or a colour image above `MAX_COLOR_MAP_BYTES`
   (256 MiB), so a pack cannot make the colour map allocate gigabytes.

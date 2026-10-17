@@ -78,7 +78,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Level, theme, skin and core-pack authoring formats (spec 2026-10-16 formats §§3-6): authoring types, canonical files, compile to the runtime structs, lift from them | — | `olr-format::{levels, themes, skins, core_pack, image_io}` | done (plan 13b); the packs' format (plan 13c) | `bundled_levels_survive_lift_write_read_and_compile`, `the_bundled_theme_survives_lift_write_read_and_compile`, `the_bundled_core_pack_survives_lift_write_read_and_compile`, `every_bundled_skin_draws_the_same` |
 | Pack tooling (spec 2026-10-16 formats §6): `olr-cli pack check\|fmt\|new`, the level operations and preview, the schema docs | — | `olr-edit`, `olr-cli` (`pack_cmd.rs`, `level_cmd.rs`), `xtask format-docs` | done (plan 13d) | `load_then_files_reproduces_every_bundled_pack`, `bundled_packs_are_canonical`, `the_background_invariant_holds_at_every_art_scale`, `every_guide_example_parses_and_is_canonical`, `format-docs` check step |
 | Level composition (spec 2026-10-17 editor §1-3, §7): `editor/composition.ron` of image, drawn and raster elements, baked into `material.png`, `front.png`, `back.png` and `thumb.png`; JPEG originals; `olr-cli level element …`, `level bake`, stale bakes in `pack check` | — | `olr-format` (`levels::composition`, `image_io::decode_image_within`), `olr-pack` (`is_authoring`), `olr-edit` (`pixelate`, `compose`, `element`), `olr-cli` (`element_cmd.rs`), `olr-detcheck --bake` | done (plan 14a) | `every_bundled_level_round_trips_through_a_raster_base`, `region_bakes_equal_the_full_bake_and_keep_the_invariant`, `editor_files_are_not_content`, `the_fixture_is_baked`, `cargo xtask determinism`'s bake digest |
-| Level editor core (spec 2026-10-17 editor §4-§5, §8): the document (elements decoded, an image cache, one bake), reversible edits and a 256 MiB history, the tools (select, brush, eraser, rectangle, ellipse, line, spawn, eyedropper), the panels and shortcuts, tested headless; the game hosts it in plan 14c | — | `olr-format` (`image_io::jpeg_orientation`, `levels::check_elements`), `olr-edit` (`level::{draw_art, erase_art, rescale_art, Shape::{Ellipse, Line}}`, `compose::{Decoded, ImageCache, bake_elements}`), `olr-editor` | done (plan 14b) | `undo_and_redo_restore_everything_exactly`, `every_operation_undoes_to_the_same_files`, `opening_and_saving_changes_nothing`, `art_painting_is_clipped_and_total`, `a_brush_stroke_is_one_step`, `locked_elements_are_not_changed_by_the_canvas`, `history_drops_the_oldest_steps_over_the_cap`, the `flows` tests |
+| Level editor core (spec 2026-10-17 editor §4-§5, §8): the document (elements decoded, an image cache, one bake), reversible edits and a 256 MiB history, the tools (select, brush, eraser, rectangle, ellipse, line, spawn, eyedropper), the panels and shortcuts, tested headless; hosted in the game (the Editor screen, the canvas drawn by `olr-render`, Play, the file browser, recovery, `olr --edit`) | — | `olr-format` (`image_io::jpeg_orientation`, `levels::check_elements`), `olr-edit` (`level::{draw_art, erase_art, rescale_art, Shape::{Ellipse, Line}}`, `compose::{Decoded, ImageCache, bake_elements}`, `new::pack_id`), `olr-editor` (`browser`), `olr-terrain` (`ColorMap::replace_rect`), `olr-content` (`LoadedLevel::{from_source, first_spawn}`, `build_match_spawning`), `olr-ui` (`screens::editor`), `olr-game` (`editor`) | done (plans 14b-14c) | `undo_and_redo_restore_everything_exactly`, `every_operation_undoes_to_the_same_files`, `opening_and_saving_changes_nothing`, `art_painting_is_clipped_and_total`, `a_brush_stroke_is_one_step`, `locked_elements_are_not_changed_by_the_canvas`, `history_drops_the_oldest_steps_over_the_cap`, the `flows` tests |
 
 ## Deliberate deviations
 
@@ -3265,6 +3265,61 @@ and its batch reviews. Tools, not OLX behaviour.
   Both are integer, in doubled coordinates (a line's distance compared in
   256 bits), clipped to the level before iterating. A brush stroke is dabs
   joined by lines of the brush's width.
+
+## Level editor decisions (plan 14c)
+
+Decided in `docs/superpowers/plans/2026-10-17-plan-14c-editor-in-game.md`
+and its batch reviews. Tools, not OLX behaviour.
+
+- **R1 - the canvas is `olr-render`'s**, not `olr-present`'s (`Presentation`
+  needs a `World`): an `olr_terrain::ColorMap` of the bake drawn as a
+  terrain-only `DrawList` with `Renderer::render_in` into the canvas's part
+  of the window, under the egui panels and overlays; each edit replaces its
+  dirty rectangle (`ColorMap::replace_rect`, `Renderer::update_terrain`).
+  The canvas draws with SharpBilinear whatever the options' filter (whole
+  multiples would letterbox off the overlays), and its view is clipped to
+  what one device texture holds (`Canvas::max_view_for`).
+- **R2 - the material view** is a second colour map of `MATERIAL_PALETTE` at
+  art scale 1, built when it is turned on; toggling, a resize or an
+  art-scale change rebuilds the map whole.
+- **R3 - Play**: 0 bots is the sandbox (the player alone), 1-8 a Deathmatch
+  against the Local Play screen's saved bot level, personality and loadout,
+  under OLX's default rules and `DEFAULT_PRESET`. Neither records a replay;
+  there is no weapon selection (random weapons). Esc ends the play at once
+  (no pause menu), and so does Stop over the playfield.
+- **R4 - the first spawn**: the human worm's `WormSetup::spawn` is the
+  level's first spawn when it lies inside the level and not in rock, else a
+  free spot (`LoadedLevel::first_spawn`; `build_match_spawning`, with
+  `build_match` unchanged). Later respawns are the simulation's.
+- **R5 - where levels are edited**: the data directory's `packs/`. The
+  Editor screen offers Edit for its level packs and Edit a copy for the
+  others (`olr_edit::new::new_pack`, `Template::From`); new ids are
+  `pack_id` slugs of the name, unique against the catalog and `packs/`.
+  The host also refuses to open, create or save inside any bundled root
+  (the browser could reach one).
+- **R6 - `olr --edit <dir>`** refuses a directory inside `--content`
+  ("bundled content is not edited in place: use the Editor menu's Edit a
+  copy", exit status 2) before any window opens.
+- **R7 - recovery**: `recovery/<id>/` in the data directory holds the pack's
+  files and `recovery.ron` (origin, level name), written atomically
+  (`replace_dir`) every 2 minutes while there are unsaved changes, and
+  removed on a save, on Close and when the document is left. Each editing
+  session writes a copy of its own id (`pack_id` against `recovery/`), so a
+  crash's copy survives opening its pack again. Recovering opens the
+  original directory when it is there, else a new `packs/<id>` (Save makes
+  it); a damaged copy is listed and can be discarded; a recovery's own
+  folder is never opened as a pack.
+- **R8 - the editor's settings** (Play's mod and bots, the browser's last
+  folder) are `editor.ron`, written through `Store::save_file` (versioned
+  and atomic like the settings) and read with `Store::load_file`.
+- **R9 - the file browser lives in `olr-editor`**, as state and a modal
+  window; the host lists directories and reads files (`EditorCommand::List`,
+  `ReadImage`: an import is refused by its metadata above 64 MiB and by its
+  first bytes when it is not a PNG or JPEG, before it is read whole). A
+  click selects; a double click or Choose picks (a folder is entered).
+- **Closing the window** with the editor open sends its Close first: unsaved
+  changes ask (Save, Don't save, Cancel), and the window closes once the
+  editor does.
 
 ## Kept OLX quirks
 

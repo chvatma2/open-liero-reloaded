@@ -142,6 +142,19 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `origin_text`). Esc is `Back` and
   F5 `Restart` on every screen, a held key's repeats ignored
   (`pressed_once`); in the options Esc first closes an open dialog.
+- **Editor screen** (`screens/editor.rs`, plan 14c): Main's **Editor**
+  (between Sandbox and Profiles; `Screen::Editor`, in `MENUS`): the
+  recoveries first ("Recover <name>" and Discard; a damaged one only
+  Discard), New level (a form: Name, Width and Height 1..=4096, default
+  504 × 350, Theme from `Catalog::sources`' themes, `olx-theme-dirt` by
+  default; Create disabled until valid), and every catalog level with Edit
+  (`MenuData::editable`, the data directory's packs) or Edit a copy (a
+  form: Name, "<Name> copy", Copy). They emit `UiAction::{EditLevel,
+  CopyLevel, NewLevel, Recover, DiscardRecovery}`, which `update` turns
+  into the `AppCommand`s of the same names only on the Editor screen with
+  nothing playing. The app fills `MenuData::set_editor_packs(editable,
+  recoveries)` and `editor_message` (a failure, in red); it opens the
+  editor itself (this crate has no `olr-editor`). Tests: `tests/editor.rs`.
 - **Online screens** (`online.rs`, `screens/{multiplayer,host,lobby}.rs`,
   plan 10 task 11): plain views, no networking (this crate stays free of
   `olr-net`/`olr-lobby`/`olr-discovery`; `olr-game` converts): `LobbyView`/`MemberView`
@@ -338,7 +351,10 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `ProjectDirs::cache_dir()/downloads`, a `Store::open(dir)`'s
   `<dir>/cache/downloads`, none in memory: plan 11's download cache),
   `Store::open(dir)`, `load_*` (`Loaded { value, warnings }`) and
-  `save_*`. Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
+  `save_*`; `load_file::<T>(name)` / `save_file(name, &value)` for any other
+  RON file of the data directory (the editor's `editor.ron`: `(version: 1,
+  value: …)`, the same atomic write, backups and newer-file rules; `None`
+  when absent); `recovery_dir()` (`recovery/`, the editor's copies). Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
   struct `#[serde(default)]`, atomic writes (temporary file, sync,
   rename). An undecodable file gives defaults and a warning and is moved
   to `<name>.bak`, `<name>.1.bak`, ... (at most `MAX_BACKUPS`; then the
