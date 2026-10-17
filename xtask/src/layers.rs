@@ -11,6 +11,9 @@ pub struct Rules {
     pub same_layer: Vec<(String, String)>,
     pub no_std: Vec<String>,
     pub wasm: Vec<String>,
+    /// `(crate, dependency)` pairs the first must never reach, directly or
+    /// transitively through normal dependencies.
+    pub forbidden: Vec<(String, String)>,
 }
 
 pub fn load_rules() -> anyhow::Result<Rules> {
@@ -75,7 +78,36 @@ pub fn violations(rules: &Rules, krates: &[Krate]) -> Vec<String> {
             ));
         }
     }
+    for (from, to) in &rules.forbidden {
+        if let Some(path) = dependency_path(krates, from, to) {
+            out.push(format!("{from} must not depend on {to}, even transitively: {}", path.join(" -> ")));
+        }
+    }
     out
+}
+
+/// The chain of workspace crates from `from` to `to` through normal
+/// dependencies, if there is one (breadth first, so the shortest).
+fn dependency_path(krates: &[Krate], from: &str, to: &str) -> Option<Vec<String>> {
+    let deps = |n: &str| krates.iter().find(|k| k.name == n).map(|k| k.deps.as_slice()).unwrap_or(&[]);
+    let mut seen: BTreeSet<&str> = BTreeSet::from([from]);
+    let mut queue = std::collections::VecDeque::from([vec![from.to_string()]]);
+    while let Some(path) = queue.pop_front() {
+        let last = path.last().expect("a path is never empty");
+        for d in deps(last) {
+            if d == to {
+                let mut found = path.clone();
+                found.push(d.clone());
+                return Some(found);
+            }
+            if seen.insert(d.as_str()) {
+                let mut next = path.clone();
+                next.push(d.clone());
+                queue.push_back(next);
+            }
+        }
+    }
+    None
 }
 
 pub fn workspace_krates() -> anyhow::Result<Vec<Krate>> {
@@ -142,6 +174,7 @@ mod tests {
             same_layer: vec![("b".into(), "c".into())],
             no_std: vec!["a".into()],
             wasm: vec![],
+            forbidden: vec![],
         }
     }
 
@@ -171,6 +204,15 @@ mod tests {
                 "zzz: not listed in xtask/layers.ron",
             ]
         );
+    }
+
+    #[test]
+    fn forbidden_dependencies_are_refused_transitively() {
+        // d -> b -> a: `d` reaches the forbidden `a` only through `b`.
+        let rules = Rules { forbidden: vec![("d".into(), "a".into())], ..rules() };
+        let v = violations(&rules, &[k("a", &[]), k("b", &["a"]), k("d", &["b"])]);
+        assert_eq!(v, vec!["d must not depend on a, even transitively: d -> b -> a"]);
+        assert!(violations(&rules, &[k("a", &[]), k("b", &[]), k("d", &["b"])]).is_empty());
     }
 
     #[test]
