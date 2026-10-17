@@ -30,6 +30,7 @@ pub fn canonical_text(path: &str, text: &str) -> Result<String, FormatError> {
         "skin.ron" => again::<crate::skins::SkinFile>(path, text),
         "theme.ron" => again::<crate::themes::ThemeFile>(path, text),
         "core.ron" => again::<crate::core_pack::CoreFile>(path, text),
+        crate::levels::COMPOSITION_FILE => again::<crate::levels::Composition>(path, text),
         _ => Err(FormatError::invalid(path, "", "not an authoring file this format reads")),
     }
 }
@@ -50,6 +51,14 @@ mod tests {
         let canonical = canonical_text("weapons/g.ron", weapon).unwrap();
         assert_eq!(canonical_text("weapons/g.ron", &canonical).unwrap(), canonical);
         assert!(canonical.contains("    fire: Special(\n"), "{canonical}");
+    }
+
+    #[test]
+    fn a_composition_becomes_canonical() {
+        assert_eq!(
+            canonical_text("editor/composition.ron", "(elements:[])").unwrap(),
+            "(\n    elements: [],\n)\n"
+        );
     }
 
     #[test]

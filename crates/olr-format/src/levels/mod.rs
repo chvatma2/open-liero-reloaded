@@ -1,6 +1,8 @@
 //! The level authoring format: `level.ron`, `material.png`, `front.png`,
 //! `back.png` and an optional `thumb.png` (spec §6).
 
+mod composition;
+pub use composition::*;
 mod files;
 pub(crate) use files::LevelFile;
 mod thumb;

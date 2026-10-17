@@ -145,7 +145,8 @@ pub fn image_size(bytes: &[u8]) -> Option<(u32, u32)> {
             // Markers without a segment.
             0x01 | 0xD0..=0xD7 => i += 2,
             0xC0..=0xC3 | 0xC5..=0xC7 | 0xC9..=0xCB | 0xCD..=0xCF => {
-                let be = |at: usize| Some(u32::from(u16::from_be_bytes([*bytes.get(at)?, *bytes.get(at + 1)?])));
+                let be =
+                    |at: usize| Some(u32::from(u16::from_be_bytes([*bytes.get(at)?, *bytes.get(at + 1)?])));
                 return Some((be(i + 7)?, be(i + 5)?));
             }
             // The end of the image or the scan before any frame header.
@@ -177,7 +178,8 @@ pub fn decode_image_within(bytes: &[u8], bound: ImageBound) -> Result<RgbaImage,
         .jpeg_set_out_colorspace(zune_core::colorspace::ColorSpace::RGB)
         .set_max_width(w as usize)
         .set_max_height(h as usize);
-    let mut dec = zune_jpeg::JpegDecoder::new_with_options(zune_core::bytestream::ZCursor::new(bytes), options);
+    let mut dec =
+        zune_jpeg::JpegDecoder::new_with_options(zune_core::bytestream::ZCursor::new(bytes), options);
     let rgb = dec.decode().map_err(|e| format!("{e:?}"))?;
     let info = dec.info().ok_or("a JPEG without a frame header")?;
     if (u32::from(info.width), u32::from(info.height)) != (w, h) || rgb.len() != w as usize * h as usize * 3 {
