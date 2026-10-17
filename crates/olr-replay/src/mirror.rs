@@ -309,7 +309,7 @@ fn hash_bytes(hex: &str) -> [u8; 32] {
     };
     let mut out = [0u8; 32];
     if hex.len() == 64 {
-        for (o, pair) in out.iter_mut().zip(hex.as_bytes().chunks_exact(2)) {
+        for (o, pair) in out.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
             match (nibble(pair[0]), nibble(pair[1])) {
                 (Some(h), Some(l)) => *o = h << 4 | l,
                 _ => return [0; 32],
