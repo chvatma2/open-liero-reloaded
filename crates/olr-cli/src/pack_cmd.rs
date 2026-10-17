@@ -1,8 +1,10 @@
-//! `olr-cli pack …`: checking and formatting packs (plan 13d).
+//! `olr-cli pack …`: checking, formatting and making packs (plan 13d).
 
 use std::path::{Path, PathBuf};
 
-use clap::Subcommand;
+use clap::{Subcommand, ValueEnum};
+use olr_data::manifest::PackKind;
+use olr_edit::new::{Template, new_pack};
 use olr_pack::Severity;
 use olr_vfs::DirFs;
 
@@ -29,12 +31,75 @@ enum PackCommand {
         #[arg(required = true)]
         paths: Vec<PathBuf>,
     },
+    /// Make a new pack: a mod or a level from a template, or any kind as a copy of a pack.
+    New {
+        kind: Kind,
+        /// The new pack's id: a lowercase slug (a-z, 0-9 and -).
+        id: String,
+        /// The directory to write; it must not exist or be empty. Default: ./<id>.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// The name menus show. Default: the id.
+        #[arg(long)]
+        name: Option<String>,
+        /// A level's size in world pixels, WxH. Default: 640x480.
+        #[arg(long, value_parser = parse_size, conflicts_with = "from")]
+        size: Option<(u32, u32)>,
+        /// A level's theme pack id. Default: olx-theme-dirt.
+        #[arg(long, conflicts_with = "from")]
+        theme: Option<String>,
+        /// Copy this pack (of the same kind) under the new id and name.
+        #[arg(long)]
+        from: Option<PathBuf>,
+    },
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum Kind {
+    Mod,
+    Level,
+    Skin,
+    Theme,
+    Core,
+}
+
+impl Kind {
+    fn pack_kind(self) -> PackKind {
+        match self {
+            Kind::Mod => PackKind::Mod,
+            Kind::Level => PackKind::Level,
+            Kind::Skin => PackKind::Skin,
+            Kind::Theme => PackKind::Theme,
+            Kind::Core => PackKind::Core,
+        }
+    }
+
+    fn name(self) -> &'static str {
+        match self {
+            Kind::Mod => "mod",
+            Kind::Level => "level",
+            Kind::Skin => "skin",
+            Kind::Theme => "theme",
+            Kind::Core => "core",
+        }
+    }
+}
+
+/// `WxH`, two whole numbers.
+pub(crate) fn parse_size(s: &str) -> Result<(u32, u32), String> {
+    let (w, h) = s.split_once('x').ok_or_else(|| format!("{s:?} is not WxH"))?;
+    let num = |v: &str| v.parse::<u32>().map_err(|_| format!("{s:?} is not WxH (whole numbers)"));
+    Ok((num(w)?, num(h)?))
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
     match &args.command {
         PackCommand::Check { paths } => check(paths),
         PackCommand::Fmt { check, paths } => fmt(paths, *check),
+        PackCommand::New { kind, id, out, name, size, theme, from } => {
+            let out = out.clone().unwrap_or_else(|| PathBuf::from(id));
+            new(*kind, id, &out, name.as_deref().unwrap_or(id), *size, theme.as_deref(), from.as_deref())
+        }
     }
 }
 
@@ -106,4 +171,31 @@ fn fmt(paths: &[PathBuf], check_only: bool) -> anyhow::Result<bool> {
         }
     }
     Ok(ok)
+}
+
+fn new(
+    kind: Kind,
+    id: &str,
+    out: &Path,
+    name: &str,
+    size: Option<(u32, u32)>,
+    theme: Option<&str>,
+    from: Option<&Path>,
+) -> anyhow::Result<bool> {
+    if !matches!(kind, Kind::Level) && (size.is_some() || theme.is_some()) {
+        anyhow::bail!("--size and --theme apply to level packs only");
+    }
+    let template = match (kind, from) {
+        (_, Some(from)) => Template::From(from),
+        (Kind::Mod, None) => Template::Mod,
+        (Kind::Level, None) => {
+            Template::Level { size: size.unwrap_or((640, 480)), theme: theme.unwrap_or("olx-theme-dirt") }
+        }
+        (Kind::Skin | Kind::Theme | Kind::Core, None) => {
+            anyhow::bail!("{} packs start from an existing pack: pass --from <pack dir>", kind.name())
+        }
+    };
+    new_pack(out, kind.pack_kind(), id, name, template)?;
+    println!("made {} pack {id} in {}", kind.name(), out.display());
+    Ok(true)
 }

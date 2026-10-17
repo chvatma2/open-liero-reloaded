@@ -145,6 +145,36 @@ fn pack_fmt_check_exits_1_on_a_dirty_pack() {
 }
 
 #[test]
+fn pack_new_level_then_check() {
+    let tmp = tempfile::tempdir().unwrap();
+    let pack = tmp.path().join("t");
+    let out = olr_cli().args(["pack", "new", "level", "t", "--out"]).arg(&pack).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    let out = olr_cli().args(["pack", "check"]).arg(&pack).output().unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}");
+    assert!(stdout.ends_with("checked 1 packs: 0 errors, 0 warnings\n"), "{stdout}");
+
+    let skin = tmp.path().join("s");
+    let out = olr_cli().args(["pack", "new", "skin", "s", "--out"]).arg(&skin).output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr)
+            .contains("skin packs start from an existing pack: pass --from <pack dir>")
+    );
+    let out = olr_cli()
+        .args(["pack", "new", "mod", "m", "--size", "8x8", "--out"])
+        .arg(tmp.path().join("m"))
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let out = olr_cli().args(["pack", "new", "level", "l", "--size", "8by8"]).output().unwrap();
+    assert_eq!(out.status.code(), Some(2), "a clap error naming the flag");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--size"));
+    assert!(!skin.exists() && !tmp.path().join("m").exists());
+}
+
+#[test]
 fn reimport_replaces_stale_files() {
     let tmp = tempfile::tempdir().unwrap();
     let (src, out) = (tmp.path().join("gamedir"), tmp.path().join("packs"));
