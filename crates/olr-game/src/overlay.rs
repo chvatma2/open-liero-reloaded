@@ -240,6 +240,17 @@ pub const MIGRATING_COLOUR: Color32 = Color32::from_rgb(255, 200, 80);
 /// "Connection problem"'s colour: a fault.
 pub const LAGGING_COLOUR: Color32 = Color32::from_rgb(255, 90, 60);
 
+/// The editor's Play's Stop button at `top_right` (the playfield's corner,
+/// in points), as the label "Stop": whether it was clicked (plan 14c R3;
+/// Esc stops too).
+pub fn stop_button(ui: &egui::Ui, top_right: Pos2) -> bool {
+    egui::Area::new(egui::Id::new("olr-edited-play-stop"))
+        .pivot(Align2::RIGHT_TOP)
+        .fixed_pos(top_right + egui::vec2(-8.0, 8.0))
+        .show(ui.ctx(), |ui| ui.button(egui::RichText::new("Stop").size(18.0)).on_hover_text("Esc").clicked())
+        .inner
+}
+
 /// The playfield's top line and its colour: a host migration under way
 /// (`migrating`, plan 12c), else "Connection problem" while the host says
 /// this client lags, else none.

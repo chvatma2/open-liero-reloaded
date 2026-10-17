@@ -6,6 +6,7 @@
 //! R8) and Play, which the app around it starts (`HostOut::Play`). No
 //! window: the app draws `olr_editor::ui::show` and the canvas.
 
+pub mod canvas;
 mod files;
 mod recovery;
 
@@ -32,6 +33,9 @@ use crate::setup::EditedPlay;
 pub const RECOVERY_INTERVAL: Duration = Duration::from_secs(120);
 /// The editor's settings in the data directory (R8).
 pub const EDITOR_FILE: &str = "editor.ron";
+/// What opening a recovery copy's folder as a pack says.
+pub const RECOVERY_IN_PLACE: &str =
+    "a recovery copy is reopened with the Editor menu's Recover, not opened in place";
 /// What opening a bundled level in place says (R5, R6).
 pub const BUNDLED: &str = "bundled content is not edited in place: use the Editor menu's Edit a copy";
 
@@ -118,6 +122,11 @@ impl EditorHost {
 
     pub fn data(&mut self) -> &mut EditorData {
         &mut self.data
+    }
+
+    /// The UI's data as last drawn (the canvas's rectangle).
+    pub fn data_ref(&self) -> &EditorData {
+        &self.data
     }
 
     /// The state and the UI's data together, for `olr_editor::ui::show`.
@@ -212,12 +221,18 @@ impl EditorHost {
         if self.is_bundled(dir) {
             return EditorAction::OpenFailed(BUNDLED.into());
         }
+        if self.recovery_dir.as_ref().is_some_and(|r| files::inside(dir, std::slice::from_ref(r))) {
+            return EditorAction::OpenFailed(RECOVERY_IN_PLACE.into());
+        }
         let opened = olr_edit::pack::load(dir).map_err(|e| e.to_string()).and_then(|pack| {
             Document::open(pack, dir.to_path_buf(), self.state.catalog()).map_err(|e| e.to_string())
         });
         match opened {
             Ok(doc) => {
-                self.recovery_id = Some(doc.manifest().id.clone());
+                // A copy of its own: an earlier session's (a crash's) stays
+                // offered whatever this one does (batch B review).
+                let taken = |c: &str| self.recovery_dir.as_ref().is_some_and(|r| r.join(c).exists());
+                self.recovery_id = Some(pack_id(&doc.manifest().id, taken));
                 self.dirty_since = None;
                 EditorAction::Opened(Box::new(doc))
             }
@@ -340,5 +355,30 @@ impl EditorHost {
     /// directory's packs).
     fn is_bundled(&self, dir: &Path) -> bool {
         files::inside(dir, &self.bundled)
+    }
+}
+
+/// What closing the window does (Review Focus 1).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CloseDecision {
+    /// Close it now.
+    Quit,
+    /// Wait: the editor asks about its unsaved changes first; the window
+    /// closes once it answers `Closed`.
+    Wait,
+}
+
+/// The window's close button with the editor `host` open (or none): the
+/// editor's Close, after ending its Play (the caller ends the session).
+/// Unsaved changes open the editor's dialog and the window waits.
+pub fn on_close_request(host: Option<&mut EditorHost>) -> CloseDecision {
+    let Some(h) = host else { return CloseDecision::Quit };
+    if h.state().playing() {
+        h.act(vec![EditorAction::PlayEnded]);
+    }
+    if h.act(vec![EditorAction::Close]).contains(&HostOut::Closed) {
+        CloseDecision::Quit
+    } else {
+        CloseDecision::Wait
     }
 }

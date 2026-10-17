@@ -267,52 +267,53 @@ impl Gpu {
         Some(Acquired { frame, wait: t0.elapsed() })
     }
 
-    /// Draws `list` (none: black, as behind the menus) and the overlay into `frame` and presents it, applying
+    /// Draws `world` (a list and the `[x, y, w, h]` pixels it fills: a
+    /// game's playfield, `app::playfield`, or the editor's canvas; none:
+    /// black, as behind the menus) and the overlay into `frame` and
+    /// presents it, applying
     /// the overlay's texture changes (`textures`, left empty) whether or
     /// not there is a frame. Returns how long the swap chain made the frame
     /// wait, or `None` when there was no frame.
     pub fn present(
         &mut self,
         frame: Option<Acquired>,
-        list: Option<&DrawList>,
+        world: Option<(&DrawList, [u32; 4])>,
         overlay: &OverlayPaint,
         textures: &mut egui::TexturesDelta,
     ) -> Option<PresentTiming> {
-        with_textures(self, textures, |gpu| frame.map(|f| gpu.present_frame(f, list, overlay)))
+        with_textures(self, textures, |gpu| frame.map(|f| gpu.present_frame(f, world, overlay)))
     }
 
     /// [`Gpu::present`] once the overlay's textures are up to date.
     fn present_frame(
         &mut self,
         acquired: Acquired,
-        list: Option<&DrawList>,
+        world: Option<(&DrawList, [u32; 4])>,
         overlay: &OverlayPaint,
     ) -> PresentTiming {
         let frame = acquired.frame;
         let view = frame.texture.create_view(&wgpu::TextureViewDescriptor::default());
         let size = (frame.texture.width(), frame.texture.height());
-        self.draw(list, overlay, &view, size);
+        self.draw(world, overlay, &view, size);
         self.window.pre_present_notify();
         let t1 = Instant::now();
         self.renderer.queue().present(frame);
         PresentTiming { acquire: acquired.wait, present: t1.elapsed() }
     }
 
-    /// The world (none: black) in the playfield above the HUD's bar, then
-    /// the overlay over
-    /// it, into `view`.
+    /// The world (none: black) in its area, then the overlay over it, into
+    /// `view`.
     fn draw(
         &mut self,
-        list: Option<&DrawList>,
+        world: Option<(&DrawList, [u32; 4])>,
         overlay: &OverlayPaint,
         view: &wgpu::TextureView,
         size: (u32, u32),
     ) {
-        if let Some(list) = list {
-            // The playfield: the window's 16:9 frame above the HUD's bar.
-            self.renderer.render_in(list, view, crate::app::playfield(size));
+        if let Some((list, area)) = world {
+            self.renderer.render_in(list, view, area);
         }
-        let load = if list.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::BLACK) };
+        let load = if world.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::BLACK) };
         let (device, queue) = (self.renderer.device().clone(), self.renderer.queue().clone());
         let screen = egui_wgpu::ScreenDescriptor {
             size_in_pixels: [size.0, size.1],
@@ -345,7 +346,7 @@ impl Gpu {
     /// changes.
     pub fn screenshot(
         &mut self,
-        list: Option<&DrawList>,
+        world: Option<(&DrawList, [u32; 4])>,
         overlay: &OverlayPaint,
         path: &Path,
     ) -> anyhow::Result<RgbaImage> {
@@ -362,7 +363,7 @@ impl Gpu {
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         // `present` applied this frame's texture changes, drawn or not.
-        self.draw(list, overlay, &view, size);
+        self.draw(world, overlay, &view, size);
         let img = self.read(&texture)?;
         if let Some(dir) = path.parent() {
             std::fs::create_dir_all(dir)?;

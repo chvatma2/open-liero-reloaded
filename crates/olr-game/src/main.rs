@@ -2,7 +2,7 @@
 //! a Deathmatch against bots (M6) or a replay when the command line names
 //! one. Run `olr --help`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 use anyhow::Context as _;
@@ -216,6 +216,24 @@ struct Args {
     /// The port to host on (TCP and UDP) and to join when the address has none.
     #[arg(long)]
     port: Option<u16>,
+    /// Open the level editor on the level pack in DIR (not bundled content:
+    /// copy it from the Editor menu); the menus run behind it.
+    #[arg(long, value_name = "DIR",
+          conflicts_with_all = ["host", "join", "net_sim", "mode", "replay", "spectate", "script", "demo"])]
+    edit: Option<PathBuf>,
+}
+
+/// `--edit`'s directory (plan 14c R6): the pack at `edit`, unless it lies
+/// inside the `content` root (bundled content is never edited in place).
+fn edit_target(edit: &Path, content: &Path) -> Result<PathBuf, String> {
+    let dir = edit.canonicalize().map_err(|e| format!("{}: {e}", edit.display()))?;
+    if !dir.is_dir() {
+        return Err(format!("{}: not a directory", edit.display()));
+    }
+    if content.canonicalize().is_ok_and(|c| dir.starts_with(c)) {
+        return Err(olr_game::editor::BUNDLED.to_string());
+    }
+    Ok(dir)
 }
 
 /// `content/packs` beside the executable (an unpacked release), else in
@@ -437,11 +455,16 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     let interpolation = if args.no_interp { Interpolation::Latest } else { Interpolation::Linear };
     let viewport = olr_scene::Viewport::GAME;
     let shell_cfg = ShellConfig { content: args.content.clone(), interpolation, viewport };
-    let shell = if play_now {
+    let mut shell = if play_now {
         direct(&args, audio, shell_cfg, &flags)?
     } else {
         menus(&args, audio, shell_cfg, flags)
     };
+    // `--edit`: the editor before the first frame.
+    if let Some(dir) = &args.edit {
+        let dir = edit_target(dir, &args.content).map_err(anyhow::Error::msg)?;
+        shell.open_editor_dir(&dir).map_err(anyhow::Error::msg)?;
+    }
     println!("olr: audio {}", if silent { "silent" } else { "opened" });
     let osrelease = wsl::osrelease();
     let backend = std::env::var("WGPU_BACKEND").ok();
@@ -580,11 +603,50 @@ fn main() -> ExitCode {
         return code;
     }
     let flags = video_flags(&matches, &args);
+    // R6: bundled content is refused before any window opens.
+    if let Some(dir) = &args.edit
+        && let Err(why) = edit_target(dir, &args.content)
+    {
+        eprintln!("olr: {why}");
+        return ExitCode::from(2);
+    }
     match run(args, plays_directly(&matches), flags) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("error: {e:#}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(args: &[&str]) -> (Args, ArgMatches) {
+        let m = Args::command().try_get_matches_from(args).unwrap();
+        (Args::from_arg_matches(&m).unwrap(), m)
+    }
+
+    #[test]
+    fn edit_takes_a_directory_and_keeps_the_menus() {
+        let (args, m) = parse(&["olr", "--edit", "p"]);
+        assert_eq!(args.edit, Some(PathBuf::from("p")));
+        assert!(!plays_directly(&m), "the menus run behind the editor");
+        assert!(
+            Args::command().try_get_matches_from(["olr", "--edit", "p", "--mode", "deathmatch"]).is_err()
+        );
+    }
+
+    #[test]
+    fn edit_refuses_the_bundled_content() {
+        let content = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/packs");
+        if content.is_dir() {
+            let bundled = content.join("olx-level-dirt-level");
+            assert_eq!(edit_target(&bundled, &content), Err(olr_game::editor::BUNDLED.to_string()));
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        assert_eq!(edit_target(tmp.path(), &content), Ok(tmp.path().canonicalize().unwrap()));
+        assert!(edit_target(&tmp.path().join("missing"), &content).is_err());
     }
 }

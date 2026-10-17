@@ -214,6 +214,17 @@ fn the_browser_by_label() {
     h.run();
     assert!(h.state().commands.contains(&C::List(PathBuf::from(t.path()))), "{:?}", h.state().commands);
     assert_eq!(h.state().state.browser().unwrap().dir(), t.path());
+    // A click on a folder selects it (a double click's second click lands
+    // on the new listing otherwise: batch B review); Choose enters it.
+    h.get_by_label("b").click();
+    h.run();
+    assert_eq!(h.state().state.browser().unwrap().dir(), t.path(), "a click only selects");
+    h.get_by_label(labels::CHOOSE).click();
+    h.run();
+    assert_eq!(h.state().state.browser().unwrap().dir(), t.path().join("b"));
+    h.get_by_label("Up").click();
+    h.run();
+    assert_eq!(h.state().state.browser().unwrap().dir(), t.path());
     h.get_by_label("x.PNG").click();
     h.run();
     h.get_by_label(labels::CHOOSE).click();

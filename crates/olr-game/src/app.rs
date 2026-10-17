@@ -21,6 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use olr_input::{Action, InputState, KeyCode};
+use olr_render::UpscaleFilter;
 use olr_scene::{DrawList, Interpolation};
 use winit::event::{ElementState, KeyEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -29,6 +30,8 @@ use winit::window::Window;
 
 use crate::autoplay::{self, Autoplay, Effect, Seen};
 use crate::clock::TickClock;
+use crate::editor::HostOut;
+use crate::editor::canvas::Canvas;
 use crate::gpu::{Gpu, OverlayPaint};
 use crate::hud::{MinimapTexture, ScoreKey};
 use crate::latency::Latency;
@@ -78,6 +81,26 @@ pub struct Config {
     pub fake_clock: bool,
 }
 
+/// The editor's uploads this frame (`outs`) into `canvas`'s map: a new
+/// document, a size or art-scale change, or the material view turned on or
+/// off rebuilds it whole (`full`: it goes up whole); an edit replaces its
+/// rectangle.
+fn canvas_outs(canvas: &mut Canvas, full: &mut bool, shell: &Shell, outs: Vec<HostOut>) {
+    let Some(h) = &shell.editor else { return };
+    let Some(doc) = h.state().document() else { return };
+    let material = h.state().material_view();
+    if outs.contains(&HostOut::FullUpload) || !canvas.fits(doc) || canvas.showing_material() != material {
+        canvas.rebuild(doc, material);
+        *full = true;
+        return;
+    }
+    for o in outs {
+        if let HostOut::Upload(r) = o {
+            canvas.upload(doc, r);
+        }
+    }
+}
+
 /// Shows `window` (made hidden: `window::attributes`). A no-op where
 /// windows have no visibility (Wayland) and once shown.
 pub(crate) fn show_window(window: &Window) {
@@ -119,6 +142,15 @@ pub struct App {
     gilrs: Option<gilrs::Gilrs>,
     clock: TickClock,
     list: DrawList,
+    /// The level editor's canvas (plan 14c): its colour map and the frame's
+    /// terrain-only list.
+    canvas: Canvas,
+    canvas_list: Option<(DrawList, [u32; 4])>,
+    /// The canvas's map goes up whole on the next draw (a new document, or
+    /// the renderer's terrain was a game's).
+    canvas_full: bool,
+    /// The window's close waits for the editor's answer (`CloseDecision::Wait`).
+    quit_after_close: bool,
     egui: egui::Context,
     win: Option<Shown>,
     debug: bool,
@@ -298,6 +330,10 @@ impl App {
             gilrs,
             clock: TickClock::new(),
             list: DrawList::new(),
+            canvas: Canvas::new(),
+            canvas_list: None,
+            canvas_full: true,
+            quit_after_close: false,
             egui,
             win: None,
             debug: false,
@@ -824,17 +860,39 @@ impl App {
             lagging: self.shell.lagging(),
             migrating: self.shell.migration_line().map(str::to_string),
         });
-        let (ui_state, data) = (&self.shell.ui, &mut self.shell.data);
+        let editing = self.shell.editor_open() && !self.shell.editing_play();
+        let playing_edited = self.shell.editing_play();
+        let stop_at = {
+            let [x, y, w, _] = playfield(size);
+            egui::pos2((x + w) as f32 / ppp, y as f32 / ppp)
+        };
+        let (ui_state, data, mut editor) = (&self.shell.ui, &mut self.shell.data, self.shell.editor.as_mut());
         let menus = self.cfg.menus;
         let mut actions = Vec::new();
+        let mut editor_actions = Vec::new();
+        let mut stop = false;
         let mut out = self.egui.run_ui(input, |ui| {
             if let Some(o) = &overlay {
                 crate::overlay::paint(ui, o);
             }
-            if menus {
+            if let Some(h) = editor.as_deref_mut().filter(|_| editing) {
+                let (state, data) = h.parts();
+                editor_actions = olr_editor::ui::show(ui, state, data);
+            } else if playing_edited {
+                stop = crate::overlay::stop_button(ui, stop_at);
+            } else if menus {
                 actions = olr_ui::screens::show(ui, ui_state, data);
             }
         });
+        if editing {
+            let out = self.shell.editor_frame(editor_actions, Instant::now());
+            canvas_outs(&mut self.canvas, &mut self.canvas_full, &self.shell, out);
+        }
+        if stop {
+            self.shell.stop_edited();
+            self.canvas_full = true;
+            self.input.release_keys();
+        }
         if menus {
             // The profiles' skin preview this frame asked for, from the next.
             self.shell.update_preview(&self.egui);
@@ -876,8 +934,39 @@ impl App {
         // (the colour map merges their dirty rectangles), then the frame.
         let world = self.shell.play.as_mut().map(|p| {
             p.session.present.upload(&mut w.gpu.renderer);
-            &self.list
+            (&self.list, playfield(size))
         });
+        // The editor's canvas: its map's changes, then its part of the window
+        // (drawn sharp: the overlays sit on it at any zoom).
+        let editor_view = self
+            .shell
+            .editor
+            .as_ref()
+            .filter(|_| editing)
+            .map(|h| (h.state().view(), h.data_ref().canvas_rect()));
+        let mut filter = None;
+        let world = match editor_view {
+            Some((view, Some(rect))) => {
+                if let Some(map) = self.canvas.map_mut() {
+                    if std::mem::take(&mut self.canvas_full) {
+                        map.take_dirty().for_each(drop);
+                        w.gpu.renderer.upload_terrain(map);
+                    } else {
+                        w.gpu.renderer.update_terrain(map);
+                    }
+                }
+                let max = w.gpu.renderer.device().limits().max_texture_dimension_2d;
+                let max_view = Canvas::max_view_for(max, w.gpu.renderer.scale());
+                self.canvas_list = self.canvas.draw(&view, rect, ppp, max_view);
+                filter = Some(std::mem::replace(
+                    &mut w.gpu.renderer.settings.filter,
+                    UpscaleFilter::SharpBilinear,
+                ));
+                self.canvas_list.as_ref().map(|(l, a)| (l, *a))
+            }
+            Some((_, None)) => None,
+            None => world,
+        };
         for warning in w.gpu.renderer.warnings().drain(..) {
             eprintln!("warning: {warning}");
         }
@@ -912,6 +1001,18 @@ impl App {
                 effects.extend(a.shot_taken(self.frames, name, check));
             }
         }
+        if let Some(f) = filter {
+            w.gpu.renderer.settings.filter = f;
+        }
+        // The window's close waits for the editor: it closed, or its
+        // question was answered otherwise (Cancel).
+        if self.quit_after_close {
+            if !self.shell.editor_open() {
+                el.exit();
+            } else if self.shell.editor.as_ref().is_some_and(|h| h.state().dialog().is_none()) {
+                self.quit_after_close = false;
+            }
+        }
         if menus {
             // The game asked for in an earlier frame (this one showed its
             // "Loading…"), then this frame's actions.
@@ -931,6 +1032,27 @@ impl App {
         }
         self.frames += 1;
         Ok(())
+    }
+
+    /// The editor's Play ends (Esc, Stop): back to the editor as it was;
+    /// the renderer's terrain was the match's, so the canvas goes up whole.
+    fn stop_edited(&mut self) {
+        self.shell.stop_edited();
+        self.canvas_full = true;
+        self.input.release_keys();
+    }
+
+    /// The window's close button: with the editor open it asks about
+    /// unsaved changes first (Review Focus 1), and the window closes when
+    /// the editor does.
+    pub(super) fn close_requested(&mut self, el: &ActiveEventLoop) {
+        match self.shell.request_close() {
+            crate::editor::CloseDecision::Quit => el.exit(),
+            crate::editor::CloseDecision::Wait => {
+                self.quit_after_close = true;
+                self.canvas_full = true;
+            }
+        }
     }
 
     /// PageUp (`faster`) or PageDown: the watched game's next speed (the
@@ -979,6 +1101,8 @@ impl App {
         }
         match code {
             // With the menus, Esc and F5 are theirs (`olr_ui::screens::show`).
+            // The editor's Play: Esc returns to the editor at once.
+            KeyCode::Escape if self.shell.editing_play() => self.stop_edited(),
             KeyCode::Escape if !self.cfg.menus => el.exit(),
             KeyCode::F5 if !self.cfg.menus => self.restart(el)?,
             KeyCode::F2 => self.debug = !self.debug,

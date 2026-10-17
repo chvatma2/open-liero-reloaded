@@ -38,7 +38,7 @@ impl ApplicationHandler for App {
         }
         let result = match &event {
             WindowEvent::CloseRequested => {
-                el.exit();
+                self.close_requested(el);
                 Ok(())
             }
             WindowEvent::Resized(size) => {

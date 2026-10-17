@@ -254,3 +254,67 @@ fn play_and_close_reach_the_app() {
     let out = h.act(vec![A::Close]);
     assert!(out.contains(&HostOut::Closed), "{out:?}");
 }
+
+/// Review Focus 1: closing the window while the editor holds unsaved
+/// changes asks first (Save, Don't save, Cancel), as Close does.
+#[test]
+fn closing_the_window_asks_when_unsaved() {
+    use olr_game::editor::{CloseDecision, on_close_request};
+    assert_eq!(on_close_request(None), CloseDecision::Quit, "no editor: quit");
+    let Some((_tmp, _root, mut h)) = host() else { return };
+    h.open_from_menu(&new_level("Office"));
+    assert_eq!(on_close_request(Some(&mut h)), CloseDecision::Quit, "nothing unsaved");
+    let Some((_tmp, _root, mut h)) = host() else { return };
+    h.open_from_menu(&new_level("Office"));
+    h.act(vec![A::AddLayer]);
+    assert_eq!(on_close_request(Some(&mut h)), CloseDecision::Wait);
+    assert!(
+        matches!(h.state().dialog(), Some(olr_editor::Dialog::Unsaved { then: olr_editor::Pending::Close })),
+        "{:?}",
+        h.state().dialog()
+    );
+    // Don't save: the editor closes, and the window with it.
+    let out = h.act(vec![A::Choose(olr_editor::Choice::Discard)]);
+    assert!(out.contains(&HostOut::Closed), "{out:?}");
+    // While Play runs, the play ends first, then the editor asks.
+    let Some((_tmp, _root, mut h)) = host() else { return };
+    h.open_from_menu(&new_level("Office"));
+    h.act(vec![A::AddLayer, A::Play]);
+    assert!(h.state().playing());
+    assert_eq!(on_close_request(Some(&mut h)), CloseDecision::Wait);
+    assert!(!h.state().playing());
+    assert!(h.state().dialog().is_some());
+}
+
+/// Batch B review, Important 1: a crash copy survives opening its pack
+/// again (Edit instead of Recover, then Close or two minutes of editing):
+/// each session writes a recovery of its own.
+#[test]
+fn a_later_session_keeps_the_crash_copy() {
+    let Some((tmp, root, mut h)) = host() else { return };
+    h.open_from_menu(&new_level("Office"));
+    h.act(vec![A::AddLayer]);
+    let t0 = Instant::now();
+    h.tick(t0);
+    h.tick(t0 + RECOVERY_INTERVAL);
+    drop(h);
+    let rec = tmp.path().join("recovery");
+    assert_eq!(list_recoveries(&rec).len(), 1);
+    let mut store = Store::open(tmp.path());
+    let packs = store.packs_dir().unwrap();
+    let mut h = EditorHost::new(&mut store, &[packs.as_path(), root.as_path()]).unwrap();
+    h.open_from_menu(&AppCommand::EditLevel("office".into()));
+    h.act(vec![A::AddLayer]);
+    h.tick(t0);
+    h.tick(t0 + RECOVERY_INTERVAL);
+    assert_eq!(list_recoveries(&rec).len(), 2, "this session's copy is another");
+    h.act(vec![A::Close, A::Choose(olr_editor::Choice::Discard)]);
+    let left: Vec<String> = list_recoveries(&rec).into_iter().map(|r| r.0).collect();
+    assert_eq!(left, ["office"], "the crash copy is still offered");
+    // A recovery's own folder is not opened as a pack (its save would be
+    // removed with the copy).
+    let mut h = EditorHost::new(&mut store, &[packs.as_path(), root.as_path()]).unwrap();
+    let out = h.open_dir(&rec.join("office"));
+    assert!(!messages(&out).is_empty(), "{out:?}");
+    assert!(h.state().document().is_none());
+}

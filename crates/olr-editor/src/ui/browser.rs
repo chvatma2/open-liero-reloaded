@@ -1,8 +1,8 @@
 //! The file browser's window (plan 14c R9), modal as the dialogs are: the
 //! path (typed paths too: a Windows drive, a WSL path), Up, the entries,
-//! Choose and Cancel. A folder is entered with a click; a file (or, to
-//! open a pack, a pack folder) is selected with a click and chosen with
-//! Choose or a double click.
+//! Choose and Cancel. A click selects an entry; Choose or a double click
+//! picks it: a file (or, to open a pack, a pack folder) is chosen, any
+//! other folder entered.
 
 use egui::{Color32, Context, RichText};
 
@@ -52,10 +52,6 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
                 ui.weak("Nothing to choose here.");
             }
             for e in shown {
-                let choosable = match b.purpose() {
-                    Purpose::ImportImage => !e.is_dir,
-                    Purpose::OpenPack => e.is_pack,
-                };
                 let text = if e.is_pack {
                     format!("📦 {}", e.name)
                 } else if e.is_dir {
@@ -64,19 +60,20 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
                     e.name.clone()
                 };
                 let selected = draft.selected.as_deref() == Some(e.name.as_str());
-                let r = ui.selectable_label(selected, text);
+                // Each row's id is its directory's and name's: a row of a new
+                // listing never inherits a click begun on the old one.
+                let r = ui.push_id((&dir, &e.name), |ui| ui.selectable_label(selected, text)).inner;
                 // The accessible name is the entry's own.
                 r.widget_info(|| {
                     egui::WidgetInfo::selected(egui::WidgetType::Button, true, selected, &e.name)
                 });
-                if r.double_clicked() && choosable {
+                // A click selects; a double click (or Choose) picks, which
+                // enters a folder (a single click entering one made a
+                // double click act twice: batch B review).
+                if r.double_clicked() {
                     out.push(EditorAction::Pick(e.name.clone()));
                 } else if r.clicked() {
-                    if choosable {
-                        draft.selected = Some(e.name.clone());
-                    } else {
-                        out.push(EditorAction::BrowseTo(dir.join(&e.name)));
-                    }
+                    draft.selected = Some(e.name.clone());
                 }
             }
         });

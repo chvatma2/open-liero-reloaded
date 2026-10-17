@@ -82,6 +82,7 @@ use crate::session::{Driver, Session};
 use crate::setup::{self, Assets, EditedPlay, Game, PlayerLook, SandboxOptions};
 use crate::video::{self, Overrides};
 
+mod editing;
 mod joining;
 mod online;
 pub use joining::{NO_WAY_TO_JOIN, UNMAP_WAIT, Unmapping, resolve};
@@ -222,6 +223,10 @@ pub struct Shell {
     /// `replays`): when that one is saved `MenuData::host_lost_replay` is
     /// set, no other replay's saving does.
     host_lost_pending: Option<u64>,
+    /// The level editor while it is open (plan 14c): it replaces the menus.
+    pub(crate) editor: Option<crate::editor::EditorHost>,
+    /// What the editor said while it opened, for the app's next editor frame.
+    editor_out: Vec<crate::editor::HostOut>,
 }
 
 /// A change to an endpoint's ICE settings (tests: a loopback base, a
@@ -293,6 +298,8 @@ impl Shell {
             no_standby: false,
             next_replay: 0,
             host_lost_pending: None,
+            editor: None,
+            editor_out: Vec::new(),
         };
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
@@ -356,6 +363,8 @@ impl Shell {
             no_standby: false,
             next_replay: 0,
             host_lost_pending: None,
+            editor: None,
+            editor_out: Vec::new(),
         }
     }
 
@@ -457,7 +466,7 @@ impl Shell {
     /// Worm names show over the game: in game and not paused, so never
     /// through the weapon selection, the pause menu or the results.
     pub fn names_shown(&self) -> bool {
-        self.play.is_some() && self.ui.screen() == Screen::InGame && !self.paused
+        self.play.is_some() && (self.ui.screen() == Screen::InGame && !self.paused || self.editing_play())
     }
 
     pub fn session(&self) -> Option<&Session> {
@@ -480,8 +489,14 @@ impl Shell {
     /// carried out; what the window must do.
     pub fn act(&mut self, a: UiAction) -> Vec<Outcome> {
         let mut out = Vec::new();
+        let before = self.ui.screen();
         for c in self.ui.update(a) {
             self.carry(c, &mut out);
+        }
+        // The Editor screen lists the packs and recoveries as they are now.
+        if self.ui.screen() == Screen::Editor && before != Screen::Editor {
+            self.data.editor_message = None;
+            self.refresh_editor_packs();
         }
         out
     }
@@ -498,12 +513,11 @@ impl Shell {
             AppCommand::StartSandbox => self.pending = Some(Launch::Sandbox),
             AppCommand::PlayReplay(path) => self.pending = Some(Launch::Replay(path)),
             AppCommand::EndMatch => self.end(),
-            // The editor's host carries these out (plan 14c Task 6).
             AppCommand::EditLevel(_)
             | AppCommand::CopyLevel { .. }
             | AppCommand::NewLevel { .. }
             | AppCommand::Recover(_)
-            | AppCommand::DiscardRecovery(_) => {}
+            | AppCommand::DiscardRecovery(_) => self.editor_command(c),
             AppCommand::SetPaused(on) => self.paused = on,
             AppCommand::ArmPlayer(weapons) => self.arm(weapons),
             AppCommand::SaveReplay => {
@@ -564,6 +578,19 @@ impl Shell {
     }
 
     fn launch_reported(&mut self, launch: Launch) -> Vec<Outcome> {
+        // The editor's Play: the menus' state is not the game's.
+        if matches!(launch, Launch::Edited(_)) {
+            return match self.launch(launch) {
+                Ok(()) => vec![Outcome::Started],
+                Err(e) => {
+                    let why = format!("{e:#}");
+                    eprintln!("warning: could not play the level: {why}");
+                    self.stop_edited();
+                    self.data.editor_message = Some(why);
+                    Vec::new()
+                }
+            };
+        }
         match self.launch(launch) {
             Ok(()) => {
                 let mut out = self.act(UiAction::MatchStarted);

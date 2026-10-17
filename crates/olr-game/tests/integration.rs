@@ -5,6 +5,7 @@
 //! Kept as their own binaries:
 //! - `soak`: the GPU tier (`check::GPU_TESTS`).
 
+mod canvas_gpu;
 mod deathmatch;
 mod downloads;
 mod editor_host;
