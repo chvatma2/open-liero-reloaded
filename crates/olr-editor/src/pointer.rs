@@ -50,6 +50,9 @@ pub(crate) enum Drag {
     Shape { id: String, tool: Tool, start: (i32, i32), now: (i32, i32) },
     /// The pixel rectangle being dragged on drawn layer `id` (plan 14e R7).
     Pixels { id: String, start: (i32, i32), now: (i32, i32) },
+    /// Glow brush dabs on element `id`'s mask (plan 15a); `before` is the
+    /// mask and its flag as the stroke began.
+    Glow { id: String, before: (Option<Arc<Vec<u8>>>, bool), last: (i32, i32) },
 }
 
 fn add(a: i32, b: i64) -> i32 {
@@ -474,6 +477,49 @@ impl EditorState {
                 }
                 Vec::new()
             }
+            Tool::Glow => {
+                let Selection::Element(id) = self.selection.clone() else {
+                    self.status.message = Some("select a glowing element to paint its glow".into());
+                    return Vec::new();
+                };
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let before = match doc.glow_stroke_before(&id) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        self.status.message = Some(e.to_string());
+                        return Vec::new();
+                    }
+                };
+                let shape = self.dab(world);
+                let strength = self.glow_strength;
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let rect = doc.paint_glow(&id, &shape, strength).unwrap_or(NOTHING);
+                self.drag = Some(Drag::Glow { id, before, last: world });
+                vec![EditorCommand::Upload(rect)]
+            }
+            Tool::Light => {
+                // A light under the pointer is dragged; elsewhere a new one.
+                let Some(doc) = &self.doc else { return Vec::new() };
+                let hit = doc.level().objects.iter().position(|o| {
+                    let (dx, dy) = sub(world, o.at());
+                    matches!(o, LevelObject::Light { .. })
+                        && dx.abs() <= SPAWN_REACH
+                        && dy.abs() <= SPAWN_REACH
+                });
+                if let Some(index) = hit {
+                    let grab = sub(world, doc.level().objects[index].at());
+                    self.selection = Selection::Object(index);
+                    self.drag = Some(Drag::Spawn { index, before: doc.level().objects.clone(), grab });
+                    return Vec::new();
+                }
+                let cmds = self.edit(|d| d.add_light(world));
+                if !cmds.is_empty()
+                    && let Some(d) = &self.doc
+                {
+                    self.selection = Selection::Object(d.level().objects.len() - 1);
+                }
+                cmds
+            }
             Tool::Spawn => {
                 let cmds = self.edit(|d| d.add_spawn(world));
                 if !cmds.is_empty()
@@ -644,6 +690,25 @@ impl EditorState {
                 }
                 Vec::new()
             }
+            Drag::Glow { id, before, last } => {
+                if world == last {
+                    return Vec::new();
+                }
+                let shapes = self.joins(last, world);
+                let strength = self.glow_strength;
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let mut rect = None;
+                for shape in &shapes {
+                    if let Ok(r) = doc.paint_glow(&id, shape, strength)
+                        && r.w > 0
+                        && r.h > 0
+                    {
+                        rect = Some(Rect::union(rect, r));
+                    }
+                }
+                self.drag = Some(Drag::Glow { id, before, last: world });
+                rect.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
+            }
             Drag::Stroke { id, before, last, rect, stroke, begun, paint } => {
                 if world == last {
                     return Vec::new();
@@ -742,6 +807,14 @@ impl EditorState {
                     return Vec::new();
                 }
                 self.history.push(vec![Edit::Objects { before, after }]);
+                self.committed(NOTHING)
+            }
+            Drag::Glow { id, before, .. } => {
+                let edits = doc.glow_stroke_edits(&id, before);
+                if edits.is_empty() {
+                    return Vec::new();
+                }
+                self.history.push(edits);
                 self.committed(NOTHING)
             }
             Drag::Stroke { id, before, rect, begun, .. } => {

@@ -10,6 +10,7 @@ use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_edit::compose::{Decoded, Rect};
 use olr_format::levels::{Element, LevelObject, LevelSource};
+use olr_format::look::LookSource;
 
 use crate::document::Item;
 
@@ -69,6 +70,18 @@ pub enum Edit {
     Whole {
         before: Box<Whole>,
         after: Box<Whole>,
+    },
+    /// The level's look: its settings and glow groups (plan 15a).
+    Look {
+        before: Option<Box<LookSource>>,
+        after: Option<Box<LookSource>>,
+    },
+    /// An element's whole painted glow mask (its box at art resolution),
+    /// before and after; `None` is no mask.
+    GlowMask {
+        id: String,
+        before: Option<Arc<Vec<u8>>>,
+        after: Option<Arc<Vec<u8>>>,
     },
 }
 
@@ -155,6 +168,8 @@ impl Edit {
             Edit::Objects { before, after } => before == after,
             Edit::Meta { before, after } => before == after,
             Edit::Whole { before, after } => before.level == after.level && before.items == after.items,
+            Edit::Look { before, after } => before == after,
+            Edit::GlowMask { before, after, .. } => before == after,
         }
     }
 
@@ -178,6 +193,10 @@ impl Edit {
                 before.name.len() + before.notes.len() + after.name.len() + after.notes.len()
             }
             Edit::Whole { before, after } => before.bytes() + after.bytes(),
+            Edit::Look { .. } => 2 * std::mem::size_of::<LookSource>(),
+            Edit::GlowMask { before, after, .. } => {
+                before.as_ref().map_or(0, |m| m.len()) + after.as_ref().map_or(0, |m| m.len())
+            }
         }
     }
 

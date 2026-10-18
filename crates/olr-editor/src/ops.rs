@@ -109,7 +109,7 @@ fn grid_key(e: &Element) -> Option<(&str, (u32, u32), Pixelation, bool)> {
 
 /// Sets one property of `e`, as `olr_edit::element::set` does (a locked
 /// element takes only `Locked`).
-fn with_property(e: &mut Element, property: Property, level: (u32, u32)) -> Result<(), DocError> {
+pub(crate) fn with_property(e: &mut Element, property: Property, level: (u32, u32)) -> Result<(), DocError> {
     if e.locked && !matches!(property, Property::Locked(_)) {
         return Err(DocError::Locked(e.id.clone()));
     }
@@ -118,6 +118,12 @@ fn with_property(e: &mut Element, property: Property, level: (u32, u32)) -> Resu
         Property::Name(n) => e.name = n,
         Property::Visible(v) => e.visible = v,
         Property::Locked(v) => e.locked = v,
+        // Look system (plan 15a): an image or drawn element only.
+        Property::Glow(_) | Property::Clear(_) if matches!(e.kind, ElementKind::Raster) => {
+            return Err(wrong("an image or drawn element"));
+        }
+        Property::Glow(g) => e.glow = g,
+        Property::Clear(c) => e.clear = c,
         Property::Material(m) => match &mut e.kind {
             ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => *material = m,
             ElementKind::Raster => return Err(wrong("an image or drawn element")),
@@ -153,12 +159,12 @@ fn with_property(e: &mut Element, property: Property, level: (u32, u32)) -> Resu
 
 impl Document {
     /// The element `id`, by index.
-    fn find(&self, id: &str) -> Result<usize, DocError> {
+    pub(crate) fn find(&self, id: &str) -> Result<usize, DocError> {
         self.index_of(id).ok_or_else(|| DocError::NoElement(id.into()))
     }
 
     /// `id` (found) when it is not locked.
-    fn unlocked(&self, id: &str) -> Result<usize, DocError> {
+    pub(crate) fn unlocked(&self, id: &str) -> Result<usize, DocError> {
         let i = self.find(id)?;
         if self.items[i].element.locked {
             return Err(DocError::Locked(id.into()));
@@ -167,7 +173,7 @@ impl Document {
     }
 
     /// `check_elements` over the composition with `edit` applied to a copy.
-    fn check_with(&self, edit: impl FnOnce(&mut Vec<Element>)) -> Result<(), DocError> {
+    pub(crate) fn check_with(&self, edit: impl FnOnce(&mut Vec<Element>)) -> Result<(), DocError> {
         let mut elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         edit(&mut elements);
         self.check(&elements, self.level.size, self.level.art_scale)
@@ -211,7 +217,7 @@ impl Document {
     }
 
     /// Carries out `edit` as a change.
-    fn change(&mut self, edit: Edit) -> Change {
+    pub(crate) fn change(&mut self, edit: Edit) -> Change {
         let dirty = self.apply(&edit, true);
         Change { edit, dirty }
     }
@@ -1433,6 +1439,26 @@ impl Document {
                 self.level = w.level.clone();
                 self.items = w.items.clone();
                 self.all()
+            }
+            Edit::Look { before, after } => {
+                let (from, to) = if forward { (before, after) } else { (after, before) };
+                self.level.look = to.as_deref().cloned();
+                // The bake numbers groups by their order: other groups, another bake.
+                let ids = |l: &Option<Box<olr_format::look::LookSource>>| {
+                    l.iter().flat_map(|l| l.glow_groups.iter().map(|g| g.id.clone())).collect::<Vec<_>>()
+                };
+                if ids(from) == ids(to) { NOTHING } else { self.all() }
+            }
+            Edit::GlowMask { id, before, after } => {
+                let to = if forward { after } else { before };
+                match to {
+                    Some(m) => self.glow_masks.insert(id.clone(), m.clone()),
+                    None => self.glow_masks.remove(id),
+                };
+                match self.index_of(id) {
+                    Some(i) => self.element_rect(&self.items[i].element),
+                    None => NOTHING,
+                }
             }
         };
         if dirty.w > 0 && dirty.h > 0 {

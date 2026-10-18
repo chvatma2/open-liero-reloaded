@@ -42,6 +42,17 @@ pub(super) fn show(ctx: &Context, state: &EditorState, out: &mut Vec<EditorActio
                     }
                 });
             }
+            Dialog::RemoveGroup { id } => {
+                ui.label(format!("Remove glow group {id:?}? Its elements stop glowing."));
+                ui.horizontal(|ui| {
+                    if ui.button(labels::REMOVE).clicked() {
+                        choose(out, Choice::Confirm);
+                    }
+                    if ui.button(labels::CANCEL).clicked() {
+                        choose(out, Choice::Cancel);
+                    }
+                });
+            }
             Dialog::Error(e) => {
                 ui.label(e);
                 if ui.button("OK").clicked() {

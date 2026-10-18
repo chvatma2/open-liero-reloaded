@@ -3,7 +3,7 @@
 use olr_data::image::Rgba;
 use olr_edit::compose::Rect;
 
-/// The canvas tools; their shortcut letters are V B E R O L P I W G M.
+/// The canvas tools; their shortcut letters are V B E R O L P I W G M H K.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
     Select,
@@ -21,10 +21,16 @@ pub enum Tool {
     /// A rectangle of the selected drawn layer's pixels, to copy, cut or
     /// delete (plan 14e R7).
     SelectPixels,
+    /// Paints the selected glowing element's glow mask (plan 15a R12).
+    Glow,
+    /// Places light objects and drags them (plan 15a R12).
+    Light,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 11] = [
+    /// The drawing tools: the toolbar's first row (the look's tools sit
+    /// with the look, plan 15a Task 18).
+    pub const DRAWING: [Tool; 11] = [
         Tool::Select,
         Tool::Brush,
         Tool::Eraser,
@@ -36,6 +42,23 @@ impl Tool {
         Tool::Wand,
         Tool::Fill,
         Tool::SelectPixels,
+    ];
+
+    /// Every tool (each has its shortcut).
+    pub const ALL: [Tool; 13] = [
+        Tool::Select,
+        Tool::Brush,
+        Tool::Eraser,
+        Tool::Rect,
+        Tool::Ellipse,
+        Tool::Line,
+        Tool::Spawn,
+        Tool::Eyedropper,
+        Tool::Wand,
+        Tool::Fill,
+        Tool::SelectPixels,
+        Tool::Glow,
+        Tool::Light,
     ];
 
     /// The shortcut letter.
@@ -52,6 +75,8 @@ impl Tool {
             Tool::Wand => 'W',
             Tool::Fill => 'G',
             Tool::SelectPixels => 'M',
+            Tool::Glow => 'H',
+            Tool::Light => 'K',
         }
     }
 
@@ -68,6 +93,8 @@ impl Tool {
             Tool::Wand => "Remove colour",
             Tool::Fill => "Fill",
             Tool::SelectPixels => "Select pixels",
+            Tool::Glow => "Glow",
+            Tool::Light => "Light",
         }
     }
 

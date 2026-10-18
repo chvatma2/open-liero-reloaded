@@ -54,7 +54,8 @@ fn look_frame_does_not_allocate_when_warm() {
         },
         phase_ms: None,
     };
-    let projectile = olr_look::ProjectileLook { glow: Some(80), light: Some(light(5000)), end_flash: Some(light(250)) };
+    let projectile =
+        olr_look::ProjectileLook { glow: Some(80), light: Some(light(5000)), end_flash: Some(light(250)) };
     let weapon = olr_look::WeaponLook { muzzle_light: Some(light(60)) };
     m.look = olr_look::ModLook {
         projectiles: vec![Some(projectile); m.sim.projectiles().len()],

@@ -8,12 +8,15 @@ use std::sync::Arc;
 
 use olr_data::image::RgbaImage;
 use olr_data::manifest::PackManifest;
-use olr_edit::compose::{Decoded, ImageCache, Rect, bake_elements, decode_element, encode_decoded};
+use olr_edit::compose::{
+    Decoded, GlowMasks, ImageCache, Rect, bake_elements_with, decode_element, decode_glow_masks,
+    encode_decoded,
+};
 use olr_edit::level::refresh_thumb;
 use olr_edit::pack::{Pack, Source};
 use olr_format::levels::{
-    Composition, CompositionSource, Element, ElementKind, LevelObject, LevelSource, check_composition,
-    check_elements, image_file,
+    Composition, CompositionSource, Element, ElementKind, GlowLayers, LevelObject, LevelSource,
+    check_composition, check_elements, element_box, glow_file, image_file,
 };
 use olr_pack::Severity;
 use olr_vfs::VPath;
@@ -78,6 +81,19 @@ pub struct Document {
     pub(crate) stored: BTreeMap<String, Vec<u8>>,
     /// Whether anything was rebaked since `open` (the thumbnail is then stale).
     pub(crate) rebaked: bool,
+    /// The elements' painted glow masks (look system), by element id: each
+    /// its box at art resolution, 0-255.
+    pub(crate) glow_masks: GlowMasks,
+    /// A plain level's glow and clear flags, made outside the editor (batch
+    /// A review I2): kept as they are while no element glows or is clear.
+    pub(crate) kept: Option<Kept>,
+}
+
+/// What a plain level brought that its layers cannot bake.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Kept {
+    pub(crate) glow: Option<GlowLayers>,
+    pub(crate) clear: Option<Vec<u8>>,
 }
 
 /// A document's pack, not yet made ([`Document::snapshot`]).
@@ -90,6 +106,7 @@ pub struct PackSnapshot {
     originals: BTreeMap<String, Arc<Vec<u8>>>,
     stored: BTreeMap<String, Vec<u8>>,
     rebaked: bool,
+    glow_masks: GlowMasks,
 }
 
 impl PackSnapshot {
@@ -103,11 +120,13 @@ impl PackSnapshot {
             &self.originals,
             &self.stored,
             self.rebaked,
+            &self.glow_masks,
         )
     }
 }
 
 /// [`Document::to_pack`] of these parts.
+#[allow(clippy::too_many_arguments)]
 fn pack_of(
     manifest: &PackManifest,
     other: &BTreeMap<VPath, Vec<u8>>,
@@ -116,6 +135,7 @@ fn pack_of(
     originals: &BTreeMap<String, Arc<Vec<u8>>>,
     stored: &BTreeMap<String, Vec<u8>>,
     rebaked: bool,
+    glow_masks: &GlowMasks,
 ) -> Pack {
     let mut files = BTreeMap::new();
     for i in items {
@@ -128,6 +148,16 @@ fn pack_of(
         for (path, bytes) in encode_decoded(&i.element, &i.decoded, level.size) {
             let kept = stored.get(&path).filter(|old| same_pixels(&path, old, &bytes));
             files.insert(path, kept.cloned().unwrap_or(bytes));
+        }
+        // A painted glow mask (look system): its element's box × art scale.
+        if i.element.glow.as_ref().is_some_and(|g| g.mask)
+            && let Some(mask) = glow_masks.get(&i.element.id)
+            && let Some((_, b)) = element_box(&i.element.kind, level.size)
+        {
+            let (w, h) = (b.0 * level.art_scale, b.1 * level.art_scale);
+            if mask.len() as u64 == u64::from(w) * u64::from(h) {
+                files.insert(glow_file(&i.element.id), olr_format::image_io::encode_grey(w, h, mask));
+            }
         }
     }
     let mut level = level.clone();
@@ -168,8 +198,12 @@ impl Document {
             .ok_or_else(|| DocError::NoTheme(level.theme.clone()))?;
         // A level without a composition opens as its three layers (the
         // playtest's request: a loaded map can be erased and painted).
+        let plain = composition.is_none();
         let src = composition.unwrap_or_else(|| olr_edit::compose::split_from(&level));
         check_composition(&src, level.size, level.art_scale).map_err(|e| DocError::Bad(e.to_string()))?;
+        let glow_masks = decode_glow_masks(&src, level.size, level.art_scale)?;
+        let kept = (plain && (level.glow.is_some() || level.clear.is_some()))
+            .then(|| Kept { glow: level.glow.clone(), clear: level.clear.clone() });
         let mut cache = ImageCache::new();
         let items = src
             .composition
@@ -214,10 +248,14 @@ impl Document {
             back_tile: theme.back_tile.clone(),
             themes: [(theme.id.clone(), (theme.front_tile.clone(), theme.back_tile.clone()))].into(),
             rebaked: false,
+            glow_masks,
+            kept,
         };
         doc.rebake(doc.all());
         doc.rebaked = (&doc.level.material, &doc.level.front, &doc.level.back)
             != (&level.material, &level.front, &level.back);
+        // The look files are baked too (plan 15a): a change of them alone
+        // does not touch the thumbnail.
         Ok(doc)
     }
 
@@ -252,11 +290,30 @@ impl Document {
         self.items.iter().position(|i| i.element.id == id)
     }
 
-    /// Rebakes `rect` from the items (`bake_elements`) and marks the thumbnail stale.
+    /// Rebakes `rect` from the items (`bake_elements_with` their glow
+    /// masks) and marks the thumbnail stale. A plain level's own glow and
+    /// clear flags stay while no element glows, or is clear.
     pub fn rebake(&mut self, rect: Rect) {
         let items: Vec<(&Element, &Decoded)> = self.items.iter().map(|i| (&i.element, &i.decoded)).collect();
-        bake_elements(&mut self.level, &items, &self.back_tile, rect);
+        bake_elements_with(&mut self.level, &items, &self.glow_masks, &self.back_tile, rect);
+        if let Some(k) = &self.kept {
+            let cells = self.level.material.len();
+            let art = (self.level.front.width(), self.level.front.height());
+            if !self.items.iter().any(|i| i.element.glow.is_some()) {
+                self.level.glow = k.glow.clone().filter(|g| g.fits(art, self.level.size));
+            }
+            if !self.items.iter().any(|i| i.element.clear) {
+                self.level.clear = k.clear.clone().filter(|c| c.len() == cells);
+            }
+        }
         self.rebaked = true;
+    }
+
+    /// Element `id`'s painted glow mask (its box at art resolution), if any.
+    pub fn glow_mask(&self, id: &str) -> Option<&[u8]> {
+        let i = self.index_of(id)?;
+        self.items[i].element.glow.as_ref().filter(|g| g.mask)?;
+        self.glow_masks.get(id).map(|m| m.as_slice())
     }
 
     /// The whole level's rectangle.
@@ -287,6 +344,7 @@ impl Document {
             &self.originals,
             &self.stored,
             self.rebaked,
+            &self.glow_masks,
         )
     }
 
@@ -301,6 +359,7 @@ impl Document {
             originals: self.originals.clone(),
             stored: self.stored.clone(),
             rebaked: self.rebaked,
+            glow_masks: self.glow_masks.clone(),
         }
     }
 
@@ -328,6 +387,14 @@ impl Document {
                 }
                 LevelObject::Light { .. } => {}
             }
+        }
+        if self.kept.is_some() {
+            out.push(Problem {
+                severity: Severity::Warning,
+                text: "this level's glow and clear solids were made outside the editor: they are kept as \
+                       they are until an element glows or is clear"
+                    .into(),
+            });
         }
         if spawns == 0 {
             out.push(Problem {

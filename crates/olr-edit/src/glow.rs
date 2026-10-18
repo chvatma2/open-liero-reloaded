@@ -6,14 +6,7 @@ use crate::level::{Shape, covers, extent};
 /// Sets `mask` (an element box of `size` world pixels at `at`, at art scale
 /// `s`, row-major art pixels) to `value` on every art pixel of a world pixel
 /// `shape` covers. Clipped to the box; never panics.
-pub(crate) fn paint_mask(
-    mask: &mut [u8],
-    at: (i32, i32),
-    size: (u32, u32),
-    s: u32,
-    shape: &Shape,
-    value: u8,
-) {
+pub fn paint_mask(mask: &mut [u8], at: (i32, i32), size: (u32, u32), s: u32, shape: &Shape, value: u8) {
     let (x0, y0, x1, y1) = extent(shape);
     let clip = |v: i64, a: i32, side: u32| (v - i64::from(a)).clamp(0, i64::from(side));
     let (bx0, bx1) = (clip(x0, at.0, size.0), clip(x1, at.0, size.0));

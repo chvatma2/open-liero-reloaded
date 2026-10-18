@@ -6,5 +6,6 @@ mod common;
 mod document;
 mod flows;
 mod history;
+mod look;
 mod state;
 mod tools;

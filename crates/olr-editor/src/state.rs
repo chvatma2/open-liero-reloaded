@@ -20,7 +20,7 @@ use crate::browser::{Browser, DirEntry, Purpose};
 use crate::catalog::{Catalog, EditorSettings, TextureEntry};
 use crate::clipboard::{Clipboard, PASTE_STEP};
 use crate::document::{DocError, Document, Problem};
-use crate::history::{History, LevelMeta};
+use crate::history::{Edit, History, LevelMeta};
 use crate::ops::Change;
 use crate::pointer::Drag;
 use crate::tools::{Brush, MAX_BRUSH, PaintChoice, PointerKind, TextureRef, Tool};
@@ -79,6 +79,17 @@ pub enum Dialog {
     ArtScale { to: u32 },
     /// An error to acknowledge: OK.
     Error(String),
+    /// Removing glow group `id` takes the glow off its elements: Remove, Cancel.
+    RemoveGroup { id: String },
+}
+
+/// The look preview's clock (plan 15a Task 17; spec §The level editor).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClockAction {
+    Play,
+    Pause,
+    /// To this time, ms (a time that is not finite or below 0 is ignored).
+    Scrub(f64),
 }
 
 /// What waits on the unsaved-changes dialog.
@@ -241,6 +252,34 @@ pub enum EditorAction {
     },
     MaterialView(bool),
     Grid(bool),
+    // The look (plan 15a Task 17).
+    /// Element `id`'s glow; `None` removes it. A glow naming no group of the
+    /// look gets a new one named after the element.
+    SetGlow {
+        id: String,
+        glow: Option<olr_format::levels::ElementGlow>,
+    },
+    /// The Look panel's commit: the settings and groups (`None` removes it).
+    SetLook(Option<olr_format::look::LookSource>),
+    AddGroup(olr_format::look::GlowGroupSource),
+    SetGroup {
+        id: String,
+        group: olr_format::look::GlowGroupSource,
+    },
+    /// Removes glow group `id` (asks first: its elements lose their glow).
+    RemoveGroup(String),
+    /// Light object `index`'s place, light and radius.
+    SetLight {
+        index: usize,
+        at: (i32, i32),
+        light: olr_format::look::LightSource,
+        radius: u8,
+    },
+    /// The glow brush's strength, percent (0 erases).
+    GlowStrength(u8),
+    /// What the canvas shows: lit, full bright or the light alone.
+    SetViewMode(olr_look::ViewMode),
+    Clock(ClockAction),
 }
 
 /// What the host carries out.
@@ -337,6 +376,13 @@ pub struct EditorState {
     /// The pixel rectangle (a drawn layer, level pixels; plan 14e R7):
     /// dropped by a tool change, Escape, Open and Close.
     pub(crate) pixel_rect: Option<(String, Rect)>,
+    /// The glow brush's strength, percent.
+    pub(crate) glow_strength: u8,
+    /// What the canvas shows (plan 15a).
+    pub(crate) view_mode: olr_look::ViewMode,
+    /// The look preview's clock, ms, and whether it runs.
+    pub(crate) clock_ms: f64,
+    pub(crate) clock_running: bool,
 }
 
 impl EditorState {
@@ -372,7 +418,38 @@ impl EditorState {
             browser: None,
             clipboard: None,
             pixel_rect: None,
+            glow_strength: 100,
+            view_mode: olr_look::ViewMode::Lit,
+            clock_ms: 0.0,
+            clock_running: false,
         }
+    }
+
+    /// What the canvas shows: lit, full bright or the light alone.
+    pub fn view_mode(&self) -> olr_look::ViewMode {
+        self.view_mode
+    }
+
+    /// The look preview's clock, ms: the animations' time on the canvas.
+    pub fn clock_ms(&self) -> f64 {
+        self.clock_ms
+    }
+
+    /// Whether the look preview's clock runs.
+    pub fn clock_running(&self) -> bool {
+        self.clock_running
+    }
+
+    /// The host's frame time, ms: the clock moves on while it runs.
+    pub fn advance_clock(&mut self, dt_ms: f64) {
+        if self.clock_running && dt_ms.is_finite() && dt_ms > 0.0 {
+            self.clock_ms += dt_ms;
+        }
+    }
+
+    /// The glow brush's strength, percent.
+    pub fn glow_strength(&self) -> u8 {
+        self.glow_strength
     }
 
     pub fn document(&self) -> Option<&Document> {
@@ -450,6 +527,8 @@ impl EditorState {
                 | EditorAction::Zoom { .. }
                 | EditorAction::MaterialView(_)
                 | EditorAction::Grid(_)
+                | EditorAction::SetViewMode(_)
+                | EditorAction::Clock(_)
         );
         if self.dialog.is_some() && waits {
             return Vec::new();
@@ -485,6 +564,9 @@ impl EditorState {
                 | EditorAction::Browse(_)
                 | EditorAction::BrowseTo(_)
                 | EditorAction::CloseBrowser
+                | EditorAction::SetViewMode(_)
+                | EditorAction::Clock(_)
+                | EditorAction::GlowStrength(_)
         );
         let mut cmds = if view_only { Vec::new() } else { self.release() };
         cmds.extend(self.act(action));
@@ -631,6 +713,40 @@ impl EditorState {
             EditorAction::Remove if self.pixel_rect.is_some() => self.erase_pixels(),
             EditorAction::Paste => self.paste(),
             EditorAction::Set(id, property) => self.edit(|d| d.set(&id, property)),
+            EditorAction::SetGlow { id, glow } => self.edits(|d| d.set_glow(&id, glow)),
+            EditorAction::SetLook(look) => self.edits(|d| d.set_look(look)),
+            EditorAction::AddGroup(group) => self.edits(|d| d.add_group(group)),
+            EditorAction::SetGroup { id, group } => self.edits(|d| d.set_group(&id, group)),
+            EditorAction::RemoveGroup(id) => {
+                if self
+                    .doc
+                    .as_ref()
+                    .is_some_and(|d| d.level().look.iter().any(|l| l.glow_groups.iter().any(|g| g.id == id)))
+                {
+                    self.dialog = Some(Dialog::RemoveGroup { id });
+                }
+                Vec::new()
+            }
+            EditorAction::SetLight { index, at, light, radius } => {
+                self.edit(|d| d.set_light(index, at, light, radius))
+            }
+            EditorAction::GlowStrength(v) => {
+                self.glow_strength = v.min(100);
+                Vec::new()
+            }
+            EditorAction::SetViewMode(mode) => {
+                self.view_mode = mode;
+                Vec::new()
+            }
+            EditorAction::Clock(c) => {
+                match c {
+                    ClockAction::Play => self.clock_running = true,
+                    ClockAction::Pause => self.clock_running = false,
+                    ClockAction::Scrub(t) if t.is_finite() && t >= 0.0 => self.clock_ms = t,
+                    ClockAction::Scrub(_) => {}
+                }
+                Vec::new()
+            }
             EditorAction::SetMany(ids, property) => self.group_edit(|d| d.set_many(&ids, property)),
             EditorAction::Remove => match self.selection.clone() {
                 Selection::Element(id) => self.removed(|d| d.remove(&id)),
@@ -1079,6 +1195,25 @@ impl EditorState {
         vec![EditorCommand::Upload(dirty)]
     }
 
+    /// Several edits of one operation as one step (the look's).
+    pub(crate) fn edits(
+        &mut self,
+        op: impl FnOnce(&mut Document) -> Result<(Vec<Edit>, Rect), DocError>,
+    ) -> Vec<EditorCommand> {
+        let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+        match op(doc) {
+            Ok((edits, _)) if edits.iter().all(Edit::is_noop) => Vec::new(),
+            Ok((edits, dirty)) => {
+                self.history.push(edits);
+                self.committed(dirty)
+            }
+            Err(e) => {
+                self.status.message = Some(e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
     /// A removal; the selection clears when it succeeds.
     fn removed(&mut self, op: impl FnOnce(&mut Document) -> Result<Change, DocError>) -> Vec<EditorCommand> {
         let cmds = self.edit(op);
@@ -1172,6 +1307,7 @@ impl EditorState {
             (Dialog::Unsaved { then }, Choice::Save) => self.save(Some(then)),
             (Dialog::Unsaved { then }, Choice::Discard) => self.carry_out(then),
             (Dialog::ArtScale { to }, Choice::Confirm) => self.edit(|d| d.set_art_scale(to)),
+            (Dialog::RemoveGroup { id }, Choice::Confirm) => self.edits(|d| d.remove_group(&id)),
             (Dialog::Error(_), _) | (_, Choice::Cancel) => Vec::new(),
             // Any other answer leaves the question open.
             (dialog, _) => {

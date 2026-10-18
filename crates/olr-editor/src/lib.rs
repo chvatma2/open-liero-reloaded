@@ -9,6 +9,7 @@ pub mod catalog;
 pub mod clipboard;
 pub mod document;
 pub mod history;
+pub mod look_ops;
 pub mod ops;
 mod pointer;
 pub mod state;

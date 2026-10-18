@@ -51,7 +51,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
 }
 
 fn tools(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
-    for tool in Tool::ALL {
+    for tool in Tool::DRAWING {
         let r = ui.selectable_label(state.tool() == tool, tool.name()).on_hover_text(tool.key().to_string());
         if r.clicked() {
             out.push(EditorAction::Tool(tool));
