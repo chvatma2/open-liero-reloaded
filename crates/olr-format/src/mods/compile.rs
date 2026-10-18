@@ -47,9 +47,27 @@ struct Compiler<'a> {
     file: String,
     taken: BTreeSet<String>,
     out: BTreeMap<String, rt::ProjectileDef>,
+    looks: BTreeMap<String, olr_look::ProjectileLook>,
+}
+
+/// A mod's look by authoring key: each projectile's by its `ModDef` key,
+/// each weapon's in order. `olr-content` indexes it like `SimMod`.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ModLookSource {
+    pub projectiles: BTreeMap<String, olr_look::ProjectileLook>,
+    pub weapons: Vec<Option<olr_look::WeaponLook>>,
 }
 
 pub fn compile_mod(src: &ModSource) -> Result<rt::ModDef, FormatError> {
+    compile_all(src).map(|(def, _)| def)
+}
+
+/// The mod's looks (projectiles and weapons), checked as `compile_mod` checks them.
+pub fn compile_mod_look(src: &ModSource) -> Result<ModLookSource, FormatError> {
+    compile_all(src).map(|(_, look)| look)
+}
+
+fn compile_all(src: &ModSource) -> Result<(rt::ModDef, ModLookSource), FormatError> {
     if src.weapons.len() > MAX_WEAPONS {
         return Err(FormatError::invalid(MOD_FILE, "weapons", format!("more than {MAX_WEAPONS} weapons")));
     }
@@ -61,7 +79,8 @@ pub fn compile_mod(src: &ModSource) -> Result<rt::ModDef, FormatError> {
         ));
     }
     check_cycles(src)?;
-    let mut c = Compiler { src, file: String::new(), taken: BTreeSet::new(), out: BTreeMap::new() };
+    let mut c =
+        Compiler { src, file: String::new(), taken: BTreeSet::new(), out: BTreeMap::new(), looks: BTreeMap::new() };
     for (id, p) in &src.shared {
         c.file = shared_file(id);
         if p.id.is_some() {
@@ -70,6 +89,7 @@ pub fn compile_mod(src: &ModSource) -> Result<rt::ModDef, FormatError> {
         c.projectile(p, id, "", 1)?;
     }
     let mut weapons = Vec::with_capacity(src.weapons.len());
+    let mut weapon_looks = Vec::with_capacity(src.weapons.len());
     let mut ids = BTreeSet::new();
     for (id, w) in &src.weapons {
         c.file = weapon_file(id);
@@ -84,15 +104,18 @@ pub fn compile_mod(src: &ModSource) -> Result<rt::ModDef, FormatError> {
             ));
         }
         weapons.push(c.weapon(id, w)?);
+        let look = w.look.as_ref().map(|l| crate::look::compile_weapon_look(l, &c.file, "look")).transpose()?;
+        weapon_looks.push(look);
     }
-    Ok(rt::ModDef {
+    let def = rt::ModDef {
         name: src.name.clone(),
         worm: worm(&src.worm),
         rope: rope(&src.rope),
         weapons,
         projectiles: c.out,
         restrictions: src.restrictions.clone(),
-    })
+    };
+    Ok((def, ModLookSource { projectiles: c.looks, weapons: weapon_looks }))
 }
 
 fn worm(w: &Worm) -> rt::WormParams {
@@ -224,6 +247,10 @@ impl Compiler<'_> {
         }
         if !self.taken.insert(key.to_string()) {
             return Err(self.err(path, format!("projectile id {key:?} is used twice; give one an `id`")));
+        }
+        if let Some(look) = &p.look {
+            let look = crate::look::compile_projectile_look(look, &self.file, &at(path, "look"))?;
+            self.looks.insert(key.to_string(), look);
         }
         let timed = p.timer.as_ref().filter(|t| t.after_s > 0.0);
         if let Some(t) = &p.timer
@@ -563,6 +590,7 @@ mod tests {
                     between_shots_s: 0.25,
                     laser_sight: false,
                     fire: Fire::Projectile { class: WeaponClass::Missile, recoil: 5, sound: None, shot },
+                    look: None,
                 },
             )],
             shared: BTreeMap::new(),

@@ -201,6 +201,7 @@ fn leaf_inner() -> impl Strategy<Value = Projectile> {
                     hit_terrain,
                     hit_worm,
                     spawns: BTreeMap::new(),
+                    look: None,
                 }
             },
         )
@@ -306,6 +307,7 @@ fn weapon_inner() -> impl Strategy<Value = Weapon> {
             between_shots_s,
             laser_sight,
             fire,
+            look: None,
         },
     )
 }

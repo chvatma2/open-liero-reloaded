@@ -178,6 +178,7 @@ mod tests {
             between_shots_s: 0.25,
             laser_sight: false,
             fire: Fire::Projectile { class: WeaponClass::Automatic, recoil: 0, sound: None, shot },
+            look: None,
         };
         ModSource {
             name: "Test".into(),

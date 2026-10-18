@@ -35,6 +35,9 @@ pub struct Weapon {
     pub laser_sight: bool,
     /// What a shot does (OLX `Wpn_Type` and its payload, `mod-fields.md` §5).
     pub fire: Fire,
+    /// The weapon's look (look system): its muzzle light. Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<crate::look::WeaponLookSource>,
 }
 
 /// How a weapon fires (OLX `Wpn_Type`; `docs/porting/olx-notes/mod-fields.md` §5).
@@ -174,6 +177,10 @@ pub struct Projectile {
     /// `<path>.spawn`).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub spawns: BTreeMap<String, EventSpawn>,
+    /// The projectile's look (look system): glow, a light, an end flash;
+    /// presentation only. Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<crate::look::ProjectileLookSource>,
 }
 
 impl Projectile {
@@ -191,6 +198,7 @@ impl Projectile {
             hit_terrain: Vec::new(),
             hit_worm: Vec::new(),
             spawns: BTreeMap::new(),
+            look: None,
         }
     }
 }
@@ -483,6 +491,7 @@ mod tests {
                 sound: Some("sfx/bazooka.ogg".into()),
                 shot: ShotSpawn { speed: 140, projectile: Some(Box::new(rocket)), ..ShotSpawn::default() },
             },
+            look: None,
         }
     }
 

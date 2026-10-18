@@ -142,6 +142,7 @@ impl<'a> Lifter<'a> {
             between_shots_s: w.rof,
             laser_sight: w.laser_sight,
             fire,
+            look: None,
         })
     }
 
@@ -285,6 +286,7 @@ impl<'a> Lifter<'a> {
             hit_terrain,
             hit_worm,
             spawns,
+            look: None,
         })
     }
 }

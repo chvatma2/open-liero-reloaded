@@ -17,7 +17,8 @@ mod spawn;
 mod types;
 
 pub use compile::{
-    MAX_AMOUNT, MAX_COLOURS, MAX_EFFECTS, MAX_INLINE_DEPTH, MAX_SHARED, MAX_WEAPONS, compile_mod,
+    MAX_AMOUNT, MAX_COLOURS, MAX_EFFECTS, MAX_INLINE_DEPTH, MAX_SHARED, MAX_WEAPONS, ModLookSource, compile_mod,
+    compile_mod_look,
 };
 pub use files::{RESTRICTIONS_FILE, file_paths, read_mod_files, write_mod_files};
 pub use lift::{LIFTED_SPAWN, lift_mod};

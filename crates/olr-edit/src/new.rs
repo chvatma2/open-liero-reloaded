@@ -182,6 +182,7 @@ fn mod_template(name: &str) -> ModSource {
             sound: None,
             shot: ShotSpawn { speed: 200, projectile: Some(Box::new(bullet)), ..ShotSpawn::default() },
         },
+        look: None,
     };
     let standard = BTreeMap::from([("Gun".to_string(), WeaponState::Enabled)]);
     ModSource {

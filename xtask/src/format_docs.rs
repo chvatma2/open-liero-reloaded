@@ -44,6 +44,7 @@ const PAGES: &[Page] = &[
             "crates/olr-format/src/mods/files.rs",
             "crates/olr-format/src/mods/types.rs",
             "crates/olr-format/src/mods/spawn.rs",
+            "crates/olr-format/src/look.rs",
             "crates/olr-format/src/colour.rs",
             "crates/olr-data/src/restrictions.rs",
         ],

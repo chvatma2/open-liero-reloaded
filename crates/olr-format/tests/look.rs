@@ -243,3 +243,110 @@ fn look_files_are_hashed_and_known() {
     let b = olr_pack::content_hash(&fs.clone().with("look/glow.png", image_io::encode_grey(8, 6, &[1; 48]))).unwrap();
     assert_ne!(a, b);
 }
+
+// ---- Mod looks (plan 15a Task 3) ----
+
+use olr_format::mods::{compile_mod, compile_mod_look, read_mod_files};
+
+const MOD: &str = "(name: \"T\", weapons: [\"w\"])";
+
+fn weapon(projectile_look: &str, weapon_look: &str, spawn_look: &str) -> String {
+    format!(
+        r##"(
+    name: "W",
+    recharge: 0.5,
+    drain: 30.0,
+    between_shots_s: 0.25,
+    fire: Projectile(
+        shot: (
+            speed: 100,
+            projectile: (
+                gfx: Pixels(["#948800"]),
+                hit_terrain: [Explode(damage: 4), Spawn("s")],
+                spawns: {{"s": (amount: 3, projectile: (gfx: Pixels([]){spawn_look}))}},
+                {projectile_look}
+            ),
+        ),
+    ),
+    {weapon_look}
+)
+"##
+    )
+}
+
+const SPEC_PROJECTILE_LOOK: &str = r##"look: (
+                    glow: 80,
+                    light: (colour: "#ff8c28", intensity: 80, reach: Pixels(48), animation: Flicker(speed: 10, depth: 15)),
+                    end_flash: (colour: "#ffc878", intensity: 200, reach: Pixels(96),
+                                animation: Keys(keys: [(0, 100), (250, 0)], looped: false)),
+                ),"##;
+
+const SPEC_WEAPON_LOOK: &str = r##"look: (muzzle_light: (colour: "#ffdca0", intensity: 120, reach: Pixels(64),
+                          animation: Keys(keys: [(0, 100), (60, 0)]))),"##;
+
+fn mod_fs(w: &str) -> MemFs {
+    MemFs::new().with("mod.ron", MOD).with("weapons/w.ron", w.to_string())
+}
+
+#[test]
+fn the_spec_mod_example_round_trips() {
+    let w = weapon(SPEC_PROJECTILE_LOOK, SPEC_WEAPON_LOOK, "");
+    let src = read_mod_files(&mod_fs(&w)).unwrap();
+    compile_mod(&src).unwrap();
+    let look = compile_mod_look(&src).unwrap();
+    let p = &look.projectiles["w"];
+    assert_eq!(p.glow, Some(80));
+    let light = p.light.as_ref().unwrap();
+    assert_eq!((light.colour, light.intensity, light.reach), ([255, 140, 40], 80, Reach::Pixels(48)));
+    let flash = p.end_flash.as_ref().unwrap();
+    assert!(flash.animation.ended(251.0));
+    assert_eq!(look.weapons.len(), 1);
+    let muzzle = look.weapons[0].as_ref().unwrap().muzzle_light.as_ref().unwrap();
+    assert_eq!(muzzle.intensity, 120);
+    assert!(!look.projectiles.contains_key("w.spawn"));
+    let canonical = canonical_text("weapons/w.ron", &w).unwrap();
+    assert_eq!(canonical_text("weapons/w.ron", &canonical).unwrap(), canonical);
+    assert!(!canonical.contains("looped"), "{canonical}");
+}
+
+#[test]
+fn a_mod_without_looks_compiles_to_none() {
+    let src = read_mod_files(&mod_fs(&weapon("", "", ""))).unwrap();
+    let look = compile_mod_look(&src).unwrap();
+    assert!(look.projectiles.is_empty());
+    assert_eq!(look.weapons, vec![None]);
+}
+
+#[test]
+fn an_inline_projectile_look_compiles_under_its_key() {
+    let w = weapon("", "", ", look: (glow: 40)");
+    let look = compile_mod_look(&read_mod_files(&mod_fs(&w)).unwrap()).unwrap();
+    assert_eq!(look.projectiles.keys().collect::<Vec<_>>(), ["w.spawn"]);
+    assert_eq!(look.projectiles["w.spawn"].glow, Some(40));
+}
+
+#[test]
+fn mod_look_limits() {
+    for (from, to, want) in [
+        ("glow: 80", "glow: 101", "fire.shot.projectile.look.glow"),
+        ("intensity: 80", "intensity: 1001", "fire.shot.projectile.look.light.intensity"),
+        ("reach: Pixels(96)", "reach: Pixels(0)", "fire.shot.projectile.look.end_flash.reach"),
+        ("intensity: 120", "intensity: 1001", "look.muzzle_light.intensity"),
+    ] {
+        let w = weapon(SPEC_PROJECTILE_LOOK, SPEC_WEAPON_LOOK, "").replacen(from, to, 1);
+        let src = read_mod_files(&mod_fs(&w)).unwrap();
+        let e = compile_mod(&src).unwrap_err().to_string();
+        assert!(e.contains("weapons/w.ron") && e.contains(want), "{to}: {e}");
+        assert!(compile_mod_look(&src).is_err());
+    }
+}
+
+#[test]
+fn bundled_mods_have_no_look() {
+    let Some(root) = std::env::var_os("OLR_CONTENT_DIR").map(std::path::PathBuf::from) else { return };
+    for id in ["olx-classic", "olx-mw-1-0"] {
+        let src = read_mod_files(&olr_vfs::DirFs::new(root.join(id))).unwrap();
+        let look = compile_mod_look(&src).unwrap();
+        assert!(look.projectiles.is_empty() && look.weapons.iter().all(Option::is_none), "{id}");
+    }
+}

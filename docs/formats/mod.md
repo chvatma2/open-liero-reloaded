@@ -67,6 +67,7 @@ Example:
 | `between_shots_s` | number | required | Seconds between shots (OLX's `ROF` ÷ 1000, `CGameScript.cpp:776`). |
 | `laser_sight` | boolean | `false` | Spawns a laser-sight entity every sub-step while the weapon is not reloading; the entity takes an entity-pool slot, so it counts in the simulation (OLX `CClient_Game.cpp:751-808`). |
 | `fire` | [Fire](#fire) | required | What a shot does (OLX `Wpn_Type` and its payload, `mod-fields.md` §5). |
+| `look` | [WeaponLookSource](#weaponlooksource) (optional) | none | The weapon's look (look system): its muzzle light. Default none. |
 
 Example:
 
@@ -138,6 +139,7 @@ A projectile (OLX `proj_t`, `include/ProjectileDesc.h:80-121`), inline in a spaw
 | `hit_terrain` | list of [Effect](#effect) | `[]` | When the projectile hits rock or dirt (OLX `Hit`). `[]` = OLX's `Nothing`. The effect kind also selects the collision physics: `Bounce`, `Nothing` (half-move), `GoThrough` (no stop), `Explode` in dirt only (keeps position); everything else stops at the last safe position (`mod-fields.md` §7). At most `MAX_EFFECTS` (16). |
 | `hit_worm` | list of [Effect](#effect) | `[]` | When it hits a worm (OLX `PlayerHit`). `[]` = `Nothing`, which also turns worm collision off; `GoThrough` hits but does not stop. At most `MAX_EFFECTS` (16). |
 | `spawns` | map of name → [EventSpawn](#spawn) | `{}` | Named spawns that `Spawn(<name>)` effects use. This runtime takes at most one, shared by all events (OLX `GeneralSpawnInfo`, expanded as `<path>.spawn`). |
+| `look` | [ProjectileLookSource](#projectilelooksource) (optional) | none | The projectile's look (look system): glow, a light, an end flash; presentation only. Default none. |
 
 Example:
 
@@ -237,6 +239,16 @@ How a weapon fires (OLX `Wpn_Type`; `docs/porting/olx-notes/mod-fields.md` §5).
 |---|---|---|---|
 | `kind` | [SpecialKind](#specialkind) | required | Which special (OLX `Wpn_Special`). |
 | `thrust` | integer | required | Jetpack: value × 50 px/s² upward per 10 ms frame (OLX `CClient_Game.cpp:549-585`). |
+
+<a id="weaponlooksource"></a>
+
+## WeaponLookSource
+
+A mod weapon's look.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `muzzle_light` | [LightSource](#lightsource) (optional) | none | Replaces the engine's muzzle-flash light. Default none. |
 
 <a id="gfx"></a>
 
@@ -409,6 +421,18 @@ LX56 fixes four flags per context, so their defaults depend on where the spawn i
 | `shared` | string (optional) | none | The id of a shared projectile (`projectiles/<id>.ron`). Exactly one of `shared` and `projectile` is set (OLX `proj`). |
 | `projectile` | [Projectile](#projectile) (optional) | none | The spawned projectile, defined here (OLX `proj`); inline projectiles nest at most `MAX_INLINE_DEPTH` (32) deep. |
 
+<a id="projectilelooksource"></a>
+
+## ProjectileLookSource
+
+A mod projectile's look.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `glow` | integer (optional) | none | How bright its sprite or pixels show whatever the darkness, percent, 0 to 100. Default none. |
+| `light` | [LightSource](#lightsource) (optional) | none | A light following it; its clock is the projectile's age. Default none. |
+| `end_flash` | [LightSource](#lightsource) (optional) | none | A light where it ended; its clock starts there. Default none. |
+
 <a id="weaponstate"></a>
 
 ## WeaponState (enum)
@@ -454,6 +478,20 @@ OLX `Wpn_Special`.
 | `Jetpack` | — | OLX `SPC_JETPACK` (1): thrust, see `Fire::Special::thrust`. |
 | `Unknown` | integer | Any other value; behaves like `Off`. |
 
+<a id="lightsource"></a>
+
+## LightSource
+
+A light: a level's light object (with its place), a projectile's light or flash, a weapon's muzzle light.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `colour` | [colour](#colour) | required | Opaque. |
+| `intensity` | integer | required | The light at the source, percent, 0 to 1000. |
+| `reach` | [ReachSource](#reachsource) | required | Where it fades to nothing. |
+| `animation` | [AnimationSource](#animationsource) | `Steady` | Default `Steady`. |
+| `phase_ms` | integer (optional) | none | Shifts the animation's clock, milliseconds; by default a looping animation's phase comes from the light's identity, so equal lights never pulse together. Default none. |
+
 <a id="animation"></a>
 
 ## Animation
@@ -464,6 +502,53 @@ A projectile's frame animation (OLX `Animating`, `AnimRate`, `AnimType`).
 |---|---|---|---|
 | `fps` | number | `0.0` | Frames per second (OLX `rate`). |
 | `mode` | [AnimMode](#animmode) | `Once` | What happens at the last frame. `Once` removes the projectile (OLX `AnimType`). |
+
+<a id="reachsource"></a>
+
+## ReachSource (enum)
+
+How far a light reaches: it fades to nothing there.
+
+| Variant | Fields | Meaning |
+|---|---|---|
+| `Pixels` | integer | World pixels, 1 to 4096. |
+| `Unlimited` | — | No fade (in a level, glow light reaches across the whole level). |
+
+<a id="animationsource"></a>
+
+## AnimationSource (enum)
+
+How a light's intensity changes over time. Levels are percent of its intensity (0 to 1000), times milliseconds. The clock is the match's (a mod's light: the projectile's age, or the time since its flash began).
+
+| Variant | Fields | Meaning |
+|---|---|---|
+| `Steady` | — | Constant. |
+| `Pulse` | `period_ms`, `low`, `high`, `shape` | Between `low` and `high` over `period_ms` (1 to 600 000), starting at the midpoint and rising. |
+| `Flicker` | `speed`, `depth` | A flame's unsteadiness: smooth noise, the same on every machine. |
+| `Keys` | `keys`, `looped` | A hand-made curve, linear between keys. |
+
+### `AnimationSource::Pulse`
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `period_ms` | integer | required | Milliseconds, 1 to 600 000. |
+| `low` | integer | required | Percent, 0 to 1000. |
+| `high` | integer | required | Percent, 0 to 1000. |
+| `shape` | [PulseShape](#pulseshape) | `Sine` | The wave. Default `Sine`. |
+
+### `AnimationSource::Flicker`
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `speed` | integer | required | Changes a second, 1 to 1000. |
+| `depth` | integer | required | How far it dims, percent, 0 to 100. |
+
+### `AnimationSource::Keys`
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `keys` | list of [keysource](#keysource) | required | 1 to 64 keys, their times not decreasing. |
+| `looped` | boolean | `false` | Repeats after the last key; otherwise the light ends there (a flash). Default false. |
 
 <a id="animmode"></a>
 
@@ -477,3 +562,21 @@ What an animation does at its last frame (OLX `Proj_AnimType`).
 | `Loop` | — | `ANI_LOOP` (1): back to frame 0. |
 | `PingPong` | — | `ANI_PINGPONG` (2): reverses at either end. |
 | `Unknown` | integer | An OLX animation type this format has no name for: nothing at the end. |
+
+<a id="pulseshape"></a>
+
+## PulseShape (enum)
+
+The wave of a `Pulse`.
+
+| Variant | Fields | Meaning |
+|---|---|---|
+| `Sine` | — | Smooth. |
+| `Triangle` | — | Linear up and down. |
+| `Square` | — | `high` for the first half of the period, `low` for the second. |
+
+<a id="keysource"></a>
+
+## keysource
+
+One key of a `Keys` animation, written `(at_ms, level)` or `(at_ms, level, "#rrggbb")`: milliseconds from the curve's start, the intensity in percent (0 to 1000), and the light's colour from this key on.
