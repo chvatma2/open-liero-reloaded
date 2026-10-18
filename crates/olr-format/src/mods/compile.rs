@@ -79,8 +79,13 @@ fn compile_all(src: &ModSource) -> Result<(rt::ModDef, ModLookSource), FormatErr
         ));
     }
     check_cycles(src)?;
-    let mut c =
-        Compiler { src, file: String::new(), taken: BTreeSet::new(), out: BTreeMap::new(), looks: BTreeMap::new() };
+    let mut c = Compiler {
+        src,
+        file: String::new(),
+        taken: BTreeSet::new(),
+        out: BTreeMap::new(),
+        looks: BTreeMap::new(),
+    };
     for (id, p) in &src.shared {
         c.file = shared_file(id);
         if p.id.is_some() {
@@ -104,7 +109,8 @@ fn compile_all(src: &ModSource) -> Result<(rt::ModDef, ModLookSource), FormatErr
             ));
         }
         weapons.push(c.weapon(id, w)?);
-        let look = w.look.as_ref().map(|l| crate::look::compile_weapon_look(l, &c.file, "look")).transpose()?;
+        let look =
+            w.look.as_ref().map(|l| crate::look::compile_weapon_look(l, &c.file, "look")).transpose()?;
         weapon_looks.push(look);
     }
     let def = rt::ModDef {

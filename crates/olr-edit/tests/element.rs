@@ -477,6 +477,7 @@ fn new_ids_reserve_masks_and_layer_files() {
         visible: true,
         locked: false,
         kind: ElementKind::drawn(ElementMaterial::Dirt),
+        glow: None,
     };
     assert_ne!(new_element_id(&[wall], &Default::default(), "wall.material", "layer"), "wall.material");
 }

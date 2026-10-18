@@ -18,7 +18,10 @@ pub use files::{
 pub use thumb::{THUMB_SIZE, letterbox, thumbnail};
 
 use crate::image_io::{LEVEL_ART, check_size};
-use crate::look::{AnimationSource, LightSource, LookSource, MAX_LIGHT_OBJECTS, ReachSource, compile_light, compile_look_source};
+use crate::look::{
+    AnimationSource, LightSource, LookSource, MAX_LIGHT_OBJECTS, ReachSource, compile_light,
+    compile_look_source,
+};
 use crate::{Colour, FormatError, LiftError};
 pub use olr_terrain::GlowLayers;
 
@@ -78,6 +81,8 @@ pub struct LevelHeader {
     pub spawns: Vec<SpawnPoint>,
     /// `level.ron`'s objects as written (with their notes).
     pub objects: Vec<LevelObject>,
+    /// `level.ron`'s look as written.
+    pub look: Option<LookSource>,
 }
 
 /// A level as its files hold it.
@@ -227,9 +232,17 @@ pub fn compile_look(src: &LevelSource) -> Result<Option<olr_look::LevelLook>, Fo
         let Some((radius, light)) = o.as_light() else { continue };
         let path = format!("objects[{i}]");
         if !(1..=16).contains(&radius) {
-            return Err(FormatError::invalid(LEVEL_FILE, &format!("{path}.radius"), format!("{radius}, not within 1 to 16")));
+            return Err(FormatError::invalid(
+                LEVEL_FILE,
+                &format!("{path}.radius"),
+                format!("{radius}, not within 1 to 16"),
+            ));
         }
-        look.lights.push(olr_look::PlacedLight { at: o.at(), radius, light: compile_light(&light, LEVEL_FILE, &path)? });
+        look.lights.push(olr_look::PlacedLight {
+            at: o.at(),
+            radius,
+            light: compile_light(&light, LEVEL_FILE, &path)?,
+        });
     }
     Ok(Some(look))
 }
@@ -241,7 +254,10 @@ fn check_glow(src: &LevelSource, glow: &GlowLayers) -> Result<(), FormatError> {
         return Err(FormatError::invalid(
             GLOW_FILE,
             "",
-            format!("the look images must be {}x{} (art) and {}x{} (world)", art.0, art.1, src.size.0, src.size.1),
+            format!(
+                "the look images must be {}x{} (art) and {}x{} (world)",
+                art.0, art.1, src.size.0, src.size.1
+            ),
         ));
     }
     let groups = src.look.as_ref().map_or(0, |l| l.glow_groups.len()).max(1);

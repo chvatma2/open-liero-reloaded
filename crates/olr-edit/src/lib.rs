@@ -7,6 +7,7 @@ pub mod compose;
 pub mod drawn;
 pub mod element;
 pub mod fmt;
+mod glow;
 pub mod level;
 pub mod mask;
 pub mod new;

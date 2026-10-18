@@ -143,6 +143,7 @@ One element of a composition.
 | `visible` | boolean | `true` | Hidden elements are left out of the bake. Default true. |
 | `locked` | boolean | `false` | The editor does not change a locked element. |
 | `kind` | [ElementKind](#elementkind) | required | What the element is. |
+| `glow` | [ElementGlow](#elementglow) (optional) | none | Its pixels glow (look system): an image or drawn element only. Default none. |
 
 <a id="colour"></a>
 
@@ -271,6 +272,18 @@ What an element is.
 | `size` | (integer, integer) (optional) | none | The layer's width and height, world pixels, each 1 to `MAX_SIDE` (4096); none: the level's size (it follows a resize). Default none. |
 | `mixed` | boolean | `false` | A material per world pixel of the layer (`editor/layers/<id>.material.png`, `material.png`'s palette) instead of `material`. Default false. |
 | `back` | boolean | `false` | A back art (`editor/layers/<id>.back.png`, the layer's art size): what shows where its dirt or rock is carved. Default false. |
+
+<a id="elementglow"></a>
+
+## ElementGlow
+
+How an element's covered pixels glow: they show at `strength` whatever the darkness, and cast light as their glow group says.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `strength` | integer | required | Percent, 1 to 100. |
+| `group` | string | required | The id of a glow group in `level.ron`'s `look`. |
+| `mask` | boolean | `false` | A painted mask (`editor/glow/<id>.png`, grey, the element's box at art resolution: 0 no glow to 255 full) scales the strength per pixel. Default false. |
 
 <a id="pulseshape"></a>
 

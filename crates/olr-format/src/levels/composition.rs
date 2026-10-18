@@ -83,6 +83,31 @@ pub struct Element {
     pub locked: bool,
     /// What the element is.
     pub kind: ElementKind,
+    /// Its pixels glow (look system): an image or drawn element only.
+    /// Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glow: Option<ElementGlow>,
+}
+
+/// How an element's covered pixels glow: they show at `strength` whatever
+/// the darkness, and cast light as their glow group says.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ElementGlow {
+    /// Percent, 1 to 100.
+    pub strength: u8,
+    /// The id of a glow group in `level.ron`'s `look`.
+    pub group: String,
+    /// A painted mask (`editor/glow/<id>.png`, grey, the element's box at art
+    /// resolution: 0 no glow to 255 full) scales the strength per pixel.
+    /// Default false.
+    #[serde(default, skip_serializing_if = "d::is_false")]
+    pub mask: bool,
+}
+
+/// An element's glow mask: `editor/glow/<id>.png`.
+pub fn glow_file(id: &str) -> String {
+    format!("{EDITOR_DIR}/glow/{id}.png")
 }
 
 /// What an element is.
@@ -253,6 +278,19 @@ pub fn element_files(element: &Element) -> Vec<String> {
         ElementKind::Drawn { mixed, back, .. } => drawn_files(&element.id, *mixed, *back),
         ElementKind::Raster => raster_files(&element.id).into(),
     }
+    .into_iter()
+    .chain(element.glow.as_ref().is_some_and(|g| g.mask).then(|| glow_file(&element.id)))
+    .collect()
+}
+
+/// An image or drawn element's box: its top-left and size in world pixels;
+/// `None` for a raster (it has no box).
+pub fn element_box(kind: &ElementKind, level: (u32, u32)) -> Option<((i32, i32), (u32, u32))> {
+    match kind {
+        ElementKind::Image { at, size, .. } => Some((*at, *size)),
+        ElementKind::Drawn { .. } => drawn_box(kind, level),
+        ElementKind::Raster => None,
+    }
 }
 
 /// `COMPOSITION_FILE` and every element's files, each once, in element order.
@@ -377,7 +415,20 @@ pub fn check_composition(
     let art = (size.0.saturating_mul(art_scale), size.1.saturating_mul(art_scale));
     for (i, e) in src.composition.elements.iter().enumerate() {
         let boxed = drawn_box(&e.kind, size);
-        for (part, file) in element_files(e).into_iter().enumerate() {
+        let glow = glow_file(&e.id);
+        if e.glow.as_ref().is_some_and(|g| g.mask) {
+            let Some(bytes) = src.files.get(&glow) else {
+                return Err(FormatError::invalid(
+                    COMPOSITION_FILE,
+                    &format!("elements[{i}]"),
+                    format!("{glow}: missing"),
+                ));
+            };
+            let b = element_box(&e.kind, size).map_or((0, 0), |(_, b)| b);
+            let expected = (b.0.saturating_mul(art_scale), b.1.saturating_mul(art_scale));
+            check_file(&glow, bytes, Some((expected, "the element's box × art_scale")))?;
+        }
+        for (part, file) in element_files(e).into_iter().filter(|f| *f != glow).enumerate() {
             let Some(bytes) = src.files.get(&file) else {
                 return Err(FormatError::invalid(
                     COMPOSITION_FILE,
@@ -413,6 +464,22 @@ pub fn check_composition(
                     ));
                 }
             }
+        }
+    }
+    Ok(())
+}
+
+/// Every glow of `c` names a group of `look` (a level's `look`): an error
+/// on `composition.ron` naming the first that does not.
+pub fn check_glow_groups(c: &Composition, look: Option<&crate::look::LookSource>) -> Result<(), FormatError> {
+    for (i, e) in c.elements.iter().enumerate() {
+        let Some(g) = &e.glow else { continue };
+        if !look.is_some_and(|l| l.glow_groups.iter().any(|x| x.id == g.group)) {
+            return Err(FormatError::invalid(
+                COMPOSITION_FILE,
+                &format!("elements[{i}].glow.group"),
+                format!("no glow group {:?} in level.ron's look", g.group),
+            ));
         }
     }
     Ok(())
@@ -504,6 +571,22 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                 ),
             ));
         }
+        if let Some(g) = &e.glow {
+            if matches!(e.kind, ElementKind::Raster) {
+                return Err(bad("glow", "a raster element cannot glow: split it into layers".into()));
+            }
+            if !(1..=100).contains(&g.strength) {
+                return Err(bad("glow.strength", format!("{}: 1 to 100", g.strength)));
+            }
+            if !crate::look::valid_group_id(&g.group) {
+                return Err(bad("glow.group", format!("{:?} is not a glow group id", g.group)));
+            }
+            let file = glow_file(&e.id);
+            let name = file.rsplit('/').next().unwrap_or(&file);
+            if let Some(why) = olr_vfs::non_portable(name) {
+                return Err(bad("id", format!("{:?}: its file {file} {why}", e.id)));
+            }
+        }
         // An image's mask is named by its unique id: never shared, but its
         // name must be portable (plan 14d review).
         if let ElementKind::Image { mask: true, .. } = e.kind {
@@ -581,6 +664,7 @@ mod tests {
             visible: true,
             locked: false,
             kind,
+            glow: None,
         };
         CompositionSource {
             composition: Composition {
@@ -847,6 +931,7 @@ mod tests {
                 mixed: true,
                 back: true,
             },
+            glow: None,
         };
         // A mask's pixels count too: at the limit, a 10 × 10 mask is over.
         let mut at_limit = sample();

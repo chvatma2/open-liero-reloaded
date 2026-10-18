@@ -10,8 +10,8 @@ use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_format::image_io::{self, IMAGES};
 use olr_format::levels::{
-    CompositionSource, Dither, Element, ElementKind, ElementMaterial, LevelSource, MAX_ELEMENTS,
-    check_composition, element_files, image_file, layer_file, raster_files,
+    CompositionSource, Dither, Element, ElementGlow, ElementKind, ElementMaterial, LevelSource, MAX_ELEMENTS,
+    check_composition, element_box, element_files, glow_file, image_file, layer_file, raster_files,
 };
 
 use crate::compose::{Decoded, ImageCache, compose_from, decode_element, encode_decoded, resize_decoded};
@@ -49,6 +49,8 @@ pub enum Property {
     Colours(Option<u16>),
     Dither(Dither),
     Threshold(u8),
+    /// The element's glow (an image or drawn element; look system).
+    Glow(Option<ElementGlow>),
 }
 
 fn level(pack: &Pack) -> Result<&LevelSource, ElementError> {
@@ -274,6 +276,7 @@ pub fn add_image_with(
                     alpha_threshold: 128,
                     mask: false,
                 },
+                glow: None,
             },
         )?;
         for p in settings {
@@ -299,6 +302,7 @@ pub fn add_layer(pack: &mut Pack, material: ElementMaterial, name: &str) -> Resu
                 visible: true,
                 locked: false,
                 kind: ElementKind::drawn(material),
+                glow: None,
             },
         )?;
         Ok(id)
@@ -318,6 +322,7 @@ fn field(p: &Property) -> &'static str {
         Property::Colours(_) => "colours",
         Property::Dither(_) => "dither",
         Property::Threshold(_) => "alpha_threshold",
+        Property::Glow(_) => "glow",
     }
 }
 
@@ -331,7 +336,18 @@ pub fn set(pack: &mut Pack, id: &str, property: Property) -> Result<(), ElementE
 /// checked once, as `set` checks one.
 pub fn set_all(pack: &mut Pack, id: &str, properties: &[Property]) -> Result<(), ElementError> {
     let context: Vec<&str> = properties.iter().map(field).collect();
-    let size = level(pack)?.size;
+    let l = level(pack)?;
+    let size = l.size;
+    for p in properties {
+        if let Property::Glow(Some(g)) = p
+            && !l.look.as_ref().is_some_and(|look| look.glow_groups.iter().any(|x| x.id == g.group))
+        {
+            return Err(ElementError::BadValue(format!(
+                "glow: no glow group {:?} in level.ron's look (add it first)",
+                g.group
+            )));
+        }
+    }
     commit(pack, &context.join(", "), |src| {
         for p in properties {
             apply(src, id, p.clone(), size)?;
@@ -355,6 +371,10 @@ fn apply(
         }
         let wrong = |want| ElementError::WrongKind { id: id.into(), want };
         match property {
+            Property::Glow(_) if matches!(e.kind, ElementKind::Raster) => {
+                return Err(wrong("an image or drawn element"));
+            }
+            Property::Glow(g) => e.glow = g,
             Property::Name(n) => e.name = n,
             Property::Visible(v) => e.visible = v,
             Property::Locked(v) => e.locked = v,
@@ -393,6 +413,48 @@ fn apply(
         }
         Ok(())
     }
+}
+
+/// Paints element `id`'s glow mask over world `shape` (look system):
+/// `strength` percent, 0 erasing. A first mask keeps everything (255). The
+/// element must glow already.
+pub fn paint_glow(pack: &mut Pack, id: &str, shape: &Shape, strength: u8) -> Result<(), ElementError> {
+    let l = level(pack)?;
+    let (size, s) = (l.size, l.art_scale);
+    if strength > 100 {
+        return Err(ElementError::BadValue(format!("strength {strength}: 0 to 100")));
+    }
+    commit(pack, "", |src| {
+        let i = unlocked(src, id)?;
+        let e = &src.composition.elements[i];
+        let Some(glow) = e.glow.clone() else {
+            return Err(ElementError::BadValue(format!("element {id:?} has no glow: set its glow first")));
+        };
+        let Some((at, b)) = element_box(&e.kind, size) else {
+            return Err(ElementError::WrongKind { id: id.into(), want: "an image or drawn element" });
+        };
+        let art = (b.0.saturating_mul(s), b.1.saturating_mul(s));
+        let file = glow_file(id);
+        let mut mask = match src.files.get(&file).filter(|_| glow.mask) {
+            Some(bytes) => {
+                let (w, h, v) = image_io::decode_grey_within(bytes, olr_format::image_io::LEVEL_ART)
+                    .map_err(|m| ElementError::BadValue(format!("{file}: {m}")))?;
+                if (w, h) != art {
+                    return Err(ElementError::BadValue(format!(
+                        "{file}: {w}x{h}, the box is {}x{}",
+                        art.0, art.1
+                    )));
+                }
+                v
+            }
+            None => vec![255; art.0 as usize * art.1 as usize],
+        };
+        let value = ((u32::from(strength) * 255 + 50) / 100) as u8;
+        crate::glow::paint_mask(&mut mask, at, b, s, shape, value);
+        src.files.insert(file, image_io::encode_grey(art.0, art.1, &mask));
+        src.composition.elements[i].glow = Some(ElementGlow { mask: true, ..glow });
+        Ok(())
+    })
 }
 
 /// Removes element `id` and the files no other element uses.
@@ -653,6 +715,7 @@ pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
                 visible: true,
                 locked: false,
                 kind: ElementKind::Raster,
+                glow: None,
             });
             new
         })

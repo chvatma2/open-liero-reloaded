@@ -261,6 +261,7 @@ impl Document {
                 alpha_threshold: 128,
                 mask: false,
             },
+            glow: None,
         };
         self.check_with(|es| es.push(element.clone()))?;
         let bytes = Arc::new(bytes);
@@ -541,6 +542,7 @@ impl Document {
             visible: true,
             locked: false,
             kind,
+            glow: None,
         };
         self.check_with(|es| es.push(element.clone()))?;
         let id = element.id.clone();
@@ -558,6 +560,7 @@ impl Document {
             visible: true,
             locked: false,
             kind: ElementKind::drawn(material),
+            glow: None,
         };
         self.check_with(|es| es.push(element.clone()))?;
         let (w, h) = self.level.size;
@@ -590,6 +593,7 @@ impl Document {
                 visible: true,
                 locked: false,
                 kind: ElementKind::Raster,
+                glow: None,
             });
             new
         })

@@ -179,7 +179,11 @@ fn unread(src: &dyn ContentSource, kind: PackKind) -> Vec<Diagnostic> {
 fn check_composition(src: &dyn ContentSource, pack: &LevelPack) -> Option<Diagnostic> {
     let def = &pack.level.def;
     let checked = olr_format::levels::read_composition_files(src).and_then(|c| match c {
-        Some(c) => olr_format::levels::check_composition(&c, (def.width, def.height), def.art_scale),
+        Some(c) => {
+            olr_format::levels::check_composition(&c, (def.width, def.height), def.art_scale)?;
+            let look = olr_format::levels::read_level_header(src)?.look;
+            olr_format::levels::check_glow_groups(&c.composition, look.as_ref())
+        }
         None => Ok(()),
     });
     checked.err().map(|e| Diagnostic::from_error(&PackError::Format(e)))
@@ -418,6 +422,7 @@ mod tests {
             visible: true,
             locked: false,
             kind: olr_format::levels::ElementKind::Raster,
+            glow: None,
         };
         let src = olr_format::levels::CompositionSource {
             composition: olr_format::levels::Composition { elements: vec![element] },

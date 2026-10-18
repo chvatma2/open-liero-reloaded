@@ -12,6 +12,11 @@
 //! - baked art is opaque: an image or drawn element's colour keeps only
 //!   its RGB.
 //!
+//! Glow (plan 15a, look system §Composition) follows the same rules: a
+//! front art pixel glows as the element giving its colour; a back art
+//! pixel as the background element giving it (a dirt or rock layer's back
+//! art never glows); a world pixel's groups follow its centre art pixel.
+//!
 //! Integer arithmetic only: the same composition bakes to the same bytes
 //! on every platform.
 
@@ -24,8 +29,9 @@ use olr_data::level::Material;
 use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
-    Composition, CompositionSource, Element, ElementKind, ElementMaterial, LevelSource, check_composition,
-    drawn_box, drawn_files, encode_material, image_file, mask_file, raster_files, write_level_files,
+    Composition, CompositionSource, Element, ElementKind, ElementMaterial, GlowLayers, LevelSource,
+    check_composition, drawn_box, drawn_files, element_box, encode_material, glow_file, image_file,
+    mask_file, raster_files, write_level_files,
 };
 use olr_format::themes::read_theme_files;
 use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
@@ -390,8 +396,14 @@ impl<'a> Layer<'a> {
     /// The element's backdrop at art pixel `(ax, ay)` (R4): a background
     /// image or drawn element's art, a raster element's back.
     fn back(&self, ax: u32, ay: u32) -> Option<Rgba> {
+        self.backdrop(ax, ay).map(|(c, _)| c)
+    }
+
+    /// [`Layer::back`], and whether it is the element's own art (which
+    /// glows with the element) rather than back art (which never does).
+    fn backdrop(&self, ax: u32, ay: u32) -> Option<(Rgba, bool)> {
         match self {
-            Layer::Image { material: Material::Background, .. } => self.front(ax, ay),
+            Layer::Image { material: Material::Background, .. } => self.front(ax, ay).map(|c| (c, true)),
             Layer::Image { .. } => None,
             // A covered background pixel is backdrop; under dirt or rock,
             // the back art where it is opaque (plan 14d R4).
@@ -400,11 +412,11 @@ impl<'a> Layer<'a> {
                 if let Some(c) = self.front(ax, ay)
                     && self.cell(lx, ly) == Some(Material::Background)
                 {
-                    return Some(c);
+                    return Some((c, true));
                 }
-                back.map(|b| b.get(lx, ly)).filter(|p| p.a != 0).map(opaque)
+                back.map(|b| b.get(lx, ly)).filter(|p| p.a != 0).map(|p| (opaque(p), false))
             }
-            Layer::Raster { back, .. } => Some(back.get(ax, ay)),
+            Layer::Raster { back, .. } => Some((back.get(ax, ay), false)),
         }
     }
 
@@ -435,14 +447,88 @@ fn back_at(layers: &[Layer], back_tile: &RgbaImage, ax: u32, ay: u32) -> Rgba {
     opaque(t.get(ax % t.width(), ay % t.height()))
 }
 
+/// The glow masks of a composition's elements, by element id: each the
+/// element's box at art resolution, 0-255 (`editor/glow/<id>.png`).
+pub type GlowMasks = BTreeMap<String, Arc<Vec<u8>>>;
+
+/// A glow mask over its element's box: the values, the box's origin and
+/// size in art pixels.
+type BoxMask<'a> = (&'a [u8], (i64, i64), (u32, u32));
+
+/// One element's glow as the bake reads it.
+struct LayerGlow<'a> {
+    /// 0-255.
+    strength: u32,
+    /// Its index in the level's glow groups.
+    group: u8,
+    /// The mask and the element's box: origin and size in art pixels.
+    mask: Option<BoxMask<'a>>,
+}
+
+impl LayerGlow<'_> {
+    /// The glow at level art pixel `(ax, ay)`, 0-255.
+    fn at(&self, ax: u32, ay: u32) -> u8 {
+        let Some((mask, origin, size)) = self.mask else { return self.strength as u8 };
+        let (lx, ly) = (i64::from(ax) - origin.0, i64::from(ay) - origin.1);
+        if !(0..i64::from(size.0)).contains(&lx) || !(0..i64::from(size.1)).contains(&ly) {
+            return 0;
+        }
+        let m = mask.get(ly as usize * size.0 as usize + lx as usize).copied().unwrap_or(0);
+        ((self.strength * u32::from(m) + 127) / 255) as u8
+    }
+}
+
+/// `e`'s glow in a level of `size` at art scale `s` with `groups` (ids in
+/// order): `None` when it has none, names no such group, or its mask does
+/// not fit.
+fn layer_glow<'a>(
+    e: &Element,
+    masks: &'a GlowMasks,
+    groups: &[&str],
+    size: (u32, u32),
+    s: u32,
+) -> Option<LayerGlow<'a>> {
+    let g = e.glow.as_ref()?;
+    let group = u8::try_from(groups.iter().position(|id| *id == g.group)?).ok()?;
+    let strength = (u32::from(g.strength.min(100)) * 255 + 50) / 100;
+    let mask = match masks.get(&e.id).filter(|_| g.mask) {
+        Some(m) => {
+            let (at, b) = element_box(&e.kind, size)?;
+            let art = (b.0.checked_mul(s)?, b.1.checked_mul(s)?);
+            if m.len() as u64 != u64::from(art.0) * u64::from(art.1) {
+                return None;
+            }
+            Some((&m[..], (i64::from(at.0) * i64::from(s), i64::from(at.1) * i64::from(s)), art))
+        }
+        None => None,
+    };
+    Some(LayerGlow { strength, group, mask })
+}
+
 /// Rebakes `rect` (clipped) of `level`'s material, front and back from
 /// decoded elements, bottom to top (rulings R3-R5 of plan 14a). A visible
 /// image whose grid is `None`, and data of a size the level or the
 /// element's box does not match, are left out; a level whose own layers
-/// do not match its size is left as it is. Never fails or panics.
+/// do not match its size is left as it is. Never fails or panics. Glow
+/// masks are not given: a masked glow bakes uniform (see
+/// [`bake_elements_with`]).
 pub fn bake_elements(
     level: &mut LevelSource,
     items: &[(&Element, &Decoded)],
+    back_tile: &RgbaImage,
+    rect: Rect,
+) {
+    bake_elements_with(level, items, &GlowMasks::new(), back_tile, rect);
+}
+
+/// [`bake_elements`] with the elements' glow masks. The level's glow
+/// (`look/`) is baked too: none when no visible element glows (with a group
+/// the level's look has), else its layers, made empty first when the level
+/// had none.
+pub fn bake_elements_with(
+    level: &mut LevelSource,
+    items: &[(&Element, &Decoded)],
+    masks: &GlowMasks,
     back_tile: &RgbaImage,
     rect: Rect,
 ) {
@@ -456,7 +542,33 @@ pub fn bake_elements(
     if !fits {
         return;
     }
-    let layers: Vec<Layer> = items.iter().filter_map(|(e, d)| Layer::new(e, d, (aw, ah), s)).collect();
+    let groups: Vec<&str> =
+        level.look.as_ref().map_or(Vec::new(), |l| l.glow_groups.iter().map(|g| g.id.as_str()).collect());
+    let (layers, glows): (Vec<Layer>, Vec<Option<LayerGlow>>) = items
+        .iter()
+        .filter_map(|(e, d)| Some((Layer::new(e, d, (aw, ah), s)?, layer_glow(e, masks, &groups, (w, h), s))))
+        .unzip();
+    let mut glow = if glows.iter().any(Option::is_some) {
+        match level.glow.take() {
+            Some(g) if g.fits((aw, ah), (w, h)) => Some(g),
+            _ => Some(GlowLayers::empty((aw, ah), (w, h))),
+        }
+    } else {
+        None
+    };
+    // The glow and group of the topmost element giving art pixel (ax, ay)'s
+    // front, and of the one giving its back (only its own art glows).
+    let front_glow = |ax: u32, ay: u32| {
+        layers.iter().zip(&glows).rev().find(|(l, _)| l.front(ax, ay).is_some()).and_then(|(_, g)| g.as_ref())
+    };
+    let back_glow = |ax: u32, ay: u32| {
+        layers
+            .iter()
+            .zip(&glows)
+            .rev()
+            .find_map(|(l, g)| l.backdrop(ax, ay).map(|(_, own)| g.as_ref().filter(|_| own)))
+            .flatten()
+    };
     let x1 = rect.x.saturating_add(rect.w).min(w);
     let y1 = rect.y.saturating_add(rect.h).min(h);
     for y in rect.y.min(h)..y1 {
@@ -476,10 +588,27 @@ pub fn bake_elements(
                     };
                     level.back.set(ax, ay, back);
                     level.front.set(ax, ay, front);
+                    if let Some(g) = glow.as_mut() {
+                        let i = ay as usize * aw as usize + ax as usize;
+                        let b = back_glow(ax, ay).map_or(0, |l| l.at(ax, ay));
+                        g.back[i] = b;
+                        g.front[i] = if material == Material::Background {
+                            b
+                        } else {
+                            front_glow(ax, ay).map_or(0, |l| l.at(ax, ay))
+                        };
+                    }
                 }
+            }
+            if let Some(g) = glow.as_mut() {
+                let lit = |l: Option<&LayerGlow>| l.filter(|l| l.at(cx, cy) > 0).map_or(0, |l| l.group);
+                let b = lit(back_glow(cx, cy));
+                g.groups_back[cell] = b;
+                g.groups[cell] = if material == Material::Background { b } else { lit(front_glow(cx, cy)) };
             }
         }
     }
+    level.glow = glow;
 }
 
 /// Decoded elements and processed images of one composition, ready to
@@ -490,6 +619,8 @@ pub struct Baker {
     back_tile: RgbaImage,
     /// Every element with its decoded data, bottom to top.
     items: Vec<(Element, Decoded)>,
+    /// The elements' glow masks.
+    masks: GlowMasks,
 }
 
 impl Baker {
@@ -532,7 +663,8 @@ impl Baker {
             .iter()
             .map(|e| Ok((e.clone(), decode_element(src, e, size, s, cache)?)))
             .collect::<Result<_, ComposeError>>()?;
-        Ok(Baker { size, art_scale, back_tile: back_tile.clone(), items })
+        let masks = decode_glow_masks(src, size, s)?;
+        Ok(Baker { size, art_scale, back_tile: back_tile.clone(), items, masks })
     }
 
     /// Rebakes `rect` (clipped to the level) of `level`'s material, front
@@ -543,8 +675,34 @@ impl Baker {
             return;
         }
         let items: Vec<(&Element, &Decoded)> = self.items.iter().map(|(e, d)| (e, d)).collect();
-        bake_elements(level, &items, &self.back_tile, rect);
+        bake_elements_with(level, &items, &self.masks, &self.back_tile, rect);
     }
+}
+
+/// The glow masks of `src`'s elements in a level of `size` at art scale
+/// `s`, each decoded grey and of its element's box × `s`.
+pub fn decode_glow_masks(
+    src: &CompositionSource,
+    size: (u32, u32),
+    s: u32,
+) -> Result<GlowMasks, ComposeError> {
+    let mut out = GlowMasks::new();
+    for e in &src.composition.elements {
+        if !e.glow.as_ref().is_some_and(|g| g.mask) {
+            continue;
+        }
+        let file = glow_file(&e.id);
+        let fail = |message: String| ComposeError::File { file: file.clone(), message };
+        let bytes = src.files.get(&file).ok_or_else(|| fail("missing".into()))?;
+        let (_, b) = element_box(&e.kind, size).ok_or_else(|| fail("a raster element cannot glow".into()))?;
+        let want = (b.0.saturating_mul(s), b.1.saturating_mul(s));
+        let (mw, mh, values) = image_io::decode_grey_within(bytes, LEVEL_ART).map_err(fail)?;
+        if (mw, mh) != want {
+            return Err(fail(format!("{mw}x{mh}, the element's box × art scale is {}x{}", want.0, want.1)));
+        }
+        out.insert(e.id.clone(), Arc::new(values));
+    }
+    Ok(out)
 }
 
 /// One element's files decoded (and an image processed through `cache`
@@ -811,6 +969,7 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         visible: true,
         locked: false,
         kind: ElementKind::Raster,
+        glow: None,
     };
     let [m, f, b] = raster_files(&element.id);
     let files = [
@@ -871,6 +1030,7 @@ pub fn split_layers(
             visible: true,
             locked: false,
             kind: ElementKind::drawn(material),
+            glow: None,
         };
         (e, Decoded::Drawn { art, cells: None, back: None })
     };
@@ -932,7 +1092,16 @@ pub fn theme_back_tile(content: &Path, theme: &str) -> Result<RgbaImage, Compose
 }
 
 /// The files a bake writes that it can leave stale.
-const BAKED: [&str; 4] = ["material.png", "front.png", "back.png", "thumb.png"];
+const BAKED: [&str; 8] = [
+    "material.png",
+    "front.png",
+    "back.png",
+    "thumb.png",
+    "look/glow.png",
+    "look/glow-back.png",
+    "look/groups.png",
+    "look/groups-back.png",
+];
 
 /// The baked files of `pack` (a composed level) that differ from what its
 /// composition bakes to: `material.png`, `front.png`, `back.png`,

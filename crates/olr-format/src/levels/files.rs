@@ -10,11 +10,11 @@ use super::{
     LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_THUMB_BYTES, THUMB_FILE, check, check_header,
     check_thumb,
 };
-use crate::look::LookSource;
-use olr_terrain::GlowLayers;
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, LEVEL_ART};
+use crate::look::LookSource;
 use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
+use olr_terrain::GlowLayers;
 
 fn default_scale() -> u32 {
     1
@@ -111,7 +111,11 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
 fn read_grey(src: &dyn ContentSource, file: &str, expected: (u32, u32)) -> Result<Vec<u8>, FormatError> {
     let bytes = read_bytes(src, file)?;
     let mismatch = |(w, h): (u32, u32)| {
-        FormatError::invalid(file, "", format!("{file} is {w}x{h}, the level needs {}x{}", expected.0, expected.1))
+        FormatError::invalid(
+            file,
+            "",
+            format!("{file} is {w}x{h}, the level needs {}x{}", expected.0, expected.1),
+        )
     };
     if let Some(size) = image_io::png_size(&bytes)
         && size != expected
@@ -127,7 +131,11 @@ fn read_grey(src: &dyn ContentSource, file: &str, expected: (u32, u32)) -> Resul
 }
 
 /// The four `look/` images: all or none.
-fn read_glow(src: &dyn ContentSource, art: (u32, u32), world: (u32, u32)) -> Result<Option<GlowLayers>, FormatError> {
+fn read_glow(
+    src: &dyn ContentSource,
+    art: (u32, u32),
+    world: (u32, u32),
+) -> Result<Option<GlowLayers>, FormatError> {
     let present = |f: &str| VPath::new(f).is_ok_and(|p| src.exists(&p));
     if !LOOK_FILES.iter().any(|f| present(f)) {
         return Ok(None);
@@ -177,6 +185,7 @@ pub fn read_level_header(src: &dyn ContentSource) -> Result<LevelHeader, FormatE
         theme: file.theme,
         spawns: file.objects.iter().filter_map(LevelObject::spawn_point).collect(),
         objects: file.objects,
+        look: file.look,
     })
 }
 

@@ -56,7 +56,7 @@ fn solid(w: u32, h: u32, c: Rgba) -> RgbaImage {
 }
 
 fn element(id: &str, kind: ElementKind) -> Element {
-    Element { id: id.into(), name: String::new(), visible: true, locked: false, kind }
+    Element { id: id.into(), name: String::new(), visible: true, locked: false, kind, glow: None }
 }
 
 /// Adds an image element `id` (source `<id>.png`) on top.

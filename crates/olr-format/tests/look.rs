@@ -88,7 +88,9 @@ fn the_spec_example_round_trips() {
     // Canonical text drops the defaults and reads back to itself.
     let canonical = canonical_text("level.ron", SPEC_LEVEL).unwrap();
     assert_eq!(canonical_text("level.ron", &canonical).unwrap(), canonical);
-    for gone in ["max_light", "light_steps", "softness", "contrast", "radius", "animation: Steady", "colour: Own"] {
+    for gone in
+        ["max_light", "light_steps", "softness", "contrast", "radius", "animation: Steady", "colour: Own"]
+    {
         assert!(!canonical.contains(gone), "{gone} in {canonical}");
     }
     // Written and read again: the same level.
@@ -102,7 +104,8 @@ fn a_level_without_a_look_writes_none() {
     let fs = files(&src);
     let names: Vec<String> = fs.files().map(|(p, _)| p.to_string()).collect();
     assert_eq!(names, ["back.png", "front.png", "level.ron", "material.png"]);
-    let text = String::from_utf8(fs.files().find(|(p, _)| p.as_str() == "level.ron").unwrap().1.to_vec()).unwrap();
+    let text =
+        String::from_utf8(fs.files().find(|(p, _)| p.as_str() == "level.ron").unwrap().1.to_vec()).unwrap();
     assert!(!text.contains("look"), "{text}");
     assert_eq!(compile_look(&src).unwrap(), None);
 }
@@ -112,7 +115,8 @@ fn glow_images_round_trip() {
     let mut src = level(Some(SPEC_LEVEL));
     src.glow = Some(glow(&src));
     let fs = files(&src);
-    let names: Vec<String> = fs.files().map(|(p, _)| p.to_string()).filter(|p| p.starts_with("look/")).collect();
+    let names: Vec<String> =
+        fs.files().map(|(p, _)| p.to_string()).filter(|p| p.starts_with("look/")).collect();
     assert_eq!(names, ["look/glow-back.png", "look/glow.png", "look/groups-back.png", "look/groups.png"]);
     assert_eq!(olr_format::levels::file_paths(&src).iter().filter(|p| p.starts_with("look/")).count(), 4);
     let back = read_level_files(&fs).unwrap();
@@ -169,7 +173,8 @@ fn limits_are_enforced() {
     let mut src = level(Some(SPEC_LEVEL));
     let look = src.look.as_mut().unwrap();
     let g = look.glow_groups[0].clone();
-    look.glow_groups = (0..256).map(|i| olr_format::look::GlowGroupSource { id: format!("g{i}"), ..g.clone() }).collect();
+    look.glow_groups =
+        (0..256).map(|i| olr_format::look::GlowGroupSource { id: format!("g{i}"), ..g.clone() }).collect();
     assert!(err(&src).contains("256 groups"), "{}", err(&src));
     // 1025 lights.
     let mut src = level(Some(SPEC_LEVEL));
@@ -216,7 +221,10 @@ fn hostile_look_files_are_errors_never_panics() {
         ("reach: Pixels(160)", "reach: Pixels(0)"),
         (
             "Flicker(speed: 8, depth: 25)",
-            &format!("Keys(keys: [{}])", (0..65).map(|i| format!("({i}, 10)")).collect::<Vec<_>>().join(", ")),
+            &format!(
+                "Keys(keys: [{}])",
+                (0..65).map(|i| format!("({i}, 10)")).collect::<Vec<_>>().join(", ")
+            ),
         ),
         ("Flicker(speed: 8, depth: 25)", "Keys(keys: [(10, 1), (5, 1)])"),
         ("Flicker(speed: 8, depth: 25)", "Keys(keys: [])"),
@@ -240,7 +248,8 @@ fn look_files_are_hashed_and_known() {
     let diags = olr_pack::validate(&fs);
     assert!(diags.iter().all(|d| !d.to_string().contains("not read")), "{diags:?}");
     let a = olr_pack::content_hash(&fs).unwrap();
-    let b = olr_pack::content_hash(&fs.clone().with("look/glow.png", image_io::encode_grey(8, 6, &[1; 48]))).unwrap();
+    let b = olr_pack::content_hash(&fs.clone().with("look/glow.png", image_io::encode_grey(8, 6, &[1; 48])))
+        .unwrap();
     assert_ne!(a, b);
 }
 
@@ -349,4 +358,12 @@ fn bundled_mods_have_no_look() {
         let look = compile_mod_look(&src).unwrap();
         assert!(look.projectiles.is_empty() && look.weapons.iter().all(Option::is_none), "{id}");
     }
+}
+
+#[test]
+fn the_default_look_is_the_empty_file() {
+    use olr_format::look::LookSource;
+    let empty: LookSource = olr_format::ron_io::from_canonical("level.ron", "()").unwrap();
+    assert_eq!(empty, LookSource::default());
+    assert_eq!(olr_format::ron_io::to_canonical("level.ron", &LookSource::default()).unwrap(), "()\n");
 }

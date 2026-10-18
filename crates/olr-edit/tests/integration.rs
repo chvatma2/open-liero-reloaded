@@ -5,6 +5,7 @@ mod compose;
 mod drawn;
 mod element;
 mod fmt;
+mod glow;
 mod guide;
 mod level;
 mod mask;

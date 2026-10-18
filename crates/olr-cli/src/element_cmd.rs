@@ -165,6 +165,24 @@ pub(crate) enum ElementCommand {
         dither: Option<DitherArg>,
         #[arg(long)]
         threshold: Option<u8>,
+        /// Glow strength, 0 to 100 percent (0 removes the glow; look system).
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+        glow: Option<u8>,
+        /// The glow group (an id in level.ron's look) the glow lights with.
+        #[arg(long)]
+        glow_group: Option<String>,
+        #[command(flatten)]
+        content: ContentArg,
+    },
+    /// Paint a glowing element's glow mask over a shape (0 erases).
+    Glow {
+        pack: PathBuf,
+        id: String,
+        #[command(flatten)]
+        shape: ShapeArgs,
+        /// 0 to 100 percent of the element's glow.
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+        strength: u8,
         #[command(flatten)]
         content: ContentArg,
     },
@@ -403,8 +421,11 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             colours,
             dither,
             threshold,
+            glow,
+            glow_group,
             content,
         } => edit(pack, content, |p| {
+            let glow = glow_property(p, id, *glow, glow_group.as_deref())?;
             // Unlocking first and locking last, so one command can unlock,
             // change and lock again; all in one step, checked together.
             let properties = [
@@ -418,6 +439,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
                 colours.map(|Colours(n)| Property::Colours(n)),
                 dither.map(|d| Property::Dither(d.dither())),
                 threshold.map(Property::Threshold),
+                glow,
                 locked.filter(|l| *l).map(Property::Locked),
             ];
             let properties: Vec<Property> = properties.into_iter().flatten().collect();
@@ -467,7 +489,42 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             element::erase(p, id, &shape.shape())?;
             Ok(Vec::new())
         }),
+        ElementCommand::Glow { pack, id, shape, strength, content } => edit(pack, content, |p| {
+            element::paint_glow(p, id, &shape.shape(), *strength)?;
+            Ok(Vec::new())
+        }),
     }
+}
+
+/// `set`'s `--glow` and `--glow-group` as one property: a strength of 0
+/// removes the glow; either flag alone keeps the other's current value
+/// (and the painted mask).
+fn glow_property(
+    p: &olr_edit::pack::Pack,
+    id: &str,
+    strength: Option<u8>,
+    group: Option<&str>,
+) -> Result<Option<Property>, element::ElementError> {
+    if strength == Some(0) {
+        return Ok(Some(Property::Glow(None)));
+    }
+    let now = p
+        .composition
+        .as_ref()
+        .and_then(|c| c.composition.elements.iter().find(|e| e.id == id))
+        .and_then(|e| e.glow.clone());
+    let (strength, group, mask) = match (strength, group, now) {
+        (Some(s), Some(g), now) => (s, g.to_string(), now.is_some_and(|n| n.mask)),
+        (Some(s), None, Some(n)) => (s, n.group, n.mask),
+        (None, Some(g), Some(n)) => (n.strength, g.to_string(), n.mask),
+        (None, None, _) => return Ok(None),
+        (_, _, None) => {
+            return Err(element::ElementError::BadValue(
+                "a new glow needs both --glow and --glow-group".into(),
+            ));
+        }
+    };
+    Ok(Some(Property::Glow(Some(olr_format::levels::ElementGlow { strength, group, mask }))))
 }
 
 /// `level bake <pack>`: rebakes a composed level.

@@ -239,7 +239,7 @@ pub struct GlowGroupSource {
 
 /// A level's look: darkness, light settings, grade and glow groups. A level
 /// without one draws as it always has.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LookSource {
     /// Default: white at 100 (no darkness).
@@ -261,6 +261,20 @@ pub struct LookSource {
     /// At most 255. Default none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub glow_groups: Vec<GlowGroupSource>,
+}
+
+impl Default for LookSource {
+    /// Every field at its serde default: no darkness, nothing else.
+    fn default() -> LookSource {
+        LookSource {
+            ambient: AmbientSource::default(),
+            max_light: 100,
+            light_steps: 0,
+            softness: 0,
+            grade: GradeSource::default(),
+            glow_groups: Vec::new(),
+        }
+    }
 }
 
 /// A mod projectile's look.
@@ -319,7 +333,11 @@ pub fn compile_reach(r: ReachSource, file: &str, path: &str) -> Result<olr_look:
 }
 
 /// An animation, checked.
-pub fn compile_animation(a: &AnimationSource, file: &str, path: &str) -> Result<olr_look::Animation, FormatError> {
+pub fn compile_animation(
+    a: &AnimationSource,
+    file: &str,
+    path: &str,
+) -> Result<olr_look::Animation, FormatError> {
     let level = |v: u16, p: &str| within(v.into(), 0, MAX_INTENSITY.into(), file, &format!("{path}.{p}"));
     Ok(match a {
         AnimationSource::Steady => olr_look::Animation::Steady,
@@ -341,7 +359,11 @@ pub fn compile_animation(a: &AnimationSource, file: &str, path: &str) -> Result<
         }
         AnimationSource::Keys { keys, looped } => {
             if keys.is_empty() || keys.len() > MAX_KEYS {
-                return Err(invalid(file, &format!("{path}.keys"), format!("{} keys, not within 1 to {MAX_KEYS}", keys.len())));
+                return Err(invalid(
+                    file,
+                    &format!("{path}.keys"),
+                    format!("{} keys, not within 1 to {MAX_KEYS}", keys.len()),
+                ));
             }
             let mut out = Vec::with_capacity(keys.len());
             for (i, k) in keys.iter().enumerate() {
@@ -393,13 +415,21 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
     within(g.contrast.into(), 0, 200, file, "look.grade.contrast")?;
     within(g.saturation.into(), 0, 200, file, "look.grade.saturation")?;
     if l.glow_groups.len() > MAX_GROUPS {
-        return Err(invalid(file, "look.glow_groups", format!("{} groups, above {MAX_GROUPS}", l.glow_groups.len())));
+        return Err(invalid(
+            file,
+            "look.glow_groups",
+            format!("{} groups, above {MAX_GROUPS}", l.glow_groups.len()),
+        ));
     }
     let mut groups = Vec::with_capacity(l.glow_groups.len());
     for (i, gr) in l.glow_groups.iter().enumerate() {
         let p = format!("look.glow_groups[{i}]");
         if !valid_group_id(&gr.id) {
-            return Err(invalid(file, &format!("{p}.id"), format!("{:?} is not a slug of [a-z0-9_.-]", gr.id)));
+            return Err(invalid(
+                file,
+                &format!("{p}.id"),
+                format!("{:?} is not a slug of [a-z0-9_.-]", gr.id),
+            ));
         }
         if l.glow_groups[..i].iter().any(|o| o.id == gr.id) {
             return Err(invalid(file, &format!("{p}.id"), format!("{:?} is used twice", gr.id)));
@@ -438,20 +468,36 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
 }
 
 /// A projectile's look, checked; `path` names it in errors.
-pub fn compile_projectile_look(l: &ProjectileLookSource, file: &str, path: &str) -> Result<olr_look::ProjectileLook, FormatError> {
+pub fn compile_projectile_look(
+    l: &ProjectileLookSource,
+    file: &str,
+    path: &str,
+) -> Result<olr_look::ProjectileLook, FormatError> {
     if let Some(g) = l.glow {
         within(g.into(), 0, 100, file, &format!("{path}.glow"))?;
     }
     Ok(olr_look::ProjectileLook {
         glow: l.glow,
         light: l.light.as_ref().map(|x| compile_light(x, file, &format!("{path}.light"))).transpose()?,
-        end_flash: l.end_flash.as_ref().map(|x| compile_light(x, file, &format!("{path}.end_flash"))).transpose()?,
+        end_flash: l
+            .end_flash
+            .as_ref()
+            .map(|x| compile_light(x, file, &format!("{path}.end_flash")))
+            .transpose()?,
     })
 }
 
 /// A weapon's look, checked.
-pub fn compile_weapon_look(l: &WeaponLookSource, file: &str, path: &str) -> Result<olr_look::WeaponLook, FormatError> {
+pub fn compile_weapon_look(
+    l: &WeaponLookSource,
+    file: &str,
+    path: &str,
+) -> Result<olr_look::WeaponLook, FormatError> {
     Ok(olr_look::WeaponLook {
-        muzzle_light: l.muzzle_light.as_ref().map(|x| compile_light(x, file, &format!("{path}.muzzle_light"))).transpose()?,
+        muzzle_light: l
+            .muzzle_light
+            .as_ref()
+            .map(|x| compile_light(x, file, &format!("{path}.muzzle_light")))
+            .transpose()?,
     })
 }

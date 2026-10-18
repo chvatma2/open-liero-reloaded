@@ -393,3 +393,43 @@ fn fill_and_duplicate_commands() {
     assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("outside"));
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
 }
+
+/// Adds `look` (one glow group, `lava`) to the pack's level.ron.
+fn add_look(pack: &Path) {
+    let path = pack.join("level.ron");
+    let text = std::fs::read_to_string(&path).unwrap();
+    let text = text.trim_end().strip_suffix(')').unwrap().to_string()
+        + "    look: (glow_groups: [(id: \"lava\", reach: Pixels(64))]),\n)\n";
+    std::fs::write(path, text).unwrap();
+}
+
+#[test]
+fn cli_sets_and_paints_glow() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    add_look(&pack);
+    let run = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        cli(&all, &pack, &content)
+    };
+    ok(&run(&["split", "{pack}", "base"]));
+    let e = run(&["set", "{pack}", "dirt", "--glow", "60"]);
+    assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("--glow-group"));
+    let e = run(&["set", "{pack}", "dirt", "--glow", "60", "--glow-group", "nowhere"]);
+    assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("nowhere"));
+    ok(&run(&["set", "{pack}", "dirt", "--glow", "60", "--glow-group", "lava"]));
+    ok(&run(&["glow", "{pack}", "dirt", "--rect", "0,0,10,10", "--strength", "0"]));
+    let composition = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    assert!(composition.contains("strength: 60") && composition.contains("mask: true"), "{composition}");
+    assert!(pack.join("editor/glow/dirt.png").is_file());
+    for f in ["look/glow.png", "look/glow-back.png", "look/groups.png", "look/groups-back.png"] {
+        assert!(pack.join(f).is_file(), "{f}");
+    }
+    ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+    // --glow 0 removes the glow, its mask and the level's look images.
+    ok(&run(&["set", "{pack}", "dirt", "--glow", "0"]));
+    assert!(!pack.join("editor/glow/dirt.png").exists());
+    assert!(!pack.join("look").join("glow.png").exists());
+}
