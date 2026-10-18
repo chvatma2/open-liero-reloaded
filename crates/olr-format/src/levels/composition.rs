@@ -504,8 +504,16 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                 ),
             ));
         }
-        // An image's mask is named by its unique id; other kinds' files
-        // are checked for sharing.
+        // An image's mask is named by its unique id: never shared, but its
+        // name must be portable (plan 14d review).
+        if let ElementKind::Image { mask: true, .. } = e.kind {
+            let file = mask_file(&e.id);
+            let name = file.rsplit('/').next().unwrap_or(&file);
+            if let Some(why) = olr_vfs::non_portable(name) {
+                return Err(bad("id", format!("{:?}: its file {file} {why}", e.id)));
+            }
+        }
+        // Other kinds' files are checked for sharing.
         if !matches!(e.kind, ElementKind::Image { .. }) {
             for file in element_files(e) {
                 // Ids are unique, their files need not be (`a` and `a.front`).
@@ -795,6 +803,17 @@ mod tests {
         assert!(e.contains("elements[2].id") && e.contains("device"), "{e}");
     }
 
+    /// Plan 14d review: an image's mask file is checked as layer files are.
+    #[test]
+    fn a_mask_named_for_a_device_is_refused() {
+        let mut s = sample();
+        s.composition.elements[1].id = "con".into();
+        let mask = s.files.remove(&mask_file("sky")).unwrap();
+        s.files.insert(mask_file("con"), mask);
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("elements[1].id") && e.contains("device"), "{e}");
+    }
+
     /// Batch B review: the elements' decoded pixels together stay within
     /// `MAX_COMPOSED_PIXELS`, so a small `composition.ron` cannot make a
     /// bake hold or process unbounded memory.
@@ -829,6 +848,15 @@ mod tests {
                 back: true,
             },
         };
+        // A mask's pixels count too: at the limit, a 10 × 10 mask is over.
+        let mut at_limit = sample();
+        at_limit.composition.elements = s.composition.elements[..4].to_vec();
+        if let ElementKind::Image { mask, .. } = &mut at_limit.composition.elements[0].kind {
+            *mask = true;
+        }
+        at_limit.files.insert(mask_file("e0"), image_io::encode_grey(10, 10, &[255; 100]));
+        let e = check_composition(&at_limit, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("masks"), "{e}");
         let mut c = Composition { elements: (0..3).map(wall).collect() };
         check_elements(&c, (4, 3), 2).unwrap();
         c.elements.push(wall(3));
