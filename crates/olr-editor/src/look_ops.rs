@@ -275,6 +275,32 @@ impl Document {
         self.set_look(Some(look))
     }
 
+    /// `objects` (copies) added after the level's, each moved by `offset`:
+    /// one step; their indices. Lights are checked as the look's.
+    pub fn paste_objects(
+        &mut self,
+        objects: &[LevelObject],
+        offset: (i32, i32),
+    ) -> Result<(Change, Vec<usize>), DocError> {
+        let before = self.level.objects.clone();
+        if before.len() + objects.len() > olr_format::levels::MAX_OBJECTS {
+            return Err(DocError::Bad(format!(
+                "a level holds at most {} objects",
+                olr_format::levels::MAX_OBJECTS
+            )));
+        }
+        let mut after = before.clone();
+        for o in objects {
+            let mut o = o.clone();
+            let at = o.at();
+            o.set_at((at.0.saturating_add(offset.0), at.1.saturating_add(offset.1)));
+            after.push(o);
+        }
+        self.check_look(self.level.look.as_ref(), &after)?;
+        let indices = (before.len()..after.len()).collect();
+        Ok((self.change(Edit::Objects { before, after }), indices))
+    }
+
     /// A light object at `at` ([`new_light`]).
     pub fn add_light(&mut self, at: (i32, i32)) -> Result<Change, DocError> {
         let before = self.level.objects.clone();

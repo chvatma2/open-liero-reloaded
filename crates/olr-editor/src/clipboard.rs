@@ -2,6 +2,8 @@
 //! elements"): it outlives the open document, so copies go across levels;
 //! the system clipboard is not used.
 
+use olr_format::levels::LevelObject;
+
 use crate::history::Snapshot;
 use crate::ops::PixelClip;
 
@@ -17,4 +19,7 @@ pub enum Clipboard {
     /// A rectangle of a drawn layer's pixels copied at world pixel `at`
     /// (plan 14e R7); pasted as a new layer at `at + offset`.
     Pixels { art_scale: u32, at: (i32, i32), clip: PixelClip, offset: (i32, i32) },
+    /// Level objects (spawns, lights; the user's request 2026-10-19),
+    /// pasted at their places plus `offset`.
+    Objects { objects: Vec<LevelObject>, offset: (i32, i32) },
 }

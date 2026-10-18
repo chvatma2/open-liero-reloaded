@@ -1063,7 +1063,7 @@ impl EditorState {
     fn copy(&mut self) -> bool {
         let Some(doc) = &self.doc else { return false };
         // Nothing to copy is said (plan 14e minors).
-        const NOTHING_TO_COPY: &str = "nothing to copy: select elements, or pixels with Select pixels (M)";
+        const NOTHING_TO_COPY: &str = "nothing to copy: select elements, a spawn or a light, or pixels with Select pixels (M)";
         if let Some((id, rect)) = &self.pixel_rect {
             let Some((clip, at)) = doc.copy_pixels(id, *rect) else {
                 self.status.message = Some(format!("no pixels of {id:?} in the rectangle to copy"));
@@ -1072,6 +1072,15 @@ impl EditorState {
             let art_scale = doc.level().art_scale;
             self.status.message = Some(format!("copied {} × {} pixels", clip.size.0, clip.size.1));
             self.clipboard = Some(Clipboard::Pixels { art_scale, at, clip, offset: PASTE_STEP });
+            return true;
+        }
+        // A spawn or light (the user's request 2026-10-19).
+        if let Selection::Object(i) = self.selection
+            && let Some(o) = doc.level().objects.get(i)
+        {
+            let what = if o.as_light().is_some() { "light" } else { "spawn" };
+            self.status.message = Some(format!("copied the {what}"));
+            self.clipboard = Some(Clipboard::Objects { objects: vec![o.clone()], offset: PASTE_STEP });
             return true;
         }
         let items = doc.copy(&self.selection.ids());
@@ -1128,6 +1137,22 @@ impl EditorState {
     /// next paste lands `PASTE_STEP` further.
     fn paste(&mut self) -> Vec<EditorCommand> {
         let (Some(doc), Some(clip)) = (self.doc.as_mut(), self.clipboard.as_mut()) else { return Vec::new() };
+        if let Clipboard::Objects { objects, offset } = clip {
+            return match doc.paste_objects(objects, *offset) {
+                Ok((change, indices)) => {
+                    *offset = (offset.0.saturating_add(PASTE_STEP.0), offset.1.saturating_add(PASTE_STEP.1));
+                    self.history.push(vec![change.edit]);
+                    if let Some(&last) = indices.last() {
+                        self.selection = Selection::Object(last);
+                    }
+                    self.committed(change.dirty)
+                }
+                Err(e) => {
+                    self.status.message = Some(e.to_string());
+                    Vec::new()
+                }
+            };
+        }
         let done = match clip {
             Clipboard::Elements { art_scale, items, offset } => {
                 doc.paste(items, *art_scale, *offset).map(|(edits, ids)| (edits, ids, offset))
@@ -1136,6 +1161,8 @@ impl EditorState {
                 let to = (at.0.saturating_add(offset.0), at.1.saturating_add(offset.1));
                 doc.paste_pixels(clip, *art_scale, to).map(|(edit, id)| (vec![edit], vec![id], offset))
             }
+            // Pasted above.
+            Clipboard::Objects { .. } => return Vec::new(),
         };
         match done {
             Ok((edits, ids, offset)) => {

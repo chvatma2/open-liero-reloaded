@@ -407,3 +407,45 @@ fn a_plain_levels_kept_glow_follows_look_edits() {
     let l = st.document().unwrap().level();
     assert!(l.glow.as_ref().is_some_and(|g| g.world == (w + 8, h)), "kept through the resize");
 }
+
+/// The user's request (2026-10-19): spawns and lights copy, cut and paste
+/// like elements: each paste 4 px further, selected, one step.
+#[test]
+fn objects_copy_cut_and_paste() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Tool(Tool::Light));
+    let at = |world, kind| A::Pointer { kind, world, shift: false, toggle: false };
+    run(&mut s, at((50, 60), PointerKind::Down));
+    run(&mut s, at((50, 60), PointerKind::Up));
+    run(&mut s, A::Copy);
+    run(&mut s, A::Paste);
+    run(&mut s, A::Paste);
+    assert_eq!(lights(&s), [(50, 60), (54, 64), (58, 68)]);
+    let n = s.document().unwrap().level().objects.len();
+    assert_eq!(*s.selection(), Selection::Object(n - 1), "the paste is selected");
+    // The pasted light is the copied one, place aside.
+    let objects = &s.document().unwrap().level().objects;
+    assert_eq!(objects[n - 1].as_light(), objects[n - 3].as_light());
+    run(&mut s, A::Undo);
+    assert_eq!(lights(&s), [(50, 60), (54, 64)], "one paste, one step");
+    // A spawn cuts and pastes back.
+    run(&mut s, A::Tool(Tool::Spawn));
+    run(&mut s, at((20, 30), PointerKind::Down));
+    run(&mut s, at((20, 30), PointerKind::Up));
+    let spawns = |s: &olr_editor::EditorState| {
+        s.document()
+            .unwrap()
+            .level()
+            .objects
+            .iter()
+            .filter(|o| matches!(o, LevelObject::Spawn { .. }))
+            .map(|o| o.at())
+            .collect::<Vec<_>>()
+    };
+    let before = spawns(&s);
+    run(&mut s, A::Cut);
+    assert_eq!(spawns(&s).len(), before.len() - 1, "cut");
+    run(&mut s, A::Paste);
+    assert!(spawns(&s).contains(&(24, 34)), "{:?}", spawns(&s));
+}
