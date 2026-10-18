@@ -498,7 +498,13 @@ fn crop_takes_the_covered_box() {
     assert_eq!(c.back.as_ref().unwrap().get(5, 3), GREY);
     assert_eq!(c.cells[0], Material::Dirt);
     assert_eq!(c.cells.len(), 6);
-    let empty = Placed { at: (0, 0), size: (2, 2), art: RgbaImage::new(2, 2), cells: vec![Material::Dirt; 4], back: None };
+    let empty = Placed {
+        at: (0, 0),
+        size: (2, 2),
+        art: RgbaImage::new(2, 2),
+        cells: vec![Material::Dirt; 4],
+        back: None,
+    };
     assert_eq!(crop(&empty, 1), None);
     // A placed layer that does not fit itself crops to nothing.
     assert_eq!(crop(&Placed { size: (9, 9), ..empty }, 1), None);
