@@ -188,8 +188,8 @@ fn palette_entries(state: &EditorState) -> Vec<(&'static str, Vec<Entry<'_>>)> {
 }
 
 /// The "Textures…" button, its swatch the current paint's, and its popup
-/// of swatches (plan 14e): a click paints with one, a right-click on one of
-/// the user's offers Remove, "Import texture…" opens the browser.
+/// of swatches (plan 14e): a click paints with one, Remove takes the chosen
+/// one of the user's out of the library, "Import texture…" opens the browser.
 fn palette(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     let groups = palette_entries(state);
     // Swatches no longer listed, or of an older library, go.
@@ -227,13 +227,17 @@ fn palette(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
                     if r.clicked() {
                         out.push(EditorAction::Paint(choice.clone()));
                     }
-                    if let PaintChoice::Texture(TextureRef::User(n)) = choice {
-                        r.context_menu(|ui| {
-                            if ui.button(labels::REMOVE).clicked() {
-                                out.push(EditorAction::RemoveTexture(n.clone()));
-                            }
-                        });
-                    }
+                }
+                // The chosen texture of the user's is removed here: a context
+                // menu inside the palette never shows (batch B review).
+                if let PaintChoice::Texture(TextureRef::User(n)) = paint
+                    && entries.iter().any(|e| e.choice == *paint)
+                    && ui
+                        .button(labels::REMOVE)
+                        .on_hover_text(format!("remove {n} from your textures"))
+                        .clicked()
+                {
+                    out.push(EditorAction::RemoveTexture(n.clone()));
                 }
             });
         }

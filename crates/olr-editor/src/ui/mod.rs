@@ -46,7 +46,7 @@ pub mod labels {
     /// The palette's swatches of the level theme's tiles.
     pub const THEME_FRONT: &str = "Theme front";
     pub const THEME_BACK: &str = "Theme back";
-    /// A user texture's right-click entry.
+    /// Removes the chosen texture of the user's (the palette).
     pub const REMOVE: &str = "Remove";
     pub const OBJECTS: &str = "Objects";
     pub const PIXEL_SIZE: &str = "Pixel size";

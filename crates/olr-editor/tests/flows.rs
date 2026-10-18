@@ -641,3 +641,24 @@ fn the_group_panel_shows_the_count() {
     }
     assert!(h.query_by_label(labels::MERGE_DOWN).is_none() && h.query_by_label(labels::SPLIT).is_none());
 }
+
+/// Batch B review: removing one of the user's textures is reachable in the
+/// palette (a context menu inside it never showed).
+#[test]
+fn a_users_texture_is_removed_from_the_palette() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    let mine = olr_editor::catalog::TextureEntry {
+        name: "stripes".into(),
+        image: olr_data::image::RgbaImage::new(8, 8),
+    };
+    act(&mut h, A::TexturesChanged(vec![mine]));
+    h.get_by_label(labels::TEXTURES).click();
+    h.run();
+    h.get_by_label("stripes").click();
+    h.run();
+    h.get_by_label(labels::TEXTURES).click();
+    h.run();
+    h.get_by_label(labels::REMOVE).click();
+    h.run();
+    assert!(h.state().commands.contains(&C::RemoveTexture("stripes".into())), "{:?}", h.state().commands);
+}

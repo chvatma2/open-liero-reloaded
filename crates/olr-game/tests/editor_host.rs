@@ -674,3 +674,18 @@ fn the_catalog_has_the_themes_holes() {
         assert!(m.cover.iter().any(|c| *c) && m.cover.iter().any(|c| !*c), "{:?}", m.size);
     }
 }
+
+/// Batch B review: the library's cap counts its files by name, without
+/// decoding the library on every add.
+#[test]
+fn the_texture_cap_counts_files_by_name() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("textures");
+    std::fs::create_dir_all(&lib).unwrap();
+    for i in 0..olr_edit::textures::MAX_USER_TEXTURES {
+        std::fs::write(lib.join(format!("t{i}.png")), b"not decoded").unwrap();
+    }
+    png(&tmp.path().join("new.png"), 4, 4);
+    let e = olr_game::editor::add_texture(&lib, &tmp.path().join("new.png")).unwrap_err();
+    assert!(e.contains("at most 256"), "{e}");
+}

@@ -212,14 +212,7 @@ fn decode_texture(name: &str, bytes: &[u8]) -> Result<RgbaImage, String> {
 /// missing directory is an empty library.
 pub fn list_textures(dir: &Path) -> (Vec<TextureEntry>, Vec<String>) {
     let (mut list, mut warnings) = (Vec::new(), Vec::new());
-    let Ok(rd) = std::fs::read_dir(dir) else { return (list, warnings) };
-    let mut names: Vec<String> = rd
-        .filter_map(Result::ok)
-        .filter_map(|e| e.file_name().to_str().map(str::to_string))
-        .filter_map(|n| n.strip_suffix(".png").map(str::to_string))
-        .filter(|n| plain_name(n))
-        .collect();
-    names.sort();
+    let mut names = texture_names(dir);
     let max = olr_edit::textures::MAX_USER_TEXTURES;
     if names.len() > max {
         warnings
@@ -235,6 +228,20 @@ pub fn list_textures(dir: &Path) -> (Vec<TextureEntry>, Vec<String>) {
     (list, warnings)
 }
 
+/// The texture names of the library `dir` (its plain `<name>.png` files),
+/// sorted; none when it cannot be read.
+fn texture_names(dir: &Path) -> Vec<String> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
+    let mut names: Vec<String> = rd
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .filter_map(|n| n.strip_suffix(".png").map(str::to_string))
+        .filter(|n| plain_name(n))
+        .collect();
+    names.sort();
+    names
+}
+
 /// Adds the picture at `path` to the library `dir` (plan 14e R2): read as
 /// an import is (`read_image`), refused above `MAX_TEXTURE_SIDE` or past
 /// `MAX_USER_TEXTURES`, written as `<dir>/<stem>.png` (a portable name,
@@ -243,7 +250,9 @@ pub fn list_textures(dir: &Path) -> (Vec<TextureEntry>, Vec<String>) {
 pub fn add_texture(dir: &Path, path: &Path) -> Result<String, String> {
     let (file, bytes) = read_image(path)?;
     let image = decode_texture(&file, &bytes)?;
-    let (have, _) = list_textures(dir);
+    // Counted by name: decoding the library to count it stalled every add
+    // (batch B review).
+    let have = texture_names(dir);
     let max = olr_edit::textures::MAX_USER_TEXTURES;
     let existing: BTreeSet<String> = std::fs::read_dir(dir)
         .map(|rd| {
