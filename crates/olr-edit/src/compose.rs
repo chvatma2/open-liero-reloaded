@@ -25,7 +25,7 @@ use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
     Composition, CompositionSource, Element, ElementKind, ElementMaterial, LevelSource, check_composition,
-    encode_material, image_file, layer_file, mask_file, raster_files, write_level_files,
+    drawn_box, drawn_files, encode_material, image_file, mask_file, raster_files, write_level_files,
 };
 use olr_format::themes::read_theme_files;
 use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
@@ -237,8 +237,9 @@ pub enum Decoded {
     /// The processed element grid; `None`: hidden and not processed (its
     /// original decoded, for its errors). Its mask, when it has one.
     Image { grid: Option<Arc<RgbaImage>>, mask: Option<Arc<Mask>> },
-    /// A level-sized art layer.
-    Drawn { art: RgbaImage },
+    /// A drawn layer's art (its box × art scale), its material per world
+    /// pixel of its box when mixed, its back art when backed (plan 14d R3).
+    Drawn { art: RgbaImage, cells: Option<Vec<Material>>, back: Option<RgbaImage> },
     /// A whole level.
     Raster { material: Vec<Material>, front: RgbaImage, back: RgbaImage },
 }
@@ -251,7 +252,9 @@ impl Decoded {
             Decoded::Image { grid, mask } => {
                 grid.as_deref().map_or(0, img) + mask.as_deref().map_or(0, |m| m.keep.len())
             }
-            Decoded::Drawn { art } => img(art),
+            Decoded::Drawn { art, cells, back } => {
+                img(art) + cells.as_ref().map_or(0, Vec::len) + back.as_ref().map_or(0, img)
+            }
             Decoded::Raster { material, front, back } => material.len() + img(front) + img(back),
         }
     }
@@ -264,8 +267,18 @@ enum Layer<'a> {
     /// `size` art pixels; art pixel `(x, y)` of the box is grid pixel
     /// `(x / pixel_size, y / pixel_size)`, covered where its alpha is 255.
     Image { material: Material, grid: &'a RgbaImage, pixel_size: u32, origin: (i64, i64), size: (i64, i64) },
-    /// A level-sized art layer, covered where its alpha is not 0.
-    Drawn { material: Material, art: &'a RgbaImage },
+    /// A drawn layer placed at `origin` (art pixels) with its art's size,
+    /// covered where its alpha is not 0 (plan 14d R4). `cells` (one per
+    /// world pixel of its box, `cols` wide) when mixed, `back` when backed.
+    Drawn {
+        material: Material,
+        art: &'a RgbaImage,
+        cells: Option<&'a [Material]>,
+        back: Option<&'a RgbaImage>,
+        origin: (i64, i64),
+        cols: u32,
+        s: u32,
+    },
     /// A whole level: it covers everything.
     Raster { material: &'a [Material], front: &'a RgbaImage, back: &'a RgbaImage },
 }
@@ -303,8 +316,25 @@ impl<'a> Layer<'a> {
                     size: (box_art.0 as i64, box_art.1 as i64),
                 }
             }
-            (ElementKind::Drawn { material, .. }, Decoded::Drawn { art: a, .. }) if dims(a) == art => {
-                Layer::Drawn { material: (*material).into(), art: a }
+            (ElementKind::Drawn { material, .. }, Decoded::Drawn { art: a, cells, back }) => {
+                let level = (art.0 / s.max(1), art.1 / s.max(1));
+                let (at, (bw, bh)) = drawn_box(&e.kind, level)?;
+                let box_art = (bw.checked_mul(s)?, bh.checked_mul(s)?);
+                let fits = dims(a) == box_art
+                    && cells.as_ref().is_none_or(|c| c.len() as u64 == u64::from(bw) * u64::from(bh))
+                    && back.as_ref().is_none_or(|b| dims(b) == box_art);
+                if !fits {
+                    return None;
+                }
+                Layer::Drawn {
+                    material: (*material).into(),
+                    art: a,
+                    cells: cells.as_deref(),
+                    back: back.as_ref(),
+                    origin: (i64::from(at.0) * i64::from(s), i64::from(at.1) * i64::from(s)),
+                    cols: bw,
+                    s,
+                }
             }
             (ElementKind::Raster, Decoded::Raster { material, front, back })
                 if dims(front) == art
@@ -330,20 +360,50 @@ impl<'a> Layer<'a> {
                 (p.a == 255).then_some(p)
             }
             Layer::Drawn { art, .. } => {
-                let p = art.get(ax, ay);
+                let (lx, ly) = self.local(ax, ay)?;
+                let p = art.get(lx, ly);
                 (p.a != 0).then(|| opaque(p))
             }
             Layer::Raster { front, .. } => Some(front.get(ax, ay)),
         }
     }
 
+    /// A drawn layer's own art pixel for level art pixel `(ax, ay)`, when
+    /// inside its box.
+    fn local(&self, ax: u32, ay: u32) -> Option<(u32, u32)> {
+        let Layer::Drawn { art, origin, .. } = self else { return None };
+        let (lx, ly) = (i64::from(ax) - origin.0, i64::from(ay) - origin.1);
+        let inside = (0..i64::from(art.width())).contains(&lx) && (0..i64::from(art.height())).contains(&ly);
+        inside.then_some((lx as u32, ly as u32))
+    }
+
+    /// A drawn layer's material at its own art pixel `(lx, ly)`: its
+    /// block's cell when mixed, else its material.
+    fn cell(&self, lx: u32, ly: u32) -> Option<Material> {
+        let Layer::Drawn { material, cells, cols, s, .. } = self else { return None };
+        Some(match cells {
+            Some(c) => *c.get((ly / s) as usize * *cols as usize + (lx / s) as usize)?,
+            None => *material,
+        })
+    }
+
     /// The element's backdrop at art pixel `(ax, ay)` (R4): a background
     /// image or drawn element's art, a raster element's back.
     fn back(&self, ax: u32, ay: u32) -> Option<Rgba> {
         match self {
-            Layer::Image { material: Material::Background, .. }
-            | Layer::Drawn { material: Material::Background, .. } => self.front(ax, ay),
-            Layer::Image { .. } | Layer::Drawn { .. } => None,
+            Layer::Image { material: Material::Background, .. } => self.front(ax, ay),
+            Layer::Image { .. } => None,
+            // A covered background pixel is backdrop; under dirt or rock,
+            // the back art where it is opaque (plan 14d R4).
+            Layer::Drawn { back, .. } => {
+                let (lx, ly) = self.local(ax, ay)?;
+                if let Some(c) = self.front(ax, ay)
+                    && self.cell(lx, ly) == Some(Material::Background)
+                {
+                    return Some(c);
+                }
+                back.map(|b| b.get(lx, ly)).filter(|p| p.a != 0).map(opaque)
+            }
             Layer::Raster { back, .. } => Some(back.get(ax, ay)),
         }
     }
@@ -352,8 +412,11 @@ impl<'a> Layer<'a> {
     /// pixel is `(ax, ay)`, when the element covers that art pixel.
     fn material(&self, cell: usize, ax: u32, ay: u32) -> Option<Material> {
         match self {
-            Layer::Image { material, .. } | Layer::Drawn { material, .. } => {
-                self.front(ax, ay).map(|_| *material)
+            Layer::Image { material, .. } => self.front(ax, ay).map(|_| *material),
+            Layer::Drawn { .. } => {
+                self.front(ax, ay)?;
+                let (lx, ly) = self.local(ax, ay)?;
+                self.cell(lx, ly)
             }
             Layer::Raster { material, .. } => material.get(cell).copied(),
         }
@@ -536,24 +599,39 @@ pub fn decode_element(
             let grid = cache.grid(source, original, box_art, &p, mask.as_deref())?;
             Decoded::Image { grid: Some(grid), mask }
         }
-        ElementKind::Drawn { .. } => Decoded::Drawn { art: rgba(&layer_file(&e.id), art)? },
+        ElementKind::Drawn { mixed, back, .. } => {
+            let (_, (bw, bh)) = drawn_box(&e.kind, size).unwrap_or(((0, 0), size));
+            let box_art = (bw.saturating_mul(s), bh.saturating_mul(s));
+            let files = drawn_files(&e.id, *mixed, *back);
+            let cells = match mixed {
+                true => Some(decode_cells(&files[1], bytes(&files[1])?, (bw, bh))?),
+                false => None,
+            };
+            let back = match back {
+                true => Some(rgba(files.last().map_or("", String::as_str), box_art)?),
+                false => None,
+            };
+            Decoded::Drawn { art: rgba(&files[0], box_art)?, cells, back }
+        }
         ElementKind::Raster => {
             let [m, f, b] = raster_files(&e.id);
-            let (mw, mh, indices) =
-                image_io::decode_indexed_within(bytes(&m)?, LEVEL_ART).map_err(|why| fail(&m, why))?;
-            if (mw, mh) != size {
-                return Err(fail(&m, format!("{mw}x{mh}, the level is {}x{}", size.0, size.1)));
-            }
-            let material = indices
-                .iter()
-                .map(|&i| {
-                    Material::from_index(i)
-                        .ok_or_else(|| fail(&m, format!("palette index {i}: not a material")))
-                })
-                .collect::<Result<Vec<_>, _>>()?;
+            let material = decode_cells(&m, bytes(&m)?, size)?;
             Decoded::Raster { material, front: rgba(&f, art)?, back: rgba(&b, art)? }
         }
     })
+}
+
+/// Material file `file` (`bytes`, `material.png`'s palette) of exactly `size`.
+fn decode_cells(file: &str, bytes: &[u8], size: (u32, u32)) -> Result<Vec<Material>, ComposeError> {
+    let fail = |message: String| ComposeError::File { file: file.into(), message };
+    let (mw, mh, indices) = image_io::decode_indexed_within(bytes, LEVEL_ART).map_err(fail)?;
+    if (mw, mh) != size {
+        return Err(fail(format!("{mw}x{mh}, the layer is {}x{}", size.0, size.1)));
+    }
+    indices
+        .iter()
+        .map(|&i| Material::from_index(i).ok_or_else(|| fail(format!("palette index {i}: not a material"))))
+        .collect()
 }
 
 /// The files a drawn or raster element's decoded data encodes to (as
@@ -566,8 +644,19 @@ pub fn encode_decoded(e: &Element, d: &Decoded, size: (u32, u32)) -> Vec<(String
         (ElementKind::Image { mask: true, .. }, Decoded::Image { mask: Some(m), .. }) => {
             vec![(mask_file(&e.id), m.encode())]
         }
-        (ElementKind::Drawn { .. }, Decoded::Drawn { art }) => {
-            vec![(layer_file(&e.id), image_io::encode_rgba(art))]
+        (ElementKind::Drawn { .. }, Decoded::Drawn { art, cells, back }) => {
+            let (_, b) = drawn_box(&e.kind, size).unwrap_or(((0, 0), size));
+            let files = drawn_files(&e.id, cells.is_some(), back.is_some());
+            let mut out = vec![(files[0].clone(), image_io::encode_rgba(art))];
+            if let Some(c) = cells
+                && c.len() as u64 == u64::from(b.0) * u64::from(b.1)
+            {
+                out.push((files[1].clone(), encode_material(b, c)));
+            }
+            if let (Some(back), Some(f)) = (back, files.last()) {
+                out.push((f.clone(), image_io::encode_rgba(back)));
+            }
+            out
         }
         (ElementKind::Raster, Decoded::Raster { material, front, back })
             if material.len() as u64 == u64::from(size.0) * u64::from(size.1) =>
@@ -626,8 +715,16 @@ pub fn resize_decoded(
     let wrong = |what: &RgbaImage| {
         EditError::Art(what.width(), what.height(), format!("{:?} is not the level's art size", e.id))
     };
+    // A boxed drawn layer only moves (plan 14d R2): its size is its own.
+    let level_sized = !matches!(e.kind, ElementKind::Drawn { size: Some(_), .. });
     match d {
-        Decoded::Drawn { art: a } if dims(a) != art => return Err(wrong(a)),
+        Decoded::Drawn { art: a, .. } if level_sized && dims(a) != art => return Err(wrong(a)),
+        Decoded::Drawn { back: Some(b), .. } if level_sized && dims(b) != art => return Err(wrong(b)),
+        Decoded::Drawn { cells: Some(c), art: a, .. }
+            if level_sized && c.len() as u64 != u64::from(old.0) * u64::from(old.1) =>
+        {
+            return Err(wrong(a));
+        }
         Decoded::Raster { front, back, .. } if dims(front) != art || dims(back) != art => {
             return Err(wrong(if dims(front) != art { front } else { back }));
         }
@@ -638,17 +735,30 @@ pub fn resize_decoded(
         }
         _ => {}
     }
+    // Art re-laid with the new area uncovered; `cells` with the new area
+    // of `fill` (background when none).
+    let relay = |art: &RgbaImage, cells: Option<&Vec<Material>>, fill: Material| {
+        let none = vec![Material::Background; old.0 as usize * old.1 as usize];
+        let cells = cells.cloned().unwrap_or(none);
+        let mut tmp = as_level(old, art_scale, cells, art.clone(), art.clone());
+        level::resize(&mut tmp, size, offset, fill, &Paint::Colour(Rgba::TRANSPARENT))?;
+        Ok::<_, EditError>((tmp.front, tmp.material))
+    };
+    let id = e.id.clone();
+    let moved = |v: i32, by: i32| v.checked_add(by).ok_or_else(|| EditError::Moved(id.clone()));
     match (&mut e.kind, d) {
-        (ElementKind::Image { at, .. }, _) => {
-            let moved = |v: i32, by: i32| v.checked_add(by).ok_or_else(|| EditError::Moved(e.id.clone()));
+        (ElementKind::Image { at, .. }, _) | (ElementKind::Drawn { at, size: Some(_), .. }, _) => {
             *at = (moved(at.0, offset.0)?, moved(at.1, offset.1)?);
         }
-        (ElementKind::Drawn { .. }, Decoded::Drawn { art }) => {
-            let cells = vec![Material::Background; old.0 as usize * old.1 as usize];
-            let mut tmp = as_level(old, art_scale, cells, art.clone(), RgbaImage::new(0, 0));
-            tmp.back = tmp.front.clone();
-            level::resize(&mut tmp, size, offset, material, &Paint::Colour(Rgba::TRANSPARENT))?;
-            *art = tmp.front;
+        (ElementKind::Drawn { material: m, .. }, Decoded::Drawn { art, cells, back }) => {
+            let (new_art, new_cells) = relay(art, cells.as_ref(), (*m).into())?;
+            if cells.is_some() {
+                *cells = Some(new_cells);
+            }
+            if let Some(b) = back {
+                *b = relay(b, None, Material::Background)?.0;
+            }
+            *art = new_art;
         }
         (ElementKind::Raster, Decoded::Raster { material: cells, front, back }) => {
             let mut tmp = as_level(old, art_scale, cells.clone(), front.clone(), back.clone());
@@ -742,7 +852,7 @@ pub fn split_layers(
             locked: false,
             kind: ElementKind::drawn(material),
         };
-        (e, Decoded::Drawn { art })
+        (e, Decoded::Drawn { art, cells: None, back: None })
     };
     vec![
         layer(ids[0], "Background", ElementMaterial::Background, fit(back)),

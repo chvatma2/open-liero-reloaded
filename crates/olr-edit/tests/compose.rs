@@ -90,6 +90,35 @@ fn with_drawn(src: &mut CompositionSource, id: &str, art: &RgbaImage, m: Element
     src.composition.elements.push(element(id, ElementKind::drawn(m)));
 }
 
+/// Adds a drawn layer `id` at `at` (world) of `size` (`None`: the level's,
+/// `level`) on top: `art` its art, `cells` its per-pixel material (mixed),
+/// `back` its back art.
+#[allow(clippy::too_many_arguments)]
+fn with_placed(
+    src: &mut CompositionSource,
+    id: &str,
+    at: (i32, i32),
+    size: Option<(u32, u32)>,
+    level: (u32, u32),
+    art: &RgbaImage,
+    cells: Option<&[Material]>,
+    back: Option<&RgbaImage>,
+    m: ElementMaterial,
+) {
+    let files = olr_format::levels::drawn_files(id, cells.is_some(), back.is_some());
+    src.files.insert(files[0].clone(), image_io::encode_rgba(art));
+    if let Some(c) = cells {
+        src.files.insert(files[1].clone(), olr_format::levels::encode_material(size.unwrap_or(level), c));
+    }
+    if let Some(b) = back {
+        src.files.insert(files.last().unwrap().clone(), image_io::encode_rgba(b));
+    }
+    src.composition.elements.push(element(
+        id,
+        ElementKind::Drawn { material: m, at, size, mixed: cells.is_some(), back: back.is_some() },
+    ));
+}
+
 /// `front == back` on every art pixel of a background block.
 fn background_invariant(l: &LevelSource) -> bool {
     let s = l.art_scale;
@@ -119,7 +148,10 @@ fn scramble(l: &mut LevelSource, r: Rect) {
 
 /// A stack from `spec`: (kind, material, x, y, w, h, visible); kind 0 an
 /// image of a 3 × 3 gradient with a transparent corner, 1 a drawn layer
-/// of a checkerboard, 2 the raster base of a random-ish level.
+/// of a checkerboard, 2 the raster base of a random-ish level, 3 a mixed
+/// and backed checkerboard layer at `(x, y)` (of `(w, h)`, or the level's
+/// size when `w` is a multiple of 4), 4 a kind-0 image with its middle
+/// pixel masked.
 fn random_stack(spec: &[(u8, u8, i32, i32, u32, u32, bool)], size: (u32, u32), s: u32) -> CompositionSource {
     let mut src = CompositionSource::default();
     for (i, &(kind, m, x, y, w, h, visible)) in spec.iter().enumerate() {
@@ -130,6 +162,34 @@ fn random_stack(spec: &[(u8, u8, i32, i32, u32, u32, bool)], size: (u32, u32), s
                 let mut img = solid(3, 3, Rgba::rgb(x as u8, y as u8, 9));
                 img.set(0, 0, Rgba { r: 0, g: 0, b: 0, a: 0 });
                 with_image(&mut src, &id, img, (x, y), (w, h), m);
+            }
+            3 => {
+                let boxed = (!w.is_multiple_of(4)).then_some((w, h));
+                let (bw, bh) = boxed.unwrap_or(size);
+                let mut art = RgbaImage::new(bw * s, bh * s);
+                let mut back = RgbaImage::new(bw * s, bh * s);
+                for ay in 0..bh * s {
+                    for ax in 0..bw * s {
+                        if !(ax + 2 * ay + i as u32).is_multiple_of(3) {
+                            art.set(ax, ay, Rgba::rgb(7, i as u8, 70));
+                        }
+                        if (ax + ay).is_multiple_of(2) {
+                            back.set(ax, ay, Rgba::rgb(70, 7, i as u8));
+                        }
+                    }
+                }
+                let cells: Vec<Material> = (0..bw * bh)
+                    .map(|k| [Material::Rock, Material::Background, Material::Dirt][(k as usize + i) % 3])
+                    .collect();
+                with_placed(&mut src, &id, (x, y), boxed, size, &art, Some(&cells), Some(&back), m);
+            }
+            4 => {
+                let mut img = solid(3, 3, Rgba::rgb(x as u8, y as u8, 9));
+                img.set(0, 0, Rgba { r: 0, g: 0, b: 0, a: 0 });
+                with_image(&mut src, &id, img, (x, y), (w, h), m);
+                let mut mask = olr_edit::mask::Mask::full((3, 3));
+                mask.keep[4] = 0;
+                with_mask(&mut src, &id, &mask);
             }
             1 => {
                 let mut art = RgbaImage::new(size.0 * s, size.1 * s);
@@ -172,6 +232,71 @@ fn random_stack(spec: &[(u8, u8, i32, i32, u32, u32, bool)], size: (u32, u32), s
         src.composition.elements.last_mut().unwrap().visible = visible;
     }
     src
+}
+
+/// Plan 14d R2/R4: a drawn layer covers only its box, placed at `at`.
+#[test]
+fn a_placed_layer_bakes_at_its_box() {
+    let mut src = CompositionSource::default();
+    let art = solid(4, 4, BROWN);
+    with_placed(&mut src, "crate", (2, 1), Some((2, 2)), (6, 4), &art, None, None, ElementMaterial::Dirt);
+    let mut l = level(6, 4, 2);
+    l.material = vec![Material::Background; 24];
+    bake(&mut l, &src, &back_tile()).unwrap();
+    for y in 0..4u32 {
+        for x in 0..6u32 {
+            let inside = (2..4).contains(&x) && (1..3).contains(&y);
+            let want = if inside { Material::Dirt } else { Material::Background };
+            assert_eq!(l.material[(y * 6 + x) as usize], want, "({x}, {y})");
+            if inside {
+                assert_eq!(l.front.get(x * 2 + 1, y * 2), BROWN);
+            }
+        }
+    }
+}
+
+/// Plan 14d R4: a mixed layer's material is its cells'; its back art is
+/// the backdrop under its dirt; its background pixels are backdrop.
+#[test]
+fn a_mixed_layer_bakes_its_cells_and_back() {
+    let mut src = CompositionSource::default();
+    let art = solid(3, 1, BROWN);
+    let cells = [Material::Rock, Material::Dirt, Material::Background];
+    let mut back = RgbaImage::new(3, 1);
+    back.set(1, 0, BLUE);
+    with_placed(&mut src, "m", (0, 0), None, (3, 1), &art, Some(&cells), Some(&back), ElementMaterial::Dirt);
+    let mut l = level(3, 1, 1);
+    bake(&mut l, &src, &back_tile()).unwrap();
+    assert_eq!(l.material, cells);
+    assert_eq!(l.back.get(1, 0), BLUE, "carving the dirt shows its back art");
+    assert_eq!(l.back.get(2, 0), BROWN, "a background pixel is backdrop");
+    assert_eq!(l.front.get(2, 0), l.back.get(2, 0));
+    assert_eq!(l.front.get(0, 0), BROWN);
+}
+
+/// Plan 14d R2: a level resize moves a boxed layer by its offset and
+/// re-lays a level-sized one (its cells, the new area of its material).
+#[test]
+fn a_resize_moves_a_boxed_layer_and_relays_a_level_sized_one() {
+    use olr_edit::compose::resize_decoded;
+    use olr_edit::level::Paint;
+    let kind = |material, at, size, mixed| ElementKind::Drawn { material, at, size, mixed, back: false };
+    let mut e = element("b", kind(ElementMaterial::Dirt, (1, 1), Some((1, 1)), false));
+    let mut d = Decoded::Drawn { art: solid(1, 1, BROWN), cells: None, back: None };
+    let paint = Paint::Colour(BLUE);
+    resize_decoded(&mut e, &mut d, (2, 2), 1, (5, 3), (3, 1), Material::Rock, &paint).unwrap();
+    assert!(matches!(e.kind, ElementKind::Drawn { at: (4, 2), size: Some((1, 1)), .. }), "{:?}", e.kind);
+    assert_eq!(d, Decoded::Drawn { art: solid(1, 1, BROWN), cells: None, back: None });
+    let mut e = element("l", kind(ElementMaterial::Rock, (0, 0), None, true));
+    let mut d = Decoded::Drawn { art: solid(2, 2, BROWN), cells: Some(vec![Material::Dirt; 4]), back: None };
+    resize_decoded(&mut e, &mut d, (2, 2), 1, (5, 3), (3, 1), Material::Rock, &paint).unwrap();
+    let Decoded::Drawn { art, cells: Some(cells), .. } = &d else { panic!("{d:?}") };
+    assert_eq!((art.width(), art.height()), (5, 3));
+    assert_eq!(cells.len(), 15);
+    assert_eq!(cells[5 + 3], Material::Dirt, "the old cells moved by the offset");
+    assert_eq!(cells[0], Material::Rock, "the new area takes the layer's material");
+    assert_eq!(art.get(0, 0).a, 0, "the new area is uncovered");
+    assert_eq!(art.get(3, 1), BROWN);
 }
 
 #[test]
@@ -433,7 +558,7 @@ proptest! {
     #[test]
     fn region_bakes_equal_the_full_bake_and_keep_the_invariant(
         s in 1u32..=3, w in 1u32..=12, h in 1u32..=12,
-        stack in prop::collection::vec((0u8..3, 0u8..3, -4i32..14, -4i32..14, 1u32..16, 1u32..16, any::<bool>()), 0..6),
+        stack in prop::collection::vec((0u8..5, 0u8..3, -4i32..14, -4i32..14, 1u32..16, 1u32..16, any::<bool>()), 0..6),
         rect in (0u32..12, 0u32..12, 1u32..12, 1u32..12),
     ) {
         // Build images (kind 0), drawn layers (kind 1: a checkerboard layer) and a raster (kind 2: compose_from a random level).
@@ -592,7 +717,7 @@ proptest! {
     #[test]
     fn bake_elements_equals_the_baker(
         s in 1u32..=3, w in 1u32..=12, h in 1u32..=12,
-        stack in prop::collection::vec((0u8..3, 0u8..3, -4i32..14, -4i32..14, 1u32..16, 1u32..16, any::<bool>()), 0..6),
+        stack in prop::collection::vec((0u8..5, 0u8..3, -4i32..14, -4i32..14, 1u32..16, 1u32..16, any::<bool>()), 0..6),
     ) {
         let src = random_stack(&stack, (w, h), s);
         let mut full = level(w, h, s);
@@ -663,7 +788,7 @@ fn mismatched_decoded_data_never_panics() {
     );
     assert_eq!(d2, d);
     let drawn = element("d", ElementKind::drawn(ElementMaterial::Dirt));
-    let mut art = Decoded::Drawn { art: solid(3, 3, BLUE) };
+    let mut art = Decoded::Drawn { art: solid(3, 3, BLUE), cells: None, back: None };
     let mut e3 = drawn.clone();
     assert!(
         resize_decoded(&mut e3, &mut art, (2, 2), 1, (4, 4), (0, 0), Material::Rock, &Paint::Colour(BLUE))

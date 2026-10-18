@@ -222,7 +222,10 @@ impl Document {
         self.check_with(|es| es.push(element.clone()))?;
         let (w, h) = self.level.size;
         let s = self.level.art_scale;
-        let item = Item { element, decoded: Decoded::Drawn { art: RgbaImage::new(w * s, h * s) } };
+        let item = Item {
+            element,
+            decoded: Decoded::Drawn { art: RgbaImage::new(w * s, h * s), cells: None, back: None },
+        };
         let index = self.items.len();
         Ok(self.change(Edit::Insert { index, item: Box::new(Snapshot { item, original: None }) }))
     }
@@ -322,7 +325,7 @@ impl Document {
     pub fn paint(&mut self, id: &str, shape: &Shape, paint: &Paint) -> Result<Option<Rect>, DocError> {
         let i = self.paintable(id)?;
         let (size, s) = (self.level.size, self.level.art_scale);
-        let Decoded::Drawn { art } = &mut self.items[i].decoded else { return Ok(None) };
+        let Decoded::Drawn { art, .. } = &mut self.items[i].decoded else { return Ok(None) };
         let rect = draw_art(art, s, size, shape, paint);
         if let Some(r) = rect {
             self.rebake(r);
@@ -333,7 +336,7 @@ impl Document {
     pub fn erase(&mut self, id: &str, shape: &Shape) -> Result<Option<Rect>, DocError> {
         let i = self.paintable(id)?;
         let (size, s) = (self.level.size, self.level.art_scale);
-        let Decoded::Drawn { art } = &mut self.items[i].decoded else { return Ok(None) };
+        let Decoded::Drawn { art, .. } = &mut self.items[i].decoded else { return Ok(None) };
         let rect = erase_art(art, s, size, shape);
         if let Some(r) = rect {
             self.rebake(r);
@@ -344,7 +347,7 @@ impl Document {
     /// Drawn layer `id`'s art (for a stroke's "before" copy and the eyedropper).
     pub fn layer_art(&self, id: &str) -> Option<&RgbaImage> {
         match &self.items.get(self.index_of(id)?)?.decoded {
-            Decoded::Drawn { art } => Some(art),
+            Decoded::Drawn { art, .. } => Some(art),
             _ => None,
         }
     }
@@ -484,7 +487,11 @@ impl Document {
         let mut result = Ok(());
         for i in &self.items.clone() {
             let decoded = match &i.decoded {
-                Decoded::Drawn { art } => Decoded::Drawn { art: rescale_art(art, from, to) },
+                Decoded::Drawn { art, cells, back } => Decoded::Drawn {
+                    art: rescale_art(art, from, to),
+                    cells: cells.clone(),
+                    back: back.as_ref().map(|b| rescale_art(b, from, to)),
+                },
                 Decoded::Raster { material, front, back } => Decoded::Raster {
                     material: material.clone(),
                     front: rescale_art(front, from, to),
@@ -572,7 +579,7 @@ impl Document {
                 let img = if forward { after } else { before };
                 let s = self.level.art_scale;
                 let Some(i) = self.index_of(id) else { return NOTHING };
-                let Decoded::Drawn { art } = &mut self.items[i].decoded else { return NOTHING };
+                let Decoded::Drawn { art, .. } = &mut self.items[i].decoded else { return NOTHING };
                 // A rectangle off the layer (a forged edit) changes nothing.
                 let fits = |o: u32, side: u32, layer: u32| {
                     o.checked_mul(s).and_then(|o| o.checked_add(side)).is_some_and(|end| end <= layer)
