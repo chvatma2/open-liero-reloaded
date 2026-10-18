@@ -426,7 +426,7 @@ fn replace_rect_copies_and_marks_dirty() {
     let mut c = color_map(&t, 2, theme(vec![], None));
     let before = c.pixels().to_vec();
     let (red, blue) = (Rgba::rgb(255, 0, 0), Rgba::rgb(0, 0, 255));
-    let mat = map(&["....", "....", "...."]);
+    let mat = vec![Material::Background; 12];
     let r = Rect { x: 2, y: 2, w: 4, h: 2 };
     c.replace_rect(r, &solid(8, 6, red), &solid(8, 6, blue), &mat);
     for y in 0..6 {
@@ -462,10 +462,10 @@ fn replace_rect_of_another_size_changes_nothing() {
     let before = c.pixels().to_vec();
     let red = Rgba::rgb(255, 0, 0);
     let r = Rect { x: 0, y: 0, w: 8, h: 6 };
-    let mat = map(&["....", "....", "...."]);
+    let mat = vec![Material::Background; 12];
     c.replace_rect(r, &solid(7, 6, red), &solid(8, 6, red), &mat);
     c.replace_rect(r, &solid(8, 6, red), &solid(8, 5, red), &mat);
-    c.replace_rect(r, &solid(8, 6, red), &solid(8, 6, red), &map(&["...", "..."]));
+    c.replace_rect(r, &solid(8, 6, red), &solid(8, 6, red), &[Material::Background; 6]);
     assert_eq!(c.pixels(), &before[..]);
     assert_eq!(c.take_dirty().count(), 0);
     assert_eq!(c.material().material(0, 0), Some(Material::Rock));
@@ -476,7 +476,7 @@ fn replace_rect_clips() {
     let t = map(&["RRRR", "RRRR", "RRRR"]);
     let mut c = color_map(&t, 2, theme(vec![], None));
     let red = Rgba::rgb(255, 0, 0);
-    let mat = map(&["....", "....", "...."]);
+    let mat = vec![Material::Background; 12];
     c.replace_rect(Rect { x: 6, y: 4, w: 100, h: 100 }, &solid(8, 6, red), &solid(8, 6, red), &mat);
     for y in 0..6 {
         for x in 0..8 {

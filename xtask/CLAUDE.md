@@ -43,7 +43,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `OLR_FULL_TESTS=1`), then the GPU step
   (`check::GPU_TESTS` with `OLR_GPU_TESTS=1`: `olr-render`'s `gpu`,
   `olr-cli`'s `render_golden` and `gpu_bench` (plan 8's `gpu-bench` on the
-  software adapter), `olr-game`'s `soak`, `olr-ui`'s `hud_snapshots`) and the
+  software adapter), `olr-game`'s `soak` and `canvas_gpu` (the editor's
+  canvas), `olr-ui`'s `hud_snapshots`; `the_gpu_tier_names_test_binaries`) and the
   audio step, then `e2e`, `net-nat`, `bench`, `stress` and `net-feel`.
   Each step prints `ok   <name> (<s>s)` (`net-nat`: `ok   net-nat (12
   scenarios, <s>s)`, `run_with`'s `finish` with a detail) or `FAIL` and

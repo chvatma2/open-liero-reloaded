@@ -586,7 +586,11 @@ impl Shell {
                     let why = format!("{e:#}");
                     eprintln!("warning: could not play the level: {why}");
                     self.stop_edited();
-                    self.data.editor_message = Some(why);
+                    if let Some(h) = &mut self.editor {
+                        h.act(vec![olr_editor::EditorAction::Failed(format!(
+                            "The level could not be played: {why}"
+                        ))]);
+                    }
                     Vec::new()
                 }
             };
@@ -889,6 +893,15 @@ impl Shell {
     /// caller waits for it with [`Shell::take_unmapping`] once the window
     /// closed).
     pub fn finish(&mut self) {
+        // A quit that did not ask (an autoplay's, `--autoquit-after`, an
+        // error) keeps the editor's unsaved changes in a recovery copy.
+        if let Some(h) = &mut self.editor {
+            for m in h.flush_recovery() {
+                if let crate::editor::HostOut::Message(m) = m {
+                    eprintln!("warning: editor: {m}");
+                }
+            }
+        }
         self.leave_online();
         self.end();
         self.close_internet();

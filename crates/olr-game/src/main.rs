@@ -218,8 +218,8 @@ struct Args {
     port: Option<u16>,
     /// Open the level editor on the level pack in DIR (not bundled content:
     /// copy it from the Editor menu); the menus run behind it.
-    #[arg(long, value_name = "DIR",
-          conflicts_with_all = ["host", "join", "net_sim", "mode", "replay", "spectate", "script", "demo"])]
+    #[arg(long, value_name = "DIR", conflicts_with_all = ["host", "join", "net_sim"],
+          conflicts_with_all = GAME_FLAGS)]
     edit: Option<PathBuf>,
 }
 
@@ -636,6 +636,17 @@ mod tests {
         assert!(
             Args::command().try_get_matches_from(["olr", "--edit", "p", "--mode", "deathmatch"]).is_err()
         );
+        // Batch C review: every flag that chooses a game is refused with it
+        // (a command-line game under the editor quit on Esc, unasked).
+        for flag in GAME_FLAGS {
+            let arg =
+                format!("--{}", if flag == "mod_name" { "mod".to_string() } else { flag.replace('_', "-") });
+            let mut argv = vec!["olr".to_string(), "--edit".into(), "p".into(), arg.clone()];
+            if !matches!(flag, "spectate" | "bonuses" | "demo") {
+                argv.push(if flag == "difficulty" { "easy".into() } else { "1".into() });
+            }
+            assert!(Args::command().try_get_matches_from(&argv).is_err(), "--edit with {arg}");
+        }
     }
 
     #[test]

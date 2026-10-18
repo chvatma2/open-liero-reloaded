@@ -318,3 +318,50 @@ fn a_later_session_keeps_the_crash_copy() {
     assert!(!messages(&out).is_empty(), "{out:?}");
     assert!(h.state().document().is_none());
 }
+
+/// Batch C review, Minor 1 regraded: a quit without the dialog (an
+/// autoplay's or `--autoquit-after`'s, a frame's error) writes the recovery
+/// copy of unsaved changes first.
+#[test]
+fn quitting_without_asking_keeps_a_recovery_copy() {
+    let Some((tmp, _root, mut h)) = host() else { return };
+    h.open_from_menu(&new_level("Office"));
+    h.flush_recovery();
+    assert!(list_recoveries(&tmp.path().join("recovery")).is_empty(), "nothing unsaved");
+    h.act(vec![A::AddLayer]);
+    h.flush_recovery();
+    assert_eq!(list_recoveries(&tmp.path().join("recovery")).len(), 1);
+}
+
+/// Batch C review, Important 2: a Play that cannot start says why in the
+/// editor (a dialog), not on the hidden Editor screen.
+#[test]
+fn a_failed_play_says_why_in_the_editor() {
+    use olr_game::shell::{Shell, ShellConfig};
+    let Some(root) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = ShellConfig {
+        content: root,
+        interpolation: olr_scene::Interpolation::Linear,
+        viewport: olr_scene::Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0),
+    };
+    let ui = olr_ui::UiState::new(olr_ui::Settings::default(), olr_ui::Profiles::default(), 1);
+    let mut sh = Shell::new(cfg, ui, Store::open(tmp.path()), olr_audio::Audio::silent());
+    sh.act(olr_ui::UiAction::Open(olr_ui::Screen::Editor));
+    sh.act(olr_ui::UiAction::NewLevel {
+        name: "Office".into(),
+        size: (120, 80),
+        theme: "olx-theme-dirt".into(),
+    });
+    assert!(sh.editor_open());
+    sh.editor_frame(vec![A::PlayMod("no-such-mod".into()), A::Play], Instant::now());
+    sh.poll();
+    assert!(!sh.editing_play());
+    let h = sh.editor().unwrap();
+    assert!(!h.state().playing());
+    assert!(
+        matches!(h.state().dialog(), Some(olr_editor::Dialog::Error(e)) if e.contains("no-such-mod")),
+        "{:?}",
+        h.state().dialog()
+    );
+}

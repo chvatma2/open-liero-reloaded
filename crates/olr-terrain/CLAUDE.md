@@ -30,7 +30,8 @@ and the colour image that follows it (`ColorMap`).
   fallback for edits a tick dropped (`lost_area`). `replace_rect(r, front,
   back, material)` (the level editor's canvas, plan 14c) copies art
   rectangle `r` of new art (front into the composite too) and the world
-  cells under it, then marks it dirty; images or a material of another size
+  cells under it from the level's cells (`&[Material]`), reading only the
+  rectangle, then marks it dirty; images or a material of another size
   change nothing, `r` is clipped. The image is always
   opaque; odd art sizes are cropped or padded, never a panic.
 - **Journal** (`journal.rs`, networking spec §3.3): off by default; `start_journal` records each mutator's clipped pre-image and keeps the order-independent cell hash. Every new write to `cells` must go through `set_cell` after `record`, or rollback breaks.

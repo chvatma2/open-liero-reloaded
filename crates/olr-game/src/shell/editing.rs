@@ -102,7 +102,9 @@ impl Shell {
                 HostOut::Closed => self.close_editor(),
                 HostOut::Message(m) => {
                     eprintln!("warning: editor: {m}");
-                    self.data.editor_message = Some(m);
+                    if let Some(h) = &mut self.editor {
+                        h.act(vec![EditorAction::Note(m)]);
+                    }
                 }
             }
         }

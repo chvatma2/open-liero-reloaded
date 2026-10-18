@@ -17,7 +17,10 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   (`Upload` a world rectangle of the bake, `Open`, `Create`, `Save`,
   `Play`, `SaveSettings`, `List`, `ReadImage`, `RecoveryDone`, `Close`)
   and answers (`Opened`, `Recovered`: as `Opened` but unsaved, `OpenFailed`,
-  `Saved`, `PlayEnded`, `Listed`, `ImportImage`, `ImportFailed`).
+  `Saved`, `PlayEnded`, `Listed`, `ImportImage`, `ImportFailed`; and
+  `Failed(why)`, an error dialog, `Note(text)`, the status bar's message,
+  for what the host could not do: a Play that did not start, a recovery
+  copy not written).
   `RecoveryDone` comes with every successful save and before a Close, Open
   or New leaves the open document (the host drops its recovery copy). While playing, every action but `PlayEnded` is
   ignored; while a dialog is open only its answer, the host's answers and

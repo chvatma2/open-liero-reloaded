@@ -101,6 +101,12 @@ pub enum EditorAction {
     },
     /// Why the image `ReadImage` asked for cannot be imported.
     ImportFailed(String),
+    /// Something the host could not do for the editor (a Play that could
+    /// not start): shown as an error to acknowledge.
+    Failed(String),
+    /// What the host has to say in passing (a recovery copy that could not
+    /// be written): the status bar's message.
+    Note(String),
     // The file browser (R9).
     /// Opens the browser at the remembered folder, else the home directory.
     Browse(Purpose),
@@ -334,6 +340,8 @@ impl EditorState {
                 | EditorAction::Recovered(_)
                 | EditorAction::Listed { .. }
                 | EditorAction::ImportFailed(_)
+                | EditorAction::Failed(_)
+                | EditorAction::Note(_)
                 | EditorAction::Pointer { .. }
                 | EditorAction::Canvas(_)
                 | EditorAction::Pan(_)
@@ -360,6 +368,7 @@ impl EditorState {
                 | EditorAction::PlayMod(_)
                 | EditorAction::PlayBots(_)
                 | EditorAction::Listed { .. }
+                | EditorAction::Note(_)
                 | EditorAction::Browse(_)
                 | EditorAction::BrowseTo(_)
                 | EditorAction::CloseBrowser
@@ -383,8 +392,12 @@ impl EditorState {
                 }
                 Vec::new()
             }
-            EditorAction::ImportFailed(why) => {
+            EditorAction::ImportFailed(why) | EditorAction::Failed(why) => {
                 self.dialog = Some(Dialog::Error(why));
+                Vec::new()
+            }
+            EditorAction::Note(text) => {
+                self.status.message = Some(text);
                 Vec::new()
             }
             EditorAction::Browse(purpose) => {

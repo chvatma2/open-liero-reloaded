@@ -94,14 +94,15 @@ impl Canvas {
     }
 
     /// `doc`'s world rectangle `r` into the map (`replace_rect`, art pixels
-    /// = `r` × the map's art scale), marked dirty for `update_terrain`.
+    /// = `r` × the map's art scale), marked dirty for `update_terrain`:
+    /// the rectangle's work and copies only.
     pub fn upload(&mut self, doc: &Document, r: Rect) {
         let Some(map) = &mut self.map else { return };
         let l = doc.level();
-        if l.size != self.level || r.w == 0 || r.h == 0 {
+        let cells = l.size.0 as usize * l.size.1 as usize;
+        if l.size != self.level || r.w == 0 || r.h == 0 || l.material.len() != cells {
             return;
         }
-        let t = terrain(l);
         let s = map.art_scale();
         let art = olr_terrain::Rect { x: r.x * s, y: r.y * s, w: r.w * s, h: r.h * s };
         match &mut self.palette {
@@ -114,9 +115,9 @@ impl Canvas {
                         back.set(x, y, c);
                     }
                 }
-                map.replace_rect(art, front, back, &t);
+                map.replace_rect(art, front, back, &l.material);
             }
-            None => map.replace_rect(art, &l.front, &l.back, &t),
+            None => map.replace_rect(art, &l.front, &l.back, &l.material),
         }
     }
 

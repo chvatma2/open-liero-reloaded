@@ -330,15 +330,22 @@ impl EditorHost {
     /// the copy is written when they have waited `RECOVERY_INTERVAL` since
     /// the first tick that saw them (or since the last copy).
     pub fn tick(&mut self, now: Instant) -> Vec<HostOut> {
-        let Some(doc) = self.state.document().filter(|_| self.state.dirty()) else {
+        if self.state.document().is_none() || !self.state.dirty() {
             self.dirty_since = None;
             return Vec::new();
-        };
+        }
         let since = *self.dirty_since.get_or_insert(now);
         if now.saturating_duration_since(since) < RECOVERY_INTERVAL {
             return Vec::new();
         }
         self.dirty_since = Some(now);
+        self.flush_recovery()
+    }
+
+    /// Writes the recovery copy now when there are unsaved changes (the
+    /// timer's, and a quit that does not ask: `Shell::finish`).
+    pub fn flush_recovery(&mut self) -> Vec<HostOut> {
+        let Some(doc) = self.state.document().filter(|_| self.state.dirty()) else { return Vec::new() };
         let (Some(dir), Some(id)) = (&self.recovery_dir, &self.recovery_id) else { return Vec::new() };
         let info = RecoveryInfo { origin: doc.dir().to_path_buf(), name: doc.level().name.clone() };
         match recovery::write(dir, id, &doc.to_pack(), &info) {

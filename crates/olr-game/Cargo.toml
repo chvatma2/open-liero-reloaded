@@ -77,5 +77,8 @@ path = "tests/integration.rs"
 [[test]]
 name = "soak"
 
+[[test]]
+name = "canvas_gpu"
+
 [lints]
 workspace = true

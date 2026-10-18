@@ -281,14 +281,16 @@ impl ColorMap {
     /// Copies art rectangle `r` of `front` and `back` (images of this map's
     /// art size) into the map's own front, back and composited pixels (the
     /// composite takes `front`), and the world cells under `r` from
-    /// `material` (the level's size), then marks `r` dirty. Images or a
-    /// material of another size change nothing. `r` is clipped to the map.
-    /// The editor's canvas uploads an edit's bake this way.
-    pub fn replace_rect(&mut self, r: Rect, front: &RgbaImage, back: &RgbaImage, material: &Terrain) {
+    /// `material` (the level's cells, row-major), then marks `r` dirty.
+    /// Images or a material of another size change nothing. `r` is clipped
+    /// to the map; only its pixels and cells are read. The editor's canvas
+    /// uploads an edit's bake this way.
+    pub fn replace_rect(&mut self, r: Rect, front: &RgbaImage, back: &RgbaImage, material: &[Material]) {
         let art = (self.width, self.height);
+        let cells = self.material.width() as usize * self.material.height() as usize;
         if (front.width(), front.height()) != art
             || (back.width(), back.height()) != art
-            || (material.width(), material.height()) != (self.material.width(), self.material.height())
+            || material.len() != cells
         {
             return;
         }
@@ -317,7 +319,7 @@ impl ColorMap {
         for wy in y0 / s..y1.div_ceil(s) {
             for wx in x0 / s..x1.div_ceil(s) {
                 let i = wy as usize * mw + wx as usize;
-                self.material.cells[i] = material.cells[i];
+                self.material.cells[i] = material[i] as u8;
             }
         }
         self.push_dirty(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });

@@ -634,10 +634,15 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   an edited Play the HUD draws with a Stop button (`overlay::stop_button`)
   and Esc or Stop ends it (`Shell::stop_edited`). Closing the window asks
   the editor first (`editor::on_close_request`, `CloseDecision::Wait`: the
-  window closes when the editor does; a Cancel lets it stay).
+  window closes when the editor does; a Cancel lets it stay); a quit that
+  does not ask (autoplay's, `--autoquit-after`, an error) writes the
+  recovery copy first (`Shell::finish`, `EditorHost::flush_recovery`). A
+  Play that does not start is an error dialog in the editor
+  (`EditorAction::Failed`), the host's messages its status bar (`Note`).
+  `--edit` conflicts with every `GAME_FLAGS` flag.
   `olr --edit <dir>` (`main.rs`'s `edit_target`, R6) refuses `--content`'s
   directories with status 2. Tests: `tests/editor_host.rs`,
-  `editor::canvas`'s unit tests, `tests/canvas_gpu.rs` (`OLR_GPU_TESTS`:
+  `editor::canvas`'s unit tests, `tests/canvas_gpu.rs` (a binary of its own in the GPU tier, `OLR_GPU_TESTS`:
   a rectangle upload draws as a full one), `main.rs`'s argument tests,
   `fixtures/autoplay/editor.ron` in `cargo xtask e2e`.
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is

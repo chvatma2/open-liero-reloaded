@@ -79,6 +79,7 @@ pub const GPU_TESTS: &[(&str, &str)] = &[
     ("olr-cli", "render_golden"),
     ("olr-cli", "gpu_bench"),
     ("olr-game", "soak"),
+    ("olr-game", "canvas_gpu"),
     ("olr-ui", "hud_snapshots"),
 ];
 
@@ -256,5 +257,25 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
     } else {
         println!("{what} failed: {}", failed.join(", "));
         Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every GPU tier target is a test binary of its own (`--test` names
+    /// it): the editor's canvas test too (plan 14c, batch C review).
+    #[test]
+    fn the_gpu_tier_names_test_binaries() {
+        assert!(GPU_TESTS.contains(&("olr-game", "canvas_gpu")));
+        for (package, test) in GPU_TESTS {
+            let dir = crate::root().join("crates").join(package);
+            let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
+            let named = manifest.contains(&format!("name = \"{test}\""));
+            let found =
+                !manifest.contains("autotests = false") && dir.join(format!("tests/{test}.rs")).is_file();
+            assert!(named || found, "{package} has no test binary {test}");
+        }
     }
 }
