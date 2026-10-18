@@ -383,3 +383,69 @@ fn pastes_cascade() {
     assert_eq!(at(&s, a), (t.0 + 4, t.1 + 4));
     assert_eq!(at(&s, b), (t.0 + 8, t.1 + 8));
 }
+
+/// Minors: a fill that converts the layer is undone as one step.
+#[test]
+fn a_fill_and_its_conversion_are_one_step() {
+    use olr_format::levels::ElementKind;
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = crate::common::editor_at(&root, std::path::Path::new("olx-level-dirt-level"));
+    let plain = |s: &olr_editor::EditorState| {
+        let d = s.document().unwrap();
+        matches!(d.items()[d.index_of("dirt").unwrap()].element.kind, ElementKind::Drawn { mixed: false, .. })
+    };
+    let art = s.document().unwrap().layer_art("dirt").unwrap().clone();
+    let l = s.document().unwrap().level();
+    let i = l.material.iter().position(|m| *m == olr_data::level::Material::Dirt).unwrap();
+    let p = ((i % l.size.0 as usize) as i32, (i / l.size.0 as usize) as i32);
+    run(&mut s, A::Select(olr_editor::Selection::Element("dirt".into())));
+    run(&mut s, A::Tool(olr_editor::tools::Tool::Fill));
+    run(&mut s, A::PaintMaterial(Some(olr_format::levels::ElementMaterial::Rock)));
+    run(
+        &mut s,
+        A::Pointer { kind: olr_editor::tools::PointerKind::Down, world: p, shift: false, toggle: false },
+    );
+    run(
+        &mut s,
+        A::Pointer { kind: olr_editor::tools::PointerKind::Up, world: p, shift: false, toggle: false },
+    );
+    assert!(!plain(&s), "the fill made it mixed");
+    run(&mut s, A::Undo);
+    assert!(plain(&s) && s.document().unwrap().layer_art("dirt").unwrap() == &art);
+    assert!(!s.can_undo(), "one step");
+}
+
+/// Minors: Copy with nothing to copy says so.
+#[test]
+fn copying_nothing_says_so() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Copy);
+    assert!(
+        s.status().message.as_deref().is_some_and(|m| m.contains("nothing to copy")),
+        "{:?}",
+        s.status().message
+    );
+    run(&mut s, A::Cut);
+    assert!(s.status().message.as_deref().is_some_and(|m| m.contains("nothing to copy")));
+}
+
+/// Minors: redoing a paste that brought an original brings it again.
+#[test]
+fn redoing_a_paste_brings_its_original() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Select(olr_editor::Selection::Element("tiny".into())));
+    run(&mut s, A::Copy);
+    let (_t2, dir) = crate::common::copy_pack(&root, std::path::Path::new("olx-level-dirt-level"));
+    run(&mut s, A::Open(dir));
+    run(&mut s, A::Paste);
+    let has = |s: &olr_editor::EditorState| {
+        crate::common::files(s.document().unwrap()).contains_key("editor/images/tiny.jpg")
+    };
+    assert!(has(&s));
+    run(&mut s, A::Undo);
+    assert!(!has(&s), "no element names it");
+    run(&mut s, A::Redo);
+    assert!(has(&s), "redone, it is back");
+}

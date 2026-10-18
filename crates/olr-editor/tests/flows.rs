@@ -541,6 +541,9 @@ fn the_tool_options_follow_the_tool() {
     assert!(shows(&h, labels::RESTORE) && !shows(&h, labels::PAINT_AS));
     act(&mut h, A::Tool(Tool::Wand));
     assert!(shows(&h, labels::TOLERANCE) && !shows(&h, labels::RESTORE));
+    // Plan 14e minors: Fill shows "Paint as", which it lays, and its tolerance.
+    act(&mut h, A::Tool(Tool::Fill));
+    assert!(shows(&h, labels::TOLERANCE) && shows(&h, labels::PAINT_AS));
     act(&mut h, A::Tool(Tool::Select));
     assert!(!shows(&h, labels::TOLERANCE) && !shows(&h, labels::PAINT_AS));
 }
@@ -700,4 +703,60 @@ fn escape_drops_the_pixel_rectangle_by_key() {
     h.key_press(egui::Key::Escape);
     h.run();
     assert!(h.state().state.pixel_rect().is_none());
+}
+
+/// Minors: no clipboard shortcut while a text field has the keyboard; a
+/// key and the window's event in one frame are one action.
+#[test]
+fn clipboard_shortcuts_spare_text_fields_and_fire_once() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    let n = ids(&h).len();
+    act(&mut h, A::Select(Selection::Element("tiny".into())));
+    act(&mut h, A::Copy);
+    h.get_by_label(labels::NAME).click();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::V);
+    h.event(egui::Event::Paste(String::new()));
+    h.run();
+    assert_eq!(ids(&h).len(), n, "the name field had the keyboard");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    act(&mut h, A::Select(Selection::Element("tiny".into())));
+    // Both in one frame (kittest's queue runs a frame per event).
+    let key = egui::Event::Key {
+        key: egui::Key::V,
+        physical_key: None,
+        pressed: true,
+        repeat: false,
+        modifiers: egui::Modifiers::COMMAND,
+    };
+    h.input_mut().events.extend([key, egui::Event::Paste(String::new())]);
+    h.run();
+    assert_eq!(ids(&h).len(), n + 1, "one paste");
+}
+
+/// Minors: the theme's swatches follow a theme change.
+#[test]
+fn theme_swatches_follow_the_theme() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = crate::common::copy_pack(&root, &crate::common::fixture());
+    let mut catalog = crate::common::catalog(&root);
+    let mut other = catalog.themes[0].clone();
+    other.id = "olx-theme-castle".into();
+    catalog.themes.push(other);
+    let mut state = EditorState::new(olr_editor::EditorSettings::default(), catalog);
+    run(&mut state, A::Open(dir));
+    let mut h = harness(state);
+    h.run();
+    h.get_by_label(labels::TEXTURES).click();
+    h.run();
+    let keys = |h: &Harness<'static, App>| h.state().data.swatch_keys();
+    assert!(keys(&h).iter().any(|k| k == "theme/olx-theme-dirt/front"), "{:?}", keys(&h));
+    let mut meta = h.state().state.document().unwrap().meta();
+    meta.theme = "olx-theme-castle".into();
+    act(&mut h, A::Meta(meta));
+    h.get_by_label(labels::TEXTURES).click();
+    h.run();
+    let k = keys(&h);
+    assert!(!k.iter().any(|k| k.starts_with("theme/olx-theme-dirt/")), "{k:?}");
 }

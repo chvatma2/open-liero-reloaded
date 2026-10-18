@@ -42,6 +42,8 @@ pub(crate) enum Drag {
         rect: Option<Rect>,
         stroke: Stroke,
         begun: Option<Edit>,
+        /// The paint, resolved once as the stroke began (plan 14e minors).
+        paint: Arc<Paint>,
     },
     /// A rectangle, ellipse or line from `start`, painted on release.
     Shape { id: String, tool: Tool, start: (i32, i32), now: (i32, i32) },
@@ -160,6 +162,14 @@ fn resized(
         y0.clamp(i32::MIN.into(), i32::MAX.into()) as i32,
     );
     (at, (w as u32, h as u32))
+}
+
+/// The rectangle both `a` and `b` hold (empty when none).
+fn intersect(a: Rect, b: Rect) -> Rect {
+    let (x0, y0) = (a.x.max(b.x), a.y.max(b.y));
+    let x1 = a.x.saturating_add(a.w).min(b.x.saturating_add(b.w));
+    let y1 = a.y.saturating_add(a.h).min(b.y.saturating_add(b.h));
+    Rect { x: x0, y: y0, w: x1.saturating_sub(x0), h: y1.saturating_sub(y0) }
 }
 
 /// The world box from `a` to `b`, both included.
@@ -281,7 +291,8 @@ impl EditorState {
         let half = (i64::from(mask.size.0.max(mask.size.1)) * i64::from(scale) / 2).max(1);
         let (dx, dy) = sub(to, from);
         // The pointer's moves are short; a far jump is bounded all the same.
-        let steps = (dx.abs().max(dy.abs()) / half).clamp(1, 1024);
+        // Rounded up: dabs at most half a crater apart (plan 14e minors).
+        let steps = ((dx.abs().max(dy.abs()) + half - 1) / half).clamp(1, 1024);
         (1..=steps)
             .map(|k| Shape::Stamp {
                 x: add(from.0, dx * k / steps),
@@ -294,13 +305,12 @@ impl EditorState {
 
     /// Paints (or erases, or restores) `shapes` into `id`; the rectangle
     /// rebaked.
-    fn lay(&mut self, id: &str, shapes: &[Shape], stroke: Stroke) -> Option<Rect> {
-        let paint = self.paint_of(self.doc.as_ref()?);
+    fn lay(&mut self, id: &str, shapes: &[Shape], stroke: Stroke, paint: &Paint) -> Option<Rect> {
         let doc = self.doc.as_mut()?;
         let mut rect = None;
         for shape in shapes {
             let r = match stroke {
-                Stroke::Paint(m) => doc.paint(id, shape, &paint, Some(m)),
+                Stroke::Paint(m) => doc.paint(id, shape, paint, Some(m)),
                 Stroke::Erase => doc.erase(id, shape, false),
                 Stroke::Restore => doc.erase(id, shape, true),
             };
@@ -375,9 +385,12 @@ impl EditorState {
                 let Some(id) = self.paint_target(erase) else { return Vec::new() };
                 let stroke = self.stroke_of(&id, erase);
                 let Some((begun, before)) = self.begin(&id, stroke) else { return Vec::new() };
-                let rect = self.lay(&id, &[self.dab(world)], stroke);
+                let Some(paint) = self.doc.as_ref().map(|d| Arc::new(self.paint_of(d))) else {
+                    return Vec::new();
+                };
+                let rect = self.lay(&id, &[self.dab(world)], stroke, &paint);
                 let before = Box::new(before);
-                self.drag = Some(Drag::Stroke { id, before, last: world, rect, stroke, begun });
+                self.drag = Some(Drag::Stroke { id, before, last: world, rect, stroke, begun, paint });
                 rect.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
             }
             Tool::Wand => {
@@ -612,16 +625,16 @@ impl EditorState {
                 }
                 Vec::new()
             }
-            Drag::Stroke { id, before, last, rect, stroke, begun } => {
+            Drag::Stroke { id, before, last, rect, stroke, begun, paint } => {
                 if world == last {
                     return Vec::new();
                 }
-                let r = self.lay(&id, &self.joins(last, world), stroke);
+                let r = self.lay(&id, &self.joins(last, world), stroke, &paint);
                 let rect = match r {
                     Some(r) => Some(Rect::union(rect, r)),
                     None => rect,
                 };
-                self.drag = Some(Drag::Stroke { id, before, last: world, rect, stroke, begun });
+                self.drag = Some(Drag::Stroke { id, before, last: world, rect, stroke, begun, paint });
                 r.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
             }
             Drag::Shape { id, tool, start, .. } => {
@@ -642,9 +655,18 @@ impl EditorState {
         let Some(doc) = self.doc.as_mut() else { return Vec::new() };
         match drag {
             Drag::Pixels { id, start, now } => {
+                // The rectangle within the layer's box and the level (plan
+                // 14e minors): what a copy takes is what shows.
                 let (x, y, w, h) = span(start, now);
-                let r = box_rect(((x, y), (w as u32, h as u32)), doc.level().size);
-                self.pixel_rect = (r.w > 0 && r.h > 0).then_some((id, r));
+                let level = doc.level().size;
+                let layer = doc.index_of(&id).and_then(|i| element_box(&doc.items()[i].element, level));
+                let r = box_rect(((x, y), (w as u32, h as u32)), level);
+                let r = layer.map_or(NOTHING, |b| intersect(r, box_rect(b, level)));
+                if r.w > 0 && r.h > 0 {
+                    self.pixel_rect = Some((id, r));
+                } else {
+                    self.status.message = Some(format!("no pixels of {id:?} there"));
+                }
                 Vec::new()
             }
             Drag::MoveMany { befores, .. } => {

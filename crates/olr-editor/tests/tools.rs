@@ -748,3 +748,114 @@ fn the_pixel_rectangle_follows_the_selection() {
     run(&mut s, A::Undo);
     assert!(s.pixel_rect().is_none(), "its layer is gone");
 }
+
+/// Minors: a stroke paints with the paint it began with, whatever is
+/// chosen meanwhile (resolved once per stroke).
+#[test]
+fn a_stroke_keeps_its_paint() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::AddLayer);
+    let Selection::Element(id) = s.selection().clone() else { panic!() };
+    run(&mut s, A::Tool(Tool::Brush));
+    let first = Rgba::rgb(10, 20, 30);
+    run(&mut s, A::Paint(PaintChoice::Colour(first)));
+    pointer(&mut s, PointerKind::Down, (20, 20), false);
+    run(&mut s, A::Paint(PaintChoice::Colour(Rgba::rgb(200, 0, 0))));
+    pointer(&mut s, PointerKind::Move, (60, 20), false);
+    pointer(&mut s, PointerKind::Up, (60, 20), false);
+    let sc = s.document().unwrap().level().art_scale;
+    assert_eq!(layer(&s, &id).get(60 * sc, 20 * sc), first);
+}
+
+/// An editor on the fixture whose theme's only hole is a 9 × 9 square
+/// covering its centre pixel alone.
+fn sparse_crater_editor(root: &std::path::Path) -> (tempfile::TempDir, EditorState) {
+    let (tmp, dir) = crate::common::copy_pack(root, &crate::common::fixture());
+    let mut catalog = crate::common::catalog(root);
+    let mut cover = vec![false; 81];
+    cover[40] = true;
+    catalog.themes[0].holes = vec![std::sync::Arc::new(olr_edit::level::StampMask { size: (9, 9), cover })];
+    let mut s = EditorState::new(olr_editor::EditorSettings::default(), catalog);
+    run(&mut s, A::Open(dir));
+    (tmp, s)
+}
+
+/// Minors: a crater stroke lays a dab at least every half crater.
+#[test]
+fn crater_joins_are_half_a_crater_apart() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = sparse_crater_editor(&root);
+    run(&mut s, A::AddLayer);
+    let Selection::Element(id) = s.selection().clone() else { panic!() };
+    run(&mut s, A::Tool(Tool::Brush));
+    run(&mut s, A::Brush(Brush { shape: BrushShape::Crater(0), size: 9 }));
+    drag(&mut s, (100, 100), (107, 100), false);
+    let art = layer(&s, &id);
+    let sc = s.document().unwrap().level().art_scale;
+    let xs: Vec<u32> = (90..120).filter(|x| art.get(x * sc, 100 * sc).a != 0).collect();
+    assert_eq!((xs.first(), xs.last()), (Some(&100), Some(&107)));
+    for w in xs.windows(2) {
+        assert!(w[1] - w[0] <= 4, "dabs {xs:?} further apart than half a crater");
+    }
+}
+
+/// Minors: the crater's scale is clamped to 16; a hole the theme lacks
+/// dabs round.
+#[test]
+fn crater_scale_is_clamped_and_a_missing_hole_dabs_round() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = sparse_crater_editor(&root);
+    run(&mut s, A::Tool(Tool::Brush));
+    run(&mut s, A::Brush(Brush { shape: BrushShape::Crater(0), size: olr_editor::tools::MAX_BRUSH }));
+    pointer(&mut s, PointerKind::Move, (50, 50), false);
+    let size = |s: &EditorState| {
+        s.overlays().iter().find_map(|o| match o {
+            Overlay::Brush { size, .. } => Some(*size),
+            _ => None,
+        })
+    };
+    assert_eq!(size(&s), Some(9 * 16));
+    run(&mut s, A::AddLayer);
+    let Selection::Element(id) = s.selection().clone() else { panic!() };
+    run(&mut s, A::Brush(Brush { shape: BrushShape::Crater(7), size: 5 }));
+    assert_eq!(size(&s), Some(5), "a missing hole's outline is the round brush's");
+    pointer(&mut s, PointerKind::Down, (50, 50), false);
+    pointer(&mut s, PointerKind::Up, (50, 50), false);
+    let art = layer(&s, &id);
+    let sc = s.document().unwrap().level().art_scale;
+    let painted = (40..60)
+        .flat_map(|y| (40..60).map(move |x| (x, y)))
+        .filter(|&(x, y)| art.get(x * sc, y * sc).a != 0)
+        .count();
+    assert_eq!(painted, 13, "a circle of radius 2");
+}
+
+/// Minors: the pixel rectangle is clipped to its layer's box; one off the
+/// layer is no rectangle, and says so.
+#[test]
+fn the_pixel_rectangle_is_the_layers() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Select(Selection::Element("wall".into())));
+    run(&mut s, A::Tool(Tool::SelectPixels));
+    drag(&mut s, (0, 0), (9, 9), false);
+    assert_eq!(s.pixel_rect().map(|r| r.1), Some(olr_edit::compose::Rect { x: 4, y: 0, w: 6, h: 10 }));
+    drag(&mut s, (0, 0), (2, 2), false);
+    assert!(s.pixel_rect().is_none());
+    assert!(s.status().message.as_deref().is_some_and(|m| m.contains("wall")), "{:?}", s.status().message);
+}
+
+/// Minors: a raster in a group stays while the others move.
+#[test]
+fn a_raster_in_a_group_stays_put() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let t = image_box(&s, "tiny").0;
+    run(&mut s, A::Select(Selection::Many(vec!["base".into(), "tiny".into()])));
+    run(&mut s, A::Nudge { dx: 1, dy: 0 });
+    assert_eq!(image_box(&s, "tiny").0, (t.0 + 1, t.1));
+    assert!(matches!(s.document().unwrap().items()[0].element.kind, ElementKind::Raster));
+    run(&mut s, A::Undo);
+    assert_eq!(image_box(&s, "tiny").0, t);
+}

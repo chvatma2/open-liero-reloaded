@@ -110,6 +110,12 @@ impl EditorData {
     pub fn canvas_rect(&self) -> Option<egui::Rect> {
         self.canvas_rect
     }
+
+    /// The palette's swatches held, by key (tests).
+    #[doc(hidden)]
+    pub fn swatch_keys(&self) -> Vec<String> {
+        self.swatches.keys().cloned().collect()
+    }
 }
 
 /// Draws the editor into `ui` and returns the actions of this frame. The

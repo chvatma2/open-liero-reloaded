@@ -518,9 +518,12 @@ impl Document {
                 }
             }
         }
-        let material = match (0..3).rev().max_by_key(|&k| counts[k]) {
+        // The most common; a tie goes to the higher priority, rock first
+        // (plan 14e minors); none covered: dirt.
+        let most = (0..3).max_by_key(|&k| (counts[k], k)).filter(|&k| counts[k] > 0);
+        let material = match most {
             Some(2) => ElementMaterial::Rock,
-            Some(0) if counts[0] > 0 => ElementMaterial::Background,
+            Some(0) => ElementMaterial::Background,
             _ => ElementMaterial::Dirt,
         };
         let placed = drawn::Placed { at, size: clip.size, art, cells: clip.cells.clone(), back: None };

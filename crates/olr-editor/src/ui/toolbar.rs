@@ -106,10 +106,7 @@ fn craters(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
         return;
     }
     let brush = state.brush();
-    let current = match brush.shape {
-        BrushShape::Crater(i) => format!("Crater {}", u32::from(i) + 1),
-        _ => "None".into(),
-    };
+    let current = crater_name(brush.shape, n);
     let label = ui.label(labels::CRATER);
     egui::ComboBox::from_id_salt("olr-editor-crater")
         .selected_text(current)
@@ -126,6 +123,41 @@ fn craters(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
         .labelled_by(label.id);
 }
 
+/// The crater picker's text for `shape` with the theme's `holes`: a hole
+/// the theme lacks reads "None", as it dabs round (plan 14e minors).
+fn crater_name(shape: BrushShape, holes: usize) -> String {
+    match shape {
+        BrushShape::Crater(i) if usize::from(i) < holes => format!("Crater {}", u32::from(i) + 1),
+        _ => "None".into(),
+    }
+}
+
+/// The longest side of a swatch's picture, in pixels.
+const SWATCH_SIDE: u32 = 64;
+
+/// `img` as a swatch's picture: at most `SWATCH_SIDE` a side (nearest
+/// pixel; a 512² texture would upload a megabyte for a 28-point square,
+/// plan 14e minors); an empty image is one clear pixel.
+fn swatch_image(img: &olr_data::image::RgbaImage) -> egui::ColorImage {
+    let (w, h) = (img.width(), img.height());
+    if w == 0 || h == 0 {
+        return egui::ColorImage::from_rgba_unmultiplied([1, 1], &[0; 4]);
+    }
+    let longest = w.max(h);
+    let side =
+        |v: u32| (u64::from(v) * u64::from(SWATCH_SIDE.min(longest)) / u64::from(longest)).max(1) as u32;
+    let (sw, sh) = (side(w), side(h));
+    let at = |v: u32, from: u32, to: u32| (u64::from(v) * u64::from(from) / u64::from(to)) as u32;
+    let mut raw = Vec::with_capacity(sw as usize * sh as usize * 4);
+    for y in 0..sh {
+        for x in 0..sw {
+            let p = img.get(at(x, w, sw), at(y, h, sh));
+            raw.extend([p.r, p.g, p.b, p.a]);
+        }
+    }
+    egui::ColorImage::from_rgba_unmultiplied([sw as usize, sh as usize], &raw)
+}
+
 /// The swatch of `key` showing `img`, made when first asked for.
 fn swatch(
     ui: &Ui,
@@ -136,15 +168,11 @@ fn swatch(
     data.swatches
         .entry(key.to_string())
         .or_insert_with(|| {
-            let colour = if img.width() == 0 || img.height() == 0 {
-                egui::ColorImage::from_rgba_unmultiplied([1, 1], &[0; 4])
-            } else {
-                egui::ColorImage::from_rgba_unmultiplied(
-                    [img.width() as usize, img.height() as usize],
-                    img.as_raw(),
-                )
-            };
-            ui.ctx().load_texture(format!("olr-editor-swatch-{key}"), colour, egui::TextureOptions::NEAREST)
+            ui.ctx().load_texture(
+                format!("olr-editor-swatch-{key}"),
+                swatch_image(img),
+                egui::TextureOptions::NEAREST,
+            )
         })
         .clone()
 }
@@ -268,29 +296,32 @@ fn paint_as_name(m: Option<ElementMaterial>, layer: Option<ElementMaterial>) -> 
     }
 }
 
-/// The chosen tool's options: "Paint as" for the painting tools, "Restore"
-/// for the eraser, "Tolerance" for Remove colour and Fill.
+/// "Paint as": the material new paint lays.
+fn paint_as(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let current = state.paint_material();
+    let layer = selected_material(state);
+    let name = paint_as_name(current, layer);
+    let label = ui.label(labels::PAINT_AS);
+    egui::ComboBox::from_id_salt("olr-editor-paint-as")
+        .selected_text(name)
+        .width(PAINT_AS_WIDTH)
+        .show_ui(ui, |ui| {
+            for (m, _) in PAINT_AS {
+                let n = paint_as_name(m, layer);
+                if ui.selectable_label(m == current, n).clicked() && m != current {
+                    out.push(EditorAction::PaintMaterial(m));
+                }
+            }
+        })
+        .response
+        .labelled_by(label.id);
+}
+
+/// The chosen tool's options: "Paint as" for the painting tools and Fill,
+/// "Restore" for the eraser, "Tolerance" for Remove colour and Fill.
 fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     match state.tool() {
-        Tool::Brush | Tool::Rect | Tool::Ellipse | Tool::Line => {
-            let current = state.paint_material();
-            let layer = selected_material(state);
-            let name = paint_as_name(current, layer);
-            let label = ui.label(labels::PAINT_AS);
-            egui::ComboBox::from_id_salt("olr-editor-paint-as")
-                .selected_text(name)
-                .width(PAINT_AS_WIDTH)
-                .show_ui(ui, |ui| {
-                    for (m, _) in PAINT_AS {
-                        let n = paint_as_name(m, layer);
-                        if ui.selectable_label(m == current, n).clicked() && m != current {
-                            out.push(EditorAction::PaintMaterial(m));
-                        }
-                    }
-                })
-                .response
-                .labelled_by(label.id);
-        }
+        Tool::Brush | Tool::Rect | Tool::Ellipse | Tool::Line => paint_as(ui, state, out),
         Tool::Eraser => {
             let mut restore = state.restore();
             if ui
@@ -308,7 +339,9 @@ fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
                 out.push(EditorAction::Tolerance(t as u8));
             }
         }
+        // Fill lays "Paint as" too (plan 14e minors).
         Tool::Fill => {
+            paint_as(ui, state, out);
             if let Some(t) =
                 number(ui, data, "fill-tolerance", labels::TOLERANCE, state.fill_tolerance().into(), 0..=100)
             {
@@ -390,5 +423,23 @@ mod tests {
         assert_eq!(paint_as_name(None, Some(ElementMaterial::Background)), "Layer's (Background)");
         assert_eq!(paint_as_name(None, None), "Layer's");
         assert_eq!(paint_as_name(Some(ElementMaterial::Rock), Some(ElementMaterial::Dirt)), "Rock");
+    }
+
+    /// Plan 14e minors: a crater the theme lacks reads "None", as it dabs round.
+    #[test]
+    fn the_crater_picker_names_only_offered_holes() {
+        assert_eq!(crater_name(BrushShape::Crater(1), 3), "Crater 2");
+        assert_eq!(crater_name(BrushShape::Crater(4), 3), "None");
+        assert_eq!(crater_name(BrushShape::Round, 3), "None");
+    }
+
+    /// Plan 14e minors: a swatch is at most 64 pixels a side.
+    #[test]
+    fn swatches_are_small() {
+        let big = olr_data::image::RgbaImage::new(512, 256);
+        assert_eq!(swatch_image(&big).size, [64, 32]);
+        let small = olr_data::image::RgbaImage::new(8, 8);
+        assert_eq!(swatch_image(&small).size, [8, 8]);
+        assert_eq!(swatch_image(&olr_data::image::RgbaImage::new(0, 0)).size, [1, 1]);
     }
 }

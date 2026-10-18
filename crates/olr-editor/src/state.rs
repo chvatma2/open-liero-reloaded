@@ -946,8 +946,13 @@ impl EditorState {
     /// clipboard (plan 14e R6, R7); whether there was anything.
     fn copy(&mut self) -> bool {
         let Some(doc) = &self.doc else { return false };
+        // Nothing to copy is said (plan 14e minors).
+        const NOTHING_TO_COPY: &str = "nothing to copy: select elements, or pixels with Select pixels (M)";
         if let Some((id, rect)) = &self.pixel_rect {
-            let Some((clip, at)) = doc.copy_pixels(id, *rect) else { return false };
+            let Some((clip, at)) = doc.copy_pixels(id, *rect) else {
+                self.status.message = Some(NOTHING_TO_COPY.into());
+                return false;
+            };
             let art_scale = doc.level().art_scale;
             self.status.message = Some(format!("copied {} × {} pixels", clip.size.0, clip.size.1));
             self.clipboard = Some(Clipboard::Pixels { art_scale, at, clip, offset: PASTE_STEP });
@@ -955,6 +960,7 @@ impl EditorState {
         }
         let items = doc.copy(&self.selection.ids());
         if items.is_empty() {
+            self.status.message = Some(NOTHING_TO_COPY.into());
             return false;
         }
         let n = items.len();
