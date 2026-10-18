@@ -100,6 +100,20 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   commits before the frame's other actions. Escape or the backdrop cancels
   a dialog; each wheel event zooms one step; the resize fields follow the
   level's size.
+- **Plan 14d** (STATUS.md, "Level editor decisions (plan 14d)"): edits
+  `Pixels` (a `Patch` of art, cells and back art over a rectangle of the
+  layer's box), `Layer` (a whole item swapped, checked to fit its element)
+  and `Mask`. `begin_stroke(id, Stroke)` makes the conversion a stroke
+  needs (plain to mixed, a picture's first mask) and the pointer records
+  it with the stroke as one step, or undoes it when the stroke changed
+  nothing; `stroke_before`/`stroke_edit` (`StrokeBefore`); `erase` masks a
+  picture (`restore`), `remove_colour`, `merge_down`, `split` (any kind);
+  the live check counts masks (`check_extra`). Tools: the Wand (W, Remove
+  colour, `tolerance`), "Paint as" (`paint_material`), Restore; Select
+  moves a drawn layer only once selected (R9); Ctrl+E merges down. The
+  toolbar has three rows (tools and the tool's options in a reserved
+  slot, brush and paint, session). `mask_dab_speed` (olr-edit): about 3 ms
+  a dab in release; `layer_move_speed`: 7-9 ms a move.
 - **Tests** (`tests/`, one binary): `document.rs`, `history.rs` (the
   undo proptest, the cap), `state.rs` (a synchronous test host in
   `common.rs`), `tools.rs` (the ignored `brush_dab_speed`: about 2 ms in

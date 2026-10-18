@@ -2,7 +2,9 @@
 
 - **Status:** agreed with the user on 2026-10-18, after the playtest of plan
   14c's editor. Planned as plan 14d, before the look system (milestone 0.2
-  sub-project 3).
+  sub-project 3). 14d done (2026-10-18): movable and mixed layers,
+  masks, merge, split; next 14e (textures, fill, stamps), then 14f
+  (clipboard, multi-select).
 - **Builds on:** `docs/superpowers/specs/2026-10-17-editor-foundation-and-level-editor-design.md`
   (the element model, the bake, the editor), plans 14a-14c, and the
   decisions in `docs/porting/STATUS.md` ("Level composition decisions",

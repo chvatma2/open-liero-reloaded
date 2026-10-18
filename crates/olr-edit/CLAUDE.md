@@ -107,6 +107,26 @@ templates and the level operations.
     the edit's property or file only when the composition checked before
     it). A locked element refuses `set` (but `Locked`), `remove`, `draw`
     and `erase`. Ids are at most 64 bytes. None bakes: callers do.
+- **Plan 14d** (decisions in `docs/porting/STATUS.md`, "Level editor
+  decisions (plan 14d)"):
+  - **`mask`**: `Mask` (one byte per original pixel, 0 erased; grey PNG),
+    `mask_shape` (an original pixel by the world pixel holding its
+    centre), `original_pixel`, `mask_colour` (4-neighbour flood of alike
+    colours, `level::similar`'s percent rule; an explicit stack),
+    `diff`/`crop`/`patch` for the history. `ImageCache::grid` takes the
+    mask (keyed by its fingerprint) and applies it before `process_grid`.
+  - **The bake** places a drawn layer at its box and reads its cells and
+    back art (R4); `Decoded::Drawn { art, cells, back }`, `Decoded::Image
+    { grid, mask }`; `resize_decoded` moves a boxed layer and pins a
+    level-sized one off the origin.
+  - **`drawn`**: `draw`/`erase` on a placed layer (the paint's phase from
+    the level's art origin; erasing digs dirt or rock to its back art, R5),
+    `mix`, `priority`, `Placed`, `placed`, `merge` (decision 4, C1, C2,
+    decision 7; `None` beyond `MAX_SIDE` or `LEVEL_ART`), `split`,
+    `into_layer`, `merge_down`, `split_element` (callers check locks).
+  - **`element`**: `draw(…, material)`, `erase`, `merge_down`, `split`,
+    `mask(MaskOp)`; `set At` on a drawn layer pins its box (or frees it at
+    the origin); `set Material` on a mixed layer makes it plain.
 - **Tests** (`tests/`, one binary): `pack.rs` (every bundled pack loads and
   writes back byte for byte; foreign files kept; invalid results refused;
   saves through `x/..` and a symbolic link; a name a save would lose),

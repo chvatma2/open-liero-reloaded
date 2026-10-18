@@ -107,8 +107,12 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   is `editor/composition.ron` (`COMPOSITION_FILE`; `EDITOR_DIR` is
   `editor`), its `Element`s bottom to top (`id` a `valid_id` slug, `name`,
   `visible`, `locked`, `ElementKind::Image { material, source, at, size,
-  pixel_size, colours, dither, alpha_threshold } | Drawn { material } |
-  Raster`). `CompositionSource` adds the files' bytes by pack path
+  pixel_size, colours, dither, alpha_threshold, mask } | Drawn { material,
+  at, size, mixed, back } | Raster`; plan 14d: a drawn layer's box, `at`
+  and `size` (`None`: the level's), `drawn_box`; a mixed layer's
+  `<id>.material.png` and a backed one's `<id>.back.png`, `drawn_files`; an
+  image's mask `editor/masks/<id>.png`, `mask_file`; all optional, so no
+  format bump; `ElementKind::drawn(m)` a plain level-sized layer). `CompositionSource` adds the files' bytes by pack path
   (`image_file`, `layer_file`, `raster_files`, `element_files`,
   `composition_paths`). `read_composition` reads `composition.ron` alone
   (`olr-cli level element list`, `validate`'s read paths);

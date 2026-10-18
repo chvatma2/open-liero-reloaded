@@ -44,8 +44,11 @@ The headless command-line tool. Its commands:
   cross outlined in black on each spawn, bounded by `LEVEL_ART`, and
   refuses an `--out` inside the pack. Tests: `tests/level.rs`, and `tests/cli.rs`'s `pack_check_*`,
   `pack_fmt_*` and `pack_new_*`.
-- `olr-cli level element list|add-image|add-layer|set|remove|raise|lower|draw|erase
-  <pack> …` and `level bake <pack>` (`element_cmd.rs`, plan 14a): the
+- `olr-cli level element list|add-image|add-layer|set|remove|raise|lower|draw|erase|merge-down|split|mask
+  <pack> …` and `level bake <pack>` (`element_cmd.rs`, plan 14a; plan
+  14d: `draw --material`, `merge-down <id>`, `split <id>` printing `added
+  element <id>` per part, `mask <id> (--rect|--circle|--colour-at X,Y
+  [--tolerance N]) [--restore]`, a restore taking a shape only): the
   `olr_edit::element` operations on a level's composition. Each loads the
   pack, applies, bakes (`compose::bake`, the back tile of the level's
   theme in `--content`, `content/packs` by default) and saves; the first

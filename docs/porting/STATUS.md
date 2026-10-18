@@ -3338,6 +3338,81 @@ and its batch reviews. Tools, not OLX behaviour.
   changes ask (Save, Don't save, Cancel), and the window closes once the
   editor does.
 
+## Level editor decisions (plan 14d)
+
+Decided in `docs/superpowers/plans/2026-10-18-plan-14d-layers-masks-merge.md`
+(spec `docs/superpowers/specs/2026-10-18-level-editor-polish-design.md`)
+and its batch reviews. Tools, not OLX behaviour.
+
+- **R1 - no format bump**: every new composition field has a default and
+  is left out when default; compositions written before read unchanged,
+  `content/packs` stays byte-identical, `PACK_FORMAT_VERSION` stays 5.
+- **R2 - a drawn layer's box**: `Drawn { at, size }` (world pixels).
+  `size: None` is the level's size at the origin and follows a level
+  resize (re-laid); `Some` is a box of its own, which a resize moves by
+  the offset. Moving a level-sized layer pins its box to the level's size;
+  back at the origin with the level's size it is `None` again. A resize
+  pins a level-sized layer off the origin too, so none of its pixels are
+  lost (batch A review).
+- **R3 - mixed and backed layers**: `Drawn { mixed, back }` with
+  `editor/layers/<id>.material.png` (a material per world pixel of the
+  box, `material.png`'s palette; spec C2) and `<id>.back.png` (what shows
+  where its dirt or rock is carved). In memory `Decoded::Drawn { art,
+  cells, back }`; the flags and the data change together, a plain layer
+  becoming mixed only through a whole-item swap (`Edit::Layer`).
+- **R4 - the bake of a drawn layer**: it covers an art pixel inside its
+  box where its art is not transparent; a covered block's material is its
+  cell (or the layer's material); its backdrop is its art where covered
+  with background, else its back art where opaque.
+- **R5 - erasing digs**: erasing a mixed layer's dirt or rock whose block
+  has back art makes it background showing that art; every other erased
+  block is cleared, back art too (batch B review). Erasing a merged map's
+  dirt shows the level's own background, as erasing the Dirt layer did.
+- **R6 - "Paint as"**: the brush's material (the layer's, Rock, Dirt,
+  Background) is set on each world pixel whose block a stroke painted; a
+  stroke of another material into a plain layer converts it to mixed
+  first, in the same history step. Painting never changes back art.
+- **R7 - masks**: `Image { mask }`, `editor/masks/<id>.png` (grey, 0
+  erased), the oriented original's size, applied before `process_grid`;
+  the grid cache keys the mask's fingerprint. A brush masks an original
+  pixel when the world pixel holding its centre is covered. The first mask
+  stroke gives the picture a full mask in the stroke's step; a stroke
+  that changes nothing leaves no step, nor its conversion (batch C
+  review). A dab reprocesses the grid: 3 ms in release for a 1024²
+  original in a 256² box, so no cheaper preview.
+- **R8 - Remove colour** (the Wand, W): a 4-neighbour flood of the
+  original from the clicked pixel over colours alike within the tolerance
+  (percent; default 10; the largest channel difference × 100 at most
+  tolerance × 255), whatever their mask state; one step.
+- **R9 - selecting and moving drawn layers**: Select hits, top down, an
+  image's box or a visible drawn layer's covered pixel. A drawn layer moves
+  only once it is selected (a first press selects), so a click on the map
+  never drags a whole layer; arrows nudge it; no resize handles; the
+  selected layer's box is drawn. A move is live (it rebakes the level:
+  7-9 ms a move in release on Castle Strike and Liero Factory).
+- **R10 - merge down**: into the drawn layer directly below, both visible
+  and unlocked; per pixel rock, then dirt, then background wins, the upper
+  layer on a tie (C1); the art the winner's where opaque, else the
+  other's; where dirt or rock won over background, that background becomes
+  back art (decision 7). The result keeps the lower layer's id, name,
+  place and material, covers both boxes, and is refused beyond
+  `MAX_SIDE` or `LEVEL_ART`. One step; Ctrl+E.
+- **R11 - split** any visible unlocked element (image, drawn, raster)
+  into Background, Dirt and Rock layers with its box, bottom to top, an
+  empty one left out; the Background layer takes the back art under dirt
+  and rock. A plain level still opens as all three layers.
+- **R12 - masks in the history**: `Arc<Mask>`, copy-on-write;
+  `Edit::Mask` holds the changed rectangle; a swap's masks count in full.
+  The editor's live check counts masks in the pixel budget (batch A
+  review).
+- **R13 - the toolbar has three rows**: the tools and the chosen tool's
+  options (Paint as, Restore, Tolerance) in a reserved slot, so choosing a
+  tool moves nothing; the brush and paint; the session. One drawing row
+  did not fit 1280 points under the game's theme.
+- **C4 - the material property**: on a plain layer it reassigns every
+  pixel; on a mixed layer it reads "Mixed", and a choice makes the layer
+  plain of it (one swap).
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
