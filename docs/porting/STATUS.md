@@ -3440,7 +3440,8 @@ and its batch reviews. Tools, not OLX behaviour; no format change.
   a fixed integer hash: value noise on lattices that wrap every 64 pixels,
   quantised to 8 shades of the material's palette; bricks, planks and
   plates are patterns with a fixed shade beside each joint, so the tile's
-  own seam steps like any joint. No files, no pack kind, nothing to
+  own seam steps like any joint. Every generator repeats exactly every 64
+  pixels (`builtin_texel`). No files, no pack kind, nothing to
   licence (the spec's shipped texture pack is this).
 - **R2 - the user's library**: the data directory's `textures/`, one
   `<name>.png` per texture (`olr_ui::Store::textures_dir`). Import reads a
@@ -3448,8 +3449,10 @@ and its batch reviews. Tools, not OLX behaviour; no format change.
   refuses a side above `MAX_TEXTURE_SIDE` (512) from its header and a
   library of `MAX_USER_TEXTURES` (256, counted by name), names it after
   the file's stem (letters, digits, `-`, `_` and spaces; at most 64
-  characters; made unique case aside, `-2`, `-3`, …) and writes it through
-  a hidden `.part` file. The host lists it when the editor opens (an
+  characters, cut cleanly; made unique case aside, `-2`, `-3`, …) and
+  writes it through a hidden `.part` file. A change re-lists the library
+  by name and decodes only textures it did not hold; opening the editor
+  decodes the library once. Swatches are at most 64 pixels a side. The host lists it when the editor opens (an
   unreadable file is a warning) and answers `AddTexture` and
   `RemoveTexture` with the library re-listed (`TexturesChanged`), and
   `Failed(why)` when the change failed.
@@ -3462,14 +3465,18 @@ and its batch reviews. Tools, not OLX behaviour; no format change.
   `i` as `Shape::Stamp` (`StampMask`: covered where neither black nor
   transparent, OLX's carve and paint pixels), scale `brush size ÷ the
   hole's longest side`, clamped to 1-16; a stroke joins its dabs with more
-  dabs along the segment, not a thick line. A hole the theme lacks dabs
-  round. The picker lists the theme's holes (none: hidden).
+  dabs along the segment, at most half a crater apart, not a thick line. A
+  hole the theme lacks dabs round and reads "None" in the picker, which
+  lists the theme's holes (none: hidden). A stroke paints with the paint
+  it began with.
 - **R5 - fill** (G): the 4-connected world pixels of the selected drawn
   layer from the clicked one, within its box and the level, sharing the
   seed's covered state and, covered, a centre colour alike within the
   tolerance (Fill's own, default 0); whole blocks painted with the paint
-  and "Paint as" (its conversion to mixed first, undone when nothing
-  changed); one step; refused on a picture. 0.21 s in release for an open
+  and "Paint as" (shown beside Fill's tolerance; its conversion to mixed
+  first, undone when nothing changed); one step; refused on a picture. A
+  draw or fill of another material that paints nothing leaves a plain
+  layer plain. 0.21 s in release for an open
   4096 × 2048 layer. `olr-cli level element fill`.
 - **R6 - the element clipboard**: the editor's own, kept across Open, New
   and Close (`Clipboard::Elements`, `Snapshot`s and their art scale).
@@ -3490,7 +3497,11 @@ and its batch reviews. Tools, not OLX behaviour; no format change.
   (C3). The spec's floating paste is this simpler first version; the step
   after it is Merge down. A clip holds art and cells, not back art: cut
   dirt pasted elsewhere does not dig to its old background (a deviation,
-  for later). The rectangle goes with the selection or its layer.
+  for later). The rectangle lies within its layer's box and the level (one
+  off the layer is none, and says so), and goes with the selection or its
+  layer. Copy or Cut with nothing to copy says so; a pasted layer's
+  material is its covered pixels' most common, a tie going to rock, then
+  dirt.
 - **R8 - multi-select**: `Selection::Many`, two elements or more in stack
   order. Ctrl+click toggles (list and canvas), Shift+click in the list
   selects the range from the single selection; a press on a member drags

@@ -130,7 +130,8 @@ templates and the level operations.
 - **Plan 14e** (decisions in `docs/porting/STATUS.md`, "Level editor
   decisions (plan 14e)"):
   - **`textures`**: `builtin()` (R1: Dirt, Rock, Grass, Brick, Metal,
-    Wood; 64 × 64, tileable, integer hash), `MAX_TEXTURE_SIDE` (512),
+    Wood; 64 × 64, tileable, integer hash; `builtin_texel` the generators,
+    periodic every 64 pixels), `MAX_TEXTURE_SIDE` (512),
     `MAX_USER_TEXTURES` (256).
   - **`level`**: `Shape` is `Clone`, not `Copy`; `Shape::Stamp { x, y,
     scale, mask: Arc<StampMask> }` (a theme hole centred, scale clamped to
@@ -141,7 +142,9 @@ templates and the level operations.
     an explicit stack and a visited `Vec<bool>`; `None` for a seed outside
     or no change; `fill_speed` ignored test: about 0.21 s in release for
     an open 4096 × 2048 layer), `crop` (to the covered art or back-art
-    box).
+    box), `unmix_plain` (a stroke that painted nothing leaves a plain
+    layer plain). `new_source_name` never runs out (one more suffix than
+    there are names).
   - **`element`**: `fill` (a seed outside the layer refused, the pack
     unchanged: `paint_layer`'s closure is fallible), `duplicate` (directly
     above; an image shares its original, its own files copied under the
