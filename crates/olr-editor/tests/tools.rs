@@ -486,3 +486,20 @@ fn layer_move_speed() {
         println!("{id}: a move of the rock layer: {:?}", start.elapsed() / 10);
     }
 }
+
+/// Plan 14d minors: the Wand on what it already removed changes nothing,
+/// and says what it needs when nothing is selected.
+#[test]
+fn the_wand_changes_nothing_twice() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Tool(Tool::Wand));
+    drag(&mut s, (340, 230), (340, 230), false);
+    assert!(s.status().message.as_deref().is_some_and(|m| m.contains("picture")), "{:?}", s.status().message);
+    run(&mut s, A::Select(Selection::Element("gradient".into())));
+    drag(&mut s, (340, 230), (340, 230), false);
+    run(&mut s, A::Save);
+    assert!(!s.dirty());
+    drag(&mut s, (340, 230), (340, 230), false);
+    assert!(!s.dirty(), "a second click on the removed region is no change");
+}

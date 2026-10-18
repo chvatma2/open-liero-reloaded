@@ -89,19 +89,42 @@ fn drawing(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
     }
 }
 
+/// The selected drawn layer's own material, when one is selected.
+fn selected_material(state: &EditorState) -> Option<ElementMaterial> {
+    let crate::state::Selection::Element(id) = state.selection() else { return None };
+    let doc = state.document()?;
+    match &doc.items()[doc.index_of(id)?].element.kind {
+        olr_format::levels::ElementKind::Drawn { material, .. } => Some(*material),
+        _ => None,
+    }
+}
+
+/// "Paint as"'s name for `m`: "Layer's" says the selected layer's material
+/// (a mixed layer's is hidden behind "Mixed" in its properties).
+fn paint_as_name(m: Option<ElementMaterial>, layer: Option<ElementMaterial>) -> String {
+    let name = |m: ElementMaterial| PAINT_AS.iter().find(|(p, _)| *p == Some(m)).map_or("", |(_, n)| n);
+    match (m, layer) {
+        (Some(m), _) => name(m).into(),
+        (None, Some(l)) => format!("Layer's ({})", name(l)),
+        (None, None) => "Layer's".into(),
+    }
+}
+
 /// The chosen tool's options: "Paint as" for the painting tools, "Restore"
 /// for the eraser, "Tolerance" for Remove colour.
 fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     match state.tool() {
         Tool::Brush | Tool::Rect | Tool::Ellipse | Tool::Line => {
             let current = state.paint_material();
-            let name = PAINT_AS.iter().find(|(m, _)| *m == current).map_or("", |(_, n)| n);
+            let layer = selected_material(state);
+            let name = paint_as_name(current, layer);
             let label = ui.label(labels::PAINT_AS);
             egui::ComboBox::from_id_salt("olr-editor-paint-as")
                 .selected_text(name)
                 .width(PAINT_AS_WIDTH)
                 .show_ui(ui, |ui| {
-                    for (m, n) in PAINT_AS {
+                    for (m, _) in PAINT_AS {
+                        let n = paint_as_name(m, layer);
                         if ui.selectable_label(m == current, n).clicked() && m != current {
                             out.push(EditorAction::PaintMaterial(m));
                         }
@@ -189,5 +212,18 @@ fn session(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
     let mut grid = state.grid();
     if ui.checkbox(&mut grid, "Grid").changed() {
         out.push(EditorAction::Grid(grid));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Plan 14d minors: "Layer's" names the layer's own material.
+    #[test]
+    fn paint_as_names_the_layers_material() {
+        assert_eq!(paint_as_name(None, Some(ElementMaterial::Background)), "Layer's (Background)");
+        assert_eq!(paint_as_name(None, None), "Layer's");
+        assert_eq!(paint_as_name(Some(ElementMaterial::Rock), Some(ElementMaterial::Dirt)), "Rock");
     }
 }

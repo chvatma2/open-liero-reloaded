@@ -316,6 +316,10 @@ impl EditorState {
                 rect.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
             }
             Tool::Wand => {
+                if !matches!(self.selection, Selection::Element(_)) {
+                    self.status.message = Some("select a picture to remove a colour from".into());
+                    return Vec::new();
+                }
                 let Some(id) = self.paint_target(true) else { return Vec::new() };
                 let Some(doc) = self.doc.as_mut() else { return Vec::new() };
                 let Some(e) = doc.index_of(&id).map(|i| doc.items()[i].element.clone()) else {
@@ -326,6 +330,8 @@ impl EditorState {
                     return Vec::new();
                 }
                 match doc.remove_colour(&id, world, self.tolerance) {
+                    // Nothing removed: no step, no unsaved mark.
+                    Ok(edits) if edits.is_empty() => Vec::new(),
                     Ok(edits) => {
                         let rect = doc.element_rect(&e);
                         self.history.push(edits);

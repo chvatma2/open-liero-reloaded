@@ -182,9 +182,11 @@ impl Document {
         }
         let total = check_elements(&Composition { elements: elements.to_vec() }, size, art_scale)
             .map_err(|e| DocError::Bad(e.to_string()))?;
+        // The masks of the elements that stay (a merge or split may take one).
         let masks: u64 = self
             .items
             .iter()
+            .filter(|i| elements.iter().any(|e| e.id == i.element.id))
             .map(|i| match &i.decoded {
                 Decoded::Image { mask: Some(m), .. } => m.keep.len() as u64,
                 _ => 0,
@@ -528,7 +530,8 @@ impl Document {
             (ElementKind::Drawn { material, .. }, Decoded::Drawn { cells: None, back, .. }, stroke) => {
                 let needed = match stroke {
                     Stroke::Paint(m) => m != Material::from(*material),
-                    Stroke::Erase => back.is_some(),
+                    // Only dirt and rock dig: a background layer erases plain.
+                    Stroke::Erase => back.is_some() && *material != ElementMaterial::Background,
                     Stroke::Restore => false,
                 };
                 if !needed {
@@ -634,7 +637,15 @@ impl Document {
         if rect.w > 0 && rect.h > 0 {
             self.rebake(rect);
         }
-        edits.extend(before.and_then(|b| self.stroke_edit(id, NOTHING, &b)));
+        match before.and_then(|b| self.stroke_edit(id, NOTHING, &b)) {
+            Some(edit) => edits.push(edit),
+            // Nothing masked: no step, nor the mask it began with.
+            None => {
+                for e in edits.drain(..).rev() {
+                    self.apply(&e, false);
+                }
+            }
+        }
         Ok(edits)
     }
 

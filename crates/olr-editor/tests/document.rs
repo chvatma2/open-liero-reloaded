@@ -348,3 +348,17 @@ fn a_locked_image_is_not_masked() {
     assert!(matches!(doc.erase("tiny", &shape, false), Err(DocError::Locked(_))));
     assert!(matches!(doc.remove_colour("tiny", (70, 52), 10), Err(DocError::Locked(_))));
 }
+
+/// Plan 14d minors: erasing a plain Background layer with back art needs
+/// no conversion: its background is never dug.
+#[test]
+fn erasing_a_plain_background_layer_converts_nothing() {
+    use olr_editor::ops::Stroke;
+    use olr_format::levels::{ElementKind, ElementMaterial};
+    let Some((_tmp, mut doc)) = opened_dirt_level() else { return };
+    doc.merge_down("dirt").unwrap();
+    doc.set("background", Property::Material(ElementMaterial::Background)).unwrap();
+    let e = &doc.items()[doc.index_of("background").unwrap()].element;
+    assert!(matches!(e.kind, ElementKind::Drawn { mixed: false, back: true, .. }), "{:?}", e.kind);
+    assert!(doc.begin_stroke("background", Stroke::Erase).unwrap().is_none());
+}
