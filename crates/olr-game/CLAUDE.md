@@ -768,7 +768,11 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `WEAPON_NAME_TICKS` (OLX's 0.75 s) after a change made with it
   (`Session::weapon_name`, `worm_label`; the change noted by
   `Session::tick` and `Session::frame` from the player's keys,
-  `tests/weapon_name.rs`), summed damage popups
+  `tests/weapon_name.rs`); under the player's own worm's name, while
+  its current weapon reloads, a reload bar filled to the slot's charge
+  (`reload_fraction`, `reload_bar`: `RELOAD_WIDTH` 14 world pixels, OLX's
+  reloading red brightened, outlined; the user's request 2026-10-18: one's
+  own only, the others' reload stays hidden as in OLX), summed damage popups
   (`Damage.dealt`), the HUD (OLX's kills; the board's deaths and
   suicides, every one, not the worm's score-gated counters), and F2's counters: FPS, frame and *busy* ms
   (the frame without the VSync wait), tick ms, entities, projectiles,

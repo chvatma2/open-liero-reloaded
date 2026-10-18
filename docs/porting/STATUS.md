@@ -266,6 +266,11 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   WSL's GL 4.8-5.0), the GPU's own time +5 %; every native path still
   holds 144 Hz (6.9 ms). On the software renderer (llvmpipe) the stress
   run's 1440p frame p50 rose 10-29 % (6.0-6.3 ms to 6.5-7.8 ms).
+- **A reload bar over one's own worm (2026-10-18).** OLX shows a
+  weapon's reload only in the HUD's slots. The user's request: under the
+  player's own worm's name, while its current weapon reloads, a bar
+  filled to its charge (`olr-game`'s `overlay::reload_bar`); other worms'
+  reload stays hidden, as in OLX. Overlay only: no simulation change.
 - **A gib stamps only rock and dirt (2026-10-18).** A slow gib that
   lands stamps its 4 × 4 frame around the landing pixel
   (`CMap::putSurfaceTo`, `src/client/Entity.cpp:373-389`), and OLX paints

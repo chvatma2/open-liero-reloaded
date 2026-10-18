@@ -140,6 +140,38 @@ pub fn worm_label<'a>(i: usize, name: &'a str, weapon: Option<&'a (usize, String
     }
 }
 
+/// The reload bar's width in world pixels (it scales with the view, as
+/// the worms do).
+pub const RELOAD_WIDTH: f32 = 14.0;
+
+/// The reload bar's height in world pixels, at least 3 points.
+const RELOAD_HEIGHT: f32 = 1.5;
+
+/// The reload bar's fill: OLX's reloading red (`(128, 64, 64)`,
+/// `CClient_Draw.cpp:1221-1257`) brightened to read over the map.
+const RELOAD_COLOUR: Color32 = Color32::from_rgb(230, 90, 80);
+
+/// The fraction reloaded of the current weapon, `slots[current]`, while it
+/// reloads (its charge); `None` when it is ready or there is no such slot.
+pub fn reload_fraction(slots: &[olr_sim::Slot], current: i32) -> Option<f32> {
+    let slot = slots.get(usize::try_from(current).ok()?)?;
+    slot.reloading.then_some(slot.charge)
+}
+
+/// The reload bar under a name label `name` (points), at `k` points per
+/// world pixel: its background, `RELOAD_WIDTH` world pixels wide and
+/// centred under the label, and its fill to `fraction` (clamped; not a
+/// number is empty).
+pub fn reload_bar(name: egui::Rect, k: f32, fraction: f32) -> (egui::Rect, egui::Rect) {
+    let (width, height) = (RELOAD_WIDTH * k, (RELOAD_HEIGHT * k).max(3.0));
+    let back = egui::Rect::from_min_size(
+        Pos2::new(name.center().x - width / 2.0, name.bottom() + 1.0),
+        egui::vec2(width, height),
+    );
+    let f = if fraction.is_nan() { 0.0 } else { fraction.clamp(0.0, 1.0) };
+    (back, egui::Rect::from_min_size(back.min, egui::vec2(width * f, height)))
+}
+
 fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, colour: Color32) {
     p.text(pos + egui::vec2(1.0, 1.0), anchor, text, font.clone(), Color32::from_black_alpha(200));
     p.text(pos, anchor, text, font, colour);
@@ -160,6 +192,13 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
         let ids: Vec<i32> = s.with_world(|w| {
             worms.iter().map(|&(i, _)| w.worms().get(i).map_or(i as i32, |w| w.id)).collect()
         });
+        // The player's own worm's reload, under its name (the user's
+        // request: only one's own; the others' stays hidden, as in OLX).
+        let local = s.local().map(usize::from);
+        let reload = s.with_world(|w| {
+            let worm = local.and_then(|i| w.worms().get(i))?;
+            reload_fraction(&worm.slots, worm.current_weapon)
+        });
         for (&(i, at), &id) in worms.iter().zip(&ids) {
             let name = s.names.of(id);
             let (text, colour) = worm_label(i, &name, weapon.as_ref());
@@ -171,6 +210,13 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
                 Color32::from_black_alpha(200),
             );
             p.galley(r.min, galley, colour);
+            if let (Some(f), true) = (reload, Some(i) == local) {
+                let (back, fill) = reload_bar(r, k, f);
+                p.rect_filled(back, 1.0, Color32::from_black_alpha(170));
+                p.rect_filled(fill, 1.0, RELOAD_COLOUR);
+                let edge = egui::Stroke::new(1.0, Color32::from_white_alpha(150));
+                p.rect_stroke(back.expand(0.5), 1.0, edge, egui::StrokeKind::Outside);
+            }
         }
     }
     for pop in &s.popups {
@@ -355,6 +401,37 @@ mod tests {
         assert_eq!(top_line(Some(moving), false), Some((moving, MIGRATING_COLOUR)));
         assert_eq!(top_line(None, true), Some((CONNECTION_PROBLEM, LAGGING_COLOUR)));
         assert_eq!(top_line(None, false), None);
+    }
+
+    /// The reload bar sits centred under the name, `RELOAD_WIDTH` world
+    /// pixels wide, filled to the fraction (a bad one clamped).
+    #[test]
+    fn the_reload_bar_sits_under_the_name() {
+        let name = egui::Rect::from_min_size(Pos2::new(260.0, 186.0), egui::vec2(80.0, 14.0));
+        let (back, fill) = reload_bar(name, 2.0, 0.25);
+        assert_eq!(back.center().x, name.center().x);
+        assert!(back.top() >= name.bottom() && back.height() > 0.0);
+        assert_eq!(back.width(), RELOAD_WIDTH * 2.0);
+        assert_eq!((fill.left(), fill.top(), fill.bottom()), (back.left(), back.top(), back.bottom()));
+        assert_eq!(fill.width(), back.width() * 0.25);
+        for f in [f32::NAN, -1.0, 2.0, f32::INFINITY] {
+            let (back, fill) = reload_bar(name, 2.0, f);
+            assert!((0.0..=back.width()).contains(&fill.width()), "{f}: {fill:?}");
+        }
+    }
+
+    /// Only a current weapon that reloads shows a bar, filled to its
+    /// charge; a bad index shows none.
+    #[test]
+    fn only_a_reloading_weapon_shows_a_bar() {
+        use olr_sim::Slot;
+        let ready = Slot::ready(0);
+        let reloading = Slot { charge: 0.4, reloading: true, ..Slot::ready(1) };
+        let slots = [ready, reloading];
+        assert_eq!(reload_fraction(&slots, 0), None);
+        assert_eq!(reload_fraction(&slots, 1), Some(0.4));
+        assert_eq!(reload_fraction(&slots, 2), None);
+        assert_eq!(reload_fraction(&slots, -1), None);
     }
 
     /// A worm's name sits centred above it, moved inside the view when
