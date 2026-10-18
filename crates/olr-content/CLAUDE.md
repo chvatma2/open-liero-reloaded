@@ -26,8 +26,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   undecodable sprite or a missing sound file costs only that asset.
 - **Edited levels** (plan 14c): `LoadedLevel::from_source(&LevelSource)`
   is `load_level` on the editor's level (compiled, the same art bound);
-  `first_spawn()` is the first spawn point when it lies inside the level and
-  not in rock, else `None`; `build_match_spawning(assets, options,
+  `first_spawn()` is the first spawn point when it is a good spawn point
+  (OLX's `CMap::IsGoodSpawnPoint`, as `FindSpot` checks: no rock in the
+  6 × 6 square from `(x - 3, y - 3)`, outside the level counting as rock),
+  else `None`; `build_match_spawning(assets, options,
   human_spawn)` is `build_match` with the first human worm's
   `WormSetup::spawn` set (`build_match` passes `None`: unchanged).
 - **Hostile levels:** `load_level` refuses an art scale above

@@ -145,8 +145,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `error:` or panic line on stderr (`bad_lines`). Then the editor run
   (plan 14c, `editor`, in `target/e2e/editor`): `fixtures/autoplay/editor.ron`
   the same way in a data directory of its own (a new level "E2E Level", a
-  drawn layer painted, a spawn, Play and Esc, Save, Close), then the pack it
-  saved, `data/packs/e2e-level` (`editor_pack_problems`: a `Drawn` layer in
+  drawn layer painted, a spawn, Play (ticking) and Stop, Play and Esc,
+  Save, Close), then its `editor-painted.png` (`canvas_problem`: not the
+  canvas's black at the picture's centre) and the pack it saved, `data/packs/e2e-level` (`editor_pack_problems`: a `Drawn` layer in
   `editor/composition.ron`, `level.ron` named "E2E Level" with one spawn)
   and `olr-cli pack check` on it exiting 0. Then the online run
   (plan 10 task 15, plan 12b task 10, `online`, in `target/e2e/online`):

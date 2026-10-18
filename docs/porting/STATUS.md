@@ -3277,8 +3277,11 @@ and its batch reviews. Tools, not OLX behaviour.
   of the window, under the egui panels and overlays; each edit replaces its
   dirty rectangle (`ColorMap::replace_rect`, `Renderer::update_terrain`).
   The canvas draws with SharpBilinear whatever the options' filter (whole
-  multiples would letterbox off the overlays), and its view is clipped to
-  what one device texture holds (`Canvas::max_view_for`).
+  multiples would letterbox off the overlays); its view is the world under
+  the whole canvas (black off the level, so panning keeps the renderer's
+  world target), cut to what one device texture holds
+  (`Canvas::max_view_for`); its map is dropped while the editor is closed
+  or its Play runs.
 - **R2 - the material view**: the canvas's one colour map is rebuilt from
   `MATERIAL_PALETTE` at art scale 1 when it is turned on, and from the bake
   when it is turned off; a resize or an art-scale change rebuilds it too.
@@ -3286,10 +3289,13 @@ and its batch reviews. Tools, not OLX behaviour.
   against the Local Play screen's saved bot level, personality and loadout,
   under OLX's default rules and `DEFAULT_PRESET`. Neither saves a replay;
   there is no weapon selection (random weapons). Esc ends the play at once
-  (no pause menu), and so does Stop over the playfield.
+  (no pause menu), and so does Stop over the playfield; F5 plays it again
+  from its start; a match over returns to the editor when its results
+  would show (no results screen).
 - **R4 - the first spawn**: the human worm's `WormSetup::spawn` is the
-  level's first spawn when it lies inside the level and not in rock, else a
-  free spot (`LoadedLevel::first_spawn`; `build_match_spawning`, with
+  level's first spawn when it is a good spawn point by OLX's own rule
+  (`CMap::IsGoodSpawnPoint`: no rock in the 6 × 6 square around it, outside
+  the level counting as rock), else a free spot (`LoadedLevel::first_spawn`; `build_match_spawning`, with
   `build_match` unchanged). Later respawns are the simulation's.
 - **R5 - where levels are edited**: the data directory's `packs/`. The
   Editor screen offers Edit for its level packs and Edit a copy for the
@@ -3306,7 +3312,11 @@ and its batch reviews. Tools, not OLX behaviour.
   removed on a save, on Close and when the document is left. Each opened
   pack's session writes a copy of its own id (`pack_id` against
   `recovery/`), so a crash's copy survives opening its pack again; a
-  recovered document keeps its copy's id (the next copy replaces it). Recovering opens the
+  recovered document keeps its copy's id (the next copy replaces it), and
+  reopens in its folder only when that still holds its pack (else a new
+  one, under a new id when its own was taken). The copy is made from a
+  document snapshot and written on a thread of its own (250 ms for Castle
+  Strike on the UI thread before). Recovering opens the
   original directory when it is there, else a new `packs/<id>` (Save makes
   it); a damaged copy is listed and can be discarded; a recovery's own
   folder is never opened as a pack.

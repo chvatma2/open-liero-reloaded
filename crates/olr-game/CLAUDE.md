@@ -637,11 +637,18 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `editor::canvas::Canvas` (the bake's `ColorMap`, or the material view's
   at art scale 1) gets its uploads (`replace_rect`, then `update_terrain`;
   whole after a new document, a resize, a material-view toggle or a Play,
-  whose session had the renderer's terrain) and draws a terrain-only list
-  into its part of the window (`Gpu::present`'s world is `(list, area)`;
-  games pass `playfield(size)`), with SharpBilinear for that frame. During
-  an edited Play the HUD draws with a Stop button (`overlay::stop_button`)
-  and Esc or Stop ends it (`Shell::stop_edited`). Closing the window asks
+  whose session had the renderer's terrain; dropped while the editor is
+  closed or its Play runs) and draws a terrain-only list of the world under
+  the whole canvas (black off the level: panning never changes its size, so
+  the renderer's world target stays) at egui's own scale of the pass into
+  its part of the window (`Gpu::present`'s world is `(list, area)`; games
+  pass `playfield(size)`), with SharpBilinear for that frame; the
+  renderer's warnings are logged once and said in the editor (`Note`).
+  During an edited Play the HUD draws with a Stop button at the
+  playfield's left (`overlay::stop_button`; `hud::Frame::edited`: its keys
+  say "Esc stop"), Esc or Stop ends it (`Shell::stop_edited`), F5 plays it
+  again (`Shell::restart_edited`), and a match over ends it when its
+  results would show (`Session::results_shown`), the editor saying so. Closing the window asks
   the editor first (`editor::on_close_request`, `CloseDecision::Wait`: the
   window closes when the editor does; a Cancel lets it stay); a quit that
   does not ask (autoplay's, `--autoquit-after`, an error) writes the
@@ -691,7 +698,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
 - **Window** (`window.rs`, the user's ruling after the plan 6 playtest):
   not resizable, no maximise button; `--fullscreen` is borderless. It opens
   hidden and shows with its first presented frame (`app::reveal_now`, at
-  the latest after `REVEAL_AFTER_FRAMES`; the user's report of a white
+  the latest after `REVEAL_AFTER_FRAMES` or `REVEAL_AFTER`, 1 s; autoplay
+  plays no step before, `Seen::shown`; the user's report of a white
   rectangle while the GPU was set up); while hidden its frames are drawn
   from `about_to_wait` (Windows sends no redraw to an invisible window).
   Wayland has no hidden windows. On
