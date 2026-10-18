@@ -297,7 +297,7 @@ mod tests {
         // Paint red into the drawn layer, as a brush stroke does.
         let shape = olr_edit::level::Shape::Rect { x: 40, y: 30, w: 6, h: 4 };
         let r = d
-            .paint("tunnels", &shape, &olr_edit::level::Paint::Colour(Rgba::rgb(250, 0, 0)))
+            .paint("tunnels", &shape, &olr_edit::level::Paint::Colour(Rgba::rgb(250, 0, 0)), None)
             .unwrap()
             .unwrap();
         c.upload(&d, r);

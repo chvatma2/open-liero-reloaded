@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::sync::Arc;
 
 use olr_data::image::RgbaImage;
+use olr_data::level::Material;
 use olr_edit::compose::{Decoded, Rect};
 use olr_format::levels::{Element, LevelObject, LevelSource};
 
@@ -15,13 +16,28 @@ use crate::document::Item;
 /// A reversible change of the document.
 #[derive(Clone, Debug)]
 pub enum Edit {
-    /// A drawn layer's art over `rect` (world), before and after (the art
-    /// pixels of the rect).
+    /// A drawn layer's pixels over `rect` (world pixels of its box, from
+    /// its top-left), before and after.
     Pixels {
         id: String,
         rect: Rect,
-        before: RgbaImage,
-        after: RgbaImage,
+        before: Patch,
+        after: Patch,
+    },
+    /// A whole item swapped (plan 14d: a layer made mixed or plain, a
+    /// picture given a mask, a merge's result).
+    Layer {
+        index: usize,
+        before: Box<Item>,
+        after: Box<Item>,
+    },
+    /// An image's mask over `rect` (pixels of its original), before and
+    /// after (`Mask::crop`).
+    Mask {
+        id: String,
+        rect: Rect,
+        before: Vec<u8>,
+        after: Vec<u8>,
     },
     /// An element's metadata (a property, a rename, a move of its box).
     Element {
@@ -54,6 +70,21 @@ pub enum Edit {
         before: Box<Whole>,
         after: Box<Whole>,
     },
+}
+
+/// A drawn layer's pixels over a rectangle of its box: its art, and its
+/// cells and back art when it has them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Patch {
+    pub art: RgbaImage,
+    pub cells: Option<Vec<Material>>,
+    pub back: Option<RgbaImage>,
+}
+
+impl Patch {
+    fn bytes(&self) -> usize {
+        image(&self.art) + self.cells.as_ref().map_or(0, Vec::len) + self.back.as_ref().map_or(0, image)
+    }
 }
 
 /// An element with its decoded data and, for an image, its original's
@@ -116,6 +147,8 @@ impl Edit {
     pub fn is_noop(&self) -> bool {
         match self {
             Edit::Pixels { before, after, .. } => before == after,
+            Edit::Layer { before, after, .. } => before == after,
+            Edit::Mask { before, after, .. } => before == after,
             Edit::Element { before, after, .. } => before == after,
             Edit::Insert { .. } | Edit::Remove { .. } => false,
             Edit::Move { from, to } => from == to,
@@ -130,7 +163,9 @@ impl Edit {
     pub fn bytes(&self) -> usize {
         let base = std::mem::size_of::<Edit>();
         base + match self {
-            Edit::Pixels { before, after, .. } => image(before) + image(after),
+            Edit::Pixels { before, after, .. } => before.bytes() + after.bytes(),
+            Edit::Layer { before, after, .. } => item(before) + item(after),
+            Edit::Mask { before, after, .. } => before.len() + after.len(),
             Edit::Element { before, after, .. } => before.name.len() + after.name.len(),
             Edit::Insert { item: s, .. } | Edit::Remove { item: s, .. } => {
                 item(&s.item) + s.original.as_ref().map_or(0, |(_, b)| b.len())
@@ -153,6 +188,7 @@ impl Edit {
                 grids(std::iter::once(&s.item)).collect()
             }
             Edit::Whole { before, after } => grids(before.items.iter().chain(&after.items)).collect(),
+            Edit::Layer { before, after, .. } => grids([&**before, &**after].into_iter()).collect(),
             _ => Vec::new(),
         }
     }

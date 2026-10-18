@@ -73,7 +73,12 @@ fn the_canvas_draws_the_bake() {
     r.upload_terrain(canvas.map_mut().unwrap());
     let before = picture(&mut canvas, &mut r);
     let painted = doc
-        .paint("tunnels", &Shape::Rect { x: 60, y: 40, w: 50, h: 30 }, &Paint::Colour(Rgba::rgb(255, 0, 255)))
+        .paint(
+            "tunnels",
+            &Shape::Rect { x: 60, y: 40, w: 50, h: 30 },
+            &Paint::Colour(Rgba::rgb(255, 0, 255)),
+            None,
+        )
         .unwrap()
         .expect("the paint changed the bake");
     canvas.upload(&doc, painted);

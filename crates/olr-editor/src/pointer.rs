@@ -2,7 +2,7 @@
 //! untrusted world pixels: every shape is clipped by the document, every
 //! sum saturates.
 
-use olr_data::image::{Rgba, RgbaImage};
+use olr_data::image::Rgba;
 use olr_edit::compose::{Decoded, Rect};
 use olr_edit::element::Property;
 use olr_edit::level::{Paint, Shape};
@@ -10,7 +10,7 @@ use olr_format::levels::{Element, ElementKind, LevelObject, MAX_SIDE};
 
 use crate::document::Document;
 use crate::history::Edit;
-use crate::ops::NOTHING;
+use crate::ops::{NOTHING, StrokeBefore};
 use crate::state::{EditorCommand, EditorState, Selection};
 use crate::tools::{BrushShape, Overlay, PaintChoice, PointerKind, Tool};
 
@@ -30,7 +30,7 @@ pub(crate) enum Drag {
     /// A spawn follows the pointer, live.
     Spawn { index: usize, before: Vec<LevelObject>, grab: (i64, i64) },
     /// Brush or eraser dabs; `before` is the layer as the stroke began.
-    Stroke { id: String, before: RgbaImage, last: (i32, i32), rect: Option<Rect>, erase: bool },
+    Stroke { id: String, before: StrokeBefore, last: (i32, i32), rect: Option<Rect>, erase: bool },
     /// A rectangle, ellipse or line from `start`, painted on release.
     Shape { id: String, tool: Tool, start: (i32, i32), now: (i32, i32) },
 }
@@ -188,7 +188,7 @@ impl EditorState {
         let doc = self.doc.as_mut()?;
         let mut rect = None;
         for shape in shapes {
-            let r = if erase { doc.erase(id, shape) } else { doc.paint(id, shape, &paint) };
+            let r = if erase { doc.erase(id, shape, false) } else { doc.paint(id, shape, &paint, None) };
             match r {
                 Ok(Some(r)) => rect = Some(Rect::union(rect, r)),
                 Ok(None) => {}
@@ -241,7 +241,7 @@ impl EditorState {
             Tool::Select => self.select_down(world),
             Tool::Brush | Tool::Eraser => {
                 let Some(id) = self.paint_target() else { return Vec::new() };
-                let Some(before) = self.doc.as_ref().and_then(|d| d.layer_art(&id)).cloned() else {
+                let Some(before) = self.doc.as_ref().and_then(|d| d.stroke_before(&id)) else {
                     return Vec::new();
                 };
                 let erase = self.tool == Tool::Eraser;
@@ -447,8 +447,8 @@ impl EditorState {
                     Tool::Ellipse => Shape::Ellipse { x, y, w, h },
                     _ => Shape::Line { from: start, to: now, width: self.brush.size },
                 };
-                let Some(before) = doc.layer_art(&id).cloned() else { return Vec::new() };
-                match doc.paint(&id, &shape, &paint) {
+                let Some(before) = doc.stroke_before(&id) else { return Vec::new() };
+                match doc.paint(&id, &shape, &paint, None) {
                     Ok(Some(rect)) => {
                         let Some(edit) = doc.stroke_edit(&id, rect, &before) else { return Vec::new() };
                         self.history.push(vec![edit]);

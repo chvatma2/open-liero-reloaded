@@ -1,5 +1,6 @@
 //! The document (plan 14b Task 4): a level pack as the editor holds it.
 
+use olr_edit::element::Property;
 use olr_editor::{DocError, Document, Severity};
 use olr_format::levels::LevelObject;
 
@@ -108,6 +109,7 @@ fn a_foreign_layer_file_is_kept_until_changed() {
         "tunnels",
         &olr_edit::level::Shape::Rect { x: 0, y: 0, w: 2, h: 2 },
         &olr_edit::level::Paint::Colour(olr_data::image::Rgba::rgb(1, 2, 3)),
+        None,
     )
     .unwrap();
     assert!(files(&doc)["editor/layers/tunnels.png"] != foreign);
@@ -138,7 +140,7 @@ fn a_snapshot_packs_as_its_document() {
     let Some(root) = crate::common::content() else { return };
     let (_tmp, mut doc) = crate::common::open_fixture(&root);
     let shape = olr_edit::level::Shape::Rect { x: 10, y: 10, w: 20, h: 8 };
-    doc.paint("tunnels", &shape, &olr_edit::level::Paint::Colour(olr_data::image::Rgba::rgb(9, 9, 9)))
+    doc.paint("tunnels", &shape, &olr_edit::level::Paint::Colour(olr_data::image::Rgba::rgb(9, 9, 9)), None)
         .unwrap();
     let snap = doc.snapshot();
     assert_eq!(snap.to_pack(), doc.to_pack());
@@ -164,7 +166,7 @@ fn a_plain_level_opens_as_three_layers_to_erase() {
     };
     let (dirt, rock) = (at(Material::Dirt), at(Material::Rock));
     for (layer, (x, y)) in [("dirt", dirt), ("rock", rock)] {
-        doc.erase(layer, &Shape::Rect { x, y, w: 1, h: 1 }).unwrap();
+        doc.erase(layer, &Shape::Rect { x, y, w: 1, h: 1 }, false).unwrap();
         let l = doc.level();
         assert_eq!(
             l.material[y as usize * w + x as usize],
@@ -189,5 +191,160 @@ fn a_raster_splits_into_three_layers() {
     let ids: Vec<&str> = doc.items().iter().map(|i| i.element.id.as_str()).collect();
     assert_eq!(ids[..3], ["background", "dirt", "rock"], "{ids:?}");
     assert_eq!((doc.level().material.clone(), doc.level().front.clone(), doc.level().back.clone()), before);
-    assert!(matches!(doc.split("tunnels"), Err(DocError::WrongKind { .. })), "only a raster splits");
+    // Plan 14d R11: any element splits; a drawn background layer into one.
+    let edits = doc.split("tunnels").unwrap();
+    assert_eq!(edits.len(), 2, "the layer out, its Background in");
+}
+
+/// Reverts `edits` (one step), last first, as `Undo` does.
+fn undo(doc: &mut Document, edits: &[olr_editor::Edit]) {
+    for e in edits.iter().rev() {
+        doc.apply(e, false);
+    }
+}
+
+fn opened_dirt_level() -> Option<(tempfile::TempDir, Document)> {
+    let root = content()?;
+    let (tmp, dir) = copy_pack(&root, std::path::Path::new("olx-level-dirt-level"));
+    Some((tmp, Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog(&root)).unwrap()))
+}
+
+/// A world pixel of `m` in `doc`'s bake.
+fn pixel_of(doc: &Document, m: olr_data::level::Material) -> (i32, i32) {
+    let l = doc.level();
+    let i = l.material.iter().position(|c| *c == m).unwrap();
+    ((i % l.size.0 as usize) as i32, (i / l.size.0 as usize) as i32)
+}
+
+/// Review Focus 1: a loaded map's Dirt merged into its Background, then
+/// erased, digs to the level's own background.
+#[test]
+fn erasing_a_merged_map_digs_to_its_background() {
+    use olr_data::level::Material;
+    use olr_editor::ops::Stroke;
+    let Some((_tmp, mut doc)) = opened_dirt_level() else { return };
+    let back = doc.level().back.clone();
+    doc.merge_down("dirt").unwrap();
+    let (x, y) = pixel_of(&doc, Material::Dirt);
+    doc.begin_stroke("background", Stroke::Erase).unwrap();
+    doc.erase("background", &olr_edit::level::Shape::Rect { x, y, w: 1, h: 1 }, false).unwrap();
+    let l = doc.level();
+    let (w, s) = (l.size.0 as usize, l.art_scale);
+    assert_eq!(l.material[y as usize * w + x as usize], Material::Background);
+    let (ax, ay) = (x as u32 * s, y as u32 * s);
+    assert_eq!(l.front.get(ax, ay), back.get(ax, ay), "the level's own background shows");
+}
+
+/// Review Focus 2: a stroke that converted a plain layer to mixed, undone,
+/// leaves a plain layer that saves no material file.
+#[test]
+fn an_undone_conversion_saves_a_plain_layer() {
+    use olr_data::level::Material;
+    use olr_editor::ops::Stroke;
+    let Some((_tmp, mut doc)) = opened_dirt_level() else { return };
+    let (x, y) = pixel_of(&doc, Material::Dirt);
+    let mut step: Vec<olr_editor::Edit> =
+        doc.begin_stroke("dirt", Stroke::Paint(Material::Rock)).unwrap().into_iter().collect();
+    assert_eq!(step.len(), 1, "the conversion");
+    let before = doc.stroke_before("dirt").unwrap();
+    let shape = olr_edit::level::Shape::Rect { x, y, w: 2, h: 2 };
+    let paint = olr_edit::level::Paint::Colour(olr_data::image::Rgba::rgb(9, 9, 9));
+    let rect = doc.paint("dirt", &shape, &paint, Some(Material::Rock)).unwrap().unwrap();
+    assert_eq!(doc.level().material[y as usize * doc.level().size.0 as usize + x as usize], Material::Rock);
+    step.push(doc.stroke_edit("dirt", rect, &before).unwrap());
+    assert!(files(&doc).contains_key("editor/layers/dirt.material.png"));
+    undo(&mut doc, &step);
+    let f = files(&doc);
+    assert!(!f.contains_key("editor/layers/dirt.material.png"));
+    let text = String::from_utf8(f["editor/composition.ron"].clone()).unwrap();
+    assert!(!text.contains("mixed"), "{text}");
+}
+
+/// Review Focus 4: a layer moved off the level and back is as it was.
+#[test]
+fn a_layer_moved_off_and_back_is_unchanged() {
+    let Some((_tmp, mut doc)) = opened_dirt_level() else { return };
+    let start = files(&doc);
+    doc.set("rock", Property::At((-500, 0))).unwrap();
+    assert!(files(&doc) != start);
+    doc.set("rock", Property::At((0, 0))).unwrap();
+    assert!(files(&doc) == start);
+}
+
+#[test]
+fn masking_an_image_erases_it_from_the_bake() {
+    use olr_editor::ops::Stroke;
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    let start = files(&doc);
+    // `tiny` has no mask yet: the stroke's first edit gives it one.
+    let conversion = doc.begin_stroke("tiny", Stroke::Erase).unwrap();
+    assert!(conversion.is_some());
+    let before = doc.stroke_before("tiny").unwrap();
+    let shape = olr_edit::level::Shape::Circle { cx: 70, cy: 52, r: 10 };
+    let rect = doc.erase("tiny", &shape, false).unwrap().unwrap();
+    let edit = doc.stroke_edit("tiny", rect, &before).unwrap();
+    assert!(matches!(edit, olr_editor::Edit::Mask { .. }), "{edit:?}");
+    assert!(files(&doc) != start);
+    // Restoring brings it back.
+    let again = doc.stroke_before("tiny").unwrap();
+    let r = doc.erase("tiny", &shape, true).unwrap().unwrap();
+    let restored = doc.stroke_edit("tiny", r, &again).unwrap();
+    undo(&mut doc, &[restored]);
+    undo(&mut doc, &[conversion.unwrap(), edit]);
+    assert!(files(&doc) == start, "undone, the image is as it was");
+}
+
+#[test]
+fn remove_colour_masks_a_region() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    let start = doc.level().clone();
+    let edits = doc.remove_colour("gradient", (340, 230), 30).unwrap();
+    assert!(!edits.is_empty());
+    assert!(doc.level().front != start.front || doc.level().material != start.material);
+    assert!(doc.remove_colour("gradient", (0, 0), 30).is_err(), "outside the image");
+    undo(&mut doc, &edits);
+    assert!(doc.level().front == start.front && doc.level().material == start.material);
+}
+
+/// C4: choosing a material on a mixed layer makes it plain, one step.
+#[test]
+fn a_mixed_layers_material_makes_it_plain() {
+    use olr_format::levels::{ElementKind, ElementMaterial};
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    let change = doc.set("wall", Property::Material(ElementMaterial::Rock)).unwrap();
+    assert!(matches!(change.edit, olr_editor::Edit::Layer { .. }));
+    let e = &doc.items()[doc.index_of("wall").unwrap()];
+    assert!(matches!(
+        e.element.kind,
+        ElementKind::Drawn { material: ElementMaterial::Rock, mixed: false, .. }
+    ));
+}
+
+#[test]
+fn merge_down_is_refused_on_the_bottom_or_onto_an_image() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    let start = files(&doc);
+    assert!(matches!(doc.merge_down("base"), Err(DocError::Bad(_))));
+    assert!(matches!(doc.merge_down("gradient"), Err(DocError::Bad(_))), "tiny below is an image");
+    assert!(files(&doc) == start);
+    let edits = doc.merge_down("wall").unwrap();
+    assert_eq!(edits.len(), 2);
+    undo(&mut doc, &edits);
+    assert!(files(&doc) == start);
+}
+
+#[test]
+fn a_locked_image_is_not_masked() {
+    use olr_editor::ops::Stroke;
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    doc.set("tiny", Property::Locked(true)).unwrap();
+    let shape = olr_edit::level::Shape::Circle { cx: 70, cy: 52, r: 10 };
+    assert!(matches!(doc.begin_stroke("tiny", Stroke::Erase), Err(DocError::Locked(_))));
+    assert!(matches!(doc.erase("tiny", &shape, false), Err(DocError::Locked(_))));
+    assert!(matches!(doc.remove_colour("tiny", (70, 52), 10), Err(DocError::Locked(_))));
 }

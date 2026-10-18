@@ -9,19 +9,65 @@ use std::sync::Arc;
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_edit::compose::{Decoded, Rect, resize_decoded};
+use olr_edit::drawn;
 use olr_edit::element::{Property, new_element_id, new_source_name};
-use olr_edit::level::{self, Paint, Shape, draw_art, erase_art, rescale_art};
-use olr_edit::mask::Mask;
+use olr_edit::level::{self, Paint, Shape, rescale_art};
+use olr_edit::mask::{Mask, mask_colour, mask_shape, original_pixel};
 use olr_edit::pixelate::Pixelation;
 use olr_format::image_io::{LEVEL_ART, check_size};
 use olr_format::levels::{
-    Composition, Dither, Element, ElementKind, ElementMaterial, LevelSource, MAX_ART_SCALE, MAX_ELEMENTS,
-    check_elements,
+    Composition, Dither, Element, ElementKind, ElementMaterial, LevelSource, MAX_ART_SCALE,
+    MAX_COMPOSED_PIXELS, MAX_ELEMENTS, check_elements, drawn_box,
 };
 
 use crate::catalog::Catalog;
 use crate::document::{DocError, Document, Item};
-use crate::history::{Edit, LevelMeta, Snapshot, Whole};
+use crate::history::{Edit, LevelMeta, Patch, Snapshot, Whole};
+
+/// Why painting on a picture is refused.
+const PICTURE: &str = "erase on a picture; merge it into a layer to paint it";
+
+/// What a stroke lays (plan 14d): paint of a material, erasing, or (on a
+/// picture) restoring what its mask erased.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Stroke {
+    Paint(Material),
+    Erase,
+    Restore,
+}
+
+/// A copy of what a stroke changes, taken as it begins: a drawn layer's
+/// data or an image's mask.
+#[derive(Clone, Debug)]
+pub enum StrokeBefore {
+    Layer(Decoded),
+    Mask(Arc<Mask>),
+}
+
+/// `local` (world pixels of a box at `at`) as a rectangle of a level of
+/// `level`, clipped.
+fn to_level(at: (i32, i32), local: Rect, level: (u32, u32)) -> Rect {
+    let c = |v: i64, side: u32| v.clamp(0, i64::from(side)) as u32;
+    let (x0, y0) = (i64::from(at.0) + i64::from(local.x), i64::from(at.1) + i64::from(local.y));
+    let (x1, y1) = (x0 + i64::from(local.w), y0 + i64::from(local.h));
+    let (x0, y0, x1, y1) = (c(x0, level.0), c(y0, level.1), c(x1, level.0), c(y1, level.1));
+    Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}
+
+/// Drawn data `d`'s pixels over `r` (world pixels of its box, `cols` wide).
+fn patch_of(d: &Decoded, r: Rect, s: u32, cols: u32) -> Option<Patch> {
+    let Decoded::Drawn { art, cells, back } = d else { return None };
+    let crop = |i: &RgbaImage| i.crop(r.x * s, r.y * s, r.w * s, r.h * s);
+    let cells = cells.as_ref().map(|c| {
+        (r.y..r.y + r.h)
+            .flat_map(|y| {
+                let row = y as usize * cols as usize;
+                c[row + r.x as usize..row + (r.x + r.w) as usize].iter().copied()
+            })
+            .collect()
+    });
+    Some(Patch { art: crop(art), cells, back: back.as_ref().map(crop) })
+}
 
 /// A change made: its edit, and the world rectangle rebaked (to upload).
 #[derive(Debug)]
@@ -54,7 +100,7 @@ fn grid_key(e: &Element) -> Option<(&str, (u32, u32), Pixelation, bool)> {
 
 /// Sets one property of `e`, as `olr_edit::element::set` does (a locked
 /// element takes only `Locked`).
-fn with_property(e: &mut Element, property: Property) -> Result<(), DocError> {
+fn with_property(e: &mut Element, property: Property, level: (u32, u32)) -> Result<(), DocError> {
     if e.locked && !matches!(property, Property::Locked(_)) {
         return Err(DocError::Locked(e.id.clone()));
     }
@@ -67,6 +113,15 @@ fn with_property(e: &mut Element, property: Property) -> Result<(), DocError> {
             ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => *material = m,
             ElementKind::Raster => return Err(wrong("an image or drawn element")),
         },
+        // A drawn layer moves; level-sized again only at the origin (plan
+        // 14d R2, batch B review 2).
+        Property::At(v) if matches!(e.kind, ElementKind::Drawn { .. }) => {
+            if let ElementKind::Drawn { at, size, .. } = &mut e.kind {
+                let b = size.unwrap_or(level);
+                *at = v;
+                *size = (v != (0, 0) || b != level).then_some(b);
+            }
+        }
         p => {
             let ElementKind::Image { at, size, pixel_size, colours, dither, alpha_threshold, .. } =
                 &mut e.kind
@@ -110,12 +165,38 @@ impl Document {
     }
 
     fn check(&self, elements: &[Element], size: (u32, u32), art_scale: u32) -> Result<(), DocError> {
+        self.check_extra(elements, size, art_scale, 0)
+    }
+
+    /// `check`, counting the items' masks and `extra` pixels more in the
+    /// budget (batch A review I2: a mask is decoded with its element).
+    fn check_extra(
+        &self,
+        elements: &[Element],
+        size: (u32, u32),
+        art_scale: u32,
+        extra: u64,
+    ) -> Result<(), DocError> {
         if elements.len() > MAX_ELEMENTS {
             return Err(DocError::Bad(format!("a level holds at most {MAX_ELEMENTS} elements")));
         }
-        check_elements(&Composition { elements: elements.to_vec() }, size, art_scale)
-            .map(|_| ())
-            .map_err(|e| DocError::Bad(e.to_string()))
+        let total = check_elements(&Composition { elements: elements.to_vec() }, size, art_scale)
+            .map_err(|e| DocError::Bad(e.to_string()))?;
+        let masks: u64 = self
+            .items
+            .iter()
+            .map(|i| match &i.decoded {
+                Decoded::Image { mask: Some(m), .. } => m.keep.len() as u64,
+                _ => 0,
+            })
+            .sum();
+        let all = total.saturating_add(masks).saturating_add(extra);
+        if all > MAX_COMPOSED_PIXELS {
+            return Err(DocError::Bad(format!(
+                "the elements and masks would decode to {all} pixels, more than {MAX_COMPOSED_PIXELS}"
+            )));
+        }
+        Ok(())
     }
 
     /// Carries out `edit` as a change.
@@ -230,22 +311,20 @@ impl Document {
         Ok(self.change(Edit::Insert { index, item: Box::new(Snapshot { item, original: None }) }))
     }
 
-    /// Splits raster element `id` (unlocked) into three drawn layers in its
-    /// place, bottom to top background, dirt and rock (`split_layers`), so
-    /// each can be painted and erased; the level looks and plays the same.
-    /// The edits (the raster out, the layers in) are applied: one history
-    /// step.
+    /// Splits element `id` (unlocked, visible) into Background, Dirt and
+    /// Rock layers in its place (plan 14d R11, `drawn::split_element`): a
+    /// material without pixels makes none. The edits (the element out, the
+    /// layers in) are applied: one history step.
     pub fn split(&mut self, id: &str) -> Result<Vec<Edit>, DocError> {
         let index = self.unlocked(id)?;
-        let Decoded::Raster { material, front, back } = &self.items[index].decoded else {
-            return Err(DocError::WrongKind { id: id.into(), want: "a raster element" });
-        };
+        let (size, s) = (self.level.size, self.level.art_scale);
+        let item = self.items[index].clone();
         let mut others: Vec<Element> =
             self.items.iter().filter(|i| i.element.id != id).map(|i| i.element.clone()).collect();
         let stray = self.stray_files();
-        let mut ids = Vec::new();
-        for (name, fallback) in [("Background", "background"), ("Dirt", "dirt"), ("Rock", "rock")] {
+        let parts = drawn::split_element(&item.element, &item.decoded, size, s, |name, fallback| {
             let new = new_element_id(&others, &stray, name, fallback);
+            // A raster's files cover a mixed layer's: none of them taken.
             others.push(Element {
                 id: new.clone(),
                 name: name.into(),
@@ -253,23 +332,21 @@ impl Document {
                 locked: false,
                 kind: ElementKind::Raster,
             });
-            ids.push(new);
+            new
+        })
+        .map_err(|e| DocError::Bad(e.to_string()))?;
+        if parts.is_empty() {
+            return Err(DocError::Bad(format!("{id:?} has no pixels to split")));
         }
-        let layers = olr_edit::compose::split_layers(
-            material,
-            front,
-            back,
-            self.level.size,
-            self.level.art_scale,
-            [&ids[0], &ids[1], &ids[2]],
-        );
         self.check_with(|es| {
-            es.splice(index..=index, layers.iter().map(|(e, _)| e.clone()));
+            es.splice(index..=index, parts.iter().map(|(e, _)| e.clone()));
         })?;
-        let raster = self.items[index].clone();
-        let mut edits =
-            vec![Edit::Remove { index, item: Box::new(Snapshot { item: raster, original: None }) }];
-        for (k, (element, decoded)) in layers.into_iter().enumerate() {
+        let original = self.original_of(&item.element).and_then(|b| match &item.element.kind {
+            ElementKind::Image { source, .. } => Some((source.clone(), b)),
+            _ => None,
+        });
+        let mut edits = vec![Edit::Remove { index, item: Box::new(Snapshot { item, original }) }];
+        for (k, (element, decoded)) in parts.into_iter().enumerate() {
             let item = Item { element, decoded };
             edits.push(Edit::Insert { index: index + k, item: Box::new(Snapshot { item, original: None }) });
         }
@@ -279,14 +356,84 @@ impl Document {
         Ok(edits)
     }
 
+    /// Merges element `id` into the drawn layer directly below it (plan 14d
+    /// R10, `drawn::merge_down`): both unlocked and visible. The edits (the
+    /// upper element out, the lower one swapped for the merge) are applied:
+    /// one history step.
+    pub fn merge_down(&mut self, id: &str) -> Result<Vec<Edit>, DocError> {
+        let upper = self.unlocked(id)?;
+        if upper == 0 {
+            return Err(DocError::Bad(format!("{id:?} is the bottom element: nothing to merge into")));
+        }
+        let lower_id = self.items[upper - 1].element.id.clone();
+        let lower = self.unlocked(&lower_id)?;
+        let (le, ue) = (&self.items[lower], &self.items[upper]);
+        let (element, decoded) = drawn::merge_down(
+            (&le.element, &le.decoded),
+            (&ue.element, &ue.decoded),
+            self.level.size,
+            self.level.art_scale,
+        )
+        .map_err(|e| DocError::Bad(e.to_string()))?;
+        self.check_with(|es| {
+            es[lower] = element.clone();
+            es.remove(upper);
+        })?;
+        let up = self.items[upper].clone();
+        let original = self.original_of(&up.element).and_then(|b| match &up.element.kind {
+            ElementKind::Image { source, .. } => Some((source.clone(), b)),
+            _ => None,
+        });
+        let edits = vec![
+            Edit::Remove { index: upper, item: Box::new(Snapshot { item: up, original }) },
+            Edit::Layer {
+                index: lower,
+                before: Box::new(self.items[lower].clone()),
+                after: Box::new(Item { element, decoded }),
+            },
+        ];
+        for e in &edits {
+            self.apply(e, true);
+        }
+        Ok(edits)
+    }
+
+    /// Swaps item `index` for `after` (an `Edit::Layer`, applied).
+    fn swap(&mut self, index: usize, after: Item) -> Edit {
+        let before = Box::new(self.items[index].clone());
+        let edit = Edit::Layer { index, before, after: Box::new(after) };
+        self.apply(&edit, true);
+        edit
+    }
+
     /// A property (ruling R4: refused on a locked element unless it is
     /// `Locked`), checked with `check_elements`; an image reprocesses
     /// through the cache only when its pixelation or box size changes.
     pub fn set(&mut self, id: &str, property: Property) -> Result<Change, DocError> {
         let index = self.find(id)?;
+        // C4: a material chosen for a mixed layer makes it plain, one swap.
+        if let Property::Material(m) = property
+            && let ElementKind::Drawn { mixed: true, .. } = self.items[index].element.kind
+        {
+            self.unlocked(id)?;
+            let mut after = self.items[index].clone();
+            if let ElementKind::Drawn { material, mixed, .. } = &mut after.element.kind {
+                (*material, *mixed) = (m, false);
+            }
+            if let Decoded::Drawn { cells, .. } = &mut after.decoded {
+                *cells = None;
+            }
+            self.check_with(|es| es[index] = after.element.clone())?;
+            let edit = self.swap(index, after);
+            let dirty = match &edit {
+                Edit::Layer { after, .. } => self.element_rect(&after.element),
+                _ => NOTHING,
+            };
+            return Ok(Change { edit, dirty });
+        }
         let before = self.items[index].element.clone();
         let mut after = before.clone();
-        with_property(&mut after, property)?;
+        with_property(&mut after, property, self.level.size)?;
         self.check_with(|es| es[index] = after.clone())?;
         Ok(self.change(Edit::Element { index, before, after }))
     }
@@ -311,40 +458,160 @@ impl Document {
         Ok(self.change(Edit::Move { from, to }))
     }
 
-    /// Drawn layer `id` (unlocked), by index.
+    /// Drawn layer `id` (unlocked), by index; a picture is refused with
+    /// `PICTURE`.
     fn paintable(&self, id: &str) -> Result<usize, DocError> {
         let i = self.unlocked(id)?;
-        if !matches!(self.items[i].decoded, Decoded::Drawn { .. }) {
-            return Err(DocError::WrongKind { id: id.into(), want: "a drawn element" });
+        match self.items[i].decoded {
+            Decoded::Drawn { .. } => Ok(i),
+            Decoded::Image { .. } => Err(DocError::Bad(PICTURE.into())),
+            _ => Err(DocError::WrongKind { id: id.into(), want: "a drawn element" }),
         }
-        Ok(i)
+    }
+
+    /// Drawn layer `i`'s box (its top-left, its size).
+    fn layer_box(&self, i: usize) -> ((i32, i32), (u32, u32)) {
+        drawn_box(&self.items[i].element.kind, self.level.size).unwrap_or(((0, 0), self.level.size))
+    }
+
+    /// Makes `id` ready for `stroke` (plan 14d R5-R7): a plain layer painted
+    /// another material, or erased with back art, becomes mixed; a picture
+    /// erased or restored without a mask gets a full one. The conversion is
+    /// applied and returned for the stroke's step; `None` when none is
+    /// needed. Painting a picture is refused.
+    pub fn begin_stroke(&mut self, id: &str, stroke: Stroke) -> Result<Option<Edit>, DocError> {
+        let i = self.unlocked(id)?;
+        let s = self.level.art_scale;
+        let item = self.items[i].clone();
+        match (&item.element.kind, &item.decoded, stroke) {
+            (ElementKind::Image { .. }, _, Stroke::Paint(_)) => Err(DocError::Bad(PICTURE.into())),
+            (ElementKind::Image { source, .. }, Decoded::Image { mask: None, .. }, _) => {
+                let bytes = self
+                    .original_of(&item.element)
+                    .ok_or_else(|| DocError::Bad(format!("{id:?}: its original is missing")))?;
+                let img = self.cache.original(source, &bytes)?;
+                let mask = Mask::full((img.width(), img.height()));
+                let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
+                self.check_extra(&elements, self.level.size, s, mask.keep.len() as u64)?;
+                let mut after = item.clone();
+                if let ElementKind::Image { mask, .. } = &mut after.element.kind {
+                    *mask = true;
+                }
+                if let Decoded::Image { mask: m, .. } = &mut after.decoded {
+                    *m = Some(Arc::new(mask));
+                }
+                Ok(Some(self.swap(i, after)))
+            }
+            (ElementKind::Drawn { material, .. }, Decoded::Drawn { cells: None, back, .. }, stroke) => {
+                let needed = match stroke {
+                    Stroke::Paint(m) => m != Material::from(*material),
+                    Stroke::Erase => back.is_some(),
+                    Stroke::Restore => false,
+                };
+                if !needed {
+                    return Ok(None);
+                }
+                let mut after = item.clone();
+                drawn::mix(&mut after.decoded, s, (*material).into());
+                if let ElementKind::Drawn { mixed, .. } = &mut after.element.kind {
+                    *mixed = true;
+                }
+                self.check_with(|es| es[i] = after.element.clone())?;
+                Ok(Some(self.swap(i, after)))
+            }
+            _ => Ok(None),
+        }
     }
 
     /// Paints into drawn layer `id` (unlocked) without recording: strokes
-    /// do (`stroke_edit`). Returns the world rectangle rebaked.
-    pub fn paint(&mut self, id: &str, shape: &Shape, paint: &Paint) -> Result<Option<Rect>, DocError> {
+    /// do (`stroke_edit`). `material` none is the layer's; another on a
+    /// plain layer is refused (`begin_stroke` makes it mixed first).
+    /// Returns the level rectangle rebaked.
+    pub fn paint(
+        &mut self,
+        id: &str,
+        shape: &Shape,
+        paint: &Paint,
+        material: Option<Material>,
+    ) -> Result<Option<Rect>, DocError> {
         let i = self.paintable(id)?;
         let (size, s) = (self.level.size, self.level.art_scale);
-        let Decoded::Drawn { art, .. } = &mut self.items[i].decoded else { return Ok(None) };
-        let rect = draw_art(art, s, size, shape, paint);
+        let (at, _) = self.layer_box(i);
+        let item = &mut self.items[i];
+        let ElementKind::Drawn { material: own, .. } = item.element.kind else { return Ok(None) };
+        let m = material.unwrap_or(own.into());
+        if m != Material::from(own) && matches!(item.decoded, Decoded::Drawn { cells: None, .. }) {
+            return Err(DocError::Bad(format!(
+                "{id:?} is plain: begin the stroke to paint another material"
+            )));
+        }
+        let rect = drawn::draw(&mut item.decoded, at, s, size, shape, paint, m);
         if let Some(r) = rect {
             self.rebake(r);
         }
         Ok(rect)
     }
 
-    pub fn erase(&mut self, id: &str, shape: &Shape) -> Result<Option<Rect>, DocError> {
-        let i = self.paintable(id)?;
+    /// Erases `shape` in drawn layer `id` (unlocked; plan 14d R5), or masks
+    /// picture `id` there (`restore`: unmasks; it needs its mask,
+    /// `begin_stroke`). Returns the level rectangle rebaked.
+    pub fn erase(&mut self, id: &str, shape: &Shape, restore: bool) -> Result<Option<Rect>, DocError> {
+        let i = self.unlocked(id)?;
         let (size, s) = (self.level.size, self.level.art_scale);
-        let Decoded::Drawn { art, .. } = &mut self.items[i].decoded else { return Ok(None) };
-        let rect = erase_art(art, s, size, shape);
+        if let ElementKind::Image { at, size: bsize, .. } = self.items[i].element.kind {
+            let Decoded::Image { mask: Some(mask), .. } = &mut self.items[i].decoded else {
+                return Err(DocError::Bad(format!("{id:?} has no mask: begin the stroke first")));
+            };
+            if mask_shape(Arc::make_mut(mask), at, bsize, shape, restore).is_none() {
+                return Ok(None);
+            }
+            self.redecode(i);
+            let rect = self.element_rect(&self.items[i].element);
+            if rect.w == 0 || rect.h == 0 {
+                return Ok(None);
+            }
+            self.rebake(rect);
+            return Ok(Some(rect));
+        }
+        let i = self.paintable(id)?;
+        let (at, _) = self.layer_box(i);
+        let rect = drawn::erase(&mut self.items[i].decoded, at, s, size, shape);
         if let Some(r) = rect {
             self.rebake(r);
         }
         Ok(rect)
     }
 
-    /// Drawn layer `id`'s art (for a stroke's "before" copy and the eyedropper).
+    /// Masks the region of similar colour around world pixel `at` of
+    /// picture `id` (unlocked; plan 14d R8, `tolerance` percent): one step,
+    /// its edits applied (a full mask first when it had none).
+    pub fn remove_colour(&mut self, id: &str, at: (i32, i32), tolerance: u8) -> Result<Vec<Edit>, DocError> {
+        let i = self.unlocked(id)?;
+        let ElementKind::Image { source, at: box_at, size: bsize, .. } = self.items[i].element.kind.clone()
+        else {
+            return Err(DocError::WrongKind { id: id.into(), want: "an image element" });
+        };
+        let bytes = self
+            .original_of(&self.items[i].element)
+            .ok_or_else(|| DocError::Bad(format!("{id:?}: its original is missing")))?;
+        let img = self.cache.original(&source, &bytes)?;
+        let seed = original_pixel(box_at, bsize, (img.width(), img.height()), at)
+            .ok_or_else(|| DocError::Bad(format!("({}, {}) is outside the picture", at.0, at.1)))?;
+        let mut edits: Vec<Edit> = self.begin_stroke(id, Stroke::Erase)?.into_iter().collect();
+        let before = self.stroke_before(id);
+        if let Decoded::Image { mask: Some(mask), .. } = &mut self.items[i].decoded {
+            mask_colour(Arc::make_mut(mask), &img, seed, tolerance);
+        }
+        self.redecode(i);
+        let rect = self.element_rect(&self.items[i].element);
+        if rect.w > 0 && rect.h > 0 {
+            self.rebake(rect);
+        }
+        edits.extend(before.and_then(|b| self.stroke_edit(id, NOTHING, &b)));
+        Ok(edits)
+    }
+
+    /// Drawn layer `id`'s art (for the eyedropper and tests).
     pub fn layer_art(&self, id: &str) -> Option<&RgbaImage> {
         match &self.items.get(self.index_of(id)?)?.decoded {
             Decoded::Drawn { art, .. } => Some(art),
@@ -352,27 +619,53 @@ impl Document {
         }
     }
 
-    /// The `Pixels` edit of a finished stroke: `before` is the layer as the
-    /// stroke began, `rect` (clipped to the level) what it changed. `None`
-    /// when `id` is no drawn layer or `before` is not its size (a stale copy:
-    /// its step could restore nothing).
-    pub fn stroke_edit(&self, id: &str, rect: Rect, before: &RgbaImage) -> Option<Edit> {
-        let rect = self.clip(rect);
-        let s = self.level.art_scale;
-        let art = self.layer_art(id)?;
-        let dims = |i: &RgbaImage| (i.width(), i.height());
-        if dims(before) != dims(art) || dims(art) != (self.level.size.0 * s, self.level.size.1 * s) {
-            return None;
+    /// A copy of what a stroke of `id` changes: a drawn layer's data, an
+    /// image's mask (none without one).
+    pub fn stroke_before(&self, id: &str) -> Option<StrokeBefore> {
+        match &self.items.get(self.index_of(id)?)?.decoded {
+            d @ Decoded::Drawn { .. } => Some(StrokeBefore::Layer(d.clone())),
+            Decoded::Image { mask: Some(m), .. } => Some(StrokeBefore::Mask(m.clone())),
+            _ => None,
         }
-        let crop = |img: &RgbaImage| img.crop(rect.x * s, rect.y * s, rect.w * s, rect.h * s);
-        Some(Edit::Pixels { id: id.into(), rect, before: crop(before), after: crop(art) })
     }
 
-    /// `rect` clipped to the level.
-    pub(crate) fn clip(&self, r: Rect) -> Rect {
-        let (w, h) = self.level.size;
-        let (x, y) = (r.x.min(w), r.y.min(h));
-        Rect { x, y, w: r.x.saturating_add(r.w).min(w) - x, h: r.y.saturating_add(r.h).min(h) - y }
+    /// The edit of a finished stroke: for a drawn layer a `Pixels` edit of
+    /// `rect` (a level rectangle; the part in the layer's box), for a
+    /// picture a `Mask` edit of what changed. `None` for a stale copy (of
+    /// another size or kind: its step could restore nothing), or a mask
+    /// that did not change.
+    pub fn stroke_edit(&self, id: &str, rect: Rect, before: &StrokeBefore) -> Option<Edit> {
+        let i = self.index_of(id)?;
+        let s = self.level.art_scale;
+        match (before, &self.items[i].decoded) {
+            (StrokeBefore::Layer(b @ Decoded::Drawn { art: ba, cells: bc, back: bb }), now) => {
+                let Decoded::Drawn { art, cells, back } = now else { return None };
+                let dims = |i: &RgbaImage| (i.width(), i.height());
+                let alike = dims(ba) == dims(art)
+                    && bc.as_ref().map(Vec::len) == cells.as_ref().map(Vec::len)
+                    && bb.as_ref().map(dims) == back.as_ref().map(dims);
+                let (at, size) = self.layer_box(i);
+                if !alike || dims(art) != (size.0.saturating_mul(s), size.1.saturating_mul(s)) {
+                    return None;
+                }
+                let c = |v: i64, side: u32| v.clamp(0, i64::from(side)) as u32;
+                let (x0, y0) = (i64::from(rect.x) - i64::from(at.0), i64::from(rect.y) - i64::from(at.1));
+                let (x1, y1) = (x0 + i64::from(rect.w), y0 + i64::from(rect.h));
+                let (x0, y0, x1, y1) = (c(x0, size.0), c(y0, size.1), c(x1, size.0), c(y1, size.1));
+                let local = Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+                Some(Edit::Pixels {
+                    id: id.into(),
+                    rect: local,
+                    before: patch_of(b, local, s, size.0)?,
+                    after: patch_of(now, local, s, size.0)?,
+                })
+            }
+            (StrokeBefore::Mask(b), Decoded::Image { mask: Some(now), .. }) => {
+                let r = now.diff(b)?;
+                Some(Edit::Mask { id: id.into(), rect: r, before: b.crop(r), after: now.crop(r) })
+            }
+            _ => None,
+        }
     }
 
     /// The objects with `edit` applied to a copy (the level's bounds on them).
@@ -448,7 +741,15 @@ impl Document {
         // resize that is refused.
         let mut moved: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         for e in &mut moved {
-            if let ElementKind::Image { at, .. } = &mut e.kind {
+            // As `resize_decoded`: a level-sized layer off the origin is
+            // pinned to its box, and boxes move.
+            if let ElementKind::Drawn { at, size: boxed @ None, .. } = &mut e.kind
+                && *at != (0, 0)
+            {
+                *boxed = Some(old);
+            }
+            if let ElementKind::Image { at, .. } | ElementKind::Drawn { at, size: Some(_), .. } = &mut e.kind
+            {
                 let shift =
                     |v: i32, by: i32| v.checked_add(by).ok_or_else(|| level::EditError::Moved(e.id.clone()));
                 *at = (shift(at.0, offset.0)?, shift(at.1, offset.1)?);
@@ -556,11 +857,15 @@ impl Document {
         self.items[index].decoded = decoded;
     }
 
-    /// The world rectangle element `e` can cover: an image's box (clipped),
-    /// the whole level otherwise.
+    /// The world rectangle element `e` can cover: an image's or a drawn
+    /// layer's box (clipped), the whole level for a raster.
     pub(crate) fn element_rect(&self, e: &Element) -> Rect {
-        match &e.kind {
-            ElementKind::Image { at, size, .. } => {
+        let boxed = match &e.kind {
+            ElementKind::Image { at, size, .. } => Some((*at, *size)),
+            kind => drawn_box(kind, self.level.size),
+        };
+        match boxed {
+            Some((at, size)) => {
                 let (w, h) = self.level.size;
                 let clip = |v: i64, side: u32| v.clamp(0, i64::from(side)) as u32;
                 let (x0, y0) = (clip(at.0.into(), w), clip(at.1.into(), h));
@@ -576,24 +881,64 @@ impl Document {
     pub fn apply(&mut self, edit: &Edit, forward: bool) -> Rect {
         let dirty = match edit {
             Edit::Pixels { id, rect, before, after } => {
-                let img = if forward { after } else { before };
+                let p = if forward { after } else { before };
                 let s = self.level.art_scale;
                 let Some(i) = self.index_of(id) else { return NOTHING };
-                let Decoded::Drawn { art, .. } = &mut self.items[i].decoded else { return NOTHING };
-                // A rectangle off the layer (a forged edit) changes nothing.
-                let fits = |o: u32, side: u32, layer: u32| {
-                    o.checked_mul(s).and_then(|o| o.checked_add(side)).is_some_and(|end| end <= layer)
-                };
-                if !fits(rect.x, img.width(), art.width()) || !fits(rect.y, img.height(), art.height()) {
+                let (at, size) = self.layer_box(i);
+                let Decoded::Drawn { art, cells, back } = &mut self.items[i].decoded else { return NOTHING };
+                // A rectangle off the layer, or a patch of another shape (a
+                // forged edit), changes nothing.
+                let inside = rect.x.checked_add(rect.w).is_some_and(|e| e <= size.0)
+                    && rect.y.checked_add(rect.h).is_some_and(|e| e <= size.1);
+                let dims = |i: &RgbaImage| (i.width(), i.height());
+                let want = (rect.w.saturating_mul(s), rect.h.saturating_mul(s));
+                let n = rect.w as usize * rect.h as usize;
+                let fits = inside
+                    && dims(&p.art) == want
+                    && dims(art) == (size.0.saturating_mul(s), size.1.saturating_mul(s))
+                    && p.cells.as_ref().map(Vec::len) == cells.as_ref().map(|_| n)
+                    && p.back.as_ref().map(dims) == back.as_ref().map(|_| want);
+                if !fits {
                     return NOTHING;
                 }
-                let (ox, oy) = (rect.x * s, rect.y * s);
-                for y in 0..img.height() {
-                    for x in 0..img.width() {
-                        art.set(ox + x, oy + y, img.get(x, y));
+                let paste = |to: &mut RgbaImage, from: &RgbaImage| {
+                    for y in 0..from.height() {
+                        for x in 0..from.width() {
+                            to.set(rect.x * s + x, rect.y * s + y, from.get(x, y));
+                        }
+                    }
+                };
+                paste(art, &p.art);
+                if let (Some(to), Some(from)) = (back.as_mut(), p.back.as_ref()) {
+                    paste(to, from);
+                }
+                if let (Some(to), Some(from)) = (cells.as_mut(), p.cells.as_ref()) {
+                    for (k, row) in from.chunks(rect.w.max(1) as usize).enumerate() {
+                        let at = (rect.y as usize + k) * size.0 as usize + rect.x as usize;
+                        to[at..at + row.len()].copy_from_slice(row);
                     }
                 }
-                *rect
+                to_level(at, *rect, self.level.size)
+            }
+            Edit::Layer { index, before, after } => {
+                let to = if forward { after } else { before };
+                if *index >= self.items.len() {
+                    return NOTHING;
+                }
+                let from = std::mem::replace(&mut self.items[*index], (**to).clone());
+                Rect::union(Some(self.element_rect(&from.element)), self.element_rect(&to.element))
+            }
+            Edit::Mask { id, rect, before, after } => {
+                let bytes = if forward { after } else { before };
+                let Some(i) = self.index_of(id) else { return NOTHING };
+                let Decoded::Image { mask: Some(mask), .. } = &mut self.items[i].decoded else {
+                    return NOTHING;
+                };
+                if !Arc::make_mut(mask).patch(*rect, bytes) {
+                    return NOTHING;
+                }
+                self.redecode(i);
+                self.element_rect(&self.items[i].element)
             }
             Edit::Element { index, before, after } => {
                 let (from, to) = if forward { (before, after) } else { (after, before) };

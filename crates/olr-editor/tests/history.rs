@@ -5,7 +5,7 @@ use olr_data::level::Material;
 use olr_edit::compose::Rect;
 use olr_edit::element::Property;
 use olr_edit::level::{Paint, Shape};
-use olr_editor::history::{Edit, History, LevelMeta};
+use olr_editor::history::{Edit, History, LevelMeta, Patch};
 use olr_editor::{DocError, Document};
 use olr_format::levels::{ElementKind, ElementMaterial};
 use proptest::prelude::*;
@@ -71,16 +71,26 @@ fn operate(doc: &mut Document, h: &mut History, cat: &olr_editor::Catalog, op: (
     let ids: Vec<String> = doc.items().iter().map(|i| i.element.id.clone()).collect();
     let id = ids[a.unsigned_abs() as usize % ids.len()].clone();
     let objects = doc.level().objects.len().max(1);
-    let stroke = |doc: &mut Document, erase: bool| -> Result<Vec<Edit>, DocError> {
+    // A stroke into `target` of `material` (or erasing), as the pointer
+    // makes one: its conversion first, then its pixels.
+    let stroke = |doc: &mut Document, target: &str, erase: bool, material: Option<Material>| {
+        use olr_editor::ops::Stroke;
         // An earlier operation may have removed the layer.
-        let Some(before) = doc.layer_art("tunnels").cloned() else { return Ok(Vec::new()) };
+        if doc.index_of(target).is_none() {
+            return Ok(Vec::new());
+        }
+        let kind =
+            if erase { Stroke::Erase } else { Stroke::Paint(material.unwrap_or(Material::Background)) };
+        let mut step: Vec<Edit> = doc.begin_stroke(target, kind)?.into_iter().collect();
+        let Some(before) = doc.stroke_before(target) else { return Ok(step) };
         let shape = Shape::Circle { cx: a, cy: b, r: 6 };
         let r = if erase {
-            doc.erase("tunnels", &shape)
+            doc.erase(target, &shape, false)
         } else {
-            doc.paint("tunnels", &shape, &Paint::Colour(Rgba::rgb(1, 2, 3)))
+            doc.paint(target, &shape, &Paint::Colour(Rgba::rgb(1, 2, 3)), material)
         };
-        Ok(r?.and_then(|rect| doc.stroke_edit("tunnels", rect, &before)).into_iter().collect())
+        step.extend(r?.and_then(|rect| doc.stroke_edit(target, rect, &before)));
+        Ok::<_, DocError>(step)
     };
     let result: Result<Vec<Edit>, DocError> = match kind {
         0 => doc.set(&id, Property::Name(format!("n{b}"))).map(|c| vec![c.edit]),
@@ -90,8 +100,8 @@ fn operate(doc: &mut Document, h: &mut History, cat: &olr_editor::Catalog, op: (
         4 => doc.set(&id, Property::Colours(Some(b.unsigned_abs() as u16 % 30 + 2))).map(|c| vec![c.edit]),
         5 => doc.move_to(&id, b.unsigned_abs() as usize % ids.len()).map(|c| vec![c.edit]),
         6 => doc.add_layer(ElementMaterial::Rock, "L").map(|c| vec![c.edit]),
-        7 => stroke(doc, false),
-        8 => stroke(doc, true),
+        7 => stroke(doc, "tunnels", false, None),
+        8 => stroke(doc, "tunnels", true, None),
         9 => doc.add_spawn((a, b)).map(|c| vec![c.edit]),
         10 => doc.move_object(b.unsigned_abs() as usize % objects, (b, a)).map(|c| vec![c.edit]),
         11 => doc.remove_object(a.unsigned_abs() as usize % objects).map(|c| vec![c.edit]),
@@ -103,6 +113,12 @@ fn operate(doc: &mut Document, h: &mut History, cat: &olr_editor::Catalog, op: (
         }
         13 => doc.remove(&id).map(|c| vec![c.edit]),
         14 => doc.set_art_scale(b.unsigned_abs() % 2 + 1).map(|c| vec![c.edit]),
+        // Plan 14d: another material (a conversion), masks, merge, split.
+        16 => stroke(doc, "tunnels", false, Some([Material::Rock, Material::Dirt][(b & 1) as usize])),
+        17 => stroke(doc, "badge", true, None),
+        18 => doc.merge_down(&id),
+        19 => doc.split(&id),
+        20 => stroke(doc, "wall", true, None),
         _ => doc
             .resize(
                 (504 + a.unsigned_abs() % 20, 350 + b.unsigned_abs() % 20),
@@ -123,7 +139,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(24))]
     #[test]
     fn every_operation_undoes_to_the_same_files(
-        ops in prop::collection::vec((0u8..16, -20i32..520, -20i32..360), 1..=6),
+        ops in prop::collection::vec((0u8..21, -20i32..520, -20i32..360), 1..=6),
     ) {
         let Some(root) = content() else { return Ok(()) };
         let (_tmp, mut doc) = open_fixture(&root);
@@ -152,11 +168,12 @@ proptest! {
 fn pixels(w: u32, h: u32) -> Vec<Edit> {
     let mut after = RgbaImage::new(w, h);
     after.set(0, 0, Rgba::rgb(1, 2, 3));
+    let patch = |art| Patch { art, cells: None, back: None };
     vec![Edit::Pixels {
         id: "x".into(),
         rect: Rect { x: 0, y: 0, w, h },
-        before: RgbaImage::new(w, h),
-        after,
+        before: patch(RgbaImage::new(w, h)),
+        after: patch(after),
     }]
 }
 
@@ -201,8 +218,8 @@ fn a_locked_element_refuses_changes_but_moves_in_the_stack() {
     assert!(locked(doc.set("tunnels", Property::Name("x".into())).map(|_| ())));
     assert!(locked(doc.remove("tunnels").map(|_| ())));
     let shape = Shape::Rect { x: 0, y: 0, w: 4, h: 4 };
-    assert!(locked(doc.paint("tunnels", &shape, &Paint::Colour(Rgba::rgb(1, 1, 1))).map(|_| ())));
-    assert!(locked(doc.erase("tunnels", &shape).map(|_| ())));
+    assert!(locked(doc.paint("tunnels", &shape, &Paint::Colour(Rgba::rgb(1, 1, 1)), None).map(|_| ())));
+    assert!(locked(doc.erase("tunnels", &shape, false).map(|_| ())));
     doc.move_to("tunnels", 0).unwrap();
     assert_eq!(doc.index_of("tunnels"), Some(0));
     doc.set("tunnels", Property::Locked(false)).unwrap();
@@ -308,11 +325,23 @@ fn a_forged_pixels_edit_never_panics() {
     let edit = Edit::Pixels {
         id: "tunnels".into(),
         rect: Rect { x: u32::MAX, y: u32::MAX - 1, w: 2, h: 2 },
-        before: RgbaImage::new(2, 2),
-        after: RgbaImage::new(2, 2),
+        before: Patch { art: RgbaImage::new(2, 2), cells: None, back: None },
+        after: Patch { art: RgbaImage::new(2, 2), cells: Some(vec![Material::Rock; 4]), back: None },
     };
     doc.apply(&edit, true);
     doc.apply(&edit, false);
+    // Plan 14d: a forged mask or layer swap changes nothing either.
+    let mask = Edit::Mask {
+        id: "badge".into(),
+        rect: Rect { x: u32::MAX, y: 0, w: 9, h: 9 },
+        before: vec![0; 3],
+        after: vec![],
+    };
+    doc.apply(&mask, true);
+    doc.apply(&mask, false);
+    let item = doc.items()[0].clone();
+    let swap = Edit::Layer { index: 999, before: Box::new(item.clone()), after: Box::new(item) };
+    doc.apply(&swap, true);
     assert!(files(&doc) == a);
 }
 
@@ -322,9 +351,13 @@ fn a_stale_stroke_before_gives_no_edit() {
     let Some(root) = content() else { return };
     let (_tmp, doc) = open_fixture(&root);
     let rect = Rect { x: 1, y: 1, w: 4, h: 4 };
-    assert!(doc.stroke_edit("tunnels", rect, &RgbaImage::new(3, 3)).is_none());
-    assert!(doc.stroke_edit("nope", rect, doc.layer_art("tunnels").unwrap()).is_none());
-    assert!(doc.stroke_edit("tunnels", rect, doc.layer_art("tunnels").unwrap()).is_some());
+    use olr_editor::ops::StrokeBefore;
+    let stale = StrokeBefore::Layer(Decoded::Drawn { art: RgbaImage::new(3, 3), cells: None, back: None });
+    assert!(doc.stroke_edit("tunnels", rect, &stale).is_none());
+    let before = doc.stroke_before("tunnels").unwrap();
+    assert!(doc.stroke_edit("nope", rect, &before).is_none());
+    assert!(doc.stroke_edit("tunnels", rect, &before).is_some());
+    assert!(doc.stroke_edit("badge", rect, &before).is_none(), "a layer's copy is no mask's");
 }
 
 /// An edit that changes nothing says so.
@@ -341,4 +374,40 @@ fn unchanged_edits_are_no_ops() {
     let mut h = History::new();
     h.push(vec![doc.move_to("tiny", i).unwrap().edit]);
     assert!(!h.can_undo(), "a step of no-ops is not recorded");
+}
+
+/// Plan 14d: the new edits count what they hold: a patch's cells and back
+/// art, a layer swap's items, a mask's bytes.
+#[test]
+fn the_new_edits_count_their_bytes() {
+    let base = std::mem::size_of::<Edit>();
+    let art = RgbaImage::new(4, 4);
+    let patch = Patch { art: art.clone(), cells: Some(vec![Material::Dirt; 16]), back: Some(art.clone()) };
+    let edit = Edit::Pixels {
+        id: "x".into(),
+        rect: Rect { x: 0, y: 0, w: 4, h: 4 },
+        before: patch.clone(),
+        after: patch,
+    };
+    assert_eq!(edit.bytes(), base + 2 * (64 + 16 + 64));
+    let mask = Edit::Mask {
+        id: "x".into(),
+        rect: Rect { x: 0, y: 0, w: 2, h: 3 },
+        before: vec![0; 6],
+        after: vec![255; 6],
+    };
+    assert_eq!(mask.bytes(), base + 12);
+    let item = olr_editor::Item {
+        element: olr_format::levels::Element {
+            id: "x".into(),
+            name: String::new(),
+            visible: true,
+            locked: false,
+            kind: ElementKind::drawn(ElementMaterial::Dirt),
+        },
+        decoded: Decoded::Drawn { art, cells: None, back: None },
+    };
+    let layer = Edit::Layer { index: 0, before: Box::new(item.clone()), after: Box::new(item) };
+    assert!(layer.bytes() >= base + 2 * 64);
+    assert!(layer.is_noop() && edit.is_noop() && !mask.is_noop());
 }
