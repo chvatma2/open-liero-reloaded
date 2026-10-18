@@ -87,6 +87,11 @@ pub struct Element {
     /// Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub glow: Option<ElementGlow>,
+    /// Its rock and dirt let light through (look system §Clear solids):
+    /// worms and projectiles still collide. An image or drawn element
+    /// only. Default false.
+    #[serde(default, skip_serializing_if = "d::is_false")]
+    pub clear: bool,
 }
 
 /// How an element's covered pixels glow: they show at `strength` whatever
@@ -571,6 +576,9 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                 ),
             ));
         }
+        if e.clear && matches!(e.kind, ElementKind::Raster) {
+            return Err(bad("clear", "a raster element cannot be clear: split it into layers".into()));
+        }
         if let Some(g) = &e.glow {
             if matches!(e.kind, ElementKind::Raster) {
                 return Err(bad("glow", "a raster element cannot glow: split it into layers".into()));
@@ -665,6 +673,7 @@ mod tests {
             locked: false,
             kind,
             glow: None,
+            clear: false,
         };
         CompositionSource {
             composition: Composition {
@@ -932,6 +941,7 @@ mod tests {
                 back: true,
             },
             glow: None,
+            clear: false,
         };
         // A mask's pixels count too: at the limit, a 10 × 10 mask is over.
         let mut at_limit = sample();

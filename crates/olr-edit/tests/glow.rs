@@ -47,6 +47,7 @@ fn pack(w: u32, h: u32, s: u32) -> Pack {
         thumb: None,
         look: Some(LookSource { glow_groups: vec![group("sky"), group("lava")], ..Default::default() }),
         glow: None,
+        clear: None,
     };
     Pack { manifest, source: Source::Level(level), composition: None, other: BTreeMap::new() }
 }
@@ -212,4 +213,48 @@ fn a_cell_glowing_off_centre_takes_its_glow_group() {
     let g = l.glow.as_ref().unwrap();
     assert_eq!(g.groups[4], 2, "lava's group");
     assert_eq!(g.groups[5], 0, "nothing glows there");
+}
+
+#[test]
+fn clear_follows_the_element_giving_the_material() {
+    let mut p = stack(2);
+    // A glass (rock) layer over x 3-4, above the ground and the lava.
+    add_layer(&mut p, ElementMaterial::Rock, "Glass").unwrap();
+    draw(&mut p, "glass", &Shape::Rect { x: 3, y: 0, w: 2, h: 1 }, &Paint::Colour(RED), None).unwrap();
+    assert_eq!(baked(&p).clear, None, "nothing clear yet");
+    set(&mut p, "glass", Property::Clear(true)).unwrap();
+    assert_eq!(baked(&p).clear.as_deref(), Some(&[0, 0, 0, 255, 255, 0][..]));
+    set(&mut p, "lava", Property::Clear(true)).unwrap();
+    let full = baked(&p);
+    assert_eq!(full.clear.as_deref(), Some(&[0, 0, 0, 255, 255, 255][..]));
+    // A region bake equals the full one.
+    let mut part = full.clone();
+    part.clear.as_mut().unwrap().iter_mut().for_each(|v| *v = 0);
+    let baker = Baker::new(p.composition.as_ref().unwrap(), (6, 1), 2, &RgbaImage::new(1, 1)).unwrap();
+    baker.bake_region(&mut part, Rect { x: 0, y: 0, w: 4, h: 1 });
+    baker.bake_region(&mut part, Rect { x: 4, y: 0, w: 2, h: 1 });
+    assert_eq!(part.clear, full.clear);
+    // A background element's clear never counts: air already lets light through.
+    set(&mut p, "glass", Property::Clear(false)).unwrap();
+    set(&mut p, "lava", Property::Clear(false)).unwrap();
+    set(&mut p, "sky", Property::Clear(true)).unwrap();
+    assert_eq!(baked(&p).clear, None);
+}
+
+#[test]
+fn a_raster_element_cannot_be_clear() {
+    let mut p = pack(4, 1, 1);
+    ensure_composed(&mut p).unwrap();
+    let e = set(&mut p, "base", Property::Clear(true)).unwrap_err().to_string();
+    assert!(e.contains("clear"), "{e}");
+}
+
+#[test]
+fn resize_re_lays_clear_flags() {
+    let mut l = level(&pack(3, 1, 1)).clone();
+    l.clear = Some(vec![0, 255, 0]);
+    olr_edit::level::resize(&mut l, (4, 1), (1, 0), Material::Rock, &Paint::Colour(RED)).unwrap();
+    assert_eq!(l.clear.as_deref(), Some(&[0, 0, 255, 0][..]));
+    olr_edit::level::resize(&mut l, (1, 1), (-2, 0), Material::Rock, &Paint::Colour(RED)).unwrap();
+    assert_eq!(l.clear.as_deref(), Some(&[255][..]));
 }

@@ -25,9 +25,10 @@ impl LoadedLevel {
             self.art_scale,
             theme.art(),
         );
-        // Glow that does not fit the map (it always does from a checked
-        // pack) is left out.
+        // Glow or clear flags that do not fit the map (they always do from
+        // a checked pack) are left out.
         map.set_glow(self.glow.clone());
+        map.set_clear(self.clear.clone());
         map
     }
 }

@@ -99,6 +99,8 @@ pub struct ColorMap {
     dirty: Vec<Rect>,
     /// The glow channel (spec 2026-10-18 look system §Glow), when the level has one.
     glow: Option<Box<Glow>>,
+    /// The level's clear flags per world pixel (§Clear solids), as loaded.
+    clear: Option<Box<[u8]>>,
 }
 
 /// A level's glow (the look system's `look/` images): strength per art pixel
@@ -214,6 +216,7 @@ impl ColorMap {
             rng: 0x9e37_79b9_7f4a_7c15,
             dirty: Vec::with_capacity(Self::MAX_DIRTY),
             glow: None,
+            clear: None,
         }
     }
 
@@ -235,6 +238,30 @@ impl ColorMap {
     }
 
     /// The composite glow strength, art size, row-major; `None` without glow.
+    /// Sets the level's clear flags (spec §Clear solids: a solid cell whose
+    /// flag is not 0 lets light through), one byte per world pixel,
+    /// row-major; flags of another size are refused (`false`). They are the
+    /// level's as loaded: play edits leave them, the flag only counts where
+    /// the cell is solid.
+    pub fn set_clear(&mut self, clear: Option<Vec<u8>>) -> bool {
+        match clear {
+            Some(c)
+                if c.len() as u64 != u64::from(self.material.width()) * u64::from(self.material.height()) =>
+            {
+                false
+            }
+            c => {
+                self.clear = c.map(Vec::into_boxed_slice);
+                true
+            }
+        }
+    }
+
+    /// The level's clear flags per world pixel; `None` when nothing is clear.
+    pub fn clear(&self) -> Option<&[u8]> {
+        self.clear.as_deref()
+    }
+
     pub fn glow(&self) -> Option<&[u8]> {
         self.glow.as_ref().map(|g| &g.comp[..])
     }

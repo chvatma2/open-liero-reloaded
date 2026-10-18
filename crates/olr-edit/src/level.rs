@@ -536,6 +536,9 @@ pub fn resize(
     // dropped, never indexed.
     level.glow = level.glow.take().filter(|g| g.fits(old_art, level.size));
     let mut glow = level.glow.as_ref().map(|_| GlowLayers::empty((aw, ah), (w, h)));
+    // Clear flags too; the new area is opaque.
+    level.clear = level.clear.take().filter(|c| c.len() == level.material.len());
+    let mut clear = level.clear.as_ref().map(|_| vec![0u8; w as usize * h as usize]);
     let (dx, dy) = (i64::from(offset.0), i64::from(offset.1));
     let (old_w, old_h) = level.size;
     // The old pixels that land inside: x in max(0, -dx)..min(old_w, w - dx).
@@ -544,6 +547,9 @@ pub fn resize(
             // Both inside their levels: lossless casts.
             let (ox, oy, nx, ny) = (ox as u32, oy as u32, (ox + dx) as u32, (oy + dy) as u32);
             cells[ny as usize * w as usize + nx as usize] = level.material[cell(level, ox, oy)];
+            if let (Some(c), Some(old)) = (clear.as_mut(), level.clear.as_ref()) {
+                c[ny as usize * w as usize + nx as usize] = old[cell(level, ox, oy)];
+            }
             if let (Some(g), Some(old)) = (glow.as_mut(), level.glow.as_ref()) {
                 let (o, n) = (cell(level, ox, oy), ny as usize * w as usize + nx as usize);
                 g.groups[n] = old.groups[o];
@@ -577,6 +583,7 @@ pub fn resize(
         o.set_at((shift(at.0, dx), shift(at.1, dy)));
     }
     level.glow = glow;
+    level.clear = clear;
     level.size = size;
     level.material = cells;
     level.front = front;

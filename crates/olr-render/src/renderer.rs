@@ -472,7 +472,7 @@ impl Renderer {
         self.dirty.extend(map.take_dirty());
         for r in &self.dirty {
             Self::write_rect(&self.queue, self.terrain.as_ref(), (map.pixels(), map.width()), *r);
-            if let Some(look) = &self.look {
+            if let Some(look) = &mut self.look {
                 look.write(&self.queue, map, *r);
             }
         }

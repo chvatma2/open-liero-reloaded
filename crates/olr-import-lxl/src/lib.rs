@@ -64,7 +64,15 @@ pub fn import_lxl(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Resu
         license: None,
     };
     Ok(ImportedLevel {
-        pack: LevelPack { manifest, level, thumb: None, look: None, glow: None, warnings: Vec::new() },
+        pack: LevelPack {
+            manifest,
+            level,
+            thumb: None,
+            look: None,
+            glow: None,
+            warnings: Vec::new(),
+            clear: None,
+        },
         warnings,
     })
 }

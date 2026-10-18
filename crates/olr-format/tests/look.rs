@@ -51,6 +51,7 @@ fn level(look: Option<&str>) -> LevelSource {
         thumb: None,
         look: None,
         glow: None,
+        clear: None,
     };
     if let Some(text) = look {
         let fs = files(&src).with("level.ron", text.as_bytes().to_vec());
@@ -130,6 +131,37 @@ fn glow_images_round_trip() {
     let mut again = MemFs::new();
     write_level_files(&mut again, &back).unwrap();
     assert_eq!(again, fs);
+}
+
+#[test]
+fn clear_image_round_trips_on_its_own() {
+    // A level without a look or glow may still have clear solids.
+    let mut src = level(None);
+    src.clear = Some((0..12).map(|i| if i % 3 == 0 { 255 } else { 0 }).collect());
+    let fs = files(&src);
+    let names: Vec<String> =
+        fs.files().map(|(p, _)| p.to_string()).filter(|p| p.starts_with("look/")).collect();
+    assert_eq!(names, ["look/clear.png"]);
+    assert!(olr_format::levels::file_paths(&src).iter().any(|p| p == "look/clear.png"));
+    assert_eq!(read_level_files(&fs).unwrap(), src);
+    // The wrong number of flags is refused on write.
+    let mut bad = src.clone();
+    bad.clear = Some(vec![0; 11]);
+    assert!(err(&bad).contains("look/clear.png"), "{}", err(&bad));
+}
+
+#[test]
+fn a_clear_image_of_the_wrong_size_fails_strictly_and_warns_leniently() {
+    let src = level(None);
+    let fs = files(&src).with("look/clear.png", image_io::encode_grey(5, 3, &[0; 15]));
+    let e = read_level_files(&fs).unwrap_err().to_string();
+    assert!(e.contains("look/clear.png"), "{e}");
+    let (back, warnings) = olr_format::levels::read_level_files_lenient(&fs).unwrap();
+    assert_eq!(back.clear, None);
+    assert!(
+        warnings.iter().any(|w| w.contains("look/clear.png") && w.contains("clear solids")),
+        "{warnings:?}"
+    );
 }
 
 fn err(src: &LevelSource) -> String {

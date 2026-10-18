@@ -3,6 +3,7 @@
 //! [`Renderer::set_lighting`]; without it nothing here exists and every
 //! frame is drawn as before.
 
+use olr_data::level::Material;
 use olr_look::{LookFrame, ViewMode};
 use olr_terrain::{ColorMap, Rect};
 
@@ -27,6 +28,10 @@ pub(super) struct LookTextures {
     pub(super) groups: wgpu::Texture,
     pub(super) solid: wgpu::Texture,
     pub(super) solid_view: wgpu::TextureView,
+    /// The solid map as written when the level has clear solids: its
+    /// material with each clear solid as background (spec §Clear solids).
+    /// Empty otherwise; the level's size once made.
+    light_cells: Vec<u8>,
     pub(super) art_scale: u32,
     /// The level's size in world pixels (uncropped).
     pub(super) level: (u32, u32),
@@ -506,6 +511,7 @@ impl LookState {
             groups,
             solid_view: view(&solid),
             solid,
+            light_cells: Vec::new(),
             art_scale: map.art_scale(),
             level,
             terrain_bind,
@@ -528,15 +534,37 @@ impl LookState {
     }
 
     /// Writes art rectangle `r` of `map`'s glow, and the world rectangle
-    /// holding it of its groups and material.
-    pub(super) fn write(&self, queue: &wgpu::Queue, map: &ColorMap, r: Rect) {
-        let Some(t) = &self.textures else { return };
+    /// holding it of its groups and material (a clear solid as background,
+    /// so light passes it).
+    pub(super) fn write(&mut self, queue: &wgpu::Queue, map: &ColorMap, r: Rect) {
+        let Some(t) = &mut self.textures else { return };
         let wr = world_rect(r, t.art_scale);
         if let (Some(glow), Some(groups)) = (map.glow(), map.glow_groups()) {
             write_bytes(queue, &t.glow, (glow, map.width()), r);
             write_bytes(queue, &t.groups, (groups, t.level.0), wr);
         }
-        write_bytes(queue, &t.solid, (map.material().cells(), t.level.0), wr);
+        let cells = map.material().cells();
+        let Some(clear) = map.clear().filter(|c| c.len() == cells.len()) else {
+            write_bytes(queue, &t.solid, (cells, t.level.0), wr);
+            return;
+        };
+        if t.light_cells.len() != cells.len() {
+            t.light_cells = cells.to_vec();
+        }
+        let w = t.level.0 as usize;
+        let (x0, x1) = ((wr.x as usize).min(w), (wr.x.saturating_add(wr.w) as usize).min(w));
+        let rows = (wr.y as usize)..(wr.y.saturating_add(wr.h) as usize).min(cells.len() / w.max(1));
+        for y in rows {
+            let i = y * w;
+            for ((out, &cell), &flag) in t.light_cells[i + x0..i + x1]
+                .iter_mut()
+                .zip(&cells[i + x0..i + x1])
+                .zip(&clear[i + x0..i + x1])
+            {
+                *out = if flag != 0 { Material::Background as u8 } else { cell };
+            }
+        }
+        write_bytes(queue, &t.solid, (&t.light_cells, t.level.0), wr);
     }
 
     /// Packs `look` (and where this frame draws) into the globals' floats.

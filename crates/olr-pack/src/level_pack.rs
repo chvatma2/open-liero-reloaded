@@ -34,6 +34,8 @@ pub struct LevelPack {
     pub look: Option<olr_look::LevelLook>,
     /// The level's glow images.
     pub glow: Option<olr_format::levels::GlowLayers>,
+    /// The level's clear flags (`look/clear.png`).
+    pub clear: Option<Vec<u8>>,
     /// What [`read_level`] left out of a look that did not check.
     pub warnings: Vec<String>,
 }
@@ -123,7 +125,7 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     let (src, warnings) = olr_format::levels::read_level_files_lenient(src)?;
     let level = compile_level(&src)?;
     let look = olr_format::levels::compile_look(&src)?;
-    Ok(LevelPack { manifest, level, thumb: None, look, glow: src.glow, warnings })
+    Ok(LevelPack { manifest, level, thumb: None, look, glow: src.glow, clear: src.clear, warnings })
 }
 
 #[cfg(test)]
@@ -160,6 +162,7 @@ pub(crate) mod tests {
             thumb: None,
             look: None,
             glow: None,
+            clear: None,
             warnings: Vec::new(),
         }
     }

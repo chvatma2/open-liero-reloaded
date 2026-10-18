@@ -51,6 +51,8 @@ pub enum Property {
     Threshold(u8),
     /// The element's glow (an image or drawn element; look system).
     Glow(Option<ElementGlow>),
+    /// Its rock and dirt let light through (look system §Clear solids).
+    Clear(bool),
 }
 
 fn level(pack: &Pack) -> Result<&LevelSource, ElementError> {
@@ -277,6 +279,7 @@ pub fn add_image_with(
                     mask: false,
                 },
                 glow: None,
+                clear: false,
             },
         )?;
         for p in settings {
@@ -303,6 +306,7 @@ pub fn add_layer(pack: &mut Pack, material: ElementMaterial, name: &str) -> Resu
                 locked: false,
                 kind: ElementKind::drawn(material),
                 glow: None,
+                clear: false,
             },
         )?;
         Ok(id)
@@ -323,6 +327,7 @@ fn field(p: &Property) -> &'static str {
         Property::Dither(_) => "dither",
         Property::Threshold(_) => "alpha_threshold",
         Property::Glow(_) => "glow",
+        Property::Clear(_) => "clear",
     }
 }
 
@@ -375,6 +380,10 @@ fn apply(
                 return Err(wrong("an image or drawn element"));
             }
             Property::Glow(g) => e.glow = g,
+            Property::Clear(_) if matches!(e.kind, ElementKind::Raster) => {
+                return Err(wrong("an image or drawn element (clear)"));
+            }
+            Property::Clear(c) => e.clear = c,
             Property::Name(n) => e.name = n,
             Property::Visible(v) => e.visible = v,
             Property::Locked(v) => e.locked = v,
@@ -716,6 +725,7 @@ pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
                 locked: false,
                 kind: ElementKind::Raster,
                 glow: None,
+                clear: false,
             });
             new
         })

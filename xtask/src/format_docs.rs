@@ -84,6 +84,7 @@ const PAGES: &[Page] = &[
             "look/glow-back.png",
             "look/groups.png",
             "look/groups-back.png",
+            "look/clear.png",
         ],
     },
     Page {

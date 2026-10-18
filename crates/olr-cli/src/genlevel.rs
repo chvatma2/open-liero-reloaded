@@ -165,6 +165,7 @@ impl GenLevel {
             look: None,
             glow: None,
             warnings: Vec::new(),
+            clear: None,
         }
     }
 }

@@ -49,6 +49,7 @@ fn level() -> LevelSource {
         thumb: None,
         look: None,
         glow: None,
+        clear: None,
     }
 }
 

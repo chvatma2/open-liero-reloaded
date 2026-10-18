@@ -80,6 +80,7 @@ fn generated_level(root: &Path, id: &str, seed: u32) -> PathBuf {
             look: None,
             glow: None,
             warnings: Vec::new(),
+            clear: None,
         },
     )
     .unwrap();

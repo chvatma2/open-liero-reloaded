@@ -135,6 +135,7 @@ fn room_level() -> olr_pack::LevelPack {
         look: None,
         glow: None,
         warnings: Vec::new(),
+        clear: None,
     }
 }
 
@@ -431,6 +432,7 @@ fn scaled_level(id: &str, size: u32, art_scale: u32) -> olr_pack::LevelPack {
         look: None,
         glow: None,
         warnings: Vec::new(),
+        clear: None,
     }
 }
 
@@ -631,6 +633,7 @@ fn the_first_spawn_is_used_only_when_inside_the_level() {
         look: None,
         glow: None,
         warnings: Vec::new(),
+        clear: None,
     };
     assert_eq!(level(&[(-1, 5), (10, 10)]).first_spawn(), None, "only the first one counts");
     assert_eq!(level(&[(10, 10)]).first_spawn(), Some((10, 10)));

@@ -27,6 +27,11 @@ fn manifest(id: &str, kind: PackKind) -> PackManifest {
 
 /// A 6 × 4 level at art scale 2 with a look (one group, one light) and glow.
 fn lit_level(dir: &Path) {
+    lit_level_with(dir, |_| {});
+}
+
+/// [`lit_level`] changed by `edit` before it is written.
+fn lit_level_with(dir: &Path, edit: impl FnOnce(&mut LevelSource)) {
     let (w, h, s) = (6, 4, 2);
     let mut glow = GlowLayers::empty((w * s, h * s), (w, h));
     glow.front[0] = 200;
@@ -45,7 +50,7 @@ fn lit_level(dir: &Path) {
         animation: Default::default(),
         phase_ms: None,
     };
-    let src = LevelSource {
+    let mut src = LevelSource {
         name: "Lit".into(),
         notes: String::new(),
         size: (w, h),
@@ -58,7 +63,9 @@ fn lit_level(dir: &Path) {
         thumb: None,
         look: Some(LookSource { glow_groups: vec![group], ..Default::default() }),
         glow: Some(glow),
+        clear: None,
     };
+    edit(&mut src);
     let mut fs = DirFs::new(dir.join("lit"));
     write_level_files(&mut fs, &src).unwrap();
     olr_pack::write_manifest(&mut fs, &manifest("lit", PackKind::Level)).unwrap();
@@ -120,6 +127,47 @@ fn the_color_map_carries_the_glow() {
     let theme = content.load_theme(&level.theme).unwrap();
     let map = level.color_map(&theme);
     assert_eq!(map.glow().unwrap()[0], 200);
+}
+
+#[test]
+fn clear_solids_load_without_a_look() {
+    let tmp = tempfile::tempdir().unwrap();
+    let flags: Vec<u8> = (0..24).map(|i| u8::from(i % 5 == 0)).collect();
+    lit_level_with(tmp.path(), |l| {
+        (l.look, l.glow, l.clear) = (None, None, Some(flags.clone()));
+        l.objects.clear();
+    });
+    let level = Content::open(tmp.path()).unwrap().load_level("lit").unwrap();
+    assert_eq!(level.clear.as_deref(), Some(&flags[..]));
+    assert!(level.has_look(), "clear solids need the look passes");
+    assert!(
+        olr_pack::validate(&DirFs::new(tmp.path().join("lit")))
+            .iter()
+            .all(|d| d.severity != olr_pack::Severity::Error)
+    );
+    let Some(root) = content_dir() else { return };
+    let content = Content::open_layers(&[Path::new(&root), tmp.path()]).unwrap();
+    let level = content.load_level("lit").unwrap();
+    let map = level.color_map(&content.load_theme(&level.theme).unwrap());
+    assert_eq!(map.clear(), Some(&flags[..]));
+}
+
+#[test]
+fn a_broken_clear_image_loads_without_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    lit_level_with(tmp.path(), |l| l.clear = Some(vec![1; 24]));
+    std::fs::write(tmp.path().join("lit/look/clear.png"), image_io::encode_grey(3, 3, &[0; 9])).unwrap();
+    let level = Content::open(tmp.path()).unwrap().load_level("lit").unwrap();
+    assert_eq!(level.clear, None);
+    assert!(level.glow.is_some() && level.look.is_some());
+    assert!(level.warnings.iter().any(|w| w.contains("look/clear.png")), "{:?}", level.warnings);
+    let diags = olr_pack::validate(&DirFs::new(tmp.path().join("lit")));
+    assert!(
+        diags
+            .iter()
+            .any(|d| d.severity == olr_pack::Severity::Error && d.to_string().contains("look/clear.png")),
+        "{diags:?}"
+    );
 }
 
 const MOD: &str = "(name: \"T\", weapons: [\"w\"])";

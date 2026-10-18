@@ -239,3 +239,19 @@ proptest! {
         }
     }
 }
+
+#[test]
+fn clear_flags_are_the_level_size() {
+    let t = map(&["DRR", "..R"]);
+    let mut c = glowing(&t);
+    assert_eq!(c.clear(), None);
+    assert!(!c.set_clear(Some(vec![1; 5])), "another size is refused");
+    assert_eq!(c.clear(), None);
+    assert!(c.set_clear(Some(vec![0, 1, 9, 0, 0, 0])));
+    assert_eq!(c.clear(), Some(&[0, 1, 9, 0, 0, 0][..]));
+    // Play edits leave the flags: they are the level's as loaded.
+    c.apply(ColorEdit::Carve { hole: 0, x: 1, y: 0 });
+    assert_eq!(c.clear(), Some(&[0, 1, 9, 0, 0, 0][..]));
+    assert!(c.set_clear(None));
+    assert_eq!(c.clear(), None);
+}

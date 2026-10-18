@@ -140,7 +140,7 @@ use olr_format::levels::{Dither, Element, ElementKind, ElementMaterial};
 const DARK: Rgba = Rgba::rgb(90, 60, 30);
 
 fn element(id: &str, kind: ElementKind) -> Element {
-    Element { id: id.into(), name: id.into(), visible: true, locked: false, kind, glow: None }
+    Element { id: id.into(), name: id.into(), visible: true, locked: false, kind, glow: None, clear: false }
 }
 
 /// A 1-high strip at `at` of `pixels` (`None` uncovered) of `m`, art scale 1.

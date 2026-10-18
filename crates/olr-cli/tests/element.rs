@@ -433,3 +433,23 @@ fn cli_sets_and_paints_glow() {
     assert!(!pack.join("editor/glow/dirt.png").exists());
     assert!(!pack.join("look").join("glow.png").exists());
 }
+
+#[test]
+fn cli_sets_clear() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    let run = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        cli(&all, &pack, &content)
+    };
+    ok(&run(&["split", "{pack}", "base"]));
+    ok(&run(&["set", "{pack}", "rock", "--clear", "true"]));
+    let composition = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    assert!(composition.contains("clear: true"), "{composition}");
+    assert!(pack.join("look/clear.png").is_file());
+    ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+    ok(&run(&["set", "{pack}", "rock", "--clear", "false"]));
+    assert!(!pack.join("look/clear.png").exists());
+}

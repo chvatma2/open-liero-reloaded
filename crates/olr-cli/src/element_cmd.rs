@@ -171,6 +171,9 @@ pub(crate) enum ElementCommand {
         /// The glow group (an id in level.ron's look) the glow lights with.
         #[arg(long)]
         glow_group: Option<String>,
+        /// Its rock and dirt let light through (look system), still solid.
+        #[arg(long)]
+        clear: Option<bool>,
         #[command(flatten)]
         content: ContentArg,
     },
@@ -423,6 +426,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             threshold,
             glow,
             glow_group,
+            clear,
             content,
         } => edit(pack, content, |p| {
             let glow = glow_property(p, id, *glow, glow_group.as_deref())?;
@@ -440,6 +444,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
                 dither.map(|d| Property::Dither(d.dither())),
                 threshold.map(Property::Threshold),
                 glow,
+                clear.map(Property::Clear),
                 locked.filter(|l| *l).map(Property::Locked),
             ];
             let properties: Vec<Property> = properties.into_iter().flatten().collect();

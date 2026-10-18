@@ -35,6 +35,8 @@ pub struct LoadedLevel {
     pub look: Option<olr_look::LevelLook>,
     /// The level's glow images.
     pub glow: Option<olr_terrain::GlowLayers>,
+    /// The level's clear flags per world pixel (`look/clear.png`).
+    pub clear: Option<Vec<u8>>,
     /// What loading left out of a look that did not check, to log once.
     pub warnings: Vec<String>,
 }
@@ -45,13 +47,13 @@ impl LoadedLevel {
     /// [`Content::load_level`] applies.
     pub fn from_source(src: &LevelSource) -> anyhow::Result<LoadedLevel> {
         let look = olr_format::levels::compile_look(src)?;
-        LoadedLevel::from_level(olr_format::levels::compile_level(src)?, look, src.glow.clone(), Vec::new())
+        let extras = (look, src.glow.clone(), src.clear.clone());
+        LoadedLevel::from_level(olr_format::levels::compile_level(src)?, extras, Vec::new())
     }
 
     fn from_level(
         l: Level,
-        look: Option<olr_look::LevelLook>,
-        glow: Option<olr_terrain::GlowLayers>,
+        (look, glow, clear): (Option<olr_look::LevelLook>, Option<olr_terrain::GlowLayers>, Option<Vec<u8>>),
         warnings: Vec<String>,
     ) -> anyhow::Result<LoadedLevel> {
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
@@ -65,13 +67,15 @@ impl LoadedLevel {
             spawns: l.def.spawns,
             look,
             glow,
+            clear,
             warnings,
         })
     }
 
-    /// The level has a look or glows: the renderer's look passes draw it.
+    /// The level has a look, glows or has clear solids: the renderer's
+    /// look passes draw it.
     pub fn has_look(&self) -> bool {
-        self.look.is_some() || self.glow.is_some()
+        self.look.is_some() || self.glow.is_some() || self.clear.is_some()
     }
 
     /// The first spawn point when it is a good spawn point, else `None` (a
@@ -173,7 +177,7 @@ impl Content {
         let pack = olr_pack::read_level(&self.pack(id, PackKind::Level)?)
             .with_context(|| format!("level pack {id}"))?;
         let warnings = pack.warnings.iter().map(|w| format!("{id}: {w}")).collect();
-        LoadedLevel::from_level(pack.level, pack.look, pack.glow, warnings)
+        LoadedLevel::from_level(pack.level, (pack.look, pack.glow, pack.clear), warnings)
             .with_context(|| format!("level pack {id}"))
     }
 

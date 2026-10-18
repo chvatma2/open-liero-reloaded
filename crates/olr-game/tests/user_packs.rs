@@ -42,7 +42,15 @@ fn level(root: &Path, id: &str, name: &str) {
     let mut fs = MemFs::new();
     olr_pack::write_level(
         &mut fs,
-        &olr_pack::LevelPack { manifest, level, thumb: None, look: None, glow: None, warnings: Vec::new() },
+        &olr_pack::LevelPack {
+            manifest,
+            level,
+            thumb: None,
+            look: None,
+            glow: None,
+            warnings: Vec::new(),
+            clear: None,
+        },
     )
     .unwrap();
     let mut sink = DirFs::new(root.join(id));

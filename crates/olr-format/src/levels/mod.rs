@@ -59,6 +59,10 @@ pub const GLOW_BACK_FILE: &str = "look/glow-back.png";
 pub const GROUPS_FILE: &str = "look/groups.png";
 /// The backdrop's glow group per world pixel, 8-bit grey, as `look/groups.png`.
 pub const GROUPS_BACK_FILE: &str = "look/groups-back.png";
+/// The level's clear solids per world pixel, 8-bit grey: 0 opaque, any
+/// other value lets light through a solid cell (spec §Clear solids).
+/// Optional, on its own.
+pub const CLEAR_FILE: &str = "look/clear.png";
 /// A level's glow images: all four or none.
 pub const LOOK_FILES: [&str; 4] = [GLOW_FILE, GLOW_BACK_FILE, GROUPS_FILE, GROUPS_BACK_FILE];
 
@@ -111,6 +115,9 @@ pub struct LevelSource {
     pub look: Option<LookSource>,
     /// The four `look/` images, when the level glows.
     pub glow: Option<GlowLayers>,
+    /// `look/clear.png`'s flags, `size.0 * size.1`, row-major, when some
+    /// solid is clear.
+    pub clear: Option<Vec<u8>>,
 }
 
 /// A thing placed in a level.
@@ -346,6 +353,15 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
     if let Some(t) = &src.thumb {
         check_thumb(t).map_err(|m| FormatError::invalid(THUMB_FILE, "", m))?;
     }
+    if let Some(c) = &src.clear
+        && c.len() != cells
+    {
+        return Err(FormatError::invalid(
+            CLEAR_FILE,
+            "",
+            format!("{} flags, the level needs {cells} ({w}x{h})", c.len()),
+        ));
+    }
     compile_look(src)?;
     if let Some(g) = &src.glow {
         check_glow(src, g)?;
@@ -403,6 +419,7 @@ pub fn lift_level(level: &Level, thumb: Option<Vec<u8>>) -> Result<LevelSource, 
         thumb,
         look: None,
         glow: None,
+        clear: None,
     };
     if (level.material.width(), level.material.height()) != src.size {
         return Err(LiftError {
@@ -443,6 +460,7 @@ pub(crate) mod tests {
             thumb: None,
             look: None,
             glow: None,
+            clear: None,
         }
     }
 

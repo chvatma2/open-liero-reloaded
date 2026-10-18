@@ -406,6 +406,7 @@ fn the_new_edits_count_their_bytes() {
             locked: false,
             kind: ElementKind::drawn(ElementMaterial::Dirt),
             glow: None,
+            clear: false,
         },
         decoded: Decoded::Drawn { art, cells: None, back: None },
     };

@@ -16,6 +16,8 @@
 //! front art pixel glows as the element giving its colour; a back art
 //! pixel as the background element giving it (a dirt or rock layer's back
 //! art never glows); a world pixel's groups follow its centre art pixel.
+//! A solid world pixel is clear (`look/clear.png`) when the element giving
+//! its material is.
 //!
 //! Integer arithmetic only: the same composition bakes to the same bytes
 //! on every platform.
@@ -558,10 +560,18 @@ pub fn bake_elements_with(
     }
     let groups: Vec<&str> =
         level.look.as_ref().map_or(Vec::new(), |l| l.glow_groups.iter().map(|g| g.id.as_str()).collect());
-    let (layers, glows): (Vec<Layer>, Vec<Option<LayerGlow>>) = items
+    let (layers, extras): (Vec<Layer>, Vec<(Option<LayerGlow>, bool)>) = items
         .iter()
-        .filter_map(|(e, d)| Some((Layer::new(e, d, (aw, ah), s)?, layer_glow(e, masks, &groups, (w, h), s))))
+        .filter_map(|(e, d)| {
+            Some((Layer::new(e, d, (aw, ah), s)?, (layer_glow(e, masks, &groups, (w, h), s), e.clear)))
+        })
         .unzip();
+    let (glows, clears): (Vec<Option<LayerGlow>>, Vec<bool>) = extras.into_iter().unzip();
+    let cells = w as usize * h as usize;
+    let mut clear = clears.iter().any(|c| *c).then(|| match level.clear.take() {
+        Some(c) if c.len() == cells => c,
+        _ => vec![0; cells],
+    });
     let mut glow = if glows.iter().any(Option::is_some) {
         match level.glow.take() {
             Some(g) if g.fits((aw, ah), (w, h)) => Some(g),
@@ -589,9 +599,16 @@ pub fn bake_elements_with(
         for x in rect.x.min(w)..x1 {
             let cell = y as usize * w as usize + x as usize;
             let (cx, cy) = (x * s + s / 2, y * s + s / 2);
-            let material =
-                layers.iter().rev().find_map(|l| l.material(cell, cx, cy)).unwrap_or(Material::Background);
+            let (material, is_clear) = layers
+                .iter()
+                .zip(&clears)
+                .rev()
+                .find_map(|(l, c)| l.material(cell, cx, cy).map(|m| (m, *c)))
+                .unwrap_or((Material::Background, false));
             level.material[cell] = material;
+            if let Some(c) = clear.as_mut() {
+                c[cell] = u8::from(is_clear && material != Material::Background) * 255;
+            }
             for ay in y * s..(y + 1) * s {
                 for ax in x * s..(x + 1) * s {
                     let back = back_at(&layers, back_tile, ax, ay);
@@ -633,8 +650,9 @@ pub fn bake_elements_with(
             }
         }
     }
-    // A glow left with nothing glowing is no glow.
+    // A glow left with nothing glowing is no glow; so are clear flags.
     level.glow = glow.filter(|g| g.front.iter().chain(&g.back).any(|v| *v > 0));
+    level.clear = clear.filter(|c| c.iter().any(|v| *v > 0));
 }
 
 /// Decoded elements and processed images of one composition, ready to
@@ -882,6 +900,7 @@ fn as_level(
         thumb: None,
         look: None,
         glow: None,
+        clear: None,
     }
 }
 
@@ -996,6 +1015,7 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         locked: false,
         kind: ElementKind::Raster,
         glow: None,
+        clear: false,
     };
     let [m, f, b] = raster_files(&element.id);
     let files = [
@@ -1057,6 +1077,7 @@ pub fn split_layers(
             locked: false,
             kind: ElementKind::drawn(material),
             glow: None,
+            clear: false,
         };
         (e, Decoded::Drawn { art, cells: None, back: None })
     };
@@ -1118,7 +1139,7 @@ pub fn theme_back_tile(content: &Path, theme: &str) -> Result<RgbaImage, Compose
 }
 
 /// The files a bake writes that it can leave stale.
-const BAKED: [&str; 8] = [
+const BAKED: [&str; 9] = [
     "material.png",
     "front.png",
     "back.png",
@@ -1127,11 +1148,13 @@ const BAKED: [&str; 8] = [
     "look/glow-back.png",
     "look/groups.png",
     "look/groups-back.png",
+    "look/clear.png",
 ];
 
 /// The baked files of `pack` (a composed level) that differ from what its
 /// composition bakes to, in `BAKED`'s order: `material.png`, `front.png`,
-/// `back.png`, `thumb.png`, then the four `look/` glow images. Empty for
+/// `back.png`, `thumb.png`, then the four `look/` glow images and
+/// `look/clear.png`. Empty for
 /// any other pack.
 pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeError> {
     let (Source::Level(level), Some(src)) = (&pack.source, &pack.composition) else { return Ok(Vec::new()) };

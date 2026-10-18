@@ -34,6 +34,7 @@ fn level(w: u32, h: u32, s: u32) -> LevelSource {
         thumb: None,
         look: None,
         glow: None,
+        clear: None,
     }
 }
 
@@ -56,7 +57,15 @@ fn solid(w: u32, h: u32, c: Rgba) -> RgbaImage {
 }
 
 fn element(id: &str, kind: ElementKind) -> Element {
-    Element { id: id.into(), name: String::new(), visible: true, locked: false, kind, glow: None }
+    Element {
+        id: id.into(),
+        name: String::new(),
+        visible: true,
+        locked: false,
+        kind,
+        glow: None,
+        clear: false,
+    }
 }
 
 /// Adds an image element `id` (source `<id>.png`) on top.

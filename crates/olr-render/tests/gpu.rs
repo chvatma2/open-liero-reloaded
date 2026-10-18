@@ -806,3 +806,49 @@ fn glow_light_is_deterministic() {
     let b = glow_frame(&gpu, &map, view, &look);
     assert_eq!(gpu.read_light(&a).unwrap().1, gpu.read_light(&b).unwrap().1);
 }
+
+/// Sets `map`'s clear flags where `clear(x, y)`.
+fn with_clear(mut map: ColorMap, clear: impl Fn(u32, u32) -> bool) -> ColorMap {
+    let (w, h) = (map.material().width(), map.material().height());
+    let flags = (0..w * h).map(|i| u8::from(clear(i % w, i / w))).collect();
+    assert!(map.set_clear(Some(flags)));
+    map
+}
+
+#[test]
+fn a_lamp_shines_through_a_clear_wall() {
+    let Some(gpu) = offscreen() else { return };
+    let map = with_clear(room(100, 40, |x, _| x == 50), |x, _| x == 50);
+    let r =
+        lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &[lamp([30.5, 20.5], 100.0)], 0);
+    assert!(light_at(&gpu, &r, 60, 20)[0] > 0.2, "past the glass: lit");
+    // A flag on air changes nothing; the wall's other rows stay opaque.
+    let map = with_clear(room(100, 40, |x, _| x == 50), |x, y| x == 20 || (x == 50 && y < 10));
+    let r =
+        lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &[lamp([30.5, 20.5], 100.0)], 0);
+    assert!((light_at(&gpu, &r, 60, 20)[0] - 0.1).abs() < 1e-3, "behind the opaque part: the ambient");
+}
+
+#[test]
+fn glow_light_passes_a_clear_wall() {
+    let Some(gpu) = offscreen() else { return };
+    let map =
+        with_clear(glowing_room(100, 40, |x, y| x == 50 || y >= 36, |x, y| y >= 36 && x < 40), |x, y| {
+            x == 50 && y < 36
+        });
+    let r = glow_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &glow_look(1.0, 200.0));
+    assert!(light_at(&gpu, &r, 75, 20)[0] > 0.12, "past the glass: glow light");
+}
+
+#[test]
+fn a_clear_solid_takes_no_soak_or_floor() {
+    let Some(gpu) = offscreen() else { return };
+    let (map, view, _) = ground();
+    let map = with_clear(map, |_, y| y >= 30);
+    let r = lit_frame_with(&gpu, &map, view, &[], |l| {
+        l.light_soak = 8;
+        l.solid_floor = [0.4; 3];
+    });
+    assert!((light_at(&gpu, &r, 50, 25)[0] - 0.4).abs() < 2e-3, "opaque rock: the floor");
+    assert!((light_at(&gpu, &r, 50, 35)[0] - 0.1).abs() < 1e-3, "clear rock: lit as air");
+}

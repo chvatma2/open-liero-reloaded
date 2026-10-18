@@ -618,8 +618,15 @@ pub fn merge_down(
     let up = placed(ue, ud, level, s).ok_or_else(|| LayerError::NoPixels(ue.id.clone()))?;
     let merged = merge(&lp, &up, s).ok_or_else(|| LayerError::TooLarge(le.id.clone()))?;
     let (kind, decoded) = into_layer(merged, material, level, s);
-    let element =
-        Element { id: le.id.clone(), name: le.name.clone(), visible: true, locked: false, kind, glow: None };
+    let element = Element {
+        id: le.id.clone(),
+        name: le.name.clone(),
+        visible: true,
+        locked: false,
+        kind,
+        glow: None,
+        clear: false,
+    };
     Ok((element, decoded))
 }
 
@@ -656,6 +663,7 @@ pub fn split_element(
             locked: false,
             kind,
             glow: None,
+            clear: false,
         };
         out.push((element, decoded));
     }

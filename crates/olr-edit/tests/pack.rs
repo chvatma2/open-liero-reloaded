@@ -166,6 +166,7 @@ fn composed(dir: &std::path::Path) -> olr_edit::pack::Pack {
         locked: false,
         kind: olr_format::levels::ElementKind::drawn(olr_format::levels::ElementMaterial::Dirt),
         glow: None,
+        clear: false,
     });
     pack.composition = Some(src);
     pack

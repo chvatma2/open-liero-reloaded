@@ -6,9 +6,9 @@ use olr_vfs::{ContentSink, ContentSource, VPath};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BACK_FILE, FRONT_FILE, GLOW_BACK_FILE, GLOW_FILE, GROUPS_BACK_FILE, GROUPS_FILE, LEVEL_FILE, LOOK_FILES,
-    LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_THUMB_BYTES, THUMB_FILE, check, check_header,
-    check_thumb,
+    BACK_FILE, CLEAR_FILE, FRONT_FILE, GLOW_BACK_FILE, GLOW_FILE, GROUPS_BACK_FILE, GROUPS_FILE, LEVEL_FILE,
+    LOOK_FILES, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_THUMB_BYTES, THUMB_FILE, check,
+    check_header, check_thumb,
 };
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, LEVEL_ART};
@@ -72,6 +72,9 @@ pub fn file_paths(src: &LevelSource) -> Vec<String> {
     if src.glow.is_some() {
         out.extend(LOOK_FILES.map(String::from));
     }
+    if src.clear.is_some() {
+        out.push(CLEAR_FILE.into());
+    }
     out
 }
 
@@ -103,6 +106,9 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
         ] {
             write_bytes(sink, file, &image_io::encode_grey(size.0, size.1, values))?;
         }
+    }
+    if let Some(c) = &src.clear {
+        write_bytes(sink, CLEAR_FILE, &image_io::encode_grey(src.size.0, src.size.1, c))?;
     }
     Ok(())
 }
@@ -151,6 +157,14 @@ fn read_glow(
         groups: read_grey(src, GROUPS_FILE, world)?,
         groups_back: read_grey(src, GROUPS_BACK_FILE, world)?,
     }))
+}
+
+/// `look/clear.png`, when present.
+fn read_clear(src: &dyn ContentSource, world: (u32, u32)) -> Result<Option<Vec<u8>>, FormatError> {
+    if !VPath::new(CLEAR_FILE).is_ok_and(|p| src.exists(&p)) {
+        return Ok(None);
+    }
+    read_grey(src, CLEAR_FILE, world).map(Some)
 }
 
 /// Reads an art PNG, checking its header size against `level.ron`'s before
@@ -219,19 +233,24 @@ pub fn read_level_files(src: &dyn ContentSource) -> Result<LevelSource, FormatEr
 pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSource, FormatError> {
     let (mut level, glow) = read_base(src)?;
     level.glow = glow?;
+    level.clear = read_clear(src, level.size)?;
     check(&level)?;
     Ok(level)
 }
 
 /// [`read_level_files_without_thumb`] for playing: a look that does not
-/// check, or glow images that do not read or fit, are left out with a
-/// warning each instead of failing the level (a broken look never keeps a
+/// check, or glow or clear images that do not read or fit, are left out
+/// with a warning each instead of failing the level (a broken look never keeps a
 /// level from being played; `pack check` still reports it).
 pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource, Vec<String>), FormatError> {
     let (mut level, glow) = read_base(src)?;
     let mut warnings = Vec::new();
     level.glow = glow.unwrap_or_else(|e| {
         warnings.push(format!("{e}: the level plays without glow"));
+        None
+    });
+    level.clear = read_clear(src, level.size).unwrap_or_else(|e| {
+        warnings.push(format!("{e}: the level plays without clear solids"));
         None
     });
     if let Err(e) = super::compile_look(&level) {
@@ -302,6 +321,7 @@ fn read_base(
         thumb: None,
         look: file.look,
         glow: None,
+        clear: None,
     };
     Ok((level, glow))
 }

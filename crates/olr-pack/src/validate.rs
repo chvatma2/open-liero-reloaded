@@ -427,6 +427,7 @@ mod tests {
             locked: false,
             kind: olr_format::levels::ElementKind::Raster,
             glow: None,
+            clear: false,
         };
         let src = olr_format::levels::CompositionSource {
             composition: olr_format::levels::Composition { elements: vec![element] },

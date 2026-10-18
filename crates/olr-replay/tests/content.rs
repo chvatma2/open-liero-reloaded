@@ -119,6 +119,7 @@ fn level_pack(rock: bool) -> olr_pack::LevelPack {
         look: None,
         glow: None,
         warnings: Vec::new(),
+        clear: None,
     }
 }
 
