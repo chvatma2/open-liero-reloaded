@@ -217,6 +217,55 @@ impl Document {
         Ok(self.change(Edit::Insert { index, item: Box::new(Snapshot { item, original: None }) }))
     }
 
+    /// Splits raster element `id` (unlocked) into three drawn layers in its
+    /// place, bottom to top background, dirt and rock (`split_layers`), so
+    /// each can be painted and erased; the level looks and plays the same.
+    /// The edits (the raster out, the layers in) are applied: one history
+    /// step.
+    pub fn split(&mut self, id: &str) -> Result<Vec<Edit>, DocError> {
+        let index = self.unlocked(id)?;
+        let Decoded::Raster { material, front, back } = &self.items[index].decoded else {
+            return Err(DocError::WrongKind { id: id.into(), want: "a raster element" });
+        };
+        let mut others: Vec<Element> =
+            self.items.iter().filter(|i| i.element.id != id).map(|i| i.element.clone()).collect();
+        let stray = self.stray_files();
+        let mut ids = Vec::new();
+        for (name, fallback) in [("Background", "background"), ("Dirt", "dirt"), ("Rock", "rock")] {
+            let new = new_element_id(&others, &stray, name, fallback);
+            others.push(Element {
+                id: new.clone(),
+                name: name.into(),
+                visible: true,
+                locked: false,
+                kind: ElementKind::Raster,
+            });
+            ids.push(new);
+        }
+        let layers = olr_edit::compose::split_layers(
+            material,
+            front,
+            back,
+            self.level.size,
+            self.level.art_scale,
+            [&ids[0], &ids[1], &ids[2]],
+        );
+        self.check_with(|es| {
+            es.splice(index..=index, layers.iter().map(|(e, _)| e.clone()));
+        })?;
+        let raster = self.items[index].clone();
+        let mut edits =
+            vec![Edit::Remove { index, item: Box::new(Snapshot { item: raster, original: None }) }];
+        for (k, (element, decoded)) in layers.into_iter().enumerate() {
+            let item = Item { element, decoded };
+            edits.push(Edit::Insert { index: index + k, item: Box::new(Snapshot { item, original: None }) });
+        }
+        for e in &edits {
+            self.apply(e, true);
+        }
+        Ok(edits)
+    }
+
     /// A property (ruling R4: refused on a locked element unless it is
     /// `Locked`), checked with `check_elements`; an image reprocesses
     /// through the cache only when its pixelation or box size changes.

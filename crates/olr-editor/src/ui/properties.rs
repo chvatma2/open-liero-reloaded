@@ -48,6 +48,14 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
             if ui.checkbox(&mut locked, labels::LOCKED).changed() {
                 set(out, Property::Locked(locked));
             }
+            if matches!(e.kind, ElementKind::Raster)
+                && ui
+                    .add_enabled(!e.locked, egui::Button::new(labels::SPLIT))
+                    .on_hover_text("background, dirt and rock as drawn layers, to paint and erase")
+                    .clicked()
+            {
+                out.push(EditorAction::Split(id.clone()));
+            }
             let material = match &e.kind {
                 ElementKind::Image { material, .. } | ElementKind::Drawn { material } => Some(*material),
                 ElementKind::Raster => None,

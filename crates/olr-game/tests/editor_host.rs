@@ -163,7 +163,7 @@ fn recovery_survives_a_missing_original() {
     assert!(h.state().dirty(), "recovered changes are unsaved");
     assert_eq!(open_dir(&h), packs.join("office"));
     let layers = h.state().document().unwrap().items().len();
-    assert_eq!(layers, 2, "the base and the layer added");
+    assert_eq!(layers, 4, "the three layers and the one added");
     h.act(vec![A::Save]);
     assert_eq!(h.state().dialog(), None);
     assert!(packs.join("office/pack.ron").is_file(), "Save makes the pack again");
@@ -210,7 +210,7 @@ fn imports_are_bounded_before_reading() {
     assert!(matches!(&d, Some(olr_editor::Dialog::Error(e)) if e.contains("64 MiB")), "{d:?}");
     let d = pick(&mut h, "text.png");
     assert!(matches!(&d, Some(olr_editor::Dialog::Error(e)) if e.contains("not a PNG or JPEG")), "{d:?}");
-    assert_eq!(h.state().document().unwrap().items().len(), 1, "nothing imported");
+    assert_eq!(h.state().document().unwrap().items().len(), 3, "nothing imported: the three layers");
     assert_eq!(MAX_IMPORT_BYTES, 64 << 20);
 }
 

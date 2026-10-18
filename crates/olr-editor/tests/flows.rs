@@ -375,3 +375,78 @@ fn escape_reverts_a_text_field() {
     let d = h.state().state.document().unwrap();
     assert_eq!(d.items()[d.index_of("tiny").unwrap()].element.name, "Tiny");
 }
+
+/// A Base (raster) layer's properties offer "Split into layers": one step,
+/// undone in one.
+#[test]
+fn a_raster_splits_by_its_button() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.get_by_label("Base").click();
+    h.run();
+    h.get_by_label(labels::SPLIT).click();
+    h.run();
+    assert_eq!(ids(&h)[..3], ["background", "dirt", "rock"]);
+    assert!(h.state().state.dirty());
+    h.get_by_label(labels::UNDO).click();
+    h.run();
+    assert_eq!(ids(&h)[0], "base", "one undo puts the raster back");
+}
+
+/// The playtest: the toolbar's controls moved as things changed (the
+/// unsaved mark, a longer mod name), and the mod picker and the bots sat
+/// past the window's edge. Each stays inside and where it is.
+#[test]
+fn the_toolbar_stays_in_the_window_and_in_place() {
+    let Some(root) = content() else { return };
+    let names = [
+        "Select",
+        "Brush",
+        "Eraser",
+        "Rectangle",
+        "Ellipse",
+        "Line",
+        "Spawn",
+        "Eyedropper",
+        "Round",
+        "Square",
+        "Front tile",
+        "Back tile",
+        labels::UNDO,
+        labels::REDO,
+        labels::OPEN,
+        labels::SAVE,
+        labels::CLOSE,
+        labels::PLAY,
+        "Mod",
+        "Bots",
+        "Material view",
+        "Grid",
+    ];
+    for width in [1280.0, 1024.0] {
+        let (_tmp, state) = editor(&root);
+        let app = App { state, data: EditorData::default(), commands: Vec::new() };
+        let mut h = Harness::builder().with_size(egui::vec2(width, 720.0)).build_ui_state(
+            |ui, app: &mut App| {
+                for a in ui::show(ui, &app.state, &mut app.data) {
+                    let c = run(&mut app.state, a);
+                    app.commands.extend(c);
+                }
+            },
+            app,
+        );
+        h.run();
+        let rects = |h: &Harness<'static, App>| -> Vec<egui::Rect> {
+            names.iter().map(|n| h.get_by_label(n).rect()).collect()
+        };
+        let first = rects(&h);
+        for (n, r) in names.iter().zip(&first) {
+            assert!(r.min.x >= 0.0 && r.max.x <= width, "{n} at {r:?} leaves a {width}-point window");
+        }
+        act(&mut h, A::AddLayer);
+        act(&mut h, A::PlayMod("olx-mw-1-0".into()));
+        act(&mut h, A::Tool(Tool::Spawn));
+        let brush = h.state().state.brush();
+        act(&mut h, A::Brush(olr_editor::tools::Brush { size: 64, ..brush }));
+        assert_eq!(rects(&h), first, "nothing moved at {width} points");
+    }
+}

@@ -44,6 +44,13 @@ templates and the level operations.
   non-empty `dir` or a template of another kind is refused before anything
   is written, and a failed save removes the directories it made (parents
   included).
+- **`compose::split_layers` / `split_from`** (plan 14c, the playtest): a
+  level's material, front and back as three drawn layers, bottom to top
+  `background` (the back art everywhere), `dirt` and `rock` (the front art
+  over their cells, clear elsewhere); they bake back to the level's files
+  byte for byte (`every_bundled_level_round_trips_through_three_layers`).
+  The editor opens a plain level this way; `ensure_composed` (the CLI's
+  element commands) keeps its raster base.
 - **`level`** (R3), on a `LevelSource` in world pixels: `Rect` (a world
   rectangle; `compose` re-exports it), `Shape` (`Rect`, `Circle`,
   `Ellipse` and `Line` (plan 14b R10: by pixel centre, in doubled

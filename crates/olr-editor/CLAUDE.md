@@ -54,7 +54,12 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   backdrop closes it.
 - **Document** (`document.rs`, R2): the open level pack, each element
   decoded (`olr_edit::compose::Decoded`) through one `ImageCache` (R3).
-  `open` composes a plain level (a raster `base`) and rebakes; `to_pack`
+  `open` gives a plain level its three drawn layers (`olr_edit::compose::
+  split_from`: `background`, `dirt`, `rock`, which bake back to its files
+  byte for byte, the playtest's request: a loaded map can be erased and
+  painted) and rebakes; `split(id)` turns a raster element into the same
+  three layers in its place (`EditorAction::Split`, the properties' "Split
+  into layers": one step); `to_pack`
   (or a `snapshot()`'s, which a thread may make: `PackSnapshot`) encodes
   the composition and keeps the bake, refreshing the thumbnail
   only when the bake changed; a layer file whose pixels did not change is
@@ -76,8 +81,13 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   integer zoom). One stroke or drag is one step; an image move is live, a
   resize previews and applies on release (R8); any action that can change
   the document ends a drag first. Locks refuse content changes, not order
-  (R4). `overlays()` is what the canvas draws over the bake.
-- **Panels** (`ui/`): toolbar (Open…, Save, Close among them), element
+  (R4). `overlays()` is what the canvas draws over the bake; the grid is
+  drawn at every zoom, a line every `grid_step` world pixels (1, or the
+  smallest power of two at least 8 points apart).
+- **Panels** (`ui/`): toolbar in two rows that never move (drawing: tools,
+  brush, paint; then history, Open…, Save, Close, the unsaved mark's kept
+  space, Play with a fixed-width mod picker and the bots, the view; the
+  playtest's controls past the window's edge, `the_toolbar_stays_in_the_window_and_in_place`), element
   list (drag a name to reorder; Import image… opens the browser),
   properties or level settings, status bar, canvas (a frame without fill,
   `egui::Frame::NONE`: the host draws the bake under it; its AccessKit

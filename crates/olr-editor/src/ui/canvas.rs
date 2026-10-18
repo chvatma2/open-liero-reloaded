@@ -9,7 +9,7 @@ use super::{EditorData, labels};
 use crate::state::{EditorAction, EditorState};
 use crate::tools::{BrushShape, Overlay, PointerKind};
 
-/// Grid lines are drawn from this many points per art pixel.
+/// Grid lines are at least this many points apart.
 const GRID_FROM: f32 = 8.0;
 
 pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
@@ -89,7 +89,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     let (w, h) = doc.level().size;
     let level_rect = egui::Rect::from_min_max(screen((0, 0)), screen((w as i32, h as i32)));
     painter.rect_stroke(level_rect, 0.0, Stroke::new(1.0, Color32::GRAY), StrokeKind::Outside);
-    if state.grid() && unit >= GRID_FROM {
+    if state.grid() {
         grid(&painter, rect, level_rect, unit);
     }
     let accent = ui.visuals().selection.stroke.color;
@@ -159,22 +159,52 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     }
 }
 
-/// A line per art pixel across the visible part of the level.
+/// The world pixels between two grid lines at `unit` points per world
+/// pixel: 1 when that is at least `GRID_FROM` points apart, else the
+/// smallest power of two that is (the playtest: zoomed out, the grid was
+/// never drawn and the checkbox seemed to do nothing).
+fn grid_step(unit: f32) -> u32 {
+    let mut step = 1u32;
+    while (step as f32) * unit < GRID_FROM && step < 1 << 16 {
+        step *= 2;
+    }
+    step
+}
+
+/// A line every `grid_step` world pixels across the visible part of the
+/// level, from its origin.
 fn grid(painter: &egui::Painter, clip: egui::Rect, level: egui::Rect, unit: f32) {
     let area = clip.intersect(level);
-    if !area.is_positive() {
+    if !area.is_positive() || unit.is_nan() || unit <= 0.0 {
         return;
     }
-    let stroke = Stroke::new(1.0, Color32::from_black_alpha(60));
-    let first = |lo: f32, origin: f32| origin + ((lo - origin) / unit).ceil() * unit;
+    let gap = grid_step(unit) as f32 * unit;
+    // Light lines: black ones vanished on dark dirt.
+    let stroke = Stroke::new(1.0, Color32::from_white_alpha(48));
+    let first = |lo: f32, origin: f32| origin + ((lo - origin) / gap).ceil() * gap;
     let mut x = first(area.min.x, level.min.x);
     while x <= area.max.x {
         painter.vline(x, area.y_range(), stroke);
-        x += unit;
+        x += gap;
     }
     let mut y = first(area.min.y, level.min.y);
     while y <= area.max.y {
         painter.hline(area.x_range(), y, stroke);
-        y += unit;
+        y += gap;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_grid_shows_at_every_zoom() {
+        assert_eq!(grid_step(16.0), 1, "zoomed in: every pixel");
+        assert_eq!(grid_step(8.0), 1);
+        assert_eq!(grid_step(4.0), 2);
+        assert_eq!(grid_step(1.0), 8);
+        assert_eq!(grid_step(0.25), 32, "zoomed out: every 32 pixels, 8 points apart");
+        assert!(grid_step(0.0) >= 1 << 16, "no endless loop");
     }
 }

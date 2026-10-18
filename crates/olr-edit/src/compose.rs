@@ -24,8 +24,8 @@ use olr_data::level::Material;
 use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
-    Composition, CompositionSource, Element, ElementKind, LevelSource, check_composition, encode_material,
-    image_file, layer_file, raster_files, write_level_files,
+    Composition, CompositionSource, Element, ElementKind, ElementMaterial, LevelSource, check_composition,
+    encode_material, image_file, layer_file, raster_files, write_level_files,
 };
 use olr_format::themes::read_theme_files;
 use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
@@ -656,6 +656,85 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
     .into_iter()
     .collect();
     CompositionSource { composition: Composition { elements: vec![element] }, files }
+}
+
+/// A level's own material, front and back as three drawn layers, bottom
+/// to top: `background` (the back art, everywhere: the backdrop), `dirt`
+/// and `rock` (the front art over each dirt or rock world pixel, clear
+/// elsewhere). Topmost wins, so they bake back to the same material, front
+/// and back (`front == back` on background), and each is painted and
+/// erased like any drawn layer. `ids` names them (unique in their stack).
+pub fn split_layers(
+    material: &[Material],
+    front: &RgbaImage,
+    back: &RgbaImage,
+    size: (u32, u32),
+    s: u32,
+    ids: [&str; 3],
+) -> Vec<(Element, Decoded)> {
+    let (aw, ah) = (size.0 * s, size.1 * s);
+    let fit = |img: &RgbaImage| {
+        let mut out = RgbaImage::new(aw, ah);
+        for y in 0..ah.min(img.height()) {
+            for x in 0..aw.min(img.width()) {
+                out.set(x, y, img.get(x, y));
+            }
+        }
+        out
+    };
+    let only = |m: Material| {
+        let mut out = RgbaImage::new(aw, ah);
+        for (i, cell) in material.iter().enumerate().take(size.0 as usize * size.1 as usize) {
+            if *cell != m {
+                continue;
+            }
+            let (wx, wy) = (i as u32 % size.0, i as u32 / size.0);
+            for y in wy * s..(wy + 1) * s {
+                for x in wx * s..(wx + 1) * s {
+                    if x < front.width() && y < front.height() {
+                        out.set(x, y, front.get(x, y));
+                    }
+                }
+            }
+        }
+        out
+    };
+    let layer = |id: &str, name: &str, material: ElementMaterial, art: RgbaImage| {
+        let e = Element {
+            id: id.into(),
+            name: name.into(),
+            visible: true,
+            locked: false,
+            kind: ElementKind::Drawn { material },
+        };
+        (e, Decoded::Drawn { art })
+    };
+    vec![
+        layer(ids[0], "Background", ElementMaterial::Background, fit(back)),
+        layer(ids[1], "Dirt", ElementMaterial::Dirt, only(Material::Dirt)),
+        layer(ids[2], "Rock", ElementMaterial::Rock, only(Material::Rock)),
+    ]
+}
+
+/// A level without a composition as the editor opens it: its material,
+/// front and back as three drawn layers (`split_layers`: `background`,
+/// `dirt`, `rock`), which bake back to its files byte for byte.
+pub fn split_from(level: &LevelSource) -> CompositionSource {
+    let layers = split_layers(
+        &level.material,
+        &level.front,
+        &level.back,
+        level.size,
+        level.art_scale,
+        ["background", "dirt", "rock"],
+    );
+    let mut files = BTreeMap::new();
+    let mut elements = Vec::new();
+    for (e, d) in layers {
+        files.extend(encode_decoded(&e, &d, level.size));
+        elements.push(e);
+    }
+    CompositionSource { composition: Composition { elements }, files }
 }
 
 /// The `back_tile` of the theme pack whose manifest id is `theme` among

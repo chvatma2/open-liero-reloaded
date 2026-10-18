@@ -173,6 +173,10 @@ and **New level** (a name, a size up to 4096 × 4096, a theme).
 `olr --edit <pack dir>` opens a pack directly (bundled content is refused:
 copy it from the menu).
 
+- **A loaded map** (an OLX level, or a copy of one) opens as three drawn
+  layers, **Rock**, **Dirt** and **Background**: erase dirt or rock and the
+  background shows there; paint either to add it. A **Base** layer (a level
+  composed before) has **Split into layers** in its properties.
 - **Elements** (left): drawn layers (**Add layer**), imported pictures
   (**Import image…**: PNG or JPEG, at most 64 MiB, through the editor's own
   file browser, which previews the image you click; its Path field takes any folder: on Windows a drive or
@@ -185,7 +189,8 @@ copy it from the menu).
   (O), Line (L), Spawn (P), Eyedropper (I); paint a colour or the theme's
   front or back tile. Ctrl+Z / Ctrl+Y undo and redo, Ctrl+S saves, Delete
   removes, Space-drag pans, the wheel zooms. **Material view** shows rock,
-  dirt and background.
+  dirt and background; **Grid** draws a line every pixel when zoomed in,
+  every 2, 4, 8 … pixels when zoomed out.
 - **Play** tries the level as it is: alone (0 bots) or a Deathmatch
   against up to 8 bots (of Local Play's saved difficulty, personality and
   loadout), the mod chosen beside it. Your worm starts at the

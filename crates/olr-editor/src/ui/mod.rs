@@ -33,6 +33,7 @@ pub mod labels {
     pub const CANVAS: &str = "Canvas";
     pub const BROWSER_PATH: &str = "Path";
     pub const CHOOSE: &str = "Choose";
+    pub const SPLIT: &str = "Split into layers";
     pub const OBJECTS: &str = "Objects";
     pub const PIXEL_SIZE: &str = "Pixel size";
     pub const COLOURS: &str = "Colours";

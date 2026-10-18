@@ -3328,6 +3328,12 @@ and its batch reviews. Tools, not OLX behaviour.
   `ReadImage`: an import is refused by its metadata above 64 MiB and by its
   first bytes when it is not a PNG or JPEG, before it is read whole). A
   click selects; a double click or Choose picks (a folder is entered).
+- **Loaded maps** (the playtest after 14c): a level without a composition
+  opens as three drawn layers, background, dirt and rock
+  (`olr_edit::compose::split_from`, byte-identical bake), not one raster
+  base, so it can be erased and painted; a raster element splits the same
+  way on request (Split into layers, one step). The CLI's element commands
+  keep the raster base (`ensure_composed`).
 - **Closing the window** with the editor open sends its Close first: unsaved
   changes ask (Save, Don't save, Cancel), and the window closes once the
   editor does.

@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use olr_data::image::RgbaImage;
 use olr_data::manifest::PackManifest;
-use olr_edit::compose::{
-    Decoded, ImageCache, Rect, bake_elements, compose_from, decode_element, encode_decoded,
-};
+use olr_edit::compose::{Decoded, ImageCache, Rect, bake_elements, decode_element, encode_decoded};
 use olr_edit::level::refresh_thumb;
 use olr_edit::pack::{Pack, Source};
 use olr_format::levels::{
@@ -171,7 +169,9 @@ impl Document {
             .iter()
             .find(|t| t.id == level.theme)
             .ok_or_else(|| DocError::NoTheme(level.theme.clone()))?;
-        let src = composition.unwrap_or_else(|| compose_from(&level));
+        // A level without a composition opens as its three layers (the
+        // playtest's request: a loaded map can be erased and painted).
+        let src = composition.unwrap_or_else(|| olr_edit::compose::split_from(&level));
         check_composition(&src, level.size, level.art_scale).map_err(|e| DocError::Bad(e.to_string()))?;
         let mut cache = ImageCache::new();
         let items = src

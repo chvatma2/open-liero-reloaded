@@ -140,6 +140,8 @@ pub enum EditorAction {
     Set(String, Property),
     /// Deletes the selected element or object.
     Remove,
+    /// Splits raster element `id` into background, dirt and rock layers.
+    Split(String),
     MoveElement {
         id: String,
         to: usize,
@@ -478,6 +480,21 @@ impl EditorState {
                 Selection::None => Vec::new(),
             },
             EditorAction::MoveElement { id, to } => self.edit(|d| d.move_to(&id, to)),
+            EditorAction::Split(id) => {
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                match doc.split(&id) {
+                    Ok(edits) => {
+                        let all = doc.all();
+                        self.selection = Selection::None;
+                        self.history.push(edits);
+                        self.committed(all)
+                    }
+                    Err(e) => {
+                        self.status.message = Some(e.to_string());
+                        Vec::new()
+                    }
+                }
+            }
             EditorAction::Meta(meta) => {
                 let catalog = self.catalog.clone();
                 self.edit(|d| d.set_meta(meta, &catalog))

@@ -244,6 +244,45 @@ fn every_bundled_level_round_trips_through_a_raster_base() {
     }
 }
 
+/// A plain level split into three drawn layers (the editor's way to open
+/// one: background, dirt, rock) bakes to its files byte for byte, and its
+/// layers hold what their names say.
+#[test]
+fn every_bundled_level_round_trips_through_three_layers() {
+    let Some(root) = content() else { return };
+    for id in [
+        "olx-level-castlestrike",
+        "olx-level-dirt-level",
+        "olx-level-fossilfacility",
+        "olx-level-liero-factory",
+    ] {
+        let original = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(root.join(id))).unwrap();
+        let src = olr_edit::compose::split_from(&original);
+        let kinds: Vec<_> =
+            src.composition.elements.iter().map(|e| (e.id.as_str(), e.kind.clone())).collect();
+        assert_eq!(
+            kinds,
+            [
+                ("background", ElementKind::Drawn { material: ElementMaterial::Background }),
+                ("dirt", ElementKind::Drawn { material: ElementMaterial::Dirt }),
+                ("rock", ElementKind::Drawn { material: ElementMaterial::Rock }),
+            ],
+            "{id}"
+        );
+        let mut baked = original.clone();
+        baked.material.fill(Material::Rock);
+        baked.front = RgbaImage::new(baked.front.width(), baked.front.height());
+        baked.back = baked.front.clone();
+        bake(&mut baked, &src, &back_tile()).unwrap();
+        let files = |l: &LevelSource| {
+            let mut fs = MemFs::new();
+            olr_format::levels::write_level_files(&mut fs, l).unwrap();
+            fs
+        };
+        assert!(files(&baked) == files(&original), "{id} changed");
+    }
+}
+
 #[test]
 fn elements_outside_the_level_are_clipped() {
     let mut src = CompositionSource::default();

@@ -20,10 +20,11 @@ fn opening_and_saving_changes_nothing() {
         gained,
         [
             "editor/composition.ron",
-            "editor/layers/base.back.png",
-            "editor/layers/base.front.png",
-            "editor/layers/base.material.png"
-        ]
+            "editor/layers/background.png",
+            "editor/layers/dirt.png",
+            "editor/layers/rock.png"
+        ],
+        "a plain level opens as its three layers"
     );
     for (path, bytes) in &on_disk {
         assert!(saved.get(path) == Some(bytes), "{path} unchanged");
@@ -143,4 +144,50 @@ fn a_snapshot_packs_as_its_document() {
     assert_eq!(snap.to_pack(), doc.to_pack());
     let moved = std::thread::spawn(move || snap.to_pack()).join().unwrap();
     assert_eq!(moved, doc.to_pack());
+}
+
+/// The playtest's request: a loaded map is three drawn layers, background,
+/// dirt and rock, and erasing on dirt or rock leaves background there.
+#[test]
+fn a_plain_level_opens_as_three_layers_to_erase() {
+    use olr_data::level::Material;
+    use olr_edit::level::Shape;
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, std::path::Path::new("olx-level-dirt-level"));
+    let mut doc = Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog(&root)).unwrap();
+    let ids: Vec<&str> = doc.items().iter().map(|i| i.element.id.as_str()).collect();
+    assert_eq!(ids, ["background", "dirt", "rock"]);
+    let l = doc.level();
+    let w = l.size.0 as usize;
+    let at = |m: Material| {
+        l.material.iter().position(|c| *c == m).map(|i| ((i % w) as i32, (i / w) as i32)).unwrap()
+    };
+    let (dirt, rock) = (at(Material::Dirt), at(Material::Rock));
+    for (layer, (x, y)) in [("dirt", dirt), ("rock", rock)] {
+        doc.erase(layer, &Shape::Rect { x, y, w: 1, h: 1 }).unwrap();
+        let l = doc.level();
+        assert_eq!(
+            l.material[y as usize * w + x as usize],
+            Material::Background,
+            "{layer} erased at ({x}, {y})"
+        );
+        let s = l.art_scale;
+        let (ax, ay) = (x as u32 * s, y as u32 * s);
+        assert_eq!(l.front.get(ax, ay), l.back.get(ax, ay), "the backdrop shows");
+    }
+}
+
+/// A raster element (a level composed before) splits into the same three
+/// layers in its place, as one step that changes nothing visible.
+#[test]
+fn a_raster_splits_into_three_layers() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    let before = (doc.level().material.clone(), doc.level().front.clone(), doc.level().back.clone());
+    let edits = doc.split("base").unwrap();
+    assert_eq!(edits.len(), 4, "the raster out, three layers in");
+    let ids: Vec<&str> = doc.items().iter().map(|i| i.element.id.as_str()).collect();
+    assert_eq!(ids[..3], ["background", "dirt", "rock"], "{ids:?}");
+    assert_eq!((doc.level().material.clone(), doc.level().front.clone(), doc.level().back.clone()), before);
+    assert!(matches!(doc.split("tunnels"), Err(DocError::WrongKind { .. })), "only a raster splits");
 }
