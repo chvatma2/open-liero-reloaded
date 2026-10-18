@@ -149,3 +149,7 @@
   fixtures/render/look-light.png
   fixtures/render/look-lit.png
   fixtures/render/look-t500.png
+2026-10-18 bless-render: plan 15a Stop 1b: light soaks 8 px into solids and solids show at least 30 % light by default
+  fixtures/render/look-light.png
+  fixtures/render/look-lit.png
+  fixtures/render/look-t500.png

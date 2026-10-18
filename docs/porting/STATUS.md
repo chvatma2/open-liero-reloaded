@@ -3523,6 +3523,24 @@ and its batch reviews. Tools, not OLX behaviour; no format change.
   outside the layer refused, nothing changed), `--texture` an alias of
   `--tile`.
 
+## Look system decisions (plan 15a)
+
+Spec `docs/superpowers/specs/2026-10-18-look-system-design.md`; Task 21
+completes this section.
+
+- **Stop 1 (2026-10-18), the user's verdict on the first lit renders:** the
+  look is good, but rock read black (only faces that saw a light were lit).
+  Light now soaks into solids (`light_soak`, 0-12 world pixels, a separable
+  maximum faded by depth) and a level sets the least light a solid shows
+  (`solid_floor`); the light grid's pad grew to 16 world pixels so neither
+  depends on the camera. Clear solids (`look/clear.png`, an element's
+  `clear`) let light through as air while worms and projectiles collide.
+- **Stop 1b (2026-10-18):** the defaults for a level with a look are soak 8
+  and a white floor at 30 % (the recommendation, taken as provisional: the
+  user expects to retune them after playtests). World-pixel shadow edges
+  stay; 2 × 2 shadow sampling remains the planned fix if they look coarse
+  in play.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

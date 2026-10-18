@@ -164,6 +164,8 @@ soaked(p)      = max over q within soak of  lit(q) × fade(|p - q|, soak + 1)
 - **`solid_floor`** (a colour and an intensity, as the ambient) is the
   least light an opaque solid pixel shows: deep rock still shows its art.
 - Air and clear pixels are not changed by either.
+- **Defaults** (the user's verdict at Stop 1b, 2026-10-18): soak 8, floor
+  white at 30 %. Provisional: they are expected to move after playtests.
 
 ### Light sources: one shape
 
@@ -371,8 +373,8 @@ look: Some((
     max_light: 100,                    // 100-200
     light_steps: 0,                    // 0 off, 2-32
     softness: 0,                       // world pixels, 0-4
-    light_soak: 0,                     // world pixels, 0-12
-    solid_floor: (colour: "#ffffff", intensity: 0),   // the least light of an opaque solid
+    light_soak: 8,                     // world pixels, 0-12
+    solid_floor: (colour: "#ffffff", intensity: 30),  // the least light of an opaque solid
     grade: (exposure: 0, contrast: 100, saturation: 100, tint: "#ffffff"),   // exposure in 1/100 stop, -200..200
     glow_groups: [
         (id: "sky", colour: Tint("#fff0d2"), intensity: 100, reach: Unlimited, animation: Steady),

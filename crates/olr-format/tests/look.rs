@@ -428,3 +428,14 @@ fn the_default_look_is_the_empty_file() {
     assert_eq!(empty, LookSource::default());
     assert_eq!(olr_format::ron_io::to_canonical("level.ron", &LookSource::default()).unwrap(), "()\n");
 }
+
+#[test]
+fn solids_defaults_are_the_stop_1_verdict() {
+    // Soak 8 and a white floor at 30 % (plan 15a Stop 1b) when a look says nothing.
+    let src = level(Some("(name: \"Lit\", size: (4, 3), art_scale: 2, theme: \"olx-theme-dirt\", look: ())"));
+    let look = compile_look(&src).unwrap().expect("a look");
+    assert_eq!((look.light_soak, look.solid_floor.colour, look.solid_floor.intensity), (8, [255; 3], 30));
+    // The defaults are left out of canonical text.
+    let text = canonical_text("level.ron", "(name: \"Lit\", size: (4, 3), art_scale: 2, theme: \"olx-theme-dirt\", look: (light_soak: 8, solid_floor: (intensity: 30)))").unwrap();
+    assert!(!text.contains("light_soak") && !text.contains("solid_floor"), "{text}");
+}

@@ -170,15 +170,39 @@ impl Default for AmbientSource {
 
 /// The least light an opaque solid pixel (rock or dirt that is not clear)
 /// shows, so deep rock still shows its art.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SolidFloorSource {
     /// Opaque. Default none: white.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub colour: Option<Colour>,
-    /// Percent, 0 to 100. Default 0 (none).
-    #[serde(default, skip_serializing_if = "d::is_default")]
+    /// Percent, 0 to 100 (0: none). Default 30 (plan 15a Stop 1b).
+    #[serde(default = "solid_floor_intensity", skip_serializing_if = "is_solid_floor_intensity")]
     pub intensity: u16,
+}
+
+impl Default for SolidFloorSource {
+    fn default() -> SolidFloorSource {
+        SolidFloorSource { colour: None, intensity: solid_floor_intensity() }
+    }
+}
+
+/// The solid floor's default intensity, percent (plan 15a Stop 1b).
+fn solid_floor_intensity() -> u16 {
+    30
+}
+
+fn is_solid_floor_intensity(v: &u16) -> bool {
+    *v == solid_floor_intensity()
+}
+
+/// The default light soak, world pixels (plan 15a Stop 1b).
+fn light_soak() -> u8 {
+    8
+}
+
+fn is_light_soak(v: &u8) -> bool {
+    *v == light_soak()
 }
 
 fn hundred() -> u16 {
@@ -269,10 +293,10 @@ pub struct LookSource {
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub softness: u8,
     /// How deep light soaks into solids from the air beside them, world
-    /// pixels, 0 to 12, fading with depth. Default 0.
-    #[serde(default, skip_serializing_if = "d::is_default")]
+    /// pixels, 0 to 12, fading with depth. Default 8.
+    #[serde(default = "light_soak", skip_serializing_if = "is_light_soak")]
     pub light_soak: u8,
-    /// The least light of an opaque solid. Default none.
+    /// The least light of an opaque solid. Default white at 30.
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub solid_floor: SolidFloorSource,
     /// Default none.
@@ -291,7 +315,7 @@ impl Default for LookSource {
             max_light: 100,
             light_steps: 0,
             softness: 0,
-            light_soak: 0,
+            light_soak: light_soak(),
             solid_floor: SolidFloorSource::default(),
             grade: GradeSource::default(),
             glow_groups: Vec::new(),
