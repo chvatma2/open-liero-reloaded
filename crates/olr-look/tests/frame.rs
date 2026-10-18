@@ -89,7 +89,8 @@ fn begin_without_a_level_look_is_full_bright() {
 #[test]
 fn an_animated_group_scales_self_light_and_cast() {
     let mut look = level();
-    look.groups[0].animation = Animation::Pulse { period_ms: 1000, low: 50, high: 50, shape: olr_look::PulseShape::Square };
+    look.groups[0].animation =
+        Animation::Pulse { period_ms: 1000, low: 50, high: 50, shape: olr_look::PulseShape::Square };
     let mut f = LookFrame::default();
     f.begin(Some(&look), 0.0);
     assert!(near(f.groups[0].self_scale, 0.5));
@@ -133,7 +134,10 @@ fn light_at_applies_animation_and_ends() {
         intensity: 200,
         reach: Reach::Pixels(96),
         animation: Animation::Keys {
-            keys: vec![olr_look::Key { at_ms: 0, level: 100, colour: None }, olr_look::Key { at_ms: 250, level: 0, colour: None }],
+            keys: vec![
+                olr_look::Key { at_ms: 0, level: 100, colour: None },
+                olr_look::Key { at_ms: 250, level: 0, colour: None },
+            ],
             looped: false,
         },
         phase_ms: Some(0),

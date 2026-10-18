@@ -36,7 +36,11 @@ fn hole(n: u32) -> Stamp {
 }
 
 fn theme() -> ThemeArt {
-    ThemeArt { holes: vec![hole(1), hole(3)], green_mask: None, front_tile: image(2, 2, |_, _| Rgba::rgb(9, 9, 9)) }
+    ThemeArt {
+        holes: vec![hole(1), hole(3)],
+        green_mask: None,
+        front_tile: image(2, 2, |_, _| Rgba::rgb(9, 9, 9)),
+    }
 }
 
 const S: u32 = 2;
@@ -52,13 +56,29 @@ fn layers(t: &Terrain) -> GlowLayers {
         .flat_map(|y| (0..aw).map(move |x| (x, y)))
         .map(|(x, y)| if air(x / S, y / S) { 100 + x as u8 } else { 10 + x as u8 })
         .collect();
-    let groups = (0..wh).flat_map(|y| (0..ww).map(move |x| (x, y))).map(|(x, y)| if air(x, y) { 2 } else { 1 }).collect();
-    GlowLayers { art: (aw, ah), world: (ww, wh), front, back, groups, groups_back: vec![2; (ww * wh) as usize] }
+    let groups = (0..wh)
+        .flat_map(|y| (0..ww).map(move |x| (x, y)))
+        .map(|(x, y)| if air(x, y) { 2 } else { 1 })
+        .collect();
+    GlowLayers {
+        art: (aw, ah),
+        world: (ww, wh),
+        front,
+        back,
+        groups,
+        groups_back: vec![2; (ww * wh) as usize],
+    }
 }
 
 fn glowing(t: &Terrain) -> ColorMap {
     let (w, h) = (t.width() * S, t.height() * S);
-    let mut c = ColorMap::new(t, &image(w, h, |_, _| Rgba::rgb(1, 1, 1)), &image(w, h, |_, _| Rgba::rgb(2, 2, 2)), S, theme());
+    let mut c = ColorMap::new(
+        t,
+        &image(w, h, |_, _| Rgba::rgb(1, 1, 1)),
+        &image(w, h, |_, _| Rgba::rgb(2, 2, 2)),
+        S,
+        theme(),
+    );
     assert!(c.set_glow(Some(layers(t))));
     c
 }
@@ -140,7 +160,8 @@ fn glow_follows_rebuild_and_replace() {
 fn a_misfit_glow_is_refused() {
     let t = map(&["DD"]);
     let (w, h) = (4, 2);
-    let mut c = ColorMap::new(&t, &image(w, h, |_, _| Rgba::BLACK), &image(w, h, |_, _| Rgba::BLACK), S, theme());
+    let mut c =
+        ColorMap::new(&t, &image(w, h, |_, _| Rgba::BLACK), &image(w, h, |_, _| Rgba::BLACK), S, theme());
     let mut bad = layers(&t);
     bad.front.pop();
     assert!(!c.set_glow(Some(bad)));
@@ -157,7 +178,15 @@ fn a_misfit_glow_is_refused() {
 fn no_glow_costs_nothing() {
     let t = map(&["DDD", "D.D"]);
     let (w, h) = (6, 4);
-    let mk = || ColorMap::new(&t, &image(w, h, |x, _| Rgba::rgb(x as u8, 0, 0)), &image(w, h, |_, y| Rgba::rgb(0, y as u8, 0)), S, theme());
+    let mk = || {
+        ColorMap::new(
+            &t,
+            &image(w, h, |x, _| Rgba::rgb(x as u8, 0, 0)),
+            &image(w, h, |_, y| Rgba::rgb(0, y as u8, 0)),
+            S,
+            theme(),
+        )
+    };
     let (mut plain, mut lit) = (mk(), mk());
     lit.set_glow(Some(layers(&t)));
     for c in [&mut plain, &mut lit] {

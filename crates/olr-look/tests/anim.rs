@@ -106,7 +106,10 @@ fn hostile_animations_never_panic() {
     assert!(near(empty.sample(12.0, 0, 0).scale, 1.0));
     assert!(!empty.ended(12.0));
     let far = Animation::Keys {
-        keys: vec![Key { at_ms: u32::MAX, level: 1000, colour: None }, Key { at_ms: 0, level: 0, colour: None }],
+        keys: vec![
+            Key { at_ms: u32::MAX, level: 1000, colour: None },
+            Key { at_ms: 0, level: 0, colour: None },
+        ],
         looped: true,
     };
     assert!(far.sample(5.0, u32::MAX, u64::MAX).scale.is_finite());

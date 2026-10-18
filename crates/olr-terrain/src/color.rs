@@ -123,7 +123,14 @@ impl GlowLayers {
     pub fn empty(art: (u32, u32), world: (u32, u32)) -> GlowLayers {
         let a = art.0 as usize * art.1 as usize;
         let w = world.0 as usize * world.1 as usize;
-        GlowLayers { art, world, front: vec![0; a], back: vec![0; a], groups: vec![0; w], groups_back: vec![0; w] }
+        GlowLayers {
+            art,
+            world,
+            front: vec![0; a],
+            back: vec![0; a],
+            groups: vec![0; w],
+            groups_back: vec![0; w],
+        }
     }
 
     /// The sizes match `art` and `world` and every buffer holds them.
@@ -388,7 +395,13 @@ impl ColorMap {
                 match m {
                     Material::Background => {
                         self.copy_block(x, y, false);
-                        glow_from(&mut self.glow, (self.width, self.scale, self.material.width()), x, y, false);
+                        glow_from(
+                            &mut self.glow,
+                            (self.width, self.scale, self.material.width()),
+                            x,
+                            y,
+                            false,
+                        );
                     }
                     Material::Dirt => {
                         self.put(x, y, self.tile(x, y));
@@ -396,7 +409,13 @@ impl ColorMap {
                     }
                     Material::Rock => {
                         self.copy_block(x, y, true);
-                        glow_from(&mut self.glow, (self.width, self.scale, self.material.width()), x, y, true);
+                        glow_from(
+                            &mut self.glow,
+                            (self.width, self.scale, self.material.width()),
+                            x,
+                            y,
+                            true,
+                        );
                     }
                 }
             }
@@ -474,7 +493,13 @@ impl ColorMap {
                 match stamp.get(col as u32, row as u32) {
                     StampPixel::Carve => {
                         copy(&mut self.pixels, &self.back, self.width, self.scale, mx, my);
-                        glow_from(&mut self.glow, (self.width, self.scale, self.material.width()), mx, my, false);
+                        glow_from(
+                            &mut self.glow,
+                            (self.width, self.scale, self.material.width()),
+                            mx,
+                            my,
+                            false,
+                        );
                     }
                     StampPixel::Paint(c) => fill(&mut self.pixels, self.width, self.scale, mx, my, c),
                     StampPixel::Skip => continue,

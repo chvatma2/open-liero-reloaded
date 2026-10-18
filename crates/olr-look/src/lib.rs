@@ -66,11 +66,22 @@ pub enum Animation {
     Steady,
     /// Between `low` and `high` over `period_ms`, starting at the midpoint
     /// and rising.
-    Pulse { period_ms: u32, low: u16, high: u16, shape: PulseShape },
+    Pulse {
+        period_ms: u32,
+        low: u16,
+        high: u16,
+        shape: PulseShape,
+    },
     /// Smooth value noise: `speed` changes a second, dimming by up to `depth` percent.
-    Flicker { speed: u16, depth: u16 },
+    Flicker {
+        speed: u16,
+        depth: u16,
+    },
     /// A hand-made curve, linear between keys.
-    Keys { keys: Vec<Key>, looped: bool },
+    Keys {
+        keys: Vec<Key>,
+        looped: bool,
+    },
 }
 
 /// One light source's fields (spec §Light sources: one shape everywhere).

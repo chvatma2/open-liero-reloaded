@@ -92,7 +92,12 @@ impl LookFrame {
                 (Some(c), _) | (None, crate::GlowColour::Tint(c)) => (false, c.map(srgb_to_linear)),
                 (None, crate::GlowColour::Own) => (true, [1.0; 3]),
             };
-            self.groups.push(FrameGroup { cast: base.map(|c| c * k), own_colour: own, self_scale: s.scale, reach: g.reach.pixels() });
+            self.groups.push(FrameGroup {
+                cast: base.map(|c| c * k),
+                own_colour: own,
+                self_scale: s.scale,
+                reach: g.reach.pixels(),
+            });
         }
         for (i, l) in level.lights.iter().enumerate() {
             let pos = [l.at.0 as f32 + 0.5, l.at.1 as f32 + 0.5];
@@ -138,7 +143,12 @@ pub fn light_at(light: &Light, t_ms: f64, identity: u64, pos: [f32; 2], radius: 
     let k = f32::from(light.intensity.min(1000)) / 100.0 * s.scale;
     let colour = s.colour.unwrap_or(light.colour).map(|c| srgb_to_linear(c) * k);
     let lit = colour.iter().any(|c| *c > 0.0) && colour.iter().all(|c| c.is_finite());
-    (lit && pos.iter().all(|p| p.is_finite())).then_some(FrameLight { pos, radius, colour, reach: light.reach.pixels() })
+    (lit && pos.iter().all(|p| p.is_finite())).then_some(FrameLight {
+        pos,
+        radius,
+        colour,
+        reach: light.reach.pixels(),
+    })
 }
 
 /// How much of a light reaches `distance` world pixels: `(1 - (d/r)²)²`,
