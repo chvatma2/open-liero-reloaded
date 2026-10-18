@@ -15,6 +15,7 @@ mod net_sim_cmd;
 mod net_soak_cmd;
 mod pack_cmd;
 mod render;
+mod render_match;
 mod replay_cmd;
 mod rollback_cost_cmd;
 mod scenario;
@@ -46,6 +47,8 @@ enum Command {
     Render(render::Args),
     /// Draw a level with its look (no match) to a PNG, offscreen.
     LookPreview(look_preview::Args),
+    /// Play a headless bot match on any packs and render its last tick to a PNG, offscreen.
+    RenderMatch(render_match::Args),
     /// Play a headless bot match: invariants every tick, tick times, determinism,
     /// replay round trip and coverage; a failure writes its replay to target/failures/.
     Match(match_cmd::Args),
@@ -96,6 +99,7 @@ fn main() -> ExitCode {
         Command::Scenario(args) => scenario::run(&args),
         Command::Render(args) => render::run(&args),
         Command::LookPreview(args) => look_preview::run(&args),
+        Command::RenderMatch(args) => render_match::run(&args),
         Command::Match(args) => match_cmd::run(&args),
         Command::NetSim(args) => net_sim_cmd::run_cmd(args),
         Command::NetSoak(args) => net_soak_cmd::run_cmd(args),

@@ -184,3 +184,34 @@ fn look_test_level_full() {
 fn look_test_level_at_500_ms() {
     look_golden("look-t500.png", &["--time", "500"]);
 }
+
+/// A chaos-bot match on the look test level with the look test mod's
+/// Glow Rocket (plan 15a Task 16): rockets with their light, end flashes,
+/// muzzle and explosion lights, the worms' floor.
+#[test]
+fn look_rocket() {
+    let Some(content) = content_dir() else { return };
+    let (mods, levels) = (root().join("fixtures/look/mods"), root().join("fixtures/look/levels"));
+    let args = [
+        "render-match",
+        "--mod",
+        "look-test-mod",
+        "--level",
+        "look-test",
+        "--bots",
+        "3",
+        "--personality",
+        "chaos",
+        "--seed",
+        "1",
+        "--ticks",
+        "300",
+        "--packs",
+        mods.to_str().unwrap(),
+        "--packs",
+        levels.to_str().unwrap(),
+        "--content",
+        &content,
+    ];
+    compare("look-rocket.png", &args, &[]);
+}

@@ -1,0 +1,10 @@
+(
+    format_version: 5,
+    id: "look-test-mod",
+    name: "Look Test Mod",
+    version: "0.1.0",
+    kind: Mod,
+    authors: [],
+    origin: None,
+    license: None,
+)

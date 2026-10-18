@@ -62,3 +62,24 @@ fn look_preview_writes_a_png() {
     let c = lit.get(427, 192);
     assert!(c.r > 0, "{c:?}");
 }
+
+/// `render-match` plays bots on bundled packs (no look: no lights) and
+/// writes the frame.
+#[test]
+fn render_match_writes_a_png() {
+    if std::env::var_os("OLR_GPU_TESTS").is_none() {
+        return;
+    }
+    let Some(content) = content_dir() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("m.png");
+    let o = Command::new(env!("CARGO_BIN_EXE_olr-cli"))
+        .args(["render-match", "--mod", "olx-classic", "--level", "olx-level-dirt-level", "--bots", "2"])
+        .args(["--seed", "1", "--ticks", "30", "--content", &content, "--out", out.to_str().unwrap()])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert!(stdout.contains("tick 30, 0 lights"), "{stdout}");
+    assert!(out.is_file());
+}

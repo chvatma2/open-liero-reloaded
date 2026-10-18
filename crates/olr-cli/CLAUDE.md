@@ -89,6 +89,18 @@ The headless command-line tool. Its commands:
   start) offscreen with `olr-render`: `S` output pixels per world pixel
   (default 2), OLX's whole-pixel latest state unless `--alpha` interpolates.
   Use it to see what a change does; view the PNG.
+- `olr-cli look-preview <pack> --at X,Y [--time MS] [--view lit|full|light] [--size WxH] [--content DIR] --out f.png`
+  (plan 15a Task 13, `look_preview.rs`) draws a level's terrain alone (no
+  worms) with its look at match clock `--time`, centred on `--at`, at
+  `Viewport::GAME`, culling lights by `olr_render::LIGHT_CULL_PAD`.
+- `olr-cli render-match <match flags> --out f.png [--scale 2] [--packs DIR]... [--content DIR]`
+  (plan 15a Task 16, `render_match.rs`) plays a headless bot match (the
+  runner's `advance`, unsettled: no invariants, no recording) on
+  `--content` with each `--packs` directory laid over it (the first wins;
+  any packs, such as `fixtures/look/mods` and `fixtures/look/levels`,
+  which no OLX trace replays) and draws its last tick as the game does,
+  look included; prints the number of lights. The rocket golden
+  (`look-rocket.png`) is chaos bots with the look test mod.
 - `olr-cli match --mod <id> --level <id> [--mode deathmatch] --bots N
   [--difficulty easy|medium|hard|xtreme|mixed] [--personality dm|chaos]
   --seed S --ticks T [--bonus-frequency F] [--kill-limit K] [--time-limit M]
