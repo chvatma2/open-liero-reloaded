@@ -648,7 +648,10 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   header, the cap counted by name, a unique portable name, written through
   a hidden `.part`) and `RemoveTexture` (`remove_texture`, plain names
   only) answer `TexturesChanged` with the library re-listed, and `Failed`
-  when the change failed.
+  when the change failed. A Ctrl+V egui-winit swallowed (an empty system
+  clipboard: it sends no key and no paste) is given to egui as an empty
+  `Event::Paste` (`app::paste_swallowed`, the window's modifiers kept in
+  `App::modifiers`), so the editor's own clipboard pastes.
   `HostOut::{Upload, FullUpload, Play, Closed,
   Message}` is what the app does. The shell owns the host (`Shell::editor`):
   while it is open `App::frame` draws `olr_editor::ui::show` instead of the

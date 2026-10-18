@@ -3488,7 +3488,9 @@ and its batch reviews. Tools, not OLX behaviour; no format change.
   Close). A paste makes a new boxed layer "Pasted" at the copied place
   plus (4, 4), plain when its covered pixels share a material, else mixed
   (C3). The spec's floating paste is this simpler first version; the step
-  after it is Merge down.
+  after it is Merge down. A clip holds art and cells, not back art: cut
+  dirt pasted elsewhere does not dig to its old background (a deviation,
+  for later). The rectangle goes with the selection or its layer.
 - **R8 - multi-select**: `Selection::Many`, two elements or more in stack
   order. Ctrl+click toggles (list and canvas), Shift+click in the list
   selects the range from the single selection; a press on a member drags
@@ -3500,7 +3502,9 @@ and its batch reviews. Tools, not OLX behaviour; no format change.
   no Merge down or Split. The properties panel keeps 260 points at least.
 - **R9 - shortcuts**: Ctrl+C, X and V as key presses and as the window's
   `Event::Copy`, `Cut` and `Paste`, never while a text field has the
-  keyboard; G Fill, M Select pixels.
+  keyboard; G Fill, M Select pixels. egui-winit sends Ctrl+V only as a
+  paste of the system clipboard's text, and nothing when it has none: the
+  game adds an empty paste then (`app::paste_swallowed`, batch C review).
 - **R10 - `olr-cli`**: `duplicate <id>` (`added element <id>`; an image
   shares its original, files of its own copied under the new id),
   `fill <id> --at X,Y [--tolerance N] <paint> [--material M]` (a seed
