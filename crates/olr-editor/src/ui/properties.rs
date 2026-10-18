@@ -154,6 +154,53 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
                 set(out, Property::Threshold(v as u8));
             }
         }
+        Selection::Many(ids) => group(ui, state, ids, out),
         Selection::None => {}
+    }
+}
+
+/// A group's panel (plan 14e R8): the count, Visible and Locked (on when
+/// all are), the material when all are images or drawn layers ("Different"
+/// when they disagree); no Merge down nor Split.
+fn group(ui: &mut Ui, state: &EditorState, ids: &[String], out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    let members: Vec<_> =
+        ids.iter().filter_map(|id| doc.index_of(id)).map(|i| &doc.items()[i].element).collect();
+    ui.heading(format!("{} elements", members.len()));
+    let set = |out: &mut Vec<EditorAction>, p: Property| out.push(EditorAction::SetMany(ids.to_vec(), p));
+    let mut visible = members.iter().all(|e| e.visible);
+    if ui.checkbox(&mut visible, labels::VISIBLE).changed() {
+        set(out, Property::Visible(visible));
+    }
+    let mut locked = members.iter().all(|e| e.locked);
+    if ui.checkbox(&mut locked, labels::LOCKED).changed() {
+        set(out, Property::Locked(locked));
+    }
+    let materials: Option<Vec<(ElementMaterial, bool)>> = members
+        .iter()
+        .map(|e| match &e.kind {
+            ElementKind::Image { material, .. } => Some((*material, false)),
+            ElementKind::Drawn { material, mixed, .. } => Some((*material, *mixed)),
+            ElementKind::Raster => None,
+        })
+        .collect();
+    if let Some(materials) = materials {
+        let first = materials.first().copied();
+        let same = materials.iter().all(|m| Some(*m) == first);
+        let name = match first {
+            Some((_, true)) if same => "Mixed",
+            Some((m, false)) if same => MATERIALS.iter().find(|(x, _)| *x == m).map_or("", |(_, n)| n),
+            _ => "Different",
+        };
+        egui::ComboBox::from_label(labels::MATERIAL).selected_text(name).show_ui(ui, |ui| {
+            for (m, n) in MATERIALS {
+                if ui.selectable_label(same && first == Some((m, false)), n).clicked() {
+                    set(out, Property::Material(m));
+                }
+            }
+        });
+    }
+    if ui.button("Delete").clicked() {
+        out.push(EditorAction::Remove);
     }
 }

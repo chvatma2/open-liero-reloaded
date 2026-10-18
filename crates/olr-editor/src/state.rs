@@ -32,6 +32,28 @@ pub enum Selection {
     Element(String),
     /// A level object, by index.
     Object(usize),
+    /// Two elements or more, in stack order, bottom first (plan 14e R8).
+    Many(Vec<String>),
+}
+
+impl Selection {
+    /// Whether element `id` is selected, alone or in a group.
+    pub fn has(&self, id: &str) -> bool {
+        match self {
+            Selection::Element(e) => e == id,
+            Selection::Many(ids) => ids.iter().any(|e| e == id),
+            _ => false,
+        }
+    }
+
+    /// The selected elements' ids (none for an object).
+    pub fn ids(&self) -> Vec<String> {
+        match self {
+            Selection::Element(e) => vec![e.clone()],
+            Selection::Many(ids) => ids.clone(),
+            _ => Vec::new(),
+        }
+    }
 }
 
 /// The status bar's contents.
@@ -144,7 +166,13 @@ pub enum EditorAction {
     AddLayer,
     Select(Selection),
     Set(String, Property),
-    /// Deletes the selected element or object.
+    /// One property on each of several elements, one step (plan 14e R8).
+    SetMany(Vec<String>, Property),
+    /// Ctrl+click: element `id` in or out of the selection.
+    SelectToggle(String),
+    /// Shift+click: the elements from the single selection to `id`.
+    SelectRange(String),
+    /// Deletes the selected element(s) or object.
     Remove,
     /// Splits raster element `id` into background, dirt and rock layers.
     Split(String),
@@ -182,11 +210,13 @@ pub enum EditorAction {
     RemoveTexture(String),
     /// Merges element `id` into the drawn layer below it (Ctrl+E).
     MergeDown(String),
-    /// A pointer event on the canvas, in world pixels (ruling R7).
+    /// A pointer event on the canvas, in world pixels (ruling R7); `toggle`
+    /// is Ctrl (plan 14e R8).
     Pointer {
         kind: PointerKind,
         world: (i32, i32),
         shift: bool,
+        toggle: bool,
     },
     /// Moves the selected image's box (the arrow keys).
     Nudge {
@@ -426,6 +456,8 @@ impl EditorState {
                 | EditorAction::TexturesChanged(_)
                 | EditorAction::RemoveTexture(_)
                 | EditorAction::Select(_)
+                | EditorAction::SelectToggle(_)
+                | EditorAction::SelectRange(_)
                 | EditorAction::PlayMod(_)
                 | EditorAction::PlayBots(_)
                 | EditorAction::Listed { .. }
@@ -527,13 +559,47 @@ impl EditorState {
                 cmds
             }
             EditorAction::Select(selection) => {
-                self.selection = selection;
+                self.selection = match selection {
+                    Selection::Many(ids) => self.group(ids),
+                    s => s,
+                };
+                Vec::new()
+            }
+            EditorAction::SelectToggle(id) => {
+                let mut ids = self.selection.ids();
+                match ids.iter().position(|e| *e == id) {
+                    Some(i) => {
+                        ids.remove(i);
+                    }
+                    None => ids.push(id),
+                }
+                self.selection = self.group(ids);
+                Vec::new()
+            }
+            EditorAction::SelectRange(id) => {
+                let anchor = match &self.selection {
+                    Selection::Element(a) => Some(a.clone()),
+                    _ => None,
+                };
+                let range = self.doc.as_ref().and_then(|d| {
+                    let (a, b) = (d.index_of(anchor.as_deref()?)?, d.index_of(&id)?);
+                    Some(d.items()[a.min(b)..=a.max(b)].iter().map(|i| i.element.id.clone()).collect())
+                });
+                self.selection = self.group(range.unwrap_or_else(|| vec![id]));
                 Vec::new()
             }
             EditorAction::Set(id, property) => self.edit(|d| d.set(&id, property)),
+            EditorAction::SetMany(ids, property) => self.group_edit(|d| d.set_many(&ids, property)),
             EditorAction::Remove => match self.selection.clone() {
                 Selection::Element(id) => self.removed(|d| d.remove(&id)),
                 Selection::Object(i) => self.removed(|d| d.remove_object(i)),
+                Selection::Many(ids) => {
+                    let cmds = self.group_edit(|d| d.remove_many(&ids));
+                    if !cmds.is_empty() {
+                        self.selection = Selection::None;
+                    }
+                    cmds
+                }
                 Selection::None => Vec::new(),
             },
             EditorAction::MoveElement { id, to } => self.edit(|d| d.move_to(&id, to)),
@@ -604,7 +670,7 @@ impl EditorState {
                 }
                 Vec::new()
             }
-            EditorAction::Pointer { kind, world, shift } => self.pointer(kind, world, shift),
+            EditorAction::Pointer { kind, world, shift, toggle } => self.pointer(kind, world, shift, toggle),
             EditorAction::Nudge { dx, dy } => self.nudge(dx, dy),
             EditorAction::Canvas(size) => {
                 self.canvas = Some(size);
@@ -825,6 +891,40 @@ impl EditorState {
         }
     }
 
+    /// The selection of `ids` (plan 14e R8): those that exist, each once, in
+    /// stack order; one is `Element`, none `None`.
+    pub(crate) fn group(&self, ids: Vec<String>) -> Selection {
+        let Some(doc) = &self.doc else { return Selection::None };
+        let mut found: Vec<(usize, String)> =
+            ids.into_iter().filter_map(|id| Some((doc.index_of(&id)?, id))).collect();
+        found.sort();
+        found.dedup();
+        match found.len() {
+            0 => Selection::None,
+            1 => Selection::Element(found.remove(0).1),
+            _ => Selection::Many(found.into_iter().map(|f| f.1).collect()),
+        }
+    }
+
+    /// A group's change made by `op` as one history step, or its refusal shown.
+    pub(crate) fn group_edit(
+        &mut self,
+        op: impl FnOnce(&mut Document) -> Result<(Vec<crate::history::Edit>, Rect), DocError>,
+    ) -> Vec<EditorCommand> {
+        let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+        match op(doc) {
+            Ok((edits, _)) if edits.iter().all(|e| e.is_noop()) => Vec::new(),
+            Ok((edits, dirty)) => {
+                self.history.push(edits);
+                self.committed(dirty)
+            }
+            Err(e) => {
+                self.status.message = Some(e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
     /// After a committed change: dirty, the diagnostics, an upload.
     pub(crate) fn committed(&mut self, dirty: Rect) -> Vec<EditorCommand> {
         self.dirty = true;
@@ -861,6 +961,7 @@ impl EditorState {
         match &self.selection {
             Selection::Element(id) if doc.index_of(id).is_none() => self.selection = Selection::None,
             Selection::Object(i) if *i >= doc.level().objects.len() => self.selection = Selection::None,
+            Selection::Many(ids) => self.selection = self.group(ids.clone()),
             _ => {}
         }
         self.committed(dirty.unwrap_or(Rect { x: 0, y: 0, w: 0, h: 0 }))

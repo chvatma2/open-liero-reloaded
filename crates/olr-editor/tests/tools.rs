@@ -10,7 +10,7 @@ use olr_format::levels::{ElementKind, LevelObject};
 use crate::common::{content, editor, editor_at, run};
 
 fn pointer(s: &mut EditorState, kind: PointerKind, world: (i32, i32), shift: bool) {
-    run(s, A::Pointer { kind, world, shift });
+    run(s, A::Pointer { kind, world, shift, toggle: false });
 }
 
 fn drag(s: &mut EditorState, from: (i32, i32), to: (i32, i32), shift: bool) {
@@ -599,4 +599,32 @@ fn fill_on_a_picture_is_refused() {
         s.status().message
     );
     assert!(bake(&s) == start && !s.can_undo());
+}
+
+fn ctrl_click(s: &mut EditorState, world: (i32, i32)) {
+    run(s, A::Pointer { kind: PointerKind::Down, world, shift: false, toggle: true });
+    run(s, A::Pointer { kind: PointerKind::Up, world, shift: false, toggle: true });
+}
+
+/// Plan 14e R8: Ctrl-clicks on the canvas build a group; a press on a
+/// member drags the whole group, one step.
+#[test]
+fn ctrl_clicks_build_a_group_on_the_canvas() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Tool(Tool::Select));
+    ctrl_click(&mut s, (50, 40));
+    ctrl_click(&mut s, (310, 210));
+    assert_eq!(s.selection(), &Selection::Many(vec!["tiny".into(), "gradient".into()]));
+    let boxes = s.overlays().iter().filter(|o| matches!(o, Overlay::Box { selected: true, .. })).count();
+    assert_eq!(boxes, 2, "each member's box is drawn selected");
+    let (t, g) = (image_box(&s, "tiny").0, image_box(&s, "gradient").0);
+    drag(&mut s, (50, 40), (53, 41), false);
+    assert_eq!(image_box(&s, "tiny").0, (t.0 + 3, t.1 + 1));
+    assert_eq!(image_box(&s, "gradient").0, (g.0 + 3, g.1 + 1));
+    assert_eq!(s.selection(), &Selection::Many(vec!["tiny".into(), "gradient".into()]), "still the group");
+    run(&mut s, A::Undo);
+    assert_eq!((image_box(&s, "tiny").0, image_box(&s, "gradient").0), (t, g), "one step");
+    ctrl_click(&mut s, (50, 40));
+    assert_eq!(s.selection(), &Selection::Element("gradient".into()));
 }

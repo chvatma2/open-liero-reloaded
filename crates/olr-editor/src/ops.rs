@@ -473,6 +473,89 @@ impl Document {
         Ok(self.change(Edit::Remove { index, item: Box::new(Snapshot { item, original }) }))
     }
 
+    /// The first of `ids` that is locked, as the refusal naming it.
+    fn none_locked(&self, ids: &[String]) -> Result<(), DocError> {
+        for id in ids {
+            if self.items[self.find(id)?].element.locked {
+                return Err(DocError::Locked(id.clone()));
+            }
+        }
+        Ok(())
+    }
+
+    /// Undoes `edits` (applied, in order), last first.
+    fn roll_back(&mut self, edits: &[Edit]) {
+        for e in edits.iter().rev() {
+            self.apply(e, false);
+        }
+    }
+
+    /// Runs `op` on each of `ids` in order as one step: its edits (applied)
+    /// and the rectangle rebaked; the first refusal undoes the others.
+    fn each(
+        &mut self,
+        ids: &[String],
+        mut op: impl FnMut(&mut Document, &str) -> Result<Change, DocError>,
+    ) -> Result<(Vec<Edit>, Rect), DocError> {
+        let (mut edits, mut dirty) = (Vec::new(), None);
+        for id in ids {
+            match op(self, id) {
+                Ok(c) => {
+                    if c.dirty.w > 0 && c.dirty.h > 0 {
+                        dirty = Some(Rect::union(dirty, c.dirty));
+                    }
+                    edits.push(c.edit);
+                }
+                Err(e) => {
+                    self.roll_back(&edits);
+                    return Err(e);
+                }
+            }
+        }
+        Ok((edits, dirty.unwrap_or(NOTHING)))
+    }
+
+    /// One property on each of `ids` (plan 14e R8), checked together: one
+    /// step's edits (applied) and the rectangle rebaked. A locked member
+    /// refuses all but `Locked`, naming it.
+    pub fn set_many(&mut self, ids: &[String], property: Property) -> Result<(Vec<Edit>, Rect), DocError> {
+        if !matches!(property, Property::Locked(_)) {
+            self.none_locked(ids)?;
+        }
+        self.each(ids, |d, id| d.set(id, property.clone()))
+    }
+
+    /// Moves each of `ids` by `delta` (a raster, which cannot move, stays):
+    /// one step; refused when any is locked, naming it.
+    pub fn move_many(&mut self, ids: &[String], delta: (i32, i32)) -> Result<(Vec<Edit>, Rect), DocError> {
+        self.none_locked(ids)?;
+        let add =
+            |a: i32, b: i32| (i64::from(a) + i64::from(b)).clamp(i32::MIN.into(), i32::MAX.into()) as i32;
+        let mut moves = Vec::new();
+        for id in ids {
+            match &self.items[self.find(id)?].element.kind {
+                ElementKind::Image { at, .. } | ElementKind::Drawn { at, .. } => {
+                    moves.push((id.clone(), (add(at.0, delta.0), add(at.1, delta.1))))
+                }
+                ElementKind::Raster => {}
+            }
+        }
+        let ids: Vec<String> = moves.iter().map(|m| m.0.clone()).collect();
+        self.each(&ids, |d, id| {
+            let to = moves.iter().find(|m| m.0 == id).map_or((0, 0), |m| m.1);
+            d.set(id, Property::At(to))
+        })
+    }
+
+    /// Removes `ids` (top first): one step's edits (applied) and the
+    /// rectangle rebaked; refused when any is locked, naming it.
+    pub fn remove_many(&mut self, ids: &[String]) -> Result<(Vec<Edit>, Rect), DocError> {
+        self.none_locked(ids)?;
+        let mut top_first = ids.to_vec();
+        top_first.sort_by_key(|id| std::cmp::Reverse(self.index_of(id)));
+        self.each(&top_first, |d, id| d.remove(id))
+    }
+
     /// Moves the element to `index` (bottom 0, clamped to the top); allowed
     /// when locked (ruling R4).
     pub fn move_to(&mut self, id: &str, index: usize) -> Result<Change, DocError> {

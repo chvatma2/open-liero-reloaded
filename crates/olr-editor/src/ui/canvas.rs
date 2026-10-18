@@ -32,13 +32,13 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     let world = |p: Pos2| view.to_world([p.x - rect.min.x, p.y - rect.min.y], s);
 
     // The pointer.
-    let (pos, pressed, down, released, shift, delta, scroll, space) = ui.input(|i| {
+    let (pos, pressed, down, released, (shift, toggle), delta, scroll, space) = ui.input(|i| {
         (
             i.pointer.latest_pos(),
             i.pointer.primary_pressed(),
             i.pointer.primary_down(),
             i.pointer.primary_released(),
-            i.modifiers.shift,
+            (i.modifiers.shift, i.modifiers.command),
             i.pointer.delta(),
             i.events
                 .iter()
@@ -57,7 +57,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     if data.canvas_drag && !down {
         data.canvas_drag = false;
         if let Some(w) = pos.map(world).or(data.last_world) {
-            out.push(EditorAction::Pointer { kind: PointerKind::Up, world: w, shift });
+            out.push(EditorAction::Pointer { kind: PointerKind::Up, world: w, shift, toggle });
         }
     }
     if space && !ui.ctx().egui_wants_keyboard_input() {
@@ -66,7 +66,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         }
     } else if let Some(p) = pos {
         let w = world(p);
-        let mut send = |kind| out.push(EditorAction::Pointer { kind, world: w, shift });
+        let mut send = |kind| out.push(EditorAction::Pointer { kind, world: w, shift, toggle });
         if pressed && over && state.dialog().is_none() && state.browser().is_none() {
             data.canvas_drag = true;
             send(PointerKind::Down);

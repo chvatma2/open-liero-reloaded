@@ -611,3 +611,33 @@ fn the_crater_picker_lists_the_themes_holes() {
     h.run();
     assert_eq!(h.state().state.brush().shape, olr_editor::tools::BrushShape::Crater(1));
 }
+
+/// Plan 14e R8: Shift selects the range from the single selection.
+#[test]
+fn shift_click_selects_a_range_in_the_list() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.get_by_label("Tiny").click();
+    h.run();
+    h.get_by_label("Badge").click_modifiers(egui::Modifiers::SHIFT);
+    h.run();
+    let want = Selection::Many(vec!["tiny".into(), "gradient".into(), "badge".into()]);
+    assert_eq!(h.state().state.selection(), &want);
+    h.get_by_label("Gradient").click_modifiers(egui::Modifiers::COMMAND);
+    h.run();
+    assert_eq!(h.state().state.selection(), &Selection::Many(vec!["tiny".into(), "badge".into()]));
+}
+
+#[test]
+fn the_group_panel_shows_the_count() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    act(&mut h, A::Select(Selection::Many(vec!["tiny".into(), "gradient".into()])));
+    assert!(h.query_by_label("2 elements").is_some());
+    // Hiding from the panel hides both, one step.
+    h.get_by_label(labels::VISIBLE).click();
+    h.run();
+    let d = h.state().state.document().unwrap();
+    for id in ["tiny", "gradient"] {
+        assert!(!d.items()[d.index_of(id).unwrap()].element.visible, "{id} hidden");
+    }
+    assert!(h.query_by_label(labels::MERGE_DOWN).is_none() && h.query_by_label(labels::SPLIT).is_none());
+}

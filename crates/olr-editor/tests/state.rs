@@ -237,3 +237,97 @@ fn removing_a_texture_asks_the_host() {
     let (_tmp, mut s) = editor(&root);
     assert_eq!(s.update(A::RemoveTexture("a".into())), vec![C::RemoveTexture("a".into())]);
 }
+
+fn at(s: &olr_editor::EditorState, id: &str) -> (i32, i32) {
+    let d = s.document().unwrap();
+    match &d.items()[d.index_of(id).unwrap()].element.kind {
+        olr_format::levels::ElementKind::Image { at, .. } => *at,
+        olr_format::levels::ElementKind::Drawn { at, .. } => *at,
+        k => panic!("{k:?}"),
+    }
+}
+
+fn group(ids: &[&str]) -> A {
+    A::Select(olr_editor::Selection::Many(ids.iter().map(|s| s.to_string()).collect()))
+}
+
+/// Plan 14e R8: a group moves as one step.
+#[test]
+fn a_group_moves_and_undoes_as_one_step() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let (t, g) = (at(&s, "tiny"), at(&s, "gradient"));
+    run(&mut s, group(&["tiny", "gradient"]));
+    run(&mut s, A::Nudge { dx: 2, dy: 0 });
+    assert_eq!((at(&s, "tiny"), at(&s, "gradient")), ((t.0 + 2, t.1), (g.0 + 2, g.1)));
+    run(&mut s, A::Undo);
+    assert_eq!((at(&s, "tiny"), at(&s, "gradient")), (t, g));
+    assert!(!s.can_undo(), "one step");
+}
+
+/// Review Focus 4: a locked member refuses moves and deletes, naming it;
+/// unlocking applies to all, as one step.
+#[test]
+fn a_group_with_a_locked_member_refuses_moves() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Set("tiny".into(), Property::Locked(true)));
+    let (t, g) = (at(&s, "tiny"), at(&s, "gradient"));
+    let items = s.document().unwrap().items().len();
+    run(&mut s, group(&["tiny", "gradient"]));
+    assert!(run(&mut s, A::Nudge { dx: 2, dy: 0 }).is_empty());
+    assert_eq!((at(&s, "tiny"), at(&s, "gradient")), (t, g));
+    assert!(s.status().message.as_deref().is_some_and(|m| m.contains("tiny")), "{:?}", s.status().message);
+    run(&mut s, A::Remove);
+    assert_eq!(s.document().unwrap().items().len(), items);
+    assert!(s.status().message.as_deref().is_some_and(|m| m.contains("tiny")));
+    run(&mut s, A::Set("gradient".into(), Property::Locked(true)));
+    run(&mut s, A::SetMany(vec!["tiny".into(), "gradient".into()], Property::Locked(false)));
+    let locked = |s: &olr_editor::EditorState, id: &str| {
+        let d = s.document().unwrap();
+        d.items()[d.index_of(id).unwrap()].element.locked
+    };
+    assert!(!locked(&s, "tiny") && !locked(&s, "gradient"));
+    run(&mut s, A::Undo);
+    assert!(locked(&s, "tiny") && locked(&s, "gradient"), "one step relocks both");
+}
+
+#[test]
+fn remove_many_is_one_step() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let ids = |s: &olr_editor::EditorState| -> Vec<String> {
+        s.document().unwrap().items().iter().map(|i| i.element.id.clone()).collect()
+    };
+    let before = ids(&s);
+    run(&mut s, group(&["badge", "tiny"]));
+    assert_eq!(
+        s.selection(),
+        &olr_editor::Selection::Many(vec!["tiny".into(), "badge".into()]),
+        "in stack order"
+    );
+    run(&mut s, A::Remove);
+    assert_eq!(ids(&s), ["base", "gradient", "tunnels", "wall"]);
+    assert_eq!(s.selection(), &olr_editor::Selection::None);
+    run(&mut s, A::Undo);
+    assert_eq!(ids(&s), before);
+}
+
+/// The list's Ctrl and Shift clicks (plan 14e R8).
+#[test]
+fn toggles_and_ranges_select_groups() {
+    use olr_editor::Selection;
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::SelectToggle("gradient".into()));
+    assert_eq!(s.selection(), &Selection::Element("gradient".into()));
+    run(&mut s, A::SelectToggle("tiny".into()));
+    assert_eq!(s.selection(), &Selection::Many(vec!["tiny".into(), "gradient".into()]));
+    run(&mut s, A::SelectToggle("gradient".into()));
+    assert_eq!(s.selection(), &Selection::Element("tiny".into()));
+    run(&mut s, A::SelectRange("tunnels".into()));
+    assert_eq!(
+        s.selection(),
+        &Selection::Many(vec!["tiny".into(), "gradient".into(), "badge".into(), "tunnels".into()])
+    );
+}

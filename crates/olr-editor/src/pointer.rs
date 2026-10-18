@@ -27,6 +27,8 @@ const HANDLE_REACH: f32 = 5.0;
 pub(crate) enum Drag {
     /// An image's box follows the pointer, live.
     Move { before: Element, from: (i32, i32) },
+    /// A group's members follow the pointer together, live (plan 14e R8).
+    MoveMany { befores: Vec<Element>, from: (i32, i32) },
     /// A handle drags an outline; the box changes on release (ruling R8).
     Resize { id: String, handle: (u8, u8), at: (i32, i32), size: (u32, u32), now: ((i32, i32), (u32, u32)) },
     /// A spawn follows the pointer, live.
@@ -317,6 +319,7 @@ impl EditorState {
         kind: PointerKind,
         world: (i32, i32),
         shift: bool,
+        toggle: bool,
     ) -> Vec<EditorCommand> {
         if self.dialog.is_some() {
             // A drag still ends on its Up.
@@ -331,7 +334,7 @@ impl EditorState {
             .then(|| l.material.get(world.1 as usize * l.size.0 as usize + world.0 as usize).copied())
             .flatten();
         match kind {
-            PointerKind::Down => self.down(world),
+            PointerKind::Down => self.down(world, toggle),
             PointerKind::Move => self.drag_to(world, shift),
             PointerKind::Up => {
                 let cmds = self.drag_to(world, shift);
@@ -340,15 +343,30 @@ impl EditorState {
         }
     }
 
-    fn down(&mut self, world: (i32, i32)) -> Vec<EditorCommand> {
+    fn down(&mut self, world: (i32, i32), toggle: bool) -> Vec<EditorCommand> {
         // A drag whose Up never came ends here.
         let mut cmds = self.release();
-        cmds.extend(self.press(world));
+        cmds.extend(self.press(world, toggle));
         cmds
     }
 
-    fn press(&mut self, world: (i32, i32)) -> Vec<EditorCommand> {
+    fn press(&mut self, world: (i32, i32), toggle: bool) -> Vec<EditorCommand> {
         match self.tool {
+            Tool::Select if toggle => {
+                // Ctrl+click: the element under the pointer in or out of the
+                // selection (plan 14e R8).
+                if let Some(id) = self.hit(world) {
+                    let mut ids = self.selection.ids();
+                    match ids.iter().position(|e| *e == id) {
+                        Some(i) => {
+                            ids.remove(i);
+                        }
+                        None => ids.push(id),
+                    }
+                    self.selection = self.group(ids);
+                }
+                Vec::new()
+            }
             Tool::Select => self.select_down(world),
             Tool::Brush | Tool::Eraser => {
                 let erase = self.tool == Tool::Eraser;
@@ -475,19 +493,24 @@ impl EditorState {
             self.drag = Some(Drag::Spawn { index, before: doc.level().objects.clone(), grab });
             return Vec::new();
         }
-        // The topmost visible image box or covered drawn pixel under the
-        // pointer (plan 14d R9).
-        let (level, s) = (doc.level().size, doc.level().art_scale);
-        let hit = doc.items().iter().enumerate().rev().find(|(_, item)| {
-            item.element.visible
-                && match &item.element.kind {
-                    ElementKind::Image { .. } => image_box(&item.element).is_some_and(|b| contains(b, world)),
-                    ElementKind::Drawn { .. } => covers(item, level, s, world),
-                    ElementKind::Raster => false,
-                }
-        });
+        let hit = self.hit(world).and_then(|id| doc.index_of(&id)).map(|i| &doc.items()[i]);
+        // A press on a group's member drags the group (plan 14e R8).
+        if let (Selection::Many(ids), Some(item)) = (&self.selection, hit)
+            && ids.contains(&item.element.id)
+        {
+            let befores: Vec<Element> = ids
+                .iter()
+                .filter_map(|id| doc.index_of(id))
+                .map(|i| doc.items()[i].element.clone())
+                .collect();
+            match befores.iter().find(|e| e.locked) {
+                Some(e) => self.status.message = Some(format!("element {:?} is locked", e.id)),
+                None => self.drag = Some(Drag::MoveMany { befores, from: world }),
+            }
+            return Vec::new();
+        }
         match hit {
-            Some((_, item)) => {
+            Some(item) => {
                 let e = item.element.clone();
                 // A drawn layer moves only once selected: a click on the map
                 // never drags a whole layer by accident.
@@ -504,9 +527,50 @@ impl EditorState {
         Vec::new()
     }
 
+    /// The topmost visible image box or covered drawn pixel under world
+    /// pixel `world` (plan 14d R9): its id.
+    fn hit(&self, world: (i32, i32)) -> Option<String> {
+        let doc = self.doc.as_ref()?;
+        let (level, s) = (doc.level().size, doc.level().art_scale);
+        doc.items()
+            .iter()
+            .rev()
+            .find(|item| {
+                item.element.visible
+                    && match &item.element.kind {
+                        ElementKind::Image { .. } => {
+                            image_box(&item.element).is_some_and(|b| contains(b, world))
+                        }
+                        ElementKind::Drawn { .. } => covers(item, level, s, world),
+                        ElementKind::Raster => false,
+                    }
+            })
+            .map(|item| item.element.id.clone())
+    }
+
     fn drag_to(&mut self, world: (i32, i32), shift: bool) -> Vec<EditorCommand> {
         let Some(drag) = self.drag.clone() else { return Vec::new() };
         match drag {
+            Drag::MoveMany { befores, from } => {
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let level = doc.level().size;
+                let (dx, dy) = sub(world, from);
+                let mut dirty: Option<Rect> = None;
+                for before in &befores {
+                    let Some((at, _)) = element_box(before, level) else { continue };
+                    let to = (add(at.0, dx), add(at.1, dy));
+                    let current =
+                        doc.index_of(&before.id).and_then(|i| element_box(&doc.items()[i].element, level));
+                    if current.map(|b| b.0) == Some(to) {
+                        continue;
+                    }
+                    match doc.set(&before.id, Property::At(to)) {
+                        Ok(change) => dirty = Some(Rect::union(dirty, change.dirty)),
+                        Err(e) => self.status.message = Some(e.to_string()),
+                    }
+                }
+                dirty.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
+            }
             Drag::Move { before, from } => {
                 let Some(doc) = self.doc.as_mut() else { return Vec::new() };
                 let level = doc.level().size;
@@ -564,6 +628,21 @@ impl EditorState {
         let Some(paint) = self.doc.as_ref().map(|d| self.paint_of(d)) else { return Vec::new() };
         let Some(doc) = self.doc.as_mut() else { return Vec::new() };
         match drag {
+            Drag::MoveMany { befores, .. } => {
+                let edits: Vec<Edit> = befores
+                    .into_iter()
+                    .filter_map(|before| {
+                        let index = doc.index_of(&before.id)?;
+                        let after = doc.items()[index].element.clone();
+                        (after != before).then_some(Edit::Element { index, before, after })
+                    })
+                    .collect();
+                if edits.is_empty() {
+                    return Vec::new();
+                }
+                self.history.push(edits);
+                self.committed(NOTHING)
+            }
             Drag::Move { before, .. } => {
                 let Some(index) = doc.index_of(&before.id) else { return Vec::new() };
                 let after = doc.items()[index].element.clone();
@@ -653,8 +732,12 @@ impl EditorState {
         }
     }
 
-    /// Moves the selected image's or drawn layer's box by `(dx, dy)`: one step.
+    /// Moves the selected image's or drawn layer's box by `(dx, dy)`, or
+    /// each of a group's (plan 14e R8): one step.
     pub(crate) fn nudge(&mut self, dx: i32, dy: i32) -> Vec<EditorCommand> {
+        if let Selection::Many(ids) = self.selection.clone() {
+            return self.group_edit(|d| d.move_many(&ids, (dx, dy)));
+        }
         let Selection::Element(id) = self.selection.clone() else { return Vec::new() };
         let Some(b) = self
             .doc
@@ -672,7 +755,7 @@ impl EditorState {
         let Some(doc) = &self.doc else { return Vec::new() };
         let size = doc.level().size;
         let mut out = Vec::new();
-        let selected = |id: &str| matches!(&self.selection, Selection::Element(s) if s == id);
+        let selected = |id: &str| self.selection.has(id);
         for item in doc.items() {
             let e = &item.element;
             // Images' boxes, and the selected drawn layer's (plan 14d R9).

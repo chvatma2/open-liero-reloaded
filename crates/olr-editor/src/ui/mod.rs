@@ -134,7 +134,9 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
     egui::Panel::left("olr-editor-elements")
         .default_size(220.0)
         .show(ui, |ui| elements::show(ui, state, &mut list));
-    egui::Panel::right("olr-editor-properties").default_size(260.0).show(ui, |ui| {
+    // At least its first width: a narrow panel (a group's) never lets the
+    // canvas grow under the pointer.
+    egui::Panel::right("olr-editor-properties").default_size(260.0).min_size(260.0).show(ui, |ui| {
         egui::ScrollArea::vertical().show(ui, |ui| match state.selection() {
             Selection::None => level::show(ui, state, data, &mut fields),
             _ => properties::show(ui, state, data, &mut fields),

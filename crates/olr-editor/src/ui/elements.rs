@@ -34,13 +34,21 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>
                     };
                     ui.label(kind);
                     let name = if e.name.is_empty() { e.id.as_str() } else { e.name.as_str() };
-                    let selected = matches!(state.selection(), Selection::Element(s) if *s == e.id);
+                    let selected = state.selection().has(&e.id);
                     // The name selects on a click and reorders on a drag.
                     let r =
                         ui.add(egui::Button::selectable(selected, name).sense(egui::Sense::click_and_drag()));
                     r.dnd_set_drag_payload(e.id.clone());
+                    // Ctrl toggles it in a group, Shift selects a range (plan 14e R8).
                     if r.clicked() {
-                        out.push(EditorAction::Select(Selection::Element(e.id.clone())));
+                        let m = ui.input(|i| i.modifiers);
+                        out.push(if m.command {
+                            EditorAction::SelectToggle(e.id.clone())
+                        } else if m.shift {
+                            EditorAction::SelectRange(e.id.clone())
+                        } else {
+                            EditorAction::Select(Selection::Element(e.id.clone()))
+                        });
                     }
                 });
                 if let Some(dragged) = row.response.dnd_release_payload::<String>()
