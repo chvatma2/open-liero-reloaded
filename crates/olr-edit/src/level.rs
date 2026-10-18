@@ -178,6 +178,9 @@ pub enum EditError {
     NoObject { index: usize, len: usize },
     #[error("element {0:?} moved out of range")]
     Moved(String),
+    /// A look edit the level's check refuses (look system).
+    #[error("{0}")]
+    Look(String),
 }
 
 impl Paint {

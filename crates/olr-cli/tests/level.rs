@@ -254,3 +254,149 @@ fn object_list_reads_level_ron_alone() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert_eq!(stdout(&out), "0: Spawn at (1, 2) — two\\nlines\n");
 }
+
+/// `olr-cli level <group…> <args…>` with `{pack}` replaced.
+fn level(args: &[&str], pack: &Path) -> Output {
+    let args: Vec<String> = args.iter().map(|a| a.replace("{pack}", pack.to_str().unwrap())).collect();
+    Command::new(env!("CARGO_BIN_EXE_olr-cli")).arg("level").args(&args).output().unwrap()
+}
+
+fn ok(o: &Output) -> String {
+    assert!(o.status.success(), "{}{}", stdout(o), String::from_utf8_lossy(&o.stderr));
+    stdout(o)
+}
+
+fn look_of(pack: &Path) -> olr_look::LevelLook {
+    let src = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(pack)).unwrap();
+    olr_format::levels::compile_look(&src).unwrap().expect("a look")
+}
+
+#[test]
+fn look_cli_sets_every_field() {
+    let Some((_tmp, pack)) = dirt_level() else { return };
+    ok(&level(
+        &[
+            "look",
+            "{pack}",
+            "--ambient",
+            "202040:30",
+            "--max-light",
+            "150",
+            "--steps",
+            "4",
+            "--softness",
+            "2",
+            "--exposure",
+            "-50",
+            "--contrast",
+            "110",
+            "--saturation",
+            "90",
+            "--tint",
+            "ffeedd",
+        ],
+        &pack,
+    ));
+    let look = look_of(&pack);
+    assert_eq!((look.ambient.colour, look.ambient.intensity), ([0x20, 0x20, 0x40], 30));
+    assert_eq!((look.max_light, look.light_steps, look.softness), (150, 4, 2));
+    assert_eq!((look.grade.exposure, look.grade.contrast, look.grade.saturation), (-50, 110, 90));
+    assert_eq!(look.grade.tint, [0xff, 0xee, 0xdd]);
+    // One flag changes one field.
+    ok(&level(&["look", "{pack}", "--steps", "0"], &pack));
+    let look = look_of(&pack);
+    assert_eq!((look.light_steps, look.max_light), (0, 150));
+    ok(&check(&pack));
+    ok(&level(&["look", "{pack}", "--clear"], &pack));
+    let src = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(&pack)).unwrap();
+    assert_eq!(src.look, None);
+}
+
+#[test]
+fn groups_and_lights_round_trip_through_the_cli() {
+    let Some((_tmp, pack)) = dirt_level() else { return };
+    ok(&level(
+        &[
+            "group",
+            "add",
+            "{pack}",
+            "lava",
+            "--intensity",
+            "150",
+            "--reach",
+            "unlimited",
+            "--animation",
+            "Pulse(period_ms: 1000, low: 50, high: 100)",
+        ],
+        &pack,
+    ));
+    ok(&level(&["group", "set", "{pack}", "lava", "--colour", "ff4000", "--intensity", "80"], &pack));
+    let g = &look_of(&pack).groups[0];
+    assert_eq!(
+        (g.intensity, g.colour, g.reach),
+        (80, olr_look::GlowColour::Tint([255, 64, 0]), olr_look::Reach::Unlimited)
+    );
+    let out = ok(&level(
+        &[
+            "light",
+            "add",
+            "{pack}",
+            "--at",
+            "10,12",
+            "--colour",
+            "ff8800",
+            "--intensity",
+            "120",
+            "--reach",
+            "64",
+            "--radius",
+            "3",
+            "--animation",
+            "Flicker(speed: 8, depth: 25)",
+        ],
+        &pack,
+    ));
+    let index = out.trim().strip_prefix("added object ").unwrap().to_string();
+    assert!(stdout(&object(&["list"], &pack)).contains(&format!("{index}: Light at (10, 12)")));
+    ok(&level(&["light", "set", "{pack}", &index, "--at", "-4,5", "--intensity", "60"], &pack));
+    let l = &look_of(&pack).lights[0];
+    assert_eq!((l.at, l.radius, l.light.intensity, l.light.colour), ((-4, 5), 3, 60, [255, 136, 0]));
+    ok(&check(&pack));
+    ok(&level(&["light", "remove", "{pack}", &index], &pack));
+    ok(&level(&["group", "remove", "{pack}", "lava"], &pack));
+    assert!(look_of(&pack).groups.is_empty() && look_of(&pack).lights.is_empty());
+}
+
+#[test]
+fn bad_look_values_are_errors() {
+    let Some((_tmp, pack)) = dirt_level() else { return };
+    let before = tree(&pack);
+    for (args, flag) in [
+        (vec!["look", "{pack}", "--ambient", "ffffff:101"], "ambient"),
+        (vec!["look", "{pack}", "--max-light", "250"], "max_light"),
+        (vec!["group", "add", "{pack}", "lava", "--reach", "64", "--animation", "Nope(1)"], "--animation"),
+        (vec!["group", "add", "{pack}", "Bad Id", "--reach", "64"], "Bad Id"),
+        (
+            vec![
+                "light",
+                "add",
+                "{pack}",
+                "--at",
+                "1,1",
+                "--colour",
+                "fff",
+                "--intensity",
+                "5",
+                "--reach",
+                "9",
+            ],
+            "--colour",
+        ),
+        (vec!["light", "set", "{pack}", "9", "--intensity", "5"], "no object 9"),
+    ] {
+        let o = level(&args, &pack);
+        let err = String::from_utf8_lossy(&o.stderr).into_owned();
+        assert!(!o.status.success() && err.contains(flag), "{args:?}: {err}");
+    }
+    assert_eq!(tree(&pack), before, "nothing written");
+}

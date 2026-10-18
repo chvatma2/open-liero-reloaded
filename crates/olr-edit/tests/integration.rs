@@ -8,6 +8,7 @@ mod fmt;
 mod glow;
 mod guide;
 mod level;
+mod look;
 mod mask;
 mod new;
 mod pack;

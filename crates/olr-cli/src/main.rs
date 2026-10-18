@@ -4,6 +4,7 @@ mod element_cmd;
 mod gpu_bench_cmd;
 mod import;
 mod level_cmd;
+mod look_cmd;
 mod match_cmd;
 #[cfg(feature = "nat-tools")]
 mod nat_tools;

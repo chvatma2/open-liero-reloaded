@@ -59,6 +59,7 @@ tempfile.workspace = true
 nat-tools = ["olr-discovery/test-relay"]
 
 [dev-dependencies]
+olr-look.workspace = true
 # Tests build this crate with `nat-tools` (olr-discovery's pattern), so
 # `check`'s plain `nextest --workspace` runs the dev tools' test.
 olr-cli = { path = ".", features = ["nat-tools"] }

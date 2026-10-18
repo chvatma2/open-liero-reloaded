@@ -101,6 +101,18 @@ enum LevelCommand {
         #[command(subcommand)]
         command: ObjectCommand,
     },
+    /// Set the level's look (look system): ambient, light settings, grade.
+    Look(crate::look_cmd::LookArgs),
+    /// The level's glow groups: add, set, remove.
+    Group {
+        #[command(subcommand)]
+        command: crate::look_cmd::GroupCommand,
+    },
+    /// The level's light objects: add, set, remove.
+    Light {
+        #[command(subcommand)]
+        command: crate::look_cmd::LightCommand,
+    },
     /// Draw the level (front, or with --material its material) to a PNG with
     /// each spawn marked; the pack is not changed.
     Preview {
@@ -311,6 +323,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             element_cmd::save_and_print(pack, &p, &messages)
         }
         LevelCommand::Element { command } => element_cmd::run(command),
+        LevelCommand::Look(a) => crate::look_cmd::look_cmd(a),
+        LevelCommand::Group { command } => crate::look_cmd::group_cmd(command),
+        LevelCommand::Light { command } => crate::look_cmd::light_cmd(command),
         LevelCommand::Bake { pack, content } => element_cmd::bake_cmd(pack, content),
         LevelCommand::Object { command } => match command {
             ObjectCommand::List { pack } => {
