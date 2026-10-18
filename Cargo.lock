@@ -3434,6 +3434,7 @@ dependencies = [
  "olr-data",
  "olr-edit",
  "olr-format",
+ "olr-look",
  "olr-pack",
  "olr-vfs",
  "proptest",
