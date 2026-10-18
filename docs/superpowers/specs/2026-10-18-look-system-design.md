@@ -494,6 +494,11 @@ Budgets (the plan measures them, with the user's consent for benchmark runs):
 - **The levers, if a budget is missed,** are global and the same for every
   player: `GI_CELL_BUDGET`, the cascade count, the shadow maps' ray count,
   `MAX_LIGHTS`. Never a per-player setting.
+- **Map size is negotiable** (the user, 2026-10-18): 4096 × 4096 pushed
+  the limits; a 2048 × 2048 maximum, or smaller maps on low-powered
+  laptops, is acceptable if the measurements call for it. No earlier limit
+  is set in stone; the plan reports the trade-off rather than degrading the
+  look.
 - **Art scale 8** stays refused by `MAX_COLOR_MAP_BYTES` as today; glow adds
   a quarter to the colour terrain's memory.
 
@@ -575,7 +580,8 @@ Marked here so they can be checked:
 - **C16. The user judges the looks at two stops:** after the renderer batch,
   a contact sheet of the look test level (lit, light only, animation frames,
   world-pixel against 2 × 2 shadows, the engine's floors and lights) waits
-  for the user's verdict; after the play batch, a playtest build.
+  for the user's verdict; after the editor batch, a playtest build (plan
+  15a R10: a playtest needs the editor to make lit levels).
 - **C11. No format version bump;** the fields are optional.
 - **C12. Integers** for every look value in the files.
 - **C13. A muzzle light per weapon** (the mod's) overrides the engine's.
