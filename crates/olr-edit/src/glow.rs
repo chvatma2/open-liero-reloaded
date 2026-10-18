@@ -28,3 +28,35 @@ pub fn paint_mask(mask: &mut [u8], at: (i32, i32), size: (u32, u32), s: u32, sha
         }
     }
 }
+
+/// The 4-connected art pixels of `art` from `seed` whose colours are
+/// `similar` to the seed's within `tolerance` percent (glow by colour, the
+/// user's request 2026-10-19): one flag per art pixel, row-major. `None`
+/// when `seed` is outside. An explicit stack: no recursion.
+pub fn colour_region(art: &olr_data::image::RgbaImage, seed: (u32, u32), tolerance: u8) -> Option<Vec<bool>> {
+    let (w, h) = (art.width(), art.height());
+    if seed.0 >= w || seed.1 >= h {
+        return None;
+    }
+    let colour = art.get(seed.0, seed.1);
+    let mut inside = vec![false; w as usize * h as usize];
+    let mut stack = vec![seed];
+    inside[seed.1 as usize * w as usize + seed.0 as usize] = true;
+    while let Some((x, y)) = stack.pop() {
+        let around = [
+            (x.checked_sub(1), Some(y)),
+            ((x + 1 < w).then_some(x + 1), Some(y)),
+            (Some(x), y.checked_sub(1)),
+            (Some(x), (y + 1 < h).then_some(y + 1)),
+        ];
+        for (nx, ny) in around {
+            let (Some(nx), Some(ny)) = (nx, ny) else { continue };
+            let i = ny as usize * w as usize + nx as usize;
+            if !inside[i] && crate::level::similar(art.get(nx, ny), colour, tolerance) {
+                inside[i] = true;
+                stack.push((nx, ny));
+            }
+        }
+    }
+    Some(inside)
+}

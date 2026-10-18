@@ -434,6 +434,34 @@ fn cli_sets_and_paints_glow() {
     assert!(!pack.join("look").join("glow.png").exists());
 }
 
+/// The user's request (2026-10-19): `glow --colour-at` lights the
+/// connected pixels alike in colour, the rest of the layer dark.
+#[test]
+fn cli_glows_pixels_by_colour() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    add_look(&pack);
+    let run = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        cli(&all, &pack, &content)
+    };
+    ok(&run(&["split", "{pack}", "base"]));
+    ok(&run(&["draw", "{pack}", "dirt", "--rect", "20,20,6,6", "--colour", "ff2020"]));
+    ok(&run(&["set", "{pack}", "dirt", "--glow", "100", "--glow-group", "lava"]));
+    let e = run(&["glow", "{pack}", "dirt", "--rect", "0,0,4,4", "--tolerance", "5", "--strength", "100"]);
+    assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("--colour-at"));
+    ok(&run(&["glow", "{pack}", "dirt", "--colour-at", "22,22", "--tolerance", "5", "--strength", "80"]));
+    let bytes = std::fs::read(pack.join("editor/glow/dirt.png")).unwrap();
+    let (w, _, mask) =
+        olr_format::image_io::decode_grey_within(&bytes, olr_format::image_io::LEVEL_ART).unwrap();
+    let v = |x: u32, y: u32| mask[(y * w + x) as usize];
+    assert_eq!((v(20, 20), v(25, 25)), (204, 204), "80 % on the red");
+    assert_eq!((v(26, 22), v(100, 100)), (0, 0), "dark elsewhere");
+    ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+}
+
 #[test]
 fn cli_sets_clear() {
     let Some((tmp, pack, content)) = dirt_level() else { return };

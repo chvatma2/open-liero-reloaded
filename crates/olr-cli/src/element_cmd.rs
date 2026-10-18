@@ -177,12 +177,17 @@ pub(crate) enum ElementCommand {
         #[command(flatten)]
         content: ContentArg,
     },
-    /// Paint a glowing element's glow mask over a shape (0 erases).
+    /// Paint a glowing element's glow mask over a shape, or over the
+    /// connected pixels alike in colour (--colour-at; the rest of a glow
+    /// without a mask then dark); 0 erases.
     Glow {
         pack: PathBuf,
         id: String,
         #[command(flatten)]
-        shape: ShapeArgs,
+        target: MaskTarget,
+        /// How alike a colour must be for --colour-at, 0 to 100 percent (default 10).
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+        tolerance: Option<u8>,
         /// 0 to 100 percent of the element's glow.
         #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
         strength: u8,
@@ -494,8 +499,16 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             element::erase(p, id, &shape.shape())?;
             Ok(Vec::new())
         }),
-        ElementCommand::Glow { pack, id, shape, strength, content } => edit(pack, content, |p| {
-            element::paint_glow(p, id, &shape.shape(), *strength)?;
+        ElementCommand::Glow { tolerance: Some(_), target: MaskTarget { colour_at: None, .. }, .. } => {
+            anyhow::bail!("--tolerance takes --colour-at")
+        }
+        ElementCommand::Glow { pack, id, target, tolerance, strength, content } => edit(pack, content, |p| {
+            match target.op(tolerance.unwrap_or(DEFAULT_TOLERANCE)) {
+                element::MaskOp::Shape(shape) => element::paint_glow(p, id, &shape, *strength)?,
+                element::MaskOp::ColourAt { at, tolerance } => {
+                    element::glow_colour(p, id, at, tolerance, *strength)?
+                }
+            }
             Ok(Vec::new())
         }),
     }

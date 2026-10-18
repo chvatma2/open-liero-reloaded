@@ -466,6 +466,74 @@ pub fn paint_glow(pack: &mut Pack, id: &str, shape: &Shape, strength: u8) -> Res
     })
 }
 
+/// Lights the connected pixels of element `id` alike in colour to the one
+/// at world pixel `at` (`tolerance` percent) at `strength` percent of its
+/// glow (the user's request, 2026-10-19). A glow without a mask starts
+/// dark: only the region lights.
+pub fn glow_colour(
+    pack: &mut Pack,
+    id: &str,
+    at: (i32, i32),
+    tolerance: u8,
+    strength: u8,
+) -> Result<(), ElementError> {
+    let l = level(pack)?;
+    let (size, s) = (l.size, l.art_scale);
+    if strength > 100 || tolerance > 100 {
+        return Err(ElementError::BadValue(format!("strength {strength}, tolerance {tolerance}: 0 to 100")));
+    }
+    commit(pack, "", |src| {
+        let bad = |e: String| ElementError::BadValue(e);
+        let i = unlocked(src, id)?;
+        let e = src.composition.elements[i].clone();
+        let Some(glow) = e.glow.clone() else {
+            return Err(bad(format!("element {id:?} has no glow: set its glow first")));
+        };
+        let Some((origin, b)) = element_box(&e.kind, size) else {
+            return Err(ElementError::WrongKind { id: id.into(), want: "an image or drawn element" });
+        };
+        let decoded =
+            decode_element(src, &e, size, s, &mut ImageCache::new()).map_err(|e| bad(e.to_string()))?;
+        let art = match &decoded {
+            Decoded::Drawn { art, .. } => art,
+            Decoded::Image { grid: Some(g), .. } => &**g,
+            _ => return Err(bad(format!("element {id:?} has no pixels to pick"))),
+        };
+        let local = |v: i32, o: i32, side: u32| {
+            let d = i64::from(v) - i64::from(o);
+            (0..i64::from(side)).contains(&d).then(|| d as u32 * s + s / 2)
+        };
+        let seed = local(at.0, origin.0, b.0)
+            .zip(local(at.1, origin.1, b.1))
+            .ok_or_else(|| bad(format!("({}, {}) is outside {id:?}", at.0, at.1)))?;
+        let region = crate::glow::colour_region(art, seed, tolerance)
+            .ok_or_else(|| bad(format!("({}, {}) is outside {id:?}", at.0, at.1)))?;
+        let (aw, ah) = (b.0.saturating_mul(s), b.1.saturating_mul(s));
+        if (art.width(), art.height()) != (aw, ah) {
+            return Err(bad(format!("element {id:?}: its pixels are not its box's")));
+        }
+        let file = glow_file(id);
+        let mut mask = match src.files.get(&file).filter(|_| glow.mask) {
+            Some(bytes) => {
+                let (w, h, v) = image_io::decode_grey_within(bytes, olr_format::image_io::LEVEL_ART)
+                    .map_err(|m| bad(format!("{file}: {m}")))?;
+                if (w, h) != (aw, ah) {
+                    return Err(bad(format!("{file}: {w}x{h}, the box is {aw}x{ah}")));
+                }
+                v
+            }
+            None => vec![0; aw as usize * ah as usize],
+        };
+        let value = ((u32::from(strength) * 255 + 50) / 100) as u8;
+        for (m, _) in mask.iter_mut().zip(&region).filter(|(_, r)| **r) {
+            *m = value;
+        }
+        src.files.insert(file, image_io::encode_grey(aw, ah, &mask));
+        src.composition.elements[i].glow = Some(ElementGlow { mask: true, ..glow });
+        Ok(())
+    })
+}
+
 /// Removes element `id` and the files no other element uses.
 pub fn remove(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
     commit(pack, "", |src| {
