@@ -35,7 +35,7 @@ pub use offscreen::{
     AdapterPreference, NoAdapter, OUTPUT_FORMAT, Offscreen, OffscreenOptions, list_adapters,
 };
 pub use renderer::{
-    GpuTimes, MAX_PROBE_PASSES, MAX_PROBE_TAPS, MIN_SCALE, Probe, RenderSettings, Renderer, WORLD_FORMAT,
-    gpu_times,
+    GI_CELL_BUDGET, GpuTimes, MAX_PROBE_PASSES, MAX_PROBE_TAPS, MIN_SCALE, Probe, RenderSettings, Renderer,
+    WORLD_FORMAT, gi_cell, gpu_times,
 };
 pub use upscale::{UpscaleFilter, dest_rect, dest_rect_in};

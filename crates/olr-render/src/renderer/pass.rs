@@ -134,6 +134,9 @@ impl Renderer {
         }
         let lit_target = lit.and(world.lit.as_ref()).zip(self.look.as_ref());
         if let Some((lt, state)) = lit_target {
+            if let Some(tex) = &state.textures {
+                tex.gi.encode(&mut encoder, &state.gi, look.is_some_and(|l| !l.groups.is_empty()));
+            }
             if let (Some(tex), n @ 1..) = (&state.textures, state.light_count) {
                 let mut pass = begin(&mut encoder, "olr-render shadow", &state.shadow_view, None);
                 pass.set_pipeline(&state.shadow_pipeline);

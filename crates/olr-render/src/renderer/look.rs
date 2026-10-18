@@ -33,6 +33,8 @@ pub(super) struct LookTextures {
     pub(super) terrain_bind: wgpu::BindGroup,
     /// The shadow pass's group 0: globals, lights, solid map.
     pub(super) shadow_bind: wgpu::BindGroup,
+    /// The level's glow light.
+    pub(super) gi: super::gi::GiState,
 }
 
 /// The light grid's format.
@@ -79,6 +81,9 @@ pub(super) struct LookState {
     pub(super) globals: wgpu::Buffer,
     pub(super) lights: wgpu::Buffer,
     pub(super) shadow_view: wgpu::TextureView,
+    pub(super) gi: super::gi::GiPipelines,
+    /// A 1 × 1 dark glow light, bound before a level's exists.
+    no_glow: wgpu::TextureView,
     pub(super) textures: Option<LookTextures>,
     /// The packed globals, reused every frame.
     pub(super) packed: Vec<f32>,
@@ -207,6 +212,7 @@ impl LookState {
                 entry(1, frag, FLOAT_TEXTURE),
                 entry(2, frag, super::UNIFORM),
                 entry(3, frag, FLOAT_TEXTURE),
+                entry(4, frag, FLOAT_TEXTURE),
             ],
         });
         let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -242,6 +248,19 @@ impl LookState {
             view_formats: &[],
         });
         let shadow_view = shadow.create_view(&wgpu::TextureViewDescriptor::default());
+        let no_glow = device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("olr-render no glow light"),
+                size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: LIGHT_FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            })
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let gi = super::gi::GiPipelines::new(device);
         let lights = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("olr-render lights"),
             size: (LIGHT_FLOATS * 4) as u64,
@@ -303,6 +322,8 @@ impl LookState {
             globals,
             lights,
             shadow_view,
+            gi,
+            no_glow,
             textures: None,
             packed: Vec::with_capacity(GLOBAL_FLOATS),
             packed_lights: Vec::with_capacity(LIGHT_FLOATS),
@@ -356,6 +377,7 @@ impl LookState {
                     tex(1, src),
                     wgpu::BindGroupEntry { binding: 2, resource: self.lights.as_entire_binding() },
                     tex(3, &self.shadow_view),
+                    tex(4, self.textures.as_ref().map_or(&self.no_glow, |t| &t.gi.fluence)),
                 ],
             })
         };
@@ -380,12 +402,14 @@ impl LookState {
         LitTarget { grid, light, views, binds, composite_bind, lit_view, upscale_bind }
     }
 
-    /// New textures for `map`, uploaded whole (zeros where it has no glow).
+    /// New textures for `map` (whose colour is `terrain`), uploaded whole
+    /// (zeros where it has no glow), and its glow light.
     pub(super) fn upload(
         &mut self,
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         map: &ColorMap,
+        terrain: &wgpu::Texture,
         max_dim: u32,
     ) {
         let level = (map.material().width(), map.material().height());
@@ -421,6 +445,14 @@ impl LookState {
                 },
             ],
         });
+        let inputs = super::gi::GiInputs {
+            globals: &self.globals,
+            glow: &view(&glow),
+            groups: &view(&groups),
+            solid: &view(&solid),
+            terrain: &view(terrain),
+        };
+        let gi = super::gi::GiState::new(device, &self.gi, level, &inputs);
         let t = LookTextures {
             glow,
             groups,
@@ -429,6 +461,7 @@ impl LookState {
             level,
             terrain_bind,
             shadow_bind,
+            gi,
         };
         let whole = Rect { x: 0, y: 0, w: map.width(), h: map.height() };
         if map.glow().is_none() {
@@ -461,7 +494,8 @@ impl LookState {
     pub(super) fn pack(&mut self, look: &LookFrame, frame: &WorldFrame) {
         let p = &mut self.packed;
         p.clear();
-        let (level, art_scale) = self.textures.as_ref().map_or(((0, 0), 1), |t| (t.level, t.art_scale));
+        let (level, art_scale, cell) =
+            self.textures.as_ref().map_or(((0, 0), 1, 1), |t| (t.level, t.art_scale, t.gi.cell));
         let [r, g, b] = look.ambient;
         p.extend([r, g, b, look.max_light]);
         let gr = &look.grade;
@@ -479,7 +513,7 @@ impl LookState {
             frame.scale as f32,
             look.lights.len() as f32,
         ]);
-        p.extend([level.0 as f32, level.1 as f32, art_scale as f32, 1.0]);
+        p.extend([level.0 as f32, level.1 as f32, art_scale as f32, cell as f32]);
         let count = look.lights.len().min(olr_look::MAX_LIGHTS);
         self.light_count = count as u32;
         let l = &mut self.packed_lights;

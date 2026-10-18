@@ -8,6 +8,24 @@
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var<uniform> lights: Lights;
 @group(0) @binding(3) var shadow_tex: texture_2d<f32>;
+@group(0) @binding(4) var glow_light: texture_2d<f32>;
+
+// The level's glow light at world point `c`: its cell grid (cells of
+// `look.level.w` world pixels) sampled bilinearly, clamped.
+fn glow_at(c: vec2<f32>) -> vec3<f32> {
+    let g = c / max(look.level.w, 1.0) - vec2<f32>(0.5);
+    let size = vec2<i32>(textureDimensions(glow_light));
+    let g0 = floor(g);
+    let f = g - g0;
+    let i0 = vec2<i32>(g0);
+    let lo = vec2<i32>(0);
+    let hi = size - vec2<i32>(1);
+    let a = textureLoad(glow_light, clamp(i0, lo, hi), 0).rgb;
+    let b = textureLoad(glow_light, clamp(i0 + vec2<i32>(1, 0), lo, hi), 0).rgb;
+    let d = textureLoad(glow_light, clamp(i0 + vec2<i32>(0, 1), lo, hi), 0).rgb;
+    let e = textureLoad(glow_light, clamp(i0 + vec2<i32>(1, 1), lo, hi), 0).rgb;
+    return mix(mix(a, b, f.x), mix(d, e, f.x), f.y);
+}
 
 @vertex
 fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
@@ -47,7 +65,7 @@ fn placed(c: vec2<f32>) -> vec3<f32> {
 fn fs_sum(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     // Grid texel p is world pixel (origin - pad + p); its centre is p's.
     let c = look.frame.xy - vec2<f32>(LIGHT_PAD) + floor(p.xy) + vec2<f32>(0.5);
-    return vec4<f32>(look.ambient.rgb + placed(c), 1.0);
+    return vec4<f32>(look.ambient.rgb + glow_at(c) + placed(c), 1.0);
 }
 
 fn blur(p: vec2<i32>, dir: vec2<i32>) -> vec3<f32> {

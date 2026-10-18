@@ -9,11 +9,13 @@ use crate::atlas::{self, AtlasLayout};
 use crate::frame::Instance;
 use crate::upscale::UpscaleFilter;
 
+mod gi;
 mod look;
 mod pass;
 mod probe;
 mod timing;
 
+pub use gi::{GI_CELL_BUDGET, gi_cell};
 pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};
 pub use timing::{GpuTimes, gpu_times};
 
@@ -449,8 +451,10 @@ impl Renderer {
         self.terrain =
             Some(Terrain { texture, bind, art: (map.width(), map.height()), art_scale: map.art_scale() });
         self.write_terrain(map, olr_terrain::Rect { x: 0, y: 0, w: map.width(), h: map.height() });
-        if let Some(look) = self.look.as_mut() {
-            look.upload(&self.device, &self.queue, map, max);
+        if let (Some(look), Some(t)) = (self.look.as_mut(), &self.terrain) {
+            look.upload(&self.device, &self.queue, map, &t.texture, max);
+            // The world target's light passes bind the new level's glow light.
+            self.target = None;
         }
     }
 

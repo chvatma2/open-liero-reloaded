@@ -616,3 +616,135 @@ fn look_softness_blurs() {
     let (s, b) = (light_at(&gpu, &sharp, 52, 20)[0], light_at(&gpu, &soft, 52, 20)[0]);
     assert!((s - 0.1).abs() < 1e-3 && b > s + 1e-3, "light bleeds past the wall's edge when soft: {s} {b}");
 }
+
+/// [`room`] whose pixels where `glows(x, y)` glow at full strength in
+/// group 1 (both front and back).
+fn glowing_room(
+    w: u32,
+    h: u32,
+    rock: impl Fn(u32, u32) -> bool,
+    glows: impl Fn(u32, u32) -> bool,
+) -> ColorMap {
+    let mut m = room(w, h, rock);
+    let mut g = olr_terrain::GlowLayers::empty((w, h), (w, h));
+    for y in 0..h {
+        for x in 0..w {
+            if glows(x, y) {
+                let i = (y * w + x) as usize;
+                (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
+            }
+        }
+    }
+    assert!(m.set_glow(Some(g)));
+    m
+}
+
+/// A look at ambient 0.1 whose group 1 casts white at `k` with `reach`.
+fn glow_look(k: f32, reach: f32) -> olr_look::LookFrame {
+    let mut look = dim(0.1);
+    look.groups[0] = olr_look::FrameGroup { cast: [k; 3], own_colour: false, self_scale: k, reach };
+    look
+}
+
+fn glow_frame(gpu: &Offscreen, map: &ColorMap, view: View, look: &olr_look::LookFrame) -> Renderer {
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.set_lighting(true);
+    r.upload_terrain(map);
+    let mut l = list(view);
+    l.map = (map.material().width(), map.material().height());
+    gpu.render_lit_to_image(&mut r, &l, Some(look), (64, 64));
+    r
+}
+
+#[test]
+fn gi_cell_sizes() {
+    assert_eq!(olr_render::gi_cell((504, 350)), 1);
+    assert_eq!(olr_render::gi_cell((1350, 550)), 2);
+    assert_eq!(olr_render::gi_cell((4096, 4096)), 8);
+    assert_eq!(olr_render::gi_cell((0, 0)), 1);
+    assert_eq!(olr_render::gi_cell((4096, 64)), 1);
+}
+
+#[test]
+fn glow_lights_its_surroundings() {
+    let Some(gpu) = offscreen() else { return };
+    // A lava strip (dirt) along the floor of an open room.
+    let map = glowing_room(100, 40, |_, y| y >= 36, |x, y| y >= 36 && (20..80).contains(&x));
+    let r = glow_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &glow_look(1.0, 64.0));
+    let near = light_at(&gpu, &r, 50, 33)[0];
+    let far = light_at(&gpu, &r, 50, 5)[0];
+    assert!(near > 0.15, "the strip lights the room above it: {near}");
+    assert!(far > 0.1 + 1e-3 && far < near, "less farther up: {far} < {near}");
+    assert!(light_at(&gpu, &r, 2, 33)[0] < near, "less to the side");
+}
+
+#[test]
+fn a_wall_blocks_glow_light() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_room(100, 40, |x, y| x == 50 || y >= 36, |x, y| y >= 36 && x < 40);
+    let r = glow_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &glow_look(1.0, 200.0));
+    assert!(light_at(&gpu, &r, 30, 30)[0] > 0.15);
+    assert!((light_at(&gpu, &r, 75, 20)[0] - 0.1).abs() < 0.01, "behind the wall: about the ambient");
+}
+
+#[test]
+fn glow_reach_fades() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_room(100, 60, |_, y| y >= 56, |_, y| y >= 56);
+    let r = glow_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 }, &glow_look(1.0, 20.0));
+    assert!(light_at(&gpu, &r, 50, 50)[0] > 0.12, "within reach");
+    assert!((light_at(&gpu, &r, 50, 20)[0] - 0.1).abs() < 0.01, "past reach: the ambient");
+}
+
+#[test]
+fn a_deeper_sky_lights_the_same() {
+    let Some(gpu) = offscreen() else { return };
+    let look = glow_look(1.0, f32::INFINITY);
+    // The sky's lower edge stays at row 64; only its depth changes.
+    let lit = |depth: u32| {
+        let map = glowing_room(100, 128, |_, _| false, |_, y| (64 - depth..64).contains(&y));
+        let r = glow_frame(&gpu, &map, View { x: 0.0, y: 64.0, w: 100.0, h: 64.0 }, &look);
+        light_at(&gpu, &r, 50, 100)[0]
+    };
+    let (a, b) = (lit(16), lit(48));
+    assert!(a > 0.15, "the sky lights the room: {a}");
+    assert!((a - b).abs() < 0.02 * a, "a sky's depth does not change its light: {a} {b}");
+}
+
+#[test]
+fn no_popping() {
+    let Some(gpu) = offscreen() else { return };
+    // A sky along the top, open space with pillars down to a floor 600 px
+    // below: the sky lights the floor from far outside the view. (A narrow
+    // shaft passes almost none of a far sky's light, physically and in the
+    // cascades, which resolve far light only at their probe spacing.)
+    let rock = |x: u32, y: u32| y >= 690 || (x % 50 == 25 && (100..600).contains(&y));
+    let map = glowing_room(200, 700, rock, |_, y| y < 16);
+    let look = glow_look(1.0, f32::INFINITY);
+    let a = glow_frame(&gpu, &map, View { x: 50.0, y: 600.0, w: 100.0, h: 60.0 }, &look);
+    let b = glow_frame(&gpu, &map, View { x: 70.0, y: 630.0, w: 100.0, h: 60.0 }, &look);
+    let (la, lb) = (light_at(&gpu, &a, 100, 655), light_at(&gpu, &b, 100, 655));
+    assert!(la[0] > 0.1 + 1e-3, "a sky 600 px above lights the floor: {la:?}");
+    assert_eq!(la, lb, "wherever the camera is");
+}
+
+#[test]
+fn group_animation_scales_glow() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_room(100, 40, |_, y| y >= 36, |_, y| y >= 36);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    let full = light_at(&gpu, &glow_frame(&gpu, &map, view, &glow_look(1.0, 64.0)), 50, 30)[0] - 0.1;
+    let half = light_at(&gpu, &glow_frame(&gpu, &map, view, &glow_look(0.5, 64.0)), 50, 30)[0] - 0.1;
+    assert!(full > 0.02 && (half / full - 0.5).abs() < 0.03, "{half} is half {full}");
+}
+
+#[test]
+fn glow_light_is_deterministic() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_room(300, 200, |x, y| x % 41 == 0 && y > 50, |x, y| y < 8 || (x + y) % 97 == 0);
+    let view = View { x: 50.0, y: 40.0, w: 120.0, h: 80.0 };
+    let look = glow_look(0.8, 150.0);
+    let a = glow_frame(&gpu, &map, view, &look);
+    let b = glow_frame(&gpu, &map, view, &look);
+    assert_eq!(gpu.read_light(&a).unwrap().1, gpu.read_light(&b).unwrap().1);
+}
