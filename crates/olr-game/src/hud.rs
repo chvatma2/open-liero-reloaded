@@ -94,6 +94,8 @@ pub struct Frame<'a> {
     pub time: f64,
     /// Started from the menus: Esc pauses rather than quits.
     pub menus: bool,
+    /// The level editor's Play: Esc stops it (back to the editor).
+    pub edited: bool,
     /// The fast-forward of a watched game (a replay, bots alone;
     /// `speed::shown`).
     pub speed: Option<&'a str>,
@@ -129,7 +131,7 @@ pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, 
 /// match's lives, kills, deaths and scoreboard are its confirmed tick's
 /// (spec §3.4); its health and weapons the newest predicted tick's.
 pub fn view(s: &Session, f: &Frame) -> HudView {
-    let Frame { scores, minimap, time, menus, speed, .. } = *f;
+    let Frame { scores, minimap, time, menus, edited, speed, .. } = *f;
     let followed = s.followed();
     let local = s.local().map(i32::from);
     // The world read once, under an online peer's lock.
@@ -209,7 +211,11 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
         Driver::Online(_) if local.is_some() => "Shift+arrows weapon   Tab scores   F2 debug   Esc quit",
         Driver::Online(_) => "Arrows follow   Tab scores   F2 debug   Esc quit",
     };
-    let hint = if menus { hint.replace("Esc quit", "Esc pause") } else { hint.to_string() };
+    let hint = match (edited, menus) {
+        (true, _) => hint.replace("Esc quit", "Esc stop"),
+        (false, true) => hint.replace("Esc quit", "Esc pause"),
+        (false, false) => hint.to_string(),
+    };
     HudView {
         worm,
         log: s.log.lines().cloned().collect(),

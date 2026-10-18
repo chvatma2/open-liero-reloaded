@@ -111,12 +111,15 @@ pub(crate) fn show_window(window: &Window) {
 
 /// The frames a hidden window draws at most before it shows anyway.
 pub(crate) const REVEAL_AFTER_FRAMES: u32 = 30;
+/// The longest a hidden window waits for its first frame.
+pub(crate) const REVEAL_AFTER: Duration = Duration::from_secs(1);
 
-/// Whether a hidden window shows after its `attempts`-th frame: once one
-/// was presented, or by the deadline whatever they gave (a surface that
-/// never presents while hidden must not keep the window hidden).
-pub(crate) fn reveal_now(presented: bool, attempts: u32) -> bool {
-    presented || attempts >= REVEAL_AFTER_FRAMES
+/// Whether a hidden window shows after its `attempts`-th frame, `waited`
+/// after it was made: once one was presented, or by the deadline whatever
+/// they gave (a surface that never presents while hidden, or whose frames
+/// each time out, must not keep the window hidden).
+pub(crate) fn reveal_now(presented: bool, attempts: u32, waited: Duration) -> bool {
+    presented || attempts >= REVEAL_AFTER_FRAMES || waited >= REVEAL_AFTER
 }
 
 /// Whether `window` is still hidden (`window::attributes`), waiting for its
@@ -130,8 +133,9 @@ struct Shown {
     window: Arc<Window>,
     gpu: Gpu,
     egui: egui_winit::State,
-    /// The frames drawn while hidden (`reveal_now`).
+    /// The frames drawn while hidden, and when the window was made (`reveal_now`).
     hidden_frames: u32,
+    made: Instant,
 }
 
 pub struct App {
@@ -151,6 +155,8 @@ pub struct App {
     canvas_full: bool,
     /// The window's close waits for the editor's answer (`CloseDecision::Wait`).
     quit_after_close: bool,
+    /// The renderer's warnings logged so far (each once).
+    logged: std::collections::BTreeSet<String>,
     egui: egui::Context,
     win: Option<Shown>,
     debug: bool,
@@ -334,6 +340,7 @@ impl App {
             canvas_list: None,
             canvas_full: true,
             quit_after_close: false,
+            logged: std::collections::BTreeSet::new(),
             egui,
             win: None,
             debug: false,
@@ -555,7 +562,7 @@ impl App {
         let egui = self.egui_state(&window, &gpu);
         println!("olr: GPU {}", gpu.info);
         self.stats.gpu = gpu.info.clone();
-        self.win = Some(Shown { window, gpu, egui, hidden_frames: 0 });
+        self.win = Some(Shown { window, gpu, egui, hidden_frames: 0, made: Instant::now() });
         // Creating the window counts as a change: a scripted `size` right
         // away waits out the interval (`window::MIN_CHANGE_INTERVAL`).
         self.requests.opened(self.now());
@@ -591,7 +598,13 @@ impl App {
             Err(e) => {
                 eprintln!("warning: making the window again: {e:#}; changing it in place");
                 let size = window::apply(&old_window, change);
-                self.win = Some(Shown { window: old_window, gpu, egui: old_egui, hidden_frames: 0 });
+                self.win = Some(Shown {
+                    window: old_window,
+                    gpu,
+                    egui: old_egui,
+                    hidden_frames: 0,
+                    made: Instant::now(),
+                });
                 if let Some(size) = size {
                     self.resized((size.width, size.height));
                 }
@@ -599,7 +612,7 @@ impl App {
             }
         };
         let egui = self.egui_state(&window, &gpu);
-        self.win = Some(Shown { window, gpu, egui, hidden_frames: 0 });
+        self.win = Some(Shown { window, gpu, egui, hidden_frames: 0, made: Instant::now() });
         drop((old_egui, old_window));
         self.input.release_keys();
         self.scores.focus(false);
@@ -841,8 +854,10 @@ impl App {
         let time = (now - start).as_secs_f64();
         // The weapon selection reads the game's keys, keyboard or gamepad.
         self.shell.data.held = self.input.held();
+        let edited_play = self.shell.editing_play();
         let overlay = self.shell.play.as_ref().map(|p| Overlay {
             session: &p.session,
+            edited: edited_play,
             alpha,
             map,
             debug: self.debug,
@@ -863,8 +878,8 @@ impl App {
         let editing = self.shell.editor_open() && !self.shell.editing_play();
         let playing_edited = self.shell.editing_play();
         let stop_at = {
-            let [x, y, w, _] = playfield(size);
-            egui::pos2((x + w) as f32 / ppp, y as f32 / ppp)
+            let [x, y, ..] = playfield(size);
+            egui::pos2(x as f32 / ppp, y as f32 / ppp)
         };
         let (ui_state, data, mut editor) = (&self.shell.ui, &mut self.shell.data, self.shell.editor.as_mut());
         let menus = self.cfg.menus;
@@ -888,11 +903,14 @@ impl App {
             let out = self.shell.editor_frame(editor_actions, Instant::now());
             canvas_outs(&mut self.canvas, &mut self.canvas_full, &self.shell, out);
         }
-        if stop {
-            self.shell.stop_edited();
-            self.canvas_full = true;
-            self.input.release_keys();
+        // The canvas's map is not kept while the editor is closed or its Play
+        // runs (the session has its own); it is made again on return.
+        if !self.shell.editor_open() || self.shell.editing_play() {
+            self.canvas.clear();
         }
+        // An edited Deathmatch over: back to the editor when its results
+        // would show (no results screen there).
+        let over = self.shell.editing_play() && self.shell.session().is_some_and(Session::results_shown);
         if menus {
             // The profiles' skin preview this frame asked for, from the next.
             self.shell.update_preview(&self.egui);
@@ -957,7 +975,9 @@ impl App {
                 }
                 let max = w.gpu.renderer.device().limits().max_texture_dimension_2d;
                 let max_view = Canvas::max_view_for(max, w.gpu.renderer.scale());
-                self.canvas_list = self.canvas.draw(&view, rect, ppp, max_view);
+                // egui's own scale this pass (the frame's `ppp` may be the
+                // last one's: a Play's end changes the UI's height).
+                self.canvas_list = self.canvas.draw(&view, rect, out.pixels_per_point, max_view);
                 filter = Some(std::mem::replace(
                     &mut w.gpu.renderer.settings.filter,
                     UpscaleFilter::SharpBilinear,
@@ -968,12 +988,18 @@ impl App {
             None => world,
         };
         for warning in w.gpu.renderer.warnings().drain(..) {
-            eprintln!("warning: {warning}");
+            if self.logged.insert(warning.clone()) {
+                eprintln!("warning: {warning}");
+            }
+            // The editor says it too (a level whose art the GPU crops).
+            if let Some(h) = self.shell.editor.as_mut().filter(|_| editing) {
+                h.act(vec![olr_editor::EditorAction::Note(warning)]);
+            }
         }
         let timing = w.gpu.present(frame, world, &paint, &mut out.textures_delta);
         if hidden(&w.window) {
             w.hidden_frames += 1;
-            if reveal_now(timing.is_some(), w.hidden_frames) {
+            if reveal_now(timing.is_some(), w.hidden_frames, w.made.elapsed()) {
                 show_window(&w.window);
             }
         }
@@ -1011,6 +1037,12 @@ impl App {
                 el.exit();
             } else if self.shell.editor.as_ref().is_some_and(|h| h.state().dialog().is_none()) {
                 self.quit_after_close = false;
+            }
+        }
+        if stop || over {
+            self.stop_edited();
+            if over && let Some(h) = self.shell.editor() {
+                h.act(vec![olr_editor::EditorAction::Note("the match is over".into())]);
             }
         }
         if menus {
@@ -1103,6 +1135,8 @@ impl App {
             // With the menus, Esc and F5 are theirs (`olr_ui::screens::show`).
             // The editor's Play: Esc returns to the editor at once.
             KeyCode::Escape if self.shell.editing_play() => self.stop_edited(),
+            // F5 plays the edited level again from its start (the HUD says so).
+            KeyCode::F5 if self.shell.editing_play() => self.shell.restart_edited(),
             KeyCode::Escape if !self.cfg.menus => el.exit(),
             KeyCode::F5 if !self.cfg.menus => self.restart(el)?,
             KeyCode::F2 => self.debug = !self.debug,
@@ -1166,7 +1200,7 @@ fn egui_frame_time(input: &mut egui::RawInput, elapsed: f64) {
 mod tests {
     use winit::event::{Ime, WindowEvent};
 
-    use super::{REVEAL_AFTER_FRAMES, reveal_now};
+    use super::{REVEAL_AFTER, REVEAL_AFTER_FRAMES, reveal_now};
 
     /// Review of the window fix (Critical 1): a hidden window shows with its
     /// first presented frame, and after `REVEAL_AFTER_FRAMES` attempts
@@ -1174,10 +1208,16 @@ mod tests {
     /// cannot keep it hidden.
     #[test]
     fn a_hidden_window_shows_by_its_deadline() {
-        assert!(reveal_now(true, 1));
-        assert!(!reveal_now(false, 1));
-        assert!(!reveal_now(false, REVEAL_AFTER_FRAMES - 1));
-        assert!(reveal_now(false, REVEAL_AFTER_FRAMES));
+        use std::time::Duration;
+        let soon = Duration::from_millis(5);
+        assert!(reveal_now(true, 1, soon));
+        assert!(!reveal_now(false, 1, soon));
+        assert!(!reveal_now(false, REVEAL_AFTER_FRAMES - 1, soon));
+        assert!(reveal_now(false, REVEAL_AFTER_FRAMES, soon));
+        // Frames that each wait long (a surface timing out while hidden):
+        // the time's deadline (deferred minor of batch B).
+        assert!(!reveal_now(false, 2, REVEAL_AFTER - soon));
+        assert!(reveal_now(false, 2, REVEAL_AFTER));
     }
 
     /// The lobby's Copy (the invite code) and pasting into a text field go

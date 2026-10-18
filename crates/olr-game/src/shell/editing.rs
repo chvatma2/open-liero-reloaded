@@ -113,6 +113,13 @@ impl Shell {
         canvas
     }
 
+    /// F5 in the editor's Play: the level again from its start.
+    pub fn restart_edited(&mut self) {
+        if self.editing_play() {
+            self.restart();
+        }
+    }
+
     /// The editor's Play ends (Esc, Stop, or the load failed): back to the
     /// editor exactly as it was; the match is thrown away.
     pub fn stop_edited(&mut self) {

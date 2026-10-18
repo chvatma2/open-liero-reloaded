@@ -81,6 +81,13 @@ impl Canvas {
         });
     }
 
+    /// Drops the map (the editor closed, or its Play runs: the session has
+    /// its own); the next frame of the editor makes it again.
+    pub fn clear(&mut self) {
+        self.map = None;
+        self.palette = None;
+    }
+
     /// Whether the map shows the material view.
     pub fn showing_material(&self) -> bool {
         self.showing_material
@@ -122,11 +129,12 @@ impl Canvas {
     }
 
     /// The terrain-only draw list and the physical-pixel area for `view`
-    /// over `canvas` (egui points) at `pixels_per_point`: the visible world
-    /// rectangle clipped to the level and to `max_view` world pixels per
-    /// side (at most `MAX_VIEW`; less when the device's textures are
-    /// smaller: `max_view_for`), and the screen sub-rectangle it fills.
-    /// `None` when no level shows.
+    /// over `canvas` (egui points) at `pixels_per_point`: the world under
+    /// the whole canvas (black where there is no level; a size that panning
+    /// never changes, so the renderer's world target stays), cut at
+    /// `max_view` world pixels per side (at most `MAX_VIEW`; less when the
+    /// device's textures are smaller: `max_view_for`), and the screen
+    /// rectangle it fills. `None` when no level is open.
     pub fn draw(
         &self,
         view: &EditorView,
@@ -140,26 +148,15 @@ impl Canvas {
             return None;
         }
         let max = max_view.clamp(1.0, olr_render::MAX_VIEW);
-        let axis = |lo: f32, len: f32, offset: f32, side: u32| {
-            let a = ((lo - offset) / unit).max(0.0);
-            let b = ((lo + len - offset) / unit).min(side as f32).min(a + max);
-            (a, b)
-        };
-        let (x0, x1) = axis(0.0, canvas.width(), view.offset[0], self.level.0);
-        let (y0, y1) = axis(0.0, canvas.height(), view.offset[1], self.level.1);
-        if x1 <= x0 || y1 <= y0 {
-            return None;
-        }
+        let (w, h) = ((canvas.width() / unit).min(max), (canvas.height() / unit).min(max));
         let px = |v: f32| (v * pixels_per_point).round().max(0.0) as u32;
-        let (sx0, sy0) =
-            (px(canvas.min.x + view.offset[0] + x0 * unit), px(canvas.min.y + view.offset[1] + y0 * unit));
-        let (sx1, sy1) =
-            (px(canvas.min.x + view.offset[0] + x1 * unit), px(canvas.min.y + view.offset[1] + y1 * unit));
+        let (sx0, sy0) = (px(canvas.min.x), px(canvas.min.y));
+        let (sx1, sy1) = (px(canvas.min.x + w * unit), px(canvas.min.y + h * unit));
         if sx1 <= sx0 || sy1 <= sy0 {
             return None;
         }
         let mut list = DrawList::default();
-        list.view = View { x: x0, y: y0, w: x1 - x0, h: y1 - y0 };
+        list.view = View { x: -view.offset[0] / unit, y: -view.offset[1] / unit, w, h };
         list.map = self.level;
         Some((list, [sx0, sy0, sx1 - sx0, sy1 - sy0]))
     }
@@ -239,26 +236,25 @@ mod tests {
         assert_eq!(view.scale(), 2.0);
         let rect = egui::Rect::from_min_max(egui::pos2(100.0, 50.0), egui::pos2(500.0, 350.0));
         let (list, area) = c.draw(&view, rect, 1.5, olr_render::MAX_VIEW).unwrap();
-        // 4 points per world pixel: the view starts at world (-2.5, -5),
-        // clipped to the level's corner.
-        assert_eq!((list.view.x, list.view.y), (0.0, 0.0));
-        assert_eq!((list.view.w, list.view.h), ((400.0 - 10.0) / 4.0, (300.0 - 20.0) / 4.0));
+        // 4 points per world pixel: the whole canvas, from world (-2.5, -5)
+        // (black where there is no level).
+        assert_eq!((list.view.x, list.view.y), (-2.5, -5.0));
+        assert_eq!((list.view.w, list.view.h), (400.0 / 4.0, 300.0 / 4.0));
         assert_eq!(list.map, (504, 350));
-        // The canvas's physical rectangle less the clipped part: from
-        // (100 + 10, 50 + 20) points to its far corner.
-        assert_eq!(area, [165, 105, 750 - 165, 525 - 105]);
-        // Scrolled past the level: nothing shows.
-        let gone = EditorView { zoom: 3, offset: [-5000.0, 0.0] };
-        assert!(c.draw(&gone, rect, 1.0, olr_render::MAX_VIEW).is_none());
-        // A view wider than MAX_VIEW is clipped to the level, then to MAX_VIEW.
+        assert_eq!(area, [150, 75, 600, 450], "the canvas's physical rectangle");
+        // Panning, a level edge in view or not, keeps the view's size: the
+        // renderer's world target is not made again (deferred minor of batch C).
+        for offset in [[-300.0, -100.0], [0.0, 0.0], [-5000.0, 0.0], [123.4, 56.7]] {
+            let (l, a) = c.draw(&EditorView { zoom: 3, offset }, rect, 1.5, olr_render::MAX_VIEW).unwrap();
+            assert_eq!((l.view.w, l.view.h, a), (100.0, 75.0, area), "{offset:?}");
+        }
+        // A view wider than the device's world target allows is cut there.
         let wide = canvas((4096, 100), 1);
         let far = EditorView { zoom: 0, offset: [0.0, 0.0] };
         let huge = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(4000.0, 100.0));
         let (list, area) = wide.draw(&far, huge, 1.0, olr_render::MAX_VIEW).unwrap();
-        assert_eq!(list.view.w, 4096.0, "the level, not the canvas");
+        assert_eq!(list.view.w, olr_render::MAX_VIEW);
         assert_eq!(area[2], 1024, "4096 world pixels at a quarter point each");
-        assert!(list.view.w <= olr_render::MAX_VIEW);
-        // A smaller device texture clips the view further.
         let max = Canvas::max_view_for(4096, 2);
         let (list, _) = wide.draw(&far, huge, 1.0, max).unwrap();
         assert_eq!(list.view.w, max);

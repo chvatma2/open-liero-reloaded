@@ -648,6 +648,18 @@ mod tests {
         let p = spawned(&a);
         assert!((p.0 - at.0).abs() <= 2 && (p.1 - at.1).abs() <= 2, "{p:?} near {at:?}");
 
+        // The HUD's keys are the editor's Play's: Esc stops it (no pause menu).
+        let vp = olr_scene::Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
+        let s = crate::session::Session::new(
+            &a,
+            vp,
+            olr_scene::Interpolation::Linear,
+            olr_audio::Audio::silent(),
+        )
+        .unwrap();
+        let frame = crate::hud::Frame { menus: true, edited: true, ..Default::default() };
+        let hint = crate::hud::view(&s, &frame).hint.unwrap();
+        assert!(hint.contains("Esc stop") && !hint.contains("pause"), "{hint}");
         let a = load_edited(&[root], &play(&level, 3), DEFAULT_SKIN, &prefs).unwrap();
         let Game::Deathmatch { options, spawn, .. } = &a.game else { panic!("bots: a Deathmatch") };
         assert_eq!(options.players.len(), 4);
