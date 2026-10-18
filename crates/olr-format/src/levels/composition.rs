@@ -45,6 +45,10 @@ fn is_one(v: &u32) -> bool {
     *v == 1
 }
 
+fn is_origin(v: &(i32, i32)) -> bool {
+    *v == (0, 0)
+}
+
 fn threshold() -> u8 {
     128
 }
@@ -107,16 +111,46 @@ pub enum ElementKind {
         /// Alpha at or above which a pixel is covered, 0 to 255. Default 128.
         #[serde(default = "threshold", skip_serializing_if = "is_threshold")]
         alpha_threshold: u8,
+        /// A mask over the original (`editor/masks/<id>.png`, a grey image
+        /// of the original's size as it is shown, EXIF-turned: 0 erased,
+        /// anything else kept), applied before resampling. Default false.
+        #[serde(default, skip_serializing_if = "d::is_false")]
+        mask: bool,
     },
-    /// A level-sized layer painted with brushes and shapes
-    /// (`editor/layers/<id>.png`, art resolution; alpha 0 = not covered).
+    /// A layer painted with brushes and shapes (`editor/layers/<id>.png`,
+    /// its box × art scale; alpha 0 = not covered).
     Drawn {
-        /// What its covered pixels are.
+        /// What its covered pixels are; on a mixed layer, what new paint is
+        /// by default.
         material: ElementMaterial,
+        /// The layer's top-left, world pixels; may lie outside the level.
+        /// Default (0, 0).
+        #[serde(default, skip_serializing_if = "is_origin")]
+        at: (i32, i32),
+        /// The layer's width and height, world pixels, each 1 to `MAX_SIDE`
+        /// (4096); none: the level's size (it follows a resize). Default none.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<(u32, u32)>,
+        /// A material per world pixel of the layer
+        /// (`editor/layers/<id>.material.png`, `material.png`'s palette)
+        /// instead of `material`. Default false.
+        #[serde(default, skip_serializing_if = "d::is_false")]
+        mixed: bool,
+        /// A back art (`editor/layers/<id>.back.png`, the layer's art size):
+        /// what shows where its dirt or rock is carved. Default false.
+        #[serde(default, skip_serializing_if = "d::is_false")]
+        back: bool,
     },
     /// A whole level's own material, front and back
     /// (`editor/layers/<id>.material.png`, `.front.png`, `.back.png`).
     Raster,
+}
+
+impl ElementKind {
+    /// A plain drawn layer of `material`, the level's size at the origin.
+    pub fn drawn(material: ElementMaterial) -> ElementKind {
+        ElementKind::Drawn { material, at: (0, 0), size: None, mixed: false, back: false }
+    }
 }
 
 /// An element's material.
@@ -172,6 +206,34 @@ pub fn layer_file(id: &str) -> String {
     format!("{EDITOR_DIR}/layers/{id}.png")
 }
 
+/// A drawn element's files: its art (`layer_file`), then its material
+/// (`editor/layers/<id>.material.png`) when mixed and its back art
+/// (`editor/layers/<id>.back.png`) when backed.
+pub fn drawn_files(id: &str, mixed: bool, back: bool) -> Vec<String> {
+    let mut out = vec![layer_file(id)];
+    if mixed {
+        out.push(format!("{EDITOR_DIR}/layers/{id}.material.png"));
+    }
+    if back {
+        out.push(format!("{EDITOR_DIR}/layers/{id}.back.png"));
+    }
+    out
+}
+
+/// An image element's mask: `editor/masks/<id>.png`.
+pub fn mask_file(id: &str) -> String {
+    format!("{EDITOR_DIR}/masks/{id}.png")
+}
+
+/// A drawn element's box in world pixels, its `at` and its size (the
+/// level's, `level`, when it has none); `None` for other kinds.
+pub fn drawn_box(kind: &ElementKind, level: (u32, u32)) -> Option<((i32, i32), (u32, u32))> {
+    match kind {
+        ElementKind::Drawn { at, size, .. } => Some((*at, size.unwrap_or(level))),
+        _ => None,
+    }
+}
+
 /// A raster element's material, front and back:
 /// `editor/layers/<id>.material.png`, `.front.png`, `.back.png`.
 pub fn raster_files(id: &str) -> [String; 3] {
@@ -181,8 +243,14 @@ pub fn raster_files(id: &str) -> [String; 3] {
 /// The files `element` uses, by pack path.
 pub fn element_files(element: &Element) -> Vec<String> {
     match &element.kind {
-        ElementKind::Image { source, .. } => vec![image_file(source)],
-        ElementKind::Drawn { .. } => vec![layer_file(&element.id)],
+        ElementKind::Image { source, mask, .. } => {
+            let mut out = vec![image_file(source)];
+            if *mask {
+                out.push(mask_file(&element.id));
+            }
+            out
+        }
+        ElementKind::Drawn { mixed, back, .. } => drawn_files(&element.id, *mixed, *back),
         ElementKind::Raster => raster_files(&element.id).into(),
     }
 }
@@ -305,9 +373,10 @@ pub fn check_composition(
     size: (u32, u32),
     art_scale: u32,
 ) -> Result<(), FormatError> {
-    check_elements(&src.composition, size, art_scale)?;
+    let mut pixels = check_elements(&src.composition, size, art_scale)?;
     let art = (size.0.saturating_mul(art_scale), size.1.saturating_mul(art_scale));
     for (i, e) in src.composition.elements.iter().enumerate() {
+        let boxed = drawn_box(&e.kind, size);
         for (part, file) in element_files(e).into_iter().enumerate() {
             let Some(bytes) = src.files.get(&file) else {
                 return Err(FormatError::invalid(
@@ -316,13 +385,34 @@ pub fn check_composition(
                     format!("{file}: missing"),
                 ));
             };
-            // A raster's files are its material, then its front and back.
-            let expected = match e.kind {
-                ElementKind::Image { .. } => None,
-                ElementKind::Raster if part == 0 => Some((size, "the level's size")),
+            // A raster's files are its material, then its front and back;
+            // a drawn layer's its art, then its material and back art.
+            let expected = match (&e.kind, boxed) {
+                (ElementKind::Image { .. }, _) => None,
+                (ElementKind::Raster, _) if part == 0 => Some((size, "the level's size")),
+                (ElementKind::Drawn { mixed: true, .. }, Some((_, b))) if part == 1 => {
+                    Some((b, "the layer's size"))
+                }
+                (ElementKind::Drawn { .. }, Some((_, b))) => Some((
+                    (b.0.saturating_mul(art_scale), b.1.saturating_mul(art_scale)),
+                    "the layer's size × art_scale",
+                )),
                 _ => Some((art, "the level's size × art_scale")),
             };
-            check_file(&file, bytes, expected)?;
+            let header = check_file(&file, bytes, expected)?;
+            // A mask is decoded with its element: its pixels count too.
+            if part == 1 && matches!(e.kind, ElementKind::Image { .. }) {
+                pixels = pixels.saturating_add(u64::from(header.0) * u64::from(header.1));
+                if pixels > MAX_COMPOSED_PIXELS {
+                    return Err(FormatError::invalid(
+                        COMPOSITION_FILE,
+                        &format!("elements[{i}]"),
+                        format!(
+                            "the elements and masks up to this one decode to {pixels} pixels, more than {MAX_COMPOSED_PIXELS}"
+                        ),
+                    ));
+                }
+            }
         }
     }
     Ok(())
@@ -330,8 +420,9 @@ pub fn check_composition(
 
 /// `check_composition` without the files: the count, ids (valid, unique,
 /// their layer files unshared and portable), image fields, sources unique
-/// case aside, each box's art within `LEVEL_ART`, the pixel budget.
-pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Result<(), FormatError> {
+/// case aside, each box's art within `LEVEL_ART`, the pixel budget (its
+/// total, masks aside, returned).
+pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Result<u64, FormatError> {
     let elements = &c.elements;
     if let Some(e) = too_many(elements.len()) {
         return Err(e);
@@ -383,12 +474,25 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                 return Err(bad("colours", format!("{n}: 2 to 256")));
             }
         }
+        if let ElementKind::Drawn { size: Some(size), .. } = &e.kind {
+            if !(1..=MAX_SIDE).contains(&size.0) || !(1..=MAX_SIDE).contains(&size.1) {
+                return Err(bad("size", format!("{}x{}: each side 1 to {MAX_SIDE}", size.0, size.1)));
+            }
+            let (aw, ah) = (size.0.saturating_mul(art_scale), size.1.saturating_mul(art_scale));
+            image_io::check_size(aw, ah, LEVEL_ART)
+                .map_err(|why| bad("size", format!("its art at art scale {art_scale}: {why}")))?;
+        }
         pixels = pixels.saturating_add(match &e.kind {
             ElementKind::Image { size, pixel_size, .. } => {
                 let side = |v: u32| u64::from(v.saturating_mul(art_scale).div_ceil((*pixel_size).max(1)));
                 side(size.0) * side(size.1)
             }
-            ElementKind::Drawn { .. } => art_pixels,
+            ElementKind::Drawn { size: boxed, mixed, back, .. } => {
+                let (w, h) = boxed.unwrap_or(size);
+                let cells = u64::from(w) * u64::from(h);
+                let art = cells * u64::from(art_scale) * u64::from(art_scale);
+                art * (1 + u64::from(*back)) + if *mixed { cells } else { 0 }
+            }
             ElementKind::Raster => 2 * art_pixels + u64::from(size.0) * u64::from(size.1),
         });
         if pixels > MAX_COMPOSED_PIXELS {
@@ -400,6 +504,8 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                 ),
             ));
         }
+        // An image's mask is named by its unique id; other kinds' files
+        // are checked for sharing.
         if !matches!(e.kind, ElementKind::Image { .. }) {
             for file in element_files(e) {
                 // Ids are unique, their files need not be (`a` and `a.front`).
@@ -413,24 +519,29 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
             }
         }
     }
-    Ok(())
+    Ok(pixels)
 }
 
 /// One element file's size from its header: an original within
 /// `IMAGES` (`expected` none), a layer of exactly `expected`, a size and
 /// what it is (a raster's material the level's size, other layers its
 /// size × `art_scale`).
-fn check_file(file: &str, bytes: &[u8], expected: Option<((u32, u32), &str)>) -> Result<(), FormatError> {
+fn check_file(
+    file: &str,
+    bytes: &[u8],
+    expected: Option<((u32, u32), &str)>,
+) -> Result<(u32, u32), FormatError> {
     let invalid = |message: String| FormatError::invalid(file, "", message);
     let Some(((ew, eh), what)) = expected else {
         let (w, h) = image_io::image_size(bytes).ok_or_else(|| invalid("not a PNG or JPEG".into()))?;
-        return image_io::check_size(w, h, IMAGES).map_err(invalid);
+        image_io::check_size(w, h, IMAGES).map_err(invalid)?;
+        return Ok((w, h));
     };
     let (w, h) = image_io::png_size(bytes).ok_or_else(|| invalid("not a PNG".into()))?;
     if (w, h) != (ew, eh) {
         return Err(invalid(format!("{w}x{h}, {what} is {ew}x{eh}")));
     }
-    Ok(())
+    Ok((w, h))
 }
 
 #[cfg(test)]
@@ -447,6 +558,12 @@ mod tests {
         let mut files = BTreeMap::new();
         files.insert(image_file("sky.png"), image_io::encode_rgba(&RgbaImage::new(10, 10)));
         files.insert(layer_file("ground"), art.clone());
+        files.insert(mask_file("sky"), image_io::encode_grey(10, 10, &[255; 100]));
+        let [wall_art, wall_material, wall_back] =
+            [0, 1, 2].map(|i| drawn_files("wall", true, true)[i].clone());
+        files.insert(wall_art, image_io::encode_rgba(&RgbaImage::new(6, 4)));
+        files.insert(wall_material, image_io::encode_indexed(3, 2, &[2; 6], &MATERIAL_PALETTE));
+        files.insert(wall_back, image_io::encode_rgba(&RgbaImage::new(6, 4)));
         for (f, b) in raster_files("base").into_iter().zip([material, art.clone(), art]) {
             files.insert(f, b);
         }
@@ -472,9 +589,20 @@ mod tests {
                             colours: Some(16),
                             dither: Dither::Ordered,
                             alpha_threshold: 128,
+                            mask: true,
                         },
                     ),
-                    element("ground", ElementKind::Drawn { material: ElementMaterial::Dirt }),
+                    element("ground", ElementKind::drawn(ElementMaterial::Dirt)),
+                    element(
+                        "wall",
+                        ElementKind::Drawn {
+                            material: ElementMaterial::Rock,
+                            at: (1, -1),
+                            size: Some((3, 2)),
+                            mixed: true,
+                            back: true,
+                        },
+                    ),
                 ],
             },
             files,
@@ -553,6 +681,38 @@ mod tests {
                     }
                 }),
             ),
+            ("size", Box::new(|s| set_wall_size(s, (0, 2)))),
+            ("size", Box::new(|s| set_wall_size(s, (5000, 2)))),
+            (
+                "editor/layers/wall.material.png",
+                Box::new(|s| {
+                    s.files.insert(
+                        drawn_files("wall", true, false)[1].clone(),
+                        image_io::encode_indexed(2, 2, &[2; 4], &MATERIAL_PALETTE),
+                    );
+                }),
+            ),
+            (
+                "editor/layers/wall.back.png",
+                Box::new(|s| {
+                    s.files.insert(
+                        drawn_files("wall", false, true)[1].clone(),
+                        image_io::encode_rgba(&RgbaImage::new(4, 4)),
+                    );
+                }),
+            ),
+            (
+                "missing",
+                Box::new(|s| {
+                    s.files.remove("editor/layers/wall.material.png");
+                }),
+            ),
+            (
+                "editor/masks/sky.png",
+                Box::new(|s| {
+                    s.files.insert(mask_file("sky"), b"not an image".to_vec());
+                }),
+            ),
             (
                 "more than",
                 Box::new(|s| {
@@ -567,6 +727,42 @@ mod tests {
             let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
             assert!(e.contains(want), "{want}: {e}");
         }
+    }
+
+    fn set_wall_size(s: &mut CompositionSource, to: (u32, u32)) {
+        if let ElementKind::Drawn { size, .. } = &mut s.composition.elements[3].kind {
+            *size = Some(to);
+        }
+    }
+
+    /// Plan 14d: a drawn layer's defaults, and an image's, are left out.
+    #[test]
+    fn defaults_are_left_out_of_drawn_and_image() {
+        let mut s = sample();
+        s.composition.elements.retain(|e| e.id == "ground");
+        let text = to_canonical(COMPOSITION_FILE, &s.composition).unwrap();
+        assert!(text.contains("Drawn(\n                material: Dirt,\n            )"), "{text}");
+        for field in ["at:", "size:", "mixed", "back", "mask"] {
+            assert!(!text.contains(field), "{field}: {text}");
+        }
+    }
+
+    /// Plan 14d: a mixed layer's material file is one of its files, so
+    /// another layer's art may not share its name.
+    #[test]
+    fn a_drawn_layers_files_never_collide() {
+        let mut s = sample();
+        s.composition.elements.retain(|e| e.id == "ground");
+        if let ElementKind::Drawn { mixed, .. } = &mut s.composition.elements[0].kind {
+            *mixed = true;
+        }
+        s.composition.elements[0].id = "a".into();
+        let mut other = s.composition.elements[0].clone();
+        other.id = "a.material".into();
+        other.kind = ElementKind::drawn(ElementMaterial::Dirt);
+        s.composition.elements.push(other);
+        let e = check_elements(&s.composition, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("two elements"), "{e}");
     }
 
     /// Review A-1: a file's size rule comes from the element, not from
@@ -606,8 +802,9 @@ mod tests {
     fn the_elements_pixels_together_are_bounded() {
         let mut s = sample();
         s.composition.elements.retain(|e| e.id == "sky");
-        if let ElementKind::Image { size, .. } = &mut s.composition.elements[0].kind {
+        if let ElementKind::Image { size, mask, .. } = &mut s.composition.elements[0].kind {
             *size = (4096, 4096);
+            *mask = false;
         }
         let one = s.composition.elements[0].clone();
         s.composition.elements = (0..4).map(|i| Element { id: format!("e{i}"), ..one.clone() }).collect();
@@ -615,6 +812,28 @@ mod tests {
         s.composition.elements.push(Element { id: "e4".into(), ..one });
         let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
         assert!(e.contains("elements[4]") && e.contains("pixels"), "{e}");
+        // Plan 14d: a drawn layer counts its art, its back art when backed
+        // and its cells when mixed. Three boxes of 4096 × 2048 at art scale
+        // 2 (32 Mi art pixels each) with backs and cells come to 3 × (64 Mi
+        // + 8 Mi): within 256 Mi; a fourth is not.
+        let wall = |i: usize| Element {
+            id: format!("w{i}"),
+            name: String::new(),
+            visible: true,
+            locked: false,
+            kind: ElementKind::Drawn {
+                material: ElementMaterial::Dirt,
+                at: (0, 0),
+                size: Some((4096, 2048)),
+                mixed: true,
+                back: true,
+            },
+        };
+        let mut c = Composition { elements: (0..3).map(wall).collect() };
+        check_elements(&c, (4, 3), 2).unwrap();
+        c.elements.push(wall(3));
+        let e = check_elements(&c, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("elements[3]") && e.contains("pixels"), "{e}");
     }
 
     /// Deferred minors: two originals whose names differ only in case
@@ -628,11 +847,12 @@ mod tests {
             *source = "SKY.png".into();
         }
         s.files.insert(image_file("SKY.png"), image_io::encode_rgba(&RgbaImage::new(2, 2)));
+        s.files.insert(mask_file("sky2"), image_io::encode_grey(10, 10, &[255; 100]));
         s.composition.elements.push(e.clone());
         let err = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
-        assert!(err.contains("elements[3].source") && err.contains("case"), "{err}");
+        assert!(err.contains("elements[4].source") && err.contains("case"), "{err}");
         // The same original twice is one file: allowed.
-        if let ElementKind::Image { source, .. } = &mut s.composition.elements[3].kind {
+        if let ElementKind::Image { source, .. } = &mut s.composition.elements[4].kind {
             *source = "sky.png".into();
         }
         check_composition(&s, (4, 3), 2).unwrap();

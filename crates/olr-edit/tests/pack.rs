@@ -164,7 +164,7 @@ fn composed(dir: &std::path::Path) -> olr_edit::pack::Pack {
         name: "Ground".into(),
         visible: true,
         locked: false,
-        kind: olr_format::levels::ElementKind::Drawn { material: olr_format::levels::ElementMaterial::Dirt },
+        kind: olr_format::levels::ElementKind::drawn(olr_format::levels::ElementMaterial::Dirt),
     });
     pack.composition = Some(src);
     pack

@@ -79,6 +79,7 @@ fn with_image(
             colours: None,
             dither: Dither::None,
             alpha_threshold: 128,
+            mask: false,
         },
     ));
 }
@@ -86,7 +87,7 @@ fn with_image(
 /// Adds a drawn layer `id` holding `art` (art resolution) on top.
 fn with_drawn(src: &mut CompositionSource, id: &str, art: &RgbaImage, m: ElementMaterial) {
     src.files.insert(layer_file(id), image_io::encode_rgba(art));
-    src.composition.elements.push(element(id, ElementKind::Drawn { material: m }));
+    src.composition.elements.push(element(id, ElementKind::drawn(m)));
 }
 
 /// `front == back` on every art pixel of a background block.
@@ -263,9 +264,9 @@ fn every_bundled_level_round_trips_through_three_layers() {
         assert_eq!(
             kinds,
             [
-                ("background", ElementKind::Drawn { material: ElementMaterial::Background }),
-                ("dirt", ElementKind::Drawn { material: ElementMaterial::Dirt }),
-                ("rock", ElementKind::Drawn { material: ElementMaterial::Rock }),
+                ("background", ElementKind::drawn(ElementMaterial::Background)),
+                ("dirt", ElementKind::drawn(ElementMaterial::Dirt)),
+                ("rock", ElementKind::drawn(ElementMaterial::Rock)),
             ],
             "{id}"
         );
@@ -604,7 +605,7 @@ fn mismatched_decoded_data_never_panics() {
             .is_err()
     );
     assert_eq!(d2, d);
-    let drawn = element("d", ElementKind::Drawn { material: ElementMaterial::Dirt });
+    let drawn = element("d", ElementKind::drawn(ElementMaterial::Dirt));
     let mut art = Decoded::Drawn { art: solid(3, 3, BLUE) };
     let mut e3 = drawn.clone();
     assert!(

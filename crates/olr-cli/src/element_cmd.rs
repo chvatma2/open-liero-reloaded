@@ -231,7 +231,7 @@ fn list(dir: &Path) -> anyhow::Result<bool> {
     for (i, e) in composition.iter().flat_map(|c| c.elements.iter()).enumerate() {
         let (kind, material) = match &e.kind {
             ElementKind::Image { material, .. } => ("Image", material_name(*material)),
-            ElementKind::Drawn { material } => ("Drawn", material_name(*material)),
+            ElementKind::Drawn { material, .. } => ("Drawn", material_name(*material)),
             ElementKind::Raster => ("Raster", "-"),
         };
         let mut line = format!("{i}: {} {kind} {material}", e.id);

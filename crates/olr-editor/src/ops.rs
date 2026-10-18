@@ -63,7 +63,7 @@ fn with_property(e: &mut Element, property: Property) -> Result<(), DocError> {
         Property::Visible(v) => e.visible = v,
         Property::Locked(v) => e.locked = v,
         Property::Material(m) => match &mut e.kind {
-            ElementKind::Image { material, .. } | ElementKind::Drawn { material } => *material = m,
+            ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => *material = m,
             ElementKind::Raster => return Err(wrong("an image or drawn element")),
         },
         p => {
@@ -113,6 +113,7 @@ impl Document {
             return Err(DocError::Bad(format!("a level holds at most {MAX_ELEMENTS} elements")));
         }
         check_elements(&Composition { elements: elements.to_vec() }, size, art_scale)
+            .map(|_| ())
             .map_err(|e| DocError::Bad(e.to_string()))
     }
 
@@ -165,6 +166,7 @@ impl Document {
                 colours: None,
                 dither: Dither::None,
                 alpha_threshold: 128,
+                mask: false,
             },
         };
         self.check_with(|es| es.push(element.clone()))?;
@@ -207,7 +209,7 @@ impl Document {
             name: name.into(),
             visible: true,
             locked: false,
-            kind: ElementKind::Drawn { material },
+            kind: ElementKind::drawn(material),
         };
         self.check_with(|es| es.push(element.clone()))?;
         let (w, h) = self.level.size;

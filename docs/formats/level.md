@@ -122,8 +122,8 @@ What an element is.
 
 | Variant | Fields | Meaning |
 |---|---|---|
-| `Image` | `material`, `source`, `at`, `size`, `pixel_size`, `colours`, `dither`, `alpha_threshold` | An imported picture (`editor/images/<source>`), placed in a box and pixelated. |
-| `Drawn` | `material` | A level-sized layer painted with brushes and shapes (`editor/layers/<id>.png`, art resolution; alpha 0 = not covered). |
+| `Image` | `material`, `source`, `at`, `size`, `pixel_size`, `colours`, `dither`, `alpha_threshold`, `mask` | An imported picture (`editor/images/<source>`), placed in a box and pixelated. |
+| `Drawn` | `material`, `at`, `size`, `mixed`, `back` | A layer painted with brushes and shapes (`editor/layers/<id>.png`, its box × art scale; alpha 0 = not covered). |
 | `Raster` | — | A whole level's own material, front and back (`editor/layers/<id>.material.png`, `.front.png`, `.back.png`). |
 
 ### `ElementKind::Image`
@@ -138,12 +138,17 @@ What an element is.
 | `colours` | integer (optional) | none | Colour reduction: none, or 2 to 256 colours (median cut). |
 | `dither` | [Dither](#dither) | `None` | Dithering when colours are reduced. |
 | `alpha_threshold` | integer | `128` | Alpha at or above which a pixel is covered, 0 to 255. Default 128. |
+| `mask` | boolean | `false` | A mask over the original (`editor/masks/<id>.png`, a grey image of the original's size as it is shown, EXIF-turned: 0 erased, anything else kept), applied before resampling. Default false. |
 
 ### `ElementKind::Drawn`
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `material` | [ElementMaterial](#elementmaterial) | required | What its covered pixels are. |
+| `material` | [ElementMaterial](#elementmaterial) | required | What its covered pixels are; on a mixed layer, what new paint is by default. |
+| `at` | (integer, integer) | `(0, 0)` | The layer's top-left, world pixels; may lie outside the level. Default (0, 0). |
+| `size` | (integer, integer) (optional) | none | The layer's width and height, world pixels, each 1 to `MAX_SIDE` (4096); none: the level's size (it follows a resize). Default none. |
+| `mixed` | boolean | `false` | A material per world pixel of the layer (`editor/layers/<id>.material.png`, `material.png`'s palette) instead of `material`. Default false. |
+| `back` | boolean | `false` | A back art (`editor/layers/<id>.back.png`, the layer's art size): what shows where its dirt or rock is carved. Default false. |
 
 <a id="elementmaterial"></a>
 

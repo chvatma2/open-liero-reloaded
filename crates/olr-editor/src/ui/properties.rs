@@ -57,7 +57,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
                 out.push(EditorAction::Split(id.clone()));
             }
             let material = match &e.kind {
-                ElementKind::Image { material, .. } | ElementKind::Drawn { material } => Some(*material),
+                ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => Some(*material),
                 ElementKind::Raster => None,
             };
             if let Some(material) = material {

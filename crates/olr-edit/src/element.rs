@@ -243,6 +243,7 @@ pub fn add_image_with(
                     colours: None,
                     dither: Dither::None,
                     alpha_threshold: 128,
+                    mask: false,
                 },
             },
         )?;
@@ -268,7 +269,7 @@ pub fn add_layer(pack: &mut Pack, material: ElementMaterial, name: &str) -> Resu
                 name: name.into(),
                 visible: true,
                 locked: false,
-                kind: ElementKind::Drawn { material },
+                kind: ElementKind::drawn(material),
             },
         )?;
         Ok(id)
@@ -323,7 +324,7 @@ fn apply(src: &mut CompositionSource, id: &str, property: Property) -> Result<()
             Property::Visible(v) => e.visible = v,
             Property::Locked(v) => e.locked = v,
             Property::Material(m) => match &mut e.kind {
-                ElementKind::Image { material, .. } | ElementKind::Drawn { material } => *material = m,
+                ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => *material = m,
                 ElementKind::Raster => return Err(wrong("an image or drawn element")),
             },
             p => {

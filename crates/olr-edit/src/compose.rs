@@ -281,7 +281,7 @@ impl<'a> Layer<'a> {
                     size: (box_art.0 as i64, box_art.1 as i64),
                 }
             }
-            (ElementKind::Drawn { material }, Decoded::Drawn { art: a }) if dims(a) == art => {
+            (ElementKind::Drawn { material, .. }, Decoded::Drawn { art: a, .. }) if dims(a) == art => {
                 Layer::Drawn { material: (*material).into(), art: a }
             }
             (ElementKind::Raster, Decoded::Raster { material, front, back })
@@ -705,7 +705,7 @@ pub fn split_layers(
             name: name.into(),
             visible: true,
             locked: false,
-            kind: ElementKind::Drawn { material },
+            kind: ElementKind::drawn(material),
         };
         (e, Decoded::Drawn { art })
     };
