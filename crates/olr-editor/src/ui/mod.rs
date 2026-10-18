@@ -182,6 +182,23 @@ fn shortcuts(ui: &Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
         if i.consume_key(Modifiers::NONE, Key::Delete) {
             out.push(EditorAction::Remove);
         }
+        // Ctrl+C, X and V: as keys, or as the window's copy, cut and paste
+        // events (plan 14e R9); one action each per frame.
+        let clipboard =
+            [(Key::C, EditorAction::Copy), (Key::X, EditorAction::Cut), (Key::V, EditorAction::Paste)];
+        for (key, action) in clipboard {
+            let event = i.events.iter().any(|e| {
+                matches!(
+                    (e, &action),
+                    (egui::Event::Copy, EditorAction::Copy)
+                        | (egui::Event::Cut, EditorAction::Cut)
+                        | (egui::Event::Paste(_), EditorAction::Paste)
+                )
+            });
+            if i.consume_key(Modifiers::COMMAND, key) || event {
+                out.push(action);
+            }
+        }
         if i.consume_key(Modifiers::COMMAND, Key::E)
             && let Selection::Element(id) = state.selection()
         {

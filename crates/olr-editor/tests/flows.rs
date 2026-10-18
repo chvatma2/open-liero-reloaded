@@ -662,3 +662,25 @@ fn a_users_texture_is_removed_from_the_palette() {
     h.run();
     assert!(h.state().commands.contains(&C::RemoveTexture("stripes".into())), "{:?}", h.state().commands);
 }
+
+/// Plan 14e R9: Ctrl+C and Ctrl+V as key presses, and as the window's
+/// copy and paste events.
+#[test]
+fn ctrl_c_and_ctrl_v_copy_and_paste() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    let n = ids(&h).len();
+    act(&mut h, A::Select(Selection::Element("tiny".into())));
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::C);
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::V);
+    h.run();
+    assert_eq!(ids(&h).len(), n + 1);
+    h.event(egui::Event::Copy);
+    h.run();
+    h.event(egui::Event::Paste(String::new()));
+    h.run();
+    assert_eq!(ids(&h).len(), n + 2, "one paste per event");
+    h.event(egui::Event::Cut);
+    h.run();
+    assert_eq!(ids(&h).len(), n + 1);
+}

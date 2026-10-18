@@ -400,6 +400,41 @@ impl Placed {
     }
 }
 
+/// `p` cropped to the world pixels it covers (plan 14e R6): those whose
+/// block holds an opaque art or back-art pixel. `None` when it covers
+/// none, or does not fit itself at art scale `s`.
+pub fn crop(p: &Placed, s: u32) -> Option<Placed> {
+    if !p.fits(s) {
+        return None;
+    }
+    let opaque = |i: &RgbaImage, x: u32, y: u32| art_block(s, x, y).any(|(ax, ay)| i.get(ax, ay).a != 0);
+    let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+    for y in 0..p.size.1 {
+        for x in 0..p.size.0 {
+            if opaque(&p.art, x, y) || p.back.as_ref().is_some_and(|b| opaque(b, x, y)) {
+                (x0, y0, x1, y1) = (x0.min(x), y0.min(y), x1.max(x + 1), y1.max(y + 1));
+            }
+        }
+    }
+    if x0 >= x1 || y0 >= y1 {
+        return None;
+    }
+    let (w, h) = (x1 - x0, y1 - y0);
+    let cut = |i: &RgbaImage| i.crop(x0 * s, y0 * s, w * s, h * s);
+    let cells = (y0..y1)
+        .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+        .map(|(x, y)| p.cells[y as usize * p.size.0 as usize + x as usize])
+        .collect();
+    let shift = |a: i32, d: u32| (i64::from(a) + i64::from(d)).clamp(i32::MIN.into(), i32::MAX.into()) as i32;
+    Some(Placed {
+        at: (shift(p.at.0, x0), shift(p.at.1, y0)),
+        size: (w, h),
+        art: cut(&p.art),
+        cells,
+        back: p.back.as_ref().map(cut),
+    })
+}
+
 /// The decision-4 merge of `upper` into `lower` over the union of their
 /// boxes (plan 14d Task 5, C1, C2, decision 7). Per world pixel: each layer
 /// covers its block where its art at the block's centre is opaque; the

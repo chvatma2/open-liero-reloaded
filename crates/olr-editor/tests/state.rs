@@ -331,3 +331,55 @@ fn toggles_and_ranges_select_groups() {
         &Selection::Many(vec!["tiny".into(), "gradient".into(), "badge".into(), "tunnels".into()])
     );
 }
+
+fn ids_of(s: &olr_editor::EditorState) -> Vec<String> {
+    s.document().unwrap().items().iter().map(|i| i.element.id.clone()).collect()
+}
+
+#[test]
+fn cut_and_paste_are_one_step_each() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let before = ids_of(&s);
+    run(&mut s, A::Select(olr_editor::Selection::Element("tiny".into())));
+    run(&mut s, A::Cut);
+    assert!(!ids_of(&s).contains(&"tiny".to_string()));
+    run(&mut s, A::Undo);
+    assert_eq!(ids_of(&s), before, "one undo brings it back");
+    run(&mut s, A::Redo);
+    run(&mut s, A::Paste);
+    let pasted = ids_of(&s).last().cloned().unwrap();
+    assert_eq!(s.selection(), &olr_editor::Selection::Element(pasted.clone()), "the copy is selected");
+    run(&mut s, A::Undo);
+    assert!(!ids_of(&s).contains(&pasted));
+}
+
+#[test]
+fn the_clipboard_survives_opening_another_level() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Select(olr_editor::Selection::Many(vec!["tiny".into(), "tunnels".into()])));
+    run(&mut s, A::Copy);
+    let (tmp2, dir) = crate::common::copy_pack(&root, std::path::Path::new("olx-level-dirt-level"));
+    run(&mut s, A::Open(dir));
+    assert!(s.document().unwrap().index_of("tiny").is_none());
+    run(&mut s, A::Paste);
+    let ids = ids_of(&s);
+    assert_eq!(&ids[ids.len() - 2..], ["tiny-2", "tunnels-2"]);
+    drop(tmp2);
+}
+
+#[test]
+fn pastes_cascade() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let t = at(&s, "tiny");
+    run(&mut s, A::Select(olr_editor::Selection::Element("tiny".into())));
+    run(&mut s, A::Copy);
+    run(&mut s, A::Paste);
+    run(&mut s, A::Paste);
+    let ids = ids_of(&s);
+    let (a, b) = (&ids[ids.len() - 2], &ids[ids.len() - 1]);
+    assert_eq!(at(&s, a), (t.0 + 4, t.1 + 4));
+    assert_eq!(at(&s, b), (t.0 + 8, t.1 + 8));
+}

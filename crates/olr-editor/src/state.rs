@@ -18,6 +18,7 @@ use olr_format::levels::{ElementMaterial, LevelSource};
 
 use crate::browser::{Browser, DirEntry, Purpose};
 use crate::catalog::{Catalog, EditorSettings, TextureEntry};
+use crate::clipboard::{Clipboard, PASTE_STEP};
 use crate::document::{DocError, Document, Problem};
 use crate::history::{History, LevelMeta};
 use crate::ops::Change;
@@ -174,6 +175,12 @@ pub enum EditorAction {
     SelectRange(String),
     /// Deletes the selected element(s) or object.
     Remove,
+    /// Copies the selected elements to the editor's clipboard (plan 14e R6).
+    Copy,
+    /// Copies, then deletes them: one step.
+    Cut,
+    /// Pastes the clipboard on top, selected: one step.
+    Paste,
     /// Splits raster element `id` into background, dirt and rock layers.
     Split(String),
     MoveElement {
@@ -323,6 +330,8 @@ pub struct EditorState {
     pub(crate) changes: u64,
     /// The file browser, while it is open.
     pub(crate) browser: Option<Browser>,
+    /// What was copied; kept across Open, New and Close (plan 14e R6).
+    pub(crate) clipboard: Option<Clipboard>,
 }
 
 impl EditorState {
@@ -356,6 +365,7 @@ impl EditorState {
             drag: None,
             changes: 0,
             browser: None,
+            clipboard: None,
         }
     }
 
@@ -458,6 +468,7 @@ impl EditorState {
                 | EditorAction::Select(_)
                 | EditorAction::SelectToggle(_)
                 | EditorAction::SelectRange(_)
+                | EditorAction::Copy
                 | EditorAction::PlayMod(_)
                 | EditorAction::PlayBots(_)
                 | EditorAction::Listed { .. }
@@ -588,6 +599,17 @@ impl EditorState {
                 self.selection = self.group(range.unwrap_or_else(|| vec![id]));
                 Vec::new()
             }
+            EditorAction::Copy => {
+                self.copy();
+                Vec::new()
+            }
+            EditorAction::Cut => {
+                if !self.copy() {
+                    return Vec::new();
+                }
+                self.act(EditorAction::Remove)
+            }
+            EditorAction::Paste => self.paste(),
             EditorAction::Set(id, property) => self.edit(|d| d.set(&id, property)),
             EditorAction::SetMany(ids, property) => self.group_edit(|d| d.set_many(&ids, property)),
             EditorAction::Remove => match self.selection.clone() {
@@ -883,6 +905,44 @@ impl EditorState {
             Ok(change) => {
                 self.history.push(vec![change.edit]);
                 self.committed(change.dirty)
+            }
+            Err(e) => {
+                self.status.message = Some(e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
+    /// Copies the selected elements to the clipboard (plan 14e R6); whether
+    /// there were any.
+    fn copy(&mut self) -> bool {
+        let Some(doc) = &self.doc else { return false };
+        let items = doc.copy(&self.selection.ids());
+        if items.is_empty() {
+            return false;
+        }
+        let n = items.len();
+        self.clipboard =
+            Some(Clipboard::Elements { art_scale: doc.level().art_scale, items, offset: PASTE_STEP });
+        self.status.message = Some(match n {
+            1 => "copied 1 element".into(),
+            n => format!("copied {n} elements"),
+        });
+        true
+    }
+
+    /// Pastes the clipboard on top as one step, the copies selected; the
+    /// next paste lands `PASTE_STEP` further.
+    fn paste(&mut self) -> Vec<EditorCommand> {
+        let (Some(doc), Some(clip)) = (self.doc.as_mut(), self.clipboard.as_mut()) else { return Vec::new() };
+        let Clipboard::Elements { art_scale, items, offset } = clip;
+        match doc.paste(items, *art_scale, *offset) {
+            Ok((edits, ids)) => {
+                *offset = (offset.0.saturating_add(PASTE_STEP.0), offset.1.saturating_add(PASTE_STEP.1));
+                let dirty = doc.all();
+                self.history.push(edits);
+                self.selection = self.group(ids);
+                self.committed(dirty)
             }
             Err(e) => {
                 self.status.message = Some(e.to_string());

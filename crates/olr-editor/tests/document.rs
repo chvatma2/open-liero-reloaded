@@ -362,3 +362,126 @@ fn erasing_a_plain_background_layer_converts_nothing() {
     assert!(matches!(e.kind, ElementKind::Drawn { mixed: false, back: true, .. }), "{:?}", e.kind);
     assert!(doc.begin_stroke("background", Stroke::Erase).unwrap().is_none());
 }
+
+fn kind_of<'a>(doc: &'a Document, id: &str) -> &'a olr_format::levels::ElementKind {
+    &doc.items()[doc.index_of(id).unwrap()].element.kind
+}
+
+/// Plan 14e R6: a pasted copy is its own element; an image shares its
+/// original and has its own mask.
+#[test]
+fn a_copy_pastes_as_an_independent_element() {
+    use olr_format::levels::ElementKind;
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    let s = doc.level().art_scale;
+    let items = doc.copy(&["badge".to_string()]);
+    let (edits, ids) = doc.paste(&items, s, (4, 4)).unwrap();
+    assert_eq!(ids, ["badge-2"]);
+    let e = &doc.items().last().unwrap().element;
+    assert_eq!((e.id.as_str(), e.name.as_str()), ("badge-2", "Badge 2"));
+    let ElementKind::Image { at, source, mask: true, .. } = &e.kind else { panic!("{:?}", e.kind) };
+    assert_eq!((*at, source.as_str()), ((-2, 104), "badge.png"));
+    let f = files(&doc);
+    assert!(f.contains_key("editor/masks/badge-2.png") && f.contains_key("editor/masks/badge.png"));
+    let mask = f["editor/masks/badge.png"].clone();
+    // Erasing the copy's mask leaves the original's.
+    doc.erase("badge-2", &olr_edit::level::Shape::Rect { x: 0, y: 104, w: 30, h: 30 }, false).unwrap();
+    let f = files(&doc);
+    assert_eq!(f["editor/masks/badge.png"], mask);
+    assert_ne!(f["editor/masks/badge-2.png"], mask);
+    // One undo of the paste's edits removes it.
+    let n = doc.items().len();
+    undo(&mut doc, &edits);
+    assert_eq!(doc.items().len(), n - 1);
+    assert!(doc.index_of("badge-2").is_none());
+}
+
+#[test]
+fn a_drawn_copy_is_cropped_to_its_pixels() {
+    use olr_format::levels::ElementKind;
+    let Some(root) = content() else { return };
+    let (_tmp, doc) = open_fixture(&root);
+    let covered = |art: &olr_data::image::RgbaImage| art.as_raw().chunks(4).filter(|p| p[3] != 0).count();
+    let whole = covered(doc.layer_art("tunnels").unwrap());
+    assert!(whole > 0);
+    let items = doc.copy(&["tunnels".to_string()]);
+    let item = &items[0].item;
+    let ElementKind::Drawn { size: Some(size), .. } = item.element.kind else {
+        panic!("{:?}", item.element.kind)
+    };
+    assert!(size.0 < doc.level().size.0 || size.1 < doc.level().size.1, "cropped: {size:?}");
+    let olr_edit::compose::Decoded::Drawn { art, .. } = &item.decoded else { panic!() };
+    assert_eq!(covered(art), whole, "every painted pixel kept");
+}
+
+/// Review Focus 1: an image pasted into a level whose picture has the same
+/// file name but other bytes takes a new name; both stay intact.
+#[test]
+fn a_pasted_image_never_overwrites_another_original() {
+    use olr_format::levels::ElementKind;
+    let Some(root) = content() else { return };
+    let (_tmp, fixture) = open_fixture(&root);
+    let tiny = std::fs::read(crate::common::fixture().join("editor/images/tiny.jpg")).unwrap();
+    let other = std::fs::read(crate::common::fixture().join("editor/images/gradient.jpg")).unwrap();
+    let items = fixture.copy(&["tiny".to_string()]);
+    let Some((_t2, mut doc)) = opened_dirt_level() else { return };
+    doc.add_image("tiny.jpg", other.clone(), (50, 50)).unwrap();
+    let (_, ids) = doc.paste(&items, fixture.level().art_scale, (4, 4)).unwrap();
+    let ElementKind::Image { source, .. } = kind_of(&doc, &ids[0]) else { panic!() };
+    assert_eq!(source, "tiny-2.jpg");
+    let dir = doc.dir().to_path_buf();
+    olr_edit::pack::save(&dir, &doc.to_pack()).unwrap();
+    let reopened = olr_edit::pack::load(&dir).unwrap();
+    let files = &reopened.composition.as_ref().unwrap().files;
+    assert_eq!(files["editor/images/tiny.jpg"], other);
+    assert_eq!(files["editor/images/tiny-2.jpg"], tiny);
+    // The same bytes under the same name are shared, not copied.
+    let (_, again) = doc.paste(&items, fixture.level().art_scale, (8, 8)).unwrap();
+    let ElementKind::Image { source, .. } = kind_of(&doc, &again[0]) else { panic!() };
+    assert_eq!(source, "tiny-2.jpg");
+}
+
+/// Review Focus 2: copies between art scales are resampled; a raster into a
+/// level of another size is refused.
+#[test]
+fn pasting_across_art_scales_resamples() {
+    use olr_format::levels::ElementKind;
+    let Some(root) = content() else { return };
+    let (_tmp, fixture) = open_fixture(&root);
+    let from = fixture.level().art_scale;
+    let items = fixture.copy(&["tunnels".to_string(), "tiny".to_string()]);
+    let Some((_t2, mut doc)) = opened_dirt_level() else { return };
+    doc.set_art_scale(from * 2).unwrap();
+    let to = doc.level().art_scale;
+    let (_, ids) = doc.paste(&items, from, (4, 4)).unwrap();
+    let d = doc.items();
+    for (id, src) in ids.iter().zip(&items) {
+        let item = &d[doc.index_of(id).unwrap()];
+        match (&item.element.kind, &item.decoded, &src.item.decoded) {
+            (
+                ElementKind::Drawn { size: Some(size), .. },
+                olr_edit::compose::Decoded::Drawn { art, .. },
+                olr_edit::compose::Decoded::Drawn { art: old, .. },
+            ) => {
+                assert_eq!((art.width(), art.height()), (size.0 * to, size.1 * to));
+                assert_eq!((art.width(), art.height()), (old.width() * 2, old.height() * 2));
+            }
+            (
+                ElementKind::Image { .. },
+                olr_edit::compose::Decoded::Image { grid: Some(g), .. },
+                olr_edit::compose::Decoded::Image { grid: Some(old), .. },
+            ) => {
+                // The processed grid is the box × art scale ÷ pixel size.
+                assert_eq!((g.width(), g.height()), (old.width() * 2, old.height() * 2));
+            }
+            k => panic!("{k:?}"),
+        }
+    }
+    // The fixture's base raster is 504 × 350; the level made another size.
+    doc.resize((300, 200), (0, 0), olr_data::level::Material::Dirt, olr_data::image::Rgba::rgb(1, 1, 1))
+        .unwrap();
+    let base = fixture.copy(&["base".to_string()]);
+    let e = doc.paste(&base, from, (4, 4)).err();
+    assert!(matches!(&e, Some(DocError::Bad(m)) if m.contains("its size")), "{e:?}");
+}

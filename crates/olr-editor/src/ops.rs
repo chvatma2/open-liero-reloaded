@@ -10,7 +10,7 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_edit::compose::{Decoded, Rect, resize_decoded};
 use olr_edit::drawn;
-use olr_edit::element::{Property, new_element_id, new_source_name};
+use olr_edit::element::{Property, copy_name, new_element_id, new_source_name};
 use olr_edit::level::{self, Paint, Shape, rescale_art};
 use olr_edit::mask::{Mask, mask_colour, mask_shape, original_pixel};
 use olr_edit::pixelate::Pixelation;
@@ -290,6 +290,151 @@ impl Document {
         let art = (size.0.saturating_mul(s), size.1.saturating_mul(s));
         let grid = self.cache.grid(source, original, art, &p, mask.as_deref())?;
         Ok(Decoded::Image { grid: Some(grid), mask })
+    }
+
+    /// Copies of `ids` in stack order (plan 14e R6): a drawn layer cropped
+    /// to its covered pixels, an image with its original.
+    pub fn copy(&self, ids: &[String]) -> Vec<Snapshot> {
+        let (size, s) = (self.level.size, self.level.art_scale);
+        let mut found: Vec<usize> = ids.iter().filter_map(|id| self.index_of(id)).collect();
+        found.sort_unstable();
+        found.dedup();
+        found
+            .into_iter()
+            .map(|i| {
+                let mut item = self.items[i].clone();
+                if let ElementKind::Drawn { material, .. } = item.element.kind
+                    && let Some(p) =
+                        drawn::placed(&item.element, &item.decoded, size, s).and_then(|p| drawn::crop(&p, s))
+                {
+                    (item.element.kind, item.decoded) = drawn::into_layer(p, material, size, s);
+                }
+                let original = match &item.element.kind {
+                    ElementKind::Image { source, .. } => {
+                        self.originals.get(source).map(|b| (source.clone(), b.clone()))
+                    }
+                    _ => None,
+                };
+                Snapshot { item, original }
+            })
+            .collect()
+    }
+
+    /// Pastes `items` (copied at art scale `from`) on top, each moved by
+    /// `offset` (plan 14e R6): new ids, `copy_name`d names; drawn and raster
+    /// art resampled to this level's art scale, images processed again; an
+    /// original whose name this level holds with other bytes takes a new
+    /// name (one with its bytes is shared). A raster pastes only into a
+    /// level of its size. The edits (applied: one step) and the new ids.
+    pub fn paste(
+        &mut self,
+        items: &[Snapshot],
+        from: u32,
+        offset: (i32, i32),
+    ) -> Result<(Vec<Edit>, Vec<String>), DocError> {
+        let (mut edits, mut ids) = (Vec::new(), Vec::new());
+        for snap in items {
+            match self.paste_one(snap, from, offset) {
+                Ok((edit, id)) => {
+                    edits.push(edit);
+                    ids.push(id);
+                }
+                Err(e) => {
+                    self.roll_back(&edits);
+                    return Err(e);
+                }
+            }
+        }
+        Ok((edits, ids))
+    }
+
+    fn paste_one(
+        &mut self,
+        snap: &Snapshot,
+        from: u32,
+        offset: (i32, i32),
+    ) -> Result<(Edit, String), DocError> {
+        let (size, to) = (self.level.size, self.level.art_scale);
+        let from = from.clamp(1, MAX_ART_SCALE);
+        let stray = self.stray_files();
+        let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
+        let mut e = snap.item.element.clone();
+        let names = elements.iter().map(|x| if x.name.is_empty() { x.id.as_str() } else { x.name.as_str() });
+        e.name = copy_name(if e.name.is_empty() { &e.id } else { &e.name }, names);
+        e.id = new_element_id(&elements, &stray, &e.name, "copy");
+        let shift = |a: (i32, i32)| {
+            let add =
+                |v: i32, d: i32| (i64::from(v) + i64::from(d)).clamp(i32::MIN.into(), i32::MAX.into()) as i32;
+            (add(a.0, offset.0), add(a.1, offset.1))
+        };
+        let mut original = None;
+        let mut extra = 0;
+        let decoded = match (&mut e.kind, &snap.item.decoded) {
+            (ElementKind::Image { at, source, .. }, Decoded::Image { mask, .. }) => {
+                *at = shift(*at);
+                let (name, bytes) = snap.original.clone().ok_or_else(|| {
+                    DocError::Bad(format!("{:?}: its original is missing", snap.item.element.id))
+                })?;
+                // Its bytes under a name here already are shared; another
+                // original of its name is never overwritten (Review Focus 1).
+                let same = |(n, b): (&String, &Arc<Vec<u8>>)| (**b == *bytes).then(|| n.clone());
+                let shared = self
+                    .originals
+                    .get_key_value(&name)
+                    .and_then(same)
+                    .or_else(|| self.originals.iter().find_map(same));
+                *source = shared.unwrap_or_else(|| {
+                    let dir = olr_format::levels::image_file("");
+                    let taken = self
+                        .originals
+                        .keys()
+                        .map(String::as_str)
+                        .chain(stray.iter().filter_map(|f| f.strip_prefix(dir.as_str())));
+                    new_source_name(taken, &name)
+                });
+                extra = mask.as_deref().map_or(0, |m| m.keep.len() as u64);
+                original = Some((source.clone(), bytes));
+                Decoded::Image { grid: None, mask: mask.clone() }
+            }
+            (ElementKind::Drawn { at, size: boxed, .. }, Decoded::Drawn { art, cells, back }) => {
+                let side = (art.width() / from, art.height() / from);
+                *at = shift(*at);
+                *boxed = (*at != (0, 0) || side != size).then_some(side);
+                Decoded::Drawn {
+                    art: rescale_art(art, from, to),
+                    cells: cells.clone(),
+                    back: back.as_ref().map(|b| rescale_art(b, from, to)),
+                }
+            }
+            (ElementKind::Raster, Decoded::Raster { material, front, back }) => {
+                let side = (front.width() / from, front.height() / from);
+                if side != size || material.len() as u64 != u64::from(size.0) * u64::from(size.1) {
+                    return Err(DocError::Bad(format!(
+                        "{:?} is a raster of {} × {}: it pastes only into a level of its size ({} × {} here)",
+                        snap.item.element.id, side.0, side.1, size.0, size.1
+                    )));
+                }
+                Decoded::Raster {
+                    material: material.clone(),
+                    front: rescale_art(front, from, to),
+                    back: rescale_art(back, from, to),
+                }
+            }
+            _ => {
+                return Err(DocError::Bad(format!("{:?}: its data does not match it", snap.item.element.id)));
+            }
+        };
+        let mut all = elements;
+        all.push(e.clone());
+        self.check_extra(&all, size, to, extra)?;
+        let decoded = match (decoded, &original) {
+            (Decoded::Image { mask, .. }, Some((_, bytes))) => self.image_grid(&e, &bytes.clone(), mask)?,
+            (d, _) => d,
+        };
+        let id = e.id.clone();
+        let item = Item { element: e, decoded };
+        let index = self.items.len();
+        Ok((self.change(Edit::Insert { index, item: Box::new(Snapshot { item, original }) }).edit, id))
     }
 
     /// An empty drawn layer on top.

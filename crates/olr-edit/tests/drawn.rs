@@ -475,3 +475,31 @@ fn fill_speed() {
     println!("fill of 4096 × 2048: {took:?}");
     assert_eq!(r, Some(Rect { x: 0, y: 0, w: 4096, h: 2048 }));
 }
+
+/// Plan 14e R6: a copy of a drawn layer is cropped to its covered pixels
+/// (art or back art).
+#[test]
+fn crop_takes_the_covered_box() {
+    use olr_edit::drawn::crop;
+    // A 6 × 4 layer at (10, 20), art scale 2: art at world (1, 1), back art at (3, 2).
+    let mut art = RgbaImage::new(12, 8);
+    let mut back = RgbaImage::new(12, 8);
+    for (ax, ay) in [(2, 2), (3, 3)] {
+        art.set(ax, ay, BROWN);
+    }
+    back.set(7, 5, GREY);
+    let mut cells = vec![Material::Background; 24];
+    cells[6 + 1] = Material::Dirt;
+    let p = Placed { at: (10, 20), size: (6, 4), art, cells, back: Some(back) };
+    let c = crop(&p, 2).unwrap();
+    assert_eq!((c.at, c.size), ((11, 21), (3, 2)));
+    assert_eq!((c.art.width(), c.art.height()), (6, 4));
+    assert_eq!(c.art.get(0, 0), BROWN);
+    assert_eq!(c.back.as_ref().unwrap().get(5, 3), GREY);
+    assert_eq!(c.cells[0], Material::Dirt);
+    assert_eq!(c.cells.len(), 6);
+    let empty = Placed { at: (0, 0), size: (2, 2), art: RgbaImage::new(2, 2), cells: vec![Material::Dirt; 4], back: None };
+    assert_eq!(crop(&empty, 1), None);
+    // A placed layer that does not fit itself crops to nothing.
+    assert_eq!(crop(&Placed { size: (9, 9), ..empty }, 1), None);
+}

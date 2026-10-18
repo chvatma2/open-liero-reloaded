@@ -6,6 +6,7 @@
 
 pub mod browser;
 pub mod catalog;
+pub mod clipboard;
 pub mod document;
 pub mod history;
 pub mod ops;
