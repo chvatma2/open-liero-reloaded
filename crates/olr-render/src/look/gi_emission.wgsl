@@ -48,7 +48,7 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     var out: GiOut;
     let k = 1.0 / max(n, 1.0);
     out.emission = vec4<f32>(em * k, solid * k);
-    out.reach = vec4<f32>(reach, 0.0, 0.0, 0.0);
+    out.reach = vec4<f32>(split(reach), 0.0, 0.0);
     return out;
 }
 

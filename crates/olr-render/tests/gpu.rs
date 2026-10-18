@@ -955,3 +955,27 @@ fn lights_past_the_cap_change_nothing() {
     let b = lit_frame(&gpu, &map, view, &more, 0);
     assert_eq!(gpu.read_light(&a).unwrap().1, gpu.read_light(&b).unwrap().1);
 }
+
+/// GL (WSL's GL over Mesa's d3d12, the e2e's software GL) draws into no
+/// R32Float target (plan 15a Task 19's e2e): a lit frame with lights and
+/// glow draws there too, as on Vulkan.
+#[test]
+fn a_lit_frame_draws_on_gl() {
+    if offscreen().is_none() {
+        return;
+    }
+    let gl = OffscreenOptions { backends: Some(wgpu::Backends::GL), ..OffscreenOptions::default() };
+    let Ok(gpu) = olr_render::Offscreen::open(&gl) else {
+        eprintln!("no GL adapter; skipping");
+        return;
+    };
+    let map = glowing_room(100, 40, |x, y| x == 50 || y >= 36, |x, y| y >= 36 && x < 40);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    let r = lit_frame_with(&gpu, &map, view, &[lamp([30.5, 20.5], 100.0)], |l| {
+        l.groups[0] =
+            olr_look::FrameGroup { cast: [1.0; 3], own_colour: true, self_scale: 1.0, reach: 200.0 };
+        l.light_soak = 4;
+    });
+    assert!(light_at(&gpu, &r, 40, 20)[0] > 0.2, "the lamp lights");
+    assert!((light_at(&gpu, &r, 75, 20)[0] - 0.1).abs() < 0.05, "the wall shadows it");
+}

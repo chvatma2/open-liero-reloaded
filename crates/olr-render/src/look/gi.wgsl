@@ -45,7 +45,7 @@ fn clamped(t: vec2<i32>, size: vec2<u32>) -> vec2<i32> {
 struct GiOut {
     // rgb cast, solid share
     @location(0) emission: vec4<f32>,
-    // reach (world px; 1e9 unlimited)
+    // reach (world px, `split`; unlimited at 1e9)
     @location(1) reach: vec4<f32>,
 };
 

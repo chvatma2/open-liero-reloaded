@@ -77,6 +77,9 @@ pub struct EditorHost {
     recovery_id: Option<String>,
     /// Since when the unsaved changes wait for a recovery copy.
     dirty_since: Option<Instant>,
+    /// The last frame's time: the look preview's clock moves on by the
+    /// time between frames (plan 15a Task 19).
+    last_frame: Option<Instant>,
     /// The recovery copy being encoded and written (`olr-game recovery`: a
     /// 1350 × 550 level's took 250 ms on the UI thread, a 4096² one's
     /// 800 ms); joined before its copy is dropped or another one opens.
@@ -133,6 +136,7 @@ impl EditorHost {
             bundled,
             recovery_id: None,
             dirty_since: None,
+            last_frame: None,
             recovery_job: None,
             warnings,
         })
@@ -407,6 +411,9 @@ impl EditorHost {
     /// the copy is written when they have waited `RECOVERY_INTERVAL` since
     /// the first tick that saw them (or since the last copy).
     pub fn tick(&mut self, now: Instant) -> Vec<HostOut> {
+        if let Some(last) = self.last_frame.replace(now) {
+            self.state.advance_clock(now.saturating_duration_since(last).as_secs_f64() * 1000.0);
+        }
         let mut out = match &self.recovery_job {
             Some(job) if job.is_finished() => self.wait_recovery(),
             _ => Vec::new(),

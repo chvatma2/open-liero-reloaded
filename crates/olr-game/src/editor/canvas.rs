@@ -4,6 +4,9 @@
 //! Each edit replaces only its dirty rectangle (`ColorMap::replace_rect`,
 //! then `Renderer::update_terrain`). The material view is a second map of
 //! `MATERIAL_PALETTE` colours at art scale 1, built when it is turned on.
+//! A level with a look draws lit (plan 15a Task 19): the map carries the
+//! bake's glow and clear solids, and `look_frame` the document's look and
+//! lights at the editor's clock and view mode.
 
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::{Material, MaterialGrid};
@@ -11,6 +14,7 @@ use olr_edit::compose::Rect;
 use olr_editor::Document;
 use olr_editor::view::View as EditorView;
 use olr_format::levels::{LevelSource, MATERIAL_PALETTE};
+use olr_look::{LevelLook, LookFrame, ViewMode};
 use olr_scene::{DrawList, View};
 use olr_terrain::{ColorMap, Terrain, ThemeArt};
 
@@ -26,6 +30,15 @@ pub struct Canvas {
     /// The material view's images, kept so an upload repaints only its
     /// rectangle.
     palette: Option<(RgbaImage, RgbaImage)>,
+    /// The document's look compiled, and what it was compiled from (the
+    /// look and the objects): compiled again only when they change.
+    look: Option<(
+        Option<LevelLook>,
+        Option<olr_format::look::LookSource>,
+        Vec<olr_format::levels::LevelObject>,
+    )>,
+    /// The frame's look, reused.
+    frame: LookFrame,
 }
 
 /// No stamps and no tiles: the canvas replays no simulation edit.
@@ -55,7 +68,15 @@ impl Default for Canvas {
 
 impl Canvas {
     pub fn new() -> Canvas {
-        Canvas { map: None, showing_material: false, level: (0, 0), art_scale: 1, palette: None }
+        Canvas {
+            map: None,
+            showing_material: false,
+            level: (0, 0),
+            art_scale: 1,
+            palette: None,
+            look: None,
+            frame: LookFrame::default(),
+        }
     }
 
     /// Rebuilds the map from `doc` (a new document, a resize or an art
@@ -77,8 +98,52 @@ impl Canvas {
             map
         } else {
             self.palette = None;
-            ColorMap::new(&t, &l.front, &l.back, l.art_scale, no_theme())
+            let mut map = ColorMap::new(&t, &l.front, &l.back, l.art_scale, no_theme());
+            // The bake's glow and clear solids (they always fit its size).
+            map.set_glow(l.glow.clone());
+            map.set_clear(l.clear.clone());
+            map
         });
+    }
+
+    /// Whether the canvas draws `doc` lit: a look, light objects, glow or
+    /// clear solids, and not the material view. The host turns the
+    /// renderer's lighting on and uploads the map whole when it changes.
+    pub fn lit(&self, doc: &Document) -> bool {
+        let l = doc.level();
+        !self.showing_material
+            && (l.look.is_some()
+                || l.glow.is_some()
+                || l.clear.is_some()
+                || l.objects.iter().any(|o| o.as_light().is_some()))
+    }
+
+    /// The frame's look of `doc` at clock `t_ms` (the editor's) in `mode`,
+    /// its lights culled to `view` (the canvas's world); `None` when the
+    /// canvas is not lit. A look that does not check draws as no look.
+    pub fn look_frame(
+        &mut self,
+        doc: &Document,
+        t_ms: f64,
+        mode: ViewMode,
+        view: View,
+    ) -> Option<&LookFrame> {
+        if !self.lit(doc) {
+            return None;
+        }
+        let l = doc.level();
+        let stale =
+            self.look.as_ref().is_none_or(|(_, look, objects)| *look != l.look || *objects != l.objects);
+        if stale {
+            let compiled = olr_format::levels::compile_look(l).ok().flatten();
+            self.look = Some((compiled, l.look.clone(), l.objects.clone()));
+        }
+        let level = self.look.as_ref().and_then(|(c, ..)| c.as_ref());
+        self.frame.mode = mode;
+        self.frame.begin(level, t_ms);
+        let p = olr_render::LIGHT_CULL_PAD;
+        self.frame.cull([view.x - p, view.y - p, view.w + 2.0 * p, view.h + 2.0 * p]);
+        Some(&self.frame)
     }
 
     /// Drops the map (the editor closed, or its Play runs: the session has
@@ -97,7 +162,10 @@ impl Canvas {
     /// rebuilt: a resize or an art-scale change).
     pub fn fits(&self, doc: &Document) -> bool {
         let l = doc.level();
-        self.map.is_some() && self.level == l.size && self.art_scale == l.art_scale.max(1)
+        // A glow that came or went changes the map's channels: built again.
+        let glow = self.showing_material
+            || self.map.as_ref().is_some_and(|m| m.glow().is_some() == l.glow.is_some());
+        self.map.is_some() && self.level == l.size && self.art_scale == l.art_scale.max(1) && glow
     }
 
     /// `doc`'s world rectangle `r` into the map (`replace_rect`, art pixels
@@ -124,7 +192,17 @@ impl Canvas {
                 }
                 map.replace_rect(art, front, back, &l.material);
             }
-            None => map.replace_rect(art, &l.front, &l.back, &l.material),
+            None => {
+                map.replace_rect(art, &l.front, &l.back, &l.material);
+                if let Some(g) = &l.glow {
+                    map.replace_glow_rect(art, g);
+                }
+                // Clear flags change with an element's Clear (its rectangle
+                // uploads): the renderer reads them with the rectangle.
+                if map.clear() != l.clear.as_deref() {
+                    map.set_clear(l.clear.clone());
+                }
+            }
         }
     }
 
@@ -240,6 +318,8 @@ mod tests {
             level: size,
             art_scale: s,
             palette: None,
+            look: None,
+            frame: LookFrame::default(),
         }
     }
 
@@ -331,5 +411,52 @@ mod tests {
             let m = l.material[(y * l.size.0 + x) as usize];
             assert_eq!(map.color_at(x.into(), y.into()), Some(palette(m)));
         }
+    }
+
+    /// Plan 15a Task 19: the canvas's look frame follows the document's
+    /// look, lights, the editor's clock and view mode.
+    #[test]
+    fn the_canvas_frame_follows_the_document() {
+        let Some((_tmp, mut d)) = doc() else { return };
+        let mut c = Canvas::new();
+        c.rebuild(&d, false);
+        let view = View { x: 0.0, y: 0.0, w: 200.0, h: 150.0 };
+        assert!(!c.lit(&d), "no look: drawn as always");
+        assert!(c.look_frame(&d, 0.0, ViewMode::Lit, view).is_none());
+        let mut look = olr_format::look::LookSource::default();
+        look.ambient.intensity = 30;
+        d.set_look(Some(look)).unwrap();
+        d.add_light((50, 50)).unwrap();
+        assert!(c.lit(&d));
+        let f = c.look_frame(&d, 0.0, ViewMode::Lit, view).expect("lit");
+        assert!((f.ambient[0] - 0.3).abs() < 1e-3 && f.lights.len() == 1);
+        assert_eq!(f.lights[0].pos, [50.5, 50.5]);
+        // A light far outside the canvas's view is culled.
+        let far = View { x: 3000.0, y: 3000.0, w: 100.0, h: 100.0 };
+        assert!(c.look_frame(&d, 0.0, ViewMode::Lit, far).unwrap().lights.is_empty());
+        assert_eq!(c.look_frame(&d, 0.0, ViewMode::FullBright, view).unwrap().mode, ViewMode::FullBright);
+        // The material view is never lit.
+        c.rebuild(&d, true);
+        assert!(!c.lit(&d));
+    }
+
+    #[test]
+    fn a_glow_edit_uploads_its_rectangle() {
+        let Some((_tmp, mut d)) = doc() else { return };
+        let mut c = Canvas::new();
+        c.rebuild(&d, false);
+        let glow = olr_format::levels::ElementGlow { strength: 100, group: String::new(), mask: false };
+        d.set_glow("tunnels", Some(glow)).unwrap();
+        assert!(!c.fits(&d), "the map has no glow yet: built again");
+        c.rebuild(&d, false);
+        assert_eq!(c.map_mut().unwrap().glow(), d.level().glow.as_ref().map(|g| &g.front[..]));
+        c.map_mut().unwrap().take_dirty().for_each(drop);
+        let r =
+            d.paint_glow("tunnels", &olr_edit::level::Shape::Rect { x: 40, y: 30, w: 6, h: 4 }, 0).unwrap();
+        assert!(c.fits(&d));
+        c.upload(&d, r);
+        let map = c.map_mut().unwrap();
+        assert_eq!(map.glow(), d.level().glow.as_ref().map(|g| &g.front[..]), "the glow follows");
+        assert!(map.take_dirty().next().is_some());
     }
 }

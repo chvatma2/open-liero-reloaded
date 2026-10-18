@@ -62,6 +62,10 @@ pub(super) const LIGHT_PAD: u32 = olr_look::MAX_SOAK as u32 + 4;
 /// view shows, whatever the camera.
 pub const LIGHT_CULL_PAD: f32 = (crate::MARGIN as u32 + LIGHT_PAD + 1) as f32;
 
+/// The shadow maps' format: each distance `split` in f16 halves (GL draws
+/// into no R32Float target).
+const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
 /// Rays per placed light's shadow map (`SHADOW_RAYS` in the shaders).
 pub(super) const SHADOW_RAYS: u32 = 512;
 
@@ -256,7 +260,7 @@ impl LookState {
             ("vs_full", "fs_shadow"),
             &[Some(&shadow_layout)],
             &[],
-            &[(wgpu::TextureFormat::R32Float, None)],
+            &[(SHADOW_FORMAT, None)],
             wgpu::PrimitiveTopology::TriangleList,
         );
         let shadow = device.create_texture(&wgpu::TextureDescriptor {
@@ -269,7 +273,7 @@ impl LookState {
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R32Float,
+            format: SHADOW_FORMAT,
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });

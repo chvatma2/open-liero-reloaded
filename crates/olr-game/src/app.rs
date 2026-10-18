@@ -981,6 +981,14 @@ impl App {
         let mut filter = None;
         let world = match editor_view {
             Some((view, Some(rect))) => {
+                // A level with a look draws lit (plan 15a Task 19): the
+                // renderer's look textures come with a whole upload.
+                let state = self.shell.editor.as_ref().map(|h| h.state());
+                let lit = state.and_then(|s| s.document()).is_some_and(|d| self.canvas.lit(d));
+                if w.gpu.renderer.lighting() != lit {
+                    w.gpu.renderer.set_lighting(lit);
+                    self.canvas_full = true;
+                }
                 if let Some(map) = self.canvas.map_mut() {
                     if std::mem::take(&mut self.canvas_full) {
                         map.take_dirty().for_each(drop);
@@ -998,7 +1006,13 @@ impl App {
                     &mut w.gpu.renderer.settings.filter,
                     UpscaleFilter::SharpBilinear,
                 ));
-                self.canvas_list.as_ref().map(|(l, a)| (l, None, *a))
+                let look = match (state, &self.canvas_list) {
+                    (Some(st), Some((l, _))) => st
+                        .document()
+                        .and_then(|d| self.canvas.look_frame(d, st.clock_ms(), st.view_mode(), l.view)),
+                    _ => None,
+                };
+                self.canvas_list.as_ref().map(|(l, a)| (l, look, *a))
             }
             Some((_, None)) => None,
             None => world,

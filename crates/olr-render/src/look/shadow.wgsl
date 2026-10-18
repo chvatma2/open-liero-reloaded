@@ -1,5 +1,5 @@
 // Placed lights' shadow maps (plan 15a Task 11): row i is light i, column
-// r the distance from the light to the first rock or dirt along ray r of
+// r (`split`) the distance from the light to the first rock or dirt along ray r of
 // SHADOW_RAYS, marched in world-pixel steps from the light's radius out to
 // its reach, within the level's box. Outside the level is open. A light
 // whose centre is solid gets 0 on every ray: it lights nothing.
@@ -32,7 +32,7 @@ fn fs_shadow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let a = lights.v[row * 2u];
     let pos = a.xy;
     if solid_at(pos) {
-        return vec4<f32>(0.0);
+        return vec4<f32>(split(0.0), 0.0, 0.0);
     }
     let angle = (ray + 0.5) / SHADOW_RAYS * 6.2831853;
     let dir = vec2<f32>(cos(angle), sin(angle));
@@ -46,7 +46,7 @@ fn fs_shadow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     for (var k = 0; k < 2; k++) {
         if abs(dir[k]) < 1e-6 {
             if pos[k] < 0.0 || pos[k] > size[k] {
-                return vec4<f32>(1e9);
+                return vec4<f32>(split(1e9), 0.0, 0.0);
             }
         } else {
             let ta = (0.0 - pos[k]) / dir[k];
@@ -56,7 +56,7 @@ fn fs_shadow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         }
     }
     if !(t1 > t0) {
-        return vec4<f32>(1e9);
+        return vec4<f32>(split(1e9), 0.0, 0.0);
     }
     // From the entry, whole steps after the radius, so a light inside the
     // level samples where it always did; never more steps than the box's
@@ -68,9 +68,9 @@ fn fs_shadow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
             break;
         }
         if solid_at(pos + dir * d) {
-            return vec4<f32>(d);
+            return vec4<f32>(split(d), 0.0, 0.0);
         }
         d += 1.0;
     }
-    return vec4<f32>(1e9);
+    return vec4<f32>(split(1e9), 0.0, 0.0);
 }

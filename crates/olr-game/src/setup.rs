@@ -629,7 +629,13 @@ mod tests {
             (p.x as i32, p.y as i32)
         };
 
+        // Plan 15a Task 19: Play carries the edited level's look.
+        let mut lit = level.clone();
+        lit.look = Some(olr_format::look::LookSource::default());
+        let a = load_edited(&[root], &play(&lit, 0), DEFAULT_SKIN, &prefs).unwrap();
+        assert!(a.level.has_look(), "the edited look plays");
         let a = load_edited(&[root], &play(&level, 0), DEFAULT_SKIN, &prefs).unwrap();
+        assert!(!a.level.has_look());
         let Game::Sandbox(setup) = &a.game else { panic!("0 bots is the sandbox") };
         assert_eq!(setup.worms.len(), 1, "no targets");
         assert!(a.edited(), "its replay is never saved");

@@ -54,7 +54,7 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         let e = textureLoad(level_em, q, 0);
         if stops(e) {
             if max(e.r, max(e.g, e.b)) > 1e-6 {
-                let reach = textureLoad(level_reach, q, 0).r;
+                let reach = joined(textureLoad(level_reach, q, 0).xy);
                 ray = vec4<f32>(e.rgb * fade(dist * cp.c.w, reach), 0.0);
             } else {
                 ray = vec4<f32>(0.0);
@@ -62,9 +62,10 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
             break;
         }
         // As far as the nearest stopper allows, at least a cell.
-        let s = textureLoad(seeds, q, 0).xy;
+        let t = textureLoad(seeds, q, 0);
         var free = 1e9;
-        if s.x >= 0.0 {
+        if t.x >= 0.0 {
+            let s = vec2<f32>(joined(t.xy), joined(t.zw));
             free = distance(s + vec2<f32>(0.5), at) - 1.5;
         }
         dist += max(free, 1.0);

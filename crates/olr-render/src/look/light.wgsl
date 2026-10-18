@@ -52,7 +52,7 @@ fn placed(c: vec2<f32>) -> vec3<f32> {
             let angle = atan2(c.y - a.y, c.x - a.x);
             ray = i32(floor(fract(angle / TAU) * SHADOW_RAYS)) % i32(SHADOW_RAYS);
         }
-        let shadow = textureLoad(shadow_tex, vec2<i32>(ray, i32(i)), 0).r;
+        let shadow = joined(textureLoad(shadow_tex, vec2<i32>(ray, i32(i)), 0).xy);
         if shadow <= 0.0 || d > shadow + 1.0 {
             continue;
         }

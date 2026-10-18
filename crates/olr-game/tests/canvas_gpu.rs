@@ -94,3 +94,62 @@ fn the_canvas_draws_the_bake() {
     r2.upload_terrain(fresh.map_mut().unwrap());
     assert_eq!(updated, picture(&mut fresh, &mut r2), "a rectangle upload equals a full one");
 }
+
+/// Plan 15a Task 19: a level with a look draws lit on the canvas: darker
+/// than its art with a dark ambient, its art again in Full bright.
+#[test]
+fn the_canvas_draws_lit() {
+    if std::env::var_os("OLR_GPU_TESTS").is_none() {
+        return;
+    }
+    let Some(root) = std::env::var_os("OLR_CONTENT_DIR").map(PathBuf::from).filter(|d| d.is_dir()) else {
+        return;
+    };
+    let Ok(gpu) = Offscreen::new() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("level");
+    copy(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/edit/composed-level"), &dir);
+    let theme =
+        olr_format::themes::read_theme_files(&olr_vfs::DirFs::new(root.join("olx-theme-dirt"))).unwrap();
+    let catalog = Catalog {
+        themes: vec![ThemeEntry {
+            id: "olx-theme-dirt".into(),
+            name: "Dirt".into(),
+            front_tile: theme.front_tile,
+            back_tile: theme.back_tile,
+            holes: Vec::new(),
+        }],
+        mods: vec![],
+        home: None,
+        textures: Vec::new(),
+    };
+    let mut doc = Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog).unwrap();
+    let mut look = olr_format::look::LookSource::default();
+    look.ambient.intensity = 20;
+    doc.set_look(Some(look)).unwrap();
+    let size = (640u32, 400u32);
+    let rect = egui::Rect::from_min_size(egui::pos2(0.0, 0.0), egui::vec2(size.0 as f32, size.1 as f32));
+    let l = doc.level();
+    let view = View::fit([size.0 as f32, size.1 as f32], (l.size.0 * l.art_scale, l.size.1 * l.art_scale));
+    let mut canvas = Canvas::new();
+    canvas.rebuild(&doc, false);
+    assert!(canvas.lit(&doc));
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::SharpBilinear });
+    r.set_lighting(true);
+    r.upload_terrain(canvas.map_mut().unwrap());
+    let (list, _) = canvas.draw(&view, rect, 1.0, olr_render::MAX_VIEW).unwrap();
+    let mean = |img: &olr_data::image::RgbaImage| {
+        img.as_raw().chunks(4).map(|p| u64::from(p[0]) + u64::from(p[1]) + u64::from(p[2])).sum::<u64>()
+    };
+    let frame = canvas.look_frame(&doc, 0.0, olr_look::ViewMode::Lit, list.view).cloned();
+    let lit = gpu.render_lit_to_image(&mut r, &list, frame.as_ref(), size);
+    let full = canvas.look_frame(&doc, 0.0, olr_look::ViewMode::FullBright, list.view).cloned();
+    let bright = gpu.render_lit_to_image(&mut r, &list, full.as_ref(), size);
+    let plain = {
+        let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::SharpBilinear });
+        r.upload_terrain(canvas.map_mut().unwrap());
+        gpu.render_to_image(&mut r, &list, size)
+    };
+    assert!(mean(&lit) < mean(&plain) * 3 / 4, "a dark ambient darkens the canvas");
+    assert_eq!(bright, plain, "full bright is the art as it is");
+}

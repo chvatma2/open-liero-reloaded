@@ -18,10 +18,11 @@ fn fs_jfa(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
             if any(q < vec2<i32>(0)) || any(q >= size) {
                 continue;
             }
-            let s = textureLoad(seeds, q, 0).xy;
-            if s.x < 0.0 {
+            let t = textureLoad(seeds, q, 0);
+            if t.x < 0.0 {
                 continue;
             }
+            let s = vec2<f32>(joined(t.xy), joined(t.zw));
             let d = distance(s, vec2<f32>(c));
             if d < best_d {
                 best_d = d;
@@ -29,5 +30,8 @@ fn fs_jfa(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
             }
         }
     }
-    return vec4<f32>(best, 0.0, 0.0);
+    if best.x < 0.0 {
+        return vec4<f32>(-1.0, 0.0, -1.0, 0.0);
+    }
+    return vec4<f32>(split(best.x), split(best.y));
 }

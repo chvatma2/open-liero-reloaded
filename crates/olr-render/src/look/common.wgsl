@@ -37,6 +37,26 @@ const SHADOW_RAYS: f32 = 512.0;
 
 const TAU: f32 = 6.2831853;
 
+// A value kept in a 16-bit float target, split in two halves each exact in
+// f16: (floor(v / 64), v - 64 floor(v / 64)). GL draws into no R32Float
+// target (plan 15a Task 19's e2e); Rgba16Float it does. A value of 1e8 or
+// more (unlimited, or none) is (-1, 0).
+fn split(v: f32) -> vec2<f32> {
+    if v >= 1e8 {
+        return vec2<f32>(-1.0, 0.0);
+    }
+    let h = floor(v / 64.0);
+    return vec2<f32>(h, v - h * 64.0);
+}
+
+// `split`'s value again: 1e9 for unlimited or none.
+fn joined(s: vec2<f32>) -> f32 {
+    if s.x < 0.0 {
+        return 1e9;
+    }
+    return s.x * 64.0 + s.y;
+}
+
 // How much of a light reaches `d` world pixels: (1 - (d/r)^2)^2, nothing at
 // or past r; no fade for an unlimited reach (r >= 1e8).
 fn fade(d: f32, r: f32) -> f32 {

@@ -34,8 +34,10 @@ pub fn gi_cell(world: (u32, u32), max_dim: u32) -> u32 {
 }
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const REACH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
-const SEED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg32Float;
+// Split in f16 halves (`split` in the shaders): GL draws into no R32Float
+// or Rg32Float target.
+const REACH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+const SEED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// The cascades' first interval, in cells.
 const L0: f32 = 2.0;
