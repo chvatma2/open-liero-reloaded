@@ -108,6 +108,22 @@ struct ProfilesFile {
     profiles: Profiles,
 }
 
+/// Whether `name` may be a [`Store::save_file`] file: a plain `.ron` name
+/// in the data directory itself, not hidden, and not one of the store's own
+/// files (settings, profiles, identity).
+fn own_file(name: &str) -> Result<(), String> {
+    let plain = !name.starts_with('.')
+        && !name.contains(['/', '\\', ':'])
+        && name.len() > ".ron".len()
+        && name.ends_with(".ron");
+    let core = [SETTINGS_FILE, PROFILES_FILE, IDENTITY_FILE].contains(&name);
+    if plain && !core {
+        Ok(())
+    } else {
+        Err(format!("{name:?} is not a file of its own in the data directory"))
+    }
+}
+
 /// A file of [`Store::save_file`]: its value under a version, as the others.
 #[derive(Serialize, Deserialize)]
 struct ValueFile<T> {
@@ -214,6 +230,9 @@ impl Store {
     /// memory, or bad (a warning; the file is moved aside as the settings'
     /// are, and a newer game's left untouched).
     pub fn load_file<T: serde::de::DeserializeOwned>(&mut self, name: &str) -> Loaded<Option<T>> {
+        if let Err(why) = own_file(name) {
+            return Loaded { value: None, warnings: vec![why] };
+        }
         self.load(
             name,
             FILE_VERSION,
@@ -226,6 +245,7 @@ impl Store {
     /// Writes `value` to `name` in the data directory as the settings are
     /// written: atomically, versioned ([`FILE_VERSION`]); nothing in memory.
     pub fn save_file<T: Serialize>(&mut self, name: &str, value: &T) -> anyhow::Result<()> {
+        own_file(name).map_err(anyhow::Error::msg)?;
         self.save(name, &ValueFile { version: FILE_VERSION, value })
     }
 

@@ -14,6 +14,7 @@ olr-modes.workspace = true
 olr-bots.workspace = true
 olr-content.workspace = true
 olr-data.workspace = true
+olr-format.workspace = true
 olr-input.workspace = true
 olr-replay.workspace = true
 serde = { workspace = true, features = ["std"] }

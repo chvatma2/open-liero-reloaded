@@ -3858,6 +3858,7 @@ dependencies = [
  "olr-bots",
  "olr-content",
  "olr-data",
+ "olr-format",
  "olr-input",
  "olr-modes",
  "olr-pack",

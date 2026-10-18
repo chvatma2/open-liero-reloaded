@@ -97,6 +97,7 @@ fn bundled_levels_offer_a_copy_editable_ones_edit() {
         h.state().commands,
         vec![AppCommand::CopyLevel { from: "olx-level-dirt-level".into(), name: "Dirt Level copy".into() }]
     );
+    assert!(h.query_by_label("Copy").is_none(), "the form closed");
 }
 
 #[test]
@@ -129,6 +130,10 @@ fn new_level_form_emits_new_level() {
             theme: "olx-theme-dirt".into()
         }]
     );
+    // The form closes once it is sent: a second click makes no second pack.
+    assert!(h.query_by_label("Create").is_none(), "the form closed");
+    h.get_by_label("New level").click();
+    h.run();
     // A side outside 1..=4096 keeps Create disabled.
     h.get_by_label("Width").click();
     h.run();

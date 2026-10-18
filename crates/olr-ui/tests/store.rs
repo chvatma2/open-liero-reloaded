@@ -445,6 +445,23 @@ fn files_round_trip() {
     assert_eq!(bad.warnings.len(), 1, "{:?}", bad.warnings);
     assert!(tmp.path().join("editor.ron.bak").exists(), "kept aside");
     assert!(Store::in_memory().load_file::<Prefs>("editor.ron").value.is_none());
+    // Only a plain `.ron` name of its own: never the core files, never a path.
+    for bad in [
+        "settings.ron",
+        "profiles.ron",
+        "identity.ron",
+        "../x.ron",
+        "a/b.ron",
+        "a\\b.ron",
+        ".x.ron",
+        "x.txt",
+        "",
+    ] {
+        assert!(store.save_file(bad, &1u8).is_err(), "{bad:?} refused");
+        let l = store.load_file::<u8>(bad);
+        assert!(l.value.is_none() && !l.warnings.is_empty(), "{bad:?} not read");
+    }
+    assert!(!tmp.path().parent().unwrap().join("x.ron").exists());
     assert_eq!(Store::open(tmp.path()).recovery_dir(), Some(tmp.path().join("recovery")));
     assert_eq!(Store::in_memory().recovery_dir(), None);
 }

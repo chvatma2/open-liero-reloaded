@@ -5,6 +5,7 @@
 //! editor itself (`olr-game`): this crate does not know it.
 
 use egui::{Color32, ComboBox, RichText, ScrollArea, TextEdit, Ui};
+use olr_format::levels::MAX_SIDE;
 
 use super::{MenuData, form_row, page, section};
 use crate::state::UiAction;
@@ -13,9 +14,9 @@ use crate::state::UiAction;
 const WIDTH: f32 = 760.0;
 /// The theme a new level takes when there is one of this id.
 const DEFAULT_THEME: &str = "olx-theme-dirt";
-/// A new level's size by default (OLX's Dirt Level's) and its bounds.
+/// A new level's size by default (OLX's Dirt Level's); its sides are at
+/// most the format's `MAX_SIDE`.
 const DEFAULT_SIZE: (u32, u32) = (504, 350);
-const MAX_SIDE: u32 = 4096;
 
 /// The forms being filled in.
 #[derive(Default)]
@@ -117,7 +118,8 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
                 theme: f.theme.clone(),
             });
         }
-        if cancel {
+        // Sent once, the form closes: a second click would make a second pack.
+        if create || cancel {
             view.new = None;
         }
         ui.add_space(10.0);
@@ -147,7 +149,7 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
         if copy {
             out.push(UiAction::CopyLevel { from: from.clone(), name: name.trim().to_string() });
         }
-        if cancel {
+        if copy || cancel {
             view.copy = None;
         }
         ui.add_space(10.0);

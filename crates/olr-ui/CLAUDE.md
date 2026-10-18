@@ -6,7 +6,8 @@ theme. The window, the GPU and the game live in `olr-game`, which draws
 these widgets and carries out their commands (`olr-game/src/shell.rs`).
 
 - **Layer 5, uses `std`.** Depends on `olr-content` (`MatchOptions`,
-  `Player`, `Catalog`, skins), `olr-data` (images), `olr-modes`, `olr-bots`,
+  `Player`, `Catalog`, skins), `olr-data` (images), `olr-format` (the
+  level size limit), `olr-modes`, `olr-bots`,
   `olr-sim`, `olr-replay` (a replay's header), `olr-input` (same layer:
   `Bindings`), egui 0.36.2, serde, ron, `directories` 6.0.0 and anyhow;
   `egui_kittest` 0.36.2 (with `wgpu` and `snapshot` for the HUD's image
@@ -147,7 +148,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   recoveries first ("Recover <name>" and Discard; a damaged one only
   Discard), New level (a form: Name, Width and Height 1..=4096, default
   504 × 350, Theme from `Catalog::sources`' themes, `olx-theme-dirt` by
-  default; Create disabled until valid), and every catalog level with Edit
+  default; Create disabled until valid; a form closes once sent), and every catalog level with Edit
   (`MenuData::editable`, the data directory's packs) or Edit a copy (a
   form: Name, "<Name> copy", Copy). They emit `UiAction::{EditLevel,
   CopyLevel, NewLevel, Recover, DiscardRecovery}`, which `update` turns
@@ -354,7 +355,9 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `save_*`; `load_file::<T>(name)` / `save_file(name, &value)` for any other
   RON file of the data directory (the editor's `editor.ron`: `(version: 1,
   value: …)`, the same atomic write, backups and newer-file rules; `None`
-  when absent); `recovery_dir()` (`recovery/`, the editor's copies).
+  when absent; a name that is not a plain `.ron` file of its own, or one of
+  the store's own files, is refused); `recovery_dir()` (`recovery/`, the
+  editor's copies).
   Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
   struct `#[serde(default)]`, atomic writes (temporary file, sync,
   rename). An undecodable file gives defaults and a warning and is moved
