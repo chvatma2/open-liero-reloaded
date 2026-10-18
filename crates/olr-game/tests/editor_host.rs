@@ -689,3 +689,50 @@ fn the_texture_cap_counts_files_by_name() {
     let e = olr_game::editor::add_texture(&lib, &tmp.path().join("new.png")).unwrap_err();
     assert!(e.contains("at most 256"), "{e}");
 }
+
+/// Minors: a name cut at 64 characters ends in neither a space nor a "-".
+#[test]
+fn a_long_texture_name_is_cut_cleanly() {
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("textures");
+    let stem = format!("{} tail", "a".repeat(63));
+    png(&tmp.path().join(format!("{stem}.png")), 4, 4);
+    let name = olr_game::editor::add_texture(&lib, &tmp.path().join(format!("{stem}.png"))).unwrap();
+    assert_eq!(name, "a".repeat(63));
+}
+
+/// Minors: a change re-lists the library by name, decoding only the
+/// textures it did not hold (one changed outside the game keeps its picture).
+#[test]
+fn a_texture_change_decodes_only_new_textures() {
+    let Some((tmp, root, _h)) = host() else { return };
+    let lib = tmp.path().join("textures");
+    std::fs::create_dir_all(&lib).unwrap();
+    png(&lib.join("a.png"), 4, 4);
+    let mut store = Store::open(tmp.path());
+    let packs = store.packs_dir().unwrap();
+    let mut h = EditorHost::new(&mut store, &[packs.as_path(), root.as_path()]).unwrap();
+    std::fs::write(lib.join("a.png"), b"no longer an image").unwrap();
+    let pics = tmp.path().join("pics");
+    std::fs::create_dir_all(&pics).unwrap();
+    png(&pics.join("b.png"), 4, 4);
+    assert_eq!(pick_texture(&mut h, &pics, "b.png"), None);
+    assert_eq!(texture_names(&h), ["a", "b"]);
+}
+
+/// Minors: a write that fails leaves nothing in the library.
+#[cfg(unix)]
+#[test]
+fn a_failed_texture_write_leaves_nothing() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().unwrap();
+    let lib = tmp.path().join("textures");
+    std::fs::create_dir_all(&lib).unwrap();
+    png(&tmp.path().join("t.png"), 4, 4);
+    std::fs::set_permissions(&lib, std::fs::Permissions::from_mode(0o555)).unwrap();
+    let r = olr_game::editor::add_texture(&lib, &tmp.path().join("t.png"));
+    let left: Vec<_> = std::fs::read_dir(&lib).unwrap().map(|e| e.unwrap().file_name()).collect();
+    std::fs::set_permissions(&lib, std::fs::Permissions::from_mode(0o755)).unwrap();
+    assert!(r.is_err(), "{r:?}");
+    assert!(left.is_empty(), "{left:?}");
+}

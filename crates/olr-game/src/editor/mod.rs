@@ -309,7 +309,7 @@ impl EditorHost {
             return;
         };
         let done = change(&dir);
-        let (list, warnings) = files::list_textures(&dir);
+        let (list, warnings) = files::refresh_textures(&dir, &self.state.catalog().textures);
         queue.push_back(EditorAction::TexturesChanged(list));
         if let Err(why) = done {
             queue.push_back(EditorAction::Failed(why));

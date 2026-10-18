@@ -211,6 +211,14 @@ fn decode_texture(name: &str, bytes: &[u8]) -> Result<RgbaImage, String> {
 /// and within `MAX_TEXTURE_SIDE`; the files it cannot read as warnings. A
 /// missing directory is an empty library.
 pub fn list_textures(dir: &Path) -> (Vec<TextureEntry>, Vec<String>) {
+    refresh_textures(dir, &[])
+}
+
+/// The library `dir` listed again, as `list_textures`, taking the textures
+/// of `known` whose names are still there as they are: only new names are
+/// read and decoded (plan 14e minors: a change no longer decodes the
+/// whole library).
+pub fn refresh_textures(dir: &Path, known: &[TextureEntry]) -> (Vec<TextureEntry>, Vec<String>) {
     let (mut list, mut warnings) = (Vec::new(), Vec::new());
     let mut names = texture_names(dir);
     let max = olr_edit::textures::MAX_USER_TEXTURES;
@@ -220,6 +228,10 @@ pub fn list_textures(dir: &Path) -> (Vec<TextureEntry>, Vec<String>) {
         names.truncate(max);
     }
     for name in names {
+        if let Some(t) = known.iter().find(|t| t.name == name) {
+            list.push(t.clone());
+            continue;
+        }
         match read_image(&dir.join(format!("{name}.png"))).and_then(|(file, b)| decode_texture(&file, &b)) {
             Ok(image) => list.push(TextureEntry { name, image }),
             Err(why) => warnings.push(format!("texture {why}: not offered")),
@@ -270,7 +282,10 @@ pub fn add_texture(dir: &Path, path: &Path) -> Result<String, String> {
         .trim_matches([' ', '-'])
         .chars()
         .take(64)
-        .collect();
+        .collect::<String>()
+        // A cut may leave a space or a "-" at the end (plan 14e minors).
+        .trim_end_matches([' ', '-'])
+        .to_string();
     let base = if plain_name(&base) { base } else { "texture".to_string() };
     let name = std::iter::once(base.clone())
         .chain((2..=1000).map(|i| format!("{base}-{i}")))
