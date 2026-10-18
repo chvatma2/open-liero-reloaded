@@ -1,0 +1,10 @@
+(
+    format_version: 5,
+    id: "look-test",
+    name: "Look Test",
+    version: "0.1.0",
+    kind: Level,
+    authors: [],
+    origin: None,
+    license: None,
+)

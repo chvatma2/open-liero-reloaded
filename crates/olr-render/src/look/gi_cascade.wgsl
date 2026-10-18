@@ -37,7 +37,9 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let dir = vec2<f32>(cos(angle), sin(angle));
     let size = vec2<i32>(textureDimensions(level_em));
     var ray = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    var dist = cp.b.z;
+    // A probe never stops on its own cell, so a wall's face gathers the
+    // light in front of it (cascade 0's rays leave the cell first).
+    var dist = max(cp.b.z, 0.75 * spacing);
     let end = cp.b.z + cp.b.w;
     for (var n = 0; n < MAX_STEPS; n++) {
         if dist >= end {

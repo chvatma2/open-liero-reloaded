@@ -1,0 +1,45 @@
+(
+    elements: [
+        (
+            id: "base",
+            name: "Base",
+            kind: Raster,
+        ),
+        (
+            id: "air",
+            name: "Air",
+            kind: Drawn(
+                material: Background,
+            ),
+        ),
+        (
+            id: "sky",
+            name: "Sky",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "sky",
+            ),
+        ),
+        (
+            id: "building",
+            name: "Building",
+            kind: Drawn(
+                material: Rock,
+            ),
+        ),
+        (
+            id: "lava",
+            name: "Lava",
+            kind: Drawn(
+                material: Dirt,
+            ),
+            glow: (
+                strength: 100,
+                group: "lava",
+            ),
+        ),
+    ],
+)

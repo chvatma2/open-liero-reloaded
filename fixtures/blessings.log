@@ -139,3 +139,8 @@
 2026-10-16 bless-render: Left-facing worms mirror their right-facing frame exactly (OLX's one-column skin offset dropped, spec 2026-10-16 formats §4)
   fixtures/render/frame-castle.png
   fixtures/render/frame-dig.png
+2026-10-18 bless-render: plan 15a: the look test level's goldens
+  fixtures/render/look-full.png
+  fixtures/render/look-light.png
+  fixtures/render/look-lit.png
+  fixtures/render/look-t500.png

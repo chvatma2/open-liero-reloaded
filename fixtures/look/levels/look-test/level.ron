@@ -1,0 +1,50 @@
+(
+    name: "Look Test",
+    size: (512, 256),
+    theme: "olx-theme-dirt",
+    objects: [
+        Light(
+            at: (200, 150),
+            colour: "#ffc080",
+            intensity: 120,
+            reach: Pixels(90),
+        ),
+        Light(
+            at: (300, 150),
+            colour: "#80a0ff",
+            intensity: 100,
+            reach: Pixels(70),
+            animation: Pulse(
+                period_ms: 1000,
+                low: 30,
+                high: 100,
+            ),
+        ),
+    ],
+    look: (
+        ambient: (
+            colour: "#203048",
+            intensity: 25,
+        ),
+        grade: (
+            saturation: 110,
+            tint: "#fff0f0",
+        ),
+        glow_groups: [
+            (
+                id: "sky",
+                colour: Tint("#fff0d2"),
+                reach: Unlimited,
+            ),
+            (
+                id: "lava",
+                intensity: 150,
+                reach: Pixels(96),
+                animation: Flicker(
+                    speed: 6,
+                    depth: 20,
+                ),
+            ),
+        ],
+    ),
+)

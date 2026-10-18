@@ -50,11 +50,39 @@ fn content_dir() -> Option<String> {
 /// `fixtures/render/<name>`, or writes the golden when blessing.
 fn golden(name: &str, scenario: &str, frame: i64, extra: &[&str]) {
     let Some(content) = content_dir() else { return };
+    let fixtures = root().join("fixtures/oracle");
+    let frame = frame.to_string();
+    let args = [
+        "render",
+        scenario,
+        "--frame",
+        &frame,
+        "--content",
+        &content,
+        "--fixtures",
+        fixtures.to_str().unwrap(),
+    ];
+    compare(name, &args, extra);
+}
+
+/// `olr-cli look-preview` of the look test level (`fixtures/look/levels/
+/// look-test`, plan 15a Task 14) centred on its building, with `extra`
+/// options, against `fixtures/render/<name>`.
+fn look_golden(name: &str, extra: &[&str]) {
+    let Some(content) = content_dir() else { return };
+    let pack = root().join("fixtures/look/levels/look-test");
+    let args = ["look-preview", pack.to_str().unwrap(), "--at", "256,128", "--content", &content];
+    compare(name, &args, extra);
+}
+
+/// Runs `olr-cli <args> --out target/render-actual/<name> <extra>` and
+/// compares the PNG with `fixtures/render/<name>`, or blesses it.
+fn compare(name: &str, args: &[&str], extra: &[&str]) {
     let actual = root().join("target/render-actual").join(name);
     std::fs::create_dir_all(actual.parent().unwrap()).unwrap();
+    let scenario = args[1];
     let out = Command::new(env!("CARGO_BIN_EXE_olr-cli"))
-        .args(["render", scenario, "--frame", &frame.to_string(), "--content", &content, "--fixtures"])
-        .arg(root().join("fixtures/oracle"))
+        .args(args)
         .arg("--out")
         .arg(&actual)
         .args(extra)
@@ -65,7 +93,7 @@ fn golden(name: &str, scenario: &str, frame: i64, extra: &[&str]) {
         eprintln!("{stderr}skipping");
         return;
     }
-    assert!(out.status.success(), "olr-cli render {scenario} failed:\n{stderr}");
+    assert!(out.status.success(), "olr-cli {} {scenario} failed:\n{stderr}", args[0]);
     eprint!("{}", String::from_utf8_lossy(&out.stdout));
     let decode = |p: &Path| std::fs::read(p).ok().and_then(|b| olr_pack::image_io::decode_rgba(&b).ok());
     let img: RgbaImage = decode(&actual).expect("olr-cli wrote a PNG");
@@ -130,4 +158,29 @@ fn offscreen_renders_bazooka_frame_like_golden() {
 #[test]
 fn offscreen_renders_castle_frame_like_golden() {
     golden("frame-castle.png", "castle-shoot-rope", 200, &["--filter", "integer-nearest"]);
+}
+
+/// The look test level lit: sky, windows, lava, two lamps, dark ambient,
+/// a grade (plan 15a Task 14).
+#[test]
+fn look_test_level_lit() {
+    look_golden("look-lit.png", &[]);
+}
+
+/// Its light alone.
+#[test]
+fn look_test_level_light() {
+    look_golden("look-light.png", &["--view", "light"]);
+}
+
+/// Full bright: the art as it is.
+#[test]
+fn look_test_level_full() {
+    look_golden("look-full.png", &["--view", "full"]);
+}
+
+/// Half a second on: the lava flickers and the blue lamp pulses.
+#[test]
+fn look_test_level_at_500_ms() {
+    look_golden("look-t500.png", &["--time", "500"]);
 }
