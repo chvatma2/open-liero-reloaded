@@ -1063,7 +1063,8 @@ impl EditorState {
     fn copy(&mut self) -> bool {
         let Some(doc) = &self.doc else { return false };
         // Nothing to copy is said (plan 14e minors).
-        const NOTHING_TO_COPY: &str = "nothing to copy: select elements, a spawn or a light, or pixels with Select pixels (M)";
+        const NOTHING_TO_COPY: &str =
+            "nothing to copy: select elements, a spawn or a light, or pixels with Select pixels (M)";
         if let Some((id, rect)) = &self.pixel_rect {
             let Some((clip, at)) = doc.copy_pixels(id, *rect) else {
                 self.status.message = Some(format!("no pixels of {id:?} in the rectangle to copy"));

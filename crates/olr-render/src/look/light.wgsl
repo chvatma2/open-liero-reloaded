@@ -34,6 +34,71 @@ fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(x, y, 0.0, 1.0);
 }
 
+// Light i's shadow map along ray `ray`: whether a point `d` world pixels
+// out is lit (1) or in shadow (0).
+fn lit_on(i: u32, ray: i32, d: f32) -> f32 {
+    let r = ((ray % i32(SHADOW_RAYS)) + i32(SHADOW_RAYS)) % i32(SHADOW_RAYS);
+    let s = joined(textureLoad(shadow_tex, vec2<i32>(r, i32(i)), 0).xy);
+    return select(0.0, 1.0, s > 0.0 && d <= s + 1.0);
+}
+
+// The ray of light `a` towards `c` (ray 0 inside its radius: the light's
+// own place says whether it sits in rock).
+fn ray_to(a: vec4<f32>, c: vec2<f32>) -> i32 {
+    if distance(c, a.xy) <= a.z {
+        return 0;
+    }
+    let angle = atan2(c.y - a.y, c.x - a.x);
+    return i32(floor(fract(angle / TAU) * SHADOW_RAYS)) % i32(SHADOW_RAYS);
+}
+
+// How much of light i (its first vec4 `a`) reaches world point `c`, by the
+// shadow filter (`look.mode.w`): 0 hard (one test, a world pixel's edge),
+// 1 anti-aliased (four tests within the world pixel), 2 soft (a penumbra
+// as wide as the light's radius casts behind the occluder, filtered over
+// the neighbouring rays).
+fn visible(i: u32, a: vec4<f32>, c: vec2<f32>) -> f32 {
+    let d = distance(c, a.xy);
+    let shadows = look.mode.w;
+    if shadows < 0.5 || d <= a.z {
+        return lit_on(i, ray_to(a, c), d);
+    }
+    if shadows < 1.5 {
+        var sum = 0.0;
+        for (var k = 0; k < 4; k++) {
+            let q = c + vec2<f32>(f32(k % 2) - 0.5, f32(k / 2) - 0.5) * 0.5;
+            sum += lit_on(i, ray_to(a, q), distance(q, a.xy));
+        }
+        return sum * 0.25;
+    }
+    // Soft: the occluders among the rays a penumbra could reach, then the
+    // share of rays lit over the penumbra they cast here.
+    let step = TAU / SHADOW_RAYS;
+    let r0 = ray_to(a, c);
+    let reach = clamp(i32(ceil(a.z * 2.0 / max(d * step, 1e-3))), 1, 12);
+    var blockers = 0.0;
+    var count = 0.0;
+    for (var k = -reach; k <= reach; k++) {
+        let r = ((r0 + k) % i32(SHADOW_RAYS) + i32(SHADOW_RAYS)) % i32(SHADOW_RAYS);
+        let s = joined(textureLoad(shadow_tex, vec2<i32>(r, i32(i)), 0).xy);
+        if s > 0.0 && d > s + 1.0 {
+            blockers += s;
+            count += 1.0;
+        }
+    }
+    if count == 0.0 {
+        return lit_on(i, r0, d);
+    }
+    let s = blockers / count;
+    let width = a.z * (d - s) / max(s, 1.0);
+    let n = clamp(i32(round(width / max(d * step, 1e-3))), 0, reach);
+    var sum = 0.0;
+    for (var k = -n; k <= n; k++) {
+        sum += lit_on(i, r0 + k, d);
+    }
+    return sum / f32(2 * n + 1);
+}
+
 // The placed lights at world point `c`.
 fn placed(c: vec2<f32>) -> vec3<f32> {
     var acc = vec3<f32>(0.0);
@@ -45,18 +110,11 @@ fn placed(c: vec2<f32>) -> vec3<f32> {
         if past >= a.w {
             continue;
         }
-        // The ray towards c; inside the radius the light's own ray 0 says
-        // whether it sits in rock.
-        var ray = 0;
-        if d > a.z {
-            let angle = atan2(c.y - a.y, c.x - a.x);
-            ray = i32(floor(fract(angle / TAU) * SHADOW_RAYS)) % i32(SHADOW_RAYS);
-        }
-        let shadow = joined(textureLoad(shadow_tex, vec2<i32>(ray, i32(i)), 0).xy);
-        if shadow <= 0.0 || d > shadow + 1.0 {
+        let v = visible(i, a, c);
+        if v <= 0.0 {
             continue;
         }
-        acc += lights.v[i * 2u + 1u].rgb * fade(past, a.w);
+        acc += lights.v[i * 2u + 1u].rgb * fade(past, a.w) * v;
     }
     return acc;
 }

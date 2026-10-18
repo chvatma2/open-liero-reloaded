@@ -61,6 +61,9 @@ pub struct LookFrame {
     pub light_soak: u8,
     /// Linear.
     pub solid_floor: [f32; 3],
+    /// Placed lights' shadow edges: 0 hard, 1 anti-aliased, 2 soft
+    /// (exploring, plan 15a playtest).
+    pub shadow_filter: u8,
     pub grade: Grade,
     /// The level's groups in order: a group map value `v` (1-255) is
     /// `groups[v - 1]`; 0 is no group.

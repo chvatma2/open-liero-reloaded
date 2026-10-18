@@ -627,7 +627,7 @@ impl LookState {
             mode,
             look.groups.len().min(GROUPS) as f32,
             f32::from(look.light_soak.min(olr_look::MAX_SOAK)),
-            0.0,
+            f32::from(look.shadow_filter.min(2)),
         ]);
         let [r, g, b] = look.solid_floor;
         p.extend([r, g, b, 0.0]);

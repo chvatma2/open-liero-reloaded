@@ -13,7 +13,7 @@ struct LookGlobals {
     frame: vec4<f32>,
     // level width, height (world px), art scale, glow-light cell (world px)
     level: vec4<f32>,
-    // view mode (0 lit, 1 full bright, 2 light only), group count, light soak (world px), 0
+    // view mode (0 lit, 1 full bright, 2 light only), group count, light soak (world px), shadow filter
     mode: vec4<f32>,
     // rgb solid floor (linear), 0
     solid: vec4<f32>,
