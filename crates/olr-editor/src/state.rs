@@ -401,7 +401,12 @@ impl EditorState {
                 Vec::new()
             }
             EditorAction::Browse(purpose) => {
-                let dir = self.settings.browse_dir.clone().unwrap_or_else(home);
+                let dir = self
+                    .settings
+                    .browse_dir
+                    .clone()
+                    .or_else(|| self.catalog.home.clone())
+                    .unwrap_or_else(|| PathBuf::from("."));
                 self.browser = Some(Browser::new(purpose, dir.clone()));
                 vec![EditorCommand::List(dir)]
             }
@@ -749,10 +754,4 @@ impl EditorState {
             }
         }
     }
-}
-
-/// Where the browser opens when no folder is remembered: the home
-/// directory, else the working directory.
-fn home() -> PathBuf {
-    std::env::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }

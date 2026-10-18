@@ -242,3 +242,49 @@ fn the_browser_by_label() {
     h.run();
     assert!(h.state().commands.contains(&C::Close), "{:?}", h.state().commands);
 }
+
+/// `..` and `.` in a typed path are resolved by name, so Up after them goes
+/// up (deferred minor of batch B).
+#[test]
+fn typed_dots_are_resolved() {
+    let Some((_doc, t, mut state)) = browsing(Purpose::ImportImage) else { return };
+    host(&mut state, A::BrowseTo("b".into()));
+    assert_eq!(state.browser().unwrap().dir(), t.path().join("b"));
+    assert_eq!(state.update(A::BrowseTo("..".into())), vec![C::List(t.path().to_path_buf())]);
+    assert_eq!(state.update(A::BrowseTo("./../b/../A".into())), vec![C::List(t.path().join("A"))]);
+    let root = PathBuf::from(std::path::MAIN_SEPARATOR_STR);
+    assert_eq!(
+        state.update(A::BrowseTo(root.join("..").join(".."))),
+        vec![C::List(root)],
+        "never above the root"
+    );
+}
+
+/// The browser's first folder without a remembered one is the host's
+/// (`Catalog::home`), not read from the environment by the state.
+#[test]
+fn the_host_names_the_first_folder() {
+    let Some(root) = content() else { return };
+    let mut catalog = crate::common::catalog(&root);
+    catalog.home = Some(PathBuf::from("/somewhere/home"));
+    let mut state = EditorState::new(Default::default(), catalog);
+    assert_eq!(state.update(A::Browse(Purpose::ImportImage)), vec![C::List("/somewhere/home".into())]);
+    let mut state = EditorState::new(Default::default(), crate::common::catalog(&root));
+    assert_eq!(state.update(A::Browse(Purpose::ImportImage)), vec![C::List(".".into())]);
+}
+
+/// A listing the host cut at `MAX_ENTRIES` says so.
+#[test]
+fn a_cut_listing_says_so() {
+    let Some((_doc, t, mut state)) = browsing(Purpose::OpenPack) else { return };
+    let many: Vec<DirEntry> = (0..olr_editor::browser::MAX_ENTRIES)
+        .map(|i| DirEntry { name: format!("d{i:05}"), is_dir: true, is_pack: false })
+        .collect();
+    state.update(A::Listed { dir: t.path().to_path_buf(), entries: Ok(many) });
+    let msg = state.browser().unwrap().message().unwrap_or_default().to_string();
+    assert!(msg.contains("first 10000"), "{msg}");
+    let mut few = vec![DirEntry { name: "b".into(), is_dir: true, is_pack: false }];
+    olr_editor::browser::sort_entries(&mut few);
+    state.update(A::Listed { dir: t.path().to_path_buf(), entries: Ok(few) });
+    assert_eq!(state.browser().unwrap().message(), None);
+}

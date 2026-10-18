@@ -10,7 +10,7 @@ pub mod canvas;
 mod files;
 mod recovery;
 
-pub use files::{MAX_ENTRIES, MAX_IMPORT_BYTES, editable_levels, level_dirs};
+pub use files::{MAX_ENTRIES, MAX_IMPORT_BYTES, editable_levels, level_dirs, list as list_dir};
 pub use recovery::{INFO_FILE, RecoveryInfo, discard_recovery, list_recoveries};
 
 use std::collections::VecDeque;
@@ -81,7 +81,7 @@ impl EditorHost {
     pub fn new(store: &mut Store, roots: &[&Path]) -> anyhow::Result<EditorHost> {
         let content = Content::open_layers(roots)?;
         let mut warnings = content.warnings().to_vec();
-        let mut catalog = Catalog::default();
+        let mut catalog = Catalog { home: std::env::home_dir(), ..Catalog::default() };
         for id in content.ids(PackKind::Theme) {
             match content.load_theme(&id) {
                 Ok(t) => catalog.themes.push(ThemeEntry {

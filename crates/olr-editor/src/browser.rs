@@ -25,6 +25,10 @@ pub struct DirEntry {
     pub is_pack: bool,
 }
 
+/// The most entries a listing holds: the host lists a larger directory's
+/// first ones in [`sort_entries`]' order, and the browser says so.
+pub const MAX_ENTRIES: usize = 10_000;
+
 /// The file extensions an import offers (case aside).
 const IMAGE_EXTENSIONS: [&str; 3] = ["png", "jpg", "jpeg"];
 
@@ -86,25 +90,46 @@ impl Browser {
     pub(crate) fn listed(&mut self, dir: PathBuf, entries: Result<Vec<DirEntry>, String>) {
         match entries {
             Ok(mut entries) => {
-                entries.sort_by(order);
+                sort_entries(&mut entries);
+                self.message = (entries.len() >= MAX_ENTRIES)
+                    .then(|| format!("only the first {MAX_ENTRIES} entries are shown"));
                 self.dir = dir;
                 self.entries = entries;
-                self.message = None;
             }
             Err(why) => self.message = Some(why),
         }
     }
 
     /// `path` from this browser: as typed when absolute, else under its
-    /// directory.
+    /// directory; `.` and `..` resolved by name (never above the root), so
+    /// the directory shown and Up stay plain.
     pub(crate) fn resolve(&self, path: &Path) -> PathBuf {
-        if path.is_absolute() { path.to_path_buf() } else { self.dir.join(path) }
+        use std::path::Component;
+        let joined = if path.is_absolute() { path.to_path_buf() } else { self.dir.join(path) };
+        let mut out = PathBuf::new();
+        for c in joined.components() {
+            match c {
+                Component::CurDir => {}
+                Component::ParentDir => {
+                    if out.file_name().is_some() {
+                        out.pop();
+                    }
+                }
+                c => out.push(c),
+            }
+        }
+        out
     }
+}
+
+/// Sorts a listing as the browser shows it ([`order`]).
+pub fn sort_entries(entries: &mut [DirEntry]) {
+    entries.sort_by(order);
 }
 
 /// Folders first, then by name ignoring case, then by the exact name (a
 /// total order: the listing is the same whatever the disk's order).
-fn order(a: &DirEntry, b: &DirEntry) -> Ordering {
+pub fn order(a: &DirEntry, b: &DirEntry) -> Ordering {
     b.is_dir
         .cmp(&a.is_dir)
         .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))

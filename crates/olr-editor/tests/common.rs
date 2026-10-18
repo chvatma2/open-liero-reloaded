@@ -30,6 +30,7 @@ pub fn catalog(root: &Path) -> Catalog {
             ModEntry { id: "olx-classic".into(), name: "Liero v1.0".into() },
             ModEntry { id: "olx-mw-1-0".into(), name: "Modern Warfare1.0".into() },
         ],
+        home: None,
     }
 }
 

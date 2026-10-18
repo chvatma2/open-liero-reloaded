@@ -201,6 +201,7 @@ mod tests {
                 back_tile: theme.back_tile,
             }],
             mods: vec![],
+            home: None,
         };
         let pack = olr_edit::pack::load(&dir).unwrap();
         Some((tmp, Document::open(pack, dir, &catalog).unwrap()))

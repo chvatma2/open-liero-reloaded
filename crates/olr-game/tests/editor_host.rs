@@ -401,3 +401,24 @@ fn nothing_is_made_or_saved_in_recovery() {
     assert!(!rec.join("made").exists(), "nothing made there");
     assert!(matches!(h.state().dialog(), Some(olr_editor::Dialog::Error(_))), "{:?}", h.state().dialog());
 }
+
+/// A listing larger than `MAX_ENTRIES` keeps its first entries in the
+/// browser's order, not the disk's (deferred minor of batch B).
+#[test]
+fn a_huge_listing_keeps_its_first_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let n = olr_game::editor::MAX_ENTRIES + 5;
+    for i in (0..n).rev() {
+        std::fs::write(tmp.path().join(format!("f{i:05}.png")), b"").unwrap();
+    }
+    std::fs::create_dir(tmp.path().join("zz-folder")).unwrap();
+    let mut state = olr_editor::EditorState::new(Default::default(), Default::default());
+    state.update(A::Browse(Purpose::ImportImage));
+    let cmds = state.update(A::BrowseTo(tmp.path().to_path_buf()));
+    assert_eq!(cmds, vec![olr_editor::EditorCommand::List(tmp.path().to_path_buf())]);
+    let entries = olr_game::editor::list_dir(tmp.path()).unwrap();
+    assert_eq!(entries.len(), olr_game::editor::MAX_ENTRIES);
+    assert_eq!(entries[0].name, "zz-folder", "folders first");
+    assert_eq!(entries[1].name, "f00000.png");
+    assert_eq!(entries.last().unwrap().name, format!("f{:05}.png", olr_game::editor::MAX_ENTRIES - 2));
+}

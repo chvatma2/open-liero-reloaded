@@ -31,12 +31,15 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   mods the host passes in; `EditorSettings` (Play's mod and bots, R9; the
   browser's `browse_dir`, plan 14c).
 - **File browser** (`browser.rs`, `ui/browser.rs`, plan 14c R9): `Browse(
-  Purpose::{ImportImage, OpenPack})` opens it at `browse_dir`, else the
-  home directory, and asks `List(dir)`; `Listed` sorts (folders first,
+  Purpose::{ImportImage, OpenPack})` opens it at `browse_dir`, else
+  `Catalog::home` (the host's home directory; else `.`), and asks
+  `List(dir)`; `Listed` sorts (folders first,
   then by name case aside, then exactly) and `shown()` filters (no hidden
   entries; folders, and for an import `.png`, `.jpg`, `.jpeg`); a failed
-  listing keeps the old one and sets `message()`. `BrowseTo` (a typed path,
-  relative to the browser's) lists; `Pick` of a file reads it
+  listing keeps the old one and sets `message()`, and so does one of
+  `MAX_ENTRIES` (the host cut it, in `sort_entries`' order). `BrowseTo` (a
+  typed path, relative to the browser's, `.` and `..` resolved by name)
+  lists; `Pick` of a file reads it
   (`ReadImage`), of a pack folder opens it as `Open` does (the dialog
   first), of another folder enters it; a pick remembers its folder
   (`SaveSettings`) and closes the browser. The window is modal: the Path

@@ -12,8 +12,8 @@ use olr_editor::browser::DirEntry;
 /// The largest image an import reads (from its metadata, before reading).
 pub const MAX_IMPORT_BYTES: u64 = 64 << 20;
 
-/// The most entries a listing shows (a huge directory costs no more).
-pub const MAX_ENTRIES: usize = 10_000;
+/// The most entries a listing shows (`olr-editor`'s).
+pub use olr_editor::browser::MAX_ENTRIES;
 
 /// The header an import looks at before reading the rest.
 const HEADER_BYTES: u64 = 16;
@@ -47,21 +47,33 @@ pub fn editable_levels(packs_dir: &Path) -> BTreeSet<String> {
     level_dirs(packs_dir).into_keys().collect()
 }
 
-/// `dir`'s entries for the browser (`EditorCommand::List`): at most
-/// [`MAX_ENTRIES`], a pack being a folder holding `pack.ron`.
+/// `dir`'s entries for the browser (`EditorCommand::List`), a pack being a
+/// folder holding `pack.ron`: every name read, sorted as the browser shows
+/// them, then the first `MAX_ENTRIES` kept (the browser says so). An
+/// entry's kind comes from the directory listing itself (no `stat`, but
+/// for a symbolic link); only a folder's `pack.ron` is looked for.
 pub fn list(dir: &Path) -> Result<Vec<DirEntry>, String> {
     let rd = std::fs::read_dir(dir).map_err(|e| format!("cannot list {}: {e}", dir.display()))?;
-    Ok(rd
+    let mut entries: Vec<(DirEntry, PathBuf)> = rd
         .filter_map(Result::ok)
-        .take(MAX_ENTRIES)
         .map(|e| {
             let path = e.path();
-            let is_dir = path.is_dir();
-            DirEntry {
-                name: e.file_name().to_string_lossy().into_owned(),
-                is_dir,
-                is_pack: is_dir && path.join(olr_pack::MANIFEST).is_file(),
-            }
+            let is_dir = match e.file_type() {
+                Ok(t) if t.is_symlink() => path.is_dir(),
+                Ok(t) => t.is_dir(),
+                Err(_) => false,
+            };
+            let name = e.file_name().to_string_lossy().into_owned();
+            (DirEntry { name, is_dir, is_pack: false }, path)
+        })
+        .collect();
+    entries.sort_by(|a, b| olr_editor::browser::order(&a.0, &b.0));
+    entries.truncate(MAX_ENTRIES);
+    Ok(entries
+        .into_iter()
+        .map(|(mut e, path)| {
+            e.is_pack = e.is_dir && path.join(olr_pack::MANIFEST).is_file();
+            e
         })
         .collect())
 }

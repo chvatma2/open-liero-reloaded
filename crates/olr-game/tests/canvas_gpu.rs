@@ -54,6 +54,7 @@ fn the_canvas_draws_the_bake() {
             back_tile: theme.back_tile,
         }],
         mods: vec![],
+        home: None,
     };
     let mut doc = Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog).unwrap();
     let settings = RenderSettings { filter: UpscaleFilter::SharpBilinear };

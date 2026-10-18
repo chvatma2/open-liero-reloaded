@@ -11,6 +11,9 @@ use serde::{Deserialize, Serialize};
 pub struct Catalog {
     pub themes: Vec<ThemeEntry>,
     pub mods: Vec<ModEntry>,
+    /// Where the file browser opens when no folder is remembered (the
+    /// host's home directory; none: the working directory).
+    pub home: Option<PathBuf>,
 }
 
 /// A theme pack: its id, its name and the tiles painting and the bake use.

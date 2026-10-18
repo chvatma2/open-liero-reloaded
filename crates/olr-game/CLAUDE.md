@@ -608,7 +608,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   slugs unique against the catalog and `packs/`), `open_dir` (`olr --edit`),
   `act` (a frame's actions, the answers fed back in order: `Open`,
   `Create`, `Save` (a missing directory made first), `List`
-  (`files::list`, at most `MAX_ENTRIES`), `ReadImage` (`files::read_image`:
+  (`files::list`, `list_dir`: every name read, sorted as the browser shows
+  them, the first `MAX_ENTRIES` kept; kinds from the listing, a `stat`
+  only for a symbolic link and a folder's `pack.ron`), `ReadImage` (`files::read_image`:
   metadata above `MAX_IMPORT_BYTES`, 64 MiB, or no regular file refused
   before opening, a non-PNG/JPEG signature before reading the rest),
   `SaveSettings` (`EDITOR_FILE` through `Store::save_file`), `RecoveryDone`)
