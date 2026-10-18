@@ -17,7 +17,7 @@ struct Quad {
     @location(0) dst: vec4<f32>,
     @location(1) src: vec4<f32>,
     @location(2) tint: vec4<f32>,
-    @location(3) shade: vec2<f32>,
+    @location(3) shade: vec3<f32>,
 };
 
 struct QuadOut {
@@ -25,12 +25,12 @@ struct QuadOut {
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) rect: vec4<f32>,
     @location(2) @interpolate(flat) tint: vec4<f32>,
-    @location(3) @interpolate(flat) shade: vec2<f32>,
+    @location(3) @interpolate(flat) shade: vec3<f32>,
 };
 
 struct LitOut {
     @location(0) colour: vec4<f32>,
-    // self-light, marker, 0, alpha
+    // self-light, marker, solid floor, alpha
     @location(1) shade: vec4<f32>,
 };
 
@@ -60,7 +60,7 @@ fn fs_sprite_lit(in: QuadOut) -> LitOut {
     }
     var out: LitOut;
     out.colour = c;
-    out.shade = vec4<f32>(in.shade.x, in.shade.y, 0.0, c.a);
+    out.shade = vec4<f32>(in.shade.x, in.shade.y, in.shade.z, c.a);
     return out;
 }
 

@@ -72,17 +72,17 @@ impl WorldFrame {
 /// One textured quad of the world pass: `dst` in target texels, `src` in
 /// texture texels (a negative width mirrors it), multiplied by `tint`
 /// (0 to 1); `shade` is its item's [`olr_scene::Shade`]: self-light (0 to
-/// 1) and marker (0 or 1), read only by the lit pass.
+/// 1), marker and solid floor (0 or 1), read only by the lit pass.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Instance {
     pub dst: [f32; 4],
     pub src: [f32; 4],
     pub tint: [f32; 4],
-    pub shade: [f32; 2],
+    pub shade: [f32; 3],
 }
 
 /// An instance's floats in the vertex buffer.
-pub const INSTANCE_FLOATS: usize = 14;
+pub const INSTANCE_FLOATS: usize = 15;
 
 impl Instance {
     /// The vertex-buffer layout: `dst`, `src`, `tint`, `shade`.
@@ -90,13 +90,14 @@ impl Instance {
         let [a, b, c, d] = self.dst;
         let [e, f, g, h] = self.src;
         let [i, j, k, l] = self.tint;
-        let [m, n] = self.shade;
-        [a, b, c, d, e, f, g, h, i, j, k, l, m, n]
+        let [m, n, o] = self.shade;
+        [a, b, c, d, e, f, g, h, i, j, k, l, m, n, o]
     }
 }
 
-fn shade(s: olr_scene::Shade) -> [f32; 2] {
-    [f32::from(s.self_light.min(100)) / 100.0, f32::from(u8::from(s.marker))]
+fn shade(s: olr_scene::Shade) -> [f32; 3] {
+    let flag = |b: bool| f32::from(u8::from(b));
+    [f32::from(s.self_light.min(100)) / 100.0, flag(s.marker), flag(s.solid_floor)]
 }
 
 /// The sizes of the look's textures for a map of `world` pixels at
@@ -132,7 +133,7 @@ pub fn terrain_instance(frame: &WorldFrame, map: (u32, u32), art: (u32, u32)) ->
         dst: [x, y, map.0 as f32 * s, map.1 as f32 * s],
         src: [0.0, 0.0, art.0 as f32, art.1 as f32],
         tint: [1.0; 4],
-        shade: [0.0; 2],
+        shade: [0.0; 3],
     }
 }
 
@@ -312,8 +313,9 @@ mod tests {
         assert_eq!(t.src, [0.0, 0.0, 1200.0, 800.0]);
     }
 
-    /// Each instance carries its item's shade: self-light (0-1) and marker
-    /// (0 or 1), the last two floats of its raw form (plan 15a Task 9).
+    /// Each instance carries its item's shade: self-light (0-1), marker and
+    /// solid floor (0 or 1), the last three floats of its raw form (plan 15a
+    /// Task 9; the floor, the user's playtest 2026-10-19).
     #[test]
     fn instance_shade_encoding() {
         use olr_scene::Shade;
@@ -323,7 +325,9 @@ mod tests {
         let mut sp = sprite_at(0, [10.0, 10.0], Rect { x: 0, y: 0, w: 8, h: 4 }, false);
         sp.shade = Shade::GLOW;
         list.sprite(Layer::Worms, sp);
-        sp.shade = Shade { self_light: 50, marker: false };
+        sp.shade = Shade { self_light: 50, ..Shade::LIT };
+        list.sprite(Layer::Worms, sp);
+        sp.shade = Shade::FLOORED;
         list.sprite(Layer::Worms, sp);
         list.push(
             Layer::Beams,
@@ -331,11 +335,14 @@ mod tests {
         );
         let mut out = Vec::new();
         push_instances(&list, &atlas, &WorldFrame::new(list.view, 2), &mut out);
-        assert_eq!(out.iter().map(|i| i.shade).collect::<Vec<_>>(), [[0.0, 1.0], [1.0, 0.0], [0.5, 0.0]]);
-        assert_eq!(out[1].raw().len(), 14);
-        assert_eq!(out[1].raw()[12..], [1.0, 0.0]);
+        assert_eq!(
+            out.iter().map(|i| i.shade).collect::<Vec<_>>(),
+            [[0.0, 1.0, 0.0], [1.0, 0.0, 0.0], [0.5, 0.0, 0.0], [0.0, 0.0, 1.0]]
+        );
+        assert_eq!(out[1].raw().len(), 15);
+        assert_eq!(out[1].raw()[12..], [1.0, 0.0, 0.0]);
         let t = terrain_instance(&WorldFrame::new(list.view, 2), (10, 10), (20, 20));
-        assert_eq!(t.shade, [0.0, 0.0]);
+        assert_eq!(t.shade, [0.0; 3]);
     }
 
     /// The look's textures crop as the terrain does: art to the device's

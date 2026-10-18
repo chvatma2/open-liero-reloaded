@@ -7,7 +7,7 @@ use common::{DEFAULT_DIRT, DIRT, ROCK, SKY, Setup, art, cosmetic, dt};
 use olr_data::image::Rgba;
 use olr_fx::{DEATH_RESERVE, Fx, Kind, MAX_ENTITIES, PLAY_ENTITIES};
 use olr_math::Vec2;
-use olr_scene::Rect;
+use olr_scene::{Rect, Shade};
 use olr_sim::{CosmeticKind, Event};
 
 #[test]
@@ -169,6 +169,32 @@ fn gibs_use_the_victims_colour() {
     // A worm without gibs of its own gets the plain ones, never a panic.
     s.tick(&[cosmetic(0, CosmeticKind::Gib { worm: 9 }, (20.0, 20.0), (0.0, 0.0))], 0);
     assert_eq!(s.draw()[0].atlas, s.assets.gibs(-1).0);
+}
+
+/// The user's playtest (2026-10-19): in a lit match blood and gibs never
+/// show below the solid floor, as rock does; other debris is lit, and
+/// nothing is shaded without a look.
+#[test]
+fn blood_and_gibs_take_the_solid_floor_when_lit() {
+    let mut s = Setup::new();
+    s.assets.add_worm(Rgba::rgb(255, 0, 0), &mut s.atlas);
+    s.tick(
+        &[
+            cosmetic(0, CosmeticKind::Blood { red: 200 }, (20.5, 20.0), (0.0, 0.0)),
+            cosmetic(0, CosmeticKind::BloodDropper, (30.5, 20.0), (0.0, 0.0)),
+            cosmetic(0, CosmeticKind::Gib { worm: 0 }, (40.5, 20.0), (0.0, 0.0)),
+            cosmetic(0, CosmeticKind::Dirt { probe: (50, 20) }, (50.5, 20.0), (0.0, 0.0)),
+        ],
+        0,
+    );
+    let floored = |x: f32| x < 45.0;
+    let lit = s.draw_lit(true);
+    assert_eq!(lit.len(), 4, "{lit:?}");
+    for sp in &lit {
+        let want = if floored(sp.pos[0]) { Shade::FLOORED } else { Shade::LIT };
+        assert_eq!(sp.shade, want, "at {:?}", sp.pos);
+    }
+    assert!(s.draw_lit(false).iter().all(|sp| sp.shade == Shade::LIT));
 }
 
 #[test]

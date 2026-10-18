@@ -23,9 +23,9 @@ impl At {
     }
 
     /// `DrawRectFill2x2(x + dx, y + dy, colour)`: one world pixel.
-    fn block(&self, assets: &FxAssets, out: &mut DrawList, dx: i32, dy: i32, colour: Rgba) {
+    fn block(&self, assets: &FxAssets, out: &mut DrawList, dx: i32, dy: i32, colour: Rgba, shade: Shade) {
         let [x, y] = self.world(self.x.saturating_add(dx), self.y.saturating_add(dy));
-        out.pixel(Layer::Entities, assets.white, x, y, colour);
+        out.pixel_shaded(Layer::Entities, assets.white, (x, y), colour, shade);
     }
 
     /// `DrawImageAdv(img, sx, 0, x + d, y + d, w, w)` of a strip of `w` ×
@@ -62,6 +62,9 @@ impl At {
 /// OLX: src/client/Entity.cpp:210-315
 pub(crate) fn entity(e: &Entity, assets: &FxAssets, lit: bool, out: &mut DrawList) {
     let glow = if lit { Shade::GLOW } else { Shade::LIT };
+    // Blood and gibs never show below the solid floor, as rock does (the
+    // user's playtest, 2026-10-19).
+    let floored = if lit { Shade::FLOORED } else { Shade::LIT };
     let lit = Shade::LIT;
     let v = out.view;
     let (ox, oy) = (v.x.trunc(), v.y.trunc());
@@ -73,7 +76,8 @@ pub(crate) fn entity(e: &Entity, assets: &FxAssets, lit: bool, out: &mut DrawLis
     }
     let frame = e.frame as i32 as i64;
     match e.kind {
-        Kind::Particle | Kind::Blood | Kind::BloodDropper => at.block(assets, out, -1, -1, e.colour),
+        Kind::Particle => at.block(assets, out, -1, -1, e.colour, lit),
+        Kind::Blood | Kind::BloodDropper => at.block(assets, out, -1, -1, e.colour, floored),
         Kind::Explosion => at.blit(out, assets.explosion, (frame * 32, -16, 32), glow),
         Kind::Smoke => at.blit(out, assets.smoke, (frame * 14, -7, 14), lit),
         Kind::ChemSmoke => at.blit(out, assets.chemsmoke, (frame * 10, -5, 10), lit),
@@ -81,18 +85,18 @@ pub(crate) fn entity(e: &Entity, assets: &FxAssets, lit: bool, out: &mut DrawLis
         Kind::Gib { worm } => {
             let (atlas, sheet) = assets.gibs(worm);
             let img = FxSprite { atlas, w: sheet.width(), h: sheet.height() };
-            at.blit(out, img, (e.rotation as i64 * 8, -2, 8), lit);
+            at.blit(out, img, (e.rotation as i64 * 8, -2, 8), floored);
         }
         // The sim's sparkles have no colour: the image, never the two blocks.
         Kind::Sparkle => at.blit(out, assets.sparkle, (frame * 10, -5, 10), glow),
         Kind::Doomsday => {
             if let Some(&c) = usize::try_from(frame).ok().and_then(|i| DOOMSDAY.get(i)) {
-                at.block(assets, out, -1, -1, c);
+                at.block(assets, out, -1, -1, c, lit);
             }
         }
         Kind::JetpackSpray => {
             let f = |k: f32| (k * (255.0 - e.frame)).min(255.0) as u8;
-            at.block(assets, out, -1, -1, Rgba::rgb(f(0.314), f(0.588), f(0.784)));
+            at.block(assets, out, -1, -1, Rgba::rgb(f(0.314), f(0.588), f(0.784)), lit);
         }
         Kind::LaserSight => {}
     }

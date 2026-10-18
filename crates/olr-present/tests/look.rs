@@ -207,7 +207,7 @@ fn a_glowing_projectile_lights_and_glows() {
             }
         }
         for s in sprites(list, Layer::Projectiles) {
-            assert_eq!(s.shade, Shade { self_light: 80, marker: false });
+            assert_eq!(s.shade, Shade { self_light: 80, ..Shade::LIT });
         }
     });
     assert!(lit_frames > 10, "{lit_frames}");
@@ -316,7 +316,7 @@ fn floors_apply_only_in_lit_matches() {
             for s in sprites(list, Layer::Worms) {
                 if s.atlas == skin {
                     let want = if lit {
-                        Shade { self_light: olr_look::engine::FLOOR, marker: false }
+                        Shade { self_light: olr_look::engine::FLOOR, ..Shade::LIT }
                     } else {
                         Shade::LIT
                     };

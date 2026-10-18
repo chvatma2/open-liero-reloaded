@@ -16,7 +16,7 @@ struct Quad {
     @location(0) dst: vec4<f32>,
     @location(1) src: vec4<f32>,
     @location(2) tint: vec4<f32>,
-    @location(3) shade: vec2<f32>,
+    @location(3) shade: vec3<f32>,
 };
 
 struct QuadOut {
@@ -24,7 +24,7 @@ struct QuadOut {
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) rect: vec4<f32>,
     @location(2) @interpolate(flat) tint: vec4<f32>,
-    @location(3) @interpolate(flat) shade: vec2<f32>,
+    @location(3) @interpolate(flat) shade: vec3<f32>,
 };
 
 @vertex

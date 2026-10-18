@@ -59,12 +59,12 @@ pub struct ShadeRules {
 
 impl ShadeRules {
     fn floor(&self) -> Shade {
-        Shade { self_light: self.floor, marker: false }
+        Shade { self_light: self.floor, ..Shade::LIT }
     }
 
     fn projectile(&self, proj: usize) -> Shade {
         let glow = self.projectile_glow.get(proj).copied().flatten().unwrap_or(0);
-        Shade { self_light: self.floor.max(glow).min(100), marker: false }
+        Shade { self_light: self.floor.max(glow).min(100), ..Shade::LIT }
     }
 }
 

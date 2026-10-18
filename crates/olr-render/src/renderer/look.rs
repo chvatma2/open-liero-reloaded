@@ -207,7 +207,7 @@ impl LookState {
         });
         let source = format!("{}\n{}", common(), include_str!("../look/world_lit.wgsl"));
         let attributes =
-            wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x2];
+            wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x3];
         let quads = || wgpu::VertexBufferLayout {
             array_stride: super::INSTANCE_STRIDE,
             step_mode: wgpu::VertexStepMode::Instance,

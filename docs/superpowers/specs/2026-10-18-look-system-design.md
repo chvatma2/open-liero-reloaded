@@ -163,6 +163,9 @@ soaked(p)      = max over q within soak of  lit(q) × fade(|p - q|, soak + 1)
   A wall thinner than twice the soak shows light from both sides, dimmed.
 - **`solid_floor`** (a colour and an intensity, as the ambient) is the
   least light an opaque solid pixel shows: deep rock still shows its art.
+  Blood and gibs (in flight, and the droppers) never show below it either,
+  so they do not turn black in dark air (the user's playtest, 2026-10-19;
+  `Shade::solid_floor`); thrown dirt and other debris stay lit as air.
 - Air and clear pixels are not changed by either.
 - **Defaults** (the user's verdict at Stop 1b, 2026-10-18): soak 8, floor
   white at 30 %. Provisional: they are expected to move after playtests.

@@ -1,6 +1,7 @@
 // The composite (plan 15a Task 10, spec §The picture): each world-target
 // texel's albedo lit by the light grid sampled at its centre, never below
-// its self-light, graded; a marker shows its albedo. Linear light, sRGB
+// its self-light (nor, for an item with the flag, the solid floor: blood
+// and gibs, as rock), graded; a marker shows its albedo. Linear light, sRGB
 // bytes in and out.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
@@ -61,7 +62,7 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     // Texel t's centre in light-grid coordinates: world pixel (origin + i)'s
     // light sits at grid coordinate i.
     let g = (vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z - vec2<f32>(0.5) + vec2<f32>(LIGHT_PAD);
-    let l = max(min(light_at(g), vec3<f32>(look.ambient.w)), vec3<f32>(shade.x));
+    let l = max(max(min(light_at(g), vec3<f32>(look.ambient.w)), vec3<f32>(shade.x)), look.solid.rgb * shade.z);
     var c = a * l * look.grade.x;
     c = (c - vec3<f32>(0.5)) * look.grade.y + vec3<f32>(0.5);
     let luma = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));

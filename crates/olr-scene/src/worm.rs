@@ -119,7 +119,7 @@ pub struct WormFrame<'a> {
 impl WormFrame<'_> {
     /// A play object's shade: the floor in a lit match.
     fn body(&self) -> Shade {
-        self.floor.map_or(Shade::LIT, |f| Shade { self_light: f, marker: false })
+        self.floor.map_or(Shade::LIT, |f| Shade { self_light: f, ..Shade::LIT })
     }
 
     /// A marker's (crosshair, health bar): its art, unlit, in a lit match.

@@ -173,9 +173,14 @@ impl Setup {
 
     /// The entity layer drawn with the whole map in view.
     pub fn draw(&self) -> Vec<Sprite> {
+        self.draw_lit(false)
+    }
+
+    /// [`Setup::draw`] in a lit match (`lit`) or not.
+    pub fn draw_lit(&self, lit: bool) -> Vec<Sprite> {
         let mut out = DrawList::new();
         out.view = View { x: 0.0, y: 0.0, w: 100.0, h: 100.0 };
-        self.fx.draw(&self.assets, false, &mut out);
+        self.fx.draw(&self.assets, lit, &mut out);
         out.layer(Layer::Entities)
             .iter()
             .map(|i| match i {

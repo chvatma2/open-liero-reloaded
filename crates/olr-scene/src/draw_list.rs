@@ -39,27 +39,33 @@ pub struct Sprite {
 /// How an item takes the look's light (look system, plan 15a R5): lit by
 /// the world's light, showing at least `self_light` percent whatever the
 /// darkness (a glow), or a `marker` drawn exactly as its art (the
-/// crosshair, health bars). Only drawn with a look; without one every item
-/// shows as its art.
+/// crosshair, health bars). A `solid_floor` item also never shows below the
+/// level's solid floor, as rock does (blood and gibs, the user's playtest
+/// 2026-10-19). Only drawn with a look; without one every item shows as its
+/// art.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Shade {
     /// Percent, 0-100.
     pub self_light: u8,
     pub marker: bool,
+    pub solid_floor: bool,
 }
 
 impl Shade {
     /// Lit by the world (every item's default).
-    pub const LIT: Shade = Shade { self_light: 0, marker: false };
+    pub const LIT: Shade = Shade { self_light: 0, marker: false, solid_floor: false };
+    /// Lit, never below the solid floor (blood and gibs).
+    pub const FLOORED: Shade = Shade { solid_floor: true, ..Shade::LIT };
     /// Shows at its own full brightness (explosions, muzzle flashes, beams).
-    pub const GLOW: Shade = Shade { self_light: 100, marker: false };
+    pub const GLOW: Shade = Shade { self_light: 100, ..Shade::LIT };
     /// Drawn as its art, unlit and ungraded (the crosshair, health bars).
-    pub const MARKER: Shade = Shade { self_light: 0, marker: true };
+    pub const MARKER: Shade = Shade { marker: true, ..Shade::LIT };
 
     /// `describe`'s suffix: nothing for [`Shade::LIT`].
     fn suffix(self) -> String {
         match self {
             Shade { marker: true, .. } => " marker".into(),
+            Shade { self_light: 0, solid_floor: true, .. } => " floored".into(),
             Shade { self_light: 0, .. } => String::new(),
             Shade { self_light, .. } => format!(" glow {self_light}"),
         }
@@ -377,7 +383,7 @@ mod tests {
         assert_eq!(Shade::LIT.suffix(), "");
         assert_eq!(Shade::GLOW.suffix(), " glow 100");
         assert_eq!(Shade::MARKER.suffix(), " marker");
-        assert_eq!(Shade { self_light: 50, marker: false }.suffix(), " glow 50");
+        assert_eq!(Shade { self_light: 50, ..Shade::LIT }.suffix(), " glow 50");
     }
 
     #[test]
