@@ -183,3 +183,44 @@ fn content_dir() -> Option<String> {
     let dir = std::env::var("OLR_CONTENT_DIR").ok()?;
     Path::new(&dir).is_dir().then_some(dir)
 }
+
+/// Shared projectiles, explicit ids and their children keep their looks
+/// (review of batch A, Critical 1): looks are keyed by the authoring key,
+/// not the occurrence path.
+#[test]
+fn shared_and_named_projectiles_keep_their_looks() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("shared-mod");
+    std::fs::create_dir_all(dir.join("weapons")).unwrap();
+    std::fs::create_dir_all(dir.join("projectiles")).unwrap();
+    std::fs::write(dir.join("mod.ron"), "(name: \"S\", weapons: [\"a\", \"b\", \"c\"])").unwrap();
+    let shared = |w: &str| {
+        format!(
+            "(name: \"{w}\", recharge: 0.5, drain: 30.0, between_shots_s: 0.25, fire: Projectile(shot: (speed: 100, shared: \"bullet\")))"
+        )
+    };
+    std::fs::write(dir.join("weapons/a.ron"), shared("A")).unwrap();
+    std::fs::write(dir.join("weapons/b.ron"), shared("B")).unwrap();
+    std::fs::write(
+        dir.join("weapons/c.ron"),
+        r##"(name: "C", recharge: 0.5, drain: 30.0, between_shots_s: 0.25, fire: Projectile(shot: (speed: 100,
+            projectile: (id: "named", gfx: Pixels(["#ffffff"]), look: (glow: 30)))))"##,
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("projectiles/bullet.ron"),
+        r##"(gfx: Pixels(["#ffffff"]), hit_terrain: [Spawn("s")],
+            spawns: {"s": (amount: 2, projectile: (gfx: Pixels([]), look: (glow: 20)))}, look: (glow: 10))"##,
+    )
+    .unwrap();
+    olr_pack::write_manifest(&mut DirFs::new(&dir), &manifest("shared-mod", PackKind::Mod)).unwrap();
+    let m = Content::open(tmp.path()).unwrap().load_mod("shared-mod").unwrap();
+    let glow_of = |name: &str| {
+        let i = m.sim.projectiles().iter().position(|p| p.name == name).unwrap_or_else(|| panic!("{name}"));
+        m.look.projectiles[i].as_ref().and_then(|l| l.glow)
+    };
+    assert_eq!(glow_of("a"), Some(10));
+    assert_eq!(glow_of("b"), Some(10));
+    assert_eq!(glow_of("a.spawn"), Some(20));
+    assert_eq!(glow_of("c"), Some(30));
+}

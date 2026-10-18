@@ -145,6 +145,10 @@ pub struct SimWeapon {
 pub struct SimProjectile {
     /// The path name, such as `grenade.spawn` (the oracle header's name).
     pub name: String,
+    /// Its `ModDef::projectiles` key (a shared projectile's id, an explicit
+    /// id, or the place-derived key): what the mod's look is keyed by. The
+    /// simulation never reads it.
+    pub key: String,
     pub def: ProjectileDef,
     /// The image's frame count (`width / height`), for image projectiles
     /// whose image the caller found (spec §18 D3).
@@ -300,6 +304,7 @@ impl<'a> Builder<'a> {
         let timer_sound = self.action_sound(pdef.timer.action.as_ref());
         self.projectiles.push(SimProjectile {
             name: path.clone(),
+            key: key.clone(),
             def: pdef.clone(),
             frames,
             event_spawn: None,

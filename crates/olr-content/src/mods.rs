@@ -160,7 +160,7 @@ impl Content {
             projectiles: sim
                 .projectiles()
                 .iter()
-                .map(|p| pack.look.projectiles.get(&p.name).cloned())
+                .map(|p| pack.look.projectiles.get(&p.key).cloned())
                 .collect(),
             weapons: pack.look.weapons.clone(),
         };
