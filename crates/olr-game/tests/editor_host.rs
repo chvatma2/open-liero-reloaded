@@ -730,9 +730,31 @@ fn a_failed_texture_write_leaves_nothing() {
     std::fs::create_dir_all(&lib).unwrap();
     png(&tmp.path().join("t.png"), 4, 4);
     std::fs::set_permissions(&lib, std::fs::Permissions::from_mode(0o555)).unwrap();
+    // Root writes through a read-only folder: nothing to test then.
+    if std::fs::write(lib.join("probe"), b"").is_ok() {
+        std::fs::remove_file(lib.join("probe")).unwrap();
+        std::fs::set_permissions(&lib, std::fs::Permissions::from_mode(0o755)).unwrap();
+        return;
+    }
     let r = olr_game::editor::add_texture(&lib, &tmp.path().join("t.png"));
     let left: Vec<_> = std::fs::read_dir(&lib).unwrap().map(|e| e.unwrap().file_name()).collect();
     std::fs::set_permissions(&lib, std::fs::Permissions::from_mode(0o755)).unwrap();
     assert!(r.is_err(), "{r:?}");
     assert!(left.is_empty(), "{left:?}");
+}
+
+/// Review of the minors: a texture deleted outside the game and imported
+/// again under its name shows the new picture.
+#[test]
+fn a_texture_imported_again_shows_its_new_picture() {
+    let Some((tmp, _root, mut h)) = host() else { return };
+    let pics = tmp.path().join("pics");
+    std::fs::create_dir_all(&pics).unwrap();
+    png(&pics.join("a.png"), 4, 4);
+    assert_eq!(pick_texture(&mut h, &pics, "a.png"), None);
+    std::fs::remove_file(tmp.path().join("textures/a.png")).unwrap();
+    png(&pics.join("a.png"), 8, 8);
+    assert_eq!(pick_texture(&mut h, &pics, "a.png"), None);
+    assert_eq!(texture_names(&h), ["a"]);
+    assert_eq!(h.state().catalog().textures[0].image.width(), 8);
 }

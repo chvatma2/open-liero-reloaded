@@ -37,7 +37,8 @@ pub(crate) enum Drag {
     /// began, after `begun`, the conversion it needed (plan 14d).
     Stroke {
         id: String,
-        before: Box<StrokeBefore>,
+        /// Shared: the drag is cloned on every move (review of the minors).
+        before: Arc<StrokeBefore>,
         last: (i32, i32),
         rect: Option<Rect>,
         stroke: Stroke,
@@ -162,6 +163,16 @@ fn resized(
         y0.clamp(i32::MIN.into(), i32::MAX.into()) as i32,
     );
     (at, (w as u32, h as u32))
+}
+
+/// The pixel rectangle from `start` to `now` (both included) on layer
+/// `id`: within its box and the level (empty when outside).
+fn pixel_span(doc: &Document, id: &str, start: (i32, i32), now: (i32, i32)) -> Rect {
+    let (x, y, w, h) = span(start, now);
+    let level = doc.level().size;
+    let layer = doc.index_of(id).and_then(|i| element_box(&doc.items()[i].element, level));
+    let r = box_rect(((x, y), (w as u32, h as u32)), level);
+    layer.map_or(NOTHING, |b| intersect(r, box_rect(b, level)))
 }
 
 /// The rectangle both `a` and `b` hold (empty when none).
@@ -389,7 +400,7 @@ impl EditorState {
                     return Vec::new();
                 };
                 let rect = self.lay(&id, &[self.dab(world)], stroke, &paint);
-                let before = Box::new(before);
+                let before = Arc::new(before);
                 self.drag = Some(Drag::Stroke { id, before, last: world, rect, stroke, begun, paint });
                 rect.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
             }
@@ -651,17 +662,17 @@ impl EditorState {
     /// Ends the drag: one history step for what it changed.
     pub(crate) fn release(&mut self) -> Vec<EditorCommand> {
         let Some(drag) = self.drag.take() else { return Vec::new() };
-        let Some(paint) = self.doc.as_ref().map(|d| self.paint_of(d)) else { return Vec::new() };
+        // Only a shape paints on release (a stroke carries its own paint).
+        let paint = match (&drag, &self.doc) {
+            (Drag::Shape { .. }, Some(d)) => Some(self.paint_of(d)),
+            _ => None,
+        };
         let Some(doc) = self.doc.as_mut() else { return Vec::new() };
         match drag {
             Drag::Pixels { id, start, now } => {
                 // The rectangle within the layer's box and the level (plan
                 // 14e minors): what a copy takes is what shows.
-                let (x, y, w, h) = span(start, now);
-                let level = doc.level().size;
-                let layer = doc.index_of(&id).and_then(|i| element_box(&doc.items()[i].element, level));
-                let r = box_rect(((x, y), (w as u32, h as u32)), level);
-                let r = layer.map_or(NOTHING, |b| intersect(r, box_rect(b, level)));
+                let r = pixel_span(doc, &id, start, now);
                 if r.w > 0 && r.h > 0 {
                     self.pixel_rect = Some((id, r));
                 } else {
@@ -743,6 +754,7 @@ impl EditorState {
                 self.committed(NOTHING)
             }
             Drag::Shape { id, tool, start, now } => {
+                let Some(paint) = paint else { return Vec::new() };
                 let (x, y, w, h) = span(start, now);
                 let shape = match tool {
                     Tool::Rect => Shape::Rect { x, y, w, h },
@@ -823,9 +835,13 @@ impl EditorState {
             Some(Drag::Shape { tool: Tool::Line, start, now, .. }) => {
                 out.push(Overlay::Segment { from: *start, to: *now })
             }
-            Some(Drag::Shape { start, now, .. } | Drag::Pixels { start, now, .. }) => {
+            Some(Drag::Shape { start, now, .. }) => {
                 let (x, y, w, h) = span(*start, *now);
                 out.push(Overlay::Outline { rect: box_rect(((x, y), (w as u32, h as u32)), size) });
+            }
+            // The outline is what release keeps (review of the minors).
+            Some(Drag::Pixels { id, start, now }) => {
+                out.push(Overlay::Outline { rect: pixel_span(doc, id, *start, *now) })
             }
             _ => {}
         }

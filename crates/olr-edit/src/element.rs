@@ -183,18 +183,26 @@ fn new_id(src: &CompositionSource, stray: &BTreeSet<String>, name: &str, fallbac
 /// ruling R7 of plan 14a). A name no suffix makes portable (a colon) is
 /// kept, for the check to refuse.
 pub fn new_source_name<'a>(sources: impl Iterator<Item = &'a str>, file_name: &str) -> String {
-    let (stem, ext) = file_name.rsplit_once('.').unwrap_or((file_name, ""));
+    let (stem, ext) =
+        file_name.rsplit_once('.').map_or((file_name, String::new()), |(s, e)| (s, format!(".{e}")));
     let names: BTreeSet<String> = sources.map(str::to_ascii_lowercase).collect();
-    let taken = |c: &str| olr_vfs::non_portable(c).is_some() || names.contains(&c.to_ascii_lowercase());
+    let used = |c: &str| names.contains(&c.to_ascii_lowercase());
+    let taken = |c: &str| olr_vfs::non_portable(c).is_some() || used(c);
     if !taken(file_name) {
         return file_name.into();
     }
     // One more suffix than there are names is always free (a pack's
     // strays never make it run out, batch C review).
-    (2..=names.len() as u64 + 2)
-        .map(|i| format!("{stem}-{i}.{ext}"))
-        .find(|c| !taken(c))
-        .unwrap_or_else(|| file_name.into())
+    let free =
+        |base: &str| (2..=names.len() as u64 + 2).map(|i| format!("{base}-{i}{ext}")).find(|c| !taken(c));
+    match free(stem) {
+        Some(name) => name,
+        // No suffix makes it portable: a name only unportable is kept, for
+        // the check to refuse; a taken one is never returned (a device's
+        // stem, `con.x.png`, takes a plain one).
+        None if !used(file_name) => file_name.into(),
+        None => free("image").unwrap_or_else(|| format!("image-{}{ext}", names.len() + 3)),
+    }
 }
 
 fn new_source(src: &CompositionSource, stray: &BTreeSet<String>, file_name: &str) -> String {

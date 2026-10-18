@@ -211,14 +211,20 @@ fn decode_texture(name: &str, bytes: &[u8]) -> Result<RgbaImage, String> {
 /// and within `MAX_TEXTURE_SIDE`; the files it cannot read as warnings. A
 /// missing directory is an empty library.
 pub fn list_textures(dir: &Path) -> (Vec<TextureEntry>, Vec<String>) {
-    refresh_textures(dir, &[])
+    refresh_textures(dir, &[], None)
 }
 
 /// The library `dir` listed again, as `list_textures`, taking the textures
 /// of `known` whose names are still there as they are: only new names are
 /// read and decoded (plan 14e minors: a change no longer decodes the
 /// whole library).
-pub fn refresh_textures(dir: &Path, known: &[TextureEntry]) -> (Vec<TextureEntry>, Vec<String>) {
+/// `fresh` (a texture just written) is always read again: its name may be
+/// one deleted outside the game, whose old picture `known` still holds.
+pub fn refresh_textures(
+    dir: &Path,
+    known: &[TextureEntry],
+    fresh: Option<&str>,
+) -> (Vec<TextureEntry>, Vec<String>) {
     let (mut list, mut warnings) = (Vec::new(), Vec::new());
     let mut names = texture_names(dir);
     let max = olr_edit::textures::MAX_USER_TEXTURES;
@@ -228,7 +234,7 @@ pub fn refresh_textures(dir: &Path, known: &[TextureEntry]) -> (Vec<TextureEntry
         names.truncate(max);
     }
     for name in names {
-        if let Some(t) = known.iter().find(|t| t.name == name) {
+        if let Some(t) = known.iter().find(|t| t.name == name && Some(name.as_str()) != fresh) {
             list.push(t.clone());
             continue;
         }

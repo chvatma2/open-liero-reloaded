@@ -626,3 +626,15 @@ fn a_source_name_is_always_free() {
         std::iter::once("tiny.jpg".to_string()).chain((2..=1500).map(|i| format!("tiny-{i}.jpg"))).collect();
     assert_eq!(new_source_name(taken.iter().map(String::as_str), "TINY.jpg"), "TINY-1501.jpg");
 }
+
+/// Review of the minors: a name without an extension, or whose every
+/// suffix stays unportable, never comes back taken.
+#[test]
+fn a_taken_source_name_is_never_returned() {
+    assert_eq!(new_source_name(["foo"].into_iter(), "foo"), "foo-2");
+    let n = new_source_name(["con.x.png"].into_iter(), "con.x.png");
+    assert_ne!(n, "con.x.png");
+    assert!(olr_vfs::non_portable(&n).is_none(), "{n}");
+    // A name only unportable (not taken) is kept for the check to refuse.
+    assert_eq!(new_source_name([].into_iter(), "a:b.png"), "a:b.png");
+}

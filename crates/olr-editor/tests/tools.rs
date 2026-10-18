@@ -839,8 +839,13 @@ fn the_pixel_rectangle_is_the_layers() {
     let (_tmp, mut s) = editor(&root);
     run(&mut s, A::Select(Selection::Element("wall".into())));
     run(&mut s, A::Tool(Tool::SelectPixels));
-    drag(&mut s, (0, 0), (9, 9), false);
-    assert_eq!(s.pixel_rect().map(|r| r.1), Some(olr_edit::compose::Rect { x: 4, y: 0, w: 6, h: 10 }));
+    // While dragging, the outline is the clipped rectangle too.
+    pointer(&mut s, PointerKind::Down, (0, 0), false);
+    pointer(&mut s, PointerKind::Move, (9, 9), false);
+    let clipped = olr_edit::compose::Rect { x: 4, y: 0, w: 6, h: 10 };
+    assert!(s.overlays().contains(&Overlay::Outline { rect: clipped }), "{:?}", s.overlays());
+    pointer(&mut s, PointerKind::Up, (9, 9), false);
+    assert_eq!(s.pixel_rect().map(|r| r.1), Some(clipped));
     drag(&mut s, (0, 0), (2, 2), false);
     assert!(s.pixel_rect().is_none());
     assert!(s.status().message.as_deref().is_some_and(|m| m.contains("wall")), "{:?}", s.status().message);
@@ -858,4 +863,20 @@ fn a_raster_in_a_group_stays_put() {
     assert!(matches!(s.document().unwrap().items()[0].element.kind, ElementKind::Raster));
     run(&mut s, A::Undo);
     assert_eq!(image_box(&s, "tiny").0, t);
+}
+
+/// Review of the minors: Copy of a pixel rectangle that holds nothing says
+/// so about the pixels.
+#[test]
+fn copying_pixels_of_nothing_says_so() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let p = tunnel_square(&s);
+    select_pixels(&mut s, p);
+    // The layer moved away: the rectangle no longer covers it.
+    run(&mut s, A::Set("tunnels".into(), olr_edit::element::Property::At((-2000, 0))));
+    assert!(s.pixel_rect().is_some());
+    run(&mut s, A::Copy);
+    let m = s.status().message.clone().unwrap_or_default();
+    assert!(m.contains("no pixels of \"tunnels\""), "{m}");
 }

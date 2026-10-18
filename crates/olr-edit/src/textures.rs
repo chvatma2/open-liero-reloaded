@@ -163,7 +163,7 @@ fn brick(x: u32, y: u32) -> Rgba {
     // A brick's edge next to the mortar is one shadow shade, so every
     // joint, the tile's own included, steps alike.
     let row = y / 8 % (N / 8);
-    let bx = (x + (row % 2) * 8) % N;
+    let bx = (x % N + (row % 2) * 8) % N;
     if y % 8 == 7 || bx % 16 == 15 {
         return MORTAR;
     }

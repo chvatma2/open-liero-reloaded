@@ -950,7 +950,7 @@ impl EditorState {
         const NOTHING_TO_COPY: &str = "nothing to copy: select elements, or pixels with Select pixels (M)";
         if let Some((id, rect)) = &self.pixel_rect {
             let Some((clip, at)) = doc.copy_pixels(id, *rect) else {
-                self.status.message = Some(NOTHING_TO_COPY.into());
+                self.status.message = Some(format!("no pixels of {id:?} in the rectangle to copy"));
                 return false;
             };
             let art_scale = doc.level().art_scale;

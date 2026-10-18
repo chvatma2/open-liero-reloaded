@@ -3465,7 +3465,8 @@ and its batch reviews. Tools, not OLX behaviour; no format change.
   `i` as `Shape::Stamp` (`StampMask`: covered where neither black nor
   transparent, OLX's carve and paint pixels), scale `brush size ÷ the
   hole's longest side`, clamped to 1-16; a stroke joins its dabs with more
-  dabs along the segment, at most half a crater apart, not a thick line. A
+  dabs along the segment, at most half a crater apart (at most 1024 dabs
+  a move), not a thick line. A
   hole the theme lacks dabs round and reads "None" in the picker, which
   lists the theme's holes (none: hidden). A stroke paints with the paint
   it began with.

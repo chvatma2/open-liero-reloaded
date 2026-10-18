@@ -302,14 +302,16 @@ impl EditorHost {
     fn textures(
         &mut self,
         queue: &mut VecDeque<EditorAction>,
-        change: impl FnOnce(&Path) -> Result<(), String>,
+        change: impl FnOnce(&Path) -> Result<Option<String>, String>,
     ) {
         let Some(dir) = self.textures_dir.clone() else {
             queue.push_back(EditorAction::Failed("textures need a data directory to be kept in".into()));
             return;
         };
         let done = change(&dir);
-        let (list, warnings) = files::refresh_textures(&dir, &self.state.catalog().textures);
+        let fresh = done.as_ref().ok().cloned().flatten();
+        let (list, warnings) =
+            files::refresh_textures(&dir, &self.state.catalog().textures, fresh.as_deref());
         queue.push_back(EditorAction::TexturesChanged(list));
         if let Err(why) = done {
             queue.push_back(EditorAction::Failed(why));
@@ -379,10 +381,10 @@ impl EditorHost {
                 Err(why) => EditorAction::ImportFailed(why),
             }),
             EditorCommand::AddTexture(path) => {
-                self.textures(queue, |dir| files::add_texture(dir, &path).map(drop))
+                self.textures(queue, |dir| files::add_texture(dir, &path).map(Some))
             }
             EditorCommand::RemoveTexture(name) => {
-                self.textures(queue, |dir| files::remove_texture(dir, &name))
+                self.textures(queue, |dir| files::remove_texture(dir, &name).map(|()| None))
             }
             EditorCommand::RecoveryDone => {
                 self.dirty_since = None;

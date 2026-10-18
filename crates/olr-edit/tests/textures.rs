@@ -72,3 +72,14 @@ fn builtin_generators_are_periodic() {
     }
     assert_eq!(builtin_texel(6, 0, 0), None);
 }
+
+/// Review of the minors: the generators take any coordinate.
+#[test]
+fn builtin_texels_take_any_coordinate() {
+    use olr_edit::textures::builtin_texel;
+    for i in 0..6 {
+        for (x, y) in [(u32::MAX, 0), (0, u32::MAX), (u32::MAX, u32::MAX), (u32::MAX - 7, 9)] {
+            assert!(builtin_texel(i, x, y).is_some());
+        }
+    }
+}
