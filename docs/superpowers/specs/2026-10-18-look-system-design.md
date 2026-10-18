@@ -105,6 +105,11 @@ and lava lighting the cave above it.
    seeing and playing it.
 10. **No popping:** light from far away never appears as the camera
     approaches; rethink only if performance degrades too much.
+11. **Solids show their art** (Stop 1, 2026-10-18): only rock faces that
+    saw a light were lit, so rock read black. Light soaks a few pixels into
+    solids, and a level sets the least light a solid shows (§Light in
+    solids). Some solids may be **clear**: light passes them as air while
+    worms and projectiles still collide (§Clear solids).
 
 ## The model
 
@@ -140,6 +145,25 @@ final  = mix(grade(shown), albedo, marker)           then back to sRGB bytes
 - A level with full ambient, no glow, no grade and no lights shows its
   albedo unchanged: `albedo × max(1, s) = albedo`. Old content goes further:
   with no look at all, the lighting passes do not run (§Pipeline).
+
+### Light in solids
+
+A solid pixel (rock or dirt that is not clear) gets no light of its own
+past its face, so:
+
+```
+light(solid p) = max(soaked(p), solid_floor)          before softness, steps and cap
+soaked(p)      = max over q within soak of  lit(q) × fade(|p - q|, soak + 1)
+```
+
+- **`lit(q)`** is `ambient + gathered` at q (air or solid); `fade` is the
+  lights' `(1 - (d/r)²)²`. The maximum is taken in two separable passes
+  (across, then down), so the reach is a soft square, not a disc: a call.
+- **`light_soak`** (world pixels, 0-12) is how deep light soaks into solids.
+  A wall thinner than twice the soak shows light from both sides, dimmed.
+- **`solid_floor`** (a colour and an intensity, as the ambient) is the
+  least light an opaque solid pixel shows: deep rock still shows its art.
+- Air and clear pixels are not changed by either.
 
 ### Light sources: one shape
 
@@ -216,6 +240,20 @@ pixel to the backdrop's glow.
 - **Play:** a carved pixel takes its backdrop's glow (strength and group);
   dirt placed by the simulation has none; stains keep the pixel's glow.
 
+### Clear solids
+
+A clear pixel is a solid (rock or dirt) that light treats as open air: it
+stops no lamp ray and no glow light, it is lit as air is, and neither soak
+nor floor touches it. The simulation still sees its material: worms and
+projectiles collide as before (glass, ice, force fields).
+
+- **Per world pixel**, from the level as loaded: a pixel is clear while its
+  level flag is set and its cell is solid. Carving makes it air; dirt the
+  simulation places on a flagged cell is clear too (a call: the flag is
+  static, so rollbacks and rebuilds need nothing).
+- **Authoring:** an element's `clear` (composition), baked into
+  `look/clear.png`.
+
 ## Light transport
 
 Light never pops in as the camera moves (the user's ruling): what a world
@@ -276,7 +314,8 @@ are evaluated directly, so their numbers mean what the editor shows:
 
 ### After both
 
-- `light = ambient + glow light + placed lights`, per world pixel.
+- `light = ambient + glow light + placed lights`, per world pixel; then, in
+  solids, the soak and the solid floor (§Light in solids).
 - The level's `softness` (0-4 world pixels) blurs it, `light_steps` (0 =
   off, 2-32) bands it, and `max_light` caps it.
 - Each art texel takes the light interpolated at its centre (decision 3).
@@ -323,6 +362,7 @@ look/glow.png     art resolution, 8-bit grey: the glow strength of the composite
 look/glow-back.png  art resolution, 8-bit grey: the backdrop's glow strength (what digging reveals)
 look/groups.png   world resolution, 8-bit grey: the composite's glow group per world pixel (0 none, n the look's group n - 1)
 look/groups-back.png  world resolution, 8-bit grey: the backdrop's group
+look/clear.png    world resolution, 8-bit grey: 0 opaque, any other value clear (optional, on its own)
 ```
 
 ```ron
@@ -331,6 +371,8 @@ look: Some((
     max_light: 100,                    // 100-200
     light_steps: 0,                    // 0 off, 2-32
     softness: 0,                       // world pixels, 0-4
+    light_soak: 0,                     // world pixels, 0-12
+    solid_floor: (colour: "#ffffff", intensity: 0),   // the least light of an opaque solid
     grade: (exposure: 0, contrast: 100, saturation: 100, tint: "#ffffff"),   // exposure in 1/100 stop, -200..200
     glow_groups: [
         (id: "sky", colour: Tint("#fff0d2"), intensity: 100, reach: Unlimited, animation: Steady),
@@ -344,7 +386,10 @@ objects: [
 ],
 ```
 
-- **All four look images or none.** Without them a level has no glow. Sizes
+- **`look/clear.png`** stands alone: present or not, whatever the glow
+  images. A size mismatch is a `pack check` error and a load warning that
+  drops it.
+- **All four glow images or none.** Without them a level has no glow. Sizes
   must match the level (art or world resolution); a mismatch or a group past
   the list is a `pack check` error and a load warning that drops the glow;
   a look value out of range is a `pack check` error and a load warning that
@@ -368,6 +413,10 @@ objects: [
   element's box, 8-bit grey), multiplies the strength per pixel; without it
   the element glows uniformly where it covers.
 - Raster elements carry no glow (split one into layers to make it glow).
+- Image and drawn elements gain `clear: bool` (default false): their solid
+  pixels let light through. The bake writes `look/clear.png` where the
+  element that sets a cell's material is clear and the cell is solid, and
+  none when nothing is clear.
 - **The bake** writes the four look images from the elements by the
   channel rules, through the same region bake (a glow edit rebakes its
   rectangle), and writes none when nothing glows. `pack check`'s stale-bake
@@ -587,6 +636,12 @@ Marked here so they can be checked:
   world-pixel against 2 × 2 shadows, the engine's floors and lights) waits
   for the user's verdict; after the editor batch, a playtest build (plan
   15a R10: a playtest needs the editor to make lit levels).
+- **C17. Soak is separable** (a maximum across, then down): a soft square
+  reach, two cheap passes; the light grid's padding grows to 16 world
+  pixels (soak 12 plus softness 4) so the soaked light never depends on
+  the camera.
+- **C18. The clear flag is static** (the level as loaded, solid cells
+  only), so play edits, rollbacks and rebuilds need no clear bookkeeping.
 - **C11. No format version bump;** the fields are optional.
 - **C12. Integers** for every look value in the files.
 - **C13. A muzzle light per weapon** (the mod's) overrides the engine's.

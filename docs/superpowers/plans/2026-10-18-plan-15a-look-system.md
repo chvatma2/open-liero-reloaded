@@ -730,6 +730,31 @@ Batch A ends: `cargo xtask check`; a background review.
 - [ ] **Step 4:** **Stop 1.** Wait for the user's verdict. Apply the tuning they ask for (R13's numbers, 2 × 2 shadow sampling if they want it), re-bless with the reason, and record the verdict in `docs/porting/STATUS.md`'s new section (Task 21 completes it).
 - [ ] **Step 5:** Commit: `fixtures: the look test level and its goldens`.
 
+### Task 14a: Light in solids (Stop 1 verdict; spec §Light in solids)
+
+**Files:**
+- Modify: `crates/olr-look/src/{lib,frame}.rs` (`LevelLook`/`LookFrame` gain `light_soak: u8`, `solid_floor` as an `Ambient` / linear `[f32; 3]`), `crates/olr-format/src/look.rs` (`LookSource.light_soak` 0-12, `solid_floor: AmbientSource` default intensity 0; compile, range checks), `crates/olr-edit/src/look.rs` and `crates/olr-cli/src/look_cmd.rs` (`level look --soak N --solid-floor RRGGBB:P`), `crates/olr-render/src/look/{common,soak}.wgsl`, `crates/olr-render/src/renderer/{look,pass}.rs` (LIGHT_PAD 16; passes sum → soak across → soak down (+ floor) → blur → composite), docs (format docs regenerated).
+- Test: `crates/olr-render/tests/gpu.rs`, `crates/olr-format` look tests, `crates/olr-look` frame tests.
+
+- [ ] **Step 1:** Failing tests: format round trip and range errors of `light_soak` 13 and `solid_floor` intensity 101; GPU `soak_lights_rock_near_lit_air` (rock 3 px under lit air gets more than ambient, 20 px deep gets ambient), `soak_never_changes_air`, `solid_floor_lights_deep_rock`, `soak_is_camera_independent`.
+- [ ] **Step 2:** Implement; GPU tests and look goldens pass (soak 0 and floor 0 change no pixel).
+- [ ] **Step 3:** Commit: `olr-render: light soaks into solids, and a solid floor`.
+
+### Task 14b: Clear solids (spec §Clear solids)
+
+**Files:**
+- Modify: `crates/olr-terrain/src/color.rs` (`set_clear(Option<Vec<u8>>) -> bool`, world size or refused; `clear()`), `crates/olr-format/src/levels/{mod,files}.rs` (`look/clear.png`, read leniently and strictly, size checked), `crates/olr-format/src/levels/composition.rs` (`Element.clear: bool`), `crates/olr-edit/src/compose.rs` (bake writes it), `crates/olr-edit/src/element.rs` (`Property::Clear`), `crates/olr-cli/src/element_cmd.rs` (`set --clear true|false`), `crates/olr-content` (loads it), `crates/olr-pack` (validates it), `crates/olr-render/src/renderer/look.rs` (the solid map writes a flagged solid as background).
+- Test: terrain, format, bake, content and GPU tests: a lamp behind a clear wall lights the air past it; glow light passes a clear wall; a clear pixel gets no floor.
+
+- [ ] **Step 1:** Failing tests as above, plus a clear.png of the wrong size: a `pack check` error and a load warning.
+- [ ] **Step 2:** Implement; commit: `olr: clear solids that let light through`.
+- [ ] **Step 3:** The test level gains a clear glass pane (`make-look-test.sh`); re-bless with the reason.
+
+### Task 14c: The solids contact sheet (Stop 1b)
+
+- [ ] **Step 1:** Render a grid into `target/look-sheet/`: `light_soak` 0, 4, 8, 12 × `solid_floor` 0, 30, 50 % on the darkened Liero Factory, Castle Strike and the test level, plus the glass pane; publish it as the Stop 1 artifact's new version.
+- [ ] **Step 2:** **Stop 1b.** The user picks the defaults for a level with a look; apply them (`LookSource`'s defaults, the test level), re-bless with the reason, record the verdict in `docs/porting/STATUS.md`.
+
 Batch B ends: `cargo xtask check`; a background review (after Stop 1's changes).
 
 ---
