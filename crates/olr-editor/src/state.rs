@@ -181,6 +181,8 @@ pub enum EditorAction {
     Cut,
     /// Pastes the clipboard on top, selected: one step.
     Paste,
+    /// Drops the pixel rectangle (Escape; plan 14e R7).
+    DropPixels,
     /// Splits raster element `id` into background, dirt and rock layers.
     Split(String),
     MoveElement {
@@ -332,6 +334,9 @@ pub struct EditorState {
     pub(crate) browser: Option<Browser>,
     /// What was copied; kept across Open, New and Close (plan 14e R6).
     pub(crate) clipboard: Option<Clipboard>,
+    /// The pixel rectangle (a drawn layer, level pixels; plan 14e R7):
+    /// dropped by a tool change, Escape, Open and Close.
+    pub(crate) pixel_rect: Option<(String, Rect)>,
 }
 
 impl EditorState {
@@ -366,6 +371,7 @@ impl EditorState {
             changes: 0,
             browser: None,
             clipboard: None,
+            pixel_rect: None,
         }
     }
 
@@ -469,6 +475,7 @@ impl EditorState {
                 | EditorAction::SelectToggle(_)
                 | EditorAction::SelectRange(_)
                 | EditorAction::Copy
+                | EditorAction::DropPixels
                 | EditorAction::PlayMod(_)
                 | EditorAction::PlayBots(_)
                 | EditorAction::Listed { .. }
@@ -609,6 +616,11 @@ impl EditorState {
                 }
                 self.act(EditorAction::Remove)
             }
+            EditorAction::DropPixels => {
+                self.pixel_rect = None;
+                Vec::new()
+            }
+            EditorAction::Remove if self.pixel_rect.is_some() => self.erase_pixels(),
             EditorAction::Paste => self.paste(),
             EditorAction::Set(id, property) => self.edit(|d| d.set(&id, property)),
             EditorAction::SetMany(ids, property) => self.group_edit(|d| d.set_many(&ids, property)),
@@ -665,6 +677,9 @@ impl EditorState {
                 if tool == Tool::Eyedropper && self.tool != Tool::Eyedropper {
                     self.prev_tool = self.tool;
                 }
+                if tool != self.tool {
+                    self.pixel_rect = None;
+                }
                 self.tool = tool;
                 Vec::new()
             }
@@ -720,6 +735,7 @@ impl EditorState {
 
     /// A document opened (or recovered): a fresh history and view.
     fn opened(&mut self, doc: Box<Document>) -> Vec<EditorCommand> {
+        self.pixel_rect = None;
         let all = doc.all();
         self.doc = Some(*doc);
         self.fit_pending = true;
@@ -818,6 +834,11 @@ impl EditorState {
         self.tool
     }
 
+    /// The pixel rectangle: its drawn layer and level rectangle (plan 14e R7).
+    pub fn pixel_rect(&self) -> Option<&(String, Rect)> {
+        self.pixel_rect.as_ref()
+    }
+
     pub fn brush(&self) -> Brush {
         self.brush
     }
@@ -913,10 +934,17 @@ impl EditorState {
         }
     }
 
-    /// Copies the selected elements to the clipboard (plan 14e R6); whether
-    /// there were any.
+    /// Copies the pixel rectangle, else the selected elements, to the
+    /// clipboard (plan 14e R6, R7); whether there was anything.
     fn copy(&mut self) -> bool {
         let Some(doc) = &self.doc else { return false };
+        if let Some((id, rect)) = &self.pixel_rect {
+            let Some((clip, at)) = doc.copy_pixels(id, *rect) else { return false };
+            let art_scale = doc.level().art_scale;
+            self.status.message = Some(format!("copied {} × {} pixels", clip.size.0, clip.size.1));
+            self.clipboard = Some(Clipboard::Pixels { art_scale, at, clip, offset: PASTE_STEP });
+            return true;
+        }
         let items = doc.copy(&self.selection.ids());
         if items.is_empty() {
             return false;
@@ -931,13 +959,56 @@ impl EditorState {
         true
     }
 
+    /// Erases the pixel rectangle from its layer (14d's erase: dirt or rock
+    /// over back art digs): one step.
+    fn erase_pixels(&mut self) -> Vec<EditorCommand> {
+        let Some((id, r)) = self.pixel_rect.clone() else { return Vec::new() };
+        let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+        let clamp = |v: u32| v.min(i32::MAX as u32) as i32;
+        let shape =
+            olr_edit::level::Shape::Rect { x: clamp(r.x), y: clamp(r.y), w: clamp(r.w), h: clamp(r.h) };
+        let begun = match doc.begin_stroke(&id, crate::ops::Stroke::Erase) {
+            Ok(b) => b,
+            Err(e) => {
+                self.status.message = Some(e.to_string());
+                return Vec::new();
+            }
+        };
+        let before = doc.stroke_before(&id);
+        let erased = doc.erase(&id, &shape, false);
+        let edit = match (&erased, &before) {
+            (Ok(Some(rect)), Some(b)) => doc.stroke_edit(&id, *rect, b).filter(|e| !e.is_noop()),
+            _ => None,
+        };
+        if let Err(e) = &erased {
+            self.status.message = Some(e.to_string());
+        }
+        let Some(edit) = edit else {
+            if let Some(b) = &begun {
+                doc.apply(b, false);
+            }
+            return Vec::new();
+        };
+        let dirty = erased.ok().flatten().unwrap_or(r);
+        self.history.push(begun.into_iter().chain([edit]).collect());
+        self.committed(dirty)
+    }
+
     /// Pastes the clipboard on top as one step, the copies selected; the
     /// next paste lands `PASTE_STEP` further.
     fn paste(&mut self) -> Vec<EditorCommand> {
         let (Some(doc), Some(clip)) = (self.doc.as_mut(), self.clipboard.as_mut()) else { return Vec::new() };
-        let Clipboard::Elements { art_scale, items, offset } = clip;
-        match doc.paste(items, *art_scale, *offset) {
-            Ok((edits, ids)) => {
+        let done = match clip {
+            Clipboard::Elements { art_scale, items, offset } => {
+                doc.paste(items, *art_scale, *offset).map(|(edits, ids)| (edits, ids, offset))
+            }
+            Clipboard::Pixels { art_scale, at, clip, offset } => {
+                let to = (at.0.saturating_add(offset.0), at.1.saturating_add(offset.1));
+                doc.paste_pixels(clip, *art_scale, to).map(|(edit, id)| (vec![edit], vec![id], offset))
+            }
+        };
+        match done {
+            Ok((edits, ids, offset)) => {
                 *offset = (offset.0.saturating_add(PASTE_STEP.0), offset.1.saturating_add(PASTE_STEP.1));
                 let dirty = doc.all();
                 self.history.push(edits);
@@ -1043,7 +1114,10 @@ impl EditorState {
         cmds.push(match then {
             Pending::Open(dir) => EditorCommand::Open(dir),
             Pending::New(n) => EditorCommand::Create(n),
-            Pending::Close => EditorCommand::Close,
+            Pending::Close => {
+                self.pixel_rect = None;
+                EditorCommand::Close
+            }
         });
         cmds
     }

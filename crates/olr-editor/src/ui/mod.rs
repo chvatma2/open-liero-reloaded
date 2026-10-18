@@ -182,6 +182,9 @@ fn shortcuts(ui: &Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
         if i.consume_key(Modifiers::NONE, Key::Delete) {
             out.push(EditorAction::Remove);
         }
+        if state.pixel_rect().is_some() && i.consume_key(Modifiers::NONE, Key::Escape) {
+            out.push(EditorAction::DropPixels);
+        }
         // Ctrl+C, X and V: as keys, or as the window's copy, cut and paste
         // events (plan 14e R9); one action each per frame.
         let clipboard =

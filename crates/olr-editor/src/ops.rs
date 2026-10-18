@@ -69,6 +69,15 @@ fn patch_of(d: &Decoded, r: Rect, s: u32, cols: u32) -> Option<Patch> {
     Some(Patch { art: crop(art), cells, back: back.as_ref().map(crop) })
 }
 
+/// A rectangle of a drawn layer's pixels (plan 14e R7): its size in world
+/// pixels, its art (size × art scale) and one material per world pixel.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PixelClip {
+    pub size: (u32, u32),
+    pub art: RgbaImage,
+    pub cells: Vec<Material>,
+}
+
 /// A change made: its edit, and the world rectangle rebaked (to upload).
 #[derive(Debug)]
 pub struct Change {
@@ -435,6 +444,106 @@ impl Document {
         let item = Item { element: e, decoded };
         let index = self.items.len();
         Ok((self.change(Edit::Insert { index, item: Box::new(Snapshot { item, original }) }).edit, id))
+    }
+
+    /// `rect` (level pixels) of drawn layer `id`, within its box (plan 14e
+    /// R7): its art and its cells (a plain layer's material), with the
+    /// world pixel of its top-left. `None` outside the layer or for
+    /// anything but a drawn layer.
+    pub fn copy_pixels(&self, id: &str, rect: Rect) -> Option<(PixelClip, (i32, i32))> {
+        let i = self.index_of(id)?;
+        let item = &self.items[i];
+        let (ElementKind::Drawn { material, .. }, Decoded::Drawn { art, cells, .. }) =
+            (&item.element.kind, &item.decoded)
+        else {
+            return None;
+        };
+        let (at, size) = self.layer_box(i);
+        let s = self.level.art_scale;
+        if (art.width(), art.height()) != (size.0.checked_mul(s)?, size.1.checked_mul(s)?) {
+            return None;
+        }
+        let local =
+            |v: u32, a: i32, side: u32| (i64::from(v) - i64::from(a)).clamp(0, i64::from(side)) as u32;
+        let (x0, y0) = (local(rect.x, at.0, size.0), local(rect.y, at.1, size.1));
+        let (x1, y1) = (
+            local(rect.x.saturating_add(rect.w), at.0, size.0),
+            local(rect.y.saturating_add(rect.h), at.1, size.1),
+        );
+        if x0 >= x1 || y0 >= y1 {
+            return None;
+        }
+        let (w, h) = (x1 - x0, y1 - y0);
+        let cells = (y0..y1)
+            .flat_map(|y| (x0..x1).map(move |x| (x, y)))
+            .map(|(x, y)| match cells {
+                Some(c) => {
+                    c.get(y as usize * size.0 as usize + x as usize).copied().unwrap_or((*material).into())
+                }
+                None => (*material).into(),
+            })
+            .collect();
+        let clip = PixelClip { size: (w, h), art: art.crop(x0 * s, y0 * s, w * s, h * s), cells };
+        let world =
+            |a: i32, v: u32| (i64::from(a) + i64::from(v)).clamp(i32::MIN.into(), i32::MAX.into()) as i32;
+        Some((clip, (world(at.0, x0), world(at.1, y0))))
+    }
+
+    /// A new boxed layer "Pasted" of `clip` (copied at art scale `from`,
+    /// resampled to this level's) at world pixel `at`, on top (plan 14e R7):
+    /// plain when its covered pixels share one material, else mixed (C3).
+    /// The edit (applied) and its id.
+    pub fn paste_pixels(
+        &mut self,
+        clip: &PixelClip,
+        from: u32,
+        at: (i32, i32),
+    ) -> Result<(Edit, String), DocError> {
+        let (size, to) = (self.level.size, self.level.art_scale);
+        let from = from.clamp(1, MAX_ART_SCALE);
+        let fits = (clip.art.width(), clip.art.height())
+            == (clip.size.0.saturating_mul(from), clip.size.1.saturating_mul(from))
+            && clip.cells.len() as u64 == u64::from(clip.size.0) * u64::from(clip.size.1);
+        if !fits || clip.size.0 == 0 || clip.size.1 == 0 {
+            return Err(DocError::Bad("the pixels copied do not fit their size".into()));
+        }
+        let art = rescale_art(&clip.art, from, to);
+        // The layer's material: its covered pixels' most common (C3).
+        let covered = |x: u32, y: u32| art.get(x * to + to / 2, y * to + to / 2).a != 0;
+        let mut counts = [0usize; 3];
+        for y in 0..clip.size.1 {
+            for x in 0..clip.size.0 {
+                if covered(x, y) {
+                    counts[usize::from(drawn::priority(clip.cells[(y * clip.size.0 + x) as usize]))] += 1;
+                }
+            }
+        }
+        let material = match (0..3).rev().max_by_key(|&k| counts[k]) {
+            Some(2) => ElementMaterial::Rock,
+            Some(0) if counts[0] > 0 => ElementMaterial::Background,
+            _ => ElementMaterial::Dirt,
+        };
+        let placed = drawn::Placed { at, size: clip.size, art, cells: clip.cells.clone(), back: None };
+        let (mut kind, decoded) = drawn::into_layer(placed, material, size, to);
+        if let ElementKind::Drawn { size: boxed, .. } = &mut kind {
+            *boxed = Some(clip.size).filter(|s| at != (0, 0) || *s != size);
+        }
+        let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
+        let names = elements.iter().map(|x| if x.name.is_empty() { x.id.as_str() } else { x.name.as_str() });
+        let name =
+            if names.clone().any(|n| n == "Pasted") { copy_name("Pasted", names) } else { "Pasted".into() };
+        let element = Element {
+            id: new_element_id(&elements, &self.stray_files(), &name, "pasted"),
+            name,
+            visible: true,
+            locked: false,
+            kind,
+        };
+        self.check_with(|es| es.push(element.clone()))?;
+        let id = element.id.clone();
+        let index = self.items.len();
+        let item = Item { element, decoded };
+        Ok((self.change(Edit::Insert { index, item: Box::new(Snapshot { item, original: None }) }).edit, id))
     }
 
     /// An empty drawn layer on top.

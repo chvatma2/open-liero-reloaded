@@ -485,3 +485,50 @@ fn pasting_across_art_scales_resamples() {
     let e = doc.paste(&base, from, (4, 4)).err();
     assert!(matches!(&e, Some(DocError::Bad(m)) if m.contains("its size")), "{e:?}");
 }
+
+/// Spec C3: pasted pixels keep their material.
+#[test]
+fn copied_rock_pixels_stay_rock() {
+    use olr_data::level::Material;
+    use olr_format::levels::ElementKind;
+    let Some((_tmp, mut doc)) = opened_dirt_level() else { return };
+    let (x, y) = pixel_of(&doc, Material::Rock);
+    let rect = olr_edit::compose::Rect { x: x as u32, y: y as u32, w: 1, h: 1 };
+    let (clip, at) = doc.copy_pixels("rock", rect).unwrap();
+    assert_eq!((clip.size, at), ((1, 1), (x, y)));
+    assert_eq!(clip.cells, [Material::Rock]);
+    let s = doc.level().art_scale;
+    let (_, id) = doc.paste_pixels(&clip, s, (x + 4, y + 4)).unwrap();
+    assert!(
+        matches!(
+            kind_of(&doc, &id),
+            ElementKind::Drawn { material: olr_format::levels::ElementMaterial::Rock, mixed: false, .. }
+        ),
+        "{:?}",
+        kind_of(&doc, &id)
+    );
+    // A clip of rock and dirt makes a mixed layer.
+    let mut mixed = clip.clone();
+    mixed.size = (2, 1);
+    mixed.cells = vec![Material::Rock, Material::Dirt];
+    let mut art = olr_data::image::RgbaImage::new(2 * s, s);
+    for ay in 0..s {
+        for ax in 0..2 * s {
+            art.set(ax, ay, olr_data::image::Rgba::rgb(5, 5, 5));
+        }
+    }
+    mixed.art = art;
+    let (_, id) = doc.paste_pixels(&mixed, s, (x, y)).unwrap();
+    assert!(matches!(kind_of(&doc, &id), ElementKind::Drawn { mixed: true, .. }), "{:?}", kind_of(&doc, &id));
+}
+
+#[test]
+fn copy_pixels_outside_the_layer_is_none() {
+    let Some(root) = content() else { return };
+    let (_tmp, doc) = open_fixture(&root);
+    // `wall` is boxed at (4, 0): the level's first columns are outside it.
+    let r = olr_edit::compose::Rect { x: 0, y: 0, w: 4, h: 4 };
+    assert!(doc.copy_pixels("wall", r).is_none());
+    assert!(doc.copy_pixels("tiny", r).is_none(), "a picture has no pixels to copy");
+    assert!(doc.copy_pixels("nope", r).is_none());
+}

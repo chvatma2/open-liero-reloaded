@@ -684,3 +684,20 @@ fn ctrl_c_and_ctrl_v_copy_and_paste() {
     h.run();
     assert_eq!(ids(&h).len(), n + 1);
 }
+
+/// Plan 14e R9: Escape drops the pixel rectangle.
+#[test]
+fn escape_drops_the_pixel_rectangle_by_key() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    act(&mut h, A::Select(Selection::Element("tunnels".into())));
+    act(&mut h, A::Tool(Tool::SelectPixels));
+    for (kind, world) in
+        [(olr_editor::tools::PointerKind::Down, (10, 10)), (olr_editor::tools::PointerKind::Up, (20, 20))]
+    {
+        act(&mut h, A::Pointer { kind, world, shift: false, toggle: false });
+    }
+    assert!(h.state().state.pixel_rect().is_some());
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.state().state.pixel_rect().is_none());
+}

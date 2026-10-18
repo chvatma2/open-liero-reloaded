@@ -3,6 +3,7 @@
 //! the system clipboard is not used.
 
 use crate::history::Snapshot;
+use crate::ops::PixelClip;
 
 /// How far each paste moves the copies from the last, in world pixels.
 pub const PASTE_STEP: (i32, i32) = (4, 4);
@@ -13,4 +14,7 @@ pub enum Clipboard {
     /// Elements, at the art scale they came from; the next paste moves them
     /// by `offset` (`PASTE_STEP` more each paste, so pastes cascade).
     Elements { art_scale: u32, items: Vec<Snapshot>, offset: (i32, i32) },
+    /// A rectangle of a drawn layer's pixels copied at world pixel `at`
+    /// (plan 14e R7); pasted as a new layer at `at + offset`.
+    Pixels { art_scale: u32, at: (i32, i32), clip: PixelClip, offset: (i32, i32) },
 }

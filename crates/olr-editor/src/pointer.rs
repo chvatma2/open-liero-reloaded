@@ -45,6 +45,8 @@ pub(crate) enum Drag {
     },
     /// A rectangle, ellipse or line from `start`, painted on release.
     Shape { id: String, tool: Tool, start: (i32, i32), now: (i32, i32) },
+    /// The pixel rectangle being dragged on drawn layer `id` (plan 14e R7).
+    Pixels { id: String, start: (i32, i32), now: (i32, i32) },
 }
 
 fn add(a: i32, b: i64) -> i32 {
@@ -427,6 +429,13 @@ impl EditorState {
                     }
                 }
             }
+            Tool::SelectPixels => {
+                self.pixel_rect = None;
+                if let Some(id) = self.paint_target(false) {
+                    self.drag = Some(Drag::Pixels { id, start: world, now: world });
+                }
+                Vec::new()
+            }
             Tool::Rect | Tool::Ellipse | Tool::Line => {
                 if let Some(id) = self.paint_target(false) {
                     self.drag = Some(Drag::Shape { id, tool: self.tool, start: world, now: world });
@@ -619,6 +628,10 @@ impl EditorState {
                 self.drag = Some(Drag::Shape { id, tool, start, now: world });
                 Vec::new()
             }
+            Drag::Pixels { id, start, .. } => {
+                self.drag = Some(Drag::Pixels { id, start, now: world });
+                Vec::new()
+            }
         }
     }
 
@@ -628,6 +641,12 @@ impl EditorState {
         let Some(paint) = self.doc.as_ref().map(|d| self.paint_of(d)) else { return Vec::new() };
         let Some(doc) = self.doc.as_mut() else { return Vec::new() };
         match drag {
+            Drag::Pixels { id, start, now } => {
+                let (x, y, w, h) = span(start, now);
+                let r = box_rect(((x, y), (w as u32, h as u32)), doc.level().size);
+                self.pixel_rect = (r.w > 0 && r.h > 0).then_some((id, r));
+                Vec::new()
+            }
             Drag::MoveMany { befores, .. } => {
                 let edits: Vec<Edit> = befores
                     .into_iter()
@@ -782,11 +801,14 @@ impl EditorState {
             Some(Drag::Shape { tool: Tool::Line, start, now, .. }) => {
                 out.push(Overlay::Segment { from: *start, to: *now })
             }
-            Some(Drag::Shape { start, now, .. }) => {
+            Some(Drag::Shape { start, now, .. } | Drag::Pixels { start, now, .. }) => {
                 let (x, y, w, h) = span(*start, *now);
                 out.push(Overlay::Outline { rect: box_rect(((x, y), (w as u32, h as u32)), size) });
             }
             _ => {}
+        }
+        if let Some((_, rect)) = &self.pixel_rect {
+            out.push(Overlay::Outline { rect: *rect });
         }
         for (i, o) in doc.level().objects.iter().enumerate() {
             match o {

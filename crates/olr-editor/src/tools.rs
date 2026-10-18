@@ -3,7 +3,7 @@
 use olr_data::image::Rgba;
 use olr_edit::compose::Rect;
 
-/// The canvas tools; their shortcut letters are V B E R O L P I W G.
+/// The canvas tools; their shortcut letters are V B E R O L P I W G M.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
     Select,
@@ -18,10 +18,13 @@ pub enum Tool {
     Wand,
     /// Flood fill (plan 14e R5).
     Fill,
+    /// A rectangle of the selected drawn layer's pixels, to copy, cut or
+    /// delete (plan 14e R7).
+    SelectPixels,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 10] = [
+    pub const ALL: [Tool; 11] = [
         Tool::Select,
         Tool::Brush,
         Tool::Eraser,
@@ -32,6 +35,7 @@ impl Tool {
         Tool::Eyedropper,
         Tool::Wand,
         Tool::Fill,
+        Tool::SelectPixels,
     ];
 
     /// The shortcut letter.
@@ -47,6 +51,7 @@ impl Tool {
             Tool::Eyedropper => 'I',
             Tool::Wand => 'W',
             Tool::Fill => 'G',
+            Tool::SelectPixels => 'M',
         }
     }
 
@@ -62,6 +67,7 @@ impl Tool {
             Tool::Eyedropper => "Eyedropper",
             Tool::Wand => "Remove colour",
             Tool::Fill => "Fill",
+            Tool::SelectPixels => "Select pixels",
         }
     }
 

@@ -628,3 +628,96 @@ fn ctrl_clicks_build_a_group_on_the_canvas() {
     ctrl_click(&mut s, (50, 40));
     assert_eq!(s.selection(), &Selection::Element("gradient".into()));
 }
+
+/// A covered pixel of `tunnels` with a 10 × 10 square from it inside the level.
+fn tunnel_square(s: &EditorState) -> (i32, i32) {
+    let art = layer(s, "tunnels");
+    let sc = s.document().unwrap().level().art_scale;
+    let (w, h) = (art.width() / sc, art.height() / sc);
+    (0..h.saturating_sub(10))
+        .flat_map(|y| (0..w.saturating_sub(10)).map(move |x| (x, y)))
+        .find(|&(x, y)| art.get(x * sc, y * sc).a != 0)
+        .map(|(x, y)| (x as i32, y as i32))
+        .expect("tunnels has pixels")
+}
+
+/// Selects a 10 × 10 rectangle of `tunnels` from `p` with the pixel tool.
+fn select_pixels(s: &mut EditorState, p: (i32, i32)) {
+    run(s, A::Select(Selection::Element("tunnels".into())));
+    run(s, A::Tool(Tool::SelectPixels));
+    drag(s, p, (p.0 + 9, p.1 + 9), false);
+    assert_eq!(
+        s.pixel_rect().map(|(id, r)| (id.as_str(), *r)),
+        Some(("tunnels", olr_edit::compose::Rect { x: p.0 as u32, y: p.1 as u32, w: 10, h: 10 }))
+    );
+}
+
+/// Plan 14e R7: copied pixels paste as a new boxed layer, offset (4, 4).
+#[test]
+fn pixels_copied_paste_as_a_layer() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let p = tunnel_square(&s);
+    select_pixels(&mut s, p);
+    run(&mut s, A::Copy);
+    run(&mut s, A::Paste);
+    let Selection::Element(id) = s.selection().clone() else { panic!("{:?}", s.selection()) };
+    let d = s.document().unwrap();
+    let e = &d.items().last().unwrap().element;
+    assert_eq!((e.id.as_str(), e.name.as_str()), (id.as_str(), "Pasted"));
+    let ElementKind::Drawn { at, size, .. } = e.kind else { panic!("{:?}", e.kind) };
+    assert_eq!((at, size), ((p.0 + 4, p.1 + 4), Some((10, 10))));
+    let sc = d.level().art_scale;
+    let (src, out) = (layer(&s, "tunnels"), layer(&s, &id));
+    for y in 0..10 * sc {
+        for x in 0..10 * sc {
+            assert_eq!(out.get(x, y), src.get(p.0 as u32 * sc + x, p.1 as u32 * sc + y), "({x}, {y})");
+        }
+    }
+    run(&mut s, A::Undo);
+    assert!(s.document().unwrap().index_of(&id).is_none(), "one step");
+}
+
+#[test]
+fn cut_pixels_erases_them_in_one_step() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let p = tunnel_square(&s);
+    let before = layer(&s, "tunnels");
+    select_pixels(&mut s, p);
+    run(&mut s, A::Cut);
+    let sc = s.document().unwrap().level().art_scale;
+    assert_eq!(layer(&s, "tunnels").get(p.0 as u32 * sc, p.1 as u32 * sc).a, 0, "cut out");
+    run(&mut s, A::Paste);
+    assert!(s.document().unwrap().items().last().unwrap().element.name == "Pasted");
+    run(&mut s, A::Undo);
+    run(&mut s, A::Undo);
+    assert!(layer(&s, "tunnels") == before, "the cut is one step");
+}
+
+#[test]
+fn delete_erases_the_pixel_rectangle() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let p = tunnel_square(&s);
+    let n = s.document().unwrap().items().len();
+    select_pixels(&mut s, p);
+    run(&mut s, A::Remove);
+    let sc = s.document().unwrap().level().art_scale;
+    assert_eq!(layer(&s, "tunnels").get(p.0 as u32 * sc, p.1 as u32 * sc).a, 0);
+    assert_eq!(s.document().unwrap().items().len(), n, "the layer stays");
+}
+
+#[test]
+fn escape_drops_the_pixel_rectangle() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let p = tunnel_square(&s);
+    select_pixels(&mut s, p);
+    assert!(s.overlays().iter().any(|o| matches!(o, Overlay::Outline { .. })), "its outline is drawn");
+    run(&mut s, A::DropPixels);
+    assert!(s.pixel_rect().is_none());
+    select_pixels(&mut s, p);
+    run(&mut s, A::Tool(Tool::Brush));
+    assert!(s.pixel_rect().is_none(), "a tool change drops it");
+}
