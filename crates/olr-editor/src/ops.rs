@@ -11,6 +11,7 @@ use olr_data::level::Material;
 use olr_edit::compose::{Decoded, Rect, resize_decoded};
 use olr_edit::element::{Property, new_element_id, new_source_name};
 use olr_edit::level::{self, Paint, Shape, draw_art, erase_art, rescale_art};
+use olr_edit::mask::Mask;
 use olr_edit::pixelate::Pixelation;
 use olr_format::image_io::{LEVEL_ART, check_size};
 use olr_format::levels::{
@@ -171,7 +172,7 @@ impl Document {
         };
         self.check_with(|es| es.push(element.clone()))?;
         let bytes = Arc::new(bytes);
-        let decoded = self.image_grid(&element, &bytes)?;
+        let decoded = self.image_grid(&element, &bytes, None)?;
         let item = Item { element, decoded };
         let index = self.items.len();
         Ok(self.change(Edit::Insert {
@@ -180,15 +181,21 @@ impl Document {
         }))
     }
 
-    /// An image element's decoded data through the cache (`None` grid when hidden).
-    fn image_grid(&mut self, e: &Element, original: &[u8]) -> Result<Decoded, DocError> {
+    /// An image element's decoded data through the cache (`None` grid when
+    /// hidden), with `mask`.
+    fn image_grid(
+        &mut self,
+        e: &Element,
+        original: &[u8],
+        mask: Option<Arc<Mask>>,
+    ) -> Result<Decoded, DocError> {
         let ElementKind::Image { source, size, pixel_size, colours, dither, alpha_threshold, .. } = &e.kind
         else {
             return Err(DocError::WrongKind { id: e.id.clone(), want: "an image element" });
         };
         if !e.visible {
             self.cache.original(source, original)?;
-            return Ok(Decoded::Image { grid: None });
+            return Ok(Decoded::Image { grid: None, mask });
         }
         let s = self.level.art_scale;
         let p = Pixelation {
@@ -198,7 +205,8 @@ impl Document {
             alpha_threshold: *alpha_threshold,
         };
         let art = (size.0.saturating_mul(s), size.1.saturating_mul(s));
-        Ok(Decoded::Image { grid: Some(self.cache.grid(source, original, art, &p)?) })
+        let grid = self.cache.grid(source, original, art, &p, mask.as_deref())?;
+        Ok(Decoded::Image { grid: Some(grid), mask })
     }
 
     /// An empty drawn layer on top.
@@ -482,15 +490,15 @@ impl Document {
                     front: rescale_art(front, from, to),
                     back: rescale_art(back, from, to),
                 },
-                Decoded::Image { .. } => match self.original_of(&i.element) {
-                    Some(bytes) => match self.image_grid(&i.element, &bytes) {
+                Decoded::Image { mask, .. } => match self.original_of(&i.element) {
+                    Some(bytes) => match self.image_grid(&i.element, &bytes, mask.clone()) {
                         Ok(d) => d,
                         Err(e) => {
                             result = Err(e);
                             break;
                         }
                     },
-                    None => Decoded::Image { grid: None },
+                    None => Decoded::Image { grid: None, mask: mask.clone() },
                 },
             };
             items.push(Item { element: i.element.clone(), decoded });
@@ -528,9 +536,15 @@ impl Document {
         if !matches!(e.kind, ElementKind::Image { .. }) {
             return;
         }
+        let mask = match &self.items[index].decoded {
+            Decoded::Image { mask, .. } => mask.clone(),
+            _ => None,
+        };
         let decoded = match self.original_of(&e) {
-            Some(bytes) => self.image_grid(&e, &bytes).unwrap_or(Decoded::Image { grid: None }),
-            None => Decoded::Image { grid: None },
+            Some(bytes) => self
+                .image_grid(&e, &bytes, mask.clone())
+                .unwrap_or(Decoded::Image { grid: None, mask: mask.clone() }),
+            None => Decoded::Image { grid: None, mask },
         };
         self.items[index].decoded = decoded;
     }

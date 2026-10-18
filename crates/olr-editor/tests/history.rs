@@ -285,7 +285,7 @@ fn a_shared_grid_counts_once() {
     let Some(root) = content() else { return };
     let (_tmp, doc) = open_fixture(&root);
     let item = doc.items()[doc.index_of("gradient").unwrap()].clone();
-    let Decoded::Image { grid: Some(grid) } = &item.decoded else { panic!("a shown image") };
+    let Decoded::Image { grid: Some(grid), .. } = &item.decoded else { panic!("a shown image") };
     let grid_bytes = grid.as_raw().len();
     let snapshot =
         |item: &olr_editor::Item| olr_editor::history::Snapshot { item: item.clone(), original: None };

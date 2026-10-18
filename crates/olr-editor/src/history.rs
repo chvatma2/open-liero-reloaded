@@ -95,7 +95,8 @@ impl Whole {
 /// cache and other steps: `History` counts each grid once).
 fn item(i: &Item) -> usize {
     let decoded = match &i.decoded {
-        Decoded::Image { .. } => 0,
+        // A mask is counted in full (plan 14d R12), the grid once by `History`.
+        Decoded::Image { mask, .. } => mask.as_deref().map_or(0, |m| m.keep.len()),
         d => d.bytes(),
     };
     decoded + std::mem::size_of::<Element>() + i.element.name.len()
@@ -104,7 +105,7 @@ fn item(i: &Item) -> usize {
 /// The image grids an item holds, by address, with their bytes.
 fn grids<'a>(items: impl Iterator<Item = &'a Item>) -> impl Iterator<Item = (usize, usize)> {
     items.filter_map(|i| match &i.decoded {
-        Decoded::Image { grid: Some(g) } => Some((Arc::as_ptr(g) as usize, image(g))),
+        Decoded::Image { grid: Some(g), .. } => Some((Arc::as_ptr(g) as usize, image(g))),
         _ => None,
     })
 }

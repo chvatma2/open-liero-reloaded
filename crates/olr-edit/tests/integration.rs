@@ -6,6 +6,7 @@ mod element;
 mod fmt;
 mod guide;
 mod level;
+mod mask;
 mod new;
 mod pack;
 mod pixelate;

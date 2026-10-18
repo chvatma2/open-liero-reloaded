@@ -328,6 +328,63 @@ fn theme_back_tile_follows_links() {
     assert!(tile == olr_edit::compose::theme_back_tile(&root, "olx-theme-dirt").unwrap());
 }
 
+/// Gives image element `id` the mask `keep` (the original's size).
+fn with_mask(src: &mut CompositionSource, id: &str, mask: &olr_edit::mask::Mask) {
+    src.files.insert(olr_format::levels::mask_file(id), mask.encode());
+    let e = src.composition.elements.iter_mut().find(|e| e.id == id).unwrap();
+    if let ElementKind::Image { mask, .. } = &mut e.kind {
+        *mask = true;
+    }
+}
+
+/// Plan 14d: a masked pixel of the original is transparent before the
+/// pipeline, so the bake leaves it uncovered.
+#[test]
+fn a_masked_image_bakes_without_its_erased_pixels() {
+    let mut src = CompositionSource::default();
+    with_image(&mut src, "x", solid(3, 3, BLUE), (0, 0), (3, 3), ElementMaterial::Dirt);
+    let mut mask = olr_edit::mask::Mask::full((3, 3));
+    mask.keep[4] = 0;
+    with_mask(&mut src, "x", &mask);
+    let mut l = level(3, 3, 1);
+    l.material = vec![Material::Background; 9];
+    bake(&mut l, &src, &back_tile()).unwrap();
+    let want: Vec<Material> =
+        (0..9).map(|i| if i == 4 { Material::Background } else { Material::Dirt }).collect();
+    assert_eq!(l.material, want);
+}
+
+/// Plan 14d R7: the grid cache keys an image's mask too.
+#[test]
+fn the_grid_cache_keys_masks() {
+    let original = image_io::encode_rgba(&solid(4, 4, BLUE));
+    let p = olr_edit::pixelate::Pixelation {
+        pixel_size: 1,
+        colours: None,
+        dither: Dither::None,
+        alpha_threshold: 128,
+    };
+    let mut cache = ImageCache::new();
+    let mut a = olr_edit::mask::Mask::full((4, 4));
+    let full = cache.grid("x.png", &original, (4, 4), &p, Some(&a)).unwrap();
+    a.keep[0] = 0;
+    let masked = cache.grid("x.png", &original, (4, 4), &p, Some(&a)).unwrap();
+    assert_eq!(cache.processed(), 2);
+    assert_eq!(full.get(0, 0).a, 255);
+    assert_eq!(masked.get(0, 0).a, 0);
+    cache.grid("x.png", &original, (4, 4), &p, Some(&a)).unwrap();
+    assert_eq!(cache.processed(), 2, "the same mask is a hit");
+}
+
+#[test]
+fn a_mask_of_another_size_is_an_error_naming_it() {
+    let mut src = CompositionSource::default();
+    with_image(&mut src, "x", solid(4, 4, BLUE), (0, 0), (4, 4), ElementMaterial::Dirt);
+    with_mask(&mut src, "x", &olr_edit::mask::Mask::full((3, 3)));
+    let e = bake(&mut level(4, 4, 1), &src, &back_tile()).unwrap_err().to_string();
+    assert!(e.contains("editor/masks/x.png"), "{e}");
+}
+
 #[test]
 fn a_bad_original_is_an_error_naming_it() {
     let mut src = CompositionSource::default();
@@ -582,8 +639,8 @@ fn the_cache_notices_new_bytes_under_an_old_name() {
         dither: Dither::None,
         alpha_threshold: 128,
     };
-    assert_eq!(cache.grid("a.png", &a, (2, 2), &p).unwrap().get(0, 0), BLUE);
-    assert_eq!(cache.grid("a.png", &b, (2, 2), &p).unwrap().get(0, 0), BROWN);
+    assert_eq!(cache.grid("a.png", &a, (2, 2), &p, None).unwrap().get(0, 0), BLUE);
+    assert_eq!(cache.grid("a.png", &b, (2, 2), &p, None).unwrap().get(0, 0), BROWN);
 }
 
 /// Batch A review: data of the wrong size is refused or encodes to
@@ -628,11 +685,11 @@ fn the_cache_bounds_its_grids() {
     };
     let n = olr_edit::compose::GRID_PIXELS / (2048 * 2048) + 3;
     for i in 0..n {
-        cache.grid(&format!("{i}.png"), &png, (2048, 2048), &p).unwrap();
+        cache.grid(&format!("{i}.png"), &png, (2048, 2048), &p, None).unwrap();
         assert!(cache.grid_pixels() <= olr_edit::compose::GRID_PIXELS);
     }
     // The newest is kept.
     let before = cache.processed();
-    cache.grid(&format!("{}.png", n - 1), &png, (2048, 2048), &p).unwrap();
+    cache.grid(&format!("{}.png", n - 1), &png, (2048, 2048), &p, None).unwrap();
     assert_eq!(cache.processed(), before);
 }

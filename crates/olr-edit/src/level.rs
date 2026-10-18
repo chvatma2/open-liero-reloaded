@@ -143,7 +143,7 @@ impl Paint {
 
 /// The box holding every world pixel `shape` covers, `x0..x1` × `y0..y1`
 /// (unclipped, `i64`; empty when it covers nothing).
-fn extent(shape: &Shape) -> (i64, i64, i64, i64) {
+pub(crate) fn extent(shape: &Shape) -> (i64, i64, i64, i64) {
     match *shape {
         Shape::Rect { x, y, w, h } | Shape::Ellipse { x, y, w, h } => {
             let (x, y) = (i64::from(x), i64::from(y));
@@ -229,6 +229,22 @@ fn inside(shape: &Shape, px: i64, py: i64) -> bool {
             }
         }
     }
+}
+
+/// Whether `shape` covers world pixel `(px, py)`, anywhere (its extent,
+/// then the shape's own rule).
+pub(crate) fn covers(shape: &Shape, px: i64, py: i64) -> bool {
+    let (x0, y0, x1, y1) = extent(shape);
+    (x0..x1).contains(&px) && (y0..y1).contains(&py) && inside(shape, px, py)
+}
+
+/// Whether colours `a` and `b` are alike within `tolerance` percent (plan
+/// 14d): the largest difference of their red, green, blue and alpha, × 100,
+/// at most `tolerance` × 255. A tolerance above 100 is 100.
+pub fn similar(a: Rgba, b: Rgba, tolerance: u8) -> bool {
+    let d = [a.r.abs_diff(b.r), a.g.abs_diff(b.g), a.b.abs_diff(b.b), a.a.abs_diff(b.a)];
+    let most = u32::from(d.into_iter().max().unwrap_or(0));
+    most * 100 <= u32::from(tolerance.min(100)) * 255
 }
 
 /// Calls `f(px, py)` for each world pixel of `shape` inside a `w` × `h`

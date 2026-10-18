@@ -451,7 +451,7 @@ pub fn resize(
     for e in &mut src.composition.elements {
         // An image's pixels are not re-laid: only its box moves.
         let mut d = match e.kind {
-            ElementKind::Image { .. } => Decoded::Image { grid: None },
+            ElementKind::Image { .. } => Decoded::Image { grid: None, mask: None },
             _ => decode_element(&before, e, old, s, &mut cache).map_err(|e| bad(e.to_string()))?,
         };
         resize_decoded(e, &mut d, old, s, size, offset, material, paint).map_err(|e| bad(e.to_string()))?;

@@ -25,12 +25,13 @@ use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
     Composition, CompositionSource, Element, ElementKind, ElementMaterial, LevelSource, check_composition,
-    encode_material, image_file, layer_file, raster_files, write_level_files,
+    encode_material, image_file, layer_file, mask_file, raster_files, write_level_files,
 };
 use olr_format::themes::read_theme_files;
 use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
 
 use crate::level::{self, EditError, Paint, refresh_thumb};
+use crate::mask::Mask;
 use crate::pack::{Pack, Source};
 use crate::pixelate::{Pixelation, process_grid};
 
@@ -64,8 +65,9 @@ pub struct ImageCache {
     tick: u64,
 }
 
-/// A processed grid's key besides its source: the box's art size and the pixelation.
-type GridKey = ((u32, u32), Pixelation);
+/// A processed grid's key besides its source: the box's art size, the
+/// pixelation and the mask's fingerprint (0: none; plan 14d R7).
+type GridKey = ((u32, u32), Pixelation, u64);
 
 /// A processed grid with its key and its last use.
 type Grid = (GridKey, Arc<RgbaImage>, u64);
@@ -135,17 +137,19 @@ impl ImageCache {
     }
 
     /// The processed element grid (`pixelate::process_grid`) for `source`
-    /// whose bytes are `original`.
+    /// whose bytes are `original`, through `mask` when it has one (its
+    /// erased pixels transparent first).
     pub fn grid(
         &mut self,
         source: &str,
         original: &[u8],
         art_box: (u32, u32),
         p: &Pixelation,
+        mask: Option<&Mask>,
     ) -> Result<Arc<RgbaImage>, ComposeError> {
         self.lookups += 1;
         let fp = fingerprint(original);
-        let key = (art_box, *p);
+        let key = (art_box, *p, mask.map_or(0, Mask::fingerprint));
         self.tick += 1;
         let tick = self.tick;
         let (f, grids) = self.grids.entry(source.into()).or_default();
@@ -158,7 +162,23 @@ impl ImageCache {
             return Ok(grid);
         }
         let img = self.original_fp(source, original, fp)?;
-        let grid = Arc::new(process_grid(&img, art_box, p));
+        let grid = match mask {
+            None => process_grid(&img, art_box, p),
+            Some(m) => {
+                let masked = m.apply(&img).ok_or_else(|| ComposeError::File {
+                    file: image_file(source),
+                    message: format!(
+                        "a mask of {}x{} for an original of {}x{}",
+                        m.size.0,
+                        m.size.1,
+                        img.width(),
+                        img.height()
+                    ),
+                })?;
+                process_grid(&masked, art_box, p)
+            }
+        };
+        let grid = Arc::new(grid);
         self.processed += 1;
         let tick = self.tick;
         let (_, grids) = self.grids.entry(source.into()).or_default();
@@ -215,8 +235,8 @@ impl ImageCache {
 #[derive(Clone, Debug, PartialEq)]
 pub enum Decoded {
     /// The processed element grid; `None`: hidden and not processed (its
-    /// original decoded, for its errors).
-    Image { grid: Option<Arc<RgbaImage>> },
+    /// original decoded, for its errors). Its mask, when it has one.
+    Image { grid: Option<Arc<RgbaImage>>, mask: Option<Arc<Mask>> },
     /// A level-sized art layer.
     Drawn { art: RgbaImage },
     /// A whole level.
@@ -228,7 +248,9 @@ impl Decoded {
     pub fn bytes(&self) -> usize {
         let img = |i: &RgbaImage| i.as_raw().len();
         match self {
-            Decoded::Image { grid } => grid.as_deref().map_or(0, img),
+            Decoded::Image { grid, mask } => {
+                grid.as_deref().map_or(0, img) + mask.as_deref().map_or(0, |m| m.keep.len())
+            }
             Decoded::Drawn { art } => img(art),
             Decoded::Raster { material, front, back } => material.len() + img(front) + img(back),
         }
@@ -265,7 +287,7 @@ impl<'a> Layer<'a> {
         Some(match (&e.kind, d) {
             (
                 ElementKind::Image { material, at, size, pixel_size, .. },
-                Decoded::Image { grid: Some(grid) },
+                Decoded::Image { grid: Some(grid), .. },
             ) => {
                 let ps = (*pixel_size).max(1);
                 let box_art = (u64::from(size.0) * u64::from(s), u64::from(size.1) * u64::from(s));
@@ -492,9 +514,17 @@ pub fn decode_element(
             source, size: (bw, bh), pixel_size, colours, dither, alpha_threshold, ..
         } => {
             let original = bytes(&image_file(source))?;
+            let mask = match &e.kind {
+                ElementKind::Image { mask: true, .. } => {
+                    let img = cache.original(source, original)?;
+                    let file = mask_file(&e.id);
+                    Some(Arc::new(Mask::decode(&file, bytes(&file)?, (img.width(), img.height()))?))
+                }
+                _ => None,
+            };
             if !e.visible {
                 cache.original(source, original)?;
-                return Ok(Decoded::Image { grid: None });
+                return Ok(Decoded::Image { grid: None, mask });
             }
             let p = Pixelation {
                 pixel_size: *pixel_size,
@@ -503,7 +533,8 @@ pub fn decode_element(
                 alpha_threshold: *alpha_threshold,
             };
             let box_art = (bw.saturating_mul(s), bh.saturating_mul(s));
-            Decoded::Image { grid: Some(cache.grid(source, original, box_art, &p)?) }
+            let grid = cache.grid(source, original, box_art, &p, mask.as_deref())?;
+            Decoded::Image { grid: Some(grid), mask }
         }
         ElementKind::Drawn { .. } => Decoded::Drawn { art: rgba(&layer_file(&e.id), art)? },
         ElementKind::Raster => {
@@ -527,10 +558,14 @@ pub fn decode_element(
 
 /// The files a drawn or raster element's decoded data encodes to (as
 /// `write_level_files` encodes art and material; a raster's material is a
-/// level of `size`); none for an image (its original is kept), data of
-/// another kind than the element, or a raster's material not of `size`.
+/// level of `size`), and an image's mask; not an image's original (it is
+/// kept), nor data of another kind than the element, nor a raster's
+/// material not of `size`.
 pub fn encode_decoded(e: &Element, d: &Decoded, size: (u32, u32)) -> Vec<(String, Vec<u8>)> {
     match (&e.kind, d) {
+        (ElementKind::Image { mask: true, .. }, Decoded::Image { mask: Some(m), .. }) => {
+            vec![(mask_file(&e.id), m.encode())]
+        }
         (ElementKind::Drawn { .. }, Decoded::Drawn { art }) => {
             vec![(layer_file(&e.id), image_io::encode_rgba(art))]
         }

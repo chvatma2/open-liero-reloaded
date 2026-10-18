@@ -7,6 +7,7 @@ pub mod compose;
 pub mod element;
 pub mod fmt;
 pub mod level;
+pub mod mask;
 pub mod new;
 pub mod pack;
 pub mod pixelate;
