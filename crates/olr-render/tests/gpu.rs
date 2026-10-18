@@ -283,3 +283,68 @@ fn gpu_timing_reports_when_the_device_has_timestamps() {
     }
     assert_eq!(r.gpu_times(), None, "each frame is read once");
 }
+
+/// [`map`] with a glow: strength `x % 7 * 30` per art pixel, group 1 on the
+/// left half (look system).
+fn glowing_map() -> ColorMap {
+    let mut m = map();
+    let mut g = olr_terrain::GlowLayers::empty((240, 180), (120, 90));
+    for (i, v) in g.front.iter_mut().enumerate() {
+        *v = (i % 240 % 7 * 30) as u8;
+    }
+    g.back.iter_mut().for_each(|v| *v = 5);
+    for (i, v) in g.groups.iter_mut().enumerate() {
+        *v = u8::from(i % 120 < 60);
+    }
+    assert!(m.set_glow(Some(g)));
+    m
+}
+
+/// The lit path with no look draws today's bytes, lighting on or off
+/// (Global Constraints: old content is byte-identical).
+#[test]
+fn look_none_draws_todays_bytes() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_map();
+    let l = list(View { x: 20.5, y: 30.0, w: 80.0, h: 60.0 });
+    let mut plain = gpu.renderer(RenderSettings::default());
+    plain.upload_terrain(&map);
+    let want = gpu.render_to_image(&mut plain, &l, (160, 120));
+    let mut lit = gpu.renderer(RenderSettings::default());
+    lit.set_lighting(true);
+    lit.upload_terrain(&map);
+    assert_eq!(gpu.render_lit_to_image(&mut lit, &l, None, (160, 120)), want);
+    assert_eq!(gpu.render_to_image(&mut lit, &l, (160, 120)), want);
+    // The lit world pass runs (two targets, the glow textures bound).
+    let mut look = olr_look::LookFrame::default();
+    look.begin(None, 0.0);
+    let _ = gpu.render_lit_to_image(&mut lit, &l, Some(&look), (160, 120));
+}
+
+/// With lighting on, the glow, group and solid textures follow the colour
+/// map's dirty rectangles (plan 15a Task 9).
+#[test]
+fn look_textures_follow_dirty_rects() {
+    let Some(gpu) = offscreen() else { return };
+    let mut lit_map = glowing_map();
+    let map = &mut lit_map;
+    let mut r = gpu.renderer(RenderSettings::default());
+    assert!(r.glow_texture().is_none(), "no look textures without lighting");
+    r.set_lighting(true);
+    r.upload_terrain(map);
+    map.take_dirty().for_each(drop);
+    assert_eq!(gpu.read_bytes(r.glow_texture().unwrap()), map.glow().unwrap());
+    for (i, x) in (10..110).step_by(9).enumerate() {
+        map.apply(ColorEdit::Carve { hole: (i % 5) as u8, x, y: 50 + (i as i32 % 3) * 7 });
+    }
+    map.apply(ColorEdit::Dirt { hole: 4, x: 30, y: 20 });
+    r.update_terrain(map);
+    assert_eq!(gpu.read_bytes(r.glow_texture().unwrap()), map.glow().unwrap());
+    assert_eq!(gpu.read_bytes(r.groups_texture().unwrap()), map.glow_groups().unwrap());
+    assert_eq!(gpu.read_bytes(r.solid_texture().unwrap()), map.material().cells());
+    // A map without glow uploads zeros.
+    let mut plain = self::map();
+    r.upload_terrain(&plain);
+    r.update_terrain(&mut plain);
+    assert!(gpu.read_bytes(r.glow_texture().unwrap()).iter().all(|v| *v == 0));
+}

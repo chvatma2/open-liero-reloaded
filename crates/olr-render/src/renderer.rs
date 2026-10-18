@@ -9,6 +9,7 @@ use crate::atlas::{self, AtlasLayout};
 use crate::frame::Instance;
 use crate::upscale::UpscaleFilter;
 
+mod look;
 mod pass;
 mod probe;
 mod timing;
@@ -22,6 +23,9 @@ pub const WORLD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// The art scale the world pass draws at, at least: OLX's sprites are 2×.
 pub const MIN_SCALE: u32 = 2;
+
+/// An instance's bytes in the vertex buffer.
+const INSTANCE_STRIDE: u64 = (crate::frame::INSTANCE_FLOATS * 4) as u64;
 
 /// How the renderer draws.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -45,6 +49,9 @@ struct Target {
     size: (u32, u32),
     view: wgpu::TextureView,
     bind: wgpu::BindGroup,
+    /// With lighting: the second target, each texel's shade (self-light,
+    /// marker), drawn with the albedo.
+    shade: Option<wgpu::TextureView>,
 }
 
 /// Draws [`DrawList`]s with one device: the terrain (a full upload, then
@@ -58,6 +65,7 @@ pub struct Renderer {
     world_pipeline: wgpu::RenderPipeline,
     upscale_pipeline: wgpu::RenderPipeline,
     texture_layout: wgpu::BindGroupLayout,
+    globals_layout: wgpu::BindGroupLayout,
     upscale_layout: wgpu::BindGroupLayout,
     globals: wgpu::Buffer,
     globals_bind: wgpu::BindGroup,
@@ -67,7 +75,7 @@ pub struct Renderer {
     terrain: Option<Terrain>,
     target: Option<Target>,
     instances: Vec<Instance>,
-    raw: Vec<[f32; 12]>,
+    raw: Vec<[f32; crate::frame::INSTANCE_FLOATS]>,
     instance_buffer: wgpu::Buffer,
     dirty: Vec<olr_terrain::Rect>,
     warnings: Vec<String>,
@@ -75,6 +83,8 @@ pub struct Renderer {
     timer: Option<timing::Timer>,
     /// The shader-headroom probe (bench only: [`Renderer::set_probe`]).
     probe: Option<probe::ProbeState>,
+    /// The look's state, with lighting on ([`Renderer::set_lighting`]).
+    look: Option<look::LookState>,
 }
 
 fn texture(
@@ -119,10 +129,15 @@ fn pipeline(
     (vs, fs): (&str, &str),
     layouts: &[Option<&wgpu::BindGroupLayout>],
     buffers: &[Option<wgpu::VertexBufferLayout>],
-    format: wgpu::TextureFormat,
-    blend: Option<wgpu::BlendState>,
+    targets: &[(wgpu::TextureFormat, Option<wgpu::BlendState>)],
     topology: wgpu::PrimitiveTopology,
 ) -> wgpu::RenderPipeline {
+    let targets: Vec<Option<wgpu::ColorTargetState>> = targets
+        .iter()
+        .map(|&(format, blend)| {
+            Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })
+        })
+        .collect();
     let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
         label: Some(label),
         source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -148,7 +163,7 @@ fn pipeline(
             module: &module,
             entry_point: Some(fs),
             compilation_options: Default::default(),
-            targets: &[Some(wgpu::ColorTargetState { format, blend, write_mask: wgpu::ColorWrites::ALL })],
+            targets: &targets,
         }),
         multiview_mask: None,
         cache: None,
@@ -207,9 +222,10 @@ impl Renderer {
                 entry(2, frag, wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering)),
             ],
         });
-        let attributes = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4];
+        let attributes =
+            wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x2];
         let quads = wgpu::VertexBufferLayout {
-            array_stride: 48,
+            array_stride: INSTANCE_STRIDE,
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &attributes,
         };
@@ -220,8 +236,7 @@ impl Renderer {
             ("vs_world", "fs_world"),
             &[Some(&globals_layout), Some(&texture_layout)],
             &[Some(quads)],
-            WORLD_FORMAT,
-            Some(wgpu::BlendState::ALPHA_BLENDING),
+            &[(WORLD_FORMAT, Some(wgpu::BlendState::ALPHA_BLENDING))],
             wgpu::PrimitiveTopology::TriangleStrip,
         );
         let upscale_pipeline = pipeline(
@@ -231,8 +246,7 @@ impl Renderer {
             ("vs_full", "fs_upscale"),
             &[Some(&upscale_layout)],
             &[],
-            surface_format,
-            None,
+            &[(surface_format, None)],
             wgpu::PrimitiveTopology::TriangleList,
         );
         let uniform = |label, size| {
@@ -265,6 +279,7 @@ impl Renderer {
             world_pipeline,
             upscale_pipeline,
             texture_layout,
+            globals_layout,
             upscale_layout,
             globals,
             globals_bind,
@@ -280,13 +295,14 @@ impl Renderer {
             warnings: Vec::new(),
             timer: None,
             probe: None,
+            look: None,
         }
     }
 
     fn instance_buffer(device: &wgpu::Device, count: usize) -> wgpu::Buffer {
         device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("olr-render instances"),
-            size: (count * 48) as u64,
+            size: count as u64 * INSTANCE_STRIDE,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         })
@@ -429,6 +445,9 @@ impl Renderer {
         self.terrain =
             Some(Terrain { texture, bind, art: (map.width(), map.height()), art_scale: map.art_scale() });
         self.write_terrain(map, olr_terrain::Rect { x: 0, y: 0, w: map.width(), h: map.height() });
+        if let Some(look) = self.look.as_mut() {
+            look.upload(&self.device, &self.queue, map, max);
+        }
     }
 
     /// Uploads the rectangles `map` changed since the last call
@@ -445,6 +464,9 @@ impl Renderer {
         self.dirty.extend(map.take_dirty());
         for r in &self.dirty {
             Self::write_rect(&self.queue, self.terrain.as_ref(), (map.pixels(), map.width()), *r);
+            if let Some(look) = &self.look {
+                look.write(&self.queue, map, *r);
+            }
         }
     }
 

@@ -71,22 +71,52 @@ impl WorldFrame {
 
 /// One textured quad of the world pass: `dst` in target texels, `src` in
 /// texture texels (a negative width mirrors it), multiplied by `tint`
-/// (0 to 1).
+/// (0 to 1); `shade` is its item's [`olr_scene::Shade`]: self-light (0 to
+/// 1) and marker (0 or 1), read only by the lit pass.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Instance {
     pub dst: [f32; 4],
     pub src: [f32; 4],
     pub tint: [f32; 4],
+    pub shade: [f32; 2],
 }
 
+/// An instance's floats in the vertex buffer.
+pub const INSTANCE_FLOATS: usize = 14;
+
 impl Instance {
-    /// The vertex-buffer layout: `dst`, `src`, `tint`.
-    pub fn raw(&self) -> [f32; 12] {
+    /// The vertex-buffer layout: `dst`, `src`, `tint`, `shade`.
+    pub fn raw(&self) -> [f32; INSTANCE_FLOATS] {
         let [a, b, c, d] = self.dst;
         let [e, f, g, h] = self.src;
         let [i, j, k, l] = self.tint;
-        [a, b, c, d, e, f, g, h, i, j, k, l]
+        let [m, n] = self.shade;
+        [a, b, c, d, e, f, g, h, i, j, k, l, m, n]
     }
+}
+
+fn shade(s: olr_scene::Shade) -> [f32; 2] {
+    [f32::from(s.self_light.min(100)) / 100.0, f32::from(u8::from(s.marker))]
+}
+
+/// The sizes of the look's textures for a map of `world` pixels at
+/// `art_scale`, cropped as the terrain texture is to the device's
+/// `max_dim`: the glow at art resolution, the groups and solid map at world
+/// resolution over the same share (Review Focus 4).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct LookTextureSizes {
+    pub art: (u32, u32),
+    pub world: (u32, u32),
+}
+
+/// See [`LookTextureSizes`].
+pub fn look_texture_sizes(world: (u32, u32), art_scale: u32, max_dim: u32) -> LookTextureSizes {
+    let s = art_scale.max(1);
+    let max = max_dim.max(1);
+    let art = |w: u32| w.saturating_mul(s).clamp(1, max);
+    let art = (art(world.0), art(world.1));
+    let crop = |w: u32, a: u32| w.min(a / s).max(1);
+    LookTextureSizes { art, world: (crop(world.0, art.0), crop(world.1, art.1)) }
 }
 
 fn tint(c: Rgba) -> [f32; 4] {
@@ -102,6 +132,7 @@ pub fn terrain_instance(frame: &WorldFrame, map: (u32, u32), art: (u32, u32)) ->
         dst: [x, y, map.0 as f32 * s, map.1 as f32 * s],
         src: [0.0, 0.0, art.0 as f32, art.1 as f32],
         tint: [1.0; 4],
+        shade: [0.0; 2],
     }
 }
 
@@ -131,7 +162,7 @@ pub fn push_instances(list: &DrawList, atlas: &AtlasLayout, frame: &WorldFrame, 
                 let [px, py] = frame.texel(x as f32, y as f32);
                 let dst = [px, py, s, s];
                 if visible(&dst) {
-                    out.push(Instance { dst, src: white, tint: tint(line.colour) });
+                    out.push(Instance { dst, src: white, tint: tint(line.colour), shade: shade(line.shade) });
                 }
             }),
         }
@@ -150,7 +181,7 @@ fn sprite(sp: &Sprite, atlas: &AtlasLayout, frame: &WorldFrame) -> Option<Instan
     }
     let Some(e) = atlas.entry(sp.atlas) else {
         let src = [WHITE.x as f32, WHITE.y as f32, 1.0, 1.0];
-        return Some(Instance { dst, src, tint: tint(MISSING) });
+        return Some(Instance { dst, src, tint: tint(MISSING), shade: shade(sp.shade) });
     };
     let r = sp.src;
     if r.w == 0 || r.h == 0 || r.x >= e.w || r.y >= e.h {
@@ -166,7 +197,7 @@ fn sprite(sp: &Sprite, atlas: &AtlasLayout, frame: &WorldFrame) -> Option<Instan
     } else {
         [src.x as f32, src.y as f32, src.w as f32, src.h as f32]
     };
-    Some(Instance { dst, src, tint: tint(sp.tint) })
+    Some(Instance { dst, src, tint: tint(sp.tint), shade: shade(sp.shade) })
 }
 
 #[cfg(test)]
@@ -279,6 +310,47 @@ mod tests {
         let t = terrain_instance(&WorldFrame::new(list.view, 2), (600, 400), (1200, 800));
         assert_eq!(t.dst, [2.0, 2.0, 1200.0, 800.0]);
         assert_eq!(t.src, [0.0, 0.0, 1200.0, 800.0]);
+    }
+
+    /// Each instance carries its item's shade: self-light (0-1) and marker
+    /// (0 or 1), the last two floats of its raw form (plan 15a Task 9).
+    #[test]
+    fn instance_shade_encoding() {
+        use olr_scene::Shade;
+        let atlas = atlas();
+        let mut list = DrawList::new();
+        list.view = View { x: 0.0, y: 0.0, w: 50.0, h: 50.0 };
+        let mut sp = sprite_at(0, [10.0, 10.0], Rect { x: 0, y: 0, w: 8, h: 4 }, false);
+        sp.shade = Shade::GLOW;
+        list.sprite(Layer::Worms, sp);
+        sp.shade = Shade { self_light: 50, marker: false };
+        list.sprite(Layer::Worms, sp);
+        list.push(
+            Layer::Beams,
+            Item::Line(Line { a: (5, 5), b: (5, 5), colour: Rgba::BLACK, shade: Shade::MARKER }),
+        );
+        let mut out = Vec::new();
+        push_instances(&list, &atlas, &WorldFrame::new(list.view, 2), &mut out);
+        assert_eq!(out.iter().map(|i| i.shade).collect::<Vec<_>>(), [[0.0, 1.0], [1.0, 0.0], [0.5, 0.0]]);
+        assert_eq!(out[1].raw().len(), 14);
+        assert_eq!(out[1].raw()[12..], [1.0, 0.0]);
+        let t = terrain_instance(&WorldFrame::new(list.view, 2), (10, 10), (20, 20));
+        assert_eq!(t.shade, [0.0, 0.0]);
+    }
+
+    /// The look's textures crop as the terrain does: art to the device's
+    /// limit, world to the same share (Review Focus 4).
+    #[test]
+    fn look_textures_crop_like_the_terrain() {
+        assert_eq!(
+            look_texture_sizes((800, 600), 2, 16384),
+            LookTextureSizes { art: (1600, 1200), world: (800, 600) }
+        );
+        assert_eq!(
+            look_texture_sizes((4096, 100), 8, 8192),
+            LookTextureSizes { art: (8192, 800), world: (1024, 100) }
+        );
+        assert_eq!(look_texture_sizes((0, 5), 3, 8192), LookTextureSizes { art: (1, 15), world: (1, 5) });
     }
 
     #[test]

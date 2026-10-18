@@ -145,6 +145,17 @@ impl Offscreen {
 
     /// Renders `list` at `size` pixels and reads the picture back.
     pub fn render_to_image(&self, renderer: &mut Renderer, list: &DrawList, size: (u32, u32)) -> RgbaImage {
+        self.render_lit_to_image(renderer, list, None, size)
+    }
+
+    /// [`Offscreen::render_to_image`] with a look ([`Renderer::render_lit`]).
+    pub fn render_lit_to_image(
+        &self,
+        renderer: &mut Renderer,
+        list: &DrawList,
+        look: Option<&olr_look::LookFrame>,
+        size: (u32, u32),
+    ) -> RgbaImage {
         let size = (size.0.max(1), size.1.max(1));
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("olr-render output"),
@@ -157,7 +168,7 @@ impl Offscreen {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        renderer.render(list, &view, size);
+        renderer.render_lit(list, look, &view, [0, 0, size.0, size.1]);
         self.read_texture(&texture)
     }
 
@@ -177,7 +188,15 @@ impl Offscreen {
     /// Reads an RGBA8 texture (made with `COPY_SRC`) back to the CPU.
     pub fn read_texture(&self, texture: &wgpu::Texture) -> RgbaImage {
         let (w, h) = (texture.width(), texture.height());
-        let row = (w * 4).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        RgbaImage::from_raw(w, h, self.read_bytes(texture)).expect("w x h texels")
+    }
+
+    /// Any texture (made with `COPY_SRC`) back to the CPU, its texels' bytes
+    /// row-major without padding.
+    pub fn read_bytes(&self, texture: &wgpu::Texture) -> Vec<u8> {
+        let (w, h) = (texture.width(), texture.height());
+        let bpp = texture.format().block_copy_size(None).unwrap_or(4);
+        let row = (w * bpp).div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT) * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("olr-render readback"),
             size: u64::from(row) * u64::from(h),
@@ -207,12 +226,12 @@ impl Offscreen {
         self.device.poll(wgpu::PollType::wait_indefinitely()).expect("the device is lost");
         rx.recv().expect("the map callback ran").expect("the readback buffer maps");
         let mapped = buffer.get_mapped_range(..).expect("mapped above");
-        let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+        let mut pixels = Vec::with_capacity((w * h * bpp) as usize);
         for line in mapped.chunks_exact(row as usize) {
-            pixels.extend_from_slice(&line[..(w * 4) as usize]);
+            pixels.extend_from_slice(&line[..(w * bpp) as usize]);
         }
         drop(mapped);
         buffer.unmap();
-        RgbaImage::from_raw(w, h, pixels).expect("w x h texels")
+        pixels
     }
 }

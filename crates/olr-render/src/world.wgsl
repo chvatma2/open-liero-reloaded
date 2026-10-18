@@ -16,6 +16,7 @@ struct Quad {
     @location(0) dst: vec4<f32>,
     @location(1) src: vec4<f32>,
     @location(2) tint: vec4<f32>,
+    @location(3) shade: vec2<f32>,
 };
 
 struct QuadOut {
@@ -23,6 +24,7 @@ struct QuadOut {
     @location(0) uv: vec2<f32>,
     @location(1) @interpolate(flat) rect: vec4<f32>,
     @location(2) @interpolate(flat) tint: vec4<f32>,
+    @location(3) @interpolate(flat) shade: vec2<f32>,
 };
 
 @vertex
@@ -37,6 +39,7 @@ fn vs_world(@builtin(vertex_index) vi: u32, q: Quad) -> QuadOut {
     let x0 = min(q.src.x, q.src.x + q.src.z);
     out.rect = vec4<f32>(x0, q.src.y, abs(q.src.z), q.src.w);
     out.tint = q.tint;
+    out.shade = q.shade;
     return out;
 }
 

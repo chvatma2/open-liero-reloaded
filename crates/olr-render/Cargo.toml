@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 olr-data.workspace = true
 olr-terrain.workspace = true
+olr-look.workspace = true
 olr-scene.workspace = true
 olr-pack.workspace = true
 wgpu.workspace = true

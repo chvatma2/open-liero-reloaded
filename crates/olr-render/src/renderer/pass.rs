@@ -1,5 +1,6 @@
 //! One drawn frame: the world pass, then the upscale pass.
 
+use olr_look::LookFrame;
 use olr_scene::DrawList;
 
 use super::{Renderer, Target, WORLD_FORMAT, texture, upscale_uniform};
@@ -20,6 +21,31 @@ impl Renderer {
     /// (`[x, y, w, h]` pixels) of `target` (the game's playfield above its
     /// HUD bar: [`crate::dest_rect_in`]); the rest of `target` is black.
     pub fn render_in(&mut self, list: &DrawList, target: &wgpu::TextureView, area: [u32; 4]) {
+        self.draw(list, None, target, area);
+    }
+
+    /// [`Renderer::render_in`] with the look of `look` (plan 15a): with
+    /// lighting on ([`Renderer::set_lighting`]) and `Some`, the world pass
+    /// also draws each texel's shade and the look passes light it; with
+    /// `None`, or lighting off, the frame is exactly `render_in`'s.
+    pub fn render_lit(
+        &mut self,
+        list: &DrawList,
+        look: Option<&LookFrame>,
+        target: &wgpu::TextureView,
+        area: [u32; 4],
+    ) {
+        let look = look.filter(|_| self.look.is_some());
+        self.draw(list, look, target, area);
+    }
+
+    fn draw(
+        &mut self,
+        list: &DrawList,
+        look: Option<&LookFrame>,
+        target: &wgpu::TextureView,
+        area: [u32; 4],
+    ) {
         let frame = WorldFrame::new(list.view, self.scale());
         self.ensure_target(&frame);
         self.instances.clear();
@@ -37,7 +63,7 @@ impl Renderer {
         }
         self.raw.clear();
         self.raw.extend(self.instances.iter().map(|i| i.raw()));
-        if self.raw.len() * 48 > self.instance_buffer.size() as usize {
+        if self.raw.len() as u64 * super::INSTANCE_STRIDE > self.instance_buffer.size() {
             self.instance_buffer = Self::instance_buffer(&self.device, self.raw.len().next_power_of_two());
         }
         if !self.raw.is_empty() {
@@ -49,6 +75,10 @@ impl Renderer {
         let dst = dest_rect_in(self.settings.filter, (src[2], src[3]), area);
         let uniform = upscale_uniform(src, dst, (tw, th), self.settings.filter, self.srgb);
         self.queue.write_buffer(&self.upscale_uniform, 0, bytemuck::cast_slice(&uniform));
+        if let (Some(look), Some(state)) = (look, self.look.as_mut()) {
+            state.pack(look, &frame);
+            self.queue.write_buffer(&state.globals, 0, bytemuck::cast_slice(&state.packed));
+        }
 
         let mut encoder =
             self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("olr-render") });
@@ -60,19 +90,40 @@ impl Renderer {
                 end_of_pass_write_index: end,
             })
         };
+        let lit = look.and(self.look.as_ref()).zip(world.shade.as_ref());
         {
-            let mut pass = begin(&mut encoder, "olr-render world", &world.view, stamp(Some(0), None));
-            pass.set_pipeline(&self.world_pipeline);
+            let mut pass = match lit {
+                Some((_, shade)) => {
+                    begin_two(&mut encoder, "olr-render world lit", &world.view, shade, stamp(Some(0), None))
+                }
+                None => begin(&mut encoder, "olr-render world", &world.view, stamp(Some(0), None)),
+            };
             pass.set_bind_group(0, &self.globals_bind, &[]);
             pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
-            if let Some(t) = &self.terrain {
-                pass.set_bind_group(1, &t.bind, &[]);
-                pass.draw(0..4, 0..1);
+            match (lit, &self.terrain) {
+                (Some((state, _)), Some(t)) => {
+                    if let Some(tex) = &state.textures {
+                        pass.set_pipeline(&state.terrain_pipeline);
+                        pass.set_bind_group(1, &t.bind, &[]);
+                        pass.set_bind_group(2, &tex.terrain_bind, &[]);
+                        pass.draw(0..4, 0..1);
+                    }
+                }
+                (None, Some(t)) => {
+                    pass.set_pipeline(&self.world_pipeline);
+                    pass.set_bind_group(1, &t.bind, &[]);
+                    pass.draw(0..4, 0..1);
+                }
+                (_, None) => {}
             }
             let end = self.instances.len() as u32;
             if let Some((_, bind)) = &self.atlas
                 && end > first_sprite
             {
+                match lit {
+                    Some((state, _)) => pass.set_pipeline(&state.sprite_pipeline),
+                    None => pass.set_pipeline(&self.world_pipeline),
+                }
                 pass.set_bind_group(1, bind, &[]);
                 pass.draw(0..4, first_sprite..end);
             }
@@ -104,7 +155,8 @@ impl Renderer {
     /// changes, so steady frames allocate nothing).
     fn ensure_target(&mut self, frame: &WorldFrame) {
         let size = frame.target_size();
-        if self.target.as_ref().is_some_and(|t| t.frame_size == size) {
+        let lit = self.look.is_some();
+        if self.target.as_ref().is_some_and(|t| t.frame_size == size && t.shade.is_some() == lit) {
             return;
         }
         let max = self.device.limits().max_texture_dimension_2d;
@@ -122,7 +174,24 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
             ],
         });
-        self.target = Some(Target { frame_size: size, size: clamped, view, bind });
+        let shade = lit.then(|| {
+            let t = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("olr-render shade"),
+                size: wgpu::Extent3d {
+                    width: clamped.0.max(1),
+                    height: clamped.1.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: super::look::SHADE_FORMAT,
+                usage,
+                view_formats: &[],
+            });
+            t.create_view(&wgpu::TextureViewDescriptor::default())
+        });
+        self.target = Some(Target { frame_size: size, size: clamped, view, bind, shade });
     }
 }
 
@@ -145,6 +214,35 @@ pub(super) fn begin<'e>(
                 store: wgpu::StoreOp::Store,
             },
         })],
+        depth_stencil_attachment: None,
+        timestamp_writes: timestamps,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    })
+}
+
+/// [`begin`] with a second target, `shade`, cleared to zero (lit, no glow).
+fn begin_two<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    label: &str,
+    view: &wgpu::TextureView,
+    shade: &wgpu::TextureView,
+    timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+) -> wgpu::RenderPass<'e> {
+    let attachment = |view, clear| {
+        Some(wgpu::RenderPassColorAttachment {
+            view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
+        })
+    };
+    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some(label),
+        color_attachments: &[
+            attachment(view, wgpu::Color::BLACK),
+            attachment(shade, wgpu::Color::TRANSPARENT),
+        ],
         depth_stencil_attachment: None,
         timestamp_writes: timestamps,
         occlusion_query_set: None,

@@ -70,8 +70,7 @@ impl ProbeState {
                 ("vs_full", fs),
                 &[Some(&layout)],
                 &[],
-                WORLD_FORMAT,
-                None,
+                &[(WORLD_FORMAT, None)],
                 wgpu::PrimitiveTopology::TriangleList,
             )
         };
