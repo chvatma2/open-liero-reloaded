@@ -342,6 +342,13 @@ fn merge_split_and_mask_commands() {
         &content,
     );
     assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("--restore takes a shape"));
+    // --tolerance is --colour-at's alone (plan 14d minors).
+    let e = cli(
+        &["level", "element", "mask", "{pack}", "sign", "--rect", "0,0,1,1", "--tolerance", "5"],
+        &pack,
+        &content,
+    );
+    assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("colour-at"));
     // The bake is current.
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
 }

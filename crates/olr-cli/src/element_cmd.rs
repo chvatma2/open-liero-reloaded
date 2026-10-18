@@ -24,7 +24,13 @@ pub(crate) struct ContentArg {
     pub(crate) content: PathBuf,
 }
 
-/// What `mask` masks: a world shape, or a region of similar colour.
+/// `mask --colour-at`'s tolerance when none is given, percent (the
+/// editor's Remove colour starts at it too).
+const DEFAULT_TOLERANCE: u8 = 10;
+
+/// What `mask` masks: a world shape, or a region of similar colour. Its
+/// own group (not `ShapeArgs` flattened in): clap's groups do not nest, and
+/// one of the three is required.
 #[derive(clap::Args)]
 #[group(required = true, multiple = false)]
 pub(crate) struct MaskTarget {
@@ -220,9 +226,9 @@ pub(crate) enum ElementCommand {
         id: String,
         #[command(flatten)]
         target: MaskTarget,
-        /// How alike a colour must be for --colour-at, 0 to 100 percent.
-        #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u8).range(0..=100))]
-        tolerance: u8,
+        /// How alike a colour must be for --colour-at, 0 to 100 percent (default 10).
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+        tolerance: Option<u8>,
         /// Bring masked pixels back (shapes only).
         #[arg(long)]
         restore: bool,
@@ -415,8 +421,11 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
         ElementCommand::Split { pack, id, content } => edit(pack, content, |p| {
             Ok(element::split(p, id)?.into_iter().map(|id| format!("added element {id}")).collect())
         }),
+        ElementCommand::Mask { tolerance: Some(_), target: MaskTarget { colour_at: None, .. }, .. } => {
+            anyhow::bail!("--tolerance takes --colour-at")
+        }
         ElementCommand::Mask { pack, id, target, tolerance, restore, content } => edit(pack, content, |p| {
-            element::mask(p, id, &target.op(*tolerance), *restore)?;
+            element::mask(p, id, &target.op(tolerance.unwrap_or(DEFAULT_TOLERANCE)), *restore)?;
             Ok(Vec::new())
         }),
         ElementCommand::Erase { pack, id, shape, content } => edit(pack, content, |p| {
