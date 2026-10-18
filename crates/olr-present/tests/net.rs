@@ -11,11 +11,12 @@ use std::path::Path;
 
 use olr_content::{Content, LoadedLevel, LoadedMod, LoadedTheme, MatchOptions, Player};
 use olr_fx::Kind;
+use olr_look::{ModLook, ProjectileLook};
 use olr_netcode::world_sim::{ConfirmedTick, TickRecorder, TickedTick};
 use olr_netcode::{Simulation, TickInfo, WorldSim};
 use olr_present::net::{EventKey, NetPresenter, event_keys};
 use olr_present::{PresentSetup, Presentation, default_colour};
-use olr_scene::{SceneOptions, Viewport};
+use olr_scene::{DrawList, SceneOptions, Viewport};
 use olr_sim::{CosmeticKind, Event, EventKind, Keys, SoundId, StampId, TerrainOp};
 
 fn content() -> Option<Content> {
@@ -622,4 +623,85 @@ fn a_death_moved_to_another_tick_by_a_correction_shows_once() {
     let mut later = vec![spawn, ev(0, EventKind::Sound { id: SoundId::THROW, pos: Vec2::ZERO })];
     later.extend(death(3, 1));
     assert_eq!(step(5, later), (2, DEATH_SPAWNS), "worm 1's next life dies anew");
+}
+
+/// A peer of the scripted rollback session, presenting `p`.
+fn peer(c: &Content, p: &Packs) -> Peer {
+    let w = world(c);
+    let present = presentation(c, p, &w);
+    Peer {
+        sim: WorldSim::new(w),
+        rec: TickRecorder::default(),
+        present,
+        net: NetPresenter::new(),
+        snaps: BTreeMap::new(),
+        used: Vec::new(),
+        current: 0,
+        confirmed: 0,
+    }
+}
+
+/// Review Focus 5 of plan 15a: a projectile that a rollback erases, or
+/// that comes back after one, ends with a flash at most once per
+/// (slot, serial), whatever the re-simulations.
+#[test]
+fn end_flashes_once_per_projectile_through_rollbacks() {
+    let Some(c) = content() else { return };
+    let mut p = packs(&c);
+    let n = p.m.sim.projectiles().len();
+    let look = ProjectileLook { glow: None, light: None, end_flash: Some(olr_look::engine::muzzle_light()) };
+    p.m.look = ModLook { projectiles: vec![Some(look); n], weapons: Vec::new() };
+    let mut peer = peer(&c, &p);
+    let (mut list, mut flashed, mut sounds) = (DrawList::new(), BTreeSet::new(), Vec::new());
+    let mut resims = 0;
+    while peer.confirmed < TICKS {
+        let target = (peer.current + FRAME).min(TICKS);
+        let conf = if target == TICKS { TICKS } else { target.saturating_sub(LAG) };
+        let (restored, ticked, _) = peer.advance(target, conf);
+        resims += ticked.iter().filter(|t| t.resim).count();
+        peer.net.apply(&mut peer.present, peer.sim.world(), &restored, &ticked, &mut sounds);
+        peer.present.build(peer.sim.world(), 1.0, &mut list);
+        for k in peer.present.flashes_started() {
+            assert!(flashed.insert(*k), "{k:?} flashed twice");
+        }
+    }
+    assert!(resims > 0, "the session rolled back");
+    assert!(flashed.len() > 5, "{} flashes", flashed.len());
+}
+
+/// Review Focus 2 of plan 15a: after a loaded state (a desync repair) the
+/// colour terrain's glow is the glow rebuilt from the world's material.
+#[test]
+fn a_loaded_state_restores_the_glow() {
+    let Some(c) = content() else { return };
+    let mut p = packs(&c);
+    let (w, h) = (p.level.material.width(), p.level.material.height());
+    let s = p.level.art_scale;
+    let mut glow = olr_terrain::GlowLayers::empty((w * s, h * s), (w, h));
+    glow.front.iter_mut().enumerate().for_each(|(i, v)| *v = (i % 251) as u8);
+    glow.back.iter_mut().enumerate().for_each(|(i, v)| *v = (i % 241) as u8);
+    p.level.glow = Some(glow);
+    let mut sim = WorldSim::new(world(&c));
+    let mut present = presentation(&c, &p, sim.world());
+    for t in 0..200 {
+        sim.tick(&final_keys(t));
+        present.on_tick(sim.world(), sim.events());
+    }
+    // The state of another timeline loads: the whole map is restored.
+    let mut other = WorldSim::new(world(&c));
+    for t in 0..150 {
+        other.tick(&predicted_keys(t, 0));
+    }
+    let state = other.save();
+    sim.restore(&state);
+    present.state_loaded(sim.world());
+    let mut net = NetPresenter::new();
+    net.reset(150);
+    let whole = olr_terrain::Area { x0: 0, y0: 0, x1: w as i32, y1: h as i32 };
+    net.apply(&mut present, sim.world(), &[whole], &[], &mut Vec::new());
+    let mut fresh = p.level.color_map(&p.theme);
+    fresh.rebuild_area(whole, sim.world().terrain());
+    assert!(!present.terrain_drift(sim.world()));
+    assert_eq!(present.color().glow(), fresh.glow());
+    assert_eq!(present.color().glow_groups(), fresh.glow_groups());
 }

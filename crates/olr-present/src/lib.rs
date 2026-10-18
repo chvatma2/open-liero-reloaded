@@ -24,14 +24,15 @@
 //! it holds no GPU or OS handle, so it is tested headless. It only reads
 //! the world (the simulation never sees presentation).
 
+mod look;
 pub mod net;
 
 use olr_content::{CorePack, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
 use olr_data::image::Rgba;
 use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
-use olr_look::{LevelLook, LookFrame};
+use olr_look::{LevelLook, LookFrame, ModLook};
 use olr_render::Renderer;
-use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, View, Viewport};
+use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, ShadeRules, View, Viewport};
 use olr_sim::{TickEvents, World};
 use olr_terrain::ColorMap;
 
@@ -76,6 +77,10 @@ pub struct Presentation {
     lit: bool,
     /// The frame's look, rebuilt by every lit [`Presentation::build`].
     look: LookFrame,
+    /// The mod's look (projectile and weapon lights).
+    mod_look: ModLook,
+    /// The dynamic lights' state (end flashes).
+    dynamic: look::Dynamic,
 }
 
 /// World pixels past the view a placed light may reach and still count:
@@ -91,6 +96,12 @@ impl Presentation {
         let fx_assets = FxAssets::new(FxImages::from_core(s.core), default_dirt_colour(s.theme), &mut assets);
         let camera = Camera::new(s.viewport, 0, s.seed);
         let mut scene = Scene::new(camera, s.options, s.seed.wrapping_add(1));
+        let lit = s.level.has_look() || !s.m.look.is_empty();
+        // A lit match shades play objects (plan 15a R7, R13); others draw as always.
+        scene.set_shades(lit.then(|| ShadeRules {
+            floor: olr_look::engine::FLOOR,
+            projectile_glow: s.m.look.projectiles.iter().map(|p| p.as_ref().and_then(|p| p.glow)).collect(),
+        }));
         scene.start(world);
         Presentation {
             scene,
@@ -102,8 +113,10 @@ impl Presentation {
             atlas_dirty: true,
             terrain_new: true,
             level_look: s.level.look.clone(),
-            lit: s.level.has_look() || !s.m.look.is_empty(),
+            lit,
             look: LookFrame::default(),
+            mod_look: s.m.look.clone(),
+            dynamic: look::Dynamic::default(),
         }
     }
 
@@ -118,15 +131,24 @@ impl Presentation {
         self.lit.then_some(&self.look)
     }
 
-    /// Rebuilds the frame's look ([`Presentation::build`] does): the level's
-    /// part at the match clock (the world's time, `alpha` of a tick on),
-    /// the lights whose reach touches `view`. Allocates nothing once warm.
+    /// The (slot, serial) of the end flashes the last frame started.
+    pub fn flashes_started(&self) -> &[(usize, u32)] {
+        self.dynamic.started()
+    }
+
+    /// Rebuilds the frame's look ([`Presentation::build`] does, after the
+    /// scene and the entities): the level's part at the match clock (the
+    /// world's time, `alpha` of a tick on), then the projectiles', end
+    /// flashes', muzzles' and explosions' lights (plan 15a R9), keeping
+    /// those whose reach touches `view`. Allocates nothing once warm.
     pub fn build_look(&mut self, world: &World, alpha: f32, view: View) {
         if !self.lit {
             return;
         }
-        let t_ms = world.time().0 as f64 + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
+        let tick_ms = world.time().0 as f64;
+        let t_ms = tick_ms + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
         self.look.begin(self.level_look.as_ref(), t_ms);
+        self.dynamic.push(&mut self.look, &self.mod_look, &self.scene, &self.fx, t_ms, tick_ms);
         let p = LIGHT_VIEW_PAD;
         self.look.cull([view.x - p, view.y - p, view.w + 2.0 * p, view.h + 2.0 * p]);
     }
@@ -171,7 +193,7 @@ impl Presentation {
     /// previous, 1 the latest): the scene, then the entities into `list`.
     pub fn build(&mut self, world: &World, alpha: f32, list: &mut DrawList) {
         self.scene.build(world, alpha, &self.assets, list);
-        self.fx.draw(&self.fx_assets, list);
+        self.fx.draw(&self.fx_assets, self.lit, list);
         self.build_look(world, alpha, list.view);
     }
 
@@ -181,6 +203,7 @@ impl Presentation {
     pub fn restart(&mut self, world: &World, level: &LoadedLevel, theme: &LoadedTheme) {
         self.scene.start(world);
         self.fx.clear();
+        self.dynamic.clear();
         self.color = level.color_map(theme);
         self.terrain_new = true;
     }
@@ -193,6 +216,7 @@ impl Presentation {
     pub fn state_loaded(&mut self, world: &World) {
         self.scene.start(world);
         self.fx.clear();
+        self.dynamic.clear();
     }
 
     /// The camera follows worm `worm` (by id) from the next frame: the

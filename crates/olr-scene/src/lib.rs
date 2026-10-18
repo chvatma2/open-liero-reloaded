@@ -31,6 +31,7 @@ pub use worm::{
     draw_worm, health_segments, muzzle_frame, skin_frame,
 };
 
+use olr_math::{AbsTime, Vec2};
 use olr_sim::{TickEvents, World};
 
 /// How a scene draws.
@@ -44,6 +45,50 @@ pub struct SceneOptions {
     pub show_health_bars: bool,
 }
 
+/// How a match with a look shades its items (look system, plan 15a R13):
+/// play objects never fall below `floor`, a projectile whose look glows
+/// shows at least that. A scene without rules draws every item lit, as
+/// always.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShadeRules {
+    /// Self-light of worms, projectiles and bonuses, percent.
+    pub floor: u8,
+    /// Each projectile's glow (by `SimMod` index), percent.
+    pub projectile_glow: Vec<Option<u8>>,
+}
+
+impl ShadeRules {
+    fn floor(&self) -> Shade {
+        Shade { self_light: self.floor, marker: false }
+    }
+
+    fn projectile(&self, proj: usize) -> Shade {
+        let glow = self.projectile_glow.get(proj).copied().flatten().unwrap_or(0);
+        Shade { self_light: self.floor.max(glow).min(100), marker: false }
+    }
+}
+
+/// A projectile as the last [`Scene::build`] placed it (a lit match's
+/// lights follow it), view or not.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawnProjectile {
+    pub slot: usize,
+    pub serial: u32,
+    /// Its `SimMod` index.
+    pub proj: usize,
+    pub pos: Vec2,
+    pub spawn_time: AbsTime,
+}
+
+/// A muzzle flash the last [`Scene::build`] showed: the worm, its drawn
+/// position and the weapon (its `SimMod` index).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawnMuzzle {
+    pub worm: i32,
+    pub weapon: usize,
+    pub pos: Vec2,
+}
+
 /// One viewport's presentation state: its camera, the previous tick's
 /// snapshot, the last tick's marks (muzzle flashes, laser sights, beams),
 /// and the options.
@@ -54,12 +99,50 @@ pub struct Scene {
     prev: Snapshot,
     cur: Snapshot,
     marks: Marks,
+    /// A lit match's rules; `None` draws as always.
+    shades: Option<ShadeRules>,
+    /// With rules, what the last build placed (reused, grown once).
+    drawn: Vec<DrawnProjectile>,
+    muzzles: Vec<DrawnMuzzle>,
 }
 
 impl Scene {
     /// `seed` seeds the laser sights' dots (the camera has its own seed).
     pub fn new(camera: Camera, options: SceneOptions, seed: u32) -> Scene {
-        Scene { camera, options, prev: Snapshot::new(), cur: Snapshot::new(), marks: Marks::new(seed) }
+        Scene {
+            camera,
+            options,
+            prev: Snapshot::new(),
+            cur: Snapshot::new(),
+            marks: Marks::new(seed),
+            shades: None,
+            drawn: Vec::new(),
+            muzzles: Vec::new(),
+        }
+    }
+
+    /// A lit match's shade rules (`None`: every item lit, as always). With
+    /// rules, each build also records its projectiles and muzzle flashes.
+    pub fn set_shades(&mut self, shades: Option<ShadeRules>) {
+        self.shades = shades;
+        self.drawn.clear();
+        self.muzzles.clear();
+    }
+
+    pub fn shades(&self) -> Option<&ShadeRules> {
+        self.shades.as_ref()
+    }
+
+    /// Every projectile the last build placed, in slot order (only with
+    /// shade rules).
+    pub fn drawn_projectiles(&self) -> &[DrawnProjectile] {
+        &self.drawn
+    }
+
+    /// The muzzle flashes the last build showed, in worm order (only with
+    /// shade rules).
+    pub fn drawn_muzzles(&self) -> &[DrawnMuzzle] {
+        &self.muzzles
     }
 
     /// Reads the world and the events after a [`World::tick`]: the state
@@ -93,6 +176,8 @@ impl Scene {
         self.prev.clear();
         self.cur.clear();
         self.marks.clear();
+        self.drawn.clear();
+        self.muzzles.clear();
     }
 
     /// A new or restarted world: [`Scene::reset`], then `world` as the
@@ -134,21 +219,39 @@ impl Scene {
             let i = worms.iter().position(|w| w.id == id)?;
             (!blend.exact()).then(|| blend.worm(i, &worms[i]))
         };
-        self.marks.draw(assets, view, drawn, out);
+        let lit = self.shades.is_some();
+        self.marks.draw(assets, view, drawn, lit, out);
+        self.drawn.clear();
+        self.muzzles.clear();
         let m = world.sim_mod();
         let mut projectiles = blend.projectiles();
         for (slot, p) in world.projectiles() {
             if let Some(def) = m.projectiles().get(p.proj) {
                 let at = blend.snap(projectiles.pos(slot, p));
-                draw_projectile(def, p, at, world.rot_bumped(p.proj), assets, view, out);
+                let shade = self.shades.as_ref().map_or(Shade::LIT, |r| r.projectile(p.proj));
+                draw_projectile(def, p, at, world.rot_bumped(p.proj), assets, view, shade, out);
+                if lit {
+                    let (serial, spawn_time) = (p.serial(), p.spawn_time);
+                    self.drawn.push(DrawnProjectile { slot, serial, proj: p.proj, pos: at, spawn_time });
+                }
             }
         }
+        let floor = self.shades.as_ref().map_or(Shade::LIT, ShadeRules::floor);
         for (slot, b) in world.bonuses().iter().enumerate().filter(|(_, b)| b.used) {
-            draw_bonus(b, blend.snap(blend.bonus(slot, b)), assets, view, out);
+            draw_bonus(b, blend.snap(blend.bonus(slot, b)), assets, view, floor, out);
         }
-        let frame = WormFrame { world, assets, view, show_health_bars: self.options.show_health_bars };
+        let frame = WormFrame {
+            world,
+            assets,
+            view,
+            show_health_bars: self.options.show_health_bars,
+            floor: self.shades.as_ref().map(|r| r.floor),
+        };
         for (i, w) in worms.iter().enumerate().filter(|(_, w)| w.alive) {
             let p = blend.snap(blend.worm(i, w));
+            if let Some(weapon) = self.marks.muzzle_weapon(w.id).filter(|_| lit) {
+                self.muzzles.push(DrawnMuzzle { worm: w.id, weapon, pos: p });
+            }
             let extras = WormExtras {
                 muzzle: self.marks.muzzle(w.id),
                 target: self.marks.target(w.id),

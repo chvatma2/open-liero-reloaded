@@ -175,7 +175,7 @@ impl Setup {
     pub fn draw(&self) -> Vec<Sprite> {
         let mut out = DrawList::new();
         out.view = View { x: 0.0, y: 0.0, w: 100.0, h: 100.0 };
-        self.fx.draw(&self.assets, &mut out);
+        self.fx.draw(&self.assets, false, &mut out);
         out.layer(Layer::Entities)
             .iter()
             .map(|i| match i {

@@ -194,7 +194,7 @@ fn bonuses_blend_between_ticks() {
                 } else {
                     assert_eq!(p, b.pos, "a new bonus is drawn where it is");
                 }
-                draw_bonus(b, p, &assets, list.view, &mut expected);
+                draw_bonus(b, p, &assets, list.view, olr_scene::Shade::LIT, &mut expected);
             }
             assert_eq!(
                 list.layer(Layer::Bonuses),

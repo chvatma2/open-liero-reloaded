@@ -39,7 +39,7 @@ fn fx_never_touches_sim_randomness() {
                 spawned = spawned.max(fx.len());
                 list.clear();
                 list.view = View { x: 0.0, y: 0.0, w: 640.0, h: 480.0 };
-                fx.draw(&assets, &mut list);
+                fx.draw(&assets, false, &mut list);
             }
             with_fx.push((w.checksum(), w.rand_calls()));
         })
@@ -81,7 +81,7 @@ fn steps_and_draws_allocate_nothing() {
             assert_eq!(step.count_total, 0, "{name} frame {frame}: step_tick allocated");
             list.clear();
             list.view = View { x: 0.0, y: 0.0, w: 640.0, h: 480.0 };
-            let drawn = allocation_counter::measure(|| fx.draw(&assets, &mut list));
+            let drawn = allocation_counter::measure(|| fx.draw(&assets, false, &mut list));
             assert_eq!(drawn.count_total, 0, "{name} frame {frame}: draw allocated");
             ticks += 1;
         })

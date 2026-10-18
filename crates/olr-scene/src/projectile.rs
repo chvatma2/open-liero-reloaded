@@ -7,7 +7,7 @@ use olr_math::Vec2;
 use olr_sim::{Bonus, BonusKind, Projectile, SimProjectile};
 
 use crate::assets::SceneAssets;
-use crate::draw_list::{DrawList, Layer, Rect, Sprite, View};
+use crate::draw_list::{DrawList, Layer, Rect, Shade, Sprite, View};
 
 /// `BONUS_LIFETIME` (`include/CBonus.h:30`): a bonus blinks for its last 3 s.
 const BONUS_LIFETIME: f32 = 60.0;
@@ -83,9 +83,11 @@ pub fn frame_x(framestep: f32, size: u32, image_w: u32) -> u32 {
     ((framestep as i32 as i64) * size as i64).rem_euclid(image_w as i64) as u32
 }
 
-/// One projectile at its drawn position `p` (snapped when exact).
+/// One projectile at its drawn position `p` (snapped when exact), with
+/// `shade` (a lit match's, else [`Shade::LIT`]).
 ///
 /// OLX: src/common/CProjectile.cpp:227-300
+#[allow(clippy::too_many_arguments)]
 pub fn draw_projectile(
     proj: &SimProjectile,
     p: &Projectile,
@@ -93,6 +95,7 @@ pub fn draw_projectile(
     rot_bumped: bool,
     assets: &SceneAssets,
     view: View,
+    shade: Shade,
     out: &mut DrawList,
 ) {
     let inside = view.contains(at.x, at.y);
@@ -106,15 +109,8 @@ pub fn draw_projectile(
                 let tint = Rgba { r, g, b, a };
                 let src = Rect { x: 0, y: 0, w: 1, h: 1 };
                 let pos = [at.x - 0.5, at.y - 0.5];
-                let sprite = Sprite {
-                    atlas: assets.white,
-                    src,
-                    pos,
-                    size: [1.0, 1.0],
-                    flip: false,
-                    tint,
-                    shade: Default::default(),
-                };
+                let sprite =
+                    Sprite { atlas: assets.white, src, pos, size: [1.0, 1.0], flip: false, tint, shade };
                 out.sprite(Layer::Projectiles, sprite);
             }
         }
@@ -132,20 +128,17 @@ pub fn draw_projectile(
             let src = Rect { x, y: 0, w: size.min(w - x), h: size };
             let size = [src.w as f32 / s, dim];
             let tint = Rgba::rgb(255, 255, 255);
-            out.sprite(
-                Layer::Projectiles,
-                Sprite { atlas: id, src, pos, size, flip: false, tint, shade: Default::default() },
-            );
+            out.sprite(Layer::Projectiles, Sprite { atlas: id, src, pos, size, flip: false, tint, shade });
         }
     }
 }
 
-/// One client bonus at its drawn position `p`, unless it is blinking off.
-/// Both images are drawn at `p − 5` screen pixels (the weapon crate is off
-/// centre).
+/// One client bonus at its drawn position `p`, unless it is blinking off,
+/// with `shade`. Both images are drawn at `p − 5` screen pixels (the weapon
+/// crate is off centre).
 ///
 /// OLX: src/common/CBonus.cpp:49-76
-pub fn draw_bonus(b: &Bonus, p: Vec2, assets: &SceneAssets, view: View, out: &mut DrawList) {
+pub fn draw_bonus(b: &Bonus, p: Vec2, assets: &SceneAssets, view: View, shade: Shade, out: &mut DrawList) {
     if b.life > BONUS_LIFETIME - 3.0 && b.flash_time > 0.15 {
         return;
     }
@@ -160,9 +153,6 @@ pub fn draw_bonus(b: &Bonus, p: Vec2, assets: &SceneAssets, view: View, out: &mu
     if view.overlaps(pos[0], pos[1], size[0], size[1]) {
         let src = Rect { x: 0, y: 0, w, h };
         let tint = Rgba::rgb(255, 255, 255);
-        out.sprite(
-            Layer::Bonuses,
-            Sprite { atlas: id, src, pos, size, flip: false, tint, shade: Default::default() },
-        );
+        out.sprite(Layer::Bonuses, Sprite { atlas: id, src, pos, size, flip: false, tint, shade });
     }
 }

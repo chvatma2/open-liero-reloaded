@@ -300,10 +300,11 @@ impl Fx {
     }
 
     /// Appends the entities to [`olr_scene::Layer::Entities`] in slot order,
-    /// as OLX draws them in the view `out.view`.
-    pub fn draw(&self, assets: &FxAssets, out: &mut DrawList) {
+    /// as OLX draws them in the view `out.view`. In a lit match (`lit`, look
+    /// system plan 15a R13) explosions, sparkles and spawn effects glow.
+    pub fn draw(&self, assets: &FxAssets, lit: bool, out: &mut DrawList) {
         for (_, e) in self.pool.iter() {
-            draw::entity(e, assets, out);
+            draw::entity(e, assets, lit, out);
         }
     }
 }

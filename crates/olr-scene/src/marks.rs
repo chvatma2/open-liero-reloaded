@@ -7,7 +7,7 @@ use olr_math::{GlibcRand, Vec2};
 use olr_sim::{CosmeticKind, EventKind, MAX_WORMS, TickEvents, WeaponType, World};
 
 use crate::assets::SceneAssets;
-use crate::draw_list::{DrawList, Item, Layer, Line, View, perform_line};
+use crate::draw_list::{DrawList, Item, Layer, Line, Shade, View, perform_line};
 
 /// A laser sight entity alive at the end of the tick.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -23,6 +23,8 @@ struct Laser {
 #[derive(Clone, Debug)]
 pub struct Marks {
     muzzle: [bool; MAX_WORMS],
+    /// The weapon (its `SimMod` index) whose shot flashed.
+    muzzle_weapon: [usize; MAX_WORMS],
     target: [bool; MAX_WORMS],
     lasers: Vec<Laser>,
     beams: [Option<Line>; MAX_WORMS],
@@ -35,6 +37,7 @@ impl Marks {
     pub fn new(seed: u32) -> Marks {
         Marks {
             muzzle: [false; MAX_WORMS],
+            muzzle_weapon: [0; MAX_WORMS],
             target: [false; MAX_WORMS],
             lasers: Vec::with_capacity(MAX_WORMS),
             beams: [None; MAX_WORMS],
@@ -55,6 +58,13 @@ impl Marks {
     /// shows for that tick; OLX shows it for one drawn frame, about one tick).
     pub fn muzzle(&self, worm: i32) -> bool {
         usize::try_from(worm).ok().and_then(|i| self.muzzle.get(i)).copied().unwrap_or(false)
+    }
+
+    /// The weapon (its `SimMod` index) whose shot flashed worm id `worm`'s
+    /// muzzle in the last tick ([`Marks::muzzle`]).
+    pub fn muzzle_weapon(&self, worm: i32) -> Option<usize> {
+        let i = usize::try_from(worm).ok()?;
+        self.muzzle.get(i).copied().unwrap_or(false).then(|| self.muzzle_weapon[i])
     }
 
     /// Worm id `worm`'s laser sight found another worm in the last tick.
@@ -87,9 +97,10 @@ impl Marks {
             match e.kind {
                 EventKind::WeaponFired { worm, weapon } => {
                     if m.weapon(weapon).is_some_and(|w| w.kind == WeaponType::Projectile)
-                        && let Some(f) = usize::try_from(worm).ok().and_then(|i| self.muzzle.get_mut(i))
+                        && let Some(i) = usize::try_from(worm).ok().filter(|&i| i < MAX_WORMS)
                     {
-                        *f = true;
+                        self.muzzle[i] = true;
+                        self.muzzle_weapon[i] = usize::try_from(weapon).unwrap_or(0);
                     }
                 }
                 EventKind::Spawned { worm } => {
@@ -139,14 +150,18 @@ impl Marks {
     /// sight then starts there, keeping its direction and length, and a
     /// beam runs from there to where it stopped, so neither trails the worm.
     ///
+    /// In a lit match (`lit`) the dots are markers and the beams glow.
+    ///
     /// OLX: src/client/Entity.cpp:305-314, src/client/GfxPrimitives.cpp:1878-1901, :2507-2520
     pub fn draw(
         &mut self,
         assets: &SceneAssets,
         view: View,
         drawn: impl Fn(i32) -> Option<Vec2>,
+        lit: bool,
         out: &mut DrawList,
     ) {
+        let (dot, beam) = if lit { (Shade::MARKER, Shade::GLOW) } else { (Shade::LIT, Shade::LIT) };
         let Marks { lasers, rng, laser_alt, beams, .. } = self;
         for l in lasers.iter() {
             let start = drawn(l.worm).unwrap_or(l.start);
@@ -161,7 +176,7 @@ impl Marks {
                 let colour = assets.laser_colours[rng.random_int(1).clamp(0, 1) as usize];
                 let (wx, wy) = (((x - x % 2) / 2) as f32, ((y - y % 2) / 2) as f32);
                 if view.overlaps(wx, wy, 1.0, 1.0) {
-                    out.pixel(Layer::Beams, assets.white, wx, wy, colour);
+                    out.pixel_shaded(Layer::Beams, assets.white, (wx, wy), colour, dot);
                 }
             });
         }
@@ -170,6 +185,7 @@ impl Marks {
             if let Some(p) = i32::try_from(id).ok().and_then(&drawn) {
                 line.a = (p.x as i32, p.y as i32);
             }
+            line.shade = beam;
             out.push(Layer::Beams, Item::Line(line));
         }
     }

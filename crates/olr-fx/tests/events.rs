@@ -74,7 +74,7 @@ fn entities_are_clipped_to_the_view_like_olx() {
     s.tick(&ev, 0);
     let mut out = olr_scene::DrawList::new();
     out.view = olr_scene::View { x: 20.0, y: 0.0, w: 40.0, h: 30.0 };
-    s.fx.draw(&s.assets, &mut out);
+    s.fx.draw(&s.assets, false, &mut out);
     // `x > Left + VirtW` is out, the right edge itself is in.
     assert_eq!(out.layer(olr_scene::Layer::Entities).len(), 1);
 }
@@ -119,7 +119,7 @@ fn entities_stay_on_the_world_grid_under_a_sub_pixel_camera() {
     let at = |x: f32| {
         let mut out = olr_scene::DrawList::new();
         out.view = olr_scene::View { x, y: x, w: 40.0, h: 30.0 };
-        s.fx.draw(&s.assets, &mut out);
+        s.fx.draw(&s.assets, false, &mut out);
         match out.layer(olr_scene::Layer::Entities) {
             [olr_scene::Item::Sprite(sp)] => sp.pos,
             other => panic!("{other:?}"),

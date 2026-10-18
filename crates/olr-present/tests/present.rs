@@ -88,7 +88,7 @@ fn presentation_draws_what_the_hand_wiring_draws() {
                 present.on_tick(world, events);
             }
             scene.build(world, 0.5, &assets, &mut a);
-            fx.draw(&fx_assets, &mut a);
+            fx.draw(&fx_assets, false, &mut a);
             present.build(world, 0.5, &mut b);
             assert_eq!(a.describe(&assets), b.describe(present.assets()), "{name} frame {f}");
             assert!(map.pixels() == present.color().pixels(), "{name} frame {f}: colour terrain");

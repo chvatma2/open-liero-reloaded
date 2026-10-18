@@ -7,7 +7,7 @@ use olr_math::Vec2;
 use olr_sim::{Dir, World, Worm};
 
 use crate::assets::{SceneAssets, WormLook};
-use crate::draw_list::{AtlasId, DrawList, Layer, Rect, Sprite, View, perform_line};
+use crate::draw_list::{AtlasId, DrawList, Layer, Rect, Shade, Sprite, View, perform_line};
 
 /// OLX's skin layout (`include/CGameSkin.h:36-41`), as `olr-content` has it.
 pub use olr_content::{FRAME_WIDTH, SKIN_HEIGHT, SKIN_WIDTH};
@@ -77,24 +77,31 @@ struct At<'a> {
 
 impl At<'_> {
     /// A sprite at `(dx, dy)` screen pixels from `p`.
-    fn blit(&mut self, atlas: AtlasId, src: Rect, d: (i32, i32), px_per_world: u32, flip: bool) {
+    #[allow(clippy::too_many_arguments)]
+    fn blit(
+        &mut self,
+        atlas: AtlasId,
+        src: Rect,
+        d: (i32, i32),
+        px_per_world: u32,
+        flip: bool,
+        shade: Shade,
+    ) {
         let s = px_per_world.max(1) as f32;
         let pos = [self.p.x + d.0 as f32 / 2.0, self.p.y + d.1 as f32 / 2.0];
         let size = [src.w as f32 / s, src.h as f32 / s];
         let tint = Rgba::rgb(255, 255, 255);
-        self.out
-            .sprite(Layer::Worms, Sprite { atlas, src, pos, size, flip, tint, shade: Default::default() });
+        self.out.sprite(Layer::Worms, Sprite { atlas, src, pos, size, flip, tint, shade });
     }
 
-    /// A solid rectangle covering screen pixels `[x0, x1) × [y0, y1)` from `p`.
-    fn fill(&mut self, white: AtlasId, x0: i32, y0: i32, x1: i32, y1: i32, colour: Rgba) {
+    /// A solid rectangle covering screen pixels `[x0, x1) × [y0, y1)` from
+    /// `p`: health bars, markers in a lit match.
+    fn fill(&mut self, white: AtlasId, (x0, y0, x1, y1): (i32, i32, i32, i32), colour: Rgba, shade: Shade) {
         let src = Rect { x: 0, y: 0, w: 1, h: 1 };
         let pos = [self.p.x + x0 as f32 / 2.0, self.p.y + y0 as f32 / 2.0];
         let size = [(x1 - x0) as f32 / 2.0, (y1 - y0) as f32 / 2.0];
-        self.out.sprite(
-            Layer::Worms,
-            Sprite { atlas: white, src, pos, size, flip: false, tint: colour, shade: Default::default() },
-        );
+        self.out
+            .sprite(Layer::Worms, Sprite { atlas: white, src, pos, size, flip: false, tint: colour, shade });
     }
 }
 
@@ -104,6 +111,26 @@ pub struct WormFrame<'a> {
     pub assets: &'a SceneAssets,
     pub view: View,
     pub show_health_bars: bool,
+    /// In a lit match (plan 15a R13), the worms' least self-light; `None`
+    /// draws every item lit, as always.
+    pub floor: Option<u8>,
+}
+
+impl WormFrame<'_> {
+    /// A play object's shade: the floor in a lit match.
+    fn body(&self) -> Shade {
+        self.floor.map_or(Shade::LIT, |f| Shade { self_light: f, marker: false })
+    }
+
+    /// A marker's (crosshair, health bar): its art, unlit, in a lit match.
+    fn marker(&self) -> Shade {
+        if self.floor.is_some() { Shade::MARKER } else { Shade::LIT }
+    }
+
+    /// A glow's (the muzzle flash): full self-light in a lit match.
+    fn glow(&self) -> Shade {
+        if self.floor.is_some() { Shade::GLOW } else { Shade::LIT }
+    }
 }
 
 /// What a worm shows besides its state: the muzzle flash and the green
@@ -136,12 +163,13 @@ pub fn draw_worm(f: &WormFrame, i: usize, w: &Worm, p: Vec2, extras: &WormExtras
         // a border grid, then up to five segments.
         let border = Rgba::rgb(0x49, 0x50, 0x65);
         let hy = -9 - 7;
-        at.fill(white, -10, hy - 1, 16, hy, border);
-        at.fill(white, -10, hy + 5, 16, hy + 6, border);
-        at.fill(white, -10, hy - 1, -9, hy + 6, border);
-        at.fill(white, 15, hy - 1, 16, hy + 6, border);
+        let m = f.marker();
+        at.fill(white, (-10, hy - 1, 16, hy), border, m);
+        at.fill(white, (-10, hy + 5, 16, hy + 6), border, m);
+        at.fill(white, (-10, hy - 1, -9, hy + 6), border, m);
+        at.fill(white, (15, hy - 1, 16, hy + 6), border, m);
         for x in [-5, 0, 5, 10] {
-            at.fill(white, x, hy, x + 1, hy + 5, border);
+            at.fill(white, (x, hy, x + 1, hy + 5), border, m);
         }
         const COLOURS: [Rgba; 5] = [
             Rgba::rgb(0xe3, 0x04, 0x04),
@@ -152,21 +180,29 @@ pub fn draw_worm(f: &WormFrame, i: usize, w: &Worm, p: Vec2, extras: &WormExtras
         ];
         for (s, &c) in COLOURS.iter().enumerate().take(health_segments(w.health).max(0) as usize) {
             let x = -10 + s as i32 * 5 + 1;
-            at.fill(white, x, hy, x + 4, hy + 5, c);
+            at.fill(white, (x, hy, x + 4, hy + 5), c, m);
         }
     }
     if look.local {
         let (dx, dy) = crosshair_offset(w.angle, w.face);
         let frame = if extras.target { 6 } else { 0 };
-        at.blit(f.assets.crosshair, Rect { x: frame, y: 0, w: 6, h: 6 }, (dx - 2, dy - 2), 2, false);
+        at.blit(
+            f.assets.crosshair,
+            Rect { x: frame, y: 0, w: 6, h: 6 },
+            (dx - 2, dy - 2),
+            2,
+            false,
+            f.marker(),
+        );
     }
     let skin = f.assets.image(look.skin);
     let (src, flip) = skin_frame(w.angle, w.face, w.frame, skin.image.width() / FRAME_WIDTH);
     let src = clip(src, skin.image.width(), skin.image.height());
-    at.blit(look.skin, src, (-(SKIN_WIDTH as i32) / 2, -(SKIN_HEIGHT as i32) / 2), skin.px_per_world, flip);
+    let d = (-(SKIN_WIDTH as i32) / 2, -(SKIN_HEIGHT as i32) / 2);
+    at.blit(look.skin, src, d, skin.px_per_world, flip, f.body());
     if extras.muzzle {
         let (frame, dx, dy) = muzzle_frame(w.angle, w.face);
-        at.blit(f.assets.muzzle, Rect { x: frame * 16, y: 0, w: 16, h: 16 }, (dx, dy), 1, false);
+        at.blit(f.assets.muzzle, Rect { x: frame * 16, y: 0, w: 16, h: 16 }, (dx, dy), 1, false, f.glow());
     }
 }
 
@@ -192,7 +228,7 @@ fn draw_rope(f: &WormFrame, p: Vec2, hook: Vec2, out: &mut DrawList) {
     perform_line(a, b, |x, y| {
         n += 1;
         if v.overlaps(x as f32, y as f32, 1.0, 1.0) {
-            out.pixel(Layer::Worms, white, x as f32, y as f32, colours[n % 2]);
+            out.pixel_shaded(Layer::Worms, white, (x as f32, y as f32), colours[n % 2], f.body());
         }
     });
     if v.contains(h.x, h.y) {
@@ -205,7 +241,7 @@ fn draw_rope(f: &WormFrame, p: Vec2, hook: Vec2, out: &mut DrawList) {
             size: [3.0, 3.0],
             flip: false,
             tint,
-            shade: Default::default(),
+            shade: f.body(),
         };
         out.sprite(Layer::Worms, sprite);
     }

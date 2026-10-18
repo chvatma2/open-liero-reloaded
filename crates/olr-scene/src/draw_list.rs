@@ -203,18 +203,22 @@ impl DrawList {
 
     /// A one-world-pixel block of `colour` at world pixel `(x, y)`.
     pub fn pixel(&mut self, layer: Layer, white: AtlasId, x: f32, y: f32, colour: Rgba) {
+        self.pixel_shaded(layer, white, (x, y), colour, Shade::LIT);
+    }
+
+    /// [`DrawList::pixel`] with a shade.
+    pub fn pixel_shaded(
+        &mut self,
+        layer: Layer,
+        white: AtlasId,
+        (x, y): (f32, f32),
+        colour: Rgba,
+        shade: Shade,
+    ) {
         let src = Rect { x: 0, y: 0, w: 1, h: 1 };
         self.sprite(
             layer,
-            Sprite {
-                atlas: white,
-                src,
-                pos: [x, y],
-                size: [1.0, 1.0],
-                flip: false,
-                tint: colour,
-                shade: Default::default(),
-            },
+            Sprite { atlas: white, src, pos: [x, y], size: [1.0, 1.0], flip: false, tint: colour, shade },
         );
     }
 
