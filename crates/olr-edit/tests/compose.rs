@@ -299,6 +299,54 @@ fn a_resize_moves_a_boxed_layer_and_relays_a_level_sized_one() {
     assert_eq!(art.get(3, 1), BROWN);
 }
 
+/// Batch A review I1: a level-sized layer moved off the origin keeps its
+/// pixels through a resize: it is pinned to its box and moved, as boxed
+/// layers are.
+#[test]
+fn a_moved_level_sized_layer_keeps_its_pixels_through_a_resize() {
+    use olr_edit::compose::resize_decoded;
+    use olr_edit::level::Paint;
+    let mut art = RgbaImage::new(10, 1);
+    for x in 0..10 {
+        art.set(x, 0, Rgba::rgb(x as u8 * 10, 0, 0));
+    }
+    let kind = ElementKind::Drawn {
+        material: ElementMaterial::Dirt,
+        at: (-5, 0),
+        size: None,
+        mixed: false,
+        back: false,
+    };
+    let mut e = element("m", kind);
+    let mut d = Decoded::Drawn { art: art.clone(), cells: None, back: None };
+    resize_decoded(&mut e, &mut d, (10, 1), 1, (5, 1), (0, 0), Material::Rock, &Paint::Colour(BLUE)).unwrap();
+    assert!(matches!(e.kind, ElementKind::Drawn { at: (-5, 0), size: Some((10, 1)), .. }), "{:?}", e.kind);
+    assert_eq!(d, Decoded::Drawn { art, cells: None, back: None });
+}
+
+/// Review Focus 3: a mixed layer's material file holding a palette index
+/// that is no material is an error naming it.
+#[test]
+fn a_bad_material_index_is_an_error_naming_it() {
+    let mut src = CompositionSource::default();
+    with_placed(
+        &mut src,
+        "m",
+        (0, 0),
+        None,
+        (2, 1),
+        &solid(2, 1, BROWN),
+        Some(&[Material::Dirt; 2]),
+        None,
+        ElementMaterial::Dirt,
+    );
+    let file = olr_format::levels::drawn_files("m", true, false)[1].clone();
+    let palette: Vec<u8> = (0..8 * 3).map(|i| i as u8).collect();
+    src.files.insert(file.clone(), image_io::encode_indexed(2, 1, &[7, 2], &palette));
+    let e = bake(&mut level(2, 1, 1), &src, &back_tile()).unwrap_err().to_string();
+    assert!(e.contains(&file) && e.contains("7"), "{e}");
+}
+
 #[test]
 fn an_empty_composition_is_open_air_over_the_theme_tile() {
     let mut l = level(4, 3, 2);

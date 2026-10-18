@@ -715,6 +715,14 @@ pub fn resize_decoded(
     let wrong = |what: &RgbaImage| {
         EditError::Art(what.width(), what.height(), format!("{:?} is not the level's art size", e.id))
     };
+    // A level-sized layer moved off the origin is pinned to its box
+    // first (batch A review I1): re-laid in its own frame it would lose
+    // pixels the new level still shows.
+    if let ElementKind::Drawn { at, size: boxed @ None, .. } = &mut e.kind
+        && *at != (0, 0)
+    {
+        *boxed = Some(old);
+    }
     // A boxed drawn layer only moves (plan 14d R2): its size is its own.
     let level_sized = !matches!(e.kind, ElementKind::Drawn { size: Some(_), .. });
     match d {
