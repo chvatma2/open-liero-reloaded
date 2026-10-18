@@ -228,7 +228,7 @@ fn agreement(mod_dir: &str, level_file: &str, seed: u32) {
                 counts[4] += 1;
                 1
             } else {
-                map.stain_image(x - 1, y - 1, &gibs, Rect { x: 4 * (tick % 5), y: 8, w: 4, h: 4 });
+                map.stain_image(x - 1, y - 1, &gibs, Rect { x: 4 * (tick % 5), y: 8, w: 4, h: 4 }, true);
                 counts[5] += 1;
                 4
             };

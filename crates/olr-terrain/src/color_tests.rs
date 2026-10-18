@@ -255,7 +255,7 @@ fn stains_paint_world_pixels_with_olx_clipping_and_colour_key() {
             |x, y| if (x + y) % 3 == 0 { Rgba::MAGENTA } else { Rgba::rgb(10 * x as u8, 10 * y as u8, 9) },
         );
     let mut c = color_map(&t, 2, theme(vec![], None));
-    c.stain_image(-1, 1, &sheet, Rect { x: 4, y: 8, w: 4, h: 4 });
+    c.stain_image(-1, 1, &sheet, Rect { x: 4, y: 8, w: 4, h: 4 }, true);
     for (x, y) in [(0u32, 1u32), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2)] {
         let (sx, sy) = (4 + x, 8 + y - 1);
         let expect = if (sx + sy) % 3 == 0 { None } else { Some(Rgba::rgb(10 * sx as u8, 10 * sy as u8, 9)) };
@@ -268,9 +268,30 @@ fn stains_paint_world_pixels_with_olx_clipping_and_colour_key() {
     assert!(matches!(block(&c, 3, 1), Block::Front));
     assert!(matches!(block(&c, 0, 0), Block::Front));
     // A source rect past the sheet is clipped; extreme positions are no-ops.
-    c.stain_image(0, 0, &sheet, Rect { x: 6, y: 10, w: 4, h: 4 });
-    c.stain_image(i32::MAX, i32::MIN, &sheet, Rect { x: 0, y: 0, w: u32::MAX, h: u32::MAX });
-    c.stain_image(0, 0, &sheet, Rect { x: u32::MAX, y: u32::MAX, w: 4, h: 4 });
+    c.stain_image(0, 0, &sheet, Rect { x: 6, y: 10, w: 4, h: 4 }, true);
+    c.stain_image(i32::MAX, i32::MIN, &sheet, Rect { x: 0, y: 0, w: u32::MAX, h: u32::MAX }, true);
+    c.stain_image(0, 0, &sheet, Rect { x: u32::MAX, y: u32::MAX, w: 4, h: 4 }, true);
+}
+
+/// The playtest's floating pixels: in play a gib stamps only over dirt and
+/// rock, so its pixels go when the dirt is dug; OLX (`on_air`) stamps the
+/// open air around it too, where nothing ever clears them.
+#[test]
+fn a_gib_stamps_only_solid_ground_in_play() {
+    let t = map(&[".D", ".D"]);
+    let red = Rgba::rgb(200, 0, 0);
+    let sheet = image(2, 2, |_, _| red);
+    let all = Rect { x: 0, y: 0, w: 2, h: 2 };
+    let mut c = color_map(&t, 1, theme(vec![], None));
+    c.stain_image(0, 0, &sheet, all, false);
+    assert!(
+        matches!(block(&c, 0, 0), Block::Front) && matches!(block(&c, 0, 1), Block::Front),
+        "air untouched"
+    );
+    assert!(matches!(block(&c, 1, 0), Block::Colour(k) if k == red));
+    let mut olx = color_map(&t, 1, theme(vec![], None));
+    olx.stain_image(0, 0, &sheet, all, true);
+    assert!(matches!(block(&olx, 0, 0), Block::Colour(k) if k == red), "OLX paints the air");
 }
 
 /// A deterministic edit sequence over a 24x16 map with a bit of everything.
@@ -320,7 +341,13 @@ fn dirty_rects_cover_every_change() {
                 c.stain(i as i32 % 26 - 1, i as i32 % 17, Rgba::rgb(200, 0, 0));
             }
             if i % 7 == 0 {
-                c.stain_image(i as i32 % 27 - 2, i as i32 % 19 - 2, &sheet, Rect { x: 0, y: 8, w: 4, h: 4 });
+                c.stain_image(
+                    i as i32 % 27 - 2,
+                    i as i32 % 19 - 2,
+                    &sheet,
+                    Rect { x: 0, y: 8, w: 4, h: 4 },
+                    i % 2 == 0,
+                );
             }
             let dirty: Vec<Rect> = c.take_dirty().collect();
             for r in &dirty {

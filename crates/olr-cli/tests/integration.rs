@@ -27,6 +27,7 @@ mod net_repro;
 mod net_soak;
 mod nostr_probe;
 mod scenario;
+mod stains;
 mod state_transfer;
 mod stress;
 mod tool_output;

@@ -226,8 +226,10 @@ impl ColorMap {
     /// world pixel per source pixel, with its top-left at world `(x, y)`.
     /// Magenta (the colour key) and fully transparent pixels are skipped.
     /// Kept quirk: clipped at the map's left or top edge, the source is still
-    /// read from its first column and row.
-    pub fn stain_image(&mut self, x: i32, y: i32, src: &RgbaImage, src_rect: Rect) {
+    /// read from its first column and row. With `on_air` (OLX, the oracle's
+    /// `olx_quirks`) it paints open air too, where nothing ever clears it
+    /// (the playtest's floating gib pixels); in play only rock and dirt.
+    pub fn stain_image(&mut self, x: i32, y: i32, src: &RgbaImage, src_rect: Rect, on_air: bool) {
         // Source clipping first; the destination box uses the requested size.
         let (sx0, sy0) = (src_rect.x.min(src.width()), src_rect.y.min(src.height()));
         let sw = src_rect.x.saturating_add(src_rect.w).min(src.width()) - sx0;
@@ -243,7 +245,8 @@ impl ColorMap {
         for row in 0..h {
             for col in 0..w {
                 let c = src.get(sx0 + col as u32, sy0 + row as u32);
-                if !c.same_rgb(Rgba::MAGENTA) && c.a != 0 {
+                let air = self.material.material(dx0 + col, dy0 + row) == Some(Material::Background);
+                if !c.same_rgb(Rgba::MAGENTA) && c.a != 0 && (on_air || !air) {
                     self.put((dx0 + col) as u32, (dy0 + row) as u32, c);
                 }
             }

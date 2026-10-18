@@ -20,7 +20,9 @@ is `docs/porting/olx-notes/presentation.md` §7 (and §2.2 for stains).
   (`Event::death`; other spawns and drips stop short of it, so every
   death shows; `death_spawns`/`death_drops` count them); with
   `SimSettings::olx_quirks` (the oracle's scenarios, render goldens,
-  `Fx::new`) OLX's `MAX_ENTITIES` and no reserve. `Fx::with_capacity` is
+  `Fx::new`) OLX's `MAX_ENTITIES` and no reserve. A landed gib stamps
+  only rock and dirt in play, open air too with `olx_quirks`
+  (`stain_image`'s `on_air`; STATUS.md, "A gib stamps only rock and dirt"). `Fx::with_capacity` is
   the performance envelope's knob (plan 8; a sixteenth reserved), never
   used by a game.
 - **Physics** (`entity.rs`): one `SimulateEntities` pass per sub-step,

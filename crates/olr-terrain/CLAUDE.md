@@ -24,7 +24,9 @@ and the colour image that follows it (`ColorMap`).
   generator) and the mask's rim. It keeps its own copy of the material
   (`material()`) and edits it after painting, so every rule reads the
   material before the edit, like OLX. `stain` (blood) and `stain_image`
-  (gibs, OLX's `DrawImageStretch2` clipping quirk) change only colour.
+  (gibs, OLX's `DrawImageStretch2` clipping quirk; `on_air` paints open
+  air as OLX does, else only rock and dirt: the floating gib pixels)
+  change only colour.
   `take_dirty()` drains art-px rectangles covering every change (at most
   `MAX_DIRTY`, merged beyond). `rebuild_area(area, &material)` is the only
   fallback for edits a tick dropped (`lost_area`). `replace_rect(r, front,

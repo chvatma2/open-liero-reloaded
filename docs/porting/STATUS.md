@@ -266,6 +266,17 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   WSL's GL 4.8-5.0), the GPU's own time +5 %; every native path still
   holds 144 Hz (6.9 ms). On the software renderer (llvmpipe) the stress
   run's 1440p frame p50 rose 10-29 % (6.0-6.3 ms to 6.5-7.8 ms).
+- **A gib stamps only rock and dirt (2026-10-18).** A slow gib that
+  lands stamps its 4 × 4 frame around the landing pixel
+  (`CMap::putSurfaceTo`, `src/client/Entity.cpp:373-389`), and OLX paints
+  the open air in that box too; digging clears only dirt, so those pixels
+  float for the rest of the match (the playtest's "blood and remains stuck
+  in the air": in a 4-bot Classic chaos match on Dirt Level, 62 cells
+  after 3000 ticks, all gib colours). In play (`Fx::for_match` without
+  `olx_quirks`) `ColorMap::stain_image` paints only rock and dirt; with
+  `olx_quirks` (scenarios, render goldens) it is OLX's. Blood already
+  stained only the pixel it hit, rock or dirt. Test: `olr-cli`'s
+  `no_effect_leaves_colour_on_open_air`.
 - **A death sound steals a voice (2026-10-13).** OLX skips a sound
   beyond its `maxplaying` (two of each death sound,
   `src/game/Sounds.cpp:25-30`, `src/sound/sfx.cpp:120-134`) or when no

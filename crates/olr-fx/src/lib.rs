@@ -77,6 +77,8 @@ impl<'a> FxTick<'a> {
 #[derive(Clone, Debug)]
 pub struct Fx {
     pool: Pool,
+    /// OLX's rules (`SimSettings::olx_quirks`): a gib stamps open air too.
+    olx_quirks: bool,
     /// The slots only a death's entities take ([`DEATH_RESERVE`] in play).
     reserve: usize,
     /// A death's entities spawned and dropped (for want of room) so far.
@@ -90,7 +92,14 @@ impl Fx {
     /// No entities, OLX's pool of [`MAX_ENTITIES`] with no reserve; `seed`
     /// seeds the entities' own `rand()`.
     pub fn new(seed: u32) -> Fx {
-        Fx { pool: Pool::new(), reserve: 0, death_spawns: 0, death_drops: 0, rand: GlibcRand::new(seed) }
+        Fx {
+            pool: Pool::new(),
+            olx_quirks: true,
+            reserve: 0,
+            death_spawns: 0,
+            death_drops: 0,
+            rand: GlibcRand::new(seed),
+        }
     }
 
     /// The pool for a match with these settings' `olx_quirks`: OLX's
@@ -107,7 +116,7 @@ impl Fx {
     pub fn with_capacity(seed: u32, capacity: usize) -> Fx {
         let pool = Pool::with_capacity(capacity);
         let reserve = pool.capacity() / 16;
-        Fx { pool, reserve, death_spawns: 0, death_drops: 0, rand: GlibcRand::new(seed) }
+        Fx { pool, olx_quirks: false, reserve, death_spawns: 0, death_drops: 0, rand: GlibcRand::new(seed) }
     }
 
     /// The pool's size.
@@ -220,7 +229,7 @@ impl Fx {
                 }
                 Landed::Stamp { x, y, worm, rotation } => {
                     let src = olr_terrain::Rect { x: (rotation as u32).wrapping_mul(4), y: 8, w: 4, h: 4 };
-                    color.stain_image(x, y, assets.gibs(worm).1, src);
+                    color.stain_image(x, y, assets.gibs(worm).1, src, self.olx_quirks);
                     self.pool.remove(i);
                 }
             }
