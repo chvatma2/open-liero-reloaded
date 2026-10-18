@@ -306,8 +306,11 @@ fn a_shared_grid_counts_once() {
     let item = doc.items()[doc.index_of("tiny").unwrap()].clone();
     let Decoded::Image { grid: Some(grid), .. } = &item.decoded else { panic!("a shown image") };
     let grid_bytes = grid.as_raw().len();
-    let snapshot =
-        |item: &olr_editor::Item| olr_editor::history::Snapshot { item: item.clone(), original: None };
+    let snapshot = |item: &olr_editor::Item| olr_editor::history::Snapshot {
+        item: item.clone(),
+        original: None,
+        glow_mask: None,
+    };
     let mut h = History::new();
     h.push(vec![Edit::Remove { index: 2, item: Box::new(snapshot(&item)) }]);
     let one = h.bytes();

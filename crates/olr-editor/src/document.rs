@@ -94,6 +94,13 @@ pub struct Document {
 pub(crate) struct Kept {
     pub(crate) glow: Option<GlowLayers>,
     pub(crate) clear: Option<Vec<u8>>,
+    /// The look's group ids the glow's group map numbers (1 + index).
+    pub(crate) ids: Vec<String>,
+}
+
+/// The look's glow group ids, in order.
+fn group_ids(l: &LevelSource) -> Vec<String> {
+    l.look.iter().flat_map(|k| k.glow_groups.iter().map(|g| g.id.clone())).collect()
 }
 
 /// A document's pack, not yet made ([`Document::snapshot`]).
@@ -164,7 +171,22 @@ fn pack_of(
     if rebaked {
         refresh_thumb(&mut level);
     }
-    let composition = Composition { elements: items.iter().map(|i| i.element.clone()).collect() };
+    let fits = |e: &Element| {
+        let n = element_box(&e.kind, level.size)
+            .map(|(_, b)| (b.0 * level.art_scale) as usize * (b.1 * level.art_scale) as usize);
+        glow_masks.get(&e.id).is_some_and(|m| Some(m.len()) == n)
+    };
+    let elements = items
+        .iter()
+        .map(|i| {
+            let mut e = i.element.clone();
+            if let Some(g) = e.glow.as_mut().filter(|g| g.mask && !fits(&i.element)) {
+                g.mask = false;
+            }
+            e
+        })
+        .collect();
+    let composition = Composition { elements };
     Pack {
         manifest: manifest.clone(),
         source: Source::Level(level),
@@ -202,8 +224,11 @@ impl Document {
         let src = composition.unwrap_or_else(|| olr_edit::compose::split_from(&level));
         check_composition(&src, level.size, level.art_scale).map_err(|e| DocError::Bad(e.to_string()))?;
         let glow_masks = decode_glow_masks(&src, level.size, level.art_scale)?;
-        let kept = (plain && (level.glow.is_some() || level.clear.is_some()))
-            .then(|| Kept { glow: level.glow.clone(), clear: level.clear.clone() });
+        let kept = (plain && (level.glow.is_some() || level.clear.is_some())).then(|| Kept {
+            glow: level.glow.clone(),
+            clear: level.clear.clone(),
+            ids: group_ids(&level),
+        });
         let mut cache = ImageCache::new();
         let items = src
             .composition
@@ -300,13 +325,38 @@ impl Document {
             let cells = self.level.material.len();
             let art = (self.level.front.width(), self.level.front.height());
             if !self.items.iter().any(|i| i.element.glow.is_some()) {
-                self.level.glow = k.glow.clone().filter(|g| g.fits(art, self.level.size));
+                // Its groups follow the look by id: a group gone lights nothing.
+                let now = group_ids(&self.level);
+                let map: Vec<u8> = std::iter::once(0)
+                    .chain(k.ids.iter().map(|id| now.iter().position(|n| n == id).map_or(0, |i| i as u8 + 1)))
+                    .collect();
+                let remap = |v: &mut u8| *v = map.get(usize::from(*v)).copied().unwrap_or(0);
+                self.level.glow = k.glow.clone().filter(|g| g.fits(art, self.level.size)).map(|mut g| {
+                    g.groups.iter_mut().for_each(remap);
+                    g.groups_back.iter_mut().for_each(remap);
+                    g
+                });
             }
             if !self.items.iter().any(|i| i.element.clear) {
                 self.level.clear = k.clear.clone().filter(|c| c.len() == cells);
             }
         }
         self.rebaked = true;
+    }
+
+    /// After a whole change (a resize, an art scale, their undo): a plain
+    /// level's kept glow and clear flags are the level's as re-laid with it.
+    pub(crate) fn keep_from_level(&mut self) {
+        let glows = self.items.iter().any(|i| i.element.glow.is_some());
+        let clears = self.items.iter().any(|i| i.element.clear);
+        if let Some(k) = &mut self.kept {
+            if !glows {
+                (k.glow, k.ids) = (self.level.glow.clone(), group_ids(&self.level));
+            }
+            if !clears {
+                k.clear = self.level.clear.clone();
+            }
+        }
     }
 
     /// Element `id`'s painted glow mask (its box at art resolution), if any.

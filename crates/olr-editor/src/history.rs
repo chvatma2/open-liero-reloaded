@@ -100,12 +100,13 @@ impl Patch {
     }
 }
 
-/// An element with its decoded data and, for an image, its original's
-/// name and bytes.
+/// An element with its decoded data, for an image its original's name and
+/// bytes, and its painted glow mask (plan 15a).
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     pub item: Item,
     pub original: Option<(String, Arc<Vec<u8>>)>,
+    pub glow_mask: Option<Arc<Vec<u8>>>,
 }
 
 /// The level's settings besides its size and art scale.
@@ -116,11 +117,13 @@ pub struct LevelMeta {
     pub theme: String,
 }
 
-/// The whole document: the level (with its bake) and the items.
+/// The whole document: the level (with its bake), the items and their
+/// glow masks.
 #[derive(Clone, Debug)]
 pub struct Whole {
     pub level: LevelSource,
     pub items: Vec<Item>,
+    pub masks: olr_edit::compose::GlowMasks,
 }
 
 /// Bytes an image holds.
@@ -167,7 +170,9 @@ impl Edit {
             Edit::Move { from, to } => from == to,
             Edit::Objects { before, after } => before == after,
             Edit::Meta { before, after } => before == after,
-            Edit::Whole { before, after } => before.level == after.level && before.items == after.items,
+            Edit::Whole { before, after } => {
+                before.level == after.level && before.items == after.items && before.masks == after.masks
+            }
             Edit::Look { before, after } => before == after,
             Edit::GlowMask { before, after, .. } => before == after,
         }
@@ -194,20 +199,23 @@ impl Edit {
             }
             Edit::Whole { before, after } => before.bytes() + after.bytes(),
             Edit::Look { .. } => 2 * std::mem::size_of::<LookSource>(),
-            Edit::GlowMask { before, after, .. } => {
-                before.as_ref().map_or(0, |m| m.len()) + after.as_ref().map_or(0, |m| m.len())
-            }
+            // Masks count once each, by address, as grids do (`grids`).
+            Edit::GlowMask { .. } => 0,
         }
     }
 
     /// The image grids the edit holds, by address, with their bytes.
     fn grids(&self) -> Vec<(usize, usize)> {
+        let mask = |m: &Arc<Vec<u8>>| (Arc::as_ptr(m) as usize, m.len());
         match self {
             Edit::Insert { item: s, .. } | Edit::Remove { item: s, .. } => {
-                grids(std::iter::once(&s.item)).collect()
+                grids(std::iter::once(&s.item)).chain(s.glow_mask.iter().map(mask)).collect()
             }
-            Edit::Whole { before, after } => grids(before.items.iter().chain(&after.items)).collect(),
+            Edit::Whole { before, after } => grids(before.items.iter().chain(&after.items))
+                .chain(before.masks.values().chain(after.masks.values()).map(mask))
+                .collect(),
             Edit::Layer { before, after, .. } => grids([&**before, &**after].into_iter()).collect(),
+            Edit::GlowMask { before, after, .. } => before.iter().chain(after).map(mask).collect(),
             _ => Vec::new(),
         }
     }

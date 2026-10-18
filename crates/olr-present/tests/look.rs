@@ -384,3 +384,28 @@ fn a_muzzle_light_runs_its_curve() {
     assert!(longest.len() >= 5, "{longest:?}");
     assert!(longest.windows(2).all(|w| w[1] <= w[0]), "it fades: {longest:?}");
 }
+
+/// Batch D review Important 3: a weapon firing every few ticks keeps one
+/// muzzle light, restarted by each shot, not one per shot stacked.
+#[test]
+fn muzzle_lights_do_not_stack() {
+    let Some(content) = content() else { return };
+    let (sc, _) = olr_scenario::load_fixture(&fixtures(), "fire-minigun").unwrap();
+    let weapons = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap().sim.weapons().len();
+    let key = |at_ms, level| Key { at_ms, level, colour: None };
+    let muzzle = Light {
+        colour: [0, 255, 0],
+        intensity: 100,
+        reach: Reach::Pixels(64),
+        animation: Animation::Keys { keys: vec![key(0, 100), key(200, 0)], looped: false },
+        phase_ms: None,
+    };
+    let weapon = olr_look::WeaponLook { muzzle_light: Some(muzzle) };
+    let look = ModLook { projectiles: Vec::new(), weapons: vec![Some(weapon); weapons] };
+    let mut most = 0;
+    play_with(&content, "fire-minigun", None, Some(look), |p, _, _, _| {
+        let n = p.look().unwrap().lights.iter().filter(|l| l.colour[0] == 0.0 && l.colour[1] > 0.0).count();
+        most = most.max(n);
+    });
+    assert_eq!(most, 1, "one worm fires: one muzzle light");
+}

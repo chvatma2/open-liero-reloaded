@@ -411,8 +411,11 @@ impl EditorHost {
     /// the copy is written when they have waited `RECOVERY_INTERVAL` since
     /// the first tick that saw them (or since the last copy).
     pub fn tick(&mut self, now: Instant) -> Vec<HostOut> {
+        // At most a tenth of a second a frame: a Play (no editor frames)
+        // does not jump the clock by its whole length.
         if let Some(last) = self.last_frame.replace(now) {
-            self.state.advance_clock(now.saturating_duration_since(last).as_secs_f64() * 1000.0);
+            let ms = now.saturating_duration_since(last).as_secs_f64() * 1000.0;
+            self.state.advance_clock(ms.min(100.0));
         }
         let mut out = match &self.recovery_job {
             Some(job) if job.is_finished() => self.wait_recovery(),

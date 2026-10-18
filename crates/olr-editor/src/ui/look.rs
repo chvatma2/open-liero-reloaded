@@ -27,7 +27,7 @@ fn hex(c: Colour) -> String {
 /// `#rrggbb` or `rrggbb` as an opaque colour.
 fn parse_hex(s: &str) -> Option<Colour> {
     let s = s.trim().trim_start_matches('#');
-    if s.len() != 6 || !s.is_ascii() {
+    if s.len() != 6 || !s.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
     let v = |i: usize| u8::from_str_radix(&s[i..i + 2], 16).ok();
@@ -312,7 +312,7 @@ pub(super) fn element_glow(
         let glow = on.then(|| ElementGlow { strength: 100, group: String::new(), mask: false });
         set_glow(out, glow);
     }
-    if let Some(g) = &e.glow {
+    if let Some(g) = e.glow.as_ref().filter(|_| !e.locked) {
         let key = format!("{}/glow", e.id);
         if let Some(v) = number(ui, data, &key, labels::GLOW_STRENGTH, g.strength.into(), 1..=100) {
             set_glow(out, Some(ElementGlow { strength: v as u8, ..g.clone() }));
@@ -427,7 +427,7 @@ pub(super) fn toolbar_row(
     if ui.button(label).on_hover_text("run the lights' animations").clicked() {
         out.push(EditorAction::Clock(action));
     }
-    // Whole milliseconds; a running clock shows its time, scrubbing stops it.
+    // Whole milliseconds; a running clock shows its time and runs on from a scrub.
     let now = state.clock_ms().floor() as i64;
     if let Some(t) = number(ui, data, "clock", labels::CLOCK_SCRUB, now, 0..=86_400_000) {
         out.push(EditorAction::Clock(ClockAction::Scrub(t as f64)));

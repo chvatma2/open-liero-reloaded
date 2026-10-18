@@ -29,8 +29,8 @@ const MEMORY_MS: f64 = 2000.0;
 /// tick cost bounded time.
 const MEMORY: usize = 8192;
 
-/// The most flashes, and muzzle lights, showing at once (start order);
-/// later ones are not started. More than a frame can draw.
+/// The most end flashes showing at once (start order); later ones are not
+/// started. More than a frame can draw. Muzzle lights are one a worm.
 const ACTIVE: usize = 4 * MAX_LIGHTS;
 
 /// The longest a flash or muzzle light shows, ms (a looping one ends here).
@@ -149,7 +149,10 @@ impl Dynamic {
         }
         for s in scene.shots() {
             let at = s.at.0 as f64;
-            if self.muzzles.len() < ACTIVE && self.shot.start((s.worm, s.at.0), at, t_ms) {
+            if self.shot.start((s.worm, s.at.0), at, t_ms) {
+                // One muzzle light a worm: a new shot restarts it (a held
+                // rapid-fire weapon never stacks them, batch D review 3).
+                self.muzzles.retain(|m| m.worm != s.worm);
                 let identity = s.worm as u64;
                 self.muzzles.push(Showing {
                     def: s.weapon,

@@ -781,7 +781,8 @@ impl EditorState {
                 if now == (at, size) {
                     return Vec::new();
                 }
-                let first = match doc.set(&id, Property::Size(now.1)) {
+                // The size (its glow mask fitted with it, plan 15a), then the place.
+                let (first, first_dirty) = match doc.set_property(&id, Property::Size(now.1)) {
                     Ok(c) => c,
                     Err(e) => {
                         self.status.message = Some(e.to_string());
@@ -790,14 +791,17 @@ impl EditorState {
                 };
                 match doc.set(&id, Property::At(now.0)) {
                     Ok(second) => {
-                        let dirty = Rect::union(Some(first.dirty), second.dirty);
-                        self.history.push(vec![first.edit, second.edit]);
+                        let dirty = Rect::union(Some(first_dirty), second.dirty);
+                        self.history.push(first.into_iter().chain([second.edit]).collect());
                         self.committed(dirty)
                     }
                     Err(e) => {
-                        let dirty = doc.apply(&first.edit, false);
+                        let mut dirty = None;
+                        for edit in first.iter().rev() {
+                            dirty = Some(Rect::union(dirty, doc.apply(edit, false)));
+                        }
                         self.status.message = Some(e.to_string());
-                        vec![EditorCommand::Upload(dirty)]
+                        vec![EditorCommand::Upload(dirty.unwrap_or(NOTHING))]
                     }
                 }
             }

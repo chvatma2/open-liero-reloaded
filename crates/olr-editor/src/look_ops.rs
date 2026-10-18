@@ -19,6 +19,70 @@ use crate::document::{DocError, Document};
 use crate::history::Edit;
 use crate::ops::{Change, NOTHING, with_property};
 
+/// What a glow stroke starts from: an element's mask, and whether its glow
+/// uses one.
+pub type GlowStrokeStart = (Option<Arc<Vec<u8>>>, bool);
+
+/// `mask`, the glow mask of a box `from` (world origin, size) at art scale
+/// `s`, laid on box `to` by world position: what falls outside `from`
+/// keeps everything (255). A crop or a level resize moves a mask this way.
+pub fn relay_mask(
+    mask: &[u8],
+    from: ((i32, i32), (u32, u32)),
+    to: ((i32, i32), (u32, u32)),
+    s: u32,
+) -> Vec<u8> {
+    let s = s.max(1) as i64;
+    let (fw, fh) = (i64::from(from.1.0) * s, i64::from(from.1.1) * s);
+    let (tw, th) = (i64::from(to.1.0) * s, i64::from(to.1.1) * s);
+    let mut out = vec![255u8; (tw * th).max(0) as usize];
+    if mask.len() as i64 != fw * fh {
+        return out;
+    }
+    // Art pixel (x, y) of `to` is art pixel (x + dx, y + dy) of `from`.
+    let dx = (i64::from(to.0.0) - i64::from(from.0.0)) * s;
+    let dy = (i64::from(to.0.1) - i64::from(from.0.1)) * s;
+    for y in 0..th {
+        let fy = y + dy;
+        if !(0..fh).contains(&fy) {
+            continue;
+        }
+        for x in 0..tw {
+            let fx = x + dx;
+            if (0..fw).contains(&fx) {
+                out[(y * tw + x) as usize] = mask[(fy * fw + fx) as usize];
+            }
+        }
+    }
+    out
+}
+
+/// `mask` (`from` art pixels) resampled to `to` art pixels, nearest: a
+/// resized image's, or another art scale's. One of another size than
+/// `from` keeps everything (255).
+pub fn resample_mask(mask: &[u8], from: (u32, u32), to: (u32, u32)) -> Vec<u8> {
+    let n = to.0 as usize * to.1 as usize;
+    if mask.len() != from.0 as usize * from.1 as usize || from.0 == 0 || from.1 == 0 {
+        return vec![255; n];
+    }
+    let mut out = Vec::with_capacity(n);
+    for y in 0..to.1 as u64 {
+        let fy = (y * u64::from(from.1) / u64::from(to.1.max(1))) as usize;
+        for x in 0..to.0 as u64 {
+            let fx = (x * u64::from(from.0) / u64::from(to.0.max(1))) as usize;
+            out.push(mask[fy * from.0 as usize + fx]);
+        }
+    }
+    out
+}
+
+/// `look` (or a new one) with a new glow group `id` (a pasted glow's).
+pub(crate) fn with_group(look: Option<LookSource>, id: &str) -> LookSource {
+    let mut look = look.unwrap_or_default();
+    look.glow_groups.push(new_group(id.to_string()));
+    look
+}
+
 /// A light the Light tool places: warm white, 100 %, 96 world pixels, radius 2.
 pub fn new_light() -> LightSource {
     LightSource {
@@ -81,7 +145,7 @@ impl Document {
 
     /// The edits that make the look `after`, unglowing every element that
     /// names a group `after` lacks (and dropping its mask): checked.
-    fn look_edits(&self, after: Option<LookSource>) -> Result<Vec<Edit>, DocError> {
+    pub(crate) fn look_change(&self, after: Option<LookSource>) -> Result<Vec<Edit>, DocError> {
         self.check_look(after.as_ref(), &self.level.objects)?;
         let kept: Vec<&str> =
             after.iter().flat_map(|l| l.glow_groups.iter().map(|g| g.id.as_str())).collect();
@@ -136,7 +200,7 @@ impl Document {
             g.group = self.new_group_id(if g.group.is_empty() { id } else { &g.group });
             let mut look = self.level.look.clone().unwrap_or_default();
             look.glow_groups.push(new_group(g.group.clone()));
-            edits.extend(self.look_edits(Some(look))?);
+            edits.extend(self.look_change(Some(look))?);
         }
         let before = self.items[index].element.clone();
         let mut after = before.clone();
@@ -149,10 +213,34 @@ impl Document {
         Ok(self.apply_all(edits))
     }
 
+    /// Sets one property of element `id` (`Document::set`), and fits its
+    /// glow mask to a new box size in the same step (resampled, nearest).
+    pub fn set_property(&mut self, id: &str, property: Property) -> Result<(Vec<Edit>, Rect), DocError> {
+        let size = self.level.size;
+        let s = self.level.art_scale;
+        let before = self.index_of(id).map(|i| self.items[i].element.clone());
+        let change = self.set(id, property)?;
+        let mut edits = vec![change.edit];
+        let mut dirty = change.dirty;
+        if let (Some(was), Some(i)) = (before, self.index_of(id))
+            && let Some(m) = self.glow_masks.get(id).cloned()
+            && let (Some((_, ob)), Some((_, nb))) =
+                (element_box(&was.kind, size), element_box(&self.items[i].element.kind, size))
+            && ob != nb
+        {
+            let after = Arc::new(resample_mask(&m, (ob.0 * s, ob.1 * s), (nb.0 * s, nb.1 * s)));
+            let edit = Edit::GlowMask { id: id.into(), before: Some(m), after: Some(after) };
+            let r = self.apply(&edit, true);
+            dirty = Rect::union(Some(dirty), r);
+            edits.push(edit);
+        }
+        Ok((edits, dirty))
+    }
+
     /// Replaces the look (settings and groups; `None` removes it). Elements
     /// naming a group it no longer has lose their glow, in the same step.
     pub fn set_look(&mut self, look: Option<LookSource>) -> Result<(Vec<Edit>, Rect), DocError> {
-        let edits = self.look_edits(look)?;
+        let edits = self.look_change(look)?;
         Ok(self.apply_all(edits))
     }
 
@@ -228,7 +316,7 @@ impl Document {
     /// What a glow stroke into `id` starts from: its mask and whether the
     /// element's glow uses one. Refused for an element without a glow, a
     /// locked or a raster one.
-    pub fn glow_stroke_before(&self, id: &str) -> Result<(Option<Arc<Vec<u8>>>, bool), DocError> {
+    pub fn glow_stroke_before(&self, id: &str) -> Result<GlowStrokeStart, DocError> {
         let index = self.unlocked(id)?;
         let e = &self.items[index].element;
         let Some(g) = &e.glow else {
@@ -253,7 +341,9 @@ impl Document {
         };
         let n = b.0 as usize * s as usize * b.1 as usize * s as usize;
         let mask = self.glow_masks.entry(id.to_string()).or_insert_with(|| Arc::new(vec![255; n]));
-        if mask.len() != n {
+        // A mask that no longer fits starts again whole: all of it changes.
+        let reset = mask.len() != n;
+        if reset {
             *mask = Arc::new(vec![255; n]);
         }
         let value = ((u32::from(strength.min(100)) * 255 + 50) / 100) as u8;
@@ -261,7 +351,11 @@ impl Document {
         if let Some(g) = self.items[index].element.glow.as_mut() {
             g.mask = true;
         }
-        let rect = shape_bounds(shape, self.level.size).unwrap_or(NOTHING);
+        let rect = if reset {
+            self.element_rect(&self.items[index].element)
+        } else {
+            shape_bounds(shape, self.level.size).unwrap_or(NOTHING)
+        };
         if rect.w > 0 && rect.h > 0 {
             self.rebake(rect);
         }
@@ -271,7 +365,7 @@ impl Document {
     /// The step a glow stroke into `id` made, from what it started from
     /// (`glow_stroke_before`): the glow's mask flag, then the mask. Empty
     /// when it changed nothing.
-    pub fn glow_stroke_edits(&self, id: &str, before: (Option<Arc<Vec<u8>>>, bool)) -> Vec<Edit> {
+    pub fn glow_stroke_edits(&self, id: &str, before: GlowStrokeStart) -> Vec<Edit> {
         let Some(index) = self.index_of(id) else { return Vec::new() };
         let after_mask = self.glow_masks.get(id).cloned();
         if after_mask == before.0 {

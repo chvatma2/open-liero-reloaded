@@ -277,7 +277,7 @@ impl Document {
         let index = self.items.len();
         Ok(self.change(Edit::Insert {
             index,
-            item: Box::new(Snapshot { item, original: Some((source, bytes)) }),
+            item: Box::new(Snapshot { item, original: Some((source, bytes)), glow_mask: None }),
         }))
     }
 
@@ -332,7 +332,14 @@ impl Document {
                     }
                     _ => None,
                 };
-                Snapshot { item, original }
+                // Its mask, re-laid on the cropped box.
+                let from = &self.items[i].element;
+                let glow_mask = self.glow_mask(&from.id).and_then(|m| {
+                    let old = olr_format::levels::element_box(&from.kind, size)?;
+                    let new = olr_format::levels::element_box(&item.element.kind, size)?;
+                    Some(Arc::new(crate::look_ops::relay_mask(m, old, new, s)))
+                });
+                Snapshot { item, original, glow_mask }
             })
             .collect()
     }
@@ -353,7 +360,7 @@ impl Document {
         for snap in items {
             match self.paste_one(snap, from, offset) {
                 Ok((edit, id)) => {
-                    edits.push(edit);
+                    edits.extend(edit);
                     ids.push(id);
                 }
                 Err(e) => {
@@ -370,7 +377,7 @@ impl Document {
         snap: &Snapshot,
         from: u32,
         offset: (i32, i32),
-    ) -> Result<(Edit, String), DocError> {
+    ) -> Result<(Vec<Edit>, String), DocError> {
         let (size, to) = (self.level.size, self.level.art_scale);
         let from = from.clamp(1, MAX_ART_SCALE);
         let stray = self.stray_files();
@@ -449,9 +456,30 @@ impl Document {
             (d, _) => d,
         };
         let id = e.id.clone();
+        // A glow naming a group this level's look lacks gets it (plan 15a,
+        // batch D review 1): the paste glows as the copy did.
+        let mut edits = Vec::new();
+        if let Some(g) = &e.glow
+            && !self.level.look.iter().any(|l| l.glow_groups.iter().any(|x| x.id == g.group))
+        {
+            let look = crate::look_ops::with_group(self.level.look.clone(), &g.group);
+            for edit in self.look_change(Some(look))? {
+                self.apply(&edit, true);
+                edits.push(edit);
+            }
+        }
+        // Its mask, fitted to its box here (another art scale resamples it).
+        let glow_mask = snap.glow_mask.as_ref().and_then(|m| {
+            let (_, b) = olr_format::levels::element_box(&e.kind, size)?;
+            let (_, ob) = olr_format::levels::element_box(&snap.item.element.kind, size)?;
+            let (old, new) = ((ob.0 * from, ob.1 * from), (b.0 * to, b.1 * to));
+            Some(Arc::new(crate::look_ops::resample_mask(m, old, new)))
+        });
         let item = Item { element: e, decoded };
         let index = self.items.len();
-        Ok((self.change(Edit::Insert { index, item: Box::new(Snapshot { item, original }) }).edit, id))
+        let snapshot = Snapshot { item, original, glow_mask };
+        edits.push(self.change(Edit::Insert { index, item: Box::new(snapshot) }).edit);
+        Ok((edits, id))
     }
 
     /// `rect` (level pixels) of drawn layer `id`, within its box (plan 14e
@@ -556,7 +584,14 @@ impl Document {
         let id = element.id.clone();
         let index = self.items.len();
         let item = Item { element, decoded };
-        Ok((self.change(Edit::Insert { index, item: Box::new(Snapshot { item, original: None }) }).edit, id))
+        Ok((
+            self.change(Edit::Insert {
+                index,
+                item: Box::new(Snapshot { item, original: None, glow_mask: None }),
+            })
+            .edit,
+            id,
+        ))
     }
 
     /// An empty drawn layer on top.
@@ -579,7 +614,10 @@ impl Document {
             decoded: Decoded::Drawn { art: RgbaImage::new(w * s, h * s), cells: None, back: None },
         };
         let index = self.items.len();
-        Ok(self.change(Edit::Insert { index, item: Box::new(Snapshot { item, original: None }) }))
+        Ok(self.change(Edit::Insert {
+            index,
+            item: Box::new(Snapshot { item, original: None, glow_mask: None }),
+        }))
     }
 
     /// Splits element `id` (unlocked, visible) into Background, Dirt and
@@ -618,10 +656,14 @@ impl Document {
             ElementKind::Image { source, .. } => Some((source.clone(), b)),
             _ => None,
         });
-        let mut edits = vec![Edit::Remove { index, item: Box::new(Snapshot { item, original }) }];
+        let glow_mask = self.glow_masks.get(&item.element.id).cloned();
+        let mut edits = vec![Edit::Remove { index, item: Box::new(Snapshot { item, original, glow_mask }) }];
         for (k, (element, decoded)) in parts.into_iter().enumerate() {
             let item = Item { element, decoded };
-            edits.push(Edit::Insert { index: index + k, item: Box::new(Snapshot { item, original: None }) });
+            edits.push(Edit::Insert {
+                index: index + k,
+                item: Box::new(Snapshot { item, original: None, glow_mask: None }),
+            });
         }
         for e in &edits {
             self.apply(e, true);
@@ -658,7 +700,14 @@ impl Document {
             _ => None,
         });
         let edits = vec![
-            Edit::Remove { index: upper, item: Box::new(Snapshot { item: up, original }) },
+            Edit::Remove {
+                index: upper,
+                item: Box::new(Snapshot {
+                    glow_mask: self.glow_masks.get(&up.element.id).cloned(),
+                    item: up,
+                    original,
+                }),
+            },
             Edit::Layer {
                 index: lower,
                 before: Box::new(self.items[lower].clone()),
@@ -741,7 +790,8 @@ impl Document {
             }
             _ => None,
         };
-        Ok(self.change(Edit::Remove { index, item: Box::new(Snapshot { item, original }) }))
+        let glow_mask = self.glow_masks.get(id).cloned();
+        Ok(self.change(Edit::Remove { index, item: Box::new(Snapshot { item, original, glow_mask }) }))
     }
 
     /// The first of `ids` that is locked, as the refusal naming it.
@@ -1156,7 +1206,7 @@ impl Document {
     }
 
     fn whole(&self) -> Whole {
-        Whole { level: self.level.clone(), items: self.items.clone() }
+        Whole { level: self.level.clone(), items: self.items.clone(), masks: self.glow_masks.clone() }
     }
 
     /// As `olr-cli level resize`: the elements follow (`resize_decoded`),
@@ -1197,8 +1247,22 @@ impl Document {
         }
         let elements: Vec<Element> = items.iter().map(|i| i.element.clone()).collect();
         self.check(&elements, size, s)?;
+        // Glow masks follow their layers: a level-sized layer's content
+        // moves by `offset` into its new box, a box keeps its own.
+        let mut masks = self.glow_masks.clone();
+        for (was, now) in self.items.iter().zip(&items) {
+            let Some(m) = self.glow_masks.get(&was.element.id) else { continue };
+            let (Some((at, b)), Some(new)) = (
+                olr_format::levels::element_box(&was.element.kind, old),
+                olr_format::levels::element_box(&now.element.kind, size),
+            ) else {
+                continue;
+            };
+            let moved = ((at.0.saturating_add(offset.0), at.1.saturating_add(offset.1)), b);
+            masks.insert(now.element.id.clone(), Arc::new(crate::look_ops::relay_mask(m, moved, new, s)));
+        }
         let before = Box::new(self.whole());
-        Ok(self.change(Edit::Whole { before, after: Box::new(Whole { level, items }) }))
+        Ok(self.change(Edit::Whole { before, after: Box::new(Whole { level, items, masks }) }))
     }
 
     /// Rescales drawn and raster layers (`rescale_art`) and reprocesses images.
@@ -1246,8 +1310,24 @@ impl Document {
         }
         self.level.art_scale = old;
         result?;
+        // Glow masks and the level's own glow (a plain level's) at the new scale.
+        let mut masks = self.glow_masks.clone();
+        for i in &items {
+            if let (Some(m), Some((_, b))) =
+                (self.glow_masks.get(&i.element.id), olr_format::levels::element_box(&i.element.kind, (w, h)))
+            {
+                let m = crate::look_ops::resample_mask(m, (b.0 * from, b.1 * from), (b.0 * to, b.1 * to));
+                masks.insert(i.element.id.clone(), Arc::new(m));
+            }
+        }
+        if let Some(g) = level.glow.as_mut() {
+            let (from_art, to_art) = ((w * from, h * from), (w * to, h * to));
+            g.front = crate::look_ops::resample_mask(&g.front, from_art, to_art);
+            g.back = crate::look_ops::resample_mask(&g.back, from_art, to_art);
+            g.art = to_art;
+        }
         let before = Box::new(self.whole());
-        Ok(self.change(Edit::Whole { before, after: Box::new(Whole { level, items }) }))
+        Ok(self.change(Edit::Whole { before, after: Box::new(Whole { level, items, masks }) }))
     }
 
     /// An image element's original bytes.
@@ -1396,14 +1476,19 @@ impl Document {
             }
             Edit::Insert { index, item } | Edit::Remove { index, item } => {
                 let insert = matches!(edit, Edit::Insert { .. }) == forward;
+                let id = &item.item.element.id;
                 if insert {
                     if let Some((name, bytes)) = &item.original {
                         self.originals.insert(name.clone(), bytes.clone());
+                    }
+                    if let Some(m) = &item.glow_mask {
+                        self.glow_masks.insert(id.clone(), m.clone());
                     }
                     let at = (*index).min(self.items.len());
                     self.items.insert(at, item.item.clone());
                 } else if *index < self.items.len() {
                     self.items.remove(*index);
+                    self.glow_masks.remove(id);
                 }
                 self.element_rect(&item.item.element)
             }
@@ -1438,6 +1523,8 @@ impl Document {
                 let w = if forward { after } else { before };
                 self.level = w.level.clone();
                 self.items = w.items.clone();
+                self.glow_masks = w.masks.clone();
+                self.keep_from_level();
                 self.all()
             }
             Edit::Look { before, after } => {

@@ -712,7 +712,7 @@ impl EditorState {
             }
             EditorAction::Remove if self.pixel_rect.is_some() => self.erase_pixels(),
             EditorAction::Paste => self.paste(),
-            EditorAction::Set(id, property) => self.edit(|d| d.set(&id, property)),
+            EditorAction::Set(id, property) => self.edits(|d| d.set_property(&id, property)),
             EditorAction::SetGlow { id, glow } => self.edits(|d| d.set_glow(&id, glow)),
             EditorAction::SetLook(look) => self.edits(|d| d.set_look(look)),
             EditorAction::AddGroup(group) => self.edits(|d| d.add_group(group)),

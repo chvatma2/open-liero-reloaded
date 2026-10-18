@@ -261,3 +261,149 @@ fn a_plain_level_keeps_its_glow_and_clear() {
     assert_eq!(saved.name, "Renamed", "saved where it was read back");
     assert_eq!((saved.glow, saved.clear), (src.glow, src.clear));
 }
+
+/// Element `id` given a glow and a dab of the brush at `at`, then selected.
+fn paint_glow_on(s: &mut olr_editor::EditorState, id: &str, at: (i32, i32)) {
+    let glow = ElementGlow { strength: 100, group: String::new(), mask: false };
+    run(s, A::SetGlow { id: id.into(), glow: Some(glow) });
+    run(s, A::Select(Selection::Element(id.into())));
+    run(s, A::Tool(Tool::Glow));
+    run(s, A::GlowStrength(0));
+    let p = |kind| A::Pointer { kind, world: at, shift: false, toggle: false };
+    run(s, p(PointerKind::Down));
+    run(s, p(PointerKind::Up));
+    assert!(s.document().unwrap().glow_mask(id).is_some());
+}
+
+/// The mask fits its element's box (× art scale), and the pack saves clean.
+fn saves_clean(s: &mut olr_editor::EditorState, id: &str) {
+    let doc = s.document().unwrap();
+    let e = &doc.items()[doc.index_of(id).unwrap()].element;
+    let (_, b) = olr_format::levels::element_box(&e.kind, doc.level().size).unwrap();
+    let a = doc.level().art_scale;
+    let mask = doc.glow_mask(id).expect("the mask is kept");
+    assert_eq!(mask.len() as u32, b.0 * a * b.1 * a, "the mask fits the box");
+    let dir = doc.dir().to_path_buf();
+    let cmds = run(s, A::Save);
+    assert!(!s.dirty(), "saved: {cmds:?} {:?}", s.dialog());
+    let errors: Vec<_> = olr_pack::validate(&olr_vfs::DirFs::new(&dir))
+        .into_iter()
+        .filter(|d| d.severity == olr_pack::Severity::Error)
+        .collect();
+    assert!(errors.is_empty(), "{errors:?}");
+}
+
+/// Batch D review Critical 1: an image's new size resamples its mask.
+#[test]
+fn a_resized_masked_image_keeps_its_mask() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    paint_glow_on(&mut s, "badge", (10, 120));
+    run(&mut s, A::Set("badge".into(), Property::Size((96, 72))));
+    saves_clean(&mut s, "badge");
+    run(&mut s, A::Undo);
+    let len = s.document().unwrap().glow_mask("badge").unwrap().len() as u32;
+    let a = s.document().unwrap().level().art_scale;
+    assert_eq!(len, 48 * a * 48 * a, "undo takes the old mask back");
+}
+
+/// A level resize moves a level-sized layer's mask with it.
+#[test]
+fn a_level_resize_keeps_a_layers_mask() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    paint_glow_on(&mut s, "tunnels", (100, 100));
+    let (w, h) = s.document().unwrap().level().size;
+    let resize = A::Resize {
+        size: (w + 20, h),
+        offset: (10, 0),
+        material: olr_data::level::Material::Background,
+        colour: olr_data::image::Rgba::BLACK,
+    };
+    run(&mut s, resize);
+    let doc = s.document().unwrap();
+    let a = doc.level().art_scale;
+    let mask = doc.glow_mask("tunnels").unwrap();
+    assert_eq!(mask[(100 * a * (w + 20) * a + 110 * a) as usize], 0, "the dab moved with the layer");
+    saves_clean(&mut s, "tunnels");
+}
+
+/// An art-scale change rescales the masks.
+#[test]
+fn art_scale_rescales_glow_masks() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    paint_glow_on(&mut s, "tunnels", (100, 100));
+    let a = s.document().unwrap().level().art_scale;
+    run(&mut s, A::ArtScale(a + 1));
+    run(&mut s, A::Choose(Choice::Confirm));
+    assert_eq!(s.document().unwrap().level().art_scale, a + 1);
+    saves_clean(&mut s, "tunnels");
+}
+
+/// A pasted copy of a masked element brings its mask (and glows alike).
+#[test]
+fn paste_keeps_the_glow_mask() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    paint_glow_on(&mut s, "badge", (10, 120));
+    let mask = s.document().unwrap().glow_mask("badge").unwrap().to_vec();
+    run(&mut s, A::Select(Selection::Element("badge".into())));
+    run(&mut s, A::Copy);
+    run(&mut s, A::Paste);
+    let Selection::Element(id) = s.selection().clone() else { panic!("the paste is selected") };
+    assert_ne!(id, "badge");
+    assert_eq!(s.document().unwrap().glow_mask(&id), Some(&mask[..]));
+    saves_clean(&mut s, &id);
+    // Removing it, then undoing, keeps its mask too.
+    run(&mut s, A::Remove);
+    run(&mut s, A::Undo);
+    assert_eq!(s.document().unwrap().glow_mask(&id), Some(&mask[..]));
+}
+
+/// Batch D review Important 2: a plain level's kept glow follows its look:
+/// a removed group's pixels light nothing, the save stays clean.
+#[test]
+fn a_plain_levels_kept_glow_follows_look_edits() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = crate::common::copy_pack(&root, std::path::Path::new("olx-level-dirt-level"));
+    let fs = olr_vfs::DirFs::new(&dir);
+    let mut src = olr_format::levels::read_level_files(&fs).unwrap();
+    let (w, h) = src.size;
+    let s = src.art_scale;
+    let group = |id: &str| olr_format::look::GlowGroupSource {
+        id: id.into(),
+        colour: Default::default(),
+        intensity: 100,
+        reach: ReachSource::Pixels(32),
+        animation: Default::default(),
+        phase_ms: None,
+    };
+    src.look = Some(LookSource { glow_groups: vec![group("a"), group("b")], ..Default::default() });
+    let mut glow = olr_format::levels::GlowLayers::empty((w * s, h * s), (w, h));
+    glow.front.iter_mut().for_each(|v| *v = 100);
+    glow.groups.iter_mut().enumerate().for_each(|(i, g)| *g = 1 + (i % 2) as u8);
+    src.glow = Some(glow);
+    olr_format::levels::write_level_files(&mut olr_vfs::DirFs::new(&dir), &src).unwrap();
+    let (_t, mut st) = editor_at(&root, &dir);
+    run(&mut st, A::RemoveGroup("a".into()));
+    run(&mut st, A::Choose(Choice::Confirm));
+    let g = st.document().unwrap().level().glow.clone().unwrap();
+    assert!(g.groups.iter().all(|v| *v <= 1), "group b is now 1, a's pixels 0");
+    assert!(g.groups.contains(&1) && g.groups.contains(&0));
+    let saved_dir = st.document().unwrap().dir().to_path_buf();
+    run(&mut st, A::Save);
+    assert!(!st.dirty(), "{:?}", st.dialog());
+    let saved = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(&saved_dir)).unwrap();
+    assert_eq!(saved.glow, Some(g));
+    // A resize re-lays the kept glow and clear flags, as `level resize` does.
+    let resize = A::Resize {
+        size: (w + 8, h),
+        offset: (0, 0),
+        material: olr_data::level::Material::Rock,
+        colour: olr_data::image::Rgba::BLACK,
+    };
+    run(&mut st, resize);
+    let l = st.document().unwrap().level();
+    assert!(l.glow.as_ref().is_some_and(|g| g.world == (w + 8, h)), "kept through the resize");
+}
