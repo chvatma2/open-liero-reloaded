@@ -615,10 +615,16 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   before opening, a non-PNG/JPEG signature before reading the rest),
   `SaveSettings` (`EDITOR_FILE` through `Store::save_file`), `RecoveryDone`)
   and `tick(now)` (the recovery copy, `recovery.rs`: `recovery/<id>/`, the
-  pack's files and `recovery.ron`, `replace_dir`-atomic, when unsaved
-  changes have waited `RECOVERY_INTERVAL`, 120 s, since the first tick that
-  saw them; each session's id unique against `recovery/`, so a crash's copy
-  survives (a recovered document keeps its copy's id); `list_recoveries`
+  pack's files and `recovery.ron`, `replace_dir`-atomic (an interrupted
+  write's hidden siblings of that id removed first, its warnings said),
+  when unsaved changes have waited `RECOVERY_INTERVAL`, 120 s, since the
+  first tick that saw them, made from `Document::snapshot` and written on
+  the `olr-game recovery` thread (250 ms for a 1350 × 550 level on the UI
+  thread before), waited for (`wait_recovery`) before a save or Close drops
+  it, before another document opens, at `flush_recovery` and on drop; each session's id unique against `recovery/`, so a crash's copy
+  survives (a recovered document keeps its copy's id; it reopens in its
+  original folder only when that still holds its pack, else in a new folder,
+  under a new id when another pack took its own); `list_recoveries`
   (damaged ones listed), `discard_recovery` (ids are plain names)).
   Bundled roots (every root but `packs/`) and `recovery/` are refused for
   Open, Create and Save (`BUNDLED`, `RECOVERY_IN_PLACE`).

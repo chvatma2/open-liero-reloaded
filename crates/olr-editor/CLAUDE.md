@@ -49,7 +49,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
 - **Document** (`document.rs`, R2): the open level pack, each element
   decoded (`olr_edit::compose::Decoded`) through one `ImageCache` (R3).
   `open` composes a plain level (a raster `base`) and rebakes; `to_pack`
-  encodes the composition and keeps the bake, refreshing the thumbnail
+  (or a `snapshot()`'s, which a thread may make: `PackSnapshot`) encodes
+  the composition and keeps the bake, refreshing the thumbnail
   only when the bake changed; a layer file whose pixels did not change is
   saved as opened (another program's encoding kept); stray files in
   `editor/` are never overwritten by a new element's (ids and names skip

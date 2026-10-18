@@ -71,6 +71,10 @@ pub struct EditorHost {
     recovery_id: Option<String>,
     /// Since when the unsaved changes wait for a recovery copy.
     dirty_since: Option<Instant>,
+    /// The recovery copy being encoded and written (`olr-game recovery`: a
+    /// 1350 × 550 level's took 250 ms on the UI thread, a 4096² one's
+    /// 800 ms); joined before its copy is dropped or another one opens.
+    recovery_job: Option<std::thread::JoinHandle<Vec<HostOut>>>,
     warnings: Vec<String>,
 }
 
@@ -114,6 +118,7 @@ impl EditorHost {
             bundled,
             recovery_id: None,
             dirty_since: None,
+            recovery_job: None,
             warnings,
         })
     }
@@ -184,14 +189,23 @@ impl EditorHost {
             AppCommand::Recover(id) => {
                 let rec =
                     self.recovery_dir.clone().ok_or_else(|| anyhow::anyhow!("no recovery directory"))?;
-                let (pack, info) = recovery::load(&rec, id)?;
-                // The original's directory when it is there; else a new one
-                // in packs (Save makes it).
-                let dir = if info.origin.join(olr_pack::MANIFEST).is_file() && !self.is_bundled(&info.origin)
-                {
+                self.settle_recovery();
+                let (mut pack, info) = recovery::load(&rec, id)?;
+                // The original's folder when it still holds this pack; else a
+                // new folder in packs (Save makes it), under a new id when
+                // another pack took this one meanwhile: never over or beside
+                // another pack of its id.
+                let same = olr_pack::read_manifest(&olr_vfs::DirFs::new(&info.origin))
+                    .is_ok_and(|m| m.id == pack.manifest.id && m.kind == PackKind::Level);
+                let dir = if same && !self.is_bundled(&info.origin) && !self.in_recovery(&info.origin) {
                     info.origin
                 } else {
-                    packs.join(pack_id(id, |c| packs.join(c).exists()))
+                    let content = Content::open_layers(&self.root_refs())?;
+                    let taken = |c: &str| content.pack_kind(c).is_some() || packs.join(c).exists();
+                    if content.pack_kind(&pack.manifest.id).is_some() {
+                        pack.manifest.id = pack_id(&pack.manifest.id, taken);
+                    }
+                    packs.join(pack_id(&pack.manifest.id, |c| packs.join(c).exists()))
                 };
                 let doc = Document::open(pack, dir, self.state.catalog())?;
                 self.recovery_id = Some(id.clone());
@@ -220,6 +234,7 @@ impl EditorHost {
 
     /// The pack at `dir` as an `Opened` answer, or why not (`OpenFailed`).
     fn load(&mut self, dir: &Path) -> EditorAction {
+        self.settle_recovery();
         if self.is_bundled(dir) {
             return EditorAction::OpenFailed(BUNDLED.into());
         }
@@ -319,6 +334,8 @@ impl EditorHost {
             }),
             EditorCommand::RecoveryDone => {
                 self.dirty_since = None;
+                // A copy still being written would come back after the removal.
+                out.extend(self.wait_recovery());
                 if let (Some(dir), Some(id)) = (&self.recovery_dir, &self.recovery_id)
                     && let Err(e) = discard_recovery(dir, id)
                 {
@@ -336,28 +353,70 @@ impl EditorHost {
     /// the copy is written when they have waited `RECOVERY_INTERVAL` since
     /// the first tick that saw them (or since the last copy).
     pub fn tick(&mut self, now: Instant) -> Vec<HostOut> {
+        let mut out = match &self.recovery_job {
+            Some(job) if job.is_finished() => self.wait_recovery(),
+            _ => Vec::new(),
+        };
         if self.state.document().is_none() || !self.state.dirty() {
             self.dirty_since = None;
-            return Vec::new();
+            return out;
         }
         let since = *self.dirty_since.get_or_insert(now);
-        if now.saturating_duration_since(since) < RECOVERY_INTERVAL {
-            return Vec::new();
+        if now.saturating_duration_since(since) < RECOVERY_INTERVAL || self.recovery_job.is_some() {
+            return out;
         }
         self.dirty_since = Some(now);
-        self.flush_recovery()
+        let Some(job) = self.recovery_snapshot() else { return out };
+        match std::thread::Builder::new().name("olr-game recovery".into()).spawn(move || job.write()) {
+            Ok(handle) => self.recovery_job = Some(handle),
+            Err(e) => out.push(HostOut::Message(format!("writing the recovery copy: {e}"))),
+        }
+        out
     }
 
-    /// Writes the recovery copy now when there are unsaved changes (the
-    /// timer's, and a quit that does not ask: `Shell::finish`).
+    /// Writes the recovery copy now when there are unsaved changes (a quit
+    /// that does not ask: `Shell::finish`), after the one being written.
     pub fn flush_recovery(&mut self) -> Vec<HostOut> {
-        let Some(doc) = self.state.document().filter(|_| self.state.dirty()) else { return Vec::new() };
-        let (Some(dir), Some(id)) = (&self.recovery_dir, &self.recovery_id) else { return Vec::new() };
-        let info = RecoveryInfo { origin: doc.dir().to_path_buf(), name: doc.level().name.clone() };
-        match recovery::write(dir, id, &doc.to_pack(), &info) {
-            Ok(()) => Vec::new(),
-            Err(e) => vec![HostOut::Message(format!("writing the recovery copy: {e:#}"))],
+        let mut out = self.wait_recovery();
+        if let Some(job) = self.recovery_snapshot() {
+            out.extend(job.write());
         }
+        out
+    }
+
+    /// Whether a recovery copy is being written.
+    pub fn recovery_writing(&self) -> bool {
+        self.recovery_job.is_some()
+    }
+
+    /// Waits for the recovery copy being written, if any: what it said.
+    pub fn wait_recovery(&mut self) -> Vec<HostOut> {
+        match self.recovery_job.take().map(std::thread::JoinHandle::join) {
+            Some(Ok(out)) => out,
+            Some(Err(_)) => vec![HostOut::Message("writing the recovery copy failed".into())],
+            None => Vec::new(),
+        }
+    }
+
+    /// Finishes the copy being written before another document takes its
+    /// place (what it said goes to the warnings).
+    fn settle_recovery(&mut self) {
+        for o in self.wait_recovery() {
+            if let HostOut::Message(m) = o {
+                self.warnings.push(m);
+            }
+        }
+    }
+
+    /// The copy to write of the unsaved changes, if any.
+    fn recovery_snapshot(&self) -> Option<RecoveryJob> {
+        let doc = self.state.document().filter(|_| self.state.dirty())?;
+        Some(RecoveryJob {
+            dir: self.recovery_dir.clone()?,
+            id: self.recovery_id.clone()?,
+            info: RecoveryInfo { origin: doc.dir().to_path_buf(), name: doc.level().name.clone() },
+            pack: doc.snapshot(),
+        })
     }
 
     fn root_refs(&self) -> Vec<&Path> {
@@ -374,6 +433,33 @@ impl EditorHost {
     /// directory's packs).
     fn is_bundled(&self, dir: &Path) -> bool {
         files::inside(dir, &self.bundled)
+    }
+}
+
+/// A recovery copy to write: the document's pack not yet made.
+struct RecoveryJob {
+    dir: PathBuf,
+    id: String,
+    info: RecoveryInfo,
+    pack: olr_editor::PackSnapshot,
+}
+
+impl RecoveryJob {
+    /// Makes the pack and writes it; what went wrong, as messages.
+    fn write(self) -> Vec<HostOut> {
+        match recovery::write(&self.dir, &self.id, &self.pack.to_pack(), &self.info) {
+            Ok(warnings) => {
+                warnings.into_iter().map(|w| HostOut::Message(format!("the recovery copy: {w}"))).collect()
+            }
+            Err(e) => vec![HostOut::Message(format!("writing the recovery copy: {e:#}"))],
+        }
+    }
+}
+
+impl Drop for EditorHost {
+    /// A copy being written is finished: never left half way.
+    fn drop(&mut self) {
+        self.wait_recovery();
     }
 }
 

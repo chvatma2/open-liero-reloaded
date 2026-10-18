@@ -130,6 +130,7 @@ fn recovery_is_written_while_unsaved_and_dropped_on_save() {
     h.tick(t0 + RECOVERY_INTERVAL - Duration::from_secs(1));
     assert!(!recovery.exists(), "not before the interval");
     h.tick(t0 + RECOVERY_INTERVAL);
+    h.wait_recovery();
     assert!(recovery.join("pack.ron").is_file(), "written");
     let info: RecoveryInfo =
         ron::from_str(&std::fs::read_to_string(recovery.join("recovery.ron")).unwrap()).unwrap();
@@ -150,6 +151,7 @@ fn recovery_survives_a_missing_original() {
     let t0 = Instant::now();
     h.tick(t0);
     h.tick(t0 + RECOVERY_INTERVAL);
+    h.wait_recovery();
     let packs = tmp.path().join("packs");
     // The game is gone (killed), and so is the pack.
     drop(h);
@@ -297,6 +299,7 @@ fn a_later_session_keeps_the_crash_copy() {
     let t0 = Instant::now();
     h.tick(t0);
     h.tick(t0 + RECOVERY_INTERVAL);
+    h.wait_recovery();
     drop(h);
     let rec = tmp.path().join("recovery");
     assert_eq!(list_recoveries(&rec).len(), 1);
@@ -307,6 +310,7 @@ fn a_later_session_keeps_the_crash_copy() {
     h.act(vec![A::AddLayer]);
     h.tick(t0);
     h.tick(t0 + RECOVERY_INTERVAL);
+    h.wait_recovery();
     assert_eq!(list_recoveries(&rec).len(), 2, "this session's copy is another");
     h.act(vec![A::Close, A::Choose(olr_editor::Choice::Discard)]);
     let left: Vec<String> = list_recoveries(&rec).into_iter().map(|r| r.0).collect();
@@ -421,4 +425,107 @@ fn a_huge_listing_keeps_its_first_entries() {
     assert_eq!(entries[0].name, "zz-folder", "folders first");
     assert_eq!(entries[1].name, "f00000.png");
     assert_eq!(entries.last().unwrap().name, format!("f{:05}.png", olr_game::editor::MAX_ENTRIES - 2));
+}
+
+/// A recovery whose origin now holds another pack, or whose pack id another
+/// pack took meanwhile, opens in a new folder under a new id: it never
+/// overwrites that pack, nor shadows it (deferred minor of batch B).
+#[test]
+fn recovering_never_overwrites_another_pack() {
+    let Some((tmp, root, mut h)) = host() else { return };
+    let packs = tmp.path().join("packs");
+    h.open_from_menu(&new_level("Office"));
+    h.act(vec![A::AddLayer]);
+    let t0 = Instant::now();
+    h.tick(t0);
+    h.tick(t0 + RECOVERY_INTERVAL);
+    h.wait_recovery();
+    drop(h);
+    // packs/office now holds another pack ("Other"), and office's id moved
+    // to packs/moved.
+    std::fs::rename(packs.join("office"), packs.join("moved")).unwrap();
+    let mut store = Store::open(tmp.path());
+    let mut h = EditorHost::new(&mut store, &[packs.as_path(), root.as_path()]).unwrap();
+    h.open_from_menu(&new_level("Other"));
+    std::fs::rename(packs.join("other"), packs.join("office")).unwrap();
+    let before = digest(&packs.join("office"));
+    let mut h = EditorHost::new(&mut store, &[packs.as_path(), root.as_path()]).unwrap();
+    h.open_from_menu(&AppCommand::Recover("office".into()));
+    let doc = h.state().document().expect("recovered");
+    assert_ne!(doc.dir(), packs.join("office"), "not into another pack's folder");
+    assert_ne!(doc.dir(), packs.join("moved"));
+    assert_ne!(doc.manifest().id, "office", "the id is taken by packs/moved");
+    h.act(vec![A::Save]);
+    assert_eq!(digest(&packs.join("office")), before, "the other pack is untouched");
+    let ids = editable_levels(&packs);
+    assert_eq!(ids.len(), 3, "three packs, three ids: {ids:?}");
+}
+
+/// A copy write cleans the hidden siblings an interrupted write of the same
+/// copy left (`replace_dir`'s), never another copy's.
+#[test]
+fn a_recovery_write_cleans_its_leftovers() {
+    let Some((tmp, _root, mut h)) = host() else { return };
+    h.open_from_menu(&new_level("Office"));
+    h.act(vec![A::AddLayer]);
+    let rec = tmp.path().join("recovery");
+    for d in [".replaced-office", ".replaced-office~1", ".import-office", ".replaced-other"] {
+        std::fs::create_dir_all(rec.join(d)).unwrap();
+    }
+    assert!(h.flush_recovery().is_empty());
+    let left: Vec<String> = std::fs::read_dir(&rec)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .filter(|n| n.starts_with('.'))
+        .collect();
+    assert_eq!(left, [".replaced-other"], "only another copy's leftover stays");
+}
+
+/// The timer's copy is made and written on a thread of its own: the tick
+/// returns while it is written, a save waits for it before dropping it.
+#[test]
+fn the_recovery_copy_is_written_off_the_ui_thread() {
+    let Some((tmp, _root, mut h)) = host() else { return };
+    h.open_from_menu(&AppCommand::NewLevel {
+        name: "Big".into(),
+        size: (2048, 2048),
+        theme: "olx-theme-dirt".into(),
+    });
+    h.act(vec![A::AddLayer]);
+    let t0 = Instant::now();
+    h.tick(t0);
+    h.tick(t0 + RECOVERY_INTERVAL);
+    assert!(h.recovery_writing(), "written on a thread");
+    h.act(vec![A::Save]);
+    assert!(!h.recovery_writing());
+    assert!(
+        list_recoveries(&tmp.path().join("recovery")).is_empty(),
+        "the save dropped it after it was written"
+    );
+}
+
+/// A pack made whose editor did not open is listed at once as yours
+/// (Edit, not Edit a copy), and the screen's message goes when the Editor
+/// screen is opened again (deferred minors of batches A and C).
+#[test]
+fn the_editor_screen_follows_what_happened() {
+    use olr_game::shell::{Shell, ShellConfig};
+    let Some(root) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = ShellConfig {
+        content: root,
+        interpolation: olr_scene::Interpolation::Linear,
+        viewport: olr_scene::Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0),
+    };
+    let ui = olr_ui::UiState::new(olr_ui::Settings::default(), olr_ui::Profiles::default(), 1);
+    let mut sh = Shell::new(cfg, ui, Store::open(tmp.path()), olr_audio::Audio::silent());
+    sh.act(olr_ui::UiAction::Open(olr_ui::Screen::Editor));
+    // A theme this install lacks: the pack is made, the editor cannot open it.
+    sh.act(olr_ui::UiAction::NewLevel { name: "Odd".into(), size: (40, 30), theme: "no-such-theme".into() });
+    assert!(!sh.editor_open());
+    assert!(sh.data.editor_message.is_some());
+    assert!(sh.data.editable.contains("odd"), "{:?}", sh.data.editable);
+    sh.act(olr_ui::UiAction::Back);
+    sh.act(olr_ui::UiAction::Open(olr_ui::Screen::Editor));
+    assert_eq!(sh.data.editor_message, None);
 }

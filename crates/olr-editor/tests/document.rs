@@ -129,3 +129,18 @@ fn stray_editor_files_are_never_overwritten() {
     assert!(f.contains_key("editor/images/photo-2.jpg"));
     assert!(f.contains_key("editor/layers/layer-2.png"));
 }
+
+/// A snapshot makes the same pack as its document (plan 14c: the host's
+/// recovery copy is encoded from one on a thread of its own).
+#[test]
+fn a_snapshot_packs_as_its_document() {
+    let Some(root) = crate::common::content() else { return };
+    let (_tmp, mut doc) = crate::common::open_fixture(&root);
+    let shape = olr_edit::level::Shape::Rect { x: 10, y: 10, w: 20, h: 8 };
+    doc.paint("tunnels", &shape, &olr_edit::level::Paint::Colour(olr_data::image::Rgba::rgb(9, 9, 9)))
+        .unwrap();
+    let snap = doc.snapshot();
+    assert_eq!(snap.to_pack(), doc.to_pack());
+    let moved = std::thread::spawn(move || snap.to_pack()).join().unwrap();
+    assert_eq!(moved, doc.to_pack());
+}

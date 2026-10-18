@@ -82,6 +82,72 @@ pub struct Document {
     pub(crate) rebaked: bool,
 }
 
+/// A document's pack, not yet made ([`Document::snapshot`]).
+#[derive(Clone, Debug)]
+pub struct PackSnapshot {
+    manifest: PackManifest,
+    other: BTreeMap<VPath, Vec<u8>>,
+    level: LevelSource,
+    items: Vec<Item>,
+    originals: BTreeMap<String, Arc<Vec<u8>>>,
+    stored: BTreeMap<String, Vec<u8>>,
+    rebaked: bool,
+}
+
+impl PackSnapshot {
+    /// The pack the document made when the snapshot was taken.
+    pub fn to_pack(&self) -> Pack {
+        pack_of(
+            &self.manifest,
+            &self.other,
+            &self.level,
+            &self.items,
+            &self.originals,
+            &self.stored,
+            self.rebaked,
+        )
+    }
+}
+
+/// [`Document::to_pack`] of these parts.
+fn pack_of(
+    manifest: &PackManifest,
+    other: &BTreeMap<VPath, Vec<u8>>,
+    level: &LevelSource,
+    items: &[Item],
+    originals: &BTreeMap<String, Arc<Vec<u8>>>,
+    stored: &BTreeMap<String, Vec<u8>>,
+    rebaked: bool,
+) -> Pack {
+    let mut files = BTreeMap::new();
+    for i in items {
+        match &i.element.kind {
+            ElementKind::Image { source, .. } => {
+                if let Some(bytes) = originals.get(source) {
+                    files.insert(image_file(source), bytes.as_ref().clone());
+                }
+            }
+            _ => {
+                for (path, bytes) in encode_decoded(&i.element, &i.decoded, level.size) {
+                    let kept = stored.get(&path).filter(|old| same_pixels(&path, old, &bytes));
+                    files.insert(path, kept.cloned().unwrap_or(bytes));
+                }
+            }
+        }
+    }
+    let mut level = level.clone();
+    if rebaked {
+        refresh_thumb(&mut level);
+    }
+    let composition = Composition { elements: items.iter().map(|i| i.element.clone()).collect() };
+    Pack {
+        manifest: manifest.clone(),
+        source: Source::Level(level),
+        composition: Some(CompositionSource { composition, files }),
+        other: other.clone(),
+    }
+}
+
 impl std::fmt::Debug for Document {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Document")
@@ -215,31 +281,28 @@ impl Document {
     /// kept), the bake, the thumbnail refreshed only if anything was
     /// rebaked since `open`.
     pub fn to_pack(&self) -> Pack {
-        let mut files = BTreeMap::new();
-        for i in &self.items {
-            match &i.element.kind {
-                ElementKind::Image { source, .. } => {
-                    if let Some(bytes) = self.originals.get(source) {
-                        files.insert(image_file(source), bytes.as_ref().clone());
-                    }
-                }
-                _ => {
-                    for (path, bytes) in encode_decoded(&i.element, &i.decoded, self.level.size) {
-                        let kept = self.stored.get(&path).filter(|old| same_pixels(&path, old, &bytes));
-                        files.insert(path, kept.cloned().unwrap_or(bytes));
-                    }
-                }
-            }
-        }
-        let mut level = self.level.clone();
-        if self.rebaked {
-            refresh_thumb(&mut level);
-        }
-        Pack {
+        pack_of(
+            &self.manifest,
+            &self.other,
+            &self.level,
+            &self.items,
+            &self.originals,
+            &self.stored,
+            self.rebaked,
+        )
+    }
+
+    /// What `to_pack` reads, copied out: the pack can then be made away from
+    /// the document (the host encodes its recovery copy on a thread).
+    pub fn snapshot(&self) -> PackSnapshot {
+        PackSnapshot {
             manifest: self.manifest.clone(),
-            source: Source::Level(level),
-            composition: Some(CompositionSource { composition: self.composition(), files }),
             other: self.other.clone(),
+            level: self.level.clone(),
+            items: self.items.clone(),
+            originals: self.originals.clone(),
+            stored: self.stored.clone(),
+            rebaked: self.rebaked,
         }
     }
 

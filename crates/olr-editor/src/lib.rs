@@ -16,7 +16,7 @@ pub mod ui;
 pub mod view;
 
 pub use catalog::{Catalog, EditorSettings, ModEntry, ThemeEntry};
-pub use document::{DocError, Document, Item, Problem};
+pub use document::{DocError, Document, Item, PackSnapshot, Problem};
 pub use history::{Edit, History, LevelMeta};
 pub use olr_pack::Severity;
 pub use ops::Change;

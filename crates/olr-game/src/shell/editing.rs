@@ -78,6 +78,8 @@ impl Shell {
                 _ => None,
             });
             self.data.editor_message = Some(why.unwrap_or_else(|| "the level did not open".into()));
+            // A pack may have been made (a copy, a new level) all the same.
+            self.refresh_editor_packs();
             return;
         }
         self.data.editor_message = None;

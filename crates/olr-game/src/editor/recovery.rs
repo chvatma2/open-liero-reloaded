@@ -41,13 +41,29 @@ fn checked(dir: &Path, id: &str) -> anyhow::Result<PathBuf> {
 }
 
 /// Writes `pack` (edited at `origin`, its level named `name`) as recovery
-/// `id` in `dir`, replacing the last copy whole.
-pub fn write(dir: &Path, id: &str, pack: &Pack, info: &RecoveryInfo) -> anyhow::Result<()> {
+/// `id` in `dir`, replacing the last copy whole; first removes what an
+/// interrupted write of this copy left beside it (`replace_dir`'s hidden
+/// `.import-<id>` and `.replaced-<id>[~k]`). Returns `replace_dir`'s
+/// warnings (an old copy that could not be removed).
+pub fn write(dir: &Path, id: &str, pack: &Pack, info: &RecoveryInfo) -> anyhow::Result<Vec<String>> {
     let target = checked(dir, id)?;
     let files = olr_edit::pack::files(pack)?;
     let text = ron::ser::to_string_pretty(info, ron::ser::PrettyConfig::default())?;
     std::fs::create_dir_all(dir)?;
-    olr_pack::install::replace_dir(&target, |tmp| {
+    let mut warnings = Vec::new();
+    for entry in std::fs::read_dir(dir)?.filter_map(Result::ok) {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        let replaced = name
+            .strip_prefix(".replaced-")
+            .and_then(|r| r.strip_prefix(id))
+            .is_some_and(|rest| rest.is_empty() || rest.starts_with('~'));
+        if (replaced || name == format!(".import-{id}"))
+            && let Err(e) = std::fs::remove_dir_all(entry.path())
+        {
+            warnings.push(format!("{}: {e}", entry.path().display()));
+        }
+    }
+    warnings.extend(olr_pack::install::replace_dir(&target, |tmp| {
         for (path, bytes) in &files {
             let file = tmp.join(path.as_str());
             if let Some(parent) = file.parent() {
@@ -56,8 +72,8 @@ pub fn write(dir: &Path, id: &str, pack: &Pack, info: &RecoveryInfo) -> anyhow::
             std::fs::write(file, bytes)?;
         }
         std::fs::write(tmp.join(INFO_FILE), &text)
-    })?;
-    Ok(())
+    })?);
+    Ok(warnings)
 }
 
 /// Recovery `id`'s `recovery.ron`, bounded.
