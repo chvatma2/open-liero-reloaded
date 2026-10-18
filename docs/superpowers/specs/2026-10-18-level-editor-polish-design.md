@@ -98,6 +98,47 @@ existing tools.
    with no pixels makes no layer).
 6. **This round also includes** flood fill, pixel copy and paste, the
    theme's hole stamps and multi-select.
+7. **Merging never changes what a tunnel shows.** When dirt or rock merges
+   over a background pixel, the merged layer remembers that background
+   art, and digging the dirt away in play shows it, as on a loaded map
+   today.
+8. **Painted layers move.** Drawn and mixed layers have a position and can
+   be dragged, nudged, copied and pasted at an offset, like pictures, so a
+   painted crate can be duplicated and dragged to its next spot.
+
+## Calls made in writing this (not the user's)
+
+Marked here so they can be checked:
+
+- **C1. Same material in a merge:** the upper layer's pixel wins.
+- **C2. Material per world pixel.** A mixed layer stores one material per
+  world pixel, as `material.png` does. Merge decides per world pixel:
+  - The covering state of each layer comes from the block's centre art
+    pixel, as the bake does today.
+  - The winning layer gives the block's art pixels. Where its art is
+    transparent inside the block, the other layer's art fills in.
+- **C3. Pasted pixels keep their material.** Pasting rock into the Dirt
+  layer keeps it rock, and the target becomes mixed. "Paste as layer"
+  makes a plain layer when the pixels share one material, and a mixed
+  layer otherwise.
+- **C4. The material property:**
+  - On a plain layer, setting it reassigns every pixel, as today.
+  - On a mixed layer, it reads "Mixed", and choosing a material makes the
+    layer plain with that material (one step).
+  - The material of new paint is a brush option: "the layer's" by default,
+    or Rock, Dirt or Background.
+  - On a multi-selection, the property sets each element as above.
+- **C5. A drawn layer's extent:**
+  - A new layer covers the level. Paint outside a layer's box is clipped
+    to the box.
+  - An element copy of a drawn layer is cropped to its covered pixels.
+  - A merge covers both boxes. A split keeps the source's box.
+  - Pixels moved off the level stay in the layer and do not bake.
+- **C6. Pasting into another level** (the clipboard spans levels): a
+  layer whose art scale differs is resampled to the target's scale by
+  nearest neighbour.
+- The CLI commands, the texture library's place and format, and the
+  composition format's additions below.
 
 ## Behaviour
 
@@ -162,13 +203,25 @@ existing tools.
   the material of new paint, and may in addition hold a **material per
   pixel** (a mixed layer). A plain drawn layer is a mixed layer whose every
   covering pixel has the layer's material.
-- Merge produces mixed layers. Painting into a mixed layer shows a
-  material choice beside the paint (Rock, Dirt, Background; default the
-  layer's material).
-- The bake reads a mixed layer's per-pixel material where it covers; the
+- Merge produces mixed layers, and so does pasting pixels of another
+  material (C3). The brush's material choice (C4) paints any material
+  into any layer; painting another material into a plain layer makes it
+  mixed.
+- A mixed layer may also hold a **back** art (decision 7): what shows
+  where its dirt or rock is carved. Where it has none, what lies below
+  shows, as for any layer today.
+- The bake reads a mixed layer's per-pixel material where it covers. The
   background rule (§1 of the editor spec: background elements are the
-  backdrop) applies per pixel: a mixed layer's background pixels are
-  backdrop.
+  backdrop) applies per pixel: a mixed layer's background pixels, and its
+  back art, are backdrop.
+
+### Moving drawn layers
+
+- A drawn layer (plain or mixed) has a position in world pixels and a box
+  of its own (C5). Select drags it, the arrow keys nudge it, as for an
+  image box today. A move is one step and changes no pixels.
+- Painting, erasing, fill and pixel selection work in the layer's own
+  coordinates, so a moved layer paints where it shows.
 
 ### Merge down
 
@@ -177,8 +230,14 @@ existing tools.
   refused with the reason. Hidden elements are refused too ("show it
   first"); a locked pair is refused.
 - The result replaces both: a mixed drawn layer with the lower one's id,
-  name and position, its pixels decided by the merge rule (decision 4). An
-  image merges as its processed pixels (its mask applied). One undo step.
+  name and stack position, covering both boxes (C5). Its pixels follow
+  the merge rule (decision 4, C1, C2). Where dirt or rock won over a
+  background pixel, or over a pixel with back art, that art becomes the
+  merged layer's back art (decision 7). An image merges as its processed
+  pixels (its mask applied). One undo step.
+- Example: merging Dirt into Background on a loaded map gives one mixed
+  layer. It bakes byte for byte as before, and digging its dirt in play
+  shows the level's own background.
 
 ### Split by material
 
@@ -186,8 +245,10 @@ existing tools.
   plain drawn layer (trivially one layer), or an image (its processed
   pixels). The result is up to three drawn layers, bottom to top
   Background, Dirt, Rock, in the element's place, each holding only its
-  material's pixels; a material without pixels makes no layer. One undo
-  step. (Plan 14c's raster split, generalised.)
+  material's pixels; a material without pixels makes no layer. A mixed
+  layer's or a raster's back art becomes part of the Background layer, so
+  a split also bakes as before. One undo step. (Plan 14c's raster split,
+  generalised.)
 
 ### Flood fill
 
@@ -219,10 +280,14 @@ existing tools.
 The composition format (`editor/composition.ron`, spec 2026-10-17 §2) grows,
 version bumped (compatibility breaks are fine at this stage):
 
-- **A mixed drawn layer:** `Drawn { material, mixed: true }` (or a
-  separate kind, the builder's call) with its per-pixel material in
-  `editor/layers/<id>.material.png` (the level's `MATERIAL_PALETTE`,
-  indexed), beside its art `editor/layers/<id>.png`.
+- **A drawn layer's position and box:** `Drawn { material, at, size }`
+  (world pixels; absent means the whole level, at the origin).
+- **A mixed drawn layer:** `Drawn { material, mixed: true, … }` (or a
+  separate kind, the builder's call). Its per-pixel material is in
+  `editor/layers/<id>.material.png` (C2: one per world pixel, the level's
+  `MATERIAL_PALETTE`, indexed). Its optional back art is in
+  `editor/layers/<id>.back.png`. Both sit beside its art,
+  `editor/layers/<id>.png`.
 - **An image's mask:** `editor/masks/<id>.png`, a 1-bit (or grey) image of
   the original's size; absent means no mask.
 - `pack check`, `pack fmt` and `format-docs` cover the new fields and files;
