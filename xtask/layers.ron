@@ -7,6 +7,7 @@
         "olr-math": 0,
         "olr-data": 1,
         "olr-terrain": 1,
+        "olr-look": 1,
         "olr-vfs": 1,
         "olr-pack": 2,
         "olr-format": 2,
@@ -89,8 +90,8 @@
         // (plan 10 ruling PF2).
         ("olr-cli", "olr-server"),
     ],
-    no_std: ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby"],
-    wasm: ["olr-math", "olr-data", "olr-terrain", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby", "olr-vfs", "olr-format", "olr-pack", "olr-import-lgs", "olr-import-lxl", "olr-import-gfx"],
+    no_std: ["olr-math", "olr-data", "olr-terrain", "olr-look", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby"],
+    wasm: ["olr-math", "olr-data", "olr-terrain", "olr-look", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby", "olr-vfs", "olr-format", "olr-pack", "olr-import-lgs", "olr-import-lxl", "olr-import-gfx"],
     forbidden: [
         // The game, the server and the UI ship without legacy importers (spec §5).
         ("olr-game", "olr-import"), ("olr-game", "olr-import-lgs"), ("olr-game", "olr-import-lxl"), ("olr-game", "olr-import-gfx"),

@@ -13,6 +13,7 @@ publish = false
 olr-math = { path = "crates/olr-math" }
 olr-data = { path = "crates/olr-data" }
 olr-terrain = { path = "crates/olr-terrain" }
+olr-look = { path = "crates/olr-look" }
 olr-sim = { path = "crates/olr-sim" }
 olr-modes = { path = "crates/olr-modes" }
 olr-bots = { path = "crates/olr-bots" }

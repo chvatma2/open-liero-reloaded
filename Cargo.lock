@@ -3600,6 +3600,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "olr-look"
+version = "0.2.0"
+dependencies = [
+ "libm",
+]
+
+[[package]]
 name = "olr-math"
 version = "0.2.0"
 dependencies = [

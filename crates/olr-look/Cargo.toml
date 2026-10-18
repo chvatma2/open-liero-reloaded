@@ -1,0 +1,19 @@
+[package]
+name = "olr-look"
+description = "The look's runtime data (spec 2026-10-18 look system): lights, glow groups, animation, the per-frame LookFrame and the engine's own look."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+libm.workspace = true
+
+[lints]
+workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
