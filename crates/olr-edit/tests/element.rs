@@ -595,3 +595,34 @@ fn fill_paints_a_texture_into_a_layer() {
         Err(ElementError::WrongKind { .. })
     ));
 }
+
+/// Minors: a draw or fill of another material that paints nothing leaves a
+/// plain layer plain.
+#[test]
+fn painting_nothing_keeps_a_layer_plain() {
+    let mut p = pack(8, 6, 1);
+    let id = add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
+    let clear = Paint::Tile(RgbaImage::new(2, 2));
+    draw(&mut p, &id, &Shape::Rect { x: 0, y: 0, w: 4, h: 4 }, &clear, Some(ElementMaterial::Rock)).unwrap();
+    fill(&mut p, &id, (1, 1), &clear, 0, Some(ElementMaterial::Rock)).unwrap();
+    assert_eq!(element(&p, &id).kind, ElementKind::drawn(ElementMaterial::Dirt));
+    assert!(!p.composition.as_ref().unwrap().files.contains_key("editor/layers/l.material.png"));
+}
+
+/// Minors: a locked element duplicates; its copy is locked too.
+#[test]
+fn a_locked_element_duplicates_locked() {
+    let mut p = pack(8, 6, 1);
+    let id = add_layer(&mut p, ElementMaterial::Dirt, "Crate").unwrap();
+    set(&mut p, &id, Property::Locked(true)).unwrap();
+    let copy = duplicate(&mut p, &id).unwrap();
+    assert!(element(&p, &copy).locked);
+}
+
+/// Minors: renaming never runs out, even past a thousand taken names.
+#[test]
+fn a_source_name_is_always_free() {
+    let taken: Vec<String> =
+        std::iter::once("tiny.jpg".to_string()).chain((2..=1500).map(|i| format!("tiny-{i}.jpg"))).collect();
+    assert_eq!(new_source_name(taken.iter().map(String::as_str), "TINY.jpg"), "TINY-1501.jpg");
+}

@@ -59,3 +59,16 @@ fn builtin_textures_tile() {
         }
     }
 }
+
+/// Minors: every built-in texture's generator repeats every
+/// `BUILTIN_SIDE` pixels both ways, exactly.
+#[test]
+fn builtin_generators_are_periodic() {
+    use olr_edit::textures::builtin_texel;
+    for (i, t) in builtin().iter().enumerate() {
+        for (y, x) in [(0, 64), (5, 130), (70, 3), (200, 199), (63, 127)] {
+            assert_eq!(builtin_texel(i, x, y), Some(t.image.get(x % 64, y % 64)), "{} at ({x}, {y})", t.name);
+        }
+    }
+    assert_eq!(builtin_texel(6, 0, 0), None);
+}

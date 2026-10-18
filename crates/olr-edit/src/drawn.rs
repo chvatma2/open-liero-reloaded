@@ -149,16 +149,18 @@ pub fn fill(
     let want = centre(art, local(first));
     let alike = |c: Rgba| (c.a != 0) == (want.a != 0) && (want.a == 0 || similar(c, want, tolerance));
     let mut inside = vec![false; rw * rh];
-    let mut stack = vec![first];
+    // `u32` indices: box ∩ level holds at most the art's pixels, far below 2³².
+    let mut stack = vec![first as u32];
     inside[first] = true;
     let (mut bx0, mut by0, mut bx1, mut by1) = (rw, rh, 0, 0);
     while let Some(i) = stack.pop() {
+        let i = i as usize;
         let (x, y) = (i % rw, i / rw);
         (bx0, by0, bx1, by1) = (bx0.min(x), by0.min(y), bx1.max(x + 1), by1.max(y + 1));
         let mut visit = |j: usize| {
             if !inside[j] && alike(centre(art, local(j))) {
                 inside[j] = true;
-                stack.push(j);
+                stack.push(j as u32);
             }
         };
         if x > 0 {
@@ -249,6 +251,17 @@ pub fn mix(d: &mut Decoded, s: u32, material: Material) {
     if let Decoded::Drawn { art, cells: cells @ None, .. } = d {
         let n = (art.width() / s.max(1)) as usize * (art.height() / s.max(1)) as usize;
         *cells = Some(vec![material; n]);
+    }
+}
+
+/// Drops the cells of drawn data `d` whose every cell is `material`: the
+/// layer is plain again (a stroke of another material that painted
+/// nothing; plan 14e minors).
+pub fn unmix_plain(d: &mut Decoded, material: Material) {
+    if let Decoded::Drawn { cells: cells @ Some(_), .. } = d
+        && cells.as_ref().is_some_and(|c| c.iter().all(|m| *m == material))
+    {
+        *cells = None;
     }
 }
 

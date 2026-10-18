@@ -26,18 +26,17 @@ pub const MAX_USER_TEXTURES: usize = 256;
 
 const N: u32 = BUILTIN_SIDE;
 
+/// A generator: the texel at any `(x, y)`, repeating every `N` pixels.
+type Generator = (&'static str, fn(u32, u32) -> Rgba);
+
+/// R1's generators, in `builtin`'s order.
+const GENERATORS: [Generator; 6] =
+    [("Dirt", dirt), ("Rock", rock), ("Grass", grass), ("Brick", brick), ("Metal", metal), ("Wood", wood)];
+
 /// R1's set, in this order: Dirt, Rock, Grass, Brick, Metal, Wood.
 pub fn builtin() -> Vec<Texture> {
-    type Generator = (&'static str, fn(u32, u32) -> Rgba);
-    let gens: [Generator; 6] = [
-        ("Dirt", dirt),
-        ("Rock", rock),
-        ("Grass", grass),
-        ("Brick", brick),
-        ("Metal", metal),
-        ("Wood", wood),
-    ];
-    gens.into_iter()
+    GENERATORS
+        .into_iter()
         .map(|(name, f)| {
             let mut image = RgbaImage::new(N, N);
             for y in 0..N {
@@ -48,6 +47,12 @@ pub fn builtin() -> Vec<Texture> {
             Texture { name, image }
         })
         .collect()
+}
+
+/// Built-in texture `i`'s generator at any `(x, y)` (it repeats every
+/// `BUILTIN_SIDE` pixels); `None` past the set.
+pub fn builtin_texel(i: usize, x: u32, y: u32) -> Option<Rgba> {
+    GENERATORS.get(i).map(|(_, f)| f(x, y))
 }
 
 /// A fixed 32-bit integer hash of a lattice point and a seed.
@@ -102,7 +107,7 @@ const DIRT: [Rgba; 8] = [
 
 fn dirt(x: u32, y: u32) -> Rgba {
     let v = fbm(x, y, &[((16, 16), 4), ((8, 8), 2), ((4, 4), 1)], 11);
-    let grain = hash(x, y, 12) & 63;
+    let grain = hash(x % N, y % N, 12) & 63;
     shade(&DIRT, (v * 3 + grain * 2) / 4 + 8)
 }
 
@@ -119,7 +124,7 @@ const ROCK: [Rgba; 8] = [
 
 fn rock(x: u32, y: u32) -> Rgba {
     let v = fbm(x, y, &[((32, 32), 4), ((16, 16), 3), ((8, 8), 2), ((2, 2), 1)], 21);
-    let grain = hash(x, y, 22) & 31;
+    let grain = hash(x % N, y % N, 22) & 31;
     shade(&ROCK, v + grain / 2)
 }
 
@@ -137,7 +142,7 @@ const GRASS: [Rgba; 8] = [
 fn grass(x: u32, y: u32) -> Rgba {
     // Blades: narrow across, long down.
     let v = fbm(x, y, &[((2, 16), 3), ((4, 32), 2), ((16, 16), 2)], 31);
-    let grain = hash(x, y, 32) & 31;
+    let grain = hash(x % N, y % N, 32) & 31;
     shade(&GRASS, v + grain / 2)
 }
 
@@ -157,7 +162,7 @@ fn brick(x: u32, y: u32) -> Rgba {
     // 16 × 8 bricks, every other row offset by half a brick.
     // A brick's edge next to the mortar is one shadow shade, so every
     // joint, the tile's own included, steps alike.
-    let row = y / 8;
+    let row = y / 8 % (N / 8);
     let bx = (x + (row % 2) * 8) % N;
     if y % 8 == 7 || bx % 16 == 15 {
         return MORTAR;
@@ -166,7 +171,7 @@ fn brick(x: u32, y: u32) -> Rgba {
         return BRICK[1];
     }
     let base = hash(bx / 16, row, 41) % 96;
-    let grain = fbm(x, y, &[((4, 4), 1)], 42) / 2 + (hash(x, y, 43) & 31);
+    let grain = fbm(x, y, &[((4, 4), 1)], 42) / 2 + (hash(x % N, y % N, 43) & 31);
     shade(&BRICK, base + grain / 2)
 }
 
@@ -211,8 +216,9 @@ const WOOD: [Rgba; 8] = [
 
 fn wood(x: u32, y: u32) -> Rgba {
     // Planks 16 high, each with a joint at its own place; grain along them.
-    let plank = y / 16;
+    let plank = y / 16 % (N / 16);
     let joint = hash(plank, 0, 61) % N;
+    let x = x % N;
     if y % 16 == 15 || x == joint {
         return WOOD[0];
     }

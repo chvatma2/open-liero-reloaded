@@ -182,14 +182,19 @@ fn new_id(src: &CompositionSource, stray: &BTreeSet<String>, name: &str, fallbac
 /// file system refuses (a Windows device: `CON.png` becomes `CON-2.png`;
 /// ruling R7 of plan 14a). A name no suffix makes portable (a colon) is
 /// kept, for the check to refuse.
-pub fn new_source_name<'a>(sources: impl Iterator<Item = &'a str> + Clone, file_name: &str) -> String {
+pub fn new_source_name<'a>(sources: impl Iterator<Item = &'a str>, file_name: &str) -> String {
     let (stem, ext) = file_name.rsplit_once('.').unwrap_or((file_name, ""));
-    let taken =
-        |c: &str| olr_vfs::non_portable(c).is_some() || sources.clone().any(|s| s.eq_ignore_ascii_case(c));
+    let names: BTreeSet<String> = sources.map(str::to_ascii_lowercase).collect();
+    let taken = |c: &str| olr_vfs::non_portable(c).is_some() || names.contains(&c.to_ascii_lowercase());
     if !taken(file_name) {
         return file_name.into();
     }
-    (2u32..=1000).map(|i| format!("{stem}-{i}.{ext}")).find(|c| !taken(c)).unwrap_or_else(|| file_name.into())
+    // One more suffix than there are names is always free (a pack's
+    // strays never make it run out, batch C review).
+    (2..=names.len() as u64 + 2)
+        .map(|i| format!("{stem}-{i}.{ext}"))
+        .find(|c| !taken(c))
+        .unwrap_or_else(|| file_name.into())
 }
 
 fn new_source(src: &CompositionSource, stray: &BTreeSet<String>, file_name: &str) -> String {
@@ -487,10 +492,14 @@ pub fn draw(
 ) -> Result<(), ElementError> {
     paint_layer(pack, id, |d, at, size, s, layer| {
         let m = material.unwrap_or(layer);
+        let plain = matches!(d, Decoded::Drawn { cells: None, .. });
         if m != layer {
             drawn::mix(d, s, layer.into());
         }
         drawn::draw(d, at, s, size, shape, paint, m.into());
+        if plain {
+            drawn::unmix_plain(d, layer.into());
+        }
         Ok(())
     })
 }
@@ -519,10 +528,14 @@ pub fn fill(
             return Err(ElementError::BadValue(format!("({}, {}) is outside {id:?}", seed.0, seed.1)));
         }
         let m = material.unwrap_or(layer);
+        let plain = matches!(d, Decoded::Drawn { cells: None, .. });
         if m != layer {
             drawn::mix(d, s, layer.into());
         }
         drawn::fill(d, at, s, size, seed, paint, m.into(), tolerance);
+        if plain {
+            drawn::unmix_plain(d, layer.into());
+        }
         Ok(())
     })
 }
