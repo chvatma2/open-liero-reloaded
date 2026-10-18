@@ -33,9 +33,34 @@ pub(super) struct LookTextures {
     pub(super) terrain_bind: wgpu::BindGroup,
 }
 
+/// The light grid's format.
+pub(super) const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// One world target's look passes: the light grid (gathered, blurred
+/// across, then down, capped and banded) and the lit target the upscale
+/// reads.
+pub(super) struct LitTarget {
+    /// World pixels: the light grid's size.
+    pub(super) grid: (u32, u32),
+    pub(super) light: [wgpu::Texture; 3],
+    pub(super) views: [wgpu::TextureView; 3],
+    /// The sum pass's, the across blur's (reads 0) and the down blur's (reads 1).
+    pub(super) binds: [wgpu::BindGroup; 3],
+    pub(super) composite_bind: wgpu::BindGroup,
+    pub(super) lit_view: wgpu::TextureView,
+    /// The upscale pass's view of the lit target.
+    pub(super) upscale_bind: wgpu::BindGroup,
+}
+
 pub(super) struct LookState {
     pub(super) terrain_pipeline: wgpu::RenderPipeline,
     pub(super) sprite_pipeline: wgpu::RenderPipeline,
+    pub(super) sum_pipeline: wgpu::RenderPipeline,
+    pub(super) blur_h_pipeline: wgpu::RenderPipeline,
+    pub(super) blur_v_pipeline: wgpu::RenderPipeline,
+    pub(super) composite_pipeline: wgpu::RenderPipeline,
+    pub(super) light_layout: wgpu::BindGroupLayout,
+    pub(super) composite_layout: wgpu::BindGroupLayout,
     pub(super) layout: wgpu::BindGroupLayout,
     pub(super) globals: wgpu::Buffer,
     pub(super) textures: Option<LookTextures>,
@@ -155,6 +180,44 @@ impl LookState {
             &targets,
             wgpu::PrimitiveTopology::TriangleStrip,
         );
+        let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("olr-render light"),
+            entries: &[entry(0, frag, super::UNIFORM), entry(1, frag, FLOAT_TEXTURE)],
+        });
+        let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("olr-render composite"),
+            entries: &[
+                entry(0, frag, super::UNIFORM),
+                entry(1, frag, FLOAT_TEXTURE),
+                entry(2, frag, FLOAT_TEXTURE),
+                entry(3, frag, FLOAT_TEXTURE),
+            ],
+        });
+        let light_source = format!("{COMMON}\n{}", include_str!("../look/light.wgsl"));
+        let light = |fs: &str| {
+            pipeline(
+                device,
+                "olr-render light",
+                &light_source,
+                ("vs_full", fs),
+                &[Some(&light_layout)],
+                &[],
+                &[(LIGHT_FORMAT, None)],
+                wgpu::PrimitiveTopology::TriangleList,
+            )
+        };
+        let (sum_pipeline, blur_h_pipeline, blur_v_pipeline) =
+            (light("fs_sum"), light("fs_blur_h"), light("fs_blur_v"));
+        let composite_pipeline = pipeline(
+            device,
+            "olr-render composite",
+            &format!("{COMMON}\n{}", include_str!("../look/composite.wgsl")),
+            ("vs_full", "fs_composite"),
+            &[Some(&composite_layout)],
+            &[],
+            &[(WORLD_FORMAT, None)],
+            wgpu::PrimitiveTopology::TriangleList,
+        );
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("olr-render look globals"),
             size: (GLOBAL_FLOATS * 4) as u64,
@@ -164,11 +227,82 @@ impl LookState {
         LookState {
             terrain_pipeline,
             sprite_pipeline,
+            sum_pipeline,
+            blur_h_pipeline,
+            blur_v_pipeline,
+            composite_pipeline,
+            light_layout,
+            composite_layout,
             layout,
             globals,
             textures: None,
             packed: Vec::with_capacity(GLOBAL_FLOATS),
         }
+    }
+
+    /// The look passes' textures for a world target of `texels` (`grid`
+    /// world pixels): its light grid and lit target, bound to `albedo` and
+    /// `shade` (the world pass's targets) and to the upscale.
+    #[allow(clippy::too_many_arguments)]
+    pub(super) fn target(
+        &self,
+        device: &wgpu::Device,
+        grid: (u32, u32),
+        texels: (u32, u32),
+        albedo: &wgpu::TextureView,
+        shade: &wgpu::TextureView,
+        (upscale_layout, upscale_uniform, sampler): (&wgpu::BindGroupLayout, &wgpu::Buffer, &wgpu::Sampler),
+    ) -> LitTarget {
+        let make = |label: &str, size: (u32, u32), format| {
+            device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label),
+                size: wgpu::Extent3d {
+                    width: size.0.max(1),
+                    height: size.1.max(1),
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            })
+        };
+        let light = [0, 1, 2].map(|_| make("olr-render light grid", grid, LIGHT_FORMAT));
+        let views = light.each_ref().map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
+        fn tex(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
+            wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }
+        }
+        let uniform = || wgpu::BindGroupEntry { binding: 0, resource: self.globals.as_entire_binding() };
+        let light_bind = |src: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("olr-render light"),
+                layout: &self.light_layout,
+                entries: &[uniform(), tex(1, src)],
+            })
+        };
+        // The sum reads nothing; it is bound to the grid it does not write.
+        let binds = [light_bind(&views[2]), light_bind(&views[0]), light_bind(&views[1])];
+        let composite_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("olr-render composite"),
+            layout: &self.composite_layout,
+            entries: &[uniform(), tex(1, albedo), tex(2, shade), tex(3, &views[2])],
+        });
+        let lit = make("olr-render lit", texels, WORLD_FORMAT);
+        let lit_view = lit.create_view(&wgpu::TextureViewDescriptor::default());
+        let upscale_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("olr-render upscale lit"),
+            layout: upscale_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: upscale_uniform.as_entire_binding() },
+                tex(1, &lit_view),
+                wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
+            ],
+        });
+        LitTarget { grid, light, views, binds, composite_bind, lit_view, upscale_bind }
     }
 
     /// New textures for `map`, uploaded whole (zeros where it has no glow).
@@ -293,6 +427,14 @@ impl Renderer {
         }
         // The world target gains or loses its shade target.
         self.target = None;
+    }
+
+    /// The view's light grid as last drawn (tests): the texture
+    /// (RGBA16Float) and where it lies; `None` before a lit frame.
+    pub fn light_grid(&self) -> Option<(&wgpu::Texture, crate::LightGrid)> {
+        let t = self.target.as_ref()?;
+        let lit = t.lit.as_ref()?;
+        Some((&lit.light[2], crate::LightGrid { origin: t.origin, size: lit.grid }))
     }
 
     /// The glow texture (tests); `None` without lighting or a terrain.

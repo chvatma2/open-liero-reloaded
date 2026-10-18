@@ -19,6 +19,7 @@
 mod atlas;
 mod diff;
 mod frame;
+mod look;
 mod offscreen;
 mod renderer;
 mod upscale;
@@ -29,6 +30,7 @@ pub use frame::{
     INSTANCE_FLOATS, Instance, LookTextureSizes, MARGIN, MAX_VIEW, MISSING, WorldFrame, look_texture_sizes,
     push_instances, terrain_instance,
 };
+pub use look::{LightGrid, grade_linear, linear_to_srgb, shade_texel};
 pub use offscreen::{
     AdapterPreference, NoAdapter, OUTPUT_FORMAT, Offscreen, OffscreenOptions, list_adapters,
 };

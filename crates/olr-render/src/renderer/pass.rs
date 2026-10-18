@@ -48,6 +48,9 @@ impl Renderer {
     ) {
         let frame = WorldFrame::new(list.view, self.scale());
         self.ensure_target(&frame);
+        if let Some(t) = self.target.as_mut() {
+            t.origin = frame.origin;
+        }
         self.instances.clear();
         if let Some(t) = &self.terrain {
             // A colour map the device made us crop covers its share of the map.
@@ -128,10 +131,26 @@ impl Renderer {
                 pass.draw(0..4, first_sprite..end);
             }
         }
+        let lit_target = lit.and(world.lit.as_ref()).zip(self.look.as_ref());
+        if let Some((lt, state)) = lit_target {
+            let passes = [
+                (&lt.views[0], &state.sum_pipeline, &lt.binds[0]),
+                (&lt.views[1], &state.blur_h_pipeline, &lt.binds[1]),
+                (&lt.views[2], &state.blur_v_pipeline, &lt.binds[2]),
+                (&lt.lit_view, &state.composite_pipeline, &lt.composite_bind),
+            ];
+            for (view, pipeline, bind) in passes {
+                let mut pass = begin(&mut encoder, "olr-render look", view, None);
+                pass.set_pipeline(pipeline);
+                pass.set_bind_group(0, bind, &[]);
+                pass.draw(0..3, 0..1);
+            }
+        }
         {
             let mut pass = begin(&mut encoder, "olr-render upscale", target, stamp(None, Some(1)));
             pass.set_pipeline(&self.upscale_pipeline);
-            pass.set_bind_group(0, &world.bind, &[]);
+            let bind = lit_target.map_or(&world.bind, |(lt, _)| &lt.upscale_bind);
+            pass.set_bind_group(0, bind, &[]);
             pass.draw(0..3, 0..1);
         }
         if let Some(p) = self.probe.as_mut() {
@@ -156,7 +175,12 @@ impl Renderer {
     fn ensure_target(&mut self, frame: &WorldFrame) {
         let size = frame.target_size();
         let lit = self.look.is_some();
-        if self.target.as_ref().is_some_and(|t| t.frame_size == size && t.shade.is_some() == lit) {
+        let grid_fits = |t: &Target| t.lit.as_ref().is_none_or(|l| l.grid == frame.size);
+        if self
+            .target
+            .as_ref()
+            .is_some_and(|t| t.frame_size == size && t.shade.is_some() == lit && grid_fits(t))
+        {
             return;
         }
         let max = self.device.limits().max_texture_dimension_2d;
@@ -191,7 +215,19 @@ impl Renderer {
             });
             t.create_view(&wgpu::TextureViewDescriptor::default())
         });
-        self.target = Some(Target { frame_size: size, size: clamped, view, bind, shade });
+        let lit = match (&self.look, &shade) {
+            (Some(state), Some(shade)) => Some(state.target(
+                &self.device,
+                frame.size,
+                clamped,
+                &view,
+                shade,
+                (&self.upscale_layout, &self.upscale_uniform, &self.sampler),
+            )),
+            _ => None,
+        };
+        self.target =
+            Some(Target { frame_size: size, size: clamped, view, bind, shade, lit, origin: frame.origin });
     }
 }
 

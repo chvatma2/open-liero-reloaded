@@ -52,6 +52,10 @@ struct Target {
     /// With lighting: the second target, each texel's shade (self-light,
     /// marker), drawn with the albedo.
     shade: Option<wgpu::TextureView>,
+    /// With lighting: the light grid and the lit target.
+    lit: Option<look::LitTarget>,
+    /// The world pixel of the target's texel (0, 0), as last drawn.
+    origin: (i32, i32),
 }
 
 /// Draws [`DrawList`]s with one device: the terrain (a full upload, then

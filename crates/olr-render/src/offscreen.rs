@@ -191,6 +191,21 @@ impl Offscreen {
         RgbaImage::from_raw(w, h, self.read_bytes(texture)).expect("w x h texels")
     }
 
+    /// The renderer's light grid as last drawn ([`Renderer::light_grid`]):
+    /// where it lies and each texel's linear light.
+    pub fn read_light(&self, renderer: &Renderer) -> Option<(crate::LightGrid, Vec<[f32; 3]>)> {
+        let (texture, grid) = renderer.light_grid()?;
+        let bytes = self.read_bytes(texture);
+        let half = |b: &[u8]| f16_to_f32(u16::from_le_bytes([b[0], b[1]]));
+        let light = bytes
+            .as_chunks::<8>()
+            .0
+            .iter()
+            .map(|t| [half(&t[0..2]), half(&t[2..4]), half(&t[4..6])])
+            .collect();
+        Some((grid, light))
+    }
+
     /// Any texture (made with `COPY_SRC`) back to the CPU, its texels' bytes
     /// row-major without padding.
     pub fn read_bytes(&self, texture: &wgpu::Texture) -> Vec<u8> {
@@ -233,5 +248,18 @@ impl Offscreen {
         drop(mapped);
         buffer.unmap();
         pixels
+    }
+}
+
+/// An IEEE half as an `f32`.
+fn f16_to_f32(h: u16) -> f32 {
+    let sign = if h & 0x8000 != 0 { -1.0 } else { 1.0 };
+    let exp = i32::from((h >> 10) & 0x1f);
+    let frac = f32::from(h & 0x3ff);
+    match exp {
+        0 => sign * frac * 2f32.powi(-24),
+        31 if frac == 0.0 => sign * f32::INFINITY,
+        31 => f32::NAN,
+        e => sign * (1.0 + frac / 1024.0) * 2f32.powi(e - 15),
     }
 }

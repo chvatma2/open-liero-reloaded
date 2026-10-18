@@ -348,3 +348,117 @@ fn look_textures_follow_dirty_rects() {
     r.update_terrain(&mut plain);
     assert!(gpu.read_bytes(r.glow_texture().unwrap()).iter().all(|v| *v == 0));
 }
+
+/// A look frame of ambient `a` (grey), one glow group at self-light scale
+/// 0.5 (the left half of [`glowing_map`]), nothing else.
+fn dim(a: f32) -> olr_look::LookFrame {
+    let mut look = olr_look::LookFrame::default();
+    look.begin(None, 0.0);
+    look.ambient = [a; 3];
+    look.groups.push(olr_look::FrameGroup { cast: [0.0; 3], own_colour: true, self_scale: 0.5, reach: 0.0 });
+    look
+}
+
+/// 80 × 60 world pixels at art scale 2 onto 160 × 120 output pixels with
+/// integer nearest: one output pixel per world-target texel.
+fn one_to_one() -> (DrawList, (u32, u32)) {
+    (list(View { x: 20.0, y: 30.0, w: 80.0, h: 60.0 }), (160, 120))
+}
+
+#[test]
+fn look_full_ambient_is_identity() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_map();
+    let (l, size) = one_to_one();
+    let mut plain = gpu.renderer(RenderSettings::default());
+    plain.upload_terrain(&map);
+    let want = gpu.render_to_image(&mut plain, &l, size);
+    let mut lit = gpu.renderer(RenderSettings::default());
+    lit.set_lighting(true);
+    lit.upload_terrain(&map);
+    let mut look = dim(1.0);
+    look.groups.clear();
+    assert_eq!(gpu.render_lit_to_image(&mut lit, &l, Some(&look), size), want);
+    assert_eq!(gpu.render_lit_to_image(&mut lit, &l, Some(&look), size), want, "same state, same bytes");
+}
+
+#[test]
+fn look_ambient_darkens() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_map();
+    let (l, size) = one_to_one();
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.upload_terrain(&map);
+    let plain = gpu.render_to_image(&mut r, &l, size);
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    let look = dim(0.3);
+    let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), size);
+    let (grid, light) = gpu.read_light(&r).expect("a light grid");
+    assert_eq!(grid.origin, (19, 29));
+    assert!(light.iter().all(|c| (c[0] - 0.3).abs() < 1e-3), "ambient everywhere");
+    let glow = map.glow().unwrap();
+    let mut worst = 0i32;
+    for y in 0..size.1 {
+        for x in 0..size.0 {
+            // Output pixel (x, y) is target texel (x + 2, y + 2): art pixel (40 + x, 60 + y).
+            let (ax, ay) = (40 + x, 60 + y);
+            let g = f32::from(glow[(ay * 240 + ax) as usize]) / 255.0;
+            let left = ax / 2 < 60;
+            let self_light = if left { g * 0.5 } else { g };
+            let p = plain.get(x, y);
+            let want = olr_render::shade_texel(
+                [p.r, p.g, p.b, 255],
+                [0.3; 3],
+                self_light,
+                false,
+                &Default::default(),
+                1.0,
+            );
+            let got = img.get(x, y);
+            for (a, b) in [got.r, got.g, got.b].iter().zip(&want[..3]) {
+                worst = worst.max((i32::from(*a) - i32::from(*b)).abs());
+            }
+        }
+    }
+    assert!(worst <= 1, "every texel within 1 of the model: {worst}");
+}
+
+#[test]
+fn look_steps_band_the_light() {
+    let Some(gpu) = offscreen() else { return };
+    let (l, size) = one_to_one();
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.set_lighting(true);
+    r.upload_terrain(&glowing_map());
+    let mut look = dim(0.3);
+    look.light_steps = 4;
+    gpu.render_lit_to_image(&mut r, &l, Some(&look), size);
+    let (_, light) = gpu.read_light(&r).unwrap();
+    assert!(light.iter().all(|c| (c[0] - 0.25).abs() < 1e-3), "0.3 bands to 0.25: {:?}", light[0]);
+    look.max_light = 2.0;
+    look.ambient = [3.0; 3];
+    gpu.render_lit_to_image(&mut r, &l, Some(&look), size);
+    let (_, light) = gpu.read_light(&r).unwrap();
+    assert!(light.iter().all(|c| (c[0] - 2.0).abs() < 1e-3), "capped at max light: {:?}", light[0]);
+}
+
+#[test]
+fn look_modes() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_map();
+    let (l, size) = one_to_one();
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.upload_terrain(&map);
+    let plain = gpu.render_to_image(&mut r, &l, size);
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    let mut look = dim(0.3);
+    look.mode = olr_look::ViewMode::FullBright;
+    assert_eq!(gpu.render_lit_to_image(&mut r, &l, Some(&look), size), plain);
+    look.mode = olr_look::ViewMode::LightOnly;
+    let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), size);
+    // Art pixel (42, 60) does not glow (42 % 7 = 0): white lit at 0.3.
+    let grey = olr_render::linear_to_srgb(0.3);
+    assert_eq!(img.get(2, 0), Rgba::rgb(grey, grey, grey));
+}

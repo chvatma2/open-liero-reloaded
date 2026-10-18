@@ -75,7 +75,7 @@ fn fs_terrain_lit(in: QuadOut) -> LitOut {
     let v = textureLoad(groups_tex, clamp(t / s, vec2<i32>(0), wsize - vec2<i32>(1)), 0).r;
     // A pixel of no group still glows; it only casts no light.
     var scale = 1.0;
-    if v > 0u && v <= 255u {
+    if v > 0u && v <= min(u32(look.mode.y), 255u) {
         scale = look.groups[v - 1u].w;
     }
     var out: LitOut;
