@@ -177,7 +177,7 @@ Every light source has the same fields:
 animation: Pulse(period_ms: 2000, low: 60, high: 100, shape: Sine),   // Sine | Triangle | Square
 animation: Flicker(speed: 8, depth: 25),         // value noise, changes per second, percent
 animation: Keys(keys: [(0, 100), (150, 40), (400, 0)], looped: false),
-animation: Keys(keys: [(0, 100, Some((255, 160, 60))), ...], looped: true),   // colour too
+animation: Keys(keys: [(0, 100, "#ffa03c"), ...], looped: true),   // colour too
 ```
 
 - The animation scales intensity (and, for `Keys` with colours, sets the
@@ -321,40 +321,45 @@ are evaluated directly, so their numbers mean what the editor shows:
 level.ron         + look, + Light objects
 look/glow.png     art resolution, 8-bit grey: the glow strength of the composite (front over solid, back elsewhere)
 look/glow-back.png  art resolution, 8-bit grey: the backdrop's glow strength (what digging reveals)
-look/groups.png   world resolution, 8-bit grey: the composite's glow group per world pixel
+look/groups.png   world resolution, 8-bit grey: the composite's glow group per world pixel (0 none, n the look's group n - 1)
 look/groups-back.png  world resolution, 8-bit grey: the backdrop's group
 ```
 
 ```ron
 look: Some((
-    ambient: (colour: (255, 255, 255), intensity: 30),
+    ambient: (colour: "#ffffff", intensity: 30),
     max_light: 100,                    // 100-200
     light_steps: 0,                    // 0 off, 2-32
     softness: 0,                       // world pixels, 0-4
-    grade: (exposure: 0, contrast: 100, saturation: 100, tint: (255, 255, 255)),   // exposure in 1/100 stop, -200..200
+    grade: (exposure: 0, contrast: 100, saturation: 100, tint: "#ffffff"),   // exposure in 1/100 stop, -200..200
     glow_groups: [
-        (id: "sky", colour: Rgb(255, 240, 210), intensity: 100, reach: Unlimited, animation: Steady),
+        (id: "sky", colour: Tint("#fff0d2"), intensity: 100, reach: Unlimited, animation: Steady),
         (id: "lava", colour: Own, intensity: 150, reach: Pixels(96), animation: Flicker(speed: 6, depth: 20)),
     ],
 )),
 objects: [
     Spawn(at: (40, 300)),
-    Light(at: (512, 140), colour: (255, 190, 120), intensity: 120, reach: Pixels(160),
+    Light(at: (512, 140), colour: "#ffbe78", intensity: 120, reach: Pixels(160),
           radius: 2, animation: Flicker(speed: 8, depth: 25)),
 ],
 ```
 
 - **All four look images or none.** Without them a level has no glow. Sizes
-  must match the level (art or world resolution); a mismatch, a group index
-  past the list, or an unknown field is a `pack check` error and a load
-  warning that drops the glow, never a panic (repo rule 6).
+  must match the level (art or world resolution); a mismatch or a group past
+  the list is a `pack check` error and a load warning that drops the glow;
+  a look value out of range is a `pack check` error and a load warning that
+  drops the look (its lights and glow too); a `level.ron` that does not
+  parse (an unknown field) fails the level, as any authoring file does; a
+  bad look in a mod fails the mod, as any bad mod field does. Never a panic
+  (repo rule 6).
 - **`look: None`** (absent) is a level without a look: the passes do not
   run.
 - **Hashed:** `level.ron` and `look/` are in the content hash already (only
   `editor/`, hidden files, `pack.ron` and `thumb.png` are left out), so
   content download, replays and the lobby's checks carry them unchanged.
 - **Integers only** (percent, milliseconds, world pixels), so canonical
-  RON round-trips byte-identically.
+  RON round-trips byte-identically. Colours are the format's hex strings
+  (`"#rrggbb"`), as every other colour in a pack (plan 15a, Task 2).
 
 ### Composition (`editor/composition.ron`, not hashed)
 
@@ -376,12 +381,12 @@ objects: [
 // projectiles/<id>.ron
 look: Some((
     glow: Some(80),                                   // self-light of its sprite or pixels, percent
-    light: Some((colour: (255, 140, 40), intensity: 80, reach: Pixels(48), animation: Flicker(speed: 10, depth: 15))),
-    end_flash: Some((colour: (255, 200, 120), intensity: 200, reach: Pixels(96),
+    light: Some((colour: "#ff8c28", intensity: 80, reach: Pixels(48), animation: Flicker(speed: 10, depth: 15))),
+    end_flash: Some((colour: "#ffc878", intensity: 200, reach: Pixels(96),
                      animation: Keys(keys: [(0, 100), (250, 0)], looped: false))),
 )),
 // weapons/<id>.ron
-look: Some((muzzle_light: Some((colour: (255, 220, 160), intensity: 120, reach: Pixels(64),
+look: Some((muzzle_light: Some((colour: "#ffdca0", intensity: 120, reach: Pixels(64),
                                 animation: Keys(keys: [(0, 100), (60, 0)], looped: false))))),
 ```
 
