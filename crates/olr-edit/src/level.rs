@@ -20,7 +20,7 @@
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_format::image_io::{LEVEL_ART, check_size};
-use olr_format::levels::{LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, thumbnail};
+use olr_format::levels::{GlowLayers, LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, thumbnail};
 use std::sync::Arc;
 
 /// A rectangle of world pixels.
@@ -527,6 +527,8 @@ pub fn resize(
     }
     let mut cells = vec![material; w as usize * h as usize];
     let (mut front, mut back) = (new_area.clone(), new_area);
+    // The glow re-laid the same way; the new area glows none.
+    let mut glow = level.glow.as_ref().map(|_| GlowLayers::empty((aw, ah), (w, h)));
     let (dx, dy) = (i64::from(offset.0), i64::from(offset.1));
     let (old_w, old_h) = level.size;
     // The old pixels that land inside: x in max(0, -dx)..min(old_w, w - dx).
@@ -535,27 +537,36 @@ pub fn resize(
             // Both inside their levels: lossless casts.
             let (ox, oy, nx, ny) = (ox as u32, oy as u32, (ox + dx) as u32, (oy + dy) as u32);
             cells[ny as usize * w as usize + nx as usize] = level.material[cell(level, ox, oy)];
+            if let (Some(g), Some(old)) = (glow.as_mut(), level.glow.as_ref()) {
+                let (o, n) = (cell(level, ox, oy), ny as usize * w as usize + nx as usize);
+                g.groups[n] = old.groups[o];
+                g.groups_back[n] = old.groups_back[o];
+            }
             for (i, (ax, ay)) in art_block(s, ox, oy).enumerate() {
                 let i = i as u32;
                 let (bx, by) = (nx * s + i % s, ny * s + i / s);
                 front.set(bx, by, level.front.get(ax, ay));
                 back.set(bx, by, level.back.get(ax, ay));
+                if let (Some(g), Some(old)) = (glow.as_mut(), level.glow.as_ref()) {
+                    let (o, n) = ((ay * old.art.0 + ax) as usize, (by * aw + bx) as usize);
+                    g.front[n] = old.front[o];
+                    g.back[n] = old.back[o];
+                }
             }
         }
     }
     let inside = |v: i64, side: u32| (0..i64::from(side)).contains(&v);
-    let (kept, dropped) = std::mem::take(&mut level.objects).into_iter().partition(|o| match o {
-        LevelObject::Spawn { at, .. } => inside(i64::from(at.0) + dx, w) && inside(i64::from(at.1) + dy, h),
+    let (kept, dropped) = std::mem::take(&mut level.objects).into_iter().partition(|o| {
+        let at = o.at();
+        inside(i64::from(at.0) + dx, w) && inside(i64::from(at.1) + dy, h)
     });
     level.objects = kept;
     for o in &mut level.objects {
-        match o {
-            // Inside the new level: fits in i32.
-            LevelObject::Spawn { at, .. } => {
-                *at = ((i64::from(at.0) + dx) as i32, (i64::from(at.1) + dy) as i32)
-            }
-        }
+        // Inside the new level: fits in i32.
+        let at = o.at();
+        o.set_at(((i64::from(at.0) + dx) as i32, (i64::from(at.1) + dy) as i32));
     }
+    level.glow = glow;
     level.size = size;
     level.material = cells;
     level.front = front;
@@ -575,8 +586,8 @@ pub fn add_spawn(level: &mut LevelSource, at: (i32, i32), notes: &str) -> Result
 pub fn move_object(level: &mut LevelSource, index: usize, at: (i32, i32)) -> Result<(), EditError> {
     let len = level.objects.len();
     match level.objects.get_mut(index) {
-        Some(LevelObject::Spawn { at: old, .. }) => {
-            *old = at;
+        Some(o) => {
+            o.set_at(at);
             Ok(())
         }
         None => Err(EditError::NoObject { index, len }),

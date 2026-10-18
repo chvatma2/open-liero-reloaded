@@ -696,6 +696,8 @@ fn as_level(
         front,
         back,
         thumb: None,
+        look: None,
+        glow: None,
     }
 }
 

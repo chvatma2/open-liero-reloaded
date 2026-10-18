@@ -33,6 +33,8 @@ fn level(w: u32, h: u32, art_scale: u32) -> LevelSource {
         front: art(1),
         back: art(2),
         thumb: None,
+        look: None,
+        glow: None,
     }
 }
 

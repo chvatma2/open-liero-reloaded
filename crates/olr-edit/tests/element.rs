@@ -36,6 +36,8 @@ fn pack(w: u32, h: u32, s: u32) -> Pack {
         front: RgbaImage::new(w * s, h * s),
         back: RgbaImage::new(w * s, h * s),
         thumb: None,
+        look: None,
+        glow: None,
     };
     Pack { manifest, source: Source::Level(level), composition: None, other: BTreeMap::new() }
 }

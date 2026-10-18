@@ -18,7 +18,9 @@ pub use files::{
 pub use thumb::{THUMB_SIZE, letterbox, thumbnail};
 
 use crate::image_io::{LEVEL_ART, check_size};
-use crate::{FormatError, LiftError};
+use crate::look::{AnimationSource, LightSource, LookSource, MAX_LIGHT_OBJECTS, ReachSource, compile_light, compile_look_source};
+use crate::{Colour, FormatError, LiftError};
+pub use olr_terrain::GlowLayers;
 
 /// The largest `art_scale` (a level's art pixels per world pixel).
 pub const MAX_ART_SCALE: u32 = 8;
@@ -44,6 +46,16 @@ pub const MAX_THUMB_BYTES: u64 = 1 << 20;
 /// before any decoding (a pack must not make the menus decode a huge
 /// image). `olr-pack` re-exports it.
 pub const MAX_THUMB_SIDE: u32 = 512;
+/// The glow strength of the composite (front over solid, back elsewhere), art size, 8-bit grey.
+pub const GLOW_FILE: &str = "look/glow.png";
+/// The backdrop's glow strength (what digging reveals), art size, 8-bit grey.
+pub const GLOW_BACK_FILE: &str = "look/glow-back.png";
+/// The composite's glow group per world pixel, 8-bit grey (an index into `look.glow_groups`).
+pub const GROUPS_FILE: &str = "look/groups.png";
+/// The backdrop's glow group per world pixel, 8-bit grey.
+pub const GROUPS_BACK_FILE: &str = "look/groups-back.png";
+/// A level's glow images: all four or none.
+pub const LOOK_FILES: [&str; 4] = [GLOW_FILE, GLOW_BACK_FILE, GROUPS_FILE, GROUPS_BACK_FILE];
 
 /// `material` (`size`, row-major) as `material.png` holds it: an 8-bit
 /// palette PNG of `MATERIAL_PALETTE`, indexed by `Material as u8`. The
@@ -88,6 +100,10 @@ pub struct LevelSource {
     pub back: RgbaImage,
     /// `thumb.png`'s bytes, passed through (presentation only).
     pub thumb: Option<Vec<u8>>,
+    /// `level.ron`'s `look`; `None` with no light objects draws as always.
+    pub look: Option<LookSource>,
+    /// The four `look/` images, when the level glows.
+    pub glow: Option<GlowLayers>,
 }
 
 /// A thing placed in a level.
@@ -103,6 +119,143 @@ pub enum LevelObject {
         #[serde(default, skip_serializing_if = "String::is_empty")]
         notes: String,
     },
+    /// A light (look system): a source of light at a world position that
+    /// draws nothing itself. At most 1024 a level.
+    Light {
+        /// World pixels (x, y), origin top-left, y down.
+        at: (i32, i32),
+        /// Opaque.
+        colour: Colour,
+        /// The light at the source, percent, 0 to 1000.
+        intensity: u16,
+        /// Where it fades to nothing.
+        reach: ReachSource,
+        /// The source's size, world pixels, 1 to 16: full intensity within
+        /// it, and its shadows start at its edge. Default 2.
+        #[serde(default = "two", skip_serializing_if = "is_two")]
+        radius: u8,
+        /// Default `Steady`.
+        #[serde(default, skip_serializing_if = "crate::defaults::is_default")]
+        animation: AnimationSource,
+        /// Shifts the animation's clock, milliseconds. Default none: from the
+        /// light's index.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        phase_ms: Option<u32>,
+        /// Free text for authors; ignored by the game.
+        #[serde(default, skip_serializing_if = "String::is_empty")]
+        notes: String,
+    },
+}
+
+fn two() -> u8 {
+    2
+}
+
+fn is_two(v: &u8) -> bool {
+    *v == 2
+}
+
+impl LevelObject {
+    /// A spawn point without notes.
+    pub fn spawn(at: (i32, i32)) -> LevelObject {
+        LevelObject::Spawn { at, notes: String::new() }
+    }
+
+    /// A light object without notes.
+    pub fn light(at: (i32, i32), radius: u8, light: LightSource) -> LevelObject {
+        let LightSource { colour, intensity, reach, animation, phase_ms } = light;
+        LevelObject::Light { at, colour, intensity, reach, radius, animation, phase_ms, notes: String::new() }
+    }
+
+    /// Where the object is, world pixels.
+    pub fn at(&self) -> (i32, i32) {
+        match self {
+            LevelObject::Spawn { at, .. } | LevelObject::Light { at, .. } => *at,
+        }
+    }
+
+    /// Moves the object.
+    pub fn set_at(&mut self, to: (i32, i32)) {
+        match self {
+            LevelObject::Spawn { at, .. } | LevelObject::Light { at, .. } => *at = to,
+        }
+    }
+
+    /// A light object's radius and light; `None` for any other object.
+    pub fn as_light(&self) -> Option<(u8, LightSource)> {
+        match self {
+            LevelObject::Light { colour, intensity, reach, radius, animation, phase_ms, .. } => Some((
+                *radius,
+                LightSource {
+                    colour: *colour,
+                    intensity: *intensity,
+                    reach: *reach,
+                    animation: animation.clone(),
+                    phase_ms: *phase_ms,
+                },
+            )),
+            LevelObject::Spawn { .. } => None,
+        }
+    }
+
+    /// A spawn point's position; `None` for any other object.
+    pub fn spawn_point(&self) -> Option<SpawnPoint> {
+        match self {
+            LevelObject::Spawn { at, .. } => Some(SpawnPoint { x: at.0, y: at.1 }),
+            LevelObject::Light { .. } => None,
+        }
+    }
+}
+
+/// The level's runtime look: `look` with its light objects, or `None` when
+/// it has neither (it draws as it always has). Checks every value.
+pub fn compile_look(src: &LevelSource) -> Result<Option<olr_look::LevelLook>, FormatError> {
+    let lights: Vec<(usize, &LevelObject)> =
+        src.objects.iter().enumerate().filter(|(_, o)| matches!(o, LevelObject::Light { .. })).collect();
+    if lights.len() > MAX_LIGHT_OBJECTS {
+        return Err(FormatError::invalid(
+            LEVEL_FILE,
+            "objects",
+            format!("{} lights, above {MAX_LIGHT_OBJECTS}", lights.len()),
+        ));
+    }
+    if src.look.is_none() && lights.is_empty() {
+        return Ok(None);
+    }
+    let mut look = compile_look_source(&src.look.clone().unwrap_or_default(), LEVEL_FILE)?;
+    for (i, o) in lights {
+        let Some((radius, light)) = o.as_light() else { continue };
+        let path = format!("objects[{i}]");
+        if !(1..=16).contains(&radius) {
+            return Err(FormatError::invalid(LEVEL_FILE, &format!("{path}.radius"), format!("{radius}, not within 1 to 16")));
+        }
+        look.lights.push(olr_look::PlacedLight { at: o.at(), radius, light: compile_light(&light, LEVEL_FILE, &path)? });
+    }
+    Ok(Some(look))
+}
+
+/// The glow images fit the level and name only groups its look has.
+fn check_glow(src: &LevelSource, glow: &GlowLayers) -> Result<(), FormatError> {
+    let art = (src.size.0 * src.art_scale, src.size.1 * src.art_scale);
+    if !glow.fits(art, src.size) {
+        return Err(FormatError::invalid(
+            GLOW_FILE,
+            "",
+            format!("the look images must be {}x{} (art) and {}x{} (world)", art.0, art.1, src.size.0, src.size.1),
+        ));
+    }
+    let groups = src.look.as_ref().map_or(0, |l| l.glow_groups.len()).max(1);
+    for (file, values) in [(GROUPS_FILE, &glow.groups), (GROUPS_BACK_FILE, &glow.groups_back)] {
+        if let Some(i) = values.iter().position(|v| usize::from(*v) >= groups) {
+            let (x, y) = (i as u32 % src.size.0, i as u32 / src.size.0);
+            return Err(FormatError::invalid(
+                file,
+                "",
+                format!("group {} at ({x}, {y}), the look has {groups} glow groups", values[i]),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// What `level.ron` alone says: size, art scale, objects, and the art size
@@ -175,6 +328,10 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
     if let Some(t) = &src.thumb {
         check_thumb(t).map_err(|m| FormatError::invalid(THUMB_FILE, "", m))?;
     }
+    compile_look(src)?;
+    if let Some(g) = &src.glow {
+        check_glow(src, g)?;
+    }
     for (file, img) in [(FRONT_FILE, &src.front), (BACK_FILE, &src.back)] {
         if (img.width(), img.height()) != (aw, ah) {
             return Err(FormatError::invalid(
@@ -194,13 +351,7 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
 /// Makes the runtime level.
 pub fn compile_level(src: &LevelSource) -> Result<Level, FormatError> {
     check(src)?;
-    let spawns = src
-        .objects
-        .iter()
-        .map(|o| match o {
-            LevelObject::Spawn { at, .. } => SpawnPoint { x: at.0, y: at.1 },
-        })
-        .collect();
+    let spawns = src.objects.iter().filter_map(LevelObject::spawn_point).collect();
     let def = LevelDef {
         name: src.name.clone(),
         width: src.size.0,
@@ -232,6 +383,8 @@ pub fn lift_level(level: &Level, thumb: Option<Vec<u8>>) -> Result<LevelSource, 
         front: level.front.clone(),
         back: level.back.clone(),
         thumb,
+        look: None,
+        glow: None,
     };
     if (level.material.width(), level.material.height()) != src.size {
         return Err(LiftError {
@@ -270,6 +423,8 @@ pub(crate) mod tests {
             front,
             back: RgbaImage::new(w * art_scale, h * art_scale),
             thumb: None,
+            look: None,
+            glow: None,
         }
     }
 

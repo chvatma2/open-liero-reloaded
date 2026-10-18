@@ -360,6 +360,13 @@ fn describe(o: &LevelObject) -> String {
                 .collect();
             format!("Spawn at ({}, {}) — {notes}", at.0, at.1)
         }
+        LevelObject::Light { at, intensity, reach, .. } => {
+            let reach = match reach {
+                olr_format::look::ReachSource::Pixels(n) => format!("{n}"),
+                olr_format::look::ReachSource::Unlimited => "unlimited".into(),
+            };
+            format!("Light at ({}, {}), {intensity}%, reach {reach}", at.0, at.1)
+        }
     }
 }
 
@@ -458,7 +465,7 @@ fn preview(l: &LevelSource, scale: u32, material: bool) -> anyhow::Result<RgbaIm
     }
     let cross = [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)];
     for o in &l.objects {
-        let LevelObject::Spawn { at, .. } = o;
+        let LevelObject::Spawn { at, .. } = o else { continue };
         // The centre of the spawn's art block, in output pixels.
         let centre = |v: i32| {
             (i64::from(v) * i64::from(s) + i64::from(s / 2)) * i64::from(scale) + i64::from(scale / 2)

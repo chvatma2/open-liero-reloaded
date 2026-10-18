@@ -224,6 +224,8 @@ fn level_template(name: &str, (w, h): (u32, u32), theme: &str) -> Result<LevelSo
         front,
         back: back_art,
         thumb: None,
+        look: None,
+        glow: None,
     };
     crate::level::refresh_thumb(&mut level);
     Ok(level)

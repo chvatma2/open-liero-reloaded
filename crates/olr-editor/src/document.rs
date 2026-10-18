@@ -326,6 +326,7 @@ impl Document {
                         });
                     }
                 }
+                LevelObject::Light { .. } => {}
             }
         }
         if spawns == 0 {

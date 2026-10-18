@@ -1101,6 +1101,8 @@ impl Document {
             front: RgbaImage::new(0, 0),
             back: RgbaImage::new(0, 0),
             thumb: None,
+            look: None,
+            glow: None,
         };
         edit(&mut tmp)?;
         Ok(self.change(Edit::Objects { before, after: tmp.objects }))

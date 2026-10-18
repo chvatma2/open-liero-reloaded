@@ -518,10 +518,10 @@ impl EditorState {
                 let (dx, dy) = sub(world, *at);
                 dx.abs() <= SPAWN_REACH && dy.abs() <= SPAWN_REACH
             }
+            LevelObject::Light { .. } => false,
         });
         if let Some(index) = spawn {
-            let LevelObject::Spawn { at, .. } = &doc.level().objects[index];
-            let grab = sub(world, *at);
+            let grab = sub(world, doc.level().objects[index].at());
             self.selection = Selection::Object(index);
             self.drag = Some(Drag::Spawn { index, before: doc.level().objects.clone(), grab });
             return Vec::new();
@@ -853,6 +853,7 @@ impl EditorState {
                 LevelObject::Spawn { at, .. } => {
                     out.push(Overlay::Spawn { at: *at, selected: self.selection == Selection::Object(i) })
                 }
+                LevelObject::Light { .. } => {}
             }
         }
         if matches!(self.tool, Tool::Brush | Tool::Eraser)

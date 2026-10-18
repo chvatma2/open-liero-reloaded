@@ -32,6 +32,8 @@ fn level(w: u32, h: u32, s: u32) -> LevelSource {
         front: RgbaImage::new(w * s, h * s),
         back: RgbaImage::new(w * s, h * s),
         thumb: None,
+        look: None,
+        glow: None,
     }
 }
 

@@ -1,14 +1,17 @@
 //! A level's files. Other paths (`pack.ron`, ...) belong to `olr-pack`
 //! and are ignored here.
 
-use olr_data::level::{Material, SpawnPoint};
+use olr_data::level::Material;
 use olr_vfs::{ContentSink, ContentSource, VPath};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BACK_FILE, FRONT_FILE, LEVEL_FILE, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_THUMB_BYTES,
-    THUMB_FILE, check, check_header, check_thumb,
+    BACK_FILE, FRONT_FILE, GLOW_BACK_FILE, GLOW_FILE, GROUPS_BACK_FILE, GROUPS_FILE, LEVEL_FILE, LOOK_FILES,
+    LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_THUMB_BYTES, THUMB_FILE, check, check_header,
+    check_thumb,
 };
+use crate::look::LookSource;
+use olr_terrain::GlowLayers;
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, LEVEL_ART};
 use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
@@ -43,6 +46,10 @@ pub(crate) struct LevelFile {
     /// addresses them by index.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     objects: Vec<LevelObject>,
+    /// The level's look (darkness, light settings, grade, glow groups); none
+    /// draws as OLX did. Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    look: Option<LookSource>,
 }
 
 fn write_bytes(sink: &mut dyn ContentSink, file: &str, bytes: &[u8]) -> Result<(), FormatError> {
@@ -62,6 +69,9 @@ pub fn file_paths(src: &LevelSource) -> Vec<String> {
     if src.thumb.is_some() {
         out.push(THUMB_FILE.into());
     }
+    if src.glow.is_some() {
+        out.extend(LOOK_FILES.map(String::from));
+    }
     out
 }
 
@@ -74,6 +84,7 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
         art_scale: src.art_scale,
         theme: src.theme.clone(),
         objects: src.objects.clone(),
+        look: src.look.clone(),
     };
     write_text(sink, LEVEL_FILE, &to_canonical(LEVEL_FILE, &file)?)?;
     write_bytes(sink, MATERIAL_FILE, &super::encode_material(src.size, &src.material))?;
@@ -82,7 +93,56 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
     if let Some(t) = &src.thumb {
         write_bytes(sink, THUMB_FILE, t)?;
     }
+    if let Some(g) = &src.glow {
+        let (art, world) = (g.art, g.world);
+        for (file, size, values) in [
+            (GLOW_FILE, art, &g.front),
+            (GLOW_BACK_FILE, art, &g.back),
+            (GROUPS_FILE, world, &g.groups),
+            (GROUPS_BACK_FILE, world, &g.groups_back),
+        ] {
+            write_bytes(sink, file, &image_io::encode_grey(size.0, size.1, values))?;
+        }
+    }
     Ok(())
+}
+
+/// Reads an 8-bit grey look image, checking its header size first.
+fn read_grey(src: &dyn ContentSource, file: &str, expected: (u32, u32)) -> Result<Vec<u8>, FormatError> {
+    let bytes = read_bytes(src, file)?;
+    let mismatch = |(w, h): (u32, u32)| {
+        FormatError::invalid(file, "", format!("{file} is {w}x{h}, the level needs {}x{}", expected.0, expected.1))
+    };
+    if let Some(size) = image_io::png_size(&bytes)
+        && size != expected
+    {
+        return Err(mismatch(size));
+    }
+    let (w, h, values) = image_io::decode_grey_within(&bytes, LEVEL_ART)
+        .map_err(|message| FormatError::Io { file: file.into(), message })?;
+    if (w, h) != expected {
+        return Err(mismatch((w, h)));
+    }
+    Ok(values)
+}
+
+/// The four `look/` images: all or none.
+fn read_glow(src: &dyn ContentSource, art: (u32, u32), world: (u32, u32)) -> Result<Option<GlowLayers>, FormatError> {
+    let present = |f: &str| VPath::new(f).is_ok_and(|p| src.exists(&p));
+    if !LOOK_FILES.iter().any(|f| present(f)) {
+        return Ok(None);
+    }
+    if let Some(missing) = LOOK_FILES.iter().find(|f| !present(f)) {
+        return Err(FormatError::invalid(missing, "", "missing: a level's glow needs all four look/ images"));
+    }
+    Ok(Some(GlowLayers {
+        art,
+        world,
+        front: read_grey(src, GLOW_FILE, art)?,
+        back: read_grey(src, GLOW_BACK_FILE, art)?,
+        groups: read_grey(src, GROUPS_FILE, world)?,
+        groups_back: read_grey(src, GROUPS_BACK_FILE, world)?,
+    }))
 }
 
 /// Reads an art PNG, checking its header size against `level.ron`'s before
@@ -115,13 +175,7 @@ pub fn read_level_header(src: &dyn ContentSource) -> Result<LevelHeader, FormatE
         size: file.size,
         art_scale: file.art_scale,
         theme: file.theme,
-        spawns: file
-            .objects
-            .iter()
-            .map(|o| match o {
-                LevelObject::Spawn { at, .. } => SpawnPoint { x: at.0, y: at.1 },
-            })
-            .collect(),
+        spawns: file.objects.iter().filter_map(LevelObject::spawn_point).collect(),
         objects: file.objects,
     })
 }
@@ -186,6 +240,7 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
     }
     let front = read_art(src, FRONT_FILE, art)?;
     let back = read_art(src, BACK_FILE, art)?;
+    let glow = read_glow(src, art, file.size)?;
     let level = LevelSource {
         name: file.name,
         notes: file.notes,
@@ -197,6 +252,8 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
         front,
         back,
         thumb: None,
+        look: file.look,
+        glow,
     };
     check(&level)?;
     Ok(level)
@@ -206,6 +263,7 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
 mod tests {
     use super::*;
     use crate::levels::MAX_THUMB_SIDE;
+    use olr_data::level::SpawnPoint;
     use olr_vfs::MemFs;
 
     #[test]

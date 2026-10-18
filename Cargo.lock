@@ -3446,6 +3446,7 @@ version = "0.2.0"
 dependencies = [
  "insta",
  "olr-data",
+ "olr-look",
  "olr-pack",
  "olr-sim",
  "olr-terrain",

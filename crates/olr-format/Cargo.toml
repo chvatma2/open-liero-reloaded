@@ -11,6 +11,8 @@ autotests = false
 [dependencies]
 olr-data.workspace = true
 olr-vfs.workspace = true
+olr-look.workspace = true
+olr-terrain.workspace = true
 serde = { workspace = true, features = ["std"] }
 ron.workspace = true
 thiserror.workspace = true
@@ -21,7 +23,6 @@ zune-core.workspace = true
 [dev-dependencies]
 olr-pack.workspace = true
 olr-sim.workspace = true
-olr-terrain.workspace = true
 proptest.workspace = true
 insta.workspace = true
 sha2.workspace = true

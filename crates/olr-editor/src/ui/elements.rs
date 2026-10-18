@@ -69,7 +69,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>
     ui.separator();
     ui.heading(labels::OBJECTS);
     for (i, o) in doc.level().objects.iter().enumerate() {
-        let LevelObject::Spawn { at, .. } = o;
+        let LevelObject::Spawn { at, .. } = o else { continue };
         let selected = *state.selection() == Selection::Object(i);
         if ui.selectable_label(selected, format!("Spawn {} at ({}, {})", i + 1, at.0, at.1)).clicked() {
             out.push(EditorAction::Select(Selection::Object(i)));
