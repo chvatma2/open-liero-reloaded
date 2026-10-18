@@ -1,5 +1,6 @@
-//! Building a lit frame's look allocates nothing once warm (plan 15a
-//! Task 13): its own process, as it counts allocations.
+//! Building a lit frame allocates nothing once warm (plan 15a Tasks 13
+//! and 15): the scene, the entities and the look with every dynamic light.
+//! Its own process, as it counts allocations.
 
 use std::path::Path;
 
@@ -38,7 +39,27 @@ fn look_frame_does_not_allocate_when_warm() {
             .collect(),
     });
     let theme = content.load_theme(&level.theme).unwrap();
-    let m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();
+    let mut m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();
+    // Every projectile lights, glows and flashes, every weapon's muzzle lights.
+    let light = |ms| olr_look::Light {
+        colour: [255, 140, 40],
+        intensity: 100,
+        reach: olr_look::Reach::Pixels(48),
+        animation: olr_look::Animation::Keys {
+            keys: vec![
+                olr_look::Key { at_ms: 0, level: 100, colour: None },
+                olr_look::Key { at_ms: ms, level: 0, colour: None },
+            ],
+            looped: false,
+        },
+        phase_ms: None,
+    };
+    let projectile = olr_look::ProjectileLook { glow: Some(80), light: Some(light(5000)), end_flash: Some(light(250)) };
+    let weapon = olr_look::WeaponLook { muzzle_light: Some(light(60)) };
+    m.look = olr_look::ModLook {
+        projectiles: vec![Some(projectile); m.sim.projectiles().len()],
+        weapons: vec![Some(weapon); m.sim.weapons().len()],
+    };
     let skin = content.skin_or_default("olx-skin-default");
     let setup = PresentSetup {
         core: content.core(),
@@ -49,27 +70,35 @@ fn look_frame_does_not_allocate_when_warm() {
         options: SceneOptions { interpolation: Interpolation::Linear, show_health_bars: true },
         seed: 1,
     };
-    let mut present = None;
+    let mut present: Option<Presentation> = None;
     let mut list = DrawList::new();
-    let mut measured = 0;
-    olr_scenario::play(&content, &sc, &trace, |world, f, events| {
-        let p = present.get_or_insert_with(|| {
-            let mut p = Presentation::new(&setup, world);
-            for i in 0..sc.worms.len() {
-                p.add_worm(&skin, default_colour(i), i == 0, i == 0);
+    let (mut measured, mut flashes) = (0, 0);
+    // The first play warms every buffer; the second measures whole frames.
+    for pass in 0..2 {
+        olr_scenario::play(&content, &sc, &trace, |world, f, events| {
+            let p = present.get_or_insert_with(|| {
+                let mut p = Presentation::new(&setup, world);
+                for i in 0..sc.worms.len() {
+                    p.add_worm(&skin, default_colour(i), i == 0, i == 0);
+                }
+                p
+            });
+            if f < 0 && pass == 1 {
+                p.restart(world, &level, &theme);
             }
-            p
-        });
-        if f >= 0 {
-            p.on_tick(world, events);
-        }
-        p.build(world, 0.5, &mut list);
-        if f > 2 {
-            let a = allocation_counter::measure(|| p.build_look(world, 0.5, list.view));
-            assert_eq!(a.count_total, 0, "frame {f}: building the look allocated");
+            if f >= 0 {
+                p.on_tick(world, events);
+            }
+            if pass == 0 || f <= 2 {
+                p.build(world, 0.5, &mut list);
+                return;
+            }
+            let a = allocation_counter::measure(|| p.build(world, 0.5, &mut list));
+            assert_eq!(a.count_total, 0, "frame {f}: building the frame and its look allocated");
             measured += 1;
-        }
-    })
-    .unwrap();
-    assert!(measured > 0);
+            flashes += p.flashes_started().len();
+        })
+        .unwrap();
+    }
+    assert!(measured > 0 && flashes > 0, "{measured} frames, {flashes} flashes");
 }

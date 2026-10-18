@@ -155,3 +155,5 @@
   fixtures/render/look-t500.png
 2026-10-18 bless-render: plan 15a: a glowing rocket in play
   fixtures/render/look-rocket.png
+2026-10-18 bless-render: plan 15a batch C review: muzzle lights run their keys, end flashes start per tick, explosion lights fit the explosion's life
+  fixtures/render/look-rocket.png

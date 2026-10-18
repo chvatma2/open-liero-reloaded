@@ -77,6 +77,19 @@ fn play_with(
     name: &str,
     level_look: Option<LevelLook>,
     mod_look: Option<ModLook>,
+    each: impl FnMut(&mut Presentation, &World, &DrawList, i64),
+) {
+    play_every(content, name, level_look, mod_look, 1, each);
+}
+
+/// [`play_with`] drawing a frame after every `stride`th tick only (a
+/// slower display).
+fn play_every(
+    content: &Content,
+    name: &str,
+    level_look: Option<LevelLook>,
+    mod_look: Option<ModLook>,
+    stride: i64,
     mut each: impl FnMut(&mut Presentation, &World, &DrawList, i64),
 ) {
     let (sc, trace) = olr_scenario::load_fixture(&fixtures(), name).unwrap();
@@ -110,8 +123,10 @@ fn play_with(
         if f >= 0 {
             p.on_tick(world, events);
         }
-        p.build(world, 0.5, &mut list);
-        each(p, world, &list, f);
+        if f.rem_euclid(stride) == 0 {
+            p.build(world, 0.5, &mut list);
+            each(p, world, &list, f);
+        }
     })
     .unwrap();
 }
@@ -314,4 +329,58 @@ fn floors_apply_only_in_lit_matches() {
         });
         assert!(checked > 0);
     }
+}
+
+/// Spec §Fair play: a frame depends on the world and the clock, never on
+/// the frame rate. A projectile ending between two drawn frames flashes
+/// as on a faster display.
+#[test]
+fn end_flashes_do_not_depend_on_the_frame_rate() {
+    let Some(content) = content() else { return };
+    let mut runs = Vec::new();
+    for stride in [1, 4] {
+        let mut keys = Vec::new();
+        let look = mod_look(&content, None, Some(green_flash()));
+        play_every(&content, BAZOOKA, None, Some(look), stride, |p, _, _, _| {
+            keys.extend_from_slice(p.flashes_started());
+        });
+        keys.sort();
+        runs.push(keys);
+    }
+    assert!(!runs[0].is_empty());
+    assert_eq!(runs[0], runs[1]);
+}
+
+/// A weapon's muzzle light runs its keys (60 ms here), not one tick.
+#[test]
+fn a_muzzle_light_runs_its_curve() {
+    let Some(content) = content() else { return };
+    let (sc, _) = olr_scenario::load_fixture(&fixtures(), BAZOOKA).unwrap();
+    let weapons = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap().sim.weapons().len();
+    let key = |at_ms, level| Key { at_ms, level, colour: None };
+    let muzzle = Light {
+        colour: [0, 255, 0],
+        intensity: 100,
+        reach: Reach::Pixels(64),
+        animation: Animation::Keys { keys: vec![key(0, 100), key(60, 0)], looped: false },
+        phase_ms: None,
+    };
+    let weapon = olr_look::WeaponLook { muzzle_light: Some(muzzle) };
+    let look = ModLook { projectiles: Vec::new(), weapons: vec![Some(weapon); weapons] };
+    let (mut run, mut longest) = (Vec::new(), Vec::new());
+    play_with(&content, BAZOOKA, None, Some(look), |p, _, _, _| {
+        let green = p.look().unwrap().lights.iter().find(|l| l.colour[0] == 0.0 && l.colour[1] > 0.0);
+        match green {
+            Some(l) => run.push(l.colour[1]),
+            None => {
+                if run.len() > longest.len() {
+                    longest = std::mem::take(&mut run);
+                }
+                run.clear();
+            }
+        }
+    });
+    // Frames 10 ms apart at alpha 0.5: about 6 frames of a 60 ms fade.
+    assert!(longest.len() >= 5, "{longest:?}");
+    assert!(longest.windows(2).all(|w| w[1] <= w[0]), "it fades: {longest:?}");
 }

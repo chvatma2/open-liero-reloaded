@@ -66,7 +66,7 @@ entity pass `substep` (spec §19), runs the passes left, and rebuilds a
 `lost_area`. So a `Dirt` particle samples the colour image after the edits
 before it, and stains land between the edits as in OLX. **The caller must not
 also call `olr_content::apply_edits` for the same tick.** Per drawn frame,
-`fx.draw(&fx_assets, &mut list)` after `scene.build`. On a restart:
+`fx.draw(&fx_assets, lit, &mut list)` (`lit`: a match with a look, where explosions, sparkles and spawn effects glow) after `scene.build`. On a restart:
 `fx.clear()` and a new colour map.
 
 Test: `cargo nextest run -p olr-fx`. `tests/entities.rs` and `tests/events.rs`

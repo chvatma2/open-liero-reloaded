@@ -23,8 +23,6 @@ struct Laser {
 #[derive(Clone, Debug)]
 pub struct Marks {
     muzzle: [bool; MAX_WORMS],
-    /// The weapon (its `SimMod` index) whose shot flashed.
-    muzzle_weapon: [usize; MAX_WORMS],
     target: [bool; MAX_WORMS],
     lasers: Vec<Laser>,
     beams: [Option<Line>; MAX_WORMS],
@@ -37,7 +35,6 @@ impl Marks {
     pub fn new(seed: u32) -> Marks {
         Marks {
             muzzle: [false; MAX_WORMS],
-            muzzle_weapon: [0; MAX_WORMS],
             target: [false; MAX_WORMS],
             lasers: Vec::with_capacity(MAX_WORMS),
             beams: [None; MAX_WORMS],
@@ -58,13 +55,6 @@ impl Marks {
     /// shows for that tick; OLX shows it for one drawn frame, about one tick).
     pub fn muzzle(&self, worm: i32) -> bool {
         usize::try_from(worm).ok().and_then(|i| self.muzzle.get(i)).copied().unwrap_or(false)
-    }
-
-    /// The weapon (its `SimMod` index) whose shot flashed worm id `worm`'s
-    /// muzzle in the last tick ([`Marks::muzzle`]).
-    pub fn muzzle_weapon(&self, worm: i32) -> Option<usize> {
-        let i = usize::try_from(worm).ok()?;
-        self.muzzle.get(i).copied().unwrap_or(false).then(|| self.muzzle_weapon[i])
     }
 
     /// Worm id `worm`'s laser sight found another worm in the last tick.
@@ -97,10 +87,9 @@ impl Marks {
             match e.kind {
                 EventKind::WeaponFired { worm, weapon } => {
                     if m.weapon(weapon).is_some_and(|w| w.kind == WeaponType::Projectile)
-                        && let Some(i) = usize::try_from(worm).ok().filter(|&i| i < MAX_WORMS)
+                        && let Some(f) = usize::try_from(worm).ok().and_then(|i| self.muzzle.get_mut(i))
                     {
-                        self.muzzle[i] = true;
-                        self.muzzle_weapon[i] = usize::try_from(weapon).unwrap_or(0);
+                        *f = true;
                     }
                 }
                 EventKind::Spawned { worm } => {

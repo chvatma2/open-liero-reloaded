@@ -21,10 +21,14 @@ fn flash(colour: [u8; 3], intensity: u16, reach: u16, ms: u32) -> Light {
     }
 }
 
+/// An explosion light's keys, ms: the presentation fits them to the
+/// explosion's life.
+pub const EXPLOSION_MS: u32 = 200;
+
 /// An explosion of OLX size `size`: warm, brighter and wider with the size.
 pub fn explosion_light(size: i32) -> Light {
     let s = size.clamp(0, 500) as u16;
-    flash([255, 200, 140], (60 + 8 * s).min(250), (24 + 8 * s).min(4096), 200)
+    flash([255, 200, 140], (60 + 8 * s).min(250), (24 + 8 * s).min(4096), EXPLOSION_MS)
 }
 
 /// A muzzle flash's light.

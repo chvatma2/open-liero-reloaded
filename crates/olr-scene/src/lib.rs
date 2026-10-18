@@ -80,14 +80,33 @@ pub struct DrawnProjectile {
     pub spawn_time: AbsTime,
 }
 
-/// A muzzle flash the last [`Scene::build`] showed: the worm, its drawn
-/// position and the weapon (its `SimMod` index).
+/// A projectile that ended in a tick (its slot empty or holding another
+/// serial after it), where it was at the tick before: a lit match's end
+/// flash. Recorded per tick, so it never depends on the frame rate.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct DrawnMuzzle {
-    pub worm: i32,
-    pub weapon: usize,
+pub struct EndedProjectile {
+    pub slot: usize,
+    pub serial: u32,
+    /// Its `SimMod` index.
+    pub proj: usize,
+    pub spawn_time: AbsTime,
     pub pos: Vec2,
+    /// The tick it ended in.
+    pub at: AbsTime,
 }
+
+/// A projectile weapon's shot in a tick: a lit match's muzzle light.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Shot {
+    pub worm: i32,
+    /// The weapon (its `SimMod` index).
+    pub weapon: usize,
+    pub at: AbsTime,
+}
+
+/// The most [`EndedProjectile`]s and [`Shot`]s kept between two
+/// [`Scene::clear_look_events`] (a host drawing no frame drops the rest).
+pub const LOOK_EVENTS: usize = 8192;
 
 /// One viewport's presentation state: its camera, the previous tick's
 /// snapshot, the last tick's marks (muzzle flashes, laser sights, beams),
@@ -103,7 +122,11 @@ pub struct Scene {
     shades: Option<ShadeRules>,
     /// With rules, what the last build placed (reused, grown once).
     drawn: Vec<DrawnProjectile>,
-    muzzles: Vec<DrawnMuzzle>,
+    worms: Vec<(i32, Vec2)>,
+    /// With rules, the ticks' ended projectiles and shots since the last
+    /// [`Scene::clear_look_events`].
+    ended: Vec<EndedProjectile>,
+    shots: Vec<Shot>,
 }
 
 impl Scene {
@@ -117,16 +140,20 @@ impl Scene {
             marks: Marks::new(seed),
             shades: None,
             drawn: Vec::new(),
-            muzzles: Vec::new(),
+            worms: Vec::new(),
+            ended: Vec::new(),
+            shots: Vec::new(),
         }
     }
 
     /// A lit match's shade rules (`None`: every item lit, as always). With
-    /// rules, each build also records its projectiles and muzzle flashes.
+    /// rules, each build also records where its projectiles and worms are,
+    /// and each tick the projectiles that ended and the shots.
     pub fn set_shades(&mut self, shades: Option<ShadeRules>) {
         self.shades = shades;
         self.drawn.clear();
-        self.muzzles.clear();
+        self.worms.clear();
+        self.clear_look_events();
     }
 
     pub fn shades(&self) -> Option<&ShadeRules> {
@@ -139,10 +166,62 @@ impl Scene {
         &self.drawn
     }
 
-    /// The muzzle flashes the last build showed, in worm order (only with
-    /// shade rules).
-    pub fn drawn_muzzles(&self) -> &[DrawnMuzzle] {
-        &self.muzzles
+    /// The alive worms (id, drawn position) the last build placed, in worm
+    /// order (only with shade rules).
+    pub fn drawn_worms(&self) -> &[(i32, Vec2)] {
+        &self.worms
+    }
+
+    /// The projectiles that ended in the ticks since the last
+    /// [`Scene::clear_look_events`], in tick then slot order (only with
+    /// shade rules). A re-simulated tick reports its ends again.
+    pub fn ended_projectiles(&self) -> &[EndedProjectile] {
+        &self.ended
+    }
+
+    /// The projectile weapons' shots in those ticks, in tick then event order.
+    pub fn shots(&self) -> &[Shot] {
+        &self.shots
+    }
+
+    /// Forgets the ended projectiles and shots (the presentation took them).
+    pub fn clear_look_events(&mut self) {
+        self.ended.clear();
+        self.shots.clear();
+    }
+
+    /// With shade rules, records a tick's ended projectiles (in the
+    /// previous snapshot, not in the new one) and shots. The first tick
+    /// re-simulated after a rollback follows a snapshot of the old
+    /// timeline (a later time): no end is read from that pair.
+    fn record_look_events(&mut self, world: &World, events: &TickEvents) {
+        if self.shades.is_none() {
+            return;
+        }
+        let at = world.time();
+        let follows = self.prev.time().is_some_and(|t| t < at);
+        let now = self.cur.projectiles();
+        let mut i = 0;
+        for q in self.prev.projectiles().iter().filter(|_| follows) {
+            while now.get(i).is_some_and(|n| n.slot < q.slot) {
+                i += 1;
+            }
+            let still = now.get(i).is_some_and(|n| (n.slot, n.serial) == (q.slot, q.serial));
+            if !still && self.ended.len() < LOOK_EVENTS {
+                let (slot, serial, proj, spawn_time, pos) =
+                    (q.slot as usize, q.serial, q.proj, q.spawn_time, q.pos);
+                self.ended.push(EndedProjectile { slot, serial, proj, spawn_time, pos, at });
+            }
+        }
+        let m = world.sim_mod();
+        for e in events {
+            if let olr_sim::EventKind::WeaponFired { worm, weapon } = e.kind
+                && m.weapon(weapon).is_some_and(|w| w.kind == olr_sim::WeaponType::Projectile)
+                && self.shots.len() < LOOK_EVENTS
+            {
+                self.shots.push(Shot { worm, weapon: usize::try_from(weapon).unwrap_or(0), at });
+            }
+        }
     }
 
     /// Reads the world and the events after a [`World::tick`]: the state
@@ -155,6 +234,7 @@ impl Scene {
         self.cur.capture_into(world);
         self.camera.on_events(events, world.time());
         self.marks.observe(world, events);
+        self.record_look_events(world, events);
     }
 
     /// [`Scene::after_tick`] for a tick simulated again (a rollback in
@@ -167,6 +247,7 @@ impl Scene {
         core::mem::swap(&mut self.prev, &mut self.cur);
         self.cur.capture_into(world);
         self.marks.observe(world, events);
+        self.record_look_events(world, events);
     }
 
     /// Forgets the history and stops the camera's shake, for a new or
@@ -177,7 +258,8 @@ impl Scene {
         self.cur.clear();
         self.marks.clear();
         self.drawn.clear();
-        self.muzzles.clear();
+        self.worms.clear();
+        self.clear_look_events();
     }
 
     /// A new or restarted world: [`Scene::reset`], then `world` as the
@@ -222,7 +304,7 @@ impl Scene {
         let lit = self.shades.is_some();
         self.marks.draw(assets, view, drawn, lit, out);
         self.drawn.clear();
-        self.muzzles.clear();
+        self.worms.clear();
         let m = world.sim_mod();
         let mut projectiles = blend.projectiles();
         for (slot, p) in world.projectiles() {
@@ -249,8 +331,8 @@ impl Scene {
         };
         for (i, w) in worms.iter().enumerate().filter(|(_, w)| w.alive) {
             let p = blend.snap(blend.worm(i, w));
-            if let Some(weapon) = self.marks.muzzle_weapon(w.id).filter(|_| lit) {
-                self.muzzles.push(DrawnMuzzle { worm: w.id, weapon, pos: p });
+            if lit {
+                self.worms.push((w.id, p));
             }
             let extras = WormExtras {
                 muzzle: self.marks.muzzle(w.id),

@@ -27,6 +27,8 @@
 mod look;
 pub mod net;
 
+pub use look::FlashKey;
+
 use olr_content::{CorePack, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
 use olr_data::image::Rgba;
 use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
@@ -131,8 +133,8 @@ impl Presentation {
         self.lit.then_some(&self.look)
     }
 
-    /// The (slot, serial) of the end flashes the last frame started.
-    pub fn flashes_started(&self) -> &[(usize, u32)] {
+    /// The end flashes the last frame started (tests and tools).
+    pub fn flashes_started(&self) -> &[FlashKey] {
         self.dynamic.started()
     }
 
@@ -145,10 +147,9 @@ impl Presentation {
         if !self.lit {
             return;
         }
-        let tick_ms = world.time().0 as f64;
-        let t_ms = tick_ms + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
+        let t_ms = world.time().0 as f64 + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
         self.look.begin(self.level_look.as_ref(), t_ms);
-        self.dynamic.push(&mut self.look, &self.mod_look, &self.scene, &self.fx, t_ms, tick_ms);
+        self.dynamic.push(&mut self.look, &self.mod_look, &mut self.scene, &self.fx, t_ms);
         let p = LIGHT_VIEW_PAD;
         self.look.cull([view.x - p, view.y - p, view.w + 2.0 * p, view.h + 2.0 * p]);
     }

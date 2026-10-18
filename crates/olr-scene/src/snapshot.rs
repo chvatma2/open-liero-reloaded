@@ -44,6 +44,9 @@ pub struct ProjSnap {
     /// [`Projectile::serial`]: a new projectile in the same slot has another.
     pub serial: u32,
     pub pos: Vec2,
+    /// Its `SimMod` index and spawn time (a lit match's end flashes).
+    pub proj: usize,
+    pub spawn_time: AbsTime,
 }
 
 /// What a client bonus slot held at a tick.
@@ -103,6 +106,8 @@ impl Snapshot {
             slot: slot as u32,
             serial: p.serial(),
             pos: p.pos,
+            proj: p.proj,
+            spawn_time: p.spawn_time,
         }));
         for (s, b) in self.bonuses.iter_mut().zip(world.bonuses()) {
             *s = BonusSnap::of(b);
