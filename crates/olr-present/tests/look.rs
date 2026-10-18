@@ -25,6 +25,8 @@ fn look() -> LevelLook {
         max_light: 100,
         light_steps: 0,
         softness: 0,
+        light_soak: 0,
+        solid_floor: Ambient { colour: [255, 255, 255], intensity: 0 },
         grade: Grade::default(),
         groups: vec![GlowGroup {
             id: "lava".into(),

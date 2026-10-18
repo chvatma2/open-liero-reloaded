@@ -395,7 +395,7 @@ fn look_ambient_darkens() {
     let look = dim(0.3);
     let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), size);
     let (grid, light) = gpu.read_light(&r).expect("a light grid");
-    assert_eq!(grid.origin, (15, 25), "the frame's origin less the light grid's pad (4)");
+    assert_eq!(grid.origin, (3, 13), "the frame's origin less the light grid's pad (16)");
     assert!(light.iter().all(|c| (c[0] - 0.3).abs() < 1e-3), "ambient everywhere");
     let glow = map.glow().unwrap();
     let mut worst = 0i32;
@@ -502,11 +502,22 @@ fn lit_frame(
     lights: &[olr_look::FrameLight],
     softness: u8,
 ) -> Renderer {
+    lit_frame_with(gpu, map, view, lights, |l| l.softness = softness)
+}
+
+/// [`lit_frame`] with the look changed by `set`.
+fn lit_frame_with(
+    gpu: &Offscreen,
+    map: &ColorMap,
+    view: View,
+    lights: &[olr_look::FrameLight],
+    set: impl FnOnce(&mut olr_look::LookFrame),
+) -> Renderer {
     let mut r = gpu.renderer(RenderSettings::default());
     r.set_lighting(true);
     r.upload_terrain(map);
     let mut look = dim(0.1);
-    look.softness = softness;
+    set(&mut look);
     look.lights.extend_from_slice(lights);
     let mut l = list(view);
     l.map = (map.material().width(), map.material().height());
@@ -580,15 +591,19 @@ fn light_is_camera_independent() {
     let Some(gpu) = offscreen() else { return };
     let map = room(400, 60, |x, y| x % 37 == 0 && y > 20);
     let lights = [lamp([120.5, 30.5], 90.0), lamp([200.5, 10.5], f32::INFINITY)];
-    for softness in [0, 2] {
-        let base = lit_frame(&gpu, &map, View { x: 100.0, y: 0.0, w: 120.0, h: 60.0 }, &lights, softness);
+    for (softness, soak) in [(0, 0), (2, 0), (0, olr_look::MAX_SOAK), (4, olr_look::MAX_SOAK)] {
+        let set = |l: &mut olr_look::LookFrame| {
+            l.softness = softness;
+            l.light_soak = soak;
+        };
+        let base = lit_frame_with(&gpu, &map, View { x: 100.0, y: 0.0, w: 120.0, h: 60.0 }, &lights, set);
         for dx in [1, 7, 31, 200] {
-            let r = lit_frame(
+            let r = lit_frame_with(
                 &gpu,
                 &map,
                 View { x: 100.0 + dx as f32, y: 0.0, w: 120.0, h: 60.0 },
                 &lights,
-                softness,
+                set,
             );
             for x in (100 + dx)..220 {
                 for y in [5, 30, 55] {
@@ -598,12 +613,55 @@ fn light_is_camera_independent() {
                     assert_eq!(
                         light_at(&gpu, &base, x, y),
                         light_at(&gpu, &r, x, y),
-                        "({x}, {y}) moved by {dx}, softness {softness}"
+                        "({x}, {y}) moved by {dx}, softness {softness}, soak {soak}"
                     );
                 }
             }
         }
     }
+}
+
+/// Rock from y 20 down, a lamp in the air above it.
+fn ground() -> (ColorMap, View, [olr_look::FrameLight; 1]) {
+    (room(100, 40, |_, y| y >= 20), View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, [lamp([50.5, 10.5], 100.0)])
+}
+
+#[test]
+fn soak_lights_rock_near_lit_air() {
+    let Some(gpu) = offscreen() else { return };
+    let (map, view, lights) = ground();
+    let hard = lit_frame_with(&gpu, &map, view, &lights, |_| {});
+    assert!((light_at(&gpu, &hard, 50, 23)[0] - 0.1).abs() < 1e-3, "no soak: the ambient past the face");
+    let soaked = lit_frame_with(&gpu, &map, view, &lights, |l| l.light_soak = 8);
+    let (near, deeper) = (light_at(&gpu, &soaked, 50, 22)[0], light_at(&gpu, &soaked, 50, 25)[0]);
+    assert!(near > 0.2 && deeper > 0.1 + 1e-3 && near > deeper, "light fades into the rock: {near} {deeper}");
+    assert!((light_at(&gpu, &soaked, 50, 35)[0] - 0.1).abs() < 1e-3, "past the soak: the ambient");
+}
+
+#[test]
+fn soak_and_floor_never_change_air() {
+    let Some(gpu) = offscreen() else { return };
+    let (map, view, lights) = ground();
+    let hard = lit_frame_with(&gpu, &map, view, &lights, |_| {});
+    let soaked = lit_frame_with(&gpu, &map, view, &lights, |l| {
+        l.light_soak = olr_look::MAX_SOAK;
+        l.solid_floor = [0.5; 3];
+    });
+    for y in 0..20 {
+        for x in 0..100 {
+            assert_eq!(light_at(&gpu, &hard, x, y), light_at(&gpu, &soaked, x, y), "air ({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn solid_floor_lights_deep_rock() {
+    let Some(gpu) = offscreen() else { return };
+    let (map, view, _) = ground();
+    let r = lit_frame_with(&gpu, &map, view, &[], |l| l.solid_floor = [0.4, 0.3, 0.2]);
+    let deep = light_at(&gpu, &r, 50, 35);
+    assert!((deep[0] - 0.4).abs() < 2e-3 && (deep[2] - 0.2).abs() < 2e-3, "{deep:?}");
+    assert!((light_at(&gpu, &r, 50, 5)[0] - 0.1).abs() < 1e-3, "air keeps the ambient");
 }
 
 #[test]

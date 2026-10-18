@@ -146,8 +146,10 @@ impl Renderer {
             }
             let passes = [
                 (&lt.views[0], &state.sum_pipeline, &lt.binds[0]),
-                (&lt.views[1], &state.blur_h_pipeline, &lt.binds[1]),
-                (&lt.views[2], &state.blur_v_pipeline, &lt.binds[2]),
+                (&lt.views[1], &state.soak_h_pipeline, &lt.soak_binds[0]),
+                (&lt.views[2], &state.soak_v_pipeline, &lt.soak_binds[1]),
+                (&lt.views[0], &state.blur_h_pipeline, &lt.binds[1]),
+                (&lt.views[1], &state.blur_v_pipeline, &lt.binds[2]),
                 (&lt.lit_view, &state.composite_pipeline, &lt.composite_bind),
             ];
             for (view, pipeline, bind) in passes {

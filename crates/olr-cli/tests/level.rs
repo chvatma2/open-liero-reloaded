@@ -294,10 +294,16 @@ fn look_cli_sets_every_field() {
             "90",
             "--tint",
             "ffeedd",
+            "--soak",
+            "6",
+            "--solid-floor",
+            "c0c0ff:35",
         ],
         &pack,
     ));
     let look = look_of(&pack);
+    assert_eq!(look.light_soak, 6);
+    assert_eq!((look.solid_floor.colour, look.solid_floor.intensity), ([0xc0, 0xc0, 0xff], 35));
     assert_eq!((look.ambient.colour, look.ambient.intensity), ([0x20, 0x20, 0x40], 30));
     assert_eq!((look.max_light, look.light_steps, look.softness), (150, 4, 2));
     assert_eq!((look.grade.exposure, look.grade.contrast, look.grade.saturation), (-50, 110, 90));

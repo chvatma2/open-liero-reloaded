@@ -127,6 +127,8 @@ A level's look: darkness, light settings, grade and glow groups. A level without
 | `max_light` | integer | `100` | The brightest light, percent, 100 to 200 (above 100, flashes brighten a lit level). Default 100. |
 | `light_steps` | integer | `0` | Bands the light: 0 (off) or 2 to 32. Default 0. |
 | `softness` | integer | `0` | Blurs the light, world pixels, 0 to 4. Default 0. |
+| `light_soak` | integer | `0` | How deep light soaks into solids from the air beside them, world pixels, 0 to 12, fading with depth. Default 0. |
+| `solid_floor` | [SolidFloorSource](#solidfloorsource) | each field's default | The least light of an opaque solid. Default none. |
 | `grade` | [GradeSource](#gradesource) | each field's default | Default none. |
 | `glow_groups` | list of [GlowGroupSource](#glowgroupsource) | `[]` | At most 255. Default none. |
 
@@ -209,6 +211,17 @@ The light everywhere, unblocked.
 | `colour` | [colour](#colour) (optional) | none | Opaque. Default none: white. |
 | `intensity` | integer | `100` | Percent, 0 to 100. Default 100. |
 
+<a id="solidfloorsource"></a>
+
+## SolidFloorSource
+
+The least light an opaque solid pixel (rock or dirt that is not clear) shows, so deep rock still shows its art.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `colour` | [colour](#colour) (optional) | none | Opaque. Default none: white. |
+| `intensity` | integer | `0` | Percent, 0 to 100. Default 0 (none). |
+
 <a id="gradesource"></a>
 
 ## GradeSource
@@ -226,7 +239,7 @@ A level's colour grade, applied to the lit world (not the HUD).
 
 ## GlowGroupSource
 
-A group of glowing pixels: how they light the world and animate. The pixels name it by index in `look/groups.png` (0 is the first group).
+A group of glowing pixels: how they light the world and animate. The pixels name it in `look/groups.png` by 1 + its index (0 is no group).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|

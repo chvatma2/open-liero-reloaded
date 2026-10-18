@@ -13,8 +13,10 @@ struct LookGlobals {
     frame: vec4<f32>,
     // level width, height (world px), art scale, glow-light cell (world px)
     level: vec4<f32>,
-    // view mode (0 lit, 1 full bright, 2 light only), group count, 0, 0
+    // view mode (0 lit, 1 full bright, 2 light only), group count, light soak (world px), 0
     mode: vec4<f32>,
+    // rgb solid floor (linear), 0
+    solid: vec4<f32>,
     // per group: rgb cast (linear, × intensity × animation), self-light scale
     groups: array<vec4<f32>, 255>,
     // per group: reach (world px; 1e9 unlimited), own colour (1) or tint (0), 0, 0
@@ -31,8 +33,8 @@ struct Lights {
 const SHADOW_RAYS: f32 = 512.0;
 
 // World pixels the light grid reaches past the world target on every side,
-// so a blur never sees the grid's edge in the view.
-const LIGHT_PAD: f32 = 4.0;
+// so the soak (12) and a blur (4) never see the grid's edge in the view.
+const LIGHT_PAD: f32 = 16.0;
 
 const TAU: f32 = 6.2831853;
 

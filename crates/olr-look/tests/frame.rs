@@ -30,6 +30,8 @@ fn level() -> LevelLook {
         max_light: 150,
         light_steps: 4,
         softness: 2,
+        light_soak: 6,
+        solid_floor: Ambient { colour: [255, 255, 255], intensity: 40 },
         grade: Grade { exposure: 50, contrast: 110, saturation: 90, tint: [255, 240, 220] },
         groups: vec![
             GlowGroup {
@@ -59,7 +61,8 @@ fn begin_fills_level_part() {
     f.begin(Some(&level()), 0.0);
     assert!(near(f.ambient[0], 0.3) && near(f.ambient[2], 0.3));
     assert!(near(f.max_light, 1.5));
-    assert_eq!((f.light_steps, f.softness), (4, 2));
+    assert_eq!((f.light_steps, f.softness, f.light_soak), (4, 2, 6));
+    assert!(f.solid_floor.iter().all(|&c| near(c, 0.4)));
     assert_eq!(f.grade.exposure, 50);
     assert_eq!(f.mode, ViewMode::Lit);
     assert_eq!(f.groups.len(), 2);
@@ -165,4 +168,17 @@ fn engine_numbers_match_r13() {
     let m = engine::muzzle_light();
     assert_eq!((m.colour, m.intensity, m.reach), ([255, 220, 160], 80, Reach::Pixels(40)));
     assert!(m.animation.ended(51.0) && !m.animation.ended(49.0));
+}
+
+#[test]
+fn solids_settings_are_bounded_and_off_without_a_look() {
+    let mut l = level();
+    l.light_soak = 200;
+    l.solid_floor.intensity = 500;
+    let mut f = LookFrame::default();
+    f.begin(Some(&l), 0.0);
+    assert_eq!(f.light_soak, olr_look::MAX_SOAK);
+    assert!(near(f.solid_floor[0], 1.0));
+    f.begin(None, 0.0);
+    assert_eq!((f.light_soak, f.solid_floor), (0, [0.0; 3]));
 }

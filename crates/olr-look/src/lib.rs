@@ -16,7 +16,9 @@ pub mod engine;
 mod frame;
 
 pub use anim::{default_phase, splitmix64};
-pub use frame::{FrameGroup, FrameLight, LookFrame, MAX_LIGHTS, ViewMode, fade, light_at, srgb_to_linear};
+pub use frame::{
+    FrameGroup, FrameLight, LookFrame, MAX_LIGHTS, MAX_SOAK, ViewMode, fade, light_at, srgb_to_linear,
+};
 
 /// An sRGB colour, as the files and the art store it.
 pub type Rgb = [u8; 3];
@@ -161,6 +163,10 @@ pub struct LevelLook {
     pub light_steps: u8,
     /// World pixels of blur, 0-4.
     pub softness: u8,
+    /// World pixels light soaks into solids, 0-[`MAX_SOAK`].
+    pub light_soak: u8,
+    /// The least light an opaque solid pixel shows.
+    pub solid_floor: Ambient,
     pub grade: Grade,
     /// A group map value `v` (1-255) is `groups[v - 1]`; 0 is no group.
     pub groups: Vec<GlowGroup>,

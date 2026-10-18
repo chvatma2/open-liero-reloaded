@@ -15,8 +15,8 @@ pub(super) const COMMON: &str = include_str!("../look/common.wgsl");
 /// Groups in the globals (a group map value is one byte, 0 none).
 pub(super) const GROUPS: usize = 255;
 
-/// The globals' floats: six vec4s, then two arrays of [`GROUPS`] vec4s.
-pub(super) const GLOBAL_FLOATS: usize = 4 * (6 + 2 * GROUPS);
+/// The globals' floats: seven vec4s, then two arrays of [`GROUPS`] vec4s.
+pub(super) const GLOBAL_FLOATS: usize = 4 * (7 + 2 * GROUPS);
 
 /// The format of the world pass's second target: self-light, marker, 0, alpha.
 pub(super) const SHADE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -26,6 +26,7 @@ pub(super) struct LookTextures {
     pub(super) glow: wgpu::Texture,
     pub(super) groups: wgpu::Texture,
     pub(super) solid: wgpu::Texture,
+    pub(super) solid_view: wgpu::TextureView,
     pub(super) art_scale: u32,
     /// The level's size in world pixels (uncropped).
     pub(super) level: (u32, u32),
@@ -41,8 +42,10 @@ pub(super) struct LookTextures {
 pub(super) const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// World pixels the light grid reaches past the world target on every side
-/// (`LIGHT_PAD` in the shaders): a blur of up to 4 never sees its edge.
-pub(super) const LIGHT_PAD: u32 = 4;
+/// (`LIGHT_PAD` in the shaders): the soak (up to [`olr_look::MAX_SOAK`]) and
+/// a blur of up to 4 never see its edge, so the light never depends on the
+/// camera.
+pub(super) const LIGHT_PAD: u32 = olr_look::MAX_SOAK as u32 + 4;
 
 /// Rays per placed light's shadow map (`SHADOW_RAYS` in the shaders).
 pub(super) const SHADOW_RAYS: u32 = 512;
@@ -50,16 +53,18 @@ pub(super) const SHADOW_RAYS: u32 = 512;
 /// The placed lights' uniform: two vec4s per light.
 const LIGHT_FLOATS: usize = 8 * olr_look::MAX_LIGHTS;
 
-/// One world target's look passes: the light grid (gathered, blurred
-/// across, then down, capped and banded) and the lit target the upscale
-/// reads.
+/// One world target's look passes: the light grid (gathered into 0, soaked
+/// into solids across into 1 and down into 2, blurred across into 0 and
+/// down, capped and banded, into 1) and the lit target the upscale reads.
 pub(super) struct LitTarget {
     /// World pixels: the light grid's size.
     pub(super) grid: (u32, u32),
     pub(super) light: [wgpu::Texture; 3],
     pub(super) views: [wgpu::TextureView; 3],
-    /// The sum pass's, the across blur's (reads 0) and the down blur's (reads 1).
+    /// The sum pass's, the across blur's (reads 2) and the down blur's (reads 0).
     pub(super) binds: [wgpu::BindGroup; 3],
+    /// The across soak's (reads 0) and the down soak's (reads 1).
+    pub(super) soak_binds: [wgpu::BindGroup; 2],
     pub(super) composite_bind: wgpu::BindGroup,
     pub(super) lit_view: wgpu::TextureView,
     /// The upscale pass's view of the lit target.
@@ -73,6 +78,9 @@ pub(super) struct LookState {
     pub(super) blur_h_pipeline: wgpu::RenderPipeline,
     pub(super) blur_v_pipeline: wgpu::RenderPipeline,
     pub(super) composite_pipeline: wgpu::RenderPipeline,
+    pub(super) soak_h_pipeline: wgpu::RenderPipeline,
+    pub(super) soak_v_pipeline: wgpu::RenderPipeline,
+    pub(super) soak_layout: wgpu::BindGroupLayout,
     pub(super) shadow_pipeline: wgpu::RenderPipeline,
     pub(super) shadow_layout: wgpu::BindGroupLayout,
     pub(super) light_layout: wgpu::BindGroupLayout,
@@ -84,6 +92,9 @@ pub(super) struct LookState {
     pub(super) gi: super::gi::GiPipelines,
     /// A 1 × 1 dark glow light, bound before a level's exists.
     no_glow: wgpu::TextureView,
+    /// A 1 × 1 solid map, bound before a level's exists (the soak reads
+    /// nothing outside the level, whose size is then 0).
+    no_solid: wgpu::TextureView,
     pub(super) textures: Option<LookTextures>,
     /// The packed globals, reused every frame.
     pub(super) packed: Vec<f32>,
@@ -260,6 +271,30 @@ impl LookState {
                 view_formats: &[],
             })
             .create_view(&wgpu::TextureViewDescriptor::default());
+        let no_solid = r8(device, "olr-render no solid map", (1, 1), wgpu::TextureFormat::R8Uint)
+            .create_view(&wgpu::TextureViewDescriptor::default());
+        let soak_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("olr-render soak"),
+            entries: &[
+                entry(0, frag, super::UNIFORM),
+                entry(1, frag, FLOAT_TEXTURE),
+                entry(2, frag, UINT_TEXTURE),
+            ],
+        });
+        let soak_source = format!("{COMMON}\n{}", include_str!("../look/soak.wgsl"));
+        let soak = |fs: &str| {
+            pipeline(
+                device,
+                "olr-render soak",
+                &soak_source,
+                ("vs_full", fs),
+                &[Some(&soak_layout)],
+                &[],
+                &[(LIGHT_FORMAT, None)],
+                wgpu::PrimitiveTopology::TriangleList,
+            )
+        };
+        let (soak_h_pipeline, soak_v_pipeline) = (soak("fs_soak_h"), soak("fs_soak_v"));
         let gi = super::gi::GiPipelines::new(device);
         let lights = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("olr-render lights"),
@@ -314,6 +349,9 @@ impl LookState {
             blur_h_pipeline,
             blur_v_pipeline,
             composite_pipeline,
+            soak_h_pipeline,
+            soak_v_pipeline,
+            soak_layout,
             shadow_pipeline,
             shadow_layout,
             light_layout,
@@ -324,6 +362,7 @@ impl LookState {
             shadow_view,
             gi,
             no_glow,
+            no_solid,
             textures: None,
             packed: Vec::with_capacity(GLOBAL_FLOATS),
             packed_lights: Vec::with_capacity(LIGHT_FLOATS),
@@ -381,12 +420,21 @@ impl LookState {
                 ],
             })
         };
-        // The sum reads nothing; it is bound to the grid it does not write.
-        let binds = [light_bind(&views[2]), light_bind(&views[0]), light_bind(&views[1])];
+        // The sum reads nothing; it is bound to a grid it does not write.
+        let binds = [light_bind(&views[1]), light_bind(&views[2]), light_bind(&views[0])];
+        let solid = self.textures.as_ref().map_or(&self.no_solid, |t| &t.solid_view);
+        let soak_bind = |src: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("olr-render soak"),
+                layout: &self.soak_layout,
+                entries: &[uniform(), tex(1, src), tex(2, solid)],
+            })
+        };
+        let soak_binds = [soak_bind(&views[0]), soak_bind(&views[1])];
         let composite_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render composite"),
             layout: &self.composite_layout,
-            entries: &[uniform(), tex(1, albedo), tex(2, shade), tex(3, &views[2])],
+            entries: &[uniform(), tex(1, albedo), tex(2, shade), tex(3, &views[1])],
         });
         let lit = make("olr-render lit", texels, WORLD_FORMAT);
         let lit_view = lit.create_view(&wgpu::TextureViewDescriptor::default());
@@ -399,7 +447,7 @@ impl LookState {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
             ],
         });
-        LitTarget { grid, light, views, binds, composite_bind, lit_view, upscale_bind }
+        LitTarget { grid, light, views, binds, soak_binds, composite_bind, lit_view, upscale_bind }
     }
 
     /// New textures for `map` (whose colour is `terrain`), uploaded whole
@@ -456,6 +504,7 @@ impl LookState {
         let t = LookTextures {
             glow,
             groups,
+            solid_view: view(&solid),
             solid,
             art_scale: map.art_scale(),
             level,
@@ -534,7 +583,14 @@ impl LookState {
             ViewMode::FullBright => 1.0,
             ViewMode::LightOnly => 2.0,
         };
-        p.extend([mode, look.groups.len().min(GROUPS) as f32, 0.0, 0.0]);
+        p.extend([
+            mode,
+            look.groups.len().min(GROUPS) as f32,
+            f32::from(look.light_soak.min(olr_look::MAX_SOAK)),
+            0.0,
+        ]);
+        let [r, g, b] = look.solid_floor;
+        p.extend([r, g, b, 0.0]);
         for i in 0..GROUPS {
             match look.groups.get(i) {
                 Some(g) => p.extend([g.cast[0], g.cast[1], g.cast[2], g.self_scale]),
@@ -585,7 +641,7 @@ impl Renderer {
         let lit = t.lit.as_ref()?;
         let pad = LIGHT_PAD as i32;
         Some((
-            &lit.light[2],
+            &lit.light[1],
             crate::LightGrid { origin: (t.origin.0 - pad, t.origin.1 - pad), size: lit.grid },
         ))
     }

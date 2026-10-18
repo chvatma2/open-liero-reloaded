@@ -8,6 +8,9 @@ use crate::{Grade, LevelLook, Light, Reach, default_phase, identity_of};
 /// The most placed lights a frame draws (plan 15a R13).
 pub const MAX_LIGHTS: usize = 256;
 
+/// The deepest light soaks into solids, world pixels (spec §Light in solids).
+pub const MAX_SOAK: u8 = 12;
+
 /// What the composite shows (the editor's toggle, spec §The level editor).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ViewMode {
@@ -54,6 +57,10 @@ pub struct LookFrame {
     pub max_light: f32,
     pub light_steps: u8,
     pub softness: u8,
+    /// 0-[`MAX_SOAK`].
+    pub light_soak: u8,
+    /// Linear.
+    pub solid_floor: [f32; 3],
     pub grade: Grade,
     /// The level's groups in order: a group map value `v` (1-255) is
     /// `groups[v - 1]`; 0 is no group.
@@ -74,12 +81,18 @@ impl LookFrame {
             self.max_light = 1.0;
             self.light_steps = 0;
             self.softness = 0;
+            self.light_soak = 0;
+            self.solid_floor = [0.0; 3];
             self.grade = Grade::default();
             return;
         };
-        let a = level.ambient;
-        let k = f32::from(a.intensity.min(100)) / 100.0;
-        self.ambient = a.colour.map(|c| srgb_to_linear(c) * k);
+        let linear = |a: crate::Ambient| {
+            let k = f32::from(a.intensity.min(100)) / 100.0;
+            a.colour.map(|c| srgb_to_linear(c) * k)
+        };
+        self.ambient = linear(level.ambient);
+        self.light_soak = level.light_soak.min(MAX_SOAK);
+        self.solid_floor = linear(level.solid_floor);
         self.max_light = (f32::from(level.max_light) / 100.0).clamp(1.0, 2.0);
         self.light_steps = level.light_steps;
         self.softness = level.softness.min(4);

@@ -12,6 +12,7 @@ use olr_edit::pack::Source;
 use olr_format::Colour;
 use olr_format::look::{
     AmbientSource, AnimationSource, GlowColourSource, GlowGroupSource, LightSource, ReachSource,
+    SolidFloorSource,
 };
 
 use crate::element_cmd::{self, ContentArg};
@@ -34,6 +35,12 @@ pub(crate) struct LookArgs {
     /// Light blur, world pixels, 0-4.
     #[arg(long)]
     softness: Option<u8>,
+    /// How deep light soaks into solids, world pixels, 0-12.
+    #[arg(long)]
+    soak: Option<u8>,
+    /// The least light of an opaque solid, RRGGBB:PERCENT (0-100).
+    #[arg(long, value_parser = parse_ambient)]
+    solid_floor: Option<(Colour, u16)>,
     /// Hundredths of a stop, -200 to 200.
     #[arg(long, allow_hyphen_values = true)]
     exposure: Option<i16>,
@@ -48,7 +55,7 @@ pub(crate) struct LookArgs {
     tint: Option<Colour>,
     /// Remove the look: its settings and every glow group (their elements
     /// stop glowing).
-    #[arg(long, conflicts_with_all = ["ambient", "max_light", "steps", "softness", "exposure", "contrast", "saturation", "tint"])]
+    #[arg(long, conflicts_with_all = ["ambient", "max_light", "steps", "softness", "soak", "solid_floor", "exposure", "contrast", "saturation", "tint"])]
     clear: bool,
     #[command(flatten)]
     content: ContentArg,
@@ -208,6 +215,10 @@ pub(crate) fn look_cmd(a: &LookArgs) -> anyhow::Result<bool> {
     k.max_light = a.max_light.unwrap_or(k.max_light);
     k.light_steps = a.steps.unwrap_or(k.light_steps);
     k.softness = a.softness.unwrap_or(k.softness);
+    k.light_soak = a.soak.unwrap_or(k.light_soak);
+    if let Some((colour, intensity)) = a.solid_floor {
+        k.solid_floor = SolidFloorSource { colour: Some(colour), intensity };
+    }
     k.grade.exposure = a.exposure.unwrap_or(k.grade.exposure);
     k.grade.contrast = a.contrast.unwrap_or(k.grade.contrast);
     k.grade.saturation = a.saturation.unwrap_or(k.grade.saturation);

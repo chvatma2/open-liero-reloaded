@@ -168,6 +168,19 @@ impl Default for AmbientSource {
     }
 }
 
+/// The least light an opaque solid pixel (rock or dirt that is not clear)
+/// shows, so deep rock still shows its art.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SolidFloorSource {
+    /// Opaque. Default none: white.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub colour: Option<Colour>,
+    /// Percent, 0 to 100. Default 0 (none).
+    #[serde(default, skip_serializing_if = "d::is_default")]
+    pub intensity: u16,
+}
+
 fn hundred() -> u16 {
     100
 }
@@ -255,6 +268,13 @@ pub struct LookSource {
     /// Blurs the light, world pixels, 0 to 4. Default 0.
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub softness: u8,
+    /// How deep light soaks into solids from the air beside them, world
+    /// pixels, 0 to 12, fading with depth. Default 0.
+    #[serde(default, skip_serializing_if = "d::is_default")]
+    pub light_soak: u8,
+    /// The least light of an opaque solid. Default none.
+    #[serde(default, skip_serializing_if = "d::is_default")]
+    pub solid_floor: SolidFloorSource,
     /// Default none.
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub grade: GradeSource,
@@ -271,6 +291,8 @@ impl Default for LookSource {
             max_light: 100,
             light_steps: 0,
             softness: 0,
+            light_soak: 0,
+            solid_floor: SolidFloorSource::default(),
             grade: GradeSource::default(),
             glow_groups: Vec::new(),
         }
@@ -408,6 +430,8 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
         return Err(invalid(file, "look.light_steps", format!("{}, not 0 or within 2 to 32", l.light_steps)));
     }
     within(l.softness.into(), 0, 4, file, "look.softness")?;
+    within(l.light_soak.into(), 0, olr_look::MAX_SOAK.into(), file, "look.light_soak")?;
+    within(l.solid_floor.intensity.into(), 0, 100, file, "look.solid_floor.intensity")?;
     let g = &l.grade;
     if !(-200..=200).contains(&g.exposure) {
         return Err(invalid(file, "look.grade.exposure", format!("{}, not within -200 to 200", g.exposure)));
@@ -456,6 +480,11 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
         max_light: l.max_light,
         light_steps: l.light_steps,
         softness: l.softness,
+        light_soak: l.light_soak,
+        solid_floor: olr_look::Ambient {
+            colour: rgb(l.solid_floor.colour.unwrap_or_else(white), file, "look.solid_floor.colour")?,
+            intensity: l.solid_floor.intensity,
+        },
         grade: olr_look::Grade {
             exposure: g.exposure,
             contrast: g.contrast,

@@ -25,6 +25,8 @@ const SPEC_LEVEL: &str = r##"(
         max_light: 100,
         light_steps: 0,
         softness: 0,
+        light_soak: 4,
+        solid_floor: (colour: "#c0c0ff", intensity: 40),
         grade: (exposure: 0, contrast: 100, saturation: 100, tint: "#ffffff"),
         glow_groups: [
             (id: "sky", colour: Tint("#fff0d2"), intensity: 100, reach: Unlimited, animation: Steady),
@@ -78,6 +80,10 @@ fn the_spec_example_round_trips() {
     let src = level(Some(SPEC_LEVEL));
     let look = compile_look(&src).unwrap().expect("a look");
     assert_eq!(look.ambient.intensity, 30);
+    assert_eq!(
+        (look.light_soak, look.solid_floor.colour, look.solid_floor.intensity),
+        (4, [192, 192, 255], 40)
+    );
     assert_eq!(look.groups.len(), 2);
     assert_eq!(look.groups[0].colour, GlowColour::Tint([255, 240, 210]));
     assert_eq!(look.groups[1].reach, Reach::Pixels(96));
@@ -145,6 +151,8 @@ fn limits_are_enforced() {
         ("light_steps: 0", "light_steps: 1", "look.light_steps"),
         ("light_steps: 0", "light_steps: 33", "look.light_steps"),
         ("softness: 0", "softness: 5", "look.softness"),
+        ("light_soak: 4", "light_soak: 13", "look.light_soak"),
+        ("intensity: 40)", "intensity: 101)", "look.solid_floor.intensity"),
         ("exposure: 0", "exposure: 201", "look.grade.exposure"),
         ("contrast: 100", "contrast: 201", "look.grade.contrast"),
         ("saturation: 100", "saturation: 201", "look.grade.saturation"),
