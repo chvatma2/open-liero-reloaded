@@ -42,7 +42,7 @@ pub(crate) enum Drag {
         last: (i32, i32),
         rect: Option<Rect>,
         stroke: Stroke,
-        begun: Option<Edit>,
+        begun: Option<Box<Edit>>,
         /// The paint, resolved once as the stroke began (plan 14e minors).
         paint: Arc<Paint>,
     },
@@ -401,7 +401,15 @@ impl EditorState {
                 };
                 let rect = self.lay(&id, &[self.dab(world)], stroke, &paint);
                 let before = Arc::new(before);
-                self.drag = Some(Drag::Stroke { id, before, last: world, rect, stroke, begun, paint });
+                self.drag = Some(Drag::Stroke {
+                    id,
+                    before,
+                    last: world,
+                    rect,
+                    stroke,
+                    begun: begun.map(Box::new),
+                    paint,
+                });
                 rect.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
             }
             Tool::Wand => {
@@ -750,7 +758,7 @@ impl EditorState {
                     }
                     return Vec::new();
                 };
-                self.history.push(begun.into_iter().chain([edit]).collect());
+                self.history.push(begun.map(|b| *b).into_iter().chain([edit]).collect());
                 self.committed(NOTHING)
             }
             Drag::Shape { id, tool, start, now } => {
