@@ -12,3 +12,4 @@ pub mod mask;
 pub mod new;
 pub mod pack;
 pub mod pixelate;
+pub mod textures;

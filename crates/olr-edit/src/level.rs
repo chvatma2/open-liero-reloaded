@@ -21,6 +21,7 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_format::image_io::{LEVEL_ART, check_size};
 use olr_format::levels::{LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, thumbnail};
+use std::sync::Arc;
 
 /// A rectangle of world pixels.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,7 +51,8 @@ impl Rect {
 /// `(px - cx)² + (py - cy)² <= r²` (`r < 0` covers nothing). An `Ellipse`
 /// and a `Line` cover a pixel by its centre (`px + ½, py + ½`), measured
 /// in doubled coordinates so halves stay integers (plan 14b ruling R10).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// A `Stamp` covers the world pixels of its mask's covered cells.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Shape {
     Rect {
         x: i32,
@@ -80,6 +82,54 @@ pub enum Shape {
         to: (i32, i32),
         width: u32,
     },
+    /// `mask` centred on `(x, y)` (its top-left at `x - w·scale/2`,
+    /// `y - h·scale/2`), each mask cell `scale` × `scale` world pixels
+    /// (plan 14e R4). A scale above [`MAX_STAMP_SCALE`] is that; 0, or a
+    /// mask whose cover does not match its size, covers nothing.
+    Stamp {
+        x: i32,
+        y: i32,
+        scale: u32,
+        mask: Arc<StampMask>,
+    },
+}
+
+/// The largest scale of a [`Shape::Stamp`].
+pub const MAX_STAMP_SCALE: u32 = 16;
+
+/// A stamp's covered cells, row by row (`cover.len() == w * h`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StampMask {
+    pub size: (u32, u32),
+    pub cover: Vec<bool>,
+}
+
+impl StampMask {
+    /// A theme hole (OLX's colours: black leaves the terrain, any other
+    /// colour carves or paints): covered where neither black nor
+    /// transparent.
+    pub fn from_hole(img: &RgbaImage) -> StampMask {
+        let mut cover = Vec::with_capacity(img.width() as usize * img.height() as usize);
+        for y in 0..img.height() {
+            for x in 0..img.width() {
+                let c = img.get(x, y);
+                cover.push(c.a != 0 && !c.same_rgb(Rgba::BLACK));
+            }
+        }
+        StampMask { size: (img.width(), img.height()), cover }
+    }
+
+    /// Whether the cover matches the size.
+    fn valid(&self) -> bool {
+        (self.size.0 as usize).checked_mul(self.size.1 as usize) == Some(self.cover.len())
+    }
+}
+
+/// A stamp's top-left world pixel and its cell side.
+fn stamp_origin(x: i32, y: i32, scale: u32, mask: &StampMask) -> (i64, i64, i64) {
+    let s = i64::from(scale.min(MAX_STAMP_SCALE));
+    let (w, h) = (i64::from(mask.size.0), i64::from(mask.size.1));
+    (i64::from(x) - w * s / 2, i64::from(y) - h * s / 2, s)
 }
 
 /// What an art pixel is painted with, composited over the art (straight
@@ -167,6 +217,13 @@ pub(crate) fn extent(shape: &Shape) -> (i64, i64, i64, i64) {
             let (ay, by) = (i64::from(from.1), i64::from(to.1));
             (ax.min(bx) - pad, ay.min(by) - pad, ax.max(bx) + pad + 1, ay.max(by) + pad + 1)
         }
+        Shape::Stamp { x, y, scale, ref mask } => {
+            if scale == 0 || !mask.valid() {
+                return (0, 0, 0, 0);
+            }
+            let (x0, y0, s) = stamp_origin(x, y, scale, mask);
+            (x0, y0, x0 + i64::from(mask.size.0) * s, y0 + i64::from(mask.size.1) * s)
+        }
     }
 }
 
@@ -196,6 +253,12 @@ fn mul_wide(a: u128, b: u128) -> (u128, u128) {
 /// Whether world pixel `(px, py)` is covered by `shape` (in its extent).
 fn inside(shape: &Shape, px: i64, py: i64) -> bool {
     match *shape {
+        Shape::Stamp { x, y, scale, ref mask } => {
+            // Inside the extent: the cell is within the mask.
+            let (x0, y0, s) = stamp_origin(x, y, scale, mask);
+            let (cx, cy) = ((px - x0) / s, (py - y0) / s);
+            mask.cover.get((cy * i64::from(mask.size.0) + cx) as usize).copied().unwrap_or(false)
+        }
         Shape::Rect { .. } => true,
         Shape::Circle { cx, cy, r } => {
             // Inside the clipped box |dx|, |dy| <= r < 2^31.

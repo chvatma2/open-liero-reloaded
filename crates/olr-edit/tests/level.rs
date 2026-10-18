@@ -3,11 +3,12 @@
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_edit::level::{
-    Layer, Paint, Rect, Shape, Solid, add_spawn, carve, draw_art, erase_art, fill, move_object, paint,
-    refresh_thumb, remove_object, rescale_art, resize, shape_bounds, stamp,
+    Layer, Paint, Rect, Shape, Solid, StampMask, add_spawn, carve, draw_art, erase_art, fill, move_object,
+    paint, refresh_thumb, remove_object, rescale_art, resize, shape_bounds, stamp,
 };
 use olr_format::levels::{LevelObject, LevelSource, MAX_OBJECTS, THUMB_SIZE, compile_level};
 use proptest::prelude::*;
+use std::sync::Arc;
 
 /// A `w` × `h` level of dirt at `art_scale`, every art pixel's front and
 /// back colour distinct (front blue 1, back blue 2).
@@ -477,4 +478,51 @@ proptest! {
             }
         }
     }
+}
+
+#[test]
+fn a_stamp_covers_its_mask_scaled() {
+    let mask = StampMask { size: (3, 2), cover: vec![true, false, true, false, true, false] };
+    let shape = Shape::Stamp { x: 10, y: 10, scale: 2, mask: Arc::new(mask) };
+    let mut want = Vec::new();
+    for (cx, cy) in [(0u32, 0u32), (2, 0), (1, 1)] {
+        for dy in 0..2 {
+            for dx in 0..2 {
+                want.push((7 + cx * 2 + dx, 8 + cy * 2 + dy));
+            }
+        }
+    }
+    want.sort_by_key(|&(x, y)| (y, x));
+    assert_eq!(coverage(&shape, 20, 20), want);
+    assert_eq!(shape_bounds(&shape, (20, 20)), Some(Rect { x: 7, y: 8, w: 6, h: 4 }));
+}
+
+#[test]
+fn a_stamp_far_or_huge_never_panics() {
+    let mask = Arc::new(StampMask { size: (64, 64), cover: vec![true; 64 * 64] });
+    for (x, y) in [(i32::MAX, 0), (i32::MIN, i32::MIN), (0, i32::MAX), (5, 5)] {
+        let shape = Shape::Stamp { x, y, scale: 16, mask: mask.clone() };
+        let _ = coverage(&shape, 16, 16);
+        let _ = shape_bounds(&shape, (16, 16));
+    }
+    // A mask whose cover does not match its size covers nothing.
+    let bad = Shape::Stamp {
+        x: 5,
+        y: 5,
+        scale: 1,
+        mask: Arc::new(StampMask { size: (4, 4), cover: vec![true; 3] }),
+    };
+    assert_eq!(coverage(&bad, 16, 16), vec![]);
+}
+
+#[test]
+fn from_hole_takes_carve_and_paint() {
+    let mut img = RgbaImage::new(4, 1);
+    img.set(0, 0, Rgba::BLACK);
+    img.set(1, 0, Rgba::MAGENTA);
+    img.set(2, 0, Rgba::rgb(90, 60, 30));
+    img.set(3, 0, Rgba::TRANSPARENT);
+    let m = StampMask::from_hole(&img);
+    assert_eq!(m.size, (4, 1));
+    assert_eq!(m.cover, vec![false, true, true, false]);
 }
