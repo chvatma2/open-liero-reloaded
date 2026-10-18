@@ -44,9 +44,10 @@ pub struct Args {
     time: u64,
     #[arg(long, value_enum, default_value = "lit")]
     view: ViewArg,
-    /// Placed lights' shadow edges: hard, anti-aliased or soft (exploring).
-    #[arg(long, value_enum, default_value = "hard")]
-    shadows: ShadowArg,
+    /// Placed lights' shadow edges instead of the level's: hard, aa
+    /// (smooth) or soft.
+    #[arg(long, value_enum)]
+    shadows: Option<ShadowArg>,
     /// The picture's size in pixels (the game's 427 × 192 view, integer scaled).
     #[arg(long, value_parser = parse_size, default_value = "854x384")]
     size: (u32, u32),
@@ -76,7 +77,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     };
     let mut look = LookFrame { mode, ..LookFrame::default() };
     look.begin(level.look.as_ref(), args.time as f64);
-    look.shadow_filter = args.shadows as u8;
+    if let Some(s) = args.shadows {
+        look.shadow_filter = s as u8;
+    }
     let pad = olr_render::LIGHT_CULL_PAD;
     let v = list.view;
     look.cull([v.x - pad, v.y - pad, v.w + 2.0 * pad, v.h + 2.0 * pad]);

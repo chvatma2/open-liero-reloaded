@@ -153,6 +153,19 @@ pub struct PlacedLight {
     pub light: Light,
 }
 
+/// How placed lights' shadows meet the light (the user's choice after the
+/// playtest, 2026-10-19: soft by default).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Shadows {
+    /// Cut at whole world pixels.
+    Hard,
+    /// Anti-aliased: four tests a world pixel.
+    Smooth,
+    /// A penumbra from the light's radius, wider farther behind the occluder.
+    #[default]
+    Soft,
+}
+
 /// A level's look (`level.ron`'s `look` and its light objects).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LevelLook {
@@ -167,6 +180,7 @@ pub struct LevelLook {
     pub light_soak: u8,
     /// The least light an opaque solid pixel shows.
     pub solid_floor: Ambient,
+    pub shadows: Shadows,
     pub grade: Grade,
     /// A group map value `v` (1-255) is `groups[v - 1]`; 0 is no group.
     pub groups: Vec<GlowGroup>,

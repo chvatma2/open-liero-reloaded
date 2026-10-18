@@ -71,6 +71,7 @@ pub mod labels {
     pub const LOOK_SOFTNESS: &str = "Softness";
     pub const LOOK_SOAK: &str = "Light soak";
     pub const LOOK_FLOOR: &str = "Solid floor %";
+    pub const LOOK_SHADOWS: &str = "Shadows";
     pub const LOOK_EXPOSURE: &str = "Exposure";
     pub const LOOK_CONTRAST: &str = "Contrast %";
     pub const LOOK_SATURATION: &str = "Saturation %";

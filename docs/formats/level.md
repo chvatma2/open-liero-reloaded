@@ -129,6 +129,7 @@ A level's look: darkness, light settings, grade and glow groups. A level without
 | `softness` | integer | `0` | Blurs the light, world pixels, 0 to 4. Default 0. |
 | `light_soak` | integer | `8` | How deep light soaks into solids from the air beside them, world pixels, 0 to 12, fading with depth. Default 8. |
 | `solid_floor` | [SolidFloorSource](#solidfloorsource) | each field's default | The least light of an opaque solid. Default white at 30. |
+| `shadows` | [ShadowsSource](#shadowssource) | `Soft` | Placed lights' shadow edges. Default `Soft`. |
 | `grade` | [GradeSource](#gradesource) | each field's default | Default none. |
 | `glow_groups` | list of [GlowGroupSource](#glowgroupsource) | `[]` | At most 255. Default none. |
 
@@ -222,6 +223,18 @@ The least light an opaque solid pixel (rock or dirt that is not clear) shows, so
 |---|---|---|---|
 | `colour` | [colour](#colour) (optional) | none | Opaque. Default none: white. |
 | `intensity` | integer | `30` | Percent, 0 to 100 (0: none). Default 30 (plan 15a Stop 1b). |
+
+<a id="shadowssource"></a>
+
+## ShadowsSource (enum)
+
+How placed lights' shadows meet the light.
+
+| Variant | Fields | Meaning |
+|---|---|---|
+| `Hard` | — | Cut at whole world pixels. |
+| `Smooth` | — | Anti-aliased: an edge pixel partly lit. |
+| `Soft` | — | A penumbra as wide as the light's radius casts behind what shadows it: sharp near the occluder, softer farther away. |
 
 <a id="gradesource"></a>
 

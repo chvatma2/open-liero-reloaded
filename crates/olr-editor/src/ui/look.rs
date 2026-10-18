@@ -11,7 +11,7 @@ use olr_format::Colour;
 use olr_format::levels::{Element, ElementGlow, ElementKind, LevelObject};
 use olr_format::look::{
     AnimationSource, GlowColourSource, GlowGroupSource, KeySource, LightSource, LookSource, PulseShape,
-    ReachSource, SolidFloorSource,
+    ReachSource, ShadowsSource, SolidFloorSource,
 };
 use olr_look::ViewMode;
 
@@ -214,6 +214,22 @@ pub(super) fn level_look(
     if let Some(v) = number(ui, data, "look/floor", labels::LOOK_FLOOR, floor.intensity.into(), 0..=100) {
         set(out, &|l| l.solid_floor = SolidFloorSource { intensity: v as u16, ..floor });
     }
+    let shadows =
+        [(ShadowsSource::Hard, "Hard"), (ShadowsSource::Smooth, "Smooth"), (ShadowsSource::Soft, "Soft")];
+    let label = ui.label(labels::LOOK_SHADOWS);
+    let now = shadows.iter().find(|(s, _)| *s == look.shadows).map_or("", |(_, n)| n);
+    egui::ComboBox::from_id_salt("look/shadows")
+        .selected_text(now)
+        .show_ui(ui, |ui| {
+            for (s, n) in shadows {
+                if ui.selectable_label(s == look.shadows, n).clicked() && s != look.shadows {
+                    set(out, &|l| l.shadows = s);
+                }
+            }
+        })
+        .response
+        .on_hover_text("the lights' shadow edges: soft widens with a light's radius")
+        .labelled_by(label.id);
     let g = &look.grade;
     if let Some(v) = number(ui, data, "look/exposure", labels::LOOK_EXPOSURE, g.exposure.into(), -200..=200) {
         set(out, &|l| l.grade.exposure = v as i16);

@@ -32,6 +32,7 @@ fn level() -> LevelLook {
         softness: 2,
         light_soak: 6,
         solid_floor: Ambient { colour: [255, 255, 255], intensity: 40 },
+        shadows: olr_look::Shadows::Smooth,
         grade: Grade { exposure: 50, contrast: 110, saturation: 90, tint: [255, 240, 220] },
         groups: vec![
             GlowGroup {
@@ -63,6 +64,7 @@ fn begin_fills_level_part() {
     assert!(near(f.max_light, 1.5));
     assert_eq!((f.light_steps, f.softness, f.light_soak), (4, 2, 6));
     assert!(f.solid_floor.iter().all(|&c| near(c, 0.4)));
+    assert_eq!(f.shadow_filter, 1, "smooth");
     assert_eq!(f.grade.exposure, 50);
     assert_eq!(f.mode, ViewMode::Lit);
     assert_eq!(f.groups.len(), 2);

@@ -168,6 +168,19 @@ impl Default for AmbientSource {
     }
 }
 
+/// How placed lights' shadows meet the light.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ShadowsSource {
+    /// Cut at whole world pixels.
+    Hard,
+    /// Anti-aliased: an edge pixel partly lit.
+    Smooth,
+    /// A penumbra as wide as the light's radius casts behind what shadows
+    /// it: sharp near the occluder, softer farther away.
+    #[default]
+    Soft,
+}
+
 /// The least light an opaque solid pixel (rock or dirt that is not clear)
 /// shows, so deep rock still shows its art.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -299,6 +312,9 @@ pub struct LookSource {
     /// The least light of an opaque solid. Default white at 30.
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub solid_floor: SolidFloorSource,
+    /// Placed lights' shadow edges. Default `Soft`.
+    #[serde(default, skip_serializing_if = "d::is_default")]
+    pub shadows: ShadowsSource,
     /// Default none.
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub grade: GradeSource,
@@ -317,6 +333,7 @@ impl Default for LookSource {
             softness: 0,
             light_soak: light_soak(),
             solid_floor: SolidFloorSource::default(),
+            shadows: ShadowsSource::default(),
             grade: GradeSource::default(),
             glow_groups: Vec::new(),
         }
@@ -508,6 +525,11 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
         solid_floor: olr_look::Ambient {
             colour: rgb(l.solid_floor.colour.unwrap_or_else(white), file, "look.solid_floor.colour")?,
             intensity: l.solid_floor.intensity,
+        },
+        shadows: match l.shadows {
+            ShadowsSource::Hard => olr_look::Shadows::Hard,
+            ShadowsSource::Smooth => olr_look::Shadows::Smooth,
+            ShadowsSource::Soft => olr_look::Shadows::Soft,
         },
         grade: olr_look::Grade {
             exposure: g.exposure,

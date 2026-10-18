@@ -441,3 +441,17 @@ fn solids_defaults_are_the_stop_1_verdict() {
     let text = canonical_text("level.ron", "(name: \"Lit\", size: (4, 3), art_scale: 2, theme: \"olx-theme-dirt\", look: (light_soak: 8, solid_floor: (intensity: 30)))").unwrap();
     assert!(!text.contains("light_soak") && !text.contains("solid_floor"), "{text}");
 }
+
+#[test]
+fn shadows_default_to_soft() {
+    // The user's choice after the playtest (2026-10-19): soft lamp shadows.
+    let src = level(Some("(name: \"Lit\", size: (4, 3), art_scale: 2, theme: \"olx-theme-dirt\", look: ())"));
+    assert_eq!(compile_look(&src).unwrap().unwrap().shadows, olr_look::Shadows::Soft);
+    let hard =
+        "(name: \"Lit\", size: (4, 3), art_scale: 2, theme: \"olx-theme-dirt\", look: (shadows: Hard))";
+    assert_eq!(compile_look(&level(Some(hard))).unwrap().unwrap().shadows, olr_look::Shadows::Hard);
+    let text = canonical_text("level.ron", hard).unwrap();
+    assert!(text.contains("shadows: Hard"), "{text}");
+    let soft = canonical_text("level.ron", &hard.replace("Hard", "Soft")).unwrap();
+    assert!(!soft.contains("shadows"), "the default is left out: {soft}");
+}

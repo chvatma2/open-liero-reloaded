@@ -61,8 +61,8 @@ pub struct LookFrame {
     pub light_soak: u8,
     /// Linear.
     pub solid_floor: [f32; 3],
-    /// Placed lights' shadow edges: 0 hard, 1 anti-aliased, 2 soft
-    /// (exploring, plan 15a playtest).
+    /// Placed lights' shadow edges ([`crate::Shadows`]): 0 hard, 1 smooth,
+    /// 2 soft.
     pub shadow_filter: u8,
     pub grade: Grade,
     /// The level's groups in order: a group map value `v` (1-255) is
@@ -86,6 +86,7 @@ impl LookFrame {
             self.softness = 0;
             self.light_soak = 0;
             self.solid_floor = [0.0; 3];
+            self.shadow_filter = 0;
             self.grade = Grade::default();
             return;
         };
@@ -96,6 +97,11 @@ impl LookFrame {
         self.ambient = linear(level.ambient);
         self.light_soak = level.light_soak.min(MAX_SOAK);
         self.solid_floor = linear(level.solid_floor);
+        self.shadow_filter = match level.shadows {
+            crate::Shadows::Hard => 0,
+            crate::Shadows::Smooth => 1,
+            crate::Shadows::Soft => 2,
+        };
         self.max_light = (f32::from(level.max_light) / 100.0).clamp(1.0, 2.0);
         self.light_steps = level.light_steps;
         self.softness = level.softness.min(4);

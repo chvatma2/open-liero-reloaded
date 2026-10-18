@@ -314,6 +314,16 @@ are evaluated directly, so their numbers mean what the editor shows:
 - **The planned fix for coarse shadows** (decision 3): the shadow maps
   sampled 2 × 2 per world pixel. Not built until the look calls for it.
 
+### Shadow edges (after the playtest, 2026-10-19)
+
+- A level's `shadows` (`Hard`, `Smooth`, `Soft`; default `Soft`, the
+  user's choice from a comparison): `Hard` cuts at whole world pixels;
+  `Smooth` tests four points a world pixel; `Soft` finds the occluders
+  among the shadow-map rays a penumbra could reach and lights the share
+  of rays over a penumbra `radius × (d - s) / s` wide (`s` the occluder's
+  distance, `d` the point's): sharp near the occluder, softer farther, and
+  wider for a bigger light. Glow light is soft already.
+
 ### After both
 
 - `light = ambient + glow light + placed lights`, per world pixel; then, in

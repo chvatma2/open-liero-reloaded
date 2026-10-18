@@ -21,6 +21,7 @@ fn look_frame_does_not_allocate_when_warm() {
         light_steps: 0,
         softness: 0,
         light_soak: 0,
+        shadows: olr_look::Shadows::Soft,
         solid_floor: olr_look::Ambient { colour: [255, 255, 255], intensity: 0 },
         grade: Default::default(),
         groups: Vec::new(),

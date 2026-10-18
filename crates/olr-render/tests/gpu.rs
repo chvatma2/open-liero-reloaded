@@ -979,3 +979,24 @@ fn a_lit_frame_draws_on_gl() {
     assert!(light_at(&gpu, &r, 40, 20)[0] > 0.2, "the lamp lights");
     assert!((light_at(&gpu, &r, 75, 20)[0] - 0.1).abs() < 0.05, "the wall shadows it");
 }
+
+/// The soft filter (the default since the playtest): a big lamp's shadow
+/// behind a short wall has a penumbra, partly lit, where the hard one cuts.
+#[test]
+fn soft_shadows_have_a_penumbra() {
+    let Some(gpu) = offscreen() else { return };
+    // A short wall x = 50, y 18..23, a lamp of radius 6 left of it: its
+    // shadow at x = 100 spans about y 12..29.
+    let map = room(120, 40, |x, y| x == 50 && (18..23).contains(&y));
+    let view = View { x: 0.0, y: 0.0, w: 120.0, h: 40.0 };
+    let big = olr_look::FrameLight { pos: [30.5, 20.5], radius: 6.0, colour: [1.0; 3], reach: 200.0 };
+    let frame = |filter: u8| lit_frame_with(&gpu, &map, view, &[big], |l| l.shadow_filter = filter);
+    let (hard, soft) = (frame(0), frame(2));
+    // Along a column far behind the wall, across the shadow's upper edge.
+    let column = |r: &Renderer| (0..40).map(|y| light_at(&gpu, r, 100, y)[0]).collect::<Vec<_>>();
+    let partial = |c: &[f32]| c.iter().filter(|v| **v > 0.12 && **v < 0.9).count();
+    let (h, s) = (column(&hard), column(&soft));
+    assert!(partial(&s) > partial(&h) + 2, "a wider partly lit edge: hard {h:?}, soft {s:?}");
+    // Next to the lamp, no occluder: soft changes nothing.
+    assert_eq!(light_at(&gpu, &hard, 35, 20), light_at(&gpu, &soft, 35, 20));
+}

@@ -3540,6 +3540,10 @@ completes this section.
   user expects to retune them after playtests). World-pixel shadow edges
   stay; 2 × 2 shadow sampling remains the planned fix if they look coarse
   in play.
+- **Playtest (2026-10-19):** the user likes the look. Shadow edges: from
+  a comparison of hard, anti-aliased, soft and blurred, lamps' shadows are
+  `Soft` by default (a level's `shadows`: `Hard`, `Smooth`, `Soft`).
+  Objects (spawns, lights) copy, cut and paste in the editor.
 
 ## Kept OLX quirks
 
