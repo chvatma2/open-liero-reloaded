@@ -48,6 +48,8 @@ pub const REPLAYS_DIR: &str = "replays";
 pub const PACKS_DIR: &str = "packs";
 /// The level editor's recovery copies (plan 14c R7), in the data directory.
 pub const RECOVERY_DIR: &str = "recovery";
+/// The level editor's texture library (plan 14e R2).
+pub const TEXTURES_DIR: &str = "textures";
 /// The version of a file [`Store::save_file`] writes.
 pub const FILE_VERSION: u32 = 1;
 /// Downloaded content in the cache directory (plan 11, ruling N30).
@@ -230,6 +232,12 @@ impl Store {
     /// data directory.
     pub fn recovery_dir(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join(RECOVERY_DIR))
+    }
+
+    /// The level editor's own textures (plan 14e R2), if there is a data
+    /// directory.
+    pub fn textures_dir(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join(TEXTURES_DIR))
     }
 
     /// A RON file of the data directory (`name`, such as `editor.ron`)

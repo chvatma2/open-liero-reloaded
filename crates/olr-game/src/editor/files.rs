@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::manifest::PackKind;
 use olr_editor::browser::DirEntry;
+use olr_editor::catalog::TextureEntry;
 
 /// The largest image an import reads (from its metadata, before reading).
 pub const MAX_IMPORT_BYTES: u64 = 64 << 20;
@@ -182,4 +183,106 @@ pub fn inside(dir: &Path, roots: &[PathBuf]) -> bool {
     // written to (fail closed).
     let Some(dir) = canon(dir) else { return true };
     roots.iter().filter_map(|r| canon(r)).any(|r| dir.starts_with(r))
+}
+
+/// Whether `name` is a texture's plain name: no path, nothing hidden.
+fn plain_name(name: &str) -> bool {
+    !name.is_empty()
+        && !name.starts_with('.')
+        && !name.contains(['/', '\\'])
+        && olr_vfs::non_portable(&format!("{name}.png")).is_none()
+}
+
+/// The texture `bytes` (named `name` in messages) decoded, refused above
+/// `MAX_TEXTURE_SIDE` from its header before it is decoded.
+fn decode_texture(name: &str, bytes: &[u8]) -> Result<RgbaImage, String> {
+    let (w, h) =
+        olr_format::image_io::image_size(bytes).ok_or_else(|| format!("{name} is not a PNG or JPEG"))?;
+    let max = olr_edit::textures::MAX_TEXTURE_SIDE;
+    if w == 0 || h == 0 || w > max || h > max {
+        return Err(format!("{name} is {w} × {h}: a texture may be at most {max} × {max} pixels"));
+    }
+    olr_format::image_io::decode_image_within(bytes, olr_format::image_io::IMAGES)
+        .map_err(|e| format!("{name}: {e}"))
+}
+
+/// The textures of the library `dir` (plan 14e R2): its `<name>.png` files
+/// in name order, at most `MAX_USER_TEXTURES`, each read as an import is
+/// and within `MAX_TEXTURE_SIDE`; the files it cannot read as warnings. A
+/// missing directory is an empty library.
+pub fn list_textures(dir: &Path) -> (Vec<TextureEntry>, Vec<String>) {
+    let (mut list, mut warnings) = (Vec::new(), Vec::new());
+    let Ok(rd) = std::fs::read_dir(dir) else { return (list, warnings) };
+    let mut names: Vec<String> = rd
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .filter_map(|n| n.strip_suffix(".png").map(str::to_string))
+        .filter(|n| plain_name(n))
+        .collect();
+    names.sort();
+    let max = olr_edit::textures::MAX_USER_TEXTURES;
+    if names.len() > max {
+        warnings
+            .push(format!("the texture library holds more than {max} textures: the first {max} are offered"));
+        names.truncate(max);
+    }
+    for name in names {
+        match read_image(&dir.join(format!("{name}.png"))).and_then(|(file, b)| decode_texture(&file, &b)) {
+            Ok(image) => list.push(TextureEntry { name, image }),
+            Err(why) => warnings.push(format!("texture {why}: not offered")),
+        }
+    }
+    (list, warnings)
+}
+
+/// Adds the picture at `path` to the library `dir` (plan 14e R2): read as
+/// an import is (`read_image`), refused above `MAX_TEXTURE_SIDE` or past
+/// `MAX_USER_TEXTURES`, written as `<dir>/<stem>.png` (a portable name,
+/// made unique: `-2`, `-3`, …; through a hidden file renamed into place).
+/// Returns its name.
+pub fn add_texture(dir: &Path, path: &Path) -> Result<String, String> {
+    let (file, bytes) = read_image(path)?;
+    let image = decode_texture(&file, &bytes)?;
+    let (have, _) = list_textures(dir);
+    let max = olr_edit::textures::MAX_USER_TEXTURES;
+    let existing: BTreeSet<String> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok).filter_map(|e| e.file_name().to_str().map(str::to_lowercase)).collect()
+        })
+        .unwrap_or_default();
+    if have.len() >= max {
+        return Err(format!("the texture library holds at most {max} textures: remove one first"));
+    }
+    let stem = Path::new(&file).file_stem().and_then(|s| s.to_str()).unwrap_or("");
+    let base: String = stem
+        .chars()
+        .map(|c| if c.is_alphanumeric() || matches!(c, '-' | '_' | ' ') { c } else { '-' })
+        .collect::<String>()
+        .trim_matches([' ', '-'])
+        .chars()
+        .take(64)
+        .collect();
+    let base = if plain_name(&base) { base } else { "texture".to_string() };
+    let name = std::iter::once(base.clone())
+        .chain((2..=1000).map(|i| format!("{base}-{i}")))
+        .find(|n| !existing.contains(&format!("{n}.png").to_lowercase()))
+        .ok_or_else(|| format!("no free name for {file} in the texture library"))?;
+    std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let tmp = dir.join(format!(".{name}.png.part"));
+    let target = dir.join(format!("{name}.png"));
+    std::fs::write(&tmp, olr_format::image_io::encode_rgba(&image))
+        .and_then(|()| std::fs::rename(&tmp, &target))
+        .map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("{}: {e}", target.display())
+        })?;
+    Ok(name)
+}
+
+/// Removes texture `name` (a plain name only) from the library `dir`.
+pub fn remove_texture(dir: &Path, name: &str) -> Result<(), String> {
+    if !plain_name(name) {
+        return Err(format!("{name:?} is no texture's name"));
+    }
+    std::fs::remove_file(dir.join(format!("{name}.png"))).map_err(|e| format!("texture {name}: {e}"))
 }

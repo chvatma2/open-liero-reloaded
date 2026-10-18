@@ -576,3 +576,101 @@ fn the_selected_image_is_previewed_small() {
     let p = h.state().browser().unwrap().preview().cloned().unwrap();
     assert!(p.image.unwrap_err().contains("not a PNG or JPEG"));
 }
+
+/// A `w` × `h` PNG of one colour at `path`.
+fn png(path: &Path, w: u32, h: u32) {
+    let mut img = olr_data::image::RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            img.set(x, y, olr_data::image::Rgba::rgb(10, 200, 30));
+        }
+    }
+    std::fs::write(path, olr_format::image_io::encode_rgba(&img)).unwrap();
+}
+
+fn texture_names(h: &EditorHost) -> Vec<String> {
+    h.state().catalog().textures.iter().map(|t| t.name.clone()).collect()
+}
+
+/// Picks `name` in `dir` from the texture browser; the error dialog it
+/// left, if any (dismissed).
+fn pick_texture(h: &mut EditorHost, dir: &Path, name: &str) -> Option<olr_editor::Dialog> {
+    h.act(vec![A::Browse(Purpose::ImportTexture)]);
+    h.act(vec![A::BrowseTo(dir.to_path_buf())]);
+    h.act(vec![A::Pick(name.into())]);
+    let d = h.state().dialog().cloned();
+    h.act(vec![A::Choose(olr_editor::Choice::Cancel)]);
+    d
+}
+
+/// Plan 14e R2: the user's library in the data directory's `textures/`.
+#[test]
+fn textures_are_added_listed_and_removed() {
+    let Some((tmp, root, mut h)) = host() else { return };
+    let pics = tmp.path().join("pics");
+    std::fs::create_dir_all(&pics).unwrap();
+    png(&pics.join("tex.png"), 32, 32);
+    assert_eq!(pick_texture(&mut h, &pics, "tex.png"), None);
+    assert_eq!(pick_texture(&mut h, &pics, "tex.png"), None);
+    assert_eq!(texture_names(&h), ["tex", "tex-2"]);
+    let lib = tmp.path().join("textures");
+    assert!(lib.join("tex.png").is_file() && lib.join("tex-2.png").is_file());
+    // A later session lists them.
+    let mut store = Store::open(tmp.path());
+    let packs = store.packs_dir().unwrap();
+    let mut again = EditorHost::new(&mut store, &[packs.as_path(), root.as_path()]).unwrap();
+    assert_eq!(texture_names(&again), ["tex", "tex-2"]);
+    assert_eq!(again.state().catalog().textures[0].image.width(), 32);
+    again.act(vec![A::RemoveTexture("tex".into())]);
+    assert_eq!(texture_names(&again), ["tex-2"]);
+    assert!(!lib.join("tex.png").exists());
+    // One deleted outside the game: the list is refreshed, and the removal says so.
+    std::fs::remove_file(lib.join("tex-2.png")).unwrap();
+    again.act(vec![A::RemoveTexture("tex-2".into())]);
+    assert!(texture_names(&again).is_empty());
+}
+
+/// Review Focus 5: hostile texture files are refused before they are read
+/// whole, and nothing is written.
+#[test]
+fn texture_imports_are_bounded() {
+    let Some((tmp, _root, mut h)) = host() else { return };
+    let pics = tmp.path().join("pics");
+    std::fs::create_dir_all(&pics).unwrap();
+    png(&pics.join("huge.png"), 600, 600);
+    std::fs::write(pics.join("text.png"), "not an image at all").unwrap();
+    let big = std::fs::File::create(pics.join("big.png")).unwrap();
+    big.set_len(2 << 30).unwrap();
+    for (name, says) in [("huge.png", "512"), ("text.png", "not a PNG or JPEG"), ("big.png", "64 MiB")] {
+        let d = pick_texture(&mut h, &pics, name);
+        assert!(matches!(&d, Some(olr_editor::Dialog::Error(e)) if e.contains(says)), "{name}: {d:?}");
+    }
+    assert!(texture_names(&h).is_empty());
+    let lib = tmp.path().join("textures");
+    assert!(!lib.exists() || std::fs::read_dir(&lib).unwrap().next().is_none(), "nothing written");
+    std::fs::create_dir_all(&lib).unwrap();
+    std::fs::write(tmp.path().join("x.png"), b"keep").unwrap();
+    for bad in ["../x", "", ".", "a/b", "..\\x"] {
+        assert!(olr_game::editor::remove_texture(&lib, bad).is_err(), "{bad:?}");
+    }
+    assert!(tmp.path().join("x.png").is_file());
+    // A file the library cannot read is a warning, not a texture.
+    std::fs::write(lib.join("broken.png"), b"nope").unwrap();
+    png(&lib.join("wide.png"), 513, 4);
+    png(&lib.join("ok.png"), 4, 4);
+    let (list, warnings) = olr_game::editor::list_textures(&lib);
+    assert_eq!(list.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["ok"]);
+    assert_eq!(warnings.len(), 2, "{warnings:?}");
+}
+
+/// Plan 14e R4: the crater brushes are the level theme's holes.
+#[test]
+fn the_catalog_has_the_themes_holes() {
+    let Some((_tmp, _root, mut h)) = host() else { return };
+    h.open_from_menu(&new_level("Office"));
+    let holes = h.state().holes();
+    assert_eq!(holes.len(), 5);
+    for m in holes {
+        assert!(m.cover.iter().any(|c| *c) && m.cover.iter().any(|c| !*c), "{:?}", m.size);
+    }
+}

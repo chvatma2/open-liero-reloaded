@@ -10,7 +10,10 @@ pub mod canvas;
 mod files;
 mod recovery;
 
-pub use files::{MAX_ENTRIES, MAX_IMPORT_BYTES, PREVIEW_SIDE, editable_levels, level_dirs, list as list_dir};
+pub use files::{
+    MAX_ENTRIES, MAX_IMPORT_BYTES, PREVIEW_SIDE, add_texture, editable_levels, level_dirs, list as list_dir,
+    list_textures, remove_texture,
+};
 pub use recovery::{INFO_FILE, RecoveryInfo, discard_recovery, list_recoveries};
 
 use std::collections::VecDeque;
@@ -20,6 +23,7 @@ use std::time::{Duration, Instant};
 use olr_content::Content;
 use olr_data::manifest::PackKind;
 use olr_edit::compose::Rect;
+use olr_edit::level::StampMask;
 use olr_edit::new::{Template, new_pack, pack_id};
 use olr_editor::ui::EditorData;
 use olr_editor::{
@@ -61,6 +65,8 @@ pub struct EditorHost {
     /// The data directory's files (only `editor.ron` is written).
     store: Store,
     packs_dir: Option<PathBuf>,
+    /// The user's texture library (plan 14e R2).
+    textures_dir: Option<PathBuf>,
     recovery_dir: Option<PathBuf>,
     /// The content layers, the data directory's packs first.
     roots: Vec<PathBuf>,
@@ -94,7 +100,7 @@ impl EditorHost {
                     id,
                     front_tile: t.front_tile,
                     back_tile: t.back_tile,
-                    holes: Vec::new(),
+                    holes: t.holes.iter().map(|h| std::sync::Arc::new(StampMask::from_hole(h))).collect(),
                 }),
                 Err(e) => warnings.push(format!("{e:#}: not offered in the editor")),
             }
@@ -105,6 +111,12 @@ impl EditorHost {
         }
         let loaded = store.load_file::<EditorSettings>(EDITOR_FILE);
         warnings.extend(loaded.warnings);
+        let textures_dir = store.textures_dir();
+        if let Some(dir) = &textures_dir {
+            let (list, why) = files::list_textures(dir);
+            catalog.textures = list;
+            warnings.extend(why);
+        }
         let packs_dir = store.packs_dir();
         let bundled =
             roots.iter().filter(|r| Some(**r) != packs_dir.as_deref()).map(|r| r.to_path_buf()).collect();
@@ -115,6 +127,7 @@ impl EditorHost {
             // newer game's file is left untouched, a bad one kept).
             store: store.clone(),
             packs_dir,
+            textures_dir,
             recovery_dir: store.recovery_dir(),
             roots: roots.iter().map(|r| r.to_path_buf()).collect(),
             bundled,
@@ -283,6 +296,28 @@ impl EditorHost {
         out
     }
 
+    /// Changes the texture library with `change`, then answers with the
+    /// library as it now is (a texture deleted outside the game drops out)
+    /// and, when the change failed, why.
+    fn textures(
+        &mut self,
+        queue: &mut VecDeque<EditorAction>,
+        change: impl FnOnce(&Path) -> Result<(), String>,
+    ) {
+        let Some(dir) = self.textures_dir.clone() else {
+            queue.push_back(EditorAction::Failed("textures need a data directory to be kept in".into()));
+            return;
+        };
+        let done = change(&dir);
+        let (list, warnings) = files::list_textures(&dir);
+        queue.push_back(EditorAction::TexturesChanged(list));
+        if let Err(why) = done {
+            queue.push_back(EditorAction::Failed(why));
+        } else if !warnings.is_empty() {
+            queue.push_back(EditorAction::Note(warnings.join("; ")));
+        }
+    }
+
     fn carry(&mut self, c: EditorCommand, queue: &mut VecDeque<EditorAction>, out: &mut Vec<HostOut>) {
         match c {
             EditorCommand::Upload(r) => {
@@ -343,9 +378,11 @@ impl EditorHost {
                 Ok((file_name, bytes)) => EditorAction::ImportImage { file_name, bytes },
                 Err(why) => EditorAction::ImportFailed(why),
             }),
-            // The texture library comes with plan 14e Task 5.
-            EditorCommand::AddTexture(_) | EditorCommand::RemoveTexture(_) => {
-                queue.push_back(EditorAction::Failed("textures are not available yet".into()))
+            EditorCommand::AddTexture(path) => {
+                self.textures(queue, |dir| files::add_texture(dir, &path).map(drop))
+            }
+            EditorCommand::RemoveTexture(name) => {
+                self.textures(queue, |dir| files::remove_texture(dir, &name))
             }
             EditorCommand::RecoveryDone => {
                 self.dirty_since = None;

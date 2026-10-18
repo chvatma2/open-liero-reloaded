@@ -18,6 +18,12 @@ pub struct Texture {
 /// The side of a built-in texture, in art pixels.
 pub const BUILTIN_SIDE: u32 = 64;
 
+/// The largest side of a user texture, in art pixels (spec §Textures).
+pub const MAX_TEXTURE_SIDE: u32 = 512;
+
+/// The most textures the user's library holds (plan 14e).
+pub const MAX_USER_TEXTURES: usize = 256;
+
 const N: u32 = BUILTIN_SIDE;
 
 /// R1's set, in this order: Dirt, Rock, Grass, Brick, Metal, Wood.
