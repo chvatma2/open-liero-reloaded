@@ -625,7 +625,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   survives (a recovered document keeps its copy's id; it reopens in its
   original folder only when that still holds its pack, else in a new folder,
   under a new id when another pack took its own); `list_recoveries`
-  (damaged ones listed), `discard_recovery` (ids are plain names)).
+  (damaged ones listed; a copy a kill left hidden between `replace_dir`'s
+  renames is made `<id>` again first), `discard_recovery` (ids are plain names)).
   Bundled roots (every root but `packs/`) and `recovery/` are refused for
   Open, Create and Save (`BUNDLED`, `RECOVERY_IN_PLACE`).
   `HostOut::{Upload, FullUpload, Play, Closed,
