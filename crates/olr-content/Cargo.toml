@@ -12,6 +12,7 @@ autotests = false
 olr-math.workspace = true
 olr-data.workspace = true
 olr-terrain.workspace = true
+olr-look.workspace = true
 olr-sim.workspace = true
 olr-modes.workspace = true
 olr-bots.workspace = true

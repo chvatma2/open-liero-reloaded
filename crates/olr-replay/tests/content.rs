@@ -78,7 +78,12 @@ fn mod_pack() -> olr_pack::ModPack {
         projectiles: Default::default(),
         restrictions: Default::default(),
     };
-    olr_pack::ModPack { manifest: manifest("beam-mod", PackKind::Mod), def, assets: Default::default() }
+    olr_pack::ModPack {
+        manifest: manifest("beam-mod", PackKind::Mod),
+        def,
+        assets: Default::default(),
+        look: Default::default(),
+    }
 }
 
 /// 160 × 120 of dirt over a rock floor, open above y 60; `rock` adds a
@@ -107,7 +112,14 @@ fn level_pack(rock: bool) -> olr_pack::LevelPack {
         front: filled(w, h, Rgba::rgb(128, 128, 128)),
         back: filled(w, h, Rgba::BLACK),
     };
-    olr_pack::LevelPack { manifest: manifest("pit-level", PackKind::Level), level, thumb: None }
+    olr_pack::LevelPack {
+        manifest: manifest("pit-level", PackKind::Level),
+        level,
+        thumb: None,
+        look: None,
+        glow: None,
+        warnings: Vec::new(),
+    }
 }
 
 fn theme_pack() -> olr_pack::ThemePack {

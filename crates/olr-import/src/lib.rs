@@ -179,7 +179,7 @@ pub enum Progress<'a> {
 
 enum Imported {
     Mod(olr_import_lgs::ImportedMod),
-    Level(olr_import_lxl::ImportedLevel),
+    Level(Box<olr_import_lxl::ImportedLevel>),
     Skin(olr_import_gfx::ImportedSkin),
     Theme(olr_import_gfx::ImportedTheme),
     Core(olr_import_gfx::ImportedCore),
@@ -302,7 +302,7 @@ impl Job {
                 let mut level = olr_import_lxl::import_lxl(src, &VPath::new(l)?, origin)?;
                 // The menus' thumbnail (plan 7 G6), from the art.
                 level.pack.thumb = Some(olr_import_gfx::level_thumbnail(&level.pack.level));
-                Imported::Level(level)
+                Imported::Level(Box::new(level))
             }
             Job::Theme(t) => Imported::Theme(olr_import_gfx::import_theme(src, &VPath::new(t)?, origin)?),
             Job::Skin(p) | Job::ExtraSkin { name: p, .. } => {

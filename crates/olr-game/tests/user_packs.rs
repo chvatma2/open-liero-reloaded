@@ -40,7 +40,11 @@ fn level(root: &Path, id: &str, name: &str) {
         back: RgbaImage::new(4, 4),
     };
     let mut fs = MemFs::new();
-    olr_pack::write_level(&mut fs, &olr_pack::LevelPack { manifest, level, thumb: None }).unwrap();
+    olr_pack::write_level(
+        &mut fs,
+        &olr_pack::LevelPack { manifest, level, thumb: None, look: None, glow: None, warnings: Vec::new() },
+    )
+    .unwrap();
     let mut sink = DirFs::new(root.join(id));
     for (p, bytes) in fs.files() {
         sink.write(p, bytes).unwrap();

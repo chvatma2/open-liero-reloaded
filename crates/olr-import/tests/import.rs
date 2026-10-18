@@ -47,7 +47,7 @@ fn level(dir: &Path, sub: &str, id: &str, name: &str) {
         front: RgbaImage::new(3, 2),
         back: RgbaImage::new(3, 2),
     };
-    let pack = LevelPack { manifest, level, thumb: None };
+    let pack = LevelPack { manifest, level, thumb: None, look: None, glow: None, warnings: Vec::new() };
     olr_pack::write_level(&mut DirFs::new(dir.join(sub)), &pack).unwrap();
 }
 

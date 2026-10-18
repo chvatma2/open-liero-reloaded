@@ -46,7 +46,10 @@ pub fn import_mod(olx: &dyn ContentSource, mod_dir: &VPath, origin: Origin) -> R
         origin: Some(origin),
         license: None,
     };
-    Ok(ImportedMod { pack: ModPack { manifest, def, assets: cx.assets }, warnings: cx.warnings })
+    Ok(ImportedMod {
+        pack: ModPack { manifest, def, assets: cx.assets, look: Default::default() },
+        warnings: cx.warnings,
+    })
 }
 
 struct Converter<'a> {

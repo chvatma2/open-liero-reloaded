@@ -217,6 +217,45 @@ pub fn read_level_files(src: &dyn ContentSource) -> Result<LevelSource, FormatEr
 
 /// The level with `thumb` always `None`: the thumbnail is never read.
 pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSource, FormatError> {
+    let (mut level, glow) = read_base(src)?;
+    level.glow = glow?;
+    check(&level)?;
+    Ok(level)
+}
+
+/// [`read_level_files_without_thumb`] for playing: a look that does not
+/// check, or glow images that do not read or fit, are left out with a
+/// warning each instead of failing the level (a broken look never keeps a
+/// level from being played; `pack check` still reports it).
+pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource, Vec<String>), FormatError> {
+    let (mut level, glow) = read_base(src)?;
+    let mut warnings = Vec::new();
+    level.glow = glow.unwrap_or_else(|e| {
+        warnings.push(format!("{e}: the level plays without glow"));
+        None
+    });
+    if let Err(e) = super::compile_look(&level) {
+        warnings.push(format!("{e}: the level plays without its look"));
+        level.look = None;
+        level.objects.retain(|o| matches!(o, LevelObject::Spawn { .. }));
+        level.glow = None;
+    }
+    if let Some(g) = &level.glow
+        && let Err(e) = super::check_glow(&level, g)
+    {
+        warnings.push(format!("{e}: the level plays without glow"));
+        level.glow = None;
+    }
+    check(&level)?;
+    Ok((level, warnings))
+}
+
+/// `level.ron`, the material and the art, checked; the glow images' read
+/// apart, so a caller decides what a bad one means.
+#[allow(clippy::type_complexity)]
+fn read_base(
+    src: &dyn ContentSource,
+) -> Result<(LevelSource, Result<Option<GlowLayers>, FormatError>), FormatError> {
     let file = read_level_ron(src)?;
     // level.ron is validated before any image is read.
     let art = check_header(file.size, file.art_scale, file.objects.len())?;
@@ -249,7 +288,7 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
     }
     let front = read_art(src, FRONT_FILE, art)?;
     let back = read_art(src, BACK_FILE, art)?;
-    let glow = read_glow(src, art, file.size)?;
+    let glow = read_glow(src, art, file.size);
     let level = LevelSource {
         name: file.name,
         notes: file.notes,
@@ -262,10 +301,9 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
         back,
         thumb: None,
         look: file.look,
-        glow,
+        glow: None,
     };
-    check(&level)?;
-    Ok(level)
+    Ok((level, glow))
 }
 
 #[cfg(test)]

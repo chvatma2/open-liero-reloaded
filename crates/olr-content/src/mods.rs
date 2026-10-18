@@ -37,6 +37,9 @@ pub struct LoadedMod {
     pub worm: WormParams,
     /// The mod's ninja rope (`ModDef::rope`), applied the same way.
     pub rope: RopeParams,
+    /// The mod's look (look system), indexed like `SimMod::projectiles`
+    /// and `SimMod::weapons`.
+    pub look: olr_look::ModLook,
 }
 
 impl LoadedMod {
@@ -153,9 +156,17 @@ impl Content {
                 None => {}
             }
         }
+        let look = olr_look::ModLook {
+            projectiles: sim
+                .projectiles()
+                .iter()
+                .map(|p| pack.look.projectiles.get(&p.name).cloned())
+                .collect(),
+            weapons: pack.look.weapons.clone(),
+        };
         let (name, restrictions) = (pack.def.name, pack.def.restrictions);
         let (worm, rope) = (pack.def.worm, pack.def.rope);
-        Ok(LoadedMod { sim: Arc::new(sim), images, sounds, warnings, name, restrictions, worm, rope })
+        Ok(LoadedMod { sim: Arc::new(sim), images, sounds, warnings, name, restrictions, worm, rope, look })
     }
 }
 

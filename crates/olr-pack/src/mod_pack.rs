@@ -22,6 +22,9 @@ pub const RESTRICTIONS_FILE: &str = olr_format::mods::RESTRICTIONS_FILE;
 pub struct ModPack {
     pub manifest: PackManifest,
     pub def: ModDef,
+    /// The mod's look by authoring key (look system); not written by
+    /// [`write_mod`] (the importers write none).
+    pub look: olr_format::mods::ModLookSource,
     /// Asset files by pack path, such as `gfx/missile.png`.
     pub assets: BTreeMap<VPath, Vec<u8>>,
 }
@@ -55,14 +58,16 @@ pub fn read_mod(src: &dyn ContentSource) -> Result<ModPack, PackError> {
     if manifest.kind != PackKind::Mod {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Mod"));
     }
-    let def = compile_mod(&read_mod_files(src)?)?;
+    let source = read_mod_files(src)?;
+    let def = compile_mod(&source)?;
+    let look = olr_format::mods::compile_mod_look(&source)?;
     let mut assets = BTreeMap::new();
     for path in walk(src, &VPath::root())? {
         if !is_definition(path.as_str()) {
             assets.insert(path.clone(), crate::ron_io::read_file(src, &path)?);
         }
     }
-    Ok(ModPack { manifest, def, assets })
+    Ok(ModPack { manifest, def, look, assets })
 }
 
 /// The names of the mod's weapon restriction presets
@@ -186,6 +191,7 @@ pub(crate) mod tests {
             ]
             .into_iter()
             .collect(),
+            look: Default::default(),
         }
     }
 

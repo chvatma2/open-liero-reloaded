@@ -13,7 +13,8 @@ use olr_data::level::{Level, LevelDef, Material, MaterialGrid, SpawnPoint};
 use serde::{Deserialize, Serialize};
 
 pub use files::{
-    file_paths, read_level_files, read_level_files_without_thumb, read_level_header, write_level_files,
+    file_paths, read_level_files, read_level_files_lenient, read_level_files_without_thumb,
+    read_level_header, write_level_files,
 };
 pub use thumb::{THUMB_SIZE, letterbox, thumbnail};
 
@@ -248,7 +249,7 @@ pub fn compile_look(src: &LevelSource) -> Result<Option<olr_look::LevelLook>, Fo
 }
 
 /// The glow images fit the level and name only groups its look has.
-fn check_glow(src: &LevelSource, glow: &GlowLayers) -> Result<(), FormatError> {
+pub(crate) fn check_glow(src: &LevelSource, glow: &GlowLayers) -> Result<(), FormatError> {
     let art = (src.size.0 * src.art_scale, src.size.1 * src.art_scale);
     if !glow.fits(art, src.size) {
         return Err(FormatError::invalid(

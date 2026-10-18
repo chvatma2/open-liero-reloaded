@@ -9,6 +9,7 @@ publish.workspace = true
 autotests = false
 
 [dependencies]
+olr-look.workspace = true
 olr-data.workspace = true
 olr-vfs.workspace = true
 olr-format.workspace = true

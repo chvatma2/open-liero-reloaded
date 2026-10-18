@@ -40,6 +40,9 @@ fn level(dir: &Path, id: &str, name: &str) -> DirFs {
             back: RgbaImage::new(3, 2),
         },
         thumb: None,
+        look: None,
+        glow: None,
+        warnings: Vec::new(),
     };
     olr_pack::write_level(&mut fs, &pack).unwrap();
     fs

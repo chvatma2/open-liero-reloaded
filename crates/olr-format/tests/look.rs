@@ -323,7 +323,7 @@ fn a_mod_without_looks_compiles_to_none() {
     let src = read_mod_files(&mod_fs(&weapon("", "", ""))).unwrap();
     let look = compile_mod_look(&src).unwrap();
     assert!(look.projectiles.is_empty());
-    assert_eq!(look.weapons, vec![None]);
+    assert!(look.weapons.is_empty());
 }
 
 #[test]

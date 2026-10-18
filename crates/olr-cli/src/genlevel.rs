@@ -162,6 +162,9 @@ impl GenLevel {
             art_scale: s,
             theme: theme.to_string(),
             spawns: Vec::new(),
+            look: None,
+            glow: None,
+            warnings: Vec::new(),
         }
     }
 }

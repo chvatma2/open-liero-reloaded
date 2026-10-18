@@ -51,7 +51,8 @@ struct Compiler<'a> {
 }
 
 /// A mod's look by authoring key: each projectile's by its `ModDef` key,
-/// each weapon's in order. `olr-content` indexes it like `SimMod`.
+/// each weapon's in order (empty when no weapon has one; read past its end
+/// as none). `olr-content` indexes it like `SimMod`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModLookSource {
     pub projectiles: BTreeMap<String, olr_look::ProjectileLook>,
@@ -121,6 +122,10 @@ fn compile_all(src: &ModSource) -> Result<(rt::ModDef, ModLookSource), FormatErr
         projectiles: c.out,
         restrictions: src.restrictions.clone(),
     };
+    // No weapon look at all is no list: a mod without looks is the empty look.
+    if weapon_looks.iter().all(Option::is_none) {
+        weapon_looks.clear();
+    }
     Ok((def, ModLookSource { projectiles: c.looks, weapons: weapon_looks }))
 }
 

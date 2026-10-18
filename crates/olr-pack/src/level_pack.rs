@@ -5,9 +5,7 @@
 use olr_data::image::RgbaImage;
 use olr_data::level::{Level, LevelDef};
 use olr_data::manifest::{PackKind, PackManifest};
-use olr_format::levels::{
-    compile_level, lift_level, read_level_files_without_thumb, read_level_header, write_level_files,
-};
+use olr_format::levels::{compile_level, lift_level, read_level_header, write_level_files};
 use olr_vfs::{ContentSink, ContentSource, VPath};
 
 use crate::image_io::{decode_rgba, encode_rgba, png_size};
@@ -31,6 +29,13 @@ pub struct LevelPack {
     /// `thumb.png`, if the pack has a readable one (at most
     /// [`MAX_THUMB_SIDE`] square).
     pub thumb: Option<RgbaImage>,
+    /// The level's look (look system): `None` draws as always. Not
+    /// written by [`write_level`] (the importers write none).
+    pub look: Option<olr_look::LevelLook>,
+    /// The level's glow images.
+    pub glow: Option<olr_format::levels::GlowLayers>,
+    /// What [`read_level`] left out of a look that did not check.
+    pub warnings: Vec<String>,
 }
 
 /// Writes the pack in format 5 (`olr-format`'s level files), the
@@ -115,8 +120,10 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     if manifest.kind != PackKind::Level {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Level"));
     }
-    let level = compile_level(&read_level_files_without_thumb(src)?)?;
-    Ok(LevelPack { manifest, level, thumb: None })
+    let (src, warnings) = olr_format::levels::read_level_files_lenient(src)?;
+    let level = compile_level(&src)?;
+    let look = olr_format::levels::compile_look(&src)?;
+    Ok(LevelPack { manifest, level, thumb: None, look, glow: src.glow, warnings })
 }
 
 #[cfg(test)]
@@ -151,6 +158,9 @@ pub(crate) mod tests {
                 back: RgbaImage::new(4, 4),
             },
             thumb: None,
+            look: None,
+            glow: None,
+            warnings: Vec::new(),
         }
     }
 

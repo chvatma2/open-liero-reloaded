@@ -18,13 +18,17 @@ impl LoadedLevel {
     /// The level's colour map before any edit (worms' spawn holes included:
     /// they arrive with the first tick's events).
     pub fn color_map(&self, theme: &LoadedTheme) -> ColorMap {
-        ColorMap::new(
+        let mut map = ColorMap::new(
             &Terrain::from_grid(&self.material),
             &self.front,
             &self.back,
             self.art_scale,
             theme.art(),
-        )
+        );
+        // Glow that does not fit the map (it always does from a checked
+        // pack) is left out.
+        map.set_glow(self.glow.clone());
+        map
     }
 }
 

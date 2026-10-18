@@ -71,8 +71,18 @@ fn generated_level(root: &Path, id: &str, seed: u32) -> PathBuf {
         back: art,
     };
     let mut fs = MemFs::new();
-    olr_pack::write_level(&mut fs, &olr_pack::LevelPack { manifest: manifest(id), level, thumb: None })
-        .unwrap();
+    olr_pack::write_level(
+        &mut fs,
+        &olr_pack::LevelPack {
+            manifest: manifest(id),
+            level,
+            thumb: None,
+            look: None,
+            glow: None,
+            warnings: Vec::new(),
+        },
+    )
+    .unwrap();
     let dir = root.join(id);
     let mut sink = DirFs::new(&dir);
     for (p, bytes) in fs.files() {

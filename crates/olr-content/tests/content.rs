@@ -98,7 +98,12 @@ fn broken_mod() -> olr_pack::ModPack {
     };
     let mut assets = BTreeMap::new();
     assets.insert(VPath::new("gfx/broken.png").unwrap(), b"not a png".to_vec());
-    olr_pack::ModPack { manifest: manifest("broken-mod", PackKind::Mod), def, assets }
+    olr_pack::ModPack {
+        manifest: manifest("broken-mod", PackKind::Mod),
+        def,
+        assets,
+        look: Default::default(),
+    }
 }
 
 /// A 100 × 100 level of rock with a 30 × 30 room of background at (40..70, 40..70).
@@ -123,7 +128,14 @@ fn room_level() -> olr_pack::LevelPack {
         front: filled(100, 100, Rgba::rgb(128, 128, 128)),
         back: filled(100, 100, Rgba::BLACK),
     };
-    olr_pack::LevelPack { manifest: manifest("test-level", PackKind::Level), level, thumb: None }
+    olr_pack::LevelPack {
+        manifest: manifest("test-level", PackKind::Level),
+        level,
+        thumb: None,
+        look: None,
+        glow: None,
+        warnings: Vec::new(),
+    }
 }
 
 fn theme() -> olr_pack::ThemePack {
@@ -416,6 +428,9 @@ fn scaled_level(id: &str, size: u32, art_scale: u32) -> olr_pack::LevelPack {
         manifest: manifest(id, PackKind::Level),
         level: Level { def, material, front: art.clone(), back: art },
         thumb: None,
+        look: None,
+        glow: None,
+        warnings: Vec::new(),
     }
 }
 
@@ -613,6 +628,9 @@ fn the_first_spawn_is_used_only_when_inside_the_level() {
         art_scale: 1,
         theme: "t".into(),
         spawns: spawns.iter().map(|&(x, y)| SpawnPoint { x, y }).collect(),
+        look: None,
+        glow: None,
+        warnings: Vec::new(),
     };
     assert_eq!(level(&[(-1, 5), (10, 10)]).first_spawn(), None, "only the first one counts");
     assert_eq!(level(&[(10, 10)]).first_spawn(), Some((10, 10)));

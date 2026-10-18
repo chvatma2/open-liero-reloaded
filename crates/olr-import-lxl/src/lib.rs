@@ -63,7 +63,10 @@ pub fn import_lxl(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Resu
         origin: Some(origin),
         license: None,
     };
-    Ok(ImportedLevel { pack: LevelPack { manifest, level, thumb: None }, warnings })
+    Ok(ImportedLevel {
+        pack: LevelPack { manifest, level, thumb: None, look: None, glow: None, warnings: Vec::new() },
+        warnings,
+    })
 }
 
 fn le_i32(b: &[u8], at: usize) -> i32 {

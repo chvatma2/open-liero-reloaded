@@ -31,6 +31,12 @@ pub struct LoadedLevel {
     /// The theme pack's id, such as `olx-theme-dirt`.
     pub theme: String,
     pub spawns: Vec<SpawnPoint>,
+    /// The level's look (look system); `None` draws as always.
+    pub look: Option<olr_look::LevelLook>,
+    /// The level's glow images.
+    pub glow: Option<olr_terrain::GlowLayers>,
+    /// What loading left out of a look that did not check, to log once.
+    pub warnings: Vec<String>,
 }
 
 impl LoadedLevel {
@@ -38,10 +44,16 @@ impl LoadedLevel {
     /// pack's files are) as a match loads it, under the art bound
     /// [`Content::load_level`] applies.
     pub fn from_source(src: &LevelSource) -> anyhow::Result<LoadedLevel> {
-        LoadedLevel::from_level(olr_format::levels::compile_level(src)?)
+        let look = olr_format::levels::compile_look(src)?;
+        LoadedLevel::from_level(olr_format::levels::compile_level(src)?, look, src.glow.clone(), Vec::new())
     }
 
-    fn from_level(l: Level) -> anyhow::Result<LoadedLevel> {
+    fn from_level(
+        l: Level,
+        look: Option<olr_look::LevelLook>,
+        glow: Option<olr_terrain::GlowLayers>,
+        warnings: Vec<String>,
+    ) -> anyhow::Result<LoadedLevel> {
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
         Ok(LoadedLevel {
             name: l.def.name,
@@ -51,7 +63,15 @@ impl LoadedLevel {
             art_scale: l.def.art_scale,
             theme: l.def.theme,
             spawns: l.def.spawns,
+            look,
+            glow,
+            warnings,
         })
+    }
+
+    /// The level has a look or glows: the renderer's look passes draw it.
+    pub fn has_look(&self) -> bool {
+        self.look.is_some() || self.glow.is_some()
     }
 
     /// The first spawn point when it is a good spawn point, else `None` (a
@@ -152,7 +172,9 @@ impl Content {
     pub fn load_level(&self, id: &str) -> anyhow::Result<LoadedLevel> {
         let pack = olr_pack::read_level(&self.pack(id, PackKind::Level)?)
             .with_context(|| format!("level pack {id}"))?;
-        LoadedLevel::from_level(pack.level).with_context(|| format!("level pack {id}"))
+        let warnings = pack.warnings.iter().map(|w| format!("{id}: {w}")).collect();
+        LoadedLevel::from_level(pack.level, pack.look, pack.glow, warnings)
+            .with_context(|| format!("level pack {id}"))
     }
 
     /// Theme pack `id` (such as `olx-theme-dirt`). Fewer than five holes, or

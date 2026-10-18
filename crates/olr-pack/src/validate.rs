@@ -114,6 +114,10 @@ pub fn validate(src: &dyn ContentSource) -> Vec<Diagnostic> {
     let result = match manifest.kind {
         PackKind::Mod => read_mod(src).map(|p| out.extend(check_mod(&p))),
         PackKind::Level => read_level(src).map(|p| {
+            // `read_level` plays a broken look without it; a check reports it.
+            if let Err(e) = olr_format::levels::read_level_files_without_thumb(src) {
+                out.push(Diagnostic::from_error(&PackError::Format(e)));
+            }
             // Presentation only: the level plays without it.
             if let Err(e) = crate::read_level_thumb(src) {
                 out.push(Diagnostic::new(Severity::Warning, THUMB_FILE, format!("{e}: not shown")));
