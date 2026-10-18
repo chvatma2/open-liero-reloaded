@@ -60,7 +60,7 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     }
     // Texel t's centre in light-grid coordinates: world pixel (origin + i)'s
     // light sits at grid coordinate i.
-    let g = (vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z - vec2<f32>(0.5);
+    let g = (vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z - vec2<f32>(0.5) + vec2<f32>(LIGHT_PAD);
     let l = max(min(light_at(g), vec3<f32>(look.ambient.w)), vec3<f32>(shade.x));
     var c = a * l * look.grade.x;
     c = (c - vec3<f32>(0.5)) * look.grade.y + vec3<f32>(0.5);

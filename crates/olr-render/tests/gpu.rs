@@ -395,7 +395,7 @@ fn look_ambient_darkens() {
     let look = dim(0.3);
     let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), size);
     let (grid, light) = gpu.read_light(&r).expect("a light grid");
-    assert_eq!(grid.origin, (19, 29));
+    assert_eq!(grid.origin, (15, 25), "the frame's origin less the light grid's pad (4)");
     assert!(light.iter().all(|c| (c[0] - 0.3).abs() < 1e-3), "ambient everywhere");
     let glow = map.glow().unwrap();
     let mut worst = 0i32;
@@ -461,4 +461,158 @@ fn look_modes() {
     // Art pixel (42, 60) does not glow (42 % 7 = 0): white lit at 0.3.
     let grey = olr_render::linear_to_srgb(0.3);
     assert_eq!(img.get(2, 0), Rgba::rgb(grey, grey, grey));
+}
+
+/// A `w` × `h` open room at art scale 1 (black art), rock where `rock(x, y)`.
+fn room(w: u32, h: u32, rock: impl Fn(u32, u32) -> bool) -> ColorMap {
+    let cells =
+        (0..w * h).map(|i| if rock(i % w, i / w) { Material::Rock } else { Material::Background }).collect();
+    let t = Terrain::from_grid(&MaterialGrid::from_cells(w, h, cells).unwrap());
+    let theme = ThemeArt { holes: Vec::new(), green_mask: None, front_tile: solid(1, 1, Rgba::BLACK) };
+    ColorMap::new(
+        &t,
+        &solid(w, h, Rgba::rgb(128, 128, 128)),
+        &solid(w, h, Rgba::rgb(128, 128, 128)),
+        1,
+        theme,
+    )
+}
+
+/// A white light at `at` (world coordinates), radius 2, reach `reach`.
+fn lamp(at: [f32; 2], reach: f32) -> olr_look::FrameLight {
+    olr_look::FrameLight { pos: at, radius: 2.0, colour: [1.0; 3], reach }
+}
+
+/// The light at world pixel `(x, y)` of the last lit frame.
+fn light_at(gpu: &Offscreen, r: &Renderer, x: i32, y: i32) -> [f32; 3] {
+    let (grid, light) = gpu.read_light(r).unwrap();
+    let (i, j) = (x - grid.origin.0, y - grid.origin.1);
+    assert!(
+        i >= 0 && j >= 0 && (i as u32) < grid.size.0 && (j as u32) < grid.size.1,
+        "({x}, {y}) off the grid"
+    );
+    light[(j as u32 * grid.size.0 + i as u32) as usize]
+}
+
+/// A lit frame of `map` over `view` with `lights` at ambient 0.1.
+fn lit_frame(
+    gpu: &Offscreen,
+    map: &ColorMap,
+    view: View,
+    lights: &[olr_look::FrameLight],
+    softness: u8,
+) -> Renderer {
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.set_lighting(true);
+    r.upload_terrain(map);
+    let mut look = dim(0.1);
+    look.softness = softness;
+    look.lights.extend_from_slice(lights);
+    let mut l = list(view);
+    l.map = (map.material().width(), map.material().height());
+    gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
+    r
+}
+
+#[test]
+fn a_wall_blocks_a_light() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |x, _| x == 50);
+    let r =
+        lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &[lamp([30.5, 20.5], 100.0)], 0);
+    assert!(light_at(&gpu, &r, 40, 20)[0] > 0.2, "in front of the wall: lit");
+    assert!(light_at(&gpu, &r, 50, 20)[0] > 0.1, "the wall's face is lit");
+    assert!((light_at(&gpu, &r, 60, 20)[0] - 0.1).abs() < 1e-3, "behind it: the ambient");
+}
+
+#[test]
+fn reach_bounds_a_light() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |_, _| false);
+    let r = lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &[lamp([20.5, 20.5], 30.0)], 0);
+    assert!(light_at(&gpu, &r, 20, 20)[0] > 1.0 - 1e-3, "full at the source (capped at max light)");
+    assert!(light_at(&gpu, &r, 40, 20)[0] > 0.1 + 1e-3, "within reach of the radius' edge");
+    assert!((light_at(&gpu, &r, 60, 20)[0] - 0.1).abs() < 1e-3, "past reach: the ambient");
+}
+
+#[test]
+fn an_off_view_light_reaching_the_view_lights_it() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(200, 40, |_, _| false);
+    // The view is x 100..140; the lamp sits 60 px left of it, outside the grid.
+    let r =
+        lit_frame(&gpu, &map, View { x: 100.0, y: 0.0, w: 40.0, h: 40.0 }, &[lamp([40.5, 20.5], 100.0)], 0);
+    assert!(light_at(&gpu, &r, 101, 20)[0] > 0.1 + 1e-3);
+    // A lamp outside the level lights it too (outside is open).
+    let r =
+        lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 40.0, h: 40.0 }, &[lamp([-20.5, 20.5], 100.0)], 0);
+    assert!(light_at(&gpu, &r, 1, 20)[0] > 0.1 + 1e-3);
+}
+
+#[test]
+fn a_light_against_a_wall_lights_the_room() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |x, _| x >= 51);
+    let r = lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &[lamp([50.5, 20.5], 40.0)], 0);
+    assert!(light_at(&gpu, &r, 40, 20)[0] > 0.2, "the room is lit");
+    // A lamp inside rock lights nothing.
+    let r = lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &[lamp([60.5, 20.5], 40.0)], 0);
+    assert!((light_at(&gpu, &r, 40, 20)[0] - 0.1).abs() < 1e-3);
+    assert!((light_at(&gpu, &r, 60, 20)[0] - 0.1).abs() < 1e-3);
+}
+
+#[test]
+fn placed_lights_at_the_edges() {
+    let Some(gpu) = offscreen() else { return };
+    let big = room(4096, 4096, |x, y| x % 512 == 0 && y % 3 == 0);
+    let mut lights =
+        vec![lamp([2000.5, 2000.5], f32::INFINITY), lamp([-50.0, -50.0], 300.0), lamp([0.5, 0.5], 64.0)];
+    lights.extend((0..300).map(|i| lamp([1990.0 + (i % 20) as f32, 1990.0 + (i / 20) as f32], 40.0)));
+    let view = View { x: 1950.0, y: 1950.0, w: 100.0, h: 100.0 };
+    let a = lit_frame(&gpu, &big, view, &lights, 0);
+    let b = lit_frame(&gpu, &big, view, &lights, 0);
+    assert_eq!(gpu.read_light(&a).unwrap().1, gpu.read_light(&b).unwrap().1, "deterministic");
+    assert!(light_at(&gpu, &a, 2000, 2000)[0] > 0.9);
+}
+
+#[test]
+fn light_is_camera_independent() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(400, 60, |x, y| x % 37 == 0 && y > 20);
+    let lights = [lamp([120.5, 30.5], 90.0), lamp([200.5, 10.5], f32::INFINITY)];
+    for softness in [0, 2] {
+        let base = lit_frame(&gpu, &map, View { x: 100.0, y: 0.0, w: 120.0, h: 60.0 }, &lights, softness);
+        for dx in [1, 7, 31, 200] {
+            let r = lit_frame(
+                &gpu,
+                &map,
+                View { x: 100.0 + dx as f32, y: 0.0, w: 120.0, h: 60.0 },
+                &lights,
+                softness,
+            );
+            for x in (100 + dx)..220 {
+                for y in [5, 30, 55] {
+                    if x >= 220 {
+                        continue;
+                    }
+                    assert_eq!(
+                        light_at(&gpu, &base, x, y),
+                        light_at(&gpu, &r, x, y),
+                        "({x}, {y}) moved by {dx}, softness {softness}"
+                    );
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn look_softness_blurs() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |x, _| x == 50);
+    let lights = [lamp([45.5, 20.5], 30.0)];
+    let sharp = lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &lights, 0);
+    let soft = lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &lights, 3);
+    let (s, b) = (light_at(&gpu, &sharp, 52, 20)[0], light_at(&gpu, &soft, 52, 20)[0]);
+    assert!((s - 0.1).abs() < 1e-3 && b > s + 1e-3, "light bleeds past the wall's edge when soft: {s} {b}");
 }

@@ -31,10 +31,22 @@ pub(super) struct LookTextures {
     pub(super) level: (u32, u32),
     /// The lit terrain's group 2: globals, glow, groups.
     pub(super) terrain_bind: wgpu::BindGroup,
+    /// The shadow pass's group 0: globals, lights, solid map.
+    pub(super) shadow_bind: wgpu::BindGroup,
 }
 
 /// The light grid's format.
 pub(super) const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// World pixels the light grid reaches past the world target on every side
+/// (`LIGHT_PAD` in the shaders): a blur of up to 4 never sees its edge.
+pub(super) const LIGHT_PAD: u32 = 4;
+
+/// Rays per placed light's shadow map (`SHADOW_RAYS` in the shaders).
+pub(super) const SHADOW_RAYS: u32 = 512;
+
+/// The placed lights' uniform: two vec4s per light.
+const LIGHT_FLOATS: usize = 8 * olr_look::MAX_LIGHTS;
 
 /// One world target's look passes: the light grid (gathered, blurred
 /// across, then down, capped and banded) and the lit target the upscale
@@ -59,13 +71,21 @@ pub(super) struct LookState {
     pub(super) blur_h_pipeline: wgpu::RenderPipeline,
     pub(super) blur_v_pipeline: wgpu::RenderPipeline,
     pub(super) composite_pipeline: wgpu::RenderPipeline,
+    pub(super) shadow_pipeline: wgpu::RenderPipeline,
+    pub(super) shadow_layout: wgpu::BindGroupLayout,
     pub(super) light_layout: wgpu::BindGroupLayout,
     pub(super) composite_layout: wgpu::BindGroupLayout,
     pub(super) layout: wgpu::BindGroupLayout,
     pub(super) globals: wgpu::Buffer,
+    pub(super) lights: wgpu::Buffer,
+    pub(super) shadow_view: wgpu::TextureView,
     pub(super) textures: Option<LookTextures>,
     /// The packed globals, reused every frame.
     pub(super) packed: Vec<f32>,
+    /// The packed lights, reused every frame.
+    pub(super) packed_lights: Vec<f32>,
+    /// The placed lights this frame draws.
+    pub(super) light_count: u32,
 }
 
 const UINT_TEXTURE: wgpu::BindingType = wgpu::BindingType::Texture {
@@ -182,7 +202,51 @@ impl LookState {
         );
         let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render light"),
-            entries: &[entry(0, frag, super::UNIFORM), entry(1, frag, FLOAT_TEXTURE)],
+            entries: &[
+                entry(0, frag, super::UNIFORM),
+                entry(1, frag, FLOAT_TEXTURE),
+                entry(2, frag, super::UNIFORM),
+                entry(3, frag, FLOAT_TEXTURE),
+            ],
+        });
+        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("olr-render shadow"),
+            entries: &[
+                entry(0, frag, super::UNIFORM),
+                entry(1, frag, super::UNIFORM),
+                entry(2, frag, UINT_TEXTURE),
+            ],
+        });
+        let shadow_pipeline = pipeline(
+            device,
+            "olr-render shadow",
+            &format!("{COMMON}\n{}", include_str!("../look/shadow.wgsl")),
+            ("vs_full", "fs_shadow"),
+            &[Some(&shadow_layout)],
+            &[],
+            &[(wgpu::TextureFormat::R32Float, None)],
+            wgpu::PrimitiveTopology::TriangleList,
+        );
+        let shadow = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("olr-render shadow maps"),
+            size: wgpu::Extent3d {
+                width: SHADOW_RAYS,
+                height: olr_look::MAX_LIGHTS as u32,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let shadow_view = shadow.create_view(&wgpu::TextureViewDescriptor::default());
+        let lights = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("olr-render lights"),
+            size: (LIGHT_FLOATS * 4) as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
         });
         let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render composite"),
@@ -231,12 +295,18 @@ impl LookState {
             blur_h_pipeline,
             blur_v_pipeline,
             composite_pipeline,
+            shadow_pipeline,
+            shadow_layout,
             light_layout,
             composite_layout,
             layout,
             globals,
+            lights,
+            shadow_view,
             textures: None,
             packed: Vec::with_capacity(GLOBAL_FLOATS),
+            packed_lights: Vec::with_capacity(LIGHT_FLOATS),
+            light_count: 0,
         }
     }
 
@@ -281,7 +351,12 @@ impl LookState {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("olr-render light"),
                 layout: &self.light_layout,
-                entries: &[uniform(), tex(1, src)],
+                entries: &[
+                    uniform(),
+                    tex(1, src),
+                    wgpu::BindGroupEntry { binding: 2, resource: self.lights.as_entire_binding() },
+                    tex(3, &self.shadow_view),
+                ],
             })
         };
         // The sum reads nothing; it is bound to the grid it does not write.
@@ -334,7 +409,27 @@ impl LookState {
                 },
             ],
         });
-        let t = LookTextures { glow, groups, solid, art_scale: map.art_scale(), level, terrain_bind };
+        let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("olr-render shadow"),
+            layout: &self.shadow_layout,
+            entries: &[
+                wgpu::BindGroupEntry { binding: 0, resource: self.globals.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 1, resource: self.lights.as_entire_binding() },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(&view(&solid)),
+                },
+            ],
+        });
+        let t = LookTextures {
+            glow,
+            groups,
+            solid,
+            art_scale: map.art_scale(),
+            level,
+            terrain_bind,
+            shadow_bind,
+        };
         let whole = Rect { x: 0, y: 0, w: map.width(), h: map.height() };
         if map.glow().is_none() {
             let zeros = vec![0u8; map.width() as usize * map.height() as usize];
@@ -385,6 +480,21 @@ impl LookState {
             look.lights.len() as f32,
         ]);
         p.extend([level.0 as f32, level.1 as f32, art_scale as f32, 1.0]);
+        let count = look.lights.len().min(olr_look::MAX_LIGHTS);
+        self.light_count = count as u32;
+        let l = &mut self.packed_lights;
+        l.clear();
+        for f in &look.lights[..count] {
+            l.extend([f.pos[0], f.pos[1], f.radius.max(0.0), f.reach.min(1e9)]);
+            l.extend([f.colour[0], f.colour[1], f.colour[2], 0.0]);
+        }
+        l.resize(LIGHT_FLOATS, 0.0);
+        for v in l.iter_mut() {
+            if !v.is_finite() {
+                *v = 0.0;
+            }
+        }
+        let p = &mut self.packed;
         let mode = match look.mode {
             ViewMode::Lit => 0.0,
             ViewMode::FullBright => 1.0,
@@ -434,7 +544,11 @@ impl Renderer {
     pub fn light_grid(&self) -> Option<(&wgpu::Texture, crate::LightGrid)> {
         let t = self.target.as_ref()?;
         let lit = t.lit.as_ref()?;
-        Some((&lit.light[2], crate::LightGrid { origin: t.origin, size: lit.grid }))
+        let pad = LIGHT_PAD as i32;
+        Some((
+            &lit.light[2],
+            crate::LightGrid { origin: (t.origin.0 - pad, t.origin.1 - pad), size: lit.grid },
+        ))
     }
 
     /// The glow texture (tests); `None` without lighting or a terrain.
