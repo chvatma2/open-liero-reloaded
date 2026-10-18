@@ -22,7 +22,7 @@ mod worm;
 
 pub use assets::{AtlasImage, SceneAssets, WormLook};
 pub use camera::{Camera, FOV_HEIGHT, SHAKE_MS, Viewport};
-pub use draw_list::{AtlasId, DrawList, Item, Layer, Line, Rect, Sprite, View, perform_line};
+pub use draw_list::{AtlasId, DrawList, Item, Layer, Line, Rect, Shade, Sprite, View, perform_line};
 pub use marks::Marks;
 pub use projectile::{draw_bonus, draw_projectile, frame_x, framestep};
 pub use snapshot::{Blend, BonusSnap, Interpolation, ProjBlend, ProjSnap, Snapshot, WormSnap, worm_blends};

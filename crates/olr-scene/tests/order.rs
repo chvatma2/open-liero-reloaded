@@ -78,8 +78,15 @@ fn draw_list_order_matches_olx_layers() {
     let first = list.items().next().map(|(l, _)| l);
     let src = Rect { x: 0, y: 0, w: 1, h: 1 };
     let white = Rgba::rgb(255, 255, 255);
-    let entity =
-        Sprite { atlas: AtlasId(0), src, pos: [0.0, 0.0], size: [1.0, 1.0], flip: false, tint: white };
+    let entity = Sprite {
+        atlas: AtlasId(0),
+        src,
+        pos: [0.0, 0.0],
+        size: [1.0, 1.0],
+        flip: false,
+        tint: white,
+        shade: Default::default(),
+    };
     list.sprite(Layer::Entities, entity);
     assert_ne!(first, Some(Layer::Entities));
     assert_eq!(list.items().next(), Some((Layer::Entities, &Item::Sprite(entity))));

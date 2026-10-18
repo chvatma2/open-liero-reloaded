@@ -115,7 +115,12 @@ impl Marks {
                     {
                         let end = pos + vel;
                         let a = (pos.x as i32, pos.y as i32);
-                        self.beams[i] = Some(Line { a, b: (end.x as i32, end.y as i32), colour });
+                        self.beams[i] = Some(Line {
+                            a,
+                            b: (end.x as i32, end.y as i32),
+                            colour,
+                            shade: Default::default(),
+                        });
                     }
                 }
                 _ => {}

@@ -183,7 +183,15 @@ mod tests {
 
     fn sprite_at(atlas: u32, pos: [f32; 2], src: Rect, flip: bool) -> Sprite {
         let size = [src.w as f32 / 2.0, src.h as f32 / 2.0];
-        Sprite { atlas: AtlasId(atlas), src, pos, size, flip, tint: Rgba::rgb(255, 255, 255) }
+        Sprite {
+            atlas: AtlasId(atlas),
+            src,
+            pos,
+            size,
+            flip,
+            tint: Rgba::rgb(255, 255, 255),
+            shade: Default::default(),
+        }
     }
 
     #[test]
@@ -209,7 +217,15 @@ mod tests {
         let src = Rect { x: 8, y: 0, w: 8, h: 6 };
         list.sprite(Layer::Worms, sprite_at(1, [15.5, 30.0], src, false));
         list.sprite(Layer::Entities, sprite_at(1, [15.5, 30.0], src, true));
-        list.push(Layer::Beams, Item::Line(Line { a: (12, 22), b: (14, 23), colour: Rgba::rgb(255, 0, 0) }));
+        list.push(
+            Layer::Beams,
+            Item::Line(Line {
+                a: (12, 22),
+                b: (14, 23),
+                colour: Rgba::rgb(255, 0, 0),
+                shade: Default::default(),
+            }),
+        );
         let f = WorldFrame::new(list.view, 2);
         let mut out = Vec::new();
         push_instances(&list, &atlas, &f, &mut out);
@@ -253,7 +269,10 @@ mod tests {
         list.sprite(Layer::Worms, sprite_at(0, [500.0, 10.0], src, false));
         list.sprite(Layer::Worms, sprite_at(0, [-30.0, 10.0], src, false));
         list.sprite(Layer::Worms, sprite_at(0, [f32::NAN, 10.0], src, false));
-        list.push(Layer::Beams, Item::Line(Line { a: (-100, 0), b: (100, 0), colour: Rgba::BLACK }));
+        list.push(
+            Layer::Beams,
+            Item::Line(Line { a: (-100, 0), b: (100, 0), colour: Rgba::BLACK, shade: Default::default() }),
+        );
         let mut out = Vec::new();
         push_instances(&list, &atlas, &WorldFrame::new(list.view, 2), &mut out);
         assert_eq!(out.len(), 53, "the line's pixels from x = -1 to 51");
@@ -271,7 +290,10 @@ mod tests {
             let src = Rect { x: 0, y: 0, w: 8, h: 4 };
             list.sprite(Layer::Entities, sprite_at(i % 3, [i as f32 * 0.5, 100.0], src, i % 2 == 0));
         }
-        list.push(Layer::Beams, Item::Line(Line { a: (0, 0), b: (300, 200), colour: Rgba::BLACK }));
+        list.push(
+            Layer::Beams,
+            Item::Line(Line { a: (0, 0), b: (300, 200), colour: Rgba::BLACK, shade: Default::default() }),
+        );
         let frame = WorldFrame::new(list.view, 2);
         let mut out = Vec::new();
         push_instances(&list, &atlas, &frame, &mut out);

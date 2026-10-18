@@ -47,7 +47,10 @@ impl At {
         let src = Rect { x: sx as u32, y: 0, w: w as u32, h: h as u32 };
         let size = [w as f32 / 2.0, h as f32 / 2.0];
         let tint = Rgba::rgb(255, 255, 255);
-        out.sprite(Layer::Entities, Sprite { atlas: img.atlas, src, pos, size, flip: false, tint });
+        out.sprite(
+            Layer::Entities,
+            Sprite { atlas: img.atlas, src, pos, size, flip: false, tint, shade: Default::default() },
+        );
     }
 }
 

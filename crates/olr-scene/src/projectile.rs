@@ -106,7 +106,15 @@ pub fn draw_projectile(
                 let tint = Rgba { r, g, b, a };
                 let src = Rect { x: 0, y: 0, w: 1, h: 1 };
                 let pos = [at.x - 0.5, at.y - 0.5];
-                let sprite = Sprite { atlas: assets.white, src, pos, size: [1.0, 1.0], flip: false, tint };
+                let sprite = Sprite {
+                    atlas: assets.white,
+                    src,
+                    pos,
+                    size: [1.0, 1.0],
+                    flip: false,
+                    tint,
+                    shade: Default::default(),
+                };
                 out.sprite(Layer::Projectiles, sprite);
             }
         }
@@ -124,7 +132,10 @@ pub fn draw_projectile(
             let src = Rect { x, y: 0, w: size.min(w - x), h: size };
             let size = [src.w as f32 / s, dim];
             let tint = Rgba::rgb(255, 255, 255);
-            out.sprite(Layer::Projectiles, Sprite { atlas: id, src, pos, size, flip: false, tint });
+            out.sprite(
+                Layer::Projectiles,
+                Sprite { atlas: id, src, pos, size, flip: false, tint, shade: Default::default() },
+            );
         }
     }
 }
@@ -149,6 +160,9 @@ pub fn draw_bonus(b: &Bonus, p: Vec2, assets: &SceneAssets, view: View, out: &mu
     if view.overlaps(pos[0], pos[1], size[0], size[1]) {
         let src = Rect { x: 0, y: 0, w, h };
         let tint = Rgba::rgb(255, 255, 255);
-        out.sprite(Layer::Bonuses, Sprite { atlas: id, src, pos, size, flip: false, tint });
+        out.sprite(
+            Layer::Bonuses,
+            Sprite { atlas: id, src, pos, size, flip: false, tint, shade: Default::default() },
+        );
     }
 }

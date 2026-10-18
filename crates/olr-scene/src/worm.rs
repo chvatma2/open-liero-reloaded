@@ -82,7 +82,8 @@ impl At<'_> {
         let pos = [self.p.x + d.0 as f32 / 2.0, self.p.y + d.1 as f32 / 2.0];
         let size = [src.w as f32 / s, src.h as f32 / s];
         let tint = Rgba::rgb(255, 255, 255);
-        self.out.sprite(Layer::Worms, Sprite { atlas, src, pos, size, flip, tint });
+        self.out
+            .sprite(Layer::Worms, Sprite { atlas, src, pos, size, flip, tint, shade: Default::default() });
     }
 
     /// A solid rectangle covering screen pixels `[x0, x1) × [y0, y1)` from `p`.
@@ -90,7 +91,10 @@ impl At<'_> {
         let src = Rect { x: 0, y: 0, w: 1, h: 1 };
         let pos = [self.p.x + x0 as f32 / 2.0, self.p.y + y0 as f32 / 2.0];
         let size = [(x1 - x0) as f32 / 2.0, (y1 - y0) as f32 / 2.0];
-        self.out.sprite(Layer::Worms, Sprite { atlas: white, src, pos, size, flip: false, tint: colour });
+        self.out.sprite(
+            Layer::Worms,
+            Sprite { atlas: white, src, pos, size, flip: false, tint: colour, shade: Default::default() },
+        );
     }
 }
 
@@ -201,6 +205,7 @@ fn draw_rope(f: &WormFrame, p: Vec2, hook: Vec2, out: &mut DrawList) {
             size: [3.0, 3.0],
             flip: false,
             tint,
+            shade: Default::default(),
         };
         out.sprite(Layer::Worms, sprite);
     }

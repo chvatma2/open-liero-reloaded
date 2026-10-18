@@ -156,10 +156,14 @@ fn missing_assets_use_placeholders() {
         size: [4.0, 4.0],
         flip: false,
         tint: white,
+        shade: Default::default(),
     };
     l.sprite(Layer::Worms, sprite(0, 5.0));
     l.sprite(Layer::Worms, sprite(7, 20.0));
-    l.push(Layer::Beams, Item::Line(Line { a: (2, 25), b: (8, 25), colour: Rgba::rgb(0, 0, 255) }));
+    l.push(
+        Layer::Beams,
+        Item::Line(Line { a: (2, 25), b: (8, 25), colour: Rgba::rgb(0, 0, 255), shade: Default::default() }),
+    );
     let img = gpu.render_to_image(&mut r, &l, (80, 60));
     // World (x, y) is output pixel (2x, 2y) at 1:1 (the view sits on whole pixels).
     assert_eq!(img.get(10, 20), Rgba::rgb(0, 255, 0));

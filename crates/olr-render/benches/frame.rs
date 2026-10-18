@@ -76,12 +76,21 @@ fn scene(gpu: &Offscreen) -> (Renderer, DrawList) {
             size: [8.0, 8.0],
             flip: i % 2 == 0,
             tint: Rgba::rgb(255, 255, 255),
+            shade: Default::default(),
         };
         l.sprite(if i % 3 == 0 { Layer::Worms } else { Layer::Projectiles }, sprite);
     }
     for i in 0..500i32 {
         let (x, y) = (100 + i % 300, 90 + i / 3 % 170);
-        l.push(Layer::Beams, Item::Line(Line { a: (x, y), b: (x + 1, y), colour: Rgba::rgb(255, 0, 0) }));
+        l.push(
+            Layer::Beams,
+            Item::Line(Line {
+                a: (x, y),
+                b: (x + 1, y),
+                colour: Rgba::rgb(255, 0, 0),
+                shade: Default::default(),
+            }),
+        );
     }
     (r, l)
 }

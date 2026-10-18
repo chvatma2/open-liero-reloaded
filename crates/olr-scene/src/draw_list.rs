@@ -33,6 +33,37 @@ pub struct Sprite {
     pub size: [f32; 2],
     pub flip: bool,
     pub tint: Rgba,
+    pub shade: Shade,
+}
+
+/// How an item takes the look's light (look system, plan 15a R5): lit by
+/// the world's light, showing at least `self_light` percent whatever the
+/// darkness (a glow), or a `marker` drawn exactly as its art (the
+/// crosshair, health bars). Only drawn with a look; without one every item
+/// shows as its art.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Shade {
+    /// Percent, 0-100.
+    pub self_light: u8,
+    pub marker: bool,
+}
+
+impl Shade {
+    /// Lit by the world (every item's default).
+    pub const LIT: Shade = Shade { self_light: 0, marker: false };
+    /// Shows at its own full brightness (explosions, muzzle flashes, beams).
+    pub const GLOW: Shade = Shade { self_light: 100, marker: false };
+    /// Drawn as its art, unlit and ungraded (the crosshair, health bars).
+    pub const MARKER: Shade = Shade { self_light: 0, marker: true };
+
+    /// `describe`'s suffix: nothing for [`Shade::LIT`].
+    fn suffix(self) -> String {
+        match self {
+            Shade { marker: true, .. } => " marker".into(),
+            Shade { self_light: 0, .. } => String::new(),
+            Shade { self_light, .. } => format!(" glow {self_light}"),
+        }
+    }
 }
 
 /// A solid 1-world-pixel line (spec §19 E3) through the pixels
@@ -43,6 +74,7 @@ pub struct Line {
     pub a: (i32, i32),
     pub b: (i32, i32),
     pub colour: Rgba,
+    pub shade: Shade,
 }
 
 impl Line {
@@ -174,7 +206,15 @@ impl DrawList {
         let src = Rect { x: 0, y: 0, w: 1, h: 1 };
         self.sprite(
             layer,
-            Sprite { atlas: white, src, pos: [x, y], size: [1.0, 1.0], flip: false, tint: colour },
+            Sprite {
+                atlas: white,
+                src,
+                pos: [x, y],
+                size: [1.0, 1.0],
+                flip: false,
+                tint: colour,
+                shade: Default::default(),
+            },
         );
     }
 
@@ -197,16 +237,24 @@ impl DrawList {
                     Item::Line(line) => {
                         let _ = writeln!(
                             s,
-                            "line {},{} {},{} {}",
+                            "line {},{} {},{} {}{}",
                             line.a.0,
                             line.a.1,
                             line.b.0,
                             line.b.1,
-                            hex(line.colour)
+                            hex(line.colour),
+                            line.shade.suffix()
                         );
                     }
                     Item::Sprite(sp) if sp.atlas == assets.white && sp.size == [1.0, 1.0] => {
-                        let _ = writeln!(s, "px {},{} {}", n(sp.pos[0]), n(sp.pos[1]), hex(sp.tint));
+                        let _ = writeln!(
+                            s,
+                            "px {},{} {}{}",
+                            n(sp.pos[0]),
+                            n(sp.pos[1]),
+                            hex(sp.tint),
+                            sp.shade.suffix()
+                        );
                     }
                     Item::Sprite(sp) => {
                         let r = sp.src;
@@ -229,6 +277,7 @@ impl DrawList {
                         if sp.tint != Rgba::rgb(255, 255, 255) {
                             let _ = write!(s, " {}", hex(sp.tint));
                         }
+                        s.push_str(&sp.shade.suffix());
                         s.push('\n');
                     }
                 }
@@ -310,6 +359,21 @@ mod tests {
         let mut v = Vec::new();
         perform_line(a, b, |x, y| v.push((x, y)));
         v
+    }
+
+    /// Every item is lit by default; `describe` names a shade only when it
+    /// differs, so the committed snapshots stay as they are (plan 15a R5).
+    #[test]
+    fn shade_is_lit_by_default_and_described_only_when_not() {
+        assert_eq!(Shade::default(), Shade::LIT);
+        assert_eq!((Shade::LIT.self_light, Shade::LIT.marker), (0, false));
+        assert_eq!((Shade::GLOW.self_light, Shade::GLOW.marker), (100, false));
+        assert_eq!((Shade::MARKER.self_light, Shade::MARKER.marker), (0, true));
+        // `describe` appends the suffix to each item's line.
+        assert_eq!(Shade::LIT.suffix(), "");
+        assert_eq!(Shade::GLOW.suffix(), " glow 100");
+        assert_eq!(Shade::MARKER.suffix(), " marker");
+        assert_eq!(Shade { self_light: 50, marker: false }.suffix(), " glow 50");
     }
 
     #[test]
