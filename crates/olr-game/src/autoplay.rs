@@ -242,6 +242,9 @@ pub struct Seen<'a> {
     pub ticks: Option<u64>,
     /// The online lobby's members, while there is one.
     pub members: Option<usize>,
+    /// The window shows (it opens hidden until its first frame; Wayland's
+    /// always counts as shown): no step plays before.
+    pub shown: bool,
 }
 
 /// What the app must do for the script.
@@ -522,7 +525,7 @@ impl Autoplay {
     /// must do.
     pub fn step(&mut self, seen: &Seen) -> Vec<Effect> {
         let mut out: Vec<Effect> = self.keys_later.drain(..).map(|k| Effect::Key(k, false)).collect();
-        if self.result.is_some() || seen.frame < self.busy_until {
+        if self.result.is_some() || seen.frame < self.busy_until || !seen.shown {
             return out;
         }
         let widgets = seen.tree.map(widgets);
@@ -910,7 +913,33 @@ mod tests {
     }
 
     fn seen(frame: u64, screen: Option<Screen>, tree: Option<&TreeUpdate>) -> Seen<'_> {
-        Seen { frame, tree, screen, window: (1280, 720), speed: Speed::X1, ticks: None, members: None }
+        Seen {
+            frame,
+            tree,
+            screen,
+            window: (1280, 720),
+            speed: Speed::X1,
+            ticks: None,
+            members: None,
+            shown: true,
+        }
+    }
+
+    /// No step plays before the window shows (it opens hidden until its
+    /// first frame): a click sent to a window not yet mapped was lost on
+    /// X11 (the e2e's editor run, its first step a click).
+    #[test]
+    fn steps_wait_for_the_window_to_show() {
+        let t = tree(vec![(1, node(Role::Button, Some("Editor"), None, (0.0, 0.0)))]);
+        let mut a = Autoplay::from_steps(parse(r#"(steps: [(ui: Click("Editor"))])"#).unwrap());
+        let hidden = Seen { shown: false, ..seen(0, Some(Screen::Main), Some(&t)) };
+        assert!(a.step(&hidden).is_empty());
+        let mut raw = RawInput::default();
+        a.input(&mut raw);
+        assert!(raw.events.is_empty(), "nothing sent to a hidden window");
+        a.step(&seen(1, Some(Screen::Main), Some(&t)));
+        a.input(&mut raw);
+        assert!(!raw.events.is_empty(), "the click once it shows");
     }
 
     #[test]

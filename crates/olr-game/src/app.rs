@@ -935,6 +935,7 @@ impl App {
                 speed,
                 ticks: self.shell.session().map(crate::session::Session::ticks),
                 members: self.shell.data.lobby.as_ref().map(|l| l.members.len()),
+                shown: !hidden(&w.window),
             };
             for e in a.step(&seen) {
                 match e {

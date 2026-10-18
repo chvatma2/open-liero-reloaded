@@ -1,7 +1,8 @@
 // The level editor end to end (plan 14c Task 7, spec §8): from the main
 // menu's Editor, a new level; a drawn layer painted with the brush, a
-// spawn placed, Play and Esc back, Save, Close. `xtask e2e` runs it after
-// the menus script in a data directory of its own, then checks the saved
+// spawn placed, Play (it ticks) and Stop back, Play and Esc back, Save,
+// Close. `xtask e2e` runs it after the menus script in a data directory of
+// its own, then checks the canvas in `editor-painted.png` and the saved
 // pack `packs/e2e-level/`: a drawn layer in its composition, one spawn in
 // `level.ron`, and `olr-cli pack check` clean.
 (
@@ -24,11 +25,20 @@
         (ui: Wait(3)),
         (ui: Assert(LabelContains("Spawn 1 at"))),
         (ui: Screenshot("editor-painted")),
-        // Play the level, then Esc returns to the editor as it was.
+        // Play the level (it ticks), then Stop returns to the editor as it
+        // was; played again, Esc does the same.
         (ui: Click("Play")),
         (ui: Wait(30)),
         (ui: Assert(Playing(true))),
+        (ui: Assert(TicksAtLeast(20))),
         (ui: Screenshot("editor-play")),
+        (ui: Click("Stop")),
+        (ui: Wait(5)),
+        (ui: Assert(Playing(false))),
+        (ui: Assert(LabelContains("Spawn 1 at"))),
+        (ui: Click("Play")),
+        (ui: Wait(30)),
+        (ui: Assert(TicksAtLeast(20))),
         (ui: Key("Escape")),
         (ui: Wait(5)),
         (ui: Assert(Playing(false))),

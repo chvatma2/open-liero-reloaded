@@ -45,6 +45,8 @@ pub const SETTINGS: &str = "fixtures/autoplay/settings.ron";
 pub const EDITOR_SCRIPT: &str = "fixtures/autoplay/editor.ron";
 pub const EDITOR_LEVEL: &str = "E2E Level";
 pub const EDITOR_PACK: &str = "packs/e2e-level";
+/// The editor run's screenshot whose canvas must show the level.
+pub const EDITOR_CANVAS_SHOT: &str = "editor-painted";
 
 /// The online run's script (`{port}` stands for the server's port) and
 /// the server's config.
@@ -300,6 +302,14 @@ fn editor(x: &Xvfb, content: &Path, settings: &str, out: &Path) -> Result<Played
     let script =
         std::fs::read_to_string(root().join(EDITOR_SCRIPT)).map_err(|e| format!("{EDITOR_SCRIPT}: {e}"))?;
     let played = play(x, content, &script, settings, out, true)?;
+    let shot = out.join("shots").join(format!("{EDITOR_CANVAS_SHOT}.png"));
+    let img = std::fs::read(&shot)
+        .map_err(|e| e.to_string())
+        .and_then(|b| olr_pack::image_io::decode_rgba(&b))
+        .map_err(|e| format!("{}: {e}", shot.display()))?;
+    if let Some(why) = canvas_problem(&img) {
+        return Err(format!("{}: {why}", shot.display()));
+    }
     let pack = out.join("data").join(EDITOR_PACK);
     let read = |f: &str| std::fs::read_to_string(pack.join(f)).ok();
     let problems =
@@ -321,6 +331,27 @@ fn editor(x: &Xvfb, content: &Path, settings: &str, out: &Path) -> Result<Played
         ));
     }
     Ok(played)
+}
+
+/// What is wrong with the editor run's picture of its canvas: the level
+/// (centred on the canvas, which is near the window's centre) must show,
+/// not the canvas's black, in the middle twentieth of the picture.
+pub fn canvas_problem(img: &olr_data::image::RgbaImage) -> Option<String> {
+    let (w, h) = (img.width(), img.height());
+    let (x0, y0, x1, y1) =
+        (w * 9 / 20, h * 9 / 20, (w * 11 / 20).max(w * 9 / 20 + 1), (h * 11 / 20).max(h * 9 / 20 + 1));
+    let (mut dark, mut all) = (0usize, 0usize);
+    for y in y0..y1.min(h) {
+        for x in x0..x1.min(w) {
+            let c = img.get(x, y);
+            all += 1;
+            if u16::from(c.r) + u16::from(c.g) + u16::from(c.b) < 30 {
+                dark += 1;
+            }
+        }
+    }
+    (all == 0 || dark * 2 > all)
+        .then(|| format!("the canvas is black at its centre ({dark} of {all} pixels)"))
 }
 
 /// What is wrong with the editor run's saved pack, by its composition and
@@ -666,6 +697,29 @@ mod tests {
         assert!(online_settings("(settings: ())", "ws://x").is_err());
         let server = std::fs::read_to_string(root().join(SERVER_CONFIG)).unwrap();
         assert!(server.contains(r#"relays: ["{relay}"]"#) && server.contains("visibility: Public"));
+    }
+
+    /// The editor run's screenshot shows the level on its canvas: not the
+    /// canvas's black at the picture's centre (a canvas that drew nothing).
+    #[test]
+    fn a_black_canvas_is_named() {
+        let solid = |c: olr_data::image::Rgba| {
+            let mut img = olr_data::image::RgbaImage::new(64, 48);
+            for y in 0..48 {
+                for x in 0..64 {
+                    img.set(x, y, c);
+                }
+            }
+            img
+        };
+        assert!(canvas_problem(&solid(olr_data::image::Rgba::rgb(139, 90, 43))).is_none());
+        assert!(canvas_problem(&solid(olr_data::image::Rgba::BLACK)).is_some());
+        let script = std::fs::read_to_string(root().join(EDITOR_SCRIPT)).unwrap();
+        assert!(shots(&script).contains(&EDITOR_CANVAS_SHOT.to_string()));
+        assert!(
+            script.contains("Click(\"Stop\")") && script.contains("TicksAtLeast("),
+            "Stop clicked, ticks checked"
+        );
     }
 
     /// Plan 14c Task 7: the editor run's pack is checked, each problem named.
