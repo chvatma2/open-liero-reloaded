@@ -182,6 +182,8 @@ pub struct Assets {
     /// (`Content::skin_matching`), the default skin when it does not
     /// match. Empty in every other game.
     pub slot_skins: Vec<LoadedSkin>,
+    /// The level editor's Play (`load_edited`): its replay is never saved.
+    pub edited: bool,
 }
 
 /// The packs `mod_id`, `level_id` (with its theme) and skin `skin` (a
@@ -236,6 +238,7 @@ fn open_level(
         warnings,
         player: None,
         slot_skins: Vec::new(),
+        edited: false,
     })
 }
 
@@ -296,8 +299,8 @@ pub struct EditedPlay {
     pub bots: u8,
 }
 
-/// The level id an edited play's assets carry: the level is the editor's,
-/// in no pack.
+/// The level id an edited play's assets carry (the level is the editor's,
+/// in no pack): for messages; `Assets::edited` marks the play.
 pub const EDITED_LEVEL: &str = "edited level";
 
 /// The editor's Play (plan 14c R3, R4) on the edited level: the sandbox
@@ -345,7 +348,9 @@ pub fn load_edited(
         let packs = Packs { mod_pack: r(&mod_id), level: r(&level_id), theme: r(&level.theme) };
         Game::Deathmatch { options: Box::new(p.options(1)), packs, spawn }
     };
-    open_level(Arc::new(content), mod_id, level_id, level, skin, game)
+    let mut a = open_level(Arc::new(content), mod_id, level_id, level, skin, game)?;
+    a.edited = true;
+    Ok(a)
 }
 
 /// The online match `start` describes (`olr_online`'s `MatchStarting`),
@@ -494,7 +499,7 @@ impl Assets {
     /// Whether this is the level editor's Play (`load_edited`), whose
     /// replay is never saved.
     pub fn edited(&self) -> bool {
-        self.level_id == EDITED_LEVEL
+        self.edited
     }
 
     /// Whether a person plays the game: the sandbox, a Deathmatch with a
@@ -628,6 +633,17 @@ mod tests {
         let Game::Sandbox(setup) = &a.game else { panic!("0 bots is the sandbox") };
         assert_eq!(setup.worms.len(), 1, "no targets");
         assert!(a.edited(), "its replay is never saved");
+        let o = SandboxOptions {
+            mod_id: String::new(),
+            level_id: String::new(),
+            seed: 1,
+            targets: 0,
+            bonuses: false,
+        };
+        assert!(
+            !load(&[root], "Classic", "Dirt Level", DEFAULT_SKIN, o).unwrap().edited(),
+            "a menu sandbox is not"
+        );
         assert_eq!(setup.worms[0].pos, Some(at));
         let p = spawned(&a);
         assert!((p.0 - at.0).abs() <= 2 && (p.1 - at.1).abs() <= 2, "{p:?} near {at:?}");

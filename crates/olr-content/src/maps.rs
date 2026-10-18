@@ -54,14 +54,21 @@ impl LoadedLevel {
         })
     }
 
-    /// The first spawn point when it lies inside the level (`0..size`)
-    /// and not in rock, else `None` (a free spot): a worm placed there
-    /// would start outside the map or stuck.
+    /// The first spawn point when it is a good spawn point, else `None` (a
+    /// free spot): OLX's `CMap::IsGoodSpawnPoint` (`src/game/CMap.h:458`,
+    /// as `olr-sim`'s `FindSpot` checks), no rock in the 6 × 6 square from
+    /// `(x - 3, y - 3)` to `(x + 2, y + 2)`, outside the level counting as
+    /// rock. A worm placed elsewhere would start stuck or off the map.
     pub fn first_spawn(&self) -> Option<(i32, i32)> {
         let s = self.spawns.first()?;
-        let (x, y) = (u32::try_from(s.x).ok()?, u32::try_from(s.y).ok()?);
-        let inside = x < self.material.width() && y < self.material.height();
-        (inside && self.material.get(x, y) != Material::Rock).then_some((s.x, s.y))
+        let (w, h) = (i64::from(self.material.width()), i64::from(self.material.height()));
+        let (x, y) = (i64::from(s.x), i64::from(s.y));
+        let free = |xx: i64, yy: i64| {
+            (0..w).contains(&xx)
+                && (0..h).contains(&yy)
+                && self.material.get(xx as u32, yy as u32) != Material::Rock
+        };
+        ((y - 3)..(y + 3)).all(|yy| ((x - 3)..(x + 3)).all(|xx| free(xx, yy))).then_some((s.x, s.y))
     }
 }
 

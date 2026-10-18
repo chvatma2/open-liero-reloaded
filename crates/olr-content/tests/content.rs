@@ -619,7 +619,14 @@ fn the_first_spawn_is_used_only_when_inside_the_level() {
     assert_eq!(level(&[]).first_spawn(), None);
     assert_eq!(level(&[(40, 0)]).first_spawn(), None);
     assert_eq!(level(&[(0, 30)]).first_spawn(), None);
-    assert_eq!(level(&[(39, 29)]).first_spawn(), Some((39, 29)));
+    // OLX's `IsGoodSpawnPoint`: no rock (outside counts as rock) in the
+    // 6 × 6 square from (x - 3, y - 3) to (x + 2, y + 2).
+    assert_eq!(level(&[(37, 27)]).first_spawn(), Some((37, 27)));
+    assert_eq!(level(&[(38, 27)]).first_spawn(), None, "touching the edge");
+    assert_eq!(level(&[(3, 3)]).first_spawn(), Some((3, 3)));
+    assert_eq!(level(&[(2, 3)]).first_spawn(), None);
     assert_eq!(level(&[(20, 5)]).first_spawn(), None, "inside rock: a free spot");
+    assert_eq!(level(&[(23, 8)]).first_spawn(), None, "rock in the square");
+    assert_eq!(level(&[(24, 8)]).first_spawn(), Some((24, 8)));
     assert_eq!(level(&[(i32::MIN, i32::MAX)]).first_spawn(), None);
 }
