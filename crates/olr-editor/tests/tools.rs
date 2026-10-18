@@ -7,7 +7,7 @@ use olr_editor::view::{View, ZOOMS};
 use olr_editor::{EditorAction as A, EditorState, Selection};
 use olr_format::levels::{ElementKind, LevelObject};
 
-use crate::common::{content, editor, run};
+use crate::common::{content, editor, editor_at, run};
 
 fn pointer(s: &mut EditorState, kind: PointerKind, world: (i32, i32), shift: bool) {
     run(s, A::Pointer { kind, world, shift });
@@ -305,4 +305,109 @@ fn view_maps_the_largest_levels() {
             }
         }
     }
+}
+
+/// The plain Dirt Level open: three layers.
+fn dirt_level() -> Option<(tempfile::TempDir, EditorState)> {
+    Some(editor_at(&content()?, std::path::Path::new("olx-level-dirt-level")))
+}
+
+/// A world pixel of `m` in the bake.
+fn pixel_of(s: &EditorState, m: olr_data::level::Material) -> (i32, i32) {
+    let l = s.document().unwrap().level();
+    let i = l.material.iter().position(|c| *c == m).unwrap();
+    ((i % l.size.0 as usize) as i32, (i / l.size.0 as usize) as i32)
+}
+
+fn material_at(s: &EditorState, (x, y): (i32, i32)) -> olr_data::level::Material {
+    let l = s.document().unwrap().level();
+    l.material[y as usize * l.size.0 as usize + x as usize]
+}
+
+fn bake(s: &EditorState) -> (Vec<olr_data::level::Material>, olr_data::image::RgbaImage) {
+    let l = s.document().unwrap().level();
+    (l.material.clone(), l.front.clone())
+}
+
+fn kind(s: &EditorState, id: &str) -> ElementKind {
+    let d = s.document().unwrap();
+    d.items()[d.index_of(id).unwrap()].element.kind.clone()
+}
+
+/// Plan 14d R6: "Paint as" Rock into the plain Dirt layer is one step,
+/// its conversion to mixed included.
+#[test]
+fn a_stroke_of_rock_into_dirt_is_one_step() {
+    use olr_data::level::Material;
+    use olr_format::levels::ElementMaterial;
+    let Some((_tmp, mut s)) = dirt_level() else { return };
+    let start = bake(&s);
+    let p = pixel_of(&s, Material::Dirt);
+    run(&mut s, A::Select(Selection::Element("dirt".into())));
+    run(&mut s, A::Tool(Tool::Brush));
+    run(&mut s, A::PaintMaterial(Some(ElementMaterial::Rock)));
+    drag(&mut s, p, p, false);
+    assert_eq!(material_at(&s, p), Material::Rock);
+    assert!(matches!(kind(&s, "dirt"), ElementKind::Drawn { mixed: true, .. }));
+    run(&mut s, A::Undo);
+    assert!(bake(&s) == start, "one undo");
+    assert!(matches!(kind(&s, "dirt"), ElementKind::Drawn { mixed: false, .. }), "plain again");
+}
+
+#[test]
+fn the_eraser_masks_a_selected_image() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let start = bake(&s);
+    run(&mut s, A::Select(Selection::Element("tiny".into())));
+    run(&mut s, A::Tool(Tool::Eraser));
+    drag(&mut s, (60, 45), (80, 55), false);
+    assert!(bake(&s) != start, "the eraser masked the picture");
+    assert!(matches!(kind(&s, "tiny"), ElementKind::Image { mask: true, .. }));
+    run(&mut s, A::Restore(true));
+    drag(&mut s, (60, 45), (80, 55), false);
+    assert!(bake(&s) == start, "restoring the same path brings it back");
+}
+
+#[test]
+fn the_wand_removes_a_colour() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let start = bake(&s);
+    run(&mut s, A::Select(Selection::Element("gradient".into())));
+    run(&mut s, A::Tool(Tool::Wand));
+    run(&mut s, A::Tolerance(30));
+    assert_eq!(s.tolerance(), 30);
+    drag(&mut s, (340, 230), (340, 230), false);
+    assert!(bake(&s) != start);
+    run(&mut s, A::Undo);
+    assert!(bake(&s) == start);
+}
+
+/// Plan 14d R9: a press on an unselected drawn layer only selects it; a
+/// drag on the selected layer moves it, as one step.
+#[test]
+fn a_click_on_a_drawn_layer_selects_before_it_moves() {
+    use olr_data::level::Material;
+    let Some((_tmp, mut s)) = dirt_level() else { return };
+    let p = pixel_of(&s, Material::Rock);
+    let start = bake(&s);
+    drag(&mut s, p, (p.0 + 5, p.1), false);
+    assert_eq!(s.selection(), &Selection::Element("rock".into()));
+    assert!(bake(&s) == start, "nothing moved");
+    drag(&mut s, p, (p.0 + 5, p.1), false);
+    assert!(matches!(kind(&s, "rock"), ElementKind::Drawn { at: (5, 0), .. }), "{:?}", kind(&s, "rock"));
+    run(&mut s, A::Undo);
+    assert!(matches!(kind(&s, "rock"), ElementKind::Drawn { at: (0, 0), size: None, .. }));
+    assert!(bake(&s) == start);
+}
+
+#[test]
+fn arrows_nudge_a_selected_drawn_layer() {
+    let Some((_tmp, mut s)) = dirt_level() else { return };
+    run(&mut s, A::Select(Selection::Element("rock".into())));
+    run(&mut s, A::Nudge { dx: 1, dy: 0 });
+    assert!(matches!(kind(&s, "rock"), ElementKind::Drawn { at: (1, 0), .. }));
+    let overlays = s.overlays();
+    assert!(overlays.iter().any(|o| matches!(o, Overlay::Box { selected: true, .. })), "its box is drawn");
 }

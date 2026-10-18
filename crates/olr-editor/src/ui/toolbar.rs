@@ -7,28 +7,43 @@ use super::{EditorData, labels, number};
 use crate::browser::Purpose;
 use crate::state::{EditorAction, EditorState, MAX_BOTS};
 use crate::tools::{Brush, BrushShape, MAX_BRUSH, PaintChoice, Tool};
+use olr_format::levels::ElementMaterial;
 
 /// The mod picker's width (points): a long name is cut, never wider.
 const MOD_WIDTH: f32 = 160.0;
 /// The space the unsaved mark keeps, shown or not: nothing moves when it
 /// comes and goes.
 const MARK_WIDTH: f32 = 110.0;
+/// The space a tool's options keep at the tools' row's end, whichever
+/// tool is chosen (plan 14d R13).
+const OPTIONS_WIDTH: f32 = 220.0;
+/// "Paint as"'s picker width.
+const PAINT_AS_WIDTH: f32 = 110.0;
+/// "Paint as": the layer's own material, or one of the three.
+const PAINT_AS: [(Option<ElementMaterial>, &str); 4] = [
+    (None, "Layer's"),
+    (Some(ElementMaterial::Rock), "Rock"),
+    (Some(ElementMaterial::Dirt), "Dirt"),
+    (Some(ElementMaterial::Background), "Background"),
+];
 
-/// Two rows (the playtest: one wrapped row moved its controls as they
-/// changed width, and pushed the mod picker past the window's edge):
-/// drawing (tools, brush, paint), then the files, history, Play and the
-/// view; each control's place is fixed by what precedes it alone.
+/// Three rows (the playtest: one wrapped row moved its controls as they
+/// changed width, and pushed the mod picker past the window's edge; plan
+/// 14d's tool options did not fit a drawing row): the tools and the chosen
+/// tool's options, the brush and paint, then the files, history, Play and
+/// the view; each control's place is fixed by what precedes it alone.
 pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     // Every control as tall as a button, so a row's labels, fields and
     // pickers share its buttons' centre line (the host's theme makes
     // buttons taller than labels: the playtest's crooked Play, Mod, Bots).
     let h = ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
     ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(h);
+    ui.horizontal_wrapped(|ui| tools(ui, state, data, out));
     ui.horizontal_wrapped(|ui| drawing(ui, state, data, out));
     ui.horizontal_wrapped(|ui| session(ui, state, data, out));
 }
 
-fn drawing(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+fn tools(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     for tool in Tool::ALL {
         let r = ui.selectable_label(state.tool() == tool, tool.name()).on_hover_text(tool.key().to_string());
         if r.clicked() {
@@ -36,6 +51,15 @@ fn drawing(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
         }
     }
     ui.separator();
+    // The tool's options, in a space of their own whatever the tool.
+    let size = egui::vec2(OPTIONS_WIDTH, ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_size(size);
+        options(ui, state, data, out);
+    });
+}
+
+fn drawing(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     let brush = state.brush();
     for (shape, name) in [(BrushShape::Round, "Round"), (BrushShape::Square, "Square")] {
         if ui.selectable_label(brush.shape == shape, name).clicked() {
@@ -62,6 +86,48 @@ fn drawing(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
         if ui.selectable_label(paint == choice, name).clicked() {
             out.push(EditorAction::Paint(choice));
         }
+    }
+}
+
+/// The chosen tool's options: "Paint as" for the painting tools, "Restore"
+/// for the eraser, "Tolerance" for Remove colour.
+fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+    match state.tool() {
+        Tool::Brush | Tool::Rect | Tool::Ellipse | Tool::Line => {
+            let current = state.paint_material();
+            let name = PAINT_AS.iter().find(|(m, _)| *m == current).map_or("", |(_, n)| n);
+            let label = ui.label(labels::PAINT_AS);
+            egui::ComboBox::from_id_salt("olr-editor-paint-as")
+                .selected_text(name)
+                .width(PAINT_AS_WIDTH)
+                .show_ui(ui, |ui| {
+                    for (m, n) in PAINT_AS {
+                        if ui.selectable_label(m == current, n).clicked() && m != current {
+                            out.push(EditorAction::PaintMaterial(m));
+                        }
+                    }
+                })
+                .response
+                .labelled_by(label.id);
+        }
+        Tool::Eraser => {
+            let mut restore = state.restore();
+            if ui
+                .checkbox(&mut restore, labels::RESTORE)
+                .on_hover_text("bring back a picture's erased pixels")
+                .changed()
+            {
+                out.push(EditorAction::Restore(restore));
+            }
+        }
+        Tool::Wand => {
+            if let Some(t) =
+                number(ui, data, "tolerance", labels::TOLERANCE, state.tolerance().into(), 0..=100)
+            {
+                out.push(EditorAction::Tolerance(t as u8));
+            }
+        }
+        _ => {}
     }
 }
 

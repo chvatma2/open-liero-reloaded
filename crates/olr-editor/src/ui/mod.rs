@@ -34,6 +34,10 @@ pub mod labels {
     pub const BROWSER_PATH: &str = "Path";
     pub const CHOOSE: &str = "Choose";
     pub const SPLIT: &str = "Split into layers";
+    pub const MERGE_DOWN: &str = "Merge down";
+    pub const PAINT_AS: &str = "Paint as";
+    pub const RESTORE: &str = "Restore";
+    pub const TOLERANCE: &str = "Tolerance";
     pub const OBJECTS: &str = "Objects";
     pub const PIXEL_SIZE: &str = "Pixel size";
     pub const COLOURS: &str = "Colours";
@@ -159,6 +163,11 @@ fn shortcuts(ui: &Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
         }
         if i.consume_key(Modifiers::NONE, Key::Delete) {
             out.push(EditorAction::Remove);
+        }
+        if i.consume_key(Modifiers::COMMAND, Key::E)
+            && let Selection::Element(id) = state.selection()
+        {
+            out.push(EditorAction::MergeDown(id.clone()));
         }
         for tool in Tool::ALL {
             if let Some(key) = Key::from_name(&tool.key().to_string())

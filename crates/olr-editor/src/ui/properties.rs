@@ -48,34 +48,60 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
             if ui.checkbox(&mut locked, labels::LOCKED).changed() {
                 set(out, Property::Locked(locked));
             }
-            if matches!(e.kind, ElementKind::Raster)
-                && ui
-                    .add_enabled(!e.locked, egui::Button::new(labels::SPLIT))
-                    .on_hover_text("background, dirt and rock as drawn layers, to paint and erase")
-                    .clicked()
+            if ui
+                .add_enabled(!e.locked && e.visible, egui::Button::new(labels::SPLIT))
+                .on_hover_text("its rock, dirt and background as drawn layers, to paint and erase")
+                .clicked()
             {
                 out.push(EditorAction::Split(id.clone()));
+            }
+            if index > 0
+                && ui
+                    .add_enabled(!e.locked, egui::Button::new(labels::MERGE_DOWN))
+                    .on_hover_text(
+                        "into the drawn layer below: rock, then dirt, then background wins (Ctrl+E)",
+                    )
+                    .clicked()
+            {
+                out.push(EditorAction::MergeDown(id.clone()));
             }
             let material = match &e.kind {
                 ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => Some(*material),
                 ElementKind::Raster => None,
             };
+            let mixed = matches!(e.kind, ElementKind::Drawn { mixed: true, .. });
             if let Some(material) = material {
-                let name = MATERIALS.iter().find(|(m, _)| *m == material).map_or("", |(_, n)| n);
+                // A mixed layer reads "Mixed"; a choice makes it plain (C4).
+                let name = match mixed {
+                    true => "Mixed",
+                    false => MATERIALS.iter().find(|(m, _)| *m == material).map_or("", |(_, n)| n),
+                };
                 egui::ComboBox::from_label(labels::MATERIAL).selected_text(name).show_ui(ui, |ui| {
                     for (m, n) in MATERIALS {
-                        if ui.selectable_label(m == material, n).clicked() && m != material {
+                        if ui.selectable_label(m == material && !mixed, n).clicked()
+                            && (m != material || mixed)
+                        {
                             set(out, Property::Material(m));
                         }
                     }
                 });
+            }
+            let coord = i64::from(i32::MIN)..=i64::from(i32::MAX);
+            if let ElementKind::Drawn { at, .. } = &e.kind {
+                ui.separator();
+                let x = number(ui, data, &format!("{id}/x"), "X", at.0.into(), coord.clone());
+                let y = number(ui, data, &format!("{id}/y"), "Y", at.1.into(), coord);
+                if x.is_some() || y.is_some() {
+                    let to = (x.map_or(at.0, |v| v as i32), y.map_or(at.1, |v| v as i32));
+                    set(out, Property::At(to));
+                }
+                return;
             }
             let ElementKind::Image { at, size, pixel_size, colours, dither, alpha_threshold, .. } = &e.kind
             else {
                 return;
             };
             ui.separator();
-            let coord = i64::from(i32::MIN)..=i64::from(i32::MAX);
             let x = number(ui, data, &format!("{id}/x"), "X", at.0.into(), coord.clone());
             let y = number(ui, data, &format!("{id}/y"), "Y", at.1.into(), coord);
             if x.is_some() || y.is_some() {

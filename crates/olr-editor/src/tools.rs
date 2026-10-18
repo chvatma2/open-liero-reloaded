@@ -3,7 +3,7 @@
 use olr_data::image::Rgba;
 use olr_edit::compose::Rect;
 
-/// The canvas tools; their shortcut letters are V B E R O L P I.
+/// The canvas tools; their shortcut letters are V B E R O L P I W.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
     Select,
@@ -14,10 +14,12 @@ pub enum Tool {
     Line,
     Spawn,
     Eyedropper,
+    /// Remove colour (plan 14d R8): masks a picture's region of alike colour.
+    Wand,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 8] = [
+    pub const ALL: [Tool; 9] = [
         Tool::Select,
         Tool::Brush,
         Tool::Eraser,
@@ -26,6 +28,7 @@ impl Tool {
         Tool::Line,
         Tool::Spawn,
         Tool::Eyedropper,
+        Tool::Wand,
     ];
 
     /// The shortcut letter.
@@ -39,6 +42,7 @@ impl Tool {
             Tool::Line => 'L',
             Tool::Spawn => 'P',
             Tool::Eyedropper => 'I',
+            Tool::Wand => 'W',
         }
     }
 
@@ -52,6 +56,7 @@ impl Tool {
             Tool::Line => "Line",
             Tool::Spawn => "Spawn",
             Tool::Eyedropper => "Eyedropper",
+            Tool::Wand => "Remove colour",
         }
     }
 

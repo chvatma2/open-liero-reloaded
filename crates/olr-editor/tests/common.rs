@@ -142,7 +142,13 @@ fn open(catalog: &olr_editor::Catalog, dir: &Path) -> olr_editor::EditorAction {
 
 /// An editor state with a copy of the fixture open.
 pub fn editor(root: &Path) -> (tempfile::TempDir, olr_editor::EditorState) {
-    let (tmp, dir) = copy_pack(root, &fixture());
+    editor_at(root, &fixture())
+}
+
+/// An editor state with a copy of the pack at `pack` (relative to `root`,
+/// or absolute) open.
+pub fn editor_at(root: &Path, pack: &Path) -> (tempfile::TempDir, olr_editor::EditorState) {
+    let (tmp, dir) = copy_pack(root, pack);
     let mut state = olr_editor::EditorState::new(olr_editor::EditorSettings::default(), catalog(root));
     run(&mut state, olr_editor::EditorAction::Open(dir));
     assert!(state.document().is_some());

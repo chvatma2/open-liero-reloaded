@@ -6,11 +6,11 @@ use olr_data::image::Rgba;
 use olr_edit::compose::{Decoded, Rect};
 use olr_edit::element::Property;
 use olr_edit::level::{Paint, Shape};
-use olr_format::levels::{Element, ElementKind, LevelObject, MAX_SIDE};
+use olr_format::levels::{Element, ElementKind, LevelObject, MAX_SIDE, drawn_box};
 
 use crate::document::Document;
 use crate::history::Edit;
-use crate::ops::{NOTHING, StrokeBefore};
+use crate::ops::{NOTHING, Stroke, StrokeBefore};
 use crate::state::{EditorCommand, EditorState, Selection};
 use crate::tools::{BrushShape, Overlay, PaintChoice, PointerKind, Tool};
 
@@ -29,8 +29,16 @@ pub(crate) enum Drag {
     Resize { id: String, handle: (u8, u8), at: (i32, i32), size: (u32, u32), now: ((i32, i32), (u32, u32)) },
     /// A spawn follows the pointer, live.
     Spawn { index: usize, before: Vec<LevelObject>, grab: (i64, i64) },
-    /// Brush or eraser dabs; `before` is the layer as the stroke began.
-    Stroke { id: String, before: StrokeBefore, last: (i32, i32), rect: Option<Rect>, erase: bool },
+    /// Brush or eraser dabs; `before` is the layer (or mask) as the stroke
+    /// began, after `begun`, the conversion it needed (plan 14d).
+    Stroke {
+        id: String,
+        before: Box<StrokeBefore>,
+        last: (i32, i32),
+        rect: Option<Rect>,
+        stroke: Stroke,
+        begun: Option<Edit>,
+    },
     /// A rectangle, ellipse or line from `start`, painted on release.
     Shape { id: String, tool: Tool, start: (i32, i32), now: (i32, i32) },
 }
@@ -49,6 +57,25 @@ fn image_box(e: &Element) -> Option<((i32, i32), (u32, u32))> {
         ElementKind::Image { at, size, .. } => Some((*at, *size)),
         _ => None,
     }
+}
+
+/// An image's or a drawn layer's box (a level of `level`): what moves.
+fn element_box(e: &Element, level: (u32, u32)) -> Option<((i32, i32), (u32, u32))> {
+    image_box(e).or_else(|| drawn_box(&e.kind, level))
+}
+
+/// Whether drawn item `item` covers world pixel `p` (its art at the
+/// pixel's block centre is opaque; plan 14d R9).
+fn covers(item: &crate::document::Item, level: (u32, u32), s: u32, p: (i32, i32)) -> bool {
+    let (Some((at, size)), Decoded::Drawn { art, .. }) =
+        (drawn_box(&item.element.kind, level), &item.decoded)
+    else {
+        return false;
+    };
+    let (lx, ly) = sub(p, at);
+    let inside = (0..i64::from(size.0)).contains(&lx) && (0..i64::from(size.1)).contains(&ly);
+    let (ax, ay) = ((lx as u32).saturating_mul(s) + s / 2, (ly as u32).saturating_mul(s) + s / 2);
+    inside && ax < art.width() && ay < art.height() && art.get(ax, ay).a != 0
 }
 
 fn contains((at, size): ((i32, i32), (u32, u32)), p: (i32, i32)) -> bool {
@@ -147,27 +174,61 @@ impl EditorState {
         }
     }
 
-    /// The selected drawn layer a painting tool paints into, or why not.
-    fn paint_target(&mut self) -> Option<String> {
+    /// The selected drawn layer a painting tool paints into (or, with
+    /// `picture`, the selected image the eraser masks), or why not.
+    fn paint_target(&mut self, picture: bool) -> Option<String> {
         let doc = self.doc.as_ref()?;
         let id = match &self.selection {
             Selection::Element(id) => id.clone(),
             _ => String::new(),
         };
         let item = doc.index_of(&id).map(|i| &doc.items()[i]);
-        match item {
-            Some(item) if matches!(item.decoded, Decoded::Drawn { .. }) => {
-                if item.element.locked {
-                    self.status.message = Some(format!("element {id:?} is locked"));
-                    return None;
-                }
-                Some(id)
+        let why = match item {
+            Some(item) if item.element.locked => format!("element {id:?} is locked"),
+            Some(item) if matches!(item.decoded, Decoded::Drawn { .. }) => return Some(id),
+            Some(item) if matches!(item.decoded, Decoded::Image { .. }) && picture => return Some(id),
+            Some(item) if matches!(item.decoded, Decoded::Image { .. }) => {
+                "erase on a picture; merge it into a layer to paint it".into()
             }
-            _ => {
-                self.status.message = Some("select a drawn layer to paint".into());
-                None
+            _ => "select a drawn layer to paint".into(),
+        };
+        self.status.message = Some(why);
+        None
+    }
+
+    /// What a stroke into `id` lays: the eraser's erase or restore (a
+    /// picture's), or paint of "Paint as" (else the layer's material).
+    fn stroke_of(&self, id: &str, erase: bool) -> Stroke {
+        let item = self.doc.as_ref().and_then(|d| d.index_of(id).map(|i| &d.items()[i]));
+        match item.map(|i| &i.element.kind) {
+            Some(ElementKind::Image { .. }) if erase && self.restore => Stroke::Restore,
+            _ if erase => Stroke::Erase,
+            Some(ElementKind::Drawn { material, .. }) => {
+                Stroke::Paint(self.paint_material.unwrap_or(*material).into())
             }
+            _ => Stroke::Paint(olr_data::level::Material::Dirt),
         }
+    }
+
+    /// Begins a stroke of `stroke` into `id` (`Document::begin_stroke`):
+    /// its conversion and the copy it starts from, or `None` (the status
+    /// says why).
+    fn begin(&mut self, id: &str, stroke: Stroke) -> Option<(Option<Edit>, StrokeBefore)> {
+        let doc = self.doc.as_mut()?;
+        let begun = match doc.begin_stroke(id, stroke) {
+            Ok(e) => e,
+            Err(e) => {
+                self.status.message = Some(e.to_string());
+                return None;
+            }
+        };
+        let Some(before) = doc.stroke_before(id) else {
+            if let Some(e) = &begun {
+                doc.apply(e, false);
+            }
+            return None;
+        };
+        Some((begun, before))
     }
 
     /// A brush dab at `p`.
@@ -182,13 +243,18 @@ impl EditorState {
         }
     }
 
-    /// Paints (or erases) `shapes` into layer `id`; the rectangle rebaked.
-    fn lay(&mut self, id: &str, shapes: &[Shape], erase: bool) -> Option<Rect> {
+    /// Paints (or erases, or restores) `shapes` into `id`; the rectangle
+    /// rebaked.
+    fn lay(&mut self, id: &str, shapes: &[Shape], stroke: Stroke) -> Option<Rect> {
         let paint = self.paint_of(self.doc.as_ref()?);
         let doc = self.doc.as_mut()?;
         let mut rect = None;
         for shape in shapes {
-            let r = if erase { doc.erase(id, shape, false) } else { doc.paint(id, shape, &paint, None) };
+            let r = match stroke {
+                Stroke::Paint(m) => doc.paint(id, shape, &paint, Some(m)),
+                Stroke::Erase => doc.erase(id, shape, false),
+                Stroke::Restore => doc.erase(id, shape, true),
+            };
             match r {
                 Ok(Some(r)) => rect = Some(Rect::union(rect, r)),
                 Ok(None) => {}
@@ -240,17 +306,39 @@ impl EditorState {
         match self.tool {
             Tool::Select => self.select_down(world),
             Tool::Brush | Tool::Eraser => {
-                let Some(id) = self.paint_target() else { return Vec::new() };
-                let Some(before) = self.doc.as_ref().and_then(|d| d.stroke_before(&id)) else {
-                    return Vec::new();
-                };
                 let erase = self.tool == Tool::Eraser;
-                let rect = self.lay(&id, &[self.dab(world)], erase);
-                self.drag = Some(Drag::Stroke { id, before, last: world, rect, erase });
+                let Some(id) = self.paint_target(erase) else { return Vec::new() };
+                let stroke = self.stroke_of(&id, erase);
+                let Some((begun, before)) = self.begin(&id, stroke) else { return Vec::new() };
+                let rect = self.lay(&id, &[self.dab(world)], stroke);
+                let before = Box::new(before);
+                self.drag = Some(Drag::Stroke { id, before, last: world, rect, stroke, begun });
                 rect.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
             }
+            Tool::Wand => {
+                let Some(id) = self.paint_target(true) else { return Vec::new() };
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let Some(e) = doc.index_of(&id).map(|i| doc.items()[i].element.clone()) else {
+                    return Vec::new();
+                };
+                if !matches!(e.kind, ElementKind::Image { .. }) {
+                    self.status.message = Some("select a picture to remove a colour from".into());
+                    return Vec::new();
+                }
+                match doc.remove_colour(&id, world, self.tolerance) {
+                    Ok(edits) => {
+                        let rect = doc.element_rect(&e);
+                        self.history.push(edits);
+                        self.committed(rect)
+                    }
+                    Err(e) => {
+                        self.status.message = Some(e.to_string());
+                        Vec::new()
+                    }
+                }
+            }
             Tool::Rect | Tool::Ellipse | Tool::Line => {
-                if let Some(id) = self.paint_target() {
+                if let Some(id) = self.paint_target(false) {
                     self.drag = Some(Drag::Shape { id, tool: self.tool, start: world, now: world });
                 }
                 Vec::new()
@@ -315,17 +403,27 @@ impl EditorState {
             self.drag = Some(Drag::Spawn { index, before: doc.level().objects.clone(), grab });
             return Vec::new();
         }
-        // The topmost visible image under the pointer.
+        // The topmost visible image box or covered drawn pixel under the
+        // pointer (plan 14d R9).
+        let (level, s) = (doc.level().size, doc.level().art_scale);
         let hit = doc.items().iter().enumerate().rev().find(|(_, item)| {
-            item.element.visible && image_box(&item.element).is_some_and(|b| contains(b, world))
+            item.element.visible
+                && match &item.element.kind {
+                    ElementKind::Image { .. } => image_box(&item.element).is_some_and(|b| contains(b, world)),
+                    ElementKind::Drawn { .. } => covers(item, level, s, world),
+                    ElementKind::Raster => false,
+                }
         });
         match hit {
             Some((_, item)) => {
                 let e = item.element.clone();
+                // A drawn layer moves only once selected: a click on the map
+                // never drags a whole layer by accident.
+                let moves = image_box(&e).is_some() || self.selection == Selection::Element(e.id.clone());
                 self.selection = Selection::Element(e.id.clone());
                 if e.locked {
                     self.status.message = Some(format!("element {:?} is locked", e.id));
-                } else {
+                } else if moves {
                     self.drag = Some(Drag::Move { before: e, from: world });
                 }
             }
@@ -338,11 +436,13 @@ impl EditorState {
         let Some(drag) = self.drag.clone() else { return Vec::new() };
         match drag {
             Drag::Move { before, from } => {
-                let Some((at, _)) = image_box(&before) else { return Vec::new() };
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let level = doc.level().size;
+                let Some((at, _)) = element_box(&before, level) else { return Vec::new() };
                 let (dx, dy) = sub(world, from);
                 let to = (add(at.0, dx), add(at.1, dy));
-                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
-                let current = doc.index_of(&before.id).and_then(|i| image_box(&doc.items()[i].element));
+                let current =
+                    doc.index_of(&before.id).and_then(|i| element_box(&doc.items()[i].element, level));
                 if current.map(|b| b.0) == Some(to) {
                     return Vec::new();
                 }
@@ -367,17 +467,17 @@ impl EditorState {
                 }
                 Vec::new()
             }
-            Drag::Stroke { id, before, last, rect, erase } => {
+            Drag::Stroke { id, before, last, rect, stroke, begun } => {
                 if world == last {
                     return Vec::new();
                 }
                 let join = Shape::Line { from: last, to: world, width: self.brush.size };
-                let r = self.lay(&id, &[join, self.dab(world)], erase);
+                let r = self.lay(&id, &[join, self.dab(world)], stroke);
                 let rect = match r {
                     Some(r) => Some(Rect::union(rect, r)),
                     None => rect,
                 };
-                self.drag = Some(Drag::Stroke { id, before, last: world, rect, erase });
+                self.drag = Some(Drag::Stroke { id, before, last: world, rect, stroke, begun });
                 r.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
             }
             Drag::Shape { id, tool, start, .. } => {
@@ -434,10 +534,13 @@ impl EditorState {
                 self.history.push(vec![Edit::Objects { before, after }]);
                 self.committed(NOTHING)
             }
-            Drag::Stroke { id, before, rect, .. } => {
-                let Some(rect) = rect else { return Vec::new() };
-                let Some(edit) = doc.stroke_edit(&id, rect, &before) else { return Vec::new() };
-                self.history.push(vec![edit]);
+            Drag::Stroke { id, before, rect, begun, .. } => {
+                let edit = rect.and_then(|r| doc.stroke_edit(&id, r, &before));
+                let step: Vec<Edit> = begun.into_iter().chain(edit).collect();
+                if step.is_empty() {
+                    return Vec::new();
+                }
+                self.history.push(step);
                 self.committed(NOTHING)
             }
             Drag::Shape { id, tool, start, now } => {
@@ -447,28 +550,35 @@ impl EditorState {
                     Tool::Ellipse => Shape::Ellipse { x, y, w, h },
                     _ => Shape::Line { from: start, to: now, width: self.brush.size },
                 };
-                let Some(before) = doc.stroke_before(&id) else { return Vec::new() };
-                match doc.paint(&id, &shape, &paint, None) {
-                    Ok(Some(rect)) => {
-                        let Some(edit) = doc.stroke_edit(&id, rect, &before) else { return Vec::new() };
-                        self.history.push(vec![edit]);
-                        self.committed(rect)
-                    }
-                    Ok(None) => Vec::new(),
-                    Err(e) => {
-                        self.status.message = Some(e.to_string());
-                        Vec::new()
-                    }
+                let stroke = self.stroke_of(&id, false);
+                let Some((begun, before)) = self.begin(&id, stroke) else { return Vec::new() };
+                let Stroke::Paint(m) = stroke else { return Vec::new() };
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let painted = doc.paint(&id, &shape, &paint, Some(m));
+                let edit = match &painted {
+                    Ok(Some(rect)) => doc.stroke_edit(&id, *rect, &before),
+                    _ => None,
+                };
+                if let Err(e) = &painted {
+                    self.status.message = Some(e.to_string());
                 }
+                let step: Vec<Edit> = begun.into_iter().chain(edit).collect();
+                if step.is_empty() {
+                    return Vec::new();
+                }
+                self.history.push(step);
+                self.committed(painted.ok().flatten().unwrap_or(NOTHING))
             }
         }
     }
 
-    /// Moves the selected image's box by `(dx, dy)`: one step.
+    /// Moves the selected image's or drawn layer's box by `(dx, dy)`: one step.
     pub(crate) fn nudge(&mut self, dx: i32, dy: i32) -> Vec<EditorCommand> {
         let Selection::Element(id) = self.selection.clone() else { return Vec::new() };
-        let Some(b) =
-            self.doc.as_ref().and_then(|d| d.index_of(&id).and_then(|i| image_box(&d.items()[i].element)))
+        let Some(b) = self
+            .doc
+            .as_ref()
+            .and_then(|d| d.index_of(&id).and_then(|i| element_box(&d.items()[i].element, d.level().size)))
         else {
             return Vec::new();
         };
@@ -484,7 +594,9 @@ impl EditorState {
         let selected = |id: &str| matches!(&self.selection, Selection::Element(s) if s == id);
         for item in doc.items() {
             let e = &item.element;
-            if let (true, Some(b)) = (e.visible, image_box(e)) {
+            // Images' boxes, and the selected drawn layer's (plan 14d R9).
+            let b = image_box(e).or_else(|| drawn_box(&e.kind, size).filter(|_| selected(&e.id)));
+            if let (true, Some(b)) = (e.visible, b) {
                 out.push(Overlay::Box {
                     rect: box_rect(b, size),
                     selected: selected(&e.id),

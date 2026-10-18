@@ -165,6 +165,14 @@ pub enum EditorAction {
     Tool(Tool),
     Brush(Brush),
     Paint(PaintChoice),
+    /// What painting lays (plan 14d R6): none, the layer's own material.
+    PaintMaterial(Option<ElementMaterial>),
+    /// Whether the eraser restores a picture's masked pixels.
+    Restore(bool),
+    /// Remove colour's tolerance, percent (0 to 100).
+    Tolerance(u8),
+    /// Merges element `id` into the drawn layer below it (Ctrl+E).
+    MergeDown(String),
     /// A pointer event on the canvas, in world pixels (ruling R7).
     Pointer {
         kind: PointerKind,
@@ -223,6 +231,9 @@ pub enum EditorCommand {
     Close,
 }
 
+/// Remove colour's tolerance at first, percent (plan 14d R8).
+pub const DEFAULT_TOLERANCE: u8 = 10;
+
 /// Bots a Play match takes at most.
 pub const MAX_BOTS: u8 = 8;
 
@@ -244,6 +255,9 @@ pub struct EditorState {
     pub(crate) prev_tool: Tool,
     pub(crate) brush: Brush,
     pub(crate) paint: PaintChoice,
+    pub(crate) paint_material: Option<ElementMaterial>,
+    pub(crate) restore: bool,
+    pub(crate) tolerance: u8,
     pub(crate) view: View,
     /// The canvas's size in points, once the UI reported it.
     pub(crate) canvas: Option<[f32; 2]>,
@@ -276,6 +290,9 @@ impl EditorState {
             prev_tool: Tool::Select,
             brush: Brush::default(),
             paint: PaintChoice::default(),
+            paint_material: None,
+            restore: false,
+            tolerance: DEFAULT_TOLERANCE,
             view: View { zoom: 2, offset: [0.0, 0.0] },
             canvas: None,
             fit_pending: false,
@@ -377,6 +394,9 @@ impl EditorState {
                 | EditorAction::Grid(_)
                 | EditorAction::Brush(_)
                 | EditorAction::Paint(_)
+                | EditorAction::PaintMaterial(_)
+                | EditorAction::Restore(_)
+                | EditorAction::Tolerance(_)
                 | EditorAction::Select(_)
                 | EditorAction::PlayMod(_)
                 | EditorAction::PlayBots(_)
@@ -480,21 +500,8 @@ impl EditorState {
                 Selection::None => Vec::new(),
             },
             EditorAction::MoveElement { id, to } => self.edit(|d| d.move_to(&id, to)),
-            EditorAction::Split(id) => {
-                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
-                match doc.split(&id) {
-                    Ok(edits) => {
-                        let all = doc.all();
-                        self.selection = Selection::None;
-                        self.history.push(edits);
-                        self.committed(all)
-                    }
-                    Err(e) => {
-                        self.status.message = Some(e.to_string());
-                        Vec::new()
-                    }
-                }
-            }
+            EditorAction::Split(id) => self.restack(&id, false),
+            EditorAction::MergeDown(id) => self.restack(&id, true),
             EditorAction::Meta(meta) => {
                 let catalog = self.catalog.clone();
                 self.edit(|d| d.set_meta(meta, &catalog))
@@ -542,6 +549,18 @@ impl EditorState {
             }
             EditorAction::Paint(p) => {
                 self.paint = p;
+                Vec::new()
+            }
+            EditorAction::PaintMaterial(m) => {
+                self.paint_material = m;
+                Vec::new()
+            }
+            EditorAction::Restore(on) => {
+                self.restore = on;
+                Vec::new()
+            }
+            EditorAction::Tolerance(t) => {
+                self.tolerance = t.min(100);
                 Vec::new()
             }
             EditorAction::Pointer { kind, world, shift } => self.pointer(kind, world, shift),
@@ -641,6 +660,30 @@ impl EditorState {
         }
     }
 
+    /// Splits element `id`, or merges it down (`merge`): one step; the
+    /// merged layer is selected, a split's parts are not.
+    fn restack(&mut self, id: &str, merge: bool) -> Vec<EditorCommand> {
+        let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+        let below =
+            doc.index_of(id).and_then(|i| i.checked_sub(1)).map(|i| doc.items()[i].element.id.clone());
+        let done = if merge { doc.merge_down(id) } else { doc.split(id) };
+        match done {
+            Ok(edits) => {
+                let all = doc.all();
+                self.selection = match (merge, below) {
+                    (true, Some(b)) => Selection::Element(b),
+                    _ => Selection::None,
+                };
+                self.history.push(edits);
+                self.committed(all)
+            }
+            Err(e) => {
+                self.status.message = Some(e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
     pub fn tool(&self) -> Tool {
         self.tool
     }
@@ -651,6 +694,19 @@ impl EditorState {
 
     pub fn paint(&self) -> PaintChoice {
         self.paint
+    }
+
+    /// What painting lays; none is the layer's own material.
+    pub fn paint_material(&self) -> Option<ElementMaterial> {
+        self.paint_material
+    }
+
+    pub fn restore(&self) -> bool {
+        self.restore
+    }
+
+    pub fn tolerance(&self) -> u8 {
+        self.tolerance
     }
 
     pub fn view(&self) -> View {

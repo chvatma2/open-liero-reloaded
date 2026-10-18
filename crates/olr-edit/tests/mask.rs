@@ -105,3 +105,38 @@ fn similar_follows_the_percentage_rule() {
     assert!(similar(black, Rgba::rgb(255, 255, 255), 200));
     assert!(!similar(black, Rgba { a: 0, ..black }, 99));
 }
+
+/// Plan 14d R7: a mask stroke reprocesses the picture's grid on each dab.
+/// A size-16 dab on a 1024 × 1024 original in a 256 × 256 box, no colour
+/// reduction: the mask and the grid. Run by hand:
+/// `cargo nextest run -p olr-edit --release --run-ignored only mask_dab_speed --no-capture`.
+#[test]
+#[ignore]
+fn mask_dab_speed() {
+    use olr_edit::compose::ImageCache;
+    use olr_edit::pixelate::Pixelation;
+    let mut img = RgbaImage::new(1024, 1024);
+    for y in 0..1024 {
+        for x in 0..1024 {
+            img.set(x, y, Rgba::rgb((x / 4) as u8, (y / 4) as u8, ((x ^ y) & 255) as u8));
+        }
+    }
+    let bytes = olr_format::image_io::encode_rgba(&img);
+    let p = Pixelation {
+        pixel_size: 1,
+        colours: None,
+        dither: olr_format::levels::Dither::None,
+        alpha_threshold: 128,
+    };
+    let mut cache = ImageCache::new();
+    let mut mask = Mask::full((1024, 1024));
+    cache.grid("p.png", &bytes, (256, 256), &p, Some(&mask)).unwrap();
+    let dabs = 20;
+    let start = std::time::Instant::now();
+    for i in 0..dabs {
+        let shape = Shape::Circle { cx: 20 + i * 8, cy: 128, r: 8 };
+        mask_shape(&mut mask, (0, 0), (256, 256), &shape, false);
+        cache.grid("p.png", &bytes, (256, 256), &p, Some(&mask)).unwrap();
+    }
+    println!("mask dab: {:?} each", start.elapsed() / dabs as u32);
+}

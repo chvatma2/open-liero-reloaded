@@ -407,6 +407,7 @@ fn the_toolbar_stays_in_the_window_and_in_place() {
         "Line",
         "Spawn",
         "Eyedropper",
+        "Remove colour",
         "Round",
         "Square",
         "Front tile",
@@ -448,6 +449,11 @@ fn the_toolbar_stays_in_the_window_and_in_place() {
         let brush = h.state().state.brush();
         act(&mut h, A::Brush(olr_editor::tools::Brush { size: 64, ..brush }));
         assert_eq!(rects(&h), first, "nothing moved at {width} points");
+        // Plan 14d R13: a tool's options never move the others.
+        for tool in Tool::ALL {
+            act(&mut h, A::Tool(tool));
+            assert_eq!(rects(&h), first, "nothing moved at {width} points with {}", tool.name());
+        }
     }
 }
 
@@ -479,7 +485,8 @@ fn a_toolbar_row_is_one_straight_line() {
             .collect()
     };
     for row in [
-        &["Select", "Eyedropper", "Round", "Size", "Colour", "Back tile"][..],
+        &["Select", "Eyedropper", "Remove colour"][..],
+        &["Round", "Size", "Colour", "Back tile"][..],
         &[labels::UNDO, labels::OPEN, labels::CLOSE, labels::PLAY, "Mod", "Bots", "Material view", "Grid"][..],
     ] {
         let c = centres(row);
@@ -488,4 +495,37 @@ fn a_toolbar_row_is_one_straight_line() {
             assert!((y - first).abs() <= 1.0, "{name} centred at {y}, not {first}: {c:?}");
         }
     }
+    // Plan 14d: a tool's options share the tools' row's line.
+    let options =
+        [(Tool::Brush, labels::PAINT_AS), (Tool::Eraser, labels::RESTORE), (Tool::Wand, labels::TOLERANCE)];
+    for (tool, label) in options {
+        act(&mut h, A::Tool(tool));
+        let y = |n: &str| h.get_by_label(n).rect().center().y;
+        assert!((y("Select") - y(label)).abs() <= 1.0, "{label} off the tools' row's line");
+    }
+}
+
+#[test]
+fn merge_down_from_the_properties() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    let before = ids(&h).len();
+    act(&mut h, A::Select(Selection::Element("wall".into())));
+    h.get_by_label(labels::MERGE_DOWN).click();
+    h.run();
+    assert_eq!(ids(&h).len(), before - 1);
+}
+
+/// Plan 14d R13: each tool shows its own options.
+#[test]
+fn the_tool_options_follow_the_tool() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    let shows = |h: &Harness<'static, App>, label: &str| h.query_by_label(label).is_some();
+    act(&mut h, A::Tool(Tool::Brush));
+    assert!(shows(&h, labels::PAINT_AS) && !shows(&h, labels::RESTORE));
+    act(&mut h, A::Tool(Tool::Eraser));
+    assert!(shows(&h, labels::RESTORE) && !shows(&h, labels::PAINT_AS));
+    act(&mut h, A::Tool(Tool::Wand));
+    assert!(shows(&h, labels::TOLERANCE) && !shows(&h, labels::RESTORE));
+    act(&mut h, A::Tool(Tool::Select));
+    assert!(!shows(&h, labels::TOLERANCE) && !shows(&h, labels::PAINT_AS));
 }

@@ -181,3 +181,22 @@ fn an_unchanged_value_is_no_step() {
     assert!(run(&mut s, A::MoveElement { id: "tiny".into(), to: 1 }).is_empty());
     assert!(!s.can_undo() && !s.dirty());
 }
+
+/// Plan 14d: merge down and split, from actions, are one step each.
+#[test]
+fn merge_down_and_split_are_one_step_each() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let ids = |s: &olr_editor::EditorState| -> Vec<String> {
+        s.document().unwrap().items().iter().map(|i| i.element.id.clone()).collect()
+    };
+    let start = ids(&s);
+    run(&mut s, A::MergeDown("wall".into()));
+    assert_eq!(ids(&s).len(), start.len() - 1, "wall merged into tunnels");
+    run(&mut s, A::Undo);
+    assert_eq!(ids(&s), start);
+    run(&mut s, A::Split("tiny".into()));
+    assert!(!ids(&s).contains(&"tiny".to_string()));
+    run(&mut s, A::Undo);
+    assert_eq!(ids(&s), start);
+}
