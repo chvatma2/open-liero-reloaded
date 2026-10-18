@@ -133,8 +133,8 @@ impl Canvas {
     /// the whole canvas (black where there is no level; a size that panning
     /// never changes, so the renderer's world target stays), cut at
     /// `max_view` world pixels per side (at most `MAX_VIEW`; less when the
-    /// device's textures are smaller: `max_view_for`), and the screen
-    /// rectangle it fills. `None` when no level is open.
+    /// device's textures are smaller: `max_view_for`; then over the visible
+    /// level), and the screen rectangle it fills. `None` when no level is open.
     pub fn draw(
         &self,
         view: &EditorView,
@@ -148,15 +148,27 @@ impl Canvas {
             return None;
         }
         let max = max_view.clamp(1.0, olr_render::MAX_VIEW);
-        let (w, h) = ((canvas.width() / unit).min(max), (canvas.height() / unit).min(max));
+        // One axis: the view's start and length in world pixels, and where it
+        // starts on screen (points). The whole canvas when it fits; else a
+        // `max` long window over the visible level (its size still fixed).
+        let axis = |offset: f32, len: f32, lo: f32| {
+            let (start, all) = (-offset / unit, len / unit);
+            if all <= max {
+                return (start, all, lo);
+            }
+            let x = start.max(0.0).clamp(start, start + all - max);
+            (x, max, lo + (x - start) * unit)
+        };
+        let (x, w, sx) = axis(view.offset[0], canvas.width(), canvas.min.x);
+        let (y, h, sy) = axis(view.offset[1], canvas.height(), canvas.min.y);
         let px = |v: f32| (v * pixels_per_point).round().max(0.0) as u32;
-        let (sx0, sy0) = (px(canvas.min.x), px(canvas.min.y));
-        let (sx1, sy1) = (px(canvas.min.x + w * unit), px(canvas.min.y + h * unit));
+        let (sx0, sy0) = (px(sx), px(sy));
+        let (sx1, sy1) = (px(sx + w * unit), px(sy + h * unit));
         if sx1 <= sx0 || sy1 <= sy0 {
             return None;
         }
         let mut list = DrawList::default();
-        list.view = View { x: -view.offset[0] / unit, y: -view.offset[1] / unit, w, h };
+        list.view = View { x, y, w, h };
         list.map = self.level;
         Some((list, [sx0, sy0, sx1 - sx0, sy1 - sy0]))
     }
@@ -255,6 +267,17 @@ mod tests {
         let (list, area) = wide.draw(&far, huge, 1.0, olr_render::MAX_VIEW).unwrap();
         assert_eq!(list.view.w, olr_render::MAX_VIEW);
         assert_eq!(area[2], 1024, "4096 world pixels at a quarter point each");
+        // Panned right on that canvas, the cut view follows the level, not
+        // the canvas's left edge (review of the minors round).
+        let right = EditorView { zoom: 0, offset: [2000.0, 0.0] };
+        let (list, area) = wide.draw(&right, huge, 1.0, olr_render::MAX_VIEW).unwrap();
+        assert_eq!((list.view.x, list.view.w), (0.0, olr_render::MAX_VIEW), "the level's left edge on");
+        assert_eq!((area[0], area[2]), (2000, 1024), "drawn where the level is");
+        for offset in [[2100.0, 0.0], [-500.0, 0.0], [3990.0, 0.0]] {
+            let (l, a) = wide.draw(&EditorView { zoom: 0, offset }, huge, 1.0, olr_render::MAX_VIEW).unwrap();
+            assert_eq!(l.view.w, olr_render::MAX_VIEW, "{offset:?}: its size stays");
+            assert!(a[0] + a[2] <= 4000, "{offset:?}: inside the canvas");
+        }
         let max = Canvas::max_view_for(4096, 2);
         let (list, _) = wide.draw(&far, huge, 1.0, max).unwrap();
         assert_eq!(list.view.w, max);
