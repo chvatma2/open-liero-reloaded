@@ -37,6 +37,7 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   copy. Play tries the level at once (alone, or against up to 8 bots);
   Esc or Stop returns to the editor as it was. Unsaved changes are kept
   in a recovery copy every 2 minutes and offered after a crash.
+  Import image… previews the picture you select.
 
 - Releases say what they are: a work in progress is named
   `<version>-dev.<commits>.<commit>` (such as `0.2.0-dev.192.24b2ac4`), a

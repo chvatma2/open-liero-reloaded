@@ -175,7 +175,7 @@ copy it from the menu).
 
 - **Elements** (left): drawn layers (**Add layer**), imported pictures
   (**Import image…**: PNG or JPEG, at most 64 MiB, through the editor's own
-  file browser; its Path field takes any folder: on Windows a drive or
+  file browser, which previews the image you click; its Path field takes any folder: on Windows a drive or
   `\\wsl.localhost\…`, under WSL `/mnt/c/…`), and the level's spawns under
   Objects. Drag a name to reorder; the eye and the lock hide and protect.
 - **Properties** (right): the selected element's, or with nothing selected

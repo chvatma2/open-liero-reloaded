@@ -10,7 +10,7 @@ pub mod canvas;
 mod files;
 mod recovery;
 
-pub use files::{MAX_ENTRIES, MAX_IMPORT_BYTES, editable_levels, level_dirs, list as list_dir};
+pub use files::{MAX_ENTRIES, MAX_IMPORT_BYTES, PREVIEW_SIDE, editable_levels, level_dirs, list as list_dir};
 pub use recovery::{INFO_FILE, RecoveryInfo, discard_recovery, list_recoveries};
 
 use std::collections::VecDeque;
@@ -333,6 +333,10 @@ impl EditorHost {
             EditorCommand::List(dir) => {
                 let entries = files::list(&dir);
                 queue.push_back(EditorAction::Listed { dir, entries });
+            }
+            EditorCommand::ReadPreview(path) => {
+                let image = files::read_preview(&path);
+                queue.push_back(EditorAction::Previewed { path, image });
             }
             EditorCommand::ReadImage(path) => queue.push_back(match files::read_image(&path) {
                 Ok((file_name, bytes)) => EditorAction::ImportImage { file_name, bytes },

@@ -7,6 +7,8 @@
 use std::cmp::Ordering;
 use std::path::{Path, PathBuf};
 
+use olr_data::image::RgbaImage;
+
 /// What the browser is choosing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Purpose {
@@ -42,12 +44,26 @@ pub struct Browser {
     dir: PathBuf,
     entries: Vec<DirEntry>,
     message: Option<String>,
+    /// The selected image's preview, and the file it was last asked for.
+    preview: Option<Preview>,
+    asked: Option<String>,
+}
+
+/// The selected image's preview for an import (the host made it small:
+/// `EditorCommand::ReadPreview`), or why there is none.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Preview {
+    /// The entry it shows.
+    pub name: String,
+    pub image: Result<RgbaImage, String>,
+    /// The image's own size, when it was read.
+    pub size: Option<(u32, u32)>,
 }
 
 impl Browser {
     /// A browser at `dir`, empty until its first listing.
     pub(crate) fn new(purpose: Purpose, dir: PathBuf) -> Browser {
-        Browser { purpose, dir, entries: Vec::new(), message: None }
+        Browser { purpose, dir, entries: Vec::new(), message: None, preview: None, asked: None }
     }
 
     pub fn purpose(&self) -> Purpose {
@@ -57,6 +73,32 @@ impl Browser {
     /// The directory shown.
     pub fn dir(&self) -> &Path {
         &self.dir
+    }
+
+    /// The selected image's preview, once the host answered.
+    pub fn preview(&self) -> Option<&Preview> {
+        self.preview.as_ref()
+    }
+
+    /// Asks for entry `name`'s preview: the path to read, for an import's
+    /// file not asked for already.
+    pub(crate) fn ask_preview(&mut self, name: &str) -> Option<PathBuf> {
+        let e = self.entry(name).filter(|e| self.purpose == Purpose::ImportImage && !e.is_dir)?;
+        if self.asked.as_deref() == Some(e.name.as_str()) {
+            return None;
+        }
+        self.asked = Some(name.to_string());
+        Some(self.dir.join(name))
+    }
+
+    /// The host's preview of `path`: kept when it is the file asked for last.
+    pub(crate) fn previewed(&mut self, path: &Path, image: Result<(RgbaImage, (u32, u32)), String>) {
+        let Some(name) = self.asked.clone().filter(|n| self.dir.join(n) == path) else { return };
+        let (image, size) = match image {
+            Ok((img, size)) => (Ok(img), Some(size)),
+            Err(why) => (Err(why), None),
+        };
+        self.preview = Some(Preview { name, image, size });
     }
 
     /// Why the last listing failed (the old one stays shown).
@@ -97,6 +139,8 @@ impl Browser {
                 entries.truncate(MAX_ENTRIES);
                 self.dir = dir;
                 self.entries = entries;
+                self.preview = None;
+                self.asked = None;
             }
             Err(why) => self.message = Some(why),
         }

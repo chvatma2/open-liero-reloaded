@@ -115,6 +115,14 @@ pub enum EditorAction {
     /// An entry chosen: a file to import, or a pack folder to open (another
     /// folder is entered).
     Pick(String),
+    /// An image selected in the import's browser: its preview, please.
+    PreviewImage(String),
+    /// The host's preview of an image (`ReadPreview`): a small copy and the
+    /// image's own size, or why there is none.
+    Previewed {
+        path: PathBuf,
+        image: Result<(olr_data::image::RgbaImage, (u32, u32)), String>,
+    },
     CloseBrowser,
     // Files.
     Open(PathBuf),
@@ -204,6 +212,8 @@ pub enum EditorCommand {
     List(PathBuf),
     /// Read this image (bounded); answer `ImportImage` or `ImportFailed`.
     ReadImage(PathBuf),
+    /// Read this image and make it small for the browser; answer `Previewed`.
+    ReadPreview(PathBuf),
     /// The document was saved, or is being closed or left: drop its
     /// recovery copy (R7).
     RecoveryDone,
@@ -342,6 +352,7 @@ impl EditorState {
                 | EditorAction::ImportFailed(_)
                 | EditorAction::Failed(_)
                 | EditorAction::Note(_)
+                | EditorAction::Previewed { .. }
                 | EditorAction::Pointer { .. }
                 | EditorAction::Canvas(_)
                 | EditorAction::Pan(_)
@@ -369,6 +380,8 @@ impl EditorState {
                 | EditorAction::PlayBots(_)
                 | EditorAction::Listed { .. }
                 | EditorAction::Note(_)
+                | EditorAction::PreviewImage(_)
+                | EditorAction::Previewed { .. }
                 | EditorAction::Browse(_)
                 | EditorAction::BrowseTo(_)
                 | EditorAction::CloseBrowser
@@ -415,6 +428,19 @@ impl EditorState {
                 None => Vec::new(),
             },
             EditorAction::Pick(name) => self.pick(&name),
+            EditorAction::PreviewImage(name) => self
+                .browser
+                .as_mut()
+                .and_then(|b| b.ask_preview(&name))
+                .map(EditorCommand::ReadPreview)
+                .into_iter()
+                .collect(),
+            EditorAction::Previewed { path, image } => {
+                if let Some(b) = &mut self.browser {
+                    b.previewed(&path, image);
+                }
+                Vec::new()
+            }
             EditorAction::CloseBrowser => {
                 self.browser = None;
                 Vec::new()

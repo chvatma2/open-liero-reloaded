@@ -19,7 +19,11 @@ fn tree() -> tempfile::TempDir {
     std::fs::create_dir(d.join("b")).unwrap();
     std::fs::create_dir(d.join("A")).unwrap();
     std::fs::write(d.join("A/pack.ron"), "()").unwrap();
-    std::fs::write(d.join("x.PNG"), b"png").unwrap();
+    std::fs::write(
+        d.join("x.PNG"),
+        olr_pack::image_io::encode_rgba(&olr_data::image::RgbaImage::new(40, 20)),
+    )
+    .unwrap();
     std::fs::write(d.join("y.txt"), b"text").unwrap();
     std::fs::write(d.join(".hidden"), b"").unwrap();
     tmp
@@ -50,6 +54,16 @@ fn host(state: &mut EditorState, action: A) -> Vec<C> {
         for c in run(state, a) {
             if let C::List(dir) = &c {
                 queue.push_back(A::Listed { dir: dir.clone(), entries: list(dir) });
+            }
+            if let C::ReadPreview(path) = &c {
+                let image = std::fs::read(path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|b| olr_format::image_io::decode_image_within(&b, olr_format::image_io::IMAGES))
+                    .map(|img| {
+                        let size = (img.width(), img.height());
+                        (img, size)
+                    });
+                queue.push_back(A::Previewed { path: path.clone(), image });
             }
             out.push(c);
         }
@@ -227,6 +241,8 @@ fn the_browser_by_label() {
     assert_eq!(h.state().state.browser().unwrap().dir(), t.path());
     h.get_by_label("x.PNG").click();
     h.run();
+    // Its preview beside the list, with the image's size.
+    h.get_by_label("40 × 20");
     h.get_by_label(labels::CHOOSE).click();
     h.run();
     assert!(h.state().commands.contains(&C::ReadImage(t.path().join("x.PNG"))), "{:?}", h.state().commands);
@@ -292,4 +308,31 @@ fn a_cut_listing_says_so() {
     olr_editor::browser::sort_entries(&mut few);
     state.update(A::Listed { dir: t.path().to_path_buf(), entries: Ok(few) });
     assert_eq!(state.browser().unwrap().message(), None);
+}
+
+/// The selected image's preview: the host reads it (`ReadPreview`), the
+/// browser keeps the answer for that file only, a new listing drops it.
+#[test]
+fn an_image_is_previewed_when_selected() {
+    use olr_data::image::RgbaImage;
+    let Some((_doc, t, mut state)) = browsing(Purpose::ImportImage) else { return };
+    let x = t.path().join("x.PNG");
+    assert_eq!(state.update(A::PreviewImage("x.PNG".into())), vec![C::ReadPreview(x.clone())]);
+    assert!(state.update(A::PreviewImage("b".into())).is_empty(), "a folder has none");
+    assert!(state.update(A::PreviewImage("nothing".into())).is_empty());
+    let small = RgbaImage::new(8, 4);
+    state.update(A::Previewed { path: x.clone(), image: Ok((small.clone(), (800, 400))) });
+    let p = state.browser().unwrap().preview().unwrap();
+    assert_eq!((p.name.as_str(), p.size), ("x.PNG", Some((800, 400))));
+    assert_eq!(p.image.as_ref().ok(), Some(&small));
+    // An answer for another file than the one asked for is not kept.
+    state.update(A::Previewed { path: t.path().join("y.png"), image: Ok((small.clone(), (1, 1))) });
+    assert_eq!(state.browser().unwrap().preview().unwrap().name, "x.PNG");
+    state.update(A::Previewed { path: x.clone(), image: Err("not a PNG or JPEG".into()) });
+    assert!(state.browser().unwrap().preview().unwrap().image.is_err());
+    host(&mut state, A::BrowseTo("b".into()));
+    assert!(state.browser().unwrap().preview().is_none(), "another folder: none");
+    // Opening a pack shows no previews.
+    let Some((_doc, _t, mut state)) = browsing(Purpose::OpenPack) else { return };
+    assert!(state.update(A::PreviewImage("A".into())).is_empty());
 }

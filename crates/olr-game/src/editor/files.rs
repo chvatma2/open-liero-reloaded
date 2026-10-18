@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
 
+use olr_data::image::{Rgba, RgbaImage};
 use olr_data::manifest::PackKind;
 use olr_editor::browser::DirEntry;
 
@@ -116,6 +117,49 @@ pub fn read_image(path: &Path) -> Result<(String, Vec<u8>), String> {
     }
     olr_format::image_io::image_size(&bytes).ok_or_else(not_image)?;
     Ok((name, bytes))
+}
+
+/// The longest side of the import browser's preview, in pixels.
+pub const PREVIEW_SIDE: u32 = 192;
+
+/// The import browser's preview of the image at `path`
+/// (`EditorCommand::ReadPreview`): read as an import is ([`read_image`]'s
+/// bounds), decoded within what an import accepts (`IMAGES`, a JPEG turned
+/// by its EXIF orientation), then made at most [`PREVIEW_SIDE`] on a side
+/// (each pixel the mean of its block); with the image's own size.
+pub fn read_preview(path: &Path) -> Result<(RgbaImage, (u32, u32)), String> {
+    let (name, bytes) = read_image(path)?;
+    let img = olr_format::image_io::decode_image_within(&bytes, olr_format::image_io::IMAGES)
+        .map_err(|e| format!("{name}: {e}"))?;
+    let size = (img.width(), img.height());
+    Ok((shrink(&img, PREVIEW_SIDE), size))
+}
+
+/// `img` made to fit `side` × `side`, its aspect kept (never larger).
+fn shrink(img: &RgbaImage, side: u32) -> RgbaImage {
+    let (w, h) = (img.width().max(1), img.height().max(1));
+    let k = (w.max(h) as f64 / side as f64).max(1.0);
+    let (ow, oh) = (((w as f64 / k).round() as u32).max(1), ((h as f64 / k).round() as u32).max(1));
+    let mut out = RgbaImage::new(ow, oh);
+    for oy in 0..oh {
+        let (y0, y1) = (oy * h / oh, ((oy + 1) * h / oh).max(oy * h / oh + 1));
+        for ox in 0..ow {
+            let (x0, x1) = (ox * w / ow, ((ox + 1) * w / ow).max(ox * w / ow + 1));
+            let mut sum = [0u64; 4];
+            for y in y0..y1.min(img.height()) {
+                for x in x0..x1.min(img.width()) {
+                    let c = img.get(x, y);
+                    for (s, v) in sum.iter_mut().zip([c.r, c.g, c.b, c.a]) {
+                        *s += u64::from(v);
+                    }
+                }
+            }
+            let n = u64::from((y1 - y0) * (x1 - x0)).max(1);
+            let m = |i: usize| (sum[i] / n) as u8;
+            out.set(ox, oy, Rgba { r: m(0), g: m(1), b: m(2), a: m(3) });
+        }
+    }
+    out
 }
 
 /// Whether `dir` lies inside one of `roots` (each compared canonically,

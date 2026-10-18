@@ -80,6 +80,8 @@ struct BrowserDraft {
     dir: Option<std::path::PathBuf>,
     path: String,
     selected: Option<String>,
+    /// The preview's texture, for the entry it shows.
+    preview: Option<(String, egui::TextureHandle)>,
 }
 
 impl EditorData {

@@ -43,7 +43,12 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   lists; `Pick` of a file reads it
   (`ReadImage`), of a pack folder opens it as `Open` does (the dialog
   first), of another folder enters it; a pick remembers its folder
-  (`SaveSettings`) and closes the browser. The window is modal: the Path
+  (`SaveSettings`) and closes the browser. For an import, a click on an
+  image asks for its preview (`PreviewImage` → `ReadPreview`, answered by
+  `Previewed`: the host's small copy and the image's size; kept for the
+  file asked for last, dropped by a new listing), shown beside the list
+  (`Browser::preview`, at most 200 points, a small image enlarged with
+  sharp pixels, its size under it, or why there is none). The window is modal: the Path
   field (Enter browses), Up, the entries (a click selects, a double click
   picks; rows keyed by directory and name), Choose, Cancel; Escape or the
   backdrop closes it.

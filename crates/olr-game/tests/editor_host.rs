@@ -546,3 +546,33 @@ fn an_interrupted_copy_is_listed_again() {
     std::fs::rename(rec.join("office"), rec.join(".replaced-office")).unwrap();
     assert_eq!(list_recoveries(&rec).len(), 1, "the hidden old copy too");
 }
+
+/// The import browser's preview of the selected image: read with the
+/// import's bounds, made at most `PREVIEW_SIDE` on a side, its own size
+/// kept; a file that is no image says why.
+#[test]
+fn the_selected_image_is_previewed_small() {
+    use olr_data::image::{Rgba, RgbaImage};
+    let Some((tmp, _root, mut h)) = host() else { return };
+    h.open_from_menu(&new_level("Office"));
+    let pics = tmp.path().join("pics");
+    std::fs::create_dir_all(&pics).unwrap();
+    let mut img = RgbaImage::new(1000, 500);
+    for x in 0..500 {
+        img.set(x, 10, Rgba::rgb(255, 0, 0));
+    }
+    std::fs::write(pics.join("wide.png"), olr_pack::image_io::encode_rgba(&img)).unwrap();
+    std::fs::write(pics.join("text.png"), "not an image").unwrap();
+    // One frame each, as the browser's: the listing comes before the click.
+    h.act(vec![A::Browse(Purpose::ImportImage)]);
+    h.act(vec![A::BrowseTo(pics.clone())]);
+    h.act(vec![A::PreviewImage("wide.png".into())]);
+    let p = h.state().browser().unwrap().preview().cloned().expect("previewed");
+    assert_eq!(p.size, Some((1000, 500)));
+    let small = p.image.unwrap();
+    let side = olr_game::editor::PREVIEW_SIDE;
+    assert_eq!((small.width(), small.height()), (side, side / 2), "fits, its aspect kept");
+    h.act(vec![A::PreviewImage("text.png".into())]);
+    let p = h.state().browser().unwrap().preview().cloned().unwrap();
+    assert!(p.image.unwrap_err().contains("not a PNG or JPEG"));
+}
