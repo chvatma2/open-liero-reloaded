@@ -494,6 +494,90 @@ pub fn draw(
     })
 }
 
+/// Flood-fills drawn layer `id` from world pixel `seed` (plan 14e R5,
+/// `drawn::fill`) with `paint`; `material` as `draw` takes it. A seed
+/// outside the layer's box or the level is refused.
+pub fn fill(
+    pack: &mut Pack,
+    id: &str,
+    seed: (i32, i32),
+    paint: &Paint,
+    tolerance: u8,
+    material: Option<ElementMaterial>,
+) -> Result<(), ElementError> {
+    let mut outside = false;
+    paint_layer(pack, id, |d, at, size, s, layer| {
+        let (box_size, inside) = match d {
+            Decoded::Drawn { art, .. } => ((art.width() / s.max(1), art.height() / s.max(1)), true),
+            _ => ((0, 0), false),
+        };
+        let within = |v: i32, from: i32, side: u32, level: u32| {
+            let v = i64::from(v);
+            v >= i64::from(from).max(0) && v < (i64::from(from) + i64::from(side)).min(i64::from(level))
+        };
+        if !inside || !within(seed.0, at.0, box_size.0, size.0) || !within(seed.1, at.1, box_size.1, size.1) {
+            outside = true;
+            return;
+        }
+        let m = material.unwrap_or(layer);
+        if m != layer {
+            drawn::mix(d, s, layer.into());
+        }
+        drawn::fill(d, at, s, size, seed, paint, m.into(), tolerance);
+    })?;
+    if outside {
+        return Err(ElementError::BadValue(format!("({}, {}) is outside {id:?}", seed.0, seed.1)));
+    }
+    Ok(())
+}
+
+/// `name` with the next free ` N` suffix (N from 2) among `names`: a
+/// trailing ` N` of `name` is dropped first ("Crate" → "Crate 2", "Crate 2"
+/// → "Crate 3").
+pub fn copy_name<'a>(name: &str, names: impl Iterator<Item = &'a str> + Clone) -> String {
+    let base = match name.rsplit_once(' ') {
+        Some((b, n)) if !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) => b,
+        _ => name,
+    };
+    let with = |i: u32| if base.is_empty() { i.to_string() } else { format!("{base} {i}") };
+    (2u32..).map(with).find(|c| !names.clone().any(|n| n == c)).unwrap_or_default()
+}
+
+/// Copies element `id` directly above it, at the same place (plan 14e
+/// R10): a new id and a `copy_name`d name; an image shares its original,
+/// and every file of its own (a layer's art, a mask) is copied under the
+/// new id. Returns the new id.
+pub fn duplicate(pack: &mut Pack, id: &str) -> Result<String, ElementError> {
+    let stray = stray(pack);
+    commit(pack, "", |src| {
+        let i = find(src, id)?;
+        if src.composition.elements.len() >= MAX_ELEMENTS {
+            return Err(ElementError::TooMany);
+        }
+        let e = src.composition.elements[i].clone();
+        let names = src
+            .composition
+            .elements
+            .iter()
+            .map(|o| if o.name.is_empty() { o.id.as_str() } else { o.name.as_str() });
+        let name = copy_name(if e.name.is_empty() { &e.id } else { &e.name }, names);
+        let new = new_id(src, &stray, &name, "copy");
+        let copy = Element { id: new.clone(), name, ..e.clone() };
+        for (from, to) in element_files(&e).into_iter().zip(element_files(&copy)) {
+            if from != to {
+                let bytes = src
+                    .files
+                    .get(&from)
+                    .cloned()
+                    .ok_or_else(|| ElementError::BadValue(format!("{from}: missing")))?;
+                src.files.insert(to, bytes);
+            }
+        }
+        src.composition.elements.insert(i + 1, copy);
+        Ok(new)
+    })
+}
+
 /// Erases `shape` in drawn layer `id` (plan 14d R5: dirt and rock over back
 /// art are dug to it; the rest cleared).
 pub fn erase(pack: &mut Pack, id: &str, shape: &Shape) -> Result<(), ElementError> {

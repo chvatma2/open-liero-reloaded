@@ -204,6 +204,32 @@ pub(crate) enum ElementCommand {
         #[command(flatten)]
         content: ContentArg,
     },
+    /// Flood-fill the connected region of a world pixel in a drawn layer:
+    /// pixels alike in covered state and colour.
+    Fill {
+        pack: PathBuf,
+        id: String,
+        /// The world pixel to fill from, X,Y.
+        #[arg(long, value_parser = parse_point, allow_hyphen_values = true)]
+        at: (i32, i32),
+        /// How alike a colour must be, 0 to 100 percent (default 0: exact).
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100), default_value_t = 0)]
+        tolerance: u8,
+        #[command(flatten)]
+        paint: PaintArgs,
+        /// What the filled pixels are (default the layer's material).
+        #[arg(long)]
+        material: Option<MaterialArg>,
+        #[command(flatten)]
+        content: ContentArg,
+    },
+    /// Copy an element directly above it, at the same place; prints the new id.
+    Duplicate {
+        pack: PathBuf,
+        id: String,
+        #[command(flatten)]
+        content: ContentArg,
+    },
     /// Merge an element into the drawn layer directly below it: per pixel
     /// rock, then dirt, then background wins.
     MergeDown {
@@ -414,6 +440,15 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             element::draw(p, id, &shape.shape(), &paint.paint(), material.map(|m| m.element()))?;
             Ok(Vec::new())
         }),
+        ElementCommand::Fill { pack, id, at, tolerance, paint, material, content } => {
+            edit(pack, content, |p| {
+                element::fill(p, id, *at, &paint.paint(), *tolerance, material.map(|m| m.element()))?;
+                Ok(Vec::new())
+            })
+        }
+        ElementCommand::Duplicate { pack, id, content } => {
+            edit(pack, content, |p| Ok(vec![format!("added element {}", element::duplicate(p, id)?)]))
+        }
         ElementCommand::MergeDown { pack, id, content } => edit(pack, content, |p| {
             element::merge_down(p, id)?;
             Ok(Vec::new())

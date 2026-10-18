@@ -506,3 +506,88 @@ fn a_mask_that_misses_the_picture_is_refused() {
     assert!(e.to_string().contains("misses"), "{e}");
     assert_eq!(p.composition, before);
 }
+
+fn element<'a>(p: &'a Pack, id: &str) -> &'a olr_format::levels::Element {
+    p.composition.as_ref().unwrap().composition.elements.iter().find(|e| e.id == id).unwrap()
+}
+
+#[test]
+fn duplicate_copies_files_and_shares_originals() {
+    let mut p = pack(8, 6, 1);
+    let layer_id = add_layer(&mut p, ElementMaterial::Dirt, "Crate").unwrap();
+    draw(
+        &mut p,
+        &layer_id,
+        &Shape::Rect { x: 1, y: 1, w: 2, h: 2 },
+        &Paint::Colour(RED),
+        Some(ElementMaterial::Rock),
+    )
+    .unwrap();
+    let image = add_image(&mut p, "a.png", png(4, 4), (1, 1), (4, 4), ElementMaterial::Rock, "Sign").unwrap();
+    mask(&mut p, &image, &MaskOp::Shape(Shape::Rect { x: 1, y: 1, w: 1, h: 1 }), false).unwrap();
+    assert_eq!(ids(&p), ["base", "crate", "sign"]);
+
+    assert_eq!(duplicate(&mut p, "crate").unwrap(), "crate-2");
+    assert_eq!(duplicate(&mut p, "sign").unwrap(), "sign-2");
+    assert_eq!(duplicate(&mut p, "base").unwrap(), "base-2");
+    assert_eq!(ids(&p), ["base", "base-2", "crate", "crate-2", "sign", "sign-2"]);
+    let src = p.composition.as_ref().unwrap();
+    check_composition(src, (8, 6), 1).unwrap();
+    assert_eq!(element(&p, "crate-2").name, "Crate 2");
+    assert_eq!(element(&p, "sign-2").name, "Sign 2");
+    assert_eq!(element(&p, "crate-2").kind, element(&p, "crate").kind);
+    for (a, b) in [("crate", "crate-2"), ("base", "base-2")] {
+        let (fa, fb) = (
+            olr_format::levels::element_files(element(&p, a)),
+            olr_format::levels::element_files(element(&p, b)),
+        );
+        assert_eq!(fa.len(), fb.len());
+        for (x, y) in fa.iter().zip(&fb) {
+            assert_ne!(x, y);
+            assert_eq!(src.files[x], src.files[y], "{y} copies {x}");
+        }
+    }
+    let ElementKind::Image { source: s1, .. } = &element(&p, "sign").kind else { panic!() };
+    let ElementKind::Image { source: s2, mask: true, .. } = &element(&p, "sign-2").kind else { panic!() };
+    assert_eq!(s1, s2, "an image copy shares its original");
+    let (m1, m2) = (olr_format::levels::mask_file("sign"), olr_format::levels::mask_file("sign-2"));
+    assert_eq!(src.files[&m1], src.files[&m2]);
+    // Locked elements duplicate too; unknown ones are refused.
+    assert!(matches!(duplicate(&mut p, "nope"), Err(ElementError::NoElement(_))));
+}
+
+#[test]
+fn copy_name_counts_on() {
+    let names = ["Crate", "Crate 2", "Pipe 3", ""];
+    assert_eq!(copy_name("Crate", names.iter().copied()), "Crate 3");
+    assert_eq!(copy_name("Crate 2", names.iter().copied()), "Crate 3");
+    assert_eq!(copy_name("Pipe 3", names.iter().copied()), "Pipe 2");
+    assert_eq!(copy_name("Desk", names.iter().copied()), "Desk 2");
+    assert_eq!(copy_name("Room 101", names.iter().copied()), "Room 2");
+    assert_eq!(copy_name("", names.iter().copied()), "2");
+}
+
+#[test]
+fn fill_paints_a_texture_into_a_layer() {
+    let mut p = pack(8, 6, 2);
+    let id = add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
+    draw(&mut p, &id, &Shape::Rect { x: 0, y: 0, w: 8, h: 1 }, &Paint::Colour(RED), None).unwrap();
+    let tile = olr_edit::textures::builtin().remove(3).image;
+    fill(&mut p, &id, (3, 3), &Paint::Tile(tile.clone()), 0, Some(ElementMaterial::Rock)).unwrap();
+    let art = layer(&p, &id);
+    for ay in 0..12 {
+        for ax in 0..16 {
+            let want = if ay < 2 { RED } else { tile.get(ax % 64, ay % 64) };
+            assert_eq!(art.get(ax, ay), want, "({ax}, {ay})");
+        }
+    }
+    let e = element(&p, &id);
+    assert!(matches!(e.kind, ElementKind::Drawn { mixed: true, .. }), "another material mixes: {:?}", e.kind);
+    // A seed off the layer is refused.
+    let err = fill(&mut p, &id, (8, 0), &Paint::Colour(RED), 0, None).unwrap_err();
+    assert!(err.to_string().contains("outside"), "{err}");
+    assert!(matches!(
+        fill(&mut p, "base", (1, 1), &Paint::Colour(RED), 0, None),
+        Err(ElementError::WrongKind { .. })
+    ));
+}

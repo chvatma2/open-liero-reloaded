@@ -9,7 +9,7 @@ use olr_format::image_io::{LEVEL_ART, check_size};
 use olr_format::levels::{Element, ElementKind, ElementMaterial, MAX_SIDE, drawn_box};
 
 use crate::compose::Decoded;
-use crate::level::{Paint, Rect, Shape, art_block, covers, extent};
+use crate::level::{Paint, Rect, Shape, art_block, covers, extent, similar};
 
 /// Material priority (decision 4): Rock 2, Dirt 1, Background 0.
 pub fn priority(m: Material) -> u8 {
@@ -111,6 +111,102 @@ pub fn draw(
             cells[ly as usize * size.0 as usize + lx as usize] = material;
         }
     })
+}
+
+/// Fills the region of world pixel `seed` in drawn data `d` (box at `at`,
+/// art scale `s`) within the box and a level of `level` (plan 14e R5): the
+/// 4-connected world pixels sharing the seed's covered state (a block's
+/// centre art pixel opaque) and, when covered, whose centre colour is
+/// `similar` to the seed's within `tolerance` percent. Its blocks are
+/// painted as `draw` paints them, with `material` in the cells. Returns the
+/// level rectangle holding the region; `None` when the seed is outside,
+/// nothing changed, or `d` is no drawn data of a consistent size.
+#[allow(clippy::too_many_arguments)]
+pub fn fill(
+    d: &mut Decoded,
+    at: (i32, i32),
+    s: u32,
+    level: (u32, u32),
+    seed: (i32, i32),
+    paint: &Paint,
+    material: Material,
+    tolerance: u8,
+) -> Option<Rect> {
+    let Parts { art, mut cells, size, .. } = parts(d, s)?;
+    let (ax, ay) = (i64::from(at.0), i64::from(at.1));
+    let (x0, y0) = (ax.max(0), ay.max(0));
+    let x1 = (ax + i64::from(size.0)).min(i64::from(level.0));
+    let y1 = (ay + i64::from(size.1)).min(i64::from(level.1));
+    let (sx, sy) = (i64::from(seed.0), i64::from(seed.1));
+    if !(x0..x1).contains(&sx) || !(y0..y1).contains(&sy) {
+        return None;
+    }
+    // The region, in box ∩ level coordinates.
+    let (rw, rh) = ((x1 - x0) as usize, (y1 - y0) as usize);
+    let local = |i: usize| ((x0 - ax) as u32 + (i % rw) as u32, (y0 - ay) as u32 + (i / rw) as u32);
+    let centre = |art: &RgbaImage, (lx, ly): (u32, u32)| art.get(lx * s + s / 2, ly * s + s / 2);
+    let first = (sy - y0) as usize * rw + (sx - x0) as usize;
+    let want = centre(art, local(first));
+    let alike = |c: Rgba| (c.a != 0) == (want.a != 0) && (want.a == 0 || similar(c, want, tolerance));
+    let mut inside = vec![false; rw * rh];
+    let mut stack = vec![first];
+    inside[first] = true;
+    let (mut bx0, mut by0, mut bx1, mut by1) = (rw, rh, 0, 0);
+    while let Some(i) = stack.pop() {
+        let (x, y) = (i % rw, i / rw);
+        (bx0, by0, bx1, by1) = (bx0.min(x), by0.min(y), bx1.max(x + 1), by1.max(y + 1));
+        let mut visit = |j: usize| {
+            if !inside[j] && alike(centre(art, local(j))) {
+                inside[j] = true;
+                stack.push(j);
+            }
+        };
+        if x > 0 {
+            visit(i - 1);
+        }
+        if x + 1 < rw {
+            visit(i + 1);
+        }
+        if y > 0 {
+            visit(i - rw);
+        }
+        if y + 1 < rh {
+            visit(i + rw);
+        }
+    }
+    let origin = (ax * i64::from(s), ay * i64::from(s));
+    let mut changed = false;
+    for y in by0..by1 {
+        for x in bx0..bx1 {
+            if !inside[y * rw + x] {
+                continue;
+            }
+            let (lx, ly) = local(y * rw + x);
+            let mut painted = false;
+            for (px, py) in art_block(s, lx, ly) {
+                if let Some(c) =
+                    paint.at(origin.0 + i64::from(px), origin.1 + i64::from(py)).filter(|c| c.a != 0)
+                {
+                    let c = Rgba { a: 255, ..c };
+                    changed |= art.get(px, py) != c;
+                    art.set(px, py, c);
+                    painted = true;
+                }
+            }
+            if painted && let Some(cells) = cells.as_deref_mut() {
+                let cell = &mut cells[ly as usize * size.0 as usize + lx as usize];
+                changed |= *cell != material;
+                *cell = material;
+            }
+        }
+    }
+    let rect = Rect {
+        x: (x0 as usize + bx0) as u32,
+        y: (y0 as usize + by0) as u32,
+        w: (bx1 - bx0) as u32,
+        h: (by1 - by0) as u32,
+    };
+    changed.then_some(rect)
 }
 
 /// Erases `shape` from drawn data `d` as `draw` paints (plan 14d R5): a

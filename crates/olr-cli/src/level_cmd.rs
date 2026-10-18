@@ -169,8 +169,8 @@ pub(crate) struct PaintArgs {
     /// A colour, RRGGBB (a leading # is allowed).
     #[arg(long, value_parser = parse_colour)]
     colour: Option<Rgba>,
-    /// A PNG repeated from the art origin.
-    #[arg(long, value_parser = parse_image)]
+    /// A PNG repeated from the art origin (`--texture` alike).
+    #[arg(long, visible_alias = "texture", value_parser = parse_image)]
     tile: Option<RgbaImage>,
 }
 

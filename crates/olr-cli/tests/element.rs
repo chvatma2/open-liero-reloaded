@@ -352,3 +352,44 @@ fn merge_split_and_mask_commands() {
     // The bake is current.
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
 }
+
+#[test]
+fn fill_and_duplicate_commands() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    let run = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        ok(&cli(&all, &pack, &content))
+    };
+    assert_eq!(run(&["duplicate", "{pack}", "sign"]), "added element sign-2\n");
+    run(&["split", "{pack}", "base"]);
+    let texture = sign_png(tmp.path());
+    run(&["fill", "{pack}", "background", "--at", "5,5", "--texture", texture.to_str().unwrap()]);
+    run(&[
+        "fill",
+        "{pack}",
+        "cave",
+        "--at",
+        "100,100",
+        "--tolerance",
+        "5",
+        "--colour",
+        "404040",
+        "--material",
+        "rock",
+    ]);
+    let list = ok(&cli(&["level", "element", "list", "{pack}"], &pack, &content));
+    assert!(
+        list.contains("sign Image Rock \"Sign\"\n") && list.contains("sign-2 Image Rock \"Sign 2\""),
+        "{list}"
+    );
+    let e = cli(
+        &["level", "element", "fill", "{pack}", "cave", "--at", "-1,0", "--colour", "404040"],
+        &pack,
+        &content,
+    );
+    assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("outside"));
+    ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+}

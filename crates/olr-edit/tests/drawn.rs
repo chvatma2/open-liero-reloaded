@@ -4,7 +4,7 @@
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_edit::compose::{Decoded, Rect};
-use olr_edit::drawn::{draw, erase, priority};
+use olr_edit::drawn::{draw, erase, fill, priority};
 use olr_edit::level::{Paint, Shape};
 
 const BLUE: Rgba = Rgba::rgb(20, 40, 200);
@@ -382,4 +382,96 @@ fn merge_and_split_refuse_locked_elements() {
         split_element(&lower, &d, (2, 2), 1, |n, _| n.into()).unwrap_err(),
         LayerError::Locked("below".into())
     );
+}
+
+/// A `w` × 1 layer at art scale 1 whose covered pixels are `px` (`None` uncovered).
+fn line_of(px: &[Option<Rgba>]) -> Decoded {
+    let mut art = RgbaImage::new(px.len() as u32, 1);
+    for (x, c) in px.iter().enumerate() {
+        if let Some(c) = c {
+            art.set(x as u32, 0, *c);
+        }
+    }
+    layer(art, None, None)
+}
+
+fn covered_row(d: &Decoded) -> Vec<Option<Rgba>> {
+    let a = art(d);
+    (0..a.width()).map(|x| Some(a.get(x, 0)).filter(|c| c.a != 0)).collect()
+}
+
+#[test]
+fn fill_takes_the_connected_region() {
+    let b = Some(BROWN);
+    let mut d = line_of(&[b, b, None, b, b]);
+    let r = fill(&mut d, (0, 0), 1, (5, 1), (0, 0), &Paint::Colour(GREY), Material::Dirt, 0);
+    assert_eq!(r, Some(Rect { x: 0, y: 0, w: 2, h: 1 }));
+    assert_eq!(covered_row(&d), [Some(GREY), Some(GREY), None, b, b]);
+}
+
+#[test]
+fn fill_of_empty_space_stops_at_covered_pixels() {
+    let b = Some(BROWN);
+    let mut d = line_of(&[None, b, None, None, b, None]);
+    let r = fill(&mut d, (0, 0), 1, (6, 1), (3, 0), &Paint::Colour(GREY), Material::Dirt, 0);
+    assert_eq!(r, Some(Rect { x: 2, y: 0, w: 2, h: 1 }));
+    assert_eq!(covered_row(&d), [None, b, Some(GREY), Some(GREY), b, None]);
+}
+
+#[test]
+fn fill_tolerance_follows_similar() {
+    // 26 of 255 is just above 10 %, 25 within it.
+    let near = Rgba::rgb(140 + 25, 90, 40);
+    let far = Rgba::rgb(140 - 26, 90, 40);
+    let px = [Some(BROWN), Some(near), Some(far)];
+    let mut d = line_of(&px);
+    fill(&mut d, (0, 0), 1, (3, 1), (0, 0), &Paint::Colour(GREY), Material::Dirt, 10);
+    assert_eq!(covered_row(&d), [Some(GREY), Some(GREY), Some(far)]);
+    let mut d = line_of(&px);
+    fill(&mut d, (0, 0), 1, (3, 1), (0, 0), &Paint::Colour(GREY), Material::Dirt, 0);
+    assert_eq!(covered_row(&d), [Some(GREY), Some(near), Some(far)]);
+}
+
+#[test]
+fn fill_is_bounded_by_box_and_level() {
+    // A 4 × 2 empty box at (-2, 0) on a 3 × 2 level: only its right half lies inside.
+    let mut d = layer(RgbaImage::new(4, 2), None, None);
+    let r = fill(&mut d, (-2, 0), 1, (3, 2), (0, 0), &Paint::Colour(GREY), Material::Dirt, 0);
+    assert_eq!(r, Some(Rect { x: 0, y: 0, w: 2, h: 2 }));
+    for y in 0..2 {
+        for x in 0..4 {
+            assert_eq!(art(&d).get(x, y).a != 0, x >= 2, "({x}, {y})");
+        }
+    }
+    for seed in [(-1, 0), (i32::MAX, 0), (0, i32::MIN), (3, 0)] {
+        let mut d = layer(RgbaImage::new(4, 2), None, None);
+        assert_eq!(fill(&mut d, (-2, 0), 1, (3, 2), seed, &Paint::Colour(GREY), Material::Dirt, 0), None);
+        assert_eq!(art(&d), &RgbaImage::new(4, 2), "{seed:?}");
+    }
+    // Filling with what is there changes nothing.
+    let mut d = line_of(&[Some(GREY)]);
+    assert_eq!(fill(&mut d, (0, 0), 1, (1, 1), (0, 0), &Paint::Colour(GREY), Material::Dirt, 0), None);
+}
+
+#[test]
+fn fill_sets_cells_with_material() {
+    let mut d = layer(solid(2, 4, BROWN), Some(vec![Material::Dirt; 2]), None);
+    // Art scale 2: a 1 × 2 layer.
+    let r = fill(&mut d, (0, 0), 2, (1, 2), (0, 1), &Paint::Colour(GREY), Material::Rock, 0);
+    assert_eq!(r, Some(Rect { x: 0, y: 0, w: 1, h: 2 }));
+    let Decoded::Drawn { art, cells, .. } = &d else { unreachable!() };
+    assert_eq!(cells.as_deref(), Some(&[Material::Rock, Material::Rock][..]));
+    assert!(art.as_raw().chunks(4).all(|p| p == [128, 128, 128, 255]));
+}
+
+/// Review Focus 3: a fill of a whole open large level is fast (release).
+#[test]
+#[ignore]
+fn fill_speed() {
+    let mut d = layer(RgbaImage::new(4096, 2048), None, None);
+    let t = std::time::Instant::now();
+    let r = fill(&mut d, (0, 0), 1, (4096, 2048), (7, 7), &Paint::Colour(GREY), Material::Dirt, 0);
+    let took = t.elapsed();
+    println!("fill of 4096 × 2048: {took:?}");
+    assert_eq!(r, Some(Rect { x: 0, y: 0, w: 4096, h: 2048 }));
 }
