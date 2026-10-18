@@ -116,7 +116,8 @@ pub fn draw(
 /// Erases `shape` from drawn data `d` as `draw` paints (plan 14d R5): a
 /// block whose cell is dirt or rock and whose back art has an opaque pixel
 /// is dug, becoming background with the back art as its art (the back
-/// art cleared there); every other block is cleared (alpha 0).
+/// art cleared there); every other block is cleared (alpha 0), its back
+/// art too.
 pub fn erase(d: &mut Decoded, at: (i32, i32), s: u32, level: (u32, u32), shape: &Shape) -> Option<Rect> {
     let Parts { art, mut cells, mut back, size } = parts(d, s)?;
     each(shape, at, size, level, |lx, ly, _, _| {
@@ -134,11 +135,25 @@ pub fn erase(d: &mut Decoded, at: (i32, i32), s: u32, level: (u32, u32), shape: 
                 back.set(ax, ay, Rgba::TRANSPARENT);
             }
         } else {
+            // Cleared, back art included: an erased background is gone
+            // (batch B review 1).
             for (ax, ay) in art_block(s, lx, ly) {
                 art.set(ax, ay, Rgba::TRANSPARENT);
+                if let Some(back) = back.as_deref_mut() {
+                    back.set(ax, ay, Rgba::TRANSPARENT);
+                }
             }
         }
     })
+}
+
+/// Gives a plain layer's data cells, all of `material` (plan 14d R3), so
+/// it can hold other materials; mixed or other data is left as it is.
+pub fn mix(d: &mut Decoded, s: u32, material: Material) {
+    if let Decoded::Drawn { art, cells: cells @ None, .. } = d {
+        let n = (art.width() / s.max(1)) as usize * (art.height() / s.max(1)) as usize;
+        *cells = Some(vec![material; n]);
+    }
 }
 
 /// A layer's pixels placed in the world: what merge and split work on.

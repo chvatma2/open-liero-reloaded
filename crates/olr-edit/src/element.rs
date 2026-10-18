@@ -342,7 +342,10 @@ fn apply(
             Property::At(v) if matches!(e.kind, ElementKind::Drawn { .. }) => {
                 if let ElementKind::Drawn { at, size: boxed, .. } = &mut e.kind {
                     *at = v;
-                    boxed.get_or_insert(size);
+                    let b = boxed.unwrap_or(size);
+                    // Back at the origin with the level's size, it follows
+                    // the level again (batch B review 2).
+                    *boxed = (v != (0, 0) || b != size).then_some(b);
                 }
             }
             p => {
@@ -458,14 +461,6 @@ fn paint_layer(
     })
 }
 
-/// A plain layer's cells, all of `material`, so it can hold others.
-fn mix(d: &mut Decoded, s: u32, material: ElementMaterial) {
-    if let Decoded::Drawn { art, cells: cells @ None, .. } = d {
-        let n = (art.width() / s.max(1)) as usize * (art.height() / s.max(1)) as usize;
-        *cells = Some(vec![material.into(); n]);
-    }
-}
-
 /// Paints `shape` (world pixels, whole art blocks) into drawn layer `id`,
 /// opaque: each art pixel takes the paint's RGB (a transparent pixel of a
 /// tile leaves it). `material` other than a plain layer's makes it mixed
@@ -480,7 +475,7 @@ pub fn draw(
     paint_layer(pack, id, |d, at, size, s, layer| {
         let m = material.unwrap_or(layer);
         if m != layer {
-            mix(d, s, layer);
+            drawn::mix(d, s, layer.into());
         }
         drawn::draw(d, at, s, size, shape, paint, m.into());
     })
@@ -491,7 +486,7 @@ pub fn draw(
 pub fn erase(pack: &mut Pack, id: &str, shape: &Shape) -> Result<(), ElementError> {
     paint_layer(pack, id, |d, at, size, s, layer| {
         if matches!(d, Decoded::Drawn { back: Some(_), .. }) {
-            mix(d, s, layer);
+            drawn::mix(d, s, layer.into());
         }
         drawn::erase(d, at, s, size, shape);
     })

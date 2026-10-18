@@ -319,3 +319,13 @@ fn a_merge_too_large_is_refused() {
     let (a, b) = (element("a", kind((0, 0))), element("b", kind((5000, 0))));
     assert_eq!(merge_down((&a, &d), (&b, &d), (8, 8), 1).unwrap_err(), LayerError::TooLarge("a".into()));
 }
+
+/// Batch B review 1: an erased block that is not dug loses its back art
+/// too, so a background pixel with back art can be cleared.
+#[test]
+fn erasing_a_background_pixel_clears_its_back_art() {
+    let mut d = layer(solid(1, 1, BROWN), Some(vec![Material::Background]), Some(solid(1, 1, BLUE)));
+    erase(&mut d, (0, 0), 1, (1, 1), &Shape::Rect { x: 0, y: 0, w: 1, h: 1 });
+    let Decoded::Drawn { art, back: Some(back), .. } = &d else { panic!() };
+    assert_eq!((art.get(0, 0).a, back.get(0, 0).a), (0, 0));
+}

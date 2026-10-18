@@ -450,3 +450,14 @@ fn set_at_moves_a_drawn_layer() {
         e.kind
     );
 }
+
+/// Batch B review 2: a layer moved back to the origin is level-sized again.
+#[test]
+fn a_layer_moved_back_to_the_origin_follows_the_level_again() {
+    let mut p = pack(8, 6, 1);
+    let id = add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
+    set(&mut p, &id, Property::At((2, 3))).unwrap();
+    set(&mut p, &id, Property::At((0, 0))).unwrap();
+    let e = &p.composition.as_ref().unwrap().composition.elements[1];
+    assert_eq!(e.kind, ElementKind::drawn(ElementMaterial::Dirt));
+}
