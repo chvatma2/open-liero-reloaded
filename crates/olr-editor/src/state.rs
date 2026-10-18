@@ -278,6 +278,8 @@ pub struct EditorState {
     pub(crate) fill_tolerance: u8,
     /// The built-in textures (plan 14e R1), made once.
     pub(crate) builtin: Arc<Vec<Texture>>,
+    /// Counts `TexturesChanged`: the palette's user swatches follow it.
+    pub(crate) textures_generation: u64,
     pub(crate) view: View,
     /// The canvas's size in points, once the UI reported it.
     pub(crate) canvas: Option<[f32; 2]>,
@@ -315,6 +317,7 @@ impl EditorState {
             tolerance: DEFAULT_TOLERANCE,
             fill_tolerance: DEFAULT_FILL_TOLERANCE,
             builtin: Arc::new(olr_edit::textures::builtin()),
+            textures_generation: 0,
             view: View { zoom: 2, offset: [0.0, 0.0] },
             canvas: None,
             fit_pending: false,
@@ -462,6 +465,7 @@ impl EditorState {
             }
             EditorAction::TexturesChanged(textures) => {
                 self.catalog.textures = textures;
+                self.textures_generation += 1;
                 if self.texture(&self.paint).is_none() {
                     self.paint = PaintChoice::default();
                 }
@@ -732,6 +736,11 @@ impl EditorState {
 
     pub fn paint(&self) -> &PaintChoice {
         &self.paint
+    }
+
+    /// How many times the user's library changed (`TexturesChanged`).
+    pub fn textures_generation(&self) -> u64 {
+        self.textures_generation
     }
 
     /// The built-in textures (plan 14e R1), in `TextureRef::Builtin` order.

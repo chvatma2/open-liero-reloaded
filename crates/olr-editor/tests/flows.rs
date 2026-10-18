@@ -5,7 +5,7 @@
 use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
-use olr_editor::tools::Tool;
+use olr_editor::tools::{PaintChoice, TextureRef, Tool};
 use olr_editor::ui::{self, EditorData, labels};
 use olr_editor::{EditorAction as A, EditorCommand as C, EditorState, Selection};
 use olr_format::levels::ElementKind;
@@ -408,10 +408,12 @@ fn the_toolbar_stays_in_the_window_and_in_place() {
         "Spawn",
         "Eyedropper",
         "Remove colour",
+        "Fill",
         "Round",
         "Square",
         "Front tile",
         "Back tile",
+        labels::TEXTURES,
         labels::UNDO,
         labels::REDO,
         labels::OPEN,
@@ -454,6 +456,15 @@ fn the_toolbar_stays_in_the_window_and_in_place() {
             act(&mut h, A::Tool(tool));
             assert_eq!(rects(&h), first, "nothing moved at {width} points with {}", tool.name());
         }
+        // Plan 14e: nor a texture or a crater chosen.
+        act(&mut h, A::Paint(PaintChoice::Texture(TextureRef::Builtin(3))));
+        assert_eq!(rects(&h), first, "nothing moved at {width} points with a texture");
+        let brush = h.state().state.brush();
+        act(
+            &mut h,
+            A::Brush(olr_editor::tools::Brush { shape: olr_editor::tools::BrushShape::Crater(2), ..brush }),
+        );
+        assert_eq!(rects(&h), first, "nothing moved at {width} points with a crater");
     }
 }
 
@@ -485,8 +496,8 @@ fn a_toolbar_row_is_one_straight_line() {
             .collect()
     };
     for row in [
-        &["Select", "Eyedropper", "Remove colour"][..],
-        &["Round", "Size", "Colour", "Back tile"][..],
+        &["Select", "Eyedropper", "Remove colour", "Fill"][..],
+        &["Round", labels::CRATER, "Size", "Colour", "Back tile", labels::TEXTURES][..],
         &[labels::UNDO, labels::OPEN, labels::CLOSE, labels::PLAY, "Mod", "Bots", "Material view", "Grid"][..],
     ] {
         let c = centres(row);
@@ -496,8 +507,12 @@ fn a_toolbar_row_is_one_straight_line() {
         }
     }
     // Plan 14d: a tool's options share the tools' row's line.
-    let options =
-        [(Tool::Brush, labels::PAINT_AS), (Tool::Eraser, labels::RESTORE), (Tool::Wand, labels::TOLERANCE)];
+    let options = [
+        (Tool::Brush, labels::PAINT_AS),
+        (Tool::Eraser, labels::RESTORE),
+        (Tool::Wand, labels::TOLERANCE),
+        (Tool::Fill, labels::TOLERANCE),
+    ];
     for (tool, label) in options {
         act(&mut h, A::Tool(tool));
         let y = |n: &str| h.get_by_label(n).rect().center().y;
@@ -528,4 +543,71 @@ fn the_tool_options_follow_the_tool() {
     assert!(shows(&h, labels::TOLERANCE) && !shows(&h, labels::RESTORE));
     act(&mut h, A::Tool(Tool::Select));
     assert!(!shows(&h, labels::TOLERANCE) && !shows(&h, labels::PAINT_AS));
+}
+
+/// Plan 14e: the palette offers the theme's tiles, the built-in textures
+/// and the user's, each a swatch labelled by name.
+#[test]
+fn the_palette_offers_every_texture() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    let mine = olr_editor::catalog::TextureEntry {
+        name: "stripes".into(),
+        image: olr_data::image::RgbaImage::new(8, 8),
+    };
+    act(&mut h, A::TexturesChanged(vec![mine]));
+    h.get_by_label(labels::TEXTURES).click();
+    h.run();
+    for name in [
+        "Dirt",
+        "Rock",
+        "Grass",
+        "Brick",
+        "Metal",
+        "Wood",
+        labels::THEME_FRONT,
+        labels::THEME_BACK,
+        "stripes",
+        labels::IMPORT_TEXTURE,
+    ] {
+        assert!(h.query_by_label(name).is_some(), "{name} is offered");
+    }
+    h.get_by_label("Brick").click();
+    h.run();
+    assert_eq!(h.state().state.paint(), &PaintChoice::Texture(TextureRef::Builtin(3)));
+    h.get_by_label(labels::TEXTURES).click();
+    h.run();
+    h.get_by_label("stripes").click();
+    h.run();
+    assert_eq!(h.state().state.paint(), &PaintChoice::Texture(TextureRef::User("stripes".into())));
+    h.get_by_label(labels::TEXTURES).click();
+    h.run();
+    h.get_by_label(labels::THEME_BACK).click();
+    h.run();
+    assert_eq!(h.state().state.paint(), &PaintChoice::BackTile);
+}
+
+#[test]
+fn import_texture_opens_the_browser_for_images() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.get_by_label(labels::TEXTURES).click();
+    h.run();
+    h.get_by_label(labels::IMPORT_TEXTURE).click();
+    h.run();
+    let b = h.state().state.browser().expect("the browser opens");
+    assert_eq!(b.purpose(), olr_editor::browser::Purpose::ImportTexture);
+}
+
+#[test]
+fn the_crater_picker_lists_the_themes_holes() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    let n = h.state().state.holes().len();
+    assert!(n >= 2, "the Dirt theme has holes");
+    h.get_by_label(labels::CRATER).click();
+    h.run();
+    for i in 1..=n {
+        assert!(h.query_by_label(&format!("Crater {i}")).is_some(), "Crater {i}");
+    }
+    h.get_by_label("Crater 2").click();
+    h.run();
+    assert_eq!(h.state().state.brush().shape, olr_editor::tools::BrushShape::Crater(1));
 }

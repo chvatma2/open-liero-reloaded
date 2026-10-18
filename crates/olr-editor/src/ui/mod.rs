@@ -38,6 +38,16 @@ pub mod labels {
     pub const PAINT_AS: &str = "Paint as";
     pub const RESTORE: &str = "Restore";
     pub const TOLERANCE: &str = "Tolerance";
+    /// The palette's button (plan 14e).
+    pub const TEXTURES: &str = "Textures…";
+    pub const IMPORT_TEXTURE: &str = "Import texture…";
+    /// The crater brush's picker.
+    pub const CRATER: &str = "Crater";
+    /// The palette's swatches of the level theme's tiles.
+    pub const THEME_FRONT: &str = "Theme front";
+    pub const THEME_BACK: &str = "Theme back";
+    /// A user texture's right-click entry.
+    pub const REMOVE: &str = "Remove";
     pub const OBJECTS: &str = "Objects";
     pub const PIXEL_SIZE: &str = "Pixel size";
     pub const COLOURS: &str = "Colours";
@@ -77,6 +87,12 @@ pub struct EditorData {
     drawn: std::collections::BTreeSet<String>,
     /// The file browser's typed path and selection, while it is open.
     browser: Option<BrowserDraft>,
+    /// The palette's swatches by key (`builtin/<i>`, `user/<name>`,
+    /// `theme/<id>/front|back`), made when first drawn; those no longer
+    /// listed, or of an older user library, are dropped.
+    swatches: BTreeMap<String, egui::TextureHandle>,
+    /// The user library's generation the `user/` swatches were made from.
+    swatch_generation: u64,
 }
 
 /// The file browser's drafts, for the directory shown.

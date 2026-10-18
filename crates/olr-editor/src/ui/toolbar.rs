@@ -6,7 +6,7 @@ use egui::Ui;
 use super::{EditorData, labels, number};
 use crate::browser::Purpose;
 use crate::state::{EditorAction, EditorState, MAX_BOTS};
-use crate::tools::{Brush, BrushShape, MAX_BRUSH, PaintChoice, Tool};
+use crate::tools::{Brush, BrushShape, MAX_BRUSH, PaintChoice, TextureRef, Tool};
 use olr_format::levels::ElementMaterial;
 
 /// The mod picker's width (points): a long name is cut, never wider.
@@ -19,6 +19,13 @@ const MARK_WIDTH: f32 = 110.0;
 const OPTIONS_WIDTH: f32 = 220.0;
 /// "Paint as"'s picker width.
 const PAINT_AS_WIDTH: f32 = 110.0;
+/// The crater picker's width.
+const CRATER_WIDTH: f32 = 80.0;
+/// The palette button's width, its swatch shown or not.
+const TEXTURES_WIDTH: f32 = 120.0;
+/// A swatch's side in the palette, and in its button (points).
+const SWATCH: f32 = 28.0;
+const BUTTON_SWATCH: f32 = 16.0;
 /// "Paint as": the layer's own material, or one of the three.
 const PAINT_AS: [(Option<ElementMaterial>, &str); 4] = [
     (None, "Layer's"),
@@ -66,6 +73,7 @@ fn drawing(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
             out.push(EditorAction::Brush(Brush { shape, ..brush }));
         }
     }
+    craters(ui, state, out);
     if let Some(size) = number(ui, data, "brush-size", "Size", brush.size.into(), 1..=MAX_BRUSH.into()) {
         out.push(EditorAction::Brush(Brush { size: size as u32, ..brush }));
     }
@@ -87,6 +95,152 @@ fn drawing(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
             out.push(EditorAction::Paint(choice));
         }
     }
+    palette(ui, state, data, out);
+}
+
+/// The crater brushes (plan 14e R4): the level theme's holes, none shown
+/// without any.
+fn craters(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let n = state.holes().len().min(usize::from(u8::MAX) + 1);
+    if n == 0 {
+        return;
+    }
+    let brush = state.brush();
+    let current = match brush.shape {
+        BrushShape::Crater(i) => format!("Crater {}", u32::from(i) + 1),
+        _ => "None".into(),
+    };
+    let label = ui.label(labels::CRATER);
+    egui::ComboBox::from_id_salt("olr-editor-crater")
+        .selected_text(current)
+        .width(CRATER_WIDTH)
+        .show_ui(ui, |ui| {
+            for i in 0..n {
+                let shape = BrushShape::Crater(i as u8);
+                if ui.selectable_label(brush.shape == shape, format!("Crater {}", i + 1)).clicked() {
+                    out.push(EditorAction::Brush(Brush { shape, ..brush }));
+                }
+            }
+        })
+        .response
+        .labelled_by(label.id);
+}
+
+/// The swatch of `key` showing `img`, made when first asked for.
+fn swatch(
+    ui: &Ui,
+    data: &mut EditorData,
+    key: &str,
+    img: &olr_data::image::RgbaImage,
+) -> egui::TextureHandle {
+    data.swatches
+        .entry(key.to_string())
+        .or_insert_with(|| {
+            let colour = if img.width() == 0 || img.height() == 0 {
+                egui::ColorImage::from_rgba_unmultiplied([1, 1], &[0; 4])
+            } else {
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [img.width() as usize, img.height() as usize],
+                    img.as_raw(),
+                )
+            };
+            ui.ctx().load_texture(format!("olr-editor-swatch-{key}"), colour, egui::TextureOptions::NEAREST)
+        })
+        .clone()
+}
+
+/// A choice of the palette: its paint, its swatch's key, its image and its
+/// label.
+struct Entry<'a> {
+    choice: PaintChoice,
+    key: String,
+    image: &'a olr_data::image::RgbaImage,
+    name: String,
+}
+
+/// The palette's choices, grouped "Theme", "Built-in" and "Yours".
+fn palette_entries(state: &EditorState) -> Vec<(&'static str, Vec<Entry<'_>>)> {
+    let Some(doc) = state.document() else { return Vec::new() };
+    let theme = &doc.level().theme;
+    let entry = |choice, key, image, name: &str| Entry { choice, key, image, name: name.to_string() };
+    let ours = vec![
+        entry(PaintChoice::FrontTile, format!("theme/{theme}/front"), doc.front_tile(), labels::THEME_FRONT),
+        entry(PaintChoice::BackTile, format!("theme/{theme}/back"), doc.back_tile(), labels::THEME_BACK),
+    ];
+    let builtin = state
+        .builtin_textures()
+        .iter()
+        .enumerate()
+        .map(|(i, t)| {
+            entry(PaintChoice::Texture(TextureRef::Builtin(i)), format!("builtin/{i}"), &t.image, t.name)
+        })
+        .collect();
+    let yours = state
+        .catalog()
+        .textures
+        .iter()
+        .map(|t| {
+            let choice = PaintChoice::Texture(TextureRef::User(t.name.clone()));
+            entry(choice, format!("user/{}", t.name), &t.image, &t.name)
+        })
+        .collect();
+    vec![("Theme", ours), ("Built-in", builtin), ("Yours", yours)]
+}
+
+/// The "Textures…" button, its swatch the current paint's, and its popup
+/// of swatches (plan 14e): a click paints with one, a right-click on one of
+/// the user's offers Remove, "Import texture…" opens the browser.
+fn palette(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+    let groups = palette_entries(state);
+    // Swatches no longer listed, or of an older library, go.
+    if data.swatch_generation != state.textures_generation() {
+        data.swatches.retain(|k, _| !k.starts_with("user/"));
+        data.swatch_generation = state.textures_generation();
+    }
+    let listed: std::collections::BTreeSet<&str> =
+        groups.iter().flat_map(|(_, g)| g.iter().map(|e| e.key.as_str())).collect();
+    data.swatches.retain(|k, _| listed.contains(k.as_str()));
+    let paint = state.paint();
+    let current = groups.iter().flat_map(|(_, g)| g.iter()).find(|e| e.choice == *paint);
+    let button = match current {
+        Some(e) => {
+            let tex = swatch(ui, data, &e.key, e.image);
+            let image = egui::Image::new(&tex).fit_to_exact_size(egui::vec2(BUTTON_SWATCH, BUTTON_SWATCH));
+            egui::Button::image_and_text(image, labels::TEXTURES)
+        }
+        None => egui::Button::new(labels::TEXTURES),
+    };
+    let r = ui.add_sized([TEXTURES_WIDTH, ui.spacing().interact_size.y], button);
+    egui::Popup::menu(&r).show(|ui| {
+        for (title, entries) in &groups {
+            ui.label(egui::RichText::new(*title).strong());
+            if entries.is_empty() {
+                ui.label(egui::RichText::new("none yet: import one from a picture").weak());
+            }
+            ui.horizontal_wrapped(|ui| {
+                ui.set_max_width(6.0 * (SWATCH + 80.0));
+                for Entry { choice, key, image, name } in entries {
+                    let tex = swatch(ui, data, key, image);
+                    let image = egui::Image::new(&tex).fit_to_exact_size(egui::vec2(SWATCH, SWATCH));
+                    let r =
+                        ui.add(egui::Button::image_and_text(image, name.as_str()).selected(choice == paint));
+                    if r.clicked() {
+                        out.push(EditorAction::Paint(choice.clone()));
+                    }
+                    if let PaintChoice::Texture(TextureRef::User(n)) = choice {
+                        r.context_menu(|ui| {
+                            if ui.button(labels::REMOVE).clicked() {
+                                out.push(EditorAction::RemoveTexture(n.clone()));
+                            }
+                        });
+                    }
+                }
+            });
+        }
+        if ui.button(labels::IMPORT_TEXTURE).clicked() {
+            out.push(EditorAction::Browse(Purpose::ImportTexture));
+        }
+    });
 }
 
 /// The selected drawn layer's own material, when one is selected.
@@ -111,7 +265,7 @@ fn paint_as_name(m: Option<ElementMaterial>, layer: Option<ElementMaterial>) -> 
 }
 
 /// The chosen tool's options: "Paint as" for the painting tools, "Restore"
-/// for the eraser, "Tolerance" for Remove colour.
+/// for the eraser, "Tolerance" for Remove colour and Fill.
 fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     match state.tool() {
         Tool::Brush | Tool::Rect | Tool::Ellipse | Tool::Line => {
@@ -146,6 +300,13 @@ fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
         Tool::Wand => {
             if let Some(t) =
                 number(ui, data, "tolerance", labels::TOLERANCE, state.tolerance().into(), 0..=100)
+            {
+                out.push(EditorAction::Tolerance(t as u8));
+            }
+        }
+        Tool::Fill => {
+            if let Some(t) =
+                number(ui, data, "fill-tolerance", labels::TOLERANCE, state.fill_tolerance().into(), 0..=100)
             {
                 out.push(EditorAction::Tolerance(t as u8));
             }
