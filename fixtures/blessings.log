@@ -144,3 +144,8 @@
   fixtures/render/look-light.png
   fixtures/render/look-lit.png
   fixtures/render/look-t500.png
+2026-10-18 bless-render: plan 15a Task 14b: the look test level gains a clear glass pane
+  fixtures/render/look-full.png
+  fixtures/render/look-light.png
+  fixtures/render/look-lit.png
+  fixtures/render/look-t500.png

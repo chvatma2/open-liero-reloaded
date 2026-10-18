@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Builds fixtures/look/levels/look-test (plan 15a Task 14) with olr-cli's
 # level and look commands: a glowing sky over a rock building whose roof has
-# two windows, a flickering lava strip, two lamps inside, a dark ambient and
-# a slight grade. Run from the repository root; OLR picks the binary.
+# two windows and whose right wall has a glass pane, a flickering lava strip,
+# two lamps inside, a dark ambient and a slight grade. Run from the repository root; OLR picks the binary.
 set -euo pipefail
 OLR=${OLR:-target/debug/olr-cli}
 P=fixtures/look/levels/look-test
@@ -25,6 +25,11 @@ E draw "$P" building --rect 150,70,200,130 --colour b0a898
 E erase "$P" building --rect 160,80,180,120
 E erase "$P" building --rect 200,70,20,10
 E erase "$P" building --rect 280,70,20,10
+# A glass pane (clear rock) in the building's right wall: light passes,
+# worms and projectiles do not.
+E add-layer "$P" --material rock --name Glass
+E draw "$P" glass --rect 340,110,10,60 --colour a8d8e8
+E set "$P" glass --clear true
 # A lava strip (dirt) on the ground, left of the building.
 E add-layer "$P" --material dirt --name Lava
 E draw "$P" lava --rect 20,196,100,8 --colour e05010
