@@ -450,3 +450,42 @@ fn the_toolbar_stays_in_the_window_and_in_place() {
         assert_eq!(rects(&h), first, "nothing moved at {width} points");
     }
 }
+
+/// The playtest after the two rows: Play, the mod picker and the bots sat
+/// at different heights. Every control of a toolbar row shares one centre
+/// line.
+#[test]
+fn a_toolbar_row_is_one_straight_line() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    // The game's style (`olr_ui::theme::apply`): larger buttons than labels.
+    h.ctx.all_styles_mut(|style| {
+        use egui::{FontId, TextStyle};
+        style.spacing.item_spacing = egui::vec2(8.0, 6.0);
+        style.spacing.button_padding = egui::vec2(10.0, 4.0);
+        style.text_styles = [
+            (TextStyle::Small, FontId::proportional(11.0)),
+            (TextStyle::Body, FontId::proportional(15.0)),
+            (TextStyle::Monospace, FontId::monospace(14.0)),
+            (TextStyle::Button, FontId::proportional(16.0)),
+            (TextStyle::Heading, FontId::proportional(26.0)),
+        ]
+        .into();
+    });
+    h.run();
+    let centres = |names: &[&str]| -> Vec<(String, f32)> {
+        names
+            .iter()
+            .flat_map(|n| h.query_all_by_label(n).map(move |node| (n.to_string(), node.rect().center().y)))
+            .collect()
+    };
+    for row in [
+        &["Select", "Eyedropper", "Round", "Size", "Colour", "Back tile"][..],
+        &[labels::UNDO, labels::OPEN, labels::CLOSE, labels::PLAY, "Mod", "Bots", "Material view", "Grid"][..],
+    ] {
+        let c = centres(row);
+        let first = c[0].1;
+        for (name, y) in &c {
+            assert!((y - first).abs() <= 1.0, "{name} centred at {y}, not {first}: {c:?}");
+        }
+    }
+}

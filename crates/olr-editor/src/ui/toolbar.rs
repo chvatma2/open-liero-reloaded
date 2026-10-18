@@ -19,6 +19,11 @@ const MARK_WIDTH: f32 = 110.0;
 /// drawing (tools, brush, paint), then the files, history, Play and the
 /// view; each control's place is fixed by what precedes it alone.
 pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+    // Every control as tall as a button, so a row's labels, fields and
+    // pickers share its buttons' centre line (the host's theme makes
+    // buttons taller than labels: the playtest's crooked Play, Mod, Bots).
+    let h = ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
+    ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(h);
     ui.horizontal_wrapped(|ui| drawing(ui, state, data, out));
     ui.horizontal_wrapped(|ui| session(ui, state, data, out));
 }

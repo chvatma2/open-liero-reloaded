@@ -87,7 +87,9 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
 - **Panels** (`ui/`): toolbar in two rows that never move (drawing: tools,
   brush, paint; then history, Open…, Save, Close, the unsaved mark's kept
   space, Play with a fixed-width mod picker and the bots, the view; the
-  playtest's controls past the window's edge, `the_toolbar_stays_in_the_window_and_in_place`), element
+  playtest's controls past the window's edge, `the_toolbar_stays_in_the_window_and_in_place`;
+  every control as tall as a button, so each row is one straight line
+  under the host's theme, `a_toolbar_row_is_one_straight_line`), element
   list (drag a name to reorder; Import image… opens the browser),
   properties or level settings, status bar, canvas (a frame without fill,
   `egui::Frame::NONE`: the host draws the bake under it; its AccessKit
