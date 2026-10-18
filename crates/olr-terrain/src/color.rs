@@ -8,6 +8,8 @@
 //! exactly as OLX's single loop does. Replaying the same edits in the same
 //! order keeps that copy equal to the simulation's grid.
 
+use alloc::boxed::Box;
+use alloc::vec;
 use alloc::vec::Vec;
 
 use olr_data::image::{Rgba, RgbaImage};
@@ -95,6 +97,56 @@ pub struct ColorMap {
     /// The green shades' own generator (OLX draws them from the client's `rand()`).
     rng: u64,
     dirty: Vec<Rect>,
+    /// The glow channel (spec 2026-10-18 look system §Glow), when the level has one.
+    glow: Option<Box<Glow>>,
+}
+
+/// A level's glow (the look system's `look/` images): strength per art pixel
+/// and group per world pixel, of the composite at load (`front`, which
+/// equals `back` on background) and of the backdrop digging reveals.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GlowLayers {
+    /// Art pixels (the colour map's size).
+    pub art: (u32, u32),
+    /// World pixels (the material's size).
+    pub world: (u32, u32),
+    /// Strength 0-255, art size, row-major.
+    pub front: Vec<u8>,
+    pub back: Vec<u8>,
+    /// Glow group index per world pixel, row-major.
+    pub groups: Vec<u8>,
+    pub groups_back: Vec<u8>,
+}
+
+impl GlowLayers {
+    /// No glow anywhere.
+    pub fn empty(art: (u32, u32), world: (u32, u32)) -> GlowLayers {
+        let a = art.0 as usize * art.1 as usize;
+        let w = world.0 as usize * world.1 as usize;
+        GlowLayers { art, world, front: vec![0; a], back: vec![0; a], groups: vec![0; w], groups_back: vec![0; w] }
+    }
+
+    /// The sizes match `art` and `world` and every buffer holds them.
+    pub fn fits(&self, art: (u32, u32), world: (u32, u32)) -> bool {
+        let a = art.0 as usize * art.1 as usize;
+        let w = world.0 as usize * world.1 as usize;
+        self.art == art
+            && self.world == world
+            && self.front.len() == a
+            && self.back.len() == a
+            && self.groups.len() == w
+            && self.groups_back.len() == w
+    }
+}
+
+/// The colour map's glow: the layers as loaded, and the composite the edits change.
+#[derive(Clone, Debug)]
+struct Glow {
+    layers: GlowLayers,
+    /// Strength, art size.
+    comp: Vec<u8>,
+    /// Group, world size.
+    comp_groups: Vec<u8>,
 }
 
 /// `img` as opaque RGBA8 of `w` × `h`: the part that fits is copied, the
@@ -154,7 +206,69 @@ impl ColorMap {
             theme,
             rng: 0x9e37_79b9_7f4a_7c15,
             dirty: Vec::with_capacity(Self::MAX_DIRTY),
+            glow: None,
         }
+    }
+
+    /// Gives the map a glow channel (`None` removes it). Layers that do not
+    /// fit this map's art and world sizes are refused (`false`) and the map
+    /// keeps what it had. The composite starts as `front`; set it before the
+    /// first upload, as nothing is marked dirty.
+    pub fn set_glow(&mut self, glow: Option<GlowLayers>) -> bool {
+        let Some(layers) = glow else {
+            self.glow = None;
+            return true;
+        };
+        if !layers.fits((self.width, self.height), (self.material.width(), self.material.height())) {
+            return false;
+        }
+        let (comp, comp_groups) = (layers.front.clone(), layers.groups.clone());
+        self.glow = Some(Box::new(Glow { layers, comp, comp_groups }));
+        true
+    }
+
+    /// The composite glow strength, art size, row-major; `None` without glow.
+    pub fn glow(&self) -> Option<&[u8]> {
+        self.glow.as_ref().map(|g| &g.comp[..])
+    }
+
+    /// The composite glow group per world pixel, row-major; `None` without glow.
+    pub fn glow_groups(&self) -> Option<&[u8]> {
+        self.glow.as_ref().map(|g| &g.comp_groups[..])
+    }
+
+    /// [`ColorMap::replace_rect`]'s glow: copies art rectangle `r` of
+    /// `glow`'s strengths (front into the composite too) and the groups of
+    /// the world pixels under it, then marks `r` dirty. Layers of another
+    /// size, or a map without glow, change nothing; `r` is clipped.
+    pub fn replace_glow_rect(&mut self, r: Rect, glow: &GlowLayers) {
+        let (art, world) = ((self.width, self.height), (self.material.width(), self.material.height()));
+        let Some(g) = self.glow.as_deref_mut() else { return };
+        if !glow.fits(art, world) {
+            return;
+        }
+        let (x0, y0) = (r.x.min(art.0), r.y.min(art.1));
+        let (x1, y1) = (r.x.saturating_add(r.w).min(art.0), r.y.saturating_add(r.h).min(art.1));
+        if x1 <= x0 || y1 <= y0 {
+            return;
+        }
+        let w = art.0 as usize;
+        for y in y0..y1 {
+            let (a, b) = (y as usize * w + x0 as usize, y as usize * w + x1 as usize);
+            g.layers.front[a..b].copy_from_slice(&glow.front[a..b]);
+            g.layers.back[a..b].copy_from_slice(&glow.back[a..b]);
+            g.comp[a..b].copy_from_slice(&glow.front[a..b]);
+        }
+        let (s, mw) = (self.scale, world.0 as usize);
+        for wy in y0 / s..y1.div_ceil(s) {
+            for wx in x0 / s..x1.div_ceil(s) {
+                let i = wy as usize * mw + wx as usize;
+                g.layers.groups[i] = glow.groups[i];
+                g.layers.groups_back[i] = glow.groups_back[i];
+                g.comp_groups[i] = glow.groups[i];
+            }
+        }
+        self.push_dirty(Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 });
     }
 
     /// Width of the colour image in art pixels.
@@ -272,9 +386,18 @@ impl ColorMap {
                 self.material.cells[i] = m as u8;
                 let (x, y) = (x as u32, y as u32);
                 match m {
-                    Material::Background => self.copy_block(x, y, false),
-                    Material::Dirt => self.put(x, y, self.tile(x, y)),
-                    Material::Rock => self.copy_block(x, y, true),
+                    Material::Background => {
+                        self.copy_block(x, y, false);
+                        glow_from(&mut self.glow, (self.width, self.scale, self.material.width()), x, y, false);
+                    }
+                    Material::Dirt => {
+                        self.put(x, y, self.tile(x, y));
+                        glow_none(&mut self.glow, (self.width, self.scale, self.material.width()), x, y);
+                    }
+                    Material::Rock => {
+                        self.copy_block(x, y, true);
+                        glow_from(&mut self.glow, (self.width, self.scale, self.material.width()), x, y, true);
+                    }
                 }
             }
         }
@@ -349,7 +472,10 @@ impl ColorMap {
                     continue;
                 }
                 match stamp.get(col as u32, row as u32) {
-                    StampPixel::Carve => copy(&mut self.pixels, &self.back, self.width, self.scale, mx, my),
+                    StampPixel::Carve => {
+                        copy(&mut self.pixels, &self.back, self.width, self.scale, mx, my);
+                        glow_from(&mut self.glow, (self.width, self.scale, self.material.width()), mx, my, false);
+                    }
                     StampPixel::Paint(c) => fill(&mut self.pixels, self.width, self.scale, mx, my, c),
                     StampPixel::Skip => continue,
                 }
@@ -379,6 +505,7 @@ impl ColorMap {
             if p != StampPixel::Skip && flag & PX_ROCK == 0 {
                 let t = tile(&self.theme.front_tile, mx, my);
                 fill(&mut self.pixels, self.width, self.scale, mx, my, t);
+                glow_none(&mut self.glow, (self.width, self.scale, self.material.width()), mx, my);
                 changed = true;
             }
             if let StampPixel::Paint(rim) = p
@@ -413,14 +540,9 @@ impl ColorMap {
                 GreenPixel::Rim(rim) => rim,
                 GreenPixel::Pink => continue,
             };
-            fill(
-                &mut self.pixels,
-                self.width,
-                self.scale,
-                (i % mw as usize) as u32,
-                (i / mw as usize) as u32,
-                colour,
-            );
+            let (mx, my) = ((i % mw as usize) as u32, (i / mw as usize) as u32);
+            fill(&mut self.pixels, self.width, self.scale, mx, my, colour);
+            glow_none(&mut self.glow, (self.width, self.scale, self.material.width()), mx, my);
             changed = true;
         }
         self.material.place_green_dirt(mask, pos_x, pos_y, &mut || 0);
@@ -501,6 +623,39 @@ fn copy(dst: &mut [u8], src: &[u8], w: u32, s: u32, x: u32, y: u32) {
     for row in y as usize * s..(y as usize + 1) * s {
         let start = (row * w + x as usize * s) * 4;
         dst[start..start + s * 4].copy_from_slice(&src[start..start + s * 4]);
+    }
+}
+
+/// World pixel `(x, y)` takes the loaded front's or back's glow and group
+/// (art `w` wide at scale `s`, world `mw` wide).
+fn glow_from(glow: &mut Option<Box<Glow>>, (w, s, mw): (u32, u32, u32), x: u32, y: u32, front: bool) {
+    if let Some(g) = glow.as_deref_mut() {
+        let (src, groups) =
+            if front { (&g.layers.front, &g.layers.groups) } else { (&g.layers.back, &g.layers.groups_back) };
+        copy_bytes(&mut g.comp, src, w, s, x, y);
+        let i = y as usize * mw as usize + x as usize;
+        g.comp_groups[i] = groups[i];
+    }
+}
+
+/// World pixel `(x, y)` glows no more (dirt the simulation placed).
+fn glow_none(glow: &mut Option<Box<Glow>>, (w, s, mw): (u32, u32, u32), x: u32, y: u32) {
+    if let Some(g) = glow.as_deref_mut() {
+        let (w, s) = (w as usize, s as usize);
+        for row in y as usize * s..(y as usize + 1) * s {
+            let start = row * w + x as usize * s;
+            g.comp[start..start + s].fill(0);
+        }
+        g.comp_groups[y as usize * mw as usize + x as usize] = 0;
+    }
+}
+
+/// Copies world pixel `(x, y)`'s block of a one-byte-per-art-pixel image.
+fn copy_bytes(dst: &mut [u8], src: &[u8], w: u32, s: u32, x: u32, y: u32) {
+    let (w, s) = (w as usize, s as usize);
+    for row in y as usize * s..(y as usize + 1) * s {
+        let start = row * w + x as usize * s;
+        dst[start..start + s].copy_from_slice(&src[start..start + s]);
     }
 }
 

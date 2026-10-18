@@ -36,6 +36,15 @@ and the colour image that follows it (`ColorMap`).
   rectangle, then marks it dirty; images or a material of another size
   change nothing, `r` is clipped. The image is always
   opaque; odd art sizes are cropped or padded, never a panic.
+- **Glow** (plan 15a, look system §Glow): `set_glow(Some(GlowLayers))` gives the map
+  a glow channel (strength per art pixel, group per world pixel, of the front
+  as loaded and of the backdrop); layers of another size are refused
+  (`false`). Edits keep it in step: a carve reveals the back's glow and
+  group, the rim keeps the pixel's; placed and green dirt glow none; stains
+  keep glow; `rebuild_area` takes back (background), none (dirt) or front
+  (rock). `glow()` and `glow_groups()` are the composites;
+  `replace_glow_rect` is `replace_rect`'s glow (the editor). Without glow
+  nothing changes and nothing is spent.
 - **Journal** (`journal.rs`, networking spec §3.3): off by default; `start_journal` records each mutator's clipped pre-image and keeps the order-independent cell hash. Every new write to `cells` must go through `set_cell` after `record`, or rollback breaks.
 - **Restored areas**: `undo_to` reports each undone edit's rectangle and a `load_cells` the whole map; `take_restored_areas()` drains them (`Area`, world px, at most `MAX_RESTORED`, merged into the bounding box beyond), so the colour map, which only replays the ticks' edits, can `rebuild_area` what an undo or a load changed.
 - **State transfer**: `cells()` and `load_cells` (all-or-nothing, valid materials only). A load is not undoable: it seals the journal, so every older mark is `Forgotten`.

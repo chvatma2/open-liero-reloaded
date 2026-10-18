@@ -16,7 +16,7 @@ mod stamp;
 use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-pub use color::{Area, ColorEdit, ColorMap, GREEN_SHADES, Rect, ThemeArt};
+pub use color::{Area, ColorEdit, ColorMap, GREEN_SHADES, GlowLayers, Rect, ThemeArt};
 pub use journal::{JournalError, JournalMark};
 use olr_data::level::{Material, MaterialGrid};
 pub use stamp::{GreenMask, GreenPixel, Stamp, StampPixel};
