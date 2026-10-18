@@ -639,6 +639,16 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   renames is made `<id>` again first), `discard_recovery` (ids are plain names)).
   Bundled roots (every root but `packs/`) and `recovery/` are refused for
   Open, Create and Save (`BUNDLED`, `RECOVERY_IN_PLACE`).
+  Plan 14e: the catalog's themes carry their holes (`StampMask::from_hole`
+  of `LoadedTheme::holes`, the crater brushes); the user's texture library
+  is `Store::textures_dir()`, listed at `new` (`files::list_textures`:
+  `<name>.png` in name order, at most `MAX_USER_TEXTURES`, each read as an
+  import and within `MAX_TEXTURE_SIDE`, an unreadable one a warning);
+  `AddTexture` (`files::add_texture`: bounded read, side checked from the
+  header, the cap counted by name, a unique portable name, written through
+  a hidden `.part`) and `RemoveTexture` (`remove_texture`, plain names
+  only) answer `TexturesChanged` with the library re-listed, and `Failed`
+  when the change failed.
   `HostOut::{Upload, FullUpload, Play, Closed,
   Message}` is what the app does. The shell owns the host (`Shell::editor`):
   while it is open `App::frame` draws `olr_editor::ui::show` instead of the

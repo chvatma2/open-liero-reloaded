@@ -48,7 +48,11 @@ The headless command-line tool. Its commands:
   <pack> …` and `level bake <pack>` (`element_cmd.rs`, plan 14a; plan
   14d: `draw --material`, `merge-down <id>`, `split <id>` printing `added
   element <id>` per part, `mask <id> (--rect|--circle|--colour-at X,Y
-  [--tolerance N]) [--restore]`, a restore taking a shape only): the
+  [--tolerance N]) [--restore]`, a restore taking a shape only; plan 14e:
+  `fill <id> --at X,Y [--tolerance N] (--colour|--tile|--texture)
+  [--material M]` (a seed outside the layer refused), `duplicate <id>`
+  printing `added element <id>`, `--texture` an alias of `--tile` on every
+  paint): the
   `olr_edit::element` operations on a level's composition. Each loads the
   pack, applies, bakes (`compose::bake`, the back tile of the level's
   theme in `--content`, `content/packs` by default) and saves; the first

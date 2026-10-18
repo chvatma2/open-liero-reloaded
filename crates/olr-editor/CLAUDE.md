@@ -114,6 +114,37 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   toolbar has three rows (tools and the tool's options in a reserved
   slot, brush and paint, session). `mask_dab_speed` (olr-edit): about 3 ms
   a dab in release; `layer_move_speed`: 7-9 ms a move.
+- **Plan 14e** (STATUS.md, "Level editor decisions (plan 14e)"):
+  - **Paint**: `PaintChoice::Texture(TextureRef)` (`PaintChoice` is
+    `Clone`, `state.paint()` a reference); the state's built-in textures
+    (`builtin_textures`) and the user's (`Catalog::textures`,
+    `TextureEntry`; `TexturesChanged` replaces them and bumps
+    `textures_generation`); a missing texture paints the default colour.
+    `Browse(Purpose::ImportTexture)`'s pick sends `AddTexture(path)`;
+    `RemoveTexture(name)` asks the host.
+  - **Tools**: Fill (G; `Document::fill`, its tolerance `fill_tolerance`,
+    `Tolerance` setting the chosen tool's), crater brushes
+    (`BrushShape::Crater(i)`, `ThemeEntry::holes`, `state.holes()` for the
+    level's theme; joined by dabs about every half crater), Select pixels (M; the
+    `pixel_rect`, dropped on a tool change, `DropPixels` (Escape), Open and
+    Close).
+  - **Palette** (`ui/toolbar.rs`): a Crater picker after Square (hidden
+    without holes), "Textures…" showing the current paint's swatch, its
+    popup grouped "Theme" (`THEME_FRONT`, `THEME_BACK`), "Built-in" and
+    "Yours" (Remove for the chosen one of yours), "Import texture…";
+    swatches cached in `EditorData` by key, dropped when no longer listed.
+  - **Multi-select**: `Selection::Many` (stack order; `group` normalises,
+    `has`, `ids`), `SelectToggle`/`SelectRange` (the list's Ctrl and Shift
+    clicks), `Pointer { toggle }` (Ctrl on the canvas), `Drag::MoveMany`,
+    `SetMany`; `Document::set_many`, `move_many`, `remove_many` (one step
+    each, a locked member refusing, named); the group panel. The
+    properties panel keeps 260 points at least.
+  - **Clipboard** (`clipboard.rs`): `Clipboard::Elements` (`Document::copy`,
+    drawn layers cropped; `paste`: new ids and names, resampled across art
+    scales, originals never overwritten) and `Clipboard::Pixels`
+    (`copy_pixels`, `paste_pixels`: a new layer "Pasted"), kept across
+    documents; `Copy`, `Cut`, `Paste` from Ctrl+C/X/V or egui's copy, cut
+    and paste events, each paste (4, 4) further.
 - **Tests** (`tests/`, one binary): `document.rs`, `history.rs` (the
   undo proptest, the cap), `state.rs` (a synchronous test host in
   `common.rs`), `tools.rs` (the ignored `brush_dab_speed`: about 2 ms in

@@ -127,13 +127,32 @@ templates and the level operations.
   - **`element`**: `draw(…, material)`, `erase`, `merge_down`, `split`,
     `mask(MaskOp)`; `set At` on a drawn layer pins its box (or frees it at
     the origin); `set Material` on a mixed layer makes it plain.
+- **Plan 14e** (decisions in `docs/porting/STATUS.md`, "Level editor
+  decisions (plan 14e)"):
+  - **`textures`**: `builtin()` (R1: Dirt, Rock, Grass, Brick, Metal,
+    Wood; 64 × 64, tileable, integer hash), `MAX_TEXTURE_SIDE` (512),
+    `MAX_USER_TEXTURES` (256).
+  - **`level`**: `Shape` is `Clone`, not `Copy`; `Shape::Stamp { x, y,
+    scale, mask: Arc<StampMask> }` (a theme hole centred, scale clamped to
+    `MAX_STAMP_SCALE` 16; 0 or a cover not matching its size covers
+    nothing); `StampMask::from_hole` (covered where neither black nor
+    transparent).
+  - **`drawn`**: `fill` (R5: 4-neighbour from a seed within box ∩ level,
+    an explicit stack and a visited `Vec<bool>`; `None` for a seed outside
+    or no change; `fill_speed` ignored test: about 0.21 s in release for
+    an open 4096 × 2048 layer), `crop` (to the covered art or back-art
+    box).
+  - **`element`**: `fill` (a seed outside the layer refused, the pack
+    unchanged: `paint_layer`'s closure is fallible), `duplicate` (directly
+    above; an image shares its original, its own files copied under the
+    new id), `copy_name` ("Crate" → "Crate 2", "Crate 2" → "Crate 3").
 - **Tests** (`tests/`, one binary): `pack.rs` (every bundled pack loads and
   writes back byte for byte; foreign files kept; invalid results refused;
   saves through `x/..` and a symbolic link; a name a save would lose),
   `fmt.rs` (`bundled_packs_are_canonical`, R5's `check` guard), `new.rs`,
   `level.rs` (a proptest of the background invariant at art scales 1-4)
   and `guide.rs` (`docs/formats/README.md`'s examples parse, are canonical
-  and check clean, the composed level's files generated); `pixelate.rs`,
+  and check clean, the composed level's files generated); `pixelate.rs`, `textures.rs`,
   `compose.rs` (the raster round trip of every bundled level, the region
   proptest, `the_fixture_is_baked` over `fixtures/edit/composed-level`, the
   ignored `bake_speed`: about 0.3-0.4 s in release for a full-level

@@ -3429,6 +3429,84 @@ and its batch reviews. Tools, not OLX behaviour.
   pixel; on a mixed layer it reads "Mixed", and a choice makes the layer
   plain of it (one swap).
 
+## Level editor decisions (plan 14e)
+
+Decided in `docs/superpowers/plans/2026-10-18-plan-14e-textures-clipboard.md`
+(spec `docs/superpowers/specs/2026-10-18-level-editor-polish-design.md`)
+and its batch reviews. Tools, not OLX behaviour; no format change.
+
+- **R1 - built-in textures are code**: `olr_edit::textures::builtin()`
+  makes Dirt, Rock, Grass, Brick, Metal and Wood, 64 × 64 and opaque, from
+  a fixed integer hash: value noise on lattices that wrap every 64 pixels,
+  quantised to 8 shades of the material's palette; bricks, planks and
+  plates are patterns with a fixed shade beside each joint, so the tile's
+  own seam steps like any joint. No files, no pack kind, nothing to
+  licence (the spec's shipped texture pack is this).
+- **R2 - the user's library**: the data directory's `textures/`, one
+  `<name>.png` per texture (`olr_ui::Store::textures_dir`). Import reads a
+  PNG or JPEG as an image import is (`MAX_IMPORT_BYTES`, signature first),
+  refuses a side above `MAX_TEXTURE_SIDE` (512) from its header and a
+  library of `MAX_USER_TEXTURES` (256, counted by name), names it after
+  the file's stem (letters, digits, `-`, `_` and spaces; at most 64
+  characters; made unique case aside, `-2`, `-3`, …) and writes it through
+  a hidden `.part` file. The host lists it when the editor opens (an
+  unreadable file is a warning) and answers `AddTexture` and
+  `RemoveTexture` with the library re-listed (`TexturesChanged`), and
+  `Failed(why)` when the change failed.
+- **R3 - what paint is**: `PaintChoice::{Colour, FrontTile, BackTile,
+  Texture(TextureRef::{Builtin(i), User(name)})}`, resolved to a
+  `Paint::Tile` when painted: in step with the level's art origin, as the
+  theme's tiles. A texture no longer there paints the default colour (and
+  the choice falls back to it).
+- **R4 - crater brushes**: `BrushShape::Crater(i)`, the level theme's hole
+  `i` as `Shape::Stamp` (`StampMask`: covered where neither black nor
+  transparent, OLX's carve and paint pixels), scale `brush size ÷ the
+  hole's longest side`, clamped to 1-16; a stroke joins its dabs with more
+  dabs along the segment, not a thick line. A hole the theme lacks dabs
+  round. The picker lists the theme's holes (none: hidden).
+- **R5 - fill** (G): the 4-connected world pixels of the selected drawn
+  layer from the clicked one, within its box and the level, sharing the
+  seed's covered state and, covered, a centre colour alike within the
+  tolerance (Fill's own, default 0); whole blocks painted with the paint
+  and "Paint as" (its conversion to mixed first, undone when nothing
+  changed); one step; refused on a picture. 0.21 s in release for an open
+  4096 × 2048 layer. `olr-cli level element fill`.
+- **R6 - the element clipboard**: the editor's own, kept across Open, New
+  and Close (`Clipboard::Elements`, `Snapshot`s and their art scale).
+  Copies of drawn layers are cropped to their covered pixels
+  (`drawn::crop`). A paste puts copies on top, (4, 4) further than the
+  last paste, selected, as one step: new ids, names `<name> 2`, `3`, …;
+  drawn and raster art resampled to the level's art scale, images
+  processed again; an image shares any original here of its exact bytes,
+  else takes a new name, never overwriting another picture; a raster
+  pastes only into a level of its size. Cut is copy, then delete.
+  `olr-cli level element duplicate` copies an element directly above.
+- **R7 - pixels**: Select pixels (M) drags a rectangle on the selected
+  drawn layer; Ctrl+C copies its art and cells (`PixelClip`), Ctrl+X
+  copies then erases it (14d's erase: dirt or rock over back art digs),
+  Delete erases it, Escape drops it (as do a tool change, Open and
+  Close). A paste makes a new boxed layer "Pasted" at the copied place
+  plus (4, 4), plain when its covered pixels share a material, else mixed
+  (C3). The spec's floating paste is this simpler first version; the step
+  after it is Merge down.
+- **R8 - multi-select**: `Selection::Many`, two elements or more in stack
+  order. Ctrl+click toggles (list and canvas), Shift+click in the list
+  selects the range from the single selection; a press on a member drags
+  the group; arrows nudge it; Delete, Copy, Cut, Visible, Locked and
+  Material apply to each, one step each. A move, delete, hide or material
+  with a locked member is refused, naming it; Locked applies to all; a
+  raster member does not move. The panel shows the count, Visible and
+  Locked (on when all are), Material ("Different" when they disagree);
+  no Merge down or Split. The properties panel keeps 260 points at least.
+- **R9 - shortcuts**: Ctrl+C, X and V as key presses and as the window's
+  `Event::Copy`, `Cut` and `Paste`, never while a text field has the
+  keyboard; G Fill, M Select pixels.
+- **R10 - `olr-cli`**: `duplicate <id>` (`added element <id>`; an image
+  shares its original, files of its own copied under the new id),
+  `fill <id> --at X,Y [--tolerance N] <paint> [--material M]` (a seed
+  outside the layer refused, nothing changed), `--texture` an alias of
+  `--tile`.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

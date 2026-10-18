@@ -3,8 +3,10 @@
 - **Status:** agreed with the user on 2026-10-18, after the playtest of plan
   14c's editor. Planned as plan 14d, before the look system (milestone 0.2
   sub-project 3). 14d done (2026-10-18): movable and mixed layers,
-  masks, merge, split; next 14e (textures, fill, stamps), then 14f
-  (clipboard, multi-select).
+  masks, merge, split. 14e done (2026-10-18): textures (built-in, the
+  theme's, the user's library), fill, crater brushes, element and pixel
+  copy and paste, multi-select; pixel paste makes a new layer (the
+  floating paste is a follow-up).
 - **Builds on:** `docs/superpowers/specs/2026-10-17-editor-foundation-and-level-editor-design.md`
   (the element model, the bake, the editor), plans 14a-14c, and the
   decisions in `docs/porting/STATUS.md` ("Level composition decisions",
