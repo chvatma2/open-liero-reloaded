@@ -106,7 +106,7 @@ A thing placed in a level.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `at` | (integer, integer) | required | World pixels (x, y), origin top-left, y down. |
+| `at` | (integer, integer) | required | World pixels (x, y), origin top-left, y down; outside the level by at most 4096 (a light outside lights the level through the open air around it). |
 | `colour` | [colour](#colour) | required | Opaque. |
 | `intensity` | integer | required | The light at the source, percent, 0 to 1000. |
 | `reach` | [ReachSource](#reachsource) | required | Where it fades to nothing. |

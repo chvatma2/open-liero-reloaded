@@ -1,7 +1,7 @@
 // Placed lights' shadow maps (plan 15a Task 11): row i is light i, column
 // r the distance from the light to the first rock or dirt along ray r of
 // SHADOW_RAYS, marched in world-pixel steps from the light's radius out to
-// its reach (or the level's far side). Outside the level is open. A light
+// its reach, within the level's box. Outside the level is open. A light
 // whose centre is solid gets 0 on every ray: it lights nothing.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
@@ -36,14 +36,35 @@ fn fs_shadow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     }
     let angle = (ray + 0.5) / SHADOW_RAYS * 6.2831853;
     let dir = vec2<f32>(cos(angle), sin(angle));
-    // As far as the reach, and never past the level's farthest corner.
-    let level = look.level.xy;
-    let corner = max(abs(pos), abs(pos - level));
-    let far = length(corner) + 1.0;
-    let end = min(a.z + a.w, far);
-    var d = a.z;
-    loop {
-        if d >= end {
+    // Only the part of the ray inside the level can meet rock (outside is
+    // open): clip it to the level's box (a slab test), so a light however
+    // far away marches at most across the level. A light inside starts at
+    // its radius as before.
+    let size = min(look.level.xy, vec2<f32>(textureDimensions(solid_tex)));
+    var t0 = a.z;
+    var t1 = a.z + a.w;
+    for (var k = 0; k < 2; k++) {
+        if abs(dir[k]) < 1e-6 {
+            if pos[k] < 0.0 || pos[k] > size[k] {
+                return vec4<f32>(1e9);
+            }
+        } else {
+            let ta = (0.0 - pos[k]) / dir[k];
+            let tb = (size[k] - pos[k]) / dir[k];
+            t0 = max(t0, min(ta, tb));
+            t1 = min(t1, max(ta, tb) + 1.0);
+        }
+    }
+    if !(t1 > t0) {
+        return vec4<f32>(1e9);
+    }
+    // From the entry, whole steps after the radius, so a light inside the
+    // level samples where it always did; never more steps than the box's
+    // perimeter (f32 stops counting whole steps far away).
+    var d = a.z + max(floor(t0 - a.z), 0.0);
+    let steps = i32(2.0 * (size.x + size.y)) + 2;
+    for (var i = 0; i < steps; i++) {
+        if d >= t1 {
             break;
         }
         if solid_at(pos + dir * d) {

@@ -65,7 +65,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     };
     let mut look = LookFrame { mode, ..LookFrame::default() };
     look.begin(level.look.as_ref(), args.time as f64);
-    let pad = 6.0;
+    let pad = olr_render::LIGHT_CULL_PAD;
     let v = list.view;
     look.cull([v.x - pad, v.y - pad, v.w + 2.0 * pad, v.h + 2.0 * pad]);
     let gpu = Offscreen::new()?;

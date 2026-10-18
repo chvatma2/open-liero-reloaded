@@ -92,6 +92,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             },
             backends,
             timestamps: true,
+            max_texture_side: None,
         },
     };
     let content = olr_content::Content::open(&args.content)?;

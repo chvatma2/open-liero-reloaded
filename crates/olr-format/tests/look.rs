@@ -197,6 +197,8 @@ fn limits_are_enforced() {
         ("intensity: 120", "intensity: 1001", "objects[1].intensity"),
         ("radius: 2", "radius: 17", "objects[1].radius"),
         ("radius: 2", "radius: 0", "objects[1].radius"),
+        ("at: (2, 1)", "at: (2, 4100)", "objects[1].at"),
+        ("at: (2, 1)", "at: (-4097, 1)", "objects[1].at"),
         ("\"#ffbe78\"", "\"#ffbe7880\"", "objects[1].colour"),
     ];
     for (from, to, want) in cases {

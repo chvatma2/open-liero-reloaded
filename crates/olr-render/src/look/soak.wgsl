@@ -27,7 +27,7 @@ fn opaque(p: vec2<i32>) -> bool {
 
 fn soak(p: vec2<i32>, dir: vec2<i32>) -> vec3<f32> {
     let own = textureLoad(src, p, 0).rgb;
-    let r = clamp(i32(look.mode.z), 0, 12);
+    let r = clamp(i32(look.mode.z), 0, MAX_SOAK);
     if r == 0 || !opaque(p) {
         return own;
     }

@@ -32,9 +32,8 @@ struct Lights {
 // The shadow maps' rays per light.
 const SHADOW_RAYS: f32 = 512.0;
 
-// World pixels the light grid reaches past the world target on every side,
-// so the soak (12) and a blur (4) never see the grid's edge in the view.
-const LIGHT_PAD: f32 = 16.0;
+// LIGHT_PAD (world pixels the light grid reaches past the world target on
+// every side) and MAX_SOAK are prepended from the Rust constants.
 
 const TAU: f32 = 6.2831853;
 

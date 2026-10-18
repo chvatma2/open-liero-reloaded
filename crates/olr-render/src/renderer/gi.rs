@@ -16,14 +16,18 @@ use super::{entry, pipeline};
 /// The most cells the glow light's grid holds (plan 15a R13).
 pub const GI_CELL_BUDGET: u32 = 262_144;
 
-/// The glow light's cell for a level of `world` pixels: the smallest power
-/// of two `s` (1, 2, 4, ...) with `ceil(w / s) × ceil(h / s)` at most
-/// [`GI_CELL_BUDGET`] cells.
-pub fn gi_cell(world: (u32, u32)) -> u32 {
+/// The glow light's cell for a level of `world` pixels on a device whose
+/// textures are at most `max_dim` texels a side: the smallest power of two
+/// `s` (1, 2, 4, ...) with `ceil(w / s) × ceil(h / s)` at most
+/// [`GI_CELL_BUDGET`] cells and every cascade's texture (at most twice the
+/// grid, plus a probe block) within `max_dim`.
+pub fn gi_cell(world: (u32, u32), max_dim: u32) -> u32 {
+    let fits = |s: u32| {
+        let (w, h) = (u64::from(world.0.div_ceil(s)), u64::from(world.1.div_ceil(s)));
+        w * h <= u64::from(GI_CELL_BUDGET) && 2 * w.max(h) + 8 <= u64::from(max_dim)
+    };
     let mut s = 1u32;
-    while u64::from(world.0.div_ceil(s)) * u64::from(world.1.div_ceil(s)) > u64::from(GI_CELL_BUDGET)
-        && s < 1 << 16
-    {
+    while !fits(s) && s < 1 << 16 {
         s *= 2;
     }
     s
@@ -96,7 +100,7 @@ impl GiPipelines {
             ],
         );
         let fluence_layout = layout("olr-render gi fluence", &[entry(0, frag, FLOAT)]);
-        let head = format!("{}\n{}", super::look::COMMON, include_str!("../look/gi.wgsl"));
+        let head = format!("{}\n{}", super::look::common(), include_str!("../look/gi.wgsl"));
         let make = |label, body: &str, fs, layout: &wgpu::BindGroupLayout, targets: &[_]| {
             pipeline(
                 device,
@@ -258,9 +262,10 @@ impl GiState {
         device: &wgpu::Device,
         pipes: &GiPipelines,
         level: (u32, u32),
+        max_dim: u32,
         inputs: &GiInputs,
     ) -> GiState {
-        let cell = gi_cell(level);
+        let cell = gi_cell(level, max_dim);
         let grid = (level.0.div_ceil(cell).max(1), level.1.div_ceil(cell).max(1));
         let diag = f64::from(grid.0).hypot(f64::from(grid.1)) as f32;
         let mut count = 1;

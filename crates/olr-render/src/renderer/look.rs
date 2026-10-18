@@ -11,7 +11,12 @@ use super::{Renderer, WORLD_FORMAT, entry, pipeline};
 use crate::frame::{WorldFrame, look_texture_sizes};
 
 /// The shared WGSL of every look pass.
-pub(super) const COMMON: &str = include_str!("../look/common.wgsl");
+const COMMON: &str = include_str!("../look/common.wgsl");
+
+/// [`COMMON`] after the Rust constants the shaders share.
+pub(super) fn common() -> String {
+    format!("const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\n{COMMON}", olr_look::MAX_SOAK)
+}
 
 /// Groups in the globals (a group map value is one byte, 0 none).
 pub(super) const GROUPS: usize = 255;
@@ -51,6 +56,11 @@ pub(super) const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16
 /// a blur of up to 4 never see its edge, so the light never depends on the
 /// camera.
 pub(super) const LIGHT_PAD: u32 = olr_look::MAX_SOAK as u32 + 4;
+
+/// World pixels past the view a light must be kept when it reaches that
+/// far (`LookFrame::cull`'s padding): a culled light then lights nothing the
+/// view shows, whatever the camera.
+pub const LIGHT_CULL_PAD: f32 = (crate::MARGIN as u32 + LIGHT_PAD + 1) as f32;
 
 /// Rays per placed light's shadow map (`SHADOW_RAYS` in the shaders).
 pub(super) const SHADOW_RAYS: u32 = 512;
@@ -191,7 +201,7 @@ impl LookState {
                 entry(2, frag, UINT_TEXTURE),
             ],
         });
-        let source = format!("{COMMON}\n{}", include_str!("../look/world_lit.wgsl"));
+        let source = format!("{}\n{}", common(), include_str!("../look/world_lit.wgsl"));
         let attributes =
             wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x2];
         let quads = || wgpu::VertexBufferLayout {
@@ -242,7 +252,7 @@ impl LookState {
         let shadow_pipeline = pipeline(
             device,
             "olr-render shadow",
-            &format!("{COMMON}\n{}", include_str!("../look/shadow.wgsl")),
+            &format!("{}\n{}", common(), include_str!("../look/shadow.wgsl")),
             ("vs_full", "fs_shadow"),
             &[Some(&shadow_layout)],
             &[],
@@ -286,7 +296,7 @@ impl LookState {
                 entry(2, frag, UINT_TEXTURE),
             ],
         });
-        let soak_source = format!("{COMMON}\n{}", include_str!("../look/soak.wgsl"));
+        let soak_source = format!("{}\n{}", common(), include_str!("../look/soak.wgsl"));
         let soak = |fs: &str| {
             pipeline(
                 device,
@@ -316,7 +326,7 @@ impl LookState {
                 entry(3, frag, FLOAT_TEXTURE),
             ],
         });
-        let light_source = format!("{COMMON}\n{}", include_str!("../look/light.wgsl"));
+        let light_source = format!("{}\n{}", common(), include_str!("../look/light.wgsl"));
         let light = |fs: &str| {
             pipeline(
                 device,
@@ -334,7 +344,7 @@ impl LookState {
         let composite_pipeline = pipeline(
             device,
             "olr-render composite",
-            &format!("{COMMON}\n{}", include_str!("../look/composite.wgsl")),
+            &format!("{}\n{}", common(), include_str!("../look/composite.wgsl")),
             ("vs_full", "fs_composite"),
             &[Some(&composite_layout)],
             &[],
@@ -505,7 +515,9 @@ impl LookState {
             solid: &view(&solid),
             terrain: &view(terrain),
         };
-        let gi = super::gi::GiState::new(device, &self.gi, level, &inputs);
+        // Over the level the device keeps (cropped like the terrain): past it
+        // is open, as for the shadows and the soak.
+        let gi = super::gi::GiState::new(device, &self.gi, sizes.world, max_dim, &inputs);
         let t = LookTextures {
             glow,
             groups,
@@ -584,14 +596,10 @@ impl LookState {
             f32::from(look.light_steps),
         ]);
         p.extend([lin(gr.tint[0]), lin(gr.tint[1]), lin(gr.tint[2]), f32::from(look.softness)]);
-        p.extend([
-            frame.origin.0 as f32,
-            frame.origin.1 as f32,
-            frame.scale as f32,
-            look.lights.len() as f32,
-        ]);
-        p.extend([level.0 as f32, level.1 as f32, art_scale as f32, cell as f32]);
+        // Only the first MAX_LIGHTS are uploaded: the shaders loop over those.
         let count = look.lights.len().min(olr_look::MAX_LIGHTS);
+        p.extend([frame.origin.0 as f32, frame.origin.1 as f32, frame.scale as f32, count as f32]);
+        p.extend([level.0 as f32, level.1 as f32, art_scale as f32, cell as f32]);
         self.light_count = count as u32;
         let l = &mut self.packed_lights;
         l.clear();

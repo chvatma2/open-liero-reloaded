@@ -50,6 +50,9 @@ pub struct OffscreenOptions {
     pub backends: Option<wgpu::Backends>,
     /// Ask for `Features::TIMESTAMP_QUERY` when the adapter has it (bench only).
     pub timestamps: bool,
+    /// A texture side below the adapter's (tests: a level the device
+    /// crops), never below wgpu's minimum of 2048.
+    pub max_texture_side: Option<u32>,
 }
 
 /// An adapter's place in `prefer`'s order (lowest first). Software: a
@@ -115,10 +118,15 @@ impl Offscreen {
         } else {
             wgpu::Features::empty()
         };
+        let mut required_limits = adapter.limits();
+        if let Some(side) = o.max_texture_side {
+            required_limits.max_texture_dimension_2d =
+                side.clamp(2048, required_limits.max_texture_dimension_2d);
+        }
         let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
             label: Some("olr-render offscreen"),
             required_features,
-            required_limits: adapter.limits(),
+            required_limits,
             ..Default::default()
         }))
         .map_err(|e| NoAdapter(format!("{} ({:?}): {e}", info.name, info.backend)))?;

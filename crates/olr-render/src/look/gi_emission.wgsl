@@ -14,7 +14,8 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     let cell = vec2<i32>(p.xy);
     let s = max(i32(gp.c.w), 1);
     let a = max(i32(look.level.z), 1);
-    let level = vec2<i32>(look.level.xy);
+    // The level the device keeps: past a crop is open.
+    let level = min(vec2<i32>(look.level.xy), vec2<i32>(textureDimensions(solid_tex)));
     let count = u32(look.mode.y);
     var em = vec3<f32>(0.0);
     var solid = 0.0;

@@ -136,7 +136,9 @@ pub enum LevelObject {
     /// A light (look system): a source of light at a world position that
     /// draws nothing itself. At most 1024 a level.
     Light {
-        /// World pixels (x, y), origin top-left, y down.
+        /// World pixels (x, y), origin top-left, y down; outside the level by
+        /// at most 4096 (a light outside lights the level through the open
+        /// air around it).
         at: (i32, i32),
         /// Opaque.
         colour: Colour,
@@ -245,6 +247,18 @@ pub fn compile_look(src: &LevelSource) -> Result<Option<olr_look::LevelLook>, Fo
                 LEVEL_FILE,
                 &format!("{path}.radius"),
                 format!("{radius}, not within 1 to 16"),
+            ));
+        }
+        // A light may sit outside the level and light it, but not further
+        // than a level's side: the shadow march and the cull stay bounded.
+        let (x, y) = o.at();
+        let side = MAX_SIDE as i64;
+        let within = |v: i32, len: u32| (-side..=i64::from(len) + side).contains(&i64::from(v));
+        if !within(x, src.size.0) || !within(y, src.size.1) {
+            return Err(FormatError::invalid(
+                LEVEL_FILE,
+                &format!("{path}.at"),
+                format!("({x}, {y}) is more than {MAX_SIDE} world pixels outside the level"),
             ));
         }
         look.lights.push(olr_look::PlacedLight {

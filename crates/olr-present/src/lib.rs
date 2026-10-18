@@ -78,9 +78,9 @@ pub struct Presentation {
     look: LookFrame,
 }
 
-/// World pixels past the view a placed light may sit and still count: the
-/// world target's margin, the light grid's pad (4) and one more.
-const LIGHT_VIEW_PAD: f32 = 6.0;
+/// World pixels past the view a placed light may reach and still count:
+/// the renderer's (the world target's margin, the light grid's pad, one more).
+const LIGHT_VIEW_PAD: f32 = olr_render::LIGHT_CULL_PAD;
 
 impl Presentation {
     /// The presentation of `world`, at its start (the first tick blends

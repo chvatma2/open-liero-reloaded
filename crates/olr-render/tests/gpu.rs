@@ -716,11 +716,15 @@ fn glow_frame(gpu: &Offscreen, map: &ColorMap, view: View, look: &olr_look::Look
 
 #[test]
 fn gi_cell_sizes() {
-    assert_eq!(olr_render::gi_cell((504, 350)), 1);
-    assert_eq!(olr_render::gi_cell((1350, 550)), 2);
-    assert_eq!(olr_render::gi_cell((4096, 4096)), 8);
-    assert_eq!(olr_render::gi_cell((0, 0)), 1);
-    assert_eq!(olr_render::gi_cell((4096, 64)), 1);
+    let big = 16384;
+    assert_eq!(olr_render::gi_cell((504, 350), big), 1);
+    assert_eq!(olr_render::gi_cell((1350, 550), big), 2);
+    assert_eq!(olr_render::gi_cell((4096, 4096), big), 8);
+    assert_eq!(olr_render::gi_cell((0, 0), big), 1);
+    assert_eq!(olr_render::gi_cell((4096, 64), big), 1);
+    // A cascade is up to twice the grid: a small device takes larger cells.
+    assert_eq!(olr_render::gi_cell((4096, 64), 8192), 2);
+    assert_eq!(olr_render::gi_cell((2048, 40), 2048), 4);
 }
 
 #[test]
@@ -851,4 +855,103 @@ fn a_clear_solid_takes_no_soak_or_floor() {
     });
     assert!((light_at(&gpu, &r, 50, 25)[0] - 0.4).abs() < 2e-3, "opaque rock: the floor");
     assert!((light_at(&gpu, &r, 50, 35)[0] - 0.1).abs() < 1e-3, "clear rock: lit as air");
+}
+
+#[test]
+fn a_far_unlimited_light_ends_its_shadow_march() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |x, _| x == 50);
+    // Far past f32's whole numbers: a march in 1-pixel steps would never end.
+    for at in [[1.0e8, 20.5], [-3.0e7, -3.0e7], [60.5, 1.0e9]] {
+        let r =
+            lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &[lamp(at, f32::INFINITY)], 0);
+        assert!(light_at(&gpu, &r, 10, 20)[0].is_finite());
+    }
+    // A light in the level marches as before: the wall still shadows.
+    let r = lit_frame(
+        &gpu,
+        &map,
+        View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 },
+        &[lamp([30.5, 20.5], f32::INFINITY)],
+        0,
+    );
+    assert!((light_at(&gpu, &r, 60, 20)[0] - 0.1).abs() < 1e-3);
+}
+
+#[test]
+fn culling_with_the_cull_pad_changes_no_light() {
+    let Some(gpu) = offscreen() else { return };
+    // Rock straddling the view's left and top edges, which soaks the light
+    // of the air beyond them.
+    let map = room(300, 120, |x, y| {
+        (98..=103).contains(&x) && (30..90).contains(&y) || (18..=23).contains(&y) && x > 120
+    });
+    let view = View { x: 100.0, y: 20.0, w: 100.0, h: 60.0 };
+    // Small lamps beyond the edges, their reach ending 1 to 30 px outside.
+    let lights: Vec<_> = (1..=30)
+        .flat_map(|d| {
+            let d = d as f32;
+            [lamp([100.0 - d - 5.0, 40.5 + d], 3.0), lamp([130.5 + 2.0 * d, 20.0 - d - 5.0], 3.0)]
+        })
+        .collect();
+    let set = |l: &mut olr_look::LookFrame| {
+        l.softness = 4;
+        l.light_soak = olr_look::MAX_SOAK;
+    };
+    let all = lit_frame_with(&gpu, &map, view, &lights, set);
+    let culled = {
+        let mut r = gpu.renderer(RenderSettings::default());
+        r.set_lighting(true);
+        r.upload_terrain(&map);
+        let mut look = dim(0.1);
+        set(&mut look);
+        look.lights.extend_from_slice(&lights);
+        let p = olr_render::LIGHT_CULL_PAD;
+        look.cull([view.x - p, view.y - p, view.w + 2.0 * p, view.h + 2.0 * p]);
+        let mut l = list(view);
+        l.map = (300, 120);
+        gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
+        r
+    };
+    for y in 20..80 {
+        for x in 100..200 {
+            assert_eq!(light_at(&gpu, &all, x, y), light_at(&gpu, &culled, x, y), "({x}, {y})");
+        }
+    }
+}
+
+#[test]
+fn glow_light_past_the_device_crop_is_open() {
+    if offscreen().is_none() {
+        return;
+    }
+    let small = OffscreenOptions { max_texture_side: Some(2048), ..OffscreenOptions::default() };
+    let Ok(gpu) = olr_render::Offscreen::open(&small) else { return };
+    assert_eq!(gpu.device().limits().max_texture_dimension_2d, 2048);
+    // Glowing ground from x 2040 to the level's end at 3000: the device keeps
+    // x < 2048, so only 8 columns of it glow; the rest is cut off.
+    let glows = |x: u32, y: u32| y >= 36 && x >= 2040;
+    let cropped = glowing_room(3000, 40, |_, y| y >= 36, glows);
+    let view = View { x: 1950.0, y: 0.0, w: 98.0, h: 40.0 };
+    let r = glow_frame(&gpu, &cropped, view, &glow_look(1.0, 400.0));
+    // The same 8 columns on a level that ends at the crop.
+    let whole = glowing_room(2048, 40, |_, y| y >= 36, glows);
+    let w = glow_frame(&gpu, &whole, view, &glow_look(1.0, 400.0));
+    let (a, b) = (light_at(&gpu, &r, 2000, 20)[0], light_at(&gpu, &w, 2000, 20)[0]);
+    assert!(a < b * 1.5 + 0.01, "past the crop nothing glows: {a} against {b}");
+}
+
+#[test]
+fn lights_past_the_cap_change_nothing() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |x, _| x == 50);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    let capped: Vec<_> = (0..olr_look::MAX_LIGHTS)
+        .map(|i| lamp([10.5 + (i % 30) as f32, 5.5 + (i / 30) as f32], 8.0))
+        .collect();
+    let mut more = capped.clone();
+    more.extend((0..40).map(|i| lamp([70.5 + i as f32 * 0.5, 20.5], 60.0)));
+    let a = lit_frame(&gpu, &map, view, &capped, 0);
+    let b = lit_frame(&gpu, &map, view, &more, 0);
+    assert_eq!(gpu.read_light(&a).unwrap().1, gpu.read_light(&b).unwrap().1);
 }
