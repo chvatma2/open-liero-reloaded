@@ -127,3 +127,195 @@ fn huge_or_far_shapes_never_panic() {
     let mut bad = layer(solid(3, 3, BROWN), Some(vec![Material::Dirt; 2]), None);
     assert_eq!(draw(&mut bad, (0, 0), 1, (6, 6), &shapes[0], &Paint::Colour(GREY), Material::Rock), None);
 }
+
+// Task 5: merge and split.
+
+use std::sync::Arc;
+
+use olr_edit::compose::{ImageCache, bake_elements, decode_element, split_from};
+use olr_edit::drawn::{LayerError, Placed, merge, merge_down, placed, split, split_element};
+use olr_format::levels::{Dither, Element, ElementKind, ElementMaterial};
+
+const DARK: Rgba = Rgba::rgb(90, 60, 30);
+
+fn element(id: &str, kind: ElementKind) -> Element {
+    Element { id: id.into(), name: id.into(), visible: true, locked: false, kind }
+}
+
+/// A 1-high strip at `at` of `pixels` (`None` uncovered) of `m`, art scale 1.
+fn strip(at: (i32, i32), pixels: &[Option<Rgba>], m: Material) -> Placed {
+    let mut art = RgbaImage::new(pixels.len() as u32, 1);
+    for (x, p) in pixels.iter().enumerate() {
+        if let Some(c) = p {
+            art.set(x as u32, 0, *c);
+        }
+    }
+    Placed { at, size: (pixels.len() as u32, 1), art, cells: vec![m; pixels.len()], back: None }
+}
+
+fn row(p: &Placed) -> Vec<Rgba> {
+    (0..p.art.width()).map(|x| p.art.get(x, 0)).collect()
+}
+
+/// Review Focus 1's base: a loaded map's Dirt merged into its Background
+/// bakes as the three layers did.
+#[test]
+fn merging_dirt_into_background_bakes_the_same() {
+    let Some(root) = crate::common::content() else { return };
+    for id in ["olx-level-dirt-level", "olx-level-castlestrike", "olx-level-liero-factory"] {
+        let original = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(root.join(id))).unwrap();
+        let tile = olr_edit::compose::theme_back_tile(&root, &original.theme).unwrap();
+        let (size, s) = (original.size, original.art_scale);
+        let src = split_from(&original);
+        let mut cache = ImageCache::new();
+        let items: Vec<(Element, Decoded)> = src
+            .composition
+            .elements
+            .iter()
+            .map(|e| (e.clone(), decode_element(&src, e, size, s, &mut cache).unwrap()))
+            .collect();
+        let bake = |stack: &[(&Element, &Decoded)]| {
+            let mut l = original.clone();
+            bake_elements(&mut l, stack, &tile, Rect { x: 0, y: 0, w: size.0, h: size.1 });
+            (l.material, l.front, l.back)
+        };
+        let three: Vec<(&Element, &Decoded)> = items.iter().map(|(e, d)| (e, d)).collect();
+        let (e, d) = merge_down((&items[0].0, &items[0].1), (&items[1].0, &items[1].1), size, s).unwrap();
+        assert_eq!(e.id, "background");
+        assert!(
+            matches!(e.kind, ElementKind::Drawn { mixed: true, back: true, size: None, .. }),
+            "{id}: {:?}",
+            e.kind
+        );
+        let two = [(&e, &d), (&items[2].0, &items[2].1)];
+        assert!(bake(&two) == bake(&three), "{id}: the merge bakes alike");
+        // And it splits back into the two layers it was made of.
+        let p = placed(&e, &d, size, s).unwrap();
+        let [bg, dirt, rock] = split(&p, s);
+        let art = |i: usize| match &items[i].1 {
+            Decoded::Drawn { art, .. } => art.clone(),
+            _ => panic!(),
+        };
+        assert!(bg.unwrap().art == art(0), "{id}: the background comes back");
+        assert!(dirt.unwrap().art == art(1), "{id}: the dirt comes back");
+        assert!(rock.is_none(), "{id}: no rock in the merge");
+    }
+}
+
+#[test]
+fn a_merge_follows_rock_then_dirt_then_background() {
+    let lower = strip((0, 0), &[Some(BROWN), Some(BROWN), None], Material::Dirt);
+    let upper = strip((0, 0), &[Some(GREY), None, Some(GREY)], Material::Rock);
+    let m = merge(&lower, &upper, 1).unwrap();
+    assert_eq!(m.cells, [Material::Rock, Material::Dirt, Material::Rock]);
+    assert_eq!(row(&m), [GREY, BROWN, GREY]);
+    // Background over dirt: dirt wins, and the background is its back art.
+    let sky = strip((0, 0), &[Some(BLUE), Some(BLUE), Some(BLUE)], Material::Background);
+    let m = merge(&lower, &sky, 1).unwrap();
+    assert_eq!(m.cells, [Material::Dirt, Material::Dirt, Material::Background]);
+    assert_eq!(row(&m), [BROWN, BROWN, BLUE]);
+    let back = m.back.unwrap();
+    assert_eq!([back.get(0, 0), back.get(1, 0)], [BLUE, BLUE]);
+    assert_eq!(back.get(2, 0).a, 0);
+}
+
+#[test]
+fn a_tie_goes_to_the_upper_layer() {
+    let lower = strip((0, 0), &[Some(BROWN)], Material::Dirt);
+    let upper = strip((0, 0), &[Some(DARK)], Material::Dirt);
+    assert_eq!(row(&merge(&lower, &upper, 1).unwrap()), [DARK]);
+}
+
+/// Review Focus 4: a merge covers both boxes; pixels off the level stay.
+#[test]
+fn a_merge_keeps_pixels_off_the_level() {
+    let lower = strip((0, 0), &[Some(BROWN); 3], Material::Dirt);
+    let upper = strip((-2, 0), &[Some(GREY); 4], Material::Rock);
+    let m = merge(&lower, &upper, 1).unwrap();
+    assert_eq!((m.at, m.size), ((-2, 0), (5, 1)));
+    assert_eq!(row(&m), [GREY, GREY, GREY, GREY, BROWN]);
+    assert_eq!(m.cells[4], Material::Dirt);
+}
+
+#[test]
+fn split_of_an_image_is_its_processed_pixels() {
+    let mut grid = RgbaImage::new(2, 2);
+    grid.set(0, 0, BROWN);
+    grid.set(1, 1, Rgba { a: 100, ..BROWN });
+    let e = element(
+        "photo",
+        ElementKind::Image {
+            material: ElementMaterial::Dirt,
+            source: "photo.png".into(),
+            at: (3, 1),
+            size: (2, 2),
+            pixel_size: 1,
+            colours: None,
+            dither: Dither::None,
+            alpha_threshold: 128,
+            mask: false,
+        },
+    );
+    let d = Decoded::Image { grid: Some(Arc::new(grid)), mask: None };
+    let out = split_element(&e, &d, (8, 8), 1, |name, _| name.to_ascii_lowercase()).unwrap();
+    assert_eq!(out.len(), 1, "one material, one layer");
+    let (layer, data) = &out[0];
+    assert_eq!(layer.id, "dirt");
+    assert!(matches!(layer.kind, ElementKind::Drawn { at: (3, 1), size: Some((2, 2)), mixed: false, .. }));
+    let Decoded::Drawn { art, .. } = data else { panic!() };
+    assert_eq!(art.get(0, 0), BROWN);
+    assert_eq!(art.get(1, 1).a, 0, "below the threshold's 255: uncovered");
+}
+
+#[test]
+fn merge_down_refuses_hidden_and_non_drawn() {
+    let layer = |id: &str| element(id, ElementKind::drawn(ElementMaterial::Dirt));
+    let d = Decoded::Drawn { art: RgbaImage::new(2, 2), cells: None, back: None };
+    let mut hidden = layer("top");
+    hidden.visible = false;
+    let below = layer("below");
+    assert_eq!(
+        merge_down((&below, &d), (&hidden, &d), (2, 2), 1).unwrap_err(),
+        LayerError::Hidden("top".into())
+    );
+    let image = element(
+        "img",
+        ElementKind::Image {
+            material: ElementMaterial::Dirt,
+            source: "a.png".into(),
+            at: (0, 0),
+            size: (2, 2),
+            pixel_size: 1,
+            colours: None,
+            dither: Dither::None,
+            alpha_threshold: 128,
+            mask: false,
+        },
+    );
+    let img = Decoded::Image { grid: Some(Arc::new(RgbaImage::new(2, 2))), mask: None };
+    assert_eq!(
+        merge_down((&image, &img), (&layer("top"), &d), (2, 2), 1).unwrap_err(),
+        LayerError::NotDrawn("img".into())
+    );
+}
+
+/// Review Focus 4: a union of boxes beyond `MAX_SIDE` is refused, never
+/// allocated.
+#[test]
+fn a_merge_too_large_is_refused() {
+    let lower = strip((0, 0), &[Some(BROWN)], Material::Dirt);
+    let far = strip((5000, 0), &[Some(GREY)], Material::Rock);
+    assert_eq!(merge(&lower, &far, 1), None);
+    let extreme = strip((i32::MIN, i32::MAX), &[Some(GREY)], Material::Rock);
+    assert_eq!(merge(&lower, &extreme, 1), None);
+    let kind = |at| ElementKind::Drawn {
+        material: ElementMaterial::Dirt,
+        at,
+        size: Some((1, 1)),
+        mixed: false,
+        back: false,
+    };
+    let d = Decoded::Drawn { art: solid(1, 1, BROWN), cells: None, back: None };
+    let (a, b) = (element("a", kind((0, 0))), element("b", kind((5000, 0))));
+    assert_eq!(merge_down((&a, &d), (&b, &d), (8, 8), 1).unwrap_err(), LayerError::TooLarge("a".into()));
+}

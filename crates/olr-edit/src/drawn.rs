@@ -5,6 +5,8 @@
 
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
+use olr_format::image_io::{LEVEL_ART, check_size};
+use olr_format::levels::{Element, ElementKind, ElementMaterial, MAX_SIDE, drawn_box};
 
 use crate::compose::Decoded;
 use crate::level::{Paint, Rect, Shape, art_block, covers, extent};
@@ -137,4 +139,326 @@ pub fn erase(d: &mut Decoded, at: (i32, i32), s: u32, level: (u32, u32), shape: 
             }
         }
     })
+}
+
+/// A layer's pixels placed in the world: what merge and split work on.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Placed {
+    /// The box's top-left, world pixels.
+    pub at: (i32, i32),
+    /// The box's size, world pixels.
+    pub size: (u32, u32),
+    /// `size` × art scale; alpha 0 is not covered.
+    pub art: RgbaImage,
+    /// One per world pixel of the box, row-major.
+    pub cells: Vec<Material>,
+    /// `size` × art scale, when it has back art.
+    pub back: Option<RgbaImage>,
+}
+
+/// Why a merge or a split is refused.
+#[derive(Debug, thiserror::Error, PartialEq)]
+pub enum LayerError {
+    #[error("element {0:?} is not a drawn layer: merge into a drawn layer")]
+    NotDrawn(String),
+    #[error("element {0:?} is hidden: show it first")]
+    Hidden(String),
+    #[error("element {0:?} has no pixels to work on")]
+    NoPixels(String),
+    #[error(
+        "merging into {0:?} would make a layer larger than {MAX_SIDE} × {MAX_SIDE} pixels or its art too large"
+    )]
+    TooLarge(String),
+}
+
+/// Opaque: the colour's RGB.
+fn opaque(c: Rgba) -> Rgba {
+    Rgba { a: 255, ..c }
+}
+
+/// A visible element as placed pixels: a drawn layer (its cells from its
+/// material when plain), an image's processed grid (covered where its alpha
+/// is 255, made opaque; its cells its material), a raster (the level: its
+/// front as art, its back as back art). `None` for a hidden element or
+/// data that does not match the element.
+pub fn placed(e: &Element, d: &Decoded, level: (u32, u32), s: u32) -> Option<Placed> {
+    if !e.visible || s == 0 {
+        return None;
+    }
+    let dims = |i: &RgbaImage| (i.width(), i.height());
+    let cells_of = |size: (u32, u32)| size.0 as usize * size.1 as usize;
+    match (&e.kind, d) {
+        (ElementKind::Drawn { material, .. }, Decoded::Drawn { art, cells, back }) => {
+            let (at, size) = drawn_box(&e.kind, level)?;
+            let box_art = (size.0.checked_mul(s)?, size.1.checked_mul(s)?);
+            let fits = dims(art) == box_art
+                && cells.as_ref().is_none_or(|c| c.len() == cells_of(size))
+                && back.as_ref().is_none_or(|b| dims(b) == box_art);
+            fits.then(|| Placed {
+                at,
+                size,
+                art: art.clone(),
+                cells: cells.clone().unwrap_or_else(|| vec![(*material).into(); cells_of(size)]),
+                back: back.clone(),
+            })
+        }
+        (
+            ElementKind::Image { material, at, size, pixel_size, .. },
+            Decoded::Image { grid: Some(grid), .. },
+        ) => {
+            let ps = (*pixel_size).max(1);
+            let box_art = (size.0.checked_mul(s)?, size.1.checked_mul(s)?);
+            if dims(grid) != (box_art.0.div_ceil(ps), box_art.1.div_ceil(ps)) {
+                return None;
+            }
+            let mut art = RgbaImage::new(box_art.0, box_art.1);
+            for y in 0..box_art.1 {
+                for x in 0..box_art.0 {
+                    let p = grid.get(x / ps, y / ps);
+                    if p.a == 255 {
+                        art.set(x, y, p);
+                    }
+                }
+            }
+            Some(Placed {
+                at: *at,
+                size: *size,
+                art,
+                cells: vec![(*material).into(); cells_of(*size)],
+                back: None,
+            })
+        }
+        (ElementKind::Raster, Decoded::Raster { material, front, back }) => {
+            let box_art = (level.0.checked_mul(s)?, level.1.checked_mul(s)?);
+            if dims(front) != box_art || dims(back) != box_art || material.len() != cells_of(level) {
+                return None;
+            }
+            let mut art = front.clone();
+            for y in 0..art.height() {
+                for x in 0..art.width() {
+                    art.set(x, y, opaque(front.get(x, y)));
+                }
+            }
+            Some(Placed { at: (0, 0), size: level, art, cells: material.clone(), back: Some(back.clone()) })
+        }
+        _ => None,
+    }
+}
+
+impl Placed {
+    /// The box offset of world pixel `(wx, wy)`, when inside the box.
+    fn local(&self, wx: i64, wy: i64) -> Option<(u32, u32)> {
+        let (lx, ly) = (wx - i64::from(self.at.0), wy - i64::from(self.at.1));
+        let inside = (0..i64::from(self.size.0)).contains(&lx) && (0..i64::from(self.size.1)).contains(&ly);
+        inside.then_some((lx as u32, ly as u32))
+    }
+
+    fn cell(&self, l: (u32, u32)) -> Material {
+        self.cells[l.1 as usize * self.size.0 as usize + l.0 as usize]
+    }
+
+    /// Whether it covers the block of world pixel `(wx, wy)`: its art at
+    /// the block's centre is opaque.
+    fn covers(&self, wx: i64, wy: i64, s: u32) -> Option<(u32, u32)> {
+        let l = self.local(wx, wy)?;
+        (self.art.get(l.0 * s + s / 2, l.1 * s + s / 2).a != 0).then_some(l)
+    }
+
+    /// Its art pixel `(i, j)` of world pixel `(wx, wy)`'s block, opaque.
+    fn art_at(&self, wx: i64, wy: i64, s: u32, (i, j): (u32, u32)) -> Option<Rgba> {
+        let l = self.local(wx, wy)?;
+        Some(self.art.get(l.0 * s + i, l.1 * s + j)).filter(|p| p.a != 0)
+    }
+
+    fn back_at(&self, wx: i64, wy: i64, s: u32, (i, j): (u32, u32)) -> Option<Rgba> {
+        let l = self.local(wx, wy)?;
+        Some(self.back.as_ref()?.get(l.0 * s + i, l.1 * s + j)).filter(|p| p.a != 0)
+    }
+}
+
+/// The decision-4 merge of `upper` into `lower` over the union of their
+/// boxes (plan 14d Task 5, C1, C2, decision 7). Per world pixel: each layer
+/// covers its block where its art at the block's centre is opaque; the
+/// winner is the covering layer of higher `priority`, the upper on a tie.
+/// The winner's art fills the block where opaque, the other's elsewhere;
+/// the cell is the winner's (with no winner, the lower layer's, else
+/// background). The back art is the winner's own, else the loser's art
+/// when the loser covers there with background, else the loser's back.
+/// `None` when the union is larger than `MAX_SIDE` per side or its art
+/// beyond `LEVEL_ART`.
+pub fn merge(lower: &Placed, upper: &Placed, s: u32) -> Option<Placed> {
+    let lo = |p: &Placed| (i64::from(p.at.0), i64::from(p.at.1));
+    let hi = |p: &Placed| (i64::from(p.at.0) + i64::from(p.size.0), i64::from(p.at.1) + i64::from(p.size.1));
+    let (x0, y0) = (lo(lower).0.min(lo(upper).0), lo(lower).1.min(lo(upper).1));
+    let (x1, y1) = (hi(lower).0.max(hi(upper).0), hi(lower).1.max(hi(upper).1));
+    let (w, h) = (x1 - x0, y1 - y0);
+    let max = i64::from(MAX_SIDE);
+    if s == 0 || !(1..=max).contains(&w) || !(1..=max).contains(&h) {
+        return None;
+    }
+    let (w, h) = (w as u32, h as u32);
+    check_size(w * s, h * s, LEVEL_ART).ok()?;
+    let mut art = RgbaImage::new(w * s, h * s);
+    let mut back = RgbaImage::new(w * s, h * s);
+    let mut cells = vec![Material::Background; w as usize * h as usize];
+    let mut backed = false;
+    for y in 0..h {
+        for x in 0..w {
+            let (wx, wy) = (x0 + i64::from(x), y0 + i64::from(y));
+            let (lc, uc) = (lower.covers(wx, wy, s), upper.covers(wx, wy, s));
+            // The winner and the other layer, when anything covers.
+            let won = match (lc, uc) {
+                (Some(l), Some(u)) if priority(lower.cell(l)) > priority(upper.cell(u)) => {
+                    Some((lower, upper))
+                }
+                (_, Some(_)) => Some((upper, lower)),
+                (Some(_), None) => Some((lower, upper)),
+                (None, None) => None,
+            };
+            cells[y as usize * w as usize + x as usize] = match won {
+                Some((winner, _)) => winner.local(wx, wy).map_or(Material::Background, |l| winner.cell(l)),
+                None => lower.local(wx, wy).map_or(Material::Background, |l| lower.cell(l)),
+            };
+            let (first, second) = won.unwrap_or((upper, lower));
+            // The loser shows its art as backdrop where it covers with background.
+            let loser_ground = won.is_some()
+                && second.covers(wx, wy, s).is_some_and(|l| second.cell(l) == Material::Background);
+            for j in 0..s {
+                for i in 0..s {
+                    let p = first.art_at(wx, wy, s, (i, j)).or_else(|| second.art_at(wx, wy, s, (i, j)));
+                    let b = match won {
+                        Some(_) => first.back_at(wx, wy, s, (i, j)).or_else(|| {
+                            if loser_ground {
+                                second.art_at(wx, wy, s, (i, j))
+                            } else {
+                                second.back_at(wx, wy, s, (i, j))
+                            }
+                        }),
+                        None => upper.back_at(wx, wy, s, (i, j)).or_else(|| lower.back_at(wx, wy, s, (i, j))),
+                    };
+                    let (ax, ay) = (x * s + i, y * s + j);
+                    if let Some(p) = p {
+                        art.set(ax, ay, opaque(p));
+                    }
+                    if let Some(b) = b {
+                        back.set(ax, ay, opaque(b));
+                        backed = true;
+                    }
+                }
+            }
+        }
+    }
+    let at = (x0 as i32, y0 as i32);
+    Some(Placed { at, size: (w, h), art, cells, back: backed.then_some(back) })
+}
+
+/// The Background, Dirt and Rock layers of `p` (plan 14d R11), each with
+/// `p`'s box, holding only its material's pixels; the Background layer
+/// also takes the back art under dirt and rock. `None` for one with no
+/// opaque pixel.
+pub fn split(p: &Placed, s: u32) -> [Option<Placed>; 3] {
+    [Material::Background, Material::Dirt, Material::Rock].map(|m| {
+        let mut art = RgbaImage::new(p.art.width(), p.art.height());
+        let mut any = false;
+        for y in 0..p.size.1 {
+            for x in 0..p.size.0 {
+                let c = p.cell((x, y));
+                for (ax, ay) in art_block(s, x, y) {
+                    let px = if c == m {
+                        Some(p.art.get(ax, ay))
+                    } else if m == Material::Background {
+                        p.back.as_ref().map(|b| b.get(ax, ay)).filter(|b| b.a != 0)
+                    } else {
+                        None
+                    };
+                    if let Some(px) = px {
+                        any |= px.a != 0;
+                        art.set(ax, ay, px);
+                    }
+                }
+            }
+        }
+        any.then(|| Placed { at: p.at, size: p.size, art, cells: vec![m; p.cells.len()], back: None })
+    })
+}
+
+/// `p` as a drawn element's kind and data: `material` its material, mixed
+/// when a covered cell differs from it (uncovered cells set to it), backed
+/// when a back pixel is opaque, `size: None` when its box is the level
+/// (`level`) at the origin.
+pub fn into_layer(p: Placed, material: ElementMaterial, level: (u32, u32), s: u32) -> (ElementKind, Decoded) {
+    let m: Material = material.into();
+    let Placed { at, size, art, mut cells, back } = p;
+    let mut mixed = false;
+    for y in 0..size.1 {
+        for x in 0..size.0 {
+            let i = y as usize * size.0 as usize + x as usize;
+            let covered = art.get(x * s + s / 2, y * s + s / 2).a != 0;
+            if !covered {
+                cells[i] = m;
+            }
+            mixed |= cells[i] != m;
+        }
+    }
+    let back = back.filter(|b| b.as_raw().chunks(4).any(|px| px[3] != 0));
+    let boxed = (at != (0, 0) || size != level).then_some(size);
+    let kind = ElementKind::Drawn { material, at, size: boxed, mixed, back: back.is_some() };
+    (kind, Decoded::Drawn { art, cells: mixed.then_some(cells), back })
+}
+
+/// `upper` merged into `lower` (plan 14d R10): `lower`'s id, name and
+/// material, visible and unlocked. Refused unless `lower` is a drawn layer
+/// and both are visible.
+pub fn merge_down(
+    lower: (&Element, &Decoded),
+    upper: (&Element, &Decoded),
+    level: (u32, u32),
+    s: u32,
+) -> Result<(Element, Decoded), LayerError> {
+    let (le, ld) = lower;
+    let (ue, ud) = upper;
+    let ElementKind::Drawn { material, .. } = le.kind else {
+        return Err(LayerError::NotDrawn(le.id.clone()));
+    };
+    for e in [le, ue] {
+        if !e.visible {
+            return Err(LayerError::Hidden(e.id.clone()));
+        }
+    }
+    let lp = placed(le, ld, level, s).ok_or_else(|| LayerError::NoPixels(le.id.clone()))?;
+    let up = placed(ue, ud, level, s).ok_or_else(|| LayerError::NoPixels(ue.id.clone()))?;
+    let merged = merge(&lp, &up, s).ok_or_else(|| LayerError::TooLarge(le.id.clone()))?;
+    let (kind, decoded) = into_layer(merged, material, level, s);
+    let element = Element { id: le.id.clone(), name: le.name.clone(), visible: true, locked: false, kind };
+    Ok((element, decoded))
+}
+
+/// The layers `split` makes of element `e` (plan 14d R11), bottom to top,
+/// named "Background", "Dirt" and "Rock", each one's id from `id(name,
+/// fallback)`. Refused for a hidden element or data that does not match.
+pub fn split_element(
+    e: &Element,
+    d: &Decoded,
+    level: (u32, u32),
+    s: u32,
+    mut id: impl FnMut(&str, &str) -> String,
+) -> Result<Vec<(Element, Decoded)>, LayerError> {
+    if !e.visible {
+        return Err(LayerError::Hidden(e.id.clone()));
+    }
+    let p = placed(e, d, level, s).ok_or_else(|| LayerError::NoPixels(e.id.clone()))?;
+    let names = [
+        ("Background", "background", ElementMaterial::Background),
+        ("Dirt", "dirt", ElementMaterial::Dirt),
+        ("Rock", "rock", ElementMaterial::Rock),
+    ];
+    let mut out = Vec::new();
+    for (part, (name, fallback, material)) in split(&p, s).into_iter().zip(names) {
+        let Some(part) = part else { continue };
+        let (kind, decoded) = into_layer(part, material, level, s);
+        let element =
+            Element { id: id(name, fallback), name: name.into(), visible: true, locked: false, kind };
+        out.push((element, decoded));
+    }
+    Ok(out)
 }
