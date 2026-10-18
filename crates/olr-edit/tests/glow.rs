@@ -103,8 +103,9 @@ fn glow_follows_the_channel_rules() {
         let row: Vec<u8> = (0..6).map(|x| g.front[(x * s) as usize]).collect();
         assert_eq!(row, [255, 255, 0, 0, 128, 128], "front, scale {s}");
         assert!(g.back.iter().all(|v| *v == 255), "the sky is the backdrop everywhere");
-        assert_eq!(g.groups, [0, 0, 0, 0, 1, 1]);
-        assert!(g.groups_back.iter().all(|v| *v == 0));
+        // A group map holds 1 + the group's index; 0 is no group.
+        assert_eq!(g.groups, [1, 1, 0, 0, 2, 2]);
+        assert!(g.groups_back.iter().all(|v| *v == 1));
     }
 }
 
@@ -190,4 +191,25 @@ fn pack_check_refuses_a_glow_naming_no_group() {
     let files = olr_edit::pack::files(&p).unwrap();
     let e = olr_edit::pack::check(&files).unwrap_err().to_string();
     assert!(e.contains("lava") && e.contains("composition.ron"), "{e}");
+}
+
+/// A world pixel whose centre art pixel does not glow takes the group of a
+/// glowing art pixel in it, never a group by default (review of batch A,
+/// Important 3).
+#[test]
+fn a_cell_glowing_off_centre_takes_its_glow_group() {
+    let mut p = stack(2);
+    // Mask lava's art pixels so only the left column of world pixel 4 glows.
+    paint_glow(&mut p, "lava", &Shape::Rect { x: 4, y: 0, w: 2, h: 1 }, 0).unwrap();
+    let src = p.composition.as_mut().unwrap();
+    let file = glow_file("lava");
+    let (w, h, mut mask) =
+        olr_format::image_io::decode_grey_within(&src.files[&file], olr_format::image_io::LEVEL_ART).unwrap();
+    assert_eq!((w, h), (12, 2));
+    mask[8] = 255; // art (8, 0): world pixel 4's top-left, off centre at scale 2
+    src.files.insert(file, olr_format::image_io::encode_grey(w, h, &mask));
+    let l = baked(&p);
+    let g = l.glow.as_ref().unwrap();
+    assert_eq!(g.groups[4], 2, "lava's group");
+    assert_eq!(g.groups[5], 0, "nothing glows there");
 }

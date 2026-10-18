@@ -105,11 +105,11 @@ fn removing_a_group_renumbers_and_unglows() {
     add_group(&mut l, group("a")).unwrap();
     add_group(&mut l, group("b")).unwrap();
     let mut g = GlowLayers::empty((4, 2), (4, 2));
-    // World pixels 0 and 1 glow in group a (0), 2 and 3 in b (1).
+    // World pixels 0 and 1 glow in group a (map value 1), 2 and 3 in b (2).
     g.front = vec![10, 11, 12, 13, 0, 0, 0, 0];
-    g.groups = vec![0, 0, 1, 1, 0, 0, 0, 0];
+    g.groups = vec![1, 1, 2, 2, 0, 0, 0, 0];
     g.back = vec![20, 0, 0, 23, 0, 0, 0, 0];
-    g.groups_back = vec![0, 0, 0, 1, 0, 0, 0, 0];
+    g.groups_back = vec![1, 0, 0, 2, 0, 0, 0, 0];
     l.glow = Some(g);
     let mut p = pack(l);
     add_layer(&mut p, ElementMaterial::Dirt, "Lava").unwrap();
@@ -121,9 +121,9 @@ fn removing_a_group_renumbers_and_unglows() {
     assert_eq!(l.look.as_ref().unwrap().glow_groups.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(), ["b"]);
     let g = l.glow.as_ref().unwrap();
     assert_eq!(g.front, [0, 0, 12, 13, 0, 0, 0, 0]);
-    assert_eq!(g.groups, [0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(g.groups, [0, 0, 1, 1, 0, 0, 0, 0]);
     assert_eq!(g.back, [0, 0, 0, 23, 0, 0, 0, 0]);
-    assert_eq!(g.groups_back, [0, 0, 0, 0, 0, 0, 0, 0]);
+    assert_eq!(g.groups_back, [0, 0, 0, 1, 0, 0, 0, 0]);
     let e = &p.composition.as_ref().unwrap().composition.elements;
     assert!(e.iter().all(|e| e.glow.is_none()));
     assert!(remove_group(&mut p, "a").is_err());
@@ -157,4 +157,49 @@ fn lights_round_trip() {
     assert!(add_light(&mut l, (0, 0), light(5000), 2).is_err());
     assert!(add_light(&mut l, (0, 0), light(10), 17).is_err());
     assert_eq!(l.objects.len(), 2);
+}
+
+/// Removing the last glowing group leaves no all-zero glow behind (review
+/// of batch A, Minor 5).
+#[test]
+fn removing_the_last_group_drops_an_empty_glow() {
+    let mut l = level();
+    add_group(&mut l, group("a")).unwrap();
+    let mut g = GlowLayers::empty((4, 2), (4, 2));
+    g.front[0] = 9;
+    g.groups[0] = 1;
+    l.glow = Some(g);
+    let mut p = pack(l);
+    remove_group(&mut p, "a").unwrap();
+    assert_eq!(level_of(&p).glow, None);
+}
+
+/// A resize moves lights with the level and keeps those outside it (they
+/// may sit outside and still light it; review of batch A, Minor 6).
+#[test]
+fn a_resize_keeps_lights_outside_the_level() {
+    let mut l = level();
+    add_light(&mut l, (-20, 1), light(10), 2).unwrap();
+    let dropped = olr_edit::level::resize(
+        &mut l,
+        (3, 2),
+        (0, 0),
+        Material::Dirt,
+        &olr_edit::level::Paint::Colour(Rgba::BLACK),
+    )
+    .unwrap();
+    assert!(dropped.is_empty(), "{dropped:?}");
+    assert_eq!(l.objects[1].at(), (-20, 1));
+    // A glow that does not fit the level is dropped, never indexed.
+    l.glow = Some(GlowLayers::empty((1, 1), (1, 1)));
+    olr_edit::level::resize(
+        &mut l,
+        (4, 2),
+        (1, 0),
+        Material::Dirt,
+        &olr_edit::level::Paint::Colour(Rgba::BLACK),
+    )
+    .unwrap();
+    assert_eq!(l.objects[1].at(), (-19, 1));
+    assert_eq!(l.glow, None);
 }

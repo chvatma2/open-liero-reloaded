@@ -110,23 +110,28 @@ pub fn remove_group(pack: &mut Pack, id: &str) -> Result<Vec<String>, EditError>
             .ok_or_else(|| EditError::Look(format!("no glow group {id:?}")))?;
         look.glow_groups.remove(k);
         let (s, w) = (l.art_scale as usize, l.size.0 as usize);
-        if let Some(g) = l.glow.as_mut() {
+        let art = (l.size.0 * l.art_scale, l.size.1 * l.art_scale);
+        if let Some(g) = l.glow.as_mut().filter(|g| g.fits(art, l.size)) {
+            // Map value k + 1 named the group; those above move down one.
+            let named = (k + 1) as u8;
             let aw = g.art.0 as usize;
             for (groups, strength) in [(&mut g.groups, &mut g.front), (&mut g.groups_back, &mut g.back)] {
                 for (i, v) in groups.iter_mut().enumerate() {
-                    match usize::from(*v) {
-                        x if x == k => {
-                            *v = 0;
-                            let (x, y) = (i % w, i / w);
-                            for ay in y * s..(y + 1) * s {
-                                strength[ay * aw + x * s..ay * aw + (x + 1) * s].fill(0);
-                            }
+                    if *v == named {
+                        *v = 0;
+                        let (x, y) = (i % w, i / w);
+                        for ay in y * s..(y + 1) * s {
+                            strength[ay * aw + x * s..ay * aw + (x + 1) * s].fill(0);
                         }
-                        x if x > k => *v -= 1,
-                        _ => {}
+                    } else if *v > named {
+                        *v -= 1;
                     }
                 }
             }
+        }
+        // A glow left with nothing glowing is no glow.
+        if l.glow.as_ref().is_some_and(|g| g.front.iter().chain(&g.back).all(|v| *v == 0)) {
+            l.glow = None;
         }
         Ok(())
     })?;

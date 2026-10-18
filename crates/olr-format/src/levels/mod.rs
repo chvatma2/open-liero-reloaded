@@ -54,9 +54,10 @@ pub const MAX_THUMB_SIDE: u32 = 512;
 pub const GLOW_FILE: &str = "look/glow.png";
 /// The backdrop's glow strength (what digging reveals), art size, 8-bit grey.
 pub const GLOW_BACK_FILE: &str = "look/glow-back.png";
-/// The composite's glow group per world pixel, 8-bit grey (an index into `look.glow_groups`).
+/// The composite's glow group per world pixel, 8-bit grey: 0 no group (the
+/// pixel's glow lights nothing), `n` the look's `glow_groups[n - 1]`.
 pub const GROUPS_FILE: &str = "look/groups.png";
-/// The backdrop's glow group per world pixel, 8-bit grey.
+/// The backdrop's glow group per world pixel, 8-bit grey, as `look/groups.png`.
 pub const GROUPS_BACK_FILE: &str = "look/groups-back.png";
 /// A level's glow images: all four or none.
 pub const LOOK_FILES: [&str; 4] = [GLOW_FILE, GLOW_BACK_FILE, GROUPS_FILE, GROUPS_BACK_FILE];
@@ -261,9 +262,9 @@ pub(crate) fn check_glow(src: &LevelSource, glow: &GlowLayers) -> Result<(), For
             ),
         ));
     }
-    let groups = src.look.as_ref().map_or(0, |l| l.glow_groups.len()).max(1);
+    let groups = src.look.as_ref().map_or(0, |l| l.glow_groups.len());
     for (file, values) in [(GROUPS_FILE, &glow.groups), (GROUPS_BACK_FILE, &glow.groups_back)] {
-        if let Some(i) = values.iter().position(|v| usize::from(*v) >= groups) {
+        if let Some(i) = values.iter().position(|v| usize::from(*v) > groups) {
             let (x, y) = (i as u32 % src.size.0, i as u32 / src.size.0);
             return Err(FormatError::invalid(
                 file,

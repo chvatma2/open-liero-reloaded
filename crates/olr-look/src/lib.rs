@@ -162,7 +162,7 @@ pub struct LevelLook {
     /// World pixels of blur, 0-4.
     pub softness: u8,
     pub grade: Grade,
-    /// Indexed by the glow group maps.
+    /// A group map value `v` (1-255) is `groups[v - 1]`; 0 is no group.
     pub groups: Vec<GlowGroup>,
     pub lights: Vec<PlacedLight>,
 }

@@ -55,7 +55,8 @@ pub struct LookFrame {
     pub light_steps: u8,
     pub softness: u8,
     pub grade: Grade,
-    /// Indexed by the glow group maps.
+    /// The level's groups in order: a group map value `v` (1-255) is
+    /// `groups[v - 1]`; 0 is no group.
     pub groups: Vec<FrameGroup>,
     pub lights: Vec<FrameLight>,
     pub mode: ViewMode,

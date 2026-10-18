@@ -502,8 +502,8 @@ pub fn stamp(level: &mut LevelSource, at: (i32, i32), image: &RgbaImage, layer: 
 
 /// The old content's (0, 0) lands at `offset`; the new area is `material`
 /// painted with `paint` (front and back alike when background). Objects
-/// move by `offset`; those now outside are removed and returned as they
-/// were.
+/// move by `offset`; spawns now outside are removed and returned as they
+/// were, lights stay (they may light the level from outside).
 pub fn resize(
     level: &mut LevelSource,
     size: (u32, u32),
@@ -531,6 +531,10 @@ pub fn resize(
     let mut cells = vec![material; w as usize * h as usize];
     let (mut front, mut back) = (new_area.clone(), new_area);
     // The glow re-laid the same way; the new area glows none.
+    let old_art = (level.size.0 * s, level.size.1 * s);
+    // A glow that does not fit the level (never from a checked pack) is
+    // dropped, never indexed.
+    level.glow = level.glow.take().filter(|g| g.fits(old_art, level.size));
     let mut glow = level.glow.as_ref().map(|_| GlowLayers::empty((aw, ah), (w, h)));
     let (dx, dy) = (i64::from(offset.0), i64::from(offset.1));
     let (old_w, old_h) = level.size;
@@ -559,15 +563,18 @@ pub fn resize(
         }
     }
     let inside = |v: i64, side: u32| (0..i64::from(side)).contains(&v);
+    // Spawns outside the new level go; lights may light it from outside
+    // and stay (look system).
     let (kept, dropped) = std::mem::take(&mut level.objects).into_iter().partition(|o| {
         let at = o.at();
-        inside(i64::from(at.0) + dx, w) && inside(i64::from(at.1) + dy, h)
+        matches!(o, LevelObject::Light { .. })
+            || (inside(i64::from(at.0) + dx, w) && inside(i64::from(at.1) + dy, h))
     });
     level.objects = kept;
     for o in &mut level.objects {
-        // Inside the new level: fits in i32.
         let at = o.at();
-        o.set_at(((i64::from(at.0) + dx) as i32, (i64::from(at.1) + dy) as i32));
+        let shift = |v: i32, d: i64| (i64::from(v) + d).clamp(i32::MIN.into(), i32::MAX.into()) as i32;
+        o.set_at((shift(at.0, dx), shift(at.1, dy)));
     }
     level.glow = glow;
     level.size = size;

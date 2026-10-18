@@ -207,6 +207,27 @@ fn hostile_look_files_are_errors_never_panics() {
     let fs = good.clone().with("look/groups.png", image_io::encode_grey(4, 3, &groups));
     let e = read(&fs).unwrap_err();
     assert!(e.contains("look/groups.png") && e.contains("200") && e.contains("(3, 1)"), "{e}");
+    // 0 is no group and 1..=n name the look's n groups: n + 1 is past them.
+    groups[7] = 3;
+    let fs = good.clone().with("look/groups.png", image_io::encode_grey(4, 3, &groups));
+    assert!(read(&fs).unwrap_err().contains("group 3"));
+    groups[7] = 2;
+    let fs = good.clone().with("look/groups.png", image_io::encode_grey(4, 3, &groups));
+    read(&fs).unwrap();
+    // A 16-bit grey image is read as 8-bit, never a panic (Review Focus 1).
+    let wide = {
+        let mut out = Vec::new();
+        {
+            let mut enc = png::Encoder::new(&mut out, 8, 6);
+            enc.set_color(png::ColorType::Grayscale);
+            enc.set_depth(png::BitDepth::Sixteen);
+            let mut w = enc.write_header().unwrap();
+            w.write_image_data(&[0x80; 8 * 6 * 2]).unwrap();
+        }
+        out
+    };
+    let fs = good.clone().with("look/glow.png", wide);
+    assert_eq!(read_level_files(&fs).unwrap().glow.unwrap().front[0], 0x80);
     // A colour image instead of grey, and garbage.
     let fs = good.clone().with("look/glow-back.png", image_io::encode_rgba(&RgbaImage::new(8, 6)));
     assert!(read(&fs).unwrap_err().contains("look/glow-back.png"));

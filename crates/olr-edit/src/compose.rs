@@ -459,7 +459,7 @@ type BoxMask<'a> = (&'a [u8], (i64, i64), (u32, u32));
 struct LayerGlow<'a> {
     /// 0-255.
     strength: u32,
-    /// Its index in the level's glow groups.
+    /// Its group map value: 1 + its index in the level's glow groups.
     group: u8,
     /// The mask and the element's box: origin and size in art pixels.
     mask: Option<BoxMask<'a>>,
@@ -489,7 +489,7 @@ fn layer_glow<'a>(
     s: u32,
 ) -> Option<LayerGlow<'a>> {
     let g = e.glow.as_ref()?;
-    let group = u8::try_from(groups.iter().position(|id| *id == g.group)?).ok()?;
+    let group = u8::try_from(groups.iter().position(|id| *id == g.group)? + 1).ok()?;
     let strength = (u32::from(g.strength.min(100)) * 255 + 50) / 100;
     let mask = match masks.get(&e.id).filter(|_| g.mask) {
         Some(m) => {
@@ -503,6 +503,20 @@ fn layer_glow<'a>(
         None => None,
     };
     Some(LayerGlow { strength, group, mask })
+}
+
+/// A world pixel's glow group: `glowing(ax, ay)`'s group (0 none) at the
+/// centre art pixel `centre`, else at the first art pixel of its block
+/// (`(x0, y0, s)`, row-major) that has one.
+fn cell_group((x0, y0, s): (u32, u32, u32), (cx, cy): (u32, u32), glowing: &dyn Fn(u32, u32) -> u8) -> u8 {
+    match glowing(cx, cy) {
+        0 => (y0..y0 + s)
+            .flat_map(|ay| (x0..x0 + s).map(move |ax| (ax, ay)))
+            .map(|(ax, ay)| glowing(ax, ay))
+            .find(|g| *g > 0)
+            .unwrap_or(0),
+        g => g,
+    }
 }
 
 /// Rebakes `rect` (clipped) of `level`'s material, front and back from
@@ -601,14 +615,26 @@ pub fn bake_elements_with(
                 }
             }
             if let Some(g) = glow.as_mut() {
-                let lit = |l: Option<&LayerGlow>| l.filter(|l| l.at(cx, cy) > 0).map_or(0, |l| l.group);
-                let b = lit(back_glow(cx, cy));
+                // The group of the element glowing at the centre art pixel,
+                // else at the first glowing one of the block; 0 (none) when
+                // nothing glows there.
+                let block = (x * s, y * s, s);
+                let group = |pick: &dyn Fn(u32, u32) -> u8| cell_group(block, (cx, cy), pick);
+                let lit = |l: Option<&LayerGlow>, ax: u32, ay: u32| {
+                    l.filter(|l| l.at(ax, ay) > 0).map_or(0, |l| l.group)
+                };
+                let b = group(&|ax, ay| lit(back_glow(ax, ay), ax, ay));
                 g.groups_back[cell] = b;
-                g.groups[cell] = if material == Material::Background { b } else { lit(front_glow(cx, cy)) };
+                g.groups[cell] = if material == Material::Background {
+                    b
+                } else {
+                    group(&|ax, ay| lit(front_glow(ax, ay), ax, ay))
+                };
             }
         }
     }
-    level.glow = glow;
+    // A glow left with nothing glowing is no glow.
+    level.glow = glow.filter(|g| g.front.iter().chain(&g.back).any(|v| *v > 0));
 }
 
 /// Decoded elements and processed images of one composition, ready to
@@ -1104,8 +1130,9 @@ const BAKED: [&str; 8] = [
 ];
 
 /// The baked files of `pack` (a composed level) that differ from what its
-/// composition bakes to: `material.png`, `front.png`, `back.png`,
-/// `thumb.png`, in that order. Empty for any other pack.
+/// composition bakes to, in `BAKED`'s order: `material.png`, `front.png`,
+/// `back.png`, `thumb.png`, then the four `look/` glow images. Empty for
+/// any other pack.
 pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeError> {
     let (Source::Level(level), Some(src)) = (&pack.source, &pack.composition) else { return Ok(Vec::new()) };
     let mut baked = level.clone();

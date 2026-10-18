@@ -215,7 +215,7 @@ pub enum GlowColourSource {
 }
 
 /// A group of glowing pixels: how they light the world and animate. The
-/// pixels name it by index in `look/groups.png` (0 is the first group).
+/// pixels name it in `look/groups.png` by 1 + its index (0 is no group).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GlowGroupSource {
