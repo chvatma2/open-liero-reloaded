@@ -117,7 +117,8 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     frame.present.upload(&mut renderer);
     let px = |world: i32| ((world as f32 * args.scale).round() as u32).max(1);
     let size = (px(frame.viewport.width), px(frame.viewport.height));
-    gpu.render_to_png(&mut renderer, &frame.list, size, &args.out)
+    let img = gpu.render_lit_to_image(&mut renderer, &frame.list, frame.present.look(), size);
+    std::fs::write(&args.out, olr_pack::image_io::encode_rgba(&img))
         .with_context(|| format!("writing {}", args.out.display()))?;
     for w in renderer.warnings().drain(..) {
         eprintln!("warning: {w}");

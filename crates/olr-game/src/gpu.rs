@@ -67,6 +67,10 @@ pub struct OverlayPaint<'a> {
     pub pixels_per_point: f32,
 }
 
+/// A world to draw: its list, its look (plan 15a: a level or mod with a
+/// look), and the `[x, y, w, h]` pixels of the window it fills.
+pub type World<'a> = (&'a DrawList, Option<&'a olr_look::LookFrame>, [u32; 4]);
+
 pub struct Gpu {
     window: Arc<Window>,
     instance: wgpu::Instance,
@@ -267,7 +271,7 @@ impl Gpu {
         Some(Acquired { frame, wait: t0.elapsed() })
     }
 
-    /// Draws `world` (a list and the `[x, y, w, h]` pixels it fills: a
+    /// Draws `world` (a list, its look, and the `[x, y, w, h]` pixels it fills: a
     /// game's playfield, `app::playfield`, or the editor's canvas; none:
     /// black, as behind the menus) and the overlay into `frame` and
     /// presents it, applying
@@ -277,7 +281,7 @@ impl Gpu {
     pub fn present(
         &mut self,
         frame: Option<Acquired>,
-        world: Option<(&DrawList, [u32; 4])>,
+        world: Option<World>,
         overlay: &OverlayPaint,
         textures: &mut egui::TexturesDelta,
     ) -> Option<PresentTiming> {
@@ -288,7 +292,7 @@ impl Gpu {
     fn present_frame(
         &mut self,
         acquired: Acquired,
-        world: Option<(&DrawList, [u32; 4])>,
+        world: Option<World>,
         overlay: &OverlayPaint,
     ) -> PresentTiming {
         let frame = acquired.frame;
@@ -305,13 +309,13 @@ impl Gpu {
     /// `view`.
     fn draw(
         &mut self,
-        world: Option<(&DrawList, [u32; 4])>,
+        world: Option<World>,
         overlay: &OverlayPaint,
         view: &wgpu::TextureView,
         size: (u32, u32),
     ) {
-        if let Some((list, area)) = world {
-            self.renderer.render_in(list, view, area);
+        if let Some((list, look, area)) = world {
+            self.renderer.render_lit(list, look, view, area);
         }
         let load = if world.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::BLACK) };
         let (device, queue) = (self.renderer.device().clone(), self.renderer.queue().clone());
@@ -346,7 +350,7 @@ impl Gpu {
     /// changes.
     pub fn screenshot(
         &mut self,
-        world: Option<(&DrawList, [u32; 4])>,
+        world: Option<World>,
         overlay: &OverlayPaint,
         path: &Path,
     ) -> anyhow::Result<RgbaImage> {

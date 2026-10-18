@@ -567,10 +567,15 @@ impl Renderer {
                 self.look = Some(LookState::new(&self.device, &self.globals_layout, &self.texture_layout));
             }
             (false, true) => self.look = None,
-            _ => {}
+            _ => return,
         }
         // The world target gains or loses its shade target.
         self.target = None;
+    }
+
+    /// Whether lighting is on ([`Renderer::set_lighting`]).
+    pub fn lighting(&self) -> bool {
+        self.look.is_some()
     }
 
     /// The view's light grid as last drawn (tests): the texture

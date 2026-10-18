@@ -13,6 +13,7 @@ name = "olr"
 path = "src/main.rs"
 
 [dependencies]
+olr-look.workspace = true
 olr-math.workspace = true
 olr-data.workspace = true
 olr-terrain.workspace = true

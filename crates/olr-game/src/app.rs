@@ -968,7 +968,7 @@ impl App {
         // (the colour map merges their dirty rectangles), then the frame.
         let world = self.shell.play.as_mut().map(|p| {
             p.session.present.upload(&mut w.gpu.renderer);
-            (&self.list, playfield(size))
+            (&self.list, p.session.present.look(), playfield(size))
         });
         // The editor's canvas: its map's changes, then its part of the window
         // (drawn sharp: the overlays sit on it at any zoom).
@@ -998,7 +998,7 @@ impl App {
                     &mut w.gpu.renderer.settings.filter,
                     UpscaleFilter::SharpBilinear,
                 ));
-                self.canvas_list.as_ref().map(|(l, a)| (l, *a))
+                self.canvas_list.as_ref().map(|(l, a)| (l, None, *a))
             }
             Some((_, None)) => None,
             None => world,

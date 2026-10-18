@@ -29,8 +29,9 @@ pub mod net;
 use olr_content::{CorePack, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
 use olr_data::image::Rgba;
 use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
+use olr_look::{LevelLook, LookFrame};
 use olr_render::Renderer;
-use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, Viewport};
+use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, View, Viewport};
 use olr_sim::{TickEvents, World};
 use olr_terrain::ColorMap;
 
@@ -69,7 +70,17 @@ pub struct Presentation {
     seed: u32,
     atlas_dirty: bool,
     terrain_new: bool,
+    /// The level's look, when it has one.
+    level_look: Option<LevelLook>,
+    /// The level or the mod has a look: the renderer's look passes draw it.
+    lit: bool,
+    /// The frame's look, rebuilt by every lit [`Presentation::build`].
+    look: LookFrame,
 }
+
+/// World pixels past the view a placed light may sit and still count: the
+/// world target's margin, the light grid's pad (4) and one more.
+const LIGHT_VIEW_PAD: f32 = 6.0;
 
 impl Presentation {
     /// The presentation of `world`, at its start (the first tick blends
@@ -90,7 +101,34 @@ impl Presentation {
             seed: s.seed,
             atlas_dirty: true,
             terrain_new: true,
+            level_look: s.level.look.clone(),
+            lit: s.level.has_look() || !s.m.look.is_empty(),
+            look: LookFrame::default(),
         }
+    }
+
+    /// The level or the mod has a look (plan 15a R7): frames are drawn
+    /// with [`Presentation::look`].
+    pub fn has_look(&self) -> bool {
+        self.lit
+    }
+
+    /// The look of the frame last built; `None` without a look.
+    pub fn look(&self) -> Option<&LookFrame> {
+        self.lit.then_some(&self.look)
+    }
+
+    /// Rebuilds the frame's look ([`Presentation::build`] does): the level's
+    /// part at the match clock (the world's time, `alpha` of a tick on),
+    /// the lights whose reach touches `view`. Allocates nothing once warm.
+    pub fn build_look(&mut self, world: &World, alpha: f32, view: View) {
+        if !self.lit {
+            return;
+        }
+        let t_ms = world.time().0 as f64 + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
+        self.look.begin(self.level_look.as_ref(), t_ms);
+        let p = LIGHT_VIEW_PAD;
+        self.look.cull([view.x - p, view.y - p, view.w + 2.0 * p, view.h + 2.0 * p]);
     }
 
     /// A cosmetic-entity pool of `capacity` instead of the match's
@@ -134,6 +172,7 @@ impl Presentation {
     pub fn build(&mut self, world: &World, alpha: f32, list: &mut DrawList) {
         self.scene.build(world, alpha, &self.assets, list);
         self.fx.draw(&self.fx_assets, list);
+        self.build_look(world, alpha, list.view);
     }
 
     /// A new world on the same level with the same worms (a restart): the
@@ -222,6 +261,11 @@ impl Presentation {
     /// (a new world or renderer), else the rectangles the ticks since the
     /// last upload changed.
     pub fn upload(&mut self, renderer: &mut Renderer) {
+        // A look needs the renderer's look textures, uploaded with the map.
+        if renderer.lighting() != self.lit {
+            renderer.set_lighting(self.lit);
+            self.terrain_new = true;
+        }
         if self.take_atlas_dirty() {
             renderer.upload_atlas(&self.assets);
         }

@@ -27,6 +27,7 @@ olr-edit.workspace = true
 olr-format.workspace = true
 olr-terrain.workspace = true
 olr-scene.workspace = true
+olr-look.workspace = true
 olr-fx.workspace = true
 olr-render.workspace = true
 olr-present.workspace = true
@@ -59,7 +60,6 @@ tempfile.workspace = true
 nat-tools = ["olr-discovery/test-relay"]
 
 [dev-dependencies]
-olr-look.workspace = true
 # Tests build this crate with `nat-tools` (olr-discovery's pattern), so
 # `check`'s plain `nextest --workspace` runs the dev tools' test.
 olr-cli = { path = ".", features = ["nat-tools"] }

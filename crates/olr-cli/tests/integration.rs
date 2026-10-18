@@ -22,6 +22,7 @@ mod element;
 mod feel;
 mod hits;
 mod level;
+mod look_preview;
 mod matches;
 mod net_repro;
 mod net_soak;

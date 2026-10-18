@@ -9,6 +9,7 @@ publish.workspace = true
 autotests = false
 
 [dependencies]
+olr-look.workspace = true
 olr-data.workspace = true
 olr-terrain.workspace = true
 olr-sim.workspace = true
@@ -19,6 +20,8 @@ olr-render.workspace = true
 olr-netcode.workspace = true
 
 [dev-dependencies]
+allocation-counter.workspace = true
+olr-look.workspace = true
 olr-scenario.workspace = true
 olr-oracle.workspace = true
 olr-math.workspace = true
@@ -26,6 +29,10 @@ olr-math.workspace = true
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
+
+[[test]]
+name = "no_alloc"
+path = "tests/no_alloc.rs"
 
 [lints]
 workspace = true

@@ -3499,6 +3499,7 @@ dependencies = [
  "olr-game",
  "olr-input",
  "olr-lobby",
+ "olr-look",
  "olr-math",
  "olr-modes",
  "olr-net",
@@ -3724,9 +3725,11 @@ dependencies = [
 name = "olr-present"
 version = "0.2.0"
 dependencies = [
+ "allocation-counter",
  "olr-content",
  "olr-data",
  "olr-fx",
+ "olr-look",
  "olr-math",
  "olr-netcode",
  "olr-oracle",
@@ -3755,6 +3758,7 @@ dependencies = [
  "bytemuck",
  "divan",
  "olr-data",
+ "olr-look",
  "olr-pack",
  "olr-scene",
  "olr-terrain",

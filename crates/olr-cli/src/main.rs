@@ -5,6 +5,7 @@ mod gpu_bench_cmd;
 mod import;
 mod level_cmd;
 mod look_cmd;
+mod look_preview;
 mod match_cmd;
 #[cfg(feature = "nat-tools")]
 mod nat_tools;
@@ -43,6 +44,8 @@ enum Command {
     Scenario(scenario::Args),
     /// Render one frame of an oracle scenario to a PNG, offscreen with wgpu.
     Render(render::Args),
+    /// Draw a level with its look (no match) to a PNG, offscreen.
+    LookPreview(look_preview::Args),
     /// Play a headless bot match: invariants every tick, tick times, determinism,
     /// replay round trip and coverage; a failure writes its replay to target/failures/.
     Match(match_cmd::Args),
@@ -92,6 +95,7 @@ fn main() -> ExitCode {
         Command::Level(args) => level_cmd::run(&args),
         Command::Scenario(args) => scenario::run(&args),
         Command::Render(args) => render::run(&args),
+        Command::LookPreview(args) => look_preview::run(&args),
         Command::Match(args) => match_cmd::run(&args),
         Command::NetSim(args) => net_sim_cmd::run_cmd(args),
         Command::NetSoak(args) => net_soak_cmd::run_cmd(args),
