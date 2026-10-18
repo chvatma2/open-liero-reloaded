@@ -149,8 +149,8 @@ fn scramble(l: &mut LevelSource, r: Rect) {
 /// A stack from `spec`: (kind, material, x, y, w, h, visible); kind 0 an
 /// image of a 3 × 3 gradient with a transparent corner, 1 a drawn layer
 /// of a checkerboard, 2 the raster base of a random-ish level, 3 a mixed
-/// and backed checkerboard layer at `(x, y)` (of `(w, h)`, or the level's
-/// size when `w` is a multiple of 4), 4 a kind-0 image with its middle
+/// and/or backed checkerboard layer at `(x, y)` (of `(w, h)`, or the
+/// level's size when `w` is a multiple of 4), 4 a kind-0 image with one
 /// pixel masked.
 fn random_stack(spec: &[(u8, u8, i32, i32, u32, u32, bool)], size: (u32, u32), s: u32) -> CompositionSource {
     let mut src = CompositionSource::default();
@@ -181,14 +181,17 @@ fn random_stack(spec: &[(u8, u8, i32, i32, u32, u32, bool)], size: (u32, u32), s
                 let cells: Vec<Material> = (0..bw * bh)
                     .map(|k| [Material::Rock, Material::Background, Material::Dirt][(k as usize + i) % 3])
                     .collect();
-                with_placed(&mut src, &id, (x, y), boxed, size, &art, Some(&cells), Some(&back), m);
+                // Mixed, backed, both or neither, by the position's parity.
+                let cells = (x % 2 == 0).then_some(cells);
+                let back = (y % 2 == 0).then_some(back);
+                with_placed(&mut src, &id, (x, y), boxed, size, &art, cells.as_deref(), back.as_ref(), m);
             }
             4 => {
                 let mut img = solid(3, 3, Rgba::rgb(x as u8, y as u8, 9));
                 img.set(0, 0, Rgba { r: 0, g: 0, b: 0, a: 0 });
                 with_image(&mut src, &id, img, (x, y), (w, h), m);
                 let mut mask = olr_edit::mask::Mask::full((3, 3));
-                mask.keep[4] = 0;
+                mask.keep[(x + 2 * y).rem_euclid(9) as usize] = 0;
                 with_mask(&mut src, &id, &mask);
             }
             1 => {
@@ -875,4 +878,48 @@ fn the_cache_bounds_its_grids() {
     let before = cache.processed();
     cache.grid(&format!("{}.png", n - 1), &png, (2048, 2048), &p, None).unwrap();
     assert_eq!(cache.processed(), before);
+}
+
+/// Plan 14d minors: data its element's flags disagree with encodes to no
+/// file, never a file the composition does not name.
+#[test]
+fn encode_decoded_refuses_data_its_flags_disagree_with() {
+    let plain = element("p", ElementKind::drawn(ElementMaterial::Dirt));
+    let mixed_data =
+        Decoded::Drawn { art: solid(2, 2, BROWN), cells: Some(vec![Material::Dirt; 4]), back: None };
+    assert!(encode_decoded(&plain, &mixed_data, (2, 2)).is_empty());
+    let mixed = element(
+        "m",
+        ElementKind::Drawn {
+            material: ElementMaterial::Dirt,
+            at: (0, 0),
+            size: None,
+            mixed: true,
+            back: false,
+        },
+    );
+    let short = Decoded::Drawn { art: solid(2, 2, BROWN), cells: Some(vec![Material::Dirt; 3]), back: None };
+    assert!(encode_decoded(&mixed, &short, (2, 2)).is_empty());
+}
+
+/// Plan 14d minors: a wrong number of cells names the cells.
+#[test]
+fn a_resize_names_wrong_cells() {
+    use olr_edit::compose::resize_decoded;
+    use olr_edit::level::Paint;
+    let mut e = element(
+        "m",
+        ElementKind::Drawn {
+            material: ElementMaterial::Dirt,
+            at: (0, 0),
+            size: None,
+            mixed: true,
+            back: false,
+        },
+    );
+    let mut d = Decoded::Drawn { art: solid(2, 2, BROWN), cells: Some(vec![Material::Dirt; 3]), back: None };
+    let err = resize_decoded(&mut e, &mut d, (2, 2), 1, (3, 3), (0, 0), Material::Rock, &Paint::Colour(BLUE))
+        .unwrap_err()
+        .to_string();
+    assert!(err.contains("cells"), "{err}");
 }

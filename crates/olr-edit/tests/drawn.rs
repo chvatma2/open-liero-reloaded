@@ -134,6 +134,7 @@ use std::sync::Arc;
 
 use olr_edit::compose::{ImageCache, bake_elements, decode_element, split_from};
 use olr_edit::drawn::{LayerError, Placed, merge, merge_down, placed, split, split_element};
+
 use olr_format::levels::{Dither, Element, ElementKind, ElementMaterial};
 
 const DARK: Rgba = Rgba::rgb(90, 60, 30);
@@ -328,4 +329,57 @@ fn erasing_a_background_pixel_clears_its_back_art() {
     erase(&mut d, (0, 0), 1, (1, 1), &Shape::Rect { x: 0, y: 0, w: 1, h: 1 });
     let Decoded::Drawn { art, back: Some(back), .. } = &d else { panic!() };
     assert_eq!((art.get(0, 0).a, back.get(0, 0).a), (0, 0));
+}
+
+/// Plan 14d minors: a background cell whose art pixel is transparent keeps
+/// its back art in the split's Background layer.
+#[test]
+fn split_keeps_back_art_under_transparent_background() {
+    let mut art = RgbaImage::new(2, 1);
+    art.set(0, 0, BLUE);
+    let p = Placed {
+        at: (0, 0),
+        size: (2, 1),
+        art,
+        cells: vec![Material::Background; 2],
+        back: Some(solid(2, 1, GREY)),
+    };
+    let [bg, ..] = split(&p, 1);
+    let bg = bg.unwrap();
+    assert_eq!((bg.art.get(0, 0), bg.art.get(1, 0)), (BLUE, GREY));
+}
+
+/// Plan 14d minors: a hand-made `Placed` that does not fit itself is
+/// refused, never a panic.
+#[test]
+fn an_inconsistent_placed_never_panics() {
+    let bad = Placed {
+        at: (0, 0),
+        size: (2, 1),
+        art: RgbaImage::new(1, 1),
+        cells: vec![Material::Dirt],
+        back: None,
+    };
+    assert_eq!(split(&bad, 1), [None, None, None]);
+    let good = strip((0, 0), &[Some(BROWN)], Material::Dirt);
+    assert_eq!(merge(&good, &bad, 1), None);
+    assert_eq!(merge(&good, &good, 0), None);
+    let _ = olr_edit::drawn::into_layer(bad, ElementMaterial::Dirt, (2, 1), 1);
+}
+
+/// Plan 14d minors: a locked element is refused here too.
+#[test]
+fn merge_and_split_refuse_locked_elements() {
+    let mut lower = element("below", ElementKind::drawn(ElementMaterial::Dirt));
+    let upper = element("top", ElementKind::drawn(ElementMaterial::Dirt));
+    let d = Decoded::Drawn { art: solid(2, 2, BROWN), cells: None, back: None };
+    lower.locked = true;
+    assert_eq!(
+        merge_down((&lower, &d), (&upper, &d), (2, 2), 1).unwrap_err(),
+        LayerError::Locked("below".into())
+    );
+    assert_eq!(
+        split_element(&lower, &d, (2, 2), 1, |n, _| n.into()).unwrap_err(),
+        LayerError::Locked("below".into())
+    );
 }

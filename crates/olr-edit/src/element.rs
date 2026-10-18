@@ -87,6 +87,9 @@ fn commit<T>(
             format!("{context}: {e}")
         })
     })?;
+    // Files no element names any more (a layer made plain) go.
+    let named: BTreeSet<String> = olr_format::levels::composition_paths(&src).into_iter().collect();
+    src.files.retain(|f, _| named.contains(f));
     pack.composition = Some(src);
     Ok(out)
 }
@@ -141,10 +144,20 @@ fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
 /// raster's) neither another element's, nor among `files` (the pack's
 /// others, stray ones included), nor a name some file system refuses.
 pub fn new_element_id(elements: &[Element], files: &BTreeSet<String>, name: &str, fallback: &str) -> String {
-    let used: BTreeSet<String> =
-        elements.iter().flat_map(element_files).chain(files.iter().cloned()).collect();
+    // Every file an element may come to hold: a drawn layer's material and
+    // back art, an image's mask (plan 14d).
+    let may_hold = |e: &Element| -> Vec<String> {
+        let mut out = element_files(e);
+        match &e.kind {
+            ElementKind::Drawn { .. } => out.extend(olr_format::levels::drawn_files(&e.id, true, true)),
+            ElementKind::Image { .. } => out.push(olr_format::levels::mask_file(&e.id)),
+            ElementKind::Raster => {}
+        }
+        out
+    };
+    let used: BTreeSet<String> = elements.iter().flat_map(may_hold).chain(files.iter().cloned()).collect();
     unique(&slug(name, fallback), |c| {
-        let mut files = vec![layer_file(c)];
+        let mut files = vec![layer_file(c), olr_format::levels::mask_file(c)];
         files.extend(raster_files(c));
         elements.iter().any(|e| e.id == c)
             || files.iter().any(|f| {
@@ -595,7 +608,9 @@ pub fn mask(pack: &mut Pack, id: &str, op: &MaskOp, restore: bool) -> Result<(),
         };
         match op {
             MaskOp::Shape(shape) => {
-                mask_shape(&mut m, *at, *bsize, shape, restore);
+                if mask_shape(&mut m, *at, *bsize, shape, restore).is_none() {
+                    return Err(bad(format!("the shape misses {id:?}")));
+                }
             }
             MaskOp::ColourAt { at: world, tolerance } => {
                 let seed = original_pixel(*at, *bsize, osize, *world)

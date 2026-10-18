@@ -180,6 +180,8 @@ pub enum LayerError {
     Hidden(String),
     #[error("element {0:?} has no pixels to work on")]
     NoPixels(String),
+    #[error("element {0:?} is locked")]
+    Locked(String),
     #[error(
         "merging into {0:?} would make a layer larger than {MAX_SIDE} × {MAX_SIDE} pixels or its art too large"
     )]
@@ -261,6 +263,17 @@ pub fn placed(e: &Element, d: &Decoded, level: (u32, u32), s: u32) -> Option<Pla
 }
 
 impl Placed {
+    /// Whether its art, cells and back art are its box's at art scale `s`
+    /// (a hand-made one may not be).
+    pub fn fits(&self, s: u32) -> bool {
+        let art = (self.size.0.checked_mul(s), self.size.1.checked_mul(s));
+        let dims = |i: &RgbaImage| (Some(i.width()), Some(i.height()));
+        s > 0
+            && dims(&self.art) == art
+            && self.cells.len() as u64 == u64::from(self.size.0) * u64::from(self.size.1)
+            && self.back.as_ref().is_none_or(|b| dims(b) == art)
+    }
+
     /// The box offset of world pixel `(wx, wy)`, when inside the box.
     fn local(&self, wx: i64, wy: i64) -> Option<(u32, u32)> {
         let (lx, ly) = (wx - i64::from(self.at.0), wy - i64::from(self.at.1));
@@ -308,15 +321,15 @@ pub fn merge(lower: &Placed, upper: &Placed, s: u32) -> Option<Placed> {
     let (x1, y1) = (hi(lower).0.max(hi(upper).0), hi(lower).1.max(hi(upper).1));
     let (w, h) = (x1 - x0, y1 - y0);
     let max = i64::from(MAX_SIDE);
-    if s == 0 || !(1..=max).contains(&w) || !(1..=max).contains(&h) {
+    if !lower.fits(s) || !upper.fits(s) || !(1..=max).contains(&w) || !(1..=max).contains(&h) {
         return None;
     }
     let (w, h) = (w as u32, h as u32);
     check_size(w * s, h * s, LEVEL_ART).ok()?;
     let mut art = RgbaImage::new(w * s, h * s);
-    let mut back = RgbaImage::new(w * s, h * s);
+    // Back art only when some pixel needs it (plan 14d minors).
+    let mut back: Option<RgbaImage> = None;
     let mut cells = vec![Material::Background; w as usize * h as usize];
-    let mut backed = false;
     for y in 0..h {
         for x in 0..w {
             let (wx, wy) = (x0 + i64::from(x), y0 + i64::from(y));
@@ -356,15 +369,14 @@ pub fn merge(lower: &Placed, upper: &Placed, s: u32) -> Option<Placed> {
                         art.set(ax, ay, opaque(p));
                     }
                     if let Some(b) = b {
-                        back.set(ax, ay, opaque(b));
-                        backed = true;
+                        back.get_or_insert_with(|| RgbaImage::new(w * s, h * s)).set(ax, ay, opaque(b));
                     }
                 }
             }
         }
     }
     let at = (x0 as i32, y0 as i32);
-    Some(Placed { at, size: (w, h), art, cells, back: backed.then_some(back) })
+    Some(Placed { at, size: (w, h), art, cells, back })
 }
 
 /// The Background, Dirt and Rock layers of `p` (plan 14d R11), each with
@@ -372,6 +384,9 @@ pub fn merge(lower: &Placed, upper: &Placed, s: u32) -> Option<Placed> {
 /// also takes the back art under dirt and rock. `None` for one with no
 /// opaque pixel.
 pub fn split(p: &Placed, s: u32) -> [Option<Placed>; 3] {
+    if !p.fits(s) {
+        return [None, None, None];
+    }
     [Material::Background, Material::Dirt, Material::Rock].map(|m| {
         let mut art = RgbaImage::new(p.art.width(), p.art.height());
         let mut any = false;
@@ -379,12 +394,13 @@ pub fn split(p: &Placed, s: u32) -> [Option<Placed>; 3] {
             for x in 0..p.size.0 {
                 let c = p.cell((x, y));
                 for (ax, ay) in art_block(s, x, y) {
-                    let px = if c == m {
-                        Some(p.art.get(ax, ay))
-                    } else if m == Material::Background {
-                        p.back.as_ref().map(|b| b.get(ax, ay)).filter(|b| b.a != 0)
-                    } else {
-                        None
+                    let own = (c == m).then(|| p.art.get(ax, ay));
+                    let back = || p.back.as_ref().map(|b| b.get(ax, ay)).filter(|b| b.a != 0);
+                    // The Background layer takes the back art wherever the art
+                    // does not show (plan 14d minors).
+                    let px = match m {
+                        Material::Background => own.filter(|a| a.a != 0).or_else(back),
+                        _ => own,
                     };
                     if let Some(px) = px {
                         any |= px.a != 0;
@@ -403,6 +419,17 @@ pub fn split(p: &Placed, s: u32) -> [Option<Placed>; 3] {
 /// (`level`) at the origin.
 pub fn into_layer(p: Placed, material: ElementMaterial, level: (u32, u32), s: u32) -> (ElementKind, Decoded) {
     let m: Material = material.into();
+    // A hand-made `Placed` that does not fit itself makes an empty layer.
+    let p = match p.fits(s) {
+        true => p,
+        false => Placed {
+            art: RgbaImage::new(p.size.0.saturating_mul(s), p.size.1.saturating_mul(s)),
+            cells: vec![m; p.size.0 as usize * p.size.1 as usize],
+            back: None,
+            ..p
+        },
+    };
+    let s = s.max(1);
     let Placed { at, size, art, mut cells, back } = p;
     let mut mixed = false;
     for y in 0..size.1 {
@@ -436,6 +463,9 @@ pub fn merge_down(
         return Err(LayerError::NotDrawn(le.id.clone()));
     };
     for e in [le, ue] {
+        if e.locked {
+            return Err(LayerError::Locked(e.id.clone()));
+        }
         if !e.visible {
             return Err(LayerError::Hidden(e.id.clone()));
         }
@@ -458,6 +488,9 @@ pub fn split_element(
     s: u32,
     mut id: impl FnMut(&str, &str) -> String,
 ) -> Result<Vec<(Element, Decoded)>, LayerError> {
+    if e.locked {
+        return Err(LayerError::Locked(e.id.clone()));
+    }
     if !e.visible {
         return Err(LayerError::Hidden(e.id.clone()));
     }

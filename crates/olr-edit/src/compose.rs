@@ -644,13 +644,17 @@ pub fn encode_decoded(e: &Element, d: &Decoded, size: (u32, u32)) -> Vec<(String
         (ElementKind::Image { mask: true, .. }, Decoded::Image { mask: Some(m), .. }) => {
             vec![(mask_file(&e.id), m.encode())]
         }
-        (ElementKind::Drawn { .. }, Decoded::Drawn { art, cells, back }) => {
+        // The files the element names, from data that agrees with it.
+        (ElementKind::Drawn { mixed, back: backed, .. }, Decoded::Drawn { art, cells, back })
+            if *mixed == cells.is_some() && *backed == back.is_some() =>
+        {
             let (_, b) = drawn_box(&e.kind, size).unwrap_or(((0, 0), size));
             let files = drawn_files(&e.id, cells.is_some(), back.is_some());
             let mut out = vec![(files[0].clone(), image_io::encode_rgba(art))];
-            if let Some(c) = cells
-                && c.len() as u64 == u64::from(b.0) * u64::from(b.1)
-            {
+            if let Some(c) = cells {
+                if c.len() as u64 != u64::from(b.0) * u64::from(b.1) {
+                    return Vec::new();
+                }
                 out.push((files[1].clone(), encode_material(b, c)));
             }
             if let (Some(back), Some(f)) = (back, files.last()) {
@@ -731,7 +735,13 @@ pub fn resize_decoded(
         Decoded::Drawn { cells: Some(c), art: a, .. }
             if level_sized && c.len() as u64 != u64::from(old.0) * u64::from(old.1) =>
         {
-            return Err(wrong(a));
+            let what = format!(
+                "{:?}'s cells are {}, the level has {}",
+                e.id,
+                c.len(),
+                u64::from(old.0) * u64::from(old.1)
+            );
+            return Err(EditError::Art(a.width(), a.height(), what));
         }
         Decoded::Raster { front, back, .. } if dims(front) != art || dims(back) != art => {
             return Err(wrong(if dims(front) != art { front } else { back }));

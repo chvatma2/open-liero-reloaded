@@ -461,3 +461,48 @@ fn a_layer_moved_back_to_the_origin_follows_the_level_again() {
     let e = &p.composition.as_ref().unwrap().composition.elements[1];
     assert_eq!(e.kind, ElementKind::drawn(ElementMaterial::Dirt));
 }
+
+/// Plan 14d minors: new ids never take a stray mask file, nor the names a
+/// plain layer's material and back art would take.
+#[test]
+fn new_ids_reserve_masks_and_layer_files() {
+    use olr_format::levels::Element;
+    let files: std::collections::BTreeSet<String> = ["editor/masks/x.png".to_string()].into();
+    assert_ne!(new_element_id(&[], &files, "x", "image"), "x");
+    let wall = Element {
+        id: "wall".into(),
+        name: String::new(),
+        visible: true,
+        locked: false,
+        kind: ElementKind::drawn(ElementMaterial::Dirt),
+    };
+    assert_ne!(new_element_id(&[wall], &Default::default(), "wall.material", "layer"), "wall.material");
+}
+
+/// Plan 14d minors: a mixed layer made plain drops its material file.
+#[test]
+fn a_layer_made_plain_drops_its_material_file() {
+    let mut p = pack(8, 6, 1);
+    let id = add_layer(&mut p, ElementMaterial::Dirt, "Ground").unwrap();
+    draw(
+        &mut p,
+        &id,
+        &Shape::Rect { x: 1, y: 1, w: 2, h: 2 },
+        &Paint::Colour(RED),
+        Some(ElementMaterial::Rock),
+    )
+    .unwrap();
+    set(&mut p, &id, Property::Material(ElementMaterial::Rock)).unwrap();
+    assert!(!p.composition.as_ref().unwrap().files.contains_key("editor/layers/ground.material.png"));
+}
+
+/// Plan 14d minors: a mask shape that misses the picture changes nothing.
+#[test]
+fn a_mask_that_misses_the_picture_is_refused() {
+    let mut p = pack(8, 6, 1);
+    let id = add_image(&mut p, "a.png", png(4, 4), (0, 0), (4, 4), ElementMaterial::Dirt, "A").unwrap();
+    let before = p.composition.clone();
+    let e = mask(&mut p, &id, &MaskOp::Shape(Shape::Rect { x: 6, y: 5, w: 1, h: 1 }), false).unwrap_err();
+    assert!(e.to_string().contains("misses"), "{e}");
+    assert_eq!(p.composition, before);
+}
