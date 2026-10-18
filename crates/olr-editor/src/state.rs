@@ -488,6 +488,14 @@ impl EditorState {
         );
         let mut cmds = if view_only { Vec::new() } else { self.release() };
         cmds.extend(self.act(action));
+        // The pixel rectangle is the selected layer's: it goes with the
+        // selection, or with its layer (batch C review).
+        if let Some((id, _)) = &self.pixel_rect
+            && (self.selection != Selection::Element(id.clone())
+                || self.doc.as_ref().is_none_or(|d| d.index_of(id).is_none()))
+        {
+            self.pixel_rect = None;
+        }
         cmds
     }
 

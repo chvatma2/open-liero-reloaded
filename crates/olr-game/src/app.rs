@@ -165,6 +165,8 @@ pub struct App {
     debug: bool,
     /// Tab held: the scoreboard shows.
     scores: ScoreKey,
+    /// The keyboard's modifiers, as the window last said.
+    modifiers: winit::keyboard::ModifiersState,
     /// The HUD's minimap picture.
     minimap: MinimapTexture,
     /// The UI scale the options set (1 for the command line's games):
@@ -224,6 +226,15 @@ pub struct App {
 pub fn egui_hears(event: &winit::event::WindowEvent, capturing: bool) -> bool {
     use winit::event::WindowEvent as E;
     !(capturing && matches!(event, E::KeyboardInput { .. } | E::Ime(_)))
+}
+
+/// Whether egui-winit swallowed a paste (plan 14e batch C review):
+/// Ctrl+V `pressed` with `command` held makes it send `Event::Paste` only
+/// when the system clipboard holds text, and no key event either; the
+/// level editor's own clipboard then never hears it. `v`: the key is V;
+/// `pushed`: egui-winit added an event for it.
+pub fn paste_swallowed(pressed: bool, command: bool, v: bool, pushed: bool) -> bool {
+    pressed && command && v && !pushed
 }
 
 /// What a key does for a watched game.
@@ -348,6 +359,7 @@ impl App {
             win: None,
             debug: false,
             scores: ScoreKey::default(),
+            modifiers: winit::keyboard::ModifiersState::default(),
             minimap: MinimapTexture::default(),
             ui_scale,
             saved: 0,
@@ -1257,6 +1269,17 @@ mod tests {
 
     /// While the options capture a key, egui hears no key or text: the
     /// capture has it alone. Other events still reach egui.
+    #[test]
+    fn a_swallowed_paste_is_given_back() {
+        // Ctrl+V pressed and egui-winit added nothing: its clipboard had no text.
+        assert!(super::paste_swallowed(true, true, true, false));
+        // It sent its own Paste, a release, no Ctrl, another key: nothing to add.
+        assert!(!super::paste_swallowed(true, true, true, true));
+        assert!(!super::paste_swallowed(false, true, true, false));
+        assert!(!super::paste_swallowed(true, false, true, false));
+        assert!(!super::paste_swallowed(true, true, false, false));
+    }
+
     #[test]
     fn egui_hears_no_key_while_capturing() {
         let text = WindowEvent::Ime(Ime::Commit(" ".into()));

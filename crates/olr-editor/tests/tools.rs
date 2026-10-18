@@ -721,3 +721,30 @@ fn escape_drops_the_pixel_rectangle() {
     run(&mut s, A::Tool(Tool::Brush));
     assert!(s.pixel_rect().is_none(), "a tool change drops it");
 }
+
+/// Batch C review: the pixel rectangle goes when the selection moves on or
+/// its layer goes, so Delete deletes what is selected.
+#[test]
+fn the_pixel_rectangle_follows_the_selection() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let p = tunnel_square(&s);
+    let before = layer(&s, "tunnels");
+    select_pixels(&mut s, p);
+    run(&mut s, A::Select(Selection::Element("tiny".into())));
+    assert!(s.pixel_rect().is_none(), "another element chosen");
+    run(&mut s, A::Remove);
+    assert!(s.document().unwrap().index_of("tiny").is_none(), "Delete deleted the selected element");
+    assert!(layer(&s, "tunnels") == before);
+    // A rectangle on a pasted layer, the paste undone.
+    run(&mut s, A::Undo);
+    select_pixels(&mut s, p);
+    run(&mut s, A::Copy);
+    run(&mut s, A::Paste);
+    let Selection::Element(pasted) = s.selection().clone() else { panic!() };
+    run(&mut s, A::Tool(Tool::SelectPixels));
+    drag(&mut s, (p.0 + 4, p.1 + 4), (p.0 + 6, p.1 + 6), false);
+    assert_eq!(s.pixel_rect().map(|r| r.0.clone()), Some(pasted));
+    run(&mut s, A::Undo);
+    assert!(s.pixel_rect().is_none(), "its layer is gone");
+}

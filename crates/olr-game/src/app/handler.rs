@@ -21,11 +21,32 @@ impl ApplicationHandler for App {
         if !self.current(id) {
             return;
         }
+        if let WindowEvent::ModifiersChanged(m) = &event {
+            self.modifiers = m.state();
+        }
         let capturing = self.shell.data.capture.is_some();
         if let Some(w) = &mut self.win
             && super::egui_hears(&event, capturing)
         {
+            let before = w.egui.egui_input().events.len();
             let _ = w.egui.on_window_event(&w.window, &event);
+            // A Ctrl+V egui-winit swallowed (an empty system clipboard) is
+            // still a paste: the level editor pastes its own clipboard.
+            if let WindowEvent::KeyboardInput { event: key, .. } = &event {
+                use winit::keyboard::{Key, KeyCode, PhysicalKey};
+                let v = matches!(&key.logical_key, Key::Character(c) if c.eq_ignore_ascii_case("v"))
+                    || key.physical_key == PhysicalKey::Code(KeyCode::KeyV);
+                let command = if cfg!(target_os = "macos") {
+                    self.modifiers.super_key()
+                } else {
+                    self.modifiers.control_key()
+                };
+                let input = w.egui.egui_input_mut();
+                let pushed = input.events.len() > before;
+                if super::paste_swallowed(key.state.is_pressed(), command, v, pushed) {
+                    input.events.push(egui::Event::Paste(String::new()));
+                }
+            }
         }
         // The in-game chat's field has the keys: the game hears none.
         let chatting = self.shell.data.ingame_chat.is_some();
