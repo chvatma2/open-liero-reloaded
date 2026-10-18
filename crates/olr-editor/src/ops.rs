@@ -398,6 +398,27 @@ impl Document {
         Ok(edits)
     }
 
+    /// Whether `item`'s data fits its element: a drawn layer's art, cells
+    /// and back art its box and flags, an image's mask its flag.
+    fn fits(&self, item: &Item) -> bool {
+        let s = self.level.art_scale;
+        let dims = |i: &RgbaImage| (i.width(), i.height());
+        match (&item.element.kind, &item.decoded) {
+            (ElementKind::Drawn { mixed, back: backed, .. }, Decoded::Drawn { art, cells, back }) => {
+                let Some((_, size)) = drawn_box(&item.element.kind, self.level.size) else { return false };
+                let box_art = (size.0.saturating_mul(s), size.1.saturating_mul(s));
+                dims(art) == box_art
+                    && *mixed == cells.is_some()
+                    && *backed == back.is_some()
+                    && cells.as_ref().is_none_or(|c| c.len() as u64 == u64::from(size.0) * u64::from(size.1))
+                    && back.as_ref().is_none_or(|b| dims(b) == box_art)
+            }
+            (ElementKind::Image { mask, .. }, Decoded::Image { mask: m, .. }) => *mask == m.is_some(),
+            (ElementKind::Raster, Decoded::Raster { .. }) => true,
+            _ => false,
+        }
+    }
+
     /// Swaps item `index` for `after` (an `Edit::Layer`, applied).
     fn swap(&mut self, index: usize, after: Item) -> Edit {
         let before = Box::new(self.items[index].clone());
@@ -485,6 +506,8 @@ impl Document {
         let item = self.items[i].clone();
         match (&item.element.kind, &item.decoded, stroke) {
             (ElementKind::Image { .. }, _, Stroke::Paint(_)) => Err(DocError::Bad(PICTURE.into())),
+            // Nothing to restore without a mask (batch C review 1).
+            (ElementKind::Image { .. }, Decoded::Image { mask: None, .. }, Stroke::Restore) => Ok(None),
             (ElementKind::Image { source, .. }, Decoded::Image { mask: None, .. }, _) => {
                 let bytes = self
                     .original_of(&item.element)
@@ -560,6 +583,10 @@ impl Document {
         let (size, s) = (self.level.size, self.level.art_scale);
         if let ElementKind::Image { at, size: bsize, .. } = self.items[i].element.kind {
             let Decoded::Image { mask: Some(mask), .. } = &mut self.items[i].decoded else {
+                // Restoring a picture with no mask restores nothing.
+                if restore {
+                    return Ok(None);
+                }
                 return Err(DocError::Bad(format!("{id:?} has no mask: begin the stroke first")));
             };
             if mask_shape(Arc::make_mut(mask), at, bsize, shape, restore).is_none() {
@@ -893,9 +920,12 @@ impl Document {
                 let dims = |i: &RgbaImage| (i.width(), i.height());
                 let want = (rect.w.saturating_mul(s), rect.h.saturating_mul(s));
                 let n = rect.w as usize * rect.h as usize;
+                let box_art = (size.0.saturating_mul(s), size.1.saturating_mul(s));
                 let fits = inside
                     && dims(&p.art) == want
-                    && dims(art) == (size.0.saturating_mul(s), size.1.saturating_mul(s))
+                    && dims(art) == box_art
+                    && cells.as_ref().is_none_or(|c| c.len() as u64 == u64::from(size.0) * u64::from(size.1))
+                    && back.as_ref().is_none_or(|b| dims(b) == box_art)
                     && p.cells.as_ref().map(Vec::len) == cells.as_ref().map(|_| n)
                     && p.back.as_ref().map(dims) == back.as_ref().map(|_| want);
                 if !fits {
@@ -922,7 +952,10 @@ impl Document {
             }
             Edit::Layer { index, before, after } => {
                 let to = if forward { after } else { before };
-                if *index >= self.items.len() {
+                // A swap of another element, or of data that does not fit
+                // its element, changes nothing (batch C review 3).
+                let same = self.items.get(*index).is_some_and(|i| i.element.id == to.element.id);
+                if !same || !self.fits(to) {
                     return NOTHING;
                 }
                 let from = std::mem::replace(&mut self.items[*index], (**to).clone());

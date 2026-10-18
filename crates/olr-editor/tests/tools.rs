@@ -411,3 +411,78 @@ fn arrows_nudge_a_selected_drawn_layer() {
     let overlays = s.overlays();
     assert!(overlays.iter().any(|o| matches!(o, Overlay::Box { selected: true, .. })), "its box is drawn");
 }
+
+/// Batch C review 1: a stroke that changes nothing leaves no step, nor
+/// the conversion it began with.
+#[test]
+fn a_stroke_that_changes_nothing_leaves_no_step() {
+    use olr_format::levels::ElementMaterial;
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Select(Selection::Element("tiny".into())));
+    run(&mut s, A::Tool(Tool::Eraser));
+    drag(&mut s, (400, 300), (410, 300), false);
+    assert!(matches!(kind(&s, "tiny"), ElementKind::Image { mask: false, .. }), "no mask for a miss");
+    run(&mut s, A::Restore(true));
+    drag(&mut s, (60, 45), (70, 45), false);
+    assert!(matches!(kind(&s, "tiny"), ElementKind::Image { mask: false, .. }), "nothing to restore");
+    assert!(!s.can_undo() && !s.dirty());
+    let Some((_tmp, mut s)) = dirt_level() else { return };
+    run(&mut s, A::Select(Selection::Element("dirt".into())));
+    run(&mut s, A::Tool(Tool::Brush));
+    run(&mut s, A::PaintMaterial(Some(ElementMaterial::Rock)));
+    drag(&mut s, (-50, -50), (-40, -50), false);
+    assert!(matches!(kind(&s, "dirt"), ElementKind::Drawn { mixed: false, .. }));
+    assert!(!s.can_undo() && !s.dirty());
+}
+
+/// Batch C review 2: erasing a picture that lies off the level is still
+/// one undoable step.
+#[test]
+fn masking_a_picture_off_the_level_is_recorded() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Set("tiny".into(), Property::At((-200, -200))));
+    run(&mut s, A::Select(Selection::Element("tiny".into())));
+    run(&mut s, A::Tool(Tool::Eraser));
+    drag(&mut s, (-180, -180), (-170, -175), false);
+    assert!(matches!(kind(&s, "tiny"), ElementKind::Image { mask: true, .. }));
+    let erased = |s: &EditorState| {
+        let d = s.document().unwrap();
+        match &d.items()[d.index_of("tiny").unwrap()].decoded {
+            olr_edit::compose::Decoded::Image { mask: Some(m), .. } => {
+                m.keep.iter().filter(|k| **k == 0).count()
+            }
+            _ => 0,
+        }
+    };
+    let n = erased(&s);
+    assert!(n > 0);
+    run(&mut s, A::Undo);
+    assert!(
+        matches!(kind(&s, "tiny"), ElementKind::Image { mask: false, at: (-200, -200), .. }),
+        "{:?}",
+        kind(&s, "tiny")
+    );
+    run(&mut s, A::Redo);
+    assert_eq!(erased(&s), n, "the redone step holds the erased pixels");
+}
+
+/// Batch C review 4: moving a level-sized layer rebakes the level on each
+/// pointer move. Run by hand:
+/// `cargo nextest run -p olr-editor --release --run-ignored only layer_move_speed --no-capture`.
+#[test]
+#[ignore]
+fn layer_move_speed() {
+    let Some(root) = content() else { return };
+    for id in ["olx-level-castlestrike", "olx-level-liero-factory"] {
+        let (_tmp, mut s) = editor_at(&root, std::path::Path::new(id));
+        run(&mut s, A::Select(Selection::Element("rock".into())));
+        run(&mut s, A::Nudge { dx: 1, dy: 0 });
+        let start = std::time::Instant::now();
+        for i in 0..10 {
+            run(&mut s, A::Nudge { dx: if i % 2 == 0 { 1 } else { -1 }, dy: 0 });
+        }
+        println!("{id}: a move of the rock layer: {:?}", start.elapsed() / 10);
+    }
+}

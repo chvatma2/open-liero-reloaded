@@ -535,12 +535,20 @@ impl EditorState {
                 self.committed(NOTHING)
             }
             Drag::Stroke { id, before, rect, begun, .. } => {
-                let edit = rect.and_then(|r| doc.stroke_edit(&id, r, &before));
-                let step: Vec<Edit> = begun.into_iter().chain(edit).collect();
-                if step.is_empty() {
+                // A mask's change is its own, on or off the level.
+                let edit = match &*before {
+                    StrokeBefore::Mask(_) => doc.stroke_edit(&id, NOTHING, &before),
+                    StrokeBefore::Layer(_) => rect.and_then(|r| doc.stroke_edit(&id, r, &before)),
+                };
+                // A stroke of no change leaves no step, nor its conversion
+                // (batch C review 1).
+                let Some(edit) = edit.filter(|e| !e.is_noop()) else {
+                    if let Some(b) = &begun {
+                        doc.apply(b, false);
+                    }
                     return Vec::new();
-                }
-                self.history.push(step);
+                };
+                self.history.push(begun.into_iter().chain([edit]).collect());
                 self.committed(NOTHING)
             }
             Drag::Shape { id, tool, start, now } => {
@@ -562,11 +570,13 @@ impl EditorState {
                 if let Err(e) = &painted {
                     self.status.message = Some(e.to_string());
                 }
-                let step: Vec<Edit> = begun.into_iter().chain(edit).collect();
-                if step.is_empty() {
+                let Some(edit) = edit.filter(|e| !e.is_noop()) else {
+                    if let (Some(b), Some(doc)) = (&begun, self.doc.as_mut()) {
+                        doc.apply(b, false);
+                    }
                     return Vec::new();
-                }
-                self.history.push(step);
+                };
+                self.history.push(begun.into_iter().chain([edit]).collect());
                 self.committed(painted.ok().flatten().unwrap_or(NOTHING))
             }
         }

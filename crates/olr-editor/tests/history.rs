@@ -411,3 +411,38 @@ fn the_new_edits_count_their_bytes() {
     assert!(layer.bytes() >= base + 2 * 64);
     assert!(layer.is_noop() && edit.is_noop() && !mask.is_noop());
 }
+
+/// Batch C review 3: a forged swap whose data does not fit its element is
+/// refused, and a later pixel edit never panics on it.
+#[test]
+fn a_forged_layer_swap_is_refused() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    let a = files(&doc);
+    let index = doc.index_of("tunnels").unwrap();
+    let mut forged = doc.items()[index].clone();
+    if let ElementKind::Drawn { mixed, .. } = &mut forged.element.kind {
+        *mixed = true;
+    }
+    if let Decoded::Drawn { cells, .. } = &mut forged.decoded {
+        *cells = Some(vec![Material::Rock; 3]);
+    }
+    let swap =
+        Edit::Layer { index, before: Box::new(doc.items()[index].clone()), after: Box::new(forged.clone()) };
+    doc.apply(&swap, true);
+    assert!(files(&doc) == a, "refused");
+    let mut other = forged;
+    other.element.id = "not-tunnels".into();
+    let wrong_id =
+        Edit::Layer { index, before: Box::new(doc.items()[index].clone()), after: Box::new(other) };
+    doc.apply(&wrong_id, true);
+    assert!(files(&doc) == a, "another element's swap is refused");
+    let pixels = Edit::Pixels {
+        id: "tunnels".into(),
+        rect: Rect { x: 0, y: 0, w: 1, h: 1 },
+        before: Patch { art: RgbaImage::new(1, 1), cells: Some(vec![Material::Rock]), back: None },
+        after: Patch { art: RgbaImage::new(1, 1), cells: Some(vec![Material::Rock]), back: None },
+    };
+    doc.apply(&pixels, false);
+    assert!(files(&doc) == a);
+}
