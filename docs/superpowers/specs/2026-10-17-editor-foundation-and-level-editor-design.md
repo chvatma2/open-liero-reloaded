@@ -309,9 +309,9 @@ composed level (§2).
     browser, recovery;
   - the e2e script.
 
-  Then a playtest zip. Done
-  (`docs/superpowers/plans/2026-10-17-plan-14c-editor-in-game.md`;
-  decisions in `docs/porting/STATUS.md`, "Level editor decisions (plan 14c)").
+  Done (`docs/superpowers/plans/2026-10-17-plan-14c-editor-in-game.md`;
+  decisions in `docs/porting/STATUS.md`, "Level editor decisions (plan
+  14c)"). Then a playtest release (the Flatpak and the Windows zip).
 
 ## 10. Out of scope
 

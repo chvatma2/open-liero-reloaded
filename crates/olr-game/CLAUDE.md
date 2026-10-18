@@ -616,10 +616,11 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   pack's files and `recovery.ron`, `replace_dir`-atomic, when unsaved
   changes have waited `RECOVERY_INTERVAL`, 120 s, since the first tick that
   saw them; each session's id unique against `recovery/`, so a crash's copy
-  survives; `list_recoveries` (damaged ones listed), `discard_recovery`
-  (ids are plain names)). Bundled roots (every root but `packs/`) and
-  `recovery/` are refused for Open, Create and Save (`BUNDLED`,
-  `RECOVERY_IN_PLACE`). `HostOut::{Upload, FullUpload, Play, Closed,
+  survives (a recovered document keeps its copy's id); `list_recoveries`
+  (damaged ones listed), `discard_recovery` (ids are plain names)).
+  Bundled roots (every root but `packs/`) and `recovery/` are refused for
+  Open, Create and Save (`BUNDLED`, `RECOVERY_IN_PLACE`).
+  `HostOut::{Upload, FullUpload, Play, Closed,
   Message}` is what the app does. The shell owns the host (`Shell::editor`):
   while it is open `App::frame` draws `olr_editor::ui::show` instead of the
   menus, `Shell::editor_frame` runs it (Play becomes `Launch::Edited`:
@@ -639,10 +640,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   recovery copy first (`Shell::finish`, `EditorHost::flush_recovery`). A
   Play that does not start is an error dialog in the editor
   (`EditorAction::Failed`), the host's messages its status bar (`Note`).
-  `--edit` conflicts with every `GAME_FLAGS` flag.
-  `olr --edit <dir>` (`main.rs`'s `edit_target`, R6) refuses `--content`'s
-  directories with status 2. Tests: `tests/editor_host.rs`,
-  `editor::canvas`'s unit tests, `tests/canvas_gpu.rs` (a binary of its own in the GPU tier, `OLR_GPU_TESTS`:
+  `--edit` conflicts with every `GAME_FLAGS` flag and with `--host`,
+  `--join` and `--net-sim`.
+  `olr --edit <dir>` (`main.rs`'s `edit_target`, R6) exits with status 2
+  for a directory inside `--content`, a missing path or a file. Tests:
+  `tests/editor_host.rs`, `editor::canvas`'s unit tests,
+  `tests/canvas_gpu.rs` (a binary of its own in the GPU tier, `OLR_GPU_TESTS`:
   a rectangle upload draws as a full one), `main.rs`'s argument tests,
   `fixtures/autoplay/editor.ron` in `cargo xtask e2e`.
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
@@ -775,10 +778,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `Type(text)` (egui's text event to the focused field: click it first),
   `Press`/`Release(action)` (the input path), `WaitFor(screen)`,
   `Wait(frames)`, `Drag(label, from, to)` and `ClickAt(label, at)`
-(fractions of the widget's rect, written `(0.3, 0.5)`; a drag moves in
-`DRAG_STEPS`, 8, one a frame: the editor's canvas), `Screenshot(name)` (`<shot dir>/<name>.png`, checked not
-  blank: `sanity`), `Assert(Screen | Label | WindowSize | Speed | Playing
-  | TicksAtLeast | Lobby(members: n) | LabelContains(text))` (the online lobby's members), `Quit`, `WaitForExit` (the menus' Quit). A step that
+  (fractions of the widget's rect, written `(0.3, 0.5)`; a drag moves in
+  `DRAG_STEPS`, 8, one a frame: the editor's canvas), `Screenshot(name)`
+  (`<shot dir>/<name>.png`, checked not blank: `sanity`), `Assert(Screen |
+  Label | LabelContains(text) | WindowSize | Speed | Playing | TicksAtLeast
+  | Lobby(members: n))` (the online lobby's members), `Quit`,
+  `WaitForExit` (the menus' Quit). A step that
   waits fails the run after `within` frames (`DEFAULT_WITHIN`); the game
   then exits with the error. Each step is a JSON line in `<shot
   dir>/autoplay.jsonl`, the last `pass` or `fail`. `--fake-clock` (only

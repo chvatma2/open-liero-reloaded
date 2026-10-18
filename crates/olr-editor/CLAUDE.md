@@ -22,8 +22,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   for what the host could not do: a Play that did not start, a recovery
   copy not written).
   `RecoveryDone` comes with every successful save and before a Close, Open
-  or New leaves the open document (the host drops its recovery copy). While playing, every action but `PlayEnded` is
-  ignored; while a dialog is open only its answer, the host's answers and
+  or New leaves the open document (the host drops its recovery copy).
+  While playing, every action but `PlayEnded` is ignored; while a dialog is open only its answer, the host's answers and
   the view act. Open, New and Close ask first when there are unsaved
   changes. Saves are answered in order (`saves`: each one's follow-up and
   the change count it was sent at), so an edit made meanwhile stays unsaved.

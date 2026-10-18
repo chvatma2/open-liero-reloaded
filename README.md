@@ -83,6 +83,7 @@ Useful flags (`olr --help` lists them all):
 | `--data-dir <dir>` | settings, profiles, replays and user packs here instead of the platform's directory |
 | `--content <dir>` | the imported content (default `content/packs` beside `olr-game`, else in the working directory) |
 | `--no-sound` | open no audio device |
+| `--edit <pack dir>` | open the level editor on that pack (the menus run behind it; bundled content is refused) |
 
 ### The menus
 
@@ -163,7 +164,7 @@ game starts with defaults (and says so in its log). One from a newer
 version of the game is left where it is, untouched: the game uses
 defaults, saves nothing to it that session, and says so on the main menu.
 
-### Editing levels
+### Editing levels (0.2, in progress)
 
 **Editor** in the main menu lists every level: **Edit** for the levels in
 the data directory's `packs/` (the ones you made), **Edit a copy** for the
@@ -174,21 +175,25 @@ copy it from the menu).
 
 - **Elements** (left): drawn layers (**Add layer**), imported pictures
   (**Import image…**: PNG or JPEG, at most 64 MiB, through the editor's own
-  file browser; type any path, a Windows drive or a WSL path too), and the
-  level's spawns under Objects. Drag a name to reorder; the eye and the
-  lock hide and protect.
+  file browser; its Path field takes any folder: on Windows a drive or
+  `\\wsl.localhost\…`, under WSL `/mnt/c/…`), and the level's spawns under
+  Objects. Drag a name to reorder; the eye and the lock hide and protect.
+- **Properties** (right): the selected element's, or with nothing selected
+  the level's (name, notes, theme, art scale, size). The arrow keys nudge
+  the selected image by one pixel.
 - **Tools** (top): Select (V), Brush (B), Eraser (E), Rectangle (R), Ellipse
   (O), Line (L), Spawn (P), Eyedropper (I); paint a colour or the theme's
   front or back tile. Ctrl+Z / Ctrl+Y undo and redo, Ctrl+S saves, Delete
   removes, Space-drag pans, the wheel zooms. **Material view** shows rock,
   dirt and background.
 - **Play** tries the level as it is: alone (0 bots) or a Deathmatch
-  against up to 8 bots, the mod chosen beside it. Your worm starts at the
+  against up to 8 bots (of Local Play's saved difficulty, personality and
+  loadout), the mod chosen beside it. Your worm starts at the
   first spawn (or a free spot). **Esc** or **Stop** returns to the editor
   exactly as it was; the match's damage is thrown away.
 - **Saving and safety:** Save writes the whole pack at once and checks it.
-  Open, New, Close and closing the window ask first when there are
-  unsaved changes. Every 2 minutes unsaved changes are copied to the data
+  Open…, Close and closing the window ask first when there are unsaved
+  changes. Every 2 minutes unsaved changes are copied to the data
   directory's `recovery/`; after a crash the Editor screen offers
   **Recover** (or **Discard**).
 

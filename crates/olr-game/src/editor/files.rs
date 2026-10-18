@@ -105,8 +105,9 @@ pub fn read_image(path: &Path) -> Result<(String, Vec<u8>), String> {
 }
 
 /// Whether `dir` lies inside one of `roots` (each compared canonically,
-/// symbolic links resolved; a directory that does not exist yet by its
-/// nearest existing ancestor).
+/// symbolic links resolved; a directory that does not exist yet, `dir` or
+/// a root, by its nearest existing ancestor). A `dir` that resolves
+/// nowhere counts as inside.
 pub fn inside(dir: &Path, roots: &[PathBuf]) -> bool {
     let canon = |p: &Path| -> Option<PathBuf> {
         let mut at = p.to_path_buf();
@@ -119,6 +120,8 @@ pub fn inside(dir: &Path, roots: &[PathBuf]) -> bool {
             at = at.parent()?.to_path_buf();
         }
     };
-    let Some(dir) = canon(dir) else { return false };
-    roots.iter().filter_map(|r| r.canonicalize().ok()).any(|r| dir.starts_with(r))
+    // A path that resolves nowhere is treated as inside: refused, never
+    // written to (fail closed).
+    let Some(dir) = canon(dir) else { return true };
+    roots.iter().filter_map(|r| canon(r)).any(|r| dir.starts_with(r))
 }

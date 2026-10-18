@@ -105,7 +105,9 @@ impl EditorHost {
         Ok(EditorHost {
             state: EditorState::new(loaded.value.unwrap_or_default(), catalog),
             data: EditorData::default(),
-            store: store.dir().map_or_else(Store::in_memory, Store::open),
+            // The store that read `editor.ron`, with what it learnt (a
+            // newer game's file is left untouched, a bad one kept).
+            store: store.clone(),
             packs_dir,
             recovery_dir: store.recovery_dir(),
             roots: roots.iter().map(|r| r.to_path_buf()).collect(),
@@ -221,7 +223,7 @@ impl EditorHost {
         if self.is_bundled(dir) {
             return EditorAction::OpenFailed(BUNDLED.into());
         }
-        if self.recovery_dir.as_ref().is_some_and(|r| files::inside(dir, std::slice::from_ref(r))) {
+        if self.in_recovery(dir) {
             return EditorAction::OpenFailed(RECOVERY_IN_PLACE.into());
         }
         let opened = olr_edit::pack::load(dir).map_err(|e| e.to_string()).and_then(|pack| {
@@ -275,6 +277,8 @@ impl EditorHost {
             EditorCommand::Create(n) => {
                 let answer = if self.is_bundled(&n.dir) {
                     EditorAction::OpenFailed(BUNDLED.into())
+                } else if self.in_recovery(&n.dir) {
+                    EditorAction::OpenFailed(RECOVERY_IN_PLACE.into())
                 } else {
                     let t = Template::Level { size: n.size, theme: &n.theme };
                     match new_pack(&n.dir, PackKind::Level, &n.id, &n.name, t) {
@@ -287,6 +291,8 @@ impl EditorHost {
             EditorCommand::Save { dir, pack } => {
                 let result = if self.is_bundled(&dir) {
                     Err(BUNDLED.to_string())
+                } else if self.in_recovery(&dir) {
+                    Err(RECOVERY_IN_PLACE.to_string())
                 } else {
                     // A recovered pack whose original is gone is saved anew.
                     std::fs::create_dir_all(&dir)
@@ -356,6 +362,12 @@ impl EditorHost {
 
     fn root_refs(&self) -> Vec<&Path> {
         self.roots.iter().map(PathBuf::as_path).collect()
+    }
+
+    /// Whether `dir` lies in the recovery copies' folder (never a pack's
+    /// home: a save there would go with its copy).
+    fn in_recovery(&self, dir: &Path) -> bool {
+        self.recovery_dir.as_ref().is_some_and(|r| files::inside(dir, std::slice::from_ref(r)))
     }
 
     /// Whether `dir` lies in bundled content (any root but the data

@@ -354,7 +354,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `save_*`; `load_file::<T>(name)` / `save_file(name, &value)` for any other
   RON file of the data directory (the editor's `editor.ron`: `(version: 1,
   value: …)`, the same atomic write, backups and newer-file rules; `None`
-  when absent); `recovery_dir()` (`recovery/`, the editor's copies). Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
+  when absent); `recovery_dir()` (`recovery/`, the editor's copies).
+  Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
   struct `#[serde(default)]`, atomic writes (temporary file, sync,
   rename). An undecodable file gives defaults and a warning and is moved
   to `<name>.bak`, `<name>.1.bak`, ... (at most `MAX_BACKUPS`; then the

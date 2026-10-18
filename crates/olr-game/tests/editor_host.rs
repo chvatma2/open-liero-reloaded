@@ -365,3 +365,39 @@ fn a_failed_play_says_why_in_the_editor() {
         h.state().dialog()
     );
 }
+
+/// Docs review, Important 1: `editor.ron` follows the store's rules: a
+/// newer game's file is left untouched by this session's saves.
+#[test]
+fn a_newer_editor_file_is_left_untouched() {
+    let Some(root) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let newer = "(version: 99, value: (play_bots: 5))";
+    std::fs::write(tmp.path().join(EDITOR_FILE), newer).unwrap();
+    let mut store = Store::open(tmp.path());
+    let packs = store.packs_dir().unwrap();
+    let mut h = EditorHost::new(&mut store, &[packs.as_path(), root.as_path()]).unwrap();
+    assert!(!h.take_warnings().is_empty(), "said");
+    h.open_from_menu(&new_level("Office"));
+    h.act(vec![A::PlayBots(3)]);
+    assert_eq!(std::fs::read_to_string(tmp.path().join(EDITOR_FILE)).unwrap(), newer);
+}
+
+/// Docs review, Important 2: `recovery/` is refused for Create and Save as
+/// for Open (a save there would go with the copy).
+#[test]
+fn nothing_is_made_or_saved_in_recovery() {
+    let Some((tmp, _root, mut h)) = host() else { return };
+    h.open_from_menu(&new_level("Office"));
+    let rec = tmp.path().join("recovery");
+    let n = olr_editor::NewLevel {
+        dir: rec.join("made"),
+        id: "made".into(),
+        name: "Made".into(),
+        size: (40, 30),
+        theme: "olx-theme-dirt".into(),
+    };
+    h.act(vec![A::New(n)]);
+    assert!(!rec.join("made").exists(), "nothing made there");
+    assert!(matches!(h.state().dialog(), Some(olr_editor::Dialog::Error(_))), "{:?}", h.state().dialog());
+}
