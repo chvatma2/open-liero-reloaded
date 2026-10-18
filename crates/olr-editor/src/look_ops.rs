@@ -19,9 +19,17 @@ use crate::document::{DocError, Document};
 use crate::history::Edit;
 use crate::ops::{Change, NOTHING, with_property};
 
-/// What a glow stroke starts from: an element's mask, and whether its glow
-/// uses one.
-pub type GlowStrokeStart = (Option<Arc<Vec<u8>>>, bool);
+/// An element's box: its world origin and size.
+type ElementBox = ((i32, i32), (u32, u32));
+
+/// What a glow stroke starts from: an element's mask and glow, and the
+/// look (a new glow adds a group).
+#[derive(Clone, Debug)]
+pub struct GlowStrokeStart {
+    pub mask: Option<Arc<Vec<u8>>>,
+    pub glow: Option<ElementGlow>,
+    pub look: Option<LookSource>,
+}
 
 /// `mask`, the glow mask of a box `from` (world origin, size) at art scale
 /// `s`, laid on box `to` by world position: what falls outside `from`
@@ -339,43 +347,65 @@ impl Document {
         Ok(self.change(Edit::Objects { before, after }))
     }
 
-    /// What a glow stroke into `id` starts from: its mask and whether the
-    /// element's glow uses one. Refused for an element without a glow, a
-    /// locked or a raster one.
+    /// What a glow stroke (or a glow by colour) into `id` starts from:
+    /// its mask, its glow and the look. Refused for a locked or a raster
+    /// element.
     pub fn glow_stroke_before(&self, id: &str) -> Result<GlowStrokeStart, DocError> {
         let index = self.unlocked(id)?;
         let e = &self.items[index].element;
-        let Some(g) = &e.glow else {
-            return Err(DocError::Bad(format!("element {id:?} has no glow: give it one first")));
-        };
         if element_box(&e.kind, self.level.size).is_none() {
             return Err(DocError::WrongKind { id: id.into(), want: "an image or drawn element" });
         }
-        Ok((self.glow_masks.get(id).cloned(), g.mask))
+        Ok(GlowStrokeStart {
+            mask: self.glow_masks.get(id).cloned(),
+            glow: e.glow.clone(),
+            look: self.level.look.clone(),
+        })
     }
 
-    /// Paints element `id`'s glow mask under world `shape` at `strength`
-    /// percent (0 erases), within a stroke (no step: `glow_stroke_edits`
-    /// records it). A first mask keeps everything; the glow uses it at
-    /// once. Returns the rectangle rebaked.
-    pub fn paint_glow(&mut self, id: &str, shape: &Shape, strength: u8) -> Result<Rect, DocError> {
+    /// Element `id`'s mask, ready to paint (no step: the stroke's records
+    /// it): an element without a glow gets one, in a new group named after
+    /// it, dark (0) but for what is painted (the user's request,
+    /// 2026-10-19); a glow without a mask, or one that no longer fits, starts
+    /// whole (255). Returns its index, box and whether all of it changed.
+    fn ready_mask(&mut self, id: &str) -> Result<(usize, ElementBox, bool), DocError> {
         self.glow_stroke_before(id)?;
         let index = self.find(id)?;
         let s = self.level.art_scale;
         let Some((at, b)) = element_box(&self.items[index].element.kind, self.level.size) else {
-            return Ok(NOTHING);
+            return Err(DocError::WrongKind { id: id.into(), want: "an image or drawn element" });
         };
         let n = b.0 as usize * s as usize * b.1 as usize * s as usize;
+        let mut reset = false;
+        if self.items[index].element.glow.is_none() {
+            let group = self.new_group_id(id);
+            self.level.look = Some(with_group(self.level.look.clone(), &group));
+            self.items[index].element.glow = Some(ElementGlow { strength: 100, group, mask: true });
+            self.glow_masks.insert(id.to_string(), Arc::new(vec![0; n]));
+            reset = true;
+        }
         let mask = self.glow_masks.entry(id.to_string()).or_insert_with(|| Arc::new(vec![255; n]));
         // A mask that no longer fits starts again whole: all of it changes.
-        let reset = mask.len() != n;
-        if reset {
+        if mask.len() != n {
             *mask = Arc::new(vec![255; n]);
+            reset = true;
         }
-        let value = ((u32::from(strength.min(100)) * 255 + 50) / 100) as u8;
-        olr_edit::glow::paint_mask(Arc::make_mut(mask).as_mut_slice(), at, b, s, shape, value);
         if let Some(g) = self.items[index].element.glow.as_mut() {
+            reset |= !g.mask;
             g.mask = true;
+        }
+        Ok((index, (at, b), reset))
+    }
+
+    /// Paints element `id`'s glow mask under world `shape` at `strength`
+    /// percent (0 erases), within a stroke (no step: `glow_stroke_edits`
+    /// records it). Returns the rectangle rebaked.
+    pub fn paint_glow(&mut self, id: &str, shape: &Shape, strength: u8) -> Result<Rect, DocError> {
+        let (index, (at, b), reset) = self.ready_mask(id)?;
+        let s = self.level.art_scale;
+        let value = ((u32::from(strength.min(100)) * 255 + 50) / 100) as u8;
+        if let Some(mask) = self.glow_masks.get_mut(id) {
+            olr_edit::glow::paint_mask(Arc::make_mut(mask).as_mut_slice(), at, b, s, shape, value);
         }
         let rect = if reset {
             self.element_rect(&self.items[index].element)
@@ -388,25 +418,145 @@ impl Document {
         Ok(rect)
     }
 
+    /// The pixels of element `id`'s own art alike in colour to the one
+    /// under world point `at` (4-connected, within `tolerance` percent):
+    /// their world rectangle in the level, and a flag per art pixel of it
+    /// (row-major). `None` when nothing of it is under `at`.
+    pub fn colour_pixels(&self, id: &str, at: (i32, i32), tolerance: u8) -> Option<(Rect, Vec<bool>)> {
+        let index = self.index_of(id)?;
+        let s = self.level.art_scale;
+        let (origin, b) = element_box(&self.items[index].element.kind, self.level.size)?;
+        let art = match &self.items[index].decoded {
+            olr_edit::compose::Decoded::Drawn { art, .. } => art,
+            olr_edit::compose::Decoded::Image { grid: Some(g), .. } => &**g,
+            _ => return None,
+        };
+        let local = |v: i32, o: i32, side: u32| {
+            let d = i64::from(v) - i64::from(o);
+            (0..i64::from(side)).contains(&d).then(|| d as u32 * s + s / 2)
+        };
+        let seed = (local(at.0, origin.0, b.0)?, local(at.1, origin.1, b.1)?);
+        let region = olr_edit::glow::colour_region(art, seed, tolerance)?;
+        // Its world bounding box (in the box's world pixels), cut to the level.
+        let (aw, ah) = (art.width(), art.height());
+        let (mut x0, mut y0, mut x1, mut y1) = (u32::MAX, u32::MAX, 0, 0);
+        for (i, _) in region.iter().enumerate().filter(|(_, r)| **r) {
+            let (x, y) = (i as u32 % aw.max(1), i as u32 / aw.max(1));
+            (x0, y0, x1, y1) = (x0.min(x / s), y0.min(y / s), x1.max(x / s + 1), y1.max(y / s + 1));
+        }
+        let (lw, lh) = self.level.size;
+        let clip = |v: i64, side: u32| v.clamp(0, i64::from(side)) as u32;
+        let (wx0, wy0) =
+            (clip(i64::from(origin.0) + i64::from(x0), lw), clip(i64::from(origin.1) + i64::from(y0), lh));
+        let (wx1, wy1) =
+            (clip(i64::from(origin.0) + i64::from(x1), lw), clip(i64::from(origin.1) + i64::from(y1), lh));
+        if wx1 <= wx0 || wy1 <= wy0 {
+            return None;
+        }
+        let rect = Rect { x: wx0, y: wy0, w: wx1 - wx0, h: wy1 - wy0 };
+        let (rw, rh) = (rect.w * s, rect.h * s);
+        let mut out = vec![false; rw as usize * rh as usize];
+        for ry in 0..rh {
+            for rx in 0..rw {
+                let bx = i64::from(rect.x * s + rx) - i64::from(origin.0) * i64::from(s);
+                let by = i64::from(rect.y * s + ry) - i64::from(origin.1) * i64::from(s);
+                if (0..i64::from(aw)).contains(&bx) && (0..i64::from(ah)).contains(&by) {
+                    out[(ry * rw + rx) as usize] = region[(by as u32 * aw + bx as u32) as usize];
+                }
+            }
+        }
+        Some((rect, out))
+    }
+
+    /// Sets element `id`'s glow to `strength` percent on the pixels of
+    /// world rectangle `rect` (level pixels) that `region` (a flag per art
+    /// pixel of `rect`, row-major; `None` all) picks and its box holds: a
+    /// pixel selection's glow (the user's request, 2026-10-19). An element
+    /// without a glow gets one, dark elsewhere. One step: the edits, and
+    /// the rectangle rebaked.
+    pub fn glow_pixels(
+        &mut self,
+        id: &str,
+        rect: Rect,
+        region: Option<&[bool]>,
+        strength: u8,
+    ) -> Result<(Vec<Edit>, Rect), DocError> {
+        let start = self.glow_stroke_before(id)?;
+        let s = self.level.art_scale;
+        let (rw, rh) = (rect.w * s, rect.h * s);
+        if region.is_some_and(|r| r.len() != rw as usize * rh as usize) {
+            return Err(DocError::Bad("the selection does not fit its rectangle".into()));
+        }
+        let (index, (origin, b), _) = self.ready_mask(id)?;
+        let value = ((u32::from(strength.min(100)) * 255 + 50) / 100) as u8;
+        let (bw, bh) = (i64::from(b.0 * s), i64::from(b.1 * s));
+        if let Some(mask) = self.glow_masks.get_mut(id) {
+            let m = Arc::make_mut(mask);
+            for ry in 0..rh {
+                for rx in 0..rw {
+                    if !region.is_none_or(|r| r[(ry * rw + rx) as usize]) {
+                        continue;
+                    }
+                    let bx = i64::from(rect.x * s + rx) - i64::from(origin.0) * i64::from(s);
+                    let by = i64::from(rect.y * s + ry) - i64::from(origin.1) * i64::from(s);
+                    if (0..bw).contains(&bx) && (0..bh).contains(&by) {
+                        m[(by * bw + bx) as usize] = value;
+                    }
+                }
+            }
+        }
+        let dirty = self.element_rect(&self.items[index].element);
+        self.rebake(dirty);
+        Ok((self.glow_stroke_edits(id, start), dirty))
+    }
+
+    /// Glow by colour (the user's request, 2026-10-19): `colour_pixels`
+    /// under `at` take `strength` percent ([`Document::glow_pixels`]).
+    /// Nothing under `at` is no change.
+    pub fn glow_by_colour(
+        &mut self,
+        id: &str,
+        at: (i32, i32),
+        strength: u8,
+        tolerance: u8,
+    ) -> Result<(Vec<Edit>, Rect), DocError> {
+        self.glow_stroke_before(id)?;
+        match self.colour_pixels(id, at, tolerance) {
+            Some((rect, region)) => self.glow_pixels(id, rect, Some(&region), strength),
+            None => Ok((Vec::new(), NOTHING)),
+        }
+    }
+
     /// The step a glow stroke into `id` made, from what it started from
-    /// (`glow_stroke_before`): the glow's mask flag, then the mask. Empty
-    /// when it changed nothing.
-    pub fn glow_stroke_edits(&self, id: &str, before: GlowStrokeStart) -> Vec<Edit> {
+    /// (`glow_stroke_before`): a new group in the look, the element's glow,
+    /// then the mask. Empty when the mask did not change (anything the
+    /// stroke made for it is taken back).
+    pub fn glow_stroke_edits(&mut self, id: &str, before: GlowStrokeStart) -> Vec<Edit> {
         let Some(index) = self.index_of(id) else { return Vec::new() };
         let after_mask = self.glow_masks.get(id).cloned();
-        if after_mask == before.0 {
+        if after_mask == before.mask {
+            // A stroke of no change: what it set up goes again.
+            self.level.look = before.look;
+            self.items[index].element.glow = before.glow;
+            match before.mask {
+                Some(m) => self.glow_masks.insert(id.into(), m),
+                None => self.glow_masks.remove(id),
+            };
             return Vec::new();
         }
         let mut edits = Vec::new();
+        if self.level.look != before.look {
+            edits.push(Edit::Look {
+                before: before.look.map(Box::new),
+                after: self.level.look.clone().map(Box::new),
+            });
+        }
         let after = self.items[index].element.clone();
-        if after.glow.as_ref().is_some_and(|g| g.mask != before.1) {
-            let mut was = after.clone();
-            if let Some(g) = was.glow.as_mut() {
-                g.mask = before.1;
-            }
+        if after.glow != before.glow {
+            let was = olr_format::levels::Element { glow: before.glow, ..after.clone() };
             edits.push(Edit::Element { index, before: was, after });
         }
-        edits.push(Edit::GlowMask { id: id.into(), before: before.0, after: after_mask });
+        edits.push(Edit::GlowMask { id: id.into(), before: before.mask, after: after_mask });
         edits
     }
 }

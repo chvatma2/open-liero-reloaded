@@ -424,6 +424,16 @@ pub(super) fn toolbar_row(
     {
         out.push(EditorAction::GlowStrength(v as u8));
     }
+    // The selected pixels take the brush's glow (the user's request, 2026-10-19).
+    if ui
+        .add_enabled(state.pixel_rect().is_some(), egui::Button::new(labels::GLOW_SELECTION))
+        .on_hover_text(
+            "the selected pixels glow at the brush's glow % (0 clears); select them with Select pixels (M)",
+        )
+        .clicked()
+    {
+        out.push(EditorAction::GlowSelection(state.glow_strength()));
+    }
     ui.separator();
     for (mode, label) in [
         (ViewMode::Lit, labels::VIEW_LIT),

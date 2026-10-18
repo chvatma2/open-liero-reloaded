@@ -39,6 +39,8 @@ pub mod labels {
     pub const PAINT_AS: &str = "Paint as";
     pub const RESTORE: &str = "Restore";
     pub const TOLERANCE: &str = "Tolerance";
+    pub const BY_COLOUR: &str = "By colour";
+    pub const GLOW_SELECTION: &str = "Glow selection";
     /// The palette's button (plan 14e).
     pub const TEXTURES: &str = "Textures…";
     pub const IMPORT_TEXTURE: &str = "Import texture…";

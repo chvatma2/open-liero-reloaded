@@ -809,6 +809,28 @@ fn paint_glow_with_the_brush() {
     assert!(h.state().state.can_undo());
 }
 
+/// The user's request (2026-10-19): pixels picked by colour with Select
+/// pixels take the brush's glow from the look row's Glow selection.
+#[test]
+fn glow_pixels_picked_by_colour() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.get_by_label("Tunnels").click();
+    h.run();
+    act(&mut h, A::Tool(Tool::SelectPixels));
+    h.get_by_label(labels::BY_COLOUR).click();
+    h.run();
+    assert!(h.state().state.select_by_colour());
+    let at = canvas_point(&h, (0.0, 0.0));
+    hover(&mut h, at);
+    press(&mut h, at, true);
+    press(&mut h, at, false);
+    assert!(h.state().state.pixel_region().is_some(), "picked by colour");
+    h.get_by_label(labels::GLOW_SELECTION).click();
+    h.run();
+    assert!(h.state().state.document().unwrap().glow_mask("tunnels").is_some());
+    assert!(h.state().state.can_undo());
+}
+
 #[test]
 fn place_a_light_and_edit_it() {
     let Some((_tmp, mut h)) = opened() else { return };

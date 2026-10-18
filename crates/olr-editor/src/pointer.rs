@@ -52,7 +52,7 @@ pub(crate) enum Drag {
     Pixels { id: String, start: (i32, i32), now: (i32, i32) },
     /// Glow brush dabs on element `id`'s mask (plan 15a); `before` is the
     /// mask and its flag as the stroke began.
-    Glow { id: String, before: (Option<Arc<Vec<u8>>>, bool), last: (i32, i32) },
+    Glow { id: String, before: crate::look_ops::GlowStrokeStart, last: (i32, i32) },
 }
 
 fn add(a: i32, b: i64) -> i32 {
@@ -464,8 +464,32 @@ impl EditorState {
                     }
                 }
             }
+            Tool::SelectPixels if self.select_by_colour => {
+                // The connected pixels alike in colour (the user's request,
+                // 2026-10-19); Ctrl adds to the selection.
+                let Selection::Element(id) = self.selection.clone() else {
+                    self.status.message = Some("select an element to pick its pixels".into());
+                    return Vec::new();
+                };
+                let Some(doc) = &self.doc else { return Vec::new() };
+                let Some((rect, region)) = doc.colour_pixels(&id, world, self.tolerance) else {
+                    self.status.message = Some(format!("no pixels of {id:?} there"));
+                    return Vec::new();
+                };
+                let s = doc.level().art_scale;
+                let (rect, region) = match (&self.pixel_rect, &self.pixel_region) {
+                    (Some((old, r)), Some(g)) if toggle && *old == id => {
+                        join_regions((*r, g), (rect, &region), s)
+                    }
+                    _ => (rect, region),
+                };
+                self.pixel_rect = Some((id, rect));
+                self.pixel_region = Some(Arc::new(region));
+                Vec::new()
+            }
             Tool::SelectPixels => {
                 self.pixel_rect = None;
+                self.pixel_region = None;
                 if let Some(id) = self.paint_target(false) {
                     self.drag = Some(Drag::Pixels { id, start: world, now: world });
                 }
@@ -479,9 +503,14 @@ impl EditorState {
             }
             Tool::Glow => {
                 let Selection::Element(id) = self.selection.clone() else {
-                    self.status.message = Some("select a glowing element to paint its glow".into());
+                    self.status.message = Some("select an element to paint its glow".into());
                     return Vec::new();
                 };
+                // By colour: one click, one step (the user's request, 2026-10-19).
+                if self.glow_by_colour {
+                    let (strength, tolerance) = (self.glow_strength, self.tolerance);
+                    return self.edits(|d| d.glow_by_colour(&id, world, strength, tolerance));
+                }
                 let Some(doc) = self.doc.as_mut() else { return Vec::new() };
                 let before = match doc.glow_stroke_before(&id) {
                     Ok(b) => b,
@@ -748,6 +777,7 @@ impl EditorState {
                 let r = pixel_span(doc, &id, start, now);
                 if r.w > 0 && r.h > 0 {
                     self.pixel_rect = Some((id, r));
+                    self.pixel_region = None;
                 } else {
                     self.status.message = Some(format!("no pixels of {id:?} there"));
                 }
@@ -958,4 +988,21 @@ impl EditorState {
         }
         out
     }
+}
+
+/// Two pixel selections (world rectangles, a flag per art pixel at art
+/// scale `s`) as one over their union.
+fn join_regions(a: (Rect, &[bool]), b: (Rect, &[bool]), s: u32) -> (Rect, Vec<bool>) {
+    let u = Rect::union(Some(a.0), b.0);
+    let (uw, uh) = (u.w * s, u.h * s);
+    let mut out = vec![false; uw as usize * uh as usize];
+    for (r, flags) in [a, b] {
+        let rw = r.w * s;
+        for (i, _) in flags.iter().enumerate().filter(|(_, f)| **f) {
+            let (x, y) = (i as u32 % rw.max(1), i as u32 / rw.max(1));
+            let (ux, uy) = ((r.x - u.x) * s + x, (r.y - u.y) * s + y);
+            out[(uy * uw + ux) as usize] = true;
+        }
+    }
+    (u, out)
 }

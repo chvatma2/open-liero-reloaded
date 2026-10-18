@@ -319,7 +319,8 @@ fn paint_as(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
 }
 
 /// The chosen tool's options: "Paint as" for the painting tools and Fill,
-/// "Restore" for the eraser, "Tolerance" for Remove colour and Fill.
+/// "Restore" for the eraser, "Tolerance" for Remove colour and Fill; "By
+/// colour" (and its tolerance) for Select pixels and the Glow brush.
 fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     match state.tool() {
         Tool::Brush | Tool::Rect | Tool::Ellipse | Tool::Line => paint_as(ui, state, out),
@@ -345,6 +346,25 @@ fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
             paint_as(ui, state, out);
             if let Some(t) =
                 number(ui, data, "fill-tolerance", labels::TOLERANCE, state.fill_tolerance().into(), 0..=100)
+            {
+                out.push(EditorAction::Tolerance(t as u8));
+            }
+        }
+        Tool::SelectPixels | Tool::Glow => {
+            let (mut on, hover) = if state.tool() == Tool::Glow {
+                (state.glow_by_colour(), "a click lights the connected pixels alike in colour")
+            } else {
+                (state.select_by_colour(), "a click picks the connected pixels alike in colour; Ctrl adds")
+            };
+            if ui.checkbox(&mut on, labels::BY_COLOUR).on_hover_text(hover).changed() {
+                out.push(match state.tool() {
+                    Tool::Glow => EditorAction::GlowByColour(on),
+                    _ => EditorAction::SelectByColour(on),
+                });
+            }
+            if on
+                && let Some(t) =
+                    number(ui, data, "tolerance", labels::TOLERANCE, state.tolerance().into(), 0..=100)
             {
                 out.push(EditorAction::Tolerance(t as u8));
             }

@@ -449,3 +449,148 @@ fn objects_copy_cut_and_paste() {
     run(&mut s, A::Paste);
     assert!(spawns(&s).contains(&(24, 34)), "{:?}", spawns(&s));
 }
+
+/// The user's request (2026-10-19): the Glow brush on an element without
+/// a glow gives it one, dark but for what is painted; one step.
+#[test]
+fn the_glow_brush_starts_a_dark_glow() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Select(Selection::Element("tunnels".into())));
+    run(&mut s, A::Tool(Tool::Glow));
+    run(&mut s, A::GlowStrength(80));
+    let p = |kind| A::Pointer { kind, world: (100, 100), shift: false, toggle: false };
+    run(&mut s, p(PointerKind::Down));
+    run(&mut s, p(PointerKind::Up));
+    let doc = s.document().unwrap();
+    let a = doc.level().art_scale;
+    let w = doc.level().size.0 * a;
+    let g = element_glow(&s, "tunnels").expect("a glow");
+    assert!(g.mask && groups(&s).contains(&g.group), "its own group");
+    let mask = doc.glow_mask("tunnels").unwrap();
+    assert_eq!(mask[(100 * a * w + 100 * a) as usize], 204, "80 % where painted");
+    assert_eq!(mask[(10 * a * w + 10 * a) as usize], 0, "dark elsewhere");
+    run(&mut s, A::Undo);
+    assert_eq!(element_glow(&s, "tunnels"), None, "one step");
+    assert!(groups(&s).is_empty());
+}
+
+/// Glow by colour: one click lights the connected pixels alike in colour.
+#[test]
+fn glow_by_colour_lights_alike_pixels() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    // A red square on the Tunnels layer: a "painted lamp".
+    run(&mut s, A::Select(Selection::Element("tunnels".into())));
+    run(&mut s, A::Tool(Tool::Rect));
+    run(&mut s, A::Paint(olr_editor::tools::PaintChoice::Colour(olr_data::image::Rgba::rgb(250, 20, 20))));
+    let at = |world, kind| A::Pointer { kind, world, shift: false, toggle: false };
+    run(&mut s, at((200, 150), PointerKind::Down));
+    run(&mut s, at((210, 158), PointerKind::Move));
+    run(&mut s, at((210, 158), PointerKind::Up));
+    run(&mut s, A::Tool(Tool::Glow));
+    run(&mut s, A::GlowByColour(true));
+    run(&mut s, A::Tolerance(10));
+    run(&mut s, A::GlowStrength(100));
+    run(&mut s, at((205, 154), PointerKind::Down));
+    run(&mut s, at((205, 154), PointerKind::Up));
+    let doc = s.document().unwrap();
+    let a = doc.level().art_scale;
+    let w = doc.level().size.0 * a;
+    let mask = doc.glow_mask("tunnels").expect("a mask");
+    let v = |x: u32, y: u32| mask[(y * a * w + x * a) as usize];
+    assert_eq!(v(205, 154), 255, "the red glows");
+    assert_eq!(v(201, 151), 255);
+    assert_eq!(v(150, 100), 0, "the rest does not");
+    assert_eq!(v(215, 154), 0, "past the square");
+    run(&mut s, A::Undo);
+    assert_eq!(element_glow(&s, "tunnels"), None, "one step");
+}
+
+/// A red square painted on Tunnels at (200, 150)-(210, 158).
+fn red_square(s: &mut olr_editor::EditorState) {
+    run(s, A::Select(Selection::Element("tunnels".into())));
+    run(s, A::Tool(Tool::Rect));
+    run(s, A::Paint(olr_editor::tools::PaintChoice::Colour(olr_data::image::Rgba::rgb(250, 20, 20))));
+    let at = |world, kind| A::Pointer { kind, world, shift: false, toggle: false };
+    run(s, at((200, 150), PointerKind::Down));
+    run(s, at((210, 158), PointerKind::Move));
+    run(s, at((210, 158), PointerKind::Up));
+}
+
+/// The user's request (2026-10-19): pixels selected by colour take a glow
+/// of their own, the rest of the layer none; one step.
+#[test]
+fn a_colour_selection_takes_a_glow() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    red_square(&mut s);
+    run(&mut s, A::Tool(Tool::SelectPixels));
+    run(&mut s, A::SelectByColour(true));
+    run(&mut s, A::Tolerance(10));
+    let at = |world, kind| A::Pointer { kind, world, shift: false, toggle: false };
+    run(&mut s, at((205, 154), PointerKind::Down));
+    run(&mut s, at((205, 154), PointerKind::Up));
+    assert!(s.pixel_rect().is_some(), "selected");
+    run(&mut s, A::GlowSelection(70));
+    let doc = s.document().unwrap();
+    let a = doc.level().art_scale;
+    let w = doc.level().size.0 * a;
+    let mask = doc.glow_mask("tunnels").expect("a mask");
+    let v = |x: u32, y: u32| mask[(y * a * w + x * a) as usize];
+    assert_eq!((v(205, 154), v(201, 151)), (179, 179), "70 % on the red");
+    assert_eq!((v(150, 100), v(215, 154)), (0, 0), "none elsewhere");
+    run(&mut s, A::Undo);
+    assert_eq!(element_glow(&s, "tunnels"), None, "one step");
+}
+
+/// Ctrl adds another patch alike in colour to the selection; copy refuses
+/// a selection by colour (it takes a rectangle).
+#[test]
+fn ctrl_adds_to_a_colour_selection() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    red_square(&mut s);
+    let at = |world, kind, toggle| A::Pointer { kind, world, shift: false, toggle };
+    run(&mut s, at((300, 150), PointerKind::Down, false));
+    run(&mut s, at((306, 156), PointerKind::Move, false));
+    run(&mut s, at((306, 156), PointerKind::Up, false));
+    run(&mut s, A::Tool(Tool::SelectPixels));
+    run(&mut s, A::SelectByColour(true));
+    run(&mut s, A::Tolerance(10));
+    run(&mut s, at((205, 154), PointerKind::Down, false));
+    run(&mut s, at((205, 154), PointerKind::Up, false));
+    run(&mut s, at((303, 153), PointerKind::Down, true));
+    run(&mut s, at((303, 153), PointerKind::Up, true));
+    run(&mut s, A::Copy);
+    assert!(s.status().message.as_deref().is_some_and(|m| m.contains("rectangle")), "copy refused");
+    run(&mut s, A::GlowSelection(100));
+    let doc = s.document().unwrap();
+    let a = doc.level().art_scale;
+    let w = doc.level().size.0 * a;
+    let mask = doc.glow_mask("tunnels").expect("a mask");
+    let v = |x: u32, y: u32| mask[(y * a * w + x * a) as usize];
+    assert_eq!((v(205, 154), v(303, 153)), (255, 255), "both patches");
+    assert_eq!((v(250, 154), v(150, 100)), (0, 0), "none between or elsewhere");
+}
+
+/// A rectangle of pixels takes a glow too.
+#[test]
+fn a_rectangle_selection_takes_a_glow() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Select(Selection::Element("tunnels".into())));
+    run(&mut s, A::Tool(Tool::SelectPixels));
+    let at = |world, kind| A::Pointer { kind, world, shift: false, toggle: false };
+    run(&mut s, at((40, 40), PointerKind::Down));
+    run(&mut s, at((60, 50), PointerKind::Move));
+    run(&mut s, at((60, 50), PointerKind::Up));
+    run(&mut s, A::GlowSelection(100));
+    let doc = s.document().unwrap();
+    let a = doc.level().art_scale;
+    let w = doc.level().size.0 * a;
+    let mask = doc.glow_mask("tunnels").expect("a mask");
+    let v = |x: u32, y: u32| mask[(y * a * w + x * a) as usize];
+    assert_eq!(v(45, 45), 255);
+    assert_eq!((v(30, 45), v(45, 60)), (0, 0));
+}

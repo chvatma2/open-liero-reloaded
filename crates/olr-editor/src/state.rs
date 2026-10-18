@@ -26,6 +26,10 @@ use crate::pointer::Drag;
 use crate::tools::{Brush, MAX_BRUSH, PaintChoice, PointerKind, TextureRef, Tool};
 use crate::view::View;
 
+/// A selection by colour takes a glow only (2026-10-19).
+const BY_COLOUR_TAKES_A_RECTANGLE: &str =
+    "copy, cut and delete take a rectangle selection (Select pixels without By colour)";
+
 /// What is selected.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Selection {
@@ -277,6 +281,13 @@ pub enum EditorAction {
     },
     /// The glow brush's strength, percent (0 erases).
     GlowStrength(u8),
+    /// The Glow brush lights the connected pixels alike in colour.
+    GlowByColour(bool),
+    /// Select pixels picks the connected pixels alike in colour (Ctrl adds).
+    SelectByColour(bool),
+    /// The pixel selection's glow, percent: those pixels of its layer glow
+    /// (a layer without a glow gets one), one step.
+    GlowSelection(u8),
     /// What the canvas shows: lit, full bright or the light alone.
     SetViewMode(olr_look::ViewMode),
     Clock(ClockAction),
@@ -376,6 +387,13 @@ pub struct EditorState {
     /// The pixel rectangle (a drawn layer, level pixels; plan 14e R7):
     /// dropped by a tool change, Escape, Open and Close.
     pub(crate) pixel_rect: Option<(String, Rect)>,
+    /// The pixel selection's own pixels when it was picked by colour: a
+    /// flag per art pixel of `pixel_rect` (row-major); `None` all of it.
+    pub(crate) pixel_region: Option<Arc<Vec<bool>>>,
+    /// The Glow brush lights alike pixels in one click; Select pixels picks
+    /// them (the user's request, 2026-10-19).
+    pub(crate) glow_by_colour: bool,
+    pub(crate) select_by_colour: bool,
     /// The glow brush's strength, percent.
     pub(crate) glow_strength: u8,
     /// What the canvas shows (plan 15a).
@@ -418,6 +436,9 @@ impl EditorState {
             browser: None,
             clipboard: None,
             pixel_rect: None,
+            pixel_region: None,
+            glow_by_colour: false,
+            select_by_colour: false,
             glow_strength: 100,
             view_mode: olr_look::ViewMode::Lit,
             clock_ms: 0.0,
@@ -450,6 +471,21 @@ impl EditorState {
     /// The glow brush's strength, percent.
     pub fn glow_strength(&self) -> u8 {
         self.glow_strength
+    }
+
+    /// Whether the Glow brush, and Select pixels, pick by colour.
+    pub fn glow_by_colour(&self) -> bool {
+        self.glow_by_colour
+    }
+
+    pub fn select_by_colour(&self) -> bool {
+        self.select_by_colour
+    }
+
+    /// The pixel selection picked by colour: a flag per art pixel of its
+    /// rectangle; `None` for a rectangle.
+    pub fn pixel_region(&self) -> Option<&[bool]> {
+        self.pixel_rect.as_ref().and(self.pixel_region.as_deref().map(Vec::as_slice))
     }
 
     pub fn document(&self) -> Option<&Document> {
@@ -567,6 +603,8 @@ impl EditorState {
                 | EditorAction::SetViewMode(_)
                 | EditorAction::Clock(_)
                 | EditorAction::GlowStrength(_)
+                | EditorAction::GlowByColour(_)
+                | EditorAction::SelectByColour(_)
         );
         let mut cmds = if view_only { Vec::new() } else { self.release() };
         cmds.extend(self.act(action));
@@ -577,6 +615,7 @@ impl EditorState {
                 || self.doc.as_ref().is_none_or(|d| d.index_of(id).is_none()))
         {
             self.pixel_rect = None;
+            self.pixel_region = None;
         }
         cmds
     }
@@ -708,6 +747,7 @@ impl EditorState {
             }
             EditorAction::DropPixels => {
                 self.pixel_rect = None;
+                self.pixel_region = None;
                 Vec::new()
             }
             EditorAction::Remove if self.pixel_rect.is_some() => self.erase_pixels(),
@@ -733,6 +773,22 @@ impl EditorState {
             EditorAction::GlowStrength(v) => {
                 self.glow_strength = v.min(100);
                 Vec::new()
+            }
+            EditorAction::GlowByColour(on) => {
+                self.glow_by_colour = on;
+                Vec::new()
+            }
+            EditorAction::SelectByColour(on) => {
+                self.select_by_colour = on;
+                Vec::new()
+            }
+            EditorAction::GlowSelection(v) => {
+                let Some((id, rect)) = self.pixel_rect.clone() else {
+                    self.status.message = Some("select pixels first (Select pixels, M)".into());
+                    return Vec::new();
+                };
+                let region = self.pixel_region.clone();
+                self.edits(|d| d.glow_pixels(&id, rect, region.as_deref().map(Vec::as_slice), v.min(100)))
             }
             EditorAction::SetViewMode(mode) => {
                 self.view_mode = mode;
@@ -803,6 +859,7 @@ impl EditorState {
                 }
                 if tool != self.tool {
                     self.pixel_rect = None;
+                    self.pixel_region = None;
                 }
                 self.tool = tool;
                 Vec::new()
@@ -860,6 +917,7 @@ impl EditorState {
     /// A document opened (or recovered): a fresh history and view.
     fn opened(&mut self, doc: Box<Document>) -> Vec<EditorCommand> {
         self.pixel_rect = None;
+        self.pixel_region = None;
         let all = doc.all();
         self.doc = Some(*doc);
         self.fit_pending = true;
@@ -1065,6 +1123,10 @@ impl EditorState {
         // Nothing to copy is said (plan 14e minors).
         const NOTHING_TO_COPY: &str =
             "nothing to copy: select elements, a spawn or a light, or pixels with Select pixels (M)";
+        if self.pixel_region.is_some() {
+            self.status.message = Some(BY_COLOUR_TAKES_A_RECTANGLE.into());
+            return false;
+        }
         if let Some((id, rect)) = &self.pixel_rect {
             let Some((clip, at)) = doc.copy_pixels(id, *rect) else {
                 self.status.message = Some(format!("no pixels of {id:?} in the rectangle to copy"));
@@ -1103,6 +1165,10 @@ impl EditorState {
     /// over back art digs): one step.
     fn erase_pixels(&mut self) -> Vec<EditorCommand> {
         let Some((id, r)) = self.pixel_rect.clone() else { return Vec::new() };
+        if self.pixel_region.is_some() {
+            self.status.message = Some(BY_COLOUR_TAKES_A_RECTANGLE.into());
+            return Vec::new();
+        }
         let Some(doc) = self.doc.as_mut() else { return Vec::new() };
         let clamp = |v: u32| v.min(i32::MAX as u32) as i32;
         let shape =
@@ -1293,6 +1359,7 @@ impl EditorState {
             Pending::New(n) => EditorCommand::Create(n),
             Pending::Close => {
                 self.pixel_rect = None;
+                self.pixel_region = None;
                 EditorCommand::Close
             }
         });
