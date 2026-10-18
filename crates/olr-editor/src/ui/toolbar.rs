@@ -83,7 +83,7 @@ fn drawing(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
         out.push(EditorAction::Paint(PaintChoice::Colour(rgba)));
     }
     for (choice, name) in [(PaintChoice::FrontTile, "Front tile"), (PaintChoice::BackTile, "Back tile")] {
-        if ui.selectable_label(paint == choice, name).clicked() {
+        if ui.selectable_label(*paint == choice, name).clicked() {
             out.push(EditorAction::Paint(choice));
         }
     }

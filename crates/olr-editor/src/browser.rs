@@ -16,6 +16,15 @@ pub enum Purpose {
     ImportImage,
     /// A level pack's folder to open.
     OpenPack,
+    /// A PNG or JPEG to add to the user's textures (plan 14e R2).
+    ImportTexture,
+}
+
+impl Purpose {
+    /// Whether it picks an image file (shown, and previewed).
+    pub fn images(self) -> bool {
+        matches!(self, Purpose::ImportImage | Purpose::ImportTexture)
+    }
 }
 
 /// One entry of a listed directory, as the host found it.
@@ -83,7 +92,7 @@ impl Browser {
     /// Asks for entry `name`'s preview: the path to read, for an import's
     /// file not asked for already.
     pub(crate) fn ask_preview(&mut self, name: &str) -> Option<PathBuf> {
-        let e = self.entry(name).filter(|e| self.purpose == Purpose::ImportImage && !e.is_dir)?;
+        let e = self.entry(name).filter(|e| self.purpose.images() && !e.is_dir)?;
         if self.asked.as_deref() == Some(e.name.as_str()) {
             return None;
         }
@@ -106,7 +115,7 @@ impl Browser {
         self.message.as_deref()
     }
 
-    /// The entries shown: folders, and for `ImportImage` the `.png`, `.jpg`
+    /// The entries shown: folders, and for an image's purpose the `.png`, `.jpg`
     /// and `.jpeg` files (case aside); hidden (`.`) entries left out.
     pub fn shown(&self) -> Vec<&DirEntry> {
         self.entries
@@ -114,7 +123,7 @@ impl Browser {
             .filter(|e| !e.name.starts_with('.'))
             .filter(|e| {
                 e.is_dir
-                    || self.purpose == Purpose::ImportImage
+                    || self.purpose.images()
                         && Path::new(&e.name)
                             .extension()
                             .and_then(|x| x.to_str())

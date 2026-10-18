@@ -67,6 +67,7 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
     }
     let title = match b.purpose() {
         Purpose::ImportImage => "Import an image (PNG or JPEG)",
+        Purpose::ImportTexture => "Import a texture (PNG or JPEG, at most 512 × 512)",
         Purpose::OpenPack => "Open a level pack",
     };
     let modal = egui::Modal::new(egui::Id::new("olr-editor-browser")).show(ctx, |ui| {
@@ -89,7 +90,7 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
             ui.label(RichText::new(m).color(Color32::from_rgb(255, 110, 90)));
         }
         ui.separator();
-        let import = b.purpose() == Purpose::ImportImage;
+        let import = b.purpose().images();
         ui.horizontal_top(|ui| {
             let list =
                 if import { ui.available_width() - PREVIEW_WIDTH - 12.0 } else { ui.available_width() };

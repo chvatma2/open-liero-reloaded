@@ -25,12 +25,23 @@ pub fn catalog(root: &Path) -> Catalog {
             name: "Dirt".into(),
             front_tile: theme.front_tile,
             back_tile: theme.back_tile,
+            holes: theme
+                .holes
+                .iter()
+                .map(|h| {
+                    // Mask 1 carves, 2 paints: both cover (plan 14e R4).
+                    let size = (h.paint.width(), h.paint.height());
+                    let cover = h.mask.iter().map(|m| *m != 0).collect();
+                    std::sync::Arc::new(olr_edit::level::StampMask { size, cover })
+                })
+                .collect(),
         }],
         mods: vec![
             ModEntry { id: "olx-classic".into(), name: "Liero v1.0".into() },
             ModEntry { id: "olx-mw-1-0".into(), name: "Modern Warfare1.0".into() },
         ],
         home: None,
+        textures: Vec::new(),
     }
 }
 

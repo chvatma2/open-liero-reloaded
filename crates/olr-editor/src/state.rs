@@ -5,21 +5,24 @@
 
 use std::collections::VecDeque;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use olr_data::image::Rgba;
 use olr_data::level::Material;
 use olr_edit::compose::Rect;
 use olr_edit::element::Property;
+use olr_edit::level::StampMask;
 use olr_edit::pack::Pack;
+use olr_edit::textures::Texture;
 use olr_format::levels::{ElementMaterial, LevelSource};
 
 use crate::browser::{Browser, DirEntry, Purpose};
-use crate::catalog::{Catalog, EditorSettings};
+use crate::catalog::{Catalog, EditorSettings, TextureEntry};
 use crate::document::{DocError, Document, Problem};
 use crate::history::{History, LevelMeta};
 use crate::ops::Change;
 use crate::pointer::Drag;
-use crate::tools::{Brush, MAX_BRUSH, PaintChoice, PointerKind, Tool};
+use crate::tools::{Brush, MAX_BRUSH, PaintChoice, PointerKind, TextureRef, Tool};
 use crate::view::View;
 
 /// What is selected.
@@ -107,6 +110,9 @@ pub enum EditorAction {
     /// What the host has to say in passing (a recovery copy that could not
     /// be written): the status bar's message.
     Note(String),
+    /// The user's texture library as it now is (plan 14e R2): the answer
+    /// to `AddTexture` and `RemoveTexture`.
+    TexturesChanged(Vec<TextureEntry>),
     // The file browser (R9).
     /// Opens the browser at the remembered folder, else the home directory.
     Browse(Purpose),
@@ -169,8 +175,11 @@ pub enum EditorAction {
     PaintMaterial(Option<ElementMaterial>),
     /// Whether the eraser restores a picture's masked pixels.
     Restore(bool),
-    /// Remove colour's tolerance, percent (0 to 100).
+    /// The chosen tool's tolerance, percent (0 to 100): Remove colour's,
+    /// or with Fill chosen, Fill's.
     Tolerance(u8),
+    /// Removes a texture from the user's library (plan 14e R2).
+    RemoveTexture(String),
     /// Merges element `id` into the drawn layer below it (Ctrl+E).
     MergeDown(String),
     /// A pointer event on the canvas, in world pixels (ruling R7).
@@ -224,6 +233,11 @@ pub enum EditorCommand {
     ReadImage(PathBuf),
     /// Read this image and make it small for the browser; answer `Previewed`.
     ReadPreview(PathBuf),
+    /// Add this image to the user's textures (plan 14e R2); answer
+    /// `TexturesChanged`, or `Failed` with why not.
+    AddTexture(PathBuf),
+    /// Remove this texture from the user's library; answer `TexturesChanged`.
+    RemoveTexture(String),
     /// The document was saved, or is being closed or left: drop its
     /// recovery copy (R7).
     RecoveryDone,
@@ -233,6 +247,9 @@ pub enum EditorCommand {
 
 /// Remove colour's tolerance at first, percent (plan 14d R8).
 pub const DEFAULT_TOLERANCE: u8 = 10;
+
+/// Fill's tolerance at first, percent (plan 14e R5): exact.
+pub const DEFAULT_FILL_TOLERANCE: u8 = 0;
 
 /// Bots a Play match takes at most.
 pub const MAX_BOTS: u8 = 8;
@@ -258,6 +275,9 @@ pub struct EditorState {
     pub(crate) paint_material: Option<ElementMaterial>,
     pub(crate) restore: bool,
     pub(crate) tolerance: u8,
+    pub(crate) fill_tolerance: u8,
+    /// The built-in textures (plan 14e R1), made once.
+    pub(crate) builtin: Arc<Vec<Texture>>,
     pub(crate) view: View,
     /// The canvas's size in points, once the UI reported it.
     pub(crate) canvas: Option<[f32; 2]>,
@@ -293,6 +313,8 @@ impl EditorState {
             paint_material: None,
             restore: false,
             tolerance: DEFAULT_TOLERANCE,
+            fill_tolerance: DEFAULT_FILL_TOLERANCE,
+            builtin: Arc::new(olr_edit::textures::builtin()),
             view: View { zoom: 2, offset: [0.0, 0.0] },
             canvas: None,
             fit_pending: false,
@@ -371,6 +393,7 @@ impl EditorState {
                 | EditorAction::ImportFailed(_)
                 | EditorAction::Failed(_)
                 | EditorAction::Note(_)
+                | EditorAction::TexturesChanged(_)
                 | EditorAction::Previewed { .. }
                 | EditorAction::Pointer { .. }
                 | EditorAction::Canvas(_)
@@ -397,6 +420,8 @@ impl EditorState {
                 | EditorAction::PaintMaterial(_)
                 | EditorAction::Restore(_)
                 | EditorAction::Tolerance(_)
+                | EditorAction::TexturesChanged(_)
+                | EditorAction::RemoveTexture(_)
                 | EditorAction::Select(_)
                 | EditorAction::PlayMod(_)
                 | EditorAction::PlayBots(_)
@@ -435,6 +460,14 @@ impl EditorState {
                 self.status.message = Some(text);
                 Vec::new()
             }
+            EditorAction::TexturesChanged(textures) => {
+                self.catalog.textures = textures;
+                if self.texture(&self.paint).is_none() {
+                    self.paint = PaintChoice::default();
+                }
+                Vec::new()
+            }
+            EditorAction::RemoveTexture(name) => vec![EditorCommand::RemoveTexture(name)],
             EditorAction::Browse(purpose) => {
                 let dir = self
                     .settings
@@ -548,7 +581,8 @@ impl EditorState {
                 Vec::new()
             }
             EditorAction::Paint(p) => {
-                self.paint = p;
+                // A texture that is not there paints the colour (R3).
+                self.paint = if self.texture(&p).is_some() { p } else { PaintChoice::default() };
                 Vec::new()
             }
             EditorAction::PaintMaterial(m) => {
@@ -560,7 +594,10 @@ impl EditorState {
                 Vec::new()
             }
             EditorAction::Tolerance(t) => {
-                self.tolerance = t.min(100);
+                match self.tool {
+                    Tool::Fill => self.fill_tolerance = t.min(100),
+                    _ => self.tolerance = t.min(100),
+                }
                 Vec::new()
             }
             EditorAction::Pointer { kind, world, shift } => self.pointer(kind, world, shift),
@@ -612,7 +649,7 @@ impl EditorState {
         let Some(e) = b.entry(name) else { return Vec::new() };
         let (dir, path) = (b.dir().to_path_buf(), b.dir().join(name));
         let take = match b.purpose() {
-            Purpose::ImportImage => !e.is_dir,
+            Purpose::ImportImage | Purpose::ImportTexture => !e.is_dir,
             Purpose::OpenPack => e.is_pack,
         };
         if !take {
@@ -624,6 +661,7 @@ impl EditorState {
         let mut cmds = vec![EditorCommand::SaveSettings(self.settings.clone())];
         match purpose {
             Purpose::ImportImage => cmds.insert(0, EditorCommand::ReadImage(path)),
+            Purpose::ImportTexture => cmds.insert(0, EditorCommand::AddTexture(path)),
             Purpose::OpenPack => cmds.extend(self.leave(Pending::Open(path))),
         }
         cmds
@@ -692,8 +730,33 @@ impl EditorState {
         self.brush
     }
 
-    pub fn paint(&self) -> PaintChoice {
-        self.paint
+    pub fn paint(&self) -> &PaintChoice {
+        &self.paint
+    }
+
+    /// The built-in textures (plan 14e R1), in `TextureRef::Builtin` order.
+    pub fn builtin_textures(&self) -> &[Texture] {
+        &self.builtin
+    }
+
+    /// The image `paint` paints with when it is a texture, from the
+    /// built-in set or the user's library; `Some(None)` for a paint that
+    /// is no texture, `None` for a texture that is not there.
+    pub(crate) fn texture(&self, paint: &PaintChoice) -> Option<Option<&olr_data::image::RgbaImage>> {
+        match paint {
+            PaintChoice::Texture(TextureRef::Builtin(i)) => self.builtin.get(*i).map(|t| Some(&t.image)),
+            PaintChoice::Texture(TextureRef::User(name)) => {
+                self.catalog.textures.iter().find(|t| t.name == *name).map(|t| Some(&t.image))
+            }
+            _ => Some(None),
+        }
+    }
+
+    /// The open level theme's holes, the crater brushes (plan 14e R4).
+    pub fn holes(&self) -> &[Arc<StampMask>] {
+        let Some(doc) = &self.doc else { return &[] };
+        let theme = &doc.level().theme;
+        self.catalog.themes.iter().find(|t| t.id == *theme).map_or(&[], |t| &t.holes[..])
     }
 
     /// What painting lays; none is the layer's own material.
@@ -705,8 +768,14 @@ impl EditorState {
         self.restore
     }
 
+    /// Remove colour's tolerance.
     pub fn tolerance(&self) -> u8 {
         self.tolerance
+    }
+
+    /// Fill's tolerance.
+    pub fn fill_tolerance(&self) -> u8 {
+        self.fill_tolerance
     }
 
     pub fn view(&self) -> View {

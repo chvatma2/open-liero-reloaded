@@ -94,6 +94,7 @@ impl EditorHost {
                     id,
                     front_tile: t.front_tile,
                     back_tile: t.back_tile,
+                    holes: Vec::new(),
                 }),
                 Err(e) => warnings.push(format!("{e:#}: not offered in the editor")),
             }
@@ -342,6 +343,10 @@ impl EditorHost {
                 Ok((file_name, bytes)) => EditorAction::ImportImage { file_name, bytes },
                 Err(why) => EditorAction::ImportFailed(why),
             }),
+            // The texture library comes with plan 14e Task 5.
+            EditorCommand::AddTexture(_) | EditorCommand::RemoveTexture(_) => {
+                queue.push_back(EditorAction::Failed("textures are not available yet".into()))
+            }
             EditorCommand::RecoveryDone => {
                 self.dirty_since = None;
                 // A copy still being written would come back after the removal.

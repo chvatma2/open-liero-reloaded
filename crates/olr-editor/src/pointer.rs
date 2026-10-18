@@ -2,10 +2,12 @@
 //! untrusted world pixels: every shape is clipped by the document, every
 //! sum saturates.
 
+use std::sync::Arc;
+
 use olr_data::image::Rgba;
 use olr_edit::compose::{Decoded, Rect};
 use olr_edit::element::Property;
-use olr_edit::level::{Paint, Shape};
+use olr_edit::level::{MAX_STAMP_SCALE, Paint, Shape, StampMask};
 use olr_format::levels::{Element, ElementKind, LevelObject, MAX_SIDE, drawn_box};
 
 use crate::document::Document;
@@ -165,12 +167,20 @@ fn span(a: (i32, i32), b: (i32, i32)) -> (i32, i32, i32, i32) {
 }
 
 impl EditorState {
-    /// The paint `self.paint` lays in `doc`.
+    /// The paint `self.paint` lays in `doc`; a texture no longer there
+    /// paints the default colour (plan 14e R3).
     fn paint_of(&self, doc: &Document) -> Paint {
-        match self.paint {
-            PaintChoice::Colour(c) => Paint::Colour(c),
+        match &self.paint {
+            PaintChoice::Colour(c) => Paint::Colour(*c),
             PaintChoice::FrontTile => Paint::Tile(doc.front_tile().clone()),
             PaintChoice::BackTile => Paint::Tile(doc.back_tile().clone()),
+            p @ PaintChoice::Texture(_) => match self.texture(p) {
+                Some(Some(img)) => Paint::Tile(img.clone()),
+                _ => match PaintChoice::default() {
+                    PaintChoice::Colour(c) => Paint::Colour(c),
+                    _ => Paint::Colour(Rgba::BLACK),
+                },
+            },
         }
     }
 
@@ -231,16 +241,51 @@ impl EditorState {
         Some((begun, before))
     }
 
-    /// A brush dab at `p`.
+    /// The crater brush's hole and scale (plan 14e R4): `None` when the
+    /// brush is no crater or the theme has no such hole.
+    fn crater(&self) -> Option<(Arc<StampMask>, u32)> {
+        let BrushShape::Crater(i) = self.brush.shape else { return None };
+        let mask = self.holes().get(usize::from(i))?.clone();
+        let side = mask.size.0.max(mask.size.1).max(1);
+        Some((mask, (self.brush.size / side).clamp(1, MAX_STAMP_SCALE)))
+    }
+
+    /// A brush dab at `p`; a crater whose hole the theme lacks dabs round.
     fn dab(&self, p: (i32, i32)) -> Shape {
         let size = self.brush.size;
+        if let Some((mask, scale)) = self.crater() {
+            return Shape::Stamp { x: p.0, y: p.1, scale, mask };
+        }
         match self.brush.shape {
-            BrushShape::Round => Shape::Circle { cx: p.0, cy: p.1, r: (size / 2) as i32 },
+            BrushShape::Round | BrushShape::Crater(_) => {
+                Shape::Circle { cx: p.0, cy: p.1, r: (size / 2) as i32 }
+            }
             BrushShape::Square => {
                 let half = i64::from(size / 2);
                 Shape::Rect { x: add(p.0, -half), y: add(p.1, -half), w: size as i32, h: size as i32 }
             }
         }
+    }
+
+    /// The shapes joining a stroke's dab at `from` to the next at `to`: a
+    /// line as wide as the brush, or for a crater brush (R4) its dabs every
+    /// half crater along the segment, `to`'s included.
+    fn joins(&self, from: (i32, i32), to: (i32, i32)) -> Vec<Shape> {
+        let Some((mask, scale)) = self.crater() else {
+            return vec![Shape::Line { from, to, width: self.brush.size }, self.dab(to)];
+        };
+        let half = (i64::from(mask.size.0.max(mask.size.1)) * i64::from(scale) / 2).max(1);
+        let (dx, dy) = sub(to, from);
+        // The pointer's moves are short; a far jump is bounded all the same.
+        let steps = (dx.abs().max(dy.abs()) / half).clamp(1, 1024);
+        (1..=steps)
+            .map(|k| Shape::Stamp {
+                x: add(from.0, dx * k / steps),
+                y: add(from.1, dy * k / steps),
+                scale,
+                mask: mask.clone(),
+            })
+            .collect()
     }
 
     /// Paints (or erases, or restores) `shapes` into `id`; the rectangle
@@ -334,6 +379,27 @@ impl EditorState {
                     Ok(edits) if edits.is_empty() => Vec::new(),
                     Ok(edits) => {
                         let rect = doc.element_rect(&e);
+                        self.history.push(edits);
+                        self.committed(rect)
+                    }
+                    Err(e) => {
+                        self.status.message = Some(e.to_string());
+                        Vec::new()
+                    }
+                }
+            }
+            Tool::Fill => {
+                let Some(id) = self.paint_target(false) else { return Vec::new() };
+                let Some(paint) = self.doc.as_ref().map(|d| self.paint_of(d)) else { return Vec::new() };
+                let material = self.paint_material.map(Into::into);
+                let tolerance = self.fill_tolerance;
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                match doc.fill(&id, world, &paint, material, tolerance) {
+                    // Nothing filled: no step, no unsaved mark.
+                    Ok(edits) if edits.is_empty() => Vec::new(),
+                    Ok(edits) => {
+                        let rect =
+                            doc.index_of(&id).map_or(NOTHING, |i| doc.element_rect(&doc.items()[i].element));
                         self.history.push(edits);
                         self.committed(rect)
                     }
@@ -477,8 +543,7 @@ impl EditorState {
                 if world == last {
                     return Vec::new();
                 }
-                let join = Shape::Line { from: last, to: world, width: self.brush.size };
-                let r = self.lay(&id, &[join, self.dab(world)], stroke);
+                let r = self.lay(&id, &self.joins(last, world), stroke);
                 let rect = match r {
                     Some(r) => Some(Rect::union(rect, r)),
                     None => rect,
@@ -650,7 +715,9 @@ impl EditorState {
         if matches!(self.tool, Tool::Brush | Tool::Eraser)
             && let Some(centre) = self.status.cursor
         {
-            out.push(Overlay::Brush { centre, size: self.brush.size, shape: self.brush.shape });
+            // A crater's outline spans its extent (plan 14e R4).
+            let size = self.crater().map_or(self.brush.size, |(m, scale)| m.size.0.max(m.size.1) * scale);
+            out.push(Overlay::Brush { centre, size, shape: self.brush.shape });
         }
         out
     }

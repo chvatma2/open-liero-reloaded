@@ -208,9 +208,11 @@ mod tests {
                 name: "Dirt".into(),
                 front_tile: theme.front_tile,
                 back_tile: theme.back_tile,
+                holes: Vec::new(),
             }],
             mods: vec![],
             home: None,
+            textures: Vec::new(),
         };
         let pack = olr_edit::pack::load(&dir).unwrap();
         Some((tmp, Document::open(pack, dir, &catalog).unwrap()))

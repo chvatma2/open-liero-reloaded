@@ -187,7 +187,7 @@ fn spawn_and_eyedropper() {
     run(&mut s, A::Paint(PaintChoice::FrontTile));
     run(&mut s, A::Tool(Tool::Eyedropper));
     pointer(&mut s, PointerKind::Down, (450, 300), false);
-    assert_eq!(s.paint(), PaintChoice::Colour(Rgba::rgb(1, 2, 3)));
+    assert_eq!(s.paint(), &PaintChoice::Colour(Rgba::rgb(1, 2, 3)));
     assert_eq!(s.tool(), Tool::Brush, "back to the previous tool");
 }
 
@@ -502,4 +502,101 @@ fn the_wand_changes_nothing_twice() {
     assert!(!s.dirty());
     drag(&mut s, (340, 230), (340, 230), false);
     assert!(!s.dirty(), "a second click on the removed region is no change");
+}
+
+/// Plan 14e R3: a texture repeats from the level's art origin, wherever the
+/// layer lies.
+#[test]
+fn a_texture_paints_in_step_with_the_world() {
+    use olr_editor::tools::TextureRef;
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::AddLayer);
+    let Selection::Element(id) = s.selection().clone() else { panic!("the new layer is selected") };
+    run(&mut s, A::Set(id.clone(), Property::At((3, 2))));
+    run(&mut s, A::Tool(Tool::Brush));
+    run(&mut s, A::Paint(PaintChoice::Texture(TextureRef::Builtin(3))));
+    drag(&mut s, (50, 50), (60, 52), false);
+    let art = layer(&s, &id);
+    let sc = s.document().unwrap().level().art_scale;
+    let tile = olr_edit::textures::builtin().remove(3).image;
+    let mut painted = 0;
+    for ay in 0..art.height() {
+        for ax in 0..art.width() {
+            if art.get(ax, ay).a != 0 {
+                painted += 1;
+                let want = tile.get((ax + 3 * sc) % 64, (ay + 2 * sc) % 64);
+                assert_eq!(art.get(ax, ay), want, "art ({ax}, {ay})");
+            }
+        }
+    }
+    assert!(painted > 100, "{painted}");
+}
+
+#[test]
+fn the_fill_tool_fills_one_step() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Select(Selection::Element("tunnels".into())));
+    run(&mut s, A::Tool(Tool::Fill));
+    run(&mut s, A::Paint(PaintChoice::Colour(Rgba::rgb(1, 2, 3))));
+    let before = layer(&s, "tunnels");
+    let start = bake(&s);
+    pointer(&mut s, PointerKind::Down, (2, 2), false);
+    pointer(&mut s, PointerKind::Up, (2, 2), false);
+    let after = layer(&s, "tunnels");
+    assert!(after != before, "filled");
+    assert!(after.as_raw().chunks(4).any(|p| p == [1, 2, 3, 255]));
+    run(&mut s, A::Undo);
+    assert!(layer(&s, "tunnels") == before, "one undo restores it");
+    assert!(bake(&s) == start);
+    assert!(!s.can_undo());
+}
+
+/// Plan 14e R4: a crater brush paints its hole's cover, centred on the click.
+#[test]
+fn a_crater_brush_paints_the_hole_shape() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let mask = s.catalog().themes[0].holes[0].clone();
+    let (w, h) = mask.size;
+    run(&mut s, A::AddLayer);
+    let Selection::Element(id) = s.selection().clone() else { panic!() };
+    run(&mut s, A::Tool(Tool::Brush));
+    run(&mut s, A::Brush(Brush { shape: BrushShape::Crater(0), size: w.max(h) }));
+    let p = (100, 100);
+    pointer(&mut s, PointerKind::Down, p, false);
+    pointer(&mut s, PointerKind::Up, p, false);
+    let art = layer(&s, &id);
+    let sc = s.document().unwrap().level().art_scale;
+    let (x0, y0) = (p.0 as u32 - w / 2, p.1 as u32 - h / 2);
+    let mut painted = 0;
+    for y in 0..art.height() / sc {
+        for x in 0..art.width() / sc {
+            let on = art.get(x * sc, y * sc).a != 0;
+            let want = (x0..x0 + w).contains(&x)
+                && (y0..y0 + h).contains(&y)
+                && mask.cover[((y - y0) * w + (x - x0)) as usize];
+            assert_eq!(on, want, "({x}, {y})");
+            painted += u32::from(on);
+        }
+    }
+    assert!(painted > 0);
+}
+
+#[test]
+fn fill_on_a_picture_is_refused() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::Select(Selection::Element("tiny".into())));
+    run(&mut s, A::Tool(Tool::Fill));
+    let start = bake(&s);
+    pointer(&mut s, PointerKind::Down, (50, 40), false);
+    pointer(&mut s, PointerKind::Up, (50, 40), false);
+    assert!(
+        s.status().message.as_deref().is_some_and(|m| m.contains("merge it into a layer")),
+        "{:?}",
+        s.status().message
+    );
+    assert!(bake(&s) == start && !s.can_undo());
 }

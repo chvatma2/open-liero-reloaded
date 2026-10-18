@@ -2,8 +2,10 @@
 //! for the editor between sessions.
 
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use olr_data::image::RgbaImage;
+use olr_edit::level::StampMask;
 use serde::{Deserialize, Serialize};
 
 /// The installed themes and mods the editor offers.
@@ -14,15 +16,26 @@ pub struct Catalog {
     /// Where the file browser opens when no folder is remembered (the
     /// host's home directory; none: the working directory).
     pub home: Option<PathBuf>,
+    /// The user's own textures (plan 14e R2), in the host's order.
+    pub textures: Vec<TextureEntry>,
 }
 
-/// A theme pack: its id, its name and the tiles painting and the bake use.
+/// A texture of the user's library: its name and its image.
+#[derive(Clone, Debug, PartialEq)]
+pub struct TextureEntry {
+    pub name: String,
+    pub image: RgbaImage,
+}
+
+/// A theme pack: its id, its name, the tiles painting and the bake use,
+/// and its holes' covers, the crater brushes (plan 14e R4).
 #[derive(Clone, Debug)]
 pub struct ThemeEntry {
     pub id: String,
     pub name: String,
     pub front_tile: RgbaImage,
     pub back_tile: RgbaImage,
+    pub holes: Vec<Arc<StampMask>>,
 }
 
 /// A mod pack Play can use.

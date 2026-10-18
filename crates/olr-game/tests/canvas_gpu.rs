@@ -52,9 +52,11 @@ fn the_canvas_draws_the_bake() {
             name: "Dirt".into(),
             front_tile: theme.front_tile,
             back_tile: theme.back_tile,
+            holes: Vec::new(),
         }],
         mods: vec![],
         home: None,
+        textures: Vec::new(),
     };
     let mut doc = Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog).unwrap();
     let settings = RenderSettings { filter: UpscaleFilter::SharpBilinear };

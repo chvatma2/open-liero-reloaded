@@ -140,7 +140,8 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
                 let radius = size as f32 * unit / 2.0;
                 let stroke = Stroke::new(1.0, Color32::WHITE);
                 match shape {
-                    BrushShape::Round => {
+                    // A crater's outline is the circle about its extent.
+                    BrushShape::Round | BrushShape::Crater(_) => {
                         painter.circle_stroke(c, radius, stroke);
                     }
                     BrushShape::Square => {

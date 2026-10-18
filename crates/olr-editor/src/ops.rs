@@ -612,6 +612,44 @@ impl Document {
         Ok(rect)
     }
 
+    /// Flood-fills drawn layer `id` (unlocked) from world pixel `seed`
+    /// (plan 14e R5, `olr_edit::drawn::fill`) with `paint` of `material`
+    /// (none: the layer's): one step, its edits applied (its conversion to
+    /// mixed first, when the material needs it). No edits when nothing
+    /// changed; a picture is refused.
+    pub fn fill(
+        &mut self,
+        id: &str,
+        seed: (i32, i32),
+        paint: &Paint,
+        material: Option<Material>,
+        tolerance: u8,
+    ) -> Result<Vec<Edit>, DocError> {
+        let i = self.paintable(id)?;
+        let ElementKind::Drawn { material: own, .. } = self.items[i].element.kind else {
+            return Ok(Vec::new());
+        };
+        let m = material.unwrap_or(own.into());
+        let mut edits: Vec<Edit> = self.begin_stroke(id, Stroke::Paint(m))?.into_iter().collect();
+        let before = self.stroke_before(id);
+        let (size, s) = (self.level.size, self.level.art_scale);
+        let (at, _) = self.layer_box(i);
+        let rect = drawn::fill(&mut self.items[i].decoded, at, s, size, seed, paint, m, tolerance);
+        if let Some(r) = rect {
+            self.rebake(r);
+        }
+        match rect.zip(before).and_then(|(r, b)| self.stroke_edit(id, r, &b)).filter(|e| !e.is_noop()) {
+            Some(edit) => edits.push(edit),
+            // Nothing filled: no step, nor its conversion.
+            None => {
+                for e in edits.drain(..).rev() {
+                    self.apply(&e, false);
+                }
+            }
+        }
+        Ok(edits)
+    }
+
     /// Masks the region of similar colour around world pixel `at` of
     /// picture `id` (unlocked; plan 14d R8, `tolerance` percent): one step,
     /// its edits applied (a full mask first when it had none).

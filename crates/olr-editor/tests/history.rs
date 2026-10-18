@@ -61,6 +61,7 @@ fn two_themes() -> olr_editor::Catalog {
         name: "Test".into(),
         front_tile: tile.clone(),
         back_tile: tile,
+        holes: Vec::new(),
     });
     cat
 }

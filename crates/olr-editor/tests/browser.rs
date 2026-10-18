@@ -336,3 +336,16 @@ fn an_image_is_previewed_when_selected() {
     let Some((_doc, _t, mut state)) = browsing(Purpose::OpenPack) else { return };
     assert!(state.update(A::PreviewImage("A".into())).is_empty());
 }
+
+/// Plan 14e R2: a texture pick asks the host to add it to the library.
+#[test]
+fn a_texture_pick_asks_the_host_to_add_it() {
+    let Some((_doc, t, mut state)) = browsing(Purpose::ImportTexture) else { return };
+    assert_eq!(names(&state), ["A", "b", "x.PNG"], "images, as for an import");
+    let cmds = state.update(A::Pick("x.PNG".into()));
+    let dir = t.path().to_path_buf();
+    assert!(
+        matches!(&cmds[..], [C::AddTexture(p), C::SaveSettings(s)] if *p == dir.join("x.PNG") && s.browse_dir == Some(dir.clone())),
+        "{cmds:?}"
+    );
+}

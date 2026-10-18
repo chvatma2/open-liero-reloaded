@@ -3,7 +3,7 @@
 use olr_data::image::Rgba;
 use olr_edit::compose::Rect;
 
-/// The canvas tools; their shortcut letters are V B E R O L P I W.
+/// The canvas tools; their shortcut letters are V B E R O L P I W G.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
     Select,
@@ -16,10 +16,12 @@ pub enum Tool {
     Eyedropper,
     /// Remove colour (plan 14d R8): masks a picture's region of alike colour.
     Wand,
+    /// Flood fill (plan 14e R5).
+    Fill,
 }
 
 impl Tool {
-    pub const ALL: [Tool; 9] = [
+    pub const ALL: [Tool; 10] = [
         Tool::Select,
         Tool::Brush,
         Tool::Eraser,
@@ -29,6 +31,7 @@ impl Tool {
         Tool::Spawn,
         Tool::Eyedropper,
         Tool::Wand,
+        Tool::Fill,
     ];
 
     /// The shortcut letter.
@@ -43,6 +46,7 @@ impl Tool {
             Tool::Spawn => 'P',
             Tool::Eyedropper => 'I',
             Tool::Wand => 'W',
+            Tool::Fill => 'G',
         }
     }
 
@@ -57,6 +61,7 @@ impl Tool {
             Tool::Spawn => "Spawn",
             Tool::Eyedropper => "Eyedropper",
             Tool::Wand => "Remove colour",
+            Tool::Fill => "Fill",
         }
     }
 
@@ -70,6 +75,9 @@ impl Tool {
 pub enum BrushShape {
     Round,
     Square,
+    /// The level theme's hole `i` (plan 14e R4), scaled in whole steps by
+    /// the brush size.
+    Crater(u8),
 }
 
 /// The brush, sized in world pixels (1 to `MAX_BRUSH`); also a line's width.
@@ -87,12 +95,22 @@ impl Default for Brush {
 
 pub const MAX_BRUSH: u32 = 256;
 
-/// What painting lays: a colour, or the theme's front or back tile.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What painting lays: a colour, the theme's front or back tile, or a
+/// texture (plan 14e R3).
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PaintChoice {
     Colour(Rgba),
     FrontTile,
     BackTile,
+    Texture(TextureRef),
+}
+
+/// A texture: a built-in one (`olr_edit::textures::builtin`'s index) or
+/// one of the user's library, by name.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum TextureRef {
+    Builtin(usize),
+    User(String),
 }
 
 impl Default for PaintChoice {

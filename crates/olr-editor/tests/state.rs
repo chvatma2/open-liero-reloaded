@@ -200,3 +200,40 @@ fn merge_down_and_split_are_one_step_each() {
     run(&mut s, A::Undo);
     assert_eq!(ids(&s), start);
 }
+
+fn texture(name: &str) -> olr_editor::catalog::TextureEntry {
+    olr_editor::catalog::TextureEntry { name: name.into(), image: olr_data::image::RgbaImage::new(4, 4) }
+}
+
+#[test]
+fn textures_changed_replaces_the_user_library() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::TexturesChanged(vec![texture("a"), texture("b")]));
+    let names: Vec<_> = s.catalog().textures.iter().map(|t| t.name.clone()).collect();
+    assert_eq!(names, ["a", "b"]);
+    run(&mut s, A::TexturesChanged(vec![texture("c")]));
+    assert_eq!(s.catalog().textures, vec![texture("c")]);
+}
+
+#[test]
+fn a_removed_texture_falls_back_to_the_colour() {
+    use olr_editor::tools::{PaintChoice, TextureRef};
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    run(&mut s, A::TexturesChanged(vec![texture("a")]));
+    run(&mut s, A::Paint(PaintChoice::Texture(TextureRef::User("a".into()))));
+    assert_eq!(s.paint(), &PaintChoice::Texture(TextureRef::User("a".into())));
+    run(&mut s, A::TexturesChanged(vec![texture("b")]));
+    assert_eq!(s.paint(), &PaintChoice::default());
+    // Asking for a texture that is not there is the colour too.
+    run(&mut s, A::Paint(PaintChoice::Texture(TextureRef::Builtin(99))));
+    assert_eq!(s.paint(), &PaintChoice::default());
+}
+
+#[test]
+fn removing_a_texture_asks_the_host() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    assert_eq!(s.update(A::RemoveTexture("a".into())), vec![C::RemoveTexture("a".into())]);
+}
