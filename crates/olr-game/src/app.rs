@@ -109,6 +109,9 @@ pub(crate) fn show_window(window: &Window) {
     }
 }
 
+/// The renderer's warnings remembered as logged, at most.
+const MAX_LOGGED: usize = 256;
+
 /// The frames a hidden window draws at most before it shows anyway.
 pub(crate) const REVEAL_AFTER_FRAMES: u32 = 30;
 /// The longest a hidden window waits for its first frame.
@@ -878,8 +881,8 @@ impl App {
         let editing = self.shell.editor_open() && !self.shell.editing_play();
         let playing_edited = self.shell.editing_play();
         let stop_at = {
-            let [x, y, ..] = playfield(size);
-            egui::pos2(x as f32 / ppp, y as f32 / ppp)
+            let [x, y, _, h] = playfield(size);
+            egui::pos2(x as f32 / ppp, (y + h) as f32 / ppp)
         };
         let (ui_state, data, mut editor) = (&self.shell.ui, &mut self.shell.data, self.shell.editor.as_mut());
         let menus = self.cfg.menus;
@@ -989,7 +992,9 @@ impl App {
             None => world,
         };
         for warning in w.gpu.renderer.warnings().drain(..) {
-            if self.logged.insert(warning.clone()) {
+            // Each once (at most `MAX_LOGGED` remembered: a text that varies
+            // never grows the set without bound).
+            if self.logged.len() < MAX_LOGGED && self.logged.insert(warning.clone()) {
                 eprintln!("warning: {warning}");
             }
             // The editor says it too (a level whose art the GPU crops).

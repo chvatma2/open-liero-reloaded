@@ -49,7 +49,8 @@ pub fn editable_levels(packs_dir: &Path) -> BTreeSet<String> {
 
 /// `dir`'s entries for the browser (`EditorCommand::List`), a pack being a
 /// folder holding `pack.ron`: every name read, sorted as the browser shows
-/// them, then the first `MAX_ENTRIES` kept (the browser says so). An
+/// them (each name lowercased once), then the first `MAX_ENTRIES` and one
+/// more kept (the browser shows the first and says the rest were cut). An
 /// entry's kind comes from the directory listing itself (no `stat`, but
 /// for a symbolic link); only a folder's `pack.ron` is looked for.
 pub fn list(dir: &Path) -> Result<Vec<DirEntry>, String> {
@@ -67,8 +68,9 @@ pub fn list(dir: &Path) -> Result<Vec<DirEntry>, String> {
             (DirEntry { name, is_dir, is_pack: false }, path)
         })
         .collect();
-    entries.sort_by(|a, b| olr_editor::browser::order(&a.0, &b.0));
-    entries.truncate(MAX_ENTRIES);
+    entries.sort_by_cached_key(|e| olr_editor::browser::sort_key(&e.0));
+    // One more than shown: the browser says the rest were cut.
+    entries.truncate(MAX_ENTRIES + 1);
     Ok(entries
         .into_iter()
         .map(|(mut e, path)| {

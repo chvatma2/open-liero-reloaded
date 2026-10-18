@@ -36,8 +36,9 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   `List(dir)`; `Listed` sorts (folders first,
   then by name case aside, then exactly) and `shown()` filters (no hidden
   entries; folders, and for an import `.png`, `.jpg`, `.jpeg`); a failed
-  listing keeps the old one and sets `message()`, and so does one of
-  `MAX_ENTRIES` (the host cut it, in `sort_entries`' order). `BrowseTo` (a
+  listing keeps the old one and sets `message()`, and so does one of more
+  than `MAX_ENTRIES` (the host cut it after one more, in `sort_entries`'
+  order; the first `MAX_ENTRIES` show). `BrowseTo` (a
   typed path, relative to the browser's, `.` and `..` resolved by name)
   lists; `Pick` of a file reads it
   (`ReadImage`), of a pack folder opens it as `Open` does (the dialog

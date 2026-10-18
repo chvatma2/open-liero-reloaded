@@ -421,10 +421,10 @@ fn a_huge_listing_keeps_its_first_entries() {
     let cmds = state.update(A::BrowseTo(tmp.path().to_path_buf()));
     assert_eq!(cmds, vec![olr_editor::EditorCommand::List(tmp.path().to_path_buf())]);
     let entries = olr_game::editor::list_dir(tmp.path()).unwrap();
-    assert_eq!(entries.len(), olr_game::editor::MAX_ENTRIES);
+    assert_eq!(entries.len(), olr_game::editor::MAX_ENTRIES + 1, "one more: the browser says it cut");
     assert_eq!(entries[0].name, "zz-folder", "folders first");
     assert_eq!(entries[1].name, "f00000.png");
-    assert_eq!(entries.last().unwrap().name, format!("f{:05}.png", olr_game::editor::MAX_ENTRIES - 2));
+    assert_eq!(entries.last().unwrap().name, format!("f{:05}.png", olr_game::editor::MAX_ENTRIES - 1));
 }
 
 /// A recovery whose origin now holds another pack, or whose pack id another
@@ -528,4 +528,21 @@ fn the_editor_screen_follows_what_happened() {
     sh.act(olr_ui::UiAction::Back);
     sh.act(olr_ui::UiAction::Open(olr_ui::Screen::Editor));
     assert_eq!(sh.data.editor_message, None);
+}
+
+/// A copy whose write a kill interrupted between `replace_dir`'s renames
+/// (`<id>` missing, its new or old copy hidden beside it) is listed again,
+/// never cleaned away by the next write (review of the minors round).
+#[test]
+fn an_interrupted_copy_is_listed_again() {
+    let Some((tmp, _root, mut h)) = host() else { return };
+    h.open_from_menu(&new_level("Office"));
+    h.act(vec![A::AddLayer]);
+    h.flush_recovery();
+    let rec = tmp.path().join("recovery");
+    std::fs::rename(rec.join("office"), rec.join(".import-office")).unwrap();
+    assert_eq!(list_recoveries(&rec).len(), 1, "the hidden new copy comes back");
+    assert!(rec.join("office/pack.ron").is_file());
+    std::fs::rename(rec.join("office"), rec.join(".replaced-office")).unwrap();
+    assert_eq!(list_recoveries(&rec).len(), 1, "the hidden old copy too");
 }

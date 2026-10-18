@@ -609,7 +609,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `act` (a frame's actions, the answers fed back in order: `Open`,
   `Create`, `Save` (a missing directory made first), `List`
   (`files::list`, `list_dir`: every name read, sorted as the browser shows
-  them, the first `MAX_ENTRIES` kept; kinds from the listing, a `stat`
+  them, the first `MAX_ENTRIES` and one more kept (the browser says it cut); kinds from the listing, a `stat`
   only for a symbolic link and a folder's `pack.ron`), `ReadImage` (`files::read_image`:
   metadata above `MAX_IMPORT_BYTES`, 64 MiB, or no regular file refused
   before opening, a non-PNG/JPEG signature before reading the rest),
@@ -640,12 +640,13 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   whose session had the renderer's terrain; dropped while the editor is
   closed or its Play runs) and draws a terrain-only list of the world under
   the whole canvas (black off the level: panning never changes its size, so
-  the renderer's world target stays) at egui's own scale of the pass into
+  the renderer's world target stays; cut to one world target, it follows
+  the visible level) at egui's own scale of the pass into
   its part of the window (`Gpu::present`'s world is `(list, area)`; games
   pass `playfield(size)`), with SharpBilinear for that frame; the
   renderer's warnings are logged once and said in the editor (`Note`).
   During an edited Play the HUD draws with a Stop button at the
-  playfield's left (`overlay::stop_button`; `hud::Frame::edited`: its keys
+  playfield's bottom left (`overlay::stop_button`; `hud::Frame::edited`: its keys
   say "Esc stop"), Esc or Stop ends it (`Shell::stop_edited`), F5 plays it
   again (`Shell::restart_edited`), and a match over ends it when its
   results would show (`Session::results_shown`), the editor saying so. Closing the window asks

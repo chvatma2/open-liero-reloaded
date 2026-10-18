@@ -191,7 +191,7 @@ copy it from the menu).
   loadout), the mod chosen beside it. Your worm starts at the
   first spawn (or a free spot). **Esc** or **Stop** returns to the editor
   exactly as it was (and so does a match's end); the match's damage is
-  thrown away. **F5** plays it again from the start.
+  thrown away. **F5** starts it again (a Deathmatch: a rematch).
 - **Saving and safety:** Save writes the whole pack at once and checks it.
   Open…, Close and closing the window ask first when there are unsaved
   changes. Every 2 minutes unsaved changes are copied to the data

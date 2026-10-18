@@ -26,7 +26,8 @@ pub struct DirEntry {
 }
 
 /// The most entries a listing holds: the host lists a larger directory's
-/// first ones in [`sort_entries`]' order, and the browser says so.
+/// first ones in [`sort_entries`]' order, one more to say there were more,
+/// and the browser shows the first and says so.
 pub const MAX_ENTRIES: usize = 10_000;
 
 /// The file extensions an import offers (case aside).
@@ -91,8 +92,9 @@ impl Browser {
         match entries {
             Ok(mut entries) => {
                 sort_entries(&mut entries);
-                self.message = (entries.len() >= MAX_ENTRIES)
+                self.message = (entries.len() > MAX_ENTRIES)
                     .then(|| format!("only the first {MAX_ENTRIES} entries are shown"));
+                entries.truncate(MAX_ENTRIES);
                 self.dir = dir;
                 self.entries = entries;
             }
@@ -122,9 +124,16 @@ impl Browser {
     }
 }
 
-/// Sorts a listing as the browser shows it ([`order`]).
+/// Sorts a listing as the browser shows it ([`order`]), each name
+/// lowercased once.
 pub fn sort_entries(entries: &mut [DirEntry]) {
-    entries.sort_by(order);
+    entries.sort_by_cached_key(sort_key);
+}
+
+/// [`order`] as a key: folders first, then the name ignoring case, then
+/// exactly.
+pub fn sort_key(e: &DirEntry) -> (bool, String, String) {
+    (!e.is_dir, e.name.to_lowercase(), e.name.clone())
 }
 
 /// Folders first, then by name ignoring case, then by the exact name (a

@@ -87,6 +87,7 @@ fn info(dir: &Path) -> anyhow::Result<RecoveryInfo> {
 /// damaged one (its `recovery.ron` unreadable, or no `pack.ron`) is named
 /// by its id. Hidden entries (a write in progress) are left out.
 pub fn list_recoveries(dir: &Path) -> Vec<(String, String, bool)> {
+    promote_leftovers(dir);
     let Ok(rd) = std::fs::read_dir(dir) else { return Vec::new() };
     let mut out: Vec<(String, String, bool)> = rd
         .filter_map(Result::ok)
@@ -105,6 +106,25 @@ pub fn list_recoveries(dir: &Path) -> Vec<(String, String, bool)> {
         .collect();
     out.sort();
     out
+}
+
+/// A copy whose write a kill interrupted between `replace_dir`'s renames
+/// is `<id>` again: its hidden new copy (`.import-<id>`) when it holds a
+/// whole one, else its hidden old copy (`.replaced-<id>`), so a crash's
+/// copy is offered and never cleaned away by the next write.
+fn promote_leftovers(dir: &Path) {
+    let Ok(rd) = std::fs::read_dir(dir) else { return };
+    let names: Vec<String> =
+        rd.filter_map(Result::ok).filter_map(|e| e.file_name().to_str().map(str::to_string)).collect();
+    for prefix in [".import-", ".replaced-"] {
+        for name in &names {
+            let Some(id) = name.strip_prefix(prefix).filter(|id| valid_id(id)) else { continue };
+            let (from, to) = (dir.join(name), dir.join(id));
+            if !to.exists() && from.join(INFO_FILE).is_file() && from.join(olr_pack::MANIFEST).is_file() {
+                let _ = std::fs::rename(&from, &to);
+            }
+        }
+    }
 }
 
 /// Removes recovery `id` from `dir` (absent: nothing to do).

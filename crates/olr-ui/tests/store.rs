@@ -447,6 +447,7 @@ fn files_round_trip() {
     assert!(Store::in_memory().load_file::<Prefs>("editor.ron").value.is_none());
     // Only a plain `.ron` name of its own: never the core files, never a path.
     for bad in [
+        "con.ron",
         "settings.ron",
         "profiles.ron",
         "identity.ron",

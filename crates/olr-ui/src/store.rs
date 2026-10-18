@@ -117,6 +117,13 @@ fn own_file(name: &str) -> Result<(), String> {
         && name.len() > ".ron".len()
         && name.ends_with(".ron");
     let core = [SETTINGS_FILE, PROFILES_FILE, IDENTITY_FILE].contains(&name);
+    // A Windows device (`con.ron`) is no file.
+    let device = ["con", "prn", "aux", "nul", "com", "lpt"].iter().any(|d| {
+        name.len() >= d.len()
+            && name[..d.len()].eq_ignore_ascii_case(d)
+            && name[d.len()..].starts_with(|c: char| c == '.' || c.is_ascii_digit())
+    });
+    let core = core || device;
     if plain && !core {
         Ok(())
     } else {

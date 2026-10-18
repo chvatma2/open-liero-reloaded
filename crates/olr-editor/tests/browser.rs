@@ -252,7 +252,7 @@ fn typed_dots_are_resolved() {
     assert_eq!(state.browser().unwrap().dir(), t.path().join("b"));
     assert_eq!(state.update(A::BrowseTo("..".into())), vec![C::List(t.path().to_path_buf())]);
     assert_eq!(state.update(A::BrowseTo("./../b/../A".into())), vec![C::List(t.path().join("A"))]);
-    let root = PathBuf::from(std::path::MAIN_SEPARATOR_STR);
+    let root = t.path().ancestors().last().unwrap().to_path_buf();
     assert_eq!(
         state.update(A::BrowseTo(root.join("..").join(".."))),
         vec![C::List(root)],
@@ -277,12 +277,17 @@ fn the_host_names_the_first_folder() {
 #[test]
 fn a_cut_listing_says_so() {
     let Some((_doc, t, mut state)) = browsing(Purpose::OpenPack) else { return };
-    let many: Vec<DirEntry> = (0..olr_editor::browser::MAX_ENTRIES)
-        .map(|i| DirEntry { name: format!("d{i:05}"), is_dir: true, is_pack: false })
-        .collect();
-    state.update(A::Listed { dir: t.path().to_path_buf(), entries: Ok(many) });
+    let entries = |n: usize| -> Vec<DirEntry> {
+        (0..n).map(|i| DirEntry { name: format!("d{i:05}"), is_dir: true, is_pack: false }).collect()
+    };
+    let max = olr_editor::browser::MAX_ENTRIES;
+    state.update(A::Listed { dir: t.path().to_path_buf(), entries: Ok(entries(max)) });
+    assert_eq!(state.browser().unwrap().message(), None, "exactly MAX_ENTRIES: nothing cut");
+    // The host lists one more to say it cut the rest.
+    state.update(A::Listed { dir: t.path().to_path_buf(), entries: Ok(entries(max + 1)) });
     let msg = state.browser().unwrap().message().unwrap_or_default().to_string();
     assert!(msg.contains("first 10000"), "{msg}");
+    assert_eq!(state.browser().unwrap().shown().len(), max);
     let mut few = vec![DirEntry { name: "b".into(), is_dir: true, is_pack: false }];
     olr_editor::browser::sort_entries(&mut few);
     state.update(A::Listed { dir: t.path().to_path_buf(), entries: Ok(few) });

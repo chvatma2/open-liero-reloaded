@@ -85,7 +85,8 @@ impl EditorHost {
     pub fn new(store: &mut Store, roots: &[&Path]) -> anyhow::Result<EditorHost> {
         let content = Content::open_layers(roots)?;
         let mut warnings = content.warnings().to_vec();
-        let mut catalog = Catalog { home: std::env::home_dir(), ..Catalog::default() };
+        let home = std::env::home_dir().or_else(|| std::env::current_dir().ok());
+        let mut catalog = Catalog { home, ..Catalog::default() };
         for id in content.ids(PackKind::Theme) {
             match content.load_theme(&id) {
                 Ok(t) => catalog.themes.push(ThemeEntry {
@@ -288,8 +289,13 @@ impl EditorHost {
                     out.push(HostOut::Upload(r));
                 }
             }
-            EditorCommand::Open(dir) => queue.push_back(self.load(&dir)),
+            EditorCommand::Open(dir) => {
+                // The last document's copy finishes first; what it said shows.
+                out.extend(self.wait_recovery());
+                queue.push_back(self.load(&dir));
+            }
             EditorCommand::Create(n) => {
+                out.extend(self.wait_recovery());
                 let answer = if self.is_bundled(&n.dir) {
                     EditorAction::OpenFailed(BUNDLED.into())
                 } else if self.in_recovery(&n.dir) {
