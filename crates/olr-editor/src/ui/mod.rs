@@ -8,6 +8,7 @@ mod canvas;
 mod dialogs;
 mod elements;
 mod level;
+mod look;
 mod properties;
 mod status;
 mod toolbar;
@@ -59,6 +60,44 @@ pub mod labels {
     pub const NAME: &str = "Name";
     pub const DONT_SAVE: &str = "Don't save";
     pub const CANCEL: &str = "Cancel";
+    // The look (plan 15a Task 18).
+    pub const LOOK: &str = "Look";
+    pub const ADD_LOOK: &str = "Add look";
+    pub const REMOVE_LOOK: &str = "Remove look";
+    pub const LOOK_AMBIENT: &str = "Ambient %";
+    pub const LOOK_AMBIENT_COLOUR: &str = "Ambient colour";
+    pub const LOOK_MAX_LIGHT: &str = "Max light %";
+    pub const LOOK_STEPS: &str = "Light steps";
+    pub const LOOK_SOFTNESS: &str = "Softness";
+    pub const LOOK_SOAK: &str = "Light soak";
+    pub const LOOK_FLOOR: &str = "Solid floor %";
+    pub const LOOK_EXPOSURE: &str = "Exposure";
+    pub const LOOK_CONTRAST: &str = "Contrast %";
+    pub const LOOK_SATURATION: &str = "Saturation %";
+    pub const LOOK_TINT: &str = "Tint";
+    pub const ADD_GROUP: &str = "Add glow group";
+    pub const GROUP_COLOUR: &str = "Group colour";
+    pub const GROUP_INTENSITY: &str = "Group intensity %";
+    pub const GROUP_REACH: &str = "Group reach";
+    pub const ANIMATION: &str = "Animation";
+    pub const UNLIMITED: &str = "unlimited";
+    pub const GLOW: &str = "Glow";
+    pub const GLOW_STRENGTH: &str = "Glow strength %";
+    pub const GLOW_GROUP: &str = "Glow group";
+    pub const CLEAR: &str = "Lets light through";
+    pub const LIGHT_COLOUR: &str = "Light colour";
+    pub const LIGHT_INTENSITY: &str = "Light intensity %";
+    pub const LIGHT_REACH: &str = "Light reach";
+    pub const LIGHT_RADIUS: &str = "Light radius";
+    pub const TOOL_GLOW: &str = "Glow brush";
+    pub const TOOL_LIGHT: &str = "Light";
+    pub const GLOW_STRENGTH_BRUSH: &str = "Brush glow %";
+    pub const VIEW_LIT: &str = "Lit";
+    pub const VIEW_FULL: &str = "Full bright";
+    pub const VIEW_LIGHT: &str = "Light only";
+    pub const CLOCK_PLAY: &str = "Play lights";
+    pub const CLOCK_PAUSE: &str = "Pause lights";
+    pub const CLOCK_SCRUB: &str = "Time ms";
 }
 
 /// Transient UI state: value and text drafts, the canvas rect last drawn,

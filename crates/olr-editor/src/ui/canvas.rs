@@ -156,6 +156,22 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
                 painter.circle_filled(c, 4.0, colour);
                 painter.circle_stroke(c, 6.0, Stroke::new(1.0, Color32::BLACK));
             }
+            Overlay::Light { at, selected, radius, reach } => {
+                let c = screen(at) + egui::vec2(unit / 2.0, unit / 2.0);
+                let colour = if selected { accent } else { Color32::from_rgb(255, 210, 90) };
+                // A small sun: its rays, then its body.
+                for k in 0..8 {
+                    let a = k as f32 * std::f32::consts::FRAC_PI_4;
+                    let d = egui::vec2(a.cos(), a.sin());
+                    painter.line_segment([c + d * 6.0, c + d * 9.0], Stroke::new(1.5, colour));
+                }
+                painter.circle_filled(c, 4.0, colour);
+                painter.circle_stroke(c, 4.5, Stroke::new(1.0, Color32::BLACK));
+                if selected && let Some(r) = reach {
+                    let edge = (f32::from(radius) + f32::from(r)) * unit;
+                    painter.circle_stroke(c, edge, Stroke::new(1.0, colour.gamma_multiply(0.7)));
+                }
+            }
         }
     }
 }

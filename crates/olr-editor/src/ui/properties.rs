@@ -20,6 +20,10 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     let Some(doc) = state.document() else { return };
     match state.selection() {
         Selection::Object(i) => {
+            if let Some(o @ LevelObject::Light { .. }) = doc.level().objects.get(*i) {
+                super::look::light(ui, data, *i, o, out);
+                return;
+            }
             let Some(LevelObject::Spawn { at, .. }) = doc.level().objects.get(*i) else { return };
             ui.heading(format!("Spawn {}", i + 1));
             ui.label(format!("at ({}, {})", at.0, at.1));
@@ -86,6 +90,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
                     }
                 });
             }
+            super::look::element_glow(ui, state, data, e, out);
             let coord = i64::from(i32::MIN)..=i64::from(i32::MAX);
             if let ElementKind::Drawn { at, .. } = &e.kind {
                 ui.separator();

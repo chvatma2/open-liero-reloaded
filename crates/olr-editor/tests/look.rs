@@ -226,7 +226,7 @@ fn locked_elements_refuse_glow() {
 #[test]
 fn a_plain_level_keeps_its_glow_and_clear() {
     let Some(root) = content() else { return };
-    let (tmp, dir) = crate::common::copy_pack(&root, std::path::Path::new("olx-level-dirt-level"));
+    let (_tmp, dir) = crate::common::copy_pack(&root, std::path::Path::new("olx-level-dirt-level"));
     let fs = olr_vfs::DirFs::new(&dir);
     let mut src = olr_format::levels::read_level_files(&fs).unwrap();
     let (w, h) = src.size;
@@ -252,9 +252,12 @@ fn a_plain_level_keeps_its_glow_and_clear() {
     let doc = st.document().unwrap();
     assert!(doc.diagnostics().iter().any(|p| p.text.contains("outside the editor")), "it says so");
     assert_eq!((&doc.level().glow, &doc.level().clear), (&src.glow, &src.clear));
+    // The editor opened its own copy: what it saves is there.
+    let saved_dir = doc.dir().to_path_buf();
     let meta = olr_editor::LevelMeta { name: "Renamed".into(), ..doc.meta() };
     run(&mut st, A::Meta(meta));
     run(&mut st, A::Save);
-    let saved = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(&dir)).unwrap();
+    let saved = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(&saved_dir)).unwrap();
+    assert_eq!(saved.name, "Renamed", "saved where it was read back");
     assert_eq!((saved.glow, saved.clear), (src.glow, src.clear));
 }

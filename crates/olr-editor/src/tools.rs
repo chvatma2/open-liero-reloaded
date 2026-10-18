@@ -192,4 +192,12 @@ pub enum Overlay {
         at: (i32, i32),
         selected: bool,
     },
+    /// A light object; the selected one shows its reach (world pixels from
+    /// its radius's edge; `None` unlimited).
+    Light {
+        at: (i32, i32),
+        selected: bool,
+        radius: u8,
+        reach: Option<u16>,
+    },
 }

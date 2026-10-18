@@ -48,6 +48,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     ui.horizontal_wrapped(|ui| tools(ui, state, data, out));
     ui.horizontal_wrapped(|ui| drawing(ui, state, data, out));
     ui.horizontal_wrapped(|ui| session(ui, state, data, out));
+    ui.horizontal_wrapped(|ui| super::look::toolbar_row(ui, state, data, out));
 }
 
 fn tools(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {

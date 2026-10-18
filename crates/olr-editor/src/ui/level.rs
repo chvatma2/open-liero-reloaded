@@ -74,4 +74,5 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         });
         data.resize = None;
     }
+    super::look::level_look(ui, state, data, out);
 }

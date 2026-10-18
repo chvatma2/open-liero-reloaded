@@ -934,10 +934,18 @@ impl EditorState {
                 LevelObject::Spawn { at, .. } => {
                     out.push(Overlay::Spawn { at: *at, selected: self.selection == Selection::Object(i) })
                 }
-                LevelObject::Light { .. } => {}
+                LevelObject::Light { .. } => {
+                    let Some((radius, l)) = o.as_light() else { continue };
+                    let reach = match l.reach {
+                        olr_format::look::ReachSource::Pixels(p) => Some(p),
+                        olr_format::look::ReachSource::Unlimited => None,
+                    };
+                    let selected = self.selection == Selection::Object(i);
+                    out.push(Overlay::Light { at: o.at(), selected, radius, reach })
+                }
             }
         }
-        if matches!(self.tool, Tool::Brush | Tool::Eraser)
+        if matches!(self.tool, Tool::Brush | Tool::Eraser | Tool::Glow)
             && let Some(centre) = self.status.cursor
         {
             // A crater's outline spans its extent (plan 14e R4).

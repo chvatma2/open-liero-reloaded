@@ -760,3 +760,113 @@ fn theme_swatches_follow_the_theme() {
     let k = keys(&h);
     assert!(!k.iter().any(|k| k.starts_with("theme/olx-theme-dirt/")), "{k:?}");
 }
+
+/// Types `value` into the number field labelled `label` and commits it.
+fn type_number(h: &mut Harness<'static, App>, label: &str, value: &str) {
+    h.get_by_role_and_label(Role::SpinButton, label).focus();
+    h.run();
+    h.get_by_label(label).type_text(value);
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+}
+
+#[test]
+fn glow_an_element_and_save() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.get_by_label("Tunnels").click();
+    h.run();
+    h.get_by_label(labels::GLOW).click();
+    h.run();
+    let doc = h.state().state.document().unwrap();
+    let e = &doc.items()[doc.index_of("tunnels").unwrap()].element;
+    assert_eq!(e.glow.as_ref().map(|g| g.group.as_str()), Some("tunnels"));
+    let dir = doc.dir().to_path_buf();
+    h.get_by_label(labels::SAVE).click();
+    h.run();
+    let ron = std::fs::read_to_string(dir.join("level.ron")).unwrap();
+    assert!(ron.contains("glow_groups") && ron.contains("id: \"tunnels\""), "{ron}");
+    assert!(dir.join("look/glow.png").is_file());
+}
+
+#[test]
+fn paint_glow_with_the_brush() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.get_by_label("Tunnels").click();
+    h.run();
+    h.get_by_label(labels::GLOW).click();
+    h.run();
+    h.get_by_label(labels::TOOL_GLOW).click();
+    h.run();
+    assert_eq!(h.state().state.tool(), Tool::Glow);
+    let start = canvas_point(&h, (-20.0, 0.0));
+    hover(&mut h, start);
+    press(&mut h, start, true);
+    let end = canvas_point(&h, (20.0, 0.0));
+    hover(&mut h, end);
+    press(&mut h, end, false);
+    assert!(h.state().state.document().unwrap().glow_mask("tunnels").is_some());
+    assert!(h.state().state.can_undo());
+}
+
+#[test]
+fn place_a_light_and_edit_it() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.get_by_label(labels::TOOL_LIGHT).click();
+    h.run();
+    let at = canvas_point(&h, (0.0, 0.0));
+    hover(&mut h, at);
+    press(&mut h, at, true);
+    press(&mut h, at, false);
+    let doc = h.state().state.document().unwrap();
+    let index = doc.level().objects.iter().position(|o| o.as_light().is_some()).expect("a light");
+    assert_eq!(h.state().state.selection(), &Selection::Object(index));
+    type_number(&mut h, labels::LIGHT_INTENSITY, "250");
+    let doc = h.state().state.document().unwrap();
+    assert_eq!(doc.level().objects[index].as_light().unwrap().1.intensity, 250);
+}
+
+#[test]
+fn edit_the_look_panel() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    // Tall enough that the level panel's Look section is in view.
+    h.set_size(egui::vec2(1280.0, 1800.0));
+    act(&mut h, A::Select(Selection::None));
+    h.get_by_label(labels::ADD_LOOK).click();
+    h.run();
+    assert!(h.state().state.document().unwrap().level().look.is_some());
+    type_number(&mut h, labels::LOOK_AMBIENT, "40");
+    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    assert_eq!(look.ambient.intensity, 40);
+    h.get_by_label(labels::ADD_GROUP).click();
+    h.run();
+    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    assert_eq!(look.glow_groups.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(), ["group-1"]);
+    type_number(&mut h, labels::GROUP_INTENSITY, "300");
+    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    assert_eq!(look.glow_groups[0].intensity, 300);
+    h.get_by_label(labels::UNDO).click();
+    h.run();
+    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    assert_eq!(look.glow_groups[0].intensity, 100);
+}
+
+#[test]
+fn toggle_views_and_scrub_the_clock() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.get_by_label(labels::VIEW_LIGHT).click();
+    h.run();
+    assert_eq!(h.state().state.view_mode(), olr_look::ViewMode::LightOnly);
+    h.get_by_label(labels::VIEW_FULL).click();
+    h.run();
+    assert_eq!(h.state().state.view_mode(), olr_look::ViewMode::FullBright);
+    h.get_by_label(labels::CLOCK_PLAY).click();
+    h.run();
+    assert!(h.state().state.clock_running());
+    h.get_by_label(labels::CLOCK_PAUSE).click();
+    h.run();
+    assert!(!h.state().state.clock_running());
+    type_number(&mut h, labels::CLOCK_SCRUB, "750");
+    assert_eq!(h.state().state.clock_ms(), 750.0);
+    assert!(!h.state().state.dirty());
+}
