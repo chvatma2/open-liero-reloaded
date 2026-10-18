@@ -131,12 +131,16 @@ pub enum EditError {
 }
 
 impl Paint {
-    /// The colour of art pixel `(ax, ay)`; `None` for an empty tile.
-    pub(crate) fn at(&self, ax: u32, ay: u32) -> Option<Rgba> {
+    /// The colour of the level's art pixel `(ax, ay)` (any position: a
+    /// tile repeats from the art origin both ways); `None` for an empty tile.
+    pub(crate) fn at(&self, ax: i64, ay: i64) -> Option<Rgba> {
         match self {
             Paint::Colour(c) => Some(*c),
             Paint::Tile(t) if t.width() == 0 || t.height() == 0 => None,
-            Paint::Tile(t) => Some(t.get(ax % t.width(), ay % t.height())),
+            Paint::Tile(t) => Some(t.get(
+                ax.rem_euclid(i64::from(t.width())) as u32,
+                ay.rem_euclid(i64::from(t.height())) as u32,
+            )),
         }
     }
 }
@@ -282,7 +286,7 @@ pub fn draw_art(
     }
     covered(shape, size, |x, y| {
         for (ax, ay) in art_block(art_scale, x, y) {
-            if let Some(c) = paint.at(ax, ay).filter(|c| c.a != 0) {
+            if let Some(c) = paint.at(ax.into(), ay.into()).filter(|c| c.a != 0) {
                 art.set(ax, ay, Rgba { a: 255, ..c });
             }
         }
@@ -352,7 +356,7 @@ pub fn fill(level: &mut LevelSource, shape: &Shape, solid: Solid, paint: &Paint)
         let i = cell(level, x, y);
         level.material[i] = solid.into();
         for (ax, ay) in art_block(s, x, y) {
-            if let Some(c) = paint.at(ax, ay) {
+            if let Some(c) = paint.at(ax.into(), ay.into()) {
                 let c = over(c, level.front.get(ax, ay));
                 level.front.set(ax, ay, c);
             }
@@ -365,7 +369,7 @@ pub fn paint(level: &mut LevelSource, shape: &Shape, layer: Layer, paint: &Paint
     covered(shape, level.size, |x, y| {
         let background = level.material[cell(level, x, y)] == Material::Background;
         for (ax, ay) in art_block(s, x, y) {
-            let Some(c) = paint.at(ax, ay) else { continue };
+            let Some(c) = paint.at(ax.into(), ay.into()) else { continue };
             match layer {
                 Layer::Back => {
                     let c = over(c, level.back.get(ax, ay));
@@ -453,7 +457,7 @@ pub fn resize(
     let mut new_area = RgbaImage::new(aw, ah);
     for ay in 0..ah {
         for ax in 0..aw {
-            if let Some(c) = paint.at(ax, ay) {
+            if let Some(c) = paint.at(ax.into(), ay.into()) {
                 new_area.set(ax, ay, c);
             }
         }

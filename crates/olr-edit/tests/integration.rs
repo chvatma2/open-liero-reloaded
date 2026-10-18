@@ -2,6 +2,7 @@
 
 mod common;
 mod compose;
+mod drawn;
 mod element;
 mod fmt;
 mod guide;
