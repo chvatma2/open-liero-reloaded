@@ -29,6 +29,13 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   relay pool, the game list, pings, invites), plus winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
   are `eprintln!("warning: ...")`, each once.
+- **Version** (`lib.rs`'s `VERSION`): `OLR_BUILD_VERSION` at compile time
+  (`cargo xtask dist` sets it: `0.2.0-dev.192.24b2ac4`, or `0.2.0` for a
+  final release), else `<CARGO_PKG_VERSION>-dev (local build)`; `olr
+  --version`, the log's first line (`olr <version>`), `MenuData::version`
+  (the main menu's corner, About). Shown only: nothing compares it
+  (replays, the game list's `FINGERPRINT`, the netcode stay as they are).
+  `olr-server` has the same `VERSION` (`--version`, its first line).
 - **Menus first** (`main.rs`, `shell.rs`, plan 7 task 2): without a flag
   that chooses a game (`GAME_FLAGS`: `--mode`, `--replay`, `--level`,
   `--mod`, `--targets`, `--seed`, `--script`, `--demo`, ...) the game opens

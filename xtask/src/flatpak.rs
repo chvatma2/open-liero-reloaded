@@ -10,7 +10,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::dist::{self, Platform, VERSION, ZIP_DIR};
+use crate::dist::{self, Platform, ZIP_DIR};
 use crate::root;
 
 /// The application ID: the files' names in `tools/flatpak/` and the
@@ -54,8 +54,8 @@ fn run(what: &str, c: &mut Command) -> Result<(), String> {
 }
 
 /// Stages the programs and the packaging files in `src` (emptied first).
-fn stage(build: &Path, src: &Path) -> Result<(), String> {
-    let folder = dist::stage(Platform::Linux, build, src)?;
+fn stage(build: &Path, src: &Path, version: &str) -> Result<(), String> {
+    let folder = dist::stage(Platform::Linux, build, src, version)?;
     let app = src.join("app");
     std::fs::rename(&folder, &app).map_err(|e| format!("{} to {}: {e}", folder.display(), app.display()))?;
     let tools = root().join(TOOL_DIR);
@@ -64,7 +64,7 @@ fn stage(build: &Path, src: &Path) -> Result<(), String> {
         let from = tools.join(&name);
         let text = std::fs::read_to_string(&from).map_err(|e| format!("{}: {e}", from.display()))?;
         let to = src.join(&name);
-        std::fs::write(&to, packaging_text(&text, VERSION)).map_err(|e| format!("{}: {e}", to.display()))?;
+        std::fs::write(&to, packaging_text(&text, version)).map_err(|e| format!("{}: {e}", to.display()))?;
     }
     Ok(())
 }
@@ -83,10 +83,10 @@ pub fn staged_app() -> PathBuf {
 /// The Flatpak of `build` (`dist::build`'s Linux output): staged, built by
 /// `flatpak-builder` and written as `target/release-zips/<bundle_name>`;
 /// returns the bundle's path. The staged folder stays (`staged_app`).
-pub fn bundle(build: &Path) -> Result<PathBuf, String> {
+pub fn bundle(build: &Path, version: &str) -> Result<PathBuf, String> {
     let work = work();
     let (src, repo) = (work.join("src"), work.join("repo"));
-    stage(build, &src)?;
+    stage(build, &src, version)?;
     println!("building the Flatpak (the first run downloads the 26.08 runtime from Flathub)...");
     run(
         "flatpak-builder",
@@ -99,7 +99,7 @@ pub fn bundle(build: &Path) -> Result<PathBuf, String> {
             .arg(work.join("build"))
             .arg(src.join(format!("{APP_ID}.yml"))),
     )?;
-    let bundle = root().join("target").join(ZIP_DIR).join(bundle_name(VERSION));
+    let bundle = root().join("target").join(ZIP_DIR).join(bundle_name(version));
     if let Some(dir) = bundle.parent() {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
@@ -121,9 +121,13 @@ pub fn command() -> anyhow::Result<bool> {
         println!("FAIL flatpak: {why}");
         return Ok(false);
     }
-    println!("building olr-game and olr-server (the {} profile: LTO, minutes from cold)...", dist::PROFILE);
-    let build = dist::build(Platform::Linux).map_err(anyhow::Error::msg)?;
-    let bundle = bundle(&build).map_err(anyhow::Error::msg)?;
+    let version = crate::version::release_version(false).map_err(anyhow::Error::msg)?;
+    println!(
+        "building olr-game and olr-server {version} (the {} profile: LTO, minutes from cold)...",
+        dist::PROFILE
+    );
+    let build = dist::build(Platform::Linux, &version).map_err(anyhow::Error::msg)?;
+    let bundle = bundle(&build, &version).map_err(anyhow::Error::msg)?;
     let bytes = std::fs::metadata(&bundle).map_or(0, |m| m.len());
     println!("{}  {:.1} MiB", bundle.display(), bytes as f64 / (1024.0 * 1024.0));
     println!("install: flatpak install --user {}", bundle.display());

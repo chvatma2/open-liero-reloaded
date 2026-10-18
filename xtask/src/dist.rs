@@ -230,11 +230,13 @@ pub fn unpack(zip: &Path, into: &Path) -> Result<(), String> {
     archive.extract(into).map_err(|e| format!("unpacking {} into {}: {e}", zip.display(), into.display()))
 }
 
-/// Builds `olr-game` and `olr-server` for `platform` in the `dist` profile;
-/// gives cargo's output directory.
-pub fn build(platform: Platform) -> Result<PathBuf, String> {
+/// Builds `olr-game` and `olr-server` for `platform` in the `dist` profile,
+/// carrying `version` (`version::BUILD_VERSION_VAR`); gives cargo's output
+/// directory.
+pub fn build(platform: Platform, version: &str) -> Result<PathBuf, String> {
     let mut c = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     c.current_dir(root()).args(["build", "--quiet", "--profile", PROFILE]);
+    c.env(crate::version::BUILD_VERSION_VAR, version);
     for package in PACKAGES {
         c.args(["-p", package]);
     }
@@ -253,15 +255,15 @@ pub fn build(platform: Platform) -> Result<PathBuf, String> {
 }
 
 /// Stages the folder for `platform` in `dir` (emptied first) from cargo's
-/// output directory `build`; gives the folder.
-pub fn stage(platform: Platform, build: &Path, dir: &Path) -> Result<PathBuf, String> {
+/// output directory `build`, named for `version`; gives the folder.
+pub fn stage(platform: Platform, build: &Path, dir: &Path, version: &str) -> Result<PathBuf, String> {
     match std::fs::remove_dir_all(dir) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
             return Err(format!("{}: {e}", dir.display()));
         }
         _ => {}
     }
-    let folder = dir.join(folder(VERSION));
+    let folder = dir.join(folder(version));
     let mut dlls: Vec<(String, PathBuf)> = Vec::new();
     if platform == Platform::Windows {
         for exe in EXES {
@@ -382,7 +384,7 @@ fn listening_port(line: &str) -> Option<u16> {
 
 /// A fresh directory for an unpacked zip and the run's working directory,
 /// the check's server config written there; gives (folder, run directory).
-fn unpack_fresh(zip: &Path, base: &Path) -> Result<(PathBuf, PathBuf), String> {
+fn unpack_fresh(zip: &Path, base: &Path, version: &str) -> Result<(PathBuf, PathBuf), String> {
     match std::fs::remove_dir_all(base) {
         Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
             return Err(format!("{}: {e}", base.display()));
@@ -393,12 +395,12 @@ fn unpack_fresh(zip: &Path, base: &Path) -> Result<(PathBuf, PathBuf), String> {
     unpack(zip, &unpacked)?;
     std::fs::create_dir_all(&run).map_err(|e| format!("{}: {e}", run.display()))?;
     std::fs::write(run.join("server.ron"), CHECK_CONFIG).map_err(|e| format!("{}: {e}", run.display()))?;
-    Ok((unpacked.join(folder(VERSION)), run))
+    Ok((unpacked.join(folder(version)), run))
 }
 
 /// The release folder the Linux Flatpak holds (`flatpak::staged_app`), run
-/// from a temporary directory.
-fn verify_linux(folder: &Path) -> Result<String, String> {
+/// from a temporary directory; `olr --version` must say `version`.
+fn verify_linux(folder: &Path, version: &str) -> Result<String, String> {
     let tmp = tempfile::Builder::new()
         .prefix("olr-dist-")
         .tempdir()
@@ -416,6 +418,15 @@ fn verify_linux(folder: &Path) -> Result<String, String> {
         }
     }
     let folder = folder.canonicalize().map_err(|e| format!("{}: {e}", folder.display()))?;
+    let said = Command::new(folder.join("olr"))
+        .arg("--version")
+        .current_dir(&run)
+        .output()
+        .map_err(|e| format!("cannot run olr --version: {e}"))?;
+    let said = String::from_utf8_lossy(&said.stdout).trim().to_string();
+    if said != format!("olr {version}") {
+        return Err(format!("olr --version says {said:?}, not \"olr {version}\""));
+    }
     let help = Command::new(folder.join("olr"))
         .arg("--help")
         .current_dir(&run)
@@ -495,7 +506,7 @@ fn verify_linux(folder: &Path) -> Result<String, String> {
 /// The Windows zip, unpacked under the stage in Windows' temp directory
 /// and run from another directory there through interop; `Ok(None)` when
 /// interop is missing (a notice).
-fn verify_windows(zip: &Path) -> Result<Option<String>, String> {
+fn verify_windows(zip: &Path, version: &str) -> Result<Option<String>, String> {
     if let Some(why) = winbuild::interop_missing() {
         println!("skip dist verification on Windows ({why})");
         return Ok(None);
@@ -504,11 +515,11 @@ fn verify_windows(zip: &Path) -> Result<Option<String>, String> {
     std::fs::create_dir_all(&stage.dir).map_err(|e| format!("{}: {e}", stage.dir.display()))?;
     // A run an interrupted xtask left behind would hold the files.
     winbuild::stop_stage_processes(&stage.dir)?;
-    let (folder, run) = unpack_fresh(zip, &stage.dir.join("dist"))?;
+    let (folder, run) = unpack_fresh(zip, &stage.dir.join("dist"), version)?;
     let help =
         winbuild::run_in(&stage, &folder.join("olr.exe"), &run, &["--help".to_string()], &[], READY_WITHIN)?;
     let text = String::from_utf8_lossy(&help.stdout);
-    let beside = format!("{}\\content\\packs]", self::folder(VERSION));
+    let beside = format!("{}\\content\\packs]", self::folder(version));
     if !text.lines().any(|l| l.contains("[default: ") && l.trim_end().ends_with(&beside)) {
         return Err(format!("olr.exe --help does not show the content beside it (…{beside}):\n{text}"));
     }
@@ -542,8 +553,17 @@ pub fn release_name(version: &str, platform: Platform) -> String {
 }
 
 /// `cargo xtask dist`: the releases (the Windows zip, the Linux Flatpak),
-/// then (unless `verify` is off) their checks.
-pub fn command(verify: bool) -> anyhow::Result<bool> {
+/// then (unless `verify` is off) their checks; a work in progress's version
+/// unless `final_` (`version::release_version`).
+pub fn command(verify: bool, final_: bool) -> anyhow::Result<bool> {
+    let version = match crate::version::release_version(final_) {
+        Ok(v) => v,
+        Err(why) => {
+            println!("FAIL dist: {why}");
+            return Ok(false);
+        }
+    };
+    println!("releasing {version}{}", if final_ { " (final)" } else { " (a work in progress)" });
     if let Some(why) = winbuild::build_missing() {
         println!("FAIL dist: the Windows build cannot be made here: {why}");
         return Ok(false);
@@ -562,13 +582,13 @@ pub fn command(verify: bool) -> anyhow::Result<bool> {
             "building olr-game and olr-server for {} (the {PROFILE} profile: LTO, minutes from cold)...",
             platform.suffix()
         );
-        let build = build(platform).map_err(anyhow::Error::msg)?;
+        let build = build(platform, &version).map_err(anyhow::Error::msg)?;
         let file = match platform {
-            Platform::Linux => crate::flatpak::bundle(&build).map_err(anyhow::Error::msg)?,
+            Platform::Linux => crate::flatpak::bundle(&build, &version).map_err(anyhow::Error::msg)?,
             Platform::Windows => {
-                let folder =
-                    stage(platform, &build, &staging.join(platform.suffix())).map_err(anyhow::Error::msg)?;
-                let zip = target.join(ZIP_DIR).join(release_name(VERSION, platform));
+                let folder = stage(platform, &build, &staging.join(platform.suffix()), &version)
+                    .map_err(anyhow::Error::msg)?;
+                let zip = target.join(ZIP_DIR).join(release_name(&version, platform));
                 write_zip(&folder, &executables(platform), &zip).map_err(anyhow::Error::msg)?;
                 zip
             }
@@ -581,8 +601,8 @@ pub fn command(verify: bool) -> anyhow::Result<bool> {
         for (platform, file) in &releases {
             println!("checking {} ...", file.display());
             let result = match platform {
-                Platform::Linux => verify_linux(&crate::flatpak::staged_app()).map(Some),
-                Platform::Windows => verify_windows(file),
+                Platform::Linux => verify_linux(&crate::flatpak::staged_app(), &version).map(Some),
+                Platform::Windows => verify_windows(file, &version),
             };
             match result {
                 Ok(Some(what)) => println!("ok   dist {}: {what}", platform.suffix()),

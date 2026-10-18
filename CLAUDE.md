@@ -42,7 +42,9 @@ modernized for current displays.
 8. **Commits:** small, imperative subject (`olr-pack: validate projectile cycles`).
 9. **Releases:** `cargo xtask dist` builds and runs the Linux release, a Flatpak
    (`target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak`, `tools/flatpak/`),
-   and the Windows zip (`…-windows-x64.zip`). There is no Linux zip.
+   and the Windows zip (`…-windows-x64.zip`). There is no Linux zip. `<version>` is a
+   work in progress's, `0.2.0-dev.<commits since the last release tag>.<commit>[.dirty]`;
+   `--final` names the plain version and needs the commit tagged `v<version>` and a clean tree.
 
 ## Oracle
 

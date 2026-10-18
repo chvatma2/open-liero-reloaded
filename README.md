@@ -342,7 +342,22 @@ olr-cli level preview my-level --out preview.png --scale 2
 
 ## Building the releases
 
-`cargo xtask dist` builds both releases in one run:
+`cargo xtask dist` builds both releases in one run. Their `<version>` says
+what they are:
+
+- **a work in progress** (the default):
+  `<version>-dev.<commits since the last release tag>.<commit>`, such as
+  `0.2.0-dev.192.24b2ac4`, with `.dirty` when the working tree has
+  uncommitted changes. `0.2.0` is the release being worked towards;
+- **a final release** (`cargo xtask dist --final`): the plain `0.2.0`,
+  refused unless the commit is tagged `v0.2.0` and nothing is uncommitted
+  (tag it yourself first: `git tag v0.2.0`; `dist` never tags).
+
+The game and the server show the same version (`olr --version`,
+`olr-server --version`, About, the main menu's corner, the first line of
+their logs); a build made outside `dist` says `0.2.0-dev (local build)`.
+The version is shown only: builds of different versions play together and
+read each other's replays as before.
 
 - **Linux: a Flatpak,**
   `target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak`.
@@ -374,7 +389,8 @@ target (`sudo apt install mingw-w64`, `rustup target add
 x86_64-pc-windows-gnu`). Without either, the command fails before it
 builds anything: both releases or none.
 
-At the end, the Flatpak's folder runs from another directory: `olr --help`,
+At the end, the Flatpak's folder runs from another directory: `olr
+--version` (it must say the release's version), `olr --help`,
 and an `olr-server` match with a bot client. The Windows zip is unpacked
 into a fresh directory and runs `olr.exe --help` and `olr-server.exe`
 loading its map, through WSL interop (skipped with a notice without it).

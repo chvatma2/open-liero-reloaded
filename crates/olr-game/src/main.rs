@@ -73,7 +73,7 @@ enum Filter {
 /// or quits. With the menus, --fullscreen, --uncapped, --filter and
 /// --no-interp win over the options for the run (they are not saved).
 #[derive(clap::Parser)]
-#[command(name = "olr")]
+#[command(name = "olr", version = olr_game::VERSION)]
 struct Args {
     /// What to play (the sandbox when another flag chooses a game).
     #[arg(long, value_enum)]
@@ -427,6 +427,7 @@ fn menus(args: &Args, audio: olr_audio::Audio, mut cfg: ShellConfig, flags: Over
 }
 
 fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
+    println!("olr {}", olr_game::VERSION);
     let var = std::env::var(window::WINDOW_SYSTEM_VAR).ok();
     let ws = window::window_system(args.window_system, var.as_deref()).map_err(anyhow::Error::msg)?;
     let mut steps: Vec<Step> = match (&args.script, args.demo) {
@@ -626,6 +627,17 @@ mod tests {
     fn parse(args: &[&str]) -> (Args, ArgMatches) {
         let m = Args::command().try_get_matches_from(args).unwrap();
         (Args::from_arg_matches(&m).unwrap(), m)
+    }
+
+    /// `olr --version` names the build: a release's (`dist`) or a local one.
+    #[test]
+    fn the_version_names_the_build() {
+        let e = Args::command().try_get_matches_from(["olr", "--version"]).unwrap_err();
+        assert_eq!(e.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(e.to_string().trim(), format!("olr {}", olr_game::VERSION));
+        if option_env!("OLR_BUILD_VERSION").is_none() {
+            assert_eq!(olr_game::VERSION, concat!(env!("CARGO_PKG_VERSION"), "-dev (local build)"));
+        }
     }
 
     #[test]

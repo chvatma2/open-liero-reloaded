@@ -289,11 +289,21 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   Microsoft's Basic Render Driver, a `Cpu` adapter), with timestamps on
   both; `olr.exe --demo` writes its shots under the stage's `target/`. Nothing is left running; the
   stage stays for the next run.
-- `dist [--no-verify]` (`dist.rs`): the releases (`release_name`): the
+- `dist [--no-verify] [--final]` (`dist.rs`): the releases (`release_name`): the
   Linux Flatpak, `target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak`
   (`flatpak::bundle`; there is no Linux zip, and an old one there is
-  removed), and the Windows zip, `…-windows-x64.zip` (`ZIP_DIR`; `VERSION`:
-  xtask's, the workspace's; `zip_name`, `folder`). Without the Flatpak
+  removed), and the Windows zip, `…-windows-x64.zip` (`ZIP_DIR`; `zip_name`,
+  `folder`). `<version>` (`version.rs`, `release_version`) is a work in
+  progress's, `wip_version`: `<VERSION>-dev.<commits since the newest
+  release tag the commit has, v<x.y.z> only (is_release_tag); all without
+  one>.<7-hex commit>`, `.dirty` with uncommitted changes (untracked files
+  aside); with `--final`, `final_version`: the plain `VERSION` (xtask's,
+  the workspace's), refused unless `git tag --points-at HEAD` has
+  `v<VERSION>` and the tree is clean (it never tags). The builds get it as
+  `OLR_BUILD_VERSION` (`version::BUILD_VERSION_VAR`), the folder in the zip,
+  the Flatpak's name and its metainfo `<release version>` too; the Linux
+  check runs `olr --version`, which must say `olr <version>`. `flatpak`
+  alone names a work in progress. Without the Flatpak
   tools (`flatpak::tools_missing`) the command fails before building. `olr-game` and
   `olr-server` are built with `cargo build --profile dist` (workspace
   `Cargo.toml`: release, `strip`, no debug info, panics unwinding),

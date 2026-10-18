@@ -128,6 +128,9 @@ pub struct MenuData {
     /// What the app said of the editor's last command (a copy or a new
     /// level that failed), on the Editor screen.
     pub editor_message: Option<String>,
+    /// The game's version (the app's: a release's name, or a local
+    /// build's), on the main menu and in About; empty: the crate's.
+    pub version: String,
     /// A text field had the focus as the last frame ended.
     typing: bool,
     /// The weapon selection in progress.
@@ -180,6 +183,7 @@ impl MenuData {
             editable: BTreeSet::new(),
             recoveries: Vec::new(),
             editor_message: None,
+            version: String::new(),
             typing: false,
             select: None,
             thumbs: BTreeMap::new(),
@@ -316,7 +320,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
         _ => {
             let frame = egui::Frame::central_panel(ui.style()).fill(theme::BACKGROUND);
             egui::CentralPanel::default().frame(frame).show(ui, |ui| match screen {
-                Screen::Main => main::show(ui, state, &data.notices, &mut out),
+                Screen::Main => main::show(ui, state, &data.notices, &data.version, &mut out),
                 Screen::LocalPlay => local_play::show(ui, state, data, &mut out),
                 Screen::Profiles => profiles::show(ui, state, data, &mut out),
                 Screen::Replays => replays::show(ui, state, data, &mut out),

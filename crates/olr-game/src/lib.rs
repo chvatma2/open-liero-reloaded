@@ -9,6 +9,15 @@
 //! timing) are unit-tested; the window, GPU and devices are
 //! checked by running the game (`--autoquit-after`, `--demo`, `--shot`).
 
+/// This build's version: a release's, as `cargo xtask dist` names it
+/// (`0.2.0-dev.192.24b2ac4`, or `0.2.0` for a final one), else the
+/// workspace's marked as a local build. Shown only (`--version`, About, the
+/// main menu, the log): no replay, game list or compatibility check reads it.
+pub const VERSION: &str = match option_env!("OLR_BUILD_VERSION") {
+    Some(v) => v,
+    None => concat!(env!("CARGO_PKG_VERSION"), "-dev (local build)"),
+};
+
 pub mod app;
 pub mod autoplay;
 pub mod clock;

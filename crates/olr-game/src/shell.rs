@@ -253,6 +253,7 @@ impl Shell {
         let mut data = MenuData::new(Default::default(), store.replays_dir());
         let packs_dir = store.packs_dir();
         data.notices = store.notices();
+        data.version = crate::VERSION.to_string();
         let mut shell = Shell {
             ui,
             data,

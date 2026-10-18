@@ -421,3 +421,19 @@ fn main_menu_shows_the_store_notices() {
     h.run();
     h.get_by_label_contains(text);
 }
+
+/// The game's version shows on the main menu and in About (a screenshot
+/// says which build it is).
+#[test]
+fn the_version_shows_on_the_main_menu_and_in_about() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
+    h.state_mut().data.version = "9.8.7-dev.5.abc1234".into();
+    h.run();
+    h.get_by_label("9.8.7-dev.5.abc1234");
+    // Beside the menu, never in its way: its buttons stay in the window.
+    let quit = h.get_by_label("Quit").rect();
+    assert!(quit.max.y < 720.0 && quit.min.y > 0.0, "the menu is laid out as before: {quit:?}");
+    h.get_by_label("About").click();
+    h.run();
+    h.get_by_label_contains("9.8.7-dev.5.abc1234");
+}

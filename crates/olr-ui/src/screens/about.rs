@@ -94,7 +94,8 @@ pub(super) fn show(ui: &mut Ui, data: &MenuData, out: &mut Vec<UiAction>) {
     let mut ui = page(ui, "About", WIDTH, out);
     ScrollArea::vertical().id_salt("about").show(&mut ui, |ui| {
         ui.vertical_centered(|ui| {
-            let version = format!("Open Liero Reloaded {}", env!("CARGO_PKG_VERSION"));
+            let v = if data.version.is_empty() { env!("CARGO_PKG_VERSION") } else { data.version.as_str() };
+            let version = format!("Open Liero Reloaded {v}");
             ui.label(RichText::new(version).size(22.0).strong());
             ui.label("A remake of OpenLieroX in Rust: its levels, mods and skins, played as it plays them.");
         });

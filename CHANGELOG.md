@@ -38,6 +38,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   Esc or Stop returns to the editor as it was. Unsaved changes are kept
   in a recovery copy every 2 minutes and offered after a crash.
 
+- Releases say what they are: a work in progress is named
+  `<version>-dev.<commits>.<commit>` (such as `0.2.0-dev.192.24b2ac4`), a
+  final release (`cargo xtask dist --final`, from a commit tagged
+  `v<version>`) the plain version. The game and the server show it
+  (`--version`, About, the main menu, their logs).
+
 ### Changed
 
 - The HUD no longer says "Jump to respawn" while you are dead: the worm

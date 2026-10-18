@@ -26,7 +26,7 @@ const LOG_FILE: &str = "server.log";
 static STOP: AtomicBool = AtomicBool::new(false);
 
 #[derive(Parser)]
-#[command(name = "olr-server", about = "The Open Liero Reloaded dedicated server")]
+#[command(name = "olr-server", about = "The Open Liero Reloaded dedicated server", version = VERSION)]
 struct Args {
     /// The server's config (RON; see fixtures/server/example.ron).
     #[arg(long, required_unless_present = "nat_check")]
@@ -57,6 +57,13 @@ struct Args {
 fn default_content() -> PathBuf {
     olr_content::default_content_dir(std::env::current_exe().ok().as_deref())
 }
+
+/// This build's version, as `olr-game`'s `VERSION`: a release's (`cargo
+/// xtask dist`) or the workspace's marked as a local build. Shown only.
+const VERSION: &str = match option_env!("OLR_BUILD_VERSION") {
+    Some(v) => v,
+    None => concat!(env!("CARGO_PKG_VERSION"), "-dev (local build)"),
+};
 
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
@@ -91,6 +98,7 @@ fn main() -> anyhow::Result<()> {
     // Ruling T13-A: the handler only sets the flag the loop reads.
     ctrlc::set_handler(|| STOP.store(true, Ordering::Relaxed)).context("the Ctrl+C handler")?;
     std::thread::Builder::new().name("olr-server-console".into()).spawn(console)?;
+    println!("olr-server {VERSION}");
     println!("Ctrl+C or quit stops the server");
     olr_server::run(config, content, &data_dir, &STOP, &mut log)
 }
@@ -168,6 +176,15 @@ fn civil_from_days(z: i64) -> (i64, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `olr-server --version` names the build, as the game's does.
+    #[test]
+    fn the_version_names_the_build() {
+        use clap::CommandFactory as _;
+        let e = Args::command().try_get_matches_from(["olr-server", "--version"]).unwrap_err();
+        assert_eq!(e.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(e.to_string().trim(), format!("olr-server {VERSION}"));
+    }
 
     #[test]
     fn dates_are_gregorian() {

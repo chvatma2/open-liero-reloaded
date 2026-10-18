@@ -11,7 +11,15 @@ const BUTTON: [f32; 2] = [260.0, 36.0];
 
 /// The menu, with the store's `notices` (a newer game's settings file
 /// left untouched) as a banner on top.
-pub(super) fn show(ui: &mut Ui, state: &UiState, notices: &[String], out: &mut Vec<UiAction>) {
+/// `version` (the game's) shows in the bottom right corner.
+pub(super) fn show(ui: &mut Ui, state: &UiState, notices: &[String], version: &str, out: &mut Vec<UiAction>) {
+    if !version.is_empty() {
+        // An area of its own: the menu's layout never sees it.
+        egui::Area::new(egui::Id::new("olr-main-version"))
+            .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-8.0, -6.0))
+            .interactable(false)
+            .show(ui.ctx(), |ui| ui.label(RichText::new(version).weak().size(14.0)));
+    }
     ui.vertical_centered(|ui| {
         for n in notices {
             ui.label(RichText::new(n).color(Color32::from_rgb(255, 200, 80)));

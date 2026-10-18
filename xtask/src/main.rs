@@ -19,6 +19,7 @@ mod olx_timing;
 mod oracle;
 mod oracle_gen;
 mod tidy;
+mod version;
 mod winbuild;
 
 use std::path::PathBuf;
@@ -208,6 +209,10 @@ enum Command {
         /// Only build the zips: do not unpack and run them.
         #[arg(long)]
         no_verify: bool,
+        /// The final release: named `<version>` (not `<version>-dev.<n>.<commit>`),
+        /// refused unless the commit is tagged v<version> and nothing is uncommitted.
+        #[arg(long = "final")]
+        final_release: bool,
     },
     /// The Linux release build repackaged as a Flatpak bundle (runtime
     /// org.freedesktop.Platform 26.08), in
@@ -268,7 +273,7 @@ fn main() -> ExitCode {
         Command::BlessRender { reason } => bless::run(&reason),
         Command::BlessRegression { reason, from } => bless_regression::run(&reason, from.as_deref()),
         Command::Windows => winbuild::command(),
-        Command::Dist { no_verify } => dist::command(!no_verify),
+        Command::Dist { no_verify, final_release } => dist::command(!no_verify, final_release),
         Command::Flatpak => flatpak::command(),
         Command::Determinism { windows, arm64, wasm, all } => {
             determinism::command(determinism::Opts { wasm, windows, arm64, all })

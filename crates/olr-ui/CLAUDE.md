@@ -143,6 +143,9 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `origin_text`). Esc is `Back` and
   F5 `Restart` on every screen, a held key's repeats ignored
   (`pressed_once`); in the options Esc first closes an open dialog.
+  `MenuData::version` (the app's build version) shows in the main menu's
+  bottom right corner (an area of its own, outside the menu's layout) and
+  at About's top (the crate's version when empty).
 - **Editor screen** (`screens/editor.rs`, plan 14c): Main's **Editor**
   (between Sandbox and Profiles; `Screen::Editor`, in `MENUS`): the
   recoveries first ("Recover <name>" and Discard; a damaged one only
