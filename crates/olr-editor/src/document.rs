@@ -119,18 +119,15 @@ fn pack_of(
 ) -> Pack {
     let mut files = BTreeMap::new();
     for i in items {
-        match &i.element.kind {
-            ElementKind::Image { source, .. } => {
-                if let Some(bytes) = originals.get(source) {
-                    files.insert(image_file(source), bytes.as_ref().clone());
-                }
-            }
-            _ => {
-                for (path, bytes) in encode_decoded(&i.element, &i.decoded, level.size) {
-                    let kept = stored.get(&path).filter(|old| same_pixels(&path, old, &bytes));
-                    files.insert(path, kept.cloned().unwrap_or(bytes));
-                }
-            }
+        if let ElementKind::Image { source, .. } = &i.element.kind
+            && let Some(bytes) = originals.get(source)
+        {
+            files.insert(image_file(source), bytes.as_ref().clone());
+        }
+        // Layers, rasters and masks (plan 14d).
+        for (path, bytes) in encode_decoded(&i.element, &i.decoded, level.size) {
+            let kept = stored.get(&path).filter(|old| same_pixels(&path, old, &bytes));
+            files.insert(path, kept.cloned().unwrap_or(bytes));
         }
     }
     let mut level = level.clone();
@@ -195,12 +192,13 @@ impl Document {
                 _ => None,
             })
             .collect();
+        // Every file but the originals (kept by source name).
         let stored = src
             .composition
             .elements
             .iter()
-            .filter(|e| !matches!(e.kind, ElementKind::Image { .. }))
             .flat_map(olr_format::levels::element_files)
+            .filter(|f| !f.starts_with(&image_file("")))
             .filter_map(|f| Some((f.clone(), src.files.get(&f)?.clone())))
             .collect();
         let mut doc = Document {

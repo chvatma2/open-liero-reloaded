@@ -73,7 +73,7 @@ fn play_hands_over_the_bake_and_changes_nothing() {
     run(&mut s, A::PlayEnded);
     assert!(!s.playing());
     assert!(*s.document().unwrap().level() == before);
-    assert_eq!(s.document().unwrap().items().len(), 5);
+    assert_eq!(s.document().unwrap().items().len(), 6);
     let cmds = run(&mut s, A::PlayBots(12));
     assert_eq!(s.settings().play_bots, 8);
     assert!(matches!(cmds.as_slice(), [C::SaveSettings(set)] if set.play_bots == 8));

@@ -160,14 +160,14 @@ fn drag_row(h: &mut Harness<'static, App>, from: &str, onto: &str) {
 #[test]
 fn reorder_by_drag() {
     let Some((_tmp, mut h)) = opened() else { return };
-    assert_eq!(ids(&h), ["base", "tiny", "gradient", "badge", "tunnels"]);
+    assert_eq!(ids(&h), ["base", "tiny", "gradient", "badge", "tunnels", "wall"]);
     drag_row(&mut h, "Badge", "Gradient");
-    assert_eq!(ids(&h), ["base", "tiny", "badge", "gradient", "tunnels"]);
+    assert_eq!(ids(&h), ["base", "tiny", "badge", "gradient", "tunnels", "wall"]);
     act(&mut h, A::Set("tiny".into(), olr_edit::element::Property::Locked(true)));
     drag_row(&mut h, "Tiny", "Tunnels");
     assert_eq!(
         ids(&h),
-        ["base", "badge", "gradient", "tunnels", "tiny"],
+        ["base", "badge", "gradient", "tunnels", "tiny", "wall"],
         "a locked element still moves (R4)"
     );
 }
@@ -215,10 +215,10 @@ fn shortcuts_select_tools() {
     }
     h.get_by_label(labels::ADD_LAYER).click();
     h.run();
-    assert_eq!(ids(&h).len(), 6);
+    assert_eq!(ids(&h).len(), 7);
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
     h.run();
-    assert_eq!(ids(&h).len(), 5, "Ctrl+Z undoes");
+    assert_eq!(ids(&h).len(), 6, "Ctrl+Z undoes");
 }
 
 /// Final review: a mouse release during a Space pan still ends the stroke;

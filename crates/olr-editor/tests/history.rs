@@ -284,7 +284,8 @@ fn a_resize_past_the_pixel_budget_is_refused() {
 fn a_shared_grid_counts_once() {
     let Some(root) = content() else { return };
     let (_tmp, doc) = open_fixture(&root);
-    let item = doc.items()[doc.index_of("gradient").unwrap()].clone();
+    // `tiny` has no mask (a mask counts in full in every step, R12).
+    let item = doc.items()[doc.index_of("tiny").unwrap()].clone();
     let Decoded::Image { grid: Some(grid), .. } = &item.decoded else { panic!("a shown image") };
     let grid_bytes = grid.as_raw().len();
     let snapshot =
