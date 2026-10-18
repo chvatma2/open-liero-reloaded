@@ -452,11 +452,11 @@ fn drop_files(src: &mut CompositionSource, e: &Element) {
 
 /// Drawn layer `id` decoded, given to `paint` with its box's top-left,
 /// the level's size, the art scale and the layer's material, and stored
-/// again.
+/// again; an error from `paint` keeps the pack as it was.
 fn paint_layer(
     pack: &mut Pack,
     id: &str,
-    paint: impl FnOnce(&mut Decoded, (i32, i32), (u32, u32), u32, ElementMaterial),
+    paint: impl FnOnce(&mut Decoded, (i32, i32), (u32, u32), u32, ElementMaterial) -> Result<(), ElementError>,
 ) -> Result<(), ElementError> {
     let l = level(pack)?;
     let (size, s) = (l.size, l.art_scale);
@@ -468,7 +468,7 @@ fn paint_layer(
         };
         let mut d = decoded(src, i, size, s)?;
         let (at, _) = olr_format::levels::drawn_box(&e.kind, size).unwrap_or(((0, 0), size));
-        paint(&mut d, at, size, s, material);
+        paint(&mut d, at, size, s, material)?;
         store(src, i, e, &d, size);
         Ok(())
     })
@@ -491,6 +491,7 @@ pub fn draw(
             drawn::mix(d, s, layer.into());
         }
         drawn::draw(d, at, s, size, shape, paint, m.into());
+        Ok(())
     })
 }
 
@@ -505,7 +506,6 @@ pub fn fill(
     tolerance: u8,
     material: Option<ElementMaterial>,
 ) -> Result<(), ElementError> {
-    let mut outside = false;
     paint_layer(pack, id, |d, at, size, s, layer| {
         let (box_size, inside) = match d {
             Decoded::Drawn { art, .. } => ((art.width() / s.max(1), art.height() / s.max(1)), true),
@@ -516,19 +516,15 @@ pub fn fill(
             v >= i64::from(from).max(0) && v < (i64::from(from) + i64::from(side)).min(i64::from(level))
         };
         if !inside || !within(seed.0, at.0, box_size.0, size.0) || !within(seed.1, at.1, box_size.1, size.1) {
-            outside = true;
-            return;
+            return Err(ElementError::BadValue(format!("({}, {}) is outside {id:?}", seed.0, seed.1)));
         }
         let m = material.unwrap_or(layer);
         if m != layer {
             drawn::mix(d, s, layer.into());
         }
         drawn::fill(d, at, s, size, seed, paint, m.into(), tolerance);
-    })?;
-    if outside {
-        return Err(ElementError::BadValue(format!("({}, {}) is outside {id:?}", seed.0, seed.1)));
-    }
-    Ok(())
+        Ok(())
+    })
 }
 
 /// `name` with the next free ` N` suffix (N from 2) among `names`: a
@@ -586,6 +582,7 @@ pub fn erase(pack: &mut Pack, id: &str, shape: &Shape) -> Result<(), ElementErro
             drawn::mix(d, s, layer.into());
         }
         drawn::erase(d, at, s, size, shape);
+        Ok(())
     })
 }
 

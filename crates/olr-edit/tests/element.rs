@@ -583,9 +583,13 @@ fn fill_paints_a_texture_into_a_layer() {
     }
     let e = element(&p, &id);
     assert!(matches!(e.kind, ElementKind::Drawn { mixed: true, .. }), "another material mixes: {:?}", e.kind);
-    // A seed off the layer is refused.
+    // A seed off the layer is refused, and changes nothing (batch A review):
+    // not even a file no element names, which a kept edit would drop.
+    p.composition.as_mut().unwrap().files.insert("editor/layers/stray.png".into(), png(1, 1));
+    let before = p.composition.clone();
     let err = fill(&mut p, &id, (8, 0), &Paint::Colour(RED), 0, None).unwrap_err();
     assert!(err.to_string().contains("outside"), "{err}");
+    assert!(p.composition == before, "a refused fill keeps the composition");
     assert!(matches!(
         fill(&mut p, "base", (1, 1), &Paint::Colour(RED), 0, None),
         Err(ElementError::WrongKind { .. })
