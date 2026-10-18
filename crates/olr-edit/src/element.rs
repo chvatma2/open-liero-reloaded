@@ -8,14 +8,16 @@ use std::collections::BTreeSet;
 
 use olr_data::image::RgbaImage;
 use olr_data::level::Material;
-use olr_format::image_io::{self, IMAGES, LEVEL_ART};
+use olr_format::image_io::{self, IMAGES};
 use olr_format::levels::{
     CompositionSource, Dither, Element, ElementKind, ElementMaterial, LevelSource, MAX_ELEMENTS,
     check_composition, element_files, image_file, layer_file, raster_files,
 };
 
 use crate::compose::{Decoded, ImageCache, compose_from, decode_element, encode_decoded, resize_decoded};
-use crate::level::{Paint, Shape, draw_art, erase_art};
+use crate::drawn;
+use crate::level::{Paint, Shape};
+use crate::mask::{Mask, mask_colour, mask_shape, original_pixel};
 use crate::pack::{Pack, Source};
 
 #[derive(Debug, thiserror::Error, PartialEq)]
@@ -222,6 +224,7 @@ pub fn add_image_with(
     image_io::check_size(w, h, IMAGES).map_err(bad)?;
     image_io::decode_image_within(&bytes, IMAGES).map_err(bad)?;
     let stray = stray(pack);
+    let level_size = level(pack)?.size;
     commit(pack, file_name, |src| {
         let source = new_source(src, &stray, file_name);
         let stem = file_name.rsplit_once('.').map_or(file_name, |(s, _)| s);
@@ -248,7 +251,7 @@ pub fn add_image_with(
             },
         )?;
         for p in settings {
-            apply(src, &id, p.clone())?;
+            apply(src, &id, p.clone(), level_size)?;
         }
         Ok(id)
     })
@@ -302,16 +305,22 @@ pub fn set(pack: &mut Pack, id: &str, property: Property) -> Result<(), ElementE
 /// checked once, as `set` checks one.
 pub fn set_all(pack: &mut Pack, id: &str, properties: &[Property]) -> Result<(), ElementError> {
     let context: Vec<&str> = properties.iter().map(field).collect();
+    let size = level(pack)?.size;
     commit(pack, &context.join(", "), |src| {
         for p in properties {
-            apply(src, id, p.clone())?;
+            apply(src, id, p.clone(), size)?;
         }
         Ok(())
     })
 }
 
-/// Sets one property of element `id` in `src`, unchecked.
-fn apply(src: &mut CompositionSource, id: &str, property: Property) -> Result<(), ElementError> {
+/// Sets one property of element `id` in `src` (a level of `size`), unchecked.
+fn apply(
+    src: &mut CompositionSource,
+    id: &str,
+    property: Property,
+    size: (u32, u32),
+) -> Result<(), ElementError> {
     {
         let i = find(src, id)?;
         let e = &mut src.composition.elements[i];
@@ -324,9 +333,18 @@ fn apply(src: &mut CompositionSource, id: &str, property: Property) -> Result<()
             Property::Visible(v) => e.visible = v,
             Property::Locked(v) => e.locked = v,
             Property::Material(m) => match &mut e.kind {
-                ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => *material = m,
+                ElementKind::Image { material, .. } => *material = m,
+                // A mixed layer becomes plain, all of `m` (plan 14d C4).
+                ElementKind::Drawn { material, mixed, .. } => (*material, *mixed) = (m, false),
                 ElementKind::Raster => return Err(wrong("an image or drawn element")),
             },
+            // Moving a level-sized layer pins its box (batch A review I1).
+            Property::At(v) if matches!(e.kind, ElementKind::Drawn { .. }) => {
+                if let ElementKind::Drawn { at, size: boxed, .. } = &mut e.kind {
+                    *at = v;
+                    boxed.get_or_insert(size);
+                }
+            }
             p => {
                 let ElementKind::Image { at, size, pixel_size, colours, dither, alpha_threshold, .. } =
                     &mut e.kind
@@ -384,45 +402,219 @@ pub fn lower(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
     })
 }
 
-/// Drawn layer `id`'s art, decoded, given to `paint`, and stored again.
+/// Element `i`'s data decoded (a level of `size` at art scale `s`).
+fn decoded(src: &CompositionSource, i: usize, size: (u32, u32), s: u32) -> Result<Decoded, ElementError> {
+    decode_element(src, &src.composition.elements[i], size, s, &mut ImageCache::new())
+        .map_err(|e| ElementError::BadValue(e.to_string()))
+}
+
+/// Stores `element` with data `d` at index `i` (a level of `size`): its
+/// flags follow the data (a drawn layer's `mixed` and `back`, an image's
+/// `mask`), and its files are written.
+fn store(src: &mut CompositionSource, i: usize, mut element: Element, d: &Decoded, size: (u32, u32)) {
+    match (&mut element.kind, d) {
+        (ElementKind::Drawn { mixed, back, .. }, Decoded::Drawn { cells, back: art, .. }) => {
+            (*mixed, *back) = (cells.is_some(), art.is_some());
+        }
+        (ElementKind::Image { mask, .. }, Decoded::Image { mask: m, .. }) => *mask = m.is_some(),
+        _ => {}
+    }
+    for (path, bytes) in encode_decoded(&element, d, size) {
+        src.files.insert(path, bytes);
+    }
+    src.composition.elements[i] = element;
+}
+
+/// Removes the files of `e` (just taken out of `src`) no other element uses.
+fn drop_files(src: &mut CompositionSource, e: &Element) {
+    for f in element_files(e) {
+        if !src.composition.elements.iter().any(|o| element_files(o).contains(&f)) {
+            src.files.remove(&f);
+        }
+    }
+}
+
+/// Drawn layer `id` decoded, given to `paint` with its box's top-left,
+/// the level's size, the art scale and the layer's material, and stored
+/// again.
 fn paint_layer(
     pack: &mut Pack,
     id: &str,
-    paint: impl FnOnce(&mut RgbaImage, (u32, u32), u32),
+    paint: impl FnOnce(&mut Decoded, (i32, i32), (u32, u32), u32, ElementMaterial),
 ) -> Result<(), ElementError> {
     let l = level(pack)?;
     let (size, s) = (l.size, l.art_scale);
     commit(pack, "", |src| {
         let i = unlocked(src, id)?;
-        if !matches!(src.composition.elements[i].kind, ElementKind::Drawn { .. }) {
+        let e = src.composition.elements[i].clone();
+        let ElementKind::Drawn { material, .. } = e.kind else {
             return Err(ElementError::WrongKind { id: id.into(), want: "a drawn element" });
-        }
-        let file = layer_file(id);
-        let bytes = src.files.get(&file).ok_or_else(|| ElementError::BadValue(format!("{file}: missing")))?;
-        let mut art = image_io::decode_rgba_within(bytes, LEVEL_ART)
-            .map_err(|why| ElementError::BadValue(format!("{file}: {why}")))?;
-        if (art.width(), art.height()) != (size.0 * s, size.1 * s) {
-            return Err(ElementError::BadValue(format!("{file}: not the level's art size")));
-        }
-        paint(&mut art, size, s);
-        src.files.insert(file, image_io::encode_rgba(&art));
+        };
+        let mut d = decoded(src, i, size, s)?;
+        let (at, _) = olr_format::levels::drawn_box(&e.kind, size).unwrap_or(((0, 0), size));
+        paint(&mut d, at, size, s, material);
+        store(src, i, e, &d, size);
         Ok(())
     })
 }
 
+/// A plain layer's cells, all of `material`, so it can hold others.
+fn mix(d: &mut Decoded, s: u32, material: ElementMaterial) {
+    if let Decoded::Drawn { art, cells: cells @ None, .. } = d {
+        let n = (art.width() / s.max(1)) as usize * (art.height() / s.max(1)) as usize;
+        *cells = Some(vec![material.into(); n]);
+    }
+}
+
 /// Paints `shape` (world pixels, whole art blocks) into drawn layer `id`,
 /// opaque: each art pixel takes the paint's RGB (a transparent pixel of a
-/// tile leaves it).
-pub fn draw(pack: &mut Pack, id: &str, shape: &Shape, paint: &Paint) -> Result<(), ElementError> {
-    paint_layer(pack, id, |art, size, s| {
-        draw_art(art, s, size, shape, paint);
+/// tile leaves it). `material` other than a plain layer's makes it mixed
+/// first (plan 14d R6); none is the layer's.
+pub fn draw(
+    pack: &mut Pack,
+    id: &str,
+    shape: &Shape,
+    paint: &Paint,
+    material: Option<ElementMaterial>,
+) -> Result<(), ElementError> {
+    paint_layer(pack, id, |d, at, size, s, layer| {
+        let m = material.unwrap_or(layer);
+        if m != layer {
+            mix(d, s, layer);
+        }
+        drawn::draw(d, at, s, size, shape, paint, m.into());
     })
 }
 
-/// Clears `shape` in drawn layer `id` (alpha 0).
+/// Erases `shape` in drawn layer `id` (plan 14d R5: dirt and rock over back
+/// art are dug to it; the rest cleared).
 pub fn erase(pack: &mut Pack, id: &str, shape: &Shape) -> Result<(), ElementError> {
-    paint_layer(pack, id, |art, size, s| {
-        erase_art(art, s, size, shape);
+    paint_layer(pack, id, |d, at, size, s, layer| {
+        if matches!(d, Decoded::Drawn { back: Some(_), .. }) {
+            mix(d, s, layer);
+        }
+        drawn::erase(d, at, s, size, shape);
+    })
+}
+
+/// Merges element `id` into the drawn layer directly below it (plan 14d
+/// R10): one layer with the lower one's id, name and place.
+pub fn merge_down(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
+    let l = level(pack)?;
+    let (size, s) = (l.size, l.art_scale);
+    commit(pack, "", |src| {
+        let upper = unlocked(src, id)?;
+        if upper == 0 {
+            return Err(ElementError::BadValue(format!(
+                "{id:?} is the bottom element: nothing to merge into"
+            )));
+        }
+        let lower = upper - 1;
+        unlocked(src, &src.composition.elements[lower].id.clone())?;
+        let (ld, ud) = (decoded(src, lower, size, s)?, decoded(src, upper, size, s)?);
+        let (le, ue) = (src.composition.elements[lower].clone(), src.composition.elements[upper].clone());
+        let (merged, d) = drawn::merge_down((&le, &ld), (&ue, &ud), size, s)
+            .map_err(|e| ElementError::BadValue(e.to_string()))?;
+        let gone = src.composition.elements.remove(upper);
+        drop_files(src, &gone);
+        store(src, lower, merged, &d, size);
+        Ok(())
+    })
+}
+
+/// Splits element `id` into Background, Dirt and Rock layers in its place
+/// (plan 14d R11); returns their ids, bottom to top.
+pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
+    let l = level(pack)?;
+    let (size, s) = (l.size, l.art_scale);
+    let stray = stray(pack);
+    commit(pack, "", |src| {
+        let i = unlocked(src, id)?;
+        let d = decoded(src, i, size, s)?;
+        let e = src.composition.elements[i].clone();
+        let mut taken: Vec<Element> =
+            src.composition.elements.iter().filter(|o| o.id != id).cloned().collect();
+        let parts = drawn::split_element(&e, &d, size, s, |name, fallback| {
+            let new = new_element_id(&taken, &stray, name, fallback);
+            // A raster's files cover a mixed layer's: none of them taken.
+            taken.push(Element {
+                id: new.clone(),
+                name: String::new(),
+                visible: true,
+                locked: false,
+                kind: ElementKind::Raster,
+            });
+            new
+        })
+        .map_err(|e| ElementError::BadValue(e.to_string()))?;
+        if parts.is_empty() {
+            return Err(ElementError::BadValue(format!("{id:?} has no pixels to split")));
+        }
+        let gone = src.composition.elements.remove(i);
+        drop_files(src, &gone);
+        let mut ids = Vec::new();
+        for (k, (part, data)) in parts.into_iter().enumerate() {
+            ids.push(part.id.clone());
+            src.composition.elements.insert(i + k, part.clone());
+            store(src, i + k, part, &data, size);
+        }
+        Ok(ids)
+    })
+}
+
+/// How `mask` masks an image.
+#[derive(Clone, Debug, PartialEq)]
+pub enum MaskOp {
+    /// The original pixels under a world shape.
+    Shape(Shape),
+    /// The connected region of similar colour around world pixel `at`
+    /// (`tolerance` percent, plan 14d R8).
+    ColourAt { at: (i32, i32), tolerance: u8 },
+}
+
+/// Masks (or with `restore`, unmasks: shapes only) part of image element
+/// `id`'s original (plan 14d R7, R8); its first mask keeps everything.
+pub fn mask(pack: &mut Pack, id: &str, op: &MaskOp, restore: bool) -> Result<(), ElementError> {
+    let size = level(pack)?.size;
+    if restore && matches!(op, MaskOp::ColourAt { .. }) {
+        return Err(ElementError::BadValue("--restore takes a shape".into()));
+    }
+    commit(pack, "", |src| {
+        let i = unlocked(src, id)?;
+        let e = src.composition.elements[i].clone();
+        let ElementKind::Image { source, at, size: bsize, mask: has, .. } = &e.kind else {
+            return Err(ElementError::WrongKind { id: id.into(), want: "an image element" });
+        };
+        let bad = |e: String| ElementError::BadValue(e);
+        let file = image_file(source);
+        let bytes = src.files.get(&file).ok_or_else(|| bad(format!("{file}: missing")))?;
+        let original = ImageCache::new().original(source, bytes).map_err(|e| bad(e.to_string()))?;
+        let osize = (original.width(), original.height());
+        let mut m = match has {
+            true => {
+                let mf = olr_format::levels::mask_file(id);
+                let mb = src.files.get(&mf).ok_or_else(|| bad(format!("{mf}: missing")))?;
+                Mask::decode(&mf, mb, osize).map_err(|e| bad(e.to_string()))?
+            }
+            false => Mask::full(osize),
+        };
+        match op {
+            MaskOp::Shape(shape) => {
+                mask_shape(&mut m, *at, *bsize, shape, restore);
+            }
+            MaskOp::ColourAt { at: world, tolerance } => {
+                let seed = original_pixel(*at, *bsize, osize, *world)
+                    .ok_or_else(|| bad(format!("({}, {}) is outside the image", world.0, world.1)))?;
+                mask_colour(&mut m, &original, seed, *tolerance);
+            }
+        }
+        let d = Decoded::Image { grid: None, mask: Some(std::sync::Arc::new(m)) };
+        let mut e = e.clone();
+        if let ElementKind::Image { mask, .. } = &mut e.kind {
+            *mask = true;
+        }
+        store(src, i, e, &d, size);
+        Ok(())
     })
 }
 

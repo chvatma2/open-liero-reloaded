@@ -667,6 +667,15 @@ fn the_fixture_is_baked() {
     let pack = olr_edit::pack::load(&fixture).unwrap();
     let tile = olr_edit::compose::theme_back_tile(&content, "olx-theme-dirt").unwrap();
     assert_eq!(olr_edit::compose::stale(&pack, &tile).unwrap(), Vec::<String>::new());
+    // Plan 14d: the fixture holds a mask, a mixed layer and back art, so
+    // the bake digest covers them.
+    let elements = &pack.composition.as_ref().unwrap().composition.elements;
+    assert!(elements.iter().any(|e| matches!(e.kind, ElementKind::Image { mask: true, .. })));
+    assert!(
+        elements
+            .iter()
+            .any(|e| matches!(e.kind, ElementKind::Drawn { mixed: true, back: true, size: Some(_), .. }))
+    );
 }
 
 /// A hidden image is not processed, but its original still decodes: an
@@ -750,14 +759,15 @@ fn encode_decoded_round_trips() {
         let d = decode_element(src, e, level.size, level.art_scale, &mut cache).unwrap();
         let files = encode_decoded(e, &d, level.size);
         if matches!(e.kind, ElementKind::Image { .. }) {
-            assert!(files.is_empty());
+            // An image's original is kept; only its mask is encoded.
+            assert!(files.iter().all(|(p, _)| p.starts_with("editor/masks/")), "{files:?}");
         }
         for (path, bytes) in files {
             assert!(src.files[&path] == bytes, "{path}");
             encoded += 1;
         }
     }
-    assert_eq!(encoded, 4, "the raster's three files and the drawn layer");
+    assert_eq!(encoded, 9, "the raster's three files, two drawn layers' four, two masks");
 }
 
 proptest! {

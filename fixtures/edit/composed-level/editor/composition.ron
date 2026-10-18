@@ -29,6 +29,7 @@
                 pixel_size: 2,
                 colours: 16,
                 dither: Ordered,
+                mask: true,
             ),
         ),
         (
@@ -41,6 +42,7 @@
                 size: (48, 48),
                 colours: 8,
                 dither: Diffusion,
+                mask: true,
             ),
         ),
         (
@@ -48,6 +50,17 @@
             name: "Tunnels",
             kind: Drawn(
                 material: Background,
+            ),
+        ),
+        (
+            id: "wall",
+            name: "Wall",
+            kind: Drawn(
+                material: Background,
+                at: (4, 0),
+                size: (504, 350),
+                mixed: true,
+                back: true,
             ),
         ),
     ],

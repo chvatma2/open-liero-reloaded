@@ -131,7 +131,7 @@ fn raise_lower_remove_reorder_and_drop_files() {
 fn draw_and_erase_paint_whole_art_blocks() {
     let mut p = pack(8, 6, 2);
     let id = add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
-    draw(&mut p, &id, &Shape::Rect { x: 1, y: 1, w: 2, h: 2 }, &Paint::Colour(RED)).unwrap();
+    draw(&mut p, &id, &Shape::Rect { x: 1, y: 1, w: 2, h: 2 }, &Paint::Colour(RED), None).unwrap();
     let art = layer(&p, &id);
     for ay in 0..12 {
         for ax in 0..16 {
@@ -151,7 +151,7 @@ fn draw_and_erase_paint_whole_art_blocks() {
     }
     assert_eq!(art.get(2, 2).a, 255);
     assert!(matches!(
-        draw(&mut p, "base", &Shape::Rect { x: 0, y: 0, w: 1, h: 1 }, &Paint::Colour(RED)),
+        draw(&mut p, "base", &Shape::Rect { x: 0, y: 0, w: 1, h: 1 }, &Paint::Colour(RED), None),
         Err(ElementError::WrongKind { .. })
     ));
 }
@@ -175,7 +175,7 @@ fn resize_moves_boxes_and_relays_layers() {
     let mut p = pack(8, 6, 1);
     let img = add_image(&mut p, "a.png", png(2, 2), (3, 2), (2, 2), ElementMaterial::Rock, "").unwrap();
     let l = add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
-    draw(&mut p, &l, &Shape::Rect { x: 0, y: 0, w: 1, h: 1 }, &Paint::Colour(RED)).unwrap();
+    draw(&mut p, &l, &Shape::Rect { x: 0, y: 0, w: 1, h: 1 }, &Paint::Colour(RED), None).unwrap();
     resize(&mut p, (13, 9), (5, 3), Material::Rock, &Paint::Colour(RED)).unwrap();
     let src = p.composition.as_ref().unwrap();
     let at = src.composition.elements.iter().find(|e| e.id == img).map(|e| match &e.kind {
@@ -291,7 +291,7 @@ fn locks() {
     set(&mut p, &id, Property::Locked(true)).unwrap();
     let locked = Err(ElementError::Locked(id.clone()));
     let rect = Shape::Rect { x: 0, y: 0, w: 1, h: 1 };
-    assert_eq!(draw(&mut p, &id, &rect, &Paint::Colour(RED)), locked);
+    assert_eq!(draw(&mut p, &id, &rect, &Paint::Colour(RED), None), locked);
     assert_eq!(erase(&mut p, &id, &rect), locked);
     assert_eq!(remove(&mut p, &id), locked);
 }
@@ -343,7 +343,7 @@ fn resize_decoded_matches_element_resize() {
     let mut p = pack(8, 6, 1);
     add_image(&mut p, "a.png", png(2, 2), (3, 2), (2, 2), ElementMaterial::Rock, "").unwrap();
     let l = add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
-    draw(&mut p, &l, &Shape::Rect { x: 0, y: 0, w: 1, h: 1 }, &Paint::Colour(RED)).unwrap();
+    draw(&mut p, &l, &Shape::Rect { x: 0, y: 0, w: 1, h: 1 }, &Paint::Colour(RED), None).unwrap();
     let before = p.composition.clone().unwrap();
     let paint = Paint::Colour(RED);
     resize(&mut p, (13, 9), (5, 3), Material::Rock, &paint).unwrap();
@@ -373,4 +373,80 @@ fn new_elements_skip_stray_editor_files() {
     add_image(&mut p, "a.png", png(2, 2), (0, 0), (2, 2), ElementMaterial::Rock, "").unwrap();
     let src = p.composition.as_ref().unwrap();
     assert!(src.files.contains_key("editor/images/a-2.png"), "{:?}", src.files.keys());
+}
+
+/// Plan 14d Task 6: a loaded map merged and split again bakes as it was.
+#[test]
+fn merge_down_and_split_round_trip_a_plain_level() {
+    let Some(root) = crate::common::content() else { return };
+    let mut p = olr_edit::pack::load(&root.join("olx-level-dirt-level")).unwrap();
+    let Source::Level(original) = &p.source else { panic!() };
+    let original = original.clone();
+    p.composition = Some(olr_edit::compose::split_from(&original));
+    merge_down(&mut p, "dirt").unwrap();
+    assert_eq!(ids(&p), ["background", "rock"]);
+    let parts = split(&mut p, "background").unwrap();
+    assert_eq!(parts.len(), 2, "{parts:?}");
+    let tile = olr_edit::compose::theme_back_tile(&root, &original.theme).unwrap();
+    let mut baked = original.clone();
+    olr_edit::compose::bake(&mut baked, p.composition.as_ref().unwrap(), &tile).unwrap();
+    assert!(
+        baked.material == original.material && baked.front == original.front && baked.back == original.back
+    );
+}
+
+#[test]
+fn drawing_rock_into_a_dirt_layer_makes_it_mixed() {
+    let mut p = pack(8, 6, 1);
+    let id = add_layer(&mut p, ElementMaterial::Dirt, "Ground").unwrap();
+    draw(
+        &mut p,
+        &id,
+        &Shape::Rect { x: 1, y: 1, w: 2, h: 2 },
+        &Paint::Colour(RED),
+        Some(ElementMaterial::Rock),
+    )
+    .unwrap();
+    let src = p.composition.as_ref().unwrap();
+    let e = src.composition.elements.iter().find(|e| e.id == id).unwrap();
+    assert!(
+        matches!(e.kind, ElementKind::Drawn { mixed: true, material: ElementMaterial::Dirt, .. }),
+        "{:?}",
+        e.kind
+    );
+    assert!(src.files.contains_key("editor/layers/ground.material.png"));
+    check_composition(src, (8, 6), 1).unwrap();
+}
+
+#[test]
+fn mask_by_shape_and_colour() {
+    let mut p = pack(8, 6, 1);
+    let id = add_image(&mut p, "a.png", png(4, 4), (0, 0), (4, 4), ElementMaterial::Dirt, "A").unwrap();
+    mask(&mut p, &id, &MaskOp::Shape(Shape::Rect { x: 0, y: 0, w: 1, h: 1 }), false).unwrap();
+    let src = p.composition.as_ref().unwrap();
+    let e = src.composition.elements.iter().find(|e| e.id == id).unwrap();
+    assert!(matches!(e.kind, ElementKind::Image { mask: true, .. }));
+    let file = olr_format::levels::mask_file(&id);
+    let (_, _, keep) = image_io::decode_grey_within(&src.files[&file], image_io::IMAGES).unwrap();
+    assert_eq!(keep.iter().filter(|k| **k == 0).count(), 1);
+    // The whole transparent image is one colour: the flood takes it all.
+    mask(&mut p, &id, &MaskOp::ColourAt { at: (2, 2), tolerance: 0 }, false).unwrap();
+    let src = p.composition.as_ref().unwrap();
+    let (_, _, keep) = image_io::decode_grey_within(&src.files[&file], image_io::IMAGES).unwrap();
+    assert!(keep.iter().all(|k| *k == 0));
+    let e = mask(&mut p, &id, &MaskOp::ColourAt { at: (2, 2), tolerance: 0 }, true).unwrap_err();
+    assert!(e.to_string().contains("--restore takes a shape"), "{e}");
+}
+
+#[test]
+fn set_at_moves_a_drawn_layer() {
+    let mut p = pack(8, 6, 1);
+    let id = add_layer(&mut p, ElementMaterial::Dirt, "L").unwrap();
+    set(&mut p, &id, Property::At((2, 3))).unwrap();
+    let e = &p.composition.as_ref().unwrap().composition.elements[1];
+    assert!(
+        matches!(e.kind, ElementKind::Drawn { at: (2, 3), size: Some((8, 6)), .. }),
+        "moving pins its box: {:?}",
+        e.kind
+    );
 }

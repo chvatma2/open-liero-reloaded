@@ -314,3 +314,34 @@ fn add_image_refuses_a_cut_jpeg() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("cut.jpg"), "{out:?}");
     assert_eq!(tree(&pack), before);
 }
+
+/// Plan 14d Task 6: `split`, `merge-down` and `mask` on a composed level.
+#[test]
+fn merge_split_and_mask_commands() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    let run = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        ok(&cli(&all, &pack, &content))
+    };
+    let out = run(&["split", "{pack}", "base"]);
+    assert_eq!(out, "added element background\nadded element dirt\nadded element rock\n");
+    run(&["merge-down", "{pack}", "dirt"]);
+    run(&["mask", "{pack}", "sign", "--colour-at", "0,15", "--tolerance", "5"]);
+    run(&["mask", "{pack}", "sign", "--rect", "10,10,4,4", "--restore"]);
+    run(&["draw", "{pack}", "background", "--rect", "20,20,4,4", "--colour", "808080", "--material", "rock"]);
+    let composition = std::fs::read_to_string(pack.join("editor/composition.ron")).unwrap();
+    assert!(composition.contains("mask: true"), "{composition}");
+    assert!(composition.contains("mixed: true") && composition.contains("back: true"), "{composition}");
+    assert!(pack.join("editor/masks/sign.png").is_file());
+    let e = cli(
+        &["level", "element", "mask", "{pack}", "sign", "--colour-at", "0,15", "--restore"],
+        &pack,
+        &content,
+    );
+    assert!(!e.status.success() && String::from_utf8_lossy(&e.stderr).contains("--restore takes a shape"));
+    // The bake is current.
+    ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+}

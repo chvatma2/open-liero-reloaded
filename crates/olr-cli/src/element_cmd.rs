@@ -13,7 +13,7 @@ use olr_edit::element::{self, Property};
 use olr_edit::pack::{Pack, Source, load, save};
 use olr_format::levels::{Dither, ElementKind, ElementMaterial};
 
-use crate::level_cmd::{MaterialArg, PaintArgs, ShapeArgs, parse_point, read_bounded};
+use crate::level_cmd::{MaterialArg, PaintArgs, ShapeArgs, parse_ints, parse_point, read_bounded};
 use crate::pack_cmd::parse_size;
 
 /// Where the theme packs are, for the bake's back tile.
@@ -22,6 +22,34 @@ pub(crate) struct ContentArg {
     /// The content directory holding the level's theme pack.
     #[arg(long, default_value = "content/packs")]
     pub(crate) content: PathBuf,
+}
+
+/// What `mask` masks: a world shape, or a region of similar colour.
+#[derive(clap::Args)]
+#[group(required = true, multiple = false)]
+pub(crate) struct MaskTarget {
+    /// A rectangle X,Y,W,H, world pixels.
+    #[arg(long, value_parser = parse_ints::<4>, allow_hyphen_values = true)]
+    rect: Option<[i32; 4]>,
+    /// A circle X,Y,R, world pixels.
+    #[arg(long, value_parser = parse_ints::<3>, allow_hyphen_values = true)]
+    circle: Option<[i32; 3]>,
+    /// The connected region of similar colour around world pixel X,Y.
+    #[arg(long, value_parser = parse_point, allow_hyphen_values = true)]
+    colour_at: Option<(i32, i32)>,
+}
+
+impl MaskTarget {
+    fn op(&self, tolerance: u8) -> element::MaskOp {
+        use olr_edit::level::Shape;
+        match (self.rect, self.circle, self.colour_at) {
+            (Some([x, y, w, h]), ..) => element::MaskOp::Shape(Shape::Rect { x, y, w, h }),
+            (None, Some([cx, cy, r]), _) => element::MaskOp::Shape(Shape::Circle { cx, cy, r }),
+            (None, None, Some(at)) => element::MaskOp::ColourAt { at, tolerance },
+            // clap's group requires one.
+            (None, None, None) => element::MaskOp::Shape(Shape::Rect { x: 0, y: 0, w: 0, h: 0 }),
+        }
+    }
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -163,6 +191,41 @@ pub(crate) enum ElementCommand {
         shape: ShapeArgs,
         #[command(flatten)]
         paint: PaintArgs,
+        /// What the painted pixels are (default the layer's material); another
+        /// material makes the layer hold a material per pixel.
+        #[arg(long)]
+        material: Option<MaterialArg>,
+        #[command(flatten)]
+        content: ContentArg,
+    },
+    /// Merge an element into the drawn layer directly below it: per pixel
+    /// rock, then dirt, then background wins.
+    MergeDown {
+        pack: PathBuf,
+        id: String,
+        #[command(flatten)]
+        content: ContentArg,
+    },
+    /// Split an element into Background, Dirt and Rock layers in its place;
+    /// prints the new ids, bottom first.
+    Split {
+        pack: PathBuf,
+        id: String,
+        #[command(flatten)]
+        content: ContentArg,
+    },
+    /// Erase part of an image element's original through its mask.
+    Mask {
+        pack: PathBuf,
+        id: String,
+        #[command(flatten)]
+        target: MaskTarget,
+        /// How alike a colour must be for --colour-at, 0 to 100 percent.
+        #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u8).range(0..=100))]
+        tolerance: u8,
+        /// Bring masked pixels back (shapes only).
+        #[arg(long)]
+        restore: bool,
         #[command(flatten)]
         content: ContentArg,
     },
@@ -341,8 +404,19 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             element::lower(p, id)?;
             Ok(Vec::new())
         }),
-        ElementCommand::Draw { pack, id, shape, paint, content } => edit(pack, content, |p| {
-            element::draw(p, id, &shape.shape(), &paint.paint())?;
+        ElementCommand::Draw { pack, id, shape, paint, material, content } => edit(pack, content, |p| {
+            element::draw(p, id, &shape.shape(), &paint.paint(), material.map(|m| m.element()))?;
+            Ok(Vec::new())
+        }),
+        ElementCommand::MergeDown { pack, id, content } => edit(pack, content, |p| {
+            element::merge_down(p, id)?;
+            Ok(Vec::new())
+        }),
+        ElementCommand::Split { pack, id, content } => edit(pack, content, |p| {
+            Ok(element::split(p, id)?.into_iter().map(|id| format!("added element {id}")).collect())
+        }),
+        ElementCommand::Mask { pack, id, target, tolerance, restore, content } => edit(pack, content, |p| {
+            element::mask(p, id, &target.op(*tolerance), *restore)?;
             Ok(Vec::new())
         }),
         ElementCommand::Erase { pack, id, shape, content } => edit(pack, content, |p| {

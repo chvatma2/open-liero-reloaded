@@ -213,7 +213,7 @@ impl LayerArg {
 }
 
 /// `N` comma-separated whole numbers.
-fn parse_ints<const N: usize>(s: &str) -> Result<[i32; N], String> {
+pub(crate) fn parse_ints<const N: usize>(s: &str) -> Result<[i32; N], String> {
     let parts: Vec<&str> = s.split(',').collect();
     if parts.len() != N {
         return Err(format!("{s:?}: expected {N} comma-separated whole numbers"));
