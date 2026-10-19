@@ -156,7 +156,8 @@ impl Renderer {
                 }
             }
             if let Some(tex) = &state.textures {
-                tex.gi.encode(&mut encoder, &state.gi, look.is_some_and(|l| !l.groups.is_empty()));
+                let casting = look.is_some_and(|l| !l.groups.is_empty());
+                tex.gi.encode(&mut encoder, &state.gi, casting, &lt.occluder_bind);
             }
             if let (Some(tex), n @ 1..) = (&state.textures, state.light_count) {
                 let mut pass = begin(&mut encoder, "olr-render shadow", &state.shadow_view, None);

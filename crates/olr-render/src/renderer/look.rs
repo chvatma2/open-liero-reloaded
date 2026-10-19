@@ -331,7 +331,7 @@ impl LookState {
             )
         };
         let (soak_h_pipeline, soak_v_pipeline) = (soak("fs_soak_h"), soak("fs_soak_v"));
-        let gi = super::gi::GiPipelines::new(device);
+        let gi = super::gi::GiPipelines::new(device, &occluder_layout);
         let lights = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("olr-render lights"),
             size: (LIGHT_FLOATS * 4) as u64,

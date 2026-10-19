@@ -7,6 +7,8 @@
 @group(0) @binding(3) var groups_tex: texture_2d<u32>;
 @group(0) @binding(4) var solid_tex: texture_2d<u32>;
 @group(0) @binding(5) var terrain_tex: texture_2d<f32>;
+// The occluder map (plan 15b): a living worm's world pixel is solid.
+@group(1) @binding(0) var occluder_tex: texture_2d<u32>;
 
 
 @fragment
@@ -28,7 +30,8 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
                 continue;
             }
             n += 1.0;
-            if textureLoad(solid_tex, clamped(w, textureDimensions(solid_tex)), 0).r != 1u {
+            let worm = worm_in(occluder_tex, look.occluders.xy, w) != 0u;
+            if worm || textureLoad(solid_tex, clamped(w, textureDimensions(solid_tex)), 0).r != 1u {
                 solid += 1.0;
             }
             let v = textureLoad(groups_tex, clamped(w, textureDimensions(groups_tex)), 0).r;

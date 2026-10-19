@@ -72,7 +72,9 @@ pub(super) struct GiPipelines {
 }
 
 impl GiPipelines {
-    pub(super) fn new(device: &wgpu::Device) -> GiPipelines {
+    /// `occluders` is the occluder map's layout (plan 15b), the emission's
+    /// group 1.
+    pub(super) fn new(device: &wgpu::Device, occluders: &wgpu::BindGroupLayout) -> GiPipelines {
         let frag = wgpu::ShaderStages::FRAGMENT;
         let layout = |label, entries: &[wgpu::BindGroupLayoutEntry]| {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries })
@@ -103,25 +105,28 @@ impl GiPipelines {
         );
         let fluence_layout = layout("olr-render gi fluence", &[entry(0, frag, FLOAT)]);
         let head = format!("{}\n{}", super::look::common(), include_str!("../look/gi.wgsl"));
-        let make = |label, body: &str, fs, layout: &wgpu::BindGroupLayout, targets: &[_]| {
+        let make_with = |label, body: &str, fs, layouts: &[Option<&wgpu::BindGroupLayout>], targets: &[_]| {
             pipeline(
                 device,
                 label,
                 &format!("{head}\n{body}"),
                 ("vs_full", fs),
-                &[Some(layout)],
+                layouts,
                 &[],
                 targets,
                 wgpu::PrimitiveTopology::TriangleList,
             )
         };
+        let make = |label, body: &str, fs, layout: &wgpu::BindGroupLayout, targets: &[_]| {
+            make_with(label, body, fs, &[Some(layout)], targets)
+        };
         let two = [(FORMAT, None), (REACH_FORMAT, None)];
         GiPipelines {
-            emission: make(
+            emission: make_with(
                 "olr-render gi emission",
                 include_str!("../look/gi_emission.wgsl"),
                 "fs_emission",
-                &emission_layout,
+                &[Some(&emission_layout), Some(occluders)],
                 &two,
             ),
             seed: make(
@@ -397,10 +402,19 @@ impl GiState {
     /// Encodes the frame's glow light: emission, pyramid, cascades from the
     /// top down, fluence. With `casting` false (no group casts light) the
     /// fluence is only cleared.
-    pub(super) fn encode(&self, encoder: &mut wgpu::CommandEncoder, pipes: &GiPipelines, casting: bool) {
+    /// `occluders` is the occluder map's bind group (plan 15b): living worms
+    /// block glow light.
+    pub(super) fn encode(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        pipes: &GiPipelines,
+        casting: bool,
+        occluders: &wgpu::BindGroup,
+    ) {
         let pass = |encoder: &mut wgpu::CommandEncoder,
                     targets: &[&wgpu::TextureView],
-                    work: Option<(&wgpu::RenderPipeline, &wgpu::BindGroup)>| {
+                    work: Option<(&wgpu::RenderPipeline, &wgpu::BindGroup)>,
+                    group1: Option<&wgpu::BindGroup>| {
             let attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = targets
                 .iter()
                 .map(|view| {
@@ -426,22 +440,26 @@ impl GiState {
             if let Some((pipeline, bind)) = work {
                 p.set_pipeline(pipeline);
                 p.set_bind_group(0, bind, &[]);
+                if let Some(g) = group1 {
+                    p.set_bind_group(1, g, &[]);
+                }
                 p.draw(0..3, 0..1);
             }
         };
         if !casting {
-            pass(encoder, &[&self.fluence], None);
+            pass(encoder, &[&self.fluence], None, None);
             return;
         }
-        pass(encoder, &[&self.emission.0, &self.emission.1], Some((&pipes.emission, &self.emission_bind)));
-        pass(encoder, &[&self.seeds[0]], Some((&pipes.seed, &self.seed_bind)));
+        let emission = Some((&pipes.emission, &self.emission_bind));
+        pass(encoder, &[&self.emission.0, &self.emission.1], emission, Some(occluders));
+        pass(encoder, &[&self.seeds[0]], Some((&pipes.seed, &self.seed_bind)), None);
         for (target, b) in &self.jfa {
-            pass(encoder, &[&self.seeds[*target]], Some((&pipes.jfa, b)));
+            pass(encoder, &[&self.seeds[*target]], Some((&pipes.jfa, b)), None);
         }
         for i in (0..self.cascades.len()).rev() {
-            pass(encoder, &[&self.cascades[i]], Some((&pipes.cascade, &self.cascade_binds[i])));
+            pass(encoder, &[&self.cascades[i]], Some((&pipes.cascade, &self.cascade_binds[i])), None);
         }
-        pass(encoder, &[&self.fluence], Some((&pipes.fluence, &self.fluence_bind)));
+        pass(encoder, &[&self.fluence], Some((&pipes.fluence, &self.fluence_bind)), None);
     }
 }
 

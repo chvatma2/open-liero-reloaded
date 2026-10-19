@@ -1168,3 +1168,19 @@ fn an_off_view_worm_still_shadows_the_view() {
     let r = worm_frame(&gpu, &map, view, &lights, &[([94.0, 17.0, 4.0, 7.0], 1)], |_| {});
     assert!((light_at(&gpu, &r, 101, 20)[0] - 0.1).abs() < 1e-3, "the worm off the view shadows it");
 }
+
+#[test]
+fn a_worm_blocks_glow_light() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_room(100, 40, |x, y| x == 10 || y >= 30, |x, y| x == 10 && y < 30);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    let glow = |l: &mut olr_look::LookFrame| {
+        l.groups[0] = olr_look::FrameGroup { cast: [1.0; 3], own_colour: false, self_scale: 1.0, reach: 64.0 }
+    };
+    let bare = worm_frame(&gpu, &map, view, &[], &[], glow);
+    let worm = worm_frame(&gpu, &map, view, &[], &[([20.0, 22.0, 4.0, 7.0], 1)], glow);
+    let (b, w) = (light_at(&gpu, &bare, 26, 27)[0], light_at(&gpu, &worm, 26, 27)[0]);
+    assert!(b - w >= 0.05, "behind the worm: darker, {b} {w}");
+    let (b, w) = (light_at(&gpu, &bare, 18, 27)[0], light_at(&gpu, &worm, 18, 27)[0]);
+    assert!((b - w).abs() < 0.02, "in front of it: about the same, {b} {w}");
+}
