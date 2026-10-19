@@ -128,8 +128,17 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     } else if shade.z > 0.25 {
         least = look.solid.rgb;
     }
-    let l = max(max(min(here, vec3<f32>(look.ambient.w)), vec3<f32>(shade.x)), least);
-    var c = (a * l + bloom_at(g) * look.mode.w) * look.grade.x;
+    // A glowing pixel shows its own art: other light lifts it to 1 at most
+    // (plan 15c: a sky lights the level without looking blown out).
+    // Nor does the glare touch it: the halo is the bright air's around it.
+    var cap = vec3<f32>(look.ambient.w);
+    var glare = look.mode.w;
+    if shade.x > 0.0 {
+        cap = min(cap, vec3<f32>(1.0));
+        glare = 0.0;
+    }
+    let l = max(max(min(here, cap), vec3<f32>(shade.x)), least);
+    var c = (a * l + bloom_at(g) * glare) * look.grade.x;
     c = (c - vec3<f32>(0.5)) * look.grade.y + vec3<f32>(0.5);
     let luma = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
     c = vec3<f32>(luma) + (c - vec3<f32>(luma)) * look.grade.z;

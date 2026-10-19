@@ -1,0 +1,34 @@
+(
+    name: "Castle Strike (day)",
+    size: (1350, 550),
+    theme: "olx-theme-dirt",
+    look: (
+        ambient: (
+            colour: "#a0b4d0",
+            intensity: 12,
+        ),
+        max_light: 150,
+        light_soak: 12,
+        solid_floor: (
+            colour: "#a0a8c0",
+            intensity: 20,
+        ),
+        glow_groups: [
+            (
+                id: "flames",
+                intensity: 900,
+                reach: Pixels(100),
+                animation: Flicker(
+                    speed: 9,
+                    depth: 35,
+                ),
+            ),
+            (
+                id: "sky",
+                colour: Tint("#fff2dc"),
+                intensity: 300,
+                reach: Unlimited,
+            ),
+        ],
+    ),
+)

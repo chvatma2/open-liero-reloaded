@@ -1,0 +1,47 @@
+(
+    elements: [
+        (
+            id: "background",
+            name: "Background",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "flames",
+                mask: true,
+            ),
+        ),
+        (
+            id: "background-2",
+            name: "Background 2",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "sky",
+                mask: true,
+            ),
+        ),
+        (
+            id: "dirt",
+            name: "Dirt",
+            kind: Drawn(
+                material: Dirt,
+            ),
+            glow: (
+                strength: 100,
+                group: "flames",
+                mask: true,
+            ),
+        ),
+        (
+            id: "rock",
+            name: "Rock",
+            kind: Drawn(
+                material: Rock,
+            ),
+        ),
+    ],
+)

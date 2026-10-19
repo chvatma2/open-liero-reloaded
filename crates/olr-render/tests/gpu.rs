@@ -1839,3 +1839,37 @@ fn bloom_keeps_the_worm_floor_and_lit_side() {
     let floor = f32::from(white_under([0.2; 3]));
     assert!(right >= floor - 1.0 && left >= right + 30.0, "{left} {right} {floor}");
 }
+
+/// Plan 15c: a glowing pixel shows its own art, however bright the light
+/// around it (a daylight sky lights the level without looking blown out).
+#[test]
+fn a_glowing_pixel_shows_its_art_under_bright_light() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_room(100, 40, |_, _| false, |x, y| y < 20 && x < 60);
+    let mut r = lit_renderer(&gpu, &map);
+    let mut look = glow_look(3.0, f32::INFINITY);
+    look.groups[0].self_scale = 1.0;
+    look.max_light = 2.0;
+    let img = picture(&gpu, &mut r, &map, &look);
+    let p = img.get(2 * 30, 2 * 10);
+    assert_eq!((p.r, p.g, p.b), (128, 128, 128), "the art as it is: {p:?}");
+    assert!(light_at(&gpu, &r, 30, 25)[0] > 1.0, "the air below is lit above 1");
+}
+
+/// Plan 15c: glowing pixels feed no bloom; the bright air around them does.
+#[test]
+fn glowing_pixels_feed_no_bloom() {
+    let Some(gpu) = offscreen() else { return };
+    // A sky over the whole top, the air under it far below 1.
+    let map = glowing_room(100, 40, |_, y| y >= 30, |_, y| y < 10);
+    let frame = |bloom: bool| {
+        let mut r = lit_renderer(&gpu, &map);
+        r.set_bloom(bloom);
+        let mut look = glow_look(3.0, 2.0);
+        look.groups[0].self_scale = 1.0;
+        look.max_light = 2.0;
+        picture(&gpu, &mut r, &map, &look)
+    };
+    let (on, off) = (frame(true), frame(false));
+    assert_eq!(on.get(2 * 50, 2 * 4), off.get(2 * 50, 2 * 4), "the sky itself");
+}

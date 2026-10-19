@@ -287,6 +287,7 @@ impl LookState {
                 entry(1, frag, FLOAT_TEXTURE),
                 entry(2, frag, FLOAT_TEXTURE),
                 entry(3, frag, UINT_TEXTURE),
+                entry(4, frag, UINT_TEXTURE),
             ],
         });
         let occluder_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -469,6 +470,9 @@ impl LookState {
         }
         let uniform = || wgpu::BindGroupEntry { binding: 0, resource: self.globals.as_entire_binding() };
         let solid = self.textures.as_ref().map_or(&self.no_solid, |t| &t.solid_view);
+        let groups =
+            self.textures.as_ref().map(|t| t.groups.create_view(&wgpu::TextureViewDescriptor::default()));
+        let groups = groups.as_ref().unwrap_or(&self.no_solid);
         let light_bind = |src: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("olr-render light"),
@@ -478,6 +482,7 @@ impl LookState {
                     tex(1, src),
                     tex(2, self.textures.as_ref().map_or(&self.no_glow, |t| &t.gi.fluence)),
                     tex(3, solid),
+                    tex(4, groups),
                 ],
             })
         };

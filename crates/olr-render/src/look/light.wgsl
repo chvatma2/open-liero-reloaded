@@ -10,6 +10,9 @@
 @group(0) @binding(1) var src: texture_2d<f32>;
 @group(0) @binding(2) var glow_light: texture_2d<f32>;
 @group(0) @binding(3) var solid_tex: texture_2d<u32>;
+// The glow groups per world pixel (plan 15c: a glowing pixel feeds no
+// bloom: the bright air around it does).
+@group(0) @binding(4) var groups_tex: texture_2d<u32>;
 
 // Whether world pixel `w` is opaque rock or dirt (the solid map: material 1
 // is background, a clear solid is written as it); outside the level is open.
@@ -114,6 +117,12 @@ fn fs_blur_v(@builtin(position) p: vec4<f32>) -> Toned {
     }
     var out: Toned;
     out.light = vec4<f32>(max(c, vec3<f32>(0.0)), 1.0);
+    let w = world_of(vec2<i32>(p.xy));
+    let gs = vec2<i32>(textureDimensions(groups_tex));
+    if all(w >= vec2<i32>(0)) && all(w < gs) && textureLoad(groups_tex, w, 0).r != 0u {
+        out.excess = vec4<f32>(0.0, 0.0, 0.0, 1.0);
+        return out;
+    }
     // Soft-saturated: a source far above 1 (a disc's own cells) glows, not
     // a blot.
     out.excess = vec4<f32>(vec3<f32>(1.0) - exp(-max(u - vec3<f32>(1.0), vec3<f32>(0.0))), 1.0);
