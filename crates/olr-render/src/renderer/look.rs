@@ -345,6 +345,7 @@ impl LookState {
                 entry(1, frag, FLOAT_TEXTURE),
                 entry(2, frag, FLOAT_TEXTURE),
                 entry(3, frag, FLOAT_TEXTURE),
+                entry(4, frag, UINT_TEXTURE),
             ],
         });
         let light_source = format!("{}\n{}", common(), include_str!("../look/light.wgsl"));
@@ -489,11 +490,6 @@ impl LookState {
             })
         };
         let soak_binds = [soak_bind(&views[0]), soak_bind(&views[1])];
-        let composite_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("olr-render composite"),
-            layout: &self.composite_layout,
-            entries: &[uniform(), tex(1, albedo), tex(2, shade), tex(3, &views[1])],
-        });
         let occluders = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("olr-render occluders"),
             size: wgpu::Extent3d { width: grid.0.max(1), height: grid.1.max(1), depth_or_array_layers: 1 },
@@ -511,6 +507,11 @@ impl LookState {
             label: Some("olr-render occluders"),
             layout: &self.occluder_layout,
             entries: &[tex(0, &occluder_view)],
+        });
+        let composite_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("olr-render composite"),
+            layout: &self.composite_layout,
+            entries: &[uniform(), tex(1, albedo), tex(2, shade), tex(3, &views[1]), tex(4, &occluder_view)],
         });
         let lit = make("olr-render lit", texels, WORLD_FORMAT);
         let lit_view = lit.create_view(&wgpu::TextureViewDescriptor::default());

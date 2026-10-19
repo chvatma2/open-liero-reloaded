@@ -1184,3 +1184,143 @@ fn a_worm_blocks_glow_light() {
     let (b, w) = (light_at(&gpu, &bare, 18, 27)[0], light_at(&gpu, &worm, 18, 27)[0]);
     assert!((b - w).abs() < 0.02, "in front of it: about the same, {b} {w}");
 }
+
+/// A dark room's frame (ambient 0.05, worm floor 0.2) with each body drawn
+/// both as an occluder and as a white `Shade::WORM` sprite (plan 15b), at
+/// two output pixels per world pixel: world pixel (x, y) is output pixel
+/// (2x, 2y). `more` adds items.
+fn lit_worms(
+    gpu: &Offscreen,
+    map: &ColorMap,
+    lights: &[olr_look::FrameLight],
+    bodies: &[Body],
+    more: impl FnOnce(&mut DrawList),
+) -> (Renderer, RgbaImage, olr_look::LookFrame) {
+    let (w, h) = (map.material().width(), map.material().height());
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.upload_images(&[white_image()]);
+    r.set_lighting(true);
+    r.upload_terrain(map);
+    let mut look = dim(0.05);
+    look.worm_floor = [0.2; 3];
+    look.lights.extend_from_slice(lights);
+    let mut l = list(View { x: 0.0, y: 0.0, w: w as f32, h: h as f32 });
+    l.map = (w, h);
+    push_bodies(&mut l, bodies);
+    for &([x, y, bw, bh], _) in bodies {
+        l.sprite(
+            Layer::Worms,
+            Sprite {
+                atlas: AtlasId(0),
+                src: Rect { x: 0, y: 0, w: bw as u32, h: bh as u32 },
+                pos: [x, y],
+                size: [bw, bh],
+                flip: false,
+                tint: Rgba::rgb(255, 255, 255),
+                shade: olr_scene::Shade::WORM,
+            },
+        );
+    }
+    more(&mut l);
+    let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), (2 * w, 2 * h));
+    (r, img, look)
+}
+
+/// The sRGB a white texel shows under `light`.
+fn white_under(light: [f32; 3]) -> u8 {
+    olr_render::shade_texel([255; 4], light, 0.0, false, &Default::default(), 1.0)[0]
+}
+
+/// World column `x`'s mean red over world rows `ys` of `img`.
+fn column(img: &RgbaImage, x: u32, ys: std::ops::Range<u32>) -> f32 {
+    let n = ys.len() as f32;
+    ys.map(|y| f32::from(img.get(2 * x, 2 * y).r)).sum::<f32>() / n
+}
+
+#[test]
+fn a_worm_is_lit_on_the_lamps_side() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(50, 30, |_, _| false);
+    let (_, img, _) =
+        lit_worms(&gpu, &map, &[lamp([14.5, 15.0], 30.0)], &[([20.0, 12.0, 4.0, 6.0], 1)], |_| {});
+    let (left, inner, right) = (column(&img, 20, 12..18), column(&img, 21, 12..18), column(&img, 23, 12..18));
+    assert!(left >= right + 30.0, "the lamp's side is brighter: {left} {right}");
+    assert!(inner >= right + 30.0, "the lamp's half, not one column: {inner} {right}");
+    let floor = f32::from(white_under([0.2; 3]));
+    assert!((right - floor).abs() <= 1.0, "the far side shows the worm floor: {right} {floor}");
+}
+
+#[test]
+fn a_worm_in_anothers_shadow_keeps_its_floor() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(50, 30, |_, _| false);
+    let bodies = [([20.0, 12.0, 4.0, 6.0], 1), ([28.0, 12.0, 4.0, 6.0], 2)];
+    let (_, img, _) = lit_worms(&gpu, &map, &[lamp([14.5, 15.0], 30.0)], &bodies, |_| {});
+    let floor = white_under([0.2; 3]);
+    for x in 28..32 {
+        for y in 12..18 {
+            let v = img.get(2 * x, 2 * y).r;
+            assert!(v.saturating_add(1) >= floor, "({x}, {y}): {v} below the floor {floor}");
+        }
+    }
+}
+
+#[test]
+fn a_worm_against_a_wall_keeps_its_floor() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(50, 30, |x, _| x >= 24);
+    let (_, img, _) =
+        lit_worms(&gpu, &map, &[lamp([14.5, 15.0], 30.0)], &[([20.0, 12.0, 4.0, 6.0], 1)], |_| {});
+    let floor = white_under([0.2; 3]);
+    for x in 20..24 {
+        for y in 12..18 {
+            let v = img.get(2 * x, 2 * y).r;
+            assert!(v.saturating_add(1) >= floor, "({x}, {y}): {v} below the floor {floor}");
+        }
+    }
+    assert!(column(&img, 20, 12..18) >= f32::from(floor) + 30.0, "the lamp's side is lit");
+}
+
+#[test]
+fn worm_shading_is_steady() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(50, 30, |_, _| false);
+    let lights = [lamp([14.5, 15.0], 30.0)];
+    let body = |x: f32| [([x, 12.0, 4.0, 6.0], 1)];
+    let (_, a, _) = lit_worms(&gpu, &map, &lights, &body(20.0), |_| {});
+    let (_, b, _) = lit_worms(&gpu, &map, &lights, &body(20.0), |_| {});
+    assert_eq!(a.as_raw(), b.as_raw(), "the same bytes twice");
+    let (_, moved, _) = lit_worms(&gpu, &map, &lights, &body(21.0), |_| {});
+    let cols: Vec<f32> = (20..24).map(|x| column(&a, x, 12..18)).collect();
+    let step = cols.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
+    for c in 0..4 {
+        let m = column(&moved, 21 + c, 12..18);
+        assert!(
+            (m - cols[c as usize]).abs() <= step + 2.0,
+            "column {c}: {} → {m}, step {step}",
+            cols[c as usize]
+        );
+    }
+}
+
+#[test]
+fn a_rope_pixel_has_no_side() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(50, 30, |_, _| false);
+    let rope = |l: &mut DrawList| {
+        let white = Rgba::rgb(255, 255, 255);
+        for x in [16, 40] {
+            l.push(
+                Layer::Worms,
+                Item::Line(Line { a: (x, 15), b: (x, 15), colour: white, shade: olr_scene::Shade::WORM }),
+            );
+        }
+    };
+    let (r, img, look) = lit_worms(&gpu, &map, &[lamp([14.5, 15.0], 30.0)], &[], rope);
+    for x in [16, 40] {
+        let light = light_at(&gpu, &r, x, 15).map(|v| v.max(0.2));
+        let want = white_under(light);
+        let got = img.get(2 * x as u32, 30).r;
+        assert!(got.abs_diff(want) <= 1, "({x}, 15): {got} want {want} (max_light {})", look.max_light);
+    }
+}
