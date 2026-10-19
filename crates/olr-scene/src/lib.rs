@@ -322,13 +322,7 @@ impl Scene {
         for (slot, b) in world.bonuses().iter().enumerate().filter(|(_, b)| b.used) {
             draw_bonus(b, blend.snap(blend.bonus(slot, b)), assets, view, floor, out);
         }
-        let frame = WormFrame {
-            world,
-            assets,
-            view,
-            show_health_bars: self.options.show_health_bars,
-            lit,
-        };
+        let frame = WormFrame { world, assets, view, show_health_bars: self.options.show_health_bars, lit };
         for (i, w) in worms.iter().enumerate().filter(|(_, w)| w.alive) {
             let p = blend.snap(blend.worm(i, w));
             if lit {
