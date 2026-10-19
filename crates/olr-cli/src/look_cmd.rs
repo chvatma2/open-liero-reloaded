@@ -184,6 +184,15 @@ fn parse_animation(s: &str) -> Result<AnimationSource, String> {
     olr_format::ron_io::from_canonical("--animation", s).map_err(|e| e.to_string())
 }
 
+/// Refreshes the level's thumbnail (lit by its look, the user's note
+/// 2026-10-19) and saves, then prints `messages`.
+fn save(dir: &Path, pack: &mut olr_edit::pack::Pack, messages: &[String]) -> anyhow::Result<bool> {
+    if let Source::Level(l) = &mut pack.source {
+        olr_edit::level::refresh_thumb(l);
+    }
+    element_cmd::save_and_print(dir, pack, messages)
+}
+
 fn bail(dir: &Path, e: impl std::fmt::Display) -> anyhow::Error {
     anyhow::anyhow!("{}: {e}", dir.display())
 }
@@ -205,7 +214,7 @@ pub(crate) fn look_cmd(a: &LookArgs) -> anyhow::Result<bool> {
         let Source::Level(l) = &mut pack.source else { anyhow::bail!("{}: not a level pack", dir.display()) };
         look::set_look(l, None).map_err(|e| bail(dir, e))?;
         element_cmd::bake_pack(dir, &mut pack, &a.content.content)?;
-        return element_cmd::save_and_print(dir, &pack, &[]);
+        return save(dir, &mut pack, &[]);
     }
     let Source::Level(l) = &mut pack.source else { anyhow::bail!("{}: not a level pack", dir.display()) };
     let mut k = l.look.clone().unwrap_or_default();
@@ -224,7 +233,7 @@ pub(crate) fn look_cmd(a: &LookArgs) -> anyhow::Result<bool> {
     k.grade.saturation = a.saturation.unwrap_or(k.grade.saturation);
     k.grade.tint = a.tint.or(k.grade.tint);
     look::set_look(l, Some(k)).map_err(|e| bail(dir, e))?;
-    element_cmd::save_and_print(dir, &pack, &[])
+    save(dir, &mut pack, &[])
 }
 
 fn group_of(id: &str, f: &GroupFields, now: Option<GlowGroupSource>) -> anyhow::Result<GlowGroupSource> {
@@ -259,7 +268,7 @@ pub(crate) fn group_cmd(c: &GroupCommand) -> anyhow::Result<bool> {
                 anyhow::bail!("{}: not a level pack", dir.display())
             };
             let i = look::add_group(l, group_of(id, fields, None)?).map_err(|e| bail(dir, e))?;
-            element_cmd::save_and_print(dir, &pack, &[format!("added group {i}")])
+            save(dir, &mut pack, &[format!("added group {i}")])
         }
         GroupCommand::Set { pack: dir, id, fields, rename } => {
             let mut pack = element_cmd::load_level(dir)?;
@@ -272,14 +281,14 @@ pub(crate) fn group_cmd(c: &GroupCommand) -> anyhow::Result<bool> {
             if let Some(to) = rename {
                 look::rename_group(&mut pack, id, to).map_err(|e| bail(dir, e))?;
             }
-            element_cmd::save_and_print(dir, &pack, &[])
+            save(dir, &mut pack, &[])
         }
         GroupCommand::Remove { pack: dir, id, content } => {
             let mut pack = element_cmd::load_level(dir)?;
             let gone = look::remove_group(&mut pack, id).map_err(|e| bail(dir, e))?;
             element_cmd::bake_pack(dir, &mut pack, &content.content)?;
             let messages: Vec<String> = gone.iter().map(|e| format!("unglowed element {e}")).collect();
-            element_cmd::save_and_print(dir, &pack, &messages)
+            save(dir, &mut pack, &messages)
         }
     }
 }
@@ -339,5 +348,5 @@ pub(crate) fn light_cmd(c: &LightCommand) -> anyhow::Result<bool> {
             Vec::new()
         }
     };
-    element_cmd::save_and_print(dir, &pack, &messages)
+    save(dir, &mut pack, &messages)
 }

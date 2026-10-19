@@ -591,3 +591,18 @@ fn a_pasted_layers_material_tie_goes_to_rock() {
         kind_of(&doc, &id)
     );
 }
+
+/// The user's note (2026-10-19): a look set in the editor shows in the
+/// saved thumbnail (drawn lit), though nothing was rebaked.
+#[test]
+fn a_look_shows_in_the_saved_thumbnail() {
+    let Some(root) = crate::common::content() else { return };
+    let (_tmp, mut doc) = crate::common::open_fixture(&root);
+    let before = crate::common::files(&doc)["thumb.png"].clone();
+    let dark = olr_format::look::LookSource {
+        ambient: olr_format::look::AmbientSource { colour: None, intensity: 10 },
+        ..Default::default()
+    };
+    doc.set_look(Some(dark)).unwrap();
+    assert_ne!(crate::common::files(&doc)["thumb.png"], before);
+}

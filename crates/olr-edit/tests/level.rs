@@ -300,6 +300,21 @@ fn refresh_thumb_draws_the_front() {
     assert!(thumb == olr_format::levels::thumbnail(&l.front));
 }
 
+/// The user's note (2026-10-19): a level with a look gets its lit
+/// thumbnail (`olr_format::levels::level_thumbnail`), darker when dark.
+#[test]
+fn refresh_thumb_draws_a_lit_level_lit() {
+    let mut l = level(16, 8, 2);
+    l.look = Some(olr_format::look::LookSource {
+        ambient: olr_format::look::AmbientSource { colour: None, intensity: 10 },
+        ..Default::default()
+    });
+    refresh_thumb(&mut l);
+    let thumb = olr_format::image_io::decode_rgba(l.thumb.as_ref().unwrap()).unwrap();
+    assert!(thumb == olr_format::levels::level_thumbnail(&l));
+    assert!(thumb != olr_format::levels::thumbnail(&l.front));
+}
+
 /// One random operation.
 /// The world pixels `shape` covers on a `w` × `h` level, drawn at art scale 1.
 fn coverage(shape: &Shape, w: u32, h: u32) -> Vec<(u32, u32)> {

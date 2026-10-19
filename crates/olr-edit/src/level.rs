@@ -20,7 +20,7 @@
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_format::image_io::{LEVEL_ART, check_size};
-use olr_format::levels::{GlowLayers, LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, thumbnail};
+use olr_format::levels::{GlowLayers, LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, level_thumbnail};
 use std::sync::Arc;
 
 /// A rectangle of world pixels.
@@ -618,7 +618,8 @@ pub fn remove_object(level: &mut LevelSource, index: usize) -> Result<LevelObjec
     Ok(level.objects.remove(index))
 }
 
-/// Regenerates `thumb` from `front` (every CLI operation calls it).
+/// Regenerates `thumb` from `front`, lit when the level has a look
+/// (`olr_format::levels::level_thumbnail`; every CLI operation calls it).
 pub fn refresh_thumb(level: &mut LevelSource) {
-    level.thumb = Some(olr_format::image_io::encode_rgba(&thumbnail(&level.front)));
+    level.thumb = Some(olr_format::image_io::encode_rgba(&level_thumbnail(level)));
 }

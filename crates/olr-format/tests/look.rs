@@ -455,3 +455,89 @@ fn shadows_default_to_soft() {
     let soft = canonical_text("level.ron", &hard.replace("Hard", "Soft")).unwrap();
     assert!(!soft.contains("shadows"), "the default is left out: {soft}");
 }
+
+/// A 64 × 32 open level of white art (art scale 1) with `look` (a
+/// `level.ron` text's look), for the lit thumbnails.
+fn white_level(look: &str) -> LevelSource {
+    let (w, h) = (64u32, 32u32);
+    let mut white = RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            white.set(x, y, olr_data::image::Rgba::rgb(255, 255, 255));
+        }
+    }
+    let src = LevelSource {
+        name: "Thumb".into(),
+        notes: String::new(),
+        size: (w, h),
+        art_scale: 1,
+        theme: "olx-theme-dirt".into(),
+        objects: Vec::new(),
+        material: vec![Material::Background; (w * h) as usize],
+        front: white.clone(),
+        back: white,
+        thumb: None,
+        look: None,
+        glow: None,
+        clear: None,
+    };
+    let text = format!("(name: \"Thumb\", size: (64, 32), theme: \"olx-theme-dirt\", {look})");
+    read_level_files(&files(&src).with("level.ron", text.into_bytes())).unwrap()
+}
+
+/// The user's note (2026-10-19): a lit level's thumbnail shows its look.
+/// Without a look it is the plain thumbnail.
+#[test]
+fn a_level_without_a_look_keeps_its_plain_thumbnail() {
+    let l = white_level("");
+    assert!(olr_format::levels::level_thumbnail(&l) == olr_format::levels::thumbnail(&l.front));
+}
+
+#[test]
+fn a_dark_level_has_a_dark_thumbnail_lit_by_its_lamps() {
+    let dark = white_level("look: (ambient: (intensity: 10))");
+    let t = olr_format::levels::level_thumbnail(&dark);
+    let plain = olr_format::levels::thumbnail(&dark.front);
+    assert_eq!((t.width(), t.height()), (plain.width(), plain.height()));
+    // 64 × 32 fills 160 × 80 (bars of 8 above and below).
+    let mid = t.get(80, 48);
+    assert!(mid.r < 110 && mid.r > 60, "about 10 % light: {mid:?}");
+    assert_eq!(t.get(80, 2).a, 0, "the bars stay clear");
+    let lamp = white_level(
+        "objects: [Light(at: (8, 16), colour: \"#ffffff\", intensity: 100, reach: Pixels(24))], \
+         look: (ambient: (intensity: 10))",
+    );
+    let t = olr_format::levels::level_thumbnail(&lamp);
+    let (near, far) = (t.get(20, 48), t.get(140, 48));
+    assert!(near.r > far.r + 100, "the lamp's side is lit: {near:?} {far:?}");
+    assert_eq!(far, mid, "past its reach, the ambient");
+}
+
+#[test]
+fn glow_shows_and_lights_around_it_in_the_thumbnail() {
+    let mut l = white_level(
+        "look: (ambient: (intensity: 5), glow_groups: [(id: \"lamp\", colour: Own, reach: Pixels(16))])",
+    );
+    let mut g = GlowLayers::empty((64, 32), (64, 32));
+    for y in 12..20 {
+        for x in 40..48 {
+            let i = (y * 64 + x) as usize;
+            (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
+        }
+    }
+    l.glow = Some(g);
+    let t = olr_format::levels::level_thumbnail(&l);
+    let (on, beside, far) = (t.get(110, 48), t.get(95, 48), t.get(10, 48));
+    assert!(on.r > 240, "the glowing art at full: {on:?}");
+    assert!(beside.r > far.r + 20, "its light spills around: {beside:?} {far:?}");
+}
+
+#[test]
+fn solids_never_fall_below_the_solid_floor_in_the_thumbnail() {
+    let mut l = white_level("look: (ambient: (intensity: 0), solid_floor: (intensity: 40))");
+    l.material = vec![Material::Rock; 64 * 32];
+    let t = olr_format::levels::level_thumbnail(&l);
+    let v = t.get(80, 48);
+    // 40 % white light on white art is about sRGB 170.
+    assert!((160..=180).contains(&v.r), "{v:?}");
+}

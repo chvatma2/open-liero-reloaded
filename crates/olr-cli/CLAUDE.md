@@ -94,7 +94,9 @@ The headless command-line tool. Its commands:
   add|set|remove <pack> [<index>] [--at X,Y] [--colour RRGGBB]
   [--intensity P] [--reach N|unlimited] [--radius 1..16] [--animation RON]
   [--phase MS]` (`look_cmd.rs`, plan 15a Task 7): the `olr_edit::look`
-  operations, each checked by `compile_level` on a copy before it is kept.
+  operations, each checked by `compile_level` on a copy before it is kept,
+  then the thumbnail refreshed, lit by the look (the user's note,
+  2026-10-19; `look_commands_refresh_the_lit_thumbnail`).
   `level look` sets the given fields (a look made when the level has
   none); `--clear` removes the look and every group first (their elements
   stop glowing) and rebakes; there is no flag for `shadows` (soft by

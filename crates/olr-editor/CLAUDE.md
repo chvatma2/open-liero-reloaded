@@ -62,7 +62,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   into layers": one step); `to_pack`
   (or a `snapshot()`'s, which a thread may make: `PackSnapshot`) encodes
   the composition and keeps the bake, refreshing the thumbnail
-  only when the bake changed; a layer file whose pixels did not change is
+  when the bake changed or the level has a look or a light (drawn lit, the
+  user's note 2026-10-19, `a_look_shows_in_the_saved_thumbnail`); a layer file whose pixels did not change is
   saved as opened (another program's encoding kept); stray files in
   `editor/` are never overwritten by a new element's (ids and names skip
   them); `diagnostics` are R6's cheap checks.

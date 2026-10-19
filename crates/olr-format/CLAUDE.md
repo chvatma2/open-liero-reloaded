@@ -216,7 +216,16 @@ packs' format (version 5); `olr-pack` reads and writes through them.
 - **Level thumbnails** (`levels/thumb.rs`, moved from `olr-import-gfx` in
   plan 13d): `thumbnail(front)` box-filters a level's front art into
   `THUMB_SIZE` (160 × 96, `olr-pack` re-exports it), `letterbox`ed; the
-  importer and `olr_edit::level::refresh_thumb` both use it.
+  importer uses it. `level_thumbnail(level)` (the user's note, 2026-10-19;
+  `olr_edit::level::refresh_thumb` uses it) draws a level with a look lit:
+  a CPU model at clock 0 of the ambient, the placed lights' fade (no
+  shadows), the glow light (a grid of cells two thumbnail pixels a side,
+  each casting its glow by the angle it fills, `side / (2π d)` at most 1,
+  faded by its reach), each art sample never below its glow nor, solid,
+  the solid floor, capped at max light, the mean graded; no soak, softness
+  or steps. Without a look, or with one that does not compile, it is
+  `thumbnail(front)` (`tests/look.rs`: the plain one kept, a dark level
+  lit by a lamp, glow spilling, the solid floor).
 - **`canonical_text(path, text)`** (plan 13d): one authoring file (by its
   path in the pack: `mod.ron`, `weapons/<id>.ron` with a valid id,
   `level.ron`, ...) parsed as its type and written again canonically; it

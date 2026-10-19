@@ -83,6 +83,175 @@ fn scaled(art: &RgbaImage, tw: u32, th: u32) -> RgbaImage {
     out
 }
 
+/// The thumbnail of `level` as it plays (the user's note, 2026-10-19): a
+/// level with a look ([`super::compile_look`]) is drawn lit, else it is
+/// [`thumbnail`] of its front. A light the look cannot compile is the plain
+/// thumbnail too.
+pub fn level_thumbnail(level: &super::LevelSource) -> RgbaImage {
+    match super::compile_look(level) {
+        Ok(Some(look)) => lit_thumbnail(level, &look),
+        _ => thumbnail(&level.front),
+    }
+}
+
+/// `fade` of the look shaders (`common.wgsl`): `(1 - (d/r)²)²`, nothing at
+/// or past `r`, none for an unlimited reach.
+fn fade(d: f32, r: f32) -> f32 {
+    if r >= 1e8 {
+        return 1.0;
+    }
+    let x = d / r.max(1e-6);
+    if x >= 1.0 {
+        return 0.0;
+    }
+    let v = 1.0 - x * x;
+    v * v
+}
+
+fn linear_to_srgb(v: f32) -> u8 {
+    let c = v.clamp(0.0, 1.0);
+    let s = if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
+    (s * 255.0 + 0.5) as u8
+}
+
+/// [`thumbnail`] with `look` at clock 0, a CPU model of the look (the
+/// renderer's is on the GPU): each thumbnail pixel's light is the ambient,
+/// the placed lights (their fade, no shadows) and the glow light (each of
+/// a coarse grid of cells casting its glow by the angle it fills, faded by
+/// its reach); each art sample is lit by it, never below its glow nor, for
+/// a solid, the solid floor, capped at max light; the mean is graded. No
+/// shadows, soak, softness or light steps: a thumbnail is too small for
+/// them.
+fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> RgbaImage {
+    use olr_data::level::Material;
+    let (tw, th) = THUMB_SIZE;
+    let mut out = RgbaImage::new(tw, th);
+    let art = &level.front;
+    let (aw, ah) = (art.width(), art.height());
+    let (ww, wh) = level.size;
+    let s = level.art_scale.max(1);
+    if aw == 0 || ah == 0 || ww == 0 || wh == 0 || aw != ww * s || ah != wh * s {
+        return thumbnail(art);
+    }
+    let mut frame = olr_look::LookFrame::default();
+    frame.begin(Some(look), 0.0);
+    let glow = level.glow.as_ref().filter(|g| g.art == (aw, ah) && g.world == (ww, wh));
+    let solid = |wx: u32, wy: u32| {
+        level.material.get((wy * ww + wx) as usize).is_some_and(|m| *m != Material::Background)
+    };
+    // A world pixel's group and an art pixel's glow strength, front where
+    // solid, back where not (as the colour map shows them).
+    let group = |wx: u32, wy: u32| -> Option<&olr_look::FrameGroup> {
+        let g = glow?;
+        let i = (wy * ww + wx) as usize;
+        let v = if solid(wx, wy) { g.groups.get(i) } else { g.groups_back.get(i) }.copied().unwrap_or(0);
+        if v == 0 { None } else { frame.groups.get(usize::from(v) - 1) }
+    };
+    let strength = |x: u32, y: u32| -> f32 {
+        let Some(g) = glow else { return 0.0 };
+        let i = (y * aw + x) as usize;
+        let v = if solid(x / s, y / s) { g.front.get(i) } else { g.back.get(i) }.copied().unwrap_or(0);
+        f32::from(v) / 255.0
+    };
+    let albedo = |x: u32, y: u32| {
+        let p = art.get(x, y);
+        [p.r, p.g, p.b].map(olr_look::srgb_to_linear)
+    };
+    let (ox, oy, w, h) = letterbox(aw, ah, tw, th);
+    let (aw64, ah64, w64, h64) = (u64::from(aw), u64::from(ah), u64::from(w), u64::from(h));
+    let sx = SAMPLES.min(aw64.div_ceil(w64)).max(1);
+    let sy = SAMPLES.min(ah64.div_ceil(h64)).max(1);
+    // Art sample (i, j) of thumbnail pixel (tx, ty).
+    let sample = |tx: u64, ty: u64, i: u64, j: u64| {
+        let y = (((ty * sy + j) * 2 + 1) * ah64 / (h64 * sy * 2)).min(ah64 - 1);
+        let x = (((tx * sx + i) * 2 + 1) * aw64 / (w64 * sx * 2)).min(aw64 - 1);
+        (x as u32, y as u32)
+    };
+    // The glow light's cells: two thumbnail pixels a side.
+    let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
+    let mut cells: Vec<([f32; 3], f32, [f32; 2])> = Vec::new();
+    if glow.is_some() {
+        for cy in 0..u64::from(ch) {
+            for cx in 0..u64::from(cw) {
+                let (mut sum, mut reach, mut n) = ([0.0f32; 3], 0.0f32, 0.0f32);
+                for ty in (cy * 2)..(cy * 2 + 2).min(h64) {
+                    for tx in (cx * 2)..(cx * 2 + 2).min(w64) {
+                        for j in 0..sy {
+                            for i in 0..sx {
+                                let (x, y) = sample(tx, ty, i, j);
+                                n += 1.0;
+                                let g = strength(x, y);
+                                let Some(grp) = group(x / s, y / s).filter(|_| g > 0.0) else { continue };
+                                let a = if grp.own_colour { albedo(x, y) } else { [1.0; 3] };
+                                for ((s, k), a) in sum.iter_mut().zip(grp.cast).zip(a) {
+                                    *s += k * a * g;
+                                }
+                                reach = reach.max(grp.reach);
+                            }
+                        }
+                    }
+                }
+                if n > 0.0 && sum.iter().any(|v| *v > 0.0) {
+                    // The cell's centre in world pixels.
+                    let at = [
+                        ((cx * 2 + 1) as f32) * ww as f32 / w as f32,
+                        ((cy * 2 + 1) as f32) * wh as f32 / h as f32,
+                    ];
+                    cells.push((sum.map(|v| v / n), reach, at));
+                }
+            }
+        }
+    }
+    // A cell's side in world pixels: the angle it fills from `d` away.
+    let side = 2.0 * (ww as f32 / w as f32).max(wh as f32 / h as f32);
+    let max = frame.max_light;
+    let g = &frame.grade;
+    let exposure = 2f32.powf(f32::from(g.exposure) / 100.0);
+    let (contrast, saturation) = (f32::from(g.contrast) / 100.0, f32::from(g.saturation) / 100.0);
+    let tint = g.tint.map(olr_look::srgb_to_linear);
+    for ty in 0..h64 {
+        for tx in 0..w64 {
+            let at = [(tx as f32 + 0.5) * ww as f32 / w as f32, (ty as f32 + 0.5) * wh as f32 / h as f32];
+            let mut light = frame.ambient;
+            for l in &frame.lights {
+                let d = ((l.pos[0] - at[0]).powi(2) + (l.pos[1] - at[1]).powi(2)).sqrt();
+                let k = fade((d - l.radius).max(0.0), l.reach);
+                for (v, c) in light.iter_mut().zip(l.colour) {
+                    *v += c * k;
+                }
+            }
+            for (e, reach, p) in &cells {
+                let d = ((p[0] - at[0]).powi(2) + (p[1] - at[1]).powi(2)).sqrt();
+                let k = (side / (std::f32::consts::TAU * d.max(1e-3))).min(1.0) * fade(d, *reach);
+                for (v, c) in light.iter_mut().zip(e) {
+                    *v += c * k;
+                }
+            }
+            let light = light.map(|v| if v.is_finite() { v.min(max) } else { 0.0 });
+            let mut sum = [0.0f32; 3];
+            for j in 0..sy {
+                for i in 0..sx {
+                    let (x, y) = sample(tx, ty, i, j);
+                    let (wx, wy) = (x / s, y / s);
+                    let own = strength(x, y) * group(wx, wy).map_or(1.0, |g| g.self_scale);
+                    let floor = if solid(wx, wy) { frame.solid_floor } else { [0.0; 3] };
+                    let a = albedo(x, y);
+                    for (((s, a), l), f) in sum.iter_mut().zip(a).zip(light).zip(floor) {
+                        *s += a * l.max(f).max(own);
+                    }
+                }
+            }
+            let n = (sx * sy) as f32;
+            let mut v = sum.map(|c| c / n * exposure);
+            v = v.map(|c| (c - 0.5) * contrast + 0.5);
+            let luma = 0.2126 * v[0] + 0.7152 * v[1] + 0.0722 * v[2];
+            let [r, g, b] = [0, 1, 2].map(|c| linear_to_srgb((luma + (v[c] - luma) * saturation) * tint[c]));
+            out.set(ox + tx as u32, oy + ty as u32, olr_data::image::Rgba::rgb(r, g, b));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

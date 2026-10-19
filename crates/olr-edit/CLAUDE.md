@@ -66,7 +66,8 @@ templates and the level operations.
   art scale), `resize` (returns the objects it drops, as they were),
   `add_spawn`, `move_object`, `remove_object` (by index; `EditError` for a
   bad index, more than `MAX_OBJECTS`, a size or art out of bounds) and
-  `refresh_thumb`. Every touched world pixel changes its whole art block,
+  `refresh_thumb` (lit for a level with a look:
+  `olr_format::levels::level_thumbnail`, `refresh_thumb_draws_a_lit_level_lit`). Every touched world pixel changes its whole art block,
   and `front == back` wherever the material is background, before and
   after every operation.
 - **Level composition** (plan 14a; decisions in `docs/porting/STATUS.md`,

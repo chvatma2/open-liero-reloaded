@@ -57,6 +57,37 @@ fn carve_then_check() {
     assert_ne!(after["thumb.png"], before["thumb.png"], "the thumbnail follows the art");
 }
 
+/// The user's note (2026-10-19): the look commands refresh the
+/// thumbnail, which a level with a look draws lit.
+#[test]
+fn look_commands_refresh_the_lit_thumbnail() {
+    let Some((_tmp, pack)) = dirt_level() else { return };
+    let p = pack.to_str().unwrap();
+    let run = |args: &[&str]| {
+        let o = Command::new(env!("CARGO_BIN_EXE_olr-cli")).args(args).output().unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    };
+    let before = tree(&pack);
+    run(&["level", "look", p, "--ambient", "203048:10"]);
+    let dark = tree(&pack);
+    assert_ne!(dark["thumb.png"], before["thumb.png"], "a dark look darkens the thumbnail");
+    run(&[
+        "level",
+        "light",
+        "add",
+        p,
+        "--at",
+        "100,100",
+        "--colour",
+        "ffcc88",
+        "--intensity",
+        "150",
+        "--reach",
+        "80",
+    ]);
+    assert_ne!(tree(&pack)["thumb.png"], dark["thumb.png"], "a lamp lights it");
+}
+
 #[test]
 fn an_invalid_operation_writes_nothing() {
     let Some((_tmp, pack)) = dirt_level() else { return };

@@ -168,7 +168,9 @@ fn pack_of(
         }
     }
     let mut level = level.clone();
-    if rebaked {
+    // A look or a light changes the thumbnail too (drawn lit, the user's
+    // note 2026-10-19).
+    if rebaked || level.look.is_some() || level.objects.iter().any(|o| o.as_light().is_some()) {
         refresh_thumb(&mut level);
     }
     let fits = |e: &Element| {
