@@ -7,9 +7,9 @@
 @group(0) @binding(3) var upper: texture_2d<f32>;
 @group(0) @binding(4) var seeds: texture_2d<f32>;
 
-// The most steps of one ray's sphere trace (a ray grazing a wall steps one
-// cell at a time); past it the ray counts as open.
-const MAX_STEPS: i32 = 96;
+// The most steps of one ray's march (a ray grazing a wall steps one cell
+// at a time); past it the ray counts as open.
+const MAX_STEPS: i32 = 128;
 
 // Cascade (d.x dirs, d.y x d.z block, d.w x e.x probes) at probe q, direction k.
 fn upper_at(q: vec2<i32>, k: i32) -> vec4<f32> {
@@ -17,6 +17,100 @@ fn upper_at(q: vec2<i32>, k: i32) -> vec4<f32> {
     let probe = clamp(q, vec2<i32>(0), vec2<i32>(i32(cp.d.w), i32(cp.e.x)) - vec2<i32>(1));
     let t = probe * vec2<i32>(bw, i32(cp.d.z)) + vec2<i32>(k % bw, k / bw);
     return textureLoad(upper, t, 0);
+}
+
+fn inside(q: vec2<i32>) -> bool {
+    return all(q >= vec2<i32>(0)) && all(q < vec2<i32>(textureDimensions(level_em)));
+}
+
+// Whether cell `q` stops a ray (outside the grid nothing does).
+fn stops_at(q: vec2<i32>) -> bool {
+    return inside(q) && stops(textureLoad(level_em, q, 0));
+}
+
+// How far a ray at `at` may jump: the jump flood's distance to the nearest
+// stopper, less a cell and a half; 0 near one.
+fn free_at(at: vec2<f32>) -> f32 {
+    let t = textureLoad(seeds, vec2<i32>(floor(at)), 0);
+    if t.x < 0.0 {
+        return 1e9;
+    }
+    let s = vec2<f32>(joined(t.xy), joined(t.zw));
+    return max(distance(s + vec2<f32>(0.5), at) - 1.5, 0.0);
+}
+
+// The ray from `o` along `dir` over [t0, t1) cells: where it meets a
+// stopper, `t` its distance and `q` its cell (`hit`), or open. Far from
+// stoppers it jumps by the flood's distance; near them it walks cell by
+// cell (an exact grid walk), and passing a corner it is stopped when both
+// cells beside the corner stop: no ray slips between rock pixels touching
+// at a corner, so light never passes a wall one pixel thin (the user's
+// request, 2026-10-19). `skip` is a cell never stopping it (the probe's own).
+struct Hit {
+    hit: bool,
+    q: vec2<i32>,
+    t: f32,
+};
+
+fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit {
+    var h: Hit;
+    h.hit = false;
+    var t = t0;
+    let sx = select(-1, 1, dir.x > 0.0);
+    let sy = select(-1, 1, dir.y > 0.0);
+    for (var n = 0; n < MAX_STEPS; n++) {
+        if t >= t1 {
+            break;
+        }
+        let at = o + dir * t;
+        let q = vec2<i32>(floor(at));
+        if !inside(q) {
+            // Outside the grid nothing stops a ray, and it never comes back.
+            break;
+        }
+        if any(q != skip) && stops_at(q) {
+            h.hit = true;
+            h.q = q;
+            h.t = t;
+            return h;
+        }
+        let free = free_at(at);
+        if free >= 1.0 {
+            t += free;
+            continue;
+        }
+        // The next cell boundary along each axis.
+        let bx = select(f32(q.x), f32(q.x + 1), dir.x > 0.0);
+        let by = select(f32(q.y), f32(q.y + 1), dir.y > 0.0);
+        let tx = select(1e9, (bx - at.x) / dir.x, abs(dir.x) > 1e-6);
+        let ty = select(1e9, (by - at.y) / dir.y, abs(dir.y) > 1e-6);
+        if abs(tx - ty) < 1e-3 {
+            // Through a corner: both cells beside it stopping close it.
+            let a = q + vec2<i32>(sx, 0);
+            let b = q + vec2<i32>(0, sy);
+            if stops_at(a) && stops_at(b) {
+                h.hit = true;
+                h.q = a;
+                h.t = t + min(tx, ty);
+                return h;
+            }
+        }
+        t += max(min(tx, ty), 0.0) + 1e-3;
+    }
+    return h;
+}
+
+// Whether the segment from `a` to `b` (cells) meets no stopper but in `a`'s
+// own cell.
+fn clear_between(a: vec2<f32>, b: vec2<f32>) -> bool {
+    let d = b - a;
+    let len = length(d);
+    if len < 1e-4 {
+        return !stops_at(vec2<i32>(floor(b)));
+    }
+    let skip = vec2<i32>(floor(a));
+    // Its end's cell counts: the upper ray starts there.
+    return !march(a, d / len, 0.0, len + 1e-3, skip).hit && (all(vec2<i32>(floor(b)) == skip) || !stops_at(vec2<i32>(floor(b))));
 }
 
 @fragment
@@ -35,59 +129,56 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let centre = (vec2<f32>(probe) + vec2<f32>(0.5)) * spacing;
     let angle = (f32(d) + 0.5) / cp.a.y * TAU;
     let dir = vec2<f32>(cos(angle), sin(angle));
-    let size = vec2<i32>(textureDimensions(level_em));
     var ray = vec4<f32>(0.0, 0.0, 0.0, 1.0);
-    // A probe never stops on its own cell, so a wall's face gathers the
-    // light in front of it (cascade 0's rays leave the cell first).
-    var dist = max(cp.b.z, 0.75 * spacing);
+    // Cascade 0 marches from its probe's centre, never stopping in its own
+    // cell, so a wall's face gathers the light in front of it.
+    let own = vec2<i32>(floor(centre));
     let end = cp.b.z + cp.b.w;
-    for (var n = 0; n < MAX_STEPS; n++) {
-        if dist >= end {
-            break;
+    let h = march(centre, dir, cp.b.z, end, select(vec2<i32>(-1), own, cp.a.x < 0.5));
+    if h.hit {
+        let e = textureLoad(level_em, h.q, 0);
+        if max(e.r, max(e.g, e.b)) > 1e-6 {
+            let reach = joined(textureLoad(level_reach, h.q, 0).xy);
+            ray = vec4<f32>(e.rgb * fade(h.t * cp.c.w, reach), 0.0);
+        } else {
+            ray = vec4<f32>(0.0);
         }
-        let at = centre + dir * dist;
-        let q = vec2<i32>(floor(at));
-        // Outside the grid nothing stops a ray, and it never comes back.
-        if any(q < vec2<i32>(0)) || any(q >= size) {
-            break;
-        }
-        let e = textureLoad(level_em, q, 0);
-        if stops(e) {
-            if max(e.r, max(e.g, e.b)) > 1e-6 {
-                let reach = joined(textureLoad(level_reach, q, 0).xy);
-                ray = vec4<f32>(e.rgb * fade(dist * cp.c.w, reach), 0.0);
-            } else {
-                ray = vec4<f32>(0.0);
-            }
-            break;
-        }
-        // As far as the nearest stopper allows, at least a cell.
-        let t = textureLoad(seeds, q, 0);
-        var free = 1e9;
-        if t.x >= 0.0 {
-            let s = vec2<f32>(joined(t.xy), joined(t.zw));
-            free = distance(s + vec2<f32>(0.5), at) - 1.5;
-        }
-        dist += max(free, 1.0);
     }
     if cp.e.y > 0.5 && ray.a > 0.0 {
         // The next cascade's two directions around this one, bilinear
-        // between its four probes around this probe's centre.
+        // between its four probes around this probe's centre, each only
+        // when nothing stops the way from this ray's end to where its ray
+        // starts (the bilinear fix: no light from a probe across a wall).
         let g = centre / (spacing * 2.0) - vec2<f32>(0.5);
         let g0 = floor(g);
         let f = g - g0;
         let q0 = vec2<i32>(g0);
+        let tip = centre + dir * end;
         var acc = vec3<f32>(0.0);
         for (var k = 0; k < 2; k++) {
             let dk = d * 2 + k;
-            let a = upper_at(q0, dk).rgb;
-            let b = upper_at(q0 + vec2<i32>(1, 0), dk).rgb;
-            let c = upper_at(q0 + vec2<i32>(0, 1), dk).rgb;
-            let e = upper_at(q0 + vec2<i32>(1, 1), dk).rgb;
-            acc += mix(mix(a, b, f.x), mix(c, e, f.x), f.y);
+            let ak = (f32(dk) + 0.5) / cp.d.x * TAU;
+            let dir_k = vec2<f32>(cos(ak), sin(ak));
+            var sum = vec3<f32>(0.0);
+            var weight = 0.0;
+            for (var j = 0; j < 4; j++) {
+                let o = vec2<i32>(j % 2, j / 2);
+                let wj = mix(1.0 - f.x, f.x, f32(o.x)) * mix(1.0 - f.y, f.y, f32(o.y));
+                if wj <= 0.0 {
+                    continue;
+                }
+                let qj = q0 + o;
+                let cj = (vec2<f32>(clamp(qj, vec2<i32>(0), vec2<i32>(i32(cp.d.w), i32(cp.e.x)) - vec2<i32>(1))) + vec2<f32>(0.5)) * spacing * 2.0;
+                if clear_between(tip, cj + dir_k * end) {
+                    sum += upper_at(qj, dk).rgb * wj;
+                    weight += wj;
+                }
+            }
+            if weight > 0.0 {
+                acc += sum / weight;
+            }
         }
         ray = vec4<f32>(ray.rgb + ray.a * acc * 0.5, ray.a);
     }
     return ray;
 }
-

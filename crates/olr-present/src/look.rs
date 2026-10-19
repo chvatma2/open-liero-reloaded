@@ -1,7 +1,9 @@
 //! The look's dynamic lights (plan 15a Task 15; spec §Mod packs, §The
-//! engine): after the level's own, in R9's order, the projectiles' lights
-//! (slot order), their end flashes (start order), the muzzle lights (start
-//! order) and the explosions' lights (effect slot order).
+//! engine), glowing discs in the glow light since plan 15c (radii from
+//! `engine::disc_radius` and `engine::explosion_radius`), in R9's order:
+//! the projectiles' lights (slot order), their end flashes (start order),
+//! the muzzle lights (start order) and the explosions' lights (effect slot
+//! order).
 //!
 //! End flashes and muzzle lights start from the scene's per-tick records
 //! (`Scene::ended_projectiles`, `Scene::shots`), so they never depend on
@@ -130,8 +132,9 @@ impl Dynamic {
         for d in scene.drawn_projectiles() {
             if let Some(l) = projectile(d.proj).and_then(|p| p.light.as_ref()) {
                 let clock = t_ms - d.spawn_time.0 as f64;
-                if let Some(f) = light_at(l, clock, u64::from(d.serial), [d.pos.x, d.pos.y], 1.0) {
-                    look.push(f);
+                let radius = engine::disc_radius(l.reach.pixels());
+                if let Some(f) = light_at(l, clock, u64::from(d.serial), [d.pos.x, d.pos.y], radius) {
+                    look.push_emitter(f);
                 }
             }
         }
@@ -171,8 +174,9 @@ impl Dynamic {
         };
         self.flashes.retain(|s| {
             let Some(l) = flash(s.def).filter(|l| !ended(l, s)) else { return false };
-            if let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, s.pos, 1.0) {
-                look.push(f);
+            let radius = engine::disc_radius(l.reach.pixels());
+            if let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, s.pos, radius) {
+                look.push_emitter(f);
             }
             true
         });
@@ -184,11 +188,12 @@ impl Dynamic {
                 return false;
             }
             // It follows its worm as drawn; a worm not drawn (dead) shows none.
+            let radius = engine::disc_radius(l.reach.pixels());
             if let Some((_, p, owner)) = worms.iter().find(|(id, ..)| *id == s.worm)
-                && let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, [p.x, p.y], 1.0)
+                && let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, [p.x, p.y], radius)
             {
                 // Plan 15b: it ignores its own worm's body as an occluder.
-                look.push(FrameLight { owner: *owner, ..f });
+                look.push_emitter(FrameLight { owner: *owner, ..f });
             }
             true
         });
@@ -205,8 +210,9 @@ impl Dynamic {
                 }
             };
             let clock = age_ms / life_ms * f64::from(engine::EXPLOSION_MS);
-            if let Some(f) = light_at(&self.explosions[i].1, clock, slot as u64, [e.pos.x, e.pos.y], 1.0) {
-                look.push(f);
+            let (radius, pos) = (engine::explosion_radius(e.type2), [e.pos.x, e.pos.y]);
+            if let Some(f) = light_at(&self.explosions[i].1, clock, slot as u64, pos, radius) {
+                look.push_emitter(f);
             }
         }
     }

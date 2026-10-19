@@ -8,6 +8,10 @@ use crate::{Grade, LevelLook, Light, Reach, default_phase, identity_of};
 /// The most placed lights a frame draws (plan 15a R13).
 pub const MAX_LIGHTS: usize = 256;
 
+/// The most glowing discs a frame draws (plan 15c): play's lights, in
+/// order.
+pub const MAX_EMITTERS: usize = 1024;
+
 /// The deepest light soaks into solids, world pixels (spec §Light in solids).
 pub const MAX_SOAK: u8 = 12;
 
@@ -75,6 +79,10 @@ pub struct LookFrame {
     /// `groups[v - 1]`; 0 is no group.
     pub groups: Vec<FrameGroup>,
     pub lights: Vec<FrameLight>,
+    /// Play's lights as glowing discs in the glow light (plan 15c): the
+    /// engine's explosion and muzzle lights, a mod look's shot lights, end
+    /// flashes and muzzle lights. `radius` is the disc's.
+    pub emitters: Vec<FrameLight>,
     pub mode: ViewMode,
 }
 
@@ -85,6 +93,7 @@ impl LookFrame {
     pub fn begin(&mut self, level: Option<&LevelLook>, t_ms: f64) {
         self.groups.clear();
         self.lights.clear();
+        self.emitters.clear();
         let Some(level) = level else {
             self.ambient = [1.0; 3];
             self.max_light = 1.0;
@@ -143,17 +152,26 @@ impl LookFrame {
         self.lights.push(light);
     }
 
-    /// Keeps the lights whose reach touches `view` (world `x, y, w, h`), then
-    /// the first [`MAX_LIGHTS`], in order.
+    /// Adds a glowing disc after the others (plan 15c; the callers' order).
+    pub fn push_emitter(&mut self, light: FrameLight) {
+        self.emitters.push(light);
+    }
+
+    /// Keeps the lights and emitters whose reach touches `view` (world `x,
+    /// y, w, h`), then the first [`MAX_LIGHTS`] and [`MAX_EMITTERS`], in
+    /// order.
     pub fn cull(&mut self, view: [f32; 4]) {
         let [x0, y0, w, h] = view;
         let (x1, y1) = (x0 + w, y0 + h);
-        self.lights.retain(|l| {
+        let touches = |l: &FrameLight| {
             let dx = (x0 - l.pos[0]).max(l.pos[0] - x1).max(0.0);
             let dy = (y0 - l.pos[1]).max(l.pos[1] - y1).max(0.0);
             libm::sqrtf(dx * dx + dy * dy) <= l.reach + l.radius
-        });
+        };
+        self.lights.retain(touches);
         self.lights.truncate(MAX_LIGHTS);
+        self.emitters.retain(touches);
+        self.emitters.truncate(MAX_EMITTERS);
     }
 }
 

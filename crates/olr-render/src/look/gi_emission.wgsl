@@ -7,6 +7,10 @@
 @group(0) @binding(3) var groups_tex: texture_2d<u32>;
 @group(0) @binding(4) var solid_tex: texture_2d<u32>;
 @group(0) @binding(5) var terrain_tex: texture_2d<f32>;
+// Play's glowing discs this frame (plan 15c, `gi_dynamic.wgsl`): radiance
+// per cell, and their reach (unsplit; 60000 or more unlimited).
+@group(0) @binding(6) var dynamic_tex: texture_2d<f32>;
+@group(0) @binding(7) var dynamic_reach: texture_2d<f32>;
 // The occluder map (plan 15b): a living worm's world pixel is solid.
 @group(1) @binding(0) var occluder_tex: texture_2d<u32>;
 
@@ -19,6 +23,10 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     // The level the device keeps: past a crop is open.
     let level = min(vec2<i32>(look.level.xy), vec2<i32>(textureDimensions(solid_tex)));
     let count = u32(look.mode.y);
+    let disc = textureLoad(dynamic_tex, cell, 0).rgb;
+    // A disc's cells never count as a worm: a muzzle flash shines from
+    // inside its worm's outline.
+    let lit = max(disc.r, max(disc.g, disc.b)) > 0.0;
     var em = vec3<f32>(0.0);
     var solid = 0.0;
     var reach = 0.0;
@@ -30,7 +38,7 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
                 continue;
             }
             n += 1.0;
-            let worm = worm_in(occluder_tex, look.occluders.xy, w) != 0u;
+            let worm = !lit && worm_in(occluder_tex, look.occluders.xy, w) != 0u;
             if worm || textureLoad(solid_tex, clamped(w, textureDimensions(solid_tex)), 0).r != 1u {
                 solid += 1.0;
             }
@@ -50,7 +58,11 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     }
     var out: GiOut;
     let k = 1.0 / max(n, 1.0);
-    out.emission = vec4<f32>(em * k, solid * k);
+    if lit {
+        let d = textureLoad(dynamic_reach, cell, 0).r;
+        reach = max(reach, select(d, 1e9, d >= 59999.0));
+    }
+    out.emission = vec4<f32>(em * k + disc, solid * k);
     out.reach = vec4<f32>(split(reach), 0.0, 0.0);
     return out;
 }

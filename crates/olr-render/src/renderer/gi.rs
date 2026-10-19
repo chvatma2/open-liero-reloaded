@@ -39,6 +39,15 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const REACH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const SEED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
+/// The dynamic layer's reach: unsplit f16 (max blending needs one value),
+/// 60 000 or more unlimited (plan 15c).
+const DYNAMIC_REACH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// Floats a disc: world x, y, radius, reach; radiance r, g, b, 0 (plan 15c).
+pub(super) const EMITTER_FLOATS: usize = 8;
+
+const EMITTER_STRIDE: u64 = (EMITTER_FLOATS * 4) as u64;
+
 /// The cascades' first interval, in cells.
 const L0: f32 = 2.0;
 
@@ -59,11 +68,14 @@ const UINT: wgpu::BindingType = wgpu::BindingType::Texture {
 
 /// The glow light's pipelines and layouts (one set per renderer).
 pub(super) struct GiPipelines {
+    /// Play's glowing discs into the dynamic layer (plan 15c).
+    dynamic: wgpu::RenderPipeline,
     emission: wgpu::RenderPipeline,
     seed: wgpu::RenderPipeline,
     jfa: wgpu::RenderPipeline,
     cascade: wgpu::RenderPipeline,
     fluence: wgpu::RenderPipeline,
+    dynamic_layout: wgpu::BindGroupLayout,
     emission_layout: wgpu::BindGroupLayout,
     seed_layout: wgpu::BindGroupLayout,
     jfa_layout: wgpu::BindGroupLayout,
@@ -88,7 +100,14 @@ impl GiPipelines {
                 entry(3, frag, UINT),
                 entry(4, frag, UINT),
                 entry(5, frag, FLOAT),
+                entry(6, frag, FLOAT),
+                entry(7, frag, FLOAT),
             ],
+        );
+        let both = wgpu::ShaderStages::VERTEX_FRAGMENT;
+        let dynamic_layout = layout(
+            "olr-render gi dynamic",
+            &[entry(0, both, super::UNIFORM), entry(1, frag, UINT), entry(2, frag, super::UNIFORM)],
         );
         let seed_layout = layout("olr-render gi seed", &[entry(0, frag, FLOAT)]);
         let jfa_layout =
@@ -121,7 +140,31 @@ impl GiPipelines {
             make_with(label, body, fs, &[Some(layout)], targets)
         };
         let two = [(FORMAT, None), (REACH_FORMAT, None)];
+        let add = wgpu::BlendComponent {
+            src_factor: wgpu::BlendFactor::One,
+            dst_factor: wgpu::BlendFactor::One,
+            operation: wgpu::BlendOperation::Add,
+        };
+        let max = wgpu::BlendComponent { operation: wgpu::BlendOperation::Max, ..add };
+        let discs = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4];
         GiPipelines {
+            dynamic: pipeline(
+                device,
+                "olr-render gi dynamic",
+                &format!("{head}\n{}", include_str!("../look/gi_dynamic.wgsl")),
+                ("vs_disc", "fs_disc"),
+                &[Some(&dynamic_layout)],
+                &[Some(wgpu::VertexBufferLayout {
+                    array_stride: EMITTER_STRIDE,
+                    step_mode: wgpu::VertexStepMode::Instance,
+                    attributes: &discs,
+                })],
+                &[
+                    (FORMAT, Some(wgpu::BlendState { color: add, alpha: add })),
+                    (DYNAMIC_REACH_FORMAT, Some(wgpu::BlendState { color: max, alpha: max })),
+                ],
+                wgpu::PrimitiveTopology::TriangleStrip,
+            ),
             emission: make_with(
                 "olr-render gi emission",
                 include_str!("../look/gi_emission.wgsl"),
@@ -157,6 +200,7 @@ impl GiPipelines {
                 &fluence_layout,
                 &[(FORMAT, None)],
             ),
+            dynamic_layout,
             emission_layout,
             seed_layout,
             jfa_layout,
@@ -214,6 +258,9 @@ pub(super) struct GiState {
     pub(super) cell: u32,
     /// The emission grid (rgb cast, solid share) and its reach.
     emission: (wgpu::TextureView, wgpu::TextureView),
+    /// Play's discs this frame (plan 15c): radiance and reach per cell.
+    dynamic: (wgpu::TextureView, wgpu::TextureView),
+    dynamic_bind: wgpu::BindGroup,
     /// The jump flood's two textures: the seeds go into the first.
     seeds: [wgpu::TextureView; 2],
     cascades: Vec<wgpu::TextureView>,
@@ -283,6 +330,10 @@ impl GiState {
             texture(device, "olr-render gi emission", grid, FORMAT),
             texture(device, "olr-render gi reach", grid, REACH_FORMAT),
         );
+        let dynamic = (
+            texture(device, "olr-render gi dynamic", grid, FORMAT),
+            texture(device, "olr-render gi dynamic reach", grid, DYNAMIC_REACH_FORMAT),
+        );
         let seeds = [0, 1].map(|_| texture(device, "olr-render gi seeds", grid, SEED_FORMAT));
         let shapes: Vec<Cascade> = (0..count).map(|i| Cascade::new(i, grid)).collect();
         let cascades: Vec<_> =
@@ -324,7 +375,14 @@ impl GiState {
                 tv(inputs.groups),
                 tv(inputs.solid),
                 tv(inputs.terrain),
+                tv(&dynamic.0),
+                tv(&dynamic.1),
             ],
+        );
+        let dynamic_bind = bind(
+            device,
+            &pipes.dynamic_layout,
+            [emission_params.as_entire_binding(), tv(inputs.solid), inputs.globals.as_entire_binding()],
         );
         let seed_bind = bind(device, &pipes.seed_layout, [tv(&emission.0)]);
         // Steps of half the grid's power of two down to 1, ping-ponging.
@@ -388,6 +446,8 @@ impl GiState {
         GiState {
             cell,
             emission,
+            dynamic,
+            dynamic_bind,
             seeds,
             cascades,
             fluence,
@@ -399,17 +459,19 @@ impl GiState {
         }
     }
 
-    /// Encodes the frame's glow light: emission, pyramid, cascades from the
-    /// top down, fluence. With `casting` false (no group casts light) the
-    /// fluence is only cleared.
+    /// Encodes the frame's glow light: play's discs, emission, pyramid,
+    /// cascades from the top down, fluence. With `casting` false (no group
+    /// casts light and no disc glows) the fluence is only cleared.
     /// `occluders` is the occluder map's bind group (plan 15b): living worms
-    /// block glow light.
+    /// block glow light. `discs` holds `count` discs ([`EMITTER_FLOATS`]
+    /// each, plan 15c).
     pub(super) fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         pipes: &GiPipelines,
         casting: bool,
         occluders: &wgpu::BindGroup,
+        (discs, count): (&wgpu::Buffer, u32),
     ) {
         let pass = |encoder: &mut wgpu::CommandEncoder,
                     targets: &[&wgpu::TextureView],
@@ -449,6 +511,34 @@ impl GiState {
         if !casting {
             pass(encoder, &[&self.fluence], None, None);
             return;
+        }
+        {
+            let both = [&self.dynamic.0, &self.dynamic.1];
+            let attachments = both.map(|view| {
+                Some(wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })
+            });
+            let mut p = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("olr-render gi dynamic"),
+                color_attachments: &attachments,
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            if count > 0 {
+                p.set_pipeline(&pipes.dynamic);
+                p.set_bind_group(0, &self.dynamic_bind, &[]);
+                p.set_vertex_buffer(0, discs.slice(..));
+                p.draw(0..4, 0..count);
+            }
         }
         let emission = Some((&pipes.emission, &self.emission_bind));
         pass(encoder, &[&self.emission.0, &self.emission.1], emission, Some(occluders));

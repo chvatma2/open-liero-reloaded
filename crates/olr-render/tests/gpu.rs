@@ -1417,3 +1417,122 @@ fn a_one_pixel_wall_stops_glow_light() {
     let (front, behind) = (light_at(&gpu, &r, 29, 20)[0], light_at(&gpu, &r, 31, 20)[0]);
     assert!(front > 0.15 && (behind - 0.1).abs() < 0.01, "front {front}, behind {behind}");
 }
+
+/// A glowing disc (plan 15c): white, `radius`, `reach`.
+fn disc(at: [f32; 2], radius: f32, reach: f32) -> olr_look::FrameLight {
+    olr_look::FrameLight { pos: at, radius, colour: [1.0; 3], reach, owner: 0 }
+}
+
+/// [`lit_frame_with`] with `emitters` and nothing else.
+fn disc_frame(gpu: &Offscreen, map: &ColorMap, view: View, emitters: &[olr_look::FrameLight]) -> Renderer {
+    lit_frame_with(gpu, map, view, &[], |l| l.emitters.extend_from_slice(emitters))
+}
+
+/// Plan 15c, review focus 1: a size-500 explosion, a NaN position, an
+/// unlimited reach and a black disc draw, and the light stays finite.
+#[test]
+fn huge_and_hostile_emitters_stay_finite() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(300, 120, |x, y| y >= 100 || x == 150);
+    let view = View { x: 0.0, y: 0.0, w: 300.0, h: 120.0 };
+    let big = olr_look::engine::explosion_light(500);
+    let boom =
+        olr_look::light_at(&big, 0.0, 0, [100.5, 50.5], olr_look::engine::explosion_radius(500)).unwrap();
+    let emitters = [
+        boom,
+        disc([f32::NAN, 20.0], 4.0, 60.0),
+        disc([200.5, 50.5], 6.0, f32::INFINITY),
+        olr_look::FrameLight { colour: [0.0; 3], ..disc([50.5, 50.5], 4.0, 60.0) },
+        olr_look::FrameLight {
+            radius: f32::NAN,
+            colour: [f32::INFINITY, 1.0, 1.0],
+            ..disc([60.5, 50.5], 4.0, 60.0)
+        },
+        disc([f32::INFINITY, 1e30], 1e30, 1e30),
+    ];
+    let r = disc_frame(&gpu, &map, view, &emitters);
+    let (_, light) = gpu.read_light(&r).unwrap();
+    assert!(light.iter().flatten().all(|v| v.is_finite()), "the light is finite");
+    assert!(light_at(&gpu, &r, 110, 50)[0] > 0.2, "the explosion lights");
+}
+
+/// Plan 15c ("My calls"): a flash's light at about a third of its reach
+/// is today's point light there, and it never passes a one-pixel wall.
+#[test]
+fn a_flash_lights_its_surroundings_softly() {
+    let Some(gpu) = offscreen() else { return };
+    let view = View { x: 0.0, y: 0.0, w: 200.0, h: 60.0 };
+    let open = room(200, 60, |_, _| false);
+    let r = disc_frame(&gpu, &open, view, &[disc([60.5, 30.5], 4.0, 60.0)]);
+    let today = olr_look::fade(16.0, olr_look::Reach::Pixels(60));
+    let v = light_at(&gpu, &r, 80, 30)[0] - 0.1;
+    assert!((v - today).abs() < 0.25 * today, "at d0: {v} against today's {today}");
+    let walled = room(200, 60, |x, _| x == 70);
+    let r = disc_frame(&gpu, &walled, view, &[disc([60.5, 30.5], 4.0, 60.0)]);
+    assert!(light_at(&gpu, &r, 69, 30)[0] > 0.2, "the lit side");
+    for y in [20, 25, 30, 35, 40] {
+        for x in [71, 72, 75] {
+            let v = light_at(&gpu, &r, x, y)[0];
+            assert!((v - 0.1).abs() < 1e-3, "behind the wall ({x}, {y}): {v}");
+        }
+    }
+}
+
+/// Plan 15c: a worm's shadow from a disc is soft, never a hard column.
+#[test]
+fn a_worm_casts_a_soft_shadow() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 60, |x, _| x >= 60);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 };
+    let flash = [disc([30.5, 30.5], 4.0, 80.0)];
+    let r = worm_frame(&gpu, &map, view, &[], &[([40.0, 27.0, 4.0, 6.0], 1)], |l| {
+        l.emitters.extend_from_slice(&flash)
+    });
+    let face: Vec<f32> = (0..60).map(|y| light_at(&gpu, &r, 59, y)[0]).collect();
+    let (lo, at) =
+        face[10..50].iter().zip(10..).fold((f32::MAX, 0), |m, (&v, y)| if v < m.0 { (v, y) } else { m });
+    let hi = face[at - 10..=at + 10].iter().cloned().fold(0.0, f32::max);
+    let eps = 0.02 * (hi - lo);
+    assert!(hi - lo > 0.05, "a shadow at all: {face:?}");
+    for side in [-1i32, 1] {
+        let between = (1..=12)
+            .map(|k| face[(at as i32 + side * k) as usize])
+            .filter(|&v| v > lo + eps && v < hi - eps)
+            .count();
+        assert!(between >= 3, "side {side}: {between} penumbra pixels in {face:?}");
+    }
+}
+
+/// Plan 15c, review focus 2: emitters past [`olr_look::MAX_EMITTERS`]
+/// change nothing.
+#[test]
+fn emitters_past_the_cap_change_nothing() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |x, _| x == 50);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    let capped: Vec<_> = (0..olr_look::MAX_EMITTERS)
+        .map(|i| disc([5.5 + (i % 40) as f32, 5.5 + (i / 40) as f32], 1.0, 8.0))
+        .collect();
+    let mut more = capped.clone();
+    more.extend((0..500).map(|i| disc([70.5 + (i % 20) as f32, 10.5 + (i / 20) as f32], 3.0, 60.0)));
+    let a = disc_frame(&gpu, &map, view, &capped);
+    let b = disc_frame(&gpu, &map, view, &more);
+    assert_eq!(gpu.read_light(&a).unwrap().1, gpu.read_light(&b).unwrap().1);
+}
+
+/// Plan 15c, review focus 5: a flash just off the view lights the view as
+/// if the camera had moved to include it.
+#[test]
+fn an_off_view_flash_lights_the_view_the_same() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(300, 60, |x, y| x % 41 == 0 && y > 40);
+    let flash = [disc([85.5, 30.5], 4.0, 40.0)];
+    let off = disc_frame(&gpu, &map, View { x: 100.0, y: 0.0, w: 100.0, h: 60.0 }, &flash);
+    let on = disc_frame(&gpu, &map, View { x: 70.0, y: 0.0, w: 100.0, h: 60.0 }, &flash);
+    assert!(light_at(&gpu, &off, 101, 30)[0] > 0.11, "it reaches the view");
+    for x in 100..170 {
+        for y in [5, 30, 45, 55] {
+            assert_eq!(light_at(&gpu, &off, x, y), light_at(&gpu, &on, x, y), "({x}, {y})");
+        }
+    }
+}

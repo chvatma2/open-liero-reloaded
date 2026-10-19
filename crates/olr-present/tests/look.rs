@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use olr_content::{Content, olx_level_id, olx_mod_id};
 use olr_look::{
     Ambient, Animation, GlowColour, GlowGroup, Grade, Key, LevelLook, Light, ModLook, PlacedLight,
-    ProjectileLook, Reach,
+    ProjectileLook, Reach, engine,
 };
 use olr_present::{PresentSetup, Presentation, default_colour};
 use olr_scene::{DrawList, Interpolation, Item, Layer, SceneOptions, Shade, Viewport};
@@ -202,7 +202,7 @@ fn a_glowing_projectile_lights_and_glows() {
         let v = list.view;
         for d in p.scene.drawn_projectiles() {
             if v.contains(d.pos.x, d.pos.y) {
-                assert!(l.lights.iter().any(|f| f.pos == [d.pos.x, d.pos.y]), "a light on {d:?}");
+                assert!(l.emitters.iter().any(|f| f.pos == [d.pos.x, d.pos.y]), "a light on {d:?}");
                 lit_frames += 1;
             }
         }
@@ -224,7 +224,7 @@ fn an_end_flash_follows_the_projectile() {
     play_with(&content, BAZOOKA, None, Some(look), |p, _, _, f| {
         let l = p.look().unwrap();
         let green: Vec<[f32; 2]> =
-            l.lights.iter().filter(|x| x.colour[0] == 0.0 && x.colour[1] > 0.0).map(|x| x.pos).collect();
+            l.emitters.iter().filter(|x| x.colour[0] == 0.0 && x.colour[1] > 0.0).map(|x| x.pos).collect();
         let now = p.scene.drawn_projectiles();
         for d in &last {
             if !now.iter().any(|n| (n.slot, n.serial) == (d.slot, d.serial)) {
@@ -261,7 +261,7 @@ fn engine_lights_only_in_lit_matches() {
     });
     let (mut explosion, mut muzzle) = (false, false);
     play_with(&content, BAZOOKA, Some(look()), None, |p, _, _, _| {
-        for l in &p.look().unwrap().lights {
+        for l in &p.look().unwrap().emitters {
             let ratio = l.colour[2] / l.colour[0].max(1e-6);
             // The engine's explosion (255, 200, 140) and muzzle (255, 220, 160), in linear.
             explosion |= (ratio - 0.262).abs() < 0.01;
@@ -269,6 +269,31 @@ fn engine_lights_only_in_lit_matches() {
         }
     });
     assert!(explosion && muzzle, "explosion {explosion}, muzzle {muzzle}");
+}
+
+/// Plan 15c: play's lights are glowing discs in the glow light, with the
+/// engine's radii: an explosion's grows with its size, a muzzle flash's is
+/// about an eighth of its reach.
+#[test]
+fn engine_lights_are_emitters() {
+    let Some(content) = content() else { return };
+    let (mut explosion, mut muzzle) = (0, 0);
+    play_with(&content, BAZOOKA, Some(look()), None, |p, _, _, _| {
+        let l = p.look().unwrap();
+        assert!(l.lights.iter().all(|f| f.pos == [100.5, 100.5]), "only the level's lamp is a light");
+        for e in &l.emitters {
+            let ratio = e.colour[2] / e.colour[0].max(1e-6);
+            if (ratio - 0.262).abs() < 0.01 {
+                assert!((0..=500).any(|s| engine::explosion_radius(s) == e.radius), "{e:?}");
+                explosion += 1;
+            }
+            if (ratio - 0.352).abs() < 0.01 {
+                assert_eq!(e.radius, engine::disc_radius(40.0), "{e:?}");
+                muzzle += 1;
+            }
+        }
+    });
+    assert!(explosion > 0 && muzzle > 0, "explosion {explosion}, muzzle {muzzle}");
 }
 
 #[test]
@@ -371,7 +396,7 @@ fn a_muzzle_light_runs_its_curve() {
     let look = ModLook { projectiles: Vec::new(), weapons: vec![Some(weapon); weapons] };
     let (mut run, mut longest) = (Vec::new(), Vec::new());
     play_with(&content, BAZOOKA, None, Some(look), |p, _, _, _| {
-        let green = p.look().unwrap().lights.iter().find(|l| l.colour[0] == 0.0 && l.colour[1] > 0.0);
+        let green = p.look().unwrap().emitters.iter().find(|l| l.colour[0] == 0.0 && l.colour[1] > 0.0);
         match green {
             Some(l) => run.push(l.colour[1]),
             None => {
@@ -406,7 +431,7 @@ fn muzzle_lights_do_not_stack() {
     let look = ModLook { projectiles: Vec::new(), weapons: vec![Some(weapon); weapons] };
     let mut most = 0;
     play_with(&content, "fire-minigun", None, Some(look), |p, _, _, _| {
-        let n = p.look().unwrap().lights.iter().filter(|l| l.colour[0] == 0.0 && l.colour[1] > 0.0).count();
+        let n = p.look().unwrap().emitters.iter().filter(|l| l.colour[0] == 0.0 && l.colour[1] > 0.0).count();
         most = most.max(n);
     });
     assert_eq!(most, 1, "one worm fires: one muzzle light");
@@ -460,7 +485,7 @@ fn a_muzzle_light_belongs_to_its_worm() {
     let look = ModLook { projectiles: Vec::new(), weapons: vec![Some(weapon); weapons] };
     let mut seen = 0;
     play_with(&content, "fire-minigun", None, Some(look), |p, _, list, _| {
-        for l in &p.look().unwrap().lights {
+        for l in &p.look().unwrap().emitters {
             if l.colour[0] == 0.0 && l.colour[1] > 0.0 {
                 let body = list.occluders.iter().find(|o| o.worm == l.owner);
                 assert!(l.owner != 0 && body.is_some(), "owner {}", l.owner);

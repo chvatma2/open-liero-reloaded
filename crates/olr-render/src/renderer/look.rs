@@ -134,6 +134,13 @@ pub(super) struct LookState {
     pub(super) packed_lights: Vec<f32>,
     /// The placed lights this frame draws.
     pub(super) light_count: u32,
+    /// Play's glowing discs (plan 15c): [`super::gi::EMITTER_FLOATS`] each,
+    /// the first [`olr_look::MAX_EMITTERS`] of the frame's.
+    pub(super) emitters: wgpu::Buffer,
+    /// The packed discs, reused every frame.
+    pub(super) packed_emitters: Vec<f32>,
+    /// The discs this frame draws.
+    pub(super) emitter_count: u32,
 }
 
 const UINT_TEXTURE: wgpu::BindingType = wgpu::BindingType::Texture {
@@ -339,6 +346,13 @@ impl LookState {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let emitter_floats = olr_look::MAX_EMITTERS * super::gi::EMITTER_FLOATS;
+        let emitters = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("olr-render emitters"),
+            size: (emitter_floats * 4) as u64,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render composite"),
             entries: &[
@@ -427,6 +441,9 @@ impl LookState {
             packed: Vec::with_capacity(GLOBAL_FLOATS),
             packed_lights: Vec::with_capacity(LIGHT_FLOATS),
             light_count: 0,
+            emitters,
+            packed_emitters: Vec::with_capacity(emitter_floats),
+            emitter_count: 0,
         }
     }
 
@@ -654,6 +671,26 @@ impl LookState {
         write_bytes(queue, &t.solid, (&t.light_cells, t.level.0), wr);
     }
 
+    /// Packs the first [`olr_look::MAX_EMITTERS`] of `look`'s emitters as
+    /// discs (plan 15c): position, radius (0.5-16), reach (`f32::INFINITY`
+    /// unlimited) and radiance ([`olr_look::engine::disc_radiance`]). A disc
+    /// whose position or reach is not a number, or that gives no light, is
+    /// left out.
+    fn pack_emitters(&mut self, look: &LookFrame) {
+        let e = &mut self.packed_emitters;
+        e.clear();
+        for f in look.emitters.iter().take(olr_look::MAX_EMITTERS) {
+            let radius = if f.radius.is_finite() { f.radius.clamp(0.5, 16.0) } else { 1.0 };
+            let l = olr_look::engine::disc_radiance(f.colour, radius, f.reach);
+            let placed = f.pos.iter().all(|p| p.is_finite() && p.abs() < 1e6) && !f.reach.is_nan();
+            if !placed || l.iter().all(|&v| v <= 0.0) {
+                continue;
+            }
+            e.extend([f.pos[0], f.pos[1], radius, f.reach.max(0.0).min(1e9), l[0], l[1], l[2], 0.0]);
+        }
+        self.emitter_count = (e.len() / super::gi::EMITTER_FLOATS) as u32;
+    }
+
     /// Packs `look` (and where this frame draws) into the globals' floats.
     pub(super) fn pack(&mut self, look: &LookFrame, frame: &WorldFrame) {
         let p = &mut self.packed;
@@ -688,6 +725,7 @@ impl LookState {
                 *v = 0.0;
             }
         }
+        self.pack_emitters(look);
         let p = &mut self.packed;
         let mode = match look.mode {
             ViewMode::Lit => 0.0,

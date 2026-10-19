@@ -18,7 +18,8 @@ mod frame;
 pub use anim::{default_phase, splitmix64};
 pub use engine::worm_floor_of;
 pub use frame::{
-    FrameGroup, FrameLight, LookFrame, MAX_LIGHTS, MAX_SOAK, ViewMode, fade, light_at, srgb_to_linear,
+    FrameGroup, FrameLight, LookFrame, MAX_EMITTERS, MAX_LIGHTS, MAX_SOAK, ViewMode, fade, light_at,
+    srgb_to_linear,
 };
 
 /// An sRGB colour, as the files and the art store it.

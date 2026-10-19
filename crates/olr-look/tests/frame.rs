@@ -1,8 +1,8 @@
 //! `LookFrame` building, fade and culling (spec §Light sources, §Pipeline).
 
 use olr_look::{
-    Ambient, Animation, FrameLight, GlowColour, GlowGroup, Grade, LevelLook, Light, LookFrame, MAX_LIGHTS,
-    PlacedLight, Reach, ViewMode, engine, fade, light_at, srgb_to_linear,
+    Ambient, Animation, FrameLight, GlowColour, GlowGroup, Grade, LevelLook, Light, LookFrame, MAX_EMITTERS,
+    MAX_LIGHTS, PlacedLight, Reach, ViewMode, engine, fade, light_at, srgb_to_linear,
 };
 
 fn near(a: f32, b: f32) -> bool {
@@ -207,4 +207,51 @@ fn worm_floor_hues() {
     l.ambient = olr_look::Ambient { colour: [0x20, 0x30, 0x48], intensity: 10 };
     frame.begin(Some(&l), 0.0);
     assert!(near(frame.worm_floor, f));
+}
+
+/// Plan 15c ("My calls"): a disc's radiance makes its light at
+/// `d0 = max(reach / 3, 2 r)` in the open match today's point light there.
+#[test]
+fn disc_calibration_matches_todays_light() {
+    let open = |reach: f32| if reach.is_finite() { Reach::Pixels(reach as u16) } else { Reach::Unlimited };
+    for (reach, r) in [(40.0f32, 5.0f32), (300.0, 6.0)] {
+        let l = engine::disc_radiance([1.0; 3], r, reach)[0];
+        let d0 = (reach / 3.0).max(2.0 * r);
+        let disc = l * (2.0 * r / (std::f32::consts::TAU * d0)).min(1.0) * fade(d0, open(reach));
+        assert!((disc - fade(d0 - r, open(reach))).abs() < 1e-4, "reach {reach}, radius {r}: {disc}");
+    }
+    for (r, reach) in [(5.0, f32::INFINITY), (0.0, 40.0), (0.0, 0.0), (f32::NAN, f32::NAN), (6.0, 1e30)] {
+        let l = engine::disc_radiance([1.0, 0.5, 0.0], r, reach);
+        assert!(l.iter().all(|v| v.is_finite() && *v >= 0.0 && *v <= 64.0), "{r} {reach}: {l:?}");
+    }
+    assert_eq!(engine::disc_radius(40.0), 5.0);
+    assert_eq!(engine::disc_radius(1.0), 1.0);
+    assert_eq!(engine::disc_radius(4096.0), 6.0);
+    assert_eq!(engine::disc_radius(f32::INFINITY), 1.0);
+    assert_eq!(engine::disc_radius(f32::NAN), 1.0);
+    assert_eq!(engine::explosion_radius(0), 2.0);
+    assert_eq!(engine::explosion_radius(10), 7.0);
+    assert_eq!(engine::explosion_radius(500), 12.0);
+    assert_eq!(engine::explosion_radius(-5), 2.0);
+}
+
+#[test]
+fn emitters_cull_like_lights() {
+    let mut f = LookFrame::default();
+    f.begin(None, 0.0);
+    for i in 0..(MAX_EMITTERS + 300) {
+        let off = i % 30 == 7;
+        f.push_emitter(if off {
+            at(-5000.0, 0.0, 10.0)
+        } else {
+            at(i as f32 % 400.0, 50.0, 20.0 + i as f32)
+        });
+    }
+    f.push_emitter(at(-500.0, 100.0, 600.0));
+    f.cull([0.0, 0.0, 427.0, 192.0]);
+    assert_eq!(f.emitters.len(), MAX_EMITTERS);
+    assert!(f.emitters.iter().all(|l| l.pos[0] >= 0.0));
+    assert!(f.emitters.windows(2).all(|w| w[0].reach < w[1].reach), "order kept");
+    f.begin(None, 0.0);
+    assert!(f.emitters.is_empty(), "begin clears them");
 }
