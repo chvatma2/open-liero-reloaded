@@ -15,7 +15,10 @@ const COMMON: &str = include_str!("../look/common.wgsl");
 
 /// [`COMMON`] after the Rust constants the shaders share.
 pub(super) fn common() -> String {
-    format!("const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\n{COMMON}", olr_look::MAX_SOAK)
+    format!(
+        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\n{COMMON}",
+        olr_look::MAX_SOAK
+    )
 }
 
 /// Groups in the globals (a group map value is one byte, 0 none).
@@ -57,10 +60,18 @@ pub(super) struct LookTextures {
 pub(super) const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// World pixels the light grid reaches past the world target on every side
-/// (`LIGHT_PAD` in the shaders): the soak (up to [`olr_look::MAX_SOAK`]) and
-/// a blur of up to 4 never see its edge, so the light never depends on the
-/// camera.
-pub(super) const LIGHT_PAD: u32 = olr_look::MAX_SOAK as u32 + 4;
+/// (`LIGHT_PAD` in the shaders): the soak (up to [`olr_look::MAX_SOAK`]), a
+/// blur of up to 4 and the bloom ([`BLOOM_RADIUS`]) never see its edge, so
+/// the light never depends on the camera.
+pub(super) const LIGHT_PAD: u32 = olr_look::MAX_SOAK as u32 + 4 + BLOOM_RADIUS as u32;
+
+/// The bloom's reach, world pixels (plan 15c's glare): a Gaussian of a
+/// third of it each way.
+pub(super) const BLOOM_RADIUS: i32 = 12;
+
+/// How much of the light above 1 the bloom adds back, spread (plan 15c; a
+/// starting value judged on the day Castle Strike).
+pub(super) const BLOOM_STRENGTH: f32 = 0.6;
 
 /// One world target's look passes: the light grid (gathered into 0, soaked
 /// into solids across into 1 and down into 2, blurred across into 0 and
@@ -72,6 +83,11 @@ pub(super) struct LitTarget {
     pub(super) views: [wgpu::TextureView; 3],
     /// The sum pass's, the across blur's (reads 2) and the down blur's (reads 0).
     pub(super) binds: [wgpu::BindGroup; 3],
+    /// The bloom (plan 15c): the down blur writes the light above 1 into 0,
+    /// spread across into 1 and down into 0, which the composite adds.
+    pub(super) bloom_views: [wgpu::TextureView; 2],
+    /// The across spread's (reads 0) and the down spread's (reads 1).
+    pub(super) bloom_binds: [wgpu::BindGroup; 2],
     /// The across soak's (reads 0) and the down soak's (reads 1).
     pub(super) soak_binds: [wgpu::BindGroup; 2],
     pub(super) composite_bind: wgpu::BindGroup,
@@ -90,6 +106,8 @@ pub(super) struct LookState {
     pub(super) sum_pipeline: wgpu::RenderPipeline,
     pub(super) blur_h_pipeline: wgpu::RenderPipeline,
     pub(super) blur_v_pipeline: wgpu::RenderPipeline,
+    pub(super) bloom_h_pipeline: wgpu::RenderPipeline,
+    pub(super) bloom_v_pipeline: wgpu::RenderPipeline,
     pub(super) composite_pipeline: wgpu::RenderPipeline,
     pub(super) soak_h_pipeline: wgpu::RenderPipeline,
     pub(super) soak_v_pipeline: wgpu::RenderPipeline,
@@ -119,6 +137,8 @@ pub(super) struct LookState {
     pub(super) packed_emitters: Vec<f32>,
     /// The discs this frame draws.
     pub(super) emitter_count: u32,
+    /// Whether the bloom is added (tests turn it off: `Renderer::set_bloom`).
+    pub(super) bloom: bool,
 }
 
 const UINT_TEXTURE: wgpu::BindingType = wgpu::BindingType::Texture {
@@ -325,10 +345,11 @@ impl LookState {
                 entry(2, frag, FLOAT_TEXTURE),
                 entry(3, frag, FLOAT_TEXTURE),
                 entry(4, frag, UINT_TEXTURE),
+                entry(5, frag, FLOAT_TEXTURE),
             ],
         });
         let light_source = format!("{}\n{}", common(), include_str!("../look/light.wgsl"));
-        let light = |fs: &str| {
+        let light_to = |fs: &str, targets: &[(wgpu::TextureFormat, Option<wgpu::BlendState>)]| {
             pipeline(
                 device,
                 "olr-render light",
@@ -336,12 +357,14 @@ impl LookState {
                 ("vs_full", fs),
                 &[Some(&light_layout)],
                 &[],
-                &[(LIGHT_FORMAT, None)],
+                targets,
                 wgpu::PrimitiveTopology::TriangleList,
             )
         };
-        let (sum_pipeline, blur_h_pipeline, blur_v_pipeline) =
-            (light("fs_sum"), light("fs_blur_h"), light("fs_blur_v"));
+        let light = |fs: &str| light_to(fs, &[(LIGHT_FORMAT, None)]);
+        let (sum_pipeline, blur_h_pipeline) = (light("fs_sum"), light("fs_blur_h"));
+        let blur_v_pipeline = light_to("fs_blur_v", &[(LIGHT_FORMAT, None), (LIGHT_FORMAT, None)]);
+        let (bloom_h_pipeline, bloom_v_pipeline) = (light("fs_bloom_h"), light("fs_bloom_v"));
         let composite_pipeline = pipeline(
             device,
             "olr-render composite",
@@ -383,6 +406,8 @@ impl LookState {
             sum_pipeline,
             blur_h_pipeline,
             blur_v_pipeline,
+            bloom_h_pipeline,
+            bloom_v_pipeline,
             composite_pipeline,
             soak_h_pipeline,
             soak_v_pipeline,
@@ -402,6 +427,7 @@ impl LookState {
             emitters,
             packed_emitters: Vec::with_capacity(emitter_floats),
             emitter_count: 0,
+            bloom: true,
         }
     }
 
@@ -457,6 +483,9 @@ impl LookState {
         };
         // The sum reads nothing; it is bound to a grid it does not write.
         let binds = [light_bind(&views[1]), light_bind(&views[2]), light_bind(&views[0])];
+        let bloom = [0, 1].map(|_| make("olr-render bloom", grid, LIGHT_FORMAT));
+        let bloom_views = bloom.each_ref().map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
+        let bloom_binds = [light_bind(&bloom_views[0]), light_bind(&bloom_views[1])];
         let soak_bind = |src: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("olr-render soak"),
@@ -486,7 +515,14 @@ impl LookState {
         let composite_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render composite"),
             layout: &self.composite_layout,
-            entries: &[uniform(), tex(1, albedo), tex(2, shade), tex(3, &views[1]), tex(4, &occluder_view)],
+            entries: &[
+                uniform(),
+                tex(1, albedo),
+                tex(2, shade),
+                tex(3, &views[1]),
+                tex(4, &occluder_view),
+                tex(5, &bloom_views[0]),
+            ],
         });
         let lit = make("olr-render lit", texels, WORLD_FORMAT);
         let lit_view = lit.create_view(&wgpu::TextureViewDescriptor::default());
@@ -504,6 +540,8 @@ impl LookState {
             light,
             views,
             binds,
+            bloom_views,
+            bloom_binds,
             soak_binds,
             composite_bind,
             occluder_view,
@@ -691,7 +729,7 @@ impl LookState {
             mode,
             look.groups.len().min(GROUPS) as f32,
             f32::from(look.light_soak.min(olr_look::MAX_SOAK)),
-            0.0,
+            if self.bloom { BLOOM_STRENGTH } else { 0.0 },
         ]);
         let [r, g, b] = look.solid_floor;
         p.extend([r, g, b, 0.0]);
@@ -759,6 +797,14 @@ impl Renderer {
     pub fn reset_light_history(&mut self) {
         if let Some(t) = self.look.as_ref().and_then(|l| l.textures.as_ref()) {
             t.gi.reset();
+        }
+    }
+
+    /// Turns the bloom off or on (tests: a picture with and without it).
+    #[doc(hidden)]
+    pub fn set_bloom(&mut self, on: bool) {
+        if let Some(l) = self.look.as_mut() {
+            l.bloom = on;
         }
     }
 

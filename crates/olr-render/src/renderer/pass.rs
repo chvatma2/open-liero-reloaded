@@ -166,20 +166,27 @@ impl Renderer {
                 let discs = (&state.emitters, state.emitter_count);
                 tex.gi.encode(&mut encoder, &state.gi, casting, &lt.occluder_bind, discs);
             }
-            let passes = [
-                (&lt.views[0], &state.sum_pipeline, &lt.binds[0]),
-                (&lt.views[1], &state.soak_h_pipeline, &lt.soak_binds[0]),
-                (&lt.views[2], &state.soak_v_pipeline, &lt.soak_binds[1]),
-                (&lt.views[0], &state.blur_h_pipeline, &lt.binds[1]),
-                (&lt.views[1], &state.blur_v_pipeline, &lt.binds[2]),
-                (&lt.lit_view, &state.composite_pipeline, &lt.composite_bind),
-            ];
-            for (view, pipeline, bind) in passes {
-                let mut pass = begin(&mut encoder, "olr-render look", view, None);
+            let full = |encoder: &mut wgpu::CommandEncoder, view, pipeline, bind| {
+                let mut pass = begin(encoder, "olr-render look", view, None);
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, bind, &[]);
                 pass.draw(0..3, 0..1);
+            };
+            full(&mut encoder, &lt.views[0], &state.sum_pipeline, &lt.binds[0]);
+            full(&mut encoder, &lt.views[1], &state.soak_h_pipeline, &lt.soak_binds[0]);
+            full(&mut encoder, &lt.views[2], &state.soak_v_pipeline, &lt.soak_binds[1]);
+            full(&mut encoder, &lt.views[0], &state.blur_h_pipeline, &lt.binds[1]);
+            {
+                // The toned light and the light above 1 (plan 15c's bloom).
+                let mut pass =
+                    begin_two(&mut encoder, "olr-render look", &lt.views[1], &lt.bloom_views[0], None);
+                pass.set_pipeline(&state.blur_v_pipeline);
+                pass.set_bind_group(0, &lt.binds[2], &[]);
+                pass.draw(0..3, 0..1);
             }
+            full(&mut encoder, &lt.bloom_views[1], &state.bloom_h_pipeline, &lt.bloom_binds[0]);
+            full(&mut encoder, &lt.bloom_views[0], &state.bloom_v_pipeline, &lt.bloom_binds[1]);
+            full(&mut encoder, &lt.lit_view, &state.composite_pipeline, &lt.composite_bind);
         }
         {
             let mut pass = begin(&mut encoder, "olr-render upscale", target, stamp(None, Some(1)));

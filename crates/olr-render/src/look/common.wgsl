@@ -13,7 +13,7 @@ struct LookGlobals {
     frame: vec4<f32>,
     // level width, height (world px), art scale, glow-light cell (world px)
     level: vec4<f32>,
-    // view mode (0 lit, 1 full bright, 2 light only), group count, light soak (world px), 0
+    // view mode (0 lit, 1 full bright, 2 light only), group count, light soak (world px), bloom strength (plan 15c)
     mode: vec4<f32>,
     // rgb solid floor (linear), 0
     solid: vec4<f32>,
@@ -31,7 +31,8 @@ struct LookGlobals {
 };
 
 // LIGHT_PAD (world pixels the light grid reaches past the world target on
-// every side) and MAX_SOAK are prepended from the Rust constants.
+// every side), MAX_SOAK and BLOOM_RADIUS are prepended from the Rust
+// constants.
 
 const TAU: f32 = 6.2831853;
 

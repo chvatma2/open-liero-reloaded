@@ -192,6 +192,12 @@ fn disc_calibration_matches_todays_light() {
         let l = engine::disc_radiance([1.0, 0.5, 0.0], r, reach);
         assert!(l.iter().all(|v| v.is_finite() && *v >= 0.0 && *v <= 64.0), "{r} {reach}: {l:?}");
     }
+    // A reach no farther than twice the radius still lights (the
+    // calibration point stays inside the reach).
+    for (r, reach) in [(2.0, 4.0), (1.0, 2.0), (6.0, 8.0)] {
+        let l = engine::disc_radiance([1.0; 3], r, reach)[0];
+        assert!(l > 0.0 && l <= 64.0, "{r} {reach}: {l}");
+    }
     assert_eq!(engine::disc_radius(40.0), 5.0);
     assert_eq!(engine::disc_radius(1.0), 1.0);
     assert_eq!(engine::disc_radius(4096.0), 6.0);

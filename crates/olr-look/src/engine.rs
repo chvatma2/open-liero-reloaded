@@ -88,15 +88,17 @@ const MAX_RADIANCE: f32 = 64.0;
 
 /// The radiance of a glowing disc of `radius` and `reach` whose colour
 /// (linear, × intensity × animation) is `colour` (plan 15c, "My calls"):
-/// calibrated so its light at `d0 = max(reach / 3, 2 radius)` in the open
-/// equals today's point light there. A disc lights `L · min(1, 2r / (TAU
+/// calibrated so its light at `d0 = max(reach / 3, 2 radius)` (at most
+/// halfway from the disc's edge to its reach) in the open equals today's
+/// point light there. A disc lights `L · min(1, 2r / (TAU
 /// d0)) · fade(d0)` (the share of directions it covers); a point light
 /// lit `colour · fade(d0 − r)`. Always finite, at most 64 × the colour; an
 /// unlimited reach is calibrated at `2 radius`.
 pub fn disc_radiance(colour: [f32; 3], radius: f32, reach: f32) -> [f32; 3] {
     let r = if radius.is_finite() { radius.max(0.5) } else { 1.0 };
     let reach = if reach.is_nan() { 0.0 } else { reach };
-    let d0 = if reach.is_finite() { (reach / 3.0).max(2.0 * r) } else { 2.0 * r };
+    // Within the reach: no farther than halfway from the disc's edge to it.
+    let d0 = if reach.is_finite() { (reach / 3.0).max(2.0 * r).min((r + reach) / 2.0) } else { 2.0 * r };
     let share = (2.0 * r / (core::f32::consts::TAU * d0)).min(1.0);
     let (now, disc) = (fade_px(d0 - r, reach), share * fade_px(d0, reach));
     let k = if disc > 1e-12 { (now / disc).min(MAX_RADIANCE) } else { 0.0 };

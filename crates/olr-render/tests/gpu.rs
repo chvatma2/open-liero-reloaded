@@ -401,7 +401,7 @@ fn look_ambient_darkens() {
     let look = dim(0.3);
     let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), size);
     let (grid, light) = gpu.read_light(&r).expect("a light grid");
-    assert_eq!(grid.origin, (3, 13), "the frame's origin less the light grid's pad (16)");
+    assert_eq!(grid.origin, (-9, 1), "the frame's origin less the light grid's pad (28)");
     assert!(light.iter().all(|c| (c[0] - 0.3).abs() < 1e-3), "ambient everywhere");
     let glow = map.glow().unwrap();
     let mut worst = 0i32;
@@ -1123,6 +1123,8 @@ fn lit_worms(
     let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
     r.upload_images(&[white_image()]);
     r.set_lighting(true);
+    // Plan 15b's shading, exactly: the glare (plan 15c) is tested apart.
+    r.set_bloom(false);
     r.upload_terrain(map);
     let mut look = dim(0.05);
     look.worm_floor = [0.2; 3];
@@ -1733,4 +1735,107 @@ fn regions_follow_glow_edits() {
         let img = picture(&gpu, &mut r, &map, &anim(i));
         assert_eq!(red_at(&img, 21, 19), red_at(&img, 61, 21), "clock {i}: one region");
     }
+}
+
+/// Plan 15c ("My calls"): a lit level whose light never exceeds 1 draws as
+/// before, bloom on: the composite model texel for texel.
+#[test]
+fn a_dim_level_draws_as_before() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |x, y| x == 50 || y >= 30);
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    let mut look = dim(0.7);
+    look.max_light = 2.0;
+    look.light_soak = 4;
+    let mut l = list(View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
+    l.map = (100, 40);
+    let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), (200, 80));
+    for (x, y) in [(10, 10), (49, 20), (50, 20), (51, 20), (80, 35), (99, 39)] {
+        let light = light_at(&gpu, &r, x, y);
+        let want = olr_render::shade_texel([128, 128, 128, 255], light, 0.0, false, &look.grade, 2.0);
+        let got = img.get(2 * x as u32, 2 * y as u32);
+        for (g, w) in [got.r, got.g, got.b].into_iter().zip(want) {
+            assert!(g.abs_diff(w) <= 1, "({x}, {y}): {got:?} against {want:?}");
+        }
+    }
+}
+
+/// A frame of a strong small disc in an open room, bloom on or off.
+fn glare(gpu: &Offscreen, view: View, bloom: bool) -> RgbaImage {
+    let map = room(200, 60, |_, _| false);
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.set_lighting(true);
+    r.set_bloom(bloom);
+    r.upload_terrain(&map);
+    let mut look = dim(0.05);
+    look.max_light = 2.0;
+    look.emitters.push(olr_look::FrameLight { colour: [6.0; 3], ..disc([100.5, 30.5], 2.0, 4.0) });
+    let mut l = list(view);
+    l.map = (200, 60);
+    gpu.render_lit_to_image(&mut r, &l, Some(&look), ((view.w * 2.0) as u32, (view.h * 2.0) as u32))
+}
+
+/// Plan 15c: light above 1 glows past where it lights.
+#[test]
+fn bright_light_blooms() {
+    let Some(gpu) = offscreen() else { return };
+    let view = View { x: 50.0, y: 0.0, w: 100.0, h: 60.0 };
+    let (on, off) = (glare(&gpu, view, true), glare(&gpu, view, false));
+    // 6 px past the disc's lit area (radius 2 + reach 4).
+    let (a, b) = (on.get(2 * 62, 2 * 30), off.get(2 * 62, 2 * 30));
+    assert!(a.r > b.r, "bloom: {a:?} against {b:?}");
+    // Far away, nothing.
+    assert_eq!(on.get(2 * 5, 2 * 5), off.get(2 * 5, 2 * 5));
+}
+
+/// Plan 15c: bloom is steady and does not depend on the camera.
+#[test]
+fn bloom_is_steady_and_camera_independent() {
+    let Some(gpu) = offscreen() else { return };
+    let view = View { x: 50.0, y: 0.0, w: 100.0, h: 60.0 };
+    let a = glare(&gpu, view, true);
+    assert_eq!(a.as_raw(), glare(&gpu, view, true).as_raw(), "steady");
+    let moved = glare(&gpu, View { x: 57.0, ..view }, true);
+    for y in 0..120 {
+        for x in 0..(2 * 93) {
+            assert_eq!(a.get(x + 14, y), moved.get(x, y), "({x}, {y})");
+        }
+    }
+}
+
+/// Plan 15c: the glare never takes a worm below its floor nor hides its
+/// lit side (plan 15b).
+#[test]
+fn bloom_keeps_the_worm_floor_and_lit_side() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(50, 30, |_, _| false);
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.upload_images(&[white_image()]);
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    let mut look = dim(0.05);
+    look.worm_floor = [0.2; 3];
+    look.max_light = 2.0;
+    look.emitters.push(lamp([14.5, 15.0], 30.0));
+    let mut l = list(View { x: 0.0, y: 0.0, w: 50.0, h: 30.0 });
+    l.map = (50, 30);
+    push_bodies(&mut l, &[([20.0, 12.0, 4.0, 6.0], 1)]);
+    l.sprite(
+        Layer::Worms,
+        Sprite {
+            atlas: AtlasId(0),
+            src: Rect { x: 0, y: 0, w: 4, h: 6 },
+            pos: [20.0, 12.0],
+            size: [4.0, 6.0],
+            flip: false,
+            tint: Rgba::rgb(255, 255, 255),
+            shade: olr_scene::Shade::WORM,
+        },
+    );
+    let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), (100, 60));
+    let (left, right) = (column(&img, 20, 12..18), column(&img, 23, 12..18));
+    let floor = f32::from(white_under([0.2; 3]));
+    assert!(right >= floor - 1.0 && left >= right + 30.0, "{left} {right} {floor}");
 }

@@ -19,6 +19,25 @@ pub fn linear_to_srgb(c: f32) -> u8 {
     (s * 255.0 + 0.5).floor().clamp(0.0, 255.0) as u8
 }
 
+/// The tone curve (plan 15c, "My calls"): light `v` as the light grid
+/// keeps it, the identity up to 1, then a shoulder rising smoothly
+/// towards the white point `max_light` (`m`): `1 + (m − 1)(1 − e^(−(v −
+/// 1)/(m − 1)))`, slope 1 at 1. A white point of 1 or less clips at 1;
+/// NaN is 0. `light.wgsl`'s `tone` is the same.
+pub fn tone(v: f32, max_light: f32) -> f32 {
+    if v.is_nan() {
+        return 0.0;
+    }
+    if v <= 1.0 {
+        return v;
+    }
+    let k = max_light - 1.0;
+    if k.is_nan() || k <= 0.0 {
+        return 1.0;
+    }
+    1.0 + k * (1.0 - (-(v - 1.0) / k).exp())
+}
+
 /// The grade on a linear colour: exposure (`2^(stops)` given as the
 /// multiplier), contrast around 0.5, saturation around Rec. 709 luma, then
 /// the tint (linear).
@@ -62,6 +81,29 @@ pub fn shade_texel(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Plan 15c ("My calls"): the curve is the identity up to 1 and
+    /// compresses the light above it towards `max_light`, its white point.
+    #[test]
+    fn tone_is_the_identity_up_to_one() {
+        for m in [1.0, 1.5, 2.0] {
+            for i in 0..=100 {
+                let v = i as f32 / 100.0;
+                assert_eq!(tone(v, m), v, "{v} {m}");
+            }
+            let mut last = 0.0;
+            for i in 0..=2000 {
+                let v = i as f32 / 100.0;
+                let t = tone(v, m);
+                assert!(t >= last && t <= m, "{v} {m}: {t}");
+                last = t;
+            }
+            // Continuous with slope 1 at 1.
+            assert!((tone(1.0 + 1e-3, m) - (1.0 + 1e-3)).abs() < 1e-5 || m == 1.0);
+        }
+        assert_eq!(tone(5.0, 1.0), 1.0, "a white point of 1 clips");
+        assert!(tone(1e9, 2.0) <= 2.0 && tone(f32::NAN, 2.0) == 0.0);
+    }
 
     #[test]
     fn shade_texel_table() {

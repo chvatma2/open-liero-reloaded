@@ -1,14 +1,17 @@
 // The composite (plan 15a Task 10, spec §The picture): each world-target
 // texel's albedo lit by the light grid sampled at its centre, never below
 // its self-light nor its floor (the solid floor for blood and gibs, as rock;
-// the worm floor for worms, plan 15b), graded; a marker shows its albedo. Linear light, sRGB
-// bytes in and out.
+// the worm floor for worms, plan 15b), with the bloom added (plan 15c),
+// graded; a marker shows its albedo. Linear light, sRGB bytes in and out.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(0) @binding(1) var albedo_tex: texture_2d<f32>;
 @group(0) @binding(2) var shade_tex: texture_2d<f32>;
 @group(0) @binding(3) var light_tex: texture_2d<f32>;
 @group(0) @binding(4) var occluder_tex: texture_2d<u32>;
+// The bloom (plan 15c): the light above 1, spread; added before the grade
+// at `look.mode.w`'s strength.
+@group(0) @binding(5) var bloom_tex: texture_2d<f32>;
 
 @vertex
 fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
@@ -41,6 +44,19 @@ fn light_at(g: vec2<f32>) -> vec3<f32> {
     let b = textureLoad(light_tex, clamp(i0 + vec2<i32>(1, 0), vec2<i32>(0), size - vec2<i32>(1)), 0).rgb;
     let c = textureLoad(light_tex, clamp(i0 + vec2<i32>(0, 1), vec2<i32>(0), size - vec2<i32>(1)), 0).rgb;
     let d = textureLoad(light_tex, clamp(i0 + vec2<i32>(1, 1), vec2<i32>(0), size - vec2<i32>(1)), 0).rgb;
+    return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+}
+
+// The bloom at light-grid coordinate `g`, bilinear, clamped.
+fn bloom_at(g: vec2<f32>) -> vec3<f32> {
+    let size = vec2<i32>(textureDimensions(bloom_tex));
+    let g0 = floor(g);
+    let f = g - g0;
+    let i0 = vec2<i32>(g0);
+    let a = textureLoad(bloom_tex, clamp(i0, vec2<i32>(0), size - vec2<i32>(1)), 0).rgb;
+    let b = textureLoad(bloom_tex, clamp(i0 + vec2<i32>(1, 0), vec2<i32>(0), size - vec2<i32>(1)), 0).rgb;
+    let c = textureLoad(bloom_tex, clamp(i0 + vec2<i32>(0, 1), vec2<i32>(0), size - vec2<i32>(1)), 0).rgb;
+    let d = textureLoad(bloom_tex, clamp(i0 + vec2<i32>(1, 1), vec2<i32>(0), size - vec2<i32>(1)), 0).rgb;
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
@@ -113,7 +129,7 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         least = look.solid.rgb;
     }
     let l = max(max(min(here, vec3<f32>(look.ambient.w)), vec3<f32>(shade.x)), least);
-    var c = a * l * look.grade.x;
+    var c = (a * l + bloom_at(g) * look.mode.w) * look.grade.x;
     c = (c - vec3<f32>(0.5)) * look.grade.y + vec3<f32>(0.5);
     let luma = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
     c = vec3<f32>(luma) + (c - vec3<f32>(luma)) * look.grade.z;

@@ -1,8 +1,10 @@
 // The view's light grid (plan 15a Task 10): one texel per world pixel of
 // the world target. `fs_sum` gathers the light (the ambient and the glow
 // light, the only light model since plan 15c), `fs_blur_h` and `fs_blur_v`
-// blur it by the level's softness, and `fs_blur_v` also caps it at max
-// light and bands it into light steps.
+// blur it by the level's softness, and `fs_blur_v` also tones it towards
+// max light and bands it into light steps, and writes the light the tone
+// took off (above 1) for the bloom, which `fs_bloom_h` and `fs_bloom_v`
+// spread (plan 15c's glare).
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(0) @binding(1) var src: texture_2d<f32>;
@@ -82,13 +84,74 @@ fn fs_blur_h(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     return vec4<f32>(blur(vec2<i32>(p.xy), vec2<i32>(1, 0)), 1.0);
 }
 
+// The tone curve (plan 15c, `olr_render::tone`): the identity up to 1,
+// then a shoulder towards the white point `m`; a white point of 1 clips.
+fn tone(v: f32, m: f32) -> f32 {
+    if v <= 1.0 {
+        return v;
+    }
+    let k = m - 1.0;
+    if k <= 0.0 {
+        return 1.0;
+    }
+    return 1.0 + k * (1.0 - exp(-(v - 1.0) / k));
+}
+
+struct Toned {
+    @location(0) light: vec4<f32>,
+    // the light above 1 (soft-saturated), the bloom's source
+    @location(1) excess: vec4<f32>,
+};
+
 @fragment
-fn fs_blur_v(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+fn fs_blur_v(@builtin(position) p: vec4<f32>) -> Toned {
     let max_light = look.ambient.w;
-    var c = min(blur(vec2<i32>(p.xy), vec2<i32>(0, 1)), vec3<f32>(max_light));
+    let u = max(blur(vec2<i32>(p.xy), vec2<i32>(0, 1)), vec3<f32>(0.0));
+    var c = vec3<f32>(tone(u.r, max_light), tone(u.g, max_light), tone(u.b, max_light));
     let steps = look.grade.w;
     if steps > 0.0 {
         c = floor(c / max_light * steps + vec3<f32>(0.5)) / steps * max_light;
     }
-    return vec4<f32>(max(c, vec3<f32>(0.0)), 1.0);
+    var out: Toned;
+    out.light = vec4<f32>(max(c, vec3<f32>(0.0)), 1.0);
+    // Soft-saturated: a source far above 1 (a disc's own cells) glows, not
+    // a blot.
+    out.excess = vec4<f32>(vec3<f32>(1.0) - exp(-max(u - vec3<f32>(1.0), vec3<f32>(0.0))), 1.0);
+    return out;
+}
+
+// The bloom's spread along `dir`: a Gaussian of BLOOM_RADIUS world pixels;
+// an air texel gathers only the air before the first rock each way, so no
+// glare crosses a wall however thin.
+fn bloom(p: vec2<i32>, dir: vec2<i32>) -> vec3<f32> {
+    let size = vec2<i32>(textureDimensions(src));
+    let sigma = f32(BLOOM_RADIUS) / 3.0;
+    var acc = textureLoad(src, p, 0).rgb;
+    var n = 1.0;
+    let air = !solid_px(world_of(p));
+    for (var side = -1; side <= 1; side += 2) {
+        for (var i = 1; i <= BLOOM_RADIUS; i++) {
+            let q = clamp(p + dir * (i * side), vec2<i32>(0), size - vec2<i32>(1));
+            if air && solid_px(world_of(q)) {
+                break;
+            }
+            let w = exp(-f32(i * i) / (2.0 * sigma * sigma));
+            acc += textureLoad(src, q, 0).rgb * w;
+        }
+    }
+    // Normalised as the whole kernel, so a lone bright texel spreads.
+    for (var i = 1; i <= BLOOM_RADIUS; i++) {
+        n += 2.0 * exp(-f32(i * i) / (2.0 * sigma * sigma));
+    }
+    return acc / n;
+}
+
+@fragment
+fn fs_bloom_h(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(bloom(vec2<i32>(p.xy), vec2<i32>(1, 0)), 1.0);
+}
+
+@fragment
+fn fs_bloom_v(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(bloom(vec2<i32>(p.xy), vec2<i32>(0, 1)), 1.0);
 }
