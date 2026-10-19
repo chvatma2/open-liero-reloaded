@@ -923,48 +923,6 @@ fn a_clear_solid_takes_no_soak_or_floor() {
 }
 
 #[test]
-fn culling_with_the_cull_pad_changes_no_light() {
-    let Some(gpu) = offscreen() else { return };
-    // Rock straddling the view's left and top edges, which soaks the light
-    // of the air beyond them.
-    let map = room(300, 120, |x, y| {
-        (98..=103).contains(&x) && (30..90).contains(&y) || (18..=23).contains(&y) && x > 120
-    });
-    let view = View { x: 100.0, y: 20.0, w: 100.0, h: 60.0 };
-    // Small lamps beyond the edges, their reach ending 1 to 30 px outside.
-    let lights: Vec<_> = (1..=30)
-        .flat_map(|d| {
-            let d = d as f32;
-            [lamp([100.0 - d - 5.0, 40.5 + d], 3.0), lamp([130.5 + 2.0 * d, 20.0 - d - 5.0], 3.0)]
-        })
-        .collect();
-    let set = |l: &mut olr_look::LookFrame| {
-        l.softness = 4;
-        l.light_soak = olr_look::MAX_SOAK;
-    };
-    let all = lit_frame_with(&gpu, &map, view, &lights, set);
-    let culled = {
-        let mut r = gpu.renderer(RenderSettings::default());
-        r.set_lighting(true);
-        r.upload_terrain(&map);
-        let mut look = dim(0.1);
-        set(&mut look);
-        look.emitters.extend_from_slice(&lights);
-        let p = olr_render::LIGHT_CULL_PAD;
-        look.cull([view.x - p, view.y - p, view.w + 2.0 * p, view.h + 2.0 * p]);
-        let mut l = list(view);
-        l.map = (300, 120);
-        gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
-        r
-    };
-    for y in 20..80 {
-        for x in 100..200 {
-            assert_eq!(light_at(&gpu, &all, x, y), light_at(&gpu, &culled, x, y), "({x}, {y})");
-        }
-    }
-}
-
-#[test]
 fn glow_light_past_the_device_crop_is_open() {
     if offscreen().is_none() {
         return;
@@ -1470,4 +1428,174 @@ fn an_off_view_flash_lights_the_view_the_same() {
             assert_eq!(light_at(&gpu, &off, x, y), light_at(&gpu, &on, x, y), "({x}, {y})");
         }
     }
+}
+
+/// [`room`] whose art is `art(x, y)` (front and back alike).
+fn painted_room(w: u32, h: u32, rock: impl Fn(u32, u32) -> bool, art: impl Fn(u32, u32) -> Rgba) -> ColorMap {
+    let cells =
+        (0..w * h).map(|i| if rock(i % w, i / w) { Material::Rock } else { Material::Background }).collect();
+    let t = Terrain::from_grid(&MaterialGrid::from_cells(w, h, cells).unwrap());
+    let theme = ThemeArt { holes: Vec::new(), green_mask: None, front_tile: solid(1, 1, Rgba::BLACK) };
+    let mut img = RgbaImage::new(w, h);
+    for y in 0..h {
+        for x in 0..w {
+            img.set(x, y, art(x, y));
+        }
+    }
+    ColorMap::new(&t, &img, &img, 1, theme)
+}
+
+/// `n` lit frames of `map` over `view` on one renderer, each with
+/// `emitters` and the look `set` changes (ambient 0.1, no light cap).
+fn frames(
+    gpu: &Offscreen,
+    map: &ColorMap,
+    view: View,
+    emitters: &[olr_look::FrameLight],
+    n: usize,
+    set: impl Fn(&mut olr_look::LookFrame),
+) -> Renderer {
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.set_lighting(true);
+    r.upload_terrain(map);
+    let mut look = dim(0.1);
+    look.max_light = 1e4;
+    look.emitters.extend_from_slice(emitters);
+    set(&mut look);
+    let mut l = list(view);
+    l.map = (map.material().width(), map.material().height());
+    for _ in 0..n {
+        gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
+    }
+    r
+}
+
+/// An L-shaped corridor in rock: across at y 10..20 from x 10 to 80, then
+/// down at x 70..80 to y 55.
+fn corridor(art: impl Fn(u32, u32) -> Rgba) -> ColorMap {
+    let open = |x: u32, y: u32| {
+        (10..80).contains(&x) && (10..20).contains(&y) || (70..80).contains(&x) && (10..55).contains(&y)
+    };
+    painted_room(100, 60, |x, y| !open(x, y), art)
+}
+
+const WHITE: Rgba = Rgba::rgb(255, 255, 255);
+
+/// Plan 15c: light bounces round a corner no ray from the source reaches.
+#[test]
+fn light_bounces_round_a_corner() {
+    let Some(gpu) = offscreen() else { return };
+    let map = corridor(|_, _| WHITE);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 };
+    let flash = [olr_look::FrameLight { colour: [4.0; 3], ..disc([20.5, 15.5], 3.0, 200.0) }];
+    let flat = frames(&gpu, &map, view, &flash, 30, |l| l.bounce = 0.0);
+    let v = light_at(&gpu, &flat, 75, 50)[0];
+    assert!((v - 0.1).abs() < 1e-3, "no bounce: the ambient round the corner, {v}");
+    let lit = frames(&gpu, &map, view, &flash, 30, |l| l.bounce = 0.6);
+    let v = light_at(&gpu, &lit, 75, 50)[0];
+    assert!(v > 0.12, "bounced light round the corner: {v}");
+}
+
+/// Plan 15c: bounced light takes the colour of the wall it bounced off.
+#[test]
+fn bounce_tints_with_the_wall() {
+    let Some(gpu) = offscreen() else { return };
+    let map = corridor(|_, _| Rgba::rgb(255, 0, 0));
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 };
+    let flash = [olr_look::FrameLight { colour: [4.0; 3], ..disc([20.5, 15.5], 3.0, 200.0) }];
+    let r = frames(&gpu, &map, view, &flash, 30, |l| {
+        l.bounce = 0.6;
+        l.ambient = [0.0; 3];
+    });
+    let [red, green, _] = light_at(&gpu, &r, 75, 50);
+    assert!(red > 0.01 && red > 2.0 * green, "red bounce: {red} {green}");
+}
+
+/// Plan 15c, review focus 3: a closed white room's feedback converges.
+#[test]
+fn bounce_never_runs_away() {
+    let Some(gpu) = offscreen() else { return };
+    let map = painted_room(64, 40, |x, y| x < 2 || y < 2 || x >= 62 || y >= 38, |_, _| WHITE);
+    let view = View { x: 0.0, y: 0.0, w: 64.0, h: 40.0 };
+    let flash = [disc([32.5, 20.5], 2.0, 100.0)];
+    let direct = frames(&gpu, &map, view, &flash, 1, |l| l.bounce = 0.0);
+    let near = light_at(&gpu, &direct, 36, 20)[0];
+    for bounce in [0.6, 0.9, 5.0] {
+        let r = frames(&gpu, &map, view, &flash, 200, |l| l.bounce = bounce);
+        let (grid, light) = gpu.read_light(&r).unwrap();
+        let mut most = 0.0f32;
+        for (i, v) in light.iter().enumerate() {
+            assert!(v.iter().all(|c| c.is_finite()));
+            // Past the disc itself (its own cells hold its radiance).
+            let (x, y) = (
+                grid.origin.0 + (i as u32 % grid.size.0) as i32,
+                grid.origin.1 + (i as u32 / grid.size.0) as i32,
+            );
+            if (x as f32 + 0.5 - 32.5).hypot(y as f32 + 0.5 - 20.5) > 3.0 {
+                most = most.max(v[0]);
+            }
+        }
+        assert!(most < 4.0 * near, "bounce {bounce}: {most} against {near} at 2 px");
+    }
+}
+
+/// Plan 15c: a steady scene with bounce settles to the same bytes.
+#[test]
+fn bounce_settles_to_steady_bytes() {
+    let Some(gpu) = offscreen() else { return };
+    let map = corridor(|x, y| Rgba::rgb((x * 3) as u8, 200, (y * 4) as u8));
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 };
+    let flash = [disc([20.5, 15.5], 3.0, 200.0)];
+    let mut r = frames(&gpu, &map, view, &flash, 60, |l| l.bounce = 0.6);
+    let a = gpu.read_light(&r).unwrap().1;
+    let mut look = dim(0.1);
+    look.max_light = 1e4;
+    look.bounce = 0.6;
+    look.emitters.extend_from_slice(&flash);
+    let mut l = list(view);
+    l.map = (100, 60);
+    gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
+    assert_eq!(a, gpu.read_light(&r).unwrap().1);
+}
+
+/// Plan 15c (the user's request, 2026-10-19): bounced light never passes a
+/// wall one pixel thin.
+#[test]
+fn no_bounce_through_a_thin_wall() {
+    let Some(gpu) = offscreen() else { return };
+    let map = painted_room(100, 40, |x, y| x == 50 || y < 2 || y >= 38 || x < 2 || x >= 98, |_, _| WHITE);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    let flash = [olr_look::FrameLight { colour: [4.0; 3], ..disc([30.5, 20.5], 3.0, 200.0) }];
+    for bounce in [0.6, 0.9] {
+        let r = frames(&gpu, &map, view, &flash, 30, |l| l.bounce = bounce);
+        assert!(light_at(&gpu, &r, 49, 20)[0] > 0.2);
+        for y in (3..37).step_by(3) {
+            for x in [51, 52, 60, 80, 96] {
+                let v = light_at(&gpu, &r, x, y)[0];
+                assert!((v - 0.1).abs() < 1e-3, "bounce {bounce}: ({x}, {y}) {v}");
+            }
+        }
+    }
+}
+
+/// Plan 15c, review focus 4: a new level's light starts afresh, whatever
+/// the last level's history.
+#[test]
+fn a_new_level_starts_its_light_afresh() {
+    let Some(gpu) = offscreen() else { return };
+    let a = corridor(|_, _| WHITE);
+    let b = painted_room(80, 50, |x, y| y >= 40 || x == 30, |_, _| WHITE);
+    let flash = [disc([20.5, 15.5], 3.0, 200.0)];
+    let mut r = frames(&gpu, &a, View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 }, &flash, 30, |l| l.bounce = 0.6);
+    r.upload_terrain(&b);
+    let view = View { x: 0.0, y: 0.0, w: 80.0, h: 50.0 };
+    let mut look = dim(0.1);
+    look.max_light = 1e4;
+    look.bounce = 0.6;
+    look.emitters.extend_from_slice(&flash);
+    let mut l = list(view);
+    l.map = (80, 50);
+    gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
+    let fresh = frames(&gpu, &b, view, &flash, 1, |l| l.bounce = 0.6);
+    assert_eq!(gpu.read_light(&r).unwrap().1, gpu.read_light(&fresh).unwrap().1);
 }

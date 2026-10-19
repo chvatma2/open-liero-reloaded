@@ -16,7 +16,6 @@ mod probe;
 mod timing;
 
 pub use gi::{GI_CELL_BUDGET, gi_cell};
-pub use look::LIGHT_CULL_PAD;
 pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};
 pub use timing::{GpuTimes, gpu_times};
 

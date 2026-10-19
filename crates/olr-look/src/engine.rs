@@ -50,6 +50,11 @@ fn flash(colour: [u8; 3], intensity: u16, reach: u16, ms: u32) -> Light {
     }
 }
 
+/// How strongly rock and dirt reflect the light reaching them, times their
+/// colour (plan 15c: bounce). The renderer clamps it to 0-0.9 so the
+/// feedback always converges.
+pub const BOUNCE: f32 = 0.6;
+
 /// An explosion light's keys, ms: the presentation fits them to the
 /// explosion's life.
 pub const EXPLOSION_MS: u32 = 200;

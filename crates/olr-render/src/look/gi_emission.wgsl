@@ -31,6 +31,7 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     var solid = 0.0;
     var reach = 0.0;
     var n = 0.0;
+    var albedo = vec3<f32>(0.0);
     for (var dy = 0; dy < s; dy++) {
         for (var dx = 0; dx < s; dx++) {
             let w = cell * s + vec2<i32>(dx, dy);
@@ -39,11 +40,15 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
             }
             n += 1.0;
             let worm = !lit && worm_in(occluder_tex, look.occluders.xy, w) != 0u;
-            if worm || textureLoad(solid_tex, clamped(w, textureDimensions(solid_tex)), 0).r != 1u {
+            let art = clamped(w * a + vec2<i32>(a / 2), textureDimensions(glow_tex));
+            if worm {
                 solid += 1.0;
+            } else if textureLoad(solid_tex, clamped(w, textureDimensions(solid_tex)), 0).r != 1u {
+                // Rock and dirt reflect by their colour; a worm reflects nothing.
+                solid += 1.0;
+                albedo += to_linear(textureLoad(terrain_tex, clamped(art, textureDimensions(terrain_tex)), 0).rgb);
             }
             let v = textureLoad(groups_tex, clamped(w, textureDimensions(groups_tex)), 0).r;
-            let art = clamped(w * a + vec2<i32>(a / 2), textureDimensions(glow_tex));
             let g = textureLoad(glow_tex, art, 0).r;
             if g > 0.0 && v > 0u && v <= min(count, 255u) {
                 let info = look.group_info[v - 1u];
@@ -64,6 +69,7 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     }
     out.emission = vec4<f32>(em * k + disc, solid * k);
     out.reach = vec4<f32>(split(reach), 0.0, 0.0);
+    out.albedo = vec4<f32>(albedo / max(solid, 1.0), 1.0);
     return out;
 }
 

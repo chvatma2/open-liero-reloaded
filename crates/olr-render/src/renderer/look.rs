@@ -59,11 +59,6 @@ pub(super) const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16
 /// camera.
 pub(super) const LIGHT_PAD: u32 = olr_look::MAX_SOAK as u32 + 4;
 
-/// World pixels past the view a light must be kept when it reaches that
-/// far (`LookFrame::cull`'s padding): a culled light then lights nothing the
-/// view shows, whatever the camera.
-pub const LIGHT_CULL_PAD: f32 = (crate::MARGIN as u32 + LIGHT_PAD + 1) as f32;
-
 /// One world target's look passes: the light grid (gathered into 0, soaked
 /// into solids across into 1 and down into 2, blurred across into 0 and
 /// down, capped and banded, into 1) and the lit target the upscale reads.
@@ -626,7 +621,9 @@ impl LookState {
             f32::from(look.light_steps),
         ]);
         p.extend([lin(gr.tint[0]), lin(gr.tint[1]), lin(gr.tint[2]), f32::from(look.softness)]);
-        p.extend([frame.origin.0 as f32, frame.origin.1 as f32, frame.scale as f32, 0.0]);
+        // The bounce (plan 15c), clamped so the feedback converges.
+        let bounce = if look.bounce.is_finite() { look.bounce.clamp(0.0, 0.9) } else { 0.0 };
+        p.extend([frame.origin.0 as f32, frame.origin.1 as f32, frame.scale as f32, bounce]);
         p.extend([level.0 as f32, level.1 as f32, art_scale as f32, cell as f32]);
         self.pack_emitters(look);
         let p = &mut self.packed;
@@ -689,6 +686,15 @@ impl Renderer {
         }
         // The world target gains or loses its shade target.
         self.target = None;
+    }
+
+    /// Forgets the light's history (plan 15c: bounce reads the last frame's
+    /// light): the next lit frame starts afresh. `upload_terrain` and a
+    /// frame drawn without a look do it too.
+    pub fn reset_light_history(&mut self) {
+        if let Some(t) = self.look.as_ref().and_then(|l| l.textures.as_ref()) {
+            t.gi.reset();
+        }
     }
 
     /// Whether lighting is on ([`Renderer::set_lighting`]).

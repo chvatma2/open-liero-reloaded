@@ -101,18 +101,6 @@ fn at(x: f32, y: f32, reach: f32) -> FrameLight {
 }
 
 #[test]
-fn a_light_far_off_view_whose_reach_touches_it_is_kept() {
-    let mut f = LookFrame::default();
-    f.begin(None, 0.0);
-    f.push_emitter(at(-500.0, 100.0, 600.0));
-    f.push_emitter(at(-500.0, 100.0, 400.0));
-    f.push_emitter(at(10_000.0, 100.0, f32::INFINITY));
-    f.cull([0.0, 0.0, 427.0, 192.0]);
-    assert_eq!(f.emitters.len(), 2);
-    assert!(near(f.emitters[0].reach, 600.0) && f.emitters[1].reach.is_infinite());
-}
-
-#[test]
 fn light_at_applies_animation_and_ends() {
     let flash = Light {
         colour: [255, 0, 0],
@@ -215,23 +203,29 @@ fn disc_calibration_matches_todays_light() {
     assert_eq!(engine::explosion_radius(-5), 2.0);
 }
 
+/// Plan 15c: emitters are kept wherever they are (bounced light may reach
+/// the view from past their reach), the first [`MAX_EMITTERS`] in order.
 #[test]
-fn emitters_cull_like_lights() {
+fn emitters_past_the_cap_are_dropped() {
     let mut f = LookFrame::default();
     f.begin(None, 0.0);
     for i in 0..(MAX_EMITTERS + 300) {
-        let off = i % 30 == 7;
-        f.push_emitter(if off {
-            at(-5000.0, 0.0, 10.0)
-        } else {
-            at(i as f32 % 400.0, 50.0, 20.0 + i as f32)
-        });
+        f.push_emitter(at(-5000.0 + i as f32, 50.0, 20.0 + i as f32));
     }
-    f.push_emitter(at(-500.0, 100.0, 600.0));
-    f.cull([0.0, 0.0, 427.0, 192.0]);
     assert_eq!(f.emitters.len(), MAX_EMITTERS);
-    assert!(f.emitters.iter().all(|l| l.pos[0] >= 0.0));
     assert!(f.emitters.windows(2).all(|w| w[0].reach < w[1].reach), "order kept");
+    assert_eq!(f.emitters[0].pos[0], -5000.0, "far off any view, kept");
     f.begin(None, 0.0);
     assert!(f.emitters.is_empty(), "begin clears them");
+}
+
+/// Plan 15c: a lit level's light bounces at the engine's strength; a frame
+/// without a look has no bounce.
+#[test]
+fn bounce_is_the_engines_in_a_lit_level() {
+    let mut f = LookFrame::default();
+    f.begin(Some(&level()), 0.0);
+    assert_eq!(f.bounce, engine::BOUNCE);
+    f.begin(None, 0.0);
+    assert_eq!(f.bounce, 0.0);
 }

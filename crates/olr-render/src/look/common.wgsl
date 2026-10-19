@@ -9,7 +9,7 @@ struct LookGlobals {
     grade: vec4<f32>,
     // rgb tint (linear), softness (world pixels)
     tint: vec4<f32>,
-    // world frame origin x, y (world px), world target texels per world px, 0
+    // world frame origin x, y (world px), world target texels per world px, bounce (0-0.9; plan 15c)
     frame: vec4<f32>,
     // level width, height (world px), art scale, glow-light cell (world px)
     level: vec4<f32>,

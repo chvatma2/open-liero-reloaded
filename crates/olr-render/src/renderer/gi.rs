@@ -40,6 +40,9 @@ const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 // or Rg32Float target.
 const REACH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 const SEED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// Each cell's albedo (plan 15c: bounce): its rock and dirt's art colour,
+/// averaged, linear.
+const ALBEDO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// The dynamic layer's reach: unsplit f16 (max blending needs one value),
 /// 60 000 or more unlimited (plan 15c).
@@ -122,6 +125,9 @@ impl GiPipelines {
                 entry(2, frag, FLOAT),
                 entry(3, frag, FLOAT),
                 entry(4, frag, FLOAT),
+                entry(5, frag, FLOAT),
+                entry(6, frag, FLOAT),
+                entry(7, frag, super::UNIFORM),
             ],
         );
         let fluence_layout = layout("olr-render gi fluence", &[entry(0, frag, FLOAT)]);
@@ -141,7 +147,7 @@ impl GiPipelines {
         let make = |label, body: &str, fs, layout: &wgpu::BindGroupLayout, targets: &[_]| {
             make_with(label, body, fs, &[Some(layout)], targets)
         };
-        let two = [(FORMAT, None), (REACH_FORMAT, None)];
+        let three = [(FORMAT, None), (REACH_FORMAT, None), (ALBEDO_FORMAT, None)];
         let add = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::One,
             dst_factor: wgpu::BlendFactor::One,
@@ -172,7 +178,7 @@ impl GiPipelines {
                 include_str!("../look/gi_emission.wgsl"),
                 "fs_emission",
                 &[Some(&emission_layout), Some(occluders)],
-                &two,
+                &three,
             ),
             seed: make(
                 "olr-render gi seed",
@@ -240,26 +246,35 @@ fn texture(
     size: (u32, u32),
     format: wgpu::TextureFormat,
 ) -> wgpu::TextureView {
-    device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some(label),
-            size: wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        })
-        .create_view(&wgpu::TextureViewDescriptor::default())
+    texture_with(device, label, size, format, wgpu::TextureUsages::empty()).create_view(&Default::default())
+}
+
+/// A render target that may also be copied (`extra`).
+fn texture_with(
+    device: &wgpu::Device,
+    label: &str,
+    size: (u32, u32),
+    format: wgpu::TextureFormat,
+    extra: wgpu::TextureUsages,
+) -> wgpu::Texture {
+    device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | extra,
+        view_formats: &[],
+    })
 }
 
 /// One level's glow light: its grid, pyramid, cascades and fluence.
 pub(super) struct GiState {
     /// World pixels per cell.
     pub(super) cell: u32,
-    /// The emission grid (rgb cast, solid share) and its reach.
-    emission: (wgpu::TextureView, wgpu::TextureView),
+    /// The emission grid (rgb cast, solid share), its reach and its albedo.
+    emission: (wgpu::TextureView, wgpu::TextureView, wgpu::TextureView),
     /// Play's discs this frame (plan 15c): radiance and reach per cell.
     dynamic: (wgpu::TextureView, wgpu::TextureView),
     dynamic_bind: wgpu::BindGroup,
@@ -268,6 +283,12 @@ pub(super) struct GiState {
     cascades: Vec<wgpu::TextureView>,
     /// The glow light per cell, which the light sum samples.
     pub(super) fluence: wgpu::TextureView,
+    fluence_texture: wgpu::Texture,
+    /// The last frame's fluence, which bounce reads (plan 15c).
+    history: wgpu::TextureView,
+    history_texture: wgpu::Texture,
+    /// The history holds nothing yet: cleared before the next frame reads it.
+    fresh: std::cell::Cell<bool>,
     emission_bind: wgpu::BindGroup,
     seed_bind: wgpu::BindGroup,
     /// Each flood pass: the texture it writes and its bind (step, the other).
@@ -331,6 +352,7 @@ impl GiState {
         let emission = (
             texture(device, "olr-render gi emission", grid, FORMAT),
             texture(device, "olr-render gi reach", grid, REACH_FORMAT),
+            texture(device, "olr-render gi albedo", grid, ALBEDO_FORMAT),
         );
         let dynamic = (
             texture(device, "olr-render gi dynamic", grid, FORMAT),
@@ -340,7 +362,17 @@ impl GiState {
         let shapes: Vec<Cascade> = (0..count).map(|i| Cascade::new(i, grid)).collect();
         let cascades: Vec<_> =
             shapes.iter().map(|c| texture(device, "olr-render gi cascade", c.size(), FORMAT)).collect();
-        let fluence = texture(device, "olr-render glow light", grid, FORMAT);
+        let fluence_texture =
+            texture_with(device, "olr-render glow light", grid, FORMAT, wgpu::TextureUsages::COPY_SRC);
+        let fluence = fluence_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let history_texture = texture_with(
+            device,
+            "olr-render glow light history",
+            grid,
+            FORMAT,
+            wgpu::TextureUsages::COPY_DST,
+        );
+        let history = history_texture.create_view(&wgpu::TextureViewDescriptor::default());
         let tv = wgpu::BindingResource::TextureView;
         let emission_params = params(
             device,
@@ -440,7 +472,16 @@ impl GiState {
                 bind(
                     device,
                     &pipes.cascade_layout,
-                    [p.as_entire_binding(), tv(&emission.0), tv(&emission.1), tv(upper), tv(nearest)],
+                    [
+                        p.as_entire_binding(),
+                        tv(&emission.0),
+                        tv(&emission.1),
+                        tv(upper),
+                        tv(nearest),
+                        tv(&emission.2),
+                        tv(&history),
+                        inputs.globals.as_entire_binding(),
+                    ],
                 )
             })
             .collect();
@@ -453,6 +494,10 @@ impl GiState {
             seeds,
             cascades,
             fluence,
+            fluence_texture,
+            history,
+            history_texture,
+            fresh: std::cell::Cell::new(true),
             emission_bind,
             seed_bind,
             jfa,
@@ -512,7 +557,11 @@ impl GiState {
         };
         if !casting {
             pass(encoder, &[&self.fluence], None, None);
+            self.reset();
             return;
+        }
+        if self.fresh.replace(false) {
+            pass(encoder, &[&self.history], None, None);
         }
         {
             let both = [&self.dynamic.0, &self.dynamic.1];
@@ -543,7 +592,7 @@ impl GiState {
             }
         }
         let emission = Some((&pipes.emission, &self.emission_bind));
-        pass(encoder, &[&self.emission.0, &self.emission.1], emission, Some(occluders));
+        pass(encoder, &[&self.emission.0, &self.emission.1, &self.emission.2], emission, Some(occluders));
         pass(encoder, &[&self.seeds[0]], Some((&pipes.seed, &self.seed_bind)), None);
         for (target, b) in &self.jfa {
             pass(encoder, &[&self.seeds[*target]], Some((&pipes.jfa, b)), None);
@@ -552,6 +601,17 @@ impl GiState {
             pass(encoder, &[&self.cascades[i]], Some((&pipes.cascade, &self.cascade_binds[i])), None);
         }
         pass(encoder, &[&self.fluence], Some((&pipes.fluence, &self.fluence_bind)), None);
+        // The next frame's bounce reads this frame's light.
+        encoder.copy_texture_to_texture(
+            self.fluence_texture.as_image_copy(),
+            self.history_texture.as_image_copy(),
+            self.fluence_texture.size(),
+        );
+    }
+
+    /// Forgets the light's history: the next frame bounces nothing old.
+    pub(super) fn reset(&self) {
+        self.fresh.set(true);
     }
 }
 

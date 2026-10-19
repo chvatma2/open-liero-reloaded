@@ -66,6 +66,9 @@ pub struct LookFrame {
     /// The least light of a worm, linear ([`crate::worm_floor_of`] of the
     /// level's ambient colour as set, its intensity ignored; plan 15b).
     pub worm_floor: [f32; 3],
+    /// How strongly rock and dirt reflect light (plan 15c):
+    /// [`crate::engine::BOUNCE`] in a lit level, 0 without a look.
+    pub bounce: f32,
     pub grade: Grade,
     /// The level's groups in order: a group map value `v` (1-255) is
     /// `groups[v - 1]`; 0 is no group.
@@ -92,6 +95,7 @@ impl LookFrame {
             self.light_soak = 0;
             self.solid_floor = [0.0; 3];
             self.worm_floor = crate::worm_floor_of([255; 3]);
+            self.bounce = 0.0;
             self.grade = Grade::default();
             return;
         };
@@ -103,6 +107,7 @@ impl LookFrame {
         self.light_soak = level.light_soak.min(MAX_SOAK);
         self.solid_floor = linear(level.solid_floor);
         self.worm_floor = crate::worm_floor_of(level.ambient.colour);
+        self.bounce = crate::engine::BOUNCE;
         self.max_light = (f32::from(level.max_light) / 100.0).clamp(1.0, 2.0);
         self.light_steps = level.light_steps;
         self.softness = level.softness.min(4);
@@ -125,23 +130,14 @@ impl LookFrame {
         }
     }
 
-    /// Adds a glowing disc after the others (plan 15c; the callers' order).
+    /// Adds a glowing disc after the others (plan 15c; the callers' order),
+    /// while there are fewer than [`MAX_EMITTERS`]. Discs are never culled
+    /// to a view: light bounced off a wall may reach the view from past a
+    /// disc's reach, so the light stays camera-independent.
     pub fn push_emitter(&mut self, light: FrameLight) {
-        self.emitters.push(light);
-    }
-
-    /// Keeps the emitters whose reach touches `view` (world `x, y, w, h`),
-    /// then the first [`MAX_EMITTERS`], in order.
-    pub fn cull(&mut self, view: [f32; 4]) {
-        let [x0, y0, w, h] = view;
-        let (x1, y1) = (x0 + w, y0 + h);
-        let touches = |l: &FrameLight| {
-            let dx = (x0 - l.pos[0]).max(l.pos[0] - x1).max(0.0);
-            let dy = (y0 - l.pos[1]).max(l.pos[1] - y1).max(0.0);
-            libm::sqrtf(dx * dx + dy * dy) <= l.reach + l.radius
-        };
-        self.emitters.retain(touches);
-        self.emitters.truncate(MAX_EMITTERS);
+        if self.emitters.len() < MAX_EMITTERS {
+            self.emitters.push(light);
+        }
     }
 }
 

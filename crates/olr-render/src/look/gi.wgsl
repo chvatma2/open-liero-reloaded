@@ -1,10 +1,12 @@
 // Glow light (plan 15a Task 12, spec §Glow light): 2D global illumination
 // with radiance cascades over the whole level's grid of cells (`s` world
-// pixels each). `fs_emission` averages each cell's glowing pixels (what they
-// cast) and solid share; `fs_down` halves a level of that pyramid;
-// `fs_cascade` gathers cascade i's radiance (rays over its interval, a
-// glowing or solid cell stopping a ray) and merges cascade i + 1 beyond
-// it; `fs_fluence` averages cascade 0's directions per cell.
+// pixels each). `fs_disc` draws play's glowing discs (plan 15c);
+// `fs_emission` averages each cell's glowing pixels (what they cast), solid
+// share and albedo; `fs_cascade` gathers cascade i's radiance (rays over
+// its interval, a glowing or solid cell stopping a ray; a solid one gives
+// back its albedo times the last frame's light in front of it, plan 15c's
+// bounce) and merges cascade i + 1 beyond it; `fs_fluence` averages
+// cascade 0's directions per cell.
 //
 // Cascade i: probes every 2^i cells, 4 * 2^i directions laid in a block of
 // `bw` x `bh` texels per probe, rays over [2 (2^i - 1), 2 (2^(i+1) - 1))
@@ -47,6 +49,8 @@ struct GiOut {
     @location(0) emission: vec4<f32>,
     // reach (world px, `split`; unlimited at 1e9)
     @location(1) reach: vec4<f32>,
+    // rgb albedo of the cell's rock and dirt (linear; plan 15c), 1
+    @location(2) albedo: vec4<f32>,
 };
 
 

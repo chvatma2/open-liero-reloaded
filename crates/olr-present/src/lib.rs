@@ -34,7 +34,7 @@ use olr_data::image::Rgba;
 use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
 use olr_look::{LevelLook, LookFrame, ModLook};
 use olr_render::Renderer;
-use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, ShadeRules, View, Viewport};
+use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, ShadeRules, Viewport};
 use olr_sim::{TickEvents, World};
 use olr_terrain::ColorMap;
 
@@ -84,10 +84,6 @@ pub struct Presentation {
     /// The dynamic lights' state (end flashes).
     dynamic: look::Dynamic,
 }
-
-/// World pixels past the view a placed light may reach and still count:
-/// the renderer's (the world target's margin, the light grid's pad, one more).
-const LIGHT_VIEW_PAD: f32 = olr_render::LIGHT_CULL_PAD;
 
 impl Presentation {
     /// The presentation of `world`, at its start (the first tick blends
@@ -141,17 +137,16 @@ impl Presentation {
     /// Rebuilds the frame's look ([`Presentation::build`] does, after the
     /// scene and the entities): the level's part at the match clock (the
     /// world's time, `alpha` of a tick on), then the projectiles', end
-    /// flashes', muzzles' and explosions' lights (plan 15a R9), keeping
-    /// those whose reach touches `view`. Allocates nothing once warm.
-    pub fn build_look(&mut self, world: &World, alpha: f32, view: View) {
+    /// flashes', muzzles' and explosions' lights (plan 15a R9) as glowing
+    /// discs, wherever they are (plan 15c: never culled to the view, so the
+    /// light stays camera-independent). Allocates nothing once warm.
+    pub fn build_look(&mut self, world: &World, alpha: f32) {
         if !self.lit {
             return;
         }
         let t_ms = world.time().0 as f64 + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
         self.look.begin(self.level_look.as_ref(), t_ms);
         self.dynamic.push(&mut self.look, &self.mod_look, &mut self.scene, &self.fx, t_ms);
-        let p = LIGHT_VIEW_PAD;
-        self.look.cull([view.x - p, view.y - p, view.w + 2.0 * p, view.h + 2.0 * p]);
     }
 
     /// A cosmetic-entity pool of `capacity` instead of the match's
@@ -195,7 +190,7 @@ impl Presentation {
     pub fn build(&mut self, world: &World, alpha: f32, list: &mut DrawList) {
         self.scene.build(world, alpha, &self.assets, list);
         self.fx.draw(&self.fx_assets, self.lit, list);
-        self.build_look(world, alpha, list.view);
+        self.build_look(world, alpha);
     }
 
     /// A new world on the same level with the same worms (a restart): the

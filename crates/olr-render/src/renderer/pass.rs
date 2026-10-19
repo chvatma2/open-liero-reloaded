@@ -36,6 +36,9 @@ impl Renderer {
         area: [u32; 4],
     ) {
         let look = look.filter(|_| self.look.is_some());
+        if look.is_none() {
+            self.reset_light_history();
+        }
         self.draw(list, look, target, area);
     }
 

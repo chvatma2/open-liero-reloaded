@@ -6,6 +6,11 @@
 @group(0) @binding(2) var level_reach: texture_2d<f32>;
 @group(0) @binding(3) var upper: texture_2d<f32>;
 @group(0) @binding(4) var seeds: texture_2d<f32>;
+// Plan 15c's bounce: each cell's albedo, the last frame's fluence, and the
+// look's globals (`frame.w`: the bounce, 0-0.9).
+@group(0) @binding(5) var albedo_tex: texture_2d<f32>;
+@group(0) @binding(6) var history: texture_2d<f32>;
+@group(0) @binding(7) var<uniform> look: LookGlobals;
 
 // The most steps of one ray's march (a ray grazing a wall steps one cell
 // at a time); past it the ray counts as open.
@@ -46,15 +51,20 @@ fn free_at(at: vec2<f32>) -> f32 {
 // cells beside the corner stop: no ray slips between rock pixels touching
 // at a corner, so light never passes a wall one pixel thin (the user's
 // request, 2026-10-19). `skip` is a cell never stopping it (the probe's own).
+// `prev` is the open cell the ray left to enter the stopper (`has_prev`
+// false when it started in it).
 struct Hit {
     hit: bool,
     q: vec2<i32>,
     t: f32,
+    prev: vec2<i32>,
+    has_prev: bool,
 };
 
 fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit {
     var h: Hit;
     h.hit = false;
+    h.has_prev = false;
     var t = t0;
     let sx = select(-1, 1, dir.x > 0.0);
     let sy = select(-1, 1, dir.y > 0.0);
@@ -74,6 +84,8 @@ fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit
             h.t = t;
             return h;
         }
+        h.prev = q;
+        h.has_prev = true;
         let free = free_at(at);
         if free >= 1.0 {
             t += free;
@@ -92,6 +104,8 @@ fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit
                 h.hit = true;
                 h.q = a;
                 h.t = t + min(tx, ty);
+                h.prev = q;
+                h.has_prev = true;
                 return h;
             }
         }
@@ -140,6 +154,13 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         if max(e.r, max(e.g, e.b)) > 1e-6 {
             let reach = joined(textureLoad(level_reach, h.q, 0).xy);
             ray = vec4<f32>(e.rgb * fade(h.t * cp.c.w, reach), 0.0);
+        } else if h.has_prev {
+            // Bounce (plan 15c): the light that reached the face the ray
+            // meets, taken in front of it (never through the wall), times
+            // the wall's colour.
+            let b = clamp(look.frame.w, 0.0, 0.9);
+            let lit = textureLoad(history, h.prev, 0).rgb;
+            ray = vec4<f32>(textureLoad(albedo_tex, h.q, 0).rgb * lit * b, 0.0);
         } else {
             ray = vec4<f32>(0.0);
         }
