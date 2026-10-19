@@ -16,6 +16,11 @@
 // at a time); past it the ray counts as open.
 const MAX_STEPS: i32 = 128;
 
+// The most radiance a ray carries, well inside f16 (final review,
+// Important 1: overlapping discs overflowed into infinity, then NaN, which
+// bounce kept alive).
+const LIGHT_MAX: f32 = 16384.0;
+
 // Cascade (d.x dirs, d.y x d.z block, d.w x e.x probes) at probe q, direction k.
 fn upper_at(q: vec2<i32>, k: i32) -> vec4<f32> {
     let bw = i32(cp.d.y);
@@ -55,6 +60,10 @@ fn free_at(at: vec2<f32>) -> f32 {
 // false when it started in it).
 struct Hit {
     hit: bool,
+    // The march ran out of steps before its end: counted as blocked (final
+    // review, Important 2), never as open, so no light from where its tip
+    // lies comes through rock.
+    blocked: bool,
     q: vec2<i32>,
     t: f32,
     prev: vec2<i32>,
@@ -64,6 +73,7 @@ struct Hit {
 fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit {
     var h: Hit;
     h.hit = false;
+    h.blocked = false;
     h.has_prev = false;
     var t = t0;
     let sx = select(-1, 1, dir.x > 0.0);
@@ -111,6 +121,9 @@ fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit
         }
         t += max(min(tx, ty), 0.0) + 1e-3;
     }
+    if t < t1 && inside(vec2<i32>(floor(o + dir * t))) {
+        h.blocked = true;
+    }
     return h;
 }
 
@@ -124,7 +137,8 @@ fn clear_between(a: vec2<f32>, b: vec2<f32>) -> bool {
     }
     let skip = vec2<i32>(floor(a));
     // Its end's cell counts: the upper ray starts there.
-    return !march(a, d / len, 0.0, len + 1e-3, skip).hit && (all(vec2<i32>(floor(b)) == skip) || !stops_at(vec2<i32>(floor(b))));
+    let m = march(a, d / len, 0.0, len + 1e-3, skip);
+    return !m.hit && !m.blocked && (all(vec2<i32>(floor(b)) == skip) || !stops_at(vec2<i32>(floor(b))));
 }
 
 @fragment
@@ -149,7 +163,9 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let own = vec2<i32>(floor(centre));
     let end = cp.b.z + cp.b.w;
     let h = march(centre, dir, cp.b.z, end, select(vec2<i32>(-1), own, cp.a.x < 0.5));
-    if h.hit {
+    if h.blocked {
+        ray = vec4<f32>(0.0);
+    } else if h.hit {
         let e = textureLoad(level_em, h.q, 0);
         if max(e.r, max(e.g, e.b)) > 1e-6 {
             let reach = joined(textureLoad(level_reach, h.q, 0).xy);
@@ -159,7 +175,9 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
             // meets, taken in front of it (never through the wall), times
             // the wall's colour.
             let b = clamp(look.frame.w, 0.0, 0.9);
-            let lit = textureLoad(history, h.prev, 0).rgb;
+            let last = textureLoad(history, h.prev, 0).rgb;
+            // Never NaN or infinity from history (final review, Important 1).
+            let lit = select(vec3<f32>(0.0), min(last, vec3<f32>(LIGHT_MAX)), last == last);
             ray = vec4<f32>(textureLoad(albedo_tex, h.q, 0).rgb * lit * b, 0.0);
         } else {
             ray = vec4<f32>(0.0);
@@ -201,5 +219,5 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         }
         ray = vec4<f32>(ray.rgb + ray.a * acc * 0.5, ray.a);
     }
-    return ray;
+    return vec4<f32>(select(vec3<f32>(0.0), min(ray.rgb, vec3<f32>(LIGHT_MAX)), ray.rgb == ray.rgb), ray.a);
 }

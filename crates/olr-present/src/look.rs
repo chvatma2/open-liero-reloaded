@@ -1,8 +1,9 @@
 //! The look's dynamic lights (plan 15a Task 15; spec §Mod packs, §The
 //! engine), glowing discs in the glow light since plan 15c (radii from
-//! `engine::disc_radius` and `engine::explosion_radius`), in R9's order:
-//! the projectiles' lights (slot order), their end flashes (start order),
-//! the muzzle lights (start order) and the explosions' lights (effect slot
+//! `engine::disc_radius` and `engine::explosion_radius`), the engine's
+//! first so the disc cap never drops them (final review, Important 3): the
+//! muzzle lights (start order), the explosions' lights (effect slot order),
+//! the projectiles' lights (slot order) and their end flashes (start
 //! order).
 //!
 //! End flashes and muzzle lights start from the scene's per-tick records
@@ -129,15 +130,6 @@ impl Dynamic {
         let flash = |proj: usize| projectile(proj).and_then(|p| p.end_flash.as_ref());
         let weapon =
             |w: usize| m.weapons.get(w).and_then(Option::as_ref).and_then(|w| w.muzzle_light.as_ref());
-        for d in scene.drawn_projectiles() {
-            if let Some(l) = projectile(d.proj).and_then(|p| p.light.as_ref()) {
-                let clock = t_ms - d.spawn_time.0 as f64;
-                let radius = engine::disc_radius(l.reach.pixels());
-                if let Some(f) = light_at(l, clock, u64::from(d.serial), [d.pos.x, d.pos.y], radius) {
-                    look.push_emitter(f);
-                }
-            }
-        }
         // Start what the ticks since the last frame began.
         self.started.clear();
         for e in scene.ended_projectiles() {
@@ -172,14 +164,6 @@ impl Dynamic {
             let age = t_ms - s.start_ms;
             !(0.0..LIFE_MS).contains(&age) || l.animation.ended(age + f64::from(l.phase_ms.unwrap_or(0)))
         };
-        self.flashes.retain(|s| {
-            let Some(l) = flash(s.def).filter(|l| !ended(l, s)) else { return false };
-            let radius = engine::disc_radius(l.reach.pixels());
-            if let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, s.pos, radius) {
-                look.push_emitter(f);
-            }
-            true
-        });
         let engine_muzzle = self.muzzle.get_or_insert_with(engine::muzzle_light);
         let worms = scene.drawn_worms();
         self.muzzles.retain(|s| {
@@ -215,6 +199,25 @@ impl Dynamic {
                 look.push_emitter(f);
             }
         }
+        // Mods' lights after the engine's (final review, Important 3): past
+        // the disc cap, explosions and muzzle flashes still light.
+        for d in scene.drawn_projectiles() {
+            if let Some(l) = projectile(d.proj).and_then(|p| p.light.as_ref()) {
+                let clock = t_ms - d.spawn_time.0 as f64;
+                let radius = engine::disc_radius(l.reach.pixels());
+                if let Some(f) = light_at(l, clock, u64::from(d.serial), [d.pos.x, d.pos.y], radius) {
+                    look.push_emitter(f);
+                }
+            }
+        }
+        self.flashes.retain(|s| {
+            let Some(l) = flash(s.def).filter(|l| !ended(l, s)) else { return false };
+            let radius = engine::disc_radius(l.reach.pixels());
+            if let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, s.pos, radius) {
+                look.push_emitter(f);
+            }
+            true
+        });
     }
 }
 

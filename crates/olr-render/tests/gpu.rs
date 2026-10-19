@@ -1873,3 +1873,61 @@ fn glowing_pixels_feed_no_bloom() {
     let (on, off) = (frame(true), frame(false));
     assert_eq!(on.get(2 * 50, 2 * 4), off.get(2 * 50, 2 * 4), "the sky itself");
 }
+
+/// Final review, Important 1: many of the brightest discs on one cell never
+/// overflow f16 into inf or NaN, which bounce would keep alive.
+#[test]
+fn stacked_bright_discs_never_poison_the_light() {
+    let Some(gpu) = offscreen() else { return };
+    let map = painted_room(100, 40, |x, y| x == 70 || y >= 36, |_, _| WHITE);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    let discs: Vec<_> = (0..64)
+        .map(|_| olr_look::FrameLight { colour: [100.0; 3], ..disc([30.5, 20.5], 2.0, 4096.0) })
+        .collect();
+    let mut r = frames(&gpu, &map, view, &discs, 10, |l| l.bounce = 0.6);
+    let (_, light) = gpu.read_light(&r).unwrap();
+    assert!(light.iter().flatten().all(|v| v.is_finite()), "finite with the discs");
+    // The discs gone: the light settles back, nothing kept from them.
+    let mut look = dim(0.1);
+    look.max_light = 1e4;
+    look.bounce = 0.6;
+    look.groups[0] = olr_look::FrameGroup {
+        cast: [0.0; 3],
+        own_colour: false,
+        self_scale: 0.0,
+        reach: 0.0,
+        ..Default::default()
+    };
+    look.emitters.push(disc([5.5, 5.5], 1.0, 4.0));
+    let mut l = list(view);
+    l.map = (100, 40);
+    for _ in 0..5 {
+        gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
+    }
+    let (_, light) = gpu.read_light(&r).unwrap();
+    assert!(light.iter().flatten().all(|v| v.is_finite()), "finite after them");
+}
+
+/// Final review, Important 2: a ray that runs out of steps in a long, low
+/// tunnel never counts as open: no light from beyond thick rock.
+#[test]
+fn a_long_low_tunnel_takes_no_light_through_rock() {
+    let Some(gpu) = offscreen() else { return };
+    // A tunnel 3 px high from x 0, rock around it; past `rock` px of rock,
+    // an open cavern under a glowing sky of unlimited reach.
+    let mut lit = Vec::new();
+    for (end, rock) in [(900, 50), (700, 8), (500, 4), (300, 2)] {
+        let open = move |x: u32, y: u32| (60..63).contains(&y) && x < end || x >= end + rock;
+        let sky = move |x: u32, y: u32| x >= end + rock && y < 8;
+        let map = glowing_room(1024, 128, move |x, y| !open(x, y), sky);
+        let view = View { x: 20.0, y: 20.0, w: 250.0, h: 80.0 };
+        let r = glow_frame(&gpu, &map, view, &glow_look(5.0, f32::INFINITY));
+        for x in (30..260).step_by(10) {
+            let v = light_at(&gpu, &r, x, 61)[0];
+            if (v - 0.1).abs() > 1e-3 {
+                lit.push((end, x, v));
+            }
+        }
+    }
+    assert!(lit.is_empty(), "light in the tunnel from beyond the rock: {lit:?}");
+}

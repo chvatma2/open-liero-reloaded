@@ -92,7 +92,10 @@ on screen or offscreen.
     `a_one_pixel_wall_stops_light_right_behind_it`,
     `a_diagonal_wall_one_pixel_thin_stops_light`); a cascade merges only
     the upper probes whose ray start its ray's end can see (the bilinear
-    fix). A ray meeting rock or dirt takes its albedo × the history's
+    fix). A march that runs out of steps counts as blocked; a disc sum, a
+    ray and the history are clamped (16384) and never NaN
+    (`stacked_bright_discs_never_poison_the_light`,
+    `a_long_low_tunnel_takes_no_light_through_rock`). A ray meeting rock or dirt takes its albedo × the history's
     fluence of the open cell it came from × the bounce (`frame.w`, 0-0.9):
     bounced light never crosses a wall (`light_bounces_round_a_corner`,
     `bounce_tints_with_the_wall`, `bounce_never_runs_away`,
@@ -101,7 +104,8 @@ on screen or offscreen.
     one that casts nothing) starts it afresh
     (`a_new_level_starts_its_light_afresh`). `gi_cell` picks the grid's
     cell (a power of two) so the grid holds at most `GI_CELL_BUDGET` (2^20:
-    Castle Strike at one cell a world pixel) cells and every cascade
+    Castle Strike at one cell a world pixel; a larger level's 2-px cells
+    can let a 1-px wall leak, `docs/porting/STATUS.md`) cells and every cascade
     texture fits the device (`glow_light_past_the_device_crop_is_open`).
     Without groups or discs the fluence is only cleared.
   - **Flicker regions** (`regions.rs`, plan 15c): `Regions` labels each

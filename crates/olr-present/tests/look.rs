@@ -432,3 +432,24 @@ fn living_worms_are_occluders() {
         assert!(!lit || checked > 0);
     }
 }
+
+/// Final review, Important 3: the engine's explosion and muzzle lights come
+/// before shot lights and end flashes, so a match past the disc cap keeps
+/// them.
+#[test]
+fn engine_lights_come_first() {
+    let Some(content) = content() else { return };
+    let mods = mod_look(&content, Some(steady([0, 255, 0], 80, 48)), Some(green_flash()));
+    let mut checked = 0;
+    play_with(&content, BAZOOKA, Some(look()), Some(mods), |p, _, _, _| {
+        let e = &p.look().unwrap().emitters;
+        let engine = |f: &olr_look::FrameLight| f.colour[0] > 0.0;
+        if let Some(last) = e.iter().rposition(engine)
+            && let Some(first_mod) = e.iter().position(|f| !engine(f))
+        {
+            assert!(last < first_mod, "engine lights first: {e:?}");
+            checked += 1;
+        }
+    });
+    assert!(checked > 0);
+}

@@ -25,7 +25,9 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     // The level the device keeps: past a crop is open.
     let level = min(vec2<i32>(look.level.xy), vec2<i32>(textureDimensions(solid_tex)));
     let count = u32(look.mode.y);
-    let disc = textureLoad(dynamic_tex, cell, 0).rgb;
+    // At most a ray's radiance, never NaN (final review, Important 1).
+    let summed = textureLoad(dynamic_tex, cell, 0).rgb;
+    let disc = select(vec3<f32>(0.0), min(summed, vec3<f32>(16384.0)), summed == summed);
     // A disc's cells never count as a worm: a muzzle flash shines from
     // inside its worm's outline.
     let lit = max(disc.r, max(disc.g, disc.b)) > 0.0;

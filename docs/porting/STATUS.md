@@ -3674,7 +3674,13 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
   merge only upper probes whose ray start the lower ray's end can see (the
   bilinear fix; without it a 1-px wall leaked 0.53 behind a flash).
   `GI_CELL_BUDGET` is 2^20, so Castle Strike's light has a cell a world
-  pixel (2-px cells let a diagonal 1-px wall share cells with air).
+  pixel. **Caveat (a deviation, the final review's Important 4):** a level
+  of more than 2^20 world pixels (2048 × 1024 and up), or one a device's
+  texture limit crops, gets cells of 2 or 4 world pixels, and there a wall
+  one pixel thin can share a cell with air and let light through. The
+  guarantee holds at a cell a world pixel. A march that runs out of
+  steps counts as blocked, and a disc sum, a ray and the history are
+  clamped and never NaN (Importants 1-2).
 - **Play's lights as glowing discs.** Explosions (`explosion_radius`, 2-12
   by size), muzzle flashes, shot lights and end flashes (`disc_radius`, an
   eighth of the reach, 1-6) are `LookFrame::emitters`, drawn as instanced
@@ -3683,7 +3689,8 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
   `disc_radiance` calibrates each so its light at `d0 = max(reach / 3, 2r)`
   (at most halfway to the reach) matches the old point light. A disc's
   cells never count as a worm. Discs are capped at `MAX_EMITTERS` (1024) in
-  order and never culled to a view: bounced light may reach the view from
+  order, the engine's explosions and muzzle flashes pushed before mods'
+  shot lights and end flashes (Important 3), and never culled to a view: bounced light may reach the view from
   past a disc's reach, so culling made light camera-dependent. A disc
   outside the level emits nothing.
 - **Bounce.** A ray meeting rock or dirt takes the cell's albedo (its art,

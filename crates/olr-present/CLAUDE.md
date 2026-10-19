@@ -60,10 +60,11 @@ wired in the frame loop's order **once**, so each mode that draws a world
 - **Dynamic lights** (`look.rs`, plan 15a Task 15 and the batch C and D
   reviews; plan 15c: `LookFrame::emitters`, glowing discs of
   `engine::disc_radius` of the reach, an explosion's `explosion_radius` of
-  its size; R9's order): projectile lights (the
+  its size; the engine's first so the cap never drops them: muzzle
+  lights, explosion lights, then mods' projectile lights (the
   scene's `drawn_projectiles`, slot order, the clock from the spawn time,
-  identity the serial), end flashes (start order), muzzle lights (start
-  order) and explosion lights (the entities' slot order). End flashes and
+  identity the serial) and end flashes (start order); muzzle lights in
+  start order, explosion lights in the entities' slot order. End flashes and
   muzzle lights start from the scene's per-tick records
   (`Scene::ended_projectiles`, `Scene::shots`, taken with
   `clear_look_events` each frame), so they never depend on the frame rate,
