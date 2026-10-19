@@ -780,8 +780,11 @@ fn glow_frame(gpu: &Offscreen, map: &ColorMap, view: View, look: &olr_look::Look
 fn gi_cell_sizes() {
     let big = 16384;
     assert_eq!(olr_render::gi_cell((504, 350), big), 1);
-    assert_eq!(olr_render::gi_cell((1350, 550), big), 2);
-    assert_eq!(olr_render::gi_cell((4096, 4096), big), 8);
+    // Plan 15c: Castle Strike's light at one cell a world pixel, so no
+    // thin wall shares a cell with the air beside it.
+    assert_eq!(olr_render::gi_cell((1350, 550), big), 1);
+    assert_eq!(olr_render::gi_cell((2048, 1024), big), 2);
+    assert_eq!(olr_render::gi_cell((4096, 4096), big), 4);
     assert_eq!(olr_render::gi_cell((0, 0), big), 1);
     assert_eq!(olr_render::gi_cell((4096, 64), big), 1);
     // A cascade is up to twice the grid: a small device takes larger cells.

@@ -46,8 +46,6 @@ pub(super) struct LookTextures {
     pub(super) level: (u32, u32),
     /// The lit terrain's group 2: globals, glow, groups.
     pub(super) terrain_bind: wgpu::BindGroup,
-    /// The shadow pass's group 0: globals, lights, solid map.
-    pub(super) shadow_bind: wgpu::BindGroup,
     /// The level's glow light.
     pub(super) gi: super::gi::GiState,
 }
@@ -65,19 +63,6 @@ pub(super) const LIGHT_PAD: u32 = olr_look::MAX_SOAK as u32 + 4;
 /// far (`LookFrame::cull`'s padding): a culled light then lights nothing the
 /// view shows, whatever the camera.
 pub const LIGHT_CULL_PAD: f32 = (crate::MARGIN as u32 + LIGHT_PAD + 1) as f32;
-
-/// The shadow maps' format: each distance `split` in f16 halves (GL draws
-/// into no R32Float target).
-const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-
-/// Rays per placed light's shadow map (`SHADOW_RAYS` in the shaders).
-pub(super) const SHADOW_RAYS: u32 = 512;
-
-/// The most placed lights (none since plan 15c; the path goes next).
-const MAX_LIGHTS: usize = 256;
-
-/// The placed lights' uniform: two vec4s per light.
-const LIGHT_FLOATS: usize = 8 * MAX_LIGHTS;
 
 /// One world target's look passes: the light grid (gathered into 0, soaked
 /// into solids across into 1 and down into 2, blurred across into 0 and
@@ -111,8 +96,6 @@ pub(super) struct LookState {
     pub(super) soak_h_pipeline: wgpu::RenderPipeline,
     pub(super) soak_v_pipeline: wgpu::RenderPipeline,
     pub(super) soak_layout: wgpu::BindGroupLayout,
-    pub(super) shadow_pipeline: wgpu::RenderPipeline,
-    pub(super) shadow_layout: wgpu::BindGroupLayout,
     /// Draws the occluder map (plan 15b): group 0 the globals, group 1 the atlas.
     pub(super) occluder_pipeline: wgpu::RenderPipeline,
     pub(super) occluder_globals_bind: wgpu::BindGroup,
@@ -122,8 +105,6 @@ pub(super) struct LookState {
     pub(super) composite_layout: wgpu::BindGroupLayout,
     pub(super) layout: wgpu::BindGroupLayout,
     pub(super) globals: wgpu::Buffer,
-    pub(super) lights: wgpu::Buffer,
-    pub(super) shadow_view: wgpu::TextureView,
     pub(super) gi: super::gi::GiPipelines,
     /// A 1 × 1 dark glow light, bound before a level's exists.
     no_glow: wgpu::TextureView,
@@ -133,10 +114,6 @@ pub(super) struct LookState {
     pub(super) textures: Option<LookTextures>,
     /// The packed globals, reused every frame.
     pub(super) packed: Vec<f32>,
-    /// The packed lights, reused every frame.
-    pub(super) packed_lights: Vec<f32>,
-    /// The placed lights this frame draws.
-    pub(super) light_count: u32,
     /// Play's glowing discs (plan 15c): [`super::gi::EMITTER_FLOATS`] each,
     /// the first [`olr_look::MAX_EMITTERS`] of the frame's.
     pub(super) emitters: wgpu::Buffer,
@@ -263,45 +240,14 @@ impl LookState {
             entries: &[
                 entry(0, frag, super::UNIFORM),
                 entry(1, frag, FLOAT_TEXTURE),
-                entry(2, frag, super::UNIFORM),
-                entry(3, frag, FLOAT_TEXTURE),
-                entry(4, frag, FLOAT_TEXTURE),
-                entry(5, frag, UINT_TEXTURE),
-            ],
-        });
-        let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("olr-render shadow"),
-            entries: &[
-                entry(0, frag, super::UNIFORM),
-                entry(1, frag, super::UNIFORM),
-                entry(2, frag, UINT_TEXTURE),
+                entry(2, frag, FLOAT_TEXTURE),
+                entry(3, frag, UINT_TEXTURE),
             ],
         });
         let occluder_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render occluders"),
             entries: &[entry(0, frag, UINT_TEXTURE)],
         });
-        let shadow_pipeline = pipeline(
-            device,
-            "olr-render shadow",
-            &format!("{}\n{}", common(), include_str!("../look/shadow.wgsl")),
-            ("vs_full", "fs_shadow"),
-            &[Some(&shadow_layout), Some(&occluder_layout)],
-            &[],
-            &[(SHADOW_FORMAT, None)],
-            wgpu::PrimitiveTopology::TriangleList,
-        );
-        let shadow = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("olr-render shadow maps"),
-            size: wgpu::Extent3d { width: SHADOW_RAYS, height: MAX_LIGHTS as u32, depth_or_array_layers: 1 },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: SHADOW_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let shadow_view = shadow.create_view(&wgpu::TextureViewDescriptor::default());
         let no_glow = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("olr-render no glow light"),
@@ -339,12 +285,6 @@ impl LookState {
         };
         let (soak_h_pipeline, soak_v_pipeline) = (soak("fs_soak_h"), soak("fs_soak_v"));
         let gi = super::gi::GiPipelines::new(device, &occluder_layout);
-        let lights = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("olr-render lights"),
-            size: (LIGHT_FLOATS * 4) as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         let emitter_floats = olr_look::MAX_EMITTERS * super::gi::EMITTER_FLOATS;
         let emitters = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("olr-render emitters"),
@@ -422,8 +362,6 @@ impl LookState {
             soak_h_pipeline,
             soak_v_pipeline,
             soak_layout,
-            shadow_pipeline,
-            shadow_layout,
             occluder_pipeline,
             occluder_globals_bind,
             occluder_layout,
@@ -431,15 +369,11 @@ impl LookState {
             composite_layout,
             layout,
             globals,
-            lights,
-            shadow_view,
             gi,
             no_glow,
             no_solid,
             textures: None,
             packed: Vec::with_capacity(GLOBAL_FLOATS),
-            packed_lights: Vec::with_capacity(LIGHT_FLOATS),
-            light_count: 0,
             emitters,
             packed_emitters: Vec::with_capacity(emitter_floats),
             emitter_count: 0,
@@ -491,10 +425,8 @@ impl LookState {
                 entries: &[
                     uniform(),
                     tex(1, src),
-                    wgpu::BindGroupEntry { binding: 2, resource: self.lights.as_entire_binding() },
-                    tex(3, &self.shadow_view),
-                    tex(4, self.textures.as_ref().map_or(&self.no_glow, |t| &t.gi.fluence)),
-                    tex(5, solid),
+                    tex(2, self.textures.as_ref().map_or(&self.no_glow, |t| &t.gi.fluence)),
+                    tex(3, solid),
                 ],
             })
         };
@@ -587,18 +519,6 @@ impl LookState {
                 },
             ],
         });
-        let shadow_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("olr-render shadow"),
-            layout: &self.shadow_layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.globals.as_entire_binding() },
-                wgpu::BindGroupEntry { binding: 1, resource: self.lights.as_entire_binding() },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&view(&solid)),
-                },
-            ],
-        });
         let inputs = super::gi::GiInputs {
             globals: &self.globals,
             glow: &view(&glow),
@@ -607,7 +527,7 @@ impl LookState {
             terrain: &view(terrain),
         };
         // Over the level the device keeps (cropped like the terrain): past it
-        // is open, as for the shadows and the soak.
+        // is open, as for the soak.
         let gi = super::gi::GiState::new(device, &self.gi, sizes.world, max_dim, &inputs);
         let t = LookTextures {
             glow,
@@ -618,7 +538,6 @@ impl LookState {
             art_scale: map.art_scale(),
             level,
             terrain_bind,
-            shadow_bind,
             gi,
         };
         let whole = Rect { x: 0, y: 0, w: map.width(), h: map.height() };
@@ -707,19 +626,8 @@ impl LookState {
             f32::from(look.light_steps),
         ]);
         p.extend([lin(gr.tint[0]), lin(gr.tint[1]), lin(gr.tint[2]), f32::from(look.softness)]);
-        // Only the first MAX_LIGHTS are uploaded: the shaders loop over those.
-        let count = 0;
-        p.extend([frame.origin.0 as f32, frame.origin.1 as f32, frame.scale as f32, count as f32]);
+        p.extend([frame.origin.0 as f32, frame.origin.1 as f32, frame.scale as f32, 0.0]);
         p.extend([level.0 as f32, level.1 as f32, art_scale as f32, cell as f32]);
-        self.light_count = count as u32;
-        let l = &mut self.packed_lights;
-        l.clear();
-        l.resize(LIGHT_FLOATS, 0.0);
-        for v in l.iter_mut() {
-            if !v.is_finite() {
-                *v = 0.0;
-            }
-        }
         self.pack_emitters(look);
         let p = &mut self.packed;
         let mode = match look.mode {

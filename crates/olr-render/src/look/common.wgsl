@@ -9,11 +9,11 @@ struct LookGlobals {
     grade: vec4<f32>,
     // rgb tint (linear), softness (world pixels)
     tint: vec4<f32>,
-    // world frame origin x, y (world px), world target texels per world px, placed lights
+    // world frame origin x, y (world px), world target texels per world px, 0
     frame: vec4<f32>,
     // level width, height (world px), art scale, glow-light cell (world px)
     level: vec4<f32>,
-    // view mode (0 lit, 1 full bright, 2 light only), group count, light soak (world px), shadow filter
+    // view mode (0 lit, 1 full bright, 2 light only), group count, light soak (world px), 0
     mode: vec4<f32>,
     // rgb solid floor (linear), 0
     solid: vec4<f32>,
@@ -26,16 +26,6 @@ struct LookGlobals {
     // per group: reach (world px; 1e9 unlimited), own colour (1) or tint (0), 0, 0
     group_info: array<vec4<f32>, 255>,
 };
-
-// Placed lights: per light two vec4s, (x, y, radius, reach; 1e9 unlimited)
-// and (r, g, b linear × intensity × animation, owner: the worm's index + 1
-// whose occluder the light ignores, 0 none; plan 15b).
-struct Lights {
-    v: array<vec4<f32>, 512>,
-};
-
-// The shadow maps' rays per light.
-const SHADOW_RAYS: f32 = 512.0;
 
 // LIGHT_PAD (world pixels the light grid reaches past the world target on
 // every side) and MAX_SOAK are prepended from the Rust constants.

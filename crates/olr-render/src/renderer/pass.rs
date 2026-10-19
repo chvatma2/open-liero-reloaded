@@ -89,7 +89,6 @@ impl Renderer {
         if let (Some(look), Some(state)) = (look, self.look.as_mut()) {
             state.pack(look, &frame);
             self.queue.write_buffer(&state.globals, 0, bytemuck::cast_slice(&state.packed));
-            self.queue.write_buffer(&state.lights, 0, bytemuck::cast_slice(&state.packed_lights));
             if !state.packed_emitters.is_empty() {
                 self.queue.write_buffer(&state.emitters, 0, bytemuck::cast_slice(&state.packed_emitters));
             }
@@ -162,14 +161,6 @@ impl Renderer {
                 let casting = look.is_some_and(|l| !l.groups.is_empty()) || state.emitter_count > 0;
                 let discs = (&state.emitters, state.emitter_count);
                 tex.gi.encode(&mut encoder, &state.gi, casting, &lt.occluder_bind, discs);
-            }
-            if let (Some(tex), n @ 1..) = (&state.textures, state.light_count) {
-                let mut pass = begin(&mut encoder, "olr-render shadow", &state.shadow_view, None);
-                pass.set_pipeline(&state.shadow_pipeline);
-                pass.set_bind_group(0, &tex.shadow_bind, &[]);
-                pass.set_bind_group(1, &lt.occluder_bind, &[]);
-                pass.set_scissor_rect(0, 0, super::look::SHADOW_RAYS, n);
-                pass.draw(0..3, 0..1);
             }
             let passes = [
                 (&lt.views[0], &state.sum_pipeline, &lt.binds[0]),

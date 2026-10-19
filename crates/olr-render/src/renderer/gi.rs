@@ -13,8 +13,10 @@
 
 use super::{entry, pipeline};
 
-/// The most cells the glow light's grid holds (plan 15a R13).
-pub const GI_CELL_BUDGET: u32 = 262_144;
+/// The most cells the glow light's grid holds (plan 15a R13; plan 15c:
+/// 2^20, so Castle Strike's 1350 × 550 has a cell a world pixel and no thin
+/// wall shares a cell with the air beside it).
+pub const GI_CELL_BUDGET: u32 = 1 << 20;
 
 /// The glow light's cell for a level of `world` pixels on a device whose
 /// textures are at most `max_dim` texels a side: the smallest power of two
