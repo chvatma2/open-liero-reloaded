@@ -13,6 +13,7 @@ mod gi;
 mod look;
 mod pass;
 mod probe;
+mod regions;
 mod timing;
 
 pub use gi::{GI_CELL_BUDGET, gi_cell};

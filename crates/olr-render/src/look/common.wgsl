@@ -25,6 +25,9 @@ struct LookGlobals {
     groups: array<vec4<f32>, 255>,
     // per group: reach (world px; 1e9 unlimited), own colour (1) or tint (0), 0, 0
     group_info: array<vec4<f32>, 255>,
+    // per group: a flicker's speed (0: none), depth (percent), clock (ms),
+    // seed (plan 15c: each region flickers on its own)
+    group_flicker: array<vec4<f32>, 255>,
 };
 
 // LIGHT_PAD (world pixels the light grid reaches past the world target on
@@ -76,4 +79,33 @@ fn fade(d: f32, r: f32) -> f32 {
     }
     let v = 1.0 - x * x;
     return v * v;
+}
+
+// A 32-bit hash (PCG's output function).
+fn hash32(x: u32) -> u32 {
+    let state = x * 747796405u + 2891336453u;
+    let word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
+    return (word >> 22u) ^ word;
+}
+
+// `olr_look::anim`'s flicker (plan 15c), seeded by `seed`: smooth value
+// noise over buckets of 1000 / speed ms, dimming by up to `depth` percent.
+fn flicker(t_ms: f32, speed: f32, depth: f32, seed: u32) -> f32 {
+    let pos = max(t_ms, 0.0) / (1000.0 / max(speed, 1.0));
+    let b = floor(pos);
+    let f = clamp(pos - b, 0.0, 1.0);
+    let k = u32(b);
+    let a = f32(hash32(seed ^ hash32(k)) >> 8u) / 16777216.0;
+    let c = f32(hash32(seed ^ hash32(k + 1u)) >> 8u) / 16777216.0;
+    let v = a + (c - a) * (f * f * (3.0 - 2.0 * f));
+    return 1.0 - clamp(depth / 100.0, 0.0, 1.0) * v;
+}
+
+// A group's flicker `f` (`LookGlobals.group_flicker`) in region `region`
+// (plan 15c): 1 for a group that does not flicker.
+fn region_flicker(f: vec4<f32>, region: u32) -> f32 {
+    if f.x <= 0.0 {
+        return 1.0;
+    }
+    return flicker(f.z, f.x, f.y, hash32(u32(f.w) ^ (region * 2654435769u)));
 }

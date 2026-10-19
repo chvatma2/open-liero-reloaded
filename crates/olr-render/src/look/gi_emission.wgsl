@@ -11,6 +11,8 @@
 // per cell, and their reach (unsplit; 60000 or more unlimited).
 @group(0) @binding(6) var dynamic_tex: texture_2d<f32>;
 @group(0) @binding(7) var dynamic_reach: texture_2d<f32>;
+// Each world pixel's flicker region (plan 15c).
+@group(0) @binding(8) var regions_tex: texture_2d<u32>;
 // The occluder map (plan 15b): a living worm's world pixel is solid.
 @group(1) @binding(0) var occluder_tex: texture_2d<u32>;
 
@@ -56,7 +58,8 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
                 if info.y > 0.5 {
                     colour = to_linear(textureLoad(terrain_tex, clamped(art, textureDimensions(terrain_tex)), 0).rgb);
                 }
-                em += colour * look.groups[v - 1u].rgb * g;
+                let region = textureLoad(regions_tex, clamped(w, textureDimensions(regions_tex)), 0).r;
+                em += colour * look.groups[v - 1u].rgb * g * region_flicker(look.group_flicker[v - 1u], region);
                 reach = max(reach, info.x);
             }
         }

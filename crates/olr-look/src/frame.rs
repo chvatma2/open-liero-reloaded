@@ -25,7 +25,7 @@ pub enum ViewMode {
 }
 
 /// A glow group at this frame. Colours are linear.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct FrameGroup {
     /// Multiplies the cast colour (the pixel's art when `own_colour`, else
     /// already the tint): intensity × animation.
@@ -35,6 +35,16 @@ pub struct FrameGroup {
     pub self_scale: f32,
     /// World pixels; `f32::INFINITY` unlimited.
     pub reach: f32,
+    /// A `Flicker` group's speed and depth (percent) (plan 15c): each
+    /// separately drawn region of its pixels flickers on its own, so
+    /// `cast` and `self_scale` leave the flicker out and the renderer
+    /// applies it per region. `None` for every other animation, whose
+    /// scale `cast` and `self_scale` hold.
+    pub flicker: Option<(f32, f32)>,
+    /// The group's clock with its phase, ms (a flicker's).
+    pub t_ms: f32,
+    /// Seeds a flicker's noise (the group's identity, folded).
+    pub seed: u32,
 }
 
 /// A glowing disc at this frame (plan 15c): one of play's lights.
@@ -115,8 +125,23 @@ impl LookFrame {
         for g in &level.groups {
             let identity = identity_of(&g.id);
             let phase = g.phase_ms.unwrap_or_else(|| phase_for(&g.animation, identity));
-            let s = g.animation.sample(t_ms, phase, identity);
+            // A flicker is the renderer's, per region (plan 15c).
+            let flicker = match g.animation {
+                crate::Animation::Flicker { speed, depth } => {
+                    Some((f32::from(speed.max(1)), f32::from(depth.min(100))))
+                }
+                _ => None,
+            };
+            let s = match flicker {
+                Some(_) => crate::anim::STEADY_SAMPLE,
+                None => g.animation.sample(t_ms, phase, identity),
+            };
             let k = f32::from(g.intensity) / 100.0 * s.scale;
+            // The flicker's clock, kept within f32's whole milliseconds.
+            let clock = t_ms + f64::from(phase);
+            let wrap = 16_777_216.0;
+            let clock =
+                if clock.is_finite() { (clock - libm::floor(clock / wrap) * wrap) as f32 } else { 0.0 };
             let (own, base) = match (s.colour, g.colour) {
                 (Some(c), _) | (None, crate::GlowColour::Tint(c)) => (false, c.map(srgb_to_linear)),
                 (None, crate::GlowColour::Own) => (true, [1.0; 3]),
@@ -126,6 +151,9 @@ impl LookFrame {
                 own_colour: own,
                 self_scale: s.scale,
                 reach: g.reach.pixels(),
+                flicker,
+                t_ms: clock,
+                seed: (identity ^ (identity >> 32)) as u32,
             });
         }
     }

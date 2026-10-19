@@ -21,8 +21,8 @@ pub(super) fn common() -> String {
 /// Groups in the globals (a group map value is one byte, 0 none).
 pub(super) const GROUPS: usize = 255;
 
-/// The globals' floats: nine vec4s, then two arrays of [`GROUPS`] vec4s.
-pub(super) const GLOBAL_FLOATS: usize = 4 * (9 + 2 * GROUPS);
+/// The globals' floats: nine vec4s, then three arrays of [`GROUPS`] vec4s.
+pub(super) const GLOBAL_FLOATS: usize = 4 * (9 + 3 * GROUPS);
 
 /// The occluder map's format (plan 15b): each texel a worm's index + 1, 0
 /// none (GL renders into `R8Uint`).
@@ -44,8 +44,11 @@ pub(super) struct LookTextures {
     pub(super) art_scale: u32,
     /// The level's size in world pixels (uncropped).
     pub(super) level: (u32, u32),
-    /// The lit terrain's group 2: globals, glow, groups.
+    /// The lit terrain's group 2: globals, glow, groups, flicker regions.
     pub(super) terrain_bind: wgpu::BindGroup,
+    /// Each world pixel's flicker region (plan 15c), `R16Uint`.
+    pub(super) region_map: wgpu::Texture,
+    regions: super::regions::Regions,
     /// The level's glow light.
     pub(super) gi: super::gi::GiState,
 }
@@ -177,6 +180,32 @@ pub(super) fn write_bytes(
     );
 }
 
+/// [`write_bytes`] for two bytes a texel (`R16Uint`).
+fn write_u16(queue: &wgpu::Queue, texture: &wgpu::Texture, (data, width): (&[u16], u32), r: Rect) {
+    let (tw, th) = (texture.width(), texture.height());
+    let (w, h) = (r.w.min(tw.saturating_sub(r.x)), r.h.min(th.saturating_sub(r.y)));
+    let end =
+        (u64::from(r.y) + u64::from(h).saturating_sub(1)) * u64::from(width) + u64::from(r.x) + u64::from(w);
+    if w == 0 || h == 0 || r.x.saturating_add(w) > width || end > data.len() as u64 {
+        return;
+    }
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x: r.x, y: r.y, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        bytemuck::cast_slice(data),
+        wgpu::TexelCopyBufferLayout {
+            offset: 2 * (u64::from(r.y) * u64::from(width) + u64::from(r.x)),
+            bytes_per_row: Some(2 * width),
+            rows_per_image: Some(h),
+        },
+        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+    );
+}
+
 /// Art rectangle `r` as the world rectangle holding it at `s`.
 fn world_rect(r: Rect, s: u32) -> Rect {
     let s = s.max(1);
@@ -198,6 +227,7 @@ impl LookState {
                 entry(0, frag, super::UNIFORM),
                 entry(1, frag, FLOAT_TEXTURE),
                 entry(2, frag, UINT_TEXTURE),
+                entry(3, frag, UINT_TEXTURE),
             ],
         });
         let source = format!("{}\n{}", common(), include_str!("../look/world_lit.wgsl"));
@@ -498,6 +528,7 @@ impl LookState {
         let glow = r8(device, "olr-render glow", sizes.art, wgpu::TextureFormat::R8Unorm);
         let groups = r8(device, "olr-render glow groups", sizes.world, wgpu::TextureFormat::R8Uint);
         let solid = r8(device, "olr-render solid", sizes.world, wgpu::TextureFormat::R8Uint);
+        let region_map = r8(device, "olr-render flicker regions", sizes.world, wgpu::TextureFormat::R16Uint);
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
         let terrain_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render look terrain"),
@@ -512,6 +543,10 @@ impl LookState {
                     binding: 2,
                     resource: wgpu::BindingResource::TextureView(&view(&groups)),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(&view(&region_map)),
+                },
             ],
         });
         let inputs = super::gi::GiInputs {
@@ -520,6 +555,7 @@ impl LookState {
             groups: &view(&groups),
             solid: &view(&solid),
             terrain: &view(terrain),
+            regions: &view(&region_map),
         };
         // Over the level the device keeps (cropped like the terrain): past it
         // is open, as for the soak.
@@ -533,6 +569,8 @@ impl LookState {
             art_scale: map.art_scale(),
             level,
             terrain_bind,
+            regions: super::regions::Regions::new(level, map.glow_groups()),
+            region_map,
             gi,
         };
         let whole = Rect { x: 0, y: 0, w: map.width(), h: map.height() };
@@ -559,6 +597,9 @@ impl LookState {
         if let (Some(glow), Some(groups)) = (map.glow(), map.glow_groups()) {
             write_bytes(queue, &t.glow, (glow, map.width()), r);
             write_bytes(queue, &t.groups, (groups, t.level.0), wr);
+            if let Some((x, y, w, h)) = t.regions.update(groups, (wr.x, wr.y, wr.w, wr.h)) {
+                write_u16(queue, &t.region_map, (&t.regions.ids, t.level.0), Rect { x, y, w, h });
+            }
         }
         let cells = map.material().cells();
         let Some(clear) = map.clear().filter(|c| c.len() == cells.len()) else {
@@ -602,6 +643,20 @@ impl LookState {
             e.extend([f.pos[0], f.pos[1], radius, f.reach.clamp(0.0, 1e9), l[0], l[1], l[2], 0.0]);
         }
         self.emitter_count = (e.len() / super::gi::EMITTER_FLOATS) as u32;
+    }
+
+    /// Labels the flicker regions for the groups `look` flickers, when they
+    /// are not the ones labelled, and uploads the whole map (plan 15c).
+    pub(super) fn sync_regions(&mut self, queue: &wgpu::Queue, look: &LookFrame) {
+        let Some(t) = &mut self.textures else { return };
+        let mut mask = [false; GROUPS];
+        for (m, g) in mask.iter_mut().zip(&look.groups) {
+            *m = g.flicker.is_some();
+        }
+        if t.regions.set_mask(&mask) {
+            let whole = Rect { x: 0, y: 0, w: t.level.0, h: t.level.1 };
+            write_u16(queue, &t.region_map, (&t.regions.ids, t.level.0), whole);
+        }
     }
 
     /// Packs `look` (and where this frame draws) into the globals' floats.
@@ -659,6 +714,16 @@ impl LookState {
         for i in 0..GROUPS {
             match look.groups.get(i) {
                 Some(g) => p.extend([g.reach.min(1e9), f32::from(u8::from(g.own_colour)), 0.0, 0.0]),
+                None => p.extend([0.0; 4]),
+            }
+        }
+        // Each group's flicker (plan 15c): speed, depth, clock, seed (24
+        // bits, whole in f32); a speed of 0 is no flicker.
+        for i in 0..GROUPS {
+            match look.groups.get(i).and_then(|g| g.flicker.map(|f| (g, f))) {
+                Some((g, (speed, depth))) => {
+                    p.extend([speed.max(1.0), depth, g.t_ms, (g.seed & 0xff_ffff) as f32])
+                }
                 None => p.extend([0.0; 4]),
             }
         }

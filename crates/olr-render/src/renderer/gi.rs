@@ -107,6 +107,7 @@ impl GiPipelines {
                 entry(5, frag, FLOAT),
                 entry(6, frag, FLOAT),
                 entry(7, frag, FLOAT),
+                entry(8, frag, UINT),
             ],
         );
         let both = wgpu::ShaderStages::VERTEX_FRAGMENT;
@@ -331,6 +332,8 @@ pub(super) struct GiInputs<'a> {
     pub(super) groups: &'a wgpu::TextureView,
     pub(super) solid: &'a wgpu::TextureView,
     pub(super) terrain: &'a wgpu::TextureView,
+    /// Each world pixel's flicker region (plan 15c).
+    pub(super) regions: &'a wgpu::TextureView,
 }
 
 impl GiState {
@@ -411,6 +414,7 @@ impl GiState {
                 tv(inputs.terrain),
                 tv(&dynamic.0),
                 tv(&dynamic.1),
+                tv(inputs.regions),
             ],
         );
         let dynamic_bind = bind(

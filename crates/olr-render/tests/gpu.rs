@@ -355,7 +355,13 @@ fn dim(a: f32) -> olr_look::LookFrame {
     let mut look = olr_look::LookFrame::default();
     look.begin(None, 0.0);
     look.ambient = [a; 3];
-    look.groups.push(olr_look::FrameGroup { cast: [0.0; 3], own_colour: true, self_scale: 0.5, reach: 0.0 });
+    look.groups.push(olr_look::FrameGroup {
+        cast: [0.0; 3],
+        own_colour: true,
+        self_scale: 0.5,
+        reach: 0.0,
+        ..Default::default()
+    });
     look
 }
 
@@ -762,7 +768,8 @@ fn glowing_room(
 /// A look at ambient 0.1 whose group 1 casts white at `k` with `reach`.
 fn glow_look(k: f32, reach: f32) -> olr_look::LookFrame {
     let mut look = dim(0.1);
-    look.groups[0] = olr_look::FrameGroup { cast: [k; 3], own_colour: false, self_scale: k, reach };
+    look.groups[0] =
+        olr_look::FrameGroup { cast: [k; 3], own_colour: false, self_scale: k, reach, ..Default::default() };
     look
 }
 
@@ -961,8 +968,13 @@ fn a_lit_frame_draws_on_gl() {
     // A worm's occluder (plan 15b) draws there too.
     let body = [([20.0, 10.0, 4.0, 6.0], 1)];
     let r = worm_frame(&gpu, &map, view, &[lamp([30.5, 20.5], 100.0)], &body, |l| {
-        l.groups[0] =
-            olr_look::FrameGroup { cast: [1.0; 3], own_colour: true, self_scale: 1.0, reach: 200.0 };
+        l.groups[0] = olr_look::FrameGroup {
+            cast: [1.0; 3],
+            own_colour: true,
+            self_scale: 1.0,
+            reach: 200.0,
+            ..Default::default()
+        };
         l.light_soak = 4;
     });
     assert!(light_at(&gpu, &r, 40, 20)[0] > 0.2, "the lamp lights");
@@ -1080,7 +1092,13 @@ fn a_worm_blocks_glow_light() {
     let map = glowing_room(100, 40, |x, y| x == 10 || y >= 30, |x, y| x == 10 && y < 30);
     let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
     let glow = |l: &mut olr_look::LookFrame| {
-        l.groups[0] = olr_look::FrameGroup { cast: [1.0; 3], own_colour: false, self_scale: 1.0, reach: 64.0 }
+        l.groups[0] = olr_look::FrameGroup {
+            cast: [1.0; 3],
+            own_colour: false,
+            self_scale: 1.0,
+            reach: 64.0,
+            ..Default::default()
+        }
     };
     let bare = worm_frame(&gpu, &map, view, &[], &[], glow);
     let worm = worm_frame(&gpu, &map, view, &[], &[([20.0, 22.0, 4.0, 7.0], 1)], glow);
@@ -1563,7 +1581,8 @@ fn bounce_settles_to_steady_bytes() {
 #[test]
 fn no_bounce_through_a_thin_wall() {
     let Some(gpu) = offscreen() else { return };
-    let map = painted_room(100, 40, |x, y| x == 50 || !(2..38).contains(&y) || !(2..98).contains(&x), |_, _| WHITE);
+    let map =
+        painted_room(100, 40, |x, y| x == 50 || !(2..38).contains(&y) || !(2..98).contains(&x), |_, _| WHITE);
     let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
     let flash = [olr_look::FrameLight { colour: [4.0; 3], ..disc([30.5, 20.5], 3.0, 200.0) }];
     for bounce in [0.6, 0.9] {
@@ -1598,4 +1617,120 @@ fn a_new_level_starts_its_light_afresh() {
     gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
     let fresh = frames(&gpu, &b, view, &flash, 1, |l| l.bounce = 0.6);
     assert_eq!(gpu.read_light(&r).unwrap().1, gpu.read_light(&fresh).unwrap().1);
+}
+
+/// Two 3 × 3 glowing patches 40 px apart in group 1 of a dark room.
+fn two_flames() -> ColorMap {
+    let patch = |x: u32, y: u32| (19..22).contains(&y) && ((20..23).contains(&x) || (60..63).contains(&x));
+    glowing_room(100, 40, |_, _| false, patch)
+}
+
+/// Group 1 casting dimly (0.3) with its self-light whole, animated by
+/// `anim` at clock `t_ms`: `Some((speed, depth))` flickers.
+fn flame_look(flicker: Option<(f32, f32)>, self_scale: f32, t_ms: f32) -> olr_look::LookFrame {
+    let mut look = dim(0.05);
+    look.groups[0] = olr_look::FrameGroup {
+        cast: [0.3; 3],
+        own_colour: false,
+        self_scale,
+        reach: 40.0,
+        flicker,
+        t_ms,
+        seed: 7,
+    };
+    look
+}
+
+/// The drawn picture of `map` with `look`, two output pixels a world pixel.
+fn picture(gpu: &Offscreen, r: &mut Renderer, map: &ColorMap, look: &olr_look::LookFrame) -> RgbaImage {
+    let mut l = list(View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
+    l.map = (map.material().width(), map.material().height());
+    gpu.render_lit_to_image(r, &l, Some(look), (200, 80))
+}
+
+fn lit_renderer(gpu: &Offscreen, map: &ColorMap) -> Renderer {
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.set_lighting(true);
+    r.upload_terrain(map);
+    r
+}
+
+/// World pixel (x, y)'s red in a [`picture`].
+fn red_at(img: &RgbaImage, x: u32, y: u32) -> u8 {
+    img.get(2 * x, 2 * y).r
+}
+
+/// Plan 15c: each separately drawn flame of a `Flicker` group flickers on
+/// its own.
+#[test]
+fn two_flames_flicker_on_their_own() {
+    let Some(gpu) = offscreen() else { return };
+    let map = two_flames();
+    let mut r = lit_renderer(&gpu, &map);
+    let differ = (0..20)
+        .filter(|i| {
+            let img = picture(&gpu, &mut r, &map, &flame_look(Some((8.0, 60.0)), 1.0, *i as f32 * 70.0));
+            red_at(&img, 21, 20) != red_at(&img, 61, 20)
+        })
+        .count();
+    assert!(differ >= 10, "the flames differ at {differ} of 20 clocks");
+}
+
+/// Plan 15c: one flame flickers as one: no seams inside it.
+#[test]
+fn one_flame_flickers_as_one() {
+    let Some(gpu) = offscreen() else { return };
+    let map = two_flames();
+    let mut r = lit_renderer(&gpu, &map);
+    for i in 0..20 {
+        let img = picture(&gpu, &mut r, &map, &flame_look(Some((8.0, 60.0)), 1.0, i as f32 * 70.0));
+        for x0 in [20, 60] {
+            let first = red_at(&img, x0, 19);
+            for y in 19..22 {
+                for x in x0..x0 + 3 {
+                    assert_eq!(red_at(&img, x, y), first, "clock {i}: ({x}, {y})");
+                }
+            }
+        }
+    }
+}
+
+/// Plan 15c: `Pulse` and `Keys` groups stay in step across their pixels.
+#[test]
+fn pulse_groups_stay_in_step() {
+    let Some(gpu) = offscreen() else { return };
+    let map = two_flames();
+    let mut r = lit_renderer(&gpu, &map);
+    for i in 0..20 {
+        let img = picture(&gpu, &mut r, &map, &flame_look(None, 0.4 + 0.03 * i as f32, i as f32 * 70.0));
+        assert_eq!(red_at(&img, 21, 20), red_at(&img, 61, 20), "clock {i}");
+    }
+}
+
+/// Plan 15c, review focus 4: a glowing bridge drawn between the flames
+/// makes them one region, flickering as one.
+#[test]
+fn regions_follow_glow_edits() {
+    let Some(gpu) = offscreen() else { return };
+    let mut map = two_flames();
+    let mut r = lit_renderer(&gpu, &map);
+    let anim = |i: usize| flame_look(Some((8.0, 60.0)), 1.0, i as f32 * 70.0);
+    picture(&gpu, &mut r, &map, &anim(0));
+    let mut g = olr_terrain::GlowLayers::empty((100, 40), (100, 40));
+    for y in 0..40 {
+        for x in 0..100 {
+            let patch = (19..22).contains(&y) && ((20..23).contains(&x) || (60..63).contains(&x));
+            let bridge = y == 20 && (20..63).contains(&x);
+            if patch || bridge {
+                let i = (y * 100 + x) as usize;
+                (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
+            }
+        }
+    }
+    map.replace_glow_rect(olr_terrain::Rect { x: 23, y: 20, w: 37, h: 1 }, &g);
+    r.update_terrain(&mut map);
+    for i in 0..20 {
+        let img = picture(&gpu, &mut r, &map, &anim(i));
+        assert_eq!(red_at(&img, 21, 19), red_at(&img, 61, 21), "clock {i}: one region");
+    }
 }

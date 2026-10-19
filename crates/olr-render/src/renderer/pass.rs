@@ -90,6 +90,7 @@ impl Renderer {
         let uniform = upscale_uniform(src, dst, (tw, th), self.settings.filter, self.srgb);
         self.queue.write_buffer(&self.upscale_uniform, 0, bytemuck::cast_slice(&uniform));
         if let (Some(look), Some(state)) = (look, self.look.as_mut()) {
+            state.sync_regions(&self.queue, look);
             state.pack(look, &frame);
             self.queue.write_buffer(&state.globals, 0, bytemuck::cast_slice(&state.packed));
             if !state.packed_emitters.is_empty() {

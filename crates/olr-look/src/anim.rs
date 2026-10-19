@@ -13,6 +13,9 @@ pub struct Sample {
 
 const STEADY: Sample = Sample { scale: 1.0, colour: None };
 
+/// [`Animation::Steady`]'s sample.
+pub(crate) const STEADY_SAMPLE: Sample = STEADY;
+
 /// SplitMix64's finaliser: a well-mixed hash of `x`.
 pub fn splitmix64(x: u64) -> u64 {
     let mut z = x.wrapping_add(0x9e37_79b9_7f4a_7c15);

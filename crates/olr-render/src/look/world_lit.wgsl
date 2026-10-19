@@ -12,6 +12,8 @@ struct Globals {
 @group(2) @binding(0) var<uniform> look: LookGlobals;
 @group(2) @binding(1) var glow_tex: texture_2d<f32>;
 @group(2) @binding(2) var groups_tex: texture_2d<u32>;
+// Each world pixel's flicker region (plan 15c).
+@group(2) @binding(3) var regions_tex: texture_2d<u32>;
 
 struct Quad {
     @location(0) dst: vec4<f32>,
@@ -73,11 +75,13 @@ fn fs_terrain_lit(in: QuadOut) -> LitOut {
     let glow = textureLoad(glow_tex, clamp(t, vec2<i32>(0), gsize - vec2<i32>(1)), 0).r;
     let s = max(i32(look.level.z), 1);
     let wsize = vec2<i32>(textureDimensions(groups_tex));
-    let v = textureLoad(groups_tex, clamp(t / s, vec2<i32>(0), wsize - vec2<i32>(1)), 0).r;
+    let w = clamp(t / s, vec2<i32>(0), wsize - vec2<i32>(1));
+    let v = textureLoad(groups_tex, w, 0).r;
     // A pixel of no group still glows; it only casts no light.
     var scale = 1.0;
     if v > 0u && v <= min(u32(look.mode.y), 255u) {
-        scale = look.groups[v - 1u].w;
+        let region = textureLoad(regions_tex, clamp(w, vec2<i32>(0), vec2<i32>(textureDimensions(regions_tex)) - vec2<i32>(1)), 0).r;
+        scale = look.groups[v - 1u].w * region_flicker(look.group_flicker[v - 1u], region);
     }
     var out: LitOut;
     out.colour = c;

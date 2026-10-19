@@ -229,3 +229,22 @@ fn bounce_is_the_engines_in_a_lit_level() {
     f.begin(None, 0.0);
     assert_eq!(f.bounce, 0.0);
 }
+
+/// Plan 15c: a `Flicker` group leaves its flicker to the renderer (per
+/// region): its cast and self-light are unscaled, its speed, depth and
+/// clock are given.
+#[test]
+fn a_flicker_group_flickers_per_region() {
+    let mut look = level();
+    look.groups[0].animation = Animation::Flicker { speed: 8, depth: 25 };
+    look.groups[0].phase_ms = Some(100);
+    let mut f = LookFrame::default();
+    for t in [0.0, 37.0, 1234.0] {
+        f.begin(Some(&look), t);
+        let g = f.groups[0];
+        assert_eq!(g.flicker, Some((8.0, 25.0)));
+        assert!(near(g.self_scale, 1.0) && near(g.cast[0], 0.5), "{g:?}");
+        assert!(near(g.t_ms, t as f32 + 100.0));
+        assert_eq!(f.groups[1].flicker, None);
+    }
+}
