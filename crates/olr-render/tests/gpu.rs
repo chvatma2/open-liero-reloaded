@@ -732,8 +732,12 @@ fn look_softness_blurs() {
     let lights = [lamp([45.5, 20.5], 30.0)];
     let sharp = lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &lights, 0);
     let soft = lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &lights, 3);
+    // Softness blurs the light in the open (the lamp's falloff changes),
+    // but never past the wall (the user's request, 2026-10-19).
+    let changed = (0..50).any(|x| light_at(&gpu, &sharp, x, 20) != light_at(&gpu, &soft, x, 20));
+    assert!(changed, "softness blurs the light");
     let (s, b) = (light_at(&gpu, &sharp, 52, 20)[0], light_at(&gpu, &soft, 52, 20)[0]);
-    assert!((s - 0.1).abs() < 1e-3 && b > s + 1e-3, "light bleeds past the wall's edge when soft: {s} {b}");
+    assert!((s - 0.1).abs() < 1e-3 && (b - 0.1).abs() < 1e-3, "no light past the wall: {s} {b}");
 }
 
 /// [`room`] whose pixels where `glows(x, y)` glow at full strength in
@@ -1353,4 +1357,63 @@ fn a_light_ignores_its_own_worm_through_a_hollow() {
         let v = light_at(&gpu, &r, x, y)[0];
         assert!(v > 0.2, "({x}, {y}) lit all round: {v}");
     }
+}
+
+/// The user's request (2026-10-19): light never passes opaque rock, however
+/// thin. A one-pixel wall: the air right behind it stays at the ambient,
+/// under every shadow filter and the most softness.
+#[test]
+fn a_one_pixel_wall_stops_light_right_behind_it() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |x, _| x == 50);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    for filter in [0, 1, 2] {
+        for softness in [0, 4] {
+            let r = lit_frame_with(&gpu, &map, view, &[lamp([40.5, 20.5], 60.0)], |l| {
+                l.shadow_filter = filter;
+                l.softness = softness;
+            });
+            for y in [15, 20, 25] {
+                let v = light_at(&gpu, &r, 51, y)[0];
+                assert!((v - 0.1).abs() < 1e-3, "filter {filter}, softness {softness}: (51, {y}) {v}");
+            }
+            assert!(light_at(&gpu, &r, 49, 20)[0] > 0.2, "the lit side");
+        }
+    }
+}
+
+/// A diagonal wall one pixel thin (its pixels touching at corners only)
+/// stops light as a straight one does.
+#[test]
+fn a_diagonal_wall_one_pixel_thin_stops_light() {
+    let Some(gpu) = offscreen() else { return };
+    // The staircase x - y = 30 from (30, 0) to (69, 39): the lamp below-right of it.
+    let map = room(100, 40, |x, y| x == y + 30);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    for filter in [0, 1, 2] {
+        let r = lit_frame_with(&gpu, &map, view, &[lamp([60.5, 20.5], 80.0)], |l| l.shadow_filter = filter);
+        let mut leaks = Vec::new();
+        for y in 5..35 {
+            for x in 0..100 {
+                // Above-left of the wall, past its corner pixels.
+                if x + 2 < y + 30 && x > y + 10 {
+                    let v = light_at(&gpu, &r, x, y)[0];
+                    if (v - 0.1).abs() > 1e-3 {
+                        leaks.push((x, y, v));
+                    }
+                }
+            }
+        }
+        assert!(leaks.is_empty(), "filter {filter}: light behind the wall at {leaks:?}");
+    }
+}
+
+/// Glow light stops at a one-pixel wall too.
+#[test]
+fn a_one_pixel_wall_stops_glow_light() {
+    let Some(gpu) = offscreen() else { return };
+    let map = glowing_room(100, 40, |x, _| x == 10 || x == 30, |x, _| x == 10);
+    let r = glow_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &glow_look(1.0, 64.0));
+    let (front, behind) = (light_at(&gpu, &r, 29, 20)[0], light_at(&gpu, &r, 31, 20)[0]);
+    assert!(front > 0.15 && (behind - 0.1).abs() < 0.01, "front {front}, behind {behind}");
 }

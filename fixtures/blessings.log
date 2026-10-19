@@ -159,3 +159,5 @@
   fixtures/render/look-rocket.png
 2026-10-19 bless-render: plan 15b: worms take the worm floor, block light and are lit on the light's side
   fixtures/render/look-rocket.png
+2026-10-19 bless-render: light never passes rock however thin: shadow rays walk every pixel, air past a wall's entry stays dark, the blur stops at walls
+  fixtures/render/look-rocket.png

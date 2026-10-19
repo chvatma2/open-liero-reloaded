@@ -81,14 +81,20 @@ on screen or offscreen.
     texture fits the device (`glow_light_past_the_device_crop_is_open`).
     Without groups the fluence is only cleared.
   - **Shadow maps** (`shadow.wgsl`, Task 11): one row per placed light,
-    `SHADOW_RAYS` (512) columns, each the distance to the first rock or
-    dirt marched from the light's radius out to its reach within the
-    level's box (outside is open; a light centred in a solid lights
+    `SHADOW_RAYS` (512) columns, each the distance where the ray enters
+    the first rock or dirt (or another worm), walked pixel by pixel (a
+    grid walk: no step passes between rock pixels touching at a corner;
+    the user's request, 2026-10-19) from the light's radius out to its
+    reach within the level's box (outside is open; a light centred in a solid lights
     nothing; a far Unlimited light's march ends,
     `a_far_unlimited_light_ends_its_shadow_march`). Skipped with no
     lights. The shadow filter (`LookFrame::shadow_filter`, from
     `olr_look::Shadows`) is applied when the sum reads them (`light.wgsl`'s
-    `visible`): 0 hard (one test), 1 smooth (four tests a world pixel), 2
+    `visible`; a point is lit up to `past_rock` past the entry: a solid
+    pixel's within 1, its face, an air pixel's within 0.5, so no light
+    reaches past rock however thin, `a_one_pixel_wall_stops_light_right_behind_it`,
+    `a_diagonal_wall_one_pixel_thin_stops_light`; the light layout binds the
+    solid map): 0 hard (one test), 1 smooth (four tests a world pixel), 2
     soft (a penumbra from the light's radius, wider farther behind the
     occluder, over the neighbouring rays), soft the default (the user's
     playtest, 2026-10-19; `soft_shadows_have_a_penumbra`).
@@ -101,7 +107,8 @@ on screen or offscreen.
     faded by distance; `fs_soak_v` raises it to the solid floor. Air keeps
     its light (`soak_and_floor_never_change_air`).
   - **Blur** (`fs_blur_h`, `fs_blur_v`): a box of the level's softness (0
-    to 4 world pixels) each way; `fs_blur_v` also caps the light at max
+    to 4 world pixels) each way, an air texel gathering only the air before
+    the first solid each way (no light blurs through a wall); `fs_blur_v` also caps the light at max
     light and bands it into the light steps.
   - **Composite** (`composite.wgsl`): each world-target texel's albedo
     times the light grid at its centre (bilinear), never below its

@@ -256,6 +256,7 @@ impl LookState {
                 entry(2, frag, super::UNIFORM),
                 entry(3, frag, FLOAT_TEXTURE),
                 entry(4, frag, FLOAT_TEXTURE),
+                entry(5, frag, UINT_TEXTURE),
             ],
         });
         let shadow_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -466,6 +467,7 @@ impl LookState {
             wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }
         }
         let uniform = || wgpu::BindGroupEntry { binding: 0, resource: self.globals.as_entire_binding() };
+        let solid = self.textures.as_ref().map_or(&self.no_solid, |t| &t.solid_view);
         let light_bind = |src: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("olr-render light"),
@@ -476,12 +478,12 @@ impl LookState {
                     wgpu::BindGroupEntry { binding: 2, resource: self.lights.as_entire_binding() },
                     tex(3, &self.shadow_view),
                     tex(4, self.textures.as_ref().map_or(&self.no_glow, |t| &t.gi.fluence)),
+                    tex(5, solid),
                 ],
             })
         };
         // The sum reads nothing; it is bound to a grid it does not write.
         let binds = [light_bind(&views[1]), light_bind(&views[2]), light_bind(&views[0])];
-        let solid = self.textures.as_ref().map_or(&self.no_solid, |t| &t.solid_view);
         let soak_bind = |src: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("olr-render soak"),

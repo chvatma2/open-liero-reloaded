@@ -9,6 +9,25 @@
 @group(0) @binding(2) var<uniform> lights: Lights;
 @group(0) @binding(3) var shadow_tex: texture_2d<f32>;
 @group(0) @binding(4) var glow_light: texture_2d<f32>;
+@group(0) @binding(5) var solid_tex: texture_2d<u32>;
+
+// Whether world pixel `w` is opaque rock or dirt (the solid map: material 1
+// is background, a clear solid is written as it); outside the level is open.
+fn solid_px(w: vec2<i32>) -> bool {
+    let size = vec2<i32>(textureDimensions(solid_tex));
+    if any(w < vec2<i32>(0)) || any(w >= size) || any(w >= vec2<i32>(look.level.xy)) {
+        return false;
+    }
+    return textureLoad(solid_tex, w, 0).r != 1u;
+}
+
+// How far past where a ray enters rock a point is still lit: a solid
+// pixel's centre within its face (1), an air pixel's only before the rock
+// (half a pixel of the ray's angle), so no light reaches past rock however
+// thin (the user's request, 2026-10-19).
+fn past_rock(c: vec2<f32>) -> f32 {
+    return select(0.5, 1.0, solid_px(vec2<i32>(floor(c))));
+}
 
 // The level's glow light at world point `c`: its cell grid (cells of
 // `look.level.w` world pixels) sampled bilinearly, clamped.
@@ -35,11 +54,12 @@ fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
 }
 
 // Light i's shadow map along ray `ray`: whether a point `d` world pixels
-// out is lit (1) or in shadow (0).
-fn lit_on(i: u32, ray: i32, d: f32) -> f32 {
+// out, `past` at most past where the ray enters rock ([`past_rock`]), is
+// lit (1) or in shadow (0).
+fn lit_on(i: u32, ray: i32, d: f32, past: f32) -> f32 {
     let r = ((ray % i32(SHADOW_RAYS)) + i32(SHADOW_RAYS)) % i32(SHADOW_RAYS);
     let s = joined(textureLoad(shadow_tex, vec2<i32>(r, i32(i)), 0).xy);
-    return select(0.0, 1.0, s > 0.0 && d <= s + 1.0);
+    return select(0.0, 1.0, s > 0.0 && d <= s + past);
 }
 
 // The ray of light `a` towards `c` (ray 0 inside its radius: the light's
@@ -60,14 +80,15 @@ fn ray_to(a: vec4<f32>, c: vec2<f32>) -> i32 {
 fn visible(i: u32, a: vec4<f32>, c: vec2<f32>) -> f32 {
     let d = distance(c, a.xy);
     let shadows = look.mode.w;
+    let past = past_rock(c);
     if shadows < 0.5 || d <= a.z {
-        return lit_on(i, ray_to(a, c), d);
+        return lit_on(i, ray_to(a, c), d, past);
     }
     if shadows < 1.5 {
         var sum = 0.0;
         for (var k = 0; k < 4; k++) {
             let q = c + vec2<f32>(f32(k % 2) - 0.5, f32(k / 2) - 0.5) * 0.5;
-            sum += lit_on(i, ray_to(a, q), distance(q, a.xy));
+            sum += lit_on(i, ray_to(a, q), distance(q, a.xy), past);
         }
         return sum * 0.25;
     }
@@ -81,20 +102,20 @@ fn visible(i: u32, a: vec4<f32>, c: vec2<f32>) -> f32 {
     for (var k = -reach; k <= reach; k++) {
         let r = ((r0 + k) % i32(SHADOW_RAYS) + i32(SHADOW_RAYS)) % i32(SHADOW_RAYS);
         let s = joined(textureLoad(shadow_tex, vec2<i32>(r, i32(i)), 0).xy);
-        if s > 0.0 && d > s + 1.0 {
+        if s > 0.0 && d > s + past {
             blockers += s;
             count += 1.0;
         }
     }
     if count == 0.0 {
-        return lit_on(i, r0, d);
+        return lit_on(i, r0, d, past);
     }
     let s = blockers / count;
     let width = a.z * (d - s) / max(s, 1.0);
     let n = clamp(i32(round(width / max(d * step, 1e-3))), 0, reach);
     var sum = 0.0;
     for (var k = -n; k <= n; k++) {
-        sum += lit_on(i, r0 + k, d);
+        sum += lit_on(i, r0 + k, d, past);
     }
     return sum / f32(2 * n + 1);
 }
@@ -126,15 +147,31 @@ fn fs_sum(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     return vec4<f32>(look.ambient.rgb + glow_at(c) + placed(c), 1.0);
 }
 
+// Grid texel `p`'s world pixel.
+fn world_of(p: vec2<i32>) -> vec2<i32> {
+    return vec2<i32>(look.frame.xy) - vec2<i32>(i32(LIGHT_PAD)) + p;
+}
+
+// A box of the level's softness along `dir`. An air texel gathers only the
+// air before the first rock each way, so no light blurs through a wall
+// however thin (the user's request, 2026-10-19).
 fn blur(p: vec2<i32>, dir: vec2<i32>) -> vec3<f32> {
     let r = clamp(i32(look.tint.w), 0, 4);
     let size = vec2<i32>(textureDimensions(src));
-    var acc = vec3<f32>(0.0);
-    for (var i = -r; i <= r; i++) {
-        let q = clamp(p + dir * i, vec2<i32>(0), size - vec2<i32>(1));
-        acc += textureLoad(src, q, 0).rgb;
+    var acc = textureLoad(src, p, 0).rgb;
+    var n = 1.0;
+    let air = !solid_px(world_of(p));
+    for (var side = -1; side <= 1; side += 2) {
+        for (var i = 1; i <= r; i++) {
+            let q = clamp(p + dir * (i * side), vec2<i32>(0), size - vec2<i32>(1));
+            if air && solid_px(world_of(q)) {
+                break;
+            }
+            acc += textureLoad(src, q, 0).rgb;
+            n += 1.0;
+        }
     }
-    return acc / f32(2 * r + 1);
+    return acc / n;
 }
 
 @fragment

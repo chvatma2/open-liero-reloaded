@@ -3647,6 +3647,13 @@ Spec `docs/superpowers/specs/2026-10-19-worm-lighting-design.md`, plan
   read one pixel past the first non-worm pixel within 4. One value per world
   pixel. A rope or hook pixel (no occluder under it) takes the light where
   it is. The worm floor still bounds it from below.
+- **Light never passes rock, however thin** (the user's request,
+  2026-10-19): the shadow march walks every world pixel a ray crosses
+  (a grid walk; the old 1-pixel steps passed between rock pixels touching
+  at a corner) and stores where it enters rock; an air pixel is lit only
+  before that entry (half a pixel of slack), a solid one within its face
+  (1 pixel); the softness blur stops at walls for air. Glow light already
+  stopped at 1-pixel walls (`a_one_pixel_wall_stops_glow_light`).
 - **Not measured yet:** the occluder pass and the facing lookups' GPU cost
   (`olr-cli gpu-bench --look`) waits for the user's consent.
 
