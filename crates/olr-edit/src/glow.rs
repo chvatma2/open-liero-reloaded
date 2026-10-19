@@ -60,3 +60,56 @@ pub fn colour_region(art: &olr_data::image::RgbaImage, seed: (u32, u32), toleran
     }
     Some(inside)
 }
+
+/// `mask`, the glow mask of a box `from` (world origin, size) at art scale
+/// `s`, laid on box `to` by world position: what falls outside `from`
+/// keeps everything (255). A crop or a level resize moves a mask this way.
+pub fn relay_mask(
+    mask: &[u8],
+    from: ((i32, i32), (u32, u32)),
+    to: ((i32, i32), (u32, u32)),
+    s: u32,
+) -> Vec<u8> {
+    let s = s.max(1) as i64;
+    let (fw, fh) = (i64::from(from.1.0) * s, i64::from(from.1.1) * s);
+    let (tw, th) = (i64::from(to.1.0) * s, i64::from(to.1.1) * s);
+    let mut out = vec![255u8; (tw * th).max(0) as usize];
+    if mask.len() as i64 != fw * fh {
+        return out;
+    }
+    // Art pixel (x, y) of `to` is art pixel (x + dx, y + dy) of `from`.
+    let dx = (i64::from(to.0.0) - i64::from(from.0.0)) * s;
+    let dy = (i64::from(to.0.1) - i64::from(from.0.1)) * s;
+    for y in 0..th {
+        let fy = y + dy;
+        if !(0..fh).contains(&fy) {
+            continue;
+        }
+        for x in 0..tw {
+            let fx = x + dx;
+            if (0..fw).contains(&fx) {
+                out[(y * tw + x) as usize] = mask[(fy * fw + fx) as usize];
+            }
+        }
+    }
+    out
+}
+
+/// `mask` (`from` art pixels) resampled to `to` art pixels, nearest: a
+/// resized image's, or another art scale's. One of another size than
+/// `from` keeps everything (255).
+pub fn resample_mask(mask: &[u8], from: (u32, u32), to: (u32, u32)) -> Vec<u8> {
+    let n = to.0 as usize * to.1 as usize;
+    if mask.len() != from.0 as usize * from.1 as usize || from.0 == 0 || from.1 == 0 {
+        return vec![255; n];
+    }
+    let mut out = Vec::with_capacity(n);
+    for y in 0..to.1 as u64 {
+        let fy = (y * u64::from(from.1) / u64::from(to.1.max(1))) as usize;
+        for x in 0..to.0 as u64 {
+            let fx = (x * u64::from(from.0) / u64::from(to.0.max(1))) as usize;
+            out.push(mask[fy * from.0 as usize + fx]);
+        }
+    }
+    out
+}

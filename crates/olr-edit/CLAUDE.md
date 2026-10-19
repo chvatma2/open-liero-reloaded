@@ -202,8 +202,10 @@ templates and the level operations.
     `merge_down` and `split` results lose their glow (Task 5 ruling);
     `duplicate` copies the mask and `remove` drops it, with the element's
     files (`element_files` lists it).
-    `element::resize` re-lays no glow mask (the editor keeps its own
-    `GlowMasks`, batch D review).
+    `element::resize` re-lays a painted glow mask with its layer (a
+    level-sized layer's moves by the offset) and `set_all` resamples a
+    resized image's (`glow::relay_mask`, `glow::resample_mask`, shared
+    with the editor; plan 15a's final review).
 - **Tests** (`tests/`, one binary): `pack.rs` (every bundled pack loads and
   writes back byte for byte; foreign files kept; invalid results refused;
   saves through `x/..` and a symbolic link; a name a save would lose),

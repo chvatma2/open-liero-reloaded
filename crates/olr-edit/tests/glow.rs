@@ -258,3 +258,27 @@ fn resize_re_lays_clear_flags() {
     olr_edit::level::resize(&mut l, (1, 1), (-2, 0), Material::Rock, &Paint::Colour(RED)).unwrap();
     assert_eq!(l.clear.as_deref(), Some(&[255][..]));
 }
+
+/// Plan 15a's final review: resizing a masked image resamples its glow mask
+/// to the new box, as the editor does (it was refused).
+#[test]
+fn resizing_a_masked_image_resamples_its_mask() {
+    let mut p = pack(8, 4, 1);
+    let mut img = RgbaImage::new(4, 4);
+    for y in 0..4 {
+        for x in 0..4 {
+            img.set(x, y, RED);
+        }
+    }
+    let bytes = olr_format::image_io::encode_rgba(&img);
+    let id = add_image(&mut p, "a.png", bytes, (0, 0), (4, 4), ElementMaterial::Rock, "A").unwrap();
+    set(&mut p, &id, glow(100, "lava")).unwrap();
+    paint_glow(&mut p, &id, &Shape::Rect { x: 0, y: 0, w: 2, h: 4 }, 0).unwrap();
+    set(&mut p, &id, Property::Size((8, 4))).unwrap();
+    let c = p.composition.as_ref().unwrap();
+    let (w, h, m) =
+        olr_format::image_io::decode_grey_within(&c.files[&glow_file(&id)], olr_format::image_io::LEVEL_ART)
+            .unwrap();
+    assert_eq!((w, h), (8, 4));
+    assert_eq!((m[0], m[3], m[4], m[7]), (0, 0, 255, 255), "the erased left half stays the left half");
+}

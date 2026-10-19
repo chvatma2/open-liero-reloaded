@@ -462,6 +462,45 @@ fn cli_glows_pixels_by_colour() {
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
 }
 
+/// Plan 15a's final review: a level resize moves a level-sized layer's
+/// painted glow mask with its art (it was refused, or left behind with an
+/// offset).
+#[test]
+fn a_level_resize_moves_glow_masks() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    add_look(&pack);
+    let run = |args: &[&str]| cli(args, &pack, &content);
+    let element = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        run(&all)
+    };
+    ok(&element(&["split", "{pack}", "base"]));
+    ok(&element(&["set", "{pack}", "dirt", "--glow", "100", "--glow-group", "lava"]));
+    ok(&element(&["glow", "{pack}", "dirt", "--rect", "0,0,10,10", "--strength", "50"]));
+    ok(&run(&[
+        "level",
+        "resize",
+        "{pack}",
+        "--size",
+        "520x350",
+        "--offset",
+        "16,0",
+        "--content",
+        "{content}",
+    ]));
+    let bytes = std::fs::read(pack.join("editor/glow/dirt.png")).unwrap();
+    let (w, h, mask) =
+        olr_format::image_io::decode_grey_within(&bytes, olr_format::image_io::LEVEL_ART).unwrap();
+    assert_eq!((w, h), (520, 350));
+    let v = |x: u32, y: u32| mask[(y * w + x) as usize];
+    assert_eq!((v(16, 0), v(25, 9)), (128, 128), "the painted block moved with the art");
+    assert_eq!((v(26, 5), v(100, 100)), (255, 255), "the rest as it was");
+    ok(&run(&["pack", "check", "{pack}", "--content", "{content}"]));
+}
+
 #[test]
 fn cli_sets_clear() {
     let Some((tmp, pack, content)) = dirt_level() else { return };

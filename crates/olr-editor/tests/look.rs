@@ -574,6 +574,31 @@ fn ctrl_adds_to_a_colour_selection() {
     assert_eq!((v(250, 154), v(150, 100)), (0, 0), "none between or elsewhere");
 }
 
+/// Plan 15a's final review: a colour selection made at one art scale, then
+/// added to by Ctrl after the art scale changed, never panics (its flags
+/// were laid out for the old scale); the stale selection is dropped.
+#[test]
+fn a_colour_selection_survives_an_art_scale_change() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    red_square(&mut s);
+    run(&mut s, A::Tool(Tool::SelectPixels));
+    run(&mut s, A::SelectByColour(true));
+    run(&mut s, A::Tolerance(10));
+    let at = |world, kind, toggle| A::Pointer { kind, world, shift: false, toggle };
+    run(&mut s, at((205, 154), PointerKind::Down, false));
+    run(&mut s, at((205, 154), PointerKind::Up, false));
+    assert!(s.pixel_region().is_some());
+    let a = s.document().unwrap().level().art_scale;
+    run(&mut s, A::ArtScale(if a > 1 { a - 1 } else { a + 1 }));
+    run(&mut s, A::Choose(Choice::Confirm));
+    assert!(s.pixel_rect().is_none(), "a whole change drops the pixel selection");
+    run(&mut s, at((205, 154), PointerKind::Down, true));
+    run(&mut s, at((205, 154), PointerKind::Up, true));
+    run(&mut s, A::GlowSelection(100));
+    assert!(s.document().unwrap().glow_mask("tunnels").is_some());
+}
+
 /// A rectangle of pixels takes a glow too.
 #[test]
 fn a_rectangle_selection_takes_a_glow() {

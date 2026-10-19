@@ -1106,6 +1106,7 @@ impl EditorState {
             // A change of nothing is no step and leaves the level clean.
             Ok(change) if change.edit.is_noop() => Vec::new(),
             Ok(change) => {
+                self.drop_stale_pixels(std::slice::from_ref(&change.edit));
                 self.history.push(vec![change.edit]);
                 self.committed(change.dirty)
             }
@@ -1270,6 +1271,7 @@ impl EditorState {
         match op(doc) {
             Ok((edits, _)) if edits.iter().all(|e| e.is_noop()) => Vec::new(),
             Ok((edits, dirty)) => {
+                self.drop_stale_pixels(&edits);
                 self.history.push(edits);
                 self.committed(dirty)
             }
@@ -1331,6 +1333,7 @@ impl EditorState {
                 dirty = Some(Rect::union(dirty, r));
             }
         }
+        let whole = step.iter().any(|e| matches!(e, Edit::Whole { .. }));
         // A selection the step removed goes.
         match &self.selection {
             Selection::Element(id) if doc.index_of(id).is_none() => self.selection = Selection::None,
@@ -1338,7 +1341,24 @@ impl EditorState {
             Selection::Many(ids) => self.selection = self.group(ids.clone()),
             _ => {}
         }
+        if whole {
+            self.drop_pixels();
+        }
         self.committed(dirty.unwrap_or(Rect { x: 0, y: 0, w: 0, h: 0 }))
+    }
+
+    /// A whole change (art scale, resize, crop) moves every layer's pixels:
+    /// the pixel selection, laid out for the old ones, goes (plan 15a's
+    /// final review: a stale colour selection once overran its flags).
+    fn drop_stale_pixels(&mut self, edits: &[Edit]) {
+        if edits.iter().any(|e| matches!(e, Edit::Whole { .. })) {
+            self.drop_pixels();
+        }
+    }
+
+    fn drop_pixels(&mut self) {
+        self.pixel_rect = None;
+        self.pixel_region = None;
     }
 
     /// Open, New or Close: asks first when there are unsaved changes.

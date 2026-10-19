@@ -353,9 +353,26 @@ pub fn set_all(pack: &mut Pack, id: &str, properties: &[Property]) -> Result<(),
             )));
         }
     }
+    let s = l.art_scale;
     commit(pack, &context.join(", "), |src| {
+        let was = find(src, id).ok().and_then(|i| element_box(&src.composition.elements[i].kind, size));
         for p in properties {
             apply(src, id, p.clone(), size)?;
+        }
+        // A painted glow mask follows a resized image, resampled as the
+        // editor does (plan 15a's final review).
+        let i = find(src, id)?;
+        let e = &src.composition.elements[i];
+        let file = glow_file(id);
+        if let (Some(true), Some((_, from)), Some((_, to)), Some(bytes)) =
+            (e.glow.as_ref().map(|g| g.mask), was, element_box(&e.kind, size), src.files.get(&file))
+            && from != to
+        {
+            let (w, h, mask) = image_io::decode_grey_within(bytes, olr_format::image_io::LEVEL_ART)
+                .map_err(|m| ElementError::BadValue(format!("{file}: {m}")))?;
+            let (tw, th) = (to.0.saturating_mul(s), to.1.saturating_mul(s));
+            let resampled = crate::glow::resample_mask(&mask, (w, h), (tw, th));
+            src.files.insert(file, image_io::encode_grey(tw, th, &resampled));
         }
         Ok(())
     })
@@ -894,6 +911,7 @@ pub fn resize(
     let mut cache = ImageCache::new();
     let before = src.clone();
     for e in &mut src.composition.elements {
+        let was = element_box(&e.kind, old);
         // An image's pixels are not re-laid: only its box moves.
         let mut d = match e.kind {
             ElementKind::Image { .. } => Decoded::Image { grid: None, mask: None },
@@ -902,6 +920,22 @@ pub fn resize(
         resize_decoded(e, &mut d, old, s, size, offset, material, paint).map_err(|e| bad(e.to_string()))?;
         for (path, bytes) in encode_decoded(e, &d, size) {
             src.files.insert(path, bytes);
+        }
+        // A painted glow mask follows its layer's content as the editor's
+        // does (plan 15a's final review): a level-sized layer's moves by
+        // `offset` into its new box, a box keeps its own.
+        let file = glow_file(&e.id);
+        if let (Some(true), Some((at, b)), Some(new), Some(bytes)) =
+            (e.glow.as_ref().map(|g| g.mask), was, element_box(&e.kind, size), src.files.get(&file))
+        {
+            let (w, h, mask) = image_io::decode_grey_within(bytes, olr_format::image_io::LEVEL_ART)
+                .map_err(|m| bad(format!("{file}: {m}")))?;
+            if (w, h) == (b.0.saturating_mul(s), b.1.saturating_mul(s)) {
+                let moved = ((at.0.saturating_add(offset.0), at.1.saturating_add(offset.1)), b);
+                let relaid = crate::glow::relay_mask(&mask, moved, new, s);
+                let (nw, nh) = (new.1.0.saturating_mul(s), new.1.1.saturating_mul(s));
+                src.files.insert(file, image_io::encode_grey(nw, nh, &relaid));
+            }
         }
     }
     check_composition(&src, size, s).map_err(|e| ElementError::BadValue(e.to_string()))?;

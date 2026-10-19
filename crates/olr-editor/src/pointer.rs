@@ -991,12 +991,17 @@ impl EditorState {
 }
 
 /// Two pixel selections (world rectangles, a flag per art pixel at art
-/// scale `s`) as one over their union.
+/// scale `s`) as one over their union; flags of another layout (a
+/// selection made at another art scale) add nothing (plan 15a's final
+/// review: they once indexed past the union).
 fn join_regions(a: (Rect, &[bool]), b: (Rect, &[bool]), s: u32) -> (Rect, Vec<bool>) {
     let u = Rect::union(Some(a.0), b.0);
     let (uw, uh) = (u.w * s, u.h * s);
     let mut out = vec![false; uw as usize * uh as usize];
     for (r, flags) in [a, b] {
+        if flags.len() != r.w as usize * s as usize * r.h as usize * s as usize {
+            continue;
+        }
         let rw = r.w * s;
         for (i, _) in flags.iter().enumerate().filter(|(_, f)| **f) {
             let (x, y) = (i as u32 % rw.max(1), i as u32 / rw.max(1));
@@ -1005,4 +1010,19 @@ fn join_regions(a: (Rect, &[bool]), b: (Rect, &[bool]), s: u32) -> (Rect, Vec<bo
         }
     }
     (u, out)
+}
+
+#[cfg(test)]
+mod join_tests {
+    use super::*;
+
+    /// A selection laid out at another art scale (4 flags per world pixel,
+    /// joined at scale 1) adds nothing instead of indexing past the union.
+    #[test]
+    fn a_stale_selection_adds_nothing() {
+        let a = Rect { x: 0, y: 0, w: 2, h: 2 };
+        let b = Rect { x: 4, y: 0, w: 1, h: 1 };
+        let (u, flags) = join_regions((a, &[true; 16]), (b, &[true]), 1);
+        assert_eq!((u, flags.iter().filter(|f| **f).count()), (Rect { x: 0, y: 0, w: 5, h: 2 }, 1));
+    }
 }
