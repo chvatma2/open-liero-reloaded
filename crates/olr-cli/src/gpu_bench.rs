@@ -37,6 +37,10 @@ pub struct BenchConfig {
     /// Frames drawn for each probe count.
     pub probe_frames: u32,
     pub options: OffscreenOptions,
+    /// Draw the replay's level with [`bench_look`] (`--look`, plan 15a
+    /// Task 20): the look system's passes, and the engine's lights of the
+    /// replay's own shots and explosions.
+    pub look: bool,
 }
 
 /// The probe at one pass count.
@@ -88,7 +92,91 @@ pub struct GpuReport {
     /// The replay's mod and level.
     pub scene: String,
     pub start_tick: u32,
+    /// Drawn with [`bench_look`].
+    #[serde(default)]
+    pub look: bool,
     pub sizes: Vec<SizeReport>,
+}
+
+/// [`bench_look`]'s spacing of placed lights, world pixels.
+pub const LIGHT_STEP: i32 = 96;
+
+/// A representative lit scene for a level of `world` pixels at art scale
+/// `art` (plan 15a Task 20): a dark blue ambient at 20 %, the solid floor
+/// and soak at their defaults, soft shadows, a placed light every
+/// [`LIGHT_STEP`] world pixels (warm and cool in turn, every third
+/// flickering; at most `MAX_LIGHT_OBJECTS`), and one glow group (reach 48,
+/// pulsing) lighting dashed strips 2 world pixels wide every 64.
+pub fn bench_look(world: (u32, u32), art: u32) -> (olr_look::LevelLook, olr_terrain::GlowLayers) {
+    use olr_look::{Ambient, Animation, GlowColour, GlowGroup, Light, PlacedLight, PulseShape, Reach};
+    let art = art.max(1);
+    let defaults = olr_format::look::LookSource::default();
+    let mut lights = Vec::new();
+    let (w, h) = (world.0.min(i32::MAX as u32) as i32, world.1.min(i32::MAX as u32) as i32);
+    'rows: for y in (LIGHT_STEP / 2..h.max(1)).step_by(LIGHT_STEP as usize) {
+        for x in (LIGHT_STEP / 2..w.max(1)).step_by(LIGHT_STEP as usize) {
+            if lights.len() == olr_format::look::MAX_LIGHT_OBJECTS {
+                break 'rows;
+            }
+            let i = lights.len();
+            let colour = if i % 2 == 0 { [255, 192, 128] } else { [144, 176, 255] };
+            let animation =
+                if i % 3 == 2 { Animation::Flicker { speed: 8, depth: 25 } } else { Animation::Steady };
+            let light =
+                Light { colour, intensity: 150, reach: Reach::Pixels(120), animation, phase_ms: None };
+            lights.push(PlacedLight { at: (x, y), radius: 2, light });
+        }
+    }
+    if lights.is_empty() {
+        let light = Light {
+            colour: [255, 255, 255],
+            intensity: 150,
+            reach: Reach::Pixels(120),
+            animation: Animation::Steady,
+            phase_ms: None,
+        };
+        lights.push(PlacedLight { at: (w / 2, h / 2), radius: 2, light });
+    }
+    let group = GlowGroup {
+        id: "bench".into(),
+        colour: GlowColour::Own,
+        intensity: 300,
+        reach: Reach::Pixels(48),
+        animation: Animation::Pulse { period_ms: 2000, low: 60, high: 100, shape: PulseShape::Sine },
+        phase_ms: None,
+    };
+    let look = olr_look::LevelLook {
+        ambient: Ambient { colour: [0x30, 0x40, 0x60], intensity: 20 },
+        max_light: 100,
+        light_steps: 0,
+        softness: 1,
+        light_soak: defaults.light_soak,
+        solid_floor: Ambient { colour: [255, 255, 255], intensity: 30 },
+        shadows: olr_look::Shadows::Soft,
+        grade: Default::default(),
+        groups: vec![group],
+        lights,
+    };
+    let art_size = (world.0.saturating_mul(art), world.1.saturating_mul(art));
+    let mut glow = olr_terrain::GlowLayers::empty(art_size, world);
+    let strip = |x: u32, y: u32| x % 64 < 2 && y % 32 < 8;
+    for y in 0..world.1 {
+        for x in 0..world.0 {
+            if strip(x, y) {
+                glow.groups[(y * world.0 + x) as usize] = 1;
+                glow.groups_back[(y * world.0 + x) as usize] = 1;
+            }
+        }
+    }
+    for y in 0..art_size.1 {
+        for x in 0..art_size.0 {
+            if strip(x / art, y / art) {
+                let i = (y * art_size.0 + x) as usize;
+                (glow.front[i], glow.back[i]) = (255, 255);
+            }
+        }
+    }
+    (look, glow)
 }
 
 /// `1920x1080,2560x1440` as sizes.
@@ -189,7 +277,12 @@ pub fn run(
         cfg.start_tick
     );
     let packs = &replay.setup.packs;
-    let assets = LevelAssets::load(content, &packs.mod_pack.id, &packs.level.id)?;
+    let mut assets = LevelAssets::load(content, &packs.mod_pack.id, &packs.level.id)?;
+    if cfg.look {
+        let l = &mut assets.level;
+        let (look, glow) = bench_look((l.material.width(), l.material.height()), l.art_scale);
+        (l.look, l.glow) = (Some(look), Some(glow));
+    }
     let gpu = Offscreen::open(&cfg.options)?;
     let info = gpu.adapter_info().clone();
     check_adapter(cfg.options.prefer, info.device_type, &info.name)?;
@@ -204,6 +297,7 @@ pub fn run(
         device_type: format!("{:?}", info.device_type),
         scene: format!("{} on {}", packs.mod_pack.id, packs.level.id),
         start_tick: cfg.start_tick,
+        look: cfg.look,
         ..GpuReport::default()
     };
     let end = cfg.start_tick.saturating_add(cfg.frames).min(replay.ticks());
@@ -248,7 +342,7 @@ pub fn run(
         // A first frame makes the world target and uploads everything.
         present.build(&world, 1.0, &mut list);
         present.upload(&mut renderer);
-        renderer.render(&list, &view, size);
+        renderer.render_lit(&list, present.look(), &view, [0, 0, size.0, size.1]);
         gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
         let _ = renderer.gpu_times();
         let (mut tick, mut cpu, mut frame, mut total, mut gpu_ms) = (vec![], vec![], vec![], vec![], vec![]);
@@ -265,7 +359,7 @@ pub fn run(
             let t1 = Instant::now();
             present.build(&world, 1.0, &mut list);
             present.upload(&mut renderer);
-            renderer.render(&list, &view, size);
+            renderer.render_lit(&list, present.look(), &view, [0, 0, size.0, size.1]);
             cpu.push(ms(t1));
             gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
             frame.push(ms(t1));
@@ -287,7 +381,7 @@ pub fn run(
             let (mut wall, mut on_gpu, mut dropped) = (vec![], vec![], 0);
             for _ in 0..cfg.probe_frames {
                 let t0 = Instant::now();
-                renderer.render(&list, &view, size);
+                renderer.render_lit(&list, present.look(), &view, [0, 0, size.0, size.1]);
                 gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
                 wall.push(ms(t0));
                 match probe_sample(renderer.gpu_times(), passes) {
@@ -328,6 +422,28 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `--look`'s scene (plan 15a Task 20): a dark ambient, placed lights
+    /// every `LIGHT_STEP` world pixels inside the level (at most
+    /// `MAX_LIGHT_OBJECTS`), and dashed glowing strips in group 1, sized to
+    /// the level; the same for the same level.
+    #[test]
+    fn the_bench_look_fills_the_level() {
+        let (look, glow) = bench_look((504, 350), 2);
+        assert!(look.ambient.intensity < 50 && look.groups.len() == 1);
+        assert_eq!(look.lights.len(), 5 * 4, "a light every {LIGHT_STEP} px");
+        assert!(look.lights.iter().all(|l| (0..504).contains(&l.at.0) && (0..350).contains(&l.at.1)));
+        assert_eq!((glow.world, glow.art), ((504, 350), (1008, 700)));
+        assert!(glow.fits((1008, 700), (504, 350)));
+        let lit = glow.front.iter().filter(|&&g| g > 0).count();
+        assert!(lit > 0 && lit < glow.front.len() / 10, "{lit}");
+        assert!(glow.groups.iter().all(|&g| g <= 1) && glow.groups.contains(&1));
+        assert_eq!(bench_look((504, 350), 2), (look, glow));
+        let (big, _) = bench_look((4096, 4096), 1);
+        assert_eq!(big.lights.len(), olr_format::look::MAX_LIGHT_OBJECTS);
+        let (tiny, _) = bench_look((64, 64), 1);
+        assert_eq!(tiny.lights.len(), 1);
+    }
 
     #[test]
     fn sizes_parse() {

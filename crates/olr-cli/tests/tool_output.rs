@@ -80,6 +80,7 @@ fn gpu_bench_report_sample() {
         timestamps: true,
         scene: "olx-mw-1-0 on olx-level-castlestrike".into(),
         start_tick: 1000,
+        look: false,
         sizes: vec![SizeReport {
             size: (2560, 1440),
             frames: 600,

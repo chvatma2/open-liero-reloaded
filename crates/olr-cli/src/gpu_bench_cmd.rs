@@ -55,6 +55,11 @@ pub struct Args {
     /// Print every adapter wgpu finds and stop.
     #[arg(long)]
     list_adapters: bool,
+    /// Draw the level lit: a dark ambient, a placed light every 96 world
+    /// pixels, glowing strips, soft shadows, and the engine's lights of the
+    /// replay's shots (plan 15a Task 20; `olr_cli::gpu_bench::bench_look`).
+    #[arg(long)]
+    look: bool,
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
@@ -94,6 +99,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             timestamps: true,
             max_texture_side: None,
         },
+        look: args.look,
     };
     let content = olr_content::Content::open(&args.content)?;
     let report = gpu_bench::run(&content, &replay, &cfg, &mut |l| eprintln!("  {l}"))?;

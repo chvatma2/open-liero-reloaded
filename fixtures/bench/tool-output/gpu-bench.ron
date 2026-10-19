@@ -5,6 +5,7 @@
     timestamps: true,
     scene: "olx-mw-1-0 on olx-level-castlestrike",
     start_tick: 1000,
+    look: false,
     sizes: [
         (
             size: (2560, 1440),

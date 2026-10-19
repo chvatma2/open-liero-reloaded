@@ -41,6 +41,7 @@ fn a_recorded_match_is_drawn_timed_and_probed() {
         probe_taps: 4,
         probe_frames: 5,
         options: OffscreenOptions { timestamps: true, ..OffscreenOptions::default() },
+        look: false,
     };
     let r = gpu_bench::run(&content, &replay, &cfg, &mut |_| {}).unwrap();
     eprintln!("gpu-bench on {} ({}, {}), timestamps {}", r.adapter, r.backend, r.device_type, r.timestamps);
@@ -57,6 +58,14 @@ fn a_recorded_match_is_drawn_timed_and_probed() {
     assert_eq!((probed.passes, probed.taps, probed.timed_on_gpu), (2, 4, r.timestamps), "{s:?}");
     if r.timestamps {
         assert!(probed.ms.p50 > 0.0 && s.probe[0].ms == Spread::default(), "{s:?}");
+    }
+    // `--look` (plan 15a Task 20): the same match drawn lit, said so.
+    let lit =
+        gpu_bench::run(&content, &replay, &BenchConfig { look: true, ..cfg.clone() }, &mut |_| {}).unwrap();
+    assert!(lit.look && !r.look);
+    assert_eq!(lit.sizes[0].frames, 50);
+    if r.timestamps {
+        assert!(lit.sizes[0].gpu_ms.unwrap().p50 > s.gpu_ms.unwrap().p50, "the look passes cost GPU time");
     }
     let mut tampered = replay.clone();
     *tampered.row_mut(150).first_mut().unwrap() = olr_sim::Keys(0xFF);
