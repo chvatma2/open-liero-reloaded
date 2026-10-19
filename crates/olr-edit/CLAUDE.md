@@ -154,21 +154,20 @@ templates and the level operations.
   `docs/superpowers/specs/2026-10-18-look-system-design.md`; the format's
   side is `olr-format`'s `look` and level looks):
   - **`look`** (Task 7): `set_look` (`None` removes it), `add_group` (a new
-    id; returns its index), `set_group` (keeps the id), `add_light`
-    (returns its index; `EditError::TooManyObjects` past `MAX_OBJECTS`) and
-    `set_light` (its notes kept) on a `LevelSource`; `rename_group` (the
+    id; returns its index) and `set_group` (keeps the id) on a
+    `LevelSource` (plan 15c: no light objects, glowing pixels are a level's
+    light); `rename_group` (the
     elements naming it follow) and `remove_group` on a `Pack`: the level's
     glow loses the group's pixels (strength and group 0), the groups above
     move down one, an all-zero glow becomes none, and every element naming
     it loses its glow and mask, locked or not (returns their ids; the
     caller rebakes a composed level). Each edits a copy and keeps it only
-    when `compile_level` checks (`EditError::Look`). Lights move and go
-    with `level::move_object` (any object now) and `remove_object`.
+    when `compile_level` checks (`EditError::Look`).
   - **`level::resize`** re-lays the glow (`GlowLayers`) and clear flags
     with the art, the new area glowing none and opaque; a glow or flags not
     fitting the level are dropped, never indexed. Spawns outside the new
-    level are removed and returned; lights stay, since they may light it
-    from outside (batch A review), their positions shifted saturating.
+    level are removed and returned; the others' positions shift
+    saturating.
   - **The bake** (`compose`, Tasks 5 and 14b): a front art pixel glows as
     the element giving its colour, a back art pixel as the background
     element giving it (a dirt or rock layer's back art never glows); a
@@ -224,9 +223,8 @@ templates and the level operations.
   off centre, clear following the element giving the material, a raster
   refusing clear, a resize re-laying clear flags) and `look.rs` (look
   edits validate, unique group ids, removing a group renumbers and
-  unglows, renaming follows the elements, lights round-trip, the last
-  group's removal drops an empty glow, a resize keeping lights outside the
-  level). `glow_colour` is tested through `olr-cli`'s
+  unglows, renaming follows the elements, the last group's removal drops
+  an empty glow, `a_resize_drops_a_glow_that_does_not_fit`). `glow_colour` is tested through `olr-cli`'s
   `cli_glows_pixels_by_colour` and the editor's
   `glow_pixels_picked_by_colour`. The bundled-content tests skip without
   `OLR_CONTENT_DIR`.

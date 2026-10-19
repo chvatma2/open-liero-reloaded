@@ -47,6 +47,12 @@ loadouts, §4 the recommendations this crate follows).
   prefers weapons it has not fired, moves at random, records what it fired
   (`Bot::fired_weapons`); its loadout rotates by the mode
   (`olr_modes::RespawnLoadout::ChaosCycle`).
+- **Idle** (plan 15c, `Personality::Idle`): `think` returns `Keys(0)` at
+  once, every tick, without reading events, its rng or the area cache;
+  it never presses jump to respawn (the server's `MaxRespawnTime` brings
+  it back). Its loadout is a Deathmatch bot's; its rng stream id is 2.
+  For exploring a level with worms around (`tests/idle.rs`,
+  `an_idle_bot_presses_nothing`).
 - **Work budget** (`budget.rs`, F7): one unit per terrain pixel read. Every
   primitive checks its worst case first (`Budget::afford`), so `think`
   never spends more than `Bot::budget()` (`units_used()` is the test hook);

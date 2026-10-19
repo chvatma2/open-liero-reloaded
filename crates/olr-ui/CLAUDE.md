@@ -55,7 +55,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   The master volume defaults to OLX's 70 %; the game plays `master * sfx`.
 - **Match preferences** (`match_prefs.rs`): mod, level, `bots` (1 to
   `MAX_BOTS`), one `difficulty` or `per_bot` levels, `personality`
-  (`BotPersonality`), `loadout`, `rules` (`RulePrefs`), `bonuses`,
+  (`BotPersonality`: Olx, Chaos, Idle, plan 15c: "Idle (does nothing)"), `loadout`, `rules` (`RulePrefs`), `bonuses`,
   `restrictions`, `loading_time` (OLX's menu ranges `LOADING_TIME_RANGE`,
   `LIVES_RANGE`, ... from `FeatureList.cpp`). `options(seed)` is
   `olr_content::build_match`'s input (the human is worm 0); `set_bots`,

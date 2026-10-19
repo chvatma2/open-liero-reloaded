@@ -39,8 +39,7 @@ The headless command-line tool. Its commands:
   `object add` `added object <i>`; `object add|move` warn on stderr about
   a spawn outside the level. `object list` reads `level.ron` alone
   (`read_level_header`) and prints `<i>: Spawn at (x, y)[ — notes]`, the
-  notes' control characters escaped, and a light object (plan 15a) as
-  `<i>: Light at (x, y), <intensity>%, reach <n|unlimited>`; `preview`
+  notes' control characters escaped; `preview`
   crosses spawns only. `preview` draws `front` (or the
   material through `MATERIAL_PALETTE`) at art pixels × `--scale`, a white
   cross outlined in black on each spawn, bounded by `LEVEL_ART`, and
@@ -90,26 +89,21 @@ The headless command-line tool. Its commands:
   [--exposure N] [--contrast P] [--saturation P] [--tint RRGGBB] |
   --clear`, `level group add|set|remove <pack> <id> [--colour own|RRGGBB]
   [--intensity P] [--reach N|unlimited] [--animation RON] [--phase MS]`
-  (`set --rename NEW`, the elements naming it follow) and `level light
-  add|set|remove <pack> [<index>] [--at X,Y] [--colour RRGGBB]
-  [--intensity P] [--reach N|unlimited] [--radius 1..16] [--animation RON]
-  [--phase MS]` (`look_cmd.rs`, plan 15a Task 7): the `olr_edit::look`
+  (`set --rename NEW`, the elements naming it follow) (`look_cmd.rs`,
+  plan 15a Task 7; plan 15c removed `level light`: glowing pixels are a
+  level's light): the `olr_edit::look`
   operations, each checked by `compile_level` on a copy before it is kept,
   then the thumbnail refreshed, lit by the look (the user's note,
   2026-10-19; `look_commands_refresh_the_lit_thumbnail`).
   `level look` sets the given fields (a look made when the level has
   none); `--clear` removes the look and every group first (their elements
-  stop glowing) and rebakes; there is no flag for `shadows` (soft by
-  default; `level.ron` or the editor's Look panel). `group add` (needs
+  stop glowing) and rebakes. `group add` (needs
   `--reach`) prints `added group <i>`; `group remove` zeroes its pixels'
   strength, renumbers the groups above it, rebakes a composed level and
-  prints `unglowed element <id>` per element that lost its glow. `light
-  add` (needs `--at`, `--colour`, `--intensity`, `--reach`; radius 2 by
-  default) prints `added object <i>`; `set` keeps what is not given;
-  `set` and `remove` refuse an index that is not a light. Animations are
+  prints `unglowed element <id>` per element that lost its glow. Animations are
   RON, such as `Flicker(speed: 8, depth: 25)` or `Pulse(period_ms: 2000,
   low: 60, high: 100)`. Tests: `tests/level.rs`'s
-  `look_cli_sets_every_field`, `groups_and_lights_round_trip_through_the_cli`,
+  `look_cli_sets_every_field`, `groups_round_trip_through_the_cli`,
   `bad_look_values_are_errors`.
 - `olr-cli scenario [name...] [--dump F] [--all | --fields a+b] [--time F.ron]` replays oracle
   scenarios in `olr-sim` and prints the first divergence of each. `--time`
@@ -131,35 +125,34 @@ The headless command-line tool. Its commands:
   It draws with the presentation's look (`render_lit_to_image`; the
   imported OLX packs have none, so the frame goldens are unchanged).
   Use it to see what a change does; view the PNG.
-- `olr-cli look-preview <pack> --at X,Y [--time MS] [--view lit|full|light] [--shadows hard|aa|soft] [--size WxH] [--content DIR] --out f.png`
+- `olr-cli look-preview <pack> --at X,Y [--time MS] [--view lit|full|light] [--size WxH] [--content DIR] --out f.png`
   (plan 15a Task 13, `look_preview.rs`) draws a level's terrain alone (no
   worms) with its look at match clock `--time`, centred on `--at`, at
-  `Viewport::GAME`, culling lights by `olr_render::LIGHT_CULL_PAD`. It
+  `Viewport::GAME`. It
   reads the pack's level files strictly (`read_level_files`), its theme
   from `--content` (`content/packs`), and draws through the real renderer
   offscreen (`set_lighting`, `render_lit_to_image`) with IntegerNearest at
   854 × 384 by default; the renderer's warnings print on stderr.
-  `--shadows` replaces the level's shadow filter (`LookFrame::shadow_filter`:
-  `aa` is `Shadows::Smooth`; the comparison behind the user's choice of
-  soft shadows, 2026-10-19). The fast loop for a look, and the look goldens
+  The fast loop for a look, and the look goldens
   (`look-lit.png`, `look-light.png`, `look-full.png`, `look-t500.png`:
   `fixtures/look/levels/look-test` at 256,128). Tests:
   `tests/look_preview.rs` (`look_preview_writes_a_png` edits a copy of
-  Dirt Level with `level look` and `level light add`; `render_match_writes_a_png`).
+  Dirt Level with `level look` and a glowing patch, `level group add` and
+  `level element set|glow`; `render_match_writes_a_png`).
 - `olr-cli render-match <match flags> --out f.png [--scale 2] [--packs DIR]... [--content DIR]`
   (plan 15a Task 16, `render_match.rs`) plays a headless bot match (the
   runner's `advance`, unsettled: no invariants, no recording) on
   `--content` with each `--packs` directory laid over it (the first wins;
   any packs, such as `fixtures/look/mods` and `fixtures/look/levels`,
   which no OLX trace replays) and draws its last tick as the game does,
-  look included; prints the number of lights. `--scale` is in (0, 16];
+  look included; prints the number of glowing discs (play's lights). `--scale` is in (0, 16];
   worms wear the default skin and colours, worm 0 the local one; the
   packs' warnings print on stderr. The rocket golden (`look-rocket.png`)
   is chaos bots with the look test mod (`--mod look-test-mod --level
   look-test --bots 3 --personality chaos --seed 1 --ticks 300`); a bot
   change moves it (re-bless with a reason).
 - `olr-cli match --mod <id> --level <id> [--mode deathmatch] --bots N
-  [--difficulty easy|medium|hard|xtreme|mixed] [--personality dm|chaos]
+  [--difficulty easy|medium|hard|xtreme|mixed] [--personality dm|chaos|idle]
   --seed S --ticks T [--bonus-frequency F] [--kill-limit K] [--time-limit M]
   [--record f] [--coverage] [--no-verify] [--failures DIR] [--p99-budget-ms B]`
   plays a headless Deathmatch of bots (spec §7.1): invariants every tick
@@ -656,7 +649,7 @@ configuration (a standby unless `--no-standby`) and the printed lines. The tests
 tests are `cargo nextest run -p olr-cli --test integration corpus::`.
 `tests/corpus.rs` checks every imported
 pack when `OLR_CONTENT_DIR` is set. `tests/playtest.rs` checks the hand-made playtest packs
-(`content/playtest/`, such as the lit Castle Strike) with `pack check
+(`content/playtest/`: the lit Castle Strikes, night and day) with `pack check
 --content`, and on the GPU tier plays a bot match on it (`render-match
 --packs content/playtest`). `tests/digest.rs` pins a SHA-256 of what
 the game receives from every bundled pack (each skin's drawn frames, the

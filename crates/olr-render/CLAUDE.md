@@ -38,19 +38,24 @@ on screen or offscreen.
   `look/mod.rs`). `set_lighting(true)` makes a `LookState`; each
   `upload_terrain` then makes the level's look textures (`LookTextures`:
   glow `R8Unorm` at art size, glow groups and the solid map `R8Uint` at
-  world size, each cropped like the terrain by `look_texture_sizes`) and
-  each `update_terrain` rectangle rewrites them (`look_textures_follow_dirty_rects`).
+  world size, plan 15c's flicker regions `R16Uint` at world size, each
+  cropped like the terrain by `look_texture_sizes`) and each
+  `update_terrain` rectangle rewrites them (`look_textures_follow_dirty_rects`).
   The solid map is the material, except that with the level's clear flags
   (`ColorMap::clear`, Task 14b) a clear solid is written as background,
-  so placed light, glow light and the soak pass it
+  so the glow light and the soak pass it
   (`a_lamp_shines_through_a_clear_wall`, `glow_light_passes_a_clear_wall`,
   `a_clear_solid_takes_no_soak_or_floor`). The `LookFrame` is packed each
   frame into one uniform (`LookGlobals`, `look/common.wgsl`, every field a
-  vec4; 255 groups, `groups[v - 1]` for group value v, 0 none) and the
-  lights' (two vec4s each, the first `olr_look::MAX_LIGHTS` (256) only,
-  `lights_past_the_cap_change_nothing`; non-finite values become 0).
-  `LIGHT_PAD` and `MAX_SOAK` are prepended to the shaders from Rust. A
-  lit frame's passes, in order (`pass.rs`'s `draw`):
+  vec4; 255 groups, `groups[v - 1]` for group value v, 0 none, in three
+  arrays: cast and self-light scale, reach and own colour, and plan 15c's
+  flicker (speed, depth, clock, seed); `frame.w` the bounce, `mode.w` the
+  bloom strength; non-finite values become 0) and play's discs into an
+  instance buffer (`pack_emitters`). `LIGHT_PAD`, `MAX_SOAK` and
+  `BLOOM_RADIUS` are prepended to the shaders from Rust. **Plan 15c**
+  (spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`): the
+  glow light is the only light model (no placed lights, no shadow maps).
+  A lit frame's passes, in order (`pass.rs`'s `draw`):
   - **World lit** (`world_lit.wgsl`): the world pass into two targets, the
     albedo and the shade target (`SHADE_FORMAT`, `Rgba8Unorm`: self-light,
     marker, floor kind halved (0 none, 0.5 solid, 1 worm), alpha), each
@@ -63,59 +68,81 @@ on screen or offscreen.
     `R8Uint` occluder map, one texel per world pixel over the light grid
     (`LookGlobals.occluders`: origin and size), each opaque texel the worm's
     index + 1; cleared every lit frame. `worm_in` (`common.wgsl`) reads it.
-    The shadow march and the glow light's emission treat a worm texel as
-    solid, except the shadow march of a light owned by that worm (the
-    light's second vec4's w, `FrameLight::owner`) or, unowned, whose centre
-    is in it
+    The glow light's emission treats a worm texel as solid, except in a
+    cell a disc lights (a muzzle flash inside its worm)
     (`a_worm_shadows_the_wall_behind_it`, `a_light_inside_a_worm_ignores_it`,
     `overlapping_worms_block_each_others_lights`,
-    `an_off_view_worm_still_shadows_the_view`, `a_worm_blocks_glow_light`).
-  - **Glow light** (`gi.rs`, `gi_*.wgsl`, Task 12): radiance cascades over
-    the whole level, fixed to the world (never camera-dependent): emission,
-    a jump-flood seed and its passes (distance to the nearest solid or
-    glowing cell), the cascades from the top down, then the fluence the sum
-    samples bilinearly. Rays are sphere-traced at full grid resolution, at
-    most 96 steps (a coarse pyramid closed thin shafts and leaked through
-    1-px walls). `gi_cell` picks the grid's cell (a power of two) so the
-    grid holds at most `GI_CELL_BUDGET` (262 144) cells and every cascade
+    `an_off_view_worm_still_shadows_the_view`, `a_worm_blocks_glow_light`,
+    `a_worm_casts_a_soft_shadow`).
+  - **Glow light** (`gi.rs`, `gi_*.wgsl`, Task 12; plan 15c): radiance
+    cascades over the whole level, fixed to the world (never
+    camera-dependent): play's discs (`gi_dynamic.wgsl`: the first
+    `olr_look::MAX_EMITTERS` of `LookFrame::emitters`, instanced quads into
+    a dynamic layer; a cell whose centre is in a disc and in the open takes
+    its radiance whole, `olr_look::engine::disc_radiance`; a disc smaller
+    than a cell lights its own by area; reach max-blended as unsplit f16,
+    60000 unlimited), the emission (glow × group × each pixel's flicker
+    region, the discs added, solid share, albedo of rock and dirt), a
+    jump-flood seed and its passes, the cascades from the top down, then the
+    fluence the sum samples bilinearly, copied into the history after each
+    frame. Rays march at full grid resolution, at most 128 steps, jumping
+    by the flood's distance far from stoppers and walking cell by cell near
+    them (a corner whose two side cells stop closes the ray: no light
+    through a 1-px or diagonal wall,
+    `a_one_pixel_wall_stops_light_right_behind_it`,
+    `a_diagonal_wall_one_pixel_thin_stops_light`); a cascade merges only
+    the upper probes whose ray start its ray's end can see (the bilinear
+    fix). A ray meeting rock or dirt takes its albedo × the history's
+    fluence of the open cell it came from × the bounce (`frame.w`, 0-0.9):
+    bounced light never crosses a wall (`light_bounces_round_a_corner`,
+    `bounce_tints_with_the_wall`, `bounce_never_runs_away`,
+    `bounce_settles_to_steady_bytes`, `no_bounce_through_a_thin_wall`).
+    `reset_light_history` (and `upload_terrain`, a frame without a look,
+    one that casts nothing) starts it afresh
+    (`a_new_level_starts_its_light_afresh`). `gi_cell` picks the grid's
+    cell (a power of two) so the grid holds at most `GI_CELL_BUDGET` (2^20:
+    Castle Strike at one cell a world pixel) cells and every cascade
     texture fits the device (`glow_light_past_the_device_crop_is_open`).
-    Without groups the fluence is only cleared.
-  - **Shadow maps** (`shadow.wgsl`, Task 11): one row per placed light,
-    `SHADOW_RAYS` (512) columns, each the distance where the ray enters
-    the first rock or dirt (or another worm), walked pixel by pixel (a
-    grid walk: no step passes between rock pixels touching at a corner;
-    the user's request, 2026-10-19) from the light's radius out to its
-    reach within the level's box (outside is open; a light centred in a solid lights
-    nothing; a far Unlimited light's march ends,
-    `a_far_unlimited_light_ends_its_shadow_march`). Skipped with no
-    lights. The shadow filter (`LookFrame::shadow_filter`, from
-    `olr_look::Shadows`) is applied when the sum reads them (`light.wgsl`'s
-    `visible`; a point is lit up to `past_rock` past the entry: a solid
-    pixel's within 1, its face, an air pixel's within 0.5, so no light
-    reaches past rock however thin, `a_one_pixel_wall_stops_light_right_behind_it`,
-    `a_diagonal_wall_one_pixel_thin_stops_light`; the light layout binds the
-    solid map): 0 hard (one test), 1 smooth (four tests a world pixel), 2
-    soft (a penumbra from the light's radius, wider farther behind the
-    occluder, over the neighbouring rays), soft the default (the user's
-    playtest, 2026-10-19; `soft_shadows_have_a_penumbra`).
+    Without groups or discs the fluence is only cleared.
+  - **Flicker regions** (`regions.rs`, plan 15c): `Regions` labels each
+    4-connected region of a `Flicker` group's world pixels (only the
+    groups the frame flickers: `sync_regions` relabels the whole map when
+    that set changes; `write` relabels the regions touching a dirty
+    rectangle or its border) with 1 + its first pixel's index folded into
+    16 bits, an `R16Uint` map the lit terrain and the emission read
+    (`region_flicker` in `common.wgsl`: value noise on a 32-bit hash;
+    `two_flames_flicker_on_their_own`, `one_flame_flickers_as_one`,
+    `pulse_groups_stay_in_step`, `regions_follow_glow_edits`).
   - **Sum** (`fs_sum`): the light grid, one texel per world pixel of the
-    world target plus `LIGHT_PAD` on every side (`Rgba16Float`): ambient,
-    glow light and the placed lights (fade from the radius' edge to radius
-    + reach).
+    world target plus `LIGHT_PAD` on every side (`Rgba16Float`): ambient
+    and glow light.
   - **Soak** (`soak.wgsl`, Task 14a): `fs_soak_h` across, `fs_soak_v` down:
     an opaque solid texel takes the most light within the soak of it,
     faded by distance; `fs_soak_v` raises it to the solid floor. Air keeps
     its light (`soak_and_floor_never_change_air`).
   - **Blur** (`fs_blur_h`, `fs_blur_v`): a box of the level's softness (0
     to 4 world pixels) each way, an air texel gathering only the air before
-    the first solid each way (no light blurs through a wall); `fs_blur_v` also caps the light at max
-    light and bands it into the light steps.
+    the first solid each way (no light blurs through a wall); `fs_blur_v`
+    also tones the light (`tone`, the CPU twin `olr_render::tone`: the
+    identity up to 1, a shoulder to max light; a white point of 1 clips),
+    bands it into the light steps and writes the light above 1,
+    soft-saturated, for the bloom (a glowing pixel writes none).
+  - **Bloom** (`fs_bloom_h`, `fs_bloom_v`, plan 15c): a Gaussian of
+    `BLOOM_RADIUS` (12) world pixels each way over the light grid, an air
+    texel's stopping at rock; the composite adds it × `BLOOM_STRENGTH`
+    (0.6; `set_bloom(false)` for tests) before the grade
+    (`bright_light_blooms`, `bloom_is_steady_and_camera_independent`,
+    `a_dim_level_draws_as_before`, `glowing_pixels_feed_no_bloom`,
+    `bloom_keeps_the_worm_floor_and_lit_side`).
   - **Composite** (`composite.wgsl`): each world-target texel's albedo
     times the light grid at its centre (bilinear), never below its
     self-light nor its floor: the solid floor for `Shade::FLOORED` (blood,
     droppers and gibs; the user's playtest, 2026-10-19,
     `a_floored_item_never_falls_below_the_solid_floor`), the worm floor for
     `Shade::WORM` (plan 15b, `a_worm_item_never_falls_below_the_worm_floor`).
+    A glowing texel (self-light above 0) shows its own art: other light
+    lifts it to 1 at most and no bloom lands on it
+    (`a_glowing_pixel_shows_its_art_under_bright_light`).
     A worm texel over its own worm in the occluder map takes the light just
     outside the worm on its side (`facing_light`: outward from the 7 × 7
     window's worm pixels, read one pixel past the first non-worm pixel
@@ -124,13 +151,12 @@ on screen or offscreen.
     graded (exposure, contrast, saturation, tint) in linear light; a
     marker shows its albedo. View modes: lit, full bright (the albedo),
     light only (white albedo). The upscale pass reads the lit target.
-  `LIGHT_PAD` is `MAX_SOAK` (12) + 4: neither the soak nor the blur sees
-  the grid's edge, so the light is camera-independent
-  (`light_is_camera_independent`). `LIGHT_CULL_PAD` (`MARGIN` + `LIGHT_PAD`
-  + 1, 18) is the padding a caller culls lights with (`LookFrame::cull`:
-  `olr-present`, `olr-cli look-preview`; `culling_with_the_cull_pad_changes_no_light`).
+  `LIGHT_PAD` is `MAX_SOAK` (12) + 4 + `BLOOM_RADIUS` (12): neither the
+  soak, the blur nor the bloom sees the grid's edge, so the light is
+  camera-independent (`light_is_camera_independent`,
+  `an_off_view_flash_lights_the_view_the_same`).
   **GL limits:** GL renders into no `R32Float` or `Rg32Float` target, so
-  the shadow maps, the flood's seeds and the reach split each value into
+  the flood's seeds and the emission's reach split each value into
   two halves exact in f16 in `Rgba16Float` (`split`/`joined` in
   `common.wgsl`; Task 19's e2e found it; `a_lit_frame_draws_on_gl`).
   **CPU model** (`look/mod.rs`): `shade_texel` (one composite texel),
@@ -216,7 +242,7 @@ Test: `cargo nextest run -p olr-render` (CPU: packing, quads, upscale
 geometry, image diff, `shade_texel_table`, the cascades' layout). The GPU
 tests (`tests/gpu.rs`; the look's read the light grid back with
 `read_light`: ambient, steps, view modes, walls, reach, edges, soak and
-floor, softness, glow light, clear solids, the cull pad, the light cap,
-GL, soft shadows) and goldens need
+floor, softness, glow light, clear solids, discs, bounce, flicker, glare,
+the disc cap, GL) and goldens need
 `OLR_GPU_TESTS=1`; `cargo xtask full` sets it and runs them, skipping with a
 notice when no adapter opens (`cargo run -p olr-render --example adapter`).

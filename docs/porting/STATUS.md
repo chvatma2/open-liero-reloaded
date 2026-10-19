@@ -3657,6 +3657,64 @@ Spec `docs/superpowers/specs/2026-10-19-worm-lighting-design.md`, plan
 - **Not measured yet:** the occluder pass and the facing lookups' GPU cost
   (`olr-cli gpu-bench --look`) waits for the user's consent.
 
+## Glowing light (plan 15c)
+
+Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
+`docs/superpowers/plans/2026-10-19-plan-15c-glowing-light.md`, as built
+(the spec's "My calls" are binding; the user approved the day renders,
+2026-10-19):
+
+- **One light model.** The glow light's radiance cascades are the only
+  light: the placed lights, their shadow maps and the `shadows` setting
+  are gone from the format (`LevelObject::Light` and `look.shadows` are
+  errors naming them), the editor (the Light tool, K) and the CLI (`level
+  light`). The night Castle Strike lost its light objects. Light never
+  passes rock or dirt however thin: the cascades walk exactly cell by cell
+  near stoppers (a corner both of whose side cells stop is closed) and
+  merge only upper probes whose ray start the lower ray's end can see (the
+  bilinear fix; without it a 1-px wall leaked 0.53 behind a flash).
+  `GI_CELL_BUDGET` is 2^20, so Castle Strike's light has a cell a world
+  pixel (2-px cells let a diagonal 1-px wall share cells with air).
+- **Play's lights as glowing discs.** Explosions (`explosion_radius`, 2-12
+  by size), muzzle flashes, shot lights and end flashes (`disc_radius`, an
+  eighth of the reach, 1-6) are `LookFrame::emitters`, drawn as instanced
+  quads into a dynamic emission layer (a cell whose centre is in the disc,
+  in the open, takes its radiance whole; reach max-blended, unsplit f16).
+  `disc_radiance` calibrates each so its light at `d0 = max(reach / 3, 2r)`
+  (at most halfway to the reach) matches the old point light. A disc's
+  cells never count as a worm. Discs are capped at `MAX_EMITTERS` (1024) in
+  order and never culled to a view: bounced light may reach the view from
+  past a disc's reach, so culling made light camera-dependent. A disc
+  outside the level emits nothing.
+- **Bounce.** A ray meeting rock or dirt takes the cell's albedo (its art,
+  linear) × the last frame's fluence of the open cell it came from (never
+  through the wall) × `engine::BOUNCE` (0.6, clamped 0-0.9). The history
+  is the fluence copied after each frame; a new level, a frame without a
+  look or one with no glow starts it afresh.
+- **Independent flicker.** A `Flicker` group's flicker is the renderer's:
+  each 4-connected region of its pixels (labelled on the CPU, only for
+  groups that flicker, again for regions touching a changed rectangle)
+  flickers with its own seed, value noise like `olr_look::anim`'s on a
+  32-bit hash. `Pulse`, `Keys` and `Steady` stay group-wide.
+- **Glare.** The light grid is toned (`olr_render::tone`: the identity up
+  to 1, a smooth shoulder to `max_light`; a white point of 1 clips) and
+  banded after. The bloom spreads the light above 1 (soft-saturated)
+  over the light grid, 12 world px (`BLOOM_RADIUS`, a third of it the
+  Gaussian's sigma; `LIGHT_PAD` 28), stopping at rock for air, added at
+  0.6 before the grade. A glowing pixel shows its own art: other light
+  lifts it to 1 at most, no glare lands on it and it feeds none (a
+  daylight sky lights the level without washing out; a flame's
+  luminosity is its halo).
+- **The idle bot** (`Personality::Idle`): presses nothing, not even to
+  respawn (the server's `MaxRespawnTime` brings it back); online wire
+  index 2.
+- **Castle Strike by day** (`content/playtest/olr-level-castlestrike-day`).
+  The user found explosions perhaps a bit bright: a later milestone, to
+  verify by playthrough.
+- **Not measured yet:** the cascades' cost at a cell a world pixel, the
+  bounce copy and the bloom passes, on Windows at 1080p with the user's
+  consent.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

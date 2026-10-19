@@ -1,6 +1,7 @@
 # Glowing light — design
 
-**Status:** a draft for the user's approval, 2026-10-19. It follows the
+**Status:** approved and built (plan 15c, 2026-10-19; as built in
+`docs/porting/STATUS.md`, "Glowing light (plan 15c)"). It follows the
 brainstorm `2026-10-19-lighting-evolution-brainstorm.md`. It changes the
 look system (`2026-10-18-look-system-design.md`, plan 15a) and builds on
 plan 15b (`2026-10-19-worm-lighting-design.md`).

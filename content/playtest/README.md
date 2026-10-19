@@ -17,4 +17,11 @@ or lay them over the content with `olr-cli render-match --packs content/playtest
   `background-2`), so moonlight comes from every open patch of sky through
   the glow light rather than from one direction; torches that flicker in
   the cellars and the gatehouse, lanterns in the towers, a cool light at
-  the well, and glowing torch flames and candles (group `flames`).
+  the well, and glowing torch flames and candles (group `flames`). Its
+  light objects went with plan 15c: its glowing pixels light it.
+- `olr-level-castlestrike-day/`: Castle Strike (day), made from the night
+  pack (plan 15c's showcase): a low blue-grey ambient, the sky glowing
+  warm white at 300 % (group `sky`, unlimited reach) so daylight comes in
+  through the hall, the loft and the towers and bounces off their walls,
+  and the cavern torches and the hall's candles flickering each on its
+  own (group `flames`, `Flicker`, 900 %).

@@ -125,25 +125,23 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   writes 255). All are 8-bit grey PNGs (`encode_grey`); a 16-bit one reads
   normalised to 8 bits (`decode_grey_within`, Task 2 ruling), each size
   checked from the header before decoding. `LevelHeader` gains `look`.
-  `LevelObject::Light { at, colour, intensity, reach, radius, animation,
-  phase_ms, notes }` (radius 1-16, default 2; `at` at most `MAX_SIDE`
-  world pixels outside the level, so the shadow march and the cull stay
-  bounded; at most `MAX_LIGHT_OBJECTS`, 1024) is drawn by nothing and
-  never read by the simulation; helpers `spawn`, `light`, `at`, `set_at`,
-  `as_light`, `spawn_point` (spawns are `filter_map(spawn_point)`).
-  `compile_look(src)` is the runtime `olr_look::LevelLook` with its lights
-  (`None` with neither a look nor a light; a light without a look takes
-  the default look, Task 2 ruling); `check` runs it and checks the glow
+  Plan 15c: glowing pixels are a level's only light: `LevelObject::Light`
+  is gone (a `Light(..)` object is an error naming it,
+  `a_light_object_is_an_error`), so `LevelObject` is `Spawn` alone
+  (helpers `spawn`, `at`, `set_at`, `spawn_point`).
+  `compile_look(src)` is the runtime `olr_look::LevelLook` (`None`
+  without a look); `check` runs it and checks the glow
   fits and names only groups the look has, and the clear flags' count.
   `read_level_files_lenient` (playing; `olr-pack`'s `read_level`) leaves
   out, with a warning each, glow or clear images that do not read or fit
-  and a look that does not check (which drops its lights and glow too);
+  and a look that does not check (which drops its glow too);
   `level.ron` that does not parse still fails, and the strict readers stay
   `pack check`'s.
 - **Looks** (`look.rs`, plan 15a): the shared authoring types of levels and
   mods and their compilers to `olr-look`. Every value is an integer
   (percent, milliseconds, world pixels); colours are the format's hex
-  `Colour` strings and must be opaque (Task 2 ruling). `LightSource`
+  `Colour` strings and must be opaque (Task 2 ruling). `LightSource` (a
+  mod's light, played as a glowing disc since plan 15c)
   (colour, intensity 0-`MAX_INTENSITY` 1000, `ReachSource::Pixels(1 to
   MAX_REACH 4096) | Unlimited`, `AnimationSource`, `phase_ms`),
   `AnimationSource` (`Steady`; `Pulse` with period 1-`MAX_PERIOD_MS`,
@@ -153,15 +151,15 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `AmbientSource`, `max_light` 100-200, `light_steps` 0 or 2-32,
   `softness` 0-4, `light_soak` 0-`olr_look::MAX_SOAK` default 8,
   `solid_floor` `SolidFloorSource` default white at 30 % (both plan 15a
-  Stop 1b), `shadows` `ShadowsSource` `Hard | Smooth | Soft` default `Soft`
-  (the user's playtest, 2026-10-19), `grade` `GradeSource`, `glow_groups`
+  Stop 1b; plan 15c removed `shadows`: an unknown field,
+  `shadows_is_an_unknown_field`), `grade` `GradeSource`, `glow_groups`
   at most `MAX_GROUPS` 255), `GlowGroupSource` (an id by `valid_group_id`,
   a slug of `[a-z0-9_.-]` of 1-64 bytes not starting with `.`, unique;
   `GlowColourSource::Own | Tint`, intensity, reach, animation, phase),
   `ProjectileLookSource`, `WeaponLookSource`. `LookSource`'s `Default` is
   written by hand to equal its serde defaults (`the_default_look_is_the_empty_file`).
   `compile_reach`, `compile_animation`, `compile_light`,
-  `compile_look_source` (the look without its lights),
+  `compile_look_source` (a level's look),
   `compile_projectile_look`, `compile_weapon_look`: each value checked, an
   error naming its field path.
 - **Level composition** (`levels/composition.rs`, plan 14a): `Composition`
@@ -218,14 +216,13 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `THUMB_SIZE` (160 × 96, `olr-pack` re-exports it), `letterbox`ed; the
   importer uses it. `level_thumbnail(level)` (the user's note, 2026-10-19;
   `olr_edit::level::refresh_thumb` uses it) draws a level with a look lit:
-  a CPU model at clock 0 of the ambient, the placed lights' fade (no
-  shadows), the glow light (a grid of cells two thumbnail pixels a side,
+  a CPU model at clock 0 of the ambient and the glow light (a grid of cells two thumbnail pixels a side,
   each casting its glow by the angle it fills, `side / (2π d)` at most 1,
   faded by its reach), each art sample never below its glow nor, solid,
   the solid floor, capped at max light, the mean graded; no soak, softness
   or steps. Without a look, or with one that does not compile, it is
-  `thumbnail(front)` (`tests/look.rs`: the plain one kept, a dark level
-  lit by a lamp, glow spilling, the solid floor).
+  `thumbnail(front)` (`tests/look.rs`: the plain one kept, a dark level,
+  glow spilling, the solid floor).
 - **`canonical_text(path, text)`** (plan 13d): one authoring file (by its
   path in the pack: `mod.ron`, `weapons/<id>.ron` with a valid id,
   `level.ron`, ...) parsed as its type and written again canonically; it
@@ -261,7 +258,8 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `hostile_look_files_are_errors_never_panics`, look files hashed and known
   to `olr_pack::validate`, inline projectile looks under their key,
   `bundled_mods_have_no_look`, `the_default_look_is_the_empty_file`,
-  `solids_defaults_are_the_stop_1_verdict`, `shadows_default_to_soft`. Unit tests in each module's files cover its checks. The
+  `solids_defaults_are_the_stop_1_verdict`, `a_light_object_is_an_error`,
+  `shadows_is_an_unknown_field`. Unit tests in each module's files cover its checks. The
   bundled-content tests skip when `OLR_CONTENT_DIR` is not a directory.
   Every `check()` applies the pixel bound its reader decodes with
   (`image_io::check_size`), so a saved file always reopens.

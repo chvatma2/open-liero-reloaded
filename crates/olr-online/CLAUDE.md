@@ -24,7 +24,7 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
   `Player::HumanWith` its loadout or `Player::Human`, a bot's `Player::Bot`;
   LX56 with the setup's bonuses and loading time; empty restrictions are
   `DEFAULT_PRESET`), the bots' wire numbers (`bot_config`/`bot_wire`:
-  difficulty 0-3 Easy..Xtreme, personality 0 OLX / 1 chaos, loadout 0
+  difficulty 0-3 Easy..Xtreme, personality 0 OLX / 1 chaos / 2 idle (plan 15c), loadout 0
   presets / 1 random; out of range refused), the rules (`deathmatch`,
   `rules_wire`, every field named), `setup_packs` (mod, level, theme with
   content hashes), `check_packs`, `resolve` (a chosen loadout the

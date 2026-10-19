@@ -46,24 +46,32 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   final release (`cargo xtask dist --final`, from a commit tagged
   `v<version>`) the plain version. The game and the server show it
   (`--version`, About, the main menu, their logs).
-- Lit levels: a level can set darkness (an ambient colour and strength),
-  place lights (colour, strength, reach, steady, pulsing, flickering or
-  keyed), and make any pixels glow and light their surroundings. Lamps
-  throw soft shadows; light soaks into rock and dirt, which never fall
-  below a solid floor; clear solids let light through. Explosions, muzzle
-  flashes and glowing shots light the level too. Worms, shots and bonuses
+- Lit levels: a level can set darkness (an ambient colour and strength)
+  and make any pixels glow (steady, pulsing, flickering or keyed): glowing
+  pixels are a level's light. Light spreads from their shapes with soft
+  shadows, bounces off rock and dirt in their colour (daylight through an
+  opening lights a room), never passes rock or dirt however thin, soaks
+  into solids, which never fall below a solid floor, and bright light
+  glows (bloom, with a smooth tone curve up to the level's max light).
+  Each separately drawn flame of a flickering group flickers on its own.
+  Clear solids let light through. Explosions, muzzle flashes and glowing
+  shots light the level as small glowing discs. Worms, shots and bonuses
   stay visible in the dark. A level without a look draws as before.
 - Worms in the light: in a lit match a worm is lit on the side a light
-  comes from, throws a shadow from lamps, explosions, muzzle flashes and
-  glowing terrain, and never shows below a floor of 35 % of the level's
-  ambient hue.
-- The level editor makes lit levels: a Look panel, the Glow brush (H), the
-  Light tool (K), lit, full-bright and light-only views and a preview
-  clock. Pixels picked by colour or by a rectangle can be made to glow.
-  Spawns and lights copy and paste.
-- `olr-cli level look`, `level group`, `level light`, `level element glow`
-  (a shape or `--colour-at`) and `look-preview` make and check lit levels
-  from the command line.
+  comes from, throws a soft shadow, and never shows below a floor of 35 %
+  of the level's ambient hue.
+- The level editor makes lit levels: a Look panel, the Glow brush (H),
+  lit, full-bright and light-only views and a preview clock. Pixels picked
+  by colour or by a rectangle can be made to glow. Spawns copy and paste.
+- `olr-cli level look`, `level group`, `level element glow` (a shape or
+  `--colour-at`) and `look-preview` make and check lit levels from the
+  command line.
+- Idle bots: a bot personality that does nothing (Local Play's
+  Personality, `--personality idle` on the command line), to explore a
+  level with worms around.
+- A playtest pack, Castle Strike by day (`content/playtest/`): daylight
+  through the hall, the loft and the towers, flickering torches and
+  candles in the caverns.
 - Your own worm no longer shows its name above it (OpenLieroX shows none);
   its weapon's name still shows while you change weapons.
 

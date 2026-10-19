@@ -32,12 +32,12 @@ wired in the frame loop's order **once**, so each mode that draws a world
     (the only place the tick's terrain edits reach the colour map; never
     also call `olr_content::apply_edits`), then `Scene::after_tick`.
   - `build(&world, alpha, &mut list)` per drawn frame: scene, then entities
-    (`Fx::draw` with the match's lit flag), then `build_look(&world, alpha,
-    list.view)`: the frame's `olr_look::LookFrame`, which `look()` returns
+    (`Fx::draw` with the match's lit flag), then `build_look(&world,
+    alpha)`: the frame's `olr_look::LookFrame`, which `look()` returns
     (`None` unlit) for the renderer. It begins with the level's look at the
-    match clock (the world's time plus `alpha` of a 10 ms tick), adds the
-    dynamic lights (`look.rs`), and culls to the view padded by
-    `olr_render::LIGHT_CULL_PAD` (batch B review, Important 2). It allocates
+    match clock (the world's time plus `alpha` of a 10 ms tick) and adds the
+    dynamic lights (`look.rs`) as glowing discs, never culled to the view
+    (plan 15c: bounced light may reach it from past a disc's reach). It allocates
     nothing once warm (`tests/no_alloc.rs`).
   - `upload(&mut renderer)` right before the frame is drawn: the atlas when
     a worm was added (also mid-match), the whole colour map when it is new
@@ -58,7 +58,9 @@ wired in the frame loop's order **once**, so each mode that draws a world
     It compares the whole grid; `olr-game`'s session checks it every
     `DRIFT_CHECK_TICKS` in debug builds.
 - **Dynamic lights** (`look.rs`, plan 15a Task 15 and the batch C and D
-  reviews; R9's order, after the level's own): projectile lights (the
+  reviews; plan 15c: `LookFrame::emitters`, glowing discs of
+  `engine::disc_radius` of the reach, an explosion's `explosion_radius` of
+  its size; R9's order): projectile lights (the
   scene's `drawn_projectiles`, slot order, the clock from the spawn time,
   identity the serial), end flashes (start order), muzzle lights (start
   order) and explosion lights (the entities' slot order). End flashes and
@@ -71,14 +73,13 @@ wired in the frame loop's order **once**, so each mode that draws a world
   (never iterated) and a time-ordered deque remember keys 2 s (`MEMORY_MS`,
   past the rollback window) and at most 8192, so a re-simulated tick or a
   mispredicted end a correction erased never flashes twice (the flash stays
-  where it first showed). At most `4 × olr_look::MAX_LIGHTS` flashes show;
+  where it first showed). At most `olr_look::MAX_EMITTERS` flashes show;
   a flash or muzzle light ends with its animation or after 2 s (`LIFE_MS`), and a
   clock that went back forgets what came after. A muzzle light is the
   weapon look's `muzzle_light`, else `olr_look::engine::muzzle_light()`:
   one a worm (a new shot restarts it, batch D review, Important 3),
-  following the worm as drawn, none for a dead worm; its `owner` is the
-  worm's occluder id, so its own body never shadows it (plan 15b final
-  review, `a_muzzle_light_belongs_to_its_worm`). An explosion's light
+  following the worm as drawn, none for a dead worm (its disc's cells
+  never count as its worm, plan 15c). An explosion's light
   is `engine::explosion_light(size)`, made once per size, its clock the
   explosion's age over its life (size × 25 ms) scaled to
   `engine::EXPLOSION_MS` (batch C review, Minor 2), identity its slot.
@@ -124,7 +125,7 @@ final timeline's, a loaded state,
 `end_flashes_once_per_projectile_through_rollbacks`,
 `a_loaded_state_restores_the_glow`; `tests/look.rs`: no look for bundled
 content, the level part, projectile and end-flash lights, engine lights and
-floors only in lit matches, `living_worms_are_occluders`, the light cap, frame-rate independence, muzzle
+floors only in lit matches, `engine_lights_are_emitters`, `living_worms_are_occluders`, `emitters_are_deterministic`, frame-rate independence, muzzle
 lights' curve and no stacking; `tests/no_alloc.rs`, its own binary, a warm
 lit build with every dynamic light allocates nothing). They need
 `OLR_CONTENT_DIR` and skip without it.

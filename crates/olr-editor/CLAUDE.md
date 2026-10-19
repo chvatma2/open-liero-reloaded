@@ -156,8 +156,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     `set_look` (elements naming a group gone lose their glow),
     `add_group`, `set_group`, `remove_group` (its elements unglow, one
     step; a group or look used by a locked element is refused,
-    `DocError::Locked`), `add_light` (`new_light`), `set_light`,
-    `paste_objects`; each checks with `compile_look` first. Edits
+    `DocError::Locked`), `paste_objects`; each checks with `compile_look` first. Edits
     `Edit::Look` (the `LookSource` before and after) and `Edit::GlowMask`
     (an element's whole mask swapped, `Arc`s, counted once by address in
     `MAX_BYTES`; `Edit::Whole` carries `masks` too). The document keeps
@@ -174,12 +173,10 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     with any group and glow the stroke made, or none when the mask did not
     change; an element without a glow gets one in a new group, dark but
     for what is painted; a glow without a mask starts whole) at the
-    brush's strength (`GlowStrength`, 0 erases); Light (K) drags a light
-    under the pointer, else places one. `Tool::DRAWING` is the toolbar's
-    first row, `Tool::ALL` (13) every shortcut. Lights are level objects:
-    `Overlay::Light` (a small sun; the selected one's radius + reach as a
-    circle), listed as "Light i at (x, y)", their properties panel
-    (place, colour, intensity, reach, radius, animation).
+    brush's strength (`GlowStrength`, 0 erases). `Tool::DRAWING` is the
+    toolbar's first row, `Tool::ALL` (12) every shortcut. Plan 15c removed
+    the Light tool (K) and light objects: glowing pixels are a level's
+    light (`the_editor_has_no_light_tool`).
   - **Glow on selected pixels** (the user's playtest, 2026-10-19): Select
     pixels' "By colour" (`SelectByColour`) picks the connected pixels of
     the selected element alike in colour (`colour_pixels`, the tool's
@@ -197,16 +194,16 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     them a step.
   - **Panels** (`ui/look.rs`, Task 18): the level panel's Look section
     (Add look / Remove look; ambient, max light, steps, softness, soak,
-    solid floor, shadows, the grade; its glow groups with colour,
+    solid floor, the grade; its glow groups with colour,
     intensity, reach and the animation editor, Remove asking first,
     `Dialog::RemoveGroup`); an image or drawn element's Glow (strength and
     group only; a locked element's fields hidden) and "Lets light through"
-    (`Property::Clear`); a fourth toolbar row (`toolbar_row`: the Glow and
-    Light tools, the brush's glow %, Glow selection, the views, Play/Pause
+    (`Property::Clear`); a fourth toolbar row (`toolbar_row`: the Glow
+    tool, the brush's glow %, Glow selection, the views, Play/Pause
     lights and the clock's ms). Colours are `#rrggbb` text fields
     committed once (no colour picker: each drag change would be a step).
   - **Object clipboard** (the user's playtest, 2026-10-19):
-    `Clipboard::Objects` (a selected spawn or light, `copy`; cut copies
+    `Clipboard::Objects` (a selected spawn, `copy`; cut copies
     then removes), pasted at their places plus an offset that grows by
     (4, 4) each paste (`paste_objects`, one step, the last pasted
     selected; `objects_copy_cut_and_paste`).
@@ -214,11 +211,11 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   undo proptest, the cap), `state.rs` (a synchronous test host in
   `common.rs`), `tools.rs` (the ignored `brush_dab_speed`: about 2 ms in
   release for a size-16 dab on Castle Strike), `look.rs` (plan 15a: glow,
-  groups, lights, the clock, masks through resizes and pastes, the object
+  groups, the clock, masks through resizes and pastes, the object
   clipboard, glow by colour) and `flows.rs` (the
   `egui_kittest` flows of spec §8; plan 15a's `glow_an_element_and_save`,
   `paint_glow_with_the_brush`, `glow_pixels_picked_by_colour`,
-  `place_a_light_and_edit_it`, `edit_the_look_panel`,
+  `edit_the_look_panel`,
   `toggle_views_and_scrub_the_clock`). The content tests skip without
   `OLR_CONTENT_DIR`.
 

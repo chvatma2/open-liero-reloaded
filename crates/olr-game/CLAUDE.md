@@ -165,7 +165,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `Presentation::upload` turns the renderer's lighting on or off to match,
   uploading the terrain whole when it changes. The game builds no look of
   its own: `olr-content` loads the level's and mod's looks, `olr-present`
-  builds the frame (culled by `olr_render::LIGHT_CULL_PAD`).
+  builds the frame.
 - **Fast-forward** (`speed.rs`, plan 7 task 8, the user's request): a
   game nobody plays (`Session::human()` false, worked out again at each
   restart: a replay, or `--spectate`'s
@@ -688,15 +688,13 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   carries the bake's glow and clear solids (`ColorMap::set_glow`,
   `set_clear`; a dab's rectangle also `replace_glow_rect`, and the clear
   flags when they changed; a glow that came or went rebuilds the map,
-  `fits`). `Canvas::lit(doc)` is true for a look, light objects, glow or
+  `fits`). `Canvas::lit(doc)` is true for a look, glow or
   clear solids, never in the material view; the app sets the renderer's
   lighting to it, uploading the canvas whole on a change.
-  `Canvas::look_frame(doc, clock_ms, view_mode, view)` compiles the
-  document's look and lights (`olr_format::levels::compile_look`, again
-  only when the look or the objects changed; a look that does not check
-  draws as none) and begins the frame at the editor's clock and view mode,
-  its lights culled to the canvas's world padded by `LIGHT_CULL_PAD`; the
-  canvas's world is `(list, look, area)`. `EditorHost` advances the
+  `Canvas::look_frame(doc, clock_ms, view_mode)` compiles the document's
+  look (`olr_format::levels::compile_look`, again only when it changed; a
+  look that does not check draws as none) and begins the frame at the
+  editor's clock and view mode; the canvas's world is `(list, look, area)`. `EditorHost` advances the
   editor's clock (`EditorState::advance_clock`) by the time between its
   frames, at most 100 ms a frame (a Play's length never jumps it). Play
   needed no change: `setup::load_edited`'s `LoadedLevel::from_source`
