@@ -176,6 +176,37 @@ pub fn push_instances(list: &DrawList, atlas: &AtlasLayout, frame: &WorldFrame, 
     }
 }
 
+/// Appends one instance per occluder of `list` (plan 15b) for the occluder
+/// map, one texel per world pixel, whose texel (0, 0) is world pixel
+/// `origin`: `dst` in its texels, `shade[0]` the worm (index + 1). An
+/// image the atlas lacks, or worm 0, occludes nothing.
+pub fn occluder_instances(list: &DrawList, atlas: &AtlasLayout, origin: (i32, i32), out: &mut Vec<Instance>) {
+    for o in list.occluders.iter().filter(|o| o.worm != 0) {
+        let Some(e) = atlas.entry(o.atlas) else { continue };
+        let r = o.src;
+        if r.w == 0 || r.h == 0 || r.x >= e.w || r.y >= e.h {
+            continue;
+        }
+        let (w, h) = (r.w.min(e.w - r.x), r.h.min(e.h - r.y));
+        let dst = [
+            o.pos[0] - origin.0 as f32,
+            o.pos[1] - origin.1 as f32,
+            o.size[0] * w as f32 / r.w as f32,
+            o.size[1] * h as f32 / r.h as f32,
+        ];
+        if !dst.iter().all(|v| v.is_finite()) || dst[2] <= 0.0 || dst[3] <= 0.0 {
+            continue;
+        }
+        let src = TexRect { x: e.x + r.x, y: e.y + r.y, w, h };
+        let src = if o.flip {
+            [(src.x + src.w) as f32, src.y as f32, -(src.w as f32), src.h as f32]
+        } else {
+            [src.x as f32, src.y as f32, src.w as f32, src.h as f32]
+        };
+        out.push(Instance { dst, src, tint: [1.0; 4], shade: [f32::from(o.worm), 0.0, 0.0] });
+    }
+}
+
 /// A sprite's quad, its source clipped to its image (`None` when nothing
 /// is left or the numbers are not finite).
 fn sprite(sp: &Sprite, atlas: &AtlasLayout, frame: &WorldFrame) -> Option<Instance> {

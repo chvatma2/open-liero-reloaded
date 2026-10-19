@@ -21,8 +21,12 @@ pub(super) fn common() -> String {
 /// Groups in the globals (a group map value is one byte, 0 none).
 pub(super) const GROUPS: usize = 255;
 
-/// The globals' floats: seven vec4s, then two arrays of [`GROUPS`] vec4s.
-pub(super) const GLOBAL_FLOATS: usize = 4 * (8 + 2 * GROUPS);
+/// The globals' floats: nine vec4s, then two arrays of [`GROUPS`] vec4s.
+pub(super) const GLOBAL_FLOATS: usize = 4 * (9 + 2 * GROUPS);
+
+/// The occluder map's format (plan 15b): each texel a worm's index + 1, 0
+/// none (GL renders into `R8Uint`).
+const OCCLUDER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
 
 /// The format of the world pass's second target: self-light, marker, solid floor, alpha.
 pub(super) const SHADE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -85,6 +89,10 @@ pub(super) struct LitTarget {
     /// The across soak's (reads 0) and the down soak's (reads 1).
     pub(super) soak_binds: [wgpu::BindGroup; 2],
     pub(super) composite_bind: wgpu::BindGroup,
+    /// The occluder map (plan 15b): one texel per world pixel of the grid.
+    pub(super) occluder_view: wgpu::TextureView,
+    /// The occluder map for the passes that read it ([`LookState::occluder_layout`]).
+    pub(super) occluder_bind: wgpu::BindGroup,
     pub(super) lit_view: wgpu::TextureView,
     /// The upscale pass's view of the lit target.
     pub(super) upscale_bind: wgpu::BindGroup,
@@ -102,6 +110,11 @@ pub(super) struct LookState {
     pub(super) soak_layout: wgpu::BindGroupLayout,
     pub(super) shadow_pipeline: wgpu::RenderPipeline,
     pub(super) shadow_layout: wgpu::BindGroupLayout,
+    /// Draws the occluder map (plan 15b): group 0 the globals, group 1 the atlas.
+    pub(super) occluder_pipeline: wgpu::RenderPipeline,
+    pub(super) occluder_globals_bind: wgpu::BindGroup,
+    /// One `R8Uint` texture: the occluder map, as the passes read it.
+    pub(super) occluder_layout: wgpu::BindGroupLayout,
     pub(super) light_layout: wgpu::BindGroupLayout,
     pub(super) composite_layout: wgpu::BindGroupLayout,
     pub(super) layout: wgpu::BindGroupLayout,
@@ -253,12 +266,16 @@ impl LookState {
                 entry(2, frag, UINT_TEXTURE),
             ],
         });
+        let occluder_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("olr-render occluders"),
+            entries: &[entry(0, frag, UINT_TEXTURE)],
+        });
         let shadow_pipeline = pipeline(
             device,
             "olr-render shadow",
             &format!("{}\n{}", common(), include_str!("../look/shadow.wgsl")),
             ("vs_full", "fs_shadow"),
-            &[Some(&shadow_layout)],
+            &[Some(&shadow_layout), Some(&occluder_layout)],
             &[],
             &[(SHADOW_FORMAT, None)],
             wgpu::PrimitiveTopology::TriangleList,
@@ -361,6 +378,25 @@ impl LookState {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
+        let occluder_globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("olr-render occluder globals"),
+            entries: &[entry(0, wgpu::ShaderStages::VERTEX, super::UNIFORM)],
+        });
+        let occluder_globals_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("olr-render occluder globals"),
+            layout: &occluder_globals_layout,
+            entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
+        });
+        let occluder_pipeline = pipeline(
+            device,
+            "olr-render occluders",
+            &format!("{}\n{}", common(), include_str!("../look/occluder.wgsl")),
+            ("vs_occluder", "fs_occluder"),
+            &[Some(&occluder_globals_layout), Some(texture_layout)],
+            &[Some(quads())],
+            &[(OCCLUDER_FORMAT, None)],
+            wgpu::PrimitiveTopology::TriangleStrip,
+        );
         LookState {
             terrain_pipeline,
             sprite_pipeline,
@@ -373,6 +409,9 @@ impl LookState {
             soak_layout,
             shadow_pipeline,
             shadow_layout,
+            occluder_pipeline,
+            occluder_globals_bind,
+            occluder_layout,
             light_layout,
             composite_layout,
             layout,
@@ -455,6 +494,24 @@ impl LookState {
             layout: &self.composite_layout,
             entries: &[uniform(), tex(1, albedo), tex(2, shade), tex(3, &views[1])],
         });
+        let occluders = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("olr-render occluders"),
+            size: wgpu::Extent3d { width: grid.0.max(1), height: grid.1.max(1), depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: OCCLUDER_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let occluder_view = occluders.create_view(&wgpu::TextureViewDescriptor::default());
+        let occluder_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("olr-render occluders"),
+            layout: &self.occluder_layout,
+            entries: &[tex(0, &occluder_view)],
+        });
         let lit = make("olr-render lit", texels, WORLD_FORMAT);
         let lit_view = lit.create_view(&wgpu::TextureViewDescriptor::default());
         let upscale_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -466,7 +523,18 @@ impl LookState {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(sampler) },
             ],
         });
-        LitTarget { grid, light, views, binds, soak_binds, composite_bind, lit_view, upscale_bind }
+        LitTarget {
+            grid,
+            light,
+            views,
+            binds,
+            soak_binds,
+            composite_bind,
+            occluder_view,
+            occluder_bind,
+            lit_view,
+            upscale_bind,
+        }
     }
 
     /// New textures for `map` (whose colour is `terrain`), uploaded whole
@@ -633,6 +701,14 @@ impl LookState {
         p.extend([r, g, b, 0.0]);
         let [r, g, b] = look.worm_floor;
         p.extend([r, g, b, 0.0]);
+        // The occluder map covers the light grid (plan 15b).
+        let (pad, grid) = (LIGHT_PAD as i32, frame.size.0 + 2 * LIGHT_PAD);
+        p.extend([
+            (frame.origin.0 - pad) as f32,
+            (frame.origin.1 - pad) as f32,
+            grid as f32,
+            (frame.size.1 + 2 * LIGHT_PAD) as f32,
+        ]);
         for i in 0..GROUPS {
             match look.groups.get(i) {
                 Some(g) => p.extend([g.cast[0], g.cast[1], g.cast[2], g.self_scale]),

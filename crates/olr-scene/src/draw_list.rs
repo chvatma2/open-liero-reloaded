@@ -87,6 +87,20 @@ impl Shade {
     }
 }
 
+/// A living worm's body as a light occluder (plan 15b, spec
+/// `2026-10-19-worm-lighting-design.md`): cut as its skin sprite, its
+/// opaque pixels stop light. `worm` is the worm's index + 1 (1-255), so a
+/// light inside a worm can ignore that worm. Only a lit match lists them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Occluder {
+    pub atlas: AtlasId,
+    pub src: Rect,
+    pub pos: [f32; 2],
+    pub size: [f32; 2],
+    pub flip: bool,
+    pub worm: u8,
+}
+
 /// A solid 1-world-pixel line (spec §19 E3) through the pixels
 /// [`Line::pixels`] lists: OLX's `perform_line` from `a` to `b`, both
 /// included.
@@ -178,8 +192,13 @@ pub struct DrawList {
     pub view: View,
     /// The map's size in world pixels.
     pub map: (u32, u32),
+    /// The living worms' bodies in a lit match (plan 15b), whatever the view.
+    pub occluders: Vec<Occluder>,
     layers: [Vec<Item>; 5],
 }
+
+/// The occluders' room: one per worm a match can hold (a worm id is a byte).
+const OCCLUDERS_RESERVED: usize = 256;
 
 impl DrawList {
     /// Items each layer has room for before it grows (a busy OLX frame
@@ -201,6 +220,7 @@ impl DrawList {
                     if i == Layer::Entities as usize { Self::ENTITIES_RESERVED } else { Self::RESERVED };
                 Vec::with_capacity(room)
             }),
+            occluders: Vec::with_capacity(OCCLUDERS_RESERVED),
             ..DrawList::default()
         }
     }
@@ -208,6 +228,7 @@ impl DrawList {
     /// Empties every layer, keeping the buffers.
     pub fn clear(&mut self) {
         self.layers.iter_mut().for_each(Vec::clear);
+        self.occluders.clear();
     }
 
     pub fn layer(&self, layer: Layer) -> &[Item] {

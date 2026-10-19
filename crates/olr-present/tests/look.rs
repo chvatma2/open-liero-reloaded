@@ -411,3 +411,32 @@ fn muzzle_lights_do_not_stack() {
     });
     assert_eq!(most, 1, "one worm fires: one muzzle light");
 }
+
+/// Plan 15b: in a lit match each living worm's body is an occluder (its
+/// index + 1), cut as its skin sprite; an unlit match lists none.
+#[test]
+fn living_worms_are_occluders() {
+    let Some(content) = content() else { return };
+    for lit in [false, true] {
+        let mut checked = 0;
+        play_with(&content, "dig", lit.then(look), None, |p, world, list, _| {
+            if !lit {
+                assert!(list.occluders.is_empty());
+                return;
+            }
+            let living: Vec<u8> =
+                world.worms().iter().enumerate().filter(|(_, w)| w.alive).map(|(i, _)| i as u8 + 1).collect();
+            let ids: Vec<u8> = list.occluders.iter().map(|o| o.worm).collect();
+            assert_eq!(ids, living);
+            let skin = p.assets().worm(0).skin;
+            if let (Some(o), Some(s)) = (
+                list.occluders.iter().find(|o| o.worm == 1),
+                sprites(list, Layer::Worms).find(|s| s.atlas == skin),
+            ) {
+                assert_eq!((o.atlas, o.src, o.pos, o.size, o.flip), (s.atlas, s.src, s.pos, s.size, s.flip));
+                checked += 1;
+            }
+        });
+        assert!(!lit || checked > 0);
+    }
+}

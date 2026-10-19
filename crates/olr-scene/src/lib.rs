@@ -22,7 +22,9 @@ mod worm;
 
 pub use assets::{AtlasImage, SceneAssets, WormLook};
 pub use camera::{Camera, FOV_HEIGHT, SHAKE_MS, Viewport};
-pub use draw_list::{AtlasId, DrawList, Floor, Item, Layer, Line, Rect, Shade, Sprite, View, perform_line};
+pub use draw_list::{
+    AtlasId, DrawList, Floor, Item, Layer, Line, Occluder, Rect, Shade, Sprite, View, perform_line,
+};
 pub use marks::Marks;
 pub use projectile::{draw_bonus, draw_projectile, frame_x, framestep};
 pub use snapshot::{Blend, BonusSnap, Interpolation, ProjBlend, ProjSnap, Snapshot, WormSnap, worm_blends};
@@ -327,6 +329,8 @@ impl Scene {
             let p = blend.snap(blend.worm(i, w));
             if lit {
                 self.worms.push((w.id, p));
+                // Plan 15b: living worms block light, whatever the view.
+                out.occluders.push(worm::body(&frame, i, w, p));
             }
             let extras = WormExtras {
                 muzzle: self.marks.muzzle(w.id),

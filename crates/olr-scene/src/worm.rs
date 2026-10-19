@@ -7,7 +7,7 @@ use olr_math::Vec2;
 use olr_sim::{Dir, World, Worm};
 
 use crate::assets::{SceneAssets, WormLook};
-use crate::draw_list::{AtlasId, DrawList, Layer, Rect, Shade, Sprite, View, perform_line};
+use crate::draw_list::{AtlasId, DrawList, Layer, Occluder, Rect, Shade, Sprite, View, perform_line};
 
 /// OLX's skin layout (`include/CGameSkin.h:36-41`), as `olr-content` has it.
 pub use olr_content::{FRAME_WIDTH, SKIN_HEIGHT, SKIN_WIDTH};
@@ -195,15 +195,29 @@ pub fn draw_worm(f: &WormFrame, i: usize, w: &Worm, p: Vec2, extras: &WormExtras
             f.marker(),
         );
     }
-    let skin = f.assets.image(look.skin);
-    let (src, flip) = skin_frame(w.angle, w.face, w.frame, skin.image.width() / FRAME_WIDTH);
-    let src = clip(src, skin.image.width(), skin.image.height());
-    let d = (-(SKIN_WIDTH as i32) / 2, -(SKIN_HEIGHT as i32) / 2);
-    at.blit(look.skin, src, d, skin.px_per_world, flip, f.body());
+    let b = body(f, i, w, p);
+    let tint = Rgba::rgb(255, 255, 255);
+    let (atlas, src, pos, size, flip, shade) = (b.atlas, b.src, b.pos, b.size, b.flip, f.body());
+    at.out.sprite(Layer::Worms, Sprite { atlas, src, pos, size, flip, tint, shade });
     if extras.muzzle {
         let (frame, dx, dy) = muzzle_frame(w.angle, w.face);
         at.blit(f.assets.muzzle, Rect { x: frame * 16, y: 0, w: 16, h: 16 }, (dx, dy), 1, false, f.glow());
     }
+}
+
+/// Worm `i`'s body (its skin frame) drawn at `p`, as an occluder (plan
+/// 15b): the skin sprite's atlas, source, position, size and flip.
+pub fn body(f: &WormFrame, i: usize, w: &Worm, p: Vec2) -> Occluder {
+    let look: WormLook = f.assets.worm(i);
+    let skin = f.assets.image(look.skin);
+    let (src, flip) = skin_frame(w.angle, w.face, w.frame, skin.image.width() / FRAME_WIDTH);
+    let src = clip(src, skin.image.width(), skin.image.height());
+    let s = skin.px_per_world.max(1) as f32;
+    // OLX's offset is in screen pixels (half world pixels) from `p`.
+    let pos = [p.x - (SKIN_WIDTH / 2) as f32 / 2.0, p.y - (SKIN_HEIGHT / 2) as f32 / 2.0];
+    let size = [src.w as f32 / s, src.h as f32 / s];
+    let worm = u8::try_from(i + 1).unwrap_or(u8::MAX);
+    Occluder { atlas: look.skin, src, pos, size, flip, worm }
 }
 
 /// `src` cut to a `w` × `h` image (an odd skin sheet never reads outside).

@@ -2,11 +2,14 @@
 // r (`split`) the distance from the light to the first rock or dirt along ray r of
 // SHADOW_RAYS, marched in world-pixel steps from the light's radius out to
 // its reach, within the level's box. Outside the level is open. A light
-// whose centre is solid gets 0 on every ray: it lights nothing.
+// whose centre is solid gets 0 on every ray: it lights nothing. A living
+// worm (the occluder map, plan 15b) stops a ray too, except the worm the
+// light's centre is in.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(0) @binding(1) var<uniform> lights: Lights;
 @group(0) @binding(2) var solid_tex: texture_2d<u32>;
+@group(1) @binding(0) var occluder_tex: texture_2d<u32>;
 
 @vertex
 fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
@@ -25,6 +28,12 @@ fn solid_at(p: vec2<f32>) -> bool {
     return textureLoad(solid_tex, c, 0).r != 1u;
 }
 
+// A worm other than `own` at `p` (plan 15b).
+fn worm_blocks(p: vec2<f32>, own: u32) -> bool {
+    let id = worm_in(occluder_tex, look.occluders.xy, vec2<i32>(floor(p)));
+    return id != 0u && id != own;
+}
+
 @fragment
 fn fs_shadow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let ray = floor(p.x);
@@ -34,6 +43,7 @@ fn fs_shadow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     if solid_at(pos) {
         return vec4<f32>(split(0.0), 0.0, 0.0);
     }
+    let own = worm_in(occluder_tex, look.occluders.xy, vec2<i32>(floor(pos)));
     let angle = (ray + 0.5) / SHADOW_RAYS * 6.2831853;
     let dir = vec2<f32>(cos(angle), sin(angle));
     // Only the part of the ray inside the level can meet rock (outside is
@@ -67,7 +77,7 @@ fn fs_shadow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         if d >= t1 {
             break;
         }
-        if solid_at(pos + dir * d) {
+        if solid_at(pos + dir * d) || worm_blocks(pos + dir * d, own) {
             return vec4<f32>(split(d), 0.0, 0.0);
         }
         d += 1.0;

@@ -4,7 +4,7 @@ use olr_look::LookFrame;
 use olr_scene::DrawList;
 
 use super::{Renderer, Target, WORLD_FORMAT, texture, upscale_uniform};
-use crate::frame::{WorldFrame, push_instances, terrain_instance};
+use crate::frame::{WorldFrame, occluder_instances, push_instances, terrain_instance};
 use crate::upscale::dest_rect_in;
 
 impl Renderer {
@@ -64,6 +64,14 @@ impl Renderer {
         if let Some((layout, _)) = &self.atlas {
             push_instances(list, layout, &frame, &mut self.instances);
         }
+        // The occluder map's quads (plan 15b), lit frames only.
+        let first_occluder = self.instances.len() as u32;
+        if let (Some(_), Some(_), Some((layout, _))) = (look, &self.look, &self.atlas) {
+            let pad = super::look::LIGHT_PAD as i32;
+            let origin = (frame.origin.0 - pad, frame.origin.1 - pad);
+            occluder_instances(list, layout, origin, &mut self.instances);
+        }
+        let end_occluder = self.instances.len() as u32;
         self.raw.clear();
         self.raw.extend(self.instances.iter().map(|i| i.raw()));
         if self.raw.len() as u64 * super::INSTANCE_STRIDE > self.instance_buffer.size() {
@@ -120,7 +128,7 @@ impl Renderer {
                 }
                 (_, None) => {}
             }
-            let end = self.instances.len() as u32;
+            let end = first_occluder;
             if let Some((_, bind)) = &self.atlas
                 && end > first_sprite
             {
@@ -134,6 +142,19 @@ impl Renderer {
         }
         let lit_target = lit.and(world.lit.as_ref()).zip(self.look.as_ref());
         if let Some((lt, state)) = lit_target {
+            {
+                // Cleared every lit frame: only this frame's worms occlude.
+                let mut pass = begin(&mut encoder, "olr-render occluders", &lt.occluder_view, None);
+                if let Some((_, bind)) = &self.atlas
+                    && end_occluder > first_occluder
+                {
+                    pass.set_pipeline(&state.occluder_pipeline);
+                    pass.set_bind_group(0, &state.occluder_globals_bind, &[]);
+                    pass.set_bind_group(1, bind, &[]);
+                    pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+                    pass.draw(0..4, first_occluder..end_occluder);
+                }
+            }
             if let Some(tex) = &state.textures {
                 tex.gi.encode(&mut encoder, &state.gi, look.is_some_and(|l| !l.groups.is_empty()));
             }
@@ -141,6 +162,7 @@ impl Renderer {
                 let mut pass = begin(&mut encoder, "olr-render shadow", &state.shadow_view, None);
                 pass.set_pipeline(&state.shadow_pipeline);
                 pass.set_bind_group(0, &tex.shadow_bind, &[]);
+                pass.set_bind_group(1, &lt.occluder_bind, &[]);
                 pass.set_scissor_rect(0, 0, super::look::SHADOW_RAYS, n);
                 pass.draw(0..3, 0..1);
             }

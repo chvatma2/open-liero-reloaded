@@ -19,6 +19,8 @@ struct LookGlobals {
     solid: vec4<f32>,
     // rgb worm floor (linear), 0 (plan 15b)
     worm_floor: vec4<f32>,
+    // the occluder map (plan 15b): origin x, y (world px), width, height (texels)
+    occluders: vec4<f32>,
     // per group: rgb cast (linear, × intensity × animation), self-light scale
     groups: array<vec4<f32>, 255>,
     // per group: reach (world px; 1e9 unlimited), own colour (1) or tint (0), 0, 0
@@ -57,6 +59,18 @@ fn joined(s: vec2<f32>) -> f32 {
         return 1e9;
     }
     return s.x * 64.0 + s.y;
+}
+
+// The worm (index + 1) at world pixel `w` of the occluder map `map` whose
+// texel (0, 0) is world pixel `origin` (`LookGlobals.occluders.xy`), 0 for
+// none or outside it (plan 15b).
+fn worm_in(map: texture_2d<u32>, origin: vec2<f32>, w: vec2<i32>) -> u32 {
+    let t = w - vec2<i32>(origin);
+    let size = vec2<i32>(textureDimensions(map));
+    if any(t < vec2<i32>(0)) || any(t >= size) {
+        return 0u;
+    }
+    return textureLoad(map, t, 0).r;
 }
 
 // How much of a light reaches `d` world pixels: (1 - (d/r)^2)^2, nothing at
