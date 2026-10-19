@@ -1,7 +1,7 @@
 // The composite (plan 15a Task 10, spec §The picture): each world-target
 // texel's albedo lit by the light grid sampled at its centre, never below
-// its self-light (nor, for an item with the flag, the solid floor: blood
-// and gibs, as rock), graded; a marker shows its albedo. Linear light, sRGB
+// its self-light nor its floor (the solid floor for blood and gibs, as rock;
+// the worm floor for worms, plan 15b), graded; a marker shows its albedo. Linear light, sRGB
 // bytes in and out.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
@@ -62,7 +62,15 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     // Texel t's centre in light-grid coordinates: world pixel (origin + i)'s
     // light sits at grid coordinate i.
     let g = (vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z - vec2<f32>(0.5) + vec2<f32>(LIGHT_PAD);
-    let l = max(max(min(light_at(g), vec3<f32>(look.ambient.w)), vec3<f32>(shade.x)), look.solid.rgb * shade.z);
+    // The floor kind, stored halved (world_lit.wgsl): 0.5 the solid floor,
+    // 1 the worm floor (plan 15b).
+    var floor = vec3<f32>(0.0);
+    if shade.z > 0.75 {
+        floor = look.worm_floor.rgb;
+    } else if shade.z > 0.25 {
+        floor = look.solid.rgb;
+    }
+    let l = max(max(min(light_at(g), vec3<f32>(look.ambient.w)), vec3<f32>(shade.x)), floor);
     var c = a * l * look.grade.x;
     c = (c - vec3<f32>(0.5)) * look.grade.y + vec3<f32>(0.5);
     let luma = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));

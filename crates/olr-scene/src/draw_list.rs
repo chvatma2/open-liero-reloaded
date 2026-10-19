@@ -39,23 +39,37 @@ pub struct Sprite {
 /// How an item takes the look's light (look system, plan 15a R5): lit by
 /// the world's light, showing at least `self_light` percent whatever the
 /// darkness (a glow), or a `marker` drawn exactly as its art (the
-/// crosshair, health bars). A `solid_floor` item also never shows below the
-/// level's solid floor, as rock does (blood and gibs, the user's playtest
-/// 2026-10-19). Only drawn with a look; without one every item shows as its
-/// art.
+/// crosshair, health bars). Its `floor` is the least light it shows besides
+/// its self-light. Only drawn with a look; without one every item shows as
+/// its art.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Shade {
     /// Percent, 0-100.
     pub self_light: u8,
     pub marker: bool,
-    pub solid_floor: bool,
+    pub floor: Floor,
+}
+
+/// The least light a lit item shows (the user's playtest 2026-10-19, plan
+/// 15b).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Floor {
+    /// None: the world's light alone.
+    #[default]
+    None,
+    /// The level's solid floor, as rock (blood and gibs).
+    Solid,
+    /// The worm floor: the level's ambient hue (worms, their rope and hook).
+    Worm,
 }
 
 impl Shade {
     /// Lit by the world (every item's default).
-    pub const LIT: Shade = Shade { self_light: 0, marker: false, solid_floor: false };
+    pub const LIT: Shade = Shade { self_light: 0, marker: false, floor: Floor::None };
     /// Lit, never below the solid floor (blood and gibs).
-    pub const FLOORED: Shade = Shade { solid_floor: true, ..Shade::LIT };
+    pub const FLOORED: Shade = Shade { floor: Floor::Solid, ..Shade::LIT };
+    /// Lit, never below the worm floor (worms, their rope and hook; plan 15b).
+    pub const WORM: Shade = Shade { floor: Floor::Worm, ..Shade::LIT };
     /// Shows at its own full brightness (explosions, muzzle flashes, beams).
     pub const GLOW: Shade = Shade { self_light: 100, ..Shade::LIT };
     /// Drawn as its art, unlit and ungraded (the crosshair, health bars).
@@ -65,7 +79,8 @@ impl Shade {
     fn suffix(self) -> String {
         match self {
             Shade { marker: true, .. } => " marker".into(),
-            Shade { self_light: 0, solid_floor: true, .. } => " floored".into(),
+            Shade { self_light: 0, floor: Floor::Solid, .. } => " floored".into(),
+            Shade { self_light: 0, floor: Floor::Worm, .. } => " worm floor".into(),
             Shade { self_light: 0, .. } => String::new(),
             Shade { self_light, .. } => format!(" glow {self_light}"),
         }
@@ -383,6 +398,8 @@ mod tests {
         assert_eq!(Shade::LIT.suffix(), "");
         assert_eq!(Shade::GLOW.suffix(), " glow 100");
         assert_eq!(Shade::MARKER.suffix(), " marker");
+        assert_eq!(Shade::FLOORED.suffix(), " floored");
+        assert_eq!(Shade::WORM.suffix(), " worm floor");
         assert_eq!(Shade { self_light: 50, ..Shade::LIT }.suffix(), " glow 50");
     }
 

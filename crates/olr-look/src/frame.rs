@@ -61,6 +61,9 @@ pub struct LookFrame {
     pub light_soak: u8,
     /// Linear.
     pub solid_floor: [f32; 3],
+    /// The least light of a worm, linear ([`crate::worm_floor_of`] of the
+    /// level's ambient colour as set, its intensity ignored; plan 15b).
+    pub worm_floor: [f32; 3],
     /// Placed lights' shadow edges ([`crate::Shadows`]): 0 hard, 1 smooth,
     /// 2 soft.
     pub shadow_filter: u8,
@@ -86,6 +89,7 @@ impl LookFrame {
             self.softness = 0;
             self.light_soak = 0;
             self.solid_floor = [0.0; 3];
+            self.worm_floor = crate::worm_floor_of([255; 3]);
             self.shadow_filter = 0;
             self.grade = Grade::default();
             return;
@@ -97,6 +101,7 @@ impl LookFrame {
         self.ambient = linear(level.ambient);
         self.light_soak = level.light_soak.min(MAX_SOAK);
         self.solid_floor = linear(level.solid_floor);
+        self.worm_floor = crate::worm_floor_of(level.ambient.colour);
         self.shadow_filter = match level.shadows {
             crate::Shadows::Hard => 0,
             crate::Shadows::Smooth => 1,

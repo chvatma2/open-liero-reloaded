@@ -315,17 +315,18 @@ fn floors_apply_only_in_lit_matches() {
             let crosshair = p.assets().crosshair;
             for s in sprites(list, Layer::Worms) {
                 if s.atlas == skin {
-                    let want = if lit {
-                        Shade { self_light: olr_look::engine::FLOOR, ..Shade::LIT }
-                    } else {
-                        Shade::LIT
-                    };
-                    assert_eq!(s.shade, want);
+                    // Plan 15b: worms take the worm floor, not a self-light.
+                    assert_eq!(s.shade, if lit { Shade::WORM } else { Shade::LIT });
                     checked += 1;
                 }
                 if s.atlas == crosshair {
                     assert_eq!(s.shade, if lit { Shade::MARKER } else { Shade::LIT });
                 }
+            }
+            // Projectiles keep the engine floor as self-light.
+            let floor = Shade { self_light: olr_look::engine::FLOOR, ..Shade::LIT };
+            for s in sprites(list, Layer::Projectiles) {
+                assert_eq!(s.shade, if lit { floor } else { Shade::LIT });
             }
         });
         assert!(checked > 0);

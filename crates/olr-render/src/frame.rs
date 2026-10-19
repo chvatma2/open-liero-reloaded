@@ -95,9 +95,15 @@ impl Instance {
     }
 }
 
+/// An item's shade as instance floats: self-light (0-1), marker (0 or 1),
+/// floor (0 none, 1 solid, 2 worm; plan 15b).
 fn shade(s: olr_scene::Shade) -> [f32; 3] {
-    let flag = |b: bool| f32::from(u8::from(b));
-    [f32::from(s.self_light.min(100)) / 100.0, flag(s.marker), flag(s.solid_floor)]
+    let floor = match s.floor {
+        olr_scene::Floor::None => 0.0,
+        olr_scene::Floor::Solid => 1.0,
+        olr_scene::Floor::Worm => 2.0,
+    };
+    [f32::from(s.self_light.min(100)) / 100.0, f32::from(u8::from(s.marker)), floor]
 }
 
 /// The sizes of the look's textures for a map of `world` pixels at

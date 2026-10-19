@@ -17,6 +17,8 @@ struct LookGlobals {
     mode: vec4<f32>,
     // rgb solid floor (linear), 0
     solid: vec4<f32>,
+    // rgb worm floor (linear), 0 (plan 15b)
+    worm_floor: vec4<f32>,
     // per group: rgb cast (linear, × intensity × animation), self-light scale
     groups: array<vec4<f32>, 255>,
     // per group: reach (world px; 1e9 unlimited), own colour (1) or tint (0), 0, 0

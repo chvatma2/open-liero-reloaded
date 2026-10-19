@@ -16,6 +16,7 @@ pub mod engine;
 mod frame;
 
 pub use anim::{default_phase, splitmix64};
+pub use engine::worm_floor_of;
 pub use frame::{
     FrameGroup, FrameLight, LookFrame, MAX_LIGHTS, MAX_SOAK, ViewMode, fade, light_at, srgb_to_linear,
 };

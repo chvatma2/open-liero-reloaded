@@ -184,3 +184,27 @@ fn solids_settings_are_bounded_and_off_without_a_look() {
     f.begin(None, 0.0);
     assert_eq!((f.light_soak, f.solid_floor), (0, [0.0; 3]));
 }
+
+#[test]
+fn worm_floor_hues() {
+    let k = olr_look::engine::WORM_FLOOR as f32 / 100.0;
+    let near = |a: [f32; 3], b: [f32; 3]| a.iter().zip(&b).all(|(x, y)| (x - y).abs() < 1e-3);
+    assert!(near(olr_look::worm_floor_of([255, 255, 255]), [k; 3]), "white");
+    assert!(near(olr_look::worm_floor_of([0, 0, 0]), [k; 3]), "black: white");
+    // #203048 at full brightness is #6ea5ff (by linear channels, the brightest at 1).
+    let f = olr_look::worm_floor_of([0x20, 0x30, 0x48]);
+    assert!((f[2] - k).abs() < 1e-3 && f[0] < f[1] && f[1] < f[2], "{f:?}");
+    // Pure blue's 35 % is too dark: mixed towards white to half of 35 % white's luminance.
+    let b = olr_look::worm_floor_of([0, 0, 255]);
+    let lum = 0.2126 * b[0] + 0.7152 * b[1] + 0.0722 * b[2];
+    assert!((lum - k * 0.5).abs() < 1e-3 && b[2] > b[0], "{b:?} {lum}");
+    // A frame without a level look (a mod's look alone): 35 % white.
+    let mut frame = LookFrame::default();
+    frame.begin(None, 0.0);
+    assert!(near(frame.worm_floor, [k; 3]));
+    // A level's ambient hue, whatever its intensity.
+    let mut l = level();
+    l.ambient = olr_look::Ambient { colour: [0x20, 0x30, 0x48], intensity: 10 };
+    frame.begin(Some(&l), 0.0);
+    assert!(near(frame.worm_floor, f));
+}

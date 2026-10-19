@@ -680,8 +680,7 @@ fn a_floored_item_never_falls_below_the_solid_floor() {
     let mut l = list(View { x: 0.0, y: 0.0, w: 40.0, h: 30.0 });
     l.map = (40, 30);
     let white = Rgba::rgb(255, 255, 255);
-    let floored = olr_scene::Shade { solid_floor: true, ..olr_scene::Shade::LIT };
-    for (x, shade) in [(10, olr_scene::Shade::LIT), (20, floored)] {
+    for (x, shade) in [(10, olr_scene::Shade::LIT), (20, olr_scene::Shade::FLOORED)] {
         l.push(Layer::Entities, Item::Line(Line { a: (x, 10), b: (x, 10), colour: white, shade }));
     }
     let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), (80, 60));
@@ -693,6 +692,37 @@ fn a_floored_item_never_falls_below_the_solid_floor() {
     let (lit, fl) = (img.get(20, 20), img.get(40, 20));
     assert!(near(lit, model([0.1; 3])), "lit: the ambient, {lit:?}");
     assert!(near(fl, model([0.4, 0.3, 0.2])), "floored: the solid floor, {fl:?}");
+}
+
+/// Plan 15b: a worm's item shows at least the worm floor, not the solid floor.
+#[test]
+fn a_worm_item_never_falls_below_the_worm_floor() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(40, 30, |_, _| false);
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.upload_images(&[]);
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    let mut look = dim(0.1);
+    look.solid_floor = [0.4, 0.3, 0.2];
+    look.worm_floor = [0.2, 0.3, 0.4];
+    let mut l = list(View { x: 0.0, y: 0.0, w: 40.0, h: 30.0 });
+    l.map = (40, 30);
+    let white = Rgba::rgb(255, 255, 255);
+    let shades = [(10, olr_scene::Shade::LIT), (20, olr_scene::Shade::FLOORED), (30, olr_scene::Shade::WORM)];
+    for (x, shade) in shades {
+        l.push(Layer::Entities, Item::Line(Line { a: (x, 10), b: (x, 10), colour: white, shade }));
+    }
+    let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), (80, 60));
+    let model =
+        |light| olr_render::shade_texel([255; 4], light, 0.0, false, &Default::default(), look.max_light);
+    let near = |got: Rgba, want: [u8; 4]| {
+        [got.r, got.g, got.b].iter().zip(&want).all(|(a, b)| (i32::from(*a) - i32::from(*b)).abs() <= 1)
+    };
+    let (lit, fl, worm) = (img.get(20, 20), img.get(40, 20), img.get(60, 20));
+    assert!(near(lit, model([0.1; 3])), "lit: the ambient, {lit:?}");
+    assert!(near(fl, model([0.4, 0.3, 0.2])), "floored: the solid floor, {fl:?}");
+    assert!(near(worm, model([0.2, 0.3, 0.4])), "worm: the worm floor, {worm:?}");
 }
 
 #[test]

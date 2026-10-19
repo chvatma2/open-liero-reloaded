@@ -22,7 +22,7 @@ mod worm;
 
 pub use assets::{AtlasImage, SceneAssets, WormLook};
 pub use camera::{Camera, FOV_HEIGHT, SHAKE_MS, Viewport};
-pub use draw_list::{AtlasId, DrawList, Item, Layer, Line, Rect, Shade, Sprite, View, perform_line};
+pub use draw_list::{AtlasId, DrawList, Floor, Item, Layer, Line, Rect, Shade, Sprite, View, perform_line};
 pub use marks::Marks;
 pub use projectile::{draw_bonus, draw_projectile, frame_x, framestep};
 pub use snapshot::{Blend, BonusSnap, Interpolation, ProjBlend, ProjSnap, Snapshot, WormSnap, worm_blends};
@@ -46,12 +46,12 @@ pub struct SceneOptions {
 }
 
 /// How a match with a look shades its items (look system, plan 15a R13):
-/// play objects never fall below `floor`, a projectile whose look glows
-/// shows at least that. A scene without rules draws every item lit, as
+/// projectiles and bonuses never fall below `floor`, a projectile whose look
+/// glows shows at least that; worms take the worm floor (plan 15b). A scene without rules draws every item lit, as
 /// always.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ShadeRules {
-    /// Self-light of worms, projectiles and bonuses, percent.
+    /// Self-light of projectiles and bonuses, percent.
     pub floor: u8,
     /// Each projectile's glow (by `SimMod` index), percent.
     pub projectile_glow: Vec<Option<u8>>,
@@ -327,7 +327,7 @@ impl Scene {
             assets,
             view,
             show_health_bars: self.options.show_health_bars,
-            floor: self.shades.as_ref().map(|r| r.floor),
+            lit,
         };
         for (i, w) in worms.iter().enumerate().filter(|(_, w)| w.alive) {
             let p = blend.snap(blend.worm(i, w));

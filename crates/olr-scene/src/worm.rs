@@ -111,25 +111,25 @@ pub struct WormFrame<'a> {
     pub assets: &'a SceneAssets,
     pub view: View,
     pub show_health_bars: bool,
-    /// In a lit match (plan 15a R13), the worms' least self-light; `None`
-    /// draws every item lit, as always.
-    pub floor: Option<u8>,
+    /// A lit match (plan 15a R13): worms take the worm floor (plan 15b);
+    /// unlit, every item is drawn lit, as always.
+    pub lit: bool,
 }
 
 impl WormFrame<'_> {
-    /// A play object's shade: the floor in a lit match.
+    /// A worm's, its rope's and hook's shade: the worm floor in a lit match.
     fn body(&self) -> Shade {
-        self.floor.map_or(Shade::LIT, |f| Shade { self_light: f, ..Shade::LIT })
+        if self.lit { Shade::WORM } else { Shade::LIT }
     }
 
     /// A marker's (crosshair, health bar): its art, unlit, in a lit match.
     fn marker(&self) -> Shade {
-        if self.floor.is_some() { Shade::MARKER } else { Shade::LIT }
+        if self.lit { Shade::MARKER } else { Shade::LIT }
     }
 
     /// A glow's (the muzzle flash): full self-light in a lit match.
     fn glow(&self) -> Shade {
-        if self.floor.is_some() { Shade::GLOW } else { Shade::LIT }
+        if self.lit { Shade::GLOW } else { Shade::LIT }
     }
 }
 

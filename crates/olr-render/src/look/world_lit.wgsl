@@ -60,7 +60,8 @@ fn fs_sprite_lit(in: QuadOut) -> LitOut {
     }
     var out: LitOut;
     out.colour = c;
-    out.shade = vec4<f32>(in.shade.x, in.shade.y, in.shade.z, c.a);
+    // The floor kind (0 none, 1 solid, 2 worm) is stored halved: 0, 0.5, 1.
+    out.shade = vec4<f32>(in.shade.x, in.shade.y, in.shade.z * 0.5, c.a);
     return out;
 }
 

@@ -22,7 +22,7 @@ pub(super) fn common() -> String {
 pub(super) const GROUPS: usize = 255;
 
 /// The globals' floats: seven vec4s, then two arrays of [`GROUPS`] vec4s.
-pub(super) const GLOBAL_FLOATS: usize = 4 * (7 + 2 * GROUPS);
+pub(super) const GLOBAL_FLOATS: usize = 4 * (8 + 2 * GROUPS);
 
 /// The format of the world pass's second target: self-light, marker, solid floor, alpha.
 pub(super) const SHADE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -630,6 +630,8 @@ impl LookState {
             f32::from(look.shadow_filter.min(2)),
         ]);
         let [r, g, b] = look.solid_floor;
+        p.extend([r, g, b, 0.0]);
+        let [r, g, b] = look.worm_floor;
         p.extend([r, g, b, 0.0]);
         for i in 0..GROUPS {
             match look.groups.get(i) {
