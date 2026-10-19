@@ -161,3 +161,9 @@
   fixtures/render/look-rocket.png
 2026-10-19 bless-render: light never passes rock however thin: shadow rays walk every pixel, air past a wall's entry stays dark, the blur stops at walls
   fixtures/render/look-rocket.png
+2026-10-19 bless-render: plan 15c: glowing light only, bounce, flicker and glare
+  fixtures/render/look-full.png
+  fixtures/render/look-light.png
+  fixtures/render/look-lit.png
+  fixtures/render/look-rocket.png
+  fixtures/render/look-t500.png

@@ -29,12 +29,13 @@
             (
                 id: "lamp-warm",
                 colour: Tint("#ffc080"),
-                intensity: 120,
+                intensity: 700,
                 reach: Pixels(90),
             ),
             (
                 id: "lamp-cool",
                 colour: Tint("#80a0ff"),
+                intensity: 600,
                 reach: Pixels(70),
                 animation: Pulse(
                     period_ms: 1000,
