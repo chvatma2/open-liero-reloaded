@@ -16,6 +16,7 @@ impl BotRng {
         let p: u64 = match personality {
             Personality::Deathmatch => 0,
             Personality::Chaos => 1,
+            Personality::Idle => 2,
         };
         let x = (u64::from(match_seed) << 32) ^ ((worm as u64) << 8) ^ p;
         Self::from_seed((splitmix64(x) >> 32) as u32)

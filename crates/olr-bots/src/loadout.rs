@@ -145,10 +145,10 @@ pub fn choose_loadout(
             let all: Vec<bool> = alloc::vec![true; rules.weapon_count()];
             get_random_weapons(&all, rng)
         }
-        (Personality::Deathmatch, LoadoutPolicy::OlxPreset) => {
+        (Personality::Deathmatch | Personality::Idle, LoadoutPolicy::OlxPreset) => {
             olx_bot_weapons(rules, settings.loading_time, rng).weapons
         }
-        (Personality::Deathmatch, LoadoutPolicy::Random) => random_loadout(rules, rng),
+        (Personality::Deathmatch | Personality::Idle, LoadoutPolicy::Random) => random_loadout(rules, rng),
     };
     Loadout::new(weapons.iter().map(|&w| Slot::ready(w)).collect(), settings)
 }

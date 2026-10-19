@@ -437,3 +437,25 @@ fn the_version_shows_on_the_main_menu_and_in_about() {
     h.run();
     h.get_by_label_contains("9.8.7-dev.5.abc1234");
 }
+
+/// The idle bot (plan 15c): a personality that presses nothing, chosen
+/// where the other bot settings are.
+#[test]
+fn idle_is_a_personality_choice() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
+    h.get_by_label("Local Play").click();
+    h.run();
+    h.get_by_label("Personality").click();
+    h.run();
+    h.get_by_label("Idle (does nothing)").click();
+    h.run();
+    let p = h.state().ui.settings().gameplay.match_prefs.clone();
+    assert_eq!(p.personality, BotPersonality::Idle);
+    assert!(
+        p.options(1)
+            .players
+            .iter()
+            .skip(1)
+            .all(|b| matches!(b, Player::Bot(c) if c.personality == Personality::Idle))
+    );
+}

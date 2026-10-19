@@ -60,15 +60,18 @@ pub enum BotPersonality {
     Olx,
     /// Fires everything it has, ignoring restrictions (spec §20 F10).
     Chaos,
+    /// Presses nothing, so the player can explore a level (plan 15c).
+    Idle,
 }
 
 impl BotPersonality {
-    pub const ALL: [BotPersonality; 2] = [BotPersonality::Olx, BotPersonality::Chaos];
+    pub const ALL: [BotPersonality; 3] = [BotPersonality::Olx, BotPersonality::Chaos, BotPersonality::Idle];
 
     pub fn personality(self) -> Personality {
         match self {
             BotPersonality::Olx => Personality::Deathmatch,
             BotPersonality::Chaos => Personality::Chaos,
+            BotPersonality::Idle => Personality::Idle,
         }
     }
 }

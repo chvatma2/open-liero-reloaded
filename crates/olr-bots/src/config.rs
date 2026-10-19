@@ -12,6 +12,9 @@ pub enum Personality {
     Deathmatch,
     /// Fires everything, ignoring restrictions, for coverage (spec §20 F10).
     Chaos,
+    /// Presses nothing: stands where it spawns, so a player can explore a
+    /// level with worms around (plan 15c).
+    Idle,
 }
 
 /// OLX's `AI_EASY` .. `AI_XTREME` (`include/ProfileSystem.h:52-55`).

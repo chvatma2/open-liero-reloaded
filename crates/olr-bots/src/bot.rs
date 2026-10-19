@@ -180,6 +180,12 @@ impl Bot {
     /// One tick: reads `world` (before it ticks) and the events of its last
     /// tick, and gives the keys the worm holds in the next.
     pub fn think(&mut self, world: &World, events: &TickEvents) -> Keys {
+        if self.cfg.personality == Personality::Idle {
+            // Plan 15c: presses nothing, not even to respawn (the server's
+            // `MaxRespawnTime` brings it back).
+            self.units = 0;
+            return Keys(0);
+        }
         let now = world.time();
         let mut b = Budget::new(self.budget);
         for e in events.iter() {
@@ -203,6 +209,7 @@ impl Bot {
                     let act = match self.cfg.personality {
                         Personality::Deathmatch => self.get_input(&c, &mut b),
                         Personality::Chaos => self.chaos_input(&c, &mut b),
+                        Personality::Idle => return Keys(0),
                     };
                     self.intent(me, &act)
                 } else {
@@ -258,6 +265,7 @@ impl Bot {
                 }
             }
             Personality::Chaos => self.chaos.respawned(),
+            Personality::Idle => {}
         }
     }
 }

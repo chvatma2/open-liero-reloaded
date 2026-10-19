@@ -8,6 +8,7 @@ mod aim;
 mod bot;
 mod brain;
 mod chaos;
+mod idle;
 mod matches;
 mod motor;
 mod nav;

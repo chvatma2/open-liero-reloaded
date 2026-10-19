@@ -242,6 +242,7 @@ impl Report {
         let bots = match self.personality {
             Personality::Chaos => "chaos",
             Personality::Deathmatch => "deathmatch",
+            Personality::Idle => "idle",
         };
         t.push_str(&format!(
             "  {bots} bots; level {}x{} at art scale {}; area cache {} of {}\n",

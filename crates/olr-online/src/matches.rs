@@ -14,11 +14,11 @@ use olr_proto::{BotWire, Look, MatchSetupWire, MatchStartWire, RulesWire};
 use olr_sim::{Keys, MatchSetup, SimSettings, World};
 
 /// The bots' wire numbers: `BotWire::difficulty` is OLX's level, 0 (Easy)
-/// to 3 (Xtreme); `personality` 0 OLX's bot, 1 chaos; `loadout` 0 OLX's
+/// to 3 (Xtreme); `personality` 0 OLX's bot, 1 chaos, 2 idle; `loadout` 0 OLX's
 /// presets, 1 random weapons.
 const DIFFICULTIES: [Difficulty; 4] =
     [Difficulty::Easy, Difficulty::Medium, Difficulty::Hard, Difficulty::Xtreme];
-const PERSONALITIES: [Personality; 2] = [Personality::Deathmatch, Personality::Chaos];
+const PERSONALITIES: [Personality; 3] = [Personality::Deathmatch, Personality::Chaos, Personality::Idle];
 const LOADOUTS: [LoadoutPolicy; 2] = [LoadoutPolicy::OlxPreset, LoadoutPolicy::Random];
 
 /// A bot's configuration from its wire numbers (a number out of range is

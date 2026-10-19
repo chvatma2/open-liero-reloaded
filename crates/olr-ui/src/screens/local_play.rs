@@ -321,6 +321,7 @@ pub(super) fn personality_combo(
     let name = |b: BotPersonality| match b {
         BotPersonality::Olx => "OLX bot",
         BotPersonality::Chaos => "Chaos (fires everything)",
+        BotPersonality::Idle => "Idle (does nothing)",
     };
     ComboBox::from_id_salt(id)
         .selected_text(name(*personality))

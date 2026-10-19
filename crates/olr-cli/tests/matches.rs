@@ -88,3 +88,17 @@ fn failure_writes_replay() {
     let out = olr_cli().args(["replay", "--content", &dir]).arg(replay_file).output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stdout));
 }
+
+/// Plan 15c: `--personality idle` plays a match of bots that do nothing,
+/// and it verifies.
+#[test]
+fn match_takes_idle_bots() {
+    let Some(dir) = content_dir() else { return };
+    let out = olr_cli()
+        .args(["match", "--content", &dir, "--mod", CLASSIC, "--level", "olx-level-dirt-level"])
+        .args(["--personality", "idle", "--bots", "2", "--seed", "1", "--ticks", "500"])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(out.status.success(), "{stdout}{}", String::from_utf8_lossy(&out.stderr));
+}

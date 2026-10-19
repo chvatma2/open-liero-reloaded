@@ -352,6 +352,7 @@ pub fn prefs_of(s: &MatchSetupWire) -> MatchPrefs {
         personality: match first.personality {
             Personality::Deathmatch => BotPersonality::Olx,
             Personality::Chaos => BotPersonality::Chaos,
+            Personality::Idle => BotPersonality::Idle,
         },
         loadout: match first.loadout {
             LoadoutPolicy::OlxPreset => BotLoadout::OlxPreset,

@@ -21,6 +21,8 @@ pub enum Personality {
     Deathmatch,
     /// Fires everything; its loadout rotates on every spawn (spec §20 F10).
     Chaos,
+    /// Presses nothing (plan 15c).
+    Idle,
 }
 
 /// The bots' difficulty (`--difficulty`); `mixed` gives bot `i` Easy,
@@ -128,6 +130,7 @@ impl MatchSpec {
         let personality = match self.personality {
             Personality::Deathmatch => olr_bots::Personality::Deathmatch,
             Personality::Chaos => olr_bots::Personality::Chaos,
+            Personality::Idle => olr_bots::Personality::Idle,
         };
         BotConfig { personality, difficulty, ..BotConfig::default() }
     }
@@ -158,6 +161,7 @@ impl MatchSpec {
         let p = match self.personality {
             Personality::Deathmatch => "dm",
             Personality::Chaos => "chaos",
+            Personality::Idle => "idle",
         };
         let d = format!("{:?}", self.difficulty).to_lowercase();
         let short = |id: &str| id.trim_start_matches("olx-level-").trim_start_matches("olx-").to_string();
