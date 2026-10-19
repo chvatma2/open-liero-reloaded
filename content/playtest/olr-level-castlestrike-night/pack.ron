@@ -1,0 +1,14 @@
+(
+    format_version: 5,
+    id: "olr-level-castlestrike-night",
+    name: "Castle Strike (night)",
+    version: "1",
+    kind: Level,
+    authors: [],
+    origin: Some((
+        source: "OpenLieroX",
+        path: "share/gamedir/levels/CastleStrike.lxl",
+        revision: "d1ad953f4f20610f2648cce26c9739e7c088409d",
+    )),
+    license: None,
+)

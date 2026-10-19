@@ -653,7 +653,10 @@ configuration (a standby unless `--no-standby`) and the printed lines. The tests
 `net_soak_memory` (it reads the process's memory): one module's
 tests are `cargo nextest run -p olr-cli --test integration corpus::`.
 `tests/corpus.rs` checks every imported
-pack when `OLR_CONTENT_DIR` is set. `tests/digest.rs` pins a SHA-256 of what
+pack when `OLR_CONTENT_DIR` is set. `tests/playtest.rs` checks the hand-made playtest packs
+(`content/playtest/`, such as the lit Castle Strike) with `pack check
+--content`, and on the GPU tier plays a bot match on it (`render-match
+--packs content/playtest`). `tests/digest.rs` pins a SHA-256 of what
 the game receives from every bundled pack (each skin's drawn frames, the
 images the runtime uses, level and theme data; plan 13c): a pack format or
 importer change that alters a drawn pixel changes the snapshot. To accept a reviewed snapshot change, run
