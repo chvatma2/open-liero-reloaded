@@ -127,7 +127,13 @@ on screen or offscreen.
   - **Soak** (`soak.wgsl`, Task 14a): `fs_soak_h` across, `fs_soak_v` down:
     an opaque solid texel takes the most light within the soak of it,
     faded by distance; `fs_soak_v` raises it to the solid floor. Air keeps
-    its light (`soak_and_floor_never_change_air`).
+    its light (`soak_and_floor_never_change_air`). A worm's short shade
+    colours only the rock face (the user's playtest, 2026-10-20): the
+    across pass also writes rows into the bloom's spare texture, where a
+    texel within twice `WORM_SHADOW` + 2 of a worm (the occluder map) takes
+    the nearest unshaded same-kind texel's light along its row; the down
+    pass uses them from 2 px into rock (half at 2 px, whole deeper)
+    (`a_worm_shadow_stays_at_the_rock_face`).
   - **Blur** (`fs_blur_h`, `fs_blur_v`): a box of the level's softness (0
     to 4 world pixels) each way, an air texel gathering only the air before
     the first solid each way (no light blurs through a wall); `fs_blur_v`

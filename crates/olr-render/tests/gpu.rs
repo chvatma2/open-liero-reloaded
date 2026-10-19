@@ -1967,3 +1967,32 @@ fn a_worm_changes_no_light_away_from_it() {
         assert!(moved.is_empty(), "worm at {body:?} changed the light at {moved:?}");
     }
 }
+
+/// The user's playtest (2026-10-20): a worm's short shadow shades the rock
+/// face under it but does not reach deep into the rock: from 2 px in, the
+/// soak takes the light beside the shadow.
+#[test]
+fn a_worm_shadow_stays_at_the_rock_face() {
+    let Some(gpu) = offscreen() else { return };
+    // A glowing sky over the top, open air, rock from y 40 down (outdoors).
+    let map = glowing_room(100, 60, |_, y| y >= 40, |_, y| y < 8);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 };
+    let set = |l: &mut olr_look::LookFrame| {
+        l.light_soak = 8;
+        l.groups[0] = olr_look::FrameGroup {
+            cast: [2.0; 3],
+            own_colour: false,
+            self_scale: 1.0,
+            reach: f32::INFINITY,
+            ..Default::default()
+        };
+    };
+    let bare = worm_frame(&gpu, &map, view, &[], &[], set);
+    let worm = worm_frame(&gpu, &map, view, &[], &[([48.0, 34.0, 4.0, 6.0], 1)], set);
+    let (b, w) = (light_at(&gpu, &bare, 50, 40)[0], light_at(&gpu, &worm, 50, 40)[0]);
+    assert!(w < b - 0.02, "the face under the worm is shaded: {w} against {b}");
+    for y in 43..48 {
+        let (b, w) = (light_at(&gpu, &bare, 50, y)[0], light_at(&gpu, &worm, 50, y)[0]);
+        assert!(w > 0.9 * b, "{} px into the rock: {w} against {b}", y - 40);
+    }
+}

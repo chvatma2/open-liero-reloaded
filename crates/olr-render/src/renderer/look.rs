@@ -323,10 +323,13 @@ impl LookState {
                 entry(0, frag, super::UNIFORM),
                 entry(1, frag, FLOAT_TEXTURE),
                 entry(2, frag, UINT_TEXTURE),
+                entry(3, frag, FLOAT_TEXTURE),
+                entry(4, frag, UINT_TEXTURE),
+                entry(5, frag, FLOAT_TEXTURE),
             ],
         });
         let soak_source = format!("{}\n{}", common(), include_str!("../look/soak.wgsl"));
-        let soak = |fs: &str| {
+        let soak = |fs: &str, targets: &[(wgpu::TextureFormat, Option<wgpu::BlendState>)]| {
             pipeline(
                 device,
                 "olr-render soak",
@@ -334,11 +337,13 @@ impl LookState {
                 ("vs_full", fs),
                 &[Some(&soak_layout)],
                 &[],
-                &[(LIGHT_FORMAT, None)],
+                targets,
                 wgpu::PrimitiveTopology::TriangleList,
             )
         };
-        let (soak_h_pipeline, soak_v_pipeline) = (soak("fs_soak_h"), soak("fs_soak_v"));
+        // The across soak also writes the rows for the deeper rock.
+        let soak_h_pipeline = soak("fs_soak_h", &[(LIGHT_FORMAT, None), (LIGHT_FORMAT, None)]);
+        let soak_v_pipeline = soak("fs_soak_v", &[(LIGHT_FORMAT, None)]);
         let gi = super::gi::GiPipelines::new(device, &occluder_layout);
         let emitter_floats = olr_look::MAX_EMITTERS * super::gi::EMITTER_FLOATS;
         let emitters = device.create_buffer(&wgpu::BufferDescriptor {
@@ -500,14 +505,6 @@ impl LookState {
         let bloom = [0, 1].map(|_| make("olr-render bloom", grid, LIGHT_FORMAT));
         let bloom_views = bloom.each_ref().map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
         let bloom_binds = [light_bind(&bloom_views[0]), light_bind(&bloom_views[1])];
-        let soak_bind = |src: &wgpu::TextureView| {
-            device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("olr-render soak"),
-                layout: &self.soak_layout,
-                entries: &[uniform(), tex(1, src), tex(2, solid)],
-            })
-        };
-        let soak_binds = [soak_bind(&views[0]), soak_bind(&views[1])];
         let occluders = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("olr-render occluders"),
             size: wgpu::Extent3d { width: grid.0.max(1), height: grid.1.max(1), depth_or_array_layers: 1 },
@@ -526,6 +523,24 @@ impl LookState {
             layout: &self.occluder_layout,
             entries: &[tex(0, &occluder_view)],
         });
+        // The across soak (reads 0) writes 1 and the rows into the bloom's
+        // spare 1 (free until the bloom); the down soak reads 1, the sum and
+        // the rows.
+        let soak_bind = |src: &wgpu::TextureView, rows: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("olr-render soak"),
+                layout: &self.soak_layout,
+                entries: &[
+                    uniform(),
+                    tex(1, src),
+                    tex(2, solid),
+                    tex(3, &views[0]),
+                    tex(4, &occluder_view),
+                    tex(5, rows),
+                ],
+            })
+        };
+        let soak_binds = [soak_bind(&views[0], &views[2]), soak_bind(&views[1], &bloom_views[1])];
         let composite_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render composite"),
             layout: &self.composite_layout,

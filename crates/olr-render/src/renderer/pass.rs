@@ -173,7 +173,14 @@ impl Renderer {
                 pass.draw(0..3, 0..1);
             };
             full(&mut encoder, &lt.views[0], &state.sum_pipeline, &lt.binds[0]);
-            full(&mut encoder, &lt.views[1], &state.soak_h_pipeline, &lt.soak_binds[0]);
+            {
+                // The across soak, and the rows for the deeper rock.
+                let mut pass =
+                    begin_two(&mut encoder, "olr-render look", &lt.views[1], &lt.bloom_views[1], None);
+                pass.set_pipeline(&state.soak_h_pipeline);
+                pass.set_bind_group(0, &lt.soak_binds[0], &[]);
+                pass.draw(0..3, 0..1);
+            }
             full(&mut encoder, &lt.views[2], &state.soak_v_pipeline, &lt.soak_binds[1]);
             full(&mut encoder, &lt.views[0], &state.blur_h_pipeline, &lt.binds[1]);
             {

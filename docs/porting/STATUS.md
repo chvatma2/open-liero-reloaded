@@ -3724,7 +3724,9 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
   10 px from a worm (`a_worm_throws_no_long_shadow`,
   `a_worm_changes_no_light_away_from_it`); the lit side (plan 15b) and the
   worm floor hold. This replaces plan 15b's "worms block light" for the
-  glow light.
+  glow light. The shade colours only the rock face: from 2 px into rock
+  the soak takes, for a texel near a worm, the nearest unshaded light
+  along its row (the user's playtest: it went 12 px deep).
 - **The idle bot** (`Personality::Idle`): presses nothing, not even to
   respawn (the server's `MaxRespawnTime` brings it back); online wire
   index 2.
