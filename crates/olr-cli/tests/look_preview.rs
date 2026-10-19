@@ -22,20 +22,15 @@ fn look_preview_writes_a_png() {
     };
     let p = pack.to_str().unwrap();
     run(&["level", "look", p, "--ambient", "ffffff:20"]);
-    run(&[
-        "level",
-        "light",
-        "add",
-        p,
-        "--at",
-        "250,175",
-        "--colour",
-        "ffcc88",
-        "--intensity",
-        "150",
-        "--reach",
-        "120",
-    ]);
+    // A glowing patch (plan 15c: glowing pixels are a level's only light).
+    run(&["level", "group", "add", p, "lamp", "--colour", "ffcc88", "--intensity", "150", "--reach", "120"]);
+    run(&["level", "element", "split", p, "base", "--content", &content]);
+    let set = ["level", "element", "set", p, "background", "--glow", "100", "--glow-group", "lamp"];
+    run(&[&set[..], &["--content", &content]].concat());
+    let glow = ["level", "element", "glow", p, "background", "--rect", "0,0,1,1", "--strength", "0"];
+    run(&[&glow[..], &["--content", &content]].concat());
+    let patch = ["level", "element", "glow", p, "background", "--circle", "250,175,4", "--strength", "100"];
+    run(&[&patch[..], &["--content", &content]].concat());
     let out = tmp.path().join("lit.png");
     let o = out.to_str().unwrap();
     run(&["look-preview", p, "--at", "250,175", "--content", &content, "--out", o]);
@@ -55,10 +50,10 @@ fn look_preview_writes_a_png() {
         full.to_str().unwrap(),
     ]);
     let full = olr_format::image_io::decode_rgba(&std::fs::read(&full).unwrap()).unwrap();
-    // The corner is far from the lamp: darker lit than full bright.
+    // The corner is far from the patch: darker lit than full bright.
     let (a, b) = (lit.get(4, 4), full.get(4, 4));
     assert!(u32::from(a.r) + u32::from(a.g) < u32::from(b.r) + u32::from(b.g), "{a:?} {b:?}");
-    // The lamp's own pixel is lit.
+    // The patch's own pixel is lit.
     let c = lit.get(427, 192);
     assert!(c.r > 0, "{c:?}");
 }

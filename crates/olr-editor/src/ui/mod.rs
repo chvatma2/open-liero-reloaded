@@ -73,7 +73,6 @@ pub mod labels {
     pub const LOOK_SOFTNESS: &str = "Softness";
     pub const LOOK_SOAK: &str = "Light soak";
     pub const LOOK_FLOOR: &str = "Solid floor %";
-    pub const LOOK_SHADOWS: &str = "Shadows";
     pub const LOOK_EXPOSURE: &str = "Exposure";
     pub const LOOK_CONTRAST: &str = "Contrast %";
     pub const LOOK_SATURATION: &str = "Saturation %";
@@ -88,12 +87,7 @@ pub mod labels {
     pub const GLOW_STRENGTH: &str = "Glow strength %";
     pub const GLOW_GROUP: &str = "Glow group";
     pub const CLEAR: &str = "Lets light through";
-    pub const LIGHT_COLOUR: &str = "Light colour";
-    pub const LIGHT_INTENSITY: &str = "Light intensity %";
-    pub const LIGHT_REACH: &str = "Light reach";
-    pub const LIGHT_RADIUS: &str = "Light radius";
     pub const TOOL_GLOW: &str = "Glow brush";
-    pub const TOOL_LIGHT: &str = "Light";
     pub const GLOW_STRENGTH_BRUSH: &str = "Brush glow %";
     pub const VIEW_LIT: &str = "Lit";
     pub const VIEW_FULL: &str = "Full bright";

@@ -14,7 +14,7 @@ use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
 
 use olr_fx::{Fx, Kind};
-use olr_look::{FrameLight, Light, LookFrame, MAX_LIGHTS, ModLook, engine, light_at};
+use olr_look::{Light, LookFrame, MAX_EMITTERS, ModLook, engine, light_at};
 use olr_scene::Scene;
 
 /// An end flash's identity: the projectile's slot, serial, `SimMod` index
@@ -32,8 +32,8 @@ const MEMORY_MS: f64 = 2000.0;
 const MEMORY: usize = 8192;
 
 /// The most end flashes showing at once (start order); later ones are not
-/// started. More than a frame can draw. Muzzle lights are one a worm.
-const ACTIVE: usize = 4 * MAX_LIGHTS;
+/// started. As many as a frame draws. Muzzle lights are one a worm.
+const ACTIVE: usize = MAX_EMITTERS;
 
 /// The longest a flash or muzzle light shows, ms (a looping one ends here).
 const LIFE_MS: f64 = 2000.0;
@@ -189,11 +189,11 @@ impl Dynamic {
             }
             // It follows its worm as drawn; a worm not drawn (dead) shows none.
             let radius = engine::disc_radius(l.reach.pixels());
-            if let Some((_, p, owner)) = worms.iter().find(|(id, ..)| *id == s.worm)
+            // Plan 15c: a disc's cells never count as its worm's body.
+            if let Some((_, p, _)) = worms.iter().find(|(id, ..)| *id == s.worm)
                 && let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, [p.x, p.y], radius)
             {
-                // Plan 15b: it ignores its own worm's body as an occluder.
-                look.push_emitter(FrameLight { owner: *owner, ..f });
+                look.push_emitter(f);
             }
             true
         });

@@ -21,23 +21,9 @@ fn look_frame_does_not_allocate_when_warm() {
         light_steps: 0,
         softness: 0,
         light_soak: 0,
-        shadows: olr_look::Shadows::Soft,
         solid_floor: olr_look::Ambient { colour: [255, 255, 255], intensity: 0 },
         grade: Default::default(),
         groups: Vec::new(),
-        lights: (0..20)
-            .map(|i| olr_look::PlacedLight {
-                at: (i * 40, 100),
-                radius: 2,
-                light: olr_look::Light {
-                    colour: [255, 200, 100],
-                    intensity: 100,
-                    reach: olr_look::Reach::Pixels(200),
-                    animation: olr_look::Animation::Flicker { speed: 8, depth: 25 },
-                    phase_ms: None,
-                },
-            })
-            .collect(),
     });
     let theme = content.load_theme(&level.theme).unwrap();
     let mut m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();

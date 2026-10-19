@@ -832,23 +832,6 @@ fn glow_pixels_picked_by_colour() {
 }
 
 #[test]
-fn place_a_light_and_edit_it() {
-    let Some((_tmp, mut h)) = opened() else { return };
-    h.get_by_label(labels::TOOL_LIGHT).click();
-    h.run();
-    let at = canvas_point(&h, (0.0, 0.0));
-    hover(&mut h, at);
-    press(&mut h, at, true);
-    press(&mut h, at, false);
-    let doc = h.state().state.document().unwrap();
-    let index = doc.level().objects.iter().position(|o| o.as_light().is_some()).expect("a light");
-    assert_eq!(h.state().state.selection(), &Selection::Object(index));
-    type_number(&mut h, labels::LIGHT_INTENSITY, "250");
-    let doc = h.state().state.document().unwrap();
-    assert_eq!(doc.level().objects[index].as_light().unwrap().1.intensity, 250);
-}
-
-#[test]
 fn edit_the_look_panel() {
     let Some((_tmp, mut h)) = opened() else { return };
     // Tall enough that the level panel's Look section is in view.

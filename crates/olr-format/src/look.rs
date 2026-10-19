@@ -1,5 +1,5 @@
 //! The look's authoring types (spec `2026-10-18-look-system-design.md`
-//! §Data), shared by levels (`level.ron`'s `look` and `Light` objects) and
+//! §Data), shared by levels (`level.ron`'s `look`) and
 //! mods (a projectile's or weapon's `look`), and their compilers to
 //! `olr-look`'s runtime types. Every value is an integer: percent,
 //! milliseconds, world pixels.
@@ -22,8 +22,6 @@ pub const MAX_PERIOD_MS: u32 = 600_000;
 pub const MAX_KEYS: usize = 64;
 /// The most glow groups of a level (a group index is one byte).
 pub const MAX_GROUPS: usize = 255;
-/// The most `Light` objects of a level (plan 15a R14).
-pub const MAX_LIGHT_OBJECTS: usize = 1024;
 
 /// How far a light reaches: it fades to nothing there.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,8 +127,8 @@ pub enum AnimationSource {
     },
 }
 
-/// A light: a level's light object (with its place), a projectile's light or
-/// flash, a weapon's muzzle light.
+/// A mod's light: a projectile's light or flash, a weapon's muzzle light.
+/// Play draws it as a glowing disc (plan 15c).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct LightSource {
@@ -166,19 +164,6 @@ impl Default for AmbientSource {
     fn default() -> AmbientSource {
         AmbientSource { colour: None, intensity: 100 }
     }
-}
-
-/// How placed lights' shadows meet the light.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub enum ShadowsSource {
-    /// Cut at whole world pixels.
-    Hard,
-    /// Anti-aliased: an edge pixel partly lit.
-    Smooth,
-    /// A penumbra as wide as the light's radius casts behind what shadows
-    /// it: sharp near the occluder, softer farther away.
-    #[default]
-    Soft,
 }
 
 /// The least light an opaque solid pixel (rock or dirt that is not clear)
@@ -312,9 +297,6 @@ pub struct LookSource {
     /// The least light of an opaque solid. Default white at 30.
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub solid_floor: SolidFloorSource,
-    /// Placed lights' shadow edges. Default `Soft`.
-    #[serde(default, skip_serializing_if = "d::is_default")]
-    pub shadows: ShadowsSource,
     /// Default none.
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub grade: GradeSource,
@@ -333,7 +315,6 @@ impl Default for LookSource {
             softness: 0,
             light_soak: light_soak(),
             solid_floor: SolidFloorSource::default(),
-            shadows: ShadowsSource::default(),
             grade: GradeSource::default(),
             glow_groups: Vec::new(),
         }
@@ -526,11 +507,6 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
             colour: rgb(l.solid_floor.colour.unwrap_or_else(white), file, "look.solid_floor.colour")?,
             intensity: l.solid_floor.intensity,
         },
-        shadows: match l.shadows {
-            ShadowsSource::Hard => olr_look::Shadows::Hard,
-            ShadowsSource::Smooth => olr_look::Shadows::Smooth,
-            ShadowsSource::Soft => olr_look::Shadows::Soft,
-        },
         grade: olr_look::Grade {
             exposure: g.exposure,
             contrast: g.contrast,
@@ -538,7 +514,6 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
             tint: rgb(g.tint.unwrap_or_else(white), file, "look.grade.tint")?,
         },
         groups,
-        lights: Vec::new(),
     })
 }
 

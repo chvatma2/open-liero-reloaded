@@ -1033,9 +1033,9 @@ impl App {
                     UpscaleFilter::SharpBilinear,
                 ));
                 let look = match (state, &self.canvas_list) {
-                    (Some(st), Some((l, _))) => st
-                        .document()
-                        .and_then(|d| self.canvas.look_frame(d, st.clock_ms(), st.view_mode(), l.view)),
+                    (Some(st), Some(_)) => {
+                        st.document().and_then(|d| self.canvas.look_frame(d, st.clock_ms(), st.view_mode()))
+                    }
                     _ => None,
                 };
                 self.canvas_list.as_ref().map(|(l, a)| (l, look, *a))

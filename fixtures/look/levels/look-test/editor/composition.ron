@@ -49,5 +49,27 @@
                 group: "lava",
             ),
         ),
+        (
+            id: "lamp-warm",
+            name: "Lamp warm",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "lamp-warm",
+            ),
+        ),
+        (
+            id: "lamp-cool",
+            name: "Lamp cool",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "lamp-cool",
+            ),
+        ),
     ],
 )

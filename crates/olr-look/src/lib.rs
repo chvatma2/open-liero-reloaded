@@ -18,8 +18,7 @@ mod frame;
 pub use anim::{default_phase, splitmix64};
 pub use engine::worm_floor_of;
 pub use frame::{
-    FrameGroup, FrameLight, LookFrame, MAX_EMITTERS, MAX_LIGHTS, MAX_SOAK, ViewMode, fade, light_at,
-    srgb_to_linear,
+    FrameGroup, FrameLight, LookFrame, MAX_EMITTERS, MAX_SOAK, ViewMode, fade, light_at, srgb_to_linear,
 };
 
 /// An sRGB colour, as the files and the art store it.
@@ -145,30 +144,8 @@ pub struct GlowGroup {
     pub phase_ms: Option<u32>,
 }
 
-/// A light object placed in a level.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct PlacedLight {
-    /// World pixel.
-    pub at: (i32, i32),
-    /// The source's size in world pixels, 1-16.
-    pub radius: u8,
-    pub light: Light,
-}
-
-/// How placed lights' shadows meet the light (the user's choice after the
-/// playtest, 2026-10-19: soft by default).
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum Shadows {
-    /// Cut at whole world pixels.
-    Hard,
-    /// Anti-aliased: four tests a world pixel.
-    Smooth,
-    /// A penumbra from the light's radius, wider farther behind the occluder.
-    #[default]
-    Soft,
-}
-
-/// A level's look (`level.ron`'s `look` and its light objects).
+/// A level's look (`level.ron`'s `look`). Its glowing pixels are its only
+/// light (plan 15c).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LevelLook {
     pub ambient: Ambient,
@@ -182,11 +159,9 @@ pub struct LevelLook {
     pub light_soak: u8,
     /// The least light an opaque solid pixel shows.
     pub solid_floor: Ambient,
-    pub shadows: Shadows,
     pub grade: Grade,
     /// A group map value `v` (1-255) is `groups[v - 1]`; 0 is no group.
     pub groups: Vec<GlowGroup>,
-    pub lights: Vec<PlacedLight>,
 }
 
 /// A mod projectile's look.

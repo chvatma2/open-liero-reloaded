@@ -1,5 +1,5 @@
-//! Look operations (plan 15a Task 7): the look's settings, glow groups and
-//! light objects, each validated as the format checks them.
+//! Look operations (plan 15a Task 7): the look's settings and glow groups,
+//! each validated as the format checks them.
 
 use std::collections::BTreeMap;
 
@@ -9,9 +9,8 @@ use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
 use olr_edit::element::{Property, add_layer, set};
 use olr_edit::look::*;
 use olr_edit::pack::{Pack, Source};
-use olr_format::Colour;
 use olr_format::levels::{ElementGlow, ElementMaterial, GlowLayers, LevelObject, LevelSource};
-use olr_format::look::{AnimationSource, GlowGroupSource, LightSource, LookSource, ReachSource};
+use olr_format::look::{GlowGroupSource, LookSource, ReachSource};
 
 fn group(id: &str) -> GlowGroupSource {
     GlowGroupSource {
@@ -20,16 +19,6 @@ fn group(id: &str) -> GlowGroupSource {
         intensity: 100,
         reach: ReachSource::Pixels(32),
         animation: Default::default(),
-        phase_ms: None,
-    }
-}
-
-fn light(intensity: u16) -> LightSource {
-    LightSource {
-        colour: Colour(Rgba::rgb(255, 128, 0)),
-        intensity,
-        reach: ReachSource::Pixels(64),
-        animation: AnimationSource::Flicker { speed: 8, depth: 25 },
         phase_ms: None,
     }
 }
@@ -145,21 +134,6 @@ fn renaming_a_group_follows_its_elements() {
     assert!(rename_group(&mut p, "magma", "Bad Id").is_err());
 }
 
-#[test]
-fn lights_round_trip() {
-    let mut l = level();
-    let i = add_light(&mut l, (2, 1), light(120), 3).unwrap();
-    assert_eq!(i, 1);
-    assert_eq!(l.objects[1].as_light().unwrap(), (3, light(120)));
-    set_light(&mut l, 1, (3, 0), light(50), 2).unwrap();
-    assert_eq!((l.objects[1].at(), l.objects[1].as_light().unwrap()), ((3, 0), (2, light(50))));
-    assert!(set_light(&mut l, 0, (0, 0), light(50), 2).is_err(), "object 0 is a spawn");
-    assert!(set_light(&mut l, 7, (0, 0), light(50), 2).is_err());
-    assert!(add_light(&mut l, (0, 0), light(5000), 2).is_err());
-    assert!(add_light(&mut l, (0, 0), light(10), 17).is_err());
-    assert_eq!(l.objects.len(), 2);
-}
-
 /// Removing the last glowing group leaves no all-zero glow behind (review
 /// of batch A, Minor 5).
 #[test]
@@ -175,23 +149,11 @@ fn removing_the_last_group_drops_an_empty_glow() {
     assert_eq!(level_of(&p).glow, None);
 }
 
-/// A resize moves lights with the level and keeps those outside it (they
-/// may sit outside and still light it; review of batch A, Minor 6).
+/// A glow that does not fit the level is dropped by a resize, never
+/// indexed (review of batch A, Minor 6).
 #[test]
-fn a_resize_keeps_lights_outside_the_level() {
+fn a_resize_drops_a_glow_that_does_not_fit() {
     let mut l = level();
-    add_light(&mut l, (-20, 1), light(10), 2).unwrap();
-    let dropped = olr_edit::level::resize(
-        &mut l,
-        (3, 2),
-        (0, 0),
-        Material::Dirt,
-        &olr_edit::level::Paint::Colour(Rgba::BLACK),
-    )
-    .unwrap();
-    assert!(dropped.is_empty(), "{dropped:?}");
-    assert_eq!(l.objects[1].at(), (-20, 1));
-    // A glow that does not fit the level is dropped, never indexed.
     l.glow = Some(GlowLayers::empty((1, 1), (1, 1)));
     olr_edit::level::resize(
         &mut l,
@@ -201,6 +163,5 @@ fn a_resize_keeps_lights_outside_the_level() {
         &olr_edit::level::Paint::Colour(Rgba::BLACK),
     )
     .unwrap();
-    assert_eq!(l.objects[1].at(), (-19, 1));
     assert_eq!(l.glow, None);
 }

@@ -19,11 +19,8 @@ pub use files::{
 pub use thumb::{THUMB_SIZE, letterbox, level_thumbnail, thumbnail};
 
 use crate::image_io::{LEVEL_ART, check_size};
-use crate::look::{
-    AnimationSource, LightSource, LookSource, MAX_LIGHT_OBJECTS, ReachSource, compile_light,
-    compile_look_source,
-};
-use crate::{Colour, FormatError, LiftError};
+use crate::look::{LookSource, compile_look_source};
+use crate::{FormatError, LiftError};
 pub use olr_terrain::GlowLayers;
 
 /// The largest `art_scale` (a level's art pixels per world pixel).
@@ -111,7 +108,7 @@ pub struct LevelSource {
     pub back: RgbaImage,
     /// `thumb.png`'s bytes, passed through (presentation only).
     pub thumb: Option<Vec<u8>>,
-    /// `level.ron`'s `look`; `None` with no light objects draws as always.
+    /// `level.ron`'s `look`; `None` draws as always.
     pub look: Option<LookSource>,
     /// The four `look/` images, when the level glows.
     pub glow: Option<GlowLayers>,
@@ -133,42 +130,6 @@ pub enum LevelObject {
         #[serde(default, skip_serializing_if = "String::is_empty")]
         notes: String,
     },
-    /// A light (look system): a source of light at a world position that
-    /// draws nothing itself. At most 1024 a level.
-    Light {
-        /// World pixels (x, y), origin top-left, y down; outside the level by
-        /// at most 4096 (a light outside lights the level through the open
-        /// air around it).
-        at: (i32, i32),
-        /// Opaque.
-        colour: Colour,
-        /// The light at the source, percent, 0 to 1000.
-        intensity: u16,
-        /// Where it fades to nothing.
-        reach: ReachSource,
-        /// The source's size, world pixels, 1 to 16: full intensity within
-        /// it, and its shadows start at its edge. Default 2.
-        #[serde(default = "two", skip_serializing_if = "is_two")]
-        radius: u8,
-        /// Default `Steady`.
-        #[serde(default, skip_serializing_if = "crate::defaults::is_default")]
-        animation: AnimationSource,
-        /// Shifts the animation's clock, milliseconds. Default none: from the
-        /// light's index.
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        phase_ms: Option<u32>,
-        /// Free text for authors; ignored by the game.
-        #[serde(default, skip_serializing_if = "String::is_empty")]
-        notes: String,
-    },
-}
-
-fn two() -> u8 {
-    2
-}
-
-fn is_two(v: &u8) -> bool {
-    *v == 2
 }
 
 impl LevelObject {
@@ -177,40 +138,17 @@ impl LevelObject {
         LevelObject::Spawn { at, notes: String::new() }
     }
 
-    /// A light object without notes.
-    pub fn light(at: (i32, i32), radius: u8, light: LightSource) -> LevelObject {
-        let LightSource { colour, intensity, reach, animation, phase_ms } = light;
-        LevelObject::Light { at, colour, intensity, reach, radius, animation, phase_ms, notes: String::new() }
-    }
-
     /// Where the object is, world pixels.
     pub fn at(&self) -> (i32, i32) {
         match self {
-            LevelObject::Spawn { at, .. } | LevelObject::Light { at, .. } => *at,
+            LevelObject::Spawn { at, .. } => *at,
         }
     }
 
     /// Moves the object.
     pub fn set_at(&mut self, to: (i32, i32)) {
         match self {
-            LevelObject::Spawn { at, .. } | LevelObject::Light { at, .. } => *at = to,
-        }
-    }
-
-    /// A light object's radius and light; `None` for any other object.
-    pub fn as_light(&self) -> Option<(u8, LightSource)> {
-        match self {
-            LevelObject::Light { colour, intensity, reach, radius, animation, phase_ms, .. } => Some((
-                *radius,
-                LightSource {
-                    colour: *colour,
-                    intensity: *intensity,
-                    reach: *reach,
-                    animation: animation.clone(),
-                    phase_ms: *phase_ms,
-                },
-            )),
-            LevelObject::Spawn { .. } => None,
+            LevelObject::Spawn { at, .. } => *at = to,
         }
     }
 
@@ -218,56 +156,15 @@ impl LevelObject {
     pub fn spawn_point(&self) -> Option<SpawnPoint> {
         match self {
             LevelObject::Spawn { at, .. } => Some(SpawnPoint { x: at.0, y: at.1 }),
-            LevelObject::Light { .. } => None,
         }
     }
 }
 
-/// The level's runtime look: `look` with its light objects, or `None` when
-/// it has neither (it draws as it always has). Checks every value.
+/// The level's runtime look, or `None` without one (it draws as it always
+/// has). Checks every value. Its glowing pixels are its only light (plan
+/// 15c).
 pub fn compile_look(src: &LevelSource) -> Result<Option<olr_look::LevelLook>, FormatError> {
-    let lights: Vec<(usize, &LevelObject)> =
-        src.objects.iter().enumerate().filter(|(_, o)| matches!(o, LevelObject::Light { .. })).collect();
-    if lights.len() > MAX_LIGHT_OBJECTS {
-        return Err(FormatError::invalid(
-            LEVEL_FILE,
-            "objects",
-            format!("{} lights, above {MAX_LIGHT_OBJECTS}", lights.len()),
-        ));
-    }
-    if src.look.is_none() && lights.is_empty() {
-        return Ok(None);
-    }
-    let mut look = compile_look_source(&src.look.clone().unwrap_or_default(), LEVEL_FILE)?;
-    for (i, o) in lights {
-        let Some((radius, light)) = o.as_light() else { continue };
-        let path = format!("objects[{i}]");
-        if !(1..=16).contains(&radius) {
-            return Err(FormatError::invalid(
-                LEVEL_FILE,
-                &format!("{path}.radius"),
-                format!("{radius}, not within 1 to 16"),
-            ));
-        }
-        // A light may sit outside the level and light it, but not further
-        // than a level's side: the shadow march and the cull stay bounded.
-        let (x, y) = o.at();
-        let side = MAX_SIDE as i64;
-        let within = |v: i32, len: u32| (-side..=i64::from(len) + side).contains(&i64::from(v));
-        if !within(x, src.size.0) || !within(y, src.size.1) {
-            return Err(FormatError::invalid(
-                LEVEL_FILE,
-                &format!("{path}.at"),
-                format!("({x}, {y}) is more than {MAX_SIDE} world pixels outside the level"),
-            ));
-        }
-        look.lights.push(olr_look::PlacedLight {
-            at: o.at(),
-            radius,
-            light: compile_light(&light, LEVEL_FILE, &path)?,
-        });
-    }
-    Ok(Some(look))
+    src.look.as_ref().map(|l| compile_look_source(l, LEVEL_FILE)).transpose()
 }
 
 /// The glow images fit the level and name only groups its look has.

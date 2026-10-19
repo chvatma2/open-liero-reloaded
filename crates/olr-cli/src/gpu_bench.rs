@@ -98,45 +98,15 @@ pub struct GpuReport {
     pub sizes: Vec<SizeReport>,
 }
 
-/// [`bench_look`]'s spacing of placed lights, world pixels.
-pub const LIGHT_STEP: i32 = 96;
-
 /// A representative lit scene for a level of `world` pixels at art scale
-/// `art` (plan 15a Task 20): a dark blue ambient at 20 %, the solid floor
-/// and soak at their defaults, soft shadows, a placed light every
-/// [`LIGHT_STEP`] world pixels (warm and cool in turn, every third
-/// flickering; at most `MAX_LIGHT_OBJECTS`), and one glow group (reach 48,
-/// pulsing) lighting dashed strips 2 world pixels wide every 64.
+/// `art` (plan 15a Task 20; plan 15c: glowing pixels are the only level
+/// light, play's discs come from the match): a dark blue ambient at 20 %,
+/// the solid floor and soak at their defaults, and one glow group (reach
+/// 48, pulsing) lighting dashed strips 2 world pixels wide every 64.
 pub fn bench_look(world: (u32, u32), art: u32) -> (olr_look::LevelLook, olr_terrain::GlowLayers) {
-    use olr_look::{Ambient, Animation, GlowColour, GlowGroup, Light, PlacedLight, PulseShape, Reach};
+    use olr_look::{Ambient, Animation, GlowColour, GlowGroup, PulseShape, Reach};
     let art = art.max(1);
     let defaults = olr_format::look::LookSource::default();
-    let mut lights = Vec::new();
-    let (w, h) = (world.0.min(i32::MAX as u32) as i32, world.1.min(i32::MAX as u32) as i32);
-    'rows: for y in (LIGHT_STEP / 2..h.max(1)).step_by(LIGHT_STEP as usize) {
-        for x in (LIGHT_STEP / 2..w.max(1)).step_by(LIGHT_STEP as usize) {
-            if lights.len() == olr_format::look::MAX_LIGHT_OBJECTS {
-                break 'rows;
-            }
-            let i = lights.len();
-            let colour = if i % 2 == 0 { [255, 192, 128] } else { [144, 176, 255] };
-            let animation =
-                if i % 3 == 2 { Animation::Flicker { speed: 8, depth: 25 } } else { Animation::Steady };
-            let light =
-                Light { colour, intensity: 150, reach: Reach::Pixels(120), animation, phase_ms: None };
-            lights.push(PlacedLight { at: (x, y), radius: 2, light });
-        }
-    }
-    if lights.is_empty() {
-        let light = Light {
-            colour: [255, 255, 255],
-            intensity: 150,
-            reach: Reach::Pixels(120),
-            animation: Animation::Steady,
-            phase_ms: None,
-        };
-        lights.push(PlacedLight { at: (w / 2, h / 2), radius: 2, light });
-    }
     let group = GlowGroup {
         id: "bench".into(),
         colour: GlowColour::Own,
@@ -152,10 +122,8 @@ pub fn bench_look(world: (u32, u32), art: u32) -> (olr_look::LevelLook, olr_terr
         softness: 1,
         light_soak: defaults.light_soak,
         solid_floor: Ambient { colour: [255, 255, 255], intensity: 30 },
-        shadows: olr_look::Shadows::Soft,
         grade: Default::default(),
         groups: vec![group],
-        lights,
     };
     let art_size = (world.0.saturating_mul(art), world.1.saturating_mul(art));
     let mut glow = olr_terrain::GlowLayers::empty(art_size, world);
@@ -423,26 +391,19 @@ pub fn run(
 mod tests {
     use super::*;
 
-    /// `--look`'s scene (plan 15a Task 20): a dark ambient, placed lights
-    /// every `LIGHT_STEP` world pixels inside the level (at most
-    /// `MAX_LIGHT_OBJECTS`), and dashed glowing strips in group 1, sized to
-    /// the level; the same for the same level.
+    /// `--look`'s scene (plan 15a Task 20): a dark ambient and dashed
+    /// glowing strips in group 1, sized to the level; the same for the same
+    /// level.
     #[test]
     fn the_bench_look_fills_the_level() {
         let (look, glow) = bench_look((504, 350), 2);
         assert!(look.ambient.intensity < 50 && look.groups.len() == 1);
-        assert_eq!(look.lights.len(), 5 * 4, "a light every {LIGHT_STEP} px");
-        assert!(look.lights.iter().all(|l| (0..504).contains(&l.at.0) && (0..350).contains(&l.at.1)));
         assert_eq!((glow.world, glow.art), ((504, 350), (1008, 700)));
         assert!(glow.fits((1008, 700), (504, 350)));
         let lit = glow.front.iter().filter(|&&g| g > 0).count();
         assert!(lit > 0 && lit < glow.front.len() / 10, "{lit}");
         assert!(glow.groups.iter().all(|&g| g <= 1) && glow.groups.contains(&1));
         assert_eq!(bench_look((504, 350), 2), (look, glow));
-        let (big, _) = bench_look((4096, 4096), 1);
-        assert_eq!(big.lights.len(), olr_format::look::MAX_LIGHT_OBJECTS);
-        let (tiny, _) = bench_look((64, 64), 1);
-        assert_eq!(tiny.lights.len(), 1);
     }
 
     #[test]

@@ -8,10 +8,10 @@ use egui::Ui;
 use olr_data::image::Rgba;
 use olr_edit::element::Property;
 use olr_format::Colour;
-use olr_format::levels::{Element, ElementGlow, ElementKind, LevelObject};
+use olr_format::levels::{Element, ElementGlow, ElementKind};
 use olr_format::look::{
-    AnimationSource, GlowColourSource, GlowGroupSource, KeySource, LightSource, LookSource, PulseShape,
-    ReachSource, ShadowsSource, SolidFloorSource,
+    AnimationSource, GlowColourSource, GlowGroupSource, KeySource, LookSource, PulseShape, ReachSource,
+    SolidFloorSource,
 };
 use olr_look::ViewMode;
 
@@ -214,22 +214,6 @@ pub(super) fn level_look(
     if let Some(v) = number(ui, data, "look/floor", labels::LOOK_FLOOR, floor.intensity.into(), 0..=100) {
         set(out, &|l| l.solid_floor = SolidFloorSource { intensity: v as u16, ..floor });
     }
-    let shadows =
-        [(ShadowsSource::Hard, "Hard"), (ShadowsSource::Smooth, "Smooth"), (ShadowsSource::Soft, "Soft")];
-    let label = ui.label(labels::LOOK_SHADOWS);
-    let now = shadows.iter().find(|(s, _)| *s == look.shadows).map_or("", |(_, n)| n);
-    egui::ComboBox::from_id_salt("look/shadows")
-        .selected_text(now)
-        .show_ui(ui, |ui| {
-            for (s, n) in shadows {
-                if ui.selectable_label(s == look.shadows, n).clicked() && s != look.shadows {
-                    set(out, &|l| l.shadows = s);
-                }
-            }
-        })
-        .response
-        .on_hover_text("the lights' shadow edges: soft widens with a light's radius")
-        .labelled_by(label.id);
     let g = &look.grade;
     if let Some(v) = number(ui, data, "look/exposure", labels::LOOK_EXPOSURE, g.exposure.into(), -200..=200) {
         set(out, &|l| l.grade.exposure = v as i16);
@@ -361,63 +345,21 @@ pub(super) fn element_glow(
     }
 }
 
-/// A light object's properties: place, colour, intensity, reach, radius
-/// and animation; each change one step.
-pub(super) fn light(
-    ui: &mut Ui,
-    data: &mut EditorData,
-    index: usize,
-    o: &LevelObject,
-    out: &mut Vec<EditorAction>,
-) {
-    let Some((radius, l)) = o.as_light() else { return };
-    let at = o.at();
-    ui.heading(format!("Light {}", index + 1));
-    let key = format!("light/{index}");
-    let coord = i64::from(i32::MIN)..=i64::from(i32::MAX);
-    let x = number(ui, data, &format!("{key}/x"), "X", at.0.into(), coord.clone());
-    let y = number(ui, data, &format!("{key}/y"), "Y", at.1.into(), coord);
-    let mut new: Option<(i32, i32, LightSource, u8)> = None;
-    if x.is_some() || y.is_some() {
-        new = Some((x.map_or(at.0, |v| v as i32), y.map_or(at.1, |v| v as i32), l.clone(), radius));
-    }
-    if let Some(c) = colour(ui, data, &format!("{key}/colour"), labels::LIGHT_COLOUR, l.colour) {
-        new = Some((at.0, at.1, LightSource { colour: c, ..l.clone() }, radius));
-    }
-    if let Some(v) =
-        number(ui, data, &format!("{key}/intensity"), labels::LIGHT_INTENSITY, l.intensity.into(), 0..=1000)
-    {
-        new = Some((at.0, at.1, LightSource { intensity: v as u16, ..l.clone() }, radius));
-    }
-    if let Some(r) = reach(ui, data, &format!("{key}/reach"), labels::LIGHT_REACH, l.reach) {
-        new = Some((at.0, at.1, LightSource { reach: r, ..l.clone() }, radius));
-    }
-    if let Some(v) = number(ui, data, &format!("{key}/radius"), labels::LIGHT_RADIUS, radius.into(), 1..=16) {
-        new = Some((at.0, at.1, l.clone(), v as u8));
-    }
-    if let Some(a) = animation(ui, data, &format!("{key}/animation"), &l.animation) {
-        new = Some((at.0, at.1, LightSource { animation: a, ..l.clone() }, radius));
-    }
-    if let Some((x, y, light, radius)) = new {
-        out.push(EditorAction::SetLight { index, at: (x, y), light, radius });
-    }
-    if ui.button("Delete").clicked() {
-        out.push(EditorAction::Remove);
-    }
-}
-
-/// The toolbar's look row: the Glow and Light tools (with the brush's
-/// strength), the view and the preview clock.
+/// The toolbar's look row: the Glow tool (with the brush's strength), the
+/// view and the preview clock.
 pub(super) fn toolbar_row(
     ui: &mut Ui,
     state: &EditorState,
     data: &mut EditorData,
     out: &mut Vec<EditorAction>,
 ) {
-    for (tool, label) in [(Tool::Glow, labels::TOOL_GLOW), (Tool::Light, labels::TOOL_LIGHT)] {
-        if ui.selectable_label(state.tool() == tool, label).on_hover_text(tool.key().to_string()).clicked() {
-            out.push(EditorAction::Tool(tool));
-        }
+    let glow = Tool::Glow;
+    if ui
+        .selectable_label(state.tool() == glow, labels::TOOL_GLOW)
+        .on_hover_text(glow.key().to_string())
+        .clicked()
+    {
+        out.push(EditorAction::Tool(glow));
     }
     if let Some(v) =
         number(ui, data, "glow-strength", labels::GLOW_STRENGTH_BRUSH, state.glow_strength().into(), 0..=100)

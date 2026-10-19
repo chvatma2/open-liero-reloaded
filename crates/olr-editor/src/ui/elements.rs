@@ -72,7 +72,6 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>
         let at = o.at();
         let kind = match o {
             LevelObject::Spawn { .. } => "Spawn",
-            LevelObject::Light { .. } => "Light",
         };
         let selected = *state.selection() == Selection::Object(i);
         if ui.selectable_label(selected, format!("{kind} {} at ({}, {})", i + 1, at.0, at.1)).clicked() {

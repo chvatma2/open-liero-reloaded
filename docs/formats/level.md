@@ -93,26 +93,12 @@ A thing placed in a level.
 | Variant | Fields | Meaning |
 |---|---|---|
 | `Spawn` | `at`, `notes` | A spawn point (world pixels). The 0.2 runtime does not read spawns yet. |
-| `Light` | `at`, `colour`, `intensity`, `reach`, `radius`, `animation`, `phase_ms`, `notes` | A light (look system): a source of light at a world position that draws nothing itself. At most 1024 a level. |
 
 ### `LevelObject::Spawn`
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `at` | (integer, integer) | required | World pixels (x, y), origin top-left, y down; outside the level is a warning of `olr-cli pack check`. |
-| `notes` | string | `""` | Free text for authors; ignored by the game. |
-
-### `LevelObject::Light`
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `at` | (integer, integer) | required | World pixels (x, y), origin top-left, y down; outside the level by at most 4096 (a light outside lights the level through the open air around it). |
-| `colour` | [colour](#colour) | required | Opaque. |
-| `intensity` | integer | required | The light at the source, percent, 0 to 1000. |
-| `reach` | [ReachSource](#reachsource) | required | Where it fades to nothing. |
-| `radius` | integer | `2` | The source's size, world pixels, 1 to 16: full intensity within it, and its shadows start at its edge. Default 2. |
-| `animation` | [AnimationSource](#animationsource) | `Steady` | Default `Steady`. |
-| `phase_ms` | integer (optional) | none | Shifts the animation's clock, milliseconds. Default none: from the light's index. |
 | `notes` | string | `""` | Free text for authors; ignored by the game. |
 
 <a id="looksource"></a>
@@ -129,7 +115,6 @@ A level's look: darkness, light settings, grade and glow groups. A level without
 | `softness` | integer | `0` | Blurs the light, world pixels, 0 to 4. Default 0. |
 | `light_soak` | integer | `8` | How deep light soaks into solids from the air beside them, world pixels, 0 to 12, fading with depth. Default 8. |
 | `solid_floor` | [SolidFloorSource](#solidfloorsource) | each field's default | The least light of an opaque solid. Default white at 30. |
-| `shadows` | [ShadowsSource](#shadowssource) | `Soft` | Placed lights' shadow edges. Default `Soft`. |
 | `grade` | [GradeSource](#gradesource) | each field's default | Default none. |
 | `glow_groups` | list of [GlowGroupSource](#glowgroupsource) | `[]` | At most 255. Default none. |
 
@@ -148,59 +133,6 @@ One element of a composition.
 | `kind` | [ElementKind](#elementkind) | required | What the element is. |
 | `glow` | [ElementGlow](#elementglow) (optional) | none | Its pixels glow (look system): an image or drawn element only. Default none. |
 | `clear` | boolean | `false` | Its rock and dirt let light through (look system §Clear solids): worms and projectiles still collide. An image or drawn element only. Default false. |
-
-<a id="colour"></a>
-
-## colour
-
-A colour in an authoring file: `"#rrggbb"` (opaque) or `"#rrggbbaa"` (alpha 00 transparent to ff opaque), hex digits read in any case. Written lowercase, without the alpha when opaque.
-
-<a id="reachsource"></a>
-
-## ReachSource (enum)
-
-How far a light reaches: it fades to nothing there.
-
-| Variant | Fields | Meaning |
-|---|---|---|
-| `Pixels` | integer | World pixels, 1 to 4096. |
-| `Unlimited` | — | No fade (in a level, glow light reaches across the whole level). |
-
-<a id="animationsource"></a>
-
-## AnimationSource (enum)
-
-How a light's intensity changes over time. Levels are percent of its intensity (0 to 1000), times milliseconds. The clock is the match's (a mod's light: the projectile's age, or the time since its flash began).
-
-| Variant | Fields | Meaning |
-|---|---|---|
-| `Steady` | — | Constant. |
-| `Pulse` | `period_ms`, `low`, `high`, `shape` | Between `low` and `high` over `period_ms` (1 to 600 000), starting at the midpoint and rising. |
-| `Flicker` | `speed`, `depth` | A flame's unsteadiness: smooth noise, the same on every machine. |
-| `Keys` | `keys`, `looped` | A hand-made curve, linear between keys. |
-
-### `AnimationSource::Pulse`
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `period_ms` | integer | required | Milliseconds, 1 to 600 000. |
-| `low` | integer | required | Percent, 0 to 1000. |
-| `high` | integer | required | Percent, 0 to 1000. |
-| `shape` | [PulseShape](#pulseshape) | `Sine` | The wave. Default `Sine`. |
-
-### `AnimationSource::Flicker`
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `speed` | integer | required | Changes a second, 1 to 1000. |
-| `depth` | integer | required | How far it dims, percent, 0 to 100. |
-
-### `AnimationSource::Keys`
-
-| Field | Type | Default | Meaning |
-|---|---|---|---|
-| `keys` | list of [keysource](#keysource) | required | 1 to 64 keys, their times not decreasing. |
-| `looped` | boolean | `false` | Repeats after the last key; otherwise the light ends there (a flash). Default false. |
 
 <a id="ambientsource"></a>
 
@@ -223,18 +155,6 @@ The least light an opaque solid pixel (rock or dirt that is not clear) shows, so
 |---|---|---|---|
 | `colour` | [colour](#colour) (optional) | none | Opaque. Default none: white. |
 | `intensity` | integer | `30` | Percent, 0 to 100 (0: none). Default 30 (plan 15a Stop 1b). |
-
-<a id="shadowssource"></a>
-
-## ShadowsSource (enum)
-
-How placed lights' shadows meet the light.
-
-| Variant | Fields | Meaning |
-|---|---|---|
-| `Hard` | — | Cut at whole world pixels. |
-| `Smooth` | — | Anti-aliased: an edge pixel partly lit. |
-| `Soft` | — | A penumbra as wide as the light's radius casts behind what shadows it: sharp near the occluder, softer farther away. |
 
 <a id="gradesource"></a>
 
@@ -312,23 +232,11 @@ How an element's covered pixels glow: they show at `strength` whatever the darkn
 | `group` | string | required | The id of a glow group in `level.ron`'s `look`. |
 | `mask` | boolean | `false` | A painted mask (`editor/glow/<id>.png`, grey, the element's box at art resolution: 0 no glow to 255 full) scales the strength per pixel. Default false. |
 
-<a id="pulseshape"></a>
+<a id="colour"></a>
 
-## PulseShape (enum)
+## colour
 
-The wave of a `Pulse`.
-
-| Variant | Fields | Meaning |
-|---|---|---|
-| `Sine` | — | Smooth. |
-| `Triangle` | — | Linear up and down. |
-| `Square` | — | `high` for the first half of the period, `low` for the second. |
-
-<a id="keysource"></a>
-
-## keysource
-
-One key of a `Keys` animation, written `(at_ms, level)` or `(at_ms, level, "#rrggbb")`: milliseconds from the curve's start, the intensity in percent (0 to 1000), and the light's colour from this key on.
+A colour in an authoring file: `"#rrggbb"` (opaque) or `"#rrggbbaa"` (alpha 00 transparent to ff opaque), hex digits read in any case. Written lowercase, without the alpha when opaque.
 
 <a id="glowcoloursource"></a>
 
@@ -340,6 +248,53 @@ What colour a glow group's pixels cast (their own glow always shows their art).
 |---|---|---|
 | `Own` | — | Each pixel's art colour. |
 | `Tint` | [colour](#colour) | One colour; opaque. |
+
+<a id="reachsource"></a>
+
+## ReachSource (enum)
+
+How far a light reaches: it fades to nothing there.
+
+| Variant | Fields | Meaning |
+|---|---|---|
+| `Pixels` | integer | World pixels, 1 to 4096. |
+| `Unlimited` | — | No fade (in a level, glow light reaches across the whole level). |
+
+<a id="animationsource"></a>
+
+## AnimationSource (enum)
+
+How a light's intensity changes over time. Levels are percent of its intensity (0 to 1000), times milliseconds. The clock is the match's (a mod's light: the projectile's age, or the time since its flash began).
+
+| Variant | Fields | Meaning |
+|---|---|---|
+| `Steady` | — | Constant. |
+| `Pulse` | `period_ms`, `low`, `high`, `shape` | Between `low` and `high` over `period_ms` (1 to 600 000), starting at the midpoint and rising. |
+| `Flicker` | `speed`, `depth` | A flame's unsteadiness: smooth noise, the same on every machine. |
+| `Keys` | `keys`, `looped` | A hand-made curve, linear between keys. |
+
+### `AnimationSource::Pulse`
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `period_ms` | integer | required | Milliseconds, 1 to 600 000. |
+| `low` | integer | required | Percent, 0 to 1000. |
+| `high` | integer | required | Percent, 0 to 1000. |
+| `shape` | [PulseShape](#pulseshape) | `Sine` | The wave. Default `Sine`. |
+
+### `AnimationSource::Flicker`
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `speed` | integer | required | Changes a second, 1 to 1000. |
+| `depth` | integer | required | How far it dims, percent, 0 to 100. |
+
+### `AnimationSource::Keys`
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `keys` | list of [keysource](#keysource) | required | 1 to 64 keys, their times not decreasing. |
+| `looped` | boolean | `false` | Repeats after the last key; otherwise the light ends there (a flash). Default false. |
 
 <a id="elementmaterial"></a>
 
@@ -364,3 +319,21 @@ Dithering of an image element's colour reduction.
 | `None` | — | Nearest colour. |
 | `Ordered` | — | Bayer 8 × 8. |
 | `Diffusion` | — | Floyd-Steinberg error diffusion. |
+
+<a id="pulseshape"></a>
+
+## PulseShape (enum)
+
+The wave of a `Pulse`.
+
+| Variant | Fields | Meaning |
+|---|---|---|
+| `Sine` | — | Smooth. |
+| `Triangle` | — | Linear up and down. |
+| `Square` | — | `high` for the first half of the period, `low` for the second. |
+
+<a id="keysource"></a>
+
+## keysource
+
+One key of a `Keys` animation, written `(at_ms, level)` or `(at_ms, level, "#rrggbb")`: milliseconds from the curve's start, the intensity in percent (0 to 1000), and the light's colour from this key on.

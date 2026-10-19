@@ -1,5 +1,5 @@
-//! `olr-cli level look|group|light …` (look system, plan 15a Task 7): a
-//! level's look settings, glow groups and light objects, through
+//! `olr-cli level look|group …` (look system, plan 15a Task 7): a level's
+//! look settings and glow groups (its only light, plan 15c), through
 //! `olr_edit::look`. Each loads the pack, applies, rebakes a composed level
 //! when its glow changed, and saves; a refused edit writes nothing.
 
@@ -11,12 +11,10 @@ use olr_edit::look;
 use olr_edit::pack::Source;
 use olr_format::Colour;
 use olr_format::look::{
-    AmbientSource, AnimationSource, GlowColourSource, GlowGroupSource, LightSource, ReachSource,
-    SolidFloorSource,
+    AmbientSource, AnimationSource, GlowColourSource, GlowGroupSource, ReachSource, SolidFloorSource,
 };
 
 use crate::element_cmd::{self, ContentArg};
-use crate::level_cmd::parse_point;
 
 /// `level look`'s flags: each sets one field of the look (made when the
 /// level has none).
@@ -107,51 +105,6 @@ pub(crate) enum GroupCommand {
         #[command(flatten)]
         content: ContentArg,
     },
-}
-
-/// A light's flags (`set` keeps what is not given).
-#[derive(clap::Args)]
-pub(crate) struct LightFields {
-    /// World pixels X,Y.
-    #[arg(long, value_parser = parse_point, allow_hyphen_values = true)]
-    at: Option<(i32, i32)>,
-    /// RRGGBB.
-    #[arg(long, value_parser = parse_colour)]
-    colour: Option<Colour>,
-    /// Percent, 0-1000.
-    #[arg(long)]
-    intensity: Option<u16>,
-    /// World pixels, or `unlimited`.
-    #[arg(long, value_parser = parse_reach)]
-    reach: Option<ReachSource>,
-    /// World pixels, 1-16 (default 2).
-    #[arg(long)]
-    radius: Option<u8>,
-    /// An animation in RON, such as `Pulse(period_ms: 2000, low: 60, high: 100)`.
-    #[arg(long, value_parser = parse_animation)]
-    animation: Option<AnimationSource>,
-    /// Milliseconds.
-    #[arg(long)]
-    phase: Option<u32>,
-}
-
-#[derive(Subcommand)]
-pub(crate) enum LightCommand {
-    /// Add a light object (`--at`, `--colour`, `--intensity` and `--reach` needed); prints its index.
-    Add {
-        pack: PathBuf,
-        #[command(flatten)]
-        fields: LightFields,
-    },
-    /// Change light object INDEX.
-    Set {
-        pack: PathBuf,
-        index: usize,
-        #[command(flatten)]
-        fields: LightFields,
-    },
-    /// Remove light object INDEX.
-    Remove { pack: PathBuf, index: usize },
 }
 
 fn parse_colour(s: &str) -> Result<Colour, String> {
@@ -291,62 +244,4 @@ pub(crate) fn group_cmd(c: &GroupCommand) -> anyhow::Result<bool> {
             save(dir, &mut pack, &messages)
         }
     }
-}
-
-fn light_of(
-    f: &LightFields,
-    now: Option<((i32, i32), u8, LightSource)>,
-) -> anyhow::Result<((i32, i32), u8, LightSource)> {
-    let need = |what: &str| anyhow::anyhow!("a new light needs --{what}");
-    let at = f.at.or(now.as_ref().map(|n| n.0)).ok_or_else(|| need("at"))?;
-    let radius = f.radius.or(now.as_ref().map(|n| n.1)).unwrap_or(2);
-    let old = now.map(|n| n.2);
-    let light = LightSource {
-        colour: f.colour.or(old.as_ref().map(|l| l.colour)).ok_or_else(|| need("colour"))?,
-        intensity: f.intensity.or(old.as_ref().map(|l| l.intensity)).ok_or_else(|| need("intensity"))?,
-        reach: f.reach.or(old.as_ref().map(|l| l.reach)).ok_or_else(|| need("reach"))?,
-        animation: f.animation.clone().or(old.as_ref().map(|l| l.animation.clone())).unwrap_or_default(),
-        phase_ms: f.phase.or(old.as_ref().and_then(|l| l.phase_ms)),
-    };
-    Ok((at, radius, light))
-}
-
-/// `level light …`.
-pub(crate) fn light_cmd(c: &LightCommand) -> anyhow::Result<bool> {
-    let (dir, op): (&Path, _) = match c {
-        LightCommand::Add { pack, .. }
-        | LightCommand::Set { pack, .. }
-        | LightCommand::Remove { pack, .. } => (pack, c),
-    };
-    let mut pack = element_cmd::load_level(dir)?;
-    let Source::Level(l) = &mut pack.source else { anyhow::bail!("{}: not a level pack", dir.display()) };
-    let messages = match op {
-        LightCommand::Add { fields, .. } => {
-            let (at, radius, light) = light_of(fields, None)?;
-            let i = look::add_light(l, at, light, radius).map_err(|e| bail(dir, e))?;
-            vec![format!("added object {i}")]
-        }
-        LightCommand::Set { index, fields, .. } => {
-            let now = match l.objects.get(*index) {
-                None => {
-                    anyhow::bail!("{}: no object {index} (the level has {})", dir.display(), l.objects.len())
-                }
-                Some(o) => match o.as_light() {
-                    Some((radius, light)) => (o.at(), radius, light),
-                    None => anyhow::bail!("{}: object {index} is not a light", dir.display()),
-                },
-            };
-            let (at, radius, light) = light_of(fields, Some(now))?;
-            look::set_light(l, *index, at, light, radius).map_err(|e| bail(dir, e))?;
-            Vec::new()
-        }
-        LightCommand::Remove { index, .. } => {
-            if !l.objects.get(*index).is_some_and(|o| o.as_light().is_some()) {
-                anyhow::bail!("{}: object {index} is not a light", dir.display());
-            }
-            olr_edit::level::remove_object(l, *index).map_err(|e| bail(dir, e))?;
-            Vec::new()
-        }
-    };
-    save(dir, &mut pack, &messages)
 }

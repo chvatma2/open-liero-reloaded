@@ -1,12 +1,10 @@
 //! The per-frame look the renderer draws with (spec §Pipeline): the level's
-//! settings and groups evaluated at the clock, and the placed lights.
+//! settings and groups evaluated at the clock, and play's glowing discs
+//! (plan 15c).
 
 use alloc::vec::Vec;
 
 use crate::{Grade, LevelLook, Light, Reach, default_phase, identity_of};
-
-/// The most placed lights a frame draws (plan 15a R13).
-pub const MAX_LIGHTS: usize = 256;
 
 /// The most glowing discs a frame draws (plan 15c): play's lights, in
 /// order.
@@ -39,20 +37,17 @@ pub struct FrameGroup {
     pub reach: f32,
 }
 
-/// A placed light at this frame.
+/// A glowing disc at this frame (plan 15c): one of play's lights.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FrameLight {
     /// World coordinates.
     pub pos: [f32; 2],
-    /// World pixels: full intensity within it; shadow rays start at its edge.
+    /// The disc's radius, world pixels.
     pub radius: f32,
     /// Linear, × intensity × animation.
     pub colour: [f32; 3],
     /// World pixels; `f32::INFINITY` unlimited.
     pub reach: f32,
-    /// The worm (its index + 1) the light belongs to, 0 none: a light
-    /// ignores its own worm as an occluder (plan 15b; a muzzle flash).
-    pub owner: u8,
 }
 
 /// Everything the renderer's look passes read for one frame.
@@ -71,14 +66,10 @@ pub struct LookFrame {
     /// The least light of a worm, linear ([`crate::worm_floor_of`] of the
     /// level's ambient colour as set, its intensity ignored; plan 15b).
     pub worm_floor: [f32; 3],
-    /// Placed lights' shadow edges ([`crate::Shadows`]): 0 hard, 1 smooth,
-    /// 2 soft.
-    pub shadow_filter: u8,
     pub grade: Grade,
     /// The level's groups in order: a group map value `v` (1-255) is
     /// `groups[v - 1]`; 0 is no group.
     pub groups: Vec<FrameGroup>,
-    pub lights: Vec<FrameLight>,
     /// Play's lights as glowing discs in the glow light (plan 15c): the
     /// engine's explosion and muzzle lights, a mod look's shot lights, end
     /// flashes and muzzle lights. `radius` is the disc's.
@@ -88,11 +79,10 @@ pub struct LookFrame {
 
 impl LookFrame {
     /// Clears the frame and fills the level's part at clock `t_ms`: ambient,
-    /// grade, settings, groups and the level's lights. A level without a look
-    /// is full ambient. Keeps `mode` and the vectors' capacity.
+    /// grade, settings and groups. A level without a look is full ambient.
+    /// Keeps `mode` and the vectors' capacity.
     pub fn begin(&mut self, level: Option<&LevelLook>, t_ms: f64) {
         self.groups.clear();
-        self.lights.clear();
         self.emitters.clear();
         let Some(level) = level else {
             self.ambient = [1.0; 3];
@@ -102,7 +92,6 @@ impl LookFrame {
             self.light_soak = 0;
             self.solid_floor = [0.0; 3];
             self.worm_floor = crate::worm_floor_of([255; 3]);
-            self.shadow_filter = 0;
             self.grade = Grade::default();
             return;
         };
@@ -114,11 +103,6 @@ impl LookFrame {
         self.light_soak = level.light_soak.min(MAX_SOAK);
         self.solid_floor = linear(level.solid_floor);
         self.worm_floor = crate::worm_floor_of(level.ambient.colour);
-        self.shadow_filter = match level.shadows {
-            crate::Shadows::Hard => 0,
-            crate::Shadows::Smooth => 1,
-            crate::Shadows::Soft => 2,
-        };
         self.max_light = (f32::from(level.max_light) / 100.0).clamp(1.0, 2.0);
         self.light_steps = level.light_steps;
         self.softness = level.softness.min(4);
@@ -139,17 +123,6 @@ impl LookFrame {
                 reach: g.reach.pixels(),
             });
         }
-        for (i, l) in level.lights.iter().enumerate() {
-            let pos = [l.at.0 as f32 + 0.5, l.at.1 as f32 + 0.5];
-            if let Some(f) = light_at(&l.light, t_ms, i as u64, pos, f32::from(l.radius.clamp(1, 16))) {
-                self.lights.push(f);
-            }
-        }
-    }
-
-    /// Adds a light after the level's (plan 15a R9's order is the callers').
-    pub fn push(&mut self, light: FrameLight) {
-        self.lights.push(light);
     }
 
     /// Adds a glowing disc after the others (plan 15c; the callers' order).
@@ -157,9 +130,8 @@ impl LookFrame {
         self.emitters.push(light);
     }
 
-    /// Keeps the lights and emitters whose reach touches `view` (world `x,
-    /// y, w, h`), then the first [`MAX_LIGHTS`] and [`MAX_EMITTERS`], in
-    /// order.
+    /// Keeps the emitters whose reach touches `view` (world `x, y, w, h`),
+    /// then the first [`MAX_EMITTERS`], in order.
     pub fn cull(&mut self, view: [f32; 4]) {
         let [x0, y0, w, h] = view;
         let (x1, y1) = (x0 + w, y0 + h);
@@ -168,8 +140,6 @@ impl LookFrame {
             let dy = (y0 - l.pos[1]).max(l.pos[1] - y1).max(0.0);
             libm::sqrtf(dx * dx + dy * dy) <= l.reach + l.radius
         };
-        self.lights.retain(touches);
-        self.lights.truncate(MAX_LIGHTS);
         self.emitters.retain(touches);
         self.emitters.truncate(MAX_EMITTERS);
     }
@@ -197,7 +167,6 @@ pub fn light_at(light: &Light, t_ms: f64, identity: u64, pos: [f32; 2], radius: 
         radius,
         colour,
         reach: light.reach.pixels(),
-        owner: 0,
     })
 }
 

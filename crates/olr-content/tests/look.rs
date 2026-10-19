@@ -6,10 +6,9 @@ use olr_content::Content;
 use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
-use olr_format::Colour;
 use olr_format::image_io;
-use olr_format::levels::{GlowLayers, LevelObject, LevelSource, write_level_files};
-use olr_format::look::{GlowGroupSource, LightSource, LookSource, ReachSource};
+use olr_format::levels::{GlowLayers, LevelSource, write_level_files};
+use olr_format::look::{GlowGroupSource, LookSource, ReachSource};
 use olr_vfs::DirFs;
 
 fn manifest(id: &str, kind: PackKind) -> PackManifest {
@@ -43,20 +42,13 @@ fn lit_level_with(dir: &Path, edit: impl FnOnce(&mut LevelSource)) {
         animation: Default::default(),
         phase_ms: None,
     };
-    let light = LightSource {
-        colour: Colour(olr_data::image::Rgba::rgb(255, 0, 0)),
-        intensity: 100,
-        reach: ReachSource::Unlimited,
-        animation: Default::default(),
-        phase_ms: None,
-    };
     let mut src = LevelSource {
         name: "Lit".into(),
         notes: String::new(),
         size: (w, h),
         art_scale: s,
         theme: "olx-theme-dirt".into(),
-        objects: vec![LevelObject::light((2, 1), 3, light)],
+        objects: Vec::new(),
         material: vec![Material::Dirt; (w * h) as usize],
         front: RgbaImage::new(w * s, h * s),
         back: RgbaImage::new(w * s, h * s),
@@ -78,8 +70,7 @@ fn a_level_look_loads() {
     let level = Content::open(tmp.path()).unwrap().load_level("lit").unwrap();
     assert!(level.has_look());
     let look = level.look.as_ref().unwrap();
-    assert_eq!((look.groups.len(), look.lights.len()), (1, 1));
-    assert_eq!(look.lights[0].at, (2, 1));
+    assert_eq!(look.groups.len(), 1);
     assert_eq!(level.glow.as_ref().unwrap().front[0], 200);
     assert!(level.warnings.is_empty(), "{:?}", level.warnings);
     let from_source = olr_content::LoadedLevel::from_source(

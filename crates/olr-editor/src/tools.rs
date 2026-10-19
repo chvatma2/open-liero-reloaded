@@ -23,8 +23,6 @@ pub enum Tool {
     SelectPixels,
     /// Paints the selected glowing element's glow mask (plan 15a R12).
     Glow,
-    /// Places light objects and drags them (plan 15a R12).
-    Light,
 }
 
 impl Tool {
@@ -45,7 +43,7 @@ impl Tool {
     ];
 
     /// Every tool (each has its shortcut).
-    pub const ALL: [Tool; 13] = [
+    pub const ALL: [Tool; 12] = [
         Tool::Select,
         Tool::Brush,
         Tool::Eraser,
@@ -58,7 +56,6 @@ impl Tool {
         Tool::Fill,
         Tool::SelectPixels,
         Tool::Glow,
-        Tool::Light,
     ];
 
     /// The shortcut letter.
@@ -76,7 +73,6 @@ impl Tool {
             Tool::Fill => 'G',
             Tool::SelectPixels => 'M',
             Tool::Glow => 'H',
-            Tool::Light => 'K',
         }
     }
 
@@ -94,7 +90,6 @@ impl Tool {
             Tool::Fill => "Fill",
             Tool::SelectPixels => "Select pixels",
             Tool::Glow => "Glow",
-            Tool::Light => "Light",
         }
     }
 
@@ -191,13 +186,5 @@ pub enum Overlay {
     Spawn {
         at: (i32, i32),
         selected: bool,
-    },
-    /// A light object; the selected one shows its reach (world pixels from
-    /// its radius's edge; `None` unlimited).
-    Light {
-        at: (i32, i32),
-        selected: bool,
-        radius: u8,
-        reach: Option<u16>,
     },
 }

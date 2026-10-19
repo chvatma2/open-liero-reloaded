@@ -168,9 +168,9 @@ fn pack_of(
         }
     }
     let mut level = level.clone();
-    // A look or a light changes the thumbnail too (drawn lit, the user's
-    // note 2026-10-19).
-    if rebaked || level.look.is_some() || level.objects.iter().any(|o| o.as_light().is_some()) {
+    // A look changes the thumbnail too (drawn lit, the user's note
+    // 2026-10-19).
+    if rebaked || level.look.is_some() {
         refresh_thumb(&mut level);
     }
     let fits = |e: &Element| {
@@ -437,7 +437,6 @@ impl Document {
                         });
                     }
                 }
-                LevelObject::Light { .. } => {}
             }
         }
         if self.kept.is_some() {

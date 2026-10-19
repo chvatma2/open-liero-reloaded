@@ -108,11 +108,6 @@ enum LevelCommand {
         #[command(subcommand)]
         command: crate::look_cmd::GroupCommand,
     },
-    /// The level's light objects: add, set, remove.
-    Light {
-        #[command(subcommand)]
-        command: crate::look_cmd::LightCommand,
-    },
     /// Draw the level (front, or with --material its material) to a PNG with
     /// each spawn marked; the pack is not changed.
     Preview {
@@ -325,7 +320,6 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         LevelCommand::Element { command } => element_cmd::run(command),
         LevelCommand::Look(a) => crate::look_cmd::look_cmd(a),
         LevelCommand::Group { command } => crate::look_cmd::group_cmd(command),
-        LevelCommand::Light { command } => crate::look_cmd::light_cmd(command),
         LevelCommand::Bake { pack, content } => element_cmd::bake_cmd(pack, content),
         LevelCommand::Object { command } => match command {
             ObjectCommand::List { pack } => {
@@ -374,13 +368,6 @@ fn describe(o: &LevelObject) -> String {
                 .map(|c| if c.is_control() { c.escape_default().to_string() } else { c.to_string() })
                 .collect();
             format!("Spawn at ({}, {}) — {notes}", at.0, at.1)
-        }
-        LevelObject::Light { at, intensity, reach, .. } => {
-            let reach = match reach {
-                olr_format::look::ReachSource::Pixels(n) => format!("{n}"),
-                olr_format::look::ReachSource::Unlimited => "unlimited".into(),
-            };
-            format!("Light at ({}, {}), {intensity}%, reach {reach}", at.0, at.1)
         }
     }
 }
@@ -480,7 +467,7 @@ fn preview(l: &LevelSource, scale: u32, material: bool) -> anyhow::Result<RgbaIm
     }
     let cross = [(0, 0), (-1, 0), (1, 0), (0, -1), (0, 1)];
     for o in &l.objects {
-        let LevelObject::Spawn { at, .. } = o else { continue };
+        let LevelObject::Spawn { at, .. } = o;
         // The centre of the spawn's art block, in output pixels.
         let centre = |v: i32| {
             (i64::from(v) * i64::from(s) + i64::from(s / 2)) * i64::from(scale) + i64::from(scale / 2)

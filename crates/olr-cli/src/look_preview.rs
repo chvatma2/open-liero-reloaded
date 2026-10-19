@@ -24,14 +24,6 @@ pub enum ViewArg {
     Light,
 }
 
-/// Placed lights' shadow edges (`LookFrame::shadow_filter`).
-#[derive(Clone, Copy, ValueEnum)]
-pub enum ShadowArg {
-    Hard,
-    Aa,
-    Soft,
-}
-
 #[derive(clap::Args)]
 pub struct Args {
     /// A level pack directory.
@@ -44,10 +36,6 @@ pub struct Args {
     time: u64,
     #[arg(long, value_enum, default_value = "lit")]
     view: ViewArg,
-    /// Placed lights' shadow edges instead of the level's: hard, aa
-    /// (smooth) or soft.
-    #[arg(long, value_enum)]
-    shadows: Option<ShadowArg>,
     /// The picture's size in pixels (the game's 427 × 192 view, integer scaled).
     #[arg(long, value_parser = parse_size, default_value = "854x384")]
     size: (u32, u32),
@@ -77,12 +65,6 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     };
     let mut look = LookFrame { mode, ..LookFrame::default() };
     look.begin(level.look.as_ref(), args.time as f64);
-    if let Some(s) = args.shadows {
-        look.shadow_filter = s as u8;
-    }
-    let pad = olr_render::LIGHT_CULL_PAD;
-    let v = list.view;
-    look.cull([v.x - pad, v.y - pad, v.w + 2.0 * pad, v.h + 2.0 * pad]);
     let gpu = Offscreen::new()?;
     let mut renderer = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
     renderer.set_lighting(true);

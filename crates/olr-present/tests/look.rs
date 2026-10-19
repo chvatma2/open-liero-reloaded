@@ -7,8 +7,8 @@ use std::path::{Path, PathBuf};
 
 use olr_content::{Content, olx_level_id, olx_mod_id};
 use olr_look::{
-    Ambient, Animation, GlowColour, GlowGroup, Grade, Key, LevelLook, Light, ModLook, PlacedLight,
-    ProjectileLook, Reach, engine,
+    Ambient, Animation, GlowColour, GlowGroup, Grade, Key, LevelLook, Light, ModLook, ProjectileLook, Reach,
+    engine,
 };
 use olr_present::{PresentSetup, Presentation, default_colour};
 use olr_scene::{DrawList, Interpolation, Item, Layer, SceneOptions, Shade, Viewport};
@@ -30,7 +30,6 @@ fn look() -> LevelLook {
         light_steps: 0,
         softness: 0,
         light_soak: 0,
-        shadows: olr_look::Shadows::Soft,
         solid_floor: Ambient { colour: [255, 255, 255], intensity: 0 },
         grade: Grade::default(),
         groups: vec![GlowGroup {
@@ -45,17 +44,6 @@ fn look() -> LevelLook {
                 shape: olr_look::PulseShape::Square,
             },
             phase_ms: Some(0),
-        }],
-        lights: vec![PlacedLight {
-            at: (100, 100),
-            radius: 2,
-            light: Light {
-                colour: [255, 0, 0],
-                intensity: 100,
-                reach: Reach::Pixels(5000),
-                animation: Animation::Steady,
-                phase_ms: None,
-            },
         }],
     }
 }
@@ -150,8 +138,6 @@ fn look_frame_level_part() {
         let l = p.look().expect("a lit level's frame has a look");
         assert!((l.ambient[0] - 0.2).abs() < 1e-6);
         assert_eq!(l.groups.len(), 1);
-        assert_eq!(l.lights.len(), 1, "the lamp's reach touches the view");
-        assert_eq!(l.lights[0].pos, [100.5, 100.5]);
         seen.push((f, l.groups[0].self_scale));
     });
     // The pulse follows the match clock: tick 10 ms each, alpha 0.5.
@@ -280,7 +266,6 @@ fn engine_lights_are_emitters() {
     let (mut explosion, mut muzzle) = (0, 0);
     play_with(&content, BAZOOKA, Some(look()), None, |p, _, _, _| {
         let l = p.look().unwrap();
-        assert!(l.lights.iter().all(|f| f.pos == [100.5, 100.5]), "only the level's lamp is a light");
         for e in &l.emitters {
             let ratio = e.colour[2] / e.colour[0].max(1e-6);
             if (ratio - 0.262).abs() < 0.01 {
@@ -296,37 +281,19 @@ fn engine_lights_are_emitters() {
     assert!(explosion > 0 && muzzle > 0, "explosion {explosion}, muzzle {muzzle}");
 }
 
+/// Play's discs are the same, in the same order, every run.
 #[test]
-fn the_light_cap_is_deterministic() {
+fn emitters_are_deterministic() {
     let Some(content) = content() else { return };
-    let mut many = look();
-    many.lights = (0..2000)
-        .map(|i| PlacedLight {
-            at: (i % 50, i / 50),
-            radius: 1,
-            light: Light {
-                colour: [255, 255, 255],
-                intensity: 10,
-                reach: Reach::Unlimited,
-                animation: Animation::Steady,
-                phase_ms: None,
-            },
-        })
-        .collect();
     let mut runs = Vec::new();
     for _ in 0..2 {
         let mut frames = Vec::new();
-        play_with(&content, BAZOOKA, Some(many.clone()), None, |p, _, _, _| {
-            let l = p.look().unwrap();
-            assert_eq!(l.lights.len(), olr_look::MAX_LIGHTS);
-            // The level's lights come first (plan 15a R9): its first 256 are kept.
-            for (i, f) in l.lights.iter().enumerate() {
-                assert_eq!(f.pos, [(i % 50) as f32 + 0.5, (i / 50) as f32 + 0.5]);
-            }
-            frames.push(l.lights.clone());
+        play_with(&content, BAZOOKA, Some(look()), None, |p, _, _, _| {
+            frames.push(p.look().unwrap().emitters.clone());
         });
         runs.push(frames);
     }
+    assert!(runs[0].iter().any(|f| !f.is_empty()));
     assert_eq!(runs[0], runs[1]);
 }
 
@@ -464,36 +431,4 @@ fn living_worms_are_occluders() {
         });
         assert!(!lit || checked > 0);
     }
-}
-
-/// Plan 15b final review, Important 1: a muzzle light carries its worm
-/// (index + 1), so it ignores that worm's body whatever the art at its
-/// centre; other lights belong to no worm.
-#[test]
-fn a_muzzle_light_belongs_to_its_worm() {
-    let Some(content) = content() else { return };
-    let (sc, _) = olr_scenario::load_fixture(&fixtures(), "fire-minigun").unwrap();
-    let weapons = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap().sim.weapons().len();
-    let muzzle = Light {
-        colour: [0, 255, 0],
-        intensity: 100,
-        reach: Reach::Pixels(64),
-        animation: Animation::Steady,
-        phase_ms: None,
-    };
-    let weapon = olr_look::WeaponLook { muzzle_light: Some(muzzle) };
-    let look = ModLook { projectiles: Vec::new(), weapons: vec![Some(weapon); weapons] };
-    let mut seen = 0;
-    play_with(&content, "fire-minigun", None, Some(look), |p, _, list, _| {
-        for l in &p.look().unwrap().emitters {
-            if l.colour[0] == 0.0 && l.colour[1] > 0.0 {
-                let body = list.occluders.iter().find(|o| o.worm == l.owner);
-                assert!(l.owner != 0 && body.is_some(), "owner {}", l.owner);
-                seen += 1;
-            } else {
-                assert_eq!(l.owner, 0);
-            }
-        }
-    });
-    assert!(seen > 0);
 }

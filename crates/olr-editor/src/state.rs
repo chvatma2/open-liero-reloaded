@@ -272,13 +272,6 @@ pub enum EditorAction {
     },
     /// Removes glow group `id` (asks first: its elements lose their glow).
     RemoveGroup(String),
-    /// Light object `index`'s place, light and radius.
-    SetLight {
-        index: usize,
-        at: (i32, i32),
-        light: olr_format::look::LightSource,
-        radius: u8,
-    },
     /// The glow brush's strength, percent (0 erases).
     GlowStrength(u8),
     /// The Glow brush lights the connected pixels alike in colour.
@@ -767,9 +760,6 @@ impl EditorState {
                 }
                 Vec::new()
             }
-            EditorAction::SetLight { index, at, light, radius } => {
-                self.edit(|d| d.set_light(index, at, light, radius))
-            }
             EditorAction::GlowStrength(v) => {
                 self.glow_strength = v.min(100);
                 Vec::new()
@@ -1138,12 +1128,11 @@ impl EditorState {
             self.clipboard = Some(Clipboard::Pixels { art_scale, at, clip, offset: PASTE_STEP });
             return true;
         }
-        // A spawn or light (the user's request 2026-10-19).
+        // A spawn (the user's request 2026-10-19).
         if let Selection::Object(i) = self.selection
             && let Some(o) = doc.level().objects.get(i)
         {
-            let what = if o.as_light().is_some() { "light" } else { "spawn" };
-            self.status.message = Some(format!("copied the {what}"));
+            self.status.message = Some("copied the spawn".into());
             self.clipboard = Some(Clipboard::Objects { objects: vec![o.clone()], offset: PASTE_STEP });
             return true;
         }

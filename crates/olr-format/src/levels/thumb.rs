@@ -85,8 +85,8 @@ fn scaled(art: &RgbaImage, tw: u32, th: u32) -> RgbaImage {
 
 /// The thumbnail of `level` as it plays (the user's note, 2026-10-19): a
 /// level with a look ([`super::compile_look`]) is drawn lit, else it is
-/// [`thumbnail`] of its front. A light the look cannot compile is the plain
-/// thumbnail too.
+/// [`thumbnail`] of its front. A look that does not compile gives the
+/// plain thumbnail too.
 pub fn level_thumbnail(level: &super::LevelSource) -> RgbaImage {
     match super::compile_look(level) {
         Ok(Some(look)) => lit_thumbnail(level, &look),
@@ -115,8 +115,8 @@ fn linear_to_srgb(v: f32) -> u8 {
 }
 
 /// [`thumbnail`] with `look` at clock 0, a CPU model of the look (the
-/// renderer's is on the GPU): each thumbnail pixel's light is the ambient,
-/// the placed lights (their fade, no shadows) and the glow light (each of
+/// renderer's is on the GPU): each thumbnail pixel's light is the ambient
+/// and the glow light (each of
 /// a coarse grid of cells casting its glow by the angle it fills, faded by
 /// its reach); each art sample is lit by it, never below its glow nor, for
 /// a solid, the solid floor, capped at max light; the mean is graded. No
@@ -213,13 +213,6 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
         for tx in 0..w64 {
             let at = [(tx as f32 + 0.5) * ww as f32 / w as f32, (ty as f32 + 0.5) * wh as f32 / h as f32];
             let mut light = frame.ambient;
-            for l in &frame.lights {
-                let d = ((l.pos[0] - at[0]).powi(2) + (l.pos[1] - at[1]).powi(2)).sqrt();
-                let k = fade((d - l.radius).max(0.0), l.reach);
-                for (v, c) in light.iter_mut().zip(l.colour) {
-                    *v += c * k;
-                }
-            }
             for (e, reach, p) in &cells {
                 let d = ((p[0] - at[0]).powi(2) + (p[1] - at[1]).powi(2)).sqrt();
                 let k = (side / (std::f32::consts::TAU * d.max(1e-3))).min(1.0) * fade(d, *reach);

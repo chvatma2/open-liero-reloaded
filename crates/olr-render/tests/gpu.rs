@@ -480,7 +480,7 @@ fn room(w: u32, h: u32, rock: impl Fn(u32, u32) -> bool) -> ColorMap {
 
 /// A white light at `at` (world coordinates), radius 2, reach `reach`.
 fn lamp(at: [f32; 2], reach: f32) -> olr_look::FrameLight {
-    olr_look::FrameLight { pos: at, radius: 2.0, colour: [1.0; 3], reach, owner: 0 }
+    olr_look::FrameLight { pos: at, radius: 2.0, colour: [1.0; 3], reach }
 }
 
 /// The light at world pixel `(x, y)` of the last lit frame.
@@ -518,7 +518,7 @@ fn lit_frame_with(
     r.upload_terrain(map);
     let mut look = dim(0.1);
     set(&mut look);
-    look.lights.extend_from_slice(lights);
+    look.emitters.extend_from_slice(lights);
     let mut l = list(view);
     l.map = (map.material().width(), map.material().height());
     gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
@@ -554,10 +554,6 @@ fn an_off_view_light_reaching_the_view_lights_it() {
     let r =
         lit_frame(&gpu, &map, View { x: 100.0, y: 0.0, w: 40.0, h: 40.0 }, &[lamp([40.5, 20.5], 100.0)], 0);
     assert!(light_at(&gpu, &r, 101, 20)[0] > 0.1 + 1e-3);
-    // A lamp outside the level lights it too (outside is open).
-    let r =
-        lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 40.0, h: 40.0 }, &[lamp([-20.5, 20.5], 100.0)], 0);
-    assert!(light_at(&gpu, &r, 1, 20)[0] > 0.1 + 1e-3);
 }
 
 #[test]
@@ -623,7 +619,8 @@ fn light_is_camera_independent() {
 
 /// Rock from y 20 down, a lamp in the air above it.
 fn ground() -> (ColorMap, View, [olr_look::FrameLight; 1]) {
-    (room(100, 40, |_, y| y >= 20), View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, [lamp([50.5, 10.5], 100.0)])
+    let lamp = olr_look::FrameLight { colour: [0.2; 3], ..lamp([50.5, 10.5], 100.0) };
+    (room(100, 40, |_, y| y >= 20), View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, [lamp])
 }
 
 #[test]
@@ -923,27 +920,6 @@ fn a_clear_solid_takes_no_soak_or_floor() {
 }
 
 #[test]
-fn a_far_unlimited_light_ends_its_shadow_march() {
-    let Some(gpu) = offscreen() else { return };
-    let map = room(100, 40, |x, _| x == 50);
-    // Far past f32's whole numbers: a march in 1-pixel steps would never end.
-    for at in [[1.0e8, 20.5], [-3.0e7, -3.0e7], [60.5, 1.0e9]] {
-        let r =
-            lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 }, &[lamp(at, f32::INFINITY)], 0);
-        assert!(light_at(&gpu, &r, 10, 20)[0].is_finite());
-    }
-    // A light in the level marches as before: the wall still shadows.
-    let r = lit_frame(
-        &gpu,
-        &map,
-        View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 },
-        &[lamp([30.5, 20.5], f32::INFINITY)],
-        0,
-    );
-    assert!((light_at(&gpu, &r, 60, 20)[0] - 0.1).abs() < 1e-3);
-}
-
-#[test]
 fn culling_with_the_cull_pad_changes_no_light() {
     let Some(gpu) = offscreen() else { return };
     // Rock straddling the view's left and top edges, which soaks the light
@@ -970,7 +946,7 @@ fn culling_with_the_cull_pad_changes_no_light() {
         r.upload_terrain(&map);
         let mut look = dim(0.1);
         set(&mut look);
-        look.lights.extend_from_slice(&lights);
+        look.emitters.extend_from_slice(&lights);
         let p = olr_render::LIGHT_CULL_PAD;
         look.cull([view.x - p, view.y - p, view.w + 2.0 * p, view.h + 2.0 * p]);
         let mut l = list(view);
@@ -1006,21 +982,6 @@ fn glow_light_past_the_device_crop_is_open() {
     assert!(a < b * 1.5 + 0.01, "past the crop nothing glows: {a} against {b}");
 }
 
-#[test]
-fn lights_past_the_cap_change_nothing() {
-    let Some(gpu) = offscreen() else { return };
-    let map = room(100, 40, |x, _| x == 50);
-    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
-    let capped: Vec<_> = (0..olr_look::MAX_LIGHTS)
-        .map(|i| lamp([10.5 + (i % 30) as f32, 5.5 + (i / 30) as f32], 8.0))
-        .collect();
-    let mut more = capped.clone();
-    more.extend((0..40).map(|i| lamp([70.5 + i as f32 * 0.5, 20.5], 60.0)));
-    let a = lit_frame(&gpu, &map, view, &capped, 0);
-    let b = lit_frame(&gpu, &map, view, &more, 0);
-    assert_eq!(gpu.read_light(&a).unwrap().1, gpu.read_light(&b).unwrap().1);
-}
-
 /// GL (WSL's GL over Mesa's d3d12, the e2e's software GL) draws into no
 /// R32Float target (plan 15a Task 19's e2e): a lit frame with lights and
 /// glow draws there too, as on Vulkan.
@@ -1047,28 +1008,6 @@ fn a_lit_frame_draws_on_gl() {
     assert!((light_at(&gpu, &r, 75, 20)[0] - 0.1).abs() < 0.05, "the wall shadows it");
 }
 
-/// The soft filter (the default since the playtest): a big lamp's shadow
-/// behind a short wall has a penumbra, partly lit, where the hard one cuts.
-#[test]
-fn soft_shadows_have_a_penumbra() {
-    let Some(gpu) = offscreen() else { return };
-    // A short wall x = 50, y 18..23, a lamp of radius 6 left of it: its
-    // shadow at x = 100 spans about y 12..29.
-    let map = room(120, 40, |x, y| x == 50 && (18..23).contains(&y));
-    let view = View { x: 0.0, y: 0.0, w: 120.0, h: 40.0 };
-    let big =
-        olr_look::FrameLight { pos: [30.5, 20.5], radius: 6.0, colour: [1.0; 3], reach: 200.0, owner: 0 };
-    let frame = |filter: u8| lit_frame_with(&gpu, &map, view, &[big], |l| l.shadow_filter = filter);
-    let (hard, soft) = (frame(0), frame(2));
-    // Along a column far behind the wall, across the shadow's upper edge.
-    let column = |r: &Renderer| (0..40).map(|y| light_at(&gpu, r, 100, y)[0]).collect::<Vec<_>>();
-    let partial = |c: &[f32]| c.iter().filter(|v| **v > 0.12 && **v < 0.9).count();
-    let (h, s) = (column(&hard), column(&soft));
-    assert!(partial(&s) > partial(&h) + 2, "a wider partly lit edge: hard {h:?}, soft {s:?}");
-    // Next to the lamp, no occluder: soft changes nothing.
-    assert_eq!(light_at(&gpu, &hard, 35, 20), light_at(&gpu, &soft, 35, 20));
-}
-
 /// A worm's silhouette for the occluder tests (plan 15b): `[x, y, w, h]`
 /// world pixels of worm `worm` (its index + 1), all opaque.
 type Body = ([f32; 4], u8);
@@ -1089,7 +1028,7 @@ fn worm_frame(
     r.upload_terrain(map);
     let mut look = dim(0.1);
     set(&mut look);
-    look.lights.extend_from_slice(lights);
+    look.emitters.extend_from_slice(lights);
     let mut l = list(view);
     l.map = (map.material().width(), map.material().height());
     push_bodies(&mut l, bodies);
@@ -1131,8 +1070,7 @@ fn a_light_inside_a_worm_ignores_it() {
     let Some(gpu) = offscreen() else { return };
     let map = room(100, 40, |_, _| false);
     let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
-    let flash =
-        olr_look::FrameLight { pos: [52.0, 20.0], radius: 1.0, colour: [1.0; 3], reach: 40.0, owner: 0 };
+    let flash = olr_look::FrameLight { pos: [52.0, 20.0], radius: 5.0, colour: [1.0; 3], reach: 40.0 };
     let r = worm_frame(&gpu, &map, view, &[flash], &[([50.0, 17.0, 4.0, 6.0], 1)], |_| {});
     for (x, y) in [(46, 20), (57, 20), (52, 13), (52, 26)] {
         let v = light_at(&gpu, &r, x, y)[0];
@@ -1145,8 +1083,7 @@ fn overlapping_worms_block_each_others_lights() {
     let Some(gpu) = offscreen() else { return };
     let map = room(100, 40, |_, _| false);
     let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
-    let flash =
-        olr_look::FrameLight { pos: [42.5, 21.5], radius: 1.0, colour: [1.0; 3], reach: 40.0, owner: 0 };
+    let flash = olr_look::FrameLight { pos: [42.5, 21.5], radius: 2.0, colour: [1.0; 3], reach: 40.0 };
     let pair = [([40.0, 18.0, 4.0, 7.0], 1), ([44.0, 18.0, 4.0, 7.0], 2)];
     let r = worm_frame(&gpu, &map, view, &[flash], &pair, |_| {});
     assert!(light_at(&gpu, &r, 37, 21)[0] > 0.2, "worm 1's near side is lit");
@@ -1210,7 +1147,7 @@ fn lit_worms(
     r.upload_terrain(map);
     let mut look = dim(0.05);
     look.worm_floor = [0.2; 3];
-    look.lights.extend_from_slice(lights);
+    look.emitters.extend_from_slice(lights);
     let mut l = list(View { x: 0.0, y: 0.0, w: w as f32, h: h as f32 });
     l.map = (w, h);
     push_bodies(&mut l, bodies);
@@ -1332,9 +1269,10 @@ fn a_rope_pixel_has_no_side() {
     }
 }
 
-/// Final review, Important 1: a light carrying its worm (a muzzle flash)
-/// ignores that worm even where the worm's art is transparent at the
-/// light's centre (many skins are, in some frames).
+/// Plan 15b's final review, Important 1, under plan 15c: a muzzle-sized
+/// disc in its worm lights all round, whatever the worm's art at its
+/// centre (many skins are transparent there in some frames): a disc's
+/// cells never count as a worm.
 #[test]
 fn a_light_ignores_its_own_worm_through_a_hollow() {
     let Some(gpu) = offscreen() else { return };
@@ -1345,10 +1283,9 @@ fn a_light_ignores_its_own_worm_through_a_hollow() {
     r.upload_images(&[AtlasImage { name: "hollow".into(), image: hollow, px_per_world: 1 }]);
     r.set_lighting(true);
     r.upload_terrain(&map);
-    let flash =
-        olr_look::FrameLight { pos: [52.5, 20.5], radius: 1.0, colour: [1.0; 3], reach: 40.0, owner: 1 };
+    let flash = olr_look::FrameLight { pos: [52.5, 20.5], radius: 5.0, colour: [1.0; 3], reach: 40.0 };
     let mut look = dim(0.1);
-    look.lights.push(flash);
+    look.emitters.push(flash);
     let mut l = list(View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
     l.map = (100, 40);
     push_bodies(&mut l, &[([50.0, 17.0, 4.0, 6.0], 1)]);
@@ -1361,24 +1298,19 @@ fn a_light_ignores_its_own_worm_through_a_hollow() {
 
 /// The user's request (2026-10-19): light never passes opaque rock, however
 /// thin. A one-pixel wall: the air right behind it stays at the ambient,
-/// under every shadow filter and the most softness.
+/// under the most softness.
 #[test]
 fn a_one_pixel_wall_stops_light_right_behind_it() {
     let Some(gpu) = offscreen() else { return };
     let map = room(100, 40, |x, _| x == 50);
     let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
-    for filter in [0, 1, 2] {
-        for softness in [0, 4] {
-            let r = lit_frame_with(&gpu, &map, view, &[lamp([40.5, 20.5], 60.0)], |l| {
-                l.shadow_filter = filter;
-                l.softness = softness;
-            });
-            for y in [15, 20, 25] {
-                let v = light_at(&gpu, &r, 51, y)[0];
-                assert!((v - 0.1).abs() < 1e-3, "filter {filter}, softness {softness}: (51, {y}) {v}");
-            }
-            assert!(light_at(&gpu, &r, 49, 20)[0] > 0.2, "the lit side");
+    for softness in [0, 4] {
+        let r = lit_frame_with(&gpu, &map, view, &[lamp([40.5, 20.5], 60.0)], |l| l.softness = softness);
+        for y in [15, 20, 25] {
+            let v = light_at(&gpu, &r, 51, y)[0];
+            assert!((v - 0.1).abs() < 1e-3, "softness {softness}: (51, {y}) {v}");
         }
+        assert!(light_at(&gpu, &r, 49, 20)[0] > 0.2, "the lit side");
     }
 }
 
@@ -1390,8 +1322,8 @@ fn a_diagonal_wall_one_pixel_thin_stops_light() {
     // The staircase x - y = 30 from (30, 0) to (69, 39): the lamp below-right of it.
     let map = room(100, 40, |x, y| x == y + 30);
     let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
-    for filter in [0, 1, 2] {
-        let r = lit_frame_with(&gpu, &map, view, &[lamp([60.5, 20.5], 80.0)], |l| l.shadow_filter = filter);
+    {
+        let r = lit_frame_with(&gpu, &map, view, &[lamp([60.5, 20.5], 80.0)], |_| {});
         let mut leaks = Vec::new();
         for y in 5..35 {
             for x in 0..100 {
@@ -1404,7 +1336,7 @@ fn a_diagonal_wall_one_pixel_thin_stops_light() {
                 }
             }
         }
-        assert!(leaks.is_empty(), "filter {filter}: light behind the wall at {leaks:?}");
+        assert!(leaks.is_empty(), "light behind the wall at {leaks:?}");
     }
 }
 
@@ -1420,7 +1352,7 @@ fn a_one_pixel_wall_stops_glow_light() {
 
 /// A glowing disc (plan 15c): white, `radius`, `reach`.
 fn disc(at: [f32; 2], radius: f32, reach: f32) -> olr_look::FrameLight {
-    olr_look::FrameLight { pos: at, radius, colour: [1.0; 3], reach, owner: 0 }
+    olr_look::FrameLight { pos: at, radius, colour: [1.0; 3], reach }
 }
 
 /// [`lit_frame_with`] with `emitters` and nothing else.

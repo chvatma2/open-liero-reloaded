@@ -1,13 +1,14 @@
 //! Look operations (look system, plan 15a Task 7): a level's look
-//! settings, its glow groups and its light objects. Each edits a copy and
+//! settings and its glow groups (its glowing pixels are its only light,
+//! plan 15c). Each edits a copy and
 //! keeps it only when the level still checks (`compile_level`, which checks
 //! the look and the glow); a refused edit changes nothing. Group removal and
 //! renaming act on the pack: the composition's elements name groups.
 
 use std::collections::BTreeSet;
 
-use olr_format::levels::{LevelObject, LevelSource, MAX_OBJECTS, compile_level, composition_paths};
-use olr_format::look::{GlowGroupSource, LightSource, LookSource, valid_group_id};
+use olr_format::levels::{LevelSource, compile_level, composition_paths};
+use olr_format::look::{GlowGroupSource, LookSource, valid_group_id};
 
 use crate::level::EditError;
 use crate::pack::{Pack, Source};
@@ -147,44 +148,4 @@ pub fn remove_group(pack: &mut Pack, id: &str) -> Result<Vec<String>, EditError>
         src.files.retain(|f, _| named.contains(f));
     }
     Ok(unglowed)
-}
-
-/// Adds a light object at `at` (world pixels); returns its index.
-pub fn add_light(
-    level: &mut LevelSource,
-    at: (i32, i32),
-    light: LightSource,
-    radius: u8,
-) -> Result<usize, EditError> {
-    checked(level, |l| {
-        if l.objects.len() >= MAX_OBJECTS {
-            return Err(EditError::TooManyObjects);
-        }
-        l.objects.push(LevelObject::light(at, radius, light));
-        Ok(l.objects.len() - 1)
-    })
-}
-
-/// Replaces light object `index` (its place, light and radius; its notes kept).
-pub fn set_light(
-    level: &mut LevelSource,
-    index: usize,
-    at: (i32, i32),
-    light: LightSource,
-    radius: u8,
-) -> Result<(), EditError> {
-    checked(level, |l| {
-        let len = l.objects.len();
-        let o = l.objects.get_mut(index).ok_or(EditError::NoObject { index, len })?;
-        let LevelObject::Light { notes, .. } = o else {
-            return Err(EditError::Look(format!("object {index} is not a light")));
-        };
-        let notes = std::mem::take(notes);
-        let mut new = LevelObject::light(at, radius, light);
-        if let LevelObject::Light { notes: n, .. } = &mut new {
-            *n = notes;
-        }
-        *o = new;
-        Ok(())
-    })
 }

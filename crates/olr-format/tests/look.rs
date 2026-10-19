@@ -17,8 +17,6 @@ const SPEC_LEVEL: &str = r##"(
     theme: "olx-theme-dirt",
     objects: [
         Spawn(at: (1, 1)),
-        Light(at: (2, 1), colour: "#ffbe78", intensity: 120, reach: Pixels(160),
-              radius: 2, animation: Flicker(speed: 8, depth: 25)),
     ],
     look: (
         ambient: (colour: "#ffffff", intensity: 30),
@@ -89,15 +87,10 @@ fn the_spec_example_round_trips() {
     assert_eq!(look.groups[0].colour, GlowColour::Tint([255, 240, 210]));
     assert_eq!(look.groups[1].reach, Reach::Pixels(96));
     assert_eq!(look.groups[1].animation, Animation::Flicker { speed: 6, depth: 20 });
-    assert_eq!(look.lights.len(), 1);
-    let l = &look.lights[0];
-    assert_eq!((l.at, l.radius, l.light.colour, l.light.intensity), ((2, 1), 2, [255, 190, 120], 120));
     // Canonical text drops the defaults and reads back to itself.
     let canonical = canonical_text("level.ron", SPEC_LEVEL).unwrap();
     assert_eq!(canonical_text("level.ron", &canonical).unwrap(), canonical);
-    for gone in
-        ["max_light", "light_steps", "softness", "contrast", "radius", "animation: Steady", "colour: Own"]
-    {
+    for gone in ["max_light", "light_steps", "softness", "contrast", "animation: Steady", "colour: Own"] {
         assert!(!canonical.contains(gone), "{gone} in {canonical}");
     }
     // Written and read again: the same level.
@@ -194,12 +187,6 @@ fn limits_are_enforced() {
         ("id: \"lava\"", "id: \"sky\"", "used twice"),
         ("depth: 20)", "depth: 101)", "look.glow_groups[1].animation.depth"),
         ("speed: 6,", "speed: 0,", "look.glow_groups[1].animation.speed"),
-        ("intensity: 120", "intensity: 1001", "objects[1].intensity"),
-        ("radius: 2", "radius: 17", "objects[1].radius"),
-        ("radius: 2", "radius: 0", "objects[1].radius"),
-        ("at: (2, 1)", "at: (2, 4100)", "objects[1].at"),
-        ("at: (2, 1)", "at: (-4097, 1)", "objects[1].at"),
-        ("\"#ffbe78\"", "\"#ffbe7880\"", "objects[1].colour"),
     ];
     for (from, to, want) in cases {
         assert!(SPEC_LEVEL.contains(from), "{from}");
@@ -218,11 +205,6 @@ fn limits_are_enforced() {
     look.glow_groups =
         (0..256).map(|i| olr_format::look::GlowGroupSource { id: format!("g{i}"), ..g.clone() }).collect();
     assert!(err(&src).contains("256 groups"), "{}", err(&src));
-    // 1025 lights.
-    let mut src = level(Some(SPEC_LEVEL));
-    let light = src.objects[1].clone();
-    src.objects = vec![light; 1025];
-    assert!(err(&src).contains("1025 lights"), "{}", err(&src));
 }
 
 #[test]
@@ -280,17 +262,17 @@ fn hostile_look_files_are_errors_never_panics() {
     assert!(read(&fs).is_err());
     // Animations past their limits.
     for (from, to) in [
-        ("Flicker(speed: 8, depth: 25)", "Pulse(period_ms: 0, low: 1, high: 2)"),
-        ("reach: Pixels(160)", "reach: Pixels(0)"),
+        ("Flicker(speed: 6, depth: 20)", "Pulse(period_ms: 0, low: 1, high: 2)"),
+        ("reach: Pixels(96)", "reach: Pixels(0)"),
         (
-            "Flicker(speed: 8, depth: 25)",
+            "Flicker(speed: 6, depth: 20)",
             &format!(
                 "Keys(keys: [{}])",
                 (0..65).map(|i| format!("({i}, 10)")).collect::<Vec<_>>().join(", ")
             ),
         ),
-        ("Flicker(speed: 8, depth: 25)", "Keys(keys: [(10, 1), (5, 1)])"),
-        ("Flicker(speed: 8, depth: 25)", "Keys(keys: [])"),
+        ("Flicker(speed: 6, depth: 20)", "Keys(keys: [(10, 1), (5, 1)])"),
+        ("Flicker(speed: 6, depth: 20)", "Keys(keys: [])"),
     ] {
         let text = SPEC_LEVEL.replacen(from, to, 1);
         let fs = good.clone().with("level.ron", text.into_bytes());
@@ -298,7 +280,7 @@ fn hostile_look_files_are_errors_never_panics() {
             Err(e) => e,
             Ok(s) => err(&s),
         };
-        assert!(e.contains("objects[1]"), "{to}: {e}");
+        assert!(e.contains("look.glow_groups[1]"), "{to}: {e}");
     }
 }
 
@@ -442,20 +424,6 @@ fn solids_defaults_are_the_stop_1_verdict() {
     assert!(!text.contains("light_soak") && !text.contains("solid_floor"), "{text}");
 }
 
-#[test]
-fn shadows_default_to_soft() {
-    // The user's choice after the playtest (2026-10-19): soft lamp shadows.
-    let src = level(Some("(name: \"Lit\", size: (4, 3), art_scale: 2, theme: \"olx-theme-dirt\", look: ())"));
-    assert_eq!(compile_look(&src).unwrap().unwrap().shadows, olr_look::Shadows::Soft);
-    let hard =
-        "(name: \"Lit\", size: (4, 3), art_scale: 2, theme: \"olx-theme-dirt\", look: (shadows: Hard))";
-    assert_eq!(compile_look(&level(Some(hard))).unwrap().unwrap().shadows, olr_look::Shadows::Hard);
-    let text = canonical_text("level.ron", hard).unwrap();
-    assert!(text.contains("shadows: Hard"), "{text}");
-    let soft = canonical_text("level.ron", &hard.replace("Hard", "Soft")).unwrap();
-    assert!(!soft.contains("shadows"), "the default is left out: {soft}");
-}
-
 /// A 64 × 32 open level of white art (art scale 1) with `look` (a
 /// `level.ron` text's look), for the lit thumbnails.
 fn white_level(look: &str) -> LevelSource {
@@ -494,7 +462,7 @@ fn a_level_without_a_look_keeps_its_plain_thumbnail() {
 }
 
 #[test]
-fn a_dark_level_has_a_dark_thumbnail_lit_by_its_lamps() {
+fn a_dark_level_has_a_dark_thumbnail() {
     let dark = white_level("look: (ambient: (intensity: 10))");
     let t = olr_format::levels::level_thumbnail(&dark);
     let plain = olr_format::levels::thumbnail(&dark.front);
@@ -503,14 +471,6 @@ fn a_dark_level_has_a_dark_thumbnail_lit_by_its_lamps() {
     let mid = t.get(80, 48);
     assert!(mid.r < 110 && mid.r > 60, "about 10 % light: {mid:?}");
     assert_eq!(t.get(80, 2).a, 0, "the bars stay clear");
-    let lamp = white_level(
-        "objects: [Light(at: (8, 16), colour: \"#ffffff\", intensity: 100, reach: Pixels(24))], \
-         look: (ambient: (intensity: 10))",
-    );
-    let t = olr_format::levels::level_thumbnail(&lamp);
-    let (near, far) = (t.get(20, 48), t.get(140, 48));
-    assert!(near.r > far.r + 100, "the lamp's side is lit: {near:?} {far:?}");
-    assert_eq!(far, mid, "past its reach, the ambient");
 }
 
 #[test]
@@ -540,4 +500,25 @@ fn solids_never_fall_below_the_solid_floor_in_the_thumbnail() {
     let v = t.get(80, 48);
     // 40 % white light on white art is about sRGB 170.
     assert!((160..=180).contains(&v.r), "{v:?}");
+}
+
+/// Plan 15c: glowing pixels are a level's only light. A `Light` object is
+/// an error naming it (compatibility breaks are fine at this stage).
+#[test]
+fn a_light_object_is_an_error() {
+    let text = "(name: \"Lit\", size: (4, 3), art_scale: 2, theme: \"olx-theme-dirt\", objects: [\
+                Light(at: (2, 1), colour: \"#ffffff\", intensity: 100, reach: Pixels(16))])";
+    let fs = files(&level(None)).with("level.ron", text.as_bytes().to_vec());
+    let e = read_level_files(&fs).unwrap_err().to_string();
+    assert!(e.contains("level.ron") && e.contains("Light"), "{e}");
+}
+
+/// Plan 15c: `shadows` went with the point lights.
+#[test]
+fn shadows_is_an_unknown_field() {
+    let text =
+        "(name: \"Lit\", size: (4, 3), art_scale: 2, theme: \"olx-theme-dirt\", look: (shadows: Hard))";
+    let fs = files(&level(None)).with("level.ron", text.as_bytes().to_vec());
+    let e = read_level_files(&fs).unwrap_err().to_string();
+    assert!(e.contains("shadows"), "{e}");
 }

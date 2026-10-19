@@ -6,7 +6,7 @@ use olr_editor::state::ClockAction;
 use olr_editor::tools::{PointerKind, Tool};
 use olr_editor::{Choice, Dialog, EditorAction as A, EditorCommand as C, Selection};
 use olr_format::levels::{ElementGlow, LevelObject};
-use olr_format::look::{LightSource, LookSource, ReachSource};
+use olr_format::look::{LookSource, ReachSource};
 use olr_look::ViewMode;
 
 use crate::common::{catalog, content, editor, editor_at, run};
@@ -29,11 +29,6 @@ fn groups(s: &olr_editor::EditorState) -> Vec<String> {
 fn element_glow(s: &olr_editor::EditorState, id: &str) -> Option<ElementGlow> {
     let doc = s.document().unwrap();
     doc.items()[doc.index_of(id).unwrap()].element.glow.clone()
-}
-
-fn lights(s: &olr_editor::EditorState) -> Vec<(i32, i32)> {
-    let doc = s.document().unwrap();
-    doc.level().objects.iter().filter_map(|o| o.as_light().map(|_| o.at())).collect()
 }
 
 #[test]
@@ -95,39 +90,6 @@ fn removing_a_group_unglows_in_one_step() {
 }
 
 #[test]
-fn lights_place_move_and_undo() {
-    let Some(root) = content() else { return };
-    let (_tmp, mut s) = editor(&root);
-    run(&mut s, A::Tool(Tool::Light));
-    let at = |world, kind| A::Pointer { kind, world, shift: false, toggle: false };
-    use PointerKind::{Down, Move, Up};
-    run(&mut s, at((50, 60), Down));
-    run(&mut s, at((50, 60), Up));
-    assert_eq!(lights(&s), [(50, 60)]);
-    let index = s.document().unwrap().level().objects.len() - 1;
-    assert_eq!(*s.selection(), Selection::Object(index));
-    // A press on it drags it.
-    run(&mut s, at((51, 60), Down));
-    run(&mut s, at((71, 75), Move));
-    run(&mut s, at((71, 75), Up));
-    assert_eq!(lights(&s), [(70, 75)]);
-    let light = LightSource {
-        colour: olr_format::Colour(olr_data::image::Rgba::rgb(0, 128, 255)),
-        intensity: 150,
-        reach: ReachSource::Pixels(90),
-        animation: Default::default(),
-        phase_ms: None,
-    };
-    run(&mut s, A::SetLight { index, at: (70, 75), light: light.clone(), radius: 4 });
-    let o = &s.document().unwrap().level().objects[index];
-    assert_eq!(o.as_light(), Some((4, light)));
-    for _ in 0..3 {
-        run(&mut s, A::Undo);
-    }
-    assert!(lights(&s).is_empty());
-}
-
-#[test]
 fn look_edits_undo() {
     let Some(root) = content() else { return };
     let (_tmp, mut s) = editor(&root);
@@ -178,9 +140,6 @@ fn look_survives_save_and_reopen() {
     use PointerKind::{Down, Up};
     run(&mut s, at((100, 100), Down));
     run(&mut s, at((100, 100), Up));
-    run(&mut s, A::Tool(Tool::Light));
-    run(&mut s, at((30, 40), Down));
-    run(&mut s, at((30, 40), Up));
     run(&mut s, A::Set("wall".into(), Property::Clear(true)));
     let before = s.document().unwrap();
     let (level, mask) = (before.level().clone(), before.glow_mask("tunnels").unwrap().to_vec());
@@ -236,17 +195,6 @@ fn a_plain_level_keeps_its_glow_and_clear() {
     glow.back.iter_mut().step_by(5).for_each(|v| *v = 100);
     src.glow = Some(glow);
     src.clear = Some((0..w * h).map(|i| u8::from(i % 3 == 0) * 255).collect());
-    src.objects.push(LevelObject::light(
-        (10, 10),
-        2,
-        LightSource {
-            colour: olr_format::Colour(olr_data::image::Rgba::rgb(255, 255, 255)),
-            intensity: 100,
-            reach: ReachSource::Pixels(50),
-            animation: Default::default(),
-            phase_ms: None,
-        },
-    ));
     olr_format::levels::write_level_files(&mut olr_vfs::DirFs::new(&dir), &src).unwrap();
     let (_t, mut st) = editor_at(&root, &dir);
     let doc = st.document().unwrap();
@@ -408,31 +356,13 @@ fn a_plain_levels_kept_glow_follows_look_edits() {
     assert!(l.glow.as_ref().is_some_and(|g| g.world == (w + 8, h)), "kept through the resize");
 }
 
-/// The user's request (2026-10-19): spawns and lights copy, cut and paste
-/// like elements: each paste 4 px further, selected, one step.
+/// The user's request (2026-10-19): spawns copy, cut and paste like
+/// elements: each paste 4 px further, selected, one step.
 #[test]
 fn objects_copy_cut_and_paste() {
     let Some(root) = content() else { return };
     let (_tmp, mut s) = editor(&root);
-    run(&mut s, A::Tool(Tool::Light));
     let at = |world, kind| A::Pointer { kind, world, shift: false, toggle: false };
-    run(&mut s, at((50, 60), PointerKind::Down));
-    run(&mut s, at((50, 60), PointerKind::Up));
-    run(&mut s, A::Copy);
-    run(&mut s, A::Paste);
-    run(&mut s, A::Paste);
-    assert_eq!(lights(&s), [(50, 60), (54, 64), (58, 68)]);
-    let n = s.document().unwrap().level().objects.len();
-    assert_eq!(*s.selection(), Selection::Object(n - 1), "the paste is selected");
-    // The pasted light is the copied one, place aside.
-    let objects = &s.document().unwrap().level().objects;
-    assert_eq!(objects[n - 1].as_light(), objects[n - 3].as_light());
-    run(&mut s, A::Undo);
-    assert_eq!(lights(&s), [(50, 60), (54, 64)], "one paste, one step");
-    // A spawn cuts and pastes back.
-    run(&mut s, A::Tool(Tool::Spawn));
-    run(&mut s, at((20, 30), PointerKind::Down));
-    run(&mut s, at((20, 30), PointerKind::Up));
     let spawns = |s: &olr_editor::EditorState| {
         s.document()
             .unwrap()
@@ -443,11 +373,24 @@ fn objects_copy_cut_and_paste() {
             .map(|o| o.at())
             .collect::<Vec<_>>()
     };
+    run(&mut s, A::Tool(Tool::Spawn));
+    run(&mut s, at((50, 60), PointerKind::Down));
+    run(&mut s, at((50, 60), PointerKind::Up));
     let before = spawns(&s);
-    run(&mut s, A::Cut);
-    assert_eq!(spawns(&s).len(), before.len() - 1, "cut");
+    run(&mut s, A::Copy);
     run(&mut s, A::Paste);
-    assert!(spawns(&s).contains(&(24, 34)), "{:?}", spawns(&s));
+    run(&mut s, A::Paste);
+    assert_eq!(spawns(&s)[before.len()..], [(54, 64), (58, 68)]);
+    let n = s.document().unwrap().level().objects.len();
+    assert_eq!(*s.selection(), Selection::Object(n - 1), "the paste is selected");
+    run(&mut s, A::Undo);
+    assert_eq!(spawns(&s).len(), before.len() + 1, "one paste, one step");
+    // A spawn cuts and pastes back.
+    run(&mut s, A::Select(Selection::Object(n - 3)));
+    run(&mut s, A::Cut);
+    assert_eq!(spawns(&s).len(), before.len(), "cut");
+    run(&mut s, A::Paste);
+    assert!(spawns(&s).contains(&(54, 64)), "{:?}", spawns(&s));
 }
 
 /// The user's request (2026-10-19): the Glow brush on an element without
@@ -618,4 +561,11 @@ fn a_rectangle_selection_takes_a_glow() {
     let v = |x: u32, y: u32| mask[(y * a * w + x * a) as usize];
     assert_eq!(v(45, 45), 255);
     assert_eq!((v(30, 45), v(45, 60)), (0, 0));
+}
+
+/// Plan 15c: glowing pixels are the only light; the Light tool (K) went.
+#[test]
+fn the_editor_has_no_light_tool() {
+    assert!(Tool::ALL.iter().all(|t| t.name() != "Light"), "{:?}", Tool::ALL);
+    assert!(Tool::ALL.iter().all(|t| t.key() != 'K'), "K selects nothing");
 }

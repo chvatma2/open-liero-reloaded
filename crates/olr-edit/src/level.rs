@@ -503,7 +503,7 @@ pub fn stamp(level: &mut LevelSource, at: (i32, i32), image: &RgbaImage, layer: 
 /// The old content's (0, 0) lands at `offset`; the new area is `material`
 /// painted with `paint` (front and back alike when background). Objects
 /// move by `offset`; spawns now outside are removed and returned as they
-/// were, lights stay (they may light the level from outside).
+/// were.
 pub fn resize(
     level: &mut LevelSource,
     size: (u32, u32),
@@ -569,12 +569,10 @@ pub fn resize(
         }
     }
     let inside = |v: i64, side: u32| (0..i64::from(side)).contains(&v);
-    // Spawns outside the new level go; lights may light it from outside
-    // and stay (look system).
+    // Spawns outside the new level go.
     let (kept, dropped) = std::mem::take(&mut level.objects).into_iter().partition(|o| {
         let at = o.at();
-        matches!(o, LevelObject::Light { .. })
-            || (inside(i64::from(at.0) + dx, w) && inside(i64::from(at.1) + dy, h))
+        inside(i64::from(at.0) + dx, w) && inside(i64::from(at.1) + dy, h)
     });
     level.objects = kept;
     for o in &mut level.objects {

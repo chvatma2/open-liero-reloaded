@@ -482,7 +482,7 @@ OLX `Wpn_Special`.
 
 ## LightSource
 
-A light: a level's light object (with its place), a projectile's light or flash, a weapon's muzzle light.
+A mod's light: a projectile's light or flash, a weapon's muzzle light. Play draws it as a glowing disc (plan 15c).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|

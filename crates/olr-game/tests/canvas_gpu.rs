@@ -141,9 +141,9 @@ fn the_canvas_draws_lit() {
     let mean = |img: &olr_data::image::RgbaImage| {
         img.as_raw().chunks(4).map(|p| u64::from(p[0]) + u64::from(p[1]) + u64::from(p[2])).sum::<u64>()
     };
-    let frame = canvas.look_frame(&doc, 0.0, olr_look::ViewMode::Lit, list.view).cloned();
+    let frame = canvas.look_frame(&doc, 0.0, olr_look::ViewMode::Lit).cloned();
     let lit = gpu.render_lit_to_image(&mut r, &list, frame.as_ref(), size);
-    let full = canvas.look_frame(&doc, 0.0, olr_look::ViewMode::FullBright, list.view).cloned();
+    let full = canvas.look_frame(&doc, 0.0, olr_look::ViewMode::FullBright).cloned();
     let bright = gpu.render_lit_to_image(&mut r, &list, full.as_ref(), size);
     let plain = {
         let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::SharpBilinear });

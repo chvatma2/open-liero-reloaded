@@ -74,9 +74,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     let img = gpu.render_lit_to_image(&mut renderer, &list, present.look(), size);
     std::fs::write(&args.out, olr_pack::image_io::encode_rgba(&img))
         .with_context(|| format!("writing {}", args.out.display()))?;
-    let lights = present.look().map_or(0, |l| l.lights.len());
+    let discs = present.look().map_or(0, |l| l.emitters.len());
     println!(
-        "wrote {} ({}x{}, tick {}, {lights} lights)",
+        "wrote {} ({}x{}, tick {}, {discs} glowing discs)",
         args.out.display(),
         size.0,
         size.1,

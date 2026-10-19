@@ -71,21 +71,13 @@ fn look_commands_refresh_the_lit_thumbnail() {
     run(&["level", "look", p, "--ambient", "203048:10"]);
     let dark = tree(&pack);
     assert_ne!(dark["thumb.png"], before["thumb.png"], "a dark look darkens the thumbnail");
-    run(&[
-        "level",
-        "light",
-        "add",
-        p,
-        "--at",
-        "100,100",
-        "--colour",
-        "ffcc88",
-        "--intensity",
-        "150",
-        "--reach",
-        "80",
-    ]);
-    assert_ne!(tree(&pack)["thumb.png"], dark["thumb.png"], "a lamp lights it");
+    // Glowing pixels (plan 15c: a level's only light) light it.
+    let content = crate::common::content_dir().unwrap();
+    run(&["level", "group", "add", p, "lamp", "--reach", "80"]);
+    run(&["level", "element", "split", p, "base", "--content", &content]);
+    let glow = ["level", "element", "set", p, "background", "--glow", "100", "--glow-group", "lamp"];
+    run(&[&glow[..], &["--content", &content]].concat());
+    assert_ne!(tree(&pack)["thumb.png"], dark["thumb.png"], "a glow lights it");
 }
 
 #[test]
@@ -350,7 +342,7 @@ fn look_cli_sets_every_field() {
 }
 
 #[test]
-fn groups_and_lights_round_trip_through_the_cli() {
+fn groups_round_trip_through_the_cli() {
     let Some((_tmp, pack)) = dirt_level() else { return };
     ok(&level(
         &[
@@ -373,35 +365,8 @@ fn groups_and_lights_round_trip_through_the_cli() {
         (g.intensity, g.colour, g.reach),
         (80, olr_look::GlowColour::Tint([255, 64, 0]), olr_look::Reach::Unlimited)
     );
-    let out = ok(&level(
-        &[
-            "light",
-            "add",
-            "{pack}",
-            "--at",
-            "10,12",
-            "--colour",
-            "ff8800",
-            "--intensity",
-            "120",
-            "--reach",
-            "64",
-            "--radius",
-            "3",
-            "--animation",
-            "Flicker(speed: 8, depth: 25)",
-        ],
-        &pack,
-    ));
-    let index = out.trim().strip_prefix("added object ").unwrap().to_string();
-    assert!(stdout(&object(&["list"], &pack)).contains(&format!("{index}: Light at (10, 12)")));
-    ok(&level(&["light", "set", "{pack}", &index, "--at", "-4,5", "--intensity", "60"], &pack));
-    let l = &look_of(&pack).lights[0];
-    assert_eq!((l.at, l.radius, l.light.intensity, l.light.colour), ((-4, 5), 3, 60, [255, 136, 0]));
-    ok(&check(&pack));
-    ok(&level(&["light", "remove", "{pack}", &index], &pack));
     ok(&level(&["group", "remove", "{pack}", "lava"], &pack));
-    assert!(look_of(&pack).groups.is_empty() && look_of(&pack).lights.is_empty());
+    assert!(look_of(&pack).groups.is_empty());
 }
 
 #[test]
@@ -413,23 +378,7 @@ fn bad_look_values_are_errors() {
         (vec!["look", "{pack}", "--max-light", "250"], "max_light"),
         (vec!["group", "add", "{pack}", "lava", "--reach", "64", "--animation", "Nope(1)"], "--animation"),
         (vec!["group", "add", "{pack}", "Bad Id", "--reach", "64"], "Bad Id"),
-        (
-            vec![
-                "light",
-                "add",
-                "{pack}",
-                "--at",
-                "1,1",
-                "--colour",
-                "fff",
-                "--intensity",
-                "5",
-                "--reach",
-                "9",
-            ],
-            "--colour",
-        ),
-        (vec!["light", "set", "{pack}", "9", "--intensity", "5"], "no object 9"),
+        (vec!["group", "add", "{pack}", "lamp", "--reach", "64", "--colour", "fff"], "--colour"),
     ] {
         let o = level(&args, &pack);
         let err = String::from_utf8_lossy(&o.stderr).into_owned();

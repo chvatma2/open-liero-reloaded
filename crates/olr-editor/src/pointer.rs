@@ -526,29 +526,6 @@ impl EditorState {
                 self.drag = Some(Drag::Glow { id, before, last: world });
                 vec![EditorCommand::Upload(rect)]
             }
-            Tool::Light => {
-                // A light under the pointer is dragged; elsewhere a new one.
-                let Some(doc) = &self.doc else { return Vec::new() };
-                let hit = doc.level().objects.iter().position(|o| {
-                    let (dx, dy) = sub(world, o.at());
-                    matches!(o, LevelObject::Light { .. })
-                        && dx.abs() <= SPAWN_REACH
-                        && dy.abs() <= SPAWN_REACH
-                });
-                if let Some(index) = hit {
-                    let grab = sub(world, doc.level().objects[index].at());
-                    self.selection = Selection::Object(index);
-                    self.drag = Some(Drag::Spawn { index, before: doc.level().objects.clone(), grab });
-                    return Vec::new();
-                }
-                let cmds = self.edit(|d| d.add_light(world));
-                if !cmds.is_empty()
-                    && let Some(d) = &self.doc
-                {
-                    self.selection = Selection::Object(d.level().objects.len() - 1);
-                }
-                cmds
-            }
             Tool::Spawn => {
                 let cmds = self.edit(|d| d.add_spawn(world));
                 if !cmds.is_empty()
@@ -601,7 +578,6 @@ impl EditorState {
                 let (dx, dy) = sub(world, *at);
                 dx.abs() <= SPAWN_REACH && dy.abs() <= SPAWN_REACH
             }
-            LevelObject::Light { .. } => false,
         });
         if let Some(index) = spawn {
             let grab = sub(world, doc.level().objects[index].at());
@@ -967,15 +943,6 @@ impl EditorState {
             match o {
                 LevelObject::Spawn { at, .. } => {
                     out.push(Overlay::Spawn { at: *at, selected: self.selection == Selection::Object(i) })
-                }
-                LevelObject::Light { .. } => {
-                    let Some((radius, l)) = o.as_light() else { continue };
-                    let reach = match l.reach {
-                        olr_format::look::ReachSource::Pixels(p) => Some(p),
-                        olr_format::look::ReachSource::Unlimited => None,
-                    };
-                    let selected = self.selection == Selection::Object(i);
-                    out.push(Overlay::Light { at: o.at(), selected, radius, reach })
                 }
             }
         }

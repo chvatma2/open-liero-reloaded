@@ -2,7 +2,7 @@
 
 use olr_look::{
     Ambient, Animation, FrameLight, GlowColour, GlowGroup, Grade, LevelLook, Light, LookFrame, MAX_EMITTERS,
-    MAX_LIGHTS, PlacedLight, Reach, ViewMode, engine, fade, light_at, srgb_to_linear,
+    Reach, ViewMode, engine, fade, light_at, srgb_to_linear,
 };
 
 fn near(a: f32, b: f32) -> bool {
@@ -32,7 +32,6 @@ fn level() -> LevelLook {
         softness: 2,
         light_soak: 6,
         solid_floor: Ambient { colour: [255, 255, 255], intensity: 40 },
-        shadows: olr_look::Shadows::Smooth,
         grade: Grade { exposure: 50, contrast: 110, saturation: 90, tint: [255, 240, 220] },
         groups: vec![
             GlowGroup {
@@ -52,7 +51,6 @@ fn level() -> LevelLook {
                 phase_ms: None,
             },
         ],
-        lights: vec![PlacedLight { at: (10, 20), radius: 2, light: white(100, Reach::Pixels(160)) }],
     }
 }
 
@@ -64,7 +62,6 @@ fn begin_fills_level_part() {
     assert!(near(f.max_light, 1.5));
     assert_eq!((f.light_steps, f.softness, f.light_soak), (4, 2, 6));
     assert!(f.solid_floor.iter().all(|&c| near(c, 0.4)));
-    assert_eq!(f.shadow_filter, 1, "smooth");
     assert_eq!(f.grade.exposure, 50);
     assert_eq!(f.mode, ViewMode::Lit);
     assert_eq!(f.groups.len(), 2);
@@ -73,13 +70,10 @@ fn begin_fills_level_part() {
     assert!(near(lava.self_scale, 1.0) && near(lava.reach, 64.0));
     let sky = f.groups[1];
     assert!(sky.own_colour && near(sky.cast[1], 2.0) && sky.reach.is_infinite());
-    assert_eq!(f.lights.len(), 1);
-    let l = f.lights[0];
-    assert_eq!(l.pos, [10.5, 20.5]);
-    assert!(near(l.radius, 2.0) && near(l.colour[0], 1.0) && near(l.reach, 160.0));
     // Begin again: cleared, not appended.
+    f.push_emitter(at(1.0, 2.0, 3.0));
     f.begin(Some(&level()), 5.0);
-    assert_eq!((f.groups.len(), f.lights.len()), (2, 1));
+    assert_eq!((f.groups.len(), f.emitters.len()), (2, 0));
 }
 
 #[test]
@@ -87,7 +81,7 @@ fn begin_without_a_level_look_is_full_bright() {
     let mut f = LookFrame::default();
     f.begin(None, 0.0);
     assert!(near(f.ambient[0], 1.0) && near(f.max_light, 1.0));
-    assert!(f.groups.is_empty() && f.lights.is_empty());
+    assert!(f.groups.is_empty() && f.emitters.is_empty());
     assert_eq!(f.grade, Grade::default());
 }
 
@@ -103,33 +97,19 @@ fn an_animated_group_scales_self_light_and_cast() {
 }
 
 fn at(x: f32, y: f32, reach: f32) -> FrameLight {
-    FrameLight { pos: [x, y], radius: 2.0, colour: [1.0; 3], reach, owner: 0 }
-}
-
-#[test]
-fn cull_keeps_order_and_cap() {
-    let mut f = LookFrame::default();
-    f.begin(None, 0.0);
-    for i in 0..300 {
-        let off = i % 30 == 7; // 10 of them far off the view
-        f.push(if off { at(-5000.0, 0.0, 10.0) } else { at(i as f32, 50.0, 20.0 + i as f32) });
-    }
-    f.cull([0.0, 0.0, 427.0, 192.0]);
-    assert_eq!(f.lights.len(), MAX_LIGHTS);
-    assert!(f.lights.iter().all(|l| l.pos[0] >= 0.0));
-    assert!(f.lights.windows(2).all(|w| w[0].reach < w[1].reach), "order kept");
+    FrameLight { pos: [x, y], radius: 2.0, colour: [1.0; 3], reach }
 }
 
 #[test]
 fn a_light_far_off_view_whose_reach_touches_it_is_kept() {
     let mut f = LookFrame::default();
     f.begin(None, 0.0);
-    f.push(at(-500.0, 100.0, 600.0));
-    f.push(at(-500.0, 100.0, 400.0));
-    f.push(at(10_000.0, 100.0, f32::INFINITY));
+    f.push_emitter(at(-500.0, 100.0, 600.0));
+    f.push_emitter(at(-500.0, 100.0, 400.0));
+    f.push_emitter(at(10_000.0, 100.0, f32::INFINITY));
     f.cull([0.0, 0.0, 427.0, 192.0]);
-    assert_eq!(f.lights.len(), 2);
-    assert!(near(f.lights[0].reach, 600.0) && f.lights[1].reach.is_infinite());
+    assert_eq!(f.emitters.len(), 2);
+    assert!(near(f.emitters[0].reach, 600.0) && f.emitters[1].reach.is_infinite());
 }
 
 #[test]

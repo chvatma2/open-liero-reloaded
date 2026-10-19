@@ -73,8 +73,11 @@ const SHADOW_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// Rays per placed light's shadow map (`SHADOW_RAYS` in the shaders).
 pub(super) const SHADOW_RAYS: u32 = 512;
 
+/// The most placed lights (none since plan 15c; the path goes next).
+const MAX_LIGHTS: usize = 256;
+
 /// The placed lights' uniform: two vec4s per light.
-const LIGHT_FLOATS: usize = 8 * olr_look::MAX_LIGHTS;
+const LIGHT_FLOATS: usize = 8 * MAX_LIGHTS;
 
 /// One world target's look passes: the light grid (gathered into 0, soaked
 /// into solids across into 1 and down into 2, blurred across into 0 and
@@ -290,11 +293,7 @@ impl LookState {
         );
         let shadow = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("olr-render shadow maps"),
-            size: wgpu::Extent3d {
-                width: SHADOW_RAYS,
-                height: olr_look::MAX_LIGHTS as u32,
-                depth_or_array_layers: 1,
-            },
+            size: wgpu::Extent3d { width: SHADOW_RAYS, height: MAX_LIGHTS as u32, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -709,16 +708,12 @@ impl LookState {
         ]);
         p.extend([lin(gr.tint[0]), lin(gr.tint[1]), lin(gr.tint[2]), f32::from(look.softness)]);
         // Only the first MAX_LIGHTS are uploaded: the shaders loop over those.
-        let count = look.lights.len().min(olr_look::MAX_LIGHTS);
+        let count = 0;
         p.extend([frame.origin.0 as f32, frame.origin.1 as f32, frame.scale as f32, count as f32]);
         p.extend([level.0 as f32, level.1 as f32, art_scale as f32, cell as f32]);
         self.light_count = count as u32;
         let l = &mut self.packed_lights;
         l.clear();
-        for f in &look.lights[..count] {
-            l.extend([f.pos[0], f.pos[1], f.radius.max(0.0), f.reach.min(1e9)]);
-            l.extend([f.colour[0], f.colour[1], f.colour[2], f32::from(f.owner)]);
-        }
         l.resize(LIGHT_FLOATS, 0.0);
         for v in l.iter_mut() {
             if !v.is_finite() {
@@ -736,7 +731,7 @@ impl LookState {
             mode,
             look.groups.len().min(GROUPS) as f32,
             f32::from(look.light_soak.min(olr_look::MAX_SOAK)),
-            f32::from(look.shadow_filter.min(2)),
+            0.0,
         ]);
         let [r, g, b] = look.solid_floor;
         p.extend([r, g, b, 0.0]);

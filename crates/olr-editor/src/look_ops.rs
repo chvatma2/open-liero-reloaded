@@ -5,14 +5,13 @@
 
 use std::sync::Arc;
 
-use olr_data::image::{Rgba, RgbaImage};
+use olr_data::image::RgbaImage;
 use olr_edit::compose::Rect;
 use olr_edit::element::Property;
 use olr_edit::level::{Shape, shape_bounds};
-use olr_format::Colour;
 use olr_format::levels::{ElementGlow, LevelObject, LevelSource, compile_look, element_box};
 use olr_format::look::{
-    AnimationSource, GlowColourSource, GlowGroupSource, LightSource, LookSource, ReachSource, valid_group_id,
+    AnimationSource, GlowColourSource, GlowGroupSource, LookSource, ReachSource, valid_group_id,
 };
 
 use crate::document::{DocError, Document};
@@ -38,17 +37,6 @@ pub(crate) fn with_group(look: Option<LookSource>, id: &str) -> LookSource {
     let mut look = look.unwrap_or_default();
     look.glow_groups.push(new_group(id.to_string()));
     look
-}
-
-/// A light the Light tool places: warm white, 100 %, 96 world pixels, radius 2.
-pub fn new_light() -> LightSource {
-    LightSource {
-        colour: Colour(Rgba::rgb(255, 224, 176)),
-        intensity: 100,
-        reach: ReachSource::Pixels(96),
-        animation: AnimationSource::Steady,
-        phase_ms: None,
-    }
 }
 
 /// A new glow's group (spec): each pixel's own colour, 100 %, 64 world
@@ -256,44 +244,6 @@ impl Document {
         self.check_look(self.level.look.as_ref(), &after)?;
         let indices = (before.len()..after.len()).collect();
         Ok((self.change(Edit::Objects { before, after }), indices))
-    }
-
-    /// A light object at `at` ([`new_light`]).
-    pub fn add_light(&mut self, at: (i32, i32)) -> Result<Change, DocError> {
-        let before = self.level.objects.clone();
-        if before.len() >= olr_format::levels::MAX_OBJECTS {
-            return Err(DocError::Bad(format!(
-                "a level holds at most {} objects",
-                olr_format::levels::MAX_OBJECTS
-            )));
-        }
-        let mut after = before.clone();
-        after.push(LevelObject::light(at, 2, new_light()));
-        self.check_look(self.level.look.as_ref(), &after)?;
-        Ok(self.change(Edit::Objects { before, after }))
-    }
-
-    /// Replaces light object `index`: its place, light and radius (notes kept).
-    pub fn set_light(
-        &mut self,
-        index: usize,
-        at: (i32, i32),
-        light: LightSource,
-        radius: u8,
-    ) -> Result<Change, DocError> {
-        let before = self.level.objects.clone();
-        let mut after = before.clone();
-        let notes = match after.get(index) {
-            Some(LevelObject::Light { notes, .. }) => notes.clone(),
-            _ => return Err(DocError::Bad(format!("object {index} is not a light"))),
-        };
-        let mut new = LevelObject::light(at, radius, light);
-        if let LevelObject::Light { notes: n, .. } = &mut new {
-            *n = notes;
-        }
-        after[index] = new;
-        self.check_look(self.level.look.as_ref(), &after)?;
-        Ok(self.change(Edit::Objects { before, after }))
     }
 
     /// What a glow stroke (or a glow by colour) into `id` starts from:
