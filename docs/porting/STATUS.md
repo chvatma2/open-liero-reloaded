@@ -3612,6 +3612,42 @@ R1-R16, as built):
   `Soft` by default (a level's `shadows`: `Hard`, `Smooth`, `Soft`).
   Objects (spawns, lights) copy, cut and paste in the editor.
 
+## Worms in the light (plan 15b)
+
+Spec `docs/superpowers/specs/2026-10-19-worm-lighting-design.md`, plan
+`docs/superpowers/plans/2026-10-19-plan-15b-worm-light.md`, as built:
+
+- **The worm floor.** In a lit match a worm, its rope and hook show at
+  least `olr_look::engine::WORM_FLOOR` (35 %) of the level's ambient hue at
+  full brightness (`worm_floor_of`: the ambient colour as set, scaled until
+  its brightest linear channel is 1; its intensity ignored; black gives
+  white; a hue darker than half of 35 % white's luminance is mixed towards
+  white to that half). Without a level look (a mod's look alone) it is 35 %
+  white. `olr_scene::Shade`'s `floor` (`Floor::None | Solid | Worm`,
+  `Shade::WORM`) replaces `solid_floor`; projectiles and bonuses keep the
+  engine `FLOOR` (50 %) as self-light. The user saw it on a darkened look
+  test level and kept 35 % (2026-10-19).
+- **Worms block light.** The scene lists each living worm's body (its skin
+  frame) as an `Occluder` (`DrawList::occluders`, worm index + 1) in a lit
+  match, whatever the view. The renderer draws them each lit frame into an
+  `R8Uint` occluder map, one texel per world pixel over the light grid
+  (`LookGlobals.occluders`). The placed and engine lights' shadow march and
+  the glow light's emission treat a worm texel as solid; a light ignores
+  the worm its centre is in (a muzzle flash, an explosion in a worm). The
+  map covers only the light grid: a worm more than 17 world pixels outside
+  the view throws no shadow into it, and the glow light (otherwise fixed to
+  the world) is blocked only by worms in it. Worms take no soak and no
+  solid floor.
+- **The lit side.** The composite lights a worm pixel (`Floor::Worm` over a
+  texel of the same worm in the occluder map) with the light just outside
+  the worm on its side: the outward direction is the sum of `w - q` over the
+  worm's pixels in a 7 × 7 window (up when they cancel), and the light is
+  read one pixel past the first non-worm pixel within 4. One value per world
+  pixel. A rope or hook pixel (no occluder under it) takes the light where
+  it is. The worm floor still bounds it from below.
+- **Not measured yet:** the occluder pass and the facing lookups' GPU cost
+  (`olr-cli gpu-bench --look`) waits for the user's consent.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

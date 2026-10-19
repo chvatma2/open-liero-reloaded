@@ -53,10 +53,21 @@ on screen or offscreen.
   lit frame's passes, in order (`pass.rs`'s `draw`):
   - **World lit** (`world_lit.wgsl`): the world pass into two targets, the
     albedo and the shade target (`SHADE_FORMAT`, `Rgba8Unorm`: self-light,
-    marker, solid floor, alpha), each item's from its `olr_scene::Shade`
-    (three floats of the instance, `INSTANCE_FLOATS` 15); the lit terrain's
+    marker, floor kind halved (0 none, 0.5 solid, 1 worm), alpha), each
+    item's from its `olr_scene::Shade` (three floats of the instance,
+    `INSTANCE_FLOATS` 15; the floor kind 0, 1 or 2 there); the lit terrain's
     self-light is its glow × its group's self-light scale (1 for no group:
     such a pixel glows, but casts nothing).
+  - **Occluders** (`occluder.wgsl`, plan 15b): the list's `occluders` (the
+    living worms' bodies, `frame.rs`'s `occluder_instances`) drawn into an
+    `R8Uint` occluder map, one texel per world pixel over the light grid
+    (`LookGlobals.occluders`: origin and size), each opaque texel the worm's
+    index + 1; cleared every lit frame. `worm_in` (`common.wgsl`) reads it.
+    The shadow march and the glow light's emission treat a worm texel as
+    solid, except the shadow march of a light whose centre is in that worm
+    (`a_worm_shadows_the_wall_behind_it`, `a_light_inside_a_worm_ignores_it`,
+    `overlapping_worms_block_each_others_lights`,
+    `an_off_view_worm_still_shadows_the_view`, `a_worm_blocks_glow_light`).
   - **Glow light** (`gi.rs`, `gi_*.wgsl`, Task 12): radiance cascades over
     the whole level, fixed to the world (never camera-dependent): emission,
     a jump-flood seed and its passes (distance to the nearest solid or
@@ -92,9 +103,15 @@ on screen or offscreen.
     light and bands it into the light steps.
   - **Composite** (`composite.wgsl`): each world-target texel's albedo
     times the light grid at its centre (bilinear), never below its
-    self-light nor, for an item with `solid_floor` (blood, droppers and
-    gibs, `Shade::FLOORED`; the user's playtest, 2026-10-19,
-    `a_floored_item_never_falls_below_the_solid_floor`), the solid floor;
+    self-light nor its floor: the solid floor for `Shade::FLOORED` (blood,
+    droppers and gibs; the user's playtest, 2026-10-19,
+    `a_floored_item_never_falls_below_the_solid_floor`), the worm floor for
+    `Shade::WORM` (plan 15b, `a_worm_item_never_falls_below_the_worm_floor`).
+    A worm texel over its own worm in the occluder map takes the light just
+    outside the worm on its side (`facing_light`: outward from the 7 × 7
+    window's worm pixels, read one pixel past the first non-worm pixel
+    within 4; per world pixel; `a_worm_is_lit_on_the_lamps_side`,
+    `worm_shading_is_steady`); a rope pixel takes the light where it is;
     graded (exposure, contrast, saturation, tint) in linear light; a
     marker shows its albedo. View modes: lit, full bright (the albedo),
     light only (white albedo). The upscale pass reads the lit target.

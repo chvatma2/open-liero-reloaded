@@ -46,7 +46,9 @@ own look. The simulation never sees it.
   reach) and the level's lights; it keeps `mode` (`ViewMode`: `Lit`,
   `FullBright`, `LightOnly`, the editor's toggle) and the vectors'
   capacity. It clamps `max_light` to 1.0-2.0, `softness` to 4 and
-  `light_soak` to `MAX_SOAK` (12); `solid_floor` is linear, and
+  `light_soak` to `MAX_SOAK` (12); `solid_floor` is linear, `worm_floor`
+  is `worm_floor_of` the ambient colour as set (35 % white without a
+  level look), and
   `shadow_filter` is `Shadows` as 0 hard, 1 smooth, 2 soft. Without a level
   look the frame is full ambient with no soak, floor, steps, blur or grade
   and hard shadows. A level light sits at its world pixel's centre (`at +
@@ -62,8 +64,11 @@ own look. The simulation never sees it.
 - **Identities:** a group's is `identity_of(id)` (FNV-1a 64), a level
   light's its index.
 - **Engine** (`engine.rs`, R13): code, not data, acting only in a match
-  with a look. `FLOOR` (50 %, the least self-light of worms, projectiles
-  and bonuses in a lit match), `explosion_light(size)` (warm; size clamped
+  with a look. `FLOOR` (50 %, the least self-light of projectiles and
+  bonuses in a lit match), `WORM_FLOOR` (35 %) and `worm_floor_of(ambient)`
+  (plan 15b: the worms' least light, linear: the ambient hue at full
+  brightness × 35 %, black → white, at least half of 35 % white's
+  luminance), `explosion_light(size)` (warm; size clamped
   to 0-500, intensity `60 + 8 × size` up to 250, reach `24 + 8 × size`;
   keys over `EXPLOSION_MS`, 200 ms, which the presentation fits to the
   explosion's life), `muzzle_light()` (80 %, reach 40, 50 ms). Both are
@@ -73,7 +78,7 @@ own look. The simulation never sees it.
   deterministic and bounded, phases, `hostile_animations_never_panic`) and
   `frame.rs` (the fade profile, `begin` with and without a level look, an
   animated group, `cull`'s order and cap and a far light whose reach
-  touches the view, `light_at`, `engine_numbers_match_r13`,
+  touches the view, `light_at`, `engine_numbers_match_r13`, `worm_floor_hues`,
   `solids_settings_are_bounded_and_off_without_a_look`).
 
 Test: `cargo nextest run -p olr-look`.

@@ -30,23 +30,31 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   `Line { a, b, colour, shade }`, a 1-pixel `perform_line`. A solid block is the
   `white` image tinted (`pixel`, or `pixel_shaded` with a shade).
   `describe` is the compact text the snapshot tests commit; it names a
-  shade only when it is not `Shade::LIT` (`glow N`, `marker`, `floored`),
+  shade only when it is not `Shade::LIT` (`glow N`, `marker`, `floored`,
+  `worm floor`),
   so the snapshots of unlit matches stay as they were. Layers keep `RESERVED` items of room (the entities `ENTITIES_RESERVED`,
   olr-fx's play pool), so frames do not allocate
   (`tests/no_alloc.rs`).
 - **Shades** (`draw_list.rs`, `lib.rs`, plan 15a Task 15, R5 and R13):
-  every item carries a `Shade { self_light, marker, solid_floor }`, which
+  every item carries a `Shade { self_light, marker, floor }`, which
   only the renderer's look passes read: `Shade::LIT` (lit by the world, the
   default), `GLOW` (100 % self-light), `MARKER` (drawn as its art, unlit
-  and ungraded) and `FLOORED` (lit, never below the level's solid floor,
-  as rock: blood and gibs, the user's playtest, 2026-10-19).
+  and ungraded), `FLOORED` (`Floor::Solid`: lit, never below the level's
+  solid floor, as rock: blood and gibs, the user's playtest, 2026-10-19)
+  and `WORM` (`Floor::Worm`: never below the worm floor; worms, their rope
+  and hook, plan 15b).
   `Scene::set_shades(Option<ShadeRules>)` gives a lit match its rules
   (`olr-present` sets them; `None`, the default, draws every item lit, as
-  always): `ShadeRules::floor` is the least self-light of worms, the rope
-  and hook, projectiles and bonuses, and `projectile_glow` (by `SimMod`
+  always): `ShadeRules::floor` is the least self-light of projectiles and
+  bonuses (worms take `Shade::WORM`), and `projectile_glow` (by `SimMod`
   index) raises a projectile's to its look's glow. With rules the muzzle
   flash and the beams glow, and the crosshair, health bars and laser-sight
-  dots are markers (`Marks::draw`'s `lit`, `WormFrame::floor`).
+  dots are markers (`Marks::draw`'s `lit`, `WormFrame::lit`).
+- **Occluders** (plan 15b): in a lit match `build` lists each living
+  worm's body (`worm::body`: its skin frame's atlas, source, position, size
+  and flip, `worm` = index + 1) in `DrawList::occluders`, whatever the
+  view; the renderer's occluder map stops light with them. `clear` empties
+  them (256 of room, no per-frame allocation).
 - **Look records** (`lib.rs`, plan 15a Task 15 and the batch C review),
   kept only with shade rules: each `build` records `drawn_projectiles()`
   (`DrawnProjectile`: slot, serial, `SimMod` index, drawn position, spawn

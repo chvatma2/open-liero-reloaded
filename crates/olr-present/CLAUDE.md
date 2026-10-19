@@ -23,8 +23,9 @@ wired in the frame loop's order **once**, so each mode that draws a world
   - **Lit matches** (plan 15a Tasks 13 and 15, R7, R13): `has_look()` is the
     level's `LoadedLevel::has_look` or a mod look that is not empty. `new`
     then gives the scene its `olr_scene::ShadeRules` (`floor` =
-    `olr_look::engine::FLOOR`, 50 %; each projectile's look glow); an unlit match
-    sets none and draws as always.
+    `olr_look::engine::FLOOR`, 50 %, for projectiles and bonuses; each
+    projectile's look glow; worms take `Shade::WORM` and are occluders,
+    plan 15b); an unlit match sets none and draws as always.
   - `set_fx_capacity(n)` before the first tick: a bench-only entity pool
     (plan 8).
   - `on_tick(&world, &events)` after every `World::tick`: `Fx::step_tick`
@@ -121,7 +122,7 @@ final timeline's, a loaded state,
 `end_flashes_once_per_projectile_through_rollbacks`,
 `a_loaded_state_restores_the_glow`; `tests/look.rs`: no look for bundled
 content, the level part, projectile and end-flash lights, engine lights and
-floors only in lit matches, the light cap, frame-rate independence, muzzle
+floors only in lit matches, `living_worms_are_occluders`, the light cap, frame-rate independence, muzzle
 lights' curve and no stacking; `tests/no_alloc.rs`, its own binary, a warm
 lit build with every dynamic light allocates nothing). They need
 `OLR_CONTENT_DIR` and skip without it.

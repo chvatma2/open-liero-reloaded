@@ -1,6 +1,7 @@
 # Worms in the light — design
 
-**Status:** draft, 2026-10-19. Follows the look system
+**Status:** implemented, 2026-10-19 (plan 15b; as built and its rulings:
+`docs/porting/STATUS.md`, "Worms in the light (plan 15b)"). Follows the look system
 (`2026-10-18-look-system-design.md`, plan 15a), whose terms this uses:
 the light grid, placed lights, glow light, engine lights, the solid floor,
 shade (self-light, marker, solid floor).

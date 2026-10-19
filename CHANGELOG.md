@@ -53,6 +53,10 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   below a solid floor; clear solids let light through. Explosions, muzzle
   flashes and glowing shots light the level too. Worms, shots and bonuses
   stay visible in the dark. A level without a look draws as before.
+- Worms in the light: in a lit match a worm is lit on the side a light
+  comes from, throws a shadow from lamps, explosions, muzzle flashes and
+  glowing terrain, and never shows below a floor of 35 % of the level's
+  ambient hue.
 - The level editor makes lit levels: a Look panel, the Glow brush (H), the
   Light tool (K), lit, full-bright and light-only views and a preview
   clock. Pixels picked by colour or by a rectangle can be made to glow.
