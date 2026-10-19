@@ -12,8 +12,9 @@ or lay them over the content with `olr-cli render-match --packs content/playtest
 `olr-cli`'s `tests/playtest.rs` checks them.
 
 - `olr-level-castlestrike-night/`: Castle Strike (night). OLX's Castle
-  Strike with a look: a dark blue ambient, a pale moon high above the
-  level (unlimited reach, so towers and walls throw long shadows), torches
-  that flicker in the cellars and the gatehouse, lanterns in the towers,
-  a cool light at the well, and glowing torch flames and candles (glow
-  group `flames`).
+  Strike with a look: a dark blue ambient; the sky glows (group `sky`, a
+  pale blue tint of unlimited reach on a copy of the background layer,
+  `background-2`), so moonlight comes from every open patch of sky through
+  the glow light rather than from one direction; torches that flicker in
+  the cellars and the gatehouse, lanterns in the towers, a cool light at
+  the well, and glowing torch flames and candles (group `flames`).

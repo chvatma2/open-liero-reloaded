@@ -4,17 +4,11 @@
     theme: "olx-theme-dirt",
     objects: [
         Light(
-            at: (700, -250),
-            colour: "#a8c0ff",
-            intensity: 55,
-            reach: Unlimited,
-            radius: 16,
-        ),
-        Light(
             at: (210, 429),
             colour: "#ff9a40",
             intensity: 130,
             reach: Pixels(80),
+            radius: 4,
             animation: Flicker(
                 speed: 8,
                 depth: 25,
@@ -25,6 +19,7 @@
             colour: "#ff9a40",
             intensity: 130,
             reach: Pixels(80),
+            radius: 4,
             animation: Flicker(
                 speed: 8,
                 depth: 25,
@@ -35,6 +30,7 @@
             colour: "#ff9a40",
             intensity: 130,
             reach: Pixels(80),
+            radius: 4,
             animation: Flicker(
                 speed: 8,
                 depth: 25,
@@ -113,6 +109,12 @@
                 id: "flames",
                 intensity: 160,
                 reach: Pixels(40),
+            ),
+            (
+                id: "sky",
+                colour: Tint("#8098d0"),
+                intensity: 300,
+                reach: Unlimited,
             ),
         ],
     ),

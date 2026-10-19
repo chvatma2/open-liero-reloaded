@@ -13,6 +13,18 @@
             ),
         ),
         (
+            id: "background-2",
+            name: "Background 2",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 35,
+                group: "sky",
+                mask: true,
+            ),
+        ),
+        (
             id: "dirt",
             name: "Dirt",
             kind: Drawn(
