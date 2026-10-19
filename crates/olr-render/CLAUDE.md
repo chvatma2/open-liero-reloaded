@@ -68,12 +68,16 @@ on screen or offscreen.
     `R8Uint` occluder map, one texel per world pixel over the light grid
     (`LookGlobals.occluders`: origin and size), each opaque texel the worm's
     index + 1; cleared every lit frame. `worm_in` (`common.wgsl`) reads it.
-    The glow light's emission treats a worm texel as solid, except in a
-    cell a disc lights (a muzzle flash inside its worm)
+    The glow light's emission marks a mostly-worm cell (2 + its rock
+    share; not in a cell a disc lights, a muzzle flash inside its worm),
+    keeping the glow under it; the cascades let a worm stop a ray only
+    within `WORM_SHADOW` (4) world pixels of its probe, so a worm throws a
+    short shadow and nothing more than 10 px from it changes (the user's
+    playtest, 2026-10-20; `a_worm_throws_no_long_shadow`,
+    `a_worm_changes_no_light_away_from_it`)
     (`a_worm_shadows_the_wall_behind_it`, `a_light_inside_a_worm_ignores_it`,
     `overlapping_worms_block_each_others_lights`,
-    `an_off_view_worm_still_shadows_the_view`, `a_worm_blocks_glow_light`,
-    `a_worm_casts_a_soft_shadow`).
+    `an_off_view_worm_still_shadows_the_view`, `a_worm_blocks_glow_light`).
   - **Glow light** (`gi.rs`, `gi_*.wgsl`, Task 12; plan 15c): radiance
     cascades over the whole level, fixed to the world (never
     camera-dependent): play's discs (`gi_dynamic.wgsl`: the first

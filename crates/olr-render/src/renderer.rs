@@ -17,6 +17,7 @@ mod regions;
 mod timing;
 
 pub use gi::{GI_CELL_BUDGET, gi_cell};
+pub use look::WORM_SHADOW;
 pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};
 pub use timing::{GpuTimes, gpu_times};
 

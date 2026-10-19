@@ -33,6 +33,7 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     let lit = max(disc.r, max(disc.g, disc.b)) > 0.0;
     var em = vec3<f32>(0.0);
     var solid = 0.0;
+    var worms = 0.0;
     var reach = 0.0;
     var n = 0.0;
     var albedo = vec3<f32>(0.0);
@@ -46,7 +47,7 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
             let worm = !lit && worm_in(occluder_tex, look.occluders.xy, w) != 0u;
             let art = clamped(w * a + vec2<i32>(a / 2), textureDimensions(glow_tex));
             if worm {
-                solid += 1.0;
+                worms += 1.0;
             } else if textureLoad(solid_tex, clamped(w, textureDimensions(solid_tex)), 0).r != 1u {
                 // Rock and dirt reflect by their colour; a worm reflects nothing.
                 solid += 1.0;
@@ -72,7 +73,11 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
         let d = textureLoad(dynamic_reach, cell, 0).r;
         reach = max(reach, select(d, 1e9, d >= 59999.0));
     }
-    out.emission = vec4<f32>(em * k + disc, solid * k);
+    // A cell that is mostly worm is marked 2 + its rock share: it stops a
+    // ray only near the worm (the worm-shadow follow-up), and otherwise
+    // shows what lies under it (its glow, its rock).
+    let mark = select(0.0, 2.0, worms * k >= 0.5 && solid * k < 0.5);
+    out.emission = vec4<f32>(em * k + disc, solid * k + mark);
     out.reach = vec4<f32>(split(reach), 0.0, 0.0);
     out.albedo = vec4<f32>(albedo / max(solid, 1.0), 1.0);
     return out;

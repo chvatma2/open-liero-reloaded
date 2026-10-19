@@ -36,6 +36,6 @@ pub use offscreen::{
 };
 pub use renderer::{
     GI_CELL_BUDGET, GpuTimes, MAX_PROBE_PASSES, MAX_PROBE_TAPS, MIN_SCALE, Probe, RenderSettings, Renderer,
-    WORLD_FORMAT, gi_cell, gpu_times,
+    WORLD_FORMAT, WORM_SHADOW, gi_cell, gpu_times,
 };
 pub use upscale::{UpscaleFilter, dest_rect, dest_rect_in};

@@ -1083,7 +1083,8 @@ fn an_off_view_worm_still_shadows_the_view() {
     let bare = worm_frame(&gpu, &map, view, &lights, &[], |_| {});
     assert!(light_at(&gpu, &bare, 101, 20)[0] > 0.2, "the face is lit without the worm");
     let r = worm_frame(&gpu, &map, view, &lights, &[([94.0, 17.0, 4.0, 7.0], 1)], |_| {});
-    assert!((light_at(&gpu, &r, 101, 20)[0] - 0.1).abs() < 1e-3, "the worm off the view shadows it");
+    let (lit, shaded) = (light_at(&gpu, &bare, 101, 20)[0], light_at(&gpu, &r, 101, 20)[0]);
+    assert!(shaded < lit - 0.05, "the worm off the view shades it (a short shadow): {shaded} {lit}");
 }
 
 #[test]
@@ -1388,31 +1389,6 @@ fn a_flash_lights_its_surroundings_softly() {
             let v = light_at(&gpu, &r, x, y)[0];
             assert!((v - 0.1).abs() < 1e-3, "behind the wall ({x}, {y}): {v}");
         }
-    }
-}
-
-/// Plan 15c: a worm's shadow from a disc is soft, never a hard column.
-#[test]
-fn a_worm_casts_a_soft_shadow() {
-    let Some(gpu) = offscreen() else { return };
-    let map = room(100, 60, |x, _| x >= 60);
-    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 };
-    let flash = [disc([30.5, 30.5], 4.0, 80.0)];
-    let r = worm_frame(&gpu, &map, view, &[], &[([40.0, 27.0, 4.0, 6.0], 1)], |l| {
-        l.emitters.extend_from_slice(&flash)
-    });
-    let face: Vec<f32> = (0..60).map(|y| light_at(&gpu, &r, 59, y)[0]).collect();
-    let (lo, at) =
-        face[10..50].iter().zip(10..).fold((f32::MAX, 0), |m, (&v, y)| if v < m.0 { (v, y) } else { m });
-    let hi = face[at - 10..=at + 10].iter().cloned().fold(0.0, f32::max);
-    let eps = 0.02 * (hi - lo);
-    assert!(hi - lo > 0.05, "a shadow at all: {face:?}");
-    for side in [-1i32, 1] {
-        let between = (1..=12)
-            .map(|k| face[(at as i32 + side * k) as usize])
-            .filter(|&v| v > lo + eps && v < hi - eps)
-            .count();
-        assert!(between >= 3, "side {side}: {between} penumbra pixels in {face:?}");
     }
 }
 
@@ -1930,4 +1906,64 @@ fn a_long_low_tunnel_takes_no_light_through_rock() {
         }
     }
     assert!(lit.is_empty(), "light in the tunnel from beyond the rock: {lit:?}");
+}
+
+/// The worm-shadow follow-up (2026-10-20, the user's playtest): a worm
+/// blocks light only within `olr_render::WORM_SHADOW` world pixels of it,
+/// so it throws no long shadow: a face 15 px behind it is lit as if it
+/// were not there.
+#[test]
+fn a_worm_throws_no_long_shadow() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 60, |x, _| x >= 60);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 };
+    let flash = [disc([30.5, 30.5], 4.0, 80.0)];
+    let set = |l: &mut olr_look::LookFrame| l.emitters.extend_from_slice(&flash);
+    let bare = worm_frame(&gpu, &map, view, &[], &[], set);
+    let worm = worm_frame(&gpu, &map, view, &[], &[([40.0, 27.0, 4.0, 6.0], 1)], set);
+    for y in 20..40 {
+        assert_eq!(light_at(&gpu, &bare, 59, y), light_at(&gpu, &worm, 59, y), "the face at y {y}");
+    }
+    // Right behind the worm, a short shade.
+    let (b, w) = (light_at(&gpu, &bare, 46, 30)[0], light_at(&gpu, &worm, 46, 30)[0]);
+    assert!(w < b - 0.05, "shaded right behind it: {w} against {b}");
+    assert_eq!(light_at(&gpu, &bare, 54, 30), light_at(&gpu, &worm, 54, 30), "10 px behind: unchanged");
+}
+
+/// The worm-shadow follow-up: away from a worm the light is as without it,
+/// whether the worm stands over glowing sky or plain background (no pop at
+/// the sky's edge).
+#[test]
+fn a_worm_changes_no_light_away_from_it() {
+    let Some(gpu) = offscreen() else { return };
+    // A glowing sky over the top half, rock along the bottom.
+    let map = glowing_room(120, 60, |_, y| y >= 56, |_, y| y < 28);
+    let view = View { x: 0.0, y: 0.0, w: 120.0, h: 60.0 };
+    let sky = |l: &mut olr_look::LookFrame| {
+        l.groups[0] = olr_look::FrameGroup {
+            cast: [1.0; 3],
+            own_colour: false,
+            self_scale: 1.0,
+            reach: f32::INFINITY,
+            ..Default::default()
+        }
+    };
+    let bare = worm_frame(&gpu, &map, view, &[], &[], sky);
+    for body in [[60.0, 10.0, 4.0, 6.0], [60.0, 35.0, 4.0, 6.0]] {
+        let worm = worm_frame(&gpu, &map, view, &[], &[(body, 1)], sky);
+        let mut moved = Vec::new();
+        for y in (2..56).step_by(3) {
+            for x in (2..118).step_by(3) {
+                // More than 10 px from the worm's outline.
+                let (cx, cy) = (x as f32 + 0.5, y as f32 + 0.5);
+                let dx = (body[0] - cx).max(cx - body[0] - body[2]).max(0.0);
+                let dy = (body[1] - cy).max(cy - body[1] - body[3]).max(0.0);
+                let far = dx.hypot(dy) > 10.0;
+                if far && light_at(&gpu, &bare, x, y) != light_at(&gpu, &worm, x, y) {
+                    moved.push((x, y));
+                }
+            }
+        }
+        assert!(moved.is_empty(), "worm at {body:?} changed the light at {moved:?}");
+    }
 }

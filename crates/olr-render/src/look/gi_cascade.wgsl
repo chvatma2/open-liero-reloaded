@@ -38,6 +38,26 @@ fn stops_at(q: vec2<i32>) -> bool {
     return inside(q) && stops(textureLoad(level_em, q, 0));
 }
 
+// Whether a worm's cell (marked 2 + its rock share by the emission) is a
+// worm to a ray `t` cells from its probe: within `worms` cells (the
+// worm-shadow follow-up, 2026-10-20: a worm throws only a short shadow).
+fn worm_cell(e: vec4<f32>) -> bool {
+    return e.a >= 1.5;
+}
+
+// Whether cell `q` stops a ray `t` cells out: a worm only within `worms`
+// cells; past that, what lies under it (its rock, its glow) does.
+fn blocks(q: vec2<i32>, t: f32, worms: f32) -> bool {
+    if !inside(q) {
+        return false;
+    }
+    let e = textureLoad(level_em, q, 0);
+    if worm_cell(e) {
+        return t <= worms || e.a - 2.0 >= 0.5 || max(e.r, max(e.g, e.b)) > 1e-6;
+    }
+    return stops(e);
+}
+
 // How far a ray at `at` may jump: the jump flood's distance to the nearest
 // stopper, less a cell and a half; 0 near one.
 fn free_at(at: vec2<f32>) -> f32 {
@@ -60,6 +80,8 @@ fn free_at(at: vec2<f32>) -> f32 {
 // false when it started in it).
 struct Hit {
     hit: bool,
+    // The ray met a worm within its shadow's reach: dark, no bounce.
+    worm: bool,
     // The march ran out of steps before its end: counted as blocked (final
     // review, Important 2), never as open, so no light from where its tip
     // lies comes through rock.
@@ -70,9 +92,10 @@ struct Hit {
     has_prev: bool,
 };
 
-fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit {
+fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>, worms: f32) -> Hit {
     var h: Hit;
     h.hit = false;
+    h.worm = false;
     h.blocked = false;
     h.has_prev = false;
     var t = t0;
@@ -88,10 +111,12 @@ fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit
             // Outside the grid nothing stops a ray, and it never comes back.
             break;
         }
-        if any(q != skip) && stops_at(q) {
+        if any(q != skip) && blocks(q, t, worms) {
             h.hit = true;
             h.q = q;
             h.t = t;
+            let e = textureLoad(level_em, q, 0);
+            h.worm = worm_cell(e) && t <= worms;
             return h;
         }
         h.prev = q;
@@ -110,10 +135,12 @@ fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit
             // Through a corner: both cells beside it stopping close it.
             let a = q + vec2<i32>(sx, 0);
             let b = q + vec2<i32>(0, sy);
-            if stops_at(a) && stops_at(b) {
+            let tc = t + min(tx, ty);
+            if blocks(a, tc, worms) && blocks(b, tc, worms) {
                 h.hit = true;
                 h.q = a;
-                h.t = t + min(tx, ty);
+                h.t = tc;
+                h.worm = worm_cell(textureLoad(level_em, a, 0)) && tc <= worms;
                 h.prev = q;
                 h.has_prev = true;
                 return h;
@@ -133,12 +160,12 @@ fn clear_between(a: vec2<f32>, b: vec2<f32>) -> bool {
     let d = b - a;
     let len = length(d);
     if len < 1e-4 {
-        return !stops_at(vec2<i32>(floor(b)));
+        return !blocks(vec2<i32>(floor(b)), 1e9, 0.0);
     }
     let skip = vec2<i32>(floor(a));
     // Its end's cell counts: the upper ray starts there.
-    let m = march(a, d / len, 0.0, len + 1e-3, skip);
-    return !m.hit && !m.blocked && (all(vec2<i32>(floor(b)) == skip) || !stops_at(vec2<i32>(floor(b))));
+    let m = march(a, d / len, 0.0, len + 1e-3, skip, 0.0);
+    return !m.hit && !m.blocked && (all(vec2<i32>(floor(b)) == skip) || !blocks(vec2<i32>(floor(b)), 1e9, 0.0));
 }
 
 @fragment
@@ -162,8 +189,10 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     // cell, so a wall's face gathers the light in front of it.
     let own = vec2<i32>(floor(centre));
     let end = cp.b.z + cp.b.w;
-    let h = march(centre, dir, cp.b.z, end, select(vec2<i32>(-1), own, cp.a.x < 0.5));
-    if h.blocked {
+    // A worm throws a shadow only `WORM_SHADOW` world pixels long.
+    let worms = WORM_SHADOW / max(cp.c.w, 1.0);
+    let h = march(centre, dir, cp.b.z, end, select(vec2<i32>(-1), own, cp.a.x < 0.5), worms);
+    if h.blocked || h.worm {
         ray = vec4<f32>(0.0);
     } else if h.hit {
         let e = textureLoad(level_em, h.q, 0);

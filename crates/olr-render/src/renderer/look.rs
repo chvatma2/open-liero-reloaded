@@ -16,7 +16,7 @@ const COMMON: &str = include_str!("../look/common.wgsl");
 /// [`COMMON`] after the Rust constants the shaders share.
 pub(super) fn common() -> String {
     format!(
-        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\n{COMMON}",
+        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\nconst WORM_SHADOW: f32 = {WORM_SHADOW:?};\n{COMMON}",
         olr_look::MAX_SOAK
     )
 }
@@ -64,6 +64,15 @@ pub(super) const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16
 /// blur of up to 4 and the bloom ([`BLOOM_RADIUS`]) never see its edge, so
 /// the light never depends on the camera.
 pub(super) const LIGHT_PAD: u32 = olr_look::MAX_SOAK as u32 + 4 + BLOOM_RADIUS as u32;
+
+/// How far a worm's shadow reaches, world pixels (the worm-shadow
+/// follow-up, 2026-10-20, the user's playtest of the day Castle Strike: a
+/// worm blocking all light threw massive shadows outdoors). A ray is
+/// stopped by a worm only that near its probe; past it the worm is
+/// invisible to light, which shows what lies under it. The cascades'
+/// merging carries the shade a probe spacing or two further: no change
+/// more than 10 px from a worm (`a_worm_changes_no_light_away_from_it`).
+pub const WORM_SHADOW: f32 = 4.0;
 
 /// The bloom's reach, world pixels (plan 15c's glare): a Gaussian of a
 /// third of it each way.

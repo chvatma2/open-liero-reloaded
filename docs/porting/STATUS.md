@@ -3627,7 +3627,8 @@ Spec `docs/superpowers/specs/2026-10-19-worm-lighting-design.md`, plan
   `Shade::WORM`) replaces `solid_floor`; projectiles and bonuses keep the
   engine `FLOOR` (50 %) as self-light. The user saw it on a darkened look
   test level and kept 35 % (2026-10-19).
-- **Worms block light.** The scene lists each living worm's body (its skin
+- **Worms block light** (since 2026-10-20 only over 4 world pixels: see
+  "Glowing light (plan 15c)", short worm shadows). The scene lists each living worm's body (its skin
   frame) as an `Occluder` (`DrawList::occluders`, worm index + 1) in a lit
   match, whatever the view. The renderer draws them each lit frame into an
   `R8Uint` occluder map, one texel per world pixel over the light grid
@@ -3712,6 +3713,18 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
   lifts it to 1 at most, no glare lands on it and it feeds none (a
   daylight sky lights the level without washing out; a flame's
   luminosity is its halo).
+- **Short worm shadows** (the user's playtest of the day Castle Strike,
+  2026-10-20: outdoors a worm's shadow was massive, popped at the edge of
+  the glowing sky and drifted after the worm stopped). A worm blocks a
+  ray only within `olr_render::WORM_SHADOW` (4) world pixels of the ray's
+  probe; past that it is invisible to light and the cell shows what lies
+  under it (its glow, its rock). The emission marks a mostly-worm cell 2
+  + its rock share, and a worm's pixels keep the glow under them. The
+  cascades' merging carries the shade a little further, nothing more than
+  10 px from a worm (`a_worm_throws_no_long_shadow`,
+  `a_worm_changes_no_light_away_from_it`); the lit side (plan 15b) and the
+  worm floor hold. This replaces plan 15b's "worms block light" for the
+  glow light.
 - **The idle bot** (`Personality::Idle`): presses nothing, not even to
   respawn (the server's `MaxRespawnTime` brings it back); online wire
   index 2.

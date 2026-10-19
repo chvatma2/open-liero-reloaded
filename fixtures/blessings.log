@@ -167,3 +167,5 @@
   fixtures/render/look-lit.png
   fixtures/render/look-rocket.png
   fixtures/render/look-t500.png
+2026-10-19 bless-render: worm shadows only 4 px long (the user's playtest of the day Castle Strike)
+  fixtures/render/look-rocket.png
