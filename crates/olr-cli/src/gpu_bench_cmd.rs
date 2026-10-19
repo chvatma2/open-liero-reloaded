@@ -12,6 +12,8 @@ use olr_render::{AdapterPreference, OffscreenOptions};
 #[derive(Clone, Copy, clap::ValueEnum)]
 enum Adapter {
     Hardware,
+    /// An integrated GPU first: a laptop's GPU on a desktop (plan 15a Task 20).
+    Integrated,
     Software,
 }
 
@@ -93,6 +95,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         options: OffscreenOptions {
             prefer: match args.adapter {
                 Adapter::Hardware => AdapterPreference::Hardware,
+                Adapter::Integrated => AdapterPreference::Integrated,
                 Adapter::Software => AdapterPreference::Software,
             },
             backends,

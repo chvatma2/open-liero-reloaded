@@ -215,7 +215,7 @@ pub fn check_adapter(
     device_type: wgpu::DeviceType,
     name: &str,
 ) -> anyhow::Result<()> {
-    if prefer == AdapterPreference::Hardware && (device_type == wgpu::DeviceType::Cpu || software_name(name))
+    if prefer != AdapterPreference::Software && (device_type == wgpu::DeviceType::Cpu || software_name(name))
     {
         bail!(
             "asked for the hardware adapter, got {name} (a software rasteriser); under WSL run with \
@@ -472,6 +472,8 @@ mod tests {
     fn a_software_adapter_is_refused_for_hardware_runs() {
         use wgpu::DeviceType as D;
         assert!(check_adapter(AdapterPreference::Hardware, D::Cpu, "llvmpipe").is_err());
+        assert!(check_adapter(AdapterPreference::Integrated, D::Cpu, "llvmpipe").is_err());
+        assert!(check_adapter(AdapterPreference::Integrated, D::IntegratedGpu, "Radeon").is_ok());
         assert!(check_adapter(AdapterPreference::Hardware, D::DiscreteGpu, "RTX").is_ok());
         assert!(check_adapter(AdapterPreference::Hardware, D::Other, "D3D12 (RTX)").is_ok());
         assert!(check_adapter(AdapterPreference::Software, D::Cpu, "lavapipe").is_ok());

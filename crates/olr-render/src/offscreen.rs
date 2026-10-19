@@ -40,6 +40,9 @@ pub enum AdapterPreference {
     /// A discrete GPU, then an integrated one, then the rest, software last
     /// (the performance envelope, plan 8).
     Hardware,
+    /// An integrated GPU, then a discrete one, then the rest, software last:
+    /// a laptop's GPU measured on a desktop (plan 15a Task 20).
+    Integrated,
 }
 
 /// How an [`Offscreen`] opens; the default is [`Offscreen::new`]'s.
@@ -59,17 +62,23 @@ pub struct OffscreenOptions {
 /// software rasteriser (lavapipe through Vulkan, then llvmpipe through GL)
 /// draws the same pixels on every machine, so goldens compare tightly; any
 /// other adapter comes last.
-fn rank(info: &wgpu::AdapterInfo, prefer: AdapterPreference) -> u8 {
+fn rank(device_type: wgpu::DeviceType, backend: wgpu::Backend, prefer: AdapterPreference) -> u8 {
     use wgpu::{Backend, DeviceType};
     match prefer {
-        AdapterPreference::Software => match (info.device_type, info.backend) {
+        AdapterPreference::Software => match (device_type, backend) {
             (DeviceType::Cpu, Backend::Vulkan) => 0,
             (DeviceType::Cpu, _) => 1,
             _ => 2,
         },
-        AdapterPreference::Hardware => match info.device_type {
+        AdapterPreference::Hardware => match device_type {
             DeviceType::DiscreteGpu => 0,
             DeviceType::IntegratedGpu => 1,
+            DeviceType::VirtualGpu | DeviceType::Other => 2,
+            DeviceType::Cpu => 3,
+        },
+        AdapterPreference::Integrated => match device_type {
+            DeviceType::IntegratedGpu => 0,
+            DeviceType::DiscreteGpu => 1,
             DeviceType::VirtualGpu | DeviceType::Other => 2,
             DeviceType::Cpu => 3,
         },
@@ -106,7 +115,10 @@ impl Offscreen {
         let instance = instance(o.backends);
         let mut adapters =
             pollster::block_on(instance.enumerate_adapters(o.backends.unwrap_or(wgpu::Backends::all())));
-        adapters.sort_by_key(|a| rank(&a.get_info(), o.prefer));
+        adapters.sort_by_key(|a| {
+            let i = a.get_info();
+            rank(i.device_type, i.backend, o.prefer)
+        });
         let adapter = match adapters.into_iter().next() {
             Some(a) => a,
             None => pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -269,5 +281,26 @@ fn f16_to_f32(h: u16) -> f32 {
         31 if frac == 0.0 => sign * f32::INFINITY,
         31 => f32::NAN,
         e => sign * (1.0 + frac / 1024.0) * 2f32.powi(e - 15),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `Integrated` (plan 15a Task 20, a laptop's GPU on a desktop) ranks the
+    /// integrated GPU first, then the discrete one, software last; `Hardware`
+    /// the discrete one first.
+    #[test]
+    fn preferences_rank_adapters() {
+        use wgpu::DeviceType::*;
+        let order = |p| {
+            let mut v = [Cpu, DiscreteGpu, IntegratedGpu, Other];
+            v.sort_by_key(|&t| rank(t, wgpu::Backend::Vulkan, p));
+            v
+        };
+        assert_eq!(order(AdapterPreference::Hardware), [DiscreteGpu, IntegratedGpu, Other, Cpu]);
+        assert_eq!(order(AdapterPreference::Integrated), [IntegratedGpu, DiscreteGpu, Other, Cpu]);
+        assert_eq!(order(AdapterPreference::Software)[0], Cpu);
     }
 }
