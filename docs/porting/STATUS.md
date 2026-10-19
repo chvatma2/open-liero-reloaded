@@ -3721,6 +3721,30 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
 - **Not measured yet:** the cascades' cost at a cell a world pixel, the
   bounce copy and the bloom passes, on Windows at 1080p with the user's
   consent.
+- **Follow-ups** (the final review, 2026-10-20; open):
+  - *Important, the user's call:* thin walls leak at cells of 2+ world
+    pixels (levels over 2^20 px, or cropped by the device): raise
+    `GI_CELL_BUDGET` (about 64 B of GPU memory a cell) or accept it.
+  - *Owed before trusting it on hardware:* `cargo xtask full` and the
+    Windows 1080p measurement (`olr-cli gpu-bench --look` on a recorded
+    day Castle Strike match); the f16-overflow and step-exhaustion guards
+    were never seen to fail on lavapipe, so watch for NaN or leaks there;
+    check steady scenes keep the same bytes (the f16 bounce feedback could
+    settle in a one-step cycle on hardware).
+  - Explosions perhaps a bit bright (the user, 2026-10-19): a later
+    milestone, by playthrough.
+  - Small discs (cells lit whole) pulse slightly as they move sub-pixel:
+    normalise by πr² over the cells lit, or a radius of at least a cell.
+  - Flicker regions relabel a whole big flickering region per nearby dig,
+    and `Regions` holds about 7 B a world pixel even when nothing flickers
+    (allocate lazily; bitset stamps).
+  - Bloom no longer comes from glowing pixels' own brightness (a "My
+    calls" item changed by Task 8's ruling; renders approved): confirm.
+  - `gpu_bench_cmd.rs`'s `--look` doc still says placed lights and soft
+    shadows; `bench_look` has no `Flicker` group.
+  - Overlapping discs share the largest reach (max-blended).
+  - A faint static star-ray pattern around small bright sources (the
+    cascades' directions), seen in the look goldens.
 
 ## Kept OLX quirks
 
