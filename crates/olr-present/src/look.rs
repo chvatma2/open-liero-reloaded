@@ -12,7 +12,7 @@ use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
 
 use olr_fx::{Fx, Kind};
-use olr_look::{Light, LookFrame, MAX_LIGHTS, ModLook, engine, light_at};
+use olr_look::{FrameLight, Light, LookFrame, MAX_LIGHTS, ModLook, engine, light_at};
 use olr_scene::Scene;
 
 /// An end flash's identity: the projectile's slot, serial, `SimMod` index
@@ -184,10 +184,11 @@ impl Dynamic {
                 return false;
             }
             // It follows its worm as drawn; a worm not drawn (dead) shows none.
-            if let Some((_, p)) = worms.iter().find(|(id, _)| *id == s.worm)
+            if let Some((_, p, owner)) = worms.iter().find(|(id, ..)| *id == s.worm)
                 && let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, [p.x, p.y], 1.0)
             {
-                look.push(f);
+                // Plan 15b: it ignores its own worm's body as an occluder.
+                look.push(FrameLight { owner: *owner, ..f });
             }
             true
         });

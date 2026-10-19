@@ -53,6 +53,8 @@ own look. The simulation never sees it.
   look the frame is full ambient with no soak, floor, steps, blur or grade
   and hard shadows. A level light sits at its world pixel's centre (`at +
   0.5`, Task 1 ruling), its radius clamped to 1-16, its identity its index.
+  A `FrameLight`'s `owner` (worm index + 1, 0 none; plan 15b) is the worm
+  whose occluder it ignores (a muzzle flash); `light_at` gives 0.
   `push` adds the dynamic lights in plan 15a R9's order (the callers');
   `cull(view)` keeps those whose reach plus radius touches the view, then
   the first `MAX_LIGHTS` (256), in order. Colours are linear

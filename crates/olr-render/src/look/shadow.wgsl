@@ -4,7 +4,7 @@
 // its reach, within the level's box. Outside the level is open. A light
 // whose centre is solid gets 0 on every ray: it lights nothing. A living
 // worm (the occluder map, plan 15b) stops a ray too, except the worm the
-// light's centre is in.
+// light's centre is in, or the worm it belongs to.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(0) @binding(1) var<uniform> lights: Lights;
@@ -43,7 +43,12 @@ fn fs_shadow(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     if solid_at(pos) {
         return vec4<f32>(split(0.0), 0.0, 0.0);
     }
-    let own = worm_in(occluder_tex, look.occluders.xy, vec2<i32>(floor(pos)));
+    // The light's own worm: its owner (a muzzle flash, whatever the art at
+    // its centre), else the worm its centre is in (an explosion).
+    var own = u32(round(lights.v[row * 2u + 1u].w));
+    if own == 0u {
+        own = worm_in(occluder_tex, look.occluders.xy, vec2<i32>(floor(pos)));
+    }
     let angle = (ray + 0.5) / SHADOW_RAYS * 6.2831853;
     let dir = vec2<f32>(cos(angle), sin(angle));
     // Only the part of the ray inside the level can meet rock (outside is

@@ -103,7 +103,7 @@ fn an_animated_group_scales_self_light_and_cast() {
 }
 
 fn at(x: f32, y: f32, reach: f32) -> FrameLight {
-    FrameLight { pos: [x, y], radius: 2.0, colour: [1.0; 3], reach }
+    FrameLight { pos: [x, y], radius: 2.0, colour: [1.0; 3], reach, owner: 0 }
 }
 
 #[test]

@@ -3633,7 +3633,9 @@ Spec `docs/superpowers/specs/2026-10-19-worm-lighting-design.md`, plan
   `R8Uint` occluder map, one texel per world pixel over the light grid
   (`LookGlobals.occluders`). The placed and engine lights' shadow march and
   the glow light's emission treat a worm texel as solid; a light ignores
-  the worm its centre is in (a muzzle flash, an explosion in a worm). The
+  the worm it belongs to (`FrameLight::owner`: a muzzle flash, whatever the
+  skin's art at its centre, the final review's Important 1), else the worm
+  its centre is in (an explosion in a worm). The
   map covers only the light grid: a worm more than 17 world pixels outside
   the view throws no shadow into it, and the glow light (otherwise fixed to
   the world) is blocked only by worms in it. Worms take no soak and no

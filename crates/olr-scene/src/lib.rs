@@ -124,7 +124,7 @@ pub struct Scene {
     shades: Option<ShadeRules>,
     /// With rules, what the last build placed (reused, grown once).
     drawn: Vec<DrawnProjectile>,
-    worms: Vec<(i32, Vec2)>,
+    worms: Vec<(i32, Vec2, u8)>,
     /// With rules, the ticks' ended projectiles and shots since the last
     /// [`Scene::clear_look_events`].
     ended: Vec<EndedProjectile>,
@@ -168,9 +168,9 @@ impl Scene {
         &self.drawn
     }
 
-    /// The alive worms (id, drawn position) the last build placed, in worm
-    /// order (only with shade rules).
-    pub fn drawn_worms(&self) -> &[(i32, Vec2)] {
+    /// The alive worms (id, drawn position, occluder id: index + 1, plan
+    /// 15b) the last build placed, in worm order (only with shade rules).
+    pub fn drawn_worms(&self) -> &[(i32, Vec2, u8)] {
         &self.worms
     }
 
@@ -328,9 +328,10 @@ impl Scene {
         for (i, w) in worms.iter().enumerate().filter(|(_, w)| w.alive) {
             let p = blend.snap(blend.worm(i, w));
             if lit {
-                self.worms.push((w.id, p));
                 // Plan 15b: living worms block light, whatever the view.
-                out.occluders.push(worm::body(&frame, i, w, p));
+                let body = worm::body(&frame, i, w, p);
+                self.worms.push((w.id, p, body.worm));
+                out.occluders.push(body);
             }
             let extras = WormExtras {
                 muzzle: self.marks.muzzle(w.id),

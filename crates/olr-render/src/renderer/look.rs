@@ -678,7 +678,7 @@ impl LookState {
         l.clear();
         for f in &look.lights[..count] {
             l.extend([f.pos[0], f.pos[1], f.radius.max(0.0), f.reach.min(1e9)]);
-            l.extend([f.colour[0], f.colour[1], f.colour[2], 0.0]);
+            l.extend([f.colour[0], f.colour[1], f.colour[2], f32::from(f.owner)]);
         }
         l.resize(LIGHT_FLOATS, 0.0);
         for v in l.iter_mut() {

@@ -64,7 +64,9 @@ on screen or offscreen.
     (`LookGlobals.occluders`: origin and size), each opaque texel the worm's
     index + 1; cleared every lit frame. `worm_in` (`common.wgsl`) reads it.
     The shadow march and the glow light's emission treat a worm texel as
-    solid, except the shadow march of a light whose centre is in that worm
+    solid, except the shadow march of a light owned by that worm (the
+    light's second vec4's w, `FrameLight::owner`) or, unowned, whose centre
+    is in it
     (`a_worm_shadows_the_wall_behind_it`, `a_light_inside_a_worm_ignores_it`,
     `overlapping_worms_block_each_others_lights`,
     `an_off_view_worm_still_shadows_the_view`, `a_worm_blocks_glow_light`).

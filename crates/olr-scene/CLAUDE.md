@@ -58,7 +58,8 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
 - **Look records** (`lib.rs`, plan 15a Task 15 and the batch C review),
   kept only with shade rules: each `build` records `drawn_projectiles()`
   (`DrawnProjectile`: slot, serial, `SimMod` index, drawn position, spawn
-  time, view or not) and `drawn_worms()` (id, drawn position); each
+  time, view or not) and `drawn_worms()` (id, drawn position, occluder id);
+  each
   `after_tick` and `after_tick_resimulated` records `ended_projectiles()`
   (`EndedProjectile`: a projectile in the previous snapshot whose slot is
   empty or holds another serial, at its last position; `ProjSnap` now

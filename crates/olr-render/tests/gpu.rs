@@ -480,7 +480,7 @@ fn room(w: u32, h: u32, rock: impl Fn(u32, u32) -> bool) -> ColorMap {
 
 /// A white light at `at` (world coordinates), radius 2, reach `reach`.
 fn lamp(at: [f32; 2], reach: f32) -> olr_look::FrameLight {
-    olr_look::FrameLight { pos: at, radius: 2.0, colour: [1.0; 3], reach }
+    olr_look::FrameLight { pos: at, radius: 2.0, colour: [1.0; 3], reach, owner: 0 }
 }
 
 /// The light at world pixel `(x, y)` of the last lit frame.
@@ -1052,7 +1052,8 @@ fn soft_shadows_have_a_penumbra() {
     // shadow at x = 100 spans about y 12..29.
     let map = room(120, 40, |x, y| x == 50 && (18..23).contains(&y));
     let view = View { x: 0.0, y: 0.0, w: 120.0, h: 40.0 };
-    let big = olr_look::FrameLight { pos: [30.5, 20.5], radius: 6.0, colour: [1.0; 3], reach: 200.0 };
+    let big =
+        olr_look::FrameLight { pos: [30.5, 20.5], radius: 6.0, colour: [1.0; 3], reach: 200.0, owner: 0 };
     let frame = |filter: u8| lit_frame_with(&gpu, &map, view, &[big], |l| l.shadow_filter = filter);
     let (hard, soft) = (frame(0), frame(2));
     // Along a column far behind the wall, across the shadow's upper edge.
@@ -1126,7 +1127,8 @@ fn a_light_inside_a_worm_ignores_it() {
     let Some(gpu) = offscreen() else { return };
     let map = room(100, 40, |_, _| false);
     let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
-    let flash = olr_look::FrameLight { pos: [52.0, 20.0], radius: 1.0, colour: [1.0; 3], reach: 40.0 };
+    let flash =
+        olr_look::FrameLight { pos: [52.0, 20.0], radius: 1.0, colour: [1.0; 3], reach: 40.0, owner: 0 };
     let r = worm_frame(&gpu, &map, view, &[flash], &[([50.0, 17.0, 4.0, 6.0], 1)], |_| {});
     for (x, y) in [(46, 20), (57, 20), (52, 13), (52, 26)] {
         let v = light_at(&gpu, &r, x, y)[0];
@@ -1139,7 +1141,8 @@ fn overlapping_worms_block_each_others_lights() {
     let Some(gpu) = offscreen() else { return };
     let map = room(100, 40, |_, _| false);
     let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
-    let flash = olr_look::FrameLight { pos: [42.5, 21.5], radius: 1.0, colour: [1.0; 3], reach: 40.0 };
+    let flash =
+        olr_look::FrameLight { pos: [42.5, 21.5], radius: 1.0, colour: [1.0; 3], reach: 40.0, owner: 0 };
     let pair = [([40.0, 18.0, 4.0, 7.0], 1), ([44.0, 18.0, 4.0, 7.0], 2)];
     let r = worm_frame(&gpu, &map, view, &[flash], &pair, |_| {});
     assert!(light_at(&gpu, &r, 37, 21)[0] > 0.2, "worm 1's near side is lit");
@@ -1322,5 +1325,32 @@ fn a_rope_pixel_has_no_side() {
         let want = white_under(light);
         let got = img.get(2 * x as u32, 30).r;
         assert!(got.abs_diff(want) <= 1, "({x}, 15): {got} want {want} (max_light {})", look.max_light);
+    }
+}
+
+/// Final review, Important 1: a light carrying its worm (a muzzle flash)
+/// ignores that worm even where the worm's art is transparent at the
+/// light's centre (many skins are, in some frames).
+#[test]
+fn a_light_ignores_its_own_worm_through_a_hollow() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |_, _| false);
+    let mut hollow = solid(4, 6, Rgba::rgb(255, 255, 255));
+    hollow.set(2, 3, Rgba::TRANSPARENT);
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.upload_images(&[AtlasImage { name: "hollow".into(), image: hollow, px_per_world: 1 }]);
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    let flash =
+        olr_look::FrameLight { pos: [52.5, 20.5], radius: 1.0, colour: [1.0; 3], reach: 40.0, owner: 1 };
+    let mut look = dim(0.1);
+    look.lights.push(flash);
+    let mut l = list(View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
+    l.map = (100, 40);
+    push_bodies(&mut l, &[([50.0, 17.0, 4.0, 6.0], 1)]);
+    gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
+    for (x, y) in [(46, 20), (57, 20), (52, 13), (52, 26)] {
+        let v = light_at(&gpu, &r, x, y)[0];
+        assert!(v > 0.2, "({x}, {y}) lit all round: {v}");
     }
 }

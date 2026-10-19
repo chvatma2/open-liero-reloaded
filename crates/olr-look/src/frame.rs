@@ -46,6 +46,9 @@ pub struct FrameLight {
     pub colour: [f32; 3],
     /// World pixels; `f32::INFINITY` unlimited.
     pub reach: f32,
+    /// The worm (its index + 1) the light belongs to, 0 none: a light
+    /// ignores its own worm as an occluder (plan 15b; a muzzle flash).
+    pub owner: u8,
 }
 
 /// Everything the renderer's look passes read for one frame.
@@ -176,6 +179,7 @@ pub fn light_at(light: &Light, t_ms: f64, identity: u64, pos: [f32; 2], radius: 
         radius,
         colour,
         reach: light.reach.pixels(),
+        owner: 0,
     })
 }
 

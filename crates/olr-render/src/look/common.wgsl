@@ -28,7 +28,8 @@ struct LookGlobals {
 };
 
 // Placed lights: per light two vec4s, (x, y, radius, reach; 1e9 unlimited)
-// and (r, g, b linear × intensity × animation, 0).
+// and (r, g, b linear × intensity × animation, owner: the worm's index + 1
+// whose occluder the light ignores, 0 none; plan 15b).
 struct Lights {
     v: array<vec4<f32>, 512>,
 };

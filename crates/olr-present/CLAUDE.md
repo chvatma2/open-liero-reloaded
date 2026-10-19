@@ -76,7 +76,9 @@ wired in the frame loop's order **once**, so each mode that draws a world
   clock that went back forgets what came after. A muzzle light is the
   weapon look's `muzzle_light`, else `olr_look::engine::muzzle_light()`:
   one a worm (a new shot restarts it, batch D review, Important 3),
-  following the worm as drawn, none for a dead worm. An explosion's light
+  following the worm as drawn, none for a dead worm; its `owner` is the
+  worm's occluder id, so its own body never shadows it (plan 15b final
+  review, `a_muzzle_light_belongs_to_its_worm`). An explosion's light
   is `engine::explosion_light(size)`, made once per size, its clock the
   explosion's age over its life (size × 25 ms) scaled to
   `engine::EXPLOSION_MS` (batch C review, Minor 2), identity its slot.

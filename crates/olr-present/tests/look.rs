@@ -440,3 +440,35 @@ fn living_worms_are_occluders() {
         assert!(!lit || checked > 0);
     }
 }
+
+/// Plan 15b final review, Important 1: a muzzle light carries its worm
+/// (index + 1), so it ignores that worm's body whatever the art at its
+/// centre; other lights belong to no worm.
+#[test]
+fn a_muzzle_light_belongs_to_its_worm() {
+    let Some(content) = content() else { return };
+    let (sc, _) = olr_scenario::load_fixture(&fixtures(), "fire-minigun").unwrap();
+    let weapons = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap().sim.weapons().len();
+    let muzzle = Light {
+        colour: [0, 255, 0],
+        intensity: 100,
+        reach: Reach::Pixels(64),
+        animation: Animation::Steady,
+        phase_ms: None,
+    };
+    let weapon = olr_look::WeaponLook { muzzle_light: Some(muzzle) };
+    let look = ModLook { projectiles: Vec::new(), weapons: vec![Some(weapon); weapons] };
+    let mut seen = 0;
+    play_with(&content, "fire-minigun", None, Some(look), |p, _, list, _| {
+        for l in &p.look().unwrap().lights {
+            if l.colour[0] == 0.0 && l.colour[1] > 0.0 {
+                let body = list.occluders.iter().find(|o| o.worm == l.owner);
+                assert!(l.owner != 0 && body.is_some(), "owner {}", l.owner);
+                seen += 1;
+            } else {
+                assert_eq!(l.owner, 0);
+            }
+        }
+    });
+    assert!(seen > 0);
+}
