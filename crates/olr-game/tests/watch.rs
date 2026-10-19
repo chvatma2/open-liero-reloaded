@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use olr_audio::Audio;
-use olr_game::app::{WatchKey, game_has_screen, watch_key};
+use olr_game::app::{WatchKey, cursor_hidden, game_has_screen, watch_key};
 use olr_game::hud::{self, Frame};
 use olr_game::session::Session;
 use olr_game::setup::{self, Assets, DeathmatchOptions};
@@ -204,4 +204,20 @@ fn the_arrows_follow_in_command_line_games() {
     assert!(!game_has_screen(true, false), "a menu panel holds the game");
     let spectate = watch_key(KeyCode::ArrowRight, true, false, game_has_screen(false, false));
     assert_eq!(spectate, Some(WatchKey::Follow(1)));
+}
+
+/// The user's note (2026-10-19): the mouse cursor is hidden while a match
+/// plays with nothing open, and shows over menus, the pause, the weapon
+/// selection, results, the in-game chat and the editor's Play (its Stop
+/// button).
+#[test]
+fn the_cursor_hides_only_in_play() {
+    // (menus, names shown, a game playing, the editor's Play, chatting)
+    assert!(cursor_hidden(true, true, true, false, false), "a match played from the menus");
+    assert!(cursor_hidden(false, false, true, false, false), "a command-line game");
+    assert!(!cursor_hidden(true, false, true, false, false), "a menu panel over the game");
+    assert!(!cursor_hidden(true, true, false, false, false), "no game");
+    assert!(!cursor_hidden(false, false, false, false, false), "no game on the command line");
+    assert!(!cursor_hidden(true, true, true, true, false), "the editor's Play: its Stop button");
+    assert!(!cursor_hidden(true, true, true, false, true), "the chat");
 }

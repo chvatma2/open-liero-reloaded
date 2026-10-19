@@ -253,6 +253,20 @@ pub fn game_has_screen(menus: bool, names_shown: bool) -> bool {
     !menus || names_shown
 }
 
+/// Whether the mouse cursor is hidden (the user's note, 2026-10-19): while
+/// a game plays with the screen its own ([`game_has_screen`]), except the
+/// level editor's Play (its Stop button) and the in-game chat. Play uses no
+/// mouse.
+pub fn cursor_hidden(
+    menus: bool,
+    names_shown: bool,
+    playing: bool,
+    editing_play: bool,
+    chatting: bool,
+) -> bool {
+    playing && game_has_screen(menus, names_shown) && !editing_play && !chatting
+}
+
 /// What `code` does in a game: the arrows choose the worm followed in a
 /// game nobody here plays (`spectating`: a replay, bots alone, an online
 /// match watched), and are the player's own keys otherwise; PageUp and
@@ -938,6 +952,18 @@ impl App {
             self.chatting = chatting;
         }
         let tree = out.platform_output.accesskit_update.take();
+        let hide = cursor_hidden(
+            menus,
+            self.shell.names_shown(),
+            self.shell.play.is_some(),
+            self.shell.editing_play(),
+            self.shell.data.ingame_chat.is_some(),
+        );
+        if hide {
+            // egui-winit hides the cursor for this icon and shows it again
+            // when egui next asks for another.
+            out.platform_output.cursor_icon = egui::CursorIcon::None;
+        }
         w.egui.handle_platform_output(&w.window, out.platform_output);
         // The autoplay's steps, on what this frame shows.
         let mut effects = Vec::new();

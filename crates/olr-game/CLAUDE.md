@@ -110,6 +110,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `Audio::set_volume` at once (`Shell::volume`). While the options capture
   a key, the app feeds `MenuData::capture` every window and gilrs event,
   and egui hears no key (`app::egui_hears`).
+- **Mouse cursor** (the user's note, 2026-10-19): hidden while a match
+  plays with nothing open (`app::cursor_hidden`: the game has the screen,
+  not the editor's Play with its Stop button, not the in-game chat), by
+  handing egui-winit `CursorIcon::None`, which shows it again with egui's
+  next icon; play uses no mouse (`tests/watch.rs`,
+  `the_cursor_hides_only_in_play`).
 - **Single thread** (spec §8.6): the device is created and used only on
   the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
   used the device crashes when it exits. kira runs its own audio thread;
