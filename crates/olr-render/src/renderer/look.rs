@@ -686,7 +686,7 @@ impl LookState {
             if !placed || l.iter().all(|&v| v <= 0.0) {
                 continue;
             }
-            e.extend([f.pos[0], f.pos[1], radius, f.reach.max(0.0).min(1e9), l[0], l[1], l[2], 0.0]);
+            e.extend([f.pos[0], f.pos[1], radius, f.reach.clamp(0.0, 1e9), l[0], l[1], l[2], 0.0]);
         }
         self.emitter_count = (e.len() / super::gi::EMITTER_FLOATS) as u32;
     }
