@@ -1563,7 +1563,7 @@ fn bounce_settles_to_steady_bytes() {
 #[test]
 fn no_bounce_through_a_thin_wall() {
     let Some(gpu) = offscreen() else { return };
-    let map = painted_room(100, 40, |x, y| x == 50 || y < 2 || y >= 38 || x < 2 || x >= 98, |_, _| WHITE);
+    let map = painted_room(100, 40, |x, y| x == 50 || !(2..38).contains(&y) || !(2..98).contains(&x), |_, _| WHITE);
     let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
     let flash = [olr_look::FrameLight { colour: [4.0; 3], ..disc([30.5, 20.5], 3.0, 200.0) }];
     for bounce in [0.6, 0.9] {
