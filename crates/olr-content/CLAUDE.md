@@ -13,8 +13,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
 (sprites by name, game sounds, `colours.cfg`) and `new_world(&SandboxSetup)`.
 
 - **Layer 4, uses `std`.** Depends on `olr-sim`, `olr-modes`, `olr-bots`,
-  `olr-replay`, `olr-pack`, `sha2`, `hex`, `olr-terrain`, `olr-data`, `olr-vfs`, `anyhow`,
-  `serde` and `ron`.
+  `olr-replay`, `olr-pack`, `sha2`, `hex`, `olr-terrain`, `olr-look`, `olr-data`, `olr-vfs`,
+  `anyhow`, `serde` and `ron`.
   `olr-scenario` (same layer) uses it.
 - **Never panic on content** (spec §19, Review Focus 3): a missing or odd
   asset gets a placeholder (`PLACEHOLDER` colour; core sprites at their
@@ -32,6 +32,23 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   else `None`; `build_match_spawning(assets, options,
   human_spawn)` is `build_match` with the first human worm's
   `WormSetup::spawn` set (`build_match` passes `None`: unchanged).
+- **Looks** (`maps.rs`, `mods.rs`, plan 15a Tasks 6 and 14b): `LoadedLevel`
+  carries the level's `look` (`olr_look::LevelLook`), `glow`
+  (`olr_terrain::GlowLayers`), `clear` (clear flags per world pixel,
+  `look/clear.png`: solids light passes while worms and projectiles still
+  collide) and `warnings`. Playing reads a level leniently (`olr_pack::read_level`
+  through `olr_format::levels::read_level_files_lenient`): a look, glow
+  image or clear image that does not check is dropped with a warning
+  naming the pack (a dropped look drops its glow too), while
+  `olr_pack::validate` stays strict. `has_look()` is a look, a glow or
+  clear solids: the renderer's look passes draw it. `from_source` compiles
+  the editor's look as well (`olr_format::levels::compile_look`), and
+  `color_map` hands the glow and clear flags to the `ColorMap`
+  (`set_glow`, `set_clear`). `LoadedMod::look` (`olr_look::ModLook`) is
+  indexed like `SimMod::projectiles` and `SimMod::weapons`, each
+  projectile's look found by its `ModDef` key (`SimProjectile::key`), so
+  shared and named projectiles and their children keep their looks (batch
+  A review, Critical 1). The bundled packs have no look (`tests/look.rs`).
 - **Hostile levels:** `load_level` refuses an art scale above
   `MAX_ART_SCALE` (8) or a colour image above `MAX_COLOR_MAP_BYTES`
   (256 MiB), so a pack cannot make the colour map allocate gigabytes.
@@ -182,5 +199,6 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
 
 Test: `cargo nextest run -p olr-content` (`loads_every_manifest_item` and the
 real-level part of `new_world_spawns_worms_on_free_spots`, `tests/color.rs`'s
-matches, `tests/matches.rs` and the imported part of `tests/catalog.rs` need
+matches, `tests/matches.rs`, the imported part of `tests/catalog.rs` and
+`tests/look.rs`'s colour-map and bundled-content checks need
 `OLR_CONTENT_DIR`; `olr-import`'s tests cover the layers).

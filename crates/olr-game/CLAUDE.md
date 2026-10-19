@@ -128,7 +128,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   playtest): the game is designed for 16:9. `playfield(size)` is the
   window's centred 16:9 frame above the HUD bar (`olr_ui::hud::playfield`,
   whole pixels); `Gpu::draw` renders the world there
-  (`Renderer::render_in`, black around it) and the egui overlay paints
+  (`Renderer::render_lit`, which is `render_in` without a look; black
+  around it) and the egui overlay paints
   the bar (and the side layout's columns) over the rest; the names'
   `ScreenMap` uses the same rectangle (`olr_render::dest_rect_in`). The
   view is `olr_scene::Viewport::GAME` (427 × 192 world pixels) for every
@@ -151,6 +152,14 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   entities), the overlay, `Presentation::upload` (atlas if a worm was
   added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
   one is due (one that fails is a warning, never the end of the game).
+  **Lit matches** (plan 15a Tasks 13, 19): `Gpu::present` and
+  `Gpu::screenshot` take a `gpu::World`, `(list, Option<&LookFrame>,
+  area)`; a match passes `Presentation::look()` (`Some` when the level or
+  the mod has a look, `Presentation::has_look`), and
+  `Presentation::upload` turns the renderer's lighting on or off to match,
+  uploading the terrain whole when it changes. The game builds no look of
+  its own: `olr-content` loads the level's and mod's looks, `olr-present`
+  builds the frame (culled by `olr_render::LIGHT_CULL_PAD`).
 - **Fast-forward** (`speed.rs`, plan 7 task 8, the user's request): a
   game nobody plays (`Session::human()` false, worked out again at each
   restart: a replay, or `--spectate`'s
@@ -666,9 +675,26 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   the whole canvas (black off the level: panning never changes its size, so
   the renderer's world target stays; cut to one world target, it follows
   the visible level) at egui's own scale of the pass into
-  its part of the window (`Gpu::present`'s world is `(list, area)`; games
+  its part of the window (`Gpu::present`'s world is `(list, look, area)`; games
   pass `playfield(size)`), with SharpBilinear for that frame; the
   renderer's warnings are logged once and said in the editor (`Note`).
+  **The lit canvas** (plan 15a Task 19, `editor/canvas.rs`): the map
+  carries the bake's glow and clear solids (`ColorMap::set_glow`,
+  `set_clear`; a dab's rectangle also `replace_glow_rect`, and the clear
+  flags when they changed; a glow that came or went rebuilds the map,
+  `fits`). `Canvas::lit(doc)` is true for a look, light objects, glow or
+  clear solids, never in the material view; the app sets the renderer's
+  lighting to it, uploading the canvas whole on a change.
+  `Canvas::look_frame(doc, clock_ms, view_mode, view)` compiles the
+  document's look and lights (`olr_format::levels::compile_look`, again
+  only when the look or the objects changed; a look that does not check
+  draws as none) and begins the frame at the editor's clock and view mode,
+  its lights culled to the canvas's world padded by `LIGHT_CULL_PAD`; the
+  canvas's world is `(list, look, area)`. `EditorHost` advances the
+  editor's clock (`EditorState::advance_clock`) by the time between its
+  frames, at most 100 ms a frame (a Play's length never jumps it). Play
+  needed no change: `setup::load_edited`'s `LoadedLevel::from_source`
+  carries the look, glow and clear (its test asserts `has_look`).
   During an edited Play the HUD draws with a Stop button at the
   playfield's bottom left (`overlay::stop_button`; `hud::Frame::edited`: its keys
   say "Esc stop"), Esc or Stop ends it (`Shell::stop_edited`), F5 plays it
@@ -686,7 +712,10 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   for a directory inside `--content`, a missing path or a file. Tests:
   `tests/editor_host.rs`, `editor::canvas`'s unit tests,
   `tests/canvas_gpu.rs` (a binary of its own in the GPU tier, `OLR_GPU_TESTS`:
-  a rectangle upload draws as a full one), `main.rs`'s argument tests,
+  a rectangle upload draws as a full one; `the_canvas_draws_lit`: a dark
+  ambient darkens the canvas, Full bright is the art byte for byte),
+  `editor::canvas`'s `the_canvas_frame_follows_the_document` and
+  `a_glow_edit_uploads_its_rectangle`, `main.rs`'s argument tests,
   `fixtures/autoplay/editor.ron` in `cargo xtask e2e`.
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
@@ -781,7 +810,10 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `WEAPON_NAME_TICKS` (OLX's 0.75 s) after a change made with it
   (`Session::weapon_name`, `worm_label`; the change noted by
   `Session::tick` and `Session::frame` from the player's keys,
-  `tests/weapon_name.rs`); under the player's own worm's name, while
+  `tests/weapon_name.rs`); else no name over the player's own worm (OLX
+  draws none over a local human worm; plan 15a Task 8: `worm_label(i,
+  local, ..)` is `None`; a game with no local slot names every worm);
+  under the place of the player's own worm's name, while
   its current weapon reloads, a reload bar filled to the slot's charge
   (`reload_fraction`, `reload_bar`: `RELOAD_WIDTH` 14 world pixels, OLX's
   reloading red brightened, outlined; the user's request 2026-10-18: one's

@@ -3525,8 +3525,75 @@ and its batch reviews. Tools, not OLX behaviour; no format change.
 
 ## Look system decisions (plan 15a)
 
-Spec `docs/superpowers/specs/2026-10-18-look-system-design.md`; Task 21
-completes this section.
+Spec `docs/superpowers/specs/2026-10-18-look-system-design.md`, plan
+`docs/superpowers/plans/2026-10-18-plan-15a-look-system.md` (its rulings
+R1-R16, as built):
+
+- **Crates and data.** `olr-look` (layer 1, `no_std` with `alloc`, wasm)
+  holds the runtime look, animation, `LookFrame` and the engine's look; it
+  depends on `libm` (it needs `powf`, `floor`, `sqrt`), not `olr-math`. The
+  look stays out of `olr_data::level::Level`: `LevelSource` and
+  `LoadedLevel` carry `look` and `glow`; a mod's look compiles beside the
+  mod (`compile_mod_look`). Glow lives inside `ColorMap` (`set_glow`) and
+  shares its dirty rectangles. Look colours are hex strings, as every
+  colour in the formats.
+- **Loading.** A level whose look or glow does not check plays without it
+  (one warning, its lights and glow dropped); `pack check` stays strict. A
+  level with lights but no `look` gets the default look (full ambient). A
+  16-bit grey look image reads as 8 bits. At most 1024 light objects.
+- **Item shading.** `olr_scene::Shade` (self-light, marker, solid floor) is
+  a field of every sprite and line. In a lit match worms, projectiles and
+  bonuses never show below 50 % (the engine floor), and the rope and hook
+  take it too; explosions, sparkles, spawns, the muzzle flash and beams
+  show at full self-light; the crosshair, health bars and laser sight are
+  markers (unlit, ungraded). Blood, droppers and gibs never show below the
+  level's solid floor (playtest, 2026-10-19).
+- **Lights.** Order in a frame: level lights (file order), projectile
+  lights (slot), end flashes (start), muzzle lights (worm: one each, a new
+  shot restarts it), explosion lights (effect slot); culled to the view's
+  reach, then the first 256 (`MAX_LIGHTS`). A level light sits at its world
+  pixel's centre. End flashes key on (slot, serial, kind, spawn time) and
+  are remembered 2 s, so a rollback neither repeats nor erases one; the
+  first re-simulated tick after a rollback reads no ends. The clock is the
+  world's time plus `alpha × 10` ms; the editor has its own. A looping
+  animation's default phase comes from its id; a once-only curve starts at
+  0. Explosion light: (255, 200, 140), `min(60 + 8 × size, 250)` %, reach
+  `24 + 8 × size`, fitted to the explosion's life; muzzle light: (255, 220,
+  160), 80 %, reach 40.
+- **Passes.** The lit world pass writes the albedo and a shade target; then
+  the glow light (radiance cascades over the whole level, fixed to the
+  world: cascade 0 a probe per cell and 4 directions, each cascade doubling
+  spacing, directions and interval (2 cells at cascade 0) until the
+  intervals reach the grid's diagonal; rays sphere-traced at full
+  resolution with a jump-flood distance to the nearest stopper, at most 96
+  steps; `GI_CELL_BUDGET` 262 144 cells), placed lights' shadow maps (512
+  rays a light), the light grid's sum, soak, floor, blur, cap and steps, and
+  the composite. The light grid reaches 16 world pixels past the world
+  target, so soak and softness never depend on the camera. On GL nothing
+  renders into `R32Float`: distances are split in two `Rgba16Float` halves.
+- **Shadow edges.** A light's fade runs from its radius' edge; outside the
+  level is open; a wall's face is lit. Playtest (2026-10-19): `Soft` by
+  default (a penumbra as wide as the light's radius, over the neighbouring
+  rays); `Smooth` (4 sub-samples) and `Hard` (world-pixel) remain a level's
+  choice.
+- **Own name.** No name label over one's own worm (closer to OLX, which
+  draws none); its weapon name still shows while changing weapons, and the
+  reload bar keeps its place.
+- **Editor.** Glow brush (H), Light tool (K), a look panel and a fourth
+  toolbar row (views, brush glow, the preview clock); colours are hex text
+  fields (one step a commit). A glow mask edit swaps the whole mask. An
+  element's glow edits strength and group; groups are edited in the look
+  panel. A plain level's glow and clear flags made elsewhere are kept while
+  no element glows or is clear. The canvas is lit for a look, lights, glow
+  or clear solids. Playtest (2026-10-19): objects copy and paste; pixels
+  picked by colour (Select pixels, By colour, Ctrl adds) or by rectangle
+  take a glow (Glow selection), and the Glow brush lights a colour patch in
+  a click or starts a dark glow on an element without one; copy, cut and
+  delete take a rectangle selection only.
+- **Test content.** `fixtures/look/levels/look-test/` and
+  `fixtures/look/mods/look-test-mod/` (Glow Rocket); no rocket scenario
+  (scenarios replay OLX traces, which cannot load these packs): the play
+  golden is `olr-cli render-match` of chaos bots (`look-rocket.png`).
 
 - **Stop 1 (2026-10-18), the user's verdict on the first lit renders:** the
   look is good, but rock read black (only faces that saw a light were lit).

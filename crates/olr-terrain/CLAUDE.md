@@ -44,9 +44,32 @@ and the colour image that follows it (`ColorMap`).
   keep glow; `rebuild_area` takes back (background), none (dirt) or front
   (rock). `glow()` and `glow_groups()` are the composites;
   `replace_glow_rect` is `replace_rect`'s glow (the editor). Without glow
-  nothing changes and nothing is spent.
+  nothing changes and nothing is spent. `GlowLayers` (`olr-format`
+  re-exports it as the level's four `look/` images) holds `art` and
+  `world` sizes, `front` and `back` (strength 0-255 per art pixel) and
+  `groups` and `groups_back` (one byte per world pixel); `empty(art,
+  world)` glows nowhere, `fits(art, world)` checks the sizes and every
+  buffer's length. The colour map never reads a group's meaning: what a
+  value names (0 none, `v` the look's `glow_groups[v - 1]`) is the
+  renderer's.
+- **Clear solids** (plan 15a Task 14b, spec §Clear solids):
+  `set_clear(Some(flags))` gives the level's clear flags, one byte per
+  world pixel, row-major (a solid cell whose flag is not 0 lets light
+  through); flags of another size are refused (`false`), `None` removes
+  them. `clear()` returns them as loaded: play edits never change them, and
+  a flag counts only where the cell is solid.
 - **Journal** (`journal.rs`, networking spec §3.3): off by default; `start_journal` records each mutator's clipped pre-image and keeps the order-independent cell hash. Every new write to `cells` must go through `set_cell` after `record`, or rollback breaks.
 - **Restored areas**: `undo_to` reports each undone edit's rectangle and a `load_cells` the whole map; `take_restored_areas()` drains them (`Area`, world px, at most `MAX_RESTORED`, merged into the bounding box beyond), so the colour map, which only replays the ticks' edits, can `rebuild_area` what an undo or a load changed.
 - **State transfer**: `cells()` and `load_cells` (all-or-nothing, valid materials only). A load is not undoable: it seals the journal, so every older mark is `Forgotten`.
+
+- **Tests** (`tests/`, one binary since plan 15a Task 4: `journal.rs`,
+  `glow.rs`; unit tests in the modules): `glow.rs` covers the channel
+  rules (a new map shows the front glow, carving reveals the backdrop's,
+  placed dirt glows none, stains keep glow, `rebuild_area` and
+  `replace_glow_rect`), a misfit glow refused, `no_glow_costs_nothing`, the
+  proptest `random_edits_keep_glow_consistent` (background shows the back
+  glow, rock the front, dirt the front or none; Task 4 ruling: not equality
+  with a rebuild, which gives all dirt none) and
+  `clear_flags_are_the_level_size`.
 
 Test: `cargo nextest run -p olr-terrain`.

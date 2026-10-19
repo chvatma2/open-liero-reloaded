@@ -25,13 +25,43 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   OLX's order (`Layer::ALL`): entities, beams (laser sights, then worm
   beams, as `DrawEntities` draws them), projectiles, bonuses, worms (rope,
   hook, health bar, crosshair, skin, muzzle per worm). Items are
-  `Sprite { atlas, src, pos, size, flip, tint }` in world pixels (OLX's
+  `Sprite { atlas, src, pos, size, flip, tint, shade }` in world pixels (OLX's
   sprites are 2× art, so positions fall on half pixels) and
-  `Line { a, b, colour }`, a 1-pixel `perform_line`. A solid block is the
-  `white` image tinted. `describe` is the compact text the snapshot tests
-  commit. Layers keep `RESERVED` items of room (the entities `ENTITIES_RESERVED`,
+  `Line { a, b, colour, shade }`, a 1-pixel `perform_line`. A solid block is the
+  `white` image tinted (`pixel`, or `pixel_shaded` with a shade).
+  `describe` is the compact text the snapshot tests commit; it names a
+  shade only when it is not `Shade::LIT` (`glow N`, `marker`, `floored`),
+  so the snapshots of unlit matches stay as they were. Layers keep `RESERVED` items of room (the entities `ENTITIES_RESERVED`,
   olr-fx's play pool), so frames do not allocate
   (`tests/no_alloc.rs`).
+- **Shades** (`draw_list.rs`, `lib.rs`, plan 15a Task 15, R5 and R13):
+  every item carries a `Shade { self_light, marker, solid_floor }`, which
+  only the renderer's look passes read: `Shade::LIT` (lit by the world, the
+  default), `GLOW` (100 % self-light), `MARKER` (drawn as its art, unlit
+  and ungraded) and `FLOORED` (lit, never below the level's solid floor,
+  as rock: blood and gibs, the user's playtest, 2026-10-19).
+  `Scene::set_shades(Option<ShadeRules>)` gives a lit match its rules
+  (`olr-present` sets them; `None`, the default, draws every item lit, as
+  always): `ShadeRules::floor` is the least self-light of worms, the rope
+  and hook, projectiles and bonuses, and `projectile_glow` (by `SimMod`
+  index) raises a projectile's to its look's glow. With rules the muzzle
+  flash and the beams glow, and the crosshair, health bars and laser-sight
+  dots are markers (`Marks::draw`'s `lit`, `WormFrame::floor`).
+- **Look records** (`lib.rs`, plan 15a Task 15 and the batch C review),
+  kept only with shade rules: each `build` records `drawn_projectiles()`
+  (`DrawnProjectile`: slot, serial, `SimMod` index, drawn position, spawn
+  time, view or not) and `drawn_worms()` (id, drawn position); each
+  `after_tick` and `after_tick_resimulated` records `ended_projectiles()`
+  (`EndedProjectile`: a projectile in the previous snapshot whose slot is
+  empty or holds another serial, at its last position; `ProjSnap` now
+  keeps `proj` and `spawn_time`) and `shots()` (`Shot`: a projectile
+  weapon's `WeaponFired`), per tick so end flashes and muzzle lights never
+  depend on the frame rate. `clear_look_events` forgets them (the
+  presentation takes them each frame); at most `LOOK_EVENTS` (8192) of
+  each are kept between two clears. The first tick re-simulated after a
+  rollback reads no ends (its previous snapshot is the old timeline's, a
+  later time); a re-simulated tick reports its ends again, and
+  `olr-present` starts each once.
 - **`SceneAssets`** (`assets.rs`): core sprites and mod projectile images
   (already alpha: the importers key OLX's magenta once, nothing keys at load), and per worm a colorized
   skin (`add_worm`: `olr_content::LoadedSkin::colorized`; `skin_frame` cuts

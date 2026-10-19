@@ -7,7 +7,7 @@ its document, undo history, tools and egui panels, as pure state a host
 drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
 
 - **Layer 5, `std`, `#![forbid(unsafe_code)]`.** Depends on `olr-data`,
-  `olr-vfs`, `olr-format`, `olr-pack`, `olr-edit`, egui 0.36.2, serde and
+  `olr-vfs`, `olr-format`, `olr-pack`, `olr-edit`, `olr-look` (`ViewMode`), egui 0.36.2, serde and
   thiserror; not on `olr-ui`, `olr-render` or `olr-present` (the host
   applies `olr_ui::theme`). Not wasm. Tests use `egui_kittest` (`wgpu`,
   `snapshot`), `tempfile` and `proptest`.
@@ -145,11 +145,80 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     (`copy_pixels`, `paste_pixels`: a new layer "Pasted"), kept across
     documents; `Copy`, `Cut`, `Paste` from Ctrl+C/X/V or egui's copy, cut
     and paste events, each paste (4, 4) further.
+- **Plan 15a, the look** (spec `docs/superpowers/specs/2026-10-18-look-system-design.md`
+  §The level editor; the canvas is lit by the host, `olr-game`'s
+  `editor/canvas.rs`):
+  - **Document** (`look_ops.rs`, Task 17): `set_glow` (a glow naming no
+    group of the look gets a new one named after the element, made
+    unique; `None` removes the glow and its mask), `set_property` (fits
+    the glow mask to a new box size, nearest, in the same step),
+    `set_look` (elements naming a group gone lose their glow),
+    `add_group`, `set_group`, `remove_group` (its elements unglow, one
+    step; a group or look used by a locked element is refused,
+    `DocError::Locked`), `add_light` (`new_light`), `set_light`,
+    `paste_objects`; each checks with `compile_look` first. Edits
+    `Edit::Look` (the `LookSource` before and after) and `Edit::GlowMask`
+    (an element's whole mask swapped, `Arc`s, counted once by address in
+    `MAX_BYTES`; `Edit::Whole` carries `masks` too). The document keeps
+    `GlowMasks` (by element id, each its box at art resolution, 0-255;
+    `glow_mask(id)`) and bakes with them (`bake_elements_with`); saving
+    drops a mask flag whose mask does not fit. A plain level's glow and
+    clear flags made outside the editor (`Kept`) stay as they are while no
+    element glows or is clear, their groups following the look by id, with
+    a diagnostic saying so (`a_plain_level_keeps_its_glow_and_clear`); a
+    resize, crop or art-scale change re-lays the masks (`relay_mask`,
+    `resample_mask`), and a paste keeps them.
+  - **Tools**: Glow (H) paints the selected element's mask
+    (`glow_stroke_before`, `paint_glow`, `glow_stroke_edits`: one step
+    with any group and glow the stroke made, or none when the mask did not
+    change; an element without a glow gets one in a new group, dark but
+    for what is painted; a glow without a mask starts whole) at the
+    brush's strength (`GlowStrength`, 0 erases); Light (K) drags a light
+    under the pointer, else places one. `Tool::DRAWING` is the toolbar's
+    first row, `Tool::ALL` (13) every shortcut. Lights are level objects:
+    `Overlay::Light` (a small sun; the selected one's radius + reach as a
+    circle), listed as "Light i at (x, y)", their properties panel
+    (place, colour, intensity, reach, radius, animation).
+  - **Glow on selected pixels** (the user's playtest, 2026-10-19): Select
+    pixels' "By colour" (`SelectByColour`) picks the connected pixels of
+    the selected element alike in colour (`colour_pixels`, the tool's
+    tolerance), Ctrl adding to the selection (`join_regions`); the
+    selection keeps `pixel_region` (a flag per art pixel of `pixel_rect`,
+    `None` for a rectangle). The Glow brush's "By colour"
+    (`GlowByColour`) lights such pixels in one click, one step
+    (`glow_by_colour`). "Glow selection" (`GlowSelection`) gives the
+    selected pixels the brush's glow % (0 clears; `glow_pixels`; a layer
+    without a glow gets one, dark elsewhere). Copy, cut and delete refuse
+    a colour selection (`BY_COLOUR_TAKES_A_RECTANGLE`).
+  - **Clock and view** (`ClockAction::{Play, Pause, Scrub}`,
+    `SetViewMode`): `clock_ms`, `clock_running`, `advance_clock` (the
+    host's frame time), `view_mode` (Lit, Full bright, Light only); none of
+    them a step.
+  - **Panels** (`ui/look.rs`, Task 18): the level panel's Look section
+    (Add look / Remove look; ambient, max light, steps, softness, soak,
+    solid floor, shadows, the grade; its glow groups with colour,
+    intensity, reach and the animation editor, Remove asking first,
+    `Dialog::RemoveGroup`); an image or drawn element's Glow (strength and
+    group only; a locked element's fields hidden) and "Lets light through"
+    (`Property::Clear`); a fourth toolbar row (`toolbar_row`: the Glow and
+    Light tools, the brush's glow %, Glow selection, the views, Play/Pause
+    lights and the clock's ms). Colours are `#rrggbb` text fields
+    committed once (no colour picker: each drag change would be a step).
+  - **Object clipboard** (the user's playtest, 2026-10-19):
+    `Clipboard::Objects` (a selected spawn or light, `copy`; cut copies
+    then removes), pasted at their places plus an offset that grows by
+    (4, 4) each paste (`paste_objects`, one step, the last pasted
+    selected; `objects_copy_cut_and_paste`).
 - **Tests** (`tests/`, one binary): `document.rs`, `history.rs` (the
   undo proptest, the cap), `state.rs` (a synchronous test host in
   `common.rs`), `tools.rs` (the ignored `brush_dab_speed`: about 2 ms in
-  release for a size-16 dab on Castle Strike) and `flows.rs` (the
-  `egui_kittest` flows of spec §8). The content tests skip without
+  release for a size-16 dab on Castle Strike), `look.rs` (plan 15a: glow,
+  groups, lights, the clock, masks through resizes and pastes, the object
+  clipboard, glow by colour) and `flows.rs` (the
+  `egui_kittest` flows of spec §8; plan 15a's `glow_an_element_and_save`,
+  `paint_glow_with_the_brush`, `glow_pixels_picked_by_colour`,
+  `place_a_light_and_edit_it`, `edit_the_look_panel`,
+  `toggle_views_and_scrub_the_clock`). The content tests skip without
   `OLR_CONTENT_DIR`.
 
 Test: `cargo nextest run -p olr-editor`.

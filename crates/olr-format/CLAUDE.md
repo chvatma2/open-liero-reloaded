@@ -6,9 +6,10 @@ compilers to `olr-data`'s runtime structs; lifts back. Plan 13a: mods.
 Plan 13b: levels, themes, skins and the core pack. Plan 13c: these are the
 packs' format (version 5); `olr-pack` reads and writes through them.
 
-- **Layer 2, `std`.** Depends on `olr-data`, `olr-vfs`, `serde`, `ron`,
-  `thiserror`, `png`, `zune-jpeg` and `zune-core` (exact pins, default
-  features off). Tests also use `olr-pack` and `olr-sim`
+- **Layer 2, `std`.** Depends on `olr-data`, `olr-vfs`, `olr-look` (the
+  look's runtime types), `olr-terrain` (`GlowLayers`, plan 15a), `serde`,
+  `ron`, `thiserror`, `png`, `zune-jpeg` and `zune-core` (exact pins,
+  default features off). Tests also use `olr-pack` and `olr-sim`
   (dev-dependencies).
 - **Canonical text** (`ron_io`): `to_canonical`/`from_canonical` are the only
   path between values and text: 4-space indent, no struct names,
@@ -63,6 +64,15 @@ packs' format (version 5); `olr-pack` reads and writes through them.
     else there (`gun.ron~`, `.DS_Store`) is not read, and
     `olr_pack::validate` warns about it; a `.ron` in a subfolder of
     `projectiles/` is an error.
+  - **Looks** (plan 15a Task 3): `Weapon::look` (`WeaponLookSource`, its
+    `muzzle_light`) and `Projectile::look` (`ProjectileLookSource`: `glow`
+    0-100, a `light`, an `end_flash`), presentation only.
+    `compile_mod_look` gives `ModLookSource`: each projectile's look by its
+    `ModDef` key (shared ones included) and the weapons' in order, empty when no weapon has one (readers
+    index with `get`). `compile_mod` checks looks in the same walk
+    (`compile_all`), so a bad look fails the mod. `lift_mod` gives every
+    look `None` (`ModDef` carries none; Task 3 ruling), and the roundtrip
+    proptest generates none: `tests/look.rs` covers looks' limits.
   - **Tests.** `tests/equivalence.rs`: the bundled mods, lifted, written,
     read and compiled, give the import back exactly, the same `SimMod`, and
     the same RON text (with snapshots of some files in `tests/snapshots/`).
@@ -103,6 +113,57 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `MAX_OBJECTS` (4096); a material or art size that does not match is an
   error. Art decodes within `image_io::LEVEL_ART`. `encode_material` is
   `material.png`'s encoding, shared with a raster element's.
+- **Level looks** (`levels/`, plan 15a Tasks 2, 6 and 14b; spec
+  `docs/superpowers/specs/2026-10-18-look-system-design.md` §Data):
+  `LevelSource` gains `look` (`level.ron`'s `look`, a `LookSource`),
+  `glow` (`GlowLayers`, re-exported from `olr-terrain`: the four `look/`
+  images, `LOOK_FILES`, all or none: `GLOW_FILE` and `GLOW_BACK_FILE`
+  strength per art pixel, `GROUPS_FILE` and `GROUPS_BACK_FILE` a group per
+  world pixel, 0 no group and `n` the look's `glow_groups[n - 1]`) and
+  `clear` (`CLEAR_FILE`, `look/clear.png`: a flag per world pixel, 0
+  opaque, any other value a clear solid; optional on its own; the bake
+  writes 255). All are 8-bit grey PNGs (`encode_grey`); a 16-bit one reads
+  normalised to 8 bits (`decode_grey_within`, Task 2 ruling), each size
+  checked from the header before decoding. `LevelHeader` gains `look`.
+  `LevelObject::Light { at, colour, intensity, reach, radius, animation,
+  phase_ms, notes }` (radius 1-16, default 2; `at` at most `MAX_SIDE`
+  world pixels outside the level, so the shadow march and the cull stay
+  bounded; at most `MAX_LIGHT_OBJECTS`, 1024) is drawn by nothing and
+  never read by the simulation; helpers `spawn`, `light`, `at`, `set_at`,
+  `as_light`, `spawn_point` (spawns are `filter_map(spawn_point)`).
+  `compile_look(src)` is the runtime `olr_look::LevelLook` with its lights
+  (`None` with neither a look nor a light; a light without a look takes
+  the default look, Task 2 ruling); `check` runs it and checks the glow
+  fits and names only groups the look has, and the clear flags' count.
+  `read_level_files_lenient` (playing; `olr-pack`'s `read_level`) leaves
+  out, with a warning each, glow or clear images that do not read or fit
+  and a look that does not check (which drops its lights and glow too);
+  `level.ron` that does not parse still fails, and the strict readers stay
+  `pack check`'s.
+- **Looks** (`look.rs`, plan 15a): the shared authoring types of levels and
+  mods and their compilers to `olr-look`. Every value is an integer
+  (percent, milliseconds, world pixels); colours are the format's hex
+  `Colour` strings and must be opaque (Task 2 ruling). `LightSource`
+  (colour, intensity 0-`MAX_INTENSITY` 1000, `ReachSource::Pixels(1 to
+  MAX_REACH 4096) | Unlimited`, `AnimationSource`, `phase_ms`),
+  `AnimationSource` (`Steady`; `Pulse` with period 1-`MAX_PERIOD_MS`,
+  `PulseShape`; `Flicker` speed 1-1000, depth 0-100; `Keys` of 1-`MAX_KEYS`
+  (64) `KeySource`s, written `(at_ms, level)` or `(at_ms, level,
+  "#rrggbb")`, times not decreasing), `LookSource` (`ambient`
+  `AmbientSource`, `max_light` 100-200, `light_steps` 0 or 2-32,
+  `softness` 0-4, `light_soak` 0-`olr_look::MAX_SOAK` default 8,
+  `solid_floor` `SolidFloorSource` default white at 30 % (both plan 15a
+  Stop 1b), `shadows` `ShadowsSource` `Hard | Smooth | Soft` default `Soft`
+  (the user's playtest, 2026-10-19), `grade` `GradeSource`, `glow_groups`
+  at most `MAX_GROUPS` 255), `GlowGroupSource` (an id by `valid_group_id`,
+  a slug of `[a-z0-9_.-]` of 1-64 bytes not starting with `.`, unique;
+  `GlowColourSource::Own | Tint`, intensity, reach, animation, phase),
+  `ProjectileLookSource`, `WeaponLookSource`. `LookSource`'s `Default` is
+  written by hand to equal its serde defaults (`the_default_look_is_the_empty_file`).
+  `compile_reach`, `compile_animation`, `compile_light`,
+  `compile_look_source` (the look without its lights),
+  `compile_projectile_look`, `compile_weapon_look`: each value checked, an
+  error naming its field path.
 - **Level composition** (`levels/composition.rs`, plan 14a): `Composition`
   is `editor/composition.ron` (`COMPOSITION_FILE`; `EDITOR_DIR` is
   `editor`), its `Element`s bottom to top (`id` a `valid_id` slug, `name`,
@@ -130,6 +191,16 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `composition.ron`; a wrong size on the file itself. `check_elements(c,
   size, art_scale)` is its metadata part without the files (the editor's
   live check, plan 14b); `check_composition` calls it first.
+  Plan 15a (Tasks 5 and 14b): `Element::glow` (`ElementGlow { strength
+  1-100, group, mask }`; a group id by `valid_group_id`; a mask is
+  `glow_file(id)`, `editor/glow/<id>.png`, grey, the element's box × art
+  scale, listed by `element_files`) and `Element::clear` (its rock and
+  dirt let light through; collisions unchanged), both optional and on the
+  element, not its kind (Task 5 ruling); a raster element can do neither
+  (`check_elements`). `element_box(kind, size)` is an image or drawn
+  element's box (`None` for a raster). `check_glow_groups(c, look)`: every
+  element's glow names a group of the level's look (an error on
+  `composition.ron`); `olr-pack`'s `validate` calls it.
 - **Themes** (`themes/`): `ThemeSource` is `theme.ron`, `holes/<i>.png` with
   `holes/<i>.mask.png`, `green_ball.png` with `green_ball.mask.png`,
   `stones/`, `misc/`, `front_tile.png` and `back_tile.png`. A stamp is a
@@ -174,7 +245,14 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   stays the stored frame's size. Test data in `tests/data/` (README).
 - **Tests** (`tests/`): `levels.rs`, `themes.rs`, `core_pack.rs` and
   `skins.rs` read every bundled pack in `content/packs` (format 5) and check
-  it is canonical: written again, the same bytes. Unit tests in each module's files cover its checks. The
+  it is canonical: written again, the same bytes. `look.rs` (plan 15a): the
+  spec's level and mod examples round-trip, a level without a look writes
+  none, the glow and clear images round-trip (clear on its own; a wrong
+  size fails strictly and warns leniently), `limits_are_enforced`,
+  `hostile_look_files_are_errors_never_panics`, look files hashed and known
+  to `olr_pack::validate`, inline projectile looks under their key,
+  `bundled_mods_have_no_look`, `the_default_look_is_the_empty_file`,
+  `solids_defaults_are_the_stop_1_verdict`, `shadows_default_to_soft`. Unit tests in each module's files cover its checks. The
   bundled-content tests skip when `OLR_CONTENT_DIR` is not a directory.
   Every `check()` applies the pixel bound its reader decodes with
   (`image_io::check_size`), so a saved file always reopens.

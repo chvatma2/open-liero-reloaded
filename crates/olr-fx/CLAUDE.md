@@ -36,6 +36,14 @@ is `docs/porting/olx-notes/presentation.md` §7 (and §2.2 for stains).
   so the grid stays the world's under a sub-pixel camera), with OLX's clipping and SDL's source clipping (frames before
   or past an image draw nothing). Entities are drawn at their latest state
   (no interpolation).
+- **Shades** (`draw.rs`, plan 15a Task 15, R13): `Fx::draw`'s `lit` (a match
+  with a look) gives explosions, sparkles and spawn effects
+  `olr_scene::Shade::GLOW`, and blood, blood droppers and gibs
+  `Shade::FLOORED`, so they never show below the level's solid floor, as
+  rock does (the user's playtest, 2026-10-19); dirt particles, smoke,
+  chemical smoke, doomsday and jetpack spray stay `Shade::LIT`. Unlit, every
+  entity is `Shade::LIT`. `olr-present` lights explosions from the entities
+  (`Fx::entities`).
 - **Assets** (`assets.rs`): `FxAssets` registers the core sprites and each
   worm's colorized gibs (`CWorm::ColorizeImage`, floats) in any `Atlas`
   (`SceneAssets` in the game), sharing the atlas's white pixel
@@ -66,9 +74,11 @@ entity pass `substep` (spec §19), runs the passes left, and rebuilds a
 `lost_area`. So a `Dirt` particle samples the colour image after the edits
 before it, and stains land between the edits as in OLX. **The caller must not
 also call `olr_content::apply_edits` for the same tick.** Per drawn frame,
-`fx.draw(&fx_assets, lit, &mut list)` (`lit`: a match with a look, where explosions, sparkles and spawn effects glow) after `scene.build`. On a restart:
+`fx.draw(&fx_assets, lit, &mut list)` (`lit`: a match with a look, see
+Shades above) after `scene.build`. On a restart:
 `fx.clear()` and a new colour map.
 
 Test: `cargo nextest run -p olr-fx`. `tests/entities.rs` and `tests/events.rs`
-use a made-up level; `tests/matches.rs` plays oracle scenarios and needs
+use a made-up level (`blood_and_gibs_take_the_solid_floor_when_lit` pins
+the shades); `tests/matches.rs` plays oracle scenarios and needs
 `OLR_CONTENT_DIR` (it skips without it).

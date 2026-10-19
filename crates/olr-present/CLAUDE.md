@@ -7,7 +7,8 @@ wired in the frame loop's order **once**, so each mode that draws a world
 
 - **Layer 5.** Depends on `olr-scene`, `olr-fx`, `olr-render` (same layer,
   listed in `xtask/layers.ron`), `olr-content`, `olr-sim`, `olr-terrain`,
-  `olr-data`, `olr-netcode` (its tick records, for online play). It holds
+  `olr-data`, `olr-look` (the look frame), `olr-netcode` (its tick records,
+  for online play). It holds
   no GPU or OS handle: only `upload` takes the `olr_render::Renderer`, so
   everything else is tested headless.
 - **Use** (`lib.rs`):
@@ -19,27 +20,67 @@ wired in the frame loop's order **once**, so each mode that draws a world
     The entities' pool is the match's (`olr_fx::Fx::for_match`): play's
     16384 with its death reserve, OLX's 1024 with
     `SimSettings::olx_quirks` (scenarios, render goldens).
+  - **Lit matches** (plan 15a Tasks 13 and 15, R7, R13): `has_look()` is the
+    level's `LoadedLevel::has_look` or a mod look that is not empty. `new`
+    then gives the scene its `olr_scene::ShadeRules` (`floor` =
+    `olr_look::engine::FLOOR`, 50 %; each projectile's look glow); an unlit match
+    sets none and draws as always.
   - `set_fx_capacity(n)` before the first tick: a bench-only entity pool
     (plan 8).
   - `on_tick(&world, &events)` after every `World::tick`: `Fx::step_tick`
     (the only place the tick's terrain edits reach the colour map; never
     also call `olr_content::apply_edits`), then `Scene::after_tick`.
-  - `build(&world, alpha, &mut list)` per drawn frame: scene, then entities.
+  - `build(&world, alpha, &mut list)` per drawn frame: scene, then entities
+    (`Fx::draw` with the match's lit flag), then `build_look(&world, alpha,
+    list.view)`: the frame's `olr_look::LookFrame`, which `look()` returns
+    (`None` unlit) for the renderer. It begins with the level's look at the
+    match clock (the world's time plus `alpha` of a 10 ms tick), adds the
+    dynamic lights (`look.rs`), and culls to the view padded by
+    `olr_render::LIGHT_CULL_PAD` (batch B review, Important 2). It allocates
+    nothing once warm (`tests/no_alloc.rs`).
   - `upload(&mut renderer)` right before the frame is drawn: the atlas when
     a worm was added (also mid-match), the whole colour map when it is new
     (`new`, `restart`, `invalidate_gpu` for a new renderer), else the dirty
     rectangles of the ticks since the last frame (the map merges them).
+    It first turns the renderer's lighting on or off to match `has_look()`
+    (`Renderer::lighting`, `set_lighting`), uploading the terrain whole on a
+    change (the look textures go with the map).
   - `step_fx(&FxTick)`: `on_tick`'s entities and colour part for a tick
     described by hand (online play).
   - `restart(&world, &level, &theme)` for the same worms on a new world;
     `state_loaded(&world)` for a loaded state in online play (scene
     restarts, entities go; the colour map is repainted by the load's
-    restored area).
+    restored area). Both forget the end flashes and muzzle lights.
   - `follow(worm)` / `followed()`: the worm the camera follows (worm 0
     when new; the game's local slot, or a spectator's choice).
   - `terrain_drift(&world)`: the colour map's material is not the world's.
     It compares the whole grid; `olr-game`'s session checks it every
     `DRIFT_CHECK_TICKS` in debug builds.
+- **Dynamic lights** (`look.rs`, plan 15a Task 15 and the batch C and D
+  reviews; R9's order, after the level's own): projectile lights (the
+  scene's `drawn_projectiles`, slot order, the clock from the spawn time,
+  identity the serial), end flashes (start order), muzzle lights (start
+  order) and explosion lights (the entities' slot order). End flashes and
+  muzzle lights start from the scene's per-tick records
+  (`Scene::ended_projectiles`, `Scene::shots`, taken with
+  `clear_look_events` each frame), so they never depend on the frame rate,
+  and run their keys from the tick they started. An end flash is the
+  projectile look's `end_flash`, keyed by `FlashKey` (slot, serial,
+  `SimMod` index, spawn time ms), started once: a set for membership
+  (never iterated) and a time-ordered deque remember keys 2 s (`MEMORY_MS`,
+  past the rollback window) and at most 8192, so a re-simulated tick or a
+  mispredicted end a correction erased never flashes twice (the flash stays
+  where it first showed). At most `4 × olr_look::MAX_LIGHTS` flashes show;
+  a flash or muzzle light ends with its animation or after 2 s (`LIFE_MS`), and a
+  clock that went back forgets what came after. A muzzle light is the
+  weapon look's `muzzle_light`, else `olr_look::engine::muzzle_light()`:
+  one a worm (a new shot restarts it, batch D review, Important 3),
+  following the worm as drawn, none for a dead worm. An explosion's light
+  is `engine::explosion_light(size)`, made once per size, its clock the
+  explosion's age over its life (size × 25 ms) scaled to
+  `engine::EXPLOSION_MS` (batch C review, Minor 2), identity its slot.
+  `flashes_started()` lists the end flashes the last frame started (tests
+  and tools).
 - **Online play** (`net.rs`, spec §3.4, decision N20): the newest
   predicted tick is drawn and corrections re-simulate shown ticks. Per
   advance: inside it, for each simulated tick (olr-online's `on_tick`
@@ -76,5 +117,11 @@ Test: `cargo nextest run -p olr-present` (`tests/present.rs` plays oracle
 scenarios: the bundle draws what the hand wiring drew, the atlas bookkeeping,
 drift; `tests/net.rs` rolls a Dirt Level match back by hand: sounds and
 spawns once per key, no drift after any advance, the confirmed records the
-final timeline's, a loaded state). It needs `OLR_CONTENT_DIR` and skips
-without it.
+final timeline's, a loaded state,
+`end_flashes_once_per_projectile_through_rollbacks`,
+`a_loaded_state_restores_the_glow`; `tests/look.rs`: no look for bundled
+content, the level part, projectile and end-flash lights, engine lights and
+floors only in lit matches, the light cap, frame-rate independence, muzzle
+lights' curve and no stacking; `tests/no_alloc.rs`, its own binary, a warm
+lit build with every dynamic light allocates nothing). They need
+`OLR_CONTENT_DIR` and skip without it.

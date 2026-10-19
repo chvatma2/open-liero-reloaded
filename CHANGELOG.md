@@ -46,6 +46,22 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   final release (`cargo xtask dist --final`, from a commit tagged
   `v<version>`) the plain version. The game and the server show it
   (`--version`, About, the main menu, their logs).
+- Lit levels: a level can set darkness (an ambient colour and strength),
+  place lights (colour, strength, reach, steady, pulsing, flickering or
+  keyed), and make any pixels glow and light their surroundings. Lamps
+  throw soft shadows; light soaks into rock and dirt, which never fall
+  below a solid floor; clear solids let light through. Explosions, muzzle
+  flashes and glowing shots light the level too. Worms, shots and bonuses
+  stay visible in the dark. A level without a look draws as before.
+- The level editor makes lit levels: a Look panel, the Glow brush (H), the
+  Light tool (K), lit, full-bright and light-only views and a preview
+  clock. Pixels picked by colour or by a rectangle can be made to glow.
+  Spawns and lights copy and paste.
+- `olr-cli level look`, `level group`, `level light`, `level element glow`
+  (a shape or `--colour-at`) and `look-preview` make and check lit levels
+  from the command line.
+- Your own worm no longer shows its name above it (OpenLieroX shows none);
+  its weapon's name still shows while you change weapons.
 
 ### Changed
 

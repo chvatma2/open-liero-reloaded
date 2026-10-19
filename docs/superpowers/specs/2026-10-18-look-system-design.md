@@ -1,7 +1,11 @@
 # Look System: Design (0.2, sub-project 3)
 
 - **Status:** agreed with the user on 2026-10-18, question by question.
-  Planned as plan 15a (`docs/superpowers/plans/2026-10-18-plan-15a-look-system.md`).
+  Built as plan 15a (`docs/superpowers/plans/2026-10-18-plan-15a-look-system.md`),
+  with the playtest's changes of 2026-10-19 (soft shadows by default, glow
+  on selected pixels, blood and gibs on the solid floor); its decisions are
+  in `docs/porting/STATUS.md`, "Look system decisions (plan 15a)". Worms in
+  the light follow in plan 15b (`2026-10-19-worm-lighting-design.md`).
 - **Milestone:** 0.2 (`docs/superpowers/specs/2026-10-16-milestone-0.2-scope.md`),
   sub-project 3, "Graphics groundwork and look format".
 - **Builds on:**

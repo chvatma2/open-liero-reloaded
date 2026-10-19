@@ -149,6 +149,61 @@ templates and the level operations.
     unchanged: `paint_layer`'s closure is fallible), `duplicate` (directly
     above; an image shares its original, its own files copied under the
     new id), `copy_name` ("Crate" → "Crate 2", "Crate 2" → "Crate 3").
+- **Plan 15a, the look system** (spec
+  `docs/superpowers/specs/2026-10-18-look-system-design.md`; the format's
+  side is `olr-format`'s `look` and level looks):
+  - **`look`** (Task 7): `set_look` (`None` removes it), `add_group` (a new
+    id; returns its index), `set_group` (keeps the id), `add_light`
+    (returns its index; `EditError::TooManyObjects` past `MAX_OBJECTS`) and
+    `set_light` (its notes kept) on a `LevelSource`; `rename_group` (the
+    elements naming it follow) and `remove_group` on a `Pack`: the level's
+    glow loses the group's pixels (strength and group 0), the groups above
+    move down one, an all-zero glow becomes none, and every element naming
+    it loses its glow and mask, locked or not (returns their ids; the
+    caller rebakes a composed level). Each edits a copy and keeps it only
+    when `compile_level` checks (`EditError::Look`). Lights move and go
+    with `level::move_object` (any object now) and `remove_object`.
+  - **`level::resize`** re-lays the glow (`GlowLayers`) and clear flags
+    with the art, the new area glowing none and opaque; a glow or flags not
+    fitting the level are dropped, never indexed. Spawns outside the new
+    level are removed and returned; lights stay, since they may light it
+    from outside (batch A review), their positions shifted saturating.
+  - **The bake** (`compose`, Tasks 5 and 14b): a front art pixel glows as
+    the element giving its colour, a back art pixel as the background
+    element giving it (a dirt or rock layer's back art never glows); a
+    world pixel's group is that of the element glowing at its centre art
+    pixel, else at the first glowing art pixel of its block, 0 none (batch
+    A review, `a_cell_glowing_off_centre_takes_its_glow_group`). Strength
+    percent bakes to 0-255, × the mask's value / 255. A glow naming no
+    group of the level's look, or a mask not fitting its box, is left out.
+    A solid world pixel is clear (255) when the element giving its
+    material is. The level's `glow` and `clear` are `None` when nothing
+    glows or nothing is clear (no `look/` files written). `GlowMasks`
+    (element id → mask), `decode_glow_masks(src, size, s)` (each grey, its
+    box × art scale; a missing or misfit one is `ComposeError::File`),
+    `bake_elements_with` (`bake_elements` passes no masks: a masked glow
+    bakes uniform; `Baker` decodes and passes them). `stale` covers the
+    four `look/` glow images and `look/clear.png`.
+  - **`glow`**: `paint_mask(mask, at, size, s, shape, value)` (a box mask at
+    art resolution, clipped to the box) and `colour_region(art, seed,
+    tolerance)` (glow by colour, the user's playtest, 2026-10-19: the
+    4-connected art pixels `level::similar` to the seed's, an explicit
+    stack; `None` for a seed outside).
+  - **`element`**: `Property::Glow(Option<ElementGlow>)` and
+    `Property::Clear(bool)` (an image or drawn element, `WrongKind` for a
+    raster; `set_all` refuses a glow naming no group of the level's look
+    before editing). `paint_glow(pack, id, shape, strength)` paints the
+    mask (0-100, 0 erasing; a first mask starts at 255) and
+    `glow_colour(pack, id, at, tolerance, strength)` (the user's playtest,
+    2026-10-19; `olr-cli level element glow --colour-at`) lights the region
+    alike in colour to world pixel `at` (a glow without a mask starts
+    dark: only the region lights). Both need the element to glow already,
+    refuse a locked one, write `editor/glow/<id>.png` and set its `mask`.
+    `merge_down` and `split` results lose their glow (Task 5 ruling);
+    `duplicate` copies the mask and `remove` drops it, with the element's
+    files (`element_files` lists it).
+    `element::resize` re-lays no glow mask (the editor keeps its own
+    `GlowMasks`, batch D review).
 - **Tests** (`tests/`, one binary): `pack.rs` (every bundled pack loads and
   writes back byte for byte; foreign files kept; invalid results refused;
   saves through `x/..` and a symbolic link; a name a save would lose),
@@ -159,7 +214,18 @@ templates and the level operations.
   `compose.rs` (the raster round trip of every bundled level, the region
   proptest, `the_fixture_is_baked` over `fixtures/edit/composed-level`, the
   ignored `bake_speed`: about 0.3-0.4 s in release for a full-level
-  256-colour diffused image) and `element.rs`. The bundled-content tests skip without
+  256-colour diffused image) and `element.rs`; plan 15a: `glow.rs` (the
+  channel rules, the region bake equal to the full bake, no glow writing
+  no `look/` files, a painted mask, an unknown group refused by `set` and
+  by the pack check, a duplicate keeping its glow and mask, a cell glowing
+  off centre, clear following the element giving the material, a raster
+  refusing clear, a resize re-laying clear flags) and `look.rs` (look
+  edits validate, unique group ids, removing a group renumbers and
+  unglows, renaming follows the elements, lights round-trip, the last
+  group's removal drops an empty glow, a resize keeping lights outside the
+  level). `glow_colour` is tested through `olr-cli`'s
+  `cli_glows_pixels_by_colour` and the editor's
+  `glow_pixels_picked_by_colour`. The bundled-content tests skip without
   `OLR_CONTENT_DIR`.
 
 Test: `cargo nextest run -p olr-edit`.
