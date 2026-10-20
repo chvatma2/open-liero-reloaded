@@ -32,8 +32,10 @@ fn has_nextest() -> bool {
     Command::new("cargo").args(["nextest", "--version"]).output().is_ok_and(|o| o.status.success())
 }
 
-pub fn run(offline: bool) -> anyhow::Result<bool> {
-    run_with(offline, false)
+/// `cargo xtask check`; with `render`, also the [`RENDER_TESTS`] (what a
+/// rendering change needs, without the rest of `full`).
+pub fn run(offline: bool, render: bool) -> anyhow::Result<bool> {
+    run_with(offline, false, render)
 }
 
 /// `cargo xtask full`: `check`, then the bot-match grid ([`FULL_TESTS`]),
@@ -47,7 +49,7 @@ pub fn run(offline: bool) -> anyhow::Result<bool> {
 /// (`bench.rs`), and the feel numbers of online play against theirs
 /// (`net.rs`).
 pub fn full(offline: bool) -> anyhow::Result<bool> {
-    run_with(offline, true)
+    run_with(offline, true, false)
 }
 
 /// The full tier's long CPU tests as `(package, test target)`, run with
@@ -83,6 +85,12 @@ pub const GPU_TESTS: &[(&str, &str)] = &[
     ("olr-ui", "hud_snapshots"),
 ];
 
+/// The GPU tests a rendering change needs (`check --render`): the
+/// renderer's GPU tests, the render goldens and the HUD snapshots, without
+/// the soak and the GPU benchmarks of [`GPU_TESTS`].
+pub const RENDER_TESTS: &[(&str, &str)] =
+    &[("olr-render", "gpu"), ("olr-cli", "render_golden"), ("olr-ui", "hud_snapshots")];
+
 /// Whether `olr-render`'s `adapter` example opens a graphics adapter:
 /// `Ok(Ok(adapter))` when it does, `Ok(Err(notice))` when none opens, `Err`
 /// when the probe itself fails.
@@ -100,11 +108,13 @@ pub fn probe_adapter() -> Result<Result<String, String>, String> {
     }
 }
 
-fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
+/// `tests` with `OLR_GPU_TESTS` set, or a `skip <name>` notice when no
+/// graphics adapter opens.
+fn gpu_tests_step(name: &str, tests: &[(&str, &str)], envs: &[(&str, PathBuf)]) -> StepResult {
     match probe_adapter()? {
         Ok(said) => println!("     gpu adapter: {said}"),
         Err(said) => {
-            println!("skip gpu ({said})");
+            println!("skip {name} ({said})");
             return Ok(());
         }
     }
@@ -113,7 +123,7 @@ fn gpu_step(envs: &[(&str, PathBuf)]) -> StepResult {
     if !has_nextest() {
         args = vec!["test", "--quiet"];
     }
-    for (package, test) in GPU_TESTS {
+    for (package, test) in tests {
         args.extend(["-p", package, "--test", test]);
     }
     let mut envs = envs.to_vec();
@@ -164,7 +174,7 @@ fn audio_step(envs: &[(&str, PathBuf)]) -> StepResult {
     }
 }
 
-fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
+fn run_with(offline: bool, gpu: bool, render: bool) -> anyhow::Result<bool> {
     crate::tidy::sweep_if_large();
     let rules = layers::load_rules()?;
     let failed = RefCell::new(Vec::new());
@@ -231,9 +241,12 @@ fn run_with(offline: bool, gpu: bool) -> anyhow::Result<bool> {
         crate::determinism::step(crate::determinism::Opts { wasm: true, ..Default::default() })
     });
 
+    if render && !gpu {
+        step("render", &mut || gpu_tests_step("render", RENDER_TESTS, &envs));
+    }
     if gpu {
         step("bot-grid", &mut || full_cpu_step(&envs));
-        step("gpu", &mut || gpu_step(&envs));
+        step("gpu", &mut || gpu_tests_step("gpu", GPU_TESTS, &envs));
         step("audio", &mut || audio_step(&envs));
         let content = envs.iter().find(|(k, _)| *k == "OLR_CONTENT_DIR").map(|(_, v)| v.clone());
         step("e2e", &mut || crate::e2e::run(content.as_deref()));

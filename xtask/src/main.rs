@@ -41,6 +41,10 @@ enum Command {
         /// Do not download OLX content; tests that need it are skipped.
         #[arg(long)]
         offline: bool,
+        /// Also the render goldens, HUD snapshots and the renderer's GPU tests: what a
+        /// rendering change needs, without the rest of `full`.
+        #[arg(long)]
+        render: bool,
     },
     /// `check`, then the bot-match grid and the 30-minute match, then the GPU tier:
     /// the renderer's GPU tests and the render goldens (skipped with a notice when
@@ -245,7 +249,7 @@ pub fn root() -> PathBuf {
 
 fn main() -> ExitCode {
     let result = match Cli::parse().command {
-        Command::Check { offline } => check::run(offline),
+        Command::Check { offline, render } => check::run(offline, render),
         Command::Full { offline } => check::full(offline),
         Command::Layers => layers::run().map(|()| true),
         Command::FormatDocs { check } => format_docs::run(check),
