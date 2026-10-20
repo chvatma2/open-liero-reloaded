@@ -66,7 +66,19 @@ impl Repo {
     }
 
     pub fn changed_files(&self, base: &str, head: &str) -> Result<Vec<String>> {
-        Ok(lines(&self.git(&["diff", "--name-only", base, head])?))
+        // Without renames, a file moved out of a protected path lists both paths.
+        Ok(lines(&self.git(&["diff", "--name-only", "--no-renames", base, head])?))
+    }
+
+    /// Whether `base` is an ancestor of `HEAD` (the session kept the history
+    /// it started on).
+    pub fn is_ancestor(&self, base: &str) -> Result<bool> {
+        let status = Command::new("git")
+            .args(["merge-base", "--is-ancestor", base, "HEAD"])
+            .current_dir(&self.dir)
+            .status()
+            .context("cannot run git")?;
+        Ok(status.success())
     }
 
     /// No changes and no untracked files outside `target/`.

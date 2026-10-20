@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use serde::{Deserialize, Serialize};
+
 use crate::gate::DEFERRED_FILE;
 use crate::trust::{MARKER, Refusal};
 
@@ -19,6 +21,14 @@ pub enum HandBack {
     CheckFailed(String),
     MainBroken,
     RebaseConflict,
+    /// The session's commits do not descend from the `main` it started on.
+    NotOnMain,
+    PushFailed(String),
+    /// The runner was interrupted and could not safely carry on.
+    Interrupted(&'static str),
+    /// The session could not run at all (login, network, the binary); the
+    /// runner pauses rather than hand back the whole queue.
+    Infrastructure(String),
 }
 
 impl HandBack {
@@ -39,6 +49,12 @@ impl HandBack {
                     .into()
             }
             HandBack::RebaseConflict => "`main` moved during the session and the change no longer rebases cleanly.".into(),
+            HandBack::NotOnMain => "The session rewrote history below the `main` it started on.".into(),
+            HandBack::PushFailed(why) => format!("The push to `main` was refused:\n\n```\n{why}\n```"),
+            HandBack::Interrupted(when) => format!("The runner was interrupted {when}."),
+            HandBack::Infrastructure(why) => format!(
+                "The session could not run: {why}\n\nThe runner is paused (`olr-runner resume` once fixed)."
+            ),
         }
     }
 }
@@ -48,7 +64,7 @@ fn list(items: &[String]) -> String {
 }
 
 /// A pushed issue.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Done {
     pub summary: String,
     pub first: String,
@@ -57,6 +73,9 @@ pub struct Done {
     pub claude_md: Vec<String>,
     pub new_packages: Vec<String>,
     pub deferred: bool,
+    /// The change touched rendering, but no graphics adapter checked the goldens.
+    #[serde(default)]
+    pub render_unverified: bool,
 }
 
 pub fn done_comment(d: &Done) -> String {
@@ -72,6 +91,9 @@ pub fn done_comment(d: &Done) -> String {
     }
     if d.deferred {
         c += &format!("\n\nNeeds heavier verification before release: see `{DEFERRED_FILE}`.");
+    }
+    if d.render_unverified {
+        c += "\n\nThe render goldens were not checked (no graphics adapter): run `cargo xtask check --render` before release.";
     }
     c
 }

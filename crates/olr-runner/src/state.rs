@@ -9,8 +9,24 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
+use crate::report::Done;
+
 pub struct State {
     pub dir: PathBuf,
+}
+
+/// How far the run in progress got: what a recovery may still do.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Phase {
+    /// The issue is being claimed; no session yet. A recovery hands it back.
+    Claimed,
+    /// The session is running. A recovery resumes it once.
+    Session,
+    /// The session finished; its commits are being checked and pushed. A
+    /// recovery runs the gate again, never the session.
+    Gate { summary: String },
+    /// Pushed; only the report is left.
+    Pushed(Done),
 }
 
 /// The run in progress.
@@ -23,6 +39,9 @@ pub struct Current {
     /// Session running time so far (usage-limit waits excluded).
     pub active_secs: u64,
     pub log: PathBuf,
+    pub phase: Phase,
+    /// Times the session was resumed after an interruption.
+    pub resumes: u32,
 }
 
 fn unix_secs() -> u64 {
@@ -68,7 +87,12 @@ impl State {
     pub fn set_current(&self, current: Option<&Current>) -> Result<()> {
         let path = self.dir.join("current.ron");
         match current {
-            Some(c) => std::fs::write(path, ron::to_string(c)?)?,
+            Some(c) => {
+                // Written beside and renamed, so a kill never leaves half a file.
+                let tmp = path.with_extension("ron.new");
+                std::fs::write(&tmp, ron::to_string(c)?)?;
+                std::fs::rename(tmp, path)?;
+            }
             None if path.exists() => std::fs::remove_file(path)?,
             None => {}
         }
@@ -91,6 +115,12 @@ impl State {
         let text = std::fs::read_to_string(self.dir.join("history.log")).unwrap_or_default();
         let lines: Vec<String> = text.lines().map(str::to_string).collect();
         lines[lines.len().saturating_sub(n)..].to_vec()
+    }
+
+    /// Where a running session's process id is kept, so a later tick can
+    /// stop a session an interrupted runner left behind.
+    pub fn session_pid(&self) -> PathBuf {
+        self.dir.join("session.pid")
     }
 
     /// A new session log for `issue`.

@@ -27,8 +27,10 @@ pub struct Settings {
     pub claude_bin: String,
     /// The gate's check, run in the workspace.
     pub check_cmd: Vec<String>,
-    /// The gate's extra check when a change touches rendering.
+    /// The gate's check, instead of `check_cmd`, when a change touches rendering.
     pub render_check_cmd: Vec<String>,
+    /// Run the gate's checks inside bubblewrap (`gate::sandboxed`).
+    pub gate_sandbox: bool,
     /// The runner's own clone.
     pub workspace: PathBuf,
     /// Lock, pause flag, current run, history and session logs.
@@ -67,6 +69,7 @@ impl Default for Settings {
             claude_bin: "claude".into(),
             check_cmd: strings(&["cargo", "xtask", "check"]),
             render_check_cmd: strings(&["cargo", "xtask", "check", "--render"]),
+            gate_sandbox: true,
             workspace: home.join(".local/share/olr-runner/work"),
             state_dir: home.join(".local/state/olr-runner"),
             claude_config_dir: home.join(".config/olr-runner/claude"),

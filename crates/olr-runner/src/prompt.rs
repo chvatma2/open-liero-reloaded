@@ -6,11 +6,22 @@ use std::path::Path;
 use crate::trust::{MARKER, Part, Task};
 
 const TEMPLATE: &str = include_str!("prompt.md");
-const FENCE_END: &str = "</untrusted-report>";
 
-/// Untrusted text that can neither close the fence nor pose as a runner comment.
+/// Untrusted text that can neither close the fence (in any case or
+/// spacing) nor pose as a runner comment.
 fn neutralise(text: &str) -> String {
-    text.replace(FENCE_END, "</untrusted-report\u{200b}>").replace(MARKER, "<!-- olr-runner (quoted) -->")
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    while let Some(at) = rest.find("</") {
+        let after = &rest[at + 2..];
+        let squeezed: String = after.chars().filter(|c| !c.is_whitespace()).take(17).collect();
+        out.push_str(&rest[..at]);
+        // `<\/` reads the same to a person and closes nothing.
+        out.push_str(if squeezed.eq_ignore_ascii_case("untrusted-report>") { "<\\/" } else { "</" });
+        rest = after;
+    }
+    out.push_str(rest);
+    out.replace(MARKER, "<!-- olr-runner (quoted) -->")
 }
 
 fn section(parts: &[Part], clean: impl Fn(&str) -> String) -> String {

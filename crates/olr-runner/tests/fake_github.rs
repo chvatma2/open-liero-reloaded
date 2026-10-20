@@ -5,7 +5,8 @@ use anyhow::{Result, bail};
 use olr_runner::github::{GitHub, IssueDetail, IssueRef, Milestone};
 
 /// GitHub in memory: label edits change the issues, every mutation is
-/// logged, and `fail` makes every call fail (the network is down).
+/// logged, `fail` makes every call fail (the network is down) and
+/// `fail_on` the calls of one kind (`labels`, `comment`, `close`).
 #[derive(Default)]
 pub struct FakeGitHub {
     pub milestones: RefCell<Vec<Milestone>>,
@@ -13,12 +14,21 @@ pub struct FakeGitHub {
     pub closed: RefCell<BTreeSet<u64>>,
     pub log: RefCell<Vec<String>>,
     pub fail: Cell<bool>,
+    pub fail_on: RefCell<Option<&'static str>>,
 }
 
 impl FakeGitHub {
     fn up(&self) -> Result<()> {
         if self.fail.get() {
             bail!("gh: network is down");
+        }
+        Ok(())
+    }
+
+    fn up_for(&self, op: &str) -> Result<()> {
+        self.up()?;
+        if *self.fail_on.borrow() == Some(op) {
+            bail!("gh: {op} failed");
         }
         Ok(())
     }
@@ -56,7 +66,7 @@ impl GitHub for FakeGitHub {
     }
 
     fn edit_labels(&self, n: u64, add: &[&str], remove: &[&str]) -> Result<()> {
-        self.up()?;
+        self.up_for("labels")?;
         let mut details = self.details.borrow_mut();
         let labels = &mut details.get_mut(&n).unwrap().labels;
         labels.retain(|l| !remove.contains(&l.as_str()));
@@ -69,13 +79,13 @@ impl GitHub for FakeGitHub {
     }
 
     fn comment(&self, n: u64, body: &str) -> Result<()> {
-        self.up()?;
+        self.up_for("comment")?;
         self.log.borrow_mut().push(format!("comment {n} {body}"));
         Ok(())
     }
 
     fn close(&self, n: u64) -> Result<()> {
-        self.up()?;
+        self.up_for("close")?;
         self.closed.borrow_mut().insert(n);
         self.log.borrow_mut().push(format!("close {n}"));
         Ok(())

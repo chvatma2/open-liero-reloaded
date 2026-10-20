@@ -119,3 +119,18 @@ fn hidden_comments_revealed() {
 fn unclosed_hidden_comment_revealed() {
     assert_eq!(reveal_hidden("a<!-- tail"), "a[hidden HTML comment:  tail]");
 }
+
+#[test]
+fn invisible_characters_revealed() {
+    let tagged = "fix\u{E0061}\u{E0062}it\u{202E}x\u{200B}y";
+    assert_eq!(reveal_hidden(tagged), "fix[U+E0061][U+E0062]it[U+202E]x[U+200B]y");
+}
+
+#[test]
+fn edit_in_same_second_refuses() {
+    let mut d = detail("mallory");
+    d.comments.push(comment(M, "Fix it."));
+    d.editor = Some("mallory".into());
+    d.last_edited_at = Some("2026-10-20T10:10:00Z".into());
+    assert_eq!(classify(&d, M).unwrap_err(), Refusal::EditedAfterApproval { by: "mallory".into() });
+}

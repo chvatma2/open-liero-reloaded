@@ -47,7 +47,8 @@ fn protected_hits_listed() {
 fn render_paths_detected() {
     assert!(touches_render(&strings(&["crates/olr-sim/src/a.rs", "crates/olr-render/src/gi.rs"])));
     assert!(touches_render(&strings(&["fixtures/ui/hud.png"])));
-    assert!(!touches_render(&strings(&["crates/olr-sim/src/a.rs", "docs/x.md"])));
+    assert!(touches_render(&strings(&["crates/olr-sim/src/a.rs"])), "the goldens replay the simulation");
+    assert!(!touches_render(&strings(&["crates/olr-bots/src/a.rs", "docs/x.md"])));
     assert_eq!(
         claude_md_edits(&strings(&["CLAUDE.md", "crates/olr-sim/CLAUDE.md", "README.md"])),
         strings(&["CLAUDE.md", "crates/olr-sim/CLAUDE.md"])
@@ -74,6 +75,7 @@ fn done_comment_has_revert_and_marker() {
         claude_md: strings(&["crates/olr-sim/CLAUDE.md"]),
         new_packages: strings(&["rand 0.9.0"]),
         deferred: true,
+        render_unverified: false,
     };
     let c = done_comment(&d);
     assert!(c.starts_with(MARKER));
@@ -105,4 +107,29 @@ fn handback_comment_has_reason_log_and_retry() {
     ] {
         assert!(c.contains(needle), "hand-back comment lacks {needle:?}:\n{c}");
     }
+}
+
+#[test]
+fn gate_sandbox_masks_credentials() {
+    let home = tempfile::tempdir().unwrap();
+    for d in [".config/gh", ".ssh", ".config/olr-runner", ".cargo"] {
+        std::fs::create_dir_all(home.path().join(d)).unwrap();
+    }
+    std::fs::write(home.path().join(".git-credentials"), "x").unwrap();
+    let ws = home.path().join("work");
+    let cmd = olr_runner::gate::sandboxed(&strings(&["cargo", "xtask", "check"]), &ws, home.path());
+    let joined = cmd.join(" ");
+    assert_eq!(cmd[0], "bwrap");
+    assert!(joined.contains("--ro-bind / /"));
+    let h = home.path().display();
+    for masked in [
+        format!("--tmpfs {h}/.config/gh"),
+        format!("--tmpfs {h}/.ssh"),
+        format!("--tmpfs {h}/.config/olr-runner"),
+    ] {
+        assert!(joined.contains(&masked), "{masked} in {joined}");
+    }
+    assert!(joined.contains(&format!("--ro-bind /dev/null {h}/.git-credentials")));
+    assert!(joined.contains(&format!("--bind {} {}", ws.display(), ws.display())));
+    assert!(joined.ends_with("-- nice -n 19 ionice -c 3 cargo xtask check"), "{joined}");
 }

@@ -31,6 +31,9 @@ pub struct SessionSpec {
     pub idle: Duration,
     /// Running time left before the ceiling.
     pub budget: Duration,
+    /// Where the session's process id (its process group's) is written
+    /// while it runs.
+    pub pid_file: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -108,6 +111,15 @@ fn command(spec: &SessionSpec) -> Command {
     cmd
 }
 
+/// Kills the process group a session left in `pid_file` (an interrupted
+/// runner's), if any, so a resume never runs beside it.
+pub fn stop_left_over(pid_file: &std::path::Path) {
+    if let Some(pid) = std::fs::read_to_string(pid_file).ok().and_then(|p| p.trim().parse::<u32>().ok()) {
+        let _ = Command::new("kill").args(["-KILL", "--", &format!("-{pid}")]).status();
+    }
+    let _ = std::fs::remove_file(pid_file);
+}
+
 /// Interrupts the session's process group, then kills it after [`GRACE`].
 fn interrupt(child: &mut Child) {
     let group = format!("-{}", child.id());
@@ -133,6 +145,9 @@ pub fn run(spec: &SessionSpec) -> Result<(Outcome, Duration)> {
         .with_context(|| format!("cannot open {}", spec.log.display()))?;
     let mut child = command(spec).spawn().with_context(|| format!("cannot start {}", spec.claude_bin))?;
     let started = Instant::now();
+    if let Some(pid_file) = &spec.pid_file {
+        std::fs::write(pid_file, child.id().to_string())?;
+    }
 
     let (tx, rx) = mpsc::channel();
     let stdout = child.stdout.take().expect("piped");
@@ -169,6 +184,9 @@ pub fn run(spec: &SessionSpec) -> Result<(Outcome, Duration)> {
     };
     let status = child.wait()?;
     let active = started.elapsed();
+    if let Some(pid_file) = &spec.pid_file {
+        let _ = std::fs::remove_file(pid_file);
+    }
     let stderr = stderr.join().unwrap_or_default();
     if let Some(outcome) = stopped {
         return Ok((outcome, active));

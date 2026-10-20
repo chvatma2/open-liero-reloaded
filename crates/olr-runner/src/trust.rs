@@ -56,8 +56,23 @@ pub fn approved_at(d: &IssueDetail) -> Option<&LabelEvent> {
     d.label_events.iter().rfind(|e| e.added && e.label == "approved")
 }
 
-/// Shows hidden HTML comments (invisible on GitHub) as visible text.
+/// Characters GitHub shows as nothing: Unicode tags, bidi controls and
+/// zero-width characters.
+fn invisible(c: char) -> bool {
+    matches!(c, '\u{E0000}'..='\u{E007F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}'
+        | '\u{200B}'..='\u{200F}' | '\u{2060}'..='\u{2064}' | '\u{FEFF}' | '\u{00AD}')
+}
+
+/// Shows what GitHub hides, HTML comments and invisible characters, as
+/// visible text.
 pub fn reveal_hidden(text: &str) -> String {
+    reveal_comments(text)
+        .chars()
+        .map(|c| if invisible(c) { format!("[U+{:04X}]", u32::from(c)) } else { c.to_string() })
+        .collect()
+}
+
+fn reveal_comments(text: &str) -> String {
     let mut out = String::with_capacity(text.len());
     let mut rest = text;
     while let Some(start) = rest.find("<!--") {
@@ -82,12 +97,12 @@ pub fn classify(d: &IssueDetail, maintainer: &str) -> Result<Task, Refusal> {
         approved_at(d).filter(|e| e.actor == maintainer).ok_or(Refusal::NotApprovedByMaintainer)?;
     let body_owner = d.editor.as_deref().unwrap_or(&d.author);
     if let Some(edited) = &d.last_edited_at
-        && edited.as_str() > approval.at.as_str()
+        && edited.as_str() >= approval.at.as_str()
         && body_owner != maintainer
     {
         return Err(Refusal::EditedAfterApproval { by: body_owner.to_string() });
     }
-    if let Some(r) = d.renames.iter().find(|r| r.at > approval.at && r.actor != maintainer) {
+    if let Some(r) = d.renames.iter().find(|r| r.at >= approval.at && r.actor != maintainer) {
         return Err(Refusal::EditedAfterApproval { by: r.actor.clone() });
     }
     let title_owner = d.renames.last().map_or(d.author.as_str(), |r| r.actor.as_str());

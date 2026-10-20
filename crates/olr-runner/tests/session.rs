@@ -26,6 +26,7 @@ fn workdir(mode: &str, extra: &str) -> (tempfile::TempDir, SessionSpec) {
         prompt: Some("do it".into()),
         idle: Duration::from_secs(10),
         budget: Duration::from_secs(60),
+        pid_file: None,
     };
     (tmp, spec)
 }

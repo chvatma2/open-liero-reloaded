@@ -10,10 +10,15 @@ use serde_json::{Value, json};
 use crate::github::GitHub;
 use crate::settings::{Settings, home};
 
-pub fn service_unit() -> String {
-    "[Unit]\nDescription=OLR issue runner: one poll-and-work pass\n[Service]\nType=oneshot\n\
-     ExecStart=%h/.local/bin/olr-runner tick\nTimeoutStartSec=infinity\n"
-        .into()
+/// The service, with the installer's `PATH` (systemd's own lacks
+/// `~/.cargo/bin` and `~/.local/bin`, where `cargo`, `claude` and `rtk`
+/// live) and the lowest CPU and I/O priority.
+pub fn service_unit(path: &str) -> String {
+    format!(
+        "[Unit]\nDescription=OLR issue runner: one poll-and-work pass\n[Service]\nType=oneshot\n\
+         ExecStart=%h/.local/bin/olr-runner tick\nTimeoutStartSec=infinity\n\
+         Environment=PATH={path}\nNice=19\nIOSchedulingClass=idle\n"
+    )
 }
 
 pub fn timer_unit() -> String {
@@ -45,7 +50,18 @@ pub fn session_settings(workspace: &Path, home: &Path) -> Value {
                 "Bash(gh *)",
                 "Read(~/.config/gh/**)",
                 "Read(~/.git-credentials)",
-                "Read(~/.ssh/**)"
+                "Read(~/.ssh/**)",
+                "Read(~/.config/olr-runner/**)",
+                "WebFetch",
+                "WebSearch",
+                "Edit(~/.config/**)",
+                "Edit(~/.local/bin/**)",
+                "Edit(~/.local/state/**)",
+                "Edit(~/.claude/**)",
+                "Edit(~/.ssh/**)",
+                "Edit(~/.bashrc)",
+                "Edit(~/.profile)",
+                "Edit(~/.gitconfig)"
             ]
         },
         "sandbox": {
@@ -55,7 +71,7 @@ pub fn session_settings(workspace: &Path, home: &Path) -> Value {
             "network": { "allowedDomains": ["crates.io", "*.crates.io"], "strictAllowlist": true },
             "filesystem": {
                 "allowWrite": [workspace.display().to_string(), at(".cargo")],
-                "denyRead": [at(".config/gh"), at(".git-credentials"), at(".ssh")]
+                "denyRead": [at(".config/gh"), at(".git-credentials"), at(".ssh"), at(".config/olr-runner")]
             }
         }
     })
@@ -91,7 +107,8 @@ pub fn run(s: &Settings, gh: &dyn GitHub) -> Result<()> {
 
     let units = home.join(".config/systemd/user");
     std::fs::create_dir_all(&units)?;
-    std::fs::write(units.join("olr-runner.service"), service_unit())?;
+    let path = std::env::var("PATH").unwrap_or_default();
+    std::fs::write(units.join("olr-runner.service"), service_unit(&path))?;
     std::fs::write(units.join("olr-runner.timer"), timer_unit())?;
     std::fs::create_dir_all(&s.claude_config_dir)?;
     std::fs::create_dir_all(&s.state_dir)?;

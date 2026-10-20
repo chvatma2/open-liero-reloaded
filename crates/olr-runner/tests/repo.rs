@@ -114,3 +114,28 @@ fn push_updates_origin_main() {
     let (ok, out) = repo.run(&["sh".into(), "-c".into(), "echo hi; exit 3".into()]).unwrap();
     assert!(!ok && out.contains("hi"));
 }
+
+#[test]
+fn renames_list_both_paths() {
+    let (tmp, url, _) = origin();
+    let repo = Repo::prepare(&tmp.path().join("work"), &url).unwrap();
+    let base = repo.head().unwrap();
+    git(&repo.dir, &["mv", "README", "MOVED"]);
+    git(&repo.dir, &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "mv (#7)"]);
+    assert_eq!(repo.changed_files(&base, &repo.head().unwrap()).unwrap(), ["MOVED", "README"]);
+}
+
+#[test]
+fn is_ancestor_of_head() {
+    let (tmp, url, _) = origin();
+    let repo = Repo::prepare(&tmp.path().join("work"), &url).unwrap();
+    let base = repo.head().unwrap();
+    commit(&repo.dir, "a", "1", "a (#7)");
+    assert!(repo.is_ancestor(&base).unwrap());
+    git(&repo.dir, &["reset", "-q", "--hard", &base]);
+    git(
+        &repo.dir,
+        &["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--amend", "-m", "rewritten"],
+    );
+    assert!(!repo.is_ancestor(&base).unwrap(), "base itself was rewritten");
+}

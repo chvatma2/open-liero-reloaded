@@ -67,6 +67,7 @@ fn settings_default_values() {
     assert_eq!(s.claude_bin, "claude");
     assert_eq!(s.check_cmd, ["cargo", "xtask", "check"]);
     assert_eq!(s.render_check_cmd, ["cargo", "xtask", "check", "--render"]);
+    assert!(s.gate_sandbox);
     assert_eq!(s.workspace, home.join(".local/share/olr-runner/work"));
     assert_eq!(s.state_dir, home.join(".local/state/olr-runner"));
     assert_eq!(s.claude_config_dir, home.join(".config/olr-runner/claude"));
