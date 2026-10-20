@@ -13,6 +13,8 @@ pub mod gpu_bench;
 pub mod invariants;
 pub mod netsim;
 pub mod nostr_probe;
+pub mod perfcount;
+pub mod quick_bench;
 pub mod rollback_cost;
 pub mod runner;
 pub mod soak;

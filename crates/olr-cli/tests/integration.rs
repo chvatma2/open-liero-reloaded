@@ -27,6 +27,7 @@ mod matches;
 mod net_repro;
 mod net_soak;
 mod nostr_probe;
+mod perfcount;
 mod playtest;
 mod scenario;
 mod stains;

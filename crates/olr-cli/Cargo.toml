@@ -52,6 +52,8 @@ clap.workspace = true
 serde = { workspace = true, features = ["std"] }
 ron.workspace = true
 tempfile.workspace = true
+# `quick-bench`: user-space instruction counts (`perfcount.rs`).
+perf-event2.workspace = true
 
 [features]
 # The Docker NAT tests' dev tools (plan 12b Task 10): `olr-cli nostr-relay`

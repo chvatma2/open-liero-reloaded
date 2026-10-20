@@ -204,6 +204,16 @@ The headless command-line tool. Its commands:
   area cache); the new fields are `#[serde(default)]`, so older reports
   still read. A failed match writes its replay to `target/failures/`. `cargo
   xtask stress` runs both mods × pool 3000/20 000 on Castle Strike.
+- `olr-cli quick-bench [--content DIR] [--out f.ron]` (`quick_bench.rs`,
+  the command in `quick_bench_cmd.rs`; the issue runner's quick
+  benchmark, `cargo xtask bench-quick` gates it): the warm match of
+  `benches/game.rs` (`quick_bench::warm`, shared by both: 8 Classic bots
+  on Liero Factory, `WARM_TICKS` 2000), then the user-space instructions
+  (`perfcount::Instructions`, through `perf-event2`) of `MATCH_TICKS` 300
+  ticks (bots, tick, `on_tick`) and of `DRAW_LISTS` 60 draw-list builds,
+  and the fastest of `FRAMES` 7 offscreen 1080p frames in ms.
+  `QuickReport`'s numbers are `None`, with a notice, without an
+  instruction counter or a graphics adapter. Test: `tests/perfcount.rs`.
 - `olr-cli net-sim [--mod M --level L --seed N --slots 8 --clients 3
   --spectators 1 --join-tick T --profile typical --drift-ppm P --ticks 1000
   --outage peer:from:until --net-seed N --difficulty D --exit

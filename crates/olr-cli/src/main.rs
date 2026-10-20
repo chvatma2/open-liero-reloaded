@@ -14,6 +14,7 @@ mod net_repro_cmd;
 mod net_sim_cmd;
 mod net_soak_cmd;
 mod pack_cmd;
+mod quick_bench_cmd;
 mod render;
 mod render_match;
 mod replay_cmd;
@@ -71,6 +72,9 @@ enum Command {
     /// OLX's projectile pool or a larger one; prints tick, bot, pool, entity,
     /// event, render and memory figures.
     Stress(stress_cmd::Args),
+    /// A one-minute benchmark of one change: instruction counts of a warm match's ticks and
+    /// draw lists, and the fastest offscreen 1080p frame (`cargo xtask bench-quick`).
+    QuickBench(quick_bench_cmd::Args),
     /// Times a rollback: restoring the world and re-simulating ticks (plan 9, spec §3.3).
     RollbackCost(rollback_cost_cmd::Args),
     /// Draw a recorded match offscreen at several sizes on the GPU, timing the CPU
@@ -107,6 +111,7 @@ fn main() -> ExitCode {
         Command::NetRepro(args) => net_repro_cmd::run(&args),
         Command::Replay(args) => replay_cmd::run(&args),
         Command::Stress(args) => stress_cmd::run(&args),
+        Command::QuickBench(args) => quick_bench_cmd::run(&args),
         Command::RollbackCost(args) => rollback_cost_cmd::run(&args),
         Command::GpuBench(args) => gpu_bench_cmd::run(&args),
         Command::NostrProbe(args) => olr_cli::nostr_probe::run_relays(&args),
