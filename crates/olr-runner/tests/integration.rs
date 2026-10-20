@@ -5,3 +5,4 @@ mod queue;
 mod trust;
 mod prompt;
 mod session_io;
+mod gate;
