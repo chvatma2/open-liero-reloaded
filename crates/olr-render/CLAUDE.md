@@ -144,7 +144,8 @@ on screen or offscreen.
   - **Bloom** (`fs_bloom_h`, `fs_bloom_v`, plan 15c): a Gaussian of
     `BLOOM_RADIUS` (12) world pixels each way over the light grid, an air
     texel's stopping at rock; the composite adds it × `BLOOM_STRENGTH`
-    (0.6; `set_bloom(false)` for tests) before the grade
+    (0.6; `set_bloom(false)` for tests) before the grade, never on rock
+    or dirt
     (`bright_light_blooms`, `bloom_is_steady_and_camera_independent`,
     `a_dim_level_draws_as_before`, `glowing_pixels_feed_no_bloom`,
     `bloom_keeps_the_worm_floor_and_lit_side`).
@@ -156,7 +157,10 @@ on screen or offscreen.
     `Shade::WORM` (plan 15b, `a_worm_item_never_falls_below_the_worm_floor`).
     A glowing texel (self-light above 0) shows its own art: other light
     lifts it to 1 at most and no bloom lands on it
-    (`a_glowing_pixel_shows_its_art_under_bright_light`).
+    (`a_glowing_pixel_shows_its_art_under_bright_light`); so does any
+    texel over an opaque solid's world pixel (the solid map, binding 6;
+    #1: rock under a bright sky read oversaturated,
+    `rock_shows_at_most_its_art_under_bright_light`).
     A worm texel over its own worm in the occluder map takes the light just
     outside the worm on its side (`facing_light`: outward from the 7 × 7
     window's worm pixels, read one pixel past the first non-worm pixel

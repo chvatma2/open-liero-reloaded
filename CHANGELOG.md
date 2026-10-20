@@ -51,8 +51,9 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   pixels are a level's light. Light spreads from their shapes with soft
   shadows, bounces off rock and dirt in their colour (daylight through an
   opening lights a room), never passes rock or dirt however thin, soaks
-  into solids, which never fall below a solid floor, and bright light
-  glows (bloom, with a smooth tone curve up to the level's max light).
+  into solids, which never fall below a solid floor nor show brighter
+  than their art, and bright light glows in the open (bloom, with a
+  smooth tone curve up to the level's max light).
   Each separately drawn flame of a flickering group flickers on its own.
   Clear solids let light through. Explosions, muzzle flashes and glowing
   shots light the level as small glowing discs. Worms, shots and bonuses

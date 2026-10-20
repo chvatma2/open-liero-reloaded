@@ -2,7 +2,8 @@
 // texel's albedo lit by the light grid sampled at its centre, never below
 // its self-light nor its floor (the solid floor for blood and gibs, as rock;
 // the worm floor for worms, plan 15b), with the bloom added (plan 15c),
-// graded; a marker shows its albedo. Linear light, sRGB bytes in and out.
+// graded; a marker shows its albedo. Opaque rock and dirt show at most
+// their art (#1). Linear light, sRGB bytes in and out.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(0) @binding(1) var albedo_tex: texture_2d<f32>;
@@ -12,6 +13,8 @@
 // The bloom (plan 15c): the light above 1, spread; added before the grade
 // at `look.mode.w`'s strength.
 @group(0) @binding(5) var bloom_tex: texture_2d<f32>;
+// The solid map (#1): an opaque solid shows at most its art.
+@group(0) @binding(6) var solid_tex: texture_2d<u32>;
 
 @vertex
 fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
@@ -31,6 +34,16 @@ fn to_srgb(v: vec3<f32>) -> vec3<f32> {
     let lo = c * 12.92;
     let hi = 1.055 * pow(c, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
     return select(hi, lo, c <= vec3<f32>(0.0031308));
+}
+
+// Whether world pixel `w` is opaque rock or dirt (the solid map: material 1
+// is background, a clear solid is written as it); outside the level is open.
+fn solid_px(w: vec2<i32>) -> bool {
+    let size = vec2<i32>(textureDimensions(solid_tex));
+    if any(w < vec2<i32>(0)) || any(w >= size) || any(w >= vec2<i32>(look.level.xy)) {
+        return false;
+    }
+    return textureLoad(solid_tex, w, 0).r != 1u;
 }
 
 // The light at light-grid coordinate `g` (texel centres at whole numbers),
@@ -112,9 +125,10 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     // light sits at grid coordinate i.
     let g = (vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z - vec2<f32>(0.5) + vec2<f32>(LIGHT_PAD);
     var here = light_at(g);
+    // Texel t's world pixel.
+    let w = vec2<i32>(look.frame.xy) + vec2<i32>(floor((vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z));
     if shade.z > 0.75 {
         // A worm's pixel takes the light on its side (plan 15b).
-        let w = vec2<i32>(look.frame.xy) + vec2<i32>(floor((vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z));
         let id = worm_in(occluder_tex, look.occluders.xy, w);
         if id != 0u {
             here = facing_light(w, id, here);
@@ -133,7 +147,9 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     // Nor does the glare touch it: the halo is the bright air's around it.
     var cap = vec3<f32>(look.ambient.w);
     var glare = look.mode.w;
-    if shade.x > 0.0 {
+    // So does opaque rock or dirt (#1: under a bright sky, rock soaked
+    // above 1 and blooming read oversaturated, brighter than its art).
+    if shade.x > 0.0 || solid_px(w) {
         cap = min(cap, vec3<f32>(1.0));
         glare = 0.0;
     }

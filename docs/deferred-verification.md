@@ -7,3 +7,4 @@ once it is verified, before the release.
 
 | Issue | What to run or measure | Why |
 |---|---|---|
+| #1 | Playtest Castle Strike (day) on a desktop GPU: the red-roofed building and the rock beside the sky show their OLX art, no brighter; then a lit 1080p frame (`olr-cli gpu-bench --look`) | The renders were checked on lavapipe only; `bench-quick` draws an unlit frame, so the composite's extra solid-map read per texel is unmeasured |

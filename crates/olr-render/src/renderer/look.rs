@@ -361,6 +361,7 @@ impl LookState {
                 entry(3, frag, FLOAT_TEXTURE),
                 entry(4, frag, UINT_TEXTURE),
                 entry(5, frag, FLOAT_TEXTURE),
+                entry(6, frag, UINT_TEXTURE),
             ],
         });
         let light_source = format!("{}\n{}", common(), include_str!("../look/light.wgsl"));
@@ -551,6 +552,7 @@ impl LookState {
                 tex(3, &views[1]),
                 tex(4, &occluder_view),
                 tex(5, &bloom_views[0]),
+                tex(6, solid),
             ],
         });
         let lit = make("olr-render lit", texels, WORLD_FORMAT);

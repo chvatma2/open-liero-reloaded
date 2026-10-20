@@ -1832,6 +1832,43 @@ fn a_glowing_pixel_shows_its_art_under_bright_light() {
     assert!(light_at(&gpu, &r, 30, 25)[0] > 1.0, "the air below is lit above 1");
 }
 
+/// #1 (Castle Strike's playtest): opaque rock shows at most its art under a
+/// bright sky, bloom on, so a red roof neither brightens nor washes out;
+/// the air beside it still brightens above its art.
+#[test]
+fn rock_shows_at_most_its_art_under_bright_light() {
+    let Some(gpu) = offscreen() else { return };
+    let red = Rgba::rgb(160, 40, 30);
+    let mut map = painted_room(100, 40, |x, y| y >= 20 && x >= 30, |_, _| red);
+    let mut g = olr_terrain::GlowLayers::empty((100, 40), (100, 40));
+    for i in (0..100 * 40).filter(|i| i / 100 < 8) {
+        (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
+    }
+    assert!(map.set_glow(Some(g)));
+    let mut r = lit_renderer(&gpu, &map);
+    let mut look = glow_look(3.0, f32::INFINITY);
+    look.groups[0].self_scale = 1.0;
+    look.max_light = 2.0;
+    look.light_soak = 8;
+    let img = picture(&gpu, &mut r, &map, &look);
+    assert!(light_at(&gpu, &r, 50, 20)[0] > 1.0, "the rock's face soaks light above 1");
+    // Under the open sky the face shows its art exactly; nowhere more.
+    for (x, y) in [(50, 20), (70, 21), (30, 20)] {
+        for (dx, dy) in [(0, 0), (1, 1)] {
+            let p = img.get(2 * x + dx, 2 * y + dy);
+            assert_eq!((p.r, p.g, p.b), (red.r, red.g, red.b), "rock ({x}, {y}): its art, {p:?}");
+        }
+    }
+    for y in 20..40 {
+        for x in 30..100 {
+            let p = img.get(2 * x, 2 * y);
+            assert!(p.r <= red.r && p.g <= red.g && p.b <= red.b, "rock ({x}, {y}): {p:?}");
+        }
+    }
+    let air = img.get(2 * 15, 2 * 25);
+    assert!(air.r > red.r && air.g > red.g, "the air brightens: {air:?}");
+}
+
 /// Plan 15c: glowing pixels feed no bloom; the bright air around them does.
 #[test]
 fn glowing_pixels_feed_no_bloom() {

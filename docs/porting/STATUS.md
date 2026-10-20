@@ -3712,7 +3712,12 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
   0.6 before the grade. A glowing pixel shows its own art: other light
   lifts it to 1 at most, no glare lands on it and it feeds none (a
   daylight sky lights the level without washing out; a flame's
-  luminosity is its halo).
+  luminosity is its halo). Opaque rock and dirt likewise show at most
+  their art, with no glare on them (#1, the day Castle Strike's playtest:
+  rock beside the sky soaked light above 1 and took the bloom, so the
+  red-roofed building read oversaturated, brighter than OLX's art);
+  `max_light` above 100 % and the bloom brighten only the open (air,
+  clear solids) and play's items over it.
 - **Short worm shadows** (the user's playtest of the day Castle Strike,
   2026-10-20: outdoors a worm's shadow was massive, popped at the edge of
   the glowing sky and drifted after the worm stopped). A worm blocks a
