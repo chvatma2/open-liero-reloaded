@@ -3,4 +3,6 @@
 //! (spec: `docs/superpowers/specs/2026-10-20-issue-runner-design.md`).
 
 pub mod github;
+pub mod queue;
 pub mod settings;
+pub mod trust;
