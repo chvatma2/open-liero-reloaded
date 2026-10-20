@@ -1,0 +1,12 @@
+(
+    host: (
+        cpus: 12,
+        cpu: "AMD Ryzen 5 7600X 6-Core Processor",
+        adapter: "llvmpipe (LLVM 21.1.8, 256 bits) (Vulkan, Cpu)",
+    ),
+    report: (
+        match_ticks_instructions: Some(115456984),
+        draw_lists_instructions: Some(3451066),
+        render_frame_ms_min: Some(3.114217),
+    ),
+)
