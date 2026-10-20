@@ -1,6 +1,12 @@
 //! `olr-runner`: the issue runner's commands.
 
+use std::process::ExitCode;
+
 use clap::{Parser, Subcommand};
+use olr_runner::github::GhCli;
+use olr_runner::run::{self, RunResult};
+use olr_runner::settings::Settings;
+use olr_runner::state::State;
 
 #[derive(Parser)]
 #[command(name = "olr-runner")]
@@ -30,14 +36,38 @@ enum Command {
     DryRun,
 }
 
-fn main() {
-    match Cli::parse().command {
-        Command::Install
-        | Command::Status
-        | Command::Pause
-        | Command::Resume
-        | Command::Tick
-        | Command::Run { .. }
-        | Command::DryRun => todo!(),
+fn main() -> ExitCode {
+    match real_main() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("olr-runner: {e:#}");
+            ExitCode::FAILURE
+        }
     }
+}
+
+fn real_main() -> anyhow::Result<()> {
+    let command = Cli::parse().command;
+    let s = Settings::load()?;
+    let st = State::new(&s.state_dir)?;
+    let gh = GhCli { repo: s.repo.clone() };
+    match command {
+        Command::Install => todo!("Task 8"),
+        Command::Status => print!("{}", run::status(&gh, &st)?),
+        Command::Pause => {
+            st.set_paused(true)?;
+            println!("paused: no new issues will be taken");
+        }
+        Command::Resume => {
+            st.set_paused(false)?;
+            println!("resumed");
+        }
+        Command::Tick => run::tick(&gh, &s, &st)?,
+        Command::Run { issue } => match run::run_now(&gh, &s, &st, issue)? {
+            RunResult::Pushed { first, last } => println!("#{issue} pushed {first}..{last}"),
+            RunResult::HandedBack(h) => println!("#{issue} handed back: {}", h.describe()),
+        },
+        Command::DryRun => println!("{}", run::dry_run(&gh, &s)?),
+    }
+    Ok(())
 }

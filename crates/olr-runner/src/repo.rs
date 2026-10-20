@@ -60,6 +60,11 @@ impl Repo {
         Ok(lines(&self.git(&["log", "--reverse", "--format=%s", &format!("{base}..{head}")])?))
     }
 
+    /// Commit ids in `base..head`, oldest first.
+    pub fn commit_ids(&self, base: &str, head: &str) -> Result<Vec<String>> {
+        Ok(lines(&self.git(&["rev-list", "--reverse", &format!("{base}..{head}")])?))
+    }
+
     pub fn changed_files(&self, base: &str, head: &str) -> Result<Vec<String>> {
         Ok(lines(&self.git(&["diff", "--name-only", base, head])?))
     }

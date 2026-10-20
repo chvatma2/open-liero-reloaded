@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # A stand-in for `claude -p … --output-format stream-json`, driven by
-# `fake.env` in the working directory:
+# `fake.env` in the working directory, or `target/fake.env` (where the
+# runner's workspace keeps it out of git's way):
 #   FAKE_MODE    done | silent | limit-then-done | crash | commit
 #   FAKE_RESULT  the result file to write (done, limit-then-done, commit)
 #   FAKE_FILE, FAKE_SUBJECT  what `commit` commits
@@ -8,10 +9,11 @@
 #   FAKE_BEFORE  a shell command run first (e.g. push to origin)
 #   FAKE_STATUS  the result file's first line (default: done)
 set -u
-[ -f fake.env ] && . ./fake.env
+envf=fake.env; [ -f "$envf" ] || envf=target/fake.env
+[ -f "$envf" ] && . "./$envf"
 resume=no
 for a in "$@"; do [ "$a" = "--resume" ] && resume=yes; done
-echo "args: $*" >> fake.calls
+all="$*"; echo "args: ${all//$'\n'/ }" >> "$(dirname "$envf")/fake.calls"
 [ -n "${FAKE_BEFORE:-}" ] && eval "$FAKE_BEFORE"
 
 activity() {
@@ -19,6 +21,7 @@ activity() {
   echo '{"type":"assistant","message":{"content":[]}}'
 }
 finish() {
+  mkdir -p "$(dirname "$FAKE_RESULT")"
   printf '%s\nDid the thing.\n' "${FAKE_STATUS:-done}" > "$FAKE_RESULT"
   echo '{"type":"result","subtype":"success","is_error":false,"result":"Finished."}'
 }
