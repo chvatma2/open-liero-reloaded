@@ -41,6 +41,7 @@
         "olr-server": 6,
         "olr-game": 6,
         "olr-detcheck": 6,
+        "olr-runner": 6,
         "xtask": 6,
     },
     same_layer: [

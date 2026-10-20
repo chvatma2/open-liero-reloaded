@@ -1,0 +1,5 @@
+[
+  { "number": 7, "title": "Rope snaps on long swings", "labels": [{ "name": "approved" }, { "name": "bug" }] },
+  { "number": 9, "title": "Add a mute key", "labels": [{ "name": "approved" }, { "name": "in-progress" }] },
+  { "number": 11, "title": "A pull request", "labels": [{ "name": "approved" }], "pull_request": { "url": "x" } }
+]

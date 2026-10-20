@@ -1,0 +1,29 @@
+{
+  "data": {
+    "repository": {
+      "issue": {
+        "number": 7,
+        "title": "Rope snaps on long swings",
+        "body": "The rope breaks when I swing far.",
+        "author": { "login": "reporter" },
+        "editor": { "login": "chvatma2" },
+        "lastEditedAt": "2026-10-20T10:00:00Z",
+        "labels": { "nodes": [{ "name": "approved" }, { "name": "bug" }] },
+        "comments": {
+          "nodes": [
+            { "author": { "login": "chvatma2" }, "body": "Keep the rope length cap.", "createdAt": "2026-10-20T10:05:00Z" },
+            { "author": { "login": "someone" }, "body": "+1", "createdAt": "2026-10-20T10:06:00Z" }
+          ]
+        },
+        "timelineItems": {
+          "nodes": [
+            { "__typename": "RenamedTitleEvent", "actor": { "login": "chvatma2" }, "createdAt": "2026-10-20T09:59:00Z" },
+            { "__typename": "LabeledEvent", "actor": { "login": "chvatma2" }, "label": { "name": "bug" }, "createdAt": "2026-10-20T10:01:00Z" },
+            { "__typename": "UnlabeledEvent", "actor": { "login": "chvatma2" }, "label": { "name": "bug" }, "createdAt": "2026-10-20T10:02:00Z" },
+            { "__typename": "LabeledEvent", "actor": { "login": "chvatma2" }, "label": { "name": "approved" }, "createdAt": "2026-10-20T10:10:00Z" }
+          ]
+        }
+      }
+    }
+  }
+}
