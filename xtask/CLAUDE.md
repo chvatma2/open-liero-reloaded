@@ -2,7 +2,7 @@
 
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
-`e2e`, `net-nat`, `bench`, `stress`, `net-feel`, `net-soak`, `windows`, `envelope`,
+`e2e`, `net-nat`, `bench`, `bench-quick`, `stress`, `net-feel`, `net-soak`, `windows`, `envelope`,
 `determinism`, `dist`, `flatpak`, `format-docs`.
 
 - `format-docs [--check]` (`format_docs.rs`, plan 13d R4; the level page
@@ -92,6 +92,16 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   (logged like `bless-render`); baselines it could not measure are kept
   from the old file and listed in `kept`, and offline the stress file
   stays as it was. About 35 s once built.
+- `bench-quick [--bless --reason "<why>"]` (`bench_quick.rs`; the issue
+  runner's one-minute benchmark of one change, not a `full` step): builds
+  `olr-cli` in release, runs `quick-bench --out target/bench-quick.ron`
+  and reads it strictly (`QuickReport`, unknown fields refused), then
+  compares with `fixtures/bench/quick.ron` (`Baseline`: the `Host` and the
+  report): instructions of the match's ticks and draw lists fail over
+  `INSTR_TOLERANCE` (+15 %), the fastest 1080p frame over
+  `RENDER_TOLERANCE` (+50 %); a missing baseline or number, or another
+  host's baseline, is a notice. `--bless` writes the baseline, logged in
+  `fixtures/blessings.log`. Unit tests on `compare`.
 - `stress [--seconds 180]` (`bench::stress_command`): the long stress
   run, every `STRESS` configuration through `olr-cli stress` (progress and
   each report as it plays, determinism checked), then a summary table

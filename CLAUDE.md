@@ -20,7 +20,11 @@ modernized for current displays.
    `stress`; re-baseline with `cargo xtask bench --bless --reason
    "<why>"`); run it before merging bot, rendering, audio, network or
    performance-sensitive changes. `cargo xtask stress` is the long engine
-   stress run.
+   stress run. `cargo xtask check --render` adds the render goldens, HUD
+   snapshots and renderer GPU tests to `check` (what a rendering change
+   needs, without the rest of `full`); `cargo xtask bench-quick` is a
+   one-minute instruction-count benchmark of one change (`bench` stays the
+   real one).
 2. **One crate per concern, under `crates/`.** Each crate has a `CLAUDE.md`:
    read it before editing the crate. Register every new crate in `xtask/layers.ron`.
    A crate may depend only on lower layers (`cargo xtask layers`).

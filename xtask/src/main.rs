@@ -2,6 +2,7 @@
 
 mod api;
 mod bench;
+mod bench_quick;
 mod bless;
 mod bless_regression;
 mod check;
@@ -97,6 +98,17 @@ enum Command {
         /// Do not download OLX content (the content benchmarks and stress are skipped).
         #[arg(long)]
         offline: bool,
+    },
+    /// The issue runner's one-minute benchmark: instruction counts of a warm match's ticks
+    /// and draw lists (fail over +15 %) and the fastest offscreen 1080p frame (over +50 %)
+    /// from `olr-cli quick-bench`, against fixtures/bench/quick.ron. `bench` stays the real one.
+    BenchQuick {
+        /// Measure and write the baseline instead, logged in fixtures/blessings.log.
+        #[arg(long, requires = "reason")]
+        bless: bool,
+        /// Why the baseline changes (with --bless).
+        #[arg(long)]
+        reason: Option<String>,
     },
     /// The engine stress test: 32 chaos bots on Castle Strike for minutes, both
     /// mods, OLX's projectile pool and a raised one; prints each report.
@@ -264,6 +276,7 @@ fn main() -> ExitCode {
         Command::Tidy { docker_cache } => tidy::run(docker_cache),
         Command::E2e { offline } => e2e_command(offline),
         Command::Bench { bless, reason, offline } => bench::run(reason.as_deref().filter(|_| bless), offline),
+        Command::BenchQuick { bless, reason } => bench_quick::run(reason.as_deref().filter(|_| bless)),
         Command::Stress { seconds } => bench::stress_command(seconds),
         Command::Envelope { quick, only, gpu, bless, reason, report, from } => {
             envelope::run(&envelope::Opts { quick, only, gpu, bless: reason.filter(|_| bless), report, from })
