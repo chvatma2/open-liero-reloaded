@@ -4,6 +4,7 @@
 
 pub mod gate;
 pub mod github;
+pub mod install;
 pub mod limit;
 pub mod prompt;
 pub mod queue;

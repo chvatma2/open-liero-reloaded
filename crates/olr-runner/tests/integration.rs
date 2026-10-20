@@ -3,6 +3,7 @@
 mod fake_github;
 mod gate;
 mod github;
+mod install;
 mod prompt;
 mod queue;
 pub mod repo;

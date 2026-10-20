@@ -52,7 +52,7 @@ fn real_main() -> anyhow::Result<()> {
     let st = State::new(&s.state_dir)?;
     let gh = GhCli { repo: s.repo.clone() };
     match command {
-        Command::Install => todo!("Task 8"),
+        Command::Install => olr_runner::install::run(&s, &gh)?,
         Command::Status => print!("{}", run::status(&gh, &st)?),
         Command::Pause => {
             st.set_paused(true)?;
