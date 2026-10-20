@@ -115,10 +115,12 @@ lists open issues that have `approved` and are in the **active
 milestone**, and that have neither `in-progress` nor `needs-maintainer`.
 It takes the oldest, ordered by when `approved` was added.
 
-The active milestone is named in the runner's config; if none is named,
-it is the open milestone with the lowest version-like title (my call). The
-repository has no milestones yet; setting up the first one is part of
-setup.
+The active milestone is **the one open milestone**: only one milestone
+is ever open at a time (the user's rule), so it needs no config. Each poll
+checks this. With no open milestone or more than one, the runner starts
+nothing, logs why and reports it in `status`, and comments on no issue. A
+session already running finishes normally. The repository has no
+milestones yet; creating the first one is part of setup.
 
 ### Trusted and untrusted text
 
@@ -367,6 +369,8 @@ push anyway.
 - Generous time limits; big features happen.
 - Sessions may change the goldens; unwanted feel gets reverted later.
 - A session plans and builds in one go.
+- Only one milestone is open at a time; it is the active release. The
+  runner works nothing while zero or several are open. No config.
 - The runner acts as the maintainer's own GitHub account. No
   notification channel: the maintainer checks milestones and commit
   messages.
@@ -376,7 +380,7 @@ push anyway.
 
 ## Calls made in this design (check these)
 
-- Milestones mark the release; an `approved` label marks approval; the
+- An `approved` label marks approval; the
   label set above.
 - An issue body counts as trusted only if the maintainer edited it last.
   A non-maintainer edit after approval sends the issue back.
