@@ -8,8 +8,13 @@ pub enum Pick {
     NoMilestone,
     /// Only one milestone may be open; their titles.
     ManyMilestones(Vec<String>),
-    Empty { milestone: String },
-    Next { milestone: String, number: u64 },
+    Empty {
+        milestone: String,
+    },
+    Next {
+        milestone: String,
+        number: u64,
+    },
 }
 
 /// Approved, and neither being worked nor handed back.
@@ -25,13 +30,10 @@ pub fn pick(milestones: &[Milestone], candidates: &[(IssueRef, Option<String>)])
         [one] => one.title.clone(),
         many => return Pick::ManyMilestones(many.iter().map(|m| m.title.clone()).collect()),
     };
-    let next = candidates
-        .iter()
-        .filter(|(i, _)| eligible(&i.labels))
-        .min_by(|(a, at_a), (b, at_b)| {
-            // A missing approval time sorts last.
-            (at_a.is_none(), at_a, a.number).cmp(&(at_b.is_none(), at_b, b.number))
-        });
+    let next = candidates.iter().filter(|(i, _)| eligible(&i.labels)).min_by(|(a, at_a), (b, at_b)| {
+        // A missing approval time sorts last.
+        (at_a.is_none(), at_a, a.number).cmp(&(at_b.is_none(), at_b, b.number))
+    });
     match next {
         Some((i, _)) => Pick::Next { milestone, number: i.number },
         None => Pick::Empty { milestone },

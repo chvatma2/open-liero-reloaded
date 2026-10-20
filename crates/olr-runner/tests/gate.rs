@@ -1,6 +1,8 @@
 use std::path::Path;
 
-use olr_runner::gate::{bad_subjects, claude_md_edits, glob_match, new_packages, protected_hits, touches_render};
+use olr_runner::gate::{
+    bad_subjects, claude_md_edits, glob_match, new_packages, protected_hits, touches_render,
+};
 use olr_runner::report::{Done, HandBack, done_comment, handback_comment};
 use olr_runner::trust::MARKER;
 
@@ -10,7 +12,8 @@ fn strings(v: &[&str]) -> Vec<String> {
 
 #[test]
 fn subjects_need_issue_suffix() {
-    let subjects = strings(&["olr-sim: cap the rope (#7)", "docs: rope (#77)", "fixup", "olr-ui: label (#7) "]);
+    let subjects =
+        strings(&["olr-sim: cap the rope (#7)", "docs: rope (#77)", "fixup", "olr-ui: label (#7) "]);
     assert_eq!(bad_subjects(&subjects, 7), strings(&["docs: rope (#77)", "fixup"]));
 }
 
@@ -32,8 +35,12 @@ fn glob_single_star() {
 #[test]
 fn protected_hits_listed() {
     let patterns = strings(&["crates/olr-runner/**", ".github/**", "fixtures/oracle/*.jsonl.gz"]);
-    let files = strings(&["crates/olr-sim/src/rope.rs", ".github/workflows/x.yml", "fixtures/oracle/r.jsonl.gz"]);
-    assert_eq!(protected_hits(&files, &patterns), strings(&[".github/workflows/x.yml", "fixtures/oracle/r.jsonl.gz"]));
+    let files =
+        strings(&["crates/olr-sim/src/rope.rs", ".github/workflows/x.yml", "fixtures/oracle/r.jsonl.gz"]);
+    assert_eq!(
+        protected_hits(&files, &patterns),
+        strings(&[".github/workflows/x.yml", "fixtures/oracle/r.jsonl.gz"])
+    );
 }
 
 #[test]
@@ -41,10 +48,10 @@ fn render_paths_detected() {
     assert!(touches_render(&strings(&["crates/olr-sim/src/a.rs", "crates/olr-render/src/gi.rs"])));
     assert!(touches_render(&strings(&["fixtures/ui/hud.png"])));
     assert!(!touches_render(&strings(&["crates/olr-sim/src/a.rs", "docs/x.md"])));
-    assert_eq!(claude_md_edits(&strings(&["CLAUDE.md", "crates/olr-sim/CLAUDE.md", "README.md"])), strings(&[
-        "CLAUDE.md",
-        "crates/olr-sim/CLAUDE.md"
-    ]));
+    assert_eq!(
+        claude_md_edits(&strings(&["CLAUDE.md", "crates/olr-sim/CLAUDE.md", "README.md"])),
+        strings(&["CLAUDE.md", "crates/olr-sim/CLAUDE.md"])
+    );
 }
 
 #[test]
@@ -86,9 +93,16 @@ fn done_comment_has_revert_and_marker() {
 
 #[test]
 fn handback_comment_has_reason_log_and_retry() {
-    let c = handback_comment(&HandBack::Protected(strings(&[".github/x.yml"])), Path::new("/s/runs/7-1.jsonl"));
+    let c =
+        handback_comment(&HandBack::Protected(strings(&[".github/x.yml"])), Path::new("/s/runs/7-1.jsonl"));
     assert!(c.starts_with(MARKER));
-    for needle in ["Handed back to the maintainer", ".github/x.yml", "/s/runs/7-1.jsonl", "needs-maintainer", "approved"] {
+    for needle in [
+        "Handed back to the maintainer",
+        ".github/x.yml",
+        "/s/runs/7-1.jsonl",
+        "needs-maintainer",
+        "approved",
+    ] {
         assert!(c.contains(needle), "hand-back comment lacks {needle:?}:\n{c}");
     }
 }

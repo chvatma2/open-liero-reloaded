@@ -58,7 +58,12 @@ impl Default for Settings {
             idle_secs: 45 * 60,
             ceiling_secs: 8 * 60 * 60,
             limit_fallback_secs: 30 * 60,
-            protected: strings(&["crates/olr-runner/**", ".github/**", ".claude/**", "fixtures/oracle/*.jsonl.gz"]),
+            protected: strings(&[
+                "crates/olr-runner/**",
+                ".github/**",
+                ".claude/**",
+                "fixtures/oracle/*.jsonl.gz",
+            ]),
             claude_bin: "claude".into(),
             check_cmd: strings(&["cargo", "xtask", "check"]),
             render_check_cmd: strings(&["cargo", "xtask", "check", "--render"]),

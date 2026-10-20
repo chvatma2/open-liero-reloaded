@@ -135,7 +135,10 @@ pub fn parse_issue(json: &str) -> Result<IssueDetail> {
     if let Some(errors) = v.get("errors") {
         bail!("GitHub: {errors}");
     }
-    let i = v.pointer("/data/repository/issue").filter(|i| !i.is_null()).ok_or_else(|| anyhow!("no such issue"))?;
+    let i = v
+        .pointer("/data/repository/issue")
+        .filter(|i| !i.is_null())
+        .ok_or_else(|| anyhow!("no such issue"))?;
     let mut label_events = Vec::new();
     let mut renames = Vec::new();
     for node in array(i, "/timelineItems/nodes") {
@@ -200,11 +203,16 @@ impl GhCli {
 
 impl GitHub for GhCli {
     fn open_milestones(&self) -> Result<Vec<Milestone>> {
-        parse_milestones(&self.gh(&["api", &format!("repos/{}/milestones?state=open&per_page=100", self.repo)], None)?)
+        parse_milestones(
+            &self.gh(&["api", &format!("repos/{}/milestones?state=open&per_page=100", self.repo)], None)?,
+        )
     }
 
     fn approved_issues(&self, milestone: u64) -> Result<Vec<IssueRef>> {
-        let path = format!("repos/{}/issues?milestone={milestone}&labels=approved&state=open&per_page=100", self.repo);
+        let path = format!(
+            "repos/{}/issues?milestone={milestone}&labels=approved&state=open&per_page=100",
+            self.repo
+        );
         parse_issues(&self.gh(&["api", &path], None)?)
     }
 
@@ -212,7 +220,9 @@ impl GitHub for GhCli {
         let (owner, name) = self.repo.split_once('/').ok_or_else(|| anyhow!("repo is not owner/name"))?;
         let query = format!("query={ISSUE_QUERY}");
         let (owner, name, number) = (format!("owner={owner}"), format!("name={name}"), format!("number={n}"));
-        parse_issue(&self.gh(&["api", "graphql", "-f", &query, "-f", &owner, "-f", &name, "-F", &number], None)?)
+        parse_issue(
+            &self.gh(&["api", "graphql", "-f", &query, "-f", &owner, "-f", &name, "-F", &number], None)?,
+        )
     }
 
     fn edit_labels(&self, n: u64, add: &[&str], remove: &[&str]) -> Result<()> {
@@ -228,7 +238,8 @@ impl GitHub for GhCli {
     }
 
     fn comment(&self, n: u64, body: &str) -> Result<()> {
-        self.gh(&["issue", "comment", &n.to_string(), "-R", &self.repo, "--body-file", "-"], Some(body)).map(drop)
+        self.gh(&["issue", "comment", &n.to_string(), "-R", &self.repo, "--body-file", "-"], Some(body))
+            .map(drop)
     }
 
     fn close(&self, n: u64) -> Result<()> {
@@ -237,7 +248,21 @@ impl GitHub for GhCli {
 
     fn ensure_labels(&self) -> Result<()> {
         for (name, colour, description) in LABELS {
-            self.gh(&["label", "create", name, "--color", colour, "--description", description, "--force", "-R", &self.repo], None)?;
+            self.gh(
+                &[
+                    "label",
+                    "create",
+                    name,
+                    "--color",
+                    colour,
+                    "--description",
+                    description,
+                    "--force",
+                    "-R",
+                    &self.repo,
+                ],
+                None,
+            )?;
         }
         Ok(())
     }

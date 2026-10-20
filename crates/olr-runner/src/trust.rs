@@ -78,7 +78,8 @@ pub fn reveal_hidden(text: &str) -> String {
 
 /// Splits an approved issue into the maintainer's task and report material.
 pub fn classify(d: &IssueDetail, maintainer: &str) -> Result<Task, Refusal> {
-    let approval = approved_at(d).filter(|e| e.actor == maintainer).ok_or(Refusal::NotApprovedByMaintainer)?;
+    let approval =
+        approved_at(d).filter(|e| e.actor == maintainer).ok_or(Refusal::NotApprovedByMaintainer)?;
     let body_owner = d.editor.as_deref().unwrap_or(&d.author);
     if let Some(edited) = &d.last_edited_at
         && edited.as_str() > approval.at.as_str()

@@ -32,10 +32,10 @@ fn oldest_approval_first() {
     assert_eq!(pick(&ms(&["0.2.0"]), &candidates), Pick::Next { milestone: "0.2.0".into(), number: 8 });
     let rest = &candidates[..2];
     assert_eq!(pick(&ms(&["0.2.0"]), rest), Pick::Next { milestone: "0.2.0".into(), number: 5 });
-    assert_eq!(pick(&ms(&["0.2.0"]), &[candidates[3].clone(), candidates[0].clone()]), Pick::Next {
-        milestone: "0.2.0".into(),
-        number: 3
-    });
+    assert_eq!(
+        pick(&ms(&["0.2.0"]), &[candidates[3].clone(), candidates[0].clone()]),
+        Pick::Next { milestone: "0.2.0".into(), number: 3 }
+    );
 }
 
 #[test]
@@ -44,8 +44,10 @@ fn skips_in_progress_and_needs_maintainer() {
     assert!(!eligible(&["approved".into(), "in-progress".into()]));
     assert!(!eligible(&["approved".into(), "needs-maintainer".into()]));
     assert!(!eligible(&["bug".into()]));
-    let candidates =
-        [issue(1, &["approved", "in-progress"], Some("a")), issue(2, &["approved", "needs-maintainer"], Some("b"))];
+    let candidates = [
+        issue(1, &["approved", "in-progress"], Some("a")),
+        issue(2, &["approved", "needs-maintainer"], Some("b")),
+    ];
     assert_eq!(pick(&ms(&["0.2.0"]), &candidates), Pick::Empty { milestone: "0.2.0".into() });
 }
 

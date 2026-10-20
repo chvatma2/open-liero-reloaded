@@ -4,7 +4,10 @@
 /// When the limit lifts, in local time.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reset {
-    At { hour: u32, minute: u32 },
+    At {
+        hour: u32,
+        minute: u32,
+    },
     /// A weekday form or no time: wait the fallback and try again.
     Unknown,
 }

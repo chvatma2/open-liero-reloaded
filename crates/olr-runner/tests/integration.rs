@@ -1,8 +1,8 @@
 //! The runner's integration tests, one binary.
 
-mod github;
-mod queue;
-mod trust;
-mod prompt;
-mod session_io;
 mod gate;
+mod github;
+mod prompt;
+mod queue;
+mod session_io;
+mod trust;

@@ -24,10 +24,14 @@ fn result_garbage_is_error() {
 
 #[test]
 fn scan_result_line() {
-    let line = r#"{"type":"result","subtype":"success","is_error":false,"result":"All done.","session_id":"x"}"#;
+    let line =
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"All done.","session_id":"x"}"#;
     assert_eq!(scan(line), Line::Result { is_error: false, text: "All done.".into() });
     let err = r#"{"type":"result","is_error":true,"result":"You've hit your session limit · resets 3:45pm"}"#;
-    assert_eq!(scan(err), Line::Result { is_error: true, text: "You've hit your session limit · resets 3:45pm".into() });
+    assert_eq!(
+        scan(err),
+        Line::Result { is_error: true, text: "You've hit your session limit · resets 3:45pm".into() }
+    );
 }
 
 #[test]
@@ -44,21 +48,30 @@ fn scan_non_json_is_activity() {
 
 #[test]
 fn limit_pm() {
-    assert_eq!(limit::parse("You've hit your session limit · resets 3:45pm"), Some(Reset::At { hour: 15, minute: 45 }));
-    assert_eq!(limit::parse("You've hit your Opus limit · resets 3pm (Europe/Prague)"), Some(Reset::At {
-        hour: 15,
-        minute: 0
-    }));
-    assert_eq!(limit::parse("You've hit your session limit · resets 15:45"), Some(Reset::At { hour: 15, minute: 45 }));
+    assert_eq!(
+        limit::parse("You've hit your session limit · resets 3:45pm"),
+        Some(Reset::At { hour: 15, minute: 45 })
+    );
+    assert_eq!(
+        limit::parse("You've hit your Opus limit · resets 3pm (Europe/Prague)"),
+        Some(Reset::At { hour: 15, minute: 0 })
+    );
+    assert_eq!(
+        limit::parse("You've hit your session limit · resets 15:45"),
+        Some(Reset::At { hour: 15, minute: 45 })
+    );
 }
 
 #[test]
 fn limit_12am() {
-    assert_eq!(limit::parse("You've hit your session limit · resets 12am"), Some(Reset::At { hour: 0, minute: 0 }));
-    assert_eq!(limit::parse("You've hit your session limit · resets 12:30pm"), Some(Reset::At {
-        hour: 12,
-        minute: 30
-    }));
+    assert_eq!(
+        limit::parse("You've hit your session limit · resets 12am"),
+        Some(Reset::At { hour: 0, minute: 0 })
+    );
+    assert_eq!(
+        limit::parse("You've hit your session limit · resets 12:30pm"),
+        Some(Reset::At { hour: 12, minute: 30 })
+    );
 }
 
 #[test]

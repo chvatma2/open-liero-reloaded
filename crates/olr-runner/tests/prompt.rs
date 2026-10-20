@@ -16,7 +16,11 @@ fn task(untrusted: &str) -> Task {
 }
 
 fn prompt(untrusted: &str) -> String {
-    render(&task(untrusted), Path::new("/w/target/olr-runner/result.md"), Path::new("/w/target/olr-runner/notes.md"))
+    render(
+        &task(untrusted),
+        Path::new("/w/target/olr-runner/result.md"),
+        Path::new("/w/target/olr-runner/notes.md"),
+    )
 }
 
 #[test]
@@ -35,7 +39,10 @@ fn prompt_has_rules_and_paths() {
     ] {
         assert!(p.contains(needle), "prompt lacks {needle:?}");
     }
-    assert!(!p.contains("{issue}") && !p.contains("{task}") && !p.contains("{report}"), "placeholders filled");
+    assert!(
+        !p.contains("{issue}") && !p.contains("{task}") && !p.contains("{report}"),
+        "placeholders filled"
+    );
 }
 
 #[test]

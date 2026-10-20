@@ -29,10 +29,9 @@ fn parse_issue_reads_everything() {
 
 #[test]
 fn parse_issue_without_edits() {
-    let json = ISSUE.replace(r#""editor": { "login": "chvatma2" }"#, r#""editor": null"#).replace(
-        r#""lastEditedAt": "2026-10-20T10:00:00Z""#,
-        r#""lastEditedAt": null"#,
-    );
+    let json = ISSUE
+        .replace(r#""editor": { "login": "chvatma2" }"#, r#""editor": null"#)
+        .replace(r#""lastEditedAt": "2026-10-20T10:00:00Z""#, r#""lastEditedAt": null"#);
     let d = parse_issue(&json).unwrap();
     assert_eq!(d.editor, None);
     assert_eq!(d.last_edited_at, None);
@@ -61,12 +60,10 @@ fn settings_default_values() {
     assert_eq!(s.maintainer, "chvatma2");
     assert_eq!(s.remote_url, "https://github.com/chvatma2/open-liero-reloaded.git");
     assert_eq!((s.idle_secs, s.ceiling_secs, s.limit_fallback_secs), (2700, 28800, 1800));
-    assert_eq!(s.protected, [
-        "crates/olr-runner/**",
-        ".github/**",
-        ".claude/**",
-        "fixtures/oracle/*.jsonl.gz"
-    ]);
+    assert_eq!(
+        s.protected,
+        ["crates/olr-runner/**", ".github/**", ".claude/**", "fixtures/oracle/*.jsonl.gz"]
+    );
     assert_eq!(s.claude_bin, "claude");
     assert_eq!(s.check_cmd, ["cargo", "xtask", "check"]);
     assert_eq!(s.render_check_cmd, ["cargo", "xtask", "check", "--render"]);
