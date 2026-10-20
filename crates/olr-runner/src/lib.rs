@@ -7,6 +7,7 @@ pub mod github;
 pub mod limit;
 pub mod prompt;
 pub mod queue;
+pub mod repo;
 pub mod report;
 pub mod result;
 pub mod settings;
