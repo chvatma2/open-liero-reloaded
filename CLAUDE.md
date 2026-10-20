@@ -89,3 +89,15 @@ The render goldens in `fixtures/render/` are drawn from them at test time
 (scenario, level and art scale from the packs); the goldens are accepted
 fixtures, changed only with `cargo xtask bless-render --reason "<why>"`.
 `olr-cli render <scenario> --frame N --out f.png` draws any scenario frame.
+
+## Issue runner
+
+`olr-runner` (spec `docs/superpowers/specs/2026-10-20-issue-runner-design.md`)
+implements GitHub issues the maintainer labels `approved` in the one open
+milestone, one at a time, in headless sessions on the maintainer's PC, and
+pushes them to `main`; it hands an issue back with `needs-maintainer` and
+a comment when it cannot. Its commits end with `(#<issue>)`; its done
+comment gives the revert command. Work needing a real benchmark or a
+playtest is listed in `docs/deferred-verification.md` (label
+`needs-bench`). Commands: `olr-runner install | status | pause | resume |
+tick | run <n> | dry-run`.

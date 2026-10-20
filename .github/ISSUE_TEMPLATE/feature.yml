@@ -1,0 +1,23 @@
+name: Feature request
+description: Something you would like Open Liero Reloaded to do.
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the idea. The maintainer reviews every issue before any work starts.
+  - type: textarea
+    id: what
+    attributes:
+      label: What you want
+    validations:
+      required: true
+  - type: textarea
+    id: why
+    attributes:
+      label: Why
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples
+      description: Other games or mods that do this, sketches, screenshots.

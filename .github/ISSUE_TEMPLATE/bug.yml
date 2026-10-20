@@ -1,0 +1,38 @@
+name: Bug report
+description: Something in Open Liero Reloaded does not work as it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for the report. The maintainer reviews every issue before any work starts.
+  - type: textarea
+    id: happened
+    attributes:
+      label: What happened
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: "1. Start a match on …\n2. …"
+  - type: input
+    id: version
+    attributes:
+      label: OLR version
+      placeholder: olr --version
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+  - type: input
+    id: content
+    attributes:
+      label: Mod and level, if relevant
