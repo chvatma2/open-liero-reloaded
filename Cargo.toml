@@ -76,7 +76,6 @@ proc-macro2 = "1"
 proptest = "1.11.0"
 insta = "1.49.0"
 tempfile = "3"
-libc = "0.2"
 allocation-counter = "0.8.1"
 # Benchmarks (plan 7 G8): an exact pin, dev-dependency only.
 divan = "=0.1.21"

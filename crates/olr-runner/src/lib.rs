@@ -10,6 +10,7 @@ pub mod queue;
 pub mod repo;
 pub mod report;
 pub mod result;
+pub mod session;
 pub mod settings;
 pub mod stream;
 pub mod trust;

@@ -3793,7 +3793,6 @@ version = "0.2.0"
 dependencies = [
  "anyhow",
  "clap",
- "libc",
  "ron",
  "serde",
  "serde_json",

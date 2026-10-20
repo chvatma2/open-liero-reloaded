@@ -21,7 +21,6 @@ clap.workspace = true
 serde = { workspace = true, features = ["std"] }
 serde_json.workspace = true
 ron.workspace = true
-libc.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
