@@ -29,3 +29,12 @@ Modules:
 Tests never touch the network, GitHub or the user's repositories: they use
 temp git repositories, a `FakeGitHub` (`tests/fake_github.rs`) and a fake
 `claude` script (`tests/data/fake-claude.sh`).
+
+Recovery: `current.ron` holds the run's `Phase` (`Claimed`, `Session`,
+`Gate`, `Pushed`), written before each step with side effects. A tick
+that finds one carries it on: a claim is handed back, a session resumed
+once (after killing any session left in `session.pid`), a gate re-run, a
+push only reported. A session that cannot run at all (crash, login,
+network) pauses the runner rather than drain the queue. The gate's checks
+run in bubblewrap (`gate::sandboxed`: read-only but for the workspace,
+`~/.cargo` and `/tmp`; credentials and the runner's config hidden; niced).
