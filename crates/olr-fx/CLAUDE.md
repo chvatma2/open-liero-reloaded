@@ -25,6 +25,26 @@ is `docs/porting/olx-notes/presentation.md` §7 (and §2.2 for stains).
   (`stain_image`'s `on_air`; STATUS.md, "A gib stamps only rock and dirt"). `Fx::with_capacity` is
   the performance envelope's knob (plan 8; a sixteenth reserved), never
   used by a game.
+- **Blood amount** (`blood.rs`, issue #6; a deliberate deviation in
+  STATUS.md): `Fx::set_blood(percent)` (0-`BLOOD_MAX` 500, `BLOOD_DEFAULT`
+  100, the player's Options → Video setting through
+  `olr_present::Presentation::set_blood`) scales what `step_tick` spawns,
+  never the simulation's draws. With `s` the amount: `Blood` events `s`
+  times as many, `BloodDropper` events `min(s, 1)`, a dropper's drops
+  `max(s, 1)` (none at 0 %). Fewer are spread by accumulators that start
+  at a half (50 %: the first of each two); more are copies with
+  velocities jittered by the amount's own `GlibcRand` (`seed ^
+  0xb100d000`), so at 100 % nothing differs from before (render goldens,
+  oracle scenarios) and other effects never shift with the amount. A
+  copy spawns only below `Fx::extra_blood_limit` (play:
+  `ordinary - EXTRA_BLOOD_HEADROOM`, an eighth of the pool; 0 with
+  `olx_quirks`, OLX's pool having no reserve), so extra blood is refused
+  before ordinary effects and never takes the death reserve; a death's
+  own blood (the first of each event) still may. `Fx::spawn` is one
+  entity whatever the amount. Tests: `tests/blood.rs` (0 %, 50 %, 130 %,
+  500 %, the caps, determinism); `tests/matches.rs` runs
+  `fx_never_touches_sim_randomness_at_500_percent_blood` and the
+  allocation test at 500 % too.
 - **Physics** (`entity.rs`): one `SimulateEntities` pass per sub-step,
   motion with the sub-step `dt` (`LX56PhysicsDT`, 11 ms), animation with
   OLX's fixed 10 ms frame, all in `f32` like OLX (the sums drift; tests pin

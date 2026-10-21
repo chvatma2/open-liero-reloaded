@@ -13,13 +13,16 @@ use olr_scene::DrawList;
 use olr_sim::{CosmeticKind, Event, EventKind, LostArea, TickEvents, World};
 use olr_terrain::{ColorMap, PX_DIRT, Terrain};
 
+use blood::Blood;
 use entity::Landed;
 use pool::Pool;
 
 pub use assets::{Atlas, FxAssets, FxImages, FxSprite, colorize_gibs, default_dirt_colour};
+pub use blood::{BLOOD_DEFAULT, BLOOD_MAX};
 pub use entity::{Entity, Kind};
 
 mod assets;
+mod blood;
 mod draw;
 mod entity;
 mod pool;
@@ -44,6 +47,12 @@ const _: () = assert!(PLAY_ENTITIES <= DrawList::ENTITIES_RESERVED);
 /// entities stop at `PLAY_ENTITIES - DEATH_RESERVE`. One death is 157
 /// entities (7 gibs, 150 blood), so the reserve holds six at once.
 pub const DEATH_RESERVE: usize = PLAY_ENTITIES / 16;
+
+/// The slots below play's ordinary limit that a blood amount's extra
+/// entities ([`Fx::set_blood`] above 100 %) leave free, an eighth of the
+/// pool: extra blood is refused before any ordinary effect is, and never
+/// takes the death reserve.
+pub const EXTRA_BLOOD_HEADROOM: usize = PLAY_ENTITIES / 8;
 
 /// What one [`World::tick`] reported, as [`Fx::step_tick`] replays it.
 #[derive(Clone, Copy, Debug)]
@@ -86,6 +95,8 @@ pub struct Fx {
     death_drops: u64,
     /// The client's own `rand()` (spec §19 E8): gib spins and drips.
     rand: GlibcRand,
+    /// The player's blood amount (issue #6), with its own generator.
+    blood: Blood,
 }
 
 impl Fx {
@@ -99,6 +110,7 @@ impl Fx {
             death_spawns: 0,
             death_drops: 0,
             rand: GlibcRand::new(seed),
+            blood: Blood::new(seed),
         }
     }
 
@@ -116,7 +128,15 @@ impl Fx {
     pub fn with_capacity(seed: u32, capacity: usize) -> Fx {
         let pool = Pool::with_capacity(capacity);
         let reserve = pool.capacity() / 16;
-        Fx { pool, olx_quirks: false, reserve, death_spawns: 0, death_drops: 0, rand: GlibcRand::new(seed) }
+        Fx {
+            pool,
+            olx_quirks: false,
+            reserve,
+            death_spawns: 0,
+            death_drops: 0,
+            rand: GlibcRand::new(seed),
+            blood: Blood::new(seed),
+        }
     }
 
     /// The pool's size.
@@ -145,6 +165,32 @@ impl Fx {
         self.pool.capacity() - self.reserve
     }
 
+    /// How many entities may be alive for a blood amount's extra entity
+    /// to spawn: an eighth of the pool ([`EXTRA_BLOOD_HEADROOM`] in play)
+    /// below the ordinary limit, so extra blood is refused first and never
+    /// takes the death reserve; 0 with `olx_quirks` (OLX's pool has no
+    /// reserve to protect: no extra blood at all).
+    pub fn extra_blood_limit(&self) -> usize {
+        if self.olx_quirks { 0 } else { self.ordinary_limit().saturating_sub(self.pool.capacity() / 8) }
+    }
+
+    /// The player's blood amount in percent ([`BLOOD_DEFAULT`] when new).
+    pub fn blood(&self) -> u16 {
+        self.blood.percent()
+    }
+
+    /// Sets the player's blood amount in percent, at most [`BLOOD_MAX`]
+    /// (issue #6), for the cosmetics replayed from now on: blood events
+    /// become `percent / 100` times as many, blood droppers at most as many
+    /// (fewer below 100 %), a dropper's drops at least as many (more above
+    /// 100 %; none at 0 %). Fewer are spread evenly (50 %: every other
+    /// one); more are copies with jittered velocities from a generator of
+    /// their own, limited by [`Fx::extra_blood_limit`]. Presentation only:
+    /// the world never sees it.
+    pub fn set_blood(&mut self, percent: u16) {
+        self.blood.set_percent(percent);
+    }
+
     /// Removes every entity (`ClearEntities`), for a new or restarted match.
     pub fn clear(&mut self) {
         self.pool.clear();
@@ -169,7 +215,8 @@ impl Fx {
     /// `color` at its probe, a gib draws its spin. Returns whether it took a
     /// slot (none for a beam, which `olr-scene` draws, or when all are used;
     /// a `death`'s entity, [`olr_sim::Event::death`], may use the death
-    /// reserve, any other stops short of it).
+    /// reserve, any other stops short of it). One entity whatever the
+    /// blood amount: [`Fx::step_tick`] applies [`Fx::set_blood`].
     ///
     /// Dirt whose probe is no longer dirt takes the theme's default colour:
     /// OLX reads an explosion's colour before the bonuses it blows up
@@ -210,6 +257,47 @@ impl Fx {
         self.pool.add_below(e, limit).is_some()
     }
 
+    /// A cosmetic event as the blood amount shows it ([`Fx::set_blood`]):
+    /// blood and droppers as many times as the amount gives (the first an
+    /// ordinary [`Fx::spawn`], the rest [`Fx::spawn_extra`]), everything
+    /// else once.
+    fn spawn_event(
+        &mut self,
+        kind: CosmeticKind,
+        pos: Vec2,
+        vel: Vec2,
+        death: bool,
+        color: &ColorMap,
+        assets: &FxAssets,
+    ) {
+        let copies = match kind {
+            CosmeticKind::Blood { .. } => self.blood.events(),
+            CosmeticKind::BloodDropper => self.blood.droppers(),
+            _ => 1,
+        };
+        if copies == 0 {
+            return;
+        }
+        self.spawn(kind, pos, vel, death, color, assets);
+        for _ in 1..copies {
+            self.spawn_extra(kind, pos, vel);
+        }
+    }
+
+    /// A copy of a blood entity the blood amount adds: its velocity
+    /// jittered, refused once [`Fx::extra_blood_limit`] entities are alive.
+    /// Only blood is copied (no dirt colour, no gib spin to draw).
+    fn spawn_extra(&mut self, kind: CosmeticKind, pos: Vec2, vel: Vec2) {
+        let limit = self.extra_blood_limit();
+        if self.pool.is_full_below(limit) {
+            return;
+        }
+        let vel = self.blood.jitter(vel);
+        if let Some(e) = Entity::new(kind, pos, vel, Rgba::BLACK) {
+            self.pool.add_below(e, limit);
+        }
+    }
+
     /// One `SimulateEntities(dt)` pass over the entities in slot order,
     /// including those spawned during it into higher slots. Blood and gibs
     /// that land stain `color`; collisions read its material, which is in
@@ -245,7 +333,8 @@ impl Fx {
     }
 
     /// A blood dropper's drop every 0.1 s (`fExtra` in whole milliseconds),
-    /// from the entities' own `rand()`. `ent` still points at slot `i`
+    /// from the entities' own `rand()`, as many as the blood amount gives
+    /// (one at 100 %, the rest copies). `ent` still points at slot `i`
     /// afterwards, whatever took it, as in OLX.
     ///
     /// OLX: src/client/Entity.cpp:453-462
@@ -256,9 +345,16 @@ impl Fx {
             let pos = self.pool.get(i).pos;
             let vel = self.rand.random_vec();
             let red = RED[col.clamp(0, 1) as usize];
-            if let Some(blood) = Entity::new(CosmeticKind::Blood { red }, pos, vel, Rgba::BLACK) {
+            let kind = CosmeticKind::Blood { red };
+            let drops = self.blood.drops();
+            if drops > 0
+                && let Some(blood) = Entity::new(kind, pos, vel, Rgba::BLACK)
+            {
                 let limit = self.ordinary_limit();
                 self.pool.add_below(blood, limit);
+            }
+            for _ in 1..drops {
+                self.spawn_extra(kind, pos, vel);
             }
             self.pool.get_mut(i).extra = TimeDiff(0);
         }
@@ -281,7 +377,7 @@ impl Fx {
             }
             match &ev.kind {
                 EventKind::SpawnCosmetic { kind, pos, vel } => {
-                    self.spawn(*kind, *pos, *vel, ev.death, color, assets);
+                    self.spawn_event(*kind, *pos, *vel, ev.death, color, assets);
                 }
                 kind => {
                     if let Some(edit) = olr_content::color_edit(kind) {

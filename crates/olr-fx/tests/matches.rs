@@ -13,6 +13,23 @@ const BUSY: [&str; 4] = ["two-worms-fire", "suicide-score", "explode-kill-respaw
 
 #[test]
 fn fx_never_touches_sim_randomness() {
+    sim_untouched_by(|| Fx::new(3));
+}
+
+/// At five times the blood (issue #6), with play's pool, where the copies
+/// have room: the world still never sees the entities.
+#[test]
+fn fx_never_touches_sim_randomness_at_500_percent_blood() {
+    sim_untouched_by(|| {
+        let mut fx = Fx::for_match(3, false);
+        fx.set_blood(olr_fx::BLOOD_MAX);
+        fx
+    });
+}
+
+/// The busy scenarios play the same with entities from `make` attached,
+/// which made entities and stains.
+fn sim_untouched_by(make: fn() -> Fx) {
     let Some(content) = common::content() else { return };
     let dir = common::root().join("fixtures/oracle");
     let (mut spawned, mut stained) = (0, 0);
@@ -32,7 +49,7 @@ fn fx_never_touches_sim_randomness() {
         for _ in &sc.worms {
             assets.add_worm(Rgba::rgb(255, 0, 0), &mut scene);
         }
-        let (mut fx, mut list, mut with_fx) = (Fx::new(3), DrawList::new(), Vec::new());
+        let (mut fx, mut list, mut with_fx) = (make(), DrawList::new(), Vec::new());
         olr_scenario::play(&content, &sc, &trace, |w, frame, events| {
             if frame >= 0 {
                 fx.step_tick(&FxTick::new(w, events), &mut map, &assets);
@@ -57,7 +74,8 @@ fn steps_and_draws_allocate_nothing() {
     let Some(content) = common::content() else { return };
     let dir = common::root().join("fixtures/oracle");
     let mut ticks = 0;
-    for name in BUSY {
+    // OLX's pool, then play's at five times the blood (issue #6).
+    for (name, blood) in BUSY.into_iter().flat_map(|n| [(n, None), (n, Some(olr_fx::BLOOD_MAX))]) {
         let (sc, trace) = olr_scenario::load_fixture(&dir, name).unwrap();
         let level = content.load_level(&olx_level_id(&sc.level)).unwrap();
         let theme = content.load_theme(&level.theme).unwrap();
@@ -69,7 +87,15 @@ fn steps_and_draws_allocate_nothing() {
         for _ in &sc.worms {
             assets.add_worm(Rgba::rgb(0, 0, 255), &mut scene);
         }
-        let (mut fx, mut list) = (Fx::new(3), DrawList::new());
+        let mut fx = match blood {
+            None => Fx::new(3),
+            Some(percent) => {
+                let mut fx = Fx::for_match(3, false);
+                fx.set_blood(percent);
+                fx
+            }
+        };
+        let mut list = DrawList::new();
         olr_scenario::play(&content, &sc, &trace, |w, frame, events| {
             if frame < 0 {
                 return;

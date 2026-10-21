@@ -4,6 +4,7 @@
 
 mod common;
 
+mod blood;
 mod entities;
 mod events;
 mod matches;
