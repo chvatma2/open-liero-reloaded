@@ -1,0 +1,30 @@
+(
+    name: "Torch",
+    size: (14, 16),
+    elements: [
+        (
+            id: "background",
+            name: "Background",
+            kind: Drawn(
+                material: Background,
+                size: (14, 16),
+            ),
+            glow: (
+                strength: 100,
+                group: "flames",
+                mask: true,
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "flames",
+            intensity: 900,
+            reach: Pixels(100),
+            animation: Flicker(
+                speed: 9,
+                depth: 35,
+            ),
+        ),
+    ],
+)

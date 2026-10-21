@@ -125,6 +125,26 @@ The headless command-line tool. Its commands:
   It draws with the presentation's look (`render_lit_to_image`; the
   imported OLX packs have none, so the frame goldens are unchanged).
   Use it to see what a change does; view the PNG.
+- `olr-cli asset save <level-pack> (--elements <id,…> | --rect X,Y,W,H
+  [--layers <id,…>]) --name <name> --out <dir>`, `asset place
+  <level-pack> <asset-dir> --at X,Y [--content DIR]` and `asset check
+  <asset-dir>…` (`asset_cmd.rs`, issue #9: the level editor's assets,
+  `olr_edit::asset`). `save` decodes the level (`DecodedLevel::of_pack`:
+  a plain level as its three layers), cuts the elements
+  (`from_elements`) or the world rectangle of every visible layer, or of
+  `--layers` (`cut_rect`; off the level's top-left it starts at it),
+  encodes it with its lit thumbnail and writes the folder anew; it prints
+  `saved asset "<name>" (W × H, N elements[, glow groups …]) to <dir>`.
+  `place` is one save, baked as `level element …`
+  (`place_in_pack`), printing `added element <id>` per piece, `added glow
+  group <g>`, `joined glow group <g>` and, for a level that had no look,
+  `ADDED_LIGHTING`. `check` reads each folder whole (`load_dir`), prints
+  `<dir>: "<name>", W × H, N elements` or `<dir>: error: …`, and exits 1
+  if any fails. The built-in assets (`content/assets/`) are made with
+  `save` from `content/reloaded/` (their commands in its README). Tests:
+  `tests/asset.rs` (every built-in asset checks and is what its README
+  command makes, the torch carries `flames` and not `sky`, save and place
+  round trip, bad folders and arguments refused).
 - `olr-cli look-preview <pack> --at X,Y [--time MS] [--view lit|full|light] [--size WxH] [--content DIR] --out f.png`
   (plan 15a Task 13, `look_preview.rs`) draws a level's terrain alone (no
   worms) with its look at match clock `--time`, centred on `--at`, at

@@ -1,0 +1,56 @@
+(
+    name: "Control desk",
+    size: (30, 11),
+    elements: [
+        (
+            id: "background",
+            name: "Background",
+            kind: Drawn(
+                material: Background,
+                size: (30, 11),
+            ),
+        ),
+        (
+            id: "screens",
+            name: "Screens",
+            kind: Drawn(
+                material: Background,
+                at: (2, 1),
+                size: (26, 3),
+            ),
+            glow: (
+                strength: 90,
+                group: "screens",
+            ),
+        ),
+        (
+            id: "displays",
+            name: "Displays",
+            kind: Drawn(
+                material: Background,
+                at: (5, 5),
+                size: (21, 1),
+            ),
+            glow: (
+                strength: 100,
+                group: "displays",
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "screens",
+            intensity: 150,
+            reach: Pixels(18),
+        ),
+        (
+            id: "displays",
+            intensity: 180,
+            reach: Pixels(28),
+            animation: Flicker(
+                speed: 6,
+                depth: 25,
+            ),
+        ),
+    ],
+)

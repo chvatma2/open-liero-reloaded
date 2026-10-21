@@ -1,0 +1,38 @@
+(
+    name: "Lit sign",
+    size: (31, 21),
+    elements: [
+        (
+            id: "rock",
+            name: "Rock",
+            kind: Drawn(
+                material: Rock,
+                size: (31, 21),
+            ),
+        ),
+        (
+            id: "displays-in-rock",
+            name: "Displays in rock",
+            kind: Drawn(
+                material: Rock,
+                at: (1, 3),
+                size: (28, 16),
+            ),
+            glow: (
+                strength: 100,
+                group: "displays",
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "displays",
+            intensity: 180,
+            reach: Pixels(28),
+            animation: Flicker(
+                speed: 6,
+                depth: 25,
+            ),
+        ),
+    ],
+)

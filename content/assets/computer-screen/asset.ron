@@ -1,0 +1,34 @@
+(
+    name: "Computer screen",
+    size: (14, 14),
+    elements: [
+        (
+            id: "background",
+            name: "Background",
+            kind: Drawn(
+                material: Background,
+                size: (14, 14),
+            ),
+        ),
+        (
+            id: "screens",
+            name: "Screens",
+            kind: Drawn(
+                material: Background,
+                at: (1, 1),
+                size: (12, 11),
+            ),
+            glow: (
+                strength: 90,
+                group: "screens",
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "screens",
+            intensity: 150,
+            reach: Pixels(18),
+        ),
+    ],
+)

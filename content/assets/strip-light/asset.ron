@@ -1,0 +1,26 @@
+(
+    name: "Strip light",
+    size: (29, 2),
+    elements: [
+        (
+            id: "lamps",
+            name: "Lamps",
+            kind: Drawn(
+                material: Background,
+                size: (29, 2),
+            ),
+            glow: (
+                strength: 100,
+                group: "lamps",
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "lamps",
+            colour: Tint("#ffe6c0"),
+            intensity: 500,
+            reach: Pixels(90),
+        ),
+    ],
+)

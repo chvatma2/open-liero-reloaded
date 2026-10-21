@@ -1,0 +1,35 @@
+(
+    name: "Ceiling lamp",
+    size: (13, 6),
+    elements: [
+        (
+            id: "rock",
+            name: "Rock",
+            kind: Drawn(
+                material: Rock,
+                size: (13, 3),
+            ),
+        ),
+        (
+            id: "lamps",
+            name: "Lamps",
+            kind: Drawn(
+                material: Background,
+                at: (2, 3),
+                size: (9, 3),
+            ),
+            glow: (
+                strength: 100,
+                group: "lamps",
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "lamps",
+            colour: Tint("#ffe6c0"),
+            intensity: 500,
+            reach: Pixels(90),
+        ),
+    ],
+)

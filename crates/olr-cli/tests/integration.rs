@@ -14,6 +14,7 @@
 
 mod common;
 
+mod asset;
 mod cli;
 mod corpus;
 mod deaths;
