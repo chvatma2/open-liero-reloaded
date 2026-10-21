@@ -3649,6 +3649,9 @@ R1-R16, as built):
   a comparison of hard, anti-aliased, soft and blurred, lamps' shadows are
   `Soft` by default (a level's `shadows`: `Hard`, `Smooth`, `Soft`).
   Objects (spawns, lights) copy, cut and paste in the editor.
+- **Ambient occlusion** (issue #10): a level's look may darken the
+  ambient light in air near rock and dirt (`occlusion`); see "Ambient
+  occlusion (issue #10)" below.
 
 ## Worms in the light (plan 15b)
 
@@ -4010,6 +4013,57 @@ editor and `olr-cli asset save|place|check`.
   cannot be removed. The editor stays pure: the host lists, reads,
   writes, imports and removes (`ReadAsset`, `SaveAsset`, `ImportAsset`,
   `RemoveAsset`, answered by `AssetsChanged`, `AssetSaved`, `AssetRead`).
+
+## Ambient occlusion (issue #10)
+
+No OLX counterpart (a look setting, presentation only; direction E of
+`docs/superpowers/specs/2026-10-19-lighting-evolution-brainstorm.md`).
+The maintainer's rulings, as built:
+
+- **Per level, off unless set.** `look.occlusion: (strength, reach)`
+  (`OcclusionSource`): strength 1-100 percent (0 refused in a file: absent
+  is the only off), reach 2-32 world pixels (`olr_look::MIN_OCCLUSION_REACH`,
+  `MAX_OCCLUSION_REACH`), default 12. No OLX level and no shipped level
+  sets it; no engine default, no per-player setting. In `level.ron`, so
+  `content_hash` follows it.
+- **What it darkens.** Only the ambient term of the light grid's sum, and
+  only in air (the solid map: opaque rock and dirt; background and clear
+  solids are air; outside the level is open). Glow light, the sky's
+  `Unlimited` glow, lamps, explosions, muzzle flashes and bounce are not
+  occluded (the cascades already shade them near walls). Rock and dirt
+  keep their ambient; soak and the solid and worm floors are unchanged, so
+  a worm beside a wall shows at least the worm floor. The bloom may drop a
+  little where ambient plus glow was above 1 (accepted).
+- **The model (the builder's call).** Not a distance field: the
+  Gaussian-weighted share of opaque solids within the reach (sigma a third
+  of the reach, taps out to it), in two separable passes per world pixel:
+  `fs_occlusion_h` weighs each row from the world-size solid map into a
+  texture of the light grid's width and its height plus
+  `MAX_OCCLUSION_REACH` rows above and below, and `fs_sum` weighs the
+  rows down. The share is divided by a thick flat wall's face share and
+  saturates smoothly (`1 - (1 - x)²`, flat where it meets 1): air at a
+  thick wall's face loses the strength, a corner, a pocket or a narrow
+  tunnel loses as much further out (they read deep), a thin wall takes
+  less (a 1-pixel wall about 40 % of the strength at reach 12), and it
+  fades smoothly to nothing by the reach. A pure distance field (the
+  brainstorm's wording) would darken a corner no more than a flat wall.
+  It is per world pixel, then blurred by `softness` and banded by
+  `light_steps` with the rest of the light; camera-independent (the rows
+  read the world-size map past the grid); a dig is occluded the next
+  frame (the solid map follows the dirty rectangles).
+- **Cost.** Off, no pass runs and the sum's branch on a uniform keeps
+  the frame's bytes; the rows texture (`Rgba16Float`, grid width × grid
+  height + 64) exists with every lit target. On, two passes of up to 65
+  taps a world pixel. `olr-cli gpu-bench --look --occlusion S[,R]` draws
+  the bench look with it; the Windows 1080p measurement waits for the
+  maintainer (`docs/deferred-verification.md`).
+- **Elsewhere.** `olr-cli level look --occlusion S[,R]` / `--no-occlusion`;
+  the editor's Lighting panel (Occlusion % and, when on, its reach, right
+  after the ambient colour; 0 removes it). The lit thumbnail leaves it out
+  (as soak and softness). Golden: `look-occlusion.png` and
+  `look-occlusion-light.png`, a copy of the look test level with ambient
+  `#405880` at 40 and occlusion 80 over 16 px (the look test level's own
+  ambient is too dim for it to show).
 
 ## Kept OLX quirks
 

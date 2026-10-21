@@ -174,6 +174,27 @@ soaked(p)      = max over q within soak of  lit(q) × fade(|p - q|, soak + 1)
 - **Defaults** (the user's verdict at Stop 1b, 2026-10-18): soak 8, floor
   white at 30 %. Provisional: they are expected to move after playtests.
 
+### Ambient occlusion (issue #10)
+
+A level may darken the ambient light in air near rock and dirt, so
+tunnels, corners and pockets read as deep (`occlusion`, off unless the
+level sets it):
+
+```
+ambient(air p) = ambient × (1 - strength × s(min(share(p) / face, 1)))     s(x) = 1 - (1 - x)²
+```
+
+- **`share(p)`** is the Gaussian-weighted share of opaque solids (the
+  solid map) within the reach of p (sigma a third of the reach), in two
+  separable passes over the whole level's solid map, so it never depends
+  on the camera; **`face`** is that share at a thick flat wall's face. Air
+  there loses `strength`; corners, pockets and narrow tunnels saturate
+  further out; it fades smoothly to nothing by the reach.
+- Only the ambient term, only in air: glow light (the sky's too), lamps
+  and flashes are not occluded (the cascades shade them already), solids
+  keep their ambient, and the floors hold.
+- The thumbnail's CPU model leaves it out, as it does soak and softness.
+
 ### Light sources: one shape
 
 Every light source has the same fields:
@@ -387,6 +408,7 @@ look/clear.png    world resolution, 8-bit grey: 0 opaque, any other value clear 
 ```ron
 look: Some((
     ambient: (colour: "#ffffff", intensity: 30),
+    occlusion: (strength: 60, reach: 12),  // issue #10, optional: percent 1-100, world pixels 2-32 (default 12)
     max_light: 100,                    // 100-200
     light_steps: 0,                    // 0 off, 2-32
     softness: 0,                       // world pixels, 0-4
@@ -512,8 +534,9 @@ pack-format rules accept.
 - **Light objects:** a Light tool places them (like spawns), listed under
   Objects; properties: colour, intensity, reach, radius, animation, phase.
   Drawn on the canvas as a marker with a reach circle when selected.
-- **The Look panel** (level settings): ambient, max light, light steps,
-  softness, the grade, and the glow groups' list.
+- **The Look panel** (level settings): ambient, the occlusion's strength
+  and reach (issue #10, right after the ambient; 0 removes it), max light,
+  light steps, softness, the grade, and the glow groups' list.
 - **Preview:**
   - the canvas draws through the real renderer with the look;
   - a view toggle: *Lit*, *Full bright* (to paint in a dark level), *Light
@@ -527,8 +550,9 @@ pack-format rules accept.
 ### Agent operations (`olr-cli`)
 
 ```
-olr-cli level look      <pack> [--ambient RRGGBB:PCT] [--max-light PCT] [--steps N] [--softness N]
-                               [--exposure N] [--contrast PCT] [--saturation PCT] [--tint RRGGBB] [--clear]
+olr-cli level look      <pack> [--ambient RRGGBB:PCT] [--occlusion PCT[,REACH] | --no-occlusion] [--max-light PCT]
+                               [--steps N] [--softness N] [--exposure N] [--contrast PCT] [--saturation PCT]
+                               [--tint RRGGBB] [--clear]
 olr-cli level group     add|set|remove <pack> <id> [--colour own|RRGGBB] [--intensity PCT] [--reach N|unlimited] [--animation SPEC]
 olr-cli level light     add|set|remove <pack> [<index>] --at X,Y [...the light's fields]
 olr-cli level element set <pack> <id> --glow PCT --glow-group G

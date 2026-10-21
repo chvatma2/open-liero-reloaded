@@ -143,6 +143,13 @@ the view only.
 
 ### E. Ambient occlusion from the distance field
 
+**Done (issue #10),** per level and off unless set (`look.occlusion`):
+not from the glow light's jump flood (its stoppers include glowing cells
+and worms, its cells grow on big levels, and it does not run when nothing
+casts light) but a Gaussian-weighted share of the solid map within the
+reach, separable, over the whole level; it darkens only the ambient light
+in air. `docs/porting/STATUS.md`, "Ambient occlusion (issue #10)".
+
 The glow light already computes, for every cell, the distance to the
 nearest solid (the jump flood). Darkening air by that distance gives
 contact shadows in tunnels and corners.
