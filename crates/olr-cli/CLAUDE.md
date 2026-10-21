@@ -56,7 +56,10 @@ The headless command-line tool. Its commands:
   paint; plan 15a: `set --glow N` (0-100, 0 removes the glow) `--glow-group
   G` (a group of the level's look; a new glow needs both, either alone
   keeps the other and the painted mask: `glow_property`) `--clear
-  true|false` (its rock and dirt let light through, still solid), and
+  true|false` (its rock and dirt let light through, still solid); issue
+  #11: `set --distant N` (1-99 percent, near to far; 0 makes it ordinary
+  again) makes an image or plain drawn background layer distant, moved to
+  the top of the distant layers (`list` adds ` distant N%`), and
   `glow <id> (--rect|--circle|--colour-at X,Y [--tolerance N]) --strength
   S` painting a glowing element's glow mask (`element::paint_glow`, a
   first mask whole; 0 erases) or lighting the connected pixels alike in
@@ -68,7 +71,7 @@ The headless command-line tool. Its commands:
   pack, applies, bakes (`compose::bake`, the back tile of the level's
   theme in `--content`, `content/packs` by default) and saves; the first
   on a plain level composes it (raster `base`). `list` prints `<i>: <id>
-  <Image|Drawn|Raster> <material|->[ "<name>"][ hidden][ locked]`, bottom
+  <Image|Drawn|Raster> <material|->[ "<name>"][ hidden][ locked][ distant N%]`, bottom
   first, from `composition.ron` alone (`read_composition`); `add-image`
   reads its file bounded (`level_cmd::read_bounded`), applies its settings
   with the image (`add_image_with`) and prints `added element <id>`; `set`
@@ -83,7 +86,7 @@ The headless command-line tool. Its commands:
   bake (run olr-cli level bake)`) or a warning when its theme is missing;
   both count in the summary. Tests: `tests/element.rs` (plan 15a:
   `cli_sets_and_paints_glow`, `cli_glows_pixels_by_colour`,
-  `cli_sets_clear`).
+  `cli_sets_clear`; issue #11: `cli_sets_and_clears_distant`).
 - `olr-cli level look <pack> [--ambient RRGGBB:PCT] [--occlusion
   S[,R] | --no-occlusion] [--max-light P]
   [--steps N] [--softness N] [--soak N] [--solid-floor RRGGBB:PCT]
@@ -155,7 +158,9 @@ The headless command-line tool. Its commands:
   reads the pack's level files strictly (`read_level_files`), its theme
   from `--content` (`content/packs`), and draws through the real renderer
   offscreen (`set_lighting`, `render_lit_to_image`) with IntegerNearest at
-  854 × 384 by default; the renderer's warnings print on stderr.
+  854 × 384 by default, the level's distant layers too (issue #11,
+  `Renderer::set_distant`; `render-match` draws them through
+  `olr-present`); the renderer's warnings print on stderr.
   The fast loop for a look, and the look goldens
   (`look-lit.png`, `look-light.png`, `look-full.png`, `look-t500.png`:
   `fixtures/look/levels/look-test` at 256,128; issue #10's

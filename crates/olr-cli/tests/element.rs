@@ -520,3 +520,42 @@ fn cli_sets_clear() {
     ok(&run(&["set", "{pack}", "rock", "--clear", "false"]));
     assert!(!pack.join("look/clear.png").exists());
 }
+
+/// Issue #11: `set --distant N` makes a background layer distant (moved
+/// below every other element, listed so, its art in `distant/`, the back
+/// see-through where nothing covers it); `--distant 0` makes it ordinary.
+#[test]
+fn cli_sets_and_clears_distant() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    let run = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        cli(&all, &pack, &content)
+    };
+    let back = || {
+        let level = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(&pack)).unwrap();
+        level.back.as_raw().as_chunks::<4>().0.iter().any(|p| p[3] == 0)
+    };
+    ok(&run(&["set", "{pack}", "cave", "--distant", "60", "--name", "Sky"]));
+    let list = ok(&cli(&["level", "element", "list", "{pack}"], &pack, &content));
+    assert_eq!(list.lines().next(), Some("0: cave Drawn Background \"Sky\" distant 60%"), "{list}");
+    assert!(pack.join("distant/0.png").is_file());
+    let ron = std::fs::read_to_string(pack.join("level.ron")).unwrap();
+    assert!(ron.contains("distant"), "{ron}");
+    assert!(!back(), "the raster base covers the whole back");
+    ok(&run(&["set", "{pack}", "base", "--visible", "false"]));
+    assert!(back(), "uncovered back pixels are see-through");
+    let check = ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+    assert!(check.contains("0 errors"), "{check}");
+    // A rock image cannot be distant.
+    assert!(!run(&["set", "{pack}", "sign", "--distant", "20"]).status.success());
+    assert!(!run(&["set", "{pack}", "cave", "--distant", "100"]).status.success(), "1 to 99");
+    ok(&run(&["set", "{pack}", "cave", "--distant", "0"]));
+    let list = ok(&cli(&["level", "element", "list", "{pack}"], &pack, &content));
+    assert!(!list.contains("distant"), "{list}");
+    assert!(!pack.join("distant").exists());
+    assert!(!std::fs::read_to_string(pack.join("level.ron")).unwrap().contains("distant"));
+    assert!(!back(), "no distant layer, no see-through pixel");
+}

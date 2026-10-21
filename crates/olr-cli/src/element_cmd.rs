@@ -100,7 +100,7 @@ fn parse_colours(s: &str) -> Result<Colours, String> {
 
 #[derive(Subcommand)]
 pub(crate) enum ElementCommand {
-    /// Print each element, bottom first: `<index>: <id> <kind> <material>["<name>"][ hidden][ locked]`.
+    /// Print each element, bottom first: `<index>: <id> <kind> <material>["<name>"][ hidden][ locked][ distant <depth>%]`.
     List { pack: PathBuf },
     /// Add an image element on top, from a PNG or JPEG.
     AddImage {
@@ -174,6 +174,11 @@ pub(crate) enum ElementCommand {
         /// Its rock and dirt let light through (look system), still solid.
         #[arg(long)]
         clear: Option<bool>,
+        /// A distant (parallax) layer at this depth, 1 (near) to 99 (far)
+        /// percent; 0 makes it an ordinary element again (issue #11). It
+        /// moves to the top of the distant layers, below every other.
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=99))]
+        distant: Option<u8>,
         #[command(flatten)]
         content: ContentArg,
     },
@@ -365,6 +370,9 @@ fn list(dir: &Path) -> anyhow::Result<bool> {
         if e.locked {
             line.push_str(" locked");
         }
+        if let Some(d) = e.distant {
+            line.push_str(&format!(" distant {d}%"));
+        }
         println!("{line}");
     }
     Ok(true)
@@ -432,6 +440,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             glow,
             glow_group,
             clear,
+            distant,
             content,
         } => edit(pack, content, |p| {
             let glow = glow_property(p, id, *glow, glow_group.as_deref())?;
@@ -450,6 +459,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
                 threshold.map(Property::Threshold),
                 glow,
                 clear.map(Property::Clear),
+                distant.map(|d| Property::Distant((d > 0).then_some(d))),
                 locked.filter(|l| *l).map(Property::Locked),
             ];
             let properties: Vec<Property> = properties.into_iter().flatten().collect();
