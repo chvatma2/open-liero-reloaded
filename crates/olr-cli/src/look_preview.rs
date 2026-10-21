@@ -50,7 +50,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     let src = olr_format::levels::read_level_files(&DirFs::new(&args.pack))
         .map_err(|e| anyhow::anyhow!("{}: {e}", args.pack.display()))?;
     let level = LoadedLevel::from_source(&src).with_context(|| args.pack.display().to_string())?;
-    let content = Content::open(&args.content).with_context(|| args.content.display().to_string())?;
+    let content = Content::open_bundled(&args.content).with_context(|| args.content.display().to_string())?;
     let theme = content.load_theme(&level.theme)?;
     let map = level.color_map(&theme);
     let vp = Viewport::GAME;

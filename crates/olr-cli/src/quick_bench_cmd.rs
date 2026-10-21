@@ -7,7 +7,8 @@ use olr_cli::quick_bench;
 
 #[derive(clap::Args)]
 pub struct Args {
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Write the report as RON.
@@ -16,7 +17,7 @@ pub struct Args {
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
-    let content = olr_content::Content::open(&args.content)?;
+    let content = olr_content::Content::open_bundled(&args.content)?;
     let report = quick_bench::run(&content, &mut |line| eprintln!("notice: {line}"))?;
     let show = |v: Option<u64>| v.map_or("not measured".into(), |n| n.to_string());
     println!(

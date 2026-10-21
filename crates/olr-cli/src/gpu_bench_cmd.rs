@@ -49,7 +49,8 @@ pub struct Args {
     adapter: Adapter,
     #[arg(long, value_enum, default_value = "auto")]
     backend: Backend,
-    /// Imported content.
+    /// Imported content, OLR's own packs (the `reloaded` directory beside
+    /// it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     #[arg(long)]
@@ -104,7 +105,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         },
         look: args.look,
     };
-    let content = olr_content::Content::open(&args.content)?;
+    let content = olr_content::Content::open_bundled(&args.content)?;
     let report = gpu_bench::run(&content, &replay, &cfg, &mut |l| eprintln!("  {l}"))?;
     println!(
         "{} ({}, {}); GPU times: {}",

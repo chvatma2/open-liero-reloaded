@@ -14,7 +14,8 @@ use olr_cli::spec::MatchSpec;
 pub struct Args {
     #[command(flatten)]
     spec: MatchSpec,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Write the match's replay here.
@@ -39,7 +40,7 @@ pub struct Args {
 
 /// Returns `Ok(false)` if the match failed.
 pub fn run(args: &Args) -> anyhow::Result<bool> {
-    let content = olr_content::Content::open(&args.content)?;
+    let content = olr_content::Content::open_bundled(&args.content)?;
     let run = play(&content, &args.spec, &Options { fail_at: args.fail_at })?;
     println!("{}", run.summary());
     if let Some(path) = &args.record {

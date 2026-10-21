@@ -12,7 +12,8 @@ use serde_json::json;
 pub struct Args {
     /// A replay (`olr-cli match --record`, or one in `target/failures/`).
     file: PathBuf,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Stop after this many ticks (the world before tick N, 0-based).
@@ -27,7 +28,7 @@ pub struct Args {
 pub fn run(args: &Args) -> anyhow::Result<bool> {
     let bytes = std::fs::read(&args.file)?;
     let replay = Replay::decode(&bytes).map_err(anyhow::Error::new)?;
-    let content = olr_content::Content::open(&args.content)?;
+    let content = olr_content::Content::open_bundled(&args.content)?;
     let mut world = content.world_for_replay(&replay)?;
     let until = args.until.unwrap_or(u32::MAX).min(replay.ticks());
     let mut player = replay.player();

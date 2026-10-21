@@ -680,7 +680,7 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
     let (port_tx, port_rx) = mpsc::channel();
     let server = {
         let (config, data_dir) = (spec.server_config(), spec.data_dir.clone());
-        let content = Content::open(content_dir)?;
+        let content = Content::open_bundled(content_dir)?;
         let (stop, server_stop, mut log, records) =
             (Arc::clone(&stop), Arc::clone(&server_stop), log.clone(), Arc::clone(&records));
         let (rows, first_start, mut exit) =
@@ -775,7 +775,7 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
                     std::thread::sleep(Duration::from_millis(5));
                 }
             }
-            let content = Content::open(&content_dir)?;
+            let content = Content::open_bundled(&content_dir)?;
             run_bot_client(content, &client, &stop, &mut |p| {
                 if let Progress::Started(..) = p {
                     first_start.lock().expect("first start").get_or_insert_with(Instant::now);

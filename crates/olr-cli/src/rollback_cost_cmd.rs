@@ -24,7 +24,8 @@ pub struct Args {
     /// How many times it is measured.
     #[arg(long, default_value_t = 300)]
     samples: usize,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Write the report here as RON.
@@ -33,7 +34,7 @@ pub struct Args {
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
-    let content = olr_content::Content::open(&args.content)?;
+    let content = olr_content::Content::open_bundled(&args.content)?;
     let r =
         rollback_cost::measure(&content, &args.mod_id, &args.level_id, args.worms, args.depth, args.samples)?;
     print!("{}", r.text());

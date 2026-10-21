@@ -11,7 +11,8 @@ use olr_cli::bundle::{DesyncBundle, reproduce};
 #[derive(clap::Args)]
 pub struct Args {
     bundle: PathBuf,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
 }
@@ -20,7 +21,7 @@ pub struct Args {
 pub fn run(args: &Args) -> anyhow::Result<bool> {
     let bytes = std::fs::read(&args.bundle).with_context(|| format!("reading {}", args.bundle.display()))?;
     let b = DesyncBundle::decode(&bytes).with_context(|| format!("decoding {}", args.bundle.display()))?;
-    let content = olr_content::Content::open(&args.content)?;
+    let content = olr_content::Content::open_bundled(&args.content)?;
     println!(
         "peer {} desynced at tick {} (host checksum {:#x}); recorded on {}, fingerprint {:#x}{}",
         b.peer,

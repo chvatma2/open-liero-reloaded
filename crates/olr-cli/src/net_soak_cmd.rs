@@ -25,7 +25,8 @@ pub struct Args {
     /// Stop after this many runs instead of by the time.
     #[arg(long)]
     runs: Option<u32>,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Where failing cases are kept.

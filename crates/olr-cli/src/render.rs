@@ -40,7 +40,8 @@ pub struct Args {
     /// without it, the frame's state at whole pixels, as OLX draws.
     #[arg(long)]
     alpha: Option<f32>,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Directory with the scenarios and OLX's traces.
@@ -59,7 +60,7 @@ struct Frame {
 /// Plays `args.name` up to `args.frame` with a presentation following
 /// worm 0 (every worm in OLX's default skin and colours).
 fn build(args: &Args) -> anyhow::Result<Frame> {
-    let content = Content::open(&args.content)?;
+    let content = Content::open_bundled(&args.content)?;
     let (sc, trace) = olr_scenario::load_fixture(&args.fixtures, &args.name)?;
     let last = i64::from(sc.frames) - 1;
     ensure!((-1..=last).contains(&args.frame), "{} has frames -1 to {last}, not {}", args.name, args.frame);

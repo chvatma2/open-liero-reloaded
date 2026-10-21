@@ -29,15 +29,17 @@ pub struct Args {
     /// `fixtures/look/mods`.
     #[arg(long)]
     packs: Vec<PathBuf>,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
     ensure!(args.scale.is_finite() && args.scale > 0.0 && args.scale <= 16.0, "--scale must be in (0, 16]");
-    let mut roots: Vec<&std::path::Path> = args.packs.iter().map(PathBuf::as_path).collect();
-    roots.push(&args.content);
+    // The `--packs` directories, then the bundled content (OLR's own packs over `--content`).
+    let bundled = olr_content::bundled_roots(&args.content);
+    let roots: Vec<&std::path::Path> = args.packs.iter().chain(&bundled).map(PathBuf::as_path).collect();
     let content = Content::open_layers(&roots).context("opening the content")?;
     let assets = LevelAssets::load(&content, &args.spec.mod_id, &args.spec.level_id)?;
     for w in assets.m.warnings.iter().chain(&assets.level.warnings).chain(&assets.theme.warnings) {

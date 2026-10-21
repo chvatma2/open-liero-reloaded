@@ -54,7 +54,8 @@ pub struct Args {
     /// finds routes through the area cache.
     #[arg(long, value_enum, default_value_t = Personality::Chaos)]
     personality: Personality,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Write the report here as RON.
@@ -63,7 +64,7 @@ pub struct Args {
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
-    let content = olr_content::Content::open(&args.content)?;
+    let content = olr_content::Content::open_bundled(&args.content)?;
     let spec = stress::spec(&args.mod_id, &args.level_id, args.worms, args.pool, args.seconds, args.seed);
     let cfg = Config {
         render_every: args.render_every,

@@ -5,7 +5,8 @@ use std::path::PathBuf;
 pub struct Args {
     /// Scenario names (`<fixtures>/<name>.ron`); all if none.
     names: Vec<String>,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Directory with the scenarios and OLX's traces.
@@ -65,7 +66,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         (None, true) => olr_oracle::Fields::ALL,
         (None, false) => olr_scenario::CHECKED,
     };
-    let content = olr_content::Content::open(&args.content)?;
+    let content = olr_content::Content::open_bundled(&args.content)?;
     if let Some(out) = &args.time {
         let mut report = olr_cli::timing::TimingReport::default();
         let mut ok = true;

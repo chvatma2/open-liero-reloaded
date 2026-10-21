@@ -97,7 +97,8 @@ pub struct Args {
     /// Gives up after this many seconds.
     #[arg(long, default_value_t = 3600)]
     timeout: u64,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// The download cache: what `--content` lacks of a match is downloaded
@@ -409,8 +410,8 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         },
         None => IceConfig::default(),
     };
-    let content =
-        Content::open(&args.content).with_context(|| format!("opening {}", args.content.display()))?;
+    let content = Content::open_bundled(&args.content)
+        .with_context(|| format!("opening {}", args.content.display()))?;
     // Removed when this returns (dropped), unless `--cache` named one.
     let temporary = match &args.cache {
         Some(_) => None,

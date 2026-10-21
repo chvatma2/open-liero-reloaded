@@ -240,7 +240,7 @@ pub fn run_cases(
     cases: &mut dyn FnMut(u32, u64) -> SoakCase,
     out: &mut dyn Write,
 ) -> anyhow::Result<SoakSummary> {
-    let content = Content::open(&cfg.content_dir)
+    let content = Content::open_bundled(&cfg.content_dir)
         .with_context(|| format!("opening the content in {}", cfg.content_dir.display()))?;
     let begun = Instant::now();
     let budget = cfg.minutes * 60.0;

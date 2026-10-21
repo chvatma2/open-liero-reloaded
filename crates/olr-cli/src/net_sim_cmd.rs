@@ -22,7 +22,8 @@ pub struct Args {
     /// seed and the network seed.
     #[arg(long, value_parser = parse_seeds)]
     seeds: Option<Range<u32>>,
-    /// Imported content (packs written by `olr-cli import`).
+    /// Imported content (packs written by `olr-cli import`), OLR's own packs
+    /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
     /// Where a failing run writes its case.
@@ -169,7 +170,7 @@ fn parse_seeds(s: &str) -> Result<Range<u32>, String> {
 
 /// Returns `Ok(false)` if any run failed.
 pub fn run_cmd(args: Args) -> anyhow::Result<bool> {
-    let content = olr_content::Content::open(&args.content)?;
+    let content = olr_content::Content::open_bundled(&args.content)?;
     if let Some(out) = &args.feel {
         return feel(&content, out);
     }
