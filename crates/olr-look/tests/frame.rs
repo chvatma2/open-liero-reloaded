@@ -141,6 +141,19 @@ fn engine_numbers_match_r13() {
     assert!(m.animation.ended(51.0) && !m.animation.ended(49.0));
 }
 
+/// Issue #12: a skin's light is steady and capped, whatever it asks.
+#[test]
+fn skin_light_is_steady_and_capped() {
+    const { assert!(engine::SKIN_LIGHT, "skin light is on by default") };
+    let l = engine::skin_light([10, 200, 255], 150, 24);
+    assert_eq!((l.colour, l.intensity, l.reach), ([10, 200, 255], 150, Reach::Pixels(24)));
+    assert_eq!(l.animation, olr_look::Animation::Steady);
+    let big = engine::skin_light([255; 3], u16::MAX, u16::MAX);
+    assert_eq!(big.intensity, engine::MAX_SKIN_LIGHT_INTENSITY);
+    assert_eq!(big.reach, Reach::Pixels(engine::MAX_SKIN_LIGHT_REACH));
+    assert_eq!(engine::MAX_SKIN_LIGHT_REACH, 48);
+}
+
 #[test]
 fn solids_settings_are_bounded_and_off_without_a_look() {
     let mut l = level();

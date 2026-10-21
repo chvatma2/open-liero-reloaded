@@ -81,11 +81,17 @@ own look. The simulation never sees it.
   radius, reach)` (the calibration: a disc's light at `d0 = max(reach / 3,
   2r)`, at most halfway from its edge to the reach, equals the old point
   light's there; finite, at most 64 × the colour) and `BOUNCE` (0.6).
+  Issue #12: `SKIN_LIGHT` (the one switch for skins' lights, engine-wide,
+  `true`; off, no skin casts light, its glowing pixels still show bright),
+  `MAX_SKIN_LIGHT_INTENSITY` (200 %) and `MAX_SKIN_LIGHT_REACH` (48 world
+  pixels): the caps `olr-format` refuses past, and `skin_light(colour,
+  intensity, reach)` (steady, phase 0) clamps to.
 - **Tests** (`tests/`, one binary): `anim.rs` (pulse shapes at their
   quarter points, keys interpolating, carrying colour and ending, flicker
   deterministic and bounded, phases, `hostile_animations_never_panic`) and
   `frame.rs` (the fade profile, `begin` with and without a level look, an
   animated group, `light_at`, `engine_numbers_match_r13`,
+  `skin_light_is_steady_and_capped`,
   `worm_floor_hues`, `solids_settings_are_bounded_and_off_without_a_look`
   (the occlusion too, issue #10);
   plan 15c: `disc_calibration_matches_todays_light`,

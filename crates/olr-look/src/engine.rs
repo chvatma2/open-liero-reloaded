@@ -70,6 +70,33 @@ pub fn muzzle_light() -> Light {
     flash([255, 220, 160], 80, 40, 50)
 }
 
+/// The engine's switch for skin light (issue #12): a skin's `light` lights
+/// the worm's surroundings in a lit level. `false` turns every skin's light
+/// off, everywhere (their glowing pixels still show bright); there is no
+/// per-player or per-match setting.
+pub const SKIN_LIGHT: bool = true;
+
+/// The brightest a skin's light may be, percent: `olr-format` refuses more,
+/// [`skin_light`] clamps to it.
+pub const MAX_SKIN_LIGHT_INTENSITY: u16 = 200;
+
+/// The farthest a skin's light may reach, world pixels, so a skin never
+/// floods a level: `olr-format` refuses more, [`skin_light`] clamps to it.
+pub const MAX_SKIN_LIGHT_REACH: u16 = 48;
+
+/// A skin's light (issue #12) of `colour` at `intensity` percent reaching
+/// `reach` world pixels, capped at [`MAX_SKIN_LIGHT_INTENSITY`] and
+/// [`MAX_SKIN_LIGHT_REACH`]: steady, following its worm.
+pub fn skin_light(colour: [u8; 3], intensity: u16, reach: u16) -> Light {
+    Light {
+        colour,
+        intensity: intensity.min(MAX_SKIN_LIGHT_INTENSITY),
+        reach: Reach::Pixels(reach.min(MAX_SKIN_LIGHT_REACH)),
+        animation: Animation::Steady,
+        phase_ms: Some(0),
+    }
+}
+
 /// A glowing disc's radius, world pixels, for a light of `reach` (plan 15c,
 /// "My calls": a muzzle flash, shot light or end flash): about an eighth of
 /// the reach, 1 to 6; 1 for a reach that is not finite.
