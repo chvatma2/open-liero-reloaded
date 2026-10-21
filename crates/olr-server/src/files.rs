@@ -195,6 +195,38 @@ pub const LOG_MAX_BYTES: u64 = 10 * 1024 * 1024;
 /// Old log files kept: `server.log.1` (the newer), `server.log.2`.
 pub const LOG_KEEP: usize = 2;
 
+/// A panic as `server.log`'s lines: every line stamped by `stamp`, the
+/// first `panic: <olr_log::panic_report's first line>`, the rest (the
+/// message's further lines, the backtrace) indented under it.
+pub fn panic_lines(report: &str, stamp: &str) -> String {
+    let mut out = String::with_capacity(report.len() + 64);
+    for (i, line) in report.lines().enumerate() {
+        out.push_str(stamp);
+        out.push_str(if i == 0 { "panic: " } else { "    " });
+        out.push_str(line);
+        out.push('\n');
+    }
+    out
+}
+
+/// Every panic, on any thread, appended to the log at `path` (the
+/// operator's `server.log`: message, location, thread and backtrace,
+/// stamped by `stamp`) and flushed before the previous hook (the
+/// terminal's message) runs and the process goes on or ends. It opens the
+/// file itself (appending, as [`RotatingLog`] does, which buffers
+/// nothing): a panic while the log is held still gets there.
+pub fn log_panics(path: PathBuf, stamp: fn() -> String) {
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let text = panic_lines(&olr_log::panic_report(info), &stamp());
+        if let Ok(mut f) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+            let _ = f.write_all(text.as_bytes());
+            let _ = f.flush();
+        }
+        previous(info);
+    }));
+}
+
 /// An appending log file that rotates past `max` bytes (at a line start),
 /// keeping `keep` old files (`<path>.1` the newest). Writing never fails:
 /// a full disk must not stop the server (the terminal still has the log).

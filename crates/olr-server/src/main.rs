@@ -4,7 +4,8 @@
 //! <file.ron>]` checks the network instead (N60) and exits. Logs every event to the
 //! terminal and to `<data>/server.log` (rotated past 10 MiB, two old files
 //! kept), each line stamped with the UTC
-//! time. Ctrl+C, SIGTERM, closing its console (Windows) or typing `quit`
+//! time; a panic there too (message, location, thread, backtrace) before
+//! the process ends. Ctrl+C, SIGTERM, closing its console (Windows) or typing `quit`
 //! stops it cleanly: everyone gets `Bye`.
 
 use std::fs;
@@ -17,7 +18,7 @@ use anyhow::Context as _;
 use clap::Parser;
 use olr_content::Content;
 use olr_server::config::{Config, RelayConfig};
-use olr_server::files::{LOG_KEEP, LOG_MAX_BYTES, RotatingLog};
+use olr_server::files::{LOG_KEEP, LOG_MAX_BYTES, RotatingLog, log_panics};
 use olr_server::nat_check::{self, NAT_CHECK_WAIT};
 
 /// The log file, in the data directory.
@@ -94,6 +95,8 @@ fn main() -> anyhow::Result<()> {
     }
     let file = RotatingLog::open(&data_dir.join(LOG_FILE), LOG_MAX_BYTES, LOG_KEEP)
         .with_context(|| format!("opening {}", data_dir.join(LOG_FILE).display()))?;
+    // Issue #2: a panic lands in the log before the process ends.
+    log_panics(data_dir.join(LOG_FILE), stamp);
     let mut log = Stamped { file, line_start: true };
     // Ruling T13-A: the handler only sets the flag the loop reads.
     ctrlc::set_handler(|| STOP.store(true, Ordering::Relaxed)).context("the Ctrl+C handler")?;

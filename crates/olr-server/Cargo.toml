@@ -22,6 +22,7 @@ olr-net.workspace = true
 olr-discovery.workspace = true
 olr-proto.workspace = true
 olr-content.workspace = true
+olr-log.workspace = true
 olr-bots.workspace = true
 olr-modes.workspace = true
 olr-sim.workspace = true
@@ -49,6 +50,11 @@ olr-server = { path = ".", features = ["test-hooks"] }
 [[test]]
 name = "integration"
 path = "tests/integration.rs"
+
+# The panic hook is process-global: its own process.
+[[test]]
+name = "panic_log"
+path = "tests/panic_log.rs"
 
 [lints]
 workspace = true

@@ -3874,6 +3874,7 @@ dependencies = [
  "olr-content",
  "olr-discovery",
  "olr-lobby",
+ "olr-log",
  "olr-modes",
  "olr-net",
  "olr-online",

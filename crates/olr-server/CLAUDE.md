@@ -28,7 +28,8 @@ beside the executable, else in the working directory).
   `olr-discovery` (the summary and `Hosting`, `Pool`, `Publisher`,
   `invite`, `turn_note`/`TurnList`, the STUN codec, shared with the game;
   its `test-relay` feature for the tests), `olr-proto`, `olr-content`, `olr-bots`,
-  `olr-modes`, `olr-sim`, serde, ron, clap, ctrlc (the binary's stop) and
+  `olr-modes`, `olr-sim`, `olr-log` (`panic_report` alone: the game's
+  run log is not the server's), serde, ron, clap, ctrlc (the binary's stop) and
   anyhow. Not `olr-ui` (egui): the identity file's owner-only writing is replicated in `files.rs`.
 - **`config.rs`**: `Config::parse` (RON, `deny_unknown_fields`, every field
   defaulted but the rotation; bounds: 1-32 players, ≤ 16 spectators,
@@ -284,7 +285,13 @@ beside the executable, else in the working directory).
   first, through `server.log.0`, so a rename that fails — Windows, a
   viewer holding it open — touches no old file: the log goes on in
   `server.log`, said once on stderr, never tried again that run), each line stamped
-  with the UTC time. **Stopping** (ruling T13-A): Ctrl+C, SIGTERM or closing
+  with the UTC time. **Crashes** (issue #2): `files::log_panics` installs a
+  panic hook that appends every panic (any thread; `olr_log::panic_report`:
+  message, location, thread, a backtrace) to `server.log` through a handle
+  of its own, each line stamped (`panic: …`, the rest indented,
+  `files::panic_lines`), flushed, then runs the previous hook (stderr);
+  the file, rotation, format and terminal output are otherwise as before
+  (`tests/panic_log.rs`, a binary of its own). **Stopping** (ruling T13-A): Ctrl+C, SIGTERM or closing
   the console (Windows), through `ctrlc` 3.5.2 (`termination`), or `quit`
   (`stop`, `exit`) typed on the terminal: each sets `STOP`, and `run`
   shuts down with `Bye` to everyone.

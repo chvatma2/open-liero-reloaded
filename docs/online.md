@@ -801,7 +801,8 @@ and exits (see "Through routers").
 The server sends its packs to players who lack them, and passes players'
 skins on (see "Missing content"). The data directory (the config file's
 own by default) holds `server-identity.ron`, the bans file, `server.log`
-(rotated at 10 MiB: `server.log.1` and `.2` keep the older lines),
+(rotated at 10 MiB: `server.log.1` and `.2` keep the older lines; a
+crash's message, place and backtrace land there too),
 `desyncs/` bundles and `downloads/`, the skins it fetched from players
 (clear it by deleting it while the server is stopped). Two servers on one
 data directory cannot share `downloads/`: the second says so in its log
