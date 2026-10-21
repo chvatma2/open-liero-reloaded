@@ -1,0 +1,33 @@
+(
+    name: "Chaingun",
+    recharge: 0.22219999,
+    drain: 2.001,
+    between_shots_s: 0.043,
+    fire: Projectile(
+        recoil: 10,
+        sound: "sfx/shot.ogg",
+        shot: (
+            speed: 175,
+            speed_var: 5.0,
+            spread: 1.5,
+            projectile: (
+                gfx: Pixels([
+                    "#d0d7d0",
+                    "#b0b0b0",
+                ]),
+                gravity: 70,
+                hit_terrain: [
+                    Explode(
+                        damage: 2,
+                        shake: 1,
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 3,
+                    ),
+                ],
+            ),
+        ),
+    ),
+)

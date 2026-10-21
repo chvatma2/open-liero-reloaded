@@ -1,0 +1,18 @@
+(
+    gfx: Pixels([
+        "#efb000",
+        "#cf8800",
+    ]),
+    gravity: 70,
+    hit_terrain: [
+        Explode(
+            damage: 1,
+            shake: 2,
+        ),
+    ],
+    hit_worm: [
+        Injure(
+            damage: 1,
+        ),
+    ],
+)

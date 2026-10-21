@@ -1,0 +1,18 @@
+(
+    gfx: Pixels([
+        "#efb000",
+        "#cf8800",
+    ]),
+    hit_terrain: [
+        Explode(
+            damage: 3,
+            shake: 1,
+            sound: "sfx/sm_explode.ogg",
+        ),
+    ],
+    hit_worm: [
+        Injure(
+            damage: 4,
+        ),
+    ],
+)

@@ -1,0 +1,32 @@
+(
+    name: "Minigun",
+    recharge: 0.14,
+    drain: 1.43,
+    between_shots_s: 0.015,
+    fire: Projectile(
+        recoil: 6,
+        sound: "sfx/shot.ogg",
+        shot: (
+            speed: 250,
+            spread: 3.0,
+            projectile: (
+                gfx: Pixels([
+                    "#d0d7d0",
+                    "#b0b0b0",
+                ]),
+                gravity: 70,
+                hit_terrain: [
+                    Explode(
+                        damage: 3,
+                        shake: 1,
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 2,
+                    ),
+                ],
+            ),
+        ),
+    ),
+)

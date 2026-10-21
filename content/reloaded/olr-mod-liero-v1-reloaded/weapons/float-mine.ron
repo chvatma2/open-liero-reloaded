@@ -1,0 +1,56 @@
+(
+    name: "Float Mine",
+    recharge: 0.25,
+    drain: 50.001,
+    between_shots_s: 0.28,
+    fire: Projectile(
+        class: Grenade,
+        recoil: 2,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 28,
+            spread: 8.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/floatmine.png",
+                    animation: (
+                        fps: 10.0,
+                        mode: Loop,
+                    ),
+                ),
+                gravity: 1,
+                velocity_factor: 0.97,
+                timer: (
+                    after_s: 185.0,
+                    variation_s: 8.5,
+                    effects: [
+                        Explode(
+                            damage: 3,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.6,
+                    ),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 15,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 8,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        shared: "crackler.trail",
+                    ),
+                },
+            ),
+        ),
+    ),
+)

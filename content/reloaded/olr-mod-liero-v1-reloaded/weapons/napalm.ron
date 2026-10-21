@@ -1,0 +1,105 @@
+(
+    name: "Napalm",
+    recharge: 0.275,
+    drain: 100.001,
+    between_shots_s: 0.05,
+    fire: Projectile(
+        class: Grenade,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 90,
+            speed_var: 10.0,
+            spread: 4.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/napalm.png",
+                    rotating: true,
+                    rotation_step_deg: 45,
+                    rotation_speed: 400,
+                ),
+                gravity: 100,
+                timer: (
+                    after_s: 1.65,
+                    effects: [
+                        Explode(
+                            shake: 4,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        shake: 4,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 17,
+                        speed: 120,
+                        speed_var: 20.0,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Pixels([
+                                "#f8c024",
+                            ]),
+                            timer: (
+                                after_s: 0.5,
+                                effects: [
+                                    Explode(),
+                                ],
+                            ),
+                            trail: Explosive,
+                            hit_terrain: [
+                                Explode(
+                                    damage: 5,
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 15,
+                                ),
+                            ],
+                            look: (
+                                glow: 100,
+                                light: (
+                                    colour: "#ff8020",
+                                    intensity: 15,
+                                    reach: Pixels(22),
+                                    animation: Flicker(
+                                        speed: 14,
+                                        depth: 30,
+                                    ),
+                                ),
+                            ),
+                        ),
+                    ),
+                },
+                look: (
+                    glow: 70,
+                    light: (
+                        colour: "#ff9030",
+                        intensity: 30,
+                        reach: Pixels(28),
+                        animation: Flicker(
+                            speed: 12,
+                            depth: 20,
+                        ),
+                    ),
+                    end_flash: (
+                        colour: "#ffa040",
+                        intensity: 200,
+                        reach: Pixels(96),
+                        animation: Keys(
+                            keys: [
+                                (0, 100),
+                                (150, 60),
+                                (450, 0),
+                            ],
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ),
+)

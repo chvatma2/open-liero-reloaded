@@ -1,0 +1,33 @@
+(
+    name: "Handgun",
+    recharge: 0.31800002,
+    drain: 6.667,
+    between_shots_s: 0.28,
+    laser_sight: true,
+    fire: Projectile(
+        recoil: 5,
+        sound: "sfx/shot.ogg",
+        shot: (
+            speed: 252,
+            spread: 2.0,
+            projectile: (
+                gfx: Pixels([
+                    "#d0d7d0",
+                    "#b0b0b0",
+                ]),
+                gravity: 70,
+                hit_terrain: [
+                    Explode(
+                        damage: 3,
+                        shake: 1,
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 13,
+                    ),
+                ],
+            ),
+        ),
+    ),
+)

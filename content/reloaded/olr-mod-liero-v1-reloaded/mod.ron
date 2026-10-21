@@ -1,0 +1,77 @@
+(
+    name: "Liero v1.0 Reloaded",
+    worm: (
+        gravity: 100.0,
+        jump_speed: -65.0,
+    ),
+    rope: (
+        rest_length: 27,
+        strength: 4.5,
+    ),
+    weapons: [
+        "bazooka",
+        "big-nuke",
+        "blaster",
+        "booby-trap",
+        "bouncy-larpa",
+        "bouncy-mine",
+        "cannon",
+        "chaingun",
+        "chiquita-bomb",
+        "cluster-bomb",
+        "crackler",
+        "dart",
+        "dirt-ball",
+        "doomsday",
+        "explosives",
+        "flamer",
+        "float-mine",
+        "gauss-gun",
+        "greenball",
+        "grasshopper",
+        "grenade",
+        "handgun",
+        "hellraider",
+        "larpa",
+        "laser",
+        "mine",
+        "minigun",
+        "mini-nuke",
+        "mini-rockets",
+        "napalm",
+        "rb-rampage",
+        "rifle",
+        "shotgun",
+        "spikeballs",
+        "super-shotgun",
+        "uzi",
+        "winchester",
+        "zimm",
+    ],
+    loadouts: {
+        "Firebird": (
+            loading_time: 100,
+        ),
+        "Restricted 100lt": (
+            loading_time: 100,
+        ),
+        "Retro Classic": (
+            loading_time: 100,
+        ),
+        "Retro Combo": (
+            loading_time: 100,
+        ),
+        "Retro Combo Unlimited": (
+            loading_time: 100,
+        ),
+        "Rifle only": (
+            loading_time: 20,
+        ),
+        "Standard 100lt": (
+            loading_time: 100,
+        ),
+        "Standard 20lt": (
+            loading_time: 20,
+        ),
+    },
+)

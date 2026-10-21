@@ -1,0 +1,61 @@
+(
+    name: "Flamer",
+    recharge: 0.21900001,
+    drain: 1.001,
+    between_shots_s: 0.003,
+    fire: Projectile(
+        class: CloseRange,
+        shot: (
+            amount: 2,
+            speed: 98,
+            speed_var: 10.0,
+            spread: 5.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/flame.png",
+                    animation: (
+                        fps: 10.0,
+                    ),
+                ),
+                gravity: -30,
+                hit_terrain: [
+                    Carve(
+                        size: 1,
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 1,
+                    ),
+                ],
+                look: (
+                    glow: 90,
+                    light: (
+                        colour: "#ff8030",
+                        intensity: 12,
+                        reach: Pixels(20),
+                        animation: Keys(
+                            keys: [
+                                (0, 100),
+                                (600, 0),
+                            ],
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ),
+    look: (
+        muzzle_light: (
+            colour: "#ff9040",
+            intensity: 70,
+            reach: Pixels(40),
+            animation: Keys(
+                keys: [
+                    (0, 100),
+                    (60, 0),
+                ],
+            ),
+        ),
+    ),
+)

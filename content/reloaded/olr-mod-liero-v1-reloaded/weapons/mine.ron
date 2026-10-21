@@ -1,0 +1,55 @@
+(
+    name: "Mine",
+    recharge: 0.32999998,
+    drain: 100.001,
+    between_shots_s: 0.1,
+    fire: Projectile(
+        class: Grenade,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 95,
+            speed_var: 15.0,
+            spread: 6.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/mine.png",
+                    rotating: true,
+                    rotation_step_deg: 90,
+                    rotation_speed: 700,
+                ),
+                gravity: 100,
+                timer: (
+                    after_s: 214.0,
+                    variation_s: 8.5,
+                    effects: [
+                        Explode(
+                            damage: 3,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.4,
+                    ),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 32,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 5,
+                        speed: 125,
+                        speed_var: 50.0,
+                        spread: 360.0,
+                        angle: 180,
+                        shared: "bazooka.spawn",
+                    ),
+                },
+            ),
+        ),
+    ),
+)

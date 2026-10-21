@@ -1,0 +1,39 @@
+(
+    name: "RB Rampage",
+    recharge: 0.275,
+    drain: 10.001,
+    between_shots_s: 0.05,
+    fire: Projectile(
+        recoil: 4,
+        sound: "sfx/shot.ogg",
+        shot: (
+            speed: 133,
+            spread: 2.0,
+            projectile: (
+                gfx: Pixels([
+                    "#d0d880",
+                ]),
+                gravity: 70,
+                velocity_factor: 0.999,
+                timer: (
+                    after_s: 9.0,
+                    effects: [
+                        Explode(
+                            damage: 4,
+                        ),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.99,
+                    ),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 4,
+                    ),
+                ],
+            ),
+        ),
+    ),
+)

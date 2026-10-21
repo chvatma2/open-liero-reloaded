@@ -1,0 +1,78 @@
+(
+    name: "Mini Nuke",
+    recharge: 0.16499999,
+    drain: 50.01,
+    between_shots_s: 0.475,
+    fire: Projectile(
+        class: Grenade,
+        recoil: 20,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 180,
+            spread: 4.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/mininuke.png",
+                ),
+                timer: (
+                    after_s: 1.1,
+                    effects: [
+                        Explode(
+                            damage: 4,
+                            shake: 4,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.75,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 6,
+                        speed: 150,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Pixels([
+                                "#948800",
+                            ]),
+                            timer: (
+                                after_s: 1.1,
+                                variation_s: 0.5,
+                                effects: [
+                                    Explode(
+                                        damage: 4,
+                                        shake: 4,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: ChemSmoke,
+                            hit_terrain: [
+                                Bounce(
+                                    factor: 0.6,
+                                ),
+                            ],
+                            hit_worm: [
+                                Explode(
+                                    damage: 9,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    amount: 6,
+                                    speed: 50,
+                                    spread: 360.0,
+                                    shared: "big-nuke.spawn.spawn",
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
+        ),
+    ),
+)

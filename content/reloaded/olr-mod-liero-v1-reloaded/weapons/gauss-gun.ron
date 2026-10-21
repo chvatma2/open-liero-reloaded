@@ -1,0 +1,77 @@
+(
+    name: "Gauss Gun",
+    recharge: 0.175,
+    drain: 100.001,
+    between_shots_s: 0.05,
+    fire: Projectile(
+        recoil: 90,
+        sound: "sfx/exp3.ogg",
+        shot: (
+            amount: 5,
+            speed: 700,
+            speed_var: 50.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/gauss.png",
+                ),
+                gravity: 5,
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 5,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 10,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Pixels([
+                                "#bebe32",
+                            ]),
+                            hit_terrain: [
+                                Explode(
+                                    damage: 2,
+                                    sound: "sfx/sm_explode.ogg",
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 2,
+                                ),
+                            ],
+                        ),
+                    ),
+                },
+                look: (
+                    glow: 100,
+                    light: (
+                        colour: "#ff4030",
+                        intensity: 30,
+                        reach: Pixels(28),
+                    ),
+                ),
+            ),
+        ),
+    ),
+    look: (
+        muzzle_light: (
+            colour: "#ffd0b0",
+            intensity: 150,
+            reach: Pixels(72),
+            animation: Keys(
+                keys: [
+                    (0, 100),
+                    (80, 0),
+                ],
+            ),
+        ),
+    ),
+)

@@ -1,0 +1,31 @@
+(
+    name: "Super Shotgun",
+    recharge: 0.171,
+    drain: 50.001,
+    between_shots_s: 1.275,
+    fire: Projectile(
+        class: PowerGun,
+        recoil: 200,
+        sound: "sfx/shotgun.ogg",
+        shot: (
+            amount: 40,
+            speed: 182,
+            speed_var: 20.0,
+            spread: 10.0,
+            shared: "shotgun",
+        ),
+    ),
+    look: (
+        muzzle_light: (
+            colour: "#ffdca0",
+            intensity: 130,
+            reach: Pixels(60),
+            animation: Keys(
+                keys: [
+                    (0, 100),
+                    (70, 0),
+                ],
+            ),
+        ),
+    ),
+)

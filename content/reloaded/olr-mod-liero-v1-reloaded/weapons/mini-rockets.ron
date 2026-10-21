@@ -1,0 +1,47 @@
+(
+    name: "Mini Rockets",
+    recharge: 0.188,
+    drain: 10.01,
+    between_shots_s: 0.115,
+    fire: Projectile(
+        recoil: 5,
+        sound: "sfx/larpa.ogg",
+        shot: (
+            speed: 119,
+            spread: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/dart.png",
+                    frames_follow_heading: true,
+                    heading_frames: 18,
+                ),
+                gravity: 0,
+                velocity_factor: 1.001,
+                trail: Doomsday,
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 2,
+                    ),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 8,
+                    ),
+                ],
+                look: (
+                    glow: 70,
+                    light: (
+                        colour: "#ffa040",
+                        intensity: 40,
+                        reach: Pixels(28),
+                        animation: Flicker(
+                            speed: 12,
+                            depth: 20,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ),
+)

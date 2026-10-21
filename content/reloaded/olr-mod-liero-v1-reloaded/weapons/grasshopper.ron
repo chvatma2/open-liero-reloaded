@@ -1,0 +1,252 @@
+(
+    name: "Grasshopper",
+    recharge: 0.233,
+    drain: 100.001,
+    between_shots_s: 0.02,
+    fire: Projectile(
+        class: Grenade,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 133,
+            speed_var: 10.0,
+            spread: 4.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/grasshopper.png",
+                ),
+                gravity: 110,
+                timer: (
+                    after_s: 1.857,
+                    variation_s: 0.714,
+                    effects: [
+                        Explode(
+                            damage: 5,
+                            shake: 2,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: 5,
+                        shake: 2,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 5,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        speed: 100,
+                        spread: 90.0,
+                        angle: -90,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/grasshopper.png",
+                            ),
+                            timer: (
+                                after_s: 1.0,
+                                variation_s: 0.857,
+                                effects: [
+                                    Explode(
+                                        damage: 5,
+                                        shake: 2,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            hit_terrain: [
+                                Bounce(
+                                    factor: 0.6,
+                                ),
+                            ],
+                            hit_worm: [
+                                Explode(
+                                    damage: 5,
+                                ),
+                                Spawn("spawn"),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    speed: 84,
+                                    speed_var: 28.0,
+                                    spread: 90.0,
+                                    angle: -90,
+                                    projectile: (
+                                        gfx: Image(
+                                            file: "gfx/grasshopper.png",
+                                        ),
+                                        timer: (
+                                            after_s: 1.0,
+                                            variation_s: 0.857,
+                                            effects: [
+                                                Explode(
+                                                    damage: 5,
+                                                    shake: 2,
+                                                ),
+                                                Spawn("spawn"),
+                                            ],
+                                        ),
+                                        hit_terrain: [
+                                            Bounce(
+                                                factor: 0.6,
+                                            ),
+                                        ],
+                                        hit_worm: [
+                                            Explode(
+                                                damage: 5,
+                                            ),
+                                            Spawn("spawn"),
+                                        ],
+                                        spawns: {
+                                            "spawn": (
+                                                speed: 84,
+                                                speed_var: 28.0,
+                                                spread: 90.0,
+                                                angle: -90,
+                                                projectile: (
+                                                    gfx: Image(
+                                                        file: "gfx/grasshopper.png",
+                                                    ),
+                                                    timer: (
+                                                        after_s: 1.0,
+                                                        variation_s: 0.857,
+                                                        effects: [
+                                                            Explode(
+                                                                damage: 4,
+                                                                shake: 2,
+                                                            ),
+                                                            Spawn("spawn"),
+                                                        ],
+                                                    ),
+                                                    hit_terrain: [
+                                                        Bounce(
+                                                            factor: 0.6,
+                                                        ),
+                                                    ],
+                                                    hit_worm: [
+                                                        Explode(
+                                                            damage: 4,
+                                                        ),
+                                                        Spawn("spawn"),
+                                                    ],
+                                                    spawns: {
+                                                        "spawn": (
+                                                            speed: 84,
+                                                            speed_var: 28.0,
+                                                            spread: 90.0,
+                                                            angle: -90,
+                                                            projectile: (
+                                                                gfx: Image(
+                                                                    file: "gfx/grasshopper.png",
+                                                                ),
+                                                                timer: (
+                                                                    after_s: 1.0,
+                                                                    variation_s: 0.857,
+                                                                    effects: [
+                                                                        Explode(
+                                                                            damage: 4,
+                                                                            shake: 2,
+                                                                        ),
+                                                                        Spawn("spawn"),
+                                                                    ],
+                                                                ),
+                                                                hit_terrain: [
+                                                                    Bounce(
+                                                                        factor: 0.6,
+                                                                    ),
+                                                                ],
+                                                                hit_worm: [
+                                                                    Explode(
+                                                                        damage: 4,
+                                                                    ),
+                                                                    Spawn("spawn"),
+                                                                ],
+                                                                spawns: {
+                                                                    "spawn": (
+                                                                        speed: 84,
+                                                                        speed_var: 28.0,
+                                                                        spread: 90.0,
+                                                                        angle: -90,
+                                                                        projectile: (
+                                                                            gfx: Image(
+                                                                                file: "gfx/grasshopper.png",
+                                                                            ),
+                                                                            timer: (
+                                                                                after_s: 1.0,
+                                                                                variation_s: 0.857,
+                                                                                effects: [
+                                                                                    Explode(
+                                                                                        damage: 3,
+                                                                                        shake: 2,
+                                                                                    ),
+                                                                                    Spawn("spawn"),
+                                                                                ],
+                                                                            ),
+                                                                            hit_terrain: [
+                                                                                Bounce(
+                                                                                    factor: 0.4,
+                                                                                ),
+                                                                            ],
+                                                                            hit_worm: [
+                                                                                Explode(
+                                                                                    damage: 3,
+                                                                                ),
+                                                                                Spawn("spawn"),
+                                                                            ],
+                                                                            spawns: {
+                                                                                "spawn": (
+                                                                                    speed: 84,
+                                                                                    speed_var: 28.0,
+                                                                                    spread: 90.0,
+                                                                                    angle: -90,
+                                                                                    projectile: (
+                                                                                        gfx: Image(
+                                                                                            file: "gfx/grasshopper.png",
+                                                                                        ),
+                                                                                        timer: (
+                                                                                            after_s: 1.0,
+                                                                                            variation_s: 0.857,
+                                                                                            effects: [
+                                                                                                Explode(
+                                                                                                    damage: 3,
+                                                                                                    shake: 2,
+                                                                                                ),
+                                                                                            ],
+                                                                                        ),
+                                                                                        hit_terrain: [
+                                                                                            Bounce(
+                                                                                                factor: 0.4,
+                                                                                            ),
+                                                                                        ],
+                                                                                        hit_worm: [
+                                                                                            Explode(
+                                                                                                damage: 3,
+                                                                                            ),
+                                                                                        ],
+                                                                                    ),
+                                                                                ),
+                                                                            },
+                                                                        ),
+                                                                    ),
+                                                                },
+                                                            ),
+                                                        ),
+                                                    },
+                                                ),
+                                            ),
+                                        },
+                                    ),
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
+        ),
+    ),
+)

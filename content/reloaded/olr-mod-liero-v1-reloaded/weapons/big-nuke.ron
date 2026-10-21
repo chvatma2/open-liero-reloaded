@@ -1,0 +1,72 @@
+(
+    name: "Big Nuke",
+    recharge: 0.1,
+    drain: 100.001,
+    between_shots_s: 0.05,
+    fire: Projectile(
+        class: Grenade,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 119,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/nuke.png",
+                ),
+                timer: (
+                    after_s: 2.43,
+                    variation_s: 0.29,
+                    effects: [
+                        Explode(
+                            shake: 4,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.65,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 50,
+                        speed: 140,
+                        speed_var: 56.0,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Pixels([
+                                "#948800",
+                            ]),
+                            timer: (
+                                after_s: 2.86,
+                                variation_s: 0.71,
+                                effects: [
+                                    Explode(
+                                        damage: 15,
+                                        shake: 4,
+                                    ),
+                                    Spawn("spawn"),
+                                ],
+                            ),
+                            trail: ChemSmoke,
+                            hit_terrain: [
+                                Bounce(
+                                    factor: 0.6,
+                                ),
+                            ],
+                            spawns: {
+                                "spawn": (
+                                    amount: 3,
+                                    speed: 154,
+                                    speed_var: 28.0,
+                                    spread: 360.0,
+                                    shared: "big-nuke.spawn.spawn",
+                                ),
+                            },
+                        ),
+                    ),
+                },
+            ),
+        ),
+    ),
+)

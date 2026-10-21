@@ -1,0 +1,26 @@
+(
+    name: "Greenball",
+    recharge: 0.31800002,
+    drain: 2.501,
+    between_shots_s: 0.057,
+    fire: Projectile(
+        class: Grenade,
+        recoil: 5,
+        shot: (
+            speed: 140,
+            spread: 4.0,
+            projectile: (
+                gfx: Pixels([
+                    "#94b000",
+                ]),
+                gravity: 70,
+                hit_terrain: [
+                    GreenDirt(),
+                ],
+                hit_worm: [
+                    GreenDirt(),
+                ],
+            ),
+        ),
+    ),
+)

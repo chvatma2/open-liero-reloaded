@@ -1,0 +1,61 @@
+(
+    name: "Grenade",
+    recharge: 0.269,
+    drain: 100.001,
+    between_shots_s: 0.05,
+    fire: Projectile(
+        class: Grenade,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 119,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/grenade.png",
+                    rotating: true,
+                    rotation_step_deg: 90,
+                    rotation_speed: 400,
+                ),
+                gravity: 130,
+                timer: (
+                    after_s: 1.643,
+                    variation_s: 0.143,
+                    effects: [
+                        Explode(
+                            damage: 5,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.4,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 50,
+                        speed: 140,
+                        speed_var: 35.0,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Pixels([
+                                "#609660",
+                            ]),
+                            gravity: 70,
+                            hit_terrain: [
+                                Explode(
+                                    damage: 2,
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 4,
+                                ),
+                            ],
+                        ),
+                    ),
+                },
+            ),
+        ),
+    ),
+)

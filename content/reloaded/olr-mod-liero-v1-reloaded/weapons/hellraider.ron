@@ -1,0 +1,90 @@
+(
+    name: "Hellraider",
+    recharge: 0.109000005,
+    drain: 100.001,
+    between_shots_s: 0.05,
+    fire: Projectile(
+        class: Grenade,
+        recoil: 50,
+        sound: "sfx/bazooka.ogg",
+        shot: (
+            speed: 105,
+            spread: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/gauss.png",
+                ),
+                timer: (
+                    after_s: 2.14,
+                    variation_s: 0.29,
+                    effects: [
+                        Explode(
+                            damage: 5,
+                            shake: 5,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                trail: Projectile(
+                    every_s: 0.114,
+                    spawn: (
+                        speed: 1,
+                        speed_var: 1.0,
+                        parent_velocity_as_direction: true,
+                        projectile: (
+                            gfx: Pixels([
+                                "#f0f0d4",
+                            ]),
+                            timer: (
+                                after_s: 0.05,
+                                effects: [
+                                    Explode(
+                                        damage: 15,
+                                        shake: 4,
+                                    ),
+                                ],
+                            ),
+                            hit_terrain: [
+                                Explode(
+                                    damage: 5,
+                                ),
+                            ],
+                        ),
+                    ),
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.8,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 20,
+                        speed: 100,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/cannon.png",
+                            ),
+                            trail: Smoke,
+                            hit_terrain: [
+                                Explode(
+                                    damage: 4,
+                                    shake: 3,
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 18,
+                                ),
+                            ],
+                        ),
+                    ),
+                },
+                look: (
+                    glow: 80,
+                ),
+            ),
+        ),
+    ),
+)

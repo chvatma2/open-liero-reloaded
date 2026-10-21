@@ -1,0 +1,65 @@
+(
+    name: "Explosives",
+    recharge: 0.619,
+    drain: 100.001,
+    between_shots_s: 0.001,
+    fire: Projectile(
+        class: Grenade,
+        sound: "sfx/throw.ogg",
+        shot: (
+            amount: 4,
+            speed: 105,
+            spread: 10.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/explosive.png",
+                    rotating: true,
+                    rotation_step_deg: 90,
+                    rotation_speed: 400,
+                ),
+                timer: (
+                    after_s: 0.786,
+                    variation_s: 0.143,
+                    effects: [
+                        Explode(
+                            damage: 5,
+                            shake: 2,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.2,
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 15,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 5,
+                        speed: 150,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Image(
+                                file: "gfx/none.png",
+                                animation: (
+                                    fps: 15.0,
+                                ),
+                            ),
+                            gravity: 0,
+                            hit_worm: [
+                                Injure(
+                                    damage: 2,
+                                ),
+                            ],
+                        ),
+                    ),
+                },
+            ),
+        ),
+    ),
+)

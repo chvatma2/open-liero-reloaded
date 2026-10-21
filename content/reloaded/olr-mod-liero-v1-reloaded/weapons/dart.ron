@@ -1,0 +1,31 @@
+(
+    name: "Dart",
+    recharge: 0.35,
+    drain: 20.001,
+    between_shots_s: 0.429,
+    fire: Projectile(
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 154,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/dart.png",
+                    frames_follow_heading: true,
+                    heading_frames: 18,
+                ),
+                gravity: 20,
+                hit_terrain: [
+                    Explode(
+                        damage: 3,
+                        shake: 1,
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 10,
+                    ),
+                ],
+            ),
+        ),
+    ),
+)

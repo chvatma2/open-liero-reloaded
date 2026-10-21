@@ -1,0 +1,46 @@
+(
+    name: "Crackler",
+    recharge: 0.127,
+    drain: 100.001,
+    between_shots_s: 0.03,
+    fire: Projectile(
+        class: Grenade,
+        recoil: 5,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 119,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/gauss.png",
+                ),
+                gravity: 100,
+                timer: (
+                    after_s: 5.71,
+                    variation_s: 0.71,
+                    effects: [
+                        Explode(
+                            damage: 3,
+                        ),
+                    ],
+                ),
+                trail: Projectile(
+                    every_s: 0.029,
+                    spawn: (
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        shared: "crackler.trail",
+                    ),
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.9,
+                    ),
+                ],
+                look: (
+                    glow: 80,
+                ),
+            ),
+        ),
+    ),
+)

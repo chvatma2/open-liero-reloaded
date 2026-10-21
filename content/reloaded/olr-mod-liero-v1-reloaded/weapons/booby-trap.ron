@@ -1,0 +1,41 @@
+(
+    name: "Booby Trap",
+    recharge: 0.24000001,
+    drain: 100.01,
+    between_shots_s: 0.05,
+    fire: Projectile(
+        class: Grenade,
+        recoil: 5,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 100,
+            speed_var: 20.0,
+            spread: 15.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/health.png",
+                ),
+                gravity: 150,
+                timer: (
+                    after_s: 55.0,
+                    effects: [
+                        Explode(
+                            damage: 5,
+                            shake: 3,
+                        ),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.3,
+                    ),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 28,
+                    ),
+                ],
+            ),
+        ),
+    ),
+)

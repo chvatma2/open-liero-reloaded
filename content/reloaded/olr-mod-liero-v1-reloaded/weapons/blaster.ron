@@ -1,0 +1,73 @@
+(
+    name: "Blaster",
+    recharge: 0.21900001,
+    drain: 33.334,
+    between_shots_s: 1.143,
+    fire: Projectile(
+        recoil: 30,
+        sound: "sfx/blaster.ogg",
+        shot: (
+            speed: 105,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/blaster.png",
+                ),
+                trail: Smoke,
+                hit_terrain: [
+                    Explode(
+                        shake: 4,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 45,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Pixels([
+                                "#efb000",
+                                "#cf8800",
+                            ]),
+                            hit_terrain: [
+                                Explode(
+                                    damage: 3,
+                                    shake: 1,
+                                    sound: "sfx/sm_explode.ogg",
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 2,
+                                ),
+                            ],
+                            look: (
+                                glow: 70,
+                            ),
+                        ),
+                    ),
+                },
+                look: (
+                    glow: 90,
+                    light: (
+                        colour: "#ffb040",
+                        intensity: 50,
+                        reach: Pixels(36),
+                    ),
+                    end_flash: (
+                        colour: "#ffc060",
+                        intensity: 160,
+                        reach: Pixels(80),
+                        animation: Keys(
+                            keys: [
+                                (0, 100),
+                                (250, 0),
+                            ],
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ),
+)

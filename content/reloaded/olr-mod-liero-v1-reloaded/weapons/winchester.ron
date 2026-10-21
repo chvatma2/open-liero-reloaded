@@ -1,0 +1,54 @@
+(
+    name: "Winchester",
+    recharge: 0.177,
+    drain: 11.112,
+    between_shots_s: 0.525,
+    fire: Projectile(
+        recoil: 35,
+        sound: "sfx/rifle.ogg",
+        shot: (
+            speed: 700,
+            spread: 1.0,
+            projectile: (
+                gfx: Pixels([
+                    "#d0d7d0",
+                ]),
+                gravity: 1,
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 12,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 3,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        shared: "bazooka.spawn",
+                    ),
+                },
+            ),
+        ),
+    ),
+    look: (
+        muzzle_light: (
+            colour: "#ffe0b0",
+            intensity: 120,
+            reach: Pixels(56),
+            animation: Keys(
+                keys: [
+                    (0, 100),
+                    (60, 0),
+                ],
+            ),
+        ),
+    ),
+)

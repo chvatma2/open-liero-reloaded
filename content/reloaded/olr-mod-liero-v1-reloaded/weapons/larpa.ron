@@ -1,0 +1,66 @@
+(
+    name: "Larpa",
+    recharge: 0.19500001,
+    drain: 20.001,
+    between_shots_s: 0.3,
+    fire: Projectile(
+        recoil: 20,
+        sound: "sfx/larpa.ogg",
+        shot: (
+            speed: 220,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/larpa.png",
+                    frames_follow_heading: true,
+                    heading_frames: 18,
+                ),
+                gravity: 0,
+                trail: Projectile(
+                    every_s: 0.03,
+                    spawn: (
+                        speed: 1,
+                        speed_var: 5.0,
+                        parent_velocity_as_direction: true,
+                        projectile: (
+                            gfx: Pixels([
+                                "#d0d7d0",
+                            ]),
+                            hit_terrain: [
+                                Explode(
+                                    damage: 2,
+                                    shake: 1,
+                                    sound: "sfx/sm_explode.ogg",
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 4,
+                                ),
+                            ],
+                        ),
+                    ),
+                ),
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 4,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Explode(),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 5,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        shared: "bazooka.spawn",
+                    ),
+                },
+            ),
+        ),
+    ),
+)

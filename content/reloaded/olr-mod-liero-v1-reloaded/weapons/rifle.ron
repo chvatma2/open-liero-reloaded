@@ -1,0 +1,54 @@
+(
+    name: "Rifle",
+    recharge: 0.26,
+    drain: 100.001,
+    between_shots_s: 0.1,
+    laser_sight: true,
+    fire: Projectile(
+        recoil: 70,
+        sound: "sfx/rifle.ogg",
+        shot: (
+            speed: 700,
+            projectile: (
+                gfx: Pixels([
+                    "#d0d7d0",
+                ]),
+                gravity: 1,
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 1,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 34,
+                    ),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 4,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        shared: "bazooka.spawn",
+                    ),
+                },
+            ),
+        ),
+    ),
+    look: (
+        muzzle_light: (
+            colour: "#ffe0b0",
+            intensity: 120,
+            reach: Pixels(56),
+            animation: Keys(
+                keys: [
+                    (0, 100),
+                    (60, 0),
+                ],
+            ),
+        ),
+    ),
+)

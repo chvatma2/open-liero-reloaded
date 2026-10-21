@@ -1,0 +1,55 @@
+(
+    name: "Bouncy Mine",
+    recharge: 0.28,
+    drain: 100.001,
+    between_shots_s: 0.02,
+    fire: Projectile(
+        class: Grenade,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 70,
+            speed_var: 5.0,
+            spread: 3.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/bmine.png",
+                    rotating: true,
+                    rotation_step_deg: 120,
+                    rotation_speed: 400,
+                ),
+                timer: (
+                    after_s: 171.0,
+                    variation_s: 11.0,
+                    effects: [
+                        Explode(
+                            damage: 3,
+                            shake: 1,
+                        ),
+                        Spawn("spawn"),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 1.0,
+                    ),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 28,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 7,
+                        speed: 125,
+                        speed_var: 50.0,
+                        spread: 360.0,
+                        angle: 180,
+                        shared: "bazooka.spawn",
+                    ),
+                },
+            ),
+        ),
+    ),
+)

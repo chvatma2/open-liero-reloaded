@@ -1,0 +1,35 @@
+(
+    name: "Dirt Ball",
+    recharge: 0.311,
+    drain: 20.001,
+    between_shots_s: 0.286,
+    fire: Projectile(
+        class: Grenade,
+        sound: "sfx/throw.ogg",
+        shot: (
+            speed: 140,
+            speed_var: 10.0,
+            spread: 6.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/dirtball.png",
+                ),
+                timer: (
+                    after_s: 1.143,
+                    variation_s: 0.286,
+                    effects: [
+                        Dirt(),
+                    ],
+                ),
+                hit_terrain: [
+                    Bounce(
+                        factor: 0.3,
+                    ),
+                ],
+                hit_worm: [
+                    Dirt(),
+                ],
+            ),
+        ),
+    ),
+)

@@ -1,0 +1,48 @@
+(
+    name: "Doomsday",
+    recharge: 0.14,
+    drain: 12.501,
+    between_shots_s: 0.157,
+    fire: Projectile(
+        recoil: 15,
+        sound: "sfx/larpa.ogg",
+        shot: (
+            amount: 2,
+            speed: 119,
+            spread: 4.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/doomsday.png",
+                    frames_follow_heading: true,
+                    heading_frames: 18,
+                ),
+                gravity: 0,
+                velocity_factor: 1.001,
+                trail: Doomsday,
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 2,
+                    ),
+                ],
+                hit_worm: [
+                    Injure(
+                        damage: 10,
+                    ),
+                ],
+                look: (
+                    glow: 70,
+                    light: (
+                        colour: "#ff9040",
+                        intensity: 35,
+                        reach: Pixels(28),
+                        animation: Flicker(
+                            speed: 12,
+                            depth: 20,
+                        ),
+                    ),
+                ),
+            ),
+        ),
+    ),
+)

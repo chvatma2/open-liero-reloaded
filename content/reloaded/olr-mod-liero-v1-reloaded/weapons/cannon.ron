@@ -1,0 +1,56 @@
+(
+    name: "Cannon",
+    recharge: 0.1555,
+    drain: 16.667,
+    between_shots_s: 0.143,
+    fire: Projectile(
+        class: Grenade,
+        recoil: 5,
+        sound: "sfx/bazooka.ogg",
+        shot: (
+            speed: 140,
+            speed_var: 10.0,
+            spread: 1.0,
+            projectile: (
+                gfx: Image(
+                    file: "gfx/cannon.png",
+                ),
+                gravity: 70,
+                hit_terrain: [
+                    Explode(
+                        damage: 5,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 8,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 5,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        shared: "bazooka.spawn",
+                    ),
+                },
+            ),
+        ),
+    ),
+    look: (
+        muzzle_light: (
+            colour: "#ffd090",
+            intensity: 150,
+            reach: Pixels(64),
+            animation: Keys(
+                keys: [
+                    (0, 100),
+                    (80, 0),
+                ],
+            ),
+        ),
+    ),
+)
