@@ -9,10 +9,11 @@
 pub mod canvas;
 mod files;
 mod recovery;
+pub mod skin;
 
 pub use files::{
-    MAX_ENTRIES, MAX_IMPORT_BYTES, PREVIEW_SIDE, add_texture, editable_levels, level_dirs, list as list_dir,
-    list_assets, list_textures, remove_texture,
+    MAX_ENTRIES, MAX_IMPORT_BYTES, PREVIEW_SIDE, add_texture, editable_levels, editable_skins, level_dirs,
+    list as list_dir, list_assets, list_textures, remove_texture, skin_dirs,
 };
 pub use recovery::{INFO_FILE, RecoveryInfo, discard_recovery, list_recoveries};
 

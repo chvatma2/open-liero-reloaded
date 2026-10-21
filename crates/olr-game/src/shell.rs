@@ -234,6 +234,8 @@ pub struct Shell {
     pub(crate) editor: Option<crate::editor::EditorHost>,
     /// What the editor said while it opened, for the app's next editor frame.
     editor_out: Vec<crate::editor::HostOut>,
+    /// The skin editor while it is open (issue #14): it replaces the menus.
+    pub(crate) skin_editor: Option<crate::editor::skin::SkinHost>,
     /// The bug relay's address (`report::endpoint`; none: Report a bug
     /// is hidden), and the report being sent.
     report_url: Option<String>,
@@ -318,6 +320,7 @@ impl Shell {
             host_lost_pending: None,
             editor: None,
             editor_out: Vec::new(),
+            skin_editor: None,
             report_url: None,
             report_send: None,
             updater: None,
@@ -393,6 +396,7 @@ impl Shell {
             host_lost_pending: None,
             editor: None,
             editor_out: Vec::new(),
+            skin_editor: None,
             report_url: None,
             report_send: None,
             updater: None,
@@ -558,6 +562,7 @@ impl Shell {
             | AppCommand::NewLevel { .. }
             | AppCommand::Recover(_)
             | AppCommand::DiscardRecovery(_) => self.editor_command(c),
+            AppCommand::EditSkin(_) | AppCommand::NewSkin(_) => self.skin_command(c),
             AppCommand::SetPaused(on) => self.paused = on,
             AppCommand::ArmPlayer(weapons) => self.arm(weapons),
             AppCommand::SaveReplay => {

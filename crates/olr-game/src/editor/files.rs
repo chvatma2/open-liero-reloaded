@@ -1,6 +1,7 @@
 //! The editor host's disk work (plan 14c Task 5): the level packs of the
-//! data directory's `packs/`, a directory listed for the file browser, and
-//! an image read for an import, bounded before it is read whole.
+//! data directory's `packs/` (and its skin packs, issue #14), a directory
+//! listed for the file browser, and an image read for an import, bounded
+//! before it is read whole.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::io::Read as _;
@@ -25,6 +26,17 @@ const HEADER_BYTES: u64 = 16;
 /// directory name order: the first of two with one id wins. Unreadable or
 /// hidden (`.`) entries are skipped.
 pub fn level_dirs(packs_dir: &Path) -> BTreeMap<String, PathBuf> {
+    pack_dirs(packs_dir, PackKind::Level)
+}
+
+/// The skin packs in `packs_dir` by manifest id, as [`level_dirs`] (issue
+/// #14: the skin editor edits these in place).
+pub fn skin_dirs(packs_dir: &Path) -> BTreeMap<String, PathBuf> {
+    pack_dirs(packs_dir, PackKind::Skin)
+}
+
+/// The packs of `kind` in `packs_dir` by manifest id ([`level_dirs`]).
+fn pack_dirs(packs_dir: &Path, kind: PackKind) -> BTreeMap<String, PathBuf> {
     let Ok(rd) = std::fs::read_dir(packs_dir) else { return BTreeMap::new() };
     let mut dirs: Vec<PathBuf> = rd
         .filter_map(Result::ok)
@@ -36,7 +48,7 @@ pub fn level_dirs(packs_dir: &Path) -> BTreeMap<String, PathBuf> {
     let mut out = BTreeMap::new();
     for dir in dirs {
         let Ok(m) = olr_pack::read_manifest(&olr_vfs::DirFs::new(&dir)) else { continue };
-        if m.kind == PackKind::Level {
+        if m.kind == kind {
             out.entry(m.id).or_insert(dir);
         }
     }
@@ -47,6 +59,12 @@ pub fn level_dirs(packs_dir: &Path) -> BTreeMap<String, PathBuf> {
 /// `MenuData::set_editor_packs`.
 pub fn editable_levels(packs_dir: &Path) -> BTreeSet<String> {
     level_dirs(packs_dir).into_keys().collect()
+}
+
+/// The skin pack ids in `packs_dir` (by manifest), for
+/// `MenuData::set_editable_skins`.
+pub fn editable_skins(packs_dir: &Path) -> BTreeSet<String> {
+    skin_dirs(packs_dir).into_keys().collect()
 }
 
 /// `dir`'s entries for the browser (`EditorCommand::List`), a pack being a

@@ -22,7 +22,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
 - **Layer 6.** Uses `olr-ui`, `olr-content`, `olr-present`, `olr-scene`, `olr-fx`, `olr-render`,
   `olr-audio`, `olr-input`, `olr-sim`, `olr-modes`, `olr-bots`, `olr-replay`,
   `olr-terrain`, `olr-pack`, `olr-editor`, `olr-edit`, `olr-format`,
-  `olr-vfs` (the level editor), `olr-online`, `olr-netcode`, `olr-proto`,
+  `olr-vfs` (the level editor), `olr-skin-editor` (the skin editor), `olr-online`, `olr-netcode`, `olr-proto`,
   `olr-lobby` (identities, host settings), `olr-net` (endpoint settings,
   LAN announcements, `IceConfig`), `olr-discovery` (the hosted lobby's summary,
   `GameSummary::of_lobby`, and `hosting`, shared with olr-server; the
@@ -886,6 +886,36 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `editor::canvas`'s `the_canvas_frame_follows_the_document` and
   `a_glow_edit_uploads_its_rectangle`, `main.rs`'s argument tests,
   `fixtures/autoplay/editor.ron` in `cargo xtask e2e`.
+- **Skin editor** (`editor/skin.rs`, `shell/editing.rs`, issue #14;
+  decisions in `docs/porting/STATUS.md`, "Skin editor (issue #14)"):
+  `SkinHost` holds `olr-skin-editor`'s state and does its disk work. The
+  Skin tab's `AppCommand::EditSkin(id)` opens one of the user's skin packs
+  (`files::skin_dirs` of `packs/`, by manifest id; never a bundled root)
+  in place; `NewSkin(None)` a blank double-resolution skin ("New skin"),
+  `NewSkin(Some(id))` a copy of any installed skin (`Content::pack_dir`,
+  named "<name> copy", origin dropped, its other files and authors kept);
+  each checked first (`olr_edit::skin::check_dir`, then
+  `olr_edit::pack::load` and `SkinDoc::new`): a bad pack or a layout the
+  editor does not take is refused with why on the Editor screen
+  (`editor_message`), never a crash. `act` carries out `Save` (in place
+  through `olr_edit::pack::save`, or the first save a new pack in
+  `packs/` with an id `pack_id(name)` free among the installed packs and
+  the folders there, "skin" for a name without a letter or digit; a failed
+  write removes the new folder) and answers `Saved(id)` or `Failed(why)`;
+  `tick(now)` steps the preview (at most 0.25 s). The shell owns it
+  (`Shell::skin_editor`): while open `App::frame` draws
+  `olr_skin_editor::ui::show` instead of the menus and
+  `Shell::skin_frame` runs it; every save lists the content again
+  (`list_content`, `refresh_editor_packs`: `MenuData::set_editable_skins`
+  with `files::editable_skins`), so the profiles' skin picker offers the
+  skin at once; Close brings the Editor screen back. The window's close
+  asks it first (`Shell::request_close`: `Wait` while its Unsaved dialog
+  is up). No recovery copy (a deviation from the level editor's, in
+  STATUS.md). Tests: `tests/skin_editor.rs` (a copy of Firefly saved to
+  `packs/` with Firefly untouched, in the catalog's skins and the Skin
+  tab's yours, then edited in place; OLX's default made double and
+  saved; a blank one closing unasked; a bad pack and a built-in Edit
+  refused with a message; the window's close asking).
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the
   `Default` loadout: every weapon at 100 %, issue #5; there is no

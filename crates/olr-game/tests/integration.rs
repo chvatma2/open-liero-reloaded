@@ -16,6 +16,7 @@ mod options;
 mod profiles;
 mod report;
 mod run_log;
+mod skin_editor;
 mod speed;
 mod throw_sound;
 mod update;

@@ -2,7 +2,9 @@
 //! commands open an `EditorHost`, which replaces the menus until it
 //! closes; its Play runs as an edited game (`Launch::Edited`: no replay,
 //! Esc or Stop returns), and closing the window asks first when there are
-//! unsaved changes (Review Focus 1).
+//! unsaved changes (Review Focus 1). The skin editor (issue #14) likewise:
+//! the Skin tab's commands open a `SkinHost`; each save lists the content
+//! again, so the profiles' skin picker offers the skin at once.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -11,6 +13,7 @@ use olr_editor::EditorAction;
 use olr_ui::{AppCommand, Screen, UiAction};
 
 use super::Shell;
+use crate::editor::skin::{SkinHost, SkinOut};
 use crate::editor::{self, CloseDecision, EditorHost, HostOut};
 
 impl Shell {
@@ -143,13 +146,70 @@ impl Shell {
         }
     }
 
-    /// The data directory's level packs and recovery copies, for the
-    /// Editor screen.
+    /// The data directory's level and skin packs and recovery copies, for
+    /// the Editor screen.
     pub fn refresh_editor_packs(&mut self) {
         let editable = self.packs_dir.as_deref().map(editor::editable_levels).unwrap_or_default();
         let recoveries =
             self.store.recovery_dir().as_deref().map(editor::list_recoveries).unwrap_or_default();
         self.data.set_editor_packs(editable, recoveries);
+        let skins = self.packs_dir.as_deref().map(editor::editable_skins).unwrap_or_default();
+        self.data.set_editable_skins(skins);
+    }
+
+    /// Whether the skin editor is open (its panels replace the menus).
+    pub fn skin_editor_open(&self) -> bool {
+        self.skin_editor.is_some()
+    }
+
+    pub fn skin_editor(&mut self) -> Option<&mut SkinHost> {
+        self.skin_editor.as_mut()
+    }
+
+    /// The Skin tab's commands (`AppCommand::{EditSkin, NewSkin}`): the
+    /// skin editor opens, or the Editor screen says why not.
+    pub(super) fn skin_command(&mut self, c: AppCommand) {
+        let Some(packs) = self.packs_dir.clone() else {
+            self.data.editor_message = Some("there is no data directory to save skins in".into());
+            return;
+        };
+        let bundled = olr_content::bundled_roots(&self.cfg.content);
+        match SkinHost::open(&c, &packs, &bundled, self.content.as_ref()) {
+            Ok(h) => {
+                self.data.editor_message = None;
+                self.skin_editor = Some(h);
+            }
+            Err(why) => {
+                log::warn!("skin editor: {why}");
+                self.data.editor_message = Some(why);
+            }
+        }
+    }
+
+    /// One frame of the skin editor: `actions` from
+    /// `olr_skin_editor::ui::show` and the preview's clock at `now`. A save
+    /// lists the content again (the skin picker offers it at once); Close
+    /// brings the Editor screen back.
+    pub fn skin_frame(&mut self, actions: Vec<olr_skin_editor::SkinAction>, now: Instant) {
+        let Some(host) = &mut self.skin_editor else { return };
+        let out = host.act(actions);
+        host.tick(now);
+        if out.contains(&SkinOut::Saved) {
+            self.list_content();
+            self.refresh_editor_packs();
+        }
+        if out.contains(&SkinOut::Closed) {
+            self.close_skin_editor();
+        }
+    }
+
+    /// The skin editor closed: the menus come back on the Editor screen.
+    pub fn close_skin_editor(&mut self) {
+        self.skin_editor = None;
+        self.refresh_editor_packs();
+        if self.ui.screen() != Screen::Editor {
+            self.ui.update(UiAction::Open(Screen::Editor));
+        }
     }
 
     /// The window's close button: with the editor open, its Close first
@@ -157,6 +217,13 @@ impl Shell {
     pub fn request_close(&mut self) -> CloseDecision {
         if self.editing_play() {
             self.end();
+        }
+        if let Some(h) = &mut self.skin_editor {
+            if h.act(vec![olr_skin_editor::SkinAction::Close]).contains(&SkinOut::Closed) {
+                self.skin_editor = None;
+            } else {
+                return CloseDecision::Wait;
+            }
         }
         let d = editor::on_close_request(self.editor.as_mut());
         if d == CloseDecision::Quit && self.editor.is_some() {

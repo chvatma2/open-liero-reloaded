@@ -928,15 +928,22 @@ impl App {
             egui::pos2(x as f32 / ppp, (y + h) as f32 / ppp)
         };
         let (ui_state, data, mut editor) = (&self.shell.ui, &mut self.shell.data, self.shell.editor.as_mut());
+        let mut skin_editor = self.shell.skin_editor.as_mut();
+        let skinning = skin_editor.is_some();
         let menus = self.cfg.menus;
         let mut actions = Vec::new();
         let mut editor_actions = Vec::new();
+        let mut skin_actions = Vec::new();
         let mut stop = false;
         let mut out = self.egui.run_ui(input, |ui| {
             if let Some(o) = &overlay {
                 crate::overlay::paint(ui, o);
             }
-            if let Some(h) = editor.as_deref_mut().filter(|_| editing) {
+            // The skin editor (issue #14) replaces the menus while open.
+            if let Some(h) = skin_editor.as_deref_mut() {
+                let (state, data) = h.parts();
+                skin_actions = olr_skin_editor::ui::show(ui, state, data);
+            } else if let Some(h) = editor.as_deref_mut().filter(|_| editing) {
                 let (state, data) = h.parts();
                 editor_actions = olr_editor::ui::show(ui, state, data);
             } else if playing_edited {
@@ -948,6 +955,9 @@ impl App {
         if editing {
             let out = self.shell.editor_frame(editor_actions, Instant::now());
             canvas_outs(&mut self.canvas, &mut self.canvas_full, &self.shell, out);
+        }
+        if skinning {
+            self.shell.skin_frame(skin_actions, now);
         }
         // The canvas's map is not kept while the editor is closed or its Play
         // runs (the session has its own); it is made again on return.
@@ -1114,9 +1124,11 @@ impl App {
         // The window's close waits for the editor: it closed, or its
         // question was answered otherwise (Cancel).
         if self.quit_after_close {
-            if !self.shell.editor_open() {
+            if !self.shell.editor_open() && !self.shell.skin_editor_open() {
                 el.exit();
-            } else if self.shell.editor.as_ref().is_some_and(|h| h.state().dialog().is_none()) {
+            } else if self.shell.editor.as_ref().is_some_and(|h| h.state().dialog().is_none())
+                || self.shell.skin_editor.as_ref().is_some_and(|h| h.state().dialog().is_none())
+            {
                 self.quit_after_close = false;
             }
         }

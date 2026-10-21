@@ -3752,6 +3752,7 @@ dependencies = [
  "olr-scene",
  "olr-server",
  "olr-sim",
+ "olr-skin-editor",
  "olr-terrain",
  "olr-ui",
  "olr-update",
