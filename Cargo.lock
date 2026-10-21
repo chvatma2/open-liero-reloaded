@@ -3886,6 +3886,7 @@ dependencies = [
  "olr-vfs",
  "ron",
  "serde",
+ "tempfile",
 ]
 
 [[package]]

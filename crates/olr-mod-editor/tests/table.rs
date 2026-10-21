@@ -27,7 +27,9 @@ fn every_shown_field_has_a_widget() {
             assert!(matches!(w, Some(Widget::Text | Widget::OptText)), "{}: an asset is a path", r.key);
         }
         if let Some((lo, hi)) = r.range {
-            assert!(lo < hi && matches!(w, Some(Widget::Float | Widget::Int | Widget::OptInt | Widget::OptSize)));
+            assert!(
+                lo < hi && matches!(w, Some(Widget::Float | Widget::Int | Widget::OptInt | Widget::OptSize))
+            );
         }
     }
 }

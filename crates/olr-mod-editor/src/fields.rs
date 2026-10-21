@@ -95,7 +95,9 @@ pub fn get(key: &str) -> Option<&'static FieldInfo> {
 /// order.
 pub fn fields_of(owner: &str) -> impl Iterator<Item = &'static FieldInfo> {
     let owner = owner.to_string();
-    rows().iter().filter(move |r| r.ty != "variant" && r.key.rsplit_once('.').is_some_and(|(o, _)| o == owner))
+    rows()
+        .iter()
+        .filter(move |r| r.ty != "variant" && r.key.rsplit_once('.').is_some_and(|(o, _)| o == owner))
 }
 
 /// The hover text of variant `variant` of `ty` (`Effect`, `Explode`).
