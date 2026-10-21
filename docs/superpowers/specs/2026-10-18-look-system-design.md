@@ -224,7 +224,8 @@ Every light source has the same fields:
     projectile.
   - **End flashes** (a mod's), where a projectile ended.
   - **Muzzle lights** (a weapon's, else the engine's) and **explosion
-    lights** (the engine's).
+    lights** (a projectile look's `explosion`, else the mod's
+    `look.explosion`, else the engine's; issue #15).
 
 ### Animation
 
@@ -483,6 +484,30 @@ look: Some((muzzle_light: Some((colour: "#ffdca0", intensity: 120, reach: Pixels
 
 - **End flash:** shown where a projectile was last drawn when it ends (the
   scene sees its slot's serial go), so it needs no simulation event.
+- **Explosion light** (issue #15): a projectile look's `explosion: (colour,
+  intensity, radius, reach, animation, phase_ms)` replaces the engine's
+  explosion light (`engine::explosion_light`, `engine::explosion_radius`)
+  for every explosion the projectile makes: its effects' or its timer's
+  `Explode`, and a `Bounce` explosion. `mod.ron`'s `look: (explosion: …)`
+  is the default of every projectile without one. `radius` is the glowing
+  disc's (1-16 world pixels, `engine::MAX_EXPLOSION_RADIUS`, the
+  renderer's largest disc), `reach` `Pixels` only (1-4096,
+  `engine::MAX_EXPLOSION_REACH`; `Unlimited` refused), `intensity` 0-1000.
+  Without an `animation` it flashes from full to nothing over the
+  explosion's life, as the engine's (`engine::explosion_flash`); with one,
+  its clock is the explosion's age in ms, and it still ends with the
+  explosion. An explosion that is no projectile's (a bonus blown up, a
+  beam's) or an explosive trail keeps the engine's. The simulation is
+  unchanged: the cosmetic explosion event (`CosmeticKind::Explosion`)
+  names the projectile, which no checksum, oracle comparison or network
+  key reads. An `end_flash` is another light, where the projectile ended,
+  added to its explosion's.
+  ```ron
+  // a projectile's look
+  look: (explosion: (colour: "#80b0ff", intensity: 400, radius: 10, reach: Pixels(120))),
+  // mod.ron
+  look: (explosion: (colour: "#ffb070", intensity: 60, radius: 2, reach: Pixels(28))),
+  ```
 - **Old mods** have no `look`: their projectiles get only the engine's floor.
 - Optional fields, skipped when absent: `lift_mod`, the canonical text and
   the import-equivalence tests are unchanged.

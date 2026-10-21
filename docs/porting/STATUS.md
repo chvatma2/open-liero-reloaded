@@ -3911,9 +3911,12 @@ look, shipped in `content/reloaded/olr-mod-liero-v1-reloaded/`.
   flash, the Uzi's tracer rounds and stronger muzzle flashes for the
   Super Shotgun, Cannon, Rifle and Winchester. Crowded projectiles (the
   Crackler's and Hellraider's balls, the Blaster's sparks) only glow;
-  plain bullets, grenades, mines, nukes and dirt stay dark; the engine's
-  explosion light stays (issue #15 makes it per projectile). Judged from
-  `olr-cli render-match` renders on the software adapter, not yet played.
+  plain bullets, grenades, mines, nukes and dirt stay dark. Issue #15
+  gave it explosion lights: hot, wide blasts for the big explosives, a
+  cave-wide flash for the nukes, medium ones for grenades, rockets and
+  the like, and a small one (`mod.ron`'s default) for bullets and
+  shrapnel. Judged from `olr-cli render-match` renders on the software
+  adapter, not yet played.
 - **Deviation: the default mod.** A fresh profile (no `settings.ron`
   match) plays Liero v1.0 Reloaded, locally and hosting
   (`olr_ui::DEFAULT_MOD`, `MatchPrefs::default`; the maintainer's call, so
@@ -4286,6 +4289,54 @@ No OLX counterpart (OLX's skins are made in an image editor). As built:
   layouts, `left.png`, animated glow, online sharing, gibs, rope,
   crosshair; nor the e2e autoplay script (deferred:
   `docs/deferred-verification.md`).
+
+## Explosion lights (issue #15)
+
+No OLX counterpart (OLX draws no light). As built:
+
+- **On the projectile's look, not on the effect.** A projectile look's
+  `explosion` (`ExplosionLightSource`: colour, intensity, `radius`,
+  `reach`, optional `animation` and `phase_ms`) replaces the engine's
+  explosion light for every explosion that projectile makes: its effects'
+  or timer's `Explode` (`execute` merges a step's into one) and a `Bounce`
+  explosion. `mod.ron`'s `look: (explosion: …)` (`ModWideLookSource`) is
+  the default of every projectile without its own. Without either, the
+  engine's light applies exactly as before (Classic and MW set none: the
+  render goldens are unchanged).
+- **Engine's light kept for the rest.** A bonus blown up by an explosion
+  or a beam, a beam's own sparks and a projectile's explosive trail are
+  no projectile's explosion (OLX's `Explosion` for a bonus is its own
+  call; a trail is a cosmetic of the flight): they keep the engine's
+  light, whatever the mod sets.
+- **The link** is cosmetic: `CosmeticKind::Explosion { size, proj }`
+  (`proj` the projectile's `SimMod` index, -1 for none; the event keeps
+  its size, so `TickEvents` is unchanged) and `olr_fx::Kind::Explosion {
+  proj }`. `effects::explosion` takes the projectile only to tag the
+  entity: no simulation state, checksum, oracle comparison or network key
+  (`olr-present`'s `event_keys` hashes the size alone, as before) reads
+  it.
+- **Caps** (`olr_look::engine`): `MAX_EXPLOSION_RADIUS` 16 world pixels
+  (the renderer's largest disc; the engine's grow 2-12), `MAX_EXPLOSION_REACH`
+  4096 (the engine's largest), intensity 0-1000; `Unlimited` reach is
+  refused (the maintainer's call), as is a `phase_ms` without an
+  `animation`. `olr-format` refuses past them with the field's path;
+  `olr-look` clamps again where it reads (`ExplosionLight::radius`,
+  `reach`).
+- **Clock.** No `animation`: the engine's flash keys (100 → 0 over
+  `EXPLOSION_MS`), fitted to the explosion's life (size × 25 ms), as the
+  engine's (`engine::explosion_flash`). With one, the clock is the
+  explosion's age in ms, and the light still ends with the explosion's
+  entity (it is drawn per explosion entity, identity its slot).
+- **Disc order.** The engine's explosion lights stay in the engine's
+  part (after the muzzle lights); the mods' explosion lights lead the
+  mods' part (before the projectile lights and end flashes), then the
+  skins' (#12), so the 1024-disc cap keeps its priorities.
+- **Golden:** `look-blast.png` is `look-rocket.png`'s match (chaos bots,
+  the look test level) with `fixtures/look/mods/look-test-blast-mod`, the
+  look test mod's copy whose rocket explodes blue (`#4080ff`, 500 %, a
+  disc of 14, reach 160).
+- **Not built:** an editor for mod looks (none exists yet; the issue's
+  "Size" with reach under More waits for one).
 
 ## Kept OLX quirks
 
