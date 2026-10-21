@@ -34,6 +34,7 @@ struct Args {
     config: Option<PathBuf>,
     /// The content directory (mods, levels, skins): `content/packs` beside
     /// this program when there is one, else in the working directory.
+    /// OLR's own levels, the `reloaded` directory beside it, lie over it.
     #[arg(long, default_value_os_t = default_content())]
     content: PathBuf,
     /// Where the server keeps its identity, bans, log and desync bundles
@@ -88,8 +89,8 @@ fn main() -> anyhow::Result<()> {
         config_path.parent().filter(|p| !p.as_os_str().is_empty()).map_or_else(|| ".".into(), PathBuf::from)
     });
     fs::create_dir_all(&data_dir).with_context(|| format!("making {}", data_dir.display()))?;
-    let content =
-        Content::open(&args.content).with_context(|| format!("content {}", args.content.display()))?;
+    let content = Content::open_bundled(&args.content)
+        .with_context(|| format!("content {}", args.content.display()))?;
     for w in content.warnings().iter().chain(&config.warnings()) {
         eprintln!("warning: {w}");
     }

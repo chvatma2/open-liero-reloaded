@@ -764,7 +764,11 @@ olr-server --nat-check [--config server.ron]
 
 Without `--content` the server uses the `content/packs` beside it (an
 unpacked release zip, or the Flatpak's), else the one in the working
-directory. In the Flatpak it runs with `flatpak run
+directory. OLR's own levels, in the `reloaded` directory beside that
+content (`content/reloaded`: Liero Factory Reloaded and Castle Strike
+Reloaded), are there too, so a rotation names them by pack id
+(`olr-level-liero-factory-reloaded`, `olr-level-castlestrike-reloaded`)
+like any other level. In the Flatpak it runs with `flatpak run
 --command=olr-server io.github.openlieroreloaded.OpenLieroReloaded`. `--relay`
 also runs a volunteer TURN relay, and `--nat-check` checks the network
 and exits (see "Through routers").

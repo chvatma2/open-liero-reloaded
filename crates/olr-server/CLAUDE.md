@@ -15,7 +15,10 @@ olr-server --nat-check [--config server.ron]
 ```
 
 Without `--content`: `olr_content::default_content_dir` (`content/packs`
-beside the executable, else in the working directory).
+beside the executable, else in the working directory). Either way the
+content opens with `Content::open_bundled` (issue #7): OLR's own packs, the
+`reloaded` directory beside it (`content/reloaded`, the Reloaded levels),
+lie over it, so a rotation names them like any imported level.
 
 - **Layer 6, std; a library plus the binary** (plan 10 ruling PF2:
   `olr-cli`'s real-transport tests run the server in-process; `xtask/layers.ron`
