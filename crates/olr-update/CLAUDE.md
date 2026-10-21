@@ -46,10 +46,14 @@ views; `cargo xtask publish` signs and publishes with the same formats.
   `Plan::new` (install every staged file, the program first; remove the
   old manifest's files the new one lacks, compared ignoring case; files
   in no manifest, the player's, stay), `swap` (the journal `swap.txt`
-  written atomically, then each step a rename: the current file aside to
-  `old/`, the staged one in; emptied folders of removed files go; the
-  journal removed last). `recover(game, exe)` at start: a journal is
-  finished (idempotent, roll forward; `restart` when the program itself
+  written atomically, then each step a rename, retried for about a
+  second: the current file aside to a fresh `old/` (`old-<n>/` when an
+  earlier one cannot be removed, its program still running; named in the
+  journal), the staged one in, the old one put back when it cannot move
+  in; emptied folders of removed files go; the journal removed last).
+  `claim`: the work directory's lock (`try_lock`), held by an install,
+  so another copy of the game's `recover` returns `Busy` and leaves it.
+  `recover(game, exe)` at start: a journal is finished (idempotent, roll forward; `restart` when the program itself
   was swapped only now, so the old build is running), else the work
   directory removed (`old/`'s program, which ran, goes then). The only
   moment without a program is between its own two renames.

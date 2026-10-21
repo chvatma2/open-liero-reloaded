@@ -9,7 +9,11 @@
 //! - The swap's plan, the journal (`swap.txt`), is written atomically
 //!   before the first file moves. Each step is a rename: the current file
 //!   moves aside into `old/` (the running `olr.exe` too: Windows lets a
-//!   running program be renamed, not replaced), the new one moves in. The
+//!   running program be renamed, not replaced), the new one moves in; a
+//!   rename that fails is retried, and a file moved aside whose new one
+//!   cannot move in is moved back, so the folder keeps a program. Each
+//!   swap's `old/` is a fresh one (`old-<n>/` when an earlier one cannot
+//!   be removed: its program may still be running), named in the journal. The
 //!   steps are idempotent, so a start that finds the journal finishes the
 //!   swap (rolls forward) whatever step it stopped at; then the journal
 //!   goes. The program is swapped first, so a half-swapped folder starts
@@ -20,6 +24,9 @@
 //!   folder without a manifest, an older build's, loses nothing).
 //! - `old/` (the replaced files and the old program) is removed at the
 //!   next start, when the old program no longer runs.
+//! - One game at a time: an install holds [`claim`]'s lock, and a start's
+//!   [`recover`] leaves the work directory alone while another copy of
+//!   the game holds it.
 //!
 //! Plain `std::fs`, so the tests run it on any platform in a temporary
 //! directory, interrupting it at every step.
@@ -35,6 +42,8 @@ pub const MANIFEST_FILE: &str = "install-manifest.txt";
 pub const WORK_DIR: &str = ".olr-update";
 /// The journal: present while a swap is to be finished.
 const JOURNAL: &str = "swap.txt";
+/// The lock an install or a recovery holds.
+const LOCK: &str = "lock";
 /// The journal's first line.
 const JOURNAL_MAGIC: &str = "olr-swap 1";
 /// The most bytes and files a release zip may unpack to.
@@ -167,6 +176,24 @@ pub struct Plan {
     pub install: Vec<String>,
     /// The old release's files the new one does not have.
     pub remove: Vec<String>,
+    /// The work directory's folder the replaced files go to (`swap`
+    /// picks a fresh one).
+    aside: String,
+}
+
+/// An `aside` folder's name: `old` or `old-<n>`.
+fn is_aside(name: &str) -> bool {
+    name == "old"
+        || name.strip_prefix("old-").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+}
+
+/// A fresh folder for the replaced files: `old/` (or `old-<n>/`) removed
+/// or not there. One that cannot be removed holds a program still running.
+fn fresh_aside(work: &Path) -> String {
+    (0..100)
+        .map(|n| if n == 0 { "old".to_string() } else { format!("old-{n}") })
+        .find(|name| remove_dir_if_any(&work.join(name)).is_ok())
+        .unwrap_or_else(|| format!("old-{}", std::process::id()))
 }
 
 impl Plan {
@@ -182,11 +209,11 @@ impl Plan {
             installed_files(game).into_iter().filter(|f| !new.contains(&f.to_lowercase())).collect();
         remove.sort();
         remove.dedup();
-        Plan { version: version.to_string(), install, remove }
+        Plan { version: version.to_string(), install, remove, aside: "old".into() }
     }
 
     fn text(&self) -> String {
-        let mut t = format!("{JOURNAL_MAGIC}\nversion {}\n", self.version);
+        let mut t = format!("{JOURNAL_MAGIC}\nversion {}\naside {}\n", self.version, self.aside);
         t.extend(self.install.iter().map(|f| format!("install {f}\n")));
         t.extend(self.remove.iter().map(|f| format!("remove {f}\n")));
         t.push_str("end\n");
@@ -197,10 +224,11 @@ impl Plan {
         let mut lines = text.lines();
         lines.next().filter(|l| *l == JOURNAL_MAGIC)?;
         let version = lines.next()?.strip_prefix("version ")?.to_string();
+        let aside = lines.next()?.strip_prefix("aside ").filter(|a| is_aside(a))?.to_string();
         let (mut install, mut remove) = (Vec::new(), Vec::new());
         for l in lines.by_ref() {
             if l == "end" {
-                return Some(Plan { version, install, remove });
+                return Some(Plan { version, install, remove, aside });
             }
             match l.split_once(' ')? {
                 ("install", f) => install.push(safe_relative(f)?),
@@ -220,6 +248,7 @@ pub type Step<'a> = &'a mut dyn FnMut(&str) -> io::Result<()>;
 /// [`finish`]es. On an error the journal stays: the next start finishes.
 pub fn swap(game: &Path, plan: &Plan, step: Step<'_>) -> Result<(), String> {
     let work = work_dir(game);
+    let plan = &Plan { aside: fresh_aside(&work), ..plan.clone() };
     let journal = work.join(JOURNAL);
     let tmp = work.join("swap.tmp");
     write_synced(&tmp, plan.text().as_bytes()).map_err(|e| format!("{}: {e}", tmp.display()))?;
@@ -233,7 +262,7 @@ pub fn swap(game: &Path, plan: &Plan, step: Step<'_>) -> Result<(), String> {
 /// in it).
 fn finish(game: &Path, plan: &Plan, step: Step<'_>) -> Result<(), String> {
     let work = work_dir(game);
-    let (new, old) = (work.join("new"), work.join("old"));
+    let (new, old) = (work.join("new"), work.join(&plan.aside));
     let fail = |what: &str, p: &Path, e: io::Error| format!("{what} {}: {e}", p.display());
     for f in &plan.install {
         let (staged, here, aside) = (new.join(f), game.join(f), old.join(f));
@@ -241,15 +270,24 @@ fn finish(game: &Path, plan: &Plan, step: Step<'_>) -> Result<(), String> {
             // Moved in already.
             continue;
         }
-        if exists(&here) {
+        let moved = exists(&here);
+        if moved {
             step(&format!("aside {f}")).map_err(|e| e.to_string())?;
             move_aside(&here, &aside).map_err(|e| fail("moving aside", &here, e))?;
         }
         step(&format!("in {f}")).map_err(|e| e.to_string())?;
-        if let Some(parent) = here.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| fail("making", parent, e))?;
+        let moved_in = match here.parent() {
+            Some(parent) => std::fs::create_dir_all(parent),
+            None => Ok(()),
         }
-        std::fs::rename(&staged, &here).map_err(|e| fail("moving in", &staged, e))?;
+        .and_then(|()| rename_retrying(&staged, &here));
+        if let Err(e) = moved_in {
+            // The old file back, so the folder keeps a program meanwhile.
+            if moved && !exists(&here) {
+                let _ = rename_retrying(&aside, &here);
+            }
+            return Err(fail("moving in", &staged, e));
+        }
     }
     for f in &plan.remove {
         let here = game.join(f);
@@ -283,7 +321,41 @@ fn move_aside(from: &Path, to: &Path) -> io::Result<()> {
     if let Some(parent) = to.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    rename_retrying(from, to)
+}
+
+/// A rename, tried again a few times over about a second: a virus scanner
+/// or an indexer may hold a fresh file for a moment.
+fn rename_retrying(from: &Path, to: &Path) -> io::Result<()> {
+    let mut wait = std::time::Duration::from_millis(50);
+    for _ in 0..4 {
+        match std::fs::rename(from, to) {
+            Err(e) if e.kind() != io::ErrorKind::NotFound => std::thread::sleep(wait),
+            done => return done,
+        }
+        wait *= 2;
+    }
     std::fs::rename(from, to)
+}
+
+/// The work directory held by one game at a time (an install, a start's
+/// recovery); released when dropped.
+#[derive(Debug)]
+pub struct Claim {
+    _lock: std::fs::File,
+}
+
+/// Takes `game`'s work directory (made if missing): `None` while another
+/// copy of the game holds it.
+pub fn claim(game: &Path) -> io::Result<Option<Claim>> {
+    let work = work_dir(game);
+    std::fs::create_dir_all(&work)?;
+    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(work.join(LOCK))?;
+    match file.try_lock() {
+        Ok(()) => Ok(Some(Claim { _lock: file })),
+        Err(std::fs::TryLockError::WouldBlock) => Ok(None),
+        Err(std::fs::TryLockError::Error(e)) => Err(e),
+    }
 }
 
 fn exists(p: &Path) -> bool {
@@ -309,6 +381,8 @@ fn remove_dir_if_any(dir: &Path) -> io::Result<()> {
 pub enum Recovery {
     /// No work directory: nothing to do.
     Nothing,
+    /// Another copy of the game is updating it: left alone.
+    Busy,
     /// A finished update's or an abandoned download's leftovers removed
     /// (as far as they could be).
     Cleaned,
@@ -328,6 +402,11 @@ pub fn recover(game: &Path, exe: &str) -> Recovery {
     if !work.is_dir() {
         return Recovery::Nothing;
     }
+    let claim = match claim(game) {
+        Ok(Some(c)) => c,
+        Ok(None) => return Recovery::Busy,
+        Err(e) => return Recovery::Failed(format!("{}: {e}", work.display())),
+    };
     let journal = work.join(JOURNAL);
     match std::fs::read_to_string(&journal) {
         Ok(text) => {
@@ -340,6 +419,7 @@ pub fn recover(game: &Path, exe: &str) -> Recovery {
             let restart = exists(&work.join("new").join(exe));
             match finish(game, &plan, &mut |_| Ok(())) {
                 Ok(()) => {
+                    drop(claim);
                     cleanup(&work);
                     Recovery::Finished { version: plan.version, restart }
                 }
@@ -347,6 +427,7 @@ pub fn recover(game: &Path, exe: &str) -> Recovery {
             }
         }
         Err(e) if e.kind() == io::ErrorKind::NotFound => {
+            drop(claim);
             cleanup(&work);
             Recovery::Cleaned
         }

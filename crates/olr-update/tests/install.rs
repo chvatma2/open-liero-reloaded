@@ -7,7 +7,7 @@ use std::io::Write as _;
 use std::path::Path;
 
 use olr_update::install::{
-    MANIFEST_FILE, Plan, Recovery, WORK_DIR, check_writable, manifest_text, recover, stage_zip, swap,
+    MANIFEST_FILE, Plan, Recovery, WORK_DIR, check_writable, claim, manifest_text, recover, stage_zip, swap,
 };
 
 const EXE: &str = "olr.exe";
@@ -230,4 +230,46 @@ fn a_read_only_folder_is_not_writable() {
     }
     assert!(check_writable(&game).is_err());
     std::fs::set_permissions(&game, std::fs::Permissions::from_mode(0o755)).unwrap();
+}
+
+#[test]
+fn an_earlier_swaps_running_program_does_not_block_the_next() {
+    let dir = tempfile::tempdir().unwrap();
+    let (game, plan) = staged(dir.path());
+    // `old/` cannot be removed (here: a file; on Windows: the program
+    // the last update replaced, still running).
+    std::fs::write(game.join(WORK_DIR).join("old"), "running").unwrap();
+    swap(&game, &plan, &mut |_| Ok(())).unwrap();
+    assert_eq!(tree(&game), expected());
+    assert_eq!(std::fs::read_to_string(game.join(WORK_DIR).join("old-1").join(EXE)).unwrap(), "old exe");
+}
+
+#[test]
+fn a_program_that_cannot_move_in_is_put_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let (game, plan) = staged(dir.path());
+    let staged_exe = game.join(WORK_DIR).join("new").join(EXE);
+    // The new program vanishes (a virus scanner) after the old moved aside.
+    let e = swap(&game, &plan, &mut |s| {
+        if s == format!("in {EXE}") {
+            std::fs::remove_file(&staged_exe)?;
+        }
+        Ok(())
+    })
+    .unwrap_err();
+    assert!(e.contains("moving in"), "{e}");
+    assert_eq!(std::fs::read_to_string(game.join(EXE)).unwrap(), "old exe", "the folder keeps a program");
+}
+
+#[test]
+fn one_game_at_a_time_updates_the_folder() {
+    let dir = tempfile::tempdir().unwrap();
+    let (game, _plan) = staged(dir.path());
+    let held = claim(&game).unwrap().expect("free");
+    assert!(claim(&game).unwrap().is_none(), "another copy's install waits");
+    // Another copy starting leaves the staged files alone.
+    assert_eq!(recover(&game, EXE), Recovery::Busy);
+    assert!(game.join(WORK_DIR).join("new").join(EXE).exists());
+    drop(held);
+    assert_eq!(recover(&game, EXE), Recovery::Cleaned);
 }

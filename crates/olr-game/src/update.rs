@@ -214,6 +214,12 @@ pub fn install_portable(
             game.display()
         ));
     }
+    // Held until the swap is done: another copy of the game leaves it be.
+    let _claim = match install::claim(game) {
+        Ok(Some(c)) => c,
+        Ok(None) => return Event::Failed("Another copy of the game is updating it right now.".into()),
+        Err(e) => return Event::Failed(format!("Could not prepare the update ({e}).")),
+    };
     let zip_name = release::windows_zip_name(&version);
     let sig_name = release::signature_name(&zip_name);
     let (Some(zip), Some(sig)) = (release.asset(&zip_name), release.asset(&sig_name)) else {
@@ -278,7 +284,8 @@ pub fn install_portable(
     let files = match install::stage_zip(&zip_path, game, &release::folder_name(&version), EXE) {
         Ok(files) => files,
         Err(e) => {
-            install::cleanup(&work);
+            let _ = std::fs::remove_dir_all(work.join("new"));
+            let _ = std::fs::remove_file(&zip_path);
             return Event::Failed(format!(
                 "The download could not be unpacked ({e}): nothing was installed."
             ));
@@ -598,6 +605,10 @@ pub fn finish_interrupted_update() -> bool {
     let Install::Portable(dir) = Install::detect() else { return false };
     match install::recover(&dir, EXE) {
         Recovery::Nothing => false,
+        Recovery::Busy => {
+            log::info!("update: another copy of the game is updating it");
+            false
+        }
         Recovery::Cleaned => {
             log::info!("update: removed the last update's leftovers");
             false

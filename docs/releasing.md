@@ -60,7 +60,10 @@ build (`0.2.0-dev (local build)`) never checks and shows no update.
    e.g. 0.2.0 → 0.2.1); a signing key that is not the committed
    `tools/release/update-signing.pub`'s; a GPG home without the secret
    key of the committed `tools/flatpak/olr-flatpak.gpg`; a Flatpak in
-   `target/flatpak/repo` that is not this version;
+   `target/flatpak/repo` that is not this version; and, so the release
+   can be made once the repository is live, `gh` not logged in, a release
+   `v<version>` that exists already, a final release's tag not pushed or
+   a dev build's commit not on GitHub;
 1. signs the zip's manifest: `<zip>.sig` beside the zip;
 2. commits the Flatpak into the local signed repository, on `beta` for a
    pre-release and on `stable` and `beta` for a final release, and warns
