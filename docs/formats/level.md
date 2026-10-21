@@ -110,6 +110,7 @@ A level's look: darkness, light settings, grade and glow groups. A level without
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `ambient` | [AmbientSource](#ambientsource) | each field's default | Default: white at 100 (no darkness). |
+| `occlusion` | [OcclusionSource](#occlusionsource) (optional) | none | Darkens the ambient light in air near rock and dirt (issue #10). Default none: no occlusion. |
 | `max_light` | integer | `100` | The brightest light, percent, 100 to 200 (above 100, flashes brighten a lit level). Default 100. |
 | `light_steps` | integer | `0` | Bands the light: 0 (off) or 2 to 32. Default 0. |
 | `softness` | integer | `0` | Blurs the light, world pixels, 0 to 4. Default 0. |
@@ -144,6 +145,17 @@ The light everywhere, unblocked.
 |---|---|---|---|
 | `colour` | [colour](#colour) (optional) | none | Opaque. Default none: white. |
 | `intensity` | integer | `100` | Percent, 0 to 100. Default 100. |
+
+<a id="occlusionsource"></a>
+
+## OcclusionSource
+
+Ambient occlusion (issue #10): air near opaque rock and dirt shows less of the ambient light, so tunnels, corners and pockets read as deep. Only the ambient light is darkened (not glow light or flashes) and only in air; the worm and solid floors still hold. Outside the level is open air.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `strength` | integer | required | How much of the ambient light is taken away from air right against a thick wall, percent, 1 to 100 (100: none of it is left there; leave the occlusion out for none). It weighs the rock and dirt within the reach: a corner, a pocket or a narrow tunnel loses as much further out, beside a thin wall less is taken. |
+| `reach` | integer | `12` | How far from a solid the darkening fades out to nothing, world pixels, 2 to 32. Default 12. |
 
 <a id="solidfloorsource"></a>
 

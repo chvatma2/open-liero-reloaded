@@ -174,8 +174,10 @@ impl Default for AmbientSource {
 #[serde(deny_unknown_fields)]
 pub struct OcclusionSource {
     /// How much of the ambient light is taken away from air right against a
-    /// solid (a flat wall's face; deeper in a corner or a narrow tunnel),
-    /// percent, 1 to 100 (100: none of it is left there).
+    /// thick wall, percent, 1 to 100 (100: none of it is left there; leave
+    /// the occlusion out for none). It weighs the rock and dirt within the
+    /// reach: a corner, a pocket or a narrow tunnel loses as much further
+    /// out, beside a thin wall less is taken.
     pub strength: u16,
     /// How far from a solid the darkening fades out to nothing, world
     /// pixels, 2 to 32. Default 12.
@@ -183,17 +185,17 @@ pub struct OcclusionSource {
     pub reach: u16,
 }
 
-/// The occlusion's default reach, world pixels.
-fn occlusion_reach() -> u16 {
-    DEFAULT_OCCLUSION_REACH
+/// The occlusion's default reach, world pixels ([`DEFAULT_OCCLUSION_REACH`]).
+const fn occlusion_reach() -> u16 {
+    12
 }
 
 fn is_occlusion_reach(v: &u16) -> bool {
-    *v == DEFAULT_OCCLUSION_REACH
+    *v == occlusion_reach()
 }
 
 /// The occlusion's default reach, world pixels (issue #10).
-pub const DEFAULT_OCCLUSION_REACH: u16 = 12;
+pub const DEFAULT_OCCLUSION_REACH: u16 = occlusion_reach();
 
 /// The least light an opaque solid pixel (rock or dirt that is not clear)
 /// shows, so deep rock still shows its art.
