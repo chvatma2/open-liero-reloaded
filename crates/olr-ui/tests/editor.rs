@@ -1,12 +1,13 @@
 //! The Editor screen (plan 14c Task 3): the level packs to edit or copy,
 //! New level, the recoveries; the Skin tab's skins to edit or copy and New
-//! blank skin (issue #14); each asks the app through an `AppCommand`.
+//! blank skin (issue #14); the Mod tab's mods to edit or copy and its
+//! recoveries (issue #17); each asks the app through an `AppCommand`.
 
 use std::collections::BTreeSet;
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
-use olr_content::{Catalog, LevelInfo, PackSource, SkinInfo};
+use olr_content::{Catalog, LevelInfo, ModInfo, PackSource, SkinInfo};
 use olr_data::manifest::PackKind;
 use olr_ui::screens::{self, MenuData};
 use olr_ui::{AppCommand, Profiles, Screen, Settings, UiAction, UiState};
@@ -36,6 +37,10 @@ fn catalog() -> Catalog {
             SkinInfo { id: "olr-skin-firefly".into(), name: "Firefly".into() },
             SkinInfo { id: "olx-skin-default".into(), name: "default".into() },
         ],
+        mods: vec![
+            ModInfo { id: "olx-classic".into(), name: "Liero v1.0".into(), ..ModInfo::default() },
+            ModInfo { id: "my-mod".into(), name: "My Mod".into(), ..ModInfo::default() },
+        ],
         ..Catalog::default()
     }
 }
@@ -50,6 +55,10 @@ fn harness(recoveries: Vec<(String, String, bool)>) -> Harness<'static, App> {
     let mut data = MenuData::new(catalog(), None);
     data.set_editor_packs(BTreeSet::from(["my-level".to_string()]), recoveries);
     data.set_editable_skins(BTreeSet::from(["my-skin".to_string()]));
+    data.set_editor_mods(
+        BTreeSet::from(["my-mod".to_string()]),
+        vec![("my-mod".into(), "My Mod".into(), false), ("broken".into(), "?".into(), true)],
+    );
     let app =
         App { ui: UiState::new(Settings::default(), Profiles::default(), 1), data, commands: Vec::new() };
     Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
@@ -221,4 +230,54 @@ fn skin_commands_only_from_the_editor_screen() {
     ui.update(UiAction::Open(Screen::Editor));
     assert_eq!(ui.update(UiAction::NewSkin(None)), vec![AppCommand::NewSkin(None)]);
     assert_eq!(ui.update(UiAction::EditSkin("a".into())), vec![AppCommand::EditSkin("a".into())]);
+}
+
+/// Issue #17: the Mod tab offers the mod recoveries, Edit for the user's
+/// own mods (first) and Edit a copy, a new mod named in a form, for any.
+#[test]
+fn the_mod_tab_edits_yours_and_copies_any() {
+    let mut h = harness(vec![]);
+    open_editor(&mut h);
+    h.get_by_label("Mod").click();
+    h.run();
+    assert!(h.query_by_label("New level").is_none());
+    h.get_by_label("Recover My Mod").click();
+    h.run();
+    assert_eq!(h.state().commands, vec![AppCommand::RecoverMod("my-mod".into())]);
+    h.state_mut().commands.clear();
+    h.get_by_label("broken: damaged");
+    h.get_all_by_label("Discard").nth(1).unwrap().click();
+    h.run();
+    assert_eq!(h.state().commands, vec![AppCommand::DiscardModRecovery("broken".into())]);
+    h.state_mut().commands.clear();
+    assert_eq!(h.query_all_by_label("Edit").count(), 1);
+    h.get_by_label("Edit").click();
+    h.run();
+    assert_eq!(h.state().commands, vec![AppCommand::EditMod("my-mod".into())]);
+    h.state_mut().commands.clear();
+    // Yours first: the second Edit a copy is Classic's.
+    h.get_all_by_label("Edit a copy").nth(1).unwrap().click();
+    h.run();
+    h.get_by_label("New mod's name").click();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.get_by_label("New mod's name").type_text("Heavy Liero");
+    h.run();
+    h.get_by_label("Create mod").click();
+    h.run();
+    assert_eq!(
+        h.state().commands,
+        vec![AppCommand::NewMod { from: "olx-classic".into(), name: "Heavy Liero".into() }]
+    );
+    assert!(h.query_by_label("Create mod").is_none(), "the form closes");
+}
+
+#[test]
+fn mod_commands_only_from_the_editor_screen() {
+    let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
+    assert!(ui.update(UiAction::EditMod("a".into())).is_empty(), "not from Main");
+    ui.update(UiAction::Open(Screen::Editor));
+    assert_eq!(ui.update(UiAction::EditMod("a".into())), vec![AppCommand::EditMod("a".into())]);
+    let new = UiAction::NewMod { from: "a".into(), name: "B".into() };
+    assert_eq!(ui.update(new), vec![AppCommand::NewMod { from: "a".into(), name: "B".into() }]);
 }

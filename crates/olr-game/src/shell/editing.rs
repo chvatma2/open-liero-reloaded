@@ -4,7 +4,8 @@
 //! Esc or Stop returns), and closing the window asks first when there are
 //! unsaved changes (Review Focus 1). The skin editor (issue #14) likewise:
 //! the Skin tab's commands open a `SkinHost`; each save lists the content
-//! again, so the profiles' skin picker offers the skin at once.
+//! again, so the profiles' skin picker offers the skin at once. And the mod
+//! editor (issue #17): the Mod tab's commands open a `ModHost`.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -13,6 +14,7 @@ use olr_editor::EditorAction;
 use olr_ui::{AppCommand, Screen, UiAction};
 
 use super::Shell;
+use crate::editor::mods::{ModHost, ModOut};
 use crate::editor::skin::{SkinHost, SkinOut};
 use crate::editor::{self, CloseDecision, EditorHost, HostOut};
 
@@ -155,6 +157,10 @@ impl Shell {
         self.data.set_editor_packs(editable, recoveries);
         let skins = self.packs_dir.as_deref().map(editor::editable_skins).unwrap_or_default();
         self.data.set_editable_skins(skins);
+        let mods = self.packs_dir.as_deref().map(editor::editable_mods).unwrap_or_default();
+        let mod_recoveries =
+            self.store.mod_recovery_dir().as_deref().map(editor::list_recoveries).unwrap_or_default();
+        self.data.set_editor_mods(mods, mod_recoveries);
     }
 
     /// Whether the skin editor is open (its panels replace the menus).
@@ -213,6 +219,82 @@ impl Shell {
         }
     }
 
+    /// Whether the mod editor is open (its panels replace the menus).
+    pub fn mod_editor_open(&self) -> bool {
+        self.mod_editor.is_some()
+    }
+
+    pub fn mod_editor(&mut self) -> Option<&mut ModHost> {
+        self.mod_editor.as_mut()
+    }
+
+    /// The Mod tab's commands (`AppCommand::{EditMod, NewMod, RecoverMod,
+    /// DiscardModRecovery}`): the mod editor opens, or the Editor screen
+    /// says why not. A new mod's pack is made at once (the content is
+    /// listed again).
+    pub(super) fn mod_command(&mut self, c: AppCommand) {
+        if let AppCommand::DiscardModRecovery(id) = &c {
+            if let Some(dir) = self.store.mod_recovery_dir()
+                && let Err(e) = editor::discard_recovery(&dir, id)
+            {
+                self.data.editor_message = Some(format!("{e:#}"));
+            }
+            self.refresh_editor_packs();
+            return;
+        }
+        let Some(packs) = self.packs_dir.clone() else {
+            self.data.editor_message = Some("there is no data directory to save mods in".into());
+            return;
+        };
+        let bundled = olr_content::bundled_roots(&self.cfg.content);
+        let taken = self.data.catalog.sources.iter().map(|s| s.id.clone()).collect();
+        let mods = self.data.catalog.mods.iter().map(|m| (m.id.clone(), m.name.clone())).collect();
+        let recovery = self.store.mod_recovery_dir();
+        let opened = ModHost::open(&c, &packs, &bundled, self.content.as_ref(), mods, &taken, recovery);
+        if matches!(c, AppCommand::NewMod { .. }) {
+            self.list_content();
+            self.refresh_editor_packs();
+        }
+        match opened {
+            Ok(h) => {
+                self.data.editor_message = None;
+                self.mod_editor = Some(h);
+            }
+            Err(why) => {
+                log::warn!("mod editor: {why}");
+                self.data.editor_message = Some(why);
+            }
+        }
+    }
+
+    /// One frame of the mod editor: `actions` from
+    /// `olr_mod_editor::ui::show` and the recovery timer at `now`. A save
+    /// lists the content again; Close brings the Editor screen back.
+    pub fn mod_frame(&mut self, actions: Vec<olr_mod_editor::ModAction>, now: Instant) {
+        let Some(host) = &mut self.mod_editor else { return };
+        let out = host.act(actions);
+        host.tick(now);
+        for w in host.take_warnings() {
+            log::warn!("mod editor: {w}");
+        }
+        if out.contains(&ModOut::Saved) {
+            self.list_content();
+            self.refresh_editor_packs();
+        }
+        if out.contains(&ModOut::Closed) {
+            self.close_mod_editor();
+        }
+    }
+
+    /// The mod editor closed: the menus come back on the Editor screen.
+    pub fn close_mod_editor(&mut self) {
+        self.mod_editor = None;
+        self.refresh_editor_packs();
+        if self.ui.screen() != Screen::Editor {
+            self.ui.update(UiAction::Open(Screen::Editor));
+        }
+    }
+
     /// The window's close button: with the editor open, its Close first
     /// (ending its Play), so unsaved changes are asked about (Review Focus 1).
     pub fn request_close(&mut self) -> CloseDecision {
@@ -222,6 +304,13 @@ impl Shell {
         if let Some(h) = &mut self.skin_editor {
             if h.act(vec![olr_skin_editor::SkinAction::Close]).contains(&SkinOut::Closed) {
                 self.skin_editor = None;
+            } else {
+                return CloseDecision::Wait;
+            }
+        }
+        if let Some(h) = &mut self.mod_editor {
+            if h.act(vec![olr_mod_editor::ModAction::Close]).contains(&ModOut::Closed) {
+                self.mod_editor = None;
             } else {
                 return CloseDecision::Wait;
             }

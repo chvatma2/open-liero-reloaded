@@ -33,6 +33,7 @@ olr-ui.workspace = true
 olr-format.workspace = true
 olr-editor.workspace = true
 olr-skin-editor.workspace = true
+olr-mod-editor.workspace = true
 olr-edit.workspace = true
 olr-vfs.workspace = true
 olr-proto.workspace = true

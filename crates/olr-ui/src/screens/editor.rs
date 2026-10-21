@@ -4,8 +4,11 @@
 //! packs and Edit a copy for the others (bundled content is never edited
 //! in place, R5), and New level. Skin: New blank skin, then every skin
 //! (searchable), Edit for the data directory's skin packs and Edit a copy
-//! for the others (a built-in or OLX skin is never changed). The app opens
-//! the editors itself (`olr-game`): this crate does not know them.
+//! for the others (a built-in or OLX skin is never changed). Mod (issue
+//! #17): the mod recoveries first, then every mod, the user's first, with
+//! Edit for theirs and Edit a copy (a new mod, named in a form) for any.
+//! The app opens the editors itself (`olr-game`): this crate does not know
+//! them.
 
 use egui::{Color32, ComboBox, RichText, ScrollArea, TextEdit, Ui};
 use olr_format::levels::MAX_SIDE;
@@ -27,11 +30,16 @@ pub(super) enum Tab {
     #[default]
     Level,
     Skin,
+    Mod,
 }
 
 /// The tabs' labels.
 pub const LEVEL_TAB: &str = "Level";
 pub const SKIN_TAB: &str = "Skin";
+pub const MOD_TAB: &str = "Mod";
+/// The Mod tab's copy form: the new mod's name, and its button.
+pub const MOD_NAME: &str = "New mod's name";
+pub const CREATE_MOD: &str = "Create mod";
 /// The Skin tab's buttons.
 pub const NEW_SKIN: &str = "New blank skin";
 pub const SEARCH_SKINS: &str = "Search skins";
@@ -46,6 +54,8 @@ pub(super) struct View {
     copy: Option<(String, String)>,
     /// New level's form.
     new: Option<NewLevel>,
+    /// The Mod tab's copy form: the mod copied and the new mod's name.
+    mod_copy: Option<(String, String)>,
 }
 
 struct NewLevel {
@@ -68,7 +78,7 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
         ui.add_space(6.0);
     }
     ui.horizontal(|ui| {
-        for (tab, label) in [(Tab::Level, LEVEL_TAB), (Tab::Skin, SKIN_TAB)] {
+        for (tab, label) in [(Tab::Level, LEVEL_TAB), (Tab::Skin, SKIN_TAB), (Tab::Mod, MOD_TAB)] {
             if ui.selectable_label(data.editor.tab == tab, RichText::new(label).heading()).clicked() {
                 data.editor.tab = tab;
             }
@@ -77,6 +87,10 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     ui.add_space(8.0);
     if data.editor.tab == Tab::Skin {
         skins(ui, data, out);
+        return;
+    }
+    if data.editor.tab == Tab::Mod {
+        mods(ui, data, out);
         return;
     }
     if !data.recoveries.is_empty() {
@@ -270,4 +284,89 @@ fn skins(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
         );
     });
     out.extend(picked);
+}
+
+/// The Mod tab (issue #17): the mod recoveries, then every mod, the user's
+/// first: Edit for theirs, Edit a copy (a new mod, named first) for any.
+fn mods(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
+    if !data.mod_recoveries.is_empty() {
+        section(ui, "Unsaved changes", |ui, _| {
+            for (id, name, damaged) in &data.mod_recoveries {
+                ui.horizontal(|ui| {
+                    if *damaged {
+                        ui.label(
+                            RichText::new(format!("{id}: damaged")).color(Color32::from_rgb(255, 110, 90)),
+                        );
+                    } else if ui.button(format!("Recover {name}")).clicked() {
+                        out.push(UiAction::RecoverMod(id.clone()));
+                    }
+                    if ui.button("Discard").clicked() {
+                        out.push(UiAction::DiscardModRecovery(id.clone()));
+                    }
+                });
+            }
+        });
+        ui.add_space(10.0);
+    }
+    if let Some((from, name)) = &mut data.editor.mod_copy {
+        let mut create = false;
+        let mut cancel = false;
+        let shown =
+            data.catalog.mods.iter().find(|m| m.id == *from).map_or(from.as_str(), |m| m.name.as_str());
+        section(ui, &format!("New mod from {shown}"), |ui, _| {
+            form_row(ui, MOD_NAME, |ui, label| {
+                ui.add(TextEdit::singleline(name).desired_width(240.0)).labelled_by(label);
+            });
+            form_row(ui, "", |ui, _| {
+                create = ui.add_enabled(!name.trim().is_empty(), egui::Button::new(CREATE_MOD)).clicked();
+                cancel = ui.button("Cancel").clicked();
+            });
+        });
+        if create {
+            out.push(UiAction::NewMod { from: from.clone(), name: name.trim().to_string() });
+        }
+        // Sent once, the form closes: a second click would make a second pack.
+        if create || cancel {
+            data.editor.mod_copy = None;
+        }
+        ui.add_space(10.0);
+    }
+    let mut shown: Vec<(&str, &str, bool)> = data
+        .catalog
+        .mods
+        .iter()
+        .map(|m| (m.id.as_str(), m.name.as_str(), data.editable_mods.contains(&m.id)))
+        .collect();
+    // Yours first, then the others, each in the catalog's order.
+    shown.sort_by_key(|m| !m.2);
+    let mut copy = None;
+    section(ui, "Mods", |ui, _| {
+        ui.label(
+            RichText::new(
+                "Mods you made are edited in place; a new mod starts as a copy of any (the built-in ones never change).",
+            )
+            .weak(),
+        );
+        ScrollArea::vertical().id_salt("editor mods").auto_shrink([false, true]).show(ui, |ui| {
+            egui::Grid::new("editor mods").num_columns(3).striped(true).spacing([24.0, 4.0]).show(ui, |ui| {
+                for &(id, name, yours) in &shown {
+                    ui.label(name);
+                    if yours {
+                        if ui.button("Edit").clicked() {
+                            out.push(UiAction::EditMod(id.to_string()));
+                        }
+                    } else {
+                        ui.label("");
+                    }
+                    if ui.button("Edit a copy").clicked() {
+                        copy = Some((id.to_string(), format!("{name} copy")));
+                    }
+                    ui.end_row();
+                }
+            });
+        });
+    });
+    if copy.is_some() {
+        data.editor.mod_copy = copy;
+    }
 }

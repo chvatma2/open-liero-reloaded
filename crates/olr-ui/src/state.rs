@@ -256,6 +256,17 @@ pub enum UiAction {
     /// The Skin tab's New blank skin (`None`) or Edit a copy of skin pack
     /// `id` (a new skin starting from it).
     NewSkin(Option<String>),
+    /// The Mod tab (issue #17): Edit one of the user's mod packs.
+    EditMod(String),
+    /// The Mod tab's Edit a copy: a new mod named `name`, copied from mod
+    /// pack `from`.
+    NewMod {
+        from: String,
+        name: String,
+    },
+    /// The Mod tab's Recover and Discard of a mod recovery copy.
+    RecoverMod(String),
+    DiscardModRecovery(String),
     /// The Report screen's Send: this report, as its preview showed it.
     SendReport(Box<Report>),
     /// The Update screen's Update: install the release offered.
@@ -350,6 +361,18 @@ pub enum AppCommand {
     /// Open the skin editor on a new skin: blank (double resolution), or
     /// starting as a copy of skin pack `id` (saved as a new pack).
     NewSkin(Option<String>),
+    /// Open the mod editor on mod pack `id` (one of
+    /// `MenuData::editable_mods`, issue #17).
+    EditMod(String),
+    /// Make a new mod pack named `name` as a copy of mod pack `from`
+    /// (`olr_edit::new::Template::From`), then edit it.
+    NewMod {
+        from: String,
+        name: String,
+    },
+    /// Reopen mod recovery `id` (its unsaved changes), or remove it.
+    RecoverMod(String),
+    DiscardModRecovery(String),
     /// The Report screen opened: gather the automatic section and the
     /// logs into `MenuData::report.context` (sending nothing).
     PrepareReport,
@@ -549,7 +572,11 @@ impl UiState {
             | UiAction::Recover(_)
             | UiAction::DiscardRecovery(_)
             | UiAction::EditSkin(_)
-            | UiAction::NewSkin(_) => self.editor(action),
+            | UiAction::NewSkin(_)
+            | UiAction::EditMod(_)
+            | UiAction::NewMod { .. }
+            | UiAction::RecoverMod(_)
+            | UiAction::DiscardModRecovery(_) => self.editor(action),
             UiAction::Back => self.back(),
             UiAction::StartMatch => self.start_match(),
             UiAction::StartSandbox => {
@@ -915,6 +942,10 @@ impl UiState {
             UiAction::DiscardRecovery(id) => AppCommand::DiscardRecovery(id),
             UiAction::EditSkin(id) => AppCommand::EditSkin(id),
             UiAction::NewSkin(from) => AppCommand::NewSkin(from),
+            UiAction::EditMod(id) => AppCommand::EditMod(id),
+            UiAction::NewMod { from, name } => AppCommand::NewMod { from, name },
+            UiAction::RecoverMod(id) => AppCommand::RecoverMod(id),
+            UiAction::DiscardModRecovery(id) => AppCommand::DiscardModRecovery(id),
             _ => return Vec::new(),
         }]
     }

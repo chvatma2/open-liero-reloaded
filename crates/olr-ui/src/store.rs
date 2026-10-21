@@ -48,6 +48,8 @@ pub const REPLAYS_DIR: &str = "replays";
 pub const PACKS_DIR: &str = "packs";
 /// The level editor's recovery copies (plan 14c R7), in the data directory.
 pub const RECOVERY_DIR: &str = "recovery";
+/// The mod editor's recovery copies (issue #17), in the data directory.
+pub const MOD_RECOVERY_DIR: &str = "mod-recovery";
 /// The level editor's texture library (plan 14e R2).
 pub const TEXTURES_DIR: &str = "textures";
 /// The level editor's asset library, the user's (issue #9).
@@ -234,6 +236,12 @@ impl Store {
     /// data directory.
     pub fn recovery_dir(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join(RECOVERY_DIR))
+    }
+
+    /// The mod editor's recovery copies (issue #17), if there is a data
+    /// directory.
+    pub fn mod_recovery_dir(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join(MOD_RECOVERY_DIR))
     }
 
     /// The level editor's own textures (plan 14e R2), if there is a data

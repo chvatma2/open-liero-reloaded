@@ -35,6 +35,12 @@ pub fn skin_dirs(packs_dir: &Path) -> BTreeMap<String, PathBuf> {
     pack_dirs(packs_dir, PackKind::Skin)
 }
 
+/// The mod packs in `packs_dir` by manifest id, as [`level_dirs`] (issue
+/// #17: the mod editor edits these in place).
+pub fn mod_dirs(packs_dir: &Path) -> BTreeMap<String, PathBuf> {
+    pack_dirs(packs_dir, PackKind::Mod)
+}
+
 /// The packs of `kind` in `packs_dir` by manifest id ([`level_dirs`]).
 fn pack_dirs(packs_dir: &Path, kind: PackKind) -> BTreeMap<String, PathBuf> {
     let Ok(rd) = std::fs::read_dir(packs_dir) else { return BTreeMap::new() };
@@ -65,6 +71,12 @@ pub fn editable_levels(packs_dir: &Path) -> BTreeSet<String> {
 /// `MenuData::set_editable_skins`.
 pub fn editable_skins(packs_dir: &Path) -> BTreeSet<String> {
     skin_dirs(packs_dir).into_keys().collect()
+}
+
+/// The mod pack ids in `packs_dir` (by manifest), for
+/// `MenuData::set_editor_mods`.
+pub fn editable_mods(packs_dir: &Path) -> BTreeSet<String> {
+    mod_dirs(packs_dir).into_keys().collect()
 }
 
 /// `dir`'s entries for the browser (`EditorCommand::List`), a pack being a

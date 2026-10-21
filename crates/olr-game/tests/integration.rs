@@ -11,6 +11,7 @@ mod editor_host;
 mod finding;
 mod ingame;
 mod menu;
+mod mod_editor;
 mod online;
 mod options;
 mod profiles;

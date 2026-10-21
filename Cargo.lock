@@ -3741,6 +3741,7 @@ dependencies = [
  "olr-log",
  "olr-look",
  "olr-math",
+ "olr-mod-editor",
  "olr-modes",
  "olr-net",
  "olr-netcode",

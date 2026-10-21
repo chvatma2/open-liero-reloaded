@@ -236,6 +236,8 @@ pub struct Shell {
     editor_out: Vec<crate::editor::HostOut>,
     /// The skin editor while it is open (issue #14): it replaces the menus.
     pub(crate) skin_editor: Option<crate::editor::skin::SkinHost>,
+    /// The mod editor while it is open (issue #17): it replaces the menus.
+    pub(crate) mod_editor: Option<crate::editor::mods::ModHost>,
     /// The bug relay's address (`report::endpoint`; none: Report a bug
     /// is hidden), and the report being sent.
     report_url: Option<String>,
@@ -321,6 +323,7 @@ impl Shell {
             editor: None,
             editor_out: Vec::new(),
             skin_editor: None,
+            mod_editor: None,
             report_url: None,
             report_send: None,
             updater: None,
@@ -397,6 +400,7 @@ impl Shell {
             editor: None,
             editor_out: Vec::new(),
             skin_editor: None,
+            mod_editor: None,
             report_url: None,
             report_send: None,
             updater: None,
@@ -563,6 +567,10 @@ impl Shell {
             | AppCommand::Recover(_)
             | AppCommand::DiscardRecovery(_) => self.editor_command(c),
             AppCommand::EditSkin(_) | AppCommand::NewSkin(_) => self.skin_command(c),
+            AppCommand::EditMod(_)
+            | AppCommand::NewMod { .. }
+            | AppCommand::RecoverMod(_)
+            | AppCommand::DiscardModRecovery(_) => self.mod_command(c),
             AppCommand::SetPaused(on) => self.paused = on,
             AppCommand::ArmPlayer(weapons) => self.arm(weapons),
             AppCommand::SaveReplay => {
@@ -1055,6 +1063,12 @@ impl Shell {
                 if let crate::editor::HostOut::Message(m) = m {
                     log::warn!("editor: {m}");
                 }
+            }
+        }
+        if let Some(h) = &mut self.mod_editor {
+            h.flush_recovery();
+            for w in h.take_warnings() {
+                log::warn!("mod editor: {w}");
             }
         }
         self.leave_online();
