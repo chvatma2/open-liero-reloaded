@@ -161,9 +161,11 @@ fn redaction_hides_what_identifies_and_keeps_the_rest() {
     assert_eq!(n(&format!("key {key}.")), "key <key>.");
     assert_eq!(n("npub1qqqqqqqqqqqqqqqqqqqqqqqqqqqqqq joined"), "<key> joined");
     assert_eq!(n("code olr1qpzry9x8gf2tvdw0s3jn54khce6mua7l"), "code <invite>");
+    assert_eq!(n("joining OLR1QPZRY9X8GF2TVDW0S3JN54KHCE6MUA7L"), "joining <invite>");
     for kept in [
         "olr_game::shell::online: 0.2.0-dev.192.24b2ac4",
         "at 14:03:07 on Mesa 24.0.5, driver 31.0.101.5186",
+        "kernel 6.6.87.2-microsoft-standard-WSL2",
         "the hash 0123456789abcdef and 1.2.3",
         "v1.2.3.4 and 300.1.1.1 and a::b in std::fs",
         "crates/olr-game/src/app.rs:592:9",

@@ -59,10 +59,15 @@ fn run(b: &[u8], ok: impl Fn(u8) -> bool) -> usize {
 /// what stands for it.
 fn hidden(b: &[u8]) -> Option<(usize, &'static str)> {
     let ends_word = |n: usize| b.get(n).is_none_or(|&c| !is_word(c));
-    // IPv4, perhaps with a port after it (kept).
+    // IPv4, perhaps with a port after it (kept); not a version
+    // (`6.6.87.2-microsoft`).
     let n = run(b, |c| c.is_ascii_digit() || c == b'.');
     let v4 = b[..n].iter().rposition(|&c| c != b'.').map_or(0, |i| i + 1);
-    if v4 > 0 && ends_word(v4) && std::str::from_utf8(&b[..v4]).is_ok_and(|s| s.parse::<Ipv4Addr>().is_ok()) {
+    if v4 > 0
+        && ends_word(v4)
+        && b.get(v4) != Some(&b'-')
+        && std::str::from_utf8(&b[..v4]).is_ok_and(|s| s.parse::<Ipv4Addr>().is_ok())
+    {
         return Some((v4, IP));
     }
     // IPv6: at least two colons and a digit (not `a::b`), trailing colons
@@ -86,10 +91,10 @@ fn hidden(b: &[u8]) -> Option<(usize, &'static str)> {
     if n == 64 && ends_word(n) {
         return Some((n, KEY));
     }
-    // Bech32: Nostr keys and invite codes.
-    let n = run(b, |c| c.is_ascii_lowercase() || c.is_ascii_digit());
+    // Bech32, in either case: Nostr keys and invite codes.
+    let n = run(b, |c| c.is_ascii_alphanumeric());
     if n >= 20 && ends_word(n) {
-        let word = &b[..n];
+        let word = b[..n].to_ascii_lowercase();
         for (prefix, what) in [("npub1", KEY), ("nsec1", KEY), ("nprofile1", KEY), ("olr1", INVITE)] {
             if word.starts_with(prefix.as_bytes()) {
                 return Some((n, what));

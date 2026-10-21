@@ -194,7 +194,18 @@ impl RunLog {
     pub fn write(&mut self, level: Level, source: &str, message: &str) {
         let message = redact::home(message, self.home.as_deref());
         let message = if level <= Level::Info { redact::network(&message) } else { message };
-        let line = format::line(self.clock.now(), level, source, &message);
+        self.write_line(level, source, &message);
+    }
+
+    /// Writes one event the program made itself (the header: versions
+    /// that look like addresses), only the home directory hidden.
+    pub fn write_own(&mut self, level: Level, source: &str, message: &str) {
+        let message = redact::home(message, self.home.as_deref());
+        self.write_line(level, source, &message);
+    }
+
+    fn write_line(&mut self, level: Level, source: &str, message: &str) {
+        let line = format::line(self.clock.now(), level, source, message);
         let size = line.len() as u64;
         if self.truncated || self.written + size > self.cap {
             if !self.truncated {

@@ -36,8 +36,10 @@ all a stranger's report will ever carry.
   `network`, at `info` and above, replaces IPv4 and IPv6 addresses
   (`<ip>`, a port after it kept), 64-hex-digit keys and `npub1`, `nsec1`,
   `nprofile1` words (`<key>`) and `olr1` invite codes (`<invite>`). A token
-  starts after a byte that is no word byte nor a dot, so module paths,
-  versions and times stay. `debug` lines keep them (the maintainer's own
+  starts after a byte that is no word byte nor a dot, an IPv4 address is
+  not followed by `-` and an IPv6 one has a digit, so module paths,
+  versions (`6.6.87.2-microsoft`) and times stay. `RunLog::write_own`
+  (the header's lines, the program's own text) hides the home alone. `debug` lines keep them (the maintainer's own
   runs).
 - **The logger** (`lib.rs`): `init(Options { dir, level, home, header },
   clock)` once: opens the run (an unwritable directory: the terminal
@@ -48,7 +50,8 @@ all a stranger's report will ever carry.
   before (`terminal_line`: `info` → stdout `olr: …`; `warn` →
   `warning: …`, `error` → `error: …`, `debug` → `debug: …` on stderr;
   `xtask e2e` fails on stderr lines starting `warning:`/`error:`). Other
-  crates' records (wgpu, winit) reach the file from `warn` and never the
+  crates' records (wgpu, winit) reach the file from `warn`, each (target
+  and message) once and `MAX_OTHERS` (256) at most, and never the
   terminal. `to_file` writes a line to the file alone; `end()` writes
   `CLEAN_END` and closes the file (later records reach the terminal
   only). `parse_level`: `error`, `warn`, `info`, `debug`.

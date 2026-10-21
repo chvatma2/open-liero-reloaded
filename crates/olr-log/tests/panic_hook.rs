@@ -18,7 +18,7 @@ fn panics_and_records_reach_the_file() {
         dir: Some(tmp.path().join("logs")),
         level: LevelFilter::Info,
         home: Some(tmp.path().to_path_buf()),
-        header: vec!["olr 1.2.3".into(), "os: test".into()],
+        header: vec!["olr 1.2.3".into(), "os: test 6.1.2.3".into()],
     };
     let path = olr_log::init(options, Box::new(Fixed)).expect("a run file");
     assert_eq!(olr_log::path().as_deref(), Some(path.as_path()));
@@ -26,15 +26,16 @@ fn panics_and_records_reach_the_file() {
     log::debug!(target: "olr_game::shell", "not at info");
     log::info!(target: "wgpu_core", "another crate's info");
     log::warn!(target: "wgpu_core", "another crate's warning");
+    log::warn!(target: "wgpu_core", "another crate's warning");
     let caught = std::panic::catch_unwind(|| panic!("boom\nsecond line"));
     assert!(caught.is_err());
     let text = std::fs::read_to_string(&path).unwrap();
     let lines: Vec<&str> = text.lines().collect();
     assert!(lines[0].ends_with("info  olr: olr 1.2.3"), "{text}");
-    assert!(lines[1].ends_with("info  olr: os: test"), "{text}");
+    assert!(lines[1].ends_with("info  olr: os: test 6.1.2.3"), "{text}");
     assert!(text.contains("info  shell: content in ~/packs\n"), "{text}");
     assert!(!text.contains("not at info") && !text.contains("another crate's info"), "{text}");
-    assert!(text.contains("warn  wgpu_core: another crate's warning"), "{text}");
+    assert_eq!(text.matches("warn  wgpu_core: another crate's warning").count(), 1, "each once: {text}");
     let at = format!("error panic: thread 'panics_and_records_reach_the_file' panicked at {}:", file!());
     let panic_line = lines.iter().position(|l| l.contains(&at)).unwrap_or_else(|| panic!("{text}"));
     assert!(lines[panic_line].ends_with(": boom"), "{text}");

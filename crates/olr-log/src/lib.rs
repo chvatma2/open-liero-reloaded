@@ -15,12 +15,14 @@
 //!   and hides addresses and keys at `info` and above.
 //! - **Levels:** `info` by default, `debug` on request (`--log debug`,
 //!   `OLR_LOG=debug`). Other crates' records (wgpu, winit, …) reach the
-//!   file from `warn` up and never the terminal.
+//!   file from `warn` up, each once ([`MAX_OTHERS`] at most), and never
+//!   the terminal.
 
 pub mod format;
 pub mod redact;
 pub mod run;
 
+use std::collections::BTreeSet;
 use std::io::{self, Write as _};
 use std::panic::PanicHookInfo;
 use std::path::{Path, PathBuf};
@@ -37,6 +39,9 @@ pub const LEVEL_VAR: &str = "OLR_LOG";
 pub const LOGS_DIR: &str = "logs";
 /// The most backtrace lines a panic's record keeps.
 pub const MAX_BACKTRACE_LINES: usize = 80;
+/// Other crates' records are written each once, at most this many: a
+/// driver's warning every frame never fills the file.
+pub const MAX_OTHERS: usize = 256;
 
 /// A level by name: `error`, `warn`, `info` or `debug` (`trace` is
 /// `debug`; any case).
@@ -57,13 +62,16 @@ pub struct Options {
     pub level: LevelFilter,
     /// Shown as `~` in the file.
     pub home: Option<PathBuf>,
-    /// The file's first lines (the version, the system): not mirrored.
+    /// The file's first lines (the version, the system): not mirrored,
+    /// and only the home directory hidden in them.
     pub header: Vec<String>,
 }
 
 struct Logger {
     level: LevelFilter,
     file: Mutex<Option<RunLog>>,
+    /// Other crates' records written (target and message).
+    others: Mutex<BTreeSet<(String, String)>>,
 }
 
 static LOGGER: OnceLock<Logger> = OnceLock::new();
@@ -106,6 +114,11 @@ impl log::Log for Logger {
         let message = record.args().to_string();
         if ours(record.target()) {
             mirror(record.level(), &message);
+        } else {
+            let mut others = self.others.lock().unwrap_or_else(|e| e.into_inner());
+            if others.len() >= MAX_OTHERS || !others.insert((record.target().to_string(), message.clone())) {
+                return;
+            }
         }
         if let Some(mut file) = self.file(None)
             && let Some(f) = file.as_mut()
@@ -158,7 +171,7 @@ pub fn init(options: Options, clock: Box<dyn Clock>) -> Option<PathBuf> {
         match RunLog::open(dir, clock, std::process::id(), options.home.as_deref(), MAX_BYTES, KEEP) {
             Ok((mut f, o)) => {
                 for h in &options.header {
-                    f.write(Level::Info, "olr", h);
+                    f.write_own(Level::Info, "olr", h);
                 }
                 opened = o;
                 Some(f)
@@ -173,7 +186,11 @@ pub fn init(options: Options, clock: Box<dyn Clock>) -> Option<PathBuf> {
         }
     });
     let path = file.as_ref().map(|f| f.path().to_path_buf());
-    let logger = LOGGER.get_or_init(|| Logger { level: options.level, file: Mutex::new(file) });
+    let logger = LOGGER.get_or_init(|| Logger {
+        level: options.level,
+        file: Mutex::new(file),
+        others: Mutex::new(BTreeSet::new()),
+    });
     if log::set_logger(logger).is_ok() {
         log::set_max_level(options.level.max(LevelFilter::Warn));
     }
