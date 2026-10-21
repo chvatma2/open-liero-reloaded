@@ -40,7 +40,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Colour terrain (spec §19 E7): carve (back pixels, brown rim), `PlaceDirt` (`FrontTile`), `PlaceGreenDirt` (OLX's shades), beam holes, blood and gib stains, dirty rectangles | `src/common/CMap.cpp:1005-1340`, `2355-2373`, `src/client/Entity.cpp:355-390`, `src/client/GfxPrimitives.cpp` (`DrawImageStretch2`) | `olr-terrain::ColorMap`, `olr-content::{color_edit, apply_edits}` | done (plan 5 task 2) | `olr-terrain` colour tests; `olr-content/tests/color.rs` (`color_map_agrees_with_material_after_a_match`, 3000 ticks); golden `fixtures/render/dig-color.png` (`olr-scenario/tests/render_golden.rs`) |
 | Presentation (spec §19 E1-E4): camera (hard lock, clamp, shake, dead worm, respawn), skin frames (the facing-left mirror one column off), crosshair, muzzle flash, old-style health bar, rope, laser sights, beams, projectile frames (animation, special angle, angle, rotation with the `RotIncrement` bump), bonuses (blinking), layer order; interpolation (E2) | `src/client/CViewport.cpp:118-472`, `src/common/CWorm.cpp:1016-1300`, `src/client/CGameSkin.cpp:584-601`, `src/client/CNinjaRope.cpp:132-180`, `src/common/CProjectile.cpp:227-300`, `src/common/CBonus.cpp:49-76`, `src/client/Entity.cpp:30-157`, `305-314`, `src/client/GfxPrimitives.cpp:1795-2520`, `src/gusanos/viewport.cpp:105-253` | `olr-scene` | done (plan 5 task 3) | `camera_locks_clamps_and_shakes_like_olx`, `skin_frame_matches_olx_table`, `projectile_frames_match_olx`, `interpolation_never_blends_reused_slots_or_respawns`, `draw_list_order_matches_olx_layers`, `beams_and_laser_sights_live_two_entity_passes`; scene snapshots (`olr-scene/tests/snapshots`) |
 | Renderer (spec §8.2, §19 E3): art-scale world pass (terrain, instanced sprites from one atlas, world-pixel lines), upscale (integer nearest, sharp bilinear), offscreen PNGs; OLX's corner-rule colour key for sprites lives in the importers since plan 13c (`olr_format::image_io::olx_sprite_to_alpha`, applied once at import; the renderer draws the alpha it is given) | `src/client/GfxPrimitives.cpp:116-150` (`SetColorKey`); OLX blits with SDL onto a 2× screen | `olr-render`, `olr_format::image_io`, `olr-cli render` | done (plan 5 task 5) | `dirty_rect_upload_equals_full_upload`, `upscale_filters_are_selectable`, `missing_assets_use_placeholders`, `srgb_targets_show_the_same_colours`; goldens `fixtures/render/frame-*.png` (`olr-cli/tests/render_golden.rs`, `cargo xtask full`) |
-| Cosmetic entities (spec §19 E1, E8): the pool (OLX's 1024 slots with `olx_quirks`; 16384 with a death reserve in play since 2026-10-13, see Deliberate deviations), per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `olr-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits` |
+| Cosmetic entities (spec §19 E1, E8): the pool (OLX's 1024 slots with `olx_quirks`; 16384 with a death reserve in play since 2026-10-13, see Deliberate deviations), per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `olr-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits`; the player's blood amount (issue #6, Deliberate deviations): `tests/blood.rs` |
 | Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits (a death sound steals since 2026-10-13, see Deliberate deviations), live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `olr-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
 | Whose rope throws are heard (the user's playtest report, 2026-10-16: every worm's throw played map-wide at gain 1.0, about 7 to 12 starts a second with 7 to 8 bots): only the player's own (the local slot; a replay's viewer), as OLX plays `smpNinja` only in the human input handler; a bot's or a remote worm's throw is silent. `olr-sim`'s THROW events carry no owner, so the session keeps as many as the player's `NinjaRope::throws` grew (they all play at the listener) | `src/common/CWormHuman.cpp:340-342`, `555-563`, `570-574`, `src/common/CWormBot.cpp:1753`, `3823`, `src/common/PhysicsLX56.cpp:300-303` | `olr-game::throw_sound`, `Session::sounds` | done (2026-10-16) | `only_the_players_rope_throws_are_heard`, `bots_alone_throw_silently`, `a_replay_hears_its_viewers_throws`, `an_online_match_runs_headless`; a throw while the worm may not use the rope (`can_use_ninja` false, never set today) is not heard, OLX's is |
 | Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults, trigger and stick thresholds, presses and releases latched between ticks | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226` | `olr-input` | done (plan 5 task 6) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release` |
@@ -307,7 +307,45 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   from their respawn frame on (`mt`, then the worm's position).
 - **Blood amount and particles:** `olr-sim` uses OLX's defaults, `Game.Blood`
   100 and `Game.Particles` on (blood entities exist), which dedicated servers
-  keep; `olr-scenario` refuses a trace header with other values.
+  keep; `olr-scenario` refuses a trace header with other values. The
+  player's own blood amount is the effects layer's (next entry).
+- **A blood amount per player, in the effects layer (issue #6,
+  2026-10-21).** OLX lets each player set how much blood they see
+  (`Game.Blood`, `tLXOptions->iBloodAmount`), and that setting changes how
+  many `rand()` draws a hit, a death and bleeding make
+  (`CClient_Game.cpp:414-459`, `PhysicsLX56.cpp:319-329`;
+  `olx-notes/randomness.md` rows 1, 5, 6), on the stream gameplay shares.
+  OLR's simulation always makes OLX's 100 % draws (`olr-sim`'s
+  `BLOOD_AMOUNT`, bleeding's 20 rounds), so the oracle stays bit-exact and
+  online peers stay in sync; the player's **Blood** (Options → Video,
+  0-500 % in steps of 10, 100 by default; `VideoSettings::blood`) scales
+  only what `olr-fx` makes of the simulation's cosmetic events
+  (`Fx::set_blood`, through `olr_present::Presentation::set_blood`): with
+  `s` the amount, `Blood` events `s` times as many, `BloodDropper` events
+  `min(s, 1)` (never multiplied), a dropper's drops `max(s, 1)` (none at
+  0 %), so bleeding shows `s` times its blood as hits and deaths do (5× at
+  500 %, not 25×). Fewer are spread evenly by accumulators (50 %: every
+  other one; 0 %: no blood, droppers or stains); more are copies with
+  velocities jittered by a generator of the amount's own, never the
+  simulation's nor the other entities' (gib spins and drips draw as
+  before). Copies spawn only below `Fx::extra_blood_limit`, an eighth of
+  the pool (`EXTRA_BLOOD_HEADROOM`, 2048 in play) under the ordinary
+  limit: extra blood is refused before ordinary effects, never takes the
+  death reserve, and with OLX's 1024 pool (`olx_quirks`: render goldens,
+  `olr-cli scenario`) none spawns at all. Stains come from landed blood, so
+  they scale with it; online, the amount scales the cosmetics
+  `NetPresenter` hands the entities, as local play's. **The deliberate
+  exception** to the ruling of 2026-10-16 that every player in a match
+  sees the same picture: the maintainer accepts a per-player setting for
+  blood, as the information blood carries is small and comfort matters
+  (less gore, none while streaming, or more mess). Replays, the netcode
+  and the world never carry it. At 100 % nothing differs from before
+  (render goldens, HUD snapshots, match goldens unchanged). Tests:
+  `olr-fx`'s `tests/blood.rs`, `fx_never_touches_sim_randomness_at_500_percent_blood`;
+  `olr-present`'s `the_blood_amount_reaches_the_entities`; `olr-game`'s
+  `the_blood_amount_applies_at_once_and_never_to_the_world`. The frame
+  time at 500 % in a heavy fight is still to measure
+  (`docs/deferred-verification.md`).
 - Only deathmatch: no team protection in `InjureWorm`, no teamkills, no
   `FindSpotCloseToTeam`, and LX levels have no predefined spawn points.
 - **Weapon restrictions:** a `WeaponRestrictionsFile` that starts with `cfg/`
