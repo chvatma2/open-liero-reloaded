@@ -21,6 +21,7 @@ mod render_match;
 mod replay_cmd;
 mod rollback_cost_cmd;
 mod scenario;
+mod skin_cmd;
 mod stress_cmd;
 
 use std::process::ExitCode;
@@ -42,6 +43,8 @@ enum Command {
     Pack(pack_cmd::Args),
     /// Edit a level pack: carve, fill, paint, stamp, resize, its objects; preview it.
     Level(level_cmd::Args),
+    /// Make, double, check and preview worm skin packs.
+    Skin(skin_cmd::Args),
     /// Replay oracle scenarios in the simulation and compare them with OLX's traces;
     /// exits with status 1 if any diverges.
     Scenario(scenario::Args),
@@ -104,6 +107,7 @@ fn main() -> ExitCode {
         Command::Import(args) => import::run(&args),
         Command::Pack(args) => pack_cmd::run(&args),
         Command::Level(args) => level_cmd::run(&args),
+        Command::Skin(args) => skin_cmd::run(&args),
         Command::Scenario(args) => scenario::run(&args),
         Command::Render(args) => render::run(&args),
         Command::LookPreview(args) => look_preview::run(&args),

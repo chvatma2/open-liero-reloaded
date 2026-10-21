@@ -151,6 +151,26 @@ The headless command-line tool. Its commands:
   `tests/asset.rs` (every built-in asset checks and is what its README
   command makes, the torch carries `flames` and not `sky`, save and place
   round trip, bad folders and arguments refused).
+- `olr-cli skin new <out-dir> [--from <skin>] [--double] --name <name>
+  [--id ID]`, `skin double <skin> --out <dir> [--name N] [--id ID]`,
+  `skin check <dir>…` and `skin preview <skin> --colour RRGGBB --out
+  f.png [--scale 1..16]` (`skin_cmd.rs`, issue #13: `olr_edit::skin`'s
+  operations, shared with the skin editor). A `<skin>` is a skin pack's
+  directory, else an installed skin's pack id or OLX name
+  (`Content::skin_id` in `--content`'s bundled content, as the profiles'
+  picker lists them). `new` copies it (`--double`: doubled by Scale2x) or
+  makes a blank skin; `double` is `new --from <skin> --double`, named
+  "<name> Double" unless `--name`; the id is `--id`, else the name's
+  (`olr_edit::new::pack_id`) unique among the installed packs; both print
+  `made skin pack <id> ("<name>", …) in <dir>`. `check` prints each
+  pack's errors and warnings and `<dir>: "<name>", double resolution|classic
+  resolution[, glowing][, light I % over R px]`, exiting 1 on any error.
+  `preview` writes `olr_edit::skin::preview` (1792 × 672 at the default
+  `--scale` 8). Tests: `tests/skin.rs` (the commands by id, OLX name and
+  directory; bad input refused; Firefly passes `skin check`, the bundled
+  content lists it, its outline is the doubled default skin's; on the GPU
+  tier, by hand with `OLR_GPU_TESTS=1` as `reloaded.rs`' GPU test,
+  `firefly_lights_its_surroundings_in_play` on both Reloaded levels).
 - `olr-cli look-preview <pack> --at X,Y [--time MS] [--view lit|full|light] [--size WxH] [--content DIR] --out f.png`
   (plan 15a Task 13, `look_preview.rs`) draws a level's terrain alone (no
   worms) with its look at match clock `--time`, centred on `--at`, at
@@ -711,7 +731,7 @@ pack when `OLR_CONTENT_DIR` is set. `tests/playtest.rs` checks the hand-made pla
 --packs content/playtest`). `tests/reloaded.rs` (issue #7, offline too: the
 committed `content/packs`) checks OLR's own shipped packs
 (`content/reloaded/`: Liero Factory Reloaded, Castle Strike Reloaded,
-issue #21's Liero v1.0 Reloaded) with
+issue #21's Liero v1.0 Reloaded, issue #13's Firefly skin) with
 `pack check --content content/packs`, that they share no pack id with
 `content/packs`, that `Content::open_bundled` lists both levels by name,
 lit, and the mod with its look, that the factory's material, front and back are the imported Liero

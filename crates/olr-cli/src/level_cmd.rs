@@ -237,7 +237,7 @@ pub(crate) fn parse_point(s: &str) -> Result<(i32, i32), String> {
 }
 
 /// `RRGGBB` or `#RRGGBB`, opaque.
-fn parse_colour(s: &str) -> Result<Rgba, String> {
+pub(crate) fn parse_colour(s: &str) -> Result<Rgba, String> {
     let hex = s.strip_prefix('#').unwrap_or(s);
     if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return Err(format!("{s:?} is not a colour RRGGBB"));
