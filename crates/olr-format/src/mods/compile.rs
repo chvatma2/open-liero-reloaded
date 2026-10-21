@@ -12,7 +12,7 @@ use super::spawn::{Spawn, SpawnContext};
 use super::types::*;
 use super::{ModSource, Rope, Worm};
 use crate::FormatError;
-use olr_data::loadouts::{DEFAULT_LOADOUT, LOADING_TIME_RANGE, ShippedLoadout, clean_name};
+use olr_data::loadouts::{DEFAULT_LOADOUT, LOADING_TIME_RANGE, clean_name};
 
 pub const MAX_INLINE_DEPTH: usize = 32;
 pub const MAX_WEAPONS: usize = 512;
@@ -35,7 +35,7 @@ pub(crate) fn shared_file(id: &str) -> String {
 }
 
 /// Pack ids name files: lowercase ASCII, digits, `-`, `_`, `.`; not starting with `.`.
-pub(crate) fn valid_id(id: &str) -> bool {
+pub fn valid_id(id: &str) -> bool {
     !id.is_empty()
         && !id.starts_with('.')
         && id.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'-' | b'_' | b'.'))
@@ -51,6 +51,9 @@ struct Compiler<'a> {
     taken: BTreeSet<String>,
     out: BTreeMap<String, rt::ProjectileDef>,
     looks: BTreeMap<String, olr_look::ProjectileLook>,
+    /// Every error found, in the order the checks run: the walk goes on
+    /// after one, so the first is the one a stop at the first would give.
+    errors: Vec<FormatError>,
 }
 
 /// A mod's look by authoring key: each projectile's by its `ModDef` key,
@@ -67,24 +70,22 @@ pub struct ModLookSource {
 /// The shipped loadouts, each naming a preset of `restrictions.ron` (not
 /// `Default`, which every mod has), its name usable as a loadout's
 /// (`olr_data::loadouts::clean_name` leaves it as it is) and its loading
-/// time within `LOADING_TIME_RANGE`.
-fn check_loadouts(src: &ModSource) -> Result<BTreeMap<String, ShippedLoadout>, FormatError> {
+/// time within `LOADING_TIME_RANGE`. Every problem is pushed to `errors`.
+fn check_loadouts(src: &ModSource, errors: &mut Vec<FormatError>) {
     if src.loadouts.len() > MAX_LOADOUTS {
-        return Err(FormatError::invalid(MOD_FILE, "loadouts", format!("more than {MAX_LOADOUTS} loadouts")));
+        errors.push(FormatError::invalid(MOD_FILE, "loadouts", format!("more than {MAX_LOADOUTS} loadouts")));
+        return;
     }
     for (name, l) in &src.loadouts {
-        let bad = |why: String| Err(FormatError::invalid(MOD_FILE, &format!("loadouts.{name}"), why));
+        let bad = |why: String| FormatError::invalid(MOD_FILE, &format!("loadouts.{name}"), why);
         if !src.restrictions.contains_key(name) {
-            return bad("names no preset of restrictions.ron".into());
-        }
-        if name == DEFAULT_LOADOUT || clean_name(name) != *name {
-            return bad("is not a usable loadout name".into());
-        }
-        if !LOADING_TIME_RANGE.contains(&l.loading_time) {
-            return bad(format!("loading_time {} is not within {LOADING_TIME_RANGE:?}", l.loading_time));
+            errors.push(bad("names no preset of restrictions.ron".into()));
+        } else if name == DEFAULT_LOADOUT || clean_name(name) != *name {
+            errors.push(bad("is not a usable loadout name".into()));
+        } else if !LOADING_TIME_RANGE.contains(&l.loading_time) {
+            errors.push(bad(format!("loading_time {} is not within {LOADING_TIME_RANGE:?}", l.loading_time)));
         }
     }
-    Ok(src.loadouts.clone())
 }
 
 pub fn compile_mod(src: &ModSource) -> Result<rt::ModDef, FormatError> {
@@ -96,31 +97,53 @@ pub fn compile_mod_look(src: &ModSource) -> Result<ModLookSource, FormatError> {
     compile_all(src).map(|(_, look)| look)
 }
 
+/// Every error `compile_mod` could report, in the order it checks: the
+/// first is `compile_mod`'s. Empty when the mod compiles (issue #16, the
+/// mod editor's list of located errors).
+pub fn mod_errors(src: &ModSource) -> Vec<FormatError> {
+    walk(src).2
+}
+
 fn compile_all(src: &ModSource) -> Result<(rt::ModDef, ModLookSource), FormatError> {
+    let (def, look, errors) = walk(src);
+    match errors.into_iter().next() {
+        Some(first) => Err(first),
+        None => Ok((def, look)),
+    }
+}
+
+/// The whole mod checked and compiled: the `ModDef` and look are complete
+/// only when the error list is empty.
+fn walk(src: &ModSource) -> (rt::ModDef, ModLookSource, Vec<FormatError>) {
+    let mut errors = Vec::new();
     if src.weapons.len() > MAX_WEAPONS {
-        return Err(FormatError::invalid(MOD_FILE, "weapons", format!("more than {MAX_WEAPONS} weapons")));
+        errors.push(FormatError::invalid(MOD_FILE, "weapons", format!("more than {MAX_WEAPONS} weapons")));
     }
     if src.shared.len() > MAX_SHARED {
-        return Err(FormatError::invalid(
+        errors.push(FormatError::invalid(
             "projectiles/",
             "",
             format!("more than {MAX_SHARED} shared projectiles"),
         ));
     }
-    check_cycles(src)?;
+    if let Err(e) = check_cycles(src) {
+        errors.push(e);
+    }
     let mut c = Compiler {
         src,
         file: String::new(),
         taken: BTreeSet::new(),
         out: BTreeMap::new(),
         looks: BTreeMap::new(),
+        errors,
     };
     for (id, p) in &src.shared {
         c.file = shared_file(id);
         if p.id.is_some() {
-            return Err(c.err("id", "a shared projectile's id is its file name: remove `id`"));
+            let e = c.err("id", "a shared projectile's id is its file name: remove `id`");
+            c.errors.push(e);
         }
-        c.projectile(p, id, "", 1)?;
+        c.projectile(p, id, "", 1);
     }
     let mut weapons = Vec::with_capacity(src.weapons.len());
     let mut weapon_looks = Vec::with_capacity(src.weapons.len());
@@ -128,20 +151,22 @@ fn compile_all(src: &ModSource) -> Result<(rt::ModDef, ModLookSource), FormatErr
     for (id, w) in &src.weapons {
         c.file = weapon_file(id);
         if !valid_id(id) {
-            return Err(FormatError::invalid(MOD_FILE, "weapons", format!("invalid weapon id {id:?}")));
+            c.errors.push(FormatError::invalid(MOD_FILE, "weapons", format!("invalid weapon id {id:?}")));
+            continue;
         }
         if !ids.insert(id.as_str()) {
-            return Err(FormatError::invalid(
+            c.errors.push(FormatError::invalid(
                 MOD_FILE,
                 "weapons",
                 format!("weapon id {id:?} is listed twice"),
             ));
+            continue;
         }
-        weapons.push(c.weapon(id, w)?);
-        let look =
-            w.look.as_ref().map(|l| crate::look::compile_weapon_look(l, &c.file, "look")).transpose()?;
-        weapon_looks.push(look);
+        weapons.push(c.weapon(id, w));
+        let look = w.look.as_ref().map(|l| crate::look::compile_weapon_look(l, &c.file, "look"));
+        weapon_looks.push(look.and_then(|l| c.note(l)));
     }
+    check_loadouts(src, &mut c.errors);
     let def = rt::ModDef {
         name: src.name.clone(),
         worm: worm(&src.worm),
@@ -149,7 +174,7 @@ fn compile_all(src: &ModSource) -> Result<(rt::ModDef, ModLookSource), FormatErr
         weapons,
         projectiles: c.out,
         restrictions: src.restrictions.clone(),
-        loadouts: check_loadouts(src)?,
+        loadouts: src.loadouts.clone(),
     };
     // No weapon look at all is no list: a mod without looks is the empty look.
     if weapon_looks.iter().all(Option::is_none) {
@@ -159,9 +184,16 @@ fn compile_all(src: &ModSource) -> Result<(rt::ModDef, ModLookSource), FormatErr
         .look
         .as_ref()
         .and_then(|l| l.explosion.as_ref())
-        .map(|x| crate::look::compile_explosion_light(x, MOD_FILE, "look.explosion"))
-        .transpose()?;
-    Ok((def, ModLookSource { projectiles: c.looks, weapons: weapon_looks, explosion }))
+        .map(|x| crate::look::compile_explosion_light(x, MOD_FILE, "look.explosion"));
+    let explosion = match explosion {
+        Some(Err(e)) => {
+            c.errors.push(e);
+            None
+        }
+        Some(Ok(x)) => Some(x),
+        None => None,
+    };
+    (def, ModLookSource { projectiles: c.looks, weapons: weapon_looks, explosion }, c.errors)
 }
 
 fn worm(w: &Worm) -> rt::WormParams {
@@ -185,13 +217,24 @@ impl Compiler<'_> {
         FormatError::invalid(&self.file, path, message)
     }
 
-    fn weapon(&mut self, id: &str, w: &Weapon) -> Result<rt::WeaponDef, FormatError> {
+    /// Records the error at `path`.
+    fn fail(&mut self, path: &str, message: impl Into<String>) {
+        let e = self.err(path, message);
+        self.errors.push(e);
+    }
+
+    /// `r`'s value, or `None` with its error recorded.
+    fn note<T>(&mut self, r: Result<T, FormatError>) -> Option<T> {
+        r.map_err(|e| self.errors.push(e)).ok()
+    }
+
+    fn weapon(&mut self, id: &str, w: &Weapon) -> rt::WeaponDef {
         let kind = match &w.fire {
             Fire::Projectile { class, recoil, sound, shot } => rt::WeaponKind::Projectile {
                 class: weapon_class(*class),
                 recoil: *recoil,
                 sound: sound.clone(),
-                spawn: self.spawn(shot, id, "fire.shot", 0)?,
+                spawn: self.spawn(shot, id, "fire.shot", 0),
             },
             Fire::Beam {
                 recoil,
@@ -223,7 +266,7 @@ impl Compiler<'_> {
                 thrust: *thrust,
             },
         };
-        Ok(rt::WeaponDef {
+        rt::WeaponDef {
             id: id.to_string(),
             name: w.name.clone(),
             recharge: w.recharge,
@@ -231,43 +274,49 @@ impl Compiler<'_> {
             rof: w.between_shots_s,
             laser_sight: w.laser_sight,
             kind,
-        })
+        }
     }
 
+    /// The spawn's runtime form; its projectile key is empty when it names
+    /// none (an error recorded).
     fn spawn<C: SpawnContext>(
         &mut self,
         s: &Spawn<C>,
         default_key: &str,
         path: &str,
         depth: usize,
-    ) -> Result<rt::SpawnDef, FormatError> {
+    ) -> rt::SpawnDef {
         if s.amount > MAX_AMOUNT {
-            return Err(self.err(
+            self.fail(
                 &at(path, "amount"),
                 format!("amount {} is above {MAX_AMOUNT}, the most one spawn makes", s.amount),
-            ));
+            );
         }
         let projectile = match (&s.shared, &s.projectile) {
             (Some(id), None) => {
                 if !self.src.shared.contains_key(id) {
-                    return Err(self.err(
+                    self.fail(
                         &at(path, "shared"),
                         format!("no shared projectile {id:?} ({})", shared_file(id)),
-                    ));
+                    );
                 }
                 id.clone()
             }
             (None, Some(p)) => {
                 let key = p.id.clone().unwrap_or_else(|| default_key.to_string());
-                self.projectile(p, &key, &at(path, "projectile"), depth + 1)?;
+                self.projectile(p, &key, &at(path, "projectile"), depth + 1);
                 key
             }
             (Some(_), Some(_)) => {
-                return Err(self.err(path, "a spawn takes either `shared` or `projectile`, not both"));
+                self.fail(path, "a spawn takes either `shared` or `projectile`, not both");
+                String::new()
             }
-            (None, None) => return Err(self.err(path, "a spawn needs `shared` or `projectile`")),
+            (None, None) => {
+                self.fail(path, "a spawn needs `shared` or `projectile`");
+                String::new()
+            }
         };
-        Ok(rt::SpawnDef {
+        rt::SpawnDef {
             projectile,
             amount: s.amount,
             speed: s.speed,
@@ -281,39 +330,38 @@ impl Compiler<'_> {
             use_random_rot: s.random_rotation,
             add_parent_vel: s.inherit_velocity,
             parent_vel_factor: s.inherit_velocity_factor,
-        })
+        }
     }
 
-    fn projectile(&mut self, p: &Projectile, key: &str, path: &str, depth: usize) -> Result<(), FormatError> {
+    fn projectile(&mut self, p: &Projectile, key: &str, path: &str, depth: usize) {
         if depth > MAX_INLINE_DEPTH {
-            return Err(self.err(path, format!("projectiles nested deeper than {MAX_INLINE_DEPTH}")));
+            self.fail(path, format!("projectiles nested deeper than {MAX_INLINE_DEPTH}"));
+            return;
         }
         if !valid_id(key) {
-            return Err(self.err(&at(path, "id"), format!("invalid projectile id {key:?}")));
-        }
-        if !self.taken.insert(key.to_string()) {
-            return Err(self.err(path, format!("projectile id {key:?} is used twice; give one an `id`")));
+            self.fail(&at(path, "id"), format!("invalid projectile id {key:?}"));
+        } else if !self.taken.insert(key.to_string()) {
+            self.fail(path, format!("projectile id {key:?} is used twice; give one an `id`"));
         }
         if let Some(look) = &p.look {
-            let look = crate::look::compile_projectile_look(look, &self.file, &at(path, "look"))?;
-            self.looks.insert(key.to_string(), look);
+            let look = crate::look::compile_projectile_look(look, &self.file, &at(path, "look"));
+            if let Some(look) = self.note(look) {
+                self.looks.insert(key.to_string(), look);
+            }
         }
         let timed = p.timer.as_ref().filter(|t| t.after_s > 0.0);
         if let Some(t) = &p.timer
             && (t.after_s.is_nan() || t.after_s <= 0.0)
             && !t.effects.is_empty()
         {
-            return Err(self.err(
+            self.fail(
                 &at(path, "timer.effects"),
                 "a timer's effects need after_s > 0 (OLX ignores them otherwise)",
-            ));
+            );
         }
-        let (hit, hit_spawn) = self.effects(&p.hit_terrain, &at(path, "hit_terrain"))?;
-        let (player_hit, worm_spawn) = self.effects(&p.hit_worm, &at(path, "hit_worm"))?;
-        let timer_action = match timed {
-            Some(t) => Some(self.effects(&t.effects, &at(path, "timer.effects"))?),
-            None => None,
-        };
+        let (hit, hit_spawn) = self.effects(&p.hit_terrain, &at(path, "hit_terrain"));
+        let (player_hit, worm_spawn) = self.effects(&p.hit_worm, &at(path, "hit_worm"));
+        let timer_action = timed.map(|t| self.effects(&t.effects, &at(path, "timer.effects")));
         let named: BTreeSet<&str> = [
             hit_spawn.as_deref(),
             worm_spawn.as_deref(),
@@ -324,39 +372,32 @@ impl Compiler<'_> {
         .collect();
         if named.len() > 1 {
             let list: Vec<&str> = named.iter().copied().collect();
-            return Err(self.err(
+            self.fail(
                 path,
                 format!(
                     "this runtime gives a projectile's events one spawn, but they name {}",
                     list.join(", ")
                 ),
-            ));
-        }
-        if p.spawns.len() > 1 {
-            return Err(
-                self.err(&at(path, "spawns"), "this runtime takes at most one named spawn per projectile")
             );
         }
-        if let Some(name) = named.first()
+        if p.spawns.len() > 1 {
+            self.fail(&at(path, "spawns"), "this runtime takes at most one named spawn per projectile");
+        }
+        if named.len() == 1
+            && let Some(name) = named.first()
             && !p.spawns.contains_key(*name)
         {
             let have: Vec<&str> = p.spawns.keys().map(String::as_str).collect();
-            return Err(self.err(path, format!("no spawn named {name:?} (spawns: {})", have.join(", "))));
+            self.fail(path, format!("no spawn named {name:?} (spawns: {})", have.join(", ")));
         }
-        let event_spawn = match p.spawns.iter().next() {
-            Some((name, s)) => Some(self.spawn(
-                s,
-                &format!("{key}.spawn"),
-                &at(path, &format!("spawns[{name:?}]")),
-                depth,
-            )?),
-            None => None,
-        };
+        let event_spawn = p.spawns.iter().next().map(|(name, s)| {
+            self.spawn(s, &format!("{key}.spawn"), &at(path, &format!("spawns[{name:?}]")), depth)
+        });
         let trail = match &p.trail {
             Trail::Projectile { every_s, spawn } => rt::TrailDef {
                 kind: rt::TrailKind::Projectile,
                 delay: *every_s,
-                spawn: Some(self.spawn(spawn, &format!("{key}.trail"), &at(path, "trail.spawn"), depth)?),
+                spawn: Some(self.spawn(spawn, &format!("{key}.trail"), &at(path, "trail.spawn"), depth)),
             },
             other => rt::TrailDef {
                 kind: match other {
@@ -372,7 +413,7 @@ impl Compiler<'_> {
                 spawn: None,
             },
         };
-        let gfx = self.gfx(&p.gfx, &at(path, "gfx"))?;
+        let gfx = self.gfx(&p.gfx, &at(path, "gfx"));
         let (width, height) = p.size.unwrap_or(match gfx {
             rt::ProjectileGfx::Pixel { .. } => (2, 2),
             rt::ProjectileGfx::Image { .. } => (4, 4),
@@ -400,14 +441,13 @@ impl Compiler<'_> {
                 event_spawn,
             },
         );
-        Ok(())
     }
 
-    fn gfx(&self, g: &Gfx, path: &str) -> Result<rt::ProjectileGfx, FormatError> {
-        Ok(match g {
+    fn gfx(&mut self, g: &Gfx, path: &str) -> rt::ProjectileGfx {
+        match g {
             Gfx::Pixels(cs) => {
                 if cs.len() > MAX_COLOURS {
-                    return Err(self.err(path, format!("more than {MAX_COLOURS} colours")));
+                    self.fail(path, format!("more than {MAX_COLOURS} colours"));
                 }
                 rt::ProjectileGfx::Pixel { colours: cs.iter().map(|c| c.0).collect() }
             }
@@ -438,38 +478,40 @@ impl Compiler<'_> {
                     },
                 }),
             },
-        })
+        }
     }
 
-    /// One event's effect list as LX56's single action, and the spawn it names.
-    fn effects(&self, list: &[Effect], path: &str) -> Result<(rt::ActionDef, Option<String>), FormatError> {
-        if list.len() > MAX_EFFECTS {
-            return Err(self.err(path, format!("more than {MAX_EFFECTS} effects")));
-        }
+    /// One event's effect list as LX56's single action, and the spawn it
+    /// names (its first `Spawn`).
+    fn effects(&mut self, list: &[Effect], path: &str) -> (rt::ActionDef, Option<String>) {
         let mut action = rt::ActionDef::olx_default(rt::ActionKind::Nothing);
+        if list.len() > MAX_EFFECTS {
+            self.fail(path, format!("more than {MAX_EFFECTS} effects"));
+            return (action, None);
+        }
         let (mut kind_set, mut spawn) = (false, None::<String>);
         for (i, e) in list.iter().enumerate() {
             let here = format!("{path}[{i}]");
             if let Effect::Spawn(name) = e {
                 if spawn.is_some() {
-                    return Err(
-                        self.err(&here, "more than one Spawn per event is not supported by this runtime")
-                    );
+                    self.fail(&here, "more than one Spawn per event is not supported by this runtime");
+                } else {
+                    spawn = Some(name.clone());
                 }
-                spawn = Some(name.clone());
                 continue;
             }
             if kind_set {
-                return Err(self.err(
+                self.fail(
                     &here,
                     "more than one effect per event besides Spawn is not supported by this runtime",
-                ));
+                );
+                continue;
             }
             kind_set = true;
             apply(&mut action, e);
         }
         action.spawns_projectiles = spawn.is_some();
-        Ok((action, spawn))
+        (action, spawn)
     }
 }
 
@@ -892,6 +934,44 @@ mod tests {
         };
         assert!(with(MAX_INLINE_DEPTH).is_ok());
         assert!(with(MAX_INLINE_DEPTH + 1).is_err());
+    }
+
+    /// Issue #16: every error, each with its path; the first is `compile_mod`'s.
+    #[test]
+    fn mod_errors_lists_every_error_and_compile_mod_the_first() {
+        let mut two = pixel();
+        two.hit_worm =
+            vec![Effect::Injure { damage: 1 }, Effect::Explode { damage: 1, shake: 0, sound: None }];
+        let mut src =
+            one_weapon(ShotSpawn { amount: MAX_AMOUNT + 1, projectile: inline(two), ..ShotSpawn::default() });
+        let mut orphan = pixel();
+        orphan.hit_terrain = vec![Effect::Spawn("nowhere".into())];
+        src.shared.insert("orphan".into(), orphan);
+        src.loadouts
+            .insert("Nope".into(), olr_data::loadouts::ShippedLoadout { loading_time: 100, unique: false });
+        let errors = mod_errors(&src);
+        let at: Vec<(String, String)> = errors
+            .iter()
+            .map(|e| match e {
+                FormatError::Invalid { file, path, .. } => (file.clone(), path.clone()),
+                e => panic!("{e}"),
+            })
+            .collect();
+        let at: Vec<(&str, &str)> = at.iter().map(|(f, p)| (f.as_str(), p.as_str())).collect();
+        assert_eq!(
+            at,
+            [
+                ("projectiles/orphan.ron", ""),
+                ("weapons/gun.ron", "fire.shot.amount"),
+                ("weapons/gun.ron", "fire.shot.projectile.hit_worm[1]"),
+                ("mod.ron", "loadouts.Nope"),
+            ]
+        );
+        assert_eq!(compile_mod(&src).unwrap_err(), errors[0]);
+        assert!(
+            mod_errors(&one_weapon(ShotSpawn { projectile: inline(pixel()), ..ShotSpawn::default() }))
+                .is_empty()
+        );
     }
 
     #[test]

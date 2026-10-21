@@ -11,7 +11,6 @@ use crate::defaults as d;
 
 mod compile;
 mod files;
-pub(crate) use compile::valid_id;
 pub(crate) use files::ModFile;
 mod lift;
 mod spawn;
@@ -19,7 +18,7 @@ mod types;
 
 pub use compile::{
     MAX_AMOUNT, MAX_COLOURS, MAX_EFFECTS, MAX_INLINE_DEPTH, MAX_LOADOUTS, MAX_SHARED, MAX_WEAPONS,
-    ModLookSource, compile_mod, compile_mod_look,
+    ModLookSource, compile_mod, compile_mod_look, mod_errors, valid_id,
 };
 pub use files::{RESTRICTIONS_FILE, file_paths, read_mod_files, write_mod_files};
 pub use lift::{LIFTED_SPAWN, lift_mod};
