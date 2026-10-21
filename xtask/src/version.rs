@@ -13,6 +13,23 @@ use crate::root;
 /// and `olr-server`'s `VERSION`).
 pub const BUILD_VERSION_VAR: &str = "OLR_BUILD_VERSION";
 
+/// The variable carrying the bug relay's address (issue #3): `olr-game`'s
+/// `report::BUILD_URL`. `dist` passes it on from its own environment;
+/// a build without it hides Report a bug.
+pub const REPORT_URL_VAR: &str = "OLR_REPORT_URL";
+
+/// The relay's address to build with, from the variable's `value`:
+/// `None` when unset or empty; an address other than `https://` refused
+/// (a release never sends reports in the clear).
+pub fn report_url(value: Option<&str>) -> Result<Option<String>, String> {
+    let Some(v) = value.map(str::trim).filter(|v| !v.is_empty()) else { return Ok(None) };
+    let host = v.strip_prefix("https://").map(|r| r.split(['/', '?']).next().unwrap_or(""));
+    if host.is_none_or(|h| h.is_empty() || h.contains(char::is_whitespace)) {
+        return Err(format!("{REPORT_URL_VAR}={v:?} is no https:// address"));
+    }
+    Ok(Some(v.to_string()))
+}
+
 /// A work in progress of `version`: `<version>-dev.<commits>.<hash>`, and
 /// `.dirty` with uncommitted changes.
 pub fn wip_version(version: &str, commits: u32, hash: &str, dirty: bool) -> String {
@@ -75,6 +92,19 @@ pub fn release_version(final_: bool) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_report_url_is_https_or_none() {
+        assert_eq!(report_url(None), Ok(None));
+        assert_eq!(report_url(Some("  ")), Ok(None));
+        assert_eq!(
+            report_url(Some(" https://olr-bug-relay.example.workers.dev/report\n")),
+            Ok(Some("https://olr-bug-relay.example.workers.dev/report".into()))
+        );
+        for bad in ["http://relay.example/report", "https:///report", "relay.example", "https://a b/"] {
+            assert!(report_url(Some(bad)).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn a_work_in_progress_names_its_commit() {

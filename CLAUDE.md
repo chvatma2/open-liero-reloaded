@@ -49,6 +49,8 @@ modernized for current displays.
    and the Windows zip (`…-windows-x64.zip`). There is no Linux zip. `<version>` is a
    work in progress's, `0.2.0-dev.<commits since the last release tag>.<commit>[.dirty]`;
    `--final` names the plain version and needs the commit tagged `v<version>` and a clean tree.
+   `OLR_REPORT_URL=https://…` in its environment is the builds' bug relay (`tools/bug-relay/`);
+   without it the game hides **Report a bug**.
 
 ## Oracle
 

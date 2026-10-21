@@ -6,6 +6,9 @@
 //! imports them), and zipped into `target/release-zips/open-liero-reloaded-<version>-
 //! <platform>.zip`: deflate, entries in byte order, fixed times and modes
 //! (0755 for the executables), so the same inputs give the same zip.
+//! `OLR_REPORT_URL` in the environment (an `https://` address) is the
+//! builds' bug relay (issue #3, `tools/bug-relay/README.md`); without it
+//! the game hides Report a bug.
 //!
 //! Then, unless `--no-verify`, each zip is unpacked into a fresh directory
 //! and its `olr-server` runs from another working directory without
@@ -231,12 +234,20 @@ pub fn unpack(zip: &Path, into: &Path) -> Result<(), String> {
 }
 
 /// Builds `olr-game` and `olr-server` for `platform` in the `dist` profile,
-/// carrying `version` (`version::BUILD_VERSION_VAR`); gives cargo's output
-/// directory.
+/// carrying `version` (`version::BUILD_VERSION_VAR`) and the bug relay's
+/// address when this environment has one (`version::REPORT_URL_VAR`,
+/// `https://` only; without it the game hides Report a bug); gives
+/// cargo's output directory.
 pub fn build(platform: Platform, version: &str) -> Result<PathBuf, String> {
+    use crate::version::REPORT_URL_VAR;
+    let report_url = crate::version::report_url(std::env::var(REPORT_URL_VAR).ok().as_deref())?;
     let mut c = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     c.current_dir(root()).args(["build", "--quiet", "--profile", PROFILE]);
     c.env(crate::version::BUILD_VERSION_VAR, version);
+    match report_url {
+        Some(url) => c.env(REPORT_URL_VAR, url),
+        None => c.env_remove(REPORT_URL_VAR),
+    };
     for package in PACKAGES {
         c.args(["-p", package]);
     }
@@ -564,6 +575,14 @@ pub fn command(verify: bool, final_: bool) -> anyhow::Result<bool> {
         }
     };
     println!("releasing {version}{}", if final_ { " (final)" } else { " (a work in progress)" });
+    match crate::version::report_url(std::env::var(crate::version::REPORT_URL_VAR).ok().as_deref()) {
+        Ok(Some(url)) => println!("Report a bug sends to {url}"),
+        Ok(None) => println!("{} is not set: these builds hide Report a bug", crate::version::REPORT_URL_VAR),
+        Err(why) => {
+            println!("FAIL dist: {why}");
+            return Ok(false);
+        }
+    }
     if let Some(why) = winbuild::build_missing() {
         println!("FAIL dist: the Windows build cannot be made here: {why}");
         return Ok(false);
