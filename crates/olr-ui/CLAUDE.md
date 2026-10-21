@@ -9,7 +9,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `Player`, `Catalog`, skins), `olr-data` (images), `olr-format` (the
   level size limit), `olr-modes`, `olr-bots`,
   `olr-sim`, `olr-replay` (a replay's header), `olr-input` (same layer:
-  `Bindings`), egui 0.36.2, serde, ron, `directories` 6.0.0 and anyhow;
+  `Bindings`), egui 0.36.2, serde, ron, serde_json (a bug report's payload),
+  `directories` 6.0.0 and anyhow;
   `egui_kittest` 0.36.2 (with `wgpu` and `snapshot` for the HUD's image
   snapshots) and `olr-scene` (the game's skin frames) for tests.
   **No GPU handle and no window:** everything is tested headless, the
@@ -285,6 +286,42 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   (`LobbyDownload(false)`: leaves as Back does). `megabytes(bytes)`:
   "73.4 MB", "312 MB", in MiB shown as "MB" (the prompt's 50 MiB
   threshold reads "50.0 MB").
+- **Bug reports** (`report.rs`, `screens/report.rs`, issue #3): Main's
+  **Report a bug** (after About; only when `MenuData::report.available`,
+  the app's: the build has a relay) opens `Screen::Report` (in `MENUS`;
+  `Open(Report)` emits `PrepareReport`: the app gathers the automatic
+  section and the logs into `ReportData::context`). The page (900 wide):
+  "What happened" (required) and "What you expected" (`MAX_TEXT_CHARS`
+  each), "Attach a replay" (off by default) with a picker of
+  `replay_choices(dir, catalog)` (newest first by the file's date, at
+  most `MAX_REPLAY_CHOICES`, each read and decoded when the screen opens:
+  date in UTC (`utc_minute`), mod and level names, the worms' names, the
+  bytes kept, so what is sent is what was listed; one over
+  `MAX_REPLAY_BYTES` (384 KiB) or undecodable listed disabled with why;
+  the newest attachable preselected), the preview (`Report::preview`:
+  the texts, every `Section`'s facts, the replay with its worms' names,
+  the logs' summaries; each log's text under a collapsed header), Send
+  (`UiAction::SendReport(report)` → `AppCommand::SendReport`, only on the
+  Report screen and with "What happened" filled) and its status
+  (`SendStatus::{Idle, Sending, Sent(url), Failed(why)}`, set by the app;
+  `ReportData::finished`: a success clears the texts and shows "Thanks,
+  report filed:", the address selectable and Copy; a failure keeps
+  everything). The one `Report` made at the frame's start is both shown
+  and sent. `Report::json` is the payload (`REPORT_FORMAT` 1:
+  `happened`, `expected`, `sections`, `logs`, `replay`), the replay's
+  bytes beside it (`replay_bytes`). `sections(&SystemFacts)`: Game
+  (version), System (OS, distribution, kernel, window system, desktop
+  session, WSL, Flatpak), GPU (adapter, backend, device type, driver,
+  driver info, present mode, surface format), Display (scale factor,
+  window, monitor, refresh rate), Video settings (each one a command-line
+  flag set marked "(set on the command line)": `VideoOverrides`), Audio
+  settings, Gameplay settings (the match as RON); never bindings, the
+  online settings, profiles or the identity. `LogAttachment::new` keeps
+  a log's last `LOG_TAIL_BYTES` (256 KiB) from a line's start, the home
+  directory as `~`. Esc in its text fields only leaves the field. Tests:
+  `tests/report.rs` (the section for fixed facts, every value sent
+  previewed, the entry only with a relay, the flow with a replay recorded
+  from the committed content, the logs collapsed, Send's gate).
 - **Replays** (`replays.rs`): `list(dir)` (the `.olrp` files, automatic
   saves newest first, each with `header_problem`: 6 bytes read),
   `auto_save(dir, bytes)` (`match-NNNNNN.olrp`, the last

@@ -45,6 +45,9 @@
 //!   are chosen again) and whose Save replay keeps the match's replay.
 //!   Restart (F5) plays the game again in place: a Deathmatch's rematch
 //!   (same weapons), the sandbox or a replay from the start.
+//! - **Bug reports** (issue #3): Main opens Report (`PrepareReport`: the
+//!   app gathers the automatic section); its Send is `SendReport`, which
+//!   the app sends off the UI thread. Nothing is sent otherwise.
 //! - **Options** apply and save only what changed; their Clear of the
 //!   download cache is `ClearDownloadCache` (the app refuses it while an
 //!   online game is on).
@@ -59,6 +62,7 @@ use olr_sim::MAX_SLOTS;
 use crate::match_prefs::MatchPrefs;
 use crate::online::{FindingSettings, HostPrefs, LobbyCommand, Password, key_hex};
 use crate::profiles::Profiles;
+use crate::report::Report;
 use crate::settings::{AudioSettings, Settings, VideoSettings};
 
 /// A screen (§21 G1).
@@ -89,11 +93,16 @@ pub enum Screen {
     HostLost,
     /// The level editor's packs: edit, copy, new, recoveries (plan 14c).
     Editor,
+    /// A bug report to the maintainer (issue #3): the player's text, a
+    /// replay if they attach one, the preview of all that is sent, Send.
+    Report,
 }
 
 impl Screen {
     /// The screens the main menu opens.
-    pub const MENUS: [Screen; 7] = [
+    /// Report shows only when the build has a relay to send to
+    /// (`MenuData::report.available`).
+    pub const MENUS: [Screen; 8] = [
         Screen::LocalPlay,
         Screen::Multiplayer,
         Screen::Editor,
@@ -101,6 +110,7 @@ impl Screen {
         Screen::Options,
         Screen::Replays,
         Screen::About,
+        Screen::Report,
     ];
 }
 
@@ -227,6 +237,8 @@ pub enum UiAction {
     /// The Editor screen's Recover and Discard of a recovery copy.
     Recover(String),
     DiscardRecovery(String),
+    /// The Report screen's Send: this report, as its preview showed it.
+    SendReport(Box<Report>),
 }
 
 /// What the app must do.
@@ -302,6 +314,12 @@ pub enum AppCommand {
     /// Reopen recovery `id` (its unsaved changes), or remove it.
     Recover(String),
     DiscardRecovery(String),
+    /// The Report screen opened: gather the automatic section and the
+    /// logs into `MenuData::report.context` (sending nothing).
+    PrepareReport,
+    /// Send this report to the relay off the UI thread, then put how it
+    /// went in `MenuData::report.status` (the text is kept on a failure).
+    SendReport(Box<Report>),
     Quit,
 }
 
@@ -457,6 +475,9 @@ impl UiState {
                 let to_replays = self.screen == Screen::HostLost && s == Screen::Replays;
                 if from_main || to_host || to_weapons || to_replays {
                     self.go(s);
+                    if s == Screen::Report {
+                        return vec![AppCommand::PrepareReport];
+                    }
                 } else if self.screen == Screen::InGame && self.paused && s == Screen::Options {
                     self.options_in_game = true;
                     self.go(s);
@@ -526,6 +547,13 @@ impl UiState {
                 Vec::new()
             }
             UiAction::Quit => vec![AppCommand::Quit],
+            UiAction::SendReport(r) => {
+                if self.screen == Screen::Report && r.is_ready() {
+                    vec![AppCommand::SendReport(r)]
+                } else {
+                    Vec::new()
+                }
+            }
             UiAction::SetVideo(mut v) => {
                 v.sanitize();
                 if v == self.settings.video {

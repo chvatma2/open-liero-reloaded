@@ -1,6 +1,6 @@
 //! The main menu (OLX's `src/client/DeprecatedGUI/Menu_Main.cpp`, laid
 //! out anew): local play, the sandbox, the editor, profiles, options, replays,
-//! about and quit.
+//! about, report a bug (when the build has a relay to send to) and quit.
 
 use egui::{Button, Color32, RichText, Ui};
 
@@ -11,8 +11,16 @@ const BUTTON: [f32; 2] = [260.0, 36.0];
 
 /// The menu, with the store's `notices` (a newer game's settings file
 /// left untouched) as a banner on top.
-/// `version` (the game's) shows in the bottom right corner.
-pub(super) fn show(ui: &mut Ui, state: &UiState, notices: &[String], version: &str, out: &mut Vec<UiAction>) {
+/// `version` (the game's) shows in the bottom right corner; "Report a
+/// bug" only when `reporting` (the build has a relay).
+pub(super) fn show(
+    ui: &mut Ui,
+    state: &UiState,
+    notices: &[String],
+    version: &str,
+    reporting: bool,
+    out: &mut Vec<UiAction>,
+) {
     if !version.is_empty() {
         // An area of its own: the menu's layout never sees it.
         egui::Area::new(egui::Id::new("olr-main-version"))
@@ -41,6 +49,9 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, notices: &[String], version: &s
         button(ui, "Options", UiAction::Open(Screen::Options));
         button(ui, "Replays", UiAction::Open(Screen::Replays));
         button(ui, "About", UiAction::Open(Screen::About));
+        if reporting {
+            button(ui, super::report::TITLE, UiAction::Open(Screen::Report));
+        }
         ui.add_space(12.0);
         button(ui, "Quit", UiAction::Quit);
         ui.add_space(12.0);

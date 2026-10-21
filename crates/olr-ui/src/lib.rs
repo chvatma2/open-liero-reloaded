@@ -11,6 +11,7 @@ pub mod match_prefs;
 pub mod online;
 pub mod profiles;
 pub mod replays;
+pub mod report;
 pub mod screens;
 pub mod settings;
 pub mod skin_preview;

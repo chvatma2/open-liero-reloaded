@@ -3933,6 +3933,7 @@ dependencies = [
  "olr-sim",
  "ron",
  "serde",
+ "serde_json",
  "tempfile",
 ]
 

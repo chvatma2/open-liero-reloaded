@@ -23,6 +23,7 @@ mod multiplayer;
 mod options;
 mod profiles;
 mod replays;
+pub mod report;
 pub mod results;
 mod weapon_select;
 
@@ -131,6 +132,9 @@ pub struct MenuData {
     /// The game's version (the app's: a release's name, or a local
     /// build's), on the main menu and in About; empty: the crate's.
     pub version: String,
+    /// The Report screen's (issue #3): `available` (the app's: a relay to
+    /// send to), the gathered context, the texts, the replay, the status.
+    pub report: crate::report::ReportData,
     /// A text field had the focus as the last frame ended.
     typing: bool,
     /// The weapon selection in progress.
@@ -184,6 +188,7 @@ impl MenuData {
             recoveries: Vec::new(),
             editor_message: None,
             version: String::new(),
+            report: Default::default(),
             typing: false,
             select: None,
             thumbs: BTreeMap::new(),
@@ -272,8 +277,11 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
     let screen = state.screen();
     // Esc in a text field only leaves the field (egui lets go of it at the
     // start of the pass, so the field was in focus as the last frame ended).
-    let typing =
-        data.typing && matches!(screen, Screen::Lobby | Screen::Multiplayer | Screen::Host | Screen::InGame);
+    let typing = data.typing
+        && matches!(
+            screen,
+            Screen::Lobby | Screen::Multiplayer | Screen::Host | Screen::InGame | Screen::Report
+        );
     data.preview_wanted = None;
     data.decodes_left = THUMB_DECODES_PER_FRAME;
     if data.shown != Some(screen) {
@@ -290,6 +298,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
             Screen::Profiles => data.profiles = profiles::View::new(state.profiles().selected),
             Screen::Options => data.options = options::View::default(),
             Screen::Editor => data.editor = editor::View::default(),
+            Screen::Report => data.report.enter(data.replays_dir.as_deref(), &data.catalog),
             Screen::WeaponSelect => {
                 let remembered = state.profiles().selected().map(|p| p.weapons.as_slice()).unwrap_or(&[]);
                 data.select = data.weapons.as_ref().map(|m| WeaponSelect::new(m, remembered));
@@ -320,7 +329,9 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
         _ => {
             let frame = egui::Frame::central_panel(ui.style()).fill(theme::BACKGROUND);
             egui::CentralPanel::default().frame(frame).show(ui, |ui| match screen {
-                Screen::Main => main::show(ui, state, &data.notices, &data.version, &mut out),
+                Screen::Main => {
+                    main::show(ui, state, &data.notices, &data.version, data.report.available, &mut out)
+                }
                 Screen::LocalPlay => local_play::show(ui, state, data, &mut out),
                 Screen::Profiles => profiles::show(ui, state, data, &mut out),
                 Screen::Replays => replays::show(ui, state, data, &mut out),
@@ -331,6 +342,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
                 Screen::Lobby => lobby::show(ui, state, data, &mut out),
                 Screen::HostLost => host_lost::show(ui, data, &mut out),
                 Screen::Editor => editor::show(ui, data, &mut out),
+                Screen::Report => report::show(ui, state, data, &mut out),
                 _ => {}
             });
         }

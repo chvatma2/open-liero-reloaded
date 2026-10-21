@@ -84,7 +84,7 @@ fn widgets(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
 
 /// The screens to check: each opened from the main menu, then the
 /// options' and the Multiplayer screen's tabs clicked.
-const SCREENS: [(Screen, Option<&str>); 15] = [
+const SCREENS: [(Screen, Option<&str>); 16] = [
     (Screen::LocalPlay, None),
     (Screen::Options, None),
     (Screen::Options, Some("Audio")),
@@ -100,6 +100,7 @@ const SCREENS: [(Screen, Option<&str>); 15] = [
     (Screen::Host, None),
     (Screen::Lobby, None),
     (Screen::Editor, None),
+    (Screen::Report, None),
 ];
 
 #[test]
@@ -180,6 +181,7 @@ fn title_of(screen: Screen) -> &'static str {
         Screen::Host => "Host a game",
         Screen::Lobby => "Lobby",
         Screen::Editor => "Editor",
+        Screen::Report => "Report a bug",
         _ => "",
     }
 }
@@ -194,6 +196,7 @@ fn the_primary_action_is_centred_below() {
             (Screen::LocalPlay, "Start"),
             (Screen::Multiplayer, "Host a game"),
             (Screen::Host, "Start hosting"),
+            (Screen::Report, "Send"),
         ] {
             reach(&mut harness, screen);
             let b =

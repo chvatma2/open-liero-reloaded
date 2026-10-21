@@ -12,5 +12,6 @@ mod layout;
 mod online;
 mod options;
 mod profiles;
+mod report;
 mod state;
 mod store;

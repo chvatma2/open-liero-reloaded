@@ -20,7 +20,10 @@ fn state_machine_navigates_and_emits_commands() {
     assert_eq!(ui.screen(), Screen::Main);
     // Main's buttons open the menu screens; Back returns to Main.
     for s in Screen::MENUS {
-        assert!(ui.update(UiAction::Open(s)).is_empty());
+        let c = ui.update(UiAction::Open(s));
+        // The Report screen asks the app for the system's details.
+        let expected = if s == Screen::Report { vec![AppCommand::PrepareReport] } else { Vec::new() };
+        assert_eq!(c, expected, "{s:?}");
         assert_eq!(ui.screen(), s);
         assert!(ui.update(UiAction::Back).is_empty());
         assert_eq!(ui.screen(), Screen::Main);
