@@ -69,6 +69,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     let mut renderer = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
     renderer.set_lighting(true);
     renderer.upload_terrain(&map);
+    renderer.set_distant(&level.distant);
     let img = gpu.render_lit_to_image(&mut renderer, &list, Some(&look), args.size);
     std::fs::write(&args.out, olr_pack::image_io::encode_rgba(&img))
         .with_context(|| format!("writing {}", args.out.display()))?;

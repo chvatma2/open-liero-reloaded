@@ -75,6 +75,8 @@ pub struct Presentation {
     terrain_new: bool,
     /// The level's look, when it has one.
     level_look: Option<LevelLook>,
+    /// The level's distant layers (issue #11), uploaded with the terrain.
+    distant: Vec<olr_data::level::DistantLayer>,
     /// The level or the mod has a look: the renderer's look passes draw it.
     lit: bool,
     /// The frame's look, rebuilt by every lit [`Presentation::build`].
@@ -111,6 +113,7 @@ impl Presentation {
             atlas_dirty: true,
             terrain_new: true,
             level_look: s.level.look.clone(),
+            distant: s.level.distant.clone(),
             lit,
             look: LookFrame::default(),
             mod_look: s.m.look.clone(),
@@ -219,6 +222,7 @@ impl Presentation {
         self.fx.clear();
         self.dynamic.clear();
         self.color = level.color_map(theme);
+        self.distant = level.distant.clone();
         self.terrain_new = true;
     }
 
@@ -296,8 +300,8 @@ impl Presentation {
 
     /// Brings `renderer` up to date, right before a frame is drawn: the
     /// atlas when an image was added, the whole colour map when it is new
-    /// (a new world or renderer), else the rectangles the ticks since the
-    /// last upload changed.
+    /// (a new world or renderer) with the level's distant layers, else the
+    /// rectangles the ticks since the last upload changed.
     pub fn upload(&mut self, renderer: &mut Renderer) {
         // A look needs the renderer's look textures, uploaded with the map.
         if renderer.lighting() != self.lit {
@@ -310,6 +314,7 @@ impl Presentation {
         if core::mem::take(&mut self.terrain_new) {
             self.color.take_dirty().for_each(drop);
             renderer.upload_terrain(&self.color);
+            renderer.set_distant(&self.distant);
         } else {
             renderer.update_terrain(&mut self.color);
         }
