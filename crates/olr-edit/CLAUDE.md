@@ -206,6 +206,30 @@ templates and the level operations.
     level-sized layer's moves by the offset) and `set_all` resamples a
     resized image's (`glow::relay_mask`, `glow::resample_mask`, shared
     with the editor; plan 15a's final review).
+- **Issue #11, distant layers** (the format is `olr-format`'s
+  `Element::distant`): the bake leaves distant elements out of the
+  material, front and back. With a visible distant element that bakes
+  (`has_distant`), every back pixel no other background covers (a raster's
+  back pixel of alpha 0 counts as uncovered) is the back tile's colour at
+  alpha 0, see-through, and so is the front over background; a solid
+  block's front stays opaque. Without one the bake is as before (every
+  bundled level bakes byte for byte). A whole-level bake remakes
+  `level.distant` (`bake_distant`: each visible distant element's art at
+  its box, an image's grid expanded, drawn art's covered pixels opaque;
+  a region bake leaves it: callers remake it when distant items change).
+  `distant_elements(level)` gives a level's distant layers back as
+  elements (`distant-N`, boxed drawn Background layers at their depth),
+  which `compose_from` and `split_from` put at the bottom. `stale()`
+  covers `level.ron`'s distant entries and `distant/<i>.png`. `element`:
+  `Property::Distant(Option<u8>)` (an image or drawn element) moves the
+  element to the top of the distant layers, or just above them when no
+  longer distant; `raise`/`lower` refuse to cross the boundary
+  (`DISTANT_ORDER`), `merge_down` and `split` refuse a distant layer;
+  `asset::from_elements` and `cut_rect` leave distant elements out (Save
+  as asset). Tests: `compose.rs`'s
+  `distant_layers_make_uncovered_back_pixels_see_through`,
+  `distant_layers_split_and_bake_back`; `element.rs`'s
+  `distant_layers_keep_below_the_rest`, `an_asset_carries_no_distant_layer`.
 - **Issue #9, the asset library** (`asset`; the format is
   `olr_format::assets`; STATUS.md "Level editor asset library (issue
   #9)"): `Piece` (an element, its `Decoded`, an image's original, its glow

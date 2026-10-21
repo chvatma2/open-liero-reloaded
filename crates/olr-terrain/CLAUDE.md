@@ -36,6 +36,14 @@ and the colour image that follows it (`ColorMap`).
   rectangle, then marks it dirty; images or a material of another size
   change nothing, `r` is clipped. The image is always
   opaque; odd art sizes are cropped or padded, never a panic.
+- **See-through** (issue #11, a level with distant layers):
+  `ColorMap::new_see_through` keeps the alpha of the back art (0 where a
+  distant layer shows, else opaque) and of the front over background
+  (`see_through()`); carving copies the back, so a dug pixel shows the
+  distant layers at once; `stain` and `stain_image` skip alpha-0 pixels
+  (blood never hangs in the sky); `replace_rect` keeps alpha; `color_at`
+  stays opaque. `ColorMap::new` is unchanged: a level without distant
+  layers is drawn as before (`tests/see_through.rs`).
 - **Glow** (plan 15a, look system §Glow): `set_glow(Some(GlowLayers))` gives the map
   a glow channel (strength per art pixel, group per world pixel, of the front
   as loaded and of the backdrop); layers of another size are refused
@@ -70,6 +78,6 @@ and the colour image that follows it (`ColorMap`).
   proptest `random_edits_keep_glow_consistent` (background shows the back
   glow, rock the front, dirt the front or none; Task 4 ruling: not equality
   with a rebuild, which gives all dirt none) and
-  `clear_flags_are_the_level_size`.
+  `clear_flags_are_the_level_size`; issue #11's `see_through.rs`.
 
 Test: `cargo nextest run -p olr-terrain`.

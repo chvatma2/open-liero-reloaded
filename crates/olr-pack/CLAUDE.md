@@ -34,6 +34,11 @@ header's size); content hashing; validation.
   - core (format 5, `olr-format`'s `core_pack`; OLX's shared game assets, spec §19 E9): `core.ron`
     (per sprite frames and art scale, sound list, `colours.cfg` values), `gfx/<sprite>.png`
     (alpha; `giblets` and `giblet-stains` are two files that `read_core` composes), `sounds/<file>`
+- **Distant layers** (issue #11): `LevelPack::distant` (`read_level`
+  fills it through the lenient reader, `write_level` writes
+  `distant/<i>.png` and `level.ron`'s list); they are content: in
+  `content_hash`, so a replay or download carries them
+  (`distant_layers_roundtrip_and_are_content`).
 - **Bounded reads:** every pack file is read with `read_max`: at most
   `MAX_FILE_BYTES` (64 MiB; OLX's largest level art is under 1 MB encoded,
   and `png` decodes at most 64 MiB), RON at most `MAX_RON_BYTES` (4 MiB),

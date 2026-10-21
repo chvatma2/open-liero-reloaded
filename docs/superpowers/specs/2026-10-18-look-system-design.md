@@ -59,8 +59,9 @@ and lava lighting the cave above it.
   purpose. Bots, names over other worms, damage numbers and minimap dots are
   unchanged, and every marker draws unlit (the user's ruling).
 - Bloom and halos, heat haze and distortion, GPU particles, weather,
-  parallax backgrounds, normal-mapped terrain, showpiece weapon effects:
-  sub-project 5.
+  normal-mapped terrain, showpiece weapon effects: sub-project 5.
+  (Parallax backgrounds came with issue #11: distant layers,
+  `docs/porting/STATUS.md` "Distant (parallax) layers".)
 - Moving or animated backgrounds: a future milestone. A pulsing glow group
   stands in for them now.
 - Colour lookup tables (LUT images) for grading: sub-project 5.

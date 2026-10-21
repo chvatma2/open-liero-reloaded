@@ -4100,6 +4100,57 @@ The maintainer's rulings, as built:
   `#405880` at 40 and occlusion 80 over 16 px (the look test level's own
   ambient is too dim for it to show).
 
+## Distant (parallax) layers (issue #11)
+
+No OLX counterpart (decoration only; OLX levels and themes have none).
+As built:
+
+- **What is distant.** A Background element of the level editor, an
+  imported image or a plain drawn layer (not mixed, no back art, not a
+  raster), with a depth of 1-99 percent ("near" to "far"); no glow, not
+  clear. Every distant element lies below every other; their order is the
+  element order (far first). The editor keeps it on a drag (clamped to
+  the element's group, else refused with "distant layers stay below every
+  other element"), a paste (on top of the distant layers), merge down and
+  split (refused), the Distant switch (to the top of the distant layers,
+  or just above them when switched off) and placing an asset (assets
+  carry none: Save as asset leaves them out). `olr-cli level element
+  raise|lower` refuse to cross the boundary.
+- **Scrolling.** A layer's top-left is `at + depth × (camera − level size
+  / 2)` on both axes: at the level's centre it lies at `at`, and it moves
+  on screen by `(1 − depth)` of the camera's movement. The camera is the
+  view's centre in play; in the editor the canvas's centre (the drawn view
+  is cut to the device's target there). The offset is rounded to whole
+  target texels against the snapped world-target origin: no shimmer.
+- **See-through.** In a level with distant layers, back pixels no other
+  background covers bake to the back tile's colour at alpha 0
+  (`back.png`); a solid block's front stays opaque. The distant layers
+  show there, nearest on top, else the back tile; digging reveals them at
+  once (carving copies the back), blood and gibs do not stain those
+  pixels, the minimap shows the back tile's colour. A level without
+  distant layers bakes, loads and draws exactly as before.
+- **Light.** A distant texel takes the ambient and `1 − depth` of the
+  light beyond it (glow light, explosions, flashes, bloom), read from the
+  light grid at its screen point, then the grade. Distant layers never
+  glow and never cast light.
+- **Decoration only.** No material, collision, simulation or bot reads
+  them; they are content (`distant/<i>.png` and `level.ron`'s list, in
+  `content_hash`).
+- **Not built** (the issue's non-goals): animation, fog, per-layer tints,
+  per-axis speeds, a per-player setting, OLX levels or themes with
+  distant layers, assets carrying them.
+- **Cost.** Without distant layers nothing runs (the backing and the
+  layer draws need a see-through terrain; the composite's branch is gated
+  by a uniform). With them, one backing draw, one quad per layer and the
+  terrain drawn twice. The Windows 1080p measurement waits for the
+  maintainer (`docs/deferred-verification.md`). The editor remakes the
+  level's distant layers whenever the distant elements change (a stroke on
+  a distant layer remakes them per dab).
+- **Demo.** `fixtures/look/levels/look-test-distant` (the look test level,
+  its base split, two gaps erased, a night sky at depth 90 and a far city
+  at 55); goldens `look-distant-a.png`, `look-distant-b.png`,
+  `look-distant-full.png`.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

@@ -35,6 +35,10 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   so the snapshots of unlit matches stay as they were. Layers keep `RESERVED` items of room (the entities `ENTITIES_RESERVED`,
   olr-fx's play pool), so frames do not allocate
   (`tests/no_alloc.rs`).
+- **Parallax camera** (issue #11): `DrawList::parallax`, `None` but in
+  the level editor (its canvas's centre: the view there is cut to the
+  device's target), and `camera()`, it or the view's centre: where the
+  renderer places a level's distant layers.
 - **Shades** (`draw_list.rs`, `lib.rs`, plan 15a Task 15, R5 and R13):
   every item carries a `Shade { self_light, marker, floor }`, which
   only the renderer's look passes read: `Shade::LIT` (lit by the world, the

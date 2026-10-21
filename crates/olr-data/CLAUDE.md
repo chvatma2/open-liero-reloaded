@@ -22,6 +22,13 @@ skins with colorization masks, themes, and pack manifests.
   `ShippedLoadout { loading_time, unique }` (`mod.ron`'s `loadouts`, keyed
   by preset name; here so the format docs read it) is
   `ModDef::loadouts`.
+- **Distant layers** (`level.rs`, issue #11, not OLX's): `DistantLayer
+  { image, at, depth }`, a level's parallax decoration (art resolution,
+  binary alpha; `at` the top-left in world pixels with the camera at the
+  level's centre; `depth` percent `MIN_DEPTH` 1 to `MAX_DEPTH` 99).
+  `position(camera, size)` is `at + depth × (camera − size / 2)`, exact
+  (a camera that is not finite counts as the centre); the renderer
+  rounds it to its texels. No simulation reads them.
 - **Loadouts** (`loadouts.rs`, issue #5, not OLX's): `MatchLoadout { name,
   weapons, loading_time, unique }` (weapons by the mod's names; empty means
   every weapon: `Default`, `DEFAULT_LOADOUT`, `MatchLoadout::default()`,

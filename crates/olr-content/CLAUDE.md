@@ -32,6 +32,12 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   else `None`; `build_match_spawning(assets, options,
   human_spawn)` is `build_match` with the first human worm's
   `WormSetup::spawn` set (`build_match` passes `None`: unchanged).
+- **Distant layers** (issue #11): `LoadedLevel::distant` (from
+  `olr_pack::read_level`, or `from_source`'s level; dropped with a warning
+  when they do not check); with any, `color_map` makes a see-through map
+  (`ColorMap::new_see_through`), else the map is as before
+  (`distant_layers_load_and_make_the_map_see_through`). No simulation,
+  bot or material reads them.
 - **Looks** (`maps.rs`, `mods.rs`, plan 15a Tasks 6 and 14b): `LoadedLevel`
   carries the level's `look` (`olr_look::LevelLook`), `glow`
   (`olr_terrain::GlowLayers`), `clear` (clear flags per world pixel,

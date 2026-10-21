@@ -117,6 +117,31 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `MAX_OBJECTS` (4096); a material or art size that does not match is an
   error. Art decodes within `image_io::LEVEL_ART`. `encode_material` is
   `material.png`'s encoding, shared with a raster element's.
+- **Distant layers** (`levels/`, issue #11; the page
+  `docs/formats/level.md`): `LevelSource::distant`
+  (`olr_data::level::DistantLayer`s, far to near), `level.ron`'s
+  `distant` list (`DistantEntry { depth, at }`, left out when empty) and
+  `distant/<i>.png` (`DISTANT_DIR`, `distant_file(i)`; RGBA at art
+  resolution, each side a multiple of the art scale). `check_distant_layers`:
+  at most `MAX_DISTANT` (16), depth 1-99, `at` within `MAX_DISTANT_AT`
+  (4 × `MAX_SIDE`) of the origin, each image within `MAX_SIDE` × art scale
+  a side and `LEVEL_ART`, their pixels together within
+  `LEVEL_ART.max_pixels`; `file_paths` lists the files. The strict readers
+  refuse a bad layer; `read_level_files_lenient` drops them all with a
+  warning ("…: the level plays without its distant layers"). `back.png`
+  is alpha 0 where a see-through back pixel lets them show (the bake's,
+  `olr-edit`). A composition's `Element::distant` (depth, `None` for an
+  ordinary element; `is_distant`): `check_elements` allows it on an image
+  or a plain drawn (not mixed, no back art) Background element, without
+  glow or clear, 1-99, every distant element below every other
+  (`check_distant`), at most `MAX_DISTANT`, `at` within `MAX_DISTANT_AT`,
+  their art pixels within `LEVEL_ART.max_pixels`; an asset carries none
+  (`check_asset`). The thumbnail (`thumb.rs`' `seen`) shows them from the
+  level's centre in see-through pixels, lit as ambient plus (1 − depth) of
+  the rest (`the_thumbnail_shows_distant_layers`). Tests in `files.rs`
+  (`distant_layers_round_trip`, `bad_distant_layers_are_errors_and_played_without`,
+  `a_level_without_distant_layers_writes_none`) and `composition.rs`
+  (`distant_elements_follow_their_rules`).
 - **Level looks** (`levels/`, plan 15a Tasks 2, 6 and 14b; spec
   `docs/superpowers/specs/2026-10-18-look-system-design.md` §Data):
   `LevelSource` gains `look` (`level.ron`'s `look`, a `LookSource`),

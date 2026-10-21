@@ -24,6 +24,27 @@ on screen or offscreen.
   signatures); `None`, or lighting off (the default), draws exactly
   `render_in`'s bytes (`look_none_draws_todays_bytes`). `set_lighting`
   resets the world target only on a change; `lighting()` says which.
+- **Distant layers** (issue #11): `set_distant(&[DistantLayer])` makes
+  one texture per layer (an empty one, or one past the device's texture
+  side, skipped with a warning; `set_distant(&[])` drops them). Each frame
+  `frame::distant_instance` places each at `DistantLayer::position` of the
+  list's `camera()` (`DrawList::parallax`, else the view's centre), its
+  offset rounded to whole target texels against the snapped world-target
+  origin and clipped to the level and the target; the instance's shade
+  carries the depth. Only a see-through terrain (`ColorMap::see_through`,
+  taken at `upload_terrain`) draws them: its opaque backing first
+  (`fs_terrain_backing`, `_lit`: the tile colour of see-through pixels),
+  then the layers far to near (`fs_distant`, `_lit`: no blending), then
+  the terrain again over them (`fs_world`; `fs_terrain_lit` discards
+  alpha 0), then the sprites. Lit, a distant texel writes shade alpha
+  `1 − depth`, and the composite (gated by `LookGlobals.distant`, set only
+  while a layer is drawn) gives it the light beyond the ambient scaled by
+  `1 − depth` (glow light, flashes and bloom alike); never a light of its
+  own. A terrain that is not see-through draws exactly as before
+  (`look_none_draws_todays_bytes`, the goldens). Tests (GPU):
+  `distant_layers_scroll_by_their_depth`,
+  `distant_layers_take_light_by_their_depth`; `frame.rs`'s
+  `distant_quads_snap_to_texels_and_clip_to_the_level`.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel
   (`MIN_SCALE` 2, OLX's sprite art, or the level's art scale if larger). The
@@ -258,7 +279,11 @@ on screen or offscreen.
   `look-t500.png` (`--time 500`) are `olr-cli look-preview` of
   `fixtures/look/levels/look-test` at (256, 128); `look-occlusion.png`
   and `look-occlusion-light.png` (issue #10) of its copy
-  `look-test-occlusion` (ambient `#405880` at 40, occlusion 80 over 16 px); `look-rocket.png` is
+  `look-test-occlusion` (ambient `#405880` at 40, occlusion 80 over 16 px);
+  `look-distant-a.png` (at 213, 96), `look-distant-b.png` (at 299, 160)
+  and `look-distant-full.png` (`--view full`) of the distant demo level
+  `look-test-distant` (issue #11: a night sky at depth 90 and a far city at
+  55 seen through two gaps); `look-rocket.png` is
   `olr-cli render-match` of chaos bots with the look test mod
   (`fixtures/look/mods`), seed 1, 300 ticks.
 - **Instance buffer** (`instance_buffer_bytes()`): grows to the busiest

@@ -51,6 +51,10 @@ wired in the frame loop's order **once**, so each mode that draws a world
     It first turns the renderer's lighting on or off to match `has_look()`
     (`Renderer::lighting`, `set_lighting`), uploading the terrain whole on a
     change (the look textures go with the map).
+  - Issue #11: the level's distant layers (`LoadedLevel::distant`, again
+    at `restart`) go to `Renderer::set_distant` with every whole terrain
+    upload; the colour map is see-through when there are any
+    (`LoadedLevel::color_map`).
   - `step_fx(&FxTick)`: `on_tick`'s entities and colour part for a tick
     described by hand (online play).
   - `restart(&world, &level, &theme)` for the same worms on a new world;
