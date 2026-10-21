@@ -25,6 +25,7 @@ mod hits;
 mod level;
 mod look_preview;
 mod matches;
+mod mods;
 mod net_repro;
 mod net_soak;
 mod nostr_probe;

@@ -8,6 +8,7 @@ mod level_cmd;
 mod look_cmd;
 mod look_preview;
 mod match_cmd;
+mod mod_cmd;
 #[cfg(feature = "nat-tools")]
 mod nat_tools;
 mod net_client_cmd;
@@ -45,6 +46,9 @@ enum Command {
     Level(level_cmd::Args),
     /// Make, double, check and preview worm skin packs.
     Skin(skin_cmd::Args),
+    /// Edit a mod pack by field path: get, set, weapons, shared projectiles, check.
+    /// A new mod is `olr-cli pack new mod <id> [--from <mod pack>]`.
+    Mod(mod_cmd::Args),
     /// Replay oracle scenarios in the simulation and compare them with OLX's traces;
     /// exits with status 1 if any diverges.
     Scenario(scenario::Args),
@@ -108,6 +112,7 @@ fn main() -> ExitCode {
         Command::Pack(args) => pack_cmd::run(&args),
         Command::Level(args) => level_cmd::run(&args),
         Command::Skin(args) => skin_cmd::run(&args),
+        Command::Mod(args) => mod_cmd::run(&args),
         Command::Scenario(args) => scenario::run(&args),
         Command::Render(args) => render::run(&args),
         Command::LookPreview(args) => look_preview::run(&args),

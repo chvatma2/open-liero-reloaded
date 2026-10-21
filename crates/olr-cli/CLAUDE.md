@@ -171,6 +171,23 @@ The headless command-line tool. Its commands:
   content lists it, its outline is the doubled default skin's; on the GPU
   tier, by hand with `OLR_GPU_TESTS=1` as `reloaded.rs`' GPU test,
   `firefly_lights_its_surroundings_in_play` on both Reloaded levels).
+- `olr-cli mod get <pack> <path>`, `mod set <pack> <path> <value>`,
+  `mod fields <pack> [path]`, `mod weapon list|add|remove|move|copy|rename
+  …`, `mod projectile used-by|inline|share …` and `mod check <pack>…`
+  (`mod_cmd.rs`, issue #16: `olr_edit::mods`' operations; paths such as
+  `mod.worm.gravity`, `weapons/bazooka.fire.shot.projectile.spawns.spawn.amount`).
+  Each edit loads the pack, applies the operation and saves
+  (`pack::save`); a refused edit prints `refused, it would add:` and each
+  error at its path, exiting 1. `weapon add <pack> <id> [--name N]
+  [--from MOD:WEAPON] [--at I]` copies a weapon of an installed mod (an id
+  in `--content`'s bundled content, or a directory); `set` prints `set
+  <path> = <value>`; `fields` prints `path = value` per leaf and `path: V
+  (variants: …)` per enum; `check` prints `<dir>: <issue>` and `checked N
+  mods: E errors, W warnings`, exiting 1 on errors. A new mod is `pack
+  new mod <id> [--from <pack>]` (the help says so). Tests: `tests/mods.rs`
+  (get and set on a copy of Classic, refusals with their paths, the
+  weapon and projectile commands, check listing several errors and a
+  file that does not parse).
 - `olr-cli look-preview <pack> --at X,Y [--time MS] [--view lit|full|light] [--size WxH] [--content DIR] --out f.png`
   (plan 15a Task 13, `look_preview.rs`) draws a level's terrain alone (no
   worms) with its look at match clock `--time`, centred on `--at`, at
