@@ -77,6 +77,16 @@ pub struct SkinLight {
     pub reach: u16,
 }
 
+/// How many glow strengths are drawn: a `glow.png` value is rounded to
+/// quarters ([`glow_level`]), so a worm draws at most four glow overlays.
+pub const GLOW_LEVELS: usize = 4;
+
+/// The glow strength drawn for a `glow.png` value: 0 (below 32) to
+/// [`GLOW_LEVELS`] (224 and above), its nearest quarter.
+pub fn glow_level(glow: u8) -> usize {
+    (usize::from(glow) + 32) / 64
+}
+
 /// The `skin.ron` part of a skin pack.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SkinDef {

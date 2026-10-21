@@ -43,15 +43,9 @@ pub fn skin_source(layout: &FrameLayout, f: u32, face: Dir) -> SkinSource {
     SkinSource { x, y: 0, w: layout.worm_width, h: layout.worm_height, mirrored }
 }
 
-/// How many glow strengths are drawn: a `glow.png` value is rounded to
-/// quarters (`glow_level`), so a worm draws at most four glow overlays.
-pub const GLOW_LEVELS: usize = 4;
-
-/// The glow strength drawn for a `glow.png` value: 0 (below 32) to
-/// [`GLOW_LEVELS`] (224 and above), its nearest quarter.
-pub fn glow_level(glow: u8) -> usize {
-    (usize::from(glow) + 32) / 64
-}
+/// The glow strengths drawn (issue #12), shared with `olr-edit`'s skin
+/// preview.
+pub use olr_data::skin::{GLOW_LEVELS, glow_level};
 
 /// How much glow makes a skin's light full: 3 world pixels of full glow
 /// in a frame (12 art pixels at art scale 2, 48 at 4); less glow scales

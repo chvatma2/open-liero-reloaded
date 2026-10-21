@@ -160,7 +160,7 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   layout, f, face)`: the one source the game (`olr-scene`) and the
   profiles' preview (`olr-ui`) draw skins from. Issue #12:
   `glow_overlays(colour)` (per glow quarter, `GLOW_LEVELS` 4 and
-  `glow_level`, the colorized sheet's pixels of that strength, transparent
+  `glow_level`, `olr-data`'s re-exported (issue #13), the colorized sheet's pixels of that strength, transparent
   elsewhere; none without glow) and `frame_lights(colour)` (`SkinLights`:
   the light's reach and per frame a `SkinFrameLight` (sRGB colour of the
   frame's glowing pixels weighted by glow; intensity the light's scaled by

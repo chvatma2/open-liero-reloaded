@@ -46,7 +46,10 @@ skins with colorization masks, themes, and pack manifests.
   (issue #12: 40 × 36 in 64, art scale 4; `for_art_scale`, `art_scale()`
   as worm width over `WORM_WORLD_WIDTH` 10, `sheet_size()` of
   `SHEET_FRAMES` 21); `SkinLight { intensity, reach }` (bounds are
-  `olr-format`'s and `olr-look`'s).
+  `olr-format`'s and `olr-look`'s). `GLOW_LEVELS` (4) and `glow_level`
+  (a `glow.png` value's quarter, 32 and above glowing): the game's glow
+  overlays (`olr-content` re-exports them) and `olr-edit`'s skin preview
+  (issue #13) round alike.
 - **Names** (`text.rs`): `valid_name`, `is_hidden`, `sanitise_name`, the
   one rule for players' names: olr-proto refuses lobby names that break it,
   olr-replay cleans recorded ones with it.
