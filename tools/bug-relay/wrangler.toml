@@ -1,0 +1,32 @@
+# Open Liero Reloaded's bug relay (issue #3). Deployed by the maintainer
+# with `wrangler deploy` (README.md); nothing in the repository's checks
+# needs wrangler.
+name = "olr-bug-relay"
+main = "src/worker.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+# The repository issues are filed in.
+GITHUB_REPO = "chvatma2/open-liero-reloaded"
+# Reports a client address may file per hour, and issues per UTC day in all.
+PER_IP_PER_HOUR = "3"
+PER_DAY = "50"
+# The Worker's own address, for the files' download links (empty: the
+# address the request came to).
+PUBLIC_URL = ""
+
+# Counters for the rate limits (`wrangler kv namespace create LIMITS`).
+[[kv_namespaces]]
+binding = "LIMITS"
+id = "REPLACE_WITH_THE_KV_NAMESPACE_ID"
+
+# The replays and logs the issues link (`wrangler r2 bucket create olr-bug-reports`).
+[[r2_buckets]]
+binding = "FILES"
+bucket_name = "olr-bug-reports"
+
+# Secrets (`wrangler secret put <NAME>`), never in this file:
+#   GITHUB_APP_ID, GITHUB_APP_INSTALLATION_ID, GITHUB_APP_PRIVATE_KEY
+#   (the GitHub App's PEM, PKCS#1 or PKCS#8), or BOT_TOKEN (a separate bot
+#   account's fine-grained token; never the maintainer's).
+#   IP_SALT (optional): mixed into the hashed client addresses.

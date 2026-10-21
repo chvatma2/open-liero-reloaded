@@ -1,0 +1,10 @@
+{
+  "name": "olr-bug-relay",
+  "private": true,
+  "description": "Open Liero Reloaded's bug relay: takes the game's Report a bug and files it as a GitHub issue under the relay's own bot identity.",
+  "type": "module",
+  "main": "src/worker.js",
+  "scripts": {
+    "test": "node --test"
+  }
+}
