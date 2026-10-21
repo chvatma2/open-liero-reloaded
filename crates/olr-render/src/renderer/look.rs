@@ -16,7 +16,7 @@ const COMMON: &str = include_str!("../look/common.wgsl");
 /// [`COMMON`] after the Rust constants the shaders share.
 pub(super) fn common() -> String {
     format!(
-        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\nconst WORM_SHADOW: f32 = {WORM_SHADOW:?};\n{COMMON}",
+        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\nconst WORM_SHADOW: f32 = {WORM_SHADOW:?};\nconst OCCLUSION_PAD: i32 = {OCCLUSION_PAD};\n{COMMON}",
         olr_look::MAX_SOAK
     )
 }
@@ -78,6 +78,11 @@ pub const WORM_SHADOW: f32 = 4.0;
 /// third of it each way.
 pub(super) const BLOOM_RADIUS: i32 = 12;
 
+/// Rows the ambient occlusion's first pass covers above and below the light
+/// grid (issue #10): its longest reach, so the second pass of every grid
+/// texel sees each solid within the reach, wherever the view is.
+pub(super) const OCCLUSION_PAD: u32 = olr_look::MAX_OCCLUSION_REACH as u32;
+
 /// How much of the light above 1 the bloom adds back, spread (plan 15c; a
 /// starting value judged on the day Castle Strike).
 pub(super) const BLOOM_STRENGTH: f32 = 0.6;
@@ -92,6 +97,11 @@ pub(super) struct LitTarget {
     pub(super) views: [wgpu::TextureView; 3],
     /// The sum pass's, the across blur's (reads 2) and the down blur's (reads 0).
     pub(super) binds: [wgpu::BindGroup; 3],
+    /// The ambient occlusion's rows (issue #10): the light grid's width,
+    /// its height and [`OCCLUSION_PAD`] above and below.
+    pub(super) occlusion_view: wgpu::TextureView,
+    /// The occlusion's first pass's (binds a dark texture for the rows it writes).
+    pub(super) occlusion_bind: wgpu::BindGroup,
     /// The bloom (plan 15c): the down blur writes the light above 1 into 0,
     /// spread across into 1 and down into 0, which the composite adds.
     pub(super) bloom_views: [wgpu::TextureView; 2],
@@ -113,6 +123,8 @@ pub(super) struct LookState {
     pub(super) terrain_pipeline: wgpu::RenderPipeline,
     pub(super) sprite_pipeline: wgpu::RenderPipeline,
     pub(super) sum_pipeline: wgpu::RenderPipeline,
+    /// The ambient occlusion's first pass (issue #10).
+    pub(super) occlusion_pipeline: wgpu::RenderPipeline,
     pub(super) blur_h_pipeline: wgpu::RenderPipeline,
     pub(super) blur_v_pipeline: wgpu::RenderPipeline,
     pub(super) bloom_h_pipeline: wgpu::RenderPipeline,
@@ -297,6 +309,7 @@ impl LookState {
                 entry(2, frag, FLOAT_TEXTURE),
                 entry(3, frag, UINT_TEXTURE),
                 entry(4, frag, UINT_TEXTURE),
+                entry(5, frag, FLOAT_TEXTURE),
             ],
         });
         let occluder_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -379,6 +392,7 @@ impl LookState {
         };
         let light = |fs: &str| light_to(fs, &[(LIGHT_FORMAT, None)]);
         let (sum_pipeline, blur_h_pipeline) = (light("fs_sum"), light("fs_blur_h"));
+        let occlusion_pipeline = light("fs_occlusion_h");
         let blur_v_pipeline = light_to("fs_blur_v", &[(LIGHT_FORMAT, None), (LIGHT_FORMAT, None)]);
         let (bloom_h_pipeline, bloom_v_pipeline) = (light("fs_bloom_h"), light("fs_bloom_v"));
         let composite_pipeline = pipeline(
@@ -420,6 +434,7 @@ impl LookState {
             terrain_pipeline,
             sprite_pipeline,
             sum_pipeline,
+            occlusion_pipeline,
             blur_h_pipeline,
             blur_v_pipeline,
             bloom_h_pipeline,
@@ -488,7 +503,9 @@ impl LookState {
         let groups =
             self.textures.as_ref().map(|t| t.groups.create_view(&wgpu::TextureViewDescriptor::default()));
         let groups = groups.as_ref().unwrap_or(&self.no_solid);
-        let light_bind = |src: &wgpu::TextureView| {
+        let rows = make("olr-render occlusion", (grid.0, grid.1 + 2 * OCCLUSION_PAD), LIGHT_FORMAT);
+        let occlusion_view = rows.create_view(&wgpu::TextureViewDescriptor::default());
+        let light_bind_with = |src: &wgpu::TextureView, rows: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("olr-render light"),
                 layout: &self.light_layout,
@@ -498,11 +515,14 @@ impl LookState {
                     tex(2, self.textures.as_ref().map_or(&self.no_glow, |t| &t.gi.fluence)),
                     tex(3, solid),
                     tex(4, groups),
+                    tex(5, rows),
                 ],
             })
         };
-        // The sum reads nothing; it is bound to a grid it does not write.
+        let light_bind = |src: &wgpu::TextureView| light_bind_with(src, &occlusion_view);
+        // The sum reads only the occlusion's rows; it is bound to a grid it does not write.
         let binds = [light_bind(&views[1]), light_bind(&views[2]), light_bind(&views[0])];
+        let occlusion_bind = light_bind_with(&views[1], &self.no_glow);
         let bloom = [0, 1].map(|_| make("olr-render bloom", grid, LIGHT_FORMAT));
         let bloom_views = bloom.each_ref().map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
         let bloom_binds = [light_bind(&bloom_views[0]), light_bind(&bloom_views[1])];
@@ -571,6 +591,8 @@ impl LookState {
             light,
             views,
             binds,
+            occlusion_view,
+            occlusion_bind,
             bloom_views,
             bloom_binds,
             soak_binds,
@@ -762,10 +784,15 @@ impl LookState {
             f32::from(look.light_soak.min(olr_look::MAX_SOAK)),
             if self.bloom { BLOOM_STRENGTH } else { 0.0 },
         ]);
+        // The ambient occlusion (issue #10): its strength (0 none) and reach.
+        let (strength, reach) = look.occlusion.filter(|o| o.strength > 0).map_or((0.0, 0.0), |o| {
+            let reach = o.reach.clamp(olr_look::MIN_OCCLUSION_REACH, olr_look::MAX_OCCLUSION_REACH);
+            (f32::from(o.strength.min(100)) / 100.0, f32::from(reach))
+        });
         let [r, g, b] = look.solid_floor;
-        p.extend([r, g, b, 0.0]);
+        p.extend([r, g, b, strength]);
         let [r, g, b] = look.worm_floor;
-        p.extend([r, g, b, 0.0]);
+        p.extend([r, g, b, reach]);
         // The occluder map covers the light grid (plan 15b).
         let (pad, grid) = (LIGHT_PAD as i32, frame.size.0 + 2 * LIGHT_PAD);
         p.extend([

@@ -172,6 +172,10 @@ impl Renderer {
                 pass.set_bind_group(0, bind, &[]);
                 pass.draw(0..3, 0..1);
             };
+            // The ambient occlusion's rows (issue #10), only when the level has it.
+            if look.is_some_and(|l| l.occlusion.is_some_and(|o| o.strength > 0)) {
+                full(&mut encoder, &lt.occlusion_view, &state.occlusion_pipeline, &lt.occlusion_bind);
+            }
             full(&mut encoder, &lt.views[0], &state.sum_pipeline, &lt.binds[0]);
             {
                 // The across soak, and the rows for the deeper rock.

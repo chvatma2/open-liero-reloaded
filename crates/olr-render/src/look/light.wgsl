@@ -4,7 +4,9 @@
 // blur it by the level's softness, and `fs_blur_v` also tones it towards
 // max light and bands it into light steps, and writes the light the tone
 // took off (above 1) for the bloom, which `fs_bloom_h` and `fs_bloom_v`
-// spread (plan 15c's glare).
+// spread (plan 15c's glare). With the level's ambient occlusion (issue #10),
+// `fs_occlusion_h` first weighs the solids along each row and `fs_sum` takes
+// that much ambient light from the air.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(0) @binding(1) var src: texture_2d<f32>;
@@ -13,6 +15,10 @@
 // The glow groups per world pixel (plan 15c: a glowing pixel feeds no
 // bloom: the bright air around it does).
 @group(0) @binding(4) var groups_tex: texture_2d<u32>;
+// The ambient occlusion's rows (issue #10): `fs_occlusion_h`'s output, one
+// texel per world pixel of the light grid and OCCLUSION_PAD rows above and
+// below it.
+@group(0) @binding(5) var occlusion_rows: texture_2d<f32>;
 
 // Whether world pixel `w` is opaque rock or dirt (the solid map: material 1
 // is background, a clear solid is written as it); outside the level is open.
@@ -48,11 +54,69 @@ fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(x, y, 0.0, 1.0);
 }
 
+// The ambient occlusion's reach (issue #10), world pixels.
+fn occlusion_reach() -> i32 {
+    return clamp(i32(look.worm_floor.w), 2, OCCLUSION_PAD);
+}
+
+// A solid's weight `i` world pixels along a row or a column from the texel
+// whose occlusion it adds to: a Gaussian of a third of the reach, so the
+// darkening fades out smoothly by the reach (no rings).
+fn occlusion_weight(i: i32, reach: i32) -> f32 {
+    let sigma = f32(reach) / 3.0;
+    return exp(-f32(i * i) / (2.0 * sigma * sigma));
+}
+
+// The first half of the occlusion (issue #10): the weighted share of opaque
+// solids along the row within the reach of world pixel `w`. Read from the
+// world-size solid map, so it never depends on the camera.
+@fragment
+fn fs_occlusion_h(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+    let q = vec2<i32>(p.xy);
+    let w = vec2<i32>(look.frame.xy) - vec2<i32>(i32(LIGHT_PAD), i32(LIGHT_PAD) + OCCLUSION_PAD) + q;
+    let r = occlusion_reach();
+    var acc = 0.0;
+    var s = 0.0;
+    for (var i = -r; i <= r; i++) {
+        let k = occlusion_weight(i, r);
+        s += k;
+        if solid_px(w + vec2<i32>(i, 0)) {
+            acc += k;
+        }
+    }
+    return vec4<f32>(acc / s, 0.0, 0.0, 1.0);
+}
+
+// The share of the ambient light grid texel `p` (world pixel `w`) keeps
+// (issue #10): 1 without occlusion and in a solid. In air, the solids
+// within the reach, weighted by a Gaussian, against what a flat wall's face
+// has (the kernel's half past the texel's own column): at a flat wall's face
+// or closer in (a corner, a narrow tunnel) the strength is taken, fading
+// smoothly to nothing (`1 - (1 - x)^2`, flat where it meets 1).
+fn ambient_share(p: vec2<i32>, w: vec2<i32>) -> f32 {
+    let strength = clamp(look.solid.w, 0.0, 1.0);
+    if strength <= 0.0 || solid_px(w) {
+        return 1.0;
+    }
+    let r = occlusion_reach();
+    var c = 0.0;
+    var s = 0.0;
+    for (var j = -r; j <= r; j++) {
+        let k = occlusion_weight(j, r);
+        s += k;
+        c += textureLoad(occlusion_rows, p + vec2<i32>(0, OCCLUSION_PAD + j), 0).r * k;
+    }
+    let face = (s - 1.0) / (2.0 * s);
+    let x = clamp(c / s / face, 0.0, 1.0);
+    return 1.0 - strength * (1.0 - (1.0 - x) * (1.0 - x));
+}
+
 @fragment
 fn fs_sum(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     // Grid texel p is world pixel (origin - pad + p); its centre is p's.
     let c = look.frame.xy - vec2<f32>(LIGHT_PAD) + floor(p.xy) + vec2<f32>(0.5);
-    return vec4<f32>(look.ambient.rgb + glow_at(c), 1.0);
+    let share = ambient_share(vec2<i32>(p.xy), world_of(vec2<i32>(p.xy)));
+    return vec4<f32>(look.ambient.rgb * share + glow_at(c), 1.0);
 }
 
 // Grid texel `p`'s world pixel.

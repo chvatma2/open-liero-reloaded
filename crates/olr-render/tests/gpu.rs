@@ -2033,3 +2033,163 @@ fn a_worm_shadow_stays_at_the_rock_face() {
         assert!(w > 0.9 * b, "{} px into the rock: {w} against {b}", y - 40);
     }
 }
+
+/// Issue #10: ambient occlusion of `strength` percent over `reach` world pixels.
+fn occlusion(strength: u8, reach: u8) -> Option<olr_look::Occlusion> {
+    Some(olr_look::Occlusion { strength, reach })
+}
+
+/// Rock but for a tunnel 5 px tall (y 18-22) from the left edge to x 60,
+/// and open air from x 60 on.
+fn tunnel() -> (ColorMap, View) {
+    (room(100, 40, |x, y| x < 60 && !(18..23).contains(&y)), View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 })
+}
+
+/// Issue #10: with occlusion, air in a narrow tunnel shows less of the
+/// ambient light than open air; without it, or at strength 0, the light is
+/// as before. Rock keeps its ambient.
+#[test]
+fn occlusion_darkens_a_narrow_tunnel() {
+    let Some(gpu) = offscreen() else { return };
+    let (map, view) = tunnel();
+    let with = |o: Option<olr_look::Occlusion>| {
+        lit_frame_with(&gpu, &map, view, &[], |l| {
+            l.ambient = [0.5; 3];
+            l.occlusion = o;
+        })
+    };
+    let plain = with(None);
+    let grid = |r: &Renderer| gpu.read_light(r).unwrap().1;
+    assert!((light_at(&gpu, &plain, 30, 20)[0] - 0.5).abs() < 1e-3, "no occlusion: the ambient");
+    assert_eq!(grid(&with(occlusion(0, 12))), grid(&plain), "strength 0 changes nothing");
+    let r = with(occlusion(60, 12));
+    let (deep, open) = (light_at(&gpu, &r, 30, 20)[0], light_at(&gpu, &r, 90, 20)[0]);
+    assert!((open - 0.5).abs() < 1e-3, "open air past the reach keeps the ambient: {open}");
+    assert!((deep - 0.2).abs() < 1e-2, "the tunnel loses the strength (60 %): {deep}");
+    assert!((light_at(&gpu, &r, 30, 5)[0] - 0.5).abs() < 1e-3, "rock keeps its ambient");
+    // Out of the tunnel's mouth the darkening fades smoothly with distance.
+    let fade: Vec<f32> = (60..80).map(|x| light_at(&gpu, &r, x, 30)[0]).collect();
+    assert!(fade.windows(2).all(|w| w[1] >= w[0] - 1e-4), "rises away from the rock: {fade:?}");
+    assert!(fade[0] < 0.4 && fade[19] > 0.49, "{fade:?}");
+    let steps: Vec<f32> = fade.windows(2).map(|w| w[1] - w[0]).collect();
+    assert!(steps.iter().all(|s| *s < 0.08), "no step: {steps:?}");
+}
+
+/// Issue #10: occlusion darkens only the ambient light: a lamp in a tunnel
+/// lights it as fully as without occlusion.
+#[test]
+fn occlusion_leaves_glow_light_alone() {
+    let Some(gpu) = offscreen() else { return };
+    let (map, view) = tunnel();
+    let lights = [olr_look::FrameLight { colour: [0.05; 3], ..lamp([30.5, 20.5], 40.0) }];
+    let frame = |ambient: f32, o| {
+        lit_frame_with(&gpu, &map, view, &lights, |l| {
+            l.ambient = [ambient; 3];
+            l.occlusion = o;
+        })
+    };
+    let (dark, dark_occluded) = (frame(0.0, None), frame(0.0, occlusion(100, 12)));
+    for x in [20, 26, 34, 40] {
+        let lit = light_at(&gpu, &dark, x, 20)[0];
+        assert!(lit > 0.05, "the lamp lights the tunnel at {x}: {lit}");
+        assert_eq!(light_at(&gpu, &dark_occluded, x, 20), light_at(&gpu, &dark, x, 20), "at {x}");
+    }
+    let (plain, occluded) = (frame(0.2, None), frame(0.2, occlusion(100, 12)));
+    for x in [20, 26, 34, 40] {
+        let (a, b) = (light_at(&gpu, &plain, x, 20)[0], light_at(&gpu, &occluded, x, 20)[0]);
+        assert!(b < a && a - b <= 0.2 + 1e-3, "only the ambient goes at {x}: {a} {b}");
+        assert!(b >= light_at(&gpu, &dark, x, 20)[0] - 1e-3, "the lamp's light stays at {x}: {b}");
+    }
+}
+
+/// Issue #10: a worm beside a wall shows at least the worm floor, even with
+/// all the ambient light taken there.
+#[test]
+fn occlusion_keeps_the_worm_floor() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(40, 30, |x, _| x >= 31);
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.upload_images(&[]);
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    let mut look = dim(0.5);
+    look.occlusion = occlusion(100, 12);
+    look.worm_floor = [0.2, 0.3, 0.4];
+    let mut l = list(View { x: 0.0, y: 0.0, w: 40.0, h: 30.0 });
+    l.map = (40, 30);
+    let white = Rgba::rgb(255, 255, 255);
+    for (x, shade) in [(29, olr_scene::Shade::LIT), (30, olr_scene::Shade::WORM)] {
+        l.push(Layer::Entities, Item::Line(Line { a: (x, 10), b: (x, 10), colour: white, shade }));
+    }
+    let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), (80, 60));
+    assert!(light_at(&gpu, &r, 30, 10)[0] < 0.01, "no ambient left at the wall's face");
+    let model =
+        |light| olr_render::shade_texel([255; 4], light, 0.0, false, &Default::default(), look.max_light);
+    let near = |got: Rgba, want: [u8; 4]| {
+        [got.r, got.g, got.b].iter().zip(&want).all(|(a, b)| (i32::from(*a) - i32::from(*b)).abs() <= 1)
+    };
+    let worm = img.get(60, 20);
+    assert!(near(worm, model([0.2, 0.3, 0.4])), "worm: the worm floor, {worm:?}");
+    let lit = img.get(58, 20);
+    assert!(lit.r < worm.r, "a plain item beside it is darker: {lit:?}");
+}
+
+/// Issue #10: a pixel dug this frame is occluded as a level dug from the
+/// start is, at once.
+#[test]
+fn occlusion_follows_digging() {
+    let Some(gpu) = offscreen() else { return };
+    let mut dug = map();
+    let (l, size) = one_to_one();
+    let mut look = dim(0.5);
+    look.groups.clear();
+    look.occlusion = occlusion(80, 24);
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.set_lighting(true);
+    r.upload_terrain(&dug);
+    dug.take_dirty().for_each(drop);
+    gpu.render_lit_to_image(&mut r, &l, Some(&look), size);
+    assert!((light_at(&gpu, &r, 60, 50)[0] - 0.5).abs() < 1e-3, "dirt keeps the ambient");
+    dug.apply(ColorEdit::Carve { hole: 4, x: 60, y: 50 });
+    assert_eq!(dug.material().cells()[50 * 120 + 60], Material::Background as u8, "dug");
+    r.update_terrain(&mut dug);
+    gpu.render_lit_to_image(&mut r, &l, Some(&look), size);
+    let pocket = light_at(&gpu, &r, 60, 50)[0];
+    assert!(pocket < 0.2, "the fresh pocket is occluded: {pocket}");
+    let mut fresh = gpu.renderer(RenderSettings::default());
+    fresh.set_lighting(true);
+    fresh.upload_terrain(&dug);
+    gpu.render_lit_to_image(&mut fresh, &l, Some(&look), size);
+    assert_eq!(gpu.read_light(&r).unwrap().1, gpu.read_light(&fresh).unwrap().1);
+}
+
+/// Issue #10: a wall's air is darkened the same wherever the view is: with
+/// the wall at the view's edge, past it, or in its middle.
+#[test]
+fn occlusion_is_camera_independent() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(400, 200, |x, y| (x % 37 < 5 && y > 90) || (y % 41 < 3 && x > 150));
+    let set = |l: &mut olr_look::LookFrame| {
+        l.ambient = [0.5; 3];
+        l.softness = 2;
+        l.occlusion = occlusion(70, 32);
+    };
+    let at = |x: f32, y: f32| View { x, y, w: 120.0, h: 60.0 };
+    let base = lit_frame_with(&gpu, &map, at(100.0, 70.0), &[], set);
+    for (dx, dy) in [(1, 0), (7, 3), (31, 0), (0, 33), (0, -31), (-40, 25), (100, 0)] {
+        let r = lit_frame_with(&gpu, &map, at(100.0 + dx as f32, 70.0 + dy as f32), &[], set);
+        for x in (100 + dx.max(0))..(220 + dx.min(0)) {
+            for y in [72, 85, 100, 115, 128] {
+                if y < 70 + dy || y >= 130 + dy {
+                    continue;
+                }
+                assert_eq!(
+                    light_at(&gpu, &base, x, y),
+                    light_at(&gpu, &r, x, y),
+                    "({x}, {y}) moved by ({dx}, {dy})"
+                );
+            }
+        }
+    }
+    assert!(light_at(&gpu, &base, 116, 100)[0] < 0.4, "the wall's air is darkened");
+}

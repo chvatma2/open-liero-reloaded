@@ -15,9 +15,9 @@ struct LookGlobals {
     level: vec4<f32>,
     // view mode (0 lit, 1 full bright, 2 light only), group count, light soak (world px), bloom strength (plan 15c)
     mode: vec4<f32>,
-    // rgb solid floor (linear), 0
+    // rgb solid floor (linear), ambient occlusion strength (0 none, up to 1; issue #10)
     solid: vec4<f32>,
-    // rgb worm floor (linear), 0 (plan 15b)
+    // rgb worm floor (linear; plan 15b), ambient occlusion reach (world px; issue #10)
     worm_floor: vec4<f32>,
     // the occluder map (plan 15b): origin x, y (world px), width, height (texels)
     occluders: vec4<f32>,
@@ -31,8 +31,9 @@ struct LookGlobals {
 };
 
 // LIGHT_PAD (world pixels the light grid reaches past the world target on
-// every side), MAX_SOAK and BLOOM_RADIUS are prepended from the Rust
-// constants.
+// every side), MAX_SOAK, BLOOM_RADIUS and OCCLUSION_PAD (the occlusion's
+// longest reach: its rows reach that far above and below the light grid)
+// are prepended from the Rust constants.
 
 const TAU: f32 = 6.2831853;
 
