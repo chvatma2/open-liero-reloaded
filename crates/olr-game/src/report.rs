@@ -8,7 +8,8 @@
 //! `{"ok":false,"error":…}`, which [`outcome`] puts in the player's words.
 //! Nothing is sent but on the Report screen's Send.
 
-pub mod http;
+/// The HTTP client (`crate::http`), as the report's tests reach it.
+pub use crate::http;
 
 use std::path::Path;
 use std::sync::mpsc::{self, Receiver, TryRecvError};

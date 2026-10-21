@@ -1,11 +1,13 @@
-//! One HTTP/1.1 POST and its answer, over TLS for `https://` (rustls with
-//! Mozilla's roots from `webpki-roots`, as the relay pool's, never the
-//! platform's) or plain for `http://` (a local mock in tests). Just what a
-//! bug report needs: `Connection: close`, a `Content-Length` or chunked
-//! answer, every wait bounded, the answer at most [`MAX_RESPONSE`] bytes.
-//! Call it off the UI thread: it resolves names and blocks.
+//! A small HTTP/1.1 client over TLS for `https://` (rustls with Mozilla's
+//! roots from `webpki-roots`, as the relay pool's, never the platform's)
+//! or plain for `http://` (a local mock in tests). A bug report's one POST
+//! (issue #3: `Connection: close`, a `Content-Length` or chunked answer,
+//! every wait bounded, the answer at most [`MAX_RESPONSE`] bytes), and the
+//! update check's GETs (issue #4, [`get`]: redirects followed, the body
+//! streamed to a sink with its progress, at most a given size). Call it
+//! off the UI thread: it resolves names and blocks.
 
-use std::io::{self, Read, Write};
+use std::io::{self, BufRead, BufReader, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -251,6 +253,219 @@ fn dechunk(mut rest: &[u8]) -> Option<Vec<u8>> {
         out.extend_from_slice(&rest[..size]);
         rest = &rest[size + 2..];
     }
+}
+
+/// How long a GET may wait: each address's connect, and any one read or
+/// write (a slow download goes on while bytes come).
+#[derive(Clone, Copy, Debug)]
+pub struct GetTimeouts {
+    pub connect: Duration,
+    pub idle: Duration,
+}
+
+/// The most redirects a GET follows (GitHub's downloads take one).
+pub const MAX_REDIRECTS: usize = 5;
+/// The most bytes of an answer's head.
+const MAX_HEAD: usize = 64 * 1024;
+
+/// GETs `url` (`accept`: its `Accept` header) and writes the body into
+/// `sink`, at most `max` bytes, calling `progress(received, total)` as it
+/// comes (`total` when the server says it). Redirects are followed, at
+/// most [`MAX_REDIRECTS`], never from `https://` to `http://`. A status
+/// other than 2xx is an error saying it.
+pub fn get(
+    url: &str,
+    accept: &str,
+    user_agent: &str,
+    max: u64,
+    t: GetTimeouts,
+    sink: &mut dyn Write,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+) -> io::Result<()> {
+    let mut url = parse_url(url).map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+    for _ in 0..=MAX_REDIRECTS {
+        let stream = connect(&url, t.connect)?;
+        stream.set_write_timeout(Some(t.idle))?;
+        stream.set_read_timeout(Some(t.idle))?;
+        let head = format!(
+            "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: {user_agent}\r\nAccept: {accept}\r\n\
+             Connection: close\r\n\r\n",
+            url.path,
+            host_header(&url)
+        );
+        let next = if url.tls {
+            let config = tls_config().ok_or_else(|| io::Error::other("TLS could not be set up"))?;
+            let name = rustls::pki_types::ServerName::try_from(url.host.clone())
+                .map_err(|e| io::Error::new(io::ErrorKind::InvalidInput, e))?;
+            let conn = rustls::ClientConnection::new(config, name).map_err(io::Error::other)?;
+            get_once(rustls::StreamOwned::new(conn, stream), &head, max, sink, progress)?
+        } else {
+            get_once(stream, &head, max, sink, progress)?
+        };
+        let Some(location) = next else { return Ok(()) };
+        let to = if location.starts_with('/') {
+            Url { path: location, ..url.clone() }
+        } else {
+            parse_url(&location).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?
+        };
+        if url.tls && !to.tls {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "a redirect from https to http"));
+        }
+        url = to;
+    }
+    Err(io::Error::new(io::ErrorKind::InvalidData, "too many redirects"))
+}
+
+fn host_header(url: &Url) -> String {
+    if url.port == if url.tls { 443 } else { 80 } {
+        bracketed(&url.host)
+    } else {
+        format!("{}:{}", bracketed(&url.host), url.port)
+    }
+}
+
+/// One GET's exchange: `Some(location)` for a redirect, else the body
+/// written.
+fn get_once(
+    mut s: impl Read + Write,
+    head: &str,
+    max: u64,
+    sink: &mut dyn Write,
+    progress: &mut dyn FnMut(u64, Option<u64>),
+) -> io::Result<Option<String>> {
+    s.write_all(head.as_bytes())?;
+    s.flush()?;
+    let mut r = BufReader::new(s);
+    let mut lines = Vec::new();
+    let mut size = 0;
+    loop {
+        let mut line = Vec::new();
+        let n = read_line(&mut r, &mut line, MAX_HEAD - size)?;
+        size += n;
+        if n == 0 {
+            return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "no answer"));
+        }
+        let text = String::from_utf8_lossy(&line).trim_end_matches(['\r', '\n']).to_string();
+        if text.is_empty() {
+            break;
+        }
+        lines.push(text);
+    }
+    let bad = |m: &str| io::Error::new(io::ErrorKind::InvalidData, m.to_string());
+    let status_line = lines.first().ok_or_else(|| bad("no status line"))?;
+    let mut parts = status_line.split(' ');
+    let status = match (parts.next(), parts.next()) {
+        (Some(v), Some(code)) if v.starts_with("HTTP/1.") => {
+            code.parse::<u16>().map_err(|_| bad("a bad status"))?
+        }
+        _ => return Err(bad("a bad status line")),
+    };
+    let header = |name: &str| {
+        lines[1..].iter().find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.trim().eq_ignore_ascii_case(name).then(|| v.trim().to_string())
+        })
+    };
+    if matches!(status, 301 | 302 | 303 | 307 | 308) {
+        return header("location").map(Some).ok_or_else(|| bad("a redirect without a Location"));
+    }
+    if !(200..300).contains(&status) {
+        return Err(io::Error::other(format!("the server answered {status}")));
+    }
+    let chunked = header("transfer-encoding").is_some_and(|v| v.to_ascii_lowercase().contains("chunked"));
+    let length = match header("content-length") {
+        Some(v) if !chunked => Some(v.parse::<u64>().map_err(|_| bad("a bad Content-Length"))?),
+        _ => None,
+    };
+    if length.is_some_and(|n| n > max) {
+        return Err(bad("the answer is too long"));
+    }
+    let mut body = Body { got: 0, max, length, buf: vec![0u8; 64 * 1024], sink, progress };
+    if chunked {
+        loop {
+            let mut line = Vec::new();
+            if read_line(&mut r, &mut line, 1024)? == 0 {
+                return Err(bad("a cut chunked answer"));
+            }
+            let text = String::from_utf8_lossy(&line);
+            let size_text = text.trim().split(';').next().unwrap_or("").trim().to_string();
+            let mut left = u64::from_str_radix(&size_text, 16).map_err(|_| bad("a bad chunk size"))?;
+            if left == 0 {
+                return Ok(None);
+            }
+            while left > 0 {
+                let n = body.take(&mut r, left)?;
+                if n == 0 {
+                    return Err(bad("a cut chunked answer"));
+                }
+                left -= n as u64;
+            }
+            let mut crlf = Vec::new();
+            read_line(&mut r, &mut crlf, 4)?;
+        }
+    }
+    match length {
+        Some(n) => {
+            while body.got < n {
+                if body.take(&mut r, n - body.got)? == 0 {
+                    return Err(bad("a cut answer"));
+                }
+            }
+        }
+        None => loop {
+            match body.take(&mut r, u64::MAX) {
+                Ok(0) => break,
+                Ok(_) => {}
+                // A server closing without TLS's close_notify: what came is all.
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => break,
+                Err(e) => return Err(e),
+            }
+        },
+    }
+    Ok(None)
+}
+
+/// A GET's body going to its sink.
+struct Body<'a> {
+    got: u64,
+    max: u64,
+    length: Option<u64>,
+    buf: Vec<u8>,
+    sink: &'a mut dyn Write,
+    progress: &'a mut dyn FnMut(u64, Option<u64>),
+}
+
+impl Body<'_> {
+    /// Reads at most `want` bytes into the sink: how many (0 at the end).
+    fn take(&mut self, r: &mut impl Read, want: u64) -> io::Result<usize> {
+        let n = want.min(self.buf.len() as u64) as usize;
+        let n = loop {
+            match r.read(&mut self.buf[..n]) {
+                Ok(n) => break n,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => continue,
+                Err(e) if matches!(e.kind(), io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut) => {
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, "the download stalled"));
+                }
+                Err(e) => return Err(e),
+            }
+        };
+        if self.got + n as u64 > self.max {
+            return Err(io::Error::new(io::ErrorKind::InvalidData, "the answer is too long"));
+        }
+        self.sink.write_all(&self.buf[..n])?;
+        self.got += n as u64;
+        (self.progress)(self.got, self.length);
+        Ok(n)
+    }
+}
+
+/// Reads one line (its `\n` included) into `out`, at most `max` bytes.
+fn read_line(r: &mut impl BufRead, out: &mut Vec<u8>, max: usize) -> io::Result<usize> {
+    let n = r.take(max as u64 + 1).read_until(b'\n', out)?;
+    if n > max {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, "an answer's line is too long"));
+    }
+    Ok(n)
 }
 
 #[cfg(test)]

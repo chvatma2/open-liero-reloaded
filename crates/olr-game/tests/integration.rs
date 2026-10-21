@@ -18,6 +18,7 @@ mod report;
 mod run_log;
 mod speed;
 mod throw_sound;
+mod update;
 mod user_packs;
 mod watch;
 mod weapon_name;

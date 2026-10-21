@@ -112,6 +112,9 @@ webpki-roots = "=1.0.9"
 # Release signatures (issue #4): ed25519 and SHA-256 from rustls' own
 # provider (already locked and built), no crate of their own.
 aws-lc-rs = "=1.18.1"
+# The Flatpak portal (issue #4, Linux only): D-Bus with the blocking API,
+# an exact pin (2026-09).
+zbus = "=5.19.0"
 # OS randomness for the native peers (plan 10).
 getrandom = "=0.4.3"
 # The dedicated server stops cleanly on Ctrl+C, SIGTERM and a closed

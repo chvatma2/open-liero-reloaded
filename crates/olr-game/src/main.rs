@@ -622,6 +622,12 @@ fn main() -> ExitCode {
     for w in warnings.into_iter().chain(level_warning) {
         log::warn!("{w}");
     }
+    // An update an interruption cut short is finished first (issue #4);
+    // when this is the old build, the new one starts in its place.
+    if olr_game::update::finish_interrupted_update() {
+        olr_log::end();
+        return ExitCode::SUCCESS;
+    }
     let code = main_logged(&matches, args);
     olr_log::end();
     code

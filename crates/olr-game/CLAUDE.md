@@ -27,7 +27,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   LAN announcements, `IceConfig`), `olr-discovery` (the hosted lobby's summary,
   `GameSummary::of_lobby`, and `hosting`, shared with olr-server; the
   relay pool, the game list, pings, invites), `olr-log` (the run log),
-  plus `log`, rustls and webpki-roots (a bug report's POST), winit,
+  `olr-update` (issue #4: versions, releases, signatures, the folder
+  swap), plus `log`, rustls and webpki-roots (a bug report's POST, the
+  update check's GETs), zbus 5.19.0 (Linux only: the Flatpak portal), winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
   go through `log::{debug, info, warn, error}!` (below), each warning once.
 - **Version** (`lib.rs`'s `VERSION`): `OLR_BUILD_VERSION` at compile time
@@ -74,7 +76,62 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   no window) for the file, a crashed run reported once, an unwritable
   directory; `tests/speed.rs` gives its runs a data directory of their
   own.
-- **Bug reports** (`report.rs`, `report/http.rs`, issue #3; the screen
+- **Updates** (`update.rs`, `update/portal.rs`, issue #4; the screens are
+  olr-ui's, the formats `olr-update`'s): a build checks only with
+  `OLR_RELEASE_REPO` baked in (`update::BUILD_REPO`: `cargo xtask dist`
+  sets it) and a version that parses (`releases_url`; a local build:
+  `Updater::of_build` is `None`, `MenuData::update` stays default, no
+  notice, no option). `Shell::new` → `set_updater(of_build())` (tests: an
+  `Updater::start` on a mock); `OLR_UPDATE_API` at run time replaces
+  GitHub's list (`https://api.github.com/repos/<repo>/releases?per_page=30`)
+  in such a build. The check (`fetch_releases`, thread `olr-game update`,
+  `CHECK_TIMEOUTS` 10 s connect, 15 s per read) never delays the menu;
+  its failure is one `info` line (`update check: none (…)`), never shown.
+  `Updater::poll` (every `Shell::poll`): the list, then the offer for the
+  setting (`olr_update::channel`: under Flatpak the branch's; made again
+  when the setting changes, never while installing or once installed),
+  its notes `notes::plain_text`, its `UpdateMethod` by `Install::detect`
+  (`Portable(folder of olr.exe)` on Windows, `Flatpak(/.flatpak-info)`:
+  `Portal` on `stable`/`beta`, `Command(switch_command)` on an older
+  bundle's `master`; else `Page`). `AppCommand::InstallUpdate` →
+  `Updater::install` (thread `olr-game install`, `Event`s into
+  `UpdateStatus`): **Windows** `install_portable`: refuses with an
+  unfinished swap's journal, `check_writable` (else `NotWritable`, the
+  release page), the `<zip>.sig` asset (`manifest::verify` against
+  `manifest::release_key()`; another key's, unsigned, another version's
+  or file's refused), the zip into `.olr-update/<zip>.part` hashed as it
+  comes (`DOWNLOAD_TIMEOUTS` 60 s per read, at most the signed size and
+  `MAX_ZIP_BYTES`), `Manifest::check` (version offered and newer, size,
+  SHA-256), `install::stage_zip`, `Plan::new`, `install::swap`; every
+  failure before the swap leaves the folder as it was. **Flatpak**
+  `install_flatpak` over a `Portal` (`portal::Dbus`: `CreateUpdateMonitor`,
+  the monitor's `Progress` listened to before `Update("", {})`, then
+  `Close`): `Done` is installed, `UpToDate` "no newer build yet",
+  new permissions (`needs_permissions`), another failure or no portal →
+  `Outside` with `FlatpakInfo::update_command`. `RestartGame` →
+  `Updater::restart` (the new `olr.exe` with the same arguments; under
+  Flatpak `portal::spawn_latest`, `Spawn` with
+  `FLATPAK_SPAWN_FLAGS_LATEST_VERSION`, argv `olr` and the arguments,
+  NUL-terminated byte strings), then `Outcome::Quit`; a failure is said
+  on the screen. `OpenUrl` → `update::open_url` (`https://` only:
+  `explorer`, `open`, `xdg-open`). `main` calls
+  `update::finish_interrupted_update()` right after the log starts
+  (Windows `dist` builds): `install::recover` finishes a cut-short swap
+  (when this process is the old build it starts the new `olr.exe` and
+  exits) or removes the last update's leftovers. `http::get`: redirects
+  (at most `MAX_REDIRECTS`, never `https` → `http`), `Content-Length`,
+  chunked or to the close, streamed to a sink with its progress, at most
+  `max` bytes, a non-2xx status an error. Tests: `tests/update.rs` (a
+  mock on 127.0.0.1 with `https://github.example` mapped to it: every
+  framing and redirect, a silent server bounded; a signed release
+  downloaded and swapped in, the player's file kept, an old one removed;
+  another key's, a changed zip, an older release's signature, none, a cut
+  download refused with the folder unchanged; a read-only folder; the
+  fake portal's outcomes; the shell: a local build shows nothing, the
+  offer following Include pre-releases (no downgrade), Update off the UI
+  thread to Installed; an unreachable GitHub shows nothing), unit tests
+  (`releases_url`, each install's method).
+- **Bug reports** (`report.rs`, `http.rs`, issue #3; the screen
   is olr-ui's, the relay `tools/bug-relay/`): the relay's address is
   `OLR_REPORT_URL` at run time (a local mock in tests), else the build's
   (`option_env!`, `report::BUILD_URL`: `cargo xtask dist` passes it on);

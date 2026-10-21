@@ -236,6 +236,9 @@ pub struct Shell {
     /// is hidden), and the report being sent.
     report_url: Option<String>,
     report_send: Option<crate::report::Sending>,
+    /// The update check and install (issue #4); none: a build that does
+    /// not check.
+    updater: Option<crate::update::Updater>,
 }
 
 /// A change to an endpoint's ICE settings (tests: a loopback base, a
@@ -314,8 +317,10 @@ impl Shell {
             editor_out: Vec::new(),
             report_url: None,
             report_send: None,
+            updater: None,
         };
         shell.set_report_url(crate::report::endpoint(std::env::var(crate::report::URL_VAR).ok()));
+        shell.set_updater(crate::update::Updater::of_build());
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
         shell.cache = net::open_download_cache(shell.store.cache_dir());
@@ -383,6 +388,7 @@ impl Shell {
             editor_out: Vec::new(),
             report_url: None,
             report_send: None,
+            updater: None,
         }
     }
 
@@ -583,6 +589,29 @@ impl Shell {
             AppCommand::ClearDownloadCache => self.clear_download_cache(),
             AppCommand::PrepareReport => out.push(Outcome::PrepareReport),
             AppCommand::SendReport(r) => self.send_report(*r),
+            AppCommand::InstallUpdate => {
+                if let Some(u) = &mut self.updater {
+                    u.install(&mut self.data.update);
+                }
+            }
+            AppCommand::RestartGame => match self.updater.as_ref().map(|u| u.restart()) {
+                Some(Ok(())) => {
+                    log::info!("update: restarting into the new build");
+                    out.push(Outcome::Quit);
+                }
+                Some(Err(why)) => {
+                    log::warn!("update: {why}");
+                    self.data.update.status = olr_ui::update::UpdateStatus::Failed(format!(
+                        "The new version could not be started ({why}). Quit and start the game again."
+                    ));
+                }
+                None => {}
+            },
+            AppCommand::OpenUrl(url) => {
+                if let Err(why) = crate::update::open_url(&url) {
+                    log::warn!("{why}");
+                }
+            }
             AppCommand::Quit => out.push(Outcome::Quit),
         }
     }
@@ -591,6 +620,9 @@ impl Shell {
     /// and reports to the menus whether it started.
     pub fn poll(&mut self) -> Vec<Outcome> {
         self.poll_report();
+        if let Some(u) = &mut self.updater {
+            u.poll(self.ui.settings().updates.include_prereleases, &mut self.data.update);
+        }
         if self.ui.screen() != Screen::Options {
             self.cache_read = None;
         } else if self.cache_read.is_none_or(|t| t.elapsed() >= CACHE_READ_EVERY) {
@@ -850,6 +882,16 @@ impl Shell {
     pub fn set_report_url(&mut self, url: Option<String>) {
         self.data.report.available = url.is_some();
         self.report_url = url;
+    }
+
+    /// The update check (issue #4: `update::Updater::of_build`; tests: one
+    /// on a mock); `None` hides every update notice and option.
+    pub fn set_updater(&mut self, updater: Option<crate::update::Updater>) {
+        self.data.update = Default::default();
+        if let Some(u) = &updater {
+            u.fill(&mut self.data.update);
+        }
+        self.updater = updater;
     }
 
     /// The Report screen's context from `env` (the window's): the

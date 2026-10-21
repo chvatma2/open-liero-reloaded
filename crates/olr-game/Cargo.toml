@@ -50,6 +50,8 @@ serde_json.workspace = true
 # A bug report's one HTTPS POST (issue #3): the relay pool's TLS and roots.
 rustls.workspace = true
 webpki-roots.workspace = true
+# Updates (issue #4): versions, the release list, signatures, the swap.
+olr-update.workspace = true
 wgpu.workspace = true
 pollster.workspace = true
 winit.workspace = true
@@ -57,6 +59,10 @@ gilrs.workspace = true
 egui.workspace = true
 egui-wgpu.workspace = true
 egui-winit.workspace = true
+
+# The Flatpak portal's update and restart (issue #4), Linux only.
+[target.'cfg(target_os = "linux")'.dependencies]
+zbus.workspace = true
 
 [features]
 # Tests only: `Shell::test_ice` (every endpoint's ICE settings, a
@@ -67,6 +73,8 @@ test-hooks = ["olr-online/test-hooks"]
 
 [dev-dependencies]
 tempfile.workspace = true
+# The update tests' release zips (issue #4).
+zip.workspace = true
 olr-game = { path = ".", features = ["test-hooks"] }
 # The tests set a client's prompt bytes (`OnlinePeer::test_prompt_limit`).
 olr-online = { workspace = true, features = ["test-hooks"] }
