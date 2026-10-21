@@ -129,6 +129,9 @@ pub struct MenuData {
     pub editable: BTreeSet<String>,
     /// The editor's recovery copies: (id, level name, damaged).
     pub recoveries: Vec<(String, String, bool)>,
+    /// The skin packs of the data directory's `packs/` (the Skin tab's
+    /// Edit; every other skin is edited as a copy, issue #14), by id.
+    pub editable_skins: BTreeSet<String>,
     /// What the app said of the editor's last command (a copy or a new
     /// level that failed), on the Editor screen.
     pub editor_message: Option<String>,
@@ -198,6 +201,7 @@ impl MenuData {
             host_lost_hosting: false,
             editable: BTreeSet::new(),
             recoveries: Vec::new(),
+            editable_skins: BTreeSet::new(),
             editor_message: None,
             version: String::new(),
             report: Default::default(),
@@ -232,6 +236,12 @@ impl MenuData {
     pub fn set_editor_packs(&mut self, editable: BTreeSet<String>, recoveries: Vec<(String, String, bool)>) {
         self.editable = editable;
         self.recoveries = recoveries;
+    }
+
+    /// The skin packs in the data directory's packs (edited in place), for
+    /// the Editor screen's Skin tab (the app's, whenever they change).
+    pub fn set_editable_skins(&mut self, editable: BTreeSet<String>) {
+        self.editable_skins = editable;
     }
 
     /// The weapons the selection shows now, by mod id (`None` when no

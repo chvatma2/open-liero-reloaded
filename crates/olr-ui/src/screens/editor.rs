@@ -1,8 +1,11 @@
-//! The Editor screen (plan 14c, spec §6): the level editor's way in. The
-//! recoveries first (Recover, Discard), then every level pack, with Edit
-//! for the data directory's packs and Edit a copy for the others (bundled
-//! content is never edited in place, R5), and New level. The app opens the
-//! editor itself (`olr-game`): this crate does not know it.
+//! The Editor screen (plan 14c, spec §6): the editors' way in, a Level
+//! and a Skin tab (issue #14). Level: the recoveries first (Recover,
+//! Discard), then every level pack, with Edit for the data directory's
+//! packs and Edit a copy for the others (bundled content is never edited
+//! in place, R5), and New level. Skin: New blank skin, then every skin
+//! (searchable), Edit for the data directory's skin packs and Edit a copy
+//! for the others (a built-in or OLX skin is never changed). The app opens
+//! the editors itself (`olr-game`): this crate does not know them.
 
 use egui::{Color32, ComboBox, RichText, ScrollArea, TextEdit, Ui};
 use olr_format::levels::MAX_SIDE;
@@ -18,9 +21,27 @@ const DEFAULT_THEME: &str = "olx-theme-dirt";
 /// most the format's `MAX_SIDE`.
 const DEFAULT_SIZE: (u32, u32) = (504, 350);
 
-/// The forms being filled in.
+/// The tab shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(super) enum Tab {
+    #[default]
+    Level,
+    Skin,
+}
+
+/// The tabs' labels.
+pub const LEVEL_TAB: &str = "Level";
+pub const SKIN_TAB: &str = "Skin";
+/// The Skin tab's buttons.
+pub const NEW_SKIN: &str = "New blank skin";
+pub const SEARCH_SKINS: &str = "Search skins";
+
+/// The tab shown and the forms being filled in.
 #[derive(Default)]
 pub(super) struct View {
+    tab: Tab,
+    /// The Skin tab's search.
+    skin_search: String,
     /// Edit a copy's form: the pack copied and the new pack's name.
     copy: Option<(String, String)>,
     /// New level's form.
@@ -45,6 +66,18 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     if let Some(m) = &data.editor_message {
         ui.label(RichText::new(m).color(Color32::from_rgb(255, 110, 90)));
         ui.add_space(6.0);
+    }
+    ui.horizontal(|ui| {
+        for (tab, label) in [(Tab::Level, LEVEL_TAB), (Tab::Skin, SKIN_TAB)] {
+            if ui.selectable_label(data.editor.tab == tab, RichText::new(label).heading()).clicked() {
+                data.editor.tab = tab;
+            }
+        }
+    });
+    ui.add_space(8.0);
+    if data.editor.tab == Tab::Skin {
+        skins(ui, data, out);
+        return;
     }
     if !data.recoveries.is_empty() {
         section(ui, "Unsaved changes", |ui, _| {
@@ -177,4 +210,64 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
             );
         });
     });
+}
+
+/// The Skin tab (issue #14): New blank skin, then every skin, the user's
+/// first, searchable: Edit for theirs, Edit a copy for the others.
+fn skins(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
+    section(ui, "New skin", |ui, _| {
+        ui.horizontal(|ui| {
+            if ui.button(NEW_SKIN).clicked() {
+                out.push(UiAction::NewSkin(None));
+            }
+            ui.label(
+                RichText::new("double resolution; or start from any skin below with Edit a copy").weak(),
+            );
+        });
+    });
+    ui.add_space(10.0);
+    let search = data.editor.skin_search.to_lowercase();
+    let mut shown: Vec<(&str, &str, bool)> = data
+        .catalog
+        .skins
+        .iter()
+        .filter(|s| search.is_empty() || s.name.to_lowercase().contains(&search) || s.id.contains(&search))
+        .map(|s| (s.id.as_str(), s.name.as_str(), data.editable_skins.contains(&s.id)))
+        .collect();
+    // Yours first, then the others, each in the catalog's order.
+    shown.sort_by_key(|s| !s.2);
+    let total = data.catalog.skins.len();
+    let mut picked = None;
+    section(ui, "Skins", |ui, _| {
+        ui.label(
+            RichText::new("Skins you made are edited in place; the others as a copy (they never change).")
+                .weak(),
+        );
+        ui.horizontal(|ui| {
+            let l = ui.label(SEARCH_SKINS);
+            ui.add(TextEdit::singleline(&mut data.editor.skin_search).desired_width(240.0)).labelled_by(l.id);
+            ui.label(RichText::new(format!("{} of {total} skins", shown.len())).weak());
+        });
+        let row = ui.spacing().interact_size.y + 4.0;
+        ScrollArea::vertical().id_salt("editor skins").auto_shrink([false, true]).show_rows(
+            ui,
+            row,
+            shown.len(),
+            |ui, range| {
+                for &(id, name, yours) in &shown[range] {
+                    ui.horizontal(|ui| {
+                        ui.add_sized([320.0, row - 4.0], egui::Label::new(name).truncate());
+                        if yours {
+                            if ui.button("Edit").clicked() {
+                                picked = Some(UiAction::EditSkin(id.to_string()));
+                            }
+                        } else if ui.button("Edit a copy").clicked() {
+                            picked = Some(UiAction::NewSkin(Some(id.to_string())));
+                        }
+                    });
+                }
+            },
+        );
+    });
+    out.extend(picked);
 }

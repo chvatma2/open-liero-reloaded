@@ -196,7 +196,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   bottom right corner (an area of its own, outside the menu's layout) and
   at About's top (the crate's version when empty).
 - **Editor screen** (`screens/editor.rs`, plan 14c): Main's **Editor**
-  (between Sandbox and Profiles; `Screen::Editor`, in `MENUS`): the
+  (between Sandbox and Profiles; `Screen::Editor`, in `MENUS`), two tabs,
+  Level and Skin (issue #14). Level: the
   recoveries first ("Recover <name>" and Discard; a damaged one only
   Discard), New level (a form: Name, Width and Height 1..=4096, default
   504 × 350, Theme from `Catalog::sources`' themes, `olx-theme-dirt` by
@@ -207,7 +208,14 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   into the `AppCommand`s of the same names only on the Editor screen with
   nothing playing. The app fills `MenuData::set_editor_packs(editable,
   recoveries)` and `editor_message` (a failure, in red); it opens the
-  editor itself (this crate has no `olr-editor`). Tests: `tests/editor.rs`.
+  editor itself (this crate has no `olr-editor`). Skin (issue #14): New
+  blank skin (`UiAction::NewSkin(None)`), then every catalog skin, the
+  user's first (`MenuData::set_editable_skins`, the data directory's skin
+  packs), searchable ("Search skins", by name or id; `show_rows`: 700 and
+  more), each with Edit (`EditSkin(id)`) or Edit a copy (`NewSkin(Some(
+  id))`: no form, the skin editor asks a name at the first save); both
+  become `AppCommand`s of the same names as the level ones do; the app
+  opens `olr-skin-editor`. Tests: `tests/editor.rs`.
 - **Online screens** (`online.rs`, `screens/{multiplayer,host,lobby}.rs`,
   plan 10 task 11): plain views, no networking (this crate stays free of
   `olr-net`/`olr-lobby`/`olr-discovery`; `olr-game` converts): `LobbyView`/`MemberView`

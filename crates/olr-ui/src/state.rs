@@ -250,6 +250,12 @@ pub enum UiAction {
     /// The Editor screen's Recover and Discard of a recovery copy.
     Recover(String),
     DiscardRecovery(String),
+    /// The Editor screen's Skin tab (issue #14): Edit one of the user's
+    /// skin packs.
+    EditSkin(String),
+    /// The Skin tab's New blank skin (`None`) or Edit a copy of skin pack
+    /// `id` (a new skin starting from it).
+    NewSkin(Option<String>),
     /// The Report screen's Send: this report, as its preview showed it.
     SendReport(Box<Report>),
     /// The Update screen's Update: install the release offered.
@@ -338,6 +344,12 @@ pub enum AppCommand {
     /// Reopen recovery `id` (its unsaved changes), or remove it.
     Recover(String),
     DiscardRecovery(String),
+    /// Open the skin editor on skin pack `id` (one of
+    /// `MenuData::editable_skins`, issue #14).
+    EditSkin(String),
+    /// Open the skin editor on a new skin: blank (double resolution), or
+    /// starting as a copy of skin pack `id` (saved as a new pack).
+    NewSkin(Option<String>),
     /// The Report screen opened: gather the automatic section and the
     /// logs into `MenuData::report.context` (sending nothing).
     PrepareReport,
@@ -535,7 +547,9 @@ impl UiState {
             | UiAction::CopyLevel { .. }
             | UiAction::NewLevel { .. }
             | UiAction::Recover(_)
-            | UiAction::DiscardRecovery(_) => self.editor(action),
+            | UiAction::DiscardRecovery(_)
+            | UiAction::EditSkin(_)
+            | UiAction::NewSkin(_) => self.editor(action),
             UiAction::Back => self.back(),
             UiAction::StartMatch => self.start_match(),
             UiAction::StartSandbox => {
@@ -899,6 +913,8 @@ impl UiState {
             UiAction::NewLevel { name, size, theme } => AppCommand::NewLevel { name, size, theme },
             UiAction::Recover(id) => AppCommand::Recover(id),
             UiAction::DiscardRecovery(id) => AppCommand::DiscardRecovery(id),
+            UiAction::EditSkin(id) => AppCommand::EditSkin(id),
+            UiAction::NewSkin(from) => AppCommand::NewSkin(from),
             _ => return Vec::new(),
         }]
     }

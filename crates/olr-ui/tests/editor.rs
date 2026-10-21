@@ -1,11 +1,12 @@
 //! The Editor screen (plan 14c Task 3): the level packs to edit or copy,
-//! New level, the recoveries; each asks the app through an `AppCommand`.
+//! New level, the recoveries; the Skin tab's skins to edit or copy and New
+//! blank skin (issue #14); each asks the app through an `AppCommand`.
 
 use std::collections::BTreeSet;
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
-use olr_content::{Catalog, LevelInfo, PackSource};
+use olr_content::{Catalog, LevelInfo, PackSource, SkinInfo};
 use olr_data::manifest::PackKind;
 use olr_ui::screens::{self, MenuData};
 use olr_ui::{AppCommand, Profiles, Screen, Settings, UiAction, UiState};
@@ -30,6 +31,11 @@ fn catalog() -> Catalog {
             source("olx-theme-dirt", PackKind::Theme, "Dirt"),
             source("olx-level-dirt-level", PackKind::Level, "Dirt Level"),
         ],
+        skins: vec![
+            SkinInfo { id: "my-skin".into(), name: "My Skin".into() },
+            SkinInfo { id: "olr-skin-firefly".into(), name: "Firefly".into() },
+            SkinInfo { id: "olx-skin-default".into(), name: "default".into() },
+        ],
         ..Catalog::default()
     }
 }
@@ -43,6 +49,7 @@ struct App {
 fn harness(recoveries: Vec<(String, String, bool)>) -> Harness<'static, App> {
     let mut data = MenuData::new(catalog(), None);
     data.set_editor_packs(BTreeSet::from(["my-level".to_string()]), recoveries);
+    data.set_editable_skins(BTreeSet::from(["my-skin".to_string()]));
     let app =
         App { ui: UiState::new(Settings::default(), Profiles::default(), 1), data, commands: Vec::new() };
     Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
@@ -170,4 +177,48 @@ fn editor_commands_only_from_the_editor_screen() {
         ui.update(UiAction::EditLevel("my-level".into())),
         vec![AppCommand::EditLevel("my-level".into())]
     );
+}
+
+/// Issue #14: the Skin tab offers New blank skin, Edit for the user's own
+/// skin packs and Edit a copy for the others (never changed), searchable.
+#[test]
+fn the_skin_tab_edits_yours_and_copies_the_others() {
+    let mut h = harness(vec![]);
+    open_editor(&mut h);
+    assert!(h.query_by_label("New blank skin").is_none(), "the Level tab first");
+    h.get_by_label("Skin").click();
+    h.run();
+    assert!(h.query_by_label("New level").is_none());
+    h.get_by_label("New blank skin").click();
+    h.run();
+    assert_eq!(h.state().commands, vec![AppCommand::NewSkin(None)]);
+    h.state_mut().commands.clear();
+    assert_eq!(h.query_all_by_label("Edit").count(), 1);
+    assert_eq!(h.query_all_by_label("Edit a copy").count(), 2);
+    h.get_by_label("Edit").click();
+    h.run();
+    assert_eq!(h.state().commands, vec![AppCommand::EditSkin("my-skin".into())]);
+    h.state_mut().commands.clear();
+    h.get_all_by_label("Edit a copy").next().unwrap().click();
+    h.run();
+    assert_eq!(h.state().commands, vec![AppCommand::NewSkin(Some("olr-skin-firefly".into()))]);
+    // The search keeps the skins whose name or id holds it.
+    h.get_by_label("Search skins").click();
+    h.run();
+    h.get_by_label("Search skins").type_text("fire");
+    h.run();
+    assert_eq!(h.query_all_by_label("Edit a copy").count(), 1);
+    assert!(h.query_by_label("Edit").is_none());
+    h.get_by_label("Level").click();
+    h.run();
+    h.get_by_label("New level");
+}
+
+#[test]
+fn skin_commands_only_from_the_editor_screen() {
+    let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
+    assert!(ui.update(UiAction::NewSkin(None)).is_empty(), "not from Main");
+    ui.update(UiAction::Open(Screen::Editor));
+    assert_eq!(ui.update(UiAction::NewSkin(None)), vec![AppCommand::NewSkin(None)]);
+    assert_eq!(ui.update(UiAction::EditSkin("a".into())), vec![AppCommand::EditSkin("a".into())]);
 }
