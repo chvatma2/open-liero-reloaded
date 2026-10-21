@@ -125,6 +125,7 @@ struct Args {
     seed: u32,
     /// Imported content (packs written by `olr-cli import`): `content/packs`
     /// beside this program when there is one, else in the working directory.
+    /// OLR's own levels, the `reloaded` directory beside it, lie over it.
     #[arg(long, default_value_os_t = default_content())]
     content: PathBuf,
     /// Borderless fullscreen.
@@ -230,13 +231,15 @@ fn log_level(name: &str) -> Result<olr_log::LevelFilter, String> {
 }
 
 /// `--edit`'s directory (plan 14c R6): the pack at `edit`, unless it lies
-/// inside the `content` root (bundled content is never edited in place).
+/// inside a bundled root of `content` (`content` or OLR's own packs beside
+/// it, issue #7: bundled content is never edited in place).
 fn edit_target(edit: &Path, content: &Path) -> Result<PathBuf, String> {
     let dir = edit.canonicalize().map_err(|e| format!("{}: {e}", edit.display()))?;
     if !dir.is_dir() {
         return Err(format!("{}: not a directory", edit.display()));
     }
-    if content.canonicalize().is_ok_and(|c| dir.starts_with(c)) {
+    if olr_content::bundled_roots(content).iter().any(|r| r.canonicalize().is_ok_and(|c| dir.starts_with(c)))
+    {
         return Err(olr_game::editor::BUNDLED.to_string());
     }
     Ok(dir)
@@ -295,13 +298,16 @@ fn direct(
         "--record records a Deathmatch (--mode deathmatch)"
     );
     anyhow::ensure!(!args.spectate || mode == Mode::Deathmatch, "--spectate watches a Deathmatch of bots");
+    // The bundled content: OLR's own packs over `--content`.
+    let roots = olr_content::bundled_roots(&args.content);
+    let roots: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
     let assets = if let Some(file) = &args.replay {
         // Its packs from `--content`, else from the download caches by
         // content hash (a match on downloaded content, plan 11), read
         // without opening them: a game running meanwhile keeps its cache,
         // and this run creates, locks and writes none.
         let caches = olr_game::net::cache_dirs(store(args).0.cache_dir());
-        setup::load_replay(&[args.content.as_path()], file, &caches)?
+        setup::load_replay(&roots, file, &caches)?
     } else if mode == Mode::Deathmatch {
         let o = DeathmatchOptions {
             seed: args.seed,
@@ -312,7 +318,7 @@ fn direct(
             time_limit: args.time_limit,
             spectate: args.spectate,
         };
-        setup::load_deathmatch(&[args.content.as_path()], &args.mod_name, &args.level, &args.skin, &o)?
+        setup::load_deathmatch(&roots, &args.mod_name, &args.level, &args.skin, &o)?
     } else {
         let options = SandboxOptions {
             mod_id: String::new(),
@@ -321,7 +327,7 @@ fn direct(
             targets: args.targets,
             bonuses: false,
         };
-        setup::load(&[args.content.as_path()], &args.mod_name, &args.level, &args.skin, options)?
+        setup::load(&roots, &args.mod_name, &args.level, &args.skin, options)?
     };
     for w in &assets.warnings {
         log::warn!("{w}");
@@ -698,5 +704,12 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         assert_eq!(edit_target(tmp.path(), &content), Ok(tmp.path().canonicalize().unwrap()));
         assert!(edit_target(&tmp.path().join("missing"), &content).is_err());
+        // OLR's own packs beside the content are bundled too (issue #7).
+        let (packs, own) = (tmp.path().join("content/packs"), tmp.path().join("content/reloaded/l"));
+        std::fs::create_dir_all(&packs).unwrap();
+        std::fs::create_dir_all(&own).unwrap();
+        assert_eq!(edit_target(&own, &packs), Err(olr_game::editor::BUNDLED.to_string()));
+        assert_eq!(edit_target(&packs, &packs), Err(olr_game::editor::BUNDLED.to_string()));
+        assert_eq!(edit_target(&own, &tmp.path().join("elsewhere")), Ok(own.canonicalize().unwrap()));
     }
 }

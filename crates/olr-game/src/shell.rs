@@ -400,9 +400,10 @@ impl Shell {
     }
 
     /// The content directories, highest priority first: the data
-    /// directory's user packs, then the bundled content.
+    /// directory's user packs, then the bundled content (OLR's own packs,
+    /// then the imported ones: `olr_content::bundled_roots`).
     fn roots(&self) -> Vec<PathBuf> {
-        self.packs_dir.iter().cloned().chain([self.cfg.content.clone()]).collect()
+        self.packs_dir.iter().cloned().chain(olr_content::bundled_roots(&self.cfg.content)).collect()
     }
 
     /// Lists the content for the menus: the

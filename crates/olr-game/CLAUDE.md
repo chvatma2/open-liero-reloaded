@@ -218,8 +218,11 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   slot: a skin this install lacks, or has with other content, is the
   default skin, with a warning). Weapon selection's Done arms the local slot.
   The menus list and play `--content` with the data directory's `packs/`
-  over it (`Content::open_layers`, spec §9.4; the command line's games
-  use `--content` alone; without the flag `olr_content::default_content_dir`:
+  over it (`Content::open_layers`, spec §9.4), and OLR's own packs
+  between them (`olr_content::bundled_roots`, issue #7: `content/reloaded`
+  beside `content/packs`, the Reloaded levels; the command line's games
+  use those two bundled layers alone; `--edit` refuses a pack in either, `edit_target`);
+  without the flag `olr_content::default_content_dir`:
   `content/packs` beside the executable, else in the working directory). The shell keeps the layer's directory itself (`packs_dir`, `Store::packs_dir()`): `Shell::roots()`, no
   import screen (`olr-cli import` writes the packs; `tests/user_packs.rs`).
   `Shell::update_preview(ctx)`, after the menus are drawn,
