@@ -173,3 +173,6 @@
   fixtures/bench/quick.ron
 2026-10-20 bless-render: #1: opaque rock and dirt show at most their art, no bloom on them (dirt around the rocket's explosion no longer washes out)
   fixtures/render/look-rocket.png
+2026-10-21 bless-render: #10: the occluded look test level's goldens (look-occlusion, look-occlusion-light: ambient #405880 at 40, occlusion 80 over 16 px)
+  fixtures/render/look-occlusion-light.png
+  fixtures/render/look-occlusion.png

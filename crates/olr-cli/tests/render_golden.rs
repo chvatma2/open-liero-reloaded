@@ -69,8 +69,13 @@ fn golden(name: &str, scenario: &str, frame: i64, extra: &[&str]) {
 /// look-test`, plan 15a Task 14) centred on its building, with `extra`
 /// options, against `fixtures/render/<name>`.
 fn look_golden(name: &str, extra: &[&str]) {
+    look_golden_of("look-test", name, extra);
+}
+
+/// [`look_golden`] of the level pack `pack` in `fixtures/look/levels/`.
+fn look_golden_of(pack: &str, name: &str, extra: &[&str]) {
     let Some(content) = content_dir() else { return };
-    let pack = root().join("fixtures/look/levels/look-test");
+    let pack = root().join("fixtures/look/levels").join(pack);
     let args = ["look-preview", pack.to_str().unwrap(), "--at", "256,128", "--content", &content];
     compare(name, &args, extra);
 }
@@ -183,6 +188,19 @@ fn look_test_level_full() {
 #[test]
 fn look_test_level_at_500_ms() {
     look_golden("look-t500.png", &["--time", "500"]);
+}
+
+/// Issue #10: a copy of the look test level with ambient occlusion
+/// (strength 60, reach 12): its tunnels and the air by its rock darker.
+#[test]
+fn look_test_level_occluded() {
+    look_golden_of("look-test-occlusion", "look-occlusion.png", &[]);
+}
+
+/// Its light alone: the occlusion shows plainly.
+#[test]
+fn look_test_level_occluded_light() {
+    look_golden_of("look-test-occlusion", "look-occlusion-light.png", &["--view", "light"]);
 }
 
 /// A chaos-bot match on the look test level with the look test mod's
