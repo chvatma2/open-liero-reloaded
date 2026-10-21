@@ -19,6 +19,14 @@
 //! A solid world pixel is clear (`look/clear.png`) when the element giving
 //! its material is.
 //!
+//! Distant (parallax) layers (issue #11): a distant element (a background
+//! image or plain drawn layer) gives neither material nor front nor back;
+//! its covered art is one of the level's distant layers (`bake_distant`).
+//! When the level has a visible one, the back art pixels no other element
+//! covers are see-through: the back tile's colour with alpha 0 (and so the
+//! front over background blocks); without one, every back pixel is opaque,
+//! as always.
+//!
 //! Integer arithmetic only: the same composition bakes to the same bytes
 //! on every platform.
 
@@ -27,7 +35,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 use olr_data::image::{Rgba, RgbaImage};
-use olr_data::level::Material;
+use olr_data::level::{DistantLayer, MAX_DEPTH, MIN_DEPTH, Material};
 use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
@@ -418,7 +426,8 @@ impl<'a> Layer<'a> {
                 }
                 back.map(|b| b.get(lx, ly)).filter(|p| p.a != 0).map(|p| (opaque(p), false))
             }
-            Layer::Raster { back, .. } => Some((back.get(ax, ay), false)),
+            // A see-through back pixel (alpha 0) covers nothing.
+            Layer::Raster { back, .. } => Some((back.get(ax, ay), false)).filter(|(p, _)| p.a != 0),
         }
     }
 
@@ -437,16 +446,80 @@ impl<'a> Layer<'a> {
     }
 }
 
-/// The back of art pixel `(ax, ay)` (R4).
-fn back_at(layers: &[Layer], back_tile: &RgbaImage, ax: u32, ay: u32) -> Rgba {
+/// The back of art pixel `(ax, ay)` (R4): see-through (the tile's colour
+/// with alpha 0) where no element covers it in a level `see_through`
+/// (with distant layers).
+fn back_at(layers: &[Layer], back_tile: &RgbaImage, see_through: bool, ax: u32, ay: u32) -> Rgba {
     if let Some(c) = layers.iter().rev().find_map(|l| l.back(ax, ay)) {
         return c;
     }
     let t = back_tile;
-    if t.width() == 0 || t.height() == 0 {
-        return Rgba::BLACK;
+    let tile = if t.width() == 0 || t.height() == 0 {
+        Rgba::BLACK
+    } else {
+        opaque(t.get(ax % t.width(), ay % t.height()))
+    };
+    if see_through { Rgba { a: 0, ..tile } } else { tile }
+}
+
+/// `e`'s art as a distant layer in a level of `size` at art scale `s`:
+/// its box's art, opaque where it covers and alpha 0 elsewhere; `None`
+/// when it is not a visible distant element or its data does not fit.
+fn distant_layer(e: &Element, d: &Decoded, size: (u32, u32), s: u32) -> Option<DistantLayer> {
+    let depth = e.distant?.clamp(MIN_DEPTH, MAX_DEPTH);
+    if !e.visible {
+        return None;
     }
-    opaque(t.get(ax % t.width(), ay % t.height()))
+    let (at, b) = element_box(&e.kind, size)?;
+    let (bw, bh) = (b.0.checked_mul(s)?, b.1.checked_mul(s)?);
+    let mut image = RgbaImage::new(bw, bh);
+    match (&e.kind, d) {
+        (ElementKind::Image { pixel_size, .. }, Decoded::Image { grid: Some(grid), .. }) => {
+            let ps = (*pixel_size).max(1);
+            if (grid.width(), grid.height()) != (bw.div_ceil(ps), bh.div_ceil(ps)) {
+                return None;
+            }
+            for y in 0..bh {
+                for x in 0..bw {
+                    let p = grid.get(x / ps, y / ps);
+                    if p.a == 255 {
+                        image.set(x, y, p);
+                    }
+                }
+            }
+        }
+        (ElementKind::Drawn { .. }, Decoded::Drawn { art, .. }) => {
+            if (art.width(), art.height()) != (bw, bh) {
+                return None;
+            }
+            for y in 0..bh {
+                for x in 0..bw {
+                    let p = art.get(x, y);
+                    if p.a != 0 {
+                        image.set(x, y, opaque(p));
+                    }
+                }
+            }
+        }
+        _ => return None,
+    }
+    Some(DistantLayer { image, at, depth })
+}
+
+/// Remakes `level`'s distant layers from `items` (bottom to top): every
+/// visible distant element's (issue #11), far to near. A full bake
+/// (`bake_elements_with` over the whole level) does it; a region bake
+/// leaves them, so an editor calls this when a distant element changes.
+pub fn bake_distant(level: &mut LevelSource, items: &[(&Element, &Decoded)]) {
+    let (size, s) = (level.size, level.art_scale);
+    level.distant = items.iter().filter_map(|(e, d)| distant_layer(e, d, size, s)).collect();
+}
+
+/// Whether `items` hold a visible distant element that bakes (its data
+/// fitting): the level's uncovered back pixels are then see-through.
+pub fn has_distant(items: &[(&Element, &Decoded)], size: (u32, u32), s: u32) -> bool {
+    let Some(art) = size.0.checked_mul(s).zip(size.1.checked_mul(s)) else { return false };
+    items.iter().any(|(e, d)| e.distant.is_some() && Layer::new(e, d, art, s).is_some())
 }
 
 /// The glow masks of a composition's elements, by element id: each the
@@ -540,7 +613,10 @@ pub fn bake_elements(
 /// [`bake_elements`] with the elements' glow masks. The level's glow
 /// (`look/`) is baked too: none when no visible element glows (with a group
 /// the level's look has), else its layers, made empty first when the level
-/// had none.
+/// had none. Distant elements give no material or art: the back pixels no
+/// other element covers are see-through when one is visible
+/// ([`has_distant`]); a bake of the whole level remakes the distant layers
+/// ([`bake_distant`]).
 pub fn bake_elements_with(
     level: &mut LevelSource,
     items: &[(&Element, &Decoded)],
@@ -558,10 +634,15 @@ pub fn bake_elements_with(
     if !fits {
         return;
     }
+    let see_through = has_distant(items, (w, h), s);
+    if rect.x == 0 && rect.y == 0 && rect.w >= w && rect.h >= h {
+        bake_distant(level, items);
+    }
     let groups: Vec<&str> =
         level.look.as_ref().map_or(Vec::new(), |l| l.glow_groups.iter().map(|g| g.id.as_str()).collect());
     let (layers, extras): (Vec<Layer>, Vec<(Option<LayerGlow>, bool)>) = items
         .iter()
+        .filter(|(e, _)| e.distant.is_none())
         .filter_map(|(e, d)| {
             Some((Layer::new(e, d, (aw, ah), s)?, (layer_glow(e, masks, &groups, (w, h), s), e.clear)))
         })
@@ -611,11 +692,12 @@ pub fn bake_elements_with(
             }
             for ay in y * s..(y + 1) * s {
                 for ax in x * s..(x + 1) * s {
-                    let back = back_at(&layers, back_tile, ax, ay);
+                    let back = back_at(&layers, back_tile, see_through, ax, ay);
+                    // A solid block is never see-through.
                     let front = if material == Material::Background {
                         back
                     } else {
-                        layers.iter().rev().find_map(|l| l.front(ax, ay)).unwrap_or(back)
+                        layers.iter().rev().find_map(|l| l.front(ax, ay)).unwrap_or(opaque(back))
                     };
                     level.back.set(ax, ay, back);
                     level.front.set(ax, ay, front);
@@ -1006,8 +1088,47 @@ pub fn bake(
     Ok(())
 }
 
+/// A level's distant layers as distant drawn elements (`distant-1`, ...,
+/// far to near), each boxed where its layer lies: they bake back to the
+/// same layers. A layer whose size is not a multiple of the art scale (the
+/// format refuses one) is left out.
+pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded)> {
+    let s = level.art_scale.max(1);
+    level
+        .distant
+        .iter()
+        .filter(|d| {
+            d.image.width() % s == 0
+                && d.image.height() % s == 0
+                && d.image.width() > 0
+                && d.image.height() > 0
+        })
+        .enumerate()
+        .map(|(i, d)| {
+            let e = Element {
+                id: format!("distant-{}", i + 1),
+                name: format!("Distant {}", i + 1),
+                visible: true,
+                locked: false,
+                kind: ElementKind::Drawn {
+                    material: ElementMaterial::Background,
+                    at: d.at,
+                    size: Some((d.image.width() / s, d.image.height() / s)),
+                    mixed: false,
+                    back: false,
+                },
+                glow: None,
+                clear: false,
+                distant: Some(d.depth),
+            };
+            (e, Decoded::Drawn { art: d.image.clone(), cells: None, back: None })
+        })
+        .collect()
+}
+
 /// `level` as a composition of one raster element `base` (ruling R6): its
-/// material, front and back encoded as `write_level_files` encodes them.
+/// material, front and back encoded as `write_level_files` encodes them;
+/// its distant layers below it ([`distant_elements`]).
 pub fn compose_from(level: &LevelSource) -> CompositionSource {
     let element = Element {
         id: "base".into(),
@@ -1020,14 +1141,20 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         distant: None,
     };
     let [m, f, b] = raster_files(&element.id);
-    let files = [
+    let mut files: BTreeMap<String, Vec<u8>> = [
         (m, encode_material(level.size, &level.material)),
         (f, image_io::encode_rgba(&level.front)),
         (b, image_io::encode_rgba(&level.back)),
     ]
     .into_iter()
     .collect();
-    CompositionSource { composition: Composition { elements: vec![element] }, files }
+    let mut elements = Vec::new();
+    for (e, d) in distant_elements(level) {
+        files.extend(encode_decoded(&e, &d, level.size));
+        elements.push(e);
+    }
+    elements.push(element);
+    CompositionSource { composition: Composition { elements }, files }
 }
 
 /// A level's own material, front and back as three drawn layers, bottom
@@ -1093,16 +1220,18 @@ pub fn split_layers(
 
 /// A level without a composition as the editor opens it: its material,
 /// front and back as three drawn layers (`split_layers`: `background`,
-/// `dirt`, `rock`), which bake back to its files byte for byte.
+/// `dirt`, `rock`) over its distant layers ([`distant_elements`]), which
+/// bake back to its files byte for byte.
 pub fn split_from(level: &LevelSource) -> CompositionSource {
-    let layers = split_layers(
+    let mut layers = distant_elements(level);
+    layers.extend(split_layers(
         &level.material,
         &level.front,
         &level.back,
         level.size,
         level.art_scale,
         ["background", "dirt", "rock"],
-    );
+    ));
     let mut files = BTreeMap::new();
     let mut elements = Vec::new();
     for (e, d) in layers {
@@ -1141,7 +1270,8 @@ pub fn theme_back_tile(content: &Path, theme: &str) -> Result<RgbaImage, Compose
     })
 }
 
-/// The files a bake writes that it can leave stale.
+/// The files a bake writes that it can leave stale (and `level.ron`'s
+/// distant layers and their images, `distant/<i>.png`).
 const BAKED: [&str; 9] = [
     "material.png",
     "front.png",
@@ -1157,8 +1287,9 @@ const BAKED: [&str; 9] = [
 /// The baked files of `pack` (a composed level) that differ from what its
 /// composition bakes to, in `BAKED`'s order: `material.png`, `front.png`,
 /// `back.png`, `thumb.png`, then the four `look/` glow images and
-/// `look/clear.png`. Empty for
-/// any other pack.
+/// `look/clear.png`, then `level.ron` when its distant layers differ and
+/// the `distant/<i>.png` images that do, either side's. Empty for any other
+/// pack.
 pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeError> {
     let (Source::Level(level), Some(src)) = (&pack.source, &pack.composition) else { return Ok(Vec::new()) };
     let mut baked = level.clone();
@@ -1169,12 +1300,16 @@ pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeE
         Ok(fs)
     };
     let (now, then) = (files(level)?, files(&baked)?);
-    Ok(BAKED
-        .iter()
-        .filter(|f| {
-            let path = VPath::new(f).expect("a valid path");
-            now.read(&path).ok() != then.read(&path).ok()
-        })
-        .map(|f| f.to_string())
-        .collect())
+    let differs = |f: &str| {
+        let path = VPath::new(f).expect("a valid path");
+        now.read(&path).ok() != then.read(&path).ok()
+    };
+    let mut out: Vec<String> = BAKED.iter().filter(|f| differs(f)).map(|f| f.to_string()).collect();
+    let entries = |l: &LevelSource| l.distant.iter().map(|d| (d.at, d.depth)).collect::<Vec<_>>();
+    if entries(level) != entries(&baked) {
+        out.push("level.ron".into());
+    }
+    let n = level.distant.len().max(baked.distant.len());
+    out.extend((0..n).map(olr_format::levels::distant_file).filter(|f| differs(f)));
+    Ok(out)
 }

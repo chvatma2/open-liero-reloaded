@@ -525,6 +525,8 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
     let mut sources: BTreeMap<String, &str> = BTreeMap::new();
     let mut pixels = 0u64;
     let art_pixels = u64::from(art.0) * u64::from(art.1);
+    // The distant elements so far and their art's pixels (issue #11).
+    let (mut distant, mut distant_pixels) = (0usize, 0u64);
     for (i, e) in elements.iter().enumerate() {
         let at = |field: &str| format!("elements[{i}].{field}");
         let bad = |field: &str, message: String| FormatError::invalid(COMPOSITION_FILE, &at(field), message);
@@ -605,6 +607,30 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                     "distant",
                     "a distant layer must lie below every element that is not distant".into(),
                 ));
+            }
+            distant += 1;
+            if distant > super::MAX_DISTANT {
+                return Err(bad("distant", format!("more than {} distant layers", super::MAX_DISTANT)));
+            }
+            if let Some((at, (bw, bh))) = element_box(&e.kind, size) {
+                let far = |v: i32| v.unsigned_abs() > super::MAX_DISTANT_AT;
+                if far(at.0) || far(at.1) {
+                    return Err(bad(
+                        "at",
+                        format!("a distant layer lies within {} of the origin", super::MAX_DISTANT_AT),
+                    ));
+                }
+                let s = u64::from(art_scale);
+                distant_pixels += u64::from(bw) * u64::from(bh) * s * s;
+                if distant_pixels > LEVEL_ART.max_pixels {
+                    return Err(bad(
+                        "distant",
+                        format!(
+                            "the distant layers up to this one hold {distant_pixels} art pixels, above {}",
+                            LEVEL_ART.max_pixels
+                        ),
+                    ));
+                }
             }
         }
         if let Some(g) = &e.glow {

@@ -260,11 +260,12 @@ fn whole_image(piece: PieceRef) -> Option<Piece> {
 /// settings and masks), a drawn layer cropped to the pixels it covers, a
 /// raster as drawn pixels; each shown and unlocked, placed relative to the
 /// top-left of the boxes' union (the asset's size), with the glow groups
-/// they name.
+/// they name. Distant layers are left out: an asset carries none (issue
+/// #11).
 pub fn from_elements(level: &LevelPieces, ids: &[String], name: &str) -> Result<Asset, AssetError> {
     let (size, s) = (level.size, level.art_scale);
     let mut pieces = Vec::new();
-    for piece in level.pieces.iter().filter(|p| ids.contains(&p.element.id)) {
+    for piece in level.pieces.iter().filter(|p| ids.contains(&p.element.id) && !p.element.is_distant()) {
         let made = match piece.element.kind {
             ElementKind::Image { .. } => whole_image(*piece),
             _ => as_drawn(*piece, None, size, s),
@@ -297,7 +298,7 @@ pub fn from_elements(level: &LevelPieces, ids: &[String], name: &str) -> Result<
 /// piece with no pixels left is left out, so is a glow whose mask is all
 /// zero there (its group not carried), and so is a piece identical in
 /// pixels, material and glow to one below it (lit levels duplicate layers
-/// so each copy glows in its own group).
+/// so each copy glows in its own group). Distant layers are left out.
 pub fn cut_rect(
     level: &LevelPieces,
     rect: Rect,
@@ -312,7 +313,7 @@ pub fn cut_rect(
     let mut pieces: Vec<Piece> = Vec::new();
     for piece in &level.pieces {
         let e = piece.element;
-        if !e.visible || layers.is_some_and(|l| !l.contains(&e.id)) {
+        if !e.visible || e.is_distant() || layers.is_some_and(|l| !l.contains(&e.id)) {
             continue;
         }
         let inside = match &e.kind {

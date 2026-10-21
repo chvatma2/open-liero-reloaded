@@ -645,3 +645,64 @@ fn a_taken_source_name_is_never_returned() {
     // A name only unportable (not taken) is kept for the check to refuse.
     assert_eq!(new_source_name([].into_iter(), "a:b.png"), "a:b.png");
 }
+
+/// Issue #11: a background element made distant moves to the top of the
+/// distant layers, made near again to just above them; moves across that
+/// edge, merging and splitting a distant layer are refused, and a dirt
+/// layer cannot be distant.
+#[test]
+fn distant_layers_keep_below_the_rest() {
+    let mut p = pack(8, 6, 1);
+    for name in ["Sky", "Hills", "Wall"] {
+        add_layer(&mut p, ElementMaterial::Background, name).unwrap();
+    }
+    assert_eq!(ids(&p), ["base", "sky", "hills", "wall"]);
+    set(&mut p, "sky", Property::Distant(Some(90))).unwrap();
+    assert_eq!(ids(&p), ["sky", "base", "hills", "wall"]);
+    set(&mut p, "hills", Property::Distant(Some(40))).unwrap();
+    assert_eq!(ids(&p), ["sky", "hills", "base", "wall"]);
+    // A new depth keeps its place.
+    set(&mut p, "sky", Property::Distant(Some(80))).unwrap();
+    assert_eq!(ids(&p), ["sky", "hills", "base", "wall"]);
+    let e = raise(&mut p, "hills").unwrap_err().to_string();
+    assert!(e.contains(DISTANT_ORDER), "{e}");
+    assert!(lower(&mut p, "base").unwrap_err().to_string().contains(DISTANT_ORDER));
+    lower(&mut p, "hills").unwrap();
+    assert_eq!(ids(&p), ["hills", "sky", "base", "wall"]);
+    assert!(merge_down(&mut p, "sky").unwrap_err().to_string().contains("distant layer does not merge"));
+    assert!(split(&mut p, "sky").unwrap_err().to_string().contains("distant layer does not split"));
+    // A duplicate stays among the distant layers.
+    let copy = duplicate(&mut p, "sky").unwrap();
+    assert_eq!(ids(&p), ["hills", "sky", copy.as_str(), "base", "wall"]);
+    // Near again: just above the distant layers.
+    set(&mut p, "hills", Property::Distant(None)).unwrap();
+    assert_eq!(ids(&p), ["sky", copy.as_str(), "hills", "base", "wall"]);
+    // Only a background element.
+    set(&mut p, "wall", Property::Material(ElementMaterial::Dirt)).unwrap();
+    let e = set(&mut p, "wall", Property::Distant(Some(50))).unwrap_err().to_string();
+    assert!(e.contains("only a background element"), "{e}");
+    assert!(set(&mut p, "sky", Property::Distant(Some(100))).is_err());
+    check_composition(p.composition.as_ref().unwrap(), (8, 6), 1).unwrap();
+}
+
+/// Issue #11: Save as asset leaves distant layers out.
+#[test]
+fn an_asset_carries_no_distant_layer() {
+    let mut p = pack(8, 6, 1);
+    add_layer(&mut p, ElementMaterial::Background, "Sky").unwrap();
+    add_layer(&mut p, ElementMaterial::Background, "Wall").unwrap();
+    for id in ["sky", "wall"] {
+        draw(&mut p, id, &Shape::Rect { x: 0, y: 0, w: 4, h: 4 }, &Paint::Colour(RED), None).unwrap();
+    }
+    set(&mut p, "sky", Property::Distant(Some(60))).unwrap();
+    let decoded = olr_edit::asset::DecodedLevel::of_pack(&p).unwrap();
+    let level = decoded.level();
+    let ids: Vec<String> = ["sky", "wall"].map(String::from).to_vec();
+    let a = olr_edit::asset::from_elements(&level, &ids, "A").unwrap();
+    assert!(a.pieces.iter().all(|x| x.element.distant.is_none()));
+    assert_eq!(a.pieces.len(), 1);
+    assert!(olr_edit::asset::from_elements(&level, &ids[..1], "A").is_err());
+    let rect = olr_edit::level::Rect { x: 0, y: 0, w: 8, h: 6 };
+    let cut = olr_edit::asset::cut_rect(&level, rect, None, "B").unwrap();
+    assert!(cut.pieces.iter().all(|x| x.element.distant.is_none()));
+}

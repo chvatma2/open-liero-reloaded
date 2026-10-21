@@ -936,3 +936,147 @@ fn a_resize_names_wrong_cells() {
         .to_string();
     assert!(err.contains("cells"), "{err}");
 }
+
+/// Issue #11: a level with a visible distant layer bakes the back pixels
+/// no other element covers see-through (the tile's colour, alpha 0) and
+/// the layer's covered art at its box; without one (or hidden) it bakes
+/// opaque as always.
+#[test]
+fn distant_layers_make_uncovered_back_pixels_see_through() {
+    let (w, h, s) = (6, 4, 2);
+    let mut src = CompositionSource::default();
+    // A far sky, boxed off the level's top-left, half covered.
+    let mut sky = RgbaImage::new(4 * s, 2 * s);
+    for y in 0..2 * s {
+        for x in 0..2 * s {
+            sky.set(x, y, Rgba { a: 90, ..BLUE });
+        }
+    }
+    with_placed(
+        &mut src,
+        "sky",
+        (-1, 1),
+        Some((4, 2)),
+        (w, h),
+        &sky,
+        None,
+        None,
+        ElementMaterial::Background,
+    );
+    src.composition.elements[0].distant = Some(80);
+    // A background wall over the left half; dirt over the bottom row.
+    let mut wall = RgbaImage::new(w * s, h * s);
+    for y in 0..h * s {
+        for x in 0..3 * s {
+            wall.set(x, y, BROWN);
+        }
+    }
+    with_drawn(&mut src, "wall", &wall, ElementMaterial::Background);
+    let mut dirt = RgbaImage::new(w * s, h * s);
+    for x in 0..w * s {
+        for y in (h - 1) * s..h * s {
+            dirt.set(x, y, BROWN);
+        }
+    }
+    with_drawn(&mut src, "dirt", &dirt, ElementMaterial::Dirt);
+    let tile = back_tile();
+    let mut l = level(w, h, s);
+    let baker = Baker::new(&src, (w, h), s, &tile).unwrap();
+    baker.bake_region(&mut l, Rect { x: 0, y: 0, w, h });
+    // The right half above the dirt is see-through: the tile's colour.
+    for (x, y) in [(3 * s, 0), (w * s - 1, (h - 1) * s - 1)] {
+        let t = tile.get(x % 2, y % 2);
+        assert_eq!(l.back.get(x, y), Rgba { a: 0, ..t }, "({x}, {y})");
+        assert_eq!(l.front.get(x, y), l.back.get(x, y));
+    }
+    // The wall, and the dirt's front, stay opaque.
+    assert_eq!(l.back.get(0, 0), BROWN);
+    assert_eq!(l.front.get(w * s - 1, h * s - 1), BROWN);
+    // A solid block is never see-through.
+    for y in 0..h {
+        for x in 0..w {
+            if l.material[(y * w + x) as usize] != Material::Background {
+                for ay in y * s..(y + 1) * s {
+                    for ax in x * s..(x + 1) * s {
+                        assert_eq!(l.front.get(ax, ay).a, 255);
+                    }
+                }
+            }
+        }
+    }
+    // The distant layer: its box, opaque where covered, at its depth.
+    assert_eq!(l.distant.len(), 1);
+    let d = &l.distant[0];
+    assert_eq!((d.at, d.depth, d.image.width(), d.image.height()), ((-1, 1), 80, 4 * s, 2 * s));
+    assert_eq!(d.image.get(0, 0), BLUE);
+    assert_eq!(d.image.get(2 * s, 0).a, 0);
+    // Not a material: the wall's material is background, the sky gave none.
+    assert!(l.material[..(w * (h - 1)) as usize].iter().all(|m| *m == Material::Background));
+    // A region bake equals the whole one.
+    let mut part = level(w, h, s);
+    part.distant = l.distant.clone();
+    baker.bake_region(&mut part, Rect { x: 1, y: 0, w: 3, h });
+    baker.bake_region(&mut part, Rect { x: 0, y: 0, w: 1, h });
+    baker.bake_region(&mut part, Rect { x: 4, y: 0, w: 2, h });
+    assert!(part == l);
+    // Hidden: no distant layer, nothing see-through.
+    src.composition.elements[0].visible = false;
+    let mut hidden = level(w, h, s);
+    Baker::new(&src, (w, h), s, &tile).unwrap().bake_region(&mut hidden, Rect { x: 0, y: 0, w, h });
+    assert!(hidden.distant.is_empty());
+    assert!(hidden.back.as_raw().chunks(4).all(|p| p[3] == 255));
+    // Without the distant element the level bakes as it did before.
+    src.composition.elements.remove(0);
+    src.files.remove(&layer_file("sky"));
+    let mut plain = level(w, h, s);
+    Baker::new(&src, (w, h), s, &tile).unwrap().bake_region(&mut plain, Rect { x: 0, y: 0, w, h });
+    assert!(plain == hidden);
+}
+
+/// Issue #11: a plain level's distant layers split into distant drawn
+/// elements and bake back byte for byte; `stale` notices a changed layer.
+#[test]
+fn distant_layers_split_and_bake_back() {
+    let (w, h, s) = (6, 4, 2);
+    let mut src = CompositionSource::default();
+    let mut far = RgbaImage::new(2 * s, 2 * s);
+    far.set(1, 1, BLUE);
+    with_placed(&mut src, "far", (2, 0), Some((2, 2)), (w, h), &far, None, None, ElementMaterial::Background);
+    src.composition.elements[0].distant = Some(95);
+    let mut wall = RgbaImage::new(w * s, h * s);
+    wall.set(0, 0, BROWN);
+    with_drawn(&mut src, "wall", &wall, ElementMaterial::Background);
+    let tile = back_tile();
+    let mut l = level(w, h, s);
+    bake(&mut l, &src, &tile).unwrap();
+    assert_eq!(l.distant.len(), 1);
+    for split in [olr_edit::compose::split_from(&l), compose_from(&l)] {
+        assert_eq!(split.composition.elements[0].distant, Some(95));
+        let mut again = level(w, h, s);
+        bake(&mut again, &split, &tile).unwrap();
+        assert!(again == l, "{:?}", split.composition.elements);
+    }
+    // Through the pack's files: the distant image and level.ron.
+    let mut pack = olr_edit::pack::Pack {
+        manifest: olr_data::manifest::PackManifest {
+            format_version: olr_data::manifest::PACK_FORMAT_VERSION,
+            id: "t".into(),
+            name: "T".into(),
+            version: "1".into(),
+            kind: olr_data::manifest::PackKind::Level,
+            authors: Vec::new(),
+            origin: None,
+            license: None,
+        },
+        source: olr_edit::pack::Source::Level(l.clone()),
+        composition: Some(src.clone()),
+        other: Default::default(),
+    };
+    assert_eq!(olr_edit::compose::stale(&pack, &tile).unwrap(), Vec::<String>::new());
+    pack.composition.as_mut().unwrap().composition.elements[0].distant = Some(50);
+    assert_eq!(olr_edit::compose::stale(&pack, &tile).unwrap(), ["level.ron"]);
+    let olr_edit::pack::Source::Level(l) = &mut pack.source else { panic!() };
+    l.distant[0].image.set(0, 0, BROWN);
+    let stale = olr_edit::compose::stale(&pack, &tile).unwrap();
+    assert_eq!(stale, ["level.ron", "distant/0.png"]);
+}

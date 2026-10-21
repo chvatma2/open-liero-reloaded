@@ -53,6 +53,10 @@ pub enum Property {
     Glow(Option<ElementGlow>),
     /// Its rock and dirt let light through (look system §Clear solids).
     Clear(bool),
+    /// A distant (parallax) layer of this depth, percent, or none (issue
+    /// #11). Made distant, it moves to the top of the distant layers; made
+    /// near again, to just above them.
+    Distant(Option<u8>),
 }
 
 fn level(pack: &Pack) -> Result<&LevelSource, ElementError> {
@@ -330,6 +334,7 @@ fn field(p: &Property) -> &'static str {
         Property::Threshold(_) => "alpha_threshold",
         Property::Glow(_) => "glow",
         Property::Clear(_) => "clear",
+        Property::Distant(_) => "distant",
     }
 }
 
@@ -403,6 +408,16 @@ fn apply(
                 return Err(wrong("an image or drawn element (clear)"));
             }
             Property::Clear(c) => e.clear = c,
+            Property::Distant(d) => {
+                let was = e.distant.is_some();
+                e.distant = d;
+                if was != d.is_some() {
+                    let e = src.composition.elements.remove(i);
+                    // The top of the distant layers, or just above them.
+                    let at = src.composition.elements.iter().take_while(|x| x.is_distant()).count();
+                    src.composition.elements.insert(at, e);
+                }
+            }
             Property::Name(n) => e.name = n,
             Property::Visible(v) => e.visible = v,
             Property::Locked(v) => e.locked = v,
@@ -567,22 +582,41 @@ pub fn remove(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
     })
 }
 
-/// Moves element `id` one step up; the top one stays.
+/// Why elements `a` and `b` cannot swap places (issue #11): a distant
+/// layer stays below every element that is not.
+fn swap_refused(a: &Element, b: &Element) -> Option<ElementError> {
+    (a.is_distant() != b.is_distant()).then(|| ElementError::BadValue(DISTANT_ORDER.into()))
+}
+
+/// Why a move across the distant layers' edge is refused (issue #11).
+pub const DISTANT_ORDER: &str = "distant layers stay below every other element";
+
+/// Moves element `id` one step up; the top one stays. A distant layer
+/// stays below every other element (refused, [`DISTANT_ORDER`]).
 pub fn raise(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
     commit(pack, "", |src| {
         let i = find(src, id)?;
-        if i + 1 < src.composition.elements.len() {
+        let e = &src.composition.elements;
+        if i + 1 < e.len() {
+            if let Some(why) = swap_refused(&e[i], &e[i + 1]) {
+                return Err(why);
+            }
             src.composition.elements.swap(i, i + 1);
         }
         Ok(())
     })
 }
 
-/// Moves element `id` one step down; the bottom one stays.
+/// Moves element `id` one step down; the bottom one stays. An element that
+/// is not distant stays above the distant layers (refused).
 pub fn lower(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
     commit(pack, "", |src| {
         let i = find(src, id)?;
+        let e = &src.composition.elements;
         if i > 0 {
+            if let Some(why) = swap_refused(&e[i], &e[i - 1]) {
+                return Err(why);
+            }
             src.composition.elements.swap(i, i - 1);
         }
         Ok(())
@@ -779,6 +813,9 @@ pub fn merge_down(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
         }
         let lower = upper - 1;
         unlocked(src, &src.composition.elements[lower].id.clone())?;
+        if src.composition.elements[upper].is_distant() || src.composition.elements[lower].is_distant() {
+            return Err(ElementError::BadValue("a distant layer does not merge".into()));
+        }
         let (ld, ud) = (decoded(src, lower, size, s)?, decoded(src, upper, size, s)?);
         let (le, ue) = (src.composition.elements[lower].clone(), src.composition.elements[upper].clone());
         let (merged, d) = drawn::merge_down((&le, &ld), (&ue, &ud), size, s)
@@ -798,6 +835,9 @@ pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
     let stray = stray(pack);
     commit(pack, "", |src| {
         let i = unlocked(src, id)?;
+        if src.composition.elements[i].is_distant() {
+            return Err(ElementError::BadValue("a distant layer does not split".into()));
+        }
         let d = decoded(src, i, size, s)?;
         let e = src.composition.elements[i].clone();
         let mut taken: Vec<Element> =

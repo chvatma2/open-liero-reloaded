@@ -90,8 +90,40 @@ fn scaled(art: &RgbaImage, tw: u32, th: u32) -> RgbaImage {
 pub fn level_thumbnail(level: &super::LevelSource) -> RgbaImage {
     match super::compile_look(level) {
         Ok(Some(look)) => lit_thumbnail(level, &look),
-        _ => thumbnail(&level.front),
+        _ if level.distant.is_empty() => thumbnail(&level.front),
+        _ => thumbnail(&seen(level).0),
     }
+}
+
+/// `level`'s front as seen with the camera at its centre (issue #11):
+/// each see-through pixel (alpha 0) shows the nearest distant layer
+/// covering it, else keeps its colour (the back tile's); with each art
+/// pixel's depth (0 for the level's own art, else the layer's, 0-1).
+/// Every pixel opaque.
+fn seen(level: &super::LevelSource) -> (RgbaImage, Vec<f32>) {
+    let s = i64::from(level.art_scale.max(1));
+    let mut art = level.front.clone();
+    let (aw, ah) = (art.width(), art.height());
+    let mut depth = vec![0.0f32; aw as usize * ah as usize];
+    for y in 0..ah {
+        for x in 0..aw {
+            let p = art.get(x, y);
+            if p.a != 0 {
+                continue;
+            }
+            let hit = level.distant.iter().rev().find_map(|d| {
+                let (lx, ly) = (i64::from(x) - i64::from(d.at.0) * s, i64::from(y) - i64::from(d.at.1) * s);
+                let inside = (0..i64::from(d.image.width())).contains(&lx)
+                    && (0..i64::from(d.image.height())).contains(&ly);
+                let q = if inside { d.image.get(lx as u32, ly as u32) } else { return None };
+                (q.a != 0).then_some((q, d.depth))
+            });
+            let (c, d) = hit.unwrap_or((p, 0));
+            art.set(x, y, olr_data::image::Rgba { a: 255, ..c });
+            depth[(y * aw + x) as usize] = f32::from(d.min(100)) / 100.0;
+        }
+    }
+    (art, depth)
 }
 
 /// `fade` of the look shaders (`common.wgsl`): `(1 - (d/r)²)²`, nothing at
@@ -126,7 +158,15 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
     use olr_data::level::Material;
     let (tw, th) = THUMB_SIZE;
     let mut out = RgbaImage::new(tw, th);
-    let art = &level.front;
+    // A distant layer's pixel is lit by the ambient and `1 - depth` of the
+    // light beyond it.
+    let (seen_art, depths) = if level.distant.is_empty() {
+        (None, Vec::new())
+    } else {
+        let (a, d) = seen(level);
+        (Some(a), d)
+    };
+    let art = seen_art.as_ref().unwrap_or(&level.front);
     let (aw, ah) = (art.width(), art.height());
     let (ww, wh) = level.size;
     let s = level.art_scale.max(1);
@@ -229,7 +269,12 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
                     let own = strength(x, y) * group(wx, wy).map_or(1.0, |g| g.self_scale);
                     let floor = if solid(wx, wy) { frame.solid_floor } else { [0.0; 3] };
                     let a = albedo(x, y);
-                    for (((s, a), l), f) in sum.iter_mut().zip(a).zip(light).zip(floor) {
+                    let d = depths.get((y * aw + x) as usize).copied().unwrap_or(0.0);
+                    for ((((s, a), l), f), amb) in
+                        sum.iter_mut().zip(a).zip(light).zip(floor).zip(frame.ambient)
+                    {
+                        let l =
+                            if d > 0.0 { amb.min(max) + (1.0 - d) * (l - amb.min(max)).max(0.0) } else { l };
                         *s += a * l.max(f).max(own);
                     }
                 }
@@ -316,5 +361,34 @@ mod tests {
             if x < 320 { Rgba::rgb(0, 0, 255) } else { Rgba::rgb(255, 255, 255) }
         }));
         assert_eq!((t.get(10, 10), t.get(150, 90)), (Rgba::rgb(0, 0, 255), Rgba::rgb(255, 255, 255)));
+    }
+
+    /// Issue #11: a see-through pixel shows the nearest distant layer
+    /// covering it from the level's centre, else its own (tile) colour.
+    #[test]
+    fn the_thumbnail_shows_distant_layers() {
+        let mut level = crate::levels::tests::tiny(1);
+        let (w, h) = level.size;
+        let tile = Rgba { a: 0, ..Rgba::rgb(9, 9, 9) };
+        level.front = front(w, h, 1, |_, _| tile);
+        let mut near = RgbaImage::new(1, 2);
+        near.set(0, 0, Rgba::rgb(0, 0, 200));
+        near.set(0, 1, Rgba::rgb(0, 0, 200));
+        let mut far = RgbaImage::new(2, 2);
+        for (x, y) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+            far.set(x, y, Rgba::rgb(200, 0, 0));
+        }
+        level.distant = vec![
+            olr_data::level::DistantLayer { image: far, at: (0, 0), depth: 90 },
+            olr_data::level::DistantLayer { image: near, at: (0, 0), depth: 10 },
+        ];
+        let (art, depth) = seen(&level);
+        assert_eq!(art.get(0, 0), Rgba::rgb(0, 0, 200));
+        assert_eq!(art.get(1, 0), Rgba::rgb(200, 0, 0));
+        assert_eq!(art.get(2, 0), Rgba::rgb(9, 9, 9));
+        assert_eq!(depth[..3], [0.1, 0.9, 0.0]);
+        let t = level_thumbnail(&level);
+        assert!(t.as_raw().chunks(4).any(|p| p[..3] == [0, 0, 200]));
+        assert!(t.as_raw().chunks(4).any(|p| p[..3] == [200, 0, 0]));
     }
 }
