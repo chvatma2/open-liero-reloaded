@@ -328,7 +328,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   server config as `server.example.ron` (`files`), `content/packs`
   without `import-report.ron` (`copy_content`), OLR's own packs
   `content/reloaded` (`RELOADED`, issue #7) without their README
-  (`copy_reloaded`), and last
+  (`copy_reloaded`), the level editor's built-in assets `content/assets`
+  (`ASSETS`, issue #9) without their README (`copy_assets`), and last
   `install-manifest.txt` (`write_install_manifest`: every file, the
   updater's record of what the release installed, `olr_update::install`).
   `write_zip` (the `zip`
@@ -341,7 +342,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   what the bundle's `/app/lib/olr/` holds; its programs mode 0755), with
   `olr --help` run from a temporary directory, must show the
   content beside it as `--content`'s default, the folder must hold the
-  Reloaded levels (`RELOADED_LEVELS`, `check_reloaded`), and `olr-server` (config
+  Reloaded levels (`RELOADED_LEVELS`, `check_reloaded`) and every built-in
+  asset of the repository's `content/assets` (its `asset.ron`), and `olr-server` (config
   `CHECK_CONFIG`: invite only, no relays, no STUN, port 0, two fill seats (the client and a bot),
   `min_players: 1`; its rotation names the Reloaded levels after Dirt
   Level, so it checks they load at its start) must log its map (`next map:`), then start a match

@@ -58,6 +58,11 @@ pub const CONTENT_LEFT_OUT: [&str; 1] = ["import-report.ron"];
 pub const RELOADED: &str = "content/reloaded";
 /// Files at the top of OLR's own packs the programs never read.
 pub const RELOADED_LEFT_OUT: [&str; 1] = ["README.md"];
+/// The level editor's built-in assets (issue #9), beside the content
+/// (`olr_content::ASSETS_DIR`) at the same path in the folder.
+pub const ASSETS: &str = "content/assets";
+/// Files at the top of the built-in assets the programs never read.
+pub const ASSETS_LEFT_OUT: [&str; 1] = ["README.md"];
 /// The levels in [`RELOADED`] a release must hold: the verification
 /// finds each in the folder, and its server's rotation names them.
 pub const RELOADED_LEVELS: [&str; 2] =
@@ -168,8 +173,31 @@ pub fn copy_reloaded(from: &Path, to: &Path) -> Result<(), String> {
     copy_dir(from, to, &RELOADED_LEFT_OUT)
 }
 
-/// An error unless the release folder holds every level of [`RELOADED_LEVELS`].
+/// Copies the built-in assets `from` to `to`, leaving out `ASSETS_LEFT_OUT`.
+pub fn copy_assets(from: &Path, to: &Path) -> Result<(), String> {
+    copy_dir(from, to, &ASSETS_LEFT_OUT)
+}
+
+/// An error unless the release folder holds every level of
+/// [`RELOADED_LEVELS`] and every built-in asset of the repository's
+/// [`ASSETS`] (its `asset.ron`).
 fn check_reloaded(folder: &Path) -> Result<(), String> {
+    let at = |rel: &str| rel.split('/').fold(folder.to_path_buf(), |d, c| d.join(c));
+    let mut assets: Vec<String> = std::fs::read_dir(root().join(ASSETS))
+        .map_err(|e| format!("{ASSETS}: {e}"))?
+        .filter_map(Result::ok)
+        .filter(|e| e.path().is_dir())
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .collect();
+    assets.sort();
+    let lacking: Vec<&str> = assets
+        .iter()
+        .map(String::as_str)
+        .filter(|id| !at(ASSETS).join(id).join("asset.ron").is_file())
+        .collect();
+    if !lacking.is_empty() {
+        return Err(format!("{ASSETS} lacks {}", lacking.join(", ")));
+    }
     let missing: Vec<&str> = RELOADED_LEVELS
         .into_iter()
         .filter(|id| {
@@ -331,6 +359,7 @@ pub fn stage(platform: Platform, build: &Path, dir: &Path, version: &str) -> Res
     }
     copy_content(&repo.join(CONTENT), &folder.join(CONTENT))?;
     copy_reloaded(&repo.join(RELOADED), &folder.join(RELOADED))?;
+    copy_assets(&repo.join(ASSETS), &folder.join(ASSETS))?;
     write_install_manifest(&folder)?;
     Ok(folder)
 }
@@ -797,6 +826,7 @@ mod tests {
     fn the_reloaded_levels_ship_beside_the_content() {
         let t = tempfile::tempdir().unwrap();
         let folder = t.path().join("out");
+        copy_assets(&root().join(ASSETS), &folder.join(ASSETS)).unwrap();
         assert!(check_reloaded(&folder).unwrap_err().contains(RELOADED_LEVELS[0]));
         let from = root().join(RELOADED);
         copy_reloaded(&from, &folder.join(RELOADED)).unwrap();
@@ -806,6 +836,21 @@ mod tests {
         for id in RELOADED_LEVELS {
             assert!(CHECK_CONFIG.contains(&format!("level: \"{id}\"")), "{id}");
         }
+    }
+
+    /// Issue #9: the built-in assets ship beside the content, without
+    /// their README, and the release must hold every one.
+    #[test]
+    fn the_built_in_assets_ship_beside_the_content() {
+        let t = tempfile::tempdir().unwrap();
+        let folder = t.path().join("out");
+        copy_reloaded(&root().join(RELOADED), &folder.join(RELOADED)).unwrap();
+        assert!(check_reloaded(&folder).unwrap_err().contains("torch"));
+        let from = root().join(ASSETS);
+        copy_assets(&from, &folder.join(ASSETS)).unwrap();
+        check_reloaded(&folder).unwrap();
+        assert!(from.join("README.md").is_file() && !folder.join(ASSETS).join("README.md").exists());
+        assert!(folder.join(ASSETS).join("torch").join("thumb.png").is_file());
     }
 
     #[test]
