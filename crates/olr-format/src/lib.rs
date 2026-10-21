@@ -3,6 +3,7 @@
 //! their compilers to `olr-data`'s runtime structs. Plan 13a: mods; plan 13b: levels,
 //! themes, skins and the core pack.
 
+pub mod assets;
 mod colour;
 pub mod core_pack;
 pub(crate) mod defaults;

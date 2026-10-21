@@ -12,6 +12,8 @@ its type, default and meaning. They are generated from the code by
 - [`theme.md`](theme.md): level themes (holes, green dirt, tiles);
 - [`core.md`](core.md): the core pack (OLX's shared game assets);
 - [`pack.md`](pack.md): `pack.ron`, every pack's manifest.
+- [`asset.md`](asset.md): the level editor's assets, ready-made pieces
+  of a level (not packs: a folder each).
 
 An agent or a person can learn the formats from these pages alone.
 
@@ -326,6 +328,48 @@ an imported sign and a tunnel drawn as background:
             name: "Tunnel",
             kind: Drawn(
                 material: Background,
+            ),
+        ),
+    ],
+)
+```
+
+### An asset
+
+Not a pack: the level editor's ready-made piece of a level, a folder
+`<asset-id>/` holding `asset.ron`, its elements' files without `editor/`
+(here `layers/torch.png` and `glow/torch.png`, each 14 × 16) and
+`thumb.png`. Its elements are a composition's, placed from the asset's
+top-left corner, and it carries the glow groups they name:
+
+<!-- file: asset/asset.ron -->
+```ron
+(
+    name: "Torch",
+    size: (14, 16),
+    elements: [
+        (
+            id: "torch",
+            name: "Torch",
+            kind: Drawn(
+                material: Background,
+                size: (14, 16),
+            ),
+            glow: (
+                strength: 100,
+                group: "flames",
+                mask: true,
+            ),
+        ),
+    ],
+    glow_groups: [
+        (
+            id: "flames",
+            intensity: 900,
+            reach: Pixels(100),
+            animation: Flicker(
+                speed: 9,
+                depth: 35,
             ),
         ),
     ],

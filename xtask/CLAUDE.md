@@ -7,7 +7,8 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 
 - `format-docs [--check]` (`format_docs.rs`, plan 13d R4; the level page
   also documents `editor/composition.ron`, plan 14a) writes
-  `docs/formats/{mod,level,skin,theme,core,pack}.md` from the authoring
+  `docs/formats/{mod,level,skin,theme,core,asset,pack}.md` (`asset.md`:
+  the level editor's asset folders, issue #9) from the authoring
   types (`PAGES`: each page's sources, file types and map files), read
   with `syn`: each serialized field's name, type ("list of T", "map of name
   → T", "T (optional)", a link to a named type's section; a hand-serialized

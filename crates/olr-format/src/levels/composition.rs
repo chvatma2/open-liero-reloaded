@@ -397,7 +397,7 @@ pub fn write_composition_files(
 
 /// Whether `source` is one portable file name ending `.png`, `.jpg` or
 /// `.jpeg` (any case).
-fn valid_source(source: &str) -> bool {
+pub(crate) fn valid_source(source: &str) -> bool {
     let ext_ok = source.rsplit_once('.').is_some_and(|(stem, ext)| {
         !stem.is_empty() && ["png", "jpg", "jpeg"].iter().any(|e| ext.eq_ignore_ascii_case(e))
     });

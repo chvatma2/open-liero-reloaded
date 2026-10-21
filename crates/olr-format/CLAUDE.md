@@ -203,6 +203,21 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   element's box (`None` for a raster). `check_glow_groups(c, look)`: every
   element's glow names a group of the level's look (an error on
   `composition.ron`); `olr-pack`'s `validate` calls it.
+- **Assets** (`assets.rs`, issue #9; the level editor's library, not a
+  pack kind): `AssetFile` is `asset.ron` (`ASSET_FILE`: name 1 to
+  `MAX_ASSET_NAME` (64) characters, `art_scale`, `size`, composition
+  `Element`s placed from its top-left, the `glow_groups` they name);
+  `AssetSource` adds the elements' files by asset path (`asset_files`: a
+  composition's `element_files` without `editor/`) and `thumb.png`
+  (`ASSET_THUMB_FILE`, read tolerantly as a level's). `check_asset`
+  checks the name, art scale and size, that it holds no raster, its
+  groups (`compile_look_source`, every one named by an element,
+  `check_glow_groups`) and the elements with `check_composition` over
+  `as_composition` (the asset's size as the level's). `read_asset_files`
+  refuses a bad id or source before reading any file and more than
+  `MAX_ASSET_BYTES` (256 MiB) in all; `write_asset_files` writes only the
+  files the elements name. Unit tests in `assets.rs`; the page is
+  `docs/formats/asset.md`.
 - **Themes** (`themes/`): `ThemeSource` is `theme.ron`, `holes/<i>.png` with
   `holes/<i>.mask.png`, `green_ball.png` with `green_ball.mask.png`,
   `stones/`, `misc/`, `front_tile.png` and `back_tile.png`. A stamp is a
