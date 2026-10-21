@@ -178,6 +178,17 @@ online settings, profiles and your identity are never sent. The relay
 gets its address from `OLR_REPORT_URL` at build time (`cargo xtask
 dist`), and the same variable at run time overrides it.
 
+**Updates.** A release build looks for a newer release at start (in the
+background; offline it shows nothing). The main menu then shows **Update
+available: <version>**: its screen has the release's notes and an
+**Update** button, never forced. The Windows zip downloads the new zip,
+checks its signature and replaces its folder in place (your own files in
+it stay), then offers **Restart now**; a folder it cannot write to gets
+the release page instead. The Flatpak updates through the Flatpak portal
+(or your software centre, or `flatpak update`). Options → Online →
+**Include pre-releases** offers the `-dev.` builds too; Flatpak builds
+follow their branch (`stable` or `beta`) and show the command to switch.
+
 A broken settings or profiles file is set aside as `<name>.bak` and the
 game starts with defaults (and says so in its log). One from a newer
 version of the game is left where it is, untouched: the game uses
@@ -420,6 +431,12 @@ into a fresh directory and runs `olr.exe --help` and `olr-server.exe`
 loading its map, through WSL interop (skipped with a notice without it).
 `--no-verify` skips the checks. The two whole-program-optimised builds take
 several minutes from cold.
+
+`cargo xtask publish --notes <notes.md>` then publishes that build: it
+signs the zip, puts the Flatpak into the signed Flatpak repository on
+GitHub Pages and creates the GitHub release, which the games' update
+check finds. The maintainer's keys and the steps are in
+`docs/releasing.md`.
 
 ## Checks
 

@@ -37,3 +37,17 @@ or alone by `cargo xtask flatpak` (`xtask/src/flatpak.rs`), into
   remote-add --user --if-not-exists flathub
   https://dl.flathub.org/repo/flathub.flatpakrepo`; without the tools the
   command fails saying so.
+- **Updates** (issue #4, `docs/releasing.md`): `dist`'s bundle is
+  branch `master` with no repository. `cargo xtask publish` commits the
+  build into the maintainer's GPG-signed repository
+  (`~/.local/share/olr-release/flatpak-repo`, key
+  `~/.config/olr-release/gnupg`, public key `olr-flatpak.gpg` here) on
+  `beta`, and a final release on `stable` too, publishes it on GitHub
+  Pages (`openlieroreloaded/flatpak`,
+  `https://openlieroreloaded.github.io/flatpak/`) and builds the
+  release's bundle from it with `--repo-url` and `--gpg-keys`, so an
+  installed release updates from there (the game through the Flatpak
+  portal, or `flatpak update`). Adding a permission here makes `publish`
+  warn: the portal refuses such an update, players must update from
+  their software centre. Back up the repository and the key (losing the
+  key means every Linux player reinstalls).

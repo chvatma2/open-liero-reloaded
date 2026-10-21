@@ -88,6 +88,14 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   previous run's logs, the replay's worm names), then Send. It becomes a
   public GitHub issue, filed by the relay's bot (`tools/bug-relay/`); no
   account is needed and nothing is sent until you press Send.
+- **Updates from the main menu** (release builds): **Update available:
+  <version>** opens the release's notes and **Update**. The Windows zip
+  downloads, verifies its signature and replaces itself in place, keeping
+  your files, then restarts on request; the Flatpak updates through the
+  Flatpak portal from the game's own repository
+  (`https://openlieroreloaded.github.io/flatpak/`, branches `stable` and
+  `beta`). Options → Online → **Include pre-releases**. `cargo xtask
+  publish` signs and publishes a release (`docs/releasing.md`).
 
 ### Changed
 

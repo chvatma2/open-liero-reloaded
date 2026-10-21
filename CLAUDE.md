@@ -50,7 +50,10 @@ modernized for current displays.
    work in progress's, `0.2.0-dev.<commits since the last release tag>.<commit>[.dirty]`;
    `--final` names the plain version and needs the commit tagged `v<version>` and a clean tree.
    `OLR_REPORT_URL=https://…` in its environment is the builds' bug relay (`tools/bug-relay/`);
-   without it the game hides **Report a bug**.
+   without it the game hides **Report a bug**. `cargo xtask publish --notes <file>`
+   publishes `dist`'s build (signed zip, signed Flatpak repository on GitHub Pages,
+   GitHub release) so `dist` builds can update from the main menu; never run it
+   unasked: `docs/releasing.md`, the keys and backups included.
 
 ## Oracle
 
