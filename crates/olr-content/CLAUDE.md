@@ -18,7 +18,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   `olr-scenario` (same layer) uses it.
 - **Never panic on content** (spec §19, Review Focus 3): a missing or odd
   asset gets a placeholder (`PLACEHOLDER` colour; core sprites at their
-  `CORE_SPRITES` size, so frame arithmetic still works; a 672 × 18 skin;
+  `CORE_SPRITES` size, so frame arithmetic still works; a 672 × 18 skin
+  (`sheet_size` of OLX's layout);
   silence for sounds) and a warning. Warnings are returned
   (`Content::warnings`, `LoadedMod::warnings`, ...), never printed: the
   caller logs each once. A missing pack or unreadable definition is an `Err`.
@@ -150,13 +151,23 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   is left out with a warning (`Catalog::warnings`), like an unreadable
   pack; `ThumbRef::load` decodes it when a menu shows it, refusing a file
   that changed since (bounded read, header checked again before decoding).
-- **Skins** (`skins.rs`, plan 7 task 3): OLX's frame layout
-  (`FRAME_WIDTH`, `SKIN_WIDTH`, ..., `SHEET_FRAMES`), `skin_source(f,
-  face)` (a frame's rectangle; facing left is the exact mirror of the
+- **Skins** (`skins.rs`, plan 7 task 3): a skin's `FrameLayout`
+  (`LoadedSkin::layout()`, `art_scale()`; OLX's or issue #12's double
+  resolution), `SHEET_FRAMES`, `skin_source(layout, f, face)` (a frame's
+  rectangle, saturating; facing left is the exact mirror of the
   right-facing frame: OLX's one-column offset quirk was dropped
   2026-10-16), `LoadedSkin::colorized(colour)` and `skin_sprite(sheet,
-  f, face)`: the one source the game (`olr-scene`) and the profiles' preview
-  (`olr-ui`) draw skins from. `Content::skins()` and `Catalog::skins` list
+  layout, f, face)`: the one source the game (`olr-scene`) and the
+  profiles' preview (`olr-ui`) draw skins from. Issue #12:
+  `glow_overlays(colour)` (per glow quarter, `GLOW_LEVELS` 4 and
+  `glow_level`, the colorized sheet's pixels of that strength, transparent
+  elsewhere; none without glow) and `frame_lights(colour)` (`SkinLights`:
+  the light's reach and per frame a `SkinFrameLight` (sRGB colour of the
+  frame's glowing pixels weighted by glow; intensity the light's scaled by
+  the frame's glow over `FULL_LIGHT_GLOW`, 3 world pixels of full glow),
+  `None` for a frame without glow; `None` without a light). Tests:
+  `double_frames_are_cut_at_their_layout`, `glow_rounds_to_quarters`,
+  `tests/content.rs`'s `a_double_skin_loads_with_its_glow_and_light`. `Content::skins()` and `Catalog::skins` list
   them by manifest name; `resolve_id(given, prefix, ids)` (an id, or an
   OLX name's import id such as `default.png` → `olx-skin-default`),
   `Content::skin_id`, `Catalog::skin`.

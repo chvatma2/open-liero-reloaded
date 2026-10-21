@@ -18,8 +18,10 @@ use crate::state::{UiAction, UiState};
 /// The page's column: three panels side by side.
 const WIDTH: f32 = 1000.0;
 
-/// The preview's scale: a 20 × 18 sprite drawn 4 points a pixel.
-const PREVIEW_SCALE: f32 = 4.0;
+/// The preview's size: a worm (10 × 9 world pixels) drawn 8 points a
+/// world pixel, 4 a pixel of OLX's 20 × 18 sprite (a double-resolution
+/// skin's 40 × 36 fills the same size at 2, issue #12).
+const PREVIEW_SIZE: Vec2 = Vec2::new(80.0, 72.0);
 
 /// The widgets' own state: which profile is edited, its name as typed,
 /// the skin search, a pending delete and the preview's animation.
@@ -150,7 +152,7 @@ fn editor(ui: &mut Ui, p: &mut Profiles, v: &mut View, preview: Option<&PreviewT
     ui.color_edit_button_srgb(c);
     ui.add_space(8.0);
     let key = PreviewKey { skin_id: p.list[i].skin_id.clone(), colour: p.list[i].colour };
-    let size = Vec2::new(20.0, 18.0) * PREVIEW_SCALE;
+    let size = PREVIEW_SIZE;
     let ready = preview.filter(|t| t.key == key && !t.right.is_empty());
     let f = v.anim.frame() as usize;
     let clicked = ui

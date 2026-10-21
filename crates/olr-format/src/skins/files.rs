@@ -5,15 +5,24 @@ use olr_data::image::RgbaImage;
 use olr_vfs::{ContentSink, ContentSource, VPath};
 use serde::{Deserialize, Serialize};
 
-use super::{IMAGE_FILE, LEFT_FILE, SKIN_FILE, SkinSource, TINT_FILE, check, check_layout};
+use olr_data::skin::SkinLight;
+
+use super::{
+    GLOW_FILE, IMAGE_FILE, LEFT_FILE, SKIN_FILE, SkinSource, TINT_FILE, check, check_layout, check_light,
+};
 use crate::FormatError;
 use crate::image_io::{self, IMAGES};
 use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
 
-/// `skin.ron`: the skin's name and the layout of `skin.png`. Every field is
-/// written: the layout is the point of the file. Only OLX's layout (art
-/// scale 2, 20 × 18 frames, 7 aim columns by 3 walk rows) compiles today,
-/// with a `tint.png` of 0 and 255 only.
+/// `skin.ron`: the skin's name and the layout of `skin.png`. Every layout
+/// field is written: the layout is the point of the file. Two layouts
+/// compile today, both 7 aim columns by 3 walk rows, with a `tint.png` of 0
+/// and 255 only: OLX's (art scale 2, 20 × 18 frames) and double resolution
+/// (art scale 4, 40 × 36 frames); the worm is 10 × 9 world pixels either
+/// way. `glow.png` (optional, the size of `skin.png`, greyscale: 0 no glow
+/// to 255 full, drawn in quarters: 32 and above glows) makes pixels show
+/// bright whatever the darkness, still in the player's tint; glow on a
+/// transparent pixel is dropped.
 #[derive(Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct SkinFile {
@@ -31,6 +40,27 @@ pub(crate) struct SkinFile {
     aim_frames: u32,
     /// Rows of `skin.png`, one per walk frame, 1 to `MAX_FRAMES` (64); OLX's skins have 3.
     walk_frames: u32,
+    /// The glowing pixels' light on the worm's surroundings, in a lit level
+    /// only; none by default (`glow.png` alone only shows bright).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    light: Option<SkinLightFile>,
+}
+
+/// A skin's light (issue #12). Its colour is the frame's glowing pixels'
+/// as drawn (the player's tint included), weighted by their glow; its
+/// strength is `intensity` scaled by how much of the frame glows (full at
+/// 3 world pixels of full glow, such as 12 art pixels at art scale 2 or 48
+/// at 4). One light per frame drawn, a disc at the worm that walls stop.
+/// The engine caps keep a skin from flooding a level: values above them
+/// are refused. Skin light can be turned off engine-wide
+/// (`olr_look::engine::SKIN_LIGHT`).
+#[derive(Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct SkinLightFile {
+    /// Percent, 1 to `MAX_SKIN_LIGHT_INTENSITY` (200).
+    intensity: u16,
+    /// World pixels the light fades out over, 1 to `MAX_SKIN_LIGHT_REACH` (48).
+    reach: u16,
 }
 
 fn write_bytes(sink: &mut dyn ContentSink, file: &str, bytes: &[u8]) -> Result<(), FormatError> {
@@ -47,6 +77,9 @@ fn read_bytes(src: &dyn ContentSource, file: &str) -> Result<Vec<u8>, FormatErro
 /// The paths the writer writes for `src`, without encoding anything.
 pub fn file_paths(src: &SkinSource) -> Vec<String> {
     let mut out: Vec<String> = [SKIN_FILE, IMAGE_FILE, TINT_FILE].map(String::from).into();
+    if src.glow.is_some() {
+        out.push(GLOW_FILE.into());
+    }
     if src.left.is_some() {
         out.push(LEFT_FILE.into());
     }
@@ -62,10 +95,15 @@ pub fn write_skin_files(sink: &mut dyn ContentSink, src: &SkinSource) -> Result<
         frame_size: src.frame_size,
         aim_frames: src.aim_frames,
         walk_frames: src.walk_frames,
+        light: src.light.map(|l| SkinLightFile { intensity: l.intensity, reach: l.reach }),
     };
     write_text(sink, SKIN_FILE, &to_canonical(SKIN_FILE, &file)?)?;
+    let (w, h) = (src.image.width(), src.image.height());
     write_bytes(sink, IMAGE_FILE, &image_io::encode_rgba(&src.image))?;
-    write_bytes(sink, TINT_FILE, &image_io::encode_grey(src.image.width(), src.image.height(), &src.tint))?;
+    write_bytes(sink, TINT_FILE, &image_io::encode_grey(w, h, &src.tint))?;
+    if let Some(g) = &src.glow {
+        write_bytes(sink, GLOW_FILE, &image_io::encode_grey(w, h, g))?;
+    }
     if let Some(l) = &src.left {
         write_bytes(sink, LEFT_FILE, &image_io::encode_rgba(l))?;
     }
@@ -93,23 +131,35 @@ fn read_image(src: &dyn ContentSource, file: &str, size: (u32, u32)) -> Result<R
         .map_err(|message| FormatError::Io { file: file.into(), message })
 }
 
+/// Greyscale `file` of the layout's `size` (`tint.png`, `glow.png`).
+fn read_grey(src: &dyn ContentSource, file: &str, size: (u32, u32)) -> Result<Vec<u8>, FormatError> {
+    let (w, h, v) = image_io::decode_grey_within(&read_png(src, file, size)?, IMAGES)
+        .map_err(|message| FormatError::Io { file: file.into(), message })?;
+    if (w, h) != size {
+        return Err(FormatError::invalid(
+            file,
+            "",
+            format!("{file} is {w}x{h}, {IMAGE_FILE} is {}x{}", size.0, size.1),
+        ));
+    }
+    Ok(v)
+}
+
+fn exists(src: &dyn ContentSource, file: &str) -> Result<bool, FormatError> {
+    let path = VPath::new(file).map_err(|e| FormatError::Io { file: file.into(), message: e.to_string() })?;
+    Ok(src.exists(&path))
+}
+
 pub fn read_skin_files(src: &dyn ContentSource) -> Result<SkinSource, FormatError> {
     let file: SkinFile = from_canonical(SKIN_FILE, &read_text(src, SKIN_FILE)?)?;
     // skin.ron is validated before any image is read.
     let size = check_layout(file.art_scale, file.frame_size, file.aim_frames, file.walk_frames)?;
+    let light = file.light.map(|l| SkinLight { intensity: l.intensity, reach: l.reach });
+    check_light(light)?;
     let image = read_image(src, IMAGE_FILE, size)?;
-    let (tw, th, tint) = image_io::decode_grey_within(&read_png(src, TINT_FILE, size)?, IMAGES)
-        .map_err(|message| FormatError::Io { file: TINT_FILE.into(), message })?;
-    if (tw, th) != (image.width(), image.height()) {
-        return Err(FormatError::invalid(
-            TINT_FILE,
-            "",
-            format!("{TINT_FILE} is {tw}x{th}, {IMAGE_FILE} is {}x{}", image.width(), image.height()),
-        ));
-    }
-    let left_path = VPath::new(LEFT_FILE)
-        .map_err(|e| FormatError::Io { file: LEFT_FILE.into(), message: e.to_string() })?;
-    let left = if src.exists(&left_path) { Some(read_image(src, LEFT_FILE, size)?) } else { None };
+    let tint = read_grey(src, TINT_FILE, size)?;
+    let glow = if exists(src, GLOW_FILE)? { Some(read_grey(src, GLOW_FILE, size)?) } else { None };
+    let left = if exists(src, LEFT_FILE)? { Some(read_image(src, LEFT_FILE, size)?) } else { None };
     let skin = SkinSource {
         name: file.name,
         notes: file.notes,
@@ -119,6 +169,8 @@ pub fn read_skin_files(src: &dyn ContentSource) -> Result<SkinSource, FormatErro
         walk_frames: file.walk_frames,
         image,
         tint,
+        glow,
+        light,
         left,
     };
     check(&skin)?;
@@ -152,6 +204,61 @@ mod tests {
         assert_eq!(a, b);
     }
 
+    /// Issue #12: a double skin's glow.png and light round-trip.
+    #[test]
+    fn a_double_skin_round_trips_with_its_glow_and_light() {
+        let src = crate::skins::tests::double_sample();
+        let mut a = MemFs::new();
+        write_skin_files(&mut a, &src).unwrap();
+        let names: Vec<String> = a.files().map(|(p, _)| p.to_string()).collect();
+        assert_eq!(names, ["glow.png", "skin.png", "skin.ron", "tint.png"]);
+        assert_eq!(file_paths(&src), ["skin.ron", "skin.png", "tint.png", "glow.png"]);
+        let text = String::from_utf8(a.read(&VPath::new("skin.ron").unwrap()).unwrap()).unwrap();
+        assert!(text.contains("art_scale: 4") && text.contains("(40, 36)"), "{text}");
+        assert!(
+            text.contains("light: (") && text.contains("intensity: 150") && text.contains("reach: 24"),
+            "{text}"
+        );
+        let back = read_skin_files(&a).unwrap();
+        assert_eq!(back, src);
+        let mut b = MemFs::new();
+        write_skin_files(&mut b, &back).unwrap();
+        assert_eq!(a, b);
+    }
+
+    /// Bad glow masks and lights are refused with a message, never a panic.
+    #[test]
+    fn bad_glow_and_light_are_refused() {
+        let src = crate::skins::tests::double_sample();
+        let mut good = MemFs::new();
+        write_skin_files(&mut good, &src).unwrap();
+        // A mask of the wrong size.
+        let e = read_skin_files(&good.clone().with("glow.png", image_io::encode_grey(2, 2, &[0; 4])))
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("glow.png") && e.contains("layout needs"), "{e}");
+        // A truncated PNG.
+        let png = good.read(&VPath::new("glow.png").unwrap()).unwrap();
+        for cut in [0, 7, 30, png.len() / 2] {
+            let e =
+                read_skin_files(&good.clone().with("glow.png", png[..cut].to_vec())).unwrap_err().to_string();
+            assert!(e.contains("glow.png"), "{cut}: {e}");
+        }
+        // Values over the caps, and an unknown field.
+        let ron = String::from_utf8(good.read(&VPath::new("skin.ron").unwrap()).unwrap()).unwrap();
+        for (from, to, field) in [
+            ("reach: 24", "reach: 49", "light.reach"),
+            ("intensity: 150", "intensity: 1000", "light.intensity"),
+        ] {
+            let text = ron.replace(from, to);
+            let e =
+                read_skin_files(&good.clone().with("skin.ron", text.into_bytes())).unwrap_err().to_string();
+            assert!(e.contains("skin.ron") && e.contains(field), "{e}");
+        }
+        let text = ron.replace("reach: 24", "reach: 24,\n        colour: 3");
+        assert!(read_skin_files(&good.clone().with("skin.ron", text.into_bytes())).is_err());
+    }
+
     #[test]
     fn skin_ron_has_all_six_layout_fields() {
         let fs = written();
@@ -161,7 +268,7 @@ mod tests {
             assert!(text.contains(f), "{f}: {text}");
         }
         assert!(text.contains("art_scale: 2") && text.contains("(20, 18)"), "{text}");
-        assert!(!text.contains("notes"), "{text}");
+        assert!(!text.contains("notes") && !text.contains("light"), "{text}");
     }
 
     #[test]

@@ -1,6 +1,7 @@
 //! Skin packs (format 5, over `olr-format`): `skin.ron`, `skin.png` (a grid
-//! of frames), `tint.png` (greyscale: 0 keep, 255 player colour) and an
-//! optional `left.png`, compiled to the 672 x 18 OLX sheet.
+//! of frames), `tint.png` (greyscale: 0 keep, 255 player colour), an
+//! optional `glow.png` and `left.png`, compiled to the 672 x 18 OLX sheet
+//! or, for a double-resolution skin (issue #12), its 1344 x 36 double.
 
 use olr_data::manifest::{PackKind, PackManifest};
 use olr_data::skin::Skin;
@@ -55,7 +56,12 @@ mod tests {
         mask[5] = MaskKind::Colorize;
         SkinPack {
             manifest: manifest(PackKind::Skin),
-            skin: Skin { def: SkinDef { name: "s".into(), layout: FrameLayout::OLX }, image, mask },
+            skin: Skin {
+                def: SkinDef { name: "s".into(), layout: FrameLayout::OLX, light: None },
+                image,
+                mask,
+                glow: vec![],
+            },
         }
     }
 

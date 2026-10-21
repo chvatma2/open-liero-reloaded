@@ -463,7 +463,9 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `remove` (never the last; the one playing stays selected);
   `sanitize()` keeps at least one.
 - **Skin preview** (`skin_preview.rs`, plan 7 ruling Q2): `frames(skin,
-  colour)` cuts every frame, faced right and left, from
+  colour)` cuts every frame of the skin's layout (issue #12: a
+  double-resolution skin's 40 × 36 frames too; the profiles screen shows
+  them at `PREVIEW_SIZE`, 80 × 72, either way), faced right and left, from
   `LoadedSkin::colorized` with `olr_content::skin_sprite`: the game's own
   colorization and frame cut (`skin_preview_uses_colorization_like_the_game`
   compares them with `olr_scene`'s). `PreviewAnim` is OLX's menu animation.
@@ -513,7 +515,8 @@ centred below,
 `thumbnails_decode_lazily_and_bounded`, `about_credits_the_authors_and_the_licenses`
 (each thumbnail file in a directory of its own, in a temporary directory
 per test thread: parallel tests never read a file another writes),
-`tests/profiles.rs`: profiles through the widgets, names, the preview; its
+`tests/profiles.rs`: profiles through the widgets, names, the preview (a
+double-resolution skin's too, issue #12); its
 last part compares with `olr_scene::SceneAssets` when `OLR_CONTENT_DIR` is
 set; `tests/options.rs`: rebinding never leaves an action unreachable, the
 rebinding flow and the other sections through the widgets, game keys never

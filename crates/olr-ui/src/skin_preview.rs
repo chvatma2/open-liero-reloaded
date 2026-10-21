@@ -9,7 +9,7 @@
 //! ([`PreviewTextures`] in `MenuData::preview`).
 
 use egui::TextureId;
-use olr_content::{FRAME_WIDTH, LoadedSkin};
+use olr_content::LoadedSkin;
 use olr_data::image::{Rgba, RgbaImage};
 use olr_sim::Dir;
 
@@ -49,11 +49,14 @@ impl PreviewFrames {
 }
 
 /// `skin`'s frames in `colour`: the sheet colorized as the game colorizes
-/// a worm's, each frame cut and mirrored as the game draws it.
+/// a worm's, each frame cut and mirrored as the game draws it, at the
+/// skin's resolution (20 × 18 for OLX's layout, 40 × 36 for double
+/// resolution's, issue #12; the screen draws either at the worm's size).
 pub fn frames(skin: &LoadedSkin, colour: [u8; 3]) -> PreviewFrames {
     let sheet = skin.colorized(Rgba::rgb(colour[0], colour[1], colour[2]));
-    let n = (sheet.width() / FRAME_WIDTH).max(1);
-    let cut = |face| (0..n).map(|f| olr_content::skin_sprite(&sheet, f, face)).collect();
+    let layout = skin.layout();
+    let n = (sheet.width() / layout.frame_width.max(1)).max(1);
+    let cut = |face| (0..n).map(|f| olr_content::skin_sprite(&sheet, &layout, f, face)).collect();
     PreviewFrames { right: cut(Dir::Right), left: cut(Dir::Left) }
 }
 

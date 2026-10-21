@@ -185,7 +185,13 @@ fn profile_names_are_validated() {
 
 /// A sheet whose every pixel differs, with every mask kind.
 fn test_skin() -> LoadedSkin {
-    let (w, h) = (672, 18);
+    test_skin_of(FrameLayout::OLX)
+}
+
+/// [`test_skin`] of `layout` (OLX's 672 × 18, or double resolution's
+/// 1344 × 36, issue #12).
+fn test_skin_of(layout: FrameLayout) -> LoadedSkin {
+    let (w, h) = layout.sheet_size();
     let mut image = RgbaImage::new(w, h);
     let mut mask = Vec::new();
     for y in 0..h {
@@ -197,8 +203,8 @@ fn test_skin() -> LoadedSkin {
             );
         }
     }
-    let def = SkinDef { name: "test".into(), layout: FrameLayout::OLX };
-    LoadedSkin { skin: Skin { def, image, mask }, warnings: vec![] }
+    let def = SkinDef { name: "test".into(), layout, light: None };
+    LoadedSkin { skin: Skin { def, image, mask, glow: vec![] }, warnings: vec![] }
 }
 
 /// `src` of `sheet` as the renderer draws a sprite: mirrored with `flip`.
@@ -224,9 +230,26 @@ fn skin_preview_uses_colorization_like_the_game() {
     for walk in [0.0, 1.5, 2.9] {
         for angle in [-90.0, -60.0, -10.0, 0.0, 35.0, 60.0] {
             for face in [Dir::Right, Dir::Left] {
-                let (src, flip) = olr_scene::skin_frame(angle, face, walk, 21);
+                let (src, flip) = olr_scene::skin_frame(angle, face, walk, &FrameLayout::OLX, 21);
                 let f = (src.x - 4) / 32;
                 assert_eq!(frames.get(f, face), &drawn(&sheet, src, flip), "frame {f} {face:?}");
+            }
+        }
+    }
+
+    // Issue #12: a double-resolution skin's frames, 40 × 36, cut as the game cuts them.
+    let double = test_skin_of(FrameLayout::DOUBLE);
+    let frames2 = skin_preview::frames(&double, colour);
+    assert_eq!(frames2.len(), 21);
+    let sheet2 = double.colorized(Rgba::rgb(0, 177, 0));
+    for walk in [0.0, 2.9] {
+        for angle in [-90.0, 0.0, 60.0] {
+            for face in [Dir::Right, Dir::Left] {
+                let (src, flip) = olr_scene::skin_frame(angle, face, walk, &FrameLayout::DOUBLE, 21);
+                let f = (src.x - 8) / 64;
+                let got = frames2.get(f, face);
+                assert_eq!((got.width(), got.height()), (40, 36));
+                assert_eq!(got, &drawn(&sheet2, src, flip), "double frame {f} {face:?}");
             }
         }
     }
@@ -260,7 +283,7 @@ fn skin_preview_uses_colorization_like_the_game() {
     let game = &assets.image(assets.worm(i).skin).image;
     let frames = skin_preview::frames(&skin, [20, 90, 255]);
     for face in [Dir::Right, Dir::Left] {
-        let (src, flip) = olr_scene::skin_frame(0.0, face, 1.0, 21);
+        let (src, flip) = olr_scene::skin_frame(0.0, face, 1.0, &FrameLayout::OLX, 21);
         assert_eq!(frames.get(11, face), &drawn(game, src, flip), "{face:?}");
     }
 }

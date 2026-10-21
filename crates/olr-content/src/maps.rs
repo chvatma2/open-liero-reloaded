@@ -133,26 +133,24 @@ impl LoadedTheme {
     }
 }
 
-/// A worm skin (`skin.image` is OLX's 672 × 18 sheet, already keyed).
+/// A worm skin (`skin.image` is OLX's 672 × 18 sheet or, for a
+/// double-resolution skin, its 1344 × 36 double; already keyed).
 #[derive(Clone, Debug)]
 pub struct LoadedSkin {
     pub skin: Skin,
     pub warnings: Vec<String>,
 }
 
-/// OLX's skin sheet width (`CGameSkin`, 21 frames of 32 px).
-const SHEET_WIDTH: u32 = crate::SHEET_FRAMES * crate::FRAME_WIDTH;
-
 impl LoadedSkin {
-    /// A sheet of the placeholder colour, tinted with the player's colour.
+    /// An OLX-layout sheet (`CGameSkin`'s 21 frames of 32 px) of the
+    /// placeholder colour, tinted with the player's colour.
     pub fn placeholder() -> LoadedSkin {
         let layout = FrameLayout::OLX;
-        let image = placeholder_image(SHEET_WIDTH, layout.frame_height);
-        let mask = vec![MaskKind::Colorize; (SHEET_WIDTH * layout.frame_height) as usize];
-        LoadedSkin {
-            skin: Skin { def: SkinDef { name: "placeholder".into(), layout }, image, mask },
-            warnings: vec![],
-        }
+        let (w, h) = layout.sheet_size();
+        let image = placeholder_image(w, h);
+        let mask = vec![MaskKind::Colorize; (w * h) as usize];
+        let def = SkinDef { name: "placeholder".into(), layout, light: None };
+        LoadedSkin { skin: Skin { def, image, mask, glow: vec![] }, warnings: vec![] }
     }
 }
 
@@ -216,7 +214,8 @@ impl Content {
     }
 
     /// Skin pack `id` (such as `olx-skin-default`). `read_skin` compiles
-    /// every skin to OLX's 672 x 18 sheet, so there is no size to check.
+    /// every skin to OLX's 672 x 18 sheet or its 1344 x 36 double, so there
+    /// is no size to check.
     pub fn load_skin(&self, id: &str) -> anyhow::Result<LoadedSkin> {
         let skin = olr_pack::read_skin(&self.pack(id, PackKind::Skin)?)
             .with_context(|| format!("skin pack {id}"))?

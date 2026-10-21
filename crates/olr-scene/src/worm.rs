@@ -3,14 +3,19 @@
 //! pixels) relative to the worm's drawn position.
 
 use olr_data::image::Rgba;
+use olr_data::skin::FrameLayout;
 use olr_math::Vec2;
 use olr_sim::{Dir, World, Worm};
 
 use crate::assets::{SceneAssets, WormLook};
 use crate::draw_list::{AtlasId, DrawList, Layer, Occluder, Rect, Shade, Sprite, View, perform_line};
 
-/// OLX's skin layout (`include/CGameSkin.h:36-41`), as `olr-content` has it.
-pub use olr_content::{FRAME_WIDTH, SKIN_HEIGHT, SKIN_WIDTH};
+/// A worm's body offset from its drawn position, world pixels: OLX draws
+/// its 20 × 18 sprite at `(x - 10, y - 9)` screen pixels (half world
+/// pixels). A double-resolution skin covers the same 10 × 9 world pixels.
+///
+/// OLX: src/client/CGameSkin.cpp:584-601 (`Draw` at `x - skin width / 2`)
+pub const BODY_OFFSET: [f32; 2] = [5.0, 4.5];
 
 /// `Options.CrosshairDistance`'s default, in screen pixels.
 pub const CROSSHAIR_DISTANCE: f32 = 32.0;
@@ -18,18 +23,30 @@ pub const CROSSHAIR_DISTANCE: f32 = 32.0;
 const RIGHT_MUZZLE: [i32; 14] = [2, 3, 5, 3, 4, 0, 5, -8, 3, -9, 2, -13, -2, -12];
 const LEFT_MUZZLE: [i32; 14] = [4, -12, -1, -12, -1, -9, -3, -8, -2, 0, -2, 4, 1, 3];
 
-/// The skin frame for a worm aiming at `angle` (degrees, −90 up) with walk
-/// frame `walk`, on a sheet of `frame_count` frames: the source rectangle,
-/// and whether it is drawn mirrored (`olr_content::skin_source`, which the
-/// profiles' preview draws from too).
+/// The sheet frame for a worm aiming at `angle` (degrees, −90 up) with
+/// walk frame `walk`, on a sheet of `frame_count` frames (clamped to it).
 ///
-/// OLX: src/common/CWorm.cpp:1225-1244, src/client/CGameSkin.cpp:584-601
-pub fn skin_frame(angle: f32, face: Dir, walk: f32, frame_count: u32) -> (Rect, bool) {
+/// OLX: src/common/CWorm.cpp:1225-1244
+pub fn skin_frame_index(angle: f32, walk: f32, frame_count: u32) -> u32 {
     let ang = (((angle + 90.0) / 151.0 * 7.0) as i32).min(6);
     let f = (walk as i32).wrapping_mul(7).wrapping_add(ang);
-    let f = f.clamp(0, frame_count.max(1) as i32 - 1) as u32;
-    let s = olr_content::skin_source(f, face);
+    f.clamp(0, frame_count.clamp(1, i32::MAX as u32) as i32 - 1) as u32
+}
+
+/// The skin frame for a worm aiming at `angle` with walk frame `walk`, on a
+/// sheet of `layout` and `frame_count` frames ([`skin_frame_index`]): the
+/// source rectangle, and whether it is drawn mirrored
+/// (`olr_content::skin_source`, which the profiles' preview draws from too).
+///
+/// OLX: src/common/CWorm.cpp:1225-1244, src/client/CGameSkin.cpp:584-601
+pub fn skin_frame(angle: f32, face: Dir, walk: f32, layout: &FrameLayout, frame_count: u32) -> (Rect, bool) {
+    let s = olr_content::skin_source(layout, skin_frame_index(angle, walk, frame_count), face);
     (Rect { x: s.x, y: s.y, w: s.w, h: s.h }, s.mirrored)
+}
+
+/// A sheet's frame count: its width over the layout's frame width.
+fn frame_count(width: u32, layout: &FrameLayout) -> u32 {
+    width / layout.frame_width.max(1)
 }
 
 /// The muzzle flash for `angle` and `face`: its frame in `muzzle.png` and
@@ -199,6 +216,17 @@ pub fn draw_worm(f: &WormFrame, i: usize, w: &Worm, p: Vec2, extras: &WormExtras
     let tint = Rgba::rgb(255, 255, 255);
     let (atlas, src, pos, size, flip, shade) = (b.atlas, b.src, b.pos, b.size, b.flip, f.body());
     at.out.sprite(Layer::Worms, Sprite { atlas, src, pos, size, flip, tint, shade });
+    if f.lit {
+        // Issue #12: the skin's glowing pixels, over the body at their
+        // strength's self-light (the same frame, cut and place).
+        for (k, glow) in look.glow.iter().enumerate() {
+            if let Some(atlas) = *glow {
+                let self_light = ((k + 1) * 100 / look.glow.len()) as u8;
+                let shade = Shade { self_light, ..Shade::WORM };
+                at.out.sprite(Layer::Worms, Sprite { atlas, src, pos, size, flip, tint, shade });
+            }
+        }
+    }
     if extras.muzzle {
         let (frame, dx, dy) = muzzle_frame(w.angle, w.face);
         at.blit(f.assets.muzzle, Rect { x: frame * 16, y: 0, w: 16, h: 16 }, (dx, dy), 1, false, f.glow());
@@ -210,14 +238,21 @@ pub fn draw_worm(f: &WormFrame, i: usize, w: &Worm, p: Vec2, extras: &WormExtras
 pub fn body(f: &WormFrame, i: usize, w: &Worm, p: Vec2) -> Occluder {
     let look: WormLook = f.assets.worm(i);
     let skin = f.assets.image(look.skin);
-    let (src, flip) = skin_frame(w.angle, w.face, w.frame, skin.image.width() / FRAME_WIDTH);
+    let n = frame_count(skin.image.width(), &look.layout);
+    let (src, flip) = skin_frame(w.angle, w.face, w.frame, &look.layout, n);
     let src = clip(src, skin.image.width(), skin.image.height());
     let s = skin.px_per_world.max(1) as f32;
-    // OLX's offset is in screen pixels (half world pixels) from `p`.
-    let pos = [p.x - (SKIN_WIDTH / 2) as f32 / 2.0, p.y - (SKIN_HEIGHT / 2) as f32 / 2.0];
+    let pos = [p.x - BODY_OFFSET[0], p.y - BODY_OFFSET[1]];
     let size = [src.w as f32 / s, src.h as f32 / s];
     let worm = u8::try_from(i + 1).unwrap_or(u8::MAX);
     Occluder { atlas: look.skin, src, pos, size, flip, worm }
+}
+
+/// The sheet frame worm `i` draws (issue #12: its skin light's frame).
+pub fn body_frame(assets: &SceneAssets, i: usize, w: &Worm) -> u32 {
+    let look = assets.worm(i);
+    let n = frame_count(assets.image(look.skin).image.width(), &look.layout);
+    skin_frame_index(w.angle, w.frame, n)
 }
 
 /// `src` cut to a `w` × `h` image (an odd skin sheet never reads outside).

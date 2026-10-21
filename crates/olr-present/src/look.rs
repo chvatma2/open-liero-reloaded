@@ -4,7 +4,8 @@
 //! first so the disc cap never drops them (final review, Important 3): the
 //! muzzle lights (start order), the explosions' lights (effect slot order),
 //! the projectiles' lights (slot order) and their end flashes (start
-//! order).
+//! order); then the skins' lights (issue #12, worm order), after the mods'
+//! so the cap never starves those either.
 //!
 //! End flashes and muzzle lights start from the scene's per-tick records
 //! (`Scene::ended_projectiles`, `Scene::shots`), so they never depend on
@@ -16,7 +17,7 @@ use std::hash::Hash;
 
 use olr_fx::{Fx, Kind};
 use olr_look::{Light, LookFrame, MAX_EMITTERS, ModLook, engine, light_at};
-use olr_scene::Scene;
+use olr_scene::{Scene, SceneAssets};
 
 /// An end flash's identity: the projectile's slot, serial, `SimMod` index
 /// and spawn time (ms), which a corrected timeline cannot give another.
@@ -105,6 +106,8 @@ pub(crate) struct Dynamic {
     /// The engine's lights, made once: the muzzle's, and explosions' by size.
     muzzle: Option<Light>,
     explosions: Vec<(i32, Light)>,
+    /// Overrides [`engine::SKIN_LIGHT`] (tests and tools).
+    skin_light: Option<bool>,
 }
 
 impl Dynamic {
@@ -117,6 +120,11 @@ impl Dynamic {
         self.started.clear();
     }
 
+    /// Overrides the engine's skin-light switch ([`engine::SKIN_LIGHT`]).
+    pub(crate) fn set_skin_light(&mut self, on: bool) {
+        self.skin_light = Some(on);
+    }
+
     /// The keys of the end flashes the last frame started.
     pub(crate) fn started(&self) -> &[FlashKey] {
         &self.started
@@ -124,8 +132,18 @@ impl Dynamic {
 
     /// Adds the frame's dynamic lights to `look` at the match clock `t_ms`,
     /// starting the flashes and muzzle lights of the scene's ticks since the
-    /// last frame (and clearing them).
-    pub(crate) fn push(&mut self, look: &mut LookFrame, m: &ModLook, scene: &mut Scene, fx: &Fx, t_ms: f64) {
+    /// last frame (and clearing them). `skins`, the worms' looks, only in a
+    /// level with a look (issue #12: a level without one has no darkness):
+    /// each drawn worm's skin light, last.
+    pub(crate) fn push(
+        &mut self,
+        look: &mut LookFrame,
+        m: &ModLook,
+        scene: &mut Scene,
+        fx: &Fx,
+        skins: Option<&SceneAssets>,
+        t_ms: f64,
+    ) {
         let projectile = |proj: usize| m.projectiles.get(proj).and_then(Option::as_ref);
         let flash = |proj: usize| projectile(proj).and_then(|p| p.end_flash.as_ref());
         let weapon =
@@ -174,8 +192,8 @@ impl Dynamic {
             // It follows its worm as drawn; a worm not drawn (dead) shows none.
             let radius = engine::disc_radius(l.reach.pixels());
             // Plan 15c: a disc's cells never count as its worm's body.
-            if let Some((_, p, _)) = worms.iter().find(|(id, ..)| *id == s.worm)
-                && let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, [p.x, p.y], radius)
+            if let Some(w) = worms.iter().find(|w| w.id == s.worm)
+                && let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, [w.pos.x, w.pos.y], radius)
             {
                 look.push_emitter(f);
             }
@@ -218,6 +236,19 @@ impl Dynamic {
             }
             true
         });
+        // Issue #12: each drawn worm's skin light, its frame's colour and
+        // strength, following the worm (a disc inside its own worm ignores
+        // its body); behind the engine's one switch.
+        let Some(assets) = skins.filter(|_| self.skin_light.unwrap_or(engine::SKIN_LIGHT)) else { return };
+        for w in scene.drawn_worms() {
+            if let Some((f, reach)) = assets.worm_light(w.index, w.frame) {
+                let l = engine::skin_light(f.colour, f.intensity, reach);
+                let radius = engine::disc_radius(l.reach.pixels());
+                if let Some(f) = light_at(&l, t_ms, w.id as u64, [w.pos.x, w.pos.y], radius) {
+                    look.push_emitter(f);
+                }
+            }
+        }
     }
 }
 

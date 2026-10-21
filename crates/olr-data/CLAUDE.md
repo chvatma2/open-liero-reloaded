@@ -39,6 +39,14 @@ skins with colorization masks, themes, and pack manifests.
   `LOADING_TIME_RANGE` 0-500, the name `clean_name`d (at most
   `MAX_LOADOUT_NAME` 40 characters); one warning each), `unique_ok(slots,
   enabled)` (no repeat unless every enabled weapon is in a slot).
+- **Skins** (`skin.rs`): `Skin { def, image, mask, glow }` (OLX's sheet,
+  its colorization mask, and issue #12's glow, one byte a pixel or empty;
+  `glow_at` is 0 outside); `SkinDef { name, layout, light }`.
+  `FrameLayout::OLX` (20 × 18 frames in 32-pixel slots) and `DOUBLE`
+  (issue #12: 40 × 36 in 64, art scale 4; `for_art_scale`, `art_scale()`
+  as worm width over `WORM_WORLD_WIDTH` 10, `sheet_size()` of
+  `SHEET_FRAMES` 21); `SkinLight { intensity, reach }` (bounds are
+  `olr-format`'s and `olr-look`'s).
 - **Names** (`text.rs`): `valid_name`, `is_hidden`, `sanitise_name`, the
   one rule for players' names: olr-proto refuses lobby names that break it,
   olr-replay cleans recorded ones with it.

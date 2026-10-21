@@ -87,10 +87,21 @@ packs' format (version 5); `olr-pack` reads and writes through them.
     in `types.rs`).
 - **Skins** (`skins/`): `SkinSource` is `skin.ron` (all layout fields
   written), `skin.png` (a grid of frames, aim columns × walk rows),
-  `tint.png` (grey: 0 keep, 255 player colour) and an optional `left.png`.
-  `compile_skin` builds OLX's 672 × 18 sheet; only OLX's layout, no
-  `left.png` and no partial tint compile ("not supported by this runtime
-  yet"). `lift_skin` is exact for every bundled skin (tests/skins.rs).
+  `tint.png` (grey: 0 keep, 255 player colour), an optional `glow.png`
+  (issue #12: grey, 0 none to 255 full, the sheet's size) and an optional
+  `left.png`; `skin.ron`'s optional `light` (`SkinLightFile`: intensity
+  1-`MAX_SKIN_LIGHT_INTENSITY` percent, reach 1-`MAX_SKIN_LIGHT_REACH`
+  world pixels, `olr_look::engine`'s caps; above them refused).
+  `compile_skin` builds OLX's 672 × 18 sheet (`OLX_SKIN`: art scale 2,
+  20 × 18 frames) or its double, 1344 × 36 (`DOUBLE_SKIN`: art scale 4,
+  40 × 36, `FrameLayout::DOUBLE`), both 7 × 3 frames, with the glow mask
+  (empty without `glow.png`; glow on a transparent pixel is dropped) and
+  the light in `SkinDef`; other layouts, `left.png` and partial tint do
+  not compile ("not supported by this runtime yet"). `lift_skin` lifts
+  either sheet; it is exact for every bundled skin (tests/skins.rs) and
+  for double skins (`a_double_skin_compiles_and_lifts_back`). The reader
+  checks `light` before decoding any image, and `glow.png`'s header size
+  against the layout's before decoding it.
 - **Core** (`core_pack/`, not `core`: that name would shadow the `core` crate):
   `CoreSource` is `core.ron` (per sprite `frames` and `art_scale`, a `sounds`
   list, `colours` by OLX's key), `gfx/<id>.png` (alpha) and `sounds/<file>`.

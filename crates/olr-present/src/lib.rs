@@ -132,6 +132,13 @@ impl Presentation {
         self.lit.then_some(&self.look)
     }
 
+    /// Turns the skins' lights on or off for this presentation, overriding
+    /// the engine's one switch (`olr_look::engine::SKIN_LIGHT`, on): for
+    /// tests and tools; no player or match setting reaches it.
+    pub fn set_skin_light(&mut self, on: bool) {
+        self.dynamic.set_skin_light(on);
+    }
+
     /// The end flashes the last frame started (tests and tools).
     pub fn flashes_started(&self) -> &[FlashKey] {
         self.dynamic.started()
@@ -140,7 +147,8 @@ impl Presentation {
     /// Rebuilds the frame's look ([`Presentation::build`] does, after the
     /// scene and the entities): the level's part at the match clock (the
     /// world's time, `alpha` of a tick on), then the projectiles', end
-    /// flashes', muzzles' and explosions' lights (plan 15a R9) as glowing
+    /// flashes', muzzles' and explosions' lights (plan 15a R9), then in a
+    /// level with a look the skins' lights (issue #12), as glowing
     /// discs, wherever they are (plan 15c: never culled to the view, so the
     /// light stays camera-independent). Allocates nothing once warm.
     pub fn build_look(&mut self, world: &World, alpha: f32) {
@@ -149,7 +157,8 @@ impl Presentation {
         }
         let t_ms = world.time().0 as f64 + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
         self.look.begin(self.level_look.as_ref(), t_ms);
-        self.dynamic.push(&mut self.look, &self.mod_look, &mut self.scene, &self.fx, t_ms);
+        let skins = self.level_look.is_some().then_some(&self.assets);
+        self.dynamic.push(&mut self.look, &self.mod_look, &mut self.scene, &self.fx, skins, t_ms);
     }
 
     /// A cosmetic-entity pool of `capacity` instead of the match's

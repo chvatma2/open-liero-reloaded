@@ -54,8 +54,8 @@ pub use placeholder::{PLACEHOLDER, placeholder_image};
 pub use replay::replay_assets_from;
 pub use sandbox::{SANDBOX_START, SandboxSetup, SpawnSpec, match_setup, new_world_from};
 pub use skins::{
-    FRAME_SPACING, FRAME_WIDTH, SHEET_FRAMES, SKIN_HEIGHT, SKIN_WIDTH, SkinInfo, SkinSource, resolve_id,
-    skin_source, skin_sprite,
+    FULL_LIGHT_GLOW, GLOW_LEVELS, SHEET_FRAMES, SkinFrameLight, SkinInfo, SkinLights, SkinSource, glow_level,
+    resolve_id, skin_source, skin_sprite,
 };
 pub use sounds::{MAX_SOUND_BYTES, MAX_SOUND_SECONDS, check_sound};
 

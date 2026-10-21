@@ -25,8 +25,9 @@ header's size); content hashing; validation.
     PNG header before decoding: `read_level_thumb`, `decode_thumb`;
     `read_level` leaves it out; a bad one is a warning of `validate`)
   - skin (format 5, `olr-format`'s `skins`): `skin.ron`, `skin.png` (a
-    140x54 grid), `tint.png` (0 keep, 255 colour); compiled to the 672x18
-    OLX sheet
+    140x54 grid, or 280x108 for a double-resolution skin, issue #12),
+    `tint.png` (0 keep, 255 colour), optional `glow.png`; compiled to the
+    672x18 OLX sheet or its 1344x36 double
   - theme (format 5, `olr-format`'s `themes`): `theme.ron`, `holes/N.png` +
     `holes/N.mask.png`, `stones/N.png`, `misc/N.png`, `front_tile.png`, `back_tile.png`, optional `green_ball.png` + `green_ball.mask.png`
   - mod (format 5, `olr-format`'s `mods`): `mod.ron`, `weapons/<id>.ron`, `projectiles/<id>.ron`

@@ -94,7 +94,12 @@ wired in the frame loop's order **once**, so each mode that draws a world
   explosion's age over its life (size × 25 ms) scaled to
   `engine::EXPLOSION_MS` (batch C review, Minor 2), identity its slot.
   `flashes_started()` lists the end flashes the last frame started (tests
-  and tools).
+  and tools). Issue #12: last, the skins' lights, one steady disc per
+  drawn worm whose skin has a light and whose frame glows
+  (`SceneAssets::worm_light`, `engine::skin_light`, identity the worm id),
+  at the worm as drawn, in drawn-worm order; only in a level with a look
+  (a mod's look alone casts none) and while `engine::SKIN_LIGHT` is on
+  (`Presentation::set_skin_light` overrides it for tests and tools).
 - **Online play** (`net.rs`, spec §3.4, decision N20): the newest
   predicted tick is drawn and corrections re-simulate shown ticks. Per
   advance: inside it, for each simulated tick (olr-online's `on_tick`
@@ -136,6 +141,9 @@ final timeline's, a loaded state,
 `a_loaded_state_restores_the_glow`; `tests/look.rs`: no look for bundled
 content, the level part, projectile and end-flash lights, engine lights and
 floors only in lit matches, `engine_lights_are_emitters`, `living_worms_are_occluders`, `emitters_are_deterministic`, frame-rate independence, muzzle
-lights' curve and no stacking; `tests/no_alloc.rs`, its own binary, a warm
+lights' curve and no stacking; issue #12's
+`a_skin_light_follows_its_worm_in_its_colour`,
+`skin_lights_need_a_lit_level_and_the_switch` (glow overlays lit only),
+`skin_light_caps_hold_with_many_worms` (32 worms asking past the caps); `tests/no_alloc.rs`, its own binary, a warm
 lit build with every dynamic light allocates nothing). They need
 `OLR_CONTENT_DIR` and skip without it.

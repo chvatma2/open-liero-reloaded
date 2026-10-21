@@ -173,14 +173,47 @@ fn thin_core() -> olr_pack::CorePack {
 /// 5 cannot write one: the pack is made valid, then its image replaced).
 fn narrow_skin(dir: &Path) {
     let skin = Skin {
-        def: SkinDef { name: "narrow".into(), layout: FrameLayout::OLX },
+        def: SkinDef { name: "narrow".into(), layout: FrameLayout::OLX, light: None },
         image: RgbaImage::new(672, 18),
         mask: vec![MaskKind::Transparent; 672 * 18],
+        glow: vec![],
     };
     let pack = olr_pack::SkinPack { manifest: manifest("narrow-skin", PackKind::Skin), skin };
     olr_pack::write_skin(&mut DirFs::new(dir), &pack).unwrap();
     let small = olr_pack::image_io::encode_rgba(&filled(100, 18, Rgba::rgb(10, 200, 10)));
     std::fs::write(dir.join("skin.png"), small).unwrap();
+}
+
+/// A double-resolution skin pack (issue #12): each frame's 40 × 36 sprite a
+/// grey keep body with a tinted stripe, two full-glow white eyes (4 art
+/// pixels, a quarter world pixel) and a half-glow tinted one, and a light.
+fn double_skin(dir: &Path) {
+    let layout = FrameLayout::DOUBLE;
+    let (w, h) = layout.sheet_size();
+    let mut image = RgbaImage::new(w, h);
+    let mut mask = vec![MaskKind::Transparent; (w * h) as usize];
+    let mut glow = vec![0u8; (w * h) as usize];
+    for f in 0..21 {
+        let x0 = f * 64 + 8;
+        for y in 4..32 {
+            for x in x0 + 4..x0 + 36 {
+                let i = (y * w + x) as usize;
+                image.set(x, y, Rgba::rgb(100, 100, 100));
+                mask[i] = if y == 20 { MaskKind::Colorize } else { MaskKind::Keep };
+            }
+        }
+        for x in [x0 + 20, x0 + 21] {
+            for y in [10, 11] {
+                image.set(x, y, Rgba::rgb(255, 255, 255));
+                glow[(y * w + x) as usize] = 255;
+            }
+        }
+        glow[(20 * w + x0 + 10) as usize] = 128;
+    }
+    let light = Some(olr_data::skin::SkinLight { intensity: 150, reach: 24 });
+    let skin = Skin { def: SkinDef { name: "double".into(), layout, light }, image, mask, glow };
+    let pack = olr_pack::SkinPack { manifest: manifest("double-skin", PackKind::Skin), skin };
+    olr_pack::write_skin(&mut DirFs::new(dir), &pack).unwrap();
 }
 
 /// Writes the synthetic packs into `dir`.
@@ -191,6 +224,7 @@ fn synthetic(dir: &Path) {
     olr_pack::write_theme(&mut sink("test-theme"), &theme()).unwrap();
     olr_pack::write_core(&mut sink("olx-core"), &thin_core()).unwrap();
     narrow_skin(&dir.join("narrow-skin"));
+    double_skin(&dir.join("double-skin"));
     // Not a pack, and a pack this build cannot read: listed as warnings, never fatal.
     std::fs::create_dir_all(dir.join("junk")).unwrap();
     std::fs::create_dir_all(dir.join("future")).unwrap();
@@ -265,6 +299,48 @@ fn missing_assets_use_placeholders() {
         fired += events.iter().filter(|e| matches!(e.kind, olr_sim::EventKind::WeaponFired { .. })).count();
     }
     assert!(fired > 0);
+}
+
+/// Issue #12: a double-resolution skin loads at its layout, with its glow
+/// as overlays per strength and its light per frame; a classic skin (the
+/// placeholder) has neither.
+#[test]
+fn a_double_skin_loads_with_its_glow_and_light() {
+    let tmp = tempfile::tempdir().unwrap();
+    synthetic(tmp.path());
+    let content = Content::open(tmp.path()).unwrap();
+    let skin = content.load_skin("double-skin").unwrap();
+    assert_eq!((skin.skin.image.width(), skin.skin.image.height()), (1344, 36));
+    assert_eq!((skin.layout(), skin.art_scale()), (FrameLayout::DOUBLE, 4));
+    // Its frames are cut 40 × 36, 64 apart.
+    let colour = Rgba::rgb(96, 0, 0);
+    let sheet = skin.colorized(colour);
+    let sprite = olr_content::skin_sprite(&sheet, &skin.layout(), 3, olr_sim::Dir::Right);
+    assert_eq!((sprite.width(), sprite.height(), sprite.get(20, 10)), (40, 36, Rgba::rgb(255, 255, 255)));
+    // Two strengths glow: full (the eyes) and half (one tinted pixel).
+    let overlays = skin.glow_overlays(colour);
+    let levels: Vec<usize> = overlays.iter().map(|(l, _)| *l).collect();
+    assert_eq!(levels, [2, 4]);
+    let full = &overlays[1].1;
+    assert_eq!(full.get(5 * 64 + 8 + 21, 11), Rgba::rgb(255, 255, 255));
+    assert_eq!(full.get(5 * 64 + 8 + 22, 11), Rgba::TRANSPARENT, "only glowing pixels");
+    let half = &overlays[0].1;
+    assert_eq!(half.get(8 + 10, 20), olr_data::skin::colorize_pixel(Rgba::rgb(100, 100, 100), colour));
+    // The light: every frame's, the glowing pixels' colour weighted by
+    // glow, scaled by 4.5 art pixels of glow (0.28 world px) over 3.
+    let lights = skin.frame_lights(colour).unwrap();
+    assert_eq!((lights.reach, lights.frames.len()), (24, 21));
+    let tinted = olr_data::skin::colorize_pixel(Rgba::rgb(100, 100, 100), colour);
+    let g = 128.0 / 255.0;
+    let want = |white: f32, t: u8| ((4.0 * white + g * f32::from(t)) / (4.0 + g)).round() as u8;
+    let l = lights.frames[0].unwrap();
+    assert_eq!(l.colour, [want(255.0, tinted.r), want(255.0, tinted.g), want(255.0, tinted.b)]);
+    assert_eq!(l.intensity, (150.0 * (4.0 + g) / 16.0 / 3.0f32).round() as u16);
+    assert!(lights.frames.iter().all(|f| *f == Some(l)), "the same glow in every frame");
+    // A classic skin has none.
+    let plain = olr_content::LoadedSkin::placeholder();
+    assert!(plain.glow_overlays(colour).is_empty() && plain.frame_lights(colour).is_none());
+    assert_eq!(plain.art_scale(), 2);
 }
 
 /// One undecodable core sprite (or a missing sound file) costs only that
@@ -565,10 +641,11 @@ fn every_bundled_skin_mirrors() {
     let ids = content.ids(PackKind::Skin);
     assert!(!ids.is_empty());
     for id in ids.iter().filter(|i| i.starts_with("olx-skin-")) {
-        let sheet = content.load_skin(id).unwrap().colorized(Rgba::rgb(200, 60, 20));
+        let skin = content.load_skin(id).unwrap();
+        let (sheet, layout) = (skin.colorized(Rgba::rgb(200, 60, 20)), skin.layout());
         for f in 0..olr_content::SHEET_FRAMES {
-            let r = olr_content::skin_sprite(&sheet, f, olr_sim::Dir::Right);
-            let l = olr_content::skin_sprite(&sheet, f, olr_sim::Dir::Left);
+            let r = olr_content::skin_sprite(&sheet, &layout, f, olr_sim::Dir::Right);
+            let l = olr_content::skin_sprite(&sheet, &layout, f, olr_sim::Dir::Left);
             for y in 0..r.height() {
                 for x in 0..r.width() {
                     assert_eq!(l.get(x, y), r.get(r.width() - 1 - x, y), "{id} frame {f} ({x}, {y})");

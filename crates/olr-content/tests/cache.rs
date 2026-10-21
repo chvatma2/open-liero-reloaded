@@ -40,9 +40,10 @@ fn sized_skin_pack(id: &str, shade: u8, width: u32) -> MemFs {
         }
     }
     let skin = Skin {
-        def: SkinDef { name: id.into(), layout: FrameLayout::OLX },
+        def: SkinDef { name: id.into(), layout: FrameLayout::OLX, light: None },
         image: img,
         mask: vec![MaskKind::Keep; width as usize * 18],
+        glow: vec![],
     };
     let mut fs = MemFs::new();
     olr_pack::write_skin(&mut fs, &olr_pack::SkinPack { manifest: manifest(id, PackKind::Skin), skin })

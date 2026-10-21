@@ -62,7 +62,8 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
 - **Look records** (`lib.rs`, plan 15a Task 15 and the batch C review),
   kept only with shade rules: each `build` records `drawn_projectiles()`
   (`DrawnProjectile`: slot, serial, `SimMod` index, drawn position, spawn
-  time, view or not) and `drawn_worms()` (id, drawn position, occluder id);
+  time, view or not) and `drawn_worms()` (`DrawnWorm`: id, index, drawn
+  position, occluder id, skin frame: issue #12's skin lights);
   each
   `after_tick` and `after_tick_resimulated` records `ended_projectiles()`
   (`EndedProjectile`: a projectile in the previous snapshot whose slot is
@@ -77,8 +78,16 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   `olr-present` starts each once.
 - **`SceneAssets`** (`assets.rs`): core sprites and mod projectile images
   (already alpha: the importers key OLX's magenta once, nothing keys at load), and per worm a colorized
-  skin (`add_worm`: `olr_content::LoadedSkin::colorized`; `skin_frame` cuts
-  with `olr_content::skin_source`, as the profiles' preview does). Unknown ids and missing images never panic.
+  skin (`add_worm`: `olr_content::LoadedSkin::colorized`, at the skin's art
+  scale as `px_per_world`; `skin_frame(angle, face, walk, layout, frames)`
+  cuts with `olr_content::skin_source`, as the profiles' preview does).
+  Issue #12: a `WormLook` carries the skin's `layout` and `glow` (an atlas
+  image per glow quarter, `LoadedSkin::glow_overlays`), drawn over the
+  body in a lit match only (`Shade { self_light: 25-100, ..Shade::WORM }`);
+  `worm_light(i, frame)` is the frame's `SkinFrameLight` and the skin
+  light's reach (`LoadedSkin::frame_lights`, made once in `add_worm`).
+  The body sits `BODY_OFFSET` (5, 4.5) world pixels up-left of the worm
+  whatever the layout. Unknown ids and missing images never panic.
 - **Interpolation** (`snapshot.rs`, Review Focus 1): `Interpolation::Linear`
   blends positions at sub-pixel precision, never across a projectile serial
   change (slot reuse), a death or a respawn (`worm_blends`: alive flag and
@@ -94,7 +103,8 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   (half world pixels) from the drawn position. Deviations are listed in
   `docs/porting/STATUS.md` (presentation rows).
 
-Test: `cargo nextest run -p olr-scene`. The scenario tests (interpolation,
+Test: `cargo nextest run -p olr-scene` (issue #12: `frames.rs`'s
+`skin_frame_picks_double_frames`). The scenario tests (interpolation,
 order, marks, anchors, no-alloc, snapshots) need `OLR_CONTENT_DIR` and skip without
 it. Snapshots (`tests/snapshots/*.snap`) are `insta`'s: an intended change
 is accepted with `INSTA_UPDATE=always` after reading the `.snap.new` diff.

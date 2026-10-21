@@ -77,7 +77,7 @@ pub fn import_skin(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Res
     let name = file.rsplit_once('.').map_or(file, |(s, _)| s).to_string();
     let pack = SkinPack {
         manifest: manifest(format!("olx-skin-{}", slug(&name)), name.clone(), PackKind::Skin, origin),
-        skin: Skin { def: SkinDef { name, layout }, image, mask },
+        skin: Skin { def: SkinDef { name, layout, light: None }, image, mask, glow: vec![] },
     };
     Ok(ImportedSkin { pack, warnings })
 }

@@ -5,7 +5,8 @@
 
 use std::path::{Path, PathBuf};
 
-use olr_content::{Content, olx_level_id, olx_mod_id};
+use olr_content::{Content, LoadedSkin, SandboxSetup, SpawnSpec, olx_level_id, olx_mod_id};
+use olr_data::skin::{MaskKind, SkinLight};
 use olr_look::{
     Ambient, Animation, GlowColour, GlowGroup, Grade, Key, LevelLook, Light, ModLook, ProjectileLook, Reach,
     engine,
@@ -80,6 +81,23 @@ fn play_every(
     level_look: Option<LevelLook>,
     mod_look: Option<ModLook>,
     stride: i64,
+    each: impl FnMut(&mut Presentation, &World, &DrawList, i64),
+) {
+    let skin = content.skin_or_default("olx-skin-default");
+    play_skinned(content, name, level_look, mod_look, &skin, stride, |_| {}, each);
+}
+
+/// [`play_every`] with every worm in `skin`, `before` run on the
+/// presentation once its worms are added.
+#[allow(clippy::too_many_arguments)]
+fn play_skinned(
+    content: &Content,
+    name: &str,
+    level_look: Option<LevelLook>,
+    mod_look: Option<ModLook>,
+    skin: &LoadedSkin,
+    stride: i64,
+    before: impl FnOnce(&mut Presentation),
     mut each: impl FnMut(&mut Presentation, &World, &DrawList, i64),
 ) {
     let (sc, trace) = olr_scenario::load_fixture(&fixtures(), name).unwrap();
@@ -90,7 +108,6 @@ fn play_every(
     if let Some(look) = mod_look {
         m.look = look;
     }
-    let skin = content.skin_or_default("olx-skin-default");
     let setup = PresentSetup {
         core: content.core(),
         m: &m,
@@ -101,12 +118,16 @@ fn play_every(
         seed: 1,
     };
     let mut present = None;
+    let mut before = Some(before);
     let mut list = DrawList::new();
     olr_scenario::play(content, &sc, &trace, |world, f, events| {
         let p = present.get_or_insert_with(|| {
             let mut p = Presentation::new(&setup, world);
             for i in 0..sc.worms.len() {
-                p.add_worm(&skin, default_colour(i), i == 0, i == 0);
+                p.add_worm(skin, default_colour(i), i == 0, i == 0);
+            }
+            if let Some(b) = before.take() {
+                b(&mut p);
             }
             p
         });
@@ -453,4 +474,161 @@ fn engine_lights_come_first() {
         }
     });
     assert!(checked > 0);
+}
+
+/// Issue #12: `content`'s default skin with its tinted pixels glowing at
+/// full and `light`.
+fn glowing_skin(content: &Content, light: SkinLight) -> LoadedSkin {
+    let mut s = content.skin_or_default("olx-skin-default");
+    s.skin.glow = s.skin.mask.iter().map(|m| if *m == MaskKind::Colorize { 255 } else { 0 }).collect();
+    s.skin.def.light = Some(light);
+    s
+}
+
+const SKIN_LIGHT: SkinLight = SkinLight { intensity: 150, reach: 24 };
+
+/// The emitters at a drawn worm's position with a skin light's disc.
+fn skin_emitters(p: &Presentation, reach: u16) -> Vec<(usize, &olr_look::FrameLight)> {
+    let radius = engine::disc_radius(f32::from(reach));
+    let Some(l) = p.look() else { return Vec::new() };
+    p.scene
+        .drawn_worms()
+        .iter()
+        .flat_map(|w| {
+            l.emitters
+                .iter()
+                .filter(move |e| {
+                    e.pos == [w.pos.x, w.pos.y] && e.radius == radius && e.reach == f32::from(reach)
+                })
+                .map(move |e| (w.index, e))
+        })
+        .collect()
+}
+
+/// Issue #12: a skin with a light casts one disc per drawn worm, at it,
+/// of its tinted glowing pixels' colour, after the engine's lights.
+#[test]
+fn a_skin_light_follows_its_worm_in_its_colour() {
+    let Some(content) = content() else { return };
+    let skin = glowing_skin(&content, SKIN_LIGHT);
+    let mut checked = 0;
+    play_skinned(
+        &content,
+        BAZOOKA,
+        Some(look()),
+        None,
+        &skin,
+        1,
+        |_| {},
+        |p, _, _, _| {
+            let found = skin_emitters(p, SKIN_LIGHT.reach);
+            assert_eq!(found.len(), p.scene.drawn_worms().len(), "one light a worm");
+            for (i, e) in &found {
+                // Red, then blue (default_colour): the tint is the light's.
+                let main = if *i == 0 { 0 } else { 2 };
+                assert!(
+                    e.colour[main] > 0.0 && (0..3).all(|c| c == main || e.colour[c] <= e.colour[main]),
+                    "{e:?}"
+                );
+                checked += 1;
+            }
+            let emitters = &p.look().unwrap().emitters;
+            if let (Some((_, first)), Some(last_engine)) = (
+                found.first(),
+                emitters.iter().rposition(|e| e.colour[0] > 0.0 && e.radius != found[0].1.radius),
+            ) {
+                let at = emitters.iter().position(|e| std::ptr::eq(e, *first)).unwrap();
+                assert!(at > last_engine, "the skins' lights come last");
+            }
+        },
+    );
+    assert!(checked > 20, "{checked}");
+}
+
+/// Issue #12: the engine switch off, a match lit only by its mod, or an
+/// unlit one: no skin casts light; its glowing pixels still draw bright in
+/// a lit match only.
+#[test]
+fn skin_lights_need_a_lit_level_and_the_switch() {
+    let Some(content) = content() else { return };
+    let skin = glowing_skin(&content, SKIN_LIGHT);
+    let full = Shade { self_light: 100, ..Shade::WORM };
+    let cases = [
+        (Some(look()), None, false, true),
+        (None, Some(mod_look(&content, Some(steady([0, 255, 0], 80, 48)), None)), true, true),
+        (None, None, true, false),
+    ];
+    for (level, mods, switch, lit) in cases {
+        let (mut frames, mut bright) = (0, 0);
+        play_skinned(
+            &content,
+            BAZOOKA,
+            level,
+            mods,
+            &skin,
+            1,
+            |p| p.set_skin_light(switch),
+            |p, _, list, _| {
+                assert_eq!(p.has_look(), lit);
+                assert!(skin_emitters(p, SKIN_LIGHT.reach).is_empty());
+                let glow = p.assets().worm(0).glow[3].expect("a full glow overlay");
+                bright += sprites(list, Layer::Worms).filter(|s| s.atlas == glow && s.shade == full).count();
+                frames += 1;
+            },
+        );
+        assert_eq!(bright > 0, lit, "glowing pixels draw only lit: {bright} of {frames}");
+    }
+}
+
+/// Issue #12: 32 worms whose skin asks far past the caps: each light is
+/// clamped to them, the frame stays within `MAX_EMITTERS`, and nothing
+/// panics.
+#[test]
+fn skin_light_caps_hold_with_many_worms() {
+    let Some(content) = content() else { return };
+    let (sc, _) = olr_scenario::load_fixture(&fixtures(), "dig").unwrap();
+    let mut skin = glowing_skin(&content, SkinLight { intensity: u16::MAX, reach: u16::MAX });
+    skin.skin.glow.fill(255);
+    let sandbox = SandboxSetup {
+        mod_id: olx_mod_id(&sc.mod_dir),
+        level_id: olx_level_id(&sc.level),
+        seed: 3,
+        settings: olr_sim::SimSettings::lx56(),
+        worms: vec![SpawnSpec::default(); olr_sim::MAX_WORMS],
+        restrictions: olr_content::DEFAULT_PRESET.into(),
+    };
+    let mut world = content.new_world(&sandbox).unwrap();
+    let mut level = content.load_level(&sandbox.level_id).unwrap();
+    level.look = Some(look());
+    let theme = content.load_theme(&level.theme).unwrap();
+    let m = content.load_mod(&sandbox.mod_id).unwrap();
+    let setup = PresentSetup {
+        core: content.core(),
+        m: &m,
+        level: &level,
+        theme: &theme,
+        viewport: Viewport::GAME,
+        options: SceneOptions { interpolation: Interpolation::Linear, show_health_bars: true },
+        seed: 1,
+    };
+    let mut p = Presentation::new(&setup, &world);
+    for i in 0..olr_sim::MAX_WORMS {
+        p.add_worm(&skin, default_colour(i % 4), i == 0, i == 0);
+    }
+    let reach = engine::MAX_SKIN_LIGHT_REACH;
+    let (mut list, mut events) = (DrawList::new(), olr_sim::TickEvents::new());
+    let fire = vec![olr_sim::Keys(olr_sim::Keys::FIRE); olr_sim::MAX_WORMS];
+    for t in 0..60 {
+        world.tick(&fire, &mut events);
+        p.on_tick(&world, &events);
+        p.build(&world, 0.5, &mut list);
+        let lights = skin_emitters(&p, reach);
+        assert_eq!(lights.len(), p.scene.drawn_worms().len(), "tick {t}");
+        let cap = f32::from(engine::MAX_SKIN_LIGHT_INTENSITY) / 100.0;
+        for (_, e) in &lights {
+            assert!(e.colour.iter().all(|c| c.is_finite() && *c <= cap + 1e-3), "{e:?} over {cap}");
+        }
+        assert!(p.look().unwrap().emitters.len() <= olr_look::MAX_EMITTERS);
+    }
+    assert_eq!(p.scene.drawn_worms().len(), olr_sim::MAX_WORMS);
 }

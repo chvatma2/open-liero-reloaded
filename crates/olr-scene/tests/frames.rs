@@ -1,8 +1,9 @@
 //! OLX's sprite frame math against hand-computed OLX values.
 
 use olr_data::mod_def::{AnimKind, Animation, ProjectileGfx};
+use olr_data::skin::FrameLayout;
 use olr_math::Vec2;
-use olr_scene::{Rect, frame_x, framestep, skin_frame};
+use olr_scene::{Rect, frame_x, framestep, skin_frame, skin_frame_index};
 use olr_sim::{Dir, Projectile};
 
 /// `CWorm::Draw`'s aim bucket `min((int)((angle + 90) / 151 * 7), 6)`,
@@ -29,25 +30,49 @@ const ANGLE_BUCKETS: [(f32, u32); 16] = [
 
 #[test]
 fn skin_frame_matches_olx_table() {
+    let olx = &FrameLayout::OLX;
     for (angle, bucket) in ANGLE_BUCKETS {
         for walk in [0.0, 1.0, 1.99, 2.0, 2.9] {
             let f = (walk as u32) * 7 + bucket;
             let sx = f * 32 + 4;
+            assert_eq!(skin_frame_index(angle, walk, 21), f);
             // Facing right: the 20 × 18 sprite at `32 f + 4`.
-            let right = skin_frame(angle, Dir::Right, walk, 21);
+            let right = skin_frame(angle, Dir::Right, walk, olx, 21);
             assert_eq!(right, (Rect { x: sx, y: 0, w: 20, h: 18 }, false), "angle {angle} walk {walk}");
             // Facing left: the exact mirror of the same columns (OLX's
             // one-column offset dropped, spec 2026-10-16 formats §4).
-            let left = skin_frame(angle, Dir::Left, walk, 21);
+            let left = skin_frame(angle, Dir::Left, walk, olx, 21);
             assert_eq!(left, (Rect { x: sx, y: 0, w: 20, h: 18 }, true), "angle {angle} walk {walk}");
         }
     }
     // A sheet with fewer frames clamps to its last frame.
-    assert_eq!(skin_frame(60.0, Dir::Right, 2.0, 10).0.x, 9 * 32 + 4);
+    assert_eq!(skin_frame(60.0, Dir::Right, 2.0, olx, 10).0.x, 9 * 32 + 4);
     // The last frame (20) facing left reads columns 644..664 of 672.
-    assert_eq!(skin_frame(60.0, Dir::Left, 2.0, 21).0, Rect { x: 644, y: 0, w: 20, h: 18 });
+    assert_eq!(skin_frame(60.0, Dir::Left, 2.0, olx, 21).0, Rect { x: 644, y: 0, w: 20, h: 18 });
     // Nonsense never panics.
-    let _ = skin_frame(f32::NAN, Dir::Left, f32::INFINITY, 0);
+    let _ = skin_frame(f32::NAN, Dir::Left, f32::INFINITY, olx, 0);
+    let _ = skin_frame(0.0, Dir::Left, 2.0, olx, u32::MAX);
+}
+
+/// Issue #12: a double-resolution sheet picks the same frame, its 40 × 36
+/// sprite 64 apart and 8 in.
+#[test]
+fn skin_frame_picks_double_frames() {
+    let double = &FrameLayout::DOUBLE;
+    for (angle, bucket) in ANGLE_BUCKETS {
+        for walk in [0.0, 1.0, 2.9] {
+            let f = (walk as u32) * 7 + bucket;
+            for (face, flip) in [(Dir::Right, false), (Dir::Left, true)] {
+                let got = skin_frame(angle, face, walk, double, 21);
+                assert_eq!(
+                    got,
+                    (Rect { x: f * 64 + 8, y: 0, w: 40, h: 36 }, flip),
+                    "angle {angle} walk {walk}"
+                );
+            }
+        }
+    }
+    assert_eq!(skin_frame(60.0, Dir::Left, 2.0, double, 21).0, Rect { x: 1288, y: 0, w: 40, h: 36 });
 }
 
 fn image(

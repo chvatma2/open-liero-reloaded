@@ -125,12 +125,23 @@ fn theme_digest(content: &Content, id: &str) -> String {
 fn skin_digest(content: &Content, id: &str) -> String {
     let mut d = Digest256::new();
     let s = content.load_skin(id).unwrap();
-    d.text("def", &format!("{:?}", s.skin.def));
+    // The definition as it hashed before issue #12; a light or glow mask
+    // (none in the imported skins) is hashed after it.
+    let def = &s.skin.def;
+    d.text("def", &format!("SkinDef {{ name: {:?}, layout: {:?} }}", def.name, def.layout));
+    if let Some(l) = def.light {
+        d.text("light", &format!("{l:?}"));
+    }
+    if !s.skin.glow.is_empty() {
+        d.bytes("glow", &s.skin.glow);
+    }
+    let layout = s.layout();
     for (r, g, b) in COLOURS {
         let sheet = s.colorized(Rgba::rgb(r, g, b));
         for (face, name) in [(olr_sim::Dir::Right, "right"), (olr_sim::Dir::Left, "left")] {
             for f in 0..olr_content::SHEET_FRAMES {
-                d.image(&format!("frame:{r},{g},{b}:{name}:{f}"), &olr_content::skin_sprite(&sheet, f, face));
+                let sprite = olr_content::skin_sprite(&sheet, &layout, f, face);
+                d.image(&format!("frame:{r},{g},{b}:{name}:{f}"), &sprite);
             }
         }
     }

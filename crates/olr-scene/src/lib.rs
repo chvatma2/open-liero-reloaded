@@ -29,8 +29,8 @@ pub use marks::Marks;
 pub use projectile::{draw_bonus, draw_projectile, frame_x, framestep};
 pub use snapshot::{Blend, BonusSnap, Interpolation, ProjBlend, ProjSnap, Snapshot, WormSnap, worm_blends};
 pub use worm::{
-    CROSSHAIR_DISTANCE, FRAME_WIDTH, SKIN_HEIGHT, SKIN_WIDTH, WormExtras, WormFrame, crosshair_offset,
-    draw_worm, health_segments, muzzle_frame, skin_frame,
+    BODY_OFFSET, CROSSHAIR_DISTANCE, WormExtras, WormFrame, crosshair_offset, draw_worm, health_segments,
+    muzzle_frame, skin_frame, skin_frame_index,
 };
 
 use olr_math::{AbsTime, Vec2};
@@ -97,6 +97,20 @@ pub struct EndedProjectile {
     pub at: AbsTime,
 }
 
+/// A living worm as a lit build placed it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawnWorm {
+    pub id: i32,
+    /// Its index in `World::worms` (and `SceneAssets::worm`).
+    pub index: usize,
+    /// Its drawn position.
+    pub pos: Vec2,
+    /// Its occluder id: index + 1 (plan 15b).
+    pub occluder: u8,
+    /// The skin's sheet frame drawn (issue #12: its skin light's frame).
+    pub frame: u32,
+}
+
 /// A projectile weapon's shot in a tick: a lit match's muzzle light.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shot {
@@ -124,7 +138,7 @@ pub struct Scene {
     shades: Option<ShadeRules>,
     /// With rules, what the last build placed (reused, grown once).
     drawn: Vec<DrawnProjectile>,
-    worms: Vec<(i32, Vec2, u8)>,
+    worms: Vec<DrawnWorm>,
     /// With rules, the ticks' ended projectiles and shots since the last
     /// [`Scene::clear_look_events`].
     ended: Vec<EndedProjectile>,
@@ -168,9 +182,9 @@ impl Scene {
         &self.drawn
     }
 
-    /// The alive worms (id, drawn position, occluder id: index + 1, plan
-    /// 15b) the last build placed, in worm order (only with shade rules).
-    pub fn drawn_worms(&self) -> &[(i32, Vec2, u8)] {
+    /// The alive worms the last build placed, in worm order (only with
+    /// shade rules).
+    pub fn drawn_worms(&self) -> &[DrawnWorm] {
         &self.worms
     }
 
@@ -330,7 +344,8 @@ impl Scene {
             if lit {
                 // Plan 15b: living worms block light, whatever the view.
                 let body = worm::body(&frame, i, w, p);
-                self.worms.push((w.id, p, body.worm));
+                let at = worm::body_frame(assets, i, w);
+                self.worms.push(DrawnWorm { id: w.id, index: i, pos: p, occluder: body.worm, frame: at });
                 out.occluders.push(body);
             }
             let extras = WormExtras {
