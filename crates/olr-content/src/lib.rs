@@ -41,7 +41,7 @@ pub use cache::{
 pub use catalog::{Catalog, LevelInfo, MAX_THUMB_BYTES, MAX_THUMB_SIDE, ModInfo, PackSource, ThumbRef};
 pub use color::{apply_edits, color_edit, lost_area};
 pub use core_assets::{CORE_PACK_ID, CORE_SPRITES, CorePack};
-pub use locate::{CONTENT_DIR, default_content_dir};
+pub use locate::{CONTENT_DIR, RELOADED_DIR, bundled_roots, default_content_dir};
 pub use maps::{
     DEFAULT_SKIN, LoadedLevel, LoadedSkin, LoadedTheme, MAX_ART_SCALE, MAX_COLOR_MAP_BYTES, NO_SKIN_HASH,
 };
@@ -104,6 +104,17 @@ impl Content {
     pub fn open(root: &Path) -> anyhow::Result<Content> {
         std::fs::read_dir(root).with_context(|| format!("content directory {}", root.display()))?;
         Content::open_layers(&[root])
+    }
+
+    /// The bundled content of content directory `content`: its packs under
+    /// OLR's own ([`bundled_roots`]: `content/reloaded` over
+    /// `content/packs`), what the programs open by default. An unreadable
+    /// `content` is an error, as in [`Content::open`]; a missing
+    /// `reloaded` directory is skipped.
+    pub fn open_bundled(content: &Path) -> anyhow::Result<Content> {
+        std::fs::read_dir(content).with_context(|| format!("content directory {}", content.display()))?;
+        let roots = bundled_roots(content);
+        Content::open_layers(&roots.iter().map(PathBuf::as_path).collect::<Vec<_>>())
     }
 
     /// The packs of several content directories, layered (spec §9.4):

@@ -652,3 +652,23 @@ fn the_first_spawn_is_used_only_when_inside_the_level() {
     assert_eq!(level(&[(24, 8)]).first_spawn(), Some((24, 8)));
     assert_eq!(level(&[(i32::MIN, i32::MAX)]).first_spawn(), None);
 }
+
+/// Issue #7: the bundled content is OLR's own packs (`reloaded` beside the
+/// content directory) laid over the imported ones; without that directory
+/// it is the content alone, and an unreadable content directory is an error.
+#[test]
+fn the_reloaded_packs_lie_over_the_bundled_content() {
+    let tmp = tempfile::tempdir().unwrap();
+    let packs = tmp.path().join("packs");
+    synthetic(&packs);
+    let alone = Content::open_bundled(&packs).unwrap();
+    assert!(!alone.ids(PackKind::Level).contains(&"reloaded-level".to_string()));
+    let own = tmp.path().join("reloaded").join("reloaded-level");
+    olr_pack::write_level(&mut DirFs::new(&own), &room_level()).unwrap();
+    olr_pack::write_manifest(&mut DirFs::new(&own), &manifest("reloaded-level", PackKind::Level)).unwrap();
+    let content = Content::open_bundled(&packs).unwrap();
+    let levels = content.ids(PackKind::Level);
+    assert!(levels.contains(&"reloaded-level".to_string()) && levels.contains(&"test-level".to_string()));
+    assert_eq!(content.pack_dir("reloaded-level"), Some(own.as_path()));
+    assert!(Content::open_bundled(&tmp.path().join("missing")).is_err());
+}

@@ -210,7 +210,15 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
 - `default_content_dir(exe)` (`locate.rs`): `olr-game`'s and `olr-server`'s
   `--content` default, `CONTENT_DIR` (`content/packs`) beside the
   executable when it is a directory there (an unpacked release zip), else
-  relative to the working directory.
+  relative to the working directory. `bundled_roots(content)` (issue #7):
+  OLR's own packs, `RELOADED_DIR` beside it (`content/reloaded`, the
+  hand-made Reloaded levels, shipped too), then `content`;
+  `Content::open_bundled(content)` opens those layers (an unreadable
+  `content` an error, as `open`; a missing `reloaded` skipped), what the
+  game, the server and `olr-cli`'s commands open by default. The two roots
+  share no pack id (`olr-cli`'s `tests/reloaded.rs`), so neither hides
+  the other's; `tests/content.rs`'s
+  `the_reloaded_packs_lie_over_the_bundled_content`.
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
 Test: `cargo nextest run -p olr-content` (`loads_every_manifest_item` and the
