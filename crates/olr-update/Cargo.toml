@@ -1,0 +1,29 @@
+[package]
+name = "olr-update"
+description = "Updating the game: versions and channels, GitHub's release list, the Windows zip's signed manifest, the portable folder's interruption-safe swap and the Flatpak repository's files and commands."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+serde = { workspace = true, features = ["std"] }
+serde_json.workspace = true
+# ed25519 and SHA-256: rustls' provider, already built for TLS.
+aws-lc-rs.workspace = true
+base64.workspace = true
+# The Windows zip, deflate through flate2's pure-Rust backend (as xtask's `dist`).
+zip.workspace = true
+flate2.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

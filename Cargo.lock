@@ -3940,6 +3940,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "olr-update"
+version = "0.2.0"
+dependencies = [
+ "aws-lc-rs",
+ "base64 0.22.1",
+ "flate2",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "zip",
+]
+
+[[package]]
 name = "olr-vfs"
 version = "0.2.0"
 dependencies = [

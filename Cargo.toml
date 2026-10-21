@@ -46,6 +46,7 @@ olr-discovery = { path = "crates/olr-discovery" }
 olr-online = { path = "crates/olr-online" }
 olr-server = { path = "crates/olr-server" }
 olr-log = { path = "crates/olr-log" }
+olr-update = { path = "crates/olr-update" }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
 ron = "0.12.2"
 # Replays (plan 6): exact pins, the encoding is the replay format.
@@ -108,6 +109,9 @@ tungstenite = "=0.30.0"
 # never the platform's, so every OS trusts the same roots.
 rustls = "=0.23.45"
 webpki-roots = "=1.0.9"
+# Release signatures (issue #4): ed25519 and SHA-256 from rustls' own
+# provider (already locked and built), no crate of their own.
+aws-lc-rs = "=1.18.1"
 # OS randomness for the native peers (plan 10).
 getrandom = "=0.4.3"
 # The dedicated server stops cleanly on Ctrl+C, SIGTERM and a closed
