@@ -16,6 +16,8 @@ const WIDTH: f32 = 860.0;
 pub const TITLE: &str = "Update";
 /// Main's notice, before the version.
 pub const NOTICE: &str = "Update available:";
+/// Main's notice once the update is installed, before the version.
+pub const INSTALLED_NOTICE: &str = "Restart to finish the update to";
 /// The release page's button.
 pub const OPEN_PAGE: &str = "Open the release page";
 /// Said once the update is installed.

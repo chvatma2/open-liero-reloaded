@@ -34,9 +34,12 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &MenuData, out: &mut Vec<
         ui.label(RichText::new("Liero Xtreme as OpenLieroX plays it").weak());
         ui.add_space(28.0);
         if let Some(offer) = data.update.offer.as_ref().filter(|_| data.update.enabled) {
-            let text = RichText::new(format!("{} {}", super::update::NOTICE, offer.version))
-                .size(18.0)
-                .color(egui::Color32::WHITE);
+            let notice = match data.update.status {
+                crate::update::UpdateStatus::Installed => super::update::INSTALLED_NOTICE,
+                _ => super::update::NOTICE,
+            };
+            let text =
+                RichText::new(format!("{notice} {}", offer.version)).size(18.0).color(egui::Color32::WHITE);
             let notice = Button::new(text).min_size(egui::vec2(BUTTON[0], BUTTON[1])).fill(theme::PRIMARY);
             if ui.add(notice).clicked() {
                 out.push(UiAction::Open(Screen::Update));

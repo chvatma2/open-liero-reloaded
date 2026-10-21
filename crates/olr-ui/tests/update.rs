@@ -119,6 +119,13 @@ fn update_installs_then_offers_a_restart() {
     h.get_by_label("Restart now").click();
     settle(&mut h);
     assert_eq!(h.state().commands, [AppCommand::RestartGame]);
+    // The main menu says a restart finishes it, no longer "available".
+    h.get_by_label("Back").click();
+    settle(&mut h);
+    assert!(h.query_by_label_contains("Update available").is_none());
+    h.get_by_label("Restart to finish the update to 0.2.1").click();
+    settle(&mut h);
+    assert_eq!(h.state().ui.screen(), Screen::Update);
 }
 
 #[test]
