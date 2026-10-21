@@ -55,6 +55,11 @@ fn fmt_removes_an_empty_restrictions_file() {
     let Some(root) = content() else { return };
     let (_tmp, dir) = copy_pack(&root, "olx-classic");
     std::fs::write(dir.join("restrictions.ron"), "{}\n").unwrap();
+    // The shipped loadouts name the presets: without them, none.
+    let m = std::fs::read_to_string(dir.join("mod.ron")).unwrap();
+    let start = m.find("    loadouts: {").unwrap();
+    let end = start + m[start..].find("\n    },\n").unwrap() + "\n    },\n".len();
+    std::fs::write(dir.join("mod.ron"), format!("{}{}", &m[..start], &m[end..])).unwrap();
     assert_eq!(paths(&unformatted(&dir).unwrap()), ["restrictions.ron"]);
     assert_eq!(paths(&format(&dir).unwrap().files), ["restrictions.ron"]);
     assert!(!dir.join("restrictions.ron").exists());

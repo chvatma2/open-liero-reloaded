@@ -36,6 +36,8 @@ pub fn import_mod(olx: &dyn ContentSource, mod_dir: &VPath, origin: Origin) -> R
         Converter { olx, mod_dir, assets: BTreeMap::new(), sources: BTreeMap::new(), warnings: Vec::new() };
     let mut def = cx.convert(raw)?;
     def.restrictions = crate::wps::import_presets(olx, mod_dir)?;
+    let names: Vec<&str> = def.weapons.iter().map(|w| w.name.as_str()).collect();
+    def.loadouts = crate::wps::shipped_loadouts(&names, &def.restrictions);
     let manifest = PackManifest {
         format_version: PACK_FORMAT_VERSION,
         id: format!("olx-{}", slug(mod_dir.file_name())),

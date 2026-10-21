@@ -154,9 +154,32 @@ fn wps_presets_enable_what_olx_enables() {
     // A file that is not there leaves the list empty: every weapon enabled.
     assert_eq!(enabled(&classic, "No such preset").len(), 38);
 
+    // The shipped loadouts (issue #5): every preset but `Bonus only`, at
+    // the loading time its players chose.
+    let loadouts = |def: &olr_data::mod_def::ModDef| -> Vec<(String, i32, bool)> {
+        def.loadouts.iter().map(|(n, s)| (n.clone(), s.loading_time, s.unique)).collect()
+    };
+    let want = |t: &[(&str, i32)]| -> Vec<(String, i32, bool)> {
+        t.iter().map(|&(n, lt)| (n.to_string(), lt, false)).collect()
+    };
+    assert_eq!(
+        loadouts(&classic),
+        want(&[
+            ("Firebird", 100),
+            ("Restricted 100lt", 100),
+            ("Retro Classic", 100),
+            ("Retro Combo", 100),
+            ("Retro Combo Unlimited", 100),
+            ("Rifle only", 20),
+            ("Standard 100lt", 100),
+            ("Standard 20lt", 20),
+        ])
+    );
+
     let mw = olr_import_lgs::import_mod(&fs, &VPath::new("MW 1.0").unwrap(), origin()).unwrap().pack.def;
     let presets: Vec<&str> = mw.restrictions.keys().map(String::as_str).collect();
     assert_eq!(presets, ["Mortar Only", "Standard 100lt"]);
+    assert_eq!(loadouts(&mw), want(&[("Mortar Only", 20), ("Standard 100lt", 100)]));
     let mut got = enabled(&mw, "Standard 100lt");
     got.sort();
     assert_eq!(

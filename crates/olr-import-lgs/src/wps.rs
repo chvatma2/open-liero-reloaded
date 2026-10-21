@@ -3,7 +3,8 @@
 
 use std::collections::BTreeMap;
 
-use olr_data::restrictions::{Preset, WeaponState};
+use olr_data::loadouts::{DEFAULT_LOADING_TIME, MatchLoadout};
+use olr_data::restrictions::{Preset, ShippedLoadout, WeaponState};
 use olr_vfs::{ContentSource, VPath};
 
 use crate::LgsError;
@@ -94,6 +95,40 @@ pub fn import_presets(
     Ok(out)
 }
 
+/// The loading time (percent) the players of each OLX preset played it
+/// at, by preset name (compared ignoring ASCII case); every other preset is
+/// played at OLX's default 100 % (`src/common/FeatureList.cpp:31`). OLX kept
+/// `LoadingTime` apart from the preset; a shipped loadout puts them
+/// together (issue #5). OLX's bots key on the same pairs
+/// (`CWormBotInputHandler::initWeaponSelection`,
+/// `src/common/CWormBot.cpp:4129-4192`: rifles at 16-25 %, mortars below
+/// 50 %).
+pub const PRESET_LOADING_TIMES: &[(&str, i32)] =
+    &[("Standard 20lt", 20), ("Rifle only", 20), ("Mortar Only", 20)];
+
+/// The mod's shipped loadouts (`ModDef::loadouts`): one per preset of
+/// `presets` that enables a weapon of `weapons` (the mod's names), at its
+/// [`PRESET_LOADING_TIMES`] time, unique off. A preset enabling none
+/// (`Bonus only`: every weapon bonus-only) gives none: bonuses are not
+/// played (issue #5).
+pub fn shipped_loadouts(
+    weapons: &[&str],
+    presets: &BTreeMap<String, Preset>,
+) -> BTreeMap<String, ShippedLoadout> {
+    presets
+        .keys()
+        .filter_map(|name| {
+            let loading_time = PRESET_LOADING_TIMES
+                .iter()
+                .find(|(n, _)| n.eq_ignore_ascii_case(name))
+                .map_or(DEFAULT_LOADING_TIME, |&(_, lt)| lt);
+            let s = ShippedLoadout { loading_time, unique: false };
+            MatchLoadout::shipped(name, weapons, presets, s)?;
+            Some((name.clone(), s))
+        })
+        .collect()
+}
+
 /// Directory `path`, matching each component ignoring ASCII case (exact
 /// matches first), like [`olr_vfs::find_ci`] for files.
 fn find_dir_ci(src: &dyn ContentSource, path: &VPath) -> Option<VPath> {
@@ -130,6 +165,22 @@ mod tests {
                 ("mini nuke", Bonus),
             ]
         );
+    }
+
+    #[test]
+    fn presets_become_loadouts_at_their_loading_time() {
+        let p: BTreeMap<String, Preset> = [
+            ("Standard 100lt", parse_wps(b"Rifle,0\n")),
+            ("rifle ONLY", parse_wps(b"Laser,2\n")),
+            ("Bonus only", parse_wps(b"Rifle,1\nLaser,1\n")),
+        ]
+        .into_iter()
+        .map(|(n, p)| (n.to_string(), p))
+        .collect();
+        let l = shipped_loadouts(&["Rifle", "Laser"], &p);
+        let got: Vec<(&str, i32)> = l.iter().map(|(n, s)| (n.as_str(), s.loading_time)).collect();
+        assert_eq!(got, [("Standard 100lt", 100), ("rifle ONLY", 20)]);
+        assert!(l.values().all(|s| !s.unique));
     }
 
     #[test]

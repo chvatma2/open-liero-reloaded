@@ -12,7 +12,7 @@ mod wps;
 
 pub use convert::{ImportedMod, import_mod};
 pub use parse::{ProjNode, RawMod, RawWeapon, parse_lgs};
-pub use wps::{import_presets, parse_wps};
+pub use wps::{PRESET_LOADING_TIMES, import_presets, parse_wps, shipped_loadouts};
 
 /// Everything that can go wrong while importing a mod.
 #[derive(Debug, thiserror::Error)]

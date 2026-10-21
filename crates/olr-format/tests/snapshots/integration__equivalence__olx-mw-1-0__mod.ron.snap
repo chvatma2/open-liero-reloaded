@@ -59,4 +59,12 @@ expression: "String::from_utf8_lossy(bytes)"
         "force-field",
         "demolition-grenade",
     ],
+    loadouts: {
+        "Mortar Only": (
+            loading_time: 20,
+        ),
+        "Standard 100lt": (
+            loading_time: 100,
+        ),
+    },
 )

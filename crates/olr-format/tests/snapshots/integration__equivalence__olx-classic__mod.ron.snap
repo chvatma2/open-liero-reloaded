@@ -52,4 +52,30 @@ expression: "String::from_utf8_lossy(bytes)"
         "winchester",
         "zimm",
     ],
+    loadouts: {
+        "Firebird": (
+            loading_time: 100,
+        ),
+        "Restricted 100lt": (
+            loading_time: 100,
+        ),
+        "Retro Classic": (
+            loading_time: 100,
+        ),
+        "Retro Combo": (
+            loading_time: 100,
+        ),
+        "Retro Combo Unlimited": (
+            loading_time: 100,
+        ),
+        "Rifle only": (
+            loading_time: 20,
+        ),
+        "Standard 100lt": (
+            loading_time: 100,
+        ),
+        "Standard 20lt": (
+            loading_time: 20,
+        ),
+    },
 )

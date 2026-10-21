@@ -22,6 +22,11 @@ Imports OLX `script.lgs` gamescript **version 7** mods into `ModPack`s.
   name, as `ModDef::restrictions`. `parse_wps` reads lines like OLX (split at
   `,`, a state is `istringstream >> int` taken `MOD 3`, names kept as written,
   case-insensitive, last line wins).
+- **Shipped loadouts** (issue #5, `wps::shipped_loadouts`): every preset
+  that enables a weapon becomes a `ModDef::loadouts` entry at its
+  `PRESET_LOADING_TIMES` time (`Standard 20lt`, `Rifle only`, `Mortar Only`
+  20 %; any other 100 %), unique off; `Bonus only` enables none and is
+  left out.
 - **Never panic on input.** Property tests feed corrupted files.
 - Version 8 files are rejected (`UnsupportedVersion`); no mod in scope uses v8.
 
