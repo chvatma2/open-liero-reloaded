@@ -213,7 +213,9 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     host's frame time), `view_mode` (Lit, Full bright, Light only); none of
     them a step.
   - **Panels** (`ui/look.rs`, Task 18; issue #8): the level panel's
-    Lighting section (Add look / Remove look; ambient; its glow groups
+    Lighting section (Add look / Remove look; ambient; the occlusion's
+    strength and, when on, its reach right after the ambient colour (issue
+    #10: "Occlusion %", "Occlusion reach"; 0 removes it); its glow groups
     with colour, intensity, reach and the animation editor, Remove asking
     first, `Dialog::RemoveGroup`; max light, steps, softness, soak, solid
     floor and the grade under "Fine tuning"); an image or drawn element's
@@ -281,7 +283,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   clipboard, glow by colour) and `flows.rs` (the
   `egui_kittest` flows of spec §8; plan 15a's `glow_an_element_and_save`,
   `paint_glow_with_the_brush`, `glow_pixels_picked_by_colour`,
-  `edit_the_look_panel`,
+  `edit_the_look_panel`, `set_the_occlusion` (issue #10),
   `toggle_views_and_scrub_the_clock`; issue #8's
   `choose_a_tool_from_a_flyout`, `a_group_button_brings_back_its_last_tool`,
   `the_rail_highlights_the_chosen_tool`, `the_tool_options_follow_the_tool`,

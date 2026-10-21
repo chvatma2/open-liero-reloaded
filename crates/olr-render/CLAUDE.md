@@ -50,9 +50,11 @@ on screen or offscreen.
   vec4; 255 groups, `groups[v - 1]` for group value v, 0 none, in three
   arrays: cast and self-light scale, reach and own colour, and plan 15c's
   flicker (speed, depth, clock, seed); `frame.w` the bounce, `mode.w` the
-  bloom strength; non-finite values become 0) and play's discs into an
-  instance buffer (`pack_emitters`). `LIGHT_PAD`, `MAX_SOAK` and
-  `BLOOM_RADIUS` are prepended to the shaders from Rust. **Plan 15c**
+  bloom strength, `solid.w` the ambient occlusion's strength (0-1, 0
+  none) and `worm_floor.w` its reach (issue #10); non-finite values
+  become 0) and play's discs into an
+  instance buffer (`pack_emitters`). `LIGHT_PAD`, `MAX_SOAK`,
+  `BLOOM_RADIUS` and `OCCLUSION_PAD` are prepended to the shaders from Rust. **Plan 15c**
   (spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`): the
   glow light is the only light model (no placed lights, no shadow maps).
   A lit frame's passes, in order (`pass.rs`'s `draw`):
@@ -121,9 +123,24 @@ on screen or offscreen.
     (`region_flicker` in `common.wgsl`: value noise on a 32-bit hash;
     `two_flames_flicker_on_their_own`, `one_flame_flickers_as_one`,
     `pulse_groups_stay_in_step`, `regions_follow_glow_edits`).
+  - **Ambient occlusion** (issue #10, `fs_occlusion_h` in `light.wgsl`;
+    only when the frame's `LookFrame::occlusion` has a strength, otherwise
+    no pass runs): for each world pixel of the light grid and
+    `OCCLUSION_PAD` (`olr_look::MAX_OCCLUSION_REACH`, 32) rows above and
+    below it, the Gaussian-weighted share (sigma a third of the reach,
+    taps out to the reach) of opaque solids along its row, read from the
+    world-size solid map (outside the level open), into `LitTarget`'s
+    occlusion rows (`Rgba16Float`, made with every lit target).
   - **Sum** (`fs_sum`): the light grid, one texel per world pixel of the
     world target plus `LIGHT_PAD` on every side (`Rgba16Float`): ambient
-    and glow light.
+    and glow light. With occlusion (`ambient_share`), an air texel's
+    ambient (not its glow light) is scaled by `1 - strength × s(x)`: the
+    rows weighed down its column, divided by a thick flat wall's face
+    share, `x` at most 1, `s(x) = 1 - (1 - x)²`; a solid keeps its
+    ambient; without it the ambient is unscaled (the same bytes)
+    (`occlusion_darkens_a_narrow_tunnel`, `occlusion_leaves_glow_light_alone`,
+    `occlusion_keeps_the_worm_floor`, `occlusion_follows_digging`,
+    `occlusion_is_camera_independent`).
   - **Soak** (`soak.wgsl`, Task 14a): `fs_soak_h` across, `fs_soak_v` down:
     an opaque solid texel takes the most light within the soak of it,
     faded by distance; `fs_soak_v` raises it to the solid floor. Air keeps
@@ -239,7 +256,9 @@ on screen or offscreen.
   The look goldens (plan 15a Tasks 14, 16): `look-lit.png`,
   `look-light.png` (`--view light`), `look-full.png` (`--view full`) and
   `look-t500.png` (`--time 500`) are `olr-cli look-preview` of
-  `fixtures/look/levels/look-test` at (256, 128); `look-rocket.png` is
+  `fixtures/look/levels/look-test` at (256, 128); `look-occlusion.png`
+  and `look-occlusion-light.png` (issue #10) of its copy
+  `look-test-occlusion` (ambient `#405880` at 40, occlusion 80 over 16 px); `look-rocket.png` is
   `olr-cli render-match` of chaos bots with the look test mod
   (`fixtures/look/mods`), seed 1, 300 ticks.
 - **Instance buffer** (`instance_buffer_bytes()`): grows to the busiest
@@ -261,6 +280,6 @@ geometry, image diff, `shade_texel_table`, the cascades' layout). The GPU
 tests (`tests/gpu.rs`; the look's read the light grid back with
 `read_light`: ambient, steps, view modes, walls, reach, edges, soak and
 floor, softness, glow light, clear solids, discs, bounce, flicker, glare,
-the disc cap, GL) and goldens need
+the disc cap, ambient occlusion, GL) and goldens need
 `OLR_GPU_TESTS=1`; `cargo xtask full` sets it and runs them, skipping with a
 notice when no adapter opens (`cargo run -p olr-render --example adapter`).

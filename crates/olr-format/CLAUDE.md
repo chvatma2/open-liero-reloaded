@@ -155,7 +155,10 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `AmbientSource`, `max_light` 100-200, `light_steps` 0 or 2-32,
   `softness` 0-4, `light_soak` 0-`olr_look::MAX_SOAK` default 8,
   `solid_floor` `SolidFloorSource` default white at 30 % (both plan 15a
-  Stop 1b; plan 15c removed `shadows`: an unknown field,
+  Stop 1b; issue #10: `occlusion`, an optional `OcclusionSource` of
+  `strength` 1-100 (0 refused: absent is off) and `reach`
+  `olr_look::MIN_OCCLUSION_REACH`-`MAX_OCCLUSION_REACH`, 2-32, default
+  `DEFAULT_OCCLUSION_REACH` 12; plan 15c removed `shadows`: an unknown field,
   `shadows_is_an_unknown_field`), `grade` `GradeSource`, `glow_groups`
   at most `MAX_GROUPS` 255), `GlowGroupSource` (an id by `valid_group_id`,
   a slug of `[a-z0-9_.-]` of 1-64 bytes not starting with `.`, unique;
@@ -241,7 +244,7 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   the solid floor, capped at max light, the mean graded; no soak, softness
   or steps. Without a look, or with one that does not compile, it is
   `thumbnail(front)` (`tests/look.rs`: the plain one kept, a dark level,
-  glow spilling, the solid floor).
+  glow spilling, the solid floor; the occlusion left out, issue #10).
 - **`canonical_text(path, text)`** (plan 13d): one authoring file (by its
   path in the pack: `mod.ron`, `weapons/<id>.ron` with a valid id,
   `level.ron`, ...) parsed as its type and written again canonically; it
@@ -278,7 +281,9 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   to `olr_pack::validate`, inline projectile looks under their key,
   `bundled_mods_have_no_look`, `the_default_look_is_the_empty_file`,
   `solids_defaults_are_the_stop_1_verdict`, `a_light_object_is_an_error`,
-  `shadows_is_an_unknown_field`. Unit tests in each module's files cover its checks. The
+  `shadows_is_an_unknown_field`; issue #10:
+  `occlusion_round_trips_and_is_bounded`,
+  `occlusion_changes_the_content_hash`, `the_thumbnail_leaves_occlusion_out`. Unit tests in each module's files cover its checks. The
   bundled-content tests skip when `OLR_CONTENT_DIR` is not a directory.
   Every `check()` applies the pixel bound its reader decodes with
   (`image_io::check_size`), so a saved file always reopens.

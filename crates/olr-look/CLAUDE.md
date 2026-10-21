@@ -13,6 +13,7 @@ own look. The simulation never sees it.
   `f32::INFINITY` for unlimited), `PulseShape`, `Key`, `GlowGroup` (id,
   `GlowColour::Own | Tint`, intensity, reach, animation, phase),
   `LevelLook`,
+  `Occlusion` (issue #10: `strength` percent, `reach` world pixels),
   `ProjectileLook` (`glow`, `light`, `end_flash`), `WeaponLook`
   (`muzzle_light`), `ModLook` (indexed like `SimMod::projectiles` and
   `SimMod::weapons`; `is_empty`), `Grade` (exposure in 1/100 stop, contrast
@@ -21,7 +22,8 @@ own look. The simulation never sees it.
   bound; this crate clamps again where a value is read, so a hand-built
   value never misbehaves.
 - **`LevelLook`** (plan 15a Tasks 14a-14b, the user's Stop 1 verdict):
-  ambient, `max_light` (100-200 percent), `light_steps` (0 or 2-32 bands),
+  ambient, `occlusion` (issue #10: `Option<Occlusion>`, the ambient
+  light's darkening in air near solids; `None` off), `max_light` (100-200 percent), `light_steps` (0 or 2-32 bands),
   `softness` (0-4 world pixels of blur), `light_soak` (world pixels light
   soaks into solids, 0-`MAX_SOAK`), `solid_floor` (an `Ambient`: the least
   light an opaque solid pixel shows), `grade` and `groups`: its glowing
@@ -47,7 +49,10 @@ own look. The simulation never sees it.
   each region on its own) and clears the emitters; it keeps `mode`
   (`ViewMode`: `Lit`, `FullBright`, `LightOnly`, the editor's toggle) and
   the vectors' capacity. It clamps `max_light` to 1.0-2.0, `softness` to 4
-  and `light_soak` to `MAX_SOAK` (12); `solid_floor` is linear,
+  and `light_soak` to `MAX_SOAK` (12), and keeps the `occlusion` with a
+  strength (at most 100), its reach clamped to `MIN_OCCLUSION_REACH` (2)
+  to `MAX_OCCLUSION_REACH` (32; the renderer reads the solid map that far
+  past its light grid), `None` without a look; `solid_floor` is linear,
   `worm_floor` is `worm_floor_of` the ambient colour as set (35 % white
   without a level look). Without a level look the frame is full ambient
   with no soak, floor, steps, blur, grade or bounce. `emitters` (plan 15c)
@@ -81,7 +86,8 @@ own look. The simulation never sees it.
   deterministic and bounded, phases, `hostile_animations_never_panic`) and
   `frame.rs` (the fade profile, `begin` with and without a level look, an
   animated group, `light_at`, `engine_numbers_match_r13`,
-  `worm_floor_hues`, `solids_settings_are_bounded_and_off_without_a_look`;
+  `worm_floor_hues`, `solids_settings_are_bounded_and_off_without_a_look`
+  (the occlusion too, issue #10);
   plan 15c: `disc_calibration_matches_todays_light`,
   `emitters_past_the_cap_are_dropped`, `bounce_is_the_engines_in_a_lit_level`,
   `a_flicker_group_flickers_per_region`).

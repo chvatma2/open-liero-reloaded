@@ -84,7 +84,8 @@ The headless command-line tool. Its commands:
   both count in the summary. Tests: `tests/element.rs` (plan 15a:
   `cli_sets_and_paints_glow`, `cli_glows_pixels_by_colour`,
   `cli_sets_clear`).
-- `olr-cli level look <pack> [--ambient RRGGBB:PCT] [--max-light P]
+- `olr-cli level look <pack> [--ambient RRGGBB:PCT] [--occlusion
+  S[,R] | --no-occlusion] [--max-light P]
   [--steps N] [--softness N] [--soak N] [--solid-floor RRGGBB:PCT]
   [--exposure N] [--contrast P] [--saturation P] [--tint RRGGBB] |
   --clear`, `level group add|set|remove <pack> <id> [--colour own|RRGGBB]
@@ -96,7 +97,9 @@ The headless command-line tool. Its commands:
   then the thumbnail refreshed, lit by the look (the user's note,
   2026-10-19; `look_commands_refresh_the_lit_thumbnail`).
   `level look` sets the given fields (a look made when the level has
-  none); `--clear` removes the look and every group first (their elements
+  none; issue #10: `--occlusion STRENGTH[,REACH]`, the reach 12 when not
+  given, sets the ambient occlusion and `--no-occlusion` removes it, both
+  conflicting with `--clear`); `--clear` removes the look and every group first (their elements
   stop glowing) and rebakes. `group add` (needs
   `--reach`) prints `added group <i>`; `group remove` zeroes its pixels'
   strength, renumbers the groups above it, rebakes a composed level and
@@ -155,7 +158,10 @@ The headless command-line tool. Its commands:
   854 × 384 by default; the renderer's warnings print on stderr.
   The fast loop for a look, and the look goldens
   (`look-lit.png`, `look-light.png`, `look-full.png`, `look-t500.png`:
-  `fixtures/look/levels/look-test` at 256,128). Tests:
+  `fixtures/look/levels/look-test` at 256,128; issue #10's
+  `look-occlusion.png` and `look-occlusion-light.png`: its copy
+  `look-test-occlusion`, ambient `#405880` at 40 and occlusion 80 over
+  16 px). Tests:
   `tests/look_preview.rs` (`look_preview_writes_a_png` edits a copy of
   Dirt Level with `level look` and a glowing patch, `level group add` and
   `level element set|glow`; `render_match_writes_a_png`).
@@ -493,13 +499,17 @@ The headless command-line tool. Its commands:
   [--start-tick 1000] [--frames 600] [--probe-passes 0,1,2,4,8,16,32]
   [--probe-taps 9] [--probe-frames 120] [--adapter hardware|software]
   [--backend auto|gl|vulkan|dx12] [--content DIR] [--out F.ron]
-  [--list-adapters]`: the GPU half of the performance envelope (plan 8,
+  [--list-adapters] [--look [--occlusion S[,R]]]`: the GPU half of the
+  performance envelope (plan 8,
   `gpu_bench.rs`, the command in `gpu_bench_cmd.rs`). A recorded match
   (`stress --record`) on the assets its packs name (`LevelAssets`, so a
   generated level too) is played unrendered to `--start-tick`, then each
   measured tick and its frame is drawn offscreen at each size on
   `Offscreen::open` (the view, `Viewport::GAME`, over the whole target, no
-  HUD: ruling P11), the device waited for after each frame; then the
+  HUD: ruling P11), the device waited for after each frame (`--look`: the
+  level drawn with `gpu_bench::bench_look`; `--occlusion` (issue #10,
+  only with it) adds ambient occlusion to that look, named in the report's
+  `scene`); then the
   shader-headroom probe (`olr_render::Probe`, 0 passes first: the
   baseline, which runs the probe's untimed seed of the drawn frame too) for `--probe-frames` frames at each pass count. `GpuReport`
   (RON with `--out`; `cargo xtask envelope` reads it): adapter, backend,
@@ -733,8 +743,9 @@ instead of reading as 0 (rewrite with `OLR_BLESS_TOOL_OUTPUT=1`).
 `tests/gpu_bench.rs` (the GPU tier, `cargo xtask full`, `OLR_GPU_TESTS=1`)
 records a short stress match and runs `gpu_bench::run` on it on the
 software adapter at 320 × 180 with a 2-pass probe (GPU probe time above 0
-when the adapter has timestamps; lavapipe has them), and a tampered replay
-is refused at its checksum.
+when the adapter has timestamps; lavapipe has them), `--look` and, issue
+#10, `--occlusion` (refused without the look), and a tampered replay is
+refused at its checksum.
 `benches/game.rs` (divan, `cargo xtask bench`): 8 bots' think + tick and a
 draw-list build on a warm Classic match (needs `OLR_CONTENT_DIR`).
 `tests/render_golden.rs` (the GPU frame goldens) runs in `cargo xtask full`
