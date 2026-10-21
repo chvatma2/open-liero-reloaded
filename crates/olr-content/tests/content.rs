@@ -301,6 +301,30 @@ fn missing_assets_use_placeholders() {
     assert!(fired > 0);
 }
 
+/// Issue #18: a mod pack read elsewhere (the mod editor's unsaved mod)
+/// loads as the installed one does: the same compiled mod, images,
+/// sounds, look and warnings.
+#[test]
+fn a_mod_pack_given_loads_as_an_installed_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    synthetic(tmp.path());
+    let content = Content::open(tmp.path()).unwrap();
+    let installed = content.load_mod("broken-mod").unwrap();
+    let given = content.load_mod_pack("broken-mod", broken_mod()).unwrap();
+    assert_eq!(given.sim, installed.sim);
+    assert_eq!(given.images, installed.images);
+    assert_eq!(given.sounds, installed.sounds);
+    assert_eq!(given.look, installed.look);
+    assert_eq!(given.warnings, installed.warnings);
+    let Some(dir) = content_dir() else { return };
+    let content = Content::open(Path::new(&dir)).unwrap();
+    let pack = olr_pack::read_mod(&DirFs::new(Path::new(&dir).join("olx-classic"))).unwrap();
+    let given = content.load_mod_pack("olx-classic", pack).unwrap();
+    let installed = content.load_mod("olx-classic").unwrap();
+    assert_eq!(given.sim, installed.sim);
+    assert_eq!(given.sounds, installed.sounds, "OLX's game sounds come from the core pack");
+}
+
 /// Issue #12: a double-resolution skin loads at its layout, with its glow
 /// as overlays per strength and its light per frame; a classic skin (the
 /// placeholder) has neither.

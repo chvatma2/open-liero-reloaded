@@ -65,7 +65,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   frame count is an error (`check_frames`). `load_mod(id)` gives such a
   projectile a one-frame placeholder. On good content both give the same
   `SimMod` (`tests/content.rs`). Frame counts are `width / height` of the
-  pack's PNGs (spec §18 D3).
+  pack's PNGs (spec §18 D3). `load_mod_pack(id, ModPack)` is `load_mod` on
+  a pack read elsewhere (issue #18: the mod editor's unsaved mod, from
+  `olr_edit::pack::mod_pack`), its game sounds from this content's core
+  pack (`a_mod_pack_given_loads_as_an_installed_one`).
 - **Hostile sounds** (`sounds.rs`): a sound above `MAX_SOUND_BYTES` (2 MiB)
   or longer than `MAX_SOUND_SECONDS` (60 s) by its header (Ogg granule over
   rate, WAV data over byte rate) is silence with a warning, from a mod or

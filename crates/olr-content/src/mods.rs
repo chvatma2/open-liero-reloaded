@@ -136,7 +136,14 @@ impl Content {
     /// missing sound silence, each with a warning. Errors are only for what
     /// cannot run: an unreadable pack or a mod `SimMod::compile` refuses.
     pub fn load_mod(&self, id: &str) -> anyhow::Result<LoadedMod> {
-        let pack = self.mod_pack(id)?;
+        self.load_mod_pack(id, self.mod_pack(id)?)
+    }
+
+    /// Mod `pack`, read elsewhere (issue #18: the mod editor's unsaved mod,
+    /// `olr_edit::pack::mod_pack`), ready to play as [`Content::load_mod`]
+    /// makes an installed one: its game sounds from this content's core
+    /// pack, its warnings naming `id`.
+    pub fn load_mod_pack(&self, id: &str, pack: olr_pack::ModPack) -> anyhow::Result<LoadedMod> {
         let mut warnings = Vec::new();
         let (mut images, mut frames) = (BTreeMap::new(), BTreeMap::new());
         for (path, img) in decode_pngs(&pack) {
