@@ -176,3 +176,7 @@
 2026-10-21 bless-render: #10: the occluded look test level's goldens (look-occlusion, look-occlusion-light: ambient #405880 at 40, occlusion 80 over 16 px)
   fixtures/render/look-occlusion-light.png
   fixtures/render/look-occlusion.png
+2026-10-21 bless-render: #11: the distant demo level's goldens (two camera positions lit, one full bright)
+  fixtures/render/look-distant-a.png
+  fixtures/render/look-distant-b.png
+  fixtures/render/look-distant-full.png

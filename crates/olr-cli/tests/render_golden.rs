@@ -203,6 +203,36 @@ fn look_test_level_occluded_light() {
     look_golden_of("look-test-occlusion", "look-occlusion-light.png", &["--view", "light"]);
 }
 
+/// Issue #11: `look-preview` of the distant demo level (a copy of the look
+/// test level, `fixtures/look/levels/look-test-distant`: its base split,
+/// two gaps erased through every layer, a night sky at depth 90 and a far
+/// city at depth 55, both images, `level element add-image … --material
+/// background` then `set --distant N`) centred on `at`.
+fn distant_golden(name: &str, at: &str, extra: &[&str]) {
+    let Some(content) = content_dir() else { return };
+    let pack = root().join("fixtures/look/levels/look-test-distant");
+    compare(name, &["look-preview", pack.to_str().unwrap(), "--at", at, "--content", &content], extra);
+}
+
+/// The camera at the level's top-left as far as the view goes: the city
+/// and the moon shifted by their depths, lit by the dark ambient.
+#[test]
+fn distant_layers_top_left() {
+    distant_golden("look-distant-a.png", "213,96", &[]);
+}
+
+/// The camera at its bottom-right: the layers moved less than the level.
+#[test]
+fn distant_layers_bottom_right() {
+    distant_golden("look-distant-b.png", "299,160", &[]);
+}
+
+/// Full bright: the layers' own colours.
+#[test]
+fn distant_layers_full_bright() {
+    distant_golden("look-distant-full.png", "213,96", &["--view", "full"]);
+}
+
 /// A chaos-bot match on the look test level with the look test mod's
 /// Glow Rocket (plan 15a Task 16): rockets with their light, end flashes,
 /// muzzle and explosion lights, the worms' floor.

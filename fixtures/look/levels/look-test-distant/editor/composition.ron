@@ -1,0 +1,113 @@
+(
+    elements: [
+        (
+            id: "night-sky",
+            name: "Night sky",
+            kind: Image(
+                material: Background,
+                source: "sky.png",
+                at: (-44, -32),
+                size: (600, 320),
+            ),
+            distant: 90,
+        ),
+        (
+            id: "far-city",
+            name: "Far city",
+            kind: Image(
+                material: Background,
+                source: "skyline.png",
+                at: (-44, 124),
+                size: (600, 130),
+            ),
+            distant: 55,
+        ),
+        (
+            id: "background",
+            name: "Background",
+            kind: Drawn(
+                material: Background,
+            ),
+        ),
+        (
+            id: "dirt",
+            name: "Dirt",
+            kind: Drawn(
+                material: Dirt,
+            ),
+        ),
+        (
+            id: "rock",
+            name: "Rock",
+            kind: Drawn(
+                material: Rock,
+            ),
+        ),
+        (
+            id: "air",
+            name: "Air",
+            kind: Drawn(
+                material: Background,
+            ),
+        ),
+        (
+            id: "sky",
+            name: "Sky",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "sky",
+            ),
+        ),
+        (
+            id: "building",
+            name: "Building",
+            kind: Drawn(
+                material: Rock,
+            ),
+        ),
+        (
+            id: "glass",
+            name: "Glass",
+            kind: Drawn(
+                material: Rock,
+            ),
+            clear: true,
+        ),
+        (
+            id: "lava",
+            name: "Lava",
+            kind: Drawn(
+                material: Dirt,
+            ),
+            glow: (
+                strength: 100,
+                group: "lava",
+            ),
+        ),
+        (
+            id: "lamp-warm",
+            name: "Lamp warm",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "lamp-warm",
+            ),
+        ),
+        (
+            id: "lamp-cool",
+            name: "Lamp cool",
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "lamp-cool",
+            ),
+        ),
+    ],
+)
