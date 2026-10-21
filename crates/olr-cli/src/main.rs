@@ -1,5 +1,6 @@
 //! `olr-cli`: headless tools for OLR. Run `olr-cli --help`.
 
+mod asset_cmd;
 mod element_cmd;
 mod gpu_bench_cmd;
 mod import;
@@ -48,6 +49,9 @@ enum Command {
     Render(render::Args),
     /// Draw a level with its look (no match) to a PNG, offscreen.
     LookPreview(look_preview::Args),
+    /// The level editor's assets: save one from a level pack, place one in a level pack,
+    /// check asset folders.
+    Asset(asset_cmd::Args),
     /// Play a headless bot match on any packs and render its last tick to a PNG, offscreen.
     RenderMatch(render_match::Args),
     /// Play a headless bot match: invariants every tick, tick times, determinism,
@@ -103,6 +107,7 @@ fn main() -> ExitCode {
         Command::Scenario(args) => scenario::run(&args),
         Command::Render(args) => render::run(&args),
         Command::LookPreview(args) => look_preview::run(&args),
+        Command::Asset(args) => asset_cmd::run(&args),
         Command::RenderMatch(args) => render_match::run(&args),
         Command::Match(args) => match_cmd::run(&args),
         Command::NetSim(args) => net_sim_cmd::run_cmd(args),
