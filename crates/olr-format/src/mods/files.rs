@@ -2,7 +2,9 @@
 //! `projectiles/<id>.ron` and `restrictions.ron`. Other paths
 //! (`pack.ron`, assets) belong to `olr-pack` and are ignored here.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
+
+use olr_data::loadouts::ShippedLoadout;
 
 use olr_vfs::{ContentSink, ContentSource, VPath, walk};
 use serde::{Deserialize, Serialize};
@@ -34,6 +36,13 @@ pub(crate) struct ModFile {
     /// The weapon ids, in order: `weapons/<id>.ron` each; a weapon's index is
     /// its id in the game. At most `MAX_WEAPONS` (512).
     weapons: Vec<String>,
+    /// The mod's shipped loadouts (read-only in the game; every mod also has
+    /// `Default`, every weapon at 100 %), each keyed by the name of a preset
+    /// of `restrictions.ron`: the weapons that preset enables (Bonus and
+    /// Banned off), at its loading time. Not an OLX field: OLX set
+    /// `LoadingTime` apart from the preset. At most `MAX_LOADOUTS` (64).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    loadouts: BTreeMap<String, ShippedLoadout>,
 }
 
 /// The paths the writer writes for `src`, without encoding anything.
@@ -73,6 +82,7 @@ pub fn write_mod_files(sink: &mut dyn ContentSink, m: &ModSource) -> Result<(), 
         worm: m.worm.clone(),
         rope: m.rope.clone(),
         weapons: m.weapons.iter().map(|(id, _)| id.clone()).collect(),
+        loadouts: m.loadouts.clone(),
     };
     write_text(sink, MOD_FILE, &to_canonical(MOD_FILE, &file)?)?;
     for (id, w) in &m.weapons {
@@ -117,8 +127,8 @@ pub fn read_mod_files(src: &dyn ContentSource) -> Result<ModSource, FormatError>
         weapons.push((id.clone(), from_canonical(&f, &read_text(src, &f)?)?));
     }
     let io = |file: &str, message: String| FormatError::Io { file: file.into(), message };
-    let mut shared = std::collections::BTreeMap::new();
-    let mut restrictions = std::collections::BTreeMap::new();
+    let mut shared = BTreeMap::new();
+    let mut restrictions = BTreeMap::new();
     for path in walk(src, &VPath::root()).map_err(|e| io("", e.to_string()))? {
         let s = path.as_str();
         if let Some(rest) = s.strip_prefix("weapons/") {
@@ -155,6 +165,7 @@ pub fn read_mod_files(src: &dyn ContentSource) -> Result<ModSource, FormatError>
         weapons,
         shared,
         restrictions,
+        loadouts: file.loadouts,
     })
 }
 
@@ -188,6 +199,7 @@ mod tests {
             weapons: vec![("gun".into(), w)],
             shared: [("shell".to_string(), Projectile::new(Gfx::Pixels(vec![])))].into_iter().collect(),
             restrictions: Default::default(),
+            loadouts: Default::default(),
         }
     }
 

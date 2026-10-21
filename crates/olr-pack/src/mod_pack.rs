@@ -70,23 +70,14 @@ pub fn read_mod(src: &dyn ContentSource) -> Result<ModPack, PackError> {
     Ok(ModPack { manifest, def, look, assets })
 }
 
-/// The names of the mod's weapon restriction presets
-/// ([`RESTRICTIONS_FILE`]), sorted; none when the pack has no presets. Reads
-/// only the manifest and that file (a menu's list).
-pub fn read_preset_names(src: &dyn ContentSource) -> Result<Vec<String>, PackError> {
+/// The mod's definitions (`ModDef`: name, weapons, presets, shipped
+/// loadouts) without its assets: no image or sound is read (a menu's list).
+pub fn read_mod_def(src: &dyn ContentSource) -> Result<ModDef, PackError> {
     let manifest = read_manifest(src)?;
     if manifest.kind != PackKind::Mod {
         return Err(PackError::invalid(MANIFEST, "manifest kind is not Mod"));
     }
-    let path = VPath::new(RESTRICTIONS_FILE)?;
-    if !src.exists(&path) {
-        return Ok(Vec::new());
-    }
-    let text = String::from_utf8(src.read_max(&path, olr_format::ron_io::MAX_RON_BYTES)?)
-        .map_err(|_| PackError::invalid(RESTRICTIONS_FILE, "not UTF-8"))?;
-    let presets: BTreeMap<String, olr_data::restrictions::Preset> =
-        olr_format::ron_io::from_canonical(RESTRICTIONS_FILE, &text)?;
-    Ok(presets.into_keys().collect())
+    Ok(compile_mod(&read_mod_files(src)?)?)
 }
 
 #[cfg(test)]
@@ -184,6 +175,11 @@ pub(crate) mod tests {
                 )]
                 .into_iter()
                 .collect(),
+                loadouts: [(
+                    "Standard 100lt".to_string(),
+                    olr_data::loadouts::ShippedLoadout { loading_time: 40, unique: true },
+                )]
+                .into(),
             },
             assets: [
                 (VPath::new("gfx/missile.png").unwrap(), b"png".to_vec()),
@@ -233,23 +229,24 @@ pub(crate) mod tests {
     fn a_mod_without_presets_has_no_restrictions_file() {
         let mut pack = sample_mod();
         pack.def.restrictions.clear();
+        pack.def.loadouts.clear();
         let mut fs = MemFs::new();
         write_mod(&mut fs, &pack).unwrap();
         assert!(fs.files().all(|(p, _)| p.as_str() != RESTRICTIONS_FILE));
         assert_eq!(read_mod(&fs).unwrap(), pack);
-        assert!(read_preset_names(&fs).unwrap().is_empty());
+        assert!(read_mod_def(&fs).unwrap().restrictions.is_empty());
     }
 
     #[test]
-    fn preset_names_read_alone() {
+    fn definitions_read_without_assets() {
         let pack = sample_mod();
         let mut fs = MemFs::new();
         write_mod(&mut fs, &pack).unwrap();
-        let names: Vec<String> = pack.def.restrictions.keys().cloned().collect();
-        assert!(!names.is_empty());
-        assert_eq!(read_preset_names(&fs).unwrap(), names);
+        // The loadouts and presets come back; an asset is never read.
+        let fs = fs.with("gfx/missile.png", b"not even a png".to_vec());
+        assert_eq!(read_mod_def(&fs).unwrap(), pack.def);
         let fs = fs.with(RESTRICTIONS_FILE, b"[".to_vec());
-        assert!(read_preset_names(&fs).is_err());
+        assert!(read_mod_def(&fs).is_err());
     }
 
     #[test]

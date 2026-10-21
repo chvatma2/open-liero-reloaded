@@ -193,6 +193,7 @@ fn mod_template(name: &str) -> ModSource {
         weapons: vec![("gun".into(), gun)],
         shared: BTreeMap::new(),
         restrictions: BTreeMap::from([("Standard".to_string(), standard)]),
+        loadouts: BTreeMap::new(),
     }
 }
 

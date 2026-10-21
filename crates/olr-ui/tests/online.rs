@@ -23,6 +23,7 @@ pub fn catalog() -> Catalog {
             id: "olx-classic".into(),
             name: "Liero v1.0".into(),
             presets: vec!["Standard 100lt".into()],
+            ..ModInfo::default()
         }],
         levels: (0..3)
             .map(|i| LevelInfo {

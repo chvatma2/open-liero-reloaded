@@ -4,6 +4,7 @@
 use std::collections::BTreeMap;
 
 use olr_data::image::Rgba;
+use olr_data::loadouts::ShippedLoadout;
 use olr_data::restrictions::{Preset, WeaponState};
 use olr_format::Colour;
 use olr_format::mods::*;
@@ -366,9 +367,9 @@ fn mod_source() -> impl Strategy<Value = ModSource> {
         (text(), text(), worm(), rope()),
         btree_map(name(), weapon(), 1..3),
         btree_map(name(), leaf(), 0..2),
-        restrictions(),
+        (restrictions(), btree_map(name(), (0..=500i32, any::<bool>()), 0..3)),
     )
-        .prop_map(|((name, notes, worm, rope), weapons, shared, restrictions)| ModSource {
+        .prop_map(|((name, notes, worm, rope), weapons, shared, (restrictions, loadouts))| ModSource {
             name,
             notes,
             worm,
@@ -382,6 +383,10 @@ fn mod_source() -> impl Strategy<Value = ModSource> {
                 })
                 .collect(),
             restrictions,
+            loadouts: loadouts
+                .into_iter()
+                .map(|(k, (loading_time, unique))| (k, ShippedLoadout { loading_time, unique }))
+                .collect(),
         })
 }
 

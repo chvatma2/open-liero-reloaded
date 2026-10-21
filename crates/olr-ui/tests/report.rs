@@ -25,7 +25,12 @@ struct App {
 
 fn catalog() -> Catalog {
     Catalog {
-        mods: vec![ModInfo { id: "olx-classic".into(), name: "Liero v1.0".into(), presets: vec![] }],
+        mods: vec![ModInfo {
+            id: "olx-classic".into(),
+            name: "Liero v1.0".into(),
+            presets: vec![],
+            ..ModInfo::default()
+        }],
         levels: vec![LevelInfo {
             id: "olx-level-dirt-level".into(),
             name: "Dirt Level".into(),

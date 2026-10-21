@@ -12,6 +12,7 @@ use super::spawn::{Spawn, SpawnContext};
 use super::types::*;
 use super::{ModSource, Rope, Worm};
 use crate::FormatError;
+use olr_data::loadouts::{DEFAULT_LOADOUT, LOADING_TIME_RANGE, ShippedLoadout, clean_name};
 
 pub const MAX_INLINE_DEPTH: usize = 32;
 pub const MAX_WEAPONS: usize = 512;
@@ -20,6 +21,8 @@ pub const MAX_EFFECTS: usize = 16;
 pub const MAX_COLOURS: usize = 256;
 /// The most children one spawn makes at once (`olr-sim`'s `MAX_AMOUNT`).
 pub const MAX_AMOUNT: i32 = 1000;
+/// The most shipped loadouts a mod lists.
+pub const MAX_LOADOUTS: usize = 64;
 
 pub(crate) const MOD_FILE: &str = "mod.ron";
 
@@ -57,6 +60,29 @@ struct Compiler<'a> {
 pub struct ModLookSource {
     pub projectiles: BTreeMap<String, olr_look::ProjectileLook>,
     pub weapons: Vec<Option<olr_look::WeaponLook>>,
+}
+
+/// The shipped loadouts, each naming a preset of `restrictions.ron` (not
+/// `Default`, which every mod has), its name usable as a loadout's
+/// (`olr_data::loadouts::clean_name` leaves it as it is) and its loading
+/// time within `LOADING_TIME_RANGE`.
+fn check_loadouts(src: &ModSource) -> Result<BTreeMap<String, ShippedLoadout>, FormatError> {
+    if src.loadouts.len() > MAX_LOADOUTS {
+        return Err(FormatError::invalid(MOD_FILE, "loadouts", format!("more than {MAX_LOADOUTS} loadouts")));
+    }
+    for (name, l) in &src.loadouts {
+        let bad = |why: String| Err(FormatError::invalid(MOD_FILE, &format!("loadouts.{name}"), why));
+        if !src.restrictions.contains_key(name) {
+            return bad("names no preset of restrictions.ron".into());
+        }
+        if name == DEFAULT_LOADOUT || clean_name(name) != *name {
+            return bad("is not a usable loadout name".into());
+        }
+        if !LOADING_TIME_RANGE.contains(&l.loading_time) {
+            return bad(format!("loading_time {} is not within {LOADING_TIME_RANGE:?}", l.loading_time));
+        }
+    }
+    Ok(src.loadouts.clone())
 }
 
 pub fn compile_mod(src: &ModSource) -> Result<rt::ModDef, FormatError> {
@@ -121,6 +147,7 @@ fn compile_all(src: &ModSource) -> Result<(rt::ModDef, ModLookSource), FormatErr
         weapons,
         projectiles: c.out,
         restrictions: src.restrictions.clone(),
+        loadouts: check_loadouts(src)?,
     };
     // No weapon look at all is no list: a mod without looks is the empty look.
     if weapon_looks.iter().all(Option::is_none) {
@@ -606,6 +633,7 @@ mod tests {
             )],
             shared: BTreeMap::new(),
             restrictions: BTreeMap::new(),
+            loadouts: Default::default(),
         }
     }
 

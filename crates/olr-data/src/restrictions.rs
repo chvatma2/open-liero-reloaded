@@ -10,6 +10,7 @@ use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
+use crate::loadouts::MatchLoadout;
 use crate::mod_def::ModDef;
 
 /// OLX's default `WeaponRestrictionsFile` (`src/common/FeatureList.cpp:41`).
@@ -36,6 +37,25 @@ impl WeaponState {
             _ => WeaponState::Banned,
         }
     }
+}
+
+/// A shipped loadout as a mod pack lists it in `mod.ron`'s `loadouts`,
+/// keyed by the name of the preset whose weapons it enables (issue #5, not
+/// an OLX setting; the game's side is `olr_data::loadouts`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ShippedLoadout {
+    /// Percent, 0 to 500 (OLX's `LoadingTime` range,
+    /// `src/common/FeatureList.cpp:31`): weapons reload in `100 / loading_time`
+    /// times their time.
+    pub loading_time: i32,
+    /// A worm's slots must hold different weapons.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub unique: bool,
+}
+
+fn is_false(b: &bool) -> bool {
+    !*b
 }
 
 /// One `.wps` file as `CWpnRest::loadList` holds it: weapon name to state.
@@ -89,6 +109,9 @@ pub struct WeaponRules {
     weapons: Vec<String>,
     /// `m_psWeaponList`: unique ignoring ASCII case.
     list: Vec<(String, WeaponState)>,
+    /// A loadout's unique rule (issue #5, not OLX's): a worm's slots hold
+    /// different weapons ([`crate::loadouts::unique_ok`]).
+    unique: bool,
 }
 
 impl WeaponRules {
@@ -107,7 +130,8 @@ impl WeaponRules {
         file: &str,
     ) -> Self {
         let weapons: Vec<String> = weapons.into_iter().map(ToString::to_string).collect();
-        let mut rules = WeaponRules { mod_name: mod_name.to_string(), weapons, list: Vec::new() };
+        let mut rules =
+            WeaponRules { mod_name: mod_name.to_string(), weapons, list: Vec::new(), unique: false };
         // loadList: a preset map can hold names equal but for case only if
         // it was written by hand; the first in map order wins, as a later
         // `addWeapon` of the same key would keep the first spelling.
@@ -129,6 +153,34 @@ impl WeaponRules {
             }
         }
         rules
+    }
+
+    /// The list a match with `loadout` plays with (issue #5): each of the
+    /// mod's weapons (names by id) enabled when the loadout has it, else
+    /// banned (bonuses are not played with loadouts), stored trimmed so
+    /// [`WeaponRules::is_enabled`] finds each; the loadout's unique rule.
+    pub fn from_loadout<'a>(
+        mod_name: &str,
+        weapons: impl IntoIterator<Item = &'a str>,
+        loadout: &MatchLoadout,
+    ) -> Self {
+        let weapons: Vec<String> = weapons.into_iter().map(ToString::to_string).collect();
+        let on = loadout.enabled(&weapons);
+        let mut list: Vec<(String, WeaponState)> = Vec::new();
+        for (name, on) in weapons.iter().zip(on) {
+            let name = trim_spaces(name);
+            if name.is_empty() || list.iter().any(|(k, _)| k.eq_ignore_ascii_case(name)) {
+                continue;
+            }
+            list.push((name.to_string(), if on { WeaponState::Enabled } else { WeaponState::Banned }));
+        }
+        WeaponRules { mod_name: mod_name.to_string(), weapons, list, unique: loadout.unique }
+    }
+
+    /// Whether a worm's slots must hold different weapons (a loadout's
+    /// unique rule; never for an OLX preset).
+    pub fn unique(&self) -> bool {
+        self.unique
     }
 
     /// `CWpnRest::findWeapon` (`CWpnRest.cpp:122-136`): `""` finds nothing,
@@ -288,6 +340,24 @@ mod tests {
         assert_eq!(r.bonus_weapons(), vec![0, 1]);
         assert_eq!(r.weapon_count(), 2);
         assert_eq!(r.mod_name(), "m");
+    }
+
+    #[test]
+    fn a_loadout_enables_its_weapons_and_bans_the_rest() {
+        let l = MatchLoadout {
+            weapons: vec!["laser".into(), " Nuke ".into()],
+            unique: true,
+            ..Default::default()
+        };
+        let r = WeaponRules::from_loadout("m", ["Rifle", "Laser", " Nuke ", "Mine"], &l);
+        // Stored trimmed: a mod weapon with spaces can be on.
+        assert_eq!(r.enabled_weapons(), vec![1, 2]);
+        assert_eq!(r.bonus_weapons(), vec![1, 2]);
+        assert!(r.unique());
+        let all = WeaponRules::from_loadout("m", ["Rifle", "Laser"], &MatchLoadout::default());
+        assert_eq!(all.enabled_weapons(), vec![0, 1]);
+        assert!(!all.unique());
+        assert_eq!(all.find_enabled_weapon(), 1);
     }
 
     /// `findEnabledWeapon`: the first enabled name in the map's

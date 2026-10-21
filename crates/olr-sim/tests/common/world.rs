@@ -66,6 +66,7 @@ pub fn sim_mod(hit: ActionKind) -> Arc<SimMod> {
         weapons: vec![spray],
         projectiles: [("pellet".to_string(), pellet(hit))].into_iter().collect(),
         restrictions: Default::default(),
+        loadouts: Default::default(),
     };
     Arc::new(SimMod::compile(&def, &BTreeMap::new()).expect("the bench mod compiles"))
 }

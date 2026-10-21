@@ -35,6 +35,7 @@ Example:
 | `worm` | [Worm](#worm) | each field's default | Worm physics (`mod-fields.md` §3). |
 | `rope` | [Rope](#rope) | `(max_length: 300, rest_length: 30, strength: 3.5)` | Ninja rope (`mod-fields.md` §4). |
 | `weapons` | list of string | required | The weapon ids, in order: `weapons/<id>.ron` each; a weapon's index is its id in the game. At most `MAX_WEAPONS` (512). |
+| `loadouts` | map of name → [ShippedLoadout](#shippedloadout) | `{}` | The mod's shipped loadouts (read-only in the game; every mod also has `Default`, every weapon at 100 %), each keyed by the name of a preset of `restrictions.ron`: the weapons that preset enables (Bonus and Banned off), at its loading time. Not an OLX field: OLX set `LoadingTime` apart from the preset. At most `MAX_LOADOUTS` (64). |
 
 Example:
 
@@ -198,6 +199,17 @@ Ninja rope of the mod (`CGameScript.cpp:787-800`).
 | `max_length` | integer | `300` | px: a flying hook farther than this stops and falls (FeatureList `RopeMaxLength`; OLX `CNinjaRope.cpp`). |
 | `rest_length` | integer | `30` | px: no pull while the worm is closer (FeatureList `RopeRestLength`). |
 | `strength` | number | `3.5` | × 100 px/s² toward the hook (FeatureList `RopeStrength`). |
+
+<a id="shippedloadout"></a>
+
+## ShippedLoadout
+
+A shipped loadout as a mod pack lists it in `mod.ron`'s `loadouts`, keyed by the name of the preset whose weapons it enables (issue #5, not an OLX setting; the game's side is `olr_data::loadouts`).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `loading_time` | integer | required | Percent, 0 to 500 (OLX's `LoadingTime` range, `src/common/FeatureList.cpp:31`): weapons reload in `100 / loading_time` times their time. |
+| `unique` | boolean | `false` | A worm's slots must hold different weapons. |
 
 <a id="fire"></a>
 

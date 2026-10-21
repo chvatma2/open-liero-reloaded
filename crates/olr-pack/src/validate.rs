@@ -496,7 +496,18 @@ mod tests {
     fn an_empty_restrictions_file_is_read() {
         let mut pack = sample_mod();
         pack.def.restrictions.clear();
+        pack.def.loadouts.clear();
         assert_eq!(validate(&written(&pack).with("restrictions.ron", "{}\n")), vec![]);
+    }
+
+    /// A shipped loadout naming a preset the mod lacks (issue #5) is an
+    /// error, never a panic.
+    #[test]
+    fn a_loadout_without_its_preset_is_an_error() {
+        let mut pack = sample_mod();
+        pack.def.restrictions.clear();
+        let d = validate(&written(&pack));
+        assert!(d.iter().any(|d| d.to_string().contains("names no preset")), "{d:?}");
     }
 
     /// Review A-5: an editor's leftovers inside a mod's folders.

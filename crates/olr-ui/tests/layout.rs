@@ -26,6 +26,7 @@ fn catalog() -> Catalog {
             id: "olx-classic".into(),
             name: "Liero v1.0".into(),
             presets: vec!["Standard 100lt".into()],
+            ..ModInfo::default()
         }],
         levels: (0..7).map(level).collect(),
         skins: vec![SkinInfo { id: "olx-skin-ant".into(), name: "ant".into() }],

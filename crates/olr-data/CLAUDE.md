@@ -16,6 +16,22 @@ skins with colorization masks, themes, and pack manifests.
   `updateList`, `findWeapon`'s trimmed case-insensitive lookup), with the
   enabled ids (bots), the not-banned ids (natural bonuses) and
   `find_enabled_weapon` (the weapon selection's fallback).
+  `WeaponRules::from_loadout(mod name, weapons, &MatchLoadout)` (issue #5:
+  the loadout's weapons enabled, the rest banned, names stored trimmed)
+  and `unique()` (a loadout's unique rule; never for a preset).
+  `ShippedLoadout { loading_time, unique }` (`mod.ron`'s `loadouts`, keyed
+  by preset name; here so the format docs read it) is
+  `ModDef::loadouts`.
+- **Loadouts** (`loadouts.rs`, issue #5, not OLX's): `MatchLoadout { name,
+  weapons, loading_time, unique }` (weapons by the mod's names; empty means
+  every weapon: `Default`, `DEFAULT_LOADOUT`, `MatchLoadout::default()`,
+  100 %, unique off), `shipped` (a preset's enabled weapons, `None` when it
+  enables none: `Bonus only`), `mod_loadouts` (Default first, then the
+  shipped ones by name), `enabled`, `fit` (to a mod's weapons: unknown
+  names dropped, the mod's spelling and order, loading time clamped into
+  `LOADING_TIME_RANGE` 0-500, the name `clean_name`d (at most
+  `MAX_LOADOUT_NAME` 40 characters); one warning each), `unique_ok(slots,
+  enabled)` (no repeat unless every enabled weapon is in a slot).
 - **Names** (`text.rs`): `valid_name`, `is_hidden`, `sanitise_name`, the
   one rule for players' names: olr-proto refuses lobby names that break it,
   olr-replay cleans recorded ones with it.

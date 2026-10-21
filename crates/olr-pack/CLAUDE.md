@@ -59,7 +59,8 @@ header's size); content hashing; validation.
   `content_hash` like `pack.ron` (plan 7 ruling Q4): adding or changing a thumbnail
   keeps every replay of the pack valid (`hash::thumbnails_are_not_content`).
 - Menus list packs without loading them: `read_level_def` (manifest and
-  `level.ron`, no image) and `read_preset_names` (a mod's restriction presets).
+  `level.ron`, no image) and `read_mod_def` (a mod's definitions: weapons,
+  presets, shipped loadouts; no asset read).
 - `read_core` is strict (what `validate` reports); `read_core_tolerant`
   leaves out each undecodable sprite or missing sound file and returns its
   error, for loaders that put a placeholder in its place.

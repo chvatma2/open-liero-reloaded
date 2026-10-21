@@ -227,6 +227,7 @@ mod tests {
             }],
             projectiles: [("flame".to_string(), flame)].into_iter().collect(),
             restrictions: Default::default(),
+            loadouts: Default::default(),
         };
         let missing = SimMod::compile(&def, &BTreeMap::new()).unwrap();
         let err = check_frames(&missing).unwrap_err().to_string();

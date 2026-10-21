@@ -95,6 +95,7 @@ impl Converter<'_> {
             weapons,
             projectiles,
             restrictions: BTreeMap::new(),
+            loadouts: Default::default(),
         })
     }
 

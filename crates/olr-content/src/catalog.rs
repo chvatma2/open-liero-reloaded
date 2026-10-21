@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Context as _;
 use olr_data::image::RgbaImage;
+use olr_data::loadouts::{MatchLoadout, mod_loadouts};
 use olr_data::manifest::{Origin, PackKind};
 use olr_vfs::{ContentSource as _, DirFs, VPath};
 
@@ -18,7 +19,7 @@ use crate::{Content, SkinInfo};
 pub use olr_pack::{MAX_THUMB_BYTES, MAX_THUMB_SIDE};
 
 /// A mod as the menus list it.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModInfo {
     pub id: String,
     /// The pack's name, such as `Liero v1.0`.
@@ -26,6 +27,11 @@ pub struct ModInfo {
     /// Its weapon restriction presets (OLX's `WeaponRestrictionsFile`
     /// choices), sorted.
     pub presets: Vec<String>,
+    /// Its weapon names, by id.
+    pub weapons: Vec<String>,
+    /// Its loadouts: `Default` first, then the shipped ones
+    /// (`olr_data::loadouts::mod_loadouts`); read-only.
+    pub loadouts: Vec<MatchLoadout>,
 }
 
 /// A level as the menus list it.
@@ -136,12 +142,17 @@ impl Catalog {
 }
 
 impl Content {
-    /// Mod pack `id`'s name and presets, reading no weapon or image.
+    /// Mod pack `id`'s name, presets, weapon names and loadouts, from its
+    /// definitions alone (no image or sound read).
     pub fn mod_info(&self, id: &str) -> anyhow::Result<ModInfo> {
         let src = self.pack(id, PackKind::Mod)?;
         let m = olr_pack::read_manifest(&src).with_context(|| format!("mod pack {id}"))?;
-        let presets = olr_pack::read_preset_names(&src).with_context(|| format!("mod pack {id}"))?;
-        Ok(ModInfo { id: id.into(), name: m.name, presets })
+        let def = olr_pack::read_mod_def(&src).with_context(|| format!("mod pack {id}"))?;
+        let weapons: Vec<String> = def.weapons.iter().map(|w| w.name.clone()).collect();
+        let names: Vec<&str> = weapons.iter().map(String::as_str).collect();
+        let loadouts = mod_loadouts(&names, &def.restrictions, &def.loadouts);
+        let presets = def.restrictions.into_keys().collect();
+        Ok(ModInfo { id: id.into(), name: m.name, presets, weapons, loadouts })
     }
 
     /// Level pack `id`'s name, size and thumbnail ([`ThumbRef::probe`]),

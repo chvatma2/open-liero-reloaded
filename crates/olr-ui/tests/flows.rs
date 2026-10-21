@@ -37,11 +37,13 @@ fn catalog() -> Catalog {
                 id: "olx-classic".into(),
                 name: "Liero v1.0".into(),
                 presets: presets(&["All weapons", "Standard 100lt"]),
+                ..ModInfo::default()
             },
             ModInfo {
                 id: "olx-mw-1-0".into(),
                 name: "Modern Warfare1.0".into(),
                 presets: presets(&["Mortars"]),
+                ..ModInfo::default()
             },
         ],
         levels: vec![

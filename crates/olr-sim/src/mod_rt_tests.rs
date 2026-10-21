@@ -67,6 +67,7 @@ pub(crate) fn mod_def(weapons: Vec<WeaponDef>, projectiles: Vec<(&str, Projectil
         weapons,
         projectiles: projectiles.into_iter().map(|(n, p)| (n.to_string(), p)).collect(),
         restrictions: Default::default(),
+        loadouts: Default::default(),
     }
 }
 

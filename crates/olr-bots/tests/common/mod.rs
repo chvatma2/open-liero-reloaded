@@ -110,6 +110,7 @@ pub fn sim_mod_def() -> ModDef {
         weapons: vec![lob, beam("b1"), beam("b2"), beam("b3"), beam("b4")],
         projectiles: [("shell".to_string(), shell)].into_iter().collect(),
         restrictions: Default::default(),
+        loadouts: Default::default(),
     }
 }
 

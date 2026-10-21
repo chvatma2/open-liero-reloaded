@@ -95,6 +95,7 @@ fn broken_mod() -> olr_pack::ModPack {
         // OLX's default bans the only weapon.
         restrictions: [("Standard 100lt".to_string(), [("gun".to_string(), WeaponState::Banned)].into())]
             .into(),
+        loadouts: Default::default(),
     };
     let mut assets = BTreeMap::new();
     assets.insert(VPath::new("gfx/broken.png").unwrap(), b"not a png".to_vec());

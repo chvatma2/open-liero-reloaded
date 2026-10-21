@@ -10,6 +10,7 @@ extern crate alloc;
 pub mod core_pack;
 pub mod image;
 pub mod level;
+pub mod loadouts;
 pub mod manifest;
 pub mod mod_def;
 pub mod restrictions;

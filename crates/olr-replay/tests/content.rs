@@ -77,6 +77,7 @@ fn mod_pack() -> olr_pack::ModPack {
         }],
         projectiles: Default::default(),
         restrictions: Default::default(),
+        loadouts: Default::default(),
     };
     olr_pack::ModPack {
         manifest: manifest("beam-mod", PackKind::Mod),

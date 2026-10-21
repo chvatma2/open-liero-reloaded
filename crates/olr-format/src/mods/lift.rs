@@ -96,6 +96,7 @@ pub fn lift_mod(def: &rt::ModDef) -> Result<ModSource, LiftError> {
         weapons,
         shared: shared_out,
         restrictions: def.restrictions.clone(),
+        loadouts: def.loadouts.clone(),
     })
 }
 
@@ -436,6 +437,7 @@ mod tests {
             weapons: vec![weapon("rocket", "rocket"), weapon("pellet", "bits")],
             projectiles: [("bits".to_string(), bits), ("rocket".to_string(), rocket)].into_iter().collect(),
             restrictions: Default::default(),
+            loadouts: Default::default(),
         }
     }
 

@@ -69,6 +69,7 @@ fn lob_mod() -> Arc<SimMod> {
         weapons: vec![lob],
         projectiles: [("shell".to_string(), shell)].into_iter().collect(),
         restrictions: Default::default(),
+        loadouts: Default::default(),
     };
     Arc::new(SimMod::compile(&def, &BTreeMap::new()).unwrap())
 }

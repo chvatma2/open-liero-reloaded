@@ -87,6 +87,7 @@ pub fn sim_mod() -> Arc<SimMod> {
         weapons: vec![gun, beam("b1"), beam("b2"), beam("b3"), beam("b4")],
         projectiles: [("pellet".to_string(), pellet)].into_iter().collect(),
         restrictions: Default::default(),
+        loadouts: Default::default(),
     };
     Arc::new(SimMod::compile(&def, &BTreeMap::new()).unwrap())
 }

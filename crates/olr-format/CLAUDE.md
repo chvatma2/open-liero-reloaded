@@ -23,7 +23,11 @@ packs' format (version 5); `olr-pack` reads and writes through them.
 - **Mods** (`mods/`; names in `docs/porting/olx-notes/mod-fields.md` §13):
   - `ModSource` is a mod as its files hold it: `mod.ron`,
     `weapons/<id>.ron`, `projectiles/<id>.ron` (shared projectiles) and
-    `restrictions.ron`. `read_mod_files` and `write_mod_files` move it
+    `restrictions.ron`. `mod.ron`'s optional `loadouts` (issue #5) are the
+    shipped loadouts by preset name (`ShippedLoadout`); `compile_mod`
+    refuses one naming no preset, named `Default` or not a clean loadout
+    name, with a loading time outside 0-500, or more than `MAX_LOADOUTS`
+    (64). `read_mod_files` and `write_mod_files` move it
     between a `ContentSource`/`ContentSink` and memory; `compile_mod` makes
     the runtime `ModDef`; `lift_mod` goes back.
   - **`deny_unknown_fields` on every type:** a typo is an error. A spawn's

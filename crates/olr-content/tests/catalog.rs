@@ -73,6 +73,8 @@ fn catalog_lists_mods_and_levels_without_loading_them() {
     let mut m = DirFs::new(root.join("mod-a"));
     olr_pack::write_manifest(&mut m, &manifest("mod-a", "Mod A", PackKind::Mod)).unwrap();
     write(&mut m, olr_pack::RESTRICTIONS_FILE, b"{\"Standard 100lt\": {}, \"All\": {}}");
+    // No weapon, so no shipped loadout plays anything: Default alone.
+    write(&mut m, "mod.ron", b"(name: \"Mod A\", weapons: [], loadouts: {\"All\": (loading_time: 20)})");
     // A skin is listed by its manifest alone (nothing is decoded).
     let mut s = DirFs::new(root.join("olx-skin-ant"));
     olr_pack::write_manifest(&mut s, &manifest("olx-skin-ant", "ant", PackKind::Skin)).unwrap();
@@ -118,6 +120,8 @@ fn catalog_lists_mods_and_levels_without_loading_them() {
     let a = c.mod_info("mod-a").unwrap();
     assert_eq!(a.name, "Mod A");
     assert_eq!(a.presets, ["All", "Standard 100lt"]);
+    assert!(a.weapons.is_empty());
+    assert_eq!(a.loadouts, [olr_data::loadouts::MatchLoadout::default()]);
     assert_eq!(c.skins, [olr_content::SkinInfo { id: "olx-skin-ant".into(), name: "ant".into() }]);
     assert_eq!(c.skin("ant").map(|s| s.id.as_str()), Some("olx-skin-ant"), "an OLX name");
     assert_eq!(c.skin("olx-skin-ant").map(|s| s.name.as_str()), Some("ant"));

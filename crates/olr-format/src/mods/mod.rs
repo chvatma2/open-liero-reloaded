@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use olr_data::loadouts::ShippedLoadout;
 use olr_data::restrictions::Preset;
 use serde::{Deserialize, Serialize};
 
@@ -17,8 +18,8 @@ mod spawn;
 mod types;
 
 pub use compile::{
-    MAX_AMOUNT, MAX_COLOURS, MAX_EFFECTS, MAX_INLINE_DEPTH, MAX_SHARED, MAX_WEAPONS, ModLookSource,
-    compile_mod, compile_mod_look,
+    MAX_AMOUNT, MAX_COLOURS, MAX_EFFECTS, MAX_INLINE_DEPTH, MAX_LOADOUTS, MAX_SHARED, MAX_WEAPONS,
+    ModLookSource, compile_mod, compile_mod_look,
 };
 pub use files::{RESTRICTIONS_FILE, file_paths, read_mod_files, write_mod_files};
 pub use lift::{LIFTED_SPAWN, lift_mod};
@@ -45,6 +46,9 @@ pub struct ModSource {
     pub shared: BTreeMap<String, Projectile>,
     /// `restrictions.ron`: named weapon-restriction presets (`WeaponRules`).
     pub restrictions: BTreeMap<String, Preset>,
+    /// `mod.ron`'s `loadouts`: the shipped loadouts, by the name of the
+    /// preset whose weapons each enables.
+    pub loadouts: BTreeMap<String, ShippedLoadout>,
 }
 
 /// Worm physics of the mod (OLX `gs_worm_t`, `CGameScript.cpp:45-55`).

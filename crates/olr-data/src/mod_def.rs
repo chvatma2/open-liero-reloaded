@@ -12,6 +12,7 @@ use alloc::vec::Vec;
 use serde::{Deserialize, Serialize};
 
 use crate::image::Rgba;
+use crate::loadouts::ShippedLoadout;
 use crate::restrictions::Preset;
 
 /// A complete mod. `weapons` keeps the original order (it defines weapon ids);
@@ -28,6 +29,10 @@ pub struct ModDef {
     /// then `cfg/presets/*.wps` (`CWpnRest::loadList`). See
     /// [`crate::restrictions::WeaponRules`].
     pub restrictions: BTreeMap<String, Preset>,
+    /// The mod's shipped loadouts (issue #5), by the name of the preset in
+    /// `restrictions` whose weapons each enables: [`crate::loadouts`].
+    #[serde(default)]
+    pub loadouts: BTreeMap<String, ShippedLoadout>,
 }
 
 /// OLX `gs_worm_t` (`src/common/CGameScript.cpp:45-55`).
