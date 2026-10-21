@@ -79,6 +79,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Pack tooling (spec 2026-10-16 formats §6): `olr-cli pack check\|fmt\|new`, the level operations and preview, the schema docs | — | `olr-edit`, `olr-cli` (`pack_cmd.rs`, `level_cmd.rs`), `xtask format-docs` | done (plan 13d) | `load_then_files_reproduces_every_bundled_pack`, `bundled_packs_are_canonical`, `the_background_invariant_holds_at_every_art_scale`, `every_guide_example_parses_and_is_canonical`, `format-docs` check step |
 | Level composition (spec 2026-10-17 editor §1-3, §7): `editor/composition.ron` of image, drawn and raster elements, baked into `material.png`, `front.png`, `back.png` and `thumb.png`; JPEG originals; `olr-cli level element …`, `level bake`, stale bakes in `pack check` | — | `olr-format` (`levels::composition`, `image_io::decode_image_within`), `olr-pack` (`is_authoring`), `olr-edit` (`pixelate`, `compose`, `element`), `olr-cli` (`element_cmd.rs`), `olr-detcheck --bake` | done (plan 14a) | `every_bundled_level_round_trips_through_a_raster_base`, `region_bakes_equal_the_full_bake_and_keep_the_invariant`, `editor_files_are_not_content`, `the_fixture_is_baked`, `cargo xtask determinism`'s bake digest |
 | Level editor core (spec 2026-10-17 editor §4-§5, §8): the document (elements decoded, an image cache, one bake), reversible edits and a 256 MiB history, the tools (select, brush, eraser, rectangle, ellipse, line, spawn, eyedropper), the panels and shortcuts, tested headless; hosted in the game (the Editor screen, the canvas drawn by `olr-render`, Play, the file browser, recovery, `olr --edit`) | — | `olr-format` (`image_io::jpeg_orientation`, `levels::check_elements`), `olr-edit` (`level::{draw_art, erase_art, rescale_art, Shape::{Ellipse, Line}}`, `compose::{Decoded, ImageCache, bake_elements}`, `new::pack_id`), `olr-editor` (`browser`), `olr-terrain` (`ColorMap::replace_rect`), `olr-content` (`LoadedLevel::{from_source, first_spawn}`, `build_match_spawning`), `olr-ui` (`screens::editor`), `olr-game` (`editor`) | done (plans 14b-14c) | `undo_and_redo_restore_everything_exactly`, `every_operation_undoes_to_the_same_files`, `opening_and_saving_changes_nothing`, `art_painting_is_clipped_and_total`, `a_brush_stroke_is_one_step`, `locked_elements_are_not_changed_by_the_canvas`, `history_drops_the_oldest_steps_over_the_cap`, the `flows` tests; plan 14c: `a_bundled_level_is_edited_as_a_copy`, `recovery_survives_a_missing_original`, `a_damaged_recovery_is_discarded_not_fatal`, `a_later_session_keeps_the_crash_copy`, `imports_are_bounded_before_reading`, `closing_the_window_asks_when_unsaved`, `quitting_without_asking_keeps_a_recovery_copy`, `the_first_spawn_is_used_only_when_inside_the_level`, `the_canvas_draws_the_bake`, the `browser` tests, `cargo xtask e2e`'s editor run |
+| Skin editor (issue #14; no OLX counterpart): the Editor screen's Skin tab (New blank skin, Edit yours, Edit a copy), the 21-frame grid, onion skin, frame copy, paste to a frame, row or column, flip and shift, the paint tools (pencil 1 and 2 × 2, eraser, fill, eyedropper, line, rectangle) on the Colour, Player colour and Glow targets, the colour picker and recent colours, undo and redo per stroke, zoom and pan, the skin light, Make double resolution, a live preview (walking, aiming, both ways, light and dark), saving to `packs/` | `src/common/CWorm.cpp:1225-1244` (the preview's frame) | `olr-skin-editor`, `olr-edit` (`skin::preview_frame`), `olr-ui` (`screens::editor`'s Skin tab), `olr-game` (`editor::skin`) | done (issue #14) | the `olr-skin-editor` `state` and `flows` tests, `a_preview_frame_is_the_previews_cell`, `the_skin_tab_edits_yours_and_copies_the_others`, `a_copy_is_saved_to_your_packs_and_offered_by_the_skin_picker`, `a_bad_skin_pack_is_refused_with_a_message`, `closing_the_window_asks_when_unsaved` (skin) |
 
 ## Deliberate deviations
 
@@ -4236,8 +4237,55 @@ No OLX counterpart (OLX's skins are made in an image editor). As built:
   rings, eyes, the gun's metal, and a glowing tail lantern with a light
   of 80 % over 24 world pixels. It is in no golden and is not the
   default skin (bots and fresh profiles keep `olx-skin-default`).
-- **Not built** (the issue's non-goals): the editor UI, more sample
-  skins.
+- **Not built** (the issue's non-goals): the editor UI (issue #14
+  since: "Skin editor (issue #14)"), more sample skins.
+
+## Skin editor (issue #14)
+
+No OLX counterpart (OLX's skins are made in an image editor). As built:
+
+- **A crate of its own.** `olr-skin-editor` (layer 5) follows the level
+  editor's pattern (pure `update(action) -> commands`, egui panels found
+  by label, the host doing files) instead of sharing `olr-editor`'s
+  parts: its history, view and dialogs are of level edits, and a skin
+  needs far less (a 7 × 3 grid of 20 × 18 or 40 × 36 frames). The skin
+  editor's images are egui textures its panels make (the level editor's
+  swatches' way); the host does no GPU work.
+- **The way in.** The Editor screen has two tabs, Level and Skin (the
+  issue's "tabs on its start screen"). New blank skin is double
+  resolution; "Edit a copy" of any installed skin is the "copy of any
+  installed skin as the start"; "Edit" only for the data directory's skin
+  packs. A new skin and a copy have no pack until the first save, which
+  asks the name; the pack id is the name's slug, free among the installed
+  packs. A built-in or OLX skin is only ever read.
+- **Opening is checked.** A skin pack opens only when `olr_edit::skin::
+  check_dir` finds no error and it has OLX's layout or double
+  resolution's; anything else is refused with why on the Editor screen. A
+  tint other than 0 or 255 (which the runtime refuses anyway) opens as the
+  player's colour. `left.png` is kept as it is, not edited (a non-goal).
+- **Painting.** Tint is on or off (the runtime's rule); glow is painted
+  in quarters (25-100 %), as the game draws it (`glow_level`). A pixel
+  made transparent loses its tint and glow (the format drops glow on a
+  transparent pixel); tint and glow paint only opaque pixels. A fill takes
+  the pixels joined to the one clicked of the same colour, whatever the
+  target. Shifting wraps round (nothing is lost). The eyedropper returns
+  to the pencil after a pick. Recent colours are the last 12 painted.
+- **The onion skin** shows the previous aim (none before the first) or
+  the previous walk frame (the walk wraps: walk 1 shows walk 3).
+- **The preview** is a CPU approximation, `olr_edit::skin::preview_frame`
+  (one cell of `skin preview`'s sheet: light background, and the dark one
+  with the glow and a soft disc of the skin light), not the renderer. The
+  worm walks at 7.5 frames a second while its aim sweeps 200° a second
+  between 90° up and 60° down (OLX's player menu), turning round after
+  every sweep; its frame is the game's (`CWorm.cpp:1225-1244`, not the
+  menu's formula). Shown at 3 and 7 points a world pixel.
+- **No recovery copy.** Unlike the level editor, a crash or a kill loses
+  the skin's unsaved changes; closing (the editor's Close or the window's)
+  asks first. A skin is small and saved in a moment.
+- **Not built** (the issue's non-goals): importing a picture, other
+  layouts, `left.png`, animated glow, online sharing, gibs, rope,
+  crosshair; nor the e2e autoplay script (deferred:
+  `docs/deferred-verification.md`).
 
 ## Kept OLX quirks
 
