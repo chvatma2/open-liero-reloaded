@@ -45,6 +45,7 @@ olr-net = { path = "crates/olr-net" }
 olr-discovery = { path = "crates/olr-discovery" }
 olr-online = { path = "crates/olr-online" }
 olr-server = { path = "crates/olr-server" }
+olr-log = { path = "crates/olr-log" }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
 ron = "0.12.2"
 # Replays (plan 6): exact pins, the encoding is the replay format.
@@ -137,6 +138,11 @@ k256 = { version = "=0.14.0", default-features = false, features = ["schnorr", "
 hkdf = "=0.13.0"
 chacha20 = { version = "=0.10.2", default-features = false, features = ["cipher"] }
 base64 = { version = "=0.22.1", default-features = false, features = ["alloc"] }
+# The game's run log (issue #2): the `log` facade (already locked through
+# wgpu and winit), and `time` for the local UTC offset alone (already locked
+# through rcgen; `local-offset` adds num_threads on Unix).
+log = { version = "=0.4.34", features = ["std"] }
+time = { version = "=0.3.55", features = ["local-offset"] }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

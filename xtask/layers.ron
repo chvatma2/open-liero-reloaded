@@ -37,6 +37,7 @@
         "olr-net": 5,
         "olr-discovery": 5,
         "olr-online": 5,
+        "olr-log": 5,
         "olr-cli": 6,
         "olr-server": 6,
         "olr-game": 6,

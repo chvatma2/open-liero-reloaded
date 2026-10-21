@@ -1,0 +1,28 @@
+[package]
+name = "olr-log"
+description = "The game's run log: one file a run in the data directory (capped, the last ten kept), mirrored to the terminal, home paths and addresses redacted, and panics captured."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+log.workspace = true
+time.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+# The panic hook is process-global: its own process.
+[[test]]
+name = "panic_hook"
+path = "tests/panic_hook.rs"
+
+[lints]
+workspace = true
