@@ -1,11 +1,13 @@
 //! The mod editor's state on a copy of Classic (issue #17): fields set,
 //! undone and reset, the projectile tree, shared projectiles, weapons
 //! added, moved and renamed, presets, events, errors refusing the save,
-//! and Close asking first.
+//! Close asking first, and Play's choices (issue #18).
 
 use olr_data::restrictions::{ShippedLoadout, WeaponState};
 use olr_mod_editor::state::{ORDER_NOTE, effect_names};
-use olr_mod_editor::{Choice, Dialog, Event, Item, ModAction as A, ModCommand as C, NodeKind};
+use olr_mod_editor::{
+    Choice, Dialog, Event, Item, MAX_BOTS, ModAction as A, ModCommand as C, NodeKind, PlaySettings,
+};
 
 use crate::common::{MW, editor, installed};
 
@@ -279,4 +281,37 @@ fn fresh_kinds_check_clean() {
     s.update(A::Animation { gfx: format!("{p}.gfx"), on: true });
     assert!(s.value(&format!("{p}.gfx.animation.fps")).is_some(), "{}", s.status());
     assert_eq!(s.errors(), 0, "{:?}", s.issues());
+}
+
+/// Issue #18: Play's level is an installed one (a remembered level gone
+/// falls back to the first), its bots at most `MAX_BOTS`; while the match
+/// runs nothing changes the mod; without a level Play says so.
+#[test]
+fn play_chooses_an_installed_level_and_waits_for_its_end() {
+    let Some(mut s) = editor() else { return };
+    assert!(s.update(A::Play).is_empty(), "no level installed");
+    assert!(s.status().contains("no level"), "{}", s.status());
+    let levels = vec![("a".to_string(), "A".to_string()), ("b".to_string(), "B".to_string())];
+    s.set_play(levels.clone(), PlaySettings { level: "gone".into(), bots: 200 });
+    assert_eq!(s.play_level(), Some(&levels[0]));
+    assert_eq!(s.play_bots(), MAX_BOTS);
+    assert!(s.update(A::PlayLevel("nope".into())).is_empty(), "not installed");
+    let c = s.update(A::PlayLevel("b".into()));
+    assert_eq!(c, vec![C::SavePlaySettings(PlaySettings { level: "b".into(), bots: MAX_BOTS })]);
+    assert!(s.update(A::PlayLevel("b".into())).is_empty(), "no change");
+    let c = s.update(A::PlayBots(0));
+    assert_eq!(c, vec![C::SavePlaySettings(PlaySettings { level: "b".into(), bots: 0 })]);
+    s.update(set("mod.worm.gravity", "120.0"));
+    let c = s.update(A::Play);
+    assert!(matches!(&c[..], [C::Play { level, bots: 0, .. }] if level == "b"), "{c:?}");
+    assert!(s.playing());
+    // Nothing acts meanwhile but the host's answers.
+    assert!(s.update(A::Undo).is_empty());
+    assert!(s.update(A::Close).is_empty());
+    assert_eq!(s.value("mod.worm.gravity").as_deref(), Some("120.0"));
+    assert!(s.dialog().is_none());
+    s.update(A::PlayEnded);
+    assert!(!s.playing());
+    s.update(A::Undo);
+    assert_eq!(s.value("mod.worm.gravity").as_deref(), Some("100.0"));
 }

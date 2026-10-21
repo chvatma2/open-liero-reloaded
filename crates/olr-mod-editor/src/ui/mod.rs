@@ -1,5 +1,6 @@
 //! The mod editor's egui panels (issue #17): the session bar on top (Save,
-//! Close, Undo, Redo, the unsaved mark, the problems' count), the left
+//! Close, Undo, Redo, the unsaved mark, the problems' count; at the right
+//! Play and its ▾, issue #18), the left
 //! list (World, the weapons in order, the shared projectiles), the item's
 //! projectile tree and the chosen node's panel in the middle, the problems
 //! below when shown, and the dialogs. `show` draws them from the state and
@@ -29,6 +30,10 @@ pub mod labels {
     pub const UNSAVED: &str = "Unsaved changes";
     /// The problems' list, shown or hidden.
     pub const PROBLEMS: &str = "Problems";
+    // Play (issue #18).
+    pub const PLAY: &str = "Play";
+    /// Play's ▾: the level and the bots.
+    pub const PLAY_OPTIONS: &str = "Play options";
     // The left list.
     pub const WORLD: &str = "World";
     pub const ADD_WEAPON: &str = "Add weapon";
@@ -105,6 +110,14 @@ pub mod labels {
     /// Add weapon's weapon of the mod copied from.
     pub fn copy(weapon: &str) -> String {
         format!("Copy {weapon}")
+    }
+    /// Play ▾'s level (by its name).
+    pub fn play_level(name: &str) -> String {
+        format!("Play on {name}")
+    }
+    /// Play ▾'s number of bots.
+    pub fn play_bots(n: u8) -> String {
+        format!("{n} bots")
     }
     /// A problem of the list, a link to its place.
     pub fn issue(i: &Issue) -> String {
@@ -186,7 +199,7 @@ pub(crate) struct Cx<'a> {
 }
 
 /// Save, Close, Undo and Redo, the mod's name, the unsaved mark and the
-/// problems' count.
+/// problems' count; at the right Play and its ▾.
 fn session(ui: &mut Ui, cx: &mut Cx) {
     let state = cx.state;
     ui.horizontal(|ui| {
@@ -231,7 +244,66 @@ fn session(ui: &mut Ui, cx: &mut Cx) {
         if r.clicked() {
             cx.out.push(ModAction::ShowProblems(!state.show_problems()));
         }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            play_menu(ui, cx);
+            let hover = "play a test match with the mod as it is now, unsaved changes included";
+            if ui.button(labels::PLAY).on_hover_text(hover).clicked() {
+                cx.out.push(ModAction::Play);
+            }
+        });
     });
+}
+
+/// The Play menu's level list: taller lists scroll.
+const LEVELS_HEIGHT: f32 = 240.0;
+
+/// Play's ▾ (the level editor's, `olr-editor`'s `toolbar::play_menu`): the
+/// test match's level (the installed ones) and bots.
+fn play_menu(ui: &mut Ui, cx: &mut Cx) {
+    let state = cx.state;
+    let config = egui::containers::menu::MenuConfig::new()
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+    let chosen = state.play_level().map(|(id, _)| id.as_str());
+    // The arrow is drawn (a font may lack ▾); spaces make its room.
+    let (r, _) = egui::containers::menu::MenuButton::new("    ").config(config).ui(ui, |ui| {
+        ui.label(egui::RichText::new("Level").strong());
+        egui::ScrollArea::vertical().id_salt("olr-mod-editor-play-levels").max_height(LEVELS_HEIGHT).show(
+            ui,
+            |ui| {
+                for (id, name) in state.levels() {
+                    let r = ui.selectable_label(Some(id.as_str()) == chosen, name);
+                    relabel(&r, egui::WidgetType::Button, &labels::play_level(name));
+                    if r.clicked() {
+                        cx.out.push(ModAction::PlayLevel(id.clone()));
+                    }
+                }
+            },
+        );
+        ui.separator();
+        ui.label(egui::RichText::new("Bots").strong());
+        ui.horizontal(|ui| {
+            for n in 0..=crate::MAX_BOTS {
+                let r = ui.selectable_label(n == state.play_bots(), n.to_string());
+                relabel(&r, egui::WidgetType::Button, &labels::play_bots(n));
+                if r.clicked() {
+                    cx.out.push(ModAction::PlayBots(n));
+                }
+            }
+        });
+    });
+    const ARROW: f32 = 8.0;
+    let colour = ui.style().interact(&r).text_color();
+    let c = r.rect.center();
+    let arrow = vec![
+        c + egui::vec2(-ARROW / 2.0, -ARROW / 4.0),
+        c + egui::vec2(ARROW / 2.0, -ARROW / 4.0),
+        c + egui::vec2(0.0, ARROW / 4.0),
+    ];
+    ui.painter().add(egui::Shape::convex_polygon(arrow, colour, egui::Stroke::NONE));
+    relabel(&r, egui::WidgetType::Button, labels::PLAY_OPTIONS);
+    let level = state.play_level().map_or("no level", |(_, name)| name.as_str());
+    let bots = state.play_bots();
+    r.on_hover_text(format!("the test match: {level}, {bots} bot{}", plural(bots.into())));
 }
 
 /// The problems: errors first, each a link to its place.

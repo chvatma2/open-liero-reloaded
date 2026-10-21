@@ -3,8 +3,11 @@
 //! shrapnel and its users, Make a copy, a reorder and a rename with the
 //! presets following, undo and redo, Reset, Save and opening the saved
 //! pack again; an error listed, gone to and refusing the save; the fire's
-//! kind, an effect and a weapon copied from MW. The test host saves into a
-//! temporary directory and loads mods from the content at once.
+//! kind, an effect and a weapon copied from MW; Play (issue #18) with an
+//! unsaved change on a level and bots chosen in Play ▾, refused with an
+//! error, and the editor as it was when the match ends. The test host
+//! saves into a temporary directory and loads mods from the content at
+//! once; while Play's match runs it draws no editor, as the game's does.
 
 use std::path::PathBuf;
 
@@ -27,9 +30,18 @@ struct App {
 }
 
 fn harness(state: ModEditorState, dir: PathBuf) -> Harness<'static, App> {
+    harness_sized(state, dir, egui::vec2(1500.0, 1000.0))
+}
+
+fn harness_sized(state: ModEditorState, dir: PathBuf, size: egui::Vec2) -> Harness<'static, App> {
     let app = App { state, data: ModEditorData::default(), commands: Vec::new(), dir };
-    let mut h = Harness::builder().with_size(egui::vec2(1500.0, 1000.0)).build_ui_state(
+    let mut h = Harness::builder().with_size(size).build_ui_state(
         |ui, app: &mut App| {
+            // Play's match has the window: the host draws no editor.
+            if app.state.playing() {
+                ui.label("The match");
+                return;
+            }
             let actions = ui::show(ui, &app.state, &mut app.data);
             if !actions.is_empty() {
                 // Drawn again from the changed state, as the game's host does.
@@ -50,7 +62,7 @@ fn harness(state: ModEditorState, dir: PathBuf) -> Harness<'static, App> {
                                 app.state.update(A::ModLoaded(id.clone(), Box::new(p)));
                             }
                         }
-                        C::Close => {}
+                        C::Play { .. } | C::SavePlaySettings(_) | C::Close => {}
                     }
                     app.commands.push(c);
                 }
@@ -245,4 +257,85 @@ fn fire_kind_effects_and_a_weapon_from_another_mod() {
     assert_eq!(src.weapons.len(), n + 1);
     assert_eq!(src.weapons[n].1.fire, first.fire);
     assert_eq!(h.state().state.errors(), 0, "{:?}", h.state().state.issues());
+}
+
+/// Issue #18: Play takes the mod as it is, unsaved changes included, on
+/// the level and bots of Play ▾ (remembered); a mod with errors does not
+/// play and lists them; when the match ends the editor is where it was:
+/// the item, the node, the scroll, the undo history, the unsaved mark.
+#[test]
+fn play_the_unsaved_mod_and_come_back() {
+    let Some(mut state) = editor() else { return };
+    let levels = vec![
+        ("olx-level-dirt-level".to_string(), "Dirt Level".to_string()),
+        ("olx-level-liero-factory".to_string(), "Liero Factory".to_string()),
+    ];
+    state.set_play(levels, olr_mod_editor::PlaySettings::default());
+    assert_eq!(state.play_level().map(|(id, _)| id.as_str()), Some("olx-level-dirt-level"), "the first");
+    let tmp = tempfile::tempdir().unwrap();
+    let mut h = harness_sized(state, tmp.path().join("my-classic"), egui::vec2(1500.0, 420.0));
+    click(&mut h, "Bazooka");
+    click(&mut h, &labels::node("Shot"));
+    type_into(&mut h, &label("Spawn.speed"), "150");
+
+    // Play ▾: the level and the bots, each remembered.
+    click(&mut h, labels::PLAY_OPTIONS);
+    click(&mut h, &labels::play_level("Liero Factory"));
+    click(&mut h, &labels::play_bots(3));
+    let saved: Vec<_> = h
+        .state()
+        .commands
+        .iter()
+        .filter_map(|c| if let C::SavePlaySettings(s) = c { Some(s) } else { None })
+        .collect();
+    assert_eq!(saved.last().map(|s| (s.level.as_str(), s.bots)), Some(("olx-level-liero-factory", 3)));
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    // Scrolled down the shot's panel, its rare fields shown.
+    click(&mut h, labels::MORE);
+    let speed = label("Spawn.speed");
+    let top = h.get_by_label(&speed).rect();
+    h.get_by_label(&speed).scroll_down();
+    h.run();
+    let scrolled = h.get_by_label(&speed).rect();
+    assert!(scrolled.top() < top.top(), "{scrolled:?} above {top:?}");
+
+    click(&mut h, labels::PLAY);
+    let Some(C::Play { pack, level, bots }) = h.state().commands.last().cloned() else {
+        panic!("Play reaches the host: {:?}", h.state().commands.last())
+    };
+    assert_eq!(mods::get(mods::source(&pack).unwrap(), "weapons/bazooka.fire.shot.speed").unwrap(), "150");
+    assert_eq!((level.as_str(), bots), ("olx-level-liero-factory", 3));
+    assert!(h.state().state.playing());
+    assert!(h.query_by_label(labels::PLAY).is_none(), "the match has the window");
+    for _ in 0..5 {
+        h.run();
+    }
+    h.state_mut().state.update(A::PlayEnded);
+    h.run();
+    let s = &h.state().state;
+    assert!(!s.playing());
+    assert_eq!(s.item(), &Item::Weapon("bazooka".into()));
+    assert_eq!(s.node(), "weapons/bazooka.fire.shot");
+    assert!(s.dirty() && s.can_undo(), "the unsaved work and its history stay");
+    assert_eq!(h.get_by_label(&speed).rect(), scrolled, "the scroll stays");
+    h.get_by_label(labels::UNSAVED);
+
+    // An error: Play lists it and does not start.
+    let n = h.state().commands.len();
+    let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
+    h.state_mut()
+        .state
+        .update(A::Set { path: "projectiles/bazooka.spawn.spawns".into(), value: cycle.into() });
+    h.state_mut().state.update(A::ShowProblems(false));
+    h.run();
+    click(&mut h, labels::PLAY);
+    let s = &h.state().state;
+    assert!(!s.playing());
+    assert!(!h.state().commands[n..].iter().any(|c| matches!(c, C::Play { .. })));
+    assert!(s.show_problems(), "the problems show");
+    assert!(s.status().starts_with("Not played"), "{}", s.status());
+    let issue = s.issues().iter().find(|i| i.is_error()).unwrap().clone();
+    h.get_by_label(&labels::issue(&issue));
 }

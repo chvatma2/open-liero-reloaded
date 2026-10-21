@@ -16,8 +16,9 @@ Editor screen's Mod tab (`olr-ui`).
   -> Vec<ModCommand>` is pure; `ui::show(ui, &state, &mut ModEditorData)`
   draws egui and returns actions (fields' commits first). Commands:
   `Save(pack)` (checked: no errors), `LoadMod(id)` (Add weapon's copies),
-  `Close`; answers `Saved`, `ModLoaded(id, pack)`, `Failed(why)` (an
-  error dialog), `Note`. Widgets are found by `ui::labels` and the field
+  `Play { pack, level, bots }`, `SavePlaySettings`, `Close`; answers
+  `Saved`, `ModLoaded(id, pack)`, `PlayEnded`, `Failed(why)` (an error
+  dialog), `Note`. Widgets are found by `ui::labels` and the field
   table's labels (`FieldInfo::label`, "Gravity (px/s²)"); a caption
   beside a widget is painted (`ui::caption`), so each name is one node.
 - **The document** is the `Pack` itself (`state.rs`). Every change goes
@@ -55,8 +56,21 @@ Editor screen's Mod tab (`olr-ui`).
   format validates) with a slider over the soft range, a checkbox, a
   text, a dropdown of the mod's `gfx/` (with thumbnails) or `sfx/` files
   or of an enum's variants. The Look fields are left out (the art issue).
+- **Play** (issue #18; STATUS.md "Mod editor Play (issue #18)"): the
+  session bar's Play and its ▾ (the level editor's `play_menu`: the
+  installed levels by name, a list that scrolls, and 0 to `MAX_BOTS`, 8,
+  bots, buttons `labels::play_level`, `play_bots`). The host passes the
+  levels and the remembered `PlaySettings { level, bots }` (`set_play`;
+  `play_level()` is the one chosen when installed, else the first); a
+  change sends `SavePlaySettings`. Play refreshes the check: with errors
+  it shows the problems and says "Not played"; else `Play` carries the
+  pack as it is, unsaved changes included, and the state is `playing()`
+  (nothing but the host's answers acts) until `PlayEnded`. The state and
+  the panels' data stay as they were (item, node, history, scroll: egui
+  keeps the scroll while the host draws the match instead).
 - **Panels** (`ui/`): session bar (Save, Close, Undo, Redo, the unsaved
-  mark, the problems' count toggling their list), the left list
+  mark, the problems' count toggling their list; Play and Play ▾ at the
+  right), the left list
   (`list.rs`), the tree, the node's panel (`panels.rs`: World, Weapon,
   Spawn, Projectile, Timer; common fields first, the rest under More ▸),
   the problems (each a link: `GoTo` shows its item and node and marks the
@@ -67,6 +81,9 @@ Editor screen's Mod tab (`olr-ui`).
   `flows.rs` (`egui_kittest`: gravity and the bazooka's speed, the shared
   shrapnel and its users, Make a copy, reorder and rename with presets,
   undo, redo, Reset, Save and reopen; an error listed, gone to, refusing
-  the save; the fire's kind, an effect, a weapon copied from MW).
+  the save; the fire's kind, an effect, a weapon copied from MW; issue
+  #18's `play_the_unsaved_mod_and_come_back`, its test host drawing no
+  editor while Play's match runs; `state.rs`'s
+  `play_chooses_an_installed_level_and_waits_for_its_end`).
 
 Test: `cargo nextest run -p olr-mod-editor`.

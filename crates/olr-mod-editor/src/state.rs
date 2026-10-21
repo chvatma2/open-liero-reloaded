@@ -1,6 +1,7 @@
 //! The mod editor's state (issue #17): `ModEditorState::update(ModAction)
 //! -> Vec<ModCommand>` is pure; the host carries out the commands (`Save`,
-//! `LoadMod`, `Close`) and answers (`Saved`, `ModLoaded`, `Failed`).
+//! `LoadMod`, `Play`, `SavePlaySettings`, `Close`) and answers (`Saved`,
+//! `ModLoaded`, `PlayEnded`, `Failed`).
 //!
 //! Every change goes through `olr_edit::mods` on the open pack and is one
 //! undo step. A field's value is set with `set_lenient`: a change that
@@ -22,8 +23,8 @@ use olr_format::mods::{
 };
 use olr_format::ron_io::{from_canonical, to_canonical};
 use olr_pack::Severity;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use crate::history::{History, Snapshot};
 use crate::tree::{self, Item, Node, SpawnAt};
@@ -35,6 +36,26 @@ pub const ORDER_NOTE: &str = "A weapon's place in the list is its id in the game
 pub const PIXEL: &str = "Pixels([\"#ffffff\"])";
 /// A new weapon's name before it is renamed.
 pub const NEW_WEAPON: &str = "New weapon";
+/// The most bots a Play match has (the level editor's `MAX_BOTS`).
+pub const MAX_BOTS: u8 = 8;
+
+/// Play's level and bots (issue #18), remembered between sessions (the
+/// host stores them).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PlaySettings {
+    /// The installed level Play starts the match on (its pack id).
+    pub level: String,
+    /// Bots in a Play match, 0 (the sandbox) to [`MAX_BOTS`].
+    pub bots: u8,
+}
+
+impl Default for PlaySettings {
+    /// The level editor's default: one bot; the level is the host's choice.
+    fn default() -> PlaySettings {
+        PlaySettings { level: String::new(), bots: 1 }
+    }
+}
 
 /// One of a projectile's events.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -194,6 +215,12 @@ pub enum ModAction {
     Undo,
     Redo,
     Save,
+    /// A test match with the mod as it is, unsaved changes included.
+    Play,
+    /// Play's level (an installed level's pack id).
+    PlayLevel(String),
+    /// Play's bots (0 to `MAX_BOTS`).
+    PlayBots(u8),
     Close,
     Choice(Choice),
     /// The answer to a question (Change, Add, OK): yes, or no.
@@ -202,6 +229,8 @@ pub enum ModAction {
     ModLoaded(String, Box<Pack>),
     /// The host saved the pack.
     Saved,
+    /// The host's Play ended (Escape, Stop, the match over, or it did not start).
+    PlayEnded,
     /// The host could not do what was asked: an error dialog.
     Failed(String),
     /// A message for the status bar.
@@ -215,6 +244,11 @@ pub enum ModCommand {
     Save(Box<Pack>),
     /// Load installed mod `id` (answer `ModLoaded` or `Failed`).
     LoadMod(String),
+    /// Play a test match with mod `pack` (checked: no errors) on installed
+    /// level `level` against `bots` bots; answer `PlayEnded` when it ends.
+    Play { pack: Box<Pack>, level: String, bots: u8 },
+    /// Remember Play's level and bots.
+    SavePlaySettings(PlaySettings),
     /// Close the editor.
     Close,
 }
@@ -230,6 +264,11 @@ pub struct ModEditorState {
     mods: Vec<(String, String)>,
     /// Mods loaded for Add weapon.
     others: BTreeMap<String, Pack>,
+    /// The installed levels (pack id, name), for Play.
+    levels: Vec<(String, String)>,
+    play: PlaySettings,
+    /// Play's match runs (the host shows it instead of the editor).
+    playing: bool,
     history: History,
     saved_at: u64,
     saving: bool,
@@ -373,6 +412,9 @@ impl ModEditorState {
             base_id,
             mods,
             others: BTreeMap::new(),
+            levels: Vec::new(),
+            play: PlaySettings::default(),
+            playing: false,
             history: History::default(),
             saved_at: if recovered { u64::MAX } else { 0 },
             saving: false,
@@ -410,6 +452,13 @@ impl ModEditorState {
         }
     }
 
+    /// Play's levels (the installed ones: pack id, name) and its settings
+    /// remembered (a level not among them is not chosen).
+    pub fn set_play(&mut self, levels: Vec<(String, String)>, play: PlaySettings) {
+        self.levels = levels;
+        self.play = PlaySettings { bots: play.bots.min(MAX_BOTS), ..play };
+    }
+
     pub fn pack(&self) -> &Pack {
         &self.pack
     }
@@ -428,6 +477,21 @@ impl ModEditorState {
     }
     pub fn mods(&self) -> &[(String, String)] {
         &self.mods
+    }
+    /// Play's levels (pack id, name).
+    pub fn levels(&self) -> &[(String, String)] {
+        &self.levels
+    }
+    /// The level Play starts on: the one chosen when installed, else the first.
+    pub fn play_level(&self) -> Option<&(String, String)> {
+        self.levels.iter().find(|(id, _)| *id == self.play.level).or(self.levels.first())
+    }
+    pub fn play_bots(&self) -> u8 {
+        self.play.bots
+    }
+    /// Whether Play's match runs.
+    pub fn playing(&self) -> bool {
+        self.playing
     }
     /// A mod loaded for Add weapon (or this one, by its own id).
     pub fn other(&self, id: &str) -> Option<&ModSource> {
@@ -558,6 +622,12 @@ impl ModEditorState {
                 self.status = text;
                 return Vec::new();
             }
+            ModAction::PlayEnded => {
+                self.playing = false;
+                return Vec::new();
+            }
+            // Nothing else acts while Play's match runs.
+            _ if self.playing => return Vec::new(),
             _ => {}
         }
         if let Some(d) = self.dialog.clone() {
@@ -708,6 +778,20 @@ impl ModEditorState {
                 }
             }
             ModAction::Save => return self.save(),
+            ModAction::Play => return self.play(),
+            ModAction::PlayLevel(id) => {
+                if self.levels.iter().any(|(l, _)| *l == id) && id != self.play.level {
+                    self.play.level = id;
+                    return vec![ModCommand::SavePlaySettings(self.play.clone())];
+                }
+            }
+            ModAction::PlayBots(n) => {
+                let n = n.min(MAX_BOTS);
+                if n != self.play.bots {
+                    self.play.bots = n;
+                    return vec![ModCommand::SavePlaySettings(self.play.clone())];
+                }
+            }
             ModAction::Close => {
                 if self.dirty() {
                     self.dialog = Some(Dialog::Unsaved);
@@ -994,6 +1078,27 @@ impl ModEditorState {
         self.saving = true;
         self.pending_at = self.history.at();
         vec![ModCommand::Save(Box::new(self.pack.clone()))]
+    }
+
+    /// Play: the mod as it is, unsaved changes included, unless it has
+    /// errors (they are listed, as for Save).
+    fn play(&mut self) -> Vec<ModCommand> {
+        self.refresh();
+        let errors = self.errors();
+        if errors > 0 {
+            self.show_problems = true;
+            self.status = format!(
+                "Not played: the mod has {errors} error{} (listed below; click one to go to it)",
+                if errors == 1 { "" } else { "s" }
+            );
+            return Vec::new();
+        }
+        let Some((level, _)) = self.play_level().cloned() else {
+            self.status = "Not played: there is no level installed".into();
+            return Vec::new();
+        };
+        self.playing = true;
+        vec![ModCommand::Play { pack: Box::new(self.pack.clone()), level, bots: self.play.bots }]
     }
 
     fn saved(&mut self) -> Vec<ModCommand> {

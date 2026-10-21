@@ -10,6 +10,6 @@ pub mod history;
 pub mod state;
 pub mod tree;
 
-pub use state::{Choice, Dialog, Event, ModAction, ModCommand, ModEditorState};
+pub use state::{Choice, Dialog, Event, MAX_BOTS, ModAction, ModCommand, ModEditorState, PlaySettings};
 pub use tree::{Item, Node, NodeKind, SpawnAt};
 pub mod ui;
