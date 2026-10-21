@@ -37,12 +37,16 @@ impl Voice for StaticSoundHandle {
 }
 
 /// Decodes a sound file. The bytes come from a pack (untrusted): a decoder
-/// panic becomes an error, never a crash (never panic on content).
+/// panic becomes an error, never a crash (never panic on content); the
+/// panic is the log's error (the game's run log has its record too).
 fn decode(bytes: &[u8]) -> Result<StaticSoundData, String> {
     let cursor = Cursor::new(bytes.to_vec());
     match std::panic::catch_unwind(AssertUnwindSafe(|| StaticSoundData::from_cursor(cursor))) {
         Ok(r) => r.map_err(|e| e.to_string()),
-        Err(_) => Err("the decoder panicked".into()),
+        Err(_) => {
+            log::error!("a sound's decoder panicked ({} bytes): the sound is left out", bytes.len());
+            Err("the decoder panicked".into())
+        }
     }
 }
 

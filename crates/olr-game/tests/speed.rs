@@ -182,12 +182,16 @@ fn the_fake_clock_needs_an_autoplay() {
 }
 
 /// The game binary with `args` on content `dir`, no relaunch (the
-/// backend chosen), no window system needed for what fails first.
+/// backend chosen), no window system needed for what fails first; a data
+/// directory of its own (its run log there, not in the user's).
 fn game(dir: &Path, args: &[&str]) -> std::process::Output {
+    let data = tempfile::tempdir().unwrap();
     std::process::Command::new(env!("CARGO_BIN_EXE_olr"))
         .args(args)
         .arg("--content")
         .arg(dir)
+        .arg("--data-dir")
+        .arg(data.path())
         .env("WGPU_BACKEND", "vulkan")
         .output()
         .unwrap()

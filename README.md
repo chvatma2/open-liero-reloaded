@@ -157,7 +157,14 @@ The data directory is `~/.local/share/open-liero-reloaded/` on Linux (another wi
 - `packs/`: user packs (for example `olr-cli import`'s output, and the
   levels you make in the editor), layered over `--content`;
 - `editor.ron`: the editor's Play mod and bots and the file browser's last folder;
-- `recovery/`: the editor's recovery copies of unsaved levels.
+- `recovery/`: the editor's recovery copies of unsaved levels;
+- `logs/`: a log of each of the last 10 runs (`<start, UTC>_<process>.log`,
+  at most 2 MiB each): the version, the system, the GPU and the video
+  settings, what was played and what went wrong, and a crash's record. It
+  is what a bug report needs. Your home directory shows as `~`, and no
+  network address or identity key is in it. The terminal shows the same
+  lines; `--log debug` (or `OLR_LOG=debug`) adds more. A run that ended
+  without its last line (a crash, a kill) is reported by the next one.
 
 A broken settings or profiles file is set aside as `<name>.bak` and the
 game starts with defaults (and says so in its log). One from a newer

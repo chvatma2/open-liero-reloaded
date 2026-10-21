@@ -374,7 +374,7 @@ impl Log {
         if let Some(f) = &mut self.file
             && writeln!(f, "{v}").is_err()
         {
-            eprintln!("warning: writing {}", self.path.display());
+            log::warn!("writing {}", self.path.display());
             self.file = None;
         }
     }

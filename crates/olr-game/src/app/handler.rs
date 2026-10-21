@@ -66,6 +66,10 @@ impl ApplicationHandler for App {
                 self.resized((size.width, size.height));
                 Ok(())
             }
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                log::info!("display scale factor {scale_factor}");
+                Ok(())
+            }
             WindowEvent::Occluded(occluded) => {
                 if let Some(w) = &mut self.win {
                     w.gpu.set_occluded(*occluded);

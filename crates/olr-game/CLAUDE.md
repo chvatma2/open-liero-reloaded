@@ -26,16 +26,54 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `olr-lobby` (identities, host settings), `olr-net` (endpoint settings,
   LAN announcements, `IceConfig`), `olr-discovery` (the hosted lobby's summary,
   `GameSummary::of_lobby`, and `hosting`, shared with olr-server; the
-  relay pool, the game list, pings, invites), plus winit,
+  relay pool, the game list, pings, invites), `olr-log` (the run log),
+  plus `log`, winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
-  are `eprintln!("warning: ...")`, each once.
+  go through `log::{debug, info, warn, error}!` (below), each warning once.
 - **Version** (`lib.rs`'s `VERSION`): `OLR_BUILD_VERSION` at compile time
   (`cargo xtask dist` sets it: `0.2.0-dev.192.24b2ac4`, or `0.2.0` for a
   final release), else `<CARGO_PKG_VERSION>-dev (local build)`; `olr
-  --version`, the log's first line (`olr <version>`), `MenuData::version`
+  --version`, the terminal's first line and the run log's (`olr
+  <version>`), `MenuData::version`
   (the main menu's corner, About). Shown only: nothing compares it
   (replays, the game list's `FINGERPRINT`, the netcode stay as they are).
   `olr-server` has the same `VERSION` (`--version`, its first line).
+- **Run log** (issue #2, `logging.rs`, `olr-log`'s `CLAUDE.md`): `main`
+  starts it after the WSL relaunch (the parent writes none) and before
+  anything else, in `<data>/logs/` (`--data-dir`, else
+  `Store::platform`'s; none: the terminal alone, a warning), at `--log
+  <level>`, else `OLR_LOG`, else `info` (`logging::level`); the header is
+  `olr <version>` and `logging::System::line` (`os: linux x86_64, <os-release
+  PRETTY_NAME (the host's under Flatpak)>, kernel …, WSL, Flatpak, <XDG
+  session> session`), then `window system: Wayland|X11|…` once the event
+  loop is made, `GPU …` and `window <Shape>, scale factor …; video: VSync|
+  uncapped, filter, interpolation, UI scale` (`App::open`). The terminal
+  keeps its lines: `olr <version>` first (printed by `main`), `olr: …` on
+  stdout for `info`, `warning: …`/`error: …` on stderr (`xtask e2e` fails
+  on those: nothing new warns in a clean run). `main` ends it with
+  `olr_log::end()` (the clean last line) on every way out but a panic or a
+  kill; an error is logged first. At `info`, besides the old prints
+  (now `log::info!`/`warn!`; a caught pump panic is `error`): the
+  content listed (`content: N mods, N levels, N skins from …`),
+  `game start: <Assets::describe>` (kind and seed, mod, level, players
+  and bots) for every game (`direct`, `Shell::launch`, `start_online`),
+  `restart: …`, `match over`, `game end: …` and `saved the replay
+  <path>` (`olr_ui::replays::auto_save`'s file: a log and a replay
+  match), `playing the replay <path>`; online: in the lobby, leaving,
+  joining steps, the path, `<name> has left`/`timed out`, the end's
+  reason, kicks and disconnects (`online: …`), migration, relays and
+  reachability, desync bundles (`warn`, with the file); settings saved
+  (`logging::settings_changes`: video, audio and gameplay values, the keys
+  and the online part only named: TURN entries hold credentials); window
+  changes (`window change: Change {…}`, a window made again, the
+  surface made again, the present mode, the display's scale factor;
+  `Resized` at `debug`). Nothing per frame or tick at `info` but
+  `--stats`' once-a-second line (asked for). Addresses and keys in `info`
+  lines (joining, paths, reach) are hidden in the file, not the terminal.
+  `tests/run_log.rs` runs the binary (`--edit` of a missing directory:
+  no window) for the file, a crashed run reported once, an unwritable
+  directory; `tests/speed.rs` gives its runs a data directory of their
+  own.
 - **Menus first** (`main.rs`, `shell.rs`, plan 7 task 2): without a flag
   that chooses a game (`GAME_FLAGS`: `--mode`, `--replay`, `--level`,
   `--mod`, `--targets`, `--seed`, `--script`, `--demo`, ...) the game opens

@@ -75,6 +75,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   candles in the caverns.
 - Your own worm no longer shows its name above it (OpenLieroX shows none);
   its weapon's name still shows while you change weapons.
+- A log file of each run in the data directory's `logs/` (the last 10
+  kept, 2 MiB each), for bug reports: the version, system, GPU and video
+  settings, matches, online events and errors, and a crash's message,
+  place and backtrace. Home paths show as `~`; addresses and keys are left
+  out. `--log debug` or `OLR_LOG=debug` logs more. The dedicated server
+  writes a crash into `server.log` too.
 
 ### Changed
 

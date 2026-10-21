@@ -27,6 +27,7 @@ pub mod finding;
 pub mod gpu;
 pub mod hud;
 pub mod latency;
+pub mod logging;
 pub mod net;
 pub mod online;
 pub mod overlay;

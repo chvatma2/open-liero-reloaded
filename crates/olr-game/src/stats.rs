@@ -1,5 +1,5 @@
 //! Frame and tick timing: the F2 panel's counters (refreshed each second)
-//! and the whole run's summary printed on exit.
+//! and the whole run's summary logged on exit.
 
 use crate::overlay::Stats;
 use crate::session::Session;
@@ -10,9 +10,15 @@ pub fn print(st: &Stats, s: Option<&Session>) {
     let (entities, projectiles, voices) = s.map_or((0, 0, 0), |s| {
         (s.present.fx.len(), s.with_world(|w| w.projectiles().count()), s.audio.playing())
     });
-    println!(
+    log::info!(
         "stats: {:.0} fps, frame {:.2} ms (max {:.2}), busy {:.2} ms, tick {:.3} ms (max {:.3}), {} ticks/s, entities {entities}, projectiles {projectiles}, voices {voices}",
-        st.fps, st.frame_ms, st.frame_ms_max, st.busy_ms, st.tick_ms, st.tick_ms_max, st.ticks_per_second,
+        st.fps,
+        st.frame_ms,
+        st.frame_ms_max,
+        st.busy_ms,
+        st.tick_ms,
+        st.tick_ms_max,
+        st.ticks_per_second,
     );
 }
 

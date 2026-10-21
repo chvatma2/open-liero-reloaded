@@ -309,7 +309,7 @@ impl Shell {
         )?;
         host.lobby().set_spectate(true);
         let port = host.local_port();
-        println!("olr: net-sim {}: a host on port {port} with {NET_SIM_BOTS} bots", profile.name);
+        log::info!("net-sim {}: a host on port {port} with {NET_SIM_BOTS} bots", profile.name);
         self.sim_host = Some(PeerHandle::pumped(host));
         self.impair = Some(profile);
         self.join_from_flag(&format!("127.0.0.1:{port}"));
@@ -429,7 +429,7 @@ impl Shell {
             self.peer_content(),
         )
         .map_err(|e| anyhow::anyhow!("cannot host on port {port}: {e}"))?;
-        println!("olr: hosting on port {}", peer.local_port());
+        log::info!("hosting on port {}", peer.local_port());
         let mut n = Net::new(peer, true);
         n.setup_packs = Some((key, packs));
         n.password = !prefs.password.is_empty();
@@ -463,6 +463,7 @@ impl Shell {
         let action = match started {
             Ok(false) => return,
             Ok(true) => {
+                log::info!("online: in the lobby");
                 if let Some(n) = &mut self.net {
                     n.joined = true;
                 }
@@ -471,7 +472,7 @@ impl Shell {
             }
             Err(e) => {
                 let why = format!("{e:#}");
-                eprintln!("warning: online: {why}");
+                log::warn!("online: {why}");
                 UiAction::OnlineFailed(why)
             }
         };
@@ -571,6 +572,9 @@ impl Shell {
     /// Leaves the lobby this player is in (also before hosting or joining
     /// another): the match ends, the peer says goodbye.
     pub(super) fn leave_net(&mut self) {
+        if self.net.is_some() {
+            log::info!("online: leaving the game");
+        }
         if self.plays_online() {
             self.end();
         }
@@ -631,7 +635,7 @@ impl Shell {
             self.poll_replays();
         }
         if !self.replays.is_empty() {
-            eprintln!("warning: quitting while the last match's replay is made: it is not saved");
+            log::warn!("quitting while the last match's replay is made: it is not saved");
         }
     }
 
@@ -640,7 +644,7 @@ impl Shell {
     /// would draw its start world), then the menus return to Multiplayer
     /// with `why`.
     fn lost(&mut self, why: String, out: &mut Vec<Outcome>) {
-        eprintln!("olr: online: {why}");
+        log::info!("online: {why}");
         self.end();
         self.close_hosted();
         if let Some(p) = self.net.take().and_then(|n| n.peer) {
@@ -667,7 +671,7 @@ impl Shell {
     /// watches until the next one.
     fn migrated(&mut self, host: &str, me: bool, out: &mut Vec<Outcome>) {
         let text = if me { "You are now hosting".to_string() } else { format!("{host} is now hosting") };
-        println!("olr: migration: {text}");
+        log::info!("migration: {text}");
         let late =
             !me && self.plays_online() && self.with_peer(|p| p.match_session().is_none()) == Some(true);
         // The new host's lobby: still in its match (a start will come to
@@ -692,7 +696,7 @@ impl Shell {
         self.chat_line(LogLine::event(text));
         if late {
             let text = late_rejoin(host, playing);
-            println!("olr: migration: {text}");
+            log::info!("migration: {text}");
             self.chat_line(LogLine::event(text));
             if playing {
                 if let Some(n) = &mut self.net {
@@ -731,7 +735,7 @@ impl Shell {
     fn host_lost(&mut self, why: olr_online::LostWhy, out: &mut Vec<Outcome>) {
         // Ruling FR12c-4: each reason its own text on the Host lost screen.
         let why = why.to_string();
-        println!("olr: migration: host lost: {why}");
+        log::info!("migration: host lost: {why}");
         // A host lost is this player's own step-down (N70) or cut-off (SB-2).
         let hosting = self.net.as_ref().is_some_and(|n| n.host);
         self.end();
@@ -827,21 +831,26 @@ impl Shell {
                         && let Some(n) = self.net.as_mut().filter(|n| n.migrating.is_some())
                     {
                         n.migrating = None;
-                        println!("olr: migration: {text}");
+                        log::info!("migration: {text}");
                     }
                     self.chat_line(LogLine::event(text));
                 }
                 // OLX's NetworkTexts HasLeft and HasTimedOut (src/client/Options.cpp:769-770).
-                OnlineEvent::Left(name) => self.chat_line(LogLine::event(format!("{name} has left"))),
+                OnlineEvent::Left(name) => {
+                    log::info!("online: {name} has left");
+                    self.chat_line(LogLine::event(format!("{name} has left")));
+                }
                 OnlineEvent::TimedOut(name) => {
-                    self.chat_line(LogLine::event(format!("{name} has timed out")))
+                    log::info!("online: {name} has timed out");
+                    self.chat_line(LogLine::event(format!("{name} has timed out")));
                 }
                 OnlineEvent::MatchStarting { start, my_slot } => {
                     let after: Vec<OnlineEvent> = queue.drain(..).collect();
                     let rest = self.start_online(start, my_slot, after, pumped, out);
                     queue.extend(rest);
                 }
-                OnlineEvent::MatchEnded(_) => {
+                OnlineEvent::MatchEnded(end) => {
+                    log::info!("online match ended: {}", end.reason);
                     // The host's end: the results show now if they did not
                     // already (the confirmed end's).
                     if self.plays_online() && !self.over_reported && self.ui.screen() == Screen::InGame {
@@ -850,6 +859,7 @@ impl Shell {
                     }
                 }
                 OnlineEvent::Lagging(on) => {
+                    log::debug!("online: {}", if on { "connection problem" } else { "connection back" });
                     if let Some(n) = &mut self.net {
                         n.lagging = on;
                     }
@@ -877,10 +887,10 @@ impl Shell {
                 // A join to a successor during a migration (plan 12c Task
                 // 7) is the console's: the menus wait for no join.
                 OnlineEvent::Joining(step) if self.net.as_ref().is_some_and(|n| n.migrating.is_some()) => {
-                    println!("olr: migration: {step}");
+                    log::info!("migration: {step}");
                 }
                 OnlineEvent::Joining(step) => {
-                    println!("olr: {step}");
+                    log::info!("{step}");
                     self.data.joining = Some(step.to_string());
                 }
                 OnlineEvent::Reachability(r) => self.reached(r),
@@ -888,20 +898,20 @@ impl Shell {
                 // the host's lobby and on its console.
                 OnlineEvent::RelayJoin { join, more } => {
                     let text = join.line(more);
-                    println!("olr: relays: {text}");
+                    log::info!("relays: {text}");
                     self.chat_line(LogLine::event(text));
                 }
                 // B-M4: which of the hosted game's relays fails.
-                OnlineEvent::ListenRelay { url, status } => println!("olr: relay {url}: {status}"),
+                OnlineEvent::ListenRelay { url, status } => log::info!("relay {url}: {status}"),
                 OnlineEvent::Connected { path, remote } => {
-                    println!("olr: {}", path_text(path, remote));
+                    log::info!("{}", path_text(path, remote));
                     self.poll_connection();
                 }
                 // Plan 12c: the host is gone and the match moves; the HUD's
                 // top line says where to, until the handover.
                 OnlineEvent::Migrating(step) => {
                     let text = step.to_string();
-                    println!("olr: migration: {text}");
+                    log::info!("migration: {text}");
                     if let Some(n) = &mut self.net {
                         n.migrating = Some(text);
                     }
@@ -910,7 +920,7 @@ impl Shell {
                 OnlineEvent::HostLost(why) => return self.host_lost(why, out),
                 // Ruling FR12c-4: each attempt to reach a successor, and a
                 // join the migrated lobby refused, on the console only.
-                OnlineEvent::MigrationLog(text) => println!("olr: migration: {text}"),
+                OnlineEvent::MigrationLog(text) => log::info!("migration: {text}"),
             }
         }
     }
@@ -951,7 +961,7 @@ impl Shell {
         let downloads = n.downloads.clone();
         if host {
             for line in net::path_news(&mut n.paths_said, &state.members) {
-                println!("olr: {line}");
+                log::info!("{line}");
             }
             // The level's name from the peer's content (`weapons` holds it).
             let level = &state.setup.level_id;
@@ -1064,6 +1074,7 @@ impl Shell {
             }
         };
         self.log(std::mem::take(&mut assets.warnings));
+        log::info!("game start: {}", assets.describe());
         let driver = OnlineDriver::new(peer, &start);
         let made =
             Session::try_online(&assets, driver, self.cfg.viewport, self.cfg.interpolation, Audio::silent());
@@ -1092,8 +1103,6 @@ impl Shell {
             n.late = false;
             n.meter.clear();
         }
-        let watch = if my_slot.is_some() { "plays" } else { "watches" };
-        println!("olr: online match seed {}: this player {watch}", start.seed);
         out.extend(self.act(UiAction::MatchStarted));
         out.push(Outcome::Started);
         rest
@@ -1105,28 +1114,28 @@ impl Shell {
         let Some(dir) = self.store.replays_dir() else { return };
         match olr_ui::replays::auto_save(&dir, bytes) {
             Ok(path) => {
-                println!("olr: saved replay {}", path.display());
+                log::info!("saved the online match's replay {}", path.display());
                 // The Host lost screen says so once it is there.
                 if id.is_some() && self.host_lost_pending == id {
                     self.host_lost_pending = None;
                     self.data.host_lost_replay = true;
                 }
             }
-            Err(e) => eprintln!("warning: saving the replay in {}: {e}", dir.display()),
+            Err(e) => log::warn!("saving the replay in {}: {e}", dir.display()),
         }
     }
 
     /// A desync's bundle (spec §9.10), in the data directory's `desyncs/`.
     fn save_bundle(&mut self, bytes: &[u8]) {
         let Some(dir) = self.store.dir().map(|d| d.join(net::DESYNCS_DIR)) else {
-            eprintln!("warning: a desync happened; without a data directory its bundle is not saved");
+            log::warn!("a desync happened; without a data directory its bundle is not saved");
             return;
         };
         let secs =
             std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs());
         match net::save_bundle(&dir, bytes, secs) {
-            Ok(path) => eprintln!("warning: a desync happened: its bundle is {}", path.display()),
-            Err(e) => eprintln!("warning: saving a desync bundle in {}: {e}", dir.display()),
+            Ok(path) => log::warn!("a desync happened: its bundle is {}", path.display()),
+            Err(e) => log::warn!("saving a desync bundle in {}: {e}", dir.display()),
         }
     }
 
@@ -1300,7 +1309,7 @@ impl Shell {
     fn reached(&mut self, r: Reachability) {
         let Some(h) = self.net.as_mut().and_then(|n| n.hosted.as_mut()) else { return };
         for line in h.set_reach(r) {
-            println!("olr: reach: {line}");
+            log::info!("reach: {line}");
         }
     }
 

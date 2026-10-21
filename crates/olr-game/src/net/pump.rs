@@ -215,8 +215,8 @@ impl Queue {
         if self.events.len() >= PUMP_QUEUE && self.make_room() {
             self.lost += 1;
             if self.lost == 1 {
-                eprintln!(
-                    "warning: the network pump's queue is full ({PUMP_QUEUE} events): the oldest \
+                log::warn!(
+                    "the network pump's queue is full ({PUMP_QUEUE} events): the oldest \
                      confirmed ticks are thinned, then chat goes (counted; logged once)"
                 );
             }
@@ -397,7 +397,7 @@ impl<P: Poll> PeerHandle<P> {
     pub fn pumped(peer: P) -> PeerHandle<P> {
         let mut h = PeerHandle::new(peer);
         if let Err(e) = h.start_pump() {
-            eprintln!("warning: cannot start the network pump ({e}): the network runs in the frames alone");
+            log::warn!("cannot start the network pump ({e}): the network runs in the frames alone");
         }
         h
     }
@@ -536,7 +536,7 @@ impl Pump {
             t.thread().unpark();
             // A panicking poll is caught and said in `run`; this is anything else.
             if t.join().is_err() {
-                eprintln!("warning: the network pump's thread panicked");
+                log::error!("the network pump's thread panicked");
             }
         }
     }
@@ -577,8 +577,8 @@ fn run<P: Poll>(shared: &Shared<P>, stop: &AtomicBool) {
                 .map(|s| (*s).to_string())
                 .or_else(|| p.downcast_ref::<String>().cloned())
                 .unwrap_or_else(|| "a panic".into());
-            eprintln!(
-                "warning: the network pump stopped: its poll panicked ({why}); the frames alone poll the peer"
+            log::error!(
+                "the network pump stopped: its poll panicked ({why}); the frames alone poll the peer"
             );
             inner.died = Some(why);
             shared.dead.store(true, Ordering::Release);

@@ -541,6 +541,41 @@ impl Assets {
         self.slot_skins.get(slot).unwrap_or(&self.bot_skin)
     }
 
+    /// What this game is, for the log (issue #2): its kind and seed, the
+    /// mod and level, who plays.
+    pub fn describe(&self) -> String {
+        let kind = match &self.game {
+            Game::Sandbox(_) => "sandbox".to_string(),
+            Game::Deathmatch { options, .. } if self.human_plays() => {
+                format!("Deathmatch seed {}", options.seed)
+            }
+            Game::Deathmatch { options, .. } => format!("Deathmatch of bots (watched) seed {}", options.seed),
+            Game::Replay(r) => format!("replay of {:.1} s", f64::from(r.ticks()) / 100.0),
+            Game::Online { start, .. } => format!("online match seed {}", start.seed),
+        };
+        let who = match &self.game {
+            Game::Deathmatch { options, .. } => {
+                let bots: Vec<Difficulty> = options
+                    .players
+                    .iter()
+                    .filter_map(|p| match p {
+                        Player::Bot(b) => Some(b.difficulty),
+                        _ => None,
+                    })
+                    .collect();
+                let level = bots.first().map_or(String::new(), |d| format!(" ({d:?})"));
+                format!("{} players, {} bots{level}", options.players.len() - bots.len(), bots.len())
+            }
+            Game::Online { start, my_slot } => {
+                let bots = start.slots.iter().filter(|s| s.member.is_none()).count();
+                let me = my_slot.map_or("watching".to_string(), |s| format!("playing slot {s}"));
+                format!("{} players, {bots} bots, {me}", start.slots.len() - bots)
+            }
+            _ => format!("{} worms", self.worms()),
+        };
+        format!("{kind}: {} on {}, {who}", self.mod_id, self.level_id)
+    }
+
     /// How many worms the game starts with.
     pub fn worms(&self) -> usize {
         match &self.game {

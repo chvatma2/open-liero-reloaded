@@ -5,7 +5,8 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
 
 - **Layer 5, uses `std`.** Depends on `olr-sim`, `olr-content`, `olr-math`,
   `kira` (cpal backend; OGG/Vorbis and WAV decoding, no realtime-priority
-  features). `#![forbid(unsafe_code)]`. No GPU and no window: it runs on
+  features), `log` (a decoder's panic, caught, is an `error`: the game's run
+  log, `olr-log`). `#![forbid(unsafe_code)]`. No GPU and no window: it runs on
   any thread.
 - **Mix** (`mix.rs`, pure): positional sounds at `SOURCE_GAIN` 0.7 with
   OpenAL's `AL_INVERSE_DISTANCE_CLAMPED` (reference 50, rolloff 2) for a

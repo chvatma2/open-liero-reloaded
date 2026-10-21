@@ -14,6 +14,7 @@ mod menu;
 mod online;
 mod options;
 mod profiles;
+mod run_log;
 mod speed;
 mod throw_sound;
 mod user_packs;

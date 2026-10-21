@@ -12,12 +12,12 @@ use olr_game::app::{App, Config};
 use olr_game::autoplay::Autoplay;
 use olr_game::script::{self, Command, Step};
 use olr_game::session::Session;
-use olr_game::setup::{self, DeathmatchOptions, Game, SandboxOptions};
+use olr_game::setup::{self, DeathmatchOptions, SandboxOptions};
 use olr_game::shell::{Shell, ShellConfig};
 use olr_game::speed::Speed;
 use olr_game::video::{self, Overrides};
 use olr_game::window::{self, WindowSystem};
-use olr_game::wsl;
+use olr_game::{logging, wsl};
 use olr_netcode::netsim::Profile;
 use olr_render::{RenderSettings, UpscaleFilter};
 use olr_scene::Interpolation;
@@ -221,6 +221,15 @@ struct Args {
     #[arg(long, value_name = "DIR", conflicts_with_all = ["host", "join", "net_sim"],
           conflicts_with_all = GAME_FLAGS)]
     edit: Option<PathBuf>,
+    /// The run log's level (error, warn, info, debug), in the terminal and
+    /// in `<data>/logs/`; else `OLR_LOG`, else info.
+    #[arg(long, value_name = "LEVEL", value_parser = log_level)]
+    log: Option<olr_log::LevelFilter>,
+}
+
+/// A `--log` level by name.
+fn log_level(name: &str) -> Result<olr_log::LevelFilter, String> {
+    olr_log::parse_level(name).ok_or_else(|| format!("no level {name:?}: error, warn, info or debug"))
 }
 
 /// `--edit`'s directory (plan 14c R6): the pack at `edit`, unless it lies
@@ -320,7 +329,7 @@ fn direct(
         setup::load(&[args.content.as_path()], &args.mod_name, &args.level, &args.skin, options)?
     };
     for w in &assets.warnings {
-        eprintln!("warning: {w}");
+        log::warn!("{w}");
     }
     anyhow::ensure!(
         args.speed.is_none_or(|s| s == Speed::X1) || !assets.human_plays(),
@@ -329,19 +338,10 @@ fn direct(
     let mut audio = audio;
     audio.load(&assets.m, assets.content.core());
     for w in audio.take_warnings() {
-        eprintln!("warning: {w}");
+        log::warn!("{w}");
     }
     let session = Session::new(&assets, cfg.viewport, cfg.interpolation, audio)?;
-    let what = match &assets.game {
-        Game::Sandbox(_) => "sandbox".to_string(),
-        Game::Deathmatch { options, .. } if assets.human_plays() => {
-            format!("Deathmatch seed {}", options.seed)
-        }
-        Game::Deathmatch { options, .. } => format!("Deathmatch of bots (watched) seed {}", options.seed),
-        Game::Replay(r) => format!("replay of {:.1} s", f64::from(r.ticks()) / 100.0),
-        Game::Online { start, .. } => format!("online match seed {}", start.seed),
-    };
-    println!("olr: {what}: {} on {}, {} worms", assets.mod_id, assets.level_id, assets.worms());
+    log::info!("game start: {}", assets.describe());
     let mut shell = Shell::playing(cfg, assets, session);
     // The HUD's layout flag (no file: the other video flags are the
     // config's).
@@ -387,7 +387,7 @@ fn menus(args: &Args, audio: olr_audio::Audio, mut cfg: ShellConfig, flags: Over
     let mut settings = store.load_settings();
     let profiles = store.load_profiles();
     for w in warning.into_iter().chain(settings.warnings).chain(profiles.warnings) {
-        eprintln!("warning: {w}");
+        log::warn!("{w}");
     }
     // Matches get seeds from here on (each one is in its replay); `--seed`
     // would choose a game, so the clock picks the first.
@@ -399,7 +399,7 @@ fn menus(args: &Args, audio: olr_audio::Audio, mut cfg: ShellConfig, flags: Over
             .map_or(1, |d| d.subsec_nanos() ^ d.as_secs() as u32)
     };
     let data = store.dir().map_or("none (nothing is saved)".to_string(), |d| d.display().to_string());
-    println!("olr: menus; content {}, data {data}", args.content.display());
+    log::info!("menus; content {}, data {data}", args.content.display());
     let file = settings.value.video.clone();
     flags.apply(&mut settings.value.video);
     cfg.interpolation = video::interpolation(settings.value.video.interpolation);
@@ -410,7 +410,7 @@ fn menus(args: &Args, audio: olr_audio::Audio, mut cfg: ShellConfig, flags: Over
     shell.set_port(args.port);
     if let Some(profile) = args.net_sim {
         if let Err(e) = shell.start_net_sim(profile) {
-            eprintln!("warning: --net-sim: {e:#}");
+            log::warn!("--net-sim: {e:#}");
         }
     } else if let Some(name) = &args.host {
         shell.host_from_flag(Some(name.clone()));
@@ -421,13 +421,12 @@ fn menus(args: &Args, audio: olr_audio::Audio, mut cfg: ShellConfig, flags: Over
     if (args.host.is_some() || args.join.is_some())
         && let Some(why) = shell.ui.message()
     {
-        eprintln!("warning: {why}");
+        log::warn!("{why}");
     }
     shell
 }
 
 fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
-    println!("olr {}", olr_game::VERSION);
     let var = std::env::var(window::WINDOW_SYSTEM_VAR).ok();
     let ws = window::window_system(args.window_system, var.as_deref()).map_err(anyhow::Error::msg)?;
     let mut steps: Vec<Step> = match (&args.script, args.demo) {
@@ -444,12 +443,12 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     let mut audio = if args.no_sound { olr_audio::Audio::silent() } else { olr_audio::Audio::new() };
     let silent = audio.is_silent();
     for w in audio.take_warnings() {
-        eprintln!("warning: {w}");
+        log::warn!("{w}");
     }
     let gilrs = match gilrs::Gilrs::new() {
         Ok(g) => Some(g),
         Err(e) => {
-            eprintln!("warning: no gamepads: {e}");
+            log::warn!("no gamepads: {e}");
             None
         }
     };
@@ -466,7 +465,7 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
         let dir = edit_target(dir, &args.content).map_err(anyhow::Error::msg)?;
         shell.open_editor_dir(&dir).map_err(anyhow::Error::msg)?;
     }
-    println!("olr: audio {}", if silent { "silent" } else { "opened" });
+    log::info!("audio {}", if silent { "silent" } else { "opened" });
     let osrelease = wsl::osrelease();
     let backend = std::env::var("WGPU_BACKEND").ok();
     let mut filter = match args.filter {
@@ -504,13 +503,14 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     };
     let event_loop = event_loop(ws)?;
     let wayland = is_wayland(&event_loop);
+    log::info!("window system: {}", window_system_name(wayland));
     let mut app = App::new(cfg, shell, silent, gilrs, autoplay);
     let ran = event_loop.run_app(&mut app);
-    println!("olr: {}", app.summary());
+    log::info!("{}", app.summary());
     if let Some(m) = app.match_summary() {
-        println!("olr: {m}");
+        log::info!("{m}");
     }
-    println!("olr: {}", app.latency_summary());
+    log::info!("{}", app.latency_summary());
     if let Some(path) = &args.frame_log {
         let log = app.frame_log(args.frame_log_skip);
         let text = ron::ser::to_string_pretty(&log, ron::ser::PrettyConfig::default())?;
@@ -525,7 +525,7 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     drop(app);
     let wait = olr_game::shell::UNMAP_WAIT;
     if !unmapping.wait(wait) {
-        eprintln!("warning: the router did not confirm deleting the port mapping within {wait:?}");
+        log::warn!("the router did not confirm deleting the port mapping within {wait:?}");
     }
     match ran {
         // The game never sets a failing exit code; winit does, most often
@@ -539,7 +539,7 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
                 return Err(e);
             }
             match autoplay {
-                Some(Ok(())) => println!("olr: autoplay passed"),
+                Some(Ok(())) => log::info!("autoplay passed"),
                 Some(Err(why)) => anyhow::bail!(why),
                 None => {}
             }
@@ -566,6 +566,17 @@ fn event_loop(ws: WindowSystem) -> anyhow::Result<winit::event_loop::EventLoop<(
     builder.build().with_context(|| format!("opening the window system ({ws:?})"))
 }
 
+/// The window system the event loop runs on, for the log.
+fn window_system_name(wayland: bool) -> &'static str {
+    match std::env::consts::OS {
+        "linux" if wayland => "Wayland",
+        "linux" => "X11",
+        "windows" => "Windows",
+        "macos" => "macOS",
+        other => other,
+    }
+}
+
 /// Whether the event loop runs on Wayland.
 fn is_wayland(event_loop: &winit::event_loop::EventLoop<()>) -> bool {
     #[cfg(target_os = "linux")]
@@ -578,8 +589,9 @@ fn is_wayland(event_loop: &winit::event_loop::EventLoop<()>) -> bool {
 }
 
 /// On WSL without the user's choice, runs this program again with Mesa's
-/// d3d12 driver and wgpu's GL backend; returns its exit code.
-fn relaunch() -> Option<ExitCode> {
+/// d3d12 driver and wgpu's GL backend; returns its exit code. A failure
+/// to is a warning for the log, which starts after this.
+fn relaunch(warnings: &mut Vec<String>) -> Option<ExitCode> {
     let wsl = wsl::is_wsl(&wsl::osrelease());
     let backend = std::env::var("WGPU_BACKEND").ok();
     let gallium = std::env::var("GALLIUM_DRIVER").ok();
@@ -591,30 +603,55 @@ fn relaunch() -> Option<ExitCode> {
     match status {
         Ok(s) => Some(ExitCode::from(s.code().unwrap_or(1).clamp(0, 255) as u8)),
         Err(e) => {
-            eprintln!("warning: could not restart with the WSL GPU defaults ({e}); continuing");
+            warnings.push(format!("could not restart with the WSL GPU defaults ({e}); continuing"));
             None
         }
+    }
+}
+
+/// The data directory: `--data-dir`, else the platform's (none when the
+/// platform has none).
+fn data_dir(args: &Args) -> Option<PathBuf> {
+    match &args.data_dir {
+        Some(dir) => Some(dir.clone()),
+        None => olr_ui::Store::platform().0.dir().map(Path::to_path_buf),
     }
 }
 
 fn main() -> ExitCode {
     let matches = Args::command().get_matches();
     let args = Args::from_arg_matches(&matches).unwrap_or_else(|e| e.exit());
-    if let Some(code) = relaunch() {
+    let mut warnings = Vec::new();
+    // The relaunching parent writes no log: its child does.
+    if let Some(code) = relaunch(&mut warnings) {
         return code;
     }
-    let flags = video_flags(&matches, &args);
+    // The terminal's first line (the log's is in its header).
+    println!("olr {}", olr_game::VERSION);
+    let (level, level_warning) = logging::level(args.log, std::env::var(olr_log::LEVEL_VAR).ok().as_deref());
+    logging::start(data_dir(&args).as_deref(), level);
+    for w in warnings.into_iter().chain(level_warning) {
+        log::warn!("{w}");
+    }
+    let code = main_logged(&matches, args);
+    olr_log::end();
+    code
+}
+
+/// The run, with the log started.
+fn main_logged(matches: &ArgMatches, args: Args) -> ExitCode {
+    let flags = video_flags(matches, &args);
     // R6: bundled content is refused before any window opens.
     if let Some(dir) = &args.edit
         && let Err(why) = edit_target(dir, &args.content)
     {
-        eprintln!("olr: {why}");
+        log::error!("{why}");
         return ExitCode::from(2);
     }
-    match run(args, plays_directly(&matches), flags) {
+    match run(args, plays_directly(matches), flags) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("error: {e:#}");
+            log::error!("{e:#}");
             ExitCode::FAILURE
         }
     }

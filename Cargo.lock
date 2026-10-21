@@ -3294,6 +3294,7 @@ name = "olr-audio"
 version = "0.2.0"
 dependencies = [
  "kira",
+ "log",
  "olr-content",
  "olr-data",
  "olr-math",
@@ -3513,6 +3514,7 @@ dependencies = [
  "egui-wgpu",
  "egui-winit",
  "gilrs",
+ "log",
  "olr-audio",
  "olr-bots",
  "olr-content",
@@ -3525,6 +3527,7 @@ dependencies = [
  "olr-game",
  "olr-input",
  "olr-lobby",
+ "olr-log",
  "olr-look",
  "olr-math",
  "olr-modes",

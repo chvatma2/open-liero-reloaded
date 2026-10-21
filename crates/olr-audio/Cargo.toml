@@ -12,6 +12,7 @@ olr-math.workspace = true
 olr-sim.workspace = true
 olr-content.workspace = true
 kira.workspace = true
+log.workspace = true
 
 [dev-dependencies]
 olr-data.workspace = true

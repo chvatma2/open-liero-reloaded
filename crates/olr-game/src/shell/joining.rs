@@ -105,7 +105,7 @@ impl Shell {
         let endpoint =
             EndpointConfig { port: 0, impair: self.impair, ice: self.ice(ice), ..EndpointConfig::default() };
         let peer = OnlinePeer::start(role, endpoint, id, look, content, None, self.peer_content())?;
-        println!("olr: joining {what}");
+        log::info!("joining {what}");
         self.net = Some(Net::new(peer, false));
         Ok(())
     }
@@ -179,7 +179,7 @@ impl Shell {
             }
         });
         if unconfirmed {
-            eprintln!("warning: the router did not confirm deleting a port mapping");
+            log::warn!("the router did not confirm deleting a port mapping");
         }
     }
 }

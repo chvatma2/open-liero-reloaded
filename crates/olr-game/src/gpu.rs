@@ -228,6 +228,7 @@ impl Gpu {
         self.uncapped = uncapped;
         let mode = pick_present_mode(&self.present_modes, uncapped);
         if mode != self.config.present_mode {
+            log::info!("present mode {mode:?}");
             self.config.present_mode = mode;
             self.state.reconfigure();
         }
@@ -460,9 +461,12 @@ impl Surface for WindowSurface<'_> {
 
     fn recreate(&mut self) {
         match self.instance.create_surface(self.window.clone()) {
-            Ok(s) if self.adapter.is_surface_supported(&s) => *self.surface = s,
-            Ok(_) => eprintln!("warning: the new window surface is not supported by the adapter"),
-            Err(e) => eprintln!("warning: recreating the window surface: {e}"),
+            Ok(s) if self.adapter.is_surface_supported(&s) => {
+                log::info!("the window surface was made again");
+                *self.surface = s;
+            }
+            Ok(_) => log::warn!("the new window surface is not supported by the adapter"),
+            Err(e) => log::warn!("recreating the window surface: {e}"),
         }
     }
 }

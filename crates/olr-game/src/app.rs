@@ -533,8 +533,8 @@ impl App {
         let path = crate::drive::record_path(base, self.saved);
         self.saved += 1;
         match std::fs::write(&path, r.encode()) {
-            Ok(()) => println!("olr: recorded {} ({} ticks)", path.display(), r.ticks()),
-            Err(e) => eprintln!("warning: recording {}: {e}", path.display()),
+            Ok(()) => log::info!("recorded {} ({} ticks)", path.display(), r.ticks()),
+            Err(e) => log::warn!("recording {}: {e}", path.display()),
         }
     }
 
@@ -589,7 +589,16 @@ impl App {
             s.present.invalidate_gpu();
         }
         let egui = self.egui_state(&window, &gpu);
-        println!("olr: GPU {}", gpu.info);
+        log::info!("GPU {}", gpu.info);
+        log::info!(
+            "window {:?}, scale factor {}; video: {}, filter {:?}, interpolation {:?}, UI scale {}",
+            self.shape,
+            window.scale_factor(),
+            if self.cfg.uncapped { "uncapped" } else { "VSync" },
+            self.cfg.render.filter,
+            self.cfg.interpolation,
+            self.ui_scale,
+        );
         self.stats.gpu = gpu.info.clone();
         self.win = Some(Shown { window, gpu, egui, hidden_frames: 0, made: Instant::now() });
         // Creating the window counts as a change: a scripted `size` right
@@ -625,7 +634,7 @@ impl App {
         let window = match made {
             Ok(w) => w,
             Err(e) => {
-                eprintln!("warning: making the window again: {e:#}; changing it in place");
+                log::warn!("making the window again: {e:#}; changing it in place");
                 let size = window::apply(&old_window, change);
                 self.win = Some(Shown {
                     window: old_window,
@@ -641,6 +650,7 @@ impl App {
             }
         };
         let egui = self.egui_state(&window, &gpu);
+        log::info!("the window was made again: {:?}", self.shape);
         self.win = Some(Shown { window, gpu, egui, hidden_frames: 0, made: Instant::now() });
         drop((old_egui, old_window));
         self.input.release_keys();
@@ -667,6 +677,7 @@ impl App {
     /// The window is now `size` pixels: the surface follows (the view
     /// does not: it is the same for every window).
     fn resized(&mut self, size: (u32, u32)) {
+        log::debug!("window resized to {} × {}", size.0, size.1);
         if let Some(w) = &mut self.win {
             w.gpu.resize(size);
         }
@@ -677,6 +688,7 @@ impl App {
     /// surface texture is acquired.
     fn apply_requests(&mut self, el: &ActiveEventLoop) {
         let Some(change) = self.requests.due(self.now()) else { return };
+        log::info!("window change: {change:?}");
         let shown = self.shape.apply(change);
         match self.plan {
             Plan::Recreate if shown => self.recreate(el, change),
@@ -781,7 +793,7 @@ impl App {
         self.meter.tick(t0.elapsed().as_secs_f64());
         let Some(s) = self.shell.session() else { return Ok(true) };
         if s.events.gameplay_dropped() > 0 && !self.dropped_warned {
-            eprintln!("warning: a tick dropped gameplay events; its terrain area was rebuilt");
+            log::warn!("a tick dropped gameplay events; its terrain area was rebuilt");
             self.dropped_warned = true;
         }
         Ok(true)
@@ -1047,7 +1059,7 @@ impl App {
             // Each once (at most `MAX_LOGGED` remembered: a text that varies
             // never grows the set without bound).
             if self.logged.len() < MAX_LOGGED && self.logged.insert(warning.clone()) {
-                eprintln!("warning: {warning}");
+                log::warn!("{warning}");
             }
             // The editor says it too (a level whose art the GPU crops).
             if let Some(h) = self.shell.editor.as_mut().filter(|_| editing) {
@@ -1077,8 +1089,8 @@ impl App {
             // (an autoplay's is: it checks what the picture shows).
             let shot = w.gpu.screenshot(world, &paint, &path);
             match &shot {
-                Ok(_) => println!("olr: wrote {} (tick {})", path.display(), self.ticks),
-                Err(e) => eprintln!("warning: screenshot {}: {e:#}", path.display()),
+                Ok(_) => log::info!("wrote {} (tick {})", path.display(), self.ticks),
+                Err(e) => log::warn!("screenshot {}: {e:#}", path.display()),
             }
             if let (Some(name), Some(a)) = (&name, &mut self.autoplay) {
                 let check = shot.map_err(|e| format!("{e:#}")).and_then(|img| autoplay::sanity(&img));
@@ -1153,7 +1165,7 @@ impl App {
         }
         self.speed = if faster { self.speed.faster() } else { self.speed.slower() };
         self.rate.clear();
-        println!("olr: speed {}", self.speed.label());
+        log::info!("speed {}", self.speed.label());
     }
 
     fn on_key(&mut self, el: &ActiveEventLoop, ev: &KeyEvent) -> anyhow::Result<()> {
@@ -1234,7 +1246,7 @@ impl App {
             }
             Effect::Action(a, pressed) => self.press(a, pressed),
             Effect::Quit => {
-                println!("olr: autoplay passed ({} frames)", self.frames);
+                log::info!("autoplay passed ({} frames)", self.frames);
                 el.exit();
             }
             Effect::Fail(why) => self.fail(el, anyhow::anyhow!(why)),

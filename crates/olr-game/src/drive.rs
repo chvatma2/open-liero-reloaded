@@ -89,7 +89,7 @@ impl MatchDriver {
         let Some(rec) = &mut self.recorder else { return };
         if let Err(e) = rec.push(keys, world) {
             if !self.warned {
-                eprintln!("warning: the recording stopped: {e}");
+                log::warn!("the recording stopped: {e}");
                 self.warned = true;
             }
             self.recorder = None;
@@ -102,7 +102,7 @@ impl MatchDriver {
         let Some(rec) = self.recorder.take() else { return };
         match rec.finish(world) {
             Ok(r) => self.replay = Some(r),
-            Err(e) => eprintln!("warning: the recording could not be finished: {e}"),
+            Err(e) => log::warn!("the recording could not be finished: {e}"),
         }
     }
 
@@ -163,7 +163,7 @@ impl ReplayDriver {
             Ok(played) => played,
             Err(m) => {
                 if self.mismatch.is_none() {
-                    eprintln!("warning: the replay diverged: {m}");
+                    log::warn!("the replay diverged: {m}");
                     self.mismatch = Some(m);
                 }
                 // Tick 0's checksum is checked before the first tick.

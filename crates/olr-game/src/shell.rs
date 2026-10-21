@@ -145,6 +145,8 @@ pub struct Shell {
     launches: u32,
     unsaved_settings: Option<Settings>,
     unsaved_profiles: Option<Profiles>,
+    /// The settings as the log last said them (changes are logged).
+    logged_settings: Settings,
     /// Warnings logged once.
     logged: BTreeSet<String>,
     /// The content the menus list (the skin preview loads its skins).
@@ -254,6 +256,7 @@ impl Shell {
         let packs_dir = store.packs_dir();
         data.notices = store.notices();
         data.version = crate::VERSION.to_string();
+        let logged_settings = ui.settings().clone();
         let mut shell = Shell {
             ui,
             data,
@@ -267,6 +270,7 @@ impl Shell {
             launches: 0,
             unsaved_settings: None,
             unsaved_profiles: None,
+            logged_settings,
             logged: BTreeSet::new(),
             content: None,
             preview_skin: None,
@@ -332,6 +336,7 @@ impl Shell {
             launches: 1,
             unsaved_settings: None,
             unsaved_profiles: None,
+            logged_settings: Settings::default(),
             logged: BTreeSet::new(),
             content: None,
             preview_skin: None,
@@ -384,11 +389,19 @@ impl Shell {
         self.content = match Content::open_layers(&roots) {
             Ok(c) => Some(c),
             Err(e) => {
-                eprintln!("warning: {e:#}: no mods or levels to play");
+                log::warn!("{e:#}: no mods or levels to play");
                 None
             }
         };
         let catalog = self.content.as_ref().map(Content::catalog).unwrap_or_default();
+        let dirs: Vec<String> = roots.iter().map(|r| r.display().to_string()).collect();
+        log::info!(
+            "content: {} mods, {} levels, {} skins from {}",
+            catalog.mods.len(),
+            catalog.levels.len(),
+            catalog.skins.len(),
+            dirs.join(", ")
+        );
         self.log(self.content.as_ref().map(|c| c.warnings().to_vec()).unwrap_or_default());
         self.log(catalog.warnings.clone());
         self.data.set_catalog(catalog);
@@ -585,7 +598,7 @@ impl Shell {
                 Ok(()) => vec![Outcome::Started],
                 Err(e) => {
                     let why = format!("{e:#}");
-                    eprintln!("warning: could not play the level: {why}");
+                    log::warn!("could not play the level: {why}");
                     self.stop_edited();
                     if let Some(h) = &mut self.editor {
                         h.act(vec![olr_editor::EditorAction::Failed(format!(
@@ -611,7 +624,7 @@ impl Shell {
             }
             Err(e) => {
                 let why = format!("{e:#}");
-                eprintln!("warning: could not start: {why}");
+                log::warn!("could not start: {why}");
                 self.act(UiAction::MatchFailed(why))
             }
         }
@@ -655,8 +668,8 @@ impl Shell {
         let Ok(cache) = &self.cache else { return };
         let cleared = cache.lock().unwrap_or_else(PoisonError::into_inner).clear(&[]);
         match cleared {
-            Ok(()) => println!("olr: download cache cleared"),
-            Err(e) => eprintln!("warning: clearing the download cache: {e}"),
+            Ok(()) => log::info!("download cache cleared"),
+            Err(e) => log::warn!("clearing the download cache: {e}"),
         }
         self.show_download_cache();
     }
@@ -671,7 +684,7 @@ impl Shell {
     fn log(&mut self, warnings: impl IntoIterator<Item = String>) {
         for w in warnings {
             if self.logged.insert(w.clone()) {
-                eprintln!("warning: {w}");
+                log::warn!("{w}");
             }
         }
     }
@@ -695,6 +708,7 @@ impl Shell {
                 setup::load(&root, &m.mod_id, &m.level_id, &profile.skin_id, o)?
             }
             Launch::Replay(path) => {
+                log::info!("playing the replay {}", path.display());
                 setup::load_replay(&root, &path, &net::cache_dirs(self.store.cache_dir()))?
             }
             Launch::Edited(play) => {
@@ -704,6 +718,7 @@ impl Shell {
         };
         assets.player = Some(PlayerLook { name: profile.name, colour: profile.colour });
         self.log(std::mem::take(&mut assets.warnings));
+        log::info!("game start: {}", assets.describe());
         let mut session = Session::new(&assets, self.cfg.viewport, self.cfg.interpolation, Audio::silent())?;
         let mut audio = self.audio.take().unwrap_or_else(Audio::silent);
         audio.stop_all();
@@ -735,7 +750,7 @@ impl Shell {
         if let Err(e) = p.session.rebuild(&p.assets) {
             // Options `build_match` refuses would fail every rematch too:
             // the match keeps the ones it was built with.
-            eprintln!("warning: arming the player: {e:#}");
+            log::warn!("arming the player: {e:#}");
             if let Game::Deathmatch { options, .. } = &mut p.assets.game
                 && let Some(mine) = options.players.get_mut(slot)
             {
@@ -755,7 +770,7 @@ impl Shell {
             .and_then(|p| p.session.replay())
             .ok_or("there is no replay")?;
         let path = olr_ui::replays::save_kept(&dir, &r.encode()).map_err(|e| e.to_string())?;
-        println!("olr: kept replay {}", path.display());
+        log::info!("kept replay {}", path.display());
         Ok(path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned()))
     }
 
@@ -771,6 +786,7 @@ impl Shell {
     /// The game ends: its replay saved, the sound output kept.
     fn end(&mut self) {
         if let Some(mut p) = self.play.take() {
+            log::info!("game end: {}", p.assets.describe());
             if let Some(r) = p.session.take_replay().filter(|_| !p.assets.edited()) {
                 self.save_replay(&r);
             }
@@ -796,10 +812,11 @@ impl Shell {
     /// F5: the game again in place (a Deathmatch's rematch, its replay saved).
     fn restart(&mut self) {
         let Some(p) = &mut self.play else { return };
+        log::info!("restart: {}", p.assets.describe());
         match p.session.restart(&p.assets) {
             Ok(Some(r)) if !p.assets.edited() => self.save_replay(&r),
             Ok(_) => {}
-            Err(e) => eprintln!("warning: restarting: {e:#}"),
+            Err(e) => log::warn!("restarting: {e:#}"),
         }
         self.over_reported = false;
     }
@@ -808,8 +825,8 @@ impl Shell {
     fn save_replay(&mut self, r: &olr_replay::Replay) {
         let Some(dir) = self.store.replays_dir().filter(|_| r.ticks() > 0) else { return };
         match olr_ui::replays::auto_save(&dir, &r.encode()) {
-            Ok(path) => println!("olr: saved replay {} ({} ticks)", path.display(), r.ticks()),
-            Err(e) => eprintln!("warning: saving the replay in {}: {e}", dir.display()),
+            Ok(path) => log::info!("saved the replay {} ({} ticks)", path.display(), r.ticks()),
+            Err(e) => log::warn!("saving the replay in {}: {e}", dir.display()),
         }
     }
 
@@ -868,6 +885,7 @@ impl Shell {
     /// The results to the menus (`MatchOver`), once.
     fn report_over(&mut self) -> Vec<Outcome> {
         self.data.results = self.session().and_then(|s| s.results.clone());
+        log::info!("match over: the results show");
         let out = self.act(UiAction::MatchOver);
         self.over_reported = self.ui.screen() == Screen::Results;
         out
@@ -877,15 +895,19 @@ impl Shell {
     /// app calls it about once a second, so a dragged slider is not saved
     /// every frame); a failure is a warning.
     pub fn flush(&mut self) {
-        if let Some(s) = self.unsaved_settings.take()
-            && let Err(e) = self.store.save_settings(&s)
-        {
-            eprintln!("warning: saving the settings: {e:#}");
+        if let Some(s) = self.unsaved_settings.take() {
+            for change in crate::logging::settings_changes(&self.logged_settings, &s) {
+                log::info!("settings: {change}");
+            }
+            self.logged_settings.clone_from(&s);
+            if let Err(e) = self.store.save_settings(&s) {
+                log::warn!("saving the settings: {e:#}");
+            }
         }
         if let Some(p) = self.unsaved_profiles.take()
             && let Err(e) = self.store.save_profiles(&p)
         {
-            eprintln!("warning: saving the profiles: {e:#}");
+            log::warn!("saving the profiles: {e:#}");
         }
     }
 
@@ -899,7 +921,7 @@ impl Shell {
         if let Some(h) = &mut self.editor {
             for m in h.flush_recovery() {
                 if let crate::editor::HostOut::Message(m) = m {
-                    eprintln!("warning: editor: {m}");
+                    log::warn!("editor: {m}");
                 }
             }
         }
