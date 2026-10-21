@@ -4151,6 +4151,56 @@ As built:
   at 55); goldens `look-distant-a.png`, `look-distant-b.png`,
   `look-distant-full.png`.
 
+## Double-resolution and glowing skins (issue #12)
+
+No OLX counterpart: OLX skins are 672 × 18 sheets of 20 × 18 frames at
+art scale 2 (`src/client/CGameSkin.cpp`). Classic skins load, draw and
+hash exactly as before. As built:
+
+- **Two layouts.** A skin pack is OLX's layout (art scale 2, 20 × 18
+  frames) or double resolution (art scale 4, 40 × 36 frames, a 1344 × 36
+  sheet of 64-pixel slots, `FrameLayout::DOUBLE`); both 7 aim × 3 walk
+  frames, the worm 10 × 9 world pixels either way. Frames are cut, mirrored
+  and placed by the layout (`olr_content::skin_source`, `olr_scene::skin_frame`;
+  the body's offset `BODY_OFFSET` is OLX's in world pixels).
+- **The world target's scale** is the largest of 2, the terrain's art
+  scale and the art scale of any image in the atlas (a double skin's 4,
+  capped at `MAX_SPRITE_SCALE`, 8): a double skin draws one target texel
+  per art pixel. **Deviation:** with integer nearest the output keeps whole
+  multiples of the level's own scale (`dest_rect_in_units`), not of the
+  target's, so a level looks as large with a double skin in the match as
+  without one (at 1080p, 4 output pixels a world pixel either way); a
+  window too small for the target's texels shows it at a fraction of a
+  texel a pixel (½ in a 1280 × 720 window).
+- **Glowing pixels.** `glow.png` (greyscale, the size of `skin.png`)
+  rounds to quarters (`glow_level`: 32 and above glows); each quarter is
+  an overlay image drawn over the body with that self-light (25-100 %) and
+  `Floor::Worm`, in the player's tint, in a lit match only (an unlit match
+  draws as always). Glow on a transparent pixel is dropped.
+- **Skin light.** `skin.ron`'s `light: (intensity, reach)`, refused above
+  `MAX_SKIN_LIGHT_INTENSITY` (200 %) and `MAX_SKIN_LIGHT_REACH` (48 world
+  pixels) and clamped there again at runtime. One light per frame,
+  computed when the worm is added: its colour the frame's glowing pixels
+  as drawn (tint included, sRGB averaged by glow), its intensity scaled by
+  the frame's glow over 3 world pixels of full glow (`FULL_LIGHT_GLOW`).
+  Cast as a steady disc at the worm as drawn, after the engine's and the
+  mods' lights (so the emitter cap drops skins first), walls stopping it;
+  in a level with a look only (a mod's look alone casts none).
+  `olr_look::engine::SKIN_LIGHT` (on) is the one switch; no per-player
+  setting or lobby option.
+- **Not built** (the issue's non-goals): the editor, `olr-cli skin`
+  commands, animated glow, a lobby option, `left.png`.
+- **Cost.** A double skin's sheet is 4 × the pixels and the world target
+  4 × the texels of art scale 2 for the whole level; glow overlays add up
+  to four sprites a worm in a lit match; skin lights one disc a worm. The
+  Windows 1080p measurement waits for the maintainer
+  (`docs/deferred-verification.md`).
+- **Demo.** `fixtures/look/skins/look-test-skin` (OLX's default skin
+  doubled, a cyan visor at full glow, the gun's tip at half, light 200 %
+  over 40) on `fixtures/look/levels/look-test-skin-level` (a dark room, a
+  rock pillar), both built by `fixtures/look/make-look-test-skin.sh`;
+  golden `look-skin.png`.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

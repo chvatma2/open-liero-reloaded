@@ -2,13 +2,15 @@
 
 Files: `skin.ron` ([SkinFile](#skinfile)), `skin.png`, `tint.png`, `left.png`.
 
-The skin authoring format: `skin.ron`, `skin.png` (a grid of frames, aim columns by walk rows), `tint.png` (greyscale: 0 keep, 255 player colour) and an optional `left.png`. Compiled to today's 672 × 18 OLX sheet and lifted from it (docs/porting/olx-notes/asset-formats.md §3).
+The skin authoring format: `skin.ron`, `skin.png` (a grid of frames, aim columns by walk rows), `tint.png` (greyscale: 0 keep, 255 player colour), an optional `glow.png` (greyscale: 0 no glow, 255 full) and an optional `left.png`. Two layouts compile: OLX's (art scale 2, 20 × 18 frames, to a 672 × 18 sheet, docs/porting/olx-notes/asset-formats.md §3) and double resolution (art scale 4, 40 × 36 frames, to a 1344 × 36 sheet; issue #12), both 7 aim columns by 3 walk rows; the worm is 10 × 9 world pixels either way. Lifted from either sheet.
+
+A glowing pixel shows bright whatever the darkness (the player's tint still applies); glow on a transparent pixel is dropped. `skin.ron`'s `light` makes the glowing pixels light the worm's surroundings in a lit level: its colour is the frame's glowing pixels' as drawn, weighted by their glow; its strength scales with how much of the frame glows.
 
 <a id="skinfile"></a>
 
 ## SkinFile (`skin.ron`)
 
-`skin.ron`: the skin's name and the layout of `skin.png`. Every field is written: the layout is the point of the file. Only OLX's layout (art scale 2, 20 × 18 frames, 7 aim columns by 3 walk rows) compiles today, with a `tint.png` of 0 and 255 only.
+`skin.ron`: the skin's name and the layout of `skin.png`. Every layout field is written: the layout is the point of the file. Two layouts compile today, both 7 aim columns by 3 walk rows, with a `tint.png` of 0 and 255 only: OLX's (art scale 2, 20 × 18 frames) and double resolution (art scale 4, 40 × 36 frames); the worm is 10 × 9 world pixels either way. `glow.png` (optional, the size of `skin.png`, greyscale: 0 no glow to 255 full, drawn in quarters: 32 and above glows) makes pixels show bright whatever the darkness, still in the player's tint; glow on a transparent pixel is dropped.
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
@@ -18,6 +20,7 @@ The skin authoring format: `skin.ron`, `skin.png` (a grid of frames, aim columns
 | `frame_size` | (integer, integer) | required | One frame's width and height in art pixels, each 1 to `MAX_FRAME_SIDE` (256); OLX's are 20 × 18. |
 | `aim_frames` | integer | required | Columns of `skin.png`, one per aim angle, 1 to `MAX_FRAMES` (64); OLX's skins have 7. |
 | `walk_frames` | integer | required | Rows of `skin.png`, one per walk frame, 1 to `MAX_FRAMES` (64); OLX's skins have 3. |
+| `light` | [SkinLightFile](#skinlightfile) (optional) | none | The glowing pixels' light on the worm's surroundings, in a lit level only; none by default (`glow.png` alone only shows bright). |
 
 Example:
 
@@ -30,3 +33,14 @@ Example:
     walk_frames: 3,
 )
 ```
+
+<a id="skinlightfile"></a>
+
+## SkinLightFile
+
+A skin's light (issue #12). Its colour is the frame's glowing pixels' as drawn (the player's tint included), weighted by their glow; its strength is `intensity` scaled by how much of the frame glows (full at 3 world pixels of full glow, such as 12 art pixels at art scale 2 or 48 at 4). One light per frame drawn, a disc at the worm that walls stop. The engine caps keep a skin from flooding a level: values above them are refused. Skin light can be turned off engine-wide (`olr_look::engine::SKIN_LIGHT`).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `intensity` | integer | required | Percent, 1 to `MAX_SKIN_LIGHT_INTENSITY` (200). |
+| `reach` | integer | required | World pixels the light fades out over, 1 to `MAX_SKIN_LIGHT_REACH` (48). |

@@ -27,7 +27,7 @@ A pack is a directory holding `pack.ron` and the files of its kind:
 |---|---|
 | mod | `mod.ron`, `weapons/<id>.ron`, `projectiles/<id>.ron`, `restrictions.ron`, assets in `gfx/` and `sfx/` |
 | level | `level.ron`, `material.png`, `front.png`, `back.png`, `thumb.png` |
-| skin | `skin.ron`, `skin.png`, `tint.png` |
+| skin | `skin.ron`, `skin.png`, `tint.png`, optional `glow.png` |
 | theme | `theme.ron`, `holes/<i>.png` with `holes/<i>.mask.png`, `green_ball.png` with `green_ball.mask.png`, `stones/<i>.png`, `misc/<i>.png`, `front_tile.png`, `back_tile.png` |
 | core | `core.ron`, `gfx/<id>.png`, `sounds/<file>` |
 
@@ -164,7 +164,9 @@ Theme stamps and skins mark what each pixel means in a separate mask:
   the colour in `holes/<i>.png`;
 - the green ball, `green_ball.mask.png`: 0 untouched, 1 green, 2 rim;
 - a skin's `tint.png`: grey, 0 keeps the skin's colour, 255 takes the
-  player's colour.
+  player's colour;
+- a skin's optional `glow.png`: grey, 0 no glow to 255 full (in
+  quarters): the pixel shows bright in the dark, still tinted.
 
 ## Examples
 
@@ -379,7 +381,8 @@ top-left corner, and it carries the glow groups they name:
 ### A skin
 
 OLX's layout: 7 aim columns by 3 walk rows of 20 × 18 frames at art
-scale 2, so `skin.png` and `tint.png` are 140 × 54.
+scale 2, so `skin.png` and `tint.png` are 140 × 54. Double resolution
+(`art_scale: 4, frame_size: (40, 36)`) makes them 280 × 108.
 
 <!-- file: skin/skin.ron -->
 ```ron
@@ -389,6 +392,23 @@ scale 2, so `skin.png` and `tint.png` are 140 × 54.
     frame_size: (20, 18),
     aim_frames: 7,
     walk_frames: 3,
+)
+```
+
+A double-resolution skin whose `glow.png` lights a visor, and its light:
+
+<!-- file: skin/skin.ron -->
+```ron
+(
+    name: "Night Explorer",
+    art_scale: 4,
+    frame_size: (40, 36),
+    aim_frames: 7,
+    walk_frames: 3,
+    light: (
+        intensity: 150,
+        reach: 24,
+    ),
 )
 ```
 
