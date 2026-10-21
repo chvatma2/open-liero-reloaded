@@ -1,0 +1,133 @@
+(
+    elements: [
+        (
+            id: "background",
+            name: "Background",
+            kind: Drawn(
+                material: Background,
+            ),
+        ),
+        (
+            id: "dirt",
+            name: "Dirt",
+            kind: Drawn(
+                material: Dirt,
+            ),
+        ),
+        (
+            id: "rock",
+            name: "Rock",
+            kind: Drawn(
+                material: Rock,
+            ),
+        ),
+        (
+            id: "sky",
+            name: "Sky",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 35,
+                group: "sky",
+            ),
+        ),
+        (
+            id: "lamps",
+            name: "Lamps",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "lamps",
+            ),
+        ),
+        (
+            id: "glass",
+            name: "Glass",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 45,
+                group: "glass",
+            ),
+        ),
+        (
+            id: "screens",
+            name: "Screens",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 90,
+                group: "screens",
+            ),
+        ),
+        (
+            id: "screens-in-rock",
+            name: "Screens in rock",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 90,
+                group: "screens",
+            ),
+        ),
+        (
+            id: "displays",
+            name: "Displays",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "displays",
+            ),
+        ),
+        (
+            id: "displays-in-rock",
+            name: "Displays in rock",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 100,
+                group: "displays",
+            ),
+        ),
+        (
+            id: "beacons",
+            name: "Beacons",
+            locked: true,
+            kind: Drawn(
+                material: Background,
+            ),
+            glow: (
+                strength: 100,
+                group: "beacons",
+            ),
+        ),
+        (
+            id: "beacons-in-rock",
+            name: "Beacons in rock",
+            locked: true,
+            kind: Drawn(
+                material: Rock,
+            ),
+            glow: (
+                strength: 100,
+                group: "beacons",
+            ),
+        ),
+    ],
+)

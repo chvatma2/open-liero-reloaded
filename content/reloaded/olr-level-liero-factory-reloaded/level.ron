@@ -1,0 +1,64 @@
+(
+    name: "Liero Factory Reloaded",
+    notes: "OLX Liero Factory at night, its lights on (issue #7). The base layers are the imported level split; each glowing layer above them (one per glow group and material) holds only its own pixels, found by colour in the imported front.png and copied from it, so the bake is the imported material, front and back byte for byte.",
+    size: (1200, 480),
+    theme: "olx-theme-dirt",
+    look: (
+        ambient: (
+            colour: "#405880",
+            intensity: 40,
+        ),
+        light_soak: 6,
+        solid_floor: (
+            colour: "#6070a0",
+            intensity: 18,
+        ),
+        grade: (
+            saturation: 90,
+        ),
+        glow_groups: [
+            (
+                id: "sky",
+                colour: Tint("#8098d0"),
+                intensity: 300,
+                reach: Unlimited,
+            ),
+            (
+                id: "lamps",
+                colour: Tint("#ffe6c0"),
+                intensity: 500,
+                reach: Pixels(90),
+            ),
+            (
+                id: "glass",
+                colour: Tint("#a0c0ff"),
+                intensity: 80,
+                reach: Pixels(24),
+            ),
+            (
+                id: "screens",
+                intensity: 150,
+                reach: Pixels(18),
+            ),
+            (
+                id: "displays",
+                intensity: 180,
+                reach: Pixels(28),
+                animation: Flicker(
+                    speed: 6,
+                    depth: 25,
+                ),
+            ),
+            (
+                id: "beacons",
+                intensity: 200,
+                reach: Pixels(20),
+                animation: Pulse(
+                    period_ms: 2400,
+                    low: 30,
+                    high: 100,
+                ),
+            ),
+        ],
+    ),
+)
