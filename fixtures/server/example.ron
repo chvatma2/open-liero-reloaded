@@ -36,7 +36,8 @@
     // Bots join while fewer players than this are seated (players + bots =
     // fill_bots), at most 31. Default 0.
     fill_bots: 4,
-    // The maps in turn, at least one: a mod and a level by pack id, then
+    // The maps in turn, at least one: a mod and a level by pack id (the
+    // imported OLX packs and OLR's own Reloaded levels alike), then
     // time_limit (minutes; 0 or less: none; default 6), kill_limit (0 or
     // less: none; default 15), lives (below 0: unlimited; default -2) and
     // loadout (a loadout the mod ships, by name, such as "Rifle only":
@@ -46,6 +47,8 @@
     rotation: [
         (mod: "olx-classic", level: "olx-level-dirt-level", time_limit: 5.0, kill_limit: 15, lives: -2),
         (mod: "olx-mw-1-0", level: "olx-level-castlestrike", time_limit: 5.0, kill_limit: 20, lives: -2, loadout: "Standard 100lt"),
+        (mod: "olx-classic", level: "olr-level-liero-factory-reloaded", time_limit: 5.0, kill_limit: 15, lives: -2),
+        (mod: "olx-mw-1-0", level: "olr-level-castlestrike-reloaded", time_limit: 5.0, kill_limit: 20, lives: -2, loadout: "Standard 100lt"),
     ],
     // Start as soon as every player is ready and at least min_players are
     // seated. Either way, 60 s after the lobby gathers a match starts with

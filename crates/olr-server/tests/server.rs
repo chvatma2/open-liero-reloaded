@@ -795,7 +795,7 @@ fn the_fixture_configs_parse() {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../fixtures/server/example.ron");
     let config = Config::parse(&std::fs::read_to_string(path).unwrap()).unwrap();
     assert_eq!(config.port, olr_net::endpoint::DEFAULT_PORT);
-    assert_eq!(config.rotation.len(), 2);
+    assert_eq!(config.rotation.len(), 4);
     assert_eq!(config.upload_kib_s, olr_server::config::DEFAULT_UPLOAD_KIB_S);
     // It leaves the lists out, so a copy follows later default lists.
     let defaults = Config::default();
@@ -819,8 +819,9 @@ fn the_fixture_configs_parse() {
     // The example documents the relay (off) and port mapping (on).
     assert!(config.port_mapping && config.relay.is_none() && !config.allow_local);
     let Some(dir) = content_dir() else { return };
-    // Their rotations' mods and levels are the committed packs.
-    let content = content(&dir);
+    // Their rotations' mods and levels are the committed packs, OLR's own
+    // Reloaded levels among them (issue #7).
+    let content = Content::open_bundled(&dir).unwrap();
     config.check(&content).unwrap();
     e2e.check(&content).unwrap();
 }
