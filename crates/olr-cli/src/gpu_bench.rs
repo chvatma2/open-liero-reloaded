@@ -41,6 +41,9 @@ pub struct BenchConfig {
     /// Task 20): the look system's passes, and the engine's lights of the
     /// replay's own shots and explosions.
     pub look: bool,
+    /// [`bench_look`] with this ambient occlusion (`--occlusion`, issue
+    /// #10); only with `look`.
+    pub occlusion: Option<olr_look::Occlusion>,
 }
 
 /// The probe at one pass count.
@@ -249,9 +252,11 @@ pub fn run(
     let mut assets = LevelAssets::load(content, &packs.mod_pack.id, &packs.level.id)?;
     if cfg.look {
         let l = &mut assets.level;
-        let (look, glow) = bench_look((l.material.width(), l.material.height()), l.art_scale);
+        let (mut look, glow) = bench_look((l.material.width(), l.material.height()), l.art_scale);
+        look.occlusion = cfg.occlusion;
         (l.look, l.glow) = (Some(look), Some(glow));
     }
+    ensure!(cfg.look || cfg.occlusion.is_none(), "the occlusion needs the look");
     let gpu = Offscreen::open(&cfg.options)?;
     let info = gpu.adapter_info().clone();
     check_adapter(cfg.options.prefer, info.device_type, &info.name)?;
@@ -264,7 +269,13 @@ pub fn run(
         adapter: info.name.clone(),
         backend: format!("{:?}", info.backend),
         device_type: format!("{:?}", info.device_type),
-        scene: format!("{} on {}", packs.mod_pack.id, packs.level.id),
+        scene: match cfg.occlusion {
+            Some(o) => format!(
+                "{} on {}, occlusion {} % over {} px",
+                packs.mod_pack.id, packs.level.id, o.strength, o.reach
+            ),
+            None => format!("{} on {}", packs.mod_pack.id, packs.level.id),
+        },
         start_tick: cfg.start_tick,
         look: cfg.look,
         ..GpuReport::default()

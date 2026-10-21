@@ -42,6 +42,7 @@ fn a_recorded_match_is_drawn_timed_and_probed() {
         probe_frames: 5,
         options: OffscreenOptions { timestamps: true, ..OffscreenOptions::default() },
         look: false,
+        occlusion: None,
     };
     let r = gpu_bench::run(&content, &replay, &cfg, &mut |_| {}).unwrap();
     eprintln!("gpu-bench on {} ({}, {}), timestamps {}", r.adapter, r.backend, r.device_type, r.timestamps);
@@ -67,6 +68,13 @@ fn a_recorded_match_is_drawn_timed_and_probed() {
     if r.timestamps {
         assert!(lit.sizes[0].gpu_ms.unwrap().p50 > s.gpu_ms.unwrap().p50, "the look passes cost GPU time");
     }
+    // `--occlusion` (issue #10): the bench look with ambient occlusion, said so.
+    let occlusion = Some(olr_look::Occlusion { strength: 60, reach: 12 });
+    let occluded = BenchConfig { look: true, occlusion, ..cfg.clone() };
+    let occluded = gpu_bench::run(&content, &replay, &occluded, &mut |_| {}).unwrap();
+    assert!(occluded.look && occluded.scene.contains("occlusion 60 % over 12 px"), "{}", occluded.scene);
+    let unlit = BenchConfig { occlusion, ..cfg.clone() };
+    assert!(gpu_bench::run(&content, &replay, &unlit, &mut |_| {}).is_err(), "occlusion needs the look");
     let mut tampered = replay.clone();
     *tampered.row_mut(150).first_mut().unwrap() = olr_sim::Keys(0xFF);
     let e = gpu_bench::run(&content, &tampered, &cfg, &mut |_| {}).expect_err("a different match is refused");

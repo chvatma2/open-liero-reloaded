@@ -321,10 +321,13 @@ fn look_cli_sets_every_field() {
             "6",
             "--solid-floor",
             "c0c0ff:35",
+            "--occlusion",
+            "60,20",
         ],
         &pack,
     ));
     let look = look_of(&pack);
+    assert_eq!(look.occlusion, Some(olr_look::Occlusion { strength: 60, reach: 20 }));
     assert_eq!(look.light_soak, 6);
     assert_eq!((look.solid_floor.colour, look.solid_floor.intensity), ([0xc0, 0xc0, 0xff], 35));
     assert_eq!((look.ambient.colour, look.ambient.intensity), ([0x20, 0x20, 0x40], 30));
@@ -335,6 +338,12 @@ fn look_cli_sets_every_field() {
     ok(&level(&["look", "{pack}", "--steps", "0"], &pack));
     let look = look_of(&pack);
     assert_eq!((look.light_steps, look.max_light), (0, 150));
+    // Issue #10: the occlusion's reach defaults to 12; `--no-occlusion` removes it.
+    ok(&level(&["look", "{pack}", "--occlusion", "40"], &pack));
+    assert_eq!(look_of(&pack).occlusion, Some(olr_look::Occlusion { strength: 40, reach: 12 }));
+    ok(&level(&["look", "{pack}", "--no-occlusion"], &pack));
+    let look = look_of(&pack);
+    assert_eq!((look.occlusion, look.light_steps), (None, 0));
     ok(&check(&pack));
     ok(&level(&["look", "{pack}", "--clear"], &pack));
     let src = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(&pack)).unwrap();
@@ -376,6 +385,11 @@ fn bad_look_values_are_errors() {
     for (args, flag) in [
         (vec!["look", "{pack}", "--ambient", "ffffff:101"], "ambient"),
         (vec!["look", "{pack}", "--max-light", "250"], "max_light"),
+        (vec!["look", "{pack}", "--occlusion", "0"], "occlusion.strength"),
+        (vec!["look", "{pack}", "--occlusion", "50,40"], "occlusion.reach"),
+        (vec!["look", "{pack}", "--occlusion", "50,far"], "--occlusion"),
+        (vec!["look", "{pack}", "--occlusion", "50", "--no-occlusion"], "--no-occlusion"),
+        (vec!["look", "{pack}", "--occlusion", "50", "--clear"], "--clear"),
         (vec!["group", "add", "{pack}", "lava", "--reach", "64", "--animation", "Nope(1)"], "--animation"),
         (vec!["group", "add", "{pack}", "Bad Id", "--reach", "64"], "Bad Id"),
         (vec!["group", "add", "{pack}", "lamp", "--reach", "64", "--colour", "fff"], "--colour"),

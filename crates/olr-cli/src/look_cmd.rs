@@ -11,7 +11,8 @@ use olr_edit::look;
 use olr_edit::pack::Source;
 use olr_format::Colour;
 use olr_format::look::{
-    AmbientSource, AnimationSource, GlowColourSource, GlowGroupSource, ReachSource, SolidFloorSource,
+    AmbientSource, AnimationSource, GlowColourSource, GlowGroupSource, OcclusionSource, ReachSource,
+    SolidFloorSource,
 };
 
 use crate::element_cmd::{self, ContentArg};
@@ -24,6 +25,14 @@ pub(crate) struct LookArgs {
     /// The ambient light, RRGGBB:PERCENT (0-100).
     #[arg(long, value_parser = parse_ambient)]
     ambient: Option<(Colour, u16)>,
+    /// Ambient occlusion, STRENGTH[,REACH]: percent of the ambient light
+    /// taken from air against rock and dirt (1-100), fading out over REACH
+    /// world pixels (2-32, default 12).
+    #[arg(long, value_parser = parse_occlusion)]
+    occlusion: Option<OcclusionSource>,
+    /// Remove the ambient occlusion.
+    #[arg(long, conflicts_with = "occlusion")]
+    no_occlusion: bool,
     /// The brightest light, percent, 100-200.
     #[arg(long)]
     max_light: Option<u16>,
@@ -53,7 +62,7 @@ pub(crate) struct LookArgs {
     tint: Option<Colour>,
     /// Remove the look: its settings and every glow group (their elements
     /// stop glowing).
-    #[arg(long, conflicts_with_all = ["ambient", "max_light", "steps", "softness", "soak", "solid_floor", "exposure", "contrast", "saturation", "tint"])]
+    #[arg(long, conflicts_with_all = ["ambient", "occlusion", "no_occlusion", "max_light", "steps", "softness", "soak", "solid_floor", "exposure", "contrast", "saturation", "tint"])]
     clear: bool,
     #[command(flatten)]
     content: ContentArg,
@@ -122,6 +131,19 @@ fn parse_ambient(s: &str) -> Result<(Colour, u16), String> {
     Ok((parse_colour(c)?, p))
 }
 
+fn parse_occlusion(s: &str) -> Result<OcclusionSource, String> {
+    let (strength, reach) = match s.split_once(',') {
+        Some((a, b)) => (a, Some(b)),
+        None => (s, None),
+    };
+    let strength = strength.trim().parse().map_err(|_| format!("{strength:?} is not a percent"))?;
+    let reach = match reach {
+        Some(r) => r.trim().parse().map_err(|_| format!("{r:?} is not world pixels"))?,
+        None => olr_format::look::DEFAULT_OCCLUSION_REACH,
+    };
+    Ok(OcclusionSource { strength, reach })
+}
+
 fn parse_glow_colour(s: &str) -> Result<GlowColourSource, String> {
     if s == "own" { Ok(GlowColourSource::Own) } else { parse_colour(s).map(GlowColourSource::Tint) }
 }
@@ -173,6 +195,9 @@ pub(crate) fn look_cmd(a: &LookArgs) -> anyhow::Result<bool> {
     let mut k = l.look.clone().unwrap_or_default();
     if let Some((colour, intensity)) = a.ambient {
         k.ambient = AmbientSource { colour: Some(colour), intensity };
+    }
+    if a.occlusion.is_some() || a.no_occlusion {
+        k.occlusion = a.occlusion;
     }
     k.max_light = a.max_light.unwrap_or(k.max_light);
     k.light_steps = a.steps.unwrap_or(k.light_steps);

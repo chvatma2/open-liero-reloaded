@@ -63,6 +63,24 @@ pub struct Args {
     /// replay's shots (plan 15a Task 20; `olr_cli::gpu_bench::bench_look`).
     #[arg(long)]
     look: bool,
+    /// With `--look`: ambient occlusion in the bench look, STRENGTH[,REACH]
+    /// (percent 1-100, world pixels 2-32, default 12; issue #10).
+    #[arg(long, requires = "look", value_parser = parse_occlusion)]
+    occlusion: Option<olr_look::Occlusion>,
+}
+
+fn parse_occlusion(s: &str) -> Result<olr_look::Occlusion, String> {
+    let (strength, reach) = s.split_once(',').unwrap_or((s, "12"));
+    let strength: u8 = strength.trim().parse().map_err(|_| format!("{strength:?} is not a percent"))?;
+    let reach: u8 = reach.trim().parse().map_err(|_| format!("{reach:?} is not world pixels"))?;
+    if !(1..=100).contains(&strength) {
+        return Err(format!("strength {strength}, not within 1 to 100"));
+    }
+    let (lo, hi) = (olr_look::MIN_OCCLUSION_REACH, olr_look::MAX_OCCLUSION_REACH);
+    if !(lo..=hi).contains(&reach) {
+        return Err(format!("reach {reach}, not within {lo} to {hi}"));
+    }
+    Ok(olr_look::Occlusion { strength, reach })
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
@@ -104,6 +122,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             max_texture_side: None,
         },
         look: args.look,
+        occlusion: args.occlusion,
     };
     let content = olr_content::Content::open_bundled(&args.content)?;
     let report = gpu_bench::run(&content, &replay, &cfg, &mut |l| eprintln!("  {l}"))?;
