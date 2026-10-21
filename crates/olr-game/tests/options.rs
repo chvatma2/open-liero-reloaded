@@ -295,3 +295,37 @@ fn the_saved_window_opens_with_the_flags_on_top_unsaved() {
     let v = saved(&mut sh);
     assert_eq!((v.fullscreen, v.filter), (true, UpscaleFilter::Sharp));
 }
+
+/// The blood amount (issue #6) reaches a game started from the menus and
+/// the one playing at once, and changes nothing of the world: a sandbox
+/// at 0 % and one at 500 % tick to the same checksums.
+#[test]
+fn the_blood_amount_applies_at_once_and_never_to_the_world() {
+    let Some(content) = content_dir() else { return };
+    let play = |blood: u16| {
+        let settings =
+            Settings { video: VideoSettings { blood, ..VideoSettings::default() }, ..Settings::default() };
+        let mut sh = shell(&content, settings, Store::in_memory());
+        sh.act(UiAction::StartSandbox);
+        sh.poll();
+        assert_eq!(sh.ui.screen(), Screen::InGame);
+        assert_eq!(sh.session().unwrap().present.blood(), blood, "the saved amount");
+        let (mut sums, mut bloody) = (Vec::new(), 0);
+        for i in 0..600u32 {
+            // Fire now and then: shots, hits and blood.
+            sh.tick(olr_sim::Keys(if i % 50 < 10 { olr_sim::Keys::FIRE } else { 0 }));
+            let s = sh.session().unwrap();
+            sums.push(s.world.checksum());
+            bloody += s.present.fx.entities().filter(|(_, e)| e.kind == olr_fx::Kind::Blood).count();
+        }
+        (sh, sums, bloody)
+    };
+    let (mut sh, none, shown) = play(0);
+    assert_eq!(shown, 0, "no blood at 0 %");
+    let (_, lots, shown) = play(500);
+    assert!(shown > 0, "the shots drew blood");
+    assert_eq!(none, lots, "the world never sees the blood amount");
+    let v = VideoSettings { blood: 250, ..sh.ui.settings().video.clone() };
+    sh.act(UiAction::SetVideo(v));
+    assert_eq!(sh.session().unwrap().present.blood(), 250, "the game playing follows at once");
+}

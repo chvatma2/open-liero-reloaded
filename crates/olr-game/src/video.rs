@@ -7,7 +7,8 @@
 //! (paced: at most one change every `MIN_CHANGE_INTERVAL`, the latest
 //! wins), and only when the preset or fullscreen actually changed:
 //! toggling interpolation or the filter never spends a change. Everything
-//! else (the UI scale, VSync, the filter, interpolation) applies at once.
+//! else (the UI scale, VSync, the filter, interpolation, the blood amount)
+//! applies at once.
 
 use olr_scene::Interpolation;
 use olr_ui::{FrameRate, HudArrangement, UpscaleFilter, VideoSettings};
@@ -76,6 +77,10 @@ pub fn filter(f: UpscaleFilter) -> olr_render::UpscaleFilter {
         UpscaleFilter::Sharp => olr_render::UpscaleFilter::SharpBilinear,
     }
 }
+
+// The options' blood slider ends where the entities' amount does (issue #6;
+// the shell hands it to `Presentation::set_blood`).
+const _: () = assert!(*olr_ui::BLOOD_RANGE.end() == olr_fx::BLOOD_MAX);
 
 /// The scene's interpolation for the options' choice.
 pub fn interpolation(on: bool) -> Interpolation {

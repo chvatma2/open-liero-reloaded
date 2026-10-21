@@ -571,6 +571,9 @@ impl Shell {
                     o.follow(&v);
                 }
                 self.set_interpolation(video::interpolation(v.interpolation));
+                if let Some(s) = self.session_mut() {
+                    s.present.set_blood(v.blood);
+                }
                 out.push(Outcome::Video(v));
             }
             AppCommand::ApplyAudio(a) => self.set_volume(&a),
@@ -775,6 +778,7 @@ impl Shell {
         self.log(std::mem::take(&mut assets.warnings));
         log::info!("game start: {}", assets.describe());
         let mut session = Session::new(&assets, self.cfg.viewport, self.cfg.interpolation, Audio::silent())?;
+        session.present.set_blood(self.ui.settings().video.blood);
         let mut audio = self.audio.take().unwrap_or_else(Audio::silent);
         audio.stop_all();
         audio.load(&assets.m, assets.content.core());

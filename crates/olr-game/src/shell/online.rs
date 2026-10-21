@@ -1086,6 +1086,7 @@ impl Shell {
                 return Vec::new();
             }
         };
+        session.present.set_blood(self.ui.settings().video.blood);
         let mut audio = self.audio.take().unwrap_or_else(Audio::silent);
         audio.stop_all();
         audio.load(&assets.m, assets.content.core());

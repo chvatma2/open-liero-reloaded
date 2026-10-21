@@ -232,7 +232,11 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   apply at once (`Live`: UI scale; VSync or uncapped, `Gpu::set_uncapped`
   re-configuring the surface when the present mode changes; the filter,
   `renderer.settings`); interpolation is the shell's
-  (`Shell::interpolation`, new games and the one playing). The window opens
+  (`Shell::interpolation`, new games and the one playing), and so is the
+  blood amount (issue #6: `Presentation::set_blood` for every game the
+  shell starts, local or online, and at once for the one playing; the
+  command line's games keep 100 %; `video.rs` asserts the slider's end is
+  `olr_fx::BLOOD_MAX`). The window opens
   at the saved preset and mode (`Video::opening`, physical pixels;
   fullscreen keeps the preset for when it ends), so no resize follows its
   creation. `--fullscreen`, `--uncapped`, `--filter`, `--no-interp`,
@@ -1167,7 +1171,8 @@ another holder locks the cache, and makes, locks and writes no cache; the option
 is online, empties the cache), `tests/ingame.rs` (the weapon selection, the pause and a
 valid replay, the results against the world's scores), `tests/options.rs`
 (video through the paced requests,
-a window made again keeps the game ticking, volumes live, the saved window with the flags on top) play the imported
+a window made again keeps the game ticking, volumes live,
+`the_blood_amount_applies_at_once_and_never_to_the_world`, the saved window with the flags on top) play the imported
 levels when `OLR_CONTENT_DIR` is set, as does `tests/speed.rs` (fast-forward
 never changes the simulation; a played game refuses it); `tests/user_packs.rs`: a user pack
 in `<data>/packs` over the bundled one of its id, a new one added).
