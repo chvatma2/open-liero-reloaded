@@ -19,6 +19,10 @@ const INTERFACE: &str = "org.freedesktop.portal.Flatpak";
 const MONITOR: &str = "org.freedesktop.portal.Flatpak.UpdateMonitor";
 /// `FLATPAK_SPAWN_FLAGS_LATEST_VERSION`: the newest installed version.
 const SPAWN_LATEST_VERSION: u32 = 2;
+/// How long the update may go without a `Progress` signal before it is
+/// given up (the portal restarted, the monitor gone): it signals as it
+/// downloads, so silence this long is a stall.
+const STALL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
 
 /// The real portal on the session bus.
 pub struct Dbus;
@@ -49,9 +53,34 @@ impl super::Portal for Dbus {
             let _: zbus::Result<()> = monitor.call("Close", &());
             return Err(format!("Update: {e}"));
         }
-        for message in signals {
-            let Ok((info,)) = message.body().deserialize::<(HashMap<String, OwnedValue>,)>() else {
-                continue;
+        // Read on a thread of its own, so a portal that goes quiet is a
+        // timeout here (that thread then waits on, harmlessly, for good).
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::Builder::new()
+            .name("flatpak-portal".into())
+            .spawn(move || {
+                for message in signals {
+                    if let Ok((info,)) = message.body().deserialize::<(HashMap<String, OwnedValue>,)>()
+                        && tx.send(info).is_err()
+                    {
+                        break;
+                    }
+                }
+            })
+            .map_err(|e| e.to_string())?;
+        let mut outcome = Ok(());
+        loop {
+            let info = match rx.recv_timeout(STALL) {
+                Ok(info) => info,
+                Err(e) => {
+                    outcome = Err(match e {
+                        std::sync::mpsc::RecvTimeoutError::Timeout => {
+                            format!("no progress for {} minutes", STALL.as_secs() / 60)
+                        }
+                        std::sync::mpsc::RecvTimeoutError::Disconnected => "the portal went away".into(),
+                    });
+                    break;
+                }
             };
             let number = |k: &str| info.get(k).and_then(|v| u32::try_from(v).ok()).unwrap_or(0);
             let text = |k: &str| {
@@ -74,7 +103,7 @@ impl super::Portal for Dbus {
             }
         }
         let _: zbus::Result<()> = monitor.call("Close", &());
-        Ok(())
+        outcome
     }
 }
 
