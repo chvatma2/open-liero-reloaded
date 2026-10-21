@@ -60,6 +60,14 @@
                         shared: "bazooka.spawn",
                     ),
                 },
+                look: (
+                    explosion: (
+                        colour: "#ffbc70",
+                        intensity: 140,
+                        radius: 6,
+                        reach: Pixels(88),
+                    ),
+                ),
             ),
         ),
     ),

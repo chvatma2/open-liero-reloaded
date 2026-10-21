@@ -51,6 +51,12 @@
                             depth: 20,
                         ),
                     ),
+                    explosion: (
+                        colour: "#ffd090",
+                        intensity: 260,
+                        radius: 10,
+                        reach: Pixels(160),
+                    ),
                 ),
             ),
         ),

@@ -133,6 +133,16 @@ fn liero_reloaded_is_classic_but_for_its_name_and_look() {
     assert!(a.images == b.images && a.sounds == b.sounds);
     assert_eq!((&a.restrictions, a.worm, a.rope), (&b.restrictions, b.worm, b.rope));
     assert!(b.look.is_empty() && !a.look.is_empty());
+    // Issue #15: its explosion lights, the mod's small default and the
+    // Big Nuke's cave-wide flash; Classic keeps the engine's.
+    let nuke = a.sim.projectiles().iter().position(|p| p.key == "big-nuke").unwrap() as i32;
+    let (default, flash) = (a.look.explosion.as_ref().unwrap(), a.look.explosion(nuke).unwrap());
+    assert_eq!((default.radius, default.light.intensity), (2, 60));
+    assert_eq!(
+        (flash.radius, flash.light.intensity, flash.light.reach),
+        (16, 600, olr_look::Reach::Pixels(480))
+    );
+    assert!((0..b.sim.projectiles().len() as i32).all(|p| b.look.explosion(p).is_none()));
 }
 
 /// The same bot matches on Classic and on Liero v1.0 Reloaded give the

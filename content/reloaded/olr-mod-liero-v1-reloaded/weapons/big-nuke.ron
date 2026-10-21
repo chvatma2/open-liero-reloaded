@@ -63,9 +63,25 @@
                                     shared: "big-nuke.spawn.spawn",
                                 ),
                             },
+                            look: (
+                                explosion: (
+                                    colour: "#ffd090",
+                                    intensity: 160,
+                                    radius: 8,
+                                    reach: Pixels(110),
+                                ),
+                            ),
                         ),
                     ),
                 },
+                look: (
+                    explosion: (
+                        colour: "#fff0d8",
+                        intensity: 600,
+                        radius: 16,
+                        reach: Pixels(480),
+                    ),
+                ),
             ),
         ),
     ),

@@ -26,7 +26,8 @@ Remade OLX content is named "<Old name> Reloaded".
   bots arm for it as for Classic, its name holding "Liero v1.0"). Only
   `look` blocks were added (`docs/formats/mod.md`), lights for the weapons
   where light makes sense; plain bullets, grenades, mines, nukes, dirt and
-  the rest stay dark, and the engine's explosion light is unchanged:
+  the rest stay dark in flight, and their explosions light to suit them
+  (issue #15, below):
   - Bazooka: the missile glows (80) and lights the tunnel, warm orange
     `#ffa040` at 70 %, reach 44, flickering.
   - Mini Rockets and Doomsday: the same rocket light, smaller (40 % and
@@ -57,6 +58,27 @@ Remade OLX content is named "<Old name> Reloaded".
     50 ms): Super Shotgun (`#ffdca0`, 130 %, reach 60, 70 ms), Cannon
     (`#ffd090`, 150 %, reach 64, 80 ms), Rifle and Winchester (`#ffe0b0`,
     120 %, reach 56, 60 ms).
+  - Explosion lights (issue #15), each fading over its explosion as the
+    engine's does, in place of the engine's (warm, 124 % and reach 88 for
+    the commonest explosion, size 8):
+    - By default (`mod.ron`'s `look`): a small impact light, `#ffb070`
+      at 60 %, a disc of 2, reach 28: bullets, shrapnel, sparks, bits and
+      every projectile not named here.
+    - Nukes flash the cave: Big Nuke's detonation (`#fff0d8`, 600 %, a
+      disc of 16, reach 480) and its 50 bomblets (`#ffd090`, 160 %, 8,
+      reach 110); Mini Nuke's (`#fff0d8`, 400 %, 12, reach 260) and its
+      bomblets (`#ffd090`, 130 %, 6, reach 80).
+    - Big explosives, hot (`#ffd090`): Mine, Booby Trap and Bouncy Mine
+      (320 %, 12, reach 200), Bazooka and Float Mine (260 %, 10, reach
+      160), Chiquita Bomb and Cluster Bomb (240 %, 10, reach 150; their
+      bits the default).
+    - Medium blasts (`#ffbc70`): Grenade (200 %, 8, reach 120; its
+      fragments the default), Cannon and Explosives (180 %, 7, reach 110),
+      Bouncy Larpa (160 %, 6, reach 96), Mini Rockets and Doomsday
+      (150 %, 6, reach 90), Larpa (140 %, 6, reach 88; its trail's drops
+      the default) and RB Rampage (120 %, 5, reach 72).
+    - Napalm's explosive trail (a cosmetic of its flight, no projectile's
+      explosion) keeps the engine's light.
 
 - `olr-level-liero-factory-reloaded/`: **Liero Factory Reloaded** (issue
   #7). OLX's Liero Factory (`origin`: `Liero Factory.lxl` at `d1ad953f`)

@@ -33,6 +33,14 @@
                         damage: 4,
                     ),
                 ],
+                look: (
+                    explosion: (
+                        colour: "#ffbc70",
+                        intensity: 120,
+                        radius: 5,
+                        reach: Pixels(72),
+                    ),
+                ),
             ),
         ),
     ),

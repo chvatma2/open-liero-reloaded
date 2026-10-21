@@ -74,4 +74,12 @@
             loading_time: 20,
         ),
     },
+    look: (
+        explosion: (
+            colour: "#ffb070",
+            intensity: 60,
+            radius: 2,
+            reach: Pixels(28),
+        ),
+    ),
 )

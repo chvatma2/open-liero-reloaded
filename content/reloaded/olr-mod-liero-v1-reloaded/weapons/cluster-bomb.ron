@@ -57,6 +57,14 @@
                         ),
                     ),
                 },
+                look: (
+                    explosion: (
+                        colour: "#ffd090",
+                        intensity: 240,
+                        radius: 10,
+                        reach: Pixels(150),
+                    ),
+                ),
             ),
         ),
     ),
