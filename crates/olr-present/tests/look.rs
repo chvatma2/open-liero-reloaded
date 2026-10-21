@@ -26,6 +26,7 @@ fn fixtures() -> PathBuf {
 fn look() -> LevelLook {
     LevelLook {
         ambient: Ambient { colour: [255, 255, 255], intensity: 20 },
+        occlusion: None,
         max_light: 100,
         light_steps: 0,
         softness: 0,

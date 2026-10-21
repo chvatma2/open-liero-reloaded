@@ -27,6 +27,7 @@ fn white(intensity: u16, reach: Reach) -> Light {
 fn level() -> LevelLook {
     LevelLook {
         ambient: Ambient { colour: [255, 255, 255], intensity: 30 },
+        occlusion: None,
         max_light: 150,
         light_steps: 4,
         softness: 2,
@@ -149,8 +150,25 @@ fn solids_settings_are_bounded_and_off_without_a_look() {
     f.begin(Some(&l), 0.0);
     assert_eq!(f.light_soak, olr_look::MAX_SOAK);
     assert!(near(f.solid_floor[0], 1.0));
+    assert_eq!(f.occlusion, None, "a look without occlusion has none");
     f.begin(None, 0.0);
     assert_eq!((f.light_soak, f.solid_floor), (0, [0.0; 3]));
+    // Issue #10: the occlusion is clamped, and none without a look or a strength.
+    l.occlusion = Some(olr_look::Occlusion { strength: 250, reach: 200 });
+    f.begin(Some(&l), 0.0);
+    let max = olr_look::MAX_OCCLUSION_REACH;
+    assert_eq!(f.occlusion, Some(olr_look::Occlusion { strength: 100, reach: max }));
+    l.occlusion = Some(olr_look::Occlusion { strength: 40, reach: 0 });
+    f.begin(Some(&l), 0.0);
+    let min = olr_look::MIN_OCCLUSION_REACH;
+    assert_eq!(f.occlusion, Some(olr_look::Occlusion { strength: 40, reach: min }));
+    l.occlusion = Some(olr_look::Occlusion { strength: 0, reach: 12 });
+    f.begin(Some(&l), 0.0);
+    assert_eq!(f.occlusion, None, "strength 0 is none");
+    l.occlusion = Some(olr_look::Occlusion { strength: 60, reach: 12 });
+    f.begin(Some(&l), 0.0);
+    f.begin(None, 0.0);
+    assert_eq!(f.occlusion, None, "none without a look");
 }
 
 #[test]

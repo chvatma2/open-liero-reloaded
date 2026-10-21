@@ -522,3 +522,69 @@ fn shadows_is_an_unknown_field() {
     let e = read_level_files(&fs).unwrap_err().to_string();
     assert!(e.contains("shadows"), "{e}");
 }
+
+/// Issue #10: `occlusion` is absent by default, round-trips (its default
+/// reach left out of canonical text) and refuses values out of range.
+#[test]
+fn occlusion_round_trips_and_is_bounded() {
+    assert_eq!(compile_look(&level(Some(SPEC_LEVEL))).unwrap().unwrap().occlusion, None, "absent: none");
+    let with = |o: &str| {
+        SPEC_LEVEL.replacen("max_light: 100,", &format!("occlusion: {o},\n        max_light: 100,"), 1)
+    };
+    let src = level(Some(&with("(strength: 60, reach: 20)")));
+    let look = compile_look(&src).unwrap().unwrap();
+    assert_eq!(look.occlusion, Some(olr_look::Occlusion { strength: 60, reach: 20 }));
+    let fs = files(&src);
+    assert_eq!(read_level_files(&fs).unwrap(), src);
+    let text = canonical_text("level.ron", &with("(strength: 60, reach: 12)")).unwrap();
+    assert!(text.contains("occlusion: (\n            strength: 60,\n        ),\n"), "{text}");
+    let src = level(Some(&with("(strength: 40)")));
+    let o = compile_look(&src).unwrap().unwrap().occlusion;
+    assert_eq!(o, Some(olr_look::Occlusion { strength: 40, reach: 12 }), "the default reach");
+    for (o, want) in [
+        ("(strength: 0)", "look.occlusion.strength"),
+        ("(strength: 101)", "look.occlusion.strength"),
+        ("(strength: 50, reach: 1)", "look.occlusion.reach"),
+        ("(strength: 50, reach: 33)", "look.occlusion.reach"),
+        ("(strength: 50, reach: 70000)", "level.ron"),
+        ("(reach: 12)", "strength"),
+        ("(strength: 50, depth: 3)", "depth"),
+    ] {
+        let fs = files(&level(None)).with("level.ron", with(o).into_bytes());
+        let e = match read_level_files(&fs) {
+            Err(e) => e.to_string(),
+            Ok(src) => err(&src),
+        };
+        assert!(e.contains(want), "{o}: {e:?}");
+    }
+}
+
+/// Issue #10: the occlusion is in `level.ron`, so it changes the pack's
+/// content hash.
+#[test]
+fn occlusion_changes_the_content_hash() {
+    let manifest = b"(format_version: 5, id: \"lit\", name: \"Lit\", version: \"1\", kind: Level)\n".to_vec();
+    let src = level(Some(SPEC_LEVEL));
+    let fs = files(&src).with("pack.ron", manifest);
+    let a = olr_pack::content_hash(&fs).unwrap();
+    let mut occluded = src.clone();
+    occluded.look.as_mut().unwrap().occlusion =
+        Some(olr_format::look::OcclusionSource { strength: 60, reach: 12 });
+    let mut fs2 = fs.clone();
+    write_level_files(&mut fs2, &occluded).unwrap();
+    assert_eq!(read_level_files(&fs2).unwrap(), occluded);
+    assert_ne!(olr_pack::content_hash(&fs2).unwrap(), a);
+}
+
+/// Issue #10: the lit thumbnail leaves the occlusion out (as it does soak
+/// and softness).
+#[test]
+fn the_thumbnail_leaves_occlusion_out() {
+    let mut plain = white_level("look: (ambient: (intensity: 50))");
+    let mut occluded = white_level("look: (ambient: (intensity: 50), occlusion: (strength: 100))");
+    for l in [&mut plain, &mut occluded] {
+        l.material =
+            (0..64 * 32).map(|i| if i % 64 < 20 { Material::Rock } else { Material::Background }).collect();
+    }
+    assert!(olr_format::levels::level_thumbnail(&plain) == olr_format::levels::level_thumbnail(&occluded));
+}

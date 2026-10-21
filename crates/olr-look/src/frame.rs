@@ -4,7 +4,7 @@
 
 use alloc::vec::Vec;
 
-use crate::{Grade, LevelLook, Light, Reach, default_phase, identity_of};
+use crate::{Grade, LevelLook, Light, Occlusion, Reach, default_phase, identity_of};
 
 /// The most glowing discs a frame draws (plan 15c): play's lights, in
 /// order.
@@ -12,6 +12,13 @@ pub const MAX_EMITTERS: usize = 1024;
 
 /// The deepest light soaks into solids, world pixels (spec §Light in solids).
 pub const MAX_SOAK: u8 = 12;
+
+/// The shortest ambient occlusion reach, world pixels (issue #10).
+pub const MIN_OCCLUSION_REACH: u8 = 2;
+
+/// The longest ambient occlusion reach, world pixels (issue #10): the
+/// renderer reads the solid map this far past its light grid.
+pub const MAX_OCCLUSION_REACH: u8 = 32;
 
 /// What the composite shows (the editor's toggle, spec §The level editor).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -65,6 +72,10 @@ pub struct FrameLight {
 pub struct LookFrame {
     /// Linear.
     pub ambient: [f32; 3],
+    /// The level's ambient occlusion (issue #10): strength 1-100, reach
+    /// [`MIN_OCCLUSION_REACH`]-[`MAX_OCCLUSION_REACH`]; `None` without
+    /// one, a look or a strength.
+    pub occlusion: Option<Occlusion>,
     /// 1.0-2.0.
     pub max_light: f32,
     pub light_steps: u8,
@@ -99,6 +110,7 @@ impl LookFrame {
         self.emitters.clear();
         let Some(level) = level else {
             self.ambient = [1.0; 3];
+            self.occlusion = None;
             self.max_light = 1.0;
             self.light_steps = 0;
             self.softness = 0;
@@ -114,6 +126,10 @@ impl LookFrame {
             a.colour.map(|c| srgb_to_linear(c) * k)
         };
         self.ambient = linear(level.ambient);
+        self.occlusion = level.occlusion.filter(|o| o.strength > 0).map(|o| Occlusion {
+            strength: o.strength.min(100),
+            reach: o.reach.clamp(MIN_OCCLUSION_REACH, MAX_OCCLUSION_REACH),
+        });
         self.light_soak = level.light_soak.min(MAX_SOAK);
         self.solid_floor = linear(level.solid_floor);
         self.worm_floor = crate::worm_floor_of(level.ambient.colour);

@@ -17,6 +17,7 @@ fn look_frame_does_not_allocate_when_warm() {
     let mut level = content.load_level(&olx_level_id(&sc.level)).unwrap();
     level.look = Some(olr_look::LevelLook {
         ambient: olr_look::Ambient { colour: [255, 255, 255], intensity: 20 },
+        occlusion: None,
         max_light: 100,
         light_steps: 0,
         softness: 0,

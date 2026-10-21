@@ -18,7 +18,8 @@ mod frame;
 pub use anim::{default_phase, splitmix64};
 pub use engine::worm_floor_of;
 pub use frame::{
-    FrameGroup, FrameLight, LookFrame, MAX_EMITTERS, MAX_SOAK, ViewMode, fade, light_at, srgb_to_linear,
+    FrameGroup, FrameLight, LookFrame, MAX_EMITTERS, MAX_OCCLUSION_REACH, MAX_SOAK, MIN_OCCLUSION_REACH, ViewMode,
+    fade, light_at, srgb_to_linear,
 };
 
 /// An sRGB colour, as the files and the art store it.
@@ -123,6 +124,18 @@ pub struct Ambient {
     pub intensity: u16,
 }
 
+/// A level's ambient occlusion (issue #10): air near opaque rock and dirt
+/// shows less of the ambient light.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Occlusion {
+    /// Percent of the ambient light taken away from air right against a
+    /// solid, 1-100 (0 is none).
+    pub strength: u8,
+    /// World pixels over which the darkening fades out,
+    /// [`MIN_OCCLUSION_REACH`]-[`MAX_OCCLUSION_REACH`].
+    pub reach: u8,
+}
+
 /// What colour a glow group's pixels cast (their own glow is always their art).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum GlowColour {
@@ -149,6 +162,9 @@ pub struct GlowGroup {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LevelLook {
     pub ambient: Ambient,
+    /// Darkens the ambient light in air near solids; `None` (the default
+    /// of a look) is none.
+    pub occlusion: Option<Occlusion>,
     /// Percent, 100-200.
     pub max_light: u16,
     /// 0 off, else 2-32 bands.

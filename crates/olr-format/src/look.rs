@@ -166,6 +166,35 @@ impl Default for AmbientSource {
     }
 }
 
+/// Ambient occlusion (issue #10): air near opaque rock and dirt shows less
+/// of the ambient light, so tunnels, corners and pockets read as deep. Only
+/// the ambient light is darkened (not glow light or flashes) and only in air;
+/// the worm and solid floors still hold. Outside the level is open air.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct OcclusionSource {
+    /// How much of the ambient light is taken away from air right against a
+    /// solid (a flat wall's face; deeper in a corner or a narrow tunnel),
+    /// percent, 1 to 100 (100: none of it is left there).
+    pub strength: u16,
+    /// How far from a solid the darkening fades out to nothing, world
+    /// pixels, 2 to 32. Default 12.
+    #[serde(default = "occlusion_reach", skip_serializing_if = "is_occlusion_reach")]
+    pub reach: u16,
+}
+
+/// The occlusion's default reach, world pixels.
+fn occlusion_reach() -> u16 {
+    DEFAULT_OCCLUSION_REACH
+}
+
+fn is_occlusion_reach(v: &u16) -> bool {
+    *v == DEFAULT_OCCLUSION_REACH
+}
+
+/// The occlusion's default reach, world pixels (issue #10).
+pub const DEFAULT_OCCLUSION_REACH: u16 = 12;
+
 /// The least light an opaque solid pixel (rock or dirt that is not clear)
 /// shows, so deep rock still shows its art.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -280,6 +309,10 @@ pub struct LookSource {
     /// Default: white at 100 (no darkness).
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub ambient: AmbientSource,
+    /// Darkens the ambient light in air near rock and dirt (issue #10).
+    /// Default none: no occlusion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub occlusion: Option<OcclusionSource>,
     /// The brightest light, percent, 100 to 200 (above 100, flashes brighten a
     /// lit level). Default 100.
     #[serde(default = "hundred", skip_serializing_if = "is_hundred")]
@@ -310,6 +343,7 @@ impl Default for LookSource {
     fn default() -> LookSource {
         LookSource {
             ambient: AmbientSource::default(),
+            occlusion: None,
             max_light: 100,
             light_steps: 0,
             softness: 0,
@@ -447,6 +481,16 @@ pub fn valid_group_id(id: &str) -> bool {
 /// A level's look without its lights, checked.
 pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::LevelLook, FormatError> {
     within(l.ambient.intensity.into(), 0, 100, file, "look.ambient.intensity")?;
+    if let Some(o) = &l.occlusion {
+        within(o.strength.into(), 1, 100, file, "look.occlusion.strength")?;
+        within(
+            o.reach.into(),
+            olr_look::MIN_OCCLUSION_REACH.into(),
+            olr_look::MAX_OCCLUSION_REACH.into(),
+            file,
+            "look.occlusion.reach",
+        )?;
+    }
     within(l.max_light.into(), 100, 200, file, "look.max_light")?;
     if l.light_steps == 1 || l.light_steps > 32 {
         return Err(invalid(file, "look.light_steps", format!("{}, not 0 or within 2 to 32", l.light_steps)));
@@ -499,6 +543,9 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
             colour: rgb(l.ambient.colour.unwrap_or_else(white), file, "look.ambient.colour")?,
             intensity: l.ambient.intensity,
         },
+        occlusion: l
+            .occlusion
+            .map(|o| olr_look::Occlusion { strength: o.strength as u8, reach: o.reach as u8 }),
         max_light: l.max_light,
         light_steps: l.light_steps,
         softness: l.softness,

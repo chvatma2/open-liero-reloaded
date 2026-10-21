@@ -117,6 +117,7 @@ pub fn bench_look(world: (u32, u32), art: u32) -> (olr_look::LevelLook, olr_terr
     };
     let look = olr_look::LevelLook {
         ambient: Ambient { colour: [0x30, 0x40, 0x60], intensity: 20 },
+        occlusion: None,
         max_light: 100,
         light_steps: 0,
         softness: 1,
