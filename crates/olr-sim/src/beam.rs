@@ -190,7 +190,7 @@ pub(crate) fn process_shot_beam(
                 physics_dt: settings.lx56_physics_dt(),
                 referee,
             };
-            explosion(&mut blast, shot.spawn, p, 0.0, 5, shot.worm);
+            explosion(&mut blast, shot.spawn, p, 0.0, 5, shot.worm, -1);
             return Part::Stopped;
         }
         if solid(terrain, p) {
@@ -242,7 +242,7 @@ pub(crate) fn draw_beam(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut Beam
         if solid(terrain, p) {
             if beam.damage != -1 {
                 if width <= 2 {
-                    draws.entity(CosmeticKind::Explosion { size: 5 }, p, Vec2::ZERO);
+                    draws.entity(CosmeticKind::Explosion { size: 5, proj: -1 }, p, Vec2::ZERO);
                 }
                 let size = spread(beam.damage, beam, width);
                 let d = carve_at(terrain, holes, &mut draws.events, TerrainOp::Beam, size, p);
@@ -252,7 +252,11 @@ pub(crate) fn draw_beam(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut Beam
         }
         if let Some(i) = hit(worms, set, p) {
             if beam.damage != -1 {
-                draws.entity(CosmeticKind::Explosion { size: 3 }, p + Vec2::new(1.0, 1.0), Vec2::ZERO);
+                draws.entity(
+                    CosmeticKind::Explosion { size: 3, proj: -1 },
+                    p + Vec2::new(1.0, 1.0),
+                    Vec2::ZERO,
+                );
             }
             set &= !(1 << i);
             return Part::StoppedLate;

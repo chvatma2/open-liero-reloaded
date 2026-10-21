@@ -95,9 +95,14 @@ fn events_are_emitted_once_per_cause() {
         panic!("{edits:?}")
     };
     assert!((115..=125).contains(&x), "{x}");
-    // The explosion entity (size 8 below damage 6) and its two dirt particles.
+    // The explosion entity (size 8 below damage 6), naming the pellet
+    // (issue #15), and its two dirt particles.
+    let pellet = w.sim_mod().projectiles().iter().position(|p| p.key == "pellet").unwrap() as i32;
     assert_eq!(
-        count(&|e| matches!(e, EventKind::SpawnCosmetic { kind: CosmeticKind::Explosion { size: 8 }, .. })),
+        count(
+            &|e| matches!(e, EventKind::SpawnCosmetic { kind: CosmeticKind::Explosion { size: 8, proj }, .. }
+            if *proj == pellet)
+        ),
         1
     );
     assert_eq!(count(&|e| matches!(e, EventKind::SpawnCosmetic { kind: CosmeticKind::Dirt { .. }, .. })), 2);

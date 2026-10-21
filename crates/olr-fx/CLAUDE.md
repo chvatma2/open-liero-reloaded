@@ -63,7 +63,9 @@ is `docs/porting/olx-notes/presentation.md` §7 (and §2.2 for stains).
   rock does (the user's playtest, 2026-10-19); dirt particles, smoke,
   chemical smoke, doomsday and jetpack spray stay `Shade::LIT`. Unlit, every
   entity is `Shade::LIT`. `olr-present` lights explosions from the entities
-  (`Fx::entities`).
+  (`Fx::entities`); issue #15: `Kind::Explosion { proj }` carries the
+  exploded projectile's `SimMod` index from `CosmeticKind::Explosion`
+  (-1 for none), for the projectile look's explosion light.
 - **Assets** (`assets.rs`): `FxAssets` registers the core sprites and each
   worm's colorized gibs (`CWorm::ColorizeImage`, floats) in any `Atlas`
   (`SceneAssets` in the game), sharing the atlas's white pixel

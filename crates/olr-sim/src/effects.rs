@@ -163,8 +163,18 @@ impl<'a> ProjCtx<'a> {
 /// `damage` to every alive worm whose recorded position (`getBest`, as the
 /// hit test) is within 5 px: no falloff. The viewport shake (`shake`) is
 /// cosmetic. Reported as an [`EventKind::Explosion`], the `ENT_EXPLOSION` of size
-/// `(int)damage` (8 up to damage 5) and the hole's terrain edit.
-pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, shake: i32, owner: i32) {
+/// `(int)damage` (8 up to damage 5) and the hole's terrain edit. `proj`
+/// (the projectile's `SimMod` index, -1 for none) only tags the cosmetic
+/// entity; a bonus it blows up explodes with none.
+pub(crate) fn explosion(
+    ctx: &mut Blast,
+    time: AbsTime,
+    pos: Vec2,
+    damage: f32,
+    shake: i32,
+    owner: i32,
+    proj: i32,
+) {
     let (w, h) = (ctx.terrain.width() as i64, ctx.terrain.height() as i64);
     // MIN((uint)pos.y, H - 1); px = (uint)pos.x. x86-64 converts through a 64-bit int.
     let y = (c_i64(pos.y) as u32).min((h as u32).wrapping_sub(1)) as i32 as i64;
@@ -189,7 +199,7 @@ pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, 
                 continue;
             }
             ctx.bonuses[i].used = false;
-            explosion(ctx, time, pos, 15.0, 5, owner);
+            explosion(ctx, time, pos, 15.0, 5, owner, -1);
         }
     }
     if let Some(probe) = got_dirt {
@@ -197,7 +207,7 @@ pub(crate) fn explosion(ctx: &mut Blast, time: AbsTime, pos: Vec2, damage: f32, 
     }
     let size = if damage > 5.0 { c_int(damage) } else { 8 };
     ctx.draws.events.push(EventKind::Explosion { pos, damage, shake });
-    ctx.draws.entity(CosmeticKind::Explosion { size }, pos, Vec2::ZERO);
+    ctx.draws.entity(CosmeticKind::Explosion { size, proj }, pos, Vec2::ZERO);
     let d = carve_at(ctx.terrain, ctx.holes, &mut ctx.draws.events, TerrainOp::Carve, c_int(damage), pos);
     increment_dirt_count(ctx.worms, owner, d);
     // `(tLX->currentTime - time).milliseconds()`: wraps (the assert is compiled out).

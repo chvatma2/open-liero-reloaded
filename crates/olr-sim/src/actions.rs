@@ -130,7 +130,16 @@ pub(crate) fn apply_to(
                 bounce(p, a.bounce_coeff);
                 if a.bounce_explode > 0 {
                     // `Explosion(.., (float)BounceExplode, false, ..)` (`:777`): no shake.
-                    explosion(&mut ctx.blast(), p.last_sim_time, p.pos, a.bounce_explode as f32, 0, p.owner);
+                    let proj = p.proj as i32;
+                    explosion(
+                        &mut ctx.blast(),
+                        p.last_sim_time,
+                        p.pos,
+                        a.bounce_explode as f32,
+                        0,
+                        p.owner,
+                        proj,
+                    );
                 }
             }
         }
@@ -291,7 +300,7 @@ pub(crate) fn execute(pool: &mut ProjectilePool, i: usize, info: &mut DoActionIn
     let Some(p) = pool.get(i) else { return };
     let pi = &sim_mod.projectiles()[p.proj];
     let def = &pi.def;
-    let (time, pos, owner) = (p.last_sim_time, p.pos, p.owner);
+    let (time, pos, owner, proj) = (p.last_sim_time, p.pos, p.owner, p.proj as i32);
     if info.explode {
         let damage = if !info.timer {
             info.damage
@@ -302,7 +311,7 @@ pub(crate) fn execute(pool: &mut ProjectilePool, i: usize, info: &mut DoActionIn
             def.timer.action.as_ref().map_or(0, |a| a.damage)
         };
         if damage != -1 {
-            explosion(&mut ctx.blast(), time, pos, damage as f32, info.shake, owner);
+            explosion(&mut ctx.blast(), time, pos, damage as f32, info.shake, owner, proj);
         }
         info.delete_after = true;
     }

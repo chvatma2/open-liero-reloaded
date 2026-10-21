@@ -91,6 +91,17 @@ fn explosions(events: &[(Event, Terrain)]) -> Vec<(f32, i32)> {
         .collect()
 }
 
+/// The explosion entities' projectiles (issue #15), in order.
+fn exploded(events: &[(Event, Terrain)]) -> Vec<i32> {
+    events
+        .iter()
+        .filter_map(|(e, _)| match e.kind {
+            EventKind::SpawnCosmetic { kind: CosmeticKind::Explosion { proj, .. }, .. } => Some(proj),
+            _ => None,
+        })
+        .collect()
+}
+
 #[test]
 fn a_bounce_explosion_does_not_shake() {
     let hit = ActionDef { bounce_explode: 3, shake: 7, ..ActionDef::olx_default(ActionKind::Bounce) };
@@ -99,6 +110,9 @@ fn a_bounce_explosion_does_not_shake() {
     let ex = explosions(&ev);
     assert!(!ex.is_empty(), "the pellet bounced off the wall");
     assert!(ex.iter().all(|&e| e == (3.0, 0)), "{ex:?}");
+    // Each names the pellet that bounced.
+    let pellet = w.sim_mod().projectiles().iter().position(|p| p.key == "pellet").unwrap() as i32;
+    assert_eq!(exploded(&ev), vec![pellet; ex.len()]);
 }
 
 #[test]
@@ -110,6 +124,9 @@ fn a_bonus_blown_up_by_an_explosion_shakes_5() {
     let ev = play(&mut w, 60, |f| if (2..4).contains(&f) { Keys::FIRE } else { 0 });
     // The chained explosion is reported first: OLX recurses before its own spawn.
     assert_eq!(explosions(&ev), [(15.0, 5), (5.0, 7)]);
+    // The bonus explodes as no projectile; the pellet's own explosion names it.
+    let pellet = w.sim_mod().projectiles().iter().position(|p| p.key == "pellet").unwrap() as i32;
+    assert_eq!(exploded(&ev), [-1, pellet]);
 }
 
 #[test]

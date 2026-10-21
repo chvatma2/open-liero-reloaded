@@ -201,7 +201,7 @@ fn low_level(
             if trail.kind == TrailKind::Doomsday {
                 ctx.draws.entity(CosmeticKind::Doomsday, p.pos, p.vel);
             } else {
-                ctx.draws.entity(CosmeticKind::Explosion { size: 10 }, p.pos, Vec2::ZERO);
+                ctx.draws.entity(CosmeticKind::Explosion { size: 10, proj: -1 }, p.pos, Vec2::ZERO);
             }
         }
         TrailKind::Projectile if p.last_sim_time > p.last_trail_proj => {

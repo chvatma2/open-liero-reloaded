@@ -78,7 +78,7 @@ pub(crate) fn entity(e: &Entity, assets: &FxAssets, lit: bool, out: &mut DrawLis
     match e.kind {
         Kind::Particle => at.block(assets, out, -1, -1, e.colour, lit),
         Kind::Blood | Kind::BloodDropper => at.block(assets, out, -1, -1, e.colour, floored),
-        Kind::Explosion => at.blit(out, assets.explosion, (frame * 32, -16, 32), glow),
+        Kind::Explosion { .. } => at.blit(out, assets.explosion, (frame * 32, -16, 32), glow),
         Kind::Smoke => at.blit(out, assets.smoke, (frame * 14, -7, 14), lit),
         Kind::ChemSmoke => at.blit(out, assets.chemsmoke, (frame * 10, -5, 10), lit),
         Kind::Spawn => at.blit(out, assets.spawn, (frame * 32, -16, 32), glow),

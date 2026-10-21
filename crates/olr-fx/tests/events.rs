@@ -86,8 +86,8 @@ fn odd_input_never_panics() {
     let ev = [
         cosmetic(0, CosmeticKind::Blood { red: 1 }, (f32::NAN, 10.0), (0.0, 0.0)),
         cosmetic(0, CosmeticKind::Smoke, (f32::INFINITY, -1e30), (0.0, 0.0)),
-        cosmetic(0, CosmeticKind::Explosion { size: i32::MIN }, (20.0, 20.0), (0.0, 0.0)),
-        cosmetic(0, CosmeticKind::Explosion { size: i32::MAX }, (20.0, 20.0), (0.0, 0.0)),
+        cosmetic(0, CosmeticKind::Explosion { size: i32::MIN, proj: -1 }, (20.0, 20.0), (0.0, 0.0)),
+        cosmetic(0, CosmeticKind::Explosion { size: i32::MAX, proj: -1 }, (20.0, 20.0), (0.0, 0.0)),
         cosmetic(0, CosmeticKind::Gib { worm: i32::MIN }, (1e9, 20.0), (1e30, 1e30)),
         cosmetic(0, CosmeticKind::Dirt { probe: (i32::MIN, i32::MAX) }, (20.0, 20.0), (0.0, 0.0)),
         cosmetic(0, CosmeticKind::Doomsday, (20.0, 20.0), (f32::NAN, 0.0)),

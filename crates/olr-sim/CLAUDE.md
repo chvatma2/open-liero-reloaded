@@ -160,6 +160,10 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `olx:` (`GAME_SOUND_PREFIX`, a path in OLX's data directory), then the mod's
   (paths in its pack, never prefixed), so a loader can tell the roots apart.
   The renderer's data (spec §19 E6): `Explosion.shake`, `Gib { worm }`,
+  `CosmeticKind::Explosion { size, proj }` (issue #15: the exploded
+  projectile's `SimMod` index from its effects, timer or `Bounce`
+  explosion, which `effects::explosion` takes only for it; -1 for a bonus
+  blown up, a beam and an explosive trail; in no checksum),
   `Dirt { probe }` (the pixel the colour comes from), `Damage.dealt`,
   `LaserSight { worm, len }` (OLX's trace length), `Beam { worm, colour }`,
   `World::physics_time()`. `Message` comes from a mode's command,

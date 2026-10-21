@@ -50,8 +50,8 @@ fn blood_falls_and_stains_like_olx() {
 fn explosion_frames_and_invisible_start() {
     let mut s = Setup::new();
     let ev = [
-        cosmetic(0, CosmeticKind::Explosion { size: 8 }, (20.0, 20.0), (0.0, 0.0)),
-        cosmetic(0, CosmeticKind::Explosion { size: 20 }, (40.0, 20.0), (0.0, 0.0)),
+        cosmetic(0, CosmeticKind::Explosion { size: 8, proj: -1 }, (20.0, 20.0), (0.0, 0.0)),
+        cosmetic(0, CosmeticKind::Explosion { size: 20, proj: -1 }, (40.0, 20.0), (0.0, 0.0)),
     ];
     s.tick(&ev, 0);
     // Frame `15 - size`: a small explosion starts big; a large one starts
@@ -72,7 +72,7 @@ fn explosion_frames_and_invisible_start() {
     s.passes(10);
     assert_eq!(s.fx.len(), 2);
     s.passes(1);
-    assert_eq!(s.kinds(), [(1, Kind::Explosion)]);
+    assert_eq!(s.kinds(), [(1, Kind::Explosion { proj: -1 })]);
     s.passes(29);
     assert_eq!(s.fx.len(), 1);
     s.passes(1);
@@ -235,7 +235,7 @@ fn entity_cap_drops_new_ones() {
     assert_eq!(s.fx.len(), MAX_ENTITIES);
     assert!(s.fx.entities().map(|(i, _)| i).eq(0..MAX_ENTITIES));
     s.passes(33);
-    s.tick(&[cosmetic(0, CosmeticKind::Explosion { size: 8 }, (20.0, 20.0), (0.0, 0.0))], 0);
+    s.tick(&[cosmetic(0, CosmeticKind::Explosion { size: 8, proj: -1 }, (20.0, 20.0), (0.0, 0.0))], 0);
     assert!(s.kinds().iter().all(|(_, k)| *k == Kind::Smoke), "dropped while full");
     s.passes(1);
     assert!(s.fx.is_empty());
@@ -246,8 +246,8 @@ fn entity_cap_drops_new_ones() {
     s.tick(&ev, 0);
     assert_eq!(s.kinds(), [(0, Kind::Smoke), (1, Kind::LaserSight), (2, Kind::Smoke)]);
     s.passes(2);
-    s.tick(&[cosmetic(0, CosmeticKind::Explosion { size: 8 }, (20.0, 20.0), (0.0, 0.0))], 0);
-    assert_eq!(s.kinds(), [(0, Kind::Smoke), (1, Kind::Explosion), (2, Kind::Smoke)]);
+    s.tick(&[cosmetic(0, CosmeticKind::Explosion { size: 8, proj: -1 }, (20.0, 20.0), (0.0, 0.0))], 0);
+    assert_eq!(s.kinds(), [(0, Kind::Smoke), (1, Kind::Explosion { proj: -1 }), (2, Kind::Smoke)]);
 
     // A restart forgets them.
     s.fx.clear();

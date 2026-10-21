@@ -94,8 +94,12 @@ pub enum CosmeticKind {
     /// `CMap.cpp:2181-2192`; `CClient::Explosion`, `CClient_Game.cpp:233-251`),
     /// a rope hook its wrapped position (`PhysicsLX56.cpp:603-606`).
     Dirt { probe: (i32, i32) },
-    /// `ENT_EXPLOSION` of this size.
-    Explosion { size: i32 },
+    /// `ENT_EXPLOSION` of this size. `proj` is the `SimMod` index of the
+    /// projectile that exploded (`effects::explosion` from its effects or
+    /// a `Bounce` explosion), -1 for any other: a bonus blown up, a beam,
+    /// a projectile's explosive trail. Presentation only (issue #15: the
+    /// projectile look's explosion light); OLX's entity has no such field.
+    Explosion { size: i32, proj: i32 },
     /// `ENT_SPARKLE`: an air jump.
     Sparkle,
     /// `ENT_SPAWN`: a worm or a bonus appears.

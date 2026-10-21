@@ -18,7 +18,12 @@ pub enum Kind {
     Spawn,
     Blood,
     BloodDropper,
-    Explosion,
+    /// `ENT_EXPLOSION`; `proj` is the `SimMod` index of the projectile
+    /// that exploded, -1 for none (`CosmeticKind::Explosion`; issue #15:
+    /// the look's explosion light). Its size is `type2`.
+    Explosion {
+        proj: i32,
+    },
     Smoke,
     ChemSmoke,
     Sparkle,
@@ -71,7 +76,7 @@ impl Entity {
             CosmeticKind::BloodDropper => (Kind::BloodDropper, 0, Rgba::rgb(128, 0, 0)),
             CosmeticKind::Gib { worm } => (Kind::Gib { worm }, 0, Rgba::BLACK),
             CosmeticKind::Dirt { .. } => (Kind::Particle, 0, colour),
-            CosmeticKind::Explosion { size } => (Kind::Explosion, size, Rgba::BLACK),
+            CosmeticKind::Explosion { size, proj } => (Kind::Explosion { proj }, size, Rgba::BLACK),
             // The sim's sparkles are the air jump's (`PhysicsLX56.cpp:390-392`): fade 10.
             CosmeticKind::Sparkle => (Kind::Sparkle, 10, Rgba::BLACK),
             CosmeticKind::Spawn => (Kind::Spawn, 0, Rgba::BLACK),
@@ -83,7 +88,8 @@ impl Entity {
             CosmeticKind::LaserSight { len, .. } => (Kind::LaserSight, len as i32, Rgba::BLACK),
             CosmeticKind::Beam { .. } => return None,
         };
-        let frame = if kind == Kind::Explosion { 15i32.wrapping_sub(type2) as f32 } else { 0.0 };
+        let frame =
+            if matches!(kind, Kind::Explosion { .. }) { 15i32.wrapping_sub(type2) as f32 } else { 0.0 };
         Some(Entity { kind, type2, pos, vel, colour, frame, extra: TimeDiff(0), angl_vel: 0.0, rotation: 0 })
     }
 
@@ -169,7 +175,7 @@ pub(crate) fn fall(e: &mut Entity, dt: TimeDiff, material: &Terrain) -> Landed {
 pub(crate) fn animate(e: &mut Entity, dt: TimeDiff) -> bool {
     let rdt = real_dt();
     match e.kind {
-        Kind::Explosion => {
+        Kind::Explosion { .. } => {
             e.frame += rdt * 40.0;
             e.frame > 15.0
         }
