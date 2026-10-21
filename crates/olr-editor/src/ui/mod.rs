@@ -1,5 +1,7 @@
-//! The editor's egui panels (spec §4): a toolbar, the element list, the
-//! properties, the status bar, the canvas and the dialogs. `show` draws
+//! The editor's egui panels (spec §4; the layout of issue #8): the session
+//! bar and the tool options bar on top, the tool rail on the left, the
+//! right panel (its tabs, then the selection's properties or the level's),
+//! the status bar, the canvas and the dialogs. `show` draws
 //! them from the state and returns the frame's actions, as
 //! `olr_ui::screens::show` does; the host applies `olr_ui::theme`.
 
@@ -7,9 +9,11 @@ mod browser;
 mod canvas;
 mod dialogs;
 mod elements;
+mod icons;
 mod level;
 mod look;
 mod properties;
+mod rail;
 mod status;
 mod toolbar;
 
@@ -22,6 +26,30 @@ use crate::tools::Tool;
 
 /// The labels tests and 14c's e2e script find widgets by.
 pub mod labels {
+    // The session bar (issue #8): File ▾, View ▾ and Play's ▾ are named
+    // without their arrow.
+    pub const FILE: &str = "File";
+    pub const VIEW: &str = "View";
+    pub const PLAY_OPTIONS: &str = "Play options";
+    pub const MATERIAL_VIEW: &str = "Material view";
+    pub const GRID: &str = "Grid";
+    // The rail's group buttons (`ToolGroup::name`); its other buttons are
+    // named by their tool (`Tool::name`), Import by `IMPORT_IMAGE`.
+    pub const DRAW: &str = "Draw";
+    pub const PIXELS: &str = "Pixels";
+    // The tool options bar's paint.
+    pub const COLOUR: &str = "Colour";
+    pub const FRONT_TILE: &str = "Front tile";
+    pub const BACK_TILE: &str = "Back tile";
+    // The right panel's tabs and properties.
+    pub const ELEMENTS: &str = "Elements";
+    pub const ASSETS: &str = "Assets";
+    pub const SPAWNS: &str = "Spawns";
+    pub const WHAT_IS_IT: &str = "What is it?";
+    pub const PLACE: &str = "Place";
+    pub const MAKE_PARTS_GLOW: &str = "Make parts glow…";
+    pub const MORE: &str = "More";
+    pub const FINE_TUNING: &str = "Fine tuning";
     pub const UNDO: &str = "Undo";
     pub const REDO: &str = "Redo";
     pub const SAVE: &str = "Save";
@@ -51,19 +79,17 @@ pub mod labels {
     pub const THEME_BACK: &str = "Theme back";
     /// Removes the chosen texture of the user's (the palette).
     pub const REMOVE: &str = "Remove";
-    pub const OBJECTS: &str = "Objects";
     pub const PIXEL_SIZE: &str = "Pixel size";
     pub const COLOURS: &str = "Colours";
     pub const DITHER: &str = "Dither";
     pub const THRESHOLD: &str = "Threshold";
-    pub const MATERIAL: &str = "Material";
     pub const VISIBLE: &str = "Visible";
     pub const LOCKED: &str = "Locked";
     pub const NAME: &str = "Name";
     pub const DONT_SAVE: &str = "Don't save";
     pub const CANCEL: &str = "Cancel";
     // The look (plan 15a Task 18).
-    pub const LOOK: &str = "Look";
+    pub const LOOK: &str = "Lighting";
     pub const ADD_LOOK: &str = "Add look";
     pub const REMOVE_LOOK: &str = "Remove look";
     pub const LOOK_AMBIENT: &str = "Ambient %";
@@ -88,7 +114,8 @@ pub mod labels {
     pub const GLOW_GROUP: &str = "Glow group";
     pub const CLEAR: &str = "Lets light through";
     pub const TOOL_GLOW: &str = "Glow brush";
-    pub const GLOW_STRENGTH_BRUSH: &str = "Brush glow %";
+    /// The Glow brush's and Glow selection's glow % (one value).
+    pub const GLOW_STRENGTH_BRUSH: &str = "Glow %";
     pub const VIEW_LIT: &str = "Lit";
     pub const VIEW_FULL: &str = "Full bright";
     pub const VIEW_LIGHT: &str = "Light only";
@@ -169,17 +196,23 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
         (data.canvas_rect, data.canvas_size) = canvas;
     }
     data.drawn.clear();
+    // A popup open (a flyout, a menu) takes Escape for itself.
+    let popup = egui::Popup::is_any_open(ui.ctx());
     let (mut toolbar, mut list, mut fields, mut canvas, mut dialogs) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    egui::Panel::top("olr-editor-toolbar").show(ui, |ui| toolbar::show(ui, state, data, &mut toolbar));
+    egui::Panel::top("olr-editor-session").show(ui, |ui| toolbar::session(ui, state, data, &mut toolbar));
+    egui::Panel::top("olr-editor-options").show(ui, |ui| toolbar::options_bar(ui, state, data, &mut toolbar));
     egui::Panel::bottom("olr-editor-status").show(ui, |ui| status::show(ui, state));
-    egui::Panel::left("olr-editor-elements")
-        .default_size(220.0)
-        .show(ui, |ui| elements::show(ui, state, &mut list));
+    egui::Panel::left("olr-editor-rail")
+        .exact_size(rail::RAIL_WIDTH)
+        .resizable(false)
+        .show(ui, |ui| rail::show(ui, state, &mut toolbar));
     // At least its first width: a narrow panel (a group's) never lets the
     // canvas grow under the pointer.
-    egui::Panel::right("olr-editor-properties").default_size(260.0).min_size(260.0).show(ui, |ui| {
-        egui::ScrollArea::vertical().show(ui, |ui| match state.selection() {
+    egui::Panel::right("olr-editor-panel").default_size(260.0).min_size(260.0).show(ui, |ui| {
+        elements::show(ui, state, &mut list);
+        ui.separator();
+        egui::ScrollArea::vertical().id_salt("olr-editor-properties").show(ui, |ui| match state.selection() {
             Selection::None => level::show(ui, state, data, &mut fields),
             _ => properties::show(ui, state, data, &mut fields),
         })
@@ -197,13 +230,14 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
     data.texts.retain(|k, _| drawn.contains(k));
     data.drawn = drawn;
     let mut out = fields;
-    shortcuts(ui, state, &mut out);
+    shortcuts(ui, state, popup, &mut out);
     out.extend(list.into_iter().chain(canvas).chain(toolbar).chain(dialogs));
     out
 }
 
-/// The shortcuts, when no text field has the keyboard and no dialog is open.
-fn shortcuts(ui: &Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+/// The shortcuts, when no text field has the keyboard and no dialog is
+/// open; Escape not while a popup was open (it closes the popup).
+fn shortcuts(ui: &Ui, state: &EditorState, popup: bool, out: &mut Vec<EditorAction>) {
     // Not while typing, nor while a widget is dragged (its draft would
     // outlive the change a shortcut makes).
     if state.dialog().is_some()
@@ -224,7 +258,7 @@ fn shortcuts(ui: &Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
         if i.consume_key(Modifiers::NONE, Key::Delete) {
             out.push(EditorAction::Remove);
         }
-        if state.pixel_rect().is_some() && i.consume_key(Modifiers::NONE, Key::Escape) {
+        if !popup && state.pixel_rect().is_some() && i.consume_key(Modifiers::NONE, Key::Escape) {
             out.push(EditorAction::DropPixels);
         }
         // Ctrl+C, X and V: as keys, or as the window's copy, cut and paste
@@ -263,6 +297,18 @@ fn shortcuts(ui: &Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
                 out.push(EditorAction::Nudge { dx, dy });
             }
         }
+    });
+}
+
+/// Names `r` `label` for AccessKit, whatever it shows (tests and the e2e
+/// script find widgets by name: "File ▾" is "File", the rail's Glow
+/// "Glow brush").
+pub(crate) fn relabel(r: &egui::Response, typ: egui::WidgetType, selected: Option<bool>, label: &str) {
+    let enabled = r.enabled();
+    r.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(typ, enabled, label);
+        info.selected = selected;
+        info
     });
 }
 

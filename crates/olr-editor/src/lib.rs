@@ -23,5 +23,6 @@ pub use history::{Edit, History, LevelMeta};
 pub use olr_pack::Severity;
 pub use ops::Change;
 pub use state::{
-    Choice, Dialog, EditorAction, EditorCommand, EditorState, MAX_BOTS, NewLevel, Pending, Selection, Status,
+    Choice, Dialog, EditorAction, EditorCommand, EditorState, MAX_BOTS, NewLevel, PanelTab, Pending,
+    Selection, Status,
 };

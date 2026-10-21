@@ -55,10 +55,20 @@ pub struct EditorSettings {
     pub play_bots: u8,
     /// The file browser's folder last chosen from (plan 14c R8).
     pub browse_dir: Option<PathBuf>,
+    /// The properties' "More" is open (issue #8).
+    pub more_open: bool,
+    /// The lighting's "Fine tuning" is open (issue #8).
+    pub fine_tuning_open: bool,
 }
 
 impl Default for EditorSettings {
     fn default() -> EditorSettings {
-        EditorSettings { play_mod: "olx-classic".into(), play_bots: 1, browse_dir: None }
+        EditorSettings {
+            play_mod: "olx-classic".into(),
+            play_bots: 1,
+            browse_dir: None,
+            more_open: false,
+            fine_tuning_open: false,
+        }
     }
 }

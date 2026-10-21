@@ -1,20 +1,45 @@
-//! The element list, top first: drag a row to reorder, eye and lock
-//! toggles, add a layer; the objects below.
+//! The right panel's tabs (issue #8): Elements (the element list, top
+//! first: drag a row to reorder, eye and lock toggles, add a layer),
+//! Assets (the asset library's place, to come) and Spawns (the level's
+//! objects). The tab follows the selection (`EditorState::tab`).
 
 use egui::Ui;
 use olr_edit::element::Property;
 use olr_format::levels::{ElementKind, LevelObject};
 
 use super::labels;
-use crate::browser::Purpose;
-use crate::state::{EditorAction, EditorState, Selection};
+use crate::state::{EditorAction, EditorState, PanelTab, Selection};
+
+/// The lists' share of the panel's height: the properties take the rest.
+const LIST_SHARE: f32 = 0.4;
 
 pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    ui.horizontal(|ui| {
+        for (tab, label) in [
+            (PanelTab::Elements, labels::ELEMENTS),
+            (PanelTab::Assets, labels::ASSETS),
+            (PanelTab::Spawns, labels::SPAWNS),
+        ] {
+            if ui.selectable_label(state.tab() == tab, label).clicked() && state.tab() != tab {
+                out.push(EditorAction::Tab(tab));
+            }
+        }
+    });
+    ui.separator();
+    match state.tab() {
+        PanelTab::Elements => elements(ui, state, out),
+        PanelTab::Assets => {
+            ui.weak("Saved assets will appear here.");
+        }
+        PanelTab::Spawns => spawns(ui, state, out),
+    }
+}
+
+fn elements(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     let Some(doc) = state.document() else { return };
-    ui.heading("Elements");
     egui::ScrollArea::vertical()
         .id_salt("olr-editor-element-list")
-        .max_height(ui.available_height() * 0.6)
+        .max_height(ui.available_height() * LIST_SHARE)
         .show(ui, |ui| {
             for (index, item) in doc.items().iter().enumerate().rev() {
                 let e = &item.element;
@@ -58,16 +83,24 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>
                 }
             }
         });
-    ui.horizontal(|ui| {
-        if ui.button(labels::ADD_LAYER).clicked() {
-            out.push(EditorAction::AddLayer);
-        }
-        if ui.button(labels::IMPORT_IMAGE).clicked() {
-            out.push(EditorAction::Browse(Purpose::ImportImage));
-        }
-    });
-    ui.separator();
-    ui.heading(labels::OBJECTS);
+    if ui.button(labels::ADD_LAYER).on_hover_text("an empty layer to paint on").clicked() {
+        out.push(EditorAction::AddLayer);
+    }
+}
+
+fn spawns(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    if doc.level().objects.is_empty() {
+        ui.weak("No spawns yet: place them with the Spawn tool (P).");
+    }
+    egui::ScrollArea::vertical()
+        .id_salt("olr-editor-spawn-list")
+        .max_height(ui.available_height() * LIST_SHARE)
+        .show(ui, |ui| spawn_rows(ui, state, out));
+}
+
+fn spawn_rows(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
     for (i, o) in doc.level().objects.iter().enumerate() {
         let at = o.at();
         let kind = match o {

@@ -3,7 +3,7 @@
 use olr_data::image::Rgba;
 use olr_edit::compose::Rect;
 
-/// The canvas tools; their shortcut letters are V B E R O L P I W G M H K.
+/// The canvas tools; their shortcut letters are V B E R O L P I W G M H.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
     Select,
@@ -26,22 +26,6 @@ pub enum Tool {
 }
 
 impl Tool {
-    /// The drawing tools: the toolbar's first row (the look's tools sit
-    /// with the look, plan 15a Task 18).
-    pub const DRAWING: [Tool; 11] = [
-        Tool::Select,
-        Tool::Brush,
-        Tool::Eraser,
-        Tool::Rect,
-        Tool::Ellipse,
-        Tool::Line,
-        Tool::Spawn,
-        Tool::Eyedropper,
-        Tool::Wand,
-        Tool::Fill,
-        Tool::SelectPixels,
-    ];
-
     /// Every tool (each has its shortcut).
     pub const ALL: [Tool; 12] = [
         Tool::Select,
@@ -89,13 +73,64 @@ impl Tool {
             Tool::Wand => "Remove colour",
             Tool::Fill => "Fill",
             Tool::SelectPixels => "Select pixels",
-            Tool::Glow => "Glow",
+            Tool::Glow => "Glow brush",
         }
+    }
+
+    /// The rail's group holding the tool (issue #8), if it shares a button.
+    pub fn group(self) -> Option<ToolGroup> {
+        ToolGroup::ALL.into_iter().find(|g| g.tools().contains(&self))
+    }
+
+    /// Whether the tool dabs with the brush (its shape and size): the
+    /// painting tools and the Glow brush (`pointer.rs`).
+    pub fn uses_brush(self) -> bool {
+        self.paints() || self == Tool::Glow
+    }
+
+    /// Whether the tool lays the paint (a colour, a tile or a texture).
+    pub fn lays_paint(self) -> bool {
+        matches!(self, Tool::Brush | Tool::Rect | Tool::Ellipse | Tool::Line | Tool::Fill)
     }
 
     /// Whether the tool paints into the selected drawn layer.
     pub fn paints(self) -> bool {
         matches!(self, Tool::Brush | Tool::Eraser | Tool::Rect | Tool::Ellipse | Tool::Line)
+    }
+}
+
+/// A rail button holding several tools (issue #8): one click chooses the
+/// group's tool chosen last, its flyout lists them all.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ToolGroup {
+    Draw,
+    Pixels,
+}
+
+impl ToolGroup {
+    pub const ALL: [ToolGroup; 2] = [ToolGroup::Draw, ToolGroup::Pixels];
+
+    /// The group's tools, in its flyout's order.
+    pub fn tools(self) -> &'static [Tool] {
+        match self {
+            ToolGroup::Draw => {
+                &[Tool::Brush, Tool::Eraser, Tool::Fill, Tool::Rect, Tool::Ellipse, Tool::Line]
+            }
+            ToolGroup::Pixels => &[Tool::SelectPixels, Tool::Wand, Tool::Eyedropper],
+        }
+    }
+
+    /// The rail button's label.
+    pub fn name(self) -> &'static str {
+        match self {
+            ToolGroup::Draw => "Draw",
+            ToolGroup::Pixels => "Pixels",
+        }
+    }
+
+    /// The tool the button chooses before any of the group's was chosen.
+    pub fn first(self) -> Tool {
+        self.tools()[0]
     }
 }
 

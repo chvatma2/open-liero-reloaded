@@ -68,6 +68,9 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
         let w = world(p);
         let mut send = |kind| out.push(EditorAction::Pointer { kind, world: w, shift, toggle });
         if pressed && over && state.dialog().is_none() && state.browser().is_none() {
+            // A press on the canvas closes a flyout or menu left open (a
+            // stroke is no click: it would not close it).
+            egui::Popup::close_all(ui.ctx());
             data.canvas_drag = true;
             send(PointerKind::Down);
         } else if released {

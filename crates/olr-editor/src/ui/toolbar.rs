@@ -1,22 +1,25 @@
-//! The toolbar: the tools, the brush, the paint, undo and redo, open,
-//! save and close, play, and the view toggles.
+//! The two bars over the canvas (issue #8): the session bar (File ▾,
+//! Undo, Redo, the unsaved mark, then at the right View ▾ and Play with
+//! its ▾) and the tool options bar, which shows only the chosen tool's
+//! options: the brush for the tools that dab with it, the paint for those
+//! that lay it, then the tool's own.
 
-use egui::Ui;
+use egui::{Ui, WidgetType};
+use olr_look::ViewMode;
 
-use super::{EditorData, labels, number};
+use super::icons::{self, Icon};
+use super::{EditorData, labels, number, relabel};
 use crate::browser::Purpose;
-use crate::state::{EditorAction, EditorState, MAX_BOTS};
+use crate::state::{ClockAction, EditorAction, EditorState, MAX_BOTS};
 use crate::tools::{Brush, BrushShape, MAX_BRUSH, PaintChoice, TextureRef, Tool};
 use olr_format::levels::ElementMaterial;
 
-/// The mod picker's width (points): a long name is cut, never wider.
-const MOD_WIDTH: f32 = 160.0;
 /// The space the unsaved mark keeps, shown or not: nothing moves when it
 /// comes and goes.
 const MARK_WIDTH: f32 = 110.0;
-/// The space a tool's options keep at the tools' row's end, whichever
-/// tool is chosen (plan 14d R13).
-const OPTIONS_WIDTH: f32 = 220.0;
+/// The space "By colour" and its tolerance keep, the tolerance shown or
+/// not: Glow selection and the glow % never move.
+const BY_COLOUR_WIDTH: f32 = 220.0;
 /// "Paint as"'s picker width.
 const PAINT_AS_WIDTH: f32 = 110.0;
 /// The crater picker's width.
@@ -26,6 +29,8 @@ const TEXTURES_WIDTH: f32 = 120.0;
 /// A swatch's side in the palette, and in its button (points).
 const SWATCH: f32 = 28.0;
 const BUTTON_SWATCH: f32 = 16.0;
+/// The Play menu's mod list: taller lists scroll.
+const MODS_HEIGHT: f32 = 200.0;
 /// "Paint as": the layer's own material, or one of the three.
 const PAINT_AS: [(Option<ElementMaterial>, &str); 4] = [
     (None, "Layer's"),
@@ -34,43 +39,205 @@ const PAINT_AS: [(Option<ElementMaterial>, &str); 4] = [
     (Some(ElementMaterial::Background), "Background"),
 ];
 
-/// Three rows (the playtest: one wrapped row moved its controls as they
-/// changed width, and pushed the mod picker past the window's edge; plan
-/// 14d's tool options did not fit a drawing row): the tools and the chosen
-/// tool's options, the brush and paint, then the files, history, Play and
-/// the view; each control's place is fixed by what precedes it alone.
-pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
-    // Every control as tall as a button, so a row's labels, fields and
-    // pickers share its buttons' centre line (the host's theme makes
-    // buttons taller than labels: the playtest's crooked Play, Mod, Bots).
+/// Every control as tall as a button, so a bar's labels, fields and
+/// pickers share its buttons' centre line (the host's theme makes buttons
+/// taller than labels: the playtest's crooked Play, Mod, Bots). Returns
+/// that height.
+fn button_height(ui: &mut Ui) -> f32 {
     let h = ui.text_style_height(&egui::TextStyle::Button) + 2.0 * ui.spacing().button_padding.y;
     ui.spacing_mut().interact_size.y = ui.spacing().interact_size.y.max(h);
-    ui.horizontal_wrapped(|ui| tools(ui, state, data, out));
-    ui.horizontal_wrapped(|ui| drawing(ui, state, data, out));
-    ui.horizontal_wrapped(|ui| session(ui, state, data, out));
-    ui.horizontal_wrapped(|ui| super::look::toolbar_row(ui, state, data, out));
+    ui.spacing().interact_size.y
 }
 
-fn tools(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
-    for tool in Tool::DRAWING {
-        let r = ui.selectable_label(state.tool() == tool, tool.name()).on_hover_text(tool.key().to_string());
-        if r.clicked() {
-            out.push(EditorAction::Tool(tool));
+/// The session bar: each control's place is fixed by what precedes it
+/// (from the left, or from the right for View and Play), never by what a
+/// control shows (the playtest: one wrapped row moved its controls as they
+/// changed width, and pushed the mod picker past the window's edge).
+pub(super) fn session(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+    button_height(ui);
+    ui.horizontal(|ui| {
+        menu(ui, "File", labels::FILE, None, |ui| {
+            if ui.button(labels::OPEN).clicked() {
+                out.push(EditorAction::Browse(Purpose::OpenPack));
+            }
+            if ui.button(labels::SAVE).on_hover_text("Ctrl+S").clicked() {
+                out.push(EditorAction::Save);
+            }
+            if ui.button(labels::CLOSE).clicked() {
+                out.push(EditorAction::Close);
+            }
+        });
+        ui.separator();
+        if ui.add_enabled(state.can_undo(), egui::Button::new(labels::UNDO)).on_hover_text("Ctrl+Z").clicked()
+        {
+            out.push(EditorAction::Undo);
         }
-    }
-    ui.separator();
-    // The tool's options, in a space of their own whatever the tool.
-    let size = egui::vec2(OPTIONS_WIDTH, ui.spacing().interact_size.y);
-    ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
-        ui.set_min_size(size);
-        options(ui, state, data, out);
+        if ui.add_enabled(state.can_redo(), egui::Button::new(labels::REDO)).on_hover_text("Ctrl+Y").clicked()
+        {
+            out.push(EditorAction::Redo);
+        }
+        let mark = if state.dirty() { "unsaved changes" } else { "" };
+        ui.add_sized(
+            [MARK_WIDTH, ui.spacing().interact_size.y],
+            egui::Label::new(egui::RichText::new(mark).weak()),
+        );
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            play_menu(ui, state, data, out);
+            if ui.button(labels::PLAY).on_hover_text("play a test match on this level").clicked() {
+                out.push(EditorAction::Play);
+            }
+            ui.separator();
+            view_menu(ui, state, data, out);
+        });
     });
 }
 
-fn drawing(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+/// A menu's button: `text` and a ▾, drawn (a font may lack the glyph),
+/// named `label`.
+fn menu(
+    ui: &mut Ui,
+    text: &str,
+    label: &str,
+    config: Option<egui::containers::menu::MenuConfig>,
+    add: impl FnOnce(&mut Ui),
+) -> egui::Response {
+    /// The arrow's width (points); spaces make its room in the button.
+    const ARROW: f32 = 8.0;
+    let room = if text.is_empty() { "    " } else { "     " };
+    let mut button = egui::containers::menu::MenuButton::new(format!("{text}{room}"));
+    if let Some(config) = config {
+        button = button.config(config);
+    }
+    let (r, _) = button.ui(ui, add);
+    let colour = ui.style().interact(&r).text_color();
+    let c = egui::pos2(r.rect.right() - ui.spacing().button_padding.x - ARROW / 2.0, r.rect.center().y);
+    let arrow = vec![
+        c + egui::vec2(-ARROW / 2.0, -ARROW / 4.0),
+        c + egui::vec2(ARROW / 2.0, -ARROW / 4.0),
+        c + egui::vec2(0.0, ARROW / 4.0),
+    ];
+    ui.painter().add(egui::Shape::convex_polygon(arrow, colour, egui::Stroke::NONE));
+    relabel(&r, WidgetType::Button, None, label);
+    r
+}
+
+/// Menus that stay open while their fields are used: a click outside, or
+/// Escape, closes them.
+fn stays_open() -> egui::containers::menu::MenuConfig {
+    egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+}
+
+/// Play's ▾: the test match's mod and bots.
+fn play_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+    let r = menu(ui, "", labels::PLAY_OPTIONS, Some(stays_open()), |ui| {
+        ui.label(egui::RichText::new("Mod").strong());
+        egui::ScrollArea::vertical().id_salt("olr-editor-play-mods").max_height(MODS_HEIGHT).show(ui, |ui| {
+            for m in &state.catalog().mods {
+                if ui.selectable_label(m.id == state.settings().play_mod, &m.name).clicked()
+                    && m.id != state.settings().play_mod
+                {
+                    out.push(EditorAction::PlayMod(m.id.clone()));
+                }
+            }
+        });
+        ui.separator();
+        if let Some(bots) =
+            number(ui, data, "play-bots", "Bots", state.settings().play_bots.into(), 0..=MAX_BOTS.into())
+        {
+            out.push(EditorAction::PlayBots(bots as u8));
+        }
+    });
+    let mods = &state.catalog().mods;
+    let current = mods
+        .iter()
+        .find(|m| m.id == state.settings().play_mod)
+        .map_or(state.settings().play_mod.as_str(), |m| m.name.as_str());
+    let bots = state.settings().play_bots;
+    r.on_hover_text(format!("the test match: {current}, {bots} bot{}", if bots == 1 { "" } else { "s" }));
+}
+
+/// View ▾: the material view, the grid, the light views and the lights'
+/// clock.
+fn view_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+    menu(ui, "View", labels::VIEW, Some(stays_open()), |ui| {
+        let mut material = state.material_view();
+        if ui.checkbox(&mut material, labels::MATERIAL_VIEW).changed() {
+            out.push(EditorAction::MaterialView(material));
+        }
+        let mut grid = state.grid();
+        if ui.checkbox(&mut grid, labels::GRID).changed() {
+            out.push(EditorAction::Grid(grid));
+        }
+        ui.separator();
+        for (mode, label) in [
+            (ViewMode::Lit, labels::VIEW_LIT),
+            (ViewMode::FullBright, labels::VIEW_FULL),
+            (ViewMode::LightOnly, labels::VIEW_LIGHT),
+        ] {
+            if ui.selectable_label(state.view_mode() == mode, label).clicked() {
+                out.push(EditorAction::SetViewMode(mode));
+            }
+        }
+        ui.separator();
+        let (label, action) = if state.clock_running() {
+            (labels::CLOCK_PAUSE, ClockAction::Pause)
+        } else {
+            (labels::CLOCK_PLAY, ClockAction::Play)
+        };
+        if ui.button(label).on_hover_text("run the lights' animations").clicked() {
+            out.push(EditorAction::Clock(action));
+        }
+        // Whole milliseconds; a running clock shows its time and runs on from a scrub.
+        let now = state.clock_ms().floor() as i64;
+        if let Some(t) = number(ui, data, "clock", labels::CLOCK_SCRUB, now, 0..=86_400_000) {
+            out.push(EditorAction::Clock(ClockAction::Scrub(t as f64)));
+        }
+    });
+}
+
+/// The tool options bar: the chosen tool's options only, from the left:
+/// the brush, the paint, then the tool's own (so the brush's controls sit
+/// in one place for every tool that dabs). A tool without options leaves
+/// it empty, as tall as ever.
+pub(super) fn options_bar(
+    ui: &mut Ui,
+    state: &EditorState,
+    data: &mut EditorData,
+    out: &mut Vec<EditorAction>,
+) {
+    let h = button_height(ui);
+    ui.horizontal(|ui| {
+        ui.set_min_height(h);
+        let tool = state.tool();
+        let mut sections = 0;
+        let mut separate = |ui: &mut Ui| {
+            if sections > 0 {
+                ui.separator();
+            }
+            sections += 1;
+        };
+        if tool.uses_brush() {
+            separate(ui);
+            brush(ui, state, data, out);
+        }
+        if tool.lays_paint() {
+            separate(ui);
+            paint(ui, state, data, out);
+        }
+        if !matches!(tool, Tool::Select | Tool::Spawn | Tool::Eyedropper) {
+            separate(ui);
+            options(ui, state, data, out);
+        }
+    });
+}
+
+/// The brush: Round, Square, the craters and the size.
+fn brush(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     let brush = state.brush();
-    for (shape, name) in [(BrushShape::Round, "Round"), (BrushShape::Square, "Square")] {
-        if ui.selectable_label(brush.shape == shape, name).clicked() {
+    for (shape, name, icon) in
+        [(BrushShape::Round, "Round", Icon::Round), (BrushShape::Square, "Square", Icon::Square)]
+    {
+        if icon_toggle(ui, icon, name, brush.shape == shape).clicked() {
             out.push(EditorAction::Brush(Brush { shape, ..brush }));
         }
     }
@@ -78,25 +245,61 @@ fn drawing(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
     if let Some(size) = number(ui, data, "brush-size", "Size", brush.size.into(), 1..=MAX_BRUSH.into()) {
         out.push(EditorAction::Brush(Brush { size: size as u32, ..brush }));
     }
-    ui.separator();
+}
+
+/// A square toggle showing `icon`, named `name`.
+fn icon_toggle(ui: &mut Ui, icon: Icon, name: &str, selected: bool) -> egui::Response {
+    let side = ui.spacing().interact_size.y;
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::click());
+    if ui.is_rect_visible(rect) {
+        let v = ui.style().interact_selectable(&r, selected);
+        ui.painter().rect(rect, v.corner_radius, v.weak_bg_fill, v.bg_stroke, egui::StrokeKind::Inside);
+        let inner = egui::Rect::from_center_size(rect.center(), egui::vec2(side * 0.6, side * 0.6));
+        icons::paint(ui.painter(), inner, icon, egui::Stroke::new(1.5, v.text_color()));
+    }
+    relabel(&r, WidgetType::Button, Some(selected), name);
+    r.on_hover_text(name)
+}
+
+/// The paint: the colour (its button chooses it and opens its picker), the
+/// theme's tiles and the palette.
+fn paint(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     let paint = state.paint();
+    let is_colour = matches!(paint, PaintChoice::Colour(_));
     let mut colour = match paint {
         PaintChoice::Colour(c) => egui::Color32::from_rgb(c.r, c.g, c.b),
         _ => egui::Color32::from_rgb(140, 90, 40),
     };
-    if egui::color_picker::color_edit_button_srgba(ui, &mut colour, egui::color_picker::Alpha::Opaque)
-        .changed()
-        || (ui.selectable_label(matches!(paint, PaintChoice::Colour(_)), "Colour").clicked())
-    {
+    let r = egui::color_picker::color_edit_button_srgba(ui, &mut colour, egui::color_picker::Alpha::Opaque);
+    if is_colour {
+        let stroke = ui.visuals().selection.stroke;
+        ui.painter().rect_stroke(r.rect.expand(2.0), 2.0, stroke, egui::StrokeKind::Outside);
+    }
+    relabel(&r, WidgetType::ColorButton, Some(is_colour), labels::COLOUR);
+    let changed = r.changed();
+    if r.on_hover_text("paint with a colour").clicked() || changed {
         let rgba = olr_data::image::Rgba::rgb(colour.r(), colour.g(), colour.b());
         out.push(EditorAction::Paint(PaintChoice::Colour(rgba)));
     }
-    for (choice, name) in [(PaintChoice::FrontTile, "Front tile"), (PaintChoice::BackTile, "Back tile")] {
+    for (choice, name) in
+        [(PaintChoice::FrontTile, labels::FRONT_TILE), (PaintChoice::BackTile, labels::BACK_TILE)]
+    {
         if ui.selectable_label(*paint == choice, name).clicked() {
             out.push(EditorAction::Paint(choice));
         }
     }
     palette(ui, state, data, out);
+}
+
+/// `add` in a slot `width` points wide, whatever it shows: a picker's long
+/// choice is cut, never wider (the playtest's moving controls).
+fn fixed(ui: &mut Ui, width: f32, add: impl FnOnce(&mut Ui)) {
+    let size = egui::vec2(width, ui.spacing().interact_size.y);
+    ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+        ui.set_min_size(size);
+        ui.set_max_width(width);
+        add(ui);
+    });
 }
 
 /// The crater brushes (plan 14e R4): the level theme's holes, none shown
@@ -109,19 +312,22 @@ fn craters(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     let brush = state.brush();
     let current = crater_name(brush.shape, n);
     let label = ui.label(labels::CRATER);
-    egui::ComboBox::from_id_salt("olr-editor-crater")
-        .selected_text(current)
-        .width(CRATER_WIDTH)
-        .show_ui(ui, |ui| {
-            for i in 0..n {
-                let shape = BrushShape::Crater(i as u8);
-                if ui.selectable_label(brush.shape == shape, format!("Crater {}", i + 1)).clicked() {
-                    out.push(EditorAction::Brush(Brush { shape, ..brush }));
+    fixed(ui, CRATER_WIDTH, |ui| {
+        egui::ComboBox::from_id_salt("olr-editor-crater")
+            .selected_text(current)
+            .width(CRATER_WIDTH)
+            .truncate()
+            .show_ui(ui, |ui| {
+                for i in 0..n {
+                    let shape = BrushShape::Crater(i as u8);
+                    if ui.selectable_label(brush.shape == shape, format!("Crater {}", i + 1)).clicked() {
+                        out.push(EditorAction::Brush(Brush { shape, ..brush }));
+                    }
                 }
-            }
-        })
-        .response
-        .labelled_by(label.id);
+            })
+            .response
+            .labelled_by(label.id);
+    });
 }
 
 /// The crater picker's text for `shape` with the theme's `holes`: a hole
@@ -303,24 +509,29 @@ fn paint_as(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     let layer = selected_material(state);
     let name = paint_as_name(current, layer);
     let label = ui.label(labels::PAINT_AS);
-    egui::ComboBox::from_id_salt("olr-editor-paint-as")
-        .selected_text(name)
-        .width(PAINT_AS_WIDTH)
-        .show_ui(ui, |ui| {
-            for (m, _) in PAINT_AS {
-                let n = paint_as_name(m, layer);
-                if ui.selectable_label(m == current, n).clicked() && m != current {
-                    out.push(EditorAction::PaintMaterial(m));
+    fixed(ui, PAINT_AS_WIDTH, |ui| {
+        egui::ComboBox::from_id_salt("olr-editor-paint-as")
+            .selected_text(name)
+            .width(PAINT_AS_WIDTH)
+            .truncate()
+            .show_ui(ui, |ui| {
+                for (m, _) in PAINT_AS {
+                    let n = paint_as_name(m, layer);
+                    if ui.selectable_label(m == current, n).clicked() && m != current {
+                        out.push(EditorAction::PaintMaterial(m));
+                    }
                 }
-            }
-        })
-        .response
-        .labelled_by(label.id);
+            })
+            .response
+            .labelled_by(label.id);
+    });
 }
 
-/// The chosen tool's options: "Paint as" for the painting tools and Fill,
-/// "Restore" for the eraser, "Tolerance" for Remove colour and Fill; "By
-/// colour" (and its tolerance) for Select pixels and the Glow brush.
+/// The chosen tool's own options: "Paint as" for the painting tools and
+/// Fill, "Restore" for the eraser, "Tolerance" for Remove colour and Fill;
+/// "By colour" (and its tolerance) for Select pixels and the Glow brush,
+/// then the glow %: the brush's, and Select pixels' "Glow selection" (here,
+/// as a tool change drops the pixel selection; one glow % for both).
 fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     match state.tool() {
         Tool::Brush | Tool::Rect | Tool::Ellipse | Tool::Line => paint_as(ui, state, out),
@@ -351,86 +562,50 @@ fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
             }
         }
         Tool::SelectPixels | Tool::Glow => {
-            let (mut on, hover) = if state.tool() == Tool::Glow {
-                (state.glow_by_colour(), "a click lights the connected pixels alike in colour")
-            } else {
-                (state.select_by_colour(), "a click picks the connected pixels alike in colour; Ctrl adds")
-            };
-            if ui.checkbox(&mut on, labels::BY_COLOUR).on_hover_text(hover).changed() {
-                out.push(match state.tool() {
-                    Tool::Glow => EditorAction::GlowByColour(on),
-                    _ => EditorAction::SelectByColour(on),
-                });
-            }
-            if on
-                && let Some(t) =
-                    number(ui, data, "tolerance", labels::TOLERANCE, state.tolerance().into(), 0..=100)
+            // By colour's space is kept, its tolerance shown or not.
+            let size = egui::vec2(BY_COLOUR_WIDTH, ui.spacing().interact_size.y);
+            ui.allocate_ui_with_layout(size, egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                ui.set_min_size(size);
+                by_colour(ui, state, data, out);
+            });
+            ui.separator();
+            if state.tool() == Tool::SelectPixels
+                && ui
+                    .add_enabled(state.pixel_rect().is_some(), egui::Button::new(labels::GLOW_SELECTION))
+                    .on_hover_text("the selected pixels glow at the glow % (0 clears); pick them first")
+                    .clicked()
             {
-                out.push(EditorAction::Tolerance(t as u8));
+                out.push(EditorAction::GlowSelection(state.glow_strength()));
+            }
+            if let Some(v) = number(
+                ui,
+                data,
+                "glow-strength",
+                labels::GLOW_STRENGTH_BRUSH,
+                state.glow_strength().into(),
+                0..=100,
+            ) {
+                out.push(EditorAction::GlowStrength(v as u8));
             }
         }
-        _ => {}
+        Tool::Select | Tool::Spawn | Tool::Eyedropper => {}
     }
 }
 
-fn session(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
-    if ui.add_enabled(state.can_undo(), egui::Button::new(labels::UNDO)).on_hover_text("Ctrl+Z").clicked() {
-        out.push(EditorAction::Undo);
+/// "By colour", and its tolerance when on: Select pixels' or the Glow brush's.
+fn by_colour(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
+    let glow = state.tool() == Tool::Glow;
+    let (mut on, hover) = if glow {
+        (state.glow_by_colour(), "a click lights the connected pixels alike in colour")
+    } else {
+        (state.select_by_colour(), "a click picks the connected pixels alike in colour; Ctrl adds")
+    };
+    if ui.checkbox(&mut on, labels::BY_COLOUR).on_hover_text(hover).changed() {
+        out.push(if glow { EditorAction::GlowByColour(on) } else { EditorAction::SelectByColour(on) });
     }
-    if ui.add_enabled(state.can_redo(), egui::Button::new(labels::REDO)).on_hover_text("Ctrl+Y").clicked() {
-        out.push(EditorAction::Redo);
-    }
-    ui.separator();
-    if ui.button(labels::OPEN).clicked() {
-        out.push(EditorAction::Browse(Purpose::OpenPack));
-    }
-    if ui.button(labels::SAVE).on_hover_text("Ctrl+S").clicked() {
-        out.push(EditorAction::Save);
-    }
-    if ui.button(labels::CLOSE).clicked() {
-        out.push(EditorAction::Close);
-    }
-    let mark = if state.dirty() { "unsaved changes" } else { "" };
-    ui.add_sized(
-        [MARK_WIDTH, ui.spacing().interact_size.y],
-        egui::Label::new(egui::RichText::new(mark).weak()),
-    );
-    ui.separator();
-    if ui.button(labels::PLAY).clicked() {
-        out.push(EditorAction::Play);
-    }
-    let mods = &state.catalog().mods;
-    let current = mods
-        .iter()
-        .find(|m| m.id == state.settings().play_mod)
-        .map_or(state.settings().play_mod.as_str(), |m| m.name.as_str());
-    let label = ui.label("Mod");
-    egui::ComboBox::from_id_salt("olr-editor-play-mod")
-        .selected_text(current)
-        .width(MOD_WIDTH)
-        .truncate()
-        .show_ui(ui, |ui| {
-            for m in mods {
-                if ui.selectable_label(m.id == state.settings().play_mod, &m.name).clicked() {
-                    out.push(EditorAction::PlayMod(m.id.clone()));
-                }
-            }
-        })
-        .response
-        .labelled_by(label.id);
-    if let Some(bots) =
-        number(ui, data, "play-bots", "Bots", state.settings().play_bots.into(), 0..=MAX_BOTS.into())
+    if on && let Some(t) = number(ui, data, "tolerance", labels::TOLERANCE, state.tolerance().into(), 0..=100)
     {
-        out.push(EditorAction::PlayBots(bots as u8));
-    }
-    ui.separator();
-    let mut material = state.material_view();
-    if ui.checkbox(&mut material, "Material view").changed() {
-        out.push(EditorAction::MaterialView(material));
-    }
-    let mut grid = state.grid();
-    if ui.checkbox(&mut grid, "Grid").changed() {
-        out.push(EditorAction::Grid(grid));
+        out.push(EditorAction::Tolerance(t as u8));
     }
 }
 

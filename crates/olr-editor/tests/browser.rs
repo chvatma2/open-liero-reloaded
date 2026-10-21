@@ -247,13 +247,17 @@ fn the_browser_by_label() {
     h.run();
     assert!(h.state().commands.contains(&C::ReadImage(t.path().join("x.PNG"))), "{:?}", h.state().commands);
     assert!(h.state().state.browser().is_none());
-    // Open… and Close are in the toolbar.
+    // Open… and Close are in the File menu.
+    h.get_by_label(labels::FILE).click();
+    h.run();
     h.get_by_label(labels::OPEN).click();
     h.run();
     assert_eq!(h.state().state.browser().unwrap().purpose(), Purpose::OpenPack);
     h.get_by_label(labels::CANCEL).click();
     h.run();
     assert!(h.state().state.browser().is_none());
+    h.get_by_label(labels::FILE).click();
+    h.run();
     h.get_by_label(labels::CLOSE).click();
     h.run();
     assert!(h.state().commands.contains(&C::Close), "{:?}", h.state().commands);

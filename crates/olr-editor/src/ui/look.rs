@@ -1,8 +1,9 @@
-//! The look's panels (plan 15a Task 18; look system §The level editor):
-//! the level's Look section (settings and glow groups), an element's glow,
-//! a light's properties, the animation editor, and the toolbar's look row
-//! (the Glow and Light tools, the view, the clock). Every field commits
-//! once, as every editor field does; colours are `#rrggbb` text.
+//! The look's panels (plan 15a Task 18; look system §The level editor;
+//! issue #8's layout): the level's Lighting section (ambient and glow
+//! groups; the rarely used values under "Fine tuning"), an element's glow
+//! (with "Make parts glow…") and whether it lets light through, and the
+//! animation editor. Every field commits once, as every editor field
+//! does; colours are `#rrggbb` text.
 
 use egui::Ui;
 use olr_data::image::Rgba;
@@ -13,10 +14,9 @@ use olr_format::look::{
     AnimationSource, GlowColourSource, GlowGroupSource, KeySource, LookSource, PulseShape, ReachSource,
     SolidFloorSource,
 };
-use olr_look::ViewMode;
 
 use super::{EditorData, labels, number, text};
-use crate::state::{ClockAction, EditorAction, EditorState};
+use crate::state::{EditorAction, EditorState};
 use crate::tools::Tool;
 
 /// The editor's `#rrggbb`.
@@ -167,7 +167,10 @@ fn animation(
     }
 }
 
-/// The level panel's Look section: its settings, then its glow groups.
+/// The level panel's Lighting section: Add or Remove look, the ambient
+/// light, "Fine tuning" (folded by default, `EditorSettings::
+/// fine_tuning_open`: max light, steps, softness, soak, solid floor and the
+/// grade), then the glow groups.
 pub(super) fn level_look(
     ui: &mut Ui,
     state: &EditorState,
@@ -197,41 +200,6 @@ pub(super) fn level_look(
     if let Some(c) = colour(ui, data, "look/ambient-colour", labels::LOOK_AMBIENT_COLOUR, ambient) {
         set(out, &|l| l.ambient.colour = Some(c));
     }
-    if let Some(v) = number(ui, data, "look/max", labels::LOOK_MAX_LIGHT, look.max_light.into(), 100..=200) {
-        set(out, &|l| l.max_light = v as u16);
-    }
-    if let Some(v) = number(ui, data, "look/steps", labels::LOOK_STEPS, look.light_steps.into(), 0..=32) {
-        // 1 band is no band: 0 or 2 to 32.
-        set(out, &|l| l.light_steps = if v == 1 { 2 } else { v as u8 });
-    }
-    if let Some(v) = number(ui, data, "look/softness", labels::LOOK_SOFTNESS, look.softness.into(), 0..=4) {
-        set(out, &|l| l.softness = v as u8);
-    }
-    if let Some(v) = number(ui, data, "look/soak", labels::LOOK_SOAK, look.light_soak.into(), 0..=12) {
-        set(out, &|l| l.light_soak = v as u8);
-    }
-    let floor = look.solid_floor;
-    if let Some(v) = number(ui, data, "look/floor", labels::LOOK_FLOOR, floor.intensity.into(), 0..=100) {
-        set(out, &|l| l.solid_floor = SolidFloorSource { intensity: v as u16, ..floor });
-    }
-    let g = &look.grade;
-    if let Some(v) = number(ui, data, "look/exposure", labels::LOOK_EXPOSURE, g.exposure.into(), -200..=200) {
-        set(out, &|l| l.grade.exposure = v as i16);
-    }
-    if let Some(v) = number(ui, data, "look/contrast", labels::LOOK_CONTRAST, g.contrast.into(), 0..=200) {
-        set(out, &|l| l.grade.contrast = v as u16);
-    }
-    if let Some(v) =
-        number(ui, data, "look/saturation", labels::LOOK_SATURATION, g.saturation.into(), 0..=200)
-    {
-        set(out, &|l| l.grade.saturation = v as u16);
-    }
-    if let Some(c) = colour(ui, data, "look/tint", labels::LOOK_TINT, g.tint.unwrap_or(WHITE)) {
-        set(out, &|l| l.grade.tint = Some(c));
-    }
-    if ui.button(labels::REMOVE_LOOK).on_hover_text("glowing elements stop glowing").clicked() {
-        out.push(EditorAction::SetLook(None));
-    }
     ui.separator();
     ui.label(egui::RichText::new("Glow groups").strong());
     for group in &look.glow_groups {
@@ -258,6 +226,64 @@ pub(super) fn level_look(
             animation: AnimationSource::Steady,
             phase_ms: None,
         }));
+    }
+    ui.separator();
+    let open = state.settings().fine_tuning_open;
+    let r = egui::CollapsingHeader::new(labels::FINE_TUNING)
+        .id_salt("olr-editor-fine-tuning")
+        .open(Some(open))
+        .show(ui, |ui| {
+            if let Some(v) =
+                number(ui, data, "look/max", labels::LOOK_MAX_LIGHT, look.max_light.into(), 100..=200)
+            {
+                set(out, &|l| l.max_light = v as u16);
+            }
+            if let Some(v) =
+                number(ui, data, "look/steps", labels::LOOK_STEPS, look.light_steps.into(), 0..=32)
+            {
+                // 1 band is no band: 0 or 2 to 32.
+                set(out, &|l| l.light_steps = if v == 1 { 2 } else { v as u8 });
+            }
+            if let Some(v) =
+                number(ui, data, "look/softness", labels::LOOK_SOFTNESS, look.softness.into(), 0..=4)
+            {
+                set(out, &|l| l.softness = v as u8);
+            }
+            if let Some(v) = number(ui, data, "look/soak", labels::LOOK_SOAK, look.light_soak.into(), 0..=12)
+            {
+                set(out, &|l| l.light_soak = v as u8);
+            }
+            let floor = look.solid_floor;
+            if let Some(v) =
+                number(ui, data, "look/floor", labels::LOOK_FLOOR, floor.intensity.into(), 0..=100)
+            {
+                set(out, &|l| l.solid_floor = SolidFloorSource { intensity: v as u16, ..floor });
+            }
+            let g = &look.grade;
+            if let Some(v) =
+                number(ui, data, "look/exposure", labels::LOOK_EXPOSURE, g.exposure.into(), -200..=200)
+            {
+                set(out, &|l| l.grade.exposure = v as i16);
+            }
+            if let Some(v) =
+                number(ui, data, "look/contrast", labels::LOOK_CONTRAST, g.contrast.into(), 0..=200)
+            {
+                set(out, &|l| l.grade.contrast = v as u16);
+            }
+            if let Some(v) =
+                number(ui, data, "look/saturation", labels::LOOK_SATURATION, g.saturation.into(), 0..=200)
+            {
+                set(out, &|l| l.grade.saturation = v as u16);
+            }
+            if let Some(c) = colour(ui, data, "look/tint", labels::LOOK_TINT, g.tint.unwrap_or(WHITE)) {
+                set(out, &|l| l.grade.tint = Some(c));
+            }
+        });
+    if r.header_response.clicked() {
+        out.push(EditorAction::ShowFineTuning(!open));
+    }
+    if ui.button(labels::REMOVE_LOOK).on_hover_text("glowing elements stop glowing").clicked() {
+        out.push(EditorAction::SetLook(None));
     }
 }
 
@@ -290,9 +316,11 @@ fn group_fields(ui: &mut Ui, data: &mut EditorData, g: &GlowGroupSource) -> Opti
     out
 }
 
-/// An image or drawn element's Glow and Clear (plan 15a): a new glow gets
-/// its own group; its strength and group; whether its rock and dirt let
-/// light through.
+/// An image or drawn element's Glow: the checkbox (a new glow gets its own
+/// group; the only way to light or unlight the whole element), its
+/// strength and group, and "Make parts glow…": the Glow brush with By
+/// colour on, the casual way to light lamps and screens (click their
+/// colour).
 pub(super) fn element_glow(
     ui: &mut Ui,
     state: &EditorState,
@@ -308,7 +336,11 @@ pub(super) fn element_glow(
     let set_glow =
         |out: &mut Vec<EditorAction>, glow| out.push(EditorAction::SetGlow { id: e.id.clone(), glow });
     let mut on = e.glow.is_some();
-    if ui.add_enabled(!e.locked, egui::Checkbox::new(&mut on, labels::GLOW)).changed() {
+    if ui
+        .add_enabled(!e.locked, egui::Checkbox::new(&mut on, labels::GLOW))
+        .on_hover_text("the whole element glows")
+        .changed()
+    {
         let glow = on.then(|| ElementGlow { strength: 100, group: String::new(), mask: false });
         set_glow(out, glow);
     }
@@ -335,6 +367,21 @@ pub(super) fn element_glow(
             ui.weak("painted with the Glow brush (H)");
         }
     }
+    if ui
+        .add_enabled(!e.locked, egui::Button::new(labels::MAKE_PARTS_GLOW))
+        .on_hover_text("the Glow brush, By colour: click a colour on the canvas to light those pixels")
+        .clicked()
+    {
+        out.extend([EditorAction::Tool(Tool::Glow), EditorAction::GlowByColour(true)]);
+    }
+}
+
+/// Whether an image's or drawn layer's rock and dirt let light through
+/// (plan 15a; under the properties' "More").
+pub(super) fn element_clear(ui: &mut Ui, e: &Element, out: &mut Vec<EditorAction>) {
+    if matches!(e.kind, ElementKind::Raster) {
+        return;
+    }
     let mut clear = e.clear;
     if ui
         .add_enabled(!e.locked, egui::Checkbox::new(&mut clear, labels::CLEAR))
@@ -342,62 +389,5 @@ pub(super) fn element_glow(
         .changed()
     {
         out.push(EditorAction::Set(e.id.clone(), Property::Clear(clear)));
-    }
-}
-
-/// The toolbar's look row: the Glow tool (with the brush's strength), the
-/// view and the preview clock.
-pub(super) fn toolbar_row(
-    ui: &mut Ui,
-    state: &EditorState,
-    data: &mut EditorData,
-    out: &mut Vec<EditorAction>,
-) {
-    let glow = Tool::Glow;
-    if ui
-        .selectable_label(state.tool() == glow, labels::TOOL_GLOW)
-        .on_hover_text(glow.key().to_string())
-        .clicked()
-    {
-        out.push(EditorAction::Tool(glow));
-    }
-    if let Some(v) =
-        number(ui, data, "glow-strength", labels::GLOW_STRENGTH_BRUSH, state.glow_strength().into(), 0..=100)
-    {
-        out.push(EditorAction::GlowStrength(v as u8));
-    }
-    // The selected pixels take the brush's glow (the user's request, 2026-10-19).
-    if ui
-        .add_enabled(state.pixel_rect().is_some(), egui::Button::new(labels::GLOW_SELECTION))
-        .on_hover_text(
-            "the selected pixels glow at the brush's glow % (0 clears); select them with Select pixels (M)",
-        )
-        .clicked()
-    {
-        out.push(EditorAction::GlowSelection(state.glow_strength()));
-    }
-    ui.separator();
-    for (mode, label) in [
-        (ViewMode::Lit, labels::VIEW_LIT),
-        (ViewMode::FullBright, labels::VIEW_FULL),
-        (ViewMode::LightOnly, labels::VIEW_LIGHT),
-    ] {
-        if ui.selectable_label(state.view_mode() == mode, label).clicked() {
-            out.push(EditorAction::SetViewMode(mode));
-        }
-    }
-    ui.separator();
-    let (label, action) = if state.clock_running() {
-        (labels::CLOCK_PAUSE, ClockAction::Pause)
-    } else {
-        (labels::CLOCK_PLAY, ClockAction::Play)
-    };
-    if ui.button(label).on_hover_text("run the lights' animations").clicked() {
-        out.push(EditorAction::Clock(action));
-    }
-    // Whole milliseconds; a running clock shows its time and runs on from a scrub.
-    let now = state.clock_ms().floor() as i64;
-    if let Some(t) = number(ui, data, "clock", labels::CLOCK_SCRUB, now, 0..=86_400_000) {
-        out.push(EditorAction::Clock(ClockAction::Scrub(t as f64)));
     }
 }

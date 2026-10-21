@@ -29,7 +29,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   the change count it was sent at), so an edit made meanwhile stays unsaved.
 - **Catalog** (`catalog.rs`): the installed themes (with their tiles) and
   mods the host passes in; `EditorSettings` (Play's mod and bots, R9; the
-  browser's `browse_dir`, plan 14c).
+  browser's `browse_dir`, plan 14c; whether the properties' "More" and the
+  lighting's "Fine tuning" are open, issue #8).
 - **File browser** (`browser.rs`, `ui/browser.rs`, plan 14c R9): `Browse(
   Purpose::{ImportImage, OpenPack})` opens it at `browse_dir`, else
   `Catalog::home` (the host's home directory; else `.`), and asks
@@ -85,17 +86,34 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   (R4). `overlays()` is what the canvas draws over the bake; the grid is
   drawn at every zoom, a line every `grid_step` world pixels (1, or the
   smallest power of two at least 8 points apart).
-- **Panels** (`ui/`): toolbar in two rows that never move (drawing: tools,
-  brush, paint; then history, Open…, Save, Close, the unsaved mark's kept
-  space, Play with a fixed-width mod picker and the bots, the view; the
-  playtest's controls past the window's edge, `the_toolbar_stays_in_the_window_and_in_place`;
-  every control as tall as a button, so each row is one straight line
-  under the host's theme, `a_toolbar_row_is_one_straight_line`), element
-  list (drag a name to reorder; Import image… opens the browser),
-  properties or level settings, status bar, canvas (a frame without fill,
+- **Panels** (`ui/`; issue #8's layout, STATUS.md "Level editor layout
+  (issue #8)"): on top the session bar (File ▾: Open…, Save, Close; Undo,
+  Redo, the unsaved mark's kept space; at the right View ▾: Material
+  view, Grid, the light views and the lights' clock; Play and its ▾, the
+  mod and bots) and the tool options bar (`toolbar.rs`: the chosen tool's
+  options only: the brush for `Tool::uses_brush`, the paint for
+  `Tool::lays_paint`, then its own; empty but as tall without any); on
+  the left the tool rail (`rail.rs`, icons drawn in `icons.rs`): Import,
+  Select, Draw ▸, Pixels ▸ (`ToolGroup`: a click chooses the group's
+  last tool, `EditorState::last_tool`; a second click, the corner mark or
+  a right click opens the flyout), Glow (named "Glow brush"), Spawn; on
+  the right one panel (at least 260 points): the tabs Elements (drag a
+  name to reorder, eye and lock, Add layer) | Assets (a placeholder) |
+  Spawns (`PanelTab`, following the selection), then the selection's
+  properties (Name, "What is it?", Glow with "Make parts glow…", Place;
+  the rest under "More") or the level's (its Lighting's rarer values
+  under "Fine tuning"); status bar; canvas (a frame without fill,
   `egui::Frame::NONE`: the host draws the bake under it; its AccessKit
-  name is `labels::CANVAS`), dialogs and the browser; shortcuts when no text field has the
-  keyboard or a widget is dragged. Widgets are found by `ui::labels`; a
+  name is `labels::CANVAS`; a press closes any popup), dialogs and the
+  browser. Controls never move as others change width (pickers in fixed
+  slots, the brush in one place for every tool,
+  `the_toolbar_stays_in_the_window_and_in_place`, which also checks
+  1024 points under the game's theme), and every control is as tall as a
+  button, so each bar is one straight line under the host's theme
+  (`a_toolbar_row_is_one_straight_line`). Shortcuts work when no text
+  field has the keyboard or a widget is dragged; Escape with a popup open
+  only closes it. Widgets are found by `ui::labels` (`relabel` names a
+  widget whatever it shows: "File ▾" is `FILE`); a
   `DragValue` or text field commits once, when a drag stops or typing ends
   (`EditorData` drafts; Escape drops a text draft), the properties'
   commits before the frame's other actions. Escape or the backdrop cancels
@@ -111,9 +129,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   picture (`restore`), `remove_colour`, `merge_down`, `split` (any kind);
   the live check counts masks (`check_extra`). Tools: the Wand (W, Remove
   colour, `tolerance`), "Paint as" (`paint_material`), Restore; Select
-  moves a drawn layer only once selected (R9); Ctrl+E merges down. The
-  toolbar has three rows (tools and the tool's options in a reserved
-  slot, brush and paint, session). `mask_dab_speed` (olr-edit): about 3 ms
+  moves a drawn layer only once selected (R9); Ctrl+E merges down. `mask_dab_speed` (olr-edit): about 3 ms
   a dab in release; `layer_move_speed`: 7-9 ms a move.
 - **Plan 14e** (STATUS.md, "Level editor decisions (plan 14e)"):
   - **Paint**: `PaintChoice::Texture(TextureRef)` (`PaintChoice` is
@@ -129,7 +145,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     level's theme; joined by dabs about every half crater), Select pixels (M; the
     `pixel_rect`, dropped on a tool change, `DropPixels` (Escape), Open and
     Close).
-  - **Palette** (`ui/toolbar.rs`): a Crater picker after Square (hidden
+  - **Palette** (`ui/toolbar.rs`, the options bar): a Crater picker after Square (hidden
     without holes), "Textures…" showing the current paint's swatch, its
     popup grouped "Theme" (`THEME_FRONT`, `THEME_BACK`), "Built-in" and
     "Yours" (Remove for the chosen one of yours), "Import texture…";
@@ -173,8 +189,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     with any group and glow the stroke made, or none when the mask did not
     change; an element without a glow gets one in a new group, dark but
     for what is painted; a glow without a mask starts whole) at the
-    brush's strength (`GlowStrength`, 0 erases). `Tool::DRAWING` is the
-    toolbar's first row, `Tool::ALL` (12) every shortcut. Plan 15c removed
+    brush's strength (`GlowStrength`, 0 erases). `Tool::ALL` (12) is every
+    shortcut; the rail groups them (issue #8). Plan 15c removed
     the Light tool (K) and light objects: glowing pixels are a level's
     light (`the_editor_has_no_light_tool`).
   - **Glow on selected pixels** (the user's playtest, 2026-10-19): Select
@@ -192,16 +208,17 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     `SetViewMode`): `clock_ms`, `clock_running`, `advance_clock` (the
     host's frame time), `view_mode` (Lit, Full bright, Light only); none of
     them a step.
-  - **Panels** (`ui/look.rs`, Task 18): the level panel's Look section
-    (Add look / Remove look; ambient, max light, steps, softness, soak,
-    solid floor, the grade; its glow groups with colour,
-    intensity, reach and the animation editor, Remove asking first,
-    `Dialog::RemoveGroup`); an image or drawn element's Glow (strength and
-    group only; a locked element's fields hidden) and "Lets light through"
-    (`Property::Clear`); a fourth toolbar row (`toolbar_row`: the Glow
-    tool, the brush's glow %, Glow selection, the views, Play/Pause
-    lights and the clock's ms). Colours are `#rrggbb` text fields
-    committed once (no colour picker: each drag change would be a step).
+  - **Panels** (`ui/look.rs`, Task 18; issue #8): the level panel's
+    Lighting section (Add look / Remove look; ambient; its glow groups
+    with colour, intensity, reach and the animation editor, Remove asking
+    first, `Dialog::RemoveGroup`; max light, steps, softness, soak, solid
+    floor and the grade under "Fine tuning"); an image or drawn element's
+    Glow (strength and group only, a locked element's fields hidden;
+    "Make parts glow…") and "Lets light through" (`Property::Clear`,
+    under "More"); the Glow brush's glow % and Select pixels' Glow
+    selection in the options bar, the views and the clock in View ▾.
+    Colours are `#rrggbb` text fields committed once (no colour picker:
+    each drag change would be a step).
   - **Object clipboard** (the user's playtest, 2026-10-19):
     `Clipboard::Objects` (a selected spawn, `copy`; cut copies
     then removes), pasted at their places plus an offset that grows by
@@ -216,7 +233,11 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   `egui_kittest` flows of spec §8; plan 15a's `glow_an_element_and_save`,
   `paint_glow_with_the_brush`, `glow_pixels_picked_by_colour`,
   `edit_the_look_panel`,
-  `toggle_views_and_scrub_the_clock`). The content tests skip without
+  `toggle_views_and_scrub_the_clock`; issue #8's
+  `choose_a_tool_from_a_flyout`, `a_group_button_brings_back_its_last_tool`,
+  `the_rail_highlights_the_chosen_tool`, `the_tool_options_follow_the_tool`,
+  `more_and_fine_tuning_fold_and_are_remembered`, `make_parts_glow`,
+  `the_tab_follows_the_selection`). The content tests skip without
   `OLR_CONTENT_DIR`.
 
 Test: `cargo nextest run -p olr-editor`.

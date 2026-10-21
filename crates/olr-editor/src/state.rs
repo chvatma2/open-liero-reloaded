@@ -23,7 +23,7 @@ use crate::document::{DocError, Document, Problem};
 use crate::history::{Edit, History, LevelMeta};
 use crate::ops::Change;
 use crate::pointer::Drag;
-use crate::tools::{Brush, MAX_BRUSH, PaintChoice, PointerKind, TextureRef, Tool};
+use crate::tools::{Brush, MAX_BRUSH, PaintChoice, PointerKind, TextureRef, Tool, ToolGroup};
 use crate::view::View;
 
 /// A selection by colour takes a glow only (2026-10-19).
@@ -59,6 +59,17 @@ impl Selection {
             _ => Vec::new(),
         }
     }
+}
+
+/// The right panel's tabs (issue #8): the element list, the asset library
+/// (to come) and the spawns. The tab follows the selection; otherwise only
+/// a click changes it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PanelTab {
+    #[default]
+    Elements,
+    Assets,
+    Spawns,
 }
 
 /// The status bar's contents.
@@ -284,6 +295,13 @@ pub enum EditorAction {
     /// What the canvas shows: lit, full bright or the light alone.
     SetViewMode(olr_look::ViewMode),
     Clock(ClockAction),
+    // The layout (issue #8).
+    /// The right panel's tab, by hand.
+    Tab(PanelTab),
+    /// Opens or folds the properties' "More" (remembered in the settings).
+    ShowMore(bool),
+    /// Opens or folds the lighting's "Fine tuning" (remembered too).
+    ShowFineTuning(bool),
 }
 
 /// What the host carries out.
@@ -394,6 +412,11 @@ pub struct EditorState {
     /// The look preview's clock, ms, and whether it runs.
     pub(crate) clock_ms: f64,
     pub(crate) clock_running: bool,
+    /// The tool each rail group chose last (`ToolGroup::ALL`'s order): its
+    /// button brings it back (issue #8).
+    pub(crate) last_tools: [Tool; 2],
+    /// The right panel's tab.
+    pub(crate) tab: PanelTab,
 }
 
 impl EditorState {
@@ -436,7 +459,20 @@ impl EditorState {
             view_mode: olr_look::ViewMode::Lit,
             clock_ms: 0.0,
             clock_running: false,
+            last_tools: ToolGroup::ALL.map(ToolGroup::first),
+            tab: PanelTab::Elements,
         }
+    }
+
+    /// The tool of `group` chosen last (its first before any was).
+    pub fn last_tool(&self, group: ToolGroup) -> Tool {
+        let i = ToolGroup::ALL.iter().position(|g| *g == group).unwrap_or(0);
+        self.last_tools[i]
+    }
+
+    /// The right panel's tab.
+    pub fn tab(&self) -> PanelTab {
+        self.tab
     }
 
     /// What the canvas shows: lit, full bright or the light alone.
@@ -598,9 +634,31 @@ impl EditorState {
                 | EditorAction::GlowStrength(_)
                 | EditorAction::GlowByColour(_)
                 | EditorAction::SelectByColour(_)
+                | EditorAction::Tab(_)
+                | EditorAction::ShowMore(_)
+                | EditorAction::ShowFineTuning(_)
         );
+        // A selection made, even of what was selected: a click in the list,
+        // or on the canvas with Select or Spawn.
+        let selects = match action {
+            EditorAction::Select(_) => true,
+            EditorAction::Pointer { kind: PointerKind::Down, .. } => {
+                matches!(self.tool, Tool::Select | Tool::Spawn)
+            }
+            _ => false,
+        };
+        let before = self.selection.clone();
         let mut cmds = if view_only { Vec::new() } else { self.release() };
         cmds.extend(self.act(action));
+        // The tab follows the selection (issue #8): a spawn shows Spawns,
+        // an element Elements.
+        if selects || self.selection != before {
+            match self.selection {
+                Selection::Object(_) => self.tab = PanelTab::Spawns,
+                Selection::Element(_) | Selection::Many(_) => self.tab = PanelTab::Elements,
+                Selection::None => {}
+            }
+        }
         // The pixel rectangle is the selected layer's: it goes with the
         // selection, or with its layer (batch C review).
         if let Some((id, _)) = &self.pixel_rect
@@ -843,7 +901,22 @@ impl EditorState {
                 self.settings.play_bots = n.min(MAX_BOTS);
                 vec![EditorCommand::SaveSettings(self.settings.clone())]
             }
+            EditorAction::Tab(tab) => {
+                self.tab = tab;
+                Vec::new()
+            }
+            EditorAction::ShowMore(open) => {
+                self.settings.more_open = open;
+                vec![EditorCommand::SaveSettings(self.settings.clone())]
+            }
+            EditorAction::ShowFineTuning(open) => {
+                self.settings.fine_tuning_open = open;
+                vec![EditorCommand::SaveSettings(self.settings.clone())]
+            }
             EditorAction::Tool(tool) => {
+                if let Some(i) = ToolGroup::ALL.iter().position(|g| tool.group() == Some(*g)) {
+                    self.last_tools[i] = tool;
+                }
                 if tool == Tool::Eyedropper && self.tool != Tool::Eyedropper {
                     self.prev_tool = self.tool;
                 }
