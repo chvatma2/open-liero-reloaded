@@ -1,0 +1,68 @@
+(
+    name: "Glow Rocket",
+    recharge: 0.5,
+    drain: 25.0,
+    between_shots_s: 0.4,
+    fire: Projectile(
+        shot: (
+            speed: 160,
+            projectile: (
+                gfx: Pixels([
+                    "#ff8c28",
+                ]),
+                hit_terrain: [
+                    Explode(
+                        damage: 8,
+                    ),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 8,
+                    ),
+                ],
+                look: (
+                    glow: 80,
+                    light: (
+                        colour: "#ff8c28",
+                        intensity: 80,
+                        reach: Pixels(48),
+                        animation: Flicker(
+                            speed: 10,
+                            depth: 15,
+                        ),
+                    ),
+                    end_flash: (
+                        colour: "#ffc878",
+                        intensity: 200,
+                        reach: Pixels(96),
+                        animation: Keys(
+                            keys: [
+                                (0, 100),
+                                (250, 0),
+                            ],
+                        ),
+                    ),
+                    explosion: (
+                        colour: "#4080ff",
+                        intensity: 500,
+                        radius: 14,
+                        reach: Pixels(160),
+                    ),
+                ),
+            ),
+        ),
+    ),
+    look: (
+        muzzle_light: (
+            colour: "#ffdca0",
+            intensity: 120,
+            reach: Pixels(64),
+            animation: Keys(
+                keys: [
+                    (0, 100),
+                    (60, 0),
+                ],
+            ),
+        ),
+    ),
+)

@@ -1,0 +1,6 @@
+(
+    name: "Look Test Blast Mod",
+    weapons: [
+        "rocket",
+    ],
+)

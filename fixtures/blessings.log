@@ -182,3 +182,5 @@
   fixtures/render/look-distant-full.png
 2026-10-21 bless-render: #12: new golden look-skin.png, a double-resolution glowing skin with its light in a dark level
   fixtures/render/look-skin.png
+2026-10-21 bless-render: #15: new golden look-blast.png, the look test mod's copy whose rocket explodes in a large blue light
+  fixtures/render/look-blast.png

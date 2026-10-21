@@ -202,7 +202,9 @@ The headless command-line tool. Its commands:
   packs' warnings print on stderr. The rocket golden (`look-rocket.png`)
   is chaos bots with the look test mod (`--mod look-test-mod --level
   look-test --bots 3 --personality chaos --seed 1 --ticks 300`); a bot
-  change moves it (re-bless with a reason). Issue #12's `look-skin.png`:
+  change moves it (re-bless with a reason). Issue #15's `look-blast.png`
+  is the same match with `look-test-blast-mod` (`fixtures/look/mods`, a
+  copy whose Glow Rocket explodes in a large blue light). Issue #12's `look-skin.png`:
   idle bots wearing `fixtures/look/skins/look-test-skin` (double
   resolution, a glowing visor, a light) on
   `fixtures/look/levels/look-test-skin-level` (`--seed 4 --ticks 500

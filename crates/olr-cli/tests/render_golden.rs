@@ -264,6 +264,38 @@ fn look_rocket() {
     compare("look-rocket.png", &args, &[]);
 }
 
+/// Issue #15: [`look_rocket`]'s match with its copy, the look test blast
+/// mod (`fixtures/look/mods/look-test-blast-mod`), whose Glow Rocket
+/// explodes in a large blue light (`#4080ff`, 500 %, a disc of 14, reach
+/// 160) instead of the engine's.
+#[test]
+fn look_blue_explosion() {
+    let Some(content) = content_dir() else { return };
+    let (mods, levels) = (root().join("fixtures/look/mods"), root().join("fixtures/look/levels"));
+    let args = [
+        "render-match",
+        "--mod",
+        "look-test-blast-mod",
+        "--level",
+        "look-test",
+        "--bots",
+        "3",
+        "--personality",
+        "chaos",
+        "--seed",
+        "1",
+        "--ticks",
+        "300",
+        "--packs",
+        mods.to_str().unwrap(),
+        "--packs",
+        levels.to_str().unwrap(),
+        "--content",
+        &content,
+    ];
+    compare("look-blast.png", &args, &[]);
+}
+
 /// Issue #12: idle bots on the dark skin test level (`fixtures/look/levels/
 /// look-test-skin-level`) wearing the hand-made double-resolution skin
 /// (`fixtures/look/skins/look-test-skin`, art scale 4): its cyan visor
