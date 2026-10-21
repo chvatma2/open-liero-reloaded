@@ -42,9 +42,12 @@ fn bot_presets_match_olx() {
     let classic = rules("Liero v1.0", &CLASSIC, &["Bazooka", "Minigun"], &[]);
     let lt100 = ["Super Shotgun", "Napalm", "Cannon", "Doomsday", "Chaingun"].map(|n| id(&classic, n));
     assert_eq!(preset(&classic, 100), (BotWeapons { weapons: lt100, game_type: GameType::Lt100 }, 0));
-    // "Liero" anywhere in the name will do for 100lt ("Liero v1.11").
+    // "Liero" anywhere in the name will do for 100lt ("Liero v1.11"; OLR's
+    // "Liero v1.0 Reloaded", issue #21).
     let liero = rules("Liero v1.11", &CLASSIC, &[], &[]);
     assert_eq!(preset(&liero, 100).0.game_type, GameType::Lt100);
+    let reloaded = rules("Liero v1.0 Reloaded", &CLASSIC, &["Bazooka", "Minigun"], &[]);
+    assert_eq!(preset(&reloaded, 100), preset(&classic, 100));
     // One of the five banned: random weapons, all enabled and distinct.
     let no_doomsday = rules("Liero v1.0", &CLASSIC, &["Doomsday"], &[]);
     let (w, calls) = preset(&no_doomsday, 100);
@@ -57,7 +60,7 @@ fn bot_presets_match_olx() {
 
     // Rifles: Classic ("Classic" or "Liero v1.0" in the name) at 16..=25 %.
     let rifle = id(&classic, "Rifle");
-    for (name, lt) in [("Liero v1.0", 16), ("Classic 2", 25)] {
+    for (name, lt) in [("Liero v1.0", 16), ("Classic 2", 25), ("Liero v1.0 Reloaded", 20)] {
         let r = rules(name, &CLASSIC, &[], &[]);
         assert_eq!(
             preset(&r, lt),

@@ -1,9 +1,10 @@
-//! OLR's own packs (`content/reloaded/`, issue #7: the Reloaded levels),
-//! shipped beside the imported ones: each checks clean against the
-//! committed content, none shares an id with it, the game's content lists
-//! them, a bot match plays on each, and Liero Factory Reloaded is OLX's
-//! Liero Factory byte for byte but for its look. On the GPU tier each plays
-//! and draws lit.
+//! OLR's own packs (`content/reloaded/`, issue #7: the Reloaded levels;
+//! issue #21: Liero v1.0 Reloaded), shipped beside the imported ones: each
+//! checks clean against the committed content, none shares an id with it,
+//! the game's content lists them, a bot match plays on each, Liero Factory
+//! Reloaded is OLX's Liero Factory byte for byte but for its look, and
+//! Liero v1.0 Reloaded plays exactly as Classic (`olx-classic`) but for its
+//! name and look. On the GPU tier each plays and draws lit.
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,8 @@ use olr_vfs::DirFs;
 
 const FACTORY: &str = "olr-level-liero-factory-reloaded";
 const CASTLE: &str = "olr-level-castlestrike-reloaded";
+const RELOADED_MOD: &str = "olr-mod-liero-v1-reloaded";
+const CLASSIC: &str = "olx-classic";
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -52,7 +55,7 @@ fn reloaded_packs_check_clean() {
     let o = cli(&["pack", "check", dir.to_str().unwrap(), "--content", packs.to_str().unwrap()]);
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(
-        o.status.success() && out.contains("checked 2 packs: 0 errors, 0 warnings"),
+        o.status.success() && out.contains("checked 3 packs: 0 errors, 0 warnings"),
         "{out}{}",
         String::from_utf8_lossy(&o.stderr)
     );
@@ -63,7 +66,7 @@ fn reloaded_packs_check_clean() {
 #[test]
 fn reloaded_and_imported_packs_share_no_id() {
     let own = ids(&reloaded_dir());
-    assert_eq!(own, BTreeSet::from([FACTORY.to_string(), CASTLE.to_string()]));
+    assert_eq!(own, BTreeSet::from([FACTORY, CASTLE, RELOADED_MOD].map(String::from)));
     let imported = ids(&packs_dir());
     let shared: Vec<&String> = own.intersection(&imported).collect();
     assert!(shared.is_empty(), "content/reloaded and content/packs share {shared:?}");
@@ -80,6 +83,9 @@ fn the_bundled_content_lists_the_reloaded_levels() {
         assert_eq!(content.pack_name(id), Some(name));
         assert!(content.load_level(id).unwrap().has_look(), "{id} is lit");
     }
+    assert!(content.ids(PackKind::Mod).contains(&RELOADED_MOD.to_string()));
+    assert_eq!(content.pack_name(RELOADED_MOD), Some("Liero v1.0 Reloaded"));
+    assert!(!content.load_mod(RELOADED_MOD).unwrap().look.is_empty(), "the mod has a look");
 }
 
 /// The factory's gameplay and art are OLX's: its composition (checked
@@ -102,15 +108,90 @@ fn the_factory_is_the_imported_level_but_for_its_look() {
     assert!(src.look.is_some() && src.glow.is_some());
 }
 
-/// A headless bot match plays on each (invariants every tick).
+/// Liero v1.0 Reloaded is Classic but for its name and look (issue #21):
+/// the compiled mod (`ModDef`) but for the name, every image and sound
+/// byte for byte, the origin (OLX's Classic at d1ad953f); only the look
+/// differs.
 #[test]
-fn the_reloaded_levels_play() {
+fn liero_reloaded_is_classic_but_for_its_name_and_look() {
+    let read = |dir: PathBuf| olr_pack::read_mod(&DirFs::new(&dir)).unwrap();
+    let (ours, olx) = (read(reloaded_dir().join(RELOADED_MOD)), read(packs_dir().join(CLASSIC)));
+    assert_eq!(ours.manifest.name, "Liero v1.0 Reloaded");
+    assert_eq!(ours.def.name, "Liero v1.0 Reloaded");
+    assert_eq!(ours.manifest.origin, olx.manifest.origin, "OLX's Classic at d1ad953f");
+    let mut def = ours.def.clone();
+    def.name = olx.def.name.clone();
+    assert!(def == olx.def, "the compiled mod differs from Classic's");
+    assert!(ours.assets == olx.assets, "an image or sound differs from Classic's");
+    assert_ne!(ours.look, olx.look);
+    // What a match loads: the simulation's mod, the presets, the physics.
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let (a, b) = (content.load_mod(RELOADED_MOD).unwrap(), content.load_mod(CLASSIC).unwrap());
+    assert!(a.sim == b.sim, "the simulation's mod differs");
+    assert!(a.images == b.images && a.sounds == b.sounds);
+    assert_eq!((&a.restrictions, a.worm, a.rope), (&b.restrictions, b.worm, b.rope));
+    assert!(b.look.is_empty() && !a.look.is_empty());
+}
+
+/// The same bot matches on Classic and on Liero v1.0 Reloaded give the
+/// same checksums (issue #21): OLX's bots and chaos bots (which fire
+/// everything), on an OLX level and a Reloaded one.
+#[test]
+fn liero_reloaded_plays_as_classic() {
+    use olr_cli::runner::{Options, play};
+    use olr_cli::spec::{MatchSpec, Personality};
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    for (level, personality, seed) in
+        [("olx-level-dirt-level", Personality::Deathmatch, 4), (CASTLE, Personality::Chaos, 7)]
+    {
+        let run = |m: &str| {
+            let spec = MatchSpec { personality, ..MatchSpec::new(m, level, 6, seed, 1500) };
+            let run = play(&content, &spec, &Options::default()).unwrap();
+            assert!(run.failure().is_none(), "{m} on {level}: {}", run.summary());
+            (run.ticks, run.replay.checksums)
+        };
+        let (classic, ours) = (run(CLASSIC), run(RELOADED_MOD));
+        assert!(classic.0 == 1500 && classic.1.len() > 10, "{level}: {} ticks", classic.0);
+        assert_eq!(ours, classic, "{level}: Liero v1.0 Reloaded played differently from Classic");
+    }
+}
+
+/// OLX's bots choose their weapons by the mod's name (`olx_bot_weapons`:
+/// "Classic" or "Liero v1.0" in it): Liero v1.0 Reloaded's are Classic's,
+/// under every shipped preset at 20 % (rifles) and 100 % (the 100lt set).
+#[test]
+fn bots_arm_for_liero_reloaded_as_for_classic() {
+    use olr_bots::{BotRng, GameType, olx_bot_weapons};
+    let content = Content::open_bundled(&packs_dir()).unwrap();
+    let (ours, classic) = (content.load_mod(RELOADED_MOD).unwrap(), content.load_mod(CLASSIC).unwrap());
+    assert!(!ours.restrictions.is_empty());
+    for preset in ours.restrictions.keys() {
+        for lt in [20, 100] {
+            let arm = |m: &olr_content::LoadedMod| {
+                let mut rng = BotRng::from_seed(3);
+                let w = olx_bot_weapons(&m.weapon_rules(preset), lt, &mut rng);
+                (w, rng.calls())
+            };
+            assert_eq!(arm(&ours), arm(&classic), "{preset} at {lt} %");
+        }
+    }
+    for (preset, lt, want) in [("Rifle only", 20, GameType::Rifles), ("Standard 100lt", 100, GameType::Lt100)]
+    {
+        let rules = ours.weapon_rules(preset);
+        assert_eq!(olx_bot_weapons(&rules, lt, &mut BotRng::from_seed(1)).game_type, want, "{preset}");
+    }
+}
+
+/// A headless bot match plays on each level, and on Liero v1.0 Reloaded
+/// (invariants every tick).
+#[test]
+fn the_reloaded_packs_play() {
     let packs = packs_dir();
-    for level in [FACTORY, CASTLE] {
+    for (m, level) in [(CLASSIC, FACTORY), (CLASSIC, CASTLE), (RELOADED_MOD, FACTORY)] {
         let o = cli(&[
             "match",
             "--mod",
-            "olx-classic",
+            m,
             "--level",
             level,
             "--bots",
@@ -124,14 +205,15 @@ fn the_reloaded_levels_play() {
         ]);
         assert!(
             o.status.success(),
-            "{level}: {}{}",
+            "{m} on {level}: {}{}",
             String::from_utf8_lossy(&o.stdout),
             String::from_utf8_lossy(&o.stderr)
         );
     }
 }
 
-/// Both draw lit in a bot match (the GPU tier, as the playtest packs).
+/// Both levels draw lit in a bot match (the GPU tier, as the playtest
+/// packs), with Classic and with Liero v1.0 Reloaded.
 #[test]
 fn the_reloaded_levels_draw_lit() {
     if std::env::var_os("OLR_GPU_TESTS").is_none() {
@@ -139,12 +221,12 @@ fn the_reloaded_levels_draw_lit() {
     }
     let tmp = tempfile::tempdir().unwrap();
     let packs = packs_dir();
-    for level in [FACTORY, CASTLE] {
-        let out = tmp.path().join(format!("{level}.png"));
+    for (m, level) in [(CLASSIC, FACTORY), (CLASSIC, CASTLE), (RELOADED_MOD, CASTLE)] {
+        let out = tmp.path().join(format!("{m}-{level}.png"));
         let o = cli(&[
             "render-match",
             "--mod",
-            "olx-classic",
+            m,
             "--level",
             level,
             "--bots",
@@ -158,7 +240,7 @@ fn the_reloaded_levels_draw_lit() {
             "--out",
             out.to_str().unwrap(),
         ]);
-        assert!(o.status.success(), "{level}: {}", String::from_utf8_lossy(&o.stderr));
-        assert!(String::from_utf8_lossy(&o.stdout).contains("glowing discs"), "{level}: a lit match");
+        assert!(o.status.success(), "{m} on {level}: {}", String::from_utf8_lossy(&o.stderr));
+        assert!(String::from_utf8_lossy(&o.stdout).contains("glowing discs"), "{m} on {level}: a lit match");
     }
 }
