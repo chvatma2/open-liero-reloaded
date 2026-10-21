@@ -29,6 +29,7 @@ mod net_soak;
 mod nostr_probe;
 mod perfcount;
 mod playtest;
+mod reloaded;
 mod scenario;
 mod stains;
 mod state_transfer;

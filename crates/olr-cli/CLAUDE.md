@@ -532,6 +532,13 @@ The headless command-line tool. Its commands:
   misbehaviours (`Refuse`, `RefuseKind`, `KeepFor`, `NoForward`) and
   `StunResponder`.
 
+**Content:** every command's `--content` (default `content/packs`) opens
+with `Content::open_bundled` (issue #7): OLR's own packs, the `reloaded`
+directory beside it, lie over it, so `--level
+olr-level-liero-factory-reloaded` works anywhere an OLX level does;
+`render-match` lays its `--packs` over both. `pack check`, `level …` and
+`look-preview` read only themes from `--content`.
+
 **The library** (`src/lib.rs`) holds the match runner for the commands and
 the tests: `spec::MatchSpec` (the options, serialized in failures and
 goldens; `match_options` gives what `olr_content::build_match` assembles,
@@ -659,9 +666,16 @@ configuration (a standby unless `--no-standby`) and the printed lines. The tests
 tests are `cargo nextest run -p olr-cli --test integration corpus::`.
 `tests/corpus.rs` checks every imported
 pack when `OLR_CONTENT_DIR` is set. `tests/playtest.rs` checks the hand-made playtest packs
-(`content/playtest/`: the lit Castle Strikes, night and day) with `pack check
+(`content/playtest/`: the night Castle Strike) with `pack check
 --content`, and on the GPU tier plays a bot match on it (`render-match
---packs content/playtest`). `tests/digest.rs` pins a SHA-256 of what
+--packs content/playtest`). `tests/reloaded.rs` (issue #7, offline too: the
+committed `content/packs`) checks OLR's own shipped packs
+(`content/reloaded/`: Liero Factory Reloaded, Castle Strike Reloaded) with
+`pack check --content content/packs`, that they share no pack id with
+`content/packs`, that `Content::open_bundled` lists both levels by name,
+lit, that the factory's material, front and back are the imported Liero
+Factory's byte for byte (its origin too), plays a 300-tick bot match on
+each, and on the GPU tier (`OLR_GPU_TESTS`) draws each lit (`render-match`). `tests/digest.rs` pins a SHA-256 of what
 the game receives from every bundled pack (each skin's drawn frames, the
 images the runtime uses, level and theme data; plan 13c): a pack format or
 importer change that alters a drawn pixel changes the snapshot. To accept a reviewed snapshot change, run
