@@ -368,7 +368,9 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   GPG home's secret keys against `GPG_PUBLIC`'s fingerprint
   (`gpg_fingerprint`: OpenPGP v4, SHA-1 of the key packet; a test pins
   the maintainer's), `target/flatpak/repo`'s `master` metainfo naming the
-  version. Then `<zip>.sig`; the Flatpak committed (`flatpak
+  version, and for `gh` `gh_preflight` (logged in, no release of the tag
+  yet, a final's tag or a dev build's commit on GitHub: the repository
+  never goes live without its release being makeable). Then `<zip>.sig`; the Flatpak committed (`flatpak
   build-commit-from`, signed) into the persistent repository on
   `branches_for(prerelease)`, a warning when `permissions` (the
   metadata's sections but `[Application]`/`[Build]`) differ from the

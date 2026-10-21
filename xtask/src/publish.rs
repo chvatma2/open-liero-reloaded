@@ -350,6 +350,12 @@ pub fn publish(cfg: &Config) -> Result<Published, String> {
         ));
     }
     let new_metadata = ostree_cat(&cfg.src_repo, &src_ref, "/metadata")?;
+    let tag = format!("v{v}");
+    // The release must be creatable before the repository goes live.
+    let target = match &cfg.release {
+        ReleaseTarget::Gh(gh_repo) => Some(gh_preflight(gh_repo, &tag, &version)?),
+        ReleaseTarget::Dir(_) => None,
+    };
 
     // 1. The Windows zip's signature.
     let signature = cfg.zips.join(release::signature_name(&zip_name));
@@ -487,7 +493,6 @@ pub fn publish(cfg: &Config) -> Result<Published, String> {
     println!("the repository is live at {}", cfg.pages_url);
 
     // 3. The GitHub release.
-    let tag = format!("v{v}");
     let title = format!("Open Liero Reloaded {v}");
     let assets = [zip.clone(), signature.clone(), bundle.clone()];
     match &cfg.release {
@@ -504,14 +509,8 @@ pub fn publish(cfg: &Config) -> Result<Published, String> {
             let mut c = Command::new("gh");
             c.current_dir(root()).args(["release", "create", &tag]).args(&assets);
             c.args(["--repo", gh_repo, "--title", &title, "--notes-file"]).arg(&cfg.notes);
-            if prerelease {
-                // The dev build's commit, named in its version.
-                let commit = version.pre.get(2).cloned().unwrap_or_default();
-                let full = run(
-                    "git rev-parse",
-                    Command::new("git").current_dir(root()).args(["rev-parse", &commit]),
-                )?;
-                c.args(["--prerelease", "--latest=false", "--target", full.trim()]);
+            if let Some(Some(commit)) = &target {
+                c.args(["--prerelease", "--latest=false", "--target", commit]);
             } else {
                 c.args(["--verify-tag", "--latest"]);
             }
@@ -526,6 +525,45 @@ pub fn publish(cfg: &Config) -> Result<Published, String> {
         signature,
         warnings,
     })
+}
+
+/// Step 0 for `gh release create`: gh logged in, no release `tag` yet, and
+/// what it will point at on GitHub: a final release's pushed tag, or a
+/// dev build's commit (named in its version; returned in full).
+fn gh_preflight(gh_repo: &str, tag: &str, version: &Version) -> Result<Option<String>, String> {
+    run("gh auth status", Command::new("gh").args(["auth", "status"]))
+        .map_err(|e| format!("{e}: log in with gh auth login"))?;
+    let view = Command::new("gh")
+        .args(["release", "view", tag, "--repo", gh_repo])
+        .output()
+        .map_err(|e| format!("cannot run gh: {e}"))?;
+    if view.status.success() {
+        return Err(format!("the release {tag} exists already in {gh_repo}"));
+    }
+    let why = String::from_utf8_lossy(&view.stderr);
+    if !why.contains("not found") {
+        return Err(format!("gh release view {tag}: {}", why.trim()));
+    }
+    if !version.is_prerelease() {
+        let api = format!("repos/{gh_repo}/git/ref/tags/{tag}");
+        run("gh api", Command::new("gh").args(["api", &api]))
+            .map_err(|_| format!("the tag {tag} is not on GitHub: git push origin {tag}"))?;
+        return Ok(None);
+    }
+    let short = version.pre.get(2).cloned().unwrap_or_default();
+    let commit = run(
+        "git rev-parse",
+        Command::new("git").current_dir(root()).args([
+            "rev-parse",
+            "--verify",
+            &format!("{short}^{{commit}}"),
+        ]),
+    )?
+    .trim()
+    .to_string();
+    run("gh api", Command::new("gh").args(["api", &format!("repos/{gh_repo}/commits/{commit}")]))
+        .map_err(|_| format!("the build's commit {commit} is not on GitHub: push it first"))?;
+    Ok(Some(commit))
 }
 
 fn git_config(key: &str) -> Option<String> {
