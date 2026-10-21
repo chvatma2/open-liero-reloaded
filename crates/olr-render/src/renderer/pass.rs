@@ -5,7 +5,6 @@ use olr_scene::DrawList;
 
 use super::{Renderer, Target, WORLD_FORMAT, texture, upscale_uniform};
 use crate::frame::{WorldFrame, distant_instance, occluder_instances, push_instances, terrain_instance};
-use crate::upscale::dest_rect_in;
 
 impl Renderer {
     /// Draws `list` into `target` (`size` pixels, of the renderer's
@@ -96,7 +95,7 @@ impl Renderer {
         let (tw, th) = self.target.as_ref().expect("ensured above").size;
         self.queue.write_buffer(&self.globals, 0, bytemuck::cast_slice(&[tw as f32, th as f32, 0.0, 0.0]));
         let src = frame.source_rect(list.view);
-        let dst = dest_rect_in(self.settings.filter, (src[2], src[3]), area);
+        let dst = self.dest_rect_in((src[2], src[3]), area);
         let uniform = upscale_uniform(src, dst, (tw, th), self.settings.filter, self.srgb);
         self.queue.write_buffer(&self.upscale_uniform, 0, bytemuck::cast_slice(&uniform));
         if let (Some(look), Some(state)) = (look, self.look.as_mut()) {

@@ -47,7 +47,13 @@ on screen or offscreen.
   `distant_quads_snap_to_texels_and_clip_to_the_level`.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel
-  (`MIN_SCALE` 2, OLX's sprite art, or the level's art scale if larger). The
+  (`MIN_SCALE` 2, OLX's sprite art, or the level's art scale if larger:
+  `level_scale()`; issue #12: or the largest `px_per_world` of the atlas's
+  images, capped at `MAX_SPRITE_SCALE` 8, so a double-resolution skin
+  draws at 4). `dest_rect_in(src, area)` places the target with integer
+  nearest in whole multiples of the level's own scale
+  (`upscale::dest_rect_in_units`; a fraction of a texel a pixel when the
+  target does not fit), so a level shows as large whatever its skins. The
   terrain is one opaque RGBA texture of the `ColorMap` composite (spec §8.2's
   separate back, front and material textures are not needed: `olr-terrain`
   composites on the CPU). Sprites snap to whole texels; line pixels are
@@ -305,6 +311,9 @@ geometry, image diff, `shade_texel_table`, the cascades' layout). The GPU
 tests (`tests/gpu.rs`; the look's read the light grid back with
 `read_light`: ambient, steps, view modes, walls, reach, edges, soak and
 floor, softness, glow light, clear solids, discs, bounce, flicker, glare,
-the disc cap, ambient occlusion, GL) and goldens need
+the disc cap, ambient occlusion, GL; issue #12:
+`a_double_skin_draws_at_four_texels_per_world_pixel`,
+`a_glowing_skin_pixel_is_bright_in_the_dark`,
+`a_skin_light_lights_the_air_and_a_wall_stops_it`) and goldens need
 `OLR_GPU_TESTS=1`; `cargo xtask full` sets it and runs them, skipping with a
 notice when no adapter opens (`cargo run -p olr-render --example adapter`).

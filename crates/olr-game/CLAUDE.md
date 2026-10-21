@@ -278,7 +278,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   (`Renderer::render_lit`, which is `render_in` without a look; black
   around it) and the egui overlay paints
   the bar (and the side layout's columns) over the rest; the names'
-  `ScreenMap` uses the same rectangle (`olr_render::dest_rect_in`). The
+  `ScreenMap` uses the same rectangle (`Renderer::dest_rect_in`, issue
+  #12: whole multiples of the level's own scale, whatever the skins). The
   view is `olr_scene::Viewport::GAME` (427 × 192 world pixels) for every
   window and HUD layout (spec §19 E4 amended): resizes do not touch it.
   The UI's scale: every frame `olr_ui::theme::set_scale` with the

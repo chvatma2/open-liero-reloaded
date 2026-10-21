@@ -2,7 +2,7 @@
 //! on screen or offscreen.
 //!
 //! - **World pass** at art scale (at least [`MIN_SCALE`], OLX's 2× sprite
-//!   art) into a texture covering the view plus a [`MARGIN`] of world
+//!   art, or the level's or a double-resolution skin's when higher) into a texture covering the view plus a [`MARGIN`] of world
 //!   pixels: the colour terrain, then every sprite and line pixel as one
 //!   instanced quad per item from a single atlas, in the list's order. No
 //!   antialiasing: lines are exact world-pixel blocks.
@@ -35,7 +35,7 @@ pub use offscreen::{
     AdapterPreference, NoAdapter, OUTPUT_FORMAT, Offscreen, OffscreenOptions, list_adapters,
 };
 pub use renderer::{
-    GI_CELL_BUDGET, GpuTimes, MAX_PROBE_PASSES, MAX_PROBE_TAPS, MIN_SCALE, Probe, RenderSettings, Renderer,
-    WORLD_FORMAT, WORM_SHADOW, gi_cell, gpu_times,
+    GI_CELL_BUDGET, GpuTimes, MAX_PROBE_PASSES, MAX_PROBE_TAPS, MAX_SPRITE_SCALE, MIN_SCALE, Probe,
+    RenderSettings, Renderer, WORLD_FORMAT, WORM_SHADOW, gi_cell, gpu_times,
 };
-pub use upscale::{UpscaleFilter, dest_rect, dest_rect_in};
+pub use upscale::{UpscaleFilter, dest_rect, dest_rect_in, dest_rect_in_units};

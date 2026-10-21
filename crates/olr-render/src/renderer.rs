@@ -28,6 +28,10 @@ pub const WORLD_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// The art scale the world pass draws at, at least: OLX's sprites are 2×.
 pub const MIN_SCALE: u32 = 2;
 
+/// The highest atlas image scale the world pass follows (a skin's largest
+/// art scale, 8): an image claiming more draws at it, downscaled.
+pub const MAX_SPRITE_SCALE: u32 = 8;
+
 /// An instance's bytes in the vertex buffer.
 const INSTANCE_STRIDE: u64 = (crate::frame::INSTANCE_FLOATS * 4) as u64;
 
@@ -96,6 +100,9 @@ pub struct Renderer {
     upscale_uniform: wgpu::Buffer,
     sampler: wgpu::Sampler,
     atlas: Option<(AtlasLayout, wgpu::BindGroup)>,
+    /// The highest `px_per_world` of the atlas's images (issue #12: a
+    /// double-resolution skin's 4), at most [`MAX_SPRITE_SCALE`].
+    sprite_scale: u32,
     terrain: Option<Terrain>,
     /// The level's distant layers, far to near ([`Renderer::set_distant`]).
     distant: Vec<Distant>,
@@ -321,6 +328,7 @@ impl Renderer {
             upscale_uniform,
             sampler,
             atlas: None,
+            sprite_scale: 1,
             terrain: None,
             distant: Vec::new(),
             distant_draws: Vec::new(),
@@ -359,9 +367,27 @@ impl Renderer {
         &mut self.warnings
     }
 
-    /// The world pass's art scale: [`MIN_SCALE`], or the terrain's when larger.
+    /// The world pass's art scale: [`MIN_SCALE`], or the terrain's or the
+    /// atlas's highest image scale (issue #12: a double-resolution skin
+    /// draws at full resolution) when larger.
     pub fn scale(&self) -> u32 {
-        self.terrain.as_ref().map_or(MIN_SCALE, |t| t.art_scale.max(MIN_SCALE))
+        self.level_scale().max(self.sprite_scale)
+    }
+
+    /// The world pass's scale without the sprites': [`MIN_SCALE`], or the
+    /// terrain's art scale when larger.
+    fn level_scale(&self) -> u32 {
+        self.terrain.as_ref().map_or(MIN_SCALE, |t| t.art_scale).max(MIN_SCALE)
+    }
+
+    /// Where a view of `src` target texels (the view's size × [`Renderer::scale`])
+    /// lands in `area` of the output, as [`crate::dest_rect_in`] with the
+    /// settings' filter; `IntegerNearest`'s whole multiples are of the
+    /// level's scale (issue #12: a double-resolution skin drawn finer does
+    /// not change the view's size on screen).
+    pub fn dest_rect_in(&self, src: (f32, f32), area: [u32; 4]) -> [f32; 4] {
+        let unit = self.scale() as f32 / self.level_scale() as f32;
+        crate::upscale::dest_rect_in_units(self.settings.filter, src, area, unit)
     }
 
     /// The atlas layout of the last [`Renderer::upload_atlas`].
@@ -440,6 +466,8 @@ impl Renderer {
     /// [`Renderer::upload_atlas`] of a plain image list, indexed by
     /// [`olr_scene::AtlasId`] like [`SceneAssets::images`].
     pub fn upload_images(&mut self, images: &[AtlasImage]) {
+        self.sprite_scale =
+            images.iter().map(|i| i.px_per_world).max().unwrap_or(1).clamp(1, MAX_SPRITE_SCALE);
         let packed = atlas::pack(images, self.max_dim());
         self.warnings.extend(packed.warnings);
         let img = &packed.pixels;

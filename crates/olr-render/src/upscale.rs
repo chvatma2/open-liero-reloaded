@@ -29,11 +29,20 @@ impl UpscaleFilter {
 /// The output rectangle `[x, y, w, h]` (output pixels) that `src` (`w`,
 /// `h` in texels) is drawn into; the rest of the output is black.
 pub fn dest_rect(filter: UpscaleFilter, src: (f32, f32), out: (u32, u32)) -> [f32; 4] {
+    dest_rect_by(filter, src, out, 1.0)
+}
+
+/// [`dest_rect`] whose whole multiples (`IntegerNearest`) are of `unit`
+/// texels (issue #12: a target drawn finer than the level for a
+/// double-resolution skin keeps the level's multiples, so the view shows
+/// as large as without it). `unit` 1 is [`dest_rect`].
+fn dest_rect_by(filter: UpscaleFilter, src: (f32, f32), out: (u32, u32), unit: f32) -> [f32; 4] {
     let (ow, oh) = (out.0 as f32, out.1 as f32);
     let (sw, sh) = (src.0.max(1.0), src.1.max(1.0));
     let fit = (ow / sw).min(oh / sh);
+    let u = if unit.is_finite() && unit >= 1.0 { unit } else { 1.0 };
     let k = match filter {
-        UpscaleFilter::IntegerNearest => fit.floor().max(1.0),
+        UpscaleFilter::IntegerNearest => (fit * u).floor().max(1.0) / u,
         UpscaleFilter::SharpBilinear => fit,
     };
     let (w, h) = (sw * k, sh * k);
@@ -48,7 +57,13 @@ pub fn dest_rect(filter: UpscaleFilter, src: (f32, f32), out: (u32, u32)) -> [f3
 /// the output: the game's playfield, a window's 16:9 frame less its HUD
 /// bar.
 pub fn dest_rect_in(filter: UpscaleFilter, src: (f32, f32), area: [u32; 4]) -> [f32; 4] {
-    let [x, y, w, h] = dest_rect(filter, src, (area[2], area[3]));
+    dest_rect_in_units(filter, src, area, 1.0)
+}
+
+/// [`dest_rect_in`] with whole multiples of `unit` texels
+/// (`Renderer::dest_rect_in` passes the target's scale over the level's).
+pub fn dest_rect_in_units(filter: UpscaleFilter, src: (f32, f32), area: [u32; 4], unit: f32) -> [f32; 4] {
+    let [x, y, w, h] = dest_rect_by(filter, src, (area[2], area[3]), unit);
     [x + area[0] as f32, y + area[1] as f32, w, h]
 }
 
@@ -83,6 +98,29 @@ mod tests {
             assert_eq!(dest_rect_in(f, (854.0, 384.0), [0, 108, 1920, 864]), [x, y + 108.0, w, h], "{f:?}");
             assert_eq!(dest_rect_in(f, (854.0, 384.0), [0, 0, 1920, 864]), [x, y, w, h], "{f:?}");
         }
+    }
+
+    /// Issue #12: a target twice as fine (a double-resolution skin on a
+    /// classic level) draws the view as large as without it.
+    #[test]
+    fn integer_nearest_in_units_keeps_the_levels_multiples() {
+        let f = UpscaleFilter::IntegerNearest;
+        for out in [[0, 0, 1280, 576], [0, 0, 1920, 864], [0, 0, 2560, 1152], [0, 0, 700, 300]] {
+            let classic = dest_rect_in(f, (854.0, 384.0), out);
+            assert_eq!(dest_rect_in_units(f, (1708.0, 768.0), out, 2.0), classic, "{out:?}");
+        }
+        assert_eq!(
+            dest_rect_in_units(f, (854.0, 384.0), [0, 0, 1920, 864], 1.0),
+            dest_rect_in(f, (854.0, 384.0), [0, 0, 1920, 864])
+        );
+        let s = UpscaleFilter::SharpBilinear;
+        assert_eq!(
+            dest_rect_in_units(s, (1708.0, 768.0), [0, 0, 1280, 576], 2.0),
+            dest_rect_in(s, (1708.0, 768.0), [0, 0, 1280, 576])
+        );
+        // A unit that is not finite or below 1 is 1.
+        let a = dest_rect_in_units(f, (854.0, 384.0), [0, 0, 1920, 864], f32::NAN);
+        assert_eq!(a, dest_rect_in(f, (854.0, 384.0), [0, 0, 1920, 864]));
     }
 
     #[test]

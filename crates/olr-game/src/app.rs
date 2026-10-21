@@ -878,7 +878,7 @@ impl App {
             self.list.view.h * w.gpu.renderer.scale() as f32,
         );
         // The world in the playfield: the 16:9 frame above the HUD's bar.
-        let dest = olr_render::dest_rect_in(w.gpu.renderer.settings.filter, src, playfield(size));
+        let dest = w.gpu.renderer.dest_rect_in(src, playfield(size));
         let map = ScreenMap { view: self.list.view, dest, pixels_per_point: ppp };
         let mut input = w.egui.take_egui_input(&w.window);
         if self.fake_start.is_some() {

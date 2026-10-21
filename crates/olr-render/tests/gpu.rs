@@ -542,6 +542,23 @@ fn a_wall_blocks_a_light() {
     assert!((light_at(&gpu, &r, 60, 20)[0] - 0.1).abs() < 1e-3, "behind it: the ambient");
 }
 
+/// Issue #12: a skin's light, at its caps, lights the air beside its worm
+/// and a wall stops it.
+#[test]
+fn a_skin_light_lights_the_air_and_a_wall_stops_it() {
+    use olr_look::engine;
+    let Some(gpu) = offscreen() else { return };
+    let map = room(120, 40, |x, _| x == 80);
+    let l = engine::skin_light([80, 220, 255], 1000, 1000);
+    let at = [74.5, 20.5];
+    let disc = olr_look::light_at(&l, 0.0, 1, at, engine::disc_radius(l.reach.pixels())).unwrap();
+    let r = lit_frame(&gpu, &map, View { x: 0.0, y: 0.0, w: 120.0, h: 40.0 }, &[disc], 0);
+    let beside = light_at(&gpu, &r, 68, 20);
+    assert!(beside[2] > 0.2 && beside[2] > beside[0], "the air beside it, its colour: {beside:?}");
+    assert!((light_at(&gpu, &r, 86, 20)[2] - 0.1).abs() < 1e-3, "behind the wall: the ambient");
+    assert!((light_at(&gpu, &r, 2, 20)[2] - 0.1).abs() < 1e-3, "well past the capped reach: the ambient");
+}
+
 #[test]
 fn reach_bounds_a_light() {
     let Some(gpu) = offscreen() else { return };
@@ -2309,4 +2326,98 @@ fn distant_layers_take_light_by_their_depth() {
     // The back tile (no layer) is lit as the level's air.
     let tile = at(50, 28);
     assert!(tile.b > 0 && tile != Rgba::BLACK, "the tile lit like air: {tile:?}");
+}
+
+/// An 8 × 8 checker of single texels, two colours: a double-resolution
+/// skin's art (4 texels per world pixel, issue #12).
+fn checker() -> AtlasImage {
+    let mut image = RgbaImage::new(8, 8);
+    for y in 0..8 {
+        for x in 0..8 {
+            image.set(x, y, if (x + y) % 2 == 0 { Rgba::rgb(250, 30, 30) } else { Rgba::rgb(30, 30, 250) });
+        }
+    }
+    AtlasImage { name: "skin:0".into(), image, px_per_world: 4 }
+}
+
+/// Issue #12: an atlas image of 4 texels per world pixel (a double skin)
+/// makes the world target 4 texels per world pixel on a classic level, so
+/// every one of its texels shows; integer nearest still draws the view as
+/// large as without it. Without one the target stays at 2.
+#[test]
+fn a_double_skin_draws_at_four_texels_per_world_pixel() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(40, 30, |_, _| false);
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.upload_terrain(&map);
+    r.upload_images(&[AtlasImage {
+        name: "classic".into(),
+        image: solid(4, 4, Rgba::rgb(9, 9, 9)),
+        px_per_world: 2,
+    }]);
+    assert_eq!(r.scale(), 2);
+    r.upload_images(&[checker()]);
+    assert_eq!(r.scale(), 4, "the double skin's scale");
+    let mut l = list(View { x: 0.0, y: 0.0, w: 40.0, h: 30.0 });
+    l.map = (40, 30);
+    let sprite = Sprite {
+        atlas: AtlasId(0),
+        src: Rect { x: 0, y: 0, w: 8, h: 8 },
+        pos: [10.0, 10.0],
+        size: [2.0, 2.0],
+        flip: false,
+        tint: Rgba::rgb(255, 255, 255),
+        shade: Default::default(),
+    };
+    l.sprite(Layer::Worms, sprite);
+    // 160 × 120 output pixels: one per target texel.
+    let img = gpu.render_to_image(&mut r, &l, (160, 120));
+    for y in 0..8 {
+        for x in 0..8 {
+            let want = if (x + y) % 2 == 0 { Rgba::rgb(250, 30, 30) } else { Rgba::rgb(30, 30, 250) };
+            assert_eq!(img.get(40 + x, 40 + y), want, "texel ({x}, {y})");
+        }
+    }
+    // Integer nearest keeps the classic multiple: an 80 × 60 output shows
+    // the whole 40 × 30 view (2 output pixels a world pixel), not a crop.
+    let small = gpu.render_to_image(&mut r, &l, (80, 60));
+    let red = |p: Rgba| p.r > 200 || p.b > 200;
+    assert!(red(small.get(20, 20)) && red(small.get(23, 23)), "the sprite at world (10, 10): 2 px each");
+    assert!(!red(small.get(24, 24)) && !red(small.get(19, 19)));
+}
+
+/// Issue #12: a skin's glowing pixel (drawn with its strength's
+/// self-light) shows its art in a dark look; the same pixel without glow
+/// shows the dark.
+#[test]
+fn a_glowing_skin_pixel_is_bright_in_the_dark() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(40, 30, |_, _| false);
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    let white =
+        AtlasImage { name: "skin:0".into(), image: solid(4, 4, Rgba::rgb(255, 255, 255)), px_per_world: 4 };
+    r.upload_images(&[white]);
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    let mut look = dim(0.02);
+    look.worm_floor = [0.0; 3];
+    let mut l = list(View { x: 0.0, y: 0.0, w: 40.0, h: 30.0 });
+    l.map = (40, 30);
+    let src = Rect { x: 0, y: 0, w: 4, h: 4 };
+    let glow = olr_scene::Shade { self_light: 100, ..olr_scene::Shade::WORM };
+    for (x, shade) in [(10.0, olr_scene::Shade::WORM), (20.0, glow)] {
+        let tint = Rgba::rgb(255, 255, 255);
+        l.sprite(
+            Layer::Worms,
+            Sprite { atlas: AtlasId(0), src, pos: [x, 10.0], size: [1.0, 1.0], flip: false, tint, shade },
+        );
+    }
+    let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), (160, 120));
+    let (dark, bright) = (img.get(4 * 10 + 1, 4 * 10 + 1), img.get(4 * 20 + 1, 4 * 10 + 1));
+    assert_eq!(
+        (bright.r, bright.g, bright.b),
+        (255, 255, 255),
+        "the glowing pixel shows its art: {bright:?}"
+    );
+    assert!(dark.r > 0 && dark.r < 60, "the plain one is dark: {dark:?}");
 }
