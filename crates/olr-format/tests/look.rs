@@ -50,6 +50,7 @@ fn level(look: Option<&str>) -> LevelSource {
         look: None,
         glow: None,
         clear: None,
+        distant: Vec::new(),
     };
     if let Some(text) = look {
         let fs = files(&src).with("level.ron", text.as_bytes().to_vec());
@@ -448,6 +449,7 @@ fn white_level(look: &str) -> LevelSource {
         look: None,
         glow: None,
         clear: None,
+        distant: Vec::new(),
     };
     let text = format!("(name: \"Thumb\", size: (64, 32), theme: \"olx-theme-dirt\", {look})");
     read_level_files(&files(&src).with("level.ron", text.into_bytes())).unwrap()

@@ -601,6 +601,7 @@ pub fn thumbnail(asset: &Asset) -> RgbaImage {
         look: Some(preview_look(&asset.groups)),
         glow: None,
         clear: None,
+        distant: Vec::new(),
     };
     let masks: GlowMasks =
         asset.pieces.iter().filter_map(|p| Some((p.element.id.clone(), p.glow_mask.clone()?))).collect();

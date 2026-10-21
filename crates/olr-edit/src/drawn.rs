@@ -626,6 +626,7 @@ pub fn merge_down(
         kind,
         glow: None,
         clear: false,
+        distant: None,
     };
     Ok((element, decoded))
 }
@@ -664,6 +665,7 @@ pub fn split_element(
             kind,
             glow: None,
             clear: false,
+            distant: None,
         };
         out.push((element, decoded));
     }

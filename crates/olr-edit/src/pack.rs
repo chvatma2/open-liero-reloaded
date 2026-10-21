@@ -25,6 +25,8 @@ use olr_pack::{Diagnostic, MANIFEST, MAX_FILE_BYTES, PackError, Severity};
 use olr_vfs::{ContentSink, ContentSource, DirFs, MemFs, VPath, walk};
 
 /// A pack's authoring source, by kind.
+// One per open pack: boxing the level would buy nothing.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum Source {
     Mod(ModSource),

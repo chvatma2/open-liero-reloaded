@@ -107,6 +107,39 @@ pub struct LevelDef {
     pub spawns: Vec<SpawnPoint>,
 }
 
+/// The nearest a distant layer may be: 1 % of the way to the far scene.
+pub const MIN_DEPTH: u8 = 1;
+/// The farthest a distant layer may be: 99 % (100 would never move).
+pub const MAX_DEPTH: u8 = 99;
+
+/// A distant (parallax) layer of a level (issue #11): decoration seen
+/// through the level's see-through back pixels, scrolling by `1 - depth`
+/// of the camera's movement. No material, never in the simulation.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DistantLayer {
+    /// Art pixels (the level's art scale), alpha 0 where it is uncovered,
+    /// 255 elsewhere; each side a multiple of the art scale.
+    pub image: RgbaImage,
+    /// Its top-left in world pixels with the camera (the view's centre) at
+    /// the level's centre.
+    pub at: (i32, i32),
+    /// Percent, [`MIN_DEPTH`] (near: moves almost with the level, lit
+    /// almost like it) to [`MAX_DEPTH`] (far: almost still, ambient light
+    /// only).
+    pub depth: u8,
+}
+
+impl DistantLayer {
+    /// Its top-left in world pixels with the camera's centre at `camera` in
+    /// a level of `size` world pixels: `at + depth × (camera − size / 2)`,
+    /// exact (the renderer rounds it to its texels).
+    pub fn position(&self, camera: (f32, f32), size: (u32, u32)) -> (f32, f32) {
+        let d = f32::from(self.depth.clamp(MIN_DEPTH, MAX_DEPTH)) / 100.0;
+        let off = |c: f32, side: u32| if c.is_finite() { d * (c - side as f32 / 2.0) } else { 0.0 };
+        (self.at.0 as f32 + off(camera.0, size.0), self.at.1 as f32 + off(camera.1, size.1))
+    }
+}
+
 /// A loaded level.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Level {

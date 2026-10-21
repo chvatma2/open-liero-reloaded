@@ -35,6 +35,7 @@ fn level(w: u32, h: u32, s: u32) -> LevelSource {
         look: None,
         glow: None,
         clear: None,
+        distant: Vec::new(),
     }
 }
 
@@ -65,6 +66,7 @@ fn element(id: &str, kind: ElementKind) -> Element {
         kind,
         glow: None,
         clear: false,
+        distant: None,
     }
 }
 

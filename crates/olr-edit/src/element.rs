@@ -280,6 +280,7 @@ pub fn add_image_with(
                 },
                 glow: None,
                 clear: false,
+                distant: None,
             },
         )?;
         for p in settings {
@@ -307,6 +308,7 @@ pub fn add_layer(pack: &mut Pack, material: ElementMaterial, name: &str) -> Resu
                 kind: ElementKind::drawn(material),
                 glow: None,
                 clear: false,
+                distant: None,
             },
         )?;
         Ok(id)
@@ -811,6 +813,7 @@ pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
                 kind: ElementKind::Raster,
                 glow: None,
                 clear: false,
+                distant: None,
             });
             new
         })

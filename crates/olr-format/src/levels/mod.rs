@@ -1,6 +1,9 @@
 //! The level authoring format: `level.ron`, `material.png`, `front.png`,
 //! `back.png` and an optional `thumb.png` (spec §6), and an optional
-//! composition under `editor/` that bakes into them (plan 14a).
+//! composition under `editor/` that bakes into them (plan 14a). A level may
+//! have distant (parallax) layers (issue #11), `distant/<i>.png`: they show
+//! where `back.png` is see-through (alpha 0), scrolling slower than the
+//! level; without them every back pixel is opaque, as always.
 
 mod composition;
 pub use composition::*;
@@ -9,7 +12,7 @@ pub(crate) use files::LevelFile;
 mod thumb;
 
 use olr_data::image::RgbaImage;
-use olr_data::level::{Level, LevelDef, Material, MaterialGrid, SpawnPoint};
+use olr_data::level::{DistantLayer, Level, LevelDef, Material, MaterialGrid, SpawnPoint};
 use serde::{Deserialize, Serialize};
 
 pub use files::{
@@ -62,6 +65,80 @@ pub const GROUPS_BACK_FILE: &str = "look/groups-back.png";
 pub const CLEAR_FILE: &str = "look/clear.png";
 /// A level's glow images: all four or none.
 pub const LOOK_FILES: [&str; 4] = [GLOW_FILE, GLOW_BACK_FILE, GROUPS_FILE, GROUPS_BACK_FILE];
+/// The folder of a level's distant (parallax) layers' images (issue #11).
+pub const DISTANT_DIR: &str = "distant";
+/// The most distant layers a level has.
+pub const MAX_DISTANT: usize = 16;
+/// How far from the level's origin a distant layer may be placed, in world
+/// pixels along each axis.
+pub const MAX_DISTANT_AT: u32 = 4 * MAX_SIDE;
+
+/// The `i`-th distant layer's image: `distant/<i>.png`.
+pub fn distant_file(i: usize) -> String {
+    format!("{DISTANT_DIR}/{i}.png")
+}
+
+/// A distant layer's image size (art pixels) for a level at `art_scale`:
+/// each side 1 to `MAX_SIDE` world pixels, a whole number of them, and the
+/// art within `LEVEL_ART`.
+pub(crate) fn check_distant_size((w, h): (u32, u32), art_scale: u32) -> Result<(), String> {
+    let s = art_scale.max(1);
+    let side = |v: u32| v > 0 && v.is_multiple_of(s) && v / s <= MAX_SIDE;
+    if !side(w) || !side(h) {
+        return Err(format!(
+            "{w}x{h}: each side 1 to {MAX_SIDE} world pixels, a multiple of the art scale {s}"
+        ));
+    }
+    check_size(w, h, LEVEL_ART)
+}
+
+/// A level's distant layers (issue #11): at most `MAX_DISTANT`, each of
+/// depth `MIN_DEPTH` to `MAX_DEPTH`, placed within `MAX_DISTANT_AT` of the
+/// origin and of a size `check_distant_size` takes, all within
+/// `LEVEL_ART`'s pixels together.
+pub(crate) fn check_distant_layers(distant: &[DistantLayer], art_scale: u32) -> Result<(), FormatError> {
+    use olr_data::level::{MAX_DEPTH, MIN_DEPTH};
+    if distant.len() > MAX_DISTANT {
+        return Err(FormatError::invalid(
+            LEVEL_FILE,
+            "distant",
+            format!("{} distant layers, above {MAX_DISTANT}", distant.len()),
+        ));
+    }
+    let mut pixels = 0u64;
+    for (i, d) in distant.iter().enumerate() {
+        if !(MIN_DEPTH..=MAX_DEPTH).contains(&d.depth) {
+            return Err(FormatError::invalid(
+                LEVEL_FILE,
+                &format!("distant[{i}].depth"),
+                format!("{}: {MIN_DEPTH} to {MAX_DEPTH}", d.depth),
+            ));
+        }
+        let far = |v: i32| v.unsigned_abs() > MAX_DISTANT_AT;
+        if far(d.at.0) || far(d.at.1) {
+            return Err(FormatError::invalid(
+                LEVEL_FILE,
+                &format!("distant[{i}].at"),
+                format!("({}, {}): each within {MAX_DISTANT_AT} of 0", d.at.0, d.at.1),
+            ));
+        }
+        let file = distant_file(i);
+        check_distant_size((d.image.width(), d.image.height()), art_scale)
+            .map_err(|m| FormatError::invalid(&file, "", m))?;
+        pixels += u64::from(d.image.width()) * u64::from(d.image.height());
+        if pixels > LEVEL_ART.max_pixels {
+            return Err(FormatError::invalid(
+                &file,
+                "",
+                format!(
+                    "the distant layers up to this one hold {pixels} pixels, above {}",
+                    LEVEL_ART.max_pixels
+                ),
+            ));
+        }
+    }
+    Ok(())
+}
 
 /// `material` (`size`, row-major) as `material.png` holds it: an 8-bit
 /// palette PNG of `MATERIAL_PALETTE`, indexed by `Material as u8`. The
@@ -115,6 +192,10 @@ pub struct LevelSource {
     /// `look/clear.png`'s flags, `size.0 * size.1`, row-major, when some
     /// solid is clear.
     pub clear: Option<Vec<u8>>,
+    /// The distant (parallax) layers, far to near (`level.ron`'s `distant`
+    /// and `distant/<i>.png`; issue #11). With any, `back.png` is
+    /// see-through (alpha 0) where no element gives a back.
+    pub distant: Vec<DistantLayer>,
 }
 
 /// A thing placed in a level.
@@ -277,6 +358,7 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
     if let Some(g) = &src.glow {
         check_glow(src, g)?;
     }
+    check_distant_layers(&src.distant, src.art_scale)?;
     for (file, img) in [(FRONT_FILE, &src.front), (BACK_FILE, &src.back)] {
         if (img.width(), img.height()) != (aw, ah) {
             return Err(FormatError::invalid(
@@ -331,6 +413,7 @@ pub fn lift_level(level: &Level, thumb: Option<Vec<u8>>) -> Result<LevelSource, 
         look: None,
         glow: None,
         clear: None,
+        distant: Vec::new(),
     };
     if (level.material.width(), level.material.height()) != src.size {
         return Err(LiftError {
@@ -372,6 +455,7 @@ pub(crate) mod tests {
             look: None,
             glow: None,
             clear: None,
+            distant: Vec::new(),
         }
     }
 

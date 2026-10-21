@@ -901,6 +901,7 @@ fn as_level(
         look: None,
         glow: None,
         clear: None,
+        distant: Vec::new(),
     }
 }
 
@@ -1016,6 +1017,7 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         kind: ElementKind::Raster,
         glow: None,
         clear: false,
+        distant: None,
     };
     let [m, f, b] = raster_files(&element.id);
     let files = [
@@ -1078,6 +1080,7 @@ pub fn split_layers(
             kind: ElementKind::drawn(material),
             glow: None,
             clear: false,
+            distant: None,
         };
         (e, Decoded::Drawn { art, cells: None, back: None })
     };

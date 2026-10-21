@@ -92,6 +92,25 @@ pub struct Element {
     /// only. Default false.
     #[serde(default, skip_serializing_if = "d::is_false")]
     pub clear: bool,
+    /// A distant (parallax) layer (issue #11): its depth, percent, 1 (near:
+    /// it scrolls and is lit almost like the level) to 99 (far: almost
+    /// still, ambient light only). It shows through the see-through back
+    /// pixels the elements in front leave uncovered, moving by `1 - depth`
+    /// of the camera's movement; its box lies where it is drawn with the
+    /// camera (the view's centre) at the level's centre. Decoration only:
+    /// no material, no glow, never clear. A Background image or plain drawn
+    /// layer only, and every distant element lies below every other one;
+    /// an asset carries none.
+    /// Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub distant: Option<u8>,
+}
+
+impl Element {
+    /// Whether it is a distant layer.
+    pub fn is_distant(&self) -> bool {
+        self.distant.is_some()
+    }
 }
 
 /// How an element's covered pixels glow: they show at `strength` whatever
@@ -579,6 +598,15 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
         if e.clear && matches!(e.kind, ElementKind::Raster) {
             return Err(bad("clear", "a raster element cannot be clear: split it into layers".into()));
         }
+        if let Some(depth) = e.distant {
+            check_distant(e, depth).map_err(|m| bad("distant", m))?;
+            if elements[..i].iter().any(|x| !x.is_distant()) {
+                return Err(bad(
+                    "distant",
+                    "a distant layer must lie below every element that is not distant".into(),
+                ));
+            }
+        }
         if let Some(g) = &e.glow {
             if matches!(e.kind, ElementKind::Raster) {
                 return Err(bad("glow", "a raster element cannot glow: split it into layers".into()));
@@ -619,6 +647,35 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
         }
     }
     Ok(pixels)
+}
+
+/// What a distant element `e` of `depth` may be (issue #11): a Background
+/// image or plain drawn layer of depth 1 to 99 that neither glows nor is
+/// clear; the reason it may not, else `Ok`.
+pub fn check_distant(e: &Element, depth: u8) -> Result<(), String> {
+    use olr_data::level::{MAX_DEPTH, MIN_DEPTH};
+    if !(MIN_DEPTH..=MAX_DEPTH).contains(&depth) {
+        return Err(format!("depth {depth}: {MIN_DEPTH} to {MAX_DEPTH}"));
+    }
+    match &e.kind {
+        ElementKind::Image { material: ElementMaterial::Background, .. }
+        | ElementKind::Drawn { material: ElementMaterial::Background, mixed: false, back: false, .. } => {}
+        ElementKind::Raster => return Err("a raster element cannot be distant".into()),
+        ElementKind::Drawn { mixed: true, .. } => {
+            return Err("a mixed layer cannot be distant: only a background layer".into());
+        }
+        ElementKind::Drawn { material: ElementMaterial::Background, .. } => {
+            return Err("a layer with back art cannot be distant".into());
+        }
+        _ => return Err("only a background element can be distant".into()),
+    }
+    if e.glow.is_some() {
+        return Err("a distant layer cannot glow".into());
+    }
+    if e.clear {
+        return Err("a distant layer cannot be clear".into());
+    }
+    Ok(())
 }
 
 /// One element file's size from its header: an original within
@@ -674,6 +731,7 @@ mod tests {
             kind,
             glow: None,
             clear: false,
+            distant: None,
         };
         CompositionSource {
             composition: Composition {
@@ -883,6 +941,50 @@ mod tests {
         assert!(e.contains("editor/layers/base.front.png") && e.contains("two elements"), "{e}");
     }
 
+    /// Issue #11: a distant element is a background image or plain drawn
+    /// layer, below every element that is not distant, of depth 1 to 99,
+    /// neither glowing nor clear.
+    #[test]
+    fn distant_elements_follow_their_rules() {
+        let mut s = sample();
+        // The sky (an image of background) below everything else but the
+        // raster base: the base must go.
+        s.composition.elements[1].distant = Some(50);
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("elements[1].distant") && e.contains("below every element"), "{e}");
+        s.composition.elements.remove(0);
+        check_composition(&s, (4, 3), 2).unwrap();
+        for depth in [0, 100] {
+            s.composition.elements[0].distant = Some(depth);
+            let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+            assert!(e.contains("elements[0].distant") && e.contains("1 to 99"), "{e}");
+        }
+        s.composition.elements[0].distant = Some(50);
+        s.composition.elements[0].clear = true;
+        assert!(check_composition(&s, (4, 3), 2).unwrap_err().to_string().contains("cannot be clear"));
+        s.composition.elements[0].clear = false;
+        s.composition.elements[0].glow = Some(ElementGlow { strength: 10, group: "g".into(), mask: false });
+        assert!(check_composition(&s, (4, 3), 2).unwrap_err().to_string().contains("cannot glow"));
+        s.composition.elements[0].glow = None;
+        // A plain background drawn layer may be distant too; dirt, a mixed
+        // layer or one with back art may not.
+        s.composition.elements[1].distant = Some(10);
+        assert!(
+            check_composition(&s, (4, 3), 2).unwrap_err().to_string().contains("only a background element")
+        );
+        s.composition.elements[1].kind = ElementKind::drawn(ElementMaterial::Background);
+        check_composition(&s, (4, 3), 2).unwrap();
+        s.composition.elements[2].distant = Some(10);
+        assert!(check_composition(&s, (4, 3), 2).unwrap_err().to_string().contains("mixed layer"));
+        // The text leaves `distant` out when it is not set.
+        s.composition.elements[2].distant = None;
+        let mut fs = MemFs::new();
+        write_composition_files(&mut fs, &s).unwrap();
+        let text = String::from_utf8(fs.read(&VPath::new(COMPOSITION_FILE).unwrap()).unwrap()).unwrap();
+        assert_eq!(text.matches("distant").count(), 2, "{text}");
+        assert_eq!(read_composition_files(&fs).unwrap().unwrap().composition, s.composition);
+    }
+
     /// Review A-1 (re-graded): an id whose files no file system can hold
     /// on every platform (a Windows device name) is refused by the check,
     /// not only when the save writes it.
@@ -942,6 +1044,7 @@ mod tests {
             },
             glow: None,
             clear: false,
+            distant: None,
         };
         // A mask's pixels count too: at the limit, a 10 × 10 mask is over.
         let mut at_limit = sample();

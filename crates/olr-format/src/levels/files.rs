@@ -1,14 +1,14 @@
 //! A level's files. Other paths (`pack.ron`, ...) belong to `olr-pack`
 //! and are ignored here.
 
-use olr_data::level::Material;
+use olr_data::level::{DistantLayer, Material};
 use olr_vfs::{ContentSink, ContentSource, VPath};
 use serde::{Deserialize, Serialize};
 
 use super::{
     BACK_FILE, CLEAR_FILE, FRONT_FILE, GLOW_BACK_FILE, GLOW_FILE, GROUPS_BACK_FILE, GROUPS_FILE, LEVEL_FILE,
-    LOOK_FILES, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_THUMB_BYTES, THUMB_FILE, check,
-    check_header, check_thumb,
+    LOOK_FILES, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_DISTANT, MAX_THUMB_BYTES,
+    THUMB_FILE, check, check_distant_layers, check_header, check_thumb, distant_file,
 };
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, LEVEL_ART};
@@ -50,6 +50,32 @@ pub(crate) struct LevelFile {
     /// draws as OLX did. Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     look: Option<LookSource>,
+    /// The level's distant (parallax) layers, far to near (the element
+    /// order: each later one in front of the earlier ones), at most
+    /// `MAX_DISTANT` (16); the `i`-th one's image is `distant/<i>.png`.
+    /// They show where `back.png` is see-through (alpha 0). Default none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    distant: Vec<DistantEntry>,
+}
+
+/// A distant (parallax) layer (issue #11): its image `distant/<i>.png` is
+/// art pixels (the level's art scale; alpha 0 uncovered, anything else
+/// covered and drawn opaque), each side a multiple of `art_scale` and at
+/// most `MAX_SIDE` (4096) world pixels. It shows through the level's
+/// see-through back pixels, scrolling by `1 - depth` of the camera's
+/// movement, lit by `1 - depth` of the light beyond the ambient. Purely
+/// decoration: no material, never in the simulation.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct DistantEntry {
+    /// Percent, 1 (near: moves and is lit almost like the level) to 99
+    /// (far: almost still, ambient light only).
+    depth: u8,
+    /// Its top-left in world pixels with the camera (the view's centre) at
+    /// the level's centre; with the camera at `c` it lies at `at + depth ×
+    /// (c - size / 2)`. Each coordinate within `MAX_DISTANT_AT` (16384)
+    /// of 0.
+    at: (i32, i32),
 }
 
 fn write_bytes(sink: &mut dyn ContentSink, file: &str, bytes: &[u8]) -> Result<(), FormatError> {
@@ -75,6 +101,7 @@ pub fn file_paths(src: &LevelSource) -> Vec<String> {
     if src.clear.is_some() {
         out.push(CLEAR_FILE.into());
     }
+    out.extend((0..src.distant.len()).map(distant_file));
     out
 }
 
@@ -88,6 +115,7 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
         theme: src.theme.clone(),
         objects: src.objects.clone(),
         look: src.look.clone(),
+        distant: src.distant.iter().map(|d| DistantEntry { depth: d.depth, at: d.at }).collect(),
     };
     write_text(sink, LEVEL_FILE, &to_canonical(LEVEL_FILE, &file)?)?;
     write_bytes(sink, MATERIAL_FILE, &super::encode_material(src.size, &src.material))?;
@@ -110,7 +138,39 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
     if let Some(c) = &src.clear {
         write_bytes(sink, CLEAR_FILE, &image_io::encode_grey(src.size.0, src.size.1, c))?;
     }
+    for (i, d) in src.distant.iter().enumerate() {
+        write_bytes(sink, &distant_file(i), &image_io::encode_rgba(&d.image))?;
+    }
     Ok(())
+}
+
+/// The distant layers `entries` name (`distant/<i>.png`), each image's
+/// size checked from its header before decoding (`check_distant_layers`
+/// then checks them together).
+fn read_distant(
+    src: &dyn ContentSource,
+    entries: &[DistantEntry],
+    art_scale: u32,
+) -> Result<Vec<DistantLayer>, FormatError> {
+    if entries.len() > MAX_DISTANT {
+        return Err(FormatError::invalid(
+            LEVEL_FILE,
+            "distant",
+            format!("{} distant layers, above {MAX_DISTANT}", entries.len()),
+        ));
+    }
+    let mut out = Vec::with_capacity(entries.len());
+    for (i, e) in entries.iter().enumerate() {
+        let file = distant_file(i);
+        let bytes = read_bytes(src, &file)?;
+        if let Some((w, h)) = image_io::png_size(&bytes) {
+            super::check_distant_size((w, h), art_scale).map_err(|m| FormatError::invalid(&file, "", m))?;
+        }
+        let image = image_io::decode_rgba_within(&bytes, LEVEL_ART)
+            .map_err(|message| FormatError::Io { file: file.clone(), message })?;
+        out.push(DistantLayer { image, at: e.at, depth: e.depth });
+    }
+    Ok(out)
 }
 
 /// Reads an 8-bit grey look image, checking its header size first.
@@ -231,9 +291,10 @@ pub fn read_level_files(src: &dyn ContentSource) -> Result<LevelSource, FormatEr
 
 /// The level with `thumb` always `None`: the thumbnail is never read.
 pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSource, FormatError> {
-    let (mut level, glow) = read_base(src)?;
+    let (mut level, glow, distant) = read_base(src)?;
     level.glow = glow?;
     level.clear = read_clear(src, level.size)?;
+    level.distant = distant?;
     check(&level)?;
     Ok(level)
 }
@@ -243,8 +304,13 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
 /// with a warning each instead of failing the level (a broken look never keeps a
 /// level from being played; `pack check` still reports it).
 pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource, Vec<String>), FormatError> {
-    let (mut level, glow) = read_base(src)?;
+    let (mut level, glow, distant) = read_base(src)?;
     let mut warnings = Vec::new();
+    level.distant =
+        distant.and_then(|d| check_distant_layers(&d, level.art_scale).map(|()| d)).unwrap_or_else(|e| {
+            warnings.push(format!("{e}: the level plays without its distant layers"));
+            Vec::new()
+        });
     level.glow = glow.unwrap_or_else(|e| {
         warnings.push(format!("{e}: the level plays without glow"));
         None
@@ -269,12 +335,16 @@ pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource,
     Ok((level, warnings))
 }
 
-/// `level.ron`, the material and the art, checked; the glow images' read
-/// apart, so a caller decides what a bad one means.
+/// `level.ron`, the material and the art, checked; the glow images' and
+/// the distant layers' reads apart, so a caller decides what a bad one
+/// means.
 #[allow(clippy::type_complexity)]
 fn read_base(
     src: &dyn ContentSource,
-) -> Result<(LevelSource, Result<Option<GlowLayers>, FormatError>), FormatError> {
+) -> Result<
+    (LevelSource, Result<Option<GlowLayers>, FormatError>, Result<Vec<DistantLayer>, FormatError>),
+    FormatError,
+> {
     let file = read_level_ron(src)?;
     // level.ron is validated before any image is read.
     let art = check_header(file.size, file.art_scale, file.objects.len())?;
@@ -308,6 +378,7 @@ fn read_base(
     let front = read_art(src, FRONT_FILE, art)?;
     let back = read_art(src, BACK_FILE, art)?;
     let glow = read_glow(src, art, file.size);
+    let distant = read_distant(src, &file.distant, file.art_scale);
     let level = LevelSource {
         name: file.name,
         notes: file.notes,
@@ -322,8 +393,9 @@ fn read_base(
         look: file.look,
         glow: None,
         clear: None,
+        distant: Vec::new(),
     };
-    Ok((level, glow))
+    Ok((level, glow, distant))
 }
 
 #[cfg(test)]
@@ -431,5 +503,89 @@ mod tests {
             !text.contains("art_scale") && !text.contains("objects") && !text.contains("notes"),
             "{text}"
         );
+    }
+
+    fn with_distant(art_scale: u32) -> LevelSource {
+        let mut src = crate::levels::tests::tiny(art_scale);
+        let mut image = olr_data::image::RgbaImage::new(2 * art_scale, art_scale);
+        image.set(0, 0, olr_data::image::Rgba::rgb(9, 8, 7));
+        src.distant = vec![
+            DistantLayer { image: image.clone(), at: (-3, 1), depth: 40 },
+            DistantLayer { image, at: (0, 0), depth: 99 },
+        ];
+        src
+    }
+
+    #[test]
+    fn distant_layers_round_trip() {
+        let src = with_distant(2);
+        let mut a = MemFs::new();
+        write_level_files(&mut a, &src).unwrap();
+        let names: Vec<String> = a.files().map(|(p, _)| p.to_string()).collect();
+        assert_eq!(
+            names,
+            ["back.png", "distant/0.png", "distant/1.png", "front.png", "level.ron", "material.png"]
+        );
+        let mut paths = file_paths(&src);
+        paths.sort();
+        assert_eq!(paths, names);
+        let back = read_level_files(&a).unwrap();
+        assert_eq!(back, src);
+        let (lenient, warnings) = read_level_files_lenient(&a).unwrap();
+        assert_eq!((lenient, warnings), (src, Vec::new()));
+    }
+
+    #[test]
+    fn bad_distant_layers_are_errors_and_played_without() {
+        let mut fs = MemFs::new();
+        write_level_files(&mut fs, &with_distant(2)).unwrap();
+        // An image that is not a multiple of the art scale.
+        let odd =
+            fs.clone().with("distant/1.png", image_io::encode_rgba(&olr_data::image::RgbaImage::new(3, 2)));
+        let e = read_level_files(&odd).unwrap_err().to_string();
+        assert!(e.contains("distant/1.png") && e.contains("multiple of the art scale 2"), "{e}");
+        let (level, warnings) = read_level_files_lenient(&odd).unwrap();
+        assert!(level.distant.is_empty());
+        assert!(warnings[0].contains("without its distant layers"), "{warnings:?}");
+        // A missing image.
+        let mut missing = MemFs::new();
+        for (p, b) in fs.files().filter(|(p, _)| p.as_str() != "distant/0.png") {
+            missing = missing.with(p.as_str(), b.to_vec());
+        }
+        assert!(read_level_files(&missing).unwrap_err().to_string().contains("distant/0.png"));
+        assert!(read_level_files_lenient(&missing).unwrap().0.distant.is_empty());
+        // A depth out of range, and a place too far, are refused by the
+        // writer and the reader alike.
+        for (depth, at, field) in [
+            (0, (0, 0), "distant[0].depth"),
+            (100, (0, 0), "distant[0].depth"),
+            (50, (0, -16385), "distant[0].at"),
+        ] {
+            let mut src = with_distant(1);
+            src.distant[0].depth = depth;
+            src.distant[0].at = at;
+            let e = write_level_files(&mut MemFs::new(), &src).unwrap_err().to_string();
+            assert!(e.contains(field), "{e}");
+            let text = format!(
+                "(name: \"x\", size: (3, 2), art_scale: 2, theme: \"t\", distant: [(depth: {depth}, at: ({}, {}))])\n",
+                at.0, at.1
+            );
+            let bad = fs.clone().with("level.ron", text.into_bytes());
+            let e = read_level_files(&bad).unwrap_err().to_string();
+            assert!(e.contains(field) || e.contains("distant"), "{e}");
+        }
+        // Too many.
+        let mut src = with_distant(1);
+        src.distant = vec![src.distant[0].clone(); MAX_DISTANT + 1];
+        assert!(write_level_files(&mut MemFs::new(), &src).unwrap_err().to_string().contains("above 16"));
+    }
+
+    #[test]
+    fn a_level_without_distant_layers_writes_none() {
+        let mut fs = MemFs::new();
+        write_level_files(&mut fs, &crate::levels::tests::tiny(1)).unwrap();
+        let text = String::from_utf8(fs.files().find(|(p, _)| p.as_str() == "level.ron").unwrap().1.to_vec())
+            .unwrap();
+        assert!(!text.contains("distant"), "{text}");
     }
 }

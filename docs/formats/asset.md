@@ -68,6 +68,7 @@ One element of a composition.
 | `kind` | [ElementKind](#elementkind) | required | What the element is. |
 | `glow` | [ElementGlow](#elementglow) (optional) | none | Its pixels glow (look system): an image or drawn element only. Default none. |
 | `clear` | boolean | `false` | Its rock and dirt let light through (look system §Clear solids): worms and projectiles still collide. An image or drawn element only. Default false. |
+| `distant` | integer (optional) | none | A distant (parallax) layer (issue #11): its depth, percent, 1 (near: it scrolls and is lit almost like the level) to 99 (far: almost still, ambient light only). It shows through the see-through back pixels the elements in front leave uncovered, moving by `1 - depth` of the camera's movement; its box lies where it is drawn with the camera (the view's centre) at the level's centre. Decoration only: no material, no glow, never clear. A Background image or plain drawn layer only, and every distant element lies below every other one; an asset carries none. Default none. |
 
 <a id="glowgroupsource"></a>
 

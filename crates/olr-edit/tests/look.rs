@@ -39,6 +39,7 @@ fn level() -> LevelSource {
         look: None,
         glow: None,
         clear: None,
+        distant: Vec::new(),
     }
 }
 

@@ -269,6 +269,7 @@ impl Document {
             },
             glow: None,
             clear: false,
+            distant: None,
         };
         self.check_with(|es| es.push(element.clone()))?;
         let bytes = Arc::new(bytes);
@@ -536,6 +537,7 @@ impl Document {
             kind,
             glow: None,
             clear: false,
+            distant: None,
         };
         self.check_with(|es| es.push(element.clone()))?;
         let id = element.id.clone();
@@ -562,6 +564,7 @@ impl Document {
             kind: ElementKind::drawn(material),
             glow: None,
             clear: false,
+            distant: None,
         };
         self.check_with(|es| es.push(element.clone()))?;
         let (w, h) = self.level.size;
@@ -599,6 +602,7 @@ impl Document {
                 kind: ElementKind::Raster,
                 glow: None,
                 clear: false,
+                distant: None,
             });
             new
         })
@@ -1125,6 +1129,7 @@ impl Document {
             look: None,
             glow: None,
             clear: None,
+            distant: Vec::new(),
         };
         edit(&mut tmp)?;
         Ok(self.change(Edit::Objects { before, after: tmp.objects }))

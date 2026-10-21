@@ -180,6 +180,9 @@ pub fn check_asset(src: &AssetSource) -> Result<(), FormatError> {
             "an asset holds images and drawn layers, no raster",
         ));
     }
+    if let Some(i) = f.elements.iter().position(|e| e.distant.is_some()) {
+        return Err(invalid(&format!("elements[{i}].distant"), "an asset carries no distant layer"));
+    }
     let look = LookSource { glow_groups: f.glow_groups.clone(), ..LookSource::default() };
     crate::look::compile_look_source(&look, ASSET_FILE)?;
     let composition = as_composition(src);
@@ -291,6 +294,7 @@ mod tests {
             },
             glow: Some(ElementGlow { strength: 100, group: "flames".into(), mask: true }),
             clear: false,
+            distant: None,
         };
         AssetSource {
             file: AssetFile {
@@ -339,6 +343,11 @@ mod tests {
         let mut s = sample();
         s.file.elements[0].kind = ElementKind::Raster;
         assert!(check_asset(&s).is_err());
+        let mut s = sample();
+        s.file.elements[0].glow = None;
+        s.file.glow_groups.clear();
+        s.file.elements[0].distant = Some(50);
+        assert!(check_asset(&s).unwrap_err().to_string().contains("no distant layer"));
         let mut s = sample();
         s.files.remove("layers/torch.png");
         let e = check_asset(&s).unwrap_err().to_string();

@@ -410,6 +410,7 @@ fn the_new_edits_count_their_bytes() {
             kind: ElementKind::drawn(ElementMaterial::Dirt),
             glow: None,
             clear: false,
+            distant: None,
         },
         decoded: Decoded::Drawn { art, cells: None, back: None },
     };
