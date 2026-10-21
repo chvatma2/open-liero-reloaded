@@ -3928,7 +3928,7 @@ away. A layout change only: no tool, operation or format changes.
   `a_toolbar_row_is_one_straight_line`).
 - **Right: one panel** (`ui/elements.rs`, `ui/properties.rs`): tabs
   Elements | Assets | Spawns (`PanelTab`, `EditorAction::Tab`); Assets is
-  a placeholder for the asset library. The tab follows the selection
+  the asset library (issue #9, below). The tab follows the selection
   (`update`: an element or group selected shows Elements, a spawn
   Spawns, on any change of the selection and on any `Select` or a press
   with Select or Spawn); otherwise only a click changes it. Under the
@@ -3953,6 +3953,63 @@ away. A layout change only: no tool, operation or format changes.
   autoplay/editor.ron`) follows: Draw's flyout for the brush, Make parts
   glow… instead of plan 15c's removed Light tool, the Spawns tab, File's
   Save and Close.
+
+## Level editor asset library (issue #9)
+
+Ready-made pieces of a level, saved once and dropped into any level. No
+OLX counterpart: OLR's own. The format is `docs/formats/asset.md`
+(`olr_format::assets`), the operations `olr_edit::asset`, shared by the
+editor and `olr-cli asset save|place|check`.
+
+- **An asset is a folder** `<asset-id>/`: `asset.ron` (name, the art
+  scale it was made at, size, composition elements placed from its
+  top-left, the glow groups they name, with their settings), the
+  elements' files as a composition's `editor/` holds them without
+  `editor/`, and `thumb.png`. No raster element (an asset is a piece, not
+  a level). Untrusted: read with the level format's limits, ids and
+  sources checked before any file is read, refused with a message. No
+  version field or shims: the format is new.
+- **The thumbnail** is the asset baked alone and drawn lit by
+  `level_thumbnail` under a fixed dark preview look (ambient `#304060` at
+  20 %, the asset's groups), so a glow shows: under a full-bright look a
+  glow adds nothing.
+- **Libraries**: built-in in `content/assets/` beside the content
+  directory (read-only, shipped by `dist`, not a content root: assets are
+  not packs, so the fresh-import check and the pack loaders never see
+  them); the user's in `<data>/assets/`, at most 256 (`MAX_USER_ASSETS`,
+  as textures). Sharing is copying a folder in, or Import asset… (the
+  folder checked and decoded whole, then written anew under a folder name
+  of its own; a name clash numbered). Folder names are slugs of the name
+  (`torch`, `torch-2`).
+- **Save as asset** cuts the selected elements (each cropped to what it
+  covers; a picture whole), or with a pixel rectangle the world rectangle
+  from every visible layer (not clipped to the layer the rectangle was
+  dragged on, as the copy's is): a picture wholly inside kept whole (its
+  original and settings), anything else cropped as drawn pixels (a
+  layer's art, cells and back art; a picture partly inside as its baked
+  pixels); empty pieces, all-zero glow masks (their group not carried)
+  and pieces identical in pixels, material and glow to one below are
+  dropped. `olr-cli asset save --layers` restricts the layers (the torch
+  of Castle Strike Reloaded: `background-2`, a near copy of `background`
+  with holes, would come along otherwise). The name is asked; a name of
+  one of the user's asks Replace or Keep both.
+- **Placing** (a thumbnail dragged onto the canvas, or clicked and then
+  a press on the canvas; its top-left at the point, its box outlined at
+  the pointer meanwhile) is one undo step, as a paste: new ids and names
+  (the asset's name for a one-piece asset, "<asset> <piece>" otherwise,
+  numbered when taken), resampled to the level's art scale, masks kept,
+  the new elements selected. Its glow groups come first in the same step:
+  a group the level has (same id) is joined and keeps the level's
+  settings; a missing one is added with the asset's (not a new group's
+  defaults). A level without a look gets `LookSource::default()` and the
+  groups, and the status bar says "Added lighting for the asset's glow:
+  lower the ambient light in the level's lighting to see it": the
+  maintainer's choice over darkening the level unasked. A placed asset is
+  ordinary elements; no level refers to its folder.
+- **Remove** asks first and takes only the user's; built-in assets
+  cannot be removed. The editor stays pure: the host lists, reads,
+  writes, imports and removes (`ReadAsset`, `SaveAsset`, `ImportAsset`,
+  `RemoveAsset`, answered by `AssetsChanged`, `AssetSaved`, `AssetRead`).
 
 ## Kept OLX quirks
 
