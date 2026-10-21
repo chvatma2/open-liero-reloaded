@@ -87,11 +87,15 @@ pub struct ColorMap {
     /// Art pixels.
     width: u32,
     height: u32,
-    /// The composite, RGBA8, always opaque.
+    /// The composite, RGBA8, opaque but where see-through.
     pixels: Vec<u8>,
-    /// The level's front and back art (opaque), for carving and rebuilding.
+    /// The level's front and back art (opaque but where see-through), for
+    /// carving and rebuilding.
     front: Vec<u8>,
     back: Vec<u8>,
+    /// The level has distant layers (issue #11): its art keeps alpha 0
+    /// where it is see-through.
+    see_through: bool,
     material: Terrain,
     theme: ThemeArt,
     /// The green shades' own generator (OLX draws them from the client's `rand()`).
@@ -217,7 +221,47 @@ impl ColorMap {
             dirty: Vec::with_capacity(Self::MAX_DIRTY),
             glow: None,
             clear: None,
+            see_through: false,
         }
+    }
+
+    /// [`ColorMap::new`] for a level with distant layers (issue #11): the
+    /// back art's pixels of alpha 0 stay see-through (alpha 0) in the map's
+    /// back, and so in its front and composite where the material is
+    /// background; every other pixel is opaque. Carving reveals them;
+    /// stains never land on them.
+    pub fn new_see_through(
+        material: &Terrain,
+        front: &RgbaImage,
+        back: &RgbaImage,
+        art_scale: u32,
+        theme: ThemeArt,
+    ) -> Self {
+        let mut map = Self::new(material, front, back, art_scale, theme);
+        map.see_through = true;
+        let (w, h) = (map.width, map.height);
+        let s = map.scale;
+        let mw = map.material.width() as usize;
+        for y in 0..h.min(back.height()) {
+            for x in 0..w.min(back.width()) {
+                if back.get(x, y).a != 0 {
+                    continue;
+                }
+                let i = (y as usize * w as usize + x as usize) * 4 + 3;
+                map.back[i] = 0;
+                let cell = (y / s) as usize * mw + (x / s) as usize;
+                if map.material.cells[cell] == Material::Background as u8 {
+                    map.front[i] = 0;
+                    map.pixels[i] = 0;
+                }
+            }
+        }
+        map
+    }
+
+    /// Whether the map keeps see-through pixels ([`ColorMap::new_see_through`]).
+    pub fn see_through(&self) -> bool {
+        self.see_through
     }
 
     /// Gives the map a glow channel (`None` removes it). Layers that do not
@@ -320,7 +364,8 @@ impl ColorMap {
         self.scale
     }
 
-    /// The colour image, RGBA8, row-major, opaque.
+    /// The colour image, RGBA8, row-major, opaque (alpha 0 where
+    /// see-through, only in a map made by [`ColorMap::new_see_through`]).
     pub fn pixels(&self) -> &[u8] {
         &self.pixels
     }
@@ -337,7 +382,7 @@ impl ColorMap {
         let i =
             ((y as usize * self.scale as usize) * self.width as usize + x as usize * self.scale as usize) * 4;
         let p = &self.pixels[i..i + 4];
-        Some(Rgba { r: p[0], g: p[1], b: p[2], a: p[3] })
+        Some(Rgba::rgb(p[0], p[1], p[2]))
     }
 
     /// Replays one terrain edit (after the simulation made it, in the same order).
@@ -363,7 +408,7 @@ impl ColorMap {
             return;
         }
         let (x, y) = (x as u32, y as u32);
-        self.put(x, y, color);
+        self.stain_block(x, y, color);
         self.mark(x as i64, y as i64, x as i64 + 1, y as i64 + 1);
     }
 
@@ -395,7 +440,7 @@ impl ColorMap {
                 let c = src.get(sx0 + col as u32, sy0 + row as u32);
                 let air = self.material.material(dx0 + col, dy0 + row) == Some(Material::Background);
                 if !c.same_rgb(Rgba::MAGENTA) && c.a != 0 && (on_air || !air) {
-                    self.put((dx0 + col) as u32, (dy0 + row) as u32, c);
+                    self.stain_block((dx0 + col) as u32, (dy0 + row) as u32, c);
                 }
             }
         }
@@ -476,13 +521,15 @@ impl ColorMap {
             let (a, b) = ((y as usize * w + x0 as usize) * 4, (y as usize * w + x1 as usize) * 4);
             self.front[a..b].copy_from_slice(&front.as_raw()[a..b]);
             self.back[a..b].copy_from_slice(&back.as_raw()[a..b]);
+            // Opaque, but where see-through in a see-through map.
+            let keep = self.see_through;
             for p in self.front[a..b]
                 .as_chunks_mut::<4>()
                 .0
                 .iter_mut()
                 .chain(self.back[a..b].as_chunks_mut::<4>().0)
             {
-                p[3] = 255;
+                p[3] = if keep && p[3] == 0 { 0 } else { 255 };
             }
             self.pixels[a..b].copy_from_slice(&self.front[a..b]);
         }
@@ -609,6 +656,26 @@ impl ColorMap {
 
     fn put(&mut self, x: u32, y: u32, c: Rgba) {
         fill(&mut self.pixels, self.width, self.scale, x, y, c);
+    }
+
+    /// Stains world pixel `(x, y)`'s block in `c`, but its see-through
+    /// pixels (a see-through map's alpha 0: blood never hangs in the air
+    /// before the distant layers).
+    fn stain_block(&mut self, x: u32, y: u32, c: Rgba) {
+        if !self.see_through {
+            fill(&mut self.pixels, self.width, self.scale, x, y, c);
+            return;
+        }
+        let rgba = [c.r, c.g, c.b, 255];
+        let (w, s) = (self.width as usize, self.scale as usize);
+        for row in y as usize * s..(y as usize + 1) * s {
+            let start = (row * w + x as usize * s) * 4;
+            for p in self.pixels[start..start + s * 4].as_chunks_mut::<4>().0 {
+                if p[3] != 0 {
+                    p.copy_from_slice(&rgba);
+                }
+            }
+        }
     }
 
     fn copy_block(&mut self, x: u32, y: u32, front: bool) {
