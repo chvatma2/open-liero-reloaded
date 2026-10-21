@@ -206,13 +206,47 @@ templates and the level operations.
     level-sized layer's moves by the offset) and `set_all` resamples a
     resized image's (`glow::relay_mask`, `glow::resample_mask`, shared
     with the editor; plan 15a's final review).
-- **Tests** (`tests/`, one binary): `pack.rs` (every bundled pack loads and
+- **Issue #9, the asset library** (`asset`; the format is
+  `olr_format::assets`; STATUS.md "Level editor asset library (issue
+  #9)"): `Piece` (an element, its `Decoded`, an image's original, its glow
+  mask; `PieceRef` borrowed) and `Asset` (name, art scale, size, pieces
+  bottom to top relative to its top-left, the glow groups they name).
+  `from_elements` (each drawn or raster piece cropped to what it covers,
+  `drawn::crop`; an image whole) and `cut_rect(level, rect, layers, name)`
+  (every visible element, or those of `layers`; an image wholly inside
+  kept whole; anything else cropped as drawn pixels with its cells and
+  back art; a piece with no pixels, an all-zero glow mask (its group not
+  carried) and a piece identical in pixels, material and glow to one below
+  left out). `land(to, piece, from, offset, name)` lands a piece as a new
+  element (new id and name, art and mask resampled across art scales,
+  originals shared or renamed; the editor's paste uses it too);
+  `with_groups` the placing's look (`GroupChange`: joined, added with the
+  asset's settings, `added_look` for a level without one; `ADDED_LIGHTING`
+  says so); `piece_name`. `encode` writes `AssetSource` (`images/`,
+  `layers/`, `masks/`, `glow/`, and `thumbnail`: baked under
+  `preview_look`, ambient `PREVIEW_AMBIENT` `#304060` at 20 %, through
+  `level_thumbnail`); `decode` checks (`check_asset`) and decodes
+  (`decode_element`, `decode_glow_masks`). `load_dir`, `read_dir`,
+  `save_dir` (`replace_dir`), `summary` (`asset.ron` and the thumbnail
+  only: the Assets tab's entry). `DecodedLevel::of_pack` (a plain level
+  as its three layers) and `place_in_pack` (`olr-cli asset place`: one
+  checked edit of a copy, the caller bakes). The library:
+  `MAX_USER_ASSETS` (256), `valid_asset_id`, `asset_slug`,
+  `list_library`, `add_to_library` (a new folder named after it, or over
+  `replace`), `import_into_library` (read and checked whole, written
+  anew, a name clash numbered), `remove_from_library`.
+- **Tests** (`tests/`, one binary): `asset.rs` (issue #9: round trips
+  through a folder at art scales 1 and 2, masks and groups joined or
+  added, resampling across scales, the rectangle's rules, a picture kept
+  whole, a raster's cells and back art, bad folders refused, the
+  library), `pack.rs` (every bundled pack loads and
   writes back byte for byte; foreign files kept; invalid results refused;
   saves through `x/..` and a symbolic link; a name a save would lose),
   `fmt.rs` (`bundled_packs_are_canonical`, R5's `check` guard), `new.rs`,
   `level.rs` (a proptest of the background invariant at art scales 1-4)
   and `guide.rs` (`docs/formats/README.md`'s examples parse, are canonical
-  and check clean, the composed level's files generated); `pixelate.rs`, `textures.rs`,
+  and check clean, the composed level's files generated; the asset
+  example's files too); `pixelate.rs`, `textures.rs`,
   `compose.rs` (the raster round trip of every bundled level, the region
   proptest, `the_fixture_is_baked` over `fixtures/edit/composed-level`, the
   ignored `bake_speed`: about 0.3-0.4 s in release for a full-level

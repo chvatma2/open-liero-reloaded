@@ -3,6 +3,7 @@
 //! canonical formatter ([`fmt`]), pack templates ([`new`]) and the image
 //! pipeline of level composition ([`pixelate`], plan 14a).
 
+pub mod asset;
 pub mod compose;
 pub mod drawn;
 pub mod element;

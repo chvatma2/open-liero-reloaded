@@ -74,6 +74,29 @@ fn canonical(b: &Block) -> Result<String, String> {
     olr_format::canonical_text(&b.path, &b.text).map_err(|e| e.to_string())
 }
 
+/// Issue #9: the asset example, with the files its text names generated,
+/// checks clean and decodes.
+#[test]
+fn the_guide_asset_example_checks_clean() {
+    let blocks = blocks(&guide());
+    let b = blocks.iter().find(|b| b.kind == "asset").expect("an asset example");
+    let file: olr_format::assets::AssetFile = olr_format::ron_io::from_canonical(&b.path, &b.text).unwrap();
+    let (w, h) = file.size;
+    let s = file.art_scale;
+    let mut files = std::collections::BTreeMap::new();
+    files.insert(
+        "layers/torch.png".to_string(),
+        olr_format::image_io::encode_rgba(&olr_data::image::RgbaImage::new(w * s, h * s)),
+    );
+    files.insert(
+        "glow/torch.png".to_string(),
+        olr_format::image_io::encode_grey(w * s, h * s, &vec![255; (w * h * s * s) as usize]),
+    );
+    let src = olr_format::assets::AssetSource { file, files, thumb: None };
+    olr_format::assets::check_asset(&src).unwrap();
+    olr_edit::asset::decode(&src).unwrap();
+}
+
 trait ReadFile {
     fn read_file(&self, path: &str) -> Vec<u8>;
 }
