@@ -46,7 +46,7 @@ templates, the level operations and the skin operations.
   included). Issue #13: `Skin { double }` is a blank skin
   (`skin::blank`); `new_pack_with(…, edit)` changes the renamed source
   before the save (an error there, `NewError::Edit`, writes nothing).
-- **`skin`** (issue #13; `olr-cli skin`, and the skin editor next):
+- **`skin`** (issue #13; `olr-cli skin`, and issue #14's skin editor):
   `blank(name, double)` (every pixel transparent, OLX's layout or double
   resolution's), `double(src)` (a classic skin to double resolution by
   Scale2x per frame, a frame's edge its own neighbour; each art pixel
@@ -66,7 +66,9 @@ templates, the level operations and the skin operations.
   fifth of their colour, glowing pixels at their glow quarter
   (`olr_data::skin::glow_level`) and the light, if any, as a disc of its
   reach around the frame's glowing pixels, clipped to the cell: a preview,
-  not the game's pixels).
+  not the game's pixels); `preview_frame(skin, colour, f, left, dark,
+  scale)` is one of its cells alone (the skin editor's live preview,
+  issue #14).
 - **`compose::split_layers` / `split_from`** (plan 14c, the playtest): a
   level's material, front and back as three drawn layers, bottom to top
   `background` (the back art everywhere), `dirt` and `rock` (the front art
@@ -295,7 +297,7 @@ templates, the level operations and the skin operations.
   the pixel and rounds a tinted, glowing corner within its frame; blank
   skins; `check_dir` refusing another kind, a wrong-size glow, a light
   over the caps, partial tint, a cut PNG; the preview's size and glow;
-  on the committed `content/`, offline too),
+  issue #14's `a_preview_frame_is_the_previews_cell`; on the committed `content/`, offline too),
   `level.rs` (a proptest of the background invariant at art scales 1-4)
   and `guide.rs` (`docs/formats/README.md`'s examples parse, are canonical
   and check clean, the composed level's files generated; the asset

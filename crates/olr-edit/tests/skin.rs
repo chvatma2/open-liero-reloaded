@@ -1,7 +1,8 @@
 //! Skin operations (issue #13): a copy round-trips its source exactly, a
 //! classic skin doubles by Scale2x (40 × 36 frames, each 2 × 2 block the
 //! source pixel where Scale2x keeps it), blank skins, the check refusing
-//! bad skins, and the preview's size and glow.
+//! bad skins, and the preview's size and glow; one preview cell alone
+//! (issue #14's live preview).
 
 use std::path::{Path, PathBuf};
 
@@ -10,7 +11,8 @@ use olr_data::manifest::PackKind;
 use olr_data::skin::SkinLight;
 use olr_edit::new::{NewError, Template, new_pack};
 use olr_edit::skin::{
-    MAX_PREVIEW_SCALE, PREVIEW_LIGHT, SkinError, blank, check_dir, double, new_skin, preview, preview_size,
+    MAX_PREVIEW_SCALE, PREVIEW_CELL, PREVIEW_LIGHT, SkinError, blank, check_dir, double, new_skin, preview,
+    preview_frame, preview_size,
 };
 use olr_format::skins::{DOUBLE_SKIN, OLX_SKIN, SkinSource, compile_skin, read_skin_files};
 use olr_vfs::DirFs;
@@ -268,4 +270,29 @@ fn the_preview_has_its_size_and_shows_the_glow() {
     };
     assert_eq!(sum(&a, 0..half), sum(&b, 0..half));
     assert!(sum(&a, half..a.height()) > sum(&b, half..a.height()) * 3 / 2, "the glow and light show");
+}
+
+/// Issue #14: one cell drawn alone is the preview's cell, for every frame,
+/// facing and background, at either art scale.
+#[test]
+fn a_preview_frame_is_the_previews_cell() {
+    let classic = olr_pack::read_skin(&DirFs::new(default_skin())).unwrap().skin;
+    let ff = olr_pack::read_skin(&DirFs::new(firefly())).unwrap().skin;
+    let colour = Rgba::rgb(40, 160, 220);
+    for (skin, scale) in [(&classic, 2), (&ff, 4), (&ff, 1)] {
+        let all = preview(skin, colour, scale);
+        let (cw, ch) = (PREVIEW_CELL.0 * scale, PREVIEW_CELL.1 * scale);
+        for (f, left, dark) in [(0, false, false), (4, true, false), (13, false, true), (20, true, true)] {
+            let cell = preview_frame(skin, colour, f, left, dark, scale);
+            assert_eq!((cell.width(), cell.height()), (cw, ch));
+            let (col, row) = (f % 7 + if left { 7 } else { 0 }, f / 7 + if dark { 3 } else { 0 });
+            for y in 0..ch {
+                for x in 0..cw {
+                    assert_eq!(cell.get(x, y), all.get(col * cw + x, row * ch + y), "frame {f} ({x}, {y})");
+                }
+            }
+        }
+    }
+    // A frame past the sheet is the last one's, never a panic.
+    assert_eq!(preview_frame(&ff, colour, 99, false, true, 2), preview_frame(&ff, colour, 20, false, true, 2));
 }

@@ -265,54 +265,89 @@ pub fn preview(skin: &Skin, colour: Rgba, scale: u32) -> RgbaImage {
     let s = scale.clamp(1, MAX_PREVIEW_SCALE);
     let (w, h) = preview_size(s);
     let mut out = RgbaImage::new(w, h);
-    let layout = skin.def.layout;
     let sheet = skin.colorize(colour);
-    let k = layout.art_scale();
-    let (sw, sh) = (sheet.width(), sheet.height());
-    // A frame's sprite on the sheet (OLX: src/client/CGameSkin.cpp:584-601,
-    // as `olr_content::skin_source`); off the sheet is transparent.
-    let pixel = |f: u32, x: u32, y: u32| -> Option<(Rgba, u8)> {
-        let sx = f.checked_mul(layout.frame_width)?.checked_add(layout.frame_spacing)?.checked_add(x)?;
-        if sx >= sw || y >= sh || skin.mask_at(sx, y) == MaskKind::Transparent {
-            return None;
+    let (cw, ch) = (PREVIEW_CELL.0 * s, PREVIEW_CELL.1 * s);
+    for row in 0..2 * WALK {
+        for col in 0..2 * AIM {
+            let (dark, left) = (row >= WALK, col >= AIM);
+            let f = (row % WALK) * AIM + col % AIM;
+            draw_cell(skin, &sheet, f, left, dark, s, |x, y, p| out.set(col * cw + x, row * ch + y, p));
         }
-        Some((sheet.get(sx, y), skin.glow_at(sx, y)))
-    };
-    let glows: Vec<Option<FrameGlow>> = (0..AIM * WALK)
-        .map(|f| {
-            let light = skin.def.light?;
-            let (mut sum, mut weight, mut cx, mut cy) = ([0.0f32; 3], 0.0f32, 0.0f32, 0.0f32);
-            for y in 0..layout.worm_height {
-                for x in 0..layout.worm_width {
-                    let Some((p, g)) = pixel(f, x, y) else { continue };
-                    let g = f32::from(g) / 255.0;
-                    for (c, v) in sum.iter_mut().zip([p.r, p.g, p.b]) {
-                        *c += g * f32::from(v) / 255.0;
-                    }
-                    weight += g;
-                    cx += g * (x as f32 + 0.5);
-                    cy += g * (y as f32 + 0.5);
-                }
+    }
+    out
+}
+
+/// One cell of [`preview`]: frame `f` (0 to 20) in the player's `colour`,
+/// facing left when `left`, in the dark when `dark`, at `scale` (1 to
+/// [`MAX_PREVIEW_SCALE`]); [`PREVIEW_CELL`] world pixels at that scale
+/// (the skin editor's live preview, issue #14).
+pub fn preview_frame(skin: &Skin, colour: Rgba, f: u32, left: bool, dark: bool, scale: u32) -> RgbaImage {
+    let s = scale.clamp(1, MAX_PREVIEW_SCALE);
+    let mut out = RgbaImage::new(PREVIEW_CELL.0 * s, PREVIEW_CELL.1 * s);
+    let sheet = skin.colorize(colour);
+    draw_cell(skin, &sheet, f.min(AIM * WALK - 1), left, dark, s, |x, y, p| out.set(x, y, p));
+    out
+}
+
+/// Frame `f`'s light in [`preview`]: `None` without a skin light or a
+/// glowing pixel.
+fn frame_glow(skin: &Skin, sheet: &RgbaImage, f: u32) -> Option<FrameGlow> {
+    let layout = skin.def.layout;
+    let k = layout.art_scale();
+    let light = skin.def.light?;
+    let (mut sum, mut weight, mut cx, mut cy) = ([0.0f32; 3], 0.0f32, 0.0f32, 0.0f32);
+    for y in 0..layout.worm_height {
+        for x in 0..layout.worm_width {
+            let Some((p, g)) = sheet_pixel(skin, sheet, f, x, y) else { continue };
+            let g = f32::from(g) / 255.0;
+            for (c, v) in sum.iter_mut().zip([p.r, p.g, p.b]) {
+                *c += g * f32::from(v) / 255.0;
             }
-            (weight > 0.0).then(|| {
-                let share = (weight / (k * k) as f32 / 3.0).min(1.0);
-                FrameGlow {
-                    colour: sum.map(|c| c / weight),
-                    centre: (cx / weight, cy / weight),
-                    strength: f32::from(light.intensity) / 100.0 * share,
-                }
-            })
-        })
-        .collect();
+            weight += g;
+            cx += g * (x as f32 + 0.5);
+            cy += g * (y as f32 + 0.5);
+        }
+    }
+    (weight > 0.0).then(|| {
+        let share = (weight / (k * k) as f32 / 3.0).min(1.0);
+        FrameGlow {
+            colour: sum.map(|c| c / weight),
+            centre: (cx / weight, cy / weight),
+            strength: f32::from(light.intensity) / 100.0 * share,
+        }
+    })
+}
+
+/// A frame's sprite pixel on the colorized `sheet` and its glow (OLX:
+/// src/client/CGameSkin.cpp:584-601, as `olr_content::skin_source`); off
+/// the sheet or transparent is `None`.
+fn sheet_pixel(skin: &Skin, sheet: &RgbaImage, f: u32, x: u32, y: u32) -> Option<(Rgba, u8)> {
+    let layout = skin.def.layout;
+    let sx = f.checked_mul(layout.frame_width)?.checked_add(layout.frame_spacing)?.checked_add(x)?;
+    if sx >= sheet.width() || y >= sheet.height() || skin.mask_at(sx, y) == MaskKind::Transparent {
+        return None;
+    }
+    Some((sheet.get(sx, y), skin.glow_at(sx, y)))
+}
+
+/// Draws frame `f`'s cell at scale `s` through `put(x, y, pixel)`, cell
+/// coordinates.
+fn draw_cell(
+    skin: &Skin,
+    sheet: &RgbaImage,
+    f: u32,
+    left: bool,
+    dark: bool,
+    s: u32,
+    mut put: impl FnMut(u32, u32, Rgba),
+) {
+    let layout = skin.def.layout;
+    let k = layout.art_scale();
+    let glow = if dark { frame_glow(skin, sheet, f) } else { None };
     let reach = skin.def.light.map_or(1.0, |l| f32::from(l.reach).max(1.0));
     let to_u8 = |v: f32| (v * 255.0).round().clamp(0.0, 255.0) as u8;
-    for oy in 0..h {
-        let (row, cy) = (oy / (PREVIEW_CELL.1 * s), oy % (PREVIEW_CELL.1 * s));
-        let (dark, walk) = (row >= WALK, row % WALK);
-        for ox in 0..w {
-            let (col, cx) = (ox / (PREVIEW_CELL.0 * s), ox % (PREVIEW_CELL.0 * s));
-            let (left, aim) = (col >= AIM, col % AIM);
-            let f = walk * AIM + aim;
+    for cy in 0..PREVIEW_CELL.1 * s {
+        for cx in 0..PREVIEW_CELL.0 * s {
             // The cell's pixel centre and the worm's art pixel under it.
             let (wx, wy) = ((cx as f32 + 0.5) / s as f32, (cy as f32 + 0.5) / s as f32);
             let (rx, ry) = (cx as i64 * k as i64 / s as i64, cy as i64 * k as i64 / s as i64);
@@ -322,13 +357,13 @@ pub fn preview(skin: &Skin, colour: Rgba, scale: u32) -> RgbaImage {
             let skin_px = inside
                 .then(|| {
                     let ax = if left { layout.worm_width - 1 - ax as u32 } else { ax as u32 };
-                    pixel(f, ax, ay as u32)
+                    sheet_pixel(skin, sheet, f, ax, ay as u32)
                 })
                 .flatten();
             let bg = if dark { PREVIEW_DARK } else { PREVIEW_LIGHT };
             let rgb = |p: Rgba| [p.r, p.g, p.b].map(|c| f32::from(c) / 255.0);
             let mut lit = [if dark { PREVIEW_AMBIENT } else { 1.0 }; 3];
-            if let (true, Some(g)) = (dark, &glows[f as usize]) {
+            if let Some(g) = &glow {
                 let gx = if left { layout.worm_width as f32 - g.centre.0 } else { g.centre.0 };
                 let (lx, ly) =
                     (PREVIEW_WORM.0 as f32 + gx / k as f32, PREVIEW_WORM.1 as f32 + g.centre.1 / k as f32);
@@ -348,8 +383,7 @@ pub fn preview(skin: &Skin, colour: Rgba, scale: u32) -> RgbaImage {
                     c[i] = c[i] * (1.0 - a) + px[i] * lit[i].max(self_lit) * a;
                 }
             }
-            out.set(ox, oy, Rgba { r: to_u8(c[0]), g: to_u8(c[1]), b: to_u8(c[2]), a: 255 });
+            put(cx, cy, Rgba { r: to_u8(c[0]), g: to_u8(c[1]), b: to_u8(c[2]), a: 255 });
         }
     }
-    out
 }
