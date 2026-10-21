@@ -430,6 +430,7 @@ pub fn sections(f: &SystemFacts) -> Vec<Section> {
             ),
             ("UI scale", format!("{}", v.ui_scale)),
             ("HUD layout", flagged(v.hud_layout.label().to_string(), o.hud_layout)),
+            ("Blood", format!("{} %", v.blood)),
         ],
     ));
     let a = &f.settings.audio;

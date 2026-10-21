@@ -721,3 +721,41 @@ fn options_edit_turn_relays_and_port_mapping() {
     h.get_by_label("the list is full");
     assert!(h.get_by_label("Add TURN relay").accesskit_node().is_disabled());
 }
+
+/// Options → Video's Blood (issue #6): 0-500 % in steps of 10, 100 by
+/// default and for a file from before it, applied and saved at once; a
+/// hand-edited amount past the end is clamped.
+#[test]
+fn the_blood_slider_sets_the_players_blood_amount() {
+    assert_eq!(VideoSettings::default().blood, 100);
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
+    h.get_by_label("Options").click();
+    h.run();
+    let slider = h.get_by_role_and_label(Role::Slider, "Blood");
+    slider.focus();
+    h.run();
+    h.key_press(egui::Key::ArrowRight);
+    h.run();
+    assert_eq!(video(&h).last().map(|v| v.blood), Some(110), "one step");
+    assert_eq!(saved(&h).video.blood, 110);
+    h.key_press(egui::Key::ArrowLeft);
+    h.run();
+    h.key_press(egui::Key::ArrowLeft);
+    h.run();
+    assert_eq!(video(&h).last().map(|v| v.blood), Some(90));
+
+    // Clamped from a file; a file without it shows OLX's amount.
+    let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
+    let v = VideoSettings { blood: 900, ..VideoSettings::default() };
+    let applied = ui.update(UiAction::SetVideo(v));
+    assert!(applied.iter().any(|c| matches!(c, AppCommand::ApplyVideo(v) if v.blood == 500)), "{applied:?}");
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("settings.ron"), "(version: 1, settings: (video: (ui_scale: 1.5)))")
+        .unwrap();
+    assert_eq!(Store::open(tmp.path()).load_settings().value.video.blood, 100);
+    std::fs::write(tmp.path().join("settings.ron"), "(version: 1, settings: (video: (blood: 4000)))")
+        .unwrap();
+    let got = Store::open(tmp.path()).load_settings();
+    assert_eq!(got.value.video.blood, 500);
+    assert!(got.warnings.iter().any(|w| w.contains("video.blood")), "{:?}", got.warnings);
+}

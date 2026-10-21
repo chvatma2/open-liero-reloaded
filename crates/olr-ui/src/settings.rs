@@ -23,6 +23,13 @@ pub const SETTINGS_VERSION: u32 = 1;
 /// The UI scale's range (plan 7 Review Focus 5), times the DPI scale.
 pub const UI_SCALE_RANGE: RangeInclusive<f32> = 0.5..=3.0;
 
+/// The blood amount's range in percent of OLX's (issue #6;
+/// `olr_fx::BLOOD_MAX` is its end), offered in steps of [`BLOOD_STEP`].
+pub const BLOOD_RANGE: RangeInclusive<u16> = 0..=500;
+
+/// The options' blood slider's step, in percent.
+pub const BLOOD_STEP: u16 = 10;
+
 /// Everything the options menu sets.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -113,6 +120,10 @@ pub struct VideoSettings {
     pub ui_scale: f32,
     /// Where the HUD goes on a window wider than 16:9.
     pub hud_layout: HudArrangement,
+    /// How much blood this player sees, in percent of OLX's
+    /// ([`BLOOD_RANGE`], 100 by default; issue #6): presentation only,
+    /// never sent anywhere, so other players keep their own.
+    pub blood: u16,
 }
 
 /// Where the HUD goes (the user's ruling after the v0.1 playtest). The
@@ -155,6 +166,7 @@ impl Default for VideoSettings {
             interpolation: true,
             ui_scale: 1.0,
             hud_layout: HudArrangement::Auto,
+            blood: 100,
         }
     }
 }
@@ -172,6 +184,7 @@ struct VideoFile {
     interpolation: bool,
     ui_scale: f32,
     hud_layout: HudArrangement,
+    blood: u16,
 }
 
 #[derive(Clone, Copy, Deserialize)]
@@ -193,6 +206,7 @@ impl Default for VideoFile {
             interpolation: v.interpolation,
             ui_scale: v.ui_scale,
             hud_layout: v.hud_layout,
+            blood: v.blood,
         }
     }
 }
@@ -213,20 +227,27 @@ impl From<VideoFile> for VideoSettings {
             interpolation: f.interpolation,
             ui_scale: f.ui_scale,
             hud_layout: f.hud_layout,
+            blood: f.blood,
         }
     }
 }
 
 impl VideoSettings {
-    /// Clamps the UI scale into [`UI_SCALE_RANGE`] (1 when it is NaN).
+    /// Clamps the UI scale into [`UI_SCALE_RANGE`] (1 when it is NaN) and
+    /// the blood amount into [`BLOOD_RANGE`].
     pub fn sanitize(&mut self) -> Vec<String> {
+        let mut w = Vec::new();
         let fixed = clamp_scale(self.ui_scale);
-        if fixed.to_bits() == self.ui_scale.to_bits() {
-            return Vec::new();
+        if fixed.to_bits() != self.ui_scale.to_bits() {
+            w.push(format!("video.ui_scale {} is outside {:?}: {fixed}", self.ui_scale, UI_SCALE_RANGE));
+            self.ui_scale = fixed;
         }
-        let w = format!("video.ui_scale {} is outside {:?}: {fixed}", self.ui_scale, UI_SCALE_RANGE);
-        self.ui_scale = fixed;
-        vec![w]
+        let blood = self.blood.min(*BLOOD_RANGE.end());
+        if blood != self.blood {
+            w.push(format!("video.blood {} is outside {:?}: {blood}", self.blood, BLOOD_RANGE));
+            self.blood = blood;
+        }
+        w
     }
 }
 

@@ -45,7 +45,11 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   fullscreen through `VideoFile`;
   `FrameRate`, `UpscaleFilter`, interpolation, `ui_scale` in
   `UI_SCALE_RANGE` 0.5-3 (on top of the height's scale), `hud_layout`:
-  `HudArrangement::{Auto, Bar, Sides}`, Auto when an old file lacks it), audio volumes 0-1, `Bindings`, gameplay
+  `HudArrangement::{Auto, Bar, Sides}`, Auto when an old file lacks it;
+  `blood`, issue #6: this player's blood amount in percent, `BLOOD_RANGE`
+  0-500, 100 by default and for an older file, the slider's
+  `BLOOD_STEP` 10; the app hands it to `olr_present::Presentation::set_blood`,
+  nothing sends it), audio volumes 0-1, `Bindings`, gameplay
   (`MatchPrefs`: local play's last setup; the HUD has one style: an old file's `hud:` is ignored),
   an old file's `import:` block (the removed Import screen's) is ignored.
   `sanitize()` fixes out-of-range values and
@@ -139,7 +143,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   (`profiles.rs`: Players, Look and Skin panels; the list, New, Delete confirmed, "Play as this", name with
   its error, colour sliders, searchable skins, the preview; it opens on
   the profile playing), replays (`replays.rs`, each file's header problem
-  shown), options (`options.rs`, 720 wide: Video (with the HUD layout),
+  shown), options (`options.rs`, 720 wide: Video (with Blood, a 0-500 %
+  slider applied at once, and the HUD layout),
   Audio, Keys and Online tabs,
   centred; Online (scrolling): "Finding games" (Region, Public address,
   plan 12b's "Open the game's port on my router (UPnP/NAT-PMP/PCP)", a
@@ -509,7 +514,8 @@ rebinding flow and the other sections through the widgets, game keys never
 bound, the capture swallowing its key, the download cache's Clear (disabled
 with its reason; none), `options_edit_relays_and_unblock`, the finding
 settings sanitized (TURN entries, `port_mapping` on for an older file),
-`options_edit_turn_relays_and_port_mapping`; `tests/online.rs` also `tabs_and_direct_invite`,
+`options_edit_turn_relays_and_port_mapping`,
+`the_blood_slider_sets_the_players_blood_amount`; `tests/online.rs` also `tabs_and_direct_invite`,
 `internet_games_join_by_key_and_block`, `the_internet_tab_says_no_relay_reachable`,
 `the_lobby_shows_the_invite_and_copies_it`, `the_host_chooses_who_can_join`,
 `an_addressless_internet_game_is_joinable` (Join enabled, `addr: None`,

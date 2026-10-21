@@ -3,7 +3,8 @@
 //!
 //! - **Video:** the display, one list of the window's size presets (the
 //!   window is never resized by dragging) and borderless fullscreen, VSync or uncapped, the upscale filter,
-//!   interpolation, the HUD's layout and the UI scale. Each change is applied at once by the
+//!   interpolation, the blood amount (0-500 %, this player's alone: issue
+//!   #6), the HUD's layout and the UI scale. Each change is applied at once by the
 //!   app, the window's size and mode through its paced requests (at most
 //!   one change every 250 ms, however fast the player clicks).
 //! - **Audio:** the master volume (OLX's sound volume) and the effects'.
@@ -35,7 +36,9 @@ use crate::online::{
     FindingSettings, MAX_SERVERS, MAX_TURN, Region, megabytes, turn_shown, valid_relay, valid_stun,
     valid_turn,
 };
-use crate::settings::{FrameRate, HudArrangement, UI_SCALE_RANGE, UpscaleFilter, WindowPreset};
+use crate::settings::{
+    BLOOD_RANGE, BLOOD_STEP, FrameRate, HudArrangement, UI_SCALE_RANGE, UpscaleFilter, WindowPreset,
+};
 use crate::state::{UiAction, UiState};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -175,6 +178,11 @@ fn video(ui: &mut Ui, state: &UiState, view: &mut View, out: &mut Vec<UiAction>)
         ui.checkbox(&mut v.interpolation, "Smooth motion").on_hover_text(
             "Draws between the 100 Hz ticks; off draws the latest tick at whole pixels, like OLX.",
         );
+    });
+    form_row(ui, "Blood", |ui, label| {
+        ui.add(Slider::new(&mut v.blood, BLOOD_RANGE).step_by(f64::from(BLOOD_STEP)).suffix(" %"))
+            .labelled_by(label)
+            .on_hover_text("How much blood you see; 0 % shows none. Only your picture changes: other players keep their own.");
     });
     form_row(ui, "HUD layout", |ui, label| {
         ComboBox::from_id_salt("hud layout")

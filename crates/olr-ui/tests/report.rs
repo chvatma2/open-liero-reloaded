@@ -164,6 +164,7 @@ Video settings
   Interpolation: on
   UI scale: 1
   HUD layout: Auto
+  Blood: 100 %
 
 Audio settings
   Master: 70 %
