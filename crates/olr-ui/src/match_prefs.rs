@@ -183,11 +183,18 @@ pub struct MatchPrefs {
     pub weapons: MatchLoadout,
 }
 
+/// The mod a fresh profile plays, locally and hosting (issue #21, the
+/// maintainer's call): Liero v1.0 Reloaded, Classic with OLR's look, one
+/// of OLR's own packs (`content/reloaded/`). Where it is not installed the
+/// menus play the first mod listed.
+pub const DEFAULT_MOD: &str = "olr-mod-liero-v1-reloaded";
+
 impl Default for MatchPrefs {
-    /// `olr-game`'s defaults: Classic on Liero Factory against 3 Medium bots.
+    /// Liero v1.0 Reloaded ([`DEFAULT_MOD`]) on Liero Factory against 3
+    /// Medium bots.
     fn default() -> Self {
         MatchPrefs {
-            mod_id: olr_content::olx_mod_id("Classic"),
+            mod_id: DEFAULT_MOD.into(),
             level_id: olr_content::olx_level_id("Liero Factory"),
             bots: 3,
             difficulty: BotLevel::default(),

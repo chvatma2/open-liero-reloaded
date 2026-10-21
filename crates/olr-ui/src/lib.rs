@@ -24,8 +24,8 @@ pub mod weapon_select;
 
 pub use loadouts::{LOADOUTS_FILE, OwnLoadouts};
 pub use match_prefs::{
-    BotLevel, BotLoadout, BotPersonality, KILL_LIMIT_RANGE, LIVES_RANGE, LOADING_TIME_RANGE, MAX_BOTS,
-    MatchPrefs, RulePrefs, TIME_LIMIT_RANGE,
+    BotLevel, BotLoadout, BotPersonality, DEFAULT_MOD, KILL_LIMIT_RANGE, LIVES_RANGE, LOADING_TIME_RANGE,
+    MAX_BOTS, MatchPrefs, RulePrefs, TIME_LIMIT_RANGE,
 };
 pub use online::{
     ADDRESS_CHARS, CHAT_CHARS, CHAT_KEY, DEFAULT_PORT, DownloadCacheView, DownloadView, FindingSettings,

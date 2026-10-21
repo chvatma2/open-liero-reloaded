@@ -60,7 +60,7 @@ fn starting_with_missing_content_returns_to_menu() {
     sh.poll();
     assert_eq!(sh.ui.screen(), Screen::LocalPlay);
     let m = message(&sh);
-    assert!(m.contains("olx-classic") || m.contains("olx-level-liero-factory"), "{m}");
+    assert!(m.contains(olr_ui::DEFAULT_MOD) || m.contains("olx-level-liero-factory"), "{m}");
     assert!(sh.play.is_none() && !sh.ui.is_starting());
     // The sandbox, from the main menu.
     sh.act(UiAction::Back);
@@ -90,6 +90,8 @@ fn starting_with_missing_content_returns_to_menu() {
         let Some(content) = content_dir() else { return };
         let dir = tempfile::tempdir().unwrap();
         linked_content(&content, dir.path());
+        // OLR's own packs (the default mod) beside it, as they ship.
+        linked_content(&content.join("..").join(olr_content::RELOADED_DIR), dir.path());
         let mut sh = shell(dir.path(), Store::in_memory());
         let level = "olx-level-liero-factory";
         assert!(sh.data.catalog.level(level).is_some());

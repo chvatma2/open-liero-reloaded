@@ -120,7 +120,8 @@ fn pause_stops_ticks_and_replays_stay_valid() {
     assert_eq!(replay.ticks(), 500);
     let recorded: Vec<i32> = replay.setup.worms[0].loadout.slots.iter().map(|sl| sl.weapon).collect();
     assert_eq!(recorded, weapons, "the replay holds the choice");
-    let content = olr_content::Content::open(&dir).unwrap();
+    // The game's own packs too: a fresh profile plays Liero v1.0 Reloaded.
+    let content = olr_content::Content::open_bundled(&dir).unwrap();
     let run = content.play_replay(&replay).expect("the replay plays back");
     assert_eq!(run.world.checksum(), end, "to the same world");
 }

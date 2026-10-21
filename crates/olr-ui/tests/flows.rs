@@ -9,8 +9,8 @@ use olr_data::image::RgbaImage;
 use olr_data::manifest::{Origin, PackKind};
 use olr_ui::screens::{self, MenuData};
 use olr_ui::{
-    AppCommand, BotLevel, BotPersonality, MAX_BOTS, MatchPrefs, OwnLoadouts, Profile, Profiles, Screen,
-    Settings, UiAction, UiState,
+    AppCommand, BotLevel, BotPersonality, DEFAULT_MOD, MAX_BOTS, MatchPrefs, OwnLoadouts, Profile, Profiles,
+    Screen, Settings, UiAction, UiState,
 };
 
 /// A `w` × `h` thumbnail written to a directory of its own, in a temporary
@@ -108,7 +108,11 @@ struct App {
 }
 
 fn harness(ui: UiState) -> Harness<'static, App> {
-    let app = App { ui, data: MenuData::new(catalog(), None), commands: Vec::new() };
+    harness_on(ui, catalog())
+}
+
+fn harness_on(ui: UiState, catalog: Catalog) -> Harness<'static, App> {
+    let app = App { ui, data: MenuData::new(catalog, None), commands: Vec::new() };
     Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
         |ui, app: &mut App| {
             for a in screens::show(ui, &app.ui, &mut app.data) {
@@ -359,6 +363,38 @@ fn local_play_pickers_are_found_by_their_label() {
     h.run();
     assert!(h.query_by_label("Bot 2").is_none());
     assert_eq!(h.state().ui.screen(), Screen::LocalPlay);
+}
+
+/// A fresh profile plays Liero v1.0 Reloaded (issue #21), listed with the
+/// other installed mods, though it is not the first: the choice stands and
+/// nothing is repaired.
+#[test]
+fn a_fresh_profile_plays_liero_v1_reloaded() {
+    assert_eq!(MatchPrefs::default().mod_id, DEFAULT_MOD);
+    assert_eq!(DEFAULT_MOD, "olr-mod-liero-v1-reloaded");
+    let mut cat = catalog();
+    let mut ours = cat.mods[0].clone();
+    (ours.id, ours.name) = (DEFAULT_MOD.into(), "Liero v1.0 Reloaded".into());
+    cat.mods.push(ours);
+    let mut h = harness_on(UiState::new(Settings::default(), Profiles::default(), 7), cat);
+    h.get_by_label("Local Play").click();
+    h.run();
+    assert_eq!(h.state().ui.settings().gameplay.match_prefs.mod_id, DEFAULT_MOD);
+    assert!(!h.state().commands.iter().any(|c| matches!(c, AppCommand::SaveSettings(_))), "nothing repaired");
+    h.get_by_label("Start").click();
+    h.run();
+    let starts = starts(h.state());
+    assert_eq!(starts.last().map(|o| o.mod_id.as_str()), Some(DEFAULT_MOD));
+}
+
+/// The shipped content has the default mod (the committed packs with OLR's
+/// own over them, as the game opens them).
+#[test]
+fn the_default_mod_is_shipped() {
+    let Some(dir) = std::env::var_os("OLR_CONTENT_DIR") else { return };
+    let content = olr_content::Content::open_bundled(std::path::Path::new(&dir)).unwrap();
+    let info = content.catalog().mod_info(DEFAULT_MOD).cloned();
+    assert_eq!(info.map(|m| m.name), Some("Liero v1.0 Reloaded".to_string()));
 }
 
 #[test]

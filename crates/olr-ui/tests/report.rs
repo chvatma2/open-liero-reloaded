@@ -174,7 +174,7 @@ Audio settings
 Gameplay settings
 ";
     assert!(preview.starts_with(expected), "{preview}");
-    assert!(preview.contains("  Local play's match: (mod_id:\"olx-classic\""), "{preview}");
+    assert!(preview.contains("  Local play's match: (mod_id:\"olr-mod-liero-v1-reloaded\""), "{preview}");
     assert!(preview.ends_with(
         "Replay\n  none attached\n\nLogs\n  This run: now.log, still running, 1 KiB\n  The previous run: before.log, \
          ended unexpectedly (a crash or a kill), 1 KiB\n"
@@ -241,7 +241,12 @@ fn recorded_replay(names: &[&str]) -> Option<Vec<u8>> {
         return None;
     }
     let content = olr_content::Content::open(&dir).unwrap();
-    let prefs = MatchPrefs { level_id: "olx-level-dirt-level".into(), bots: 1, ..MatchPrefs::default() };
+    let prefs = MatchPrefs {
+        mod_id: "olx-classic".into(),
+        level_id: "olx-level-dirt-level".into(),
+        bots: 1,
+        ..MatchPrefs::default()
+    };
     let built = content.build_match(&prefs.options(3)).unwrap();
     let (mut world, mut rec) = (built.world, built.recorder);
     rec.set_looks(names.iter().map(|n| olr_replay::WormLook::plain(n, [200, 100, 50])).collect());
