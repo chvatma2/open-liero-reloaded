@@ -4193,6 +4193,9 @@ hash exactly as before. As built:
 - **Cost.** A double skin's sheet is 4 × the pixels and the world target
   4 × the texels of art scale 2 for the whole level; glow overlays add up
   to four sprites a worm in a lit match; skin lights one disc a worm. The
+  renderer keeps the scale of the last atlas uploaded, so the level
+  editor's canvas after a Play in a double skin draws at 4 too (correct,
+  its view cut by `max_view_for`, only dearer) until the next match. The
   Windows 1080p measurement waits for the maintainer
   (`docs/deferred-verification.md`).
 - **Demo.** `fixtures/look/skins/look-test-skin` (OLX's default skin

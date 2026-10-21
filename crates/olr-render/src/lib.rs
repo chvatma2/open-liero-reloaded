@@ -2,10 +2,11 @@
 //! on screen or offscreen.
 //!
 //! - **World pass** at art scale (at least [`MIN_SCALE`], OLX's 2× sprite
-//!   art, or the level's or a double-resolution skin's when higher) into a texture covering the view plus a [`MARGIN`] of world
-//!   pixels: the colour terrain, then every sprite and line pixel as one
-//!   instanced quad per item from a single atlas, in the list's order. No
-//!   antialiasing: lines are exact world-pixel blocks.
+//!   art, or the level's or a double-resolution skin's when higher) into a
+//!   texture covering the view plus a [`MARGIN`] of world pixels: the
+//!   colour terrain, then every sprite and line pixel as one instanced quad
+//!   per item from a single atlas, in the list's order. No antialiasing:
+//!   lines are exact world-pixel blocks.
 //! - **Upscale pass** from the view's rectangle of that texture to the
 //!   output with the selected [`UpscaleFilter`]; a sub-pixel camera moves
 //!   the source rectangle, never the world's pixels.
