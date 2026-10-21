@@ -24,7 +24,32 @@ impl App {
                     self.rate.clear();
                     self.input.release_keys();
                 }
+                Outcome::PrepareReport => {
+                    let env = self.report_environment(el);
+                    self.shell.prepare_report(env);
+                }
             }
+        }
+    }
+
+    /// What a bug report needs of the window (issue #3): the GPU, the
+    /// display as winit reports it, the window system.
+    fn report_environment(&self, el: &ActiveEventLoop) -> crate::report::Environment {
+        let window_system = Some(crate::window::system_name(super::is_wayland(el)).to_string());
+        let Some(w) = &self.win else {
+            return crate::report::Environment { window_system, ..Default::default() };
+        };
+        let monitor = w.window.current_monitor();
+        let size = w.window.inner_size();
+        crate::report::Environment {
+            gpu: Some(w.gpu.facts()),
+            display: Some(olr_ui::report::DisplayFacts {
+                scale_factor: w.window.scale_factor(),
+                window: (size.width, size.height),
+                monitor: monitor.as_ref().map(|m| (m.size().width, m.size().height)),
+                refresh_mhz: monitor.as_ref().and_then(|m| m.refresh_rate_millihertz()),
+            }),
+            window_system,
         }
     }
 

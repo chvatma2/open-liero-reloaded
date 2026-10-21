@@ -503,7 +503,7 @@ fn run(args: Args, play_now: bool, flags: Overrides) -> anyhow::Result<()> {
     };
     let event_loop = event_loop(ws)?;
     let wayland = is_wayland(&event_loop);
-    log::info!("window system: {}", window_system_name(wayland));
+    log::info!("window system: {}", olr_game::window::system_name(wayland));
     let mut app = App::new(cfg, shell, silent, gilrs, autoplay);
     let ran = event_loop.run_app(&mut app);
     log::info!("{}", app.summary());
@@ -564,17 +564,6 @@ fn event_loop(ws: WindowSystem) -> anyhow::Result<winit::event_loop::EventLoop<(
     #[cfg(not(target_os = "linux"))]
     let _ = ws;
     builder.build().with_context(|| format!("opening the window system ({ws:?})"))
-}
-
-/// The window system the event loop runs on, for the log.
-fn window_system_name(wayland: bool) -> &'static str {
-    match std::env::consts::OS {
-        "linux" if wayland => "Wayland",
-        "linux" => "X11",
-        "windows" => "Windows",
-        "macos" => "macOS",
-        other => other,
-    }
 }
 
 /// Whether the event loop runs on Wayland.

@@ -267,6 +267,17 @@ pub fn lost_connection(wayland: bool) -> String {
     }
 }
 
+/// The window system the event loop runs on, for the log and bug reports.
+pub fn system_name(wayland: bool) -> &'static str {
+    match std::env::consts::OS {
+        "linux" if wayland => "Wayland",
+        "linux" => "X11",
+        "windows" => "Windows",
+        "macos" => "macOS",
+        other => other,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

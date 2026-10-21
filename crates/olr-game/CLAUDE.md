@@ -27,7 +27,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   LAN announcements, `IceConfig`), `olr-discovery` (the hosted lobby's summary,
   `GameSummary::of_lobby`, and `hosting`, shared with olr-server; the
   relay pool, the game list, pings, invites), `olr-log` (the run log),
-  plus `log`, winit,
+  plus `log`, rustls and webpki-roots (a bug report's POST), winit,
   wgpu, gilrs and egui / egui-wgpu / egui-winit 0.36.2 (exact pins). Logs
   go through `log::{debug, info, warn, error}!` (below), each warning once.
 - **Version** (`lib.rs`'s `VERSION`): `OLR_BUILD_VERSION` at compile time
@@ -74,6 +74,42 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   no window) for the file, a crashed run reported once, an unwritable
   directory; `tests/speed.rs` gives its runs a data directory of their
   own.
+- **Bug reports** (`report.rs`, `report/http.rs`, issue #3; the screen
+  is olr-ui's, the relay `tools/bug-relay/`): the relay's address is
+  `OLR_REPORT_URL` at run time (a local mock in tests), else the build's
+  (`option_env!`, `report::BUILD_URL`: `cargo xtask dist` passes it on);
+  neither: `MenuData::report.available` false, Report a bug hidden
+  (`Shell::set_report_url`). The screen's `PrepareReport` is
+  `Outcome::PrepareReport`: `App::report_environment` (the GPU's
+  `Gpu::facts`: adapter, backend, device type, wgpu's `driver` and
+  `driver_info`, present mode, format; the window's scale factor and
+  size, `current_monitor`'s size and refresh rate; `window::system_name`)
+  → `Shell::prepare_report` (`report::facts`: `logging::System::read`,
+  Flatpak also by `FLATPAK_ID`, `VERSION`, the settings in effect with
+  `video::Overrides` marked, `report::overridden`; `report::logs`: this
+  run's file after `olr_log::flush()` and `olr_log::run::previous`'s with
+  its end, `run::ended`, each's last 256 KiB, the home directory as `~`;
+  no log file is a warning on the screen). Send (`AppCommand::SendReport`)
+  starts `report::Sending` on the `olr-game report` thread (one at a time;
+  status `Sending`), `Shell::poll` takes its outcome into
+  `ReportData::finished`. `report::body`: `multipart/form-data`, part
+  `report` the report's JSON, part `replay` the file's bytes unchanged
+  (a boundary found in neither). `report::http`: one HTTP/1.1 POST,
+  `Connection: close`, over rustls (aws-lc-rs, `webpki-roots`) for
+  `https://`, plain for `http://`; the connect `TIMEOUTS` 10 s per
+  address, the exchange 45 s in all, the answer at most 64 KiB
+  (`Content-Length`, chunked, or to the close). `report::outcome` puts
+  the relay's `{"ok":true,"url"}` / `{"ok":false,"error"}` (or the status)
+  in words: `rate_limited`/429 is `RATE_LIMITED` ("Too many reports right
+  now, please try again later."), `too_large`/413, `invalid`/400 (its
+  `detail`), `upstream`/502-504 ("GitHub did not take …"), others "The
+  report server answered N …", no connection "Could not reach the report
+  server (…)". The log says `bug report: sending (N bytes …)`, `filed as
+  <url>` or `not sent: <why>`, never the text. Tests: `tests/report.rs`
+  (a mock relay on 127.0.0.1: the multipart request, each failure and a
+  silent server bounded, the menus' Send returning at once with a second
+  Send ignored, the text kept on a failure, the logs carried),
+  `report`'s and `report::http`'s unit tests.
 - **Menus first** (`main.rs`, `shell.rs`, plan 7 task 2): without a flag
   that chooses a game (`GAME_FLAGS`: `--mode`, `--replay`, `--level`,
   `--mod`, `--targets`, `--seed`, `--script`, `--demo`, ...) the game opens

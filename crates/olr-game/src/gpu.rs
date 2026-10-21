@@ -234,6 +234,21 @@ impl Gpu {
         }
     }
 
+    /// The adapter with its driver, and the surface's present mode and
+    /// format now, for a bug report (issue #3).
+    pub fn facts(&self) -> olr_ui::report::GpuFacts {
+        let a = self.adapter.get_info();
+        olr_ui::report::GpuFacts {
+            name: a.name,
+            backend: format!("{:?}", a.backend),
+            device_type: format!("{:?}", a.device_type),
+            driver: a.driver,
+            driver_info: a.driver_info,
+            present_mode: format!("{:?}", self.config.present_mode),
+            format: format!("{:?}", self.config.format),
+        }
+    }
+
     /// The window is hidden or shown again (winit's `Occluded`).
     pub fn set_occluded(&mut self, occluded: bool) {
         self.state.set_occluded(occluded);

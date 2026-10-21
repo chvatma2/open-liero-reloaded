@@ -47,6 +47,9 @@ clap.workspace = true
 serde = { workspace = true, features = ["std"] }
 ron.workspace = true
 serde_json.workspace = true
+# A bug report's one HTTPS POST (issue #3): the relay pool's TLS and roots.
+rustls.workspace = true
+webpki-roots.workspace = true
 wgpu.workspace = true
 pollster.workspace = true
 winit.workspace = true

@@ -115,6 +115,9 @@ pub enum Outcome {
     /// A new game plays: its images go to the renderer, the clock starts
     /// afresh (the loading time is not caught up).
     Started,
+    /// The Report screen opened: the app hands [`Shell::prepare_report`]
+    /// what only the window knows (the GPU, the display).
+    PrepareReport,
 }
 
 /// What to load.
@@ -229,6 +232,10 @@ pub struct Shell {
     pub(crate) editor: Option<crate::editor::EditorHost>,
     /// What the editor said while it opened, for the app's next editor frame.
     editor_out: Vec<crate::editor::HostOut>,
+    /// The bug relay's address (`report::endpoint`; none: Report a bug
+    /// is hidden), and the report being sent.
+    report_url: Option<String>,
+    report_send: Option<crate::report::Sending>,
 }
 
 /// A change to an endpoint's ICE settings (tests: a loopback base, a
@@ -305,7 +312,10 @@ impl Shell {
             host_lost_pending: None,
             editor: None,
             editor_out: Vec::new(),
+            report_url: None,
+            report_send: None,
         };
+        shell.set_report_url(crate::report::endpoint(std::env::var(crate::report::URL_VAR).ok()));
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
         shell.data.default_stun = DEFAULT_STUN.iter().map(|s| s.to_string()).collect();
         shell.cache = net::open_download_cache(shell.store.cache_dir());
@@ -371,6 +381,8 @@ impl Shell {
             host_lost_pending: None,
             editor: None,
             editor_out: Vec::new(),
+            report_url: None,
+            report_send: None,
         }
     }
 
@@ -569,6 +581,8 @@ impl Shell {
             AppCommand::Lobby(c) => self.lobby_command(c),
             AppCommand::LeaveOnline => self.leave_online(),
             AppCommand::ClearDownloadCache => self.clear_download_cache(),
+            AppCommand::PrepareReport => out.push(Outcome::PrepareReport),
+            AppCommand::SendReport(r) => self.send_report(*r),
             AppCommand::Quit => out.push(Outcome::Quit),
         }
     }
@@ -576,6 +590,7 @@ impl Shell {
     /// Loads the game asked for in an earlier frame, if any,
     /// and reports to the menus whether it started.
     pub fn poll(&mut self) -> Vec<Outcome> {
+        self.poll_report();
         if self.ui.screen() != Screen::Options {
             self.cache_read = None;
         } else if self.cache_read.is_none_or(|t| t.elapsed() >= CACHE_READ_EVERY) {
@@ -828,6 +843,58 @@ impl Shell {
             Ok(path) => log::info!("saved the replay {} ({} ticks)", path.display(), r.ticks()),
             Err(e) => log::warn!("saving the replay in {}: {e}", dir.display()),
         }
+    }
+
+    /// Where bug reports go (`report::endpoint`; tests: a local mock);
+    /// `None` hides Report a bug.
+    pub fn set_report_url(&mut self, url: Option<String>) {
+        self.data.report.available = url.is_some();
+        self.report_url = url;
+    }
+
+    /// The Report screen's context from `env` (the window's): the
+    /// system, the settings in effect (the command line's flags marked),
+    /// this run's and the previous run's logs. Gathers only: nothing is
+    /// sent but on Send.
+    pub fn prepare_report(&mut self, env: crate::report::Environment) {
+        let overrides =
+            self.overrides.as_ref().map(|(_, o)| crate::report::overridden(o)).unwrap_or_default();
+        let facts = crate::report::facts(env, self.ui.settings(), overrides);
+        let context =
+            crate::report::context(&facts, olr_log::path().as_deref(), std::env::home_dir().as_deref());
+        for w in &context.warnings {
+            log::info!("bug report: {w}");
+        }
+        self.data.report.context = Some(context);
+    }
+
+    /// The Report screen's Send: on a thread of its own, one at a time.
+    fn send_report(&mut self, report: olr_ui::report::Report) {
+        if self.report_send.is_some() {
+            return;
+        }
+        let Some(url) = self.report_url.clone() else {
+            self.data.report.finished(Err("This build has no report server to send to.".into()));
+            return;
+        };
+        log::info!(
+            "bug report: sending ({} bytes of report, {} of replay)",
+            report.json().len(),
+            report.replay_bytes.as_ref().map_or(0, |b| b.0.len())
+        );
+        self.data.report.status = olr_ui::report::SendStatus::Sending;
+        self.report_send = Some(crate::report::Sending::start(url, report, crate::report::TIMEOUTS));
+    }
+
+    /// A send that ended: its outcome on the Report screen, and the log.
+    fn poll_report(&mut self) {
+        let Some(result) = self.report_send.as_ref().and_then(|s| s.poll()) else { return };
+        self.report_send = None;
+        match &result {
+            Ok(url) => log::info!("bug report: filed as {url}"),
+            Err(why) => log::warn!("bug report: not sent: {why}"),
+        }
+        self.data.report.finished(result);
     }
 
     /// The command line's video flags (`overrides`) win over `file`, the
