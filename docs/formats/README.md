@@ -279,6 +279,17 @@ weapon (by its `name`) is `Enabled`, `Bonus` (only from bonuses) or
 }
 ```
 
+The mod editor keeps its own file in `editor/` (as a level keeps its
+composition there): the mod this one was copied from, whose values it
+shows beside the fields. The game never reads it.
+
+<!-- file: mod/editor/mod.ron -->
+```ron
+(
+    base: "olx-classic",
+)
+```
+
 ### A level
 
 <!-- file: level/level.ron -->

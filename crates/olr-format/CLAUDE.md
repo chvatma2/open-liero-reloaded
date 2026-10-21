@@ -36,6 +36,10 @@ packs' format (version 5); `olr-pack` reads and writes through them.
     lists them all, each at its file and field path (`olr_edit::mods`'
     check); `compile_mod` returns the first. `valid_id` (an id's slug
     rule) is public for the editors.
+  - **`editor/mod.ron`** (issue #17, `MOD_EDITOR_FILE`, `ModEditorFile {
+    base }`): the mod editor's own file, the pack id of the mod a mod was
+    copied from (its Original values). Authoring only (`olr_pack::
+    is_authoring`: not hashed, never downloaded); `canonical_text` reads it.
   - **`deny_unknown_fields` on every type:** a typo is an error. A spawn's
     canonical field order puts its parameters before `shared`/`projectile`.
   - **Key rule.** A shared projectile's key is its file id. An inline

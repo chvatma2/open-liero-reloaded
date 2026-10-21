@@ -44,6 +44,7 @@ const PAGES: &[Page] = &[
             "crates/olr-format/src/mods/files.rs",
             "crates/olr-format/src/mods/types.rs",
             "crates/olr-format/src/mods/spawn.rs",
+            "crates/olr-format/src/mods/editor.rs",
             "crates/olr-format/src/look.rs",
             "crates/olr-format/src/colour.rs",
             "crates/olr-data/src/restrictions.rs",
@@ -52,6 +53,7 @@ const PAGES: &[Page] = &[
             ("ModFile", "mod.ron"),
             ("Weapon", "weapons/<id>.ron"),
             ("Projectile", "projectiles/<id>.ron"),
+            ("ModEditorFile", "editor/mod.ron"),
         ],
         maps: &[(
             "restrictions.ron",

@@ -244,7 +244,18 @@ fn check_mod(pack: &ModPack) -> Vec<Diagnostic> {
             out.push(Diagnostic::new(Warning, format!("projectiles/{name}.ron"), "projectile is never used"));
         }
     }
-    for path in pack.assets.keys() {
+    for (path, bytes) in &pack.assets {
+        // The mod editor's file (issue #17) is read by the editor alone.
+        if path.as_str() == olr_format::mods::MOD_EDITOR_FILE {
+            let text = String::from_utf8_lossy(bytes);
+            if let Err(e) = olr_format::ron_io::from_canonical::<olr_format::mods::ModEditorFile>(
+                olr_format::mods::MOD_EDITOR_FILE,
+                &text,
+            ) {
+                out.push(Diagnostic::new(Warning, path.as_str(), format!("{e}: the mod editor ignores it")));
+            }
+            continue;
+        }
         if !used_assets.contains(path.as_str()) {
             let asset = MOD_ASSET_DIRS.iter().any(|d| path.as_str().starts_with(d));
             out.push(Diagnostic::new(
@@ -373,6 +384,18 @@ mod tests {
         let d: Vec<String> = validate(&written(&pack)).iter().map(|d| d.to_string()).collect();
         assert!(d.contains(&"error: mod.ron: missing asset \"sfx/boom.ogg\"".to_string()), "{d:?}");
         assert!(d.contains(&"warning: gfx/extra.png: asset is never used".to_string()), "{d:?}");
+    }
+
+    /// Issue #17: the mod editor's file is read, not an unused asset; one
+    /// that does not parse is a warning.
+    #[test]
+    fn the_mod_editors_file_is_read() {
+        let fs = written(&sample_mod()).with("editor/mod.ron", "(base: \"olx-classic\")");
+        assert_eq!(validate(&fs), vec![]);
+        let fs = fs.with("editor/mod.ron", "(bsae: 1)");
+        let d: Vec<String> = validate(&fs).iter().map(|d| d.to_string()).collect();
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].starts_with("warning: editor/mod.ron:") && d[0].contains("bsae"), "{d:?}");
     }
 
     #[test]

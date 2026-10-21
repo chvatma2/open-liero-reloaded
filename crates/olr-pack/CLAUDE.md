@@ -60,7 +60,9 @@ header's size); content hashing; validation.
   reads its composition (`read_composition_files`, `check_composition`):
   an error is a diagnostic; the files `composition.ron` names count as
   read (`read_composition`, so a missing one is one error), any other
-  `editor/` file is "not read by the format".
+  `editor/` file is "not read by the format". A mod's `editor/mod.ron`
+  (issue #17, the mod editor's file) counts as read; one that does not
+  parse as `ModEditorFile` is a warning.
 - **Presentation-only files** (`PRESENTATION_FILES`: `thumb.png`) are left out of
   `content_hash` like `pack.ron` (plan 7 ruling Q4): adding or changing a thumbnail
   keeps every replay of the pack valid (`hash::thumbnails_are_not_content`).
