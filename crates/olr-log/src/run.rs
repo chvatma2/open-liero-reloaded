@@ -112,6 +112,35 @@ pub fn previous_unclean(dir: &Path, ours: &Path, noted: &str) -> Option<PathBuf>
     Some(previous)
 }
 
+/// How a finished run's log ends (`ended`): a bug report says so of the
+/// previous run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunEnd {
+    /// Its last line is [`CLEAN_END`].
+    Clean,
+    /// It ended without it: a crash or a kill (the next run may have added
+    /// [`UNCLEAN_NOTED`]).
+    Unclean,
+    /// Its instance still runs (another game open).
+    Running,
+}
+
+/// How the run of `log` ended; `None` when it cannot be read.
+pub fn ended(log: &Path) -> Option<RunEnd> {
+    if is_live(log) {
+        return Some(RunEnd::Running);
+    }
+    let last = last_line(log).ok()?;
+    Some(if last.trim_end().ends_with(CLEAN_END) { RunEnd::Clean } else { RunEnd::Unclean })
+}
+
+/// The run before `ours` in `dir`: the newest log older than it (by name,
+/// which sorts by start), whether or not it ended.
+pub fn previous(dir: &Path, ours: &Path) -> Option<PathBuf> {
+    let name = ours.file_name()?;
+    runs(dir).into_iter().rev().find(|l| l.file_name().is_some_and(|n| n < name))
+}
+
 /// What opening a run's log found.
 #[derive(Debug, Default)]
 pub struct Opened {

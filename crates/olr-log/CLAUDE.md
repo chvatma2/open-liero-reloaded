@@ -18,7 +18,10 @@ all a stranger's report will ever carry.
   log not live; its last line lacks `CLEAN_END`: it gets an
   `UNCLEAN_NOTED` line, so it is reported once) and `prune` (all but the
   newest `KEEP` = 10 runs, live ones skipped, their lock files with them;
-  only names starting with a digit and ending `.log`).
+  only names starting with a digit and ending `.log`). For bug reports
+  (issue #3): `previous(dir, ours)` (the newest log older than `ours`)
+  and `ended(log)` (`RunEnd::{Clean, Unclean, Running}`: its last line
+  `CLEAN_END`, else unclean; a live lock is running).
 - **Cap:** `MAX_BYTES` = 2 MiB a file. Past it one `warn log:` line says
   so; then only errors get in (`ERROR_ALLOWANCE`, 256 KiB more), and the
   end line always does.
@@ -54,7 +57,8 @@ all a stranger's report will ever carry.
   and message) once and `MAX_OTHERS` (256) at most, and never the
   terminal. `to_file` writes a line to the file alone; `end()` writes
   `CLEAN_END` and closes the file (later records reach the terminal
-  only). `parse_level`: `error`, `warn`, `info`, `debug`.
+  only); `flush()` writes the buffer now (a bug report reads the run's
+  own file). `parse_level`: `error`, `warn`, `info`, `debug`.
 - **Panics:** the hook writes `panic_report` (`thread '<name>' panicked
   at <file:line:col>: <message>` and a forced backtrace, at most 80 lines)
   as an `error` from source `panic`, to the file only, flushed, then runs

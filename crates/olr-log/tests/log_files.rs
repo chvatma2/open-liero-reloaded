@@ -216,3 +216,30 @@ fn an_unwritable_directory_fails_to_open() {
     fs::write(&file, "x").unwrap();
     assert!(RunLog::open(&file.join("logs"), Box::new(TestClock::at(T0)), 1, None, 1 << 20, 10).is_err());
 }
+
+#[test]
+fn the_previous_run_and_how_it_ended() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path();
+    {
+        let (mut log, _) = open(dir, T0, 1 << 20);
+        log.write(Level::Info, "olr", "playing");
+        log.end();
+    }
+    {
+        let (mut log, _) = open(dir, T0 + 1000, 1 << 20);
+        log.write(Level::Info, "olr", "crashing");
+        log.flush();
+    }
+    let (ours, _) = open(dir, T0 + 2000, 1 << 20);
+    let all = run::runs(dir);
+    assert_eq!(all.len(), 3);
+    assert_eq!(run::previous(dir, ours.path()), Some(all[1].clone()));
+    assert_eq!(run::previous(dir, &all[1]), Some(all[0].clone()));
+    assert_eq!(run::previous(dir, &all[0]), None);
+    assert_eq!(run::ended(&all[0]), Some(run::RunEnd::Clean));
+    // Noted by the third run's opening, still unclean.
+    assert_eq!(run::ended(&all[1]), Some(run::RunEnd::Unclean));
+    assert_eq!(run::ended(ours.path()), Some(run::RunEnd::Running));
+    assert_eq!(run::ended(&dir.join("missing.log")), None);
+}

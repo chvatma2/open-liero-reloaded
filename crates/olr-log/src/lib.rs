@@ -31,7 +31,7 @@ use std::time::Duration;
 
 pub use format::{Clock, Stamp, SystemClock};
 pub use log::{Level, LevelFilter};
-pub use run::{CLEAN_END, KEEP, MAX_BYTES, RunLog, UNCLEAN_NOTED};
+pub use run::{CLEAN_END, KEEP, MAX_BYTES, RunEnd, RunLog, UNCLEAN_NOTED};
 
 /// The environment variable that sets the level (`--log` wins).
 pub const LEVEL_VAR: &str = "OLR_LOG";
@@ -221,6 +221,14 @@ pub fn to_file(level: Level, source: &str, message: &str) {
         && let Some(f) = file.as_mut()
     {
         f.write(level, source, message);
+    }
+}
+
+/// Writes what the file holds buffered to the disk now (a bug report
+/// reads the run's own log).
+pub fn flush() {
+    if let Some(logger) = LOGGER.get() {
+        log::Log::flush(logger);
     }
 }
 
