@@ -471,9 +471,14 @@ OLX shares between mods.
 
 1. **Start a pack.** `olr-cli pack new mod my-mod` writes a one-weapon mod
    to `./my-mod`; `olr-cli pack new level my-level --size 640x480` a
-   plain level of dirt in a rock border. Skins, themes and core packs
-   start from a copy: `olr-cli pack new skin my-skin --from
-   content/packs/olx-skin-default`.
+   plain level of dirt in a rock border. Themes and core packs start
+   from a copy: `olr-cli pack new theme my-theme --from
+   content/packs/olx-theme-dirt`. Skins have commands of their own:
+   `olr-cli skin new my-skin --name "My Skin" [--from <skin>] [--double]`
+   (blank, or a copy of any installed skin by id), `olr-cli skin double
+   <skin> --out <dir>` (a classic skin doubled by Scale2x, to refine),
+   `olr-cli skin check <dir>…` and `olr-cli skin preview <dir> --colour
+   RRGGBB --out f.png` (every frame, both ways, light and dark).
 2. **Edit the text files.** Look fields up in the reference pages.
 3. **Check.** `olr-cli pack check my-mod` parses, compiles and validates
    the pack. Errors name the file and, for text that does not parse, the

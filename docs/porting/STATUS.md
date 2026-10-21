@@ -4204,6 +4204,41 @@ hash exactly as before. As built:
   rock pillar), both built by `fixtures/look/make-look-test-skin.sh`;
   golden `look-skin.png`.
 
+## Skin commands and the Firefly sample (issue #13)
+
+No OLX counterpart (OLX's skins are made in an image editor). As built:
+
+- **Commands.** `olr-cli skin new <out-dir> [--from <skin>] [--double]
+  --name <name>`, `skin double <skin> --out <dir>`, `skin check <dir>…`
+  and `skin preview <skin> --colour RRGGBB --out f.png`, over
+  `olr_edit::skin` (layer 3, no egui), which the skin editor will share.
+  A skin is named by directory, or by pack id or OLX name as the
+  profiles' picker lists them.
+- **Scale2x, the masks following the pixel.** `double` scales every
+  frame by Scale2x (a frame's edge its own neighbour, so frames never
+  mix). **Deviation from the issue's wording** ("`tint.png` / `glow.png`
+  with nearest scaling"): an art pixel takes its tint and glow from the
+  source pixel Scale2x copies its colour from, and pixels compare by
+  colour, tint and glow together. Where Scale2x keeps the source pixel
+  this is nearest scaling. Where Scale2x rounds a corner, a nearest mask
+  would leave an untinted body-coloured pixel on a tinted worm's edge (it
+  shows in any colour other than the skin's own). Only OLX's layout
+  doubles; a double skin is refused.
+- **Preview.** 14 × 6 cells of 16 × 14 world pixels, so a classic and a
+  double skin preview at the same size (1792 × 672 at `--scale` 8). The
+  dark half is a preview of glow and light: the worm at a fifth of its
+  colour, glowing pixels at their glow quarter (the game's
+  `glow_level`, now `olr_data::skin`'s), the light a disc of its reach
+  around the frame's glowing pixels, clipped to the cell. It is not the
+  game's renderer; `olr-cli render-match --skin` is.
+- **Firefly** (`content/reloaded/olr-skin-firefly`): OLX's default skin
+  doubled, then refined by `tools/skins/firefly.py`: shading, body
+  rings, eyes, the gun's metal, and a glowing tail lantern with a light
+  of 80 % over 24 world pixels. It is in no golden and is not the
+  default skin (bots and fresh profiles keep `olx-skin-default`).
+- **Not built** (the issue's non-goals): the editor UI, more sample
+  skins.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

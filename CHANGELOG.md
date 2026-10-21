@@ -109,6 +109,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   lit by the sky). They are OLR's own packs in `content/reloaded/`, beside
   the imported content, listed by the game and nameable in a server's
   rotation (the example config plays both).
+- Skin tools: `olr-cli skin new` (a blank skin, or a copy of any
+  installed skin), `skin double` (a classic skin at double resolution by
+  Scale2x, to refine), `skin check` and `skin preview` (every frame, tinted,
+  both ways, light and dark, glow shown). **Firefly**, a double-resolution
+  skin made with them, ships with the game: its tail lantern glows and
+  lights the worm's surroundings in lit levels. Pick it in Profiles.
 
 ### Changed
 
