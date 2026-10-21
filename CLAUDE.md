@@ -85,8 +85,9 @@ re-records them and logs the reason in `fixtures/blessings.log`;
 
 The converted packs are committed in `content/packs/` (the default
 `--content`), so a fresh clone plays and tests offline. OLR's own
-hand-made packs (the Reloaded levels and Liero v1.0 Reloaded, the
-default mod) are in `content/reloaded/`, laid over
+hand-made packs (the Reloaded levels, Liero v1.0 Reloaded, the
+default mod, and Firefly, a double-resolution skin made with `olr-cli
+skin`) are in `content/reloaded/`, laid over
 `content/packs` wherever it is opened (`olr_content::bundled_roots`) and
 shipped with it; they share no pack id with it (a test). The level
 editor's built-in assets are in `content/assets/` (one folder per asset,

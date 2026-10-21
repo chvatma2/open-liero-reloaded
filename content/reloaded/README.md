@@ -10,7 +10,8 @@ into the Windows zip and the Flatpak (this README stays behind). A pack
 id here must not also be one in `content/packs` (`olr-cli`'s
 `tests/reloaded.rs`, which also checks every pack here with `pack check
 --content content/packs` and plays a bot match on each level and with
-the mod). The game
+the mod; `tests/skin.rs` runs `olr-cli skin check` on the skin and
+finds it in the profiles' skin list). The game
 refuses to edit them in place: copy one from the Editor menu.
 
 Remade OLX content is named "<Old name> Reloaded".
@@ -80,3 +81,22 @@ Remade OLX content is named "<Old name> Reloaded".
   unlimited reach) so daylight comes in through the hall, the loft and
   the towers, and the cavern torches and the hall's candles flickering
   (group `flames`).
+- `olr-skin-firefly/`: **Firefly** (issue #13), a double-resolution skin
+  (art scale 4, 40 × 36 frames) for judging double resolution and the
+  skin light in play. OLX's default skin (`origin`:
+  `share/gamedir/skins/default.png` at `d1ad953f`) doubled by Scale2x,
+  then refined by `tools/skins/firefly.py` editing its PNGs: the body
+  shaded at the finer resolution (lit from the top left, a dark rim
+  below, the gun's shadow on it), rings along the body, white eyes whose
+  pupil looks where the worm aims, the gun's metal shaded, and the tail
+  tip a firefly's lantern, pale yellow-green, not tinted, glowing
+  (`glow.png`: 255 at its core, 192 at its edge) with a light of 80 %
+  over 24 world pixels (`skin.ron`; the caps are 200 % and 48). Its
+  outline is the doubled skin's (tested). Made with:
+
+  ```sh
+  cargo build -p olr-cli
+  target/debug/olr-cli skin double olx-skin-default --out content/reloaded/olr-skin-firefly --name Firefly --id olr-skin-firefly
+  python3 -I tools/skins/firefly.py content/reloaded/olr-skin-firefly content/packs/olx-skin-default
+  target/debug/olr-cli pack fmt content/reloaded/olr-skin-firefly
+  ```

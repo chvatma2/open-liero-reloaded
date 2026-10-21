@@ -1,5 +1,6 @@
 //! OLR's own packs (`content/reloaded/`, issue #7: the Reloaded levels;
-//! issue #21: Liero v1.0 Reloaded), shipped beside the imported ones: each
+//! issue #21: Liero v1.0 Reloaded; issue #13: the Firefly skin, tested in
+//! `skin.rs`), shipped beside the imported ones: each
 //! checks clean against the committed content, none shares an id with it,
 //! the game's content lists them, a bot match plays on each, Liero Factory
 //! Reloaded is OLX's Liero Factory byte for byte but for its look, and
@@ -18,6 +19,7 @@ const FACTORY: &str = "olr-level-liero-factory-reloaded";
 const CASTLE: &str = "olr-level-castlestrike-reloaded";
 const RELOADED_MOD: &str = "olr-mod-liero-v1-reloaded";
 const CLASSIC: &str = "olx-classic";
+const FIREFLY: &str = "olr-skin-firefly";
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -55,7 +57,7 @@ fn reloaded_packs_check_clean() {
     let o = cli(&["pack", "check", dir.to_str().unwrap(), "--content", packs.to_str().unwrap()]);
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(
-        o.status.success() && out.contains("checked 3 packs: 0 errors, 0 warnings"),
+        o.status.success() && out.contains("checked 4 packs: 0 errors, 0 warnings"),
         "{out}{}",
         String::from_utf8_lossy(&o.stderr)
     );
@@ -66,7 +68,7 @@ fn reloaded_packs_check_clean() {
 #[test]
 fn reloaded_and_imported_packs_share_no_id() {
     let own = ids(&reloaded_dir());
-    assert_eq!(own, BTreeSet::from([FACTORY, CASTLE, RELOADED_MOD].map(String::from)));
+    assert_eq!(own, BTreeSet::from([FACTORY, CASTLE, RELOADED_MOD, FIREFLY].map(String::from)));
     let imported = ids(&packs_dir());
     let shared: Vec<&String> = own.intersection(&imported).collect();
     assert!(shared.is_empty(), "content/reloaded and content/packs share {shared:?}");
