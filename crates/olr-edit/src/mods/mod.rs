@@ -250,6 +250,19 @@ fn leaves_of(n: &dyn Node, at: FieldPath, out: &mut Vec<String>) {
 /// `restrictions["Mine"]`). A weapon's `name` and `mod.name` rename
 /// ([`rename_weapon`], [`rename_mod`]); `mod.weapons` is read-only.
 pub fn set(pack: &mut Pack, path: &str, value: &str) -> Result<(), ModError> {
+    set_with(pack, path, value, false).map(|_| ())
+}
+
+/// [`set`] for an editor (issue #17): the change is kept even when it
+/// adds errors, which are returned (the editor lists them, and its Save
+/// refuses a mod with errors). A value that does not read as its field's
+/// type, a result that would not read back as set, and a refused rename
+/// still change nothing.
+pub fn set_lenient(pack: &mut Pack, path: &str, value: &str) -> Result<Vec<Issue>, ModError> {
+    set_with(pack, path, value, true)
+}
+
+fn set_with(pack: &mut Pack, path: &str, value: &str, lenient: bool) -> Result<Vec<Issue>, ModError> {
     let src = source(pack)?;
     let wanted = parse_path(src, path)?;
     let name = || Seg::Name("name".into());
@@ -262,12 +275,12 @@ pub fn set(pack: &mut Pack, path: &str, value: &str) -> Result<(), ModError> {
                         let id = id.clone();
                         let n = read_string(value)
                             .map_err(|message| ModError::Value { path: at.to_string(), message })?;
-                        return rename_weapon(pack, &id, Some(&n), None);
+                        return rename_weapon(pack, &id, Some(&n), None).map(|()| Vec::new());
                     }
                     File::Mod => {
                         let n = read_string(value)
                             .map_err(|message| ModError::Value { path: at.to_string(), message })?;
-                        return rename_mod(pack, &n);
+                        return rename_mod(pack, &n).map(|()| Vec::new());
                     }
                     _ => {}
                 }
@@ -275,7 +288,7 @@ pub fn set(pack: &mut Pack, path: &str, value: &str) -> Result<(), ModError> {
             if let Found::Text(t) = found {
                 let same = node::parse_as::<Vec<String>>(value).ok().and_then(|v| ron_of(&v).ok());
                 return if same.as_deref() == Some(t.as_str()) {
-                    Ok(())
+                    Ok(Vec::new())
                 } else {
                     Err(ModError::Refused(format!(
                         "{at} is read-only: the weapons' order is olr-cli mod weapon add|remove|move's"
@@ -304,7 +317,7 @@ pub fn set(pack: &mut Pack, path: &str, value: &str) -> Result<(), ModError> {
             }
         }
     }
-    commit(pack, edited, None)
+    commit_with(pack, edited, None, lenient)
 }
 
 /// `value` as a string: RON text (`"Big Nuke"`), else as it is.
@@ -405,18 +418,29 @@ pub(crate) fn commit(
     edited: ModSource,
     other: Option<BTreeMap<VPath, Vec<u8>>>,
 ) -> Result<(), ModError> {
+    commit_with(pack, edited, other, false).map(|_| ())
+}
+
+/// [`commit`], or with `lenient` keeping the new errors and returning them.
+fn commit_with(
+    pack: &mut Pack,
+    edited: ModSource,
+    other: Option<BTreeMap<VPath, Vec<u8>>>,
+    lenient: bool,
+) -> Result<Vec<Issue>, ModError> {
     let old = source(pack)?;
     if *old == edited && other.as_ref().is_none_or(|o| *o == pack.other) {
-        return Ok(());
+        return Ok(Vec::new());
     }
     let files = other.as_ref().unwrap_or(&pack.other);
     let assets: BTreeSet<String> = files.keys().map(|p| p.to_string()).collect();
     let after = check::source_issues(&edited, &assets);
+    let mut new = Vec::new();
     if !after.is_empty() {
         let before_assets: BTreeSet<String> = pack.other.keys().map(|p| p.to_string()).collect();
         let before: BTreeSet<_> = check::source_issues(old, &before_assets).iter().map(identity).collect();
-        let new: Vec<Issue> = after.into_iter().filter(|i| !before.contains(&identity(i))).collect();
-        if !new.is_empty() {
+        new = after.into_iter().filter(|i| !before.contains(&identity(i))).collect();
+        if !new.is_empty() && !lenient {
             return Err(ModError::Invalid(new));
         }
     }
@@ -425,5 +449,5 @@ pub(crate) fn commit(
     if let Some(other) = other {
         pack.other = other;
     }
-    Ok(())
+    Ok(new)
 }

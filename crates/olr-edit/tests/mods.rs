@@ -173,6 +173,26 @@ fn a_cycle_and_two_effects_in_an_event_are_refused_with_a_path() {
     assert!(files(&p) == before);
 }
 
+/// Issue #17: the editor's lenient set keeps a change with an error and
+/// returns it; `check` lists it, the save refuses the mod, and a strict
+/// edit still goes through on a mod with that old error.
+#[test]
+fn a_lenient_set_keeps_the_error_and_the_save_refuses_it() {
+    let Some(root) = content() else { return };
+    let mut p = load(&root, CLASSIC);
+    let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
+    let new = mods::set_lenient(&mut p, "projectiles/bazooka.spawn.spawns", cycle).unwrap();
+    assert!(new.iter().any(|i| i.is_error() && i.message.contains("cycle")), "{new:?}");
+    assert!(mods::get(src(&p), "projectiles/bazooka.spawn.spawns").unwrap().contains("bazooka.spawn"));
+    assert!(mods::check(&p).iter().any(|i| i.is_error() && i.message.contains("cycle")));
+    let tmp = tempfile::tempdir().unwrap();
+    assert!(matches!(pack::save(&tmp.path().join("x"), &p), Err(pack::SaveError::Invalid(_))));
+    mods::set(&mut p, "mod.worm.gravity", "90.0").unwrap();
+    // A value of the wrong type still changes nothing.
+    assert!(mods::set_lenient(&mut p, "mod.worm.gravity", "\"heavy\"").is_err());
+    assert_eq!(mods::get(src(&p), "mod.worm.gravity").unwrap(), "90.0");
+}
+
 #[test]
 fn weapons_add_remove_move_copy_and_rename() {
     let Some(root) = content() else { return };

@@ -306,6 +306,11 @@ operations.
     mod did not have (`ModError::Invalid`, the new `Issue`s) or whose
     changed files do not read back as set (`ModError::Refused`); an
     unchanged mod returns at once.
+    Issue #17: `set_lenient` (the mod editor's field edits) keeps a change
+    adding errors and returns them (the editor lists them; its Save
+    refuses a mod with errors, as `pack::save` does); a value of the wrong
+    type, a result not reading back and a refused rename still change
+    nothing.
   - **`weapons`**: `blank_weapon` (also `new`'s template), `add_weapon`
     (`WeaponFrom::{Blank, Copy { pack, id }}`: shared projectiles and
     asset files brought along, equal ones reused, others renamed),
@@ -340,7 +345,8 @@ operations.
   remove, move, copy and rename with presets and a shipped loadout
   following, a weapon of MW with its projectiles and files, used-by
   against the files, inline and share round trips, check listing several
-  errors, unparsable files never a panic),
+  errors, unparsable files never a panic; issue #17's
+  `a_lenient_set_keeps_the_error_and_the_save_refuses_it`),
   `level.rs` (a proptest of the background invariant at art scales 1-4)
   and `guide.rs` (`docs/formats/README.md`'s examples parse, are canonical
   and check clean, the composed level's files generated; the asset
