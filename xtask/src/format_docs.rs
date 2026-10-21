@@ -211,7 +211,101 @@ fn pages(check: bool) -> anyhow::Result<Vec<String>> {
     if !errors.is_empty() {
         bail!("{}", errors.join("\n"));
     }
+    if let Some(table) = field_table(&root, check)? {
+        stale.push(table);
+    }
     Ok(stale)
+}
+
+/// The mod editor's field table (issue #17): every serialized field of the
+/// mod format's types by `Type.field` (`Type::Variant.field` in an enum,
+/// `Type::Variant.0` for a tuple variant's), each variant by
+/// `Type::Variant`, with its type and its doc comment as the hover text.
+/// The hand columns (`unit`, `range`, `place`, `asset`) are kept from the
+/// file; a new field comes under More with none.
+pub(crate) const FIELD_TABLE: &str = "crates/olr-mod-editor/fields.ron";
+/// The types the table starts from (in the mod page's sources).
+const TABLE_ROOTS: &[&str] = &["ModFile", "Weapon", "Projectile", "WeaponState"];
+/// Fields the table lists without following their types: the look
+/// system's, left to the art editor.
+const TABLE_UNFOLLOWED: &[&str] = &["look"];
+/// The table's first lines.
+const TABLE_HEADER: &str = "\
+// The mod editor's field table (issue #17), written by `cargo xtask
+// format-docs` from olr-format's types: `key`, `ty` and `help` (the doc
+// comment) are generated, `check` fails when they drift from the format.
+// Edit `unit` (shown in the label), `range` (the slider's soft range; any
+// value may be typed), `place` (Common, More: under More, or Panel: drawn
+// by the editor's own panels) and `asset` (`gfx` or `sfx`: a dropdown of
+// the mod's files); writing the table again keeps them.
+";
+
+/// Where the editor shows a field.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+enum Place {
+    Common,
+    More,
+    Panel,
+}
+
+/// One row of the table.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct FieldRow {
+    key: String,
+    ty: String,
+    unit: String,
+    range: Option<(f64, f64)>,
+    place: Place,
+    asset: Option<String>,
+    help: String,
+}
+
+/// Writes the field table, or with `check` compares it; returns its name
+/// when it differs (with `check`).
+fn field_table(root: &Path, check: bool) -> anyhow::Result<Option<String>> {
+    let page = PAGES.iter().find(|p| p.kind == "mod").context("no mod page")?;
+    let mut sources = Sources::default();
+    for label in std::iter::once(&DEFAULTS).chain(page.sources) {
+        let text = std::fs::read_to_string(root.join(label)).with_context(|| format!("reading {label}"))?;
+        sources.add(label, &text)?;
+    }
+    let path = root.join(FIELD_TABLE);
+    let old = std::fs::read_to_string(&path).unwrap_or_default();
+    let text = render_table(&sources, TABLE_ROOTS, &old)?;
+    if check {
+        return Ok((old != text).then(|| FIELD_TABLE.to_string()));
+    }
+    if old != text {
+        std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;
+    }
+    Ok(None)
+}
+
+/// The table for the types of `sources` reached from `roots`, keeping the
+/// hand columns of `old`'s rows.
+fn render_table(sources: &Sources, roots: &[&str], old: &str) -> anyhow::Result<String> {
+    let kept: BTreeMap<String, FieldRow> = if old.trim().is_empty() {
+        BTreeMap::new()
+    } else {
+        ron::from_str::<Vec<FieldRow>>(old)
+            .with_context(|| format!("reading {FIELD_TABLE}"))?
+            .into_iter()
+            .map(|r| (r.key.clone(), r))
+            .collect()
+    };
+    let rows: Vec<FieldRow> = sources
+        .field_rows(roots)?
+        .into_iter()
+        .map(|(key, ty, help)| match kept.get(&key) {
+            Some(k) => FieldRow { key, ty, help, ..k.clone() },
+            None => {
+                FieldRow { key, ty, unit: String::new(), range: None, place: Place::More, asset: None, help }
+            }
+        })
+        .collect();
+    let pretty = ron::ser::PrettyConfig::new().indentor("    ".to_string()).new_line("\n".to_string());
+    Ok(format!("{TABLE_HEADER}{}\n", ron::ser::to_string_pretty(&rows, pretty)?))
 }
 
 /// The `check` step: `format-docs --check`, its failure naming each stale page.
@@ -810,6 +904,59 @@ impl Sources {
         Ok(out.join("\n"))
     }
 
+    /// The field table's rows (`render_table`): `(key, type, help)` for
+    /// every type reached from `roots`, in order of first reference.
+    fn field_rows(&self, roots: &[&str]) -> anyhow::Result<Vec<(String, String, String)>> {
+        let ty_text = |t: &Type| t.to_token_stream().to_string().replace(' ', "");
+        let help = |doc: &[String]| paragraphs(doc).join(" ");
+        let mut queue: VecDeque<String> = roots.iter().map(|t| t.to_string()).collect();
+        let mut seen: BTreeSet<String> = queue.iter().cloned().collect();
+        let mut out = Vec::new();
+        while let Some(name) = queue.pop_front() {
+            let item = self.items.get(&name).with_context(|| format!("no type `{name}` in the sources"))?;
+            let mut refs = Vec::new();
+            let field = |key: String, f: &Field, out: &mut Vec<_>, refs: &mut Vec<String>| {
+                out.push((key, ty_text(&f.ty), help(&f.doc)));
+                if !TABLE_UNFOLLOWED.contains(&f.name.as_str()) {
+                    self.label(&f.ty, refs);
+                }
+            };
+            match &item.body {
+                Body::Struct(fields) => {
+                    for f in self.text_fields(item, fields) {
+                        field(format!("{name}.{}", f.name), &f, &mut out, &mut refs);
+                    }
+                }
+                Body::Enum(variants) => {
+                    for v in variants {
+                        out.push((format!("{name}::{}", v.name), "variant".into(), help(&v.doc)));
+                        match &v.fields {
+                            VariantFields::Unit => {}
+                            VariantFields::Tuple(types) => {
+                                for (i, t) in types.iter().enumerate() {
+                                    out.push((format!("{name}::{}.{i}", v.name), ty_text(t), help(&v.doc)));
+                                    self.label(t, &mut refs);
+                                }
+                            }
+                            VariantFields::Named(fields) => {
+                                for f in fields {
+                                    field(format!("{name}::{}.{}", v.name, f.name), f, &mut out, &mut refs);
+                                }
+                            }
+                        }
+                    }
+                }
+                Body::Custom => {}
+            }
+            for r in refs {
+                if self.items.contains_key(&r) && seen.insert(r.clone()) {
+                    queue.push_back(r);
+                }
+            }
+        }
+        Ok(out)
+    }
+
     /// Whether `name` has a section: an item, or an alias of no item.
     fn has_section(&self, name: &str) -> bool {
         self.items.contains_key(name) || self.aliases.get(name).is_some_and(|(t, _)| !self.aliases_item(t))
@@ -1085,6 +1232,85 @@ mod tests {
             s.add(label, text).unwrap();
         }
         s
+    }
+
+    /// Issue #17: the field table lists every field (variants, tuple
+    /// fields, `look` listed but not followed), keeps the hand columns
+    /// and puts a new field under More.
+    #[test]
+    fn the_field_table_keeps_the_hand_columns() {
+        let s = sources(&[(
+            "src/m.rs",
+            r#"
+/// Root.
+#[derive(Serialize, Deserialize)]
+struct Root {
+    /// Gravity, px/s².
+    gravity: f32,
+    /// How.
+    how: How,
+    /// The look.
+    look: Option<Look>,
+}
+
+/// How.
+#[derive(Serialize, Deserialize)]
+enum How {
+    /// Not at all.
+    Off,
+    /// By a number.
+    Number(i32),
+    /// With fields.
+    Fast {
+        /// Its speed.
+        speed: u32,
+    },
+}
+
+/// Never followed.
+#[derive(Serialize, Deserialize)]
+struct Look {
+    /// Glow.
+    glow: u8,
+}
+"#,
+        )]);
+        let old = r#"[(key: "Root.gravity", ty: "i32", unit: "px/s²", range: Some((0.0, 9.0)), place: Common,
+            asset: None, help: "old")]"#;
+        let text = render_table(&s, &["Root"], old).unwrap();
+        assert!(text.starts_with(TABLE_HEADER));
+        let rows: Vec<FieldRow> = ron::from_str(&text).unwrap();
+        let keys: Vec<&str> = rows.iter().map(|r| r.key.as_str()).collect();
+        assert_eq!(
+            keys,
+            [
+                "Root.gravity",
+                "Root.how",
+                "Root.look",
+                "How::Off",
+                "How::Number",
+                "How::Number.0",
+                "How::Fast",
+                "How::Fast.speed"
+            ]
+        );
+        assert_eq!(
+            rows[0],
+            FieldRow {
+                key: "Root.gravity".into(),
+                ty: "f32".into(),
+                unit: "px/s²".into(),
+                range: Some((0.0, 9.0)),
+                place: Place::Common,
+                asset: None,
+                help: "Gravity, px/s².".into(),
+            }
+        );
+        assert_eq!(
+            (rows[7].place, rows[7].ty.as_str(), rows[2].ty.as_str()),
+            (Place::More, "u32", "Option<Look>")
+        );
+        assert_eq!(render_table(&s, &["Root"], &text).unwrap(), text, "writing again changes nothing");
     }
 
     #[test]

@@ -1,0 +1,29 @@
+[package]
+name = "olr-mod-editor"
+description = "The mod editor: a mod's world, weapons and projectiles edited through olr-edit's mod operations, with undo, a check before saving and egui panels, as pure state a host drives (tested headless)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-data.workspace = true
+olr-format.workspace = true
+olr-edit.workspace = true
+olr-pack.workspace = true
+olr-vfs.workspace = true
+egui.workspace = true
+serde = { workspace = true, features = ["std"] }
+ron.workspace = true
+
+[dev-dependencies]
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true

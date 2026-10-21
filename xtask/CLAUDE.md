@@ -25,7 +25,15 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   example: the guide's block (`docs/formats/README.md`, `<!-- file:
   <kind>/<path> -->` then a `ron` block), so editing the guide means
   regenerating; a malformed marker, or a file type without its example, is
-  an error. `--check` compares instead and fails naming each stale page; `check`'s `format-docs` step (before `test`, offline too) runs it.
+  an error. Issue #17: it also writes the mod editor's field table,
+  `crates/olr-mod-editor/fields.ron` (`FIELD_TABLE`, `render_table`): a
+  row per serialized field of the types reached from `TABLE_ROOTS`
+  (`Type.field`, `Type::Variant.field`, `Type::Variant.0`) and per variant
+  (`Type::Variant`, ty `variant`), in first-reference order, with its type
+  and doc comment (`help`); the `look` fields are listed, their types not
+  followed (`TABLE_UNFOLLOWED`). The hand columns (`unit`, `range`,
+  `place`, `asset`) are kept from the file by key; a new field comes as
+  More with none. `--check` compares instead and fails naming each stale page (and the table); `check`'s `format-docs` step (before `test`, offline too) runs it.
   Unit tests on inline sources.
 
 - `fetch-olx-content` (`fetch.rs`) imports the manifest into the

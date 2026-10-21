@@ -3874,6 +3874,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "olr-mod-editor"
+version = "0.2.0"
+dependencies = [
+ "egui",
+ "egui_kittest",
+ "olr-data",
+ "olr-edit",
+ "olr-format",
+ "olr-pack",
+ "olr-vfs",
+ "ron",
+ "serde",
+]
+
+[[package]]
 name = "olr-modes"
 version = "0.2.0"
 dependencies = [
