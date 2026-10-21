@@ -1,7 +1,7 @@
 (
     format_version: 5,
-    id: "olr-level-castlestrike-day",
-    name: "Castle Strike (day)",
+    id: "olr-level-castlestrike-reloaded",
+    name: "Castle Strike Reloaded",
     version: "1",
     kind: Level,
     authors: [],

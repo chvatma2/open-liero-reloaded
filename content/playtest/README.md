@@ -9,7 +9,9 @@ into the `packs/` folder of the game's data directory:
 - Windows: `%APPDATA%\open-liero-reloaded\data\packs\`
 
 or lay them over the content with `olr-cli render-match --packs content/playtest`.
-`olr-cli`'s `tests/playtest.rs` checks them.
+`olr-cli`'s `tests/playtest.rs` checks them. Packs that ship with the
+game go to `content/reloaded/` instead (the day Castle Strike did, as
+Castle Strike Reloaded, issue #7).
 
 - `olr-level-castlestrike-night/`: Castle Strike (night). OLX's Castle
   Strike with a look: a dark blue ambient; the sky glows (group `sky`, a
@@ -19,9 +21,3 @@ or lay them over the content with `olr-cli render-match --packs content/playtest
   the cellars and the gatehouse, lanterns in the towers, a cool light at
   the well, and glowing torch flames and candles (group `flames`). Its
   light objects went with plan 15c: its glowing pixels light it.
-- `olr-level-castlestrike-day/`: Castle Strike (day), made from the night
-  pack (plan 15c's showcase): a low blue-grey ambient, the sky glowing
-  warm white at 300 % (group `sky`, unlimited reach) so daylight comes in
-  through the hall, the loft and the towers and bounces off their walls,
-  and the cavern torches and the hall's candles flickering each on its
-  own (group `flames`, `Flicker`, 900 %).
