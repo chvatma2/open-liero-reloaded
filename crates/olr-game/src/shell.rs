@@ -1046,7 +1046,7 @@ impl Shell {
 /// with its restrictions (`None` for another game).
 pub fn weapon_menu(a: &Assets) -> Option<WeaponMenu> {
     let Game::Deathmatch { options, .. } = &a.game else { return None };
-    let rules = a.m.weapon_rules(&options.restrictions);
+    let rules = a.m.rules(&options.weapons);
     let names: Vec<String> = a.m.sim.weapons().iter().map(|w| w.name.clone()).collect();
     let enabled = names.iter().map(|n| rules.is_enabled(n)).collect();
     Some(WeaponMenu { names, enabled, fallback: rules.find_enabled_weapon(), seed: options.seed })

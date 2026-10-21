@@ -85,8 +85,8 @@ impl Default for DeathmatchOptions {
 
 /// The match [`DeathmatchOptions`] describe on packs `mod_id` and
 /// `level_id`: the human is worm 0, then the bots (OLX's bots at one
-/// difficulty), under OLX's LX56 settings, the default restrictions
-/// ([`olr_content::DEFAULT_PRESET`]) and the Deathmatch rules given.
+/// difficulty), under OLX's LX56 settings, the `Default` loadout (every
+/// weapon at 100 %: issue #5) and the Deathmatch rules given.
 /// The bots are capped so the worms fit `MAX_WORMS`. Spectating, the bots
 /// play alone (2 to `MAX_WORMS` of them).
 pub fn match_options(o: &DeathmatchOptions, mod_id: &str, level_id: &str) -> MatchOptions {
@@ -109,7 +109,7 @@ pub fn match_options(o: &DeathmatchOptions, mod_id: &str, level_id: &str) -> Mat
             time_limit: o.time_limit,
             ..DeathmatchSettings::default()
         },
-        restrictions: olr_content::DEFAULT_PRESET.into(),
+        weapons: olr_content::WeaponChoice::default_loadout(),
         pool_capacity: olr_sim::MatchSetup::DEFAULT_POOL_CAPACITY,
     }
 }
@@ -849,7 +849,7 @@ mod tests {
             m.players[1..].iter().all(|p| matches!(p, Player::Bot(c) if c.difficulty == Difficulty::Hard))
         );
         assert_eq!((m.deathmatch.kill_limit, m.deathmatch.time_limit, m.deathmatch.lives), (15, 1.5, -2));
-        assert_eq!(m.restrictions, olr_content::DEFAULT_PRESET);
+        assert_eq!(m.weapons, olr_content::WeaponChoice::default_loadout(), "the command line plays Default");
         let many = match_options(&DeathmatchOptions { bots: 100, ..Default::default() }, "m", "l");
         assert_eq!(many.players.len(), MAX_WORMS);
         let none = match_options(&DeathmatchOptions { bots: 0, ..Default::default() }, "m", "l");

@@ -85,7 +85,11 @@ loadouts, §4 the recommendations this crate follows).
   `choose_loadout` picks by personality and `LoadoutPolicy`. Restrictions
   come as `olr_data::restrictions::WeaponRules` (OLX's `CWpnRest` after
   `updateList`), built from the mod pack's presets (`olr-content`:
-  `LoadedMod::weapon_rules`).
+  `LoadedMod::weapon_rules`, or a loadout's: `LoadedMod::rules`).
+  A loadout's unique rule (`WeaponRules::unique`, issue #5, not OLX's):
+  after the pick, a non-chaos bot's repeats take unused enabled weapons
+  (`unique_weapons`, from its own `BotRng`; no draw without a repeat), so
+  `olx_bot_weapons` still keys on the loading time.
 - **Port, don't improve** where OLX's choices define how its bots feel; cite
   the OLX source on each function.
 - **Future: bot skill** (the user's direction; `docs/porting/STATUS.md`,

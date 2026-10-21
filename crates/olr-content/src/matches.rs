@@ -8,6 +8,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow, ensure};
 use olr_bots::{AreaCache, Bot, BotConfig, BotRng, LoadoutPolicy, Personality, choose_loadout};
+use olr_data::loadouts::{LOADING_TIME_RANGE, MatchLoadout, unique_ok};
 use olr_modes::{ChaosCycle, Deathmatch, DeathmatchSettings, RespawnLoadout};
 use olr_replay::{ModeSpec, Packs, Recorder, WormLook};
 use olr_sim::{Loadout, MAX_SLOTS, MAX_WORMS, MatchSetup, SimSettings, Slot, World};
@@ -30,6 +31,35 @@ pub enum Player {
     Bot(BotConfig),
 }
 
+/// The weapons a match is played with.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum WeaponChoice {
+    /// OLX's `WeaponRestrictionsFile`, such as [`crate::DEFAULT_PRESET`], at
+    /// the settings' loading time; its `Bonus` weapons may be in natural
+    /// bonuses. The developer tools (`olr-cli`'s matches, the oracle) play
+    /// these, so their results stay OLX's.
+    Preset(String),
+    /// A loadout (issue #5; every player-facing game): its weapons, its
+    /// loading time (replacing the settings') and its unique rule. Empty
+    /// weapons are every weapon of the mod (`Default`).
+    Loadout(MatchLoadout),
+}
+
+impl WeaponChoice {
+    /// The preset's or the loadout's name, for messages.
+    pub fn name(&self) -> &str {
+        match self {
+            WeaponChoice::Preset(file) => file,
+            WeaponChoice::Loadout(l) => &l.name,
+        }
+    }
+
+    /// The `Default` loadout: every weapon, 100 %, unique off.
+    pub fn default_loadout() -> WeaponChoice {
+        WeaponChoice::Loadout(MatchLoadout::default())
+    }
+}
+
 /// A Deathmatch to build: everything that decides how it starts.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MatchOptions {
@@ -40,15 +70,16 @@ pub struct MatchOptions {
     /// The match seed; every bot's generator is seeded from it too.
     pub seed: u32,
     /// The settings before the Deathmatch's rules are applied (OLX's LX56
-    /// with the bonus options, as the command line set them).
+    /// with the bonus options, as the command line set them). A loadout's
+    /// loading time replaces `loading_time`.
     pub settings: SimSettings,
     /// Worm `i` is played by `players[i]`: 2 to [`MAX_WORMS`].
     pub players: Vec<Player>,
     /// The rules. `respawn_loadout` is replaced: [`RespawnLoadout::ChaosCycle`]
     /// over the chaos bots when there are any, else `Keep`.
     pub deathmatch: DeathmatchSettings,
-    /// OLX's `WeaponRestrictionsFile`, such as [`crate::DEFAULT_PRESET`].
-    pub restrictions: String,
+    /// The weapons: an OLX preset (the developer tools) or a loadout (play).
+    pub weapons: WeaponChoice,
     /// The projectile pool's size: OLX's `MAX_PROJECTILES`
     /// ([`MatchSetup::DEFAULT_POOL_CAPACITY`], 3000) for every game; the
     /// engine stress test raises it (`olr-cli stress`). The replay records it.
@@ -57,8 +88,8 @@ pub struct MatchOptions {
 
 impl MatchOptions {
     /// A Deathmatch of `players` on these packs with the defaults: OLX's
-    /// LX56 settings, the default rules, [`crate::DEFAULT_PRESET`] and
-    /// OLX's projectile pool.
+    /// LX56 settings, the default rules, [`crate::DEFAULT_PRESET`] (the
+    /// developer tools' weapons) and OLX's projectile pool.
     pub fn deathmatch(mod_id: &str, level_id: &str, seed: u32, players: Vec<Player>) -> MatchOptions {
         MatchOptions {
             mod_id: mod_id.into(),
@@ -67,7 +98,7 @@ impl MatchOptions {
             settings: SimSettings::lx56(),
             players,
             deathmatch: DeathmatchSettings::default(),
-            restrictions: crate::DEFAULT_PRESET.into(),
+            weapons: WeaponChoice::Preset(crate::DEFAULT_PRESET.into()),
             pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
         }
     }
@@ -136,9 +167,11 @@ impl BuiltMatch {
 /// - each bot's loadout is `choose_loadout` from its own `BotRng`
 ///   (OLX's presets for a Deathmatch bot, random for a chaos bot), each
 ///   human's random weapons ([`Player::Human`]) or chosen ones
-///   ([`Player::HumanWith`], refused unless the restrictions enable them);
+///   ([`Player::HumanWith`], refused unless the rules enable them and,
+///   with a loadout's unique rule, `unique_ok`);
 /// - chaos bots' loadouts rotate on every spawn (spec §20 F10);
-/// - natural bonuses and the bots' choices follow `o.restrictions`.
+/// - natural bonuses and the bots' choices follow `o.weapons`; a
+///   loadout's loading time replaces the settings'.
 pub fn build_match(a: MatchAssets<'_>, o: &MatchOptions) -> anyhow::Result<BuiltMatch> {
     build_match_spawning(a, o, None)
 }
@@ -159,21 +192,34 @@ pub fn build_match_spawning(
             cfg.validate().map_err(|e| anyhow!("worm {i}: {e}"))?;
         }
     }
+    let rules = a.m.rules(&o.weapons);
+    let mut settings = o.settings.clone();
+    let restrictions = match &o.weapons {
+        WeaponChoice::Preset(file) => file.clone(),
+        WeaponChoice::Loadout(l) => {
+            settings.loading_time =
+                l.loading_time.clamp(*LOADING_TIME_RANGE.start(), *LOADING_TIME_RANGE.end());
+            crate::DEFAULT_PRESET.into()
+        }
+    };
     let sandbox = SandboxSetup {
         mod_id: o.mod_id.clone(),
         level_id: o.level_id.clone(),
         seed: o.seed,
-        settings: o.settings.clone(),
+        settings,
         worms: vec![SpawnSpec::default(); n],
-        restrictions: o.restrictions.clone(),
+        restrictions,
     };
     let mut setup = match_setup(a.m, a.level, a.theme, &sandbox)?;
     setup.pool_capacity = o.pool_capacity;
+    // A loadout's bonuses (were they on) hold its weapons.
+    if matches!(o.weapons, WeaponChoice::Loadout(_)) {
+        setup.bonus_weapons = Some(rules.bonus_weapons());
+    }
     let human = o.players.iter().position(|p| !matches!(p, Player::Bot(_)));
     if let Some(w) = human.and_then(|i| setup.worms.get_mut(i)) {
         w.spawn = human_spawn;
     }
-    let rules = a.m.weapon_rules(&o.restrictions);
     let settings = setup.settings.clone(); // `o.settings` with the mod's physics
     for (i, (w, p)) in setup.worms.iter_mut().zip(&o.players).enumerate() {
         let cfg = match p {
@@ -183,11 +229,16 @@ pub fn build_match_spawning(
                 let enabled = rules.enabled_weapons();
                 if let Some(bad) = ids.iter().find(|id| !enabled.contains(id)) {
                     anyhow::bail!(
-                        "worm {i}: weapon {bad} is not one {:?} enables in {}",
-                        o.restrictions,
+                        "worm {i}: weapon {bad} is not one {} enables in {}",
+                        o.weapons.name(),
                         o.mod_id
                     );
                 }
+                ensure!(
+                    !rules.unique() || unique_ok(ids, &enabled),
+                    "worm {i}: {} holds a weapon twice while others are free ({ids:?})",
+                    o.weapons.name()
+                );
                 w.loadout = Loadout::new(ids.iter().map(|&id| Slot::ready(id)).collect(), &settings);
                 continue;
             }

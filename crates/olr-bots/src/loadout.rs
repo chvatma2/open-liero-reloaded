@@ -133,6 +133,9 @@ fn fill_empty(mut weapons: [i32; MAX_SLOTS], rules: &WeaponRules, rng: &mut BotR
 /// - a chaos bot: [`get_random_weapons`] ignoring the restrictions (F10; its
 ///   mode changes the weapons on every spawn).
 ///
+/// With a loadout's unique rule (`rules.unique()`), a non-chaos bot's
+/// repeats then go ([`unique_weapons`]).
+///
 /// Every slot starts full and ready; `rules` must be for the match's mod.
 pub fn choose_loadout(
     cfg: &BotConfig,
@@ -140,7 +143,7 @@ pub fn choose_loadout(
     settings: &SimSettings,
     rng: &mut BotRng,
 ) -> Loadout {
-    let weapons = match (cfg.personality, cfg.loadout) {
+    let mut weapons = match (cfg.personality, cfg.loadout) {
         (Personality::Chaos, _) => {
             let all: Vec<bool> = alloc::vec![true; rules.weapon_count()];
             get_random_weapons(&all, rng)
@@ -150,7 +153,28 @@ pub fn choose_loadout(
         }
         (Personality::Deathmatch | Personality::Idle, LoadoutPolicy::Random) => random_loadout(rules, rng),
     };
+    if rules.unique() && cfg.personality != Personality::Chaos {
+        unique_weapons(&mut weapons, &rules.enabled_weapons(), rng);
+    }
     Loadout::new(weapons.iter().map(|&w| Slot::ready(w)).collect(), settings)
+}
+
+/// A loadout's unique rule on a bot's pick (issue #5, not OLX's): each
+/// slot repeating an earlier one's weapon takes one of the `enabled` ids no
+/// slot holds ([`random_enabled_weapon`], one draw), until every enabled
+/// weapon is in a slot (then repeats stay: `olr_data::loadouts::unique_ok`).
+/// No draw when nothing repeats, so a pick without repeats is unchanged.
+pub fn unique_weapons(weapons: &mut [i32; MAX_SLOTS], enabled: &[i32], rng: &mut BotRng) {
+    for i in 1..MAX_SLOTS {
+        if !weapons[..i].contains(&weapons[i]) {
+            continue;
+        }
+        let unused: Vec<i32> = enabled.iter().copied().filter(|e| !weapons.contains(e)).collect();
+        if unused.is_empty() {
+            return;
+        }
+        weapons[i] = random_enabled_weapon(&unused, rng);
+    }
 }
 
 /// The random branch of `initWeaponSelection`: `GetRandomWeapons`, then the

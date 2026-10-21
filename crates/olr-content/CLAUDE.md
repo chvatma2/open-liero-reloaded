@@ -69,6 +69,19 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   (`olr_data::restrictions::WeaponRules`). `SandboxSetup::restrictions` (OLX's
   `WeaponRestrictionsFile`, `DEFAULT_PRESET` = `Standard 100lt`) decides the
   weapons natural bonuses may hold (`MatchSetup::bonus_weapons`).
+  **Loadouts** (issue #5): `WeaponChoice::{Preset(file), Loadout(MatchLoadout)}`
+  is a match's weapons (`MatchOptions::weapons`): a preset for the
+  developer tools (`olr-cli`'s matches, the oracle: `deathmatch()` gives
+  `DEFAULT_PRESET`), a loadout for every player-facing game
+  (`WeaponChoice::default_loadout()`: `Default`, every weapon at 100 %).
+  `LoadedMod::rules(&WeaponChoice)` / `Content::rules(id, ..)` give its
+  `WeaponRules` (a loadout's by `WeaponRules::from_loadout`). A loadout's
+  loading time (clamped into `LOADING_TIME_RANGE`) replaces the settings',
+  its weapons are the natural bonuses' (`bonus_weapons`) and its unique
+  rule refuses a `HumanWith` repeat while other weapons are free
+  (`unique_ok`); the bots keep it (`olr_bots::choose_loadout`). The
+  replay records the result (loading time, bonus weapons, loadouts).
+  `DEFAULT_LOADOUT` and `MatchLoadout` are re-exported.
 - **Worlds.** `new_world` loads the mod, level and theme and calls
   `new_world_from(&mod, &level, &theme, &setup)`, which a game restart
   calls with the assets it loaded once: `match_setup` (the `olr_sim::MatchSetup`,
@@ -101,7 +114,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   assembly of a Deathmatch, used by `olr-cli match` and `olr --mode
   deathmatch`: `players[i]` is `Player::Human` (random enabled weapons:
   the command line's games), `Player::HumanWith(weapons)` (the weapon
-  selection's choice, refused unless the restrictions enable each; the
+  selection's choice, refused unless the rules enable each, or under a
+  loadout's unique rule it repeats one while others are free; the
   recording's setup holds it) or `Player::Bot(BotConfig)` (`choose_loadout`
   from `BotRng::new(seed, i, personality)`); `MatchOptions::pool_capacity`
   sets the projectile pool (`MatchSetup::DEFAULT_POOL_CAPACITY`, OLX's
@@ -111,7 +125,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   started `Recorder` and the bots on one shared `AreaCache` (think in
   `bots` order). `olr-cli`'s golden checksum streams pin it.
   `MatchOptions::deathmatch(mod, level, seed, players)` gives the defaults
-  (LX56 settings, default rules, `DEFAULT_PRESET`, OLX's pool), which
+  (LX56 settings, default rules, `WeaponChoice::Preset(DEFAULT_PRESET)`,
+  OLX's pool), which
   `olr-cli`'s `MatchSpec::match_options` and `olr-netcode`'s tests start from.
 - **Replays' content:** `check_replay_packs` (ids and content hashes) and
   `replay_assets_from(m, level, theme)` let a game that draws a replay load

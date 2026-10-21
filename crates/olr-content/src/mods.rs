@@ -11,8 +11,8 @@ use olr_data::restrictions::{Preset, WeaponRules};
 use olr_sim::{GAME_SOUND_PREFIX, SimMod};
 use olr_vfs::VPath;
 
-use crate::Content;
 use crate::placeholder::{PLACEHOLDER_SIZE, placeholder_image};
+use crate::{Content, WeaponChoice};
 
 /// A mod ready to play and draw.
 #[derive(Clone, Debug)]
@@ -50,6 +50,18 @@ impl LoadedMod {
     pub fn weapon_rules(&self, file: &str) -> WeaponRules {
         let weapons = self.sim.weapons().iter().map(|w| w.name.as_str());
         WeaponRules::from_parts(&self.name, weapons, &self.restrictions, file)
+    }
+
+    /// The rules a match of this mod plays `w` with: a preset's
+    /// ([`LoadedMod::weapon_rules`]) or a loadout's
+    /// (`WeaponRules::from_loadout`: its weapons, its unique rule).
+    pub fn rules(&self, w: &WeaponChoice) -> WeaponRules {
+        match w {
+            WeaponChoice::Preset(file) => self.weapon_rules(file),
+            WeaponChoice::Loadout(l) => {
+                WeaponRules::from_loadout(&self.name, self.sim.weapons().iter().map(|w| w.name.as_str()), l)
+            }
+        }
     }
 }
 
@@ -105,6 +117,18 @@ impl Content {
     pub fn weapon_rules(&self, id: &str, file: &str) -> anyhow::Result<WeaponRules> {
         let pack = self.mod_pack(id)?;
         Ok(WeaponRules::new(&pack.def, file))
+    }
+
+    /// The rules mod pack `id` plays `w` with ([`LoadedMod::rules`]), for
+    /// callers of [`Content::sim_mod`].
+    pub fn rules(&self, id: &str, w: &WeaponChoice) -> anyhow::Result<WeaponRules> {
+        let pack = self.mod_pack(id)?;
+        Ok(match w {
+            WeaponChoice::Preset(file) => WeaponRules::new(&pack.def, file),
+            WeaponChoice::Loadout(l) => {
+                WeaponRules::from_loadout(&pack.def.name, pack.def.weapons.iter().map(|w| w.name.as_str()), l)
+            }
+        })
     }
 
     /// Mod pack `id` ready to play: like [`Content::sim_mod`], except that a

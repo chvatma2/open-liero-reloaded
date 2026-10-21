@@ -214,7 +214,7 @@ fn local_play_builds_match_options() {
     let c = ui.update(UiAction::StartMatch);
     let [AppCommand::StartMatch(o)] = &c[..] else { panic!("{c:?}") };
     assert_eq!((o.mod_id.as_str(), o.level_id.as_str(), o.seed), ("olx-classic", "olx-level-dirt-level", 3));
-    assert_eq!(o.restrictions, "All weapons");
+    assert_eq!(o.weapons, olr_content::WeaponChoice::Preset("All weapons".into()));
     assert!(o.settings.bonuses);
     assert_eq!(o.settings.loading_time, 250);
     assert_eq!(o.players.len(), 6);

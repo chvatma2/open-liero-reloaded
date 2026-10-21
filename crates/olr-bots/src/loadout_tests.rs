@@ -179,3 +179,41 @@ fn random_weapons_follow_restrictions() {
 fn classic_rules() -> WeaponRules {
     rules("Liero v1.0", &CLASSIC, &[], &[])
 }
+
+#[test]
+fn unique_loadouts_keep_bots_from_repeating() {
+    use olr_data::loadouts::{MatchLoadout, unique_ok};
+    // Three of eight enabled at 20 % (Rifles game type for a Classic mod
+    // name): OLX's pick repeats; with unique every slot until the three are
+    // used differs, deterministically per seed.
+    let names = ["Rifle", "Bazooka", "Napalm"].map(String::from).to_vec();
+    let mut l = MatchLoadout { name: "Three".into(), weapons: names, loading_time: 20, unique: false };
+    let plain = WeaponRules::from_loadout("Liero v1.0", CLASSIC, &l);
+    l.unique = true;
+    let unique = WeaponRules::from_loadout("Liero v1.0", CLASSIC, &l);
+    assert!(unique.unique() && !plain.unique());
+    let s = SimSettings { loading_time: 20, ..SimSettings::lx56() };
+    let pick = |r: &WeaponRules, seed| -> Vec<i32> {
+        let l = choose_loadout(&BotConfig::default(), r, &s, &mut BotRng::from_seed(seed));
+        l.slots.iter().map(|s| s.weapon).collect()
+    };
+    let enabled = unique.enabled_weapons();
+    for seed in 0..50 {
+        let w = pick(&unique, seed);
+        assert!(w.iter().all(|i| enabled.contains(i)), "{w:?}");
+        assert!(unique_ok(&w, &enabled), "{w:?}");
+        assert!(enabled.iter().all(|e| w.contains(e)), "{w:?}");
+        assert_eq!(w, pick(&unique, seed));
+    }
+    assert!((0..50).any(|seed| !distinct(&pick(&plain, seed)[..3])));
+
+    // Nothing repeats: no draw, the pick unchanged.
+    let mut w = [0, 1, 2, 3, 4];
+    let mut rng = BotRng::from_seed(1);
+    unique_weapons(&mut w, &[0, 1, 2, 3, 4, 5], &mut rng);
+    assert_eq!((w, rng.calls()), ([0, 1, 2, 3, 4], 0));
+    // Repeats take unused weapons until none is left.
+    let mut w = [1, 1, 1, 1, 1];
+    unique_weapons(&mut w, &[1, 6], &mut rng);
+    assert_eq!(w, [1, 6, 1, 1, 1]);
+}

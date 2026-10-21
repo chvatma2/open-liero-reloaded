@@ -46,8 +46,8 @@ pub use maps::{
     DEFAULT_SKIN, LoadedLevel, LoadedSkin, LoadedTheme, MAX_ART_SCALE, MAX_COLOR_MAP_BYTES, NO_SKIN_HASH,
 };
 pub use matches::{
-    BuiltMatch, CPU_COLOURS, MatchAssets, MatchOptions, Player, build_match, build_match_spawning,
-    default_looks,
+    BuiltMatch, CPU_COLOURS, MatchAssets, MatchOptions, Player, WeaponChoice, build_match,
+    build_match_spawning, default_looks,
 };
 pub use mods::{LoadedMod, check_frames};
 pub use placeholder::{PLACEHOLDER, placeholder_image};
@@ -59,6 +59,8 @@ pub use skins::{
 };
 pub use sounds::{MAX_SOUND_BYTES, MAX_SOUND_SECONDS, check_sound};
 
+#[doc(no_inline)]
+pub use olr_data::loadouts::{DEFAULT_LOADOUT, MatchLoadout};
 #[doc(no_inline)]
 pub use olr_data::restrictions::{DEFAULT_PRESET, WeaponRules};
 #[doc(no_inline)]

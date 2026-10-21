@@ -39,6 +39,7 @@ pub use config::{
 };
 pub use loadout::{
     BotWeapons, GameType, choose_loadout, get_random_weapons, olx_bot_weapons, random_enabled_weapon,
+    unique_weapons,
 };
 pub use motor::{Intent, Motor};
 pub use nav::{AreaCache, Search, SearchError, SearchStatus};

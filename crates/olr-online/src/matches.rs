@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use olr_bots::{AreaCache, Bot, BotConfig, Difficulty, LoadoutPolicy, Personality};
-use olr_content::{Content, DEFAULT_PRESET, MatchOptions, Player};
+use olr_content::{Content, DEFAULT_PRESET, MatchOptions, Player, WeaponChoice};
 use olr_modes::DeathmatchSettings;
 use olr_netcode::{Driver, TickInfo, WorldSim};
 use olr_proto::{BotWire, Look, MatchSetupWire, MatchStartWire, RulesWire};
@@ -133,7 +133,7 @@ pub fn options(start: &MatchStartWire) -> anyhow::Result<MatchOptions> {
         },
         players,
         deathmatch: deathmatch(&setup.rules),
-        restrictions,
+        weapons: WeaponChoice::Preset(restrictions),
         pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
     })
 }
@@ -161,7 +161,7 @@ pub fn check_packs(content: &Content, setup: &MatchSetupWire) -> anyhow::Result<
 /// becomes random weapons, alike on every peer.
 pub fn resolve(content: &Content, start: &MatchStartWire) -> anyhow::Result<MatchOptions> {
     let mut o = options(start)?;
-    let enabled = content.weapon_rules(&o.mod_id, &o.restrictions)?.enabled_weapons();
+    let enabled = content.rules(&o.mod_id, &o.weapons)?.enabled_weapons();
     for p in &mut o.players {
         if let Player::HumanWith(ids) = p
             && !ids.iter().all(|id| enabled.contains(id))

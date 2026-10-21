@@ -407,7 +407,7 @@ fn a_replay_survives_reimporting_the_same_content() {
         settings: SimSettings::lx56(),
         players: vec![Player::Human, Player::Bot(BotConfig::default())],
         deathmatch: DeathmatchSettings::default(),
-        restrictions: DEFAULT_PRESET.into(),
+        weapons: olr_content::WeaponChoice::Preset(DEFAULT_PRESET.into()),
         pool_capacity: olr_sim::MatchSetup::DEFAULT_POOL_CAPACITY,
     };
     let m = Content::open(bundled.path()).unwrap().build_match(&options).unwrap();

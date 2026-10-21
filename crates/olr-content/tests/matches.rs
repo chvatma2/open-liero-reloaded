@@ -3,7 +3,7 @@
 use std::path::Path;
 
 use olr_bots::{BotConfig, Difficulty, Personality};
-use olr_content::{Content, DEFAULT_PRESET, MatchOptions, Player};
+use olr_content::{Content, DEFAULT_PRESET, MatchLoadout, MatchOptions, Player, WeaponChoice};
 use olr_modes::{DeathmatchSettings, RespawnLoadout};
 use olr_replay::ModeSpec;
 use olr_sim::{MatchSetup, SimSettings};
@@ -36,7 +36,7 @@ fn match_builder_seats_humans_and_bots() {
             Player::Bot(chaos),
         ],
         deathmatch: DeathmatchSettings { kill_limit: 5, ..DeathmatchSettings::default() },
-        restrictions: DEFAULT_PRESET.into(),
+        weapons: WeaponChoice::Preset(DEFAULT_PRESET.into()),
         pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
     };
     let m = c.build_match(&o).unwrap();
@@ -80,7 +80,7 @@ fn chosen_weapons_are_the_humans_and_recorded() {
         settings: SimSettings::lx56(),
         players: vec![Player::HumanWith(chosen), Player::Bot(BotConfig::default())],
         deathmatch: DeathmatchSettings::default(),
-        restrictions: DEFAULT_PRESET.into(),
+        weapons: WeaponChoice::Preset(DEFAULT_PRESET.into()),
         pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
     };
     let m = c.build_match(&o).unwrap();
@@ -112,7 +112,7 @@ fn the_recording_names_the_humans_worm() {
         settings: SimSettings::lx56(),
         players: vec![bot, bot, Player::Human],
         deathmatch: DeathmatchSettings::default(),
-        restrictions: DEFAULT_PRESET.into(),
+        weapons: WeaponChoice::Preset(DEFAULT_PRESET.into()),
         pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
     };
     let viewer = |o: &MatchOptions| {
@@ -122,4 +122,46 @@ fn the_recording_names_the_humans_worm() {
     assert_eq!(viewer(&o), Some(2));
     let alone = MatchOptions { players: vec![bot, bot], ..o };
     assert_eq!(viewer(&alone), None);
+}
+
+/// A loadout (issue #5): its loading time replaces the settings', natural
+/// bonuses hold only its weapons, the bots pick within it, and with its
+/// unique rule a human's repeat is refused while other weapons are free.
+#[test]
+fn a_loadout_sets_the_weapons_and_the_loading_time() {
+    let Some(c) = content() else { return };
+    let names = ["Rifle", "Bazooka", "Napalm"].map(String::from).to_vec();
+    let loadout = MatchLoadout { name: "Three".into(), weapons: names, loading_time: 20, unique: true };
+    let rules = c.rules("olx-classic", &WeaponChoice::Loadout(loadout.clone())).unwrap();
+    let enabled = rules.enabled_weapons();
+    assert_eq!(enabled.len(), 3);
+    let o = MatchOptions {
+        mod_id: "olx-classic".into(),
+        level_id: "olx-level-liero-factory".into(),
+        seed: 5,
+        settings: SimSettings { bonuses: true, ..SimSettings::lx56() },
+        players: vec![Player::Human, Player::Bot(BotConfig::default())],
+        deathmatch: DeathmatchSettings::default(),
+        weapons: WeaponChoice::Loadout(loadout),
+        pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
+    };
+    let m = c.build_match(&o).unwrap();
+    assert_eq!(m.setup.settings.loading_time, 20);
+    assert_eq!(m.setup.bonus_weapons.as_deref(), Some(&enabled[..]));
+    for w in &m.setup.worms {
+        let ids: Vec<i32> = w.loadout.slots.iter().map(|s| s.weapon).collect();
+        assert!(ids.iter().all(|i| enabled.contains(i)), "{ids:?}");
+        assert!(olr_data::loadouts::unique_ok(&ids, &enabled), "{ids:?}");
+    }
+    let human = |weapons| MatchOptions {
+        players: vec![Player::HumanWith(weapons), Player::Bot(BotConfig::default())],
+        ..o.clone()
+    };
+    let [a, b, d] = [enabled[0], enabled[1], enabled[2]];
+    assert!(c.build_match(&human([a, b, d, a, b])).is_ok());
+    let e = c.build_match(&human([a, a, b, b, b])).err().expect("refused").to_string();
+    assert!(e.contains("twice"), "{e}");
+    // Default: every weapon of the mod.
+    let all = c.rules("olx-classic", &WeaponChoice::default_loadout()).unwrap();
+    assert_eq!(all.enabled_weapons().len(), all.weapon_count());
 }

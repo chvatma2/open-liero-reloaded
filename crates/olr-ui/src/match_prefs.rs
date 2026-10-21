@@ -264,7 +264,7 @@ impl MatchPrefs {
             },
             players: std::iter::once(Player::Human).chain((0..bots).map(|i| Player::Bot(bot(i)))).collect(),
             deathmatch: self.rules.deathmatch(),
-            restrictions: self.restrictions.clone(),
+            weapons: olr_content::WeaponChoice::Preset(self.restrictions.clone()),
             pool_capacity: olr_sim::MatchSetup::DEFAULT_POOL_CAPACITY,
         }
     }
