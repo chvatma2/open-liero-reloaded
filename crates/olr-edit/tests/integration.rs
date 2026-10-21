@@ -11,6 +11,7 @@ mod guide;
 mod level;
 mod look;
 mod mask;
+mod mods;
 mod new;
 mod pack;
 mod pixelate;

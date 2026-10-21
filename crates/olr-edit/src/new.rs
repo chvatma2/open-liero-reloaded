@@ -9,11 +9,8 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_data::manifest::{PACK_FORMAT_VERSION, PackKind, PackManifest};
 use olr_data::restrictions::WeaponState;
-use olr_format::Colour;
 use olr_format::levels::{LevelSource, MAX_SIDE};
-use olr_format::mods::{
-    Effect, Fire, Gfx, ModSource, Projectile, Rope, ShotSpawn, Weapon, WeaponClass, Worm,
-};
+use olr_format::mods::{ModSource, Rope, Worm};
 use olr_pack::PackError;
 
 use crate::pack::{Pack, SaveError, Source, load, save};
@@ -189,26 +186,7 @@ fn rename(source: &mut Source, name: &str) {
 /// injures a worm; the default worm and rope; a preset, `Standard`,
 /// enabling it.
 fn mod_template(name: &str) -> ModSource {
-    let bullet = Projectile {
-        hit_terrain: vec![Effect::Explode { damage: 2, shake: 0, sound: None }],
-        hit_worm: vec![Effect::Injure { damage: 8 }],
-        ..Projectile::new(Gfx::Pixels(vec![Colour(Rgba::rgb(255, 230, 64))]))
-    };
-    let gun = Weapon {
-        name: "Gun".into(),
-        notes: String::new(),
-        recharge: 0.5,
-        drain: 10.0,
-        between_shots_s: 0.1,
-        laser_sight: false,
-        fire: Fire::Projectile {
-            class: WeaponClass::default(),
-            recoil: 0,
-            sound: None,
-            shot: ShotSpawn { speed: 200, projectile: Some(Box::new(bullet)), ..ShotSpawn::default() },
-        },
-        look: None,
-    };
+    let gun = crate::mods::blank_weapon("Gun");
     let standard = BTreeMap::from([("Gun".to_string(), WeaponState::Enabled)]);
     ModSource {
         name: name.into(),

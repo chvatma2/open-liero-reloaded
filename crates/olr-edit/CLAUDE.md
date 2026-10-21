@@ -3,11 +3,12 @@
 The pack authoring operations `olr-cli` and the editors share (plan 13d;
 spec `docs/superpowers/specs/2026-10-16-formats-design.md` §6): a pack's
 authoring source loaded and saved whole, the canonical formatter, pack
-templates, the level operations and the skin operations.
+templates, the level operations, the skin operations and the mod
+operations.
 
 - **Layer 3, `std`.** Depends on `olr-data`, `olr-vfs`, `olr-format`,
-  `olr-pack`, `thiserror`. It is not a forbidden importer: the game may
-  link it (the editors).
+  `olr-pack`, `thiserror`, `serde` (`mods`' RON values). It is not a
+  forbidden importer: the game may link it (the editors).
 - **`pack`** (plan 13d ruling R2): `load(dir)` gives `Pack { manifest,
   source: Source, other }`. It reads the manifest and the kind's files
   through `olr-format` (`Source::read`; a level keeps its thumbnail);
@@ -284,6 +285,40 @@ templates, the level operations and the skin operations.
   `list_library`, `add_to_library` (a new folder named after it, or over
   `replace`), `import_into_library` (read and checked whole, written
   anew, a name clash numbered), `remove_from_library`.
+- **Issue #16, the mod operations** (`mods`; `olr-cli mod`; STATUS.md
+  "Mod editing operations (issue #16)"), on a loaded mod `Pack`
+  (`source(pack)`, else `ModError::NotAMod`):
+  - **`path`**: `File` (`mod`, `restrictions`, `weapons/<id>`,
+    `projectiles/<id>`, the longest existing id), `Seg` (`.name`, `[i]`,
+    `["key"]`; printed plain when it can be), `FieldPath`, `parse`.
+  - **`node`** (private): the `Node` trait over every authoring type
+    (`ron`, `parse`, `children`, `child` (a spawn's shared `projectile` is
+    `Step::Shared`, followed into `projectiles/<id>`), `child_mut`,
+    `choices`/`set_variant` (a variant's defaults: `Variants::made`, else
+    `Name`, else `Name()`; `Unknown` never a choice), `insert` for maps),
+    through the `leaf!`, `fields!` and `composite!` macros. `fields!`
+    patterns name every field, so a new authoring field does not compile
+    until it is listed; a new enum variant needs its `CHOICES` entry.
+  - `get`, `set` (a choice by name, RON, or a bare string; `weapons/<id>.name`
+    and `mod.name` rename; a missing last map key is inserted;
+    `mod.weapons` read-only), `children`, `choices`, `variant`, `leaves`.
+  - **`commit`** (every operation): refuses an edit adding an error the
+    mod did not have (`ModError::Invalid`, the new `Issue`s) or whose
+    changed files do not read back as set (`ModError::Refused`); an
+    unchanged mod returns at once.
+  - **`weapons`**: `blank_weapon` (also `new`'s template), `add_weapon`
+    (`WeaponFrom::{Blank, Copy { pack, id }}`: shared projectiles and
+    asset files brought along, equal ones reused, others renamed),
+    `remove_weapon` (never the last), `move_weapon`, `copy_weapon`,
+    `rename_weapon` (presets follow, OLX's name match), `rename_mod`.
+  - **`shared`**: `used_by`, `inline`, `share`.
+  - **`check`**: `Issue { severity, file, path, line, col, message }`;
+    `check(pack)`, `check_dir(dir)`, `source_issues`: validate's, every
+    `mod_errors` error and missing asset at its path, unparsable files,
+    unused assets and shared projectiles; errors first.
+  - `walk` (private): every spawn and projectile with its path and key,
+    `fresh_keys` (explicit ids where inline keys would clash), shared
+    references and asset references.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: round trips
   through a folder at art scales 1 and 2, masks and groups joined or
   added, resampling across scales, the rectangle's rules, a picture kept
@@ -298,6 +333,14 @@ templates, the level operations and the skin operations.
   skins; `check_dir` refusing another kind, a wrong-size glow, a light
   over the caps, partial tint, a cut PNG; the preview's size and glow;
   issue #14's `a_preview_frame_is_the_previews_cell`; on the committed `content/`, offline too),
+  `mods.rs` (issue #16: set changes exactly the fields set on a copy of
+  Classic, every leaf of Classic and MW round-trips through set, paths
+  through shared projectiles and defaults, variants, new keys, refusals
+  (a cycle, two effects in an event) with their paths, weapon add,
+  remove, move, copy and rename with presets and a shipped loadout
+  following, a weapon of MW with its projectiles and files, used-by
+  against the files, inline and share round trips, check listing several
+  errors, unparsable files never a panic),
   `level.rs` (a proptest of the background invariant at art scales 1-4)
   and `guide.rs` (`docs/formats/README.md`'s examples parse, are canonical
   and check clean, the composed level's files generated; the asset

@@ -3657,6 +3657,7 @@ dependencies = [
  "olr-vfs",
  "png",
  "proptest",
+ "serde",
  "tempfile",
  "thiserror 2.0.21",
 ]

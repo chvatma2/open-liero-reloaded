@@ -13,6 +13,7 @@ pub mod glow;
 pub mod level;
 pub mod look;
 pub mod mask;
+pub mod mods;
 pub mod new;
 pub mod pack;
 pub mod pixelate;

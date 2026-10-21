@@ -13,6 +13,7 @@ olr-data.workspace = true
 olr-vfs.workspace = true
 olr-format.workspace = true
 olr-pack.workspace = true
+serde.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
