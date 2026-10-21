@@ -1,0 +1,11 @@
+(
+    name: "Look Test Skin",
+    art_scale: 4,
+    frame_size: (40, 36),
+    aim_frames: 7,
+    walk_frames: 3,
+    light: (
+        intensity: 200,
+        reach: 40,
+    ),
+)

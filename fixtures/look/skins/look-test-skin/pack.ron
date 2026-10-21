@@ -1,0 +1,10 @@
+(
+    format_version: 5,
+    id: "look-test-skin",
+    name: "Look Test Skin",
+    version: "1",
+    kind: Skin,
+    authors: [],
+    origin: None,
+    license: None,
+)

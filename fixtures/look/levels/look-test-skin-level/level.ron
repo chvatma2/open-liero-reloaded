@@ -1,0 +1,12 @@
+(
+    name: "Look Test Skin Level",
+    size: (427, 192),
+    theme: "olx-theme-dirt",
+    look: (
+        ambient: (
+            colour: "#304060",
+            intensity: 6,
+        ),
+        light_soak: 4,
+    ),
+)

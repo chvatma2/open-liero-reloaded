@@ -25,6 +25,10 @@ pub struct Args {
     /// Output pixels per world pixel.
     #[arg(long, default_value_t = 2.0)]
     scale: f32,
+    /// The skin every worm wears: a skin pack id or OLX name (issue #12:
+    /// a double-resolution skin draws at full resolution).
+    #[arg(long, default_value = "olx-skin-default")]
+    skin: String,
     /// Pack directories laid over `--content` (the first wins), such as
     /// `fixtures/look/mods`.
     #[arg(long)]
@@ -57,7 +61,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         seed: args.spec.seed,
     };
     let mut present = Presentation::new(&setup, game.world());
-    let skin = content.skin_or_default("olx-skin-default");
+    let id =
+        content.skin_id(&args.skin).with_context(|| format!("--skin {}: no such skin pack", args.skin))?;
+    let skin = content.load_skin(&id)?;
     for i in 0..game.world().worms().len() {
         present.add_worm(&skin, default_colour(i), i == 0, false);
     }

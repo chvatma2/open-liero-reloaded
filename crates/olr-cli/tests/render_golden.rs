@@ -263,3 +263,40 @@ fn look_rocket() {
     ];
     compare("look-rocket.png", &args, &[]);
 }
+
+/// Issue #12: idle bots on the dark skin test level (`fixtures/look/levels/
+/// look-test-skin-level`) wearing the hand-made double-resolution skin
+/// (`fixtures/look/skins/look-test-skin`, art scale 4): its cyan visor
+/// glows, its light lights the air and the rock pillar stops it. At
+/// `--scale 4`, one output pixel per skin art pixel.
+#[test]
+fn look_double_skin() {
+    let Some(content) = content_dir() else { return };
+    let (skins, levels) = (root().join("fixtures/look/skins"), root().join("fixtures/look/levels"));
+    let args = [
+        "render-match",
+        "--mod",
+        "olx-classic",
+        "--level",
+        "look-test-skin-level",
+        "--bots",
+        "2",
+        "--personality",
+        "idle",
+        "--seed",
+        "4",
+        "--ticks",
+        "500",
+        "--skin",
+        "look-test-skin",
+        "--scale",
+        "4",
+        "--packs",
+        skins.to_str().unwrap(),
+        "--packs",
+        levels.to_str().unwrap(),
+        "--content",
+        &content,
+    ];
+    compare("look-skin.png", &args, &[]);
+}
