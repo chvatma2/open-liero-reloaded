@@ -3,7 +3,7 @@
 Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
 `oracle-record`, `tidy`, `bless-render`, `bless-regression`, `fetch-olx-content`,
 `e2e`, `net-nat`, `bench`, `bench-quick`, `stress`, `net-feel`, `net-soak`, `windows`, `envelope`,
-`determinism`, `dist`, `flatpak`, `format-docs`.
+`determinism`, `dist`, `flatpak`, `publish`, `format-docs`.
 
 - `format-docs [--check]` (`format_docs.rs`, plan 13d R4; the level page
   also documents `editor/composition.ron`, plan 14a) writes
@@ -310,7 +310,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   aside); with `--final`, `final_version`: the plain `VERSION` (xtask's,
   the workspace's), refused unless `git tag --points-at HEAD` has
   `v<VERSION>` and the tree is clean (it never tags). The builds get it as
-  `OLR_BUILD_VERSION` (`version::BUILD_VERSION_VAR`), the folder in the zip,
+  `OLR_BUILD_VERSION` (`version::BUILD_VERSION_VAR`) and the release
+  repository the game checks for updates, `OLR_RELEASE_REPO`
+  (`version::RELEASE_REPO_VAR`, `RELEASE_REPO`; issue #4: a build without
+  it never checks), the folder in the zip,
   the Flatpak's name and its metainfo `<release version>` too; the Linux
   check runs `olr --version`, which must say `olr <version>`. `flatpak`
   alone names a work in progress. Without the Flatpak
@@ -322,7 +325,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   after) under one folder `open-liero-reloaded-<version>/`: the exes, the mingw
   DLLs an exe imports (`winbuild::mingw_imports`), `DOCS`, the example
   server config as `server.example.ron` (`files`) and `content/packs`
-  without `import-report.ron` (`copy_content`). `write_zip` (the `zip`
+  without `import-report.ron` (`copy_content`), and last
+  `install-manifest.txt` (`write_install_manifest`: every file, the
+  updater's record of what the release installed, `olr_update::install`).
+  `write_zip` (the `zip`
   crate, deflate only): files in byte order of their path, dated
   1980-01-01, mode 0755 for `executables` and 0644 for the rest, so the
   same inputs give the same bytes (tested). The zips are kept apart
@@ -352,6 +358,38 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   is run. Unit tests: the bundle's name; the files name `APP_ID`, as
   `olr-game`'s `window::APP_ID`; the manifest installs every file and
   links both programs.
+- `publish --notes <file>` (`publish.rs`, issue #4; how to release, the
+  keys and backups: `docs/releasing.md`): publishes the build `dist` just
+  made (`--version`, else the newest Windows zip in `ZIP_DIR`). Every
+  input is a `Config` field (`command` fills the real ones), and `publish`
+  checks all before writing: `check_version` (no `.dirty`; a dev build's
+  base above `latest_final`, the newest `v<x.y.z>` tag; a final not
+  below it), the ed25519 key (PKCS#8 PEM) against `SIGNING_PUBLIC`, the
+  GPG home's secret keys against `GPG_PUBLIC`'s fingerprint
+  (`gpg_fingerprint`: OpenPGP v4, SHA-1 of the key packet; a test pins
+  the maintainer's), `target/flatpak/repo`'s `master` metainfo naming the
+  version. Then `<zip>.sig`; the Flatpak committed (`flatpak
+  build-commit-from`, signed) into the persistent repository on
+  `branches_for(prerelease)`, a warning when `permissions` (the
+  metadata's sections but `[Application]`/`[Build]`) differ from the
+  branch's last commit; `build-update-repo --prune --prune-depth=<keep>`;
+  `build-bundle --repo-url --gpg-keys` (beta for a pre-release, else
+  stable) over `dist`'s bundle; the Pages tree (`copy_repo` without
+  `.lock`, `tmp`, `state`; `.nojekyll`, `index_html`, the
+  `.flatpakrepo`, both `.flatpakref`s, the key) as a fresh one-commit
+  `git init`, force-pushed to `PAGES_BRANCH`; `live` (`curl`) polled
+  every `WAIT_EVERY` until the served `summary` equals the local one
+  (`WAIT`, 30 min, else it fails before releasing); then `gh release
+  create` (`ReleaseTarget::Gh`; a dev build `--prerelease --target
+  <its commit>`, a final `--verify-tag --latest`) or a directory
+  (`--release-dir`, `ReleaseTarget::Dir`: the assets, the notes,
+  `release.txt`). Tests (skipped without flatpak, ostree or git; unsigned,
+  as gpg's agent cannot run in the runner's sandbox): a pre-release then a
+  final release with a new permission published into temporary
+  directories (a bare git repository as Pages), checking the signature
+  with the game's own checks, the branches, the Pages files and its one
+  commit, the release; every refusal leaving nothing written; Pages
+  never going live leaving no release. Never run it unasked.
 - `envelope` (`envelope/`, plan 8, spec
   `docs/superpowers/specs/2026-10-11-performance-envelope-design.md`;
   `cargo xtask envelope [--quick] [--only <part>]... [--gpu

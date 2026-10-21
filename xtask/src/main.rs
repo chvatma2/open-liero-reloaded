@@ -19,6 +19,7 @@ mod net;
 mod olx_timing;
 mod oracle;
 mod oracle_gen;
+mod publish;
 mod tidy;
 mod version;
 mod winbuild;
@@ -235,6 +236,39 @@ enum Command {
     /// target/release-zips/open-liero-reloaded-<version>-linux-x64.flatpak. Needs flatpak and
     /// flatpak-builder; nothing is run.
     Flatpak,
+    /// Publish the build `dist` just made (issue #4): sign the Windows zip, commit the
+    /// Flatpak to the signed repository and push it to GitHub Pages, wait until it is
+    /// live, then create the GitHub release v<version>. See docs/releasing.md.
+    Publish {
+        /// The release notes (Markdown), shown in the game's update screen.
+        #[arg(long)]
+        notes: PathBuf,
+        /// The version to publish (default: the newest Windows zip in target/release-zips).
+        #[arg(long)]
+        version: Option<String>,
+        /// The ed25519 update signing key, PKCS#8 PEM
+        /// (default ~/.config/olr-release/update-signing.pem).
+        #[arg(long)]
+        signing_key: Option<PathBuf>,
+        /// The GPG home holding the Flatpak repository's key (default ~/.config/olr-release/gnupg).
+        #[arg(long)]
+        gnupg_home: Option<PathBuf>,
+        /// The persistent signed Flatpak repository (default ~/.local/share/olr-release/flatpak-repo).
+        #[arg(long)]
+        flatpak_repo: Option<PathBuf>,
+        /// The Pages repository pushed to (default git@github.com:openlieroreloaded/flatpak.git).
+        #[arg(long)]
+        pages_remote: Option<String>,
+        /// Where Pages serves it (default https://openlieroreloaded.github.io/flatpak/).
+        #[arg(long)]
+        pages_url: Option<String>,
+        /// Copy the release's files into this directory instead of creating the GitHub release.
+        #[arg(long)]
+        release_dir: Option<PathBuf>,
+        /// Builds kept a branch in the Flatpak repository.
+        #[arg(long, default_value_t = publish::KEEP)]
+        keep: u32,
+    },
     /// Cross-platform determinism (plan 9, spec §9.5): golden bot matches' replays are played
     /// by `olr-detcheck` natively and on another platform; the checksum streams must be equal.
     /// With no leg flag the WASM leg (Node.js WASI) runs; a flag runs that leg only.
@@ -292,6 +326,27 @@ fn main() -> ExitCode {
         Command::Windows => winbuild::command(),
         Command::Dist { no_verify, final_release } => dist::command(!no_verify, final_release),
         Command::Flatpak => flatpak::command(),
+        Command::Publish {
+            notes,
+            version,
+            signing_key,
+            gnupg_home,
+            flatpak_repo,
+            pages_remote,
+            pages_url,
+            release_dir,
+            keep,
+        } => publish::command(publish::Opts {
+            notes,
+            version,
+            signing_key,
+            gnupg_home,
+            flatpak_repo,
+            pages_remote,
+            pages_url,
+            release_dir,
+            keep,
+        }),
         Command::Determinism { windows, arm64, wasm, all } => {
             determinism::command(determinism::Opts { wasm, windows, arm64, all })
         }
