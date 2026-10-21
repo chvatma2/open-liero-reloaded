@@ -166,6 +166,18 @@ The data directory is `~/.local/share/open-liero-reloaded/` on Linux (another wi
   lines; `--log debug` (or `OLR_LOG=debug`) adds more. A run that ended
   without its last line (a crash, a kill) is reported by the next one.
 
+**Report a bug** (main menu, in release builds that have a bug relay)
+files a GitHub issue without a GitHub account: what happened, what you
+expected, a saved replay if you attach one, and the details the game
+gathers (version, system, GPU and display, the video, audio and gameplay
+settings in effect, this run's and the previous run's logs). The screen
+previews all of it before Send, the replay's worm names included; nothing
+is sent otherwise, and nobody can reply through the game. Key bindings,
+online settings, profiles and your identity are never sent. The relay
+(`tools/bug-relay/`, a Cloudflare Worker) posts as its own bot; a build
+gets its address from `OLR_REPORT_URL` at build time (`cargo xtask
+dist`), and the same variable at run time overrides it.
+
 A broken settings or profiles file is set aside as `<name>.bak` and the
 game starts with defaults (and says so in its log). One from a newer
 version of the game is left where it is, untouched: the game uses

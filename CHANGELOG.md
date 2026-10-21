@@ -81,6 +81,13 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   place and backtrace. Home paths show as `~`; addresses and keys are left
   out. `--log debug` or `OLR_LOG=debug` logs more. The dedicated server
   writes a crash into `server.log` too.
+- **Report a bug** in the main menu (release builds with a bug relay):
+  say what happened and what you expected, attach a saved replay if you
+  like, read the preview of everything that will be sent (the version,
+  system, GPU and display, the settings in effect, this run's and the
+  previous run's logs, the replay's worm names), then Send. It becomes a
+  public GitHub issue, filed by the relay's bot (`tools/bug-relay/`); no
+  account is needed and nothing is sent until you press Send.
 
 ### Changed
 
