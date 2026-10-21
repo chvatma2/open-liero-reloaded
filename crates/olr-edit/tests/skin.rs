@@ -294,5 +294,8 @@ fn a_preview_frame_is_the_previews_cell() {
         }
     }
     // A frame past the sheet is the last one's, never a panic.
-    assert_eq!(preview_frame(&ff, colour, 99, false, true, 2), preview_frame(&ff, colour, 20, false, true, 2));
+    assert_eq!(
+        preview_frame(&ff, colour, 99, false, true, 2),
+        preview_frame(&ff, colour, 20, false, true, 2)
+    );
 }
