@@ -77,7 +77,7 @@ fn check_loadouts(src: &ModSource, errors: &mut Vec<FormatError>) {
         return;
     }
     for (name, l) in &src.loadouts {
-        let bad = |why: String| FormatError::invalid(MOD_FILE, &format!("loadouts.{name}"), why);
+        let bad = |why: String| FormatError::invalid(MOD_FILE, &format!("loadouts[{name:?}]"), why);
         if !src.restrictions.contains_key(name) {
             errors.push(bad("names no preset of restrictions.ron".into()));
         } else if name == DEFAULT_LOADOUT || clean_name(name) != *name {
@@ -964,7 +964,7 @@ mod tests {
                 ("projectiles/orphan.ron", ""),
                 ("weapons/gun.ron", "fire.shot.amount"),
                 ("weapons/gun.ron", "fire.shot.projectile.hit_worm[1]"),
-                ("mod.ron", "loadouts.Nope"),
+                ("mod.ron", "loadouts[\"Nope\"]"),
             ]
         );
         assert_eq!(compile_mod(&src).unwrap_err(), errors[0]);

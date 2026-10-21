@@ -29,7 +29,13 @@ packs' format (version 5); `olr-pack` reads and writes through them.
     name, with a loading time outside 0-500, or more than `MAX_LOADOUTS`
     (64). `read_mod_files` and `write_mod_files` move it
     between a `ContentSource`/`ContentSink` and memory; `compile_mod` makes
-    the runtime `ModDef`; `lift_mod` goes back.
+    the runtime `ModDef`; `lift_mod` goes back. A loadout's error path is
+    `loadouts["<name>"]`.
+  - **Every error** (issue #16): the compiler records an error and goes
+    on with a placeholder (`Compiler::fail`, `note`), so `mod_errors(src)`
+    lists them all, each at its file and field path (`olr_edit::mods`'
+    check); `compile_mod` returns the first. `valid_id` (an id's slug
+    rule) is public for the editors.
   - **`deny_unknown_fields` on every type:** a typo is an error. A spawn's
     canonical field order puts its parameters before `shared`/`projectile`.
   - **Key rule.** A shared projectile's key is its file id. An inline
