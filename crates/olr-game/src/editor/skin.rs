@@ -85,12 +85,14 @@ fn load_skin(dir: &Path) -> Result<(Pack, SkinSource), String> {
 impl SkinHost {
     /// The editor for the Editor screen's `EditSkin` or `NewSkin`: one of
     /// the user's skins in `packs_dir` in place, a blank one, or a copy of
-    /// any skin of `content`; why it cannot open otherwise.
+    /// any skin of `content`; why it cannot open otherwise. `taken`: every
+    /// pack id installed (a new pack's id avoids them).
     pub fn open(
         command: &AppCommand,
         packs_dir: &Path,
         bundled: &[PathBuf],
         content: Option<&Content>,
+        taken: BTreeSet<String>,
     ) -> Result<SkinHost, String> {
         let (pack, src, dir) = match command {
             AppCommand::EditSkin(id) => {
@@ -120,8 +122,6 @@ impl SkinHost {
         };
         let doc = SkinDoc::new(src).map_err(|e| e.to_string())?;
         let id = dir.as_ref().map(|_| pack.manifest.id.clone());
-        let taken =
-            content.map(|c| c.catalog().sources.into_iter().map(|s| s.id).collect()).unwrap_or_default();
         Ok(SkinHost {
             state: SkinEditorState::new(doc, id),
             data: SkinEditorData::default(),

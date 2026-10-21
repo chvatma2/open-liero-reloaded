@@ -174,7 +174,8 @@ impl Shell {
             return;
         };
         let bundled = olr_content::bundled_roots(&self.cfg.content);
-        match SkinHost::open(&c, &packs, &bundled, self.content.as_ref()) {
+        let taken = self.data.catalog.sources.iter().map(|s| s.id.clone()).collect();
+        match SkinHost::open(&c, &packs, &bundled, self.content.as_ref(), taken) {
             Ok(h) => {
                 self.data.editor_message = None;
                 self.skin_editor = Some(h);
