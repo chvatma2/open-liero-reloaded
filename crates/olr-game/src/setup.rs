@@ -762,9 +762,7 @@ mod tests {
                 sprees: [0; 5],
                 dying_sprees: [0; 5],
             },
-            bonuses: false,
-            loading_time: 100,
-            restrictions: String::new(),
+            loadout: olr_proto::LoadoutWire::default(),
             bots: vec![],
         };
         let start = MatchStartWire {

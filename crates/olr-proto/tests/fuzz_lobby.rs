@@ -25,9 +25,7 @@ fn setup() -> MatchSetupWire {
             sprees: [1, 2, 3, 4, 5],
             dying_sprees: [5, 4, 3, 2, 1],
         },
-        bonuses: true,
-        loading_time: 100,
-        restrictions: String::new(),
+        loadout: olr_proto::LoadoutWire::default(),
         bots: vec![BotWire { difficulty: 2, personality: 1, loadout: 0, look: look() }],
     }
 }

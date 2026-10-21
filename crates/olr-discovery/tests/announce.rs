@@ -171,9 +171,7 @@ fn lobby(phase: olr_proto::Phase, bots: usize) -> olr_proto::LobbyState {
                 sprees: [0; 5],
                 dying_sprees: [0; 5],
             },
-            bonuses: true,
-            loading_time: 100,
-            restrictions: String::new(),
+            loadout: olr_proto::LoadoutWire::default(),
             bots: vec![bot; bots],
         },
         members: vec![

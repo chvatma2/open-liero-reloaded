@@ -948,11 +948,11 @@ impl Shell {
         let Some(n) = &mut self.net else { return };
         let key = net::WeaponsKey {
             mod_id: state.setup.mod_id.clone(),
-            restrictions: state.setup.restrictions.clone(),
+            loadout: state.setup.loadout.clone(),
             content,
         };
         if n.weapons.as_ref().is_none_or(|w| w.0 != key) {
-            let menu = net::weapon_menu(&key.content, &key.mod_id, &key.restrictions);
+            let menu = net::weapon_menu(&key.content, &key.mod_id, &key.loadout);
             n.weapons = Some((key, menu));
         }
         let (host, migrated) = (n.host, n.migrated);

@@ -14,7 +14,7 @@ use crate::signal::Refusal;
 use crate::{ProtoError, decode_exact};
 
 /// Largest accepted lobby message: a full lobby at every bound fits
-/// (`worst_case_messages_fit`, about 40 KB).
+/// (`worst_case_messages_fit`, about 54 KB, 8 KB of it the setup's loadout).
 pub const MAX_LOBBY: usize = 60 * 1024;
 /// Longest name, in characters (olr-ui's profile limit).
 pub const MAX_NAME: usize = 20;
@@ -36,8 +36,11 @@ pub const MAX_MISSING: usize = 8;
 pub const MAX_ID: usize = 64;
 /// Largest input delay, in ticks.
 pub const MAX_INPUT_DELAY: u8 = 3;
-/// Longest restrictions string, in bytes.
-pub const MAX_RESTRICTIONS: usize = 256;
+/// Most weapons a setup's loadout names (issue #5; OLX's mods have at
+/// most about 50). A larger loadout cannot travel: the host plays Default.
+pub const MAX_LOADOUT_WEAPONS: usize = 128;
+/// Longest weapon name in a setup's loadout, in bytes.
+pub const MAX_WEAPON_NAME: usize = 64;
 
 /// Most relays a member lists for itself as a successor.
 pub const MAX_STANDBY_RELAYS: usize = 2;
@@ -258,10 +261,43 @@ pub struct MatchSetupWire {
     /// Pack id and content hash (64 hex characters).
     pub packs: Vec<(String, String)>,
     pub rules: RulesWire,
-    pub bonuses: bool,
-    pub loading_time: i32,
-    pub restrictions: String,
+    /// The host's loadout, in full (issue #5): every peer plays it.
+    pub loadout: LoadoutWire,
     pub bots: Vec<BotWire>,
+}
+
+/// A loadout (`olr_data::loadouts::MatchLoadout`) on the wire: its name
+/// (shown in the lobby), its enabled weapons by the mod's names (empty:
+/// every weapon, `Default`), its loading time and its unique rule. The
+/// receiver fits it to its mod and clamps the loading time.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LoadoutWire {
+    pub name: String,
+    pub weapons: Vec<String>,
+    pub loading_time: i32,
+    pub unique: bool,
+}
+
+impl Default for LoadoutWire {
+    /// `Default`: every weapon at 100 %, unique off.
+    fn default() -> Self {
+        LoadoutWire {
+            name: olr_data::loadouts::DEFAULT_LOADOUT.into(),
+            weapons: Vec::new(),
+            loading_time: olr_data::loadouts::DEFAULT_LOADING_TIME,
+            unique: false,
+        }
+    }
+}
+
+/// A loadout within the wire's bounds: a name of 1 to `MAX_LOADOUT_NAME`
+/// characters without control characters, at most `MAX_LOADOUT_WEAPONS`
+/// weapons of at most `MAX_WEAPON_NAME` bytes, none a control character.
+pub fn valid_loadout(l: &LoadoutWire) -> bool {
+    !l.name.is_empty()
+        && valid_text(&l.name, olr_data::loadouts::MAX_LOADOUT_NAME)
+        && l.weapons.len() <= MAX_LOADOUT_WEAPONS
+        && l.weapons.iter().all(|w| w.len() <= MAX_WEAPON_NAME && !w.chars().any(char::is_control))
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -375,8 +411,7 @@ pub fn valid_setup(s: &MatchSetupWire) -> bool {
         && s.packs.iter().all(|(id, h)| valid_pack_id(id) && valid_hash(h))
         && s.rules.time_limit_min.is_finite()
         && s.rules.death_decreases_score.is_finite()
-        && s.restrictions.len() <= MAX_RESTRICTIONS
-        && !s.restrictions.chars().any(char::is_control)
+        && valid_loadout(&s.loadout)
         && s.bots.len() <= MAX_BOTS
         && s.bots.iter().all(|b| valid_look(&b.look))
 }
@@ -522,9 +557,12 @@ mod tests {
                 sprees: [1, 2, 3, 4, 5],
                 dying_sprees: [5, 4, 3, 2, 1],
             },
-            bonuses: true,
-            loading_time: 100,
-            restrictions: String::new(),
+            loadout: LoadoutWire {
+                name: "Default".to_string(),
+                weapons: Vec::new(),
+                loading_time: 100,
+                unique: false,
+            },
             bots: vec![BotWire { difficulty: 2, personality: 1, loadout: 0, look: look() }],
         }
     }
@@ -702,6 +740,28 @@ mod tests {
             decode_to_host(&encode_to_host(&ToHost::Admin(AdminCommand::Settings(s)))),
             Err(ProtoError::Invalid)
         );
+        // The loadout's bounds (issue #5).
+        let bad_loadouts: [fn(&mut LoadoutWire); 5] = [
+            |l| l.name.clear(),
+            |l| l.name = "x".repeat(olr_data::loadouts::MAX_LOADOUT_NAME + 1),
+            |l| l.name = "a\nb".into(),
+            |l| l.weapons = vec!["w".into(); MAX_LOADOUT_WEAPONS + 1],
+            |l| l.weapons = vec!["w".repeat(MAX_WEAPON_NAME + 1)],
+        ];
+        for bad in bad_loadouts {
+            let mut s = setup();
+            bad(&mut s.loadout);
+            assert!(!valid_loadout(&s.loadout), "{:?}", s.loadout);
+            assert_eq!(
+                decode_to_host(&encode_to_host(&ToHost::Admin(AdminCommand::Settings(s)))),
+                Err(ProtoError::Invalid)
+            );
+        }
+        let mut s = setup();
+        s.loadout.weapons = vec!["Rifle".into(), "Super Shotgun".into()];
+        s.loadout.unique = true;
+        let m = ToHost::Admin(AdminCommand::Settings(s));
+        assert_eq!(decode_to_host(&encode_to_host(&m)), Ok(m));
     }
 
     #[test]
@@ -801,12 +861,15 @@ mod tests {
         s.packs = (0..MAX_PACKS)
             .map(|i| (alloc::format!("{i}{}", "p".repeat(MAX_ID - 1)), "a".repeat(64)))
             .collect();
-        s.restrictions = "r".repeat(MAX_RESTRICTIONS);
+        s.loadout.name = "\u{1F600}".repeat(olr_data::loadouts::MAX_LOADOUT_NAME);
+        s.loadout.weapons = (0..MAX_LOADOUT_WEAPONS)
+            .map(|i| alloc::format!("{i:03}{}", "w".repeat(MAX_WEAPON_NAME - 3)))
+            .collect();
+        s.loadout.loading_time = i32::MIN;
         s.rules.lives = i32::MIN;
         s.rules.kill_limit = i32::MIN;
         s.rules.sprees = [i32::MIN; 5];
         s.rules.dying_sprees = [i32::MIN; 5];
-        s.loading_time = i32::MIN;
         s.bots = (0..MAX_BOTS)
             .map(|i| BotWire { difficulty: 255, personality: 255, loadout: 255, look: worst_look(i) })
             .collect();

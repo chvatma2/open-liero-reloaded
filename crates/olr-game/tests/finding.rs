@@ -95,7 +95,7 @@ fn server_config(relay: &str, public: bool) -> Config {
             region: Europe,
             port: 0,
             max_players: 8,
-            rotation: [(mod: "{MOD}", level: "{LEVEL}", time_limit: 1.0, kill_limit: -1, lives: -2, bonuses: false)],
+            rotation: [(mod: "{MOD}", level: "{LEVEL}", time_limit: 1.0, kill_limit: -1, lives: -2)],
         )"#
     );
     let mut cfg = Config::parse(&text).unwrap();

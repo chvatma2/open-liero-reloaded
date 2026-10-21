@@ -868,9 +868,7 @@ mod tests {
                 level_id: l.into(),
                 packs: crate::matches::setup_packs(&content, m, l).unwrap(),
                 rules: crate::matches::rules_wire(&olr_modes::DeathmatchSettings::default()),
-                bonuses: false,
-                loading_time: 100,
-                restrictions: String::new(),
+                loadout: olr_proto::LoadoutWire::default(),
                 bots: vec![],
             };
             let cfg = olr_lobby::HostConfig {

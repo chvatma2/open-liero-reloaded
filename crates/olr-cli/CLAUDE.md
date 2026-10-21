@@ -569,7 +569,7 @@ each client's download cache `TransportSpec::client_cache(i)` in the
 data directory, and `client_content` a content directory of its own for
 some (a partial copy: they download the rest);
 `TransportSpec::new(players, minutes, profile, data_dir)` (Classic on
-Dirt Level, one time-limited match with bonuses, no fill bots: a match
+Dirt Level, one time-limited match on the Default loadout, no fill bots: a match
 needs two worms; `fill_bots` adds the server's). `TransportRun::verdict`:
 the server finished its matches; no client dropped (unless `may_drop`
 names it) and each finished as many; per match (matched by start) a

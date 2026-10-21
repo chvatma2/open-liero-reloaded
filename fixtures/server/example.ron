@@ -39,11 +39,13 @@
     // The maps in turn, at least one: a mod and a level by pack id, then
     // time_limit (minutes; 0 or less: none; default 6), kill_limit (0 or
     // less: none; default 15), lives (below 0: unlimited; default -2) and
-    // bonuses (default true). /settings changes the next map's for the
-    // rest of the run.
+    // loadout (a loadout the mod ships, by name, such as "Rifle only":
+    // its weapons, loading time and unique rule; without one: Default,
+    // every weapon at 100 %). /settings changes the next map's time
+    // limit, kill limit and lives for the rest of the run.
     rotation: [
-        (mod: "olx-classic", level: "olx-level-dirt-level", time_limit: 5.0, kill_limit: 15, lives: -2, bonuses: true),
-        (mod: "olx-mw-1-0", level: "olx-level-castlestrike", time_limit: 5.0, kill_limit: 20, lives: -2, bonuses: true),
+        (mod: "olx-classic", level: "olx-level-dirt-level", time_limit: 5.0, kill_limit: 15, lives: -2),
+        (mod: "olx-mw-1-0", level: "olx-level-castlestrike", time_limit: 5.0, kill_limit: 20, lives: -2, loadout: "Standard 100lt"),
     ],
     // Start as soon as every player is ready and at least min_players are
     // seated. Either way, 60 s after the lobby gathers a match starts with

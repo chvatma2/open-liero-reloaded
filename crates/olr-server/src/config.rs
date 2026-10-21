@@ -55,8 +55,22 @@ pub struct Entry {
     /// Below 0 unlimited; `N` lets a worm die `N + 1` times.
     #[serde(default = "default_lives")]
     pub lives: i32,
-    #[serde(default = "yes")]
-    pub bonuses: bool,
+    /// A shipped loadout of the mod by name, such as `"Rifle only"`
+    /// (issue #5: its weapons, loading time and unique rule); `None`:
+    /// `Default`, every weapon at 100 %. Own loadouts are the game's, not
+    /// a server's.
+    /// Written bare: `loadout: "Rifle only"`.
+    #[serde(default, deserialize_with = "present")]
+    pub loadout: Option<String>,
+    /// Ignored: bonuses are gone from play (issue #5). Kept so an older
+    /// config (`bonuses: true`) still loads; [`Config::warnings`] says so.
+    #[serde(default, deserialize_with = "present")]
+    pub bonuses: Option<bool>,
+}
+
+/// A field written bare (`field: value`) is `Some(value)`; absent, `None`.
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(d: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(d).map(Some)
 }
 
 fn default_time_limit() -> f32 {
@@ -69,10 +83,6 @@ fn default_kill_limit() -> i32 {
 
 fn default_lives() -> i32 {
     DeathmatchSettings::default().lives
-}
-
-fn yes() -> bool {
-    true
 }
 
 /// The server's settings.
@@ -307,6 +317,17 @@ impl Config {
         Ok(config)
     }
 
+    /// What the config asks that the server ignores: a rotation entry's
+    /// `bonuses` (issue #5), one line each.
+    pub fn warnings(&self) -> Vec<String> {
+        (self.rotation.iter().enumerate())
+            .filter(|(_, e)| e.bonuses.is_some())
+            .map(|(i, _)| {
+                format!("rotation entry {}: bonuses are gone from play; its bonuses field is ignored", i + 1)
+            })
+            .collect()
+    }
+
     /// The configured public address (checked by [`Config::parse`]).
     pub fn public_ip(&self) -> Option<IpAddr> {
         self.public_address.as_deref().and_then(|a| a.parse().ok())
@@ -410,6 +431,23 @@ mod tests {
         assert!(with("relay: Some((port: 3478, ports: (40000, 40009), capacity: 10)),").is_ok());
         assert!(with("relay: Some((port: 3478, ports: (40000, 40009), capacity: 11)),").is_err());
         assert!(with("relay: Some((port: 0, ports: (0, 0), capacity: 4096)),").is_ok());
+    }
+
+    /// Issue #5: an entry names a loadout or none; an older entry's
+    /// `bonuses` loads and is warned about.
+    #[test]
+    fn an_entry_names_a_loadout_and_ignores_bonuses() {
+        let c = Config::parse(
+            r#"(rotation: [
+                (mod: "olx-classic", level: "olx-level-dirt-level", loadout: "Rifle only"),
+                (mod: "olx-classic", level: "olx-level-dirt-level", bonuses: true),
+            ])"#,
+        )
+        .unwrap();
+        assert_eq!(c.rotation[0].loadout.as_deref(), Some("Rifle only"));
+        assert_eq!(c.rotation[1].loadout, None);
+        assert_eq!(c.warnings().len(), 1);
+        assert!(c.warnings()[0].starts_with("rotation entry 2: bonuses"), "{:?}", c.warnings());
     }
 
     /// N62: with `allow_local` a private `public_address` is announced

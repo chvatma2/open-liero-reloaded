@@ -7,10 +7,11 @@ use std::sync::Arc;
 
 use anyhow::{Context as _, anyhow, bail, ensure};
 use olr_bots::{AreaCache, Bot, BotConfig, Difficulty, LoadoutPolicy, Personality};
-use olr_content::{Content, DEFAULT_PRESET, MatchOptions, Player, WeaponChoice};
+use olr_content::{Content, MatchLoadout, MatchOptions, Player, WeaponChoice};
+use olr_data::loadouts::{LOADING_TIME_RANGE, unique_ok};
 use olr_modes::DeathmatchSettings;
 use olr_netcode::{Driver, TickInfo, WorldSim};
-use olr_proto::{BotWire, Look, MatchSetupWire, MatchStartWire, RulesWire};
+use olr_proto::{BotWire, LoadoutWire, Look, MatchSetupWire, MatchStartWire, RulesWire};
 use olr_sim::{Keys, MatchSetup, SimSettings, World};
 
 /// The bots' wire numbers: `BotWire::difficulty` is OLX's level, 0 (Easy)
@@ -100,11 +101,42 @@ pub fn rules_wire(d: &DeathmatchSettings) -> RulesWire {
     }
 }
 
+/// A setup's loadout (issue #5) as the host sent it, its loading time
+/// clamped into `LOADING_TIME_RANGE`; its weapons are matched to the mod's
+/// by name when the match is built (unknown names enable nothing).
+pub fn loadout_of(w: &LoadoutWire) -> MatchLoadout {
+    MatchLoadout {
+        name: w.name.clone(),
+        weapons: w.weapons.clone(),
+        loading_time: w.loading_time.clamp(*LOADING_TIME_RANGE.start(), *LOADING_TIME_RANGE.end()),
+        unique: w.unique,
+    }
+}
+
+/// The host's loadout for its setup: `l` in full. One that does not fit
+/// the wire's bounds (`olr_proto::valid_loadout`: more than
+/// `MAX_LOADOUT_WEAPONS` weapons, a longer weapon name) is `Default`, with
+/// the reason.
+pub fn loadout_wire(l: &MatchLoadout) -> (LoadoutWire, Option<String>) {
+    let w = LoadoutWire {
+        name: l.name.clone(),
+        weapons: l.weapons.clone(),
+        loading_time: l.loading_time,
+        unique: l.unique,
+    };
+    if olr_proto::valid_loadout(&w) {
+        (w, None)
+    } else {
+        let why = format!("loadout {:?} is too large to send: playing Default", l.name);
+        (LoadoutWire::default(), Some(why))
+    }
+}
+
 /// The match options of a start: slot `i` is worm `i`; a member's slot is
 /// `Player::HumanWith` its chosen weapons or `Player::Human` (random
 /// weapons drawn from the seed, the same on every peer), a bot's slot
-/// `Player::Bot`. OLX's LX56 settings with the setup's bonuses and loading
-/// time; an empty restrictions name is [`DEFAULT_PRESET`].
+/// `Player::Bot`. OLX's LX56 settings (no bonuses: issue #5) with the
+/// setup's loadout ([`loadout_of`]).
 pub fn options(start: &MatchStartWire) -> anyhow::Result<MatchOptions> {
     let setup = &start.setup;
     let players = start
@@ -120,20 +152,14 @@ pub fn options(start: &MatchStartWire) -> anyhow::Result<MatchOptions> {
             _ => Err(anyhow!("slot {i} is neither a member's nor a bot's")),
         })
         .collect::<anyhow::Result<Vec<Player>>>()?;
-    let restrictions =
-        if setup.restrictions.is_empty() { DEFAULT_PRESET.to_string() } else { setup.restrictions.clone() };
     Ok(MatchOptions {
         mod_id: setup.mod_id.clone(),
         level_id: setup.level_id.clone(),
         seed: start.seed,
-        settings: SimSettings {
-            bonuses: setup.bonuses,
-            loading_time: setup.loading_time,
-            ..SimSettings::lx56()
-        },
+        settings: SimSettings::lx56(),
         players,
         deathmatch: deathmatch(&setup.rules),
-        weapons: WeaponChoice::Preset(restrictions),
+        weapons: WeaponChoice::Loadout(loadout_of(&setup.loadout)),
         pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
     })
 }
@@ -156,15 +182,22 @@ pub fn check_packs(content: &Content, setup: &MatchSetupWire) -> anyhow::Result<
     Ok(())
 }
 
-/// [`options`] with each member's chosen weapons checked against the mod's
-/// restrictions: a choice the restrictions refuse (the network's input)
-/// becomes random weapons, alike on every peer.
+/// [`options`] made safe to build alike on every peer (the start is the
+/// network's input): a loadout enabling none of the mod's weapons (only a
+/// hostile host sends one) is `Default`; a member's chosen weapons the
+/// loadout refuses (a weapon it does not enable, or under its unique rule
+/// a repeat while others are free: `unique_ok`) become random weapons.
 pub fn resolve(content: &Content, start: &MatchStartWire) -> anyhow::Result<MatchOptions> {
     let mut o = options(start)?;
-    let enabled = content.rules(&o.mod_id, &o.weapons)?.enabled_weapons();
+    let mut rules = content.rules(&o.mod_id, &o.weapons)?;
+    if rules.enabled_weapons().is_empty() {
+        o.weapons = WeaponChoice::default_loadout();
+        rules = content.rules(&o.mod_id, &o.weapons)?;
+    }
+    let enabled = rules.enabled_weapons();
     for p in &mut o.players {
         if let Player::HumanWith(ids) = p
-            && !ids.iter().all(|id| enabled.contains(id))
+            && (!ids.iter().all(|id| enabled.contains(id)) || (rules.unique() && !unique_ok(ids, &enabled)))
         {
             *p = Player::Human;
         }

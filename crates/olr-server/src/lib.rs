@@ -1093,7 +1093,6 @@ fn setting_text(s: Setting) -> String {
         Setting::TimeLimit(m) => format!("time_limit {m} min"),
         Setting::KillLimit(k) => format!("kill_limit {k}"),
         Setting::Lives(l) => format!("lives {l}"),
-        Setting::Bonuses(b) => format!("bonuses {}", if b { "on" } else { "off" }),
     }
 }
 

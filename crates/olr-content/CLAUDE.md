@@ -79,7 +79,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   loading time (clamped into `LOADING_TIME_RANGE`) replaces the settings',
   its weapons are the natural bonuses' (`bonus_weapons`) and its unique
   rule refuses a `HumanWith` repeat while other weapons are free
-  (`unique_ok`); the bots keep it (`olr_bots::choose_loadout`). The
+  (`unique_ok`); the bots keep it (`olr_bots::choose_loadout`). A
+  match whose weapons enable none of the mod's is refused. The
   replay records the result (loading time, bonus weapons, loadouts).
   `DEFAULT_LOADOUT` and `MatchLoadout` are re-exported.
 - **Worlds.** `new_world` loads the mod, level and theme and calls

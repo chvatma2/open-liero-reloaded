@@ -22,13 +22,17 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
   `unix_now`), and the host's listener thread keeps its own pace.
 - **`matches.rs`**: `options(start)` (slot `i` is worm `i`: a member's
   `Player::HumanWith` its loadout or `Player::Human`, a bot's `Player::Bot`;
-  LX56 with the setup's bonuses and loading time; empty restrictions are
-  `DEFAULT_PRESET`), the bots' wire numbers (`bot_config`/`bot_wire`:
+  LX56, no bonuses, `WeaponChoice::Loadout(loadout_of(setup.loadout))`:
+  issue #5, the host's loadout as sent, its loading time clamped),
+  `loadout_wire` (the host's `MatchLoadout` for its setup; one beyond the
+  wire's bounds is `Default` with the reason), the bots' wire numbers (`bot_config`/`bot_wire`:
   difficulty 0-3 Easy..Xtreme, personality 0 OLX / 1 chaos / 2 idle (plan 15c), loadout 0
   presets / 1 random; out of range refused), the rules (`deathmatch`,
   `rules_wire`, every field named), `setup_packs` (mod, level, theme with
-  content hashes), `check_packs`, `resolve` (a chosen loadout the
-  restrictions refuse becomes random, alike everywhere), `build(content,
+  content hashes), `check_packs`, `resolve` (a loadout enabling none
+  of the mod's weapons is `Default`; a member's chosen weapons the loadout
+  refuses, a weapon it does not enable or under its unique rule a repeat
+  while others are free, become random, alike everywhere), `build(content,
   start)` → `MatchWorld { sim, bots }` (its own area cache), `build_options`
   (`olr-cli`'s `net-sim` builds with it too) and `HostBots` (bots by slot,
   thinking in slot order; `press` with the host player's keys from a
@@ -865,7 +869,9 @@ status, stale offers skipped, a failed listener restart not holding the
 old relays (B-M5). `peer.rs`: a join through Nostr expects
 its host's key.
 `tests/matches.rs`: a proptest of starts within olr-proto's bounds (256
-cases, about 30 build) never panics `build`; a slot both member and bot,
+cases, about 30 build; loadouts known, unknown, any loading time) never
+panics `build`; the setup's loadout played and refused choices fixed
+(`the_setups_loadout_is_played_and_refused_choices_are_fixed`); a slot both member and bot,
 a single slot, an unknown mod and a pack hash mismatch are refused.
 `tests/replay.rs`: a replay of confirmed inputs plays; a corrupted
 confirmed checksum warns and the same replay is kept. `peer.rs`' unit

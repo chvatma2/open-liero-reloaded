@@ -17,13 +17,15 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use olr_bots::{BotConfig, Difficulty, LoadoutPolicy, Personality};
-use olr_content::{Content, DownloadCache, InstallError};
+use olr_content::{Content, DownloadCache, InstallError, WeaponChoice};
 use olr_lobby::NotStartable;
 use olr_net::lan::{Announcer, LanGame};
 use olr_online::content::{Download, DownloadState};
-use olr_online::matches::{bot_config, bot_wire, deathmatch, rules_wire, setup_packs};
+use olr_online::matches::{bot_config, bot_wire, deathmatch, loadout_of, rules_wire, setup_packs};
 use olr_online::{NetStats, OnlinePeer, StartError};
-use olr_proto::{ItemKind, LanAnnounce, LobbyState, Look, MatchSetupWire, Member, Phase, SeatWire};
+use olr_proto::{
+    ItemKind, LanAnnounce, LoadoutWire, LobbyState, Look, MatchSetupWire, Member, Phase, SeatWire,
+};
 use olr_ui::weapon_select::WeaponMenu;
 use olr_ui::{
     BotLevel, BotLoadout, BotPersonality, DownloadView, LanEntry, LobbyView, MatchPrefs, MemberView,
@@ -59,20 +61,18 @@ pub type SharedCache = Result<Arc<Mutex<DownloadCache>>, String>;
 /// A mod's and a level's pack ids.
 pub type ModLevel = (String, String);
 
-/// What the lobby's weapon menu was made of: the mod, its restrictions
+/// What the lobby's weapon menu was made of: the mod, the setup's loadout
 /// and the peer's content (it changes as downloads land).
 #[derive(Clone)]
 pub struct WeaponsKey {
     pub mod_id: String,
-    pub restrictions: String,
+    pub loadout: LoadoutWire,
     pub content: Arc<Content>,
 }
 
 impl PartialEq for WeaponsKey {
     fn eq(&self, o: &WeaponsKey) -> bool {
-        self.mod_id == o.mod_id
-            && self.restrictions == o.restrictions
-            && Arc::ptr_eq(&self.content, &o.content)
+        self.mod_id == o.mod_id && self.loadout == o.loadout && Arc::ptr_eq(&self.content, &o.content)
     }
 }
 
@@ -105,7 +105,7 @@ pub struct Net {
     /// The host's setup packs (with their content hashes) of the mod and
     /// level last set: a lobby edit of the rules does not hash them again.
     pub setup_packs: Option<(ModLevel, Vec<(String, String)>)>,
-    /// The lobby's weapon choice: its mod and restrictions, the content it
+    /// The lobby's weapon choice: its mod and loadout, the content it
     /// was made from (the peer's: a downloaded mod counts), and the menu.
     pub weapons: Option<(WeaponsKey, Option<WeaponMenu>)>,
     /// The content downloads as last reported (`OnlineEvent::Downloads`).
@@ -359,9 +359,9 @@ pub fn prefs_of(s: &MatchSetupWire) -> MatchPrefs {
             LoadoutPolicy::Random => BotLoadout::Random,
         },
         rules: RulePrefs::from(&deathmatch(&s.rules)),
-        bonuses: s.bonuses,
-        restrictions: s.restrictions.clone(),
-        loading_time: s.loading_time,
+        bonuses: false,
+        restrictions: olr_content::DEFAULT_PRESET.into(),
+        loading_time: s.loadout.loading_time,
     }
 }
 
@@ -395,19 +395,16 @@ pub fn setup_of(p: &MatchPrefs, packs: Vec<(String, String)>, host_colour: [u8; 
         level_id: p.level_id.clone(),
         packs,
         rules: rules_wire(&p.rules.deathmatch()),
-        bonuses: p.bonuses,
-        loading_time: p.loading_time,
-        restrictions: p.restrictions.clone(),
+        loadout: LoadoutWire { loading_time: p.loading_time, ..LoadoutWire::default() },
         bots,
     }
 }
 
-/// The weapon screen's menu for a lobby's mod and restrictions (the
-/// lobby's "Choose weapons…", decision N19); `None` when the mod is not
-/// here.
-pub fn weapon_menu(content: &Content, mod_id: &str, restrictions: &str) -> Option<WeaponMenu> {
+/// The weapon screen's menu for a lobby's mod and loadout (the lobby's
+/// "Choose weapons…", decision N19); `None` when the mod is not here.
+pub fn weapon_menu(content: &Content, mod_id: &str, loadout: &LoadoutWire) -> Option<WeaponMenu> {
     let m = content.sim_mod(mod_id).ok()?;
-    let rules = content.weapon_rules(mod_id, restrictions).ok()?;
+    let rules = content.rules(mod_id, &WeaponChoice::Loadout(loadout_of(loadout))).ok()?;
     let names: Vec<String> = m.weapons().iter().map(|w| w.name.clone()).collect();
     let enabled = names.iter().map(|n| rules.is_enabled(n)).collect();
     Some(WeaponMenu { names, enabled, fallback: rules.find_enabled_weapon(), seed: 0 })

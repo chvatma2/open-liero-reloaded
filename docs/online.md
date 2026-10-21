@@ -790,7 +790,10 @@ and exits (see "Through routers").
   (otherwise a match starts 60 s after the lobby gathers; players not ready
   watch it);
 - `rotation`: the maps in turn (`mod`, `level`, `time_limit`, `kill_limit`,
-  `lives`, `bonuses`);
+  `lives`, and `loadout`: a loadout the mod ships, by name, such as
+  `loadout: "Rifle only"`; without it every weapon at 100 %, the
+  `Default` loadout). There are no bonuses: an older config's `bonuses`
+  is ignored, with a warning;
 - `admins`: public keys (64 hex characters) allowed to use admin commands;
 - `bans_file`: bans (keys and addresses) kept across restarts, relative to
   the data directory;
@@ -819,7 +822,7 @@ find your join line in `server.log` (or the terminal), and paste the key into
 **Chat commands.** Anyone: `/players`, `/help`. Admins: `/kick <name>`,
 `/ban <name>` (the key), `/banip <name>` (the key and the address),
 `/unban <name|key prefix|address>`, `/next` (end the match, or skip to the
-next map) and `/settings <time_limit|kill_limit|lives|bonuses> <value>`
+next map) and `/settings <time_limit|kill_limit|lives> <value>`
 (the next maps' settings, for the rest of the run). Admins cannot be kicked
 or banned. Bans are soft: a banned player can return with a new key.
 

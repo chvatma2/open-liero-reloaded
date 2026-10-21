@@ -4,10 +4,11 @@
 use crate::common;
 
 use common::{LEVEL, MOD, content, look, setup, start};
+use olr_content::{MatchLoadout, Player, WeaponChoice};
 use olr_modes::DeathmatchSettings;
 use olr_online::matches::{self, rules_wire};
 use olr_proto::{
-    BotWire, MatchSetupWire, MatchStartWire, RulesWire, SlotWire, ToClient, decode_to_client,
+    BotWire, LoadoutWire, MatchSetupWire, MatchStartWire, RulesWire, SlotWire, ToClient, decode_to_client,
     encode_to_client,
 };
 use proptest::prelude::*;
@@ -19,6 +20,39 @@ fn a_good_start_builds() {
     let w = matches::build(&c, &start(setup(&c, 0.1), 1)).unwrap();
     assert_eq!(w.sim.world().worms().len(), 2);
     assert_eq!(w.bots.keys().copied().collect::<Vec<_>>(), vec![1]);
+}
+
+/// Issue #5: the host's loadout is played as sent, its loading time
+/// clamped; a member's choice it refuses (a weapon it does not enable, a
+/// repeat under its unique rule) becomes random weapons; one naming no
+/// weapon of the mod is Default. Alike on every peer: only the start and
+/// the content decide.
+#[test]
+fn the_setups_loadout_is_played_and_refused_choices_are_fixed() {
+    let Some(c) = content() else { return };
+    let mut setup = setup(&c, 0.1);
+    let weapons = vec!["Rifle".to_string(), "Bazooka".to_string(), "Napalm".to_string()];
+    setup.loadout =
+        LoadoutWire { name: "Three".into(), weapons: weapons.clone(), loading_time: 9999, unique: true };
+    let mut s = start(setup, 1);
+    let o = matches::resolve(&c, &s).unwrap();
+    let want = MatchLoadout { name: "Three".into(), weapons, loading_time: 500, unique: true };
+    assert_eq!(o.weapons, WeaponChoice::Loadout(want.clone()));
+    let enabled = c.rules(MOD, &o.weapons).unwrap().enabled_weapons();
+    let [a, b, d] = [enabled[0], enabled[1], enabled[2]];
+    let chosen = |s: &mut olr_proto::MatchStartWire, w| {
+        s.slots[0].loadout = Some(w);
+        matches::resolve(&c, s).unwrap().players[0]
+    };
+    assert_eq!(chosen(&mut s, [a, b, d, a, b]), Player::HumanWith([a, b, d, a, b]));
+    assert_eq!(chosen(&mut s, [a, a, b, b, b]), Player::Human, "a repeat while one is free");
+    assert_eq!(chosen(&mut s, [a, a, b, d, d]), Player::HumanWith([a, a, b, d, d]), "all three in use");
+    let banned = (0..40).find(|w| !enabled.contains(w)).unwrap();
+    assert_eq!(chosen(&mut s, [a, b, d, a, banned]), Player::Human, "a weapon off");
+    let w = matches::build(&c, &s).unwrap();
+    assert_eq!(w.sim.world().settings().loading_time, 500);
+    s.setup.loadout.weapons = vec!["No such weapon".into()];
+    assert_eq!(matches::resolve(&c, &s).unwrap().weapons, WeaponChoice::default_loadout());
 }
 
 #[test]
@@ -129,6 +163,20 @@ fn slot(bots: usize) -> impl Strategy<Value = SlotWire> {
     })
 }
 
+/// Loadouts (issue #5): Default, known weapons in any case, unknown ones,
+/// any loading time, unique or not.
+fn loadout() -> impl Strategy<Value = LoadoutWire> {
+    let weapons = prop_oneof![
+        Just(vec![]),
+        Just(vec!["Rifle".to_string()]),
+        Just(vec!["rifle".to_string(), "BAZOOKA".to_string(), "Rifle".to_string()]),
+        Just(vec!["Unknown".to_string()]),
+    ];
+    (weapons, prop_oneof![3 => Just(100), 1 => int()], any::<bool>()).prop_map(
+        |(weapons, loading_time, unique)| LoadoutWire { name: "L".into(), weapons, loading_time, unique },
+    )
+}
+
 /// Starts within olr-proto's bounds: the real packs, some of them changed
 /// or dropped, or other ids; any rules, bots and slots.
 fn starts(good: Vec<(String, String)>) -> impl Strategy<Value = MatchStartWire> {
@@ -147,23 +195,15 @@ fn starts(good: Vec<(String, String)>) -> impl Strategy<Value = MatchStartWire> 
         ids(LEVEL, "olx-level-castlestrike"),
         packs,
         prop_oneof![3 => Just(rules_wire(&DeathmatchSettings::default())), 1 => rules()],
-        any::<bool>(),
-        prop_oneof![3 => Just(100), 1 => int()],
-        prop_oneof![
-            Just(String::new()),
-            Just(olr_content::DEFAULT_PRESET.to_string()),
-            Just("Unknown".to_string())
-        ],
+        loadout(),
         proptest::collection::vec(bot(), 0..4),
     )
-        .prop_map(|(m, l, packs, rules, bonuses, loading_time, restrictions, bots)| MatchSetupWire {
+        .prop_map(|(m, l, packs, rules, loadout, bots)| MatchSetupWire {
             mod_id: m.into(),
             level_id: l.into(),
             packs,
             rules,
-            bonuses,
-            loading_time,
-            restrictions,
+            loadout,
             bots,
         });
     (setup, any::<u32>(), any::<u64>()).prop_flat_map(|(setup, seed, checksum)| {

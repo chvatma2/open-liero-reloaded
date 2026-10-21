@@ -42,7 +42,11 @@ beside the executable, else in the working directory).
   checked; `public_ip()`; `unreachable_public_address()`: one that is IPv6
   or not global while a relay is public), `stun` (default `DEFAULT_STUN`;
   each `host:port`; `[]` asks none; final review B-M8), rotation `Entry` (`mod`,
-  `level`, `time_limit` minutes, `kill_limit`, `lives`, `bonuses`),
+  `level`, `time_limit` minutes, `kill_limit`, `lives`, `loadout`: a
+  shipped loadout's name written bare, `loadout: "Rifle only"`, `None`
+  Default; `bonuses`, issue #5, ignored but still read, written bare, so
+  an older config loads: `Config::warnings` names each entry with one and
+  `main` prints them),
   `host_config`, `check(content)` (the rotation against the packs),
   `upload_kib_s` (plan 11: content sent in all, KiB/s; default
   `DEFAULT_UPLOAD_KIB_S` 4096, so older configs load; `upload_rate()`
@@ -66,9 +70,12 @@ beside the executable, else in the working directory).
   address (N47). `fixtures/server/example.ron` documents every field (its
   admin key is a placeholder no one holds).
 - **`rotation.rs`**: `Rotation::new` hashes each entry's packs once
-  (`setup_packs`), picks its restrictions as the menus do (`DEFAULT_PRESET`,
-  else the mod's first) and checks the setup with 0 and `fill_bots` bots
-  (`valid_setup`); `setup(bots)` (loading time LX56's, bots "Bot N" in
+  (`setup_packs`), resolves its loadout (issue #5: the entry's among the
+  mod's `ModInfo::loadouts`, Default first, so a name the mod does not ship
+  is an error naming those it has; none: `Default`; one too large for the
+  wire, `loadout_wire`, an error) and checks the setup with 0 and
+  `fill_bots` bots (`valid_setup`); `setup(bots)` (the loadout in full:
+  its weapons, loading time and unique rule; bots "Bot N" in
   OLX's colours, default difficulty); `next` is the entry the lobby offers;
   `advance`; `set(Setting)` changes the next entry for the rest of the run
   (refused out of the wire's bounds).
@@ -78,7 +85,7 @@ beside the executable, else in the working directory).
   characters, the rest of the line), `/unban <name|key prefix|address>`
   (≤ 64 characters; `unban_target`: an address, else a banned name in any
   case, else ≥ 8 hex characters of one key; exactly one ban), `/next`,
-  `/settings <time_limit|kill_limit|lives|bonuses> <value>` (≤ 16
+  `/settings <time_limit|kill_limit|lives> <value>` (≤ 16
   characters, finite), `/players`, `/help` (a deviation from
   the brief: anyone may ask for help; it lists only what the asker may use),
   `/invite` (the code; anyone's in a `Public` game, whose note is public

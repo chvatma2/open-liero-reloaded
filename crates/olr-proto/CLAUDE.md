@@ -46,7 +46,7 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   `Closed` (a migrated lobby takes back its own players only, N72): also the lobby's
   `ToClient::Refused`); sdp <= 8 KiB.
 - **Lobby** (`lobby.rs`, reliable channel, `MAX_LOBBY` = 60 KiB: a full
-  lobby at every bound is about 40 KB, `worst_case_messages_fit`): `ToHost`,
+  lobby at every bound is about 54 KB (8 KB of it the loadout), `worst_case_messages_fit`): `ToHost`,
   `ToClient`, `LobbyState`, `MatchStartWire`, `MatchEndWire` and friends.
   Joining: `Challenge` → `Hello` (with the joiner's 32-byte `nonce`) →
   `HostProof { signature }` (the host proves its key, N37) → `Prove {
@@ -76,7 +76,15 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   never listed, plan 13c).
   `MAX_ARCHIVE_BYTES` restates olr-pack's `MAX_ARCHIVE`. `valid_hash` is 64
   lowercase hex; `NO_HASH` is valid and means unknown. `Look::skin_hash`
-  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 3 (plan 13c: skins are matched by id and hash, never transferred).
+  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 4 (3: plan 13c, skins are matched by id and hash, never transferred;
+  4: issue #5, `MatchSetupWire::loadout` replaces `bonuses`, `loading_time` and `restrictions`).
+- **Loadouts** (issue #5): `MatchSetupWire::loadout` is a `LoadoutWire {
+  name, weapons, loading_time, unique }`, the host's loadout in full
+  (weapons by the mod's names, empty for every weapon); `valid_loadout`:
+  a name of 1..=`MAX_LOADOUT_NAME` (40) characters without control
+  characters, at most `MAX_LOADOUT_WEAPONS` (128) names of at most
+  `MAX_WEAPON_NAME` (64) bytes without control characters. The loading
+  time is any `i32`: receivers clamp it.
 - **LAN** (`lan.rs`): `LanAnnounce` on UDP `LAN_PORT` (23401), `MAX_LAN`;
   `players` the seated members (at most `max_players`, itself at most
   `MAX_PLAYERS`), `bots` apart (appended; at most `MAX_PLAYERS`: bots take
@@ -100,9 +108,9 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   seats <= 32 with unique slots; `SlotWire.bot` indexes `setup.bots`;
   input delays <= 3; `MatchEndWire::last_tick` below `u32::MAX`; packs <= 8; bots <= 31; `missing` <= 8; pack, skin, mod
   and level ids ASCII `[a-z0-9-]` (olr-pack's manifest rule), 1..=64 bytes;
-  hashes 64 lowercase hex; rule floats finite; restrictions <= 256 bytes.
+  hashes 64 lowercase hex; rule floats finite; the setup's loadout `valid_loadout`.
   `Signature` (64 bytes) uses a custom serde tuple (serde stops at 32).
-  `valid_name`, `valid_pack_id`, `valid_look`, `valid_setup` and
+  `valid_name`, `valid_pack_id`, `valid_look`, `valid_setup`, `valid_loadout` and
   `valid_chat` are public so producers (olr-lobby) never send what the
   decoders refuse.
 - **Frame delta rule** (`frames.rs`): `known` = slots whose final input the

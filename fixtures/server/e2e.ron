@@ -21,7 +21,7 @@
     max_spectators: 2,
     fill_bots: 0,
     rotation: [
-        (mod: "olx-classic", level: "olx-level-dirt-level", time_limit: 0.2, kill_limit: 0, lives: -2, bonuses: true),
+        (mod: "olx-classic", level: "olx-level-dirt-level", time_limit: 0.2, kill_limit: 0, lives: -2),
     ],
     start_when_ready: true,
     min_players: 2,

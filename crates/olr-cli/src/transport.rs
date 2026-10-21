@@ -594,7 +594,8 @@ impl TransportSpec {
                 time_limit: self.minutes,
                 kill_limit: -1,
                 lives: -1,
-                bonuses: true,
+                loadout: None,
+                bonuses: None,
             }],
             start_when_ready: true,
             min_players: self.players.max(1),
@@ -1183,9 +1184,7 @@ mod tests {
             level_id: level.into(),
             packs: olr_online::matches::setup_packs(&c, m, level).unwrap(),
             rules: olr_online::matches::rules_wire(&olr_modes::DeathmatchSettings::default()),
-            bonuses: false,
-            loading_time: 100,
-            restrictions: String::new(),
+            loadout: olr_proto::LoadoutWire::default(),
             bots: vec![],
         };
         let slot = |m: u8| olr_proto::SlotWire { member: Some(m), bot: None, look: look("P"), loadout: None };

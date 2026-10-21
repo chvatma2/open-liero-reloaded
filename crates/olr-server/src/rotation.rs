@@ -3,12 +3,11 @@
 
 use anyhow::{Context as _, bail};
 use olr_bots::BotConfig;
-use olr_content::{Content, DEFAULT_PRESET};
+use olr_content::{Content, MatchLoadout};
 use olr_lobby::DEFAULT_SKIN;
 use olr_modes::DeathmatchSettings;
-use olr_online::matches::{bot_wire, rules_wire, setup_packs};
-use olr_proto::{BotWire, Look, MAX_BOTS, MatchSetupWire, valid_setup};
-use olr_sim::SimSettings;
+use olr_online::matches::{bot_wire, loadout_wire, rules_wire, setup_packs};
+use olr_proto::{BotWire, LoadoutWire, Look, MAX_BOTS, MatchSetupWire, valid_setup};
 
 use crate::admin::Setting;
 use crate::config::Entry;
@@ -23,7 +22,7 @@ pub const BOT_COLOURS: [[u8; 3]; 7] =
 struct Prepared {
     entry: Entry,
     packs: Vec<(String, String)>,
-    restrictions: String,
+    loadout: LoadoutWire,
 }
 
 /// The maps in turn.
@@ -47,14 +46,28 @@ impl Rotation {
             .map(|(i, e)| {
                 let what = || format!("rotation entry {} ({} on {})", i + 1, e.mod_id, e.level);
                 let packs = setup_packs(content, &e.mod_id, &e.level).with_context(what)?;
-                let presets = content.mod_info(&e.mod_id).with_context(what)?.presets;
-                // As the menus choose (olr-ui's `MatchPrefs::set_mod`).
-                let restrictions = if presets.iter().any(|p| p == DEFAULT_PRESET) {
-                    DEFAULT_PRESET.to_string()
-                } else {
-                    presets.first().cloned().unwrap_or_default()
+                let loadouts = content.mod_info(&e.mod_id).with_context(what)?.loadouts;
+                // A shipped loadout by name (`Default` is first), else Default.
+                let loadout = match &e.loadout {
+                    None => MatchLoadout::default(),
+                    Some(name) => match loadouts.iter().find(|l| l.name == *name) {
+                        Some(l) => l.clone(),
+                        None => {
+                            let names: Vec<&str> = loadouts.iter().map(|l| l.name.as_str()).collect();
+                            bail!(
+                                "{}: {} has no loadout {name:?} (it has {})",
+                                what(),
+                                e.mod_id,
+                                names.join(", ")
+                            )
+                        }
+                    },
                 };
-                let p = Prepared { entry: e.clone(), packs, restrictions };
+                let (loadout, too_large) = loadout_wire(&loadout);
+                if let Some(why) = too_large {
+                    bail!("{}: {why}", what());
+                }
+                let p = Prepared { entry: e.clone(), packs, loadout };
                 for bots in [0, max_bots] {
                     if !valid_setup(&p.setup(bots)) {
                         bail!("{}: its settings are out of bounds", what());
@@ -101,7 +114,6 @@ impl Rotation {
             Setting::TimeLimit(m) => changed.entry.time_limit = m,
             Setting::KillLimit(k) => changed.entry.kill_limit = k,
             Setting::Lives(l) => changed.entry.lives = l,
-            Setting::Bonuses(b) => changed.entry.bonuses = b,
         }
         if !valid_setup(&changed.setup(0)) {
             return Err("that value is out of bounds".into());
@@ -125,9 +137,7 @@ impl Prepared {
             level_id: e.level.clone(),
             packs: self.packs.clone(),
             rules: rules_wire(&rules),
-            bonuses: e.bonuses,
-            loading_time: SimSettings::lx56().loading_time,
-            restrictions: self.restrictions.clone(),
+            loadout: self.loadout.clone(),
             bots: fill_bots(bots),
         }
     }

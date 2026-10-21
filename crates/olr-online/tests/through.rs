@@ -13,7 +13,7 @@ use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpListener, UdpSocket};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use olr_bots::BotConfig;
-use olr_content::{Content, DEFAULT_PRESET};
+use olr_content::Content;
 use olr_discovery::announce::ANNOUNCE_TTL;
 use olr_discovery::handshake::Asker;
 use olr_discovery::nip44::{conversation_key, encrypt};
@@ -82,9 +82,7 @@ fn setup(content: &Content, minutes: f32) -> MatchSetupWire {
         level_id: LEVEL.into(),
         packs: setup_packs(content, MOD, LEVEL).unwrap(),
         rules: rules_wire(&DeathmatchSettings { time_limit: minutes, ..DeathmatchSettings::default() }),
-        bonuses: false,
-        loading_time: 100,
-        restrictions: DEFAULT_PRESET.into(),
+        loadout: olr_proto::LoadoutWire::default(),
         bots: vec![bot_wire(&BotConfig::default(), look("Bot"))],
     }
 }

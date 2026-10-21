@@ -90,7 +90,7 @@ fn main() -> anyhow::Result<()> {
     fs::create_dir_all(&data_dir).with_context(|| format!("making {}", data_dir.display()))?;
     let content =
         Content::open(&args.content).with_context(|| format!("content {}", args.content.display()))?;
-    for w in content.warnings() {
+    for w in content.warnings().iter().chain(&config.warnings()) {
         eprintln!("warning: {w}");
     }
     let file = RotatingLog::open(&data_dir.join(LOG_FILE), LOG_MAX_BYTES, LOG_KEEP)

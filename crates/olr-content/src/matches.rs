@@ -193,6 +193,7 @@ pub fn build_match_spawning(
         }
     }
     let rules = a.m.rules(&o.weapons);
+    ensure!(!rules.enabled_weapons().is_empty(), "{} enables no weapon of {}", o.weapons.name(), o.mod_id);
     let mut settings = o.settings.clone();
     let restrictions = match &o.weapons {
         WeaponChoice::Preset(file) => file.clone(),

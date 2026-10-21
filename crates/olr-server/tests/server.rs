@@ -90,8 +90,8 @@ fn config(admins: &[PublicKey], fill_bots: u8, start_when_ready: bool, minutes: 
             admins: [{}],
             fill_bots: {fill_bots},
             rotation: [
-                (mod: "olx-classic", level: "{DIRT}", time_limit: {minutes:?}, kill_limit: -1, lives: -2, bonuses: false),
-                (mod: "olx-classic", level: "{FACTORY}", time_limit: {minutes:?}, kill_limit: 15, lives: -2, bonuses: true),
+                (mod: "olx-classic", level: "{DIRT}", time_limit: {minutes:?}, kill_limit: -1, lives: -2),
+                (mod: "olx-classic", level: "{FACTORY}", time_limit: {minutes:?}, kill_limit: 15, lives: -2, loadout: "Rifle only"),
             ],
             start_when_ready: {start_when_ready},
             min_players: 2,
@@ -393,7 +393,7 @@ fn a_server_runs_a_rotation() {
     assert_eq!(first.setup.level_id, DIRT);
     assert_eq!(first.setup.bots.len(), 1, "filled to three worms");
     assert_eq!(first.slots.iter().filter(|s| s.member.is_some()).count(), 2);
-    assert!(!first.setup.bonuses);
+    assert_eq!(first.setup.loadout, olr_proto::LoadoutWire::default(), "no loadout: Default");
     // It ends on its time limit; the lobby returns, offering entry 1.
     rig.run_until(Duration::from_secs(20), "the match ends", |r| {
         clients.iter().all(|&c| r.clients[c].has(|e| matches!(e, OnlineEvent::MatchEnded(_))))
@@ -421,7 +421,9 @@ fn a_server_runs_a_rotation() {
     });
     let second = rig.clients[1].starts()[1].clone();
     assert_eq!(second.setup.level_id, FACTORY);
-    assert!(second.setup.bonuses);
+    // A shipped loadout travels in full: its weapons and loading time (issue #5).
+    assert_eq!((second.setup.loadout.name.as_str(), second.setup.loadout.loading_time), ("Rifle only", 20));
+    assert_eq!(second.setup.loadout.weapons, ["Rifle"]);
     assert_eq!(second.setup.rules.kill_limit, 15);
     // One line per event.
     let log = rig.log_text();
@@ -660,7 +662,7 @@ fn admins_change_the_settings_and_skip_maps() {
         setup(r).rules.time_limit_min == 2.5
     });
     rig.say(anna, "/settings bonuses on");
-    rig.run_until(Duration::from_secs(10), "bonuses on", |r| setup(r).bonuses);
+    rig.hears(anna, "unknown setting bonuses");
     rig.say(anna, "/settings lives many");
     rig.hears(anna, "lives:");
     rig.say(anna, "/settings speed 3");

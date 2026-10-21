@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use olr_bots::BotConfig;
-use olr_content::{Content, DEFAULT_PRESET, DownloadCache};
+use olr_content::{Content, DownloadCache};
 use olr_lobby::{HostConfig, Identity};
 use olr_modes::DeathmatchSettings;
 use olr_net::endpoint::EndpointConfig;
@@ -54,9 +54,7 @@ pub fn setup(content: &Content, minutes: f32) -> MatchSetupWire {
         level_id: LEVEL.into(),
         packs: setup_packs(content, MOD, LEVEL).unwrap(),
         rules: rules_wire(&DeathmatchSettings { time_limit: minutes, ..DeathmatchSettings::default() }),
-        bonuses: false,
-        loading_time: 100,
-        restrictions: DEFAULT_PRESET.into(),
+        loadout: olr_proto::LoadoutWire::default(),
         bots: vec![bot_wire(&BotConfig::default(), look("Bot"))],
     }
 }

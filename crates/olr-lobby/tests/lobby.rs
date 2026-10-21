@@ -45,9 +45,7 @@ fn setup(bots: usize) -> MatchSetupWire {
             sprees: [1, 2, 3, 4, 5],
             dying_sprees: [5, 4, 3, 2, 1],
         },
-        bonuses: true,
-        loading_time: 100,
-        restrictions: String::new(),
+        loadout: olr_proto::LoadoutWire::default(),
         bots: (0..bots)
             .map(|i| BotWire { difficulty: 1, personality: 0, loadout: 0, look: look(&format!("Bot {i}")) })
             .collect(),
@@ -1764,7 +1762,10 @@ fn long_look(p: u8) -> Look {
 fn long_setup(bots: usize) -> MatchSetupWire {
     let mut s = setup(0);
     s.packs = (0..MAX_PACKS).map(|i| (format!("{i}{}", "p".repeat(MAX_ID - 1)), "ab".repeat(32))).collect();
-    s.restrictions = "r".repeat(MAX_RESTRICTIONS);
+    s.loadout.name = "l".repeat(40); // olr-data's `MAX_LOADOUT_NAME`
+    s.loadout.weapons = (0..olr_proto::MAX_LOADOUT_WEAPONS)
+        .map(|i| format!("{i:03}{}", "w".repeat(olr_proto::MAX_WEAPON_NAME - 3)))
+        .collect();
     s.bots = (0..bots)
         .map(|i| BotWire { difficulty: 3, personality: 2, loadout: 1, look: long_look(i as u8) })
         .collect();

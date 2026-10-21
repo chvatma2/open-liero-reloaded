@@ -30,7 +30,7 @@ pub use signal::*;
 mod fingerprint_impl;
 
 /// Wire protocol version, checked in the handshake.
-pub const PROTOCOL_VERSION: u16 = 3;
+pub const PROTOCOL_VERSION: u16 = 4;
 /// At most this many slots in a match.
 pub const MAX_SLOTS: usize = 32;
 /// Largest accepted inputs datagram.

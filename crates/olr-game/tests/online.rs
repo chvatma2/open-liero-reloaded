@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 
 use olr_audio::Audio;
 use olr_bots::{BotConfig, Difficulty};
-use olr_content::{Content, DEFAULT_PRESET, MatchOptions, Player};
+use olr_content::{Content, MatchOptions, Player};
 use olr_game::hud::{self, Frame};
 use olr_game::net::PeerHandle;
 use olr_game::online::OnlineDriver;
@@ -212,9 +212,7 @@ fn setup(content: &Content, minutes: f32) -> MatchSetupWire {
         level_id: LEVEL.into(),
         packs: setup_packs(content, MOD, LEVEL).unwrap(),
         rules: rules_wire(&DeathmatchSettings { time_limit: minutes, ..DeathmatchSettings::default() }),
-        bonuses: false,
-        loading_time: 100,
-        restrictions: DEFAULT_PRESET.into(),
+        loadout: olr_proto::LoadoutWire::default(),
         bots: vec![bot_wire(&BotConfig::default(), look("Bot", [0, 200, 0]))],
     }
 }
@@ -1346,7 +1344,7 @@ fn dedicated_server(dir: &std::path::Path, data: &std::path::Path, minutes: f32)
             max_players: 8,
             max_spectators: 4,
             fill_bots: 3,
-            rotation: [(mod: "{MOD}", level: "{LEVEL}", time_limit: {minutes:?}, kill_limit: -1, lives: -2, bonuses: false)],
+            rotation: [(mod: "{MOD}", level: "{LEVEL}", time_limit: {minutes:?}, kill_limit: -1, lives: -2)],
             start_when_ready: true,
             min_players: 2,
         )"#

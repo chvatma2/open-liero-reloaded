@@ -47,7 +47,6 @@ pub enum Setting {
     TimeLimit(f32),
     KillLimit(i32),
     Lives(i32),
-    Bonuses(bool),
 }
 
 impl Command {
@@ -74,7 +73,7 @@ pub fn help(admin: bool, public: bool) -> Vec<&'static str> {
             "/kick <name>, /ban <name>: remove a member (a ban keeps its key out)",
             "/banip <name>: ban its key and its address; /unban <name|key prefix|address>",
             "/next: end the match, or skip to the next map",
-            "/settings <field> <value>: time_limit (minutes), kill_limit, lives, bonuses (on/off)",
+            "/settings <field> <value>: time_limit (minutes), kill_limit, lives",
         ]);
     }
     lines
@@ -152,7 +151,7 @@ fn name(arg: &str, cmd: &str) -> Result<String, String> {
 }
 
 fn setting(arg: &str) -> Result<Setting, String> {
-    const USAGE: &str = "usage: /settings <time_limit|kill_limit|lives|bonuses> <value>";
+    const USAGE: &str = "usage: /settings <time_limit|kill_limit|lives> <value>";
     let mut words = arg.split_whitespace();
     let (Some(field), Some(value), None) = (words.next(), words.next(), words.next()) else {
         return Err(USAGE.into());
@@ -169,11 +168,6 @@ fn setting(arg: &str) -> Result<Setting, String> {
         },
         "kill_limit" => value.parse().map(Setting::KillLimit).map_err(|_| bad("a whole number")),
         "lives" => value.parse().map(Setting::Lives).map_err(|_| bad("a whole number (below 0: unlimited)")),
-        "bonuses" => match value.to_lowercase().as_str() {
-            "on" | "true" | "yes" | "1" => Ok(Setting::Bonuses(true)),
-            "off" | "false" | "no" | "0" => Ok(Setting::Bonuses(false)),
-            _ => Err(bad("on or off")),
-        },
         _ => Err(format!("unknown setting {}: {USAGE}", field.chars().take(MAX_NAME).collect::<String>())),
     }
 }
@@ -196,7 +190,10 @@ mod tests {
         assert_eq!(parse("/settings Kill_Limit 3"), Some(Ok(Command::Settings(Setting::KillLimit(3)))));
         assert_eq!(parse("/settings time_limit 2.5"), Some(Ok(Command::Settings(Setting::TimeLimit(2.5)))));
         assert_eq!(parse("/settings lives -2"), Some(Ok(Command::Settings(Setting::Lives(-2)))));
-        assert_eq!(parse("/settings bonuses OFF"), Some(Ok(Command::Settings(Setting::Bonuses(false)))));
+        // Bonuses are gone from play (issue #5).
+        assert!(
+            matches!(parse("/settings bonuses OFF"), Some(Err(e)) if e.starts_with("unknown setting bonuses"))
+        );
     }
 
     #[test]

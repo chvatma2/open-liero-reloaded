@@ -1861,9 +1861,7 @@ mod tests {
             level_id: l.into(),
             packs: setup_packs(c, m, l).unwrap(),
             rules: rules_wire(&olr_modes::DeathmatchSettings::default()),
-            bonuses: false,
-            loading_time: 100,
-            restrictions: String::new(),
+            loadout: olr_proto::LoadoutWire::default(),
             bots: vec![bot.clone(), bot],
         };
         let slots =
