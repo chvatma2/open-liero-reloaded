@@ -13,6 +13,15 @@ use crate::root;
 /// and `olr-server`'s `VERSION`).
 pub const BUILD_VERSION_VAR: &str = "OLR_BUILD_VERSION";
 
+/// The variable naming the GitHub repository whose releases a build
+/// checks for updates (issue #4): `olr-game`'s `update::BUILD_REPO`.
+/// `dist` always sets it to [`RELEASE_REPO`]: a build without it (a local
+/// one) never checks.
+pub const RELEASE_REPO_VAR: &str = "OLR_RELEASE_REPO";
+
+/// The repository the releases are published in (`cargo xtask publish`).
+pub const RELEASE_REPO: &str = "chvatma2/open-liero-reloaded";
+
 /// The variable carrying the bug relay's address (issue #3): `olr-game`'s
 /// `report::BUILD_URL`. `dist` passes it on from its own environment;
 /// a build without it hides Report a bug.

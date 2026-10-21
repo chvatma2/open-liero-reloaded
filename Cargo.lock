@@ -6993,6 +6993,7 @@ name = "xtask"
 version = "0.2.0"
 dependencies = [
  "anyhow",
+ "base64 0.22.1",
  "cargo_metadata",
  "clap",
  "ctrlc",
@@ -7000,12 +7001,14 @@ dependencies = [
  "olr-data",
  "olr-oracle",
  "olr-pack",
+ "olr-update",
  "olr-vfs",
  "prettyplease",
  "proc-macro2",
  "quote",
  "ron",
  "serde",
+ "sha1 0.11.0",
  "sha2 0.11.0",
  "syn 2.0.119",
  "tempfile",

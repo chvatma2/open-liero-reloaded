@@ -8,7 +8,10 @@
 //! (0755 for the executables), so the same inputs give the same zip.
 //! `OLR_REPORT_URL` in the environment (an `https://` address) is the
 //! builds' bug relay (issue #3, `tools/bug-relay/README.md`); without it
-//! the game hides Report a bug.
+//! the game hides Report a bug. Every build carries `OLR_RELEASE_REPO`
+//! (issue #4): it checks the repository's releases for updates. The
+//! folder lists its files in `install-manifest.txt`, so the Windows
+//! updater knows which files a release installed.
 //!
 //! Then, unless `--no-verify`, each zip is unpacked into a fresh directory
 //! and its `olr-server` runs from another working directory without
@@ -244,6 +247,7 @@ pub fn build(platform: Platform, version: &str) -> Result<PathBuf, String> {
     let mut c = Command::new(std::env::var("CARGO").unwrap_or_else(|_| "cargo".into()));
     c.current_dir(root()).args(["build", "--quiet", "--profile", PROFILE]);
     c.env(crate::version::BUILD_VERSION_VAR, version);
+    c.env(crate::version::RELEASE_REPO_VAR, crate::version::RELEASE_REPO);
     match report_url {
         Some(url) => c.env(REPORT_URL_VAR, url),
         None => c.env_remove(REPORT_URL_VAR),
@@ -291,7 +295,20 @@ pub fn stage(platform: Platform, build: &Path, dir: &Path, version: &str) -> Res
         copy(&src, &folder.join(&rel))?;
     }
     copy_content(&repo.join(CONTENT), &folder.join(CONTENT))?;
+    write_install_manifest(&folder)?;
     Ok(folder)
+}
+
+/// Writes the folder's `install-manifest.txt` (`olr_update::install::
+/// MANIFEST_FILE`): every file in it, itself included, one path a line in
+/// byte order. The Windows updater removes what a release listed and the
+/// next one lacks, and leaves the player's own files.
+pub fn write_install_manifest(folder: &Path) -> Result<(), String> {
+    use olr_update::install::{MANIFEST_FILE, manifest_text};
+    let mut files = list_files(folder)?;
+    files.push(MANIFEST_FILE.to_string());
+    let path = folder.join(MANIFEST_FILE);
+    std::fs::write(&path, manifest_text(&files)).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 /// Lines a child prints (stdout and stderr), read as they come.
@@ -660,6 +677,32 @@ mod tests {
         for name in PACKAGES {
             let p = meta.packages.iter().find(|p| p.name.as_str() == name).unwrap();
             assert_eq!(p.version.to_string(), VERSION, "{name}");
+        }
+    }
+
+    /// The names the updater looks for are the ones `dist` writes.
+    #[test]
+    fn the_updater_knows_the_release_names() {
+        let v = "0.2.0-dev.5.0abc123";
+        assert_eq!(olr_update::release::windows_zip_name(v), zip_name(v, Platform::Windows));
+        assert_eq!(olr_update::release::flatpak_bundle_name(v), release_name(v, Platform::Linux));
+        assert_eq!(olr_update::release::folder_name(v), folder(v));
+        assert_eq!(olr_update::flatpak::APP_ID, crate::flatpak::APP_ID);
+    }
+
+    #[test]
+    fn the_folder_lists_its_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let folder = tmp.path().join(folder("1.2.3"));
+        for f in ["olr.exe", "content/packs/a/pack.ron", "README.md"] {
+            copy_text(&folder.join(f));
+        }
+        write_install_manifest(&folder).unwrap();
+        let text = std::fs::read_to_string(folder.join("install-manifest.txt")).unwrap();
+        assert_eq!(text, "README.md\ncontent/packs/a/pack.ron\ninstall-manifest.txt\nolr.exe\n");
+        fn copy_text(p: &Path) {
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, "x").unwrap();
         }
     }
 
