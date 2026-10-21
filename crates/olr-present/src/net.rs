@@ -97,7 +97,8 @@ fn class(kind: &EventKind, next: Option<&EventKind>) -> Option<u64> {
                 CosmeticKind::BloodDropper => (1, 0),
                 CosmeticKind::Gib { worm } => (2, worm),
                 CosmeticKind::Dirt { .. } => (3, 0),
-                CosmeticKind::Explosion { size } => (4, size),
+                // Its projectile (issue #15) is left out: the key stays as it was.
+                CosmeticKind::Explosion { size, .. } => (4, size),
                 CosmeticKind::Sparkle => (5, 0),
                 CosmeticKind::Spawn => (6, 0),
                 CosmeticKind::Smoke => (7, 0),

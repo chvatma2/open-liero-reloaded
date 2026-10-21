@@ -177,8 +177,8 @@ fn steady(colour: [u8; 3], intensity: u16, reach: u16) -> Light {
 fn mod_look(content: &Content, light: Option<Light>, end_flash: Option<Light>) -> ModLook {
     let (sc, _) = olr_scenario::load_fixture(&fixtures(), BAZOOKA).unwrap();
     let n = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap().sim.projectiles().len();
-    let look = ProjectileLook { glow: Some(80), light, end_flash };
-    ModLook { projectiles: vec![Some(look); n], weapons: Vec::new() }
+    let look = ProjectileLook { glow: Some(80), light, end_flash, explosion: None };
+    ModLook { projectiles: vec![Some(look); n], ..Default::default() }
 }
 
 /// A green flash: no engine light is green, so it tells end flashes apart.
@@ -382,7 +382,7 @@ fn a_muzzle_light_runs_its_curve() {
         phase_ms: None,
     };
     let weapon = olr_look::WeaponLook { muzzle_light: Some(muzzle) };
-    let look = ModLook { projectiles: Vec::new(), weapons: vec![Some(weapon); weapons] };
+    let look = ModLook { weapons: vec![Some(weapon); weapons], ..Default::default() };
     let (mut run, mut longest) = (Vec::new(), Vec::new());
     play_with(&content, BAZOOKA, None, Some(look), |p, _, _, _| {
         let green = p.look().unwrap().emitters.iter().find(|l| l.colour[0] == 0.0 && l.colour[1] > 0.0);
@@ -417,7 +417,7 @@ fn muzzle_lights_do_not_stack() {
         phase_ms: None,
     };
     let weapon = olr_look::WeaponLook { muzzle_light: Some(muzzle) };
-    let look = ModLook { projectiles: Vec::new(), weapons: vec![Some(weapon); weapons] };
+    let look = ModLook { weapons: vec![Some(weapon); weapons], ..Default::default() };
     let mut most = 0;
     play_with(&content, "fire-minigun", None, Some(look), |p, _, _, _| {
         let n = p.look().unwrap().emitters.iter().filter(|l| l.colour[0] == 0.0 && l.colour[1] > 0.0).count();
@@ -631,4 +631,185 @@ fn skin_light_caps_hold_with_many_worms() {
         assert!(p.look().unwrap().emitters.len() <= olr_look::MAX_EMITTERS);
     }
     assert_eq!(p.scene.drawn_worms().len(), olr_sim::MAX_WORMS);
+}
+
+// ---- Issue #15: a projectile's explosion light ----
+
+/// A hand-made mod over `content`'s Classic: weapon 0's pellet bounces with
+/// an explosion of size 6 off the map, bounces off worms and explodes on
+/// its timer (damage 7); weapon 1's rocket explodes on the map and a worm
+/// (damage 9).
+fn exploding_mod(content: &Content) -> (olr_content::LoadedMod, i32, i32) {
+    use olr_data::mod_def::*;
+    let projectile = |hit, player_hit, timer| ProjectileDef {
+        gfx: ProjectileGfx::Pixel { colours: vec![olr_data::image::Rgba::rgb(208, 215, 208)] },
+        gravity: Some(100),
+        dampening: 1.0,
+        width: 2,
+        height: 2,
+        timer,
+        trail: TrailDef { kind: TrailKind::None, delay: 0.1, spawn: None },
+        hit,
+        player_hit,
+        event_spawn: None,
+    };
+    let explode = |damage| ActionDef { damage, ..ActionDef::olx_default(ActionKind::Explode) };
+    let pellet = projectile(
+        ActionDef { bounce_coeff: 0.7, bounce_explode: 6, ..ActionDef::olx_default(ActionKind::Bounce) },
+        ActionDef { bounce_coeff: 0.7, ..ActionDef::olx_default(ActionKind::Bounce) },
+        TimerDef { time: 0.6, time_var: 0.0, action: Some(explode(7)) },
+    );
+    let rocket = projectile(explode(9), explode(9), TimerDef { time: 0.0, time_var: 0.0, action: None });
+    let weapon = |id: &str| WeaponDef {
+        id: id.into(),
+        name: id.into(),
+        recharge: 0.14,
+        drain: 1.43,
+        rof: 0.1,
+        laser_sight: false,
+        kind: WeaponKind::Projectile {
+            class: WeaponClass::Automatic,
+            recoil: 0,
+            sound: None,
+            spawn: SpawnDef { amount: 1, speed: 200, use_angle: true, ..SpawnDef::olx_default(id.into()) },
+        },
+    };
+    let (sc, _) = olr_scenario::load_fixture(&fixtures(), "dig").unwrap();
+    let mut m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();
+    let def = ModDef {
+        name: "Explosions".into(),
+        worm: m.worm,
+        rope: m.rope,
+        weapons: vec![weapon("pellet"), weapon("rocket")],
+        projectiles: [("pellet".to_string(), pellet), ("rocket".to_string(), rocket)].into_iter().collect(),
+        restrictions: Default::default(),
+        loadouts: Default::default(),
+    };
+    let sim = olr_sim::SimMod::compile(&def, &Default::default()).unwrap();
+    let index = |key: &str| sim.projectiles().iter().position(|p| p.key == key).unwrap() as i32;
+    let (pellet, rocket) = (index("pellet"), index("rocket"));
+    m.sim = std::sync::Arc::new(sim);
+    m.look = ModLook::default();
+    (m, pellet, rocket)
+}
+
+/// One explosion light seen: the explosion's projectile and size, and the
+/// disc at its position.
+type Seen = (i32, i32, olr_look::FrameLight);
+
+/// Plays [`exploding_mod`] in a dark level with `mod_look` for 2 s, worm 0
+/// firing pellets and worm 1 rockets for the first 0.3 s: every explosion's
+/// disc, and the world's checksum each tick.
+fn explode(content: &Content, mod_look: ModLook) -> (Vec<Seen>, Vec<u64>) {
+    let (mut m, ..) = exploding_mod(content);
+    m.look = mod_look;
+    let (sc, _) = olr_scenario::load_fixture(&fixtures(), "dig").unwrap();
+    let sandbox = SandboxSetup {
+        mod_id: olx_mod_id(&sc.mod_dir),
+        level_id: olx_level_id(&sc.level),
+        seed: 5,
+        settings: olr_sim::SimSettings::lx56(),
+        worms: vec![SpawnSpec { pos: None, weapons: vec![0] }, SpawnSpec { pos: None, weapons: vec![1] }],
+        restrictions: olr_content::DEFAULT_PRESET.into(),
+    };
+    let mut level = content.load_level(&sandbox.level_id).unwrap();
+    level.look = Some(look());
+    let theme = content.load_theme(&level.theme).unwrap();
+    let mut world = olr_content::new_world_from(&m, &level, &theme, &sandbox).unwrap();
+    let setup = PresentSetup {
+        core: content.core(),
+        m: &m,
+        level: &level,
+        theme: &theme,
+        viewport: Viewport::GAME,
+        options: SceneOptions { interpolation: Interpolation::Linear, show_health_bars: true },
+        seed: 1,
+    };
+    let mut p = Presentation::new(&setup, &world);
+    let skin = content.skin_or_default("olx-skin-default");
+    for i in 0..2 {
+        p.add_worm(&skin, default_colour(i), i == 0, i == 0);
+    }
+    let (mut list, mut events) = (DrawList::new(), olr_sim::TickEvents::new());
+    let (mut seen, mut sums) = (Vec::new(), Vec::new());
+    for t in 0..200 {
+        let keys = olr_sim::Keys(if t < 30 { olr_sim::Keys::FIRE } else { 0 });
+        world.tick(&[keys; 2], &mut events);
+        sums.push(world.checksum());
+        p.on_tick(&world, &events);
+        p.build(&world, 0.0, &mut list);
+        let l = p.look().unwrap();
+        for (_, e) in p.fx.entities() {
+            let olr_fx::Kind::Explosion { proj } = e.kind else { continue };
+            for f in l.emitters.iter().filter(|f| f.pos == [e.pos.x, e.pos.y]) {
+                seen.push((proj, e.type2, *f));
+            }
+        }
+    }
+    (seen, sums)
+}
+
+/// `f`'s colour is `colour` (sRGB) in linear light, at most `intensity`
+/// percent of it.
+fn colour_of(f: &olr_look::FrameLight, colour: [u8; 3]) -> bool {
+    let want = colour.map(olr_look::srgb_to_linear);
+    let k = f.colour[2] / want[2];
+    (0..3).all(|i| (f.colour[i] - want[i] * k).abs() < 1e-4 * k.max(1.0))
+}
+
+/// Issue #15: a projectile's explosion light replaces the engine's for
+/// each of its explosions (a bounce's, a timer's, a hit's): its colour,
+/// intensity, disc and reach; the mod's applies to a projectile without
+/// one, and without either the engine's does. The simulation never sees it.
+#[test]
+fn a_projectile_explosion_light_replaces_the_engines() {
+    let Some(content) = content() else { return };
+    let (m, pellet, rocket) = exploding_mod(&content);
+    let blue = [128, 176, 255];
+    let red = [255, 64, 32];
+    let own =
+        olr_look::ExplosionLight { light: engine::explosion_flash(blue, 400, 120), radius: 10, fitted: true };
+    let wide = olr_look::ExplosionLight {
+        light: Light { animation: Animation::Steady, ..steady(red, 150, 300) },
+        radius: 4,
+        fitted: false,
+    };
+    let mut projectiles = vec![None; m.sim.projectiles().len()];
+    projectiles[pellet as usize] =
+        Some(ProjectileLook { explosion: Some(own.clone()), ..Default::default() });
+    let with_wide = ModLook { projectiles: projectiles.clone(), explosion: Some(wide), ..Default::default() };
+    let (seen, sums) = explode(&content, with_wide);
+    // The pellet's: blue at up to 400 %, a disc of 10, reach 120, from its
+    // bounces (size 6) and its timer (size 7).
+    let pellets: Vec<&Seen> = seen.iter().filter(|s| s.0 == pellet).collect();
+    for (_, size, f) in &pellets {
+        assert!(colour_of(f, blue), "{size}: {f:?}");
+        assert_eq!((f.radius, f.reach), (10.0, 120.0), "{f:?}");
+        assert!(f.colour[2] <= 4.0 + 1e-4, "{f:?}");
+    }
+    let brightest = pellets.iter().map(|s| s.2.colour[2]).fold(0.0, f32::max);
+    assert!(brightest > 3.0, "the flash starts near 400 %: {brightest}");
+    let sizes: std::collections::BTreeSet<i32> = pellets.iter().map(|s| s.1).collect();
+    assert_eq!(sizes, [6, 7].into(), "a bounce's and a timer's");
+    // The rocket has none of its own: the mod's, steady red at 150 %, for
+    // its hits (size 9).
+    let rockets: Vec<&Seen> = seen.iter().filter(|s| s.0 == rocket).collect();
+    assert!(!rockets.is_empty() && rockets.iter().all(|s| s.1 == 9));
+    for (_, _, f) in &rockets {
+        assert!(colour_of(f, red) && (f.colour[0] - 1.5).abs() < 1e-4, "{f:?}");
+        assert_eq!((f.radius, f.reach), (4.0, 300.0), "{f:?}");
+    }
+    // Without the mod's, the rocket's are the engine's.
+    let (seen, plain) = explode(&content, ModLook { projectiles, ..Default::default() });
+    let rockets: Vec<&Seen> = seen.iter().filter(|s| s.0 == rocket).collect();
+    assert!(!rockets.is_empty());
+    for (_, size, f) in &rockets {
+        let e = engine::explosion_light(*size);
+        assert!(colour_of(f, e.colour), "{f:?}");
+        assert_eq!((f.radius, f.reach), (engine::explosion_radius(*size), e.reach.pixels()), "{f:?}");
+    }
+    assert!(seen.iter().filter(|s| s.0 == pellet).all(|s| colour_of(&s.2, blue)));
+    // The simulation is the same whatever the look.
+    assert_eq!(sums, plain);
+    assert_eq!(sums, explode(&content, ModLook::default()).1);
 }

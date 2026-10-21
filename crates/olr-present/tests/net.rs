@@ -502,6 +502,15 @@ fn event_keys_ignore_floats_and_count_equal_events() {
         event_keys(9, &[ev(0, gib(2))])[0],
         "a cosmetic's worm counts"
     );
+    // Issue #15: an explosion's projectile is not in its key.
+    let explosion = |size, proj| EventKind::SpawnCosmetic {
+        kind: CosmeticKind::Explosion { size, proj },
+        pos: Vec2::ZERO,
+        vel: Vec2::ZERO,
+    };
+    let key = |kind| event_keys(9, &[ev(0, kind)])[0].unwrap();
+    assert_eq!(key(explosion(8, 3)), key(explosion(8, -1)));
+    assert_ne!(key(explosion(8, 3)), key(explosion(9, 3)), "its size counts");
 }
 
 /// A drifted colour terrain after an advance (a presentation bug) is
@@ -649,8 +658,9 @@ fn end_flashes_once_per_projectile_through_rollbacks() {
     let Some(c) = content() else { return };
     let mut p = packs(&c);
     let n = p.m.sim.projectiles().len();
-    let look = ProjectileLook { glow: None, light: None, end_flash: Some(olr_look::engine::muzzle_light()) };
-    p.m.look = ModLook { projectiles: vec![Some(look); n], weapons: Vec::new() };
+    let end_flash = Some(olr_look::engine::muzzle_light());
+    let look = ProjectileLook { end_flash, ..Default::default() };
+    p.m.look = ModLook { projectiles: vec![Some(look); n], ..Default::default() };
     let mut peer = peer(&c, &p);
     let (mut list, mut flashed, mut sounds) = (DrawList::new(), BTreeSet::new(), Vec::new());
     let mut resims = 0;

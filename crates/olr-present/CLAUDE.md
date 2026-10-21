@@ -70,7 +70,8 @@ wired in the frame loop's order **once**, so each mode that draws a world
   reviews; plan 15c: `LookFrame::emitters`, glowing discs of
   `engine::disc_radius` of the reach, an explosion's `explosion_radius` of
   its size; the engine's first so the cap never drops them: muzzle
-  lights, explosion lights, then mods' projectile lights (the
+  lights, explosion lights, then mods' explosion lights (issue #15),
+  projectile lights (the
   scene's `drawn_projectiles`, slot order, the clock from the spawn time,
   identity the serial) and end flashes (start order); muzzle lights in
   start order, explosion lights in the entities' slot order. End flashes and
@@ -93,6 +94,13 @@ wired in the frame loop's order **once**, so each mode that draws a world
   is `engine::explosion_light(size)`, made once per size, its clock the
   explosion's age over its life (size × 25 ms) scaled to
   `engine::EXPLOSION_MS` (batch C review, Minor 2), identity its slot.
+  Issue #15: an explosion entity whose projectile (`olr_fx::Kind::
+  Explosion { proj }`) has an explosion light (`ModLook::explosion`: its
+  look's, else the mod's) shows that instead, in the mods' part (first,
+  before the projectile lights, slot order): its disc `radius()`, its reach
+  capped (`reach()`), its clock fitted as the engine's when `fitted`, else
+  the explosion's age in ms; it ends with the explosion. The rest (no
+  projectile: bonuses, beams, explosive trails) keep the engine's.
   `flashes_started()` lists the end flashes the last frame started (tests
   and tools). Issue #12: last, the skins' lights, one steady disc per
   drawn worm whose skin has a light and whose frame glows
@@ -144,6 +152,12 @@ floors only in lit matches, `engine_lights_are_emitters`, `living_worms_are_occl
 lights' curve and no stacking; issue #12's
 `a_skin_light_follows_its_worm_in_its_colour`,
 `skin_lights_need_a_lit_level_and_the_switch` (glow overlays lit only),
-`skin_light_caps_hold_with_many_worms` (32 worms asking past the caps); `tests/no_alloc.rs`, its own binary, a warm
-lit build with every dynamic light allocates nothing). They need
+`skin_light_caps_hold_with_many_worms` (32 worms asking past the caps);
+issue #15's `a_projectile_explosion_light_replaces_the_engines` (a
+hand-made mod's bounce, timer and hit explosions in their projectile's
+light or the mod's, the engine's without either, the world's checksums
+the same whatever the look); `tests/net.rs`'s event keys leave an
+explosion's projectile out; `tests/no_alloc.rs`, its own binary, a warm
+lit build with every dynamic light, own and mod-wide explosion lights
+included, allocates nothing). They need
 `OLR_CONTENT_DIR` and skip without it.

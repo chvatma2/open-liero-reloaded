@@ -2,10 +2,12 @@
 //! engine), glowing discs in the glow light since plan 15c (radii from
 //! `engine::disc_radius` and `engine::explosion_radius`), the engine's
 //! first so the disc cap never drops them (final review, Important 3): the
-//! muzzle lights (start order), the explosions' lights (effect slot order),
-//! the projectiles' lights (slot order) and their end flashes (start
-//! order); then the skins' lights (issue #12, worm order), after the mods'
-//! so the cap never starves those either.
+//! muzzle lights (start order), the engine's explosion lights (effect slot
+//! order); then the mods': their explosion lights (issue #15, a projectile
+//! look's `explosion` or the mod's, effect slot order), the projectiles'
+//! lights (slot order) and their end flashes (start order); then the skins'
+//! lights (issue #12, worm order), after the mods' so the cap never starves
+//! those either.
 //!
 //! End flashes and muzzle lights start from the scene's per-tick records
 //! (`Scene::ended_projectiles`, `Scene::shots`), so they never depend on
@@ -15,7 +17,7 @@
 use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
 
-use olr_fx::{Fx, Kind};
+use olr_fx::{Entity, Fx, Kind};
 use olr_look::{Light, LookFrame, MAX_EMITTERS, ModLook, engine, light_at};
 use olr_scene::{Scene, SceneAssets};
 
@@ -199,11 +201,10 @@ impl Dynamic {
             }
             true
         });
-        for (slot, e) in fx.entities().filter(|(_, e)| e.kind == Kind::Explosion) {
-            // An explosion's frame starts at 15 - size and grows 40 a second
-            // to 15: it lives size × 25 ms, and its light's keys span that.
-            let life_ms = f64::from(e.type2.max(1)) * 25.0;
-            let age_ms = f64::from((e.frame - 15.0 + e.type2 as f32) * 25.0).clamp(0.0, life_ms);
+        // The engine's explosion lights: those whose projectile's look (or
+        // the mod's) has none (issue #15).
+        for (slot, e, _) in explosions(fx).filter(|&(_, _, proj)| m.explosion(proj).is_none()) {
+            let (age_ms, life_ms) = explosion_age(e);
             let i = match self.explosions.iter().position(|(s, _)| *s == e.type2) {
                 Some(i) => i,
                 None => {
@@ -218,7 +219,19 @@ impl Dynamic {
             }
         }
         // Mods' lights after the engine's (final review, Important 3): past
-        // the disc cap, explosions and muzzle flashes still light.
+        // the disc cap, explosions and muzzle flashes still light. First
+        // the mods' explosion lights (issue #15), slot order: the engine's
+        // flash fitted to the explosion's life, or the mod's animation at
+        // the explosion's age; capped where read.
+        for (slot, e, proj) in explosions(fx) {
+            let Some(x) = m.explosion(proj) else { continue };
+            let (age_ms, life_ms) = explosion_age(e);
+            let clock = if x.fitted { age_ms / life_ms * f64::from(engine::EXPLOSION_MS) } else { age_ms };
+            if let Some(mut f) = light_at(&x.light, clock, slot as u64, [e.pos.x, e.pos.y], x.radius()) {
+                f.reach = f.reach.min(x.reach());
+                look.push_emitter(f);
+            }
+        }
         for d in scene.drawn_projectiles() {
             if let Some(l) = projectile(d.proj).and_then(|p| p.light.as_ref()) {
                 let clock = t_ms - d.spawn_time.0 as f64;
@@ -250,6 +263,23 @@ impl Dynamic {
             }
         }
     }
+}
+
+/// The explosion entities in slot order, each with its slot and
+/// projectile (-1 for none).
+fn explosions(fx: &Fx) -> impl Iterator<Item = (usize, &Entity, i32)> {
+    fx.entities().filter_map(|(slot, e)| match e.kind {
+        Kind::Explosion { proj } => Some((slot, e, proj)),
+        _ => None,
+    })
+}
+
+/// An explosion's age and life, ms: its frame starts at 15 - size and
+/// grows 40 a second to 15, so it lives size × 25 ms.
+fn explosion_age(e: &Entity) -> (f64, f64) {
+    let life_ms = f64::from(e.type2.max(1)) * 25.0;
+    let age_ms = f64::from((e.frame - 15.0 + e.type2 as f32) * 25.0).clamp(0.0, life_ms);
+    (age_ms, life_ms)
 }
 
 #[cfg(test)]
