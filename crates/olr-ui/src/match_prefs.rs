@@ -185,8 +185,8 @@ pub struct MatchPrefs {
 
 /// The mod a fresh profile plays, locally and hosting (issue #21, the
 /// maintainer's call): Liero v1.0 Reloaded, Classic with OLR's look, one
-/// of OLR's own packs (`content/reloaded/`). Where it is not installed the
-/// menus play the first mod listed.
+/// of OLR's own packs (`content/reloaded/`). Where it is not installed
+/// Local Play shows the first mod listed instead.
 pub const DEFAULT_MOD: &str = "olr-mod-liero-v1-reloaded";
 
 impl Default for MatchPrefs {
