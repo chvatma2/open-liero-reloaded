@@ -7,8 +7,9 @@ use egui::Ui;
 use olr_edit::element::Property;
 use olr_format::levels::{Dither, ElementKind, ElementMaterial, LevelObject, MAX_PIXEL_SIZE, MAX_SIDE};
 
-use super::{EditorData, labels, number, text};
+use super::{EditorData, labels, number, slider, text};
 use crate::state::{EditorAction, EditorState, Selection};
+use olr_data::level::{MAX_DEPTH, MIN_DEPTH};
 use olr_format::levels::Element;
 
 const MATERIALS: [(ElementMaterial, &str); 3] = [
@@ -67,6 +68,9 @@ fn element(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, ou
         if mixed {
             ui.weak("Mixed: rock, dirt and background painted in one layer");
         }
+        if material == ElementMaterial::Background && !mixed {
+            distant(ui, state, data, e, out);
+        }
     }
     super::look::element_glow(ui, state, data, e, out);
     place(ui, data, e, out);
@@ -117,6 +121,43 @@ fn what_is_it(ui: &mut Ui, current: Option<ElementMaterial>, locked: bool) -> Op
         }
     });
     chosen
+}
+
+/// Issue #11: the Distant switch and, when on, the Depth slider from near
+/// to far; the hint when nothing in front is see-through yet.
+fn distant(
+    ui: &mut Ui,
+    state: &EditorState,
+    data: &mut EditorData,
+    e: &Element,
+    out: &mut Vec<EditorAction>,
+) {
+    let set = |out: &mut Vec<EditorAction>, p: Property| out.push(EditorAction::Set(e.id.clone(), p));
+    let mut on = e.distant.is_some();
+    let r = ui.add_enabled(!e.locked, egui::Checkbox::new(&mut on, labels::DISTANT)).on_hover_text(
+        "decoration far behind the level: it scrolls slower and takes less light; \
+         it shows where the back is see-through",
+    );
+    if r.changed() {
+        set(out, Property::Distant(on.then_some(crate::ops::DEFAULT_DEPTH)));
+    }
+    let Some(depth) = e.distant else { return };
+    if !e.locked
+        && let Some(v) = slider(
+            ui,
+            data,
+            &format!("{}/depth", e.id),
+            labels::DEPTH,
+            ("near", "far"),
+            depth.into(),
+            i64::from(MIN_DEPTH)..=i64::from(MAX_DEPTH),
+        )
+    {
+        set(out, Property::Distant(Some(v as u8)));
+    }
+    if state.document().is_some_and(|d| !d.has_holes()) {
+        ui.colored_label(ui.visuals().warn_fg_color, labels::DISTANT_HINT);
+    }
 }
 
 /// "Place": X and Y, and an image's Width and Height.

@@ -90,6 +90,25 @@ fn covers(item: &crate::document::Item, level: (u32, u32), s: u32, p: (i32, i32)
     inside && ax < art.width() && ay < art.height() && art.get(ax, ay).a != 0
 }
 
+/// World rectangle `r` moved by `by`, clipped to `level`.
+fn shift_rect(r: Rect, by: (i32, i32), level: (u32, u32)) -> Rect {
+    if by == (0, 0) {
+        return r;
+    }
+    let (x, y) = (i64::from(r.x) + i64::from(by.0), i64::from(r.y) + i64::from(by.1));
+    clipped(x, y, x + i64::from(r.w), y + i64::from(r.h), level)
+}
+
+/// `p` moved by `by`, saturating.
+fn shifted(p: (i32, i32), by: (i32, i32)) -> (i32, i32) {
+    (p.0.saturating_add(by.0), p.1.saturating_add(by.1))
+}
+
+/// `p` moved back by `by`, saturating.
+fn unshift(p: (i32, i32), by: (i32, i32)) -> (i32, i32) {
+    (p.0.saturating_sub(by.0), p.1.saturating_sub(by.1))
+}
+
 fn contains((at, size): ((i32, i32), (u32, u32)), p: (i32, i32)) -> bool {
     let (dx, dy) = sub(p, at);
     (0..i64::from(size.0)).contains(&dx) && (0..i64::from(size.1)).contains(&dy)
@@ -340,6 +359,38 @@ impl EditorState {
         rect
     }
 
+    /// The canvas's camera for distant layers (issue #11): the world point
+    /// at its centre; `None` before the canvas or a document.
+    pub fn parallax_camera(&self) -> Option<(f32, f32)> {
+        let doc = self.doc.as_ref()?;
+        Some(self.view.centre(self.canvas?, doc.level().art_scale))
+    }
+
+    /// Where distant element `e` shows on the canvas, relative to its
+    /// place, in whole world pixels: `depth × (camera − level centre)`, as
+    /// the renderer draws it (to within its texel rounding); (0, 0) for
+    /// any other element.
+    pub(crate) fn parallax(&self, e: &Element) -> (i32, i32) {
+        let (Some(depth), Some(camera), Some(doc)) = (e.distant, self.parallax_camera(), &self.doc) else {
+            return (0, 0);
+        };
+        let layer =
+            olr_data::level::DistantLayer { image: olr_data::image::RgbaImage::new(0, 0), at: (0, 0), depth };
+        let (x, y) = layer.position(camera, doc.level().size);
+        let whole = |v: f32| v.round().clamp(i32::MIN as f32, i32::MAX as f32) as i32;
+        (whole(x), whole(y))
+    }
+
+    /// World pixel `world` on the selected element, where a distant one
+    /// shows shifted (issue #11).
+    fn to_layer(&self, world: (i32, i32)) -> (i32, i32) {
+        let (Selection::Element(id), Some(doc)) = (&self.selection, &self.doc) else { return world };
+        match doc.index_of(id) {
+            Some(i) => unshift(world, self.parallax(&doc.items()[i].element)),
+            None => world,
+        }
+    }
+
     pub(crate) fn pointer(
         &mut self,
         kind: PointerKind,
@@ -359,6 +410,12 @@ impl EditorState {
         self.status.material = inside
             .then(|| l.material.get(world.1 as usize * l.size.0 as usize + world.0 as usize).copied())
             .flatten();
+        // A tool working on the selected distant layer works where it shows
+        // (issue #11); Select shifts each element its own way (`hit`).
+        let world = match self.tool {
+            Tool::Select | Tool::Spawn | Tool::Eyedropper => world,
+            _ => self.to_layer(world),
+        };
         match kind {
             PointerKind::Down => self.down(world, toggle),
             PointerKind::Move => self.drag_to(world, shift),
@@ -564,8 +621,9 @@ impl EditorState {
         {
             let reach = HANDLE_REACH / (self.view.scale() * doc.level().art_scale as f32);
             let reach = i64::from(reach.ceil().max(1.0) as i32);
+            let local = unshift(world, self.parallax(e));
             let hit = handles(b).find(|(_, at)| {
-                let (dx, dy) = sub(world, *at);
+                let (dx, dy) = sub(local, *at);
                 dx.abs() <= reach && dy.abs() <= reach
             });
             if let Some((handle, _)) = hit {
@@ -631,10 +689,11 @@ impl EditorState {
             .find(|item| {
                 item.element.visible
                     && match &item.element.kind {
-                        ElementKind::Image { .. } => {
-                            image_box(&item.element).is_some_and(|b| contains(b, world))
+                        ElementKind::Image { .. } => image_box(&item.element)
+                            .is_some_and(|b| contains(b, unshift(world, self.parallax(&item.element)))),
+                        ElementKind::Drawn { .. } => {
+                            covers(item, level, s, unshift(world, self.parallax(&item.element)))
                         }
-                        ElementKind::Drawn { .. } => covers(item, level, s, world),
                         ElementKind::Raster => false,
                     }
             })
@@ -685,6 +744,7 @@ impl EditorState {
             }
             Drag::Resize { id, handle, at, size, .. } => {
                 let start = handles((at, size)).find(|(h, _)| *h == handle).map_or(at, |(_, p)| p);
+                let world = self.to_layer(world);
                 let now = resized((at, size), handle, sub(world, start), shift);
                 self.drag = Some(Drag::Resize { id, handle, at, size, now });
                 Vec::new()
@@ -905,11 +965,20 @@ impl EditorState {
         let size = doc.level().size;
         let mut out = Vec::new();
         let selected = |id: &str| self.selection.has(id);
+        // The selected element's shift: a distant layer's tools draw where
+        // it shows (issue #11).
+        let layer = match &self.selection {
+            Selection::Element(id) => {
+                doc.index_of(id).map_or((0, 0), |i| self.parallax(&doc.items()[i].element))
+            }
+            _ => (0, 0),
+        };
         for item in doc.items() {
             let e = &item.element;
             // Images' boxes, and the selected drawn layer's (plan 14d R9).
             let b = image_box(e).or_else(|| drawn_box(&e.kind, size).filter(|_| selected(&e.id)));
             if let (true, Some(b)) = (e.visible, b) {
+                let b = (shifted(b.0, self.parallax(e)), b.1);
                 out.push(Overlay::Box {
                     rect: box_rect(b, size),
                     selected: selected(&e.id),
@@ -924,25 +993,29 @@ impl EditorState {
             && e.visible
             && let Some(b) = image_box(e)
         {
-            out.extend(handles(b).map(|(_, at)| Overlay::Handle { at }));
+            let by = self.parallax(e);
+            out.extend(handles(b).map(|(_, at)| Overlay::Handle { at: shifted(at, by) }));
         }
         match &self.drag {
-            Some(Drag::Resize { now, .. }) => out.push(Overlay::Outline { rect: box_rect(*now, size) }),
+            Some(Drag::Resize { id, now, .. }) => {
+                let by = doc.index_of(id).map_or((0, 0), |i| self.parallax(&doc.items()[i].element));
+                out.push(Overlay::Outline { rect: box_rect((shifted(now.0, by), now.1), size) })
+            }
             Some(Drag::Shape { tool: Tool::Line, start, now, .. }) => {
-                out.push(Overlay::Segment { from: *start, to: *now })
+                out.push(Overlay::Segment { from: shifted(*start, layer), to: shifted(*now, layer) })
             }
             Some(Drag::Shape { start, now, .. }) => {
                 let (x, y, w, h) = span(*start, *now);
-                out.push(Overlay::Outline { rect: box_rect(((x, y), (w as u32, h as u32)), size) });
+                let at = shifted((x, y), layer);
+                out.push(Overlay::Outline { rect: box_rect((at, (w as u32, h as u32)), size) });
             }
             // The outline is what release keeps (review of the minors).
-            Some(Drag::Pixels { id, start, now }) => {
-                out.push(Overlay::Outline { rect: pixel_span(doc, id, *start, *now) })
-            }
+            Some(Drag::Pixels { id, start, now }) => out
+                .push(Overlay::Outline { rect: shift_rect(pixel_span(doc, id, *start, *now), layer, size) }),
             _ => {}
         }
         if let Some((_, rect)) = &self.pixel_rect {
-            out.push(Overlay::Outline { rect: *rect });
+            out.push(Overlay::Outline { rect: shift_rect(*rect, layer, size) });
         }
         for (i, o) in doc.level().objects.iter().enumerate() {
             match o {

@@ -116,6 +116,12 @@ pub mod labels {
     pub const GLOW_STRENGTH: &str = "Glow strength %";
     pub const GLOW_GROUP: &str = "Glow group";
     pub const CLEAR: &str = "Lets light through";
+    // Distant (parallax) layers (issue #11).
+    pub const DISTANT: &str = "Distant";
+    pub const DEPTH: &str = "Depth";
+    /// Shown while a distant layer is selected and no back pixel is
+    /// see-through.
+    pub const DISTANT_HINT: &str = "Nothing in front is see-through yet: erase parts of the background layer, or use Remove colour on it, to show this layer";
     pub const TOOL_GLOW: &str = "Glow brush";
     /// The Glow brush's and Glow selection's glow % (one value).
     pub const GLOW_STRENGTH_BRUSH: &str = "Glow %";
@@ -357,6 +363,42 @@ pub(crate) fn number(
             )
             .labelled_by(l.id);
         if r.dragged() || r.has_focus() {
+            data.drafts.insert(key.into(), v);
+            return None;
+        }
+        data.drafts.remove(key);
+        let v = (v.round() as i64).clamp(*range.start(), *range.end());
+        (v != current).then_some(v)
+    })
+    .inner
+}
+
+/// A labelled slider of whole numbers (`key` names its draft) that commits
+/// once, when the drag stops; `low` and `high` name its ends. Returns the
+/// new value then.
+pub(crate) fn slider(
+    ui: &mut Ui,
+    data: &mut EditorData,
+    key: &str,
+    label: &str,
+    (low, high): (&str, &str),
+    current: i64,
+    range: std::ops::RangeInclusive<i64>,
+) -> Option<i64> {
+    data.drawn.insert(key.into());
+    ui.horizontal(|ui| {
+        let l = ui.label(label);
+        ui.weak(low);
+        let mut v = data.drafts.get(key).copied().unwrap_or(current as f64);
+        let r = ui
+            .add(
+                egui::Slider::new(&mut v, *range.start() as f64..=*range.end() as f64)
+                    .integer()
+                    .show_value(true),
+            )
+            .labelled_by(l.id);
+        ui.weak(high);
+        if r.dragged() {
             data.drafts.insert(key.into(), v);
             return None;
         }

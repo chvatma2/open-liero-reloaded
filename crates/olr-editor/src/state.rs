@@ -351,6 +351,9 @@ pub enum EditorAction {
 pub enum EditorCommand {
     /// Re-upload this world rectangle of the bake (the canvas, in 14c).
     Upload(Rect),
+    /// The level's distant layers (issue #11): their images, places and
+    /// depths, sent again whenever they change (`Renderer::set_distant`).
+    Distant(Vec<olr_data::level::DistantLayer>),
     /// Read the pack at this path (`pack::load`) and answer `Opened` /
     /// `OpenFailed` (`Document::open` with the catalog).
     Open(PathBuf),
@@ -489,6 +492,9 @@ pub struct EditorState {
     pub(crate) placing: bool,
     /// Counts `AssetsChanged`: the tab's thumbnails follow it.
     pub(crate) assets_generation: u64,
+    /// The document's `distant_generation` last sent (`Distant`); `None`
+    /// before a document's first.
+    pub(crate) distant_sent: Option<u64>,
 }
 
 impl EditorState {
@@ -538,6 +544,7 @@ impl EditorState {
             picked_asset: None,
             placing: false,
             assets_generation: 0,
+            distant_sent: None,
         }
     }
 
@@ -776,6 +783,13 @@ impl EditorState {
         }
         if self.pixel_rect.is_none() {
             self.pixel_world = None;
+        }
+        // The distant layers follow every change of them (issue #11).
+        if let Some(d) = &self.doc
+            && self.distant_sent != Some(d.distant_generation())
+        {
+            self.distant_sent = Some(d.distant_generation());
+            cmds.push(EditorCommand::Distant(d.level().distant.clone()));
         }
         cmds
     }
@@ -1147,6 +1161,7 @@ impl EditorState {
         self.pixel_region = None;
         let all = doc.all();
         self.doc = Some(*doc);
+        self.distant_sent = None;
         self.fit_pending = true;
         self.fit();
         self.history = History::new();

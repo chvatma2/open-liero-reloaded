@@ -62,6 +62,9 @@ fn elements(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
                         ElementKind::Raster => "▦",
                     };
                     ui.label(kind);
+                    if let Some(depth) = e.distant {
+                        ui.label("🌄").on_hover_text(format!("{}: depth {depth} %", labels::DISTANT));
+                    }
                     let name = if e.name.is_empty() { e.id.as_str() } else { e.name.as_str() };
                     let selected = state.selection().has(&e.id);
                     // The name selects on a click and reorders on a drag.

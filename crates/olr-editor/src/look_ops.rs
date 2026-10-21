@@ -162,6 +162,9 @@ impl Document {
     /// Sets one property of element `id` (`Document::set`), and fits its
     /// glow mask to a new box size in the same step (resampled, nearest).
     pub fn set_property(&mut self, id: &str, property: Property) -> Result<(Vec<Edit>, Rect), DocError> {
+        if let Property::Distant(d) = property {
+            return self.set_distant(id, d);
+        }
         let size = self.level.size;
         let s = self.level.art_scale;
         let before = self.index_of(id).map(|i| self.items[i].element.clone());

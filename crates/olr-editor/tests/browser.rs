@@ -171,7 +171,8 @@ fn recovered_documents_are_unsaved() {
     let mut state = EditorState::new(Default::default(), crate::common::catalog(&root));
     let cmds = state.update(A::Recovered(Box::new(doc)));
     assert!(state.dirty(), "a recovery holds unsaved changes");
-    assert_eq!(cmds, vec![C::Upload(all)]);
+    // Its distant layers (none) follow every new document (issue #11).
+    assert_eq!(cmds, vec![C::Upload(all), C::Distant(Vec::new())]);
 }
 
 #[test]

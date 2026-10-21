@@ -17,7 +17,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   (`Upload` a world rectangle of the bake, `Open`, `Create`, `Save`,
   `Play`, `SaveSettings`, `List`, `ReadImage`, `RecoveryDone`, `Close`;
   the libraries' `AddTexture`, `RemoveTexture`, `ReadAsset`, `SaveAsset`,
-  `ImportAsset`, `RemoveAsset`)
+  `ImportAsset`, `RemoveAsset`; issue #11's `Distant`)
   and answers (`Opened`, `Recovered`: as `Opened` but unsaved, `OpenFailed`,
   `Saved`, `PlayEnded`, `Listed`, `ImportImage`, `ImportFailed`,
   `TexturesChanged`, `AssetsChanged`, `AssetSaved`, `AssetRead`; and
@@ -271,6 +271,30 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     Purpose::ImportAsset)`); Remove asset for a picked one of yours,
     asking first (`Dialog::RemoveAsset`, then `RemoveAsset(id)`); a
     built-in one is never removed.
+- **Distant layers** (issue #11; the format is `olr_format::levels`'
+  `Element::distant`, the bake `olr_edit::compose`'s): an image or plain
+  drawn Background element made distant (`Property::Distant`, through
+  `Document::set_distant`, which `set_property` calls: one step, moving
+  it to the top of the distant layers or, no longer distant, just above
+  them). The order holds everywhere: `move_to` clamps a drag to the
+  element's group and refuses a move clamping undoes (`DISTANT_ORDER`), a
+  paste lands a distant copy on top of the distant layers (`landed`,
+  `insert_landed`), `merge_down` and `split` refuse ("a distant layer does
+  not merge|split"); assets never carry one. `Document::rebake`
+  rebakes the whole level when the bake turns see-through or back
+  (`see_through()`), makes the level's distant layers again when the
+  distant items changed (`distant_generation()`), and counts the
+  see-through back pixels (`has_holes()`). `EditorState::update` sends
+  `EditorCommand::Distant(layers)` whenever the generation moved (and with
+  every new document). The canvas's camera is the view's centre
+  (`View::centre`, `parallax_camera()`); `parallax(e)` is where a distant
+  element shows relative to its place, so `hit`, the Select handles and
+  resize, the tools on a selected distant layer (`to_layer`) and
+  `overlays()` work where it draws. The panels: a Distant switch and a
+  Depth slider (`ui::slider`, "near" to "far", committed when the drag
+  stops; `ops::DEFAULT_DEPTH` 50) right under "What is it?" for a
+  Background element, the hint `labels::DISTANT_HINT` while nothing is
+  see-through, and the list's 🌄 mark. Tests: `tests/distant.rs`.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the

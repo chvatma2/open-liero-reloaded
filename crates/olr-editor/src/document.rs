@@ -9,8 +9,8 @@ use std::sync::Arc;
 use olr_data::image::RgbaImage;
 use olr_data::manifest::PackManifest;
 use olr_edit::compose::{
-    Decoded, GlowMasks, ImageCache, Rect, bake_elements_with, decode_element, decode_glow_masks,
-    encode_decoded,
+    Decoded, GlowMasks, ImageCache, Rect, bake_distant, bake_elements_with, decode_element,
+    decode_glow_masks, encode_decoded, has_distant,
 };
 use olr_edit::level::refresh_thumb;
 use olr_edit::pack::{Pack, Source};
@@ -87,6 +87,16 @@ pub struct Document {
     /// A plain level's glow and clear flags, made outside the editor (batch
     /// A review I2): kept as they are while no element glows or is clear.
     pub(crate) kept: Option<Kept>,
+    /// Issue #11: whether the bake is see-through (a visible distant layer,
+    /// `has_distant`); a change rebakes the whole level.
+    pub(crate) see_through: bool,
+    /// The distant items as the level's distant layers were last made from
+    /// (`bake_distant` runs again only when they differ).
+    pub(crate) distant_items: Vec<Item>,
+    /// Counts the changes of the level's distant layers.
+    pub(crate) distant_generation: u64,
+    /// The back art's see-through pixels (alpha 0), counted.
+    pub(crate) holes: u64,
 }
 
 /// What a plain level brought that its layers cannot bake.
@@ -101,6 +111,21 @@ pub(crate) struct Kept {
 /// The look's glow group ids, in order.
 fn group_ids(l: &LevelSource) -> Vec<String> {
     l.look.iter().flat_map(|k| k.glow_groups.iter().map(|g| g.id.clone())).collect()
+}
+
+/// The see-through (alpha 0) back art pixels within world rectangle `r`.
+fn holes(back: &RgbaImage, r: Rect, s: u32) -> u64 {
+    let (w, h) = (back.width(), back.height());
+    let x1 = r.x.saturating_add(r.w).saturating_mul(s).min(w);
+    let y1 = r.y.saturating_add(r.h).saturating_mul(s).min(h);
+    let x0 = r.x.saturating_mul(s).min(x1);
+    let mut n = 0;
+    for y in r.y.saturating_mul(s).min(y1)..y1 {
+        let row = &back.as_raw()
+            [(y as usize * w as usize + x0 as usize) * 4..(y as usize * w as usize + x1 as usize) * 4];
+        n += row.as_chunks::<4>().0.iter().filter(|p| p[3] == 0).count() as u64;
+    }
+    n
 }
 
 /// A document's pack, not yet made ([`Document::snapshot`]).
@@ -277,6 +302,10 @@ impl Document {
             rebaked: false,
             glow_masks,
             kept,
+            see_through: false,
+            distant_items: Vec::new(),
+            distant_generation: 0,
+            holes: 0,
         };
         doc.rebake(doc.all());
         doc.rebaked = (&doc.level.material, &doc.level.front, &doc.level.back)
@@ -320,9 +349,34 @@ impl Document {
     /// Rebakes `rect` from the items (`bake_elements_with` their glow
     /// masks) and marks the thumbnail stale. A plain level's own glow and
     /// clear flags stay while no element glows, or is clear.
+    ///
+    /// Issue #11: a change of whether the bake is see-through (a visible
+    /// distant layer) rebakes the whole level; the level's distant layers
+    /// are made again when the distant items changed
+    /// (`distant_generation` counts it).
     pub fn rebake(&mut self, rect: Rect) {
         let items: Vec<(&Element, &Decoded)> = self.items.iter().map(|i| (&i.element, &i.decoded)).collect();
+        let (size, s) = (self.level.size, self.level.art_scale);
+        let see_through = has_distant(&items, size, s);
+        let all = Rect { x: 0, y: 0, w: size.0, h: size.1 };
+        let rect = if see_through != self.see_through { all } else { rect };
+        let whole = rect.x == 0 && rect.y == 0 && rect.w >= size.0 && rect.h >= size.1;
+        let holes_before = if whole { 0 } else { holes(&self.level.back, rect, s) };
         bake_elements_with(&mut self.level, &items, &self.glow_masks, &self.back_tile, rect);
+        let distant = self.items.iter().filter(|i| i.element.distant.is_some());
+        if whole || !distant.clone().eq(self.distant_items.iter()) {
+            if !whole {
+                bake_distant(&mut self.level, &items);
+            }
+            self.distant_items = distant.cloned().collect();
+            self.distant_generation += 1;
+        }
+        self.see_through = see_through;
+        self.holes = if whole {
+            holes(&self.level.back, all, s)
+        } else {
+            (self.holes + holes(&self.level.back, rect, s)).saturating_sub(holes_before)
+        };
         if let Some(k) = &self.kept {
             let cells = self.level.material.len();
             let art = (self.level.front.width(), self.level.front.height());
@@ -366,6 +420,24 @@ impl Document {
         let i = self.index_of(id)?;
         self.items[i].element.glow.as_ref().filter(|g| g.mask)?;
         self.glow_masks.get(id).map(|m| m.as_slice())
+    }
+
+    /// Whether the bake is see-through: a visible distant layer shows where
+    /// no other background covers the back (issue #11).
+    pub fn see_through(&self) -> bool {
+        self.see_through
+    }
+
+    /// Whether any back pixel is see-through (the level's distant layers
+    /// show somewhere).
+    pub fn has_holes(&self) -> bool {
+        self.holes > 0
+    }
+
+    /// Counts the changes of the level's distant layers
+    /// (`level().distant`): the canvas sends them again when it changes.
+    pub fn distant_generation(&self) -> u64 {
+        self.distant_generation
     }
 
     /// The whole level's rectangle.

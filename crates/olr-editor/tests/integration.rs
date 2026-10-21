@@ -4,6 +4,7 @@
 mod asset;
 mod browser;
 mod common;
+mod distant;
 mod document;
 mod flows;
 mod history;

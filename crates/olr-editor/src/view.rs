@@ -52,6 +52,13 @@ impl View {
         [self.offset[0] + world.0 as f32 * unit, self.offset[1] + world.1 as f32 * unit]
     }
 
+    /// The world point at the centre of a canvas of `canvas` points: the
+    /// camera distant layers scroll by (issue #11).
+    pub fn centre(&self, canvas: [f32; 2], art_scale: u32) -> (f32, f32) {
+        let unit = self.scale() * art_scale.max(1) as f32;
+        ((canvas[0] / 2.0 - self.offset[0]) / unit, (canvas[1] / 2.0 - self.offset[1]) / unit)
+    }
+
     /// Zooms by `steps` index steps about canvas point `about`: the art
     /// point under it stays (to within the pixel snap).
     pub fn zoom_about(&mut self, steps: i32, about: [f32; 2]) {

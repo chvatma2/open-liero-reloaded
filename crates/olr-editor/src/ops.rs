@@ -10,7 +10,7 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_edit::compose::{Decoded, Rect, resize_decoded};
 use olr_edit::drawn;
-use olr_edit::element::{Property, copy_name, new_element_id, new_source_name};
+use olr_edit::element::{DISTANT_ORDER, Property, copy_name, new_element_id, new_source_name};
 use olr_edit::level::{self, Paint, Shape, rescale_art};
 use olr_edit::mask::{Mask, mask_colour, mask_shape, original_pixel};
 use olr_edit::pixelate::Pixelation;
@@ -124,6 +124,12 @@ pub(crate) fn with_property(e: &mut Element, property: Property, level: (u32, u3
         }
         Property::Glow(g) => e.glow = g,
         Property::Clear(c) => e.clear = c,
+        // Issue #11: an image or drawn element (`Document::set_distant`
+        // keeps the order).
+        Property::Distant(_) if matches!(e.kind, ElementKind::Raster) => {
+            return Err(wrong("an image or drawn element"));
+        }
+        Property::Distant(d) => e.distant = d,
         Property::Material(m) => match &mut e.kind {
             ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => *material = m,
             ElementKind::Raster => return Err(wrong("an image or drawn element")),
@@ -156,6 +162,10 @@ pub(crate) fn with_property(e: &mut Element, property: Property, level: (u32, u3
     }
     Ok(())
 }
+
+/// A distant layer's depth at first, percent (issue #11): the Distant
+/// switch's.
+pub const DEFAULT_DEPTH: u8 = 50;
 
 impl Document {
     /// The element `id`, by index.
@@ -424,7 +434,9 @@ impl Document {
             _ => 0,
         };
         let mut all = elements;
-        all.push(piece.element.clone());
+        // Where `insert_landed` puts it: a distant one on top of the distant.
+        let at = if piece.element.is_distant() { self.distant_count() } else { all.len() };
+        all.insert(at, piece.element.clone());
         self.check_extra(&all, size, to, extra)?;
         if let (Decoded::Image { mask, .. }, Some((_, bytes))) = (&piece.decoded, &piece.original) {
             piece.decoded = self.image_grid(&piece.element, &bytes.clone(), mask.clone())?;
@@ -435,7 +447,8 @@ impl Document {
     /// Inserts a landed piece on top: its edit (applied).
     pub(crate) fn insert_landed(&mut self, piece: olr_edit::asset::Piece) -> Result<Edit, DocError> {
         let olr_edit::asset::Piece { element, decoded, original, glow_mask } = piece;
-        let index = self.items.len();
+        // A distant layer lands on top of the distant ones (issue #11).
+        let index = if element.is_distant() { self.distant_count() } else { self.items.len() };
         let snapshot = Snapshot { item: Item { element, decoded }, original, glow_mask };
         Ok(self.change(Edit::Insert { index, item: Box::new(snapshot) }).edit)
     }
@@ -586,6 +599,9 @@ impl Document {
     /// layers in) are applied: one history step.
     pub fn split(&mut self, id: &str) -> Result<Vec<Edit>, DocError> {
         let index = self.unlocked(id)?;
+        if self.items[index].element.is_distant() {
+            return Err(DocError::Bad("a distant layer does not split".into()));
+        }
         let (size, s) = (self.level.size, self.level.art_scale);
         let item = self.items[index].clone();
         let mut others: Vec<Element> =
@@ -644,6 +660,9 @@ impl Document {
         let lower_id = self.items[upper - 1].element.id.clone();
         let lower = self.unlocked(&lower_id)?;
         let (le, ue) = (&self.items[lower], &self.items[upper]);
+        if le.element.is_distant() || ue.element.is_distant() {
+            return Err(DocError::Bad("a distant layer does not merge".into()));
+        }
         let (element, decoded) = drawn::merge_down(
             (&le.element, &le.decoded),
             (&ue.element, &ue.decoded),
@@ -839,11 +858,53 @@ impl Document {
     }
 
     /// Moves the element to `index` (bottom 0, clamped to the top); allowed
-    /// when locked (ruling R4).
+    /// when locked (ruling R4). Distant layers stay below the rest (issue
+    /// #11): the index is clamped to the element's own group, and a move
+    /// that clamping undoes is refused with `DISTANT_ORDER`.
     pub fn move_to(&mut self, id: &str, index: usize) -> Result<Change, DocError> {
         let from = self.find(id)?;
         let to = index.min(self.items.len() - 1);
-        Ok(self.change(Edit::Move { from, to }))
+        let distant = self.distant_count();
+        let group = if self.items[from].element.is_distant() {
+            0..=distant.saturating_sub(1)
+        } else {
+            distant..=self.items.len() - 1
+        };
+        let clamped = to.clamp(*group.start(), *group.end());
+        if clamped == from && to != from {
+            return Err(DocError::Bad(DISTANT_ORDER.into()));
+        }
+        Ok(self.change(Edit::Move { from, to: clamped }))
+    }
+
+    /// How many distant layers the document holds (all at the bottom).
+    pub(crate) fn distant_count(&self) -> usize {
+        self.items.iter().take_while(|i| i.element.is_distant()).count()
+    }
+
+    /// Makes element `id` distant at `depth` percent (issue #11), or not
+    /// (`None`): one step. Becoming distant or not moves it to the top of
+    /// the distant layers (just above them when no longer distant), so they
+    /// stay below the rest.
+    pub fn set_distant(&mut self, id: &str, depth: Option<u8>) -> Result<(Vec<Edit>, Rect), DocError> {
+        let index = self.find(id)?;
+        let before = self.items[index].element.clone();
+        let mut after = before.clone();
+        with_property(&mut after, Property::Distant(depth), self.level.size)?;
+        if before.is_distant() == after.is_distant() {
+            self.check_with(|es| es[index] = after.clone())?;
+            let c = self.change(Edit::Element { index, before, after });
+            return Ok((vec![c.edit], c.dirty));
+        }
+        // Its place: the top of the distant layers without it.
+        let to =
+            self.items.iter().enumerate().filter(|(i, it)| *i != index && it.element.is_distant()).count();
+        self.check_with(|es| {
+            es.remove(index);
+            es.insert(to, after.clone());
+        })?;
+        let edits = vec![Edit::Move { from: index, to }, Edit::Element { index: to, before, after }];
+        Ok(self.apply_all(edits))
     }
 
     /// Drawn layer `id` (unlocked), by index; a picture is refused with
