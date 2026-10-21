@@ -34,6 +34,18 @@ pub struct Settings {
     pub gameplay: GameplaySettings,
     /// The online screens' (plan 10 task 11).
     pub online: OnlineSettings,
+    /// The update check's (issue #4).
+    pub updates: UpdateSettings,
+}
+
+/// What the update check offers (issue #4).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdateSettings {
+    /// "Include pre-releases": `None` until the player changes it, and
+    /// then the installed build's channel (a pre-release build includes
+    /// them, a final one does not). Under Flatpak the branch decides.
+    pub include_prereleases: Option<bool>,
 }
 
 impl Settings {

@@ -18,6 +18,7 @@ pub mod skin_preview;
 pub mod state;
 pub mod store;
 pub mod theme;
+pub mod update;
 pub mod weapon_select;
 
 pub use match_prefs::{
@@ -37,7 +38,8 @@ pub use profiles::{
 };
 pub use settings::{
     AudioSettings, FrameRate, GAME_KEYS, GameplaySettings, HudArrangement, SETTINGS_VERSION, Settings,
-    UI_SCALE_RANGE, UpscaleFilter, VideoSettings, WindowPreset, clamp_scale, sanitize_bindings,
+    UI_SCALE_RANGE, UpdateSettings, UpscaleFilter, VideoSettings, WindowPreset, clamp_scale,
+    sanitize_bindings,
 };
 pub use state::{AppCommand, Game, Screen, UiAction, UiState};
 pub use store::{

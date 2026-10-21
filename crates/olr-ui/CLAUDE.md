@@ -322,6 +322,35 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `tests/report.rs` (the section for fixed facts, every value sent
   previewed, the entry only with a relay, the flow with a replay recorded
   from the committed content, the logs collapsed, Send's gate).
+- **Updates** (`update.rs`, `screens/update.rs`, issue #4): plain views
+  the app fills (`MenuData::update`, an `UpdateData`): `enabled` (the
+  build checks for updates: `cargo xtask dist` made it; else no notice and
+  no option), `build_prerelease`, `flatpak` (`FlatpakChannel`: the branch
+  is `beta`, the command switching branch), `offer` (`UpdateOffer`:
+  version, title, notes as plain text, the release page, `UpdateMethod::
+  {Portable, Portal, Command(cmd), Page}`) and `status` (`UpdateStatus::
+  {Idle, Working { step, progress }, Installed, Failed(why),
+  NotWritable(why), Outside { why, command }}`). Main shows "Update
+  available: <version>" (`screens::update::NOTICE`) over its buttons, a
+  primary-coloured button, only with an offer in an enabled build; it
+  opens `Screen::Update` (in `MENUS`): the release's title, "Version X
+  (you have Y)", the page as a link, "Release notes" (selectable,
+  scrolling), and in the footer Update (`UiAction::InstallUpdate` →
+  `AppCommand::InstallUpdate`, only on that screen; disabled while
+  `Working`, with the step and a progress bar or a spinner below; a
+  failure in red, Update retries), `INSTALLED` and "Restart now"
+  (`RestartGame` → `AppCommand::RestartGame`), "Open the release page"
+  (`OpenUrl(url)` → `AppCommand::OpenUrl`, `https://` only, the Update
+  screen only) for `NotWritable` and `Page`, and a selectable command with
+  Copy (`command_line`) for `Outside` and `Command`. Back returns to Main:
+  nothing is forced. The options' Online tab ends with "Updates" (enabled
+  builds only): "Include pre-releases" (`UpdateData::includes_prereleases`:
+  `settings.updates.include_prereleases`, `UpdateSettings`, `None` until
+  changed = the build's own channel) → `SetIncludePrereleases(on)`
+  (saved); under Flatpak the checkbox shows the branch's channel and
+  toggling it shows the switch command instead (nothing saved). Tests:
+  `tests/update.rs`; `tests/layout.rs` checks the screen and its primary
+  action.
 - **Replays** (`replays.rs`): `list(dir)` (the `.olrp` files, automatic
   saves newest first, each with `header_problem`: 6 bytes read),
   `auto_save(dir, bytes)` (`match-NNNNNN.olrp`, the last

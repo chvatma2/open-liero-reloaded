@@ -15,3 +15,4 @@ mod profiles;
 mod report;
 mod state;
 mod store;
+mod update;

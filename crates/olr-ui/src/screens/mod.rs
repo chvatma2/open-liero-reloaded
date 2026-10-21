@@ -25,6 +25,7 @@ mod profiles;
 mod replays;
 pub mod report;
 pub mod results;
+pub mod update;
 mod weapon_select;
 
 pub use host_lost::{HOST_LOST_REPLAY, HOST_LOST_TITLE, STEPPED_DOWN_TITLE};
@@ -135,6 +136,9 @@ pub struct MenuData {
     /// The Report screen's (issue #3): `available` (the app's: a relay to
     /// send to), the gathered context, the texts, the replay, the status.
     pub report: crate::report::ReportData,
+    /// The update check's (issue #4): the release offered, the install's
+    /// progress, the Flatpak branch; the app's.
+    pub update: crate::update::UpdateData,
     /// A text field had the focus as the last frame ended.
     typing: bool,
     /// The weapon selection in progress.
@@ -189,6 +193,7 @@ impl MenuData {
             editor_message: None,
             version: String::new(),
             report: Default::default(),
+            update: Default::default(),
             typing: false,
             select: None,
             thumbs: BTreeMap::new(),
@@ -329,9 +334,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
         _ => {
             let frame = egui::Frame::central_panel(ui.style()).fill(theme::BACKGROUND);
             egui::CentralPanel::default().frame(frame).show(ui, |ui| match screen {
-                Screen::Main => {
-                    main::show(ui, state, &data.notices, &data.version, data.report.available, &mut out)
-                }
+                Screen::Main => main::show(ui, state, data, &mut out),
                 Screen::LocalPlay => local_play::show(ui, state, data, &mut out),
                 Screen::Profiles => profiles::show(ui, state, data, &mut out),
                 Screen::Replays => replays::show(ui, state, data, &mut out),
@@ -343,6 +346,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
                 Screen::HostLost => host_lost::show(ui, data, &mut out),
                 Screen::Editor => editor::show(ui, data, &mut out),
                 Screen::Report => report::show(ui, state, data, &mut out),
+                Screen::Update => update::show(ui, state, data, &mut out),
                 _ => {}
             });
         }

@@ -84,7 +84,7 @@ fn widgets(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
 
 /// The screens to check: each opened from the main menu, then the
 /// options' and the Multiplayer screen's tabs clicked.
-const SCREENS: [(Screen, Option<&str>); 16] = [
+const SCREENS: [(Screen, Option<&str>); 17] = [
     (Screen::LocalPlay, None),
     (Screen::Options, None),
     (Screen::Options, Some("Audio")),
@@ -101,6 +101,7 @@ const SCREENS: [(Screen, Option<&str>); 16] = [
     (Screen::Lobby, None),
     (Screen::Editor, None),
     (Screen::Report, None),
+    (Screen::Update, None),
 ];
 
 #[test]
@@ -152,6 +153,12 @@ fn reach(harness: &mut Harness<'static, App>, screen: Screen) {
     while app.ui.screen() != Screen::Main {
         app.ui.update(UiAction::Back);
     }
+    // The update screen shows an offered release (issue #4).
+    app.data.update = olr_ui::update::UpdateData {
+        enabled: true,
+        offer: Some(crate::update::offer(olr_ui::update::UpdateMethod::Portable)),
+        ..Default::default()
+    };
     let path: &[Screen] = match screen {
         Screen::Host | Screen::Lobby => &[Screen::Multiplayer, Screen::Host],
         Screen::Main => &[],
@@ -182,6 +189,7 @@ fn title_of(screen: Screen) -> &'static str {
         Screen::Lobby => "Lobby",
         Screen::Editor => "Editor",
         Screen::Report => "Report a bug",
+        Screen::Update => "Update",
         _ => "",
     }
 }
@@ -197,6 +205,7 @@ fn the_primary_action_is_centred_below() {
             (Screen::Multiplayer, "Host a game"),
             (Screen::Host, "Start hosting"),
             (Screen::Report, "Send"),
+            (Screen::Update, "Update"),
         ] {
             reach(&mut harness, screen);
             let b =

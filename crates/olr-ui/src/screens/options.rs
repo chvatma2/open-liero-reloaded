@@ -18,7 +18,10 @@
 //!   (plan 11; the app disables it while an online game is on). Relay
 //!   edits reconnect the relays in use (the Internet tab's, a hosted
 //!   game's listening); the other settings apply to the next game hosted
-//!   or joined.
+//!   or joined. Then, in a build that checks for updates (issue #4),
+//!   "Include pre-releases" (the installed build's channel until changed;
+//!   under Flatpak the branch's, and changing it shows the command that
+//!   switches branch).
 //!
 //! The match (OLX's game settings) is set up in local play, before each
 //! game, and remembered there: it has no tab here.
@@ -74,6 +77,9 @@ pub(super) struct View {
     show_turn: bool,
     /// The public address being typed (`None`: the saved one, not edited).
     address: Option<String>,
+    /// Under Flatpak, "Include pre-releases" was toggled: the command
+    /// switching branch is shown.
+    switch_shown: bool,
 }
 
 /// The page's column, the keys' table's width (one for every tab, so
@@ -114,6 +120,10 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
                 online(ui, state, data, &mut v, out);
                 ui.add_space(10.0);
                 section(ui, "Downloaded content", |ui, _| downloads(ui, data, out));
+                if data.update.enabled {
+                    ui.add_space(10.0);
+                    section(ui, "Updates", |ui, _| updates(ui, state, data, &mut v, out));
+                }
             });
         }
     }
@@ -239,6 +249,40 @@ fn downloads(ui: &mut Ui, data: &MenuData, out: &mut Vec<UiAction>) {
             ui.label(format!("Download cache: none ({why})"));
         }
     }
+}
+
+/// The text under "Include pre-releases".
+pub const PRERELEASES_HELP: &str = "Pre-releases are the development builds between releases: newer, \
+     less tested. Without them the game offers final releases only, and stays on this build until a newer \
+     final release exists.";
+
+/// "Include pre-releases": saved, except under Flatpak, where the branch
+/// the game runs from decides and the toggle shows how to switch it.
+fn updates(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut Vec<UiAction>) {
+    let u = &data.update;
+    let mut on = u.includes_prereleases(state.settings().updates.include_prereleases);
+    if let Some(f) = &u.flatpak {
+        if v.switch_shown {
+            on = !on;
+        }
+        if ui.checkbox(&mut on, "Include pre-releases").changed() {
+            v.switch_shown = !v.switch_shown;
+        }
+        ui.label(RichText::new(PRERELEASES_HELP).weak());
+        if v.switch_shown {
+            let (from, to) = if f.beta { ("beta", "stable") } else { ("stable", "beta") };
+            ui.label(format!(
+                "This Flatpak runs from its {from} branch, which the game cannot change. To switch to \
+                 {to}, run this (it installs the {to} branch and uninstalls the {from} one):"
+            ));
+            super::update::command_line(ui, &f.switch_command);
+        }
+        return;
+    }
+    if ui.checkbox(&mut on, "Include pre-releases").changed() {
+        out.push(UiAction::SetIncludePrereleases(on));
+    }
+    ui.label(RichText::new(PRERELEASES_HELP).weak());
 }
 
 /// Finding and reaching games: the region, the public address, port

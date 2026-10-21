@@ -48,6 +48,11 @@
 //! - **Bug reports** (issue #3): Main opens Report (`PrepareReport`: the
 //!   app gathers the automatic section); its Send is `SendReport`, which
 //!   the app sends off the UI thread. Nothing is sent otherwise.
+//! - **Updates** (issue #4): Main's notice opens Update (the release's
+//!   notes); its Update is `InstallUpdate`, then `RestartGame` once
+//!   installed, `OpenUrl` for the release page. Nothing installs
+//!   otherwise. The options' "Include pre-releases" is
+//!   `SetIncludePrereleases` (saved).
 //! - **Options** apply and save only what changed; their Clear of the
 //!   download cache is `ClearDownloadCache` (the app refuses it while an
 //!   online game is on).
@@ -96,13 +101,17 @@ pub enum Screen {
     /// A bug report to the maintainer (issue #3): the player's text, a
     /// replay if they attach one, the preview of all that is sent, Send.
     Report,
+    /// A newer release (issue #4): its title and notes, Update, its
+    /// progress, Restart.
+    Update,
 }
 
 impl Screen {
     /// The screens the main menu opens.
     /// Report shows only when the build has a relay to send to
-    /// (`MenuData::report.available`).
-    pub const MENUS: [Screen; 8] = [
+    /// (`MenuData::report.available`), Update only when a newer release
+    /// is offered (`MenuData::update.offer`).
+    pub const MENUS: [Screen; 9] = [
         Screen::LocalPlay,
         Screen::Multiplayer,
         Screen::Editor,
@@ -111,6 +120,7 @@ impl Screen {
         Screen::Replays,
         Screen::About,
         Screen::Report,
+        Screen::Update,
     ];
 }
 
@@ -239,6 +249,15 @@ pub enum UiAction {
     DiscardRecovery(String),
     /// The Report screen's Send: this report, as its preview showed it.
     SendReport(Box<Report>),
+    /// The Update screen's Update: install the release offered.
+    InstallUpdate,
+    /// The Update screen's Restart, once the update is installed.
+    RestartGame,
+    /// The Update screen's link (the release page): open it in the
+    /// browser (`https://` only).
+    OpenUrl(String),
+    /// The options' "Include pre-releases".
+    SetIncludePrereleases(bool),
 }
 
 /// What the app must do.
@@ -320,6 +339,13 @@ pub enum AppCommand {
     /// Send this report to the relay off the UI thread, then put how it
     /// went in `MenuData::report.status` (the text is kept on a failure).
     SendReport(Box<Report>),
+    /// Install the offered release (`MenuData::update.offer`) off the UI
+    /// thread, its progress in `MenuData::update.status`.
+    InstallUpdate,
+    /// Start the installed update and quit.
+    RestartGame,
+    /// Open this `https://` address in the browser.
+    OpenUrl(String),
     Quit,
 }
 
@@ -547,6 +573,19 @@ impl UiState {
                 Vec::new()
             }
             UiAction::Quit => vec![AppCommand::Quit],
+            UiAction::InstallUpdate if self.screen == Screen::Update => vec![AppCommand::InstallUpdate],
+            UiAction::RestartGame if self.screen == Screen::Update => vec![AppCommand::RestartGame],
+            UiAction::OpenUrl(url) if self.screen == Screen::Update && url.starts_with("https://") => {
+                vec![AppCommand::OpenUrl(url)]
+            }
+            UiAction::InstallUpdate | UiAction::RestartGame | UiAction::OpenUrl(_) => Vec::new(),
+            UiAction::SetIncludePrereleases(on) => {
+                if self.settings.updates.include_prereleases == Some(on) {
+                    return Vec::new();
+                }
+                self.settings.updates.include_prereleases = Some(on);
+                vec![self.save_settings()]
+            }
             UiAction::SendReport(r) => {
                 if self.screen == Screen::Report && r.is_ready() {
                     vec![AppCommand::SendReport(r)]
