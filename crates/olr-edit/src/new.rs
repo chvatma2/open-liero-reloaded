@@ -26,6 +26,9 @@ pub enum Template<'a> {
     /// A level of `size` world pixels: dirt inside a one-pixel rock border,
     /// on the theme `theme`.
     Level { size: (u32, u32), theme: &'a str },
+    /// A blank skin (issue #13): every pixel transparent, OLX's layout or,
+    /// `double`, double resolution's ([`crate::skin::blank`]).
+    Skin { double: bool },
     /// A copy of the pack at this directory.
     From(&'a Path),
 }
@@ -43,6 +46,9 @@ pub enum NewError {
     Size(u32, u32),
     #[error("{}: {source}", from.display())]
     Load { from: PathBuf, source: PackError },
+    /// The copy could not be changed as asked (a skin already double).
+    #[error("{0}")]
+    Edit(String),
     #[error(transparent)]
     Save(#[from] SaveError),
     #[error(transparent)]
@@ -95,6 +101,20 @@ pub fn new_pack(
     name: &str,
     template: Template<'_>,
 ) -> Result<Vec<String>, NewError> {
+    new_pack_with(dir, kind, id, name, template, |_| Ok(()))
+}
+
+/// [`new_pack`], with `edit` changing the source (renamed already) before
+/// it is saved: an error there writes nothing (`olr-cli skin new --from
+/// … --double` doubles the copy).
+pub fn new_pack_with(
+    dir: &Path,
+    kind: PackKind,
+    id: &str,
+    name: &str,
+    template: Template<'_>,
+    edit: impl FnOnce(&mut Source) -> Result<(), NewError>,
+) -> Result<Vec<String>, NewError> {
     if !is_slug(id) {
         return Err(NewError::BadId(id.into()));
     }
@@ -110,6 +130,10 @@ pub fn new_pack(
             fresh(Source::Level(level_template(name, size, theme)?))
         }
         Template::Level { .. } => return Err(wrong("level")),
+        Template::Skin { double } if kind == PackKind::Skin => {
+            fresh(Source::Skin(crate::skin::blank(name, double)))
+        }
+        Template::Skin { .. } => return Err(wrong("skin")),
         Template::From(from) => {
             let pack = load(from).map_err(|source| NewError::Load { from: from.into(), source })?;
             if pack.manifest.kind != kind {
@@ -122,6 +146,7 @@ pub fn new_pack(
     pack.manifest.name = name.into();
     pack.manifest.origin = None;
     rename(&mut pack.source, name);
+    edit(&mut pack.source)?;
     // `replace_dir` swaps the new pack in over an empty directory. A failed
     // save removes what this made: `dir` and the parents it lacked.
     let made = dir.ancestors().take_while(|a| !a.as_os_str().is_empty() && !a.exists()).last();

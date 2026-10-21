@@ -3,7 +3,7 @@
 The pack authoring operations `olr-cli` and the editors share (plan 13d;
 spec `docs/superpowers/specs/2026-10-16-formats-design.md` §6): a pack's
 authoring source loaded and saved whole, the canonical formatter, pack
-templates and the level operations.
+templates, the level operations and the skin operations.
 
 - **Layer 3, `std`.** Depends on `olr-data`, `olr-vfs`, `olr-format`,
   `olr-pack`, `thiserror`. It is not a forbidden importer: the game may
@@ -43,7 +43,30 @@ templates and the level operations.
   origin; it returns the save's warnings. A non-slug id, an existing
   non-empty `dir` or a template of another kind is refused before anything
   is written, and a failed save removes the directories it made (parents
-  included).
+  included). Issue #13: `Skin { double }` is a blank skin
+  (`skin::blank`); `new_pack_with(…, edit)` changes the renamed source
+  before the save (an error there, `NewError::Edit`, writes nothing).
+- **`skin`** (issue #13; `olr-cli skin`, and the skin editor next):
+  `blank(name, double)` (every pixel transparent, OLX's layout or double
+  resolution's), `double(src)` (a classic skin to double resolution by
+  Scale2x per frame, a frame's edge its own neighbour; each art pixel
+  takes colour, tint and glow from the one source pixel it copies, pixels
+  compared by all three, so a tinted edge stays tinted: nearest scaling
+  where Scale2x keeps the pixel; `left.png` by its own colours; name,
+  notes and light kept; any other layout is `SkinError::NotClassic`, a
+  size mismatch `SkinError::Size`, never a panic), `new_skin(dir, id,
+  name, from, doubled)` (a copy of the skin pack at `from`, doubled when
+  asked, or a blank one), `check_dir(dir)` (`Checked`: another kind of
+  pack, then `olr_pack::validate`'s errors and warnings on the files as
+  they are, then the skin as the game loads it) and `preview(skin,
+  colour, scale)` (`preview_size`: 14 × 6 cells of `PREVIEW_CELL` 16 × 14
+  world pixels at `scale` 1 to `MAX_PREVIEW_SCALE` 16 output pixels each,
+  so both art scales preview alike; seven aim frames facing right then
+  left, three walk rows on `PREVIEW_LIGHT` then three in the dark at a
+  fifth of their colour, glowing pixels at their glow quarter
+  (`olr_data::skin::glow_level`) and the light, if any, as a disc of its
+  reach around the frame's glowing pixels, clipped to the cell: a preview,
+  not the game's pixels).
 - **`compose::split_layers` / `split_from`** (plan 14c, the playtest): a
   level's material, front and back as three drawn layers, bottom to top
   `background` (the back art everywhere), `dirt` and `rock` (the front art
@@ -267,6 +290,12 @@ templates and the level operations.
   writes back byte for byte; foreign files kept; invalid results refused;
   saves through `x/..` and a symbolic link; a name a save would lose),
   `fmt.rs` (`bundled_packs_are_canonical`, R5's `check` guard), `new.rs`,
+  `skin.rs` (issue #13: a copy of OLX's default skin and of Firefly
+  round-trips exactly; `double` keeps each 2 × 2 block where Scale2x keeps
+  the pixel and rounds a tinted, glowing corner within its frame; blank
+  skins; `check_dir` refusing another kind, a wrong-size glow, a light
+  over the caps, partial tint, a cut PNG; the preview's size and glow;
+  on the committed `content/`, offline too),
   `level.rs` (a proptest of the background invariant at art scales 1-4)
   and `guide.rs` (`docs/formats/README.md`'s examples parse, are canonical
   and check clean, the composed level's files generated; the asset
