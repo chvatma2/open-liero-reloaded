@@ -94,6 +94,9 @@ pub mod labels {
     pub const REMOVE_LOOK: &str = "Remove look";
     pub const LOOK_AMBIENT: &str = "Ambient %";
     pub const LOOK_AMBIENT_COLOUR: &str = "Ambient colour";
+    // Issue #10.
+    pub const LOOK_OCCLUSION: &str = "Occlusion %";
+    pub const LOOK_OCCLUSION_REACH: &str = "Occlusion reach";
     pub const LOOK_MAX_LIGHT: &str = "Max light %";
     pub const LOOK_STEPS: &str = "Light steps";
     pub const LOOK_SOFTNESS: &str = "Softness";

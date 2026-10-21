@@ -1040,6 +1040,34 @@ fn edit_the_look_panel() {
     assert_eq!(look.glow_groups[0].intensity, 100);
 }
 
+/// Issue #10: the lighting's Occlusion shows right after the ambient (not
+/// under Fine tuning); a strength turns it on at the default reach, whose
+/// field then shows, and 0 removes it.
+#[test]
+fn set_the_occlusion() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.set_size(egui::vec2(1280.0, 1800.0));
+    act(&mut h, A::Select(Selection::None));
+    h.get_by_label(labels::ADD_LOOK).click();
+    h.run();
+    assert!(!h.state().state.settings().fine_tuning_open);
+    assert!(h.query_by_label(labels::LOOK_OCCLUSION).is_some(), "not under Fine tuning");
+    assert!(h.query_by_label(labels::LOOK_OCCLUSION_REACH).is_none(), "no reach while off");
+    let occlusion = |h: &Harness<'static, App>| {
+        h.state().state.document().unwrap().level().look.clone().unwrap().occlusion
+    };
+    type_number(&mut h, labels::LOOK_OCCLUSION, "60");
+    let on = olr_format::look::OcclusionSource { strength: 60, reach: 12 };
+    assert_eq!(occlusion(&h), Some(on));
+    type_number(&mut h, labels::LOOK_OCCLUSION_REACH, "20");
+    assert_eq!(occlusion(&h), Some(olr_format::look::OcclusionSource { reach: 20, ..on }));
+    type_number(&mut h, labels::LOOK_OCCLUSION, "0");
+    assert_eq!(occlusion(&h), None, "0 removes it");
+    h.get_by_label(labels::UNDO).click();
+    h.run();
+    assert_eq!(occlusion(&h), Some(olr_format::look::OcclusionSource { reach: 20, ..on }));
+}
+
 #[test]
 fn toggle_views_and_scrub_the_clock() {
     let Some((_tmp, mut h)) = opened() else { return };
@@ -1090,7 +1118,9 @@ fn more_and_fine_tuning_fold_and_are_remembered() {
     }
     act(&mut h, A::Select(Selection::Element("tunnels".into())));
     assert!(h.query_by_label(labels::LOCKED).is_some(), "More stays open");
-    // The level's lighting: ambient and groups shown, the rest folded.
+    // The level's lighting: ambient and groups shown, the rest folded
+    // (tall enough that Fine tuning is in view below the occlusion).
+    h.set_size(egui::vec2(1280.0, 1800.0));
     act(&mut h, A::Select(Selection::None));
     h.get_by_label(labels::ADD_LOOK).click();
     h.run();

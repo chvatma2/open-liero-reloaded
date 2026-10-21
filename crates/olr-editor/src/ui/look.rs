@@ -11,8 +11,8 @@ use olr_edit::element::Property;
 use olr_format::Colour;
 use olr_format::levels::{Element, ElementGlow, ElementKind};
 use olr_format::look::{
-    AnimationSource, GlowColourSource, GlowGroupSource, KeySource, LookSource, PulseShape, ReachSource,
-    SolidFloorSource,
+    AnimationSource, DEFAULT_OCCLUSION_REACH, GlowColourSource, GlowGroupSource, KeySource, LookSource,
+    OcclusionSource, PulseShape, ReachSource, SolidFloorSource,
 };
 
 use super::{EditorData, labels, number, text};
@@ -200,6 +200,7 @@ pub(super) fn level_look(
     if let Some(c) = colour(ui, data, "look/ambient-colour", labels::LOOK_AMBIENT_COLOUR, ambient) {
         set(out, &|l| l.ambient.colour = Some(c));
     }
+    occlusion(ui, data, look.occlusion, &mut |o| set(out, &|l| l.occlusion = o));
     ui.separator();
     ui.label(egui::RichText::new("Glow groups").strong());
     for group in &look.glow_groups {
@@ -284,6 +285,30 @@ pub(super) fn level_look(
     }
     if ui.button(labels::REMOVE_LOOK).on_hover_text("glowing elements stop glowing").clicked() {
         out.push(EditorAction::SetLook(None));
+    }
+}
+
+/// The ambient occlusion's strength and, when on, reach (issue #10): right
+/// after the ambient colour, not under Fine tuning (it changes a level's
+/// look a lot). Strength 0 removes it.
+fn occlusion(
+    ui: &mut Ui,
+    data: &mut EditorData,
+    now: Option<OcclusionSource>,
+    set: &mut dyn FnMut(Option<OcclusionSource>),
+) {
+    let strength = now.map_or(0, |o| o.strength);
+    if let Some(v) = number(ui, data, "look/occlusion", labels::LOOK_OCCLUSION, strength.into(), 0..=100) {
+        let reach = now.map_or(DEFAULT_OCCLUSION_REACH, |o| o.reach);
+        set((v > 0).then_some(OcclusionSource { strength: v as u16, reach }));
+    }
+    let Some(o) = now else { return };
+    let (lo, hi) = (olr_look::MIN_OCCLUSION_REACH, olr_look::MAX_OCCLUSION_REACH);
+    let key = "look/occlusion-reach";
+    if let Some(v) =
+        number(ui, data, key, labels::LOOK_OCCLUSION_REACH, o.reach.into(), lo.into()..=hi.into())
+    {
+        set(Some(OcclusionSource { reach: v as u16, ..o }));
     }
 }
 
