@@ -31,12 +31,12 @@ pub(super) fn items(ui: &mut Ui, cx: &mut Cx) {
         if chosen {
             ui.horizontal(|ui| {
                 ui.add_space(12.0);
-                let up = ui.add_enabled(i > 0, egui::Button::new("⏶").small());
+                let up = ui.add_enabled(i > 0, egui::Button::new("▲").small());
                 relabel(&up, egui::WidgetType::Button, labels::MOVE_UP);
                 if up.on_hover_text(labels::MOVE_UP).clicked() {
                     cx.out.push(ModAction::MoveWeapon { id: id.clone(), by: -1 });
                 }
-                let down = ui.add_enabled(i < last, egui::Button::new("⏷").small());
+                let down = ui.add_enabled(i < last, egui::Button::new("▼").small());
                 relabel(&down, egui::WidgetType::Button, labels::MOVE_DOWN);
                 if down.on_hover_text(labels::MOVE_DOWN).clicked() {
                     cx.out.push(ModAction::MoveWeapon { id: id.clone(), by: 1 });

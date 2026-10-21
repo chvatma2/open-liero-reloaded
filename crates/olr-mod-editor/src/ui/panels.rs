@@ -436,12 +436,8 @@ fn trail(ui: &mut Ui, cx: &mut Cx, path: &str) {
                         None => r,
                     };
                     if r.clicked() && k != kind {
-                        chosen = Some(match k {
-                            "Projectile" => {
-                                format!("Projectile(every_s: 0.1, spawn: (projectile: (gfx: {PIXEL})))")
-                            }
-                            k => k.to_string(),
-                        });
+                        // A variant set by name starts valid (`olr_edit::mods::set`).
+                        chosen = Some(k.to_string());
                     }
                 }
             })

@@ -22,7 +22,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
 - **Layer 6.** Uses `olr-ui`, `olr-content`, `olr-present`, `olr-scene`, `olr-fx`, `olr-render`,
   `olr-audio`, `olr-input`, `olr-sim`, `olr-modes`, `olr-bots`, `olr-replay`,
   `olr-terrain`, `olr-pack`, `olr-editor`, `olr-edit`, `olr-format`,
-  `olr-vfs` (the level editor), `olr-skin-editor` (the skin editor), `olr-online`, `olr-netcode`, `olr-proto`,
+  `olr-vfs` (the level editor), `olr-skin-editor` (the skin editor),
+  `olr-mod-editor` (the mod editor), `olr-online`, `olr-netcode`, `olr-proto`,
   `olr-lobby` (identities, host settings), `olr-net` (endpoint settings,
   LAN announcements, `IceConfig`), `olr-discovery` (the hosted lobby's summary,
   `GameSummary::of_lobby`, and `hosting`, shared with olr-server; the
@@ -916,6 +917,36 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   tab's yours, then edited in place; OLX's default made double and
   saved; a blank one closing unasked; a bad pack and a built-in Edit
   refused with a message; the window's close asking).
+- **Mod editor** (`editor/mods.rs`, `shell/editing.rs`, issue #17;
+  decisions in `docs/porting/STATUS.md`, "Mod editor (issue #17)"):
+  `ModHost` holds `olr-mod-editor`'s state and does its disk work. The
+  Mod tab's `AppCommand::EditMod(id)` opens one of the user's mod packs
+  (`files::mod_dirs` of `packs/`, by manifest id; never a bundled root)
+  in place; `NewMod { from, name }` first makes a new pack in `packs/`
+  (`new_pack`, `Template::From` of `Content::pack_dir(from)`, its id
+  `pack_id(name)` free among the installed packs and the folders there,
+  "mod" for a name without a letter or digit) with `editor/mod.ron`
+  naming `from`, lists the content again and opens it; `RecoverMod(id)`
+  a recovery copy (`Store::mod_recovery_dir`, `recovery::load`; its
+  origin must be in `packs/`), unsaved. The base mod named by
+  `editor/mod.ron` is loaded from the content when installed (the
+  Original values). `act` carries out `Save` (`olr_edit::pack::save` in
+  place, which refuses errors; the recovery copy removed), `LoadMod` (Add
+  weapon's other mods, by the catalog's pack folders) and `Close` (the
+  copy removed). `tick(now)`: the recovery copy (`recovery::write`,
+  `mod-recovery/<pack id>/`) when unsaved changes have waited
+  `RECOVERY_INTERVAL`; `flush_recovery` at a quit that does not ask
+  (`Shell::finish`). The shell owns it (`Shell::mod_editor`): while open
+  `App::frame` draws `olr_mod_editor::ui::show` instead of the menus and
+  `Shell::mod_frame` runs it; a save lists the content again; Close
+  brings the Editor screen back; the window's close asks it first
+  (`Shell::request_close`). `refresh_editor_packs` also fills
+  `MenuData::set_editor_mods` (`files::editable_mods`, the mod
+  recoveries). Tests: `tests/mod_editor.rs` (a copy of Classic made,
+  edited, saved and opened again with Classic's originals, Classic
+  untouched; a built-in Edit refused; a recovery copy written, offered
+  by the next run, recovered, removed on Save and Close; the window's
+  close asking).
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the
   `Default` loadout: every weapon at 100 %, issue #5; there is no

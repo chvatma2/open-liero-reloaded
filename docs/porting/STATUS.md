@@ -81,6 +81,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Level editor core (spec 2026-10-17 editor §4-§5, §8): the document (elements decoded, an image cache, one bake), reversible edits and a 256 MiB history, the tools (select, brush, eraser, rectangle, ellipse, line, spawn, eyedropper), the panels and shortcuts, tested headless; hosted in the game (the Editor screen, the canvas drawn by `olr-render`, Play, the file browser, recovery, `olr --edit`) | — | `olr-format` (`image_io::jpeg_orientation`, `levels::check_elements`), `olr-edit` (`level::{draw_art, erase_art, rescale_art, Shape::{Ellipse, Line}}`, `compose::{Decoded, ImageCache, bake_elements}`, `new::pack_id`), `olr-editor` (`browser`), `olr-terrain` (`ColorMap::replace_rect`), `olr-content` (`LoadedLevel::{from_source, first_spawn}`, `build_match_spawning`), `olr-ui` (`screens::editor`), `olr-game` (`editor`) | done (plans 14b-14c) | `undo_and_redo_restore_everything_exactly`, `every_operation_undoes_to_the_same_files`, `opening_and_saving_changes_nothing`, `art_painting_is_clipped_and_total`, `a_brush_stroke_is_one_step`, `locked_elements_are_not_changed_by_the_canvas`, `history_drops_the_oldest_steps_over_the_cap`, the `flows` tests; plan 14c: `a_bundled_level_is_edited_as_a_copy`, `recovery_survives_a_missing_original`, `a_damaged_recovery_is_discarded_not_fatal`, `a_later_session_keeps_the_crash_copy`, `imports_are_bounded_before_reading`, `closing_the_window_asks_when_unsaved`, `quitting_without_asking_keeps_a_recovery_copy`, `the_first_spawn_is_used_only_when_inside_the_level`, `the_canvas_draws_the_bake`, the `browser` tests, `cargo xtask e2e`'s editor run |
 | Skin editor (issue #14; no OLX counterpart): the Editor screen's Skin tab (New blank skin, Edit yours, Edit a copy), the 21-frame grid, onion skin, frame copy, paste to a frame, row or column, flip and shift, the paint tools (pencil 1 and 2 × 2, eraser, fill, eyedropper, line, rectangle) on the Colour, Player colour and Glow targets, the colour picker and recent colours, undo and redo per stroke, zoom and pan, the skin light, Make double resolution, a live preview (walking, aiming, both ways, light and dark), saving to `packs/` | `src/common/CWorm.cpp:1225-1244` (the preview's frame) | `olr-skin-editor`, `olr-edit` (`skin::preview_frame`), `olr-ui` (`screens::editor`'s Skin tab), `olr-game` (`editor::skin`) | done (issue #14) | the `olr-skin-editor` `state` and `flows` tests, `a_preview_frame_is_the_previews_cell`, `the_skin_tab_edits_yours_and_copies_the_others`, `a_copy_is_saved_to_your_packs_and_offered_by_the_skin_picker`, `a_bad_skin_pack_is_refused_with_a_message`, `closing_the_window_asks_when_unsaved` (skin) |
 | Mod editing operations (issue #16; no OLX counterpart): get and set any field by path (through shared projectiles), weapons added (blank or from another mod with their projectiles and files), removed, moved, copied and renamed with the presets and loadouts following, shared projectiles listed, inlined and shared, every error located; `olr-cli mod` | — | `olr-format` (`mods::mod_errors`), `olr-edit` (`mods`), `olr-cli` (`mod_cmd.rs`) | done (issue #16) | `set_changes_exactly_the_fields_set`, `every_leaf_round_trips_through_set`, `a_cycle_and_two_effects_in_an_event_are_refused_with_a_path`, `weapons_add_remove_move_copy_and_rename`, `a_weapon_of_another_mod_brings_its_projectiles_and_files`, `used_by_matches_the_files`, `inline_and_share_round_trip`, `check_lists_every_error_with_its_path`, `mod_errors_lists_every_error_and_compile_mod_the_first`, `olr-cli`'s `tests/mods.rs` |
+| Mod editor (issue #17; no OLX counterpart): the Editor screen's Mod tab (Edit yours, Edit a copy of any mod as a new mod, recoveries), the left list (World, the weapons in order, the shared projectiles), the world's fields, presets and shipped loadouts, a weapon's fields and fire, the projectile tree (shot, projectile, event spawns, trail, timer; shared ones with their users, Make a copy for this weapon, Make it shared), events as one effect and a spawn, weapons added (blank or copied from any mod), removed, moved, duplicated and renamed, undo and redo, the check before saving with each problem a link, the base mod's values with Reset, recovery copies | — | `olr-format` (`mods::ModEditorFile`, `editor/mod.ron`), `olr-pack` (it is read), `olr-edit` (`mods::set_lenient`), `olr-mod-editor` (`fields.ron` from `xtask format-docs`), `olr-ui` (`screens::editor`'s Mod tab, `Store::mod_recovery_dir`), `olr-game` (`editor::mods`) | done (issue #17) | the `olr-mod-editor` `table`, `state` and `flows` tests, `a_lenient_set_keeps_the_error_and_the_save_refuses_it`, `the_mod_editors_file_is_read`, `the_field_table_keeps_the_hand_columns`, `the_mod_tab_edits_yours_and_copies_any`, `a_new_mod_is_a_copy_saved_to_your_packs_and_edited_again`, `unsaved_work_is_kept_in_a_recovery_copy`, `format-docs` check step |
 
 ## Deliberate deviations
 
@@ -4411,6 +4412,78 @@ No simulation, Classic, MW, oracle or golden changes. As built:
   when the mod does not compile).
 - **Not built** (the issue's non-goals): the editor UI, Play, art and
   sounds, practice.
+
+## Mod editor (issue #17)
+
+No OLX counterpart (OLX's mods are edited as text). The editor over #16's
+operations; no simulation, Classic, MW, oracle or golden changes. As
+built:
+
+- **A crate of its own.** `olr-mod-editor` (layer 5) follows the skin
+  editor's pattern: pure `update(action) -> commands`, egui panels found
+  by label, the host (`olr-game`'s `editor::mods`) doing files. Its
+  document is the `olr_edit::pack::Pack` itself; every change goes
+  through `olr_edit::mods`, so the editor and `olr-cli mod` change mods
+  the same way.
+- **The way in.** The Editor screen's third tab, Mod: the mod recovery
+  copies first, then every installed mod, the user's first, with Edit
+  for the data directory's mod packs and Edit a copy for any (a form
+  names the new mod). A copy is made in `packs/` at once
+  (`new_pack`, `Template::From`; its id the name's slug free among the
+  installed packs), not at the first save as a skin is: the mod's
+  shared projectiles and files come with it, and the recovery copy and
+  Save then always have a folder. A built-in or OLX mod is only read.
+- **The base mod.** A copy's `editor/mod.ron` (`ModEditorFile { base }`,
+  an authoring file `pack check` reads and the game ignores) names the mod
+  it was copied from; the editor loads that mod (when installed) and
+  shows its value beside each field that differs, with Reset. A mod
+  whose base is gone shows no originals.
+- **Errors are kept, not refused.** #16's operations refuse an edit that
+  adds an error; the editor sets fields with `set_lenient`, which keeps
+  the edit and returns the new errors, so a mod can pass through an
+  invalid state (a cycle made and then broken elsewhere). The check
+  (`mods::check`) runs after every change, undo and redo; errors and
+  warnings are listed with their path, each a link to its item, node and
+  field (marked and scrolled to). Save refuses a mod with errors (the
+  editor first, `pack::save` again); structural operations (add, move,
+  share, inline) keep #16's refusal and say why in the status.
+- **One step per change.** The history holds snapshots of the mod's
+  source and name (and its files, when a weapon copied from another mod
+  brought some), at most 200; the same value set again is no step.
+- **Weapons.** Added at the end (blank, or a copy of a weapon of any
+  installed mod or this one; the copy's id is its name's slug made
+  unique), removed, moved one place at a time, duplicated (after the
+  original) and renamed through their Name field (the presets follow,
+  #16). The first move says once that a weapon's place is its id in the
+  game. Changing a fire's kind asks first (its settings start again from
+  the new kind's start values; undo brings them back).
+- **Projectiles as a tree.** The weapon's shot, its projectile, and under
+  each projectile its event spawns, its trail's spawn and its timer, each
+  a node by its field path; a spawn naming a shared projectile leads into
+  it (a cycle shown once, not followed). A shared projectile shows its
+  users (links); a spawn's projectile is chosen among its own and the
+  shared ones; Make a copy for this weapon is `mods::inline`, Make it
+  shared `mods::share`.
+- **Events** are shown as LX56 runs them: one effect (a dropdown of the
+  effects, `Spawn` and `Unknown` left out; its fields below) and whether
+  it spawns (the projectile's spawn, made with one white pixel when it has
+  none; turning the last user off removes the spawn). An imported event
+  with more effects says how many more (the check's error).
+- **Fields** come from `crates/olr-mod-editor/fields.ron`, which `cargo
+  xtask format-docs` writes from the format's types and doc comments
+  (the hover help) and whose unit, soft range, place and asset folder are
+  edited by hand and kept; `check` fails when it drifts. A number is typed
+  (any value: the format validates) and has a slider over the soft range;
+  common fields come first and the rest under More ▸; image and sound
+  fields are dropdowns of the mod's `gfx/` (with thumbnails) and `sfx/`
+  files. The Look fields are left to the art issue.
+- **Recovery copies.** As the level editor's (`recovery.rs`), in
+  `<data>/mod-recovery/<pack id>/`, written every 120 s while there are
+  unsaved changes, at a quit that does not ask, and removed on Save and
+  Close. A recovered mod opens unsaved in its own folder (one of the
+  user's packs only).
+- **Not built** (the issue's non-goals): play from the editor, art,
+  sounds, the look fields, practice, a raw RON editor.
 
 ## Kept OLX quirks
 

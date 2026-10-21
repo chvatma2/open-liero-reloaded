@@ -739,12 +739,8 @@ impl ModEditorState {
             (Dialog::FireKind { weapon, kind }, ModAction::Confirm(true)) => {
                 self.dialog = None;
                 let path = format!("weapons/{weapon}.fire");
-                // A shot needs a projectile: a fresh one, one white pixel.
-                let value = match kind.as_str() {
-                    "Projectile" => format!("Projectile(shot: (projectile: (gfx: {PIXEL})))"),
-                    _ => kind,
-                };
-                if self.change(false, |p| mods::set_lenient(p, &path, &value)) {
+                // A variant set by name starts valid (`olr_edit::mods::set`).
+                if self.change(false, |p| mods::set_lenient(p, &path, &kind)) {
                     self.node = format!("weapons/{weapon}");
                 }
                 Vec::new()

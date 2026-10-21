@@ -271,9 +271,7 @@ fn fresh_kinds_check_clean() {
     assert_eq!(s.variant("weapons/laser.fire").as_deref(), Some("Projectile"), "{}", s.status());
     // A projectile trail, and an image.
     let p = "weapons/bazooka.fire.shot.projectile";
-    let trail =
-        format!("Projectile(every_s: 0.1, spawn: (projectile: (gfx: {})))", olr_mod_editor::state::PIXEL);
-    s.update(set(&format!("{p}.trail"), &trail));
+    s.update(set(&format!("{p}.trail"), "Projectile"));
     assert_eq!(s.variant(&format!("{p}.trail")).as_deref(), Some("Projectile"), "{}", s.status());
     s.update(set(&format!("{p}.gfx"), olr_mod_editor::state::PIXEL));
     assert_eq!(s.variant(&format!("{p}.gfx")).as_deref(), Some("Pixels"), "{}", s.status());

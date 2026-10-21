@@ -196,8 +196,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   bottom right corner (an area of its own, outside the menu's layout) and
   at About's top (the crate's version when empty).
 - **Editor screen** (`screens/editor.rs`, plan 14c): Main's **Editor**
-  (between Sandbox and Profiles; `Screen::Editor`, in `MENUS`), two tabs,
-  Level and Skin (issue #14). Level: the
+  (between Sandbox and Profiles; `Screen::Editor`, in `MENUS`), three
+  tabs, Level, Skin (issue #14) and Mod (issue #17). Level: the
   recoveries first ("Recover <name>" and Discard; a damaged one only
   Discard), New level (a form: Name, Width and Height 1..=4096, default
   504 × 350, Theme from `Catalog::sources`' themes, `olx-theme-dirt` by
@@ -215,7 +215,15 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   more), each with Edit (`EditSkin(id)`) or Edit a copy (`NewSkin(Some(
   id))`: no form, the skin editor asks a name at the first save); both
   become `AppCommand`s of the same names as the level ones do; the app
-  opens `olr-skin-editor`. Tests: `tests/editor.rs`.
+  opens `olr-skin-editor`. Mod (issue #17): the mod recoveries first
+  ("Recover <name>", Discard: `RecoverMod`, `DiscardModRecovery`), then
+  every catalog mod, the user's first (`MenuData::set_editor_mods(
+  editable, recoveries)`, the data directory's mod packs and the mod
+  editor's copies), each with Edit for the user's (`EditMod(id)`) and Edit
+  a copy for any (a form: `MOD_NAME` "New mod's name", "<Name> copy",
+  `CREATE_MOD`: `NewMod { from, name }`; it closes once sent); `AppCommand`s
+  of the same names; the app opens `olr-mod-editor`. Tests:
+  `tests/editor.rs`.
 - **Online screens** (`online.rs`, `screens/{multiplayer,host,lobby}.rs`,
   plan 10 task 11): plain views, no networking (this crate stays free of
   `olr-net`/`olr-lobby`/`olr-discovery`; `olr-game` converts): `LobbyView`/`MemberView`
@@ -489,7 +497,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   value: …)`, the same atomic write, backups and newer-file rules; `None`
   when absent; a name that is not a plain `.ron` file of its own, or one of
   the store's own files, is refused); `recovery_dir()` (`recovery/`, the
-  editor's copies); `textures_dir()` (`textures/`, the editor's texture
+  editor's copies); `mod_recovery_dir()` (`mod-recovery/`, the mod
+  editor's, issue #17); `textures_dir()` (`textures/`, the editor's texture
   library, plan 14e); `assets_dir()` (`assets/`, the editor's asset
   library of the user's, issue #9).
   Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
