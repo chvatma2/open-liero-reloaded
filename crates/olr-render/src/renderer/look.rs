@@ -25,7 +25,7 @@ pub(super) fn common() -> String {
 pub(super) const GROUPS: usize = 255;
 
 /// The globals' floats: nine vec4s, then three arrays of [`GROUPS`] vec4s.
-pub(super) const GLOBAL_FLOATS: usize = 4 * (9 + 3 * GROUPS);
+pub(super) const GLOBAL_FLOATS: usize = 4 * (10 + 3 * GROUPS);
 
 /// The occluder map's format (plan 15b): each texel a worm's index + 1, 0
 /// none (GL renders into `R8Uint`).
@@ -160,6 +160,13 @@ pub(super) struct LookState {
     pub(super) emitter_count: u32,
     /// Whether the bloom is added (tests turn it off: `Renderer::set_bloom`).
     pub(super) bloom: bool,
+    /// Whether this frame draws distant layers (issue #11): the composite
+    /// then reads their depth from the shade's alpha.
+    pub(super) distant: bool,
+    /// The terrain opaque under a level's distant layers, and the layers
+    /// (issue #11).
+    pub(super) backing_pipeline: wgpu::RenderPipeline,
+    pub(super) distant_pipeline: wgpu::RenderPipeline,
 }
 
 const UINT_TEXTURE: wgpu::BindingType = wgpu::BindingType::Texture {
@@ -299,6 +306,27 @@ impl LookState {
             &[Some(globals_layout), Some(texture_layout)],
             &[Some(quads())],
             &targets,
+            wgpu::PrimitiveTopology::TriangleStrip,
+        );
+        let backing_pipeline = pipeline(
+            device,
+            "olr-render terrain backing lit",
+            &source,
+            ("vs_world", "fs_terrain_backing_lit"),
+            &[Some(globals_layout), Some(texture_layout), Some(&layout)],
+            &[Some(quads())],
+            &targets,
+            wgpu::PrimitiveTopology::TriangleStrip,
+        );
+        // Unblended: the shade's alpha is the layer's depth.
+        let distant_pipeline = pipeline(
+            device,
+            "olr-render distant lit",
+            &source,
+            ("vs_world", "fs_distant_lit"),
+            &[Some(globals_layout), Some(texture_layout)],
+            &[Some(quads())],
+            &[(WORLD_FORMAT, None), (SHADE_FORMAT, None)],
             wgpu::PrimitiveTopology::TriangleStrip,
         );
         let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -459,6 +487,9 @@ impl LookState {
             packed_emitters: Vec::with_capacity(emitter_floats),
             emitter_count: 0,
             bloom: true,
+            distant: false,
+            backing_pipeline,
+            distant_pipeline,
         }
     }
 
@@ -801,6 +832,8 @@ impl LookState {
             grid as f32,
             (frame.size.1 + 2 * LIGHT_PAD) as f32,
         ]);
+        // Whether the level draws distant layers (issue #11).
+        p.extend([f32::from(u8::from(self.distant)), 0.0, 0.0, 0.0]);
         for i in 0..GROUPS {
             match look.groups.get(i) {
                 Some(g) => p.extend([g.cast[0], g.cast[1], g.cast[2], g.self_scale]),

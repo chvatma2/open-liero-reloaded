@@ -67,10 +67,17 @@ fn fs_sprite_lit(in: QuadOut) -> LitOut {
     return out;
 }
 
-@fragment
-fn fs_terrain_lit(in: QuadOut) -> LitOut {
+// The terrain lit (`backing`: opaque, a see-through pixel showing its
+// back tile, under a level's distant layers; else a see-through pixel,
+// alpha 0, is left to them: issue #11).
+fn terrain_lit(in: QuadOut, backing: bool) -> LitOut {
     let t = texel(in);
-    let c = textureLoad(tex, t, 0);
+    var c = textureLoad(tex, t, 0);
+    if backing {
+        c.a = 1.0;
+    } else if c.a <= 0.0 {
+        discard;
+    }
     let gsize = vec2<i32>(textureDimensions(glow_tex));
     let glow = textureLoad(glow_tex, clamp(t, vec2<i32>(0), gsize - vec2<i32>(1)), 0).r;
     let s = max(i32(look.level.z), 1);
@@ -86,5 +93,30 @@ fn fs_terrain_lit(in: QuadOut) -> LitOut {
     var out: LitOut;
     out.colour = c;
     out.shade = vec4<f32>(clamp(glow * scale, 0.0, 1.0), 0.0, 0.0, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_terrain_lit(in: QuadOut) -> LitOut {
+    return terrain_lit(in, false);
+}
+
+@fragment
+fn fs_terrain_backing_lit(in: QuadOut) -> LitOut {
+    return terrain_lit(in, true);
+}
+
+// A distant layer's pixel (issue #11): opaque where it covers; its shade
+// holds no self-light and its depth as 1 - alpha (the composite lights it
+// by 1 - depth of the light beyond the ambient).
+@fragment
+fn fs_distant_lit(in: QuadOut) -> LitOut {
+    let c = textureLoad(tex, texel(in), 0);
+    if c.a <= 0.0 {
+        discard;
+    }
+    var out: LitOut;
+    out.colour = vec4<f32>(c.rgb, 1.0);
+    out.shade = vec4<f32>(0.0, 0.0, 0.0, 1.0 - clamp(in.shade.x, 0.0, 0.99));
     return out;
 }

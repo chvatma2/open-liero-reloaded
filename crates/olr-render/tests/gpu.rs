@@ -2193,3 +2193,120 @@ fn occlusion_is_camera_independent() {
     }
     assert!(light_at(&gpu, &base, 116, 100)[0] < 0.4, "the wall's air is darkened");
 }
+
+/// Issue #11: a see-through level of `w` × `h` world pixels at art scale
+/// `s`, all open air; its back is the tile colour `TILE` with alpha 0
+/// (see-through) but opaque `WALL` where `wall(x, y)` (world pixels).
+fn see_through(w: u32, h: u32, s: u32, wall: impl Fn(u32, u32) -> bool) -> ColorMap {
+    let t = Terrain::from_grid(&MaterialGrid::new(w, h, Material::Background));
+    let mut back = RgbaImage::new(w * s, h * s);
+    for y in 0..h * s {
+        for x in 0..w * s {
+            back.set(x, y, if wall(x / s, y / s) { WALL } else { Rgba { a: 0, ..TILE } });
+        }
+    }
+    let theme = ThemeArt { holes: Vec::new(), green_mask: None, front_tile: solid(1, 1, Rgba::BLACK) };
+    ColorMap::new_see_through(&t, &back, &back, s, theme)
+}
+
+const TILE: Rgba = Rgba::rgb(30, 60, 90);
+const WALL: Rgba = Rgba::rgb(200, 200, 0);
+const SKY: Rgba = Rgba::rgb(220, 20, 20);
+
+/// A distant layer of `w` × `h` art pixels of `c` at `at`, `depth` percent.
+fn layer(w: u32, h: u32, c: Rgba, at: (i32, i32), depth: u8) -> olr_data::level::DistantLayer {
+    olr_data::level::DistantLayer { image: solid(w, h, c), at, depth }
+}
+
+/// The first output column of row `y` showing `c`.
+fn first(img: &RgbaImage, y: u32, c: Rgba) -> Option<u32> {
+    (0..img.width()).find(|&x| img.get(x, y) == c)
+}
+
+#[test]
+fn distant_layers_scroll_by_their_depth() {
+    let Some(gpu) = offscreen() else { return };
+    let map = see_through(120, 90, 2, |x, _| x < 30);
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.upload_terrain(&map);
+    // Depth 33 at (50, 50) with the camera at the level's centre (60, 45);
+    // another wholly behind the wall.
+    r.set_distant(&[layer(8, 8, SKY, (50, 50), 33), layer(8, 8, SKY, (26, 40), 10)]);
+    let (a, size) = one_to_one();
+    assert_eq!(a.camera(), (60.0, 60.0), "the view's centre");
+    let at_a = gpu.render_to_image(&mut r, &a, size);
+    // The camera 10 world px right: the layer moves 3.3 world px with it,
+    // 6.6 texels, rounded to 7; on screen it moves 13.4 texels left,
+    // rounded to 13 (output pixels are texels here).
+    let b = list(View { x: 30.0, y: 30.0, w: 80.0, h: 60.0 });
+    let at_b = gpu.render_to_image(&mut r, &b, size);
+    // The camera 15 below the centre: the layer 4.95 world px lower.
+    let row = 2 * (57 - 30) as u32;
+    let (xa, xb) = (first(&at_a, row, SKY).unwrap(), first(&at_b, row, SKY).unwrap());
+    assert_eq!(xa, 2 * (50 - 20));
+    assert_eq!(xa as i32 - xb as i32, 13);
+    // 8 art pixels at art scale 2: 8 texels wide.
+    assert_eq!((xa..xa + 8).filter(|&x| at_a.get(x, row) == SKY).count(), 8);
+    // Around it the back tile shows; the wall hides the other layer.
+    assert_eq!(at_a.get(xa - 1, row), TILE);
+    assert_eq!(at_a.get(xa + 8, row), TILE);
+    let wall_row = 2 * (42 - 30) as u32;
+    assert!((0..2 * 10).all(|x| at_a.get(x, wall_row) == WALL), "the wall over the near layer");
+    // A frame from the editor's camera: the parallax override.
+    let mut c = list(View { x: 30.0, y: 30.0, w: 80.0, h: 60.0 });
+    c.parallax = Some((60.0, 60.0));
+    let at_c = gpu.render_to_image(&mut r, &c, size);
+    assert_eq!(first(&at_c, row, SKY).unwrap(), xa - 20, "the layer still, the view moved");
+    // Without distant layers the see-through pixels show the back tile.
+    r.set_distant(&[]);
+    let none = gpu.render_to_image(&mut r, &a, size);
+    assert!(none.as_raw().chunks(4).all(|p| p != [220, 20, 20, 255]));
+    assert_eq!(none.get(xa, row), TILE);
+}
+
+#[test]
+fn distant_layers_take_light_by_their_depth() {
+    let Some(gpu) = offscreen() else { return };
+    // A glowing floor (rock, y ≥ 36) under open, see-through air.
+    let mut map = {
+        let cells = (0..100 * 40)
+            .map(|i| if i / 100 >= 36 { Material::Rock } else { Material::Background })
+            .collect();
+        let t = Terrain::from_grid(&MaterialGrid::from_cells(100, 40, cells).unwrap());
+        let mut back = RgbaImage::new(100, 40);
+        for y in 0..40 {
+            for x in 0..100 {
+                back.set(x, y, if y >= 36 { WALL } else { Rgba { a: 0, ..TILE } });
+            }
+        }
+        let theme = ThemeArt { holes: Vec::new(), green_mask: None, front_tile: solid(1, 1, Rgba::BLACK) };
+        ColorMap::new_see_through(&t, &back, &back, 1, theme)
+    };
+    let mut g = olr_terrain::GlowLayers::empty((100, 40), (100, 40));
+    for i in 36 * 100..40 * 100 {
+        (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
+    }
+    assert!(map.set_glow(Some(g)));
+    let white = Rgba::rgb(255, 255, 255);
+    let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    // Near (10) on the left, far (90) on the right, at the same height.
+    r.set_distant(&[layer(10, 10, white, (20, 20), 10), layer(10, 10, white, (70, 20), 90)]);
+    let mut l = list(View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
+    l.map = (100, 40);
+    let look = glow_look(1.0, 200.0);
+    let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), (200, 80));
+    // World pixel (x, y) is output pixel (2x, 2y) (source rectangle at texel 2).
+    let at = |x: u32, y: u32| img.get(2 * x, 2 * y);
+    let (near, far) = (at(25, 28), at(75, 28));
+    let air = light_at(&gpu, &r, 25, 28)[0];
+    assert!(air > 0.2, "the glow lights the air: {air}");
+    assert!(near.r > far.r + 40, "near {near:?}, far {far:?}");
+    // The far layer is lit by the ambient and a tenth of the rest.
+    let want = olr_render::linear_to_srgb(0.1 + 0.1 * (light_at(&gpu, &r, 75, 28)[0] - 0.1));
+    assert!((i32::from(far.r) - i32::from(want)).abs() <= 3, "far {far:?}, want {want}");
+    // The back tile (no layer) is lit as the level's air.
+    let tile = at(50, 28);
+    assert!(tile.b > 0 && tile != Rgba::BLACK, "the tile lit like air: {tile:?}");
+}

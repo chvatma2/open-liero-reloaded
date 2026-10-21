@@ -27,8 +27,8 @@ mod upscale;
 pub use atlas::{AtlasLayout, PackedAtlas, TexRect, WHITE, pack};
 pub use diff::{ImageDiff, perceptual_diff};
 pub use frame::{
-    INSTANCE_FLOATS, Instance, LookTextureSizes, MARGIN, MAX_VIEW, MISSING, WorldFrame, look_texture_sizes,
-    push_instances, terrain_instance,
+    INSTANCE_FLOATS, Instance, LookTextureSizes, MARGIN, MAX_VIEW, MISSING, WorldFrame, distant_instance,
+    look_texture_sizes, push_instances, terrain_instance,
 };
 pub use look::{LightGrid, grade_linear, linear_to_srgb, shade_texel, tone};
 pub use offscreen::{

@@ -21,6 +21,9 @@ struct LookGlobals {
     worm_floor: vec4<f32>,
     // the occluder map (plan 15b): origin x, y (world px), width, height (texels)
     occluders: vec4<f32>,
+    // 1 when the level draws distant layers (issue #11: the shade's alpha
+    // is then 1 - their depth), 0, 0, 0
+    distant: vec4<f32>,
     // per group: rgb cast (linear, × intensity × animation), self-light scale
     groups: array<vec4<f32>, 255>,
     // per group: reach (world px; 1e9 unlimited), own colour (1) or tint (0), 0, 0

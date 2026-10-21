@@ -4,7 +4,7 @@ use olr_look::LookFrame;
 use olr_scene::DrawList;
 
 use super::{Renderer, Target, WORLD_FORMAT, texture, upscale_uniform};
-use crate::frame::{WorldFrame, occluder_instances, push_instances, terrain_instance};
+use crate::frame::{WorldFrame, distant_instance, occluder_instances, push_instances, terrain_instance};
 use crate::upscale::dest_rect_in;
 
 impl Renderer {
@@ -55,6 +55,7 @@ impl Renderer {
             t.origin = frame.origin;
         }
         self.instances.clear();
+        self.distant_draws.clear();
         if let Some(t) = &self.terrain {
             // A colour map the device made us crop covers its share of the map.
             let (tw, th) = (t.texture.width(), t.texture.height());
@@ -62,6 +63,15 @@ impl Renderer {
                 |m: u32, part: u32, all: u32| (u64::from(m) * u64::from(part) / u64::from(all.max(1))) as u32;
             let map = (share(list.map.0, tw, t.art.0), share(list.map.1, th, t.art.1));
             self.instances.push(terrain_instance(&frame, map, (tw, th)));
+            // The distant layers' quads (issue #11), far to near.
+            let camera = list.camera();
+            for (k, d) in self.distant.iter().enumerate() {
+                let at = d.layer.position(camera, list.map);
+                if let Some(i) = distant_instance(&frame, at, d.art, t.art_scale, list.map, d.layer.depth) {
+                    self.distant_draws.push((k, self.instances.len() as u32));
+                    self.instances.push(i);
+                }
+            }
         }
         let first_sprite = self.instances.len() as u32;
         if let Some((layout, _)) = &self.atlas {
@@ -91,6 +101,7 @@ impl Renderer {
         self.queue.write_buffer(&self.upscale_uniform, 0, bytemuck::cast_slice(&uniform));
         if let (Some(look), Some(state)) = (look, self.look.as_mut()) {
             state.sync_regions(&self.queue, look);
+            state.distant = !self.distant_draws.is_empty();
             state.pack(look, &frame);
             self.queue.write_buffer(&state.globals, 0, bytemuck::cast_slice(&state.packed));
             if !state.packed_emitters.is_empty() {
@@ -118,9 +129,26 @@ impl Renderer {
             };
             pass.set_bind_group(0, &self.globals_bind, &[]);
             pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
+            // A see-through terrain (a level with distant layers, issue
+            // #11): the terrain opaque, the layers far to near, then the
+            // terrain over them; any other, the terrain alone, as always.
+            let distant = |pass: &mut wgpu::RenderPass, pipeline| {
+                pass.set_pipeline(pipeline);
+                for &(k, i) in &self.distant_draws {
+                    pass.set_bind_group(1, &self.distant[k].bind, &[]);
+                    pass.draw(0..4, i..i + 1);
+                }
+            };
             match (lit, &self.terrain) {
                 (Some((state, _)), Some(t)) => {
                     if let Some(tex) = &state.textures {
+                        if t.see_through {
+                            pass.set_pipeline(&state.backing_pipeline);
+                            pass.set_bind_group(1, &t.bind, &[]);
+                            pass.set_bind_group(2, &tex.terrain_bind, &[]);
+                            pass.draw(0..4, 0..1);
+                            distant(&mut pass, &state.distant_pipeline);
+                        }
                         pass.set_pipeline(&state.terrain_pipeline);
                         pass.set_bind_group(1, &t.bind, &[]);
                         pass.set_bind_group(2, &tex.terrain_bind, &[]);
@@ -128,6 +156,12 @@ impl Renderer {
                     }
                 }
                 (None, Some(t)) => {
+                    if t.see_through {
+                        pass.set_pipeline(&self.backing_pipeline);
+                        pass.set_bind_group(1, &t.bind, &[]);
+                        pass.draw(0..4, 0..1);
+                        distant(&mut pass, &self.distant_pipeline);
+                    }
                     pass.set_pipeline(&self.world_pipeline);
                     pass.set_bind_group(1, &t.bind, &[]);
                     pass.draw(0..4, 0..1);

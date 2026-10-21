@@ -143,6 +143,48 @@ pub fn terrain_instance(frame: &WorldFrame, map: (u32, u32), art: (u32, u32)) ->
     }
 }
 
+/// A distant layer's quad (issue #11): its image of `art` art pixels (the
+/// level's `art_scale`) with its top-left at world pixel `at` (the camera's
+/// [`olr_data::level::DistantLayer::position`]), offset by whole target
+/// texels from the frame's snapped origin (rounded: no shimmer), clipped
+/// to the level (`map` world pixels) and to the target. `shade[0]` is its
+/// depth (0-1, the lit pass's). `None` when nothing of it shows.
+pub fn distant_instance(
+    frame: &WorldFrame,
+    at: (f32, f32),
+    art: (u32, u32),
+    art_scale: u32,
+    map: (u32, u32),
+    depth: u8,
+) -> Option<Instance> {
+    if !at.0.is_finite() || !at.1.is_finite() || art.0 == 0 || art.1 == 0 {
+        return None;
+    }
+    let s = frame.scale as f64;
+    // Target texels per art pixel: whole (the scale is the art scale or 2).
+    let k = s / f64::from(art_scale.max(1));
+    let x0 = ((f64::from(at.0) - f64::from(frame.origin.0)) * s).round();
+    let y0 = ((f64::from(at.1) - f64::from(frame.origin.1)) * s).round();
+    let (x1, y1) = (x0 + f64::from(art.0) * k, y0 + f64::from(art.1) * k);
+    // The level and the target, in target texels.
+    let (tw, th) = frame.target_size();
+    let lx0 = (-f64::from(frame.origin.0) * s).max(0.0);
+    let ly0 = (-f64::from(frame.origin.1) * s).max(0.0);
+    let lx1 = ((f64::from(map.0) - f64::from(frame.origin.0)) * s).min(f64::from(tw));
+    let ly1 = ((f64::from(map.1) - f64::from(frame.origin.1)) * s).min(f64::from(th));
+    let (cx0, cy0, cx1, cy1) = (x0.max(lx0), y0.max(ly0), x1.min(lx1), y1.min(ly1));
+    if cx1 <= cx0 || cy1 <= cy0 {
+        return None;
+    }
+    let src = [(cx0 - x0) / k, (cy0 - y0) / k, (cx1 - cx0) / k, (cy1 - cy0) / k];
+    Some(Instance {
+        dst: [cx0 as f32, cy0 as f32, (cx1 - cx0) as f32, (cy1 - cy0) as f32],
+        src: src.map(|v| v as f32),
+        tint: [1.0; 4],
+        shade: [f32::from(depth.min(100)) / 100.0, 0.0, 0.0],
+    })
+}
+
 /// Appends the instances of `list`'s layers in drawing order: each sprite
 /// snapped to whole target texels (sprites keep their pixel grid), each
 /// line as one world-pixel block per [`olr_scene::Line::pixels`] pixel
@@ -261,6 +303,31 @@ mod tests {
             tint: Rgba::rgb(255, 255, 255),
             shade: Default::default(),
         }
+    }
+
+    /// Issue #11: a distant layer moves by whole target texels, rounded,
+    /// and shows only over the level.
+    #[test]
+    fn distant_quads_snap_to_texels_and_clip_to_the_level() {
+        let f = WorldFrame::new(View { x: 10.0, y: 20.0, w: 100.0, h: 80.0 }, 2);
+        assert_eq!(f.origin, (9, 19));
+        // At art scale 1 an art pixel is two texels; 0.3 world px rounds to 1 texel.
+        let i = distant_instance(&f, (20.3, 30.0), (8, 4), 1, (500, 500), 40).unwrap();
+        assert_eq!(i.dst, [23.0, 22.0, 16.0, 8.0]);
+        assert_eq!(i.src, [0.0, 0.0, 8.0, 4.0]);
+        assert_eq!(i.shade[0], 0.4);
+        // Left of the level: nothing shows.
+        assert!(distant_instance(&f, (-30.0, 30.0), (16, 4), 1, (500, 500), 40).is_none());
+        let f = WorldFrame::new(View { x: -5.0, y: 0.0, w: 100.0, h: 80.0 }, 2);
+        let i = distant_instance(&f, (-3.0, 0.0), (16, 4), 1, (500, 500), 40).unwrap();
+        // World x 0 is texel 12; the layer starts at texel 6.
+        assert_eq!((i.dst[0], i.dst[2]), (12.0, 26.0));
+        assert_eq!((i.src[0], i.src[2]), (3.0, 13.0));
+        // Past the level's right edge, and wholly outside the target.
+        let i = distant_instance(&f, (5.0, 0.0), (16, 4), 1, (10, 10), 40).unwrap();
+        assert_eq!(i.dst[2], 10.0);
+        assert!(distant_instance(&f, (900.0, 0.0), (16, 4), 1, (5000, 10), 40).is_none());
+        assert!(distant_instance(&f, (f32::NAN, 0.0), (16, 4), 1, (50, 10), 40).is_none());
     }
 
     #[test]

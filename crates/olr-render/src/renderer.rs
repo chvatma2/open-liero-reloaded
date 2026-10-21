@@ -44,6 +44,18 @@ struct Terrain {
     /// The colour map's size in art pixels (the texture may be cropped).
     art: (u32, u32),
     art_scale: u32,
+    /// The map keeps see-through pixels (issue #11): drawn over an opaque
+    /// copy of itself, so they show the back tile where no distant layer
+    /// covers them.
+    see_through: bool,
+}
+
+/// A distant layer's texture (issue #11) and where it lies.
+struct Distant {
+    bind: wgpu::BindGroup,
+    /// Its size in art pixels.
+    art: (u32, u32),
+    layer: olr_data::level::DistantLayer,
 }
 
 /// The world-pass target and the upscale pass's view of it.
@@ -71,6 +83,10 @@ pub struct Renderer {
     srgb: bool,
     pub settings: RenderSettings,
     world_pipeline: wgpu::RenderPipeline,
+    /// The terrain opaque under a level's distant layers, and the layers
+    /// (issue #11).
+    backing_pipeline: wgpu::RenderPipeline,
+    distant_pipeline: wgpu::RenderPipeline,
     upscale_pipeline: wgpu::RenderPipeline,
     texture_layout: wgpu::BindGroupLayout,
     globals_layout: wgpu::BindGroupLayout,
@@ -81,6 +97,10 @@ pub struct Renderer {
     sampler: wgpu::Sampler,
     atlas: Option<(AtlasLayout, wgpu::BindGroup)>,
     terrain: Option<Terrain>,
+    /// The level's distant layers, far to near ([`Renderer::set_distant`]).
+    distant: Vec<Distant>,
+    /// This frame's distant quads: the layer and its instance.
+    distant_draws: Vec<(usize, u32)>,
     target: Option<Target>,
     instances: Vec<Instance>,
     raw: Vec<[f32; crate::frame::INSTANCE_FLOATS]>,
@@ -237,16 +257,21 @@ impl Renderer {
             step_mode: wgpu::VertexStepMode::Instance,
             attributes: &attributes,
         };
-        let world_pipeline = pipeline(
-            &device,
-            "olr-render world",
-            include_str!("world.wgsl"),
-            ("vs_world", "fs_world"),
-            &[Some(&globals_layout), Some(&texture_layout)],
-            &[Some(quads)],
-            &[(WORLD_FORMAT, Some(wgpu::BlendState::ALPHA_BLENDING))],
-            wgpu::PrimitiveTopology::TriangleStrip,
-        );
+        let world = |label, fs, blend| {
+            pipeline(
+                &device,
+                label,
+                include_str!("world.wgsl"),
+                ("vs_world", fs),
+                &[Some(&globals_layout), Some(&texture_layout)],
+                &[Some(quads.clone())],
+                &[(WORLD_FORMAT, blend)],
+                wgpu::PrimitiveTopology::TriangleStrip,
+            )
+        };
+        let world_pipeline = world("olr-render world", "fs_world", Some(wgpu::BlendState::ALPHA_BLENDING));
+        let backing_pipeline = world("olr-render terrain backing", "fs_terrain_backing", None);
+        let distant_pipeline = world("olr-render distant", "fs_distant", None);
         let upscale_pipeline = pipeline(
             &device,
             "olr-render upscale",
@@ -285,6 +310,8 @@ impl Renderer {
             srgb: surface_format.is_srgb(),
             settings,
             world_pipeline,
+            backing_pipeline,
+            distant_pipeline,
             upscale_pipeline,
             texture_layout,
             globals_layout,
@@ -295,6 +322,8 @@ impl Renderer {
             sampler,
             atlas: None,
             terrain: None,
+            distant: Vec::new(),
+            distant_draws: Vec::new(),
             target: None,
             instances: Vec::with_capacity(4 * DrawList::RESERVED),
             raw: Vec::with_capacity(4 * DrawList::RESERVED),
@@ -450,13 +479,56 @@ impl Renderer {
             | wgpu::TextureUsages::COPY_SRC;
         let texture = texture(&self.device, "olr-render terrain", size, usage);
         let bind = self.bind_texture("olr-render terrain", &texture);
-        self.terrain =
-            Some(Terrain { texture, bind, art: (map.width(), map.height()), art_scale: map.art_scale() });
+        self.terrain = Some(Terrain {
+            texture,
+            bind,
+            art: (map.width(), map.height()),
+            art_scale: map.art_scale(),
+            see_through: map.see_through(),
+        });
         self.write_terrain(map, olr_terrain::Rect { x: 0, y: 0, w: map.width(), h: map.height() });
         if let (Some(look), Some(t)) = (self.look.as_mut(), &self.terrain) {
             look.upload(&self.device, &self.queue, map, &t.texture, max);
             // The world target's light passes bind the new level's glow light.
             self.target = None;
+        }
+    }
+
+    /// Sets the level's distant (parallax) layers, far to near (issue #11;
+    /// none: a level drawn as always). They show where the terrain is
+    /// see-through (`ColorMap::new_see_through`), each scrolling by `1 -
+    /// depth` of the camera's movement ([`DrawList::camera`]), offset by
+    /// whole texels and clipped to the level. A layer larger than the
+    /// device allows is left out, with a warning.
+    pub fn set_distant(&mut self, layers: &[olr_data::level::DistantLayer]) {
+        let max = self.max_dim();
+        self.distant.clear();
+        for (i, l) in layers.iter().enumerate() {
+            let art = (l.image.width(), l.image.height());
+            if art.0 == 0 || art.1 == 0 || art.0 > max || art.1 > max {
+                self.warnings.push(format!(
+                    "distant layer {i}: {}x{} is empty or larger than the device's {max}; left out",
+                    art.0, art.1
+                ));
+                continue;
+            }
+            let texture = self.device.create_texture_with_data(
+                &self.queue,
+                &wgpu::TextureDescriptor {
+                    label: Some("olr-render distant"),
+                    size: wgpu::Extent3d { width: art.0, height: art.1, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: WORLD_FORMAT,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                l.image.as_raw(),
+            );
+            let bind = self.bind_texture("olr-render distant", &texture);
+            self.distant.push(Distant { bind, art, layer: l.clone() });
         }
     }
 

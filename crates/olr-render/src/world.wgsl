@@ -52,3 +52,23 @@ fn fs_world(in: QuadOut) -> @location(0) vec4<f32> {
     }
     return c;
 }
+
+// A level with distant layers (issue #11): its terrain first drawn opaque
+// (a see-through pixel shows its back tile), then each distant layer where
+// it covers, then the terrain again over them (fs_world: see-through pixels
+// discarded).
+@fragment
+fn fs_terrain_backing(in: QuadOut) -> @location(0) vec4<f32> {
+    let t = clamp(floor(in.uv), in.rect.xy, in.rect.xy + in.rect.zw - vec2<f32>(1.0));
+    return vec4<f32>(textureLoad(tex, vec2<i32>(t), 0).rgb, 1.0);
+}
+
+@fragment
+fn fs_distant(in: QuadOut) -> @location(0) vec4<f32> {
+    let t = clamp(floor(in.uv), in.rect.xy, in.rect.xy + in.rect.zw - vec2<f32>(1.0));
+    let c = textureLoad(tex, vec2<i32>(t), 0);
+    if c.a <= 0.0 {
+        discard;
+    }
+    return vec4<f32>(c.rgb, 1.0);
+}

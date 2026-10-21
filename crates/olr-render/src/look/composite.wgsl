@@ -3,7 +3,8 @@
 // its self-light nor its floor (the solid floor for blood and gibs, as rock;
 // the worm floor for worms, plan 15b), with the bloom added (plan 15c),
 // graded; a marker shows its albedo. Opaque rock and dirt show at most
-// their art (#1). Linear light, sRGB bytes in and out.
+// their art (#1). A distant layer's pixel takes less of the light the
+// farther it is (issue #11). Linear light, sRGB bytes in and out.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(0) @binding(1) var albedo_tex: texture_2d<f32>;
@@ -152,6 +153,14 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     if shade.x > 0.0 || solid_px(w) {
         cap = min(cap, vec3<f32>(1.0));
         glare = 0.0;
+    }
+    // A distant layer's pixel (issue #11) takes the ambient and 1 - depth
+    // of the light beyond it, the bloom too; only in a level that has one.
+    if look.distant.x > 0.5 && shade.w > 0.0 && shade.w < 0.998 {
+        let d = 1.0 - shade.w;
+        let base = min(here, look.ambient.rgb);
+        here = base + (here - base) * (1.0 - d);
+        glare = glare * (1.0 - d);
     }
     let l = max(max(min(here, cap), vec3<f32>(shade.x)), least);
     var c = (a * l + bloom_at(g) * glare) * look.grade.x;
