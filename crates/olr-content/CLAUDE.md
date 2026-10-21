@@ -48,7 +48,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   indexed like `SimMod::projectiles` and `SimMod::weapons`, each
   projectile's look found by its `ModDef` key (`SimProjectile::key`), so
   shared and named projectiles and their children keep their looks (batch
-  A review, Critical 1). The bundled packs have no look (`tests/look.rs`).
+  A review, Critical 1). The imported packs have no look (`tests/look.rs`;
+  `content/reloaded`'s Liero v1.0 Reloaded has one, issue #21).
 - **Hostile levels:** `load_level` refuses an art scale above
   `MAX_ART_SCALE` (8) or a colour image above `MAX_COLOR_MAP_BYTES`
   (256 MiB), so a pack cannot make the colour map allocate gigabytes.
@@ -212,7 +213,7 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   executable when it is a directory there (an unpacked release zip), else
   relative to the working directory. `bundled_roots(content)` (issue #7):
   OLR's own packs, `RELOADED_DIR` beside it (`content/reloaded`, the
-  hand-made Reloaded levels, shipped too), then `content`;
+  hand-made Reloaded levels and Liero v1.0 Reloaded, shipped too), then `content`;
   `Content::open_bundled(content)` opens those layers (an unreadable
   `content` an error, as `open`; a missing `reloaded` skipped), what the
   game, the server and `olr-cli`'s commands open by default. The two roots

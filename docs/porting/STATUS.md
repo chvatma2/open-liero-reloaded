@@ -3886,6 +3886,41 @@ its own remade "Reloaded" levels beside them:
   (`fixtures/server/example.ron`), and `dist`'s verification server
   loads them.
 
+## Liero v1.0 Reloaded (issue #21)
+
+The 0.2 scope's Reloaded mod: OLX's Classic ("Liero v1.0") with OLR's
+look, shipped in `content/reloaded/olr-mod-liero-v1-reloaded/`.
+
+- **Gameplay is Classic's.** Made with `olr-cli pack new mod --from
+  content/packs/olx-classic`; its `origin` is Classic's (OLX
+  `share/gamedir/Classic` at `d1ad953f`), as Liero Factory Reloaded
+  records Liero Factory's. Only the name and `look` blocks differ:
+  `olr-cli`'s `tests/reloaded.rs` compares the compiled `ModDef` (but for
+  the name), the assets, the simulation's `SimMod`, presets and physics
+  with Classic's, plays the same bot matches on both (OLX's bots on Dirt
+  Level, chaos bots on Castle Strike Reloaded) to the same checksums, and
+  arms OLX's bots alike under every preset (`olx_bot_weapons` matches
+  "Liero v1.0" in the name: rifles at 16-25 %, the 100lt set at 100 %).
+  `olx-classic` itself, the goldens, the oracle and the benchmarks are
+  unchanged and keep naming Classic.
+- **The look** (`content/reloaded/README.md` lists every light): glowing,
+  tunnel-lighting rockets and missiles, the laser's red muzzle light, the
+  flamer's flames, napalm's burst and burning drops, the Blaster's ball
+  and burst, the Gauss Gun's red tracers, the Zimm's pulsing ball and
+  flash, the Uzi's tracer rounds and stronger muzzle flashes for the
+  Super Shotgun, Cannon, Rifle and Winchester. Crowded projectiles (the
+  Crackler's and Hellraider's balls, the Blaster's sparks) only glow;
+  plain bullets, grenades, mines, nukes and dirt stay dark; the engine's
+  explosion light stays (issue #15 makes it per projectile). Judged from
+  `olr-cli render-match` renders on the software adapter, not yet played.
+- **Deviation: the default mod.** A fresh profile (no `settings.ron`
+  match) plays Liero v1.0 Reloaded, locally and hosting
+  (`olr_ui::DEFAULT_MOD`, `MatchPrefs::default`; the maintainer's call, so
+  a playtest starts on it); OLX's menu starts on Classic. A saved choice
+  stands; where the mod is not installed the menus play the first listed
+  mod. The command line's games (`olr --mod`, default "Classic"), the
+  level editor's Play mod and the tools keep Classic.
+
 ## Level editor layout (issue #8)
 
 The maintainer's "option B": the casual path (import an image, adjust,

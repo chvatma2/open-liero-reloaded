@@ -700,12 +700,17 @@ pack when `OLR_CONTENT_DIR` is set. `tests/playtest.rs` checks the hand-made pla
 --content`, and on the GPU tier plays a bot match on it (`render-match
 --packs content/playtest`). `tests/reloaded.rs` (issue #7, offline too: the
 committed `content/packs`) checks OLR's own shipped packs
-(`content/reloaded/`: Liero Factory Reloaded, Castle Strike Reloaded) with
+(`content/reloaded/`: Liero Factory Reloaded, Castle Strike Reloaded,
+issue #21's Liero v1.0 Reloaded) with
 `pack check --content content/packs`, that they share no pack id with
 `content/packs`, that `Content::open_bundled` lists both levels by name,
-lit, that the factory's material, front and back are the imported Liero
-Factory's byte for byte (its origin too), plays a 300-tick bot match on
-each, and on the GPU tier (`OLR_GPU_TESTS`) draws each lit (`render-match`). `tests/digest.rs` pins a SHA-256 of what
+lit, and the mod with its look, that the factory's material, front and back are the imported Liero
+Factory's byte for byte (its origin too), that the mod is Classic but for
+its name and look (`ModDef` but the name, assets, `SimMod`, presets,
+physics, origin; the same bot matches' checksums, OLX's bots on Dirt
+Level and chaos bots on Castle Strike Reloaded; `olx_bot_weapons` alike
+under every preset), plays a 300-tick bot match on
+each level and with the mod, and on the GPU tier (`OLR_GPU_TESTS`) draws them lit (`render-match`). `tests/digest.rs` pins a SHA-256 of what
 the game receives from every bundled pack (each skin's drawn frames, the
 images the runtime uses, level and theme data; plan 13c): a pack format or
 importer change that alters a drawn pixel changes the snapshot. To accept a reviewed snapshot change, run

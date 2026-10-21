@@ -58,7 +58,11 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   PageUp/PageDown (a watched game's fast-forward) are dropped, then an
   action left unreachable gets OLX's back), one warning each.
   The master volume defaults to OLX's 70 %; the game plays `master * sfx`.
-- **Match preferences** (`match_prefs.rs`): mod, level, `bots` (1 to
+- **Match preferences** (`match_prefs.rs`): mod (a fresh profile's is
+  `DEFAULT_MOD`, issue #21: Liero v1.0 Reloaded, `olr-mod-liero-v1-reloaded`
+  in `content/reloaded/`; local play and hosting start from it; one not
+  installed becomes the first listed when Local Play shows; tests/flows.rs'
+  `a_fresh_profile_plays_liero_v1_reloaded`, `the_default_mod_is_shipped`), level, `bots` (1 to
   `MAX_BOTS`), one `difficulty` or `per_bot` levels, `personality`
   (`BotPersonality`: Olx, Chaos, Idle, plan 15c: "Idle (does nothing)"), `loadout` (`BotLoadout`: the
   bots' weapon choice), `rules` (`RulePrefs`; OLX's menu ranges
