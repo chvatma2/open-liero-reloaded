@@ -137,6 +137,7 @@ fn room_level() -> olr_pack::LevelPack {
         glow: None,
         warnings: Vec::new(),
         clear: None,
+        distant: Vec::new(),
     }
 }
 
@@ -434,6 +435,7 @@ fn scaled_level(id: &str, size: u32, art_scale: u32) -> olr_pack::LevelPack {
         glow: None,
         warnings: Vec::new(),
         clear: None,
+        distant: Vec::new(),
     }
 }
 

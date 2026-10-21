@@ -72,6 +72,7 @@ pub fn import_lxl(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Resu
             glow: None,
             warnings: Vec::new(),
             clear: None,
+            distant: Vec::new(),
         },
         warnings,
     })

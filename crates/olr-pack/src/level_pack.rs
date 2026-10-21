@@ -36,6 +36,9 @@ pub struct LevelPack {
     pub glow: Option<olr_format::levels::GlowLayers>,
     /// The level's clear flags (`look/clear.png`).
     pub clear: Option<Vec<u8>>,
+    /// The level's distant (parallax) layers (`distant/<i>.png`, issue
+    /// #11), far to near; empty for most levels.
+    pub distant: Vec<olr_data::level::DistantLayer>,
     /// What [`read_level`] left out of a look that did not check.
     pub warnings: Vec<String>,
 }
@@ -53,7 +56,9 @@ pub fn write_level(sink: &mut dyn ContentSink, pack: &LevelPack) -> Result<(), P
         }
         None => None,
     };
-    let src = lift_level(&pack.level, thumb).map_err(|e| PackError::invalid(LEVEL_FILE, e.to_string()))?;
+    let mut src =
+        lift_level(&pack.level, thumb).map_err(|e| PackError::invalid(LEVEL_FILE, e.to_string()))?;
+    src.distant = pack.distant.clone();
     write_manifest(sink, &pack.manifest)?;
     write_level_files(sink, &src)?;
     Ok(())
@@ -125,7 +130,16 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     let (src, warnings) = olr_format::levels::read_level_files_lenient(src)?;
     let level = compile_level(&src)?;
     let look = olr_format::levels::compile_look(&src)?;
-    Ok(LevelPack { manifest, level, thumb: None, look, glow: src.glow, clear: src.clear, warnings })
+    Ok(LevelPack {
+        manifest,
+        level,
+        thumb: None,
+        look,
+        glow: src.glow,
+        clear: src.clear,
+        distant: src.distant,
+        warnings,
+    })
 }
 
 #[cfg(test)]
@@ -163,6 +177,7 @@ pub(crate) mod tests {
             look: None,
             glow: None,
             clear: None,
+            distant: Vec::new(),
             warnings: Vec::new(),
         }
     }
@@ -173,6 +188,24 @@ pub(crate) mod tests {
         let mut fs = MemFs::new();
         write_level(&mut fs, &pack).unwrap();
         assert_eq!(read_level(&fs).unwrap(), pack);
+    }
+
+    /// Issue #11: distant layers round-trip, are content (hashed) and
+    /// known to `validate`.
+    #[test]
+    fn distant_layers_roundtrip_and_are_content() {
+        let mut pack = sample_level();
+        let mut image = RgbaImage::new(4, 2);
+        image.set(1, 1, Rgba::rgb(4, 5, 6));
+        pack.distant = vec![olr_data::level::DistantLayer { image, at: (-1, 2), depth: 70 }];
+        let mut fs = MemFs::new();
+        write_level(&mut fs, &pack).unwrap();
+        assert_eq!(read_level(&fs).unwrap(), pack);
+        assert!(crate::validate(&fs).is_empty(), "{:?}", crate::validate(&fs));
+        let mut other = fs.clone();
+        pack.distant[0].depth = 71;
+        write_level(&mut other, &pack).unwrap();
+        assert_ne!(crate::content_hash(&fs).unwrap(), crate::content_hash(&other).unwrap());
     }
 
     #[test]

@@ -50,6 +50,7 @@ fn level(root: &Path, id: &str, name: &str) {
             glow: None,
             warnings: Vec::new(),
             clear: None,
+            distant: Vec::new(),
         },
     )
     .unwrap();
