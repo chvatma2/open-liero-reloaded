@@ -37,6 +37,9 @@ pub struct LoadedLevel {
     pub glow: Option<olr_terrain::GlowLayers>,
     /// The level's clear flags per world pixel (`look/clear.png`).
     pub clear: Option<Vec<u8>>,
+    /// The level's distant (parallax) layers, far to near (issue #11):
+    /// its back art's alpha-0 pixels are see-through when it has any.
+    pub distant: Vec<olr_data::level::DistantLayer>,
     /// What loading left out of a look that did not check, to log once.
     pub warnings: Vec<String>,
 }
@@ -47,15 +50,13 @@ impl LoadedLevel {
     /// [`Content::load_level`] applies.
     pub fn from_source(src: &LevelSource) -> anyhow::Result<LoadedLevel> {
         let look = olr_format::levels::compile_look(src)?;
-        let extras = (look, src.glow.clone(), src.clear.clone());
+        let extras =
+            Extras { look, glow: src.glow.clone(), clear: src.clear.clone(), distant: src.distant.clone() };
         LoadedLevel::from_level(olr_format::levels::compile_level(src)?, extras, Vec::new())
     }
 
-    fn from_level(
-        l: Level,
-        (look, glow, clear): (Option<olr_look::LevelLook>, Option<olr_terrain::GlowLayers>, Option<Vec<u8>>),
-        warnings: Vec<String>,
-    ) -> anyhow::Result<LoadedLevel> {
+    fn from_level(l: Level, extras: Extras, warnings: Vec<String>) -> anyhow::Result<LoadedLevel> {
+        let Extras { look, glow, clear, distant } = extras;
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
         Ok(LoadedLevel {
             name: l.def.name,
@@ -68,6 +69,7 @@ impl LoadedLevel {
             look,
             glow,
             clear,
+            distant,
             warnings,
         })
     }
@@ -94,6 +96,14 @@ impl LoadedLevel {
         };
         ((y - 3)..(y + 3)).all(|yy| ((x - 3)..(x + 3)).all(|xx| free(xx, yy))).then_some((s.x, s.y))
     }
+}
+
+/// What a level has besides its material and art.
+struct Extras {
+    look: Option<olr_look::LevelLook>,
+    glow: Option<olr_terrain::GlowLayers>,
+    clear: Option<Vec<u8>>,
+    distant: Vec<olr_data::level::DistantLayer>,
 }
 
 /// A theme: the stamps the map is edited with and the tiles dirt is drawn
@@ -177,8 +187,8 @@ impl Content {
         let pack = olr_pack::read_level(&self.pack(id, PackKind::Level)?)
             .with_context(|| format!("level pack {id}"))?;
         let warnings = pack.warnings.iter().map(|w| format!("{id}: {w}")).collect();
-        LoadedLevel::from_level(pack.level, (pack.look, pack.glow, pack.clear), warnings)
-            .with_context(|| format!("level pack {id}"))
+        let extras = Extras { look: pack.look, glow: pack.glow, clear: pack.clear, distant: pack.distant };
+        LoadedLevel::from_level(pack.level, extras, warnings).with_context(|| format!("level pack {id}"))
     }
 
     /// Theme pack `id` (such as `olx-theme-dirt`). Fewer than five holes, or

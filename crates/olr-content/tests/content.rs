@@ -637,6 +637,7 @@ fn the_first_spawn_is_used_only_when_inside_the_level() {
         glow: None,
         warnings: Vec::new(),
         clear: None,
+        distant: Vec::new(),
     };
     assert_eq!(level(&[(-1, 5), (10, 10)]).first_spawn(), None, "only the first one counts");
     assert_eq!(level(&[(10, 10)]).first_spawn(), Some((10, 10)));
@@ -673,4 +674,34 @@ fn the_reloaded_packs_lie_over_the_bundled_content() {
     assert!(levels.contains(&"reloaded-level".to_string()) && levels.contains(&"test-level".to_string()));
     assert_eq!(content.pack_dir("reloaded-level"), Some(own.as_path()));
     assert!(Content::open_bundled(&tmp.path().join("missing")).is_err());
+}
+
+/// Issue #11: a level pack's distant layers load, and its colour map keeps
+/// the back's see-through pixels; the same level without them stays
+/// opaque.
+#[test]
+fn distant_layers_load_and_make_the_map_see_through() {
+    let tmp = tempfile::tempdir().unwrap();
+    synthetic(tmp.path());
+    let mut pack = room_level();
+    pack.level.back = filled(100, 100, Rgba { a: 0, ..Rgba::rgb(3, 4, 5) });
+    for y in 40..70 {
+        for x in 40..70 {
+            pack.level.front.set(x, y, pack.level.back.get(x, y));
+        }
+    }
+    let image = filled(10, 10, Rgba::rgb(50, 60, 200));
+    pack.distant = vec![olr_data::level::DistantLayer { image, at: (45, 45), depth: 70 }];
+    olr_pack::write_level(&mut DirFs::new(tmp.path().join("test-level")), &pack).unwrap();
+    let content = Content::open(tmp.path()).unwrap();
+    let level = content.load_level("test-level").unwrap();
+    assert_eq!(level.distant, pack.distant);
+    let theme = content.load_theme(&level.theme).unwrap();
+    let map = level.color_map(&theme);
+    assert!(map.see_through());
+    let alpha = |x: u32, y: u32| map.pixels()[((y * 100 + x) * 4 + 3) as usize];
+    assert_eq!((alpha(50, 50), alpha(10, 10)), (0, 255));
+    let mut plain = level.clone();
+    plain.distant.clear();
+    assert!(plain.color_map(&theme).pixels().chunks(4).all(|p| p[3] == 255));
 }

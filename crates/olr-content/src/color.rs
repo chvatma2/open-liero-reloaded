@@ -16,15 +16,12 @@ impl LoadedTheme {
 
 impl LoadedLevel {
     /// The level's colour map before any edit (worms' spawn holes included:
-    /// they arrive with the first tick's events).
+    /// they arrive with the first tick's events); see-through
+    /// ([`ColorMap::new_see_through`]) when the level has distant layers.
     pub fn color_map(&self, theme: &LoadedTheme) -> ColorMap {
-        let mut map = ColorMap::new(
-            &Terrain::from_grid(&self.material),
-            &self.front,
-            &self.back,
-            self.art_scale,
-            theme.art(),
-        );
+        let make = if self.distant.is_empty() { ColorMap::new } else { ColorMap::new_see_through };
+        let mut map =
+            make(&Terrain::from_grid(&self.material), &self.front, &self.back, self.art_scale, theme.art());
         // Glow or clear flags that do not fit the map (they always do from
         // a checked pack) are left out.
         map.set_glow(self.glow.clone());
