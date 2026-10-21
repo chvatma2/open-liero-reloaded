@@ -27,7 +27,12 @@ wired in the frame loop's order **once**, so each mode that draws a world
     projectile's look glow; worms take `Shade::WORM` and are occluders,
     plan 15b); an unlit match sets none and draws as always.
   - `set_fx_capacity(n)` before the first tick: a bench-only entity pool
-    (plan 8).
+    (plan 8); the blood amount stays.
+  - `set_blood(percent)` / `blood()` (issue #6): the player's blood amount
+    (Options → Video, 0-500 %, 100 when new; `olr_fx::Fx::set_blood`),
+    applied from the next tick, kept through restarts and loaded states.
+    Presentation only: the world, replays and the netcode never carry it,
+    and online it scales the cosmetics `NetPresenter` hands the entities.
   - `on_tick(&world, &events)` after every `World::tick`: `Fx::step_tick`
     (the only place the tick's terrain edits reach the colour map; never
     also call `olr_content::apply_edits`), then `Scene::after_tick`.
@@ -120,7 +125,7 @@ wired in the frame loop's order **once**, so each mode that draws a world
 
 Test: `cargo nextest run -p olr-present` (`tests/present.rs` plays oracle
 scenarios: the bundle draws what the hand wiring drew, the atlas bookkeeping,
-drift; `tests/net.rs` rolls a Dirt Level match back by hand: sounds and
+drift, `the_blood_amount_reaches_the_entities`; `tests/net.rs` rolls a Dirt Level match back by hand: sounds and
 spawns once per key, no drift after any advance, the confirmed records the
 final timeline's, a loaded state,
 `end_flashes_once_per_projectile_through_rollbacks`,

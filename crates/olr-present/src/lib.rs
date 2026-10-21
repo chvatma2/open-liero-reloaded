@@ -154,8 +154,26 @@ impl Presentation {
     /// play's death reserve, a sixteenth (bench only: the performance
     /// envelope's effects sweep, plan 8). Call it before the first
     /// [`Presentation::on_tick`]: the entities so far go.
+    /// The blood amount stays.
     pub fn set_fx_capacity(&mut self, capacity: usize) {
+        let blood = self.fx.blood();
         self.fx = Fx::with_capacity(self.seed.wrapping_add(2), capacity);
+        self.fx.set_blood(blood);
+    }
+
+    /// The player's blood amount in percent (issue #6, Options → Video;
+    /// `olr_fx::BLOOD_DEFAULT` 100 when new, at most `olr_fx::BLOOD_MAX`):
+    /// how much of the simulation's blood the entities show from the next
+    /// tick on ([`olr_fx::Fx::set_blood`]). Presentation only: the world,
+    /// replays and the netcode never see it, so every player keeps their
+    /// own. It stays through restarts and loaded states.
+    pub fn set_blood(&mut self, percent: u16) {
+        self.fx.set_blood(percent);
+    }
+
+    /// The blood amount in percent.
+    pub fn blood(&self) -> u16 {
+        self.fx.blood()
     }
 
     /// Registers the next worm's look (its index in `World::worms`): the

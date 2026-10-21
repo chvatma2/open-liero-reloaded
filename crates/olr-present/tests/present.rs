@@ -5,7 +5,7 @@
 use std::path::{Path, PathBuf};
 
 use olr_content::{Content, LoadedLevel, LoadedMod, LoadedTheme, olx_level_id, olx_mod_id};
-use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
+use olr_fx::{Fx, FxAssets, FxImages, FxTick, Kind, default_dirt_colour};
 use olr_present::{PresentSetup, Presentation, default_colour};
 use olr_scene::{Camera, DrawList, Interpolation, Scene, SceneAssets, SceneOptions, Viewport};
 use olr_terrain::ColorEdit;
@@ -148,4 +148,41 @@ fn terrain_drift_is_detected() {
     world.tick(&[olr_sim::Keys(0)], &mut events);
     pr.on_tick(&world, &events);
     assert!(!pr.terrain_drift(&world), "a restart starts from the level again");
+}
+
+/// The player's blood amount (issue #6) reaches the entities and stays
+/// through a bench pool: at 0 % a match with kills shows no blood, and
+/// the world plays as it would have.
+#[test]
+fn the_blood_amount_reaches_the_entities() {
+    let Some(content) = content() else { return };
+    let (sc, trace) = olr_scenario::load_fixture(&fixtures(), "explode-kill-respawn").unwrap();
+    let p = packs(&content, &sc);
+    let s = setup(&content, &p);
+    let mut plain = Vec::new();
+    olr_scenario::play(&content, &sc, &trace, |w, _, _| plain.push(w.checksum())).unwrap();
+    let shown = |percent: u16| {
+        let (mut present, mut sums, mut blood) = (None, Vec::new(), 0);
+        olr_scenario::play(&content, &sc, &trace, |world, f, events| {
+            let pr = present.get_or_insert_with(|| {
+                let mut pr = Presentation::new(&s, world);
+                assert_eq!(pr.blood(), olr_fx::BLOOD_DEFAULT);
+                pr.set_blood(percent);
+                pr.set_fx_capacity(olr_fx::PLAY_ENTITIES);
+                pr
+            });
+            if f >= 0 {
+                pr.on_tick(world, events);
+            }
+            blood +=
+                pr.fx.entities().filter(|(_, e)| matches!(e.kind, Kind::Blood | Kind::BloodDropper)).count();
+            sums.push(world.checksum());
+        })
+        .unwrap();
+        assert_eq!(present.unwrap().blood(), percent, "kept through the bench pool");
+        assert_eq!(plain, sums, "{percent} %: the world is the same");
+        blood
+    };
+    assert!(shown(100) > 0, "the scenario bleeds");
+    assert_eq!(shown(0), 0);
 }
