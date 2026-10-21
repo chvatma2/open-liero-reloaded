@@ -75,6 +75,6 @@ fn render_match_writes_a_png() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    assert!(stdout.contains("tick 30, 0 lights"), "{stdout}");
+    assert!(stdout.contains("tick 30, 0 glowing discs"), "{stdout}");
     assert!(out.is_file());
 }
