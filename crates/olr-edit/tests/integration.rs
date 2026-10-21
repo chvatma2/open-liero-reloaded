@@ -14,4 +14,5 @@ mod mask;
 mod new;
 mod pack;
 mod pixelate;
+mod skin;
 mod textures;

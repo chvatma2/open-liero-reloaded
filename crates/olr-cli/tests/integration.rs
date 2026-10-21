@@ -32,6 +32,7 @@ mod perfcount;
 mod playtest;
 mod reloaded;
 mod scenario;
+mod skin;
 mod stains;
 mod state_transfer;
 mod stress;
