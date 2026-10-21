@@ -3766,6 +3766,53 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
   - A faint static star-ray pattern around small bright sources (the
     cascades' directions), seen in the look goldens.
 
+## Loadouts (issue #5)
+
+OLX chose a match's weapons with a `.wps` restriction preset
+(`WeaponRestrictionsFile`, `src/common/CWpnRest.cpp`), set the loading time
+apart (`LoadingTime`, `src/common/FeatureList.cpp:31`) and could drop
+bonuses (`Bonuses`). OLR puts the weapons and the loading time together in
+a **loadout** and plays without bonuses. Deliberate deviations:
+
+- **Loadouts** (`olr_data::loadouts::MatchLoadout`): a name, the weapons
+  on, the loading time (0-500 %, OLX's range) and the **Unique** rule (not
+  OLX's): no weapon twice in a worm's five slots unless every weapon on is
+  already in one (`unique_ok`). Every mod has `Default`, which is no data:
+  every weapon, 100 %, Unique off. It is listed first, a fresh install's
+  choice and the fallback for a loadout that is gone, in Local Play, the
+  lobby, the server's rotation and `olr`'s command line.
+  `DEFAULT_PRESET` (Standard 100lt) stays only for the oracle and the
+  developer tools (`olr-cli`, scenarios).
+- **Shipped loadouts** are the imported presets (`ModDef::loadouts`, by
+  preset name; `olr-import-lgs`'s `PRESET_LOADING_TIMES`): the weapons the
+  preset enables (`CWpnRest::updateList`; a weapon in the `Bonus` state is
+  off, bonuses being gone), Unique off, 20 % for Standard 20lt, Rifle only
+  and Mortar Only, 100 % for the rest. A preset enabling no weapon makes no
+  loadout (Classic's Bonus only). They are read-only; the player's own
+  (`olr-ui`'s `loadouts.ron`, per mod, unique names ignoring case, a
+  shipped name refused) never lose a loadout: a weapon a mod update
+  removed is left out, with a warning, only when it is played.
+- **Unique in play:** the weapon selection steps over weapons another
+  slot holds (`olr_ui::weapon_select`); a bot's repeats are replaced by
+  the first unused enabled weapon in a deterministic draw
+  (`olr_bots::unique_weapons`; no draw without the rule, so the bots of a
+  loadout without it choose as OLX's); an online player's choice that
+  breaks it, or holds a weapon the loadout has off, is replaced by random
+  weapons from the match seed on every peer alike (`olr_online::matches::
+  resolve`).
+- **Bonuses are gone from play:** Local Play's checkbox, `olr --bonuses`,
+  the lobby's setup (`MatchSetupWire`), the server's rotation field (an
+  older config's `bonuses` is ignored with a warning) and `/settings
+  bonuses`. The simulation keeps `SimSettings::bonuses`, ported and
+  checked by the oracle; `olr-cli`'s specs and the tests keep using it.
+- **Local Play** lost "Reset the match to OLX's settings", the loading
+  time slider and the preset picker; an older settings file's
+  `restrictions`, `loading_time` and `bonuses` are ignored (it plays
+  `Default`).
+- **Online:** the host's loadout travels in full in the setup (protocol
+  4; at most `MAX_LOADOUT_WEAPONS` 128 names, a larger one sent as
+  `Default`); a server's rotation entry may name a shipped loadout.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

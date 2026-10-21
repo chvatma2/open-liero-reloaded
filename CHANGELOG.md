@@ -96,6 +96,13 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   (`https://openlieroreloaded.github.io/flatpak/`, branches `stable` and
   `beta`). Options → Online → **Include pre-releases**. `cargo xtask
   publish` signs and publishes a release (`docs/releasing.md`).
+- Loadouts: which weapons are on, their loading time and a Unique rule
+  (no weapon twice in a worm's five slots unless every weapon on is
+  already used), named per mod. Every mod has Default (every weapon,
+  100 %) and read-only loadouts made from OLX's presets; Edit loadouts…
+  in Local Play and the lobby makes your own, kept in `loadouts.ron`. An
+  online game plays the host's loadout; a server's rotation entry may
+  name one (`loadout: "Rifle only"`).
 
 ### Changed
 
@@ -115,10 +122,21 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   made with `cargo xtask fetch-olx-content` or `olr-cli import`; packs of
   another version are refused. Content hashes changed, so 0.1 replays and
   cached downloads no longer open.
+- Local Play is simpler: mod, level, loadout, lives, kill limit, time
+  limit, your profile, the bots and their difficulty; each bot's own
+  difficulty, their personality and weapons are under Advanced…, also in
+  the lobby. A fresh install and a missing loadout play Default; an
+  older settings file's weapon preset and loading time are not carried
+  over. The network protocol version is 4.
 
 ### Removed
 
 - `olr-cli validate`: use `olr-cli pack check`.
+- Bonuses in play: the Bonuses checkbox, `olr --bonuses`, the server's
+  `bonuses` rotation field (ignored, with a warning) and `/settings
+  bonuses`. `olr-cli` keeps them for tests. Also gone: Local Play's
+  loading time slider, weapon preset and "Reset the match to OLX's
+  settings".
 - The Import screen; import OLX content with `olr-cli import --all` (it adds packs; `--prune` removes the others), and later in
   the editors.
 

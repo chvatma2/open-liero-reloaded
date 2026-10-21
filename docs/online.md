@@ -8,9 +8,12 @@ forwarding: see "Through routers".
 ## Host from the menus
 
 Multiplayer, then Host: name the game, set the player count and an optional
-password, then Start hosting. The Lobby opens: pick the map and the rules
-(only the host can), your weapons ("Random" or the weapon screen), Ready, and
-chat with Enter after pressing the chat key (T; rebind it in Options, Keys,
+password, then Start hosting. The Lobby opens. The host picks the map, the
+loadout ("Edit loadouts…" makes your own; everyone plays the host's and sees
+its name), the rules and the bots ("Advanced…": each bot's difficulty, their
+personality and weapons). Everyone picks their weapons ("Random" or the
+weapon screen, within the loadout), ticks Ready and
+chats with Enter after pressing the chat key (T; rebind it in Options, Keys,
 "Chat"). The host can kick, ban, move players to spectators and "Force start"
 (players not ready then spectate that match). `olr --host [NAME]`
 opens the Lobby straight away; `--port` changes the port.

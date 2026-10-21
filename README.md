@@ -87,11 +87,17 @@ Useful flags (`olr --help` lists them all):
 
 ### The menus
 
-- **Local Play:** the mod, the level (thumbnails), OLX's Deathmatch rules
-  (lives, kill limit, time limit, loading time, bonuses, the weapon
-  restriction preset), 1 to 31 bots at one difficulty (Easy, Medium, Hard,
-  Xtreme) or each its own, their personality (OLX's bot or chaos) and
-  loadout, and which profile you play. **Start** loads the match and
+- **Local Play:** the mod, the level (thumbnails), the loadout, OLX's
+  Deathmatch rules (lives, kill limit, time limit), which profile you play
+  and 1 to 31 bots at one difficulty (Easy, Medium, Hard, Xtreme);
+  **Advanced…** gives each bot its own difficulty, their personality
+  (OLX's bot, chaos or idle) and how they choose weapons. A **loadout** is
+  which weapons are on, their loading time (0-500 %) and whether a worm's
+  five slots must hold different weapons (Unique). Every mod has
+  **Default** (every weapon, 100 %) and the ones made from OLX's presets
+  (read-only); **Edit loadouts…** makes your own (New, Copy, Rename,
+  Delete), kept per mod in the data directory's `loadouts.ron`. There are
+  no bonuses. **Start** loads the match and
   shows OLX's **weapon selection**: five slots (Up/Down choose a slot,
   Left/Right the weapon, with Shift six at a time), **Random**, **Done**;
   the mouse works too. After the match (15 kills or 6 minutes by
@@ -223,7 +229,7 @@ copy it from the menu).
   every 2, 4, 8 … pixels when zoomed out.
 - **Play** tries the level as it is: alone (0 bots) or a Deathmatch
   against up to 8 bots (of Local Play's saved difficulty, personality and
-  loadout), the mod chosen beside it. Your worm starts at the
+  weapon choice, with the Default loadout), the mod chosen beside it. Your worm starts at the
   first spawn (or a free spot). **Esc** or **Stop** returns to the editor
   exactly as it was (and so does a match's end); the match's damage is
   thrown away. **F5** starts it again (a Deathmatch: a rematch).
@@ -256,7 +262,7 @@ the menus (for scripted runs and tests).
 ### The sandbox
 
 ```sh
-cargo run --release -p olr-game -- --level <id> --mod <id> [--skin <id>] [--targets N] [--seed N] [--bonuses]
+cargo run --release -p olr-game -- --level <id> --mod <id> [--skin <id>] [--targets N] [--seed N]
 ```
 
 `--level` and `--mod` take a pack id or an OLX name or prefix (levels: `Liero
