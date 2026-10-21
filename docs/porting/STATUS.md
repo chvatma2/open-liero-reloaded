@@ -80,6 +80,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Level composition (spec 2026-10-17 editor §1-3, §7): `editor/composition.ron` of image, drawn and raster elements, baked into `material.png`, `front.png`, `back.png` and `thumb.png`; JPEG originals; `olr-cli level element …`, `level bake`, stale bakes in `pack check` | — | `olr-format` (`levels::composition`, `image_io::decode_image_within`), `olr-pack` (`is_authoring`), `olr-edit` (`pixelate`, `compose`, `element`), `olr-cli` (`element_cmd.rs`), `olr-detcheck --bake` | done (plan 14a) | `every_bundled_level_round_trips_through_a_raster_base`, `region_bakes_equal_the_full_bake_and_keep_the_invariant`, `editor_files_are_not_content`, `the_fixture_is_baked`, `cargo xtask determinism`'s bake digest |
 | Level editor core (spec 2026-10-17 editor §4-§5, §8): the document (elements decoded, an image cache, one bake), reversible edits and a 256 MiB history, the tools (select, brush, eraser, rectangle, ellipse, line, spawn, eyedropper), the panels and shortcuts, tested headless; hosted in the game (the Editor screen, the canvas drawn by `olr-render`, Play, the file browser, recovery, `olr --edit`) | — | `olr-format` (`image_io::jpeg_orientation`, `levels::check_elements`), `olr-edit` (`level::{draw_art, erase_art, rescale_art, Shape::{Ellipse, Line}}`, `compose::{Decoded, ImageCache, bake_elements}`, `new::pack_id`), `olr-editor` (`browser`), `olr-terrain` (`ColorMap::replace_rect`), `olr-content` (`LoadedLevel::{from_source, first_spawn}`, `build_match_spawning`), `olr-ui` (`screens::editor`), `olr-game` (`editor`) | done (plans 14b-14c) | `undo_and_redo_restore_everything_exactly`, `every_operation_undoes_to_the_same_files`, `opening_and_saving_changes_nothing`, `art_painting_is_clipped_and_total`, `a_brush_stroke_is_one_step`, `locked_elements_are_not_changed_by_the_canvas`, `history_drops_the_oldest_steps_over_the_cap`, the `flows` tests; plan 14c: `a_bundled_level_is_edited_as_a_copy`, `recovery_survives_a_missing_original`, `a_damaged_recovery_is_discarded_not_fatal`, `a_later_session_keeps_the_crash_copy`, `imports_are_bounded_before_reading`, `closing_the_window_asks_when_unsaved`, `quitting_without_asking_keeps_a_recovery_copy`, `the_first_spawn_is_used_only_when_inside_the_level`, `the_canvas_draws_the_bake`, the `browser` tests, `cargo xtask e2e`'s editor run |
 | Skin editor (issue #14; no OLX counterpart): the Editor screen's Skin tab (New blank skin, Edit yours, Edit a copy), the 21-frame grid, onion skin, frame copy, paste to a frame, row or column, flip and shift, the paint tools (pencil 1 and 2 × 2, eraser, fill, eyedropper, line, rectangle) on the Colour, Player colour and Glow targets, the colour picker and recent colours, undo and redo per stroke, zoom and pan, the skin light, Make double resolution, a live preview (walking, aiming, both ways, light and dark), saving to `packs/` | `src/common/CWorm.cpp:1225-1244` (the preview's frame) | `olr-skin-editor`, `olr-edit` (`skin::preview_frame`), `olr-ui` (`screens::editor`'s Skin tab), `olr-game` (`editor::skin`) | done (issue #14) | the `olr-skin-editor` `state` and `flows` tests, `a_preview_frame_is_the_previews_cell`, `the_skin_tab_edits_yours_and_copies_the_others`, `a_copy_is_saved_to_your_packs_and_offered_by_the_skin_picker`, `a_bad_skin_pack_is_refused_with_a_message`, `closing_the_window_asks_when_unsaved` (skin) |
+| Mod editing operations (issue #16; no OLX counterpart): get and set any field by path (through shared projectiles), weapons added (blank or from another mod with their projectiles and files), removed, moved, copied and renamed with the presets and loadouts following, shared projectiles listed, inlined and shared, every error located; `olr-cli mod` | — | `olr-format` (`mods::mod_errors`), `olr-edit` (`mods`), `olr-cli` (`mod_cmd.rs`) | done (issue #16) | `set_changes_exactly_the_fields_set`, `every_leaf_round_trips_through_set`, `a_cycle_and_two_effects_in_an_event_are_refused_with_a_path`, `weapons_add_remove_move_copy_and_rename`, `a_weapon_of_another_mod_brings_its_projectiles_and_files`, `used_by_matches_the_files`, `inline_and_share_round_trip`, `check_lists_every_error_with_its_path`, `mod_errors_lists_every_error_and_compile_mod_the_first`, `olr-cli`'s `tests/mods.rs` |
 
 ## Deliberate deviations
 
@@ -4337,6 +4338,79 @@ No OLX counterpart (OLX draws no light). As built:
   disc of 14, reach 160).
 - **Not built:** an editor for mod looks (none exists yet; the issue's
   "Size" with reach under More waits for one).
+
+## Mod editing operations (issue #16)
+
+No OLX counterpart (OLX's mods are edited as text). The mod editor's
+operations below its UI (`olr_edit::mods`, layer 3) and `olr-cli mod`.
+No simulation, Classic, MW, oracle or golden changes. As built:
+
+- **Paths.** `<file>.<field>…`: the file is `mod`, `restrictions`,
+  `weapons/<id>` or `projectiles/<id>` (the longest existing id, so ids
+  holding dots resolve); fields are `.name`, `[i]` (a list) and
+  `["key"]` (a map key not a plain name, such as a preset). A tuple
+  variant's field is `0` (`weapons/x.fire.shot.projectile.gfx.0`). The
+  navigator goes through structs, enums, `Option` and `Box`; a spawn's
+  `projectile` leads into the shared projectile it names, so `get` and
+  `set` read and write `projectiles/<id>` there (every user sees the
+  change). `mod.weapons` is the id list, read-only (the weapon commands
+  change it).
+- **Setting a variant** by name makes it with its defaults: the variant's
+  serde defaults, or a hand-made start where those are not a valid value
+  (`Fire::Projectile` the blank weapon's shot, `Beam` red and 1 wide,
+  `Special` Off, `Trail::Projectile` a white pixel every 0.1 s,
+  `Effect::Spawn` names `spawn`, `Gfx::Pixels` white; `Gfx::Image` starts
+  with an empty file, which is refused as a missing asset until a file
+  is set). `Unknown(i32)` variants (imported OLX numbers) are listed,
+  read and kept, never offered as a choice. A value is RON of the
+  field's type, else a bare string for a string field.
+- **What is refused.** An edit is kept only when it adds no error the
+  mod did not have (`olr_format::mods::mod_errors` plus missing asset
+  files, compared by file, path and message), so a mod with an old
+  error stays editable; and only when its canonical text reads back as
+  set (a `NaN` is refused). So what LX56 cannot express is refused with
+  the compiler's path: per event at most one effect besides a `Spawn`,
+  one `Spawn`, one `spawns` entry, every event naming the same spawn; a
+  projectile cycle; a duplicate key.
+- **`mod_errors`** (`olr-format`): the compiler records every error and
+  carries on with placeholders, so `check` lists them all at once, each
+  at its field path; `compile_mod` still returns the first. A shipped
+  loadout's error path is now `loadouts["<name>"]` (was
+  `loadouts.<name>`), so a name with a dot stays one step.
+- **Weapons.** The index is the weapon's id in the game (`move`).
+  - `add`: blank (the `pack new mod` gun) or a copy of a weapon of this
+    or another installed mod, with its shared projectiles and the files
+    they and it name. A shared projectile equal to one of the same id
+    here (after the files' renames) is reused; another gets a fresh id
+    (`<id>-2`…). A file with the same bytes is reused, a missing one
+    copied, a different one copied as `<stem>-N.<ext>`. Inline keys that
+    clash are given an explicit `id`.
+  - A new weapon is in no preset: OLX's `updateList` enables a weapon a
+    preset does not name, so it is on in every preset and loadout.
+  - `remove` refuses the last weapon and drops its preset entries (unless
+    another weapon has the name); shared projectiles only it used stay,
+    with `check`'s "projectile is never used" warning.
+  - `copy` inserts after the original ("Bazooka 2").
+  - `rename` (and `set weapons/<id>.name`, or a whole weapon set): the
+    presets' entries for the old name (OLX's match: trimmed, ignoring
+    ASCII case) become one for the new name with the first's state; the
+    shipped loadouts take their weapons from the presets, so they follow.
+    A name must be non-empty, without surrounding spaces or control
+    characters, and unique.
+  - `rename_mod` (`set mod.name`) sets `mod.ron`'s name and the
+    manifest's; nothing in the presets or loadouts names the mod.
+- **Shared projectiles.** `used_by` lists each with the spawns naming it.
+  `inline` copies a spawn's shared projectile into it (the shared file is
+  removed when no other spawn uses it); `share` makes an inline one
+  `projectiles/<id>` (default id its key). Inline after share, and share
+  after inline, give the files back.
+- **`check`**: `olr_pack::validate`'s errors and warnings (without the
+  ones repeating ours), every compile error at its path, missing assets
+  at the field naming them, files that do not parse with line and
+  column, and unused `gfx/` and `sfx/` files and shared projectiles (also
+  when the mod does not compile).
+- **Not built** (the issue's non-goals): the editor UI, Play, art and
+  sounds, practice.
 
 ## Kept OLX quirks
 
