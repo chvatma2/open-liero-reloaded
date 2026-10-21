@@ -1134,14 +1134,14 @@ fn make_parts_glow() {
 }
 
 /// Issue #8: the right panel's tab follows the selection; otherwise it
-/// changes by hand; Assets is a placeholder.
+/// changes by hand; Assets is the asset library (issue #9).
 #[test]
 fn the_tab_follows_the_selection() {
     let Some((_tmp, mut h)) = opened() else { return };
     assert_eq!(h.state().state.tab(), PanelTab::Elements);
     h.get_by_label(labels::ASSETS).click();
     h.run();
-    assert!(h.query_by_label("Saved assets will appear here.").is_some());
+    assert!(h.query_by_label(labels::IMPORT_ASSET).is_some());
     h.get_by_label(labels::SPAWNS).click();
     h.run();
     assert_eq!(h.state().state.tab(), PanelTab::Spawns);

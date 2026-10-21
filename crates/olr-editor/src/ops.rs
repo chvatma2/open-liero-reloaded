@@ -378,88 +378,11 @@ impl Document {
         from: u32,
         offset: (i32, i32),
     ) -> Result<(Vec<Edit>, String), DocError> {
-        let (size, to) = (self.level.size, self.level.art_scale);
-        let from = from.clamp(1, MAX_ART_SCALE);
-        let stray = self.stray_files();
-        let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
-        let mut e = snap.item.element.clone();
-        let names = elements.iter().map(|x| if x.name.is_empty() { x.id.as_str() } else { x.name.as_str() });
-        e.name = copy_name(if e.name.is_empty() { &e.id } else { &e.name }, names);
-        e.id = new_element_id(&elements, &stray, &e.name, "copy");
-        let shift = |a: (i32, i32)| {
-            let add =
-                |v: i32, d: i32| (i64::from(v) + i64::from(d)).clamp(i32::MIN.into(), i32::MAX.into()) as i32;
-            (add(a.0, offset.0), add(a.1, offset.1))
-        };
-        let mut original = None;
-        let mut extra = 0;
-        let decoded = match (&mut e.kind, &snap.item.decoded) {
-            (ElementKind::Image { at, source, .. }, Decoded::Image { mask, .. }) => {
-                *at = shift(*at);
-                let (name, bytes) = snap.original.clone().ok_or_else(|| {
-                    DocError::Bad(format!("{:?}: its original is missing", snap.item.element.id))
-                })?;
-                // Its bytes under a name here already are shared; another
-                // original of its name is never overwritten (Review Focus 1).
-                let same = |(n, b): (&String, &Arc<Vec<u8>>)| (**b == *bytes).then(|| n.clone());
-                let shared = self
-                    .originals
-                    .get_key_value(&name)
-                    .and_then(same)
-                    .or_else(|| self.originals.iter().find_map(same));
-                *source = shared.unwrap_or_else(|| {
-                    let dir = olr_format::levels::image_file("");
-                    let taken = self
-                        .originals
-                        .keys()
-                        .map(String::as_str)
-                        .chain(stray.iter().filter_map(|f| f.strip_prefix(dir.as_str())));
-                    new_source_name(taken, &name)
-                });
-                extra = mask.as_deref().map_or(0, |m| m.keep.len() as u64);
-                original = Some((source.clone(), bytes));
-                Decoded::Image { grid: None, mask: mask.clone() }
-            }
-            (ElementKind::Drawn { at, size: boxed, .. }, Decoded::Drawn { art, cells, back }) => {
-                let side = (art.width() / from, art.height() / from);
-                *at = shift(*at);
-                *boxed = (*at != (0, 0) || side != size).then_some(side);
-                Decoded::Drawn {
-                    art: rescale_art(art, from, to),
-                    cells: cells.clone(),
-                    back: back.as_ref().map(|b| rescale_art(b, from, to)),
-                }
-            }
-            (ElementKind::Raster, Decoded::Raster { material, front, back }) => {
-                let side = (front.width() / from, front.height() / from);
-                if side != size || material.len() as u64 != u64::from(size.0) * u64::from(size.1) {
-                    return Err(DocError::Bad(format!(
-                        "{:?} is a raster of {} × {}: it pastes only into a level of its size ({} × {} here)",
-                        snap.item.element.id, side.0, side.1, size.0, size.1
-                    )));
-                }
-                Decoded::Raster {
-                    material: material.clone(),
-                    front: rescale_art(front, from, to),
-                    back: rescale_art(back, from, to),
-                }
-            }
-            _ => {
-                return Err(DocError::Bad(format!("{:?}: its data does not match it", snap.item.element.id)));
-            }
-        };
-        let mut all = elements;
-        all.push(e.clone());
-        self.check_extra(&all, size, to, extra)?;
-        let decoded = match (decoded, &original) {
-            (Decoded::Image { mask, .. }, Some((_, bytes))) => self.image_grid(&e, &bytes.clone(), mask)?,
-            (d, _) => d,
-        };
-        let id = e.id.clone();
+        let piece = self.landed(snap.piece(), from, offset, None)?;
+        let mut edits = Vec::new();
         // A glow naming a group this level's look lacks gets it (plan 15a,
         // batch D review 1): the paste glows as the copy did.
-        let mut edits = Vec::new();
-        if let Some(g) = &e.glow
+        if let Some(g) = &piece.element.glow
             && !self.level.look.iter().any(|l| l.glow_groups.iter().any(|x| x.id == g.group))
         {
             let look = crate::look_ops::with_group(self.level.look.clone(), &g.group);
@@ -468,18 +391,52 @@ impl Document {
                 edits.push(edit);
             }
         }
-        // Its mask, fitted to its box here (another art scale resamples it).
-        let glow_mask = snap.glow_mask.as_ref().and_then(|m| {
-            let (_, b) = olr_format::levels::element_box(&e.kind, size)?;
-            let (_, ob) = olr_format::levels::element_box(&snap.item.element.kind, size)?;
-            let (old, new) = ((ob.0 * from, ob.1 * from), (b.0 * to, b.1 * to));
-            Some(Arc::new(crate::look_ops::resample_mask(m, old, new)))
-        });
-        let item = Item { element: e, decoded };
-        let index = self.items.len();
-        let snapshot = Snapshot { item, original, glow_mask };
-        edits.push(self.change(Edit::Insert { index, item: Box::new(snapshot) }).edit);
+        let id = piece.element.id.clone();
+        edits.push(self.insert_landed(piece)?);
         Ok((edits, id))
+    }
+
+    /// `piece` (made at art scale `from`) landed in this level, moved by
+    /// `offset` (`olr_edit::asset::land`: a new id and name, art resampled,
+    /// its mask fitted) and checked, an image's grid processed; not yet in.
+    pub(crate) fn landed(
+        &mut self,
+        piece: olr_edit::asset::PieceRef,
+        from: u32,
+        offset: (i32, i32),
+        name: Option<&str>,
+    ) -> Result<olr_edit::asset::Piece, DocError> {
+        let (size, to) = (self.level.size, self.level.art_scale);
+        let stray = self.stray_files();
+        let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
+        let landing = olr_edit::asset::Landing {
+            elements: &elements,
+            stray: &stray,
+            originals: &self.originals,
+            size,
+            art_scale: to,
+        };
+        let mut piece = olr_edit::asset::land(&landing, piece, from, offset, name)
+            .map_err(|e| DocError::Bad(e.to_string()))?;
+        let extra = match &piece.decoded {
+            Decoded::Image { mask, .. } => mask.as_deref().map_or(0, |m| m.keep.len() as u64),
+            _ => 0,
+        };
+        let mut all = elements;
+        all.push(piece.element.clone());
+        self.check_extra(&all, size, to, extra)?;
+        if let (Decoded::Image { mask, .. }, Some((_, bytes))) = (&piece.decoded, &piece.original) {
+            piece.decoded = self.image_grid(&piece.element, &bytes.clone(), mask.clone())?;
+        }
+        Ok(piece)
+    }
+
+    /// Inserts a landed piece on top: its edit (applied).
+    pub(crate) fn insert_landed(&mut self, piece: olr_edit::asset::Piece) -> Result<Edit, DocError> {
+        let olr_edit::asset::Piece { element, decoded, original, glow_mask } = piece;
+        let index = self.items.len();
+        let snapshot = Snapshot { item: Item { element, decoded }, original, glow_mask };
+        Ok(self.change(Edit::Insert { index, item: Box::new(snapshot) }).edit)
     }
 
     /// `rect` (level pixels) of drawn layer `id`, within its box (plan 14e
@@ -805,7 +762,7 @@ impl Document {
     }
 
     /// Undoes `edits` (applied, in order), last first.
-    fn roll_back(&mut self, edits: &[Edit]) {
+    pub(crate) fn roll_back(&mut self, edits: &[Edit]) {
         for e in edits.iter().rev() {
             self.apply(e, false);
         }

@@ -17,7 +17,7 @@ use olr_edit::textures::Texture;
 use olr_format::levels::{ElementMaterial, LevelSource};
 
 use crate::browser::{Browser, DirEntry, Purpose};
-use crate::catalog::{Catalog, EditorSettings, TextureEntry};
+use crate::catalog::{AssetEntry, AssetKey, Catalog, EditorSettings, TextureEntry};
 use crate::clipboard::{Clipboard, PASTE_STEP};
 use crate::document::{DocError, Document, Problem};
 use crate::history::{Edit, History, LevelMeta};
@@ -62,7 +62,7 @@ impl Selection {
 }
 
 /// The right panel's tabs (issue #8): the element list, the asset library
-/// (to come) and the spawns. The tab follows the selection; otherwise only
+/// (issue #9) and the spawns. The tab follows the selection; otherwise only
 /// a click changes it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PanelTab {
@@ -96,6 +96,14 @@ pub enum Dialog {
     Error(String),
     /// Removing glow group `id` takes the glow off its elements: Remove, Cancel.
     RemoveGroup { id: String },
+    /// Save as asset's name (issue #9), the field starting at `suggested`:
+    /// Save (`NameAsset`), Cancel.
+    AssetName { suggested: String },
+    /// An asset of the user's (folder `id`) is named `name` already:
+    /// Replace (`Confirm`), Keep both (`KeepBoth`), Cancel.
+    AssetExists { name: String, id: String },
+    /// Removing the user's asset `id` (named `name`): Remove, Cancel.
+    RemoveAsset { id: String, name: String },
 }
 
 /// The look preview's clock (plan 15a Task 17; spec §The level editor).
@@ -132,6 +140,8 @@ pub enum Choice {
     Discard,
     Cancel,
     Confirm,
+    /// An asset named as one of the user's: saved beside it, renamed.
+    KeepBoth,
 }
 
 /// Mouse, keyboard and widget events, and the host's answers.
@@ -162,6 +172,19 @@ pub enum EditorAction {
     /// The user's texture library as it now is (plan 14e R2): the answer
     /// to `AddTexture` and `RemoveTexture`.
     TexturesChanged(Vec<TextureEntry>),
+    /// The asset library as it now is (issue #9): the built-in assets, then
+    /// the user's; the answer to `SaveAsset`, `ImportAsset` and
+    /// `RemoveAsset`.
+    AssetsChanged(Vec<AssetEntry>),
+    /// An asset was saved or imported into the user's library: it is
+    /// selected in the Assets tab.
+    AssetSaved(AssetKey),
+    /// The asset `ReadAsset` asked for, to place at world pixel `at`, or why
+    /// it cannot be read.
+    AssetRead {
+        at: (i32, i32),
+        asset: Result<Box<olr_edit::asset::Asset>, String>,
+    },
     // The file browser (R9).
     /// Opens the browser at the remembered folder, else the home directory.
     Browse(Purpose),
@@ -295,6 +318,25 @@ pub enum EditorAction {
     /// What the canvas shows: lit, full bright or the light alone.
     SetViewMode(olr_look::ViewMode),
     Clock(ClockAction),
+    // The asset library (issue #9).
+    /// Saves the selected elements, or the pixel rectangle cut from every
+    /// visible layer, as an asset: asks its name first.
+    SaveAsAsset,
+    /// The name dialog's Save.
+    NameAsset(String),
+    /// A thumbnail clicked: the asset is selected (`None`: none) and the
+    /// next press on the canvas places it.
+    PickAsset(Option<AssetKey>),
+    /// Escape: the picked asset is no longer placed by a press.
+    CancelPlacing,
+    /// Places asset `key` with its top-left at world pixel `at` (a
+    /// thumbnail dropped on the canvas, or a press with one picked).
+    PlaceAsset {
+        key: AssetKey,
+        at: (i32, i32),
+    },
+    /// Removes the user's asset `id` (asks first).
+    RemoveAsset(String),
     // The layout (issue #8).
     /// The right panel's tab, by hand.
     Tab(PanelTab),
@@ -338,6 +380,25 @@ pub enum EditorCommand {
     AddTexture(PathBuf),
     /// Remove this texture from the user's library; answer `TexturesChanged`.
     RemoveTexture(String),
+    /// Read asset `key` whole (`olr_edit::asset::load_dir`); answer
+    /// `AssetRead` with `at`.
+    ReadAsset {
+        key: AssetKey,
+        at: (i32, i32),
+    },
+    /// Write this asset into the user's library (`olr_edit::asset::encode`,
+    /// `save_dir`): over the folder `replace`, else in a new one named after
+    /// it; answer `AssetsChanged` and `AssetSaved`, or `Failed`.
+    SaveAsset {
+        asset: Box<olr_edit::asset::Asset>,
+        replace: Option<String>,
+    },
+    /// Add the asset folder at this path to the user's library (checked and
+    /// decoded first, then written anew); answer `AssetsChanged` and
+    /// `AssetSaved`, or `Failed`.
+    ImportAsset(PathBuf),
+    /// Remove the user's asset folder `id`; answer `AssetsChanged`.
+    RemoveAsset(String),
     /// The document was saved, or is being closed or left: drop its
     /// recovery copy (R7).
     RecoveryDone,
@@ -417,6 +478,17 @@ pub struct EditorState {
     pub(crate) last_tools: [Tool; 2],
     /// The right panel's tab.
     pub(crate) tab: PanelTab,
+    /// The pixel rectangle's world rectangle before it was clipped to its
+    /// layer (within the level): what Save as asset cuts (issue #9).
+    pub(crate) pixel_world: Option<Rect>,
+    /// The asset Save as asset made, waiting for its name.
+    pub(crate) pending_asset: Option<Box<olr_edit::asset::Asset>>,
+    /// The asset selected in the Assets tab, and whether the next press on
+    /// the canvas places it.
+    pub(crate) picked_asset: Option<AssetKey>,
+    pub(crate) placing: bool,
+    /// Counts `AssetsChanged`: the tab's thumbnails follow it.
+    pub(crate) assets_generation: u64,
 }
 
 impl EditorState {
@@ -461,6 +533,11 @@ impl EditorState {
             clock_running: false,
             last_tools: ToolGroup::ALL.map(ToolGroup::first),
             tab: PanelTab::Elements,
+            pixel_world: None,
+            pending_asset: None,
+            picked_asset: None,
+            placing: false,
+            assets_generation: 0,
         }
     }
 
@@ -473,6 +550,26 @@ impl EditorState {
     /// The right panel's tab.
     pub fn tab(&self) -> PanelTab {
         self.tab
+    }
+
+    /// The asset selected in the Assets tab.
+    pub fn picked_asset(&self) -> Option<&AssetKey> {
+        self.picked_asset.as_ref()
+    }
+
+    /// Whether the next press on the canvas places the picked asset.
+    pub fn placing(&self) -> bool {
+        self.placing && self.picked_asset.is_some()
+    }
+
+    /// The library's entry of `key`.
+    pub fn asset(&self, key: &AssetKey) -> Option<&AssetEntry> {
+        self.catalog.assets.iter().find(|a| a.key == *key)
+    }
+
+    /// How many times the asset library changed (`AssetsChanged`).
+    pub fn assets_generation(&self) -> u64 {
+        self.assets_generation
     }
 
     /// What the canvas shows: lit, full bright or the light alone.
@@ -585,6 +682,10 @@ impl EditorState {
                 | EditorAction::Failed(_)
                 | EditorAction::Note(_)
                 | EditorAction::TexturesChanged(_)
+                | EditorAction::AssetsChanged(_)
+                | EditorAction::AssetSaved(_)
+                | EditorAction::AssetRead { .. }
+                | EditorAction::NameAsset(_)
                 | EditorAction::Previewed { .. }
                 | EditorAction::Pointer { .. }
                 | EditorAction::Canvas(_)
@@ -615,6 +716,11 @@ impl EditorState {
                 | EditorAction::Tolerance(_)
                 | EditorAction::TexturesChanged(_)
                 | EditorAction::RemoveTexture(_)
+                | EditorAction::AssetsChanged(_)
+                | EditorAction::AssetSaved(_)
+                | EditorAction::PickAsset(_)
+                | EditorAction::CancelPlacing
+                | EditorAction::RemoveAsset(_)
                 | EditorAction::Select(_)
                 | EditorAction::SelectToggle(_)
                 | EditorAction::SelectRange(_)
@@ -668,6 +774,9 @@ impl EditorState {
             self.pixel_rect = None;
             self.pixel_region = None;
         }
+        if self.pixel_rect.is_none() {
+            self.pixel_world = None;
+        }
         cmds
     }
 
@@ -702,6 +811,60 @@ impl EditorState {
                 Vec::new()
             }
             EditorAction::RemoveTexture(name) => vec![EditorCommand::RemoveTexture(name)],
+            EditorAction::AssetsChanged(assets) => {
+                self.catalog.assets = assets;
+                self.assets_generation += 1;
+                if self.picked_asset.as_ref().is_some_and(|k| self.asset(k).is_none()) {
+                    self.picked_asset = None;
+                }
+                Vec::new()
+            }
+            EditorAction::AssetSaved(key) => {
+                let name = self.asset(&key).map_or_else(|| key.id.clone(), |a| a.name.clone());
+                self.status.message = Some(format!("saved the asset {name:?} in your assets"));
+                self.picked_asset = Some(key);
+                self.placing = false;
+                self.tab = PanelTab::Assets;
+                Vec::new()
+            }
+            EditorAction::AssetRead { at, asset } => match asset {
+                Ok(asset) => self.place_asset(&asset, at),
+                Err(why) => {
+                    self.dialog = Some(Dialog::Error(why));
+                    Vec::new()
+                }
+            },
+            EditorAction::SaveAsAsset => self.save_as_asset(),
+            EditorAction::NameAsset(name) => self.name_asset(name),
+            EditorAction::PickAsset(key) => {
+                self.placing = key.is_some();
+                if let Some(a) = key.as_ref().and_then(|k| self.asset(k)) {
+                    self.status.message = Some(format!(
+                        "click the level to place {:?} (Escape cancels), or drag it there",
+                        a.name
+                    ));
+                }
+                self.picked_asset = key;
+                Vec::new()
+            }
+            EditorAction::CancelPlacing => {
+                self.placing = false;
+                Vec::new()
+            }
+            EditorAction::PlaceAsset { key, at } => {
+                self.placing = false;
+                if self.doc.is_none() || self.asset(&key).is_none() {
+                    return Vec::new();
+                }
+                vec![EditorCommand::ReadAsset { key, at }]
+            }
+            EditorAction::RemoveAsset(id) => {
+                let key = AssetKey { builtin: false, id: id.clone() };
+                if let Some(a) = self.asset(&key) {
+                    self.dialog = Some(Dialog::RemoveAsset { id, name: a.name.clone() });
+                }
+                Vec::new()
+            }
             EditorAction::Browse(purpose) => {
                 let dir = self
                     .settings
@@ -914,6 +1077,7 @@ impl EditorState {
                 vec![EditorCommand::SaveSettings(self.settings.clone())]
             }
             EditorAction::Tool(tool) => {
+                self.placing = false;
                 if let Some(i) = ToolGroup::ALL.iter().position(|g| tool.group() == Some(*g)) {
                     self.last_tools[i] = tool;
                 }
@@ -1004,6 +1168,7 @@ impl EditorState {
         let take = match b.purpose() {
             Purpose::ImportImage | Purpose::ImportTexture => !e.is_dir,
             Purpose::OpenPack => e.is_pack,
+            Purpose::ImportAsset => e.is_asset,
         };
         if !take {
             return if e.is_dir { vec![EditorCommand::List(path)] } else { Vec::new() };
@@ -1015,6 +1180,7 @@ impl EditorState {
         match purpose {
             Purpose::ImportImage => cmds.insert(0, EditorCommand::ReadImage(path)),
             Purpose::ImportTexture => cmds.insert(0, EditorCommand::AddTexture(path)),
+            Purpose::ImportAsset => cmds.insert(0, EditorCommand::ImportAsset(path)),
             Purpose::OpenPack => cmds.extend(self.leave(Pending::Open(path))),
         }
         cmds
@@ -1309,6 +1475,96 @@ impl EditorState {
         }
     }
 
+    /// Save as asset (issue #9): the pixel rectangle cut from every visible
+    /// layer, else the selected elements; asks the name next.
+    fn save_as_asset(&mut self) -> Vec<EditorCommand> {
+        let Some(doc) = &self.doc else { return Vec::new() };
+        if self.pixel_region.is_some() {
+            self.status.message =
+                Some("Save as asset takes a rectangle selection (Select pixels without By colour)".into());
+            return Vec::new();
+        }
+        let made = if let Some(rect) = self.pixel_world {
+            doc.asset_of_rect(rect, "Asset")
+        } else {
+            let ids = self.selection.ids();
+            if ids.is_empty() {
+                self.status.message =
+                    Some("nothing to save: select elements, or pixels with Select pixels (M)".into());
+                return Vec::new();
+            }
+            let name = match ids.as_slice() {
+                [id] => doc.index_of(id).map_or("Asset", |i| doc.items[i].element.name.as_str()),
+                _ => "Asset",
+            };
+            doc.asset_of_elements(&ids, name)
+        };
+        match made {
+            Ok(asset) => {
+                let suggested: String = asset.name.chars().take(olr_format::assets::MAX_ASSET_NAME).collect();
+                self.pending_asset = Some(Box::new(asset));
+                self.dialog = Some(Dialog::AssetName { suggested });
+            }
+            Err(e) => self.status.message = Some(e.to_string()),
+        }
+        Vec::new()
+    }
+
+    /// The name dialog's Save: an empty or too long name asks again; a name
+    /// one of the user's assets has asks to replace it or keep both.
+    fn name_asset(&mut self, name: String) -> Vec<EditorCommand> {
+        if !matches!(self.dialog, Some(Dialog::AssetName { .. })) || self.pending_asset.is_none() {
+            return Vec::new();
+        }
+        let name = name.trim().to_string();
+        let len = name.chars().count();
+        if len == 0 || len > olr_format::assets::MAX_ASSET_NAME || name.chars().any(char::is_control) {
+            self.status.message =
+                Some(format!("an asset's name is 1 to {} characters", olr_format::assets::MAX_ASSET_NAME));
+            self.dialog = Some(Dialog::AssetName { suggested: name });
+            return Vec::new();
+        }
+        if let Some(a) = self.pending_asset.as_mut() {
+            a.name = name.clone();
+        }
+        let clash = self.catalog.assets.iter().find(|a| !a.key.builtin && a.name == name);
+        if let Some(a) = clash {
+            self.dialog = Some(Dialog::AssetExists { name, id: a.key.id.clone() });
+            return Vec::new();
+        }
+        self.dialog = None;
+        self.send_asset(None)
+    }
+
+    /// The named asset to the host (over folder `replace`).
+    fn send_asset(&mut self, replace: Option<String>) -> Vec<EditorCommand> {
+        match self.pending_asset.take() {
+            Some(asset) => vec![EditorCommand::SaveAsset { asset, replace }],
+            None => Vec::new(),
+        }
+    }
+
+    /// Places `asset` (`AssetRead`) at world pixel `at`: one step, the new
+    /// elements selected.
+    fn place_asset(&mut self, asset: &olr_edit::asset::Asset, at: (i32, i32)) -> Vec<EditorCommand> {
+        let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+        match doc.place_asset(asset, at) {
+            Ok(placed) => {
+                let dirty = doc.all();
+                self.history.push(placed.edits);
+                self.selection = self.group(placed.ids);
+                self.tab = PanelTab::Elements;
+                let cmds = self.committed(dirty);
+                self.status.message = placed.note;
+                cmds
+            }
+            Err(e) => {
+                self.status.message = Some(e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
     /// The selection of `ids` (plan 14e R8): those that exist, each once, in
     /// stack order; one is `Element`, none `None`.
     pub(crate) fn group(&self, ids: Vec<String>) -> Selection {
@@ -1485,6 +1741,21 @@ impl EditorState {
             (Dialog::Unsaved { then }, Choice::Discard) => self.carry_out(then),
             (Dialog::ArtScale { to }, Choice::Confirm) => self.edit(|d| d.set_art_scale(to)),
             (Dialog::RemoveGroup { id }, Choice::Confirm) => self.edits(|d| d.remove_group(&id)),
+            (Dialog::AssetExists { id, .. }, Choice::Confirm) => self.send_asset(Some(id)),
+            (Dialog::AssetExists { name, .. }, Choice::KeepBoth) => {
+                let yours: Vec<String> =
+                    self.catalog.assets.iter().filter(|a| !a.key.builtin).map(|a| a.name.clone()).collect();
+                let name = olr_edit::element::copy_name(&name, yours.iter().map(String::as_str));
+                if let Some(a) = self.pending_asset.as_mut() {
+                    a.name = name;
+                }
+                self.send_asset(None)
+            }
+            (Dialog::RemoveAsset { id, .. }, Choice::Confirm) => vec![EditorCommand::RemoveAsset(id)],
+            (Dialog::AssetName { .. } | Dialog::AssetExists { .. }, Choice::Cancel) => {
+                self.pending_asset = None;
+                Vec::new()
+            }
             (Dialog::Error(_), _) | (_, Choice::Cancel) => Vec::new(),
             // Any other answer leaves the question open.
             (dialog, _) => {

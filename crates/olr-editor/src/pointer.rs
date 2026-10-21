@@ -485,6 +485,7 @@ impl EditorState {
                 };
                 self.pixel_rect = Some((id, rect));
                 self.pixel_region = Some(Arc::new(region));
+                self.pixel_world = None;
                 Vec::new()
             }
             Tool::SelectPixels => {
@@ -752,6 +753,10 @@ impl EditorState {
                 // 14e minors): what a copy takes is what shows.
                 let r = pixel_span(doc, &id, start, now);
                 if r.w > 0 && r.h > 0 {
+                    // Save as asset cuts every visible layer: the rectangle
+                    // within the level only (issue #9).
+                    let (x, y, w, h) = span(start, now);
+                    self.pixel_world = Some(box_rect(((x, y), (w as u32, h as u32)), doc.level().size));
                     self.pixel_rect = Some((id, r));
                     self.pixel_region = None;
                 } else {

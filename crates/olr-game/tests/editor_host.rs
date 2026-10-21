@@ -758,3 +758,48 @@ fn a_texture_imported_again_shows_its_new_picture() {
     assert_eq!(texture_names(&h), ["a"]);
     assert_eq!(h.state().catalog().textures[0].image.width(), 8);
 }
+
+/// Issue #9: the built-in assets beside the content (`content/assets`,
+/// read-only) and the user's in the data directory's `assets/`: listed at
+/// the start, saved, imported, placed and removed.
+#[test]
+fn assets_are_listed_saved_placed_and_removed() {
+    let Some((tmp, root, mut h)) = host() else { return };
+    let key = |builtin: bool, id: &str| olr_editor::AssetKey { builtin, id: id.into() };
+    let names = |h: &EditorHost| -> Vec<(bool, String)> {
+        h.state().catalog().assets.iter().map(|a| (a.key.builtin, a.name.clone())).collect()
+    };
+    assert!(names(&h).contains(&(true, "Torch".into())), "{:?}", names(&h));
+    assert!(names(&h).iter().all(|(builtin, _)| *builtin));
+    let built_in = root.parent().unwrap().join("assets");
+    let before = digest(&built_in);
+    h.open_from_menu(&new_level("Hall"));
+    h.act(vec![A::Select(olr_editor::Selection::Element("dirt".into()))]);
+    h.act(vec![A::SaveAsAsset]);
+    h.act(vec![A::NameAsset("Hall dirt".into())]);
+    let lib = tmp.path().join("assets");
+    assert!(lib.join("hall-dirt/asset.ron").is_file());
+    assert_eq!(h.state().picked_asset(), Some(&key(false, "hall-dirt")));
+    // Placing a built-in one reads it whole and lands it in the level.
+    let n = h.state().document().unwrap().items().len();
+    h.act(vec![A::PlaceAsset { key: key(true, "torch"), at: (10, 10) }]);
+    assert_eq!(h.state().document().unwrap().items().len(), n + 1);
+    // Imported: written anew in the user's library.
+    h.act(vec![A::Browse(Purpose::ImportAsset)]);
+    h.act(vec![A::BrowseTo(built_in.clone())]);
+    h.act(vec![A::Pick("lit-sign".into())]);
+    assert!(lib.join("lit-sign/asset.ron").is_file());
+    // A later session lists them; removing asks first.
+    let mut store = Store::open(tmp.path());
+    let packs = store.packs_dir().unwrap();
+    let mut again = EditorHost::new(&mut store, &[packs.as_path(), root.as_path()]).unwrap();
+    assert!(
+        names(&again).contains(&(false, "Hall dirt".into()))
+            && names(&again).contains(&(false, "Lit sign".into()))
+    );
+    again.act(vec![A::RemoveAsset("hall-dirt".into())]);
+    again.act(vec![A::Choose(olr_editor::Choice::Confirm)]);
+    assert!(!lib.join("hall-dirt").exists());
+    assert!(!names(&again).contains(&(false, "Hall dirt".into())));
+    assert_eq!(digest(&built_in), before, "the built-in assets are never written");
+}

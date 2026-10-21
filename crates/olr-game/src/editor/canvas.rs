@@ -273,6 +273,7 @@ mod tests {
             mods: vec![],
             home: None,
             textures: Vec::new(),
+            assets: Vec::new(),
         };
         let pack = olr_edit::pack::load(&dir).unwrap();
         Some((tmp, Document::open(pack, dir, &catalog).unwrap()))

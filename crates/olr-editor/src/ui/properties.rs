@@ -79,6 +79,21 @@ fn element(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, ou
     if r.header_response.clicked() {
         out.push(EditorAction::ShowMore(!open));
     }
+    save_as_asset(ui, state, out);
+}
+
+/// Save as asset… at the bottom of the properties (issue #9): the pixel
+/// rectangle when there is one, else the selection.
+fn save_as_asset(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    ui.separator();
+    let hint = if state.pixel_rect().is_some() {
+        "the selected rectangle, cut from every visible layer, into your assets"
+    } else {
+        "the selected elements into your assets"
+    };
+    if ui.button(labels::SAVE_AS_ASSET).on_hover_text(hint).clicked() {
+        out.push(EditorAction::SaveAsAsset);
+    }
 }
 
 /// "What is it?": Rock, Dirt or Background, one segmented switch; `current`
@@ -241,4 +256,5 @@ fn group(ui: &mut Ui, state: &EditorState, ids: &[String], out: &mut Vec<EditorA
     if ui.button("Delete").clicked() {
         out.push(EditorAction::Remove);
     }
+    save_as_asset(ui, state, out);
 }

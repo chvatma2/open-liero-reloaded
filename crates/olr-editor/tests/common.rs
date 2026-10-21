@@ -42,6 +42,7 @@ pub fn catalog(root: &Path) -> Catalog {
         ],
         home: None,
         textures: Vec::new(),
+        assets: Vec::new(),
     }
 }
 
@@ -103,6 +104,62 @@ pub fn files(doc: &olr_editor::Document) -> std::collections::BTreeMap<String, V
         .collect()
 }
 
+thread_local! {
+    /// The asset library the test host keeps (built-in, the user's), when
+    /// a test set one (`set_library`).
+    static LIBRARY: std::cell::RefCell<Option<(PathBuf, PathBuf)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The repository's built-in assets (`content/assets`).
+pub fn built_in_assets() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/assets")
+}
+
+/// Has the test host keep the asset library: `builtin` read-only, `yours`
+/// written; returns the library as `AssetsChanged` lists it.
+pub fn set_library(builtin: &Path, yours: &Path) -> Vec<olr_editor::AssetEntry> {
+    LIBRARY.with(|l| *l.borrow_mut() = Some((builtin.to_path_buf(), yours.to_path_buf())));
+    library()
+}
+
+/// The library as the game's host lists it: the built-in assets, then the
+/// user's.
+fn library() -> Vec<olr_editor::AssetEntry> {
+    let Some((builtin, yours)) = LIBRARY.with(|l| l.borrow().clone()) else { return Vec::new() };
+    let entries = |dir: &Path, builtin: bool| {
+        olr_edit::asset::list_library(dir, usize::MAX).0.into_iter().map(move |(id, s)| {
+            olr_editor::AssetEntry {
+                key: olr_editor::AssetKey { builtin, id },
+                name: s.name,
+                size: s.size,
+                tags: s.tags,
+                glows: s.glows,
+                thumb: s.thumb,
+            }
+        })
+    };
+    entries(&builtin, true).chain(entries(&yours, false)).collect()
+}
+
+/// A change of the user's assets carried out, answered as the game's host
+/// answers it.
+fn change_assets(
+    queue: &mut std::collections::VecDeque<olr_editor::EditorAction>,
+    change: impl FnOnce(&Path) -> Result<Option<String>, olr_edit::asset::AssetError>,
+) {
+    use olr_editor::EditorAction;
+    let Some((_, yours)) = LIBRARY.with(|l| l.borrow().clone()) else { return };
+    let done = change(&yours);
+    queue.push_back(EditorAction::AssetsChanged(library()));
+    match done {
+        Ok(Some(id)) => {
+            queue.push_back(EditorAction::AssetSaved(olr_editor::AssetKey { builtin: false, id }))
+        }
+        Ok(None) => {}
+        Err(e) => queue.push_back(EditorAction::Failed(e.to_string())),
+    }
+}
+
 /// Carries out `action` and every command it leads to as the host would,
 /// synchronously, feeding the answers back; returns every command emitted.
 pub fn run(
@@ -132,6 +189,24 @@ pub fn run(
                 EditorCommand::Save { dir, pack } => queue.push_back(EditorAction::Saved(
                     olr_edit::pack::save(dir, pack).map_err(|e| e.to_string()),
                 )),
+                EditorCommand::ReadAsset { key, at } => {
+                    let lib = LIBRARY.with(|l| l.borrow().clone()).expect("a library");
+                    let dir = if key.builtin { lib.0 } else { lib.1 };
+                    let asset = olr_edit::asset::load_dir(&dir.join(&key.id))
+                        .map(Box::new)
+                        .map_err(|e| e.to_string());
+                    queue.push_back(EditorAction::AssetRead { at: *at, asset });
+                }
+                EditorCommand::SaveAsset { asset, replace } => change_assets(&mut queue, |dir| {
+                    olr_edit::asset::add_to_library(dir, asset, replace.as_deref()).map(Some)
+                }),
+                EditorCommand::ImportAsset(path) => {
+                    change_assets(&mut queue, |dir| olr_edit::asset::import_into_library(dir, path).map(Some))
+                }
+                EditorCommand::RemoveAsset(id) => change_assets(&mut queue, |dir| {
+                    olr_edit::asset::remove_from_library(dir, id).map(|()| None)
+                }),
+
                 _ => {}
             }
             out.push(command);
@@ -164,4 +239,26 @@ pub fn editor_at(root: &Path, pack: &Path) -> (tempfile::TempDir, olr_editor::Ed
     run(&mut state, olr_editor::EditorAction::Open(dir));
     assert!(state.document().is_some());
     (tmp, state)
+}
+
+/// A directory as the game's host lists it for the browser (folders,
+/// packs and assets marked).
+pub fn list_dir(dir: &Path) -> Vec<olr_editor::browser::DirEntry> {
+    let mut out: Vec<olr_editor::browser::DirEntry> = std::fs::read_dir(dir)
+        .map(|rd| {
+            rd.filter_map(Result::ok)
+                .map(|e| {
+                    let is_dir = e.path().is_dir();
+                    olr_editor::browser::DirEntry {
+                        name: e.file_name().to_string_lossy().into_owned(),
+                        is_dir,
+                        is_pack: is_dir && e.path().join("pack.ron").is_file(),
+                        is_asset: is_dir && e.path().join("asset.ron").is_file(),
+                    }
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    olr_editor::browser::sort_entries(&mut out);
+    out
 }

@@ -57,6 +57,7 @@ fn the_canvas_draws_the_bake() {
         mods: vec![],
         home: None,
         textures: Vec::new(),
+        assets: Vec::new(),
     };
     let mut doc = Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog).unwrap();
     let settings = RenderSettings { filter: UpscaleFilter::SharpBilinear };
@@ -122,6 +123,7 @@ fn the_canvas_draws_lit() {
         mods: vec![],
         home: None,
         textures: Vec::new(),
+        assets: Vec::new(),
     };
     let mut doc = Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog).unwrap();
     let mut look = olr_format::look::LookSource::default();

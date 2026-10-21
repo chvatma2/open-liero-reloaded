@@ -15,9 +15,12 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   Vec<EditorCommand>` is pure; `ui::show(ui, &state, &mut EditorData)`
   draws egui and returns actions. The host carries out the commands
   (`Upload` a world rectangle of the bake, `Open`, `Create`, `Save`,
-  `Play`, `SaveSettings`, `List`, `ReadImage`, `RecoveryDone`, `Close`)
+  `Play`, `SaveSettings`, `List`, `ReadImage`, `RecoveryDone`, `Close`;
+  the libraries' `AddTexture`, `RemoveTexture`, `ReadAsset`, `SaveAsset`,
+  `ImportAsset`, `RemoveAsset`)
   and answers (`Opened`, `Recovered`: as `Opened` but unsaved, `OpenFailed`,
-  `Saved`, `PlayEnded`, `Listed`, `ImportImage`, `ImportFailed`; and
+  `Saved`, `PlayEnded`, `Listed`, `ImportImage`, `ImportFailed`,
+  `TexturesChanged`, `AssetsChanged`, `AssetSaved`, `AssetRead`; and
   `Failed(why)`, an error dialog, `Note(text)`, the status bar's message,
   for what the host could not do: a Play that did not start, a recovery
   copy not written).
@@ -32,7 +35,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   browser's `browse_dir`, plan 14c; whether the properties' "More" and the
   lighting's "Fine tuning" are open, issue #8).
 - **File browser** (`browser.rs`, `ui/browser.rs`, plan 14c R9): `Browse(
-  Purpose::{ImportImage, OpenPack})` opens it at `browse_dir`, else
+  Purpose::{ImportImage, OpenPack, ImportTexture, ImportAsset})` opens it at `browse_dir`, else
   `Catalog::home` (the host's home directory; else `.`), and asks
   `List(dir)`; `Listed` sorts (folders first,
   then by name case aside, then exactly) and `shown()` filters (no hidden
@@ -43,7 +46,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   typed path, relative to the browser's, `.` and `..` resolved by name)
   lists; `Pick` of a file reads it
   (`ReadImage`), of a pack folder opens it as `Open` does (the dialog
-  first), of another folder enters it; a pick remembers its folder
+  first), for `ImportAsset` of an asset folder (`DirEntry::is_asset`: it
+  holds `asset.ron`) sends `ImportAsset(path)`, of another folder enters it; a pick remembers its folder
   (`SaveSettings`) and closes the browser. For an import, a click on an
   image asks for its preview (`PreviewImage` → `ReadPreview`, answered by
   `Previewed`: the host's small copy and the image's size; kept for the
@@ -98,7 +102,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   last tool, `EditorState::last_tool`; a second click, the corner mark or
   a right click opens the flyout), Glow (named "Glow brush"), Spawn; on
   the right one panel (at least 260 points): the tabs Elements (drag a
-  name to reorder, eye and lock, Add layer) | Assets (a placeholder) |
+  name to reorder, eye and lock, Add layer) | Assets (issue #9, below) |
   Spawns (`PanelTab`, following the selection), then the selection's
   properties (Name, "What is it?", Glow with "Make parts glow…", Place;
   the rest under "More") or the level's (its Lighting's rarer values
@@ -224,7 +228,52 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     then removes), pasted at their places plus an offset that grows by
     (4, 4) each paste (`paste_objects`, one step, the last pasted
     selected; `objects_copy_cut_and_paste`).
-- **Tests** (`tests/`, one binary): `document.rs`, `history.rs` (the
+- **Asset library** (issue #9; STATUS.md "Level editor asset library
+  (issue #9)"; the format and operations are `olr_format::assets` and
+  `olr_edit::asset`):
+  - **Catalog**: `Catalog::assets` (`AssetEntry`: `AssetKey { builtin,
+    id }` (the folder), name, size, tags, glows, thumbnail; built-in first,
+    then the user's); `AssetsChanged` replaces them and bumps
+    `assets_generation` (the tab's thumbnail textures, cached in
+    `EditorData` by key, follow it).
+  - **Save as asset** (`SaveAsAsset`, the button at the bottom of an
+    element's or a group's properties): with a pixel rectangle,
+    `Document::asset_of_rect` of `pixel_world` (the dragged rectangle
+    within the level, not clipped to its layer as `pixel_rect` is: every
+    visible layer is cut); else `asset_of_elements` of the selection; a
+    colour selection is refused. It waits in `pending_asset` while
+    `Dialog::AssetName` asks its name (`NameAsset`: 1 to 64 characters,
+    else asked again); a name one of the user's assets has asks
+    `Dialog::AssetExists` (Replace: `Choice::Confirm`, over its folder;
+    Keep both: `Choice::KeepBoth`, renamed `copy_name`); then
+    `SaveAsset { asset, replace }`. The host answers `AssetsChanged` and
+    `AssetSaved(key)`, which selects it and shows the Assets tab.
+  - **Placing** (`asset_ops.rs`): a thumbnail clicked is picked
+    (`PickAsset`, a second click unpicks) and the next press on the canvas
+    places it there (`placing()`; Escape, `CancelPlacing`, or a tool
+    change stops); one dragged onto the canvas (egui's drag and drop, an
+    `AssetKey` payload) lands where let go; both outline its size at the
+    pointer. `PlaceAsset { key, at }` asks `ReadAsset`; `AssetRead`
+    places it with `Document::place_asset`: one step, its glow groups
+    first (`olr_edit::asset::with_groups`: joined by id, the level's
+    settings kept; missing ones added with the asset's; a level without a
+    look gets `LookSource::default()` and the status bar says
+    `ADDED_LIGHTING`), then each piece on top as a paste lands it (`land`,
+    shared with `paste_one`: new ids and names, the asset's name for one
+    piece, "<asset> <piece>" for several, resampled to the level's art
+    scale, masks kept); the new elements are selected. A placed asset is
+    ordinary elements.
+  - **The tab** (`ui/elements.rs`): thumbnails grouped `BUILT_IN` and
+    `YOURS`, each button named by the asset (`relabel`), its name and tag
+    under it ("rock, background, glows"); Import asset… (`Browse(
+    Purpose::ImportAsset)`); Remove asset for a picked one of yours,
+    asking first (`Dialog::RemoveAsset`, then `RemoveAsset(id)`); a
+    built-in one is never removed.
+- **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
+  clash, the rectangle unclipped and hidden layers left out, placing as one
+  step with lighting added, join and add, Remove, Import, and the
+  `egui_kittest` flow `save_and_place_through_the_panels`; the test host
+  keeps a library, `common::set_library`), `document.rs`, `history.rs` (the
   undo proptest, the cap), `state.rs` (a synchronous test host in
   `common.rs`), `tools.rs` (the ignored `brush_dab_speed`: about 2 ms in
   release for a size-16 dab on Castle Strike), `look.rs` (plan 15a: glow,

@@ -122,6 +122,15 @@ pub mod labels {
     pub const CLOCK_PLAY: &str = "Play lights";
     pub const CLOCK_PAUSE: &str = "Pause lights";
     pub const CLOCK_SCRUB: &str = "Time ms";
+    // The asset library (issue #9).
+    pub const SAVE_AS_ASSET: &str = "Save as asset…";
+    pub const IMPORT_ASSET: &str = "Import asset…";
+    pub const REMOVE_ASSET: &str = "Remove asset";
+    pub const ASSET_NAME: &str = "Asset name";
+    pub const REPLACE: &str = "Replace";
+    pub const KEEP_BOTH: &str = "Keep both";
+    pub const BUILT_IN: &str = "Built-in";
+    pub const YOURS: &str = "Yours";
 }
 
 /// Transient UI state: value and text drafts, the canvas rect last drawn,
@@ -156,6 +165,12 @@ pub struct EditorData {
     swatches: BTreeMap<String, egui::TextureHandle>,
     /// The user library's generation the `user/` swatches were made from.
     swatch_generation: u64,
+    /// The Assets tab's thumbnails by asset, of the library's generation
+    /// `asset_generation` (issue #9).
+    asset_thumbs: BTreeMap<crate::catalog::AssetKey, egui::TextureHandle>,
+    asset_generation: u64,
+    /// The asset name dialog's field, while it is open.
+    asset_name: Option<String>,
 }
 
 /// The file browser's drafts, for the directory shown.
@@ -210,7 +225,7 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
     // At least its first width: a narrow panel (a group's) never lets the
     // canvas grow under the pointer.
     egui::Panel::right("olr-editor-panel").default_size(260.0).min_size(260.0).show(ui, |ui| {
-        elements::show(ui, state, &mut list);
+        elements::show(ui, state, data, &mut list);
         ui.separator();
         egui::ScrollArea::vertical().id_salt("olr-editor-properties").show(ui, |ui| match state.selection() {
             Selection::None => level::show(ui, state, data, &mut fields),
@@ -222,7 +237,7 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
         .frame(egui::Frame::NONE)
         .show(ui, |ui| canvas::show(ui, state, data, &mut canvas));
     browser::show(ui.ctx(), state, data, &mut dialogs);
-    dialogs::show(ui.ctx(), state, &mut dialogs);
+    dialogs::show(ui.ctx(), state, data, &mut dialogs);
     // A draft whose field was not drawn this frame is dropped, never
     // committed later to whatever shows that field again.
     let drawn = std::mem::take(&mut data.drawn);
@@ -257,6 +272,9 @@ fn shortcuts(ui: &Ui, state: &EditorState, popup: bool, out: &mut Vec<EditorActi
         }
         if i.consume_key(Modifiers::NONE, Key::Delete) {
             out.push(EditorAction::Remove);
+        }
+        if !popup && state.placing() && i.consume_key(Modifiers::NONE, Key::Escape) {
+            out.push(EditorAction::CancelPlacing);
         }
         if !popup && state.pixel_rect().is_some() && i.consume_key(Modifiers::NONE, Key::Escape) {
             out.push(EditorAction::DropPixels);

@@ -40,6 +40,7 @@ fn list(dir: &Path) -> Result<Vec<DirEntry>, String> {
                 name: e.file_name().to_string_lossy().into_owned(),
                 is_dir,
                 is_pack: is_dir && e.path().join("pack.ron").is_file(),
+                is_asset: is_dir && e.path().join("asset.ron").is_file(),
             }
         })
         .collect())
@@ -298,7 +299,9 @@ fn the_host_names_the_first_folder() {
 fn a_cut_listing_says_so() {
     let Some((_doc, t, mut state)) = browsing(Purpose::OpenPack) else { return };
     let entries = |n: usize| -> Vec<DirEntry> {
-        (0..n).map(|i| DirEntry { name: format!("d{i:05}"), is_dir: true, is_pack: false }).collect()
+        (0..n)
+            .map(|i| DirEntry { name: format!("d{i:05}"), is_dir: true, is_pack: false, is_asset: false })
+            .collect()
     };
     let max = olr_editor::browser::MAX_ENTRIES;
     state.update(A::Listed { dir: t.path().to_path_buf(), entries: Ok(entries(max)) });
@@ -308,7 +311,7 @@ fn a_cut_listing_says_so() {
     let msg = state.browser().unwrap().message().unwrap_or_default().to_string();
     assert!(msg.contains("first 10000"), "{msg}");
     assert_eq!(state.browser().unwrap().shown().len(), max);
-    let mut few = vec![DirEntry { name: "b".into(), is_dir: true, is_pack: false }];
+    let mut few = vec![DirEntry { name: "b".into(), is_dir: true, is_pack: false, is_asset: false }];
     olr_editor::browser::sort_entries(&mut few);
     state.update(A::Listed { dir: t.path().to_path_buf(), entries: Ok(few) });
     assert_eq!(state.browser().unwrap().message(), None);

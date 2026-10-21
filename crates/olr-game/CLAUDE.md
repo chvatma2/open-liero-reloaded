@@ -807,7 +807,19 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   header, the cap counted by name, a unique portable name, written through
   a hidden `.part`) and `RemoveTexture` (`remove_texture`, plain names
   only) answer `TexturesChanged` with the library re-listed, and `Failed`
-  when the change failed. A Ctrl+V egui-winit swallowed (an empty system
+  when the change failed. Issue #9, the asset library: the built-in
+  assets are `olr_content::assets_dir` of the last bundled root
+  (`content/assets` beside `content/packs`, read-only, listed once at
+  `new`), the user's `Store::assets_dir()` (`assets/`), both listed by
+  `files::list_assets` (`olr_edit::asset::list_library`: each folder's
+  summary, the user's capped at `MAX_USER_ASSETS`, a folder that does not
+  read a warning) into `Catalog::assets`, built-in first. `ReadAsset`
+  answers `AssetRead` (`load_dir`, a valid folder id only); `SaveAsset`
+  (`add_to_library`), `ImportAsset` (`import_into_library`) and
+  `RemoveAsset` (`remove_from_library`) answer `AssetsChanged` and, for a
+  folder written, `AssetSaved`, or `Failed` (`EditorHost::assets`). The
+  built-in folder is never written (`tests/editor_host.rs`'s
+  `assets_are_listed_saved_placed_and_removed`). A Ctrl+V egui-winit swallowed (an empty system
   clipboard: it sends no key and no paste) is given to egui as an empty
   `Event::Paste` (`app::paste_swallowed`, the window's modifiers kept in
   `App::modifiers`), so the editor's own clipboard pastes.

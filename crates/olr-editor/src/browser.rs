@@ -18,6 +18,9 @@ pub enum Purpose {
     OpenPack,
     /// A PNG or JPEG to add to the user's textures (plan 14e R2).
     ImportTexture,
+    /// An asset folder (holding `asset.ron`) to add to the user's assets
+    /// (issue #9).
+    ImportAsset,
 }
 
 impl Purpose {
@@ -34,6 +37,8 @@ pub struct DirEntry {
     pub is_dir: bool,
     /// A folder holding `pack.ron`.
     pub is_pack: bool,
+    /// A folder holding `asset.ron` (issue #9).
+    pub is_asset: bool,
 }
 
 /// The most entries a listing holds: the host lists a larger directory's

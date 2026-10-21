@@ -18,6 +18,42 @@ pub struct Catalog {
     pub home: Option<PathBuf>,
     /// The user's own textures (plan 14e R2), in the host's order.
     pub textures: Vec<TextureEntry>,
+    /// The asset library (issue #9): the built-in assets, then the user's,
+    /// each in the host's order.
+    pub assets: Vec<AssetEntry>,
+}
+
+/// An asset of the library, by where it is: built in (shipped with the
+/// game, read-only) or the user's, and its folder's name.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AssetKey {
+    pub builtin: bool,
+    pub id: String,
+}
+
+/// What the Assets tab shows of an asset (`olr_edit::asset::Summary`):
+/// its name, size in world pixels, what its elements are, whether it
+/// glows, and its thumbnail (none when absent or bad).
+#[derive(Clone, Debug, PartialEq)]
+pub struct AssetEntry {
+    pub key: AssetKey,
+    pub name: String,
+    pub size: (u32, u32),
+    pub tags: Vec<&'static str>,
+    pub glows: bool,
+    pub thumb: Option<RgbaImage>,
+}
+
+impl AssetEntry {
+    /// The tag under its thumbnail: what it is ("rock, background"), and
+    /// "glows".
+    pub fn tag(&self) -> String {
+        let mut words: Vec<&str> = self.tags.clone();
+        if self.glows {
+            words.push("glows");
+        }
+        words.join(", ")
+    }
 }
 
 /// A texture of the user's library: its name and its image.

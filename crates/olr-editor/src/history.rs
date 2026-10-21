@@ -109,6 +109,19 @@ pub struct Snapshot {
     pub glow_mask: Option<Arc<Vec<u8>>>,
 }
 
+impl Snapshot {
+    /// The snapshot as a piece of `olr_edit::asset` (pastes and assets
+    /// share its operations).
+    pub fn piece(&self) -> olr_edit::asset::PieceRef<'_> {
+        olr_edit::asset::PieceRef {
+            element: &self.item.element,
+            decoded: &self.item.decoded,
+            original: self.original.as_ref(),
+            glow_mask: self.glow_mask.as_ref(),
+        }
+    }
+}
+
 /// The level's settings besides its size and art scale.
 #[derive(Clone, Debug, PartialEq)]
 pub struct LevelMeta {

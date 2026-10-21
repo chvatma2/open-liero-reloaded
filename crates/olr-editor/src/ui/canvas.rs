@@ -6,6 +6,7 @@
 use egui::{Color32, Key, Pos2, Sense, Stroke, StrokeKind, Ui};
 
 use super::{EditorData, labels};
+use crate::catalog::AssetKey;
 use crate::state::{EditorAction, EditorState};
 use crate::tools::{BrushShape, Overlay, PointerKind};
 
@@ -67,7 +68,17 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     } else if let Some(p) = pos {
         let w = world(p);
         let mut send = |kind| out.push(EditorAction::Pointer { kind, world: w, shift, toggle });
-        if pressed && over && state.dialog().is_none() && state.browser().is_none() {
+        if pressed
+            && over
+            && state.placing()
+            && state.dialog().is_none()
+            && state.browser().is_none()
+            && let Some(key) = state.picked_asset()
+        {
+            // A picked asset lands where pressed (issue #9).
+            egui::Popup::close_all(ui.ctx());
+            out.push(EditorAction::PlaceAsset { key: key.clone(), at: w });
+        } else if pressed && over && state.dialog().is_none() && state.browser().is_none() {
             // A press on the canvas closes a flyout or menu left open (a
             // stroke is no click: it would not close it).
             egui::Popup::close_all(ui.ctx());
@@ -79,6 +90,13 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
             send(PointerKind::Move);
         }
         data.last_world = Some(w);
+    }
+    // An asset dragged from the Assets tab lands where it is let go.
+    let carried = egui::DragAndDrop::payload::<AssetKey>(ui.ctx());
+    if let Some(key) = response.dnd_release_payload::<AssetKey>()
+        && let Some(p) = pos
+    {
+        out.push(EditorAction::PlaceAsset { key: (*key).clone(), at: world(p) });
     }
     if over
         && scroll != 0
@@ -160,6 +178,29 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
                 painter.circle_stroke(c, 6.0, Stroke::new(1.0, Color32::BLACK));
             }
         }
+    }
+    // Where an asset picked or carried would land: its box at the pointer.
+    let landing = carried
+        .map(|k| (*k).clone())
+        .or_else(|| state.placing().then(|| state.picked_asset().cloned()).flatten());
+    if over
+        && let (Some(key), Some(p)) = (landing, pos)
+        && let Some(a) = state.asset(&key)
+    {
+        let at = world(p);
+        let b = egui::Rect::from_min_max(
+            screen(at),
+            screen((at.0.saturating_add(a.size.0 as i32), at.1.saturating_add(a.size.1 as i32))),
+        );
+        painter.rect_filled(b, 0.0, Color32::from_white_alpha(24));
+        painter.rect_stroke(b, 0.0, Stroke::new(1.0, Color32::YELLOW), StrokeKind::Outside);
+        painter.text(
+            b.left_top() - egui::vec2(0.0, 2.0),
+            egui::Align2::LEFT_BOTTOM,
+            &a.name,
+            egui::FontId::proportional(12.0),
+            Color32::YELLOW,
+        );
     }
 }
 

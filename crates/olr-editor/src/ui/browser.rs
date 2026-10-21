@@ -69,6 +69,7 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
         Purpose::ImportImage => "Import an image (PNG or JPEG)",
         Purpose::ImportTexture => "Import a texture (PNG or JPEG, at most 512 × 512)",
         Purpose::OpenPack => "Open a level pack",
+        Purpose::ImportAsset => "Import an asset (a folder holding asset.ron)",
     };
     let modal = egui::Modal::new(egui::Id::new("olr-editor-browser")).show(ctx, |ui| {
         ui.set_width(620.0);
@@ -104,6 +105,8 @@ pub(super) fn show(ctx: &Context, state: &EditorState, data: &mut EditorData, ou
                     for e in shown {
                         let text = if e.is_pack {
                             format!("📦 {}", e.name)
+                        } else if e.is_asset {
+                            format!("🧩 {}", e.name)
                         } else if e.is_dir {
                             format!("📁 {}", e.name)
                         } else {

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::manifest::PackKind;
 use olr_editor::browser::DirEntry;
-use olr_editor::catalog::TextureEntry;
+use olr_editor::catalog::{AssetEntry, AssetKey, TextureEntry};
 
 /// The largest image an import reads (from its metadata, before reading).
 pub const MAX_IMPORT_BYTES: u64 = 64 << 20;
@@ -67,7 +67,7 @@ pub fn list(dir: &Path) -> Result<Vec<DirEntry>, String> {
                 Err(_) => false,
             };
             let name = e.file_name().to_string_lossy().into_owned();
-            (DirEntry { name, is_dir, is_pack: false }, path)
+            (DirEntry { name, is_dir, is_pack: false, is_asset: false }, path)
         })
         .collect();
     entries.sort_by_cached_key(|e| olr_editor::browser::sort_key(&e.0));
@@ -77,6 +77,7 @@ pub fn list(dir: &Path) -> Result<Vec<DirEntry>, String> {
         .into_iter()
         .map(|(mut e, path)| {
             e.is_pack = e.is_dir && path.join(olr_pack::MANIFEST).is_file();
+            e.is_asset = e.is_dir && path.join(olr_format::assets::ASSET_FILE).is_file();
             e
         })
         .collect())
@@ -315,4 +316,24 @@ pub fn remove_texture(dir: &Path, name: &str) -> Result<(), String> {
         return Err(format!("{name:?} is no texture's name"));
     }
     std::fs::remove_file(dir.join(format!("{name}.png"))).map_err(|e| format!("texture {name}: {e}"))
+}
+
+/// The asset library `dir` (issue #9) as the Assets tab lists it: each
+/// asset's summary (`olr_edit::asset::list_library`, at most `max`), keyed
+/// built-in or the user's; the folders that do not read as warnings. A
+/// missing directory is an empty library.
+pub fn list_assets(dir: &Path, builtin: bool, max: usize) -> (Vec<AssetEntry>, Vec<String>) {
+    let (list, warnings) = olr_edit::asset::list_library(dir, max);
+    let entries = list
+        .into_iter()
+        .map(|(id, s)| AssetEntry {
+            key: AssetKey { builtin, id },
+            name: s.name,
+            size: s.size,
+            tags: s.tags,
+            glows: s.glows,
+            thumb: s.thumb,
+        })
+        .collect();
+    (entries, warnings)
 }

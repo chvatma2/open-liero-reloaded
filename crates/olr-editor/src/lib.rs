@@ -4,6 +4,7 @@
 //! as pure state a host drives (`olr-game`, plan 14c).
 #![forbid(unsafe_code)]
 
+pub mod asset_ops;
 pub mod browser;
 pub mod catalog;
 pub mod clipboard;
@@ -17,7 +18,7 @@ pub mod tools;
 pub mod ui;
 pub mod view;
 
-pub use catalog::{Catalog, EditorSettings, ModEntry, ThemeEntry};
+pub use catalog::{AssetEntry, AssetKey, Catalog, EditorSettings, ModEntry, ThemeEntry};
 pub use document::{DocError, Document, Item, PackSnapshot, Problem};
 pub use history::{Edit, History, LevelMeta};
 pub use olr_pack::Severity;

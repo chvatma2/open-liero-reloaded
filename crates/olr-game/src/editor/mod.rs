@@ -12,7 +12,7 @@ mod recovery;
 
 pub use files::{
     MAX_ENTRIES, MAX_IMPORT_BYTES, PREVIEW_SIDE, add_texture, editable_levels, level_dirs, list as list_dir,
-    list_textures, remove_texture,
+    list_assets, list_textures, remove_texture,
 };
 pub use recovery::{INFO_FILE, RecoveryInfo, discard_recovery, list_recoveries};
 
@@ -67,6 +67,11 @@ pub struct EditorHost {
     packs_dir: Option<PathBuf>,
     /// The user's texture library (plan 14e R2).
     textures_dir: Option<PathBuf>,
+    /// The asset library (issue #9): the user's (`<data>/assets`) and the
+    /// built-in one (`content/assets`, read-only), listed once.
+    assets_dir: Option<PathBuf>,
+    builtin_assets_dir: Option<PathBuf>,
+    builtin_assets: Vec<olr_editor::catalog::AssetEntry>,
     recovery_dir: Option<PathBuf>,
     /// The content layers, the data directory's packs first.
     roots: Vec<PathBuf>,
@@ -121,8 +126,26 @@ impl EditorHost {
             warnings.extend(why);
         }
         let packs_dir = store.packs_dir();
-        let bundled =
+        let bundled: Vec<PathBuf> =
             roots.iter().filter(|r| Some(**r) != packs_dir.as_deref()).map(|r| r.to_path_buf()).collect();
+        // The built-in assets are beside the content directory, the last
+        // root (`olr_content::bundled_roots`).
+        let builtin_assets_dir = bundled.last().and_then(|c| olr_content::assets_dir(c));
+        let builtin_assets = match &builtin_assets_dir {
+            Some(dir) => {
+                let (list, why) = files::list_assets(dir, true, usize::MAX);
+                warnings.extend(why);
+                list
+            }
+            None => Vec::new(),
+        };
+        let assets_dir = store.assets_dir();
+        catalog.assets = builtin_assets.clone();
+        if let Some(dir) = &assets_dir {
+            let (list, why) = files::list_assets(dir, false, olr_edit::asset::MAX_USER_ASSETS);
+            catalog.assets.extend(list);
+            warnings.extend(why);
+        }
         Ok(EditorHost {
             state: EditorState::new(loaded.value.unwrap_or_default(), catalog),
             data: EditorData::default(),
@@ -131,6 +154,9 @@ impl EditorHost {
             store: store.clone(),
             packs_dir,
             textures_dir,
+            assets_dir,
+            builtin_assets_dir,
+            builtin_assets,
             recovery_dir: store.recovery_dir(),
             roots: roots.iter().map(|r| r.to_path_buf()).collect(),
             bundled,
@@ -324,6 +350,39 @@ impl EditorHost {
         }
     }
 
+    /// Changes the user's asset library with `change` (giving the folder
+    /// written, if any), then answers with the library as it now is and the
+    /// asset saved, or why the change failed.
+    fn assets(
+        &mut self,
+        queue: &mut VecDeque<EditorAction>,
+        change: impl FnOnce(&Path) -> Result<Option<String>, String>,
+    ) {
+        let Some(dir) = self.assets_dir.clone() else {
+            queue.push_back(EditorAction::Failed("assets need a data directory to be kept in".into()));
+            return;
+        };
+        let done = change(&dir);
+        let (list, warnings) = files::list_assets(&dir, false, olr_edit::asset::MAX_USER_ASSETS);
+        queue.push_back(EditorAction::AssetsChanged(
+            self.builtin_assets.iter().cloned().chain(list).collect(),
+        ));
+        match done {
+            Err(why) => queue.push_back(EditorAction::Failed(why)),
+            Ok(saved) => {
+                if let Some(id) = saved {
+                    queue.push_back(EditorAction::AssetSaved(olr_editor::catalog::AssetKey {
+                        builtin: false,
+                        id,
+                    }));
+                }
+                if !warnings.is_empty() {
+                    queue.push_back(EditorAction::Note(warnings.join("; ")));
+                }
+            }
+        }
+    }
+
     fn carry(&mut self, c: EditorCommand, queue: &mut VecDeque<EditorAction>, out: &mut Vec<HostOut>) {
         match c {
             EditorCommand::Upload(r) => {
@@ -390,6 +449,31 @@ impl EditorHost {
             EditorCommand::RemoveTexture(name) => {
                 self.textures(queue, |dir| files::remove_texture(dir, &name).map(|()| None))
             }
+            EditorCommand::ReadAsset { key, at } => {
+                let dir = if key.builtin { &self.builtin_assets_dir } else { &self.assets_dir };
+                let asset = match dir {
+                    Some(dir) if olr_edit::asset::valid_asset_id(&key.id) => {
+                        olr_edit::asset::load_dir(&dir.join(&key.id))
+                            .map(Box::new)
+                            .map_err(|e| format!("asset {}: {e}", key.id))
+                    }
+                    _ => Err(format!("no asset {:?}", key.id)),
+                };
+                queue.push_back(EditorAction::AssetRead { at, asset });
+            }
+            EditorCommand::SaveAsset { asset, replace } => self.assets(queue, |dir| {
+                olr_edit::asset::add_to_library(dir, &asset, replace.as_deref())
+                    .map(Some)
+                    .map_err(|e| format!("saving the asset: {e}"))
+            }),
+            EditorCommand::ImportAsset(path) => self.assets(queue, |dir| {
+                olr_edit::asset::import_into_library(dir, &path)
+                    .map(Some)
+                    .map_err(|e| format!("importing {}: {e}", path.display()))
+            }),
+            EditorCommand::RemoveAsset(id) => self.assets(queue, |dir| {
+                olr_edit::asset::remove_from_library(dir, &id).map(|()| None).map_err(|e| e.to_string())
+            }),
             EditorCommand::RecoveryDone => {
                 self.dirty_since = None;
                 // A copy still being written would come back after the removal.

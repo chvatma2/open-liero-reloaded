@@ -475,7 +475,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   when absent; a name that is not a plain `.ron` file of its own, or one of
   the store's own files, is refused); `recovery_dir()` (`recovery/`, the
   editor's copies); `textures_dir()` (`textures/`, the editor's texture
-  library, plan 14e).
+  library, plan 14e); `assets_dir()` (`assets/`, the editor's asset
+  library of the user's, issue #9).
   Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
   struct `#[serde(default)]`, atomic writes (temporary file, sync,
   rename). An undecodable file gives defaults and a warning and is moved

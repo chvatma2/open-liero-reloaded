@@ -15,6 +15,17 @@ pub const CONTENT_DIR: &str = "content/packs";
 /// imported packs, and shipped with them.
 pub const RELOADED_DIR: &str = "reloaded";
 
+/// The directory of the built-in level editor assets, beside a content
+/// directory (so `content/assets` beside `content/packs`, issue #9):
+/// read-only, shipped with the packs.
+pub const ASSETS_DIR: &str = "assets";
+
+/// The built-in assets' directory of content directory `content`
+/// ([`ASSETS_DIR`] beside it; it may not exist).
+pub fn assets_dir(content: &Path) -> Option<PathBuf> {
+    content.parent().map(|dir| dir.join(ASSETS_DIR))
+}
+
 /// `<exe dir>/content/packs` when that directory exists (`exe` is the
 /// running executable's path, `std::env::current_exe()`), else
 /// `content/packs` relative to the working directory.
