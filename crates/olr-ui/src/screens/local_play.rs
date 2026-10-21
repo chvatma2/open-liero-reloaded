@@ -1,19 +1,23 @@
 //! Local play's setup (OLX's local game menu,
 //! `src/client/DeprecatedGUI/Menu_Local.cpp`, and its game settings
 //! dialog): the mod, the level grid with thumbnails and sizes, the
-//! Deathmatch settings, the bots, the human's profile, and Start. Laid
-//! out anew in the page frame: the map on the left, the match and the
-//! players (the human's profile, the bots) in panels on the right, Start
-//! centred below.
+//! loadout and the Deathmatch rules, the human's profile and the bots, and
+//! Start. Laid out anew in the page frame: the map on the left, the match
+//! and the players in panels on the right, Start centred below. Issue #5
+//! made it simpler: the weapons, their loading time and the unique rule
+//! are the loadout's (`Edit loadouts…`), each bot's difficulty, the
+//! personality and the bots' weapons are behind "Advanced…", and bonuses
+//! are gone.
 
 use egui::{Color32, ComboBox, RichText, ScrollArea, Sense, Slider, Ui, Vec2};
 
 use super::{
-    MenuData, columns, footer, form_check_row, form_row, message, page, primary, section, tall_section,
+    MenuData, columns, footer, form_check_row, form_row, loadouts, message, page, primary, section,
+    tall_section,
 };
+use crate::loadouts::OwnLoadouts;
 use crate::match_prefs::{
-    BotLevel, BotLoadout, BotPersonality, KILL_LIMIT_RANGE, LIVES_RANGE, LOADING_TIME_RANGE, MAX_BOTS,
-    MatchPrefs, TIME_LIMIT_RANGE,
+    BotLevel, BotPersonality, KILL_LIMIT_RANGE, LIVES_RANGE, MAX_BOTS, MatchPrefs, TIME_LIMIT_RANGE,
 };
 use crate::state::{UiAction, UiState};
 
@@ -39,13 +43,15 @@ const TIME_LIMIT_ON: f32 = 6.0;
 
 pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut Vec<UiAction>) {
     let before = state.settings().gameplay.match_prefs.clone();
+    let own = state.loadouts();
     let mut p = before.clone();
     // A saved mod or level that is no longer imported: the first listed.
     if data.catalog.mod_info(&p.mod_id).is_none()
         && let Some(m) = data.catalog.mods.first()
     {
-        p.set_mod(m);
+        p.set_mod(m, own);
     }
+    loadouts::refresh(data, own, &mut p);
     if data.catalog.level(&p.level_id).is_none()
         && let Some(l) = data.catalog.levels.first()
     {
@@ -69,7 +75,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     let ui = &mut ui;
     columns(ui, 2, |c| {
         tall_section(&mut c[0], "Map", |ui, _| {
-            mod_picker(ui, data, &mut p);
+            mod_picker(ui, data, own, &mut p);
             ui.add_space(8.0);
             ScrollArea::vertical().id_salt("local play levels").auto_shrink([false, false]).show(ui, |ui| {
                 level_grid(ui, data, &mut p);
@@ -77,9 +83,8 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         });
         ScrollArea::vertical().id_salt("local play setup").show(&mut c[1], |ui| {
             section(ui, "Match (Deathmatch)", |ui, _| {
-                if rules(ui, data, &mut p) {
-                    p = olx_match(data, &p);
-                }
+                loadouts::picker(ui, data, own, &mut p, true);
+                rules(ui, &mut p);
             });
             ui.add_space(SECTION_GAP);
             // The human, then the bots.
@@ -100,10 +105,14 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
                         .labelled_by(label);
                     profiles.selected = selected;
                 });
-                bots(ui, &mut p);
+                bots(ui, data, &mut p);
             });
         });
     });
+    if let Some(l) = loadouts::editor(ui.ctx(), data, own, out) {
+        p.weapons = l;
+    }
+    loadouts::bots_window(ui.ctx(), data, &mut p);
     // The changes first, so a Start in the same frame starts them.
     if p != before {
         out.push(UiAction::SetMatch(p));
@@ -116,7 +125,9 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     }
 }
 
-pub(super) fn mod_picker(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
+/// The mod picker; a new mod keeps the loadout's name when it has one of
+/// that name (`MatchPrefs::set_mod`).
+pub(super) fn mod_picker(ui: &mut Ui, data: &MenuData, own: &OwnLoadouts, p: &mut MatchPrefs) {
     let name = data
         .catalog
         .mod_info(&p.mod_id)
@@ -129,7 +140,7 @@ pub(super) fn mod_picker(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) {
             .show_ui(ui, |ui| {
                 for m in &data.catalog.mods {
                     if ui.selectable_label(m.id == p.mod_id, &m.name).clicked() {
-                        p.set_mod(m);
+                        p.set_mod(m, own);
                     }
                 }
             })
@@ -206,20 +217,9 @@ pub(crate) fn fit(size: Vec2, rect: egui::Rect) -> egui::Rect {
     egui::Rect::from_center_size(rect.center(), size * k)
 }
 
-/// The match OLX starts with: its rules, bots and weapons, the mod and
-/// level kept (the mod's presets decide the weapons).
-pub(super) fn olx_match(data: &MenuData, p: &MatchPrefs) -> MatchPrefs {
-    let mut d =
-        MatchPrefs { mod_id: p.mod_id.clone(), level_id: p.level_id.clone(), ..MatchPrefs::default() };
-    if let Some(m) = data.catalog.mod_info(&d.mod_id) {
-        d.set_mod(m);
-    }
-    d
-}
-
 /// OLX's Deathmatch settings: a rule switched off says so in place of
-/// its slider. True when the player asked for OLX's match back.
-pub(super) fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) -> bool {
+/// its slider.
+pub(super) fn rules(ui: &mut Ui, p: &mut MatchPrefs) {
     let r = &mut p.rules;
     form_check_row(ui, r.lives >= 0, "Lives", |ui, on, changed| {
         if changed {
@@ -255,32 +255,6 @@ pub(super) fn rules(ui: &mut Ui, data: &MenuData, p: &mut MatchPrefs) -> bool {
             ui.label(RichText::new("off").weak());
         }
     });
-    form_row(ui, "Loading time", |ui, _| {
-        ui.add(Slider::new(&mut p.loading_time, LOADING_TIME_RANGE).suffix(" %"));
-    });
-    form_row(ui, "Weapons", |ui, label| {
-        let presets = data.catalog.mod_info(&p.mod_id).map(|m| m.presets.clone()).unwrap_or_default();
-        ComboBox::from_id_salt("restrictions")
-            .selected_text(p.restrictions.clone())
-            .width(COMBO_W)
-            .show_ui(ui, |ui| {
-                for name in presets {
-                    let checked = name == p.restrictions;
-                    if ui.selectable_label(checked, &name).clicked() {
-                        p.restrictions = name;
-                    }
-                }
-            })
-            .response
-            .labelled_by(label);
-    });
-    form_row(ui, "", |ui, _| {
-        ui.checkbox(&mut p.bonuses, "Bonuses");
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.button("Reset the match to OLX's settings").clicked()
-        })
-        .inner
-    })
 }
 
 fn level_name(l: BotLevel) -> &'static str {
@@ -335,46 +309,31 @@ pub(super) fn personality_combo(
         .labelled_by(label);
 }
 
-/// The bots: how many, their difficulty (one for all or each its own),
-/// personality and loadout.
-fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
+/// The bots: how many and their difficulty (each its own, the
+/// personality and their weapons in "Advanced…").
+fn bots(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs) {
     form_row(ui, "Bots", |ui, label| {
         let mut n = p.bots;
         if ui.add(Slider::new(&mut n, 1..=MAX_BOTS)).labelled_by(label).changed() {
             p.set_bots(n);
         }
     });
-    form_row(ui, "", |ui, _| {
-        let mut each = p.per_bot.is_some();
-        if ui.checkbox(&mut each, "Each bot its own difficulty").changed() {
-            p.set_per_bot(each);
+    difficulty(ui, data, p, "difficulty");
+}
+
+/// "Difficulty" (one for every bot; "each its own" when set apart) and
+/// "Advanced…", which opens the bots window.
+pub(super) fn difficulty(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs, id: &str) {
+    form_row(ui, "Difficulty", |ui, label| {
+        if p.per_bot.is_some() {
+            ui.label(RichText::new("each bot its own").weak());
+        } else {
+            level_combo(ui, label, id, &mut p.difficulty);
         }
     });
-    match &mut p.per_bot {
-        None => {
-            form_row(ui, "Difficulty", |ui, label| level_combo(ui, label, "difficulty", &mut p.difficulty))
+    form_row(ui, "", |ui, _| {
+        if ui.button("Advanced…").clicked() {
+            data.bots_open = true;
         }
-        Some(levels) => {
-            for (i, l) in levels.iter_mut().enumerate() {
-                form_row(ui, &format!("Bot {}", i + 1), |ui, label| level_combo(ui, label, ("bot", i), l));
-            }
-        }
-    }
-    form_row(ui, "Personality", |ui, label| personality_combo(ui, label, "personality", &mut p.personality));
-    form_row(ui, "Loadout", |ui, label| {
-        let name = |b: BotLoadout| match b {
-            BotLoadout::OlxPreset => "OLX's choice",
-            BotLoadout::Random => "Random",
-        };
-        ComboBox::from_id_salt("loadout")
-            .selected_text(name(p.loadout))
-            .width(COMBO_W)
-            .show_ui(ui, |ui| {
-                for b in [BotLoadout::OlxPreset, BotLoadout::Random] {
-                    ui.selectable_value(&mut p.loadout, b, name(b));
-                }
-            })
-            .response
-            .labelled_by(label);
     });
 }

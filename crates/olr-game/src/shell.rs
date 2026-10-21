@@ -148,6 +148,8 @@ pub struct Shell {
     launches: u32,
     unsaved_settings: Option<Settings>,
     unsaved_profiles: Option<Profiles>,
+    /// The own loadouts to write (`loadouts.ron`, issue #5).
+    unsaved_loadouts: Option<olr_ui::OwnLoadouts>,
     /// The settings as the log last said them (changes are logged).
     logged_settings: Settings,
     /// Warnings logged once.
@@ -280,6 +282,7 @@ impl Shell {
             launches: 0,
             unsaved_settings: None,
             unsaved_profiles: None,
+            unsaved_loadouts: None,
             logged_settings,
             logged: BTreeSet::new(),
             content: None,
@@ -319,6 +322,9 @@ impl Shell {
             report_send: None,
             updater: None,
         };
+        let loaded = shell.store.load_file::<olr_ui::OwnLoadouts>(olr_ui::LOADOUTS_FILE);
+        let fixed = shell.ui.set_loadouts(loaded.value.unwrap_or_default());
+        shell.log(loaded.warnings.into_iter().chain(fixed).collect::<Vec<_>>());
         shell.set_report_url(crate::report::endpoint(std::env::var(crate::report::URL_VAR).ok()));
         shell.set_updater(crate::update::Updater::of_build());
         shell.data.default_relays = DEFAULT_RELAYS.iter().map(|r| r.to_string()).collect();
@@ -351,6 +357,7 @@ impl Shell {
             launches: 1,
             unsaved_settings: None,
             unsaved_profiles: None,
+            unsaved_loadouts: None,
             logged_settings: Settings::default(),
             logged: BTreeSet::new(),
             content: None,
@@ -575,6 +582,7 @@ impl Shell {
                 self.unsaved_settings = Some(s);
             }
             AppCommand::SaveProfiles(p) => self.unsaved_profiles = Some(p),
+            AppCommand::SaveLoadouts(l) => self.unsaved_loadouts = Some(l),
             AppCommand::HostGame(prefs) => {
                 let started = self.start_host(&prefs);
                 self.connected(started.map(|()| true), out);
@@ -750,7 +758,7 @@ impl Shell {
                     level_id: String::new(),
                     seed: 1,
                     targets: SANDBOX_TARGETS,
-                    bonuses: m.bonuses,
+                    bonuses: false,
                 };
                 setup::load(&root, &m.mod_id, &m.level_id, &profile.skin_id, o)?
             }
@@ -1000,7 +1008,7 @@ impl Shell {
         out
     }
 
-    /// Writes the settings and profiles changed since the last call (the
+    /// Writes the settings, profiles and own loadouts changed since the last call (the
     /// app calls it about once a second, so a dragged slider is not saved
     /// every frame); a failure is a warning.
     pub fn flush(&mut self) {
@@ -1017,6 +1025,11 @@ impl Shell {
             && let Err(e) = self.store.save_profiles(&p)
         {
             log::warn!("saving the profiles: {e:#}");
+        }
+        if let Some(l) = self.unsaved_loadouts.take()
+            && let Err(e) = self.store.save_file(olr_ui::LOADOUTS_FILE, &l)
+        {
+            log::warn!("saving the loadouts: {e:#}");
         }
     }
 
@@ -1043,11 +1056,12 @@ impl Shell {
 }
 
 /// The weapon selection's menu for `a`'s game: a Deathmatch's mod weapons
-/// with its restrictions (`None` for another game).
+/// with its loadout's (`None` for another game).
 pub fn weapon_menu(a: &Assets) -> Option<WeaponMenu> {
     let Game::Deathmatch { options, .. } = &a.game else { return None };
     let rules = a.m.rules(&options.weapons);
     let names: Vec<String> = a.m.sim.weapons().iter().map(|w| w.name.clone()).collect();
     let enabled = names.iter().map(|n| rules.is_enabled(n)).collect();
-    Some(WeaponMenu { names, enabled, fallback: rules.find_enabled_weapon(), seed: options.seed })
+    let (fallback, unique) = (rules.find_enabled_weapon(), rules.unique());
+    Some(WeaponMenu { names, enabled, fallback, seed: options.seed, unique })
 }

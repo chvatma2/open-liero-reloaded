@@ -7,6 +7,7 @@
 #![forbid(unsafe_code)]
 
 pub mod hud;
+pub mod loadouts;
 pub mod match_prefs;
 pub mod online;
 pub mod profiles;
@@ -21,6 +22,7 @@ pub mod theme;
 pub mod update;
 pub mod weapon_select;
 
+pub use loadouts::{LOADOUTS_FILE, OwnLoadouts};
 pub use match_prefs::{
     BotLevel, BotLoadout, BotPersonality, KILL_LIMIT_RANGE, LIVES_RANGE, LOADING_TIME_RANGE, MAX_BOTS,
     MatchPrefs, RulePrefs, TIME_LIMIT_RANGE,

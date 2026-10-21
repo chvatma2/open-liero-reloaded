@@ -21,7 +21,9 @@ use olr_content::{Content, DownloadCache, InstallError, WeaponChoice};
 use olr_lobby::NotStartable;
 use olr_net::lan::{Announcer, LanGame};
 use olr_online::content::{Download, DownloadState};
-use olr_online::matches::{bot_config, bot_wire, deathmatch, loadout_of, rules_wire, setup_packs};
+use olr_online::matches::{
+    bot_config, bot_wire, deathmatch, loadout_of, loadout_wire, rules_wire, setup_packs,
+};
 use olr_online::{NetStats, OnlinePeer, StartError};
 use olr_proto::{
     ItemKind, LanAnnounce, LoadoutWire, LobbyState, Look, MatchSetupWire, Member, Phase, SeatWire,
@@ -334,9 +336,9 @@ fn level_of(d: Difficulty) -> BotLevel {
     }
 }
 
-/// The lobby's setup as the menus' match panels show it: the bots' common
-/// difficulty (each one's when they differ), personality and loadout from
-/// the first bot. A bot whose wire numbers are out of range counts with
+/// The lobby's setup as the menus' match panels show it: the host's
+/// loadout (`loadout_of`), the bots' common difficulty (each one's when
+/// they differ), personality and weapon choice from the first bot. A bot whose wire numbers are out of range counts with
 /// the defaults (the lobby refuses such a setup anyway).
 pub fn prefs_of(s: &MatchSetupWire) -> MatchPrefs {
     let bots: Vec<BotConfig> = s.bots.iter().map(|b| bot_config(b).unwrap_or_default()).collect();
@@ -359,17 +361,16 @@ pub fn prefs_of(s: &MatchSetupWire) -> MatchPrefs {
             LoadoutPolicy::Random => BotLoadout::Random,
         },
         rules: RulePrefs::from(&deathmatch(&s.rules)),
-        bonuses: false,
-        restrictions: olr_content::DEFAULT_PRESET.into(),
-        loading_time: s.loadout.loading_time,
+        weapons: loadout_of(&s.loadout),
     }
 }
 
 /// The lobby's setup of the menus' `p` (not through `MatchPrefs::sanitize`:
 /// a lobby of people may have no bot): `packs` (its mod's, level's and
 /// theme's with their content hashes: `setup_packs`, `Net::packs`), the
-/// bots named "Bot N" in OLX's bot colours away from `host_colour`, in the
-/// default skin.
+/// loadout in full (`Default` when too large to send: `loadout_wire`,
+/// logged), the bots named "Bot N" in OLX's bot colours away from
+/// `host_colour`, in the default skin.
 pub fn setup_of(p: &MatchPrefs, packs: Vec<(String, String)>, host_colour: [u8; 3]) -> MatchSetupWire {
     let n = usize::from(p.bots);
     let colours = olr_ui::bot_colours(host_colour, n);
@@ -395,7 +396,13 @@ pub fn setup_of(p: &MatchPrefs, packs: Vec<(String, String)>, host_colour: [u8; 
         level_id: p.level_id.clone(),
         packs,
         rules: rules_wire(&p.rules.deathmatch()),
-        loadout: LoadoutWire { loading_time: p.loading_time, ..LoadoutWire::default() },
+        loadout: {
+            let (l, why) = loadout_wire(&p.weapons);
+            if let Some(why) = why {
+                log::warn!("online: {why}");
+            }
+            l
+        },
         bots,
     }
 }
@@ -407,7 +414,13 @@ pub fn weapon_menu(content: &Content, mod_id: &str, loadout: &LoadoutWire) -> Op
     let rules = content.rules(mod_id, &WeaponChoice::Loadout(loadout_of(loadout))).ok()?;
     let names: Vec<String> = m.weapons().iter().map(|w| w.name.clone()).collect();
     let enabled = names.iter().map(|n| rules.is_enabled(n)).collect();
-    Some(WeaponMenu { names, enabled, fallback: rules.find_enabled_weapon(), seed: 0 })
+    Some(WeaponMenu {
+        names,
+        enabled,
+        fallback: rules.find_enabled_weapon(),
+        seed: 0,
+        unique: rules.unique(),
+    })
 }
 
 /// A game announced on the network as the Multiplayer screen lists it

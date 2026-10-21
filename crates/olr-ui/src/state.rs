@@ -64,6 +64,7 @@ use olr_content::MatchOptions;
 use olr_input::Bindings;
 use olr_sim::MAX_SLOTS;
 
+use crate::loadouts::OwnLoadouts;
 use crate::match_prefs::MatchPrefs;
 use crate::online::{FindingSettings, HostPrefs, LobbyCommand, Password, key_hex};
 use crate::profiles::Profiles;
@@ -163,6 +164,8 @@ pub enum UiAction {
     SetChatKey(olr_input::KeyCode),
     SetMatch(MatchPrefs),
     SetProfiles(Profiles),
+    /// The loadout editor's own loadouts (issue #5).
+    SetLoadouts(OwnLoadouts),
     /// The app: the match or sandbox asked for is ready.
     MatchStarted,
     /// The app: it could not be started (missing or broken content).
@@ -293,6 +296,8 @@ pub enum AppCommand {
     SaveSettings(Settings),
     /// Write `profiles.ron` (`Store::save_profiles`).
     SaveProfiles(Profiles),
+    /// Write `loadouts.ron` (`Store::save_file(LOADOUTS_FILE, ..)`).
+    SaveLoadouts(OwnLoadouts),
     /// Host a game with these choices, then report [`UiAction::LobbyJoined`]
     /// or [`UiAction::OnlineFailed`].
     HostGame(HostPrefs),
@@ -379,6 +384,8 @@ pub struct UiState {
     screen: Screen,
     settings: Settings,
     profiles: Profiles,
+    /// The player's own loadouts (`loadouts.ron`, issue #5).
+    loadouts: OwnLoadouts,
     play: Play,
     paused: bool,
     /// The options were opened from the pause menu: Back returns there.
@@ -404,6 +411,7 @@ impl UiState {
             screen: Screen::Main,
             settings,
             profiles,
+            loadouts: OwnLoadouts::default(),
             play: Play::None,
             paused: false,
             options_in_game: false,
@@ -425,6 +433,19 @@ impl UiState {
 
     pub fn profiles(&self) -> &Profiles {
         &self.profiles
+    }
+
+    /// The player's own loadouts.
+    pub fn loadouts(&self) -> &OwnLoadouts {
+        &self.loadouts
+    }
+
+    /// The own loadouts the app loaded (`loadouts.ron`), sanitized; the
+    /// warnings to log. Nothing is saved.
+    pub fn set_loadouts(&mut self, mut l: OwnLoadouts) -> Vec<String> {
+        let w = l.sanitize();
+        self.loadouts = l;
+        w
     }
 
     /// The keys the player uses: the selected profile's, else the options'.
@@ -635,6 +656,14 @@ impl UiState {
                 }
                 self.settings.gameplay.match_prefs = m;
                 vec![self.save_settings()]
+            }
+            UiAction::SetLoadouts(mut l) => {
+                l.sanitize();
+                if l == self.loadouts {
+                    return Vec::new();
+                }
+                self.loadouts = l;
+                vec![AppCommand::SaveLoadouts(self.loadouts.clone())]
             }
             UiAction::SetProfiles(mut p) => {
                 p.sanitize();

@@ -56,16 +56,39 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   The master volume defaults to OLX's 70 %; the game plays `master * sfx`.
 - **Match preferences** (`match_prefs.rs`): mod, level, `bots` (1 to
   `MAX_BOTS`), one `difficulty` or `per_bot` levels, `personality`
-  (`BotPersonality`: Olx, Chaos, Idle, plan 15c: "Idle (does nothing)"), `loadout`, `rules` (`RulePrefs`), `bonuses`,
-  `restrictions`, `loading_time` (OLX's menu ranges `LOADING_TIME_RANGE`,
-  `LIVES_RANGE`, ... from `FeatureList.cpp`). `options(seed)` is
-  `olr_content::build_match`'s input (the human is worm 0); `set_bots`,
-  `set_per_bot`, `set_mod` (keeps a preset the mod has, else
-  `DEFAULT_PRESET`, else its first). They **mirror** `DeathmatchSettings`
+  (`BotPersonality`: Olx, Chaos, Idle, plan 15c: "Idle (does nothing)"), `loadout` (`BotLoadout`: the
+  bots' weapon choice), `rules` (`RulePrefs`; OLX's menu ranges
+  `LIVES_RANGE`, ... from `FeatureList.cpp`), `weapons` (the match's
+  `MatchLoadout` as last chosen: its name, which the menus look up again,
+  and what it holds, which plays; an older file's `bonuses`,
+  `restrictions` and `loading_time` are ignored: it plays `Default`).
+  `options(seed)` is `olr_content::build_match`'s input (the human is
+  worm 0; OLX's LX56 settings, no bonuses, `WeaponChoice::Loadout`);
+  `set_bots`, `set_per_bot`, `set_mod(m, own)` (the loadout of the same
+  name when the new mod has one, else `Default`: `loadouts::resolve`);
+  `sanitize` cleans the loadout's name and clamps its loading time
+  (`LOADING_TIME_RANGE`, re-exported from `olr_data::loadouts`). They **mirror** `DeathmatchSettings`
   (`RulePrefs`) and the bot choices (`BotLevel`, `BotLoadout`,
   `BotPersonality`): the file holds only what the menus edit, under names
   this crate owns; conversions name every field, so a field added to
   `DeathmatchSettings` does not compile until it is mirrored.
+- **Loadouts** (`loadouts.rs`, issue #5; not OLX's): `OwnLoadouts {
+  mods: BTreeMap<mod id, Vec<MatchLoadout>> }`, the player's own, in the
+  data directory's `LOADOUTS_FILE` (`loadouts.ron`, through
+  `Store::load_file`/`save_file`; `UiState::set_loadouts` at start,
+  `UiAction::SetLoadouts` → `AppCommand::SaveLoadouts` when changed);
+  `sanitize` never drops a loadout (a name cleaned, `Default` or a
+  repeat ignoring case numbered, the loading time clamped; one warning
+  each). Weapons are kept by name as saved: a weapon a mod update removed
+  stays in the file and is left out only when played. `choices(m, own)`:
+  `Default` and the mod's shipped ones (`ModInfo::loadouts`, read-only),
+  then the own ones (one under a shipped name, ignoring case, is not
+  listed); `resolve(name, m, own)`: the loadout to play and what was wrong
+  (an own one fitted to the mod's weapons; `Default` when the name is gone
+  or an own one keeps no weapon); `check_name` (unique per mod ignoring
+  case, shipped names and `Default` refused), `free_name` ("Mine 2"),
+  `explicit` (the weapons written out: `Default`'s empty list is every
+  weapon), `MAX_OWN_LOADOUTS` (64 a mod, the editor's cap).
 - **Screens** (`screens/`): `show(ui, &UiState, &mut MenuData) ->
   Vec<UiAction>` draws the current screen; the caller feeds the actions to
   `update`. `MenuData` holds the `olr_content::Catalog`, the replays
@@ -93,11 +116,26 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   (`main.rs`, centred on its own), local play (`local_play.rs`, 1100
   wide: the Map panel (mod, level grid with
   thumbnails or a name-and-size placeholder), the Match panel
-  (Deathmatch rules, loading time, weapons, bonuses, "Reset the match to
-  OLX's settings": rules, bots and weapons, the mod and level kept), the
-  Players panel (the player's profile, the bots), Start with "Loading…"
-  and the failure message; a saved
-  mod or level no longer imported becomes the first listed), profiles
+  ("Loadout": `Default` first, then the mod's, then the player's own,
+  and "Edit loadouts…"; then lives, kill limit, time limit), the
+  Players panel (the player's profile, Bots, Difficulty, "Advanced…"),
+  Start with "Loading…" and the failure message (issue #5 made it
+  simpler: no loading time, preset, bonuses or reset); a saved
+  mod or level no longer imported becomes the first listed; the
+  loadout is looked up again by name every frame, `screens::loadouts::
+  refresh`, `Default` when gone, each problem logged once through
+  `take_warnings`). **The loadout editor** (`screens/loadouts.rs`, a modal
+  window, `MenuData`'s): the mod's loadouts (the read-only ones marked),
+  New (a copy of `Default`), Copy, Rename ("New name", OK; refused names
+  said in red) and Delete (confirmed; own ones only); the selected one's
+  weapon checkboxes, All on, All off, "Loading time", "Unique weapons"
+  (`UNIQUE_HINT`), greyed for a read-only one (`READ_ONLY`); every valid
+  change is saved at once (`SetLoadouts`), one with no weapon on is shown
+  with `NO_WEAPON` and not saved; Done, Esc or a click outside closes it
+  and selects the loadout it showed. **"Advanced…"** opens the bots
+  window: "Each bot its own difficulty" (then "Bot N" pickers),
+  Personality, "Bots' weapons" (OLX's choice, Random), Close. Esc closes
+  an open window instead of going back (`MenuData::window_open`), profiles
   (`profiles.rs`: Players, Look and Skin panels; the list, New, Delete confirmed, "Play as this", name with
   its error, colour sliders, searchable skins, the preview; it opens on
   the profile playing), replays (`replays.rs`, each file's header problem
@@ -194,8 +232,10 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   host's Start and Force start stand one above the other in a column too
   narrow for both, and a member's Kick, Ban and move buttons wrap (UI
   scale 3 on a 4:3 desktop). The lobby reuses Local
-  Play's panels (`local_play`'s `rules`, `level_grid`, `mod_picker`: the
-  host edits, others see them greyed), bots 0..=MAX_BOTS (Add/Remove bot),
+  Play's panels (`local_play`'s `rules`, `level_grid`, `mod_picker`, the
+  loadout picker: the host edits and has "Edit loadouts…", others see
+  them greyed with the host's loadout's name), bots 0..=MAX_BOTS
+  (Add/Remove bot, Difficulty and the same "Advanced…" window),
   "Your weapons" (Random, or the weapon screen: `Open(WeaponSelect)` from
   the lobby, whose Done answers `Loadout`, Back returns). Start (host,
   `can_start`'s reason its tooltip) and Force start (two worms and a
@@ -394,9 +434,12 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   layout at 3440 × 1440 (`tests/hud_snapshots.rs` against `fixtures/ui/`, in the GPU tier
   with `OLR_GPU_TESTS`; `cargo xtask bless-render --reason` re-records them, logged).
 - **Weapon selection** (`weapon_select.rs`, §21 G4): `WeaponMenu` (names,
-  enabled, `findEnabledWeapon`'s fallback, seed; `needs_choice`),
-  `WeaponSelect::new(menu, remembered)` (the profile's names), `change`
-  (OLX's loop over the enabled weapons), `random` (`get_random_weapons`),
+  enabled, `findEnabledWeapon`'s fallback, seed, `unique`: the loadout's
+  rule; `needs_choice`),
+  `WeaponSelect::new(menu, remembered)` (the profile's names; under the
+  unique rule a repeat becomes the first enabled weapon no slot holds),
+  `change` (OLX's loop over the enabled weapons; under the unique rule
+  over those no other slot holds, unless every enabled weapon is in one), `random` (`get_random_weapons`),
   `on_keys(menu, held, now)` (edges, auto-repeat, × 6 with Select weapon,
   Done on Fire's release).
 - **Profiles** (`profiles.rs`): `Profile { name, skin_id, colour, bindings,
@@ -450,7 +493,10 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `PRIMARY` (the primary action's fill), `section_frame()`.
 
 Test: `cargo nextest run -p olr-ui` (`tests/store.rs`, `tests/state.rs`,
-`tests/flows.rs`: kittest flows by label and the local play's match,
+`tests/flows.rs`: kittest flows by label and the local play's match
+(`local_play_is_the_simple_setup`), `tests/loadouts.rs`: the editor
+through its widgets, a chosen loadout gone playing `Default`, own
+loadouts saved when changed,
 `tests/layout.rs`: every sub-screen a centred column, the primary action
 centred below,
 `thumbnails_decode_lazily_and_bounded`, `about_credits_the_authors_and_the_licenses`

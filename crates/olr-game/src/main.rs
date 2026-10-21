@@ -123,9 +123,6 @@ struct Args {
     /// The match seed.
     #[arg(long, default_value_t = 1)]
     seed: u32,
-    /// Bonuses spawn and fall (OLX's Bonuses option).
-    #[arg(long)]
-    bonuses: bool,
     /// Imported content (packs written by `olr-cli import`): `content/packs`
     /// beside this program when there is one, else in the working directory.
     #[arg(long, default_value_os_t = default_content())]
@@ -261,7 +258,7 @@ fn net_profile(name: &str) -> Result<Profile, String> {
 
 /// The flags that choose a game: with any of them on the command line the
 /// game plays it at once (scripted runs and tests); without, the menus.
-const GAME_FLAGS: [&str; 17] = [
+const GAME_FLAGS: [&str; 16] = [
     "mode",
     "bots",
     "spectate",
@@ -276,7 +273,6 @@ const GAME_FLAGS: [&str; 17] = [
     "skin",
     "targets",
     "seed",
-    "bonuses",
     "script",
     "demo",
 ];
@@ -314,7 +310,6 @@ fn direct(
             lives: args.lives,
             kill_limit: args.kill_limit,
             time_limit: args.time_limit,
-            bonuses: args.bonuses,
             spectate: args.spectate,
         };
         setup::load_deathmatch(&[args.content.as_path()], &args.mod_name, &args.level, &args.skin, &o)?
@@ -324,7 +319,7 @@ fn direct(
             level_id: String::new(),
             seed: args.seed,
             targets: args.targets,
-            bonuses: args.bonuses,
+            bonuses: false,
         };
         setup::load(&[args.content.as_path()], &args.mod_name, &args.level, &args.skin, options)?
     };
@@ -686,7 +681,7 @@ mod tests {
             let arg =
                 format!("--{}", if flag == "mod_name" { "mod".to_string() } else { flag.replace('_', "-") });
             let mut argv = vec!["olr".to_string(), "--edit".into(), "p".into(), arg.clone()];
-            if !matches!(flag, "spectate" | "bonuses" | "demo") {
+            if !matches!(flag, "spectate" | "demo") {
                 argv.push(if flag == "difficulty" { "easy".into() } else { "1".into() });
             }
             assert!(Args::command().try_get_matches_from(&argv).is_err(), "--edit with {arg}");

@@ -1,12 +1,14 @@
 //! The match local play starts (spec §21; OLX's local game menu,
 //! `src/client/DeprecatedGUI/Menu_Local.cpp`): the mod, the level, the
-//! Deathmatch rules, the bots and their difficulty. Mirrors of `olr-modes`'
-//! and `olr-bots`' types (see `settings.rs`), each `#[serde(default)]`.
+//! Deathmatch rules, the bots and their difficulty, and the loadout (issue
+//! #5). Mirrors of `olr-modes`' and `olr-bots`' types (see `settings.rs`),
+//! each `#[serde(default)]`.
 
 use std::ops::RangeInclusive;
 
 use olr_bots::{BotConfig, Difficulty, LoadoutPolicy, Personality};
-use olr_content::{DEFAULT_PRESET, MatchOptions, ModInfo, Player};
+use olr_content::{MatchLoadout, MatchOptions, ModInfo, Player, WeaponChoice};
+pub use olr_data::loadouts::LOADING_TIME_RANGE;
 use olr_modes::DeathmatchSettings;
 use olr_sim::{MAX_WORMS, SimSettings};
 use serde::{Deserialize, Serialize};
@@ -170,14 +172,15 @@ pub struct MatchPrefs {
     /// own level): bot `i` plays `per_bot[i]`.
     pub per_bot: Option<Vec<BotLevel>>,
     pub personality: BotPersonality,
+    /// The bots' choice of starting weapons.
     pub loadout: BotLoadout,
     pub rules: RulePrefs,
-    /// OLX's `Bonuses`.
-    pub bonuses: bool,
-    /// OLX's `WeaponRestrictionsFile`: one of the mod's presets.
-    pub restrictions: String,
-    /// OLX's `LoadingTime`, in percent ([`LOADING_TIME_RANGE`]).
-    pub loading_time: i32,
+    /// The match's loadout as last chosen (`crate::loadouts::resolve`):
+    /// its name, which the menus look up again in the mod's loadouts (a
+    /// name gone plays `Default`), and what it holds, which plays. An
+    /// older file's `bonuses`, `restrictions` and `loading_time` are
+    /// ignored: it plays `Default`.
+    pub weapons: MatchLoadout,
 }
 
 impl Default for MatchPrefs {
@@ -192,9 +195,7 @@ impl Default for MatchPrefs {
             personality: BotPersonality::default(),
             loadout: BotLoadout::default(),
             rules: RulePrefs::default(),
-            bonuses: false,
-            restrictions: DEFAULT_PRESET.into(),
-            loading_time: SimSettings::lx56().loading_time,
+            weapons: MatchLoadout::default(),
         }
     }
 }
@@ -202,10 +203,8 @@ impl Default for MatchPrefs {
 /// The most bots beside the human.
 pub const MAX_BOTS: u8 = (MAX_WORMS - 1) as u8;
 
-/// OLX's menu ranges (`src/common/FeatureList.cpp:31-35`): `LoadingTime`
-/// in percent.
-pub const LOADING_TIME_RANGE: RangeInclusive<i32> = 0..=500;
-/// `Lives` (below 0 unlimited), `KillLimit` (below 1 off).
+/// OLX's menu ranges (`src/common/FeatureList.cpp:31-35`; `LoadingTime`
+/// is a loadout's, [`LOADING_TIME_RANGE`]): `Lives` (below 0 unlimited), `KillLimit` (below 1 off).
 pub const LIVES_RANGE: RangeInclusive<i32> = 1..=150;
 pub const KILL_LIMIT_RANGE: RangeInclusive<i32> = 1..=150;
 /// `TimeLimit` in minutes (0 or less off).
@@ -233,15 +232,14 @@ impl MatchPrefs {
         self.per_bot = on.then(|| (0..usize::from(self.bots)).map(|i| self.bot_level(i)).collect());
     }
 
-    /// Mod `m`; the restrictions stay when `m` has that preset, else
-    /// [`DEFAULT_PRESET`] when it has that, else its first.
-    pub fn set_mod(&mut self, m: &ModInfo) {
+    /// Mod `m`, with the loadout of the same name when `m` (or the
+    /// player, `own`) has one, else `Default` (`crate::loadouts::resolve`);
+    /// what was wrong with it.
+    pub fn set_mod(&mut self, m: &ModInfo, own: &crate::loadouts::OwnLoadouts) -> Vec<String> {
         self.mod_id = m.id.clone();
-        if m.presets.is_empty() || m.presets.contains(&self.restrictions) {
-            return;
-        }
-        let default = m.presets.iter().find(|p| *p == DEFAULT_PRESET);
-        self.restrictions = default.unwrap_or(&m.presets[0]).clone();
+        let (l, w) = crate::loadouts::resolve(&self.weapons.name, m, own);
+        self.weapons = l;
+        w
     }
 
     /// The match to build on `seed` (`olr_content::build_match`'s input).
@@ -257,20 +255,16 @@ impl MatchPrefs {
             mod_id: self.mod_id.clone(),
             level_id: self.level_id.clone(),
             seed,
-            settings: SimSettings {
-                bonuses: self.bonuses,
-                loading_time: self.loading_time,
-                ..SimSettings::lx56()
-            },
+            settings: SimSettings::lx56(),
             players: std::iter::once(Player::Human).chain((0..bots).map(|i| Player::Bot(bot(i)))).collect(),
             deathmatch: self.rules.deathmatch(),
-            weapons: olr_content::WeaponChoice::Preset(self.restrictions.clone()),
+            weapons: WeaponChoice::Loadout(self.weapons.clone()),
             pool_capacity: olr_sim::MatchSetup::DEFAULT_POOL_CAPACITY,
         }
     }
 
     /// Fixes the bot count, the per-bot list's length, empty ids, the
-    /// loading time and rules that `olr-modes` or OLX's ranges
+    /// loadout's name and loading time and rules that `olr-modes` or OLX's ranges
     /// (`SimSettings::validate`) refuse, one warning each.
     pub fn sanitize(&mut self) -> Vec<String> {
         let d = MatchPrefs::default();
@@ -286,23 +280,27 @@ impl MatchPrefs {
             w.push(format!("match.per_bot has {} bots, not {}: fitted", l.len(), self.bots));
             self.set_bots(self.bots);
         }
-        for (name, v, default) in [
-            ("mod_id", &mut self.mod_id, d.mod_id),
-            ("level_id", &mut self.level_id, d.level_id),
-            ("restrictions", &mut self.restrictions, d.restrictions),
-        ] {
+        for (name, v, default) in
+            [("mod_id", &mut self.mod_id, d.mod_id), ("level_id", &mut self.level_id, d.level_id)]
+        {
             if v.trim().is_empty() {
                 w.push(format!("match.{name} is empty: {default}"));
                 *v = default;
             }
         }
-        if !LOADING_TIME_RANGE.contains(&self.loading_time) {
-            let fixed = self.loading_time.clamp(*LOADING_TIME_RANGE.start(), *LOADING_TIME_RANGE.end());
+        let l = &mut self.weapons;
+        let name = olr_data::loadouts::clean_name(&l.name);
+        if name != l.name {
+            w.push(format!("match.weapons.name {:?} is not usable: {name:?}", l.name));
+            l.name = name;
+        }
+        if !LOADING_TIME_RANGE.contains(&l.loading_time) {
+            let fixed = l.loading_time.clamp(*LOADING_TIME_RANGE.start(), *LOADING_TIME_RANGE.end());
             w.push(format!(
-                "match.loading_time {} is not within {LOADING_TIME_RANGE:?}: {fixed}",
-                self.loading_time
+                "match.weapons.loading_time {} is not within {LOADING_TIME_RANGE:?}: {fixed}",
+                l.loading_time
             ));
-            self.loading_time = fixed;
+            l.loading_time = fixed;
         }
         let r = &mut self.rules;
         if !r.time_limit.is_finite() {

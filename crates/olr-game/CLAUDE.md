@@ -170,7 +170,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
 - **Menus first** (`main.rs`, `shell.rs`, plan 7 task 2): without a flag
   that chooses a game (`GAME_FLAGS`: `--mode`, `--replay`, `--level`,
   `--mod`, `--targets`, `--seed`, `--script`, `--demo`, ...) the game opens
-  the main menu, with `settings.ron`/`profiles.ron` from the data directory
+  the main menu, with `settings.ron`/`profiles.ron` and the own loadouts
+(`loadouts.ron`, `olr_ui::LOADOUTS_FILE` through `Store::load_file`,
+`UiState::set_loadouts`; issue #5) from the data directory
   (`olr_ui::Store::platform`; warnings logged; `Store::notices`, a newer
   game's file left untouched, on the main menu) and the first match seed
   from the clock (each seed is in its replay). With such a flag it plays
@@ -202,7 +204,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `Session::replay` with `olr_ui::replays::save_kept`. Every Deathmatch's replay is saved in the
   data directory's `replays/` when it ends, restarts or the game quits
   (`olr_ui::replays::auto_save`, none of no tick); the Replays screen plays
-  them. Settings are written at most once a second (`Shell::flush`) and
+  them. Settings (and profiles and own loadouts: `AppCommand::SaveLoadouts`
+→ `Store::save_file`) are written at most once a second (`Shell::flush`) and
   at exit. The human's profile names and colours the local slot's worm
   (`PlayerLook`) and its skin is that worm's (`Assets::skin`); every
   other worm wears OLX's default skin (`Assets::bot_skin`, as OLX's bot
@@ -433,7 +436,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   from `Store::load_identity`, a fresh key with a warning when the file's
   is no valid key; the selected profile's look, its skin by pack id; a
   `Content` of the shell's roots; the host's setup from the saved match,
-  `net::setup_of`, bots "Bot N" in OLX's bot colours, never through
+  `net::setup_of`: its loadout in full, `Default` when too large to send,
+  logged (`olr_online::matches::loadout_wire`); `net::prefs_of` shows a
+  lobby's loadout (`loadout_of`); bots "Bot N" in OLX's bot colours, never through
   `MatchPrefs::sanitize`: a lobby may have no bot). The host is in its
   lobby at once (`LobbyJoined`); a client when its first lobby names it.
   A typed address goes through `shell::resolve`: a name's first IPv4
@@ -516,7 +521,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `MenuData::lobby` (`net::lobby_view`: `PHASE_LOBBY` while gathering or
   showing results, `SEAT_SPECTATOR`, the host's `can_start` reason, a
   client's "Waiting for the host"; the peer sends its `Have` itself), the
-  weapon screen's menu for the lobby's mod (`net::weapon_menu`, decision
+  weapon screen's menu for the lobby's mod and loadout (its weapons and
+  unique rule: `net::weapon_menu`, decision
   N19, from the peer's content, made again when it changes: a downloaded
   mod counts, `net::WeaponsKey`), the host's LAN
   announcement (`Announcer`, for `Visibility::Public` and `Lan`; `GameSummary::of_lobby(..).lan()`,
@@ -853,8 +859,10 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `a_glow_edit_uploads_its_rectangle`, `main.rs`'s argument tests,
   `fixtures/autoplay/editor.ron` in `cargo xtask e2e`.
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
-  worm 0, then the bots at one difficulty, OLX's LX56 settings, the default
-  restrictions) feeds `olr_content::build_match`, the same assembly as
+  worm 0, then the bots at one difficulty, OLX's LX56 settings, the
+  `Default` loadout: every weapon at 100 %, issue #5; there is no
+  `--bonuses`: bonuses are gone from play, `SandboxOptions::bonuses` is
+  the soak test's) feeds `olr_content::build_match`, the same assembly as
   `olr-cli match` (loadouts, the Deathmatch and its respawn loadout, the
   shared area cache, the recorder). The command line's human gets random
   enabled weapons (`olr_content::Player::Human`). The bots think on

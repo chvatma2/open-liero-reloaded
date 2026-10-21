@@ -9,6 +9,7 @@ mod editor;
 mod flows;
 mod ingame;
 mod layout;
+mod loadouts;
 mod online;
 mod options;
 mod profiles;

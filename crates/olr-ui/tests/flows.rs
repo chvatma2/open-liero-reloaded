@@ -4,13 +4,13 @@
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use olr_bots::{Difficulty, Personality};
-use olr_content::{Catalog, LevelInfo, ModInfo, PackSource, Player, ThumbRef};
+use olr_content::{Catalog, LevelInfo, MatchLoadout, ModInfo, PackSource, Player, ThumbRef, WeaponChoice};
 use olr_data::image::RgbaImage;
 use olr_data::manifest::{Origin, PackKind};
 use olr_ui::screens::{self, MenuData};
 use olr_ui::{
-    AppCommand, BotLevel, BotPersonality, MAX_BOTS, MatchPrefs, Profile, Profiles, Screen, Settings,
-    UiAction, UiState,
+    AppCommand, BotLevel, BotPersonality, MAX_BOTS, MatchPrefs, OwnLoadouts, Profile, Profiles, Screen,
+    Settings, UiAction, UiState,
 };
 
 /// A `w` × `h` thumbnail written to a directory of its own, in a temporary
@@ -29,21 +29,37 @@ fn thumb_file(name: &str, w: u32, h: u32) -> ThumbRef {
     ThumbRef::probe(&pack).unwrap().unwrap()
 }
 
+/// A shipped loadout of `weapons` at `loading_time`.
+fn shipped(name: &str, weapons: &[&str], loading_time: i32) -> MatchLoadout {
+    let weapons = weapons.iter().map(|s| s.to_string()).collect();
+    MatchLoadout { name: name.into(), weapons, loading_time, unique: false }
+}
+
 fn catalog() -> Catalog {
-    let presets = |p: &[&str]| p.iter().map(|s| s.to_string()).collect();
+    let names = |p: &[&str]| p.iter().map(|s| s.to_string()).collect();
     Catalog {
         mods: vec![
             ModInfo {
                 id: "olx-classic".into(),
                 name: "Liero v1.0".into(),
-                presets: presets(&["All weapons", "Standard 100lt"]),
-                ..ModInfo::default()
+                presets: names(&["Rifle only", "Standard 100lt"]),
+                weapons: names(&["Bazooka", "Rifle", "Napalm"]),
+                loadouts: vec![
+                    MatchLoadout::default(),
+                    shipped("Rifle only", &["Rifle"], 20),
+                    shipped("Standard 100lt", &["Bazooka", "Rifle"], 100),
+                ],
             },
             ModInfo {
                 id: "olx-mw-1-0".into(),
                 name: "Modern Warfare1.0".into(),
-                presets: presets(&["Mortars"]),
-                ..ModInfo::default()
+                presets: names(&["Mortar Only", "Standard 100lt"]),
+                weapons: names(&["Mortar", "Uzi"]),
+                loadouts: vec![
+                    MatchLoadout::default(),
+                    shipped("Mortar Only", &["Mortar"], 20),
+                    shipped("Standard 100lt", &["Mortar", "Uzi"], 100),
+                ],
             },
         ],
         levels: vec![
@@ -178,15 +194,19 @@ fn main_to_local_play_to_match() {
 #[test]
 fn local_play_builds_match_options() {
     let cat = catalog();
+    let own = OwnLoadouts::default();
     let mut p = MatchPrefs::default();
-    // A mod keeps the preset when it has it, else takes Standard 100lt, else its first.
-    p.set_mod(cat.mod_info("olx-mw-1-0").unwrap());
-    assert_eq!((p.mod_id.as_str(), p.restrictions.as_str()), ("olx-mw-1-0", "Mortars"));
-    p.set_mod(cat.mod_info("olx-classic").unwrap());
-    assert_eq!(p.restrictions, "Standard 100lt");
-    p.restrictions = "All weapons".into();
-    p.set_mod(cat.mod_info("olx-classic").unwrap());
-    assert_eq!(p.restrictions, "All weapons");
+    assert_eq!(p.weapons, MatchLoadout::default(), "a fresh install plays Default");
+    // A mod keeps the loadout's name when it has one of that name, else
+    // plays Default.
+    p.set_mod(cat.mod_info("olx-classic").unwrap(), &own);
+    p.weapons = cat.mod_info("olx-classic").unwrap().loadouts[2].clone();
+    p.set_mod(cat.mod_info("olx-mw-1-0").unwrap(), &own);
+    assert_eq!((p.mod_id.as_str(), p.weapons.weapons.join(",")), ("olx-mw-1-0", "Mortar,Uzi".into()));
+    p.weapons = cat.mod_info("olx-mw-1-0").unwrap().loadouts[1].clone();
+    p.set_mod(cat.mod_info("olx-classic").unwrap(), &own);
+    assert_eq!(p.weapons, MatchLoadout::default(), "Classic has no Mortar Only");
+    p.weapons = cat.mod_info("olx-classic").unwrap().loadouts[1].clone();
     p.level_id = "olx-level-dirt-level".into();
     // Bots: a count, one difficulty for all or each its own, a personality.
     p.set_bots(4);
@@ -196,8 +216,6 @@ fn local_play_builds_match_options() {
     p.set_bots(5);
     assert_eq!(p.per_bot.as_ref().unwrap().len(), 5, "a new bot gets the common difficulty");
     p.personality = BotPersonality::Chaos;
-    p.loading_time = 250;
-    p.bonuses = true;
     p.rules.lives = 5;
     p.rules.kill_limit = 0;
     p.rules.time_limit = 3.0;
@@ -214,9 +232,8 @@ fn local_play_builds_match_options() {
     let c = ui.update(UiAction::StartMatch);
     let [AppCommand::StartMatch(o)] = &c[..] else { panic!("{c:?}") };
     assert_eq!((o.mod_id.as_str(), o.level_id.as_str(), o.seed), ("olx-classic", "olx-level-dirt-level", 3));
-    assert_eq!(o.weapons, olr_content::WeaponChoice::Preset("All weapons".into()));
-    assert!(o.settings.bonuses);
-    assert_eq!(o.settings.loading_time, 250);
+    assert_eq!(o.weapons, WeaponChoice::Loadout(shipped("Rifle only", &["Rifle"], 20)));
+    assert!(!o.settings.bonuses, "bonuses are gone from play");
     assert_eq!(o.players.len(), 6);
     assert_eq!(o.players[0], Player::Human);
     let bots: Vec<_> = o.players[1..]
@@ -239,45 +256,69 @@ fn local_play_builds_match_options() {
     assert_eq!(p.bots, 1);
     p.set_bots(200);
     assert_eq!(p.bots, MAX_BOTS);
-    p.loading_time = 9999;
+    p.weapons.loading_time = 9999;
     p.per_bot = Some(vec![BotLevel::Easy; 2]);
     let w = p.sanitize();
     assert_eq!(w.len(), 2, "{w:?}");
-    assert_eq!((p.loading_time, p.per_bot.as_ref().unwrap().len()), (500, usize::from(MAX_BOTS)));
-    // A file from before these fields gets their defaults.
-    let old: MatchPrefs = ron::from_str("(mod_id: \"olx-classic\", bots: 2)").unwrap();
-    assert_eq!((old.loading_time, old.per_bot, old.personality), (100, None, BotPersonality::Olx));
+    assert_eq!((p.weapons.loading_time, p.per_bot.as_ref().unwrap().len()), (500, usize::from(MAX_BOTS)));
+    // A file from before these fields gets their defaults; an older file's
+    // bonuses, preset and loading time are ignored: it plays Default.
+    let old: MatchPrefs = ron::from_str(
+        "(mod_id: \"olx-classic\", bots: 2, bonuses: true, restrictions: \"Mortars\", loading_time: 20)",
+    )
+    .unwrap();
+    assert_eq!(
+        (old.weapons, old.per_bot, old.personality),
+        (MatchLoadout::default(), None, BotPersonality::Olx)
+    );
 
-    // The widgets: each bot its own difficulty, through the checkbox.
+    // The widgets: each bot its own difficulty, in the Advanced… window.
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
     h.get_by_label("Local Play").click();
+    h.run();
+    h.get_by_label("Advanced…").click();
     h.run();
     h.get_by_label("Each bot its own difficulty").click();
     h.run();
     let prefs = &h.state().ui.settings().gameplay.match_prefs;
     assert_eq!(prefs.per_bot.as_ref().map(Vec::len), Some(usize::from(prefs.bots)));
     h.get_by_label("Bot 3");
+    h.get_by_label("Close").click();
+    h.run();
+    assert!(h.query_by_label("Bot 3").is_none(), "closed");
+    assert_eq!(h.state().ui.screen(), Screen::LocalPlay);
+}
 
-    // The match panel's reset: OLX's match, the mod and level kept, and
-    // remembered (moved here from the options' Gameplay tab).
-    h.get_by_label("Lives").click();
+/// Local play shows only what a match needs (issue #5): no loading time,
+/// preset, bonuses or reset, the bots' details behind Advanced….
+#[test]
+fn local_play_is_the_simple_setup() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
+    h.get_by_label("Local Play").click();
     h.run();
-    h.get_by_label("Dirt Level").click();
+    for label in ["Mod", "Loadout", "Edit loadouts…", "Lives", "Kill limit", "Time limit"] {
+        h.get_by_label(label);
+    }
+    for label in ["Player", "Bots", "Difficulty", "Advanced…", "Start"] {
+        h.get_by_label(label);
+    }
+    for gone in [
+        "Loading time",
+        "Weapons",
+        "Bonuses",
+        "Reset the match to OLX's settings",
+        "Personality",
+        "Each bot its own difficulty",
+    ] {
+        assert!(h.query_by_label(gone).is_none(), "{gone}");
+    }
+    // The loadouts: Default first, then the mod's.
+    h.get_by_label("Loadout").click();
     h.run();
-    let prefs = &h.state().ui.settings().gameplay.match_prefs;
-    assert!(prefs.rules.lives >= 0 && prefs.per_bot.is_some());
-    h.get_by_label("Reset the match to OLX's settings").click();
+    h.get_by_label("Rifle only").click();
     h.run();
-    let olx = MatchPrefs {
-        mod_id: "olx-classic".into(),
-        level_id: "olx-level-dirt-level".into(),
-        ..MatchPrefs::default()
-    };
-    assert_eq!(h.state().ui.settings().gameplay.match_prefs, olx);
-    assert!(
-        matches!(h.state().commands.last(), Some(AppCommand::SaveSettings(s)) if s.gameplay.match_prefs == olx),
-        "saved"
-    );
+    let p = &h.state().ui.settings().gameplay.match_prefs;
+    assert_eq!((p.weapons.name.as_str(), p.weapons.loading_time), ("Rifle only", 20));
 }
 
 /// Every picker in local play is found by its label (as a screen reader
@@ -287,7 +328,7 @@ fn local_play_pickers_are_found_by_their_label() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
     h.get_by_label("Local Play").click();
     h.run();
-    for label in ["Mod", "Weapons", "Difficulty", "Personality", "Loadout", "Player"] {
+    for label in ["Mod", "Loadout", "Difficulty", "Player"] {
         h.get_by_label(label);
     }
     h.get_by_label("Mod").click();
@@ -300,6 +341,11 @@ fn local_play_pickers_are_found_by_their_label() {
     h.get_by_label("Hard").click();
     h.run();
     assert_eq!(h.state().ui.settings().gameplay.match_prefs.difficulty, BotLevel::Hard);
+    h.get_by_label("Advanced…").click();
+    h.run();
+    for label in ["Personality", "Bots' weapons"] {
+        h.get_by_label(label);
+    }
     h.get_by_label("Each bot its own difficulty").click();
     h.run();
     h.get_by_label("Bot 2").click();
@@ -308,6 +354,11 @@ fn local_play_pickers_are_found_by_their_label() {
     h.run();
     let per_bot = h.state().ui.settings().gameplay.match_prefs.per_bot.clone().unwrap();
     assert_eq!(per_bot[1], BotLevel::Easy, "{per_bot:?}");
+    // Esc closes the window, not the screen.
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert!(h.query_by_label("Bot 2").is_none());
+    assert_eq!(h.state().ui.screen(), Screen::LocalPlay);
 }
 
 #[test]
@@ -320,7 +371,7 @@ fn local_play_replaces_a_saved_selection_no_longer_imported() {
     h.run();
     let p = &h.state().ui.settings().gameplay.match_prefs;
     assert_eq!((p.mod_id.as_str(), p.level_id.as_str()), ("olx-classic", "olx-level-dirt-level"));
-    assert_eq!(p.restrictions, "Standard 100lt", "the first mod's preset");
+    assert_eq!(p.weapons, MatchLoadout::default(), "a new mod's Default");
     assert!(h.query_by_label_contains("(missing)").is_none());
     assert!(
         h.state().commands.iter().any(|c| matches!(c, AppCommand::SaveSettings(_))),
@@ -441,11 +492,13 @@ fn the_version_shows_on_the_main_menu_and_in_about() {
 }
 
 /// The idle bot (plan 15c): a personality that presses nothing, chosen
-/// where the other bot settings are.
+/// where the other bot settings are (the Advanced… window, issue #5).
 #[test]
 fn idle_is_a_personality_choice() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
     h.get_by_label("Local Play").click();
+    h.run();
+    h.get_by_label("Advanced…").click();
     h.run();
     h.get_by_label("Personality").click();
     h.run();

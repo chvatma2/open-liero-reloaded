@@ -16,6 +16,7 @@ mod host;
 mod host_lost;
 mod ingame;
 mod keys;
+mod loadouts;
 mod lobby;
 mod local_play;
 mod main;
@@ -30,6 +31,7 @@ mod weapon_select;
 
 pub use host_lost::{HOST_LOST_REPLAY, HOST_LOST_TITLE, STEPPED_DOWN_TITLE};
 pub use keys::GAME_KEYS;
+pub use loadouts::{NO_WEAPON, READ_ONLY, UNIQUE_HINT};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -150,6 +152,12 @@ pub struct MenuData {
     decodes_left: usize,
     /// Problems for the app to log (`take_warnings`).
     warnings: Vec<String>,
+    /// Every problem `warn_once` has passed on (each is logged once).
+    warned: BTreeSet<String>,
+    /// The loadout editor, while open (local play, the host's lobby).
+    loadout_editor: Option<loadouts::Editor>,
+    /// The "Advanced…" bots window is open.
+    bots_open: bool,
     multiplayer: multiplayer::View,
     host: host::View,
     lobby_ui: lobby::View,
@@ -199,6 +207,9 @@ impl MenuData {
             thumbs: BTreeMap::new(),
             decodes_left: THUMB_DECODES_PER_FRAME,
             warnings: Vec::new(),
+            warned: BTreeSet::new(),
+            loadout_editor: None,
+            bots_open: false,
             multiplayer: multiplayer::View::default(),
             host: host::View::default(),
             lobby_ui: lobby::View::default(),
@@ -268,8 +279,21 @@ impl MenuData {
         self.thumbs.len()
     }
 
-    /// The problems found since the last call (unreadable thumbnails), for
-    /// the app to log once.
+    /// `w` for the app to log, unless it was already.
+    fn warn_once(&mut self, w: String) {
+        if self.warned.insert(w.clone()) {
+            self.warnings.push(w);
+        }
+    }
+
+    /// Whether a window is open over the page (the loadout editor, the
+    /// bots): Esc closes it instead of going back.
+    pub fn window_open(&self) -> bool {
+        self.loadout_editor.is_some() || self.bots_open
+    }
+
+    /// The problems found since the last call (unreadable thumbnails, a
+    /// loadout gone or changed), for the app to log once.
     pub fn take_warnings(&mut self) -> Vec<String> {
         std::mem::take(&mut self.warnings)
     }
@@ -320,13 +344,18 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
     if screen != Screen::InGame {
         data.ingame_chat = None;
     }
+    if !matches!(screen, Screen::LocalPlay | Screen::Lobby) {
+        data.loadout_editor = None;
+        data.bots_open = false;
+    }
     // The capture takes the key: egui must not also act on it (Space
     // pressing the focused button, Tab moving the focus, Esc leaving).
     if data.capture.is_some() {
         ui.ctx().input_mut(|i| i.events.retain(|e| !matches!(e, Event::Key { .. } | Event::Text(_))));
     }
     // A dialog of the options is open: Esc closes it, and stays.
-    let dialog = screen == Screen::Options && data.options.keys.busy(data.capture.is_some());
+    let dialog =
+        (screen == Screen::Options && data.options.keys.busy(data.capture.is_some())) || data.window_open();
     match screen {
         Screen::InGame => ingame::show(ui, state, data, &mut out),
         Screen::WeaponSelect => weapon_select::show(ui, data, &mut out),

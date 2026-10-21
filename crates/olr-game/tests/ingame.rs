@@ -30,6 +30,12 @@ fn shell(content: &Path, store: Store, settings: Settings) -> Shell {
 }
 
 /// The player's keys at tick `t`: walk about, jump and shoot now and then.
+/// Classic's shipped loadout `name` (`content/packs`).
+fn shipped(content: &Path, name: &str) -> olr_content::MatchLoadout {
+    let m = olr_content::Content::open(content).unwrap().mod_info("olx-classic").unwrap();
+    m.loadouts.into_iter().find(|l| l.name == name).unwrap()
+}
+
 fn player_keys(t: u64) -> Keys {
     let walk = if (t / 200).is_multiple_of(2) { Keys::RIGHT } else { Keys::LEFT };
     let jump = if t.is_multiple_of(97) { Keys::JUMP } else { 0 };
@@ -126,6 +132,9 @@ fn results_match_world_scores() {
     let mut settings = Settings::default();
     settings.gameplay.match_prefs.bots = 3;
     settings.gameplay.match_prefs.rules.time_limit = 0.25;
+    // Weapons whose damage ends with the match: the world's scores count
+    // on after the game over, the results do not.
+    settings.gameplay.match_prefs.weapons = shipped(&dir, "Standard 100lt");
     let mut sh = shell(&dir, Store::open(tmp.path()), settings);
     start(&mut sh);
     choose(&mut sh);
@@ -187,7 +196,9 @@ fn results_match_world_scores() {
 fn a_refused_choice_leaves_the_match_playable() {
     let Some(dir) = content() else { return };
     let tmp = tempfile::tempdir().unwrap();
-    let mut sh = shell(&dir, Store::open(tmp.path()), Settings::default());
+    let mut settings = Settings::default();
+    settings.gameplay.match_prefs.weapons = shipped(&dir, "Standard 100lt");
+    let mut sh = shell(&dir, Store::open(tmp.path()), settings);
     start(&mut sh);
     let menu = sh.data.weapons.clone().unwrap();
     let banned = (0..menu.names.len() as i32).find(|&w| !menu.enabled[w as usize]).expect("a banned weapon");

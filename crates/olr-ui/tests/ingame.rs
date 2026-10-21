@@ -169,6 +169,7 @@ fn menu() -> WeaponMenu {
         // `findEnabledWeapon`: the first enabled by name.
         fallback: 0,
         seed: 9,
+        unique: false,
     }
 }
 
@@ -205,6 +206,38 @@ fn harness(ui: UiState, data: MenuData) -> Harness<'static, App> {
 fn hold(h: &mut Harness<'static, App>, keys: u8) {
     h.state_mut().data.held = Keys(keys);
     h.run();
+}
+
+/// A loadout's unique rule (issue #5): no weapon twice in the five slots
+/// unless every enabled weapon is in one already.
+#[test]
+fn weapon_selection_keeps_the_unique_rule() {
+    let m = WeaponMenu { unique: true, ..menu() };
+    // Remembered repeats become the first enabled weapons no slot holds;
+    // once all four are in a slot, the fifth may repeat.
+    let names = ["Bazooka", "bazooka", "Laser", "Laser", "Nuke"].map(String::from);
+    let mut s = WeaponSelect::new(&m, &names);
+    assert_eq!(s.slots(), [0, 4, 2, 5, 0]);
+    s.change_slot(&m, 4, 1);
+    assert_eq!(s.slots(), [0, 4, 2, 5, 2], "every weapon is in another slot: any");
+    // Seven on: a slot steps over the weapons the others hold.
+    let all = WeaponMenu { enabled: vec![true; 7], ..m.clone() };
+    let mut s = WeaponSelect::new(&all, &[]);
+    assert_eq!(s.slots(), [0, 1, 2, 3, 4], "the fallback once, then the first free ones");
+    s.change_slot(&all, 0, 1);
+    assert_eq!(s.slots(), [5, 1, 2, 3, 4]);
+    s.change_slot(&all, 0, 1);
+    assert_eq!(s.slots(), [6, 1, 2, 3, 4]);
+    s.change_slot(&all, 0, 1);
+    assert_eq!(s.slots(), [0, 1, 2, 3, 4], "wrapping, still unique");
+    // Without the rule a slot takes the next weapon, held or not.
+    let free = WeaponMenu { unique: false, ..all };
+    s.change_slot(&free, 0, 1);
+    assert_eq!(s.slots(), [1, 1, 2, 3, 4]);
+    // Random keeps it as OLX's draw does.
+    s.random(&m);
+    let slots = s.slots();
+    assert!(olr_data::loadouts::unique_ok(&slots, &ENABLED), "{slots:?}");
 }
 
 #[test]

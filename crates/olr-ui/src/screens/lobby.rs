@@ -15,9 +15,10 @@
 
 use egui::{Button, Color32, Key, ProgressBar, RichText, ScrollArea, Sense, TextEdit, Ui, vec2};
 
-use super::local_play::{level_combo, level_grid, mod_picker, olx_match, personality_combo, rules};
-use super::{MenuData, columns, footer, message, page, primary, section, tall_section};
+use super::local_play::{difficulty, level_grid, mod_picker, rules};
+use super::{MenuData, columns, footer, loadouts, message, page, primary, section, tall_section};
 use crate::hud::LineKind;
+use crate::loadouts::OwnLoadouts;
 use crate::match_prefs::{MAX_BOTS, MatchPrefs};
 use crate::online::{CHAT_CHARS, DownloadView, LobbyView, MemberView, PHASE_LOBBY, megabytes};
 use crate::state::{Screen, UiAction, UiState};
@@ -130,7 +131,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     });
     let ui = &mut ui;
     columns(ui, 2, |c| {
-        setup(&mut c[0], &view, data, out);
+        setup(&mut c[0], &view, state.loadouts(), data, out);
         members_and_chat(&mut c[1], &view, data, out);
     });
     if data.lobby_ui.confirm_leave {
@@ -203,9 +204,14 @@ fn leave_dialog(ctx: &egui::Context, v: &mut View, out: &mut Vec<UiAction>) {
 }
 
 /// The left column: the setup (the host's), and this player's weapons.
-fn setup(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mut Vec<UiAction>) {
+fn setup(ui: &mut Ui, view: &LobbyView, own: &OwnLoadouts, data: &mut MenuData, out: &mut Vec<UiAction>) {
     let before = view.setup.clone();
     let mut p = before.clone();
+    // The host's loadout as its own loadouts now have it; a client shows
+    // the host's.
+    if view.host {
+        loadouts::refresh(data, own, &mut p);
+    }
     ScrollArea::vertical().id_salt("lobby setup").auto_shrink([false, false]).show(ui, |ui| {
         if view.invite.is_some() || view.listing.is_some() || !view.reach.is_empty() {
             section(ui, "Invite", |ui, _| invite(ui, view));
@@ -230,7 +236,7 @@ fn setup(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mut Vec<UiAct
         ui.add_space(SECTION_GAP);
         ui.add_enabled_ui(view.host, |ui| {
             section(ui, "Map", |ui, _| {
-                mod_picker(ui, data, &mut p);
+                mod_picker(ui, data, own, &mut p);
                 ui.add_space(8.0);
                 ScrollArea::vertical().id_salt("lobby levels").max_height(240.0).show(ui, |ui| {
                     level_grid(ui, data, &mut p);
@@ -238,14 +244,22 @@ fn setup(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mut Vec<UiAct
             });
             ui.add_space(SECTION_GAP);
             section(ui, "Match (Deathmatch)", |ui, _| {
-                if rules(ui, data, &mut p) {
-                    p = olx_match(data, &p);
-                }
+                loadouts::picker(ui, data, own, &mut p, view.host);
+                rules(ui, &mut p);
             });
             ui.add_space(SECTION_GAP);
-            section(ui, "Bots", |ui, _| bots(ui, &mut p));
+            section(ui, "Bots", |ui, _| bots(ui, data, &mut p));
         });
     });
+    if view.host {
+        if let Some(l) = loadouts::editor(ui.ctx(), data, own, out) {
+            p.weapons = l;
+        }
+        loadouts::bots_window(ui.ctx(), data, &mut p);
+    } else {
+        data.loadout_editor = None;
+        data.bots_open = false;
+    }
     if view.host && p != before {
         out.push(UiAction::LobbySetup(p));
     }
@@ -273,7 +287,9 @@ fn invite(ui: &mut Ui, view: &LobbyView) {
 
 /// The bots of a lobby: none to [`MAX_BOTS`] (a lobby of people needs
 /// none), one difficulty for all.
-fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
+/// The bots: Add and Remove, then their difficulty and "Advanced…"
+/// (local play's).
+fn bots(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs) {
     ui.horizontal(|ui| {
         ui.label(format!("{} bots", p.bots));
         if ui.add_enabled(p.bots < MAX_BOTS, Button::new("Add bot")).clicked() {
@@ -288,14 +304,7 @@ fn bots(ui: &mut Ui, p: &mut MatchPrefs) {
         }
     });
     if p.bots > 0 {
-        ui.horizontal(|ui| {
-            let label = ui.label("Difficulty");
-            level_combo(ui, label.id, "lobby difficulty", &mut p.difficulty);
-        });
-        ui.horizontal(|ui| {
-            let label = ui.label("Personality");
-            personality_combo(ui, label.id, "lobby personality", &mut p.personality);
-        });
+        difficulty(ui, data, p, "lobby difficulty");
     }
 }
 

@@ -26,7 +26,8 @@ pub struct SandboxOptions {
     pub seed: u32,
     /// Idle target worms besides the player.
     pub targets: usize,
-    /// OLX's `Bonuses` option: bonuses spawn and fall.
+    /// OLX's `Bonuses` option: bonuses spawn and fall. Only the tests turn
+    /// it on (the soak): bonuses are gone from play (issue #5).
     pub bonuses: bool,
 }
 
@@ -59,8 +60,6 @@ pub struct DeathmatchOptions {
     pub kill_limit: i32,
     /// `TimeLimit` in minutes: 0 or less is off.
     pub time_limit: f32,
-    /// OLX's `Bonuses` option.
-    pub bonuses: bool,
     /// No human plays: `bots` bots (2 to `MAX_WORMS`) alone, watched
     /// (`--spectate`; fast-forward allowed, `speed.rs`).
     pub spectate: bool,
@@ -77,7 +76,6 @@ impl Default for DeathmatchOptions {
             lives: d.lives,
             kill_limit: d.kill_limit,
             time_limit: d.time_limit,
-            bonuses: false,
             spectate: false,
         }
     }
@@ -101,7 +99,7 @@ pub fn match_options(o: &DeathmatchOptions, mod_id: &str, level_id: &str) -> Mat
         mod_id: mod_id.into(),
         level_id: level_id.into(),
         seed: o.seed,
-        settings: SimSettings { bonuses: o.bonuses, ..SimSettings::lx56() },
+        settings: SimSettings::lx56(),
         players,
         deathmatch: DeathmatchSettings {
             lives: o.lives,
@@ -329,7 +327,7 @@ pub fn load_edited(
             level_id: level_id.clone(),
             seed: 1,
             targets: 0,
-            bonuses: prefs.bonuses,
+            bonuses: false,
         };
         let mut setup = sandbox_setup(&o);
         setup.worms[0].pos = spawn;
@@ -341,7 +339,7 @@ pub fn load_edited(
             bots,
             per_bot: None,
             rules: olr_ui::MatchPrefs::default().rules,
-            restrictions: olr_content::DEFAULT_PRESET.into(),
+            weapons: olr_content::MatchLoadout::default(),
             ..prefs.clone()
         };
         let r = |id: &str| olr_replay::PackRef { id: id.into(), hash: String::new() };

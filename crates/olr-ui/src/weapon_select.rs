@@ -8,6 +8,10 @@
 //! Done ends the selection. The game's own keys drive it, keyboard or
 //! gamepad, as OLX's controls do; the screen also takes the mouse.
 //!
+//! A loadout's unique rule (issue #5; not OLX's) holds throughout: with
+//! [`WeaponMenu::unique`], a slot only steps to weapons no other slot
+//! holds, unless every enabled weapon is in another slot already.
+//!
 //! Pure logic: the screen (`screens/weapon_select.rs`) draws it, the app
 //! gives it the mod's weapons ([`WeaponMenu`]) and the keys held.
 
@@ -35,6 +39,8 @@ pub struct WeaponMenu {
     pub fallback: i32,
     /// Seeds the Random button.
     pub seed: u32,
+    /// The loadout's unique rule (`olr_data::loadouts::unique_ok`).
+    pub unique: bool,
 }
 
 impl WeaponMenu {
@@ -46,6 +52,11 @@ impl WeaponMenu {
 
     fn is_enabled(&self, id: i32) -> bool {
         usize::try_from(id).ok().and_then(|i| self.enabled.get(i)).copied().unwrap_or(false)
+    }
+
+    /// The enabled weapons' ids.
+    fn enabled_ids(&self) -> Vec<i32> {
+        (0..self.enabled.len() as i32).filter(|&id| self.is_enabled(id)).collect()
     }
 
     /// Weapon `id`'s name ("-" for none).
@@ -75,10 +86,12 @@ impl WeaponSelect {
     /// The selection starting from the profile's `remembered` weapon names
     /// (ignoring ASCII case, as `FindWeaponId`); a slot whose weapon the
     /// mod lacks or the restrictions do not enable gets `menu.fallback`.
+    /// Under the unique rule a slot repeating an earlier one then gets the
+    /// first enabled weapon no slot holds, while there is one.
     ///
     /// OLX: src/common/CWormHuman.cpp:724-731.
     pub fn new(menu: &WeaponMenu, remembered: &[String]) -> WeaponSelect {
-        let slots = std::array::from_fn(|i| {
+        let mut slots: [i32; MAX_SLOTS] = std::array::from_fn(|i| {
             let name = remembered.get(i).map_or("", String::as_str);
             let id = if name.is_empty() {
                 -1
@@ -87,6 +100,16 @@ impl WeaponSelect {
             };
             if menu.is_enabled(id) { id } else { menu.fallback }
         });
+        if menu.unique {
+            let enabled = menu.enabled_ids();
+            for i in 0..MAX_SLOTS {
+                if slots[..i].contains(&slots[i])
+                    && let Some(&free) = enabled.iter().find(|e| !slots.contains(e))
+                {
+                    slots[i] = free;
+                }
+            }
+        }
         WeaponSelect { slots, row: 0, rng: BotRng::from_seed(menu.seed), held: 0, repeat: None }
     }
 
@@ -121,19 +144,25 @@ impl WeaponSelect {
         }
     }
 
-    /// Changes slot `slot` by `by` enabled weapons.
+    /// Changes slot `slot` by `by` enabled weapons (under the unique
+    /// rule, those no other slot holds, unless every enabled weapon is in
+    /// another slot).
     pub fn change_slot(&mut self, menu: &WeaponMenu, slot: usize, mut by: i32) {
         let n = menu.names.len() as i32;
-        let Some(cur) = self.slots.get_mut(slot) else { return };
-        if n == 0 {
+        if slot >= MAX_SLOTS || n == 0 {
             return;
         }
+        let others: Vec<i32> =
+            self.slots.iter().enumerate().filter(|&(i, _)| i != slot).map(|(_, &w)| w).collect();
+        let free = menu.unique && !menu.enabled_ids().iter().all(|e| others.contains(e));
+        let takes = |id: i32| menu.is_enabled(id) && !(free && others.contains(&id));
+        let cur = &mut self.slots[slot];
         let start = (*cur).clamp(-1, n - 1);
         let mut id = start.max(0);
         let step = by.signum();
         while by != 0 {
             id = (id + step).rem_euclid(n);
-            if menu.is_enabled(id) {
+            if takes(id) {
                 by -= step;
             }
             if (start < 0 && id == 0) || id == start {
