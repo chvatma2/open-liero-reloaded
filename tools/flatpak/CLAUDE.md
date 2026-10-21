@@ -19,7 +19,7 @@ or alone by `cargo xtask flatpak` (`xtask/src/flatpak.rs`), into
   runtime fails at start. `libasound.so.2` and `libudev.so.1`, the
   programs' other libraries, are in the runtime.
 - **Layout**: `/app/lib/olr/` holds the release folder (programs, docs,
-  `content/packs`); `/app/bin/olr` and `/app/bin/olr-server` are symbolic
+  `content/packs` and OLR's own `content/reloaded`); `/app/bin/olr` and `/app/bin/olr-server` are symbolic
   links to it, and `/proc/self/exe` resolves them, so the programs find
   the content beside them (`olr_content::default_content_dir`). The data
   directory (`directories`' XDG paths) is `~/.var/app/<id>/`.

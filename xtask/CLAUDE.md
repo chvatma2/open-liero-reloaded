@@ -324,8 +324,10 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   the command: both releases or none), staged in `target/dist-stage/` (removed
   after) under one folder `open-liero-reloaded-<version>/`: the exes, the mingw
   DLLs an exe imports (`winbuild::mingw_imports`), `DOCS`, the example
-  server config as `server.example.ron` (`files`) and `content/packs`
-  without `import-report.ron` (`copy_content`), and last
+  server config as `server.example.ron` (`files`), `content/packs`
+  without `import-report.ron` (`copy_content`), OLR's own packs
+  `content/reloaded` (`RELOADED`, issue #7) without their README
+  (`copy_reloaded`), and last
   `install-manifest.txt` (`write_install_manifest`: every file, the
   updater's record of what the release installed, `olr_update::install`).
   `write_zip` (the `zip`
@@ -337,14 +339,16 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `--no-verify`): the Flatpak's staged folder (`flatpak::staged_app`,
   what the bundle's `/app/lib/olr/` holds; its programs mode 0755), with
   `olr --help` run from a temporary directory, must show the
-  content beside it as `--content`'s default, and `olr-server` (config
+  content beside it as `--content`'s default, the folder must hold the
+  Reloaded levels (`RELOADED_LEVELS`, `check_reloaded`), and `olr-server` (config
   `CHECK_CONFIG`: invite only, no relays, no STUN, port 0, two fill seats (the client and a bot),
-  `min_players: 1`) must log its map (`next map:`), then start a match
+  `min_players: 1`; its rotation names the Reloaded levels after Dirt
+  Level, so it checks they load at its start) must log its map (`next map:`), then start a match
   with the dev `olr-cli net-client --bot` joined (`match start:`), and stop
   cleanly on SIGTERM with no `bad_lines`. The Windows zip is unpacked into
   `%TEMP%\olr-envelope\dist` (`winbuild`'s stage, so
   `stop_stage_processes` reaches it) and run through interop
-  (`winbuild::run_in` for `olr.exe --help`; `olr-server.exe` until it
+  (`winbuild::run_in` for `olr.exe --help`, `check_reloaded`; `olr-server.exe` until it
   logs its map, then stopped by path; no client: WSL cannot reach a
   Windows listener reliably); without interop (`winbuild::interop_missing`)
   a `skip` notice. Prints each release's path and size.

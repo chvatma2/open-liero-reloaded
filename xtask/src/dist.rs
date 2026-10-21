@@ -1,7 +1,8 @@
 //! `cargo xtask dist`: the portable release zips. `olr-game` and
 //! `olr-server` are built in the `dist` profile (release without symbols or
 //! debug info) for Linux and for Windows (mingw-w64, as `winbuild`), each
-//! staged under one folder `open-liero-reloaded-<version>/` with the content, the
+//! staged under one folder `open-liero-reloaded-<version>/` with the content
+//! (`content/packs`, and OLR's own packs beside it, `content/reloaded`), the
 //! docs and an example server config (the mingw DLLs only when an exe
 //! imports them), and zipped into `target/release-zips/open-liero-reloaded-<version>-
 //! <platform>.zip`: deflate, entries in byte order, fixed times and modes
@@ -19,7 +20,9 @@
 //! machine) until its log shows the rotation's map loaded from the content
 //! beside it; on Linux a bot client (`olr-cli net-client --bot`, the dev
 //! build) joins and the server must start a match. `olr --help` must
-//! name the content beside it as the default. The Windows zip runs in
+//! name the content beside it as the default, and the folder must hold the
+//! Reloaded levels (issue #7), which the server's rotation names too, so
+//! it loads them at its start. The Windows zip runs in
 //! `%TEMP%\olr-envelope\dist` through WSL interop (skipped with a
 //! notice without it) and is stopped by `winbuild`'s stage-scoped stop.
 
@@ -50,6 +53,15 @@ pub const SERVER_EXAMPLE: (&str, &str) = ("fixtures/server/example.ron", "server
 pub const CONTENT: &str = "content/packs";
 /// Files at the top of the content the programs never read.
 pub const CONTENT_LEFT_OUT: [&str; 1] = ["import-report.ron"];
+/// OLR's own packs (issue #7: the Reloaded levels), beside the content
+/// (`olr_content::RELOADED_DIR`) at the same path in the folder.
+pub const RELOADED: &str = "content/reloaded";
+/// Files at the top of OLR's own packs the programs never read.
+pub const RELOADED_LEFT_OUT: [&str; 1] = ["README.md"];
+/// The levels in [`RELOADED`] a release must hold: the verification
+/// finds each in the folder, and its server's rotation names them.
+pub const RELOADED_LEVELS: [&str; 2] =
+    ["olr-level-liero-factory-reloaded", "olr-level-castlestrike-reloaded"];
 /// How long a verification waits for the server to load its rotation.
 const READY_WITHIN: Duration = Duration::from_secs(60);
 /// How long the Linux verification waits for the bot client's match.
@@ -70,6 +82,8 @@ const CHECK_CONFIG: &str = "// `cargo xtask dist`'s check: by address only, noth
     min_players: 1,
     rotation: [
         (mod: \"olx-classic\", level: \"olx-level-dirt-level\", time_limit: 0.2, kill_limit: 0, lives: -2, bonuses: true),
+        (mod: \"olx-classic\", level: \"olr-level-liero-factory-reloaded\"),
+        (mod: \"olx-classic\", level: \"olr-level-castlestrike-reloaded\"),
     ],
     start_when_ready: true,
 )
@@ -147,6 +161,27 @@ pub fn executables(platform: Platform) -> Vec<String> {
 /// Copies the content directory `from` to `to`, leaving out `CONTENT_LEFT_OUT`.
 pub fn copy_content(from: &Path, to: &Path) -> Result<(), String> {
     copy_dir(from, to, &CONTENT_LEFT_OUT)
+}
+
+/// Copies OLR's own packs `from` to `to`, leaving out `RELOADED_LEFT_OUT`.
+pub fn copy_reloaded(from: &Path, to: &Path) -> Result<(), String> {
+    copy_dir(from, to, &RELOADED_LEFT_OUT)
+}
+
+/// An error unless the release folder holds every level of [`RELOADED_LEVELS`].
+fn check_reloaded(folder: &Path) -> Result<(), String> {
+    let missing: Vec<&str> = RELOADED_LEVELS
+        .into_iter()
+        .filter(|id| {
+            !RELOADED
+                .split('/')
+                .fold(folder.to_path_buf(), |d, c| d.join(c))
+                .join(id)
+                .join("pack.ron")
+                .is_file()
+        })
+        .collect();
+    if missing.is_empty() { Ok(()) } else { Err(format!("{RELOADED} lacks {}", missing.join(", "))) }
 }
 
 /// Copies the directory `from` to `to`, leaving out the files named `skip` at its top.
@@ -295,6 +330,7 @@ pub fn stage(platform: Platform, build: &Path, dir: &Path, version: &str) -> Res
         copy(&src, &folder.join(&rel))?;
     }
     copy_content(&repo.join(CONTENT), &folder.join(CONTENT))?;
+    copy_reloaded(&repo.join(RELOADED), &folder.join(RELOADED))?;
     write_install_manifest(&folder)?;
     Ok(folder)
 }
@@ -469,6 +505,7 @@ fn verify_linux(folder: &Path, version: &str) -> Result<String, String> {
             String::from_utf8_lossy(&help.stderr)
         ));
     }
+    check_reloaded(&folder)?;
 
     // The bot client: the dev build, the repository's content.
     let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
@@ -527,7 +564,7 @@ fn verify_linux(folder: &Path, version: &str) -> Result<String, String> {
         return Err(server.report(&format!("olr-server's output is not clean: {bad:?}")));
     }
     Ok(format!(
-        "olr --help names the content beside it; olr-server loaded {map} and started a match ({started})"
+        "olr --help names the content beside it, OLR's own levels beside that; olr-server loaded {map} and started a match ({started})"
     ))
 }
 
@@ -551,6 +588,7 @@ fn verify_windows(zip: &Path, version: &str) -> Result<Option<String>, String> {
     if !text.lines().any(|l| l.contains("[default: ") && l.trim_end().ends_with(&beside)) {
         return Err(format!("olr.exe --help does not show the content beside it (…{beside}):\n{text}"));
     }
+    check_reloaded(&folder)?;
     let mut server = Watched::start(
         "olr-server.exe",
         Command::new(folder.join("olr-server.exe")).args(["--config", "server.ron"]).current_dir(&run),
@@ -569,7 +607,9 @@ fn verify_windows(zip: &Path, version: &str) -> Result<Option<String>, String> {
     if !bad.is_empty() {
         return Err(server.report(&format!("olr-server.exe's output is not clean: {bad:?}")));
     }
-    Ok(Some(format!("olr.exe --help names the content beside it; olr-server.exe loaded {map}")))
+    Ok(Some(format!(
+        "olr.exe --help names the content beside it, OLR's own levels beside that; olr-server.exe loaded {map}"
+    )))
 }
 
 /// A platform's release file: the Windows zip, the Linux Flatpak.
@@ -749,6 +789,23 @@ mod tests {
         assert_eq!(std::fs::read_to_string(to.join("olx-core/pack.ron")).unwrap(), "(id: \"olx-core\")");
         assert_eq!(std::fs::read_to_string(to.join("olx-core/sprites/a.png")).unwrap(), "png");
         assert_eq!(std::fs::read_to_string(to.join("olx-core/import-report.ron")).unwrap(), "kept");
+    }
+
+    /// Issue #7: OLR's own packs ship beside the content, without their
+    /// README, and the release must hold the Reloaded levels.
+    #[test]
+    fn the_reloaded_levels_ship_beside_the_content() {
+        let t = tempfile::tempdir().unwrap();
+        let folder = t.path().join("out");
+        assert!(check_reloaded(&folder).unwrap_err().contains(RELOADED_LEVELS[0]));
+        let from = root().join(RELOADED);
+        copy_reloaded(&from, &folder.join(RELOADED)).unwrap();
+        check_reloaded(&folder).unwrap();
+        assert!(from.join("README.md").is_file() && !folder.join(RELOADED).join("README.md").exists());
+        // The verification's server loads them from the folder.
+        for id in RELOADED_LEVELS {
+            assert!(CHECK_CONFIG.contains(&format!("level: \"{id}\"")), "{id}");
+        }
     }
 
     #[test]
