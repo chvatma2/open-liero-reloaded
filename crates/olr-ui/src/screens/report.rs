@@ -40,20 +40,17 @@ pub(super) fn show(ui: &mut Ui, _state: &UiState, data: &mut MenuData, out: &mut
         }
         ui.add_space(4.0);
         match &r.status {
+            // Each on a line of its own: the footer centres its lines.
             SendStatus::Sending => {
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label("Sending…");
-                });
+                ui.spinner();
+                ui.label("Sending…");
             }
             SendStatus::Sent(url) => {
                 ui.label(RichText::new(THANKS).color(Color32::from_rgb(140, 220, 140)));
-                ui.horizontal(|ui| {
-                    ui.add(egui::Label::new(RichText::new(url).monospace()).selectable(true));
-                    if ui.button("Copy").clicked() {
-                        ui.ctx().copy_text(url.clone());
-                    }
-                });
+                ui.add(egui::Label::new(RichText::new(url).monospace()).selectable(true));
+                if ui.button("Copy").clicked() {
+                    ui.ctx().copy_text(url.clone());
+                }
             }
             SendStatus::Failed(why) => {
                 ui.label(RichText::new(why).color(RED));
