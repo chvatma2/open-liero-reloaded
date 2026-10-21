@@ -3773,7 +3773,8 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
 - **The idle bot** (`Personality::Idle`): presses nothing, not even to
   respawn (the server's `MaxRespawnTime` brings it back); online wire
   index 2.
-- **Castle Strike by day** (`content/playtest/olr-level-castlestrike-day`).
+- **Castle Strike by day** (`content/playtest/olr-level-castlestrike-day`;
+  since issue #7 Castle Strike Reloaded, `content/reloaded/olr-level-castlestrike-reloaded`).
   The user found explosions perhaps a bit bright: a later milestone, to
   verify by playthrough.
 - **Not measured yet:** the cascades' cost at a cell a world pixel, the
@@ -3850,6 +3851,37 @@ a **loadout** and plays without bonuses. Deliberate deviations:
 - **Online:** the host's loadout travels in full in the setup (protocol
   4; at most `MAX_LOADOUT_WEAPONS` 128 names, a larger one sent as
   `Default`); a server's rotation entry may name a shipped loadout.
+
+## Reloaded levels (issue #7)
+
+OLX shipped its levels; OLR ships them (imported, `content/packs`) and
+its own remade "Reloaded" levels beside them:
+
+- **A second bundled content root, `content/reloaded/`,** for OLR's own
+  hand-made packs: `content/packs` holds only what the OLX import makes
+  (`cargo xtask check` compares it with a fresh import), so hand-made
+  packs cannot live there. The programs lay it over the content wherever
+  it is opened (`olr_content::bundled_roots`, `Content::open_bundled`):
+  the game (the user's data `packs/` on top, then `content/reloaded`,
+  then `content/packs`), `olr-server` and `olr-cli`'s commands, from
+  `--content` or `default_content_dir` (`reloaded` beside it). `cargo
+  xtask dist` ships it in the Windows zip and the Flatpak. A higher layer
+  still hides a lower one's pack of the same id (spec §9.4); the two
+  shipped roots share none (a test). Bundled, so the editor does not edit
+  them in place (`--edit` and the Editor menu).
+- **Liero Factory Reloaded** (`olr-level-liero-factory-reloaded`): OLX's
+  Liero Factory with a look (the factory at night, its ceiling lamps,
+  screens, displays and roof lights glowing, a faint moonlit sky); its
+  material, front and back are the imported level's byte for byte
+  (tested), so it plays as OLX's. The look was judged from
+  `olr-cli look-preview` renders on the software adapter, not yet
+  played.
+- **Castle Strike Reloaded** (`olr-level-castlestrike-reloaded`): the
+  day Castle Strike of plan 15c, moved from `content/playtest/`
+  unchanged but for its id and name. The night one stays a playtest pack.
+- Both are in the example server config's rotation
+  (`fixtures/server/example.ron`), and `dist`'s verification server
+  loads them.
 
 ## Kept OLX quirks
 

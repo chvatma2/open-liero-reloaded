@@ -103,6 +103,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   in Local Play and the lobby makes your own, kept in `loadouts.ron`. An
   online game plays the host's loadout; a server's rotation entry may
   name one (`loadout: "Rifle only"`).
+- Two Reloaded levels ship with the game: **Liero Factory Reloaded** (OLX's
+  Liero Factory at night, its lamps, screens and displays glowing; it
+  plays as before) and **Castle Strike Reloaded** (Castle Strike by day,
+  lit by the sky). They are OLR's own packs in `content/reloaded/`, beside
+  the imported content, listed by the game and nameable in a server's
+  rotation (the example config plays both).
 
 ### Changed
 

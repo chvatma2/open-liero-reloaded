@@ -84,7 +84,10 @@ re-records them and logs the reason in `fixtures/blessings.log`;
 ## Content
 
 The converted packs are committed in `content/packs/` (the default
-`--content`), so a fresh clone plays and tests offline. `cargo xtask
+`--content`), so a fresh clone plays and tests offline. OLR's own
+hand-made packs (the Reloaded levels) are in `content/reloaded/`, laid over
+`content/packs` wherever it is opened (`olr_content::bundled_roots`) and
+shipped with it; they share no pack id with it (a test). `cargo xtask
 fetch-olx-content` sparse-clones OLX at the commit pinned in
 `content/olx-manifest.ron` into `target/olx/<commit>/` and imports the
 listed items into `content/packs/`: run it after changing the manifest or

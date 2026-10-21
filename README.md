@@ -62,6 +62,12 @@ more:
   replaces packs and never removes others (`--prune` does). The game has no
   Import screen; the editors will import too, later.
 
+OLR's own levels, remade "Reloaded" versions of OLX's, are hand-made packs
+in `content/reloaded` (beside `content/packs`, shipped and loaded with it):
+**Liero Factory Reloaded** (the factory at night, its lamps and screens
+lit) and **Castle Strike Reloaded** (Castle Strike by day, lit by the sky).
+See `content/reloaded/README.md`.
+
 ### Run
 
 ```sh
@@ -81,7 +87,7 @@ Useful flags (`olr --help` lists them all):
 | `--replay f.olrp` | watch a replay |
 | `--mode deathmatch ...`, `--record f.olrp` | a command-line Deathmatch without the menus (below), saving its replay |
 | `--data-dir <dir>` | settings, profiles, replays and user packs here instead of the platform's directory |
-| `--content <dir>` | the imported content (default `content/packs` beside `olr-game`, else in the working directory) |
+| `--content <dir>` | the imported content (default `content/packs` beside `olr-game`, else in the working directory); OLR's own levels, the `reloaded` directory beside it, are laid over it |
 | `--no-sound` | open no audio device |
 | `--edit <pack dir>` | open the level editor on that pack (the menus run behind it; bundled content is refused) |
 
@@ -412,10 +418,11 @@ read each other's replays as before.
 - **Windows: a portable zip,**
   `target/release-zips/open-liero-reloaded-<version>-windows-x64.zip`.
   It holds one folder, `open-liero-reloaded-<version>/`, with `olr.exe` and
-  `olr-server.exe`, the content in `content/packs/`, this README, the
-  license, the changelog, `docs/online.md` and `server.example.ron`. Unpack
-  it anywhere and run `olr.exe`. Without `--content`, both programs use the
-  `content/packs` beside them. No extra DLLs are needed.
+  `olr-server.exe`, the content in `content/packs/` and OLR's own levels
+  in `content/reloaded/`, this README, the license, the changelog,
+  `docs/online.md` and `server.example.ron`. Unpack it anywhere and run
+  `olr.exe`. Without `--content`, both programs use the `content/packs`
+  beside them, with the `reloaded` directory beside that. No extra DLLs are needed.
 
 Both are built in the `dist` profile (release without symbols), and the
 Flatpak holds the same folder as the zip. Settings, profiles and replays
