@@ -194,6 +194,10 @@ pub struct DrawList {
     pub map: (u32, u32),
     /// The living worms' bodies in a lit match (plan 15b), whatever the view.
     pub occluders: Vec<Occluder>,
+    /// The camera the level's distant layers scroll by (issue #11), in
+    /// world pixels; `None`: the view's centre (play). The editor's canvas
+    /// gives its own view's centre, which the view's clamp may not be.
+    pub parallax: Option<(f32, f32)>,
     layers: [Vec<Item>; 5],
 }
 
@@ -229,6 +233,12 @@ impl DrawList {
     pub fn clear(&mut self) {
         self.layers.iter_mut().for_each(Vec::clear);
         self.occluders.clear();
+    }
+
+    /// The camera the distant layers scroll by: [`DrawList::parallax`], or
+    /// the view's centre.
+    pub fn camera(&self) -> (f32, f32) {
+        self.parallax.unwrap_or((self.view.x + self.view.w / 2.0, self.view.y + self.view.h / 2.0))
     }
 
     pub fn layer(&self, layer: Layer) -> &[Item] {
