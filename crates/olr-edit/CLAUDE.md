@@ -28,7 +28,10 @@ operations.
   and stays), then swaps the new pack in with
   `olr_pack::install::replace_dir`: the pack on disk is the old one or the
   new one, never a mix. Files the source no longer has are gone (a removed
-  weapon's file). Empty directories and file permissions are not kept.
+  weapon's file). Empty directories and file permissions are not kept. `mod_pack(pack)` (issue #18, the mod editor's
+  Play) is a mod `Pack` as the game reads a saved one: `files` checked as
+  `save` checks them, then `olr_pack::read_mod` from a `MemFs`, nothing
+  written (`an_unsaved_mod_reads_as_a_saved_one`).
 - **`fmt`**: `unformatted(dir)` lists the format files whose bytes differ
   from their canonical form, and those the writer leaves out (an empty
   `restrictions.ron`, which a save removes), never a foreign file; when it

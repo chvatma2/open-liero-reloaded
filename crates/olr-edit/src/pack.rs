@@ -235,6 +235,20 @@ pub fn check(files: &BTreeMap<VPath, Vec<u8>>) -> Result<(), SaveError> {
     if errors.is_empty() { Ok(()) } else { Err(SaveError::Invalid(errors)) }
 }
 
+/// Mod pack `pack` as the game reads a saved one (issue #18, the mod
+/// editor's Play): `files(pack)` checked as [`save`] checks them (an
+/// error is `SaveError::Invalid`), then read by `olr_pack::read_mod` from
+/// memory. Nothing is written.
+pub fn mod_pack(pack: &Pack) -> Result<olr_pack::ModPack, SaveError> {
+    let files = files(pack)?;
+    check(&files)?;
+    let mut mem = MemFs::new();
+    for (path, bytes) in &files {
+        mem.write(path, bytes).map_err(PackError::from)?;
+    }
+    Ok(olr_pack::read_mod(&mem)?)
+}
+
 /// `files(pack)` written through `replace_dir`; the result is read
 /// back with `olr_pack::validate` before the swap, and an error there
 /// aborts the save (the old pack stays). Returns `replace_dir`'s warnings.

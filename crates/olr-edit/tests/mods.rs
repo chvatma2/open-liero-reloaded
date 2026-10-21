@@ -193,6 +193,25 @@ fn a_lenient_set_keeps_the_error_and_the_save_refuses_it() {
     assert_eq!(mods::get(src(&p), "mod.worm.gravity").unwrap(), "90.0");
 }
 
+/// Issue #18: an unsaved mod as the game reads it, from memory: the value
+/// set is in its definition; one with an error is refused as a save is.
+#[test]
+fn an_unsaved_mod_reads_as_a_saved_one() {
+    use olr_data::mod_def::WeaponKind;
+    let Some(root) = content() else { return };
+    let mut p = load(&root, CLASSIC);
+    let saved = pack::mod_pack(&p).unwrap();
+    assert_eq!(saved, olr_pack::read_mod(&olr_vfs::DirFs::new(root.join(CLASSIC))).unwrap());
+    mods::set(&mut p, "weapons/bazooka.fire.shot.speed", "150").unwrap();
+    let m = pack::mod_pack(&p).unwrap();
+    let bazooka = m.def.weapons.iter().find(|w| w.id == "bazooka").unwrap();
+    let WeaponKind::Projectile { spawn, .. } = &bazooka.kind else { panic!("the bazooka shoots") };
+    assert_eq!(spawn.speed, 150);
+    let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
+    mods::set_lenient(&mut p, "projectiles/bazooka.spawn.spawns", cycle).unwrap();
+    assert!(matches!(pack::mod_pack(&p), Err(pack::SaveError::Invalid(_))));
+}
+
 #[test]
 fn weapons_add_remove_move_copy_and_rename() {
     let Some(root) = content() else { return };
