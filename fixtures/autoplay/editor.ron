@@ -1,7 +1,8 @@
-// The level editor end to end (plan 14c Task 7, spec §8): from the main
-// menu's Editor, a new level; a drawn layer painted with the brush, a
-// spawn placed, the layer made to glow and a light placed (plan 15a), Play
-// (it ticks) and Stop back, Play and Esc back, Save, Close. `xtask e2e` runs it after the menus script in a data directory of
+// The level editor end to end (plan 14c Task 7, spec §8; issue #8's
+// layout): from the main menu's Editor, a new level; a drawn layer painted
+// with the brush (from the rail's Draw flyout), a spawn placed, parts of
+// the layer made to glow by colour (plan 15a), Play (it ticks) and Stop
+// back, Play and Esc back, Save and Close from the File menu. `xtask e2e` runs it after the menus script in a data directory of
 // its own, then checks the canvas in `editor-painted.png` and the saved
 // pack `packs/e2e-level/`: a drawn layer in its composition, one spawn in
 // `level.ron`, and `olr-cli pack check` clean.
@@ -16,6 +17,9 @@
         (ui: Click("Create")),
         // The editor opens on the new level: its canvas, then a layer.
         (ui: Click("Add layer")),
+        // The rail's Draw chooses its last tool, then opens its flyout.
+        (ui: Click("Draw")),
+        (ui: Click("Draw")),
         (ui: Click("Brush")),
         (ui: Click("Back tile")),
         (ui: Drag("Canvas", (0.3, 0.5), (0.6, 0.5))),
@@ -23,14 +27,16 @@
         (ui: Click("Spawn")),
         (ui: ClickAt("Canvas", (0.5, 0.4))),
         (ui: Wait(3)),
+        // The right panel shows the Spawns tab: it follows the selection.
         (ui: Assert(LabelContains("Spawn 1 at"))),
-        // The look (plan 15a): the layer glows, a light lights it.
+        // The look (plan 15a): the stroke's colour glows (Make parts glow…
+        // is the Glow brush by colour), so the layer glows in parts.
+        (ui: Click("Elements")),
         (ui: Click("Layer")),
-        (ui: Click("Glow")),
-        (ui: Click("Light")),
-        (ui: ClickAt("Canvas", (0.7, 0.4))),
+        (ui: Click("Make parts glow…")),
+        (ui: ClickAt("Canvas", (0.45, 0.5))),
         (ui: Wait(3)),
-        (ui: Assert(LabelContains("Light 2 at"))),
+        (ui: Assert(Label("painted with the Glow brush (H)"))),
         (ui: Screenshot("editor-painted")),
         // Play the level (it ticks), then Stop returns to the editor as it
         // was; played again, Esc does the same.
@@ -42,8 +48,9 @@
         (ui: Click("Stop")),
         (ui: Wait(5)),
         (ui: Assert(Playing(false))),
+        (ui: Assert(Label("painted with the Glow brush (H)"))),
+        (ui: Click("Spawns")),
         (ui: Assert(LabelContains("Spawn 1 at"))),
-        (ui: Assert(LabelContains("Light 2 at"))),
         (ui: Click("Play")),
         (ui: Wait(30)),
         (ui: Assert(TicksAtLeast(20))),
@@ -51,9 +58,11 @@
         (ui: Wait(5)),
         (ui: Assert(Playing(false))),
         (ui: Assert(LabelContains("Spawn 1 at"))),
+        (ui: Click("File")),
         (ui: Click("Save")),
         (ui: Wait(3)),
         (ui: Screenshot("editor")),
+        (ui: Click("File")),
         (ui: Click("Close")),
         (ui: Wait(5)),
         (ui: WaitFor("Editor")),
