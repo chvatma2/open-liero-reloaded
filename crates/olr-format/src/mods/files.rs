@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use super::compile::{MAX_SHARED, MOD_FILE, shared_file, valid_id, weapon_file};
 use super::{ModSource, Rope, Worm};
 use crate::FormatError;
+use crate::look::ModWideLookSource;
 use crate::ron_io::{from_canonical, read_text, to_canonical, write_text};
 
 pub const RESTRICTIONS_FILE: &str = "restrictions.ron";
@@ -43,6 +44,10 @@ pub(crate) struct ModFile {
     /// `LoadingTime` apart from the preset. At most `MAX_LOADOUTS` (64).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     loadouts: BTreeMap<String, ShippedLoadout>,
+    /// The mod's look as a whole: the explosion light of every projectile
+    /// without its own. Presentation only. Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    look: Option<ModWideLookSource>,
 }
 
 /// The paths the writer writes for `src`, without encoding anything.
@@ -83,6 +88,7 @@ pub fn write_mod_files(sink: &mut dyn ContentSink, m: &ModSource) -> Result<(), 
         rope: m.rope.clone(),
         weapons: m.weapons.iter().map(|(id, _)| id.clone()).collect(),
         loadouts: m.loadouts.clone(),
+        look: m.look.clone(),
     };
     write_text(sink, MOD_FILE, &to_canonical(MOD_FILE, &file)?)?;
     for (id, w) in &m.weapons {
@@ -166,6 +172,7 @@ pub fn read_mod_files(src: &dyn ContentSource) -> Result<ModSource, FormatError>
         shared,
         restrictions,
         loadouts: file.loadouts,
+        look: file.look,
     })
 }
 
@@ -200,6 +207,7 @@ mod tests {
             shared: [("shell".to_string(), Projectile::new(Gfx::Pixels(vec![])))].into_iter().collect(),
             restrictions: Default::default(),
             loadouts: Default::default(),
+            look: None,
         }
     }
 

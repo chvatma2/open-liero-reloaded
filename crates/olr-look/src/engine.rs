@@ -65,6 +65,24 @@ pub fn explosion_light(size: i32) -> Light {
     flash([255, 200, 140], (60 + 8 * s).min(250), (24 + 8 * s).min(4096), EXPLOSION_MS)
 }
 
+/// The largest disc a mod's explosion light may ask for, world pixels
+/// (issue #15): the renderer's largest disc. `olr-format` refuses more,
+/// [`crate::ExplosionLight::radius`] clamps to it.
+pub const MAX_EXPLOSION_RADIUS: u8 = 16;
+
+/// The farthest a mod's explosion light may reach, world pixels (issue
+/// #15): as far as the engine's largest explosion. `olr-format` refuses
+/// more (and `Unlimited`), [`crate::ExplosionLight::reach`] clamps to it.
+pub const MAX_EXPLOSION_REACH: u16 = 4096;
+
+/// A mod's explosion light without an animation (issue #15): `colour` at
+/// `intensity` percent (at most 1000) reaching `reach` world pixels (1 to
+/// [`MAX_EXPLOSION_REACH`]), with the engine's flash keys over
+/// [`EXPLOSION_MS`], which the presentation fits to the explosion's life.
+pub fn explosion_flash(colour: [u8; 3], intensity: u16, reach: u16) -> Light {
+    flash(colour, intensity.min(1000), reach.clamp(1, MAX_EXPLOSION_REACH), EXPLOSION_MS)
+}
+
 /// A muzzle flash's light.
 pub fn muzzle_light() -> Light {
     flash([255, 220, 160], 80, 40, 50)

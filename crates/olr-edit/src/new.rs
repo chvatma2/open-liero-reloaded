@@ -219,6 +219,7 @@ fn mod_template(name: &str) -> ModSource {
         shared: BTreeMap::new(),
         restrictions: BTreeMap::from([("Standard".to_string(), standard)]),
         loadouts: BTreeMap::new(),
+        look: None,
     }
 }
 

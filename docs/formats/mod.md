@@ -36,6 +36,7 @@ Example:
 | `rope` | [Rope](#rope) | `(max_length: 300, rest_length: 30, strength: 3.5)` | Ninja rope (`mod-fields.md` §4). |
 | `weapons` | list of string | required | The weapon ids, in order: `weapons/<id>.ron` each; a weapon's index is its id in the game. At most `MAX_WEAPONS` (512). |
 | `loadouts` | map of name → [ShippedLoadout](#shippedloadout) | `{}` | The mod's shipped loadouts (read-only in the game; every mod also has `Default`, every weapon at 100 %), each keyed by the name of a preset of `restrictions.ron`: the weapons that preset enables (Bonus and Banned off), at its loading time. Not an OLX field: OLX set `LoadingTime` apart from the preset. At most `MAX_LOADOUTS` (64). |
+| `look` | [ModWideLookSource](#modwidelooksource) (optional) | none | The mod's look as a whole: the explosion light of every projectile without its own. Presentation only. Default none. |
 
 Example:
 
@@ -210,6 +211,16 @@ A shipped loadout as a mod pack lists it in `mod.ron`'s `loadouts`, keyed by the
 |---|---|---|---|
 | `loading_time` | integer | required | Percent, 0 to 500 (OLX's `LoadingTime` range, `src/common/FeatureList.cpp:31`): weapons reload in `100 / loading_time` times their time. |
 | `unique` | boolean | `false` | A worm's slots must hold different weapons. |
+
+<a id="modwidelooksource"></a>
+
+## ModWideLookSource
+
+A mod's look as a whole (`mod.ron`'s `look`).
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `explosion` | [ExplosionLightSource](#explosionlightsource) (optional) | none | The explosion light of every projectile without its own `explosion`. Default none: the engine's. |
 
 <a id="fire"></a>
 
@@ -443,7 +454,8 @@ A mod projectile's look.
 |---|---|---|---|
 | `glow` | integer (optional) | none | How bright its sprite or pixels show whatever the darkness, percent, 0 to 100. Default none. |
 | `light` | [LightSource](#lightsource) (optional) | none | A light following it; its clock is the projectile's age. Default none. |
-| `end_flash` | [LightSource](#lightsource) (optional) | none | A light where it ended; its clock starts there. Default none. |
+| `end_flash` | [LightSource](#lightsource) (optional) | none | A light where it ended; its clock starts there, added to its explosion's light if it explodes. Default none. |
+| `explosion` | [ExplosionLightSource](#explosionlightsource) (optional) | none | The light of every explosion it makes (its effects' `Explode`, its timer's, a `Bounce` explosion): replaces the engine's warm flash there. Default none: the mod's `look.explosion`, else the engine's. |
 
 <a id="weaponstate"></a>
 
@@ -456,6 +468,21 @@ OLX `WpnRestrictionState` (`include/CWpnRest.h:28-32`).
 | `Enabled` | — | `wpr_enabled` (0): selectable, and in bonuses. |
 | `Bonus` | — | `wpr_bonus` (1): only in bonuses. |
 | `Banned` | — | `wpr_banned` (2): nowhere. |
+
+<a id="explosionlightsource"></a>
+
+## ExplosionLightSource
+
+An explosion's light: a glowing disc where it explodes, lighting the level while the explosion shows (its size × 25 ms). It replaces the engine's (warm, brighter and wider with the explosion's size). An explosion that is no projectile's (a bonus blown up, a beam) or an explosive trail keeps the engine's.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `colour` | [colour](#colour) | required | Opaque. |
+| `intensity` | integer | required | The light at the explosion, percent, 0 to 1000. |
+| `radius` | integer | required | The glowing disc's radius, world pixels, 1 to 16 (the engine's grow from 2 to 12 with the size). |
+| `reach` | [ReachSource](#reachsource) | required | Where it fades to nothing: `Pixels`, 1 to 4096 (not `Unlimited`). |
+| `animation` | [AnimationSource](#animationsource) (optional) | none | Default none: from full to nothing over the explosion's life, as the engine's. Given, its clock is the explosion's age in milliseconds, and the light still ends with the explosion. |
+| `phase_ms` | integer (optional) | none | Shifts the animation's clock, milliseconds; only with an `animation`. Default none: a looping animation's phase comes from the explosion. |
 
 <a id="weaponclass"></a>
 

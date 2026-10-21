@@ -14,9 +14,13 @@ own look. The simulation never sees it.
   `GlowColour::Own | Tint`, intensity, reach, animation, phase),
   `LevelLook`,
   `Occlusion` (issue #10: `strength` percent, `reach` world pixels),
-  `ProjectileLook` (`glow`, `light`, `end_flash`), `WeaponLook`
+  `ProjectileLook` (`glow`, `light`, `end_flash`, `explosion`), `WeaponLook`
   (`muzzle_light`), `ModLook` (indexed like `SimMod::projectiles` and
-  `SimMod::weapons`; `is_empty`), `Grade` (exposure in 1/100 stop, contrast
+  `SimMod::weapons`, plus the mod-wide `explosion`; `is_empty`;
+  `explosion(proj)`: projectile `proj`'s own, else the mod's, `None` for
+  -1 or neither, issue #15), `ExplosionLight` (issue #15: a `Light`, the
+  disc's `radius`, `fitted`: the engine's flash keys fitted to the
+  explosion's life; `radius()` and `reach()` clamp to the caps), `Grade` (exposure in 1/100 stop, contrast
   and saturation percent, tint; `Default` is neutral), `Ambient`.
   `olr-format` compiles the authoring files into them and checks every
   bound; this crate clamps again where a value is read, so a hand-built
@@ -85,13 +89,19 @@ own look. The simulation never sees it.
   `true`; off, no skin casts light, its glowing pixels still show bright),
   `MAX_SKIN_LIGHT_INTENSITY` (200 %) and `MAX_SKIN_LIGHT_REACH` (48 world
   pixels): the caps `olr-format` refuses past, and `skin_light(colour,
-  intensity, reach)` (steady, phase 0) clamps to.
+  intensity, reach)` (steady, phase 0) clamps to. Issue #15:
+  `MAX_EXPLOSION_RADIUS` (16, the renderer's largest disc) and
+  `MAX_EXPLOSION_REACH` (4096), a mod explosion light's caps, and
+  `explosion_flash(colour, intensity, reach)` (the engine's flash keys
+  over `EXPLOSION_MS`, capped): a mod's explosion light without an
+  animation.
 - **Tests** (`tests/`, one binary): `anim.rs` (pulse shapes at their
   quarter points, keys interpolating, carrying colour and ending, flicker
   deterministic and bounded, phases, `hostile_animations_never_panic`) and
   `frame.rs` (the fade profile, `begin` with and without a level look, an
   animated group, `light_at`, `engine_numbers_match_r13`,
   `skin_light_is_steady_and_capped`,
+  `explosion_lights_are_capped_and_fall_back_to_the_mods` (issue #15),
   `worm_floor_hues`, `solids_settings_are_bounded_and_off_without_a_look`
   (the occlusion too, issue #10);
   plan 15c: `disc_calibration_matches_todays_light`,

@@ -55,11 +55,13 @@ struct Compiler<'a> {
 
 /// A mod's look by authoring key: each projectile's by its `ModDef` key,
 /// each weapon's in order (empty when no weapon has one; read past its end
-/// as none). `olr-content` indexes it like `SimMod`.
+/// as none), and `mod.ron`'s default explosion light (issue #15).
+/// `olr-content` indexes it like `SimMod`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModLookSource {
     pub projectiles: BTreeMap<String, olr_look::ProjectileLook>,
     pub weapons: Vec<Option<olr_look::WeaponLook>>,
+    pub explosion: Option<olr_look::ExplosionLight>,
 }
 
 /// The shipped loadouts, each naming a preset of `restrictions.ron` (not
@@ -153,7 +155,13 @@ fn compile_all(src: &ModSource) -> Result<(rt::ModDef, ModLookSource), FormatErr
     if weapon_looks.iter().all(Option::is_none) {
         weapon_looks.clear();
     }
-    Ok((def, ModLookSource { projectiles: c.looks, weapons: weapon_looks }))
+    let explosion = src
+        .look
+        .as_ref()
+        .and_then(|l| l.explosion.as_ref())
+        .map(|x| crate::look::compile_explosion_light(x, MOD_FILE, "look.explosion"))
+        .transpose()?;
+    Ok((def, ModLookSource { projectiles: c.looks, weapons: weapon_looks, explosion }))
 }
 
 fn worm(w: &Worm) -> rt::WormParams {
@@ -634,6 +642,7 @@ mod tests {
             shared: BTreeMap::new(),
             restrictions: BTreeMap::new(),
             loadouts: Default::default(),
+            look: None,
         }
     }
 

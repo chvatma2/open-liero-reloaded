@@ -49,6 +49,9 @@ pub struct ModSource {
     /// `mod.ron`'s `loadouts`: the shipped loadouts, by the name of the
     /// preset whose weapons each enables.
     pub loadouts: BTreeMap<String, ShippedLoadout>,
+    /// `mod.ron`'s `look` (issue #15): the mod-wide look, its projectiles'
+    /// default explosion light. Presentation only.
+    pub look: Option<crate::look::ModWideLookSource>,
 }
 
 /// Worm physics of the mod (OLX `gs_worm_t`, `CGameScript.cpp:45-55`).

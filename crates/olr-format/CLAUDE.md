@@ -70,10 +70,12 @@ packs' format (version 5); `olr-pack` reads and writes through them.
     `projectiles/` is an error.
   - **Looks** (plan 15a Task 3): `Weapon::look` (`WeaponLookSource`, its
     `muzzle_light`) and `Projectile::look` (`ProjectileLookSource`: `glow`
-    0-100, a `light`, an `end_flash`), presentation only.
-    `compile_mod_look` gives `ModLookSource`: each projectile's look by its
-    `ModDef` key (shared ones included) and the weapons' in order, empty when no weapon has one (readers
-    index with `get`). `compile_mod` checks looks in the same walk
+    0-100, a `light`, an `end_flash`, issue #15's `explosion`), and
+    `ModSource::look` (`mod.ron`'s `look`, `ModWideLookSource`: issue #15's
+    default `explosion` of every projectile without one), presentation
+    only. `compile_mod_look` gives `ModLookSource`: each projectile's look by its
+    `ModDef` key (shared ones included), the weapons' in order, empty when no weapon has one (readers
+    index with `get`), and the mod-wide `explosion`. `compile_mod` checks looks in the same walk
     (`compile_all`), so a bad look fails the mod. `lift_mod` gives every
     look `None` (`ModDef` carries none; Task 3 ruling), and the roundtrip
     proptest generates none: `tests/look.rs` covers looks' limits.
@@ -199,12 +201,18 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   at most `MAX_GROUPS` 255), `GlowGroupSource` (an id by `valid_group_id`,
   a slug of `[a-z0-9_.-]` of 1-64 bytes not starting with `.`, unique;
   `GlowColourSource::Own | Tint`, intensity, reach, animation, phase),
-  `ProjectileLookSource`, `WeaponLookSource`. `LookSource`'s `Default` is
+  `ProjectileLookSource`, `WeaponLookSource`, issue #15's
+  `ExplosionLightSource` (colour, intensity 0-1000, `radius` 1-
+  `olr_look::engine::MAX_EXPLOSION_RADIUS` 16, `reach` `Pixels` 1-
+  `MAX_EXPLOSION_REACH` 4096 only, an optional `animation` (none: the
+  engine's flash, `engine::explosion_flash`, `fitted`) and a `phase_ms`
+  only with one) and `ModWideLookSource`. `LookSource`'s `Default` is
   written by hand to equal its serde defaults (`the_default_look_is_the_empty_file`).
   `compile_reach`, `compile_animation`, `compile_light`,
   `compile_look_source` (a level's look),
-  `compile_projectile_look`, `compile_weapon_look`: each value checked, an
-  error naming its field path.
+  `compile_projectile_look`, `compile_weapon_look`,
+  `compile_explosion_light`: each value checked, an error naming its field
+  path.
 - **Level composition** (`levels/composition.rs`, plan 14a): `Composition`
   is `editor/composition.ron` (`COMPOSITION_FILE`; `EDITOR_DIR` is
   `editor`), its `Element`s bottom to top (`id` a `valid_id` slug, `name`,
@@ -317,7 +325,10 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   to `olr_pack::validate`, inline projectile looks under their key,
   `bundled_mods_have_no_look`, `the_default_look_is_the_empty_file`,
   `solids_defaults_are_the_stop_1_verdict`, `a_light_object_is_an_error`,
-  `shadows_is_an_unknown_field`; issue #10:
+  `shadows_is_an_unknown_field`; issue #15:
+  `explosion_lights_round_trip_and_compile` (a projectile's and the mod's,
+  the `ModDef` unchanged), `explosion_light_limits` (each cap, `Unlimited`,
+  a phase without an animation, the mod's naming `mod.ron`); issue #10:
   `occlusion_round_trips_and_is_bounded`,
   `occlusion_changes_the_content_hash`, `the_thumbnail_leaves_occlusion_out`. Unit tests in each module's files cover its checks. The
   bundled-content tests skip when `OLR_CONTENT_DIR` is not a directory.

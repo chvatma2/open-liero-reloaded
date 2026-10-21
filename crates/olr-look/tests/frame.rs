@@ -1,8 +1,9 @@
 //! `LookFrame` building, fade and culling (spec §Light sources, §Pipeline).
 
 use olr_look::{
-    Ambient, Animation, FrameLight, GlowColour, GlowGroup, Grade, LevelLook, Light, LookFrame, MAX_EMITTERS,
-    Reach, ViewMode, engine, fade, light_at, srgb_to_linear,
+    Ambient, Animation, ExplosionLight, FrameLight, GlowColour, GlowGroup, Grade, LevelLook, Light,
+    LookFrame, MAX_EMITTERS, ModLook, ProjectileLook, Reach, ViewMode, engine, fade, light_at,
+    srgb_to_linear,
 };
 
 fn near(a: f32, b: f32) -> bool {
@@ -139,6 +140,35 @@ fn engine_numbers_match_r13() {
     let m = engine::muzzle_light();
     assert_eq!((m.colour, m.intensity, m.reach), ([255, 220, 160], 80, Reach::Pixels(40)));
     assert!(m.animation.ended(51.0) && !m.animation.ended(49.0));
+}
+
+/// Issue #15: a mod's explosion light flashes as the engine's, capped;
+/// a projectile's own wins over the mod's, and -1 (no projectile) has none.
+#[test]
+fn explosion_lights_are_capped_and_fall_back_to_the_mods() {
+    let l = engine::explosion_flash([128, 176, 255], 400, 120);
+    assert_eq!((l.colour, l.intensity, l.reach), ([128, 176, 255], 400, Reach::Pixels(120)));
+    assert_eq!(l.animation, engine::explosion_light(5).animation, "the engine's flash keys");
+    let big = engine::explosion_flash([255; 3], u16::MAX, u16::MAX);
+    assert_eq!((big.intensity, big.reach), (1000, Reach::Pixels(engine::MAX_EXPLOSION_REACH)));
+    let mut x = ExplosionLight { light: l, radius: 200, fitted: true };
+    assert_eq!(x.radius(), f32::from(engine::MAX_EXPLOSION_RADIUS));
+    x.radius = 0;
+    assert_eq!(x.radius(), 1.0);
+    x.light.reach = Reach::Unlimited;
+    assert_eq!(x.reach(), f32::from(engine::MAX_EXPLOSION_REACH));
+
+    let own = ExplosionLight { radius: 4, ..x.clone() };
+    let mut m = ModLook {
+        projectiles: vec![None, Some(ProjectileLook { explosion: Some(own.clone()), ..Default::default() })],
+        ..Default::default()
+    };
+    assert!(m.explosion(0).is_none() && m.explosion(-1).is_none());
+    assert_eq!(m.explosion(1), Some(&own));
+    m.explosion = Some(x.clone());
+    assert!(!ModLook { explosion: Some(x.clone()), ..Default::default() }.is_empty());
+    assert_eq!((m.explosion(0), m.explosion(1), m.explosion(7)), (Some(&x), Some(&own), Some(&x)));
+    assert!(m.explosion(-1).is_none(), "a bonus or beam keeps the engine's");
 }
 
 /// Issue #12: a skin's light is steady and capped, whatever it asks.

@@ -370,6 +370,7 @@ fn a_mod_without_looks_compiles_to_none() {
     let look = compile_mod_look(&src).unwrap();
     assert!(look.projectiles.is_empty());
     assert!(look.weapons.is_empty());
+    assert!(look.explosion.is_none());
 }
 
 #[test]
@@ -396,6 +397,99 @@ fn mod_look_limits() {
     }
 }
 
+// ---- Explosion lights (issue #15) ----
+
+const BLUE_EXPLOSION: &str =
+    r##"look: (explosion: (colour: "#80b0ff", intensity: 400, radius: 10, reach: Pixels(120))),"##;
+
+const MOD_EXPLOSION: &str = r##"(name: "T", weapons: ["w"], look: (explosion: (colour: "#ff4020", intensity: 150,
+    radius: 4, reach: Pixels(40), animation: Pulse(period_ms: 100, low: 50, high: 100), phase_ms: 20)))"##;
+
+#[test]
+fn explosion_lights_round_trip_and_compile() {
+    let w = weapon(BLUE_EXPLOSION, "", ", look: (glow: 40)");
+    let fs = mod_fs(&w).with("mod.ron", MOD_EXPLOSION);
+    let src = read_mod_files(&fs).unwrap();
+    // The simulation's mod is the one without the lights.
+    let plain = read_mod_files(&mod_fs(&weapon("", "", ", look: (glow: 40)"))).unwrap();
+    assert_eq!(compile_mod(&src).unwrap(), compile_mod(&plain).unwrap());
+    let look = compile_mod_look(&src).unwrap();
+    // The projectile's own: the engine's flash keys, fitted to the explosion.
+    let own = look.projectiles["w"].explosion.as_ref().unwrap();
+    assert_eq!(
+        (own.light.colour, own.light.intensity, own.light.reach),
+        ([128, 176, 255], 400, Reach::Pixels(120))
+    );
+    assert_eq!((own.radius, own.fitted), (10, true));
+    assert_eq!(own.light, olr_look::engine::explosion_flash([128, 176, 255], 400, 120));
+    // The child has a look but no explosion light: the mod's applies.
+    assert!(look.projectiles["w.spawn"].explosion.is_none());
+    let wide = look.explosion.as_ref().unwrap();
+    assert_eq!(
+        (wide.light.colour, wide.light.intensity, wide.radius, wide.fitted),
+        ([255, 64, 32], 150, 4, false)
+    );
+    assert_eq!(wide.light.phase_ms, Some(20));
+    assert!(matches!(
+        wide.light.animation,
+        olr_look::Animation::Pulse { period_ms: 100, low: 50, high: 100, .. }
+    ));
+    // Canonical text keeps both, and reads back the same.
+    for (path, text) in [("weapons/w.ron", w.as_str()), ("mod.ron", MOD_EXPLOSION)] {
+        let canonical = canonical_text(path, text).unwrap();
+        assert_eq!(canonical_text(path, &canonical).unwrap(), canonical);
+        assert!(canonical.contains("explosion"), "{canonical}");
+    }
+    let mut out = MemFs::new();
+    olr_format::mods::write_mod_files(&mut out, &src).unwrap();
+    assert_eq!(read_mod_files(&out).unwrap(), src);
+}
+
+#[test]
+fn explosion_light_limits() {
+    for (from, to, want) in [
+        ("intensity: 400", "intensity: 1001", "fire.shot.projectile.look.explosion.intensity"),
+        ("radius: 10", "radius: 0", "fire.shot.projectile.look.explosion.radius"),
+        ("radius: 10", "radius: 17", "fire.shot.projectile.look.explosion.radius"),
+        ("reach: Pixels(120)", "reach: Pixels(0)", "fire.shot.projectile.look.explosion.reach"),
+        ("reach: Pixels(120)", "reach: Pixels(4097)", "fire.shot.projectile.look.explosion.reach"),
+        ("reach: Pixels(120)", "reach: Unlimited", "must be `Pixels`"),
+        ("\"#80b0ff\"", "\"#80b0ff80\"", "fire.shot.projectile.look.explosion.colour"),
+        (
+            "reach: Pixels(120)",
+            "reach: Pixels(120), phase_ms: 5",
+            "fire.shot.projectile.look.explosion.phase_ms",
+        ),
+        (
+            "reach: Pixels(120)",
+            "reach: Pixels(120), animation: Flicker(speed: 0, depth: 5)",
+            "explosion.animation.speed",
+        ),
+    ] {
+        let w = weapon(BLUE_EXPLOSION, "", "").replacen(from, to, 1);
+        let src = read_mod_files(&mod_fs(&w)).unwrap();
+        let e = compile_mod(&src).unwrap_err().to_string();
+        assert!(e.contains("weapons/w.ron") && e.contains(want), "{to}: {e}");
+        assert!(compile_mod_look(&src).is_err());
+    }
+    // The caps themselves pass.
+    let w = weapon(BLUE_EXPLOSION, "", "").replacen("radius: 10", "radius: 16", 1).replacen(
+        "Pixels(120)",
+        "Pixels(4096)",
+        1,
+    );
+    compile_mod_look(&read_mod_files(&mod_fs(&w)).unwrap()).unwrap();
+    // The mod-wide one is checked as well, naming `mod.ron`.
+    let fs =
+        mod_fs(&weapon("", "", "")).with("mod.ron", MOD_EXPLOSION.replacen("radius: 4", "radius: 40", 1));
+    let e = compile_mod(&read_mod_files(&fs).unwrap()).unwrap_err().to_string();
+    assert!(e.contains("mod.ron") && e.contains("look.explosion.radius"), "{e}");
+    // An unknown field is an error.
+    let fs =
+        mod_fs(&weapon("", "", "")).with("mod.ron", "(name: \"T\", weapons: [\"w\"], look: (flash: ()))");
+    assert!(read_mod_files(&fs).is_err());
+}
+
 #[test]
 fn bundled_mods_have_no_look() {
     let Some(root) = std::env::var_os("OLR_CONTENT_DIR").map(std::path::PathBuf::from) else { return };
@@ -403,6 +497,7 @@ fn bundled_mods_have_no_look() {
         let src = read_mod_files(&olr_vfs::DirFs::new(root.join(id))).unwrap();
         let look = compile_mod_look(&src).unwrap();
         assert!(look.projectiles.is_empty() && look.weapons.iter().all(Option::is_none), "{id}");
+        assert!(look.explosion.is_none() && src.look.is_none(), "{id}");
     }
 }
 

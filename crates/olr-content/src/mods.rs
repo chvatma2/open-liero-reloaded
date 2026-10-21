@@ -187,6 +187,7 @@ impl Content {
                 .map(|p| pack.look.projectiles.get(&p.key).cloned())
                 .collect(),
             weapons: pack.look.weapons.clone(),
+            explosion: pack.look.explosion.clone(),
         };
         let (name, restrictions) = (pack.def.name, pack.def.restrictions);
         let (worm, rope) = (pack.def.worm, pack.def.rope);

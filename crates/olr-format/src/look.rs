@@ -368,9 +368,54 @@ pub struct ProjectileLookSource {
     /// A light following it; its clock is the projectile's age. Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub light: Option<LightSource>,
-    /// A light where it ended; its clock starts there. Default none.
+    /// A light where it ended; its clock starts there, added to its
+    /// explosion's light if it explodes. Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub end_flash: Option<LightSource>,
+    /// The light of every explosion it makes (its effects' `Explode`, its
+    /// timer's, a `Bounce` explosion): replaces the engine's warm flash
+    /// there. Default none: the mod's `look.explosion`, else the engine's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explosion: Option<ExplosionLightSource>,
+}
+
+/// An explosion's light: a glowing disc where it explodes, lighting the
+/// level while the explosion shows (its size × 25 ms). It replaces the
+/// engine's (warm, brighter and wider with the explosion's size). An
+/// explosion that is no projectile's (a bonus blown up, a beam) or an
+/// explosive trail keeps the engine's.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExplosionLightSource {
+    /// Opaque.
+    pub colour: Colour,
+    /// The light at the explosion, percent, 0 to 1000.
+    pub intensity: u16,
+    /// The glowing disc's radius, world pixels, 1 to 16 (the engine's grow
+    /// from 2 to 12 with the size).
+    pub radius: u16,
+    /// Where it fades to nothing: `Pixels`, 1 to 4096 (not `Unlimited`).
+    pub reach: ReachSource,
+    /// Default none: from full to nothing over the explosion's life, as the
+    /// engine's. Given, its clock is the explosion's age in milliseconds,
+    /// and the light still ends with the explosion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation: Option<AnimationSource>,
+    /// Shifts the animation's clock, milliseconds; only with an
+    /// `animation`. Default none: a looping animation's phase comes from
+    /// the explosion.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub phase_ms: Option<u32>,
+}
+
+/// A mod's look as a whole (`mod.ron`'s `look`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ModWideLookSource {
+    /// The explosion light of every projectile without its own `explosion`.
+    /// Default none: the engine's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explosion: Option<ExplosionLightSource>,
 }
 
 /// A mod weapon's look.
@@ -470,6 +515,42 @@ pub fn compile_light(l: &LightSource, file: &str, path: &str) -> Result<olr_look
         animation: compile_animation(&l.animation, file, &format!("{path}.animation"))?,
         phase_ms: l.phase_ms,
     })
+}
+
+/// An explosion light, checked against [`olr_look::engine::MAX_EXPLOSION_RADIUS`]
+/// and [`olr_look::engine::MAX_EXPLOSION_REACH`].
+pub fn compile_explosion_light(
+    l: &ExplosionLightSource,
+    file: &str,
+    path: &str,
+) -> Result<olr_look::ExplosionLight, FormatError> {
+    use olr_look::engine::{MAX_EXPLOSION_RADIUS, MAX_EXPLOSION_REACH};
+    within(l.intensity.into(), 0, MAX_INTENSITY.into(), file, &format!("{path}.intensity"))?;
+    within(l.radius.into(), 1, MAX_EXPLOSION_RADIUS.into(), file, &format!("{path}.radius"))?;
+    let reach = match l.reach {
+        ReachSource::Pixels(n) => {
+            within(n.into(), 1, MAX_EXPLOSION_REACH.into(), file, &format!("{path}.reach"))?;
+            n
+        }
+        ReachSource::Unlimited => {
+            return Err(invalid(file, &format!("{path}.reach"), "an explosion's reach must be `Pixels`"));
+        }
+    };
+    if l.animation.is_none() && l.phase_ms.is_some() {
+        return Err(invalid(file, &format!("{path}.phase_ms"), "a phase needs an `animation`"));
+    }
+    let colour = rgb(l.colour, file, &format!("{path}.colour"))?;
+    let light = match &l.animation {
+        None => olr_look::engine::explosion_flash(colour, l.intensity, reach),
+        Some(a) => olr_look::Light {
+            colour,
+            intensity: l.intensity,
+            reach: olr_look::Reach::Pixels(reach),
+            animation: compile_animation(a, file, &format!("{path}.animation"))?,
+            phase_ms: l.phase_ms,
+        },
+    };
+    Ok(olr_look::ExplosionLight { light, radius: l.radius as u8, fitted: l.animation.is_none() })
 }
 
 /// A glow group's id: a slug of `[a-z0-9_.-]`, 1 to 64 bytes, not starting with `.`.
@@ -582,6 +663,11 @@ pub fn compile_projectile_look(
             .end_flash
             .as_ref()
             .map(|x| compile_light(x, file, &format!("{path}.end_flash")))
+            .transpose()?,
+        explosion: l
+            .explosion
+            .as_ref()
+            .map(|x| compile_explosion_light(x, file, &format!("{path}.explosion")))
             .transpose()?,
     })
 }

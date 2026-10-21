@@ -189,6 +189,40 @@ pub struct ProjectileLook {
     pub light: Option<Light>,
     /// Where the projectile ended; its clock starts there.
     pub end_flash: Option<Light>,
+    /// Replaces the engine's light of every explosion it makes (issue #15).
+    pub explosion: Option<ExplosionLight>,
+}
+
+/// A mod's explosion light (issue #15): replaces the engine's
+/// ([`engine::explosion_light`], [`engine::explosion_radius`]) for a
+/// projectile's explosions. It shows while the explosion does (its size ×
+/// 25 ms).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ExplosionLight {
+    /// Its colour, intensity, reach (`Pixels`, at most
+    /// [`engine::MAX_EXPLOSION_REACH`]) and animation.
+    pub light: Light,
+    /// The glowing disc's radius, world pixels, 1 to
+    /// [`engine::MAX_EXPLOSION_RADIUS`].
+    pub radius: u8,
+    /// The animation's keys span [`engine::EXPLOSION_MS`], fitted to the
+    /// explosion's life, as the engine's ([`engine::explosion_flash`]: no
+    /// animation given); otherwise its clock is the explosion's age in ms.
+    pub fitted: bool,
+}
+
+impl ExplosionLight {
+    /// The disc's radius, world pixels, clamped to 1 to
+    /// [`engine::MAX_EXPLOSION_RADIUS`].
+    pub fn radius(&self) -> f32 {
+        f32::from(self.radius.clamp(1, engine::MAX_EXPLOSION_RADIUS))
+    }
+
+    /// The light's reach, world pixels, at most
+    /// [`engine::MAX_EXPLOSION_REACH`] (an `Unlimited` one too).
+    pub fn reach(&self) -> f32 {
+        self.light.reach.pixels().min(f32::from(engine::MAX_EXPLOSION_REACH))
+    }
 }
 
 /// A mod weapon's look.
@@ -203,12 +237,24 @@ pub struct WeaponLook {
 pub struct ModLook {
     pub projectiles: Vec<Option<ProjectileLook>>,
     pub weapons: Vec<Option<WeaponLook>>,
+    /// The explosion light of every projectile without its own (issue #15).
+    pub explosion: Option<ExplosionLight>,
 }
 
 impl ModLook {
-    /// No projectile or weapon has a look.
+    /// No projectile or weapon has a look, and there is no mod-wide one.
     pub fn is_empty(&self) -> bool {
-        self.projectiles.iter().all(Option::is_none) && self.weapons.iter().all(Option::is_none)
+        self.projectiles.iter().all(Option::is_none)
+            && self.weapons.iter().all(Option::is_none)
+            && self.explosion.is_none()
+    }
+
+    /// The explosion light of projectile `proj` (a `SimMod` index; -1 is
+    /// none): its own, else the mod's; `None` for the engine's.
+    pub fn explosion(&self, proj: i32) -> Option<&ExplosionLight> {
+        let i = usize::try_from(proj).ok()?;
+        let own = self.projectiles.get(i).and_then(Option::as_ref).and_then(|p| p.explosion.as_ref());
+        own.or(self.explosion.as_ref())
     }
 }
 

@@ -97,6 +97,7 @@ pub fn lift_mod(def: &rt::ModDef) -> Result<ModSource, LiftError> {
         shared: shared_out,
         restrictions: def.restrictions.clone(),
         loadouts: def.loadouts.clone(),
+        look: None,
     })
 }
 

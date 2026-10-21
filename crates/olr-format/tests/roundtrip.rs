@@ -387,6 +387,7 @@ fn mod_source() -> impl Strategy<Value = ModSource> {
                 .into_iter()
                 .map(|(k, (loading_time, unique))| (k, ShippedLoadout { loading_time, unique }))
                 .collect(),
+            look: None,
         })
 }
 
