@@ -89,7 +89,7 @@ impl Shell {
 
     /// One frame of the editor: `actions` from `olr_editor::ui::show` and
     /// the recovery timer at `now`. Play, Closed and messages are the
-    /// shell's; the canvas's uploads (`Upload`, `FullUpload`, also those
+    /// shell's; the canvas's uploads (`Upload`, `FullUpload`, `Distant`, also those
     /// waiting since the editor opened) are returned for the app.
     pub fn editor_frame(&mut self, actions: Vec<EditorAction>, now: Instant) -> Vec<HostOut> {
         let Some(host) = &mut self.editor else { return Vec::new() };
@@ -99,7 +99,7 @@ impl Shell {
         let mut canvas = Vec::new();
         for o in out {
             match o {
-                HostOut::Upload(_) | HostOut::FullUpload => canvas.push(o),
+                HostOut::Upload(_) | HostOut::FullUpload | HostOut::Distant(_) => canvas.push(o),
                 HostOut::Play(p) => self.play_edited(*p),
                 HostOut::Closed => self.close_editor(),
                 HostOut::Message(m) => {

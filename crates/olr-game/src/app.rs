@@ -89,6 +89,11 @@ fn canvas_outs(canvas: &mut Canvas, full: &mut bool, shell: &Shell, outs: Vec<Ho
     let Some(h) = &shell.editor else { return };
     let Some(doc) = h.state().document() else { return };
     let material = h.state().material_view();
+    for o in &outs {
+        if let HostOut::Distant(layers) = o {
+            canvas.set_distant(layers.clone());
+        }
+    }
     if outs.contains(&HostOut::FullUpload) || !canvas.fits(doc) || canvas.showing_material() != material {
         canvas.rebuild(doc, material);
         *full = true;
@@ -1028,11 +1033,17 @@ impl App {
                     self.canvas_full = true;
                 }
                 if let Some(map) = self.canvas.map_mut() {
-                    if std::mem::take(&mut self.canvas_full) {
+                    let full = std::mem::take(&mut self.canvas_full);
+                    if full {
                         map.take_dirty().for_each(drop);
                         w.gpu.renderer.upload_terrain(map);
                     } else {
                         w.gpu.renderer.update_terrain(map);
+                    }
+                    // The distant layers (issue #11): with every whole upload
+                    // (a Play's session had its own) and when they change.
+                    if let Some(layers) = self.canvas.take_distant(full) {
+                        w.gpu.renderer.set_distant(layers);
                     }
                 }
                 let max = w.gpu.renderer.device().limits().max_texture_dimension_2d;

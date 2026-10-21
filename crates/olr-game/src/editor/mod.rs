@@ -50,6 +50,9 @@ pub enum HostOut {
     Upload(Rect),
     /// A new document (or a recovered one): rebuild the canvas whole.
     FullUpload,
+    /// The level's distant layers changed (issue #11): the canvas draws
+    /// these (`Renderer::set_distant`).
+    Distant(Vec<olr_data::level::DistantLayer>),
     /// Start the editor's Play; answer with `EditorAction::PlayEnded`.
     Play(Box<EditedPlay>),
     /// The editor is done (after any unsaved-changes dialog).
@@ -389,6 +392,10 @@ impl EditorHost {
                 if !out.contains(&HostOut::FullUpload) {
                     out.push(HostOut::Upload(r));
                 }
+            }
+            EditorCommand::Distant(layers) => {
+                out.retain(|o| !matches!(o, HostOut::Distant(_)));
+                out.push(HostOut::Distant(layers));
             }
             EditorCommand::Open(dir) => {
                 // The last document's copy finishes first; what it said shows.

@@ -823,7 +823,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   clipboard: it sends no key and no paste) is given to egui as an empty
   `Event::Paste` (`app::paste_swallowed`, the window's modifiers kept in
   `App::modifiers`), so the editor's own clipboard pastes.
-  `HostOut::{Upload, FullUpload, Play, Closed,
+  `HostOut::{Upload, FullUpload, Distant, Play, Closed,
   Message}` is what the app does. The shell owns the host (`Shell::editor`):
   while it is open `App::frame` draws `olr_editor::ui::show` instead of the
   menus, `Shell::editor_frame` runs it (Play becomes `Launch::Edited`:
@@ -847,6 +847,14 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `fits`). `Canvas::lit(doc)` is true for a look, glow or
   clear solids, never in the material view; the app sets the renderer's
   lighting to it, uploading the canvas whole on a change.
+  **Distant layers** (issue #11): a see-through bake makes the map
+  `ColorMap::new_see_through` (`fits` builds it again when that changes;
+  never in the material view); `HostOut::Distant` hands the layers to the
+  canvas (`Canvas::set_distant`) and the app gives them to
+  `Renderer::set_distant` when they changed and with every whole upload
+  (`take_distant`; none in the material view); the draw list's
+  `parallax` is the canvas's centre (`View::centre`), not the cut view's,
+  as the editor hit-tests them (`distant_layers_reach_the_canvas`).
   `Canvas::look_frame(doc, clock_ms, view_mode)` compiles the document's
   look (`olr_format::levels::compile_look`, again only when it changed; a
   look that does not check draws as none) and begins the frame at the

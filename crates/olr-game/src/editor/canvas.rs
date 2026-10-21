@@ -9,7 +9,7 @@
 //! the editor's clock and view mode.
 
 use olr_data::image::{Rgba, RgbaImage};
-use olr_data::level::{Material, MaterialGrid};
+use olr_data::level::{DistantLayer, Material, MaterialGrid};
 use olr_edit::compose::Rect;
 use olr_editor::Document;
 use olr_editor::view::View as EditorView;
@@ -35,6 +35,10 @@ pub struct Canvas {
     look: Option<(Option<LevelLook>, Option<olr_format::look::LookSource>)>,
     /// The frame's look, reused.
     frame: LookFrame,
+    /// The level's distant layers (issue #11; `HostOut::Distant`), and
+    /// whether the renderer has not had them yet.
+    distant: Vec<DistantLayer>,
+    distant_due: bool,
 }
 
 /// No stamps and no tiles: the canvas replays no simulation edit.
@@ -72,6 +76,8 @@ impl Canvas {
             palette: None,
             look: None,
             frame: LookFrame::default(),
+            distant: Vec::new(),
+            distant_due: false,
         }
     }
 
@@ -94,7 +100,13 @@ impl Canvas {
             map
         } else {
             self.palette = None;
-            let mut map = ColorMap::new(&t, &l.front, &l.back, l.art_scale, no_theme());
+            // A level with distant layers keeps its see-through back
+            // pixels (issue #11).
+            let mut map = if doc.see_through() {
+                ColorMap::new_see_through(&t, &l.front, &l.back, l.art_scale, no_theme())
+            } else {
+                ColorMap::new(&t, &l.front, &l.back, l.art_scale, no_theme())
+            };
             // The bake's glow and clear solids (they always fit its size).
             map.set_glow(l.glow.clone());
             map.set_clear(l.clear.clone());
@@ -147,7 +159,30 @@ impl Canvas {
         // A glow that came or went changes the map's channels: built again.
         let glow = self.showing_material
             || self.map.as_ref().is_some_and(|m| m.glow().is_some() == l.glow.is_some());
-        self.map.is_some() && self.level == l.size && self.art_scale == l.art_scale.max(1) && glow
+        // So does a see-through bake that came or went (issue #11).
+        let see_through =
+            self.showing_material || self.map.as_ref().is_some_and(|m| m.see_through() == doc.see_through());
+        self.map.is_some()
+            && self.level == l.size
+            && self.art_scale == l.art_scale.max(1)
+            && glow
+            && see_through
+    }
+
+    /// The document's distant layers changed (`HostOut::Distant`).
+    pub fn set_distant(&mut self, layers: Vec<DistantLayer>) {
+        self.distant = layers;
+        self.distant_due = true;
+    }
+
+    /// The distant layers for `Renderer::set_distant`, when they changed or
+    /// `full` (a whole upload); none in the material view, which leaves them
+    /// out.
+    pub fn take_distant(&mut self, full: bool) -> Option<&[DistantLayer]> {
+        if !std::mem::take(&mut self.distant_due) && !full {
+            return None;
+        }
+        Some(if self.showing_material { &[] } else { &self.distant })
     }
 
     /// `doc`'s world rectangle `r` into the map (`replace_rect`, art pixels
@@ -230,6 +265,9 @@ impl Canvas {
         let mut list = DrawList::default();
         list.view = View { x, y, w, h };
         list.map = self.level;
+        // Distant layers scroll by the canvas's centre (issue #11), not
+        // the cut view's: as the editor hit-tests them.
+        list.parallax = Some(view.centre([canvas.width(), canvas.height()], self.art_scale));
         Some((list, [sx0, sy0, sx1 - sx0, sy1 - sy0]))
     }
 
@@ -303,6 +341,8 @@ mod tests {
             palette: None,
             look: None,
             frame: LookFrame::default(),
+            distant: Vec::new(),
+            distant_due: false,
         }
     }
 
@@ -415,6 +455,35 @@ mod tests {
         // The material view is never lit.
         c.rebuild(&d, true);
         assert!(!c.lit(&d));
+    }
+
+    /// Issue #11: a distant layer makes the map see-through (built again),
+    /// its layers reach the renderer when they change and with every whole
+    /// upload (none in the material view), and the draw list's camera is
+    /// the canvas's centre.
+    #[test]
+    fn distant_layers_reach_the_canvas() {
+        let Some((_tmp, mut d)) = doc() else { return };
+        let mut c = Canvas::new();
+        c.rebuild(&d, false);
+        assert!(!c.map_mut().unwrap().see_through());
+        d.set_distant("tunnels", Some(40)).unwrap();
+        assert!(d.see_through());
+        assert!(!c.fits(&d), "the map is not see-through yet: built again");
+        c.rebuild(&d, false);
+        assert!(c.fits(&d) && c.map_mut().unwrap().see_through());
+        c.set_distant(d.level().distant.clone());
+        assert_eq!(c.take_distant(false).map(<[_]>::len), Some(1));
+        assert!(c.take_distant(false).is_none(), "sent once");
+        assert_eq!(c.take_distant(true).map(<[_]>::len), Some(1), "again with a whole upload");
+        let view = EditorView { zoom: 3, offset: [10.0, 20.0] };
+        let rect = egui::Rect::from_min_max(egui::pos2(100.0, 50.0), egui::pos2(500.0, 350.0));
+        let (list, _) = c.draw(&view, rect, 1.5, olr_render::MAX_VIEW).unwrap();
+        assert_eq!(list.parallax, Some(view.centre([400.0, 300.0], d.level().art_scale)));
+        assert_eq!(list.camera(), (list.view.x + list.view.w / 2.0, list.view.y + list.view.h / 2.0));
+        c.rebuild(&d, true);
+        assert!(c.fits(&d), "the material view is never see-through");
+        assert_eq!(c.take_distant(true).map(<[_]>::len), Some(0), "the material view leaves them out");
     }
 
     #[test]
