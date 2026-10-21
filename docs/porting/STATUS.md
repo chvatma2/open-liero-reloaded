@@ -3883,6 +3883,77 @@ its own remade "Reloaded" levels beside them:
   (`fixtures/server/example.ron`), and `dist`'s verification server
   loads them.
 
+## Level editor layout (issue #8)
+
+The maintainer's "option B": the casual path (import an image, adjust,
+place, say what it is, make parts glow) obvious, the rest one click
+away. A layout change only: no tool, operation or format changes.
+
+- **Left: the tool rail** (`ui/rail.rs`, `ui/icons.rs`): Import (set
+  apart), Select, Draw ▸, Pixels ▸, Glow, Spawn; each an icon drawn in
+  lines (no emoji) over a short label. `ToolGroup::{Draw, Pixels}`
+  (`tools.rs`) hold Brush, Eraser, Fill, Rectangle, Ellipse, Line and
+  Select pixels, Remove colour, Eyedropper. A group's button keeps its
+  group's name as label; its icon and hover are those of the group's tool
+  chosen last (`EditorState::last_tool`, set by any `Tool` action,
+  shortcuts too), and a click on it chooses that tool again. A second
+  click (the group's tool already chosen), a click on its corner mark or
+  a right click opens its flyout: the tools with their shortcuts; a pick,
+  Escape, a click elsewhere or a press on the canvas closes it (a stroke
+  is no click; the canvas closes every popup on a press). Escape while a
+  popup is open closes only the popup (the pixel selection stays). The
+  rail's Glow is named `labels::TOOL_GLOW` ("Glow brush", `Tool::Glow`'s
+  name now) for AccessKit, never the element's Glow checkbox.
+- **Top: two bars** (`ui/toolbar.rs`). The session bar: File ▾ (Open…,
+  Save, Close), Undo, Redo, the unsaved mark's kept space; at the right
+  View ▾ (Material view, Grid, Lit / Full bright / Light only, the
+  lights' clock) and Play with its ▾ ("Play options": the mod, a list,
+  and the bots). The ▾ are drawn (a font may lack the glyph); the menus
+  are named without them (`labels::FILE`, `VIEW`, `PLAY_OPTIONS`). View
+  and Play's menus stay open while used (a click outside closes them).
+  The tool options bar shows the chosen tool's options only, by what the
+  tool uses (`Tool::uses_brush`: the painting tools and the Glow brush;
+  `Tool::lays_paint`: Brush, Rectangle, Ellipse, Line, Fill): the brush
+  (Round and Square as icons, Crater, Size), the paint (the colour
+  button, which chooses the colour and opens its picker; Front tile, Back
+  tile, Textures…), then the tool's own: Paint as, Restore, Tolerance;
+  By colour (a slot of its own, its tolerance shown or not) and the glow
+  % ("Glow %", one value) for the Glow brush and Select pixels, which
+  also has Glow selection (a tool change drops the pixel selection, so it
+  cannot be the Glow brush's). Select, Spawn and the Eyedropper leave the
+  bar empty, as tall as ever. The playtest's rules hold: pickers keep a
+  fixed slot (a long choice is cut), the brush sits in one place for
+  every tool that dabs, and everything fits 1024 points under the game's
+  theme (`the_toolbar_stays_in_the_window_and_in_place`,
+  `a_toolbar_row_is_one_straight_line`).
+- **Right: one panel** (`ui/elements.rs`, `ui/properties.rs`): tabs
+  Elements | Assets | Spawns (`PanelTab`, `EditorAction::Tab`); Assets is
+  a placeholder for the asset library. The tab follows the selection
+  (`update`: an element or group selected shows Elements, a spawn
+  Spawns, on any change of the selection and on any `Select` or a press
+  with Select or Spawn); otherwise only a click changes it. Under the
+  tabs, the selection's properties: Name; "What is it?" (Rock, Dirt,
+  Background as one switch; a mixed layer none of them, "Mixed" under
+  it); Glow (the checkbox, strength, group, and "Make parts glow…": the
+  Glow brush with By colour on); Place (X, Y, an image's Width and
+  Height); "More" (Visible, Locked, Lets light through, Split into
+  layers, Merge down, an image's pixel size, colours, dither,
+  threshold), folded at first. With nothing selected, the level (name,
+  notes, theme, art scale, resize) and its Lighting (Add/Remove look,
+  ambient, the glow groups), the rest of the look under "Fine tuning"
+  (max light, steps, softness, soak, solid floor, the grade). "More" and
+  "Fine tuning" are remembered in `EditorSettings` (`more_open`,
+  `fine_tuning_open`; `ShowMore`, `ShowFineTuning` answer
+  `SaveSettings`). A group's and a spawn's panels keep their content
+  (the group's material is the same switch).
+- **Labels** (`ui::labels`): `OBJECTS` and `MATERIAL` went; new ones name
+  the bars, the rail's groups, the tabs, "What is it?", "Make parts
+  glow…", "More" and "Fine tuning". `ui::relabel` names a widget for
+  AccessKit whatever it shows. The e2e editor script (`fixtures/
+  autoplay/editor.ron`) follows: Draw's flyout for the brush, Make parts
+  glow… instead of plan 15c's removed Light tool, the Spawns tab, File's
+  Save and Close.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
