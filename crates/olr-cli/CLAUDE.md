@@ -247,6 +247,31 @@ The headless command-line tool. Its commands:
   resolution, a glowing visor, a light) on
   `fixtures/look/levels/look-test-skin-level` (`--seed 4 --ticks 500
   --scale 4`).
+- `olr-cli frame-hashes <match flags> [--frames 30] [--content DIR] [--out f.ron]`
+  (issue #34, `frame_hash.rs`, the command in `frame_hashes_cmd.rs`):
+  byte identity. Plays a headless bot match as `render-match` does (the
+  runner's `advance`, unsettled) on `Offscreen::new()` (the software
+  adapter), and draws each of its last `--frames` ticks lit (the level's
+  look; a level without one is an error) at `Viewport::GAME`, 2 output
+  pixels a world pixel, integer nearest, hashing the exact bytes of the
+  light grid (`Renderer::light_grid`, `Rgba16Float`) and the lit target
+  (`Renderer::view_lit_target`) with `frame_hash::hash_bytes` (FNV-1a 64:
+  a one-byte change always changes it). `FrameHashes` (RON with
+  `--out`): the adapter, the spec, both sizes and per frame the tick, the
+  world's checksum, both hashes in hex and the discs drawn.
+  `frame_hash::compare` names the first difference: another adapter is
+  not compared (`OtherAdapter`, a rasteriser may round otherwise); a
+  world that differs is another match (the simulation or the bots
+  changed), not another picture; else the tick and which texture. The
+  committed `fixtures/render/lit-hashes.ron` (4 chaos bots in Classic on
+  Castle Strike Reloaded, seed 1, the last 30 of 330 ticks, 22-31 discs
+  a frame) is checked by `tests/render_golden.rs`'
+  `lit_frames_keep_their_bytes` (`cargo xtask check --render`, about 7 s;
+  blessed with `bless-render`, which logs it), so a change meant to keep
+  the picture proves it bit for bit, stronger than the goldens'
+  perceptual tolerance; a bot or simulation change moves it too (re-bless
+  with a reason). Unit tests: the same bytes hash alike, any one byte
+  changed or two texels swapped hash otherwise, the comparison's messages.
 - `olr-cli match --mod <id> --level <id> [--mode deathmatch] --bots N
   [--locals L] [--difficulty easy|medium|hard|xtreme|mixed] [--personality dm|chaos|idle]
   --seed S --ticks T [--bonus-frequency F] [--kill-limit K] [--time-limit M]
@@ -859,8 +884,9 @@ each above 0), `--look` and, issue
 tampered replay is refused at its checksum.
 `benches/game.rs` (divan, `cargo xtask bench`): 8 bots' think + tick and a
 draw-list build on a warm Classic match (needs `OLR_CONTENT_DIR`).
-`tests/render_golden.rs` (the GPU frame goldens) runs in `cargo xtask full`
-(`OLR_GPU_TESTS=1`). `tests/matches.rs` (two 8-bot matches, determinism and
+`tests/render_golden.rs` (the GPU frame goldens, and issue #34's
+`lit_frames_keep_their_bytes`) runs in `cargo xtask full` and `check
+--render` (`OLR_GPU_TESTS=1`). `tests/matches.rs` (two 8-bot matches, determinism and
 round trip; failure capture through the binary) and `tests/golden.rs` (the
 golden checksum streams in `fixtures/matches/`; accept a change with `cargo
 xtask bless-regression --reason "<why>"`) run in `check`; `tests/grid.rs`

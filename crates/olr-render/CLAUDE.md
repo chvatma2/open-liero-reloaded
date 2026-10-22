@@ -340,7 +340,11 @@ on screen or offscreen.
   `look-test-distant` (issue #11: a night sky at depth 90 and a far city at
   55 seen through two gaps); `look-rocket.png` is
   `olr-cli render-match` of chaos bots with the look test mod
-  (`fixtures/look/mods`), seed 1, 300 ticks.
+  (`fixtures/look/mods`), seed 1, 300 ticks. Byte identity (issue #34):
+  `fixtures/render/lit-hashes.ron`, `olr-cli frame-hashes` of a lit Castle
+  Strike Reloaded match, a hash of the exact bytes of each frame's light
+  grid and lit target (no tolerance; only on the adapter that recorded
+  it), re-blessed like the goldens.
 - **Instance buffer** (`instance_buffer_bytes()`): grows to the busiest
   frame's next power of two and never shrinks; `olr-game`'s soak test
   (`tests/soak.rs`) bounds it.

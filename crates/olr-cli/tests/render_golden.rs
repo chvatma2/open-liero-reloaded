@@ -365,3 +365,51 @@ fn look_double_skin() {
     ];
     compare("look-skin.png", &args, &[]);
 }
+
+/// Issue #34, byte identity: chaos bots on Castle Strike Reloaded (its
+/// look: the flames' flicker and the sky's glow), its last 30 ticks drawn
+/// lit (`olr-cli frame-hashes`), a hash of each frame's light grid and lit
+/// target against `fixtures/render/lit-hashes.ron`: a change meant to keep
+/// the picture keeps every byte. Hashes recorded on another adapter are not
+/// compared (a notice); a different world is another match, said so.
+#[test]
+fn lit_frames_keep_their_bytes() {
+    use olr_cli::frame_hash::{self, Comparison, FrameHashes};
+    let Some(content) = content_dir() else { return };
+    let actual = root().join("target/render-actual/lit-hashes.ron");
+    std::fs::create_dir_all(actual.parent().unwrap()).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_olr-cli"))
+        .args(["frame-hashes", "--mod", "olx-classic", "--level", "olr-level-castlestrike-reloaded"])
+        .args(["--bots", "4", "--personality", "chaos", "--seed", "1", "--ticks", "330", "--frames", "30"])
+        .args(["--content", &content, "--out"])
+        .arg(&actual)
+        .output()
+        .unwrap();
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    if !out.status.success() && stderr.contains("no graphics adapter") && !blessing() {
+        eprintln!("{stderr}skipping");
+        return;
+    }
+    assert!(out.status.success(), "olr-cli frame-hashes failed:\n{stderr}");
+    let read = |p: &Path| -> Option<FrameHashes> { ron::from_str(&std::fs::read_to_string(p).ok()?).ok() };
+    let now = read(&actual).expect("olr-cli wrote the hashes");
+    let path = root().join("fixtures/render/lit-hashes.ron");
+    let committed = read(&path);
+    let same = committed.as_ref().map(|c| frame_hash::compare(c, &now));
+    if blessing() {
+        if same != Some(Comparison::Same) {
+            std::fs::copy(&actual, &path).unwrap();
+            eprintln!("blessed {}", path.display());
+        }
+        return;
+    }
+    let bless = "if the change is intended, run `cargo xtask bless-render --reason \"<why>\"`";
+    match same {
+        None => panic!("{}: missing or unreadable; {bless}", path.display()),
+        Some(Comparison::Same) => {}
+        Some(Comparison::OtherAdapter(why)) => eprintln!("{why}; skipping"),
+        Some(Comparison::Differs(why)) => {
+            panic!("{why} (against {}; this run's: {}); {bless}", path.display(), actual.display())
+        }
+    }
+}

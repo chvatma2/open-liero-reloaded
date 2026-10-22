@@ -68,7 +68,9 @@ traces recorded from a patched OLX (`tools/olx-oracle/`).
 ## Render goldens
 
 `fixtures/render/*.png` are committed render goldens, and `fixtures/ui/*.png`
-the HUD's image snapshots. When a rendering or HUD change is intended,
+the HUD's image snapshots; `fixtures/render/lit-hashes.ron` holds the exact
+bytes' hashes of a lit match's frames (`olr-cli frame-hashes`, issue #34):
+a change meant to keep the picture keeps them. When a rendering or HUD change is intended,
 `cargo xtask bless-render --reason "<why>"` re-generates both and logs the
 reason in `fixtures/blessings.log`.
 

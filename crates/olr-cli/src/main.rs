@@ -2,6 +2,7 @@
 
 mod asset_cmd;
 mod element_cmd;
+mod frame_hashes_cmd;
 mod gpu_bench_cmd;
 mod import;
 mod level_cmd;
@@ -61,6 +62,9 @@ enum Command {
     Asset(asset_cmd::Args),
     /// Play a headless bot match on any packs and render its last tick to a PNG, offscreen.
     RenderMatch(render_match::Args),
+    /// Play a headless bot match and hash the exact bytes of its last frames' light grid and
+    /// lit target, drawn lit on the software adapter (byte identity, issue #34).
+    FrameHashes(frame_hashes_cmd::Args),
     /// Play a headless bot match: invariants every tick, tick times, determinism,
     /// replay round trip and coverage; a failure writes its replay to target/failures/.
     Match(match_cmd::Args),
@@ -119,6 +123,7 @@ fn main() -> ExitCode {
         Command::LookPreview(args) => look_preview::run(&args),
         Command::Asset(args) => asset_cmd::run(&args),
         Command::RenderMatch(args) => render_match::run(&args),
+        Command::FrameHashes(args) => frame_hashes_cmd::run(&args),
         Command::Match(args) => match_cmd::run(&args),
         Command::NetSim(args) => net_sim_cmd::run_cmd(args),
         Command::NetSoak(args) => net_soak_cmd::run_cmd(args),
