@@ -36,7 +36,7 @@ pub use online::{
 };
 pub use profiles::{
     CPU_COLOURS, DEFAULT_WEAPONS, MAX_NAME_CHARS, MAX_PROFILES, NEW_COLOURS, NameError, PROFILES_VERSION,
-    Profile, Profiles, bot_colours,
+    Profile, Profiles, bot_colours, bot_colours_away,
 };
 pub use settings::{
     AudioSettings, BLOOD_RANGE, BLOOD_STEP, FrameRate, GAME_KEYS, GameplaySettings, HudArrangement,

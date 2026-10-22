@@ -44,11 +44,21 @@ pub const BOT_COLOUR_DISTANCE: f32 = 120.0;
 /// (all of them if every one is), again from the first after the last.
 /// Cosmetic: no simulation state.
 pub fn bot_colours(human: [u8; 3], n: usize) -> Vec<[u8; 3]> {
-    let dist = |c: [u8; 3]| {
+    bot_colours_away(&[human], n)
+}
+
+/// [`bot_colours`] against several local humans (split screen, issue
+/// #29): without the CPU colours close to any of `humans`' (all of them if
+/// every one is).
+pub fn bot_colours_away(humans: &[[u8; 3]], n: usize) -> Vec<[u8; 3]> {
+    let dist = |c: [u8; 3], human: [u8; 3]| {
         let d = |i: usize| f32::from(c[i]) - f32::from(human[i]);
         (d(0) * d(0) + d(1) * d(1) + d(2) * d(2)).sqrt()
     };
-    let far: Vec<[u8; 3]> = CPU_COLOURS.into_iter().filter(|&c| dist(c) >= BOT_COLOUR_DISTANCE).collect();
+    let far: Vec<[u8; 3]> = CPU_COLOURS
+        .into_iter()
+        .filter(|&c| humans.iter().all(|&h| dist(c, h) >= BOT_COLOUR_DISTANCE))
+        .collect();
     let pool = if far.is_empty() { CPU_COLOURS.to_vec() } else { far };
     (0..n).map(|i| pool[i % pool.len()]).collect()
 }
@@ -252,6 +262,18 @@ mod tests {
     use super::*;
 
     /// OLX's seven bot colours in turn; none close to the human's.
+    #[test]
+    fn bot_colours_keep_away_from_every_local_human() {
+        let c = bot_colours_away(&[[250, 10, 10], [0, 240, 0]], 6);
+        assert!(!c.contains(&[255, 0, 0]) && !c.contains(&[0, 255, 0]), "{c:?}");
+        assert_eq!(c[..5], [[0, 0, 255], [255, 0, 255], [0, 255, 255], [128, 128, 128], [128, 255, 0]]);
+        assert_eq!(
+            bot_colours_away(&[[250, 10, 10]], 6),
+            bot_colours([250, 10, 10], 6),
+            "one is bot_colours"
+        );
+    }
+
     #[test]
     fn bot_colours_follow_olx_and_skip_the_humans() {
         // The default human green (0, 177, 0): OLX's green bot is skipped.

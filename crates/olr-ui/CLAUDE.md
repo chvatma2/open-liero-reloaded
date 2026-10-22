@@ -512,7 +512,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   weapons }` (OLX's "OpenLieroXor" by default; `weapons`: the last
   selection by name, OLX's `DEFAULT_WEAPONS` at first), `Profiles { list,
   selected }`; `bot_colours(human, n)` (OLX's `CPU_COLOURS` in turn,
-  skipping those near the human's);
+  skipping those near the human's; `bot_colours_away(humans, n)` near any
+  of several local players', issue #29);
   `check_name(name, except)` (trimmed, not empty, at most 20 characters,
   no control character, no other profile's name ignoring case:
   `NameError`), `rename`, `add` ("Player N", `NEW_COLOURS` in turn),
