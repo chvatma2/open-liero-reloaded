@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use olr_net::endpoint::{Endpoint, EndpointConfig, Gate, HOST, NetEvent, SILENCE_TIMEOUT, Why};
+use olr_net::endpoint::{Endpoint, EndpointConfig, Gate, HOST, Limits, NetEvent, SILENCE_TIMEOUT, Why};
 use olr_netcode::netsim::Profile;
 use olr_netcode::{Channel, PeerId};
 use olr_proto::Refusal;
@@ -262,19 +262,30 @@ fn the_gate_refuses_with_its_reason() {
 
 #[test]
 fn floods_and_oversized_messages_drop_the_peer() {
-    let mut net = Net::new(config());
+    // The host allows 50 unreliable messages a second, not the default 400
+    // (whose flood `limits.rs`'s unit tests catch): the flooder's link
+    // hands str0m at most 100 inputs at a time and drops older ones as
+    // stale, so on a loaded machine a slow loop delivers only a few hundred
+    // a second, under the default, and the flooder was never dropped.
+    let limits = Limits { max_datagrams_per_s: 50, ..Limits::default() };
+    let mut net = Net::new(EndpointConfig { limits, ..config() });
     let (flooder, flooder_id) = net.join_and_wait(config());
     let (big, big_id) = net.join_and_wait(config());
     let (good, good_id) = net.join_and_wait(config());
 
-    // 2000 datagrams in 1 s from one client, a 63 KB reliable message from
-    // another (above olr_net::limits::MAX_RELIABLE; Link refuses above 64 KiB), a
-    // message every 10 ms from the third.
+    // 2000 datagrams a second from one client until the host drops it, a
+    // 63 KB reliable message from another (above
+    // olr_net::limits::MAX_RELIABLE; Link refuses above 64 KiB), a message
+    // every 10 ms from the third.
     let start = Instant::now();
     let (mut flooded, mut ticks) = (0u32, 0u32);
     net.clients[big].0.send(HOST, Channel::Reliable, &vec![7; 63_000]);
     net.run_until(Duration::from_secs(10), "both bad peers dropped", |n| {
-        let due = (start.elapsed().as_micros() / 500).min(2000) as u32;
+        let due = if n.host_disconnect(flooder_id).is_none() {
+            (start.elapsed().as_micros() / 500) as u32
+        } else {
+            flooded
+        };
         while flooded < due {
             n.clients[flooder].0.send(HOST, Channel::Unreliable, &flooded.to_le_bytes());
             flooded += 1;
