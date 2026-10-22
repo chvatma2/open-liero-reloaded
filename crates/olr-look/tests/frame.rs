@@ -169,6 +169,33 @@ fn explosion_heat_grows_with_the_damage_and_is_bounded() {
     }
 }
 
+/// Issue #41: a distant layer takes the slice of an explosion's heat ball
+/// at its depth: smaller and cooler the further back, none past the ball;
+/// a Big Nuke's fragments reach depth 20, a Bazooka's not.
+#[test]
+fn distant_layers_take_the_balls_slice() {
+    use engine::ExplosionHeat;
+    let ball = ExplosionHeat { radius: 20.0, amount: 800.0 };
+    let plane = engine::heat_slice(ball, 0).unwrap();
+    assert_eq!(plane, ball, "depth 0 is the plane");
+    // z = 11: R' = sqrt(400 - 121), the amount × 279 / 400.
+    let near = engine::heat_slice(ball, 10).unwrap();
+    assert!((near.radius - 279.0f32.sqrt()).abs() < 1e-4, "{near:?}");
+    assert!((near.amount - 800.0 * 279.0 / 400.0).abs() < 1e-3, "{near:?}");
+    let farther = engine::heat_slice(ball, 15).unwrap();
+    assert!(farther.radius < near.radius && farther.amount < near.amount);
+    assert!(engine::heat_slice(ball, 19).is_none(), "z = 20.9 ≥ R");
+    let h = |d: f32| engine::explosion_heat(d).unwrap();
+    assert!(engine::heat_slice(h(15.0), 20).is_some(), "a Big Nuke reaches depth 20");
+    assert!(engine::heat_slice(h(15.0), 21).is_none());
+    assert!(engine::heat_slice(h(4.0), 15).is_some(), "a Bazooka the nearest layers");
+    assert!(engine::heat_slice(h(4.0), 16).is_none());
+    for bad in [f32::NAN, 0.0, -1.0, f32::INFINITY] {
+        assert!(engine::heat_slice(ExplosionHeat { radius: bad, amount: 1.0 }, 1).is_none());
+        assert!(engine::heat_slice(ExplosionHeat { radius: 5.0, amount: bad }, 1).is_none());
+    }
+}
+
 /// Issue #15: a mod's explosion light flashes as the engine's, capped;
 /// a projectile's own wins over the mod's, and -1 (no projectile) has none.
 #[test]

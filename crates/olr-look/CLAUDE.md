@@ -101,7 +101,12 @@ own look. The simulation never sees it.
   the damage, up to `MAX_EXPLOSION_HEAT_RADIUS` 48; `None` for no damage
   or NaN): a minigun hit (3) under the lava ramp's first key at its rim, a
   Bazooka's (4) rim glowing a few pixels deep, a Big Nuke's fragments
-  (15) far more.
+  (15) far more. Issue #41 (spec's "Distant layers: the ball"):
+  `HEAT_DEPTH_PX` (`K`, 1.1: a distant layer of depth `d` lies `d × K`
+  world pixels behind the plane, so a Big Nuke's fragments reach depth
+  20, a Bazooka's depth 15) and `heat_slice(heat, depth)`: the ball's
+  circle at that `z`, radius `sqrt(R² − z²)`, amount `× (1 − z² / R²)`;
+  `None` when `z ≥ R` or a value is not a positive number.
 - **Surface materials** (`material.rs`, issue #37; spec
   `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`):
   `SurfaceMaterial { id, heat: Option<Heat> }` (`heats()`: a sensitivity
@@ -127,6 +132,7 @@ own look. The simulation never sees it.
   `skin_light_is_steady_and_capped`,
   `explosion_lights_are_capped_and_fall_back_to_the_mods` (issue #15),
   `explosion_heat_grows_with_the_damage_and_is_bounded` (issue #40),
+  `distant_layers_take_the_balls_slice` (issue #41),
   `worm_floor_hues`, `solids_settings_are_bounded_and_off_without_a_look`
   (the occlusion too, issue #10);
   plan 15c: `disc_calibration_matches_todays_light`,
