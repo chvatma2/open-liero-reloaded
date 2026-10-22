@@ -51,12 +51,14 @@ fn look_frame_does_not_allocate_when_warm() {
         light: Some(light(5000)),
         end_flash: Some(light(250)),
         explosion: i.is_multiple_of(2).then(|| explosion(false)),
+        ..Default::default()
     };
     let weapon = olr_look::WeaponLook { muzzle_light: Some(light(60)) };
     m.look = olr_look::ModLook {
         projectiles: (0..m.sim.projectiles().len()).map(|i| Some(projectile(i))).collect(),
         weapons: vec![Some(weapon); m.sim.weapons().len()],
         explosion: Some(explosion(true)),
+        ..Default::default()
     };
     let skin = content.skin_or_default("olx-skin-default");
     let setup = PresentSetup {
