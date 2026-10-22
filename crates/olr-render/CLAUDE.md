@@ -218,14 +218,19 @@ on screen or offscreen.
     reads the occluder map only within that reach of a worm box (`near_box`;
     each view's `LitTarget::worm_boxes` uniform, `look::worm_boxes` of its
     occluder quads, a texel to spare, at most `WORM_BOXES` 32, the rest
-    joined into the last; `worm_boxes_hold_every_quad`).
+    joined into the last; `worm_boxes_hold_every_quad`). With a soak of 0
+    the across pass, which would give back the sum texel for texel, does
+    not run: the down pass reads the sum as its source and rows (issue
+    #35, `LitTarget::soak_binds[2]`; `no_soak_or_softness_runs_no_across_pass`).
   - **Blur** (`fs_blur_h`, `fs_blur_v`): a box of the level's softness (0
     to 4 world pixels) each way, an air texel gathering only the air before
     the first solid each way (no light blurs through a wall); `fs_blur_v`
     also tones the light (`tone`, the CPU twin `olr_render::tone`: the
     identity up to 1, a shoulder to max light; a white point of 1 clips),
     bands it into the light steps and writes the light above 1,
-    soft-saturated, for the bloom (a glowing pixel writes none).
+    soft-saturated, for the bloom (a glowing pixel writes none). With a
+    softness of 0 `fs_blur_h` (its source again, texel for texel) does not
+    run and `fs_blur_v` reads the soaked grid itself (issue #35).
   - **Bloom** (`fs_bloom_h`, `fs_bloom_v`, plan 15c): a Gaussian of
     `BLOOM_RADIUS` (12) world pixels each way over the light grid, an air
     texel's stopping at rock; the composite adds it × `BLOOM_STRENGTH`

@@ -108,7 +108,9 @@ pub(super) struct LitTarget {
     pub(super) globals: wgpu::Buffer,
     pub(super) light: [wgpu::Texture; 3],
     pub(super) views: [wgpu::TextureView; 3],
-    /// The sum pass's, the across blur's (reads 2) and the down blur's (reads 0).
+    /// The sum pass's, the across blur's (reads 2) and the down blur's
+    /// (reads 0); with no softness the down blur takes the across blur's
+    /// (issue #35: no across pass; it reads 2).
     pub(super) binds: [wgpu::BindGroup; 3],
     /// The ambient occlusion's rows (issue #10): the light grid's width,
     /// its height and [`OCCLUSION_PAD`] above and below.
@@ -120,8 +122,10 @@ pub(super) struct LitTarget {
     pub(super) bloom_views: [wgpu::TextureView; 2],
     /// The across spread's (reads 0) and the down spread's (reads 1).
     pub(super) bloom_binds: [wgpu::BindGroup; 2],
-    /// The across soak's (reads 0) and the down soak's (reads 1).
-    pub(super) soak_binds: [wgpu::BindGroup; 2],
+    /// The across soak's (reads 0) and the down soak's (reads 1); with no
+    /// soak (issue #35: no across pass), the down soak's reading the sum
+    /// (0) as its source and its rows.
+    pub(super) soak_binds: [wgpu::BindGroup; 3],
     /// The view's worm boxes ([`WormBoxes`]), which the across soak reads
     /// (issue #35).
     pub(super) worm_boxes: wgpu::Buffer,
@@ -657,7 +661,11 @@ impl LookState {
                 ],
             })
         };
-        let soak_binds = [soak_bind(&views[0], &views[2]), soak_bind(&views[1], &bloom_views[1])];
+        let soak_binds = [
+            soak_bind(&views[0], &views[2]),
+            soak_bind(&views[1], &bloom_views[1]),
+            soak_bind(&views[0], &views[0]),
+        ];
         let composite_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render composite"),
             layout: &self.composite_layout,

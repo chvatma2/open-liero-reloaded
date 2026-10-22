@@ -284,6 +284,42 @@ fn gpu_timing_reports_when_the_device_has_timestamps() {
     assert_eq!(r.gpu_times(), None, "each frame is read once");
 }
 
+/// Issue #35: a soak or a softness of 0 runs no across pass (the down pass
+/// reads its source), one pass fewer each, counted with timestamps.
+#[test]
+fn no_soak_or_softness_runs_no_across_pass() {
+    if std::env::var_os("OLR_GPU_TESTS").is_none() {
+        return;
+    }
+    let Ok(gpu) =
+        olr_render::Offscreen::open(&OffscreenOptions { timestamps: true, ..OffscreenOptions::default() })
+    else {
+        return;
+    };
+    let mut r = gpu.renderer(RenderSettings::default());
+    if !r.enable_gpu_timing() {
+        eprintln!("no timestamps; skipping");
+        return;
+    }
+    r.set_lighting(true);
+    let map = room(100, 40, |x, _| x == 50);
+    r.upload_terrain(&map);
+    let mut l = list(View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
+    l.map = (100, 40);
+    let mut passes = |soak: u8, softness: u8| {
+        let mut look = dim(0.1);
+        (look.light_soak, look.softness) = (soak, softness);
+        gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
+        r.gpu_times().expect("timed").pass_count
+    };
+    // The first frame also clears the fresh glow light's history.
+    passes(4, 2);
+    let both = passes(4, 2);
+    assert_eq!(passes(0, 2), both - 1, "no soak");
+    assert_eq!(passes(4, 0), both - 1, "no softness");
+    assert_eq!(passes(0, 0), both - 2, "neither");
+}
+
 /// [`map`] with a glow: strength `x % 7 * 30` per art pixel, group 1 on the
 /// left half (look system).
 fn glowing_map() -> ColorMap {

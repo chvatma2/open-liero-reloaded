@@ -347,7 +347,11 @@ impl Renderer {
                 );
             }
             full(&mut encoder, PassGroup::Sum, &lt.views[0], &state.sum_pipeline, &lt.binds[0]);
-            {
+            // At a soak or softness of 0 the across pass gives back its
+            // source texel for texel: the down pass reads that instead
+            // (issue #35).
+            let (soak, soft) = look.map_or((false, false), |l| (l.light_soak > 0, l.softness > 0));
+            if soak {
                 // The across soak, and the rows for the deeper rock.
                 let (views, g) = ([&lt.views[1], &lt.bloom_views[1]], group(PassGroup::Soak));
                 let mut pass = begin_two(&mut encoder, "olr-render look", views[0], views[1], g);
@@ -355,14 +359,17 @@ impl Renderer {
                 pass.set_bind_group(0, &lt.soak_binds[0], &[]);
                 pass.draw(0..3, 0..1);
             }
-            full(&mut encoder, PassGroup::Soak, &lt.views[2], &state.soak_v_pipeline, &lt.soak_binds[1]);
-            full(&mut encoder, PassGroup::Blur, &lt.views[0], &state.blur_h_pipeline, &lt.binds[1]);
+            let soak_v = if soak { &lt.soak_binds[1] } else { &lt.soak_binds[2] };
+            full(&mut encoder, PassGroup::Soak, &lt.views[2], &state.soak_v_pipeline, soak_v);
+            if soft {
+                full(&mut encoder, PassGroup::Blur, &lt.views[0], &state.blur_h_pipeline, &lt.binds[1]);
+            }
             {
                 // The toned light and the light above 1 (plan 15c's bloom).
                 let (views, g) = ([&lt.views[1], &lt.bloom_views[0]], group(PassGroup::Blur));
                 let mut pass = begin_two(&mut encoder, "olr-render look", views[0], views[1], g);
                 pass.set_pipeline(&state.blur_v_pipeline);
-                pass.set_bind_group(0, &lt.binds[2], &[]);
+                pass.set_bind_group(0, if soft { &lt.binds[2] } else { &lt.binds[1] }, &[]);
                 pass.draw(0..3, 0..1);
             }
             full(
