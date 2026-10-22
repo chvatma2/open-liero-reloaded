@@ -170,7 +170,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   none, and why) → `UiAction::ClearDownloadCache`, which only the options
   turn into `AppCommand::ClearDownloadCache`; the match is set up in local play only, which remembers it in
   `settings.gameplay`; the UI
-  scale applies when its slider is released; `keys.rs`: per action its
+  scale applies when its slider is released; `keys.rs` (in a scroll area:
+  every `Action::ALL`, Strafe, Previous/Next weapon and Dig since #23): per action its
   keys and gamepad inputs, each removable but the last of its device, "+"
   opens a capture (`MenuData::capture`, an `olr_input::Capture` the app
   feeds), a key other actions have opens a dialog (move, refused when it

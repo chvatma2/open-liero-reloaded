@@ -5,7 +5,8 @@ use olr_sim::Keys;
 use winit::event::{ElementState, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-use crate::bindings::{Bindings, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD};
+use crate::bindings::{Bindings, DIG, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD};
+use crate::dig::Dig;
 use crate::latch::TickLatch;
 
 /// A gamepad event, as [`InputState::on_pad`] takes it (gilrs's own events
@@ -44,6 +45,7 @@ pub struct InputState {
     /// Gamepad inputs held now, by pad (gilrs's id as `usize`).
     pad: Vec<(usize, PadInput)>,
     latch: TickLatch,
+    dig: Dig,
 }
 
 impl Default for InputState {
@@ -54,7 +56,13 @@ impl Default for InputState {
 
 impl InputState {
     pub fn new(bindings: Bindings) -> InputState {
-        InputState { bindings, keys: Vec::new(), pad: Vec::new(), latch: TickLatch::default() }
+        InputState {
+            bindings,
+            keys: Vec::new(),
+            pad: Vec::new(),
+            latch: TickLatch::default(),
+            dig: Dig::default(),
+        }
     }
 
     pub fn bindings(&self) -> &Bindings {
@@ -139,15 +147,20 @@ impl InputState {
         }
     }
 
-    /// The keys held now, unlatched.
+    /// The keys held now, unlatched (Dig's gesture not included).
     pub fn held(&self) -> Keys {
-        Keys(self.latch.held())
+        Keys(self.latch.held() & !DIG)
     }
 
     /// The keys for the next tick: what is held now, plus the presses and
-    /// releases since the last call, latched so none is lost (spec §8.5).
+    /// releases since the last call, latched so none is lost (spec §8.5),
+    /// and the dig gesture when Dig digs this tick (`dig.rs`).
     pub fn latch_tick(&mut self) -> Keys {
-        self.latch.latch()
+        let last = self.latch.last();
+        let latched = self.latch.latch();
+        let (keys, pressed) = self.dig.tick(latched.0, last);
+        self.latch.tap(pressed);
+        Keys(keys)
     }
 
     /// Feeds what the bound inputs hold now to the latch.

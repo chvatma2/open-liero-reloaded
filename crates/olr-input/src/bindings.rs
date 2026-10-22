@@ -1,14 +1,21 @@
-//! What each device input does: the simulation's 8 keys as [`Action`]s, and
-//! the [`Bindings`] from keyboard keys and gamepad inputs to them.
+//! What each device input does: the simulation's 11 keys and Dig as
+//! [`Action`]s, and the [`Bindings`] from keyboard keys and gamepad inputs
+//! to them.
 
 use gilrs::{Axis, Button};
 use olr_sim::Keys;
 use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
+/// The bit [`Action::Dig`] sets in [`Bindings::key_bits`] and
+/// [`Bindings::pad_bits`]: olr-input's own, above the simulation's
+/// [`Keys::ALL`], never sent to it ([`crate::InputState::latch_tick`] turns
+/// it into the dig gesture).
+pub const DIG: u16 = 1 << 15;
+
 /// A control of OLX's `ply_keys` that the simulation has a key for (spec §19
-/// E5: the classic 8 keys only; Strafe, Previous/NextWeapon and Weapon1-5
-/// have none).
+/// E5; Weapon1-5 have none), plus [`Action::Dig`], which presses the dig
+/// gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Action {
     /// Aim up.
@@ -22,11 +29,21 @@ pub enum Action {
     Rope,
     /// Held: Left and Right cycle the weapon.
     SelectWeapon,
+    /// Held: Left and Right move without turning the worm.
+    Strafe,
+    /// A press selects the previous weapon slot.
+    PreviousWeapon,
+    /// A press selects the next weapon slot.
+    NextWeapon,
+    /// Digs once, the way a player digs with the keys (holding one
+    /// direction, pressing the other); held, again every 0.2 s. Not one of
+    /// OLX's controls (OLX has no dig key).
+    Dig,
 }
 
 impl Action {
-    /// Every action, in `Keys` bit order.
-    pub const ALL: [Action; 8] = [
+    /// Every action, in `Keys` bit order, Dig last.
+    pub const ALL: [Action; 12] = [
         Action::Up,
         Action::Down,
         Action::Left,
@@ -35,9 +52,13 @@ impl Action {
         Action::Shoot,
         Action::Rope,
         Action::SelectWeapon,
+        Action::Strafe,
+        Action::PreviousWeapon,
+        Action::NextWeapon,
+        Action::Dig,
     ];
 
-    /// The [`Keys`] bit this action sets.
+    /// The [`Keys`] bit this action sets ([`DIG`] for Dig).
     pub fn bit(self) -> u16 {
         match self {
             Action::Up => Keys::UP,
@@ -48,6 +69,10 @@ impl Action {
             Action::Jump => Keys::JUMP,
             Action::Rope => Keys::ROPE,
             Action::SelectWeapon => Keys::CHANGE,
+            Action::Strafe => Keys::STRAFE,
+            Action::PreviousWeapon => Keys::PREV_WEAPON,
+            Action::NextWeapon => Keys::NEXT_WEAPON,
+            Action::Dig => DIG,
         }
     }
 }
@@ -95,13 +120,18 @@ impl Default for Bindings {
 
 impl Bindings {
     /// OLX's player 1 defaults (non-Apple): arrows, Shoot `LCtrl`, Jump
-    /// `LAlt`, Rope `X`, SelectWeapon `LShift`; on the pad, the d-pad,
-    /// Shoot right trigger, Jump A (south), Rope Y (north), SelectWeapon left
-    /// trigger.
+    /// `LAlt`, Rope `X`, SelectWeapon `LShift`, Strafe `Z`, Previous/Next
+    /// weapon `A`/`S`; on the pad, the d-pad, Shoot right trigger, Jump A
+    /// (south), Rope Y (north), SelectWeapon left trigger.
     /// OLX: src/client/Options.cpp:45-51 (`ply_def1`), :64-73 (`ply_gamepad_def`).
     ///
+    /// Not OLX's: Dig is `C`, beside the rope and strafe keys (OLX has no
+    /// dig key), and the pad's Strafe X (west), Dig B (east) and
+    /// Previous/Next weapon the left and right shoulders (OLX's pad
+    /// defaults bind none of the four).
+    ///
     /// OLX's twin-stick controls (left stick walks, right stick aims
-    /// analogue; `CWormHuman.cpp`) have no analogue in the simulation's 8
+    /// analogue; `CWormHuman.cpp`) have no analogue in the simulation's
     /// keys, so the left stick's X axis presses Left and Right and the right
     /// stick's Y axis Up and Down, from [`STICK_THRESHOLD`].
     pub fn olx() -> Bindings {
@@ -116,6 +146,10 @@ impl Bindings {
             (Jump, AltLeft),
             (Rope, KeyX),
             (SelectWeapon, ShiftLeft),
+            (Strafe, KeyZ),
+            (PreviousWeapon, KeyA),
+            (NextWeapon, KeyS),
+            (Dig, KeyC),
         ];
         let pad = vec![
             (Up, PadInput::Button(Button::DPadUp)),
@@ -130,16 +164,20 @@ impl Bindings {
             (Right, PadInput::AxisPlus(Axis::LeftStickX)),
             (Up, PadInput::AxisPlus(Axis::RightStickY)),
             (Down, PadInput::AxisMinus(Axis::RightStickY)),
+            (Strafe, PadInput::Button(Button::West)),
+            (PreviousWeapon, PadInput::Button(Button::LeftTrigger)),
+            (NextWeapon, PadInput::Button(Button::RightTrigger)),
+            (Dig, PadInput::Button(Button::East)),
         ];
         Bindings { keys, pad }
     }
 
-    /// The [`Keys`] bits the held keyboard keys set.
+    /// The [`Keys`] bits (and [`DIG`]) the held keyboard keys set.
     pub fn key_bits(&self, held: &[KeyCode]) -> u16 {
         self.keys.iter().filter(|(_, k)| held.contains(k)).fold(0, |b, (a, _)| b | a.bit())
     }
 
-    /// The [`Keys`] bits the held gamepad inputs set.
+    /// The [`Keys`] bits (and [`DIG`]) the held gamepad inputs set.
     pub fn pad_bits(&self, held: impl Fn(PadInput) -> bool) -> u16 {
         self.pad.iter().filter(|(_, p)| held(*p)).fold(0, |b, (a, _)| b | a.bit())
     }

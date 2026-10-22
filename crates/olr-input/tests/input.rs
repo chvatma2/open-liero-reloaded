@@ -1,7 +1,8 @@
 //! `olr-input`: bindings, gamepad mapping and latching between ticks.
 
 use olr_input::{
-    Action, Axis, Bindings, Button, InputState, KeyCode, PadEvent, PadInput, TickLatch, is_browser_reserved,
+    Action, Axis, Bindings, Button, DIG, InputState, KeyCode, PadEvent, PadInput, TickLatch,
+    is_browser_reserved,
 };
 use olr_sim::Keys;
 
@@ -51,13 +52,13 @@ fn tap_between_ticks_is_latched() {
     s.on_key(KeyCode::KeyQ, true);
     assert_eq!(s.latch_tick(), Keys(L));
     let mut b = Bindings::default();
-    b.keys.push((Action::Left, KeyCode::KeyA));
+    b.keys.push((Action::Left, KeyCode::KeyJ));
     let mut s = InputState::new(b);
     s.on_key(KeyCode::ArrowLeft, true);
-    s.on_key(KeyCode::KeyA, true);
+    s.on_key(KeyCode::KeyJ, true);
     s.on_key(KeyCode::ArrowLeft, false);
     assert_eq!(s.latch_tick(), Keys(L));
-    s.on_key(KeyCode::KeyA, false);
+    s.on_key(KeyCode::KeyJ, false);
     assert_eq!(s.latch_tick(), Keys(0));
 
     // Focus loss releases everything held.
@@ -112,6 +113,15 @@ fn default_bindings_match_olx() {
     assert_eq!(key(Action::Jump), [KeyCode::AltLeft]);
     assert_eq!(key(Action::Rope), [KeyCode::KeyX]);
     assert_eq!(key(Action::SelectWeapon), [KeyCode::ShiftLeft]);
+    assert_eq!(key(Action::Strafe), [KeyCode::KeyZ]);
+    assert_eq!(key(Action::PreviousWeapon), [KeyCode::KeyA]);
+    assert_eq!(key(Action::NextWeapon), [KeyCode::KeyS]);
+    assert_eq!(key(Action::Dig), [KeyCode::KeyC]);
+    // One action per default key.
+    let mut keys: Vec<KeyCode> = b.keys.iter().map(|(_, k)| *k).collect();
+    keys.sort_by_key(|k| format!("{k:?}"));
+    keys.dedup();
+    assert_eq!(keys.len(), b.keys.len());
     let pad =
         |a: Action| -> Vec<PadInput> { b.pad.iter().filter(|(x, _)| *x == a).map(|(_, p)| *p).collect() };
     assert_eq!(pad(Action::Shoot), [PadInput::Button(Button::RightTrigger2)]);
@@ -119,10 +129,19 @@ fn default_bindings_match_olx() {
     assert_eq!(pad(Action::Rope), [PadInput::Button(Button::North)]);
     assert_eq!(pad(Action::SelectWeapon), [PadInput::Button(Button::LeftTrigger2)]);
     assert!(pad(Action::Left).contains(&PadInput::Button(Button::DPadLeft)));
+    assert_eq!(pad(Action::Strafe), [PadInput::Button(Button::West)]);
+    assert_eq!(pad(Action::PreviousWeapon), [PadInput::Button(Button::LeftTrigger)]);
+    assert_eq!(pad(Action::NextWeapon), [PadInput::Button(Button::RightTrigger)]);
+    assert_eq!(pad(Action::Dig), [PadInput::Button(Button::East)]);
+    let mut inputs: Vec<String> = b.pad.iter().map(|(_, p)| format!("{p:?}")).collect();
+    inputs.sort();
+    inputs.dedup();
+    assert_eq!(inputs.len(), b.pad.len(), "one action per default pad input");
 
-    // Every action maps to its own Keys bit.
+    // Every action maps to its own Keys bit; Dig to olr-input's own.
     let bits: Vec<u16> = Action::ALL.iter().map(|a| a.bit()).collect();
-    assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128]);
+    assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, DIG]);
+    assert_eq!(Keys::ALL & DIG, 0);
 
     // Spec §8.5: no default key, or pair of them, is a shortcut the browser
     // keeps (such as Ctrl+W); such a binding is reported.
@@ -192,4 +211,23 @@ fn gamepad_maps_to_keys() {
     s.on_pad(2, PadEvent::Button(Button::North, 0.0));
     assert_eq!(s.latch_tick(), Keys(Keys::ROPE));
     assert_eq!(s.latch_tick(), Keys(0));
+
+    // The new keys: X strafes, the shoulders change weapon.
+    s.on_pad(0, PadEvent::Button(Button::West, 1.0));
+    s.on_pad(0, PadEvent::Button(Button::LeftTrigger, 1.0));
+    s.on_pad(0, PadEvent::Button(Button::RightTrigger, 1.0));
+    assert_eq!(s.held(), Keys(Keys::STRAFE | Keys::PREV_WEAPON | Keys::NEXT_WEAPON));
+}
+
+#[test]
+fn the_new_keys_reach_the_simulation() {
+    let mut s = InputState::default();
+    s.on_key(KeyCode::KeyZ, true);
+    s.on_key(KeyCode::ArrowLeft, true);
+    assert_eq!(s.latch_tick(), Keys(Keys::STRAFE | L));
+    s.on_key(KeyCode::KeyA, true);
+    s.on_key(KeyCode::KeyA, false);
+    s.on_key(KeyCode::KeyS, true);
+    assert_eq!(s.latch_tick(), Keys(Keys::STRAFE | L | Keys::PREV_WEAPON | Keys::NEXT_WEAPON));
+    assert_eq!(s.latch_tick(), Keys(Keys::STRAFE | L | Keys::NEXT_WEAPON));
 }

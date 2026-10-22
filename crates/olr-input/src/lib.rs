@@ -1,5 +1,6 @@
 //! Keyboard and gamepad input for one player, turned into the simulation's
-//! 8 [`Keys`](olr_sim::Keys) once per tick (spec §8.5, §19 E5).
+//! [`Keys`](olr_sim::Keys) once per tick (spec §8.5, §19 E5), with a Dig
+//! action that presses the dig gesture.
 //!
 //! - **Keyboard:** winit physical key codes, so bindings mean the same place
 //!   on any layout.
@@ -14,7 +15,10 @@
 
 #![forbid(unsafe_code)]
 
-pub use bindings::{Action, Bindings, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD, is_browser_reserved};
+pub use bindings::{
+    Action, Bindings, DIG, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD, is_browser_reserved,
+};
+pub use dig::DIG_REPEAT_TICKS;
 pub use latch::TickLatch;
 pub use rebind::{Binding, Capture, Device, RebindError, Resolve, key_name};
 pub use state::{InputState, PadEvent};
@@ -24,6 +28,7 @@ pub use gilrs::{Axis, Button};
 pub use winit::keyboard::KeyCode;
 
 mod bindings;
+mod dig;
 mod latch;
 mod rebind;
 mod state;

@@ -3832,6 +3832,7 @@ name = "olr-input"
 version = "0.2.0"
 dependencies = [
  "gilrs",
+ "olr-content",
  "olr-sim",
  "ron",
  "serde",

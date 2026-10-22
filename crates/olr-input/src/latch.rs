@@ -3,7 +3,7 @@
 
 use olr_sim::Keys;
 
-/// The 8 key bits as the device reports them between ticks, and as the
+/// The key bits as the device reports them between ticks, and as the
 /// ticks see them.
 ///
 /// - A key pressed since the last tick is down for this tick, even if it
@@ -58,5 +58,21 @@ impl TickLatch {
         self.again = 0;
         self.released = 0;
         Keys(out)
+    }
+
+    /// What the last tick saw: its [`TickLatch::latch`], and any
+    /// [`TickLatch::tap`] on top.
+    pub fn last(&self) -> u16 {
+        self.seen
+    }
+
+    /// The last tick also saw `bits` down, which the device does not hold
+    /// (a press made for it, such as the dig gesture): they are up for the
+    /// next tick, as a release, and a press of one of them made meanwhile
+    /// is down for the tick after.
+    pub fn tap(&mut self, bits: u16) {
+        let bits = bits & !self.held;
+        self.seen |= bits;
+        self.released |= bits;
     }
 }

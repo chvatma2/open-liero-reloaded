@@ -16,6 +16,7 @@ gilrs.workspace = true
 
 [dev-dependencies]
 ron.workspace = true
+olr-content.workspace = true
 
 [[test]]
 name = "integration"

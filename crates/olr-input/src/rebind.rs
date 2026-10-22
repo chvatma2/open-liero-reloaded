@@ -101,6 +101,10 @@ impl Action {
             Action::Jump => "Jump",
             Action::Rope => "Rope",
             Action::SelectWeapon => "Select weapon",
+            Action::Strafe => "Strafe",
+            Action::PreviousWeapon => "Previous weapon",
+            Action::NextWeapon => "Next weapon",
+            Action::Dig => "Dig",
         }
     }
 }

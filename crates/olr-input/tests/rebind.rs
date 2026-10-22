@@ -23,9 +23,10 @@ fn bindings_list_and_find_inputs_by_action() {
         ]
     );
     assert_eq!(b.actions_of(Binding::Key(KeyCode::KeyX)), [Action::Rope]);
-    assert!(b.actions_of(Binding::Key(KeyCode::KeyZ)).is_empty());
+    assert!(b.actions_of(Binding::Key(KeyCode::KeyQ)).is_empty());
+    assert_eq!(b.actions_of(Binding::Key(KeyCode::KeyZ)), [Action::Strafe]);
     assert!(b.unreachable().is_empty());
-    assert_eq!(Binding::Key(KeyCode::KeyZ).device(), KB);
+    assert_eq!(Binding::Key(KeyCode::KeyQ).device(), KB);
     assert_eq!(Binding::Pad(PadInput::Button(Button::South)).device(), PAD);
 }
 
@@ -33,7 +34,7 @@ fn bindings_list_and_find_inputs_by_action() {
 fn binding_a_used_key_is_resolved_explicitly() {
     let mut b = Bindings::olx();
     let ctrl = Binding::Key(KeyCode::ControlLeft);
-    let z = Binding::Key(KeyCode::KeyZ);
+    let z = Binding::Key(KeyCode::KeyQ);
     // Shared: both actions keep it.
     b.bind(Action::Jump, ctrl, Resolve::Share).unwrap();
     assert_eq!(b.actions_of(ctrl), [Action::Jump, Action::Shoot]);
@@ -79,7 +80,7 @@ fn the_last_input_of_a_device_cannot_be_unbound() {
     b.unbind(Action::Left, dpad).unwrap();
     assert_eq!(b, before);
     // The keyboard and the pad on one action are no conflict.
-    b.bind(Action::Shoot, Binding::Pad(PadInput::Button(Button::West)), Resolve::Move).unwrap();
+    b.bind(Action::Shoot, Binding::Pad(PadInput::Button(Button::LeftThumb)), Resolve::Move).unwrap();
     assert_eq!(b.of(Action::Shoot, KB), [Binding::Key(KeyCode::ControlLeft)]);
     assert!(b.unreachable().is_empty());
     assert!(RebindError::Unreachable { action: Action::Shoot, device: KB }.to_string().contains("Shoot"));
@@ -103,6 +104,39 @@ fn repair_restores_olx_defaults_for_unreachable_actions() {
     assert!(b.pad.len() == olx.len() && olx.iter().all(|p| b.pad.contains(p)), "every pad input restored");
     assert!(b.repair().is_empty(), "repaired once");
     assert!(Bindings::olx().clone().repair().is_empty());
+}
+
+#[test]
+fn the_new_actions_rebind_and_an_older_file_gets_their_defaults() {
+    // Strafe, Previous/Next weapon and Dig rebind like any action.
+    let mut b = Bindings::olx();
+    let q = Binding::Key(KeyCode::KeyQ);
+    b.bind(Action::Dig, q, Resolve::Share).unwrap();
+    b.unbind(Action::Dig, Binding::Key(KeyCode::KeyC)).unwrap();
+    assert_eq!(b.of(Action::Dig, KB), [q]);
+    assert_eq!(b.unbind(Action::Dig, q), Err(RebindError::Unreachable { action: Action::Dig, device: KB }));
+    let rb = Binding::Pad(PadInput::Button(Button::RightTrigger));
+    assert_eq!(
+        b.bind(Action::Shoot, rb, Resolve::Move),
+        Err(RebindError::Unreachable { action: Action::NextWeapon, device: PAD })
+    );
+
+    // An options file from before them: OLX's (and Dig's) defaults, one
+    // warning per device and action.
+    let old = Bindings::olx();
+    let mut b = old.clone();
+    let new = [Action::Strafe, Action::PreviousWeapon, Action::NextWeapon, Action::Dig];
+    b.keys.retain(|(a, _)| !new.contains(a));
+    b.pad.retain(|(a, _)| !new.contains(a));
+    let w = b.repair();
+    assert_eq!(w.len(), 8, "{w:?}");
+    assert!(w.iter().any(|w| w.contains("Strafe") && w.contains("Z")), "{w:?}");
+    assert!(w.iter().any(|w| w.contains("Dig") && w.contains("Pad B")), "{w:?}");
+    assert!(b.unreachable().is_empty());
+    for a in new {
+        assert_eq!(b.of(a, KB), old.of(a, KB));
+        assert_eq!(b.of(a, PAD), old.of(a, PAD));
+    }
 }
 
 #[test]
@@ -150,4 +184,6 @@ fn inputs_have_names_a_player_reads() {
     assert_eq!(name(Binding::Pad(PadInput::Button(Button::RightTrigger2))), "Pad RT");
     assert_eq!(name(Binding::Pad(PadInput::AxisMinus(Axis::LeftStickX))), "Pad left stick left");
     assert_eq!(name(Binding::Pad(PadInput::AxisPlus(Axis::RightStickY))), "Pad right stick up");
+    assert_eq!(Action::PreviousWeapon.name(), "Previous weapon");
+    assert_eq!(Action::Dig.name(), "Dig");
 }

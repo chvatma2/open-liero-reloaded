@@ -161,14 +161,14 @@ fn options_rebind_a_key() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
     open_keys(&mut h);
     let (z, ctrl, alt) =
-        (Binding::Key(KeyCode::KeyZ), Binding::Key(KeyCode::ControlLeft), Binding::Key(KeyCode::AltLeft));
+        (Binding::Key(KeyCode::KeyQ), Binding::Key(KeyCode::ControlLeft), Binding::Key(KeyCode::AltLeft));
 
     // "Press a key" (OLX's "Input for:" box): a free key is added.
     h.get_by_label("Add key for Jump").click();
     h.run();
     h.get_by_label_contains("Press a key for Jump");
     assert_eq!(h.state().data.capture.as_ref().map(|c| c.device()), Some(KB));
-    press(&mut h, KeyCode::KeyZ);
+    press(&mut h, KeyCode::KeyQ);
     assert!(h.state().data.capture.is_none());
     assert_eq!(keys(&h, Action::Jump), [alt, z]);
     let applied = AppCommand::ApplyBindings(h.state().ui.bindings().clone());
@@ -178,8 +178,8 @@ fn options_rebind_a_key() {
     // A key another action has: shown, and moved on request.
     h.get_by_label("Add key for Shoot").click();
     h.run();
-    press(&mut h, KeyCode::KeyZ);
-    h.get_by_label("Z is Jump's.");
+    press(&mut h, KeyCode::KeyQ);
+    h.get_by_label("Q is Jump's.");
     assert_eq!(keys(&h, Action::Shoot), [ctrl], "nothing changes before the choice");
     h.get_by_label("Move it to Shoot").click();
     h.run();
@@ -190,10 +190,10 @@ fn options_rebind_a_key() {
     h.get_by_label("Remove Left Ctrl from Shoot").click();
     h.run();
     assert_eq!(keys(&h, Action::Shoot), [z]);
-    assert!(h.get_by_label("Remove Z from Shoot").accesskit_node().is_disabled(), "the last key stays");
+    assert!(h.get_by_label("Remove Q from Shoot").accesskit_node().is_disabled(), "the last key stays");
     h.get_by_label("Add key for Rope").click();
     h.run();
-    press(&mut h, KeyCode::KeyZ);
+    press(&mut h, KeyCode::KeyQ);
     assert!(h.get_by_label("Move it to Rope").accesskit_node().is_disabled());
     h.get_by_label_contains("Shoot would have no key");
     h.get_by_label("Use it for both").click();
@@ -205,7 +205,7 @@ fn options_rebind_a_key() {
     let before = h.state().ui.bindings().clone();
     h.get_by_label("Add key for Up").click();
     h.run();
-    press(&mut h, KeyCode::KeyZ);
+    press(&mut h, KeyCode::KeyQ);
     h.get_by_label("Cancel").click();
     h.run();
     assert_eq!(*h.state().ui.bindings(), before);
@@ -228,9 +228,9 @@ fn options_rebind_a_key() {
     h.get_by_label("Add pad input for Shoot").click();
     h.run();
     assert_eq!(h.state().data.capture.as_ref().map(|c| c.device()), Some(PAD));
-    h.state_mut().data.capture.as_mut().unwrap().on_pad(PadEvent::Button(Button::West, 1.0));
+    h.state_mut().data.capture.as_mut().unwrap().on_pad(PadEvent::Button(Button::LeftThumb, 1.0));
     h.run();
-    let west = Binding::Pad(PadInput::Button(Button::West));
+    let west = Binding::Pad(PadInput::Button(Button::LeftThumb));
     assert_eq!(h.state().ui.bindings().of(Action::Shoot, PAD).last(), Some(&west));
     assert_eq!(keys(&h, Action::Shoot), [z]);
 
@@ -251,6 +251,33 @@ fn options_rebind_a_key() {
     assert!(h.state().ui.bindings().unreachable().is_empty());
 }
 
+/// Issue #23: Strafe, Previous/Next weapon and Dig are listed with their
+/// defaults and rebind like the classic eight.
+#[test]
+fn the_keys_screen_lists_and_rebinds_the_new_actions() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
+    open_keys(&mut h);
+    for a in [Action::Strafe, Action::PreviousWeapon, Action::NextWeapon, Action::Dig] {
+        h.get_by_label(&format!("Add key for {}", a.name()));
+        h.get_by_label(&format!("Add pad input for {}", a.name()));
+    }
+    h.get_by_label("Remove C from Dig");
+    h.get_by_label("Remove Pad RB from Next weapon");
+    h.get_by_label("Add key for Dig").click();
+    h.run();
+    press(&mut h, KeyCode::KeyQ);
+    assert_eq!(keys(&h, Action::Dig), [Binding::Key(KeyCode::KeyC), Binding::Key(KeyCode::KeyQ)]);
+    h.get_by_label("Remove C from Dig").click();
+    h.run();
+    assert_eq!(keys(&h, Action::Dig), [Binding::Key(KeyCode::KeyQ)]);
+    h.get_by_label("Add pad input for Strafe").click();
+    h.run();
+    h.state_mut().data.capture.as_mut().unwrap().on_pad(PadEvent::Button(Button::LeftThumb, 1.0));
+    h.run();
+    let thumb = Binding::Pad(PadInput::Button(Button::LeftThumb));
+    assert_eq!(h.state().ui.bindings().of(Action::Strafe, PAD).last(), Some(&thumb));
+}
+
 #[test]
 fn a_profile_with_its_own_keys_is_rebound_there() {
     let own = Bindings::olx();
@@ -260,9 +287,9 @@ fn a_profile_with_its_own_keys_is_rebound_there() {
     h.get_by_label_contains("OpenLieroXor has its own keys");
     h.get_by_label("Add key for Jump").click();
     h.run();
-    press(&mut h, KeyCode::KeyZ);
+    press(&mut h, KeyCode::KeyQ);
     let profile = h.state().ui.profiles().list[0].bindings.clone().unwrap();
-    assert!(profile.of(Action::Jump, KB).contains(&Binding::Key(KeyCode::KeyZ)));
+    assert!(profile.of(Action::Jump, KB).contains(&Binding::Key(KeyCode::KeyQ)));
     assert_eq!(h.state().ui.settings().input, Bindings::olx(), "the options' keys are not the ones used");
     assert!(matches!(h.state().commands.first(), Some(AppCommand::SaveProfiles(_))));
 }

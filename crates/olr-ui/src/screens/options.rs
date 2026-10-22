@@ -115,9 +115,14 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     match v.tab {
         Tab::Video => section(ui, "Window and drawing", |ui, _| video(ui, state, &mut v, out)),
         Tab::Audio => section(ui, "Volume", |ui, _| audio(ui, state, out)),
-        Tab::Keys => section(ui, "Keyboard and gamepad", |ui, _| {
-            keys::show(ui, state, &mut data.capture, &mut v.keys, out)
-        }),
+        // Twelve actions' rows: they scroll on a short window.
+        Tab::Keys => {
+            ScrollArea::vertical().id_salt("keys options").auto_shrink([false, true]).show(ui, |ui| {
+                section(ui, "Keyboard and gamepad", |ui, _| {
+                    keys::show(ui, state, &mut data.capture, &mut v.keys, out)
+                })
+            });
+        }
         Tab::Online => {
             ScrollArea::vertical().id_salt("online options").auto_shrink([false, true]).show(ui, |ui| {
                 online(ui, state, data, &mut v, out);
