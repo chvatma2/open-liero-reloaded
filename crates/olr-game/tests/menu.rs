@@ -62,13 +62,8 @@ fn starting_with_missing_content_returns_to_menu() {
     let m = message(&sh);
     assert!(m.contains(olr_ui::DEFAULT_MOD) || m.contains("olx-level-liero-factory"), "{m}");
     assert!(sh.play.is_none() && !sh.ui.is_starting());
-    // The sandbox, from the main menu.
-    sh.act(UiAction::Back);
-    sh.act(UiAction::StartSandbox);
-    sh.poll();
-    assert_eq!(sh.ui.screen(), Screen::Main);
-    assert!(!message(&sh).is_empty());
     // A replay file that is gone, or is not a replay.
+    sh.act(UiAction::Back);
     sh.act(UiAction::Open(Screen::Replays));
     let gone = tmp.path().join("gone.olrp");
     sh.act(UiAction::PlayReplay(gone));

@@ -11,6 +11,7 @@ use olr_game::shell::{Outcome, Shell, ShellConfig};
 use olr_game::video::{Opening, Overrides, Video};
 use olr_game::window::{self, MIN_CHANGE_INTERVAL, Plan, Requests, Shape};
 use olr_scene::{Interpolation, Viewport};
+use olr_ui::weapon_select::WeaponSelect;
 use olr_ui::{
     AudioSettings, FrameRate, Profiles, Screen, Settings, Store, UiAction, UiState, UpscaleFilter,
     VideoSettings, WindowPreset,
@@ -31,6 +32,19 @@ fn content_dir() -> Option<PathBuf> {
         eprintln!("OLR_CONTENT_DIR not set; skipping the imported content");
     }
     dir
+}
+
+/// Local play's Deathmatch started from the menus, past the weapon
+/// selection (its first draw), in game.
+fn start_match(sh: &mut Shell) {
+    sh.act(UiAction::Open(Screen::LocalPlay));
+    sh.act(UiAction::StartMatch);
+    sh.poll();
+    if sh.ui.screen() == Screen::WeaponSelect {
+        let weapons = WeaponSelect::new(sh.data.weapons.as_ref().unwrap(), &[]).slots();
+        sh.act(UiAction::ChooseWeapons { weapons, names: vec![] });
+    }
+    assert_eq!(sh.ui.screen(), Screen::InGame, "{:?}", sh.ui.message());
 }
 
 const FRAME: Duration = Duration::from_millis(16);
@@ -181,9 +195,7 @@ fn a_window_made_again_keeps_the_game_ticking() {
     let Some(content) = content_dir() else { return };
     let start = || {
         let mut sh = shell(&content, Settings::default(), Store::in_memory());
-        sh.act(UiAction::StartSandbox);
-        sh.poll();
-        assert_eq!(sh.ui.screen(), Screen::InGame);
+        start_match(&mut sh);
         sh
     };
     let (mut changed, mut still) = (start(), start());
@@ -248,9 +260,7 @@ fn volume_changes_apply_live() {
     assert_eq!(sh.volume(), 0.25, "master times effects, at once");
     let Some(_) = content else { return };
     // In a game, the game's sound output follows too, and keeps it after.
-    sh.act(UiAction::StartSandbox);
-    sh.poll();
-    assert_eq!(sh.ui.screen(), Screen::InGame);
+    start_match(&mut sh);
     assert_eq!(sh.session().unwrap().audio.volume(), 0.25);
     set(&mut sh, 1.0, 0.2);
     assert!((sh.session().unwrap().audio.volume() - 0.2).abs() < 1e-6);
@@ -297,7 +307,7 @@ fn the_saved_window_opens_with_the_flags_on_top_unsaved() {
 }
 
 /// The blood amount (issue #6) reaches a game started from the menus and
-/// the one playing at once, and changes nothing of the world: a sandbox
+/// the one playing at once, and changes nothing of the world: a match
 /// at 0 % and one at 500 % tick to the same checksums.
 #[test]
 fn the_blood_amount_applies_at_once_and_never_to_the_world() {
@@ -306,9 +316,7 @@ fn the_blood_amount_applies_at_once_and_never_to_the_world() {
         let settings =
             Settings { video: VideoSettings { blood, ..VideoSettings::default() }, ..Settings::default() };
         let mut sh = shell(&content, settings, Store::in_memory());
-        sh.act(UiAction::StartSandbox);
-        sh.poll();
-        assert_eq!(sh.ui.screen(), Screen::InGame);
+        start_match(&mut sh);
         assert_eq!(sh.session().unwrap().present.blood(), blood, "the saved amount");
         let (mut sums, mut bloody) = (Vec::new(), 0);
         for i in 0..600u32 {

@@ -372,6 +372,35 @@ fn a_failed_play_says_why_in_the_editor() {
     );
 }
 
+/// Issue #33: with the main menu's Sandbox gone, the editor's Play with
+/// no bots still starts the engine's sandbox (the player and its level).
+#[test]
+fn the_editors_play_starts_the_sandbox() {
+    use olr_game::shell::{Shell, ShellConfig};
+    let Some(root) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = ShellConfig {
+        content: root,
+        interpolation: olr_scene::Interpolation::Linear,
+        viewport: olr_scene::Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0),
+    };
+    let ui = olr_ui::UiState::new(olr_ui::Settings::default(), olr_ui::Profiles::default(), 1);
+    let mut sh = Shell::new(cfg, ui, Store::open(tmp.path()), olr_audio::Audio::silent());
+    sh.act(olr_ui::UiAction::Open(olr_ui::Screen::Editor));
+    sh.act(olr_ui::UiAction::NewLevel {
+        name: "Office".into(),
+        size: (120, 80),
+        theme: "olx-theme-dirt".into(),
+    });
+    sh.editor_frame(vec![A::PlayBots(0), A::Play], Instant::now());
+    sh.poll();
+    assert!(sh.editing_play(), "{:?}", sh.editor().unwrap().state().dialog());
+    let p = sh.play.as_ref().expect("the Play runs");
+    assert!(matches!(p.assets.game, olr_game::setup::Game::Sandbox(_)), "0 bots is the sandbox");
+    assert_eq!(p.session.world.terrain().width(), 120, "on the edited level");
+    assert!(sh.tick(olr_sim::Keys(0)));
+}
+
 /// Docs review, Important 1: `editor.ron` follows the store's rules: a
 /// newer game's file is left untouched by this session's saves.
 #[test]
