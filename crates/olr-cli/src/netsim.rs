@@ -747,7 +747,7 @@ impl harness::Observer<WorldSim> for BundleRecorder<'_> {
         if self.dir.is_none() || !matches!(self.spec.scenario_seat(peer), Some(Seat::Player(_))) {
             return;
         }
-        let rows = |s: &Session<WorldSim>| -> Vec<[u8; 32]> {
+        let rows = |s: &Session<WorldSim>| -> Vec<[u16; 32]> {
             let log = s.input_log();
             (0..log.frontier()).map(|t| log.row(t).unwrap_or([0; 32])).collect()
         };

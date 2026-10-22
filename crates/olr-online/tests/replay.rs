@@ -22,9 +22,9 @@ fn record_gone(c: &olr_content::Content, gone: Option<u32>) -> MatchRecord {
     let mut sim = matches::build(c, &start).unwrap().sim;
     let (mut rows, mut checksums) = (Vec::new(), Vec::new());
     for t in 0..300u32 {
-        let mut row = [0u8; 32];
-        row[0] = ((t / 20).wrapping_mul(97) as u8) & !Keys::CHANGE;
-        row[1] = ((t / 30).wrapping_mul(31) as u8) & !Keys::CHANGE;
+        let mut row = [0u16; 32];
+        row[0] = u16::from((t / 20).wrapping_mul(97) as u8) & !Keys::CHANGE;
+        row[1] = u16::from((t / 30).wrapping_mul(31) as u8) & !Keys::CHANGE;
         if gone == Some(t) {
             sim.withdraw(1);
         }

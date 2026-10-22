@@ -43,7 +43,7 @@ impl Lcg {
 /// digging, and now and then cycles weapons and throws the rope.
 struct Chaos {
     rng: Lcg,
-    held: u8,
+    held: u16,
     left: u32,
 }
 
@@ -52,7 +52,7 @@ impl Chaos {
         if self.left == 0 {
             let r = self.rng.next();
             self.left = 1 + (r >> 8) % 40;
-            self.held = (r as u8) & (Keys::UP | Keys::DOWN | Keys::LEFT | Keys::RIGHT | Keys::JUMP);
+            self.held = u16::from(r as u8) & (Keys::UP | Keys::DOWN | Keys::LEFT | Keys::RIGHT | Keys::JUMP);
             if r & 0x1_0000 != 0 {
                 self.held |= Keys::FIRE;
             }

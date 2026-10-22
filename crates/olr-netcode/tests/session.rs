@@ -135,7 +135,7 @@ fn stamp() -> impl Strategy<Value = Stamp> {
 
 /// A frame that decodes for 4 slots.
 fn frame() -> impl Strategy<Value = Frame> {
-    (0u32..16, 0u32..16, prop::collection::vec(any::<u8>(), 4)).prop_map(|(known, changed, keys)| {
+    (0u32..16, 0u32..16, prop::collection::vec(any::<u16>(), 4)).prop_map(|(known, changed, keys)| {
         let changed = changed & known;
         Frame { known, changed, keys: keys[..changed.count_ones() as usize].to_vec() }
     })
@@ -152,7 +152,7 @@ fn gone(first: u32) -> impl Strategy<Value = Vec<(u8, u32)>> {
 fn datagram() -> impl Strategy<Value = Datagram> {
     let margin = prop_oneof![Just(i16::MIN), Just(i16::MAX), Just(0i16), -40i16..40, any::<i16>()];
     prop_oneof![
-        (stamp(), edge_u32(), edge_u32(), edge_u32(), prop::collection::vec(any::<u8>(), 0..=MAX_KEYS))
+        (stamp(), edge_u32(), edge_u32(), edge_u32(), prop::collection::vec(any::<u16>(), 0..=MAX_KEYS))
             .prop_map(|(stamp, tick, ack, first, keys)| Datagram::Client(ClientInputs {
                 stamp,
                 tick,
@@ -179,7 +179,7 @@ fn datagram() -> impl Strategy<Value = Datagram> {
 
 /// Every final input a session knew stays as it was.
 #[derive(Default)]
-struct Finals(Vec<Vec<u8>>);
+struct Finals(Vec<Vec<u16>>);
 
 impl Finals {
     fn check(&mut self, s: &Session<ToySim>) {

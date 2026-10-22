@@ -77,9 +77,9 @@ pub struct WeaponSelect {
     row: usize,
     rng: BotRng,
     /// The keys held last time ([`WeaponSelect::on_keys`]).
-    held: u8,
+    held: u16,
     /// A direction held since, and when it last stepped.
-    repeat: Option<(u8, f64, bool)>,
+    repeat: Option<(u16, f64, bool)>,
 }
 
 impl WeaponSelect {

@@ -42,7 +42,7 @@ impl Driver<ToySim> for ToyDriver {
             if self.rng.below(8) == 0 {
                 *held = self.rng.next_u64() as u8;
             }
-            *k = Keys(*held);
+            *k = Keys(u16::from(*held));
         }
     }
 }

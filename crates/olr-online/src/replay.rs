@@ -34,7 +34,7 @@ pub fn same_match(a: &[u8], b: &[u8]) -> bool {
 pub struct MatchRecord {
     pub start: MatchStartWire,
     /// The final inputs of ticks `0..rows.len()`, one byte per slot.
-    pub rows: Vec<[u8; 32]>,
+    pub rows: Vec<[u16; 32]>,
     /// The session's confirmed sync checksums (`Session::checksums`) of
     /// those ticks.
     pub checksums: Vec<(u32, u64)>,

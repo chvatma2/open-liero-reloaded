@@ -4,7 +4,9 @@ use olr_proto::*;
 
 fn report(frames: usize, own: usize) -> InputsReport {
     let f =
-        encode_frames(100, frames as u32, 32, &|t, s| Some(((t as usize * 7 + s) % 251) as u8), &|_| Some(0));
+        encode_frames(100, frames as u32, 32, &|t, s| Some(((t as usize * 7 + s) % 2039) as u16), &|_| {
+            Some(0)
+        });
     InputsReport {
         ack: 90,
         origin: 40,
@@ -203,7 +205,8 @@ fn loopback_and_private_successors_are_accepted() {
 
 #[test]
 fn the_resume_datagram_round_trips_within_its_bounds() {
-    let frames = encode_frames(100, MAX_FRAMES as u32, 4, &|t, s| Some((t as usize + s) as u8), &|_| Some(0));
+    let frames =
+        encode_frames(100, MAX_FRAMES as u32, 4, &|t, s| Some(((t as usize + s) as u16) << 4), &|_| Some(0));
     let d = Datagram::Resume(HostResume { tick: 120, at_ms: 9_000, first: 100, frames, gone: vec![] });
     let b = encode_datagram(&d);
     assert!(b.len() <= MAX_DATAGRAM, "{} bytes", b.len());

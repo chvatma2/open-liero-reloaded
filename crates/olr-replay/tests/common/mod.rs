@@ -187,7 +187,7 @@ impl KeyGen {
         for i in 0..self.held.len() {
             if self.held[i].1 == 0 {
                 let r = self.next();
-                self.held[i] = (Keys(r as u8), 1 + (r >> 8) as u32 % self.hold);
+                self.held[i] = (Keys(u16::from(r as u8)), 1 + (r >> 8) as u32 % self.hold);
             }
             self.held[i].1 -= 1;
         }

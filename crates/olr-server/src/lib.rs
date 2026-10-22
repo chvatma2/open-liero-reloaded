@@ -394,7 +394,7 @@ impl Server {
     /// The running match's confirmed input rows (the ticks below the
     /// session's frontier; none without a match): what `olr-cli`'s
     /// real-transport verdict holds a server that freezes or leaves to.
-    pub fn confirmed_rows(&self) -> Vec<[u8; 32]> {
+    pub fn confirmed_rows(&self) -> Vec<[u16; 32]> {
         let Some(s) = self.peer.match_session() else { return Vec::new() };
         let log = s.input_log();
         (0..log.frontier()).map(|t| log.row(t).unwrap_or([0; 32])).collect()

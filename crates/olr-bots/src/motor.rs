@@ -69,7 +69,7 @@ impl Motor {
         self.prev
     }
 
-    fn pressed(&self, bit: u8, k: &mut u8) {
+    fn pressed(&self, bit: u16, k: &mut u16) {
         if self.prev.0 & bit == 0 {
             *k |= bit;
         }
@@ -78,7 +78,7 @@ impl Motor {
     /// The keys for worm `w` (as the world shows it before this tick) to do
     /// `intent`.
     pub fn keys(&mut self, w: &Worm, s: &SimSettings, intent: &Intent) -> Keys {
-        let mut k = 0u8;
+        let mut k = 0u16;
         if !w.alive {
             // `CWormHuman.cpp:115-119`: the jump key asks for the respawn.
             self.pressed(Keys::JUMP, &mut k);
@@ -127,13 +127,13 @@ impl Motor {
         self.done(k)
     }
 
-    fn done(&mut self, k: u8) -> Keys {
+    fn done(&mut self, k: u16) -> Keys {
         self.prev = Keys(k);
         self.prev
     }
 }
 
-fn side_key(d: Dir) -> u8 {
+fn side_key(d: Dir) -> u16 {
     match d {
         Dir::Left => Keys::LEFT,
         Dir::Right => Keys::RIGHT,
@@ -158,7 +158,7 @@ fn shorter_way(from: i32, to: i32, slots: i32) -> Dir {
 /// 100°/s, `CWormBot.cpp:1646`), and the key held pushes the speed towards
 /// it at 500°/s² (UP lowers the speed, DOWN raises it). With no key held
 /// the simulation clamps the speed to ±100 and slows it by 200°/s².
-pub fn aim_key(angle: f32, speed: f32, target: f32) -> u8 {
+pub fn aim_key(angle: f32, speed: f32, target: f32) -> u16 {
     let e = target - angle;
     if !e.is_finite() || !speed.is_finite() {
         return 0;

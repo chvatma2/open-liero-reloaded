@@ -555,7 +555,8 @@ fn frames_older_than_a_joined_spectators_state_are_ignored() {
     assert_eq!(s.confirmed(), 41);
     for first in [1, 30, 40] {
         // Every slot known and unchanged from the tick before `first`.
-        let frames = olr_proto::encode_frames(first, 5, 3, &|_, s| Some(s as u8 + 1), &|s| Some(s as u8 + 1));
+        let frames =
+            olr_proto::encode_frames(first, 5, 3, &|_, s| Some(s as u16 + 1), &|s| Some(s as u16 + 1));
         let h = HostInputs {
             stamp: Stamp::default(),
             tick: first + 5,

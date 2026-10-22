@@ -138,7 +138,7 @@ impl Simulation for ToySim {
 mod tests {
     use super::*;
 
-    fn k(v: u8) -> Keys {
+    fn k(v: u16) -> Keys {
         Keys(v)
     }
 

@@ -55,6 +55,37 @@ fn record_then_replay_gives_identical_checksums() {
     assert_eq!(run.world, end);
 }
 
+/// Strafe and Previous/Next weapon (issue #23, the keys' high byte) are
+/// recorded and replayed: the replay rebuilds a world that strafed and
+/// changed weapons.
+#[test]
+fn the_new_keys_round_trip() {
+    let (setup, mode) = deathmatch(2, 3);
+    let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
+    rec.start(&world).unwrap();
+    let mut out = TickEvents::new();
+    let strafe = Keys::STRAFE | Keys::LEFT;
+    for t in 0..400u32 {
+        let a = match t % 40 {
+            0..=19 => strafe,
+            20 => Keys::NEXT_WEAPON,
+            30 => Keys::PREV_WEAPON | Keys::RIGHT,
+            _ => Keys::RIGHT,
+        };
+        let row = [Keys(a), Keys(if t % 50 == 25 { Keys::NEXT_WEAPON } else { 0 })];
+        world.tick(&row, &mut out);
+        rec.push(&row, &world).unwrap();
+    }
+    let replay = rec.finish(&world).unwrap();
+    let decoded = Replay::decode(&replay.encode()).unwrap();
+    assert_eq!(decoded, replay, "encoding round-trips");
+    assert_eq!(decoded.row(5), &[Keys(strafe), Keys(0)]);
+    assert_eq!(decoded.row(25)[1], Keys(Keys::NEXT_WEAPON));
+    let run = decoded.play(decoded.world(assets()).unwrap()).unwrap();
+    assert_eq!(run.world, world);
+}
+
 /// A withdrawal is recorded at its tick and replayed there.
 #[test]
 fn a_withdrawal_replays_at_its_tick() {
@@ -387,7 +418,9 @@ fn replay_size_is_reasonable() {
     let random = size(1);
     let held = size(20);
     eprintln!("one minute of 8 worms: {random} bytes with new keys every tick, {held} held 1-20 ticks");
-    assert!(random <= 50_000, "{random} bytes");
+    // 48 000 random key bytes, and their high bytes (all 0 here, about 200
+    // bytes deflated).
+    assert!(random <= 50_500, "{random} bytes");
     assert!(held <= 16_000, "{held} bytes");
 }
 
@@ -541,15 +574,15 @@ fn the_looks_round_trip() {
     assert_eq!(finish_now(many, &setup, &mode).setup.looks.len(), 4);
 }
 
-/// A format-3 file (before the looks) is refused with the version error.
+/// A format-4 file (before 16-bit keys) is refused with the version error.
 #[test]
-fn a_format_3_replay_is_refused() {
+fn a_format_4_replay_is_refused() {
     let (replay, ..) = record(10, 1);
     let mut bytes = replay.encode();
-    bytes[4..6].copy_from_slice(&3u16.to_le_bytes());
+    bytes[4..6].copy_from_slice(&4u16.to_le_bytes());
     assert_eq!(
         Replay::decode(&bytes).unwrap_err(),
-        DecodeError::Version { found: 3, supported: FORMAT_VERSION }
+        DecodeError::Version { found: 4, supported: FORMAT_VERSION }
     );
-    assert_eq!(FORMAT_VERSION, 4);
+    assert_eq!(FORMAT_VERSION, 5);
 }

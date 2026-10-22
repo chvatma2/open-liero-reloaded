@@ -5,8 +5,8 @@ use olr_input::{
 };
 use olr_sim::Keys;
 
-const L: u8 = Keys::LEFT;
-const R: u8 = Keys::RIGHT;
+const L: u16 = Keys::LEFT;
+const R: u16 = Keys::RIGHT;
 
 #[test]
 fn tap_between_ticks_is_latched() {
@@ -75,12 +75,12 @@ fn tick_latch_sees_every_press_and_release() {
     for start in [false, true] {
         for n in 0..=4u32 {
             let mut l = TickLatch::default();
-            l.set(start as u8);
+            l.set(start as u16);
             l.latch();
             let mut now = start;
             for _ in 0..n {
                 now = !now;
-                l.set(now as u8);
+                l.set(now as u16);
             }
             let a = l.latch().0 & 1 == 1;
             let b = l.latch().0 & 1 == 1;
@@ -121,7 +121,7 @@ fn default_bindings_match_olx() {
     assert!(pad(Action::Left).contains(&PadInput::Button(Button::DPadLeft)));
 
     // Every action maps to its own Keys bit.
-    let bits: Vec<u8> = Action::ALL.iter().map(|a| a.bit()).collect();
+    let bits: Vec<u16> = Action::ALL.iter().map(|a| a.bit()).collect();
     assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128]);
 
     // Spec §8.5: no default key, or pair of them, is a shortcut the browser

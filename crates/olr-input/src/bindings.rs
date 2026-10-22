@@ -38,7 +38,7 @@ impl Action {
     ];
 
     /// The [`Keys`] bit this action sets.
-    pub fn bit(self) -> u8 {
+    pub fn bit(self) -> u16 {
         match self {
             Action::Up => Keys::UP,
             Action::Down => Keys::DOWN,
@@ -135,12 +135,12 @@ impl Bindings {
     }
 
     /// The [`Keys`] bits the held keyboard keys set.
-    pub fn key_bits(&self, held: &[KeyCode]) -> u8 {
+    pub fn key_bits(&self, held: &[KeyCode]) -> u16 {
         self.keys.iter().filter(|(_, k)| held.contains(k)).fold(0, |b, (a, _)| b | a.bit())
     }
 
     /// The [`Keys`] bits the held gamepad inputs set.
-    pub fn pad_bits(&self, held: impl Fn(PadInput) -> bool) -> u8 {
+    pub fn pad_bits(&self, held: impl Fn(PadInput) -> bool) -> u16 {
         self.pad.iter().filter(|(_, p)| held(*p)).fold(0, |b, (a, _)| b | a.bit())
     }
 

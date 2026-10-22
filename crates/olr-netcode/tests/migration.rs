@@ -358,7 +358,7 @@ fn a_collecting_new_host_never_looks_silent() {
 #[test]
 fn a_worst_case_report_is_trimmed_to_fit() {
     // 32 slots, every slot changing every tick, 3000 ticks: about 120 KB untrimmed.
-    let value = |t: u32, s: usize| Some(((t as usize + s) % 2) as u8 + 1);
+    let value = |t: u32, s: usize| Some(((t as usize + s) % 2) as u16 + 1);
     let upto = 1_000 + MAX_REPORT_FRAMES as u32;
     let report = fit_report(
         1_000,
@@ -434,7 +434,7 @@ fn a_conflicting_report_is_ignored_and_counted() {
     // A forged spectator rejoins and claims another value for slot 0 at tick 100.
     assert!(m.s.get_mut(&A).unwrap().rejoined(9, Seat::Spectator, us));
     let real = m.s[&A].final_input(100, 0).unwrap().0;
-    let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&A].final_input(99, s).map(|k| k.0)).collect();
+    let base: Vec<Option<u16>> = (0..SLOTS).map(|s| m.s[&A].final_input(99, s).map(|k| k.0)).collect();
     let frames = encode_frames(100, 1, SLOTS as usize, &|_, s| (s == 0).then_some(real ^ 0x10), &|s| base[s]);
     let report =
         InputsReport { ack: 0, origin: 0, first: 100, frames, gone: vec![], own_first: 0, own: vec![] };
@@ -552,7 +552,7 @@ fn a_spectator_reports_or_takes_over() {
 /// tick being simulated when it was pressed (`at`).
 struct Recording {
     inner: Box<dyn Driver<ToySim>>,
-    pressed: std::rc::Rc<std::cell::RefCell<BTreeMap<(u32, u8), u8>>>,
+    pressed: std::rc::Rc<std::cell::RefCell<BTreeMap<(u32, u8), u16>>>,
     at: std::rc::Rc<std::cell::RefCell<BTreeMap<(u32, u8), u32>>>,
 }
 
@@ -597,8 +597,8 @@ fn the_resume_fills_bots_with_their_last_keys_and_its_own_slot_with_its_pressed_
     let upto = m.s[&A].frontier();
     assert!(upto > r + 150, "the match went on: {upto} past {r}");
     let pressed = pressed.borrow();
-    let finals: Vec<Option<u8>> = (r..upto).map(|t| m.s[&A].final_input(t, 2).map(|k| k.0)).collect();
-    let keys: Vec<Option<u8>> = (r..upto).map(|t| pressed.get(&(t, 2)).copied()).collect();
+    let finals: Vec<Option<u16>> = (r..upto).map(|t| m.s[&A].final_input(t, 2).map(|k| k.0)).collect();
+    let keys: Vec<Option<u16>> = (r..upto).map(|t| pressed.get(&(t, 2)).copied()).collect();
     assert_eq!(finals, keys, "ticks {r}..{upto}");
     assert!(keys.windows(2).any(|w| w[0] != w[1]), "its keys change");
     let d = m.s[&A].config().input_delay as u32;
@@ -792,10 +792,10 @@ fn gone(first: u32) -> impl Strategy<Value = Vec<(u8, u32)>> {
 
 fn control() -> impl Strategy<Value = Control> {
     let edge = prop_oneof![Just(0u32), Just(1), Just(99), Just(u32::MAX - 1), Just(u32::MAX), 0u32..5_000];
-    let frame = (any::<u32>(), any::<u32>(), prop::collection::vec(any::<u8>(), 0..33))
+    let frame = (any::<u32>(), any::<u32>(), prop::collection::vec(any::<u16>(), 0..33))
         .prop_map(|(known, changed, keys)| Frame { known, changed, keys });
     // Frames within the match's slots, which decode (the merge's path).
-    let fitting = (0u32..16, 0u32..16, any::<u8>()).prop_map(|(known, changed, key)| {
+    let fitting = (0u32..16, 0u32..16, any::<u16>()).prop_map(|(known, changed, key)| {
         let changed = changed & known;
         Frame { known, changed, keys: vec![key; changed.count_ones() as usize] }
     });
@@ -809,7 +809,7 @@ fn control() -> impl Strategy<Value = Control> {
             edge.clone(),
             frames.clone(),
             edge.clone(),
-            prop::collection::vec(any::<u8>(), 0..300)
+            prop::collection::vec(any::<u16>(), 0..300)
         )
             .prop_flat_map(|(ack, origin, first, frames, own_first, own)| {
                 gone(first).prop_map(move |gone| {
@@ -1957,8 +1957,8 @@ fn withdrawal_marks_travel_through_a_migration() {
     let (ka, kb) = (m.s[&A].input_log().known_upto(0), m.s[&B].input_log().known_upto(0));
     let mark = ka.max(kb);
     let value = |t: u32| m.s[&A].final_input(t, 0).map_or(0, |k| k.0);
-    let values: Vec<u8> = (kb..=mark).map(value).collect();
-    let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&B].final_input(kb - 1, s).map(|k| k.0)).collect();
+    let values: Vec<u16> = (kb..=mark).map(value).collect();
+    let base: Vec<Option<u16>> = (0..SLOTS).map(|s| m.s[&B].final_input(kb - 1, s).map(|k| k.0)).collect();
     let frames = encode_frames(
         kb,
         mark - kb + 1,
@@ -1987,7 +1987,7 @@ fn withdrawal_marks_travel_through_a_migration() {
     let us = m.now_ms * 1000;
     assert!(m.s.get_mut(&A).unwrap().rejoined(9, Seat::Spectator, us));
     let real = m.s[&A].final_input(100, 1).unwrap().0;
-    let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&A].final_input(99, s).map(|k| k.0)).collect();
+    let base: Vec<Option<u16>> = (0..SLOTS).map(|s| m.s[&A].final_input(99, s).map(|k| k.0)).collect();
     let frames = encode_frames(100, 1, SLOTS as usize, &|_, s| (s == 1).then_some(real), &|s| base[s]);
     let report = InputsReport {
         ack: 0,
@@ -2032,10 +2032,10 @@ fn a_forged_withdrawal_never_removes_a_present_player() {
     // Spectators that "held" one more tick of a slot, withdrawn there: B's
     // own (present), A's bot (present), the old host's player (absent).
     let us = m.now_ms * 1000;
-    let report = |m: &mut Mesh, from: PeerId, slot: u8, v: u8| -> u32 {
+    let report = |m: &mut Mesh, from: PeerId, slot: u8, v: u16| -> u32 {
         let us = m.now_ms * 1000;
         let k = m.s[&A].input_log().known_upto(slot);
-        let base: Vec<Option<u8>> = (0..SLOTS).map(|s| m.s[&A].final_input(k - 1, s).map(|x| x.0)).collect();
+        let base: Vec<Option<u16>> = (0..SLOTS).map(|s| m.s[&A].final_input(k - 1, s).map(|x| x.0)).collect();
         let frames =
             encode_frames(k, 1, SLOTS as usize, &|_, s| (s == slot as usize).then_some(v), &|s| base[s]);
         let gone = vec![(slot, k)];
@@ -2048,7 +2048,7 @@ fn a_forged_withdrawal_never_removes_a_present_player() {
         );
         k
     };
-    let forge = |m: &mut Mesh, from: PeerId, slot: u8, v: u8| -> u32 {
+    let forge = |m: &mut Mesh, from: PeerId, slot: u8, v: u16| -> u32 {
         assert!(m.s.get_mut(&A).unwrap().rejoined(from, Seat::Spectator, us));
         report(m, from, slot, v)
     };

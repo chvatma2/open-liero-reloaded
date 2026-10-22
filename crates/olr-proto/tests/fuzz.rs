@@ -8,7 +8,7 @@ fn sample_host() -> Datagram {
         your_ack: 490,
         margin: -2,
         first: 490,
-        frames: (0..10).map(|i| Frame { known: 0xff, changed: 1 << (i % 8), keys: vec![i as u8] }).collect(),
+        frames: (0..10).map(|i| Frame { known: 0xff, changed: 1 << (i % 8), keys: vec![i as u16] }).collect(),
         gone: vec![(1, 492), (5, 499)],
     })
 }
@@ -32,7 +32,7 @@ fn marks(first: u32) -> impl Strategy<Value = Vec<(u8, u32)>> {
 
 fn host_datagram() -> impl Strategy<Value = Datagram> {
     let edge = prop_oneof![Just(0u32), Just(1), Just(u32::MAX), Just(u32::MAX - 5), any::<u32>()];
-    let frame = (any::<u32>(), any::<u32>(), prop::collection::vec(any::<u8>(), 0..4))
+    let frame = (any::<u32>(), any::<u32>(), prop::collection::vec(any::<u16>(), 0..4))
         .prop_map(|(known, changed, keys)| Frame { known, changed, keys });
     let quiet = Frame { known: 0, changed: 0, keys: vec![] };
     let frames = prop_oneof![
@@ -97,7 +97,7 @@ fn the_fingerprint_is_set() {
 
 fn migration_control() -> impl Strategy<Value = Control> {
     let edge = prop_oneof![Just(0u32), Just(1), Just(u32::MAX), Just(u32::MAX - 1), any::<u32>()];
-    let frame = (any::<u32>(), any::<u32>(), prop::collection::vec(any::<u8>(), 0..4))
+    let frame = (any::<u32>(), any::<u32>(), prop::collection::vec(any::<u16>(), 0..4))
         .prop_map(|(known, changed, keys)| Frame { known, changed, keys });
     let frames = prop_oneof![
         prop::collection::vec(frame, 0..8),
@@ -106,9 +106,9 @@ fn migration_control() -> impl Strategy<Value = Control> {
         Just(vec![Frame { known: 0, changed: 0, keys: vec![] }; MAX_REPORT_FRAMES + 1]),
     ];
     let own = prop_oneof![
-        prop::collection::vec(any::<u8>(), 0..8),
-        Just(vec![1u8; MAX_REPORT_OWN]),
-        Just(vec![1u8; MAX_REPORT_OWN + 1]),
+        prop::collection::vec(any::<u16>(), 0..8),
+        Just(vec![1u16; MAX_REPORT_OWN]),
+        Just(vec![1u16; MAX_REPORT_OWN + 1]),
     ];
     prop_oneof![
         prop::collection::vec(edge.clone(), 0..=MAX_SLOTS + 1).prop_map(|known| Control::Collect { known }),

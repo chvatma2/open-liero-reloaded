@@ -203,7 +203,7 @@ fn harness(ui: UiState, data: MenuData) -> Harness<'static, App> {
 }
 
 /// The game's keys the player holds this frame (the app feeds them).
-fn hold(h: &mut Harness<'static, App>, keys: u8) {
+fn hold(h: &mut Harness<'static, App>, keys: u16) {
     h.state_mut().data.held = Keys(keys);
     h.run();
 }

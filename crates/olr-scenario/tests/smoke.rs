@@ -62,7 +62,7 @@ impl Rng {
 /// Keys a worm holds for a random 5 to 50 ticks: mostly firing and moving,
 /// sometimes jumping, roping, aiming or changing weapons.
 struct Player {
-    keys: u8,
+    keys: u16,
     left: u64,
 }
 

@@ -108,7 +108,7 @@ fn a_theme_without_holes_does_not_panic() {
 
 /// Two worms digging, jumping and roping through dirt, varying every few frames.
 fn busy_keys(frame: usize) -> [Keys; 2] {
-    const SEQ: [u8; 6] = [
+    const SEQ: [u16; 6] = [
         Keys::RIGHT,
         Keys::RIGHT | Keys::LEFT,
         Keys::ROPE | Keys::UP,

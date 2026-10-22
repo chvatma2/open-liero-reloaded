@@ -1237,7 +1237,7 @@ fn slow_frames_play_as_before(every: Duration) {
             .with_peer(|p| {
                 let s = p.match_session()?;
                 let log = s.input_log();
-                let rows: Vec<(u32, [Option<u8>; 2])> =
+                let rows: Vec<(u32, [Option<u16>; 2])> =
                     (next..s.confirmed()).map(|t| (t, [log.get(t, 0), log.get(t, 1)])).collect();
                 Some(rows)
             })

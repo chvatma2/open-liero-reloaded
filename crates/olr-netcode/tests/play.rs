@@ -23,7 +23,7 @@ fn frames(first: u32, n: u32) -> Vec<u8> {
 
 /// The host's datagram with every slot's input `v` for ticks `first..first
 /// + n`, encoded against `base` at `first - 1`.
-fn frames_of(first: u32, n: u32, v: u8, base: u8) -> Vec<u8> {
+fn frames_of(first: u32, n: u32, v: u16, base: u16) -> Vec<u8> {
     let h = HostInputs {
         stamp: Stamp::default(),
         tick: first + n,

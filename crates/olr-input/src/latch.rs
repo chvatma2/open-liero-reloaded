@@ -17,21 +17,21 @@ use olr_sim::Keys;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TickLatch {
     /// What the device says now.
-    held: u8,
+    held: u16,
     /// What the last tick saw.
-    seen: u8,
+    seen: u16,
     /// Pressed since the last tick.
-    pressed: u8,
+    pressed: u16,
     /// Released since the last tick.
-    released: u8,
+    released: u16,
     /// Pressed again after a release of a key the last tick saw down: down
     /// for the tick after the next.
-    again: u8,
+    again: u16,
 }
 
 impl TickLatch {
     /// The device now holds `now`.
-    pub fn set(&mut self, now: u8) {
+    pub fn set(&mut self, now: u16) {
         let down = now & !self.held;
         let up = self.held & !now;
         // A press after a release of a key the last tick saw down waits a
@@ -44,7 +44,7 @@ impl TickLatch {
     }
 
     /// What the device holds now.
-    pub fn held(&self) -> u8 {
+    pub fn held(&self) -> u16 {
         self.held
     }
 

@@ -622,7 +622,7 @@ pub struct TransportRun {
     pub server: Vec<MatchRecord>,
     /// With a [`ServerExit`]: the server's confirmed input rows as it froze
     /// or left (its observer's last view; `None` when it never went).
-    pub server_rows: Option<Vec<[u8; 32]>>,
+    pub server_rows: Option<Vec<[u16; 32]>>,
     /// The players, then the spectators.
     pub clients: Vec<ClientRun>,
     /// The server's log.
@@ -675,7 +675,7 @@ pub fn run_transport(content_dir: &Path, spec: &TransportSpec) -> anyhow::Result
     let server_stop = Arc::new(AtomicBool::new(false));
     let log = SharedLog::default();
     let records: Arc<Mutex<Vec<MatchRecord>>> = Arc::default();
-    let server_rows: Arc<Mutex<Option<Vec<[u8; 32]>>>> = Arc::default();
+    let server_rows: Arc<Mutex<Option<Vec<[u16; 32]>>>> = Arc::default();
     let first_start: Arc<Mutex<Option<Instant>>> = Arc::default();
     let (port_tx, port_rx) = mpsc::channel();
     let server = {
@@ -1047,7 +1047,7 @@ impl TransportRun {
     /// The server's confirmed rows as it went agree with the clients'
     /// `rows`, per slot, up to the furthest any client held at its
     /// migration.
-    fn server_prefix(&self, kept: &[&ClientRun], rows: &[[u8; 32]]) -> Result<(), String> {
+    fn server_prefix(&self, kept: &[&ClientRun], rows: &[[u16; 32]]) -> Result<(), String> {
         let server = match &self.server_rows {
             Some(r) if !r.is_empty() => r,
             _ => return Err("the server went before it confirmed a tick (or never went)".into()),
@@ -1128,7 +1128,7 @@ pub fn replay_checksums(content: &Content, bytes: &[u8], expected: &[(u32, u64)]
 mod tests {
     use super::*;
 
-    fn run(server_rows: Vec<[u8; 32]>) -> TransportRun {
+    fn run(server_rows: Vec<[u16; 32]>) -> TransportRun {
         TransportRun {
             server: Vec::new(),
             server_rows: Some(server_rows),
@@ -1147,8 +1147,8 @@ mod tests {
     /// there fails, and a comparison of nothing fails too (review m3).
     #[test]
     fn the_servers_rows_are_compared_as_far_as_the_clients_held_them() {
-        let mut server = vec![[1u8; 32]; 10];
-        let rows = vec![[1u8; 32]; 10];
+        let mut server = vec![[1u16; 32]; 10];
+        let rows = vec![[1u16; 32]; 10];
         server[7][2] = 9;
         let (a, b) = (held("A", vec![5, 5, 7]), held("B", vec![4, 9, 3]));
         assert!(run(server.clone()).server_prefix(&[&a, &b], &rows).is_ok(), "slot 2 held to tick 7 only");
@@ -1193,8 +1193,8 @@ mod tests {
         let mut sim = olr_online::matches::build(&c, &start).unwrap().sim;
         let (mut rows, mut checksums) = (Vec::new(), Vec::new());
         for t in 0..200u32 {
-            let mut row = [0u8; 32];
-            row[1] = ((t / 20).wrapping_mul(97) as u8) & !Keys::CHANGE;
+            let mut row = [0u16; 32];
+            row[1] = u16::from((t / 20).wrapping_mul(97) as u8) & !Keys::CHANGE;
             if t == 120 {
                 sim.withdraw(2);
             }

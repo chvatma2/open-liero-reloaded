@@ -265,7 +265,7 @@ impl Scenario {
     /// The JSON that `tools/olx-oracle/oracle_control.py` reads, writing the
     /// trace to `out` (a path inside the container).
     pub fn control_json(&self, out: &str) -> String {
-        let inputs: Vec<(u32, usize, u8)> =
+        let inputs: Vec<(u32, usize, u16)> =
             self.schedule().into_iter().map(|(f, w, k)| (f, w, k.0)).collect();
         let worms: Vec<serde_json::Value> =
             self.worms.iter().map(|w| serde_json::json!({ "x": w.x, "y": w.y })).collect();

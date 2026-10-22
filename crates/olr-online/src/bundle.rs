@@ -22,7 +22,7 @@ use crate::replay::MatchRecord;
 /// The first bytes of a game desync bundle.
 pub const GAME_BUNDLE_MAGIC: [u8; 4] = *b"OLDG";
 /// The format's version.
-pub const GAME_BUNDLE_VERSION: u16 = 2;
+pub const GAME_BUNDLE_VERSION: u16 = 3;
 /// The extension of a game desync bundle's file.
 pub const GAME_BUNDLE_EXTENSION: &str = "oldg";
 /// At most this many bundles a match, per peer (a desync the host repairs
@@ -52,7 +52,7 @@ pub struct GameBundle {
     pub start: MatchStartWire,
     /// The final input rows from tick 0 that this peer confirmed (empty
     /// for a spectator that joined mid-match).
-    pub rows: Vec<[u8; 32]>,
+    pub rows: Vec<[u16; 32]>,
     /// The withdrawals at ticks below `rows.len()`, `(tick, slot)`
     /// (decision N83; version 2).
     pub gone: Vec<(u32, u8)>,
@@ -227,7 +227,7 @@ mod tests {
         assert!(GameBundle::decode(b"OLDS\x01\x00").is_err(), "olr-cli's bundles are another format");
         assert!(GameBundle::decode(&bytes[..5]).is_err());
         let mut newer = bytes.clone();
-        newer[4] = 3;
+        newer[4] = 4;
         assert!(GameBundle::decode(&newer).is_err());
     }
 }

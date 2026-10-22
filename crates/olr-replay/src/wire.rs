@@ -3,7 +3,9 @@
 //! little-endian floats bit for bit). The keys are stored by worm, each
 //! worm's column after the other, deflated: a worm's keys repeat (held, or
 //! in patterns such as a bot's jump taps), so the columns deflate well; keys
-//! that do not cost at most about one byte per worm and tick.
+//! that do not cost at most about one byte per worm and tick. The low bytes
+//! of every column come first, then the high bytes (Strafe and Previous/Next
+//! weapon), mostly zero, which deflate to almost nothing.
 
 use alloc::format;
 use alloc::vec::Vec;
@@ -38,8 +40,8 @@ struct Wire {
     ticks: u32,
     /// Keys per row.
     width: u8,
-    /// The keys by worm (worm 0's for every tick, then worm 1's, ...),
-    /// deflated.
+    /// The keys' low bytes by worm (worm 0's for every tick, then worm
+    /// 1's, ...), then their high bytes in the same order, deflated.
     keys: Vec<u8>,
     checksums: Vec<(u32, u64)>,
     withdrawals: Vec<(u32, u8)>,
@@ -48,9 +50,13 @@ struct Wire {
 /// The deflate level: the best (bot keys deflate to about a quarter).
 const LEVEL: u8 = 9;
 
-/// The keys by worm: worm 0's for every tick, then worm 1's, ...
+/// The keys by worm (worm 0's for every tick, then worm 1's, ...), low
+/// bytes first, then high bytes.
 fn columns(r: &Replay) -> Vec<u8> {
-    (0..r.width()).flat_map(|i| (0..r.ticks()).map(move |t| r.row(t)[i].0)).collect()
+    let column = |byte: usize| {
+        (0..r.width()).flat_map(move |i| (0..r.ticks()).map(move |t| r.row(t)[i].0.to_le_bytes()[byte]))
+    };
+    column(0).chain(column(1)).collect()
 }
 
 impl Replay {
@@ -179,15 +185,19 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
         return invalid("chaos worm out of range".into());
     }
     let (width, size) = (usize::from(width), ticks as usize * usize::from(width));
-    let columns = miniz_oxide::inflate::decompress_to_vec_with_limit(&keys, size)
+    let columns = miniz_oxide::inflate::decompress_to_vec_with_limit(&keys, 2 * size)
         .map_err(|e| DecodeError::Malformed(format!("keys: {e}")))?;
-    if columns.len() != size {
-        return invalid(format!("{} keys for {ticks} ticks of {width} worms", columns.len()));
+    if columns.len() != 2 * size {
+        return invalid(format!("{} key bytes for {ticks} ticks of {width} worms", columns.len()));
     }
     let mut keys = alloc::vec![Keys(0); size];
     if ticks > 0 {
-        for (i, column) in columns.chunks_exact(ticks as usize).enumerate() {
-            column.iter().enumerate().for_each(|(t, &k)| keys[t * width + i] = Keys(k));
+        let (low, high) = columns.split_at(size);
+        let by_worm = low.chunks_exact(ticks as usize).zip(high.chunks_exact(ticks as usize));
+        for (i, (low, high)) in by_worm.enumerate() {
+            for (t, (&lo, &hi)) in low.iter().zip(high).enumerate() {
+                keys[t * width + i] = Keys(u16::from_le_bytes([lo, hi]));
+            }
         }
     }
     let setup = ReplaySetup {
@@ -255,14 +265,17 @@ mod tests {
 
     #[test]
     fn decoding_checks_every_bound() {
-        assert!(from_wire(wire(3, 2, &[1, 2, 3, 4, 5, 6])).is_ok());
-        let r = from_wire(wire(3, 2, &[1, 2, 3, 4, 5, 6])).unwrap();
+        let r = from_wire(wire(3, 2, &[1, 2, 3, 4, 5, 6, 0, 0, 0, 0, 0, 0])).unwrap();
         assert_eq!(r.row(1), &[Keys(2), Keys(5)], "columns become rows");
+        // The high bytes follow the low ones, in the same order (issue #23).
+        let r = from_wire(wire(1, 2, &[1, 2, 1, 4])).unwrap();
+        assert_eq!(r.row(0), &[Keys(0x101), Keys(0x402)]);
         assert!(matches!(err(wire(MAX_TICKS + 1, 0, &[])), DecodeError::Invalid(_)));
-        assert!(matches!(err(wire(1, 33, &[0; 33])), DecodeError::Invalid(_)));
-        // Keys that inflate to more or fewer than ticks × width bytes.
-        assert!(matches!(err(wire(3, 2, &[0; 7])), DecodeError::Malformed(_)));
-        assert!(matches!(err(wire(3, 2, &[0; 5])), DecodeError::Invalid(_)));
+        assert!(matches!(err(wire(1, 33, &[0; 66])), DecodeError::Invalid(_)));
+        // Keys that inflate to more or fewer than 2 × ticks × width bytes.
+        assert!(matches!(err(wire(3, 2, &[0; 13])), DecodeError::Malformed(_)));
+        assert!(matches!(err(wire(3, 2, &[0; 11])), DecodeError::Invalid(_)));
+        assert!(matches!(err(wire(3, 2, &[0; 6])), DecodeError::Invalid(_)), "low bytes only");
         let mut w = wire(3, 0, &[]);
         w.checksums = vec![(2, 1), (2, 2)];
         assert!(matches!(err(w), DecodeError::Invalid(_)), "checksums out of order");

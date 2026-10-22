@@ -5,8 +5,8 @@ use alloc::vec::Vec;
 
 use crate::{Frame, ProtoError};
 
-fn start(first: u32, slots: usize, base: &dyn Fn(usize) -> Option<u8>) -> [Option<u8>; 32] {
-    let mut prev: [Option<u8>; 32] = [None; 32];
+fn start(first: u32, slots: usize, base: &dyn Fn(usize) -> Option<u16>) -> [Option<u16>; 32] {
+    let mut prev: [Option<u16>; 32] = [None; 32];
     for (s, p) in prev.iter_mut().enumerate().take(slots) {
         *p = if first == 0 { Some(0) } else { base(s) };
     }
@@ -19,8 +19,8 @@ pub fn encode_frames(
     first: u32,
     ticks: u32,
     slots: usize,
-    value: &dyn Fn(u32, usize) -> Option<u8>,
-    base: &dyn Fn(usize) -> Option<u8>,
+    value: &dyn Fn(u32, usize) -> Option<u16>,
+    base: &dyn Fn(usize) -> Option<u16>,
 ) -> Vec<Frame> {
     let slots = slots.min(32);
     let mut out = Vec::with_capacity(ticks as usize);
@@ -53,8 +53,8 @@ pub fn decode_frames(
     first: u32,
     frames: &[Frame],
     slots: usize,
-    base: &dyn Fn(usize) -> Option<u8>,
-    out: &mut dyn FnMut(u32, usize, u8),
+    base: &dyn Fn(usize) -> Option<u16>,
+    out: &mut dyn FnMut(u32, usize, u16),
 ) -> Result<(), ProtoError> {
     if slots > 32 {
         return Err(ProtoError::Invalid);
@@ -92,11 +92,11 @@ mod tests {
     use alloc::vec::Vec;
 
     /// A table of known inputs: `table[t][s]`.
-    fn table(rows: &[&[Option<u8>]]) -> Vec<Vec<Option<u8>>> {
+    fn table(rows: &[&[Option<u16>]]) -> Vec<Vec<Option<u16>>> {
         rows.iter().map(|r| r.to_vec()).collect()
     }
 
-    fn round_trip(t: &[Vec<Option<u8>>], first: u32, base: &[Option<u8>]) -> Vec<Vec<Option<u8>>> {
+    fn round_trip(t: &[Vec<Option<u16>>], first: u32, base: &[Option<u16>]) -> Vec<Vec<Option<u16>>> {
         let slots = base.len();
         let frames =
             encode_frames(first, t.len() as u32, slots, &|tick, s| t[(tick - first) as usize][s], &|s| {
@@ -123,7 +123,7 @@ mod tests {
 
     #[test]
     fn unchanged_inputs_cost_no_key_bytes() {
-        let t: Vec<Vec<Option<u8>>> = (0..8).map(|_| vec![Some(5); 32]).collect();
+        let t: Vec<Vec<Option<u16>>> = (0..8).map(|_| vec![Some(5); 32]).collect();
         let frames = encode_frames(100, 8, 32, &|tick, s| t[(tick - 100) as usize][s], &|_| Some(5));
         assert!(frames.iter().all(|f| f.keys.is_empty() && f.changed == 0));
     }

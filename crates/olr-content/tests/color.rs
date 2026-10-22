@@ -189,7 +189,7 @@ fn agreement(mod_dir: &str, level_file: &str, seed: u32) {
     let (w, h) = (level.material.width(), level.material.height());
     let mut stained = vec![false; (w * h) as usize];
     let mut rng = Rng(seed as u64 * 7919 + 1);
-    let mut held = [(0u8, 0u64); 4];
+    let mut held = [(0u16, 0u64); 4];
     let mut events = TickEvents::new();
     let mut counts = [0u32; 6];
     for tick in 0..3000 {

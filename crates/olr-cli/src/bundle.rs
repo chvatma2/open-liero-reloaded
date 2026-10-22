@@ -15,7 +15,7 @@ use crate::netsim::{NetSpec, WorldFactory};
 pub const BUNDLE_MAGIC: [u8; 4] = *b"OLDS";
 /// 2: `NetSpec` gained its migration fields (plan 12c). 3: withdrawals
 /// (`DesyncBundle::gone`, plan 12d).
-pub const BUNDLE_VERSION: u16 = 3;
+pub const BUNDLE_VERSION: u16 = 4;
 
 /// A peer's record of a desync.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -28,7 +28,7 @@ pub struct DesyncBundle {
     /// The recording machine, such as `x86_64-linux`.
     pub platform: String,
     /// Final input rows from tick 0.
-    pub inputs: Vec<[u8; 32]>,
+    pub inputs: Vec<[u16; 32]>,
     pub local_checksums: Vec<(u32, u64)>,
     /// The mismatching tick and the host's checksum.
     pub host: (u32, u64),

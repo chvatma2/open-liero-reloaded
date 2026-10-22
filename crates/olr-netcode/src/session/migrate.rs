@@ -39,7 +39,7 @@ enum Rejoin {
     Awaiting { collect_us: u64 },
     /// Reported: its own provisional inputs from `own_first`, kept until the
     /// resume (then taken, and emptied).
-    Reported { own_first: u32, own: Vec<u8> },
+    Reported { own_first: u32, own: Vec<u16> },
 }
 
 /// New host: the migration it collects, from [`Session::take_over`] on.
@@ -55,7 +55,7 @@ pub(super) struct Collection {
     /// resume (the slot's prefix stops there): applied then to a slot whose
     /// player is absent, refused for a present one (its values taken
     /// unmarked, PF12d-8a), so a forged report never removes a live player.
-    held: BTreeMap<u8, (u32, Vec<u8>)>,
+    held: BTreeMap<u8, (u32, Vec<u16>)>,
 }
 
 impl<S: Simulation> Session<S> {
@@ -573,7 +573,7 @@ impl<S: Simulation> Session<S> {
     /// unmarked). Anything else as the log takes it: `New` extends (a mark
     /// rolls back to its tick), `Conflict` (another value, or a mark for a
     /// tick final without one) is counted.
-    fn take_reported(&mut self, t: u32, s: u8, v: u8, g: bool) {
+    fn take_reported(&mut self, t: u32, s: u8, v: u16, g: bool) {
         let Some(c) = self.collection.as_mut() else { return };
         let resumed = c.resumed;
         if let Some((ht, values)) = c.held.get_mut(&s)
@@ -625,7 +625,7 @@ impl<S: Simulation> Session<S> {
 
     /// `own` (inputs of `slot` from tick `own_first`) where it extends the
     /// slot's known prefix, and nothing beyond a gap or `MAX_AHEAD`.
-    fn extend_own(&mut self, slot: u8, own_first: u32, own: &[u8]) {
+    fn extend_own(&mut self, slot: u8, own_first: u32, own: &[u16]) {
         let limit = self.current.saturating_add(MAX_AHEAD);
         for (k, &v) in own.iter().enumerate() {
             let Some(t) = u32::try_from(k).ok().and_then(|k| own_first.checked_add(k)) else { break };

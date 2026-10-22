@@ -41,7 +41,7 @@ use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::io;
 use std::panic::AssertUnwindSafe;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU16, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
@@ -128,7 +128,7 @@ struct Shared<P> {
     dead: AtomicBool,
     /// The local player's keys held now (`PeerHandle::set_held`; all of
     /// them until told): what the pump may hold of the latched keys.
-    held: AtomicU8,
+    held: AtomicU16,
 }
 
 struct Inner<P> {
@@ -387,7 +387,7 @@ impl<P: Poll> PeerHandle<P> {
             epoch,
             ui_polled: AtomicU64::new(0),
             dead: AtomicBool::new(false),
-            held: AtomicU8::new(u8::MAX),
+            held: AtomicU16::new(u16::MAX),
         };
         PeerHandle { pump: None, shared: Arc::new(shared) }
     }
@@ -780,7 +780,8 @@ mod tests {
     fn the_pump_presses_the_last_latched_keys_for_a_while() {
         let (f, log, _) = fake(Duration::ZERO, Vec::new());
         let h = PeerHandle::pumped(f);
-        let held = Keys(Keys::FIRE | Keys::RIGHT);
+        // Strafe too: the high bits are held like the classic eight (issue #23).
+        let held = Keys(Keys::FIRE | Keys::RIGHT | Keys::STRAFE);
         for latched in [held, Keys(0)] {
             ui_poll_with(&h, latched);
             let from = log.lock().unwrap().len();

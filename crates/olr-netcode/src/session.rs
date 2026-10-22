@@ -443,9 +443,9 @@ pub struct Session<S: Simulation> {
     local: Vec<u8>,
     local_keys: Vec<Keys>,
     /// A client's own slot's provisional inputs, by tick from 0.
-    own: Vec<u8>,
+    own: Vec<u16>,
     /// The keys used for each tick in `base..current`.
-    used: VecDeque<[u8; 32]>,
+    used: VecDeque<[u16; 32]>,
     /// The state before each tick in `base..current`.
     snaps: VecDeque<S::Snapshot>,
     base: u32,
@@ -489,7 +489,7 @@ pub struct Session<S: Simulation> {
     stats: Stats,
     /// Decoded frame values before they are applied: `(tick, slot, value,
     /// withdrawn there)`.
-    scratch: Vec<(u32, u8, u8, bool)>,
+    scratch: Vec<(u32, u8, u16, bool)>,
     /// Client or spectator: the host's frames that began past our
     /// frontier, by `first`, with their withdrawal marks (at most
     /// [`AHEAD_KEPT`]): taken again once it reaches them.
@@ -1107,7 +1107,7 @@ impl<S: Simulation> Session<S> {
 
     /// The keys used for `slot` at `tick` (spec §3.3): the final value, a
     /// client's own provisional input, or the slot's last final value.
-    fn keys_for(&self, tick: u32, slot: u8) -> u8 {
+    fn keys_for(&self, tick: u32, slot: u8) -> u16 {
         if let Some(v) = self.log.get(tick, slot) {
             return v;
         }
@@ -1127,7 +1127,7 @@ impl<S: Simulation> Session<S> {
         }
         self.snaps.push_back(self.sim.save());
         let slots = self.cfg.slots;
-        let mut row = [0u8; 32];
+        let mut row = [0u16; 32];
         let mut keys = [Keys(0); 32];
         for s in 0..slots {
             row[s as usize] = self.keys_for(t, s);
@@ -1232,7 +1232,7 @@ impl<S: Simulation> Session<S> {
     }
 
     /// A final value arrived: roll back if the tick ran on other keys.
-    fn on_final(&mut self, tick: u32, slot: u8, v: u8) {
+    fn on_final(&mut self, tick: u32, slot: u8, v: u16) {
         if self.is_host() {
             self.dirty = self.dirty.min(tick);
         }
@@ -1405,7 +1405,7 @@ impl<S: Simulation> Session<S> {
                 let len = self.own.len();
                 let from = (p.ack as usize).min(len.saturating_sub(1)).max(len.saturating_sub(MAX_KEYS));
                 let first = from as u32;
-                let keys: Vec<u8> = self.own[from..].iter().copied().take(MAX_KEYS).collect();
+                let keys: Vec<u16> = self.own[from..].iter().copied().take(MAX_KEYS).collect();
                 let stamp = self.stamp(host, now_us);
                 let d = Datagram::Client(ClientInputs {
                     stamp,
@@ -2042,7 +2042,7 @@ impl<S: Simulation> Session<S> {
 /// `first` with, slot `s`: the frame delta rule's value at `first - 1`; 0
 /// before tick 0; none at its log's start (a joined spectator knows
 /// nothing before its state: the frames list every known slot).
-pub(crate) fn frames_base(log: &InputLog, first: u32, origin: u32, s: usize) -> Option<u8> {
+pub(crate) fn frames_base(log: &InputLog, first: u32, origin: u32, s: usize) -> Option<u16> {
     match first {
         0 => Some(0),
         f if f == origin => None,
@@ -2065,7 +2065,7 @@ fn decode_marked(
     frames: &[Frame],
     slots: usize,
     gone: &[(u8, u32)],
-    scratch: &mut Vec<(u32, u8, u8, bool)>,
+    scratch: &mut Vec<(u32, u8, u16, bool)>,
 ) -> bool {
     scratch.clear();
     let base = |s: usize| match first {
@@ -2265,7 +2265,7 @@ mod tests {
         for t in 0..64 {
             for s in 0..32 {
                 let gone = (s == 5 && t == 2) || (s == 6 && t == 60);
-                log.set_final(t, s, (t as u8 + s) % 2 + 1, gone);
+                log.set_final(t, s, u16::from((t as u8 + s) % 2 + 1), gone);
             }
         }
         let r = Resuming { until_us: 0, tick: 64, at_ms: 1 };
@@ -2517,9 +2517,9 @@ mod tests {
 
     /// The host's datagram with finals for ticks `0..n`: slot 0 presses
     /// `a(t)`, slot 1 `t`, slot 2 what the client pressed itself.
-    fn finals(c: &Session<ToySim>, n: u32, a: fn(u32) -> u8) -> Vec<u8> {
+    fn finals(c: &Session<ToySim>, n: u32, a: fn(u32) -> u16) -> Vec<u8> {
         let own = c.own.clone();
-        let value = move |t: u32, s: usize| Some([a(t), t as u8, own[t as usize]][s]);
+        let value = move |t: u32, s: usize| Some([a(t), t as u16, own[t as usize]][s]);
         host_inputs(n, 1, 0, olr_proto::encode_frames(0, n, 3, &value, &|_| Some(0)))
     }
 
@@ -2534,7 +2534,7 @@ mod tests {
             let to = c.current_tick();
             assert_eq!(to, 15);
             // Finals for ticks 0..12 that differ from the predictions.
-            let data = finals(&c, 12, |t| 5 + (t as u8 % 3));
+            let data = finals(&c, 12, |t| 5 + (t as u16 % 3));
             c.receive(0, Channel::Unreliable, &data, 150_000);
             if !pending {
                 c.advance(151_000, drv.as_mut());
@@ -2558,7 +2558,7 @@ mod tests {
             }
             // Finals for ticks 12.. that differ again: a rollback to them,
             // not before the change; the change stays.
-            let data = finals(&c, 15, |t| if t < 12 { 5 + (t as u8 % 3) } else { 9 });
+            let data = finals(&c, 15, |t| if t < 12 { 5 + (t as u16 % 3) } else { 9 });
             c.receive(0, Channel::Unreliable, &data, 152_000);
             c.advance(153_000, drv.as_mut());
             let rb: Vec<Event> =

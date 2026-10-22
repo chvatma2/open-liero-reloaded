@@ -29,7 +29,7 @@ pub struct InputLog {
     /// The first tick the log holds: ticks below it are never known.
     origin: u32,
     /// `rows[i]` is tick `origin + i`.
-    rows: Vec<[u8; 32]>,
+    rows: Vec<[u16; 32]>,
     known: Vec<u32>,
     upto: [u32; 32],
     /// Per slot, the tick its worm is withdrawn at (decision N83), part of
@@ -72,7 +72,7 @@ impl InputLog {
     }
 
     /// The final value of `slot` at `tick`, if known.
-    pub fn get(&self, tick: u32, slot: u8) -> Option<u8> {
+    pub fn get(&self, tick: u32, slot: u8) -> Option<u16> {
         if slot >= self.slots || tick >= self.upto[slot as usize] || tick < self.origin {
             return None;
         }
@@ -82,7 +82,7 @@ impl InputLog {
     /// Records `v` as the final value of `slot` at `tick`: only the slot's
     /// next unknown tick is stored ([`SetResult::Gap`] beyond it).
     /// [`InputLog::set_final`] without a withdrawal mark.
-    pub fn set(&mut self, tick: u32, slot: u8, v: u8) -> SetResult {
+    pub fn set(&mut self, tick: u32, slot: u8, v: u16) -> SetResult {
         self.set_final(tick, slot, v, false)
     }
 
@@ -91,7 +91,7 @@ impl InputLog {
     /// unknown tick is stored. A mark for a slot withdrawn already is
     /// ignored (the value is still stored). For a known tick: `Same` when
     /// both the value and the mark agree, else `Conflict`.
-    pub fn set_final(&mut self, tick: u32, slot: u8, v: u8, gone: bool) -> SetResult {
+    pub fn set_final(&mut self, tick: u32, slot: u8, v: u16, gone: bool) -> SetResult {
         if slot >= self.slots || tick < self.origin {
             return SetResult::Gap;
         }
@@ -175,7 +175,7 @@ impl InputLog {
 
     /// The keys to assume for `slot` at `tick`: the final value, else the
     /// slot's last final value before it, else `0` (spec §3.3).
-    pub fn predicted(&self, tick: u32, slot: u8) -> u8 {
+    pub fn predicted(&self, tick: u32, slot: u8) -> u16 {
         if let Some(v) = self.get(tick, slot) {
             return v;
         }
@@ -187,7 +187,7 @@ impl InputLog {
 
     /// Every slot's final value at a confirmed `tick` (`None` at or above
     /// the frontier, or below the origin).
-    pub fn row(&self, tick: u32) -> Option<[u8; 32]> {
+    pub fn row(&self, tick: u32) -> Option<[u16; 32]> {
         (tick < self.frontier() && tick >= self.origin).then(|| self.rows[(tick - self.origin) as usize])
     }
 }

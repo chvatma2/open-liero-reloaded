@@ -181,10 +181,10 @@ pub fn fit_report(
     first: u32,
     upto: u32,
     slots: usize,
-    value: &dyn Fn(u32, usize) -> Option<u8>,
-    base: &dyn Fn(usize) -> Option<u8>,
+    value: &dyn Fn(u32, usize) -> Option<u16>,
+    base: &dyn Fn(usize) -> Option<u16>,
     own_first: u32,
-    mut own: Vec<u8>,
+    mut own: Vec<u16>,
     marks: &dyn Fn(u32, u32) -> Vec<(u8, u32)>,
 ) -> InputsReport {
     // The decoder refuses a span past `u32::MAX`.
@@ -211,8 +211,8 @@ pub fn fit_resume(
     first: u32,
     upto: u32,
     slots: usize,
-    value: &dyn Fn(u32, usize) -> Option<u8>,
-    base: &dyn Fn(usize) -> Option<u8>,
+    value: &dyn Fn(u32, usize) -> Option<u16>,
+    base: &dyn Fn(usize) -> Option<u16>,
     marks: &dyn Fn(u32, u32) -> Vec<(u8, u32)>,
 ) -> Control {
     let mut resume = Control::Resume { tick, at_ms, first, frames: Vec::new(), gone: Vec::new() };

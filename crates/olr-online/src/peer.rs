@@ -1715,7 +1715,7 @@ fn record_of(s: &Session<WorldSim>, start: &MatchStartWire, upto: u32) -> Option
     if log.origin() > 0 {
         return None;
     }
-    let rows: Vec<[u8; 32]> = (0..upto).map_while(|t| log.row(t)).collect();
+    let rows: Vec<[u16; 32]> = (0..upto).map_while(|t| log.row(t)).collect();
     let n = rows.len() as u32;
     let checksums = s.checksums().iter().copied().filter(|&(t, _)| t < n).collect();
     // N83: the withdrawals, at ticks of those rows.

@@ -30,7 +30,7 @@ pub use signal::*;
 mod fingerprint_impl;
 
 /// Wire protocol version, checked in the handshake.
-pub const PROTOCOL_VERSION: u16 = 4;
+pub const PROTOCOL_VERSION: u16 = 5;
 /// At most this many slots in a match.
 pub const MAX_SLOTS: usize = 32;
 /// Largest accepted inputs datagram.
@@ -72,15 +72,16 @@ pub enum Datagram {
     Resume(HostResume),
 }
 
-/// `keys[k]` is the sender's own slot's input for tick `first + k`; `ack` is
-/// the first tick whose frame the sender lacks; `tick` its next tick to simulate.
+/// `keys[k]` is the sender's own slot's input for tick `first + k` (the
+/// simulation's key bits, `olr_sim::Keys`); `ack` is the first tick whose
+/// frame the sender lacks; `tick` its next tick to simulate.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClientInputs {
     pub stamp: Stamp,
     pub tick: u32,
     pub ack: u32,
     pub first: u32,
-    pub keys: Vec<u8>,
+    pub keys: Vec<u16>,
 }
 
 /// `frames[k]` describes tick `first + k`.
@@ -113,12 +114,12 @@ pub struct HostResume {
 }
 
 /// Slots with a final input (`known`), those differing from the previous
-/// tick (`changed`, a subset), and one key byte per `changed` bit.
+/// tick (`changed`, a subset), and one key value per `changed` bit.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Frame {
     pub known: u32,
     pub changed: u32,
-    pub keys: Vec<u8>,
+    pub keys: Vec<u16>,
 }
 
 /// What a peer knows, for the new host after a migration (spec §3.7).
@@ -142,7 +143,7 @@ pub struct InputsReport {
     /// The reporter's own provisional inputs for its slot, ticks
     /// `own_first..` (empty for a spectator).
     pub own_first: u32,
-    pub own: Vec<u8>,
+    pub own: Vec<u16>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

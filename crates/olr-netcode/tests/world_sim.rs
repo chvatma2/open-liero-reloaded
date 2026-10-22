@@ -387,7 +387,7 @@ impl Observer<WorldSim> for Taker {
 
 /// The records a peer that simulated only final inputs would make: the
 /// host's confirmed inputs replayed offline.
-fn final_timeline(c: &Content, host_log: &[[u8; 32]], ticks: u32) -> Vec<ConfirmedTick> {
+fn final_timeline(c: &Content, host_log: &[[u16; 32]], ticks: u32) -> Vec<ConfirmedTick> {
     let mut sim = WorldSim::new(dirt_world(c, 3));
     let mut rec = TickRecorder::default();
     for t in 0..ticks {

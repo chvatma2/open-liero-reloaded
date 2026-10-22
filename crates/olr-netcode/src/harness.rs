@@ -187,7 +187,7 @@ pub struct Held {
     pub migration: usize,
     pub peer: PeerId,
     pub origin: u32,
-    pub slots: Vec<Vec<u8>>,
+    pub slots: Vec<Vec<u16>>,
 }
 
 /// Watches a run as it happens (the driver's view, not the report's): what
@@ -264,7 +264,7 @@ fn every_survivor_lost_legitimately(sc: &Scenario, r: &Report) -> bool {
     // last state on (zeros before): compared from there (net-soak's
     // `bad-10s1c2v-seed1616063176`, two joined spectators among the lost).
     let rows = |p: PeerId| r.logs.get(&p).map_or(&[][..], |v| &v[..]);
-    let mut logs: Vec<(usize, &[[u8; 32]])> = Vec::new();
+    let mut logs: Vec<(usize, &[[u16; 32]])> = Vec::new();
     for &p in &survivors {
         let start = if sc.peers.iter().any(|x| x.id == p && x.join_tick.is_some()) || r.late.contains(&p) {
             let loaded = r.events.get(&p).and_then(|e| {
@@ -452,7 +452,7 @@ pub trait Factory<S: Simulation> {
 #[derive(Clone, Debug)]
 pub struct Report {
     /// The last host's confirmed inputs.
-    pub host_log: Vec<[u8; 32]>,
+    pub host_log: Vec<[u16; 32]>,
     /// The last host's withdrawals, `(tick, slot)` (its `InputLog::gone_marks` below its frontier).
     pub host_gone: Vec<(u32, u8)>,
     /// Every peer's withdrawals below its frontier.
@@ -461,7 +461,7 @@ pub struct Report {
     pub exited_us: BTreeMap<PeerId, u64>,
     /// Every peer's confirmed inputs (its log rows below its frontier; a
     /// joined spectator's are zero before its state).
-    pub logs: BTreeMap<PeerId, Vec<[u8; 32]>>,
+    pub logs: BTreeMap<PeerId, Vec<[u16; 32]>>,
     /// The checksum after every tick `t` with `t % 10 == 9`, from its last simulation.
     pub sims: BTreeMap<PeerId, BTreeMap<u32, u64>>,
     pub stats: BTreeMap<PeerId, Stats>,
@@ -1324,7 +1324,7 @@ pub fn run_observed<S: Simulation>(
     for p in peers {
         let log = p.session.input_log();
         // A joined spectator's log begins at its state: zeros before.
-        let rows: Vec<[u8; 32]> = (0..log.frontier()).map(|t| log.row(t).unwrap_or([0; 32])).collect();
+        let rows: Vec<[u16; 32]> = (0..log.frontier()).map(|t| log.row(t).unwrap_or([0; 32])).collect();
         let gone = log.gone_marks(log.frontier());
         report.checksums.insert(p.id, p.session.checksums().to_vec());
         if p.id == last {

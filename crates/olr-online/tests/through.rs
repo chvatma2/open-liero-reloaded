@@ -123,7 +123,7 @@ impl Peer {
         let mut n = 0u32;
         let mut keys = || {
             n += 1;
-            Keys(((n / 25) as u8 ^ key) & !Keys::CHANGE)
+            Keys(u16::from((n / 25) as u8 ^ key) & !Keys::CHANGE)
         };
         for e in self.p.poll(now, &mut keys, &mut |_, _, _| {}) {
             self.events.push((now, e));

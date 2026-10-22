@@ -70,7 +70,7 @@ fn world(m: Arc<SimMod>, settings: SimSettings, x: i32) -> World {
 
 /// Every event of `ticks` frames with `keys(frame)` held, with the terrain
 /// before its tick.
-fn play(w: &mut World, ticks: usize, keys: impl Fn(usize) -> u8) -> Vec<(Event, Terrain)> {
+fn play(w: &mut World, ticks: usize, keys: impl Fn(usize) -> u16) -> Vec<(Event, Terrain)> {
     let mut out = TickEvents::new();
     let mut all = Vec::new();
     for f in 0..ticks {

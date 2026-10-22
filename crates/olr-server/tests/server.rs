@@ -121,7 +121,7 @@ impl Client {
         let mut keys = || {
             *pressed += 1;
             let k = (*pressed / 25).wrapping_mul(2_654_435_761).wrapping_add(seed) >> 24;
-            Keys((k as u8) & !Keys::CHANGE)
+            Keys(u16::from(k as u8) & !Keys::CHANGE)
         };
         self.events.extend(self.p.poll(now, &mut keys, &mut |_, _, _| {}));
         if self.auto_ready {

@@ -39,7 +39,8 @@ pub use record::Recorder;
 ///
 /// 3: withdrawals (plan 12d).
 /// 4: each worm's looks (name, colour, skin id, the hash as 32 bytes).
-pub const FORMAT_VERSION: u16 = 4;
+/// 5: 16-bit keys (Strafe, Previous/Next weapon), high bytes after the low.
+pub const FORMAT_VERSION: u16 = 5;
 
 /// The first bytes of every replay file.
 pub const MAGIC: [u8; 4] = *b"OLRP";

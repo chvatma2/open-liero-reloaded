@@ -1,12 +1,13 @@
-//! Key masks shared with the OLX hooks (`OracleHooks.h`: KEY_UP = 1 ... KEY_CHANGE = 128).
+//! Key masks shared with the OLX hooks (`OracleHooks.h`: KEY_UP = 1 ...
+//! KEY_CHANGE = 128, KEY_STRAFE = 256, KEY_PREV = 512, KEY_NEXT = 1024).
 
 use std::fmt;
 
 /// The keyboard actions a scenario can hold down during a frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
-pub struct Keys(pub u8);
+pub struct Keys(pub u16);
 
-const NAMES: [(&str, u8); 8] = [
+const NAMES: [(&str, u16); 11] = [
     ("up", 1),
     ("down", 2),
     ("left", 4),
@@ -15,6 +16,9 @@ const NAMES: [(&str, u8); 8] = [
     ("fire", 32),
     ("rope", 64),
     ("change", 128),
+    ("strafe", 256),
+    ("prev", 512),
+    ("next", 1024),
 ];
 
 impl Keys {
@@ -26,7 +30,7 @@ impl Keys {
         for part in s.split('+').map(str::trim).filter(|p| !p.is_empty()) {
             let bit = NAMES.iter().find(|(n, _)| *n == part).map(|(_, b)| *b).ok_or_else(|| {
                 format!(
-                    "unknown key {part:?} (expected one of up, down, left, right, jump, fire, rope, change)"
+                    "unknown key {part:?} (expected one of up, down, left, right, jump, fire, rope, change, strafe, prev, next)"
                 )
             })?;
             mask |= bit;
@@ -57,6 +61,8 @@ mod tests {
         assert_eq!(Keys::parse(" up + change ").unwrap(), Keys(1 | 128));
         assert_eq!(Keys(8 | 16).to_string(), "right+jump");
         assert!(Keys(64).contains("rope"));
+        assert_eq!(Keys::parse("left+strafe+prev+next").unwrap(), Keys(4 | 256 | 512 | 1024));
+        assert_eq!(Keys(256 | 1024).to_string(), "strafe+next");
     }
 
     #[test]
