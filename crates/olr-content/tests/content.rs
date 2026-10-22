@@ -138,6 +138,7 @@ fn room_level() -> olr_pack::LevelPack {
         warnings: Vec::new(),
         clear: None,
         distant: Vec::new(),
+        surface: None,
     }
 }
 
@@ -536,6 +537,7 @@ fn scaled_level(id: &str, size: u32, art_scale: u32) -> olr_pack::LevelPack {
         warnings: Vec::new(),
         clear: None,
         distant: Vec::new(),
+        surface: None,
     }
 }
 
@@ -739,6 +741,7 @@ fn the_first_spawn_is_used_only_when_inside_the_level() {
         warnings: Vec::new(),
         clear: None,
         distant: Vec::new(),
+        surface: None,
     };
     assert_eq!(level(&[(-1, 5), (10, 10)]).first_spawn(), None, "only the first one counts");
     assert_eq!(level(&[(10, 10)]).first_spawn(), Some((10, 10)));
@@ -847,4 +850,36 @@ fn a_mod_image_loads_with_its_glow_mask() {
         "{:?}",
         m.warnings
     );
+}
+
+/// Issue #39: a level's surface maps reach the loaded level (for the
+/// renderer's heat), from its pack and from the editor's source alike; a
+/// level without materials has none.
+#[test]
+fn surface_maps_load_with_the_level() {
+    let dir = tempfile::tempdir().unwrap();
+    synthetic(dir.path());
+    let pack = dir.path().join("test-level");
+    let content = Content::open(dir.path()).unwrap();
+    assert_eq!(content.load_level("test-level").unwrap().surface, None);
+    let mut src = olr_format::levels::read_level_files(&DirFs::new(&pack)).unwrap();
+    src.look = Some(olr_format::look::LookSource {
+        materials: vec![olr_format::materials::MaterialSource {
+            id: "stone".into(),
+            name: "Stone".into(),
+            notes: String::new(),
+            heat: None,
+        }],
+        ..olr_format::look::LookSource::default()
+    });
+    let mut maps = olr_look::SurfaceMaps::empty((100, 100));
+    maps.front[5] = 1;
+    maps.back[7] = 1;
+    src.surface = Some(maps.clone());
+    olr_format::levels::write_level_files(&mut DirFs::new(&pack), &src).unwrap();
+    let content = Content::open(dir.path()).unwrap();
+    let loaded = content.load_level("test-level").unwrap();
+    assert_eq!(loaded.surface.as_ref(), Some(&maps));
+    assert_eq!(loaded.look.unwrap().materials[0].id, "stone");
+    assert_eq!(olr_content::LoadedLevel::from_source(&src).unwrap().surface, Some(maps));
 }

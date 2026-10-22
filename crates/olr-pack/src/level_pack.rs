@@ -39,6 +39,10 @@ pub struct LevelPack {
     /// The level's distant (parallax) layers (`distant/<i>.png`, issue
     /// #11), far to near; empty for most levels.
     pub distant: Vec<olr_data::level::DistantLayer>,
+    /// The level's surface maps (`look/surface.png`, `look/surface-back.png`,
+    /// issue #37), each world pixel's value in the look's `materials`; read
+    /// for the renderer's heat (issue #39). Not written by [`write_level`].
+    pub surface: Option<olr_format::levels::SurfaceMaps>,
     /// What [`read_level`] left out of a look that did not check.
     pub warnings: Vec<String>,
 }
@@ -138,6 +142,7 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
         glow: src.glow,
         clear: src.clear,
         distant: src.distant,
+        surface: src.surface,
         warnings,
     })
 }
@@ -178,6 +183,7 @@ pub(crate) mod tests {
             glow: None,
             clear: None,
             distant: Vec::new(),
+            surface: None,
             warnings: Vec::new(),
         }
     }

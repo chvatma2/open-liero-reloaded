@@ -45,6 +45,7 @@ fn level(dir: &Path, id: &str, name: &str) -> DirFs {
         warnings: Vec::new(),
         clear: None,
         distant: Vec::new(),
+        surface: None,
     };
     olr_pack::write_level(&mut fs, &pack).unwrap();
     fs

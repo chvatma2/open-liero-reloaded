@@ -122,6 +122,7 @@ fn level_pack(rock: bool) -> olr_pack::LevelPack {
         warnings: Vec::new(),
         clear: None,
         distant: Vec::new(),
+        surface: None,
     }
 }
 
