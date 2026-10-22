@@ -72,8 +72,10 @@ fn heated(gpu: &Offscreen) -> Renderer {
 /// Each world pixel's temperature, degrees.
 fn temps(gpu: &Offscreen, r: &Renderer) -> Vec<f32> {
     gpu.read_bytes(r.heat_texture().unwrap())
-        .chunks_exact(2)
-        .map(|b| f32::from(u16::from_le_bytes([b[0], b[1]])) / HEAT_SCALE)
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|b| f32::from(u16::from_le_bytes(*b)) / HEAT_SCALE)
         .collect()
 }
 

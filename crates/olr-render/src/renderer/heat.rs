@@ -110,7 +110,7 @@ impl HeatDeposit {
     /// not a number.
     fn clamped(self) -> Option<HeatDeposit> {
         let finite = self.pos.iter().all(|p| p.is_finite() && p.abs() < 1e6);
-        if !finite || !self.radius.is_finite() || !(self.amount > 0.0) {
+        if !finite || !self.radius.is_finite() || self.amount.is_nan() || self.amount <= 0.0 {
             return None;
         }
         Some(HeatDeposit {
@@ -1056,7 +1056,7 @@ mod tests {
     #[test]
     fn only_heating_materials_make_tables() {
         let cold = SurfaceMaterial { id: "cold".into(), heat: None };
-        assert!(tables(&[cold.clone()]).is_none());
+        assert!(tables(std::slice::from_ref(&cold)).is_none());
         let mut numb = stone();
         numb.heat.as_mut().unwrap().sensitivity = 0;
         assert!(tables(&[cold, numb.clone()]).is_none(), "sensitivity 0 never heats");
