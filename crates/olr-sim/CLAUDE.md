@@ -75,11 +75,15 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   next and `latches(i)` shows a worm's pending presses, both read-only,
   for `olr-input`'s mouse controller (issue #24).
 - **Input** (`input.rs`): keys are latched between reads exactly like OLX's
-  `CInput`. See `docs/porting/STATUS.md`. `Keys` is a `u16` of 11 bits: the
+  `CInput`. See `docs/porting/STATUS.md`. `Keys` is a `u16` of 16 bits: the
   classic 8, then `STRAFE`, `PREV_WEAPON`, `NEXT_WEAPON` (issue #23;
-  strafing is always allowed, a deviation). The checksum hashes the three
-  new latches only when one is not at rest, so worlds that never press them
-  hash as before (match goldens, oracle).
+  strafing is always allowed, a deviation), then `WEAPON1`..`WEAPON5`
+  (issue #48, `Keys::WEAPONS`, `Latches::weapons`: held, each selects its
+  slot, `physics::select_slot`; beyond the worm's slots nothing in play,
+  OLX's wrap with `olx_quirks`). The checksum hashes issue #23's three
+  latches only when one is not at rest, and the five weapon latches only
+  when one of them is not at rest, so worlds that never press them hash
+  as before (match goldens, oracle).
 - **Port, don't improve.** Keep OLX's operation order and quirks; cite the
   OLX source for each function. Any change must keep `tests/oracle.rs` green.
 - **Randomness** (`rng.rs`): the world owns the `rand()` and `FindSpot`

@@ -99,6 +99,7 @@ pub(crate) fn get_input(
             let change = right_once as i32 - left_once as i32;
             w.current_weapon = (w.current_weapon + change).rem_euclid(slots);
         }
+        select_slot(w, keys, slots, s.olx_quirks);
         // OLX: src/common/CWormHuman.cpp:443-456: a press of Previous or
         // Next weapon steps the slot by `next - prev`, wrapping, on top of
         // a SelectWeapon + Left/Right change of the same read.
@@ -151,6 +152,21 @@ pub(crate) fn get_input(
     }
 
     keys.reset();
+}
+
+/// The weapon quick-select keys: each of Weapon1-5 held (`isDown`, not a
+/// press) selects its slot, in order, so with several held the highest
+/// wins. OLX wraps a key beyond the worm's `slots` (`MOD`: with 3 slots,
+/// Weapon5 selects the second); in play such a key does nothing (a
+/// deviation, `docs/porting/STATUS.md`), with `olx_quirks` it wraps.
+///
+/// OLX: src/common/CWormHuman.cpp:430-440
+fn select_slot(w: &mut Worm, keys: &Latches, slots: i32, olx_quirks: bool) {
+    for (i, key) in (0..).zip(&keys.weapons) {
+        if key.is_down() && (i < slots || olx_quirks) {
+            w.current_weapon = i % slots;
+        }
+    }
 }
 
 /// `CWorm::CheckOnGround` (`src/common/CWorm.cpp:1363-1379`).

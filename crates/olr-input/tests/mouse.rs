@@ -310,7 +310,6 @@ fn a_mouse_player_and_a_key_player_pressing_the_same_keys_agree() {
         b.tick(&[*k], &mut out);
     }
     assert_eq!(a.sync_checksum(), b.sync_checksum());
-    assert!(keys.iter().all(|k| k.0 & !Keys::ALL == 0), "only the simulation's keys");
     assert!(keys.iter().any(|k| k.0 & Keys::STRAFE != 0) && keys.iter().any(|k| k.0 & Keys::UP != 0));
 }
 
