@@ -323,7 +323,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `predicted_dt`: the game never asks egui for a repaint, so egui's
   `stable_dt`, which menu animations and the skin preview step by, would
   otherwise be 1/60 s at any frame rate). Per tick: script steps, `input.latch_tick()`, `Session::tick` (`world.tick` →
-  its sounds, without others' rope throws, `audio.play` at the view centre → `Presentation::on_tick`, see
+  its sounds, without others' rope throws, `audio.play_heard` at the views' centres (`Presentation::listeners`, one view today) → `Presentation::on_tick`, see
   `olr-present` → damage popups). Per frame: `Session::build` (scene,
   entities), the overlay, `Presentation::upload` (atlas if a worm was
   added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
@@ -438,7 +438,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   come first, and ticks the pump ran after the poll, `PeerHandle::
   with_pumped` under the same lock, drop the poll's own ticks), the
   restored areas and ticks
-  (`NetPresenter::apply`, its sounds at the camera; debug builds check the
+  (`NetPresenter::apply`, its sounds at the views' listeners; debug builds check the
   colour terrain after every advance, about 1 ms a frame at worst in
   `an_online_match_runs_headless`), `NetPresenter::confirmed`, and the
   confirmed ticks through `after_tick` (log, tally, results, clock,

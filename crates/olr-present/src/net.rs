@@ -199,7 +199,7 @@ impl NetPresenter {
     /// before it, whose keys [`NetPresenter::reset`] kept). A tick shown before (re-simulated) runs no entity pass (the
     /// entities do not age twice): its terrain edits and only its
     /// cosmetics with a new key spawn, only its sounds with a new key
-    /// play, only its explosions with a new key shake the camera. The
+    /// play, only its explosions with a new key shake the cameras. The
     /// scene's history and marks are not touched here: they are read
     /// inside the advance, where the world is as of each tick.
     ///
@@ -270,7 +270,7 @@ impl NetPresenter {
                 }
             }
             present.step_fx(&fx(&self.kept, 0));
-            present.scene.camera.shake_for(&self.shakes, world.time());
+            present.scene.shake_for(&self.shakes, world.time());
         }
         if cfg!(debug_assertions) && !(self.next == 0 && restored.is_empty()) && present.terrain_drift(world)
         {

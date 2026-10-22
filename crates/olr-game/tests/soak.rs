@@ -118,7 +118,7 @@ fn soak_sandbox_10_minutes_headless() {
             audio.stop_all();
         }
         s.tick(chaos.keys());
-        audio.play_events(&s.events, s.present.scene.camera.listener());
+        audio.play_events_heard(&s.events, &s.present.listeners());
         let manager = audio.manager_mut().unwrap();
         manager.backend_mut().on_start_processing();
         for _ in 0..80 {

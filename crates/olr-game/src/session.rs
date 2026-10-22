@@ -759,7 +759,7 @@ impl Session {
         self.heard.extend(self.events.iter().filter(|e| matches!(e.kind, EventKind::Sound { .. })));
         self.throws.retain(&self.world, &mut self.heard);
         if self.sound {
-            self.audio.play(&self.heard, self.present.scene.camera.listener());
+            self.audio.play_heard(&self.heard, &self.present.listeners());
         }
         self.present.on_tick(&self.world, &self.events);
         self.ticks += 1;
@@ -945,7 +945,7 @@ impl Session {
         let mut play = |sounds: &[Event], p: &Presentation| {
             heard.extend_from_slice(sounds);
             if sound {
-                audio.play(sounds, p.scene.camera.listener());
+                audio.play_heard(sounds, &p.listeners());
             }
         };
         let shown = d.present(events, pumped, self.frozen, &mut self.present, &mut self.throws, &mut play);

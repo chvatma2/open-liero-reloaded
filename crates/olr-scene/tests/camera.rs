@@ -109,9 +109,9 @@ fn shake_ends_when_the_world_restarts() {
     assert_eq!(c.shake_amount(), 0);
     // `Scene::reset` (a new or restarted world) stops the shake.
     let mut scene = Scene::new(Camera::new(VP, 0, 7), SceneOptions::default(), 1);
-    scene.camera.shake(5, AbsTime(100_000));
+    scene.camera_mut().shake(5, AbsTime(100_000));
     scene.reset();
-    assert_eq!(scene.camera.shake_amount(), 0);
+    assert_eq!(scene.camera().shake_amount(), 0);
 }
 
 /// `shake_for` is `on_events` over any list of events (the online

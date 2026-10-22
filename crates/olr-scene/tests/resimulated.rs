@@ -30,8 +30,8 @@ fn resimulated_ticks_keep_the_history_without_shaking() {
         assert_eq!(new.prev(), resim.prev(), "the same history");
         new.build(world, 1.0, &assets, &mut list);
         resim.build(world, 1.0, &assets, &mut list);
-        shook |= new.camera.shake_amount() > 0;
-        assert_eq!(resim.camera.shake_amount(), 0, "a re-simulated explosion shakes nothing");
+        shook |= new.camera().shake_amount() > 0;
+        assert_eq!(resim.camera().shake_amount(), 0, "a re-simulated explosion shakes nothing");
     })
     .unwrap();
     assert!(shook, "the scenario's explosions shake a new tick's camera");

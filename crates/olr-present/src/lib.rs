@@ -1,5 +1,5 @@
-//! One viewport's presentation of a match (spec §8.2, §19 E1-E8): the
-//! scene (camera, interpolation, sprites), the cosmetic entities, the colour
+//! The presentation of a match (spec §8.2, §19 E1-E8): the scene (a
+//! camera per view, interpolation, sprites), the cosmetic entities, the colour
 //! terrain and every image of the atlas, wired in the frame loop's order
 //! once, for every mode that draws a world (the sandbox, matches, replays,
 //! `olr-cli render`).
@@ -11,7 +11,8 @@
 //! - [`Presentation::on_tick`] after every `World::tick`: the entities
 //!   replay the tick's terrain edits on the colour map (`olr_fx::Fx::step_tick`;
 //!   nothing else may apply them), then the scene reads the tick.
-//! - [`Presentation::build`] per drawn frame: the scene, then the entities.
+//! - [`Presentation::build`] per drawn frame: the scene, then the entities
+//!   ([`Presentation::build_views`]: a draw list per view, split screen).
 //! - [`Presentation::upload`] right before the frame is drawn: the atlas
 //!   when an image was added, the whole terrain when the map is new, else
 //!   its dirty rectangles (merged across the ticks since the last frame).
@@ -48,6 +49,11 @@ pub fn default_colour(i: usize) -> Rgba {
     WORM_COLOURS[i % WORM_COLOURS.len()]
 }
 
+/// View `v`'s camera seed: the first view's is the setup's `seed`.
+fn view_seed(seed: u32, v: usize) -> u32 {
+    seed.wrapping_add((v as u32).wrapping_mul(0x9E37_79B9))
+}
+
 /// What a presentation is made from.
 #[derive(Clone, Copy)]
 pub struct PresentSetup<'a> {
@@ -57,13 +63,14 @@ pub struct PresentSetup<'a> {
     pub theme: &'a LoadedTheme,
     pub viewport: Viewport,
     pub options: SceneOptions,
-    /// Seeds the camera's shake (`seed`), the laser sights' dots
+    /// Seeds the first camera's shake (`seed`; another view's its own,
+    /// from it), the laser sights' dots
     /// (`seed + 1`) and the entities (`seed + 2`).
     pub seed: u32,
 }
 
-/// One viewport's scene, cosmetic entities, colour terrain and atlas
-/// images, and what the renderer still needs of them.
+/// A match's scene (a camera per view), cosmetic entities, colour terrain
+/// and atlas images, and what the renderer still needs of them.
 pub struct Presentation {
     pub scene: Scene,
     pub fx: Fx,
@@ -217,9 +224,20 @@ impl Presentation {
 
     /// One drawn frame at `alpha` between the last two ticks (0 the
     /// previous, 1 the latest): the scene, then the entities into `list`.
+    /// With several views it draws the first ([`Presentation::build_views`]).
     pub fn build(&mut self, world: &World, alpha: f32, list: &mut DrawList) {
-        self.scene.build(world, alpha, &self.assets, list);
-        self.fx.draw(&self.fx_assets, self.lit, list);
+        self.build_views(world, alpha, core::slice::from_mut(list));
+    }
+
+    /// [`Presentation::build`] of every view, view `v` into `lists[v]`
+    /// (split screen, [`Presentation::set_views`]): each camera's scene
+    /// ([`olr_scene::Scene::build_views`]), the same entities into each
+    /// list, then the frame's one look, shared by every view.
+    pub fn build_views(&mut self, world: &World, alpha: f32, lists: &mut [DrawList]) {
+        self.scene.build_views(world, alpha, &self.assets, lists);
+        for list in lists.iter_mut().take(self.scene.views()) {
+            self.fx.draw(&self.fx_assets, self.lit, list);
+        }
         self.build_look(world, alpha);
     }
 
@@ -246,23 +264,73 @@ impl Presentation {
         self.dynamic.clear();
     }
 
-    /// The camera follows worm `worm` (by id) from the next frame: the
-    /// local player's, or the one a spectator watches. A new presentation
-    /// follows worm 0.
+    /// The first view's camera follows worm `worm` (by id) from the next
+    /// frame: the local player's, or the one a spectator watches. A new
+    /// presentation follows worm 0.
     pub fn follow(&mut self, worm: i32) {
-        self.scene.camera.set_target(worm);
+        self.scene.camera_mut().set_target(worm);
     }
 
-    /// The worm the camera follows.
+    /// The worm the first view's camera follows.
     pub fn followed(&self) -> i32 {
-        self.scene.camera.target()
+        self.scene.camera().target()
     }
 
-    /// A view of another shape: a new camera on the same target.
+    /// How many views the presentation draws (1, or 2 to
+    /// [`olr_scene::MAX_VIEWS`] in split screen).
+    pub fn views(&self) -> usize {
+        self.scene.views()
+    }
+
+    /// A view per worm id of `targets` (split screen: one per local
+    /// player; at least one, at most [`olr_scene::MAX_VIEWS`]), each camera
+    /// following its worm with the solo rules (hard lock, clamp, shake, a
+    /// dead worm's view staying, the jump at its respawn). A view kept
+    /// keeps its camera (its place and shake); a new one starts on its
+    /// worm with the next frame. Everything else stays one: the entities,
+    /// the colour terrain, the scene's history and the look.
+    ///
+    /// OLX: src/client/CClient.cpp:1527-1551, 1653-1744
+    pub fn set_views(&mut self, targets: &[i32]) {
+        let targets = &targets[..targets.len().min(olr_scene::MAX_VIEWS)];
+        self.scene.truncate_views(targets.len());
+        let viewport = self.scene.camera().viewport();
+        for (v, &worm) in targets.iter().enumerate() {
+            match self.scene.cameras_mut().get_mut(v) {
+                Some(c) => c.set_target(worm),
+                None => {
+                    self.scene.add_view(Camera::new(viewport, worm, view_seed(self.seed, v)));
+                }
+            }
+        }
+    }
+
+    /// View `view`'s camera follows worm `worm` (by id); no such view
+    /// changes nothing.
+    pub fn follow_view(&mut self, view: usize, worm: i32) {
+        if let Some(c) = self.scene.cameras_mut().get_mut(view) {
+            c.set_target(worm);
+        }
+    }
+
+    /// The worm view `view`'s camera follows.
+    pub fn followed_view(&self, view: usize) -> Option<i32> {
+        self.scene.cameras().get(view).map(Camera::target)
+    }
+
+    /// Each view's sound listener, in view order: the audio hears each
+    /// positional sound from the nearest (`olr_audio::Audio::play_heard`).
+    pub fn listeners(&self) -> olr_scene::Listeners {
+        self.scene.listeners()
+    }
+
+    /// A view of another shape: new cameras on the same targets.
     pub fn set_viewport(&mut self, viewport: Viewport) {
-        if self.scene.camera.viewport() != viewport {
-            let target = self.scene.camera.target();
-            self.scene.camera = Camera::new(viewport, target, self.seed);
+        let seed = self.seed;
+        for (v, c) in self.scene.cameras_mut().iter_mut().enumerate() {
+            if c.viewport() != viewport {
+                *c = Camera::new(viewport, c.target(), view_seed(seed, v));
+            }
         }
     }
 

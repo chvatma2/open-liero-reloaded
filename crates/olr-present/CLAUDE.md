@@ -1,7 +1,7 @@
 # olr-present
 
-One viewport's presentation of a match (spec §8.2, §19 E1-E8): `olr-scene`'s
-`Scene`, `olr-fx`'s entities, the colour terrain and every atlas image,
+The presentation of a match (spec §8.2, §19 E1-E8): `olr-scene`'s
+`Scene` (a camera per view), `olr-fx`'s entities, the colour terrain and every atlas image,
 wired in the frame loop's order **once**, so each mode that draws a world
 (the sandbox, matches, replays, `olr-cli render`) uses the same wiring.
 
@@ -61,8 +61,21 @@ wired in the frame loop's order **once**, so each mode that draws a world
     `state_loaded(&world)` for a loaded state in online play (scene
     restarts, entities go; the colour map is repainted by the load's
     restored area). Both forget the end flashes and muzzle lights.
-  - `follow(worm)` / `followed()`: the worm the camera follows (worm 0
-    when new; the game's local slot, or a spectator's choice).
+  - `follow(worm)` / `followed()`: the worm the first view's camera
+    follows (worm 0 when new; the game's local slot, or a spectator's
+    choice).
+  - **Views** (issue #27, split screen): `set_views(&[worm id])` makes a
+    view per worm (1 to `olr_scene::MAX_VIEWS`; a view kept keeps its
+    camera, a new one is seeded from `seed` by its index), `views()`,
+    `follow_view(v, worm)`, `followed_view(v)`; `set_viewport` gives
+    every view a new camera of the shape. `build_views(&world, alpha,
+    &mut [DrawList])` draws view `v` into list `v`
+    (`Scene::build_views`), the same entities into each, then the
+    frame's one look (`build` is it for one list). One `Fx`, one colour
+    map, one look and one set of dynamic lights serve every view: view
+    `v`'s list is a one-view presentation's with that camera
+    (`tests/views.rs`). `listeners()` is each view's sound listener
+    (`olr_audio::Audio::play_heard` hears each sound from the nearest).
   - `terrain_drift(&world)`: the colour map's material is not the world's.
     It compares the whole grid; `olr-game`'s session checks it every
     `DRIFT_CHECK_TICKS` in debug builds.
@@ -140,7 +153,9 @@ wired in the frame loop's order **once**, so each mode that draws a world
   moves) and an ordinal among equal ones. An erased event is not undone.
 - **The simulation never sees presentation:** it only reads the world.
 
-Test: `cargo nextest run -p olr-present` (`tests/present.rs` plays oracle
+Test: `cargo nextest run -p olr-present` (`tests/views.rs`, issue #27:
+`two_views_draw_what_single_views_draw_over_shared_entities`, unlit and
+lit; `tests/present.rs` plays oracle
 scenarios: the bundle draws what the hand wiring drew, the atlas bookkeeping,
 drift, `the_blood_amount_reaches_the_entities`; `tests/net.rs` rolls a Dirt Level match back by hand: sounds and
 spawns once per key, no drift after any advance, the confirmed records the

@@ -15,3 +15,4 @@ mod marks;
 mod order;
 mod resimulated;
 mod snapshots;
+mod views;

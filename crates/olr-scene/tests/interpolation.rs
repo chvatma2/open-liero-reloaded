@@ -63,7 +63,7 @@ fn interpolation_never_blends_reused_slots_or_respawns() {
     let mut list = DrawList::new();
     common::play(&content, "explode-kill-respawn", linear, |world, frame, _, scene, assets| {
         if frame < 0 {
-            scene.camera.set_target(1);
+            scene.camera_mut().set_target(1);
         }
         let prev = scene.prev().worms().to_vec();
         let blend = Blend::new(scene.prev(), 0.5, Interpolation::Linear);
@@ -95,7 +95,7 @@ fn interpolation_never_blends_reused_slots_or_respawns() {
             // A dead worm is not drawn; the camera stays where it died
             // (once the explosion's shake is over).
             assert!(skin(&list, assets, 1).is_none());
-            if scene.camera.shake_amount() != 0 {
+            if scene.camera().shake_amount() != 0 {
                 return;
             }
             let (mw, mh) = (world.terrain().width() as f32, world.terrain().height() as f32);

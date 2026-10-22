@@ -8,11 +8,11 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
 - **Layer 5, pure CPU.** Depends on `olr-sim`, `olr-content`, `olr-data`,
   `olr-math`. No GPU or OS handles; it only reads the world, and its
   randomness (shake, laser dots) comes from its own `GlibcRand`s.
-- **Use** (`lib.rs`): a `Scene` per viewport (`olr-present` bundles it
-  with the entities). `start(&world)` for a new or restarted world, then
+- **Use** (`lib.rs`): a `Scene` per match (`olr-present` bundles it
+  with the entities), with a camera per view. `start(&world)` for a new or restarted world, then
   `after_tick(&world, &events)` after every tick:
-  the old state becomes the previous `Snapshot`, explosions shake the
-  camera, and the tick's `Marks` (muzzle flashes, green crosshairs, laser
+  the old state becomes the previous `Snapshot`, explosions shake every
+  camera whose view holds them, and the tick's `Marks` (muzzle flashes, green crosshairs, laser
   sights, beams) replace the last. Online play calls
   `after_tick_resimulated` for a tick a rollback simulates again: the
   same without the camera shake (`Camera::shake_for(&[Event], now)` shakes
@@ -21,6 +21,26 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   layers. The game's view is `Viewport::GAME`, 427 × 192 world pixels for
   every window (spec §19 E4 as amended after the v0.1 playtest);
   `Viewport::from_aspect` (240 high) stays for tools and the goldens. The caller appends `olr-fx`'s entities to `Layer::Entities`.
+- **Views** (issue #27, split screen): `Scene::new` makes one view
+  (`camera()`, `camera_mut()`); `add_view(Camera)` adds one (at most
+  `MAX_VIEWS`, 4: OLX's fork's local players), `truncate_views(n)` keeps
+  the first (at least one), `cameras()`/`cameras_mut()`, `views()`.
+  Each camera follows its own worm with the solo rules (hard lock,
+  clamp, shake for an explosion in its own view, a dead worm's view
+  staying, the jump at the respawn); `Scene::shake_for` shakes them all
+  (online play's first-seen explosions). `listeners()` is each view's
+  `Camera::listener` (a `Listeners`, a slice of up to four). Everything
+  else is shared: the snapshots, the marks, the shade rules and the look
+  records. `build_views(&world, alpha, &assets, &mut [DrawList])` draws
+  view `v` into list `v` (`build` is it for one list: the first view):
+  one blend, each camera's `process`, the layers per view; the laser
+  sights' dots are rewound for each view after the first
+  (`Marks::dots`, `rewind_dots`), so every view draws the frame's same
+  dots and the generator moves on once a frame; every list holds every
+  occluder; `drawn_projectiles()` and `drawn_worms()` come from the first
+  view's pass. View `v`'s list equals a one-view scene's with `v`'s
+  camera (`tests/views.rs`), and one view draws exactly as before (the
+  snapshots).
 - **`DrawList`** (`draw_list.rs`): the view rectangle and five layers in
   OLX's order (`Layer::ALL`): entities, beams (laser sights, then worm
   beams, as `DrawEntities` draws them), projectiles, bonuses, worms (rope,
@@ -109,7 +129,10 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   `docs/porting/STATUS.md` (presentation rows).
 
 Test: `cargo nextest run -p olr-scene` (issue #12: `frames.rs`'s
-`skin_frame_picks_double_frames`). The scenario tests (interpolation,
+`skin_frame_picks_double_frames`; issue #27's `views.rs`:
+`two_cameras_follow_two_worms_through_shake_death_and_respawn`, unlit and
+lit, each view's list the single view's frame for frame,
+`views_draw_the_laser_sights_dots_alike`, `a_scene_holds_one_to_four_views`). The scenario tests (interpolation,
 order, marks, anchors, no-alloc, snapshots) need `OLR_CONTENT_DIR` and skip without
 it. Snapshots (`tests/snapshots/*.snap`) are `insta`'s: an intended change
 is accepted with `INSTA_UPDATE=always` after reading the `.snap.new` diff.

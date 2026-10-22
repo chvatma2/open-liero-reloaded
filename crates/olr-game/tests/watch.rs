@@ -96,7 +96,7 @@ fn on(s: &Session) -> (i32, i32, Option<String>, Vec<usize>) {
     let frame = Frame { minimap: Some(egui::TextureId::default()), ..Frame::default() };
     let view = hud::view(s, &frame);
     let big = view.minimap.unwrap().dots.iter().enumerate().filter(|(_, d)| d.big).map(|(i, _)| i).collect();
-    (s.followed(), s.present.scene.camera.target(), view.worm.map(|w| w.name), big)
+    (s.followed(), s.present.scene.camera().target(), view.worm.map(|w| w.name), big)
 }
 
 /// A replay is watched: it starts on the worm of the player who made it

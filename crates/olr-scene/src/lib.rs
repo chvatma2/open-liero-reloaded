@@ -124,12 +124,36 @@ pub struct Shot {
 /// [`Scene::clear_look_events`] (a host drawing no frame drops the rest).
 pub const LOOK_EVENTS: usize = 8192;
 
-/// One viewport's presentation state: its camera, the previous tick's
-/// snapshot, the last tick's marks (muzzle flashes, laser sights, beams),
-/// and the options.
+/// The most views a scene draws ([`Scene::add_view`]): OLX's fork splits
+/// the screen for up to four local players.
+///
+/// OLX: src/client/CClient.cpp:1527-1551, 1653-1744
+pub const MAX_VIEWS: usize = 4;
+
+/// The sound listeners of a scene's views ([`Scene::listeners`]), in view
+/// order: each camera's [`Camera::listener`].
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Listeners {
+    at: [Vec2; MAX_VIEWS],
+    len: usize,
+}
+
+impl core::ops::Deref for Listeners {
+    type Target = [Vec2];
+
+    fn deref(&self) -> &[Vec2] {
+        &self.at[..self.len]
+    }
+}
+
+/// A match's presentation state: a camera per view (one, unless
+/// [`Scene::add_view`] adds more: split screen), and what every view shares:
+/// the previous tick's snapshot, the last tick's marks (muzzle flashes,
+/// laser sights, beams), the look records and the options.
 #[derive(Clone, Debug)]
 pub struct Scene {
-    pub camera: Camera,
+    /// View `v`'s camera; never empty, at most [`MAX_VIEWS`].
+    cameras: Vec<Camera>,
     pub options: SceneOptions,
     prev: Snapshot,
     cur: Snapshot,
@@ -146,10 +170,13 @@ pub struct Scene {
 }
 
 impl Scene {
-    /// `seed` seeds the laser sights' dots (the camera has its own seed).
+    /// A scene of one view, `camera`'s; `seed` seeds the laser sights'
+    /// dots (the camera has its own seed).
     pub fn new(camera: Camera, options: SceneOptions, seed: u32) -> Scene {
+        let mut cameras = Vec::with_capacity(MAX_VIEWS);
+        cameras.push(camera);
         Scene {
-            camera,
+            cameras,
             options,
             prev: Snapshot::new(),
             cur: Snapshot::new(),
@@ -159,6 +186,65 @@ impl Scene {
             worms: Vec::new(),
             ended: Vec::new(),
             shots: Vec::new(),
+        }
+    }
+
+    /// The first view's camera (the only one without split screen).
+    pub fn camera(&self) -> &Camera {
+        &self.cameras[0]
+    }
+
+    pub fn camera_mut(&mut self) -> &mut Camera {
+        &mut self.cameras[0]
+    }
+
+    /// Every view's camera, in view order.
+    pub fn cameras(&self) -> &[Camera] {
+        &self.cameras
+    }
+
+    pub fn cameras_mut(&mut self) -> &mut [Camera] {
+        &mut self.cameras
+    }
+
+    /// How many views the scene draws (1 to [`MAX_VIEWS`]).
+    pub fn views(&self) -> usize {
+        self.cameras.len()
+    }
+
+    /// Adds a view with its own camera (split screen: each local player's
+    /// follows its worm, OLX's viewport per local player) and returns its
+    /// index; `None` with [`MAX_VIEWS`] already. Everything else stays
+    /// shared: one snapshot history, one set of marks and look records.
+    ///
+    /// OLX: src/client/CClient.cpp:1527-1551
+    pub fn add_view(&mut self, camera: Camera) -> Option<usize> {
+        (self.cameras.len() < MAX_VIEWS).then(|| {
+            self.cameras.push(camera);
+            self.cameras.len() - 1
+        })
+    }
+
+    /// Keeps the first `views` views (at least one).
+    pub fn truncate_views(&mut self, views: usize) {
+        self.cameras.truncate(views.max(1));
+    }
+
+    /// Each view's sound listener (its camera's [`Camera::listener`]), in
+    /// view order.
+    pub fn listeners(&self) -> Listeners {
+        let mut at = [Vec2::ZERO; MAX_VIEWS];
+        for (l, c) in at.iter_mut().zip(&self.cameras) {
+            *l = c.listener();
+        }
+        Listeners { at, len: self.cameras.len() }
+    }
+
+    /// [`Camera::shake_for`] for every view's camera: each shakes for an
+    /// explosion in its own view.
+    pub fn shake_for(&mut self, events: &[olr_sim::Event], now: AbsTime) {
+        for c in &mut self.cameras {
+            c.shake_for(events, now);
         }
     }
 
@@ -241,14 +327,16 @@ impl Scene {
     }
 
     /// Reads the world and the events after a [`World::tick`]: the state
-    /// before it becomes the previous snapshot, explosions shake the
-    /// camera, and the tick's marks replace the last ones. Call it also
-    /// once before the first tick (with an empty buffer), so the first
-    /// tick blends from the starting state.
+    /// before it becomes the previous snapshot, explosions shake each
+    /// view's camera in whose view they are, and the tick's marks replace
+    /// the last ones. Call it also once before the first tick (with an
+    /// empty buffer), so the first tick blends from the starting state.
     pub fn after_tick(&mut self, world: &World, events: &TickEvents) {
         core::mem::swap(&mut self.prev, &mut self.cur);
         self.cur.capture_into(world);
-        self.camera.on_events(events, world.time());
+        for c in &mut self.cameras {
+            c.on_events(events, world.time());
+        }
         self.marks.observe(world, events);
         self.record_look_events(world, events);
     }
@@ -266,10 +354,12 @@ impl Scene {
         self.record_look_events(world, events);
     }
 
-    /// Forgets the history and stops the camera's shake, for a new or
+    /// Forgets the history and stops the cameras' shake, for a new or
     /// restarted world.
     pub fn reset(&mut self) {
-        self.camera.stop_shake();
+        for c in &mut self.cameras {
+            c.stop_shake();
+        }
         self.prev.clear();
         self.cur.clear();
         self.marks.clear();
@@ -295,65 +385,99 @@ impl Scene {
         &self.marks
     }
 
-    /// One drawn frame at `alpha` between the previous tick (0) and the
-    /// world (1): `CViewport::Process` (follow, shake, clamp), then the
-    /// layers in OLX's order (presentation note §11.2). Clears `out` first
-    /// and reuses its buffers.
+    /// One drawn frame of the first view at `alpha` between the previous
+    /// tick (0) and the world (1): `CViewport::Process` (follow, shake,
+    /// clamp), then the layers in OLX's order (presentation note §11.2).
+    /// Clears `out` first and reuses its buffers. With several views it
+    /// moves only the first camera ([`Scene::build_views`] draws them all).
     ///
     /// OLX: src/gusanos/viewport.cpp:105-253, src/client/CClient_Draw.cpp:1001-1015
     pub fn build(&mut self, world: &World, alpha: f32, assets: &SceneAssets, out: &mut DrawList) {
-        let blend = Blend::new(&self.prev, alpha, self.options.interpolation);
+        self.build_views(world, alpha, assets, core::slice::from_mut(out));
+    }
+
+    /// One drawn frame of every view, view `v` into `outs[v]` (split
+    /// screen; lists beyond the views are left alone, views beyond the
+    /// lists are not drawn): each camera's `CViewport::Process` on its own
+    /// worm, then the layers as [`Scene::build`] draws them for that view.
+    /// The world is blended once, the laser sights' dots are the same in
+    /// every view (their generator moves on once a frame), every list holds
+    /// every living worm's occluder, and the look records
+    /// ([`Scene::drawn_projectiles`], [`Scene::drawn_worms`]) are kept
+    /// once, from the first view's pass. View `v`'s list is what a scene of
+    /// one view with `v`'s camera draws.
+    ///
+    /// OLX: src/client/CClient_Draw.cpp:561-609 (each viewport drawn in turn),
+    /// src/gusanos/viewport.cpp:105-253, src/client/CClient_Draw.cpp:1001-1015
+    pub fn build_views(&mut self, world: &World, alpha: f32, assets: &SceneAssets, outs: &mut [DrawList]) {
+        let Scene { cameras, options, prev, marks, shades, drawn, worms: drawn_worms, .. } = self;
+        let blend = Blend::new(prev, alpha, options.interpolation);
         let worms = world.worms();
-        let target = worms.iter().position(|w| w.id == self.camera.target());
-        let follow = target.map(|i| blend.worm(i, &worms[i]));
         let map = (world.terrain().width(), world.terrain().height());
-        self.camera.process(follow, blend.exact(), map, world.time());
-        let view = self.camera.view();
-        out.clear();
-        out.view = view;
-        out.map = map;
-        // Linear: marks start at the worms as drawn, not where the sub-step left them.
-        let drawn = |id: i32| {
-            let i = worms.iter().position(|w| w.id == id)?;
-            (!blend.exact()).then(|| blend.worm(i, &worms[i]))
-        };
-        let lit = self.shades.is_some();
-        self.marks.draw(assets, view, drawn, lit, out);
-        self.drawn.clear();
-        self.worms.clear();
-        let m = world.sim_mod();
-        let mut projectiles = blend.projectiles();
-        for (slot, p) in world.projectiles() {
-            if let Some(def) = m.projectiles().get(p.proj) {
-                let at = blend.snap(projectiles.pos(slot, p));
-                let shade = self.shades.as_ref().map_or(Shade::LIT, |r| r.projectile(p.proj));
-                draw_projectile(def, p, at, world.rot_bumped(p.proj), assets, view, shade, lit, out);
-                if lit {
-                    let (serial, spawn_time) = (p.serial(), p.spawn_time);
-                    self.drawn.push(DrawnProjectile { slot, serial, proj: p.proj, pos: at, spawn_time });
+        let lit = shades.is_some();
+        let dots = (cameras.len() > 1).then(|| marks.dots());
+        drawn.clear();
+        drawn_worms.clear();
+        for (v, (camera, out)) in cameras.iter_mut().zip(outs.iter_mut()).enumerate() {
+            let record = lit && v == 0;
+            let target = worms.iter().position(|w| w.id == camera.target());
+            let follow = target.map(|i| blend.worm(i, &worms[i]));
+            camera.process(follow, blend.exact(), map, world.time());
+            let view = camera.view();
+            out.clear();
+            out.view = view;
+            out.map = map;
+            // Linear: marks start at the worms as drawn, not where the sub-step left them.
+            let at_drawn = |id: i32| {
+                let i = worms.iter().position(|w| w.id == id)?;
+                (!blend.exact()).then(|| blend.worm(i, &worms[i]))
+            };
+            if let Some(dots) = dots.as_ref().filter(|_| v > 0) {
+                marks.rewind_dots(dots);
+            }
+            marks.draw(assets, view, at_drawn, lit, out);
+            let m = world.sim_mod();
+            let mut projectiles = blend.projectiles();
+            for (slot, p) in world.projectiles() {
+                if let Some(def) = m.projectiles().get(p.proj) {
+                    let at = blend.snap(projectiles.pos(slot, p));
+                    let shade = shades.as_ref().map_or(Shade::LIT, |r| r.projectile(p.proj));
+                    draw_projectile(def, p, at, world.rot_bumped(p.proj), assets, view, shade, lit, out);
+                    if record {
+                        let (serial, spawn_time) = (p.serial(), p.spawn_time);
+                        drawn.push(DrawnProjectile { slot, serial, proj: p.proj, pos: at, spawn_time });
+                    }
                 }
             }
-        }
-        let floor = self.shades.as_ref().map_or(Shade::LIT, ShadeRules::floor);
-        for (slot, b) in world.bonuses().iter().enumerate().filter(|(_, b)| b.used) {
-            draw_bonus(b, blend.snap(blend.bonus(slot, b)), assets, view, floor, out);
-        }
-        let frame = WormFrame { world, assets, view, show_health_bars: self.options.show_health_bars, lit };
-        for (i, w) in worms.iter().enumerate().filter(|(_, w)| w.alive) {
-            let p = blend.snap(blend.worm(i, w));
-            if lit {
-                // Plan 15b: living worms block light, whatever the view.
-                let body = worm::body(&frame, i, w, p);
-                let at = worm::body_frame(assets, i, w);
-                self.worms.push(DrawnWorm { id: w.id, index: i, pos: p, occluder: body.worm, frame: at });
-                out.occluders.push(body);
+            let floor = shades.as_ref().map_or(Shade::LIT, ShadeRules::floor);
+            for (slot, b) in world.bonuses().iter().enumerate().filter(|(_, b)| b.used) {
+                draw_bonus(b, blend.snap(blend.bonus(slot, b)), assets, view, floor, out);
             }
-            let extras = WormExtras {
-                muzzle: self.marks.muzzle(w.id),
-                target: self.marks.target(w.id),
-                hook: hook(&blend, worms, i, w),
-            };
-            draw_worm(&frame, i, w, p, &extras, out);
+            let frame = WormFrame { world, assets, view, show_health_bars: options.show_health_bars, lit };
+            for (i, w) in worms.iter().enumerate().filter(|(_, w)| w.alive) {
+                let p = blend.snap(blend.worm(i, w));
+                if lit {
+                    // Plan 15b: living worms block light, whatever the view.
+                    let body = worm::body(&frame, i, w, p);
+                    if record {
+                        let at = worm::body_frame(assets, i, w);
+                        drawn_worms.push(DrawnWorm {
+                            id: w.id,
+                            index: i,
+                            pos: p,
+                            occluder: body.worm,
+                            frame: at,
+                        });
+                    }
+                    out.occluders.push(body);
+                }
+                let extras = WormExtras {
+                    muzzle: marks.muzzle(w.id),
+                    target: marks.target(w.id),
+                    hook: hook(&blend, worms, i, w),
+                };
+                draw_worm(&frame, i, w, p, &extras, out);
+            }
         }
     }
 }

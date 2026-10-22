@@ -128,6 +128,19 @@ impl Marks {
         }
     }
 
+    /// Where the laser sights' dots stand (their generator and `laseralt`),
+    /// so another view of the same frame draws the same dots
+    /// ([`Marks::rewind_dots`]).
+    pub(crate) fn dots(&self) -> (GlibcRand, i32) {
+        (self.rng.clone(), self.laser_alt)
+    }
+
+    /// Puts the dots back where [`Marks::dots`] saw them.
+    pub(crate) fn rewind_dots(&mut self, dots: &(GlibcRand, i32)) {
+        self.rng.clone_from(&dots.0);
+        self.laser_alt = dots.1;
+    }
+
     /// The laser sights, then the beams, into [`Layer::Beams`]. Each laser
     /// is OLX's dotted line: per screen pixel of `perform_line` from the
     /// worm to the trace's end, `alt = (alt + 1) % (GetRandomInt(35) + 1)`

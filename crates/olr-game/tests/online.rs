@@ -65,7 +65,7 @@ fn the_local_slot_drives_everything() {
     assert_eq!(s.names.0, ["Bot 1", "Bot 2", "Mine"]);
     assert_eq!(s.colour(2), [20, 90, 255], "the profile's colour");
     assert_eq!(s.colour(0), olr_ui::bot_colours([20, 90, 255], 1)[0], "OLX's first bot colour");
-    assert_eq!(s.present.scene.camera.target(), 2, "the camera follows the player");
+    assert_eq!(s.present.scene.camera().target(), 2, "the camera follows the player");
     let looks = s.present.assets();
     assert_eq!(
         (looks.worm(0).local, looks.worm(1).local, looks.worm(2).local),
@@ -146,7 +146,7 @@ fn a_watcher_follows_any_worm() {
     assert!((0..3).all(|i| !looks.worm(i).human), "nobody plays here");
     let followed = |s: &Session| {
         let worm = hud::view(s, &Frame::default()).worm.map(|w| w.name);
-        (s.followed(), s.present.scene.camera.target(), worm)
+        (s.followed(), s.present.scene.camera().target(), worm)
     };
     assert_eq!(followed(&s), (0, 0, Some("Bot 1".into())));
     s.follow_next(1);
@@ -296,7 +296,7 @@ fn an_online_match_runs_headless() {
     assert_eq!(s.local(), Some(1));
     assert_eq!(s.names.0, ["Host", "Anna", "Bot"], "the lobby's names");
     assert_eq!(s.colour(1), [20, 90, 255], "the lobby's colours");
-    assert_eq!(s.present.scene.camera.target(), 1);
+    assert_eq!(s.present.scene.camera().target(), 1);
     assert!(s.present.assets().worm(1).local && !s.present.assets().worm(0).local);
 
     // The host's confirmed scores by tick.
