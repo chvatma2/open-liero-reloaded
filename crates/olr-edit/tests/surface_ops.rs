@@ -183,3 +183,46 @@ fn bad_rules_are_refused() {
     assert_eq!(surface_by_colour(&mut p, "layer", false, &[]).unwrap(), 0);
     assert_eq!(map(&p, "layer"), None);
 }
+
+fn materials(p: &Pack) -> Vec<String> {
+    match &p.source {
+        Source::Level(l) => l.look.iter().flat_map(|l| l.materials.iter().map(|m| m.id.clone())).collect(),
+        _ => panic!("a level"),
+    }
+}
+
+/// Issue #43: a material is removed only when nothing uses it (the users
+/// named: an element's surface, or a painted value); the painted maps
+/// after it are renumbered, so each pixel keeps its material.
+#[test]
+fn a_material_in_use_is_not_removed() {
+    use olr_edit::look::{material_users, remove_material};
+    let mut p = level(1);
+    set(&mut p, "layer", Property::Surface(Some("stone".into()))).unwrap();
+    let mut values = vec![0u8; 60];
+    values[7] = 3;
+    set_surface_map(&mut p, "layer", false, Some(&values)).unwrap();
+    assert_eq!(material_users(&p, "stone").unwrap(), ["Layer"]);
+    assert_eq!(material_users(&p, "metal").unwrap(), ["Layer"], "a painted value uses it");
+    assert!(material_users(&p, "wood").unwrap().is_empty());
+    assert!(material_users(&p, "lava").is_err());
+    let before = p.clone();
+    for used in ["stone", "metal"] {
+        let e = remove_material(&mut p, used).unwrap_err().to_string();
+        assert!(e.contains(used) && e.contains("Layer"), "{e}");
+    }
+    assert_eq!(p, before, "refusals change nothing");
+    // Wood goes; metal moves down to 2, and the map with it.
+    remove_material(&mut p, "wood").unwrap();
+    assert_eq!(materials(&p), ["stone", "metal"]);
+    let m = map(&p, "layer").unwrap();
+    assert_eq!((m[7], m.iter().filter(|v| **v != 0).count()), (2, 1));
+    assert_eq!(material_users(&p, "metal").unwrap(), ["Layer"]);
+}
+
+#[test]
+fn renumbering_drops_the_removed_value() {
+    let mut v = vec![0, 1, 2, 3, 4];
+    olr_edit::look::renumber_removed(&mut v, 2);
+    assert_eq!(v, [0, 1, 0, 2, 3]);
+}

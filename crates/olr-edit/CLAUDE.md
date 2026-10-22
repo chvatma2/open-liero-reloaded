@@ -410,6 +410,14 @@ operations.
     `an_asset_without_materials_is_as_before`) and `surface_ops.rs` (the
     element operations, rules by kind and colour reproducible, refusals
     changing nothing).
+- **Issue #43, the level editor's materials** (STATUS.md "Level editor
+  materials (issue #43)"): `look::material_users(pack, id)` (the
+  elements naming it or painting its value, by name; for a plain level
+  its distant layers and "the level"), `look::remove_material` (refused
+  while used, naming the users; the painted and baked maps renumbered by
+  `renumber_removed`: the removed value 0, those above down one) and
+  `names_material`, which the editor shares. Tests: `surface_ops.rs`'s
+  `a_material_in_use_is_not_removed`, `renumbering_drops_the_removed_value`.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: round trips
   through a folder at art scales 1 and 2, masks and groups joined or
   added, resampling across scales, the rectangle's rules, a picture kept

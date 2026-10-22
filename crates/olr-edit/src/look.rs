@@ -7,7 +7,10 @@
 
 use std::collections::BTreeSet;
 
-use olr_format::levels::{LevelSource, compile_level, composition_paths};
+use olr_format::image_io;
+use olr_format::levels::{
+    Element, LevelSource, compile_level, composition_paths, surface_back_file, surface_file, surface_map_size,
+};
 use olr_format::look::{GlowGroupSource, LookSource, valid_group_id};
 use olr_format::materials::MaterialSource;
 
@@ -61,6 +64,125 @@ pub fn add_material(level: &mut LevelSource, material: MaterialSource) -> Result
         look.materials.push(material);
         Ok(look.materials.len() - 1)
     })
+}
+
+/// Whether element `e` names surface material `id` (its `surface` or
+/// `back_surface`; issue #43).
+pub fn names_material(e: &Element, id: &str) -> bool {
+    e.surface.as_deref() == Some(id) || e.back_surface.as_deref() == Some(id)
+}
+
+/// `values` (a surface map's, `v` naming `materials[v - 1]`) after
+/// material value `removed` (1 + its index) left the list: its own
+/// pixels name none (0), those above move down one (issue #43).
+pub fn renumber_removed(values: &mut [u8], removed: u8) {
+    for v in values.iter_mut() {
+        if *v == removed {
+            *v = 0;
+        } else if *v > removed {
+            *v -= 1;
+        }
+    }
+}
+
+/// The value (1 + its index) of surface material `id` in `level`'s look.
+fn material_value(level: &LevelSource, id: &str) -> Result<u8, EditError> {
+    level
+        .look
+        .as_ref()
+        .and_then(|l| l.materials.iter().position(|m| m.id == id))
+        .and_then(|i| u8::try_from(i + 1).ok())
+        .ok_or_else(|| EditError::Look(format!("no material {id:?}")))
+}
+
+/// What uses surface material `id` of the level's look (issue #43): each
+/// element naming it (`surface`, `back_surface`) or painting it in one of
+/// its maps, by name (its id when unnamed), bottom to top; then "distant
+/// layer <i>" for a baked distant layer of it and "the level" when the
+/// baked maps of a level without a composition hold it. A material no
+/// one uses may be removed.
+pub fn material_users(pack: &Pack, id: &str) -> Result<Vec<String>, EditError> {
+    let level = match &pack.source {
+        Source::Level(l) => l,
+        _ => return Err(EditError::Look("not a level pack".into())),
+    };
+    let value = material_value(level, id)?;
+    let mut users = Vec::new();
+    if let Some(src) = &pack.composition {
+        for e in &src.composition.elements {
+            let painted =
+                [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)]
+                    .into_iter()
+                    .filter(|(_, on)| *on)
+                    .any(|(file, _)| {
+                        src.files
+                            .get(&file)
+                            .and_then(|b| image_io::decode_grey_within(b, image_io::LEVEL_ART).ok())
+                            .is_some_and(|(_, _, values)| values.contains(&value))
+                    });
+            if names_material(e, id) || painted {
+                users.push(if e.name.is_empty() { e.id.clone() } else { e.name.clone() });
+            }
+        }
+        return Ok(users);
+    }
+    for (i, d) in level.distant_surfaces.iter().enumerate() {
+        if d.as_deref() == Some(id) {
+            users.push(format!("distant layer {}", i + 1));
+        }
+    }
+    if level.surface.as_ref().is_some_and(|m| m.front.iter().chain(&m.back).any(|v| *v == value)) {
+        users.push("the level".into());
+    }
+    Ok(users)
+}
+
+/// Removes surface material `id` from the level's look (issue #43);
+/// refused while anything uses it ([`material_users`], named). The
+/// painted maps and the baked ones are renumbered: the materials after it
+/// move down one. A composed level is rebaked by the caller.
+pub fn remove_material(pack: &mut Pack, id: &str) -> Result<(), EditError> {
+    let users = material_users(pack, id)?;
+    if !users.is_empty() {
+        return Err(EditError::Look(format!("material {id:?} is used by {}", users.join(", "))));
+    }
+    let size = match &pack.source {
+        Source::Level(l) => l.size,
+        _ => return Err(EditError::Look("not a level pack".into())),
+    };
+    let mut composition = pack.composition.clone();
+    checked(level_mut(pack)?, |l| {
+        let value = material_value(l, id)?;
+        if let Some(look) = l.look.as_mut() {
+            look.materials.retain(|m| m.id != id);
+        }
+        if let Some(m) = l.surface.as_mut() {
+            renumber_removed(&mut m.front, value);
+            renumber_removed(&mut m.back, value);
+        }
+        if l.surface.as_ref().is_some_and(|m| m.is_empty()) {
+            l.surface = None;
+        }
+        if let Some(src) = &mut composition {
+            for e in &src.composition.elements {
+                let (w, h) = surface_map_size(&e.kind, size);
+                for file in [surface_file(&e.id), surface_back_file(&e.id)] {
+                    let Some(bytes) = src.files.get(&file) else { continue };
+                    let Ok((_, _, mut values)) = image_io::decode_grey_within(bytes, image_io::LEVEL_ART)
+                    else {
+                        continue;
+                    };
+                    renumber_removed(&mut values, value);
+                    if values.len() as u64 == u64::from(w) * u64::from(h) {
+                        src.files.insert(file, image_io::encode_grey(w, h, &values));
+                    }
+                }
+            }
+        }
+        Ok(())
+    })?;
+    pack.composition = composition;
+    Ok(())
 }
 
 /// Replaces glow group `id`'s fields; `group.id` must be `id` (see
