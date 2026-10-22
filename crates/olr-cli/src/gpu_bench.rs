@@ -4,7 +4,8 @@
 //! a time; the CPU side timed with the clock, the GPU side with timestamps
 //! when the device has them (`GpuReport::timestamps`; else only the wall
 //! time of the frame waited for, said so). Then the shader-headroom probe
-//! (`olr_render::Probe`) at each size. The scene is `Viewport::GAME` over
+//! (`olr_render::Probe`) at each size. With timestamps, each pass group's
+//! GPU time too (`SizeReport::passes`, issue #34). The scene is `Viewport::GAME` over
 //! the whole target (no HUD; plan 8 ruling P11), or with `--views N`
 //! (issue #26) N views of it in one frame ([`view_areas`]).
 
@@ -14,7 +15,8 @@ use anyhow::{Context as _, anyhow, bail, ensure};
 use olr_content::{Content, World};
 use olr_present::{PresentSetup, Presentation, default_colour};
 use olr_render::{
-    AdapterPreference, GpuTimes, OUTPUT_FORMAT, Offscreen, OffscreenOptions, Probe, RenderSettings, ViewDraw,
+    AdapterPreference, GpuTimes, OUTPUT_FORMAT, Offscreen, OffscreenOptions, PASS_GROUPS, PassGroup, Probe,
+    RenderSettings, ViewDraw,
 };
 use olr_replay::{Cursor, Replay};
 use olr_scene::{DrawList, Interpolation, SceneOptions, Viewport};
@@ -94,6 +96,15 @@ pub struct ProbePoint {
     pub gpu_dropped: u32,
 }
 
+/// One pass group's GPU time at one size (issue #34).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct PassTime {
+    /// `olr_render::PassGroup::name`.
+    pub pass: String,
+    /// Its passes summed in each measured frame, ms.
+    pub ms: Spread,
+}
+
 /// One size.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct SizeReport {
@@ -114,6 +125,11 @@ pub struct SizeReport {
     /// 0 ms, so they cannot pull it low.
     #[serde(default)]
     pub gpu_dropped: u32,
+    /// Each pass group the frames ran, in the GPU's order, from the frames
+    /// in `gpu_ms` (timestamps only; empty without them). The frame less
+    /// their sum is the copies and the gaps between passes.
+    #[serde(default)]
+    pub passes: Vec<PassTime>,
     pub probe: Vec<ProbePoint>,
 }
 
@@ -239,6 +255,20 @@ fn real(ms: f64) -> Option<f64> {
 /// The frame's GPU ms, if the frame was timed and its span is real.
 fn frame_sample(times: Option<GpuTimes>) -> Option<f64> {
     times.and_then(|g| real(g.frame_ms))
+}
+
+/// The pass groups' times of the frames sampled (`frames`, each indexed
+/// as `PassGroup::ALL`): the groups any frame ran, in order.
+pub fn pass_times(frames: &[[f64; PASS_GROUPS]]) -> Vec<PassTime> {
+    PassGroup::ALL
+        .iter()
+        .enumerate()
+        .filter(|&(i, _)| frames.iter().any(|f| f[i] > 0.0))
+        .map(|(i, g)| PassTime {
+            pass: g.name().to_string(),
+            ms: Spread::of(&frames.iter().map(|f| f[i]).collect::<Vec<_>>()),
+        })
+        .collect()
 }
 
 /// The probe passes' GPU ms of a frame drawn with `passes` (0, the
@@ -386,6 +416,7 @@ pub fn run(
         gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
         let _ = renderer.gpu_times();
         let (mut tick, mut cpu, mut frame, mut total, mut gpu_ms) = (vec![], vec![], vec![], vec![], vec![]);
+        let mut passes = vec![];
         let mut gpu_dropped = 0;
         for t in cfg.start_tick..end {
             let t0 = Instant::now();
@@ -404,8 +435,12 @@ pub fn run(
             gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
             frame.push(ms(t1));
             total.push(ms(t0));
-            match frame_sample(renderer.gpu_times()) {
-                Some(g) => gpu_ms.push(g),
+            let times = renderer.gpu_times();
+            match frame_sample(times) {
+                Some(g) => {
+                    gpu_ms.push(g);
+                    passes.extend(times.map(|t| t.passes));
+                }
                 None => gpu_dropped += u32::from(report.timestamps),
             }
         }
@@ -453,6 +488,7 @@ pub fn run(
             total_ms: Spread::of(&total),
             gpu_ms: (!gpu_ms.is_empty()).then(|| Spread::of(&gpu_ms)),
             gpu_dropped,
+            passes: pass_times(&passes),
             probe,
         });
     }
@@ -497,6 +533,23 @@ mod tests {
         assert_eq!(spread_view(view, (1350, 550), 1, 2).y, 50.0);
     }
 
+    /// Issue #34: a group's spread over the frames, only the groups some
+    /// frame ran, in the GPU's order.
+    #[test]
+    fn pass_times_keep_the_groups_run_in_order() {
+        let mut a = [0.0; PASS_GROUPS];
+        let mut b = [0.0; PASS_GROUPS];
+        (a[PassGroup::Upscale as usize], a[PassGroup::World as usize]) = (0.5, 1.0);
+        (b[PassGroup::Upscale as usize], b[PassGroup::World as usize]) = (0.7, 3.0);
+        b[PassGroup::Cascades as usize] = 2.0;
+        let t = pass_times(&[a, b]);
+        let names: Vec<&str> = t.iter().map(|p| p.pass.as_str()).collect();
+        assert_eq!(names, ["world", "cascades", "upscale"]);
+        assert_eq!((t[0].ms.p50, t[0].ms.max), (1.0, 3.0));
+        assert_eq!(t[1].ms.p50, 0.0, "a frame without the group counts 0");
+        assert!(pass_times(&[]).is_empty());
+    }
+
     #[test]
     fn sizes_parse() {
         assert_eq!(parse_sizes("1920x1080,3440x1440").unwrap(), [(1920, 1080), (3440, 1440)]);
@@ -507,7 +560,7 @@ mod tests {
     /// sample: counted as dropped, never a 0 ms frame.
     #[test]
     fn only_real_gpu_spans_are_samples() {
-        let t = |frame_ms, probe_ms| Some(GpuTimes { frame_ms, probe_ms });
+        let t = |frame_ms, probe_ms| Some(GpuTimes { frame_ms, probe_ms, ..GpuTimes::default() });
         assert_eq!(frame_sample(t(0.5, 0.0)), Some(0.5));
         assert_eq!(frame_sample(t(0.0, 0.0)), None);
         assert_eq!(frame_sample(t(f64::NAN, 0.0)), None);

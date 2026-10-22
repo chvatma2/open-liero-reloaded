@@ -1,7 +1,8 @@
 //! `olr-cli gpu-bench`: a replay drawn offscreen at several sizes on the
 //! chosen adapter, timed on the CPU and the GPU, with the shader probe
-//! (`olr_cli::gpu_bench`); the report printed and, with `--out`, written as
-//! RON (`cargo xtask envelope` reads it).
+//! (`olr_cli::gpu_bench`); the report printed (with timestamps, a table of
+//! each pass group's GPU time per size, issue #34) and, with `--out`,
+//! written as RON (`cargo xtask envelope` reads it).
 
 use std::path::PathBuf;
 
@@ -58,9 +59,9 @@ pub struct Args {
     /// Print every adapter wgpu finds and stop.
     #[arg(long)]
     list_adapters: bool,
-    /// Draw the level lit: a dark ambient, a placed light every 96 world
-    /// pixels, glowing strips, soft shadows, and the engine's lights of the
-    /// replay's shots (plan 15a Task 20; `olr_cli::gpu_bench::bench_look`).
+    /// Draw the level lit: a dark ambient, pulsing glowing strips, and the
+    /// glowing discs of the replay's shots and explosions (plan 15a Task
+    /// 20, plan 15c; `olr_cli::gpu_bench::bench_look`).
     #[arg(long)]
     look: bool,
     /// With `--look`: ambient occlusion in the bench look, STRENGTH[,REACH]
@@ -151,6 +152,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             s.frame_ms.p99,
             s.probe.iter().map(|p| (p.passes, (p.ms.p50 * 1000.0).round() / 1000.0)).collect::<Vec<_>>()
         );
+        print_passes(s);
         let probe_dropped: u32 = s.probe.iter().map(|p| p.gpu_dropped).sum();
         if s.gpu_dropped + probe_dropped > 0 {
             println!(
@@ -159,9 +161,24 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
             );
         }
     }
+    if !report.timestamps {
+        println!("  per-pass GPU times: not measured (the adapter has no timestamp queries)");
+    }
     if let Some(out) = &args.out {
         let text = ron::ser::to_string_pretty(&report, ron::ser::PrettyConfig::default())?;
         std::fs::write(out, text + "\n").with_context(|| format!("{}", out.display()))?;
     }
     Ok(true)
+}
+
+/// The size's pass groups as a table (issue #34): each group's p50 and p99
+/// GPU ms over the frames, then their p50s' sum against the frame's.
+fn print_passes(s: &gpu_bench::SizeReport) {
+    let Some(frame) = s.gpu_ms.filter(|_| !s.passes.is_empty()) else { return };
+    println!("    {:<12} {:>8} {:>8}", "GPU pass", "p50 ms", "p99 ms");
+    for p in &s.passes {
+        println!("    {:<12} {:>8.3} {:>8.3}", p.pass, p.ms.p50, p.ms.p99);
+    }
+    let sum: f64 = s.passes.iter().map(|p| p.ms.p50).sum();
+    println!("    {:<12} {sum:>8.3} of the frame's {:.3} (the rest: copies, gaps)", "sum", frame.p50);
 }

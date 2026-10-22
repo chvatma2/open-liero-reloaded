@@ -36,6 +36,16 @@
                 max: 0.06,
             )),
             gpu_dropped: 2,
+            passes: [
+                (
+                    pass: "cascades",
+                    ms: (
+                        p50: 0.01,
+                        p99: 0.02,
+                        max: 0.03,
+                    ),
+                ),
+            ],
             probe: [
                 (
                     passes: 0,

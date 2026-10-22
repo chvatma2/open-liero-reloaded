@@ -606,7 +606,13 @@ The headless command-line tool. Its commands:
   encoding and submit), `frame_ms` (the draw list to the device idle),
   `total_ms` (tick and frame), `gpu_ms` (the world and upscale passes, with
   timestamps; a frame whose span was not written or runs backwards is
-  left out and counted in `gpu_dropped`, never a 0 ms sample) and `probe`
+  left out and counted in `gpu_dropped`, never a 0 ms sample), `passes`
+  (issue #34, `PassTime`: each pass group a frame ran, in the GPU's order,
+  its GPU ms over the frames in `gpu_ms`, `gpu_bench::pass_times` of
+  `GpuTimes::passes`; empty without timestamps; printed as a table per
+  size, p50 and p99, then their p50s' sum against the frame's, the rest
+  being copies and gaps; without timestamps it says once that they were
+  not measured; `#[serde(default)]`, xtask reads none of it) and `probe`
   (`ProbePoint`: the probe passes' GPU ms, or the frame's wall ms over the
   baseline's median, `timed_on_gpu` saying which; its own
   `gpu_dropped`). `check_adapter`: a hardware run that got a software rasteriser
@@ -835,7 +841,9 @@ instead of reading as 0 (rewrite with `OLR_BLESS_TOOL_OUTPUT=1`).
 `tests/gpu_bench.rs` (the GPU tier, `cargo xtask full`, `OLR_GPU_TESTS=1`)
 records a short stress match and runs `gpu_bench::run` on it on the
 software adapter at 320 × 180 with a 2-pass probe (GPU probe time above 0
-when the adapter has timestamps; lavapipe has them), `--look` and, issue
+when the adapter has timestamps; lavapipe has them; issue #34: unlit, the
+world and upscale groups alone, lit, every look group but the occlusion,
+each above 0), `--look` and, issue
 #10, `--occlusion` (refused without the look), issue #26's `--views 4`
 (lit, costing more GPU time than one view; 0 and 5 refused), and a
 tampered replay is refused at its checksum.

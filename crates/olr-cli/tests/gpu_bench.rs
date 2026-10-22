@@ -69,6 +69,21 @@ fn a_recorded_match_is_drawn_timed_and_probed() {
     if r.timestamps {
         assert!(lit.sizes[0].gpu_ms.unwrap().p50 > s.gpu_ms.unwrap().p50, "the look passes cost GPU time");
     }
+    // Issue #34: with timestamps, each pass group's GPU time; an unlit
+    // frame is the world pass and the upscale, a lit one every look group.
+    let names = |s: &gpu_bench::SizeReport| s.passes.iter().map(|p| p.pass.clone()).collect::<Vec<_>>();
+    if r.timestamps {
+        assert_eq!(names(s), ["world", "upscale"], "{s:?}");
+        let lit = &lit.sizes[0];
+        let want = ["world", "emission", "jump flood", "cascades", "fluence", "light sum", "soak", "blur"];
+        let want = want.into_iter().chain(["bloom", "composite", "upscale"]).collect::<Vec<_>>();
+        assert_eq!(names(lit), want, "{lit:?}");
+        let sum: f64 = lit.passes.iter().map(|p| p.ms.max).sum();
+        assert!(lit.passes.iter().all(|p| p.ms.p50 > 0.0), "{lit:?}");
+        assert!(lit.passes.iter().map(|p| p.ms.p50).sum::<f64>() <= sum, "{lit:?}");
+    } else {
+        assert!(s.passes.is_empty() && lit.sizes[0].passes.is_empty());
+    }
     // `--occlusion` (issue #10): the bench look with ambient occlusion, said so.
     let occlusion = Some(olr_look::Occlusion { strength: 60, reach: 12 });
     let occluded = BenchConfig { look: true, occlusion, ..cfg.clone() };

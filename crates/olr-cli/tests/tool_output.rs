@@ -13,7 +13,7 @@
 use std::path::PathBuf;
 
 use olr_cli::feel::{FeelReport, NOTE, ProfileFeel};
-use olr_cli::gpu_bench::{GpuReport, ProbePoint, SizeReport};
+use olr_cli::gpu_bench::{GpuReport, PassTime, ProbePoint, SizeReport};
 use olr_cli::rollback_cost::RollbackCost;
 use olr_cli::stress::{Report, Spread};
 use olr_cli::timing::{ScenarioTiming, TimingReport};
@@ -90,6 +90,7 @@ fn gpu_bench_report_sample() {
             total_ms: spread(1.0),
             gpu_ms: Some(spread(0.02)),
             gpu_dropped: 2,
+            passes: vec![PassTime { pass: "cascades".into(), ms: spread(0.01) }],
             probe: vec![probe(0), probe(4)],
         }],
     };
