@@ -3,7 +3,8 @@
 Keyboard and gamepad input for one player, turned into the simulation's 11
 `Keys` once per tick (spec §8.5, §19 E5; presentation note §10).
 
-- **Layer 5, uses `std`.** Depends on `olr-sim` (`Keys`), `winit` 0.30.13
+- **Layer 5, uses `std`.** Depends on `olr-sim` (`Keys`, `World` for the
+  mouse controller), `olr-bots` (its motor's `aim_key`), `olr-math`, `winit` 0.30.13
   (physical `KeyCode`s, `WindowEvent`; the version egui-winit 0.36.2 uses),
   `gilrs` 0.11.2, `serde`. `#![forbid(unsafe_code)]`. It opens no device:
   the caller owns the window and the `Gilrs` context and passes events in.
@@ -49,5 +50,34 @@ Keyboard and gamepad input for one player, turned into the simulation's 11
   tick waits a tick (so the sim sees its edge). A press digs once; held, it
   digs again every `DIG_REPEAT_TICKS` (20, OLX's 0.2 s auto-carve,
   `CWormHuman.cpp:357-394`).
+- **Mouse controls** (`mouse.rs`, issue #24, experimental): the mouse
+  never reaches the simulation; `MouseController` turns it into the keys
+  a key player could press each tick. `InputState::set_mouse_controls`
+  plays with `Bindings::for_mouse` (the player's bindings without Up,
+  Down, SelectWeapon and Strafe, and without anything on `MOUSE_KEYS`: A
+  and D Left and Right, Space Jump, S Dig); `on_mouse` (the caller passes
+  mouse events only while the game has the pointer): left button Shoot,
+  right Rope (latched like keys), the wheel a notch per line (pixel
+  deltas one per `NOTCH_PIXELS`), up Previous, down Next weapon;
+  `latch_tick_for(local, cursor)` gives the controller the local worm
+  (`LocalWorm::of(world, worm, ahead)`: its state, latches and the next
+  ticks' sub-steps from `World::substeps_ahead`/`latches`) and the
+  cursor's direction from the drawn worm in game pixels. The controller:
+  the aim by Up/Down through `olr_bots::motor::aim_key` (so never faster
+  than the keys; a 1° dead zone, nothing pressed in a tick with no read);
+  the facing follows the cursor's side of the worm's vertical line with
+  hysteresis (`FACE_MARGIN`, `FACE_MARGIN_MIN`, nothing nearer than
+  `NEAR`), turned by the side's key alone for a tick, no Strafe, held
+  until a read turned it, and only when the other key has no unread press
+  and the player is not pressing both (so a turn never digs); Left/Right
+  otherwise with Strafe; the player's Up, Down, SelectWeapon and Strafe
+  bits dropped; a wheel notch (queue `WHEEL_QUEUE`, more dropped, cleared
+  while dead or without a worm) pressed when the last tick had none, the
+  last press was read, this tick reads, and not while firing without
+  `WeaponCombos`. Look-ahead: `LocalWorm::run` models `get_input`'s aim,
+  facing and latches, replaying the keys given for the `ahead` ticks
+  in flight (the input delay). `repeatable()` is `held()` plus, in mouse
+  mode, `MADE_UP` (Up, Down, Strafe): what a stalled online game may
+  repeat.
 
 Test: `cargo nextest run -p olr-input`.

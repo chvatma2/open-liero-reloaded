@@ -16,12 +16,13 @@
 #![forbid(unsafe_code)]
 
 pub use bindings::{
-    Action, Bindings, DIG, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD, is_browser_reserved,
+    Action, Bindings, DIG, MOUSE_KEYS, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD, is_browser_reserved,
 };
 pub use dig::DIG_REPEAT_TICKS;
 pub use latch::TickLatch;
+pub use mouse::{LocalWorm, MouseController, Notch};
 pub use rebind::{Binding, Capture, Device, RebindError, Resolve, key_name};
-pub use state::{InputState, PadEvent};
+pub use state::{InputState, NOTCH_PIXELS, PadEvent};
 
 /// Re-exported for building [`Bindings`].
 pub use gilrs::{Axis, Button};
@@ -30,5 +31,6 @@ pub use winit::keyboard::KeyCode;
 mod bindings;
 mod dig;
 mod latch;
+pub mod mouse;
 mod rebind;
 mod state;

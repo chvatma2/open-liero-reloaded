@@ -10,6 +10,8 @@ autotests = false
 
 [dependencies]
 olr-sim.workspace = true
+olr-bots.workspace = true
+olr-math.workspace = true
 serde = { workspace = true, features = ["std"] }
 winit.workspace = true
 gilrs.workspace = true

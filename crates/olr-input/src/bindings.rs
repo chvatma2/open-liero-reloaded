@@ -77,6 +77,15 @@ impl Action {
     }
 }
 
+/// The keys mouse controls fix (issue #24): A and D move, Space jumps, S
+/// digs. The buttons and the wheel are [`crate::InputState::on_mouse`]'s.
+pub const MOUSE_KEYS: [(Action, KeyCode); 4] = [
+    (Action::Left, KeyCode::KeyA),
+    (Action::Right, KeyCode::KeyD),
+    (Action::Jump, KeyCode::Space),
+    (Action::Dig, KeyCode::KeyS),
+];
+
 /// A gamepad input that can be held: a button (analog ones, the triggers,
 /// count from [`TRIGGER_THRESHOLD`]) or one direction of an axis (from
 /// [`STICK_THRESHOLD`]).
@@ -169,6 +178,19 @@ impl Bindings {
             (NextWeapon, PadInput::Button(Button::RightTrigger)),
             (Dig, PadInput::Button(Button::East)),
         ];
+        Bindings { keys, pad }
+    }
+
+    /// The bindings mouse controls play with (issue #24): these, without
+    /// the actions the controller presses itself (Up, Down, SelectWeapon,
+    /// Strafe) and without any binding of [`MOUSE_KEYS`], which are added.
+    pub fn for_mouse(&self) -> Bindings {
+        use Action::*;
+        let unused = |a: &Action| matches!(a, Up | Down | SelectWeapon | Strafe);
+        let fixed = |k: &KeyCode| MOUSE_KEYS.iter().any(|(_, f)| f == k);
+        let keys =
+            self.keys.iter().filter(|(a, k)| !unused(a) && !fixed(k)).copied().chain(MOUSE_KEYS).collect();
+        let pad = self.pad.iter().filter(|(a, _)| !unused(a)).copied().collect();
         Bindings { keys, pad }
     }
 
