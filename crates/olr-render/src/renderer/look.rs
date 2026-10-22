@@ -16,7 +16,7 @@ const COMMON: &str = include_str!("../look/common.wgsl");
 /// [`COMMON`] after the Rust constants the shaders share.
 pub(super) fn common() -> String {
     format!(
-        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\nconst WORM_SHADOW: f32 = {WORM_SHADOW:?};\nconst OCCLUSION_PAD: i32 = {OCCLUSION_PAD};\nconst WORM_BOXES: i32 = {WORM_BOXES};\n{COMMON}",
+        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\nconst OCCLUSION_PAD: i32 = {OCCLUSION_PAD};\nconst WORM_BOXES: i32 = {WORM_BOXES};\n{COMMON}",
         olr_look::MAX_SOAK
     )
 }
@@ -59,15 +59,6 @@ pub(super) struct LookTextures {
     regions: super::regions::Regions,
     /// The level's glow light.
     pub(super) gi: super::gi::GiState,
-    /// The glow light's occluder map (issue #26): one texel per world pixel
-    /// of the level (cropped like the solid map), cleared each lit frame,
-    /// then each view's occluder map copied in, so the glow light, run once
-    /// a frame, sees the worms of every view's light grid (one view: its
-    /// own, as before).
-    pub(super) gi_occluders: wgpu::Texture,
-    pub(super) gi_occluder_view: wgpu::TextureView,
-    /// [`Self::gi_occluders`] for the emission ([`LookState::occluder_layout`]).
-    pub(super) gi_occluder_bind: wgpu::BindGroup,
     /// The level's heat (issue #39), only when its materials heat.
     pub(super) heat: Option<super::heat::HeatTextures>,
 }
@@ -113,15 +104,6 @@ pub(super) const LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16
 /// the light never depends on the camera.
 pub(super) const LIGHT_PAD: u32 = olr_look::MAX_SOAK as u32 + 4 + BLOOM_RADIUS as u32;
 
-/// How far a worm's shadow reaches, world pixels (the worm-shadow
-/// follow-up, 2026-10-20, the user's playtest of the day Castle Strike: a
-/// worm blocking all light threw massive shadows outdoors). A ray is
-/// stopped by a worm only that near its probe; past it the worm is
-/// invisible to light, which shows what lies under it. The cascades'
-/// merging carries the shade a probe spacing or two further: no change
-/// more than 10 px from a worm (`a_worm_changes_no_light_away_from_it`).
-pub const WORM_SHADOW: f32 = 4.0;
-
 /// The bloom's reach, world pixels (plan 15c's glare): a Gaussian of a
 /// third of it each way.
 pub(super) const BLOOM_RADIUS: i32 = 12;
@@ -161,16 +143,15 @@ pub(super) struct LitTarget {
     pub(super) bloom_views: [wgpu::TextureView; 2],
     /// The across spread's (reads 0) and the down spread's (reads 1).
     pub(super) bloom_binds: [wgpu::BindGroup; 2],
-    /// The across soak's (reads 0) and the down soak's (reads 1); with no
-    /// soak (issue #35: no across pass), the down soak's reading the sum
-    /// (0) as its source and its rows.
-    pub(super) soak_binds: [wgpu::BindGroup; 3],
-    /// The view's worm boxes ([`WormBoxes`]), which the across soak reads
-    /// (issue #35).
+    /// Reading 0 (the across soak's, and with no soak the down soak's:
+    /// issue #35, no across pass) and reading 1 (the down soak's).
+    pub(super) soak_binds: [wgpu::BindGroup; 2],
+    /// The view's worm boxes ([`WormBoxes`], issue #35), bound to the
+    /// composite for #54's halo; read by no pass yet (#53).
     pub(super) worm_boxes: wgpu::Buffer,
     pub(super) composite_bind: wgpu::BindGroup,
-    /// The occluder map (plan 15b): one texel per world pixel of the grid.
-    pub(super) occluders: wgpu::Texture,
+    /// The occluder map (plan 15b): one texel per world pixel of the grid,
+    /// the living worms' bodies; it takes no part in the light (#53).
     pub(super) occluder_view: wgpu::TextureView,
     /// The occluder pass's group 0: [`Self::globals`].
     pub(super) occluder_globals_bind: wgpu::BindGroup,
@@ -196,14 +177,11 @@ pub(super) struct LookState {
     /// Draws the occluder map (plan 15b): group 0 the view's globals, group 1 the atlas.
     pub(super) occluder_pipeline: wgpu::RenderPipeline,
     occluder_globals_layout: wgpu::BindGroupLayout,
-    /// One `R8Uint` texture: the occluder map, as the passes read it.
-    pub(super) occluder_layout: wgpu::BindGroupLayout,
     pub(super) light_layout: wgpu::BindGroupLayout,
     pub(super) composite_layout: wgpu::BindGroupLayout,
     pub(super) layout: wgpu::BindGroupLayout,
     /// The frame's globals (issue #26): the glow light's and the lit
-    /// terrain's, which read none of a view's fields; their occluder map
-    /// is the level's ([`LookTextures::gi_occluders`]).
+    /// terrain's, which read none of a view's fields (the first view's).
     pub(super) globals: wgpu::Buffer,
     pub(super) gi: super::gi::GiPipelines,
     /// A 1 × 1 dark glow light, bound before a level's exists.
@@ -315,17 +293,17 @@ fn write_u16(queue: &super::uploads::Queue, texture: &wgpu::Texture, (data, widt
     );
 }
 
-/// The most worm boxes the soak reads (issue #35); quads past the last
-/// box's are joined into it.
+/// The most worm boxes a view's uniform holds (issue #35); quads past the
+/// last box's are joined into it.
 pub(super) const WORM_BOXES: usize = 32;
 
-/// The worm boxes' uniform (`WormBoxes` in `soak.wgsl`): the count, then
+/// The worm boxes' uniform (`WormBoxes` in `composite.wgsl`): the count, then
 /// [`WORM_BOXES`] boxes, four `i32`s each.
 pub(super) type WormBoxes = [[i32; 4]; 1 + WORM_BOXES];
 
 /// The boxes of a view's occluder quads (`occluders`, their `dst` in the
-/// occluder map's texels, which are the light grid's) for the soak's early
-/// exit (issue #35): each `[x0, y0, x1, y1)`, a texel wider every way than
+/// occluder map's texels, which are the light grid's; issue #35, for #54's
+/// halo since #53): each `[x0, y0, x1, y1)`, a texel wider every way than
 /// the texels the quad can cover, so no worm texel lies outside them; past
 /// [`WORM_BOXES`] quads the last box holds the rest. `out[0][0]` is the
 /// count.
@@ -360,7 +338,7 @@ fn world_rect(r: Rect, s: u32) -> Rect {
 
 /// Where a view's occluder map lies (plan 15b: over its light grid): origin
 /// x, y (world pixels), width, height.
-pub(super) fn occluder_rect(frame: &WorldFrame) -> [f32; 4] {
+fn occluder_rect(frame: &WorldFrame) -> [f32; 4] {
     let pad = LIGHT_PAD as i32;
     [
         (frame.origin.0 - pad) as f32,
@@ -454,10 +432,6 @@ impl LookState {
                 entry(5, frag, FLOAT_TEXTURE),
             ],
         });
-        let occluder_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("olr-render occluders"),
-            entries: &[entry(0, frag, UINT_TEXTURE)],
-        });
         let no_glow = device
             .create_texture(&wgpu::TextureDescriptor {
                 label: Some("olr-render no glow light"),
@@ -479,9 +453,6 @@ impl LookState {
                 entry(1, frag, FLOAT_TEXTURE),
                 entry(2, frag, UINT_TEXTURE),
                 entry(3, frag, FLOAT_TEXTURE),
-                entry(4, frag, UINT_TEXTURE),
-                entry(5, frag, FLOAT_TEXTURE),
-                entry(6, frag, super::UNIFORM),
             ],
         });
         let soak_source = format!("{}\n{}", common(), include_str!("../look/soak.wgsl"));
@@ -497,10 +468,9 @@ impl LookState {
                 wgpu::PrimitiveTopology::TriangleList,
             )
         };
-        // The across soak also writes the rows for the deeper rock.
-        let soak_h_pipeline = soak("fs_soak_h", &[(LIGHT_FORMAT, None), (LIGHT_FORMAT, None)]);
+        let soak_h_pipeline = soak("fs_soak_h", &[(LIGHT_FORMAT, None)]);
         let soak_v_pipeline = soak("fs_soak_v", &[(LIGHT_FORMAT, None)]);
-        let gi = super::gi::GiPipelines::new(device, &occluder_layout, &heat.look_layout);
+        let gi = super::gi::GiPipelines::new(device, &heat.look_layout);
         let emitter_floats = olr_look::MAX_EMITTERS * super::gi::EMITTER_FLOATS;
         let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render composite"),
@@ -509,9 +479,9 @@ impl LookState {
                 entry(1, frag, FLOAT_TEXTURE),
                 entry(2, frag, FLOAT_TEXTURE),
                 entry(3, frag, FLOAT_TEXTURE),
-                entry(4, frag, UINT_TEXTURE),
                 entry(5, frag, FLOAT_TEXTURE),
                 entry(6, frag, UINT_TEXTURE),
+                entry(7, frag, super::UNIFORM),
             ],
         });
         let light_source = format!("{}\n{}", common(), include_str!("../look/light.wgsl"));
@@ -577,7 +547,6 @@ impl LookState {
             soak_layout,
             occluder_pipeline,
             occluder_globals_layout,
-            occluder_layout,
             light_layout,
             composite_layout,
             layout,
@@ -674,9 +643,7 @@ impl LookState {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: OCCLUDER_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
         let occluder_view = occluders.create_view(&wgpu::TextureViewDescriptor::default());
@@ -691,29 +658,16 @@ impl LookState {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        // The across soak (reads 0) writes 1 and the rows into the bloom's
-        // spare 1 (free until the bloom); the down soak reads 1, the sum and
-        // the rows.
-        let soak_bind = |src: &wgpu::TextureView, rows: &wgpu::TextureView| {
+        // The across soak (reads 0) writes 1; the down soak reads 1 and the
+        // sum.
+        let soak_bind = |src: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("olr-render soak"),
                 layout: &self.soak_layout,
-                entries: &[
-                    uniform(),
-                    tex(1, src),
-                    tex(2, solid),
-                    tex(3, &views[0]),
-                    tex(4, &occluder_view),
-                    tex(5, rows),
-                    wgpu::BindGroupEntry { binding: 6, resource: worm_boxes.as_entire_binding() },
-                ],
+                entries: &[uniform(), tex(1, src), tex(2, solid), tex(3, &views[0])],
             })
         };
-        let soak_binds = [
-            soak_bind(&views[0], &views[2]),
-            soak_bind(&views[1], &bloom_views[1]),
-            soak_bind(&views[0], &views[0]),
-        ];
+        let soak_binds = [soak_bind(&views[0]), soak_bind(&views[1])];
         let composite_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render composite"),
             layout: &self.composite_layout,
@@ -722,9 +676,9 @@ impl LookState {
                 tex(1, albedo),
                 tex(2, shade),
                 tex(3, &views[1]),
-                tex(4, &occluder_view),
                 tex(5, &bloom_views[0]),
                 tex(6, solid),
+                wgpu::BindGroupEntry { binding: 7, resource: worm_boxes.as_entire_binding() },
             ],
         });
         let lit = make("olr-render lit", texels, WORLD_FORMAT);
@@ -751,7 +705,6 @@ impl LookState {
             soak_binds,
             worm_boxes,
             composite_bind,
-            occluders,
             occluder_view,
             occluder_globals_bind,
             lit_view,
@@ -808,32 +761,6 @@ impl LookState {
         // Over the level the device keeps (cropped like the terrain): past it
         // is open, as for the soak.
         let gi = super::gi::GiState::new(device, &self.gi, sizes.world, max_dim, &inputs);
-        let gi_occluders = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("olr-render glow light occluders"),
-            size: wgpu::Extent3d {
-                width: sizes.world.0.max(1),
-                height: sizes.world.1.max(1),
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: OCCLUDER_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST
-                | wgpu::TextureUsages::COPY_SRC,
-            view_formats: &[],
-        });
-        let gi_occluder_view = view(&gi_occluders);
-        let gi_occluder_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("olr-render glow light occluders"),
-            layout: &self.occluder_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&gi_occluder_view),
-            }],
-        });
         let t = LookTextures {
             glow,
             groups,
@@ -846,9 +773,6 @@ impl LookState {
             regions: super::regions::Regions::new(level, map.glow_groups()),
             region_map,
             gi,
-            gi_occluders,
-            gi_occluder_view,
-            gi_occluder_bind,
             heat: None,
         };
         let mut t = t;
@@ -942,10 +866,9 @@ impl LookState {
     /// Packs `look` into the globals' floats for a view drawn at `frame`
     /// (the head and the frame's groups only: what is written each frame),
     /// with distant layers when `distant` (issue #11: the composite then
-    /// reads their depth from the shade's alpha), its occluder map at
-    /// `occluders` (origin x, y in world pixels, width, height: the view's
-    /// [`occluder_rect`], or the level's for the frame's globals).
-    pub(super) fn pack(&mut self, look: &LookFrame, frame: &WorldFrame, distant: bool, occluders: [f32; 4]) {
+    /// reads their depth from the shade's alpha), its occluder map at its
+    /// [`occluder_rect`].
+    pub(super) fn pack(&mut self, look: &LookFrame, frame: &WorldFrame, distant: bool) {
         let p = &mut self.packed;
         p.clear();
         let (level, art_scale, cell) =
@@ -985,7 +908,7 @@ impl LookState {
         p.extend([r, g, b, strength]);
         let [r, g, b] = look.worm_floor;
         p.extend([r, g, b, reach]);
-        p.extend(occluders);
+        p.extend(occluder_rect(frame));
         // Whether the level draws distant layers (issue #11).
         p.extend([f32::from(u8::from(distant)), 0.0, 0.0, 0.0]);
         debug_assert_eq!(p.len(), GLOBAL_HEAD);

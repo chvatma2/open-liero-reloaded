@@ -33,7 +33,7 @@ pub enum PassGroup {
     Heat,
     /// The world pass (the albedo, and lit the shade) and the occluder map.
     World,
-    /// The glow light's inputs: its occluder map, play's discs, the emission.
+    /// The glow light's inputs: play's discs, the emission.
     Emission,
     /// The jump flood's seed and its passes.
     JumpFlood,

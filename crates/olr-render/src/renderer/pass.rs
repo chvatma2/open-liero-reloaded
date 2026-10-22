@@ -6,7 +6,7 @@ use std::ops::Range;
 use olr_look::LookFrame;
 use olr_scene::DrawList;
 
-use super::look::{LIGHT_PAD, WORM_BOXES, occluder_rect, worm_boxes};
+use super::look::{LIGHT_PAD, WORM_BOXES, worm_boxes};
 use super::timing::PassGroup;
 use super::{Renderer, Target, WORLD_FORMAT, texture, upscale_uniform};
 use crate::frame::{WorldFrame, distant_instance, occluder_instances, push_instances, terrain_instance};
@@ -184,10 +184,10 @@ impl Renderer {
                 t.gi.write_discs(&self.queue, &state.packed_emitters);
             }
             for (plan, t) in self.plans.iter().zip(&self.targets) {
-                state.pack(look, &plan.frame, !plan.distant.is_empty(), occluder_rect(&plan.frame));
+                state.pack(look, &plan.frame, !plan.distant.is_empty());
                 if let Some(lt) = &t.lit {
                     self.queue.write_buffer(&lt.globals, 0, bytemuck::cast_slice(&state.packed));
-                    // The soak's worm boxes (issue #35): only those in use.
+                    // The worm boxes (issue #35; #54's halo): only those in use.
                     let mut boxes = [[0; 4]; 1 + WORM_BOXES];
                     let occluders = plan.occluders.start as usize..plan.occluders.end as usize;
                     worm_boxes(&self.instances[occluders], &mut boxes);
@@ -196,14 +196,9 @@ impl Renderer {
                 }
             }
             // The frame's globals (the glow light's, the lit terrain's):
-            // the first view's, but with the level's occluder map.
+            // the first view's.
             if let Some(first) = self.plans.first() {
-                let map = state
-                    .textures
-                    .as_ref()
-                    .map_or((1, 1), |t| (t.gi_occluders.width(), t.gi_occluders.height()));
-                let level = [0.0, 0.0, map.0 as f32, map.1 as f32];
-                state.pack(look, &first.frame, !first.distant.is_empty(), level);
+                state.pack(look, &first.frame, !first.distant.is_empty());
                 self.queue.write_buffer(&state.globals, 0, bytemuck::cast_slice(&state.packed));
             }
         }
@@ -336,24 +331,17 @@ impl Renderer {
                 }
             }
         }
-        // The glow light, once a frame whatever the views (issue #26): its
-        // occluder map is the level's, each view's copied in.
+        // The glow light, once a frame whatever the views (issue #26); no
+        // worm takes part in it (#53).
         if let (Some(look), Some(state)) = (look, self.look.as_ref())
             && let Some(tex) = &state.textures
             && !views.is_empty()
         {
-            let clear = group(PassGroup::Emission);
-            drop(begin(&mut encoder, "olr-render glow light occluders", &tex.gi_occluder_view, clear));
-            for (plan, world) in views_drawn.clone() {
-                if let Some(lt) = &world.lit {
-                    copy_occluders(&mut encoder, &lt.occluders, &plan.frame, &tex.gi_occluders);
-                }
-            }
             // A hot pixel casts too (issue #39).
             let casting = !look.groups.is_empty() || state.emitter_count > 0 || heat_on;
             let discs = state.emitter_count;
-            let binds = (&tex.gi_occluder_bind, tex.heat_bind(&state.heat.none));
-            if tex.gi.encode(&mut encoder, &state.gi, casting, binds, discs, timer) {
+            let heat = tex.heat_bind(&state.heat.none);
+            if tex.gi.encode(&mut encoder, &state.gi, casting, heat, discs, timer) {
                 self.glow_light_steps += 1;
             }
         }
@@ -382,14 +370,9 @@ impl Renderer {
             // (issue #35).
             let (soak, soft) = look.map_or((false, false), |l| (l.light_soak > 0, l.softness > 0));
             if soak {
-                // The across soak, and the rows for the deeper rock.
-                let (views, g) = ([&lt.views[1], &lt.bloom_views[1]], group(PassGroup::Soak));
-                let mut pass = begin_two(&mut encoder, "olr-render look", views[0], views[1], g);
-                pass.set_pipeline(&state.soak_h_pipeline);
-                pass.set_bind_group(0, &lt.soak_binds[0], &[]);
-                pass.draw(0..3, 0..1);
+                full(&mut encoder, PassGroup::Soak, &lt.views[1], &state.soak_h_pipeline, &lt.soak_binds[0]);
             }
-            let soak_v = if soak { &lt.soak_binds[1] } else { &lt.soak_binds[2] };
+            let soak_v = if soak { &lt.soak_binds[1] } else { &lt.soak_binds[0] };
             full(&mut encoder, PassGroup::Soak, &lt.views[2], &state.soak_v_pipeline, soak_v);
             if soft {
                 full(&mut encoder, PassGroup::Blur, &lt.views[0], &state.blur_h_pipeline, &lt.binds[1]);
@@ -553,39 +536,6 @@ fn clip([x, y, w, h]: [u32; 4], size: (u32, u32)) -> Option<[u32; 4]> {
     let (x0, y0) = (x.min(size.0), y.min(size.1));
     let (x1, y1) = (x.saturating_add(w).min(size.0), y.saturating_add(h).min(size.1));
     (x1 > x0 && y1 > y0).then(|| [x0, y0, x1 - x0, y1 - y0])
-}
-
-/// Copies the part of a view's occluder map `from` (over its light grid,
-/// `frame`'s plus [`LIGHT_PAD`]) inside the level into the glow light's
-/// level-wide occluder map `to` (issue #26).
-fn copy_occluders(
-    encoder: &mut wgpu::CommandEncoder,
-    from: &wgpu::Texture,
-    frame: &WorldFrame,
-    to: &wgpu::Texture,
-) {
-    let pad = LIGHT_PAD as i64;
-    let origin = (i64::from(frame.origin.0) - pad, i64::from(frame.origin.1) - pad);
-    let span = |o: i64, len: u32, level: u32| {
-        let (a, b) = (o.max(0), (o + i64::from(len)).min(i64::from(level)));
-        (b > a).then(|| ((a - o) as u32, a as u32, (b - a) as u32))
-    };
-    let (Some((sx, dx, w)), Some((sy, dy, h))) =
-        (span(origin.0, from.width(), to.width()), span(origin.1, from.height(), to.height()))
-    else {
-        return;
-    };
-    let at = |texture, x, y| wgpu::TexelCopyTextureInfo {
-        texture,
-        mip_level: 0,
-        origin: wgpu::Origin3d { x, y, z: 0 },
-        aspect: wgpu::TextureAspect::All,
-    };
-    encoder.copy_texture_to_texture(
-        at(from, sx, sy),
-        at(to, dx, dy),
-        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
-    );
 }
 
 /// A render pass that clears `view` to black, writing `timestamps` (GPU

@@ -682,7 +682,7 @@ pub(super) fn heat_common() -> String {
 }
 
 /// [`heat_common`] and the heat look's bindings at bind group `group` with
-/// `heat_at` (the lit terrain's group 3, the emission's 2).
+/// `heat_at` (the lit terrain's group 3, the emission's 1).
 pub(super) fn heat_reader(group: u32) -> String {
     format!(
         "{}\n{}",

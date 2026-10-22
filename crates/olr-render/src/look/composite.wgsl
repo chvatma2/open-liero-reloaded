@@ -2,20 +2,29 @@
 // texel's albedo lit by the light grid sampled at its centre, never below
 // its self-light nor its floor (the solid floor for blood and gibs, as rock;
 // the worm floor for worms, plan 15b), with the bloom added (plan 15c),
-// graded; a marker shows its albedo. Opaque rock and dirt show at most
-// their art (#1). A distant layer's pixel takes less of the light the
-// farther it is (issue #11). Linear light, sRGB bytes in and out.
+// graded; a worm's pixel takes the light where it is, as a rope's does
+// (#53: no lit side); a marker shows its albedo. Opaque rock and dirt show
+// at most their art (#1). A distant layer's pixel takes less of the light
+// the farther it is (issue #11). Linear light, sRGB bytes in and out.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(0) @binding(1) var albedo_tex: texture_2d<f32>;
 @group(0) @binding(2) var shade_tex: texture_2d<f32>;
 @group(0) @binding(3) var light_tex: texture_2d<f32>;
-@group(0) @binding(4) var occluder_tex: texture_2d<u32>;
 // The bloom (plan 15c): the light above 1, spread; added before the grade
 // at `look.mode.w`'s strength.
 @group(0) @binding(5) var bloom_tex: texture_2d<f32>;
 // The solid map (#1): an opaque solid shows at most its art.
 @group(0) @binding(6) var solid_tex: texture_2d<u32>;
+
+// The view's worm boxes (issue #35): `count.x` boxes, each `[x0, y0, x1,
+// y1)` in light-grid texels (the occluder map's), holding every worm texel.
+// Bound for #54's halo; read by nothing yet (#53).
+struct WormBoxes {
+    count: vec4<i32>,
+    boxes: array<vec4<i32>, WORM_BOXES>,
+};
+@group(0) @binding(7) var<uniform> worm_boxes: WormBoxes;
 
 @vertex
 fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
@@ -74,38 +83,6 @@ fn bloom_at(g: vec2<f32>) -> vec3<f32> {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
-// The light a worm's world pixel `w` (of worm `id`) takes (plan 15b, the
-// lit side): the light just outside the worm on that pixel's side. The
-// outward direction is the sum of `w - q` over the worm's pixels `q` in the
-// 7 x 7 window (up when they cancel); the first pixel along it within 4
-// that is not this worm, and the light one pixel further out. The same for
-// every texel of a world pixel, so never finer than the art; `here` when
-// the worm is thicker than that.
-fn facing_light(w: vec2<i32>, id: u32, here: vec3<f32>) -> vec3<f32> {
-    var sum = vec2<f32>(0.0);
-    for (var dy = -3; dy <= 3; dy++) {
-        for (var dx = -3; dx <= 3; dx++) {
-            if worm_in(occluder_tex, look.occluders.xy, w + vec2<i32>(dx, dy)) == id {
-                sum -= vec2<f32>(f32(dx), f32(dy));
-            }
-        }
-    }
-    var n = vec2<f32>(0.0, -1.0);
-    if dot(sum, sum) > 1e-6 {
-        n = normalize(sum);
-    }
-    let c = vec2<f32>(w) + vec2<f32>(0.5);
-    let origin = vec2<i32>(look.frame.xy);
-    for (var k = 1; k <= 4; k++) {
-        let q = vec2<i32>(floor(c + n * f32(k)));
-        if worm_in(occluder_tex, look.occluders.xy, q) != id {
-            let out = vec2<i32>(floor(c + n * f32(k + 1)));
-            return light_at(vec2<f32>(out - origin) + vec2<f32>(LIGHT_PAD));
-        }
-    }
-    return here;
-}
-
 @fragment
 fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let t = vec2<i32>(p.xy);
@@ -128,13 +105,6 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     var here = light_at(g);
     // Texel t's world pixel.
     let w = vec2<i32>(look.frame.xy) + vec2<i32>(floor((vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z));
-    if shade.z > 0.75 {
-        // A worm's pixel takes the light on its side (plan 15b).
-        let id = worm_in(occluder_tex, look.occluders.xy, w);
-        if id != 0u {
-            here = facing_light(w, id, here);
-        }
-    }
     // The floor kind, stored halved (world_lit.wgsl): 0.5 the solid floor,
     // 1 the worm floor (plan 15b).
     var least = vec3<f32>(0.0);

@@ -13,9 +13,6 @@
 @group(0) @binding(7) var dynamic_reach: texture_2d<f32>;
 // Each world pixel's flicker region (plan 15c).
 @group(0) @binding(8) var regions_tex: texture_2d<u32>;
-// The occluder map (plan 15b): a living worm's world pixel is solid.
-@group(1) @binding(0) var occluder_tex: texture_2d<u32>;
-
 
 @fragment
 fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
@@ -28,12 +25,9 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     // At most a ray's radiance, never NaN (final review, Important 1).
     let summed = textureLoad(dynamic_tex, cell, 0).rgb;
     let disc = select(vec3<f32>(0.0), min(summed, vec3<f32>(16384.0)), summed == summed);
-    // A disc's cells never count as a worm: a muzzle flash shines from
-    // inside its worm's outline.
     let lit = max(disc.r, max(disc.g, disc.b)) > 0.0;
     var em = vec3<f32>(0.0);
     var solid = 0.0;
-    var worms = 0.0;
     var reach = 0.0;
     var n = 0.0;
     var albedo = vec3<f32>(0.0);
@@ -44,12 +38,9 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
                 continue;
             }
             n += 1.0;
-            let worm = !lit && worm_in(occluder_tex, look.occluders.xy, w) != 0u;
             let art = clamped(w * a + vec2<i32>(a / 2), textureDimensions(glow_tex));
-            if worm {
-                worms += 1.0;
-            } else if textureLoad(solid_tex, clamped(w, textureDimensions(solid_tex)), 0).r != 1u {
-                // Rock and dirt reflect by their colour; a worm reflects nothing.
+            if textureLoad(solid_tex, clamped(w, textureDimensions(solid_tex)), 0).r != 1u {
+                // Rock and dirt reflect by their colour.
                 solid += 1.0;
                 albedo += to_linear(textureLoad(terrain_tex, clamped(art, textureDimensions(terrain_tex)), 0).rgb);
             }
@@ -81,11 +72,8 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
         let d = textureLoad(dynamic_reach, cell, 0).r;
         reach = max(reach, select(d, 1e9, d >= 59999.0));
     }
-    // A cell that is mostly worm is marked 2 + its rock share: it stops a
-    // ray only near the worm (the worm-shadow follow-up), and otherwise
-    // shows what lies under it (its glow, its rock).
-    let mark = select(0.0, 2.0, worms * k >= 0.5 && solid * k < 0.5);
-    out.emission = vec4<f32>(em * k + disc, solid * k + mark);
+    // Worms take no part (#53): the light is the same wherever they are.
+    out.emission = vec4<f32>(em * k + disc, solid * k);
     out.reach = split(reach);
     out.albedo = vec4<f32>(albedo / max(solid, 1.0), 1.0);
     return out;

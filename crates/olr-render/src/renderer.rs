@@ -23,7 +23,6 @@ pub use heat::{
     BACK_HEAT, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_AMOUNT, MAX_HEAT_DEPOSITS,
     MAX_HEAT_RADIUS, MAX_HEAT_STEPS,
 };
-pub use look::WORM_SHADOW;
 pub use pass::ViewDraw;
 pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};
 pub use timing::{GpuTimes, PASS_GROUPS, PassGroup, PassSpan, gpu_times};

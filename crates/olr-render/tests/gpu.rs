@@ -1114,89 +1114,6 @@ fn push_bodies(l: &mut DrawList, bodies: &[Body]) {
     }
 }
 
-#[test]
-fn a_worm_shadows_the_wall_behind_it() {
-    let Some(gpu) = offscreen() else { return };
-    let (map, view, lights) = ground();
-    let bare = worm_frame(&gpu, &map, view, &lights, &[], |_| {});
-    let worm = worm_frame(&gpu, &map, view, &lights, &[([50.0, 13.0, 4.0, 6.0], 1)], |_| {});
-    // The rock face (y 20) right under the worm.
-    let (lit, shadowed) = (light_at(&gpu, &bare, 51, 20)[0], light_at(&gpu, &worm, 51, 20)[0]);
-    assert!(lit > 0.2 && (shadowed - 0.1).abs() < 1e-3, "the worm shadows the face: {lit} {shadowed}");
-    assert_eq!(light_at(&gpu, &bare, 30, 20), light_at(&gpu, &worm, 30, 20), "beside it: unchanged");
-}
-
-#[test]
-fn a_light_inside_a_worm_ignores_it() {
-    let Some(gpu) = offscreen() else { return };
-    let map = room(100, 40, |_, _| false);
-    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
-    let flash = olr_look::FrameLight { pos: [52.0, 20.0], radius: 5.0, colour: [1.0; 3], reach: 40.0 };
-    let r = worm_frame(&gpu, &map, view, &[flash], &[([50.0, 17.0, 4.0, 6.0], 1)], |_| {});
-    for (x, y) in [(46, 20), (57, 20), (52, 13), (52, 26)] {
-        let v = light_at(&gpu, &r, x, y)[0];
-        assert!(v > 0.2, "({x}, {y}) lit all round: {v}");
-    }
-}
-
-#[test]
-fn overlapping_worms_block_each_others_lights() {
-    let Some(gpu) = offscreen() else { return };
-    let map = room(100, 40, |_, _| false);
-    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
-    let flash = olr_look::FrameLight { pos: [42.5, 21.5], radius: 2.0, colour: [1.0; 3], reach: 40.0 };
-    let pair = [([40.0, 18.0, 4.0, 7.0], 1), ([44.0, 18.0, 4.0, 7.0], 2)];
-    let r = worm_frame(&gpu, &map, view, &[flash], &pair, |_| {});
-    assert!(light_at(&gpu, &r, 37, 21)[0] > 0.2, "worm 1's near side is lit");
-    assert!((light_at(&gpu, &r, 50, 21)[0] - 0.1).abs() < 1e-3, "worm 2's far side: the ambient");
-    // 32 worms, some overlapping, ids 1..=32: no panic, the same bytes twice.
-    let mut seed = 7u32;
-    let mut next = |m: u32| {
-        seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12345);
-        (seed >> 16) % m
-    };
-    let many: Vec<Body> = (1..=32).map(|i| ([next(90) as f32, next(30) as f32, 4.0, 6.0], i as u8)).collect();
-    let lights = [lamp([20.5, 10.5], 60.0), lamp([70.5, 30.5], 60.0)];
-    let a = worm_frame(&gpu, &map, view, &lights, &many, |_| {});
-    let b = worm_frame(&gpu, &map, view, &lights, &many, |_| {});
-    assert_eq!(gpu.read_light(&a).unwrap().1, gpu.read_light(&b).unwrap().1);
-}
-
-#[test]
-fn an_off_view_worm_still_shadows_the_view() {
-    let Some(gpu) = offscreen() else { return };
-    let map = room(200, 40, |x, _| x == 101);
-    let view = View { x: 100.0, y: 0.0, w: 100.0, h: 40.0 };
-    let lights = [lamp([90.5, 20.5], 60.0)];
-    let bare = worm_frame(&gpu, &map, view, &lights, &[], |_| {});
-    assert!(light_at(&gpu, &bare, 101, 20)[0] > 0.2, "the face is lit without the worm");
-    let r = worm_frame(&gpu, &map, view, &lights, &[([94.0, 17.0, 4.0, 7.0], 1)], |_| {});
-    let (lit, shaded) = (light_at(&gpu, &bare, 101, 20)[0], light_at(&gpu, &r, 101, 20)[0]);
-    assert!(shaded < lit - 0.05, "the worm off the view shades it (a short shadow): {shaded} {lit}");
-}
-
-#[test]
-fn a_worm_blocks_glow_light() {
-    let Some(gpu) = offscreen() else { return };
-    let map = glowing_room(100, 40, |x, y| x == 10 || y >= 30, |x, y| x == 10 && y < 30);
-    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
-    let glow = |l: &mut olr_look::LookFrame| {
-        l.groups[0] = olr_look::FrameGroup {
-            cast: [1.0; 3],
-            own_colour: false,
-            self_scale: 1.0,
-            reach: 64.0,
-            ..Default::default()
-        }
-    };
-    let bare = worm_frame(&gpu, &map, view, &[], &[], glow);
-    let worm = worm_frame(&gpu, &map, view, &[], &[([20.0, 22.0, 4.0, 7.0], 1)], glow);
-    let (b, w) = (light_at(&gpu, &bare, 26, 27)[0], light_at(&gpu, &worm, 26, 27)[0]);
-    assert!(b - w >= 0.05, "behind the worm: darker, {b} {w}");
-    let (b, w) = (light_at(&gpu, &bare, 18, 27)[0], light_at(&gpu, &worm, 18, 27)[0]);
-    assert!((b - w).abs() < 0.02, "in front of it: about the same, {b} {w}");
-}
-
 /// A dark room's frame (ambient 0.05, worm floor 0.2) with each body drawn
 /// both as an occluder and as a white `Shade::WORM` sprite (plan 15b), at
 /// two output pixels per world pixel: world pixel (x, y) is output pixel
@@ -1251,30 +1168,19 @@ fn column(img: &RgbaImage, x: u32, ys: std::ops::Range<u32>) -> f32 {
     ys.map(|y| f32::from(img.get(2 * x, 2 * y).r)).sum::<f32>() / n
 }
 
+/// Two worms overlapping in the dark: every pixel of both shows the worm
+/// floor (#53: neither shades the other).
 #[test]
-fn a_worm_is_lit_on_the_lamps_side() {
+fn overlapping_worms_in_the_dark_keep_their_floor() {
     let Some(gpu) = offscreen() else { return };
     let map = room(50, 30, |_, _| false);
-    let (_, img, _) =
-        lit_worms(&gpu, &map, &[lamp([14.5, 15.0], 30.0)], &[([20.0, 12.0, 4.0, 6.0], 1)], |_| {});
-    let (left, inner, right) = (column(&img, 20, 12..18), column(&img, 21, 12..18), column(&img, 23, 12..18));
-    assert!(left >= right + 30.0, "the lamp's side is brighter: {left} {right}");
-    assert!(inner >= right + 30.0, "the lamp's half, not one column: {inner} {right}");
-    let floor = f32::from(white_under([0.2; 3]));
-    assert!((right - floor).abs() <= 1.0, "the far side shows the worm floor: {right} {floor}");
-}
-
-#[test]
-fn a_worm_in_anothers_shadow_keeps_its_floor() {
-    let Some(gpu) = offscreen() else { return };
-    let map = room(50, 30, |_, _| false);
-    let bodies = [([20.0, 12.0, 4.0, 6.0], 1), ([28.0, 12.0, 4.0, 6.0], 2)];
-    let (_, img, _) = lit_worms(&gpu, &map, &[lamp([14.5, 15.0], 30.0)], &bodies, |_| {});
+    let bodies = [([20.0, 12.0, 4.0, 6.0], 1), ([22.0, 13.0, 4.0, 6.0], 2)];
+    let (_, img, _) = lit_worms(&gpu, &map, &[], &bodies, |_| {});
     let floor = white_under([0.2; 3]);
-    for x in 28..32 {
-        for y in 12..18 {
+    for x in 20..26 {
+        for y in 13..18 {
             let v = img.get(2 * x, 2 * y).r;
-            assert!(v.saturating_add(1) >= floor, "({x}, {y}): {v} below the floor {floor}");
+            assert!(v.abs_diff(floor) <= 1, "({x}, {y}): {v}, the floor {floor}");
         }
     }
 }
@@ -1291,29 +1197,6 @@ fn a_worm_against_a_wall_keeps_its_floor() {
             let v = img.get(2 * x, 2 * y).r;
             assert!(v.saturating_add(1) >= floor, "({x}, {y}): {v} below the floor {floor}");
         }
-    }
-    assert!(column(&img, 20, 12..18) >= f32::from(floor) + 30.0, "the lamp's side is lit");
-}
-
-#[test]
-fn worm_shading_is_steady() {
-    let Some(gpu) = offscreen() else { return };
-    let map = room(50, 30, |_, _| false);
-    let lights = [lamp([14.5, 15.0], 30.0)];
-    let body = |x: f32| [([x, 12.0, 4.0, 6.0], 1)];
-    let (_, a, _) = lit_worms(&gpu, &map, &lights, &body(20.0), |_| {});
-    let (_, b, _) = lit_worms(&gpu, &map, &lights, &body(20.0), |_| {});
-    assert_eq!(a.as_raw(), b.as_raw(), "the same bytes twice");
-    let (_, moved, _) = lit_worms(&gpu, &map, &lights, &body(21.0), |_| {});
-    let cols: Vec<f32> = (20..24).map(|x| column(&a, x, 12..18)).collect();
-    let step = cols.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0, f32::max);
-    for c in 0..4 {
-        let m = column(&moved, 21 + c, 12..18);
-        assert!(
-            (m - cols[c as usize]).abs() <= step + 2.0,
-            "column {c}: {} → {m}, step {step}",
-            cols[c as usize]
-        );
     }
 }
 
@@ -1339,30 +1222,114 @@ fn a_rope_pixel_has_no_side() {
     }
 }
 
-/// Plan 15b's final review, Important 1, under plan 15c: a muzzle-sized
-/// disc in its worm lights all round, whatever the worm's art at its
-/// centre (many skins are transparent there in some frames): a disc's
-/// cells never count as a worm.
+/// #53: a worm pixel takes the light where it stands, as a rope pixel
+/// does (no lit side), floored by the worm floor: on the lamp's side and
+/// on the far side alike.
 #[test]
-fn a_light_ignores_its_own_worm_through_a_hollow() {
+fn a_worm_takes_the_light_where_it_stands() {
     let Some(gpu) = offscreen() else { return };
-    let map = room(100, 40, |_, _| false);
-    let mut hollow = solid(4, 6, Rgba::rgb(255, 255, 255));
-    hollow.set(2, 3, Rgba::TRANSPARENT);
+    let map = room(50, 30, |_, _| false);
+    let (r, img, look) =
+        lit_worms(&gpu, &map, &[lamp([14.5, 15.0], 30.0)], &[([20.0, 12.0, 4.0, 6.0], 1)], |_| {});
+    // Output pixel (2x, 2y)'s centre lies at world (x - 0.25, y - 0.25) of
+    // the light grid (texel centres at whole pixels): bilinear there.
+    let mix = |a: [f32; 3], b: [f32; 3], t: f32| [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t);
+    let mut lit = 0;
+    for x in 20..24 {
+        for y in 12..18 {
+            let at = |dx, dy| light_at(&gpu, &r, x - 1 + dx, y - 1 + dy);
+            let light = mix(mix(at(0, 0), at(1, 0), 0.75), mix(at(0, 1), at(1, 1), 0.75), 0.75);
+            let floored = light.map(|v| v.max(0.2));
+            let want =
+                olr_render::shade_texel([255; 4], floored, 0.0, false, &Default::default(), look.max_light);
+            let got = img.get(2 * x as u32, 2 * y as u32);
+            assert!(got.r.abs_diff(want[0]) <= 1, "({x}, {y}): {got:?}, want {want:?}");
+            lit += usize::from(light[0] > 0.2);
+        }
+    }
+    assert!(lit > 0, "the lamp lights some of the worm above its floor");
+}
+
+/// The bodies of [`worms_change_no_light`]: in the lamp, beside it, in its
+/// light (two overlapping), over the flash disc, against the wall and
+/// behind it.
+const SCENE_WORMS: [Body; 7] = [
+    ([30.0, 18.0, 4.0, 6.0], 1),
+    ([36.0, 20.0, 4.0, 6.0], 2),
+    ([60.0, 40.0, 4.0, 6.0], 3),
+    ([62.0, 42.0, 4.0, 6.0], 4),
+    ([68.0, 28.0, 4.0, 6.0], 5),
+    ([96.0, 46.0, 4.0, 6.0], 6),
+    ([120.0, 20.0, 4.0, 6.0], 7),
+];
+
+/// Each view's light grid, as bits, after each of three frames of a lit
+/// scene (a glowing lamp, a wall, a flash disc, bounce and soak) drawn with
+/// `bodies` as worms (occluders and `Shade::WORM` sprites).
+fn scene_light(gpu: &Offscreen, views: &[(View, [u32; 4])], bodies: &[Body]) -> Vec<Vec<Vec<[u32; 3]>>> {
+    let lamp = |x: u32, y: u32| (30..34).contains(&x) && (20..24).contains(&y);
+    let map = glowing_room(160, 60, |x, y| x == 100 || y >= 52, lamp);
+    let mut look = glow_look(1.0, 80.0);
+    look.bounce = 0.5;
+    look.light_soak = 4;
+    look.emitters.push(disc([70.5, 30.5], 3.0, 60.0));
     let mut r = gpu.renderer(RenderSettings::default());
-    r.upload_images(&[AtlasImage { name: "hollow".into(), image: hollow, px_per_world: 1 }]);
+    r.upload_images(&[white_image()]);
     r.set_lighting(true);
     r.upload_terrain(&map);
-    let flash = olr_look::FrameLight { pos: [52.5, 20.5], radius: 5.0, colour: [1.0; 3], reach: 40.0 };
-    let mut look = dim(0.1);
-    look.emitters.push(flash);
-    let mut l = list(View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 });
-    l.map = (100, 40);
-    push_bodies(&mut l, &[([50.0, 17.0, 4.0, 6.0], 1)]);
-    gpu.render_lit_to_image(&mut r, &l, Some(&look), (64, 64));
-    for (x, y) in [(46, 20), (57, 20), (52, 13), (52, 26)] {
-        let v = light_at(&gpu, &r, x, y)[0];
-        assert!(v > 0.2, "({x}, {y}) lit all round: {v}");
+    let lists: Vec<DrawList> = views
+        .iter()
+        .map(|&(view, _)| {
+            let mut l = list(view);
+            l.map = (160, 60);
+            push_bodies(&mut l, bodies);
+            for &([x, y, w, h], _) in bodies {
+                let src = Rect { x: 0, y: 0, w: w as u32, h: h as u32 };
+                let tint = Rgba::rgb(255, 255, 255);
+                let shade = olr_scene::Shade::WORM;
+                let sprite =
+                    Sprite { atlas: AtlasId(0), src, pos: [x, y], size: [w, h], flip: false, tint, shade };
+                l.sprite(Layer::Worms, sprite);
+            }
+            l
+        })
+        .collect();
+    let draws: Vec<_> =
+        lists.iter().zip(views).map(|(list, &(_, area))| olr_render::ViewDraw { list, area }).collect();
+    (0..3)
+        .map(|_| {
+            gpu.render_views_to_image(&mut r, &draws, Some(&look), (320, 120));
+            (0..views.len())
+                .map(|i| {
+                    let light = gpu.read_view_light(&r, i).unwrap().1;
+                    light.iter().map(|p| p.map(f32::to_bits)).collect()
+                })
+                .collect()
+        })
+        .collect()
+}
+
+/// #53: worms take no part in the light: a lit scene's light grids are
+/// byte for byte those of the same scene without them, frame after frame
+/// (bounce on), with one view and with two.
+#[test]
+fn worms_change_no_light() {
+    let Some(gpu) = offscreen() else { return };
+    let one = [(View { x: 0.0, y: 0.0, w: 160.0, h: 60.0 }, [0, 0, 320, 120])];
+    let two = [
+        (View { x: 0.0, y: 0.0, w: 80.0, h: 60.0 }, [0, 0, 160, 120]),
+        (View { x: 80.0, y: 0.0, w: 80.0, h: 60.0 }, [160, 0, 160, 120]),
+    ];
+    for views in [&one[..], &two[..]] {
+        let bare = scene_light(&gpu, views, &[]);
+        let worms = scene_light(&gpu, views, &SCENE_WORMS);
+        for (frame, (b, w)) in bare.iter().zip(&worms).enumerate() {
+            for (i, (b, w)) in b.iter().zip(w).enumerate() {
+                assert!(b == w, "{} views, frame {frame}: view {i}'s light changed", views.len());
+            }
+        }
+        // A worthwhile scene: the bounce moves the light from frame to frame.
+        assert_ne!(bare[0], bare[2], "{} views: the bounce still moves the light", views.len());
     }
 }
 
@@ -1869,10 +1836,9 @@ fn bloom_is_steady_and_camera_independent() {
     }
 }
 
-/// Plan 15c: the glare never takes a worm below its floor nor hides its
-/// lit side (plan 15b).
+/// Plan 15c: the glare never takes a worm below its floor (plan 15b).
 #[test]
-fn bloom_keeps_the_worm_floor_and_lit_side() {
+fn bloom_keeps_the_worm_floor() {
     let Some(gpu) = offscreen() else { return };
     let map = room(50, 30, |_, _| false);
     let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
@@ -1899,9 +1865,11 @@ fn bloom_keeps_the_worm_floor_and_lit_side() {
         },
     );
     let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), (100, 60));
-    let (left, right) = (column(&img, 20, 12..18), column(&img, 23, 12..18));
     let floor = f32::from(white_under([0.2; 3]));
-    assert!(right >= floor - 1.0 && left >= right + 30.0, "{left} {right} {floor}");
+    for x in 20..24 {
+        let c = column(&img, x, 12..18);
+        assert!(c >= floor - 1.0, "column {x}: {c} below the floor {floor}");
+    }
 }
 
 /// Plan 15c: a glowing pixel shows its own art, however bright the light
@@ -2031,95 +1999,6 @@ fn a_long_low_tunnel_takes_no_light_through_rock() {
         }
     }
     assert!(lit.is_empty(), "light in the tunnel from beyond the rock: {lit:?}");
-}
-
-/// The worm-shadow follow-up (2026-10-20, the user's playtest): a worm
-/// blocks light only within `olr_render::WORM_SHADOW` world pixels of it,
-/// so it throws no long shadow: a face 15 px behind it is lit as if it
-/// were not there.
-#[test]
-fn a_worm_throws_no_long_shadow() {
-    let Some(gpu) = offscreen() else { return };
-    let map = room(100, 60, |x, _| x >= 60);
-    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 };
-    let flash = [disc([30.5, 30.5], 4.0, 80.0)];
-    let set = |l: &mut olr_look::LookFrame| l.emitters.extend_from_slice(&flash);
-    let bare = worm_frame(&gpu, &map, view, &[], &[], set);
-    let worm = worm_frame(&gpu, &map, view, &[], &[([40.0, 27.0, 4.0, 6.0], 1)], set);
-    for y in 20..40 {
-        assert_eq!(light_at(&gpu, &bare, 59, y), light_at(&gpu, &worm, 59, y), "the face at y {y}");
-    }
-    // Right behind the worm, a short shade.
-    let (b, w) = (light_at(&gpu, &bare, 46, 30)[0], light_at(&gpu, &worm, 46, 30)[0]);
-    assert!(w < b - 0.05, "shaded right behind it: {w} against {b}");
-    assert_eq!(light_at(&gpu, &bare, 54, 30), light_at(&gpu, &worm, 54, 30), "10 px behind: unchanged");
-}
-
-/// The worm-shadow follow-up: away from a worm the light is as without it,
-/// whether the worm stands over glowing sky or plain background (no pop at
-/// the sky's edge).
-#[test]
-fn a_worm_changes_no_light_away_from_it() {
-    let Some(gpu) = offscreen() else { return };
-    // A glowing sky over the top half, rock along the bottom.
-    let map = glowing_room(120, 60, |_, y| y >= 56, |_, y| y < 28);
-    let view = View { x: 0.0, y: 0.0, w: 120.0, h: 60.0 };
-    let sky = |l: &mut olr_look::LookFrame| {
-        l.groups[0] = olr_look::FrameGroup {
-            cast: [1.0; 3],
-            own_colour: false,
-            self_scale: 1.0,
-            reach: f32::INFINITY,
-            ..Default::default()
-        }
-    };
-    let bare = worm_frame(&gpu, &map, view, &[], &[], sky);
-    for body in [[60.0, 10.0, 4.0, 6.0], [60.0, 35.0, 4.0, 6.0]] {
-        let worm = worm_frame(&gpu, &map, view, &[], &[(body, 1)], sky);
-        let mut moved = Vec::new();
-        for y in (2..56).step_by(3) {
-            for x in (2..118).step_by(3) {
-                // More than 10 px from the worm's outline.
-                let (cx, cy) = (x as f32 + 0.5, y as f32 + 0.5);
-                let dx = (body[0] - cx).max(cx - body[0] - body[2]).max(0.0);
-                let dy = (body[1] - cy).max(cy - body[1] - body[3]).max(0.0);
-                let far = dx.hypot(dy) > 10.0;
-                if far && light_at(&gpu, &bare, x, y) != light_at(&gpu, &worm, x, y) {
-                    moved.push((x, y));
-                }
-            }
-        }
-        assert!(moved.is_empty(), "worm at {body:?} changed the light at {moved:?}");
-    }
-}
-
-/// The user's playtest (2026-10-20): a worm's short shadow shades the rock
-/// face under it but does not reach deep into the rock: from 2 px in, the
-/// soak takes the light beside the shadow.
-#[test]
-fn a_worm_shadow_stays_at_the_rock_face() {
-    let Some(gpu) = offscreen() else { return };
-    // A glowing sky over the top, open air, rock from y 40 down (outdoors).
-    let map = glowing_room(100, 60, |_, y| y >= 40, |_, y| y < 8);
-    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 60.0 };
-    let set = |l: &mut olr_look::LookFrame| {
-        l.light_soak = 8;
-        l.groups[0] = olr_look::FrameGroup {
-            cast: [2.0; 3],
-            own_colour: false,
-            self_scale: 1.0,
-            reach: f32::INFINITY,
-            ..Default::default()
-        };
-    };
-    let bare = worm_frame(&gpu, &map, view, &[], &[], set);
-    let worm = worm_frame(&gpu, &map, view, &[], &[([48.0, 34.0, 4.0, 6.0], 1)], set);
-    let (b, w) = (light_at(&gpu, &bare, 50, 40)[0], light_at(&gpu, &worm, 50, 40)[0]);
-    assert!(w < b - 0.02, "the face under the worm is shaded: {w} against {b}");
-    for y in 43..48 {
-        let (b, w) = (light_at(&gpu, &bare, 50, y)[0], light_at(&gpu, &worm, 50, y)[0]);
-        assert!(w > 0.9 * b, "{} px into the rock: {w} against {b}", y - 40);
-    }
 }
 
 /// Issue #10: ambient occlusion of `strength` percent over `reach` world pixels.

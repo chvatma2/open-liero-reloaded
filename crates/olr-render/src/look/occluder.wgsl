@@ -1,7 +1,7 @@
 // The occluder map (plan 15b): each living worm's body drawn at one texel
 // per world pixel over the light grid, each opaque texel its worm (index +
-// 1); 0 is no worm. The shadow pass, the glow light's emission and the
-// composite read it.
+// 1); 0 is no worm. No pass reads it (#53: worms take no part in the
+// light); #54's halo will.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(1) @binding(0) var tex: texture_2d<f32>;

@@ -96,13 +96,8 @@ pub(super) struct GiPipelines {
 }
 
 impl GiPipelines {
-    /// `occluders` is the occluder map's layout (plan 15b), the emission's
-    /// group 1; `heat` the heat look's (issue #39), its group 2.
-    pub(super) fn new(
-        device: &wgpu::Device,
-        occluders: &wgpu::BindGroupLayout,
-        heat: &wgpu::BindGroupLayout,
-    ) -> GiPipelines {
+    /// `heat` is the heat look's layout (issue #39), the emission's group 1.
+    pub(super) fn new(device: &wgpu::Device, heat: &wgpu::BindGroupLayout) -> GiPipelines {
         let frag = wgpu::ShaderStages::FRAGMENT;
         let layout = |label, entries: &[wgpu::BindGroupLayoutEntry]| {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries })
@@ -193,9 +188,9 @@ impl GiPipelines {
             dynamic_clear: dynamic("fs_disc_clear", &[(FORMAT, None), (DYNAMIC_REACH_FORMAT, None)]),
             emission: make_with(
                 "olr-render gi emission",
-                &format!("{}\n{}", super::heat::heat_reader(2), include_str!("../look/gi_emission.wgsl")),
+                &format!("{}\n{}", super::heat::heat_reader(1), include_str!("../look/gi_emission.wgsl")),
                 "fs_emission",
-                &[Some(&emission_layout), Some(occluders), Some(heat)],
+                &[Some(&emission_layout), Some(heat)],
                 &three,
             ),
             seed: make(
@@ -528,8 +523,8 @@ impl GiState {
     /// Encodes the frame's glow light: play's discs, emission, pyramid,
     /// cascades from the top down, fluence. With `casting` false (no group
     /// casts light and no disc glows) the fluence is only cleared.
-    /// `occluders` is the occluder map's bind group (plan 15b): living worms
-    /// block glow light; `heat` the heat look's (issue #39): hot pixels cast. `count` discs were last given to
+    /// `heat` is the heat look's bind group (issue #39): hot pixels cast; no
+    /// worm takes part (#53). `count` discs were last given to
     /// [`GiState::write_discs`] (plan 15c). Returns whether the history
     /// took a step (the renderer encodes it once a frame, however many
     /// views: issue #26).
@@ -538,7 +533,7 @@ impl GiState {
         encoder: &mut wgpu::CommandEncoder,
         pipes: &GiPipelines,
         casting: bool,
-        (occluders, heat): (&wgpu::BindGroup, &wgpu::BindGroup),
+        heat: &wgpu::BindGroup,
         count: u32,
         timer: Option<&Timer>,
     ) -> bool {
@@ -623,7 +618,7 @@ impl GiState {
         }
         let emission = Some((&pipes.emission, &self.emission_bind));
         let emitted = [&self.emission.0, &self.emission.1, &self.emission.2];
-        pass(encoder, PassGroup::Emission, &emitted, emission, &[occluders, heat]);
+        pass(encoder, PassGroup::Emission, &emitted, emission, &[heat]);
         let seed = Some((&pipes.seed, &self.seed_bind));
         pass(encoder, PassGroup::JumpFlood, &[&self.seeds[0]], seed, &[]);
         for (target, b) in &self.jfa {
