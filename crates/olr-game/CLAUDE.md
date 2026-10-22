@@ -4,7 +4,8 @@ The game binary (spec §8.6, §19 E10-E12, §21): a winit window, the 100 Hz
 fixed-tick loop, interpolated wgpu rendering with cosmetic entities, sound,
 input, an egui overlay and the menus (`olr-ui`). It plays the M5 sandbox
 (E11: the player and N idle targets on a level with a mod's first five
-weapons), a Deathmatch against bots (M6) and replays.
+weapons; the editors' Play and the command line's start, not the main
+menu since issue #33), a Deathmatch against bots (M6) and replays.
 
 ```
 cargo run --release -p olr-game                      # the menus
@@ -189,7 +190,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   video through `video::Video` and the paced window requests, a started
   game's upload). A
   start is loaded by `Shell::poll` after the frame that showed "Loading…";
-  a failure (a pack missing or broken: `setup::load_match`, `load`,
+  a failure (a pack missing or broken: `setup::load_match`,
   `load_replay`) returns to the menu with the reason (Review Focus 3).
   A replay file (a typed path too) is read by `setup::read_replay_file`:
   a regular file only (a FIFO never blocks), its header checked first, at

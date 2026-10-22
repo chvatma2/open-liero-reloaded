@@ -149,6 +149,8 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   bonuses`. `olr-cli` keeps them for tests. Also gone: Local Play's
   loading time slider, weapon preset and "Reset the match to OLX's
   settings".
+- The main menu's Sandbox: play Local Play against bots of the Idle
+  personality instead (`olr --mode sandbox` still starts it).
 - The Import screen; import OLX content with `olr-cli import --all` (it adds packs; `--prune` removes the others), and later in
   the editors.
 
