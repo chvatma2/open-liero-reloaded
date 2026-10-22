@@ -829,7 +829,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   Message}` is what the app does. The shell owns the host (`Shell::editor`):
   while it is open `App::frame` draws `olr_editor::ui::show` instead of the
   menus, `Shell::editor_frame` runs it (Play becomes `Launch::Edited`:
-  `setup::load_edited`, no replay, `Assets::edited`; Closed brings the
+  `setup::load_edited` of an `EditedPlay` with `PlayLevel::Edited` and
+  `PlayMod::Installed`, no replay, `Assets::edited`; Closed brings the
   Editor screen back with the content listed again), and the app's
   `editor::canvas::Canvas` (the bake's `ColorMap`, or the material view's
   at art scale 1) gets its uploads (`replace_rect`, then `update_terrain`;
@@ -942,11 +943,28 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   brings the Editor screen back; the window's close asks it first
   (`Shell::request_close`). `refresh_editor_packs` also fills
   `MenuData::set_editor_mods` (`files::editable_mods`, the mod
-  recoveries). Tests: `tests/mod_editor.rs` (a copy of Classic made,
+  recoveries). **Play** (issue #18; STATUS.md "Mod editor Play (issue
+  #18)"): `ModHost::set_play` gives the editor the catalog's levels and
+  the settings of `MOD_PLAY_FILE` (`mod-editor.ron`, `PlaySettings`;
+  without an installed level there, Local Play's), `ModOut::SavePlaySettings`
+  stores them (`Store::save_file`), and `ModOut::Play` is the shell's
+  `play_edited` of an `EditedPlay { level: PlayLevel::Installed, game_mod:
+  PlayMod::Edited(pack) }`: `setup::load_edited` checks the pack as a
+  save would (`olr_edit::pack::mod_pack`) and loads it with
+  `Content::load_mod_pack` (the session plays `Assets::m` alone). It runs
+  as the level editor's Play (`editing_play` counts either editor): the
+  app draws the match, not the mod editor, with the Stop button; Esc or
+  Stop (`stop_edited`, which answers `PlayEnded`), F5, a match over and
+  the window's close (the match ends first) as there; a Play that does
+  not load is the editor's error dialog ("The mod could not be played").
+  Tests: `tests/mod_editor.rs` (a copy of Classic made,
   edited, saved and opened again with Classic's originals, Classic
   untouched; a built-in Edit refused; a recovery copy written, offered
   by the next run, recovered, removed on Save and Close; the window's
-  close asking).
+  close asking; issue #18's
+  `play_runs_the_unsaved_mod_and_escape_comes_back` and
+  `closing_the_window_during_play_asks_first`) and `setup.rs`'s
+  `edited_play_runs_the_unsaved_mod_on_an_installed_level`.
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the
   `Default` loadout: every weapon at 100 %, issue #5; there is no

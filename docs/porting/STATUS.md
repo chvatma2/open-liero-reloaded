@@ -4482,8 +4482,48 @@ built:
   unsaved changes, at a quit that does not ask, and removed on Save and
   Close. A recovered mod opens unsaved in its own folder (one of the
   user's packs only).
-- **Not built** (the issue's non-goals): play from the editor, art,
-  sounds, the look fields, practice, a raw RON editor.
+- **Not built** (the issue's non-goals): play from the editor (issue
+  #18, below), art, sounds, the look fields, practice, a raw RON editor.
+
+## Mod editor Play (issue #18)
+
+No OLX counterpart. The mod editor's Play, as the level editor's (plan
+14c R3, R4); no simulation, Classic, MW, oracle or golden changes. As
+built:
+
+- **The mod as it is.** Play takes the editor's `Pack`, unsaved changes
+  included: `olr_edit::pack::mod_pack` writes its files in memory, checks
+  them as Save does (`pack::check`) and reads them with
+  `olr_pack::read_mod`; `Content::load_mod_pack` makes the `LoadedMod`
+  as `load_mod` makes an installed one (placeholders, the core pack's
+  game sounds). Nothing is written: the saved pack stays as it was. The
+  session plays only `Assets::m`, so nothing else changed.
+- **Refused with errors.** The editor checks first: a mod with errors
+  does not start, its problems list opens and the status says "Not
+  played"; the host's check again turns any remaining refusal into the
+  editor's error dialog ("The mod could not be played").
+- **One edited Play.** `setup::EditedPlay` now holds a `PlayLevel`
+  (`Edited`: the level editor's source; `Installed`: a pack id) and a
+  `PlayMod` (`Installed`: a pack id; `Edited`: the mod editor's pack).
+  The level editor's Play is `Edited` level and `Installed` mod, built
+  as before. The mod editor's is an `Installed` level and the `Edited`
+  mod: 0 bots the sandbox, else a Deathmatch with Local Play's
+  personality, rules and the `Default` loadout, as the level editor's;
+  on an installed level the human spawns at a free spot, as in any match
+  (the level's first spawn is the level editor's Play's alone). No replay
+  is saved.
+- **Play ▾** lists every installed level by name and 0 to 8 bots; the
+  choice is remembered in `<data>/mod-editor.ron` (`PlaySettings`),
+  first Local Play's level and one bot.
+- **Back where it was.** During the match the editor is not drawn but
+  kept (item, node, undo history, unsaved mark; egui keeps its scroll);
+  Escape or Stop ends it (`Shell::stop_edited`), F5 restarts it, a match
+  over ends it when its results would show, and closing the window ends
+  it before asking about unsaved changes. Recovery copies keep being
+  written meanwhile.
+- **Not built** (the issue's non-goals): practice setup (choosing the
+  weapons; the sandbox has the mod's first five, a Deathmatch the
+  random ones of any edited Play), online play of an unsaved mod.
 
 ## Kept OLX quirks
 
