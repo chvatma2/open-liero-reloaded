@@ -91,15 +91,20 @@ fn explosions(events: &[(Event, Terrain)]) -> Vec<(f32, i32)> {
         .collect()
 }
 
-/// The explosion entities' projectiles (issue #15), in order.
+/// The explosion entities' projectiles (issue #15), in order; the
+/// explosion events name the same (issue #42).
 fn exploded(events: &[(Event, Terrain)]) -> Vec<i32> {
-    events
-        .iter()
-        .filter_map(|(e, _)| match e.kind {
-            EventKind::SpawnCosmetic { kind: CosmeticKind::Explosion { proj, .. }, .. } => Some(proj),
-            _ => None,
-        })
-        .collect()
+    let of = |f: fn(&EventKind) -> Option<i32>| events.iter().filter_map(|(e, _)| f(&e.kind)).collect();
+    let entities: Vec<i32> = of(|k| match *k {
+        EventKind::SpawnCosmetic { kind: CosmeticKind::Explosion { proj, .. }, .. } => Some(proj),
+        _ => None,
+    });
+    let reported: Vec<i32> = of(|k| match *k {
+        EventKind::Explosion { proj, .. } => Some(proj),
+        _ => None,
+    });
+    assert_eq!(entities, reported, "the events name the entities' projectiles");
+    entities
 }
 
 #[test]

@@ -158,8 +158,11 @@ pub enum EventKind {
     /// [`EventKind::TerrainEdit`]). `shake` is OLX's viewport shake
     /// argument: the projectile's largest `Shake` among its explode actions,
     /// 0 for a `BounceExplode`, 5 for a bonus blown up by an explosion or a
-    /// beam (`CClient_Game.cpp:268`, `:1000`).
-    Explosion { pos: Vec2, damage: f32, shake: i32 },
+    /// beam (`CClient_Game.cpp:268`, `:1000`). `proj` is the exploded
+    /// projectile's `SimMod` index, -1 for none, as
+    /// [`CosmeticKind::Explosion`]'s: presentation only (issue #42: the
+    /// projectile look's explosion heat), in no checksum.
+    Explosion { pos: Vec2, damage: f32, shake: i32, proj: i32 },
     /// A cosmetic entity.
     SpawnCosmetic { kind: CosmeticKind, pos: Vec2, vel: Vec2 },
     /// Worm `worm` fired `weapon` (a weapon id): the client processed its

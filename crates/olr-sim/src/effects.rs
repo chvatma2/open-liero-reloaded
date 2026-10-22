@@ -164,8 +164,8 @@ impl<'a> ProjCtx<'a> {
 /// hit test) is within 5 px: no falloff. The viewport shake (`shake`) is
 /// cosmetic. Reported as an [`EventKind::Explosion`], the `ENT_EXPLOSION` of size
 /// `(int)damage` (8 up to damage 5) and the hole's terrain edit. `proj`
-/// (the projectile's `SimMod` index, -1 for none) only tags the cosmetic
-/// entity; a bonus it blows up explodes with none.
+/// (the projectile's `SimMod` index, -1 for none) only tags the event and
+/// the cosmetic entity; a bonus it blows up explodes with none.
 pub(crate) fn explosion(
     ctx: &mut Blast,
     time: AbsTime,
@@ -206,7 +206,7 @@ pub(crate) fn explosion(
         ctx.draws.particles(2, pos, probe, |v| Vec2::new(v.x * 30.0, v.y * 10.0));
     }
     let size = if damage > 5.0 { c_int(damage) } else { 8 };
-    ctx.draws.events.push(EventKind::Explosion { pos, damage, shake });
+    ctx.draws.events.push(EventKind::Explosion { pos, damage, shake, proj });
     ctx.draws.entity(CosmeticKind::Explosion { size, proj }, pos, Vec2::ZERO);
     let d = carve_at(ctx.terrain, ctx.holes, &mut ctx.draws.events, TerrainOp::Carve, c_int(damage), pos);
     increment_dirt_count(ctx.worms, owner, d);

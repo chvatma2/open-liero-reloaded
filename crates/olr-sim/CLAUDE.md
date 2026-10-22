@@ -170,7 +170,8 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `CosmeticKind::Explosion { size, proj }` (issue #15: the exploded
   projectile's `SimMod` index from its effects, timer or `Bounce`
   explosion, which `effects::explosion` takes only for it; -1 for a bonus
-  blown up, a beam and an explosive trail; in no checksum),
+  blown up, a beam and an explosive trail; in no checksum; issue #42:
+  `Explosion.proj`, the same, for the projectile look's explosion heat),
   `Dirt { probe }` (the pixel the colour comes from), `Damage.dealt`,
   `LaserSight { worm, len }` (OLX's trace length), `Beam { worm, colour }`,
   `World::physics_time()`. `Message` comes from a mode's command,

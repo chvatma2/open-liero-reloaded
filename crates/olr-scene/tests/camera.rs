@@ -123,7 +123,7 @@ fn shake_for_shakes_for_explosions_in_view() {
     let explosion = |x: f32, shake| Event {
         substep: 0,
         death: false,
-        kind: EventKind::Explosion { pos: Vec2::new(x, 50.0), damage: 1.0, shake },
+        kind: EventKind::Explosion { pos: Vec2::new(x, 50.0), damage: 1.0, shake, proj: -1 },
     };
     let mut c = Camera::new(VP, 0, 7);
     c.process(Some(Vec2::new(0.0, 0.0)), true, MAP, t);
