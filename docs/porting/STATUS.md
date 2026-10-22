@@ -3817,13 +3817,27 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
   since issue #7 Castle Strike Reloaded, `content/reloaded/olr-level-castlestrike-reloaded`).
   The user found explosions perhaps a bit bright: a later milestone, to
   verify by playthrough.
-- **Not measured yet:** the cascades' cost at a cell a world pixel, the
-  bounce copy and the bloom passes, on Windows at 1080p with the user's
+- **Not measured yet:** the cascades' cost at a cell a world pixel and
+  the bloom passes, on Windows at 1080p with the user's
   consent. Issue #34 built the tools (`docs/perf/graphics-tools.md`):
   `olr-cli gpu-bench` prints each pass group's GPU time, `bench-quick`
   draws a lit Castle Strike frame, and `fixtures/render/lit-hashes.ron`
   holds a lit match's exact bytes; the Windows table is deferred
   (`docs/deferred-verification.md`).
+- **Issue #35, picture-identical optimisations** (each checked against
+  `lit-hashes.ron`): no glow-light history copy (the cascades read the
+  fluence before `fs_fluence` rewrites it), the flood's seeds `Rg16Uint`
+  and the reaches `Rg16Float`/`R16Float`, the disc layer zeroed only under
+  last frame's discs, the soak's worm search only near the worms' boxes,
+  the terrain uploaded by dirty tiles of 16 world pixels (stains colour
+  only), no across blur or soak at 0, and only the frame's groups packed.
+  On lavapipe the lit Castle Strike frame went 188.5 → 174.6 ms and 37 → 36
+  passes, a tick's terrain uploads 87 % fewer instructions. No deviation
+  from OLX (the renderer is OLR's own). The bigger ideas, which change
+  the picture (static/dynamic split, fewer flood passes, cached merge
+  visibility, the light per tick, a smaller budget), are weighed in
+  `docs/perf/2026-10-graphics-candidates.md`; the Windows before/after
+  table is deferred (`docs/deferred-verification.md`).
 - **Follow-ups** (the final review, 2026-10-20; open):
   - *Important, the user's call:* thin walls leak at cells of 2+ world
     pixels (levels over 2^20 px, or cropped by the device): raise
