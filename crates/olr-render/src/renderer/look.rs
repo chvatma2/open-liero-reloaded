@@ -68,6 +68,39 @@ pub(super) struct LookTextures {
     pub(super) gi_occluder_view: wgpu::TextureView,
     /// [`Self::gi_occluders`] for the emission ([`LookState::occluder_layout`]).
     pub(super) gi_occluder_bind: wgpu::BindGroup,
+    /// The level's heat (issue #39), only when its materials heat.
+    pub(super) heat: Option<super::heat::HeatTextures>,
+}
+
+impl LookTextures {
+    /// The heat look's bind group: the level's, or `none`'s (off).
+    pub(super) fn heat_bind<'a>(&'a self, none: &'a wgpu::BindGroup) -> &'a wgpu::BindGroup {
+        self.heat.as_ref().map_or(none, |h| &h.look_bind)
+    }
+
+    /// Makes the level's heat from `surface` (its maps and materials,
+    /// [`super::Surface`]) when they are the level's size, else drops it.
+    pub(super) fn set_heat(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &super::uploads::Queue,
+        pipes: &super::heat::HeatPipelines,
+        surface: Option<&super::Surface>,
+    ) {
+        self.heat = surface.filter(|s| s.world == self.level).map(|s| {
+            let size = (self.solid.width(), self.solid.height());
+            super::heat::HeatTextures::new(
+                device,
+                queue,
+                pipes,
+                s.world,
+                size,
+                &s.texels,
+                s.tables.clone(),
+                &self.solid_view,
+            )
+        });
+    }
 }
 
 /// The light grid's format.
@@ -192,6 +225,8 @@ pub(super) struct LookState {
     /// (issue #11).
     pub(super) backing_pipeline: wgpu::RenderPipeline,
     pub(super) distant_pipeline: wgpu::RenderPipeline,
+    /// Heat's passes and its look's layout (issue #39).
+    pub(super) heat: super::heat::HeatPipelines,
 }
 
 const UINT_TEXTURE: wgpu::BindingType = wgpu::BindingType::Texture {
@@ -350,7 +385,13 @@ impl LookState {
                 entry(3, frag, UINT_TEXTURE),
             ],
         });
-        let source = format!("{}\n{}", common(), include_str!("../look/world_lit.wgsl"));
+        let heat = super::heat::HeatPipelines::new(device);
+        let source = format!(
+            "{}\n{}\n{}",
+            common(),
+            super::heat::heat_reader(3),
+            include_str!("../look/world_lit.wgsl")
+        );
         let attributes =
             wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4, 2 => Float32x4, 3 => Float32x3];
         let quads = || wgpu::VertexBufferLayout {
@@ -365,7 +406,7 @@ impl LookState {
             "olr-render terrain lit",
             &source,
             ("vs_world", "fs_terrain_lit"),
-            &[Some(globals_layout), Some(texture_layout), Some(&layout)],
+            &[Some(globals_layout), Some(texture_layout), Some(&layout), Some(&heat.look_layout)],
             &[Some(quads())],
             &targets,
             wgpu::PrimitiveTopology::TriangleStrip,
@@ -385,7 +426,7 @@ impl LookState {
             "olr-render terrain backing lit",
             &source,
             ("vs_world", "fs_terrain_backing_lit"),
-            &[Some(globals_layout), Some(texture_layout), Some(&layout)],
+            &[Some(globals_layout), Some(texture_layout), Some(&layout), Some(&heat.look_layout)],
             &[Some(quads())],
             &targets,
             wgpu::PrimitiveTopology::TriangleStrip,
@@ -458,7 +499,7 @@ impl LookState {
         // The across soak also writes the rows for the deeper rock.
         let soak_h_pipeline = soak("fs_soak_h", &[(LIGHT_FORMAT, None), (LIGHT_FORMAT, None)]);
         let soak_v_pipeline = soak("fs_soak_v", &[(LIGHT_FORMAT, None)]);
-        let gi = super::gi::GiPipelines::new(device, &occluder_layout);
+        let gi = super::gi::GiPipelines::new(device, &occluder_layout, &heat.look_layout);
         let emitter_floats = olr_look::MAX_EMITTERS * super::gi::EMITTER_FLOATS;
         let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render composite"),
@@ -550,6 +591,7 @@ impl LookState {
             bloom: true,
             backing_pipeline,
             distant_pipeline,
+            heat,
         }
     }
 
@@ -717,7 +759,8 @@ impl LookState {
     }
 
     /// New textures for `map` (whose colour is `terrain`), uploaded whole
-    /// (zeros where it has no glow), and its glow light.
+    /// (zeros where it has no glow), its glow light and, with `surface`
+    /// of its size, its heat (issue #39).
     pub(super) fn upload(
         &mut self,
         device: &wgpu::Device,
@@ -725,6 +768,7 @@ impl LookState {
         map: &ColorMap,
         terrain: &wgpu::Texture,
         max_dim: u32,
+        surface: Option<&super::Surface>,
     ) {
         let level = (map.material().width(), map.material().height());
         let sizes = look_texture_sizes(level, map.art_scale(), max_dim);
@@ -804,7 +848,10 @@ impl LookState {
             gi_occluders,
             gi_occluder_view,
             gi_occluder_bind,
+            heat: None,
         };
+        let mut t = t;
+        t.set_heat(device, queue, &self.heat, surface);
         let whole = Rect { x: 0, y: 0, w: map.width(), h: map.height() };
         if map.glow().is_none() {
             let zeros = vec![0u8; map.width() as usize * map.height() as usize];

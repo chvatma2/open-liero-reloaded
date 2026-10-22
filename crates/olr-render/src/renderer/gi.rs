@@ -97,8 +97,12 @@ pub(super) struct GiPipelines {
 
 impl GiPipelines {
     /// `occluders` is the occluder map's layout (plan 15b), the emission's
-    /// group 1.
-    pub(super) fn new(device: &wgpu::Device, occluders: &wgpu::BindGroupLayout) -> GiPipelines {
+    /// group 1; `heat` the heat look's (issue #39), its group 2.
+    pub(super) fn new(
+        device: &wgpu::Device,
+        occluders: &wgpu::BindGroupLayout,
+        heat: &wgpu::BindGroupLayout,
+    ) -> GiPipelines {
         let frag = wgpu::ShaderStages::FRAGMENT;
         let layout = |label, entries: &[wgpu::BindGroupLayoutEntry]| {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor { label: Some(label), entries })
@@ -189,9 +193,9 @@ impl GiPipelines {
             dynamic_clear: dynamic("fs_disc_clear", &[(FORMAT, None), (DYNAMIC_REACH_FORMAT, None)]),
             emission: make_with(
                 "olr-render gi emission",
-                include_str!("../look/gi_emission.wgsl"),
+                &format!("{}\n{}", super::heat::heat_reader(2), include_str!("../look/gi_emission.wgsl")),
                 "fs_emission",
-                &[Some(&emission_layout), Some(occluders)],
+                &[Some(&emission_layout), Some(occluders), Some(heat)],
                 &three,
             ),
             seed: make(
@@ -525,7 +529,7 @@ impl GiState {
     /// cascades from the top down, fluence. With `casting` false (no group
     /// casts light and no disc glows) the fluence is only cleared.
     /// `occluders` is the occluder map's bind group (plan 15b): living worms
-    /// block glow light. `count` discs were last given to
+    /// block glow light; `heat` the heat look's (issue #39): hot pixels cast. `count` discs were last given to
     /// [`GiState::write_discs`] (plan 15c). Returns whether the history
     /// took a step (the renderer encodes it once a frame, however many
     /// views: issue #26).
@@ -534,7 +538,7 @@ impl GiState {
         encoder: &mut wgpu::CommandEncoder,
         pipes: &GiPipelines,
         casting: bool,
-        occluders: &wgpu::BindGroup,
+        (occluders, heat): (&wgpu::BindGroup, &wgpu::BindGroup),
         count: u32,
         timer: Option<&Timer>,
     ) -> bool {
@@ -544,7 +548,7 @@ impl GiState {
                     group: PassGroup,
                     targets: &[&wgpu::TextureView],
                     work: Option<(&wgpu::RenderPipeline, &wgpu::BindGroup)>,
-                    group1: Option<&wgpu::BindGroup>| {
+                    more: &[&wgpu::BindGroup]| {
             // At most three targets, kept on the stack (issue #35: no
             // allocation a pass).
             let attachments: [Option<wgpu::RenderPassColorAttachment>; 3] = std::array::from_fn(|i| {
@@ -569,19 +573,19 @@ impl GiState {
             if let Some((pipeline, bind)) = work {
                 p.set_pipeline(pipeline);
                 p.set_bind_group(0, bind, &[]);
-                if let Some(g) = group1 {
-                    p.set_bind_group(1, g, &[]);
+                for (i, g) in more.iter().enumerate() {
+                    p.set_bind_group(1 + i as u32, *g, &[]);
                 }
                 p.draw(0..3, 0..1);
             }
         };
         if !casting {
-            pass(encoder, PassGroup::Fluence, &[&self.fluence], None, None);
+            pass(encoder, PassGroup::Fluence, &[&self.fluence], None, &[]);
             self.reset();
             return false;
         }
         if self.fresh.replace(false) {
-            pass(encoder, PassGroup::Fluence, &[&self.fluence], None, None);
+            pass(encoder, PassGroup::Fluence, &[&self.fluence], None, &[]);
         }
         // The discs (issue #35): the quads last drawn back to zero, then
         // this frame's added; no pass when neither has any.
@@ -619,19 +623,19 @@ impl GiState {
         }
         let emission = Some((&pipes.emission, &self.emission_bind));
         let emitted = [&self.emission.0, &self.emission.1, &self.emission.2];
-        pass(encoder, PassGroup::Emission, &emitted, emission, Some(occluders));
+        pass(encoder, PassGroup::Emission, &emitted, emission, &[occluders, heat]);
         let seed = Some((&pipes.seed, &self.seed_bind));
-        pass(encoder, PassGroup::JumpFlood, &[&self.seeds[0]], seed, None);
+        pass(encoder, PassGroup::JumpFlood, &[&self.seeds[0]], seed, &[]);
         for (target, b) in &self.jfa {
-            pass(encoder, PassGroup::JumpFlood, &[&self.seeds[*target]], Some((&pipes.jfa, b)), None);
+            pass(encoder, PassGroup::JumpFlood, &[&self.seeds[*target]], Some((&pipes.jfa, b)), &[]);
         }
         for i in (0..self.cascades.len()).rev() {
             let cascade = Some((&pipes.cascade, &self.cascade_binds[i]));
-            pass(encoder, PassGroup::Cascades, &[&self.cascades[i]], cascade, None);
+            pass(encoder, PassGroup::Cascades, &[&self.cascades[i]], cascade, &[]);
         }
         // The next frame's bounce reads this frame's light, kept here.
         let fluence = Some((&pipes.fluence, &self.fluence_bind));
-        pass(encoder, PassGroup::Fluence, &[&self.fluence], fluence, None);
+        pass(encoder, PassGroup::Fluence, &[&self.fluence], fluence, &[]);
         true
     }
 

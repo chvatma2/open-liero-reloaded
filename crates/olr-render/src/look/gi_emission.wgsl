@@ -66,6 +66,13 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
                 em += colour * group.light.rgb * g * region_flicker(group.flicker, region);
                 reach = max(reach, info.x);
             }
+            // A hot pixel casts its ramp's colour by its glow and its
+            // material's light (issue #39).
+            let heat = heat_at(w);
+            if heat.colour.a > 0.0 && heat.light > 0.0 {
+                em += to_linear(heat.colour.rgb) * heat.colour.a * heat.light * HEAT_CAST;
+                reach = max(reach, HEAT_REACH);
+            }
         }
     }
     var out: GiOut;

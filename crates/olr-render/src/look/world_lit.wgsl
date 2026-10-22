@@ -1,6 +1,7 @@
 // The world pass with a look (plan 15a Task 9): the same quads as
 // world.wgsl into two targets, the albedo and its shade (self-light,
-// marker), blended alike. The terrain's self-light is its glow.
+// marker), blended alike. The terrain's self-light is its glow, or its
+// heat's (issue #39: group 3, `heat_reader.wgsl`).
 
 struct Globals {
     target_size: vec2<f32>,
@@ -90,9 +91,17 @@ fn terrain_lit(in: QuadOut, backing: bool) -> LitOut {
         let region = textureLoad(regions_tex, clamp(w, vec2<i32>(0), vec2<i32>(textureDimensions(regions_tex)) - vec2<i32>(1)), 0).r;
         scale = look.groups[v - 1u].light.w * region_flicker(look.groups[v - 1u].flicker, region);
     }
+    var self_light = clamp(glow * scale, 0.0, 1.0);
+    // A hot pixel (issue #39) shows its material's ramp colour over its
+    // art by its glow, and glows that much whatever the darkness.
+    let heat = heat_at(t / s);
+    if heat.colour.a > 0.0 {
+        c = vec4<f32>(mix(c.rgb, heat.colour.rgb, heat.colour.a), c.a);
+        self_light = max(self_light, heat.colour.a);
+    }
     var out: LitOut;
     out.colour = c;
-    out.shade = vec4<f32>(clamp(glow * scale, 0.0, 1.0), 0.0, 0.0, 1.0);
+    out.shade = vec4<f32>(self_light, 0.0, 0.0, 1.0);
     return out;
 }
 

@@ -10,6 +10,7 @@ use crate::frame::Instance;
 use crate::upscale::UpscaleFilter;
 
 mod gi;
+mod heat;
 mod look;
 mod pass;
 mod probe;
@@ -18,6 +19,10 @@ mod timing;
 mod uploads;
 
 pub use gi::{GI_CELL_BUDGET, gi_cell};
+pub use heat::{
+    HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, MAX_HEAT_AMOUNT, MAX_HEAT_DEPOSITS, MAX_HEAT_RADIUS,
+    MAX_HEAT_STEPS,
+};
 pub use look::WORM_SHADOW;
 pub use pass::ViewDraw;
 pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};
@@ -63,6 +68,18 @@ struct Distant {
     /// Its size in art pixels.
     art: (u32, u32),
     layer: olr_data::level::DistantLayer,
+}
+
+/// A level's surface materials as the heat reads them (issue #39): kept
+/// from [`Renderer::set_surface`] so each whole terrain upload makes the
+/// heat afresh.
+struct Surface {
+    /// The maps' size, world pixels.
+    world: (u32, u32),
+    /// Front and back, one `Rg8Uint` texel a world pixel.
+    texels: Vec<u8>,
+    /// The materials' table, colour ramps and bounds.
+    tables: (Vec<f32>, Vec<u8>, heat::Bounds),
 }
 
 /// One view's world-pass target and the upscale pass's view of it (issue
@@ -134,6 +151,8 @@ pub struct Renderer {
     /// The glow light's history steps so far (tests: one a lit frame,
     /// however many views it draws).
     glow_light_steps: u64,
+    /// The level's surface materials, when any heats (issue #39).
+    surface: Option<Surface>,
 }
 
 fn texture(
@@ -339,6 +358,7 @@ impl Renderer {
             probe: None,
             look: None,
             glow_light_steps: 0,
+            surface: None,
         }
     }
 
@@ -531,7 +551,7 @@ impl Renderer {
         });
         self.write_terrain(map, olr_terrain::Rect { x: 0, y: 0, w: map.width(), h: map.height() });
         if let (Some(look), Some(t)) = (self.look.as_mut(), &self.terrain) {
-            look.upload(&self.device, &self.queue, map, &t.texture, max);
+            look.upload(&self.device, &self.queue, map, &t.texture, max, self.surface.as_ref());
             // The world targets' light passes bind the new level's glow light.
             self.targets.clear();
         }

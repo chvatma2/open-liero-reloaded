@@ -220,6 +220,22 @@ impl Renderer {
         let stamp =
             |group, begin: Option<u32>, end: Option<u32>| timer.and_then(|t| t.pass(group, begin, end));
         let group = |g| stamp(g, None, None);
+        // Heat (issue #39), once a frame whatever the views, before the
+        // world pass reads it: the deposits and steps the match time asked
+        // for since the last frame; nothing while nothing is hot. The first
+        // heat pass then starts the frame's slot 0.
+        let mut heat_first = false;
+        if let Some(state) = self.look.as_mut().filter(|_| lit)
+            && let Some(h) = state.textures.as_mut().and_then(|t| t.heat.as_mut())
+        {
+            h.prepare(&self.queue);
+            heat_first = !h.sim.ops.is_empty();
+            h.encode(&mut encoder, &state.heat, |first| {
+                stamp(PassGroup::Heat, (first && !views.is_empty()).then_some(0), None)
+            });
+        }
+        let heat_on = lit
+            && self.look.as_ref().and_then(|l| l.textures.as_ref()?.heat.as_ref()).is_some_and(|h| h.on());
         let views_drawn = self.plans.iter().zip(&self.targets);
         for (i, (plan, world)) in views_drawn.clone().enumerate() {
             let lit = look.and(self.look.as_ref()).zip(world.shade.as_ref());
@@ -230,13 +246,13 @@ impl Renderer {
                     "olr-render world lit",
                     &world.view,
                     shade,
-                    stamp(PassGroup::World, (i == 0).then_some(0), None),
+                    stamp(PassGroup::World, (i == 0 && !heat_first).then_some(0), None),
                 ),
                 None => begin(
                     &mut encoder,
                     "olr-render world",
                     &world.view,
-                    stamp(PassGroup::World, (i == 0).then_some(0), None),
+                    stamp(PassGroup::World, (i == 0 && !heat_first).then_some(0), None),
                 ),
             };
             pass.set_bind_group(0, &world.globals_bind, &[]);
@@ -255,16 +271,19 @@ impl Renderer {
             match (lit, &self.terrain) {
                 (Some((state, _)), Some(t)) => {
                     if let Some(tex) = &state.textures {
+                        let heat = tex.heat_bind(&state.heat.none);
                         if t.see_through {
                             pass.set_pipeline(&state.backing_pipeline);
                             pass.set_bind_group(1, &t.bind, &[]);
                             pass.set_bind_group(2, &tex.terrain_bind, &[]);
+                            pass.set_bind_group(3, heat, &[]);
                             pass.draw(0..4, quad.clone());
                             distant(&mut pass, &state.distant_pipeline);
                         }
                         pass.set_pipeline(&state.terrain_pipeline);
                         pass.set_bind_group(1, &t.bind, &[]);
                         pass.set_bind_group(2, &tex.terrain_bind, &[]);
+                        pass.set_bind_group(3, heat, &[]);
                         pass.draw(0..4, quad);
                     }
                 }
@@ -321,9 +340,11 @@ impl Renderer {
                     copy_occluders(&mut encoder, &lt.occluders, &plan.frame, &tex.gi_occluders);
                 }
             }
-            let casting = !look.groups.is_empty() || state.emitter_count > 0;
+            // A hot pixel casts too (issue #39).
+            let casting = !look.groups.is_empty() || state.emitter_count > 0 || heat_on;
             let discs = state.emitter_count;
-            if tex.gi.encode(&mut encoder, &state.gi, casting, &tex.gi_occluder_bind, discs, timer) {
+            let binds = (&tex.gi_occluder_bind, tex.heat_bind(&state.heat.none));
+            if tex.gi.encode(&mut encoder, &state.gi, casting, binds, discs, timer) {
                 self.glow_light_steps += 1;
             }
         }

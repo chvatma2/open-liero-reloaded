@@ -7,6 +7,9 @@ use olr_render::{Offscreen, OffscreenOptions, Probe, RenderSettings, Renderer, U
 use olr_scene::{AtlasId, AtlasImage, DrawList, Item, Layer, Line, Rect, Sprite, View};
 use olr_terrain::{ColorEdit, ColorMap, Stamp, Terrain, ThemeArt};
 
+#[path = "gpu/heat.rs"]
+mod heat;
+
 fn offscreen() -> Option<Offscreen> {
     if std::env::var_os("OLR_GPU_TESTS").is_none() {
         eprintln!("OLR_GPU_TESTS not set (`cargo xtask full` sets it); skipping");

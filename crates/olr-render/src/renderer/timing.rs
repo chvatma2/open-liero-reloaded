@@ -28,6 +28,9 @@ pub(crate) const QUERIES: u32 = PASS_BASE + PASS_SLOTS;
 /// GPU runs them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum PassGroup {
+    /// Heat's deposits, steps and zeroes (issue #39; only while anything
+    /// is hot), before the world pass reads it.
+    Heat,
     /// The world pass (the albedo, and lit the shade) and the occluder map.
     World,
     /// The glow light's inputs: its occluder map, play's discs, the emission.
@@ -55,11 +58,12 @@ pub enum PassGroup {
 }
 
 /// How many [`PassGroup`]s there are.
-pub const PASS_GROUPS: usize = 12;
+pub const PASS_GROUPS: usize = 13;
 
 impl PassGroup {
     /// Every group, in the GPU's order ([`GpuTimes::passes`]' indices).
     pub const ALL: [PassGroup; PASS_GROUPS] = [
+        PassGroup::Heat,
         PassGroup::World,
         PassGroup::Emission,
         PassGroup::JumpFlood,
@@ -77,6 +81,7 @@ impl PassGroup {
     /// Its name in `gpu-bench`'s table.
     pub fn name(self) -> &'static str {
         match self {
+            PassGroup::Heat => "heat",
             PassGroup::World => "world",
             PassGroup::Emission => "emission",
             PassGroup::JumpFlood => "jump flood",
