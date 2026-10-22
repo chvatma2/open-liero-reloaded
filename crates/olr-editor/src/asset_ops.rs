@@ -5,9 +5,12 @@
 
 use std::sync::Arc;
 
-use olr_edit::asset::{Asset, LevelPieces, PieceRef, cut_rect, from_elements, piece_name, with_groups};
+use olr_edit::asset::{
+    Asset, LevelPieces, PieceRef, cut_rect, from_elements, land_surfaces, piece_name, with_groups,
+    with_materials,
+};
 use olr_edit::compose::Rect;
-use olr_format::levels::ElementKind;
+use olr_format::levels::{ElementKind, surface_back_file, surface_file};
 
 use crate::document::{DocError, Document};
 
@@ -55,6 +58,15 @@ impl Document {
                     .glow_masks
                     .get(&i.element.id)
                     .filter(|_| i.element.glow.as_ref().is_some_and(|g| g.mask)),
+                // Its painted surface maps go into an asset (issue #38).
+                surface_map: self
+                    .surface_maps
+                    .get(&surface_file(&i.element.id))
+                    .filter(|_| i.element.surface_map),
+                back_surface_map: self
+                    .surface_maps
+                    .get(&surface_back_file(&i.element.id))
+                    .filter(|_| i.element.back_surface_map),
             })
             .collect();
         LevelPieces {
@@ -83,14 +95,23 @@ impl Document {
     /// #9): its glow groups first (`olr_edit::asset::with_groups`: a group
     /// the level has is joined, its settings kept; a missing one added with
     /// the asset's; a level without a look gets the default one, and the
-    /// status bar says so), then each piece on top as a paste lands it (new
-    /// ids and names, resampled to the level's art scale, masks kept). A
+    /// status bar says so) and its surface materials (issue #38,
+    /// `with_materials`: the same), then each piece on top as a paste lands
+    /// it (new ids and names, resampled to the level's art scale, masks
+    /// kept), with its surfaces and painted maps (`land_surfaces`). A
     /// refusal undoes what it did.
     pub fn place_asset(&mut self, asset: &Asset, at: (i32, i32)) -> Result<Placed, DocError> {
         let change = with_groups(self.level.look.as_ref(), &asset.groups);
+        let look = if change.changes() { Some(&change.look) } else { self.level.look.as_ref() };
+        let materials = with_materials(look, &asset.materials);
         let mut edits = Vec::new();
-        if change.changes() {
-            for edit in self.look_change(Some(change.look.clone()))? {
+        let look = if materials.changes() {
+            Some(&materials.look)
+        } else {
+            change.changes().then_some(&change.look)
+        };
+        if let Some(look) = look {
+            for edit in self.look_change(Some(look.clone()))? {
                 self.apply(&edit, true);
                 edits.push(edit);
             }
@@ -105,6 +126,7 @@ impl Document {
             match done {
                 Ok((edit, id)) => {
                     edits.push(edit);
+                    edits.extend(self.land_surfaces(piece, &id, &materials, &asset.materials));
                     ids.push(id);
                 }
                 Err(e) => {
@@ -115,5 +137,33 @@ impl Document {
         }
         let note = change.added_look.then(|| ADDED_LIGHTING.to_string());
         Ok(Placed { edits, ids, note })
+    }
+
+    /// Gives landed element `id` the surface materials of asset piece
+    /// `piece` (`olr_edit::asset::land_surfaces`): its painted maps, then
+    /// its surfaces; their edits (applied).
+    fn land_surfaces(
+        &mut self,
+        piece: &olr_edit::asset::Piece,
+        id: &str,
+        change: &olr_edit::asset::MaterialChange,
+        materials: &[olr_format::materials::MaterialSource],
+    ) -> Vec<Edit> {
+        let Some(index) = self.index_of(id) else { return Vec::new() };
+        let before = self.items[index].element.clone();
+        let mut after = before.clone();
+        let (front, back) = land_surfaces(piece.as_ref(), &mut after, change, materials, self.level.size);
+        let mut edits = Vec::new();
+        for (file, m) in [(surface_file(id), front), (surface_back_file(id), back)] {
+            if let Some(m) = m {
+                let edit = Edit::SurfaceMap { id: id.into(), file, before: None, after: Some(m) };
+                self.apply(&edit, true);
+                edits.push(edit);
+            }
+        }
+        if after != before {
+            edits.push(self.change(Edit::Element { index, before, after }).edit);
+        }
+        edits
     }
 }

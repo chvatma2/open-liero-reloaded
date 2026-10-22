@@ -58,6 +58,11 @@ pub enum Property {
     /// #11). Made distant, it moves to the top of the distant layers; made
     /// near again, to just above them.
     Distant(Option<u8>),
+    /// Its pixels' surface material, the id of one of the look's
+    /// materials, or none (issue #38).
+    Surface(Option<String>),
+    /// Its back art's surface material (an element with back art only).
+    BackSurface(Option<String>),
 }
 
 fn level(pack: &Pack) -> Result<&LevelSource, ElementError> {
@@ -391,6 +396,8 @@ fn field(p: &Property) -> &'static str {
         Property::Glow(_) => "glow",
         Property::Clear(_) => "clear",
         Property::Distant(_) => "distant",
+        Property::Surface(_) => "surface",
+        Property::BackSurface(_) => "back_surface",
     }
 }
 
@@ -414,6 +421,9 @@ pub fn set_all(pack: &mut Pack, id: &str, properties: &[Property]) -> Result<(),
                 "glow: no glow group {:?} in level.ron's look (add it first)",
                 g.group
             )));
+        }
+        if let Property::Surface(Some(m)) | Property::BackSurface(Some(m)) = p {
+            material_value(l, m).map_err(|e| ElementError::BadValue(format!("{}: {e}", field(p))))?;
         }
     }
     let s = l.art_scale;
@@ -482,6 +492,11 @@ fn apply(
                 return Err(wrong("an image or drawn element (clear)"));
             }
             Property::Clear(c) => e.clear = c,
+            Property::Surface(m) => e.surface = m,
+            Property::BackSurface(_) if !e.has_back_art() => {
+                return Err(wrong("an element with back art (a drawn layer with back art, a raster)"));
+            }
+            Property::BackSurface(m) => e.back_surface = m,
             Property::Distant(d) => {
                 let was = e.distant.is_some();
                 e.distant = d;
@@ -639,6 +654,206 @@ pub fn glow_colour(
         src.files.insert(file, image_io::encode_grey(aw, ah, &mask));
         src.composition.elements[i].glow = Some(ElementGlow { mask: true, ..glow });
         Ok(())
+    })
+}
+
+/// The map value naming material `id` of `level`'s look (1 + its index).
+fn material_value(level: &LevelSource, id: &str) -> Result<u8, String> {
+    level
+        .look
+        .iter()
+        .flat_map(|l| l.materials.iter())
+        .position(|m| m.id == id)
+        .and_then(|i| u8::try_from(i + 1).ok())
+        .ok_or_else(|| format!("no material {id:?} in level.ron's look (add it first)"))
+}
+
+/// Element `id` (unlocked, not distant; `back`: with back art) of `src`
+/// and its painted surface map file (`back`: its back art's).
+fn surface_target(src: &CompositionSource, id: &str, back: bool) -> Result<(usize, String), ElementError> {
+    let i = unlocked(src, id)?;
+    let e = &src.composition.elements[i];
+    if e.is_distant() {
+        return Err(ElementError::BadValue(format!(
+            "element {id:?} is a distant layer: it takes one surface for the whole layer"
+        )));
+    }
+    if back && !e.has_back_art() {
+        return Err(ElementError::WrongKind {
+            id: id.into(),
+            want: "an element with back art (a drawn layer with back art, a raster)",
+        });
+    }
+    Ok((i, if back { surface_back_file(id) } else { surface_file(id) }))
+}
+
+/// Writes element `i`'s painted surface map `file` (`back`: its back
+/// art's) of `values` (its [`surface_map_size`]); all 0 removes it.
+fn put_surface_map(
+    src: &mut CompositionSource,
+    i: usize,
+    file: String,
+    back: bool,
+    values: &[u8],
+    size: (u32, u32),
+) {
+    let e = &mut src.composition.elements[i];
+    let (w, h) = surface_map_size(&e.kind, size);
+    let on = values.iter().any(|v| *v > 0);
+    if back {
+        e.back_surface_map = on
+    } else {
+        e.surface_map = on
+    }
+    if on {
+        src.files.insert(file, image_io::encode_grey(w, h, values));
+    } else {
+        src.files.remove(&file);
+    }
+}
+
+/// Sets element `id`'s painted surface map (`back`: its back art's; issue
+/// #38) to `values`, its box at world resolution (a raster's the level's
+/// size), `v` naming the look's `materials[v - 1]` and 0 the element's
+/// default; `None` or all 0 removes it. A value past the look's
+/// materials, a map of another size, a locked or distant element, and a
+/// back map without back art are refused.
+pub fn set_surface_map(
+    pack: &mut Pack,
+    id: &str,
+    back: bool,
+    values: Option<&[u8]>,
+) -> Result<(), ElementError> {
+    let l = level(pack)?;
+    let size = l.size;
+    let n = l.look.as_ref().map_or(0, |l| l.materials.len());
+    commit(pack, "", |src| {
+        let (i, file) = surface_target(src, id, back)?;
+        let want = surface_map_size(&src.composition.elements[i].kind, size);
+        let values = match values {
+            Some(v) => v,
+            None => &[][..],
+        };
+        if !values.is_empty() && values.len() as u64 != u64::from(want.0) * u64::from(want.1) {
+            return Err(ElementError::BadValue(format!(
+                "{} values: the element's box in world pixels is {}x{}",
+                values.len(),
+                want.0,
+                want.1
+            )));
+        }
+        if let Some(k) = values.iter().position(|v| usize::from(*v) > n) {
+            let (x, y) = (k as u32 % want.0.max(1), k as u32 / want.0.max(1));
+            return Err(ElementError::BadValue(format!(
+                "material {} at ({x}, {y}): the look has {n} materials",
+                values[k]
+            )));
+        }
+        put_surface_map(src, i, file, back, values, size);
+        Ok(())
+    })
+}
+
+/// One rule of [`surface_by_colour`]: the element's pixels of collision
+/// kind `kind` (any when none) whose colour is `level::similar` to
+/// `colour` within `tolerance` percent (any colour when none) are made of
+/// `material` (an id of the look's materials; none: the element's
+/// default).
+#[derive(Clone, Debug, PartialEq)]
+pub struct SurfaceRule {
+    pub kind: Option<ElementMaterial>,
+    pub colour: Option<olr_data::image::Rgba>,
+    pub tolerance: u8,
+    pub material: Option<String>,
+}
+
+/// Paints element `id`'s surface map (`back`: its back art's; issue #38)
+/// by `rules`: each world pixel the element covers (its art's centre art
+/// pixel not transparent) takes the material of the first rule its
+/// collision kind and colour (that art pixel's; the back art's for
+/// `back`) match; the others keep their value (0 where it had no map).
+/// The same rules on the same element always paint the same map. Returns
+/// how many pixels a rule matched.
+pub fn surface_by_colour(
+    pack: &mut Pack,
+    id: &str,
+    back: bool,
+    rules: &[SurfaceRule],
+) -> Result<u64, ElementError> {
+    let l = level(pack)?;
+    let (size, s) = (l.size, l.art_scale);
+    let values = rules
+        .iter()
+        .map(|r| r.material.as_deref().map_or(Ok(0), |m| material_value(l, m)))
+        .collect::<Result<Vec<u8>, String>>()
+        .map_err(ElementError::BadValue)?;
+    commit(pack, "", |src| {
+        let bad = |e: String| ElementError::BadValue(e);
+        let (i, file) = surface_target(src, id, back)?;
+        let e = src.composition.elements[i].clone();
+        let (w, h) = surface_map_size(&e.kind, size);
+        let cells = w as usize * h as usize;
+        let decoded =
+            decode_element(src, &e, size, s, &mut ImageCache::new()).map_err(|e| bad(e.to_string()))?;
+        // The art the colours are read from, and each world pixel's kind.
+        let (art, kinds): (&RgbaImage, Box<dyn Fn(usize) -> Material>) = match (&e.kind, &decoded) {
+            (ElementKind::Image { material, .. }, Decoded::Image { grid: Some(g), .. }) => {
+                let m = Material::from(*material);
+                (&**g, Box::new(move |_| m))
+            }
+            (ElementKind::Drawn { material, .. }, Decoded::Drawn { art, cells: c, back: b }) => {
+                let m = Material::from(*material);
+                let art = if back {
+                    b.as_ref().ok_or_else(|| bad(format!("element {id:?} has no back art")))?
+                } else {
+                    art
+                };
+                (art, Box::new(move |k| c.as_ref().and_then(|c| c.get(k).copied()).unwrap_or(m)))
+            }
+            (ElementKind::Raster, Decoded::Raster { material, front, back: b }) => (
+                if back { b } else { front },
+                Box::new(move |k| material.get(k).copied().unwrap_or(Material::Background)),
+            ),
+            _ => return Err(bad(format!("element {id:?} has no pixels to read (a hidden picture?)"))),
+        };
+        if (u64::from(art.width()), u64::from(art.height()))
+            != (u64::from(w) * u64::from(s), u64::from(h) * u64::from(s))
+        {
+            return Err(bad(format!("element {id:?}: its pixels are not its box's")));
+        }
+        let mut map =
+            match src.files.get(&file).filter(|_| if back { e.back_surface_map } else { e.surface_map }) {
+                Some(bytes) => {
+                    let (mw, mh, v) = image_io::decode_grey_within(bytes, olr_format::image_io::LEVEL_ART)
+                        .map_err(|m| bad(format!("{file}: {m}")))?;
+                    if (mw, mh) != (w, h) {
+                        return Err(bad(format!("{file}: {mw}x{mh}, the box is {w}x{h}")));
+                    }
+                    v
+                }
+                None => vec![0; cells],
+            };
+        let mut matched = 0u64;
+        for y in 0..h {
+            for x in 0..w {
+                let c = art.get(x * s + s / 2, y * s + s / 2);
+                if c.a == 0 {
+                    continue;
+                }
+                let k = y as usize * w as usize + x as usize;
+                let kind = kinds(k);
+                let hit = rules.iter().position(|r| {
+                    r.kind.is_none_or(|m| Material::from(m) == kind)
+                        && r.colour.is_none_or(|rc| crate::level::similar(rc, c, r.tolerance))
+                });
+                if let Some(r) = hit {
+                    map[k] = values[r];
+                    matched += 1;
+                }
+            }
+        }
+        put_surface_map(src, i, file, back, &map, size);
+        Ok(matched)
     })
 }
 

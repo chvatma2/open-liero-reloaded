@@ -364,8 +364,7 @@ operations.
     (`relay_surface`, shared with the editor; the new area 0) and
     `set_all` resamples a resized image's, each after checking the new
     size's bounds (no map laid out at a refused size). `level::resize`
-    re-lays a plain level's own maps as its clear flags. `asset::from_elements`, `cut_rect` and `land` strip surfaces
-    (assets carry none until materials 2/10).
+    re-lays a plain level's own maps as its clear flags.
   - **`material`**: the libraries: `read_file` (bounded by
     `MAX_RON_BYTES`), `list_library(dir, max)` (by name then id; an
     unreadable file a warning "material <id>: …: not offered"; past `max`
@@ -378,6 +377,39 @@ operations.
     `level::resize`, a huge size refused) and
     `material.rs` (`the_built_in_set_loads_cleanly`, the user's library
     after it and capped).
+- **Issue #38, assets carry materials and the CLI's operations**
+  (STATUS.md "Surface materials in assets and olr-cli (issue #38)"):
+  - **`asset`**: `Piece`/`PieceRef` hold `surface_map` and
+    `back_surface_map` (the element's box at world resolution, a
+    raster's the level's; values index the materials of the level or
+    asset holding the piece) and `Asset` its `materials`. `from_elements`
+    and `cut_rect` keep surfaces, re-lay the maps with the crop
+    (`element::relay_surface`) and carry the look's materials the pieces
+    name (`surface`, `back_surface` or a painted value), in the look's
+    order, the maps re-numbered to them; a map all 0 or not fitting goes,
+    the flags follow the maps. `land` still strips surfaces (the editor's
+    paste); `with_materials` (`MaterialChange`: joined by id, the level's
+    settings kept, or added; `renumbering`) and `land_surfaces` give a
+    landed element its surfaces and re-numbered maps: `place_in_pack` and
+    the editor's `place_asset` use them. `encode`/`decode` write and read
+    `surface/<id>.png` and `.back.png`; an asset without materials is
+    byte for byte as before.
+  - **`element`**: `Property::Surface`/`BackSurface` (an id the look
+    lacks refused before editing; a back surface needs back art),
+    `set_surface_map(pack, id, back, values)` (the whole map; a value past
+    the look's materials, another size, a distant or locked element
+    refused; none or all 0 removes it) and `surface_by_colour(pack, id,
+    back, rules)` (`SurfaceRule { kind, colour, tolerance, material }`:
+    each covered world pixel, read at its block's centre art pixel (the
+    back art for `back`), takes the first matching rule's material
+    (`level::similar`; `None` the default); the rest keep theirs;
+    returns the pixels matched).
+  - Tests: `asset.rs` (`materials_and_painted_maps_travel_with_an_asset`
+    at art scales 1 and 2, joined and added, baked where placed;
+    `placing_materials_gives_a_level_a_look_and_checks`;
+    `an_asset_without_materials_is_as_before`) and `surface_ops.rs` (the
+    element operations, rules by kind and colour reproducible, refusals
+    changing nothing).
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: round trips
   through a folder at art scales 1 and 2, masks and groups joined or
   added, resampling across scales, the rectangle's rules, a picture kept

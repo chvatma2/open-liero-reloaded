@@ -4,7 +4,8 @@
 //! ([`from_elements`]) or cut out of a world rectangle of every visible
 //! layer ([`cut_rect`]); a piece landed in a level with a new id and name,
 //! resampled to its art scale ([`land`], which pastes use too); the glow
-//! groups a placing adds or joins ([`with_groups`]); an asset encoded to
+//! groups and surface materials a placing adds or joins ([`with_groups`],
+//! [`with_materials`]); an asset encoded to
 //! its folder with a lit thumbnail ([`encode`]) and decoded from one
 //! ([`decode`]), and the folder read and written ([`load_dir`],
 //! [`save_dir`], [`summary`]).
@@ -22,14 +23,15 @@ use olr_format::assets::{
 };
 use olr_format::levels::{
     Element, ElementGlow, ElementKind, ElementMaterial, LevelSource, MAX_ART_SCALE, element_box,
-    level_thumbnail,
+    level_thumbnail, surface_back_file, surface_file, surface_map_size,
 };
 use olr_format::look::{AmbientSource, GlowGroupSource, LookSource};
+use olr_format::materials::MaterialSource;
 use olr_vfs::DirFs;
 
 use crate::compose::{
     ComposeError, Decoded, GlowMasks, ImageCache, PaintedSurfaces, Rect, bake_elements_with, decode_element,
-    decode_glow_masks, encode_decoded,
+    decode_glow_masks, decode_surface_maps, encode_decoded,
 };
 use crate::drawn::{self, Placed};
 use crate::element::{copy_name, new_element_id, new_source_name};
@@ -42,14 +44,19 @@ use crate::level::rescale_art;
 pub const PREVIEW_AMBIENT: (&str, u16) = ("#304060", 20);
 
 /// One element with its decoded data, an image's original (its source
-/// name and bytes) and its glow mask (its box × art scale, 0-255): what
-/// the editor's clipboard and an asset hold.
+/// name and bytes), its glow mask (its box × art scale, 0-255) and its
+/// painted surface maps (issue #38; its box at world resolution, a
+/// raster's the level's size; `v` names `materials[v - 1]` of the level or
+/// asset it is in, 0 its `surface` or `back_surface`): what the editor's
+/// clipboard and an asset hold.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Piece {
     pub element: Element,
     pub decoded: Decoded,
     pub original: Option<(String, Arc<Vec<u8>>)>,
     pub glow_mask: Option<Arc<Vec<u8>>>,
+    pub surface_map: Option<Arc<Vec<u8>>>,
+    pub back_surface_map: Option<Arc<Vec<u8>>>,
 }
 
 /// A [`Piece`] borrowed from wherever it lives (the editor's document, a
@@ -60,6 +67,8 @@ pub struct PieceRef<'a> {
     pub decoded: &'a Decoded,
     pub original: Option<&'a (String, Arc<Vec<u8>>)>,
     pub glow_mask: Option<&'a Arc<Vec<u8>>>,
+    pub surface_map: Option<&'a Arc<Vec<u8>>>,
+    pub back_surface_map: Option<&'a Arc<Vec<u8>>>,
 }
 
 impl Piece {
@@ -69,13 +78,16 @@ impl Piece {
             decoded: &self.decoded,
             original: self.original.as_ref(),
             glow_mask: self.glow_mask.as_ref(),
+            surface_map: self.surface_map.as_ref(),
+            back_surface_map: self.back_surface_map.as_ref(),
         }
     }
 }
 
 /// An asset decoded: its name, the art scale it was made at, its size in
 /// world pixels, its pieces bottom to top (placed relative to its
-/// top-left) and the glow groups they name.
+/// top-left), the glow groups they name and the surface materials they
+/// name (issue #38; their painted maps' values index these).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Asset {
     pub name: String,
@@ -83,6 +95,7 @@ pub struct Asset {
     pub size: (u32, u32),
     pub pieces: Vec<Piece>,
     pub groups: Vec<GlowGroupSource>,
+    pub materials: Vec<MaterialSource>,
 }
 
 /// Why an asset could not be made, read, written or placed.
@@ -99,7 +112,8 @@ pub enum AssetError {
 }
 
 /// A level's elements as an asset is cut from them: each piece, the
-/// level's size, art scale and look (the groups' settings).
+/// level's size, art scale and look (the groups' and materials'
+/// settings).
 pub struct LevelPieces<'a> {
     pub pieces: Vec<PieceRef<'a>>,
     pub size: (u32, u32),
@@ -107,10 +121,39 @@ pub struct LevelPieces<'a> {
     pub look: Option<&'a LookSource>,
 }
 
-/// An element as an asset holds it: shown and unlocked, without surface
-/// materials (an asset carries none yet, issue #37).
+/// An element as an asset holds it: shown and unlocked.
 fn plain(e: &Element) -> Element {
-    Element { visible: true, locked: false, ..e.clone() }.without_surfaces()
+    Element { visible: true, locked: false, ..e.clone() }
+}
+
+/// The world box element `e`'s painted surface maps cover in a level of
+/// `size`: its box, a raster's the level.
+fn surface_box(e: &Element, size: (u32, u32)) -> ((i32, i32), (u32, u32)) {
+    element_box(&e.kind, size).unwrap_or(((0, 0), surface_map_size(&e.kind, size)))
+}
+
+/// `e`'s surface materials made to fit it with maps `front` and `back`
+/// (its box at world resolution): a map not of its box's size or all 0
+/// goes, so does a back surface without back art; the flags follow the
+/// maps. Returns the maps kept.
+fn fit_surfaces(
+    e: &mut Element,
+    front: Option<Arc<Vec<u8>>>,
+    back: Option<Arc<Vec<u8>>>,
+    size: (u32, u32),
+) -> (Option<Arc<Vec<u8>>>, Option<Arc<Vec<u8>>>) {
+    let b = surface_map_size(&e.kind, size);
+    let cells = u64::from(b.0) * u64::from(b.1);
+    let keep = |on: bool, m: Option<Arc<Vec<u8>>>| {
+        m.filter(|m| on && m.len() as u64 == cells && m.iter().any(|v| *v > 0))
+    };
+    if !e.has_back_art() || e.is_distant() {
+        e.back_surface = None;
+    }
+    let front = keep(e.surface_map && !e.is_distant(), front);
+    let back = keep(e.back_surface_map && e.has_back_art() && !e.is_distant(), back);
+    (e.surface_map, e.back_surface_map) = (front.is_some(), back.is_some());
+    (front, back)
 }
 
 /// `p`'s pixels within world rectangle `r` (`None` when they do not meet).
@@ -181,7 +224,13 @@ fn as_drawn(piece: PieceRef, within: Option<Rect>, size: (u32, u32), s: u32) -> 
     let glow_mask = relaid_mask(piece, new_box, size, s);
     let (glow, glow_mask) = kept_glow(element.glow.take(), glow_mask);
     element.glow = glow;
-    Some(Piece { element, decoded, original: None, glow_mask })
+    // Its painted surface maps follow its pixels to the new box.
+    let from = surface_box(piece.element, size);
+    let relay =
+        |m: Option<&Arc<Vec<u8>>>| m.map(|m| Arc::new(crate::element::relay_surface(m, from, new_box)));
+    let (surface_map, back_surface_map) =
+        fit_surfaces(&mut element, relay(piece.surface_map), relay(piece.back_surface_map), size);
+    Some(Piece { element, decoded, original: None, glow_mask, surface_map, back_surface_map })
 }
 
 /// `piece`'s glow mask laid on box `to` (world), when it has one.
@@ -247,13 +296,71 @@ fn drop_dangling(pieces: &mut [Piece], groups: &[GlowGroupSource]) {
     }
 }
 
-/// An image piece as it is, its glow mask kept (none when all zero).
-fn whole_image(piece: PieceRef) -> Option<Piece> {
+/// The materials of `look` the pieces (of a level of `size`) name, in the
+/// look's order (issue #38): by `surface`, `back_surface` or a painted
+/// value; their maps' values re-numbered to index them, a surface naming
+/// none of the look's materials gone (it named nothing in the level).
+fn carried_materials(
+    pieces: &mut [Piece],
+    look: Option<&LookSource>,
+    size: (u32, u32),
+) -> Vec<MaterialSource> {
+    let all = look.map_or(&[][..], |l| &l.materials[..]);
+    let mut used = vec![false; all.len()];
+    for p in pieces.iter() {
+        for id in [&p.element.surface, &p.element.back_surface].into_iter().flatten() {
+            if let Some(i) = all.iter().position(|m| m.id == *id) {
+                used[i] = true;
+            }
+        }
+        for m in [&p.surface_map, &p.back_surface_map].into_iter().flatten() {
+            for v in m.iter().map(|v| usize::from(*v)).filter(|v| (1..=all.len()).contains(v)) {
+                used[v - 1] = true;
+            }
+        }
+    }
+    // The value naming old material `i` (1-based) names it here.
+    let mut renumber = [0u8; 256];
+    let mut next = 0u8;
+    for (i, u) in used.iter().enumerate().take(255) {
+        if *u {
+            next += 1;
+            renumber[i + 1] = next;
+        }
+    }
+    for p in pieces.iter_mut() {
+        let e = &mut p.element;
+        for id in [&mut e.surface, &mut e.back_surface] {
+            if id.as_ref().is_some_and(|id| !all.iter().any(|m| m.id == *id)) {
+                *id = None;
+            }
+        }
+        let remap = |m: Option<Arc<Vec<u8>>>| {
+            m.map(|m| Arc::new(m.iter().map(|v| renumber[usize::from(*v)]).collect()))
+        };
+        let (front, back) = (remap(p.surface_map.take()), remap(p.back_surface_map.take()));
+        (p.surface_map, p.back_surface_map) = fit_surfaces(e, front, back, size);
+    }
+    all.iter().zip(&used).filter(|(_, u)| **u).map(|(m, _)| m.clone()).take(255).collect()
+}
+
+/// An image piece as it is, its glow mask and surface maps kept (none
+/// when all zero), in a level of `size`.
+fn whole_image(piece: PieceRef, size: (u32, u32)) -> Option<Piece> {
     let original = piece.original?.clone();
     let mut element = plain(piece.element);
     let (glow, glow_mask) = kept_glow(element.glow.take(), piece.glow_mask.cloned());
     element.glow = glow;
-    Some(Piece { element, decoded: piece.decoded.clone(), original: Some(original), glow_mask })
+    let (surface_map, back_surface_map) =
+        fit_surfaces(&mut element, piece.surface_map.cloned(), piece.back_surface_map.cloned(), size);
+    Some(Piece {
+        element,
+        decoded: piece.decoded.clone(),
+        original: Some(original),
+        glow_mask,
+        surface_map,
+        back_surface_map,
+    })
 }
 
 /// An asset of the elements `ids` of `level` (the editor's Save as asset
@@ -268,7 +375,7 @@ pub fn from_elements(level: &LevelPieces, ids: &[String], name: &str) -> Result<
     let mut pieces = Vec::new();
     for piece in level.pieces.iter().filter(|p| ids.contains(&p.element.id) && !p.element.is_distant()) {
         let made = match piece.element.kind {
-            ElementKind::Image { .. } => whole_image(*piece),
+            ElementKind::Image { .. } => whole_image(*piece, size),
             _ => as_drawn(*piece, None, size, s),
         };
         pieces.extend(made);
@@ -285,7 +392,9 @@ pub fn from_elements(level: &LevelPieces, ids: &[String], name: &str) -> Result<
     let mut pieces: Vec<Piece> = pieces.into_iter().map(|p| shifted(p, -x0, -y0)).collect();
     let groups = named_groups(&pieces, level.look);
     drop_dangling(&mut pieces, &groups);
-    Ok(Asset { name: name.into(), art_scale: s, size: (side(x1 - x0), side(y1 - y0)), pieces, groups })
+    let materials = carried_materials(&mut pieces, level.look, size);
+    let size = (side(x1 - x0), side(y1 - y0));
+    Ok(Asset { name: name.into(), art_scale: s, size, pieces, groups, materials })
 }
 
 /// An asset cut out of world rectangle `rect` of `level` (the editor's
@@ -327,7 +436,7 @@ pub fn cut_rect(
             }
             _ => false,
         };
-        let made = if inside { whole_image(*piece) } else { as_drawn(*piece, Some(rect), size, s) };
+        let made = if inside { whole_image(*piece, size) } else { as_drawn(*piece, Some(rect), size, s) };
         let Some(made) = made else { continue };
         let same = |o: &Piece| {
             o.element.kind == made.element.kind
@@ -336,6 +445,10 @@ pub fn cut_rect(
                 && o.glow_mask == made.glow_mask
                 && o.element.clear == made.element.clear
                 && o.original == made.original
+                && o.element.surface == made.element.surface
+                && o.element.back_surface == made.element.back_surface
+                && o.surface_map == made.surface_map
+                && o.back_surface_map == made.back_surface_map
         };
         if !pieces.iter().any(same) {
             pieces.push(made);
@@ -348,7 +461,8 @@ pub fn cut_rect(
         pieces.into_iter().map(|p| shifted(p, -i64::from(rect.x), -i64::from(rect.y))).collect();
     let groups = named_groups(&pieces, level.look);
     drop_dangling(&mut pieces, &groups);
-    Ok(Asset { name: name.into(), art_scale: s, size: (rect.w, rect.h), pieces, groups })
+    let materials = carried_materials(&mut pieces, level.look, size);
+    Ok(Asset { name: name.into(), art_scale: s, size: (rect.w, rect.h), pieces, groups, materials })
 }
 
 /// `r` within a level of `size`.
@@ -379,7 +493,8 @@ pub struct Landing<'a> {
 /// for the caller to process: `Decoded::Image { grid: None, .. }`), its
 /// glow mask fitted to its box there; an original whose name the level
 /// holds with other bytes takes a new name (one with its bytes is shared).
-/// A raster lands only in a level of its size.
+/// A raster lands only in a level of its size. Its surface materials stay
+/// behind (the level may lack them: [`place_in_pack`] lands them itself).
 pub fn land(
     to: &Landing,
     piece: PieceRef,
@@ -471,7 +586,7 @@ pub fn land(
         let (old, new) = ((ob.0 * from, ob.1 * from), (b.0 * s, b.1 * s));
         Some(Arc::new(resample_mask(m, old, new)))
     });
-    Ok(Piece { element: e, decoded, original, glow_mask })
+    Ok(Piece { element: e, decoded, original, glow_mask, surface_map: None, back_surface_map: None })
 }
 
 /// What a placing that gave a level its first look says (the editor's
@@ -516,6 +631,77 @@ pub fn with_groups(look: Option<&LookSource>, groups: &[GlowGroupSource]) -> Gro
         }
     }
     GroupChange { look, added_look, added, joined }
+}
+
+/// The look a placing leaves for the asset's surface materials (issue
+/// #38), as [`GroupChange`] for its glow groups: `look`, or the default
+/// look when the level has none and the asset has materials, with each of
+/// `materials` the level lacks added with the asset's settings; one it
+/// has (by id) is joined, its settings kept.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MaterialChange {
+    pub look: LookSource,
+    /// The level had no look: it gets `LookSource::default()`.
+    pub added_look: bool,
+    pub added: Vec<String>,
+    pub joined: Vec<String>,
+}
+
+impl MaterialChange {
+    /// Whether the level's look changes: a look or a material added.
+    pub fn changes(&self) -> bool {
+        self.added_look || !self.added.is_empty()
+    }
+
+    /// The value naming each of the asset's `materials` in the look left
+    /// (1 + its index there), by the asset's value: `[0]` is 0.
+    pub fn renumbering(&self, materials: &[MaterialSource]) -> [u8; 256] {
+        let mut out = [0u8; 256];
+        for (i, m) in materials.iter().enumerate().take(255) {
+            let at = self.look.materials.iter().position(|x| x.id == m.id);
+            out[i + 1] = at.and_then(|j| u8::try_from(j + 1).ok()).unwrap_or(0);
+        }
+        out
+    }
+}
+
+/// The surface materials of asset piece `piece` given to `e`, the element
+/// it landed as ([`land`]) in a level of `size` whose look `change` left
+/// (issue #38): its `surface` and `back_surface` (by id: joined or added),
+/// and its painted maps, their values re-numbered from the asset's
+/// `materials` to the level's. Returns the maps; `e`'s flags follow them.
+pub fn land_surfaces(
+    piece: PieceRef,
+    e: &mut Element,
+    change: &MaterialChange,
+    materials: &[MaterialSource],
+    size: (u32, u32),
+) -> (Option<Arc<Vec<u8>>>, Option<Arc<Vec<u8>>>) {
+    let renumber = change.renumbering(materials);
+    let p = piece.element;
+    (e.surface, e.back_surface) = (p.surface.clone(), p.back_surface.clone());
+    (e.surface_map, e.back_surface_map) = (p.surface_map, p.back_surface_map);
+    let remap = |m: Option<&Arc<Vec<u8>>>| {
+        m.map(|m| Arc::new(m.iter().map(|v| renumber[usize::from(*v)]).collect::<Vec<u8>>()))
+    };
+    fit_surfaces(e, remap(piece.surface_map), remap(piece.back_surface_map), size)
+}
+
+/// [`MaterialChange`] of placing an asset of `materials` in a level of
+/// `look`.
+pub fn with_materials(look: Option<&LookSource>, materials: &[MaterialSource]) -> MaterialChange {
+    let added_look = look.is_none() && !materials.is_empty();
+    let mut look = look.cloned().unwrap_or_default();
+    let (mut added, mut joined) = (Vec::new(), Vec::new());
+    for m in materials {
+        if look.materials.iter().any(|x| x.id == m.id) {
+            joined.push(m.id.clone());
+        } else {
+            look.materials.push(m.clone());
+            added.push(m.id.clone());
+        }
+    }
+    MaterialChange { look, added_look, added, joined }
 }
 
 /// What a placed piece is named: the asset's name for a one-piece asset,
@@ -567,6 +753,15 @@ pub fn encode(asset: &Asset) -> Result<AssetSource, AssetError> {
                 None => g.mask = false,
             }
         }
+        // Its painted surface maps (issue #38), each flag following its map.
+        let (w, h) = surface_map_size(&e.kind, asset.size);
+        let (front, back) =
+            fit_surfaces(&mut e, p.surface_map.clone(), p.back_surface_map.clone(), asset.size);
+        for (file, m) in [(surface_file(&e.id), front), (surface_back_file(&e.id), back)] {
+            if let Some(m) = m {
+                files.insert(strip(&file), olr_format::image_io::encode_grey(w, h, &m));
+            }
+        }
         elements.push(e);
     }
     let file = AssetFile {
@@ -575,7 +770,7 @@ pub fn encode(asset: &Asset) -> Result<AssetSource, AssetError> {
         size: asset.size,
         elements,
         glow_groups: asset.groups.clone(),
-        materials: Vec::new(),
+        materials: asset.materials.clone(),
     };
     let mut src = AssetSource { file, files, thumb: None };
     let decoded = decode(&src)?;
@@ -633,6 +828,7 @@ pub fn decode(src: &AssetSource) -> Result<Asset, AssetError> {
     let comp = as_composition(src);
     let mut cache = ImageCache::new();
     let masks = decode_glow_masks(&comp, f.size, f.art_scale)?;
+    let maps = decode_surface_maps(&comp, f.size)?;
     let mut pieces = Vec::new();
     for e in &f.elements {
         let decoded = decode_element(&comp, e, f.size, f.art_scale, &mut cache)?;
@@ -646,7 +842,14 @@ pub fn decode(src: &AssetSource) -> Result<Asset, AssetError> {
             }
             _ => None,
         };
-        pieces.push(Piece { element: e.clone(), decoded, original, glow_mask: masks.get(&e.id).cloned() });
+        pieces.push(Piece {
+            element: e.clone(),
+            decoded,
+            original,
+            glow_mask: masks.get(&e.id).cloned(),
+            surface_map: maps.get(&surface_file(&e.id)).cloned(),
+            back_surface_map: maps.get(&surface_back_file(&e.id)).cloned(),
+        });
     }
     Ok(Asset {
         name: f.name.clone(),
@@ -654,6 +857,7 @@ pub fn decode(src: &AssetSource) -> Result<Asset, AssetError> {
         size: f.size,
         pieces,
         groups: f.glow_groups.clone(),
+        materials: f.materials.clone(),
     })
 }
 
@@ -783,6 +987,7 @@ impl DecodedLevel {
         let src = pack.composition.clone().unwrap_or_else(|| crate::compose::split_from(level));
         olr_format::levels::check_composition(&src, size, s)?;
         let masks = decode_glow_masks(&src, size, s)?;
+        let maps = decode_surface_maps(&src, size)?;
         let mut cache = ImageCache::new();
         let mut pieces = Vec::new();
         for e in &src.composition.elements {
@@ -799,6 +1004,8 @@ impl DecodedLevel {
                 decoded,
                 original,
                 glow_mask: masks.get(&e.id).cloned(),
+                surface_map: maps.get(&surface_file(&e.id)).cloned(),
+                back_surface_map: maps.get(&surface_back_file(&e.id)).cloned(),
             });
         }
         Ok(DecodedLevel { pieces, size, art_scale: s, look: level.look.clone() })
@@ -816,18 +1023,22 @@ impl DecodedLevel {
 }
 
 /// What a placing did: the new elements' ids (bottom to top) and the
-/// look's change.
+/// look's changes (its glow groups, then its materials).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Placement {
     pub ids: Vec<String>,
     pub groups: GroupChange,
+    pub materials: MaterialChange,
 }
 
 /// Places `asset` in level pack `pack` with its top-left at world pixel
 /// `at` (`olr-cli asset place`, as the editor's placing): its glow groups
 /// first ([`with_groups`]: joined or added, the default look when the
-/// level has none), then each piece on top ([`land`]: new ids and names,
-/// resampled to the level's art scale, masks kept), their files written
+/// level has none), then its surface materials ([`with_materials`], issue
+/// #38: the same), then each piece on top ([`land`]: new ids and names,
+/// resampled to the level's art scale, masks kept; its surfaces kept and
+/// its painted maps' values re-numbered to the level's materials), their
+/// files written
 /// into the composition (a level without one gets its raster base first,
 /// `element::ensure_composed`). Checked whole; the pack is unchanged on a
 /// refusal. Not baked: the caller bakes and saves.
@@ -846,6 +1057,10 @@ pub fn place_in_pack(
     let groups = with_groups(level.look.as_ref(), &asset.groups);
     if groups.changes() {
         level.look = Some(groups.look.clone());
+    }
+    let materials = with_materials(level.look.as_ref(), &asset.materials);
+    if materials.changes() {
+        level.look = Some(materials.look.clone());
     }
     let Some(src) = copy.composition.as_mut() else { return Err(AssetError::Bad("no composition".into())) };
     let dir = olr_format::levels::image_file("");
@@ -874,6 +1089,13 @@ pub fn place_in_pack(
             src.files.insert(path, bytes);
         }
         let e = &mut landed.element;
+        let (front, back) = land_surfaces(piece.as_ref(), e, &materials, &asset.materials, size);
+        let (w, h) = surface_map_size(&e.kind, size);
+        for (file, m) in [(surface_file(&e.id), front), (surface_back_file(&e.id), back)] {
+            if let Some(m) = m {
+                src.files.insert(file, olr_format::image_io::encode_grey(w, h, &m));
+            }
+        }
         if let Some(g) = e.glow.as_mut() {
             let b = element_box(&e.kind, size).map(|(_, b)| (b.0 * s, b.1 * s));
             match (landed.glow_mask.as_ref(), b) {
@@ -897,9 +1119,12 @@ pub fn place_in_pack(
     }
     olr_format::levels::check_composition(src, size, s)?;
     olr_format::levels::check_glow_groups(&src.composition, level.look.as_ref())?;
+    olr_format::levels::check_surfaces(&src.composition, level.look.as_ref())?;
+    let n = level.look.as_ref().map_or(0, |l| l.materials.len());
+    olr_format::levels::check_surface_maps(src, size, n)?;
     olr_format::levels::compile_look(level)?;
     *pack = copy;
-    Ok(Placement { ids, groups })
+    Ok(Placement { ids, groups, materials })
 }
 
 // The asset library (the editor's host and its tests): a folder of asset

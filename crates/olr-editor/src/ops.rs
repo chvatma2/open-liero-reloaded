@@ -450,7 +450,7 @@ impl Document {
 
     /// Inserts a landed piece on top: its edit (applied).
     pub(crate) fn insert_landed(&mut self, piece: olr_edit::asset::Piece) -> Result<Edit, DocError> {
-        let olr_edit::asset::Piece { element, decoded, original, glow_mask } = piece;
+        let olr_edit::asset::Piece { element, decoded, original, glow_mask, .. } = piece;
         // A distant layer lands on top of the distant ones (issue #11).
         let index = if element.is_distant() { self.distant_count() } else { self.items.len() };
         let snapshot = Snapshot { item: Item { element, decoded }, original, glow_mask };

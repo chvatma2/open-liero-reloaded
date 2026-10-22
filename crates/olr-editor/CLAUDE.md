@@ -302,7 +302,15 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   an image's new box size resamples them (`Edit::SurfaceMap`, in the same
   step); split and merge down drop surfaces as they drop glow; saving
   drops a map flag whose map no longer fits. No panel edits materials yet
-  (materials 7/10). Test: `tests/surface.rs`.
+  (materials 7/10). Test: `tests/surface.rs`. Issue #38: Save as asset
+  hands `olr_edit::asset` the elements' painted maps (`pieces`), so the
+  asset carries the materials they name; `place_asset` joins or adds the
+  asset's materials with its glow groups (`with_materials`, one look
+  edit) and gives each landed element its surfaces and re-numbered maps
+  (`Document::land_surfaces`: `Edit::SurfaceMap`s, then an
+  `Edit::Element`; the same step). A paste still lands no surfaces.
+  Test: `asset.rs`'s
+  `placing_joins_or_adds_materials_and_lands_painted_maps`.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the

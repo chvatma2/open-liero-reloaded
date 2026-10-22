@@ -191,6 +191,55 @@ fn placing_joins_a_group_the_level_has_and_adds_one_it_lacks() {
     assert_eq!(groups.len(), 2);
 }
 
+fn material(id: &str, name: &str) -> olr_format::materials::MaterialSource {
+    olr_format::materials::MaterialSource {
+        id: id.into(),
+        name: name.into(),
+        notes: String::new(),
+        heat: None,
+    }
+}
+
+/// Issue #38: placing joins the asset's materials by id (the level's
+/// settings kept) or adds them; its elements keep their surfaces and their
+/// painted maps follow the level's numbering; one undo takes it all back.
+#[test]
+fn placing_joins_or_adds_materials_and_lands_painted_maps() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut doc) = open_fixture(&root);
+    let look = LookSource { materials: vec![material("wood", "Oak")], ..LookSource::default() };
+    doc.set_look(Some(look)).unwrap();
+    let before = doc.to_pack();
+    let mut desk = olr_edit::asset::load_dir(&built_in_assets().join("control-desk")).unwrap();
+    desk.materials = vec![material("metal", "Metal"), material("wood", "Wood")];
+    let piece = &mut desk.pieces[0];
+    piece.element.surface = Some("metal".into());
+    piece.element.surface_map = true;
+    let (w, h) = olr_format::levels::surface_map_size(&piece.element.kind, desk.size);
+    let mut map = vec![0u8; (w * h) as usize];
+    map[0] = 2;
+    piece.surface_map = Some(std::sync::Arc::new(map));
+    let placed = doc.place_asset(&desk, (0, 0)).unwrap();
+    let materials = &doc.level().look.as_ref().unwrap().materials;
+    assert_eq!(materials, &vec![material("wood", "Oak"), material("metal", "Metal")]);
+    let id = &placed.ids[0];
+    let e = &doc.items().iter().find(|i| i.element.id == *id).unwrap().element;
+    assert_eq!((e.surface.as_deref(), e.surface_map), (Some("metal"), true));
+    let pack = doc.to_pack();
+    let file = olr_format::levels::surface_file(id);
+    let values = olr_format::image_io::decode_grey_within(
+        &pack.composition.as_ref().unwrap().files[&file],
+        olr_format::image_io::IMAGES,
+    )
+    .unwrap()
+    .2;
+    assert_eq!((values[0], values[1]), (1, 0), "wood is the level's first");
+    for edit in placed.edits.iter().rev() {
+        doc.apply(edit, false);
+    }
+    assert_eq!(doc.to_pack(), before);
+}
+
 #[test]
 fn removing_asks_first_and_only_yours() {
     let Some((tmp, mut s)) = with_library() else { return };

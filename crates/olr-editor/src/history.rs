@@ -126,6 +126,9 @@ impl Snapshot {
             decoded: &self.item.decoded,
             original: self.original.as_ref(),
             glow_mask: self.glow_mask.as_ref(),
+            // A paste lands no surface materials (`olr_edit::asset::land`).
+            surface_map: None,
+            back_surface_map: None,
         }
     }
 }

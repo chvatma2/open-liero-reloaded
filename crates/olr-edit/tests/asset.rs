@@ -426,3 +426,124 @@ fn the_library_adds_imports_lists_and_removes() {
     assert_eq!(asset_slug("  Über lamp #2 "), "ber-lamp-2");
     assert_eq!(asset_slug("!!!"), "asset");
 }
+
+fn material(id: &str, name: &str) -> olr_format::materials::MaterialSource {
+    olr_format::materials::MaterialSource {
+        id: id.into(),
+        name: name.into(),
+        notes: String::new(),
+        heat: None,
+    }
+}
+
+/// `scene(s)` whose look has glass, stone, wood and metal (issue #38): the
+/// ground of stone, the pillar of metal but for its top two rows, painted
+/// wood.
+fn made_of(s: u32) -> Pack {
+    let mut p = scene(s);
+    let Source::Level(l) = &mut p.source else { panic!() };
+    l.look.as_mut().unwrap().materials = vec![
+        material("glass", "Glass"),
+        material("stone", "Stone"),
+        material("wood", "Wood"),
+        material("metal", "Metal"),
+    ];
+    set(&mut p, "ground", Property::Surface(Some("stone".into()))).unwrap();
+    set(&mut p, "pillar", Property::Surface(Some("metal".into()))).unwrap();
+    // The pillar is a level-sized layer: its map is the level's 12 × 8.
+    let mut map = vec![0u8; 12 * 8];
+    for y in 2..4 {
+        for x in 8..10 {
+            map[y * 12 + x] = 3;
+        }
+    }
+    set_surface_map(&mut p, "pillar", false, Some(&map)).unwrap();
+    p
+}
+
+/// The baked front surface map's value at world pixel (x, y).
+fn front_surface(l: &LevelSource, x: u32, y: u32) -> u8 {
+    l.surface.as_ref().expect("surface maps").front[(y * l.size.0 + x) as usize]
+}
+
+#[test]
+fn materials_and_painted_maps_travel_with_an_asset() {
+    for s in [1, 2] {
+        let p = made_of(s);
+        let decoded = DecodedLevel::of_pack(&p).unwrap();
+        let asset = from_elements(&decoded.level(), &ids(&["ground", "pillar"]), "Bits").unwrap();
+        // The materials named, in the look's order: glass is not.
+        let named: Vec<&str> = asset.materials.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(named, ["stone", "wood", "metal"], "scale {s}");
+        let pillar = &asset.pieces[1];
+        assert_eq!(pillar.element.surface.as_deref(), Some("metal"));
+        // Cropped to the pillar's box (8, 2, 2 × 6) and re-numbered: wood
+        // is 2 in the asset.
+        let map = pillar.surface_map.as_ref().expect("its map");
+        assert_eq!(map.len(), 12, "scale {s}");
+        assert_eq!(&map[..], &[2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 0]);
+        let back = through_folder(&asset);
+        assert_eq!(back, asset, "scale {s}");
+
+        // A level with wood (its own settings) and sky: wood joined,
+        // stone and metal added after it.
+        let mut target = pack(
+            20,
+            12,
+            s,
+            Some(LookSource { materials: vec![material("wood", "Oak")], ..Default::default() }),
+        );
+        let placed = place_in_pack(&mut target, &back, (3, 4)).unwrap();
+        assert_eq!(placed.materials.joined, ids(&["wood"]));
+        assert_eq!(placed.materials.added, ids(&["stone", "metal"]));
+        assert!(!placed.materials.added_look);
+        let look = level(&target).look.clone().unwrap();
+        assert_eq!(
+            look.materials,
+            vec![material("wood", "Oak"), material("stone", "Stone"), material("metal", "Metal")]
+        );
+        let l = baked(&target);
+        // The pillar's top (asset 8, 0) is wood (1), its foot metal (3),
+        // the ground stone (2).
+        assert_eq!(front_surface(&l, 3 + 8, 4), 1, "scale {s}");
+        assert_eq!(front_surface(&l, 3 + 9, 4 + 1), 1, "scale {s}");
+        assert_eq!(front_surface(&l, 3 + 8, 4 + 2), 3, "scale {s}");
+        assert_eq!(front_surface(&l, 3, 4 + 5), 2, "scale {s}");
+        assert_eq!(front_surface(&l, 0, 0), 0);
+    }
+}
+
+#[test]
+fn placing_materials_gives_a_level_a_look_and_checks() {
+    let p = made_of(1);
+    let decoded = DecodedLevel::of_pack(&p).unwrap();
+    let asset =
+        cut_rect(&decoded.level(), Rect { x: 6, y: 0, w: 6, h: 8 }, Some(&ids(&["pillar"])), "Top").unwrap();
+    assert_eq!(asset.materials.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["wood", "metal"]);
+    let mut bare = pack(12, 8, 1, None);
+    let placed = place_in_pack(&mut bare, &asset, (0, 0)).unwrap();
+    assert!(placed.materials.added_look && !placed.groups.added_look);
+    assert_eq!(placed.materials.added, ids(&["wood", "metal"]));
+    // Baked, the pack checks as a save would.
+    let l = baked(&bare);
+    bare.source = Source::Level(l);
+    olr_edit::pack::check(&olr_edit::pack::files(&bare).unwrap()).unwrap();
+}
+
+/// Anti-goal of issue #38: an asset without materials names none, and its
+/// placing changes no material.
+#[test]
+fn an_asset_without_materials_is_as_before() {
+    let p = scene(1);
+    let decoded = DecodedLevel::of_pack(&p).unwrap();
+    let asset = from_elements(&decoded.level(), &ids(&["ground"]), "Ground").unwrap();
+    assert!(asset.materials.is_empty() && asset.pieces[0].surface_map.is_none());
+    let src = encode(&asset).unwrap();
+    let text = olr_format::ron_io::to_canonical("asset.ron", &src.file).unwrap();
+    assert!(!text.contains("materials") && !text.contains("surface"), "{text}");
+    assert!(src.files.keys().all(|f| !f.starts_with("surface/")));
+    let mut target = pack(12, 8, 1, None);
+    let placed = place_in_pack(&mut target, &asset, (0, 0)).unwrap();
+    assert!(!placed.materials.changes());
+    assert_eq!(level(&target).look, None);
+}

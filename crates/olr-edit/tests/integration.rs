@@ -19,4 +19,5 @@ mod pack;
 mod pixelate;
 mod skin;
 mod surface;
+mod surface_ops;
 mod textures;
