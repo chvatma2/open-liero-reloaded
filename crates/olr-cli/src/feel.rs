@@ -90,6 +90,7 @@ pub fn feel_spec(profile: &str, seed: u32) -> NetSpec {
         host_freeze: None,
         profile_changes: vec![],
         migration: false,
+        strafe: false,
         faults: vec![],
     }
 }

@@ -310,10 +310,12 @@ The headless command-line tool. Its commands:
   --spectators 1 --join-tick T --profile typical --drift-ppm P --ticks 1000
   --outage peer:from:until --net-seed N --difficulty D --exit
   peer:tick:crash|leave --host-freeze from:until --profile-change
-  tick:peer:profile --migration] [--from CASE.ron]
+  tick:peer:profile --migration --strafe] [--from CASE.ron]
   [--seeds a..b] [--content DIR] [--failures DIR]` (plan 9, `netsim.rs`, the
   command in `net_sim_cmd.rs`): an online match of bots in one process over
-  `olr-netcode`'s network model. Every peer (host, clients, spectators) builds
+  `olr-netcode`'s network model (`--strafe`, `NetSpec::strafe`, issue #23:
+  the bots also hold Strafe a third of the time and tap Next/Previous weapon,
+  `netsim::extra_keys`, so the 16-bit keys cross the wire). Every peer (host, clients, spectators) builds
   its own `World` and area cache from the same `MatchOptions` (all worms
   `Player::Bot`); a peer runs only the bots of its local slots (the host
   `clients..slots`, client `k` = peer `1 + k` slot `k`), thinking with its
@@ -847,4 +849,4 @@ one migration named alike by all to a client, the bots playing on there,
 the verdict above, the server's rows as it went at least 500 ticks;
 about 24 s each (fails with the clients' migration off: all dropped).
 
-**Desync bundles** (`bundle.rs`, `BUNDLE_VERSION` 3: 2 for `NetSpec`'s migration fields, 3 for withdrawals, plan 12d): `.olds` files from `net-sim` (and, in plan 10, real games); `olr-cli net-repro <file>` names the first diverging tick and world field. `net-sim` writes them to `--failures` when a client reports a desync (`netsim::run_with`; `NetSpec::faults` plants one: `(peer, host tick, worm, health)`). A bundle's `gone` holds the peer's withdrawals below its rows' end (`InputLog::gone_marks`, taken at the desync and again when the state loads, with the rows); `reproduce` withdraws each before its tick, as the harness's offline replay does. A state diff lists the first differing path of every differing `WorldState` field, in its declaration order (`worms[3].health, ents`; `bundle::FIELDS`, kept equal to the real field set by a test), so the cause is read from the whole list, not the first entry.
+**Desync bundles** (`bundle.rs`, `BUNDLE_VERSION` 4: 2 for `NetSpec`'s migration fields, 3 for withdrawals, plan 12d, 4 for 16-bit keys, issue #23): `.olds` files from `net-sim` (and, in plan 10, real games); `olr-cli net-repro <file>` names the first diverging tick and world field. `net-sim` writes them to `--failures` when a client reports a desync (`netsim::run_with`; `NetSpec::faults` plants one: `(peer, host tick, worm, health)`). A bundle's `gone` holds the peer's withdrawals below its rows' end (`InputLog::gone_marks`, taken at the desync and again when the state loads, with the rows); `reproduce` withdraws each before its tick, as the harness's offline replay does. A state diff lists the first differing path of every differing `WorldState` field, in its declaration order (`worms[3].health, ents`; `bundle::FIELDS`, kept equal to the real field set by a test), so the cause is read from the whole list, not the first entry.

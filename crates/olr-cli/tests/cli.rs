@@ -573,6 +573,7 @@ fn net_sim_migration_flags_run_and_replay() {
         host_freeze: None,
         profile_changes: vec![],
         migration: false,
+        strafe: false,
     };
     let case = olr_cli::netsim::NetCase { spec, failure: None };
     let path = tmp.path().join("case.ron");

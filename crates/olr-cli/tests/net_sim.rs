@@ -3,6 +3,7 @@ mod common;
 use common::{content, full_tier};
 use olr_cli::netsim::{NetRun, NetSpec, run};
 use olr_netcode::Event;
+use olr_sim::Keys;
 
 fn spec(profile: &str, seed: u32) -> NetSpec {
     NetSpec {
@@ -24,6 +25,7 @@ fn spec(profile: &str, seed: u32) -> NetSpec {
         host_freeze: None,
         profile_changes: vec![],
         migration: false,
+        strafe: false,
     }
 }
 
@@ -47,6 +49,21 @@ fn bots_play_online_over_a_typical_and_a_bad_network() {
     let Some(c) = content() else { return };
     pass(&c, &spec("typical", 1));
     pass(&c, &spec("bad", 2));
+}
+
+/// Issue #23: Strafe and Previous/Next weapon go through the netcode (a
+/// bad network's rollbacks included) and every peer agrees.
+#[test]
+fn strafing_bots_play_online() {
+    let Some(c) = content() else { return };
+    let s = NetSpec { strafe: true, ..spec("bad", 6) };
+    let r = pass(&c, &s);
+    let log = &r.report.host_log;
+    for slot in [0, 5] {
+        let has = |bit: u16| log.iter().any(|row| row[slot] & bit != 0);
+        assert!(has(Keys::STRAFE) && has(Keys::NEXT_WEAPON) && has(Keys::PREV_WEAPON), "slot {slot}");
+    }
+    assert!(r.report.stats.values().any(|s| s.rollbacks > 0), "rollbacks replayed the new keys");
 }
 
 #[test]

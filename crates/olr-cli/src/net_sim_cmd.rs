@@ -87,6 +87,9 @@ struct NetSpecArgs {
     /// Host migration on (spec §3.7) even without a host exit or freeze.
     #[arg(long)]
     migration: bool,
+    /// Every bot also presses Strafe and Previous/Next weapon (issue #23).
+    #[arg(long)]
+    strafe: bool,
 }
 
 impl From<NetSpecArgs> for NetSpec {
@@ -110,6 +113,7 @@ impl From<NetSpecArgs> for NetSpec {
             host_freeze: a.host_freeze,
             profile_changes: a.profile_changes,
             migration: a.migration,
+            strafe: a.strafe,
         }
     }
 }

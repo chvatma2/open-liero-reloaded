@@ -92,6 +92,24 @@ pub struct NetSpec {
     /// `host_freeze` turn it on too.
     #[serde(default)]
     pub migration: bool,
+    /// Every bot also presses Strafe and Previous/Next weapon
+    /// ([`extra_keys`], issue #23), so the run carries the keys' high bits.
+    #[serde(default)]
+    pub strafe: bool,
+}
+
+/// What `--strafe` adds to slot `slot`'s keys at `tick`: Strafe held a
+/// third of the time, Next and Previous weapon pressed once every 90 ticks
+/// each, staggered by slot.
+pub fn extra_keys(tick: u32, slot: u8) -> u16 {
+    let t = tick + 13 * u32::from(slot);
+    let strafe = if (t / 60).is_multiple_of(3) { Keys::STRAFE } else { 0 };
+    let change = match t % 90 {
+        0 => Keys::NEXT_WEAPON,
+        45 => Keys::PREV_WEAPON,
+        _ => 0,
+    };
+    strafe | change
 }
 
 impl NetSpec {
@@ -284,16 +302,23 @@ impl<'c> WorldFactory<'c> {
 struct PeerBots {
     hosted: HostBots,
     own: Option<(u8, Rc<RefCell<Bot>>)>,
+    /// `NetSpec::strafe`.
+    strafe: bool,
 }
 
 impl Driver<WorldSim> for PeerBots {
-    fn local_inputs(&mut self, sim: &WorldSim, _tick: u32, slots: &[u8], out: &mut [Keys]) {
+    fn local_inputs(&mut self, sim: &WorldSim, tick: u32, slots: &[u8], out: &mut [Keys]) {
         match &self.own {
             Some((slot, bot)) => {
                 let mut think = || bot.borrow_mut().think(sim.world(), sim.events());
                 self.hosted.press(sim, slots, out, Some((*slot, &mut think)));
             }
             None => self.hosted.press(sim, slots, out, None),
+        }
+        if self.strafe {
+            for (&s, k) in slots.iter().zip(out.iter_mut()) {
+                k.0 |= extra_keys(tick, s);
+            }
         }
     }
 }
@@ -322,7 +347,7 @@ impl Factory<WorldSim> for WorldFactory<'_> {
             self.own.insert(peer, o.clone());
         }
         bots.retain(|&slot, _| seat.is_none() && slot >= clients);
-        Box::new(PeerBots { hosted: HostBots::new(bots), own })
+        Box::new(PeerBots { hosted: HostBots::new(bots), own, strafe: self.spec.strafe })
     }
 
     /// A client that took over: its own bot kept, the host's bots (the
@@ -348,7 +373,7 @@ impl Factory<WorldSim> for WorldFactory<'_> {
             })
             .collect();
         let own = self.own.get(&peer).filter(|o| Some(o.0) == own).cloned();
-        Box::new(PeerBots { hosted: HostBots::new(bots), own })
+        Box::new(PeerBots { hosted: HostBots::new(bots), own, strafe: self.spec.strafe })
     }
 
     /// Fault `index` of the spec: a worm's health. A fault naming no worm is
@@ -985,6 +1010,7 @@ mod tests {
             host_freeze: None,
             profile_changes: vec![],
             migration: false,
+            strafe: false,
         }
     }
 

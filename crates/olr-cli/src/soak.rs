@@ -153,6 +153,7 @@ fn generate(seed: u64, min_ticks: u32, max_ticks: u32) -> NetSpec {
         host_freeze,
         profile_changes,
         migration: false,
+        strafe: false,
     }
 }
 
