@@ -1,8 +1,8 @@
 //! `LookFrame` building, fade and culling (spec §Light sources, §Pipeline).
 
 use olr_look::{
-    Ambient, Animation, ExplosionLight, FrameLight, GlowColour, GlowGroup, Grade, LevelLook, Light,
-    LookFrame, MAX_EMITTERS, ModLook, ProjectileLook, Reach, ViewMode, engine, fade, light_at,
+    Ambient, Animation, ExplosionHeatLook, ExplosionLight, FrameLight, GlowColour, GlowGroup, Grade, LevelLook, Light,
+    LookFrame, MAX_EMITTERS, ModLook, ProjectileHeat, ProjectileLook, Reach, ViewMode, engine, fade, light_at,
     srgb_to_linear,
 };
 
@@ -223,6 +223,47 @@ fn explosion_lights_are_capped_and_fall_back_to_the_mods() {
     assert!(!ModLook { explosion: Some(x.clone()), ..Default::default() }.is_empty());
     assert_eq!((m.explosion(0), m.explosion(1), m.explosion(7)), (Some(&x), Some(&own), Some(&x)));
     assert!(m.explosion(-1).is_none(), "a bonus or beam keeps the engine's");
+}
+
+/// Issue #42: a mod's explosion heat scales the engine's, capped, over its
+/// own radius or the engine's; a projectile's own wins over the mod's, and
+/// -1 (a bonus blown up) keeps the engine's. A projectile's tick of heat is
+/// capped too.
+#[test]
+fn mod_heat_scales_the_engines_capped_and_falls_back_to_the_mods() {
+    let bazooka = engine::explosion_heat(4.0).unwrap();
+    let half = ExplosionHeatLook { amount: 50, radius: None }.heat(4.0).unwrap();
+    assert_eq!((half.amount, half.radius), (bazooka.amount / 2.0, bazooka.radius));
+    let wide = ExplosionHeatLook { amount: 100, radius: Some(30) }.heat(4.0).unwrap();
+    assert_eq!((wide.amount, wide.radius), (bazooka.amount, 30.0));
+    let hostile = ExplosionHeatLook { amount: u16::MAX, radius: Some(u8::MAX) }.heat(4.0).unwrap();
+    assert_eq!((hostile.amount, hostile.radius), (1000.0, engine::MAX_EXPLOSION_HEAT_RADIUS));
+    assert_eq!(ExplosionHeatLook { amount: 100, radius: Some(0) }.heat(4.0).unwrap().radius, 1.0);
+    for (amount, damage) in [(0, 4.0), (100, 0.0), (100, f32::NAN), (1, 2.0)] {
+        assert!(ExplosionHeatLook { amount, radius: Some(9) }.heat(damage).is_none(), "{amount} {damage}");
+    }
+    let flame = ProjectileHeat { amount: 4, radius: 5 }.tick();
+    assert_eq!((flame.amount, flame.radius), (4.0, 5.0));
+    let hot = ProjectileHeat { amount: u16::MAX, radius: u8::MAX }.tick();
+    assert_eq!(
+        (hot.amount, hot.radius),
+        (f32::from(engine::MAX_PROJECTILE_HEAT), f32::from(engine::MAX_PROJECTILE_HEAT_RADIUS))
+    );
+    assert_eq!(ProjectileHeat { amount: 0, radius: 0 }.tick().radius, 1.0);
+
+    let own = ExplosionHeatLook { amount: 200, radius: None };
+    let wide_mod = ExplosionHeatLook { amount: 30, radius: Some(12) };
+    let heat = ProjectileHeat { amount: 3, radius: 4 };
+    let p = ProjectileLook { explosion_heat: Some(own), heat: Some(heat), ..Default::default() };
+    let mut m = ModLook { projectiles: vec![None, Some(p)], ..Default::default() };
+    assert!(m.explosion_heat(0).is_none() && m.explosion_heat(-1).is_none());
+    assert_eq!((m.explosion_heat(1), m.heat(1), m.heat(0), m.heat(9)), (Some(&own), Some(&heat), None, None));
+    assert!(m.explosion(1).is_none(), "heat is not light");
+    m.explosion_heat = Some(wide_mod);
+    assert!(!ModLook { explosion_heat: Some(wide_mod), ..Default::default() }.is_empty());
+    let got = (m.explosion_heat(0), m.explosion_heat(1), m.explosion_heat(7));
+    assert_eq!(got, (Some(&wide_mod), Some(&own), Some(&wide_mod)));
+    assert!(m.explosion_heat(-1).is_none(), "a bonus blown up keeps the engine's");
 }
 
 /// Issue #12: a skin's light is steady and capped, whatever it asks.

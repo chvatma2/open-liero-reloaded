@@ -679,6 +679,9 @@ pub fn compile_projectile_look(
             .as_ref()
             .map(|x| compile_explosion_light(x, file, &format!("{path}.explosion")))
             .transpose()?,
+
+        explosion_heat: None,
+        heat: None,
     })
 }
 

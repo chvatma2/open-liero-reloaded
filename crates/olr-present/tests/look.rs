@@ -198,7 +198,7 @@ fn steady(colour: [u8; 3], intensity: u16, reach: u16) -> Light {
 fn mod_look(content: &Content, light: Option<Light>, end_flash: Option<Light>) -> ModLook {
     let (sc, _) = olr_scenario::load_fixture(&fixtures(), BAZOOKA).unwrap();
     let n = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap().sim.projectiles().len();
-    let look = ProjectileLook { glow: Some(80), light, end_flash, explosion: None };
+    let look = ProjectileLook { glow: Some(80), light, end_flash, ..Default::default() };
     ModLook { projectiles: vec![Some(look); n], ..Default::default() }
 }
 

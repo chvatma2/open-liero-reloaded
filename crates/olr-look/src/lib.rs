@@ -208,6 +208,63 @@ pub struct ProjectileLook {
     pub end_flash: Option<Light>,
     /// Replaces the engine's light of every explosion it makes (issue #15).
     pub explosion: Option<ExplosionLight>,
+    /// Scales the engine's heat of every explosion it makes (issue #42).
+    pub explosion_heat: Option<ExplosionHeatLook>,
+    /// Heat it leaves around itself each tick it lives (issue #42).
+    pub heat: Option<ProjectileHeat>,
+}
+
+/// A mod's explosion heat (issue #42, spec
+/// `2026-10-22-materials-and-heat-design.md`): the engine's heat of an
+/// explosion ([`engine::explosion_heat`]) at `amount` percent, over its own
+/// radius when it has one. Presentation only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExplosionHeatLook {
+    /// Percent of the engine's amount, 0 (none) to
+    /// [`engine::MAX_EXPLOSION_HEAT_AMOUNT`].
+    pub amount: u16,
+    /// World pixels, 1 to [`engine::MAX_EXPLOSION_HEAT_RADIUS`]; `None`
+    /// keeps the engine's for the explosion.
+    pub radius: Option<u8>,
+}
+
+impl ExplosionHeatLook {
+    /// The heat an explosion of `damage` leaves: the engine's amount at
+    /// `amount` percent (clamped to the cap) up to [`MAX_TEMPERATURE`], over
+    /// the radius (clamped to 1 to the cap) or the engine's. `None` when the
+    /// engine's is none (no damage) or it gives less than a degree.
+    pub fn heat(&self, damage: f32) -> Option<engine::ExplosionHeat> {
+        let h = engine::explosion_heat(damage)?;
+        let share = f32::from(self.amount.min(engine::MAX_EXPLOSION_HEAT_AMOUNT)) / 100.0;
+        let amount = (h.amount * share).min(f32::from(MAX_TEMPERATURE));
+        let radius = match self.radius {
+            Some(r) => f32::from(r.clamp(1, engine::MAX_EXPLOSION_HEAT_RADIUS as u8)),
+            None => h.radius,
+        };
+        (amount >= 1.0).then_some(engine::ExplosionHeat { radius, amount })
+    }
+}
+
+/// The heat a mod projectile leaves around itself each tick it lives
+/// (issue #42: flames, napalm, a hot slug), where it is that tick, its
+/// falloff the renderer's. Presentation only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ProjectileHeat {
+    /// The temperature a tick gives stone at its centre, 1 to
+    /// [`engine::MAX_PROJECTILE_HEAT`].
+    pub amount: u16,
+    /// World pixels, 1 to [`engine::MAX_PROJECTILE_HEAT_RADIUS`].
+    pub radius: u8,
+}
+
+impl ProjectileHeat {
+    /// A tick's deposit, clamped to the caps.
+    pub fn tick(&self) -> engine::ExplosionHeat {
+        engine::ExplosionHeat {
+            radius: f32::from(self.radius.clamp(1, engine::MAX_PROJECTILE_HEAT_RADIUS)),
+            amount: f32::from(self.amount.clamp(1, engine::MAX_PROJECTILE_HEAT)),
+        }
+    }
 }
 
 /// A mod's explosion light (issue #15): replaces the engine's
@@ -256,6 +313,8 @@ pub struct ModLook {
     pub weapons: Vec<Option<WeaponLook>>,
     /// The explosion light of every projectile without its own (issue #15).
     pub explosion: Option<ExplosionLight>,
+    /// The explosion heat of every projectile without its own (issue #42).
+    pub explosion_heat: Option<ExplosionHeatLook>,
 }
 
 impl ModLook {
@@ -264,6 +323,7 @@ impl ModLook {
         self.projectiles.iter().all(Option::is_none)
             && self.weapons.iter().all(Option::is_none)
             && self.explosion.is_none()
+            && self.explosion_heat.is_none()
     }
 
     /// The explosion light of projectile `proj` (a `SimMod` index; -1 is
@@ -272,6 +332,21 @@ impl ModLook {
         let i = usize::try_from(proj).ok()?;
         let own = self.projectiles.get(i).and_then(Option::as_ref).and_then(|p| p.explosion.as_ref());
         own.or(self.explosion.as_ref())
+    }
+
+    /// The explosion heat of projectile `proj` (a `SimMod` index; -1 is
+    /// none: a bonus blown up keeps the engine's): its own, else the
+    /// mod's; `None` for the engine's (issue #42).
+    pub fn explosion_heat(&self, proj: i32) -> Option<&ExplosionHeatLook> {
+        let i = usize::try_from(proj).ok()?;
+        let own = self.projectiles.get(i).and_then(Option::as_ref).and_then(|p| p.explosion_heat.as_ref());
+        own.or(self.explosion_heat.as_ref())
+    }
+
+    /// The heat projectile `proj` (a `SimMod` index) leaves each tick it
+    /// lives (issue #42); `None` for most.
+    pub fn heat(&self, proj: usize) -> Option<&ProjectileHeat> {
+        self.projectiles.get(proj).and_then(Option::as_ref).and_then(|p| p.heat.as_ref())
     }
 }
 

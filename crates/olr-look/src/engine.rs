@@ -76,8 +76,22 @@ pub struct ExplosionHeat {
     pub amount: f32,
 }
 
-/// The widest engine explosion heat, world pixels (the renderer takes 64).
+/// The widest engine explosion heat, world pixels (the renderer takes 64),
+/// and the widest a mod's `explosion_heat` may ask for (issue #42).
 pub const MAX_EXPLOSION_HEAT_RADIUS: f32 = 48.0;
+
+/// The most a mod's `explosion_heat` scales the engine's, percent (issue
+/// #42): `olr-format` refuses more, [`crate::ExplosionHeatLook::heat`]
+/// clamps to it; the deposit stays at most [`crate::MAX_TEMPERATURE`].
+pub const MAX_EXPLOSION_HEAT_AMOUNT: u16 = 1000;
+
+/// The most heat a mod projectile's `heat` leaves a tick, degrees of stone
+/// at its centre (issue #42): a tenth of the hottest, so a flame takes ten
+/// ticks in one place to melt stone white.
+pub const MAX_PROJECTILE_HEAT: u16 = 100;
+
+/// The widest a mod projectile's `heat` reaches, world pixels (issue #42).
+pub const MAX_PROJECTILE_HEAT_RADIUS: u8 = 16;
 
 /// The radii of OLX's hole stamps by hole size (damage 0 to 4 and up): the
 /// dirt theme's `holes/1-5.png`, 5, 7, 9, 11 and 15 pixels across. The

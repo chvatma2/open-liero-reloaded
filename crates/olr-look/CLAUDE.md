@@ -14,11 +14,21 @@ own look. The simulation never sees it.
   `GlowColour::Own | Tint`, intensity, reach, animation, phase),
   `LevelLook`,
   `Occlusion` (issue #10: `strength` percent, `reach` world pixels),
-  `ProjectileLook` (`glow`, `light`, `end_flash`, `explosion`), `WeaponLook`
+  `ProjectileLook` (`glow`, `light`, `end_flash`, `explosion`, issue #42's
+  `explosion_heat` and `heat`), `WeaponLook`
   (`muzzle_light`), `ModLook` (indexed like `SimMod::projectiles` and
-  `SimMod::weapons`, plus the mod-wide `explosion`; `is_empty`;
+  `SimMod::weapons`, plus the mod-wide `explosion` and, issue #42,
+  `explosion_heat`; `is_empty`;
   `explosion(proj)`: projectile `proj`'s own, else the mod's, `None` for
-  -1 or neither, issue #15), `ExplosionLight` (issue #15: a `Light`, the
+  -1 or neither, issue #15; `explosion_heat(proj)` the same for heat and
+  `heat(proj)` a projectile's own, issue #42), `ExplosionHeatLook` (issue
+  #42: `amount` percent of the engine's, `radius` world pixels or `None`
+  for the engine's; `heat(damage)`: `engine::explosion_heat(damage)`
+  scaled, amount clamped to `MAX_EXPLOSION_HEAT_AMOUNT` and the result to
+  `MAX_TEMPERATURE`, radius to 1-`MAX_EXPLOSION_HEAT_RADIUS`; `None` under
+  a degree or without the engine's), `ProjectileHeat` (issue #42: `amount`
+  a tick, `radius`; `tick()` the deposit, clamped to 1-`MAX_PROJECTILE_HEAT`
+  and 1-`MAX_PROJECTILE_HEAT_RADIUS`), `ExplosionLight` (issue #15: a `Light`, the
   disc's `radius`, `fitted`: the engine's flash keys fitted to the
   explosion's life; `radius()` and `reach()` clamp to the caps), `Grade` (exposure in 1/100 stop, contrast
   and saturation percent, tint; `Default` is neutral), `Ambient`.
@@ -101,7 +111,10 @@ own look. The simulation never sees it.
   the damage, up to `MAX_EXPLOSION_HEAT_RADIUS` 48; `None` for no damage
   or NaN): a minigun hit (3) under the lava ramp's first key at its rim, a
   Bazooka's (4) rim glowing a few pixels deep, a Big Nuke's fragments
-  (15) far more. Issue #41 (spec's "Distant layers: the ball"):
+  (15) far more. Issue #42, a mod's heat's caps: `MAX_EXPLOSION_HEAT_AMOUNT`
+  (1000 %), `MAX_EXPLOSION_HEAT_RADIUS` (48, the engine's own widest),
+  `MAX_PROJECTILE_HEAT` (100 degrees a tick) and
+  `MAX_PROJECTILE_HEAT_RADIUS` (16). Issue #41 (spec's "Distant layers: the ball"):
   `HEAT_DEPTH_PX` (`K`, 1.1: a distant layer of depth `d` lies `d × K`
   world pixels behind the plane, so a Big Nuke's fragments reach depth
   20, a Bazooka's depth 15) and `heat_slice(heat, depth)`: the ball's
@@ -123,7 +136,7 @@ own look. The simulation never sees it.
   `LevelLook::materials` (at most `MAX_MATERIALS` 255) and
   `LevelLook::material(v)` (`None` for 0 or past the list). The renderer
   heats them (issue #39); explosions deposit the engine's heat (issue
-  #40, `olr-present`).
+  #40, `olr-present`), or a mod's (issue #42).
 - **Tests** (`tests/`, one binary): `anim.rs` (pulse shapes at their
   quarter points, keys interpolating, carrying colour and ending, flicker
   deterministic and bounded, phases, `hostile_animations_never_panic`) and
@@ -132,6 +145,7 @@ own look. The simulation never sees it.
   `skin_light_is_steady_and_capped`,
   `explosion_lights_are_capped_and_fall_back_to_the_mods` (issue #15),
   `explosion_heat_grows_with_the_damage_and_is_bounded` (issue #40),
+  `mod_heat_scales_the_engines_capped_and_falls_back_to_the_mods` (issue #42),
   `distant_layers_take_the_balls_slice` (issue #41),
   `worm_floor_hues`, `solids_settings_are_bounded_and_off_without_a_look`
   (the occlusion too, issue #10);
