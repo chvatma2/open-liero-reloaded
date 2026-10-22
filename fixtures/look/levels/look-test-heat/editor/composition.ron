@@ -1,0 +1,59 @@
+(
+    elements: [
+        (
+            id: "base",
+            name: "Base",
+            kind: Raster,
+            surface_map: true,
+            back_surface_map: true,
+        ),
+        (
+            id: "cave",
+            name: "Cave",
+            kind: Drawn(
+                material: Background,
+            ),
+            surface: "brick",
+        ),
+        (
+            id: "ceiling",
+            name: "Ceiling",
+            kind: Drawn(
+                material: Rock,
+            ),
+            surface: "stone",
+        ),
+        (
+            id: "floor",
+            name: "Floor",
+            kind: Drawn(
+                material: Rock,
+            ),
+            surface: "stone",
+        ),
+        (
+            id: "mound",
+            name: "Mound",
+            kind: Drawn(
+                material: Dirt,
+            ),
+            surface: "dirt",
+        ),
+        (
+            id: "pillar",
+            name: "Pillar",
+            kind: Drawn(
+                material: Rock,
+            ),
+            surface: "wood",
+        ),
+        (
+            id: "plate",
+            name: "Plate",
+            kind: Drawn(
+                material: Rock,
+            ),
+            surface: "metal",
+        ),
+    ],
+)

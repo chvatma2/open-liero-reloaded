@@ -1,0 +1,57 @@
+(
+    name: "Bazooka",
+    recharge: 0.08,
+    drain: 100.001,
+    between_shots_s: 1.071,
+    fire: Projectile(
+        recoil: 15,
+        shot: (
+            speed: 140,
+            projectile: (
+                gfx: Pixels([
+                    "#c8c8c8",
+                ]),
+                gravity: 0,
+                velocity_factor: 1.001,
+                hit_terrain: [
+                    Explode(
+                        damage: 4,
+                        shake: 2,
+                    ),
+                    Spawn("spawn"),
+                ],
+                hit_worm: [
+                    Explode(
+                        damage: 27,
+                    ),
+                    Spawn("spawn"),
+                ],
+                spawns: {
+                    "spawn": (
+                        amount: 12,
+                        speed: 105,
+                        speed_var: 14.0,
+                        spread: 360.0,
+                        projectile: (
+                            gfx: Pixels([
+                                "#b0b0b0",
+                            ]),
+                            gravity: 70,
+                            hit_terrain: [
+                                Explode(
+                                    damage: 2,
+                                    shake: 1,
+                                ),
+                            ],
+                            hit_worm: [
+                                Injure(
+                                    damage: 2,
+                                ),
+                            ],
+                        ),
+                    ),
+                },
+            ),
+        ),
+    ),
+)

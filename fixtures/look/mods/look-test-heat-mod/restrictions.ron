@@ -1,0 +1,7 @@
+{
+    "Standard": {
+        "Bazooka": Enabled,
+        "Minigun": Enabled,
+        "Nuke": Enabled,
+    },
+}

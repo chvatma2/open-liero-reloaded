@@ -1,0 +1,8 @@
+(
+    name: "Look Test Heat Mod",
+    weapons: [
+        "bazooka",
+        "minigun",
+        "nuke",
+    ],
+)

@@ -1,0 +1,10 @@
+(
+    format_version: 5,
+    id: "look-test-heat-mod",
+    name: "Look Test Heat Mod",
+    version: "0.1.0",
+    kind: Mod,
+    authors: [],
+    origin: None,
+    license: None,
+)
