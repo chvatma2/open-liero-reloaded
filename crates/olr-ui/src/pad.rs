@@ -19,7 +19,10 @@
 //!   on in the widgets' order, so every widget can be reached;
 //! - the focused widget has a ring ([`crate::theme::FOCUS`]) while the pad
 //!   leads (until a mouse button is pressed);
-//! - a scroll area shows the widget the pad focused ([`follow_focus`]).
+//! - a scroll area shows the widget the pad focused ([`follow_focus`]),
+//!   and any widget focused otherwise than by the pointer (the keyboard's
+//!   Tab, a screen reader): issue #49, every control reachable in a
+//!   window too short for its page.
 //!
 //! Who: any pad in the menus; nobody while a match runs (the game has
 //! the pads), on the weapon selection or on local play's join step (the
@@ -30,7 +33,7 @@
 
 use std::collections::VecDeque;
 
-use egui::{Context, Event, FocusDirection, Id, Key, Modifiers, Popup, Ui};
+use egui::{Context, Event, FocusDirection, Id, Key, Modifiers, Popup, Rect, Ui};
 use olr_input::{Axis, Button, PadEvent, PadInput, STICK_THRESHOLD};
 
 use crate::state::{Screen, UiState};
@@ -74,8 +77,9 @@ const LANDING_PASSES: u8 = 2;
 /// The moves a pass makes after one press at most (text fields skipped
 /// one after another).
 const LANDING_TRIES: u8 = 4;
-/// The passes after a move in which scroll areas follow the focus.
-const FOLLOW_PASSES: u8 = 3;
+/// The passes after a move in which scroll areas follow the focus (a pass
+/// each of nested ones, a few for each).
+const FOLLOW_PASSES: u8 = 8;
 
 /// One input a pad holds that means a [`Nav`].
 #[derive(Clone, Debug)]
@@ -194,6 +198,11 @@ pub struct PadNav {
     close_list: bool,
     /// Passes left in which scroll areas follow the focus.
     follow: u8,
+    /// The widget focused when last looked at, and the passes left in
+    /// which scroll areas follow a focus that moved without the pointer
+    /// (issue #49).
+    seen_focus: Option<Id>,
+    focus_follow: u8,
     /// The drop-downs the last pass drew ([`pad_choice`]).
     combos: Vec<Id>,
     /// The pad whose press this pass carries ([`PadNav::carried`]).
@@ -422,6 +431,22 @@ impl PadNav {
         }
     }
 
+    /// Notes a focus that moved otherwise than by the pointer (egui moves
+    /// it at a pass's end for Tab, during one for a request): the scroll
+    /// areas follow it for the next passes.
+    fn see_focus(&mut self, ctx: &Context) {
+        let focused = ctx.memory(|m| m.focused());
+        if focused == self.seen_focus {
+            return;
+        }
+        self.seen_focus = focused;
+        let pointer =
+            ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_released() || i.pointer.any_down());
+        if focused.is_some() && !pointer {
+            self.focus_follow = FOLLOW_PASSES;
+        }
+    }
+
     /// At the start of a menus' pass (`screens::show`, before any widget).
     pub fn begin_pass(&mut self, ctx: &Context) {
         if ctx.input(|i| i.pointer.any_pressed()) {
@@ -433,8 +458,10 @@ impl PadNav {
             // runs passes while one is asked for).
             ctx.request_repaint();
         }
-        let follow = self.active && self.follow > 0;
+        self.see_focus(ctx);
+        let follow = (self.active && self.follow > 0) || self.focus_follow > 0;
         self.follow = self.follow.saturating_sub(1);
+        self.focus_follow = self.focus_follow.saturating_sub(1);
         ctx.data_mut(|d| d.insert_temp(follow_id(), follow));
     }
 
@@ -443,6 +470,7 @@ impl PadNav {
     pub fn end_pass(&mut self, ui: &Ui) {
         self.carried = None;
         let ctx = ui.ctx();
+        self.see_focus(ctx);
         self.combos = ctx.data_mut(|d| d.remove_temp::<Vec<Id>>(combos_id())).unwrap_or_default();
         ctx.data_mut(|d| d.remove::<(Id, i32)>(step_id()));
         if !self.active {
@@ -512,15 +540,35 @@ pub fn pad_choice<T: PartialEq + Clone>(
 }
 
 /// Ends a scroll area's content (`ui`): shows the focused widget when the
-/// pad just moved the focus to it (egui scrolls to no focused widget by
-/// itself).
+/// pad, the keyboard or a screen reader just moved the focus to it (egui
+/// scrolls to no focused widget by itself). In nested scroll areas one
+/// acts a pass, the innermost first (they end first): each sees where the
+/// widget is after the last pass's scroll. The inner one brings the
+/// widget into what shows of its view; when it can move it no further (at
+/// its end, the rest of its view out of the window), the outer one brings
+/// that part into the window.
 pub fn follow_focus(ui: &Ui) {
     let ctx = ui.ctx();
     if !ctx.data(|d| d.get_temp::<bool>(follow_id())).unwrap_or(false) {
         return;
     }
     let Some(r) = ctx.memory(|m| m.focused()).and_then(|id| ctx.read_response(id)) else { return };
-    if r.layer_id == ui.layer_id() && ui.min_rect().contains(r.rect.center()) {
-        ui.scroll_to_rect(r.rect, None);
+    if r.layer_id != ui.layer_id() || !ui.min_rect().contains(r.rect.center()) {
+        return;
     }
+    let pass = ctx.cumulative_pass_nr();
+    let acted = Id::new("olr follow acted");
+    if ctx.data(|d| d.get_temp::<u64>(acted)) == Some(pass) || ui.clip_rect().contains_rect(r.rect) {
+        return;
+    }
+    // Where it was when this area last scrolled to it: it did not move.
+    let last = ui.id().with("olr follow last");
+    if ctx.data(|d| d.get_temp::<(Id, Rect)>(last)) == Some((r.id, r.rect)) {
+        return;
+    }
+    ctx.data_mut(|d| {
+        d.insert_temp(last, (r.id, r.rect));
+        d.insert_temp(acted, pass);
+    });
+    ui.scroll_to_rect(r.rect, None);
 }
