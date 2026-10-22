@@ -24,8 +24,8 @@ views; `cargo xtask publish` signs and publishes with the same formats.
   `.dirty` build. `since(releases, current, channel, offered)` (issue
   #22): the releases taking the offer skips, the ones in the channel
   newer than the build up to and including the offer (no `.dirty`),
-  newest first by `precedence` (GitHub's order is not relied on). Asset names as `dist` and `publish` write them:
-  `windows_zip_name`, `flatpak_bundle_name`, `folder_name`,
+  newest first by `precedence` (GitHub's order is not relied on). Asset
+  names as `dist` and `publish` write them: `windows_zip_name`, `flatpak_bundle_name`, `folder_name`,
   `signature_name` (`<file>.sig`). `lib.rs`' `channel(setting, build,
   flatpak)`: under Flatpak the branch's (`stable`/`beta`), else the
   setting's.
