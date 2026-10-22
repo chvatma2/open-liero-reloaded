@@ -131,7 +131,7 @@ A distant (parallax) layer (issue #11): its image `distant/<i>.png` is art pixel
 |---|---|---|---|
 | `depth` | integer | required | Percent, 1 (near: moves and is lit almost like the level) to 99 (far: almost still, ambient light only). |
 | `at` | (integer, integer) | required | Its top-left in world pixels with the camera (the view's centre) at the level's centre; with the camera at `c` it lies at `at + depth × (c - size / 2)`. Each coordinate within `MAX_DISTANT_AT` (16384) of 0. |
-| `surface` | string (optional) | none | The whole layer's surface material (issue #37): the id of one of the look's `materials`. Default none. |
+| `surface` | string (optional) | none | The whole layer's surface material (issue #37): the id of one of the look's `materials`. Default none. When it heats, explosions heat the layer as slices of a ball (issue #41): the layer lies `z = depth × 1.1` world pixels behind the level, and an explosion of heat radius `R` warms it in a circle of radius `sqrt(R² − z²)` behind it, less the further back (no heat at depth 59 and beyond, past the largest radius, 64). A hot layer glows but casts no light. |
 
 <a id="element"></a>
 

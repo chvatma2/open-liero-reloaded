@@ -78,7 +78,12 @@ pub(crate) struct DistantEntry {
     /// of 0.
     at: (i32, i32),
     /// The whole layer's surface material (issue #37): the id of one of
-    /// the look's `materials`. Default none.
+    /// the look's `materials`. Default none. When it heats, explosions
+    /// heat the layer as slices of a ball (issue #41): the layer lies
+    /// `z = depth × 1.1` world pixels behind the level, and an explosion of
+    /// heat radius `R` warms it in a circle of radius `sqrt(R² − z²)`
+    /// behind it, less the further back (no heat at depth 59 and beyond,
+    /// past the largest radius, 64). A hot layer glows but casts no light.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     surface: Option<String>,
 }
@@ -747,6 +752,10 @@ mod tests {
             .unwrap();
         assert!(text.contains("surface: \"wood\"") && text.matches("surface").count() == 1, "{text}");
         assert_eq!(read_level_files(&fs).unwrap(), src);
+        // Issue #41: as values in the look's materials (wood is the second).
+        let ids: Vec<_> = src.look.as_ref().unwrap().materials.iter().map(|m| m.id.as_str()).collect();
+        assert_eq!(ids.iter().position(|&i| i == "wood"), Some(1), "{ids:?}");
+        assert_eq!(super::super::distant_surface_values(&src), [0, 2]);
         // An id the look lacks: refused, and played without.
         let unknown = text.replace("surface: \"wood\"", "surface: \"lava\"");
         let bad = fs.clone().with("level.ron", unknown.into_bytes());

@@ -267,6 +267,18 @@ pub fn compile_look(src: &LevelSource) -> Result<Option<olr_look::LevelLook>, Fo
     src.look.as_ref().map(|l| compile_look_source(l, LEVEL_FILE)).transpose()
 }
 
+/// Each distant layer's surface material as a value in the look's
+/// `materials` (issue #41, the renderer's heat): `v` is `materials[v - 1]`
+/// (as the surface maps' values), 0 none or an id the look lacks; one per
+/// [`LevelSource::distant_surfaces`] entry.
+pub fn distant_surface_values(src: &LevelSource) -> Vec<u8> {
+    let materials = src.look.as_ref().map_or(&[][..], |l| &l.materials[..]);
+    let value = |id: &String| {
+        materials.iter().position(|m| m.id == *id).map_or(0, |i| u8::try_from(i + 1).unwrap_or(0))
+    };
+    src.distant_surfaces.iter().map(|id| id.as_ref().map_or(0, value)).collect()
+}
+
 /// The glow images fit the level and name only groups its look has.
 pub(crate) fn check_glow(src: &LevelSource, glow: &GlowLayers) -> Result<(), FormatError> {
     let art = (src.size.0 * src.art_scale, src.size.1 * src.art_scale);
