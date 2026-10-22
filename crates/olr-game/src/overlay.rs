@@ -1,14 +1,15 @@
 //! The egui overlay at the display's resolution (spec §19 E10): worm
 //! names (the player's current weapon in its place while changing it),
-//! damage popups, the HUD (`olr_ui::hud`, from `hud::view`), the
-//! command line's results and the F2 debug panel. It only paints; it takes
+//! damage popups, the mod editor's practice's last hit (issue #20), the
+//! HUD (`olr_ui::hud`, from `hud::view`), the command line's results and
+//! the F2 debug panel. It only paints; it takes
 //! no input from the game.
 
 use egui::{Align2, Color32, FontId, Painter, Pos2};
 use olr_math::Vec2;
 use olr_scene::View;
 
-use crate::session::{Driver, POPUP_TICKS, Session};
+use crate::session::{Driver, Hit, POPUP_TICKS, Session};
 
 /// Maps world pixels to the overlay's points: the view rectangle is drawn
 /// into `dest` (output pixels, `olr_render::dest_rect`).
@@ -179,6 +180,26 @@ pub fn reload_bar(name: egui::Rect, k: f32, fraction: f32) -> (egui::Rect, egui:
     (back, egui::Rect::from_min_size(back.min, egui::vec2(width * f, height)))
 }
 
+/// A damage as the practice shows it: at most two decimals, none when
+/// whole (`25`, `12.5`).
+pub fn damage_text(v: f32) -> String {
+    let s = format!("{v:.2}");
+    s.trim_end_matches('0').trim_end_matches('.').to_string()
+}
+
+/// The practice's last hit (issue #20) on worm `name`: its damage, and the
+/// health it took when that was less (`Last hit: 25 on Bot 1 (took 10)`).
+pub fn last_hit_text(hit: &Hit, name: &str) -> String {
+    let mut text = format!("Last hit: {} on {name}", damage_text(hit.amount));
+    if hit.dealt < hit.amount {
+        text += &format!(" (took {})", damage_text(hit.dealt));
+    }
+    text
+}
+
+/// The practice's last hit's colour: the popups' red, lightened.
+const LAST_HIT_COLOUR: Color32 = Color32::from_rgb(255, 170, 140);
+
 fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, colour: Color32) {
     p.text(pos + egui::vec2(1.0, 1.0), anchor, text, font.clone(), Color32::from_black_alpha(200));
     p.text(pos, anchor, text, font, colour);
@@ -244,6 +265,14 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
             FontId::proportional(15.0),
             Color32::from_rgba_unmultiplied(255, 80, 60, fade),
         );
+    }
+    // The practice's last hit, at the picture's top centre (the HUD's keys
+    // and F2's counters take the corners, the Stop button the bottom left).
+    if let Some(hit) = s.last_hit() {
+        let r = o.map.points_rect();
+        let text = last_hit_text(&hit, &s.names.of(hit.worm));
+        let at = egui::pos2(r.center().x, r.top() + 8.0);
+        shadowed(p, at, Align2::CENTER_TOP, &text, FontId::proportional(16.0), LAST_HIT_COLOUR);
     }
     let frame = crate::hud::Frame {
         scores: o.show_scores,

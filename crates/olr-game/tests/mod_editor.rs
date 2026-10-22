@@ -6,7 +6,7 @@
 //! the window's close asking first; Play (issue #18) running the unsaved
 //! mod on the level and bots chosen, refused with an error, and Escape
 //! back to the editor as it was; issue #19's imported sound heard in Play
-//! and a Look light lighting it. Over the bundled content
+//! and a Look light lighting it; issue #20's practice with one weapon. Over the bundled content
 //! (`OLR_CONTENT_DIR`; skipped without it).
 
 use std::collections::BTreeMap;
@@ -234,6 +234,65 @@ fn play_runs_the_unsaved_mod_and_escape_comes_back() {
     sh.act(UiAction::EditMod("fast".into()));
     let s = sh.mod_editor().unwrap().state();
     assert_eq!((s.play_level().map(|(id, _)| id.as_str()), s.play_bots()), (Some(level), 2));
+}
+
+/// Issue #20: Play ▾'s practice with the weapon shown runs the unsaved
+/// mod's weapon in the player's first slot against idle targets on
+/// practice's level (Castle Strike until one is chosen), at the weapon's
+/// own reload unless Fast reload; Escape returns to the editor where it
+/// was. The normal Play is unchanged afterwards.
+#[test]
+fn practice_runs_the_weapon_shown_and_escape_comes_back() {
+    let Some((_tmp, _root, mut sh)) = shell() else { return };
+    sh.act(UiAction::NewMod { from: CLASSIC.into(), name: "Tuned".into() });
+    let s = sh.mod_editor().unwrap().state();
+    assert_eq!(s.practice_level().map(|(id, _)| id.as_str()), Some("olx-level-castlestrike"), "open");
+    assert_eq!((s.practice_targets(), s.fast_reload()), (1, false));
+
+    let t = Instant::now();
+    let recharge = "weapons/cannon.recharge";
+    sh.mod_frame(vec![A::Select(olr_mod_editor::Item::Weapon("cannon".into())), set(recharge, "2.0")], t);
+    sh.mod_frame(vec![A::PracticeTargets(2), A::Practice], t);
+    sh.poll();
+    assert!(sh.editing_play(), "{:?}", sh.mod_editor().unwrap().state().dialog());
+    let p = sh.play.as_ref().unwrap();
+    assert!(p.assets.edited() && p.assets.practice());
+    assert_eq!(p.assets.level_id, "olx-level-castlestrike");
+    assert_eq!(p.assets.worms(), 3, "the player and 2 targets");
+    let cannon = p.assets.m.sim.weapons().iter().position(|w| w.id == "cannon").unwrap();
+    assert_eq!(p.assets.m.sim.weapons()[cannon].recharge, 2.0, "the unsaved recharge");
+    let world = &p.session.world;
+    assert_eq!(world.worms()[0].slots[0].weapon, cannon as i32, "the weapon shown");
+    assert_eq!(world.settings().loading_time, 100, "its own reload");
+    for _ in 0..50 {
+        sh.tick(olr_sim::Keys(olr_sim::Keys::FIRE));
+    }
+    sh.mod_frame(Vec::new(), t);
+
+    // Escape: back where it was.
+    sh.stop_edited();
+    assert!(!sh.editing_play() && sh.play.is_none());
+    let s = sh.mod_editor().unwrap().state();
+    assert!(!s.playing() && s.dirty());
+    assert_eq!(s.item(), &olr_mod_editor::Item::Weapon("cannon".into()));
+
+    // Fast reload: LoadingTime 0.
+    sh.mod_frame(vec![A::FastReload(true), A::Practice], t);
+    sh.poll();
+    let p = sh.play.as_ref().unwrap();
+    assert_eq!(p.session.world.settings().loading_time, 0);
+    sh.stop_edited();
+
+    // The normal Play: Local Play's level, its bots, no practice.
+    sh.mod_frame(vec![A::PlayBots(1), A::Play], t);
+    sh.poll();
+    let p = sh.play.as_ref().unwrap();
+    assert!(p.assets.edited() && !p.assets.practice());
+    assert_eq!(p.assets.worms(), 2);
+    assert!(matches!(p.assets.game, olr_game::setup::Game::Deathmatch { .. }), "against a bot");
+    assert_eq!(p.session.world.settings().loading_time, 100);
+    sh.stop_edited();
+    assert!(!sh.mod_editor().unwrap().state().playing());
 }
 
 /// Issue #18: closing the window during Play ends the match, then asks

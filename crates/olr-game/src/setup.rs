@@ -182,6 +182,9 @@ pub struct Assets {
     pub slot_skins: Vec<LoadedSkin>,
     /// An editor's Play (`load_edited`): its replay is never saved.
     pub edited: bool,
+    /// The mod editor's practice with one weapon (issue #20): the
+    /// targets' health bars and the last hit's damage show.
+    pub practice: bool,
 }
 
 /// The packs `mod_id`, `level_id` (with its theme) and skin `skin` (a
@@ -238,6 +241,7 @@ fn open_loaded(
         player: None,
         slot_skins: Vec::new(),
         edited: false,
+        practice: false,
     })
 }
 
@@ -307,12 +311,51 @@ pub enum PlayMod {
 }
 
 /// What an editor's Play asks for (plan 14c R3; issue #18): its level, its
-/// mod, and 0 to `olr_editor::MAX_BOTS` bots.
+/// mod, and 0 to `olr_editor::MAX_BOTS` bots; or, for the mod editor's
+/// practice (issue #20), the weapon, targets and reload of `practice`
+/// (`bots` unread).
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditedPlay {
     pub level: PlayLevel,
     pub game_mod: PlayMod,
     pub bots: u8,
+    pub practice: Option<olr_mod_editor::Practice>,
+}
+
+/// Fast reload's `LoadingTime` (issue #20): 0 fills a slot's charge at
+/// once (`olr_sim`'s `simulate_worm_weapon`), so only the weapon's rate of
+/// fire paces it.
+pub const FAST_LOADING_TIME: i32 = 0;
+
+/// The sandbox of a practice (issue #20) with mod `m`'s weapon `p.weapon`
+/// on packs `mod_id` and `level_id`: the player (worm 0) holds it in its
+/// first slot and the mod's first other weapons in the rest (the
+/// sandbox's own loadout, `sandbox_setup`), against `p.targets` (1 to
+/// `olr_mod_editor::MAX_TARGETS`) idle targets at `FindSpot` positions,
+/// which press nothing, as `olr_bots::Personality::Idle`, and respawn by
+/// `MaxRespawnTime`. Reloading is the weapon's own (`LoadingTime` 100 %,
+/// LX56's), or [`FAST_LOADING_TIME`] with Fast reload. A weapon the mod
+/// lacks is an error.
+pub fn practice_setup(
+    m: &LoadedMod,
+    mod_id: &str,
+    level_id: &str,
+    p: &olr_mod_editor::Practice,
+) -> anyhow::Result<SandboxSetup> {
+    let weapons = m.sim.weapons();
+    let Some(chosen) = weapons.iter().position(|w| w.id == p.weapon) else {
+        anyhow::bail!("the mod has no weapon {:?}", p.weapon);
+    };
+    let others = (0..weapons.len()).filter(|&i| i != chosen);
+    let loadout = std::iter::once(chosen).chain(others).take(5).map(|i| i as i32).collect();
+    let targets = usize::from(p.targets.clamp(1, olr_mod_editor::MAX_TARGETS));
+    let o =
+        SandboxOptions { mod_id: mod_id.into(), level_id: level_id.into(), seed: 1, targets, bonuses: false };
+    let mut setup = sandbox_setup(&o);
+    setup.settings.loading_time =
+        if p.fast_reload { FAST_LOADING_TIME } else { SimSettings::lx56().loading_time };
+    setup.worms[0].weapons = loadout;
+    Ok(setup)
 }
 
 /// The level id an edited play's assets carry (the level is the editor's,
@@ -329,8 +372,10 @@ pub const EDITED_LEVEL: &str = "edited level";
 /// at a free spot, as any match. The theme, core and skin `skin` come by id
 /// from `roots`, and so do an installed level and mod; the edited mod is
 /// refused when it would not save, then loaded as an installed one
-/// (`Content::load_mod_pack`). Its replay is never saved (the shell's
-/// `Launch::Edited`), so its pack refs have no hash.
+/// (`Content::load_mod_pack`). A practice (issue #20) is its own sandbox
+/// instead ([`practice_setup`]; the human at a free spot, as any match).
+/// Its replay is never saved (the shell's `Launch::Edited`), so its pack
+/// refs have no hash.
 pub fn load_edited(
     roots: &[&Path],
     play: &EditedPlay,
@@ -356,7 +401,11 @@ pub fn load_edited(
         }
     };
     let bots = play.bots.min(olr_editor::MAX_BOTS);
-    let game = if bots == 0 {
+    let game = if let Some(p) = &play.practice {
+        let mut setup = practice_setup(&m, &mod_id, &level_id, p).context("the practice")?;
+        setup.worms[0].pos = spawn;
+        Game::Sandbox(setup)
+    } else if bots == 0 {
         let o = SandboxOptions {
             mod_id: mod_id.clone(),
             level_id: level_id.clone(),
@@ -383,6 +432,7 @@ pub fn load_edited(
     };
     let mut a = open_loaded(Arc::new(content), (mod_id, m), level_id, level, skin, game)?;
     a.edited = true;
+    a.practice = play.practice.is_some();
     Ok(a)
 }
 
@@ -535,6 +585,11 @@ impl Assets {
         self.edited
     }
 
+    /// Whether this is the mod editor's practice (issue #20).
+    pub fn practice(&self) -> bool {
+        self.practice
+    }
+
     /// Whether a person plays the game: the sandbox, a Deathmatch with a
     /// human; not a replay, nor a match of bots alone. Only a game nobody
     /// plays may run fast (`speed.rs`), so an online match counts as
@@ -681,6 +736,7 @@ mod tests {
             level: PlayLevel::Edited(Box::new(level.clone())),
             game_mod: PlayMod::Installed("olx-classic".into()),
             bots,
+            practice: None,
         };
         let prefs = olr_ui::MatchPrefs::default();
         let spawned = |a: &Assets| {
@@ -753,6 +809,7 @@ mod tests {
         let a = load_edited(&[root], &play(&level, 200), DEFAULT_SKIN, &prefs).unwrap();
         assert_eq!(a.worms(), 1 + usize::from(olr_editor::MAX_BOTS));
         let bad = EditedPlay { game_mod: PlayMod::Installed("no-such-mod".into()), ..play(&level, 0) };
+        assert!(!load_edited(&[root], &play(&level, 0), DEFAULT_SKIN, &prefs).unwrap().practice());
         assert!(load_edited(&[root], &bad, DEFAULT_SKIN, &prefs).is_err());
     }
 
@@ -774,6 +831,7 @@ mod tests {
             level: PlayLevel::Installed("olx-level-dirt-level".into()),
             game_mod: PlayMod::Edited(Box::new(pack.clone())),
             bots,
+            practice: None,
         };
         let speed = |a: &Assets| {
             let w = a.m.sim.weapons().iter().find(|w| w.id == "bazooka").unwrap();
@@ -782,7 +840,7 @@ mod tests {
         for bots in [0, 2] {
             let a = load_edited(&[root], &play(&pack, bots), DEFAULT_SKIN, &prefs).unwrap();
             assert_eq!(speed(&a), 150, "the unsaved speed");
-            assert!(a.edited());
+            assert!(a.edited() && !a.practice());
             assert_eq!((a.mod_id.as_str(), a.level_id.as_str()), ("my-classic", "olx-level-dirt-level"));
             match &a.game {
                 Game::Sandbox(s) => assert_eq!((bots, s.worms[0].pos), (0, None)),
@@ -808,6 +866,66 @@ mod tests {
         olr_edit::mods::set_lenient(&mut pack, "projectiles/bazooka.spawn.spawns", cycle).unwrap();
         let e = load_edited(&[root], &play(&pack, 0), DEFAULT_SKIN, &prefs).err().unwrap();
         assert!(format!("{e:#}").contains("the edited mod"), "{e:#}");
+    }
+
+    /// Issue #20: the mod editor's practice is a sandbox of the unsaved
+    /// mod on its level: the player holds the weapon first (then the mod's
+    /// first others), 1 to 4 idle targets (the sandbox's, pressing
+    /// nothing), the weapon's own reload (`LoadingTime` 100) unless Fast
+    /// reload (0); a weapon the mod lacks does not start.
+    #[test]
+    fn practice_holds_the_weapon_against_idle_targets() {
+        let Some(dir) = std::env::var_os("OLR_CONTENT_DIR").filter(|d| Path::new(d).is_dir()) else {
+            eprintln!("OLR_CONTENT_DIR not set; skipping");
+            return;
+        };
+        let root = Path::new(&dir);
+        let mut pack = olr_edit::pack::load(&root.join("olx-classic")).unwrap();
+        pack.manifest.id = "my-classic".into();
+        olr_edit::mods::set(&mut pack, "weapons/bazooka.fire.shot.speed", "150").unwrap();
+        let prefs = olr_ui::MatchPrefs::default();
+        let practice = |weapon: &str, targets, fast_reload| EditedPlay {
+            level: PlayLevel::Installed("olx-level-castlestrike".into()),
+            game_mod: PlayMod::Edited(Box::new(pack.clone())),
+            bots: 5,
+            practice: Some(olr_mod_editor::Practice { weapon: weapon.into(), targets, fast_reload }),
+        };
+        let a = load_edited(&[root], &practice("cannon", 3, false), DEFAULT_SKIN, &prefs).unwrap();
+        assert!(a.edited() && a.practice());
+        assert_eq!(a.level_id, "olx-level-castlestrike");
+        let index = |id: &str| a.m.sim.weapons().iter().position(|w| w.id == id).unwrap() as i32;
+        let (cannon, bazooka) = (index("cannon"), index("bazooka"));
+        assert!(cannon > 4, "not among the sandbox's first five");
+        let Game::Sandbox(setup) = &a.game else { panic!("a sandbox") };
+        assert_eq!(setup.worms.len(), 4, "the player and 3 targets");
+        assert_eq!(setup.worms[0].weapons, vec![cannon, 0, 1, 2, 3], "the weapon, then the mod's first");
+        assert!(setup.worms.iter().all(|w| w.pos.is_none()), "free spots");
+        assert_eq!(setup.settings.loading_time, 100, "the weapon's own reload");
+        let s = crate::session::Session::new(
+            &a,
+            olr_scene::Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0),
+            olr_scene::Interpolation::Linear,
+            olr_audio::Audio::silent(),
+        )
+        .unwrap();
+        assert!(matches!(s.driver, crate::session::Driver::Sandbox), "the targets press nothing");
+        assert_eq!(s.world.settings().loading_time, 100);
+        let w = &s.world.worms()[0];
+        assert_eq!(w.slots[0].weapon, cannon);
+        let shot = s.world.sim_mod().weapons()[bazooka as usize].spawn.as_ref().unwrap().speed;
+        assert_eq!(shot, 150, "the unsaved weapon");
+
+        let a = load_edited(&[root], &practice("bazooka", 1, true), DEFAULT_SKIN, &prefs).unwrap();
+        let Game::Sandbox(setup) = &a.game else { panic!("a sandbox") };
+        assert_eq!(setup.worms.len(), 2);
+        assert_eq!(setup.worms[0].weapons, vec![bazooka, 1, 2, 3, 4], "the first: not twice");
+        assert_eq!(setup.settings.loading_time, FAST_LOADING_TIME);
+        // Beyond the menu's targets: capped.
+        let a = load_edited(&[root], &practice("bazooka", 200, false), DEFAULT_SKIN, &prefs).unwrap();
+        assert_eq!(a.worms(), 1 + usize::from(olr_mod_editor::MAX_TARGETS));
+        let e =
+            load_edited(&[root], &practice("no-such-weapon", 1, false), DEFAULT_SKIN, &prefs).err().unwrap();
+        assert!(format!("{e:#}").contains("no weapon"), "{e:#}");
     }
 
     /// Both editors' Play offer the same bots (no content needed).

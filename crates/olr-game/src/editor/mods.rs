@@ -10,8 +10,9 @@
 //! editor's `recovery.rs`), written every `RECOVERY_INTERVAL` while there
 //! are unsaved changes and removed on save and Close. Play (issue #18)
 //! runs the mod as it is, unsaved changes included, as an edited game
-//! (`setup::PlayMod::Edited` on an installed level); its level and bots
-//! are remembered in `MOD_PLAY_FILE`. Issue #19: its import browser lists
+//! (`setup::PlayMod::Edited` on an installed level), and so does its
+//! practice with one weapon (issue #20, `EditedPlay::practice`); their
+//! settings are remembered in `MOD_PLAY_FILE`. Issue #19: its import browser lists
 //! folders (`files::list`, from the home folder) and reads the file picked
 //! (`files::read_file`, at most a mod file's `MAX_ASSET_BYTES`); a sound's
 //! ▶ is the shell's (`ModOut::PlaySound`). No window: the app draws
@@ -224,7 +225,17 @@ impl ModHost {
                     }
                     ModCommand::Play { pack, level, bots } => {
                         let (level, game_mod) = (PlayLevel::Installed(level), PlayMod::Edited(pack));
-                        out.push(ModOut::Play(Box::new(EditedPlay { level, game_mod, bots })));
+                        out.push(ModOut::Play(Box::new(EditedPlay {
+                            level,
+                            game_mod,
+                            bots,
+                            practice: None,
+                        })));
+                    }
+                    ModCommand::Practice { pack, level, practice } => {
+                        let (level, game_mod) = (PlayLevel::Installed(level), PlayMod::Edited(pack));
+                        let play = EditedPlay { level, game_mod, bots: 0, practice: Some(practice) };
+                        out.push(ModOut::Play(Box::new(play)));
                     }
                     ModCommand::SavePlaySettings(s) => out.push(ModOut::SavePlaySettings(s)),
                     ModCommand::List(dir) => {

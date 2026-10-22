@@ -434,7 +434,7 @@ impl EditorHost {
             }
             EditorCommand::Play { level, mod_id, bots } => {
                 let (level, game_mod) = (PlayLevel::Edited(level), PlayMod::Installed(mod_id));
-                out.push(HostOut::Play(Box::new(EditedPlay { level, game_mod, bots })));
+                out.push(HostOut::Play(Box::new(EditedPlay { level, game_mod, bots, practice: None })));
             }
             EditorCommand::SaveSettings(s) => {
                 if let Err(e) = self.store.save_file(EDITOR_FILE, &s) {

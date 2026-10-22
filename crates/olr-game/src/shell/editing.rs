@@ -16,6 +16,10 @@ use olr_ui::{AppCommand, Screen, UiAction};
 
 use super::Shell;
 use crate::editor::mods::{MOD_PLAY_FILE, ModHost, ModOut};
+
+/// The mod editor's practice level until one is chosen (issue #20): Castle
+/// Strike, the most open of OLX's levels (a wide sky over the castle).
+pub const PRACTICE_LEVEL: &str = "olx-level-castlestrike";
 use crate::editor::skin::{SkinHost, SkinOut};
 use crate::editor::{self, CloseDecision, EditorHost, HostOut};
 
@@ -278,13 +282,20 @@ impl Shell {
     }
 
     /// The mod editor's Play settings remembered (`MOD_PLAY_FILE`); without
-    /// a level installed there, Local Play's level.
+    /// a level installed there, Local Play's level; without a practice
+    /// level installed there, [`PRACTICE_LEVEL`] when installed (else the
+    /// editor takes Play's).
     fn play_settings(&mut self) -> olr_mod_editor::PlaySettings {
         let loaded = self.store.load_file::<olr_mod_editor::PlaySettings>(MOD_PLAY_FILE);
         self.log(loaded.warnings);
         let mut play = loaded.value.unwrap_or_default();
-        if !self.data.catalog.levels.iter().any(|l| l.id == play.level) {
+        let levels = &self.data.catalog.levels;
+        let installed = |id: &str| levels.iter().any(|l| l.id == id);
+        if !installed(&play.level) {
             play.level = self.ui.settings().gameplay.match_prefs.level_id.clone();
+        }
+        if !installed(&play.practice_level) && installed(PRACTICE_LEVEL) {
+            play.practice_level = PRACTICE_LEVEL.to_string();
         }
         play
     }

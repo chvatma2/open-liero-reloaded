@@ -163,6 +163,10 @@ pub struct Session {
     shown: usize,
     /// OLX's default skin (a worm spawned mid-match wears it).
     default_skin: LoadedSkin,
+    /// The mod editor's practice (`Assets::practice`): the last hit is kept.
+    practice: bool,
+    /// The practice's last hit ([`Session::last_hit`]).
+    last_hit: Option<Hit>,
 }
 
 /// The worm whose rope throws are heard ([`ThrowSounds`]): the player's,
@@ -277,6 +281,17 @@ fn replay_looks(a: &Assets, n: usize) -> Vec<olr_replay::WormLook> {
             olr_replay::WormLook { name: w.name, colour: w.colour, skin, skin_hash }
         })
         .collect()
+}
+
+/// One hit (issue #20): a `Damage` event's worm, `amount` and `dealt`,
+/// the last of which the mod editor's practice shows.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Hit {
+    pub worm: i32,
+    /// The damage the hit did (`Damage.amount`).
+    pub amount: f32,
+    /// The health it took (`Damage.dealt`: at most what the worm had).
+    pub dealt: f32,
 }
 
 /// The Deathmatch's time left in `world`, if it plays one with a limit.
@@ -400,7 +415,8 @@ impl Session {
             level: &a.level,
             theme: &a.theme,
             viewport,
-            options: SceneOptions { interpolation, show_health_bars: false },
+            // The practice's targets show their health (issue #20).
+            options: SceneOptions { interpolation, show_health_bars: a.practice() },
             seed,
         };
         let mut present = Presentation::new(&setup, &world);
@@ -437,6 +453,8 @@ impl Session {
             weapon_name_until: None,
             shown: 0,
             default_skin: a.bot_skin.clone(),
+            practice: a.practice(),
+            last_hit: None,
         };
         s.show_new_worms();
         s
@@ -637,6 +655,7 @@ impl Session {
         self.present.restart(&self.world, &a.level, &a.theme);
         self.audio.stop_all();
         self.popups.clear();
+        self.last_hit = None;
         self.log.clear();
         self.results = None;
         self.ended_at = None;
@@ -686,6 +705,12 @@ impl Session {
         let replay_done = matches!(&self.driver, Driver::Replay(d) if d.is_done());
         self.results.is_some()
             && (replay_done || self.since_end().is_some_and(|t| t > crate::hud::RESULTS_AFTER))
+    }
+
+    /// The last hit of the mod editor's practice (issue #20): the last
+    /// `Damage` event since the start or restart; always `None` elsewhere.
+    pub fn last_hit(&self) -> Option<Hit> {
+        self.last_hit
     }
 
     /// Ticks since the match ended, once it has.
@@ -762,6 +787,8 @@ impl Session {
             names,
             log,
             popups,
+            last_hit,
+            practice,
             tally,
             results,
             ended_at,
@@ -833,7 +860,10 @@ impl Session {
                 }
                 _ => {}
             }
-            let EventKind::Damage { worm, dealt, .. } = e.kind else { continue };
+            let EventKind::Damage { worm, amount, dealt, .. } = e.kind else { continue };
+            if *practice {
+                *last_hit = Some(Hit { worm, amount, dealt });
+            }
             let Some(pos) = v.positions.of(worm) else { continue };
             if dealt <= 0.0 {
                 continue;
@@ -1004,6 +1034,74 @@ fn with_drawn<R>(driver: &Driver, world: &World, frozen: bool, f: impl FnOnce(&W
 mod tests {
     use super::*;
     use crate::setup::{SandboxOptions, load};
+
+    /// Issue #20: the mod editor's practice keeps the last hit, equal to
+    /// the last `Damage` event (shown by `overlay::last_hit_text`), and
+    /// shows the targets' health bars; a restart forgets it; other games
+    /// keep none.
+    #[test]
+    fn practice_keeps_the_last_hit() {
+        let Some(dir) = std::env::var_os("OLR_CONTENT_DIR").filter(|d| std::path::Path::new(d).is_dir())
+        else {
+            eprintln!("OLR_CONTENT_DIR not set; skipping");
+            return;
+        };
+        let root = std::path::Path::new(&dir);
+        let pack = olr_edit::pack::load(&root.join("olx-classic")).unwrap();
+        let play = crate::setup::EditedPlay {
+            level: crate::setup::PlayLevel::Installed("olx-level-dirt-level".into()),
+            game_mod: crate::setup::PlayMod::Edited(Box::new(pack)),
+            bots: 0,
+            practice: Some(olr_mod_editor::Practice {
+                weapon: "bazooka".into(),
+                targets: 1,
+                fast_reload: true,
+            }),
+        };
+        let prefs = olr_ui::MatchPrefs::default();
+        let a = crate::setup::load_edited(&[root], &play, DEFAULT_SKIN, &prefs).unwrap();
+        let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
+        let mut s = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
+        assert!(s.present.scene.options.show_health_bars, "the targets' health bars");
+        assert_eq!(s.last_hit(), None);
+        // The bazooka at the player's feet: its own hits.
+        let mut hits = 0;
+        for _ in 0..600 {
+            s.tick(Keys(Keys::DOWN | Keys::FIRE));
+            let last = s.events.as_slice().iter().rev().find_map(|e| match e.kind {
+                EventKind::Damage { worm, amount, dealt, .. } => Some(Hit { worm, amount, dealt }),
+                _ => None,
+            });
+            if let Some(hit) = last {
+                hits += 1;
+                assert_eq!(s.last_hit(), Some(hit), "the last Damage event's");
+                let text = crate::overlay::last_hit_text(&hit, &s.names.of(hit.worm));
+                assert!(
+                    text.starts_with(&format!("Last hit: {} on ", crate::overlay::damage_text(hit.amount)))
+                );
+            }
+        }
+        assert!(hits > 0, "the player hit itself");
+        s.restart(&a).unwrap();
+        assert_eq!(s.last_hit(), None, "a restart forgets it");
+
+        // Not a practice: no last hit, no health bars.
+        let o = SandboxOptions {
+            mod_id: String::new(),
+            level_id: String::new(),
+            seed: 4,
+            targets: 1,
+            bonuses: false,
+        };
+        let a = load(&[root], "Classic", "Dirt Level", "default", o).unwrap();
+        let mut s = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
+        assert!(!s.present.scene.options.show_health_bars);
+        for _ in 0..300 {
+            s.tick(Keys(Keys::DOWN | Keys::FIRE));
+        }
+        assert!(!s.popups.is_empty() || s.world.worms()[0].health < 100.0, "hits");
+        assert_eq!(s.last_hit(), None);
+    }
 
     /// A match plays headless (silent), and F5 gives back the starting
     /// world without loading anything again.
