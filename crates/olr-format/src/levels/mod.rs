@@ -24,6 +24,7 @@ pub use thumb::{THUMB_SIZE, letterbox, level_thumbnail, thumbnail};
 use crate::image_io::{LEVEL_ART, check_size};
 use crate::look::{LookSource, compile_look_source};
 use crate::{FormatError, LiftError};
+pub use olr_look::SurfaceMaps;
 pub use olr_terrain::GlowLayers;
 
 /// The largest `art_scale` (a level's art pixels per world pixel).
@@ -65,6 +66,14 @@ pub const GROUPS_BACK_FILE: &str = "look/groups-back.png";
 pub const CLEAR_FILE: &str = "look/clear.png";
 /// A level's glow images: all four or none.
 pub const LOOK_FILES: [&str; 4] = [GLOW_FILE, GLOW_BACK_FILE, GROUPS_FILE, GROUPS_BACK_FILE];
+/// The front's surface material per world pixel (the rock and dirt), 8-bit
+/// grey: 0 none, `v` the look's `materials[v - 1]` (issue #37).
+pub const SURFACE_FILE: &str = "look/surface.png";
+/// The back's surface material per world pixel (what shows where the front
+/// is carved or background), 8-bit grey, as `look/surface.png`.
+pub const SURFACE_BACK_FILE: &str = "look/surface-back.png";
+/// A level's surface maps: both or none.
+pub const SURFACE_FILES: [&str; 2] = [SURFACE_FILE, SURFACE_BACK_FILE];
 /// The folder of a level's distant (parallax) layers' images (issue #11).
 pub const DISTANT_DIR: &str = "distant";
 /// The most distant layers a level has.
@@ -196,6 +205,13 @@ pub struct LevelSource {
     /// and `distant/<i>.png`; issue #11). With any, `back.png` is
     /// see-through (alpha 0) where no element gives a back.
     pub distant: Vec<DistantLayer>,
+    /// The surface maps (`look/surface.png` and `look/surface-back.png`,
+    /// issue #37), when some pixel has a surface material.
+    pub surface: Option<SurfaceMaps>,
+    /// Each distant layer's surface material by index (`level.ron`'s
+    /// `distant[i].surface`): the id of one of the look's materials; past
+    /// its end, none. The readers and the bake leave no `None` at its end.
+    pub distant_surfaces: Vec<Option<String>>,
 }
 
 /// A thing placed in a level.
@@ -269,6 +285,52 @@ pub(crate) fn check_glow(src: &LevelSource, glow: &GlowLayers) -> Result<(), For
                 file,
                 "",
                 format!("group {} at ({x}, {y}), the look has {groups} glow groups", values[i]),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The surface maps fit the level and name only materials its look has.
+pub(crate) fn check_surface(src: &LevelSource, maps: &SurfaceMaps) -> Result<(), FormatError> {
+    if !maps.fits(src.size) {
+        return Err(FormatError::invalid(
+            SURFACE_FILE,
+            "",
+            format!("the surface maps must be {}x{} (world)", src.size.0, src.size.1),
+        ));
+    }
+    let materials = src.look.as_ref().map_or(0, |l| l.materials.len());
+    for (file, values) in [(SURFACE_FILE, &maps.front), (SURFACE_BACK_FILE, &maps.back)] {
+        if let Some(i) = values.iter().position(|v| usize::from(*v) > materials) {
+            let (x, y) = (i as u32 % src.size.0, i as u32 / src.size.0);
+            return Err(FormatError::invalid(
+                file,
+                "",
+                format!("material {} at ({x}, {y}), the look has {materials} materials", values[i]),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The distant layers' surfaces: at most one per layer, each naming a
+/// material of the look.
+pub(crate) fn check_distant_surfaces(src: &LevelSource) -> Result<(), FormatError> {
+    if src.distant_surfaces.len() > src.distant.len() {
+        return Err(FormatError::invalid(
+            LEVEL_FILE,
+            "distant",
+            format!("{} distant surfaces for {} distant layers", src.distant_surfaces.len(), src.distant.len()),
+        ));
+    }
+    for (i, id) in src.distant_surfaces.iter().enumerate() {
+        let Some(id) = id else { continue };
+        if !src.look.as_ref().is_some_and(|l| l.materials.iter().any(|m| m.id == *id)) {
+            return Err(FormatError::invalid(
+                LEVEL_FILE,
+                &format!("distant[{i}].surface"),
+                format!("no material {id:?} in the look"),
             ));
         }
     }
@@ -358,7 +420,11 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
     if let Some(g) = &src.glow {
         check_glow(src, g)?;
     }
+    if let Some(m) = &src.surface {
+        check_surface(src, m)?;
+    }
     check_distant_layers(&src.distant, src.art_scale)?;
+    check_distant_surfaces(src)?;
     for (file, img) in [(FRONT_FILE, &src.front), (BACK_FILE, &src.back)] {
         if (img.width(), img.height()) != (aw, ah) {
             return Err(FormatError::invalid(
@@ -414,6 +480,8 @@ pub fn lift_level(level: &Level, thumb: Option<Vec<u8>>) -> Result<LevelSource, 
         glow: None,
         clear: None,
         distant: Vec::new(),
+        surface: None,
+        distant_surfaces: Vec::new(),
     };
     if (level.material.width(), level.material.height()) != src.size {
         return Err(LiftError {
@@ -456,6 +524,8 @@ pub(crate) mod tests {
             glow: None,
             clear: None,
             distant: Vec::new(),
+            surface: None,
+            distant_surfaces: Vec::new(),
         }
     }
 

@@ -8,7 +8,8 @@ use serde::{Deserialize, Serialize};
 use super::{
     BACK_FILE, CLEAR_FILE, FRONT_FILE, GLOW_BACK_FILE, GLOW_FILE, GROUPS_BACK_FILE, GROUPS_FILE, LEVEL_FILE,
     LOOK_FILES, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_DISTANT, MAX_THUMB_BYTES,
-    THUMB_FILE, check, check_distant_layers, check_header, check_thumb, distant_file,
+    SURFACE_BACK_FILE, SURFACE_FILE, SURFACE_FILES, SurfaceMaps, THUMB_FILE, check, check_distant_layers,
+    check_header, check_thumb, distant_file,
 };
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, LEVEL_ART};
@@ -64,7 +65,7 @@ pub(crate) struct LevelFile {
 /// most `MAX_SIDE` (4096) world pixels. It shows through the level's
 /// see-through back pixels, scrolling by `1 - depth` of the camera's
 /// movement, lit by `1 - depth` of the light beyond the ambient. Purely
-/// decoration: no material, never in the simulation.
+/// decoration: no collision material, never in the simulation.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct DistantEntry {
@@ -76,6 +77,10 @@ pub(crate) struct DistantEntry {
     /// (c - size / 2)`. Each coordinate within `MAX_DISTANT_AT` (16384)
     /// of 0.
     at: (i32, i32),
+    /// The whole layer's surface material (issue #37): the id of one of
+    /// the look's `materials`. Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    surface: Option<String>,
 }
 
 fn write_bytes(sink: &mut dyn ContentSink, file: &str, bytes: &[u8]) -> Result<(), FormatError> {
@@ -101,8 +106,19 @@ pub fn file_paths(src: &LevelSource) -> Vec<String> {
     if src.clear.is_some() {
         out.push(CLEAR_FILE.into());
     }
+    if src.surface.is_some() {
+        out.extend(SURFACE_FILES.map(String::from));
+    }
     out.extend((0..src.distant.len()).map(distant_file));
     out
+}
+
+/// `surfaces` without the `None`s at its end.
+fn trimmed(mut surfaces: Vec<Option<String>>) -> Vec<Option<String>> {
+    while surfaces.last().is_some_and(Option::is_none) {
+        surfaces.pop();
+    }
+    surfaces
 }
 
 pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Result<(), FormatError> {
@@ -115,7 +131,16 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
         theme: src.theme.clone(),
         objects: src.objects.clone(),
         look: src.look.clone(),
-        distant: src.distant.iter().map(|d| DistantEntry { depth: d.depth, at: d.at }).collect(),
+        distant: src
+            .distant
+            .iter()
+            .enumerate()
+            .map(|(i, d)| DistantEntry {
+                depth: d.depth,
+                at: d.at,
+                surface: src.distant_surfaces.get(i).cloned().flatten(),
+            })
+            .collect(),
     };
     write_text(sink, LEVEL_FILE, &to_canonical(LEVEL_FILE, &file)?)?;
     write_bytes(sink, MATERIAL_FILE, &super::encode_material(src.size, &src.material))?;
@@ -137,6 +162,11 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
     }
     if let Some(c) = &src.clear {
         write_bytes(sink, CLEAR_FILE, &image_io::encode_grey(src.size.0, src.size.1, c))?;
+    }
+    if let Some(m) = &src.surface {
+        let (w, h) = m.world;
+        write_bytes(sink, SURFACE_FILE, &image_io::encode_grey(w, h, &m.front))?;
+        write_bytes(sink, SURFACE_BACK_FILE, &image_io::encode_grey(w, h, &m.back))?;
     }
     for (i, d) in src.distant.iter().enumerate() {
         write_bytes(sink, &distant_file(i), &image_io::encode_rgba(&d.image))?;
@@ -227,6 +257,22 @@ fn read_clear(src: &dyn ContentSource, world: (u32, u32)) -> Result<Option<Vec<u
     read_grey(src, CLEAR_FILE, world).map(Some)
 }
 
+/// The two surface maps (issue #37): both or none.
+fn read_surface(src: &dyn ContentSource, world: (u32, u32)) -> Result<Option<SurfaceMaps>, FormatError> {
+    let present = |f: &str| VPath::new(f).is_ok_and(|p| src.exists(&p));
+    if !SURFACE_FILES.iter().any(|f| present(f)) {
+        return Ok(None);
+    }
+    if let Some(missing) = SURFACE_FILES.iter().find(|f| !present(f)) {
+        return Err(FormatError::invalid(missing, "", "missing: a level's surface needs both surface maps"));
+    }
+    Ok(Some(SurfaceMaps {
+        world,
+        front: read_grey(src, SURFACE_FILE, world)?,
+        back: read_grey(src, SURFACE_BACK_FILE, world)?,
+    }))
+}
+
 /// Reads an art PNG, checking its header size against `level.ron`'s before
 /// decoding.
 fn read_art(
@@ -294,6 +340,7 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
     let (mut level, glow, distant) = read_base(src)?;
     level.glow = glow?;
     level.clear = read_clear(src, level.size)?;
+    level.surface = read_surface(src, level.size)?;
     level.distant = distant?;
     check(&level)?;
     Ok(level)
@@ -311,6 +358,9 @@ pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource,
             warnings.push(format!("{e}: the level plays without its distant layers"));
             Vec::new()
         });
+    if level.distant.is_empty() {
+        level.distant_surfaces.clear();
+    }
     level.glow = glow.unwrap_or_else(|e| {
         warnings.push(format!("{e}: the level plays without glow"));
         None
@@ -319,17 +369,33 @@ pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource,
         warnings.push(format!("{e}: the level plays without clear solids"));
         None
     });
+    level.surface = read_surface(src, level.size).unwrap_or_else(|e| {
+        warnings.push(format!("{e}: the level plays without surface materials"));
+        None
+    });
     if let Err(e) = super::compile_look(&level) {
         warnings.push(format!("{e}: the level plays without its look"));
         level.look = None;
         level.objects.retain(|o| matches!(o, LevelObject::Spawn { .. }));
         level.glow = None;
+        level.surface = None;
+        level.distant_surfaces.clear();
     }
     if let Some(g) = &level.glow
         && let Err(e) = super::check_glow(&level, g)
     {
         warnings.push(format!("{e}: the level plays without glow"));
         level.glow = None;
+    }
+    if let Some(m) = &level.surface
+        && let Err(e) = super::check_surface(&level, m)
+    {
+        warnings.push(format!("{e}: the level plays without surface materials"));
+        level.surface = None;
+    }
+    if let Err(e) = super::check_distant_surfaces(&level) {
+        warnings.push(format!("{e}: the level's distant layers play without surface materials"));
+        level.distant_surfaces.clear();
     }
     check(&level)?;
     Ok((level, warnings))
@@ -379,6 +445,7 @@ fn read_base(
     let back = read_art(src, BACK_FILE, art)?;
     let glow = read_glow(src, art, file.size);
     let distant = read_distant(src, &file.distant, file.art_scale);
+    let distant_surfaces = trimmed(file.distant.iter().map(|e| e.surface.clone()).collect());
     let level = LevelSource {
         name: file.name,
         notes: file.notes,
@@ -394,6 +461,8 @@ fn read_base(
         glow: None,
         clear: None,
         distant: Vec::new(),
+        surface: None,
+        distant_surfaces,
     };
     Ok((level, glow, distant))
 }

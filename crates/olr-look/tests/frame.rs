@@ -53,6 +53,7 @@ fn level() -> LevelLook {
                 phase_ms: None,
             },
         ],
+        materials: Vec::new(),
     }
 }
 

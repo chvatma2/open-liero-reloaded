@@ -11,6 +11,7 @@ mod error;
 pub mod image_io;
 pub mod levels;
 pub mod look;
+pub mod materials;
 pub mod mods;
 pub mod ron_io;
 pub mod skins;

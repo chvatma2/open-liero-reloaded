@@ -25,6 +25,7 @@ fn look_frame_does_not_allocate_when_warm() {
         solid_floor: olr_look::Ambient { colour: [255, 255, 255], intensity: 0 },
         grade: Default::default(),
         groups: Vec::new(),
+        materials: Vec::new(),
     });
     let theme = content.load_theme(&level.theme).unwrap();
     let mut m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();

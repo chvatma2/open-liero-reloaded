@@ -186,7 +186,11 @@ fn check_composition(src: &dyn ContentSource, pack: &LevelPack) -> Option<Diagno
         Some(c) => {
             olr_format::levels::check_composition(&c, (def.width, def.height), def.art_scale)?;
             let look = olr_format::levels::read_level_header(src)?.look;
-            olr_format::levels::check_glow_groups(&c.composition, look.as_ref())
+            olr_format::levels::check_glow_groups(&c.composition, look.as_ref())?;
+            // Issue #37: surfaces name the look's materials, painted maps fit.
+            olr_format::levels::check_surfaces(&c.composition, look.as_ref())?;
+            let materials = look.as_ref().map_or(0, |l| l.materials.len());
+            olr_format::levels::check_surface_maps(&c, (def.width, def.height), materials)
         }
         None => Ok(()),
     });
@@ -511,6 +515,10 @@ mod tests {
             glow: None,
             clear: false,
             distant: None,
+            surface: None,
+            back_surface: None,
+            surface_map: false,
+            back_surface_map: false,
         };
         let src = olr_format::levels::CompositionSource {
             composition: olr_format::levels::Composition { elements: vec![element] },

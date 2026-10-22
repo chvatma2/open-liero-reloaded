@@ -2,3 +2,4 @@
 
 mod anim;
 mod frame;
+mod material;

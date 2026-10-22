@@ -10,6 +10,7 @@ use serde::ser::SerializeTuple;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::defaults as d;
+use crate::materials::{MaterialSource, compile_materials};
 use crate::{Colour, FormatError};
 
 /// The largest light or glow intensity, percent.
@@ -338,6 +339,13 @@ pub struct LookSource {
     /// At most 255. Default none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub glow_groups: Vec<GlowGroupSource>,
+    /// The surface materials its pixels are made of (presentation only,
+    /// apart from the collision material): copies of the library's, by id,
+    /// at most 255, ids unique. `look/surface.png` and
+    /// `look/surface-back.png` name them by 1 + their index (0 is none).
+    /// Default none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub materials: Vec<MaterialSource>,
 }
 
 impl Default for LookSource {
@@ -353,6 +361,7 @@ impl Default for LookSource {
             solid_floor: SolidFloorSource::default(),
             grade: GradeSource::default(),
             glow_groups: Vec::new(),
+            materials: Vec::new(),
         }
     }
 }
@@ -644,6 +653,7 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
             tint: rgb(g.tint.unwrap_or_else(white), file, "look.grade.tint")?,
         },
         groups,
+        materials: compile_materials(&l.materials, file, "look.materials")?,
     })
 }
 

@@ -183,6 +183,10 @@ pub fn check_asset(src: &AssetSource) -> Result<(), FormatError> {
     if let Some(i) = f.elements.iter().position(|e| e.distant.is_some()) {
         return Err(invalid(&format!("elements[{i}].distant"), "an asset carries no distant layer"));
     }
+    // Materials 1/10 (issue #37): assets carry no materials yet.
+    if let Some(i) = f.elements.iter().position(|e| e.clone().without_surfaces() != *e) {
+        return Err(invalid(&format!("elements[{i}].surface"), "an asset carries no surface materials"));
+    }
     let look = LookSource { glow_groups: f.glow_groups.clone(), ..LookSource::default() };
     crate::look::compile_look_source(&look, ASSET_FILE)?;
     let composition = as_composition(src);
@@ -295,6 +299,10 @@ mod tests {
             glow: Some(ElementGlow { strength: 100, group: "flames".into(), mask: true }),
             clear: false,
             distant: None,
+            surface: None,
+            back_surface: None,
+            surface_map: false,
+            back_surface_map: false,
         };
         AssetSource {
             file: AssetFile {

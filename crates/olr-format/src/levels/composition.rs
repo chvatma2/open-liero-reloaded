@@ -25,7 +25,7 @@ pub const MAX_ELEMENTS: usize = 256;
 pub const MAX_PIXEL_SIZE: u32 = 64;
 /// The most pixels a composition's elements decode to together (each
 /// image's element grid, each drawn layer, each raster's front, back and
-/// material): four times `LEVEL_ART`'s pixels, 256 Mi. A bake holds them
+/// material, each painted surface map): four times `LEVEL_ART`'s pixels, 256 Mi. A bake holds them
 /// all at once.
 pub const MAX_COMPOSED_PIXELS: u64 = 4 * LEVEL_ART.max_pixels;
 
@@ -98,12 +98,37 @@ pub struct Element {
     /// pixels the elements in front leave uncovered, moving by `1 - depth`
     /// of the camera's movement; its box lies where it is drawn with the
     /// camera (the view's centre) at the level's centre. Decoration only:
-    /// no material, no glow, never clear. A Background image or plain drawn
+    /// no collision material, no glow, never clear; one `surface` for the
+    /// whole layer. A Background image or plain drawn
     /// layer only, and every distant element lies below every other one;
     /// an asset carries none.
     /// Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub distant: Option<u8>,
+    /// Its pixels' surface material (issue #37; presentation only): the id
+    /// of one of `level.ron`'s `look.materials`. It lands where its pixels
+    /// land: a Rock or Dirt element's in `look/surface.png`, a Background
+    /// element's in `look/surface-back.png`; on a mixed layer or a raster
+    /// each pixel by its own collision material. A distant layer takes it
+    /// for the whole layer. Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface: Option<String>,
+    /// Its back art's surface material: the id of one of the look's
+    /// materials, landing in `look/surface-back.png`. Only with back art (a
+    /// drawn layer with `back`, a raster). Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub back_surface: Option<String>,
+    /// A painted map of its pixels' surface materials
+    /// (`editor/surface/<id>.png`, 8-bit grey at world resolution: its box,
+    /// a raster's the level's size): `v` is the look's `materials[v - 1]`,
+    /// 0 its `surface`. Not on a distant layer. Default false.
+    #[serde(default, skip_serializing_if = "d::is_false")]
+    pub surface_map: bool,
+    /// A painted map of its back art's surface materials
+    /// (`editor/surface/<id>.back.png`, as `surface_map`'s; 0 its
+    /// `back_surface`). Only with back art. Default false.
+    #[serde(default, skip_serializing_if = "d::is_false")]
+    pub back_surface_map: bool,
 }
 
 impl Element {
@@ -111,6 +136,33 @@ impl Element {
     pub fn is_distant(&self) -> bool {
         self.distant.is_some()
     }
+
+    /// Whether it has back art (a drawn layer with `back`, a raster): what
+    /// `back_surface` needs.
+    pub fn has_back_art(&self) -> bool {
+        matches!(self.kind, ElementKind::Drawn { back: true, .. } | ElementKind::Raster)
+    }
+
+    /// Its surface material fields cleared (no surface, no painted maps).
+    pub fn without_surfaces(self) -> Element {
+        Element { surface: None, back_surface: None, surface_map: false, back_surface_map: false, ..self }
+    }
+}
+
+/// An element's painted surface map: `editor/surface/<id>.png`.
+pub fn surface_file(id: &str) -> String {
+    format!("{EDITOR_DIR}/surface/{id}.png")
+}
+
+/// An element's painted back art surface map: `editor/surface/<id>.back.png`.
+pub fn surface_back_file(id: &str) -> String {
+    format!("{EDITOR_DIR}/surface/{id}.back.png")
+}
+
+/// The world size of `element`'s painted surface maps in a level of
+/// `level`'s size: its box's, a raster's the level's.
+pub fn surface_map_size(kind: &ElementKind, level: (u32, u32)) -> (u32, u32) {
+    element_box(kind, level).map_or(level, |(_, b)| b)
 }
 
 /// How an element's covered pixels glow: they show at `strength` whatever
@@ -304,6 +356,8 @@ pub fn element_files(element: &Element) -> Vec<String> {
     }
     .into_iter()
     .chain(element.glow.as_ref().is_some_and(|g| g.mask).then(|| glow_file(&element.id)))
+    .chain(element.surface_map.then(|| surface_file(&element.id)))
+    .chain(element.back_surface_map.then(|| surface_back_file(&element.id)))
     .collect()
 }
 
@@ -452,7 +506,23 @@ pub fn check_composition(
             let expected = (b.0.saturating_mul(art_scale), b.1.saturating_mul(art_scale));
             check_file(&glow, bytes, Some((expected, "the element's box × art_scale")))?;
         }
-        for (part, file) in element_files(e).into_iter().filter(|f| *f != glow).enumerate() {
+        let surfaces = [surface_file(&e.id), surface_back_file(&e.id)];
+        for (file, on) in surfaces.iter().zip([e.surface_map, e.back_surface_map]) {
+            if !on {
+                continue;
+            }
+            let Some(bytes) = src.files.get(file) else {
+                return Err(FormatError::invalid(
+                    COMPOSITION_FILE,
+                    &format!("elements[{i}]"),
+                    format!("{file}: missing"),
+                ));
+            };
+            let expected = surface_map_size(&e.kind, size);
+            check_file(file, bytes, Some((expected, "the element's box in world pixels")))?;
+        }
+        let own = |f: &String| *f != glow && !surfaces.contains(f);
+        for (part, file) in element_files(e).into_iter().filter(own).enumerate() {
             let Some(bytes) = src.files.get(&file) else {
                 return Err(FormatError::invalid(
                     COMPOSITION_FILE,
@@ -507,6 +577,82 @@ pub fn check_glow_groups(c: &Composition, look: Option<&crate::look::LookSource>
         }
     }
     Ok(())
+}
+
+/// Every surface of `c` (`surface`, `back_surface`) names a material of
+/// `look` (a level's `look`): an error on `composition.ron` naming the
+/// first that does not.
+pub fn check_surfaces(c: &Composition, look: Option<&crate::look::LookSource>) -> Result<(), FormatError> {
+    for (i, e) in c.elements.iter().enumerate() {
+        for (field, id) in [("surface", &e.surface), ("back_surface", &e.back_surface)] {
+            let Some(id) = id else { continue };
+            if !look.is_some_and(|l| l.materials.iter().any(|m| m.id == *id)) {
+                return Err(FormatError::invalid(
+                    COMPOSITION_FILE,
+                    &format!("elements[{i}].{field}"),
+                    format!("no material {id:?} in level.ron's look"),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// The painted surface maps of `src`'s elements in a level of `size`
+/// whose look has `materials` materials, decoded: each of its element's
+/// size ([`surface_map_size`]), every value at most `materials`. The first
+/// that is not, as an error on its file.
+pub fn check_surface_maps(src: &CompositionSource, size: (u32, u32), materials: usize) -> Result<(), FormatError> {
+    for e in &src.composition.elements {
+        for (file, on) in [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)] {
+            if !on {
+                continue;
+            }
+            let want = surface_map_size(&e.kind, size);
+            let (w, values) = decode_surface_map(src, &file, want)?;
+            if let Some(i) = values.iter().position(|v| usize::from(*v) > materials) {
+                let (x, y) = (i as u32 % w.max(1), i as u32 / w.max(1));
+                return Err(FormatError::invalid(
+                    &file,
+                    "",
+                    format!("material {} at ({x}, {y}), the look has {materials} materials", values[i]),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Painted surface map `file` of `src`, decoded grey, of size `want`:
+/// its width and values.
+pub fn decode_surface_map(
+    src: &CompositionSource,
+    file: &str,
+    want: (u32, u32),
+) -> Result<(u32, Vec<u8>), FormatError> {
+    let bytes = src
+        .files
+        .get(file)
+        .ok_or_else(|| FormatError::invalid(COMPOSITION_FILE, "", format!("{file}: missing")))?;
+    if let Some(size) = image_io::png_size(bytes)
+        && size != want
+    {
+        return Err(FormatError::invalid(
+            file,
+            "",
+            format!("{}x{}, the element's box in world pixels is {}x{}", size.0, size.1, want.0, want.1),
+        ));
+    }
+    let (w, h, values) = image_io::decode_grey_within(bytes, LEVEL_ART)
+        .map_err(|message| FormatError::Io { file: file.into(), message })?;
+    if (w, h) != want {
+        return Err(FormatError::invalid(
+            file,
+            "",
+            format!("{w}x{h}, the element's box in world pixels is {}x{}", want.0, want.1),
+        ));
+    }
+    Ok((w, values))
 }
 
 /// `check_composition` without the files: the count, ids (valid, unique,
@@ -588,6 +734,10 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
             }
             ElementKind::Raster => 2 * art_pixels + u64::from(size.0) * u64::from(size.1),
         });
+        // Painted surface maps decode with the element (issue #37).
+        let (mw, mh) = surface_map_size(&e.kind, size);
+        let maps = u64::from(e.surface_map) + u64::from(e.back_surface_map);
+        pixels = pixels.saturating_add(maps * u64::from(mw) * u64::from(mh));
         if pixels > MAX_COMPOSED_PIXELS {
             return Err(FormatError::invalid(
                 COMPOSITION_FILE,
@@ -649,6 +799,25 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                 return Err(bad("id", format!("{:?}: its file {file} {why}", e.id)));
             }
         }
+        // Surface materials (issue #37): ids, and back ones only with
+        // back art; a distant layer takes one surface and no painted map.
+        for (field, id) in [("surface", &e.surface), ("back_surface", &e.back_surface)] {
+            if let Some(id) = id
+                && !crate::materials::valid_material_id(id)
+            {
+                return Err(bad(field, format!("{id:?} is not a material id")));
+            }
+        }
+        if (e.back_surface.is_some() || e.back_surface_map) && !e.has_back_art() {
+            let field = if e.back_surface.is_some() { "back_surface" } else { "back_surface_map" };
+            return Err(bad(
+                field,
+                "only an element with back art (a drawn layer with back art, a raster) has a back surface".into(),
+            ));
+        }
+        if e.is_distant() && (e.surface_map || e.back_surface_map) {
+            return Err(bad("surface_map", "a distant layer takes one surface for the whole layer".into()));
+        }
         // An image's mask is named by its unique id: never shared, but its
         // name must be portable (plan 14d review).
         if let ElementKind::Image { mask: true, .. } = e.kind {
@@ -658,9 +827,15 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                 return Err(bad("id", format!("{:?}: its file {file} {why}", e.id)));
             }
         }
-        // Other kinds' files are checked for sharing.
-        if !matches!(e.kind, ElementKind::Image { .. }) {
-            for file in element_files(e) {
+        // Other kinds' files are checked for sharing, and every element's
+        // painted surface maps (`a.back`'s map is `a`'s back map's name).
+        let surface_maps = [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)];
+        let shared: Vec<String> = match e.kind {
+            ElementKind::Image { .. } => surface_maps.into_iter().filter(|(_, on)| *on).map(|(f, _)| f).collect(),
+            _ => element_files(e),
+        };
+        {
+            for file in shared {
                 // Ids are unique, their files need not be (`a` and `a.front`).
                 if let Some(j) = layers.insert(file.clone(), i) {
                     return Err(bad("id", format!("{file} is used by two elements (elements[{j}])")));
@@ -758,6 +933,10 @@ mod tests {
             glow: None,
             clear: false,
             distant: None,
+            surface: None,
+            back_surface: None,
+            surface_map: false,
+            back_surface_map: false,
         };
         CompositionSource {
             composition: Composition {
@@ -1071,6 +1250,10 @@ mod tests {
             glow: None,
             clear: false,
             distant: None,
+            surface: None,
+            back_surface: None,
+            surface_map: false,
+            back_surface_map: false,
         };
         // A mask's pixels count too: at the limit, a 10 × 10 mask is over.
         let mut at_limit = sample();

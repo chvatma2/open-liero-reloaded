@@ -14,12 +14,17 @@ use alloc::vec::Vec;
 mod anim;
 pub mod engine;
 mod frame;
+mod material;
 
 pub use anim::{default_phase, splitmix64};
 pub use engine::worm_floor_of;
 pub use frame::{
     FrameGroup, FrameLight, LookFrame, MAX_EMITTERS, MAX_OCCLUSION_REACH, MAX_SOAK, MIN_OCCLUSION_REACH,
     ViewMode, fade, light_at, srgb_to_linear,
+};
+pub use material::{
+    Heat, LAVA_RAMP, MAX_CAPACITY, MAX_CONDUCTIVITY, MAX_COOLING, MAX_GLOW, MAX_MATERIALS, MAX_RAMP_KEYS,
+    MAX_SENSITIVITY, MAX_TEMPERATURE, MIN_CAPACITY, MIN_COOLING, RampKey, SurfaceMaps, SurfaceMaterial, ramp_at,
 };
 
 /// An sRGB colour, as the files and the art store it.
@@ -178,6 +183,17 @@ pub struct LevelLook {
     pub grade: Grade,
     /// A group map value `v` (1-255) is `groups[v - 1]`; 0 is no group.
     pub groups: Vec<GlowGroup>,
+    /// Its surface materials (materials design): a surface map value `v`
+    /// (1-255) is `materials[v - 1]`; 0 is none.
+    pub materials: Vec<SurfaceMaterial>,
+}
+
+impl LevelLook {
+    /// The material surface map value `v` names: `None` for 0 or past the
+    /// list.
+    pub fn material(&self, v: u8) -> Option<&SurfaceMaterial> {
+        self.materials.get(usize::from(v).checked_sub(1)?)
+    }
 }
 
 /// A mod projectile's look.
