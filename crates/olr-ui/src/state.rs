@@ -1245,9 +1245,8 @@ impl UiState {
     /// `SaveProfiles` when they changed.
     fn remember_weapons(&mut self, k: usize, names: Vec<String>) -> Vec<AppCommand> {
         let profile = if self.lineup.is_empty() {
-            (k == 0).then(|| {
-                if self.profiles.selected < self.profiles.list.len() { self.profiles.selected } else { 0 }
-            })
+            let selected = self.profiles.selected;
+            (k == 0).then_some(if selected < self.profiles.list.len() { selected } else { 0 })
         } else {
             self.lineup.get(k).and_then(|j| j.profile)
         };
