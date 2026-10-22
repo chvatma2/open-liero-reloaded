@@ -25,7 +25,9 @@ wired in the frame loop's order **once**, so each mode that draws a world
     then gives the scene its `olr_scene::ShadeRules` (`floor` =
     `olr_look::engine::FLOOR`, 50 %, for projectiles and bonuses; each
     projectile's look glow; worms take `Shade::WORM` and are occluders,
-    plan 15b); an unlit match sets none and draws as always.
+    plan 15b, which since #53 block no light: a worm takes the light where
+    it stands, floored by the worm floor); an unlit match sets none and
+    draws as always.
   - `set_fx_capacity(n)` before the first tick: a bench-only entity pool
     (plan 8); the blood amount stays.
   - `set_blood(percent)` / `blood()` (issue #6): the player's blood amount

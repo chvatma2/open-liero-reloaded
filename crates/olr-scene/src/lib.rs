@@ -542,7 +542,8 @@ impl Scene {
             for (i, w) in worms.iter().enumerate().filter(|(_, w)| w.alive) {
                 let p = blend.snap(blend.worm(i, w));
                 if lit {
-                    // Plan 15b: living worms block light, whatever the view.
+                    // Plan 15b: living worms' bodies, whatever the view (the
+                    // occluder map; #53: they block no light).
                     let body = worm::body(&frame, i, w, p);
                     if record {
                         let at = worm::body_frame(assets, i, w);

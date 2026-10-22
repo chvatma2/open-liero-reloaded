@@ -291,7 +291,7 @@ impl Dynamic {
             }
             // It follows its worm as drawn; a worm not drawn (dead) shows none.
             let radius = engine::disc_radius(l.reach.pixels());
-            // Plan 15c: a disc's cells never count as its worm's body.
+            // Plan 15c: it shines from inside its worm, which blocks no light (#53).
             if let Some(w) = worms.iter().find(|w| w.id == s.worm)
                 && let Some(f) = light_at(l, t_ms - s.start_ms, s.identity, [w.pos.x, w.pos.y], radius)
             {

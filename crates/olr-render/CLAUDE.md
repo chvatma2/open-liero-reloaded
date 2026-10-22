@@ -41,12 +41,10 @@ on screen or offscreen.
   encoded into one command encoder and one submit: all views' world and
   occluder passes, the glow light once, all views' look passes, then
   all upscales. The glow light reads the frame's globals
-  (`LookState::globals`: the first view's look with the level's occluder
-  map; the lit terrain's group 2 reads them too, none of a view's fields)
-  and its own occluder map (`LookTextures::gi_occluders`, `R8Uint` at the
-  world size, cleared each lit frame, each view's map copied in where it
-  lies in the level, `copy_occluders`: exactly one view's bytes for one
-  view); one history step a frame (`glow_light_steps()`, tests). The
+  (`LookState::globals`: the first view's look; the lit terrain's group 2
+  reads them too, none of a view's fields) and no occluder map (#53:
+  worms take no part in the light, so no view's worms reach another's
+  light); one history step a frame (`glow_light_steps()`, tests). The
   instance buffer holds every view's quads (`ViewPlan`: its terrain,
   distant, sprite and occluder ranges). `view_light_grid(i)` is view
   `i`'s light grid (`light_grid()` the first's). Tests (GPU):
@@ -132,18 +130,13 @@ on screen or offscreen.
     living worms' bodies, `frame.rs`'s `occluder_instances`) drawn into an
     `R8Uint` occluder map, one texel per world pixel over the light grid
     (`LookGlobals.occluders`: origin and size), each opaque texel the worm's
-    index + 1; cleared every lit frame. `worm_in` (`common.wgsl`) reads it;
-    the glow light reads the level-wide copy (issue #26, above).
-    The glow light's emission marks a mostly-worm cell (2 + its rock
-    share; not in a cell a disc lights, a muzzle flash inside its worm),
-    keeping the glow under it; the cascades let a worm stop a ray only
-    within `WORM_SHADOW` (4) world pixels of its probe, so a worm throws a
-    short shadow and nothing more than 10 px from it changes (the user's
-    playtest, 2026-10-20; `a_worm_throws_no_long_shadow`,
-    `a_worm_changes_no_light_away_from_it`)
-    (`a_worm_shadows_the_wall_behind_it`, `a_light_inside_a_worm_ignores_it`,
-    `overlapping_worms_block_each_others_lights`,
-    `an_off_view_worm_still_shadows_the_view`, `a_worm_blocks_glow_light`).
+    index + 1; cleared every lit frame. `worm_in` (`common.wgsl`) reads it.
+    No pass reads it since #53 (the maintainer's call, 2026-10-23: worm
+    shading and worms blocking light caused more glitches than they were
+    worth): worms take no part in the light, which is byte for byte the
+    same with or without them (`worms_change_no_light`: one view and two,
+    bounce on). It and the view's worm boxes (Soak's `look::worm_boxes`,
+    bound to the composite) are kept for #54's halo.
   - **Glow light** (`gi.rs`, `gi_*.wgsl`, Task 12; plan 15c): radiance
     cascades over the whole level, fixed to the world (never
     camera-dependent): play's discs (`gi_dynamic.wgsl`: the first
@@ -155,7 +148,8 @@ on screen or offscreen.
     its radiance whole, `olr_look::engine::disc_radiance`; a disc smaller
     than a cell lights its own by area; reach max-blended as unsplit f16,
     60000 unlimited, `R16Float`), the emission (glow × group × each pixel's flicker
-    region, the discs added, solid share, albedo of rock and dirt), a
+    region, the discs added, solid share, albedo of rock and dirt; no
+    worm, #53), a
     jump-flood seed and its passes, the cascades from the top down, then the
     fluence the sum samples bilinearly, which is also the history the next
     frame's bounce reads (the cascades run before `fs_fluence` rewrites it;
@@ -213,20 +207,17 @@ on screen or offscreen.
   - **Soak** (`soak.wgsl`, Task 14a): `fs_soak_h` across, `fs_soak_v` down:
     an opaque solid texel takes the most light within the soak of it,
     faded by distance; `fs_soak_v` raises it to the solid floor. Air keeps
-    its light (`soak_and_floor_never_change_air`). A worm's short shade
-    colours only the rock face (the user's playtest, 2026-10-20): the
-    across pass also writes rows into the bloom's spare texture, where a
-    texel within twice `WORM_SHADOW` + 2 of a worm (the occluder map) takes
-    the nearest unshaded same-kind texel's light along its row; the down
-    pass uses them from 2 px into rock (half at 2 px, whole deeper)
-    (`a_worm_shadow_stays_at_the_rock_face`). Issue #35: the across pass
-    reads the occluder map only within that reach of a worm box (`near_box`;
-    each view's `LitTarget::worm_boxes` uniform, `look::worm_boxes` of its
+    its light (`soak_and_floor_never_change_air`). It reads no worm (#53:
+    plan 15c's worm-shade rows are gone). Each view's
+    `LitTarget::worm_boxes` uniform (issue #35: `look::worm_boxes` of its
     occluder quads, a texel to spare, at most `WORM_BOXES` 32, the rest
-    joined into the last; `worm_boxes_hold_every_quad`). With a soak of 0
+    joined into the last; `worm_boxes_hold_every_quad`) is still written
+    each frame and bound to the composite (binding 7) for #54's halo; no
+    pass reads it yet. With a soak of 0
     the across pass, which would give back the sum texel for texel, does
-    not run: the down pass reads the sum as its source and rows (issue
-    #35, `LitTarget::soak_binds[2]`; `no_soak_or_softness_runs_no_across_pass`).
+    not run: the down pass reads the sum as its source (issue #35,
+    `LitTarget::soak_binds[0]`, the across pass's;
+    `no_soak_or_softness_runs_no_across_pass`).
   - **Blur** (`fs_blur_h`, `fs_blur_v`): a box of the level's softness (0
     to 4 world pixels) each way, an air texel gathering only the air before
     the first solid each way (no light blurs through a wall); `fs_blur_v`
@@ -243,7 +234,7 @@ on screen or offscreen.
     or dirt
     (`bright_light_blooms`, `bloom_is_steady_and_camera_independent`,
     `a_dim_level_draws_as_before`, `glowing_pixels_feed_no_bloom`,
-    `bloom_keeps_the_worm_floor_and_lit_side`).
+    `bloom_keeps_the_worm_floor`).
   - **Composite** (`composite.wgsl`): each world-target texel's albedo
     times the light grid at its centre (bilinear), never below its
     self-light nor its floor: the solid floor for `Shade::FLOORED` (blood,
@@ -256,11 +247,12 @@ on screen or offscreen.
     texel over an opaque solid's world pixel (the solid map, binding 6;
     #1: rock under a bright sky read oversaturated,
     `rock_shows_at_most_its_art_under_bright_light`).
-    A worm texel over its own worm in the occluder map takes the light just
-    outside the worm on its side (`facing_light`: outward from the 7 × 7
-    window's worm pixels, read one pixel past the first non-worm pixel
-    within 4; per world pixel; `a_worm_is_lit_on_the_lamps_side`,
-    `worm_shading_is_steady`); a rope pixel takes the light where it is;
+    A worm texel takes the light where it is, as a rope pixel does (#53:
+    plan 15b's lit side is gone; `a_worm_takes_the_light_where_it_stands`,
+    `a_rope_pixel_has_no_side`), at least the worm floor
+    (`a_worm_against_a_wall_keeps_its_floor`,
+    `overlapping_worms_in_the_dark_keep_their_floor`); the composite reads
+    no occluder map (binding 7 is the view's worm boxes, unread until #54);
     graded (exposure, contrast, saturation, tint) in linear light; a
     marker shows its albedo. View modes: lit, full bright (the albedo),
     light only (white albedo). The upscale pass reads the lit target.
@@ -440,8 +432,8 @@ on screen or offscreen.
   pair of its own (`PASS_BASE` 32, a resolve's 256-byte alignment, to
   `PASS_SLOTS` 256 more; the first world pass's start is slot 0, the last
   upscale's end slot 1; a pass past them goes untimed), counted in its
-  `PassGroup` (heat, issue #39; world and occluders; emission: the glow light's occluder
-  map, discs and emission; jump flood; cascades; fluence and its
+  `PassGroup` (heat, issue #39; world and occluders; emission: the glow
+  light's discs and emission; jump flood; cascades; fluence and its
   clear; occlusion; light sum; soak; blur; bloom; composite; upscale; the
   timer's `pass` hands each pass its writes, `start_frame` clears them, the
   glow light's `encode` takes the timer): `GpuTimes::passes`, indexed as

@@ -137,6 +137,8 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   players apart. Replay format 4: older replays no longer open.
 - Worms facing left are drawn as the exact mirror of facing right, without
   OLX's one-pixel offset.
+- In lit levels worms no longer cast shadows or have a lit side: a worm
+  takes the light where it stands, never darker than its floor.
 
 - Content packs are in the new format, version 5. Re-import packs you
   made with `cargo xtask fetch-olx-content` or `olr-cli import`; packs of

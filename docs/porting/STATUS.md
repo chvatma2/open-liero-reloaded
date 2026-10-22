@@ -3725,8 +3725,11 @@ Spec `docs/superpowers/specs/2026-10-19-worm-lighting-design.md`, plan
   `Shade::WORM`) replaces `solid_floor`; projectiles and bonuses keep the
   engine `FLOOR` (50 %) as self-light. The user saw it on a darkened look
   test level and kept 35 % (2026-10-19).
-- **Worms block light** (since 2026-10-20 only over 4 world pixels: see
-  "Glowing light (plan 15c)", short worm shadows). The scene lists each living worm's body (its skin
+- **Worms block light — removed by issue #53** (glitches outweighed the benefit, the maintainer's call, 2026-10-23: worms
+  no longer block any light, and the light grid is byte for byte the same
+  with or without them, `worms_change_no_light`; the occluder map is
+  still drawn, for #54's halo). As it was (since 2026-10-20 only over 4
+  world pixels: see "Glowing light (plan 15c)", short worm shadows): the scene lists each living worm's body (its skin
   frame) as an `Occluder` (`DrawList::occluders`, worm index + 1) in a lit
   match, whatever the view. The renderer draws them each lit frame into an
   `R8Uint` occluder map, one texel per world pixel over the light grid
@@ -3739,13 +3742,16 @@ Spec `docs/superpowers/specs/2026-10-19-worm-lighting-design.md`, plan
   the view throws no shadow into it, and the glow light (otherwise fixed to
   the world) is blocked only by worms in it. Worms take no soak and no
   solid floor.
-- **The lit side.** The composite lights a worm pixel (`Floor::Worm` over a
+- **The lit side — removed by issue #53** (glitches outweighed the benefit, the maintainer's call, 2026-10-23: a worm
+  pixel now takes the light where it is, as a rope or hook pixel does,
+  floored by the worm floor, `a_worm_takes_the_light_where_it_stands`).
+  As it was: the composite lit a worm pixel (`Floor::Worm` over a
   texel of the same worm in the occluder map) with the light just outside
   the worm on its side: the outward direction is the sum of `w - q` over the
-  worm's pixels in a 7 × 7 window (up when they cancel), and the light is
+  worm's pixels in a 7 × 7 window (up when they cancel), and the light was
   read one pixel past the first non-worm pixel within 4. One value per world
-  pixel. A rope or hook pixel (no occluder under it) takes the light where
-  it is. The worm floor still bounds it from below.
+  pixel. A rope or hook pixel (no occluder under it) took the light where
+  it was. The worm floor still bounds it from below.
 - **Light never passes rock, however thin** (the user's request,
   2026-10-19): the shadow march walks every world pixel a ray crosses
   (a grid walk; the old 1-pixel steps passed between rock pixels touching
@@ -3753,8 +3759,11 @@ Spec `docs/superpowers/specs/2026-10-19-worm-lighting-design.md`, plan
   before that entry (half a pixel of slack), a solid one within its face
   (1 pixel); the softness blur stops at walls for air. Glow light already
   stopped at 1-pixel walls (`a_one_pixel_wall_stops_glow_light`).
-- **Not measured yet:** the occluder pass and the facing lookups' GPU cost
-  (`olr-cli gpu-bench --look`) waits for the user's consent.
+- **Not measured yet:** the occluder pass's GPU cost (`olr-cli gpu-bench
+  --look`) waits for the user's consent. Since issue #53 the light takes
+  no occluder cost: no facing lookups, no level-wide occluder copy, no
+  worm reads in the emission, cascades or soak; only the occluder map's
+  draw remains (in the world group).
 
 ## Glowing light (plan 15c)
 
@@ -3816,8 +3825,10 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
   red-roofed building read oversaturated, brighter than OLX's art);
   `max_light` above 100 % and the bloom brighten only the open (air,
   clear solids) and play's items over it.
-- **Short worm shadows** (the user's playtest of the day Castle Strike,
-  2026-10-20: outdoors a worm's shadow was massive, popped at the edge of
+- **Short worm shadows — removed by issue #53** (glitches outweighed the benefit, the maintainer's call, 2026-10-23:
+  worms block no light at all; `WORM_SHADOW`, the emission's worm marks
+  and the soak's worm-shade rows are gone). As it was (the user's playtest
+  of the day Castle Strike, 2026-10-20: outdoors a worm's shadow was massive, popped at the edge of
   the glowing sky and drifted after the worm stopped). A worm blocks a
   ray only within `olr_render::WORM_SHADOW` (4) world pixels of the ray's
   probe; past that it is invisible to light and the cell shows what lies
@@ -4714,10 +4725,10 @@ seats and play it split. As built:
   screen is smaller (`Renderer::render_views`).
 - **One glow light a frame.** The glow light (plan 15c) is world-fixed
   and runs once a frame for every view, one history step a frame,
-  whatever the number of views: its emission reads a level-wide occluder
-  map into which each view's (over its light grid) is copied, so a worm
-  shadows the glow light where any view's light grid holds it. One view
-  draws exactly as before (the goldens are unchanged).
+  whatever the number of views. Since issue #53 worms take no part in it
+  (the level-wide occluder copy each view's map went into is gone), so
+  no view's worms change another's light. One view draws exactly as
+  before.
 - **A camera per view** (issue #27): one `olr_scene::Scene` holds a
   camera per view (`Scene::add_view`, `olr_present::Presentation::
   set_views`, at most four), each following its own worm with the solo

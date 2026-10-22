@@ -78,7 +78,9 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
 - **Occluders** (plan 15b): in a lit match `build` lists each living
   worm's body (`worm::body`: its skin frame's atlas, source, position, size
   and flip, `worm` = index + 1) in `DrawList::occluders`, whatever the
-  view; the renderer's occluder map stops light with them. `clear` empties
+  view; the renderer draws them into its occluder map, which stops no
+  light (#53: worms take no part in the light; #54's halo is to use it as
+  their silhouette). `clear` empties
   them (256 of room, no per-frame allocation).
 - **Look records** (`lib.rs`, plan 15a Task 15 and the batch C review),
   kept only with shade rules: each `build` records `drawn_projectiles()`
