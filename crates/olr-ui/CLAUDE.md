@@ -37,8 +37,12 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   message). The
   `Set*` actions sanitize, then apply (`ApplyVideo`, `ApplyAudio`,
   `ApplyBindings`) and save (`SaveSettings`, `SaveProfiles`) only what
-  changed (`SetBindings`: `sanitize_bindings`). `bindings()` is the
-  selected profile's, else the options'.
+  changed (`SetBindings`: `sanitize_bindings`). `bindings()` (owned) is
+  every seat's (issue #28): keyboard 1's and the gamepads' the selected
+  profile's when it has its own (as before seats), else the options';
+  keyboard 2's (`keys2`) always the options' (a profile's own is not
+  read). `PadPause` (the app's, a pad's Start) toggles the pause in game
+  as Back does, and does nothing elsewhere (menus by pad: issue #31).
 - **Settings** (`settings.rs`): video (`WindowPreset`: 1280 × 720,
   1600 × 900, 1920 × 1080; fullscreen, borderless at the monitor's size,
   offered in the same "Display" list; v0.1.0's `window: Desktop` loads as
@@ -60,10 +64,12 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `sanitize()` fixes out-of-range values and
   keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, F3 (the network
   panel), Tab, H and
-  PageUp/PageDown (a watched game's fast-forward) are dropped from both
-  keyboard lists, then an action left unreachable in either mode gets its
-  defaults back: `Bindings::repair`; a file from before mouse bindings
-  gets #24's), one warning each.
+  PageUp/PageDown (a watched game's fast-forward) are dropped from every
+  keyboard list (keyboard 2's too), a pad's Start (`PAD_PAUSE`,
+  `PAD_PAUSE_DOES`: the pause) from the pad's, then an action left
+  unreachable for a seat or mode gets its defaults back:
+  `Bindings::repair`; a file from before mouse bindings gets #24's, one
+  from before seats OLX's player 2 for keyboard 2), one warning each.
   The master volume defaults to OLX's 70 %; the game plays `master * sfx`.
 - **Match preferences** (`match_prefs.rs`): mod (a fresh profile's is
   `DEFAULT_MOD`, issue #21: Liero v1.0 Reloaded, `olr-mod-liero-v1-reloaded`
@@ -178,21 +184,29 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   turn into `AppCommand::ClearDownloadCache`; the match is set up in local play only, which remembers it in
   `settings.gameplay`; the UI
   scale applies when its slider is released; `keys.rs` (in a scroll area:
-  every `Action::ALL`, Strafe, Previous/Next weapon and Dig since #23): per action its
-  inputs of each of the `olr_input::Mode`'s devices (`Mode::of(mouse
-  controls)`: Keyboard and Gamepad; with mouse controls on, issue #25,
-  `MOUSE_KEYS_NOTE` and Keyboard (`Bindings::mouse_keys`), Mouse and
-  Gamepad, `MOUSE_MADE` in the Keyboard and Mouse cells of Up, Down,
-  Select weapon and Strafe), each removable unless the mode's rule
+  every `Action::ALL`, Strafe, Previous/Next weapon and Dig since #23),
+  seat by seat (issue #28: "Controls of" Keyboard 1, Keyboard 2,
+  Gamepads, `olr_input::SeatKind`, each with its `seat_note`; the mouse
+  controls' checkbox, the chat key and the profile's "own keys" note on
+  Keyboard 1's page, the last also on the Gamepads'): per action its
+  inputs of each of the seat's devices in its mode
+  (`SeatKind::devices`/`mode`: Keyboard 1's Keyboard, or with mouse
+  controls on, issue #25, `MOUSE_KEYS_NOTE`, Keyboard
+  (`Bindings::mouse_keys`) and Mouse, `MOUSE_MADE` in the cells of Up,
+  Down, Select weapon and Strafe; Keyboard 2's Keyboard, `keys2`, always
+  saved to the options; the Gamepads' Gamepad), each removable unless the seat's rule
   refuses it (`Bindings::unbind` on a copy; the hover says why), "+"
   opens a capture (`MenuData::capture`, an `olr_input::Capture` the app
   feeds; a mouse capture's box has no Cancel, a click being its input:
   Esc, `Capture::cancelled`, closes it, as for the pad), an input other
   actions have opens a dialog (move, refused when it
-  would leave one unreachable; share; cancel), `GAME_KEYS` refused, browser
-  shortcuts pointed out, Reset (`RESET_KEYS`: OLX's keys and pad inputs;
-  `RESET_MOUSE`: mouse controls' keys and mouse inputs; each leaves the
-  other's alone); a profile with its own keys
+  would leave one unreachable; share; cancel), `GAME_KEYS` and a pad's
+  Start refused, browser shortcuts pointed out on the keyboards' pages
+  and so are the keys both keyboards bind (`shared_note`, from
+  `Bindings::shared_keys`), Reset per page (`RESET_KEYS`: OLX's keys;
+  `RESET_MOUSE`: mouse controls' keys and mouse inputs; `RESET_KEYS2`:
+  OLX's player 2's; `RESET_PAD`: the pad inputs; each leaves the others
+  alone); a profile with its own keys
   is rebound there; while a capture is open egui hears no key: the
   capture has it alone), the pause menu (`ingame.rs`: Resume, Options,
   Quit to menu), the weapon selection (`weapon_select.rs`, over the level:
@@ -565,6 +579,8 @@ set; `tests/options.rs`: rebinding never leaves an action unreachable, the
 rebinding flow and the other sections through the widgets, mouse controls'
 rebinding flow (`the_keys_screen_rebinds_mouse_controls`) and an older
 file's repair (`an_options_file_from_before_mouse_bindings_is_repaired`),
+each seat's page (`the_keys_screen_rebinds_each_seat`, issue #28) and a
+file from before seats (`an_options_file_from_before_seats_is_repaired`),
 game keys never bound, the capture swallowing its key, the download cache's Clear (disabled
 with its reason; none), `options_edit_relays_and_unblock`, the finding
 settings sanitized (TURN entries, `port_mapping` on for an older file),

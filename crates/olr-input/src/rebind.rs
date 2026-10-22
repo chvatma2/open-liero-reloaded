@@ -3,13 +3,16 @@
 //! choice when another action has it, unbinding, repairing a file's
 //! bindings, and capturing the next input the player presses.
 //!
-//! The rule that keeps the game controllable, in either [`Mode`]
-//! ([`Bindings::unreachable`] is empty): with mouse controls off, **every
-//! action keeps at least one keyboard key and one gamepad input**; with
-//! them on, **every action but [`MOUSE_MADE`]'s keeps a key or a mouse
-//! input** (of [`Bindings::mouse_keys`] and [`Bindings::mouse`]). A step
-//! that would break it is refused and changes nothing; bindings from a
-//! file that break it are repaired with the defaults.
+//! The rule that keeps the game controllable, in every [`Mode`] and for
+//! every seat on its own (issue #28: [`crate::SeatKind`],
+//! [`Bindings::unreachable`] is empty): **every action keeps at least one
+//! key of keyboard 1's** ([`Bindings::keys`]), **one of keyboard 2's**
+//! ([`Bindings::keys2`]) **and one gamepad input**; with mouse controls
+//! on, **every action but [`MOUSE_MADE`]'s keeps a key or a mouse input**
+//! of keyboard 1's (of [`Bindings::mouse_keys`] and [`Bindings::mouse`]).
+//! A seat needs only its own device's: a keyboard seat keys, the pads pad
+//! inputs. A step that would break it is refused and changes nothing;
+//! bindings from a file that break it are repaired with the defaults.
 
 use std::fmt;
 
@@ -44,13 +47,15 @@ impl Device {
     }
 }
 
-/// Which controls a binding is for: the keys (mouse controls off) or mouse
-/// controls (issue #25), each with its own keyboard list; the gamepad's
-/// list is the same in both.
+/// Which controls a binding is for: keyboard 1's keys (mouse controls
+/// off) or mouse controls (issue #25), each with its own keyboard list
+/// (the gamepads' list is the same in both), or keyboard 2's keys (issue
+/// #28; its keys alone).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Mode {
     Keys,
     Mouse,
+    Keyboard2,
 }
 
 impl Mode {
@@ -64,14 +69,16 @@ impl Mode {
         match self {
             Mode::Keys => &[Device::Keyboard, Device::Gamepad],
             Mode::Mouse => &[Device::Keyboard, Device::Mouse, Device::Gamepad],
+            Mode::Keyboard2 => &[Device::Keyboard],
         }
     }
 
     /// `action` takes inputs of `device` in this mode: not the mouse with
     /// mouse controls off, nor a key or mouse input for [`MOUSE_MADE`]'s
-    /// with them on.
+    /// with them on; keyboard 2 nothing but keys.
     pub fn binds(self, action: Action, device: Device) -> bool {
         match (self, device) {
+            (Mode::Keyboard2, d) => d == Device::Keyboard,
             (_, Device::Gamepad) => true,
             (Mode::Keys, Device::Keyboard) => true,
             (Mode::Keys, Device::Mouse) => false,
@@ -120,13 +127,15 @@ pub enum Resolve {
 /// What every action must keep at least one of.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Need {
-    /// A key of [`Bindings::keys`] (mouse controls off).
+    /// A key of [`Bindings::keys`] (keyboard 1, mouse controls off).
     Key,
     /// A gamepad input (either mode).
     PadInput,
     /// A key of [`Bindings::mouse_keys`] or an input of
     /// [`Bindings::mouse`], with mouse controls on; not of [`MOUSE_MADE`]'s.
     KeyOrMouse,
+    /// A key of [`Bindings::keys2`] (keyboard 2, issue #28).
+    Keyboard2Key,
 }
 
 impl Need {
@@ -136,6 +145,7 @@ impl Need {
             Need::Key => "key",
             Need::PadInput => "gamepad input",
             Need::KeyOrMouse => "key or mouse input with mouse controls",
+            Need::Keyboard2Key => "keyboard 2 key",
         }
     }
 }
@@ -148,6 +158,8 @@ pub enum RebindError {
     /// Mouse controls press `action` themselves ([`MOUSE_MADE`]), or the
     /// mouse is not bound with them off.
     NotBindable { action: Action, device: Device },
+    /// Keyboard 2 binds keys only (issue #28).
+    KeysOnly { device: Device },
 }
 
 impl fmt::Display for RebindError {
@@ -162,6 +174,7 @@ impl fmt::Display for RebindError {
             RebindError::NotBindable { action, .. } => {
                 write!(f, "mouse controls press {} themselves", action.name())
             }
+            RebindError::KeysOnly { device } => write!(f, "keyboard 2 has no {}", device.input_noun()),
         }
     }
 }
@@ -188,18 +201,22 @@ impl Action {
     }
 }
 
-/// One of [`Bindings`]' four lists.
+/// One of [`Bindings`]' five lists.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum List {
     Keys,
     Pad,
     MouseKeys,
     Mouse,
+    Keys2,
 }
 
 impl List {
+    /// The list `mode` binds `device` in (keyboard 2's for any device: it
+    /// binds keys only, [`Mode::binds`]).
     fn of(mode: Mode, device: Device) -> List {
         match (mode, device) {
+            (Mode::Keyboard2, _) => List::Keys2,
             (Mode::Keys, Device::Keyboard) => List::Keys,
             (Mode::Mouse, Device::Keyboard) => List::MouseKeys,
             (_, Device::Gamepad) => List::Pad,
@@ -212,6 +229,7 @@ impl List {
         match self {
             List::Keys => Some(Need::Key),
             List::Pad => Some(Need::PadInput),
+            List::Keys2 => Some(Need::Keyboard2Key),
             List::MouseKeys | List::Mouse => (!MOUSE_MADE.contains(&action)).then_some(Need::KeyOrMouse),
         }
     }
@@ -241,6 +259,7 @@ impl Bindings {
             List::Pad => self.pad.iter().map(|&(a, p)| (a, Binding::Pad(p))).collect(),
             List::MouseKeys => self.mouse_keys.iter().map(|&(a, k)| (a, Binding::Key(k))).collect(),
             List::Mouse => self.mouse.iter().map(|&(a, m)| (a, Binding::Mouse(m))).collect(),
+            List::Keys2 => self.keys2.iter().map(|&(a, k)| (a, Binding::Key(k))).collect(),
         }
     }
 
@@ -255,15 +274,17 @@ impl Bindings {
             Need::Key => n(List::Keys),
             Need::PadInput => n(List::Pad),
             Need::KeyOrMouse => n(List::MouseKeys) + n(List::Mouse),
+            Need::Keyboard2Key => n(List::Keys2),
         }
     }
 
     /// What an action cannot be pressed with (none, unless edited by
-    /// hand): with mouse controls off, a key or a gamepad input; with them
-    /// on, a key or mouse input ([`MOUSE_MADE`]'s need none).
+    /// hand), every seat's gaps: keyboard 1's key with mouse controls off,
+    /// a gamepad input, keyboard 1's key or mouse input with them on
+    /// ([`MOUSE_MADE`]'s need none), keyboard 2's key.
     pub fn unreachable(&self) -> Vec<(Action, Need)> {
         let mut out = Vec::new();
-        for need in [Need::Key, Need::PadInput, Need::KeyOrMouse] {
+        for need in [Need::Key, Need::PadInput, Need::KeyOrMouse, Need::Keyboard2Key] {
             for a in Action::ALL {
                 let needed = need != Need::KeyOrMouse || !MOUSE_MADE.contains(&a);
                 if needed && self.count(a, need) == 0 {
@@ -287,6 +308,9 @@ impl Bindings {
         how: Resolve,
     ) -> Result<(), RebindError> {
         let device = input.device();
+        if mode == Mode::Keyboard2 && device != Device::Keyboard {
+            return Err(RebindError::KeysOnly { device });
+        }
         if !mode.binds(action, device) {
             return Err(RebindError::NotBindable { action, device });
         }
@@ -310,6 +334,7 @@ impl Bindings {
                 (List::MouseKeys, Binding::Key(k)) => self.mouse_keys.push((action, k)),
                 (List::Pad, Binding::Pad(p)) => self.pad.push((action, p)),
                 (List::Mouse, Binding::Mouse(m)) => self.mouse.push((action, m)),
+                (List::Keys2, Binding::Key(k)) => self.keys2.push((action, k)),
                 _ => {}
             }
         }
@@ -338,6 +363,7 @@ impl Bindings {
             (List::MouseKeys, Binding::Key(k)) => self.mouse_keys.retain(|e| *e != (action, k)),
             (List::Pad, Binding::Pad(p)) => self.pad.retain(|e| *e != (action, p)),
             (List::Mouse, Binding::Mouse(m)) => self.mouse.retain(|e| *e != (action, m)),
+            (List::Keys2, Binding::Key(k)) => self.keys2.retain(|e| *e != (action, k)),
             _ => {}
         }
     }
@@ -346,17 +372,20 @@ impl Bindings {
     /// once, a key or mouse input of [`MOUSE_MADE`]'s in mouse controls'
     /// lists is dropped, and an action left unreachable in either mode
     /// gets its defaults back (OLX's keys and pad inputs, #24's mouse
-    /// controls; shared with another action that may have them). One
-    /// warning per fix. A file from before mouse bindings has #24's
+    /// controls, OLX's player 2's for keyboard 2; shared with another
+    /// action that may have them). One warning per fix. A file from before
+    /// mouse bindings has #24's, one from before seats OLX's player 2's
     /// (`#[serde(default)]`).
     pub fn repair(&mut self) -> Vec<String> {
         let mut w = Vec::new();
-        let lens = |b: &Bindings| b.keys.len() + b.pad.len() + b.mouse_keys.len() + b.mouse.len();
+        let lens =
+            |b: &Bindings| b.keys.len() + b.pad.len() + b.mouse_keys.len() + b.mouse.len() + b.keys2.len();
         let before = lens(self);
         dedup(&mut self.keys);
         dedup(&mut self.pad);
         dedup(&mut self.mouse_keys);
         dedup(&mut self.mouse);
+        dedup(&mut self.keys2);
         if lens(self) != before {
             w.push(format!("{} bindings listed twice, kept once", before - lens(self)));
         }
@@ -372,6 +401,7 @@ impl Bindings {
                 Need::Key => (Mode::Keys, &[Device::Keyboard]),
                 Need::PadInput => (Mode::Keys, &[Device::Gamepad]),
                 Need::KeyOrMouse => (Mode::Mouse, &[Device::Keyboard, Device::Mouse]),
+                Need::Keyboard2Key => (Mode::Keyboard2, &[Device::Keyboard]),
             };
             let restored: Vec<Binding> = devices.iter().flat_map(|d| defaults.of(mode, action, *d)).collect();
             for b in &restored {
@@ -379,7 +409,11 @@ impl Bindings {
                 let _ = self.bind(mode, action, *b, Resolve::Share);
             }
             let names: Vec<String> = restored.iter().map(Binding::to_string).collect();
-            let whose = if need == Need::KeyOrMouse { "mouse controls'" } else { "OLX's" };
+            let whose = match need {
+                Need::KeyOrMouse => "mouse controls'",
+                Need::Keyboard2Key => "OLX's player 2's",
+                Need::Key | Need::PadInput => "OLX's",
+            };
             w.push(format!(
                 "{} had no {}: {whose} {} restored",
                 action.name(),

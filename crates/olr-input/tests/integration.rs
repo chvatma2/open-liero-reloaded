@@ -6,3 +6,4 @@ mod dig;
 mod input;
 mod mouse;
 mod rebind;
+mod seat;

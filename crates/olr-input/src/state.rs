@@ -1,14 +1,16 @@
-//! One player's input: device events in, [`Keys`] per tick out.
+//! One player's input: device events in, [`Keys`] per tick out; the
+//! devices of every seat (the solo player's) or of one ([`Seat`], issue #28).
 
 use gilrs::{Axis, Button, EventType};
 use olr_sim::Keys;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-use crate::bindings::{Bindings, DIG, MouseInput, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD};
+use crate::bindings::{Bindings, DIG, MouseInput, PAD_PAUSE, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD};
 use crate::dig::Dig;
 use crate::latch::TickLatch;
 use crate::mouse::{LocalWorm, MADE_UP, MouseController, Notch};
+use crate::seat::Seat;
 
 /// A touchpad's scroll (pixel deltas) makes a wheel notch every this many
 /// logical pixels.
@@ -39,13 +41,17 @@ impl PadEvent {
     }
 }
 
-/// One player's devices: the keyboard (winit physical keys) and any
-/// gamepad, through [`Bindings`]. Feed it every window and gamepad event,
-/// then call [`InputState::latch_tick`] once per simulation tick.
+/// One player's devices, through [`Bindings`]: the solo player's
+/// ([`InputState::new`]: keyboard 1's keys, winit physical keys, the mouse
+/// and every gamepad), or one seat's ([`InputState::for_seat`], issue
+/// #28). Feed it every window and gamepad event, then call
+/// [`InputState::latch_tick`] once per simulation tick.
 #[derive(Clone, Debug)]
 pub struct InputState {
     /// The player's bindings, as the options show them.
     bindings: Bindings,
+    /// The seat heard (`None`: keyboard 1 and every pad).
+    seat: Option<Seat>,
     /// The bindings played with: [`InputState::bindings`], or in mouse mode
     /// [`Bindings::for_mouse`] of them.
     active: Bindings,
@@ -57,6 +63,8 @@ pub struct InputState {
     pad: Vec<(usize, PadInput)>,
     latch: TickLatch,
     dig: Dig,
+    /// A heard pad's Start was pressed since [`InputState::take_pause`].
+    pause: bool,
 }
 
 /// Mouse mode's own state: the buttons, the wheel, the controller.
@@ -79,15 +87,68 @@ impl Default for InputState {
 }
 
 impl InputState {
+    /// The solo player's: keyboard 1's keys ([`Bindings::keys`]), mouse
+    /// controls when on, and every gamepad ([`Bindings::pad`]), as before
+    /// seats; keyboard 2's keys are not heard.
     pub fn new(bindings: Bindings) -> InputState {
-        InputState {
-            active: bindings.clone(),
+        InputState::heard(None, bindings)
+    }
+
+    /// One seat's (issue #28): keyboard 1's keys and mouse controls,
+    /// keyboard 2's keys ([`Bindings::keys2`]), or one pad's inputs
+    /// ([`Bindings::pad`], events of that pad id only). Only keyboard 1
+    /// plays with mouse controls.
+    pub fn for_seat(seat: Seat, bindings: Bindings) -> InputState {
+        InputState::heard(Some(seat), bindings)
+    }
+
+    fn heard(seat: Option<Seat>, bindings: Bindings) -> InputState {
+        let mut s = InputState {
+            active: Bindings::default(),
             bindings,
+            seat,
             mouse: None,
             keys: Vec::new(),
             pad: Vec::new(),
             latch: TickLatch::default(),
             dig: Dig::default(),
+            pause: false,
+        };
+        s.active = s.playing();
+        s
+    }
+
+    /// The seat heard (`None`: the solo player's keyboard 1 and every pad).
+    pub fn seat(&self) -> Option<Seat> {
+        self.seat
+    }
+
+    /// The bindings played with: the seat's lists of
+    /// [`InputState::bindings`], or in mouse mode [`Bindings::for_mouse`]
+    /// of them.
+    fn playing(&self) -> Bindings {
+        let b = if self.mouse.is_some() { self.bindings.for_mouse() } else { self.bindings.clone() };
+        let none = Bindings {
+            keys: Vec::new(),
+            pad: Vec::new(),
+            mouse_keys: Vec::new(),
+            mouse: Vec::new(),
+            keys2: Vec::new(),
+        };
+        match self.seat {
+            None => Bindings { keys2: Vec::new(), ..b },
+            Some(Seat::Keyboard1) => Bindings { pad: Vec::new(), keys2: Vec::new(), ..b },
+            Some(Seat::Keyboard2) => Bindings { keys: b.keys2, ..none },
+            Some(Seat::Pad(_)) => Bindings { pad: b.pad, ..none },
+        }
+    }
+
+    /// Whether this state hears pad `pad`'s events.
+    fn hears_pad(&self, pad: usize) -> bool {
+        match self.seat {
+            None => true,
+            Some(Seat::Pad(p)) => p == pad,
+            Some(Seat::Keyboard1 | Seat::Keyboard2) => false,
         }
     }
 
@@ -109,8 +170,10 @@ impl InputState {
     /// the rope, the wheel changes the weapon: [`InputState::on_mouse`]),
     /// and the controller aims and turns the worm
     /// ([`InputState::latch_tick_for`]). Off, the keys are
-    /// [`Bindings::keys`] again, untouched.
+    /// [`Bindings::keys`] again, untouched. Only the solo player and
+    /// keyboard 1's seat have them: another seat stays without.
     pub fn set_mouse_controls(&mut self, on: bool) {
+        let on = on && matches!(self.seat, None | Some(Seat::Keyboard1));
         if on == self.mouse.is_some() {
             return;
         }
@@ -124,7 +187,7 @@ impl InputState {
     }
 
     fn reactivate(&mut self) {
-        self.active = if self.mouse.is_some() { self.bindings.for_mouse() } else { self.bindings.clone() };
+        self.active = self.playing();
         self.keys.clear();
         self.pad.clear();
         if let Some(m) = &mut self.mouse {
@@ -274,8 +337,15 @@ impl InputState {
         }
     }
 
-    /// A gamepad event from pad `pad`.
+    /// A gamepad event from pad `pad` (nothing for a seat that does not
+    /// hear it). Its Start ([`PAD_PAUSE`]) pressed asks for the pause
+    /// ([`InputState::take_pause`]).
     pub fn on_pad(&mut self, pad: usize, ev: PadEvent) {
+        if !self.hears_pad(pad) {
+            return;
+        }
+        let start = |s: &InputState| s.pad.contains(&(pad, PAD_PAUSE));
+        let before = start(self);
         match ev {
             PadEvent::Button(b, v) => self.set_pad(pad, PadInput::Button(b), v >= TRIGGER_THRESHOLD),
             PadEvent::Axis(a, v) => {
@@ -284,7 +354,17 @@ impl InputState {
             }
             PadEvent::Disconnected => self.pad.retain(|(p, _)| *p != pad),
         }
+        if !before && start(self) {
+            self.pause = true;
+        }
         self.update();
+    }
+
+    /// A heard pad's Start was pressed since the last call (issue #28:
+    /// Start pauses, as Esc does). Start presses no action
+    /// ([`PAD_PAUSE`] is never bound).
+    pub fn take_pause(&mut self) -> bool {
+        std::mem::take(&mut self.pause)
     }
 
     fn set_pad(&mut self, pad: usize, input: PadInput, down: bool) {

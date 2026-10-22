@@ -174,6 +174,10 @@ pub enum PadInput {
     AxisMinus(Axis),
 }
 
+/// The pad's Start button: the game's (it pauses, issue #28, as Esc does),
+/// never bound to an action. OLX binds no pad input to pausing.
+pub const PAD_PAUSE: PadInput = PadInput::Button(Button::Start);
+
 /// A trigger counts as held from 75 % of its travel.
 /// OLX: src/client/CInput.cpp:226 (`JOY_TRIGGER_THRESHOLD = 24576`).
 pub const TRIGGER_THRESHOLD: f32 = 0.75;
@@ -182,9 +186,11 @@ pub const TRIGGER_THRESHOLD: f32 = 0.75;
 /// OLX: src/client/CInput.cpp:200-201 (`JOY_DEADZONE_PERCENT = 60`).
 pub const STICK_THRESHOLD: f32 = 0.6;
 
-/// Keyboard keys (winit physical key codes, spec §8.5, so a binding means
-/// the same place on any layout) and gamepad inputs, each bound to an
-/// action, and mouse controls' own keys and mouse inputs (issue #25).
+/// Every seat's bindings (issue #28): keyboard 1's keys (winit physical
+/// key codes, spec §8.5, so a binding means the same place on any layout)
+/// and mouse controls' own keys and mouse inputs (issue #25), keyboard 2's
+/// keys, and the gamepads' inputs (every pad's seat shares them), each
+/// bound to an action.
 /// Several inputs may share an action; the action is held while any of
 /// them is. Serialisable for the options (M7).
 ///
@@ -194,15 +200,18 @@ pub const STICK_THRESHOLD: f32 = 0.6;
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Bindings {
-    /// The keyboard, mouse controls off.
+    /// Keyboard 1, mouse controls off.
     pub keys: Vec<(Action, KeyCode)>,
-    /// The gamepad, in either mode.
+    /// The gamepads, in either mode.
     pub pad: Vec<(Action, PadInput)>,
     /// The keyboard with mouse controls on, in place of `keys` (so
     /// turning them off finds `keys` untouched); never of [`MOUSE_MADE`].
     pub mouse_keys: Vec<(Action, KeyCode)>,
     /// The mouse, with mouse controls on; never of [`MOUSE_MADE`].
     pub mouse: Vec<(Action, MouseInput)>,
+    /// Keyboard 2 (issue #28), on the same keyboard as keyboard 1: OLX's
+    /// player 2 by default. A file from before seats gets them.
+    pub keys2: Vec<(Action, KeyCode)>,
 }
 
 impl Default for Bindings {
@@ -264,7 +273,41 @@ impl Bindings {
             (NextWeapon, PadInput::Button(Button::RightTrigger)),
             (Dig, PadInput::Button(Button::East)),
         ];
-        Bindings { keys, pad, mouse_keys: MOUSE_KEYS.to_vec(), mouse: MOUSE_BUTTONS.to_vec() }
+        Bindings {
+            keys,
+            pad,
+            mouse_keys: MOUSE_KEYS.to_vec(),
+            mouse: MOUSE_BUTTONS.to_vec(),
+            keys2: Bindings::olx_keys2(),
+        }
+    }
+
+    /// Keyboard 2's defaults (issue #28): OLX's player 2 on the numeric
+    /// keypad, Up `kp 8`, Down `kp 5`, Left `kp 4`, Right `kp 6`, Shoot
+    /// `kp +`, Jump `kp enter`, Rope `kp -`, SelectWeapon `kp 0`, Strafe
+    /// `kp .`, Previous/Next weapon `kp 7`/`kp 9`.
+    /// OLX: src/client/Options.cpp (`ply_def2`, after `ply_def1` at :45-51;
+    /// presentation note §10.1).
+    ///
+    /// Not OLX's: Dig is `kp 3`, beside Jump and Strafe (OLX has no dig
+    /// key; the keypad's free keys are `/`, `*`, 1, 2 and 3).
+    pub fn olx_keys2() -> Vec<(Action, KeyCode)> {
+        use Action::*;
+        use KeyCode::*;
+        vec![
+            (Up, Numpad8),
+            (Down, Numpad5),
+            (Left, Numpad4),
+            (Right, Numpad6),
+            (Shoot, NumpadAdd),
+            (Jump, NumpadEnter),
+            (Rope, NumpadSubtract),
+            (SelectWeapon, Numpad0),
+            (Strafe, NumpadDecimal),
+            (PreviousWeapon, Numpad7),
+            (NextWeapon, Numpad9),
+            (Dig, Numpad3),
+        ]
     }
 
     /// The bindings mouse controls play with (issue #24, #25): the keys
@@ -276,7 +319,7 @@ impl Bindings {
         let keys = self.mouse_keys.iter().filter(|(a, _)| used(a)).copied().collect();
         let pad = self.pad.iter().filter(|(a, _)| used(a)).copied().collect();
         let mouse = self.mouse.iter().filter(|(a, _)| used(a)).copied().collect();
-        Bindings { keys, pad, mouse_keys: Vec::new(), mouse }
+        Bindings { keys, pad, mouse_keys: Vec::new(), mouse, keys2: Vec::new() }
     }
 
     /// The [`Keys`] bits (and [`DIG`]) the held keyboard keys set.
@@ -296,14 +339,31 @@ impl Bindings {
 
     /// The bound keys that, pressed together, make a shortcut a browser keeps
     /// for itself ([`is_browser_reserved`]): pairs (and single keys) in
-    /// binding order, of [`Bindings::keys`] and then of
-    /// [`Bindings::mouse_keys`] (never pressed with them). Spec §8.5: the
-    /// defaults have none.
+    /// binding order, of [`Bindings::keys`], then of
+    /// [`Bindings::mouse_keys`] (never pressed with them), then of
+    /// [`Bindings::keys2`]. Spec §8.5: the defaults have none.
     pub fn browser_conflicts(&self) -> Vec<Vec<KeyCode>> {
         let mut out = conflicts(&self.keys);
-        for c in conflicts(&self.mouse_keys) {
+        for c in conflicts(&self.mouse_keys).into_iter().chain(conflicts(&self.keys2)) {
             if !out.contains(&c) {
                 out.push(c);
+            }
+        }
+        out
+    }
+
+    /// The keys both keyboard seats have (issue #28): of keyboard 1's list
+    /// with mouse controls on (`mouse_controls`: [`Bindings::mouse_keys`])
+    /// or off ([`Bindings::keys`]) that [`Bindings::keys2`] binds too, in
+    /// keyboard 2's order, once each. The seats share the keyboard's
+    /// events, so one press of such a key presses both players' actions;
+    /// the options show them. The defaults have none.
+    pub fn shared_keys(&self, mouse_controls: bool) -> Vec<KeyCode> {
+        let one = if mouse_controls { &self.mouse_keys } else { &self.keys };
+        let mut out = Vec::new();
+        for &(_, k) in &self.keys2 {
+            if one.iter().any(|(_, j)| *j == k) && !out.contains(&k) {
+                out.push(k);
             }
         }
         out

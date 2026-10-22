@@ -1,7 +1,9 @@
 # olr-input
 
-Keyboard, gamepad and mouse input for one player, turned into the simulation's 11
-`Keys` once per tick (spec §8.5, §19 E5; presentation note §10).
+Keyboard, gamepad and mouse input for one player, or for each input seat
+(keyboard 1, keyboard 2, each gamepad: issue #28), turned into the
+simulation's 11 `Keys` once per tick (spec §8.5, §19 E5; presentation
+note §10).
 
 - **Layer 5, uses `std`.** Depends on `olr-sim` (`Keys`, `World` for the
   mouse controller), `olr-bots` (its motor's `aim_key`), `olr-math`, `winit` 0.30.13
@@ -25,28 +27,55 @@ Keyboard, gamepad and mouse input for one player, turned into the simulation's 1
   and `mouse` (`MouseInput`: Left, Right, Middle, Back, Forward buttons,
   WheelUp, WheelDown; default `MOUSE_BUTTONS`), never of `MOUSE_MADE`
   (Up, Down, SelectWeapon, Strafe: the controller's); `mouse_bits`.
+  `keys2` (issue #28): keyboard 2's keys, `Bindings::olx_keys2()` (OLX's
+  `ply_def2`: kp 8/5/4/6, Shoot kp +, Jump kp enter, Rope kp -,
+  SelectWeapon kp 0, Strafe kp ., Previous/Next kp 7/9; Dig kp 3, OLR's);
+  `pad` is every gamepad seat's. `PAD_PAUSE` (the pad's Start) is the
+  game's pause, never bound (OLX binds none). `shared_keys(mouse_controls)`:
+  the keys keyboard 2 and keyboard 1's list in that mode both bind (one
+  press is both players'; the options show them; the defaults have none).
   `#[serde(default)]`: a file without a list takes the default (OLX's,
-  #24's for the mouse lists).
+  #24's for the mouse lists, OLX's player 2 for `keys2`).
 - **Rebinding** (`rebind.rs`, plan 7 Review Focus 2; issue #25): `Binding`
   (a key, a `PadInput` or a `MouseInput`) of a `Device` (Keyboard,
   Gamepad, Mouse), in a `Mode` (`Keys`, or `Mouse`: mouse controls; its
-  Keyboard is `mouse_keys`, the pad list is shared; `Mode::devices`, the
-  options' columns; `Mode::binds(action, device)`); `of(mode, action,
-  device)`, `actions_of(mode, input)`, `unreachable()` (both modes' gaps,
-  `(Action, Need)`: `Need::Key` and `PadInput` mouse controls off, every
-  action; `KeyOrMouse` with them on, every action but `MOUSE_MADE`'s);
+  Keyboard is `mouse_keys`, the pad list is shared; `Keyboard2`: `keys2`
+  alone, issue #28; `Mode::devices`; `Mode::binds(action, device)`);
+  `of(mode, action, device)`, `actions_of(mode, input)`, `unreachable()`
+  (every seat's and mode's gaps, `(Action, Need)`: `Need::Key` (keyboard
+  1, mouse controls off), `PadInput` and `Keyboard2Key`, every action;
+  `KeyOrMouse` with mouse controls on, every action but `MOUSE_MADE`'s);
   `bind(mode, action, input, Resolve::{Share, Move})` and `unbind` refuse
   (`RebindError::Unreachable { action, need }`, nothing changed) any step
   that leaves an action unreachable, and `bind` a key or mouse input for
   `MOUSE_MADE`'s in mouse mode or the mouse with it off
-  (`NotBindable`); `repair()` drops `MOUSE_MADE`'s from the mouse lists
-  and gives unreachable actions their defaults back (OLX's, #24's; one
-  warning each). `Capture::new(device)` is the options' "press a key" box:
+  (`NotBindable`), and anything but a key for keyboard 2 (`KeysOnly`);
+  `repair()` drops `MOUSE_MADE`'s from the mouse lists and gives
+  unreachable actions their defaults back (OLX's, #24's, OLX's player
+  2's; one warning each). `Capture::new(device)` is the options' "press a key" box:
   fed window and gilrs events, it keeps the first press (modifiers too; a
   trigger or stick past its threshold; a mouse button, or a whole wheel
   notch counted as `InputState` counts them); Esc, for a pad or mouse
   capture, sets `cancelled()`. `key_name` and `Binding`'s
   `Display` are the names the options show; `Action::name()` OLX's.
+- **Seats** (`seat.rs`, issue #28): `Seat` (`Keyboard1`, `Keyboard2`,
+  `Pad(gilrs id)`), `Seat::kind()` → `SeatKind` (`Keyboard1`, `Keyboard2`,
+  `Gamepad`: whose bindings, the options' chooser; every pad shares the
+  gamepads'; `name`, `mode(mouse_controls)`, `devices(mouse_controls)`,
+  `needs`). The per-seat rule: `Bindings::unreachable_of(seat)`, the gaps
+  of its own device's inputs alone (a keyboard seat needs keys, the pads
+  pad inputs). `InputState::for_seat(seat, bindings)` hears that seat
+  only (keyboard 2 its `keys2`; a pad seat its id's events and `pad`);
+  only keyboard 1 (and the solo player) has mouse controls.
+  `InputState::new` is the solo player, as before seats: keyboard 1's
+  keys, the mouse and every pad, never keyboard 2's keys (the game plays
+  it until several local players play, issue #29). `Seats` routes events:
+  both keyboard seats hear every key (each its own), a pad's seat is made
+  at its first event and gone at `Disconnected`; `seats()` (the
+  keyboards, then the pads first heard first), `get`, `latch_tick(seat)`,
+  `held(seat)`. Pause: a heard pad's Start press (an edge) sets
+  `take_pause()` (`InputState`'s, `Seats`' for any pad); Start presses no
+  action.
 - **Thresholds:** a trigger from 75 % of its travel, a stick from 60 %
   (OLX's `CInput`). Only gilrs's `ButtonChanged` (sent for every button)
   and `AxisChanged` are read; `Disconnected` releases that pad.

@@ -158,8 +158,12 @@ pub enum UiAction {
     Quit,
     SetVideo(VideoSettings),
     SetAudio(AudioSettings),
-    /// The options' key bindings.
+    /// The options' key bindings (every seat's, issue #28).
     SetBindings(Bindings),
+    /// A pad's Start (issue #28, `olr_input::PAD_PAUSE`): in game it
+    /// pauses or resumes, as Esc; elsewhere nothing (menus by pad are
+    /// not built).
+    PadPause,
     /// The options' online chat key (a key the game keeps is refused).
     SetChatKey(olr_input::KeyCode),
     /// The options' Mouse controls (experimental), issue #24.
@@ -487,9 +491,15 @@ impl UiState {
         w
     }
 
-    /// The keys the player uses: the selected profile's, else the options'.
-    pub fn bindings(&self) -> &Bindings {
-        self.profiles.selected().and_then(|p| p.bindings.as_ref()).unwrap_or(&self.settings.input)
+    /// Every seat's bindings (issue #28): keyboard 1's and the gamepads'
+    /// the selected profile's when it has its own (as before seats), else
+    /// the options'; keyboard 2's always the options' (a profile's own
+    /// `keys2` is not read).
+    pub fn bindings(&self) -> Bindings {
+        match self.profiles.selected().and_then(|p| p.bindings.as_ref()) {
+            Some(own) => Bindings { keys2: self.settings.input.keys2.clone(), ..own.clone() },
+            None => self.settings.input.clone(),
+        }
     }
 
     /// A start was asked for and the app has not answered.
@@ -582,6 +592,10 @@ impl UiState {
             | UiAction::RecoverMod(_)
             | UiAction::DiscardModRecovery(_) => self.editor(action),
             UiAction::Back => self.back(),
+            UiAction::PadPause if self.screen == Screen::InGame && !self.is_starting() => {
+                self.set_paused(!self.paused)
+            }
+            UiAction::PadPause => Vec::new(),
             UiAction::StartMatch => self.start_match(),
             UiAction::StartSandbox => {
                 if self.screen != Screen::Main || self.play != Play::None {
@@ -1087,6 +1101,6 @@ impl UiState {
 
     fn apply_bindings_if_changed(&self, before: &Bindings) -> Vec<AppCommand> {
         let now = self.bindings();
-        if now == before { Vec::new() } else { vec![AppCommand::ApplyBindings(now.clone())] }
+        if now == *before { Vec::new() } else { vec![AppCommand::ApplyBindings(now)] }
     }
 }

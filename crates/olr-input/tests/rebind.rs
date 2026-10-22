@@ -359,8 +359,11 @@ fn the_unreachable_rule_holds_in_both_modes() {
         .into_iter()
         .map(Binding::Mouse)
         .chain([KeyCode::KeyA, KeyCode::KeyD, KeyCode::Space, KeyCode::KeyS, KeyCode::KeyX].map(Binding::Key))
+        // Keyboard 2's (issue #28).
+        .chain([KeyCode::Numpad8, KeyCode::NumpadEnter, KeyCode::Numpad3].map(Binding::Key))
+        .chain([Binding::Pad(PadInput::Button(Button::South))])
         .collect();
-    for mode in [K, M] {
+    for mode in [K, M, Mode::Keyboard2] {
         for &input in &inputs {
             for action in Action::ALL {
                 for how in [Resolve::Move, Resolve::Share] {

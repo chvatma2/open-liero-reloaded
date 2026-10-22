@@ -1,6 +1,7 @@
-//! Keyboard, gamepad and mouse input for one player, turned into the simulation's
-//! [`Keys`](olr_sim::Keys) once per tick (spec §8.5, §19 E5), with a Dig
-//! action that presses the dig gesture.
+//! Keyboard, gamepad and mouse input for one player, or for each input
+//! seat (keyboard 1, keyboard 2, each gamepad: issue #28), turned into the
+//! simulation's [`Keys`](olr_sim::Keys) once per tick (spec §8.5, §19 E5),
+//! with a Dig action that presses the dig gesture.
 //!
 //! - **Keyboard:** winit physical key codes, so bindings mean the same place
 //!   on any layout.
@@ -16,13 +17,14 @@
 #![forbid(unsafe_code)]
 
 pub use bindings::{
-    Action, Bindings, DIG, MOUSE_BUTTONS, MOUSE_KEYS, MOUSE_MADE, MouseInput, PadInput, STICK_THRESHOLD,
-    TRIGGER_THRESHOLD, is_browser_reserved,
+    Action, Bindings, DIG, MOUSE_BUTTONS, MOUSE_KEYS, MOUSE_MADE, MouseInput, PAD_PAUSE, PadInput,
+    STICK_THRESHOLD, TRIGGER_THRESHOLD, is_browser_reserved,
 };
 pub use dig::DIG_REPEAT_TICKS;
 pub use latch::TickLatch;
 pub use mouse::{LocalWorm, MouseController, Notch};
 pub use rebind::{Binding, Capture, Device, Mode, Need, RebindError, Resolve, key_name};
+pub use seat::{Seat, SeatKind, Seats};
 pub use state::{InputState, NOTCH_PIXELS, PadEvent};
 
 /// Re-exported for building [`Bindings`].
@@ -34,4 +36,5 @@ mod dig;
 mod latch;
 pub mod mouse;
 mod rebind;
+mod seat;
 mod state;

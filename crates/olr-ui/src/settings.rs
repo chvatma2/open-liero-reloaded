@@ -11,7 +11,7 @@
 
 use std::ops::RangeInclusive;
 
-use olr_input::{Bindings, KeyCode, key_name};
+use olr_input::{Binding, Bindings, KeyCode, PAD_PAUSE, key_name};
 use serde::{Deserialize, Serialize};
 
 use crate::match_prefs::MatchPrefs;
@@ -96,15 +96,28 @@ pub const GAME_KEYS: [(KeyCode, &str); 8] = [
     (KeyCode::PageDown, "slowing down"),
 ];
 
+/// What a pad's Start does (issue #28): the game's, as Esc.
+pub const PAD_PAUSE_DOES: &str = "pause";
+
 /// Makes bindings from a file or a widget usable: the [`GAME_KEYS`] are
-/// dropped from either keyboard list (a hand-edited file may bind them),
-/// then every action left unreachable in either mode gets its defaults
-/// back (`Bindings::repair`: OLX's key or pad input, mouse controls' key
-/// or mouse input; a file from before mouse bindings has #24's). One
+/// dropped from every keyboard list (a hand-edited file may bind them), a
+/// pad's Start ([`PAD_PAUSE`], the pause since issue #28) from the pad's,
+/// then every action left unreachable for a seat or mode gets its
+/// defaults back (`Bindings::repair`: OLX's key or pad input, mouse
+/// controls' key or mouse input, OLX's player 2's key; a file from before
+/// mouse bindings has #24's, one from before seats OLX's player 2's). One
 /// warning per fix.
 pub fn sanitize_bindings(b: &mut Bindings) -> Vec<String> {
     let mut w = Vec::new();
-    for keys in [&mut b.keys, &mut b.mouse_keys] {
+    b.pad.retain(|&(a, p)| {
+        let pause = p == PAD_PAUSE;
+        if pause {
+            let name = Binding::Pad(p);
+            w.push(format!("{name} is the game's ({PAD_PAUSE_DOES}): unbound from {}", a.name()));
+        }
+        !pause
+    });
+    for keys in [&mut b.keys, &mut b.mouse_keys, &mut b.keys2] {
         keys.retain(|&(a, k)| match GAME_KEYS.iter().find(|(g, _)| *g == k) {
             Some((_, what)) => {
                 w.push(format!("{} is the game's ({what}): unbound from {}", key_name(k), a.name()));

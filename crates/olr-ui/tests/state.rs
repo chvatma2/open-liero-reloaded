@@ -55,6 +55,7 @@ fn state_machine_navigates_and_emits_commands() {
     assert!(ui.is_starting());
     assert!(ui.update(UiAction::StartMatch).is_empty());
     assert!(ui.update(UiAction::Back).is_empty(), "the start is in flight");
+    assert!(ui.update(UiAction::PadPause).is_empty(), "no pause out of a match");
     // The app reports the match ready: the weapon selection, then in game.
     ui.update(UiAction::MatchStarted);
     assert_eq!(ui.screen(), Screen::WeaponSelect);
@@ -66,6 +67,12 @@ fn state_machine_navigates_and_emits_commands() {
     assert_eq!(c, [AppCommand::ArmPlayer([3; 5])], "no names: the profile is kept");
     assert_eq!(ui.screen(), Screen::InGame);
     assert!(ui.update(UiAction::ChooseWeapons { weapons: [1; 5], names: vec![] }).is_empty(), "once");
+
+    // A pad's Start pauses and resumes as Esc (issue #28).
+    assert_eq!(ui.update(UiAction::PadPause), [AppCommand::SetPaused(true)]);
+    assert!(ui.is_paused());
+    assert_eq!(ui.update(UiAction::PadPause), [AppCommand::SetPaused(false)]);
+    assert!(!ui.is_paused());
 
     // Esc pauses and resumes; the pause menu leaves the match.
     assert_eq!(ui.update(UiAction::Back), [AppCommand::SetPaused(true)]);
@@ -168,7 +175,7 @@ fn state_machine_navigates_and_emits_commands() {
     let c = ui.update(UiAction::SetProfiles(profiles.clone()));
     assert!(c.contains(&AppCommand::SaveProfiles(profiles)), "{c:?}");
     assert!(c.contains(&AppCommand::ApplyBindings(Bindings::olx())), "{c:?}");
-    assert_eq!(ui.bindings(), &Bindings::olx());
+    assert_eq!(ui.bindings(), Bindings::olx());
 
     assert_eq!(ui.update(UiAction::Quit), [AppCommand::Quit]);
 }
