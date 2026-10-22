@@ -11,8 +11,8 @@ use olr_data::level::Material;
 use olr_format::image_io::{self, IMAGES};
 use olr_format::levels::{
     CompositionSource, Dither, Element, ElementGlow, ElementKind, ElementMaterial, LevelSource, MAX_ELEMENTS,
-    check_composition, element_box, element_files, glow_file, image_file, layer_file, raster_files,
-    surface_back_file, surface_file, surface_map_size,
+    check_composition, check_elements, element_box, element_files, glow_file, image_file, layer_file,
+    raster_files, surface_back_file, surface_file, surface_map_size,
 };
 
 use crate::compose::{Decoded, ImageCache, compose_from, decode_element, encode_decoded, resize_decoded};
@@ -126,8 +126,8 @@ pub fn fit_surface_maps(src: &mut CompositionSource, size: (u32, u32)) {
 
 /// A painted surface map (`values`, world pixels of box `from`) laid on
 /// box `to`: world pixel `(x, y)` keeps its value, the rest 0 (the
-/// element's default).
-fn relay_surface(values: &[u8], from: ((i32, i32), (u32, u32)), to: ((i32, i32), (u32, u32))) -> Vec<u8> {
+/// element's default). Shared with the editor's resize.
+pub fn relay_surface(values: &[u8], from: ((i32, i32), (u32, u32)), to: ((i32, i32), (u32, u32))) -> Vec<u8> {
     let (fw, fh) = (i64::from(from.1.0), i64::from(from.1.1));
     let (tw, th) = (i64::from(to.1.0), i64::from(to.1.1));
     let mut out = vec![0u8; (tw * th).max(0) as usize];
@@ -422,6 +422,8 @@ pub fn set_all(pack: &mut Pack, id: &str, properties: &[Property]) -> Result<(),
         for p in properties {
             apply(src, id, p.clone(), size)?;
         }
+        // The new box within its bounds before any map is resampled to it.
+        check_elements(&src.composition, size, s).map_err(|e| ElementError::BadValue(e.to_string()))?;
         // A painted glow mask follows a resized image, resampled as the
         // editor does (plan 15a's final review).
         let i = find(src, id)?;
@@ -1023,6 +1025,15 @@ pub fn resize(
     let l = level(pack)?;
     let (old, s) = (l.size, l.art_scale);
     let Some(mut src) = pack.composition.clone() else { return Ok(()) };
+    // The new size within the level's bounds before any layer or map is
+    // laid out at it.
+    let (w, h) = size;
+    if !(1..=olr_format::levels::MAX_SIDE).contains(&w) || !(1..=olr_format::levels::MAX_SIDE).contains(&h) {
+        return Err(ElementError::BadValue(format!(
+            "size {w}x{h}: 1 to {} a side",
+            olr_format::levels::MAX_SIDE
+        )));
+    }
     // Every layer the re-lay reads is the level's size (a hand edit may
     // have broken that).
     check_composition(&src, old, s).map_err(|e| ElementError::BadValue(e.to_string()))?;

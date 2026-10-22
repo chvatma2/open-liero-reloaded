@@ -20,7 +20,9 @@
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_format::image_io::{LEVEL_ART, check_size};
-use olr_format::levels::{GlowLayers, LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, level_thumbnail};
+use olr_format::levels::{
+    GlowLayers, LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, SurfaceMaps, level_thumbnail,
+};
 use std::sync::Arc;
 
 /// A rectangle of world pixels.
@@ -539,6 +541,9 @@ pub fn resize(
     // Clear flags too; the new area is opaque.
     level.clear = level.clear.take().filter(|c| c.len() == level.material.len());
     let mut clear = level.clear.as_ref().map(|_| vec![0u8; w as usize * h as usize]);
+    // Surface maps too (issue #37); the new area has none.
+    level.surface = level.surface.take().filter(|m| m.fits(level.size));
+    let mut surface = level.surface.as_ref().map(|_| SurfaceMaps::empty((w, h)));
     let (dx, dy) = (i64::from(offset.0), i64::from(offset.1));
     let (old_w, old_h) = level.size;
     // The old pixels that land inside: x in max(0, -dx)..min(old_w, w - dx).
@@ -549,6 +554,11 @@ pub fn resize(
             cells[ny as usize * w as usize + nx as usize] = level.material[cell(level, ox, oy)];
             if let (Some(c), Some(old)) = (clear.as_mut(), level.clear.as_ref()) {
                 c[ny as usize * w as usize + nx as usize] = old[cell(level, ox, oy)];
+            }
+            if let (Some(m), Some(old)) = (surface.as_mut(), level.surface.as_ref()) {
+                let (o, n) = (cell(level, ox, oy), ny as usize * w as usize + nx as usize);
+                m.front[n] = old.front[o];
+                m.back[n] = old.back[o];
             }
             if let (Some(g), Some(old)) = (glow.as_mut(), level.glow.as_ref()) {
                 let (o, n) = (cell(level, ox, oy), ny as usize * w as usize + nx as usize);
@@ -582,6 +592,7 @@ pub fn resize(
     }
     level.glow = glow;
     level.clear = clear;
+    level.surface = surface.filter(|m| !m.is_empty());
     level.size = size;
     level.material = cells;
     level.front = front;

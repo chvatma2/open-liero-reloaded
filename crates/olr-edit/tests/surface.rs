@@ -250,3 +250,43 @@ fn a_plain_levels_maps_bake_back() {
         assert_eq!((again.surface, again.distant_surfaces), want);
     }
 }
+
+/// A plain level's maps follow `level::resize` (the new area none), as
+/// its glow and clear flags do.
+#[test]
+fn a_resize_re_lays_a_plain_levels_maps() {
+    let mut l = level(3, 1, 1);
+    l.surface = Some(SurfaceMaps { world: (3, 1), front: vec![1, 2, 3], back: vec![4, 0, 4] });
+    let paint = olr_edit::level::Paint::Colour(GREY);
+    olr_edit::level::resize(&mut l, (4, 1), (1, 0), Material::Rock, &paint).unwrap();
+    let maps = l.surface.clone().unwrap();
+    assert_eq!((maps.world, maps.front, maps.back), ((4, 1), vec![0, 1, 2, 3], vec![0, 4, 0, 4]));
+    olr_format::levels::write_level_files(&mut olr_vfs::MemFs::new(), &l).unwrap();
+    // Cut down to nothing that had a material: no maps.
+    olr_edit::level::resize(&mut l, (1, 1), (0, 0), Material::Rock, &paint).unwrap();
+    assert_eq!(l.surface, None);
+}
+
+/// A size past the level's bounds is refused before any layer or map is
+/// laid out at it (no allocation of its size).
+#[test]
+fn a_huge_size_is_refused_before_anything_is_laid_out() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("huge");
+    olr_edit::new::new_pack(
+        &dir,
+        olr_data::manifest::PackKind::Level,
+        "huge",
+        "Huge",
+        olr_edit::new::Template::Level { size: (8, 4), theme: "olx-theme-dirt" },
+    )
+    .unwrap();
+    let mut pack = olr_edit::pack::load(&dir).unwrap();
+    olr_edit::element::ensure_composed(&mut pack).unwrap();
+    let id = olr_edit::element::add_layer(&mut pack, ElementMaterial::Rock, "Wall").unwrap();
+    let huge = (4_000_000_000, 4_000_000_000);
+    let paint = olr_edit::level::Paint::Colour(GREY);
+    assert!(olr_edit::element::resize(&mut pack, huge, (0, 0), Material::Rock, &paint).is_err());
+    let size = olr_edit::element::Property::Size(huge);
+    assert!(olr_edit::element::set_all(&mut pack, &id, &[size]).is_err());
+}

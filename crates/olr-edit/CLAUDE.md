@@ -361,8 +361,10 @@ operations.
   - **`element`**: `fit_surface_maps` after every edit drops a back
     surface without back art and maps that no longer fit or sit on a
     distant layer; `resize` re-lays the maps with the layer
-    (`relay_surface`, the new area 0) and `set_all` resamples a resized
-    image's. `asset::from_elements`, `cut_rect` and `land` strip surfaces
+    (`relay_surface`, shared with the editor; the new area 0) and
+    `set_all` resamples a resized image's, each after checking the new
+    size's bounds (no map laid out at a refused size). `level::resize`
+    re-lays a plain level's own maps as its clear flags. `asset::from_elements`, `cut_rect` and `land` strip surfaces
     (assets carry none until materials 2/10).
   - **`material`**: the libraries: `read_file` (bounded by
     `MAX_RON_BYTES`), `list_library(dir, max)` (by name then id; an
@@ -372,7 +374,8 @@ operations.
     at `MAX_USER_MATERIALS` (256).
   - Tests: `surface.rs` (each kind's landing, a mixed layer per pixel,
     back art, a raster, painted maps, distant surfaces, no materials no
-    maps, a plain level's maps through one raster or three layers) and
+    maps, a plain level's maps through one raster or three layers,
+    `level::resize`, a huge size refused) and
     `material.rs` (`the_built_in_set_loads_cleanly`, the user's library
     after it and capped).
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: round trips
