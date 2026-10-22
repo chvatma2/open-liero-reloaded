@@ -43,6 +43,19 @@ pub struct Settings {
     pub online: OnlineSettings,
     /// The update check's (issue #4).
     pub updates: UpdateSettings,
+    /// Mouse controls (issue #24, experimental).
+    pub mouse: MouseSettings,
+}
+
+/// Mouse controls (issue #24): the mouse aims and turns the worm through
+/// keys a key player could press (`olr_input::MouseController`), A and D
+/// move, Space jumps, S digs, the buttons shoot and throw the rope, the
+/// wheel changes the weapon. Experimental: off by default, and may change.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct MouseSettings {
+    /// The local player plays with the mouse.
+    pub enabled: bool,
 }
 
 /// What the update check offers (issue #4).

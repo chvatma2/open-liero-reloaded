@@ -278,6 +278,26 @@ fn the_keys_screen_lists_and_rebinds_the_new_actions() {
     assert_eq!(h.state().ui.bindings().of(Action::Strafe, PAD).last(), Some(&thumb));
 }
 
+/// Issue #24: Options → Keys → Mouse controls (experimental), off by
+/// default, applied and saved when switched.
+#[test]
+fn mouse_controls_are_switched_in_the_keys_tab() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
+    assert!(!Settings::default().mouse.enabled, "off by default");
+    open_keys(&mut h);
+    h.get_by_label(olr_ui::screens::MOUSE_NOTE);
+    h.get_by_label(olr_ui::screens::MOUSE_CONTROLS).click();
+    h.run();
+    assert!(h.state().ui.settings().mouse.enabled);
+    let c = &h.state().commands;
+    assert!(c.contains(&AppCommand::ApplyMouseControls(true)), "{c:?}");
+    assert!(c.iter().any(|c| matches!(c, AppCommand::SaveSettings(s) if s.mouse.enabled)), "{c:?}");
+    h.get_by_label(olr_ui::screens::MOUSE_CONTROLS).click();
+    h.run();
+    assert!(!h.state().ui.settings().mouse.enabled);
+    assert_eq!(h.state().commands.last().map(|c| matches!(c, AppCommand::SaveSettings(_))), Some(true));
+}
+
 #[test]
 fn a_profile_with_its_own_keys_is_rebound_there() {
     let own = Bindings::olx();

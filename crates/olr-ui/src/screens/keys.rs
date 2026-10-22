@@ -5,7 +5,9 @@
 //! device, "+" to capture another, and a key another action has resolved
 //! explicitly: moved (unless that leaves the other action without one) or
 //! shared (plan 7 Review Focus 2). Browser shortcuts the keys make are
-//! pointed out (spec §8.5).
+//! pointed out (spec §8.5). Above them, the switch of mouse controls
+//! (issue #24, experimental: fixed bindings, so the keyboard's Up, Down,
+//! SelectWeapon and Strafe go unused while it is on).
 //!
 //! The capture itself is [`MenuData::capture`](super::MenuData::capture):
 //! the app feeds it the window's key presses and the gamepads' events
@@ -16,6 +18,13 @@ use olr_input::{Action, Binding, Bindings, Capture, Device, KeyCode, Resolve, ke
 
 pub use crate::settings::GAME_KEYS;
 use crate::state::{UiAction, UiState};
+
+/// The switch of mouse controls (issue #24).
+pub const MOUSE_CONTROLS: &str = "Mouse controls (experimental)";
+
+/// Its note: what it does, and that it may change.
+pub const MOUSE_NOTE: &str = "The worm aims at the cursor and faces it; A and D move, Space jumps, S digs, \
+     left click shoots, right click throws the rope, the wheel changes weapon. Experimental: it may change.";
 
 /// The section's own state.
 #[derive(Clone, Debug, Default)]
@@ -65,6 +74,13 @@ pub(super) fn show(
         v.action = None;
         take(&mut b, v, action, input);
     }
+
+    let mut mouse = state.settings().mouse.enabled;
+    if ui.checkbox(&mut mouse, MOUSE_CONTROLS).changed() {
+        out.push(UiAction::SetMouseControls(mouse));
+    }
+    ui.label(RichText::new(MOUSE_NOTE).weak());
+    ui.add_space(6.0);
 
     let own = state.profiles().selected().filter(|p| p.bindings.is_some());
     let whose = match own {

@@ -51,7 +51,11 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `BLOOD_STEP` 10; the app hands it to `olr_present::Presentation::set_blood`,
   nothing sends it), audio volumes 0-1, `Bindings`, gameplay
   (`MatchPrefs`: local play's last setup; the HUD has one style: an old file's `hud:` is ignored),
-  an old file's `import:` block (the removed Import screen's) is ignored.
+  an old file's `import:` block (the removed Import screen's) is ignored;
+  `mouse` (`MouseSettings { enabled }`, issue #24): Options → Keys'
+  "Mouse controls (experimental)" checkbox above the keys, off by default,
+  with its one-line note (`screens::MOUSE_CONTROLS`, `MOUSE_NOTE`);
+  `SetMouseControls(on)` applies (`ApplyMouseControls`) and saves.
   `sanitize()` fixes out-of-range values and
   keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, F3 (the network
   panel), Tab, H and

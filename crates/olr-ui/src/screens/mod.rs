@@ -30,7 +30,7 @@ pub mod update;
 mod weapon_select;
 
 pub use host_lost::{HOST_LOST_REPLAY, HOST_LOST_TITLE, STEPPED_DOWN_TITLE};
-pub use keys::GAME_KEYS;
+pub use keys::{GAME_KEYS, MOUSE_CONTROLS, MOUSE_NOTE};
 pub use loadouts::{NO_WEAPON, READ_ONLY, UNIQUE_HINT};
 
 use std::collections::{BTreeMap, BTreeSet};

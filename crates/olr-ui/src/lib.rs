@@ -40,8 +40,8 @@ pub use profiles::{
 };
 pub use settings::{
     AudioSettings, BLOOD_RANGE, BLOOD_STEP, FrameRate, GAME_KEYS, GameplaySettings, HudArrangement,
-    SETTINGS_VERSION, Settings, UI_SCALE_RANGE, UpdateSettings, UpscaleFilter, VideoSettings, WindowPreset,
-    clamp_scale, sanitize_bindings,
+    MouseSettings, SETTINGS_VERSION, Settings, UI_SCALE_RANGE, UpdateSettings, UpscaleFilter, VideoSettings,
+    WindowPreset, clamp_scale, sanitize_bindings,
 };
 pub use state::{AppCommand, Game, Screen, UiAction, UiState};
 pub use store::{

@@ -162,6 +162,8 @@ pub enum UiAction {
     SetBindings(Bindings),
     /// The options' online chat key (a key the game keeps is refused).
     SetChatKey(olr_input::KeyCode),
+    /// The options' Mouse controls (experimental), issue #24.
+    SetMouseControls(bool),
     SetMatch(MatchPrefs),
     SetProfiles(Profiles),
     /// The loadout editor's own loadouts (issue #5).
@@ -309,6 +311,8 @@ pub enum AppCommand {
     ApplyAudio(AudioSettings),
     /// The keys the player now uses (the profile's own, else the options').
     ApplyBindings(Bindings),
+    /// Mouse controls on or off (issue #24).
+    ApplyMouseControls(bool),
     /// Write `settings.ron` (`Store::save_settings`).
     SaveSettings(Settings),
     /// Write `profiles.ron` (`Store::save_profiles`).
@@ -681,6 +685,13 @@ impl UiState {
                 let mut out = self.apply_bindings_if_changed(&before);
                 out.push(self.save_settings());
                 out
+            }
+            UiAction::SetMouseControls(on) => {
+                if on == self.settings.mouse.enabled {
+                    return Vec::new();
+                }
+                self.settings.mouse.enabled = on;
+                vec![AppCommand::ApplyMouseControls(on), self.save_settings()]
             }
             UiAction::SetChatKey(k) => {
                 let reserved = crate::settings::GAME_KEYS.iter().any(|(g, _)| *g == k);
