@@ -73,8 +73,7 @@ fn frame(sh: &mut Shell, inputs: &mut LocalInputs, ctx: &egui::Context) {
     let seats = sh.local_seats();
     let pads = seats.iter().filter_map(|s| if let Seat::Pad(p) = s { Some(*p) } else { None }).collect();
     sh.data.pad.set_players((!seats.is_empty()).then_some(pads));
-    let mut input = egui::RawInput::default();
-    input.events = sh.data.pad_events(ctx, &sh.ui);
+    let input = egui::RawInput { events: sh.data.pad_events(ctx, &sh.ui), ..Default::default() };
     let mut actions = Vec::new();
     let mut out = ctx.run_ui(input, |ui| actions = olr_ui::screens::show(ui, &sh.ui, &mut sh.data));
     // No renderer here: the textures go nowhere.
