@@ -12,6 +12,7 @@ mod finding;
 mod ingame;
 mod join;
 mod locals;
+mod material_editor;
 mod menu;
 mod mod_editor;
 mod online;

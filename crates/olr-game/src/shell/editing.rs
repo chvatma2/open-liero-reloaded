@@ -6,7 +6,9 @@
 //! the Skin tab's commands open a `SkinHost`; each save lists the content
 //! again, so the profiles' skin picker offers the skin at once. And the mod
 //! editor (issue #17): the Mod tab's commands open a `ModHost`; its Play
-//! (issue #18) runs as an edited game as the level editor's does.
+//! (issue #18) runs as an edited game as the level editor's does. And the
+//! material editor (issue #44): the Material tab's commands open a
+//! `MaterialHost` on the built-in and the user's material libraries.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -15,6 +17,7 @@ use olr_editor::EditorAction;
 use olr_ui::{AppCommand, Screen, UiAction};
 
 use super::Shell;
+use crate::editor::material::{self, MaterialHost, MaterialOut};
 use crate::editor::mods::{MOD_PLAY_FILE, ModHost, ModOut};
 
 /// The mod editor's practice level until one is chosen (issue #20): Castle
@@ -169,6 +172,13 @@ impl Shell {
         let mod_recoveries =
             self.store.mod_recovery_dir().as_deref().map(editor::list_recoveries).unwrap_or_default();
         self.data.set_editor_mods(mods, mod_recoveries);
+        let material_recoveries = self
+            .store
+            .material_recovery_dir()
+            .as_deref()
+            .map(material::list_material_recoveries)
+            .unwrap_or_default();
+        self.data.set_material_recoveries(material_recoveries);
     }
 
     /// Whether the skin editor is open (its panels replace the menus).
@@ -351,6 +361,76 @@ impl Shell {
         }
     }
 
+    /// Whether the material editor is open (its panels replace the menus).
+    pub fn material_editor_open(&self) -> bool {
+        self.material_editor.is_some()
+    }
+
+    pub fn material_editor(&mut self) -> Option<&mut MaterialHost> {
+        self.material_editor.as_mut()
+    }
+
+    /// The Material tab's commands (`AppCommand::{OpenMaterialEditor,
+    /// RecoverMaterial, DiscardMaterialRecovery}`): the material editor
+    /// opens on the built-in materials (beside the content, read-only) and
+    /// the user's (`Store::materials_dir`), or the Editor screen says why
+    /// not.
+    pub(super) fn material_command(&mut self, c: AppCommand) {
+        if let AppCommand::DiscardMaterialRecovery(id) = &c {
+            if let Some(dir) = self.store.material_recovery_dir()
+                && let Err(e) = material::discard_material_recovery(&dir, id)
+            {
+                self.data.editor_message = Some(e);
+            }
+            self.refresh_editor_packs();
+            return;
+        }
+        let Some(user) = self.store.materials_dir() else {
+            self.data.editor_message = Some("there is no data directory to save materials in".into());
+            return;
+        };
+        let bundled = olr_content::bundled_roots(&self.cfg.content);
+        let builtin = bundled.last().and_then(|c| olr_content::materials_dir(c));
+        let recovery = self.store.material_recovery_dir();
+        match MaterialHost::open(&c, builtin.as_deref(), &user, recovery) {
+            Ok(mut h) => {
+                for w in h.take_warnings() {
+                    log::warn!("material editor: {w}");
+                }
+                self.data.editor_message = None;
+                self.material_editor = Some(h);
+            }
+            Err(why) => {
+                log::warn!("material editor: {why}");
+                self.data.editor_message = Some(why);
+            }
+        }
+    }
+
+    /// One frame of the material editor: `actions` from
+    /// `olr_material_editor::ui::show` and the recovery timer at `now`.
+    /// Close brings the Editor screen back.
+    pub fn material_frame(&mut self, actions: Vec<olr_material_editor::MaterialAction>, now: Instant) {
+        let Some(host) = &mut self.material_editor else { return };
+        let out = host.act(actions);
+        host.tick(now);
+        for w in host.take_warnings() {
+            log::warn!("material editor: {w}");
+        }
+        if out.contains(&MaterialOut::Closed) {
+            self.close_material_editor();
+        }
+    }
+
+    /// The material editor closed: the menus come back on the Editor screen.
+    pub fn close_material_editor(&mut self) {
+        self.material_editor = None;
+        self.refresh_editor_packs();
+        if self.ui.screen() != Screen::Editor {
+            self.ui.update(UiAction::Open(Screen::Editor));
+        }
+    }
+
     /// The window's close button: with the editor open, its Close first
     /// (ending its Play), so unsaved changes are asked about (Review Focus 1).
     pub fn request_close(&mut self) -> CloseDecision {
@@ -370,6 +450,13 @@ impl Shell {
         if let Some(h) = &mut self.mod_editor {
             if h.act(vec![olr_mod_editor::ModAction::Close]).contains(&ModOut::Closed) {
                 self.mod_editor = None;
+            } else {
+                return CloseDecision::Wait;
+            }
+        }
+        if let Some(h) = &mut self.material_editor {
+            if h.act(vec![olr_material_editor::MaterialAction::Close]).contains(&MaterialOut::Closed) {
+                self.material_editor = None;
             } else {
                 return CloseDecision::Wait;
             }

@@ -24,7 +24,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `olr-audio`, `olr-input`, `olr-sim`, `olr-modes`, `olr-bots`, `olr-replay`,
   `olr-terrain`, `olr-pack`, `olr-editor`, `olr-edit`, `olr-format`,
   `olr-vfs` (the level editor), `olr-skin-editor` (the skin editor),
-  `olr-mod-editor` (the mod editor), `olr-online`, `olr-netcode`, `olr-proto`,
+  `olr-mod-editor` (the mod editor), `olr-material-editor` (the material
+  editor), `olr-online`, `olr-netcode`, `olr-proto`,
   `olr-lobby` (identities, host settings), `olr-net` (endpoint settings,
   LAN announcements, `IceConfig`), `olr-discovery` (the hosted lobby's summary,
   `GameSummary::of_lobby`, and `hosting`, shared with olr-server; the
@@ -1120,6 +1121,41 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `practice_holds_the_weapon_against_idle_targets`, and `session.rs`'s
   `practice_keeps_the_last_hit` (equal to the last `Damage` event; none
   outside a practice).
+- **Material editor** (`editor/material.rs`, `shell/editing.rs`, issue
+  #44; decisions in `docs/porting/STATUS.md`, "Material editor (issue
+  #44)"): `MaterialHost` holds `olr-material-editor`'s state and does its
+  disk work. The Material tab's `AppCommand::OpenMaterialEditor` lists
+  the built-in materials (`olr_content::materials_dir` of the last bundled
+  root, read-only) and the user's (`Store::materials_dir`) with
+  `olr_edit::material::list_materials` (a file that does not read a
+  warning); `RecoverMaterial(id)` opens a recovery copy, unsaved;
+  `DiscardMaterialRecovery(id)` removes one. The user's folder inside the
+  built-in one is refused. `act` carries out `Create` (never over a file
+  there), `Save` (`material_text`: checked), `Rename` (the new file, then
+  the old one removed) and `Delete` in the user's folder only, each
+  written through a hidden `.<file>.tmp` and a rename. Recovery: one
+  file a material, `Store::material_recovery_dir()`'s `<id>.ron`
+  (`write_material_recovery`, canonical RON, unchecked), written by
+  `tick(now)` when unsaved changes have waited `RECOVERY_INTERVAL` and by
+  `flush_recovery` (`Shell::finish`), removed once they are saved or
+  thrown away, another material's copy is written, or the editor closes;
+  `list_material_recoveries` (damaged ones listed by id: unreadable, or
+  holding another id), `load_material_recovery` (bounded,
+  `MAX_RON_BYTES`), `discard_material_recovery` (ids only). The shell owns
+  it (`Shell::material_editor`): while open `App::frame` draws
+  `olr_material_editor::ui::show` instead of the menus,
+  `Shell::material_frame` runs it, Close brings the Editor screen back,
+  the window's close asks it first (`Shell::request_close`), and
+  `refresh_editor_packs` fills `MenuData::set_material_recoveries`. The
+  level editor lists the library when it opens, so a saved material is
+  offered by its Add from library. Tests: `tests/material_editor.rs`
+  (the host on a temporary built-in folder: listed, Edit a copy and New
+  written and saved, a file there never written over, the built-in
+  folder byte for byte unchanged; Rename and Delete; the recovery copy
+  written after the interval, offered, recovered, removed on Save, Don't
+  save and Close; damaged copies listed and refused; through the shell
+  over the bundled content: the tab opens it on the built-in set, the
+  window's close asks, a crash's copy is offered and discarded).
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the humans
   are worms 0 to `locals - 1`, then the bots at one difficulty, OLX's LX56 settings, the
   `Default` loadout: every weapon at 100 %, issue #5; there is no

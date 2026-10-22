@@ -237,6 +237,9 @@ pub struct Shell {
     pub(crate) skin_editor: Option<crate::editor::skin::SkinHost>,
     /// The mod editor while it is open (issue #17): it replaces the menus.
     pub(crate) mod_editor: Option<crate::editor::mods::ModHost>,
+    /// The material editor while it is open (issue #44): it replaces the
+    /// menus.
+    pub(crate) material_editor: Option<crate::editor::material::MaterialHost>,
     /// The bug relay's address (`report::endpoint`; none: Report a bug
     /// is hidden), and the report being sent.
     report_url: Option<String>,
@@ -323,6 +326,7 @@ impl Shell {
             editor_out: Vec::new(),
             skin_editor: None,
             mod_editor: None,
+            material_editor: None,
             report_url: None,
             report_send: None,
             updater: None,
@@ -400,6 +404,7 @@ impl Shell {
             editor_out: Vec::new(),
             skin_editor: None,
             mod_editor: None,
+            material_editor: None,
             report_url: None,
             report_send: None,
             updater: None,
@@ -569,6 +574,9 @@ impl Shell {
             | AppCommand::NewMod { .. }
             | AppCommand::RecoverMod(_)
             | AppCommand::DiscardModRecovery(_) => self.mod_command(c),
+            AppCommand::OpenMaterialEditor
+            | AppCommand::RecoverMaterial(_)
+            | AppCommand::DiscardMaterialRecovery(_) => self.material_command(c),
             AppCommand::SetPaused(on) => self.paused = on,
             AppCommand::ArmPlayer(weapons) => self.arm(&[weapons]),
             AppCommand::ArmPlayers(weapons) => self.arm(&weapons),
@@ -1113,6 +1121,12 @@ impl Shell {
             h.flush_recovery();
             for w in h.take_warnings() {
                 log::warn!("mod editor: {w}");
+            }
+        }
+        if let Some(h) = &mut self.material_editor {
+            h.flush_recovery();
+            for w in h.take_warnings() {
+                log::warn!("material editor: {w}");
             }
         }
         self.leave_online();

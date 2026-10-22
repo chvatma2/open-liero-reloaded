@@ -8,6 +8,7 @@
 
 pub mod canvas;
 mod files;
+pub mod material;
 pub mod mods;
 mod recovery;
 pub mod skin;

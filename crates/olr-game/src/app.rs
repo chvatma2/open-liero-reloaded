@@ -1055,10 +1055,12 @@ impl App {
         let skinning = skin_editor.is_some();
         let mut mod_editor = self.shell.mod_editor.as_mut();
         let modding = mod_editor.is_some();
+        let mut material_editor = self.shell.material_editor.as_mut();
+        let materials = material_editor.is_some();
         let menus = self.cfg.menus;
         // The menus by pad (issue #31): its keys before the pass, as the
         // window's; the editors hear none.
-        if menus && !skinning && !modding && !editing && !playing_edited {
+        if menus && !skinning && !modding && !materials && !editing && !playing_edited {
             input.events.extend(data.pad_events(&self.egui, ui_state));
         } else {
             data.pad.forget();
@@ -1067,6 +1069,7 @@ impl App {
         let mut editor_actions = Vec::new();
         let mut skin_actions = Vec::new();
         let mut mod_actions = Vec::new();
+        let mut material_actions = Vec::new();
         let mut stop = false;
         let mut out = self.egui.run_ui(input, |ui| {
             if let Some(o) = &overlay {
@@ -1080,6 +1083,10 @@ impl App {
                 // The mod editor (issue #17) likewise, but for its Play's match.
                 let (state, data) = h.parts();
                 mod_actions = olr_mod_editor::ui::show(ui, state, data);
+            } else if let Some(h) = material_editor.as_deref_mut() {
+                // The material editor (issue #44) likewise.
+                let (state, data) = h.parts();
+                material_actions = olr_material_editor::ui::show(ui, state, data);
             } else if let Some(h) = editor.as_deref_mut().filter(|_| editing) {
                 let (state, data) = h.parts();
                 editor_actions = olr_editor::ui::show(ui, state, data);
@@ -1098,6 +1105,9 @@ impl App {
         }
         if modding {
             self.shell.mod_frame(mod_actions, now);
+        }
+        if materials {
+            self.shell.material_frame(material_actions, now);
         }
         // The canvas's map is not kept while the editor is closed or its Play
         // runs (the session has its own); it is made again on return.
@@ -1281,11 +1291,16 @@ impl App {
         // The window's close waits for the editor: it closed, or its
         // question was answered otherwise (Cancel).
         if self.quit_after_close {
-            if !self.shell.editor_open() && !self.shell.skin_editor_open() && !self.shell.mod_editor_open() {
+            if !self.shell.editor_open()
+                && !self.shell.skin_editor_open()
+                && !self.shell.mod_editor_open()
+                && !self.shell.material_editor_open()
+            {
                 el.exit();
             } else if self.shell.editor.as_ref().is_some_and(|h| h.state().dialog().is_none())
                 || self.shell.skin_editor.as_ref().is_some_and(|h| h.state().dialog().is_none())
                 || self.shell.mod_editor.as_ref().is_some_and(|h| h.state().dialog().is_none())
+                || self.shell.material_editor.as_ref().is_some_and(|h| h.state().dialog().is_none())
             {
                 self.quit_after_close = false;
             }
