@@ -1,9 +1,9 @@
 //! The mod editor's state (issue #17): `ModEditorState::update(ModAction)
 //! -> Vec<ModCommand>` is pure; the host carries out the commands (`Save`,
 //! `LoadMod`, `Play`, `SavePlaySettings`, `Close`; issue #19's `List`,
-//! `ReadFile`, `PlaySound`) and answers (`Saved`, `ModLoaded`,
-//! `PlayEnded`, `Failed`; `Listed`, `FileRead`). The Art and Sounds
-//! sections' work is in `assets.rs`.
+//! `ReadFile`, `PlaySound`; issue #20's `Practice`) and answers (`Saved`,
+//! `ModLoaded`, `PlayEnded`, `Failed`; `Listed`, `FileRead`). The Art and
+//! Sounds sections' work is in `assets.rs`.
 //!
 //! Every change goes through `olr_edit::mods` on the open pack and is one
 //! undo step. A field's value is set with `set_lenient`: a change that
@@ -43,9 +43,11 @@ pub const PIXEL: &str = "Pixels([\"#ffffff\"])";
 pub const NEW_WEAPON: &str = "New weapon";
 /// The most bots a Play match has (the level editor's `MAX_BOTS`).
 pub const MAX_BOTS: u8 = 8;
+/// The most target dummies a practice has (issue #20).
+pub const MAX_TARGETS: u8 = 4;
 
-/// Play's level and bots (issue #18), remembered between sessions (the
-/// host stores them).
+/// Play's level and bots (issue #18) and practice's level, targets and
+/// reload (issue #20), remembered between sessions (the host stores them).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct PlaySettings {
@@ -53,13 +55,39 @@ pub struct PlaySettings {
     pub level: String,
     /// Bots in a Play match, 0 (the sandbox) to [`MAX_BOTS`].
     pub bots: u8,
+    /// The installed level a practice is on (its pack id).
+    pub practice_level: String,
+    /// Target dummies in a practice, 1 to [`MAX_TARGETS`].
+    pub targets: u8,
+    /// Practice reloads at once (the match's `LoadingTime` 0) instead of
+    /// at the weapon's own pace (100 %).
+    pub fast_reload: bool,
 }
 
 impl Default for PlaySettings {
-    /// The level editor's default: one bot; the level is the host's choice.
+    /// The level editor's default: one bot; practice against one target
+    /// at the weapon's own reload; the levels are the host's choice.
     fn default() -> PlaySettings {
-        PlaySettings { level: String::new(), bots: 1 }
+        PlaySettings {
+            level: String::new(),
+            bots: 1,
+            practice_level: String::new(),
+            targets: 1,
+            fast_reload: false,
+        }
     }
+}
+
+/// A practice with one weapon (issue #20): what Play ▾'s "Practice with
+/// this weapon" asks the host for besides the mod and the level.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Practice {
+    /// The weapon practised with (its id in the mod).
+    pub weapon: String,
+    /// Target dummies, 1 to [`MAX_TARGETS`].
+    pub targets: u8,
+    /// `LoadingTime` 0 (reloaded at once) instead of 100 %.
+    pub fast_reload: bool,
 }
 
 /// One of a projectile's events.
@@ -286,6 +314,14 @@ pub enum ModAction {
     PlayLevel(String),
     /// Play's bots (0 to `MAX_BOTS`).
     PlayBots(u8),
+    /// A practice with the weapon shown (issue #20), unsaved changes included.
+    Practice,
+    /// Practice's level (an installed level's pack id).
+    PracticeLevel(String),
+    /// Practice's target dummies (1 to `MAX_TARGETS`).
+    PracticeTargets(u8),
+    /// Practice's Fast reload.
+    FastReload(bool),
     Close,
     Choice(Choice),
     /// The answer to a question (Change, Add, OK): yes, or no.
@@ -351,7 +387,10 @@ pub enum ModCommand {
     /// Play a test match with mod `pack` (checked: no errors) on installed
     /// level `level` against `bots` bots; answer `PlayEnded` when it ends.
     Play { pack: Box<Pack>, level: String, bots: u8 },
-    /// Remember Play's level and bots.
+    /// Practice with one weapon of mod `pack` (checked: no errors) on
+    /// installed level `level`; answer `PlayEnded` when it ends.
+    Practice { pack: Box<Pack>, level: String, practice: Practice },
+    /// Remember Play's and practice's settings.
     SavePlaySettings(PlaySettings),
     /// Close the editor.
     Close,
@@ -586,7 +625,11 @@ impl ModEditorState {
     /// remembered (a level not among them is not chosen).
     pub fn set_play(&mut self, levels: Vec<(String, String)>, play: PlaySettings) {
         self.levels = levels;
-        self.play = PlaySettings { bots: play.bots.min(MAX_BOTS), ..play };
+        self.play = PlaySettings {
+            bots: play.bots.min(MAX_BOTS),
+            targets: play.targets.clamp(1, MAX_TARGETS),
+            ..play
+        };
     }
 
     pub fn pack(&self) -> &Pack {
@@ -618,6 +661,25 @@ impl ModEditorState {
     }
     pub fn play_bots(&self) -> u8 {
         self.play.bots
+    }
+    /// The level a practice is on: the one chosen when installed, else
+    /// Play's.
+    pub fn practice_level(&self) -> Option<&(String, String)> {
+        self.levels.iter().find(|(id, _)| *id == self.play.practice_level).or(self.play_level())
+    }
+    pub fn practice_targets(&self) -> u8 {
+        self.play.targets
+    }
+    pub fn fast_reload(&self) -> bool {
+        self.play.fast_reload
+    }
+    /// The weapon a practice is with: the item shown, when a weapon of
+    /// the mod.
+    pub fn practice_weapon(&self) -> Option<&str> {
+        match &self.item {
+            Item::Weapon(id) if self.src().weapons.iter().any(|(w, _)| w == id) => Some(id),
+            _ => None,
+        }
     }
     /// Whether Play's match runs.
     pub fn playing(&self) -> bool {
@@ -954,6 +1016,26 @@ impl ModEditorState {
                     return vec![ModCommand::SavePlaySettings(self.play.clone())];
                 }
             }
+            ModAction::Practice => return self.practice(),
+            ModAction::PracticeLevel(id) => {
+                if self.levels.iter().any(|(l, _)| *l == id) && id != self.play.practice_level {
+                    self.play.practice_level = id;
+                    return vec![ModCommand::SavePlaySettings(self.play.clone())];
+                }
+            }
+            ModAction::PracticeTargets(n) => {
+                let n = n.clamp(1, MAX_TARGETS);
+                if n != self.play.targets {
+                    self.play.targets = n;
+                    return vec![ModCommand::SavePlaySettings(self.play.clone())];
+                }
+            }
+            ModAction::FastReload(on) => {
+                if on != self.play.fast_reload {
+                    self.play.fast_reload = on;
+                    return vec![ModCommand::SavePlaySettings(self.play.clone())];
+                }
+            }
             ModAction::Close => {
                 if self.dirty() {
                     self.dialog = Some(Dialog::Unsaved);
@@ -1287,14 +1369,7 @@ impl ModEditorState {
     /// Play: the mod as it is, unsaved changes included, unless it has
     /// errors (they are listed, as for Save).
     fn play(&mut self) -> Vec<ModCommand> {
-        self.refresh();
-        let errors = self.errors();
-        if errors > 0 {
-            self.show_problems = true;
-            self.status = format!(
-                "Not played: the mod has {errors} error{} (listed below; click one to go to it)",
-                if errors == 1 { "" } else { "s" }
-            );
+        if !self.playable() {
             return Vec::new();
         }
         let Some((level, _)) = self.play_level().cloned() else {
@@ -1303,6 +1378,40 @@ impl ModEditorState {
         };
         self.playing = true;
         vec![ModCommand::Play { pack: Box::new(self.pack.clone()), level, bots: self.play.bots }]
+    }
+
+    /// Practice (issue #20): Play's checks, with the weapon shown, on
+    /// practice's level against its targets.
+    fn practice(&mut self) -> Vec<ModCommand> {
+        let Some(weapon) = self.practice_weapon().map(str::to_string) else {
+            self.status = "Not played: choose the weapon to practise with in the list first".into();
+            return Vec::new();
+        };
+        if !self.playable() {
+            return Vec::new();
+        }
+        let Some((level, _)) = self.practice_level().cloned() else {
+            self.status = "Not played: there is no level installed".into();
+            return Vec::new();
+        };
+        self.playing = true;
+        let practice = Practice { weapon, targets: self.play.targets, fast_reload: self.play.fast_reload };
+        vec![ModCommand::Practice { pack: Box::new(self.pack.clone()), level, practice }]
+    }
+
+    /// Whether the mod plays: the check refreshed, no errors (else they
+    /// are listed, as for Save, and the status says so).
+    fn playable(&mut self) -> bool {
+        self.refresh();
+        let errors = self.errors();
+        if errors > 0 {
+            self.show_problems = true;
+            self.status = format!(
+                "Not played: the mod has {errors} error{} (listed below; click one to go to it)",
+                if errors == 1 { "" } else { "s" }
+            );
+        }
+        errors == 0
     }
 
     fn saved(&mut self) -> Vec<ModCommand> {

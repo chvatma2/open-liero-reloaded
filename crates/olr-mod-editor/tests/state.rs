@@ -6,7 +6,8 @@
 use olr_data::restrictions::{ShippedLoadout, WeaponState};
 use olr_mod_editor::state::{ORDER_NOTE, effect_names};
 use olr_mod_editor::{
-    Choice, Dialog, Event, Item, MAX_BOTS, ModAction as A, ModCommand as C, NodeKind, PlaySettings,
+    Choice, Dialog, Event, Item, MAX_BOTS, MAX_TARGETS, ModAction as A, ModCommand as C, NodeKind,
+    PlaySettings, Practice,
 };
 
 use crate::common::{MW, editor, installed};
@@ -292,15 +293,25 @@ fn play_chooses_an_installed_level_and_waits_for_its_end() {
     assert!(s.update(A::Play).is_empty(), "no level installed");
     assert!(s.status().contains("no level"), "{}", s.status());
     let levels = vec![("a".to_string(), "A".to_string()), ("b".to_string(), "B".to_string())];
-    s.set_play(levels.clone(), PlaySettings { level: "gone".into(), bots: 200 });
+    s.set_play(levels.clone(), PlaySettings { level: "gone".into(), bots: 200, ..PlaySettings::default() });
     assert_eq!(s.play_level(), Some(&levels[0]));
     assert_eq!(s.play_bots(), MAX_BOTS);
     assert!(s.update(A::PlayLevel("nope".into())).is_empty(), "not installed");
     let c = s.update(A::PlayLevel("b".into()));
-    assert_eq!(c, vec![C::SavePlaySettings(PlaySettings { level: "b".into(), bots: MAX_BOTS })]);
+    assert_eq!(
+        c,
+        vec![C::SavePlaySettings(PlaySettings {
+            level: "b".into(),
+            bots: MAX_BOTS,
+            ..PlaySettings::default()
+        })]
+    );
     assert!(s.update(A::PlayLevel("b".into())).is_empty(), "no change");
     let c = s.update(A::PlayBots(0));
-    assert_eq!(c, vec![C::SavePlaySettings(PlaySettings { level: "b".into(), bots: 0 })]);
+    assert_eq!(
+        c,
+        vec![C::SavePlaySettings(PlaySettings { level: "b".into(), bots: 0, ..PlaySettings::default() })]
+    );
     s.update(set("mod.worm.gravity", "120.0"));
     let c = s.update(A::Play);
     assert!(matches!(&c[..], [C::Play { level, bots: 0, .. }] if level == "b"), "{c:?}");
@@ -314,4 +325,56 @@ fn play_chooses_an_installed_level_and_waits_for_its_end() {
     assert!(!s.playing());
     s.update(A::Undo);
     assert_eq!(s.value("mod.worm.gravity").as_deref(), Some("100.0"));
+}
+
+/// Issue #20: a practice is with the weapon shown (none without one), on
+/// practice's level (else Play's), against 1 to `MAX_TARGETS` targets,
+/// at the weapon's own reload unless Fast reload is on; it waits for its
+/// end as Play does, and refuses a mod with errors.
+#[test]
+fn practice_is_with_the_weapon_shown() {
+    let Some(mut s) = editor() else { return };
+    let levels = vec![("a".to_string(), "A".to_string()), ("b".to_string(), "B".to_string())];
+    let old = PlaySettings { level: "b".into(), bots: 2, ..PlaySettings::default() };
+    s.set_play(levels.clone(), PlaySettings { targets: 0, ..old.clone() });
+    assert_eq!((s.practice_targets(), s.fast_reload()), (1, false), "one target, its own reload");
+    assert_eq!(s.practice_level(), Some(&levels[1]), "Play's level until one is chosen");
+    assert_eq!(s.practice_weapon(), None);
+    assert!(s.update(A::Practice).is_empty(), "no weapon shown");
+    assert!(s.status().contains("weapon"), "{}", s.status());
+    assert!(!s.playing());
+
+    assert!(s.update(A::PracticeTargets(0)).is_empty(), "1 already");
+    let c = s.update(A::PracticeTargets(9));
+    assert_eq!(c, vec![C::SavePlaySettings(PlaySettings { targets: MAX_TARGETS, ..old.clone() })]);
+    assert!(s.update(A::PracticeLevel("nope".into())).is_empty(), "not installed");
+    s.update(A::PracticeLevel("a".into()));
+    assert_eq!(s.practice_level(), Some(&levels[0]));
+    assert_eq!(s.play_level(), Some(&levels[1]), "Play's own stays");
+
+    s.update(A::Select(Item::Weapon("bazooka".into())));
+    assert_eq!(s.practice_weapon(), Some("bazooka"));
+    let c = s.update(A::Practice);
+    let want = Practice { weapon: "bazooka".into(), targets: MAX_TARGETS, fast_reload: false };
+    assert!(
+        matches!(&c[..], [C::Practice { level, practice, .. }] if level == "a" && *practice == want),
+        "{c:?}"
+    );
+    assert!(s.playing());
+    assert!(s.update(A::FastReload(true)).is_empty(), "nothing acts meanwhile");
+    s.update(A::PlayEnded);
+    assert!(!s.playing());
+
+    let c = s.update(A::FastReload(true));
+    assert!(matches!(&c[..], [C::SavePlaySettings(p)] if p.fast_reload));
+    let c = s.update(A::Practice);
+    assert!(matches!(&c[..], [C::Practice { practice, .. }] if practice.fast_reload), "{c:?}");
+    s.update(A::PlayEnded);
+
+    // An error: not played.
+    let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
+    s.update(A::Set { path: "projectiles/bazooka.spawn.spawns".into(), value: cycle.into() });
+    assert!(s.update(A::Practice).is_empty());
+    assert!(s.status().starts_with("Not played"), "{}", s.status());
+    assert!(!s.playing());
 }

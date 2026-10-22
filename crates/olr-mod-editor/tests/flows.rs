@@ -5,14 +5,15 @@
 //! pack again; an error listed, gone to and refusing the save; the fire's
 //! kind, an effect and a weapon copied from MW; Play (issue #18) with an
 //! unsaved change on a level and bots chosen in Play ▾, refused with an
-//! error, and the editor as it was when the match ends. The test host
+//! error, and the editor as it was when the match ends; practice with the
+//! weapon shown (issue #20) started from Play ▾ and back. The test host
 //! saves into a temporary directory and loads mods from the content at
 //! once; while Play's match runs it draws no editor, as the game's does.
 
 use std::path::PathBuf;
 
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use olr_edit::mods;
 use olr_edit::pack;
 use olr_mod_editor::fields;
@@ -82,7 +83,11 @@ fn harness_sized(state: ModEditorState, dir: PathBuf, size: egui::Vec2) -> Harne
                             };
                             app.state.update(answer);
                         }
-                        C::Play { .. } | C::SavePlaySettings(_) | C::Close | C::PlaySound { .. } => {}
+                        C::Play { .. }
+                        | C::Practice { .. }
+                        | C::SavePlaySettings(_)
+                        | C::Close
+                        | C::PlaySound { .. } => {}
                     }
                     app.commands.push(c);
                 }
@@ -358,4 +363,73 @@ fn play_the_unsaved_mod_and_come_back() {
     assert!(s.status().starts_with("Not played"), "{}", s.status());
     let issue = s.issues().iter().find(|i| i.is_error()).unwrap().clone();
     h.get_by_label(&labels::issue(&issue));
+}
+
+/// Issue #20: Play ▾'s Practice with this weapon needs a weapon shown;
+/// it carries the unsaved mod, the weapon, practice's level, targets and
+/// Fast reload (each remembered), and the editor is where it was when
+/// the practice ends. The normal Play stays as it was.
+#[test]
+fn practice_with_the_weapon_shown_and_come_back() {
+    let Some(mut state) = editor() else { return };
+    let levels = vec![
+        ("olx-level-dirt-level".to_string(), "Dirt Level".to_string()),
+        ("olx-level-castlestrike".to_string(), "Castle Strike".to_string()),
+    ];
+    state.set_play(levels, olr_mod_editor::PlaySettings::default());
+    let tmp = tempfile::tempdir().unwrap();
+    let mut h = harness(state, tmp.path().join("my-classic"));
+
+    // No weapon shown: no practice.
+    click(&mut h, labels::PLAY_OPTIONS);
+    assert!(h.get_by_label(labels::PRACTICE).accesskit_node().is_disabled());
+    h.get_by_label(labels::PRACTICE).click();
+    h.run();
+    assert!(!h.state().commands.iter().any(|c| matches!(c, C::Practice { .. })));
+    h.key_press(egui::Key::Escape);
+    h.run();
+
+    click(&mut h, "Bazooka");
+    type_into(&mut h, &label("Weapon.recharge"), "0.5");
+    click(&mut h, labels::PLAY_OPTIONS);
+    click(&mut h, &labels::practice_level("Castle Strike"));
+    click(&mut h, &labels::practice_targets(3));
+    click(&mut h, labels::FAST_RELOAD);
+    let saved = h.state().commands.iter().rev().find_map(|c| match c {
+        C::SavePlaySettings(s) => Some(s.clone()),
+        _ => None,
+    });
+    let saved = saved.expect("practice's settings are remembered");
+    assert_eq!(
+        (saved.practice_level.as_str(), saved.targets, saved.fast_reload),
+        ("olx-level-castlestrike", 3, true)
+    );
+    assert_eq!((saved.level.as_str(), saved.bots), ("", 1), "Play's own stay");
+
+    click(&mut h, labels::PRACTICE);
+    let Some(C::Practice { pack, level, practice }) = h.state().commands.last().cloned() else {
+        panic!("Practice reaches the host: {:?}", h.state().commands.last())
+    };
+    assert_eq!(mods::get(mods::source(&pack).unwrap(), "weapons/bazooka.recharge").unwrap(), "0.5");
+    assert_eq!(level, "olx-level-castlestrike");
+    let want = olr_mod_editor::Practice { weapon: "bazooka".into(), targets: 3, fast_reload: true };
+    assert_eq!(practice, want);
+    assert!(h.state().state.playing());
+    assert!(h.query_by_label(labels::PLAY).is_none(), "the practice has the window");
+    h.run();
+    h.state_mut().state.update(A::PlayEnded);
+    h.run();
+    let s = &h.state().state;
+    assert!(!s.playing());
+    assert_eq!(s.item(), &Item::Weapon("bazooka".into()));
+    assert!(s.dirty() && s.can_undo(), "the unsaved work and its history stay");
+    h.get_by_label(labels::UNSAVED);
+    assert!(h.query_by_label(labels::PRACTICE).is_none(), "Play ▾ closed with the practice");
+
+    // The normal Play: unchanged, on Play's level.
+    click(&mut h, labels::PLAY);
+    let Some(C::Play { level, bots, .. }) = h.state().commands.last().cloned() else {
+        panic!("Play reaches the host: {:?}", h.state().commands.last())
+    };
+    assert_eq!((level.as_str(), bots), ("olx-level-dirt-level", 1));
 }

@@ -16,8 +16,8 @@ pub mod tree;
 pub use assets::ArtTools;
 pub use browser::{FileEntry, Import};
 pub use state::{
-    ArtAction, BrowseAction, Choice, Dialog, Event, MAX_BOTS, ModAction, ModCommand, ModEditorState,
-    PlaySettings,
+    ArtAction, BrowseAction, Choice, Dialog, Event, MAX_BOTS, MAX_TARGETS, ModAction, ModCommand,
+    ModEditorState, PlaySettings, Practice,
 };
 pub use tree::{Item, Node, NodeKind, SpawnAt};
 pub mod ui;

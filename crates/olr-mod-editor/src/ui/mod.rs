@@ -38,8 +38,12 @@ pub mod labels {
     pub const PROBLEMS: &str = "Problems";
     // Play (issue #18).
     pub const PLAY: &str = "Play";
-    /// Play's ▾: the level and the bots.
+    /// Play's ▾: the level and the bots, and practice's (issue #20).
     pub const PLAY_OPTIONS: &str = "Play options";
+    /// Play ▾'s practice with the weapon shown (issue #20).
+    pub const PRACTICE: &str = "Practice with this weapon";
+    /// Practice's reload at once (`LoadingTime` 0).
+    pub const FAST_RELOAD: &str = "Fast reload";
     // The left list.
     pub const WORLD: &str = "World";
     pub const ADD_WEAPON: &str = "Add weapon";
@@ -193,6 +197,14 @@ pub mod labels {
     /// Play ▾'s number of bots.
     pub fn play_bots(n: u8) -> String {
         format!("{n} bots")
+    }
+    /// Play ▾'s practice level (by its name).
+    pub fn practice_level(name: &str) -> String {
+        format!("Practice on {name}")
+    }
+    /// Play ▾'s number of practice targets.
+    pub fn practice_targets(n: u8) -> String {
+        format!("{n} targets")
     }
     /// A problem of the list, a link to its place.
     pub fn issue(i: &Issue) -> String {
@@ -404,6 +416,8 @@ fn play_menu(ui: &mut Ui, cx: &mut Cx) {
                 }
             }
         });
+        ui.separator();
+        practice_menu(ui, cx);
     });
     const ARROW: f32 = 8.0;
     let colour = ui.style().interact(&r).text_color();
@@ -418,6 +432,52 @@ fn play_menu(ui: &mut Ui, cx: &mut Cx) {
     let level = state.play_level().map_or("no level", |(_, name)| name.as_str());
     let bots = state.play_bots();
     r.on_hover_text(format!("the test match: {level}, {bots} bot{}", plural(bots.into())));
+}
+
+/// The practice level's list in Play ▾: shorter than Play's.
+const PRACTICE_LEVELS_HEIGHT: f32 = 120.0;
+
+/// Play ▾'s practice (issue #20): Practice with this weapon (the weapon
+/// shown), its level, its target dummies and Fast reload.
+fn practice_menu(ui: &mut Ui, cx: &mut Cx) {
+    let state = cx.state;
+    let weapon = state.practice_weapon().unwrap_or_default();
+    let r = ui.add_enabled(!weapon.is_empty(), egui::Button::new(labels::PRACTICE));
+    let r = r.on_disabled_hover_text("choose a weapon in the list first");
+    let hover = format!("practise with {weapon} against still targets, unsaved changes included");
+    if r.on_hover_text(hover).clicked() {
+        cx.out.push(ModAction::Practice);
+        ui.close();
+    }
+    ui.label(egui::RichText::new("Practice level").strong());
+    let chosen = state.practice_level().map(|(id, _)| id.as_str());
+    egui::ScrollArea::vertical()
+        .id_salt("olr-mod-editor-practice-levels")
+        .max_height(PRACTICE_LEVELS_HEIGHT)
+        .show(ui, |ui| {
+            for (id, name) in state.levels() {
+                let r = ui.selectable_label(Some(id.as_str()) == chosen, name);
+                relabel(&r, egui::WidgetType::Button, &labels::practice_level(name));
+                if r.clicked() {
+                    cx.out.push(ModAction::PracticeLevel(id.clone()));
+                }
+            }
+        });
+    ui.label(egui::RichText::new("Targets").strong());
+    ui.horizontal(|ui| {
+        for n in 1..=crate::MAX_TARGETS {
+            let r = ui.selectable_label(n == state.practice_targets(), n.to_string());
+            relabel(&r, egui::WidgetType::Button, &labels::practice_targets(n));
+            if r.clicked() {
+                cx.out.push(ModAction::PracticeTargets(n));
+            }
+        }
+    });
+    let mut fast = state.fast_reload();
+    let r = ui.checkbox(&mut fast, labels::FAST_RELOAD);
+    if r.on_hover_text("reload at once instead of at the weapon's own pace").changed() {
+        cx.out.push(ModAction::FastReload(fast));
+    }
 }
 
 /// The problems: errors first, each a link to its place.
