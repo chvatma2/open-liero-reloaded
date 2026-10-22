@@ -218,3 +218,9 @@
   fixtures/render/heat-distant.png
 2026-10-22 bless-render: #46: Castle Strike Reloaded has surface materials, so the lit match's explosions now heat it
   fixtures/render/lit-hashes.ron
+2026-10-22 bless-render: #53: worms no longer shade or block light
+  fixtures/render/lit-hashes.ron
+  fixtures/render/look-blast.png
+  fixtures/render/look-glow-tip.png
+  fixtures/render/look-rocket.png
+  fixtures/render/look-skin.png
