@@ -123,7 +123,7 @@ pub struct Renderer {
     instances: Vec<Instance>,
     raw: Vec<[f32; crate::frame::INSTANCE_FLOATS]>,
     instance_buffer: wgpu::Buffer,
-    dirty: Vec<olr_terrain::Rect>,
+    dirty: Vec<olr_terrain::Dirty>,
     warnings: Vec<String>,
     /// GPU timestamps of every frame (bench only: [`Renderer::enable_gpu_timing`]).
     timer: Option<timing::Timer>,
@@ -333,7 +333,7 @@ impl Renderer {
             instances: Vec::with_capacity(4 * DrawList::RESERVED),
             raw: Vec::with_capacity(4 * DrawList::RESERVED),
             instance_buffer,
-            dirty: Vec::with_capacity(ColorMap::MAX_DIRTY + 1),
+            dirty: Vec::with_capacity(256),
             warnings: Vec::new(),
             timer: None,
             probe: None,
@@ -576,7 +576,8 @@ impl Renderer {
     }
 
     /// Uploads the rectangles `map` changed since the last call
-    /// ([`ColorMap::take_dirty`]); a map of another size is uploaded whole.
+    /// ([`ColorMap::take_dirty_kinds`]: a stained rectangle's colour alone,
+    /// issue #35); a map of another size is uploaded whole.
     pub fn update_terrain(&mut self, map: &mut ColorMap) {
         let same = self.terrain.as_ref().is_some_and(|t| t.art == (map.width(), map.height()));
         if !same {
@@ -585,12 +586,15 @@ impl Renderer {
             return;
         }
         // Each rectangle is written straight from the map's pixels: no copy.
+        // Where only stains changed it, its colour alone (issue #35).
         self.dirty.clear();
-        self.dirty.extend(map.take_dirty());
-        for r in &self.dirty {
-            Self::write_rect(&self.queue, self.terrain.as_ref(), (map.pixels(), map.width()), *r);
-            if let Some(look) = &mut self.look {
-                look.write(&self.queue, map, *r);
+        self.dirty.extend(map.take_dirty_kinds());
+        for d in &self.dirty {
+            Self::write_rect(&self.queue, self.terrain.as_ref(), (map.pixels(), map.width()), d.rect);
+            if let Some(look) = &mut self.look
+                && !d.colour_only
+            {
+                look.write(&self.queue, map, d.rect);
             }
         }
     }

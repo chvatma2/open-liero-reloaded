@@ -205,3 +205,5 @@
   fixtures/bench/quick.ron
 2026-10-22 bench-quick: #35 item 4: the soak reads the occluder map only near a worm box
   fixtures/bench/quick.ron
+2026-10-22 bench-quick: #35 item 5: dirty tiles and a colour-only kind for the terrain's uploads
+  fixtures/bench/quick.ron

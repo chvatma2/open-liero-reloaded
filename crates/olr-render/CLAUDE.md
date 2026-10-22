@@ -13,7 +13,9 @@ on screen or offscreen.
   RenderSettings)`; `upload_atlas(&SceneAssets)` once every image is
   registered (scene, worms, `olr-fx`); `upload_terrain(&ColorMap)` for a new
   or restarted level, then `update_terrain(&mut ColorMap)` after each tick
-  (only `take_dirty()`'s rectangles); `render(&DrawList, &view, size)` per
+  (only `take_dirty_kinds()`'s rectangles; issue #35: a colour-only one,
+  stains, writes the terrain alone, not the look textures nor the
+  flicker regions); `render(&DrawList, &view, size)` per
   drawn frame (`render_in(.., area)`: the picture in a part of the target,
   `dest_rect_in`; the game's playfield above its HUD bar; `olr_present::Presentation::upload`
   does the uploads in this order). **An image registered after `upload_atlas`** (a worm added

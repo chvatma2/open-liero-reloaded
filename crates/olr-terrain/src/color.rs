@@ -16,6 +16,7 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 
 use crate::dirt::{Clip, flags_of};
+use crate::dirty::{Dirty, DirtyTiles};
 use crate::{GreenMask, GreenPixel, PX_EMPTY, PX_ROCK, Stamp, StampPixel, Terrain, clip};
 
 /// `PlaceGreenDirt`'s shades (`CMap.cpp:1245-1248`), picked with
@@ -61,15 +62,6 @@ pub struct Rect {
     pub h: u32,
 }
 
-impl Rect {
-    fn union(self, o: Rect) -> Rect {
-        let (x, y) = (self.x.min(o.x), self.y.min(o.y));
-        let x1 = (self.x + self.w).max(o.x + o.w);
-        let y1 = (self.y + self.h).max(o.y + o.h);
-        Rect { x, y, w: x1 - x, h: y1 - y }
-    }
-}
-
 /// A map area in world pixels, `x0..x1` × `y0..y1` (exclusive ends), not
 /// necessarily inside the map (such as `olr-sim`'s `LostArea`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -100,7 +92,8 @@ pub struct ColorMap {
     theme: ThemeArt,
     /// The green shades' own generator (OLX draws them from the client's `rand()`).
     rng: u64,
-    dirty: Vec<Rect>,
+    /// What changed since [`ColorMap::take_dirty`] (issue #35: tiles).
+    dirty: DirtyTiles,
     /// The glow channel (spec 2026-10-18 look system §Glow), when the level has one.
     glow: Option<Box<Glow>>,
     /// The level's clear flags per world pixel (§Clear solids), as loaded.
@@ -181,9 +174,10 @@ fn fit(img: &RgbaImage, w: u32, h: u32) -> Vec<u8> {
 }
 
 impl ColorMap {
-    /// The most dirty rectangles kept between [`ColorMap::take_dirty`]
-    /// calls; beyond it they are merged into their bounding box.
-    pub const MAX_DIRTY: usize = 256;
+    /// The side of a dirty tile, world pixels (issue #35): every change
+    /// marks the tiles under it, and [`ColorMap::take_dirty`] gives each
+    /// row's runs of them.
+    pub const DIRTY_TILE: u32 = 16;
 
     /// The composite of a level (presentation note §2.1): `front` is
     /// already the visible image (it equals `back` where the material is
@@ -218,7 +212,7 @@ impl ColorMap {
             material: material.clone(),
             theme,
             rng: 0x9e37_79b9_7f4a_7c15,
-            dirty: Vec::with_capacity(Self::MAX_DIRTY),
+            dirty: DirtyTiles::new((width, height), Self::DIRTY_TILE * scale),
             glow: None,
             clear: None,
             see_through: false,
@@ -395,9 +389,18 @@ impl ColorMap {
     }
 
     /// The dirty rectangles since the last call, in art pixels; together
-    /// they cover every pixel that changed.
+    /// they cover every pixel that changed. Each is a run of
+    /// [`ColorMap::DIRTY_TILE`] tiles along a row, clipped to the map
+    /// (issue #35); dropped early, the iterator forgets the rest too.
     pub fn take_dirty(&mut self) -> impl Iterator<Item = Rect> + '_ {
-        self.dirty.drain(..)
+        self.dirty.drain().map(|d| d.rect)
+    }
+
+    /// [`ColorMap::take_dirty`] with each rectangle's kind (issue #35):
+    /// `colour_only` where only blood and gib stains changed it, so its
+    /// material and glow are as they were.
+    pub fn take_dirty_kinds(&mut self) -> impl Iterator<Item = Dirty> + '_ {
+        self.dirty.drain()
     }
 
     /// Blood that hit rock or dirt: OLX `CMap::putColorTo` (`CMap.cpp:2365-2368`,
@@ -409,7 +412,7 @@ impl ColorMap {
         }
         let (x, y) = (x as u32, y as u32);
         self.stain_block(x, y, color);
-        self.mark(x as i64, y as i64, x as i64 + 1, y as i64 + 1);
+        self.mark_colour(x as i64, y as i64, x as i64 + 1, y as i64 + 1);
     }
 
     /// A gib that came to rest: OLX `CMap::putSurfaceTo` with
@@ -444,7 +447,7 @@ impl ColorMap {
                 }
             }
         }
-        self.mark(dx0, dy0, dx0 + w, dy0 + h);
+        self.mark_colour(dx0, dy0, dx0 + w, dy0 + h);
     }
 
     /// Redraws `area` from `material` and takes its material there: the
@@ -685,26 +688,26 @@ impl ColorMap {
 
     /// Marks world box `x0..x1` × `y0..y1` (inside the map) dirty.
     fn mark(&mut self, x0: i64, y0: i64, x1: i64, y1: i64) {
+        self.mark_box(x0, y0, x1, y1, false);
+    }
+
+    /// [`ColorMap::mark`] where only the colour changed (a stain).
+    fn mark_colour(&mut self, x0: i64, y0: i64, x1: i64, y1: i64) {
+        self.mark_box(x0, y0, x1, y1, true);
+    }
+
+    fn mark_box(&mut self, x0: i64, y0: i64, x1: i64, y1: i64, colour_only: bool) {
         if x1 <= x0 || y1 <= y0 {
             return;
         }
         let s = self.scale;
-        self.push_dirty(Rect {
-            x: x0 as u32 * s,
-            y: y0 as u32 * s,
-            w: (x1 - x0) as u32 * s,
-            h: (y1 - y0) as u32 * s,
-        });
+        let r = Rect { x: x0 as u32 * s, y: y0 as u32 * s, w: (x1 - x0) as u32 * s, h: (y1 - y0) as u32 * s };
+        self.dirty.mark(r, colour_only);
     }
 
-    /// Adds art rectangle `r` (inside the map) to the dirty list.
+    /// Marks art rectangle `r` (inside the map) dirty, more than its colour.
     fn push_dirty(&mut self, r: Rect) {
-        if self.dirty.len() >= Self::MAX_DIRTY {
-            let all = self.dirty.drain(..).fold(r, Rect::union);
-            self.dirty.push(all);
-        } else {
-            self.dirty.push(r);
-        }
+        self.dirty.mark(r, false);
     }
 }
 

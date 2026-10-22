@@ -375,8 +375,11 @@ fn dirty_rects_stay_bounded_when_never_taken() {
             c.apply(e);
         }
     }
+    // Issue #35: tiles, so at most one rectangle a tile.
     let dirty: Vec<Rect> = c.take_dirty().collect();
-    assert!(!dirty.is_empty() && dirty.len() <= ColorMap::MAX_DIRTY, "{}", dirty.len());
+    let side = ColorMap::DIRTY_TILE * 2;
+    let tiles = c.width().div_ceil(side) * c.height().div_ceil(side);
+    assert!(!dirty.is_empty() && dirty.len() as u32 <= tiles, "{}", dirty.len());
 }
 
 #[test]
@@ -522,4 +525,21 @@ fn replace_rect_clips() {
         c.replace_rect(r, &solid(8, 6, red), &solid(8, 6, red), &mat);
     }
     assert_eq!(c.take_dirty().count(), 0);
+}
+
+/// Issue #35: blood and gib stains mark only colour; a material change
+/// marks more, and wins over a stain in the same tile.
+#[test]
+fn stains_mark_colour_only() {
+    let t = busy_map();
+    let mut c = color_map(&t, 2, busy_theme());
+    c.stain(3, 3, Rgba::rgb(200, 0, 0));
+    let sheet = image(8, 12, |x, y| Rgba::rgb(x as u8, y as u8, 7));
+    c.stain_image(5, 2, &sheet, Rect { x: 0, y: 8, w: 4, h: 4 }, true);
+    let stained: Vec<crate::Dirty> = c.take_dirty_kinds().collect();
+    assert!(!stained.is_empty() && stained.iter().all(|d| d.colour_only), "{stained:?}");
+    c.stain(3, 3, Rgba::rgb(200, 0, 0));
+    c.rebuild_area(Area { x0: 0, y0: 0, x1: 2, y1: 2 }, &t);
+    let both: Vec<crate::Dirty> = c.take_dirty_kinds().collect();
+    assert!(both.iter().any(|d| !d.colour_only && d.rect.x == 0 && d.rect.y == 0), "{both:?}");
 }

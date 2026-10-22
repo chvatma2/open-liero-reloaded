@@ -10,6 +10,7 @@ extern crate alloc;
 
 mod color;
 mod dirt;
+mod dirty;
 mod journal;
 mod stamp;
 
@@ -17,6 +18,7 @@ use alloc::boxed::Box;
 use alloc::vec::Vec;
 
 pub use color::{Area, ColorEdit, ColorMap, GREEN_SHADES, GlowLayers, Rect, ThemeArt};
+pub use dirty::Dirty;
 pub use journal::{JournalError, JournalMark};
 use olr_data::level::{Material, MaterialGrid};
 pub use stamp::{GreenMask, GreenPixel, Stamp, StampPixel};
@@ -50,7 +52,7 @@ impl Eq for Terrain {}
 
 impl Terrain {
     /// The most areas [`Terrain::take_restored_areas`] holds; beyond it
-    /// they are merged into their bounding box (as `ColorMap::MAX_DIRTY`).
+    /// they are merged into their bounding box.
     pub const MAX_RESTORED: usize = 256;
 
     pub fn from_grid(grid: &MaterialGrid) -> Self {

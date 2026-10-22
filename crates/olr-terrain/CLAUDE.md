@@ -27,8 +27,14 @@ and the colour image that follows it (`ColorMap`).
   (gibs, OLX's `DrawImageStretch2` clipping quirk; `on_air` paints open
   air as OLX does, else only rock and dirt: the floating gib pixels)
   change only colour.
-  `take_dirty()` drains art-px rectangles covering every change (at most
-  `MAX_DIRTY`, merged beyond). `rebuild_area(area, &material)` is the only
+  `take_dirty()` drains art-px rectangles covering every change: issue
+  #35's dirty tiles (`dirty.rs`, `DIRTY_TILE` 16 world px a side), each
+  change marking the tiles under it, drained as each row's runs of tiles
+  of one kind, clipped to the map (a dropped iterator forgets the rest);
+  `take_dirty_kinds()` gives each run's `Dirty { rect, colour_only }`,
+  `colour_only` where only `stain` and `stain_image` changed it (material
+  and glow as they were: the renderer uploads its colour alone;
+  `stains_mark_colour_only`). `rebuild_area(area, &material)` is the only
   fallback for edits a tick dropped (`lost_area`). `replace_rect(r, front,
   back, material)` (the level editor's canvas, plan 14c) copies art
   rectangle `r` of new art (front into the composite too) and the world

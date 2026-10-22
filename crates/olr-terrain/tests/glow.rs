@@ -149,7 +149,9 @@ fn glow_follows_rebuild_and_replace() {
     c.replace_glow_rect(Rect { x: 0, y: 0, w: 2, h: 2 }, &new);
     assert_eq!(at(&c, 0, 0), (77, 5));
     assert_eq!(at(&c, 1, 0), (102, 2), "outside the rectangle unchanged (rebuilt background)");
-    assert_eq!(c.take_dirty().collect::<Vec<_>>(), [Rect { x: 0, y: 0, w: 2, h: 2 }]);
+    // The dirty tile holding it (issue #35), clipped to the small map.
+    let whole = Rect { x: 0, y: 0, w: c.width(), h: c.height() };
+    assert_eq!(c.take_dirty().collect::<Vec<_>>(), [whole]);
     // A rectangle past the map, or layers of another size, never panic.
     c.replace_glow_rect(Rect { x: 7, y: 3, w: u32::MAX, h: u32::MAX }, &new);
     c.replace_glow_rect(Rect { x: 0, y: 0, w: 8, h: 4 }, &layers(&map(&["D"])));
