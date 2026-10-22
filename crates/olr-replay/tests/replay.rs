@@ -580,12 +580,13 @@ fn the_looks_round_trip() {
     assert_eq!(finish_now(many, &setup, &mode).setup.looks.len(), 4);
 }
 
-/// A format-4 file (before 16-bit keys) or format-5 file (one viewer,
-/// before the local slots of issue #29) is refused with the version error.
+/// A format-4 file (before 16-bit keys), format-5 file (one viewer,
+/// before the local slots of issue #29) or format-6 file (before the
+/// Weapon 1-5 keys of issue #48) is refused with the version error.
 #[test]
 fn an_older_format_replay_is_refused() {
     let (replay, ..) = record(10, 1);
-    for old in [4u16, 5] {
+    for old in [4u16, 5, 6] {
         let mut bytes = replay.encode();
         bytes[4..6].copy_from_slice(&old.to_le_bytes());
         assert_eq!(
@@ -593,5 +594,5 @@ fn an_older_format_replay_is_refused() {
             DecodeError::Version { found: old, supported: FORMAT_VERSION }
         );
     }
-    assert_eq!(FORMAT_VERSION, 6);
+    assert_eq!(FORMAT_VERSION, 7);
 }

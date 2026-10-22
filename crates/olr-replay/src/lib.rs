@@ -41,7 +41,8 @@ pub use record::Recorder;
 /// 4: each worm's looks (name, colour, skin id, the hash as 32 bytes).
 /// 5: 16-bit keys (Strafe, Previous/Next weapon), high bytes after the low.
 /// 6: the local slots (`viewers`, issue #29) in place of one viewer.
-pub const FORMAT_VERSION: u16 = 6;
+/// 7: the keys' bits 11-15 are Weapon 1-5 (issue #48).
+pub const FORMAT_VERSION: u16 = 7;
 
 /// The first bytes of every replay file.
 pub const MAGIC: [u8; 4] = *b"OLRP";

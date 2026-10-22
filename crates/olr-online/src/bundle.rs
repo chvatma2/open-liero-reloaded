@@ -21,8 +21,8 @@ use crate::replay::MatchRecord;
 
 /// The first bytes of a game desync bundle.
 pub const GAME_BUNDLE_MAGIC: [u8; 4] = *b"OLDG";
-/// The format's version.
-pub const GAME_BUNDLE_VERSION: u16 = 3;
+/// The format's version (4: the keys' bits 11-15 are Weapon 1-5, issue #48).
+pub const GAME_BUNDLE_VERSION: u16 = 4;
 /// The extension of a game desync bundle's file.
 pub const GAME_BUNDLE_EXTENSION: &str = "oldg";
 /// At most this many bundles a match, per peer (a desync the host repairs
@@ -227,7 +227,7 @@ mod tests {
         assert!(GameBundle::decode(b"OLDS\x01\x00").is_err(), "olr-cli's bundles are another format");
         assert!(GameBundle::decode(&bytes[..5]).is_err());
         let mut newer = bytes.clone();
-        newer[4] = 4;
+        newer[4..6].copy_from_slice(&(GAME_BUNDLE_VERSION + 1).to_le_bytes());
         assert!(GameBundle::decode(&newer).is_err());
     }
 }

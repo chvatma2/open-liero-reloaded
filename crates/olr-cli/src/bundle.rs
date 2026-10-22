@@ -14,8 +14,9 @@ use crate::netsim::{NetSpec, WorldFactory};
 
 pub const BUNDLE_MAGIC: [u8; 4] = *b"OLDS";
 /// 2: `NetSpec` gained its migration fields (plan 12c). 3: withdrawals
-/// (`DesyncBundle::gone`, plan 12d).
-pub const BUNDLE_VERSION: u16 = 4;
+/// (`DesyncBundle::gone`, plan 12d). 4: 16-bit keys (issue #23). 5: the
+/// keys' bits 11-15 are Weapon 1-5 (issue #48).
+pub const BUNDLE_VERSION: u16 = 5;
 
 /// A peer's record of a desync.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

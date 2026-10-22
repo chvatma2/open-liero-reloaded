@@ -539,7 +539,7 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
 - **`bundle.rs`** (spec §3.5, §9.10): `GameBundle` (what happened, host
   or not, `my_slot`, `FINGERPRINT`, platform `<arch>-<os>`, the
   `MatchStartWire`, the confirmed input rows from tick 0, the withdrawals
-  (`gone`, `GAME_BUNDLE_VERSION` 2; 16-bit keys 3), this peer's
+  (`gone`, `GAME_BUNDLE_VERSION` 2; 16-bit keys 3; Weapon 1-5 keys 4), this peer's
   checksums, the other side's stream (`other_checksums`: on the host the
   peer's compared reports, `Session::peer_checksums`; on a client the
   host's checksum of the mismatch), the mismatch `(tick, local,

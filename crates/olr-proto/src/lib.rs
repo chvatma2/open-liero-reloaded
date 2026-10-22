@@ -29,8 +29,10 @@ pub use signal::*;
 #[path = "fingerprint_impl.rs"]
 mod fingerprint_impl;
 
-/// Wire protocol version, checked in the handshake.
-pub const PROTOCOL_VERSION: u16 = 5;
+/// Wire protocol version, checked in the handshake. 6: the keys' top five
+/// bits are Weapon 1-5 (issue #48), and the state transfer's latches
+/// gained theirs.
+pub const PROTOCOL_VERSION: u16 = 6;
 /// At most this many slots in a match.
 pub const MAX_SLOTS: usize = 32;
 /// Largest accepted inputs datagram.
