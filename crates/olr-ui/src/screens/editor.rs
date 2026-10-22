@@ -135,7 +135,7 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
             });
             form_row(ui, "Theme", |ui, label| {
                 let shown = themes.iter().find(|t| t.0 == f.theme).map_or("none", |t| t.1.as_str());
-                ComboBox::from_id_salt("new level theme")
+                let combo = ComboBox::from_id_salt("new level theme")
                     .selected_text(shown)
                     .width(240.0)
                     .show_ui(ui, |ui| {
@@ -145,6 +145,10 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
                     })
                     .response
                     .labelled_by(label);
+                let ids: Vec<&String> = themes.iter().map(|t| &t.0).collect();
+                if let Some(id) = crate::pad::pad_choice(ui, &combo, &ids, &&f.theme) {
+                    f.theme = id.clone();
+                }
             });
             let ok = !f.name.trim().is_empty()
                 && side(&f.width).is_some()
@@ -222,6 +226,7 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
                     }
                 },
             );
+            crate::pad::follow_focus(ui);
         });
     });
 }
@@ -280,6 +285,7 @@ fn skins(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
                         }
                     });
                 }
+                crate::pad::follow_focus(ui);
             },
         );
     });
@@ -364,6 +370,7 @@ fn mods(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
                     ui.end_row();
                 }
             });
+            crate::pad::follow_focus(ui);
         });
     });
     if copy.is_some() {

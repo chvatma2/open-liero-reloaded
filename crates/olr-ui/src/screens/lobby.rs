@@ -240,6 +240,7 @@ fn setup(ui: &mut Ui, view: &LobbyView, own: &OwnLoadouts, data: &mut MenuData, 
                 ui.add_space(8.0);
                 ScrollArea::vertical().id_salt("lobby levels").max_height(240.0).show(ui, |ui| {
                     level_grid(ui, data, &mut p);
+                    crate::pad::follow_focus(ui);
                 });
             });
             ui.add_space(SECTION_GAP);
@@ -250,6 +251,7 @@ fn setup(ui: &mut Ui, view: &LobbyView, own: &OwnLoadouts, data: &mut MenuData, 
             ui.add_space(SECTION_GAP);
             section(ui, "Bots", |ui, _| bots(ui, data, &mut p));
         });
+        crate::pad::follow_focus(ui);
     });
     if view.host {
         if let Some(l) = loadouts::editor(ui.ctx(), data, own, out) {
@@ -316,6 +318,7 @@ fn members_and_chat(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mu
                 for m in &view.members {
                     member(ui, view, m, &mut data.lobby_ui, out);
                 }
+                crate::pad::follow_focus(ui);
             },
         );
         ui.add_space(4.0);

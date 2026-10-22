@@ -19,6 +19,7 @@ use crate::loadouts::OwnLoadouts;
 use crate::match_prefs::{
     BotLevel, BotPersonality, KILL_LIMIT_RANGE, LIVES_RANGE, MAX_BOTS, MatchPrefs, TIME_LIMIT_RANGE,
 };
+use crate::pad::pad_choice;
 use crate::state::{UiAction, UiState};
 
 /// A level card's picture, in points (the imported thumbnails' 160 × 96,
@@ -79,6 +80,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
             ui.add_space(8.0);
             ScrollArea::vertical().id_salt("local play levels").auto_shrink([false, false]).show(ui, |ui| {
                 level_grid(ui, data, &mut p);
+                crate::pad::follow_focus(ui);
             });
         });
         ScrollArea::vertical().id_salt("local play setup").show(&mut c[1], |ui| {
@@ -93,7 +95,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
                     let names: Vec<&str> = profiles.list.iter().map(|p| p.name.as_str()).collect();
                     let shown = names.get(profiles.selected).copied().unwrap_or("-").to_string();
                     let mut selected = profiles.selected;
-                    ComboBox::from_id_salt("profile")
+                    let combo = ComboBox::from_id_salt("profile")
                         .selected_text(shown)
                         .width(COMBO_W)
                         .show_ui(ui, |ui| {
@@ -103,10 +105,15 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
                         })
                         .response
                         .labelled_by(label);
+                    let all: Vec<usize> = (0..names.len()).collect();
+                    if let Some(i) = pad_choice(ui, &combo, &all, &selected) {
+                        selected = i;
+                    }
                     profiles.selected = selected;
                 });
                 bots(ui, data, &mut p);
             });
+            crate::pad::follow_focus(ui);
         });
     });
     if let Some(l) = loadouts::editor(ui.ctx(), data, own, out) {
@@ -134,7 +141,7 @@ pub(super) fn mod_picker(ui: &mut Ui, data: &MenuData, own: &OwnLoadouts, p: &mu
         .map_or_else(|| format!("{} (missing)", p.mod_id), |m| m.name.clone());
     ui.horizontal(|ui| {
         let label = ui.label(RichText::new("Mod").strong());
-        ComboBox::from_id_salt("mod")
+        let combo = ComboBox::from_id_salt("mod")
             .selected_text(name)
             .width(260.0)
             .show_ui(ui, |ui| {
@@ -146,6 +153,12 @@ pub(super) fn mod_picker(ui: &mut Ui, data: &MenuData, own: &OwnLoadouts, p: &mu
             })
             .response
             .labelled_by(label.id);
+        let ids: Vec<&str> = data.catalog.mods.iter().map(|m| m.id.as_str()).collect();
+        if let Some(id) = pad_choice(ui, &combo, &ids, &p.mod_id.as_str())
+            && let Some(m) = data.catalog.mod_info(id)
+        {
+            p.set_mod(m, own);
+        }
     });
     if data.catalog.mods.is_empty() {
         ui.label(RichText::new("No mods: import OLX's content with `olr-cli import`.").weak());
@@ -273,7 +286,7 @@ pub(super) fn level_combo(
     id: impl std::hash::Hash + std::fmt::Debug,
     level: &mut BotLevel,
 ) {
-    ComboBox::from_id_salt(id)
+    let combo = ComboBox::from_id_salt(id)
         .selected_text(level_name(*level))
         .width(COMBO_W)
         .show_ui(ui, |ui| {
@@ -283,6 +296,9 @@ pub(super) fn level_combo(
         })
         .response
         .labelled_by(label);
+    if let Some(l) = pad_choice(ui, &combo, &BotLevel::ALL, level) {
+        *level = l;
+    }
 }
 
 /// A personality picker, labelled by `label`.
@@ -297,7 +313,7 @@ pub(super) fn personality_combo(
         BotPersonality::Chaos => "Chaos (fires everything)",
         BotPersonality::Idle => "Idle (does nothing)",
     };
-    ComboBox::from_id_salt(id)
+    let combo = ComboBox::from_id_salt(id)
         .selected_text(name(*personality))
         .width(COMBO_W)
         .show_ui(ui, |ui| {
@@ -307,6 +323,9 @@ pub(super) fn personality_combo(
         })
         .response
         .labelled_by(label);
+    if let Some(b) = pad_choice(ui, &combo, &BotPersonality::ALL, personality) {
+        *personality = b;
+    }
 }
 
 /// The bots: how many and their difficulty (each its own, the

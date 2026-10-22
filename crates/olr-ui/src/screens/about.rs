@@ -130,5 +130,6 @@ pub(super) fn show(ui: &mut Ui, data: &MenuData, out: &mut Vec<UiAction>) {
                 ui.label(RichText::new("No content imported.").weak());
             }
         });
+        crate::pad::follow_focus(ui);
     });
 }

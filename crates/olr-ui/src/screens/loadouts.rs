@@ -80,7 +80,7 @@ pub(super) fn picker(
     let list = data.catalog.mod_info(&p.mod_id).map(|m| choices(m, own)).unwrap_or_default();
     let mut edit = false;
     form_row(ui, "Loadout", |ui, label| {
-        ComboBox::from_id_salt("match loadout")
+        let combo = ComboBox::from_id_salt("match loadout")
             .selected_text(p.weapons.name.clone())
             .width(COMBO_W)
             .show_ui(ui, |ui| {
@@ -92,6 +92,12 @@ pub(super) fn picker(
             })
             .response
             .labelled_by(label);
+        let names: Vec<&str> = list.iter().map(|c| c.loadout.name.as_str()).collect();
+        if let Some(name) = crate::pad::pad_choice(ui, &combo, &names, &p.weapons.name.as_str())
+            && let Some(c) = list.iter().find(|c| c.loadout.name == name)
+        {
+            p.weapons = c.loadout.clone();
+        }
         if editable {
             let can = !list.is_empty();
             edit = ui.add_enabled(can, Button::new("Edit loadouts…")).clicked();
@@ -181,6 +187,7 @@ fn list(ui: &mut Ui, m: &ModInfo, mine: &mut OwnLoadouts, ed: &mut Editor) {
                 }
             });
         }
+        crate::pad::follow_focus(ui);
     });
     let shown = all.iter().find(|c| c.loadout.name == ed.selected).cloned();
     let own_one = shown.as_ref().is_some_and(|c| !c.shipped);
@@ -289,6 +296,7 @@ fn details(ui: &mut Ui, m: &ModInfo, mine: &mut OwnLoadouts, ed: &mut Editor) {
             for (w, on) in m.weapons.iter().zip(on.iter_mut()) {
                 ui.checkbox(on, w);
             }
+            crate::pad::follow_focus(ui);
         });
         l.weapons = m.weapons.iter().zip(&on).filter(|(_, on)| **on).map(|(w, _)| w.clone()).collect();
         form_row(ui, "Loading time", |ui, label| {
@@ -329,17 +337,20 @@ pub(super) fn bots_window(ctx: &egui::Context, data: &mut MenuData, p: &mut Matc
                 p.set_per_bot(each);
             }
         });
-        ScrollArea::vertical().id_salt("bot levels").max_height(300.0).show(ui, |ui| match &mut p.per_bot {
-            None => form_row(ui, "Difficulty", |ui, label| {
-                level_combo(ui, label, "bots window difficulty", &mut p.difficulty)
-            }),
-            Some(levels) => {
-                for (i, l) in levels.iter_mut().enumerate() {
-                    form_row(ui, &format!("Bot {}", i + 1), |ui, label| {
-                        level_combo(ui, label, ("bot", i), l)
-                    });
+        ScrollArea::vertical().id_salt("bot levels").max_height(300.0).show(ui, |ui| {
+            match &mut p.per_bot {
+                None => form_row(ui, "Difficulty", |ui, label| {
+                    level_combo(ui, label, "bots window difficulty", &mut p.difficulty)
+                }),
+                Some(levels) => {
+                    for (i, l) in levels.iter_mut().enumerate() {
+                        form_row(ui, &format!("Bot {}", i + 1), |ui, label| {
+                            level_combo(ui, label, ("bot", i), l)
+                        });
+                    }
                 }
             }
+            crate::pad::follow_focus(ui);
         });
         form_row(ui, "Personality", |ui, label| {
             personality_combo(ui, label, "personality", &mut p.personality)

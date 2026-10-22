@@ -106,6 +106,7 @@ pub(super) fn show(ui: &mut Ui, _state: &UiState, data: &mut MenuData, out: &mut
                         }
                     }
                 }
+                crate::pad::follow_focus(ui);
             });
         });
         ui.add_space(6.0);
@@ -135,5 +136,6 @@ pub(super) fn show(ui: &mut Ui, _state: &UiState, data: &mut MenuData, out: &mut
                 );
             }
         });
+        crate::pad::follow_focus(ui);
     });
 }

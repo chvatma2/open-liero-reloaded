@@ -97,6 +97,7 @@ fn list(ui: &mut Ui, p: &mut Profiles, v: &mut View) {
                 }
             });
         }
+        crate::pad::follow_focus(ui);
     });
     ui.add_space(8.0);
     ui.horizontal(|ui| {
@@ -204,5 +205,6 @@ fn skins(ui: &mut Ui, p: &mut Profiles, i: usize, search: &mut String, catalog: 
                 p.list[i].skin_id = s.id.clone();
             }
         }
+        crate::pad::follow_focus(ui);
     });
 }

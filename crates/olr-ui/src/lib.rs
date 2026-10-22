@@ -10,6 +10,7 @@ pub mod hud;
 pub mod loadouts;
 pub mod match_prefs;
 pub mod online;
+pub mod pad;
 pub mod profiles;
 pub mod replays;
 pub mod report;

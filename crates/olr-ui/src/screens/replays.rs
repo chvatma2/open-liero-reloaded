@@ -69,6 +69,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
                             }
                         },
                     );
+                    crate::pad::follow_focus(ui);
                 });
             }
         }

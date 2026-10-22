@@ -12,6 +12,7 @@ mod layout;
 mod loadouts;
 mod online;
 mod options;
+mod pad;
 mod profiles;
 mod report;
 mod state;

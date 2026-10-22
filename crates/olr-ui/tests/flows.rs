@@ -35,7 +35,7 @@ fn shipped(name: &str, weapons: &[&str], loading_time: i32) -> MatchLoadout {
     MatchLoadout { name: name.into(), weapons, loading_time, unique: false }
 }
 
-fn catalog() -> Catalog {
+pub(crate) fn catalog() -> Catalog {
     let names = |p: &[&str]| p.iter().map(|s| s.to_string()).collect();
     Catalog {
         mods: vec![
@@ -101,13 +101,13 @@ fn source(id: &str, kind: PackKind, name: &str, path: &str) -> PackSource {
 }
 
 /// The menus and what they asked the app to do.
-struct App {
-    ui: UiState,
-    data: MenuData,
-    commands: Vec<AppCommand>,
+pub(crate) struct App {
+    pub(crate) ui: UiState,
+    pub(crate) data: MenuData,
+    pub(crate) commands: Vec<AppCommand>,
 }
 
-fn harness(ui: UiState) -> Harness<'static, App> {
+pub(crate) fn harness(ui: UiState) -> Harness<'static, App> {
     harness_on(ui, catalog())
 }
 
@@ -124,7 +124,7 @@ fn harness_on(ui: UiState, catalog: Catalog) -> Harness<'static, App> {
     )
 }
 
-fn starts(app: &App) -> Vec<&olr_content::MatchOptions> {
+pub(crate) fn starts(app: &App) -> Vec<&olr_content::MatchOptions> {
     app.commands
         .iter()
         .filter_map(|c| match c {

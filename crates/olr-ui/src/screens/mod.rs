@@ -9,6 +9,9 @@
 //! in the options it first closes an open dialog), F5 restarts the game in
 //! place; a held key's repeats do neither. While the options capture a
 //! key, egui hears no key at all: the capture has it alone.
+//!
+//! Pads: `crate::pad` turns a pad's d-pad, left stick, A and B into
+//! egui's focus keys ([`MenuData::pad_events`], issue #31).
 
 pub mod about;
 mod editor;
@@ -50,6 +53,7 @@ use olr_sim::{Keys, MAX_SLOTS};
 use crate::hud::LogLine;
 use crate::hud::Results;
 use crate::online::{DownloadCacheView, InternetView, LanEntry, LobbyView};
+use crate::pad::PadNav;
 use crate::replays::ReplayFile;
 use crate::skin_preview::{PreviewKey, PreviewTextures};
 use crate::state::{Screen, UiAction, UiState};
@@ -152,6 +156,9 @@ pub struct MenuData {
     /// The update check's (issue #4): the release offered, the install's
     /// progress, the Flatpak branch; the app's.
     pub update: crate::update::UpdateData,
+    /// The menus by gamepad (issue #31): the app feeds it every pad event
+    /// and adds [`MenuData::pad_events`] to each pass's input.
+    pub pad: PadNav,
     /// A text field had the focus as the last frame ended.
     typing: bool,
     /// The weapon selection in progress.
@@ -216,6 +223,7 @@ impl MenuData {
             version: String::new(),
             report: Default::default(),
             update: Default::default(),
+            pad: PadNav::default(),
             typing: false,
             select: None,
             thumbs: BTreeMap::new(),
@@ -320,6 +328,17 @@ impl MenuData {
         self.loadout_editor.is_some() || self.bots_open
     }
 
+    /// Before a pass that draws the menus: the keys the pads pressed, for
+    /// egui's input (`PadNav::events`; none while the options capture an
+    /// input: the capture has the pad alone).
+    pub fn pad_events(&mut self, ctx: &egui::Context, state: &UiState) -> Vec<Event> {
+        if self.capture.is_some() {
+            self.pad.forget();
+            return Vec::new();
+        }
+        self.pad.events(ctx, state)
+    }
+
     /// The problems found since the last call (unreadable thumbnails, a
     /// loadout gone or changed), for the app to log once.
     pub fn take_warnings(&mut self) -> Vec<String> {
@@ -339,6 +358,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
             screen,
             Screen::Lobby | Screen::Multiplayer | Screen::Host | Screen::InGame | Screen::Report
         );
+    data.pad.begin_pass(ui.ctx());
     data.preview_wanted = None;
     data.decodes_left = THUMB_DECODES_PER_FRAME;
     if data.shown != Some(screen) {
@@ -419,6 +439,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
     if screen == Screen::Lobby {
         lobby::intercept_back(data, &mut out);
     }
+    data.pad.end_pass(ui);
     out
 }
 

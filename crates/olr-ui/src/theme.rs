@@ -18,6 +18,14 @@ pub const ACCENT: Color32 = Color32::from_rgb(255, 200, 80);
 /// A page's primary action's fill (Start): egui's selection blue.
 pub const PRIMARY: Color32 = Color32::from_rgb(0, 92, 128);
 
+/// The focused widget's ring while a gamepad leads the menus (issue #31).
+pub const FOCUS: Color32 = ACCENT;
+
+/// Rings `rect` (a focused widget's) in [`FOCUS`], just outside it.
+pub fn focus_ring(painter: &egui::Painter, rect: egui::Rect) {
+    painter.rect_stroke(rect.expand(2.0), 4.0, Stroke::new(2.0, FOCUS), egui::StrokeKind::Outside);
+}
+
 /// The frame a menu groups a section's widgets in: a panel a shade
 /// lighter than the background, with a thin border.
 pub fn section_frame() -> Frame {

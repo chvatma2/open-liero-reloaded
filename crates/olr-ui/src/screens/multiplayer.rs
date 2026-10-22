@@ -107,13 +107,15 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     ui.add_space(10.0);
     // A window too short for the tab (320 × 240 points: 4:3 at UI scale 3)
     // scrolls it, so Join stays reachable.
-    ScrollArea::vertical().id_salt("multiplayer body").auto_shrink([false, false]).show(ui, |ui| match data
-        .multiplayer
-        .tab
-    {
-        Tab::Internet => section(ui, "On the Internet", |ui, _| internet(ui, connecting, data, out)),
-        Tab::Lan => section(ui, "On this network", |ui, _| lan(ui, connecting, data, out)),
-        Tab::Direct => section(ui, "Join by address or invite", |ui, _| direct(ui, connecting, data, out)),
+    ScrollArea::vertical().id_salt("multiplayer body").auto_shrink([false, false]).show(ui, |ui| {
+        match data.multiplayer.tab {
+            Tab::Internet => section(ui, "On the Internet", |ui, _| internet(ui, connecting, data, out)),
+            Tab::Lan => section(ui, "On this network", |ui, _| lan(ui, connecting, data, out)),
+            Tab::Direct => {
+                section(ui, "Join by address or invite", |ui, _| direct(ui, connecting, data, out))
+            }
+        }
+        crate::pad::follow_focus(ui);
     });
 }
 
@@ -136,29 +138,32 @@ fn internet(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<Ui
     let mut selected = data.selected_game;
     ScrollArea::vertical().id_salt("internet games").max_height(300.0).auto_shrink([false, true]).show(
         ui,
-        |ui| match table_widths(ui, &games) {
-            Some(widths) => {
-                Grid::new("internet table").num_columns(7).striped(true).spacing(vec2(GAP, 6.0)).show(
-                    ui,
-                    |ui| {
-                        for (h, w) in HEADERS.iter().zip(widths) {
-                            cell(ui, w, |ui| ui.label(RichText::new(*h).strong()));
+        |ui| {
+            match table_widths(ui, &games) {
+                Some(widths) => {
+                    Grid::new("internet table").num_columns(7).striped(true).spacing(vec2(GAP, 6.0)).show(
+                        ui,
+                        |ui| {
+                            for (h, w) in HEADERS.iter().zip(widths) {
+                                cell(ui, w, |ui| ui.label(RichText::new(*h).strong()));
+                            }
+                            ui.end_row();
+                            for g in &games {
+                                table_row(ui, g, &widths, &mut selected);
+                            }
+                        },
+                    );
+                }
+                None => {
+                    for (i, g) in games.iter().enumerate() {
+                        if i > 0 {
+                            ui.separator();
                         }
-                        ui.end_row();
-                        for g in &games {
-                            table_row(ui, g, &widths, &mut selected);
-                        }
-                    },
-                );
-            }
-            None => {
-                for (i, g) in games.iter().enumerate() {
-                    if i > 0 {
-                        ui.separator();
+                        row(ui, g, &mut selected);
                     }
-                    row(ui, g, &mut selected);
                 }
             }
+            crate::pad::follow_focus(ui);
         },
     );
     data.selected_game = selected;
@@ -363,6 +368,7 @@ fn lan(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<UiActio
                 r.on_hover_text("Password protected: type it in Direct, then Join");
             }
         }
+        crate::pad::follow_focus(ui);
     });
 }
 

@@ -142,6 +142,7 @@ pub(super) fn show(ui: &mut Ui, _state: &UiState, data: &mut MenuData, out: &mut
                     }
                 });
             }
+            crate::pad::follow_focus(ui);
         });
     });
 }

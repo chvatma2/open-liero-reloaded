@@ -36,6 +36,7 @@ use crate::online::{
     FindingSettings, MAX_SERVERS, MAX_TURN, Region, megabytes, turn_shown, valid_relay, valid_stun,
     valid_turn,
 };
+use crate::pad::pad_choice;
 use crate::settings::{
     BLOOD_RANGE, BLOOD_STEP, FrameRate, HudArrangement, UI_SCALE_RANGE, UpscaleFilter, WindowPreset,
 };
@@ -120,7 +121,8 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
             ScrollArea::vertical().id_salt("keys options").auto_shrink([false, true]).show(ui, |ui| {
                 section(ui, "Keyboard and gamepad", |ui, _| {
                     keys::show(ui, state, &mut data.capture, &mut v.keys, out)
-                })
+                });
+                crate::pad::follow_focus(ui);
             });
         }
         Tab::Online => {
@@ -132,6 +134,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
                     ui.add_space(10.0);
                     section(ui, "Updates", |ui, _| updates(ui, state, data, &mut v, out));
                 }
+                crate::pad::follow_focus(ui);
             });
         }
     }
@@ -152,7 +155,7 @@ fn video(ui: &mut Ui, state: &UiState, view: &mut View, out: &mut Vec<UiAction>)
     // size to return to.
     form_row(ui, "Display", |ui, label| {
         let shown = if v.fullscreen { FULLSCREEN } else { v.window.label() };
-        ComboBox::from_id_salt("display")
+        let combo = ComboBox::from_id_salt("display")
             .selected_text(shown)
             .width(200.0)
             .show_ui(ui, |ui| {
@@ -168,6 +171,18 @@ fn video(ui: &mut Ui, state: &UiState, view: &mut View, out: &mut Vec<UiAction>)
             })
             .response
             .labelled_by(label);
+        // A pad's left and right: the sizes, then fullscreen (`None`).
+        let choices: Vec<Option<WindowPreset>> =
+            WindowPreset::ALL.into_iter().map(Some).chain([None]).collect();
+        let current = (!v.fullscreen).then_some(v.window);
+        match pad_choice(ui, &combo, &choices, &current) {
+            Some(Some(p)) => {
+                v.window = p;
+                v.fullscreen = false;
+            }
+            Some(None) => v.fullscreen = true,
+            None => {}
+        }
     });
     form_row(ui, "Frame rate", |ui, _| {
         ui.radio_value(&mut v.frame_rate, FrameRate::VSync, "VSync");
@@ -190,7 +205,7 @@ fn video(ui: &mut Ui, state: &UiState, view: &mut View, out: &mut Vec<UiAction>)
             .on_hover_text("How much blood you see; 0 % shows none. Only your picture changes: other players keep their own.");
     });
     form_row(ui, "HUD layout", |ui, label| {
-        ComboBox::from_id_salt("hud layout")
+        let combo = ComboBox::from_id_salt("hud layout")
             .selected_text(v.hud_layout.label())
             .width(200.0)
             .show_ui(ui, |ui| {
@@ -201,6 +216,9 @@ fn video(ui: &mut Ui, state: &UiState, view: &mut View, out: &mut Vec<UiAction>)
             .response
             .labelled_by(label)
             .on_hover_text("On a window wider than 16:9, side panels can hold the health, weapons and log.");
+        if let Some(a) = pad_choice(ui, &combo, &HudArrangement::ALL, &v.hud_layout) {
+            v.hud_layout = a;
+        }
     });
     form_row(ui, "UI scale", |ui, label| {
         let mut scale = view.scale.unwrap_or(v.ui_scale);
@@ -307,7 +325,7 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
     section(ui, "Finding games", |ui, _| {
         ui.spacing_mut().item_spacing.y = 10.0;
         form_row(ui, "Region", |ui, label| {
-            ComboBox::from_id_salt("region")
+            let combo = ComboBox::from_id_salt("region")
                 .selected_text(f.region.label())
                 .width(fit(ui, 220.0))
                 .show_ui(ui, |ui| {
@@ -318,6 +336,9 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
                 .response
                 .labelled_by(label)
                 .on_hover_text("The region your hosted games say, so players can pick a near one.");
+            if let Some(r) = pad_choice(ui, &combo, &Region::ALL, &f.region) {
+                f.region = r;
+            }
         });
         form_row(ui, "Public address", |ui, label| {
             let text = v.address.get_or_insert_with(|| f.public_address.clone());
