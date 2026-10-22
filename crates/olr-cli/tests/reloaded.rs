@@ -7,7 +7,7 @@
 //! Liero v1.0 Reloaded plays exactly as Classic (`olx-classic`) but for its
 //! name and look. On the GPU tier each plays and draws lit.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -124,13 +124,29 @@ fn liero_reloaded_is_classic_but_for_its_name_and_look() {
     let mut def = ours.def.clone();
     def.name = olx.def.name.clone();
     assert!(def == olx.def, "the compiled mod differs from Classic's");
-    assert!(ours.assets == olx.assets, "an image or sound differs from Classic's");
+    // Issue #19: Classic's images and sounds byte for byte, and glow masks
+    // beside some of them (presentation only).
+    let (masks, assets): (BTreeMap<_, _>, BTreeMap<_, _>) =
+        ours.assets.clone().into_iter().partition(|(p, _)| olr_format::mods::is_glow_mask(p.as_str()));
+    assert!(assets == olx.assets, "an image or sound differs from Classic's");
+    let masked: Vec<_> = masks.keys().map(|p| p.as_str()).collect();
+    assert_eq!(
+        masked,
+        [
+            "gfx/blaster.glow.png",
+            "gfx/flame.glow.png",
+            "gfx/mininuke.glow.png",
+            "gfx/napalm.glow.png",
+            "gfx/nuke.glow.png"
+        ]
+    );
     assert_ne!(ours.look, olx.look);
     // What a match loads: the simulation's mod, the presets, the physics.
     let content = Content::open_bundled(&packs_dir()).unwrap();
     let (a, b) = (content.load_mod(RELOADED_MOD).unwrap(), content.load_mod(CLASSIC).unwrap());
     assert!(a.sim == b.sim, "the simulation's mod differs");
     assert!(a.images == b.images && a.sounds == b.sounds);
+    assert!(b.glow.is_empty() && a.glow.len() == masks.len(), "every mask loads");
     assert_eq!((&a.restrictions, a.worm, a.rope), (&b.restrictions, b.worm, b.rope));
     assert!(b.look.is_empty() && !a.look.is_empty());
     // Issue #15: its explosion lights, the mod's small default and the

@@ -450,7 +450,8 @@ fn gfx(command: &GfxCommand) -> anyhow::Result<()> {
                 let colours = colours
                     .iter()
                     .map(|c| {
-                        olr_format::Colour::parse(c).ok()
+                        olr_format::Colour::parse(c)
+                            .ok()
                             .map(|c| c.0)
                             .with_context(|| format!("{c:?} is no #rrggbb"))
                     })

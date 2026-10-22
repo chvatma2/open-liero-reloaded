@@ -79,6 +79,18 @@ Remade OLX content is named "<Old name> Reloaded".
       the default) and RB Rampage (120 %, 5, reach 72).
     - Napalm's explosive trail (a cosmetic of its flight, no projectile's
       explosion) keeps the engine's light.
+  - Glow masks (issue #19, `gfx/<name>.glow.png`; Classic's images
+    unchanged, so the frame counts and the play are Classic's, tested):
+    the hot pixels glow whatever the darkness, the brightest fully, the
+    next at 75 % and the darkest orange at 50 %; grey shells, metal and
+    smoke stay unlit. Made with `olr-cli mod gfx glow … --colour`:
+    the Flamer's flame (its yellow core fully, `#f8dc28`, `#f4f450`,
+    `#f4e83c` and `#f8c024`; `#f8a420` and `#f8961c` at 75 %), the
+    Napalm canister's core (`#ecb400` and `#dea000` fully, `#d08c00` and
+    `#c27800` at 75 %, `#b46400` at 50 %), the Blaster's ball (the same
+    oranges but the darkest), the Mini Nuke's centre (`#ecb400`, and
+    `#d08c00` at 75 %) and the Big Nuke's top (as the Napalm's, with
+    `#a65000` at 50 %).
 
 - `olr-level-liero-factory-reloaded/`: **Liero Factory Reloaded** (issue
   #7). OLX's Liero Factory (`origin`: `Liero Factory.lxl` at `d1ad953f`)

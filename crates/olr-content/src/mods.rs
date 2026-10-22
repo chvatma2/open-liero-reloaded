@@ -116,10 +116,11 @@ pub fn check_frames(m: &SimMod) -> anyhow::Result<()> {
 
 /// Decodes the pack's PNGs: the images, and frame counts `width / height`
 /// (spec §18 D3) of those with a height. Unreadable ones are `Err` entries.
+/// Glow masks are not images (issue #19): [`LoadedMod::glow`] holds them.
 fn decode_pngs(pack: &olr_pack::ModPack) -> Vec<(String, Result<RgbaImage, String>)> {
     pack.assets
         .iter()
-        .filter(|(path, _)| path.as_str().ends_with(".png"))
+        .filter(|(path, _)| path.as_str().ends_with(".png") && !olr_format::mods::is_glow_mask(path.as_str()))
         .map(|(path, bytes)| (path.as_str().to_string(), olr_pack::image_io::decode_rgba(bytes)))
         .collect()
 }

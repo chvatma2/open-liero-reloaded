@@ -155,7 +155,10 @@ fn mod_check_lists_every_error_with_its_path() {
 fn mod_gfx_and_sfx_manage_art_and_sounds() {
     let (tmp, d) = classic_copy();
     let list = ok(&["mod", "gfx", "list", &d]);
-    assert!(list.lines().any(|l| l.starts_with("gfx/missile.png: ") && l.contains("Bazooka's shot")), "{list}");
+    assert!(
+        list.lines().any(|l| l.starts_with("gfx/missile.png: ") && l.contains("Bazooka's shot")),
+        "{list}"
+    );
     ok(&["mod", "gfx", "new", &d, "gfx/tip.png", "--side", "6", "--frames", "2"]);
     let e = fails(&["mod", "gfx", "new", &d, "gfx/tip.png"]);
     assert!(e.contains("exists"), "{e}");
@@ -176,7 +179,10 @@ fn mod_gfx_and_sfx_manage_art_and_sounds() {
     assert!(e.contains("in use by") && e.contains("Bazooka's shot"), "{e}");
     ok(&["mod", "gfx", "rename", &d, "gfx/missile.png", "gfx/rocket.png"]);
     assert!(!missile.exists() && Path::new(&d).join("gfx/rocket.glow.png").is_file());
-    assert_eq!(ok(&["mod", "get", &d, "weapons/bazooka.fire.shot.projectile.gfx.file"]), "\"gfx/rocket.png\"\n");
+    assert_eq!(
+        ok(&["mod", "get", &d, "weapons/bazooka.fire.shot.projectile.gfx.file"]),
+        "\"gfx/rocket.png\"\n"
+    );
     ok(&["mod", "gfx", "remove", &d, "gfx/tip.png"]);
     // A file replaced at another frame count says so.
     let two = tmp.path().join("two.png");
