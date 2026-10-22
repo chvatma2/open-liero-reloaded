@@ -3,7 +3,10 @@
 //! composition under `editor/` that bakes into them (plan 14a). A level may
 //! have distant (parallax) layers (issue #11), `distant/<i>.png`: they show
 //! where `back.png` is see-through (alpha 0), scrolling slower than the
-//! level; without them every back pixel is opaque, as always.
+//! level; without them every back pixel is opaque, as always. A level
+//! whose look has surface materials (issue #37, `material.md`) may have
+//! `look/surface.png` and `look/surface-back.png`: what its front and back
+//! pixels are made of, for the look only.
 
 mod composition;
 pub use composition::*;
@@ -321,7 +324,11 @@ pub(crate) fn check_distant_surfaces(src: &LevelSource) -> Result<(), FormatErro
         return Err(FormatError::invalid(
             LEVEL_FILE,
             "distant",
-            format!("{} distant surfaces for {} distant layers", src.distant_surfaces.len(), src.distant.len()),
+            format!(
+                "{} distant surfaces for {} distant layers",
+                src.distant_surfaces.len(),
+                src.distant.len()
+            ),
         ));
     }
     for (i, id) in src.distant_surfaces.iter().enumerate() {

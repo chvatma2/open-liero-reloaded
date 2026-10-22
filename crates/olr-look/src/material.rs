@@ -161,7 +161,8 @@ pub fn ramp_at(ramp: &[RampKey], temperature: u16) -> Option<(Rgb, u8)> {
         }
         let (t, span) = (i32::from(temperature - a.temperature), i32::from(b.temperature - a.temperature));
         let mix = |x: u8, y: u8| (i32::from(x) + (i32::from(y) - i32::from(x)) * t / span) as u8;
-        let colour = [mix(a.colour[0], b.colour[0]), mix(a.colour[1], b.colour[1]), mix(a.colour[2], b.colour[2])];
+        let colour =
+            [mix(a.colour[0], b.colour[0]), mix(a.colour[1], b.colour[1]), mix(a.colour[2], b.colour[2])];
         return Some((colour, mix(a.glow.min(MAX_GLOW), b.glow.min(MAX_GLOW))));
     }
     Some(at)

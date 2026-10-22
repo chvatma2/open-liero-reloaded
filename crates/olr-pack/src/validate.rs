@@ -544,6 +544,50 @@ mod tests {
         assert_eq!(d, ["warning: editor/notes.txt: not read by the format"]);
     }
 
+    /// Issue #37: the baked surface maps and the painted ones are checked:
+    /// their size, and values within the look's materials.
+    #[test]
+    fn surface_maps_are_validated() {
+        let mut fs = composed_level();
+        let mut level = olr_format::levels::read_level_files(&fs).unwrap();
+        level.look = Some(olr_format::look::LookSource {
+            materials: vec![olr_format::materials::MaterialSource {
+                id: "stone".into(),
+                name: "Stone".into(),
+                notes: String::new(),
+                heat: None,
+            }],
+            ..olr_format::look::LookSource::default()
+        });
+        level.surface =
+            Some(olr_format::levels::SurfaceMaps { world: (8, 8), front: vec![1; 64], back: vec![0; 64] });
+        olr_format::levels::write_level_files(&mut fs, &level).unwrap();
+        assert_eq!(validate(&fs), vec![]);
+        let errors = |fs: &MemFs| -> Vec<String> {
+            validate(fs).iter().filter(|d| d.severity == Severity::Error).map(|d| d.to_string()).collect()
+        };
+        let grey = |w, h, v: &[u8]| crate::image_io::encode_grey(w, h, v);
+        let e = errors(&fs.clone().with("look/surface.png", grey(4, 4, &[0; 16])));
+        assert!(e.iter().any(|e| e.contains("look/surface.png")), "{e:?}");
+        let e = errors(&fs.clone().with("look/surface-back.png", grey(8, 8, &[2; 64])));
+        assert!(e.iter().any(|e| e.contains("look/surface-back.png") && e.contains("material 2")), "{e:?}");
+        // A painted map on the base raster.
+        let mut c = olr_format::levels::read_composition_files(&fs).unwrap().unwrap();
+        c.composition.elements[0].surface = Some("stone".into());
+        c.composition.elements[0].surface_map = true;
+        c.files.insert(olr_format::levels::surface_file("base"), grey(8, 8, &[1; 64]));
+        let mut ok = fs.clone();
+        olr_format::levels::write_composition_files(&mut ok, &c).unwrap();
+        assert_eq!(validate(&ok), vec![]);
+        let e = errors(&ok.clone().with("editor/surface/base.png", grey(8, 8, &[2; 64])));
+        assert!(e.iter().any(|e| e.contains("editor/surface/base.png") && e.contains("material 2")), "{e:?}");
+        c.composition.elements[0].surface = Some("lava".into());
+        let mut bad = fs.clone();
+        olr_format::levels::write_composition_files(&mut bad, &c).unwrap();
+        let e = errors(&bad);
+        assert!(e.iter().any(|e| e.contains("elements[0].surface") && e.contains("lava")), "{e:?}");
+    }
+
     /// Deferred minors: a missing composition file is one error, not also
     /// a "not read" warning for every other `editor/` file.
     #[test]

@@ -161,7 +161,10 @@ pub fn compile_material(
         return Err(FormatError::invalid(
             file,
             &at(path, "id"),
-            format!("{:?} is not 1 to {MAX_MATERIAL_ID} bytes of [a-z0-9_-] starting with a letter or digit", m.id),
+            format!(
+                "{:?} is not 1 to {MAX_MATERIAL_ID} bytes of [a-z0-9_-] starting with a letter or digit",
+                m.id
+            ),
         ));
     }
     let chars = m.name.chars().count();
@@ -336,13 +339,18 @@ mod tests {
             (
                 "heat.look.ramp",
                 Box::new(|m| {
-                    let key = RampKeySource { temperature: 1, colour: Colour::parse("#000000").unwrap(), glow: 0 };
-                    m.heat.as_mut().unwrap().look.ramp = (0..17).map(|i| RampKeySource { temperature: 1 + i, ..key }).collect();
+                    let key =
+                        RampKeySource { temperature: 1, colour: Colour::parse("#000000").unwrap(), glow: 0 };
+                    m.heat.as_mut().unwrap().look.ramp =
+                        (0..17).map(|i| RampKeySource { temperature: 1 + i, ..key }).collect();
                 }),
             ),
             ("heat.look.ramp[0].temperature", Box::new(|m| set_ramp(m, &[(0, "#000000", 0)]))),
             ("heat.look.ramp[0].temperature", Box::new(|m| set_ramp(m, &[(1001, "#000000", 0)]))),
-            ("heat.look.ramp[1].temperature", Box::new(|m| set_ramp(m, &[(5, "#000000", 0), (5, "#000000", 0)]))),
+            (
+                "heat.look.ramp[1].temperature",
+                Box::new(|m| set_ramp(m, &[(5, "#000000", 0), (5, "#000000", 0)])),
+            ),
             ("heat.look.ramp[0].glow", Box::new(|m| set_ramp(m, &[(5, "#000000", 101)]))),
             ("heat.look.ramp[0].colour", Box::new(|m| set_ramp(m, &[(5, "#00000080", 0)]))),
         ];
@@ -368,7 +376,11 @@ mod tests {
     fn set_ramp(m: &mut MaterialSource, keys: &[(u16, &str, u8)]) {
         m.heat.as_mut().unwrap().look.ramp = keys
             .iter()
-            .map(|&(temperature, c, glow)| RampKeySource { temperature, colour: Colour::parse(c).unwrap(), glow })
+            .map(|&(temperature, c, glow)| RampKeySource {
+                temperature,
+                colour: Colour::parse(c).unwrap(),
+                glow,
+            })
             .collect();
     }
 
@@ -377,7 +389,8 @@ mod tests {
         let mut other = stone();
         other.id = "brick".into();
         compile_materials(&[stone(), other], "level.ron", "look.materials").unwrap();
-        let e = compile_materials(&[stone(), stone()], "level.ron", "look.materials").unwrap_err().to_string();
+        let e =
+            compile_materials(&[stone(), stone()], "level.ron", "look.materials").unwrap_err().to_string();
         assert!(e.contains("look.materials[1].id") && e.contains("twice"), "{e}");
         let many: Vec<MaterialSource> =
             (0..256).map(|i| MaterialSource { id: format!("m{i}"), ..stone() }).collect();
@@ -391,7 +404,8 @@ mod tests {
         let text = material_text(&stone()).unwrap();
         let e = read_material("rock.ron", &text).unwrap_err().to_string();
         assert!(e.contains("rock.ron") && e.contains("\"stone\""), "{e}");
-        for bad in ["", "(", "(id: \"stone\")", "(id: \"stone\", name: \"S\", heat: (capacity: 70000))", "[[[[[[[["]
+        for bad in
+            ["", "(", "(id: \"stone\")", "(id: \"stone\", name: \"S\", heat: (capacity: 70000))", "[[[[[[[["]
         {
             assert!(read_material("stone.ron", bad).is_err(), "{bad}");
         }

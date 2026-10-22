@@ -110,7 +110,7 @@ pub struct Element {
     /// land: a Rock or Dirt element's in `look/surface.png`, a Background
     /// element's in `look/surface-back.png`; on a mixed layer or a raster
     /// each pixel by its own collision material. A distant layer takes it
-    /// for the whole layer. Default none.
+    /// for the whole layer; an asset carries none (yet). Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<String>,
     /// Its back art's surface material: the id of one of the look's
@@ -602,9 +602,15 @@ pub fn check_surfaces(c: &Composition, look: Option<&crate::look::LookSource>) -
 /// whose look has `materials` materials, decoded: each of its element's
 /// size ([`surface_map_size`]), every value at most `materials`. The first
 /// that is not, as an error on its file.
-pub fn check_surface_maps(src: &CompositionSource, size: (u32, u32), materials: usize) -> Result<(), FormatError> {
+pub fn check_surface_maps(
+    src: &CompositionSource,
+    size: (u32, u32),
+    materials: usize,
+) -> Result<(), FormatError> {
     for e in &src.composition.elements {
-        for (file, on) in [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)] {
+        for (file, on) in
+            [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)]
+        {
             if !on {
                 continue;
             }
@@ -812,7 +818,8 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
             let field = if e.back_surface.is_some() { "back_surface" } else { "back_surface_map" };
             return Err(bad(
                 field,
-                "only an element with back art (a drawn layer with back art, a raster) has a back surface".into(),
+                "only an element with back art (a drawn layer with back art, a raster) has a back surface"
+                    .into(),
             ));
         }
         if e.is_distant() && (e.surface_map || e.back_surface_map) {
@@ -829,21 +836,22 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
         }
         // Other kinds' files are checked for sharing, and every element's
         // painted surface maps (`a.back`'s map is `a`'s back map's name).
-        let surface_maps = [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)];
+        let surface_maps =
+            [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)];
         let shared: Vec<String> = match e.kind {
-            ElementKind::Image { .. } => surface_maps.into_iter().filter(|(_, on)| *on).map(|(f, _)| f).collect(),
+            ElementKind::Image { .. } => {
+                surface_maps.into_iter().filter(|(_, on)| *on).map(|(f, _)| f).collect()
+            }
             _ => element_files(e),
         };
-        {
-            for file in shared {
-                // Ids are unique, their files need not be (`a` and `a.front`).
-                if let Some(j) = layers.insert(file.clone(), i) {
-                    return Err(bad("id", format!("{file} is used by two elements (elements[{j}])")));
-                }
-                let name = file.rsplit('/').next().unwrap_or(&file);
-                if let Some(why) = olr_vfs::non_portable(name) {
-                    return Err(bad("id", format!("{:?}: its file {file} {why}", e.id)));
-                }
+        for file in shared {
+            // Ids are unique, their files need not be (`a` and `a.front`).
+            if let Some(j) = layers.insert(file.clone(), i) {
+                return Err(bad("id", format!("{file} is used by two elements (elements[{j}])")));
+            }
+            let name = file.rsplit('/').next().unwrap_or(&file);
+            if let Some(why) = olr_vfs::non_portable(name) {
+                return Err(bad("id", format!("{:?}: its file {file} {why}", e.id)));
             }
         }
     }
@@ -1360,5 +1368,99 @@ mod tests {
         write_composition_files(&mut fs, &src).unwrap();
         let e = read_composition_files(&fs).unwrap_err().to_string();
         assert!(e.contains("editor/images/sky.png"), "{e}");
+    }
+
+    /// Issue #37: an element's surfaces name the look's materials, a back
+    /// surface needs back art, a distant layer takes no painted map, and
+    /// painted maps are the element's box (a raster's: the level) in
+    /// world pixels, valued within the materials.
+    #[test]
+    fn element_surfaces_follow_their_rules() {
+        let material = |id: &str| crate::materials::MaterialSource {
+            id: id.into(),
+            name: id.into(),
+            notes: String::new(),
+            heat: None,
+        };
+        let look = crate::look::LookSource {
+            materials: vec![material("stone"), material("wood")],
+            ..crate::look::LookSource::default()
+        };
+        let mut s = sample();
+        for e in &mut s.composition.elements {
+            e.surface = Some("stone".into());
+        }
+        check_composition(&s, (4, 3), 2).unwrap();
+        check_surfaces(&s.composition, Some(&look)).unwrap();
+        let e = check_surfaces(&s.composition, None).unwrap_err().to_string();
+        assert!(e.contains("elements[0].surface") && e.contains("stone"), "{e}");
+        s.composition.elements[2].surface = Some("lava".into());
+        let e = check_surfaces(&s.composition, Some(&look)).unwrap_err().to_string();
+        assert!(e.contains("elements[2].surface") && e.contains("lava"), "{e}");
+        s.composition.elements[2].surface = Some("Not an id".into());
+        assert!(check_composition(&s, (4, 3), 2).unwrap_err().to_string().contains("elements[2].surface"));
+        s.composition.elements[2].surface = None;
+        // A back surface: the raster and the wall (back art) take one, the
+        // picture and the plain ground do not.
+        for i in [0, 3] {
+            s.composition.elements[i].back_surface = Some("wood".into());
+        }
+        check_composition(&s, (4, 3), 2).unwrap();
+        for i in [1, 2] {
+            let mut t = s.clone();
+            t.composition.elements[i].back_surface = Some("wood".into());
+            let e = check_composition(&t, (4, 3), 2).unwrap_err().to_string();
+            assert!(e.contains(&format!("elements[{i}].back_surface")) && e.contains("back art"), "{e}");
+            t.composition.elements[i].back_surface = None;
+            t.composition.elements[i].back_surface_map = true;
+            let e = check_composition(&t, (4, 3), 2).unwrap_err().to_string();
+            assert!(e.contains(&format!("elements[{i}].back_surface_map")), "{e}");
+        }
+        // Painted maps: missing, the wrong size, a value past the look's.
+        s.composition.elements[3].surface_map = true;
+        assert!(
+            check_composition(&s, (4, 3), 2).unwrap_err().to_string().contains("surface/wall.png: missing")
+        );
+        s.files.insert(surface_file("wall"), image_io::encode_grey(6, 4, &[0; 24]));
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("6x4") && e.contains("3x2"), "{e}");
+        s.files.insert(surface_file("wall"), image_io::encode_grey(3, 2, &[0, 1, 2, 0, 0, 3]));
+        check_composition(&s, (4, 3), 2).unwrap();
+        let e = check_surface_maps(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("editor/surface/wall.png") && e.contains("material 3 at (2, 1)"), "{e}");
+        check_surface_maps(&s, (4, 3), 3).unwrap();
+        // A raster's map is the level's size, and round-trips with the rest.
+        s.composition.elements[0].back_surface_map = true;
+        s.files.insert(surface_back_file("base"), image_io::encode_grey(4, 3, &[1; 12]));
+        check_composition(&s, (4, 3), 2).unwrap();
+        let mut fs = MemFs::new();
+        write_composition_files(&mut fs, &s).unwrap();
+        assert_eq!(read_composition_files(&fs).unwrap().unwrap(), s);
+        let mut paths = composition_paths(&s);
+        paths.sort();
+        assert_eq!(paths, fs.files().map(|(p, _)| p.as_str().to_string()).collect::<Vec<_>>());
+        // `wall.back`'s map would be `wall`'s back map.
+        let mut t = s.clone();
+        t.composition.elements[3].back_surface_map = true;
+        t.files.insert(surface_back_file("wall"), image_io::encode_grey(3, 2, &[0; 6]));
+        let mut twin = t.composition.elements[1].clone();
+        twin.id = "wall.back".into();
+        twin.surface_map = true;
+        if let ElementKind::Image { mask, source, .. } = &mut twin.kind {
+            (*mask, *source) = (false, "other.png".into());
+        }
+        t.composition.elements.insert(2, twin);
+        let e = check_composition(&t, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("surface/wall.back.png") && e.contains("two elements"), "{e}");
+        // A distant layer takes one surface but no painted map.
+        let mut t = sample();
+        t.composition.elements.remove(0);
+        t.composition.elements[0].distant = Some(50);
+        t.composition.elements[0].surface = Some("stone".into());
+        check_composition(&t, (4, 3), 2).unwrap();
+        t.composition.elements[0].surface_map = true;
+        t.files.insert(surface_file("sky"), image_io::encode_grey(4, 3, &[0; 12]));
+        let e = check_composition(&t, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("one surface for the whole layer"), "{e}");
     }
 }

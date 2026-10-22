@@ -1,9 +1,7 @@
 //! Surface materials (materials design, issue #37): the ramp, the clamps,
 //! the maps.
 
-use olr_look::{
-    Heat, LAVA_RAMP, MAX_RAMP_KEYS, RampKey, SurfaceMaps, SurfaceMaterial, ramp_at,
-};
+use olr_look::{Heat, LAVA_RAMP, MAX_RAMP_KEYS, RampKey, SurfaceMaps, SurfaceMaterial, ramp_at};
 
 fn heat(ramp: Vec<RampKey>) -> Heat {
     Heat { sensitivity: 100, capacity: 100, conductivity: 100, cooling: 100, ramp, light: 100 }

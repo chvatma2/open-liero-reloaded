@@ -24,7 +24,8 @@ pub use frame::{
 };
 pub use material::{
     Heat, LAVA_RAMP, MAX_CAPACITY, MAX_CONDUCTIVITY, MAX_COOLING, MAX_GLOW, MAX_MATERIALS, MAX_RAMP_KEYS,
-    MAX_SENSITIVITY, MAX_TEMPERATURE, MIN_CAPACITY, MIN_COOLING, RampKey, SurfaceMaps, SurfaceMaterial, ramp_at,
+    MAX_SENSITIVITY, MAX_TEMPERATURE, MIN_CAPACITY, MIN_COOLING, RampKey, SurfaceMaps, SurfaceMaterial,
+    ramp_at,
 };
 
 /// An sRGB colour, as the files and the art store it.

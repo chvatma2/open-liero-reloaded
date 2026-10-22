@@ -657,4 +657,116 @@ mod tests {
             .unwrap();
         assert!(!text.contains("distant"), "{text}");
     }
+
+    /// `tiny` with a look of two materials and maps naming both.
+    fn with_surface() -> LevelSource {
+        let mut src = crate::levels::tests::tiny(1);
+        let material = |id: &str| crate::materials::MaterialSource {
+            id: id.into(),
+            name: id.into(),
+            notes: String::new(),
+            heat: None,
+        };
+        src.look = Some(crate::look::LookSource {
+            materials: vec![material("stone"), material("wood")],
+            ..crate::look::LookSource::default()
+        });
+        src.surface = Some(SurfaceMaps { world: (3, 2), front: vec![1, 0, 2, 2, 0, 1], back: vec![2; 6] });
+        src
+    }
+
+    #[test]
+    fn surface_maps_round_trip() {
+        let src = with_surface();
+        let mut a = MemFs::new();
+        write_level_files(&mut a, &src).unwrap();
+        let names: Vec<String> = a.files().map(|(p, _)| p.to_string()).collect();
+        assert_eq!(
+            names,
+            [
+                "back.png",
+                "front.png",
+                "level.ron",
+                "look/surface-back.png",
+                "look/surface.png",
+                "material.png"
+            ]
+        );
+        let mut paths = file_paths(&src);
+        paths.sort();
+        assert_eq!(paths, names);
+        assert_eq!(read_level_files(&a).unwrap(), src);
+        assert_eq!(read_level_files_lenient(&a).unwrap(), (src, Vec::new()));
+    }
+
+    #[test]
+    fn bad_surface_maps_are_errors_and_played_without() {
+        let mut fs = MemFs::new();
+        write_level_files(&mut fs, &with_surface()).unwrap();
+        let grey = |w, h, v: &[u8]| image_io::encode_grey(w, h, v);
+        let cases = [
+            // The wrong size.
+            (fs.clone().with(SURFACE_FILE, grey(2, 2, &[0; 4])), "look/surface.png"),
+            // A value past the look's two materials.
+            (fs.clone().with(SURFACE_BACK_FILE, grey(3, 2, &[0, 0, 0, 0, 3, 0])), "material 3 at (1, 1)"),
+        ];
+        for (bad, want) in cases {
+            let e = read_level_files(&bad).unwrap_err().to_string();
+            assert!(e.contains(want), "{e}");
+            let (level, warnings) = read_level_files_lenient(&bad).unwrap();
+            assert_eq!(level.surface, None);
+            assert!(warnings[0].contains("without surface materials"), "{warnings:?}");
+        }
+        // One map without the other.
+        let mut one = MemFs::new();
+        for (p, b) in fs.files().filter(|(p, _)| p.as_str() != SURFACE_BACK_FILE) {
+            one = one.with(p.as_str(), b.to_vec());
+        }
+        let e = read_level_files(&one).unwrap_err().to_string();
+        assert!(e.contains("surface-back.png") && e.contains("both"), "{e}");
+        // The writer refuses what the reader would.
+        let mut src = with_surface();
+        src.surface.as_mut().unwrap().front[0] = 3;
+        assert!(write_level_files(&mut MemFs::new(), &src).is_err());
+        src.surface = Some(SurfaceMaps::empty((2, 2)));
+        assert!(write_level_files(&mut MemFs::new(), &src).is_err());
+        // Without a look the maps name nothing, and play without.
+        let mut src = with_surface();
+        src.look = None;
+        assert!(write_level_files(&mut MemFs::new(), &src).is_err());
+    }
+
+    #[test]
+    fn distant_surfaces_round_trip_and_name_the_looks_materials() {
+        let mut src = with_distant(1);
+        src.look = with_surface().look;
+        src.distant_surfaces = vec![None, Some("wood".into())];
+        let mut fs = MemFs::new();
+        write_level_files(&mut fs, &src).unwrap();
+        let text = String::from_utf8(fs.files().find(|(p, _)| p.as_str() == "level.ron").unwrap().1.to_vec())
+            .unwrap();
+        assert!(text.contains("surface: \"wood\"") && text.matches("surface").count() == 1, "{text}");
+        assert_eq!(read_level_files(&fs).unwrap(), src);
+        // An id the look lacks: refused, and played without.
+        let unknown = text.replace("surface: \"wood\"", "surface: \"lava\"");
+        let bad = fs.clone().with("level.ron", unknown.into_bytes());
+        let e = read_level_files(&bad).unwrap_err().to_string();
+        assert!(e.contains("distant[1].surface") && e.contains("lava"), "{e}");
+        let (level, warnings) = read_level_files_lenient(&bad).unwrap();
+        assert!(level.distant_surfaces.is_empty() && level.distant.len() == 2);
+        assert!(warnings[0].contains("without surface materials"), "{warnings:?}");
+        // More surfaces than layers.
+        src.distant_surfaces.push(Some("stone".into()));
+        assert!(write_level_files(&mut MemFs::new(), &src).is_err());
+    }
+
+    #[test]
+    fn a_level_without_materials_writes_no_surface() {
+        let mut fs = MemFs::new();
+        write_level_files(&mut fs, &with_distant(1)).unwrap();
+        assert!(fs.files().all(|(p, _)| !p.as_str().contains("surface")));
+        let text = String::from_utf8(fs.files().find(|(p, _)| p.as_str() == "level.ron").unwrap().1.to_vec())
+            .unwrap();
+        assert!(!text.contains("surface") && !text.contains("materials"), "{text}");
+    }
 }
