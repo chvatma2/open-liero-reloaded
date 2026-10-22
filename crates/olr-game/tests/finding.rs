@@ -130,10 +130,11 @@ fn a_listed_server_is_joined_from_the_internet_tab() {
     let mut sh = menus(&dir, Store::in_memory(), "Anna", 1.0);
     use_relays(&mut sh, &[relay.url()]);
     sh.act(UiAction::Open(Screen::Multiplayer));
+    // Listed once the relay sent its stored games: the server's may come
+    // among them, a poll before the end of them.
     run_until("the server is listed", Duration::from_secs(15), &mut [&mut sh], Some(&mut server), |s| {
-        listed(s[0], key).is_some()
+        listed(s[0], key).is_some() && s[0].data.internet.status == InternetStatus::Listed
     });
-    assert_eq!(sh.data.internet.status, InternetStatus::Listed);
     let game = listed(&sh, key).unwrap();
     assert_eq!((game.name.as_str(), game.map.as_str()), ("Office server", "Dirt Level"));
     assert_eq!(game.region, olr_ui::Region::Europe);
