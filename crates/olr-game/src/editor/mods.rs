@@ -11,7 +11,10 @@
 //! are unsaved changes and removed on save and Close. Play (issue #18)
 //! runs the mod as it is, unsaved changes included, as an edited game
 //! (`setup::PlayMod::Edited` on an installed level); its level and bots
-//! are remembered in `MOD_PLAY_FILE`. No window: the app draws
+//! are remembered in `MOD_PLAY_FILE`. Issue #19: its import browser lists
+//! folders (`files::list`, from the home folder) and reads the file picked
+//! (`files::read_file`, at most a mod file's `MAX_ASSET_BYTES`); a sound's
+//! ▶ is the shell's (`ModOut::PlaySound`). No window: the app draws
 //! `olr_mod_editor::ui::show`.
 
 use std::collections::BTreeMap;
@@ -28,7 +31,7 @@ use olr_mod_editor::{ModAction, ModCommand, ModEditorState, PlaySettings};
 use olr_ui::AppCommand;
 
 use super::RECOVERY_INTERVAL;
-use super::files::{inside, mod_dirs};
+use super::files::{self, inside, mod_dirs};
 use super::recovery::{self, RecoveryInfo};
 use crate::setup::{EditedPlay, PlayLevel, PlayMod};
 
@@ -44,6 +47,8 @@ pub enum ModOut {
     Play(Box<EditedPlay>),
     /// Play's level or bots changed: the shell stores them.
     SavePlaySettings(PlaySettings),
+    /// The Sounds section's ▶: the shell plays the file's bytes.
+    PlaySound(Vec<u8>),
     /// The editor closed.
     Closed,
 }
@@ -150,7 +155,10 @@ impl ModHost {
             _ => return Err("not a mod editor command".into()),
         };
         let base = ModEditorState::base_of(&pack).and_then(|b| source_of(content, &b));
-        let state = ModEditorState::new(pack, base, mods.clone(), recovered)?;
+        let mut state = ModEditorState::new(pack, base, mods.clone(), recovered)?;
+        if let Some(home) = std::env::home_dir().or_else(|| std::env::current_dir().ok()) {
+            state.set_browse_dir(home);
+        }
         let mod_dirs = mods
             .iter()
             .filter_map(|(id, _)| Some((id.clone(), content?.pack_dir(id)?.to_path_buf())))
@@ -219,6 +227,24 @@ impl ModHost {
                         out.push(ModOut::Play(Box::new(EditedPlay { level, game_mod, bots })));
                     }
                     ModCommand::SavePlaySettings(s) => out.push(ModOut::SavePlaySettings(s)),
+                    ModCommand::List(dir) => {
+                        let entries = files::list(&dir).map(|list| {
+                            list.into_iter()
+                                .map(|e| olr_mod_editor::FileEntry { name: e.name, is_dir: e.is_dir })
+                                .collect()
+                        });
+                        queue.push_front(ModAction::Listed { dir, entries });
+                    }
+                    ModCommand::ReadFile { import, path } => {
+                        let max = olr_edit::mods::art::MAX_ASSET_BYTES as u64;
+                        match files::read_file(&path, max) {
+                            Ok((name, bytes)) => {
+                                queue.push_front(ModAction::FileRead { import, name, bytes })
+                            }
+                            Err(why) => queue.push_front(ModAction::Failed(why)),
+                        }
+                    }
+                    ModCommand::PlaySound { bytes, .. } => out.push(ModOut::PlaySound(bytes)),
                     ModCommand::Close => {
                         self.discard_recovery();
                         out.push(ModOut::Closed);

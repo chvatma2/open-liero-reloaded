@@ -957,13 +957,28 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   Stop (`stop_edited`, which answers `PlayEnded`), F5, a match over and
   the window's close (the match ends first) as there; a Play that does
   not load is the editor's error dialog ("The mod could not be played").
+  **Art and sounds** (issue #19; STATUS.md "Mod editor art and sounds
+  (issue #19)"): the import browser opens in the home folder
+  (`set_browse_dir`); `ModCommand::List` is `files::list` (as the level
+  editor's), `ReadFile` `files::read_file` (a regular file only, at most
+  `olr_edit::mods::art::MAX_ASSET_BYTES` by its metadata and as read),
+  `PlaySound` `ModOut::PlaySound(bytes)`: the shell's
+  `Audio::preview` (the menus' device; a sound that does not decode is
+  a warning and the editor's status). Play needs nothing new: the
+  edited pack's sounds, images, glow masks and looks load with it.
   Tests: `tests/mod_editor.rs` (a copy of Classic made,
   edited, saved and opened again with Classic's originals, Classic
   untouched; a built-in Edit refused; a recovery copy written, offered
   by the next run, recovered, removed on Save and Close; the window's
   close asking; issue #18's
   `play_runs_the_unsaved_mod_and_escape_comes_back` and
-  `closing_the_window_during_play_asks_first`) and `setup.rs`'s
+  `closing_the_window_during_play_asks_first`; issue #19's
+  `an_imported_sound_plays_in_play`: imported through the host's browser,
+  ▶, set as the bazooka's fire sound, in the match's mod, decoded by a
+  mock device and heard when fired; and
+  `a_look_light_set_in_the_editor_lights_the_level_in_play`: Classic's
+  copy unlit, the rocket's light makes the match lit and is an emitter
+  of its colour), `files`' `an_import_reads_a_bounded_regular_file` and `setup.rs`'s
   `edited_play_runs_the_unsaved_mod_on_an_installed_level`.
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the

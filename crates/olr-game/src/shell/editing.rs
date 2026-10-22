@@ -316,6 +316,16 @@ impl Shell {
                         }
                     }
                 }
+                ModOut::PlaySound(bytes) => {
+                    if let Some(audio) = &mut self.audio
+                        && let Err(why) = audio.preview(&bytes)
+                    {
+                        log::warn!("mod editor: the sound did not play: {why}");
+                        if let Some(h) = &mut self.mod_editor {
+                            h.act(vec![olr_mod_editor::ModAction::Note(format!("Not played: {why}"))]);
+                        }
+                    }
+                }
                 ModOut::Closed => self.close_mod_editor(),
             }
         }

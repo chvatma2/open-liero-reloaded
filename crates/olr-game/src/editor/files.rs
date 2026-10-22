@@ -151,6 +151,31 @@ pub fn read_image(path: &Path) -> Result<(String, Vec<u8>), String> {
     Ok((name, bytes))
 }
 
+/// File `path` for the mod editor's imports (issue #19,
+/// `ModCommand::ReadFile`): its name and bytes, at most `max`. Not a
+/// regular file (a FIFO never blocks) or above `max` by its metadata is
+/// refused before it is opened, a file that grows past it while read
+/// after; what the bytes are is the editor's check.
+pub fn read_file(path: &Path, max: u64) -> Result<(String, Vec<u8>), String> {
+    let name =
+        path.file_name().map_or_else(|| path.display().to_string(), |n| n.to_string_lossy().into_owned());
+    let meta = std::fs::metadata(path).map_err(|e| format!("{name}: {e}"))?;
+    if !meta.is_file() {
+        return Err(format!("{name} is not a file"));
+    }
+    let too_big = || format!("{name} is above {} KiB, the most a mod's file may be", max >> 10);
+    if meta.len() > max {
+        return Err(too_big());
+    }
+    let file = std::fs::File::open(path).map_err(|e| format!("{name}: {e}"))?;
+    let mut bytes = Vec::new();
+    file.take(max + 1).read_to_end(&mut bytes).map_err(|e| format!("{name}: {e}"))?;
+    if bytes.len() as u64 > max {
+        return Err(too_big());
+    }
+    Ok((name, bytes))
+}
+
 /// The longest side of the import browser's preview, in pixels.
 pub const PREVIEW_SIDE: u32 = 192;
 
@@ -366,4 +391,22 @@ pub fn list_assets(dir: &Path, builtin: bool, max: usize) -> (Vec<AssetEntry>, V
         })
         .collect();
     (entries, warnings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::read_file;
+
+    /// Issue #19: the editor's imports read at most a mod file's size, and
+    /// only regular files.
+    #[test]
+    fn an_import_reads_a_bounded_regular_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let f = tmp.path().join("a.wav");
+        std::fs::write(&f, [7u8; 100]).unwrap();
+        assert_eq!(read_file(&f, 100), Ok(("a.wav".into(), vec![7; 100])));
+        assert!(read_file(&f, 99).unwrap_err().contains("a.wav is above"));
+        assert!(read_file(tmp.path(), 100).unwrap_err().contains("is not a file"));
+        assert!(read_file(&tmp.path().join("gone.wav"), 100).is_err());
+    }
 }

@@ -5,7 +5,8 @@
 //! refused for Edit; unsaved work kept in a recovery copy and recovered;
 //! the window's close asking first; Play (issue #18) running the unsaved
 //! mod on the level and bots chosen, refused with an error, and Escape
-//! back to the editor as it was. Over the bundled content
+//! back to the editor as it was; issue #19's imported sound heard in Play
+//! and a Look light lighting it. Over the bundled content
 //! (`OLR_CONTENT_DIR`; skipped without it).
 
 use std::collections::BTreeMap;
@@ -249,4 +250,121 @@ fn closing_the_window_during_play_asks_first() {
     let s = sh.mod_editor().unwrap().state();
     assert!(!s.playing());
     assert_eq!(s.dialog(), Some(&Dialog::Unsaved));
+}
+
+/// A WAV of `n` 16-bit mono samples.
+fn wav(n: u32) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + n * 2).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    for v in [16u32.to_le_bytes(), [1, 0, 1, 0], 8000u32.to_le_bytes(), 16000u32.to_le_bytes(), [2, 0, 16, 0]]
+    {
+        b.extend_from_slice(&v);
+    }
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&(n * 2).to_le_bytes());
+    for i in 0..n {
+        b.extend_from_slice(&(((i as f32 * 0.3).sin() * 6000.0) as i16).to_le_bytes());
+    }
+    b
+}
+
+/// Ticks of the edited Play holding `keys`, each frame built.
+fn play_ticks(sh: &mut Shell, keys: olr_sim::Keys, n: usize, mut each: impl FnMut(&Shell)) {
+    let mut list = olr_scene::DrawList::new();
+    for _ in 0..n {
+        sh.tick(keys);
+        sh.play.as_mut().unwrap().session.build(1.0, &mut list);
+        each(sh);
+    }
+}
+
+/// Issue #19: a sound imported through the editor's browser (the host
+/// lists the folder and reads the file) plays from the Sounds section's ▶
+/// and, set as the bazooka's fire sound, in Play: the match's mod carries
+/// its bytes, they decode, and firing sounds it.
+#[test]
+fn an_imported_sound_plays_in_play() {
+    use olr_mod_editor::{BrowseAction as B, Import};
+    let Some((tmp, _root, mut sh)) = shell() else { return };
+    sh.act(UiAction::NewMod { from: CLASSIC.into(), name: "Loud".into() });
+    assert!(sh.mod_editor_open(), "{:?}", sh.data.editor_message);
+    let files = tmp.path().join("sounds");
+    std::fs::create_dir_all(&files).unwrap();
+    let boom = wav(800);
+    std::fs::write(files.join("Boom.wav"), &boom).unwrap();
+    std::fs::write(files.join("notes.txt"), b"not a sound").unwrap();
+    let t = Instant::now();
+    sh.mod_frame(vec![A::Import(Import::Sound), A::Browse(B::To(files.clone()))], t);
+    let s = sh.mod_editor().unwrap().state();
+    let shown: Vec<String> =
+        s.browser().expect("the browser").shown().into_iter().map(|e| e.name.clone()).collect();
+    assert_eq!(shown, ["Boom.wav"], "the host listed the folder; only sounds are offered");
+    sh.mod_frame(vec![A::Browse(B::Pick("Boom.wav".into()))], t);
+    let s = sh.mod_editor().unwrap().state();
+    assert!(s.browser().is_none() && s.dialog().is_none(), "{:?}", s.dialog());
+    assert_eq!(s.asset("sfx/boom.wav"), Some(&boom[..]), "imported as read");
+    sh.mod_frame(vec![A::PlaySound("sfx/boom.wav".into())], t);
+    assert!(!sh.mod_editor().unwrap().state().status().starts_with("Not played"));
+
+    sh.mod_frame(vec![set("weapons/bazooka.fire.sound", "\"sfx/boom.wav\""), A::PlayBots(0), A::Play], t);
+    sh.poll();
+    assert!(sh.editing_play(), "{:?}", sh.mod_editor().unwrap().state().dialog());
+    let p = sh.play.as_ref().unwrap();
+    assert_eq!(p.assets.m.sounds.get("sfx/boom.wav"), Some(&boom), "the unsaved sound plays");
+    let id = p.assets.m.sim.sounds().iter().position(|n| n == "sfx/boom.wav").expect("a sound of the mod");
+    let id = olr_sim::SoundId(u16::try_from(id).unwrap());
+    let mut device = olr_audio::Audio::<olr_audio::kira::backend::mock::MockBackend>::with_backend(
+        olr_audio::kira::backend::mock::MockBackendSettings { sample_rate: 8000 },
+    );
+    device.load(&p.assets.m, p.assets.content.core());
+    assert!(device.has_sound(id), "it decodes: {:?}", device.take_warnings());
+    // The sandbox's first weapon is the bazooka: firing sounds the import.
+    let mut heard = false;
+    play_ticks(&mut sh, olr_sim::Keys(olr_sim::Keys::FIRE), 100, |sh| {
+        let s = &sh.play.as_ref().unwrap().session;
+        heard |=
+            s.sounds().iter().any(|e| matches!(e.kind, olr_sim::EventKind::Sound { id: i, .. } if i == id));
+    });
+    assert!(heard, "the bazooka's fire played the imported sound");
+}
+
+/// Issue #19: a light set in the projectile's Look group lights the
+/// level in Play: Classic plays unlit, the copy with a light on the
+/// bazooka's rocket plays lit, and the flying rocket is a light of its
+/// colour in the frame's look.
+#[test]
+fn a_look_light_set_in_the_editor_lights_the_level_in_play() {
+    use olr_format::look::{LightSource, ProjectileLookSource, ReachSource};
+    let Some((_tmp, _root, mut sh)) = shell() else { return };
+    sh.act(UiAction::NewMod { from: CLASSIC.into(), name: "Lit".into() });
+    let t = Instant::now();
+    sh.mod_frame(vec![A::PlayBots(0), A::Play], t);
+    sh.poll();
+    assert!(sh.editing_play());
+    assert!(!sh.play.as_ref().unwrap().session.present.has_look(), "Classic's copy plays unlit");
+    sh.stop_edited();
+
+    let light = LightSource {
+        colour: olr_format::Colour(olr_data::image::Rgba::rgb(64, 255, 128)),
+        intensity: 200,
+        reach: ReachSource::Pixels(60),
+        animation: Default::default(),
+        phase_ms: None,
+    };
+    let look = Some(ProjectileLookSource { light: Some(light), ..Default::default() });
+    let path = "weapons/bazooka.fire.shot.projectile.look";
+    sh.mod_frame(vec![set(path, &olr_mod_editor::state::ron(&look)), A::Play], t);
+    sh.poll();
+    assert!(sh.editing_play(), "{:?}", sh.mod_editor().unwrap().state().dialog());
+    assert!(sh.play.as_ref().unwrap().session.present.has_look(), "the mod's look lights the match");
+    let mut lit = false;
+    play_ticks(&mut sh, olr_sim::Keys(olr_sim::Keys::FIRE), 60, |sh| {
+        let look = sh.play.as_ref().unwrap().session.present.look().expect("a lit frame");
+        // The rocket's light: green above red and blue, as #40ff80.
+        lit |=
+            look.emitters.iter().any(|e| e.colour[1] > e.colour[0] * 2.0 && e.colour[1] > e.colour[2] * 2.0);
+    });
+    assert!(lit, "the rocket is a light in the level");
 }
