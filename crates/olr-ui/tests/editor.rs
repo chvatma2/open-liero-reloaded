@@ -1,7 +1,8 @@
 //! The Editor screen (plan 14c Task 3): the level packs to edit or copy,
 //! New level, the recoveries; the Skin tab's skins to edit or copy and New
 //! blank skin (issue #14); the Mod tab's mods to edit or copy and its
-//! recoveries (issue #17); each asks the app through an `AppCommand`.
+//! recoveries (issue #17); the Material tab's material editor and its
+//! recoveries (issue #44); each asks the app through an `AppCommand`.
 
 use std::collections::BTreeSet;
 
@@ -59,6 +60,10 @@ fn harness(recoveries: Vec<(String, String, bool)>) -> Harness<'static, App> {
         BTreeSet::from(["my-mod".to_string()]),
         vec![("my-mod".into(), "My Mod".into(), false), ("broken".into(), "?".into(), true)],
     );
+    data.set_material_recoveries(vec![
+        ("basalt".into(), "Basalt".into(), false),
+        ("cracked".into(), "cracked".into(), true),
+    ]);
     let app =
         App { ui: UiState::new(Settings::default(), Profiles::default(), 1), data, commands: Vec::new() };
     Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
@@ -280,4 +285,30 @@ fn mod_commands_only_from_the_editor_screen() {
     assert_eq!(ui.update(UiAction::EditMod("a".into())), vec![AppCommand::EditMod("a".into())]);
     let new = UiAction::NewMod { from: "a".into(), name: "B".into() };
     assert_eq!(ui.update(new), vec![AppCommand::NewMod { from: "a".into(), name: "B".into() }]);
+}
+
+/// Issue #44: the Material tab offers the material recoveries and opens
+/// the material editor.
+#[test]
+fn the_material_tab_opens_the_material_editor() {
+    let mut h = harness(vec![]);
+    open_editor(&mut h);
+    h.get_by_label("Material").click();
+    h.run();
+    assert!(h.query_by_label("New level").is_none());
+    h.get_by_label("Recover Basalt").click();
+    h.run();
+    assert_eq!(h.state().commands, vec![AppCommand::RecoverMaterial("basalt".into())]);
+    h.state_mut().commands.clear();
+    h.get_by_label("cracked: damaged");
+    h.get_all_by_label("Discard").nth(1).unwrap().click();
+    h.run();
+    assert_eq!(h.state().commands, vec![AppCommand::DiscardMaterialRecovery("cracked".into())]);
+    h.state_mut().commands.clear();
+    h.get_by_label("Open the material editor").click();
+    h.run();
+    assert_eq!(h.state().commands, vec![AppCommand::OpenMaterialEditor]);
+    // Only from the Editor screen.
+    let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
+    assert!(ui.update(UiAction::OpenMaterialEditor).is_empty());
 }

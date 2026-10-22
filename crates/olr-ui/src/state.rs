@@ -317,6 +317,11 @@ pub enum UiAction {
     /// The Mod tab's Recover and Discard of a mod recovery copy.
     RecoverMod(String),
     DiscardModRecovery(String),
+    /// The Material tab (issue #44): open the material editor.
+    OpenMaterialEditor,
+    /// The Material tab's Recover and Discard of a material recovery copy.
+    RecoverMaterial(String),
+    DiscardMaterialRecovery(String),
     /// The Report screen's Send: this report, as its preview showed it.
     SendReport(Box<Report>),
     /// The Update screen's Update: install the release offered.
@@ -426,6 +431,12 @@ pub enum AppCommand {
     /// Reopen mod recovery `id` (its unsaved changes), or remove it.
     RecoverMod(String),
     DiscardModRecovery(String),
+    /// Open the material editor (issue #44) on the material library.
+    OpenMaterialEditor,
+    /// Reopen material recovery `id` (a material's unsaved changes) in the
+    /// material editor, or remove it.
+    RecoverMaterial(String),
+    DiscardMaterialRecovery(String),
     /// The Report screen opened: gather the automatic section and the
     /// logs into `MenuData::report.context` (sending nothing).
     PrepareReport,
@@ -684,7 +695,10 @@ impl UiState {
             | UiAction::EditMod(_)
             | UiAction::NewMod { .. }
             | UiAction::RecoverMod(_)
-            | UiAction::DiscardModRecovery(_) => self.editor(action),
+            | UiAction::DiscardModRecovery(_)
+            | UiAction::OpenMaterialEditor
+            | UiAction::RecoverMaterial(_)
+            | UiAction::DiscardMaterialRecovery(_) => self.editor(action),
             UiAction::Back => self.back(),
             UiAction::OpenJoin(seat) => {
                 if self.screen == Screen::LocalPlay && self.play == Play::None {
@@ -1106,6 +1120,9 @@ impl UiState {
             UiAction::NewMod { from, name } => AppCommand::NewMod { from, name },
             UiAction::RecoverMod(id) => AppCommand::RecoverMod(id),
             UiAction::DiscardModRecovery(id) => AppCommand::DiscardModRecovery(id),
+            UiAction::OpenMaterialEditor => AppCommand::OpenMaterialEditor,
+            UiAction::RecoverMaterial(id) => AppCommand::RecoverMaterial(id),
+            UiAction::DiscardMaterialRecovery(id) => AppCommand::DiscardMaterialRecovery(id),
             _ => return Vec::new(),
         }]
     }

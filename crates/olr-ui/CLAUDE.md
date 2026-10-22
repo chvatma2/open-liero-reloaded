@@ -298,8 +298,9 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   from the pad that paused only, after Esc any; the weapon selection
   deaf; repeats and the stick's margin).
 - **Editor screen** (`screens/editor.rs`, plan 14c): Main's **Editor**
-  (between Multiplayer and Profiles; `Screen::Editor`, in `MENUS`), three
-  tabs, Level, Skin (issue #14) and Mod (issue #17). Level: the
+  (between Multiplayer and Profiles; `Screen::Editor`, in `MENUS`), four
+  tabs, Level, Skin (issue #14), Mod (issue #17) and Material (issue
+  #44). Level: the
   recoveries first ("Recover <name>" and Discard; a damaged one only
   Discard), New level (a form: Name, Width and Height 1..=4096, default
   504 × 350, Theme from `Catalog::sources`' themes, `olx-theme-dirt` by
@@ -324,8 +325,13 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   editor's copies), each with Edit for the user's (`EditMod(id)`) and Edit
   a copy for any (a form: `MOD_NAME` "New mod's name", "<Name> copy",
   `CREATE_MOD`: `NewMod { from, name }`; it closes once sent); `AppCommand`s
-  of the same names; the app opens `olr-mod-editor`. Tests:
-  `tests/editor.rs`.
+  of the same names; the app opens `olr-mod-editor`. Material (issue #44):
+  the material recoveries first ("Recover <name>", Discard:
+  `RecoverMaterial`, `DiscardMaterialRecovery`;
+  `MenuData::set_material_recoveries`), then "Open the material editor"
+  (`OpenMaterialEditor`; the editor lists the materials itself);
+  `AppCommand`s of the same names; the app opens `olr-material-editor`.
+  Tests: `tests/editor.rs`.
 - **Online screens** (`online.rs`, `screens/{multiplayer,host,lobby}.rs`,
   plan 10 task 11): plain views, no networking (this crate stays free of
   `olr-net`/`olr-lobby`/`olr-discovery`; `olr-game` converts): `LobbyView`/`MemberView`
@@ -647,7 +653,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   when absent; a name that is not a plain `.ron` file of its own, or one of
   the store's own files, is refused); `recovery_dir()` (`recovery/`, the
   editor's copies); `mod_recovery_dir()` (`mod-recovery/`, the mod
-  editor's, issue #17); `textures_dir()` (`textures/`, the editor's texture
+  editor's, issue #17); `material_recovery_dir()` (`material-recovery/`,
+  the material editor's, issue #44); `textures_dir()` (`textures/`, the editor's texture
   library, plan 14e); `assets_dir()` (`assets/`, the editor's asset
   library of the user's, issue #9); `materials_dir()` (`materials/`, the
   user's surface materials beside it, issue #37).

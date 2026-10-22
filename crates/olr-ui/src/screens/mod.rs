@@ -160,6 +160,9 @@ pub struct MenuData {
     pub editable_mods: BTreeSet<String>,
     /// The mod editor's recovery copies: (id, mod name, damaged).
     pub mod_recoveries: Vec<(String, String, bool)>,
+    /// The material editor's recovery copies (issue #44): (id, material
+    /// name, damaged).
+    pub material_recoveries: Vec<(String, String, bool)>,
     /// What the app said of the editor's last command (a copy or a new
     /// level that failed), on the Editor screen.
     pub editor_message: Option<String>,
@@ -240,6 +243,7 @@ impl MenuData {
             editable_skins: BTreeSet::new(),
             editable_mods: BTreeSet::new(),
             mod_recoveries: Vec::new(),
+            material_recoveries: Vec::new(),
             editor_message: None,
             version: String::new(),
             report: Default::default(),
@@ -290,6 +294,13 @@ impl MenuData {
     pub fn set_editor_mods(&mut self, editable: BTreeSet<String>, recoveries: Vec<(String, String, bool)>) {
         self.editable_mods = editable;
         self.mod_recoveries = recoveries;
+    }
+
+    /// The material editor's recoveries (`(id, material name, damaged)`),
+    /// for the Editor screen's Material tab (the app's, whenever they
+    /// change).
+    pub fn set_material_recoveries(&mut self, recoveries: Vec<(String, String, bool)>) {
+        self.material_recoveries = recoveries;
     }
 
     /// The weapons the selection shows now, by mod id (`None` when no

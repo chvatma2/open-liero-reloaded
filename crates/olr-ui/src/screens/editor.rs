@@ -7,6 +7,8 @@
 //! for the others (a built-in or OLX skin is never changed). Mod (issue
 //! #17): the mod recoveries first, then every mod, the user's first, with
 //! Edit for theirs and Edit a copy (a new mod, named in a form) for any.
+//! Material (issue #44): the material recoveries first, then Open the
+//! material editor (its own list: the built-in materials and the user's).
 //! The app opens the editors itself (`olr-game`): this crate does not know
 //! them.
 
@@ -31,12 +33,16 @@ pub(super) enum Tab {
     Level,
     Skin,
     Mod,
+    Material,
 }
 
 /// The tabs' labels.
 pub const LEVEL_TAB: &str = "Level";
 pub const SKIN_TAB: &str = "Skin";
 pub const MOD_TAB: &str = "Mod";
+pub const MATERIAL_TAB: &str = "Material";
+/// The Material tab's button.
+pub const OPEN_MATERIAL_EDITOR: &str = "Open the material editor";
 /// The Mod tab's copy form: the new mod's name, and its button.
 pub const MOD_NAME: &str = "New mod's name";
 pub const CREATE_MOD: &str = "Create mod";
@@ -78,7 +84,12 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
         ui.add_space(6.0);
     }
     ui.horizontal(|ui| {
-        for (tab, label) in [(Tab::Level, LEVEL_TAB), (Tab::Skin, SKIN_TAB), (Tab::Mod, MOD_TAB)] {
+        for (tab, label) in [
+            (Tab::Level, LEVEL_TAB),
+            (Tab::Skin, SKIN_TAB),
+            (Tab::Mod, MOD_TAB),
+            (Tab::Material, MATERIAL_TAB),
+        ] {
             if ui.selectable_label(data.editor.tab == tab, RichText::new(label).heading()).clicked() {
                 data.editor.tab = tab;
             }
@@ -91,6 +102,10 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     }
     if data.editor.tab == Tab::Mod {
         mods(ui, data, out);
+        return;
+    }
+    if data.editor.tab == Tab::Material {
+        materials(ui, data, out);
         return;
     }
     if !data.recoveries.is_empty() {
@@ -376,4 +391,42 @@ fn mods(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     if copy.is_some() {
         data.editor.mod_copy = copy;
     }
+}
+
+/// The Material tab (issue #44): the material recoveries, then the
+/// material editor's way in (it lists the materials itself).
+fn materials(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
+    if !data.material_recoveries.is_empty() {
+        section(ui, "Unsaved changes", |ui, _| {
+            for (id, name, damaged) in &data.material_recoveries {
+                ui.horizontal(|ui| {
+                    if *damaged {
+                        ui.label(
+                            RichText::new(format!("{id}: damaged")).color(Color32::from_rgb(255, 110, 90)),
+                        );
+                    } else if ui.button(format!("Recover {name}")).clicked() {
+                        out.push(UiAction::RecoverMaterial(id.clone()));
+                    }
+                    if ui.button("Discard").clicked() {
+                        out.push(UiAction::DiscardMaterialRecovery(id.clone()));
+                    }
+                });
+            }
+        });
+        ui.add_space(10.0);
+    }
+    section(ui, "Surface materials", |ui, _| {
+        ui.label(
+            RichText::new(
+                "What a level's pixels are made of for the look: stone, wood, metal, glass… Explosions leave \
+                 the ones that take heat glowing hot. The built-in materials never change: edit a copy. \
+                 Levels keep copies of the materials they use.",
+            )
+            .weak(),
+        );
+        ui.add_space(6.0);
+        if ui.button(OPEN_MATERIAL_EDITOR).clicked() {
+            out.push(UiAction::OpenMaterialEditor);
+        }
+    });
 }
