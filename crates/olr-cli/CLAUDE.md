@@ -188,6 +188,19 @@ The headless command-line tool. Its commands:
   (get and set on a copy of Classic, refusals with their paths, the
   weapon and projectile commands, check listing several errors and a
   file that does not parse).
+- `olr-cli mod gfx list|new|import|glow|rename|remove …` and `mod sfx
+  list|import|rename|remove …` (issue #19, `olr_edit::mods::art`): `list`
+  prints `<path>: W × H, N frames[, glow on K pixels]; <users or
+  unused>` (a sound its bytes); `gfx new <pack> gfx/<name>.png [--side S]
+  [--frames N] [--copy IMAGE]`; `gfx import <pack> FILE [--as PATH]
+  [--replace]` (a replace that changes the frame count prints a `note:`:
+  play changes); `gfx glow <pack> IMAGE [--from MASK.png] [--colour
+  #rrggbb]… [--tolerance T] [--rect x,y,w,h]… [--every-frame] [--strength
+  1-255] [--clear] [--export OUT.png]` paints `gfx/<name>.glow.png`
+  (adding to it; opaque pixels only; `--every-frame` repeats a rectangle
+  in each square frame); `remove` is refused while a field names the file,
+  listing them; `rename` moves the file, its mask and its users. Test:
+  `tests/mods.rs`' `mod_gfx_and_sfx_manage_art_and_sounds`.
 - `olr-cli look-preview <pack> --at X,Y [--time MS] [--view lit|full|light] [--size WxH] [--content DIR] --out f.png`
   (plan 15a Task 13, `look_preview.rs`) draws a level's terrain alone (no
   worms) with its look at match clock `--time`, centred on `--at`, at

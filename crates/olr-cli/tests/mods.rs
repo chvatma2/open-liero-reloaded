@@ -148,3 +148,52 @@ fn mod_check_lists_every_error_with_its_path() {
     assert!(out.contains("error: weapons/rifle.ron:"), "{out}");
     assert!(fails(&["mod", "get", &d, "mod.name"]).contains("weapons/rifle.ron"));
 }
+
+/// Issue #19: `mod gfx` and `mod sfx` list, add, paint glow into, rename
+/// and remove a copy of Classic's images and sounds; a used one stays.
+#[test]
+fn mod_gfx_and_sfx_manage_art_and_sounds() {
+    let (tmp, d) = classic_copy();
+    let list = ok(&["mod", "gfx", "list", &d]);
+    assert!(list.lines().any(|l| l.starts_with("gfx/missile.png: ") && l.contains("Bazooka's shot")), "{list}");
+    ok(&["mod", "gfx", "new", &d, "gfx/tip.png", "--side", "6", "--frames", "2"]);
+    let e = fails(&["mod", "gfx", "new", &d, "gfx/tip.png"]);
+    assert!(e.contains("exists"), "{e}");
+    let missile = Path::new(&d).join("gfx/missile.png");
+    let lit = ok(&["mod", "gfx", "glow", &d, "gfx/missile.png", "--rect", "0,0,3,3", "--every-frame"]);
+    assert!(lit.contains("glow on"), "{lit}");
+    let mask = Path::new(&d).join("gfx/missile.glow.png");
+    assert!(mask.is_file(), "the mask is written beside its image");
+    let out = tmp.path().join("mask.png");
+    ok(&["mod", "gfx", "glow", &d, "gfx/missile.png", "--export", out.to_str().unwrap()]);
+    assert_eq!(std::fs::read(&out).unwrap(), std::fs::read(&mask).unwrap());
+    assert!(ok(&["mod", "check", &d]).contains("0 errors"));
+    let wrong = tmp.path().join("wrong.png");
+    std::fs::write(&wrong, olr_format::mods::encode_glow_mask((3, 3), &[255; 9])).unwrap();
+    let e = fails(&["mod", "gfx", "glow", &d, "gfx/missile.png", "--from", wrong.to_str().unwrap()]);
+    assert!(e.contains("not its image's"), "{e}");
+    let e = fails(&["mod", "gfx", "remove", &d, "gfx/missile.png"]);
+    assert!(e.contains("in use by") && e.contains("Bazooka's shot"), "{e}");
+    ok(&["mod", "gfx", "rename", &d, "gfx/missile.png", "gfx/rocket.png"]);
+    assert!(!missile.exists() && Path::new(&d).join("gfx/rocket.glow.png").is_file());
+    assert_eq!(ok(&["mod", "get", &d, "weapons/bazooka.fire.shot.projectile.gfx.file"]), "\"gfx/rocket.png\"\n");
+    ok(&["mod", "gfx", "remove", &d, "gfx/tip.png"]);
+    // A file replaced at another frame count says so.
+    let two = tmp.path().join("two.png");
+    std::fs::write(&two, olr_format::image_io::encode_rgba(&olr_data::image::RgbaImage::new(8, 4))).unwrap();
+    let r = ok(&["mod", "gfx", "import", &d, two.to_str().unwrap(), "--as", "gfx/rocket.png", "--replace"]);
+    assert!(r.contains("note:") && r.contains("has 2"), "{r}");
+    // Sounds.
+    let ogg = tmp.path().join("boom.ogg");
+    std::fs::copy(repo().join("content/packs/olx-classic/sfx/exp2.ogg"), &ogg).unwrap();
+    ok(&["mod", "sfx", "import", &d, ogg.to_str().unwrap()]);
+    assert!(ok(&["mod", "sfx", "list", &d]).contains("sfx/boom.ogg: "));
+    let text = tmp.path().join("notes.ogg");
+    std::fs::write(&text, "not a sound").unwrap();
+    assert!(fails(&["mod", "sfx", "import", &d, text.to_str().unwrap()]).contains("WAV or Ogg"));
+    let e = fails(&["mod", "sfx", "remove", &d, "sfx/bazooka.ogg"]);
+    assert!(e.contains("Bazooka's fire sound"), "{e}");
+    ok(&["mod", "sfx", "rename", &d, "sfx/boom.ogg", "sfx/bang.ogg"]);
+    ok(&["mod", "sfx", "remove", &d, "sfx/bang.ogg"]);
+    assert!(ok(&["mod", "check", &d]).contains("0 errors"));
+}

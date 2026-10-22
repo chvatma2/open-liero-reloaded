@@ -1,5 +1,6 @@
 //! `olr-cli mod …` (issue #16): the mod editor's operations for agents and
-//! tests, `olr_edit::mods`'s. Values are read and written by field path
+//! tests, `olr_edit::mods`'s; issue #19's `mod gfx` and `mod sfx`, its
+//! images, glow masks and sounds (`olr_edit::mods::art`). Values are read and written by field path
 //! (`mod.worm.gravity`, `weapons/bazooka.fire.shot.speed`); every edit
 //! loads the pack, is validated (refused with the errors it would add,
 //! each at its path), and saves through `olr_edit::pack::save`. New mods
@@ -11,7 +12,7 @@ use anyhow::{Context, bail};
 use clap::Subcommand;
 use olr_content::Content;
 use olr_data::manifest::PackKind;
-use olr_edit::mods::{self, ModError, WeaponFrom};
+use olr_edit::mods::{self, ModError, WeaponFrom, art};
 use olr_edit::pack::{self, Pack};
 
 #[derive(clap::Args)]
@@ -57,6 +58,16 @@ enum ModCommand {
     Projectile {
         #[command(subcommand)]
         command: ProjectileCommand,
+    },
+    /// The mod's images (`gfx/`) and their glow masks (issue #19).
+    Gfx {
+        #[command(subcommand)]
+        command: GfxCommand,
+    },
+    /// The mod's sounds (`sfx/`, issue #19).
+    Sfx {
+        #[command(subcommand)]
+        command: SfxCommand,
     },
     /// Every error and warning of mod packs, each with its field path;
     /// exits with status 1 if any has errors.
@@ -143,6 +154,88 @@ enum ProjectileCommand {
     },
 }
 
+#[derive(Subcommand)]
+enum GfxCommand {
+    /// Print each image: its size, frames, glow and the fields using it.
+    List { pack: PathBuf },
+    /// Add a blank image of `--frames` square frames `--side` pixels a
+    /// side, or a copy of another of the mod's images (`--copy`).
+    New {
+        pack: PathBuf,
+        /// `gfx/<name>.png`.
+        path: String,
+        #[arg(long, default_value_t = 8)]
+        side: u32,
+        #[arg(long, default_value_t = 1)]
+        frames: u32,
+        /// Copy this image (and its glow mask) instead.
+        #[arg(long)]
+        copy: Option<String>,
+    },
+    /// Add a PNG file as an image (`--as`, default `gfx/<file name>`), or
+    /// with `--replace` put it in place of an existing one (a change of its
+    /// frame count changes play, and says so).
+    Import {
+        pack: PathBuf,
+        file: PathBuf,
+        #[arg(long = "as")]
+        to: Option<String>,
+        #[arg(long)]
+        replace: bool,
+    },
+    /// Paint an image's glow mask (`gfx/<name>.glow.png`): from a greyscale
+    /// PNG of its size, pixels of a colour, or rectangles; `--clear` first
+    /// removes it; `--export` writes it as a PNG. Painting adds to the mask.
+    Glow {
+        pack: PathBuf,
+        /// The image, `gfx/<name>.png`.
+        image: String,
+        /// A greyscale PNG of the image's size: the whole mask.
+        #[arg(long)]
+        from: Option<PathBuf>,
+        /// Glow the pixels of this colour (`#rrggbb`, repeatable).
+        #[arg(long = "colour")]
+        colours: Vec<String>,
+        /// How far a colour may be from `--colour`, per channel.
+        #[arg(long, default_value_t = 0)]
+        tolerance: u8,
+        /// Glow a rectangle `x,y,w,h` of image pixels (repeatable).
+        #[arg(long = "rect")]
+        rects: Vec<String>,
+        /// The rectangles are within a frame, painted in every frame.
+        #[arg(long)]
+        every_frame: bool,
+        /// The glow painted, 1 to 255 (drawn in quarters).
+        #[arg(long, default_value_t = 255)]
+        strength: u8,
+        #[arg(long)]
+        clear: bool,
+        #[arg(long)]
+        export: Option<PathBuf>,
+    },
+    /// Rename an image (its glow mask and every field naming it follow).
+    Rename { pack: PathBuf, from: String, to: String },
+    /// Remove an unused image and its glow mask (refused while used).
+    Remove { pack: PathBuf, path: String },
+}
+
+#[derive(Subcommand)]
+enum SfxCommand {
+    /// Print each sound with its size and the fields using it.
+    List { pack: PathBuf },
+    /// Add a WAV or Ogg file as a sound (`--as`, default `sfx/<file name>`).
+    Import {
+        pack: PathBuf,
+        file: PathBuf,
+        #[arg(long = "as")]
+        to: Option<String>,
+    },
+    /// Rename a sound (every field naming it follows).
+    Rename { pack: PathBuf, from: String, to: String },
+    /// Remove an unused sound (refused while used).
+    Remove { pack: PathBuf, path: String },
+}
+
 pub fn run(args: &Args) -> anyhow::Result<bool> {
     match &args.command {
         ModCommand::Get { pack, path } => {
@@ -159,6 +252,8 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         ModCommand::Fields { pack, path } => fields(&load(pack)?, path.as_deref())?,
         ModCommand::Weapon { command } => weapon(command)?,
         ModCommand::Projectile { command } => projectile(command)?,
+        ModCommand::Gfx { command } => gfx(command)?,
+        ModCommand::Sfx { command } => sfx(command)?,
         ModCommand::Check { packs } => return Ok(check(packs)),
     }
     Ok(true)
@@ -245,6 +340,226 @@ fn projectile(command: &ProjectileCommand) -> anyhow::Result<()> {
         ProjectileCommand::Share { pack, spawn, id } => {
             let id = edit(pack, |p| mods::share(p, spawn, id.as_deref()))?;
             println!("shared {spawn}'s projectile as projectiles/{id}");
+        }
+    }
+    Ok(())
+}
+
+/// The users of `asset`, for a list: `Bazooka's shot, …` or `unused`.
+fn users_line(p: &Pack, asset: &str) -> anyhow::Result<String> {
+    let u = art::users(source(p)?, asset);
+    Ok(if u.is_empty() {
+        "unused".into()
+    } else {
+        u.iter().map(|u| u.label.as_str()).collect::<Vec<_>>().join(", ")
+    })
+}
+
+/// A file read whole, at most `MAX_ASSET_BYTES`.
+fn read_file(file: &Path) -> anyhow::Result<Vec<u8>> {
+    let len = std::fs::metadata(file).with_context(|| format!("{}", file.display()))?.len();
+    if len > art::MAX_ASSET_BYTES as u64 {
+        bail!("{}: {len} bytes, more than {}", file.display(), art::MAX_ASSET_BYTES);
+    }
+    std::fs::read(file).with_context(|| format!("{}", file.display()))
+}
+
+/// `dir` and `file`'s name: an import's default path.
+fn named(dir: &str, file: &Path, to: &Option<String>) -> anyhow::Result<String> {
+    match to {
+        Some(t) => Ok(t.clone()),
+        None => {
+            let name = file.file_name().and_then(|n| n.to_str()).context("the file has no name")?;
+            Ok(format!("{dir}{name}"))
+        }
+    }
+}
+
+fn gfx(command: &GfxCommand) -> anyhow::Result<()> {
+    match command {
+        GfxCommand::List { pack } => {
+            let p = load(pack)?;
+            for path in art::images(&p) {
+                let bytes = &p.other[&olr_vfs::VPath::new(&path)?];
+                let (w, h) = olr_format::image_io::png_size(bytes).unwrap_or((0, 0));
+                let frames = art::image_frames(bytes)
+                    .map_or_else(|e| format!("unreadable: {e}"), |n| format!("{n} frames"));
+                let glow = match art::glow(&p, &path) {
+                    Some(v) if v.iter().any(|&g| g != 0) => {
+                        format!(
+                            ", glow on {} pixels",
+                            v.iter().filter(|&&g| olr_data::skin::glow_level(g) > 0).count()
+                        )
+                    }
+                    Some(_) => String::new(),
+                    None => ", a glow mask that does not fit".into(),
+                };
+                println!("{path}: {w} × {h}, {frames}{glow}; {}", users_line(&p, &path)?);
+            }
+        }
+        GfxCommand::New { pack, path, side, frames, copy } => {
+            edit(pack, |p| {
+                let (bytes, glow) = match copy {
+                    Some(from) => {
+                        let b = p
+                            .other
+                            .get(&olr_vfs::VPath::new(from).map_err(|e| ModError::Refused(e.to_string()))?)
+                            .cloned()
+                            .ok_or_else(|| ModError::Refused(format!("no image {from}")))?;
+                        (b, art::glow(p, from))
+                    }
+                    None => (art::blank_image(*side, *frames)?, None),
+                };
+                art::import_image(p, path, &bytes)?;
+                art::set_glow(p, path, glow.as_deref())
+            })?;
+            println!("added {path}");
+        }
+        GfxCommand::Import { pack, file, to, replace } => {
+            let bytes = read_file(file)?;
+            let path = named("gfx/", file, to)?;
+            if *replace {
+                let change = edit(pack, |p| art::set_image(p, &path, &bytes))?;
+                println!("replaced {path}");
+                if change.changes_play() {
+                    println!(
+                        "note: {path} had {} frames and has {}: projectiles using it play differently (try it in Play)",
+                        change.frames_before, change.frames_after
+                    );
+                }
+            } else {
+                edit(pack, |p| art::import_image(p, &path, &bytes))?;
+                println!("added {path} ({} frames)", art::image_frames(&bytes).unwrap_or(0));
+            }
+        }
+        GfxCommand::Glow {
+            pack,
+            image,
+            from,
+            colours,
+            tolerance,
+            rects,
+            every_frame,
+            strength,
+            clear,
+            export,
+        } => {
+            let paint = from.is_some() || !colours.is_empty() || !rects.is_empty() || *clear;
+            if paint {
+                let mask = from.as_deref().map(read_file).transpose()?;
+                let colours = colours
+                    .iter()
+                    .map(|c| {
+                        olr_format::Colour::parse(c).ok()
+                            .map(|c| c.0)
+                            .with_context(|| format!("{c:?} is no #rrggbb"))
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?;
+                let rects = rects.iter().map(|r| parse_rect(r)).collect::<anyhow::Result<Vec<_>>>()?;
+                let lit = edit(pack, |p| {
+                    if let Some(m) = &mask {
+                        art::set_glow_png(p, image, m)?;
+                    }
+                    let img = p
+                        .other
+                        .get(&olr_vfs::VPath::new(image).map_err(|e| ModError::Refused(e.to_string()))?)
+                        .and_then(|b| olr_format::image_io::decode_rgba(b).ok())
+                        .ok_or_else(|| ModError::Refused(format!("no image {image}")))?;
+                    let mut v = if *clear {
+                        vec![0; img.as_raw().len() / 4]
+                    } else {
+                        art::glow(p, image).unwrap_or_default()
+                    };
+                    let (w, h) = (img.width(), img.height());
+                    v.resize((w * h) as usize, 0);
+                    let near = |a: u8, b: u8| a.abs_diff(b) <= *tolerance;
+                    for y in 0..h {
+                        for x in 0..w {
+                            let c = img.get(x, y);
+                            let by_colour =
+                                colours.iter().any(|k| near(c.r, k.r) && near(c.g, k.g) && near(c.b, k.b));
+                            let fx = if *every_frame && h > 0 { x % h } else { x };
+                            let in_rect = rects.iter().any(|&(rx, ry, rw, rh)| {
+                                fx >= rx && fx < rx.saturating_add(rw) && y >= ry && y < ry.saturating_add(rh)
+                            });
+                            if c.a != 0 && (by_colour || in_rect) {
+                                let i = (y * w + x) as usize;
+                                v[i] = v[i].max(*strength);
+                            }
+                        }
+                    }
+                    art::set_glow(p, image, Some(&v))?;
+                    Ok(v.iter().filter(|&&g| olr_data::skin::glow_level(g) > 0).count())
+                })?;
+                println!("{image}: glow on {lit} pixels");
+            }
+            if let Some(out) = export {
+                let p = load(pack)?;
+                let img =
+                    p.other.get(&olr_vfs::VPath::new(image)?).with_context(|| format!("no image {image}"))?;
+                let size = olr_format::image_io::png_size(img).context("not a PNG")?;
+                let v = art::glow(&p, image).context("its glow mask does not fit")?;
+                std::fs::write(out, olr_format::mods::encode_glow_mask(size, &v))
+                    .with_context(|| format!("{}", out.display()))?;
+                println!("wrote {}", out.display());
+            }
+            if !paint && export.is_none() {
+                bail!("give --from, --colour, --rect, --clear or --export");
+            }
+        }
+        GfxCommand::Rename { pack, from, to } => {
+            edit(pack, |p| art::rename(p, from, to))?;
+            println!("renamed {from} to {to}");
+        }
+        GfxCommand::Remove { pack, path } => {
+            if !olr_format::mods::is_image(path) {
+                bail!("{path:?} is no image (gfx/<name>.png)");
+            }
+            edit(pack, |p| art::remove(p, path))?;
+            println!("removed {path}");
+        }
+    }
+    Ok(())
+}
+
+/// `x,y,w,h`.
+fn parse_rect(r: &str) -> anyhow::Result<(u32, u32, u32, u32)> {
+    let v: Vec<u32> = r
+        .split(',')
+        .map(|n| n.trim().parse())
+        .collect::<Result<_, _>>()
+        .with_context(|| format!("{r:?} is no x,y,w,h"))?;
+    match v[..] {
+        [x, y, w, h] => Ok((x, y, w, h)),
+        _ => bail!("{r:?} is no x,y,w,h"),
+    }
+}
+
+fn sfx(command: &SfxCommand) -> anyhow::Result<()> {
+    match command {
+        SfxCommand::List { pack } => {
+            let p = load(pack)?;
+            for path in art::sounds(&p) {
+                let n = p.other[&olr_vfs::VPath::new(&path)?].len();
+                println!("{path}: {n} bytes; {}", users_line(&p, &path)?);
+            }
+        }
+        SfxCommand::Import { pack, file, to } => {
+            let bytes = read_file(file)?;
+            let path = named("sfx/", file, to)?;
+            edit(pack, |p| art::import_sound(p, &path, &bytes))?;
+            println!("added {path}");
+        }
+        SfxCommand::Rename { pack, from, to } => {
+            edit(pack, |p| art::rename(p, from, to))?;
+            println!("renamed {from} to {to}");
+        }
+        SfxCommand::Remove { pack, path } => {
+            if !path.starts_with("sfx/") {
+                bail!("{path:?} is no sound (sfx/<name>)");
+            }
+            edit(pack, |p| art::remove(p, path))?;
+            println!("removed {path}");
         }
     }
     Ok(())
