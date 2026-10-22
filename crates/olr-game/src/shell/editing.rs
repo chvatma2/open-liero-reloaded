@@ -23,6 +23,9 @@ use crate::editor::mods::{MOD_PLAY_FILE, ModHost, ModOut};
 /// The mod editor's practice level until one is chosen (issue #20): Castle
 /// Strike, the most open of OLX's levels (a wide sky over the castle).
 pub const PRACTICE_LEVEL: &str = "olx-level-castlestrike";
+/// The theme whose holes the material editor's preview carves with
+/// (issue #45): OLX's dirt theme, as most levels use.
+pub const PREVIEW_THEME: &str = "olx-theme-dirt";
 use crate::editor::skin::{SkinHost, SkinOut};
 use crate::editor::{self, CloseDecision, EditorHost, HostOut};
 
@@ -396,6 +399,14 @@ impl Shell {
             Ok(mut h) => {
                 for w in h.take_warnings() {
                     log::warn!("material editor: {w}");
+                }
+                // The preview carves as play does on the dirt theme
+                // (issue #45); without it, discs of its sizes.
+                let theme = self.content.as_ref().map(|c| c.load_theme(PREVIEW_THEME));
+                match theme {
+                    Some(Ok(t)) => h.set_holes(Some(t.stamps())),
+                    Some(Err(e)) => log::warn!("material editor: the preview's holes: {e:#}"),
+                    None => {}
                 }
                 self.data.editor_message = None;
                 self.material_editor = Some(h);

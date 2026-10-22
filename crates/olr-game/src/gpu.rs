@@ -181,6 +181,17 @@ impl Gpu {
         })
     }
 
+    /// `view` (a texture on this device, filterable) as an egui texture,
+    /// drawn smooth (issue #45: the material editor's preview).
+    pub fn register_texture(&mut self, view: &wgpu::TextureView) -> egui::TextureId {
+        self.egui.register_native_texture(self.renderer.device(), view, wgpu::FilterMode::Linear)
+    }
+
+    /// Forgets a texture [`Gpu::register_texture`] gave.
+    pub fn free_texture(&mut self, id: egui::TextureId) {
+        self.egui.free_texture(&id);
+    }
+
     /// Draws to `window` from now on, a window made again (`app.rs`,
     /// `window::Plan::Recreate`): a new surface on the same instance,
     /// adapter and device, so the renderer, its textures and egui's stay.

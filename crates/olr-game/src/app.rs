@@ -32,6 +32,7 @@ use crate::autoplay::{self, Autoplay, Effect, Seen};
 use crate::clock::TickClock;
 use crate::editor::HostOut;
 use crate::editor::canvas::{Canvas, CanvasView};
+use crate::editor::heat_preview::MAX_FRAME_MS;
 use crate::gpu::{Gpu, OverlayPaint};
 use crate::hud::{MinimapTexture, ScoreKey};
 use crate::latency::Latency;
@@ -48,6 +49,7 @@ use crate::window::{self, Plan, Requests, Shape};
 
 mod handler;
 mod menus;
+mod preview;
 
 /// How often changed settings are written (`Shell::flush`).
 const FLUSH_INTERVAL: Duration = Duration::from_secs(1);
@@ -166,6 +168,8 @@ pub struct App {
     /// The canvas's map goes up whole on the next draw (a new document, or
     /// the renderer's terrain was a game's).
     canvas_full: bool,
+    /// The material editor's live heat preview while it is open (issue #45).
+    material_preview: Option<preview::MaterialPreview>,
     /// The window's close waits for the editor's answer (`CloseDecision::Wait`).
     quit_after_close: bool,
     /// The renderer's warnings logged so far (each once).
@@ -411,6 +415,7 @@ impl App {
             canvas: Canvas::new(),
             canvas_list: None,
             canvas_full: true,
+            material_preview: None,
             quit_after_close: false,
             logged: std::collections::BTreeSet::new(),
             egui,
@@ -1050,6 +1055,9 @@ impl App {
             let [x, y, _, h] = playfield(size);
             egui::pos2(x as f32 / ppp, (y + h) as f32 / ppp)
         };
+        // The material editor's preview (issue #45): made as it opens, its
+        // picture in the panel; gone once it closed.
+        preview::sync(&mut self.material_preview, &mut w.gpu, self.shell.material_editor.as_mut());
         let (ui_state, data, mut editor) = (&self.shell.ui, &mut self.shell.data, self.shell.editor.as_mut());
         let mut skin_editor = self.shell.skin_editor.as_mut();
         let skinning = skin_editor.is_some();
@@ -1057,6 +1065,7 @@ impl App {
         let modding = mod_editor.is_some();
         let mut material_editor = self.shell.material_editor.as_mut();
         let materials = material_editor.is_some();
+        let mut materials_shown = false;
         let menus = self.cfg.menus;
         // The menus by pad (issue #31): its keys before the pass, as the
         // window's; the editors hear none.
@@ -1087,6 +1096,7 @@ impl App {
                 // The material editor (issue #44) likewise.
                 let (state, data) = h.parts();
                 material_actions = olr_material_editor::ui::show(ui, state, data);
+                materials_shown = true;
             } else if let Some(h) = editor.as_deref_mut().filter(|_| editing) {
                 let (state, data) = h.parts();
                 editor_actions = olr_editor::ui::show(ui, state, data);
@@ -1108,6 +1118,16 @@ impl App {
         }
         if materials {
             self.shell.material_frame(material_actions, now);
+            // Its preview steps and draws only while it shows (issue #45):
+            // a frame's time, at most `MAX_FRAME_MS` (a stall or a hidden
+            // stretch is not caught up).
+            let ms = (elapsed * 1000.0).round().clamp(0.0, f64::from(MAX_FRAME_MS)) as u32;
+            let host = self.shell.material_editor.as_mut();
+            for warning in preview::frame(&mut self.material_preview, host, materials_shown, ms) {
+                if self.logged.len() < MAX_LOGGED && self.logged.insert(warning.clone()) {
+                    log::warn!("material preview: {warning}");
+                }
+            }
         }
         // The canvas's map is not kept while the editor is closed or its Play
         // runs (the session has its own); it is made again on return.

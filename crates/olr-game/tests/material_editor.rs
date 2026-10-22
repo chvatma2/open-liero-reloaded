@@ -201,6 +201,38 @@ fn the_users_folder_is_never_the_built_in_one() {
     assert!(MaterialHost::open(&AppCommand::OpenMaterialEditor, Some(&d.builtin), &d.builtin, None).is_err());
 }
 
+/// The preview's commands (issue #45) wait for the app, in order and
+/// bounded; nothing else answers them.
+#[test]
+fn the_previews_commands_wait_for_the_app() {
+    use olr_game::editor::material::MAX_PREVIEW_COMMANDS;
+    use olr_material_editor::{BlastSize, PreviewAction as P, PreviewCommand as PC, TimeScale};
+    let d = dirs();
+    let mut h = open(&d, &AppCommand::OpenMaterialEditor);
+    assert!(h.take_preview().is_empty());
+    let out = h.act(vec![
+        A::Preview(P::Blast([3, 4])),
+        A::Preview(P::Scale(TimeScale::Four)),
+        A::Preview(P::Compare(Some(Key::builtin("stone")))),
+        A::Preview(P::Restart),
+    ]);
+    assert!(out.is_empty());
+    assert_eq!(
+        h.take_preview(),
+        [
+            PC::Blast { at: [3, 4], size: BlastSize::Bazooka },
+            PC::TimeScale(4),
+            PC::SetCompare(Some(new_material("stone", "Stone"))),
+            PC::Restart,
+        ]
+    );
+    assert!(h.take_preview().is_empty(), "taken once");
+    // An app that never takes them keeps a bounded few.
+    h.act((0..MAX_PREVIEW_COMMANDS + 10).map(|_| A::Preview(P::Restart)).collect());
+    assert_eq!(h.take_preview().len(), MAX_PREVIEW_COMMANDS);
+    assert!(files(&d.user).is_empty(), "the preview writes nothing");
+}
+
 fn content() -> Option<PathBuf> {
     let dir = PathBuf::from(std::env::var_os("OLR_CONTENT_DIR")?);
     dir.is_dir().then_some(dir)
@@ -227,6 +259,8 @@ fn the_material_tab_opens_the_editor_on_the_bundled_materials() {
     sh.act(UiAction::OpenMaterialEditor);
     assert!(sh.material_editor_open(), "{:?}", sh.data.editor_message);
     let h = sh.material_editor().unwrap();
+    // The preview carves with the dirt theme's holes (issue #45).
+    assert_eq!(h.holes().map(Vec::len), Some(5));
     let builtin: Vec<&str> =
         h.state().library().iter().filter(|e| e.builtin).map(|e| e.material.id.as_str()).collect();
     for id in ["stone", "wood", "metal", "glass"] {

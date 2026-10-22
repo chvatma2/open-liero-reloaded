@@ -22,6 +22,7 @@ use olr_format::materials::{MaterialSource, material_file, material_text, valid_
 use olr_format::ron_io::{MAX_RON_BYTES, from_canonical, to_canonical};
 use olr_material_editor::ui::{MaterialEditorData, PreviewImage};
 use olr_material_editor::{MaterialAction, MaterialCommand, MaterialEditorState, PreviewCommand};
+use olr_terrain::Stamp;
 use olr_ui::AppCommand;
 
 use super::RECOVERY_INTERVAL;
@@ -53,6 +54,9 @@ pub struct MaterialHost {
     warnings: Vec<String>,
     /// The preview's commands since the app last took them (issue #45).
     preview: Vec<PreviewCommand>,
+    /// The holes the preview carves with (the dirt theme's; none: its own
+    /// discs).
+    holes: Option<Vec<Stamp>>,
 }
 
 /// The most preview commands kept for the app (a frame asks one or two).
@@ -174,6 +178,7 @@ impl MaterialHost {
             written,
             warnings,
             preview: Vec::new(),
+            holes: None,
         })
     }
 
@@ -195,6 +200,15 @@ impl MaterialHost {
     /// needs a graphics device).
     pub fn set_preview(&mut self, image: Option<PreviewImage>) {
         self.data.set_preview(image);
+    }
+
+    /// The holes the preview carves with (the content's dirt theme's).
+    pub fn set_holes(&mut self, holes: Option<Vec<Stamp>>) {
+        self.holes = holes;
+    }
+
+    pub fn holes(&self) -> Option<&Vec<Stamp>> {
+        self.holes.as_ref()
     }
 
     /// The preview's commands since the last call, in order, for the app's
