@@ -4660,13 +4660,15 @@ sandbox with existing settings. As built:
   chosen Castle Strike (`olx-level-castlestrike`, OLX's most open: a
   wide sky), else Play's level.
 
-## Split screen (issues #26 to #31)
+## Split screen (issues #26 to #32)
 
 Local split screen for 2 to 4 players (OLX's fork: up to four,
 `docs/porting/olx-notes/presentation.md` §1.1; `CClient.cpp:1527-1551`,
 `1653-1744`; `CClient_Draw.cpp:561-609`). Issue #26 is its first part:
 the renderer draws several views in one frame; issue #27 the second: a
-camera per view and the nearest listener. As built:
+camera per view and the nearest listener; issue #32 the last: joining
+in the menus. Done: 1 to 4 local players join local play from their own
+seats and play it split. As built:
 
 - **The fair view** (the maintainer's ruling, a deliberate deviation):
   every local player sees the same area of the level as a solo player,
@@ -4731,8 +4733,8 @@ camera per view and the nearest listener. As built:
   reload bar and rope throws heard, as OLX's local worms each with its
   own viewport and counters (`CClient.cpp:1527-1551`, `1653-1744`;
   `CClient_Draw.cpp:561-609`). Among several, player `k` sits on
-  keyboard 1 (with the mouse), keyboard 2, pad 0 or pad 1 (`players::SEATS`)
-  until the menus seat players (#31); each seat hears only its own
+  keyboard 1 (with the mouse), keyboard 2, pad 0 or pad 1 (`players::SEATS`;
+  from the menus, the join step's seats: #32 below); each seat hears only its own
   devices, so one player's keys never reach another's worm. `olr --mode
   deathmatch --locals N` plays one (the humans worms 0 to N-1), and
   `olr-cli match --locals N` one with scripted keys for tests. Replays
@@ -4780,9 +4782,32 @@ camera per view and the nearest listener. As built:
   menus while a match runs or on the weapon selection (the game's keys
   drive it, a pad's too); the pause menu and its options hear only the
   pad whose Start paused (any pad after Esc). The editors take no pad.
-- **Not yet built:** joining by pad (#32); the weapon
-  selection, the pause menu and the results stay centred over the solo
-  playfield's place. `olr-cli gpu-bench
+- **Joining** (issue #32, `olr_ui::join`, a deviation: OLX sets its
+  local players up in its player menu before a game, presentation note
+  §1.1; the routing is still OLX's, a worm per seat,
+  `CClient.cpp:1527-1551`): local play's Start opens a join step
+  ("Players") only once two or more seats were used in this run (a
+  bound key of each keyboard or a pad's button pressed); otherwise it
+  starts at once, so a solo player sees nothing new. The seat that
+  pressed Start is in; any other joins by pressing a button of its own,
+  steps through the profiles no other player has (or "Player N") with
+  left and right, readies with Fire, Jump or Start and leaves with Rope
+  or Dig; the match starts when every player is ready (or by the mouse's
+  Start), bots filling the rest. Each seat's own keys drive only its own
+  card, and the mouse only keyboard 1's. Keyboard 1 is always the first
+  local player (its view the first), so mouse controls and the pointer
+  kept in that view need nothing new; a lineup without keyboard 1 has
+  no mouse controls. Every player chooses its weapons at once, each in a
+  panel over its own view with its own keys (the mouse in keyboard 1's);
+  the last Done arms them all. The pause menu hears the joined pad whose
+  Start paused it (an unjoined pad's Start does not pause). *Unplugged*:
+  a joined pad's worm stands still (its keys released); the same pad
+  back, or another with its gilrs UUID, takes the seat back, else the
+  first pad no player has that presses a button (that press does
+  nothing else). F5's rematch and the results' keep the lineup; leaving
+  the match clears it.
+- **Not yet built:** the pause menu and the results stay centred over
+  the solo playfield's place (they are everyone's). `olr-cli gpu-bench
   --views N` lays its views out in halves (top and bottom) or quarters
   for the measurement only.
 
