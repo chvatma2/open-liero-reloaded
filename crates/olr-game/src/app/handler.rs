@@ -24,7 +24,7 @@ impl ApplicationHandler for App {
         if let WindowEvent::ModifiersChanged(m) = &event {
             self.modifiers = m.state();
         }
-        let capturing = self.shell.data.capture.is_some();
+        let capturing = self.shell.data.capture.as_ref().map(|c| c.device());
         if let Some(w) = &mut self.win
             && super::egui_hears(&event, capturing)
         {

@@ -253,8 +253,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   keeps the file's values for them until the player changes them in the
   options. Volumes: `master * sfx` to the menus' or the game's
   `Audio::set_volume` at once (`Shell::volume`). While the options capture
-  a key, the app feeds `MenuData::capture` every window and gilrs event,
-  and egui hears no key (`app::egui_hears`).
+  an input, the app feeds `MenuData::capture` every window and gilrs event,
+  and egui hears no key, nor while it is a mouse input (issue #25) a
+  mouse button or the wheel (`app::egui_hears`).
 - **Mouse cursor** (the user's note, 2026-10-19): hidden while a match
   plays with nothing open (`app::cursor_hidden`: the game has the screen,
   not the editor's Play with its Stop button, not the in-game chat), by

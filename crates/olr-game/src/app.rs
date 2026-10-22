@@ -229,11 +229,19 @@ pub struct App {
 }
 
 /// Whether egui hears window event `event`: not a key while the options
-/// capture one (`capturing`), so the captured key is the capture's alone
-/// (Space would also press the focused button, Tab move the focus).
-pub fn egui_hears(event: &winit::event::WindowEvent, capturing: bool) -> bool {
+/// capture an input (`capturing`: of that device), so the captured key is
+/// the capture's alone (Space would also press the focused button, Tab
+/// move the focus); nor a mouse button or the wheel while they capture a
+/// mouse input (issue #25: the click would also press what is under it).
+pub fn egui_hears(event: &winit::event::WindowEvent, capturing: Option<olr_input::Device>) -> bool {
     use winit::event::WindowEvent as E;
-    !(capturing && matches!(event, E::KeyboardInput { .. } | E::Ime(_)))
+    let key = matches!(event, E::KeyboardInput { .. } | E::Ime(_));
+    let mouse = matches!(event, E::MouseInput { .. } | E::MouseWheel { .. });
+    match capturing {
+        None => true,
+        Some(olr_input::Device::Mouse) => !key && !mouse,
+        Some(_) => !key,
+    }
 }
 
 /// Whether egui-winit swallowed a paste (plan 14e batch C review):
@@ -1406,8 +1414,6 @@ mod tests {
         assert!((dt - frame as f32).abs() < 1e-5, "stable_dt {dt}, the frame {frame}");
     }
 
-    /// While the options capture a key, egui hears no key or text: the
-    /// capture has it alone. Other events still reach egui.
     #[test]
     fn a_swallowed_paste_is_given_back() {
         // Ctrl+V pressed and egui-winit added nothing: its clipboard had no text.
@@ -1419,12 +1425,27 @@ mod tests {
         assert!(!super::paste_swallowed(true, true, false, false));
     }
 
+    /// While the options capture an input, egui hears no key or text, and
+    /// while they capture a mouse input no click: the capture has it
+    /// alone. Other events still reach egui.
     #[test]
     fn egui_hears_no_key_while_capturing() {
+        use olr_input::Device;
+        use winit::event::{DeviceId, ElementState, MouseButton};
         let text = WindowEvent::Ime(Ime::Commit(" ".into()));
-        assert!(super::egui_hears(&text, false));
-        assert!(!super::egui_hears(&text, true));
-        assert!(super::egui_hears(&WindowEvent::Focused(true), true));
+        assert!(super::egui_hears(&text, None));
+        assert!(!super::egui_hears(&text, Some(Device::Keyboard)));
+        assert!(!super::egui_hears(&text, Some(Device::Mouse)));
+        assert!(super::egui_hears(&WindowEvent::Focused(true), Some(Device::Keyboard)));
+        // Issue #25: a mouse capture takes the click; a key capture does not.
+        let click = WindowEvent::MouseInput {
+            device_id: DeviceId::dummy(),
+            state: ElementState::Pressed,
+            button: MouseButton::Left,
+        };
+        assert!(super::egui_hears(&click, Some(Device::Gamepad)));
+        assert!(!super::egui_hears(&click, Some(Device::Mouse)));
+        assert!(super::egui_hears(&WindowEvent::Focused(true), Some(Device::Mouse)));
     }
 
     /// The game is drawn in the window's 16:9 frame above the HUD bar: on
