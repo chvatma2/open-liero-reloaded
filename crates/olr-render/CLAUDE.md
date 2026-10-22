@@ -75,7 +75,9 @@ on screen or offscreen.
   (`look_none_draws_todays_bytes`, the goldens). Tests (GPU):
   `distant_layers_scroll_by_their_depth`,
   `distant_layers_take_light_by_their_depth`; `frame.rs`'s
-  `distant_quads_snap_to_texels_and_clip_to_the_level`.
+  `distant_quads_snap_to_texels_and_clip_to_the_level` (and
+  `distant_origin`, where the quad's top-left lies in the world: issue
+  #41's heat placement). Issue #41: a layer may heat (Heat, below).
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel
   (`MIN_SCALE` 2, OLX's sprite art, or the level's art scale if larger:
@@ -341,6 +343,43 @@ on screen or offscreen.
   `stepping_n_ticks_at_once_equals_n_single_steps`,
   `hostile_values_stay_bounded`, `a_reset_or_a_new_level_clears_the_heat`;
   `heat.rs`'s unit tests (boxes, bounds, tables).
+  **Distant layers** (issue #41, the spec's "Distant layers: the ball"):
+  `set_distant_surface(&[u8])` (each layer's material value in
+  `set_surface`'s materials, 0 none) before `set_distant`, which, lit with
+  the terrain up, gives a layer whose material heats and that
+  `MAX_HEAT_RADIUS` reaches at its `z` (`layer_heats`: `depth ×
+  olr_look::engine::HEAT_DEPTH_PX` < 64; depth 58 at most) a
+  `HeatTextures` of its own at its world size (art ÷ the level's art
+  scale): the level's table, surface texels its material front and back
+  where its image covers (`layer_texels`), a solid map all background, so
+  it takes `BACK_HEAT` (it lies behind the explosion) and cools as faced
+  by the air; no conduction to the level or between layers (`set_lighting`
+  remakes them, `upload_terrain` resets them; `set_surface` with maps
+  naming nothing keeps the table for them). `deposit_heat_seen(deposit,
+  &[HeatView { view, camera }])` (`HeatView::of(&DrawList)`) is
+  `deposit_heat` plus each heated layer's `olr_look::engine::heat_slice`
+  (radius `sqrt(R² − z²)`, amount `× (1 − z²/R²)`, none when `z ≥ R`),
+  centred on the layer pixel drawn behind the deposit by the view nearest
+  it (`nearest`: the distance to its rectangle, the first of those as
+  near): the deposit less `frame::distant_origin` (the rounded texel
+  placement `distant_instance` draws) of that view's `WorldFrame` and the
+  layer's `position(camera)`; no views, no slices. The heat then stays in
+  the layer's texture and moves with it in every view. Each layer steps
+  on the same clock (`advance_heat`, `reset_heat`, `run_heat`, the
+  frame's heat passes after the level's; `heat_waiting` and
+  `heat_behind` the most of any; `has_heat` and `heat_active` any;
+  `distant_heat_texture(i)`, `i` in `set_distant`'s list). Look: the lit
+  distant pipeline binds the look (group 2) and the layer's heat look
+  (group 3, or `none`); `fs_distant_lit` mixes the ramp colour over its
+  art by the glow and takes the glow as self-light (cold: the same bytes).
+  It casts no light: the emission reads only the level's heat (a layer's
+  placement differs per view, the glow light is one a frame). Tests
+  (GPU): `a_near_layer_takes_a_smaller_circle_than_the_plane`,
+  `a_layer_beyond_the_largest_radius_has_no_texture`,
+  `the_spot_moves_with_the_layer_as_the_camera_pans`,
+  `with_two_views_the_nearest_views_camera_places_it`,
+  `a_hot_layer_adds_no_glow_light`; unit:
+  `distant_layers_pick_their_view_reach_and_texels`.
 - **Atlas** (`atlas.rs`): shelf packing, tallest first, ties by id
   (deterministic); texel (0, 0) is white. An image too large for the
   device is left out with a warning (`warnings()`), and any id the layout

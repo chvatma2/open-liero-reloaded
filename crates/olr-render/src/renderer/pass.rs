@@ -223,16 +223,20 @@ impl Renderer {
         // Heat (issue #39), once a frame whatever the views, before the
         // world pass reads it: the deposits and steps the match time asked
         // for since the last frame; nothing while nothing is hot. The first
-        // heat pass then starts the frame's slot 0.
+        // heat pass then starts the frame's slot 0. Issue #41: the distant
+        // layers' heat after the level's.
         let mut heat_first = false;
-        if let Some(state) = self.look.as_mut().filter(|_| lit)
-            && let Some(h) = state.textures.as_mut().and_then(|t| t.heat.as_mut())
-        {
-            h.prepare(&self.queue);
-            heat_first = !h.sim.ops.is_empty();
-            h.encode(&mut encoder, &state.heat, |first| {
-                stamp(PassGroup::Heat, (first && !views.is_empty()).then_some(0), None)
-            });
+        if let Some(state) = self.look.as_mut().filter(|_| lit) {
+            let level = state.textures.as_mut().and_then(|t| t.heat.as_mut());
+            let layers = self.distant.iter_mut().filter_map(|d| d.heat.as_mut());
+            for h in level.into_iter().chain(layers) {
+                h.prepare(&self.queue);
+                let started = heat_first;
+                heat_first |= !h.sim.ops.is_empty();
+                h.encode(&mut encoder, &state.heat, |first| {
+                    stamp(PassGroup::Heat, (first && !started && !views.is_empty()).then_some(0), None)
+                });
+            }
         }
         let heat_on = lit
             && self.look.as_ref().and_then(|l| l.textures.as_ref()?.heat.as_ref()).is_some_and(|h| h.on());
@@ -260,10 +264,15 @@ impl Renderer {
             // A see-through terrain (a level with distant layers, issue
             // #11): the terrain opaque, the layers far to near, then the
             // terrain over them; any other, the terrain alone, as always.
-            let distant = |pass: &mut wgpu::RenderPass, pipeline| {
+            // Lit, each layer's heat look (issue #41) at group 3, or none.
+            let distant = |pass: &mut wgpu::RenderPass, pipeline, none: Option<&wgpu::BindGroup>| {
                 pass.set_pipeline(pipeline);
                 for &(k, i) in &self.distant_draws[plan.distant.clone()] {
-                    pass.set_bind_group(1, &self.distant[k].bind, &[]);
+                    let d = &self.distant[k];
+                    pass.set_bind_group(1, &d.bind, &[]);
+                    if let Some(none) = none {
+                        pass.set_bind_group(3, d.heat.as_ref().map_or(none, |h| &h.look_bind), &[]);
+                    }
                     pass.draw(0..4, i..i + 1);
                 }
             };
@@ -278,7 +287,7 @@ impl Renderer {
                             pass.set_bind_group(2, &tex.terrain_bind, &[]);
                             pass.set_bind_group(3, heat, &[]);
                             pass.draw(0..4, quad.clone());
-                            distant(&mut pass, &state.distant_pipeline);
+                            distant(&mut pass, &state.distant_pipeline, Some(&state.heat.none));
                         }
                         pass.set_pipeline(&state.terrain_pipeline);
                         pass.set_bind_group(1, &t.bind, &[]);
@@ -292,7 +301,7 @@ impl Renderer {
                         pass.set_pipeline(&self.backing_pipeline);
                         pass.set_bind_group(1, &t.bind, &[]);
                         pass.draw(0..4, quad.clone());
-                        distant(&mut pass, &self.distant_pipeline);
+                        distant(&mut pass, &self.distant_pipeline, None);
                     }
                     pass.set_pipeline(&self.world_pipeline);
                     pass.set_bind_group(1, &t.bind, &[]);

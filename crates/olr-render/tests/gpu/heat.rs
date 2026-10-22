@@ -2,7 +2,7 @@
 
 use olr_look::{Heat, LookFrame, RampKey, SurfaceMaps, SurfaceMaterial, ViewMode};
 use olr_render::{
-    BACK_HEAT, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer,
+    BACK_HEAT, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer,
 };
 
 use super::*;
@@ -505,4 +505,216 @@ fn a_reset_or_a_new_level_clears_the_heat() {
     r.upload_terrain(&map());
     assert!(temps(&gpu, &r).iter().all(|&v| v == 0.0), "a new level");
     assert!(!r.heat_active());
+}
+
+/// Issue #41: a texture's temperatures (degrees) and its width.
+fn layer_temps(gpu: &Offscreen, t: &wgpu::Texture) -> (usize, Vec<f32>) {
+    let bytes = gpu.read_bytes(t);
+    let t = bytes.as_chunks::<2>().0.iter().map(|b| f32::from(u16::from_le_bytes(*b)) / HEAT_SCALE);
+    (t.len() / 90, t.collect())
+}
+
+/// Issue #41: [`see_through`]'s open level, lit, with `materials`, the
+/// level's back all `back` (none for 0), and white distant layers of the
+/// level's size at `depths`, each of `values`' material.
+fn layered(
+    gpu: &Offscreen,
+    materials: &[SurfaceMaterial],
+    back: u8,
+    depths: &[u8],
+    values: &[u8],
+) -> Renderer {
+    let mut r = lit(gpu);
+    let mut m = SurfaceMaps::empty((120, 90));
+    m.back.iter_mut().for_each(|v| *v = back);
+    r.set_surface(materials, Some(&m));
+    r.set_distant_surface(values);
+    r.upload_terrain(&see_through(120, 90, 2, |_, _| false));
+    let white = Rgba::rgb(255, 255, 255);
+    let layers: Vec<_> = depths.iter().map(|&d| layer(240, 180, white, (0, 0), d)).collect();
+    r.set_distant(&layers);
+    r
+}
+
+/// The texels of a row of `t` (`w` wide) above 0.
+fn warm_in_row(w: usize, t: &[f32], y: usize) -> usize {
+    t[y * w..(y + 1) * w].iter().filter(|&&v| v > 0.0).count()
+}
+
+fn hottest(t: &[f32]) -> (usize, f32) {
+    t.iter().copied().enumerate().fold((0, 0.0), |b, (i, v)| if v > b.1 { (i, v) } else { b })
+}
+
+/// Issue #41: a deposit is a ball on the level's plane; a near distant
+/// layer takes its slice, a smaller and cooler circle than the plane's,
+/// a farther one smaller still, and the layers cool to nothing.
+#[test]
+fn a_near_layer_takes_a_smaller_circle_than_the_plane() {
+    let Some(gpu) = offscreen() else { return };
+    let stone = [material("stone", Some(heat(100, 100, 100)))];
+    let mut r = layered(&gpu, &stone, 1, &[10, 15], &[1, 1]);
+    let (l, _) = one_to_one();
+    r.deposit_heat_seen(HeatDeposit { pos: [60.5, 45.5], radius: 20.0, amount: 1000.0 }, &[HeatView::of(&l)]);
+    frame(&gpu, &mut r, &dark());
+    let plane = temps(&gpu, &r);
+    let (w, near) = layer_temps(&gpu, r.distant_heat_texture(0).unwrap());
+    let (_, far) = layer_temps(&gpu, r.distant_heat_texture(1).unwrap());
+    assert_eq!(w, 120, "the layer's world size");
+    // The back's share of the plane's 1000 at its centre; z = 11 and 16.5.
+    let ((_, p), (ni, n), (_, f)) = (hottest(&plane), hottest(&near), hottest(&far));
+    assert!((p - 1000.0 * BACK_HEAT).abs() < 2.0, "the plane: {p}");
+    assert!((n - 1000.0 * BACK_HEAT * (1.0 - 121.0 / 400.0)).abs() < 2.0, "the near layer: {n}");
+    assert!((f - 1000.0 * BACK_HEAT * (1.0 - 272.25 / 400.0)).abs() < 2.0, "the far layer: {f}");
+    // Placed behind the deposit: the camera (60, 60) moved the layer 1.5 down.
+    assert_eq!((ni % w, ni / w), (60, 43), "the near spot's centre");
+    let across = |t: &[f32], y| warm_in_row(120, t, y);
+    let (cp, cn, cf) = (across(&plane, 45), across(&near, 43), across(&far, 43));
+    assert!((38..=40).contains(&cp), "the plane's circle: {cp}");
+    assert!((32..=34).contains(&cn), "radius sqrt(279) at depth 10: {cn}");
+    assert!((21..=23).contains(&cf), "radius sqrt(127.75) at depth 15: {cf}");
+    // The layers cool to nothing, by their material.
+    steps(&gpu, &mut r, 50);
+    let (_, cooler) = layer_temps(&gpu, r.distant_heat_texture(0).unwrap());
+    assert!(hottest(&cooler).1 < n * 0.8, "it cools: {}", hottest(&cooler).1);
+    let mut seconds = 0;
+    while r.heat_active() {
+        r.advance_heat(1000);
+        frame(&gpu, &mut r, &dark());
+        seconds += 1;
+        assert!(seconds <= 120, "still hot after {seconds} s");
+    }
+    for i in 0..2 {
+        let (_, t) = layer_temps(&gpu, r.distant_heat_texture(i).unwrap());
+        assert!(t.iter().all(|&v| v == 0.0), "layer {i} cold");
+    }
+}
+
+/// Issue #41: only a layer the largest heat radius reaches at its depth
+/// and whose material heats gets a heat texture; a level whose layers
+/// get none draws and costs as without materials, and one whose layers
+/// have heat draws the same bytes while nothing is hot.
+#[test]
+fn a_layer_beyond_the_largest_radius_has_no_texture() {
+    let Some(gpu) = offscreen() else { return };
+    let m = [material("stone", Some(heat(100, 100, 100))), material("cold", None)];
+    // z = 63.8 is within MAX_HEAT_RADIUS (64), 64.9 not; then a cold
+    // material, none and a value past the list.
+    let r = layered(&gpu, &m, 0, &[58, 59, 10, 10, 10], &[1, 1, 2, 0, 9]);
+    assert!(r.distant_heat_texture(0).is_some(), "depth 58 is within reach");
+    assert!((1..5).all(|i| r.distant_heat_texture(i).is_none()));
+    assert!(r.has_heat() && r.heat_texture().is_none(), "the layer's heat alone");
+    let mut far = layered(&gpu, &m, 0, &[59, 10], &[1, 2]);
+    assert!(!far.has_heat());
+    let mut plain = layered(&gpu, &[], 0, &[59, 10], &[]);
+    let (l, size) = one_to_one();
+    let want = gpu.render_lit_to_image(&mut plain, &l, Some(&dark()), size);
+    far.deposit_heat_seen(blast(60.0, 45.0, 64.0), &[HeatView::of(&l)]);
+    far.advance_heat(100);
+    assert_eq!(gpu.render_lit_to_image(&mut far, &l, Some(&dark()), size), want, "far layers unchanged");
+    assert_eq!(far.heat_passes(), 0);
+    // A heated layer with nothing hot: the same bytes.
+    let mut idle = layered(&gpu, &m, 0, &[59, 10], &[1, 1]);
+    assert!(idle.distant_heat_texture(1).is_some());
+    idle.advance_heat(100);
+    assert_eq!(gpu.render_lit_to_image(&mut idle, &l, Some(&dark()), size), want, "idle");
+    assert!(!idle.heat_active());
+    // Unlit, no layer has heat.
+    let mut unlit = layered(&gpu, &m, 0, &[10], &[1]);
+    unlit.set_lighting(false);
+    assert!(unlit.distant_heat_texture(0).is_none() && !unlit.has_heat());
+}
+
+/// A material that takes heat easily (capacity 25: four times stone's
+/// gain), so a slice shows.
+fn hot_stone() -> SurfaceMaterial {
+    material("hot", Some(Heat { capacity: 25, ..heat(100, 100, 100) }))
+}
+
+/// The output pixels where `a` and `b` differ.
+fn changed(a: &RgbaImage, b: &RgbaImage) -> Vec<(i32, i32)> {
+    let mut out = Vec::new();
+    for y in 0..a.height() {
+        for x in 0..a.width() {
+            if a.get(x, y) != b.get(x, y) {
+                out.push((x as i32, y as i32));
+            }
+        }
+    }
+    out
+}
+
+/// Issue #41: the heat stays on the layer pixel it landed on: as the
+/// camera pans, the hot spot moves with the layer (by `1 - depth` of the
+/// camera's movement), not with the level.
+#[test]
+fn the_spot_moves_with_the_layer_as_the_camera_pans() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = layered(&gpu, &[hot_stone()], 0, &[10], &[1]);
+    let (a, size) = one_to_one();
+    let b = list(View { x: 30.0, y: 30.0, w: 80.0, h: 60.0 });
+    let cold = (frame(&gpu, &mut r, &dark()), gpu.render_lit_to_image(&mut r, &b, Some(&dark()), size));
+    r.deposit_heat_seen(blast(70.5, 50.5, 14.0), &[HeatView::of(&a)]);
+    let hot_a = gpu.render_lit_to_image(&mut r, &a, Some(&dark()), size);
+    let hot_b = gpu.render_lit_to_image(&mut r, &b, Some(&dark()), size);
+    let (sa, sb) = (changed(&cold.0, &hot_a), changed(&cold.1, &hot_b));
+    assert!(sa.len() > 100, "the layer shows hot: {} pixels", sa.len());
+    // World pixel (70, 50) is output (100, 40) in view a.
+    assert!(sa.contains(&(100, 40)) && sa.contains(&(101, 41)));
+    // The camera 10 right moves the layer 1 world pixel with it: on
+    // screen 2 × (10 - 1) = 18 texels left, the spot with it.
+    let moved: Vec<_> = sa.iter().map(|&(x, y)| (x - 18, y)).filter(|&(x, _)| x >= 0).collect();
+    assert_eq!(sb, moved);
+}
+
+/// Issue #41: with two views (split screen) the view nearest the deposit
+/// places its slices: its camera's layer position, whatever the views'
+/// order; a lone far view places them by its own.
+#[test]
+fn with_two_views_the_nearest_views_camera_places_it() {
+    let Some(gpu) = offscreen() else { return };
+    let rect = |x: f32| View { x, y: 30.0, w: 30.0, h: 30.0 };
+    // Cameras 40 left and 20 right of the level's centre (60, 45): the
+    // layer (depth 10) 4 left and 2 right.
+    let far = HeatView { view: rect(0.0), camera: (20.0, 45.0) };
+    let near = HeatView { view: rect(60.0), camera: (80.0, 45.0) };
+    let spot = |views: &[HeatView]| {
+        let mut r = layered(&gpu, &[hot_stone()], 0, &[10], &[1]);
+        r.deposit_heat_seen(blast(70.5, 50.5, 14.0), views);
+        frame(&gpu, &mut r, &dark());
+        let (w, t) = layer_temps(&gpu, r.distant_heat_texture(0).unwrap());
+        let (i, _) = hottest(&t);
+        (i % w, i / w)
+    };
+    assert_eq!(spot(&[far, near]), (68, 50), "70.5 - 2");
+    assert_eq!(spot(&[near, far]), (68, 50));
+    assert_eq!(spot(&[far]), (74, 50), "70.5 + 4");
+    // Inside both, the first.
+    let both = HeatView { view: View { x: 0.0, y: 0.0, w: 120.0, h: 90.0 }, ..far };
+    assert_eq!(spot(&[both, near]), (74, 50));
+    let mut none = layered(&gpu, &[hot_stone()], 0, &[10], &[1]);
+    none.deposit_heat_seen(blast(70.5, 50.5, 14.0), &[]);
+    assert!(!none.heat_active(), "no view, no slice");
+}
+
+/// Issue #41: a hot layer shows its ramp colour and glow but casts no
+/// light: the light grid is the same as with it cold.
+#[test]
+fn a_hot_layer_adds_no_glow_light() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = lit(&gpu);
+    r.set_surface(&[hot_stone()], None);
+    r.set_distant_surface(&[1]);
+    r.upload_terrain(&see_through(120, 90, 2, |_, _| false));
+    r.set_distant(&[layer(240, 180, Rgba::rgb(90, 90, 90), (0, 0), 5)]);
+    assert!(r.distant_heat_texture(0).is_some() && r.heat_texture().is_none());
+    let (l, _) = one_to_one();
+    let cold = frame(&gpu, &mut r, &dark());
+    let (_, before) = gpu.read_light(&r).unwrap();
+    r.deposit_heat_seen(blast(60.5, 50.5, 20.0), &[HeatView::of(&l)]);
+    let hot = frame(&gpu, &mut r, &dark());
+    let (_, after) = gpu.read_light(&r).unwrap();
+    let c = hot.get(2 * (60 - 20), 2 * (50 - 30));
+    assert!(c.r > 200 && c.r > c.b + 60, "the layer glows: {c:?}");
+    assert_ne!(cold, hot);
+    assert!(before == after, "but lights nothing");
 }

@@ -20,8 +20,8 @@ mod uploads;
 
 pub use gi::{GI_CELL_BUDGET, gi_cell};
 pub use heat::{
-    BACK_HEAT, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, MAX_HEAT_AMOUNT, MAX_HEAT_DEPOSITS, MAX_HEAT_RADIUS,
-    MAX_HEAT_STEPS,
+    BACK_HEAT, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_AMOUNT, MAX_HEAT_DEPOSITS,
+    MAX_HEAT_RADIUS, MAX_HEAT_STEPS,
 };
 pub use look::WORM_SHADOW;
 pub use pass::ViewDraw;
@@ -68,16 +68,22 @@ struct Distant {
     /// Its size in art pixels.
     art: (u32, u32),
     layer: olr_data::level::DistantLayer,
+    /// Its place in [`Renderer::set_distant`]'s list (one left out shifts
+    /// the rest).
+    index: usize,
+    /// Its heat (issue #41), when its surface material heats and an
+    /// explosion can reach its depth.
+    heat: Option<heat::HeatTextures>,
 }
 
 /// A level's surface materials as the heat reads them (issue #39): kept
 /// from [`Renderer::set_surface`] so each whole terrain upload makes the
 /// heat afresh.
 struct Surface {
-    /// The maps' size, world pixels.
-    world: (u32, u32),
-    /// Front and back, one `Rg8Uint` texel a world pixel.
-    texels: Vec<u8>,
+    /// The maps' size (world pixels) and texels (front and back, one
+    /// `Rg8Uint` texel a world pixel); `None` without maps naming a
+    /// material (issue #41: the distant layers may still heat).
+    maps: Option<((u32, u32), Vec<u8>)>,
     /// The materials' table, colour ramps and bounds.
     tables: (Vec<f32>, Vec<u8>, heat::Bounds),
 }
@@ -153,6 +159,9 @@ pub struct Renderer {
     glow_light_steps: u64,
     /// The level's surface materials, when any heats (issue #39).
     surface: Option<Surface>,
+    /// Each distant layer's surface material value (issue #41,
+    /// [`Renderer::set_distant_surface`]), 0 none.
+    distant_surface: Vec<u8>,
 }
 
 fn texture(
@@ -359,6 +368,7 @@ impl Renderer {
             look: None,
             glow_light_steps: 0,
             surface: None,
+            distant_surface: Vec::new(),
         }
     }
 
@@ -555,6 +565,10 @@ impl Renderer {
             // The world targets' light passes bind the new level's glow light.
             self.targets.clear();
         }
+        // The distant layers' heat starts afresh too (issue #41).
+        for h in self.distant.iter_mut().filter_map(|d| d.heat.as_mut()) {
+            h.sim.reset();
+        }
     }
 
     /// Sets the level's distant (parallax) layers, far to near (issue #11;
@@ -562,7 +576,11 @@ impl Renderer {
     /// see-through (`ColorMap::new_see_through`), each scrolling by `1 -
     /// depth` of the camera's movement ([`DrawList::camera`]), offset by
     /// whole texels and clipped to the level. A layer larger than the
-    /// device allows is left out, with a warning.
+    /// device allows is left out, with a warning. Issue #41: with lighting
+    /// on and the terrain up, a layer whose surface material heats
+    /// ([`Renderer::set_distant_surface`], the materials of
+    /// [`Renderer::set_surface`]) and that the largest heat radius reaches
+    /// at its depth gets a heat texture.
     pub fn set_distant(&mut self, layers: &[olr_data::level::DistantLayer]) {
         let max = self.max_dim();
         self.distant.clear();
@@ -591,8 +609,9 @@ impl Renderer {
                 l.image.as_raw(),
             );
             let bind = self.bind_texture("olr-render distant", &texture);
-            self.distant.push(Distant { bind, art, layer: l.clone() });
+            self.distant.push(Distant { bind, art, layer: l.clone(), index: i, heat: None });
         }
+        self.make_distant_heat();
     }
 
     /// Uploads the rectangles `map` changed since the last call

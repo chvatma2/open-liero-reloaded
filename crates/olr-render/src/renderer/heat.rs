@@ -14,6 +14,7 @@
 //! visible threshold. No GPU read-back. With no box nothing runs.
 
 use olr_look::{MAX_TEMPERATURE, SurfaceMaps, SurfaceMaterial};
+use olr_scene::{DrawList, View};
 
 use super::{entry, pipeline};
 
@@ -205,6 +206,107 @@ pub(super) fn surface_texels(maps: &SurfaceMaps, world: (u32, u32)) -> Option<Ve
         return None;
     }
     Some(maps.front.iter().zip(&maps.back).flat_map(|(&f, &b)| [f, b]).collect())
+}
+
+/// Where a view showed the level (issue #41): a deposit's slices on the
+/// distant layers are placed as the view nearest it draws them
+/// ([`super::Renderer::deposit_heat_seen`]).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeatView {
+    /// The view's rectangle, world pixels ([`DrawList::view`]).
+    pub view: View,
+    /// The camera its distant layers scroll by ([`DrawList::camera`]).
+    pub camera: (f32, f32),
+}
+
+impl HeatView {
+    /// How `list` shows the level.
+    pub fn of(list: &DrawList) -> HeatView {
+        HeatView { view: list.view, camera: list.camera() }
+    }
+}
+
+/// The view of `views` nearest `pos` (by the distance to its rectangle,
+/// 0 inside; the first of those as near), `None` for none.
+fn nearest(views: &[HeatView], pos: [f32; 2]) -> Option<&HeatView> {
+    let away = |v: &HeatView| {
+        let gap = |p: f32, a: f32, len: f32| (a - p).max(p - (a + len)).max(0.0);
+        let (dx, dy) = (gap(pos[0], v.view.x, v.view.w), gap(pos[1], v.view.y, v.view.h));
+        let d = dx * dx + dy * dy;
+        if d.is_nan() { f32::INFINITY } else { d }
+    };
+    views
+        .iter()
+        .fold(None, |best: Option<(&HeatView, f32)>, v| {
+            let d = away(v);
+            match best {
+                Some((_, b)) if b <= d => best,
+                _ => Some((v, d)),
+            }
+        })
+        .map(|(v, _)| v)
+}
+
+/// Whether a distant layer of material value `v` at `depth` percent gets
+/// heat (issue #41): its material heats ([`tables`]' `params`: 1 /
+/// capacity above 0) and the largest heat radius reaches its depth.
+pub(super) fn layer_heats(params: &[f32], v: u8, depth: u8) -> bool {
+    let heats = v > 0 && params.get(4 + 8 * usize::from(v) + 2).is_some_and(|&c| c > 0.0);
+    let depth = depth.clamp(olr_data::level::MIN_DEPTH, olr_data::level::MAX_DEPTH);
+    heats && f32::from(depth) * olr_look::engine::HEAT_DEPTH_PX < MAX_HEAT_RADIUS
+}
+
+/// A distant layer's surface texels (issue #41): `v` front and back on
+/// each of its `world` pixels (`scale` art pixels a side) that its image
+/// covers anywhere, none elsewhere.
+pub(super) fn layer_texels(
+    image: &olr_data::image::RgbaImage,
+    scale: u32,
+    world: (u32, u32),
+    v: u8,
+) -> Vec<u8> {
+    let mut out = vec![0u8; world.0 as usize * world.1 as usize * 2];
+    for y in 0..world.1 {
+        for x in 0..world.0 {
+            let covered = (0..scale).any(|j| {
+                (0..scale).any(|i| {
+                    let (ax, ay) = (x * scale + i, y * scale + j);
+                    ax < image.width() && ay < image.height() && image.get(ax, ay).a != 0
+                })
+            });
+            if covered {
+                let o = (y as usize * world.0 as usize + x as usize) * 2;
+                out[o..o + 2].copy_from_slice(&[v, v]);
+            }
+        }
+    }
+    out
+}
+
+/// A distant layer's solid map (issue #41): all background, so every
+/// pixel faces the air (cooling whole) and takes [`BACK_HEAT`] of a
+/// deposit, as a back wall: the layer lies behind the explosion.
+fn layer_solid(device: &wgpu::Device, queue: &super::uploads::Queue, world: (u32, u32)) -> wgpu::Texture {
+    use wgpu::TextureUsages as U;
+    let t = plain_texture(
+        device,
+        "olr-render distant solid",
+        world,
+        wgpu::TextureFormat::R8Uint,
+        U::TEXTURE_BINDING | U::COPY_DST,
+    );
+    let ones = vec![1u8; world.0 as usize * world.1 as usize];
+    queue.write_texture(
+        t.as_image_copy(),
+        &ones,
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(world.0),
+            rows_per_image: Some(world.1),
+        },
+        wgpu::Extent3d { width: world.0, height: world.1, depth_or_array_layers: 1 },
+    );
+    t
 }
 
 /// An active box: world pixels `[x0, y0, x1, y1)` that may hold heat.
@@ -964,10 +1066,14 @@ impl super::Renderer {
     /// [`super::Renderer::upload_terrain`] (a new level, a restart) and
     /// now when the terrain is up. `None`, or materials that never heat,
     /// make none: the level draws and costs exactly as without.
+    ///
+    /// Issue #41: the distant layers take these materials (by
+    /// [`Renderer::set_distant_surface`]'s values) at the next
+    /// [`Renderer::set_distant`].
     pub fn set_surface(&mut self, materials: &[SurfaceMaterial], maps: Option<&SurfaceMaps>) {
-        self.surface = maps.and_then(|m| {
-            let texels = surface_texels(m, m.world)?;
-            Some(super::Surface { world: m.world, texels, tables: tables(materials)? })
+        self.surface = tables(materials).map(|tables| super::Surface {
+            maps: maps.and_then(|m| Some((m.world, surface_texels(m, m.world)?))),
+            tables,
         });
         if let Some(look) = &mut self.look
             && let Some(t) = &mut look.textures
@@ -976,17 +1082,94 @@ impl super::Renderer {
         }
     }
 
-    fn heat_sim(&mut self) -> Option<&mut HeatSim> {
-        Some(&mut self.look.as_mut()?.textures.as_mut()?.heat.as_mut()?.sim)
+    /// Each distant layer's surface material value (issue #41), in
+    /// [`Renderer::set_distant`]'s order: `v` is [`Renderer::set_surface`]'s
+    /// `materials[v - 1]`, 0 (or a layer past the list) none. It takes
+    /// effect at the next [`Renderer::set_distant`].
+    pub fn set_distant_surface(&mut self, values: &[u8]) {
+        self.distant_surface.clear();
+        self.distant_surface.extend_from_slice(values);
+    }
+
+    /// Makes each distant layer's heat afresh (issue #41), or none: a layer
+    /// gets one with lighting on and the terrain up when its material heats
+    /// and the largest heat radius ([`MAX_HEAT_RADIUS`]) reaches its depth.
+    pub(super) fn make_distant_heat(&mut self) {
+        let scale = self.terrain.as_ref().map(|t| t.art_scale);
+        let max = self.max_dim();
+        for d in &mut self.distant {
+            d.heat = None;
+            let (Some(state), Some(scale), Some(surface)) = (&self.look, scale, &self.surface) else {
+                continue;
+            };
+            let v = self.distant_surface.get(d.index).copied().unwrap_or(0);
+            if !layer_heats(&surface.tables.0, v, d.layer.depth) {
+                continue;
+            }
+            let s = scale.max(1);
+            let world = ((d.art.0 / s).clamp(1, max), (d.art.1 / s).clamp(1, max));
+            let texels = layer_texels(&d.layer.image, s, world, v);
+            let solid = layer_solid(&self.device, &self.queue, world);
+            d.heat = Some(HeatTextures::new(
+                &self.device,
+                &self.queue,
+                &state.heat,
+                world,
+                world,
+                &texels,
+                surface.tables.clone(),
+                &view(&solid),
+            ));
+        }
+    }
+
+    fn heat_sims(&mut self) -> impl Iterator<Item = &mut HeatSim> {
+        let level = self.look.as_mut().and_then(|l| l.textures.as_mut()?.heat.as_mut());
+        let layers = self.distant.iter_mut().filter_map(|d| d.heat.as_mut());
+        level.into_iter().chain(layers).map(|h| &mut h.sim)
+    }
+
+    fn all_heat(&self) -> impl Iterator<Item = &HeatTextures> {
+        let level = self.heat_textures();
+        level.into_iter().chain(self.distant.iter().filter_map(|d| d.heat.as_ref()))
     }
 
     /// Heat for the level at `deposit` (issue #39), landing before the
     /// next step: the next lit frame draws it. At most
     /// [`MAX_HEAT_DEPOSITS`] wait for a frame; the radius and amount are
-    /// clamped, one not a number dropped. Nothing without heat.
+    /// clamped, one not a number dropped. Nothing without heat. The
+    /// level's plane only: [`Renderer::deposit_heat_seen`] heats the
+    /// distant layers too.
     pub fn deposit_heat(&mut self, deposit: HeatDeposit) {
-        if let Some(s) = self.heat_sim() {
-            s.deposit(deposit);
+        if let Some(h) = self.look.as_mut().and_then(|l| l.textures.as_mut()?.heat.as_mut()) {
+            h.sim.deposit(deposit);
+        }
+    }
+
+    /// [`Renderer::deposit_heat`], and its slices on the distant layers
+    /// that have heat (issue #41): the deposit is a ball of its radius
+    /// centred on the level's plane; a layer of depth `d` lying `d ×`
+    /// [`olr_look::engine::HEAT_DEPTH_PX`] behind it takes the ball's
+    /// circle there ([`olr_look::engine::heat_slice`]), centred on the
+    /// layer pixel drawn behind the deposit by the view of `views` nearest
+    /// it (the first of those as near; [`crate::frame::distant_origin`] of
+    /// its frame). From then on the heat stays on the layer and moves with
+    /// it. No views, no slices.
+    pub fn deposit_heat_seen(&mut self, deposit: HeatDeposit, views: &[HeatView]) {
+        self.deposit_heat(deposit);
+        let (Some(d), Some(view)) = (deposit.clamped(), nearest(views, deposit.pos)) else { return };
+        let Some(t) = &self.terrain else { return };
+        let s = t.art_scale.max(1);
+        let map = (t.art.0 / s, t.art.1 / s);
+        let frame = crate::frame::WorldFrame::new(view.view, self.scale());
+        let ball = olr_look::engine::ExplosionHeat { radius: d.radius, amount: d.amount };
+        for l in &mut self.distant {
+            let Some(h) = l.heat.as_mut() else { continue };
+            let Some(slice) = olr_look::engine::heat_slice(ball, l.layer.depth) else { continue };
+            let at = l.layer.position(view.camera, map);
+            let Some(origin) = crate::frame::distant_origin(&frame, at) else { continue };
+            let pos = [(f64::from(d.pos[0]) - origin.0) as f32, (f64::from(d.pos[1]) - origin.1) as f32];
+            h.sim.deposit(HeatDeposit { pos, radius: slice.radius, amount: slice.amount });
         }
     }
 
@@ -996,17 +1179,14 @@ impl super::Renderer {
     /// frame, the rest the frames after). Never the wall clock: paused,
     /// pass 0.
     pub fn advance_heat(&mut self, elapsed_ms: u32) {
-        if let Some(s) = self.heat_sim() {
-            s.advance(elapsed_ms);
-        }
+        self.heat_sims().for_each(|s| s.advance(elapsed_ms));
     }
 
-    /// Clears the heat (a replay seek): the next lit frame zeroes it.
-    /// [`super::Renderer::upload_terrain`] starts it afresh too.
+    /// Clears the heat (a replay seek), the distant layers' too: the next
+    /// lit frame zeroes it. [`super::Renderer::upload_terrain`] starts it
+    /// afresh too.
     pub fn reset_heat(&mut self) {
-        if let Some(s) = self.heat_sim() {
-            s.reset();
-        }
+        self.heat_sims().for_each(HeatSim::reset);
     }
 
     /// Runs the heat's waiting deposits and due steps now, as the next lit
@@ -1017,38 +1197,57 @@ impl super::Renderer {
     /// and frames, the heat is the same. Nothing without heat.
     pub fn run_heat(&mut self) {
         let Some(state) = self.look.as_mut() else { return };
-        let Some(h) = state.textures.as_mut().and_then(|t| t.heat.as_mut()) else { return };
-        h.prepare(&self.queue);
-        if h.sim.ops.is_empty() {
-            return;
+        let level = state.textures.as_mut().and_then(|t| t.heat.as_mut());
+        let layers = self.distant.iter_mut().filter_map(|d| d.heat.as_mut());
+        let mut encoder = None;
+        for h in level.into_iter().chain(layers) {
+            h.prepare(&self.queue);
+            if h.sim.ops.is_empty() {
+                continue;
+            }
+            let e = encoder.get_or_insert_with(|| {
+                self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("olr-render heat"),
+                })
+            });
+            h.encode(e, &state.heat, |_| None);
         }
-        let mut encoder = self
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("olr-render heat") });
-        h.encode(&mut encoder, &state.heat, |_| None);
-        self.queue.submit([encoder.finish()]);
+        if let Some(e) = encoder {
+            self.queue.submit([e.finish()]);
+        }
     }
 
     /// The heat deposits waiting for the next frame (at most
-    /// [`MAX_HEAT_DEPOSITS`]; 0 without heat).
+    /// [`MAX_HEAT_DEPOSITS`]; 0 without heat): the most of the level's and
+    /// each distant layer's (issue #41).
     pub fn heat_waiting(&self) -> usize {
-        self.heat_textures().map_or(0, |h| h.sim.waiting())
+        self.all_heat().map(|h| h.sim.waiting()).max().unwrap_or(0)
     }
 
     /// The heat steps the match time asked for that have not run yet (0
     /// without heat): past [`MAX_HEAT_STEPS`], the next frame leaves some.
     pub fn heat_behind(&self) -> u64 {
-        self.heat_textures().map_or(0, |h| h.sim.behind())
+        self.all_heat().map(|h| h.sim.behind()).max().unwrap_or(0)
     }
 
-    /// Whether the level has heat (its materials heat, lighting on).
+    /// Whether the level has heat (its materials heat, lighting on), or a
+    /// distant layer does (issue #41).
     pub fn has_heat(&self) -> bool {
-        self.heat_textures().is_some()
+        self.all_heat().next().is_some()
     }
 
-    /// Whether any pixel may be hot: frames run heat passes.
+    /// Whether any pixel may be hot, the distant layers' too: frames run
+    /// heat passes.
     pub fn heat_active(&self) -> bool {
-        self.heat_textures().is_some_and(|h| h.sim.active())
+        self.all_heat().any(|h| h.sim.active())
+    }
+
+    /// Distant layer `i`'s heat texture (`R16Uint` at the layer's world
+    /// size, [`HEAT_SCALE`] a degree; issue #41, tests): `i` in
+    /// [`super::Renderer::set_distant`]'s list; `None` for a layer without
+    /// heat.
+    pub fn distant_heat_texture(&self, i: usize) -> Option<&wgpu::Texture> {
+        self.distant.iter().find(|d| d.index == i)?.heat.as_ref().map(|h| &h.heat)
     }
 
     fn heat_textures(&self) -> Option<&HeatTextures> {
@@ -1213,6 +1412,31 @@ mod tests {
         assert!(s.boxes.len() <= MAX_BOXES);
         assert!(s.deposits.iter().all(|d| d.amount <= MAX_HEAT_AMOUNT && d.radius <= MAX_HEAT_RADIUS));
         assert!(s.boxes.iter().all(|b| b.hot <= MAX_TEMPERATURE as f32));
+    }
+
+    /// Issue #41: the nearest view by its rectangle, the first of those as
+    /// near; a layer heats only by a heating material within reach; a
+    /// layer's texels follow its image's coverage.
+    #[test]
+    fn distant_layers_pick_their_view_reach_and_texels() {
+        let v = |x: f32| HeatView { view: View { x, y: 0.0, w: 10.0, h: 10.0 }, camera: (x, 0.0) };
+        let views = [v(0.0), v(20.0), v(5.0)];
+        assert_eq!(nearest(&views, [25.0, 5.0]).unwrap().camera.0, 20.0, "inside");
+        assert_eq!(nearest(&views, [8.0, 5.0]).unwrap().camera.0, 0.0, "inside two: the first");
+        assert_eq!(nearest(&views, [18.0, -3.0]).unwrap().camera.0, 20.0, "the nearest edge");
+        assert_eq!(nearest(&views, [f32::NAN, 0.0]).unwrap().camera.0, 0.0);
+        assert!(nearest(&[], [0.0, 0.0]).is_none());
+        let cold = SurfaceMaterial { id: "cold".into(), heat: None };
+        let (params, ..) = tables(&[stone(), cold]).unwrap();
+        assert!(layer_heats(&params, 1, 58) && !layer_heats(&params, 1, 59), "z < 64");
+        assert!(layer_heats(&params, 1, 0), "depth 0 counts as 1");
+        assert!(
+            !layer_heats(&params, 2, 10) && !layer_heats(&params, 0, 10) && !layer_heats(&params, 255, 10)
+        );
+        let mut image = olr_data::image::RgbaImage::new(6, 4);
+        image.set(5, 0, olr_data::image::Rgba::rgb(1, 2, 3));
+        image.set(0, 3, olr_data::image::Rgba::rgb(1, 2, 3));
+        assert_eq!(layer_texels(&image, 2, (3, 2), 7), [0, 0, 0, 0, 7, 7, 7, 7, 0, 0, 0, 0]);
     }
 
     #[test]

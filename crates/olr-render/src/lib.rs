@@ -29,14 +29,14 @@ pub use atlas::{AtlasLayout, PackedAtlas, TexRect, WHITE, pack};
 pub use diff::{ImageDiff, perceptual_diff};
 pub use frame::{
     INSTANCE_FLOATS, Instance, LookTextureSizes, MARGIN, MAX_VIEW, MISSING, WorldFrame, distant_instance,
-    look_texture_sizes, push_instances, terrain_instance,
+    distant_origin, look_texture_sizes, push_instances, terrain_instance,
 };
 pub use look::{LightGrid, grade_linear, linear_to_srgb, shade_texel, tone};
 pub use offscreen::{
     AdapterPreference, NoAdapter, OUTPUT_FORMAT, Offscreen, OffscreenOptions, list_adapters,
 };
 pub use renderer::{
-    BACK_HEAT, GI_CELL_BUDGET, GpuTimes, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, MAX_HEAT_AMOUNT,
+    BACK_HEAT, GI_CELL_BUDGET, GpuTimes, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_AMOUNT,
     MAX_HEAT_DEPOSITS, MAX_HEAT_RADIUS, MAX_HEAT_STEPS, MAX_PROBE_PASSES, MAX_PROBE_TAPS, MAX_SPRITE_SCALE,
     MIN_SCALE, PASS_GROUPS, PassGroup, PassSpan, Probe, RenderSettings, Renderer, Uploads, ViewDraw,
     WORLD_FORMAT, WORM_SHADOW, gi_cell, gpu_times,

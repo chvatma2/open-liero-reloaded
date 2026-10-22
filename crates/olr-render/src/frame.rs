@@ -163,8 +163,7 @@ pub fn distant_instance(
     let s = frame.scale as f64;
     // Target texels per art pixel: whole (the scale is the art scale or 2).
     let k = s / f64::from(art_scale.max(1));
-    let x0 = ((f64::from(at.0) - f64::from(frame.origin.0)) * s).round();
-    let y0 = ((f64::from(at.1) - f64::from(frame.origin.1)) * s).round();
+    let (x0, y0) = distant_texel(frame, at);
     let (x1, y1) = (x0 + f64::from(art.0) * k, y0 + f64::from(art.1) * k);
     // The level and the target, in target texels.
     let (tw, th) = frame.target_size();
@@ -183,6 +182,29 @@ pub fn distant_instance(
         tint: [1.0; 4],
         shade: [f32::from(depth.min(100)) / 100.0, 0.0, 0.0],
     })
+}
+
+/// The target texel a distant layer's top-left lands on with its exact
+/// position `at` (world pixels): offset by whole texels from the frame's
+/// snapped origin (rounded: no shimmer). [`distant_instance`]'s placement.
+fn distant_texel(frame: &WorldFrame, at: (f32, f32)) -> (f64, f64) {
+    let s = frame.scale as f64;
+    let x0 = ((f64::from(at.0) - f64::from(frame.origin.0)) * s).round();
+    let y0 = ((f64::from(at.1) - f64::from(frame.origin.1)) * s).round();
+    (x0, y0)
+}
+
+/// The world position at which [`distant_instance`] draws a distant
+/// layer's top-left with its exact position `at` (issue #41: the layer
+/// pixel drawn behind a world point is that point less this). `None` when
+/// `at` is not finite.
+pub fn distant_origin(frame: &WorldFrame, at: (f32, f32)) -> Option<(f64, f64)> {
+    if !at.0.is_finite() || !at.1.is_finite() {
+        return None;
+    }
+    let s = frame.scale as f64;
+    let (x0, y0) = distant_texel(frame, at);
+    Some((f64::from(frame.origin.0) + x0 / s, f64::from(frame.origin.1) + y0 / s))
 }
 
 /// Appends the instances of `list`'s layers in drawing order: each sprite
@@ -328,6 +350,10 @@ mod tests {
         assert_eq!(i.dst[2], 10.0);
         assert!(distant_instance(&f, (900.0, 0.0), (16, 4), 1, (5000, 10), 40).is_none());
         assert!(distant_instance(&f, (f32::NAN, 0.0), (16, 4), 1, (50, 10), 40).is_none());
+        // Issue #41: where the quad's top-left lies in the world.
+        let f = WorldFrame::new(View { x: 10.0, y: 20.0, w: 100.0, h: 80.0 }, 2);
+        assert_eq!(distant_origin(&f, (20.3, 30.0)), Some((20.5, 30.0)), "texel 23 of origin 9");
+        assert_eq!(distant_origin(&f, (f32::NAN, 0.0)), None);
     }
 
     #[test]

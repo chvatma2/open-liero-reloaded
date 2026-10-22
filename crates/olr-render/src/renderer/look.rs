@@ -87,18 +87,19 @@ impl LookTextures {
         pipes: &super::heat::HeatPipelines,
         surface: Option<&super::Surface>,
     ) {
-        self.heat = surface.filter(|s| s.world == self.level).map(|s| {
+        self.heat = surface.and_then(|s| {
+            let (world, texels) = s.maps.as_ref().filter(|(w, _)| *w == self.level)?;
             let size = (self.solid.width(), self.solid.height());
-            super::heat::HeatTextures::new(
+            Some(super::heat::HeatTextures::new(
                 device,
                 queue,
                 pipes,
-                s.world,
+                *world,
                 size,
-                &s.texels,
+                texels,
                 s.tables.clone(),
                 &self.solid_view,
-            )
+            ))
         });
     }
 }
@@ -437,7 +438,7 @@ impl LookState {
             "olr-render distant lit",
             &source,
             ("vs_world", "fs_distant_lit"),
-            &[Some(globals_layout), Some(texture_layout)],
+            &[Some(globals_layout), Some(texture_layout), Some(&layout), Some(&heat.look_layout)],
             &[Some(quads())],
             &[(WORLD_FORMAT, None), (SHADE_FORMAT, None)],
             wgpu::PrimitiveTopology::TriangleStrip,
@@ -1026,6 +1027,8 @@ impl Renderer {
         }
         // The world targets gain or lose their shade targets.
         self.targets.clear();
+        // The distant layers' heat is the look's (issue #41).
+        self.make_distant_heat();
     }
 
     /// Forgets the light's history (plan 15c: bounce reads the last frame's

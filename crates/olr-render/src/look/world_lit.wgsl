@@ -116,16 +116,26 @@ fn fs_terrain_backing_lit(in: QuadOut) -> LitOut {
 }
 
 // A distant layer's pixel (issue #11): opaque where it covers; its shade
-// holds no self-light and its depth as 1 - alpha (the composite lights it
-// by 1 - depth of the light beyond the ambient).
+// holds its depth as 1 - alpha (the composite lights it by 1 - depth of
+// the light beyond the ambient). Issue #41: hot (group 3 is the layer's
+// own heat, at its world pixel), it shows its ramp colour and glows as the
+// lit terrain does; cold, it holds no self-light. The glow light never
+// reads it: a layer casts nothing.
 @fragment
 fn fs_distant_lit(in: QuadOut) -> LitOut {
-    let c = textureLoad(tex, texel(in), 0);
+    let t = texel(in);
+    var c = textureLoad(tex, t, 0);
     if c.a <= 0.0 {
         discard;
     }
+    var self_light = 0.0;
+    let heat = heat_at(t / max(i32(look.level.z), 1));
+    if heat.colour.a > 0.0 {
+        c = vec4<f32>(mix(c.rgb, heat.colour.rgb, heat.colour.a), c.a);
+        self_light = heat.colour.a;
+    }
     var out: LitOut;
     out.colour = vec4<f32>(c.rgb, 1.0);
-    out.shade = vec4<f32>(0.0, 0.0, 0.0, 1.0 - clamp(in.shade.x, 0.0, 0.99));
+    out.shade = vec4<f32>(self_light, 0.0, 0.0, 1.0 - clamp(in.shade.x, 0.0, 0.99));
     return out;
 }
