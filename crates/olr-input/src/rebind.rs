@@ -7,7 +7,8 @@
 //! every seat on its own (issue #28: [`crate::SeatKind`],
 //! [`Bindings::unreachable`] is empty): **every action keeps at least one
 //! key of keyboard 1's** ([`Bindings::keys`]), **one of keyboard 2's**
-//! ([`Bindings::keys2`]) **and one gamepad input**; with mouse controls
+//! ([`Bindings::keys2`]) **and one gamepad input** (but
+//! [`PAD_OPTIONAL`]'s, Weapon 1-5, which OLX binds to none); with mouse controls
 //! on, **every action but [`MOUSE_MADE`]'s keeps a key or a mouse input**
 //! of keyboard 1's (of [`Bindings::mouse_keys`] and [`Bindings::mouse`]).
 //! A seat needs only its own device's: a keyboard seat keys, the pads pad
@@ -21,7 +22,7 @@ use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::bindings::{
-    Action, Bindings, MOUSE_MADE, MouseInput, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD,
+    Action, Bindings, MOUSE_MADE, MouseInput, PAD_OPTIONAL, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD,
 };
 use crate::state::{NOTCH_PIXELS, PadEvent};
 
@@ -129,7 +130,7 @@ pub enum Resolve {
 pub enum Need {
     /// A key of [`Bindings::keys`] (keyboard 1, mouse controls off).
     Key,
-    /// A gamepad input (either mode).
+    /// A gamepad input (either mode); not of [`PAD_OPTIONAL`].
     PadInput,
     /// A key of [`Bindings::mouse_keys`] or an input of
     /// [`Bindings::mouse`], with mouse controls on; not of [`MOUSE_MADE`]'s.
@@ -196,6 +197,11 @@ impl Action {
             Action::Strafe => "Strafe",
             Action::PreviousWeapon => "Previous weapon",
             Action::NextWeapon => "Next weapon",
+            Action::Weapon1 => "Weapon 1",
+            Action::Weapon2 => "Weapon 2",
+            Action::Weapon3 => "Weapon 3",
+            Action::Weapon4 => "Weapon 4",
+            Action::Weapon5 => "Weapon 5",
             Action::Dig => "Dig",
         }
     }
@@ -228,7 +234,7 @@ impl List {
     fn need(self, action: Action) -> Option<Need> {
         match self {
             List::Keys => Some(Need::Key),
-            List::Pad => Some(Need::PadInput),
+            List::Pad => (!PAD_OPTIONAL.contains(&action)).then_some(Need::PadInput),
             List::Keys2 => Some(Need::Keyboard2Key),
             List::MouseKeys | List::Mouse => (!MOUSE_MADE.contains(&action)).then_some(Need::KeyOrMouse),
         }
@@ -280,13 +286,18 @@ impl Bindings {
 
     /// What an action cannot be pressed with (none, unless edited by
     /// hand), every seat's gaps: keyboard 1's key with mouse controls off,
-    /// a gamepad input, keyboard 1's key or mouse input with them on
-    /// ([`MOUSE_MADE`]'s need none), keyboard 2's key.
+    /// a gamepad input ([`PAD_OPTIONAL`]'s need none), keyboard 1's key or
+    /// mouse input with them on ([`MOUSE_MADE`]'s need none), keyboard 2's
+    /// key.
     pub fn unreachable(&self) -> Vec<(Action, Need)> {
         let mut out = Vec::new();
         for need in [Need::Key, Need::PadInput, Need::KeyOrMouse, Need::Keyboard2Key] {
             for a in Action::ALL {
-                let needed = need != Need::KeyOrMouse || !MOUSE_MADE.contains(&a);
+                let needed = match need {
+                    Need::KeyOrMouse => !MOUSE_MADE.contains(&a),
+                    Need::PadInput => !PAD_OPTIONAL.contains(&a),
+                    Need::Key | Need::Keyboard2Key => true,
+                };
                 if needed && self.count(a, need) == 0 {
                     out.push((a, need));
                 }

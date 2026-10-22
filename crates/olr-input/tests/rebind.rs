@@ -151,6 +151,63 @@ fn the_new_actions_rebind_and_an_older_file_gets_their_defaults() {
     }
 }
 
+/// Issue #48: Weapon 1-5 rebind like any action, need no pad input (OLX
+/// binds none), and a file from before them gets their keys.
+#[test]
+fn the_weapon_keys_rebind_need_no_pad_and_an_older_file_gets_their_defaults() {
+    let mut b = Bindings::olx();
+    let q = Binding::Key(KeyCode::KeyQ);
+    b.bind(K, Action::Weapon2, q, Resolve::Share).unwrap();
+    b.unbind(K, Action::Weapon2, Binding::Key(KeyCode::Digit2)).unwrap();
+    assert_eq!(b.of(K, Action::Weapon2, KB), [q]);
+    assert_eq!(
+        b.unbind(K, Action::Weapon2, q),
+        Err(RebindError::Unreachable { action: Action::Weapon2, need: Need::Key })
+    );
+    let one = Binding::Key(KeyCode::Digit1);
+    assert_eq!(
+        b.bind(K, Action::Rope, one, Resolve::Move),
+        Err(RebindError::Unreachable { action: Action::Weapon1, need: Need::Key })
+    );
+    // A pad input binds, and unbinds again: none is needed.
+    assert!(b.of(K, Action::Weapon1, PAD).is_empty());
+    assert!(b.unreachable().is_empty());
+    let x = Binding::Pad(PadInput::Button(Button::DPadUp));
+    b.bind(K, Action::Weapon1, x, Resolve::Share).unwrap();
+    assert_eq!(b.of(K, Action::Weapon1, PAD), [x]);
+    assert_eq!(b.actions_of(K, x), [Action::Up, Action::Weapon1]);
+    b.unbind(K, Action::Weapon1, x).unwrap();
+    assert!(b.of(K, Action::Weapon1, PAD).is_empty());
+    // Mouse controls' keys have them too, and need them.
+    assert_eq!(b.of(M, Action::Weapon5, KB), [Binding::Key(KeyCode::Digit5)]);
+    assert_eq!(
+        b.unbind(M, Action::Weapon5, Binding::Key(KeyCode::Digit5)),
+        Err(RebindError::Unreachable { action: Action::Weapon5, need: Need::KeyOrMouse })
+    );
+
+    // An options file from before them: OLX's keys (1-5, 6-0 for
+    // keyboard 2, mouse controls' 1-5), one warning per list and action;
+    // still no pad input.
+    let old = Bindings::olx();
+    let mut b = old.clone();
+    let new = Action::WEAPONS;
+    b.keys.retain(|(a, _)| !new.contains(a));
+    b.mouse_keys.retain(|(a, _)| !new.contains(a));
+    b.keys2.retain(|(a, _)| !new.contains(a));
+    let w = b.repair();
+    assert_eq!(w.len(), 15, "{w:?}");
+    assert!(w.iter().any(|w| w.contains("Weapon 3") && w.contains("3")), "{w:?}");
+    assert!(w.iter().any(|w| w.contains("Weapon 5") && w.contains("player 2") && w.contains("0")), "{w:?}");
+    assert!(b.unreachable().is_empty());
+    assert_eq!(b, old);
+    // The same file read: the lists given are kept as written.
+    let text = ron::to_string(&Bindings { keys: vec![(Action::Up, KeyCode::KeyW)], ..old.clone() }).unwrap();
+    let mut read: Bindings = ron::from_str(&text).unwrap();
+    assert!(read.of(K, Action::Weapon1, KB).is_empty());
+    read.repair();
+    assert_eq!(read.of(K, Action::Weapon1, KB), [one]);
+}
+
 #[test]
 fn a_file_without_the_pad_section_takes_olx_pad_defaults() {
     let b: Bindings = ron::from_str("(keys: [(Up, KeyW)])").unwrap();

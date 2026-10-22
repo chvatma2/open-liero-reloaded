@@ -1,4 +1,4 @@
-//! What each device input does: the simulation's 11 keys and Dig as
+//! What each device input does: the simulation's 16 keys and Dig as
 //! [`Action`]s, and the [`Bindings`] from keyboard keys, gamepad inputs and
 //! (mouse controls) mouse inputs to them.
 
@@ -13,8 +13,8 @@ use winit::keyboard::KeyCode;
 /// ([`crate::InputState::latch_tick`] turns it into the dig gesture).
 pub const DIG: u32 = 1 << 16;
 
-/// A control of OLX's `ply_keys` that the simulation has a key for (spec §19
-/// E5; Weapon1-5 have none), plus [`Action::Dig`], which presses the dig
+/// A control of OLX's `ply_keys`, each a simulation key (spec §19 E5;
+/// Weapon1-5 since issue #48), plus [`Action::Dig`], which presses the dig
 /// gesture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 pub enum Action {
@@ -35,6 +35,16 @@ pub enum Action {
     PreviousWeapon,
     /// A press selects the next weapon slot.
     NextWeapon,
+    /// Held, selects the first weapon slot.
+    Weapon1,
+    /// Held, selects the second weapon slot.
+    Weapon2,
+    /// Held, selects the third weapon slot.
+    Weapon3,
+    /// Held, selects the fourth weapon slot.
+    Weapon4,
+    /// Held, selects the fifth weapon slot.
+    Weapon5,
     /// Digs once, the way a player digs with the keys (holding one
     /// direction, pressing the other); held, again every 0.2 s. Not one of
     /// OLX's controls (OLX has no dig key).
@@ -43,7 +53,7 @@ pub enum Action {
 
 impl Action {
     /// Every action, in `Keys` bit order, Dig last.
-    pub const ALL: [Action; 12] = [
+    pub const ALL: [Action; 17] = [
         Action::Up,
         Action::Down,
         Action::Left,
@@ -55,8 +65,17 @@ impl Action {
         Action::Strafe,
         Action::PreviousWeapon,
         Action::NextWeapon,
+        Action::Weapon1,
+        Action::Weapon2,
+        Action::Weapon3,
+        Action::Weapon4,
+        Action::Weapon5,
         Action::Dig,
     ];
+
+    /// Weapon1 to Weapon5, in slot order.
+    pub const WEAPONS: [Action; 5] =
+        [Action::Weapon1, Action::Weapon2, Action::Weapon3, Action::Weapon4, Action::Weapon5];
 
     /// The bit this action sets in the actions' mask: its [`Keys`] bit
     /// ([`DIG`] for Dig).
@@ -73,18 +92,29 @@ impl Action {
             Action::Strafe => Keys::STRAFE,
             Action::PreviousWeapon => Keys::PREV_WEAPON,
             Action::NextWeapon => Keys::NEXT_WEAPON,
+            Action::Weapon1 => Keys::WEAPON1,
+            Action::Weapon2 => Keys::WEAPON2,
+            Action::Weapon3 => Keys::WEAPON3,
+            Action::Weapon4 => Keys::WEAPON4,
+            Action::Weapon5 => Keys::WEAPON5,
             Action::Dig => return DIG,
         })
     }
 }
 
 /// Mouse controls' default keys (issue #24, [`Bindings::mouse_keys`]): A
-/// and D move, Space jumps, S digs.
-pub const MOUSE_KEYS: [(Action, KeyCode); 4] = [
+/// and D move, Space jumps, S digs; 1 to 5 select a weapon slot, as in
+/// keyboard 1's own list (issue #48).
+pub const MOUSE_KEYS: [(Action, KeyCode); 9] = [
     (Action::Left, KeyCode::KeyA),
     (Action::Right, KeyCode::KeyD),
     (Action::Jump, KeyCode::Space),
     (Action::Dig, KeyCode::KeyS),
+    (Action::Weapon1, KeyCode::Digit1),
+    (Action::Weapon2, KeyCode::Digit2),
+    (Action::Weapon3, KeyCode::Digit3),
+    (Action::Weapon4, KeyCode::Digit4),
+    (Action::Weapon5, KeyCode::Digit5),
 ];
 
 /// Mouse controls' default mouse inputs (issue #24, [`Bindings::mouse`]):
@@ -102,6 +132,12 @@ pub const MOUSE_BUTTONS: [(Action, MouseInput); 4] = [
 /// worm). SelectWeapon goes unused (the wheel changes the weapon). They
 /// take no key or mouse input in mouse mode.
 pub const MOUSE_MADE: [Action; 4] = [Action::Up, Action::Down, Action::SelectWeapon, Action::Strafe];
+
+/// The actions a gamepad need not have (issue #48): Weapon 1-5, which OLX
+/// binds to no pad input (a pad has Previous and Next weapon). A player
+/// may still bind them to one.
+/// OLX: src/client/Options.cpp:61-63, :76-80
+pub const PAD_OPTIONAL: [Action; 5] = Action::WEAPONS;
 
 /// A mouse input mouse controls can bind (issue #25): a button, or a
 /// notch of the wheel one way.
@@ -226,8 +262,9 @@ impl Bindings {
     /// OLX's player 1 defaults (non-Apple), and mouse controls' (issue #24,
     /// [`MOUSE_KEYS`], [`MOUSE_BUTTONS`]): arrows, Shoot `LCtrl`, Jump
     /// `LAlt`, Rope `X`, SelectWeapon `LShift`, Strafe `Z`, Previous/Next
-    /// weapon `A`/`S`; on the pad, the d-pad, Shoot right trigger, Jump A
-    /// (south), Rope Y (north), SelectWeapon left trigger.
+    /// weapon `A`/`S`, Weapon 1-5 the digits `1`-`5`; on the pad, the
+    /// d-pad, Shoot right trigger, Jump A (south), Rope Y (north),
+    /// SelectWeapon left trigger, no Weapon 1-5 ([`PAD_OPTIONAL`]).
     /// OLX: src/client/Options.cpp:45-51 (`ply_def1`), :64-73 (`ply_gamepad_def`).
     ///
     /// Not OLX's: Dig is `C`, beside the rope and strafe keys (OLX has no
@@ -255,6 +292,11 @@ impl Bindings {
             (PreviousWeapon, KeyA),
             (NextWeapon, KeyS),
             (Dig, KeyC),
+            (Weapon1, Digit1),
+            (Weapon2, Digit2),
+            (Weapon3, Digit3),
+            (Weapon4, Digit4),
+            (Weapon5, Digit5),
         ];
         let pad = vec![
             (Up, PadInput::Button(Button::DPadUp)),
@@ -286,7 +328,8 @@ impl Bindings {
     /// Keyboard 2's defaults (issue #28): OLX's player 2 on the numeric
     /// keypad, Up `kp 8`, Down `kp 5`, Left `kp 4`, Right `kp 6`, Shoot
     /// `kp +`, Jump `kp enter`, Rope `kp -`, SelectWeapon `kp 0`, Strafe
-    /// `kp .`, Previous/Next weapon `kp 7`/`kp 9`.
+    /// `kp .`, Previous/Next weapon `kp 7`/`kp 9`, Weapon 1-5 the digits
+    /// `6` `7` `8` `9` `0`.
     /// OLX: src/client/Options.cpp (`ply_def2`, after `ply_def1` at :45-51;
     /// presentation note §10.1).
     ///
@@ -308,6 +351,11 @@ impl Bindings {
             (PreviousWeapon, Numpad7),
             (NextWeapon, Numpad9),
             (Dig, Numpad3),
+            (Weapon1, Digit6),
+            (Weapon2, Digit7),
+            (Weapon3, Digit8),
+            (Weapon4, Digit9),
+            (Weapon5, Digit0),
         ]
     }
 

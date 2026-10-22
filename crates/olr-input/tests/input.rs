@@ -101,7 +101,7 @@ fn tick_latch_sees_every_press_and_release() {
 
 #[test]
 fn default_bindings_match_olx() {
-    // OLX: src/client/Options.cpp:45-51 (ply_def1, non-Apple), :64-73.
+    // OLX: src/client/Options.cpp:45-51 (ply_def1, non-Apple), :64-80.
     let b = Bindings::default();
     let key =
         |a: Action| -> Vec<KeyCode> { b.keys.iter().filter(|(x, _)| *x == a).map(|(_, k)| *k).collect() };
@@ -117,6 +117,17 @@ fn default_bindings_match_olx() {
     assert_eq!(key(Action::PreviousWeapon), [KeyCode::KeyA]);
     assert_eq!(key(Action::NextWeapon), [KeyCode::KeyS]);
     assert_eq!(key(Action::Dig), [KeyCode::KeyC]);
+    let digits = [KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3, KeyCode::Digit4, KeyCode::Digit5];
+    for (a, k) in Action::WEAPONS.into_iter().zip(digits) {
+        assert_eq!(key(a), [k], "{a:?}");
+        assert!(b.mouse_keys.contains(&(a, k)), "mouse controls' {a:?}");
+    }
+    // Keyboard 2's, OLX's player 2 (`ply_def2`, :51): 6, 7, 8, 9, 0.
+    let digits2 = [KeyCode::Digit6, KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9, KeyCode::Digit0];
+    for (a, k) in Action::WEAPONS.into_iter().zip(digits2) {
+        let of: Vec<KeyCode> = b.keys2.iter().filter(|(x, _)| *x == a).map(|(_, k)| *k).collect();
+        assert_eq!(of, [k], "keyboard 2's {a:?}");
+    }
     // One action per default key.
     let mut keys: Vec<KeyCode> = b.keys.iter().map(|(_, k)| *k).collect();
     keys.sort_by_key(|k| format!("{k:?}"));
@@ -133,6 +144,9 @@ fn default_bindings_match_olx() {
     assert_eq!(pad(Action::PreviousWeapon), [PadInput::Button(Button::LeftTrigger)]);
     assert_eq!(pad(Action::NextWeapon), [PadInput::Button(Button::RightTrigger)]);
     assert_eq!(pad(Action::Dig), [PadInput::Button(Button::East)]);
+    for a in Action::WEAPONS {
+        assert!(pad(a).is_empty(), "OLX binds no pad input to {a:?}");
+    }
     let mut inputs: Vec<String> = b.pad.iter().map(|(_, p)| format!("{p:?}")).collect();
     inputs.sort();
     inputs.dedup();
@@ -141,7 +155,9 @@ fn default_bindings_match_olx() {
     // Every action maps to its own Keys bit; Dig to olr-input's own,
     // beyond the simulation's 16 bits.
     let bits: Vec<u32> = Action::ALL.iter().map(|a| a.bit()).collect();
-    assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, DIG]);
+    assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, 2048, 4096, 8192, 16384, 32768, DIG]);
+    let weapons: Vec<u32> = Action::WEAPONS.iter().map(|a| a.bit()).collect();
+    assert_eq!(weapons, Keys::WEAPONS.map(u32::from));
     assert!(DIG > u32::from(u16::MAX));
 
     // Spec §8.5: no default key, or pair of them, is a shortcut the browser

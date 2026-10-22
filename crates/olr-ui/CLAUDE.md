@@ -47,7 +47,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   as Back does, and does nothing elsewhere (the menus by pad: `pad.rs`).
   **The join step** (issue #32, `join.rs`, `screens/join.rs`; not
   OLX's): `MenuData::set_seats` (the app's, every frame: each seat's
-  `SeatInput { seat, held, start }`, its actions held with Dig and its
+  `SeatInput { seat, held, start }`, its actions held, `Action::bit`'s
+  `u32` mask with Dig, and its
   pad's Start) notes `seats_used`, the seats that pressed something this
   run. Local Play's Start with two or more used is `OpenJoin(seat)` (the
   pad whose A pressed it, `PadNav::carried`, else keyboard 1), else
@@ -220,7 +221,9 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   turn into `AppCommand::ClearDownloadCache`; the match is set up in local play only, which remembers it in
   `settings.gameplay`; the UI
   scale applies when its slider is released; `keys.rs` (in a scroll area:
-  every `Action::ALL`, Strafe, Previous/Next weapon and Dig since #23),
+  every `Action::ALL`, Strafe, Previous/Next weapon and Dig since #23,
+  Weapon 1-5 since #48, which a pad need not have, `PAD_OPTIONAL`; the
+  tests' `tap` scrolls a row into view first),
   seat by seat (issue #28: "Controls of" Keyboard 1, Keyboard 2,
   Gamepads, `olr_input::SeatKind`, each with its `seat_note`; the mouse
   controls' checkbox, the chat key and the profile's "own keys" note on

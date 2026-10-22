@@ -7,7 +7,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use olr_input::{
     Action, Binding, Bindings, Button, Device, KeyCode, MOUSE_BUTTONS, MOUSE_KEYS, Mode, MouseInput,
-    PadEvent, PadInput, RebindError, Resolve,
+    PAD_OPTIONAL, PadEvent, PadInput, RebindError, Resolve,
 };
 use olr_ui::screens::{self, MenuData};
 use olr_ui::{
@@ -21,12 +21,17 @@ const MOUSE: Device = Device::Mouse;
 const K: Mode = Mode::Keys;
 const M: Mode = Mode::Mouse;
 
-/// Every action can be pressed with one key alone, and with one pad input.
+/// Keyboard 1's Weapon 1-5 keys (issue #48), as an options file lists them.
+const WEAPON_KEYS: &str =
+    "(Weapon1, Digit1), (Weapon2, Digit2), (Weapon3, Digit3), (Weapon4, Digit4), (Weapon5, Digit5)";
+
+/// Every action can be pressed with one key alone, and with one pad input
+/// (but Weapon 1-5, `PAD_OPTIONAL`, which need none).
 fn controllable(b: &Bindings) -> bool {
     Action::ALL.iter().all(|a| {
         let key = b.keys.iter().any(|(_, k)| b.key_bits(&[*k]) & a.bit() != 0);
         let pad = b.pad.iter().any(|(_, p)| b.pad_bits(|q| q == *p) & a.bit() != 0);
-        key && pad
+        key && (pad || PAD_OPTIONAL.contains(a))
     })
 }
 
@@ -155,16 +160,22 @@ fn keys(h: &Harness<'static, App>, action: Action) -> Vec<Binding> {
 /// Options → Keys' seat chooser (issue #28): "Keyboard 1", "Keyboard 2"
 /// or "Gamepads".
 fn seat(h: &mut Harness<'static, App>, name: &str) {
-    h.get_by_label(name).click();
+    tap(h, name);
+}
+
+/// Clicks the widget labelled `label`, scrolled into view first (the Keys
+/// tab's rows run below a 720-pixel screen since Weapon 1-5, issue #48).
+fn tap(h: &mut Harness<'static, App>, label: &str) {
+    h.get_by_label(label).scroll_to_me();
+    h.run();
+    h.get_by_label(label).click();
     h.run();
 }
 
 fn open_keys(h: &mut Harness<'static, App>) {
-    h.get_by_label("Options").click();
-    h.run();
+    tap(h, "Options");
     assert_eq!(h.state().ui.screen(), Screen::Options);
-    h.get_by_label("Keys").click();
-    h.run();
+    tap(h, "Keys");
 }
 
 #[test]
@@ -175,8 +186,7 @@ fn options_rebind_a_key() {
         (Binding::Key(KeyCode::KeyQ), Binding::Key(KeyCode::ControlLeft), Binding::Key(KeyCode::AltLeft));
 
     // "Press a key" (OLX's "Input for:" box): a free key is added.
-    h.get_by_label("Add key for Jump").click();
-    h.run();
+    tap(&mut h, "Add key for Jump");
     h.get_by_label_contains("Press a key for Jump");
     assert_eq!(h.state().data.capture.as_ref().map(|c| c.device()), Some(KB));
     press(&mut h, KeyCode::KeyQ);
@@ -187,48 +197,39 @@ fn options_rebind_a_key() {
     assert!(matches!(h.state().commands.last(), Some(AppCommand::SaveSettings(_))));
 
     // A key another action has: shown, and moved on request.
-    h.get_by_label("Add key for Shoot").click();
-    h.run();
+    tap(&mut h, "Add key for Shoot");
     press(&mut h, KeyCode::KeyQ);
     h.get_by_label("Q is Jump's.");
     assert_eq!(keys(&h, Action::Shoot), [ctrl], "nothing changes before the choice");
-    h.get_by_label("Move it to Shoot").click();
-    h.run();
+    tap(&mut h, "Move it to Shoot");
     assert_eq!(keys(&h, Action::Shoot), [ctrl, z]);
     assert_eq!(keys(&h, Action::Jump), [alt]);
 
     // Moving Shoot's last key away is not offered: shared instead.
-    h.get_by_label("Remove Left Ctrl from Shoot").click();
-    h.run();
+    tap(&mut h, "Remove Left Ctrl from Shoot");
     assert_eq!(keys(&h, Action::Shoot), [z]);
     assert!(h.get_by_label("Remove Q from Shoot").accesskit_node().is_disabled(), "the last key stays");
-    h.get_by_label("Add key for Rope").click();
-    h.run();
+    tap(&mut h, "Add key for Rope");
     press(&mut h, KeyCode::KeyQ);
     assert!(h.get_by_label("Move it to Rope").accesskit_node().is_disabled());
     h.get_by_label_contains("Shoot would have no key");
-    h.get_by_label("Use it for both").click();
-    h.run();
+    tap(&mut h, "Use it for both");
     assert_eq!(keys(&h, Action::Shoot), [z]);
     assert_eq!(keys(&h, Action::Rope), [Binding::Key(KeyCode::KeyX), z]);
 
     // Cancel leaves everything as it was.
     let before = h.state().ui.bindings().clone();
-    h.get_by_label("Add key for Up").click();
-    h.run();
+    tap(&mut h, "Add key for Up");
     press(&mut h, KeyCode::KeyQ);
-    h.get_by_label("Cancel").click();
-    h.run();
+    tap(&mut h, "Cancel");
     assert_eq!(h.state().ui.bindings(), before);
 
     // The game's own keys are refused; Esc cancels and stays in options.
-    h.get_by_label("Add key for Up").click();
-    h.run();
+    tap(&mut h, "Add key for Up");
     press(&mut h, KeyCode::F2);
     h.get_by_label_contains("F2 is the game's");
     assert_eq!(h.state().ui.bindings(), before);
-    h.get_by_label("Add key for Up").click();
-    h.run();
+    tap(&mut h, "Add key for Up");
     // The app feeds the capture every key and egui none (it swallows them).
     press(&mut h, KeyCode::Escape);
     assert!(h.state().data.capture.is_none());
@@ -238,8 +239,7 @@ fn options_rebind_a_key() {
     // A gamepad input on the same action as its keys: the Gamepads' page.
     assert!(h.query_by_label("Add pad input for Shoot").is_none());
     seat(&mut h, "Gamepads");
-    h.get_by_label("Add pad input for Shoot").click();
-    h.run();
+    tap(&mut h, "Add pad input for Shoot");
     assert_eq!(h.state().data.capture.as_ref().map(|c| c.device()), Some(PAD));
     h.state_mut().data.capture.as_mut().unwrap().on_pad(PadEvent::Button(Button::LeftThumb, 1.0));
     h.run();
@@ -249,19 +249,16 @@ fn options_rebind_a_key() {
 
     // A browser shortcut is pointed out (Alt+F4 with Jump's Alt, spec §8.5).
     seat(&mut h, "Keyboard 1");
-    h.get_by_label("Add key for Jump").click();
-    h.run();
+    tap(&mut h, "Add key for Jump");
     press(&mut h, KeyCode::F4);
     h.get_by_label_contains("Left Alt + F4");
 
     // Back to OLX's keys, then pad inputs: each page's Reset is its own.
-    h.get_by_label("Reset to OLX's keys").click();
-    h.run();
+    tap(&mut h, "Reset to OLX's keys");
     assert_eq!(h.state().ui.bindings().keys, Bindings::olx().keys);
     assert_eq!(h.state().ui.bindings().of(K, Action::Shoot, PAD).last(), Some(&west));
     seat(&mut h, "Gamepads");
-    h.get_by_label(olr_ui::screens::RESET_PAD).click();
-    h.run();
+    tap(&mut h, olr_ui::screens::RESET_PAD);
     assert_eq!(h.state().ui.bindings(), Bindings::olx());
     assert!(h.state().commands.contains(&AppCommand::ApplyBindings(Bindings::olx())));
     h.key_press(egui::Key::Escape);
@@ -280,24 +277,68 @@ fn the_keys_screen_lists_and_rebinds_the_new_actions() {
         h.get_by_label(&format!("Add key for {}", a.name()));
     }
     h.get_by_label("Remove C from Dig");
-    h.get_by_label("Add key for Dig").click();
-    h.run();
+    tap(&mut h, "Add key for Dig");
     press(&mut h, KeyCode::KeyQ);
     assert_eq!(keys(&h, Action::Dig), [Binding::Key(KeyCode::KeyC), Binding::Key(KeyCode::KeyQ)]);
-    h.get_by_label("Remove C from Dig").click();
-    h.run();
+    tap(&mut h, "Remove C from Dig");
     assert_eq!(keys(&h, Action::Dig), [Binding::Key(KeyCode::KeyQ)]);
     seat(&mut h, "Gamepads");
     for a in [Action::Strafe, Action::PreviousWeapon, Action::NextWeapon, Action::Dig] {
         h.get_by_label(&format!("Add pad input for {}", a.name()));
     }
     h.get_by_label("Remove Pad RB from Next weapon");
-    h.get_by_label("Add pad input for Strafe").click();
-    h.run();
+    tap(&mut h, "Add pad input for Strafe");
     h.state_mut().data.capture.as_mut().unwrap().on_pad(PadEvent::Button(Button::LeftThumb, 1.0));
     h.run();
     let thumb = Binding::Pad(PadInput::Button(Button::LeftThumb));
     assert_eq!(h.state().ui.bindings().of(K, Action::Strafe, PAD).last(), Some(&thumb));
+}
+
+/// Issue #48: Weapon 1-5 are listed with their keys (1-5, keyboard 2's
+/// 6-0), have no pad input by default, rebind like any action, and a pad
+/// input bound to one can be removed again.
+#[test]
+fn the_keys_screen_lists_and_rebinds_the_weapon_keys() {
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
+    open_keys(&mut h);
+    for (i, a) in Action::WEAPONS.into_iter().enumerate() {
+        h.get_by_label(&format!("Remove {} from {}", i + 1, a.name()));
+    }
+    tap(&mut h, "Add key for Weapon 3");
+    press(&mut h, KeyCode::KeyE);
+    assert_eq!(keys(&h, Action::Weapon3), [Binding::Key(KeyCode::Digit3), Binding::Key(KeyCode::KeyE)]);
+    tap(&mut h, "Remove 3 from Weapon 3");
+    assert_eq!(keys(&h, Action::Weapon3), [Binding::Key(KeyCode::KeyE)]);
+    seat(&mut h, "Keyboard 2");
+    for (a, k) in Action::WEAPONS.into_iter().zip(["6", "7", "8", "9", "0"]) {
+        h.get_by_label(&format!("Remove {k} from {}", a.name()));
+    }
+    seat(&mut h, "Gamepads");
+    tap(&mut h, "Add pad input for Weapon 1");
+    h.state_mut().data.capture.as_mut().unwrap().on_pad(PadEvent::Button(Button::LeftThumb, 1.0));
+    h.run();
+    let thumb = Binding::Pad(PadInput::Button(Button::LeftThumb));
+    assert_eq!(h.state().ui.bindings().of(K, Action::Weapon1, PAD), [thumb]);
+    tap(&mut h, "Remove Pad left stick press from Weapon 1");
+    assert!(h.state().ui.bindings().of(K, Action::Weapon1, PAD).is_empty(), "a pad needs none");
+    assert!(h.state().ui.bindings().unreachable().is_empty());
+}
+
+/// Issue #48: an options file from before Weapon 1-5 loads with OLX's
+/// keys for them (1-5, keyboard 2's 6-0, mouse controls' 1-5), one
+/// warning per list and key, and no pad input.
+#[test]
+fn an_options_file_from_before_the_weapon_keys_gets_their_defaults() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut old = Bindings::olx();
+    for list in [&mut old.keys, &mut old.mouse_keys, &mut old.keys2] {
+        list.retain(|(a, _)| !Action::WEAPONS.contains(a));
+    }
+    let text = format!("(version: 1, settings: (input: {}))", ron::to_string(&old).unwrap());
+    std::fs::write(tmp.path().join("settings.ron"), text).unwrap();
+    let got = Store::open(tmp.path()).load_settings();
+    assert_eq!(got.warnings.len(), 15, "{:?}", got.warnings);
+    assert_eq!(got.value.input, Bindings::olx());
 }
 
 /// Issue #24: Options → Keys → Mouse controls (experimental), off by
@@ -308,14 +349,12 @@ fn mouse_controls_are_switched_in_the_keys_tab() {
     assert!(!Settings::default().mouse.enabled, "off by default");
     open_keys(&mut h);
     h.get_by_label(olr_ui::screens::MOUSE_NOTE);
-    h.get_by_label(olr_ui::screens::MOUSE_CONTROLS).click();
-    h.run();
+    tap(&mut h, olr_ui::screens::MOUSE_CONTROLS);
     assert!(h.state().ui.settings().mouse.enabled);
     let c = &h.state().commands;
     assert!(c.contains(&AppCommand::ApplyMouseControls(true)), "{c:?}");
     assert!(c.iter().any(|c| matches!(c, AppCommand::SaveSettings(s) if s.mouse.enabled)), "{c:?}");
-    h.get_by_label(olr_ui::screens::MOUSE_CONTROLS).click();
-    h.run();
+    tap(&mut h, olr_ui::screens::MOUSE_CONTROLS);
     assert!(!h.state().ui.settings().mouse.enabled);
     assert_eq!(h.state().commands.last().map(|c| matches!(c, AppCommand::SaveSettings(_))), Some(true));
 }
@@ -340,8 +379,7 @@ fn the_keys_screen_rebinds_mouse_controls() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
     open_keys(&mut h);
     assert!(h.query_by_label("Mouse").is_none() && h.query_by_label(MOUSE_KEYS_NOTE).is_none());
-    h.get_by_label(MOUSE_CONTROLS).click();
-    h.run();
+    tap(&mut h, MOUSE_CONTROLS);
     h.get_by_label(MOUSE_KEYS_NOTE);
     h.get_by_label("Mouse");
     h.get_by_label(RESET_MOUSE);
@@ -365,8 +403,7 @@ fn the_keys_screen_rebinds_mouse_controls() {
     assert!(h.query_by_label("Add pad input for Up").is_none(), "the pads' are their own page");
 
     // A free mouse button: bound. The capture box has no Cancel to click.
-    h.get_by_label("Add mouse input for Rope").click();
-    h.run();
+    tap(&mut h, "Add mouse input for Rope");
     h.get_by_label_contains("Click a mouse button or turn the wheel for Rope");
     assert_eq!(h.state().data.capture.as_ref().map(|c| c.device()), Some(MOUSE));
     assert!(h.query_by_label("Cancel").is_none());
@@ -375,41 +412,34 @@ fn the_keys_screen_rebinds_mouse_controls() {
     assert_eq!(mouse_inputs(&h, Action::Rope), [rmb, mmb]);
 
     // A button another action has: moved on request (Rope keeps the middle one).
-    h.get_by_label("Add mouse input for Shoot").click();
-    h.run();
+    tap(&mut h, "Add mouse input for Shoot");
     click(&mut h, MouseInput::Right);
     h.get_by_label("Right click is Rope's.");
-    h.get_by_label("Move it to Shoot").click();
-    h.run();
+    tap(&mut h, "Move it to Shoot");
     assert_eq!(mouse_inputs(&h, Action::Shoot), [lmb, rmb]);
     assert_eq!(mouse_inputs(&h, Action::Rope), [mmb]);
-    h.get_by_label("Remove Left click from Shoot").click();
-    h.run();
+    tap(&mut h, "Remove Left click from Shoot");
     assert_eq!(mouse_inputs(&h, Action::Shoot), [rmb]);
     // Rope's last mouse input but a key: the middle button stays removable
     // only once Rope has a key.
     assert!(h.get_by_label("Remove Middle click from Rope").accesskit_node().is_disabled());
-    h.get_by_label("Add key for Rope").click();
-    h.run();
+    tap(&mut h, "Add key for Rope");
     press(&mut h, KeyCode::KeyE);
     assert_eq!(h.state().ui.bindings().of(M, Action::Rope, KB), [Binding::Key(KeyCode::KeyE)]);
     assert!(!h.get_by_label("Remove Middle click from Rope").accesskit_node().is_disabled());
 
     // A wheel notch, shared with what has it.
-    h.get_by_label("Add mouse input for Dig").click();
-    h.run();
+    tap(&mut h, "Add mouse input for Dig");
     h.state_mut().data.capture.as_mut().unwrap().on_wheel(-1.0);
     h.run();
     h.get_by_label("Wheel down is Next weapon's.");
-    h.get_by_label("Use it for both").click();
-    h.run();
+    tap(&mut h, "Use it for both");
     assert_eq!(mouse_inputs(&h, Action::Dig), [Binding::Mouse(MouseInput::WheelDown)]);
     assert_eq!(mouse_inputs(&h, Action::NextWeapon), [Binding::Mouse(MouseInput::WheelDown)]);
 
     // Esc cancels a mouse capture (the app feeds it the key, egui none).
     let before = h.state().ui.bindings().clone();
-    h.get_by_label("Add mouse input for Jump").click();
-    h.run();
+    tap(&mut h, "Add mouse input for Jump");
     h.state_mut().data.capture.as_mut().unwrap().on_key(KeyCode::Escape, true);
     h.run();
     assert!(h.state().data.capture.is_none());
@@ -421,14 +451,12 @@ fn the_keys_screen_rebinds_mouse_controls() {
     assert!(h.state().commands.contains(&applied));
 
     // Reset: mouse controls' defaults; the keyboard's and the pad's stay.
-    h.get_by_label(RESET_MOUSE).click();
-    h.run();
+    tap(&mut h, RESET_MOUSE);
     let b = h.state().ui.bindings().clone();
     assert_eq!((b.mouse_keys.as_slice(), b.mouse.as_slice()), (&MOUSE_KEYS[..], &MOUSE_BUTTONS[..]));
 
     // Off: the keyboard's own keys, as they were; no Mouse column.
-    h.get_by_label(MOUSE_CONTROLS).click();
-    h.run();
+    tap(&mut h, MOUSE_CONTROLS);
     assert!(h.query_by_label("Mouse").is_none());
     h.get_by_label("Remove Arrow Left from Left");
     h.get_by_label("Add key for Up");
@@ -441,9 +469,11 @@ fn the_keys_screen_rebinds_mouse_controls() {
 #[test]
 fn an_options_file_from_before_mouse_bindings_is_repaired() {
     let tmp = tempfile::tempdir().unwrap();
-    let text = "(version: 1, settings: (input: (keys: [(Up, KeyW), (Down, KeyS), (Left, KeyA), (Right, KeyD), \
-                (Shoot, ControlLeft), (Jump, Space), (Rope, KeyE), (SelectWeapon, ShiftLeft), (Strafe, KeyZ), \
-                (PreviousWeapon, KeyQ), (NextWeapon, KeyR), (Dig, KeyC)]), mouse: (enabled: true)))";
+    let text = format!(
+        "(version: 1, settings: (input: (keys: [(Up, KeyW), (Down, KeyS), (Left, KeyA), (Right, KeyD), \
+         (Shoot, ControlLeft), (Jump, Space), (Rope, KeyE), (SelectWeapon, ShiftLeft), (Strafe, KeyZ), \
+         (PreviousWeapon, KeyQ), (NextWeapon, KeyR), (Dig, KeyC), {WEAPON_KEYS}]), mouse: (enabled: true)))"
+    );
     std::fs::write(tmp.path().join("settings.ron"), text).unwrap();
     let got = Store::open(tmp.path()).load_settings();
     assert!(got.warnings.is_empty(), "{:?}", got.warnings);
@@ -479,8 +509,7 @@ fn a_profile_with_its_own_keys_is_rebound_there() {
     let mut h = harness(UiState::new(Settings::default(), p, 1));
     open_keys(&mut h);
     h.get_by_label_contains("OpenLieroXor has its own keys");
-    h.get_by_label("Add key for Jump").click();
-    h.run();
+    tap(&mut h, "Add key for Jump");
     press(&mut h, KeyCode::KeyQ);
     let profile = h.state().ui.profiles().list[0].bindings.clone().unwrap();
     assert!(profile.of(K, Action::Jump, KB).contains(&Binding::Key(KeyCode::KeyQ)));
@@ -512,37 +541,32 @@ fn the_keys_screen_rebinds_each_seat() {
     }
     // Keyboard 2's last key stays; another, and it can go.
     assert!(h.get_by_label("Remove Num 3 from Dig").accesskit_node().is_disabled());
-    h.get_by_label("Add key for Dig").click();
-    h.run();
+    tap(&mut h, "Add key for Dig");
     press(&mut h, KeyCode::Numpad2);
     let k2 = |h: &Harness<'static, App>, a| h.state().ui.bindings().of(K2, a, KB);
     assert_eq!(k2(&h, Action::Dig), [Binding::Key(KeyCode::Numpad3), Binding::Key(KeyCode::Numpad2)]);
-    h.get_by_label("Remove Num 3 from Dig").click();
-    h.run();
+    tap(&mut h, "Remove Num 3 from Dig");
     assert_eq!(k2(&h, Action::Dig), [Binding::Key(KeyCode::Numpad2)]);
     // The options' keyboard 2 changed, the profile's keys did not.
     assert_eq!(h.state().ui.settings().input.keys2, h.state().ui.bindings().keys2);
     assert_eq!(h.state().ui.profiles().list[0].bindings, Some(Bindings::olx()));
     assert!(h.state().ui.bindings().unreachable().is_empty());
     // The game's keys are refused here too.
-    h.get_by_label("Add key for Up").click();
-    h.run();
+    tap(&mut h, "Add key for Up");
     press(&mut h, KeyCode::F5);
     h.get_by_label_contains("F5 is the game's");
 
     // A key keyboard 1 has: bound to keyboard 2 and shown as a conflict,
     // on both keyboards' pages.
     assert!(h.query_by_label(&shared_note(KeyCode::ArrowUp)).is_none());
-    h.get_by_label("Add key for Jump").click();
-    h.run();
+    tap(&mut h, "Add key for Jump");
     press(&mut h, KeyCode::ArrowUp);
     assert!(k2(&h, Action::Jump).contains(&Binding::Key(KeyCode::ArrowUp)));
     h.get_by_label(&shared_note(KeyCode::ArrowUp));
     seat(&mut h, "Keyboard 1");
     h.get_by_label(&shared_note(KeyCode::ArrowUp));
     seat(&mut h, "Keyboard 2");
-    h.get_by_label(RESET_KEYS2).click();
-    h.run();
+    tap(&mut h, RESET_KEYS2);
     assert_eq!(h.state().ui.bindings().keys2, Bindings::olx().keys2);
     assert!(h.query_by_label(&shared_note(KeyCode::ArrowUp)).is_none());
 
@@ -550,8 +574,7 @@ fn the_keys_screen_rebinds_each_seat() {
     seat(&mut h, "Gamepads");
     h.get_by_label(seat_note(olr_input::SeatKind::Gamepad));
     assert!(h.query_by_label("Add key for Shoot").is_none());
-    h.get_by_label("Add pad input for Shoot").click();
-    h.run();
+    tap(&mut h, "Add pad input for Shoot");
     h.state_mut().data.capture.as_mut().unwrap().on_pad(PadEvent::Button(Button::Start, 1.0));
     h.run();
     h.get_by_label_contains("Pad Start is the game's (pause)");
@@ -565,9 +588,11 @@ fn the_keys_screen_rebinds_each_seat() {
 #[test]
 fn an_options_file_from_before_seats_is_repaired() {
     let tmp = tempfile::tempdir().unwrap();
-    let text = "(version: 1, settings: (input: (keys: [(Up, KeyW), (Down, KeyS), (Left, KeyA), (Right, KeyD), \
-                (Shoot, ControlLeft), (Jump, Space), (Rope, KeyE), (SelectWeapon, ShiftLeft), (Strafe, KeyZ), \
-                (PreviousWeapon, KeyQ), (NextWeapon, KeyR), (Dig, KeyC)])))";
+    let text = format!(
+        "(version: 1, settings: (input: (keys: [(Up, KeyW), (Down, KeyS), (Left, KeyA), (Right, KeyD), \
+         (Shoot, ControlLeft), (Jump, Space), (Rope, KeyE), (SelectWeapon, ShiftLeft), (Strafe, KeyZ), \
+         (PreviousWeapon, KeyQ), (NextWeapon, KeyR), (Dig, KeyC), {WEAPON_KEYS}])))"
+    );
     std::fs::write(tmp.path().join("settings.ron"), text).unwrap();
     let got = Store::open(tmp.path()).load_settings();
     assert!(got.warnings.is_empty(), "{:?}", got.warnings);
@@ -616,40 +641,29 @@ fn video(h: &Harness<'static, App>) -> Vec<VideoSettings> {
 #[test]
 fn options_set_video_and_audio() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
-    h.get_by_label("Options").click();
-    h.run();
+    tap(&mut h, "Options");
     // Video opens first.
-    h.get_by_label("Display").click();
-    h.run();
-    h.get_by_label("1920 × 1080").click();
-    h.run();
+    tap(&mut h, "Display");
+    tap(&mut h, "1920 × 1080");
     assert_eq!(video(&h).last().map(|v| v.window), Some(WindowPreset::W1920x1080));
     // Fullscreen is the list's last entry; it keeps the window's size.
-    h.get_by_label("Display").click();
-    h.run();
-    h.get_by_label("Fullscreen").click();
-    h.run();
+    tap(&mut h, "Display");
+    tap(&mut h, "Fullscreen");
     assert_eq!(video(&h).last().map(|v| (v.window, v.fullscreen)), Some((WindowPreset::W1920x1080, true)));
-    h.get_by_label("Uncapped").click();
-    h.run();
-    h.get_by_label("Nearest").click();
-    h.run();
-    h.get_by_label("Smooth motion").click();
-    h.run();
+    tap(&mut h, "Uncapped");
+    tap(&mut h, "Nearest");
+    tap(&mut h, "Smooth motion");
     let v = video(&h).last().cloned().unwrap();
     assert!(v.fullscreen && !v.interpolation);
     assert_eq!((v.frame_rate, v.filter), (FrameRate::Uncapped, UpscaleFilter::Nearest));
     assert_eq!(video(&h).len(), 5, "one apply per change");
     assert_eq!(saved(&h).video, v);
     // A window size picked while fullscreen ends it.
-    h.get_by_label("Display").click();
-    h.run();
-    h.get_by_label("1600 × 900").click();
-    h.run();
+    tap(&mut h, "Display");
+    tap(&mut h, "1600 × 900");
     assert_eq!(video(&h).last().map(|v| (v.window, v.fullscreen)), Some((WindowPreset::W1600x900, false)));
 
-    h.get_by_label("Audio").click();
-    h.run();
+    tap(&mut h, "Audio");
     h.get_by_role_and_label(Role::Slider, "Master volume");
     h.get_by_role_and_label(Role::Slider, "Effects volume");
     // OLX's default volume (Audio.Volume 70).
@@ -657,18 +671,13 @@ fn options_set_video_and_audio() {
 
     // The HUD's layout: the bar, or side panels on an ultrawide window.
     assert_eq!(v.hud_layout, HudArrangement::Auto, "Auto by default");
-    h.get_by_label("Video").click();
-    h.run();
-    h.get_by_label("HUD layout").click();
-    h.run();
-    h.get_by_label("Side panels").click();
-    h.run();
+    tap(&mut h, "Video");
+    tap(&mut h, "HUD layout");
+    tap(&mut h, "Side panels");
     assert_eq!(video(&h).last().map(|v| v.hud_layout), Some(HudArrangement::Sides));
     assert_eq!(saved(&h).video.hud_layout, HudArrangement::Sides);
-    h.get_by_label("HUD layout").click();
-    h.run();
-    h.get_by_label("Bottom bar").click();
-    h.run();
+    tap(&mut h, "HUD layout");
+    tap(&mut h, "Bottom bar");
     assert_eq!(saved(&h).video.hud_layout, HudArrangement::Bar);
     // A file from before the setting loads with Auto; the setting is kept.
     let tmp = tempfile::tempdir().unwrap();
@@ -736,8 +745,7 @@ fn game_keys_are_never_bound_from_a_file() {
 fn capture_swallows_the_captured_key() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
     open_keys(&mut h);
-    h.get_by_label("Add key for Jump").click();
-    h.run();
+    tap(&mut h, "Add key for Jump");
     // Keys egui hears while the box is open do nothing.
     h.key_press(egui::Key::Escape);
     h.run();
@@ -760,14 +768,12 @@ fn options_rebind_the_chat_key() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
     open_keys(&mut h);
     assert_eq!(h.state().ui.settings().online.chat_key, KeyCode::KeyT);
-    h.get_by_label("Change chat key").click();
-    h.run();
+    tap(&mut h, "Change chat key");
     h.get_by_label_contains("Press a key for Chat");
     press(&mut h, KeyCode::F2);
     h.get_by_label_contains("F2 is the game's");
     assert_eq!(h.state().ui.settings().online.chat_key, KeyCode::KeyT);
-    h.get_by_label("Change chat key").click();
-    h.run();
+    tap(&mut h, "Change chat key");
     press(&mut h, KeyCode::KeyY);
     h.run();
     assert_eq!(h.state().ui.settings().online.chat_key, KeyCode::KeyY);
@@ -788,10 +794,8 @@ fn options_clears_the_download_cache() {
     h.state_mut().data.download_cache = Ok(DownloadCacheView { bytes: 312 << 20, clear: Ok(()) });
     // Only the options clear.
     assert!(h.state_mut().ui.update(UiAction::ClearDownloadCache).is_empty());
-    h.get_by_label("Options").click();
-    h.run();
-    h.get_by_label("Online").click();
-    h.run();
+    tap(&mut h, "Options");
+    tap(&mut h, "Online");
     h.get_by_label("Download cache: 312 MB");
     // Below the Online tab's lists: scrolled into view first.
     h.get_by_role_and_label(Role::Button, "Clear").scroll_to_me();
@@ -827,10 +831,8 @@ fn options_edit_relays_and_unblock() {
     let mut h = harness(UiState::new(settings, Profiles::default(), 1));
     h.state_mut().data.default_relays = vec!["wss://relay.one".into(), "wss://relay.two".into()];
     h.state_mut().data.default_stun = vec!["stun.one:3478".into()];
-    h.get_by_label("Options").click();
-    h.run();
-    h.get_by_label("Online").click();
-    h.run();
+    tap(&mut h, "Options");
+    tap(&mut h, "Online");
     // The defaults show while the settings name none.
     h.get_by_label("wss://relay.one");
     h.get_by_label("stun.one:3478");
@@ -863,15 +865,13 @@ fn options_edit_relays_and_unblock() {
     h.run();
     h.get_by_role_and_label(Role::TextInput, "New relay").type_text("wss://relay.example.org");
     h.run();
-    h.get_by_label("Add relay").click();
-    h.run();
+    tap(&mut h, "Add relay");
     assert_eq!(
         saved(&h).online.finding.relays,
         Some(vec!["wss://relay.two".to_string(), "wss://relay.example.org".to_string()])
     );
     // Reset: the defaults again.
-    h.get_by_label("Reset relays to defaults").click();
-    h.run();
+    tap(&mut h, "Reset relays to defaults");
     assert_eq!(saved(&h).online.finding.relays, None);
     h.get_by_label("wss://relay.one");
     // STUN: none asked at all.
@@ -887,10 +887,8 @@ fn options_edit_relays_and_unblock() {
     h.get_by_label("needs host:port");
     assert!(h.get_by_label("Add STUN server").accesskit_node().is_disabled());
     // The region.
-    h.get_by_label("Region").click();
-    h.run();
-    h.get_by_label("Oceania").click();
-    h.run();
+    tap(&mut h, "Region");
+    tap(&mut h, "Oceania");
     assert_eq!(saved(&h).online.finding.region, olr_ui::Region::Oceania);
     // Unblock the first host (below the lists: scrolled into view first).
     h.get_all_by_label("Unblock").next().unwrap().scroll_to_me();
@@ -908,10 +906,8 @@ fn a_full_relay_list_says_so() {
     settings.online.finding.relays =
         Some((0..olr_ui::MAX_SERVERS).map(|i| format!("wss://relay{i}.example")).collect());
     let mut h = harness(UiState::new(settings, Profiles::default(), 1));
-    h.get_by_label("Options").click();
-    h.run();
-    h.get_by_label("Online").click();
-    h.run();
+    tap(&mut h, "Options");
+    tap(&mut h, "Online");
     h.get_by_label("the list is full");
     assert!(h.get_by_label("Add relay").accesskit_node().is_disabled());
 }
@@ -986,15 +982,12 @@ fn finding_settings_are_sanitized() {
 #[test]
 fn options_edit_turn_relays_and_port_mapping() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
-    h.get_by_label("Options").click();
-    h.run();
-    h.get_by_label("Online").click();
-    h.run();
+    tap(&mut h, "Options");
+    tap(&mut h, "Online");
     // On by default; unchecked, it is saved off.
     let switch = "Open the game's port on my router (UPnP/NAT-PMP/PCP)";
     assert!(h.state().ui.settings().online.finding.port_mapping);
-    h.get_by_label(switch).click();
-    h.run();
+    tap(&mut h, switch);
     assert!(!saved(&h).online.finding.port_mapping);
     // None by default (the project ships no TURN list, N52).
     h.get_by_label("No TURN relays: none is asked.");
@@ -1017,12 +1010,10 @@ fn options_edit_turn_relays_and_port_mapping() {
     h.run();
     let typed = h.get_by_role_and_label(field, "New TURN relay").accesskit_node().value().unwrap_or_default();
     assert!(!typed.contains("s3cret"), "masked while typed: {typed}");
-    h.get_by_label("Show password").click();
-    h.run();
+    tap(&mut h, "Show password");
     let shown = h.get_by_role_and_label(Role::TextInput, "New TURN relay").accesskit_node().value();
     assert_eq!(shown.as_deref(), Some("anna:s3cret@turn.example.org:3478"), "shown when asked");
-    h.get_by_label("Add TURN relay").click();
-    h.run();
+    tap(&mut h, "Add TURN relay");
     assert_eq!(saved(&h).online.finding.turn, ["anna:s3cret@turn.example.org:3478"]);
     // Listed without its password.
     h.get_by_label("anna:•••@turn.example.org:3478");
@@ -1036,10 +1027,8 @@ fn options_edit_turn_relays_and_port_mapping() {
     settings.online.finding.turn =
         (0..olr_ui::MAX_TURN).map(|i| format!("u:p@turn{i}.example:3478")).collect();
     let mut h = harness(UiState::new(settings, Profiles::default(), 1));
-    h.get_by_label("Options").click();
-    h.run();
-    h.get_by_label("Online").click();
-    h.run();
+    tap(&mut h, "Options");
+    tap(&mut h, "Online");
     h.get_by_label("the list is full");
     assert!(h.get_by_label("Add TURN relay").accesskit_node().is_disabled());
 }
@@ -1051,8 +1040,7 @@ fn options_edit_turn_relays_and_port_mapping() {
 fn the_blood_slider_sets_the_players_blood_amount() {
     assert_eq!(VideoSettings::default().blood, 100);
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
-    h.get_by_label("Options").click();
-    h.run();
+    tap(&mut h, "Options");
     let slider = h.get_by_role_and_label(Role::Slider, "Blood");
     slider.focus();
     h.run();

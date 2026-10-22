@@ -17,7 +17,8 @@
 #![forbid(unsafe_code)]
 
 pub use bindings::{
-    Action, Bindings, DIG, MOUSE_BUTTONS, MOUSE_KEYS, MOUSE_MADE, MouseInput, PAD_PAUSE, PadInput,
+    Action, Bindings, DIG, MOUSE_BUTTONS, MOUSE_KEYS, MOUSE_MADE, MouseInput, PAD_OPTIONAL, PAD_PAUSE,
+    PadInput,
     STICK_THRESHOLD, TRIGGER_THRESHOLD, is_browser_reserved,
 };
 pub use dig::DIG_REPEAT_TICKS;

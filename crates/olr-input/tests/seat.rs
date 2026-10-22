@@ -4,7 +4,7 @@
 //! bind; a pad's Start pausing; an options file from before seats.
 
 use olr_input::{
-    Action, Binding, Bindings, Button, Device, InputState, KeyCode, Mode, Need, PAD_PAUSE, PadEvent,
+    Action, Binding, Bindings, Button, Device, InputState, KeyCode, Mode, Need, PAD_OPTIONAL, PAD_PAUSE, PadEvent,
     PadInput, RebindError, Resolve, Seat, SeatKind, Seats,
 };
 use olr_sim::Keys;
@@ -150,7 +150,7 @@ fn each_seat_keeps_its_own_actions_reachable() {
     b.pad.clear();
     assert!(b.unreachable_of(SeatKind::Keyboard2).is_empty());
     assert!(b.unreachable_of(SeatKind::Keyboard1).is_empty());
-    assert_eq!(b.unreachable_of(SeatKind::Gamepad).len(), Action::ALL.len());
+    assert_eq!(b.unreachable_of(SeatKind::Gamepad).len(), Action::ALL.len() - PAD_OPTIONAL.len());
     b.keys2.retain(|(a, _)| *a != Action::Dig);
     assert_eq!(b.unreachable_of(SeatKind::Keyboard2), [(Action::Dig, Need::Keyboard2Key)]);
     assert!(b.unreachable_of(SeatKind::Keyboard1).is_empty());
