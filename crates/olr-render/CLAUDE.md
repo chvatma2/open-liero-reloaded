@@ -297,7 +297,12 @@ on screen or offscreen.
   at most `MAX_HEAT_STEPS` 250 a frame, the rest carried; each deposit
   lands before the step it was made in, so N steps at once draw N single
   steps' bytes), `reset_heat` (a replay seek), `has_heat`,
-  `heat_active`, `heat_texture`. Issue #40: `run_heat()` runs what the
+  `heat_active`, `heat_texture`. Issue #45 (the material editor's live
+  preview): `set_surface_materials(&[SurfaceMaterial])` gives the same
+  list new values and keeps the heat (temperatures, boxes, clock; the
+  table, the ramps and the bounds rewritten, `HeatTextures::set_tables`),
+  `false` when there is none to keep (then `set_surface` is the call;
+  `new_material_values_keep_the_heat`). Issue #40: `run_heat()` runs what the
   next lit frame would (the waiting deposits, at most `MAX_HEAT_STEPS`
   steps) in a submit of its own, so a host that deposits more than
   `MAX_HEAT_DEPOSITS` or lets more steps fall due between frames
@@ -340,6 +345,7 @@ on screen or offscreen.
   Timed as `PassGroup::Heat`. Tests (GPU, `tests/gpu/heat.rs`): those
   named and `a_deposit_heats_only_material_pixels_and_spreads_only_into_conducting_ones`,
   `sensitivity_zero_never_heats`, `heat_cools_to_nothing`,
+  `new_material_values_keep_the_heat`,
   `stepping_n_ticks_at_once_equals_n_single_steps`,
   `hostile_values_stay_bounded`, `a_reset_or_a_new_level_clears_the_heat`;
   `heat.rs`'s unit tests (boxes, bounds, tables).

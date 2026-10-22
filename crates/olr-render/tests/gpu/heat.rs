@@ -235,6 +235,48 @@ fn heat_cools_to_nothing() {
     assert_eq!(r.heat_passes(), passes, "no pass once cold");
 }
 
+/// New values of the level's materials (issue #45, the material editor's
+/// live preview) keep the heat: the temperatures stay, the next frame
+/// draws and steps by the new values; without heat to keep, nothing
+/// changes and `set_surface` is the call.
+#[test]
+fn new_material_values_keep_the_heat() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = heated(&gpu);
+    r.deposit_heat(blast(20.0, 60.0, 8.0));
+    let hot = frame(&gpu, &mut r, &dark());
+    let before = temps(&gpu, &r);
+    let steps_before = r.heat_steps();
+    // Stone shows blue now, and conducts nothing.
+    let mut edited = materials();
+    edited[0].heat = Some(Heat {
+        conductivity: 0,
+        ramp: vec![RampKey { temperature: 1, colour: [0, 0, 255], glow: 100 }],
+        ..heat(100, 100, 100)
+    });
+    assert!(r.set_surface_materials(&edited));
+    assert_eq!(temps(&gpu, &r), before, "the heat is kept");
+    let blue = frame(&gpu, &mut r, &dark());
+    let (x, y) = ((20 - 20) * 2 + 1, (60 - 30) * 2);
+    assert_ne!(blue.get(x, y), hot.get(x, y), "the next frame draws the new ramp");
+    let c = blue.get(x, y);
+    assert!(c.b > c.r && c.b > c.g, "blue: {c:?}");
+    assert_eq!(r.heat_steps(), steps_before, "the clock is kept");
+    // It steps by the new values: stone no longer spreads.
+    steps(&gpu, &mut r, 30);
+    let t = temps(&gpu, &r);
+    assert_eq!(at(&t, 30, 60), 0.0, "past the deposit nothing warms: {}", at(&t, 30, 60));
+    assert!(at(&t, 20, 60) > 0.0);
+    // No heat to keep: nothing changes.
+    let cold = [material("cold", None)];
+    assert!(!r.set_surface_materials(&cold));
+    assert!(r.has_heat());
+    let mut plain = lit(&gpu);
+    plain.upload_terrain(&map());
+    assert!(!plain.set_surface_materials(&materials()));
+    assert!(!plain.has_heat());
+}
+
 /// The step runs on the match time: N ticks at once (an undrawn stretch,
 /// a deposit in it) equal N single ticks, each drawn.
 #[test]

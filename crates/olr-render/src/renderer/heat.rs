@@ -828,6 +828,9 @@ pub(super) struct HeatTextures {
     scratch: wgpu::Texture,
     scratch_view: wgpu::TextureView,
     params: wgpu::Buffer,
+    /// The materials' colour ramps (`HeatLook`), rewritten by
+    /// [`HeatTextures::set_tables`].
+    ramp: wgpu::Texture,
     /// The table as written, its head's `on` set while a box is active.
     table: Vec<f32>,
     deposits: wgpu::Buffer,
@@ -937,6 +940,7 @@ impl HeatTextures {
             scratch,
             scratch_view,
             params,
+            ramp,
             table,
             deposits,
             ranges,
@@ -947,6 +951,31 @@ impl HeatTextures {
             steps: 0,
             passes: 0,
         }
+    }
+
+    /// Gives the heat new materials' values ([`tables`]' output, issue
+    /// #45), its temperatures, boxes and clock kept: the next frame steps
+    /// and draws by them.
+    pub(super) fn set_tables(
+        &mut self,
+        queue: &super::uploads::Queue,
+        (table, ramp_texels, bounds): (Vec<f32>, Vec<u8>, Bounds),
+    ) {
+        let head: [f32; 4] = [self.table[0], self.table[1], self.table[2], self.table[3]];
+        self.table = table;
+        self.table[..4].copy_from_slice(&head);
+        queue.write_buffer(&self.params, 0, bytemuck::cast_slice(&self.table));
+        queue.write_texture(
+            self.ramp.as_image_copy(),
+            &ramp_texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(RAMP_BINS * 4),
+                rows_per_image: Some(256),
+            },
+            self.ramp.size(),
+        );
+        self.sim.bounds = bounds;
     }
 
     /// Plans the frame's heat and writes its deposits; the table's head
@@ -1086,6 +1115,32 @@ impl super::Renderer {
         {
             t.set_heat(&self.device, &self.queue, &look.heat, self.surface.as_ref());
         }
+    }
+
+    /// Gives the level new values of its surface materials (issue #45: the
+    /// material editor's live preview) and keeps its heat: the same list,
+    /// in the same order, as [`Renderer::set_surface`] was given, a
+    /// field changed. The temperatures, the active boxes and the clock stay;
+    /// the next frame steps and draws by the new values (the distant
+    /// layers' too). `false`, changing nothing, when there is no heat to
+    /// keep (none was made, or none of `materials` heats): then
+    /// [`Renderer::set_surface`] with the maps is the call.
+    pub fn set_surface_materials(&mut self, materials: &[SurfaceMaterial]) -> bool {
+        let (Some(tables), Some(surface)) = (tables(materials), self.surface.as_mut()) else {
+            return false;
+        };
+        if self.look.as_ref().and_then(|l| l.textures.as_ref()?.heat.as_ref()).is_none()
+            && self.distant.iter().all(|d| d.heat.is_none())
+        {
+            return false;
+        }
+        surface.tables = tables.clone();
+        let level = self.look.as_mut().and_then(|l| l.textures.as_mut()?.heat.as_mut());
+        let layers = self.distant.iter_mut().filter_map(|d| d.heat.as_mut());
+        for h in level.into_iter().chain(layers) {
+            h.set_tables(&self.queue, tables.clone());
+        }
+        true
     }
 
     /// Each distant layer's surface material value (issue #41), in
