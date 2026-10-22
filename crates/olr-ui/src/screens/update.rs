@@ -6,7 +6,7 @@
 
 use egui::{Color32, ProgressBar, RichText, ScrollArea, Ui};
 
-use super::{MenuData, footer, page, primary, section};
+use super::{MenuData, fit, footer, page, primary, section};
 use crate::state::{UiAction, UiState};
 use crate::update::{UpdateMethod, UpdateStatus};
 
@@ -93,7 +93,7 @@ pub(super) fn show(ui: &mut Ui, _state: &UiState, data: &mut MenuData, out: &mut
                 UpdateStatus::Working { step, progress } => {
                     match progress {
                         Some(p) => {
-                            ui.add(ProgressBar::new(*p).desired_width(320.0).show_percentage());
+                            ui.add(ProgressBar::new(*p).desired_width(fit(ui, 320.0)).show_percentage());
                         }
                         None => {
                             ui.spinner();

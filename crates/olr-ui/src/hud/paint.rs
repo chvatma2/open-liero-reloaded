@@ -377,11 +377,87 @@ fn scoreboard(ui: &Ui, rows: &[Row], offset: egui::Vec2) {
 /// score-gated `iDeaths`; `docs/porting/STATUS.md`); the followed worm's (the
 /// player's own) in yellow.
 pub fn table(ui: &mut Ui, rows: &[Row]) {
-    let head = |ui: &mut Ui, t: &str| {
-        ui.label(RichText::new(t).monospace().color(Color32::from_gray(170)));
+    grid(ui, rows, &Look { font: None, gap: 18.0, name_chars: usize::MAX });
+}
+
+/// The results' [`table`] in at most `width` points (issue #49): as it is
+/// when it fits; else in a smaller font with the columns closer, the
+/// names cut to what is left (a small window at a large UI scale).
+pub fn table_within(ui: &mut Ui, rows: &[Row], width: f32) {
+    let normal = egui::TextStyle::Monospace.resolve(ui.style());
+    if grid_width(ui, rows, &normal, 18.0, usize::MAX) <= width {
+        return table(ui, rows);
+    }
+    let font = FontId::monospace(COMPACT_FONT);
+    let char_w = text_width(ui, "0", &font).max(1.0);
+    let others = grid_width(ui, rows, &font, COMPACT_GAP, 0);
+    let name_chars = ((width - others) / char_w).floor().max(4.0) as usize;
+    grid(ui, rows, &Look { font: Some(font), gap: COMPACT_GAP, name_chars });
+}
+
+/// The results' table's font size and column gap when it is cut to fit.
+const COMPACT_FONT: f32 = 11.0;
+const COMPACT_GAP: f32 = 8.0;
+
+const HEADS: [&str; 7] = ["", "Lives", "Score", "Kills", "Deaths", "Suicides", "Damage"];
+
+/// How a table is drawn: its font (`None`: the monospace style), the
+/// space between its columns and the most of a name shown.
+struct Look {
+    font: Option<FontId>,
+    gap: f32,
+    name_chars: usize,
+}
+
+fn cells(r: &Row) -> [String; 6] {
+    [
+        r.lives.clone(),
+        r.score.to_string(),
+        r.kills.to_string(),
+        r.deaths.to_string(),
+        r.suicides.to_string(),
+        r.damage.to_string(),
+    ]
+}
+
+/// `name` cut to `chars` characters, the last an ellipsis.
+fn cut(name: &str, chars: usize) -> String {
+    if name.chars().count() <= chars {
+        return name.to_string();
+    }
+    name.chars().take(chars.saturating_sub(1)).chain(['…']).collect()
+}
+
+fn text_width(ui: &Ui, t: &str, font: &FontId) -> f32 {
+    ui.ctx().fonts_mut(|f| f.layout_no_wrap(t.to_string(), font.clone(), Color32::WHITE).size().x)
+}
+
+/// The table's width in `font` with `gap` between its columns, its names
+/// cut to `name_chars` (0: the names' column without its names).
+fn grid_width(ui: &Ui, rows: &[Row], font: &FontId, gap: f32, name_chars: usize) -> f32 {
+    let spacing = ui.spacing().item_spacing.x;
+    let mut widths = HEADS.map(|h| text_width(ui, h, font));
+    for (i, r) in rows.iter().enumerate() {
+        let name = if name_chars == 0 { String::new() } else { cut(&r.name, name_chars) };
+        let first = text_width(ui, &format!("{}.", i + 1), font) + spacing + text_width(ui, &name, font);
+        widths[0] = widths[0].max(first);
+        for (w, c) in widths[1..].iter_mut().zip(cells(r)) {
+            *w = w.max(text_width(ui, &c, font));
+        }
+    }
+    widths.iter().sum::<f32>() + gap * (widths.len() - 1) as f32
+}
+
+fn grid(ui: &mut Ui, rows: &[Row], look: &Look) {
+    let text = |t: &str| match &look.font {
+        Some(f) => RichText::new(t).font(f.clone()),
+        None => RichText::new(t).monospace(),
     };
-    egui::Grid::new("scores").striped(true).spacing([18.0, 4.0]).show(ui, |ui| {
-        for h in ["", "Lives", "Score", "Kills", "Deaths", "Suicides", "Damage"] {
+    let head = |ui: &mut Ui, t: &str| {
+        ui.label(text(t).color(Color32::from_gray(170)));
+    };
+    egui::Grid::new("scores").striped(true).spacing([look.gap, 4.0]).show(ui, |ui| {
+        for h in HEADS {
             head(ui, h);
         }
         ui.end_row();
@@ -394,18 +470,15 @@ pub fn table(ui: &mut Ui, rows: &[Row]) {
                 Color32::WHITE
             };
             let cell = |ui: &mut Ui, t: String| {
-                ui.label(RichText::new(t).monospace().color(colour));
+                ui.label(text(&t).color(colour));
             };
             ui.horizontal(|ui| {
-                ui.label(RichText::new(format!("{}.", i + 1)).monospace().color(colour));
-                ui.label(RichText::new(&r.name).monospace().color(colour));
+                ui.label(text(&format!("{}.", i + 1)).color(colour));
+                ui.label(text(&cut(&r.name, look.name_chars)).color(colour));
             });
-            cell(ui, r.lives.clone());
-            cell(ui, r.score.to_string());
-            cell(ui, r.kills.to_string());
-            cell(ui, r.deaths.to_string());
-            cell(ui, r.suicides.to_string());
-            cell(ui, r.damage.to_string());
+            for c in cells(r) {
+                cell(ui, c);
+            }
             ui.end_row();
         }
     });

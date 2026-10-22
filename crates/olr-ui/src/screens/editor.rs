@@ -15,11 +15,22 @@
 use egui::{Color32, ComboBox, RichText, ScrollArea, TextEdit, Ui};
 use olr_format::levels::MAX_SIDE;
 
-use super::{MenuData, form_row, page, section};
+use super::{MenuData, fit, form_row, page, section};
 use crate::state::UiAction;
 
 /// The page's column.
 const WIDTH: f32 = 760.0;
+
+/// A list's narrowest width for its table: in a narrower one (a large UI
+/// scale, issue #49) each row wraps on its own.
+const NARROW: f32 = 520.0;
+
+/// "Edit a copy"'s room beside a skin's name.
+const EDIT_A_COPY: f32 = 110.0;
+
+fn narrow(ui: &Ui) -> bool {
+    ui.available_width() < NARROW
+}
 /// The theme a new level takes when there is one of this id.
 const DEFAULT_THEME: &str = "olx-theme-dirt";
 /// A new level's size by default (OLX's Dirt Level's); its sides are at
@@ -83,7 +94,7 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
         ui.label(RichText::new(m).color(Color32::from_rgb(255, 110, 90)));
         ui.add_space(6.0);
     }
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for (tab, label) in [
             (Tab::Level, LEVEL_TAB),
             (Tab::Skin, SKIN_TAB),
@@ -96,6 +107,19 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
         }
     });
     ui.add_space(8.0);
+    if super::short(ui.ctx()) {
+        // A short window (issue #49): the tab scrolls, its lists in it.
+        ScrollArea::vertical().id_salt("editor tab").auto_shrink([false, false]).show(ui, |ui| {
+            tab(ui, data, out);
+            crate::pad::follow_focus(ui);
+        });
+    } else {
+        tab(ui, data, out);
+    }
+}
+
+/// The open tab's content.
+fn tab(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     if data.editor.tab == Tab::Skin {
         skins(ui, data, out);
         return;
@@ -111,7 +135,7 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     if !data.recoveries.is_empty() {
         section(ui, "Unsaved changes", |ui, _| {
             for (id, name, damaged) in &data.recoveries {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if *damaged {
                         ui.label(
                             RichText::new(format!("{id}: damaged")).color(Color32::from_rgb(255, 110, 90)),
@@ -140,19 +164,19 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
         let mut cancel = false;
         section(ui, "New level", |ui, _| {
             form_row(ui, "Name", |ui, label| {
-                ui.add(TextEdit::singleline(&mut f.name).desired_width(240.0)).labelled_by(label);
+                ui.add(TextEdit::singleline(&mut f.name).desired_width(fit(ui, 240.0))).labelled_by(label);
             });
             form_row(ui, "Width", |ui, label| {
-                ui.add(TextEdit::singleline(&mut f.width).desired_width(80.0)).labelled_by(label);
+                ui.add(TextEdit::singleline(&mut f.width).desired_width(fit(ui, 80.0))).labelled_by(label);
             });
             form_row(ui, "Height", |ui, label| {
-                ui.add(TextEdit::singleline(&mut f.height).desired_width(80.0)).labelled_by(label);
+                ui.add(TextEdit::singleline(&mut f.height).desired_width(fit(ui, 80.0))).labelled_by(label);
             });
             form_row(ui, "Theme", |ui, label| {
                 let shown = themes.iter().find(|t| t.0 == f.theme).map_or("none", |t| t.1.as_str());
                 let combo = ComboBox::from_id_salt("new level theme")
                     .selected_text(shown)
-                    .width(240.0)
+                    .width(fit(ui, 240.0))
                     .show_ui(ui, |ui| {
                         for (id, name) in &themes {
                             ui.selectable_value(&mut f.theme, id.clone(), name);
@@ -205,7 +229,7 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
         let level = data.catalog.level(from).map_or(from.as_str(), |l| l.name.as_str());
         section(ui, &format!("Copy {level}"), |ui, _| {
             form_row(ui, "Name", |ui, label| {
-                ui.add(TextEdit::singleline(name).desired_width(240.0)).labelled_by(label);
+                ui.add(TextEdit::singleline(name).desired_width(fit(ui, 240.0))).labelled_by(label);
             });
             form_row(ui, "", |ui, _| {
                 copy = ui.add_enabled(!name.trim().is_empty(), egui::Button::new("Copy")).clicked();
@@ -222,25 +246,34 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     }
     section(ui, "Levels", |ui, _| {
         ui.label(RichText::new("Levels you made are edited in place; the others as a copy.").weak());
-        ScrollArea::vertical().auto_shrink([false, true]).show(ui, |ui| {
-            egui::Grid::new("editor levels").num_columns(3).striped(true).spacing([24.0, 4.0]).show(
-                ui,
-                |ui| {
-                    for l in &data.catalog.levels {
-                        ui.label(&l.name);
-                        ui.label(RichText::new(format!("{} × {}", l.width, l.height)).weak());
-                        if data.editable.contains(&l.id) {
-                            if ui.button("Edit").clicked() {
-                                out.push(UiAction::EditLevel(l.id.clone()));
-                            }
-                        } else if ui.button("Edit a copy").clicked() {
-                            data.editor.copy = Some((l.id.clone(), format!("{} copy", l.name)));
-                            data.editor.new = None;
-                        }
-                        ui.end_row();
+        super::list_area(ui, ScrollArea::vertical().auto_shrink([false, true]), |ui| {
+            let mut level = |ui: &mut Ui, l: &olr_content::LevelInfo| {
+                ui.label(&l.name);
+                ui.label(RichText::new(format!("{} × {}", l.width, l.height)).weak());
+                if data.editable.contains(&l.id) {
+                    if ui.button("Edit").clicked() {
+                        out.push(UiAction::EditLevel(l.id.clone()));
                     }
-                },
-            );
+                } else if ui.button("Edit a copy").clicked() {
+                    data.editor.copy = Some((l.id.clone(), format!("{} copy", l.name)));
+                    data.editor.new = None;
+                }
+            };
+            if narrow(ui) {
+                for l in &data.catalog.levels {
+                    ui.horizontal_wrapped(|ui| level(ui, l));
+                }
+            } else {
+                egui::Grid::new("editor levels").num_columns(3).striped(true).spacing([24.0, 4.0]).show(
+                    ui,
+                    |ui| {
+                        for l in &data.catalog.levels {
+                            level(ui, l);
+                            ui.end_row();
+                        }
+                    },
+                );
+            }
             crate::pad::follow_focus(ui);
         });
     });
@@ -250,7 +283,7 @@ pub(super) fn show(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
 /// first, searchable: Edit for theirs, Edit a copy for the others.
 fn skins(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     section(ui, "New skin", |ui, _| {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             if ui.button(NEW_SKIN).clicked() {
                 out.push(UiAction::NewSkin(None));
             }
@@ -277,32 +310,41 @@ fn skins(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
             RichText::new("Skins you made are edited in place; the others as a copy (they never change).")
                 .weak(),
         );
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let l = ui.label(SEARCH_SKINS);
-            ui.add(TextEdit::singleline(&mut data.editor.skin_search).desired_width(240.0)).labelled_by(l.id);
+            ui.add(TextEdit::singleline(&mut data.editor.skin_search).desired_width(fit(ui, 240.0)))
+                .labelled_by(l.id);
             ui.label(RichText::new(format!("{} of {total} skins", shown.len())).weak());
         });
         let row = ui.spacing().interact_size.y + 4.0;
-        ScrollArea::vertical().id_salt("editor skins").auto_shrink([false, true]).show_rows(
-            ui,
-            row,
-            shown.len(),
-            |ui, range| {
-                for &(id, name, yours) in &shown[range] {
-                    ui.horizontal(|ui| {
-                        ui.add_sized([320.0, row - 4.0], egui::Label::new(name).truncate());
-                        if yours {
-                            if ui.button("Edit").clicked() {
-                                picked = Some(UiAction::EditSkin(id.to_string()));
-                            }
-                        } else if ui.button("Edit a copy").clicked() {
-                            picked = Some(UiAction::NewSkin(Some(id.to_string())));
+        let mut rows = |ui: &mut Ui, range: std::ops::Range<usize>| {
+            for &(id, name, yours) in &shown[range] {
+                ui.horizontal(|ui| {
+                    // Room for Edit a copy beside it in a narrow column.
+                    let w = (ui.available_width() - EDIT_A_COPY).clamp(60.0, 320.0);
+                    ui.add_sized([w, row - 4.0], egui::Label::new(name).truncate());
+                    if yours {
+                        if ui.button("Edit").clicked() {
+                            picked = Some(UiAction::EditSkin(id.to_string()));
                         }
-                    });
-                }
-                crate::pad::follow_focus(ui);
-            },
-        );
+                    } else if ui.button("Edit a copy").clicked() {
+                        picked = Some(UiAction::NewSkin(Some(id.to_string())));
+                    }
+                });
+            }
+            crate::pad::follow_focus(ui);
+        };
+        if super::short(ui.ctx()) {
+            // The page scrolls ([`super::list_area`]).
+            ui.vertical(|ui| rows(ui, 0..shown.len()));
+        } else {
+            ScrollArea::vertical().id_salt("editor skins").auto_shrink([false, true]).show_rows(
+                ui,
+                row,
+                shown.len(),
+                rows,
+            );
+        }
     });
     out.extend(picked);
 }
@@ -313,7 +355,7 @@ fn mods(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     if !data.mod_recoveries.is_empty() {
         section(ui, "Unsaved changes", |ui, _| {
             for (id, name, damaged) in &data.mod_recoveries {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if *damaged {
                         ui.label(
                             RichText::new(format!("{id}: damaged")).color(Color32::from_rgb(255, 110, 90)),
@@ -336,7 +378,7 @@ fn mods(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
             data.catalog.mods.iter().find(|m| m.id == *from).map_or(from.as_str(), |m| m.name.as_str());
         section(ui, &format!("New mod from {shown}"), |ui, _| {
             form_row(ui, MOD_NAME, |ui, label| {
-                ui.add(TextEdit::singleline(name).desired_width(240.0)).labelled_by(label);
+                ui.add(TextEdit::singleline(name).desired_width(fit(ui, 240.0))).labelled_by(label);
             });
             form_row(ui, "", |ui, _| {
                 create = ui.add_enabled(!name.trim().is_empty(), egui::Button::new(CREATE_MOD)).clicked();
@@ -368,25 +410,41 @@ fn mods(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
             )
             .weak(),
         );
-        ScrollArea::vertical().id_salt("editor mods").auto_shrink([false, true]).show(ui, |ui| {
-            egui::Grid::new("editor mods").num_columns(3).striped(true).spacing([24.0, 4.0]).show(ui, |ui| {
-                for &(id, name, yours) in &shown {
+        super::list_area(
+            ui,
+            ScrollArea::vertical().id_salt("editor mods").auto_shrink([false, true]),
+            |ui| {
+                let mut row = |ui: &mut Ui, (id, name, yours): (&str, &str, bool), grid: bool| {
                     ui.label(name);
                     if yours {
                         if ui.button("Edit").clicked() {
                             out.push(UiAction::EditMod(id.to_string()));
                         }
-                    } else {
+                    } else if grid {
                         ui.label("");
                     }
                     if ui.button("Edit a copy").clicked() {
                         copy = Some((id.to_string(), format!("{name} copy")));
                     }
-                    ui.end_row();
+                };
+                if narrow(ui) {
+                    for &m in &shown {
+                        ui.horizontal_wrapped(|ui| row(ui, m, false));
+                    }
+                } else {
+                    egui::Grid::new("editor mods").num_columns(3).striped(true).spacing([24.0, 4.0]).show(
+                        ui,
+                        |ui| {
+                            for &m in &shown {
+                                row(ui, m, true);
+                                ui.end_row();
+                            }
+                        },
+                    );
                 }
-            });
-            crate::pad::follow_focus(ui);
-        });
+                crate::pad::follow_focus(ui);
+            },
+        );
     });
     if copy.is_some() {
         data.editor.mod_copy = copy;
@@ -399,7 +457,7 @@ fn materials(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
     if !data.material_recoveries.is_empty() {
         section(ui, "Unsaved changes", |ui, _| {
             for (id, name, damaged) in &data.material_recoveries {
-                ui.horizontal(|ui| {
+                ui.horizontal_wrapped(|ui| {
                     if *damaged {
                         ui.label(
                             RichText::new(format!("{id}: damaged")).color(Color32::from_rgb(255, 110, 90)),

@@ -1021,6 +1021,9 @@ impl App {
         // each local player's own (issue #32); the join step every seat's.
         self.shell.data.held = self.inputs.first().held();
         self.shell.data.held_by = self.inputs.held();
+        // Split screen's pause menu and results centre on the window (a
+        // split replay's too: its lineup is cleared, its views are not).
+        self.shell.data.views = self.shell.session().map_or(1, |s| s.present.views().max(1));
         self.shell.data.set_seats(self.inputs.menu_seats());
         // Only a joined pad's Start is the pause's (issue #32).
         let seats = self.shell.local_seats();

@@ -24,7 +24,7 @@
 
 use egui::{Button, Color32, Grid, Key, RichText, ScrollArea, TextEdit, Ui, vec2};
 
-use super::{MenuData, footer, form_row, message, page, primary, section, tab_row};
+use super::{MenuData, fit, footer, form_row, message, page, primary, section, tab_row};
 use crate::online::{ADDRESS_CHARS, InternetEntry, InternetStatus, PASSWORD_CHARS, Password, is_invite};
 use crate::state::{Screen, UiAction, UiState};
 
@@ -186,7 +186,7 @@ fn internet(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<Ui
             let field = TextEdit::singleline(&mut v.internet_password)
                 .char_limit(PASSWORD_CHARS)
                 .password(true)
-                .desired_width(280.0);
+                .desired_width(fit(ui, 280.0));
             let r = ui.add(field).labelled_by(label);
             join |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
         });
@@ -380,7 +380,7 @@ fn direct(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<UiAc
         let field = TextEdit::singleline(&mut v.address)
             .char_limit(ADDRESS_CHARS)
             .hint_text("host[:port] or olr1…")
-            .desired_width(380.0);
+            .desired_width(fit(ui, 380.0));
         let r = ui.add(field).labelled_by(label);
         join |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
     });
@@ -393,7 +393,7 @@ fn direct(ui: &mut Ui, connecting: bool, data: &mut MenuData, out: &mut Vec<UiAc
         let field = TextEdit::singleline(&mut v.password)
             .char_limit(PASSWORD_CHARS)
             .password(true)
-            .desired_width(280.0);
+            .desired_width(fit(ui, 280.0));
         let r = ui.add(field).labelled_by(label);
         join |= r.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
     });

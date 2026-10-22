@@ -32,7 +32,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     if !state.is_paused() {
         return;
     }
-    let (_, offset) = super::playfield(ui.ctx());
+    let (_, offset) = super::panels_area(ui.ctx(), data.views);
     egui::Area::new(egui::Id::new("pause menu")).anchor(Align2::CENTER_CENTER, offset).show(ui.ctx(), |ui| {
         egui::Frame::new().fill(Color32::from_black_alpha(210)).corner_radius(6.0).inner_margin(16.0).show(
             ui,

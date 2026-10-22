@@ -139,6 +139,7 @@ fn panel(
                                 ui.end_row();
                             }
                         });
+                        crate::pad::follow_focus(ui);
                     });
                     ui.add_space(6.0);
                     let row = |ui: &mut Ui, label: &str, active: bool| {

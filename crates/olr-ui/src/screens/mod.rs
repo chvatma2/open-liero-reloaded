@@ -110,6 +110,11 @@ pub struct MenuData {
     pub seats_used: BTreeSet<Seat>,
     /// The finished match's results (the app sets them when they show).
     pub results: Option<Results>,
+    /// The views the game draws (the app's, every frame: 1 for one
+    /// player, 2 to 4 in split screen, a split replay's too): with two or
+    /// more the pause menu and the results centre on the window, not on
+    /// the solo playfield (issue #49).
+    pub views: usize,
     /// The games announced on the network (the app keeps it current).
     pub lan_games: Vec<LanEntry>,
     /// The games announced on the Internet (the app keeps it current
@@ -224,6 +229,7 @@ impl MenuData {
             seats: Vec::new(),
             seats_used: BTreeSet::new(),
             results: None,
+            views: 1,
             lan_games: Vec::new(),
             internet: InternetView::default(),
             selected_game: None,
@@ -469,22 +475,24 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
         Screen::Results => results::show(ui, state, data, &mut out),
         _ => {
             let frame = egui::Frame::central_panel(ui.style()).fill(theme::BACKGROUND);
-            egui::CentralPanel::default().frame(frame).show(ui, |ui| match screen {
-                Screen::Main => main::show(ui, state, data, &mut out),
-                Screen::LocalPlay => local_play::show(ui, state, data, &mut out),
-                Screen::Join => join::show(ui, state, data, &mut out),
-                Screen::Profiles => profiles::show(ui, state, data, &mut out),
-                Screen::Replays => replays::show(ui, state, data, &mut out),
-                Screen::Options => options::show(ui, state, data, &mut out),
-                Screen::About => about::show(ui, data, &mut out),
-                Screen::Multiplayer => multiplayer::show(ui, state, data, &mut out),
-                Screen::Host => host::show(ui, state, data, &mut out),
-                Screen::Lobby => lobby::show(ui, state, data, &mut out),
-                Screen::HostLost => host_lost::show(ui, data, &mut out),
-                Screen::Editor => editor::show(ui, data, &mut out),
-                Screen::Report => report::show(ui, state, data, &mut out),
-                Screen::Update => update::show(ui, state, data, &mut out),
-                _ => {}
+            egui::CentralPanel::default().frame(frame).show(ui, |ui| {
+                tall_enough(ui, |ui| match screen {
+                    Screen::Main => main::show(ui, state, data, &mut out),
+                    Screen::LocalPlay => local_play::show(ui, state, data, &mut out),
+                    Screen::Join => join::show(ui, state, data, &mut out),
+                    Screen::Profiles => profiles::show(ui, state, data, &mut out),
+                    Screen::Replays => replays::show(ui, state, data, &mut out),
+                    Screen::Options => options::show(ui, state, data, &mut out),
+                    Screen::About => about::show(ui, data, &mut out),
+                    Screen::Multiplayer => multiplayer::show(ui, state, data, &mut out),
+                    Screen::Host => host::show(ui, state, data, &mut out),
+                    Screen::Lobby => lobby::show(ui, state, data, &mut out),
+                    Screen::HostLost => host_lost::show(ui, data, &mut out),
+                    Screen::Editor => editor::show(ui, data, &mut out),
+                    Screen::Report => report::show(ui, state, data, &mut out),
+                    Screen::Update => update::show(ui, state, data, &mut out),
+                    _ => {}
+                })
             });
         }
     }
@@ -501,6 +509,27 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
     }
     data.pad.end_pass(ui);
     out
+}
+
+/// The shortest a menu screen is laid out, in points: in a window less
+/// tall (a large UI scale: 240 points at 3) the whole screen is laid out
+/// this tall and scrolls (issue #49).
+const MIN_HEIGHT: f32 = 480.0;
+
+/// Draws a menu screen with `add` into `ui`, or, in a [`short`] window,
+/// into a column [`MIN_HEIGHT`] tall in a vertical scroll area (its own
+/// scroll areas inside, which follow the focus first).
+fn tall_enough(ui: &mut Ui, add: impl FnOnce(&mut Ui)) {
+    if !short(ui.ctx()) {
+        return add(ui);
+    }
+    egui::ScrollArea::vertical().id_salt("short window").auto_shrink([false, false]).show(ui, |ui| {
+        let r = Rect::from_min_size(ui.cursor().min, vec2(ui.available_width(), MIN_HEIGHT));
+        let mut screen = ui.new_child(UiBuilder::new().max_rect(r).layout(Layout::top_down(Align::Min)));
+        add(&mut screen);
+        ui.advance_cursor_after_rect(r.union(screen.min_rect()));
+        crate::pad::follow_focus(ui);
+    });
 }
 
 /// The space a page's column keeps from the window's sides when the
@@ -623,12 +652,34 @@ fn framed<R>(ui: &mut Ui, title: &str, height: Option<f32>, add: impl FnOnce(&mu
 /// The width of a form's names (`form_row`).
 const FORM_LABEL: f32 = 150.0;
 
+/// The room a form's controls need beside their names: in a column
+/// narrower than both (a large UI scale on a small window, issue #49) each
+/// name stands above its control, which then has the column's width.
+const FORM_CONTROLS: f32 = 300.0;
+
+/// A slider's value field beside it (with a unit: "100 %", "6.5 min").
+const SLIDER_VALUE: f32 = 72.0;
+
+/// Whether a form in `ui` puts each name above its control.
+fn stacked(ui: &Ui) -> bool {
+    ui.available_width() < FORM_LABEL + FORM_CONTROLS
+}
+
 /// One row of a form: `name` right-aligned in a column [`FORM_LABEL`]
 /// wide, then the control `add` makes (given the name's id to be labelled
-/// by), so a form's controls all start on one line.
+/// by), so a form's controls all start on one line. In a narrow column
+/// ([`stacked`]) the name is a line of its own above the control.
 fn form_row<R>(ui: &mut Ui, name: &str, add: impl FnOnce(&mut Ui, egui::Id) -> R) -> R {
+    if stacked(ui) {
+        let label = if name.is_empty() { egui::Id::NULL } else { ui.label(name).id };
+        return form_line(ui, |ui| {
+            fit_sliders(ui);
+            add(ui, label)
+        });
+    }
     form_line(ui, |ui| {
         let label = form_name(ui, |ui| ui.label(name));
+        fit_sliders(ui);
         add(ui, label.id)
     })
 }
@@ -636,11 +687,33 @@ fn form_row<R>(ui: &mut Ui, name: &str, add: impl FnOnce(&mut Ui, egui::Id) -> R
 /// A form's row whose name is a checkbox switching the control on
 /// (`on`): `add` gets whether it is on now and whether it just changed.
 fn form_check_row<R>(ui: &mut Ui, on: bool, name: &str, add: impl FnOnce(&mut Ui, bool, bool) -> R) -> R {
+    let mut on = on;
+    if stacked(ui) {
+        let changed = ui.checkbox(&mut on, name).changed();
+        return form_line(ui, |ui| {
+            fit_sliders(ui);
+            add(ui, on, changed)
+        });
+    }
     form_line(ui, |ui| {
-        let mut on = on;
         let changed = form_name(ui, |ui| ui.checkbox(&mut on, name)).changed();
+        fit_sliders(ui);
         add(ui, on, changed)
     })
+}
+
+/// Sliders no wider than what is left of `ui` beside their value field.
+fn fit_sliders(ui: &mut Ui) {
+    let room = (ui.available_width() - SLIDER_VALUE).floor().max(40.0);
+    let s = ui.spacing_mut();
+    s.slider_width = s.slider_width.min(room);
+}
+
+/// `width`, or less in a column too narrow for it (ruling UI-1: the
+/// menus fit at every window size and UI scale; a text field's frame and
+/// margin aside).
+fn fit(ui: &Ui, width: f32) -> f32 {
+    width.min(ui.available_width() - 16.0).max(40.0)
 }
 
 /// A row of `n` tabs of `size` centred over the column: each tab's size
@@ -686,6 +759,51 @@ fn form_name(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> egui::Response) -> egui::
     .inner
 }
 
+/// The room a dialog keeps from the window's sides (and its frame's).
+const DIALOG_MARGIN: f32 = 32.0;
+
+/// Sets a dialog's (a modal window's) `ui` `width` wide, or as wide as
+/// the window allows (issue #49: a large UI scale), its text wrapping in
+/// it.
+fn dialog_width(ui: &mut Ui, width: f32) {
+    let w = width.min(ui.ctx().content_rect().width() - 2.0 * DIALOG_MARGIN).max(80.0);
+    ui.set_min_width(w);
+    ui.set_max_width(w);
+}
+
+/// A dialog's (a modal window's) content: `width` wide or as wide as the
+/// window allows ([`dialog_width`]), in a scroll area as tall as the
+/// window allows, so every control stays reachable in a small window
+/// (issue #49).
+fn dialog<R>(ui: &mut Ui, id: &str, width: f32, add: impl FnOnce(&mut Ui) -> R) -> R {
+    dialog_width(ui, width);
+    let h = (ui.ctx().content_rect().height() - 2.0 * DIALOG_MARGIN).max(40.0);
+    egui::ScrollArea::vertical()
+        .id_salt(id)
+        .max_height(h)
+        .show(ui, |ui| {
+            let r = add(ui);
+            crate::pad::follow_focus(ui);
+            r
+        })
+        .inner
+}
+
+/// Whether the window is shorter than a page ([`MIN_HEIGHT`]): its page
+/// or dialog scrolls, and the lists in it have no scroll areas of their
+/// own ([`list_area`]).
+fn short(ctx: &egui::Context) -> bool {
+    ctx.content_rect().height() < MIN_HEIGHT
+}
+
+/// A list in a dialog or a page: in `area`, or, in a [`short`] window,
+/// with no scroll area of its own, as what holds it scrolls instead (a list
+/// of a few rows' height would be hard to use, and a scroll area in one
+/// scrolling with the window cannot show its rows reliably).
+fn list_area<R>(ui: &mut Ui, area: egui::ScrollArea, add: impl FnOnce(&mut Ui) -> R) -> R {
+    if short(ui.ctx()) { ui.vertical(add).inner } else { area.show(ui, add).inner }
+}
+
 /// Why the last start failed, in red.
 fn message(ui: &mut Ui, state: &UiState) {
     if let Some(m) = state.message() {
@@ -695,11 +813,19 @@ fn message(ui: &mut Ui, state: &UiState) {
 
 /// The playfield in game (the window above the HUD bar), and the offset
 /// of its centre from the window's: the in-game panels (weapons, pause,
-/// results) anchor there, centred over the picture.
+/// results) of one player anchor there, centred over the picture.
 pub(crate) fn playfield(ctx: &egui::Context) -> (Rect, Vec2) {
     let screen = ctx.content_rect();
     let field = crate::hud::playfield(screen);
     (field, field.center() - screen.center())
+}
+
+/// Where the pause menu and the results centre, and the offset of that
+/// centre from the window's: over the playfield with one view (as solo
+/// play always had them), on the whole window with split screen's two to
+/// four `views` (they are everyone's, issue #49).
+pub(crate) fn panels_area(ctx: &egui::Context, views: usize) -> (Rect, Vec2) {
+    if views >= 2 { (ctx.content_rect(), Vec2::ZERO) } else { playfield(ctx) }
 }
 
 /// `key` went down this frame: a press, not a held key's repeat (egui's

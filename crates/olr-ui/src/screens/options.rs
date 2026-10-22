@@ -31,7 +31,7 @@
 
 use egui::{Button, ComboBox, Key, RichText, ScrollArea, Slider, TextEdit, Ui, vec2};
 
-use super::{MenuData, form_row, keys, page, section, tab_row};
+use super::{MenuData, fit, form_row, keys, page, section, tab_row};
 use crate::online::{
     FindingSettings, MAX_SERVERS, MAX_TURN, Region, megabytes, turn_shown, valid_relay, valid_stun,
     valid_turn,
@@ -114,8 +114,19 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     });
     ui.add_space(10.0);
     match v.tab {
-        Tab::Video => section(ui, "Window and drawing", |ui, _| video(ui, state, &mut v, out)),
-        Tab::Audio => section(ui, "Volume", |ui, _| audio(ui, state, out)),
+        // Each tab scrolls in a window too short for it (issue #49).
+        Tab::Video => {
+            ScrollArea::vertical().id_salt("video options").auto_shrink([false, true]).show(ui, |ui| {
+                section(ui, "Window and drawing", |ui, _| video(ui, state, &mut v, out));
+                crate::pad::follow_focus(ui);
+            });
+        }
+        Tab::Audio => {
+            ScrollArea::vertical().id_salt("audio options").auto_shrink([false, true]).show(ui, |ui| {
+                section(ui, "Volume", |ui, _| audio(ui, state, out));
+                crate::pad::follow_focus(ui);
+            });
+        }
         // Twelve actions' rows: they scroll on a short window.
         Tab::Keys => {
             ScrollArea::vertical().id_salt("keys options").auto_shrink([false, true]).show(ui, |ui| {
@@ -157,7 +168,7 @@ fn video(ui: &mut Ui, state: &UiState, view: &mut View, out: &mut Vec<UiAction>)
         let shown = if v.fullscreen { FULLSCREEN } else { v.window.label() };
         let combo = ComboBox::from_id_salt("display")
             .selected_text(shown)
-            .width(200.0)
+            .width(fit(ui, 200.0))
             .show_ui(ui, |ui| {
                 for p in WindowPreset::ALL {
                     if ui.selectable_label(!v.fullscreen && v.window == p, p.label()).clicked() {
@@ -207,7 +218,7 @@ fn video(ui: &mut Ui, state: &UiState, view: &mut View, out: &mut Vec<UiAction>)
     form_row(ui, "HUD layout", |ui, label| {
         let combo = ComboBox::from_id_salt("hud layout")
             .selected_text(v.hud_layout.label())
-            .width(200.0)
+            .width(fit(ui, 200.0))
             .show_ui(ui, |ui| {
                 for a in HudArrangement::ALL {
                     ui.selectable_value(&mut v.hud_layout, a, a.label());
@@ -429,13 +440,6 @@ fn online(ui: &mut Ui, state: &UiState, data: &MenuData, v: &mut View, out: &mut
     if f != *before {
         out.push(UiAction::SetFinding(f));
     }
-}
-
-/// `width`, or less in a column too narrow for it (ruling UI-1: the
-/// options fit at every window size and UI scale; a text field's frame
-/// and margin aside).
-fn fit(ui: &Ui, width: f32) -> f32 {
-    width.min(ui.available_width() - 16.0).max(40.0)
 }
 
 /// The Online tab's port mapping switch.

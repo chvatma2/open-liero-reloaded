@@ -21,6 +21,6 @@ pub use layout::{BAR_SHARE, HudLayout, REFERENCE_HEIGHT, frame, playfield};
 pub use model::{
     LOG_KEEP, LineKind, Log, LogLine, Names, Results, Row, clock, lives_text, message_text, rows,
 };
-pub use paint::{show, table};
+pub use paint::{show, table, table_within};
 pub use split::{MAX_VIEWS, Shared, SplitLayout, ViewPanel};
 pub use view::{Bar, Dot, HudView, MinimapView, Notice, SlotHud, ViewHud, WormHud};

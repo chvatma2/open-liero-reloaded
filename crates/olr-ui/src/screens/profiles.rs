@@ -10,13 +10,23 @@ use olr_sim::Dir;
 
 use olr_content::Catalog;
 
-use super::{MenuData, columns, page, tall_section};
+use super::{MenuData, columns, page, section, tall_section};
 use crate::profiles::{NameError, Profiles};
 use crate::skin_preview::{PreviewAnim, PreviewKey, PreviewTextures};
 use crate::state::{UiAction, UiState};
 
 /// The page's column: three panels side by side.
 const WIDTH: f32 = 1000.0;
+
+/// The body's narrowest width for the panels side by side, in points: in
+/// a narrower one (a large UI scale, issue #49) they stand one above the
+/// other.
+const STACK_BELOW: f32 = 700.0;
+const SECTION_GAP: f32 = 8.0;
+/// The skins' list's height when the panels stand one above the other.
+const SKINS_STACKED: f32 = 240.0;
+/// A colour slider's value and name beside it.
+const SLIDER_BESIDE: f32 = 110.0;
 
 /// The preview's size: a worm (10 × 9 world pixels) drawn 8 points a
 /// world pixel, 4 a pixel of OLX's 20 × 18 sprite (a double-resolution
@@ -67,15 +77,30 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     if !v.still {
         v.anim.step(ui.input(|inp| inp.stable_dt));
     }
-    columns(ui, 3, |c| {
-        tall_section(&mut c[0], "Players", |ui, _| list(ui, &mut p, &mut v));
-        tall_section(&mut c[1], "Look", |ui, _| editor(ui, &mut p, &mut v, data.preview.as_ref()));
-        let mut search = std::mem::take(&mut v.search);
-        tall_section(&mut c[2], "Skin", |ui, title| {
-            skins(ui, &mut p, v.editing, &mut search, &data.catalog, title)
+    let mut search = std::mem::take(&mut v.search);
+    if ui.available_width() < STACK_BELOW {
+        // A narrow window (a large UI scale, issue #49): the panels one
+        // above the other, scrolling together.
+        ScrollArea::vertical().id_salt("profiles stacked").auto_shrink([false, false]).show(ui, |ui| {
+            section(ui, "Players", |ui, _| list(ui, &mut p, &mut v));
+            ui.add_space(SECTION_GAP);
+            section(ui, "Look", |ui, _| editor(ui, &mut p, &mut v, data.preview.as_ref()));
+            ui.add_space(SECTION_GAP);
+            section(ui, "Skin", |ui, title| {
+                skins(ui, &mut p, v.editing, &mut search, (&data.catalog, title, true))
+            });
+            crate::pad::follow_focus(ui);
         });
-        v.search = search;
-    });
+    } else {
+        columns(ui, 3, |c| {
+            tall_section(&mut c[0], "Players", |ui, _| list(ui, &mut p, &mut v));
+            tall_section(&mut c[1], "Look", |ui, _| editor(ui, &mut p, &mut v, data.preview.as_ref()));
+            tall_section(&mut c[2], "Skin", |ui, title| {
+                skins(ui, &mut p, v.editing, &mut search, (&data.catalog, title, false))
+            });
+        });
+    }
+    v.search = search;
     let edited = &p.list[v.editing];
     data.preview_wanted = Some(PreviewKey { skin_id: edited.skin_id.clone(), colour: edited.colour });
     data.profiles = v;
@@ -86,7 +111,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
 
 /// The profiles, the one playing marked, and what can be done with them.
 fn list(ui: &mut Ui, p: &mut Profiles, v: &mut View) {
-    ScrollArea::vertical().id_salt("profiles list").max_height(360.0).show(ui, |ui| {
+    super::list_area(ui, ScrollArea::vertical().id_salt("profiles list").max_height(360.0), |ui| {
         for (n, prof) in p.list.iter().enumerate() {
             ui.horizontal(|ui| {
                 if ui.selectable_label(n == v.editing, &prof.name).clicked() && n != v.editing {
@@ -147,6 +172,9 @@ fn editor(ui: &mut Ui, p: &mut Profiles, v: &mut View, preview: Option<&PreviewT
     ui.add_space(8.0);
     ui.label(RichText::new("Colour").strong());
     let c = &mut p.list[i].colour;
+    // Each slider's value and name beside it, in a narrow column too.
+    let room = (ui.available_width() - SLIDER_BESIDE).floor().max(40.0);
+    ui.spacing_mut().slider_width = ui.spacing().slider_width.min(room);
     for (k, name) in ["Red", "Green", "Blue"].into_iter().enumerate() {
         ui.add(Slider::new(&mut c[k], 0..=255).text(name));
     }
@@ -181,7 +209,13 @@ fn editor(ui: &mut Ui, p: &mut Profiles, v: &mut View, preview: Option<&PreviewT
 }
 
 /// Every imported skin, searchable; a click gives the edited profile it.
-fn skins(ui: &mut Ui, p: &mut Profiles, i: usize, search: &mut String, catalog: &Catalog, label: egui::Id) {
+fn skins(
+    ui: &mut Ui,
+    p: &mut Profiles,
+    i: usize,
+    search: &mut String,
+    (catalog, label, stacked): (&Catalog, egui::Id, bool),
+) {
     let field = TextEdit::singleline(search).hint_text("Search skins").desired_width(f32::INFINITY);
     ui.add(field).labelled_by(label);
     let current = catalog.skin(&p.list[i].skin_id);
@@ -198,7 +232,9 @@ fn skins(ui: &mut Ui, p: &mut Profiles, i: usize, search: &mut String, catalog: 
         .filter(|s| needle.is_empty() || s.name.to_lowercase().contains(&needle) || s.id.contains(&needle))
         .collect();
     ui.label(RichText::new(format!("{} of {} skins", shown.len(), catalog.skins.len())).small().weak());
-    ScrollArea::vertical().id_salt("skins").auto_shrink([false, false]).show(ui, |ui| {
+    // Under the other panels (a narrow window): a list of its own height.
+    let area = ScrollArea::vertical().id_salt("skins").auto_shrink([false, false]);
+    let add = |ui: &mut Ui| {
         for s in shown {
             let on = current.is_some_and(|c| c.id == s.id);
             if ui.selectable_label(on, &s.name).clicked() && !on {
@@ -206,5 +242,10 @@ fn skins(ui: &mut Ui, p: &mut Profiles, i: usize, search: &mut String, catalog: 
             }
         }
         crate::pad::follow_focus(ui);
-    });
+    };
+    if stacked {
+        super::list_area(ui, area.max_height(SKINS_STACKED), add);
+    } else {
+        area.show(ui, add);
+    }
 }

@@ -9,17 +9,20 @@
 use egui::{Align2, Color32, RichText, Ui};
 
 use super::MenuData;
-use crate::hud::{Results, table};
+use crate::hud::{Results, table_within};
 use crate::state::{Game, UiAction, UiState};
 
 /// The room the panel needs besides the table, in points: its margins,
 /// title, winner, reason, buttons and message.
 const AROUND_TABLE: f32 = 190.0;
 
-/// The results panel, centred over the playfield, with `footer` under the table (the menus'
-/// buttons, or the command line's keys).
-pub fn panel(ctx: &egui::Context, r: &Results, footer: impl FnOnce(&mut Ui)) {
-    let (screen, offset) = super::playfield(ctx);
+/// The results panel, centred over the playfield with one view, on the
+/// window with split screen's `views` (2 to 4: the results are everyone's,
+/// issue #49), with `footer` under the table (the menus' buttons, or the
+/// command line's keys). The table fits the window's width (a smaller
+/// font when it must) and scrolls down on a small screen.
+pub fn panel(ctx: &egui::Context, r: &Results, views: usize, footer: impl FnOnce(&mut Ui)) {
+    let (screen, offset) = super::panels_area(ctx, views);
     egui::Area::new(egui::Id::new("results")).anchor(Align2::CENTER_CENTER, offset).show(ctx, |ui| {
         egui::Frame::new().fill(Color32::from_black_alpha(200)).corner_radius(6.0).inner_margin(12.0).show(
             ui,
@@ -38,7 +41,7 @@ pub fn panel(ctx: &egui::Context, r: &Results, footer: impl FnOnce(&mut Ui)) {
                     .max_height((screen.height() - AROUND_TABLE).max(24.0))
                     .max_width(width)
                     .min_scrolled_width(width)
-                    .show(ui, |ui| table(ui, &r.rows));
+                    .show(ui, |ui| table_within(ui, &r.rows, width));
                 ui.add_space(8.0);
                 footer(ui);
             },
@@ -49,7 +52,7 @@ pub fn panel(ctx: &egui::Context, r: &Results, footer: impl FnOnce(&mut Ui)) {
 pub(super) fn show(ui: &mut Ui, state: &UiState, data: &MenuData, out: &mut Vec<UiAction>) {
     let centred = |ui: &mut Ui, body: &mut dyn FnMut(&mut Ui)| {
         egui::Area::new(egui::Id::new("results"))
-            .anchor(Align2::CENTER_CENTER, super::playfield(ui.ctx()).1)
+            .anchor(Align2::CENTER_CENTER, super::panels_area(ui.ctx(), data.views).1)
             .show(ui.ctx(), |ui| body(ui));
     };
     if state.is_starting() {
@@ -71,7 +74,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &MenuData, out: &mut Vec<
     };
     let replay = state.game() == Some(Game::Replay);
     let online = state.game() == Some(Game::Online);
-    panel(ui.ctx(), r, |ui| {
+    panel(ui.ctx(), r, data.views, |ui| {
         ui.horizontal(|ui| {
             if online {
                 // The lobby goes on: the host starts the next match there;

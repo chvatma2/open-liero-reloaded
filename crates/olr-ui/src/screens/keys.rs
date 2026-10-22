@@ -123,7 +123,7 @@ pub(super) fn show(
         take(&mut b, mode, v, action, input);
     }
 
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Controls of");
         for s in SeatKind::ALL {
             if ui.selectable_label(s == seat, s.name()).clicked() && s != seat {
@@ -157,28 +157,27 @@ pub(super) fn show(
     }
     ui.add_space(6.0);
     let devices = seat.devices(mouse_on);
-    Grid::new("keys").num_columns(1 + devices.len()).spacing([16.0, 6.0]).striped(true).show(ui, |ui| {
-        ui.label("");
-        for d in devices {
-            let name = match d {
-                Device::Keyboard => "Keyboard",
-                Device::Mouse => "Mouse",
-                Device::Gamepad => "Gamepad",
-            };
-            ui.label(RichText::new(name).strong());
-        }
-        ui.end_row();
+    if ui.available_width() < NARROW {
+        // A column too narrow for the table (a large UI scale, issue #49):
+        // each action's name over its inputs, which wrap.
         for a in Action::ALL {
-            ui.label(a.name());
+            ui.label(RichText::new(a.name()).strong());
             for &d in devices {
-                ui.horizontal(|ui| row(ui, &mut b, mode, a, d, capture, v));
+                ui.horizontal_wrapped(|ui| {
+                    if devices.len() > 1 {
+                        ui.label(RichText::new(device_name(d)).weak());
+                    }
+                    row(ui, &mut b, mode, a, d, capture, v);
+                });
             }
-            ui.end_row();
+            ui.add_space(4.0);
         }
-    });
+    } else {
+        table(ui, &mut b, mode, devices, capture, v);
+    }
     ui.add_space(6.0);
     if seat == SeatKind::Keyboard1 {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             ui.label("Chat (online matches)");
             let key = key_name(state.settings().online.chat_key);
             let r = ui.add(Button::new(key).small());
@@ -244,6 +243,43 @@ pub(super) fn show(
             }
         }
     }
+}
+
+/// The keys' table's narrowest column, in points: in a narrower one each
+/// action's inputs go under its name.
+const NARROW: f32 = 560.0;
+
+fn device_name(d: Device) -> &'static str {
+    match d {
+        Device::Keyboard => "Keyboard",
+        Device::Mouse => "Mouse",
+        Device::Gamepad => "Gamepad",
+    }
+}
+
+/// The actions' table: a row each, a column per device of the seat.
+fn table(
+    ui: &mut Ui,
+    b: &mut Bindings,
+    mode: Mode,
+    devices: &[Device],
+    capture: &mut Option<Capture>,
+    v: &mut View,
+) {
+    Grid::new("keys").num_columns(1 + devices.len()).spacing([16.0, 6.0]).striped(true).show(ui, |ui| {
+        ui.label("");
+        for &d in devices {
+            ui.label(RichText::new(device_name(d)).strong());
+        }
+        ui.end_row();
+        for a in Action::ALL {
+            ui.label(a.name());
+            for &d in devices {
+                ui.horizontal(|ui| row(ui, b, mode, a, d, capture, v));
+            }
+            ui.end_row();
+        }
+    });
 }
 
 /// What the options say of a key both keyboard seats bind (issue #28).
@@ -356,7 +392,7 @@ fn capture_dialog(ui: &mut Ui, capture: &mut Option<Capture>, v: &mut View) {
         Device::Mouse => format!("Click a mouse button or turn the wheel for {name}"),
     };
     let r = Modal::new(Id::new("options capture")).show(ui.ctx(), |ui| {
-        ui.set_min_width(320.0);
+        super::dialog_width(ui, 320.0);
         ui.vertical_centered(|ui| {
             ui.heading(ask);
             ui.label(RichText::new("(Escape to cancel)").weak());
@@ -385,7 +421,7 @@ fn conflict_dialog(ui: &mut Ui, b: &mut Bindings, mode: Mode, v: &mut View) {
     let refused = b.clone().bind(mode, action, input, Resolve::Move).err();
     let mut choice = None;
     let r = Modal::new(Id::new("options conflict")).show(ui.ctx(), |ui| {
-        ui.set_min_width(320.0);
+        super::dialog_width(ui, 320.0);
         ui.vertical_centered(|ui| {
             ui.heading(format!("{input} is {}.", owners.join(" and ")));
             ui.add_space(8.0);

@@ -34,10 +34,10 @@ fn catalog() -> Catalog {
     }
 }
 
-struct App {
-    ui: UiState,
-    data: MenuData,
-    commands: Vec<AppCommand>,
+pub struct App {
+    pub ui: UiState,
+    pub data: MenuData,
+    pub commands: Vec<AppCommand>,
 }
 
 /// The menus in a window of `size` points at `ppp` pixels a point.
@@ -405,10 +405,10 @@ fn the_internet_table_fits_and_a_game_can_be_joined() {
             assert!(r.left() >= -0.5 && r.right() <= w + 0.5, "{n:?} at {r:?} leaves the window: {at}");
         }
         harness.get_by_label("Block this host");
-        // A window too short for the list scrolls to the button.
-        harness.get_by_role_and_label(Role::Button, "Join").scroll_to_me();
-        harness.run();
-        harness.step();
+        // A window too short for the list scrolls to the button as it takes
+        // the focus (Tab, a pad): a short one scrolls the page too (#49).
+        harness.get_by_role_and_label(Role::Button, "Join").focus();
+        harness.run_steps(12);
         harness.get_by_role_and_label(Role::Button, "Join").click();
         harness.run();
         let sent = harness.state().commands.iter().any(|c| matches!(c, AppCommand::JoinGame { .. }));

@@ -6,6 +6,7 @@
 //! - `hud_snapshots`: the GPU tier (`check::GPU_TESTS`) and `bless-render`.
 
 mod editor;
+mod fits;
 mod flows;
 mod ingame;
 mod join;

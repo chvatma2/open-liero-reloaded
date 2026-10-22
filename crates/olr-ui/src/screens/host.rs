@@ -5,7 +5,7 @@
 use egui::{ComboBox, DragValue, RichText, Slider, TextEdit, Ui};
 
 use super::multiplayer::status;
-use super::{MenuData, footer, form_row, page, primary, section};
+use super::{MenuData, fit, footer, form_row, page, primary, section};
 use crate::online::{HostPrefs, MAX_PLAYERS, MIN_PLAYERS, Visibility};
 use crate::state::{UiAction, UiState};
 
@@ -41,13 +41,17 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     let p = &mut data.host.prefs;
     section(ui, "Game", |ui, _| {
         form_row(ui, "Name", |ui, label| {
-            ui.add(TextEdit::singleline(&mut p.name).char_limit(crate::MAX_NAME_CHARS).desired_width(240.0))
-                .labelled_by(label);
+            ui.add(
+                TextEdit::singleline(&mut p.name)
+                    .char_limit(crate::MAX_NAME_CHARS)
+                    .desired_width(fit(ui, 240.0)),
+            )
+            .labelled_by(label);
         });
         form_row(ui, "Who can join", |ui, label| {
             ComboBox::from_id_salt("visibility")
                 .selected_text(p.visibility.label())
-                .width(240.0)
+                .width(fit(ui, 240.0))
                 .show_ui(ui, |ui| {
                     for v in Visibility::ALL {
                         ui.selectable_value(&mut p.visibility, v, v.label());
@@ -62,7 +66,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
                     .char_limit(crate::online::PASSWORD_CHARS)
                     .password(true)
                     .hint_text("none")
-                    .desired_width(240.0),
+                    .desired_width(fit(ui, 240.0)),
             )
             .labelled_by(label);
         });
@@ -80,7 +84,7 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
             Visibility::Invite => "Listed nowhere; the lobby shows its invite code to share.",
         };
         form_row(ui, "", |ui, _| {
-            ui.label(RichText::new(said).weak());
+            ui.add(egui::Label::new(RichText::new(said).weak()).wrap());
         });
     });
     if start {

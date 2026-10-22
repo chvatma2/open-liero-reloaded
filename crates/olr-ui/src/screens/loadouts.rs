@@ -8,7 +8,7 @@ use egui::{Button, Color32, ComboBox, Id, Key, Modal, RichText, ScrollArea, Slid
 use olr_content::{MatchLoadout, ModInfo};
 
 use super::local_play::{level_combo, personality_combo};
-use super::{MenuData, form_row};
+use super::{MenuData, dialog, fit, form_row, list_area};
 use crate::loadouts::{MAX_OWN_LOADOUTS, OwnLoadouts, check_name, choices, explicit, free_name, resolve};
 use crate::match_prefs::{BotLoadout, LOADING_TIME_RANGE, MatchPrefs};
 use crate::state::UiAction;
@@ -17,6 +17,9 @@ const RED: Color32 = Color32::from_rgb(255, 110, 90);
 
 /// The pickers' width.
 const COMBO_W: f32 = 200.0;
+
+/// The room "Edit loadouts…" needs beside the picker; less puts it under.
+const EDIT_W: f32 = 130.0;
 
 /// What the editor says of the unique rule.
 pub const UNIQUE_HINT: &str =
@@ -78,11 +81,12 @@ pub(super) fn picker(
     editable: bool,
 ) {
     let list = data.catalog.mod_info(&p.mod_id).map(|m| choices(m, own)).unwrap_or_default();
-    let mut edit = false;
+    let (mut edit, mut below) = (false, false);
     form_row(ui, "Loadout", |ui, label| {
         let combo = ComboBox::from_id_salt("match loadout")
             .selected_text(p.weapons.name.clone())
-            .width(COMBO_W)
+            .width(fit(ui, COMBO_W))
+            .truncate()
             .show_ui(ui, |ui| {
                 for c in &list {
                     if ui.selectable_label(c.loadout.name == p.weapons.name, &c.loadout.name).clicked() {
@@ -98,11 +102,18 @@ pub(super) fn picker(
         {
             p.weapons = c.loadout.clone();
         }
-        if editable {
-            let can = !list.is_empty();
-            edit = ui.add_enabled(can, Button::new("Edit loadouts…")).clicked();
+        // Beside the picker, or under it in a narrow column.
+        if editable && ui.available_width() >= EDIT_W {
+            edit = ui.add_enabled(!list.is_empty(), Button::new("Edit loadouts…")).clicked();
+        } else if editable {
+            below = true;
         }
     });
+    if below {
+        form_row(ui, "", |ui, _| {
+            edit = ui.add_enabled(!list.is_empty(), Button::new("Edit loadouts…")).clicked();
+        });
+    }
     if edit {
         data.loadout_editor = Some(Editor::new(&p.mod_id, &p.weapons.name));
     }
@@ -125,18 +136,26 @@ pub(super) fn editor(
     let mut mine = own.clone();
     let mut done = false;
     let r = Modal::new(Id::new("loadout editor")).show(ctx, |ui| {
-        ui.set_width(640.0);
-        ui.heading(format!("Loadouts of {}", m.name));
-        ui.add_space(6.0);
-        ui.columns(2, |c| {
-            list(&mut c[0], m, &mut mine, ed);
-            details(&mut c[1], m, &mut mine, ed);
+        dialog(ui, "loadout editor", 640.0, |ui| {
+            ui.heading(format!("Loadouts of {}", m.name));
+            ui.add_space(6.0);
+            // A narrow window (a large UI scale): the list over the details.
+            if ui.available_width() < 520.0 {
+                list(ui, m, &mut mine, ed);
+                ui.separator();
+                details(ui, m, &mut mine, ed);
+            } else {
+                ui.columns(2, |c| {
+                    list(&mut c[0], m, &mut mine, ed);
+                    details(&mut c[1], m, &mut mine, ed);
+                });
+            }
+            if let Some(e) = &ed.error {
+                ui.add(egui::Label::new(RichText::new(e).color(RED)).wrap());
+            }
+            ui.add_space(6.0);
+            ui.vertical_centered(|ui| done = ui.button("Done").clicked());
         });
-        if let Some(e) = &ed.error {
-            ui.add(egui::Label::new(RichText::new(e).color(RED)).wrap());
-        }
-        ui.add_space(6.0);
-        ui.vertical_centered(|ui| done = ui.button("Done").clicked());
     });
     let esc = esc_once(ctx);
     if esc && ed.rename.is_some() {
@@ -175,7 +194,7 @@ fn push_own(own: &OwnLoadouts, mut mine: OwnLoadouts, out: &mut Vec<UiAction>) {
 /// Delete.
 fn list(ui: &mut Ui, m: &ModInfo, mine: &mut OwnLoadouts, ed: &mut Editor) {
     let all = choices(m, mine);
-    ScrollArea::vertical().id_salt("loadout list").max_height(320.0).show(ui, |ui| {
+    list_area(ui, ScrollArea::vertical().id_salt("loadout list").max_height(320.0), |ui| {
         for c in &all {
             ui.horizontal(|ui| {
                 let picked = c.loadout.name == ed.selected;
@@ -237,8 +256,9 @@ fn list(ui: &mut Ui, m: &ModInfo, mine: &mut OwnLoadouts, ed: &mut Editor) {
         ed.rename = ui
             .horizontal_wrapped(|ui| {
                 let label = ui.label("New name");
-                let field =
-                    ui.add(TextEdit::singleline(&mut text).desired_width(160.0)).labelled_by(label.id);
+                let field = ui
+                    .add(TextEdit::singleline(&mut text).desired_width(fit(ui, 160.0)))
+                    .labelled_by(label.id);
                 let enter = field.lost_focus() && ui.input(|i| i.key_pressed(Key::Enter));
                 if ui.button("OK").clicked() || enter {
                     match check_name(&text, m, mine, Some(&ed.selected)) {
@@ -292,7 +312,7 @@ fn details(ui: &mut Ui, m: &ModInfo, mine: &mut OwnLoadouts, ed: &mut Editor) {
                 on.fill(false);
             }
         });
-        ScrollArea::vertical().id_salt("loadout weapons").max_height(240.0).show(ui, |ui| {
+        list_area(ui, ScrollArea::vertical().id_salt("loadout weapons").max_height(240.0), |ui| {
             for (w, on) in m.weapons.iter().zip(on.iter_mut()) {
                 ui.checkbox(on, w);
             }
@@ -328,51 +348,52 @@ pub(super) fn bots_window(ctx: &egui::Context, data: &mut MenuData, p: &mut Matc
     }
     let mut close = false;
     let r = Modal::new(Id::new("bots window")).show(ctx, |ui| {
-        ui.set_width(420.0);
-        ui.heading("Bots");
-        ui.add_space(6.0);
-        form_row(ui, "", |ui, _| {
-            let mut each = p.per_bot.is_some();
-            if ui.checkbox(&mut each, "Each bot its own difficulty").changed() {
-                p.set_per_bot(each);
-            }
-        });
-        ScrollArea::vertical().id_salt("bot levels").max_height(300.0).show(ui, |ui| {
-            match &mut p.per_bot {
-                None => form_row(ui, "Difficulty", |ui, label| {
-                    level_combo(ui, label, "bots window difficulty", &mut p.difficulty)
-                }),
-                Some(levels) => {
-                    for (i, l) in levels.iter_mut().enumerate() {
-                        form_row(ui, &format!("Bot {}", i + 1), |ui, label| {
-                            level_combo(ui, label, ("bot", i), l)
-                        });
+        dialog(ui, "bots window", 420.0, |ui| {
+            ui.heading("Bots");
+            ui.add_space(6.0);
+            form_row(ui, "", |ui, _| {
+                let mut each = p.per_bot.is_some();
+                if ui.checkbox(&mut each, "Each bot its own difficulty").changed() {
+                    p.set_per_bot(each);
+                }
+            });
+            list_area(ui, ScrollArea::vertical().id_salt("bot levels").max_height(300.0), |ui| {
+                match &mut p.per_bot {
+                    None => form_row(ui, "Difficulty", |ui, label| {
+                        level_combo(ui, label, "bots window difficulty", &mut p.difficulty)
+                    }),
+                    Some(levels) => {
+                        for (i, l) in levels.iter_mut().enumerate() {
+                            form_row(ui, &format!("Bot {}", i + 1), |ui, label| {
+                                level_combo(ui, label, ("bot", i), l)
+                            });
+                        }
                     }
                 }
-            }
-            crate::pad::follow_focus(ui);
-        });
-        form_row(ui, "Personality", |ui, label| {
-            personality_combo(ui, label, "personality", &mut p.personality)
-        });
-        form_row(ui, "Bots' weapons", |ui, label| {
-            let name = |b: BotLoadout| match b {
-                BotLoadout::OlxPreset => "OLX's choice",
-                BotLoadout::Random => "Random",
-            };
-            ComboBox::from_id_salt("bot weapons")
-                .selected_text(name(p.loadout))
-                .width(COMBO_W)
-                .show_ui(ui, |ui| {
-                    for b in [BotLoadout::OlxPreset, BotLoadout::Random] {
-                        ui.selectable_value(&mut p.loadout, b, name(b));
-                    }
-                })
-                .response
-                .labelled_by(label);
-        });
-        ui.add_space(6.0);
-        ui.vertical_centered(|ui| close = ui.button("Close").clicked());
+                crate::pad::follow_focus(ui);
+            });
+            form_row(ui, "Personality", |ui, label| {
+                personality_combo(ui, label, "personality", &mut p.personality)
+            });
+            form_row(ui, "Bots' weapons", |ui, label| {
+                let name = |b: BotLoadout| match b {
+                    BotLoadout::OlxPreset => "OLX's choice",
+                    BotLoadout::Random => "Random",
+                };
+                ComboBox::from_id_salt("bot weapons")
+                    .selected_text(name(p.loadout))
+                    .width(fit(ui, COMBO_W))
+                    .show_ui(ui, |ui| {
+                        for b in [BotLoadout::OlxPreset, BotLoadout::Random] {
+                            ui.selectable_value(&mut p.loadout, b, name(b));
+                        }
+                    })
+                    .response
+                    .labelled_by(label);
+            });
+            ui.add_space(6.0);
+            ui.vertical_centered(|ui| close = ui.button("Close").clicked());
+        })
     });
     let esc = esc_once(ctx);
     if close || r.should_close() || esc {

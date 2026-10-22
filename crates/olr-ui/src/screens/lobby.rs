@@ -15,8 +15,8 @@
 
 use egui::{Button, Color32, Key, ProgressBar, RichText, ScrollArea, Sense, TextEdit, Ui, vec2};
 
-use super::local_play::{difficulty, level_grid, mod_picker, rules};
-use super::{MenuData, columns, footer, loadouts, message, page, primary, section, tall_section};
+use super::local_play::{LEVELS_STACKED, STACK_BELOW, difficulty, level_grid, mod_picker, rules};
+use super::{MenuData, columns, footer, list_area, loadouts, message, page, primary, section, tall_section};
 use crate::hud::LineKind;
 use crate::loadouts::OwnLoadouts;
 use crate::match_prefs::{MAX_BOTS, MatchPrefs};
@@ -26,6 +26,8 @@ use crate::theme;
 
 const WIDTH: f32 = 1100.0;
 const SECTION_GAP: f32 = 8.0;
+/// The chat's lines' height under the setup (a narrow window).
+const CHAT_STACKED: f32 = 160.0;
 const RED: Color32 = Color32::from_rgb(255, 110, 90);
 /// The host's Start (`primary`'s size) and Force start buttons.
 const START: egui::Vec2 = egui::Vec2::new(220.0, 44.0);
@@ -130,10 +132,21 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         message(ui, state);
     });
     let ui = &mut ui;
-    columns(ui, 2, |c| {
-        setup(&mut c[0], &view, state.loadouts(), data, out);
-        members_and_chat(&mut c[1], &view, data, out);
-    });
+    if ui.available_width() < STACK_BELOW {
+        // A narrow window (a large UI scale, issue #49): the setup over
+        // the members and the chat, scrolling together.
+        ScrollArea::vertical().id_salt("lobby stacked").auto_shrink([false, false]).show(ui, |ui| {
+            setup(ui, &view, state.loadouts(), data, out, true);
+            ui.add_space(SECTION_GAP);
+            members_and_chat(ui, &view, data, out, true);
+            crate::pad::follow_focus(ui);
+        });
+    } else {
+        columns(ui, 2, |c| {
+            setup(&mut c[0], &view, state.loadouts(), data, out, false);
+            members_and_chat(&mut c[1], &view, data, out, false);
+        });
+    }
     if data.lobby_ui.confirm_leave {
         leave_dialog(ui.ctx(), &mut data.lobby_ui, out);
     }
@@ -203,8 +216,16 @@ fn leave_dialog(ctx: &egui::Context, v: &mut View, out: &mut Vec<UiAction>) {
         });
 }
 
-/// The left column: the setup (the host's), and this player's weapons.
-fn setup(ui: &mut Ui, view: &LobbyView, own: &OwnLoadouts, data: &mut MenuData, out: &mut Vec<UiAction>) {
+/// The left column (scrolling on its own unless `stacked` in one that
+/// does): the setup (the host's), and this player's weapons.
+fn setup(
+    ui: &mut Ui,
+    view: &LobbyView,
+    own: &OwnLoadouts,
+    data: &mut MenuData,
+    out: &mut Vec<UiAction>,
+    stacked: bool,
+) {
     let before = view.setup.clone();
     let mut p = before.clone();
     // The host's loadout as its own loadouts now have it; a client shows
@@ -212,7 +233,39 @@ fn setup(ui: &mut Ui, view: &LobbyView, own: &OwnLoadouts, data: &mut MenuData, 
     if view.host {
         loadouts::refresh(data, own, &mut p);
     }
-    ScrollArea::vertical().id_salt("lobby setup").auto_shrink([false, false]).show(ui, |ui| {
+    if stacked {
+        panels(ui, view, own, data, &mut p, out);
+    } else {
+        ScrollArea::vertical().id_salt("lobby setup").auto_shrink([false, false]).show(ui, |ui| {
+            panels(ui, view, own, data, &mut p, out);
+            crate::pad::follow_focus(ui);
+        });
+    }
+    if view.host {
+        if let Some(l) = loadouts::editor(ui.ctx(), data, own, out) {
+            p.weapons = l;
+        }
+        loadouts::bots_window(ui.ctx(), data, &mut p);
+    } else {
+        data.loadout_editor = None;
+        data.bots_open = false;
+    }
+    if view.host && p != before {
+        out.push(UiAction::LobbySetup(p));
+    }
+}
+
+/// The setup's panels: the invite or the connection, this player's
+/// weapons, the map, the match and the bots.
+fn panels(
+    ui: &mut Ui,
+    view: &LobbyView,
+    own: &OwnLoadouts,
+    data: &mut MenuData,
+    p: &mut MatchPrefs,
+    out: &mut Vec<UiAction>,
+) {
+    {
         if view.invite.is_some() || view.listing.is_some() || !view.reach.is_empty() {
             section(ui, "Invite", |ui, _| invite(ui, view));
             ui.add_space(SECTION_GAP);
@@ -236,34 +289,25 @@ fn setup(ui: &mut Ui, view: &LobbyView, own: &OwnLoadouts, data: &mut MenuData, 
         ui.add_space(SECTION_GAP);
         ui.add_enabled_ui(view.host, |ui| {
             section(ui, "Map", |ui, _| {
-                mod_picker(ui, data, own, &mut p);
+                mod_picker(ui, data, own, p);
                 ui.add_space(8.0);
-                ScrollArea::vertical().id_salt("lobby levels").max_height(240.0).show(ui, |ui| {
-                    level_grid(ui, data, &mut p);
-                    crate::pad::follow_focus(ui);
-                });
+                list_area(
+                    ui,
+                    ScrollArea::vertical().id_salt("lobby levels").max_height(LEVELS_STACKED),
+                    |ui| {
+                        level_grid(ui, data, p);
+                        crate::pad::follow_focus(ui);
+                    },
+                );
             });
             ui.add_space(SECTION_GAP);
             section(ui, "Match (Deathmatch)", |ui, _| {
-                loadouts::picker(ui, data, own, &mut p, view.host);
-                rules(ui, &mut p);
+                loadouts::picker(ui, data, own, p, view.host);
+                rules(ui, p);
             });
             ui.add_space(SECTION_GAP);
-            section(ui, "Bots", |ui, _| bots(ui, data, &mut p));
+            section(ui, "Bots", |ui, _| bots(ui, data, p));
         });
-        crate::pad::follow_focus(ui);
-    });
-    if view.host {
-        if let Some(l) = loadouts::editor(ui.ctx(), data, own, out) {
-            p.weapons = l;
-        }
-        loadouts::bots_window(ui.ctx(), data, &mut p);
-    } else {
-        data.loadout_editor = None;
-        data.bots_open = false;
-    }
-    if view.host && p != before {
-        out.push(UiAction::LobbySetup(p));
     }
 }
 
@@ -310,10 +354,19 @@ fn bots(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs) {
     }
 }
 
-fn members_and_chat(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mut Vec<UiAction>) {
+/// The right column (`stacked`: under the setup, the chat as tall as
+/// [`CHAT_STACKED`]): the members, the downloads and the chat.
+fn members_and_chat(
+    ui: &mut Ui,
+    view: &LobbyView,
+    data: &mut MenuData,
+    out: &mut Vec<UiAction>,
+    stacked: bool,
+) {
     section(ui, "Players", |ui, _| {
-        ScrollArea::vertical().id_salt("lobby members").max_height(250.0).auto_shrink([false, true]).show(
+        list_area(
             ui,
+            ScrollArea::vertical().id_salt("lobby members").auto_shrink([false, true]).max_height(250.0),
             |ui| {
                 for m in &view.members {
                     member(ui, view, m, &mut data.lobby_ui, out);
@@ -351,8 +404,8 @@ fn members_and_chat(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mu
         });
     }
     ui.add_space(SECTION_GAP);
-    tall_section(ui, "Chat", |ui, title| {
-        let h = (ui.available_height() - 36.0).max(40.0);
+    let chat = |ui: &mut Ui, title: egui::Id| {
+        let h = if stacked { CHAT_STACKED } else { (ui.available_height() - 36.0).max(40.0) };
         ScrollArea::vertical()
             .id_salt("lobby chat")
             .max_height(h)
@@ -382,7 +435,12 @@ fn members_and_chat(ui: &mut Ui, view: &LobbyView, data: &mut MenuData, out: &mu
                 r.request_focus();
             }
         });
-    });
+    };
+    if stacked {
+        section(ui, "Chat", chat);
+    } else {
+        tall_section(ui, "Chat", chat);
+    }
 }
 
 fn member(ui: &mut Ui, view: &LobbyView, m: &MemberView, v: &mut View, out: &mut Vec<UiAction>) {
@@ -440,11 +498,11 @@ fn member(ui: &mut Ui, view: &LobbyView, m: &MemberView, v: &mut View, out: &mut
 
 /// One download's row: name, kind, a progress bar and the state.
 fn download(ui: &mut Ui, d: &DownloadView) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label(&d.name);
         ui.label(RichText::new(&d.kind).small().weak());
         let done = if d.size == 0 { 0.0 } else { (d.have as f64 / d.size as f64).clamp(0.0, 1.0) as f32 };
-        ui.add(ProgressBar::new(done).desired_width(120.0).show_percentage());
+        ui.add(ProgressBar::new(done).desired_width(super::fit(ui, 120.0)).show_percentage());
         let colour = if d.state.starts_with("failed") || d.state == "not available" {
             RED
         } else {

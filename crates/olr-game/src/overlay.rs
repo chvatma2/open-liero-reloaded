@@ -382,7 +382,7 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
         } else {
             "F5 rematch    Esc quit"
         };
-        olr_ui::screens::results::panel(ui.ctx(), r, |ui| {
+        olr_ui::screens::results::panel(ui.ctx(), r, s.present.views(), |ui| {
             ui.label(egui::RichText::new(keys).color(Color32::from_gray(200)));
         });
     }

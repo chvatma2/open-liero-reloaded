@@ -13,7 +13,7 @@ use egui::{Color32, ComboBox, RichText, ScrollArea, Sense, Slider, Ui, Vec2};
 use olr_input::Seat;
 
 use super::{
-    MenuData, columns, footer, form_check_row, form_row, loadouts, message, page, primary, section,
+    MenuData, columns, fit, footer, form_check_row, form_row, loadouts, message, page, primary, section,
     tall_section,
 };
 use crate::loadouts::OwnLoadouts;
@@ -21,6 +21,7 @@ use crate::match_prefs::{
     BotLevel, BotPersonality, KILL_LIMIT_RANGE, LIVES_RANGE, MAX_BOTS, MatchPrefs, TIME_LIMIT_RANGE,
 };
 use crate::pad::pad_choice;
+use crate::profiles::Profiles;
 use crate::state::{UiAction, UiState};
 
 /// A level card's picture, in points (the imported thumbnails' 160 × 96,
@@ -36,6 +37,14 @@ const SECTION_GAP: f32 = 8.0;
 
 /// The pickers' width.
 const COMBO_W: f32 = 200.0;
+
+/// The body's narrowest width for the panels side by side, in points: in
+/// a narrower one (a large UI scale, issue #49) they stand one above the
+/// other (the lobby's too).
+pub(super) const STACK_BELOW: f32 = 640.0;
+
+/// The level grid's height when the panels stand one above the other.
+pub(super) const LEVELS_STACKED: f32 = 240.0;
 
 /// What a rule is set to when it is switched on (OLX's defaults,
 /// `src/common/FeatureList.cpp:31-33`; lives as OLX's menu starts them).
@@ -75,52 +84,45 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         message(ui, state);
     });
     let ui = &mut ui;
-    columns(ui, 2, |c| {
-        tall_section(&mut c[0], "Map", |ui, _| {
-            mod_picker(ui, data, own, &mut p);
-            ui.add_space(8.0);
-            ScrollArea::vertical().id_salt("local play levels").auto_shrink([false, false]).show(ui, |ui| {
-                level_grid(ui, data, &mut p);
+    if ui.available_width() < STACK_BELOW {
+        // A narrow window (a large UI scale, issue #49): the panels one
+        // above the other, scrolling together.
+        ScrollArea::vertical().id_salt("local play stacked").auto_shrink([false, false]).show(ui, |ui| {
+            section(ui, "Map", |ui, _| {
+                mod_picker(ui, data, own, &mut p);
+                ui.add_space(8.0);
+                super::list_area(
+                    ui,
+                    ScrollArea::vertical().id_salt("local play levels").max_height(LEVELS_STACKED),
+                    |ui| {
+                        level_grid(ui, data, &mut p);
+                        crate::pad::follow_focus(ui);
+                    },
+                );
+            });
+            ui.add_space(SECTION_GAP);
+            setup(ui, data, own, &mut p, &mut profiles);
+            crate::pad::follow_focus(ui);
+        });
+    } else {
+        columns(ui, 2, |c| {
+            tall_section(&mut c[0], "Map", |ui, _| {
+                mod_picker(ui, data, own, &mut p);
+                ui.add_space(8.0);
+                ScrollArea::vertical().id_salt("local play levels").auto_shrink([false, false]).show(
+                    ui,
+                    |ui| {
+                        level_grid(ui, data, &mut p);
+                        crate::pad::follow_focus(ui);
+                    },
+                );
+            });
+            ScrollArea::vertical().id_salt("local play setup").show(&mut c[1], |ui| {
+                setup(ui, data, own, &mut p, &mut profiles);
                 crate::pad::follow_focus(ui);
             });
         });
-        ScrollArea::vertical().id_salt("local play setup").show(&mut c[1], |ui| {
-            section(ui, "Match (Deathmatch)", |ui, _| {
-                loadouts::picker(ui, data, own, &mut p, true);
-                rules(ui, &mut p);
-            });
-            ui.add_space(SECTION_GAP);
-            // The human, then the bots.
-            section(ui, "Players", |ui, _| {
-                form_row(ui, "Player", |ui, label| {
-                    let names: Vec<&str> = profiles.list.iter().map(|p| p.name.as_str()).collect();
-                    let shown = names.get(profiles.selected).copied().unwrap_or("-").to_string();
-                    let mut selected = profiles.selected;
-                    let combo = ComboBox::from_id_salt("profile")
-                        .selected_text(shown)
-                        .width(COMBO_W)
-                        .show_ui(ui, |ui| {
-                            for (i, n) in names.iter().enumerate() {
-                                ui.selectable_value(&mut selected, i, *n);
-                            }
-                        })
-                        .response
-                        .labelled_by(label);
-                    let all: Vec<usize> = (0..names.len()).collect();
-                    if let Some(i) = pad_choice(ui, &combo, &all, &selected) {
-                        selected = i;
-                    }
-                    profiles.selected = selected;
-                });
-                bots(ui, data, &mut p);
-                // Issue #32: shown only once another seat was used.
-                if data.seats_used.len() > 1 {
-                    ui.label(RichText::new(JOIN_HINT).weak());
-                }
-            });
-            crate::pad::follow_focus(ui);
-        });
-    });
+    }
     if let Some(l) = loadouts::editor(ui.ctx(), data, own, out) {
         p.weapons = l;
     }
@@ -143,6 +145,43 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     }
 }
 
+/// The match's and the players' panels.
+fn setup(ui: &mut Ui, data: &mut MenuData, own: &OwnLoadouts, p: &mut MatchPrefs, profiles: &mut Profiles) {
+    section(ui, "Match (Deathmatch)", |ui, _| {
+        loadouts::picker(ui, data, own, p, true);
+        rules(ui, p);
+    });
+    ui.add_space(SECTION_GAP);
+    // The human, then the bots.
+    section(ui, "Players", |ui, _| {
+        form_row(ui, "Player", |ui, label| {
+            let names: Vec<&str> = profiles.list.iter().map(|p| p.name.as_str()).collect();
+            let shown = names.get(profiles.selected).copied().unwrap_or("-").to_string();
+            let mut selected = profiles.selected;
+            let combo = ComboBox::from_id_salt("profile")
+                .selected_text(shown)
+                .width(fit(ui, COMBO_W))
+                .show_ui(ui, |ui| {
+                    for (i, n) in names.iter().enumerate() {
+                        ui.selectable_value(&mut selected, i, *n);
+                    }
+                })
+                .response
+                .labelled_by(label);
+            let all: Vec<usize> = (0..names.len()).collect();
+            if let Some(i) = pad_choice(ui, &combo, &all, &selected) {
+                selected = i;
+            }
+            profiles.selected = selected;
+        });
+        bots(ui, data, p);
+        // Issue #32: shown only once another seat was used.
+        if data.seats_used.len() > 1 {
+            ui.label(RichText::new(JOIN_HINT).weak());
+        }
+    });
+}
+
 /// The Players panel's line once several seats were used (issue #32).
 pub const JOIN_HINT: &str = "Several players here: after Start, each joins with a button of their own.";
 
@@ -157,7 +196,8 @@ pub(super) fn mod_picker(ui: &mut Ui, data: &MenuData, own: &OwnLoadouts, p: &mu
         let label = ui.label(RichText::new("Mod").strong());
         let combo = ComboBox::from_id_salt("mod")
             .selected_text(name)
-            .width(260.0)
+            .width(fit(ui, 260.0))
+            .truncate()
             .show_ui(ui, |ui| {
                 for m in &data.catalog.mods {
                     if ui.selectable_label(m.id == p.mod_id, &m.name).clicked() {
@@ -204,7 +244,7 @@ pub(super) fn level_grid(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs) {
                     Some(t) => {
                         painter.rect_filled(rect, 4.0, Color32::from_rgb(24, 22, 20));
                         let uv = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, 1.0));
-                        painter.image(t.id(), fit(t.size_vec2(), rect), uv, Color32::WHITE);
+                        painter.image(t.id(), letterbox(t.size_vec2(), rect), uv, Color32::WHITE);
                     }
                     // No thumbnail yet: the name and size (plan 7 ruling Q1).
                     None => {
@@ -236,7 +276,7 @@ pub(super) fn level_grid(ui: &mut Ui, data: &mut MenuData, p: &mut MatchPrefs) {
 
 /// The largest rectangle of `size`'s aspect centred in `rect`: a
 /// thumbnail of any shape keeps it (letterboxed).
-pub(crate) fn fit(size: Vec2, rect: egui::Rect) -> egui::Rect {
+pub(crate) fn letterbox(size: Vec2, rect: egui::Rect) -> egui::Rect {
     if !(size.x > 0.0 && size.y > 0.0) {
         return rect;
     }
@@ -302,7 +342,7 @@ pub(super) fn level_combo(
 ) {
     let combo = ComboBox::from_id_salt(id)
         .selected_text(level_name(*level))
-        .width(COMBO_W)
+        .width(fit(ui, COMBO_W))
         .show_ui(ui, |ui| {
             for l in BotLevel::ALL {
                 ui.selectable_value(level, l, level_name(l));
@@ -329,7 +369,7 @@ pub(super) fn personality_combo(
     };
     let combo = ComboBox::from_id_salt(id)
         .selected_text(name(*personality))
-        .width(COMBO_W)
+        .width(fit(ui, COMBO_W))
         .show_ui(ui, |ui| {
             for b in BotPersonality::ALL {
                 ui.selectable_value(personality, b, name(b));
