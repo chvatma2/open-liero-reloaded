@@ -92,7 +92,13 @@ endpoint, each match through `olr-netcode`'s session, its replay after it.
   game did not answer" (a host that never sends `Challenge`, `HostProof`
   or `Welcome`: the link's keepalives alone never time it out); `content_cfg`:
   `PeerContent`, below); `poll(now, local_keys, on_tick) ->
-  Vec<OnlineEvent>`; `content()` (what matches and replays load from),
+  Vec<OnlineEvent>` (`local_keys: &mut LocalKeys`, `FnMut(&KeysFor) ->
+  Keys`, once per new tick, issue #24: `KeysFor { world, slot, ahead }`,
+  the newest predicted world (the state before the next tick simulated),
+  the player's slot, and the ticks the keys apply after it, the input
+  delay at a client or a host that took over, 0 at the host:
+  `PeerDriver::next` follows `simulated`;
+  `local_keys_are_told_the_world_and_the_look_ahead`); `content()` (what matches and replays load from),
   `downloads()`, `download_prompt()` (the bytes waiting for approval, as
   of the last poll), `approve_downloads()`;
   `lobby()` (`LobbyHandle`: ready, spectate, look, loadout, chat,

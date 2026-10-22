@@ -104,6 +104,20 @@ pub struct Overlay<'a> {
     /// The host is gone and the match is moving (plan 12c,
     /// `Shell::migration_line`): said at the top instead.
     pub migrating: Option<String>,
+    /// Mouse controls' cursor (issue #24, `pointer.rs`), in points, while
+    /// the game has the pointer: the target marker.
+    pub marker: Option<Pos2>,
+}
+
+/// Mouse controls' target marker (issue #24) at `at`: a small ring with a
+/// dot, outlined so it shows on any ground.
+pub fn target_marker(p: &Painter, at: Pos2, k: f32) {
+    let r = (2.5 * k).clamp(4.0, 12.0);
+    let dark = egui::Stroke::new(3.0, Color32::from_black_alpha(160));
+    let light = egui::Stroke::new(1.5, Color32::from_gray(240));
+    p.circle_stroke(at, r, dark);
+    p.circle_stroke(at, r, light);
+    p.circle_filled(at, 1.5, Color32::from_gray(240));
 }
 
 /// Where a name label of `size` goes for a worm at `at` (points): centred
@@ -214,6 +228,9 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     let small = FontId::proportional(13.0);
     let k = o.map.scale();
     let worms = crate::hud::worms_on_screen(s, &o.map, o.alpha);
+    if let Some(at) = o.marker {
+        target_marker(p, at, k);
+    }
     if o.names {
         let bounds = o.map.points_rect().intersect(ui.max_rect());
         let weapon = s.weapon_name(o.changing);

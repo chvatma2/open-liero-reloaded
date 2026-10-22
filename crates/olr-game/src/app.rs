@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use olr_input::{Action, InputState, KeyCode};
+use olr_input::{Action, InputState, KeyCode, LocalWorm};
 use olr_render::UpscaleFilter;
 use olr_scene::{DrawList, Interpolation};
 use winit::event::{ElementState, KeyEvent};
@@ -36,6 +36,7 @@ use crate::gpu::{Gpu, OverlayPaint};
 use crate::hud::{MinimapTexture, ScoreKey};
 use crate::latency::Latency;
 use crate::overlay::{Overlay, ScreenMap, Stats};
+use crate::pointer::{self, Pointer};
 use crate::script::{Command, Step};
 use crate::session::Session;
 use crate::shell::{Outcome, Shell};
@@ -223,6 +224,8 @@ pub struct App {
     /// The in-game chat's field was open last frame (keys held are
     /// released when it opens: they go to it, not the game).
     chatting: bool,
+    /// Mouse controls' pointer (issue #24): the grab and the cursor.
+    pointer: Pointer,
 }
 
 /// Whether egui hears window event `event`: not a key while the options
@@ -352,6 +355,7 @@ impl App {
         if cfg.menus {
             olr_ui::theme::apply(&egui);
             input.set_bindings(shell.ui.bindings().clone());
+            input.set_mouse_controls(shell.ui.settings().mouse.enabled);
         }
         App {
             speed: cfg.speed,
@@ -400,6 +404,7 @@ impl App {
             drawn_size: (0, 0),
             net_overlay: false,
             chatting: false,
+            pointer: Pointer::default(),
         }
     }
 
@@ -437,12 +442,21 @@ impl App {
     }
 
     fn net_step(&mut self, now: Instant) -> Vec<Outcome> {
-        // What is held as the poll latches (no input arrives meanwhile).
-        self.shell.set_held_keys(self.input.held());
+        // What is held as the poll latches (no input arrives meanwhile):
+        // what a stall may repeat, mouse controls' own keys included.
+        self.shell.set_held_keys(self.input.repeatable());
+        let aim = self.pointer.aim();
         let (input, latency) = (&mut self.input, &mut self.latency);
-        let mut keys = |_: &olr_online::KeysFor| {
+        // Mouse controls plan with the newest predicted world, looking
+        // ahead by the input delay (issue #24).
+        let mut keys = |f: &olr_online::KeysFor| {
             latency.latched();
-            input.latch_tick()
+            let local = if input.mouse_controls() {
+                LocalWorm::of(f.world, usize::from(f.slot), f.ahead)
+            } else {
+                None
+            };
+            input.latch_tick_for(local.as_ref(), aim)
         };
         let t0 = Instant::now();
         let mut out = self.shell.net_frame(now, &mut keys);
@@ -659,6 +673,8 @@ impl App {
         self.win = Some(Shown { window, gpu, egui, hidden_frames: 0, made: Instant::now() });
         drop((old_egui, old_window));
         self.input.release_keys();
+        self.input.release_mouse();
+        self.pointer.window_replaced();
         self.scores.focus(false);
         // The interval runs from the new window (`window::MIN_CHANGE_INTERVAL`).
         self.requests.opened(self.now());
@@ -727,6 +743,14 @@ impl App {
     }
 
     /// The key bound to `action` (the script presses keys as a player would).
+    /// The local player's worm before the next local tick, for mouse
+    /// controls (issue #24); `None` when nobody here plays.
+    fn local_worm(&self) -> Option<LocalWorm> {
+        let s = self.shell.session()?;
+        let i = usize::from(s.local()?);
+        s.with_world(|w| LocalWorm::of(w, i, 0))
+    }
+
     fn key_of(&self, action: Action) -> Option<KeyCode> {
         self.input.bindings().keys.iter().find(|(a, _)| *a == action).map(|&(_, k)| k)
     }
@@ -787,7 +811,8 @@ impl App {
                 Command::Fullscreen(on) => self.requests.fullscreen(on),
             }
         }
-        let keys = self.input.latch_tick();
+        let local = if self.input.mouse_controls() { self.local_worm() } else { None };
+        let keys = self.input.latch_tick_for(local.as_ref(), self.pointer.aim());
         self.latency.latched();
         self.ticks += 1;
         let t0 = Instant::now();
@@ -880,6 +905,17 @@ impl App {
         // The world in the playfield: the 16:9 frame above the HUD's bar.
         let dest = w.gpu.renderer.dest_rect_in(src, playfield(size));
         let map = ScreenMap { view: self.list.view, dest, pixels_per_point: ppp };
+        // Mouse controls' pointer (issue #24): the view drawn and the local
+        // worm in it, as the controller aims from them.
+        if self.input.mouse_controls() {
+            let worm = self.shell.session().and_then(|s| {
+                let i = usize::from(s.local()?);
+                let at = crate::hud::worms_on_screen(s, &map, alpha).into_iter().find(|(j, _)| *j == i)?.1;
+                Some(([at.x * ppp, at.y * ppp], map.scale() * ppp))
+            });
+            self.pointer.set_view(dest, worm);
+        }
+        let marker = self.pointer.marker().map(|[x, y]| egui::pos2(x / ppp, y / ppp));
         let mut input = w.egui.take_egui_input(&w.window);
         if self.fake_start.is_some() {
             input.time = Some((now - start).as_secs_f64());
@@ -920,6 +956,7 @@ impl App {
             net: self.net_overlay.then(|| self.shell.net_view()).flatten(),
             lagging: self.shell.lagging(),
             migrating: self.shell.migration_line().map(str::to_string),
+            marker,
         });
         let editing = self.shell.editor_open() && !self.shell.editing_play();
         let playing_edited = self.shell.editing_play();
@@ -1000,6 +1037,19 @@ impl App {
             // egui-winit hides the cursor for this icon and shows it again
             // when egui next asks for another.
             out.platform_output.cursor_icon = egui::CursorIcon::None;
+        }
+        // Mouse controls grab the pointer while the game has it, and free
+        // it for the menus, the pause, the chat and the weapon selection.
+        let want = pointer::wanted(
+            self.input.mouse_controls(),
+            hide,
+            self.shell.selecting(),
+            self.pointer.focused(),
+        );
+        let had = self.pointer.active();
+        self.pointer.update(&w.window, want);
+        if had && !self.pointer.active() {
+            self.input.release_mouse();
         }
         w.egui.handle_platform_output(&w.window, out.platform_output);
         // The autoplay's steps, on what this frame shows.

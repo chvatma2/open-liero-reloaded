@@ -259,8 +259,31 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   plays with nothing open (`app::cursor_hidden`: the game has the screen,
   not the editor's Play with its Stop button, not the in-game chat), by
   handing egui-winit `CursorIcon::None`, which shows it again with egui's
-  next icon; play uses no mouse (`tests/watch.rs`,
+  next icon; play uses no mouse but mouse controls' (`tests/watch.rs`,
   `the_cursor_hides_only_in_play`).
+- **Mouse controls** (issue #24, experimental; the controller is
+  `olr-input`'s `mouse.rs`): Options → Keys' switch (`olr_ui::MouseSettings`,
+  `Outcome::MouseControls` → `InputState::set_mouse_controls`, also at
+  start from the settings). `pointer.rs`'s `Pointer`: the game has the
+  pointer while `pointer::wanted` (mouse controls on, `cursor_hidden`, no
+  weapon selection, focused); `Pointer::update` (each frame, after the
+  cursor icon) grabs it `Locked` (the virtual cursor moved by
+  `DeviceEvent::MouseMotion`, `handler.rs`'s `device_event`), else
+  `Confined` (the window's `CursorMoved`), else none (`Refused`, warned
+  once: the free cursor), always clamped to the drawn view (`dest`); it
+  is freed when not wanted, at focus loss (`on_focus`) and with a window
+  made again (`window_replaced`), and grabbed again once wanted; the
+  mouse buttons go up when it is freed (`release_mouse`). While it is
+  active the window's mouse events go to `InputState::on_mouse`. Each
+  drawn frame gives it the view and the local worm as drawn
+  (`hud::worms_on_screen`, physical pixels and pixels per game pixel);
+  `Pointer::aim` (cursor minus drawn worm, in game pixels) is the
+  controller's cursor for the frame's ticks: a local tick's
+  `latch_tick_for(LocalWorm::of(world, local, 0))` (`App::local_worm`),
+  an online tick's from the `KeysFor` the peer gives (its world, slot and
+  input delay). The overlay draws the target marker at
+  `Pointer::marker` (`overlay::target_marker`). The autoplay sends no
+  game mouse: the manual playtest is in `docs/deferred-verification.md`.
 - **Single thread** (spec §8.6): the device is created and used only on
   the main (event-loop) thread; under WSL's d3d12 GL driver a thread that
   used the device crashes when it exits. kira runs its own audio thread;
@@ -472,7 +495,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `frames_every_30_ms_play_as_before`, `..._45_ms_...`). Meanwhile the
   local player presses the keys the UI last latched and still held then
   (`PeerHandle::poll` keeps the last its `local_keys` gave, masked by
-  `PeerHandle::set_held`: `App::net_step` gives `InputState::held` through
+  `PeerHandle::set_held`: `App::net_step` gives `InputState::repeatable`
+  (`held`, plus mouse controls' own Up, Down and Strafe, so a stall never
+  turns a strafing worm) through
   `Shell::set_held_keys` before each network frame, so a tap is not
   repeated, nor are Dig's taps: `held` has no gesture keys) for `PUMP_HOLD` (250 ms) of the
   stall, then `Keys(0)` (a long drag does not keep firing); the input

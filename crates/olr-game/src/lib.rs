@@ -32,6 +32,7 @@ pub mod logging;
 pub mod net;
 pub mod online;
 pub mod overlay;
+pub mod pointer;
 pub mod report;
 pub mod script;
 pub mod session;

@@ -1,7 +1,7 @@
 //! The winit event handler: window events to the game, a frame per redraw.
 
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::WindowId;
 
@@ -53,6 +53,20 @@ impl ApplicationHandler for App {
         if !(chatting && matches!(event, WindowEvent::KeyboardInput { .. })) {
             self.input.on_window_event(&event);
         }
+        // Mouse controls (issue #24): the buttons and the wheel are the
+        // game's while it has the pointer; the cursor moves the pointer's.
+        if self.pointer.active() {
+            self.input.on_mouse(&event);
+        }
+        match &event {
+            WindowEvent::CursorMoved { position, .. } => {
+                self.pointer.on_cursor_moved([position.x as f32, position.y as f32]);
+            }
+            WindowEvent::Focused(focused) => {
+                self.pointer.on_focus(*focused, self.win.as_ref().map(|w| &*w.window));
+            }
+            _ => {}
+        }
         // The options' "press a key" box, while open.
         if let Some(c) = &mut self.shell.data.capture {
             c.on_window_event(&event);
@@ -86,6 +100,14 @@ impl ApplicationHandler for App {
         };
         if let Err(e) = result {
             self.fail(el, e);
+        }
+    }
+
+    /// The mouse's raw motion: mouse controls' virtual cursor while the
+    /// pointer is locked (issue #24).
+    fn device_event(&mut self, _el: &ActiveEventLoop, _id: DeviceId, event: DeviceEvent) {
+        if let DeviceEvent::MouseMotion { delta } = event {
+            self.pointer.on_motion([delta.0 as f32, delta.1 as f32]);
         }
     }
 
