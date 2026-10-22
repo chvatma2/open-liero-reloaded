@@ -1,7 +1,8 @@
 //! The formats guide's examples (`docs/formats/README.md`, plan 13d Task 9)
 //! are real: each parses as the file it names and is canonical, and the
 //! mod and level examples (the level's composition included) make packs
-//! that check clean.
+//! that check clean. The material example is the built-in glass (issue
+//! #37).
 
 use std::collections::BTreeSet;
 
@@ -66,6 +67,10 @@ fn canonical(b: &Block) -> Result<String, String> {
         olr_pack::write_manifest(&mut out, &m).map_err(|e| e.to_string())?;
         return Ok(String::from_utf8(out.read_file("pack.ron")).unwrap());
     }
+    if b.kind == "material" {
+        let m = olr_format::materials::read_material(&b.path, &b.text).map_err(|e| e.to_string())?;
+        return olr_format::materials::material_text(&m).map_err(|e| e.to_string());
+    }
     if b.kind == "asset" {
         let file: olr_format::assets::AssetFile =
             olr_format::ron_io::from_canonical(&b.path, &b.text).map_err(|e| e.to_string())?;
@@ -97,6 +102,15 @@ fn the_guide_asset_example_checks_clean() {
     olr_edit::asset::decode(&src).unwrap();
 }
 
+/// Issue #37: the guide's material is the built-in one of its name.
+#[test]
+fn the_guide_material_is_built_in() {
+    let blocks = blocks(&guide());
+    let b = blocks.iter().find(|b| b.kind == "material").expect("a material example");
+    let path = format!("{}/../../content/materials/{}", env!("CARGO_MANIFEST_DIR"), b.path);
+    assert_eq!(std::fs::read_to_string(path).unwrap(), b.text);
+}
+
 trait ReadFile {
     fn read_file(&self, path: &str) -> Vec<u8>;
 }
@@ -113,7 +127,7 @@ fn every_guide_example_parses_and_is_canonical() {
     let kinds: BTreeSet<&str> = blocks.iter().map(|b| b.kind.as_str()).collect();
     assert_eq!(
         kinds,
-        BTreeSet::from(["asset", "core", "level", "mod", "pack", "skin", "theme"]),
+        BTreeSet::from(["asset", "core", "level", "material", "mod", "pack", "skin", "theme"]),
         "one example per kind"
     );
     let mut failures = Vec::new();

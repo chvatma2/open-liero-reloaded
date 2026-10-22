@@ -249,6 +249,9 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   `the_reloaded_packs_lie_over_the_bundled_content`. `assets_dir(content)`
   (issue #9): the level editor's built-in assets, `ASSETS_DIR` beside it
   (`content/assets`; not packs, so no root: the editor's host lists it).
+- `materials_dir(content)` (issue #37): the built-in surface materials,
+  `MATERIALS_DIR` beside the content (`content/materials`; read-only, a
+  file `<id>.ron` each; `olr_edit::material::list_materials` lists them).
 - Pack ids of OLX imports: `olx_mod_id("MW 1.0")`, `olx_level_id("CastleStrike.lxl")`.
 
 Test: `cargo nextest run -p olr-content` (`loads_every_manifest_item` and the

@@ -4825,6 +4825,60 @@ seats and play it split. As built:
   --views N` lays its views out in halves (top and bottom) or quarters
   for the measurement only.
 
+## Surface materials (issue #37)
+
+No OLX counterpart (OLX's pixels are only rock, dirt or background). The
+first of ten (spec `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`):
+the format, the built-in set and the per-pixel maps; nothing reads them
+in a match yet (heat comes later). As built:
+
+- **The material.** A file `<id>.ron` (`docs/formats/material.md`): id,
+  name, notes and an optional `heat` (sensitivity percent 0-100, default
+  100; capacity 10-1000, conductivity 0-1000 and cooling 1-1000, each
+  percent of stone's 100; a `look` of a colour ramp, temperature 1-1000
+  to colour and glow percent, empty for the engine's lava ramp, and
+  `light`, percent of the glow cast). The spec nests `look` in `heat`:
+  without heat a material has no look of its own yet. Temperatures run
+  0-1000 (a fresh crater's rim at 1000). Integers only; `olr-format`
+  refuses out of range, `olr-look` clamps again where read. Room for later
+  effects: each is a field beside `heat`.
+- **The built-in set** (`content/materials/`, read-only, shipped beside
+  the content by `cargo xtask dist`): stone (the reference: 100, 100,
+  100), dirt, sand, brick, concrete, wood (its own ember ramp), metal
+  (conducts six times stone) and glass (an amber ramp, half its glow as
+  light). The values are a first guess, to tune in the heat issue's
+  playtest. The user's materials are `materials/` of the data store;
+  the library lists built-in first, the user's at most 256, an
+  unreadable file a warning.
+- **In a level.** `look.materials` holds copies (at most 255, ids
+  unique), so a level plays anywhere; `look/surface.png` (front) and
+  `look/surface-back.png` (back) at world resolution, `v` the look's
+  `materials[v - 1]`, 0 none, both or neither. A level without materials
+  writes neither (no byte changes: render and match goldens unchanged).
+  The lenient reader plays bad maps without them, with a warning;
+  `pack check` reports them. Distant layers take one `surface` each
+  (`level.ron`'s `distant[i].surface`); "no material" in their docs reads
+  "no collision material" now.
+- **The bake.** An element's `surface` lands where its pixels land: a
+  solid world pixel takes the surface of the element giving its collision
+  material (Rock and Dirt in the front map; a mixed layer or a raster per
+  pixel); the front map is 0 over background. The back map follows the
+  backdrop as the glow groups do (the element at the centre art pixel of
+  the block, else the first): a Background element's own art gives its
+  `surface`, back art (a drawn layer with `back`, or a raster) its
+  `back_surface`. The issue lists the raster among back-art elements, so
+  a raster takes both. Painted maps (`editor/surface/<id>.png` and
+  `<id>.back.png`, the element's box, a raster's the level, in world
+  pixels) override per pixel; 0, or a value past the look's materials,
+  keeps the default. A plain level's maps survive being opened in the
+  editor (the raster's or the three layers' painted maps).
+- **Not yet built** (later issues): assets carrying materials and
+  `olr-cli` operations (2/10; until then an asset refuses surfaces and
+  Save as asset, paste and placing strip them), `LevelPack` and the match
+  reading them (3/10), heat and its look, mods, the editors' material
+  tools (7/10). The level editor keeps painted maps as opened, re-lays
+  them on a resize and drops ones that no longer fit.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

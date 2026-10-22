@@ -223,6 +223,42 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `compile_projectile_look`, `compile_weapon_look`,
   `compile_explosion_light`: each value checked, an error naming its field
   path.
+- **Surface materials** (`materials.rs`, `levels/`, issue #37; spec
+  `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`; the
+  page `docs/formats/material.md`; STATUS.md "Surface materials (issue
+  #37)"): `MaterialSource { id, name, notes, heat: Option<HeatSource> }`
+  (`HeatSource { sensitivity 0-100 default 100, capacity 10-1000,
+  conductivity 0-1000, cooling 1-1000, look: HeatLookSource { ramp of
+  1-16 `RampKeySource { temperature 1-1000 rising, colour opaque, glow
+  0-100 }` (empty: the engine's `olr_look::LAVA_RAMP`), light 0-100
+  default 100 } }`; heat values percent of stone's), one file `<id>.ron`
+  (`valid_material_id`, `material_file`, `read_material`: the id is the
+  file's stem; `material_text`); the limits are `olr-look`'s constants,
+  re-exported. `compile_material`/`compile_materials` give
+  `olr_look::SurfaceMaterial`s (at most `MAX_MATERIALS` 255, ids
+  unique). `LookSource::materials` (`level.ron`'s `look.materials`,
+  copies of the library's). `LevelSource::surface` (`SurfaceMaps`, `olr-look`'s:
+  `SURFACE_FILE` `look/surface.png` and `SURFACE_BACK_FILE`
+  `look/surface-back.png`, 8-bit grey at world resolution, both or none,
+  `v` the look's `materials[v - 1]`, 0 none; `check_surface`) and
+  `distant_surfaces` (`DistantEntry::surface`, one per distant layer,
+  trailing `None`s trimmed; `check_distant_surfaces`). The lenient reader
+  plays bad maps or distant surfaces without, with a warning. A
+  composition's `Element::{surface, back_surface, surface_map,
+  back_surface_map}`: material ids by `valid_material_id`, a back surface
+  or map only with back art (`has_back_art`: a drawn layer with `back`, a
+  raster), a distant layer no map; maps `surface_file(id)`
+  (`editor/surface/<id>.png`) and `surface_back_file(id)`
+  (`<id>.back.png`) at `surface_map_size` (the box, a raster's the level)
+  in world pixels, 0 the element's default, unshared, counted in the
+  pixel budget. `check_surfaces(c, look)` (ids in the look) and
+  `check_surface_maps(src, size, materials)` (decoded, values within) are
+  `validate`'s; `check_asset` refuses any surface (materials 2/10).
+  Tests: `materials.rs`' units, `files.rs`' `surface_maps_round_trip`,
+  `bad_surface_maps_are_errors_and_played_without`,
+  `distant_surfaces_round_trip_and_name_the_looks_materials`,
+  `a_level_without_materials_writes_no_surface`, `composition.rs`'
+  `element_surfaces_follow_their_rules`.
 - **Level composition** (`levels/composition.rs`, plan 14a): `Composition`
   is `editor/composition.ron` (`COMPOSITION_FILE`; `EDITOR_DIR` is
   `editor`), its `Element`s bottom to top (`id` a `valid_id` slug, `name`,

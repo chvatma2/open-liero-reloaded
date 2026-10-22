@@ -14,6 +14,8 @@ its type, default and meaning. They are generated from the code by
 - [`pack.md`](pack.md): `pack.ron`, every pack's manifest.
 - [`asset.md`](asset.md): the level editor's assets, ready-made pieces
   of a level (not packs: a folder each).
+- [`material.md`](material.md): surface materials, what a level's
+  pixels are made of for the look (not packs: a file each).
 
 An agent or a person can learn the formats from these pages alone.
 
@@ -386,6 +388,51 @@ top-left corner, and it carries the glow groups they name:
             ),
         ),
     ],
+)
+```
+
+### A surface material
+
+Not a pack either: one file `<id>.ron`, the game's built-in ones in
+`content/materials/` and the user's in `materials/` of the game's data
+directory. A level copies the materials it uses into its look
+(`look.materials`), and its elements name them by id (`surface`,
+`back_surface`); the bake writes `look/surface.png` and
+`look/surface-back.png`, one value per world pixel, `v` the look's
+`v`-th material and 0 none. The built-in glass glows amber when hot and
+lights little around it:
+
+<!-- file: material/glass.ron -->
+```ron
+(
+    id: "glass",
+    name: "Glass",
+    notes: "Glows amber when hot and lights little around it.",
+    heat: (
+        capacity: 90,
+        conductivity: 40,
+        cooling: 70,
+        look: (
+            ramp: [
+                (
+                    temperature: 120,
+                    colour: "#401800",
+                    glow: 0,
+                ),
+                (
+                    temperature: 400,
+                    colour: "#d06010",
+                    glow: 60,
+                ),
+                (
+                    temperature: 1000,
+                    colour: "#ffd890",
+                    glow: 100,
+                ),
+            ],
+            light: 50,
+        ),
+    ),
 )
 ```
 

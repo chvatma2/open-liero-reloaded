@@ -63,6 +63,11 @@ header's size); content hashing; validation.
   `editor/` file is "not read by the format". A mod's `editor/mod.ron`
   (issue #17, the mod editor's file) counts as read; one that does not
   parse as `ModEditorFile` is a warning.
+- **Surface materials** (issue #37): a level's `look/surface.png` and
+  `look/surface-back.png` are format files (`file_paths`) and content
+  (hashed), checked by the strict reader (size, values within the look's
+  materials); `validate` checks a composition's surfaces and painted maps
+  (`check_surfaces`, `check_surface_maps`; `surface_maps_are_validated`).
 - **Presentation-only files** (`PRESENTATION_FILES`: `thumb.png`) are left out of
   `content_hash` like `pack.ron` (plan 7 ruling Q4): adding or changing a thumbnail
   keeps every replay of the pack valid (`hash::thumbnails_are_not_content`).

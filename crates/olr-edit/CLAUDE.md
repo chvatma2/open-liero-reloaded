@@ -339,6 +339,42 @@ operations.
   - `walk` (private): every spawn and projectile with its path and key,
     `fresh_keys` (explicit ids where inline keys would clash), shared
     references and asset references.
+- **Issue #37, surface materials** (the format is `olr_format::materials`
+  and the composition's `Element::{surface, back_surface, surface_map,
+  back_surface_map}`; STATUS.md "Surface materials (issue #37)"):
+  - **The bake** (`compose`): `bake_elements_with` takes
+    `PaintedSurfaces` (the painted maps' values by file,
+    `decode_surface_maps(src, size)`; `Baker` decodes them; one of the
+    wrong size is left out). A solid world pixel's front material is the
+    surface of the element giving its collision material (a painted value
+    1-n overriding it, 0 or past the look's materials keeping it); a
+    background pixel's is 0. The back map follows the backdrop as the
+    glow groups do (the element at the centre art pixel, else the first
+    of the block): its own art gives `surface`, its back art
+    `back_surface`. Ids the look lacks name nothing. `level.surface` is
+    `None` when every value is 0, so a level without materials bakes as
+    before, byte for byte. `bake_distant` remakes `distant_surfaces`;
+    `distant_elements`, `compose_from` (the raster takes both maps as its
+    painted ones) and `split_from` (background the back map, dirt and
+    rock the front) keep a plain level's maps. `stale` covers the two
+    `look/surface*.png` and the distant surfaces.
+  - **`element`**: `fit_surface_maps` after every edit drops a back
+    surface without back art and maps that no longer fit or sit on a
+    distant layer; `resize` re-lays the maps with the layer
+    (`relay_surface`, the new area 0) and `set_all` resamples a resized
+    image's. `asset::from_elements`, `cut_rect` and `land` strip surfaces
+    (assets carry none until materials 2/10).
+  - **`material`**: the libraries: `read_file` (bounded by
+    `MAX_RON_BYTES`), `list_library(dir, max)` (by name then id; an
+    unreadable file a warning "material <id>: …: not offered"; past `max`
+    a warning) and `list_materials(builtin, user)`: `MaterialEntry {
+    builtin, material }`, the built-in set first, then the user's capped
+    at `MAX_USER_MATERIALS` (256).
+  - Tests: `surface.rs` (each kind's landing, a mixed layer per pixel,
+    back art, a raster, painted maps, distant surfaces, no materials no
+    maps, a plain level's maps through one raster or three layers) and
+    `material.rs` (`the_built_in_set_loads_cleanly`, the user's library
+    after it and capped).
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: round trips
   through a folder at art scales 1 and 2, masks and groups joined or
   added, resampling across scales, the rectangle's rules, a picture kept

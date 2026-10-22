@@ -95,6 +95,22 @@ own look. The simulation never sees it.
   `explosion_flash(colour, intensity, reach)` (the engine's flash keys
   over `EXPLOSION_MS`, capped): a mod's explosion light without an
   animation.
+- **Surface materials** (`material.rs`, issue #37; spec
+  `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`):
+  `SurfaceMaterial { id, heat: Option<Heat> }` (`heats()`: a sensitivity
+  above 0), `Heat { sensitivity, capacity, conductivity, cooling, ramp,
+  light }` (percent of stone's 100; each accessor clamps to the limits:
+  `MAX_SENSITIVITY` 100, `MIN_CAPACITY`-`MAX_CAPACITY` 10-1000,
+  `MAX_CONDUCTIVITY` 1000, `MIN_COOLING`-`MAX_COOLING` 1-1000; `ramp()` is
+  its first `MAX_RAMP_KEYS` 16 keys, `LAVA_RAMP` when empty), `RampKey {
+  temperature, colour, glow }` (temperatures 0-`MAX_TEMPERATURE` 1000,
+  glow 0-`MAX_GLOW` 100), `ramp_at(ramp, t)` (integer linear, `None`
+  below the first key, the last above it; unsorted keys never panic) and
+  `SurfaceMaps { world, front, back }` (a value per world pixel, `v` the
+  look's `materials[v - 1]`, 0 none; `fits`, `is_empty`, `highest`).
+  `LevelLook::materials` (at most `MAX_MATERIALS` 255) and
+  `LevelLook::material(v)` (`None` for 0 or past the list). Nothing reads
+  them yet: heat comes in a later issue.
 - **Tests** (`tests/`, one binary): `anim.rs` (pulse shapes at their
   quarter points, keys interpolating, carrying colour and ending, flicker
   deterministic and bounded, phases, `hostile_animations_never_panic`) and
@@ -107,5 +123,7 @@ own look. The simulation never sees it.
   plan 15c: `disc_calibration_matches_todays_light`,
   `emitters_past_the_cap_are_dropped`, `bounce_is_the_engines_in_a_lit_level`,
   `a_flicker_group_flickers_per_region`).
+  Issue #37: `material.rs` (the lava ramp's rise, interpolation, hostile
+  values clamped, maps).
 
 Test: `cargo nextest run -p olr-look`.

@@ -649,7 +649,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   editor's copies); `mod_recovery_dir()` (`mod-recovery/`, the mod
   editor's, issue #17); `textures_dir()` (`textures/`, the editor's texture
   library, plan 14e); `assets_dir()` (`assets/`, the editor's asset
-  library of the user's, issue #9).
+  library of the user's, issue #9); `materials_dir()` (`materials/`, the
+  user's surface materials beside it, issue #37).
   Versioned RON (`SETTINGS_VERSION`, `PROFILES_VERSION`), every
   struct `#[serde(default)]`, atomic writes (temporary file, sync,
   rename). An undecodable file gives defaults and a warning and is moved
