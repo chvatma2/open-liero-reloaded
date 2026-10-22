@@ -168,10 +168,9 @@ pub(super) struct LookState {
     pub(super) textures: Option<LookTextures>,
     /// The packed globals, reused every frame.
     pub(super) packed: Vec<f32>,
-    /// Play's glowing discs (plan 15c): [`super::gi::EMITTER_FLOATS`] each,
-    /// the first [`olr_look::MAX_EMITTERS`] of the frame's.
-    pub(super) emitters: wgpu::Buffer,
-    /// The packed discs, reused every frame.
+    /// The packed discs, reused every frame: [`super::gi::EMITTER_FLOATS`]
+    /// each, the first [`olr_look::MAX_EMITTERS`] of the frame's (plan
+    /// 15c; the level's glow light keeps their buffers).
     pub(super) packed_emitters: Vec<f32>,
     /// The discs this frame draws.
     pub(super) emitter_count: u32,
@@ -413,12 +412,6 @@ impl LookState {
         let soak_v_pipeline = soak("fs_soak_v", &[(LIGHT_FORMAT, None)]);
         let gi = super::gi::GiPipelines::new(device, &occluder_layout);
         let emitter_floats = olr_look::MAX_EMITTERS * super::gi::EMITTER_FLOATS;
-        let emitters = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("olr-render emitters"),
-            size: (emitter_floats * 4) as u64,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
         let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render composite"),
             entries: &[
@@ -504,7 +497,6 @@ impl LookState {
             no_solid,
             textures: None,
             packed: Vec::with_capacity(GLOBAL_FLOATS),
-            emitters,
             packed_emitters: Vec::with_capacity(emitter_floats),
             emitter_count: 0,
             bloom: true,

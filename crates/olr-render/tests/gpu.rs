@@ -542,6 +542,38 @@ fn a_wall_blocks_a_light() {
     assert!((light_at(&gpu, &r, 60, 20)[0] - 0.1).abs() < 1e-3, "behind it: the ambient");
 }
 
+/// Issue #35: the disc layer is cleared only under the discs last drawn,
+/// so a frame's light is exactly a fresh renderer's, whatever discs the
+/// frames before it drew (no bounce: no history either).
+#[test]
+fn discs_leave_nothing_behind() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(100, 40, |x, _| x == 50);
+    let view = View { x: 0.0, y: 0.0, w: 100.0, h: 40.0 };
+    let mut l = list(view);
+    l.map = (100, 40);
+    let frame = |r: &mut Renderer, lights: &[olr_look::FrameLight]| {
+        let mut look = dim(0.1);
+        look.emitters.extend_from_slice(lights);
+        gpu.render_lit_to_image(r, &l, Some(&look), (64, 64));
+        gpu.read_light(r).unwrap().1
+    };
+    let fresh = |lights: &[olr_look::FrameLight]| {
+        let mut r = gpu.renderer(RenderSettings::default());
+        r.set_lighting(true);
+        r.upload_terrain(&map);
+        frame(&mut r, lights)
+    };
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    frame(&mut r, &[lamp([20.5, 20.5], 100.0), lamp([70.5, 10.5], 1e9)]);
+    let one = [lamp([30.5, 30.5], 60.0)];
+    assert!(frame(&mut r, &one) == fresh(&one), "one disc after two");
+    assert!(frame(&mut r, &[]) == fresh(&[]), "none after one");
+    assert!(frame(&mut r, &[]) == fresh(&[]), "none after none");
+}
+
 /// Issue #12: a skin's light, at its caps, lights the air beside its worm
 /// and a wall stops it.
 #[test]

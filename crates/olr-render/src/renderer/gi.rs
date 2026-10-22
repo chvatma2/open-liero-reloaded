@@ -80,6 +80,8 @@ const UINT: wgpu::BindingType = wgpu::BindingType::Texture {
 pub(super) struct GiPipelines {
     /// Play's glowing discs into the dynamic layer (plan 15c).
     dynamic: wgpu::RenderPipeline,
+    /// The last frame's discs' quads back to zero (issue #35).
+    dynamic_clear: wgpu::RenderPipeline,
     emission: wgpu::RenderPipeline,
     seed: wgpu::RenderPipeline,
     jfa: wgpu::RenderPipeline,
@@ -160,24 +162,31 @@ impl GiPipelines {
         };
         let max = wgpu::BlendComponent { operation: wgpu::BlendOperation::Max, ..add };
         let discs = wgpu::vertex_attr_array![0 => Float32x4, 1 => Float32x4];
-        GiPipelines {
-            dynamic: pipeline(
+        let dynamic = |fs, targets: &[_]| {
+            pipeline(
                 device,
                 "olr-render gi dynamic",
                 &format!("{head}\n{}", include_str!("../look/gi_dynamic.wgsl")),
-                ("vs_disc", "fs_disc"),
+                ("vs_disc", fs),
                 &[Some(&dynamic_layout)],
                 &[Some(wgpu::VertexBufferLayout {
                     array_stride: EMITTER_STRIDE,
                     step_mode: wgpu::VertexStepMode::Instance,
                     attributes: &discs,
                 })],
+                targets,
+                wgpu::PrimitiveTopology::TriangleStrip,
+            )
+        };
+        GiPipelines {
+            dynamic: dynamic(
+                "fs_disc",
                 &[
                     (FORMAT, Some(wgpu::BlendState { color: add, alpha: add })),
                     (DYNAMIC_REACH_FORMAT, Some(wgpu::BlendState { color: max, alpha: max })),
                 ],
-                wgpu::PrimitiveTopology::TriangleStrip,
             ),
+            dynamic_clear: dynamic("fs_disc_clear", &[(FORMAT, None), (DYNAMIC_REACH_FORMAT, None)]),
             emission: make_with(
                 "olr-render gi emission",
                 include_str!("../look/gi_emission.wgsl"),
@@ -273,8 +282,17 @@ pub(super) struct GiState {
     /// The emission grid (rgb cast, solid share), its reach and its albedo.
     emission: (wgpu::TextureView, wgpu::TextureView, wgpu::TextureView),
     /// Play's discs this frame (plan 15c): radiance and reach per cell.
+    /// Zero but under the quads of the discs last drawn, which the next
+    /// frame zeroes again before drawing its own (issue #35).
     dynamic: (wgpu::TextureView, wgpu::TextureView),
     dynamic_bind: wgpu::BindGroup,
+    /// Two disc buffers ([`EMITTER_FLOATS`] floats a disc, the first
+    /// [`olr_look::MAX_EMITTERS`]): the frame's discs go into the one not
+    /// holding the discs last drawn.
+    discs: [wgpu::Buffer; 2],
+    /// The buffer holding the discs last drawn into the dynamic layer, and
+    /// how many (0: the layer is all zero).
+    drawn: std::cell::Cell<(usize, u32)>,
     /// The jump flood's two textures: the seeds go into the first.
     seeds: [wgpu::TextureView; 2],
     cascades: Vec<wgpu::TextureView>,
@@ -357,6 +375,14 @@ impl GiState {
             texture(device, "olr-render gi dynamic", grid, FORMAT),
             texture(device, "olr-render gi dynamic reach", grid, DYNAMIC_REACH_FORMAT),
         );
+        let discs = [0, 1].map(|_| {
+            device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("olr-render emitters"),
+                size: (olr_look::MAX_EMITTERS * EMITTER_FLOATS * 4) as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            })
+        });
         let seeds = [0, 1].map(|_| texture(device, "olr-render gi seeds", grid, SEED_FORMAT));
         let shapes: Vec<Cascade> = (0..count).map(|i| Cascade::new(i, grid)).collect();
         let cascades: Vec<_> =
@@ -481,6 +507,8 @@ impl GiState {
             emission,
             dynamic,
             dynamic_bind,
+            discs,
+            drawn: std::cell::Cell::new((0, 0)),
             seeds,
             cascades,
             fluence,
@@ -497,16 +525,17 @@ impl GiState {
     /// cascades from the top down, fluence. With `casting` false (no group
     /// casts light and no disc glows) the fluence is only cleared.
     /// `occluders` is the occluder map's bind group (plan 15b): living worms
-    /// block glow light. `discs` holds `count` discs ([`EMITTER_FLOATS`]
-    /// each, plan 15c). Returns whether the history took a step (the
-    /// renderer encodes it once a frame, however many views: issue #26).
+    /// block glow light. `count` discs were last given to
+    /// [`GiState::write_discs`] (plan 15c). Returns whether the history
+    /// took a step (the renderer encodes it once a frame, however many
+    /// views: issue #26).
     pub(super) fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,
         pipes: &GiPipelines,
         casting: bool,
         occluders: &wgpu::BindGroup,
-        (discs, count): (&wgpu::Buffer, u32),
+        count: u32,
         timer: Option<&Timer>,
     ) -> bool {
         // Each pass timed in its group (bench only, issue #34).
@@ -555,17 +584,17 @@ impl GiState {
         if self.fresh.replace(false) {
             pass(encoder, PassGroup::Fluence, &[&self.fluence], None, None);
         }
-        {
+        // The discs (issue #35): the quads last drawn back to zero, then
+        // this frame's added; no pass when neither has any.
+        let (last, drawn) = self.drawn.get();
+        if drawn > 0 || count > 0 {
             let both = [&self.dynamic.0, &self.dynamic.1];
             let attachments = both.map(|view| {
                 Some(wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
                     resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
+                    ops: wgpu::Operations { load: wgpu::LoadOp::Load, store: wgpu::StoreOp::Store },
                 })
             });
             let mut p = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -576,12 +605,18 @@ impl GiState {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
+            p.set_bind_group(0, &self.dynamic_bind, &[]);
+            if drawn > 0 {
+                p.set_pipeline(&pipes.dynamic_clear);
+                p.set_vertex_buffer(0, self.discs[last].slice(..));
+                p.draw(0..4, 0..drawn);
+            }
             if count > 0 {
                 p.set_pipeline(&pipes.dynamic);
-                p.set_bind_group(0, &self.dynamic_bind, &[]);
-                p.set_vertex_buffer(0, discs.slice(..));
+                p.set_vertex_buffer(0, self.discs[1 - last].slice(..));
                 p.draw(0..4, 0..count);
             }
+            self.drawn.set((1 - last, count));
         }
         let emission = Some((&pipes.emission, &self.emission_bind));
         let emitted = [&self.emission.0, &self.emission.1, &self.emission.2];
@@ -599,6 +634,15 @@ impl GiState {
         let fluence = Some((&pipes.fluence, &self.fluence_bind));
         pass(encoder, PassGroup::Fluence, &[&self.fluence], fluence, None);
         true
+    }
+
+    /// Writes the frame's discs (`packed`, [`EMITTER_FLOATS`] floats each,
+    /// at most [`olr_look::MAX_EMITTERS`]) into the buffer not holding the
+    /// discs last drawn, which [`GiState::encode`] draws.
+    pub(super) fn write_discs(&self, queue: &super::uploads::Queue, packed: &[f32]) {
+        if !packed.is_empty() {
+            queue.write_buffer(&self.discs[1 - self.drawn.get().0], 0, bytemuck::cast_slice(packed));
+        }
     }
 
     /// Forgets the light's history: the next frame bounces nothing old.

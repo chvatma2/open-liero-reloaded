@@ -141,7 +141,10 @@ on screen or offscreen.
     cascades over the whole level, fixed to the world (never
     camera-dependent): play's discs (`gi_dynamic.wgsl`: the first
     `olr_look::MAX_EMITTERS` of `LookFrame::emitters`, instanced quads into
-    a dynamic layer; a cell whose centre is in a disc and in the open takes
+    a dynamic layer, never cleared whole (issue #35: each frame zeroes the
+    quads of the discs last drawn, `fs_disc_clear`, from the other of two
+    disc buffers, `GiState::write_discs`, then adds its own; no pass when
+    neither frame has a disc; `discs_leave_nothing_behind`); a cell whose centre is in a disc and in the open takes
     its radiance whole, `olr_look::engine::disc_radiance`; a disc smaller
     than a cell lights its own by area; reach max-blended as unsplit f16,
     60000 unlimited, `R16Float`), the emission (glow × group × each pixel's flicker

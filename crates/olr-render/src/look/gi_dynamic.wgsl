@@ -4,7 +4,9 @@
 // disc and in the open (not rock or dirt: a disc in rock lights nothing)
 // takes the disc's radiance whole, so a ray meets it undiluted, added up
 // (target 0); its reach is the most of the discs' over it (target 1,
-// unsplit f16: 60000 or more is unlimited).
+// unsplit f16: 60000 or more is unlimited). `fs_disc_clear` zeroes the
+// quads of the discs last drawn (issue #35: the layer is never cleared
+// whole).
 
 @group(0) @binding(0) var<uniform> gp: GiParams;
 @group(0) @binding(1) var solid_tex: texture_2d<u32>;
@@ -65,5 +67,14 @@ fn fs_disc(in: DiscOut) -> DynOut {
     var out: DynOut;
     out.radiance = vec4<f32>(in.radiance * k, 1.0);
     out.reach = min(in.disc.w, 60000.0);
+    return out;
+}
+
+// The quad of a disc last drawn back to nothing (unblended).
+@fragment
+fn fs_disc_clear(in: DiscOut) -> DynOut {
+    var out: DynOut;
+    out.radiance = vec4<f32>(0.0);
+    out.reach = 0.0;
     return out;
 }

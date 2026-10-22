@@ -180,8 +180,8 @@ impl Renderer {
         if let (Some(look), Some(state)) = (look, self.look.as_mut()) {
             state.sync_regions(&self.queue, look);
             state.pack_emitters(look);
-            if !state.packed_emitters.is_empty() {
-                self.queue.write_buffer(&state.emitters, 0, bytemuck::cast_slice(&state.packed_emitters));
+            if let Some(t) = &state.textures {
+                t.gi.write_discs(&self.queue, &state.packed_emitters);
             }
             for (plan, t) in self.plans.iter().zip(&self.targets) {
                 state.pack(look, &plan.frame, !plan.distant.is_empty(), occluder_rect(&plan.frame));
@@ -316,7 +316,7 @@ impl Renderer {
                 }
             }
             let casting = !look.groups.is_empty() || state.emitter_count > 0;
-            let discs = (&state.emitters, state.emitter_count);
+            let discs = state.emitter_count;
             if tex.gi.encode(&mut encoder, &state.gi, casting, &tex.gi_occluder_bind, discs, timer) {
                 self.glow_light_steps += 1;
             }
