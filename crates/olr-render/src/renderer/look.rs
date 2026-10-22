@@ -16,7 +16,7 @@ const COMMON: &str = include_str!("../look/common.wgsl");
 /// [`COMMON`] after the Rust constants the shaders share.
 pub(super) fn common() -> String {
     format!(
-        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\nconst WORM_SHADOW: f32 = {WORM_SHADOW:?};\nconst OCCLUSION_PAD: i32 = {OCCLUSION_PAD};\n{COMMON}",
+        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\nconst WORM_SHADOW: f32 = {WORM_SHADOW:?};\nconst OCCLUSION_PAD: i32 = {OCCLUSION_PAD};\nconst WORM_BOXES: i32 = {WORM_BOXES};\n{COMMON}",
         olr_look::MAX_SOAK
     )
 }
@@ -122,6 +122,9 @@ pub(super) struct LitTarget {
     pub(super) bloom_binds: [wgpu::BindGroup; 2],
     /// The across soak's (reads 0) and the down soak's (reads 1).
     pub(super) soak_binds: [wgpu::BindGroup; 2],
+    /// The view's worm boxes ([`WormBoxes`]), which the across soak reads
+    /// (issue #35).
+    pub(super) worm_boxes: wgpu::Buffer,
     pub(super) composite_bind: wgpu::BindGroup,
     /// The occluder map (plan 15b): one texel per world pixel of the grid.
     pub(super) occluders: wgpu::Texture,
@@ -267,6 +270,41 @@ fn write_u16(queue: &super::uploads::Queue, texture: &wgpu::Texture, (data, widt
     );
 }
 
+/// The most worm boxes the soak reads (issue #35); quads past the last
+/// box's are joined into it.
+pub(super) const WORM_BOXES: usize = 32;
+
+/// The worm boxes' uniform (`WormBoxes` in `soak.wgsl`): the count, then
+/// [`WORM_BOXES`] boxes, four `i32`s each.
+pub(super) type WormBoxes = [[i32; 4]; 1 + WORM_BOXES];
+
+/// The boxes of a view's occluder quads (`occluders`, their `dst` in the
+/// occluder map's texels, which are the light grid's) for the soak's early
+/// exit (issue #35): each `[x0, y0, x1, y1)`, a texel wider every way than
+/// the texels the quad can cover, so no worm texel lies outside them; past
+/// [`WORM_BOXES`] quads the last box holds the rest. `out[0][0]` is the
+/// count.
+pub(super) fn worm_boxes(occluders: &[crate::frame::Instance], out: &mut WormBoxes) {
+    let mut n = 0;
+    for o in occluders {
+        let [x, y, w, h] = o.dst;
+        let b = [
+            x.floor() as i32 - 1,
+            y.floor() as i32 - 1,
+            (x + w).ceil() as i32 + 1,
+            (y + h).ceil() as i32 + 1,
+        ];
+        if n < WORM_BOXES {
+            n += 1;
+            out[n] = b;
+        } else {
+            let last = &mut out[n];
+            *last = [last[0].min(b[0]), last[1].min(b[1]), last[2].max(b[2]), last[3].max(b[3])];
+        }
+    }
+    out[0] = [n as i32, 0, 0, 0];
+}
+
 /// Art rectangle `r` as the world rectangle holding it at `s`.
 fn world_rect(r: Rect, s: u32) -> Rect {
     let s = s.max(1);
@@ -392,6 +430,7 @@ impl LookState {
                 entry(3, frag, FLOAT_TEXTURE),
                 entry(4, frag, UINT_TEXTURE),
                 entry(5, frag, FLOAT_TEXTURE),
+                entry(6, frag, super::UNIFORM),
             ],
         });
         let soak_source = format!("{}\n{}", common(), include_str!("../look/soak.wgsl"));
@@ -594,6 +633,12 @@ impl LookState {
             layout: &self.occluder_globals_layout,
             entries: &[uniform()],
         });
+        let worm_boxes = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("olr-render worm boxes"),
+            size: std::mem::size_of::<WormBoxes>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         // The across soak (reads 0) writes 1 and the rows into the bloom's
         // spare 1 (free until the bloom); the down soak reads 1, the sum and
         // the rows.
@@ -608,6 +653,7 @@ impl LookState {
                     tex(3, &views[0]),
                     tex(4, &occluder_view),
                     tex(5, rows),
+                    wgpu::BindGroupEntry { binding: 6, resource: worm_boxes.as_entire_binding() },
                 ],
             })
         };
@@ -647,6 +693,7 @@ impl LookState {
             bloom_views,
             bloom_binds,
             soak_binds,
+            worm_boxes,
             composite_bind,
             occluders,
             occluder_view,
@@ -994,5 +1041,33 @@ impl Renderer {
     /// The solid map, the colour map's material cells (tests).
     pub fn solid_texture(&self) -> Option<&wgpu::Texture> {
         self.look.as_ref()?.textures.as_ref().map(|t| &t.solid)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::frame::Instance;
+
+    fn quad(dst: [f32; 4]) -> Instance {
+        Instance { dst, src: [0.0; 4], tint: [1.0; 4], shade: [1.0, 0.0, 0.0] }
+    }
+
+    /// Issue #35: each box holds its quad's texels with a texel to spare;
+    /// past the last box the quads are joined into it.
+    #[test]
+    fn worm_boxes_hold_every_quad() {
+        let mut out = [[0; 4]; 1 + WORM_BOXES];
+        worm_boxes(&[quad([10.5, 20.0, 7.0, 7.25])], &mut out);
+        assert_eq!(out[0][0], 1);
+        assert_eq!(out[1], [9, 19, 19, 29]);
+        worm_boxes(&[], &mut out);
+        assert_eq!(out[0][0], 0, "no worm, no box");
+        let many: Vec<Instance> =
+            (0..WORM_BOXES + 3).map(|i| quad([i as f32 * 10.0, 0.0, 5.0, 5.0])).collect();
+        worm_boxes(&many, &mut out);
+        assert_eq!(out[0][0], WORM_BOXES as i32);
+        let last = (WORM_BOXES + 2) as i32 * 10;
+        assert_eq!(out[WORM_BOXES], [(WORM_BOXES as i32 - 1) * 10 - 1, -1, last + 6, 6], "the rest joined");
     }
 }

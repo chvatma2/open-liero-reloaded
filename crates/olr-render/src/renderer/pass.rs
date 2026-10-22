@@ -6,7 +6,7 @@ use std::ops::Range;
 use olr_look::LookFrame;
 use olr_scene::DrawList;
 
-use super::look::{LIGHT_PAD, occluder_rect};
+use super::look::{LIGHT_PAD, WORM_BOXES, occluder_rect, worm_boxes};
 use super::timing::PassGroup;
 use super::{Renderer, Target, WORLD_FORMAT, texture, upscale_uniform};
 use crate::frame::{WorldFrame, distant_instance, occluder_instances, push_instances, terrain_instance};
@@ -187,6 +187,12 @@ impl Renderer {
                 state.pack(look, &plan.frame, !plan.distant.is_empty(), occluder_rect(&plan.frame));
                 if let Some(lt) = &t.lit {
                     self.queue.write_buffer(&lt.globals, 0, bytemuck::cast_slice(&state.packed));
+                    // The soak's worm boxes (issue #35): only those in use.
+                    let mut boxes = [[0; 4]; 1 + WORM_BOXES];
+                    let occluders = plan.occluders.start as usize..plan.occluders.end as usize;
+                    worm_boxes(&self.instances[occluders], &mut boxes);
+                    let used = &boxes[..1 + boxes[0][0] as usize];
+                    self.queue.write_buffer(&lt.worm_boxes, 0, bytemuck::cast_slice(used));
                 }
             }
             // The frame's globals (the glow light's, the lit terrain's):

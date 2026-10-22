@@ -203,3 +203,5 @@
   fixtures/bench/quick.ron
 2026-10-22 bench-quick: #35 item 3: the disc layer cleared only under the discs last drawn
   fixtures/bench/quick.ron
+2026-10-22 bench-quick: #35 item 4: the soak reads the occluder map only near a worm box
+  fixtures/bench/quick.ron

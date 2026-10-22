@@ -212,7 +212,11 @@ on screen or offscreen.
     texel within twice `WORM_SHADOW` + 2 of a worm (the occluder map) takes
     the nearest unshaded same-kind texel's light along its row; the down
     pass uses them from 2 px into rock (half at 2 px, whole deeper)
-    (`a_worm_shadow_stays_at_the_rock_face`).
+    (`a_worm_shadow_stays_at_the_rock_face`). Issue #35: the across pass
+    reads the occluder map only within that reach of a worm box (`near_box`;
+    each view's `LitTarget::worm_boxes` uniform, `look::worm_boxes` of its
+    occluder quads, a texel to spare, at most `WORM_BOXES` 32, the rest
+    joined into the last; `worm_boxes_hold_every_quad`).
   - **Blur** (`fs_blur_h`, `fs_blur_v`): a box of the level's softness (0
     to 4 world pixels) each way, an air texel gathering only the air before
     the first solid each way (no light blurs through a wall); `fs_blur_v`

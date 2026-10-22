@@ -18,6 +18,14 @@
 // The rows the across soak wrote, for the deeper rock (read down only).
 @group(0) @binding(5) var rows_tex: texture_2d<f32>;
 
+// The view's worm boxes (issue #35): `count.x` boxes, each `[x0, y0, x1,
+// y1)` in light-grid texels (the occluder map's), holding every worm texel.
+struct WormBoxes {
+    count: vec4<i32>,
+    boxes: array<vec4<i32>, WORM_BOXES>,
+};
+@group(0) @binding(6) var<uniform> worm_boxes: WormBoxes;
+
 @vertex
 fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     let x = f32(i32(vi & 1u) * 4 - 1);
@@ -57,12 +65,27 @@ fn world_at(p: vec2<i32>) -> vec2<i32> {
     return vec2<i32>(floor(look.frame.xy)) - vec2<i32>(i32(LIGHT_PAD)) + p;
 }
 
+// Whether grid texel `p` is within `n` texels of a worm box: no worm
+// texel lies farther (issue #35: the occluder map is read only near one).
+fn near_box(p: vec2<i32>, n: i32) -> bool {
+    for (var i = 0; i < min(worm_boxes.count.x, WORM_BOXES); i++) {
+        let b = worm_boxes.boxes[i];
+        if all(p >= b.xy - vec2<i32>(n)) && all(p < b.zw + vec2<i32>(n)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Whether air texel `p` may lie in a worm's short shade: a worm pixel
 // within twice `WORM_SHADOW` + 2 of it (the cascades' merging carries the
 // shade that far; sampled every 2 px: a worm is wider).
 fn near_worm(p: vec2<i32>) -> bool {
-    let w = world_at(p);
     let n = 2 * i32(WORM_SHADOW) + 2;
+    if !near_box(p, n) {
+        return false;
+    }
+    let w = world_at(p);
     for (var dy = -n; dy <= n; dy += 2) {
         for (var dx = -n; dx <= n; dx += 2) {
             if worm_in(occluder_tex, look.occluders.xy, w + vec2<i32>(dx, dy)) != 0u {
