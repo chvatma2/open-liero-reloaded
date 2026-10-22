@@ -67,7 +67,7 @@
         range: None,
         place: Panel,
         asset: None,
-        help: "The mod\'s look as a whole: the explosion light of every projectile without its own. Presentation only. Default none.",
+        help: "The mod\'s look as a whole: the explosion light and heat of every projectile without its own. Presentation only. Default none.",
     ),
     (
         key: "Weapon.name",

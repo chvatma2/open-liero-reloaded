@@ -80,12 +80,14 @@ packs' format (version 5); `olr-pack` reads and writes through them.
     `projectiles/` is an error.
   - **Looks** (plan 15a Task 3): `Weapon::look` (`WeaponLookSource`, its
     `muzzle_light`) and `Projectile::look` (`ProjectileLookSource`: `glow`
-    0-100, a `light`, an `end_flash`, issue #15's `explosion`), and
+    0-100, a `light`, an `end_flash`, issue #15's `explosion`, issue #42's
+    `explosion_heat` and `heat`), and
     `ModSource::look` (`mod.ron`'s `look`, `ModWideLookSource`: issue #15's
-    default `explosion` of every projectile without one), presentation
+    default `explosion` and issue #42's default `explosion_heat` of every
+    projectile without one), presentation
     only. `compile_mod_look` gives `ModLookSource`: each projectile's look by its
     `ModDef` key (shared ones included), the weapons' in order, empty when no weapon has one (readers
-    index with `get`), and the mod-wide `explosion`. `compile_mod` checks looks in the same walk
+    index with `get`), and the mod-wide `explosion` and `explosion_heat`. `compile_mod` checks looks in the same walk
     (`compile_all`), so a bad look fails the mod. `lift_mod` gives every
     look `None` (`ModDef` carries none; Task 3 ruling), and the roundtrip
     proptest generates none: `tests/look.rs` covers looks' limits.
@@ -216,13 +218,19 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `olr_look::engine::MAX_EXPLOSION_RADIUS` 16, `reach` `Pixels` 1-
   `MAX_EXPLOSION_REACH` 4096 only, an optional `animation` (none: the
   engine's flash, `engine::explosion_flash`, `fitted`) and a `phase_ms`
-  only with one) and `ModWideLookSource`. `LookSource`'s `Default` is
+  only with one), issue #42's `ExplosionHeatSource` (`amount` percent of
+  the engine's heat 0-`olr_look::engine::MAX_EXPLOSION_HEAT_AMOUNT` 1000,
+  default 100; `radius` 1-`MAX_EXPLOSION_HEAT_RADIUS` 48 world pixels,
+  default none: the engine's) and `ProjectileHeatSource` (`amount` a tick
+  1-`MAX_PROJECTILE_HEAT` 100, `radius` 1-`MAX_PROJECTILE_HEAT_RADIUS` 16,
+  both required), and `ModWideLookSource`. `LookSource`'s `Default` is
   written by hand to equal its serde defaults (`the_default_look_is_the_empty_file`).
   `compile_reach`, `compile_animation`, `compile_light`,
   `compile_look_source` (a level's look),
   `compile_projectile_look`, `compile_weapon_look`,
-  `compile_explosion_light`: each value checked, an error naming its field
-  path.
+  `compile_explosion_light`, `compile_explosion_heat`,
+  `compile_projectile_heat` (issue #42): each value checked, an error
+  naming its field path.
 - **Surface materials** (`materials.rs`, `levels/`, issue #37; spec
   `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`; the
   page `docs/formats/material.md`; STATUS.md "Surface materials (issue
@@ -374,7 +382,11 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `shadows_is_an_unknown_field`; issue #15:
   `explosion_lights_round_trip_and_compile` (a projectile's and the mod's,
   the `ModDef` unchanged), `explosion_light_limits` (each cap, `Unlimited`,
-  a phase without an animation, the mod's naming `mod.ron`); issue #10:
+  a phase without an animation, the mod's naming `mod.ron`); issue #42:
+  `heat_round_trips_compiles_and_falls_back_to_the_mods` (a projectile's
+  and the mod's, the `ModDef` unchanged, canonical text leaving the default
+  amount out), `heat_limits` (each bound and cap, 0 % none, the mod's
+  naming `mod.ron`, `heat`'s fields required); issue #10:
   `occlusion_round_trips_and_is_bounded`,
   `occlusion_changes_the_content_hash`, `the_thumbnail_leaves_occlusion_out`. Unit tests in each module's files cover its checks. The
   bundled-content tests skip when `OLR_CONTENT_DIR` is not a directory.

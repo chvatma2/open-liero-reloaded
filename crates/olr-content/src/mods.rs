@@ -248,7 +248,7 @@ impl Content {
                 .collect(),
             weapons: pack.look.weapons.clone(),
             explosion: pack.look.explosion.clone(),
-            explosion_heat: None,
+            explosion_heat: pack.look.explosion_heat,
         };
         let (name, restrictions) = (pack.def.name, pack.def.restrictions);
         let (worm, rope) = (pack.def.worm, pack.def.rope);

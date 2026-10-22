@@ -58,13 +58,14 @@ struct Compiler<'a> {
 
 /// A mod's look by authoring key: each projectile's by its `ModDef` key,
 /// each weapon's in order (empty when no weapon has one; read past its end
-/// as none), and `mod.ron`'s default explosion light (issue #15).
-/// `olr-content` indexes it like `SimMod`.
+/// as none), and `mod.ron`'s default explosion light (issue #15) and heat
+/// (issue #42). `olr-content` indexes it like `SimMod`.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModLookSource {
     pub projectiles: BTreeMap<String, olr_look::ProjectileLook>,
     pub weapons: Vec<Option<olr_look::WeaponLook>>,
     pub explosion: Option<olr_look::ExplosionLight>,
+    pub explosion_heat: Option<olr_look::ExplosionHeatLook>,
 }
 
 /// The shipped loadouts, each naming a preset of `restrictions.ron` (not
@@ -185,15 +186,21 @@ fn walk(src: &ModSource) -> (rt::ModDef, ModLookSource, Vec<FormatError>) {
         .as_ref()
         .and_then(|l| l.explosion.as_ref())
         .map(|x| crate::look::compile_explosion_light(x, MOD_FILE, "look.explosion"));
-    let explosion = match explosion {
-        Some(Err(e)) => {
-            c.errors.push(e);
-            None
-        }
-        Some(Ok(x)) => Some(x),
-        None => None,
-    };
-    (def, ModLookSource { projectiles: c.looks, weapons: weapon_looks, explosion }, c.errors)
+    let explosion = noted(&mut c.errors, explosion);
+    let explosion_heat = noted(
+        &mut c.errors,
+        src.look
+            .as_ref()
+            .and_then(|l| l.explosion_heat.as_ref())
+            .map(|x| crate::look::compile_explosion_heat(x, MOD_FILE, "look.explosion_heat")),
+    );
+    let look = ModLookSource { projectiles: c.looks, weapons: weapon_looks, explosion, explosion_heat };
+    (def, look, c.errors)
+}
+
+/// A value compiled, if there was one: an error is pushed to `errors`.
+fn noted<T>(errors: &mut Vec<FormatError>, r: Option<Result<T, FormatError>>) -> Option<T> {
+    r?.map_err(|e| errors.push(e)).ok()
 }
 
 fn worm(w: &Worm) -> rt::WormParams {

@@ -386,6 +386,56 @@ pub struct ProjectileLookSource {
     /// there. Default none: the mod's `look.explosion`, else the engine's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explosion: Option<ExplosionLightSource>,
+    /// The heat every explosion it makes leaves in a level whose surface
+    /// materials heat (the same explosions as `explosion`'s). Default none:
+    /// the mod's `look.explosion_heat`, else the engine's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explosion_heat: Option<ExplosionHeatSource>,
+    /// Heat it leaves around itself each tick it lives (flames, napalm, a
+    /// hot slug), in a level whose surface materials heat. Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat: Option<ProjectileHeatSource>,
+}
+
+fn hundred_u16() -> u16 {
+    100
+}
+
+fn is_hundred_u16(v: &u16) -> bool {
+    *v == 100
+}
+
+/// An explosion's heat: how much it warms the rock and dirt around it, in
+/// a level whose surface materials heat (the level's materials decide
+/// what the heat does). Without one, every explosion leaves the engine's
+/// heat, which grows with its damage (a minigun hit warms the rock
+/// faintly, a Bazooka's rim glows, a Big Nuke's far more). Presentation
+/// only.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ExplosionHeatSource {
+    /// Percent of the engine's heat for the explosion, 0 (none) to 1000;
+    /// an explosion never gives more than the engine's hottest (1000, white
+    /// hot stone). Default 100.
+    #[serde(default = "hundred_u16", skip_serializing_if = "is_hundred_u16")]
+    pub amount: u16,
+    /// How far it reaches, world pixels, 1 to 48; it falls off from the
+    /// centre to there. Default none: the engine's for the explosion (past
+    /// the crater it carves).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub radius: Option<u16>,
+}
+
+/// The heat a projectile leaves where it is, each tick (10 ms) it lives;
+/// it falls off from its centre to `radius`. Presentation only.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProjectileHeatSource {
+    /// The heat a tick gives stone at its centre, 1 to 100 (an explosion's
+    /// is up to 1000: a Bazooka's about 300).
+    pub amount: u16,
+    /// How far it reaches, world pixels, 1 to 16.
+    pub radius: u16,
 }
 
 /// An explosion's light: a glowing disc where it explodes, lighting the
@@ -425,6 +475,10 @@ pub struct ModWideLookSource {
     /// Default none: the engine's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub explosion: Option<ExplosionLightSource>,
+    /// The explosion heat of every projectile without its own
+    /// `explosion_heat`. Default none: the engine's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub explosion_heat: Option<ExplosionHeatSource>,
 }
 
 /// A mod weapon's look.
@@ -562,6 +616,36 @@ pub fn compile_explosion_light(
     Ok(olr_look::ExplosionLight { light, radius: l.radius as u8, fitted: l.animation.is_none() })
 }
 
+/// An explosion heat, checked against
+/// [`olr_look::engine::MAX_EXPLOSION_HEAT_AMOUNT`] and
+/// [`olr_look::engine::MAX_EXPLOSION_HEAT_RADIUS`] (issue #42).
+pub fn compile_explosion_heat(
+    h: &ExplosionHeatSource,
+    file: &str,
+    path: &str,
+) -> Result<olr_look::ExplosionHeatLook, FormatError> {
+    use olr_look::engine::{MAX_EXPLOSION_HEAT_AMOUNT, MAX_EXPLOSION_HEAT_RADIUS};
+    within(h.amount.into(), 0, MAX_EXPLOSION_HEAT_AMOUNT.into(), file, &format!("{path}.amount"))?;
+    if let Some(r) = h.radius {
+        within(r.into(), 1, MAX_EXPLOSION_HEAT_RADIUS as u32, file, &format!("{path}.radius"))?;
+    }
+    Ok(olr_look::ExplosionHeatLook { amount: h.amount, radius: h.radius.map(|r| r as u8) })
+}
+
+/// A projectile's heat a tick, checked against
+/// [`olr_look::engine::MAX_PROJECTILE_HEAT`] and
+/// [`olr_look::engine::MAX_PROJECTILE_HEAT_RADIUS`] (issue #42).
+pub fn compile_projectile_heat(
+    h: &ProjectileHeatSource,
+    file: &str,
+    path: &str,
+) -> Result<olr_look::ProjectileHeat, FormatError> {
+    use olr_look::engine::{MAX_PROJECTILE_HEAT, MAX_PROJECTILE_HEAT_RADIUS};
+    within(h.amount.into(), 1, MAX_PROJECTILE_HEAT.into(), file, &format!("{path}.amount"))?;
+    within(h.radius.into(), 1, MAX_PROJECTILE_HEAT_RADIUS.into(), file, &format!("{path}.radius"))?;
+    Ok(olr_look::ProjectileHeat { amount: h.amount, radius: h.radius as u8 })
+}
+
 /// A glow group's id: a slug of `[a-z0-9_.-]`, 1 to 64 bytes, not starting with `.`.
 pub fn valid_group_id(id: &str) -> bool {
     !id.is_empty()
@@ -680,8 +764,16 @@ pub fn compile_projectile_look(
             .map(|x| compile_explosion_light(x, file, &format!("{path}.explosion")))
             .transpose()?,
 
-        explosion_heat: None,
-        heat: None,
+        explosion_heat: l
+            .explosion_heat
+            .as_ref()
+            .map(|x| compile_explosion_heat(x, file, &format!("{path}.explosion_heat")))
+            .transpose()?,
+        heat: l
+            .heat
+            .as_ref()
+            .map(|x| compile_projectile_heat(x, file, &format!("{path}.heat")))
+            .transpose()?,
     })
 }
 

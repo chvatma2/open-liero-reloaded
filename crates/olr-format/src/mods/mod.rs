@@ -66,7 +66,7 @@ pub struct ModSource {
     /// preset whose weapons each enables.
     pub loadouts: BTreeMap<String, ShippedLoadout>,
     /// `mod.ron`'s `look` (issue #15): the mod-wide look, its projectiles'
-    /// default explosion light. Presentation only.
+    /// default explosion light and (issue #42) heat. Presentation only.
     pub look: Option<crate::look::ModWideLookSource>,
 }
 

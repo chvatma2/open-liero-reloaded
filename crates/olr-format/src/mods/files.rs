@@ -44,8 +44,8 @@ pub(crate) struct ModFile {
     /// `LoadingTime` apart from the preset. At most `MAX_LOADOUTS` (64).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     loadouts: BTreeMap<String, ShippedLoadout>,
-    /// The mod's look as a whole: the explosion light of every projectile
-    /// without its own. Presentation only. Default none.
+    /// The mod's look as a whole: the explosion light and heat of every
+    /// projectile without its own. Presentation only. Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     look: Option<ModWideLookSource>,
 }

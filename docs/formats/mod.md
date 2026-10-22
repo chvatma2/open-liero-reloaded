@@ -38,7 +38,7 @@ Example:
 | `rope` | [Rope](#rope) | `(max_length: 300, rest_length: 30, strength: 3.5)` | Ninja rope (`mod-fields.md` §4). |
 | `weapons` | list of string | required | The weapon ids, in order: `weapons/<id>.ron` each; a weapon's index is its id in the game. At most `MAX_WEAPONS` (512). |
 | `loadouts` | map of name → [ShippedLoadout](#shippedloadout) | `{}` | The mod's shipped loadouts (read-only in the game; every mod also has `Default`, every weapon at 100 %), each keyed by the name of a preset of `restrictions.ron`: the weapons that preset enables (Bonus and Banned off), at its loading time. Not an OLX field: OLX set `LoadingTime` apart from the preset. At most `MAX_LOADOUTS` (64). |
-| `look` | [ModWideLookSource](#modwidelooksource) (optional) | none | The mod's look as a whole: the explosion light of every projectile without its own. Presentation only. Default none. |
+| `look` | [ModWideLookSource](#modwidelooksource) (optional) | none | The mod's look as a whole: the explosion light and heat of every projectile without its own. Presentation only. Default none. |
 
 Example:
 
@@ -241,6 +241,7 @@ A mod's look as a whole (`mod.ron`'s `look`).
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `explosion` | [ExplosionLightSource](#explosionlightsource) (optional) | none | The explosion light of every projectile without its own `explosion`. Default none: the engine's. |
+| `explosion_heat` | [ExplosionHeatSource](#explosionheatsource) (optional) | none | The explosion heat of every projectile without its own `explosion_heat`. Default none: the engine's. |
 
 <a id="fire"></a>
 
@@ -476,6 +477,8 @@ A mod projectile's look.
 | `light` | [LightSource](#lightsource) (optional) | none | A light following it; its clock is the projectile's age. Default none. |
 | `end_flash` | [LightSource](#lightsource) (optional) | none | A light where it ended; its clock starts there, added to its explosion's light if it explodes. Default none. |
 | `explosion` | [ExplosionLightSource](#explosionlightsource) (optional) | none | The light of every explosion it makes (its effects' `Explode`, its timer's, a `Bounce` explosion): replaces the engine's warm flash there. Default none: the mod's `look.explosion`, else the engine's. |
+| `explosion_heat` | [ExplosionHeatSource](#explosionheatsource) (optional) | none | The heat every explosion it makes leaves in a level whose surface materials heat (the same explosions as `explosion`'s). Default none: the mod's `look.explosion_heat`, else the engine's. |
+| `heat` | [ProjectileHeatSource](#projectileheatsource) (optional) | none | Heat it leaves around itself each tick it lives (flames, napalm, a hot slug), in a level whose surface materials heat. Default none. |
 
 <a id="weaponstate"></a>
 
@@ -503,6 +506,17 @@ An explosion's light: a glowing disc where it explodes, lighting the level while
 | `reach` | [ReachSource](#reachsource) | required | Where it fades to nothing: `Pixels`, 1 to 4096 (not `Unlimited`). |
 | `animation` | [AnimationSource](#animationsource) (optional) | none | Default none: from full to nothing over the explosion's life, as the engine's. Given, its clock is the explosion's age in milliseconds, and the light still ends with the explosion. |
 | `phase_ms` | integer (optional) | none | Shifts the animation's clock, milliseconds; only with an `animation`. Default none: a looping animation's phase comes from the explosion. |
+
+<a id="explosionheatsource"></a>
+
+## ExplosionHeatSource
+
+An explosion's heat: how much it warms the rock and dirt around it, in a level whose surface materials heat (the level's materials decide what the heat does). Without one, every explosion leaves the engine's heat, which grows with its damage (a minigun hit warms the rock faintly, a Bazooka's rim glows, a Big Nuke's far more). Presentation only.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `amount` | integer | `100` | Percent of the engine's heat for the explosion, 0 (none) to 1000; an explosion never gives more than the engine's hottest (1000, white hot stone). Default 100. |
+| `radius` | integer (optional) | none | How far it reaches, world pixels, 1 to 48; it falls off from the centre to there. Default none: the engine's for the explosion (past the crater it carves). |
 
 <a id="weaponclass"></a>
 
@@ -561,6 +575,17 @@ A projectile's frame animation (OLX `Animating`, `AnimRate`, `AnimType`).
 |---|---|---|---|
 | `fps` | number | `0.0` | Frames per second (OLX `rate`). |
 | `mode` | [AnimMode](#animmode) | `Once` | What happens at the last frame. `Once` removes the projectile (OLX `AnimType`). |
+
+<a id="projectileheatsource"></a>
+
+## ProjectileHeatSource
+
+The heat a projectile leaves where it is, each tick (10 ms) it lives; it falls off from its centre to `radius`. Presentation only.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `amount` | integer | required | The heat a tick gives stone at its centre, 1 to 100 (an explosion's is up to 1000: a Bazooka's about 300). |
+| `radius` | integer | required | How far it reaches, world pixels, 1 to 16. |
 
 <a id="reachsource"></a>
 

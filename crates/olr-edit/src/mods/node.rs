@@ -11,8 +11,8 @@ use olr_data::loadouts::ShippedLoadout;
 use olr_data::restrictions::WeaponState;
 use olr_format::Colour;
 use olr_format::look::{
-    AnimationSource, ExplosionLightSource, KeySource, LightSource, ModWideLookSource, ProjectileLookSource,
-    PulseShape, ReachSource, WeaponLookSource,
+    AnimationSource, ExplosionHeatSource, ExplosionLightSource, KeySource, LightSource, ModWideLookSource,
+    ProjectileHeatSource, ProjectileLookSource, PulseShape, ReachSource, WeaponLookSource,
 };
 use olr_format::mods::{
     AnimMode, Animation, Effect, Fire, Gfx, LIFTED_SPAWN, ModSource, Projectile, Rope, Spawn, SpawnContext,
@@ -561,11 +561,14 @@ composite!(enum Effect);
 fields!(WeaponLookSource { WeaponLookSource { muzzle_light } => [muzzle_light] });
 composite!(WeaponLookSource);
 
-fields!(ModWideLookSource { ModWideLookSource { explosion } => [explosion] });
+fields!(ModWideLookSource {
+    ModWideLookSource { explosion, explosion_heat } => [explosion, explosion_heat],
+});
 composite!(ModWideLookSource);
 
 fields!(ProjectileLookSource {
-    ProjectileLookSource { glow, light, end_flash, explosion } => [glow, light, end_flash, explosion],
+    ProjectileLookSource { glow, light, end_flash, explosion, explosion_heat, heat } =>
+        [glow, light, end_flash, explosion, explosion_heat, heat],
 });
 composite!(ProjectileLookSource);
 
@@ -579,6 +582,12 @@ fields!(ExplosionLightSource {
         [colour, intensity, radius, reach, animation, phase_ms],
 });
 composite!(ExplosionLightSource);
+
+fields!(ExplosionHeatSource { ExplosionHeatSource { amount, radius } => [amount, radius] });
+composite!(ExplosionHeatSource);
+
+fields!(ProjectileHeatSource { ProjectileHeatSource { amount, radius } => [amount, radius] });
+composite!(ProjectileHeatSource);
 
 fields!(ReachSource { ReachSource::Pixels(_0) => [_0], ReachSource::Unlimited => [] });
 impl Variants for ReachSource {

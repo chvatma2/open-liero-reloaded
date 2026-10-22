@@ -492,6 +492,92 @@ fn explosion_light_limits() {
     assert!(read_mod_files(&fs).is_err());
 }
 
+// ---- Heat (issue #42) ----
+
+const HOT_PROJECTILE: &str =
+    "look: (explosion_heat: (amount: 250, radius: 30), heat: (amount: 4, radius: 6)),";
+
+const MOD_HEAT: &str = r#"(name: "T", weapons: ["w"], look: (explosion_heat: (amount: 40)))"#;
+
+#[test]
+fn heat_round_trips_compiles_and_falls_back_to_the_mods() {
+    let w = weapon(HOT_PROJECTILE, "", ", look: (glow: 40)");
+    let fs = mod_fs(&w).with("mod.ron", MOD_HEAT);
+    let src = read_mod_files(&fs).unwrap();
+    // Presentation only: the simulation's mod is the one without heat.
+    let plain = read_mod_files(&mod_fs(&weapon("", "", ", look: (glow: 40)"))).unwrap();
+    assert_eq!(compile_mod(&src).unwrap(), compile_mod(&plain).unwrap());
+    let look = compile_mod_look(&src).unwrap();
+    let own = &look.projectiles["w"];
+    assert_eq!(own.explosion_heat, Some(olr_look::ExplosionHeatLook { amount: 250, radius: Some(30) }));
+    assert_eq!(own.heat, Some(olr_look::ProjectileHeat { amount: 4, radius: 6 }));
+    assert!(own.explosion.is_none(), "heat is not light");
+    // The child has a look but no heat: the mod's explosion heat applies,
+    // the engine's radius kept.
+    let child = &look.projectiles["w.spawn"];
+    assert!(child.explosion_heat.is_none() && child.heat.is_none());
+    assert_eq!(look.explosion_heat, Some(olr_look::ExplosionHeatLook { amount: 40, radius: None }));
+    // Canonical text keeps them and leaves the default amount out.
+    for (path, text, has) in [
+        ("weapons/w.ron", w.clone(), "heat: (\n"),
+        ("mod.ron", MOD_HEAT.into(), "amount: 40"),
+        ("mod.ron", MOD_HEAT.replacen("amount: 40", "radius: 9", 1), "radius: 9"),
+    ] {
+        let canonical = canonical_text(path, &text).unwrap();
+        assert_eq!(canonical_text(path, &canonical).unwrap(), canonical);
+        assert!(canonical.contains("explosion_heat") && canonical.contains(has), "{canonical}");
+        assert!(!canonical.contains("amount: 100"), "{canonical}");
+    }
+    let default: olr_format::look::ExplosionHeatSource =
+        olr_format::ron_io::from_canonical("mod.ron", "()").unwrap();
+    assert_eq!((default.amount, default.radius), (100, None));
+    assert_eq!(olr_format::ron_io::to_canonical("mod.ron", &default).unwrap(), "()\n");
+    let mut out = MemFs::new();
+    olr_format::mods::write_mod_files(&mut out, &src).unwrap();
+    assert_eq!(read_mod_files(&out).unwrap(), src);
+}
+
+#[test]
+fn heat_limits() {
+    let path = "fire.shot.projectile.look";
+    for (from, to, want) in [
+        ("amount: 250", "amount: 1001", format!("{path}.explosion_heat.amount")),
+        ("radius: 30", "radius: 0", format!("{path}.explosion_heat.radius")),
+        ("radius: 30", "radius: 49", format!("{path}.explosion_heat.radius")),
+        ("amount: 4", "amount: 0", format!("{path}.heat.amount")),
+        ("amount: 4", "amount: 101", format!("{path}.heat.amount")),
+        ("radius: 6", "radius: 0", format!("{path}.heat.radius")),
+        ("radius: 6", "radius: 17", format!("{path}.heat.radius")),
+    ] {
+        let w = weapon(HOT_PROJECTILE, "", "").replacen(from, to, 1);
+        let src = read_mod_files(&mod_fs(&w)).unwrap();
+        let e = compile_mod(&src).unwrap_err().to_string();
+        assert!(e.contains("weapons/w.ron") && e.contains(&want), "{to}: {e}");
+        assert!(compile_mod_look(&src).is_err());
+        assert_eq!(olr_format::mods::mod_errors(&src).len(), 1, "{to}");
+    }
+    // The caps themselves pass, and 0 % is no heat at all.
+    let w = weapon(HOT_PROJECTILE, "", "")
+        .replacen("amount: 250", "amount: 1000", 1)
+        .replacen("radius: 30", "radius: 48", 1)
+        .replacen("amount: 4", "amount: 100", 1)
+        .replacen("radius: 6", "radius: 16", 1);
+    compile_mod_look(&read_mod_files(&mod_fs(&w)).unwrap()).unwrap();
+    let w = weapon(HOT_PROJECTILE, "", "").replacen("amount: 250", "amount: 0", 1);
+    let look = compile_mod_look(&read_mod_files(&mod_fs(&w)).unwrap()).unwrap();
+    assert!(look.projectiles["w"].explosion_heat.unwrap().heat(4.0).is_none());
+    // The mod-wide one is checked as well, naming `mod.ron`.
+    let fs = mod_fs(&weapon("", "", "")).with("mod.ron", MOD_HEAT.replacen("amount: 40", "radius: 60", 1));
+    let src = read_mod_files(&fs).unwrap();
+    let e = compile_mod(&src).unwrap_err().to_string();
+    assert!(e.contains("mod.ron") && e.contains("look.explosion_heat.radius"), "{e}");
+    // A projectile's `heat` needs both fields, and an unknown one is an error.
+    for bad in ["heat: (amount: 4)", "heat: (amount: 4, radius: 6, every: 2)"] {
+        let w = weapon(&format!("look: ({bad}),"), "", "");
+        assert!(read_mod_files(&mod_fs(&w)).is_err(), "{bad}");
+    }
+}
+
 #[test]
 fn bundled_mods_have_no_look() {
     let Some(root) = std::env::var_os("OLR_CONTENT_DIR").map(std::path::PathBuf::from) else { return };
@@ -499,7 +585,7 @@ fn bundled_mods_have_no_look() {
         let src = read_mod_files(&olr_vfs::DirFs::new(root.join(id))).unwrap();
         let look = compile_mod_look(&src).unwrap();
         assert!(look.projectiles.is_empty() && look.weapons.iter().all(Option::is_none), "{id}");
-        assert!(look.explosion.is_none() && src.look.is_none(), "{id}");
+        assert!(look.explosion.is_none() && look.explosion_heat.is_none() && src.look.is_none(), "{id}");
     }
 }
 
