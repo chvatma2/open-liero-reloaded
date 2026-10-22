@@ -199,3 +199,5 @@
   fixtures/bench/quick.ron
 2026-10-22 bench-quick: #35 item 1: the glow light's history copy dropped
   fixtures/bench/quick.ron
+2026-10-22 bench-quick: #35 item 2: Rg16Uint flood seeds, Rg16Float reach, R16Float disc reach
+  fixtures/bench/quick.ron

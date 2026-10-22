@@ -78,7 +78,7 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     // shows what lies under it (its glow, its rock).
     let mark = select(0.0, 2.0, worms * k >= 0.5 && solid * k < 0.5);
     out.emission = vec4<f32>(em * k + disc, solid * k + mark);
-    out.reach = vec4<f32>(split(reach), 0.0, 0.0);
+    out.reach = split(reach);
     out.albedo = vec4<f32>(albedo / max(solid, 1.0), 1.0);
     return out;
 }

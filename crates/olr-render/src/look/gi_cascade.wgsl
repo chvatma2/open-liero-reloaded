@@ -5,7 +5,7 @@
 @group(0) @binding(1) var level_em: texture_2d<f32>;
 @group(0) @binding(2) var level_reach: texture_2d<f32>;
 @group(0) @binding(3) var upper: texture_2d<f32>;
-@group(0) @binding(4) var seeds: texture_2d<f32>;
+@group(0) @binding(4) var seeds: texture_2d<u32>;
 // Plan 15c's bounce: each cell's albedo, the last frame's fluence (the
 // fluence itself, which `fs_fluence` rewrites only after the cascades;
 // issue #35), and the look's globals (`frame.w`: the bounce, 0-0.9).
@@ -62,11 +62,11 @@ fn blocks(q: vec2<i32>, t: f32, worms: f32) -> bool {
 // How far a ray at `at` may jump: the jump flood's distance to the nearest
 // stopper, less a cell and a half; 0 near one.
 fn free_at(at: vec2<f32>) -> f32 {
-    let t = textureLoad(seeds, vec2<i32>(floor(at)), 0);
-    if t.x < 0.0 {
+    let t = textureLoad(seeds, vec2<i32>(floor(at)), 0).xy;
+    if t.x == NO_SEED {
         return 1e9;
     }
-    let s = vec2<f32>(joined(t.xy), joined(t.zw));
+    let s = vec2<f32>(t);
     return max(distance(s + vec2<f32>(0.5), at) - 1.5, 0.0);
 }
 

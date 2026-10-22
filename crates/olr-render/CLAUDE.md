@@ -144,7 +144,7 @@ on screen or offscreen.
     a dynamic layer; a cell whose centre is in a disc and in the open takes
     its radiance whole, `olr_look::engine::disc_radiance`; a disc smaller
     than a cell lights its own by area; reach max-blended as unsplit f16,
-    60000 unlimited), the emission (glow × group × each pixel's flicker
+    60000 unlimited, `R16Float`), the emission (glow × group × each pixel's flicker
     region, the discs added, solid share, albedo of rock and dirt), a
     jump-flood seed and its passes, the cascades from the top down, then the
     fluence the sum samples bilinearly, which is also the history the next
@@ -250,9 +250,11 @@ on screen or offscreen.
   camera-independent (`light_is_camera_independent`,
   `an_off_view_flash_lights_the_view_the_same`).
   **GL limits:** GL renders into no `R32Float` or `Rg32Float` target, so
-  the flood's seeds and the emission's reach split each value into
-  two halves exact in f16 in `Rgba16Float` (`split`/`joined` in
-  `common.wgsl`; Task 19's e2e found it; `a_lit_frame_draws_on_gl`).
+  the emission's reach splits each value into two halves exact in f16 in
+  `Rg16Float` (`split`/`joined` in `common.wgsl`; Task 19's e2e found
+  it; `a_lit_frame_draws_on_gl`); the flood's seeds are whole cells in
+  `Rg16Uint` (`NO_SEED` none) and the disc layer's reach one `R16Float`
+  (issue #35: half the bytes, or a quarter, of `Rgba16Float`).
   **CPU model** (`look/mod.rs`): `shade_texel` (one composite texel),
   `grade_linear`, `linear_to_srgb`, `LightGrid` (where the grid lies),
   references for tests (`shade_texel_table`). The light grid is rebuilt

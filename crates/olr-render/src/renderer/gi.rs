@@ -38,16 +38,20 @@ pub fn gi_cell(world: (u32, u32), max_dim: u32) -> u32 {
 
 const FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 // Split in f16 halves (`split` in the shaders): GL draws into no R32Float
-// or Rg32Float target.
-const REACH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-const SEED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+// or Rg32Float target. Two channels (issue #35: half the bytes).
+const REACH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+/// The jump flood's seeds: each cell's nearest stopper's cell, x and y
+/// whole (issue #35: exact in `Rg16Uint`, half the bytes of the f16
+/// halves; GL draws into it as into the occluders' `R8Uint`), `NO_SEED`
+/// none.
+const SEED_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Uint;
 /// Each cell's albedo (plan 15c: bounce): its rock and dirt's art colour,
 /// averaged, linear.
 const ALBEDO_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// The dynamic layer's reach: unsplit f16 (max blending needs one value),
-/// 60 000 or more unlimited (plan 15c).
-const DYNAMIC_REACH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// 60 000 or more unlimited (plan 15c); one channel (issue #35).
+const DYNAMIC_REACH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R16Float;
 
 /// Floats a disc: world x, y, radius, reach; radiance r, g, b, 0 (plan 15c).
 pub(super) const EMITTER_FLOATS: usize = 8;
@@ -117,8 +121,7 @@ impl GiPipelines {
             &[entry(0, both, super::UNIFORM), entry(1, frag, UINT), entry(2, frag, super::UNIFORM)],
         );
         let seed_layout = layout("olr-render gi seed", &[entry(0, frag, FLOAT)]);
-        let jfa_layout =
-            layout("olr-render gi jfa", &[entry(0, frag, super::UNIFORM), entry(1, frag, FLOAT)]);
+        let jfa_layout = layout("olr-render gi jfa", &[entry(0, frag, super::UNIFORM), entry(1, frag, UINT)]);
         let cascade_layout = layout(
             "olr-render gi cascade",
             &[
@@ -126,7 +129,7 @@ impl GiPipelines {
                 entry(1, frag, FLOAT),
                 entry(2, frag, FLOAT),
                 entry(3, frag, FLOAT),
-                entry(4, frag, FLOAT),
+                entry(4, frag, UINT),
                 entry(5, frag, FLOAT),
                 entry(6, frag, FLOAT),
                 entry(7, frag, super::UNIFORM),

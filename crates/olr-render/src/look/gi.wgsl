@@ -48,11 +48,15 @@ struct GiOut {
     // rgb cast, solid share
     @location(0) emission: vec4<f32>,
     // reach (world px, `split`; unlimited at 1e9)
-    @location(1) reach: vec4<f32>,
+    @location(1) reach: vec2<f32>,
     // rgb albedo of the cell's rock and dirt (linear; plan 15c), 1
     @location(2) albedo: vec4<f32>,
 };
 
+
+// The jump flood's seed of a cell that has no stopper yet (`Rg16Uint`:
+// cells are whole, below it; issue #35).
+const NO_SEED: u32 = 65535u;
 
 // A cell stops a ray when it is half or more solid, or glows.
 fn stops(e: vec4<f32>) -> bool {

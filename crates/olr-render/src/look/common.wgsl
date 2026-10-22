@@ -42,7 +42,7 @@ const TAU: f32 = 6.2831853;
 
 // A value kept in a 16-bit float target, split in two halves each exact in
 // f16: (floor(v / 64), v - 64 floor(v / 64)). GL draws into no R32Float
-// target (plan 15a Task 19's e2e); Rgba16Float it does. A value of 1e8 or
+// target (plan 15a Task 19's e2e); Rg16Float it does. A value of 1e8 or
 // more (unlimited, or none) is (-1, 0).
 fn split(v: f32) -> vec2<f32> {
     if v >= 1e8 {

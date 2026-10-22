@@ -39,7 +39,7 @@ fn vs_disc(
 
 struct DynOut {
     @location(0) radiance: vec4<f32>,
-    @location(1) reach: vec4<f32>,
+    @location(1) reach: f32,
 };
 
 @fragment
@@ -64,6 +64,6 @@ fn fs_disc(in: DiscOut) -> DynOut {
     }
     var out: DynOut;
     out.radiance = vec4<f32>(in.radiance * k, 1.0);
-    out.reach = vec4<f32>(min(in.disc.w, 60000.0), 0.0, 0.0, 0.0);
+    out.reach = min(in.disc.w, 60000.0);
     return out;
 }
