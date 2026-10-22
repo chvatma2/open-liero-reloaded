@@ -107,7 +107,7 @@ new file mode 100644
 index 0000000..67859eb
 --- /dev/null
 +++ b/include/OracleHooks.h
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,74 @@
 +/*
 +	OpenLieroX
 +
@@ -128,6 +128,7 @@ index 0000000..67859eb
 +	enum {
 +		KEY_UP = 1, KEY_DOWN = 2, KEY_LEFT = 4, KEY_RIGHT = 8,
 +		KEY_JUMP = 16, KEY_FIRE = 32, KEY_ROPE = 64, KEY_CHANGE = 128,
++		KEY_STRAFE = 256, KEY_PREV = 512, KEY_NEXT = 1024,
 +	};
 +	// While recording, tLX->currentTime = simulationTime + CLOCK_OFFSET_MS
 +	// during each frame and during shot delivery (OLR spec §18 D2).
@@ -380,7 +381,7 @@ new file mode 100644
 index 0000000..e552e46
 --- /dev/null
 +++ b/src/common/OracleHooks.cpp
-@@ -0,0 +1,671 @@
+@@ -0,0 +1,679 @@
 +/*
 +	OpenLieroX
 +
@@ -508,6 +509,9 @@ index 0000000..e552e46
 +	setKey(k.fire, m & KEY_FIRE);
 +	setKey(k.rope, m & KEY_ROPE);
 +	setKey(k.change, m & KEY_CHANGE);
++	setKey(k.strafe, m & KEY_STRAFE);
++	setKey(k.prev, m & KEY_PREV);
++	setKey(k.next, m & KEY_NEXT);
 +}
 +
 +static CWorm* localWorm(int wormId, std::string& err) {
@@ -713,8 +717,13 @@ index 0000000..e552e46
 +	const long frame = frameIndex();
 +	std::map<long, std::vector<Event> >::iterator it = g_plan.find(frame);
 +	if(it != g_plan.end())
-+		for(size_t i = 0; i < it->second.size(); i++)
++		for(size_t i = 0; i < it->second.size(); i++) {
++			// OLR always allows strafing: a trace with Strafe held must come
++			// from a client that allows it too (lx:strafingAllowed).
++			if((it->second[i].mask & KEY_STRAFE) && !cClient->isHostAllowingStrafing())
++				fail("frame " + itoa((int)frame) + ": strafing is not allowed on the client");
 +			apply(g_keys[it->second[i].worm], it->second[i].mask);
++		}
 +	std::map<long, std::vector<BonusEvent> >::iterator bt = g_bonusPlan.find(frame);
 +	if(bt != g_bonusPlan.end())
 +		for(size_t i = 0; i < bt->second.size(); i++) {

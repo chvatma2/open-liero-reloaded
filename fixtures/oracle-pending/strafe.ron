@@ -1,0 +1,20 @@
+(
+    description: "On Liero Factory's open rock floor (issue #23): facing right, strafe left for 60 frames, aiming up for the last 30; turn left with a tap; strafe right for 60 frames, aiming down for the last 30; let go of Strafe while walking right, which turns the worm. Facing stays while Strafe is held, the move direction follows Left and Right.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 300,
+    worms: [(x: 190, y: 320)],
+    inputs: [
+        (frame: 40, worm: 0, keys: "strafe+left"),
+        (frame: 70, worm: 0, keys: "strafe+left+up"),
+        (frame: 100, worm: 0, keys: ""),
+        (frame: 120, worm: 0, keys: "left"),
+        (frame: 123, worm: 0, keys: ""),
+        (frame: 140, worm: 0, keys: "strafe+right"),
+        (frame: 170, worm: 0, keys: "strafe+right+down"),
+        (frame: 200, worm: 0, keys: "strafe+right"),
+        (frame: 230, worm: 0, keys: "right"),
+        (frame: 260, worm: 0, keys: ""),
+    ],
+)

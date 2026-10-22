@@ -1,0 +1,20 @@
+(
+    description: "On Liero Factory's open rock floor (issue #23), WeaponCombos off, five weapons, slot 0: Next and Previous pressed while firing change nothing (`!bShoot || WeaponCombos`); after the fire key's release, Next steps to slot 1.",
+    level: "Liero Factory.lxl",
+    mod: "Classic",
+    seed: 12345,
+    frames: 120,
+    settings: {"GameOptions.GameInfo.WeaponCombos": "0"},
+    worms: [(x: 190, y: 320)],
+    weapons: [(worm: 0, names: ["Uzi", "Shotgun", "Bazooka", "Grenade", "Rifle"], current: 0)],
+    inputs: [
+        (frame: 20, worm: 0, keys: "fire"),
+        (frame: 30, worm: 0, keys: "fire+next"),
+        (frame: 32, worm: 0, keys: "fire"),
+        (frame: 40, worm: 0, keys: "fire+prev"),
+        (frame: 42, worm: 0, keys: "fire"),
+        (frame: 60, worm: 0, keys: ""),
+        (frame: 70, worm: 0, keys: "next"),
+        (frame: 72, worm: 0, keys: ""),
+    ],
+)

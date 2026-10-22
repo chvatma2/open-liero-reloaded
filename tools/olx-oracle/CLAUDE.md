@@ -18,6 +18,10 @@ you rarely need to touch these files.
   - `frame worm keys` lines (key bits in `OracleHooks.h`) drive worms through
     OLX's human input handler with virtual keys (`CInput::virt`), so aim,
     facing, rope, firing and weapon switching run through OLX's real keyboard code.
+    The bits are the classic 8, then `KEY_STRAFE` 256, `KEY_PREV` 512 and
+    `KEY_NEXT` 1024 (issue #23; `oracle_control.py`'s `KEY_BITS`); a frame
+    holding Strafe fails while the host does not allow strafing (OLR always
+    does, so a trace recorded without it would not be OLR's rule).
   - `frame bonus x y health|weapon [name]` lines place a bonus at the start of
     that frame (as `simPlaceBonus`).
   - **Every worm** gets the human handler, listed or not, so no bot AI runs (D8).

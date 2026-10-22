@@ -8,7 +8,8 @@ command, OLX answers with ":arg" lines and a lone ".".
 The scenario comes from the JSON file named by ORACLE_SCENARIO, written by
 `cargo xtask oracle-record`:
   level, mod, seed, frames, settings {setvar name: value}, worms [{x, y}],
-  inputs [[frame, worm index, key mask]],
+  inputs [[frame, worm index, key mask]] (OracleHooks.h's KEY_* bits:
+  up 1 ... change 128, strafe 256, prev 512, next 1024),
   weapons [{worm, names, current}], health [[worm index, hp]],
   bonuses [[frame, x, y, "health"|"weapon", weapon name or ""]],
   out (trace path).
@@ -18,6 +19,9 @@ The whole run is driven by simStep, so no frame depends on the wall clock.
 import json
 import os
 import sys
+
+# Every key bit OracleHooks.h declares (KEY_UP ... KEY_NEXT).
+KEY_BITS = 2047
 
 
 def emit(msg):
@@ -89,6 +93,9 @@ def main():
     schedule = os.path.join(os.path.dirname(sc["out"]), "inputs.txt")
     with open(schedule, "w") as fh:
         for frame_no, worm, keys in sc["inputs"]:
+            if keys & ~KEY_BITS:
+                emit("ORACLE_ERROR unknown key bits in %d at frame %d" % (keys, frame_no))
+                raise SystemExit(1)
             fh.write("%d %s %d\n" % (frame_no, ids[worm], keys))
         for frame_no, x, y, kind, weapon in sc.get("bonuses", []):
             fh.write("%d bonus %d %d %s %s\n" % (frame_no, x, y, kind, weapon))

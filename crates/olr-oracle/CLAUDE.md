@@ -28,7 +28,10 @@ OpenLieroX, and first-divergence comparison.
   - `compare_fields` checks only some `Fields` groups (what the simulation
     reproduces so far); `compare` checks all of them.
 - **Key masks** match `OracleHooks.h` in `tools/olx-oracle/oracle-hooks.patch`.
-  Change both together.
+  Change both together. `Keys` is a `u16`: the classic 8, then `strafe`,
+  `prev`, `next` (issue #23). `fixtures/oracle-pending/` holds scenarios
+  waiting for their trace (no Docker when written; its README, and
+  `docs/deferred-verification.md`); `pending_scenarios_parse` only parses them.
 
 `tests/fixtures.rs` checks that every committed trace is complete and shows
 what its scenario's description claims.
