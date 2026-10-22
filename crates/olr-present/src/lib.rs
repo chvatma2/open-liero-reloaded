@@ -121,6 +121,16 @@ fn heats(level: &LoadedLevel) -> bool {
         || level.distant_surface.iter().any(|&v| heating(look.material(v)))
 }
 
+/// Which projectiles (by `SimMod` index) heat the level while they live
+/// (issue #42): those whose look has `heat`, in a level whose materials
+/// heat; empty when none does, so the scene records none.
+fn projectile_heat(m: &ModLook, heats: bool) -> Vec<bool> {
+    if !heats || m.projectiles.iter().flatten().all(|p| p.heat.is_none()) {
+        return Vec::new();
+    }
+    (0..m.projectiles.len()).map(|i| m.heat(i).is_some()).collect()
+}
+
 /// The most heat catch-up runs an upload makes: a box lives at most 15 000
 /// steps, 60 runs of [`MAX_HEAT_STEPS`], so the renderer is caught up long
 /// before.
@@ -140,6 +150,7 @@ impl Presentation {
         scene.set_shades(lit.then(|| ShadeRules {
             floor: olr_look::engine::FLOOR,
             projectile_glow: s.m.look.projectiles.iter().map(|p| p.as_ref().and_then(|p| p.glow)).collect(),
+            projectile_heat: projectile_heat(&s.m.look, heats(s.level)),
         }));
         scene.start(world);
         Presentation {
@@ -315,6 +326,12 @@ impl Presentation {
         self.surface = level.surface.clone();
         self.distant_surface = level.distant_surface.clone();
         self.heats = heats(level);
+        // Issue #42: the scene records heating projectiles only where they heat.
+        let hot = projectile_heat(&self.mod_look, self.heats);
+        if let Some(rules) = self.scene.shades().filter(|r| r.projectile_heat != hot) {
+            let rules = ShadeRules { projectile_heat: hot, ..rules.clone() };
+            self.scene.set_shades(Some(rules));
+        }
         self.terrain_new = true;
         // The heat starts afresh with the terrain upload.
         (self.heat_now, self.heat_clock, self.heat_reset) = (world.time().0, world.time().0, false);

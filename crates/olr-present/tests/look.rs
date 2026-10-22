@@ -928,6 +928,19 @@ fn play_level(
     level_look: Option<LevelLook>,
     prepare: impl FnOnce(&mut LoadedLevel),
     stride: i64,
+    each: impl FnMut(&mut Presentation, &World, &[olr_sim::Event]),
+) {
+    play_looked(content, name, level_look, prepare, |_, _| {}, stride, each);
+}
+
+/// [`play_level`] with the mod's look made as `look` makes it (issue #42).
+fn play_looked(
+    content: &Content,
+    name: &str,
+    level_look: Option<LevelLook>,
+    prepare: impl FnOnce(&mut LoadedLevel),
+    look: impl FnOnce(&LoadedMod, &mut ModLook),
+    stride: i64,
     mut each: impl FnMut(&mut Presentation, &World, &[olr_sim::Event]),
 ) {
     let (sc, trace) = olr_scenario::load_fixture(&fixtures(), name).unwrap();
@@ -935,7 +948,10 @@ fn play_level(
     level.look = level_look;
     prepare(&mut level);
     let theme = content.load_theme(&level.theme).unwrap();
-    let m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();
+    let mut m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();
+    let mut mod_look = m.look.clone();
+    look(&m, &mut mod_look);
+    m.look = mod_look;
     let setup = PresentSetup {
         core: content.core(),
         m: &m,
@@ -1061,4 +1077,172 @@ fn only_a_level_whose_materials_heat_queues_heat() {
 
 fn cold_materials() -> Vec<olr_look::SurfaceMaterial> {
     vec![olr_look::SurfaceMaterial { id: "cold".into(), heat: None }]
+}
+
+/// [`play_heated`] on every world pixel stone, the mod's look made as
+/// `look` makes it (issue #42).
+fn play_hot(
+    content: &Content,
+    name: &str,
+    stride: i64,
+    look: impl FnOnce(&LoadedMod, &mut ModLook),
+    each: impl FnMut(&mut Presentation, &World, &[olr_sim::Event]),
+) {
+    let maps = |level: &mut LoadedLevel| {
+        let mut m = olr_look::SurfaceMaps::empty((level.material.width(), level.material.height()));
+        m.front.fill(1);
+        m.back.fill(1);
+        level.surface = Some(m);
+    };
+    play_looked(content, name, Some(heated_look()), maps, look, stride, each);
+}
+
+/// Gives every projectile whose key starts with `prefix` the look `with`
+/// makes of its own (issue #42).
+fn give(m: &LoadedMod, look: &mut ModLook, prefix: &str, with: impl Fn(&mut ProjectileLook)) -> usize {
+    let mut n = 0;
+    for (i, p) in m.sim.projectiles().iter().enumerate() {
+        if p.key.starts_with(prefix) {
+            with(look.projectiles[i].get_or_insert_with(ProjectileLook::default));
+            n += 1;
+        }
+    }
+    n
+}
+
+const FLAME: olr_look::ProjectileHeat = olr_look::ProjectileHeat { amount: 5, radius: 4 };
+
+/// Issue #42: each tick a projectile whose look has `heat` lives leaves
+/// that tick's heat where it is, once, so its path is warmed: the flamer's
+/// flames, one deposit each a tick at its place, at the look's amount and
+/// radius; no other projectile leaves any.
+#[test]
+fn a_projectiles_heat_warms_its_path_each_tick() {
+    let Some(content) = content() else { return };
+    let look = |m: &LoadedMod, l: &mut ModLook| assert!(give(m, l, "flamer", |p| p.heat = Some(FLAME)) > 0);
+    let (mut ticks, mut deposits, mut places) = (0, 0, Vec::new());
+    play_hot(&content, "weapons/classic/flamer", 1, look, |p, world, _| {
+        let flame = |proj: usize| world.sim_mod().projectiles()[proj].key.starts_with("flamer");
+        let alive: Vec<[f32; 2]> =
+            world.projectiles().filter(|(_, q)| flame(q.proj)).map(|(_, q)| [q.pos.x, q.pos.y]).collect();
+        let now = world.time().0;
+        let hot: Vec<_> = p.heat_waiting().iter().filter(|(_, d)| d.radius == 4.0).collect();
+        assert!(hot.iter().all(|&&(at, _)| at == now), "this tick's alone");
+        // The first frame shows the tick before the scene's first record.
+        if !alive.is_empty() || !hot.is_empty() {
+            ticks += 1;
+            assert_eq!(hot.len(), alive.len().min(olr_scene::MAX_HOT_PER_TICK), "one a flame a tick");
+            for (&&(at, d), pos) in hot.iter().zip(&alive) {
+                assert_eq!((at, d.pos, d.amount), (now, *pos, 5.0));
+            }
+            deposits += hot.len();
+            places.extend(hot.iter().map(|(_, d)| d.pos.map(|v| v as i32)));
+        }
+        // The test host never uploads: forget what was queued.
+        p.reset_heat(world);
+    });
+    places.sort();
+    places.dedup();
+    assert!(ticks > 20 && deposits > ticks, "{deposits} deposits over {ticks} ticks");
+    assert!(places.len() > 50, "a path, not a spot: {} places", places.len());
+}
+
+/// Issue #42: a projectile's heat queued is the same whether a frame is
+/// drawn every tick or every fourth or seventh (each tick's own heat, at
+/// its time), and never more than the cap a tick, however many heat.
+#[test]
+fn projectile_heat_does_not_depend_on_the_frame_rate_and_is_capped() {
+    let Some(content) = content() else { return };
+    let (mut runs, mut until) = (Vec::new(), u64::MAX);
+    for stride in [1, 4, 7] {
+        let (mut all, mut at) = (Vec::new(), 0);
+        let look = |m: &LoadedMod, l: &mut ModLook| {
+            give(m, l, "flamer", |p| p.heat = Some(FLAME));
+        };
+        play_hot(&content, "weapons/classic/flamer", stride, look, |p, world, _| {
+            all.extend(p.heat_waiting().iter().copied());
+            at = world.time().0;
+            // The test host never uploads: forget what was queued.
+            p.reset_heat(world);
+        });
+        until = until.min(at);
+        runs.push(all);
+    }
+    runs.iter_mut().for_each(|r| r.retain(|&(t, _)| t <= until));
+    assert!(runs[0].len() > 50, "{} deposits", runs[0].len());
+    assert!(runs.iter().all(|r| *r == runs[0]));
+    // A hostile look: every projectile at the caps, a tick at most 64 of them.
+    let hostile = olr_look::ProjectileHeat { amount: u16::MAX, radius: u8::MAX };
+    let mut most = 0;
+    let look = |m: &LoadedMod, l: &mut ModLook| {
+        give(m, l, "", |p| p.heat = Some(hostile));
+    };
+    play_hot(&content, "weapons/classic/flamer", 1, look, |p, world, _| {
+        let now = world.time().0;
+        let hot: Vec<_> = p.heat_waiting().iter().filter(|&&(at, d)| at == now && d.radius == 16.0).collect();
+        assert!(hot.iter().all(|(_, d)| d.amount == 100.0), "capped");
+        most = most.max(hot.len());
+        p.reset_heat(world);
+    });
+    assert_eq!(most, olr_scene::MAX_HOT_PER_TICK, "the flamer's many flames, capped");
+}
+
+/// Issue #42: an explosion leaves its projectile look's `explosion_heat`
+/// (the engine's at its percent, over its radius), else the mod's, else
+/// the engine's.
+#[test]
+fn explosion_heat_is_the_projectiles_else_the_mods() {
+    let Some(content) = content() else { return };
+    type Expect<'a> = &'a dyn Fn(&LoadedMod, i32, f32) -> Option<engine::ExplosionHeat>;
+    // Plays the Bazooka with the look `look` makes; each frame's deposits
+    // are those `expect` gives its explosions (by projectile and damage).
+    let check = |look: &dyn Fn(&LoadedMod, &mut ModLook), expect: Expect| {
+        let (mut n, mut m) = (0, None);
+        let with = |lm: &LoadedMod, l: &mut ModLook| {
+            look(lm, l);
+            m = Some(LoadedMod { look: l.clone(), ..lm.clone() });
+        };
+        let mut frames = Vec::new();
+        play_hot(&content, BAZOOKA, 1, with, |p, world, events| {
+            let blasts: Vec<_> = events
+                .iter()
+                .filter_map(|e| match e.kind {
+                    olr_sim::EventKind::Explosion { damage, proj, .. } => Some((proj, damage)),
+                    _ => None,
+                })
+                .collect();
+            frames.push((blasts, p.heat_waiting().to_vec()));
+            p.reset_heat(world);
+        });
+        let m = m.unwrap();
+        for (blasts, heat) in frames {
+            let want: Vec<_> = blasts.iter().filter_map(|&(proj, d)| expect(&m, proj, d)).collect();
+            let got: Vec<_> = heat.iter().map(|(_, h)| (h.radius, h.amount)).collect();
+            assert_eq!(got, want.iter().map(|h| (h.radius, h.amount)).collect::<Vec<_>>());
+            n += got.len();
+        }
+        assert!(n > 0, "the Bazooka heated");
+    };
+    let bazooka = |m: &LoadedMod, proj: i32| {
+        usize::try_from(proj).is_ok_and(|i| m.sim.projectiles()[i].key.starts_with("bazooka"))
+    };
+    let own = olr_look::ExplosionHeatLook { amount: 50, radius: Some(20) };
+    let none = olr_look::ExplosionHeatLook { amount: 0, radius: None };
+    check(
+        &|m, l| {
+            give(m, l, "bazooka", |p| p.explosion_heat = Some(own));
+            l.explosion_heat = Some(none);
+        },
+        &|m, proj, d| {
+            let e = engine::explosion_heat(d)?;
+            let h = engine::ExplosionHeat { radius: 20.0, amount: e.amount / 2.0 };
+            bazooka(m, proj).then_some(h).or((proj < 0).then_some(e))
+        },
+    );
+    let wide = olr_look::ExplosionHeatLook { amount: 300, radius: None };
+    check(&|_, l| l.explosion_heat = Some(wide), &|_, proj, d| {
+        let e = engine::explosion_heat(d)?;
+        Some(if proj < 0 { e } else { engine::ExplosionHeat { amount: (e.amount * 3.0).min(1000.0), ..e } })
+    });
+    check(&|_, _| {}, &|_, _, d| engine::explosion_heat(d));
 }

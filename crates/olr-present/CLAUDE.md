@@ -91,6 +91,21 @@ wired in the frame loop's order **once**, so each mode that draws a world
     replays have none yet) clear it, the renderer's with the next upload.
     `blasts_started()` (the last frame's keys) and `heat_waiting()` (the
     queue) for tests and tools.
+  - **Mods' heat** (issue #42): an explosion whose projectile
+    (`TickExplosion::proj`) has an explosion heat (`ModLook::explosion_heat`:
+    its look's, else the mod's; none for -1, a bonus blown up) queues that
+    (`ExplosionHeatLook::heat` of its damage: the engine's at its percent,
+    over its radius) instead of the engine's. A projectile whose look has
+    `heat` heats each tick it lives: `new` (again at `restart`, only when
+    the level heats) gives the scene `ShadeRules::projectile_heat`, and
+    each of the scene's per-tick `hot_projectiles()` (where it was after
+    the tick, at most `olr_scene::MAX_HOT_PER_TICK` 64 a tick) queues
+    `ProjectileHeat::tick()` there with its tick's time, once (a `WarmKey`:
+    tick ms, slot, serial, through its own `Once`): the spec's `amount ×
+    ticks elapsed at its drawn position`, a tick at a time, so it never
+    depends on the frame rate. Explosions and heating projectiles are
+    queued merged in tick order, the explosions of a tick first, under the
+    same `HEAT_QUEUE`.
   - `step_fx(&FxTick)`: `on_tick`'s entities and colour part for a tick
     described by hand (online play).
   - `restart(&world, &level, &theme)` for the same worms on a new world;
@@ -215,7 +230,14 @@ the same whatever the look); issue #40's
 explosion, at its place and the engine's size, none for the trail's many
 puffs), `explosion_heat_does_not_depend_on_the_frame_rate` (a frame
 every 1, 4 or 7 ticks queues the same deposits) and
-`only_a_level_whose_materials_heat_queues_heat` (issue #41: a distant layer's heating material too); `tests/net.rs`'s event keys leave an
+`only_a_level_whose_materials_heat_queues_heat` (issue #41: a distant layer's heating material too);
+issue #42's `a_projectiles_heat_warms_its_path_each_tick` (the flamer's
+flames: one deposit each a tick at its place, a path of many),
+`projectile_heat_does_not_depend_on_the_frame_rate_and_is_capped` (frames
+every 1, 4 or 7 ticks queue the same; every projectile at the caps heats
+64 a tick at 100 degrees, 16 px) and
+`explosion_heat_is_the_projectiles_else_the_mods` (`play_looked` gives the
+mod a look); `tests/net.rs`'s event keys leave an
 explosion's projectile out; `tests/no_alloc.rs`, its own binary, a warm
 lit build with every dynamic light, own and mod-wide explosion lights
 included, allocates nothing). They need

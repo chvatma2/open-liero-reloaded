@@ -17,7 +17,10 @@
 //! Issue #40: in a level whose surface materials heat, each explosion
 //! (`Scene::explosions`) leaves the engine's heat
 //! (`engine::explosion_heat`) once, the same way, queued with its tick's
-//! time for the renderer (`Presentation::upload`).
+//! time for the renderer (`Presentation::upload`). Issue #42: or its
+//! projectile look's `explosion_heat` (else the mod's), and each tick a
+//! projectile whose look has `heat` lives (`Scene::hot_projectiles`) leaves
+//! that tick's where it is, once.
 
 use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
@@ -36,6 +39,11 @@ pub type FlashKey = (usize, u32, usize, u64);
 /// gives again. A correction moving it leaves the heat where it first
 /// landed.
 pub type BlastKey = (u64, u16);
+
+/// A heating projectile's identity for a tick's heat (issue #42): the
+/// tick's time (ms), its slot and serial, which a re-simulated tick gives
+/// again.
+type WarmKey = (u64, usize, u32);
 
 /// The most heat deposits queued for the renderer between two uploads
 /// (reserved at the first): a host that never uploads drops the rest.
@@ -125,6 +133,8 @@ pub(crate) struct Dynamic {
     /// for the renderer (each with its tick's time, ms, in order) and the
     /// explosions the last frame queued.
     heated: Once<BlastKey>,
+    /// Issue #42: the heating projectiles' ticks whose heat was queued.
+    warmed: Once<WarmKey>,
     heat: Vec<(u64, HeatDeposit)>,
     blasts: Vec<BlastKey>,
     /// The engine's lights, made once: the muzzle's, and explosions' by size.
@@ -143,6 +153,7 @@ impl Dynamic {
         self.shot.clear();
         self.started.clear();
         self.heated.clear();
+        self.warmed.clear();
         self.heat.clear();
         self.blasts.clear();
     }
@@ -177,7 +188,8 @@ impl Dynamic {
     /// last frame (and clearing them). `skins`, the worms' looks, only in a
     /// level with a look (issue #12: a level without one has no darkness):
     /// each drawn worm's skin light, last. With `heats` (the level's
-    /// materials heat, issue #40) each explosion's heat is queued once.
+    /// materials heat, issue #40) each explosion's heat is queued once, and
+    /// (issue #42) each heating projectile's tick, in tick order.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn push(
         &mut self,
@@ -222,21 +234,45 @@ impl Dynamic {
             }
         }
         // Issue #40: each explosion's heat, once, at its tick's time: from
-        // the per-tick records, never the entities a frame may miss.
+        // the per-tick records, never the entities a frame may miss. Issue
+        // #42: its projectile's (or the mod's) explosion heat, else the
+        // engine's; merged in tick order with the heating projectiles'.
         self.blasts.clear();
-        for x in scene.explosions().iter().filter(|_| heats) {
-            let key = (x.at.0, x.index);
-            if let Some(h) = engine::explosion_heat(x.damage)
-                && self.heat.len() < HEAT_QUEUE
-                && self.heated.start(key, x.at.0 as f64, t_ms)
-            {
-                if self.heat.capacity() == 0 {
-                    self.heat.reserve_exact(HEAT_QUEUE);
-                }
-                let deposit = HeatDeposit { pos: [x.pos.x, x.pos.y], radius: h.radius, amount: h.amount };
-                self.heat.push((x.at.0, deposit));
-                if self.blasts.len() < HEAT_QUEUE {
+        let (blasts, hot) =
+            if heats { (scene.explosions(), scene.hot_projectiles()) } else { (&[][..], &[][..]) };
+        let (mut i, mut j) = (0, 0);
+        while i < blasts.len() || j < hot.len() {
+            if self.heat.len() == HEAT_QUEUE {
+                break;
+            }
+            if self.heat.capacity() == 0 {
+                self.heat.reserve_exact(HEAT_QUEUE);
+            }
+            let explosion = j == hot.len() || blasts.get(i).is_some_and(|x| x.at <= hot[j].at);
+            if explosion {
+                let x = &blasts[i];
+                i += 1;
+                let key = (x.at.0, x.index);
+                let h = match m.explosion_heat(x.proj) {
+                    Some(own) => own.heat(x.damage),
+                    None => engine::explosion_heat(x.damage),
+                };
+                if let Some(h) = h
+                    && self.heated.start(key, x.at.0 as f64, t_ms)
+                {
+                    let deposit = HeatDeposit { pos: [x.pos.x, x.pos.y], radius: h.radius, amount: h.amount };
+                    self.heat.push((x.at.0, deposit));
                     self.blasts.push(key);
+                }
+            } else {
+                let p = &hot[j];
+                j += 1;
+                if let Some(h) = m.heat(p.proj)
+                    && self.warmed.start((p.at.0, p.slot, p.serial), p.at.0 as f64, t_ms)
+                {
+                    let h = h.tick();
+                    let deposit = HeatDeposit { pos: [p.pos.x, p.pos.y], radius: h.radius, amount: h.amount };
+                    self.heat.push((p.at.0, deposit));
                 }
             }
         }
