@@ -153,6 +153,8 @@ lights' curve and no stacking; issue #12's
 `a_skin_light_follows_its_worm_in_its_colour`,
 `skin_lights_need_a_lit_level_and_the_switch` (glow overlays lit only),
 `skin_light_caps_hold_with_many_worms` (32 worms asking past the caps);
+issue #19's `a_projectiles_glowing_pixels_draw_bright_in_a_lit_match`
+(a glow mask's overlay over the missile at full self-light, lit only);
 issue #15's `a_projectile_explosion_light_replaces_the_engines` (a
 hand-made mod's bounce, timer and hit explosions in their projectile's
 light or the mod's, the engine's without either, the world's checksums

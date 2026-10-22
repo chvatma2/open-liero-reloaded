@@ -68,6 +68,9 @@ pub struct SceneAssets {
     /// `LaserSightColour1`, `LaserSightColour2`.
     pub laser_colours: [Rgba; 2],
     projectiles: Vec<Option<AtlasId>>,
+    /// Each image projectile's glowing pixels per strength (issue #19, by
+    /// `SimMod` index): `[k]` those of strength `k + 1` quarters.
+    projectile_glow: Vec<[Option<AtlasId>; GLOW_LEVELS]>,
     worms: Vec<WormLook>,
     /// Each worm's skin light (issue #12), by worm index.
     worm_lights: Vec<Option<SkinLights>>,
@@ -90,18 +93,30 @@ impl SceneAssets {
         let (crosshair, muzzle, hook) = (sprite("crosshair", 2), sprite("muzzle", 1), sprite("hook", 2));
         let (bonus, health) = (sprite("bonus", 2), sprite("health", 2));
         let skin = add("skin:placeholder", LoadedSkin::placeholder().colorized(Rgba::rgb(255, 255, 255)), 2);
-        let mut by_file: BTreeMap<&str, AtlasId> = BTreeMap::new();
+        type Glow = [Option<AtlasId>; GLOW_LEVELS];
+        let mut by_file: BTreeMap<&str, (AtlasId, Glow)> = BTreeMap::new();
         let mut projectiles = Vec::with_capacity(m.sim.projectiles().len());
+        let mut projectile_glow = Vec::with_capacity(m.sim.projectiles().len());
         for p in m.sim.projectiles() {
             let ProjectileGfx::Image { file, .. } = &p.def.gfx else {
                 projectiles.push(None);
+                projectile_glow.push([None; GLOW_LEVELS]);
                 continue;
             };
-            let id = *by_file.entry(file).or_insert_with(|| {
+            let (id, glow) = *by_file.entry(file).or_insert_with(|| {
                 let image = m.images.get(file).cloned().unwrap_or_else(|| placeholder_image(4, 4));
-                add(&format!("mod:{file}"), image, 2)
+                let id = add(&format!("mod:{file}"), image, 2);
+                // Issue #19: the image's glowing pixels, one image per strength.
+                let mut glow = [None; GLOW_LEVELS];
+                for (level, image) in m.glow_overlays(file) {
+                    if let Some(slot) = level.checked_sub(1).and_then(|k| glow.get_mut(k)) {
+                        *slot = Some(add(&format!("mod:{file}:glow{level}"), image, 2));
+                    }
+                }
+                (id, glow)
             });
             projectiles.push(Some(id));
+            projectile_glow.push(glow);
         }
         let colours = |keys: [(&str, Rgba); 2]| keys.map(|(k, d)| core.colour(k).unwrap_or(d));
         SceneAssets {
@@ -115,6 +130,7 @@ impl SceneAssets {
             rope_colours: colours(ROPE_COLOURS),
             laser_colours: colours(LASER_COLOURS),
             projectiles,
+            projectile_glow,
             worms: Vec::new(),
             worm_lights: Vec::new(),
             default_look: WormLook {
@@ -176,6 +192,13 @@ impl SceneAssets {
     /// index); `None` for pixel projectiles.
     pub fn projectile_image(&self, proj: usize) -> Option<AtlasId> {
         self.projectiles.get(proj).copied().flatten()
+    }
+
+    /// The glowing pixels of projectile type `proj`'s image per strength
+    /// (issue #19): `[k]` those of strength `k + 1` quarters, `None` where
+    /// none glow (and for pixel projectiles and unknown types).
+    pub fn projectile_glow(&self, proj: usize) -> [Option<AtlasId>; GLOW_LEVELS] {
+        self.projectile_glow.get(proj).copied().unwrap_or([None; GLOW_LEVELS])
     }
 
     /// Worm `i`'s look; a worm without one gets a placeholder skin.

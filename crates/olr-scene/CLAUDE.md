@@ -87,7 +87,12 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   `worm_light(i, frame)` is the frame's `SkinFrameLight` and the skin
   light's reach (`LoadedSkin::frame_lights`, made once in `add_worm`).
   The body sits `BODY_OFFSET` (5, 4.5) world pixels up-left of the worm
-  whatever the layout. Unknown ids and missing images never panic.
+  whatever the layout. Issue #19: a mod image with a glow mask
+  (`LoadedMod::glow_overlays`) gets an atlas image per glow quarter
+  (`mod:<file>:glow<k>`, `projectile_glow(proj)`), which `draw_projectile`
+  draws over the sprite (same frame, place and size) in a lit match only
+  (`lit`), at `max(k × 25, the sprite's self-light)`; a sprite without a
+  mask draws as before. Unknown ids and missing images never panic.
 - **Interpolation** (`snapshot.rs`, Review Focus 1): `Interpolation::Linear`
   blends positions at sub-pixel precision, never across a projectile serial
   change (slot reuse), a death or a respawn (`worm_blends`: alive flag and

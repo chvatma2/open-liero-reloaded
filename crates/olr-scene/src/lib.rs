@@ -327,7 +327,7 @@ impl Scene {
             if let Some(def) = m.projectiles().get(p.proj) {
                 let at = blend.snap(projectiles.pos(slot, p));
                 let shade = self.shades.as_ref().map_or(Shade::LIT, |r| r.projectile(p.proj));
-                draw_projectile(def, p, at, world.rot_bumped(p.proj), assets, view, shade, out);
+                draw_projectile(def, p, at, world.rot_bumped(p.proj), assets, view, shade, lit, out);
                 if lit {
                     let (serial, spawn_time) = (p.serial(), p.spawn_time);
                     self.drawn.push(DrawnProjectile { slot, serial, proj: p.proj, pos: at, spawn_time });

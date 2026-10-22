@@ -84,7 +84,9 @@ pub fn frame_x(framestep: f32, size: u32, image_w: u32) -> u32 {
 }
 
 /// One projectile at its drawn position `p` (snapped when exact), with
-/// `shade` (a lit match's, else [`Shade::LIT`]).
+/// `shade` (a lit match's, else [`Shade::LIT`]). In a lit match (`lit`) an
+/// image's glowing pixels (issue #19) are drawn over it, the same frame,
+/// at their strength's self-light (or the sprite's, when that is more).
 ///
 /// OLX: src/common/CProjectile.cpp:227-300
 #[allow(clippy::too_many_arguments)]
@@ -96,6 +98,7 @@ pub fn draw_projectile(
     assets: &SceneAssets,
     view: View,
     shade: Shade,
+    lit: bool,
     out: &mut DrawList,
 ) {
     let inside = view.contains(at.x, at.y);
@@ -129,6 +132,19 @@ pub fn draw_projectile(
             let size = [src.w as f32 / s, dim];
             let tint = Rgba::rgb(255, 255, 255);
             out.sprite(Layer::Projectiles, Sprite { atlas: id, src, pos, size, flip: false, tint, shade });
+            if lit {
+                let glow = assets.projectile_glow(p.proj);
+                for (k, atlas) in glow.iter().enumerate() {
+                    if let Some(atlas) = *atlas {
+                        let self_light = (((k + 1) * 100 / glow.len()) as u8).max(shade.self_light);
+                        let shade = Shade { self_light, ..shade };
+                        out.sprite(
+                            Layer::Projectiles,
+                            Sprite { atlas, src, pos, size, flip: false, tint, shade },
+                        );
+                    }
+                }
+            }
         }
     }
 }

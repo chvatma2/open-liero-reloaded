@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-use olr_content::{Content, LoadedSkin, SandboxSetup, SpawnSpec, olx_level_id, olx_mod_id};
+use olr_content::{Content, LoadedMod, LoadedSkin, SandboxSetup, SpawnSpec, olx_level_id, olx_mod_id};
 use olr_data::skin::{MaskKind, SkinLight};
 use olr_look::{
     Ambient, Animation, GlowColour, GlowGroup, Grade, Key, LevelLook, Light, ModLook, ProjectileLook, Reach,
@@ -98,6 +98,26 @@ fn play_skinned(
     skin: &LoadedSkin,
     stride: i64,
     before: impl FnOnce(&mut Presentation),
+    each: impl FnMut(&mut Presentation, &World, &DrawList, i64),
+) {
+    let edit = |m: &mut LoadedMod| {
+        if let Some(look) = mod_look {
+            m.look = look;
+        }
+    };
+    play_modded(content, name, level_look, edit, skin, stride, before, each);
+}
+
+/// [`play_skinned`] with the mod changed by `edit` once loaded.
+#[allow(clippy::too_many_arguments)]
+fn play_modded(
+    content: &Content,
+    name: &str,
+    level_look: Option<LevelLook>,
+    edit: impl FnOnce(&mut LoadedMod),
+    skin: &LoadedSkin,
+    stride: i64,
+    before: impl FnOnce(&mut Presentation),
     mut each: impl FnMut(&mut Presentation, &World, &DrawList, i64),
 ) {
     let (sc, trace) = olr_scenario::load_fixture(&fixtures(), name).unwrap();
@@ -105,9 +125,7 @@ fn play_skinned(
     level.look = level_look;
     let theme = content.load_theme(&level.theme).unwrap();
     let mut m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();
-    if let Some(look) = mod_look {
-        m.look = look;
-    }
+    edit(&mut m);
     let setup = PresentSetup {
         core: content.core(),
         m: &m,
@@ -812,4 +830,51 @@ fn a_projectile_explosion_light_replaces_the_engines() {
     // The simulation is the same whatever the look.
     assert_eq!(sums, plain);
     assert_eq!(sums, explode(&content, ModLook::default()).1);
+}
+
+/// Issue #19: the bazooka's missile with a glow mask (every opaque pixel
+/// of its first frame's top half full, the rest none) draws its glowing
+/// pixels over the sprite at full self-light in a lit match, the same
+/// frame and place; unlit, nothing more is drawn.
+#[test]
+fn a_projectiles_glowing_pixels_draw_bright_in_a_lit_match() {
+    let Some(content) = content() else { return };
+    let skin = content.skin_or_default("olx-skin-default");
+    let file = "gfx/missile.png";
+    let edit = |m: &mut LoadedMod| {
+        let img = &m.images[file];
+        let (w, h) = (img.width(), img.height());
+        let mask =
+            (0..w * h).map(|i| if i / w < h / 2 && img.get(i % w, i / w).a != 0 { 255 } else { 0 }).collect();
+        m.glow.insert(file.into(), mask);
+    };
+    for lit in [true, false] {
+        let mut glowing = 0;
+        let level = lit.then(look);
+        play_modded(
+            &content,
+            BAZOOKA,
+            level,
+            edit,
+            &skin,
+            1,
+            |_| {},
+            |p, _, list, _| {
+                let all: Vec<_> = sprites(list, Layer::Projectiles).collect();
+                for (i, s) in all.iter().enumerate() {
+                    let name = &p.assets().image(s.atlas).name;
+                    if name.starts_with("mod:gfx/missile.png:glow") {
+                        assert!(lit, "an unlit match draws no glow");
+                        assert_eq!(name, "mod:gfx/missile.png:glow4");
+                        assert_eq!(s.shade.self_light, 100);
+                        let under = all[i - 1];
+                        assert_eq!(p.assets().image(under.atlas).name, "mod:gfx/missile.png");
+                        assert_eq!((under.src, under.pos, under.size), (s.src, s.pos, s.size));
+                        glowing += 1;
+                    }
+                }
+            },
+        );
+        assert_eq!(glowing > 10, lit, "{glowing}");
+    }
 }
