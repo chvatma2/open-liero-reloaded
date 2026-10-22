@@ -169,9 +169,29 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   1280 × 720 window); `section`/`tall_section` group widgets in
   `theme::section_frame` panels under a title (the title's id may label a
   picker); `form_row`/`form_check_row` put a name right-aligned in a
-  `FORM_LABEL`-wide column so a form's controls start on one line. A new
-  screen uses them: `tests/layout.rs` checks every sub-screen (the
-  options' four tabs each) is centred at 1280 × 720 and 3440 × 1440. Main
+  `FORM_LABEL`-wide column so a form's controls start on one line, or
+  the name on its own line over the control in a column under 450
+  points (`stacked`); `fit(ui, width)` is a field's or drop-down's
+  width, at most what is left; `fit_sliders` narrows the sliders.
+  **Every size fits** (issue #49): a screen stacks what stood side by
+  side below a width (each screen's `STACK_BELOW`/`NARROW`: Keys' table
+  a list per action, Local Play's and the lobby's map over the match and
+  players, the profiles' panels, the loadout editor's list over its
+  details, the Editor's lists as wrapping rows); `tall_enough` lays a
+  screen shorter than `MIN_HEIGHT` (480) out that tall in a scroll area
+  ("short window"), where `list_area` drops a list's own scroll area (it
+  scrolls with the screen; `short(ctx)`) and the Editor's tab scrolls on
+  its own; `dialog(ui, id, width, add)` gives a modal window
+  `dialog_width` (the window less `DIALOG_MARGIN`) and a scroll area as
+  tall as the window allows (the loadout editor, the bots' Advanced…;
+  the Keys capture and conflict use `dialog_width`). A new screen uses
+  them: `tests/layout.rs` checks every sub-screen (the
+  options' four tabs each) is centred at 1280 × 720 and 3440 × 1440;
+  `tests/fits.rs` that every screen, Options tab, dialog and in-match
+  panel fits at 320, 384 and 427 points, 1280 × 720 at scale 1, 4K and
+  3440 × 1440 (the in-match ones at the match's scale): every widget
+  across the window, every enabled control focused (accesskit) and then
+  whole in it, scrolled there by `follow_focus`. Main
   (`main.rs`, centred on its own), local play (`local_play.rs`, 1100
   wide: the Map panel (mod, level grid with
   thumbnails or a name-and-size placeholder), the Match panel
@@ -252,7 +272,9 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   the slots with ◀ ▶, Random, Done; driven by `MenuData::held`, the game's
   keys the app feeds, or the mouse; `MenuData::weapons` is the app's
   `WeaponMenu`) and the results (`results.rs`: `panel(ctx, results,
-  footer)` also serves the command line's games; Rematch or, for a
+  views, footer)` also serves the command line's games; its table is
+  `hud::table_within`, narrowed in a narrow window: monospace 11, a
+  smaller gap, names cut with "…"; Rematch or, for a
   replay, Watch again; Save replay, once a match (`replay_saved`: then
   "Saved"); Back to menu; `MenuData::results`; "Loading…" while a rematch
   starts; the table and the weapon slots scroll so the buttons stay on a
@@ -285,7 +307,11 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   drop-down (the keyboard's arrows still move the focus); A opens a
   list, A on an entry picks it and closes the list, B closes it, the
   focus back on the drop-down; `follow_focus(ui)` ends each scroll
-  area's content (egui scrolls to no focused widget); the focused
+  area's content (egui scrolls to no focused widget): while the pad
+  leads, or for `FOLLOW_PASSES` after the focus moved without a pointer
+  press (Tab, accesskit; issue #49), one area a pass scrolls the focused
+  widget into its clip, the innermost first, an outer one when the
+  inner one could not move it (nested areas otherwise fought); the focused
   widget is ringed (`theme::focus_ring`, `FOCUS`) while the pad leads
   (`active`: until a pointer press). Who (`who`): nobody in game unpaused
   (the game has the pads), on the weapon selection (`MenuData::held`
@@ -574,9 +600,14 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `paint.rs` (`show(ui, &view)`: the bar (and the side columns, opaque),
   then its parts, the log's newest line at the bottom, a long one
   wrapped; nothing fades; a worm without slots shows no weapon
-  rows; the scoreboard centred over the playfield; `table`). The weapon
+  rows; the scoreboard centred over the playfield; `table`, and
+  `table_within` for the results). The weapon
   selection, the pause menu and the results centre over the playfield
-  (`screens::playfield`). **Split screen** (issue #30, `split.rs`;
+  (`screens::playfield`); with two to four views (`MenuData::views`,
+  the app's `present.views()`) the pause menu and the results centre on
+  the whole window (`screens::panels_area`, issue #49;
+  `tests/fits.rs`' `split_screen_panels_centre_on_the_window`), and each
+  player's weapon selection over its own view. **Split screen** (issue #30, `split.rs`;
   `HudView::views`, a `ViewHud { worm, colour }` per view, two or more:
   the split layout, none or one: the solo HUD, unchanged):
   `SplitLayout::new(screen, count)` (2 to `MAX_VIEWS` 4, pure, sized by
@@ -720,8 +751,7 @@ ignored offline), `a_migrated_lobby_shows_host_controls`,
 3440 × 1440, 1280 × 720 at 3, and borderless 16:10 and 4:3 at UI scale
 3: the Host lost screen a centred column with every widget in the
 window; the migrated lobby's listing and host controls across the
-window; the lobby's setup panels still overflow a 320- or 384-point
-column), `the_lobbys_long_lines_wrap_in_a_narrow_window`
+window; the lobby's setup at 320 and 384 points: `tests/fits.rs`), `the_lobbys_long_lines_wrap_in_a_narrow_window`
 (1280 × 720 at 1, 2 and 3 pixels a point, 3440 × 1440 at 2),
 `the_longest_join_texts_and_turn_options_fit` (the same sizes, and
 borderless fullscreen on 16:10 and 4:3 desktops at UI scale 3, 384 and

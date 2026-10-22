@@ -2307,8 +2307,9 @@ Open items (deferred minors):
 - olr-cli's NT-2 exit wait is untested (a client maps no port).
 - A mapping whose answer was lost (silence, garbage) is not deleted; it
   lasts its lease (2 h at most) and points at our own port only.
-- The Video tab's rows overflow at 384 and 320 points (UI scale 3,
-  borderless 16:10 and 4:3), older than this plan.
+- ~~The Video tab's rows overflow at 384 and 320 points (UI scale 3,
+  borderless 16:10 and 4:3), older than this plan.~~ Fixed by issue #49
+  (its rows stack, the tab scrolls).
 - The benchmark gate (side task, d75269a): a regression of exactly about
   15 % can pass when one window measures under +10 %, and Windows-side
   load is invisible to `/proc/stat`.
@@ -2867,8 +2868,9 @@ Open items (deferred minors):
   migration (no 1-second window exceeds 24 KiB/s).
 - Task 8b: its determinism test covers one scenario and no stats; one
   interpolation step back remains at the resume hold's end.
-- Task 9: the lobby's setup panels overflow 320- and 384-point windows
-  (older than this plan; not at 4K or ultrawide).
+- ~~Task 9: the lobby's setup panels overflow 320- and 384-point windows
+  (older than this plan; not at 4K or ultrawide).~~ Fixed by issue #49
+  (the lobby stacks its setup over the players and the chat).
 - Task 10: the net-nat migration scenario's `relay_allocates` is satisfied
   before the crash (the post-migration `path: relayed` line is the real
   proof); the first successor's order relies on Docker's start latency; a
@@ -4838,10 +4840,11 @@ seats and play it split. As built:
   first pad no player has that presses a button (that press does
   nothing else). F5's rematch and the results' keep the lineup; leaving
   the match clears it.
-- **Not yet built:** the pause menu and the results stay centred over
-  the solo playfield's place (they are everyone's). `olr-cli gpu-bench
-  --views N` lays its views out in halves (top and bottom) or quarters
-  for the measurement only.
+- The pause menu and the results (the overlay's too) are everyone's:
+  with two to four views they centre on the whole window, solo over the
+  playfield as before (issue #49; `MenuData::views`, from
+  `present.views()`). `olr-cli gpu-bench --views N` lays its views out in
+  halves (top and bottom) or quarters for the measurement only.
 
 ## Surface materials (issue #37)
 
@@ -5297,6 +5300,43 @@ golden and the oracle are unchanged. As built, the builder's calls:
   nukes and Mine, or only the Flamer or Napalm) and the same frames on
   the levels without materials; they are not goldens. The playtest and
   the Big Nuke frame are in `docs/deferred-verification.md`.
+
+## Every screen fits (issue #49)
+
+No OLX counterpart (OLX's menus are a fixed 640 × 480). Every menu
+screen, Options tab, dialog and in-match panel fits a window at 320 and
+384 points (UI scale 3 in borderless fullscreen on 4:3 and 16:10
+desktops), 427 points (1280 × 720 at scale 3), 1280 × 720 at scale 1,
+4K and 3440 × 1440, the in-match panels at the match's scale (the 16:9
+frame's height). `olr-ui`'s `tests/fits.rs` checks it: every widget
+lies across the window, and every control, focused, scrolls whole into
+it. As built, the builder's calls:
+
+- **No redesign:** a wide window looks as before (every render golden
+  and HUD snapshot is unchanged). Below a width, a screen stacks what
+  stood side by side: a form row's name over its control (under 450
+  points), the Keys tab's table as a list per action (under 560),
+  Local Play's and the lobby's map over the match settings and the
+  players, chat last (under 640), the profiles' panels (under 700), the
+  loadout editor's list over its details (under 520).
+- **A short window scrolls the whole screen:** below 480 points tall a
+  screen is laid out 480 points tall in a scroll area, and a dialog
+  scrolls inside the window. Lists that have a scroll area of their own
+  (levels, skins, members, loadouts) lose it there and scroll with the
+  screen: a list a few rows tall inside a scrolling screen was hard to
+  use, and egui could not reliably show its rows. The Editor's tabs
+  scroll on their own there, as its page column hides its overflow.
+- **Scroll areas follow the focus** (`pad::follow_focus`): a keyboard's
+  Tab, a pad or an accessibility focus brings the control into every
+  scroll area holding it, the innermost first, one area a frame.
+  egui's own `scroll_to_me` (accessibility's ScrollIntoView) moves only
+  the innermost area; the mouse wheel passes to the outer area when the
+  inner one is at its end.
+- **The results' table narrows** in a narrow window (monospace 11, a
+  smaller gap, names cut with "…"); the HUD's (F1) is unchanged.
+- `olr-game`'s `finding` test now waits for the relay's stored games to
+  end before checking the Internet tab's status: under the whole
+  workspace's load the server's game came among them, a poll earlier.
 
 ## Kept OLX quirks
 

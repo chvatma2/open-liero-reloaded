@@ -164,6 +164,13 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 
 ### Fixed
 
+- Every menu screen, Options tab and dialog now fits the window at UI
+  scale 3 in fullscreen on 16:10 and 4:3 screens: the Video tab, Local
+  Play, the lobby, the profiles, Keys and the editors put side-by-side
+  panels one under the other, and a window too short for a screen
+  scrolls it. Keyboard and gamepad focus scroll every control into view.
+- In split screen the pause menu and the results sit at the window's
+  centre, not over the first player's view.
 - Each mod now plays with its own worm and rope physics, as in OpenLieroX.
   Modern Warfare 1.0 had been playing with Liero v1.0's gravity, jump and
   ninja rope; its worms now fall more slowly, jump higher and its rope pulls
