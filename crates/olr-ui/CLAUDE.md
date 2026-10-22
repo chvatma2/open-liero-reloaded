@@ -19,11 +19,13 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `update(UiAction) -> Vec<AppCommand>` (pure). `Screen` is G1's list
   plus `Replays`; `Screen::MENUS` are what Main opens, Back returns to
   Main. The app reports `MatchStarted` / `MatchFailed(why)` / `MatchOver`
-  after a `StartMatch(MatchOptions)`, `StartSandbox` or
+  after a `StartMatch(MatchOptions)` or
   `PlayReplay(path)`; until it answers, Start, Back and the menu buttons
   do nothing (no double matches); a failure returns to the screen it came
-  from (local play, Main, Replays) with the reason. `game()` says what
-  plays (`Game::{Match, Sandbox, Replay}`). A match starts on
+  from (local play, Replays) with the reason. `game()` says what
+  plays (`Game::{Match, Replay, Online}`). The main menu has no Sandbox
+  (issue #33: Local Play's Idle bots do it; the engine's sandbox is
+  olr-game's, for the editors' Play and the command line). A match starts on
   `WeaponSelect`: `ChooseWeapons { weapons, names }` (Done) emits
   `ArmPlayer(weapons)`, remembers the names in the selected profile
   (`SaveProfiles`) and goes in game. In game, Back toggles the pause
@@ -259,7 +261,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   from the pad that paused only, after Esc any; the weapon selection
   deaf; repeats and the stick's margin).
 - **Editor screen** (`screens/editor.rs`, plan 14c): Main's **Editor**
-  (between Sandbox and Profiles; `Screen::Editor`, in `MENUS`), three
+  (between Multiplayer and Profiles; `Screen::Editor`, in `MENUS`), three
   tabs, Level, Skin (issue #14) and Mod (issue #17). Level: the
   recoveries first ("Recover <name>" and Discard; a damaged one only
   Discard), New level (a form: Name, Width and Height 1..=4096, default

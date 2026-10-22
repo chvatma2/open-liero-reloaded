@@ -44,7 +44,7 @@
 //!   rematch on the next seed (the match over ends first, and the weapons
 //!   are chosen again) and whose Save replay keeps the match's replay.
 //!   Restart (F5) plays the game again in place: a Deathmatch's rematch
-//!   (same weapons), the sandbox or a replay from the start.
+//!   (same weapons) or a replay from the start.
 //! - **Bug reports** (issue #3): Main opens Report (`PrepareReport`: the
 //!   app gathers the automatic section); its Send is `SendReport`, which
 //!   the app sends off the UI thread. Nothing is sent otherwise.
@@ -134,8 +134,6 @@ pub enum UiAction {
     Back,
     /// Local play's Start, or the results' rematch.
     StartMatch,
-    /// The main menu's sandbox (the player and idle targets).
-    StartSandbox,
     /// The replays screen: play this file.
     PlayReplay(PathBuf),
     /// F5: the game again from the start (a Deathmatch's rematch).
@@ -172,7 +170,7 @@ pub enum UiAction {
     SetProfiles(Profiles),
     /// The loadout editor's own loadouts (issue #5).
     SetLoadouts(OwnLoadouts),
-    /// The app: the match or sandbox asked for is ready.
+    /// The app: the match or replay asked for is ready.
     MatchStarted,
     /// The app: it could not be started (missing or broken content).
     MatchFailed(String),
@@ -292,13 +290,11 @@ pub enum AppCommand {
     /// Build and start this Deathmatch (`olr_content::build_match`), then
     /// report [`UiAction::MatchStarted`] or [`UiAction::MatchFailed`].
     StartMatch(MatchOptions),
-    /// Start the sandbox, then report as for `StartMatch`.
-    StartSandbox,
     /// Play this replay, then report as for `StartMatch`.
     PlayReplay(PathBuf),
     /// Play the running game again from the start, in place.
     Restart,
-    /// Stop the match or sandbox playing.
+    /// Stop the match or replay playing.
     EndMatch,
     /// Pause or resume the match (the pause menu).
     SetPaused(bool),
@@ -401,7 +397,6 @@ pub enum AppCommand {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Game {
     Match,
-    Sandbox,
     Replay,
     /// A lobby's match (plan 10).
     Online,
@@ -597,14 +592,6 @@ impl UiState {
             }
             UiAction::PadPause => Vec::new(),
             UiAction::StartMatch => self.start_match(),
-            UiAction::StartSandbox => {
-                if self.screen != Screen::Main || self.play != Play::None {
-                    return Vec::new();
-                }
-                self.message = None;
-                self.play = Play::Starting { from: Screen::Main, game: Game::Sandbox };
-                vec![AppCommand::StartSandbox]
-            }
             UiAction::PlayReplay(path) => {
                 if self.screen != Screen::Replays || self.play != Play::None {
                     return Vec::new();

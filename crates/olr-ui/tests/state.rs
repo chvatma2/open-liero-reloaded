@@ -138,14 +138,6 @@ fn state_machine_navigates_and_emits_commands() {
     assert_eq!(ui.game(), None);
     assert!(ui.update(UiAction::Restart).is_empty());
 
-    // The sandbox starts from the main menu.
-    assert_eq!(ui.update(UiAction::StartSandbox), [AppCommand::StartSandbox]);
-    assert!(ui.update(UiAction::StartSandbox).is_empty());
-    ui.update(UiAction::MatchStarted);
-    assert_eq!(ui.screen(), Screen::InGame);
-    ui.update(UiAction::Back);
-    ui.update(UiAction::LeaveMatch);
-
     // Options: a change is applied and saved; the same values again do nothing.
     ui.update(UiAction::Open(Screen::Options));
     let mut video = ui.settings().video.clone();

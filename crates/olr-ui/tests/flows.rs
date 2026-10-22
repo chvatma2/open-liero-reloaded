@@ -137,9 +137,11 @@ pub(crate) fn starts(app: &App) -> Vec<&olr_content::MatchOptions> {
 #[test]
 fn main_to_local_play_to_match() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
-    for label in ["Local Play", "Sandbox", "Profiles", "Options", "Replays", "About", "Quit"] {
+    for label in ["Local Play", "Multiplayer", "Editor", "Profiles", "Options", "Replays", "About", "Quit"] {
         h.get_by_label(label);
     }
+    // Issue #33: Local Play's Idle bots took the sandbox's place.
+    assert!(h.query_by_label("Sandbox").is_none());
     h.get_by_label("Local Play").click();
     h.run();
     assert_eq!(h.state().ui.screen(), Screen::LocalPlay);

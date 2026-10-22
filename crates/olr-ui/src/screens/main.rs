@@ -1,6 +1,6 @@
 //! The main menu (OLX's `src/client/DeprecatedGUI/Menu_Main.cpp`, laid
-//! out anew): local play, the sandbox, the editor, profiles, options, replays,
-//! about, report a bug (when the build has a relay to send to) and quit;
+//! out anew): local play, multiplayer, the editor, profiles, options,
+//! replays, about, report a bug (when the build has a relay to send to) and quit;
 //! above them, when a newer release is offered, its notice (issue #4).
 
 use egui::{Button, Color32, RichText, Ui};
@@ -53,7 +53,6 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &MenuData, out: &mut Vec<
         };
         button(ui, "Local Play", UiAction::Open(Screen::LocalPlay));
         button(ui, "Multiplayer", UiAction::Open(Screen::Multiplayer));
-        button(ui, "Sandbox", UiAction::StartSandbox);
         button(ui, "Editor", UiAction::Open(Screen::Editor));
         button(ui, "Profiles", UiAction::Open(Screen::Profiles));
         button(ui, "Options", UiAction::Open(Screen::Options));

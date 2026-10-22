@@ -4,7 +4,7 @@
 //! what comes back ([`Outcome`]); everything else happens here, so it is
 //! tested headless (`tests/menu.rs`).
 //!
-//! A start (local play's Start, the sandbox, a replay) is loaded by
+//! A start (local play's Start, a replay) is loaded by
 //! [`Shell::poll`] after the frame that asked for it, so the menus show
 //! "Loading…" meanwhile; until then `UiState` ignores another start, Back
 //! and the menu buttons (plan 7 Review Focus 4). A start that fails (a
@@ -79,7 +79,7 @@ use olr_ui::{
 use crate::finding::Internet;
 use crate::net::{self, Net, SharedCache};
 use crate::session::{Driver, Session};
-use crate::setup::{self, Assets, EditedPlay, Game, PlayerLook, SandboxOptions};
+use crate::setup::{self, Assets, EditedPlay, Game, PlayerLook};
 use crate::video::{self, Overrides};
 
 mod editing;
@@ -125,15 +125,11 @@ pub enum Outcome {
 /// What to load.
 enum Launch {
     Match(Box<MatchOptions>),
-    Sandbox,
     Replay(PathBuf),
     /// An editor's Play (plan 14c; the mod editor's, issue #18): no replay
     /// is saved.
     Edited(Box<EditedPlay>),
 }
-
-/// The sandbox's idle targets when started from the menu.
-pub const SANDBOX_TARGETS: usize = 3;
 
 pub struct Shell {
     pub ui: UiState,
@@ -561,7 +557,6 @@ impl Shell {
     fn carry(&mut self, c: AppCommand, out: &mut Vec<Outcome>) {
         match c {
             AppCommand::StartMatch(o) => self.pending = Some(Launch::Match(Box::new(o))),
-            AppCommand::StartSandbox => self.pending = Some(Launch::Sandbox),
             AppCommand::PlayReplay(path) => self.pending = Some(Launch::Replay(path)),
             AppCommand::EndMatch => self.end(),
             AppCommand::EditLevel(_)
@@ -777,17 +772,6 @@ impl Shell {
         let root: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
         let mut assets = match launch {
             Launch::Match(o) => setup::load_match(&root, &o, &profile.skin_id)?,
-            Launch::Sandbox => {
-                let m = &self.ui.settings().gameplay.match_prefs;
-                let o = SandboxOptions {
-                    mod_id: String::new(),
-                    level_id: String::new(),
-                    seed: 1,
-                    targets: SANDBOX_TARGETS,
-                    bonuses: false,
-                };
-                setup::load(&root, &m.mod_id, &m.level_id, &profile.skin_id, o)?
-            }
             Launch::Replay(path) => {
                 log::info!("playing the replay {}", path.display());
                 setup::load_replay(&root, &path, &net::cache_dirs(self.store.cache_dir()))?

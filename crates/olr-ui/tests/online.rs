@@ -679,8 +679,10 @@ fn the_chat_field_in_game() {
     // A local game: no chat.
     let mut h = harness();
     let ui = &mut h.state_mut().ui;
-    ui.update(UiAction::StartSandbox);
+    ui.update(UiAction::Open(Screen::LocalPlay));
+    ui.update(UiAction::StartMatch);
     ui.update(UiAction::MatchStarted);
+    ui.update(UiAction::ChooseWeapons { weapons: [0; 5], names: vec![] });
     h.state_mut().data.ingame_chat = Some(String::new());
     settle(&mut h);
     assert_eq!(h.state().ui.screen(), Screen::InGame);
