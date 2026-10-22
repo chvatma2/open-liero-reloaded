@@ -104,7 +104,8 @@ impl JoinStep {
                     UiAction::LeaveSeat(seat)
                 });
             } else if !j.ready {
-                let by = i32::from(pressed & Action::Right.bit() != 0) - i32::from(pressed & Action::Left.bit() != 0);
+                let by = i32::from(pressed & Action::Right.bit() != 0)
+                    - i32::from(pressed & Action::Left.bit() != 0);
                 if by != 0 {
                     out.push(UiAction::StepProfile { seat, by });
                 }

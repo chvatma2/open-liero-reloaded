@@ -4,8 +4,8 @@
 //! bind; a pad's Start pausing; an options file from before seats.
 
 use olr_input::{
-    Action, Binding, Bindings, Button, Device, InputState, KeyCode, Mode, Need, PAD_OPTIONAL, PAD_PAUSE, PadEvent,
-    PadInput, RebindError, Resolve, Seat, SeatKind, Seats,
+    Action, Binding, Bindings, Button, Device, InputState, KeyCode, Mode, Need, PAD_OPTIONAL, PAD_PAUSE,
+    PadEvent, PadInput, RebindError, Resolve, Seat, SeatKind, Seats,
 };
 use olr_sim::Keys;
 

@@ -23,7 +23,10 @@ fn world_of(settings: SimSettings, slots: usize) -> World {
         World::test_new(settings, crate::mod_rt::tests::test_mod(), terrain, Vec::new(), AbsTime(0), 1);
     w.spawn_worm(200, 100);
     let slot = Slot { weapon: 0, charge: 1.0, reloading: false, last_fire: 0.0 };
-    w.set_loadout(0, &Loadout { slots: vec![slot; slots], current_weapon: 0, lives: -2, kills: 0, deaths: 0 });
+    w.set_loadout(
+        0,
+        &Loadout { slots: vec![slot; slots], current_weapon: 0, lives: -2, kills: 0, deaths: 0 },
+    );
     // Frames 0 and 1 run no physics step (`physics_steps_follow_the_two_clocks`).
     w.tick_new(&[Keys(0)]);
     w.tick_new(&[Keys(0)]);
