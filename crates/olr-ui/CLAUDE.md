@@ -55,12 +55,15 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `mouse` (`MouseSettings { enabled }`, issue #24): Options → Keys'
   "Mouse controls (experimental)" checkbox above the keys, off by default,
   with its one-line note (`screens::MOUSE_CONTROLS`, `MOUSE_NOTE`);
-  `SetMouseControls(on)` applies (`ApplyMouseControls`) and saves.
+  `SetMouseControls(on)` applies (`ApplyMouseControls`) and saves; on, the
+  Keys tab shows and rebinds mouse controls' own bindings (issue #25).
   `sanitize()` fixes out-of-range values and
   keys (`sanitize_bindings`: the `GAME_KEYS` Esc, F5, F2, F3 (the network
   panel), Tab, H and
-  PageUp/PageDown (a watched game's fast-forward) are dropped, then an
-  action left unreachable gets OLX's back), one warning each.
+  PageUp/PageDown (a watched game's fast-forward) are dropped from both
+  keyboard lists, then an action left unreachable in either mode gets its
+  defaults back: `Bindings::repair`; a file from before mouse bindings
+  gets #24's), one warning each.
   The master volume defaults to OLX's 70 %; the game plays `master * sfx`.
 - **Match preferences** (`match_prefs.rs`): mod (a fresh profile's is
   `DEFAULT_MOD`, issue #21: Liero v1.0 Reloaded, `olr-mod-liero-v1-reloaded`
@@ -176,11 +179,20 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `settings.gameplay`; the UI
   scale applies when its slider is released; `keys.rs` (in a scroll area:
   every `Action::ALL`, Strafe, Previous/Next weapon and Dig since #23): per action its
-  keys and gamepad inputs, each removable but the last of its device, "+"
+  inputs of each of the `olr_input::Mode`'s devices (`Mode::of(mouse
+  controls)`: Keyboard and Gamepad; with mouse controls on, issue #25,
+  `MOUSE_KEYS_NOTE` and Keyboard (`Bindings::mouse_keys`), Mouse and
+  Gamepad, `MOUSE_MADE` in the Keyboard and Mouse cells of Up, Down,
+  Select weapon and Strafe), each removable unless the mode's rule
+  refuses it (`Bindings::unbind` on a copy; the hover says why), "+"
   opens a capture (`MenuData::capture`, an `olr_input::Capture` the app
-  feeds), a key other actions have opens a dialog (move, refused when it
-  would leave one without; share; cancel), `GAME_KEYS` refused, browser
-  shortcuts pointed out, Reset to OLX's keys; a profile with its own keys
+  feeds; a mouse capture's box has no Cancel, a click being its input:
+  Esc, `Capture::cancelled`, closes it, as for the pad), an input other
+  actions have opens a dialog (move, refused when it
+  would leave one unreachable; share; cancel), `GAME_KEYS` refused, browser
+  shortcuts pointed out, Reset (`RESET_KEYS`: OLX's keys and pad inputs;
+  `RESET_MOUSE`: mouse controls' keys and mouse inputs; each leaves the
+  other's alone); a profile with its own keys
   is rebound there; while a capture is open egui hears no key: the
   capture has it alone), the pause menu (`ingame.rs`: Resume, Options,
   Quit to menu), the weapon selection (`weapon_select.rs`, over the level:
@@ -550,8 +562,10 @@ per test thread: parallel tests never read a file another writes),
 double-resolution skin's too, issue #12); its
 last part compares with `olr_scene::SceneAssets` when `OLR_CONTENT_DIR` is
 set; `tests/options.rs`: rebinding never leaves an action unreachable, the
-rebinding flow and the other sections through the widgets, game keys never
-bound, the capture swallowing its key, the download cache's Clear (disabled
+rebinding flow and the other sections through the widgets, mouse controls'
+rebinding flow (`the_keys_screen_rebinds_mouse_controls`) and an older
+file's repair (`an_options_file_from_before_mouse_bindings_is_repaired`),
+game keys never bound, the capture swallowing its key, the download cache's Clear (disabled
 with its reason; none), `options_edit_relays_and_unblock`, the finding
 settings sanitized (TURN entries, `port_mapping` on for an older file),
 `options_edit_turn_relays_and_port_mapping`,

@@ -18,8 +18,9 @@
 //!   sub-step, `World::substeps_ahead`).
 //! - **A and D** move with Strafe held by the controller; the dig gesture
 //!   and Dig pass through as pressed.
-//! - **The wheel**: one Previous or Next weapon press per notch, queued
-//!   [`WHEEL_QUEUE`] deep, each pressed once the last was read.
+//! - **The wheel**: one Previous or Next weapon press per notch bound to
+//!   them (by default up and down), queued [`WHEEL_QUEUE`] deep, each
+//!   pressed once the last was read.
 //! - **Look-ahead**: online the keys apply `ahead` ticks (the input delay)
 //!   after the newest predicted world, so [`LocalWorm`] replays the keys
 //!   the controller gave for the ticks between through a model of the
@@ -63,7 +64,8 @@ const WHEEL: u16 = Keys::PREV_WEAPON | Keys::NEXT_WEAPON;
 pub const MADE_UP: u16 = Keys::UP | Keys::DOWN | Keys::STRAFE;
 const OWNED: u16 = MADE_UP | Keys::CHANGE;
 
-/// A wheel notch: Previous (wheel up) or Next weapon (wheel down).
+/// A wheel notch that changes the weapon: Previous or Next (by default
+/// the wheel up and down; issue #25 rebinds them, `Bindings::mouse`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Notch {
     Previous,

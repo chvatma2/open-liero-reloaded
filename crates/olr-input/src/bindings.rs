@@ -1,6 +1,6 @@
 //! What each device input does: the simulation's 11 keys and Dig as
-//! [`Action`]s, and the [`Bindings`] from keyboard keys and gamepad inputs
-//! to them.
+//! [`Action`]s, and the [`Bindings`] from keyboard keys, gamepad inputs and
+//! (mouse controls) mouse inputs to them.
 
 use gilrs::{Axis, Button};
 use olr_sim::Keys;
@@ -77,14 +77,90 @@ impl Action {
     }
 }
 
-/// The keys mouse controls fix (issue #24): A and D move, Space jumps, S
-/// digs. The buttons and the wheel are [`crate::InputState::on_mouse`]'s.
+/// Mouse controls' default keys (issue #24, [`Bindings::mouse_keys`]): A
+/// and D move, Space jumps, S digs.
 pub const MOUSE_KEYS: [(Action, KeyCode); 4] = [
     (Action::Left, KeyCode::KeyA),
     (Action::Right, KeyCode::KeyD),
     (Action::Jump, KeyCode::Space),
     (Action::Dig, KeyCode::KeyS),
 ];
+
+/// Mouse controls' default mouse inputs (issue #24, [`Bindings::mouse`]):
+/// the left button shoots, the right one throws the rope, the wheel up
+/// selects the previous weapon, down the next.
+pub const MOUSE_BUTTONS: [(Action, MouseInput); 4] = [
+    (Action::Shoot, MouseInput::Left),
+    (Action::Rope, MouseInput::Right),
+    (Action::PreviousWeapon, MouseInput::WheelUp),
+    (Action::NextWeapon, MouseInput::WheelDown),
+];
+
+/// The actions mouse controls press themselves (issue #24): the aim (Up,
+/// Down), and Strafe (A and D move without turning; the cursor turns the
+/// worm). SelectWeapon goes unused (the wheel changes the weapon). They
+/// take no key or mouse input in mouse mode.
+pub const MOUSE_MADE: [Action; 4] = [Action::Up, Action::Down, Action::SelectWeapon, Action::Strafe];
+
+/// A mouse input mouse controls can bind (issue #25): a button, or a
+/// notch of the wheel one way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MouseInput {
+    Left,
+    Right,
+    Middle,
+    /// The side button winit calls `Back`.
+    Back,
+    /// The side button winit calls `Forward`.
+    Forward,
+    /// A notch of the wheel up (away from the player).
+    WheelUp,
+    /// A notch of the wheel down.
+    WheelDown,
+}
+
+impl MouseInput {
+    pub const ALL: [MouseInput; 7] = [
+        MouseInput::Left,
+        MouseInput::Right,
+        MouseInput::Middle,
+        MouseInput::Back,
+        MouseInput::Forward,
+        MouseInput::WheelUp,
+        MouseInput::WheelDown,
+    ];
+
+    /// The button winit reports, if it is one of these.
+    pub fn of_button(b: winit::event::MouseButton) -> Option<MouseInput> {
+        use winit::event::MouseButton as B;
+        Some(match b {
+            B::Left => MouseInput::Left,
+            B::Right => MouseInput::Right,
+            B::Middle => MouseInput::Middle,
+            B::Back => MouseInput::Back,
+            B::Forward => MouseInput::Forward,
+            B::Other(_) => return None,
+        })
+    }
+
+    /// A notch of the wheel, not a button: pressed for one tick, never held.
+    pub fn is_wheel(self) -> bool {
+        matches!(self, MouseInput::WheelUp | MouseInput::WheelDown)
+    }
+
+    /// The name the options show.
+    pub fn name(self) -> &'static str {
+        match self {
+            MouseInput::Left => "Left click",
+            MouseInput::Right => "Right click",
+            MouseInput::Middle => "Middle click",
+            MouseInput::Back => "Back button",
+            MouseInput::Forward => "Forward button",
+            MouseInput::WheelUp => "Wheel up",
+            MouseInput::WheelDown => "Wheel down",
+        }
+    }
+}
 
 /// A gamepad input that can be held: a button (analog ones, the triggers,
 /// count from [`TRIGGER_THRESHOLD`]) or one direction of an axis (from
@@ -108,16 +184,25 @@ pub const STICK_THRESHOLD: f32 = 0.6;
 
 /// Keyboard keys (winit physical key codes, spec §8.5, so a binding means
 /// the same place on any layout) and gamepad inputs, each bound to an
-/// action. Several inputs may share an action; the action is held while
-/// any of them is. Serialisable for the options (M7).
+/// action, and mouse controls' own keys and mouse inputs (issue #25).
+/// Several inputs may share an action; the action is held while any of
+/// them is. Serialisable for the options (M7).
 ///
-/// A file may leave either list out: it takes OLX's (`#[serde(default)]`);
+/// A file may leave any list out: it takes the defaults
+/// (`#[serde(default)]`, so a file from before mouse bindings gets #24's);
 /// [`Bindings::repair`] restores what leaves an action unreachable.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Bindings {
+    /// The keyboard, mouse controls off.
     pub keys: Vec<(Action, KeyCode)>,
+    /// The gamepad, in either mode.
     pub pad: Vec<(Action, PadInput)>,
+    /// The keyboard with mouse controls on, in place of `keys` (so
+    /// turning them off finds `keys` untouched); never of [`MOUSE_MADE`].
+    pub mouse_keys: Vec<(Action, KeyCode)>,
+    /// The mouse, with mouse controls on; never of [`MOUSE_MADE`].
+    pub mouse: Vec<(Action, MouseInput)>,
 }
 
 impl Default for Bindings {
@@ -128,7 +213,8 @@ impl Default for Bindings {
 }
 
 impl Bindings {
-    /// OLX's player 1 defaults (non-Apple): arrows, Shoot `LCtrl`, Jump
+    /// OLX's player 1 defaults (non-Apple), and mouse controls' (issue #24,
+    /// [`MOUSE_KEYS`], [`MOUSE_BUTTONS`]): arrows, Shoot `LCtrl`, Jump
     /// `LAlt`, Rope `X`, SelectWeapon `LShift`, Strafe `Z`, Previous/Next
     /// weapon `A`/`S`; on the pad, the d-pad, Shoot right trigger, Jump A
     /// (south), Rope Y (north), SelectWeapon left trigger.
@@ -178,20 +264,19 @@ impl Bindings {
             (NextWeapon, PadInput::Button(Button::RightTrigger)),
             (Dig, PadInput::Button(Button::East)),
         ];
-        Bindings { keys, pad }
+        Bindings { keys, pad, mouse_keys: MOUSE_KEYS.to_vec(), mouse: MOUSE_BUTTONS.to_vec() }
     }
 
-    /// The bindings mouse controls play with (issue #24): these, without
-    /// the actions the controller presses itself (Up, Down, SelectWeapon,
-    /// Strafe) and without any binding of [`MOUSE_KEYS`], which are added.
+    /// The bindings mouse controls play with (issue #24, #25): the keys
+    /// are [`Bindings::mouse_keys`], the mouse [`Bindings::mouse`], the
+    /// gamepad's [`Bindings::pad`], all without [`MOUSE_MADE`]'s actions,
+    /// which the controller presses itself.
     pub fn for_mouse(&self) -> Bindings {
-        use Action::*;
-        let unused = |a: &Action| matches!(a, Up | Down | SelectWeapon | Strafe);
-        let fixed = |k: &KeyCode| MOUSE_KEYS.iter().any(|(_, f)| f == k);
-        let keys =
-            self.keys.iter().filter(|(a, k)| !unused(a) && !fixed(k)).copied().chain(MOUSE_KEYS).collect();
-        let pad = self.pad.iter().filter(|(a, _)| !unused(a)).copied().collect();
-        Bindings { keys, pad }
+        let used = |a: &Action| !MOUSE_MADE.contains(a);
+        let keys = self.mouse_keys.iter().filter(|(a, _)| used(a)).copied().collect();
+        let pad = self.pad.iter().filter(|(a, _)| used(a)).copied().collect();
+        let mouse = self.mouse.iter().filter(|(a, _)| used(a)).copied().collect();
+        Bindings { keys, pad, mouse_keys: Vec::new(), mouse }
     }
 
     /// The [`Keys`] bits (and [`DIG`]) the held keyboard keys set.
@@ -204,24 +289,42 @@ impl Bindings {
         self.pad.iter().filter(|(_, p)| held(*p)).fold(0, |b, (a, _)| b | a.bit())
     }
 
+    /// The [`Keys`] bits (and [`DIG`]) the held mouse inputs set.
+    pub fn mouse_bits(&self, held: &[MouseInput]) -> u16 {
+        self.mouse.iter().filter(|(_, m)| held.contains(m)).fold(0, |b, (a, _)| b | a.bit())
+    }
+
     /// The bound keys that, pressed together, make a shortcut a browser keeps
     /// for itself ([`is_browser_reserved`]): pairs (and single keys) in
-    /// binding order. Spec §8.5: the defaults have none.
+    /// binding order, of [`Bindings::keys`] and then of
+    /// [`Bindings::mouse_keys`] (never pressed with them). Spec §8.5: the
+    /// defaults have none.
     pub fn browser_conflicts(&self) -> Vec<Vec<KeyCode>> {
-        let keys: Vec<KeyCode> = self.keys.iter().map(|(_, k)| *k).collect();
-        let mut out = Vec::new();
-        for (i, a) in keys.iter().enumerate() {
-            if is_browser_reserved(&[*a]) {
-                out.push(vec![*a]);
-            }
-            for b in &keys[i + 1..] {
-                if a != b && is_browser_reserved(&[*a, *b]) {
-                    out.push(vec![*a, *b]);
-                }
+        let mut out = conflicts(&self.keys);
+        for c in conflicts(&self.mouse_keys) {
+            if !out.contains(&c) {
+                out.push(c);
             }
         }
         out
     }
+}
+
+/// [`Bindings::browser_conflicts`] of one list.
+fn conflicts(list: &[(Action, KeyCode)]) -> Vec<Vec<KeyCode>> {
+    let keys: Vec<KeyCode> = list.iter().map(|(_, k)| *k).collect();
+    let mut out = Vec::new();
+    for (i, a) in keys.iter().enumerate() {
+        if is_browser_reserved(&[*a]) {
+            out.push(vec![*a]);
+        }
+        for b in &keys[i + 1..] {
+            if a != b && is_browser_reserved(&[*a, *b]) {
+                out.push(vec![*a, *b]);
+            }
+        }
+    }
+    out
 }
 
 /// Whether holding `keys` together makes a shortcut that browsers handle

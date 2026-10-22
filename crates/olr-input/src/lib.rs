@@ -1,4 +1,4 @@
-//! Keyboard and gamepad input for one player, turned into the simulation's
+//! Keyboard, gamepad and mouse input for one player, turned into the simulation's
 //! [`Keys`](olr_sim::Keys) once per tick (spec §8.5, §19 E5), with a Dig
 //! action that presses the dig gesture.
 //!
@@ -16,12 +16,13 @@
 #![forbid(unsafe_code)]
 
 pub use bindings::{
-    Action, Bindings, DIG, MOUSE_KEYS, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD, is_browser_reserved,
+    Action, Bindings, DIG, MOUSE_BUTTONS, MOUSE_KEYS, MOUSE_MADE, MouseInput, PadInput, STICK_THRESHOLD,
+    TRIGGER_THRESHOLD, is_browser_reserved,
 };
 pub use dig::DIG_REPEAT_TICKS;
 pub use latch::TickLatch;
 pub use mouse::{LocalWorm, MouseController, Notch};
-pub use rebind::{Binding, Capture, Device, RebindError, Resolve, key_name};
+pub use rebind::{Binding, Capture, Device, Mode, Need, RebindError, Resolve, key_name};
 pub use state::{InputState, NOTCH_PIXELS, PadEvent};
 
 /// Re-exported for building [`Bindings`].

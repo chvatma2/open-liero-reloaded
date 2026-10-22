@@ -97,18 +97,22 @@ pub const GAME_KEYS: [(KeyCode, &str); 8] = [
 ];
 
 /// Makes bindings from a file or a widget usable: the [`GAME_KEYS`] are
-/// dropped (a hand-edited file may bind them), then every action left
-/// without a key or pad input gets OLX's back (`Bindings::repair`). One
+/// dropped from either keyboard list (a hand-edited file may bind them),
+/// then every action left unreachable in either mode gets its defaults
+/// back (`Bindings::repair`: OLX's key or pad input, mouse controls' key
+/// or mouse input; a file from before mouse bindings has #24's). One
 /// warning per fix.
 pub fn sanitize_bindings(b: &mut Bindings) -> Vec<String> {
     let mut w = Vec::new();
-    b.keys.retain(|&(a, k)| match GAME_KEYS.iter().find(|(g, _)| *g == k) {
-        Some((_, what)) => {
-            w.push(format!("{} is the game's ({what}): unbound from {}", key_name(k), a.name()));
-            false
-        }
-        None => true,
-    });
+    for keys in [&mut b.keys, &mut b.mouse_keys] {
+        keys.retain(|&(a, k)| match GAME_KEYS.iter().find(|(g, _)| *g == k) {
+            Some((_, what)) => {
+                w.push(format!("{} is the game's ({what}): unbound from {}", key_name(k), a.name()));
+                false
+            }
+            None => true,
+        });
+    }
     w.extend(b.repair());
     w
 }

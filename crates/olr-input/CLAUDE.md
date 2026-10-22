@@ -1,6 +1,6 @@
 # olr-input
 
-Keyboard and gamepad input for one player, turned into the simulation's 11
+Keyboard, gamepad and mouse input for one player, turned into the simulation's 11
 `Keys` once per tick (spec §8.5, §19 E5; presentation note §10).
 
 - **Layer 5, uses `std`.** Depends on `olr-sim` (`Keys`, `World` for the
@@ -19,17 +19,33 @@ Keyboard and gamepad input for one player, turned into the simulation's 11
   bumpers (`LeftTrigger`/`RightTrigger`), Dig East (OLX binds no pad input
   to the new four). Several inputs may share an action. Serde for M7's options.
   `browser_conflicts()` / `is_browser_reserved` flag bound keys that form
-  a shortcut browsers keep (Ctrl+W, ...); the defaults have none.
-  `#[serde(default)]`: a file without `keys` or `pad` takes OLX's.
-- **Rebinding** (`rebind.rs`, plan 7 Review Focus 2): `Binding` (a key or
-  a `PadInput`) of a `Device`; `of(action, device)`, `actions_of(input)`,
-  `unreachable()`; `bind(action, input, Resolve::{Share, Move})` and
-  `unbind` refuse (`RebindError::Unreachable`, nothing changed) any step
-  that leaves an action without a key or without a gamepad input;
-  `repair()` gives a file's unreachable actions OLX's defaults back (one
+  a shortcut browsers keep (Ctrl+W, ...; each keyboard list on its own);
+  the defaults have none. Mouse controls' own lists (issue #25):
+  `mouse_keys` (their keyboard, in place of `keys`, default `MOUSE_KEYS`)
+  and `mouse` (`MouseInput`: Left, Right, Middle, Back, Forward buttons,
+  WheelUp, WheelDown; default `MOUSE_BUTTONS`), never of `MOUSE_MADE`
+  (Up, Down, SelectWeapon, Strafe: the controller's); `mouse_bits`.
+  `#[serde(default)]`: a file without a list takes the default (OLX's,
+  #24's for the mouse lists).
+- **Rebinding** (`rebind.rs`, plan 7 Review Focus 2; issue #25): `Binding`
+  (a key, a `PadInput` or a `MouseInput`) of a `Device` (Keyboard,
+  Gamepad, Mouse), in a `Mode` (`Keys`, or `Mouse`: mouse controls; its
+  Keyboard is `mouse_keys`, the pad list is shared; `Mode::devices`, the
+  options' columns; `Mode::binds(action, device)`); `of(mode, action,
+  device)`, `actions_of(mode, input)`, `unreachable()` (both modes' gaps,
+  `(Action, Need)`: `Need::Key` and `PadInput` mouse controls off, every
+  action; `KeyOrMouse` with them on, every action but `MOUSE_MADE`'s);
+  `bind(mode, action, input, Resolve::{Share, Move})` and `unbind` refuse
+  (`RebindError::Unreachable { action, need }`, nothing changed) any step
+  that leaves an action unreachable, and `bind` a key or mouse input for
+  `MOUSE_MADE`'s in mouse mode or the mouse with it off
+  (`NotBindable`); `repair()` drops `MOUSE_MADE`'s from the mouse lists
+  and gives unreachable actions their defaults back (OLX's, #24's; one
   warning each). `Capture::new(device)` is the options' "press a key" box:
   fed window and gilrs events, it keeps the first press (modifiers too; a
-  trigger or stick past its threshold). `key_name` and `Binding`'s
+  trigger or stick past its threshold; a mouse button, or a whole wheel
+  notch counted as `InputState` counts them); Esc, for a pad or mouse
+  capture, sets `cancelled()`. `key_name` and `Binding`'s
   `Display` are the names the options show; `Action::name()` OLX's.
 - **Thresholds:** a trigger from 75 % of its travel, a stick from 60 %
   (OLX's `CInput`). Only gilrs's `ButtonChanged` (sent for every button)
@@ -53,12 +69,15 @@ Keyboard and gamepad input for one player, turned into the simulation's 11
 - **Mouse controls** (`mouse.rs`, issue #24, experimental): the mouse
   never reaches the simulation; `MouseController` turns it into the keys
   a key player could press each tick. `InputState::set_mouse_controls`
-  plays with `Bindings::for_mouse` (the player's bindings without Up,
-  Down, SelectWeapon and Strafe, and without anything on `MOUSE_KEYS`: A
-  and D Left and Right, Space Jump, S Dig); `on_mouse` (the caller passes
-  mouse events only while the game has the pointer): left button Shoot,
-  right Rope (latched like keys), the wheel a notch per line (pixel
-  deltas one per `NOTCH_PIXELS`), up Previous, down Next weapon;
+  plays with `Bindings::for_mouse` (`mouse_keys`, `mouse` and `pad`
+  without `MOUSE_MADE`'s; by default A and D Left and Right, Space Jump,
+  S Dig; off, `keys` again, untouched); `on_mouse` (the caller passes
+  mouse events only while the game has the pointer): the buttons through
+  `mouse` (latched like keys; by default left Shoot, right Rope), the
+  wheel a notch per line (pixel deltas one per `NOTCH_PIXELS`, at most
+  `WHEEL_QUEUE` an event): a notch's Previous/Next weapon go to the
+  controller's queue (by default up Previous, down Next), its other
+  actions are pressed and released at once (a tick's tap);
   `latch_tick_for(local, cursor)` gives the controller the local worm
   (`LocalWorm::of(world, worm, ahead)`: its state, latches and the next
   ticks' sub-steps from `World::substeps_ahead`/`latches`) and the

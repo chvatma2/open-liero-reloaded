@@ -5,7 +5,7 @@ use olr_sim::Keys;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-use crate::bindings::{Bindings, DIG, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD};
+use crate::bindings::{Bindings, DIG, MouseInput, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD};
 use crate::dig::Dig;
 use crate::latch::TickLatch;
 use crate::mouse::{LocalWorm, MADE_UP, MouseController, Notch};
@@ -62,10 +62,13 @@ pub struct InputState {
 /// Mouse mode's own state: the buttons, the wheel, the controller.
 #[derive(Clone, Debug, Default)]
 struct Mouse {
-    /// Shoot (left button) and Rope (right) while held.
-    buttons: u16,
+    /// The buttons held now (bound or not).
+    buttons: Vec<MouseInput>,
     /// The wheel's turn not yet a whole notch, in notches (up positive).
     wheel: f32,
+    /// A notch's bits pressed and released at once (not the weapon
+    /// changes, which the controller presses).
+    tap: u16,
     controller: MouseController,
 }
 
@@ -99,11 +102,14 @@ impl InputState {
     }
 
     /// Turns mouse controls (issue #24) on or off; everything held is
-    /// released and the controller starts afresh. In mouse mode A and D
-    /// move (Strafe made by the controller), Space jumps, S digs, the left
-    /// button shoots, the right one throws the rope, the wheel changes the
-    /// weapon ([`InputState::on_mouse`]), and the controller aims and
-    /// turns the worm ([`InputState::latch_tick_for`]).
+    /// released and the controller starts afresh. In mouse mode the keys
+    /// are [`Bindings::mouse_keys`] and the mouse [`Bindings::mouse`]
+    /// (issue #25; by default A and D move, Strafe made by the controller,
+    /// Space jumps, S digs, the left button shoots, the right one throws
+    /// the rope, the wheel changes the weapon: [`InputState::on_mouse`]),
+    /// and the controller aims and turns the worm
+    /// ([`InputState::latch_tick_for`]). Off, the keys are
+    /// [`Bindings::keys`] again, untouched.
     pub fn set_mouse_controls(&mut self, on: bool) {
         if on == self.mouse.is_some() {
             return;
@@ -128,9 +134,9 @@ impl InputState {
     }
 
     /// A winit window event of the mouse, in mouse mode (the caller passes
-    /// them while the game has the pointer): the left and right buttons,
-    /// the wheel (line deltas a notch each; a touchpad's pixel deltas a
-    /// notch every [`NOTCH_PIXELS`]). Nothing otherwise.
+    /// them while the game has the pointer): the buttons, the wheel (line
+    /// deltas a notch each; a touchpad's pixel deltas a notch every
+    /// [`NOTCH_PIXELS`]), through [`Bindings::mouse`]. Nothing otherwise.
     pub fn on_mouse(&mut self, ev: &WindowEvent) {
         match *ev {
             WindowEvent::MouseInput { state, button, .. } => {
@@ -146,23 +152,24 @@ impl InputState {
 
     /// Mouse button `button` went down or up (mouse mode).
     pub fn on_mouse_button(&mut self, button: MouseButton, down: bool) {
-        let Some(m) = &mut self.mouse else { return };
-        let bit = match button {
-            MouseButton::Left => Keys::FIRE,
-            MouseButton::Right => Keys::ROPE,
+        let (Some(m), Some(input)) = (&mut self.mouse, MouseInput::of_button(button)) else { return };
+        let at = m.buttons.iter().position(|b| *b == input);
+        match (down, at) {
+            (true, None) => m.buttons.push(input),
+            (false, Some(i)) => {
+                m.buttons.swap_remove(i);
+            }
             _ => return,
-        };
-        if down {
-            m.buttons |= bit;
-        } else {
-            m.buttons &= !bit;
         }
         self.update();
     }
 
     /// The wheel turned `notches` (up positive; whole ones are notches,
-    /// the rest waits for more the same way). Up selects the previous
-    /// weapon, down the next (mouse mode).
+    /// the rest waits for more the same way), in mouse mode: each notch
+    /// presses what [`MouseInput::WheelUp`] or `WheelDown` is bound to,
+    /// for a tick. The weapon changes wait in the controller's queue
+    /// ([`MouseController::notch`]) until the simulation can read them;
+    /// the rest is a press and release at once, latched like a click.
     pub fn on_wheel(&mut self, notches: f32) {
         let Some(m) = &mut self.mouse else { return };
         if !notches.is_finite() {
@@ -171,21 +178,48 @@ impl InputState {
         if m.wheel * notches < 0.0 {
             m.wheel = 0.0;
         }
-        m.wheel += notches;
+        // More than the controller's queue holds would be dropped anyway.
+        let most = crate::mouse::WHEEL_QUEUE as f32;
+        m.wheel = (m.wheel + notches).clamp(-most, most);
+        let mut notches = Vec::new();
         while m.wheel >= 1.0 {
             m.wheel -= 1.0;
-            m.controller.notch(Notch::Previous);
+            notches.push(MouseInput::WheelUp);
         }
         while m.wheel <= -1.0 {
             m.wheel += 1.0;
+            notches.push(MouseInput::WheelDown);
+        }
+        for n in notches {
+            self.notch(n);
+        }
+    }
+
+    /// One notch of the wheel.
+    fn notch(&mut self, input: MouseInput) {
+        let bits = self.active.mouse_bits(&[input]);
+        let Some(m) = &mut self.mouse else { return };
+        if bits & Keys::PREV_WEAPON != 0 {
+            m.controller.notch(Notch::Previous);
+        }
+        if bits & Keys::NEXT_WEAPON != 0 {
             m.controller.notch(Notch::Next);
+        }
+        let tap = bits & !(Keys::PREV_WEAPON | Keys::NEXT_WEAPON);
+        if tap != 0 {
+            m.tap = tap;
+            self.update();
+            if let Some(m) = &mut self.mouse {
+                m.tap = 0;
+            }
+            self.update();
         }
     }
 
     /// Releases the mouse buttons (the game lost the pointer).
     pub fn release_mouse(&mut self) {
         if let Some(m) = &mut self.mouse {
-            m.buttons = 0;
+            m.buttons.clear();
             m.wheel = 0.0;
             self.update();
         }
@@ -306,7 +340,7 @@ impl InputState {
     fn update(&mut self) {
         let keys = self.active.key_bits(&self.keys);
         let pad = self.active.pad_bits(|p| self.pad.iter().any(|(_, q)| *q == p));
-        let buttons = self.mouse.as_ref().map_or(0, |m| m.buttons);
-        self.latch.set(keys | pad | buttons);
+        let mouse = self.mouse.as_ref().map_or(0, |m| self.active.mouse_bits(&m.buttons) | m.tap);
+        self.latch.set(keys | pad | mouse);
     }
 }

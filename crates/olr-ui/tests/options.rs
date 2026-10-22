@@ -6,7 +6,8 @@ use egui::accesskit::Role;
 use egui_kittest::Harness;
 use egui_kittest::kittest::{NodeT, Queryable};
 use olr_input::{
-    Action, Binding, Bindings, Button, Device, KeyCode, PadEvent, PadInput, RebindError, Resolve,
+    Action, Binding, Bindings, Button, Device, KeyCode, MOUSE_BUTTONS, MOUSE_KEYS, Mode, MouseInput,
+    PadEvent, PadInput, RebindError, Resolve,
 };
 use olr_ui::screens::{self, MenuData};
 use olr_ui::{
@@ -16,6 +17,9 @@ use olr_ui::{
 
 const KB: Device = Device::Keyboard;
 const PAD: Device = Device::Gamepad;
+const MOUSE: Device = Device::Mouse;
+const K: Mode = Mode::Keys;
+const M: Mode = Mode::Mouse;
 
 /// Every action can be pressed with one key alone, and with one pad input.
 fn controllable(b: &Bindings) -> bool {
@@ -67,9 +71,9 @@ fn rebinding_never_leaves_an_action_unreachable() {
         let input = inputs[rng.next(inputs.len())];
         let before = b.clone();
         let r = match rng.next(3) {
-            0 => b.bind(action, input, Resolve::Share),
-            1 => b.bind(action, input, Resolve::Move).inspect(|_| moved += 1),
-            _ => b.unbind(action, input),
+            0 => b.bind(K, action, input, Resolve::Share),
+            1 => b.bind(K, action, input, Resolve::Move).inspect(|_| moved += 1),
+            _ => b.unbind(K, action, input),
         };
         if let Err(RebindError::Unreachable { .. }) = r {
             refused += 1;
@@ -88,7 +92,7 @@ fn rebinding_never_leaves_an_action_unreachable() {
     let out = ui.update(UiAction::SetBindings(broken));
     assert!(controllable(ui.bindings()));
     assert!(out.contains(&AppCommand::ApplyBindings(ui.bindings().clone())));
-    assert_eq!(ui.bindings().of(Action::Shoot, KB), [Binding::Key(KeyCode::ControlLeft)]);
+    assert_eq!(ui.bindings().of(K, Action::Shoot, KB), [Binding::Key(KeyCode::ControlLeft)]);
 
     // A hand-edited settings file: Shoot has no key and the pad section is
     // gone. It loads with Shoot's OLX key and OLX's pad, a warning, and the
@@ -100,8 +104,8 @@ fn rebinding_never_leaves_an_action_unreachable() {
     let got = Store::open(tmp.path()).load_settings();
     assert_eq!(got.value.video.window, WindowPreset::W1920x1080, "the rest of the file is kept");
     let input = &got.value.input;
-    assert_eq!(input.of(Action::Up, KB), [Binding::Key(KeyCode::KeyW)]);
-    assert_eq!(input.of(Action::Shoot, KB), [Binding::Key(KeyCode::ControlLeft)]);
+    assert_eq!(input.of(K, Action::Up, KB), [Binding::Key(KeyCode::KeyW)]);
+    assert_eq!(input.of(K, Action::Shoot, KB), [Binding::Key(KeyCode::ControlLeft)]);
     assert_eq!(input.pad, Bindings::olx().pad);
     assert!(got.warnings.iter().any(|w| w.contains("Shoot")), "{:?}", got.warnings);
     // The fixed file was saved: it loads again without a warning.
@@ -145,7 +149,7 @@ fn press(h: &mut Harness<'static, App>, key: KeyCode) {
 }
 
 fn keys(h: &Harness<'static, App>, action: Action) -> Vec<Binding> {
-    h.state().ui.bindings().of(action, KB)
+    h.state().ui.bindings().of(K, action, KB)
 }
 
 fn open_keys(h: &mut Harness<'static, App>) {
@@ -231,7 +235,7 @@ fn options_rebind_a_key() {
     h.state_mut().data.capture.as_mut().unwrap().on_pad(PadEvent::Button(Button::LeftThumb, 1.0));
     h.run();
     let west = Binding::Pad(PadInput::Button(Button::LeftThumb));
-    assert_eq!(h.state().ui.bindings().of(Action::Shoot, PAD).last(), Some(&west));
+    assert_eq!(h.state().ui.bindings().of(K, Action::Shoot, PAD).last(), Some(&west));
     assert_eq!(keys(&h, Action::Shoot), [z]);
 
     // A browser shortcut is pointed out (Alt+F4 with Jump's Alt, spec §8.5).
@@ -275,7 +279,7 @@ fn the_keys_screen_lists_and_rebinds_the_new_actions() {
     h.state_mut().data.capture.as_mut().unwrap().on_pad(PadEvent::Button(Button::LeftThumb, 1.0));
     h.run();
     let thumb = Binding::Pad(PadInput::Button(Button::LeftThumb));
-    assert_eq!(h.state().ui.bindings().of(Action::Strafe, PAD).last(), Some(&thumb));
+    assert_eq!(h.state().ui.bindings().of(K, Action::Strafe, PAD).last(), Some(&thumb));
 }
 
 /// Issue #24: Options → Keys → Mouse controls (experimental), off by
@@ -298,6 +302,158 @@ fn mouse_controls_are_switched_in_the_keys_tab() {
     assert_eq!(h.state().commands.last().map(|c| matches!(c, AppCommand::SaveSettings(_))), Some(true));
 }
 
+fn mouse_inputs(h: &Harness<'static, App>, action: Action) -> Vec<Binding> {
+    h.state().ui.bindings().of(M, action, MOUSE)
+}
+
+/// What the app does with a mouse button pressed while the options
+/// capture a mouse input.
+fn click(h: &mut Harness<'static, App>, button: MouseInput) {
+    h.state_mut().data.capture.as_mut().expect("capturing").on_mouse_button(button, true);
+    h.run();
+}
+
+/// Issue #25: with mouse controls on, the Keys tab shows their own keys, a
+/// Mouse column and the gamepad, rebinds them under mouse mode's rule, and
+/// leaves the keyboard's own bindings untouched.
+#[test]
+fn the_keys_screen_rebinds_mouse_controls() {
+    use olr_ui::screens::{MOUSE_CONTROLS, MOUSE_KEYS_NOTE, MOUSE_MADE, RESET_KEYS, RESET_MOUSE};
+    let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 1));
+    open_keys(&mut h);
+    assert!(h.query_by_label("Mouse").is_none() && h.query_by_label(MOUSE_KEYS_NOTE).is_none());
+    h.get_by_label(MOUSE_CONTROLS).click();
+    h.run();
+    h.get_by_label(MOUSE_KEYS_NOTE);
+    h.get_by_label("Mouse");
+    h.get_by_label(RESET_MOUSE);
+    assert!(h.query_by_label(RESET_KEYS).is_none());
+    let (lmb, rmb, mmb) = (
+        Binding::Mouse(MouseInput::Left),
+        Binding::Mouse(MouseInput::Right),
+        Binding::Mouse(MouseInput::Middle),
+    );
+    // The defaults: #24's; Up, Down, Select weapon and Strafe the mouse's.
+    h.get_by_label("Remove A from Left");
+    h.get_by_label("Remove Space from Jump");
+    h.get_by_label("Remove Wheel down from Next weapon");
+    assert!(h.get_by_label("Remove Left click from Shoot").accesskit_node().is_disabled(), "Shoot's last");
+    assert!(h.query_by_label("Remove Arrow Left from Left").is_none(), "the keyboard's own are not shown");
+    assert_eq!(h.get_all_by_label(MOUSE_MADE).count(), 8, "Up, Down, Select weapon, Strafe: key and mouse");
+    assert!(
+        h.query_by_label("Add key for Up").is_none()
+            && h.query_by_label("Add mouse input for Strafe").is_none()
+    );
+    h.get_by_label("Add pad input for Up");
+
+    // A free mouse button: bound. The capture box has no Cancel to click.
+    h.get_by_label("Add mouse input for Rope").click();
+    h.run();
+    h.get_by_label_contains("Click a mouse button or turn the wheel for Rope");
+    assert_eq!(h.state().data.capture.as_ref().map(|c| c.device()), Some(MOUSE));
+    assert!(h.query_by_label("Cancel").is_none());
+    click(&mut h, MouseInput::Middle);
+    assert!(h.state().data.capture.is_none());
+    assert_eq!(mouse_inputs(&h, Action::Rope), [rmb, mmb]);
+
+    // A button another action has: moved on request (Rope keeps the middle one).
+    h.get_by_label("Add mouse input for Shoot").click();
+    h.run();
+    click(&mut h, MouseInput::Right);
+    h.get_by_label("Right click is Rope's.");
+    h.get_by_label("Move it to Shoot").click();
+    h.run();
+    assert_eq!(mouse_inputs(&h, Action::Shoot), [lmb, rmb]);
+    assert_eq!(mouse_inputs(&h, Action::Rope), [mmb]);
+    h.get_by_label("Remove Left click from Shoot").click();
+    h.run();
+    assert_eq!(mouse_inputs(&h, Action::Shoot), [rmb]);
+    // Rope's last mouse input but a key: the middle button stays removable
+    // only once Rope has a key.
+    assert!(h.get_by_label("Remove Middle click from Rope").accesskit_node().is_disabled());
+    h.get_by_label("Add key for Rope").click();
+    h.run();
+    press(&mut h, KeyCode::KeyE);
+    assert_eq!(h.state().ui.bindings().of(M, Action::Rope, KB), [Binding::Key(KeyCode::KeyE)]);
+    assert!(!h.get_by_label("Remove Middle click from Rope").accesskit_node().is_disabled());
+
+    // A wheel notch, shared with what has it.
+    h.get_by_label("Add mouse input for Dig").click();
+    h.run();
+    h.state_mut().data.capture.as_mut().unwrap().on_wheel(-1.0);
+    h.run();
+    h.get_by_label("Wheel down is Next weapon's.");
+    h.get_by_label("Use it for both").click();
+    h.run();
+    assert_eq!(mouse_inputs(&h, Action::Dig), [Binding::Mouse(MouseInput::WheelDown)]);
+    assert_eq!(mouse_inputs(&h, Action::NextWeapon), [Binding::Mouse(MouseInput::WheelDown)]);
+
+    // Esc cancels a mouse capture (the app feeds it the key, egui none).
+    let before = h.state().ui.bindings().clone();
+    h.get_by_label("Add mouse input for Jump").click();
+    h.run();
+    h.state_mut().data.capture.as_mut().unwrap().on_key(KeyCode::Escape, true);
+    h.run();
+    assert!(h.state().data.capture.is_none());
+    assert_eq!(h.state().ui.screen(), Screen::Options);
+    assert_eq!(*h.state().ui.bindings(), before);
+    assert_eq!(h.state().ui.bindings().keys, Bindings::olx().keys, "the keyboard's untouched");
+    assert!(h.state().ui.bindings().unreachable().is_empty());
+    let applied = AppCommand::ApplyBindings(h.state().ui.bindings().clone());
+    assert!(h.state().commands.contains(&applied));
+
+    // Reset: mouse controls' defaults; the keyboard's and the pad's stay.
+    h.get_by_label(RESET_MOUSE).click();
+    h.run();
+    let b = h.state().ui.bindings().clone();
+    assert_eq!((b.mouse_keys.as_slice(), b.mouse.as_slice()), (&MOUSE_KEYS[..], &MOUSE_BUTTONS[..]));
+
+    // Off: the keyboard's own keys, as they were; no Mouse column.
+    h.get_by_label(MOUSE_CONTROLS).click();
+    h.run();
+    assert!(h.query_by_label("Mouse").is_none());
+    h.get_by_label("Remove Arrow Left from Left");
+    h.get_by_label("Add key for Up");
+    assert_eq!(*h.state().ui.bindings(), Bindings::olx());
+}
+
+/// Issue #25: an options file from before mouse bindings loads with #24's
+/// mouse controls and its own keys kept; mouse lists that leave an action
+/// unreachable with mouse controls get the defaults back, with a warning.
+#[test]
+fn an_options_file_from_before_mouse_bindings_is_repaired() {
+    let tmp = tempfile::tempdir().unwrap();
+    let text = "(version: 1, settings: (input: (keys: [(Up, KeyW), (Down, KeyS), (Left, KeyA), (Right, KeyD), \
+                (Shoot, ControlLeft), (Jump, Space), (Rope, KeyE), (SelectWeapon, ShiftLeft), (Strafe, KeyZ), \
+                (PreviousWeapon, KeyQ), (NextWeapon, KeyR), (Dig, KeyC)]), mouse: (enabled: true)))";
+    std::fs::write(tmp.path().join("settings.ron"), text).unwrap();
+    let got = Store::open(tmp.path()).load_settings();
+    assert!(got.warnings.is_empty(), "{:?}", got.warnings);
+    let input = &got.value.input;
+    assert_eq!(input.of(K, Action::Up, KB), [Binding::Key(KeyCode::KeyW)]);
+    assert_eq!((input.mouse_keys.as_slice(), input.mouse.as_slice()), (&MOUSE_KEYS[..], &MOUSE_BUTTONS[..]));
+    assert!(input.unreachable().is_empty());
+
+    // Mouse lists edited by hand: the game's keys dropped, the actions
+    // left without a key or mouse input given #24's back.
+    let text = "(version: 1, settings: (input: (mouse_keys: [(Left, KeyA), (Right, KeyD), (Jump, Tab), \
+                (Up, KeyW)], mouse: [(Shoot, Middle)])))";
+    std::fs::write(tmp.path().join("settings.ron"), text).unwrap();
+    let got = Store::open(tmp.path()).load_settings();
+    let input = &got.value.input;
+    assert!(input.unreachable().is_empty());
+    assert_eq!(input.keys, Bindings::olx().keys, "the keyboard's untouched");
+    assert_eq!(input.of(M, Action::Shoot, MOUSE), [Binding::Mouse(MouseInput::Middle)]);
+    assert_eq!(input.of(M, Action::Jump, KB), [Binding::Key(KeyCode::Space)]);
+    assert_eq!(input.of(M, Action::Rope, MOUSE), [Binding::Mouse(MouseInput::Right)]);
+    assert!(input.mouse_keys.iter().all(|(a, k)| *k != KeyCode::Tab && *a != Action::Up));
+    for w in ["Tab", "Up", "Jump", "Rope", "Dig", "Previous weapon", "Next weapon"] {
+        assert!(got.warnings.iter().any(|x| x.contains(w)), "{w}: {:?}", got.warnings);
+    }
+    let again = Store::open(tmp.path()).load_settings();
+    assert!(again.warnings.is_empty(), "{:?}", again.warnings);
+}
+
 #[test]
 fn a_profile_with_its_own_keys_is_rebound_there() {
     let own = Bindings::olx();
@@ -309,7 +465,7 @@ fn a_profile_with_its_own_keys_is_rebound_there() {
     h.run();
     press(&mut h, KeyCode::KeyQ);
     let profile = h.state().ui.profiles().list[0].bindings.clone().unwrap();
-    assert!(profile.of(Action::Jump, KB).contains(&Binding::Key(KeyCode::KeyQ)));
+    assert!(profile.of(K, Action::Jump, KB).contains(&Binding::Key(KeyCode::KeyQ)));
     assert_eq!(h.state().ui.settings().input, Bindings::olx(), "the options' keys are not the ones used");
     assert!(matches!(h.state().commands.first(), Some(AppCommand::SaveProfiles(_))));
 }
@@ -432,9 +588,9 @@ fn game_keys_are_never_bound_from_a_file() {
     let w = s.sanitize();
     assert!(!game(&s.input), "{:?}", s.input.keys);
     assert!(controllable(&s.input));
-    assert_eq!(s.input.of(Action::Shoot, KB), [Binding::Key(KeyCode::ControlLeft)]);
-    assert_eq!(s.input.of(Action::Jump, KB), [Binding::Key(KeyCode::AltLeft)], "OLX's back");
-    assert_eq!(s.input.of(Action::Down, KB), [Binding::Key(KeyCode::ArrowDown)], "OLX's back");
+    assert_eq!(s.input.of(K, Action::Shoot, KB), [Binding::Key(KeyCode::ControlLeft)]);
+    assert_eq!(s.input.of(K, Action::Jump, KB), [Binding::Key(KeyCode::AltLeft)], "OLX's back");
+    assert_eq!(s.input.of(K, Action::Down, KB), [Binding::Key(KeyCode::ArrowDown)], "OLX's back");
     let names = [olr_input::key_name(KeyCode::PageUp), olr_input::key_name(KeyCode::PageDown)];
     for k in ["Tab", "Esc", "H", &names[0], &names[1]] {
         assert!(w.iter().any(|w| w.contains(k)), "{k}: {w:?}");

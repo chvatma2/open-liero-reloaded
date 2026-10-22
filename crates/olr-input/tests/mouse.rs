@@ -1,11 +1,12 @@
-//! Mouse controls (issue #24): the fixed bindings, and the controller on
-//! real worlds (aim, facing, the wheel, a stall's repeated keys, a mouse
-//! player against a key player pressing the same keys).
+//! Mouse controls (issue #24): the default bindings, rebound ones (issue
+//! #25), and the controller on real worlds (aim, facing, the wheel, a
+//! stall's repeated keys, a mouse player against a key player pressing the
+//! same keys).
 
 use std::path::Path;
 
 use olr_content::{Content, SandboxSetup, SpawnSpec};
-use olr_input::{InputState, KeyCode, LocalWorm};
+use olr_input::{Action, Binding, Bindings, InputState, KeyCode, LocalWorm, Mode, MouseInput, Resolve};
 use olr_sim::{Dir, Keys, SimSettings, TickEvents, World};
 use winit::event::MouseButton;
 
@@ -92,6 +93,71 @@ fn wheel_turns_become_notches() {
     assert_eq!(k.latch_tick(), Keys(0), "keyboard mode ignores the wheel");
 }
 
+/// Mouse controls with Shoot on the right button and Rope on the middle
+/// one (issue #25), the wheel up jumping as well.
+fn rebound() -> InputState {
+    let m = Mode::Mouse;
+    let mut b = Bindings::olx();
+    b.bind(m, Action::Rope, Binding::Mouse(MouseInput::Middle), Resolve::Share).unwrap();
+    b.bind(m, Action::Shoot, Binding::Mouse(MouseInput::Right), Resolve::Move).unwrap();
+    b.unbind(m, Action::Shoot, Binding::Mouse(MouseInput::Left)).unwrap();
+    b.bind(m, Action::Jump, Binding::Mouse(MouseInput::WheelUp), Resolve::Share).unwrap();
+    assert!(b.unreachable().is_empty());
+    let mut s = InputState::new(b);
+    s.set_mouse_controls(true);
+    s
+}
+
+#[test]
+fn rebound_mouse_inputs_press_their_actions() {
+    let mut s = rebound();
+    s.on_mouse_button(MouseButton::Left, true);
+    assert_eq!(s.latch_tick(), Keys(0), "the left button is no one's now");
+    s.on_mouse_button(MouseButton::Left, false);
+    s.on_mouse_button(MouseButton::Right, true);
+    assert_eq!(s.latch_tick(), Keys(Keys::FIRE));
+    s.on_mouse_button(MouseButton::Right, false);
+    s.on_mouse_button(MouseButton::Middle, true);
+    s.on_mouse_button(MouseButton::Middle, false);
+    assert_eq!(s.latch_tick(), Keys(Keys::ROPE), "a click shorter than a tick");
+    assert_eq!(s.latch_tick(), Keys(0));
+    // The wheel up jumps for a tick (and its weapon change waits for a worm).
+    s.on_wheel(1.0);
+    assert_eq!(s.latch_tick(), Keys(Keys::JUMP));
+    assert_eq!(s.latch_tick(), Keys(0));
+    // Held by a key too, a notch releases nothing.
+    s.on_key(KeyCode::Space, true);
+    s.on_wheel(1.0);
+    assert_eq!(s.latch_tick(), Keys(Keys::JUMP));
+    assert_eq!(s.latch_tick(), Keys(Keys::JUMP));
+    s.on_key(KeyCode::Space, false);
+    // Off: the keyboard's own bindings, untouched; the mouse does nothing.
+    s.set_mouse_controls(false);
+    s.on_mouse_button(MouseButton::Right, true);
+    s.on_wheel(1.0);
+    s.on_key(KeyCode::ControlLeft, true);
+    assert_eq!(s.latch_tick(), Keys(Keys::FIRE));
+    assert_eq!(s.bindings().keys, Bindings::olx().keys);
+}
+
+#[test]
+fn a_rebound_mouse_mode_keeps_its_own_keys() {
+    // Mouse mode's keyboard rebound: Space throws the rope, the arrows of
+    // the keyboard's own bindings do nothing in it.
+    let mut b = Bindings::olx();
+    b.bind(Mode::Mouse, Action::Rope, Binding::Key(KeyCode::KeyE), Resolve::Share).unwrap();
+    let mut s = InputState::new(b);
+    s.set_mouse_controls(true);
+    s.on_key(KeyCode::KeyE, true);
+    s.on_key(KeyCode::ArrowLeft, true);
+    s.on_key(KeyCode::ControlLeft, true);
+    assert_eq!(s.latch_tick(), Keys(Keys::ROPE));
+    s.set_mouse_controls(false);
+    s.on_key(KeyCode::KeyE, true);
+    s.on_key(KeyCode::ArrowLeft, true);
+    assert_eq!(s.latch_tick(), Keys(L), "E is nothing without mouse controls");
+}
+
 /// A Classic match on Dirt Level, its worm in the dirt, or `None` without
 /// the imported content.
 fn dirt_world() -> Option<World> {
@@ -126,7 +192,17 @@ fn play(
     ahead: u32,
     events: impl Fn(u32, &mut InputState) -> Option<[f32; 2]>,
 ) -> Vec<Keys> {
-    let mut input = mouse();
+    play_with(mouse(), world, ticks, ahead, events)
+}
+
+/// [`play`] with `input`'s bindings.
+fn play_with(
+    mut input: InputState,
+    world: &mut World,
+    ticks: u32,
+    ahead: u32,
+    events: impl Fn(u32, &mut InputState) -> Option<[f32; 2]>,
+) -> Vec<Keys> {
     let mut out = TickEvents::new();
     let mut flight: std::collections::VecDeque<Keys> = (0..ahead).map(|_| Keys(0)).collect();
     (0..ticks)
@@ -236,4 +312,33 @@ fn a_mouse_player_and_a_key_player_pressing_the_same_keys_agree() {
     assert_eq!(a.sync_checksum(), b.sync_checksum());
     assert!(keys.iter().all(|k| k.0 & !Keys::ALL == 0), "only the simulation's keys");
     assert!(keys.iter().any(|k| k.0 & Keys::STRAFE != 0) && keys.iter().any(|k| k.0 & Keys::UP != 0));
+}
+
+#[test]
+fn rebound_buttons_work_in_the_controller_on_a_real_worm() {
+    let Some(start) = dirt_world() else { return };
+    let mut w = start.clone();
+    let keys = play_with(rebound(), &mut w, 80, 0, |t, s| {
+        match t {
+            10 => s.on_mouse_button(MouseButton::Right, true),
+            30 => s.on_mouse_button(MouseButton::Right, false),
+            40 => s.on_mouse_button(MouseButton::Middle, true),
+            41 => s.on_mouse_button(MouseButton::Middle, false),
+            50 => s.on_mouse_button(MouseButton::Left, true),
+            _ => {}
+        }
+        Some(at(-30.0, Dir::Right))
+    });
+    let has = |t: usize, bit: u16| keys[t].0 & bit != 0;
+    assert!((10..30).all(|t| has(t, Keys::FIRE)), "the right button shoots");
+    assert!(has(40, Keys::ROPE) && !has(42, Keys::ROPE), "the middle one throws the rope");
+    assert!((0..80).all(|t| !(has(t, Keys::ROPE) && !(40..42).contains(&t))));
+    assert!((50..80).all(|t| !has(t, Keys::FIRE)), "the left button does nothing");
+    // A key player pressing those keys plays the same match.
+    let mut b = start.clone();
+    let mut out = TickEvents::new();
+    for k in &keys {
+        b.tick(&[*k], &mut out);
+    }
+    assert_eq!(w.sync_checksum(), b.sync_checksum());
 }
