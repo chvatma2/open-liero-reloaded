@@ -11,8 +11,8 @@ impl App {
         for o in out {
             match o {
                 Outcome::Quit => el.exit(),
-                Outcome::Bindings(b) => self.input.set_bindings(b),
-                Outcome::MouseControls(on) => self.input.set_mouse_controls(on),
+                Outcome::Bindings(b) => self.inputs.set_bindings(b),
+                Outcome::MouseControls(on) => self.inputs.set_mouse_controls(on),
                 Outcome::Video(v) => self.apply_video(v),
                 Outcome::Started => {
                     if let Some(s) = self.shell.session_mut() {
@@ -23,7 +23,7 @@ impl App {
                     // A watched game starts at `--speed`.
                     self.speed = self.cfg.speed;
                     self.rate.clear();
-                    self.input.release_keys();
+                    self.inputs.release_keys();
                 }
                 Outcome::PrepareReport => {
                     let env = self.report_environment(el);

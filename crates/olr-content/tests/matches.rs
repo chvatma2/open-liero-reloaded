@@ -99,10 +99,11 @@ fn chosen_weapons_are_the_humans_and_recorded() {
     assert!(e.contains("worm 0"), "{e}");
 }
 
-/// The recording names the human's worm as the replay's viewer: the first
-/// that is no bot, wherever it sits; none for bots alone.
+/// The recording names the humans' worms as the replay's local slots
+/// (issue #29): every worm that is no bot, in worm order, wherever they
+/// sit; none for bots alone.
 #[test]
-fn the_recording_names_the_humans_worm() {
+fn the_recording_names_the_humans_worms() {
     let Some(c) = content() else { return };
     let bot = Player::Bot(BotConfig::default());
     let o = MatchOptions {
@@ -115,13 +116,15 @@ fn the_recording_names_the_humans_worm() {
         weapons: WeaponChoice::Preset(DEFAULT_PRESET.into()),
         pool_capacity: MatchSetup::DEFAULT_POOL_CAPACITY,
     };
-    let viewer = |o: &MatchOptions| {
+    let viewers = |o: &MatchOptions| {
         let m = c.build_match(o).unwrap();
-        m.recorder.clone().finish(&m.world).unwrap().setup.viewer
+        m.recorder.clone().finish(&m.world).unwrap().setup.viewers
     };
-    assert_eq!(viewer(&o), Some(2));
+    assert_eq!(viewers(&o), [2]);
+    let split = MatchOptions { players: vec![Player::Human, bot, Player::Human, Player::Human], ..o.clone() };
+    assert_eq!(viewers(&split), [0, 2, 3]);
     let alone = MatchOptions { players: vec![bot, bot], ..o };
-    assert_eq!(viewer(&alone), None);
+    assert!(viewers(&alone).is_empty());
 }
 
 /// A loadout (issue #5): its loading time replaces the settings', natural

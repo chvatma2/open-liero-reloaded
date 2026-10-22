@@ -151,7 +151,7 @@ fn soak_sandbox_10_minutes_headless() {
         started.elapsed().as_secs_f32(),
         gpu.adapter_info().name,
         gpu.adapter_info().backend,
-        s.player_deaths,
+        s.player_deaths[0],
     );
     assert!(max_fx > 0 && max_voices > 0 && max_proj > 0, "the chaos exercised effects, sounds and shots");
     assert!(max_fx <= FX_CAP, "cosmetic entities are capped by play's pool");

@@ -85,8 +85,9 @@ fn bots_alone_throw_silently() {
     assert_eq!(heard, 0, "no throw is heard");
 }
 
-/// A replay sounds as its game did for the player who made it: the
-/// viewer's throws are heard, the bots' are not.
+/// A replay sounds as its game did for the players who made it: the
+/// viewers' throws are heard (each of several, issue #29), the bots' are
+/// not.
 #[test]
 fn a_replay_hears_its_viewers_throws() {
     let Some(dir) = content_dir() else { return };
@@ -96,11 +97,11 @@ fn a_replay_hears_its_viewers_throws() {
         s.tick(rope_every(t, 100));
     }
     let mut replay = s.take_replay().expect("a Deathmatch records");
-    assert_eq!(replay.setup.viewer, Some(0));
+    assert_eq!(replay.setup.viewers, [0]);
     let tmp = tempfile::tempdir().unwrap();
     let file = tmp.path().join("match.olrp");
-    let mut heard = |viewer: Option<u8>| {
-        replay.setup.viewer = viewer;
+    let mut heard = |viewers: &[u8]| {
+        replay.setup.viewers = viewers.to_vec();
         std::fs::write(&file, replay.encode()).unwrap();
         let mut r = session(&setup::load_replay(&[dir.as_path()], &file, &[]).unwrap());
         assert_eq!(r.local(), None, "nobody plays a replay");
@@ -110,9 +111,10 @@ fn a_replay_hears_its_viewers_throws() {
         }
         (heard, throws(&r))
     };
-    let (by_player, thrown) = heard(Some(0));
+    let (by_player, thrown) = heard(&[0]);
     assert!(thrown[0] >= 5 && thrown[1..].iter().sum::<u32>() > 20, "throws: {thrown:?}");
     assert_eq!(by_player, thrown[0], "the viewer's throws are heard");
-    assert_eq!(heard(Some(2)).0, thrown[2], "another viewer's");
-    assert_eq!(heard(None).0, 0, "none without a viewer");
+    assert_eq!(heard(&[2]).0, thrown[2], "another viewer's");
+    assert_eq!(heard(&[2, 0]).0, thrown[2] + thrown[0], "two viewers', each's own");
+    assert_eq!(heard(&[]).0, 0, "none without a viewer");
 }

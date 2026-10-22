@@ -126,8 +126,8 @@ pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, 
 /// player's own, `Session::local`, or the one watched; no weapons during
 /// the selection), the event log, the clock and kill limit, a replay's
 /// progress, the fast-forward speed, the scoreboard while `scores` (the
-/// followed worm's row highlighted), the minimap (the player's dot the
-/// big one; "Game Over" until the results show) and the keys. An online
+/// followed worm's row highlighted), the minimap (the players' dots the
+/// big ones; "Game Over" until the results show) and the keys. An online
 /// match's lives, kills, deaths and scoreboard are its confirmed tick's
 /// (spec §3.4); its health and weapons the newest predicted tick's.
 pub fn view(s: &Session, f: &Frame) -> HudView {
@@ -151,7 +151,12 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
                         Dot {
                             pos: pos2(w.pos.x, w.pos.y),
                             colour: Color32::from_rgb(r, g, b),
-                            big: local.unwrap_or(followed) == i as i32,
+                            // Every local player's dot is big (issue #29).
+                            big: if s.locals().is_empty() {
+                                followed == i as i32
+                            } else {
+                                s.locals().iter().any(|&l| usize::from(l) == i)
+                            },
                         }
                     })
                     .collect()

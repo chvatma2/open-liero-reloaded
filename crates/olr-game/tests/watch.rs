@@ -42,8 +42,8 @@ fn replay_viewed_by(dir: &Path, ticks: u64, viewer: Option<u8>) -> Assets {
         s.tick(Keys(0));
     }
     let mut replay = s.take_replay().expect("a Deathmatch records");
-    assert_eq!(replay.setup.viewer, Some(0), "recorded from the human's slot");
-    replay.setup.viewer = viewer;
+    assert_eq!(replay.setup.viewers, [0], "recorded from the human's slot");
+    replay.setup.viewers = viewer.into_iter().collect();
     let file = std::env::temp_dir().join(format!("olr-game-watch-{}-{viewer:?}.olrp", std::process::id()));
     std::fs::write(&file, replay.encode()).unwrap();
     let r = setup::load_replay(&[dir], &file, &[]);

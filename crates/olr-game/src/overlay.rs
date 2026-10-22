@@ -1,5 +1,6 @@
 //! The egui overlay at the display's resolution (spec §19 E10): worm
-//! names (the player's current weapon in its place while changing it),
+//! names (each local player's current weapon in its place while changing
+//! it, and its reload bar),
 //! damage popups, the mod editor's practice's last hit (issue #20), the
 //! HUD (`olr_ui::hud`, from `hud::view`), the command line's results and
 //! the F2 debug panel. It only paints; it takes
@@ -91,9 +92,10 @@ pub struct Overlay<'a> {
     pub selecting: bool,
     /// Worm names show: not through the menus' panels (`Shell::names_shown`).
     pub names: bool,
-    /// The change-weapon key is held now (the input's, not a tick's):
-    /// the player's worm shows its weapon (`Session::weapon_name`).
-    pub changing: bool,
+    /// Each local player's change-weapon key is held now (its input's,
+    /// not a tick's), in local order: that player's worm shows its weapon
+    /// (`Session::weapon_name_of`; issue #29).
+    pub changing: [bool; crate::setup::MAX_LOCALS],
     /// Where the HUD goes on a window wider than 16:9 (the options').
     pub arrangement: olr_ui::HudArrangement,
     /// F3's network overlay while an online match plays (spec §7.3).
@@ -141,24 +143,25 @@ pub const WEAPON_NAME_COLOUR: Color32 = Color32::WHITE;
 /// The worm names' colour.
 const NAME_COLOUR: Color32 = Color32::from_gray(230);
 
-/// The label over worm `i`, named `name`, when it has one: the player's
-/// weapon (`weapon`, from `Session::weapon_name`) while it shows, in OLX's
-/// colour; else the name, except over the player's own worm (`local`):
-/// OLX draws no name over a local human worm, and the weapon name 15
-/// world pixels above it (`y-30` at double resolution), where the name
-/// label is here.
+/// The label over worm `i`, named `name`, when it has one: a local
+/// player's weapon (`weapons`, the worms showing theirs, from
+/// `Session::weapon_name_of`) while it shows, in OLX's colour; else the
+/// name, except over a local player's own worm (`locals`, every local
+/// player's: issue #29): OLX draws no name over a local human worm, and
+/// the weapon name 15 world pixels above it (`y-30` at double resolution),
+/// where the name label is here.
 ///
 /// OLX: src/common/CWorm.cpp:1304-1331
 pub fn worm_label<'a>(
     i: usize,
-    local: Option<usize>,
+    locals: &[usize],
     name: &'a str,
-    weapon: Option<&'a (usize, String)>,
+    weapons: &'a [(usize, String)],
 ) -> Option<(&'a str, Color32)> {
-    match weapon {
-        Some((w, text)) if *w == i => Some((text, WEAPON_NAME_COLOUR)),
-        _ if local == Some(i) => None,
-        _ => Some((name, NAME_COLOUR)),
+    match weapons.iter().find(|(w, _)| *w == i) {
+        Some((_, text)) => Some((text, WEAPON_NAME_COLOUR)),
+        None if locals.contains(&i) => None,
+        None => Some((name, NAME_COLOUR)),
     }
 }
 
@@ -233,20 +236,26 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     }
     if o.names {
         let bounds = o.map.points_rect().intersect(ui.max_rect());
-        let weapon = s.weapon_name(o.changing);
+        // Each local player's weapon name and reload (issue #29: every
+        // player's own).
+        let locals: Vec<usize> = s.locals().iter().map(|&l| usize::from(l)).collect();
+        let weapons: Vec<(usize, String)> =
+            (0..locals.len()).filter_map(|k| s.weapon_name_of(k, o.changing.get(k) == Some(&true))).collect();
         let ids: Vec<i32> = s.with_world(|w| {
             worms.iter().map(|&(i, _)| w.worms().get(i).map_or(i as i32, |w| w.id)).collect()
         });
-        // The player's own worm's reload, under its name (the user's
+        // The players' own worms' reload, under their names (the user's
         // request: only one's own; the others' stays hidden, as in OLX).
-        let local = s.local().map(usize::from);
-        let reload = s.with_world(|w| {
-            let worm = local.and_then(|i| w.worms().get(i))?;
-            reload_fraction(&worm.slots, worm.current_weapon)
+        let reloads: Vec<(usize, f32)> = s.with_world(|w| {
+            let reload = |i: usize| {
+                let worm = w.worms().get(i)?;
+                Some((i, reload_fraction(&worm.slots, worm.current_weapon)?))
+            };
+            locals.iter().filter_map(|&i| reload(i)).collect()
         });
         for (&(i, at), &id) in worms.iter().zip(&ids) {
             let name = s.names.of(id);
-            let label = worm_label(i, local, &name, weapon.as_ref());
+            let label = worm_label(i, &locals, &name, &weapons);
             // Without a label (the player's own worm), the reload bar keeps
             // the place the name's label would take.
             let (text, colour) = label.unwrap_or((&name, NAME_COLOUR));
@@ -260,7 +269,7 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
                 );
                 p.galley(r.min, galley, colour);
             }
-            if let (Some(f), true) = (reload, Some(i) == local) {
+            if let Some(&(_, f)) = reloads.iter().find(|(j, _)| *j == i) {
                 let (back, fill) = reload_bar(r, k, f);
                 p.rect_filled(back, 1.0, Color32::from_black_alpha(170));
                 p.rect_filled(fill, 1.0, RELOAD_COLOUR);
@@ -525,25 +534,31 @@ mod tests {
     /// ruling, plan 15a Task 8).
     #[test]
     fn own_worm_has_no_name_label() {
-        assert_eq!(worm_label(2, Some(2), "You", None), None);
+        assert_eq!(worm_label(2, &[2], "You", &[]), None);
+        // Issue #29: no local player's worm shows its name.
+        assert_eq!(worm_label(0, &[2, 0], "Player 2", &[]), None);
     }
 
     /// While the player changes weapons its worm's label is the weapon,
     /// in OLX's white.
     #[test]
     fn own_worm_shows_its_weapon_while_changing() {
-        let weapon = (2, "Big Nuke".to_string());
-        assert_eq!(worm_label(2, Some(2), "You", Some(&weapon)), Some(("Big Nuke", WEAPON_NAME_COLOUR)));
+        let weapon = [(2, "Big Nuke".to_string())];
+        assert_eq!(worm_label(2, &[2], "You", &weapon), Some(("Big Nuke", WEAPON_NAME_COLOUR)));
         assert_ne!(WEAPON_NAME_COLOUR, NAME_COLOUR, "told apart from a name");
+        // Issue #29: each local player's worm shows its own weapon.
+        let both = [(2, "Big Nuke".to_string()), (0, "Minigun".to_string())];
+        assert_eq!(worm_label(0, &[2, 0], "Player 2", &both), Some(("Minigun", WEAPON_NAME_COLOUR)));
+        assert_eq!(worm_label(2, &[2, 0], "Player 1", &both), Some(("Big Nuke", WEAPON_NAME_COLOUR)));
     }
 
     /// Every other worm keeps its name, and a game with no local slot (a
     /// replay, bots alone) names every worm.
     #[test]
     fn other_worms_keep_their_names() {
-        let weapon = (2, "Big Nuke".to_string());
-        assert_eq!(worm_label(0, Some(2), "Bot 1", Some(&weapon)), Some(("Bot 1", NAME_COLOUR)));
-        assert_eq!(worm_label(2, None, "Bot 3", None), Some(("Bot 3", NAME_COLOUR)));
+        let weapon = [(2, "Big Nuke".to_string())];
+        assert_eq!(worm_label(0, &[2], "Bot 1", &weapon), Some(("Bot 1", NAME_COLOUR)));
+        assert_eq!(worm_label(2, &[], "Bot 3", &[]), Some(("Bot 3", NAME_COLOUR)));
     }
 
     #[test]

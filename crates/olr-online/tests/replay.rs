@@ -82,7 +82,7 @@ fn a_missed_checksum_warns_and_the_replay_is_kept() {
 fn the_replay_starts_on_the_peers_own_slot() {
     let Some(c) = content() else { return };
     let r = record(&c);
-    let viewer = |slot| Replay::decode(&make(&c, &r, slot).unwrap().bytes).unwrap().setup.viewer;
+    let viewer = |slot| Replay::decode(&make(&c, &r, slot).unwrap().bytes).unwrap().setup.viewer();
     assert_eq!(viewer(Some(1)), Some(1));
     assert_eq!(viewer(None), None, "a spectator's");
 }

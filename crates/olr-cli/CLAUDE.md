@@ -244,10 +244,21 @@ The headless command-line tool. Its commands:
   `fixtures/look/levels/look-test-skin-level` (`--seed 4 --ticks 500
   --scale 4`).
 - `olr-cli match --mod <id> --level <id> [--mode deathmatch] --bots N
-  [--difficulty easy|medium|hard|xtreme|mixed] [--personality dm|chaos|idle]
+  [--locals L] [--difficulty easy|medium|hard|xtreme|mixed] [--personality dm|chaos|idle]
   --seed S --ticks T [--bonus-frequency F] [--kill-limit K] [--time-limit M]
   [--record f] [--coverage] [--no-verify] [--failures DIR] [--p99-budget-ms B]`
-  plays a headless Deathmatch of bots (spec §7.1): invariants every tick
+  plays a headless Deathmatch of bots (spec §7.1); `--locals L` (issue
+  #29, 0 to `spec::MAX_LOCALS` 4, also `render-match`'s, where each has
+  its crosshair) puts L local human players first (worms 0 to L - 1,
+  random weapons as `Player::Human`, the replay's local slots; at least 2
+  worms in all, so `--bots 0` with two), each pressing its own scripted
+  keys, `spec::local_keys(player, tick)` (walking, jumping, aiming,
+  bursts of fire, the rope and a weapon change, each on periods of its
+  own); `MatchSpec::locals` is left out of a spec's RON when 0, so the
+  goldens and failures read as before, and the stem names it (`-4l-`)
+  (`tests/matches.rs`'s `local_players_press_their_own_keys_and_replay`:
+  every recorded key of worm `p` is player `p`'s, each worm moves, it
+  verifies; `match_takes_local_players`). Invariants every tick
   (`invariants.rs`; a worm's centre may sit in rock where OLX's collision
   wedges it, but never with rock all over its collision cross:
   `buried_in_rock`), the end, p50/p99/max tick time (bots + sim), the bots'

@@ -7,8 +7,8 @@ use olr_sim::{Keys, MAX_WORMS, MatchSetup, World};
 
 use crate::play::apply_call;
 use crate::{
-    CHECKSUM_EVERY, MAX_SETUP_CALLS, MAX_TICKS, ModeSpec, Packs, RecordError, Replay, ReplaySetup, SetupCall,
-    WormLook,
+    CHECKSUM_EVERY, MAX_SETUP_CALLS, MAX_TICKS, MAX_VIEWERS, ModeSpec, Packs, RecordError, Replay,
+    ReplaySetup, SetupCall, WormLook,
 };
 
 /// Follows a match: its setup calls, the world's checksum before the first
@@ -62,11 +62,19 @@ impl Recorder {
         self.setup.looks = crate::looks::fit(looks, self.setup.worms.len());
     }
 
-    /// Records the worm of the player whose game this is (`None`: nobody
-    /// here plays, a bots-only match or an online spectator); a slot that
-    /// is no worm of the setup is dropped.
-    pub fn set_viewer(&mut self, slot: Option<u8>) {
-        self.setup.viewer = slot.filter(|&s| usize::from(s) < self.setup.worms.len());
+    /// Records the worms of the players whose game this is, its local
+    /// slots in local order (none: nobody here plays, a bots-only match or
+    /// an online spectator); a slot that is no worm of the setup or is
+    /// given twice is dropped, and only the first [`MAX_VIEWERS`] are kept.
+    pub fn set_viewers(&mut self, slots: &[u8]) {
+        let worms = self.setup.worms.len();
+        let mut kept: Vec<u8> = Vec::with_capacity(MAX_VIEWERS);
+        for &s in slots {
+            if usize::from(s) < worms && !kept.contains(&s) && kept.len() < MAX_VIEWERS {
+                kept.push(s);
+            }
+        }
+        self.setup.viewers = kept;
     }
 
     /// Makes `call` on `world` and records it: every change to the world

@@ -16,7 +16,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::mirror::{CallW, LookW, ModeW, PacksW, RespawnW, SettingsW, WormW};
 use crate::{
-    DecodeError, FORMAT_VERSION, HEADER_BYTES, MAGIC, MAX_SETUP_CALLS, MAX_TICKS, Replay, ReplaySetup,
+    DecodeError, FORMAT_VERSION, HEADER_BYTES, MAGIC, MAX_SETUP_CALLS, MAX_TICKS, MAX_VIEWERS, Replay,
+    ReplaySetup,
 };
 
 #[derive(Serialize, Deserialize)]
@@ -29,7 +30,7 @@ struct SetupW {
     pool_capacity: u32,
     bonus_weapons: Option<Vec<i32>>,
     calls: Vec<CallW>,
-    viewer: Option<u8>,
+    viewers: Vec<u8>,
     looks: Vec<LookW>,
 }
 
@@ -74,7 +75,7 @@ impl Replay {
                 pool_capacity: u32::try_from(s.pool_capacity).unwrap_or(u32::MAX),
                 bonus_weapons: s.bonus_weapons.clone(),
                 calls: s.calls.iter().map(|&c| c.into()).collect(),
-                viewer: s.viewer,
+                viewers: s.viewers.clone(),
                 looks: s.looks.iter().map(LookW::from).collect(),
             },
             mode: (&self.mode).into(),
@@ -158,7 +159,7 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
         seen |= 1 << worm;
         prev = t;
     }
-    let SetupW { packs, settings, start, seed, worms, pool_capacity, bonus_weapons, calls, viewer, looks } =
+    let SetupW { packs, settings, start, seed, worms, pool_capacity, bonus_weapons, calls, viewers, looks } =
         setup;
     if worms.len() > MAX_WORMS {
         return invalid(format!("{} worms, at most {MAX_WORMS}", worms.len()));
@@ -166,8 +167,16 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
     if let Some(i) = worms.iter().position(|w| w.slots.len() > MAX_SLOTS) {
         return invalid(format!("worm {i}: more than {MAX_SLOTS} weapon slots"));
     }
-    if let Some(v) = viewer.filter(|&v| usize::from(v) >= worms.len()) {
-        return invalid(format!("viewer {v} is no worm of {}", worms.len()));
+    if viewers.len() > MAX_VIEWERS {
+        return invalid(format!("{} local slots, at most {MAX_VIEWERS}", viewers.len()));
+    }
+    for (i, &v) in viewers.iter().enumerate() {
+        if usize::from(v) >= worms.len() {
+            return invalid(format!("local slot {v} is no worm of {}", worms.len()));
+        }
+        if viewers[..i].contains(&v) {
+            return invalid(format!("local slot {v} given twice"));
+        }
     }
     if looks.len() != worms.len() {
         return invalid(format!("{} looks for {} worms", looks.len(), worms.len()));
@@ -209,7 +218,7 @@ fn from_wire(w: Wire) -> Result<Replay, DecodeError> {
         pool_capacity: pool_capacity as usize,
         bonus_weapons,
         calls: calls.into_iter().map(Into::into).collect(),
-        viewer,
+        viewers,
         looks: looks.into_iter().enumerate().map(|(i, l)| l.into_look(i)).collect(),
     };
     // NaN, infinities and values outside OLX's ranges, before anything
@@ -247,7 +256,7 @@ mod tests {
                 pool_capacity: 3000,
                 bonus_weapons: None,
                 calls: vec![],
-                viewer: None,
+                viewers: vec![],
                 looks: vec![(&WormLook::numbered(0)).into()],
             },
             mode: ModeW::Oracle,
@@ -294,14 +303,33 @@ mod tests {
         assert_eq!(from_wire(wire(0, 0, &[])).unwrap().ticks(), 0);
     }
 
+    /// Issue #29: the local slots are distinct worms, at most
+    /// `MAX_VIEWERS`.
     #[test]
-    fn the_viewer_is_one_of_the_worms() {
+    fn the_local_slots_are_distinct_worms() {
+        let two = |w: &mut Wire| {
+            let worm = WormSetup {
+                team: 0,
+                loadout: Loadout::new(vec![Slot::ready(0)], &SimSettings::lx56()),
+                spawn: None,
+            };
+            w.setup.worms.push((&worm).into());
+            w.setup.looks.push((&WormLook::numbered(1)).into());
+        };
         let mut w = wire(0, 0, &[]);
-        w.setup.viewer = Some(0);
-        assert_eq!(from_wire(w).unwrap().setup.viewer, Some(0));
+        two(&mut w);
+        w.setup.viewers = vec![1, 0];
+        assert_eq!(from_wire(w).unwrap().setup.viewers, [1, 0], "in local order");
         let mut w = wire(0, 0, &[]);
-        w.setup.viewer = Some(1);
+        w.setup.viewers = vec![1];
         assert!(matches!(err(w), DecodeError::Invalid(_)), "worm 1 of 1");
+        let mut w = wire(0, 0, &[]);
+        two(&mut w);
+        w.setup.viewers = vec![1, 1];
+        assert!(matches!(err(w), DecodeError::Invalid(_)), "a slot twice");
+        let mut w = wire(0, 0, &[]);
+        w.setup.viewers = vec![0; MAX_VIEWERS + 1];
+        assert!(matches!(err(w), DecodeError::Invalid(_)), "too many");
     }
 
     #[test]

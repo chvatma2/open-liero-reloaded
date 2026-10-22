@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use olr_input::{Action, InputState, KeyCode, LocalWorm};
+use olr_input::{Action, KeyCode, LocalWorm};
 use olr_render::UpscaleFilter;
 use olr_scene::{DrawList, Interpolation};
 use winit::event::{ElementState, KeyEvent};
@@ -36,6 +36,7 @@ use crate::gpu::{Gpu, OverlayPaint};
 use crate::hud::{MinimapTexture, ScoreKey};
 use crate::latency::Latency;
 use crate::overlay::{Overlay, ScreenMap, Stats};
+use crate::players::LocalInputs;
 use crate::pointer::{self, Pointer};
 use crate::script::{Command, Step};
 use crate::session::Session;
@@ -151,7 +152,8 @@ pub struct App {
     cfg: Config,
     /// The menus and what plays.
     shell: Shell,
-    input: InputState,
+    /// The local players' inputs, one per seat (issue #29).
+    inputs: LocalInputs,
     gilrs: Option<gilrs::Gilrs>,
     clock: TickClock,
     list: DrawList,
@@ -312,6 +314,13 @@ fn is_wayland(el: &ActiveEventLoop) -> bool {
     }
 }
 
+/// The first `n` of each local player's `values` (at least one), for the
+/// exit summary: `3` alone, `3, 1` in split screen (issue #29).
+pub fn per_player<T: std::fmt::Display>(values: &[T], n: usize) -> String {
+    let shown: Vec<String> = values.iter().take(n.max(1)).map(T::to_string).collect();
+    shown.join(", ")
+}
+
 /// The game's playfield in a window of `size` pixels, `[x, y, w, h]`:
 /// its centred 16:9 frame above the HUD bar (`olr_ui::hud::playfield`),
 /// whole pixels, at least one. The world is drawn there, its view the
@@ -359,11 +368,10 @@ impl App {
         }
         let video = Video::new(shell.ui.settings().video.clone());
         let ui_scale = if cfg.menus { shell.ui.settings().video.ui_scale } else { 1.0 };
-        let mut input = InputState::default();
+        let mut inputs = LocalInputs::default();
         if cfg.menus {
             olr_ui::theme::apply(&egui);
-            input.set_bindings(shell.ui.bindings().clone());
-            input.set_mouse_controls(shell.ui.settings().mouse.enabled);
+            inputs = LocalInputs::new(shell.ui.bindings().clone(), shell.ui.settings().mouse.enabled);
         }
         App {
             speed: cfg.speed,
@@ -377,7 +385,7 @@ impl App {
             latency: Latency::new(cfg.latency_probe),
             cfg,
             shell,
-            input,
+            inputs,
             gilrs,
             clock: TickClock::new(),
             list: DrawList::new(),
@@ -452,9 +460,9 @@ impl App {
     fn net_step(&mut self, now: Instant) -> Vec<Outcome> {
         // What is held as the poll latches (no input arrives meanwhile):
         // what a stall may repeat, mouse controls' own keys included.
-        self.shell.set_held_keys(self.input.repeatable());
+        self.shell.set_held_keys(self.inputs.first().repeatable());
         let aim = self.pointer.aim();
-        let (input, latency) = (&mut self.input, &mut self.latency);
+        let (input, latency) = (self.inputs.first_mut(), &mut self.latency);
         // Mouse controls plan with the newest predicted world, looking
         // ahead by the input delay (issue #24).
         let mut keys = |f: &olr_online::KeysFor| {
@@ -497,11 +505,18 @@ impl App {
         out
     }
 
-    /// The whole run, for the exit summary.
+    /// The whole run, for the exit summary: each local player's deaths
+    /// and spawns (issue #29: "players died 3, 1 times" in split screen).
     pub fn summary(&self) -> String {
-        let (deaths, spawns) = self.shell.session().map_or((0, 0), |s| (s.player_deaths, s.player_spawns));
+        let s = self.shell.session();
+        let n = s.map_or(1, |s| s.locals().len());
+        let each = |f: fn(&Session) -> [u32; crate::setup::MAX_LOCALS]| {
+            per_player(&s.map_or([0; crate::setup::MAX_LOCALS], f), n)
+        };
+        let (deaths, spawns) = (each(|s| s.player_deaths), each(|s| s.player_spawns));
+        let who = if n > 1 { "players" } else { "player" };
         format!(
-            "{}; {} catch-up ticks dropped; player died {deaths} times, spawned {spawns} times",
+            "{}; {} catch-up ticks dropped; {who} died {deaths} times, spawned {spawns} times",
             self.meter.summary(),
             self.clock.dropped(),
         )
@@ -533,7 +548,7 @@ impl App {
             s.rematches,
             t.bot_kills,
             t.bot_kills_per_minute(),
-            t.player_kills,
+            per_player(&t.player_kills, s.locals().len()),
             t.suicides,
         ))
     }
@@ -680,8 +695,8 @@ impl App {
         log::info!("the window was made again: {:?}", self.shape);
         self.win = Some(Shown { window, gpu, egui, hidden_frames: 0, made: Instant::now() });
         drop((old_egui, old_window));
-        self.input.release_keys();
-        self.input.release_mouse();
+        self.inputs.release_keys();
+        self.inputs.first_mut().release_mouse();
         self.pointer.window_replaced();
         self.scores.focus(false);
         // The interval runs from the new window (`window::MIN_CHANGE_INTERVAL`).
@@ -741,7 +756,7 @@ impl App {
     /// path, as a player would (autoplay's `Press`, tests).
     pub fn press(&mut self, action: Action, pressed: bool) {
         if let Some(k) = self.key_of(action) {
-            self.input.on_key(k, pressed);
+            self.inputs.first_mut().on_key(k, pressed);
         }
     }
 
@@ -760,7 +775,7 @@ impl App {
     }
 
     fn key_of(&self, action: Action) -> Option<KeyCode> {
-        self.input.bindings().keys.iter().find(|(a, _)| *a == action).map(|&(_, k)| k)
+        self.inputs.first().bindings().keys.iter().find(|(a, _)| *a == action).map(|&(_, k)| k)
     }
 
     /// How fast the game playing runs now: [`App::speed`] when it is
@@ -806,7 +821,7 @@ impl App {
             match step.command {
                 Command::Press(a) | Command::Release(a) => {
                     if let Some(k) = self.key_of(a) {
-                        self.input.on_key(k, matches!(step.command, Command::Press(_)));
+                        self.inputs.first_mut().on_key(k, matches!(step.command, Command::Press(_)));
                     }
                 }
                 Command::Shot => self.shot_due = true,
@@ -819,13 +834,17 @@ impl App {
                 Command::Fullscreen(on) => self.requests.fullscreen(on),
             }
         }
-        let local = if self.input.mouse_controls() { self.local_worm() } else { None };
-        let keys = self.input.latch_tick_for(local.as_ref(), self.pointer.aim());
+        // A seat per local player (issue #29); the first plays with mouse
+        // controls' aim.
+        self.inputs.fit(self.shell.session().map_or(1, |s| s.locals().len()));
+        let local = if self.inputs.first().mouse_controls() { self.local_worm() } else { None };
+        let first = self.inputs.first_mut().latch_tick_for(local.as_ref(), self.pointer.aim());
+        let keys = self.inputs.latch(first);
         self.latency.latched();
         self.ticks += 1;
         let t0 = Instant::now();
         // Not while the pause menu or the weapon selection holds the game.
-        if !self.shell.tick(keys) {
+        if !self.shell.tick_locals(&keys) {
             return Ok(false);
         }
         self.meter.tick(t0.elapsed().as_secs_f64());
@@ -915,7 +934,7 @@ impl App {
         let map = ScreenMap { view: self.list.view, dest, pixels_per_point: ppp };
         // Mouse controls' pointer (issue #24): the view drawn and the local
         // worm in it, as the controller aims from them.
-        if self.input.mouse_controls() {
+        if self.inputs.first().mouse_controls() {
             let worm = self.shell.session().and_then(|s| {
                 let i = usize::from(s.local()?);
                 let at = crate::hud::worms_on_screen(s, &map, alpha).into_iter().find(|(j, _)| *j == i)?.1;
@@ -943,7 +962,12 @@ impl App {
         };
         let time = (now - start).as_secs_f64();
         // The weapon selection reads the game's keys, keyboard or gamepad.
-        self.shell.data.held = self.input.held();
+        self.shell.data.held = self.inputs.first().held();
+        // Each local player's change key, for its weapon name (issue #29).
+        let mut changing = [false; crate::setup::MAX_LOCALS];
+        for (c, k) in changing.iter_mut().zip(self.inputs.held()) {
+            *c = k.0 & olr_sim::Keys::CHANGE != 0;
+        }
         let edited_play = self.shell.editing_play();
         let overlay = self.shell.play.as_ref().map(|p| Overlay {
             session: &p.session,
@@ -959,7 +983,7 @@ impl App {
             speed: speed_shown,
             selecting: self.shell.selecting(),
             names: game_has_screen(self.cfg.menus, self.shell.names_shown()),
-            changing: self.shell.data.held.0 & olr_sim::Keys::CHANGE != 0,
+            changing,
             arrangement: self.shell.ui.settings().video.hud_layout,
             net: self.net_overlay.then(|| self.shell.net_view()).flatten(),
             lagging: self.shell.lagging(),
@@ -1029,7 +1053,7 @@ impl App {
             // The chat's field takes the keys: those held go up.
             let chatting = self.shell.data.ingame_chat.is_some();
             if chatting && !self.chatting {
-                self.input.release_keys();
+                self.inputs.release_keys();
             }
             self.chatting = chatting;
         }
@@ -1049,7 +1073,7 @@ impl App {
         // Mouse controls grab the pointer while the game has it, and free
         // it for the menus, the pause, the chat and the weapon selection.
         let want = pointer::wanted(
-            self.input.mouse_controls(),
+            self.inputs.first().mouse_controls(),
             hide,
             self.shell.selecting(),
             self.pointer.focused(),
@@ -1057,7 +1081,7 @@ impl App {
         let had = self.pointer.active();
         self.pointer.update(&w.window, want);
         if had && !self.pointer.active() {
-            self.input.release_mouse();
+            self.inputs.first_mut().release_mouse();
         }
         w.egui.handle_platform_output(&w.window, out.platform_output);
         // The autoplay's steps, on what this frame shows.
@@ -1236,7 +1260,7 @@ impl App {
     fn stop_edited(&mut self) {
         self.shell.stop_edited();
         self.canvas_full = true;
-        self.input.release_keys();
+        self.inputs.release_keys();
     }
 
     /// The window's close button: with the editor open it asks about
@@ -1293,7 +1317,7 @@ impl App {
         // The chat key online (the options' `online.chat_key`): its field
         // takes the keys from now on.
         if code == self.shell.ui.settings().online.chat_key && self.shell.open_chat() {
-            self.input.release_keys();
+            self.inputs.release_keys();
             return Ok(());
         }
         match code {
@@ -1336,7 +1360,7 @@ impl App {
             Effect::Shot(_) => {}
             // As the window delivers a key: the input path, then the game's keys.
             Effect::Key(code, pressed) => {
-                self.input.on_key(code, pressed);
+                self.inputs.on_key(code, pressed);
                 self.key(el, code, pressed, false)?;
             }
             Effect::Action(a, pressed) => self.press(a, pressed),
@@ -1365,7 +1389,16 @@ fn egui_frame_time(input: &mut egui::RawInput, elapsed: f64) {
 mod tests {
     use winit::event::{Ime, WindowEvent};
 
-    use super::{REVEAL_AFTER, REVEAL_AFTER_FRAMES, reveal_now};
+    use super::{REVEAL_AFTER, REVEAL_AFTER_FRAMES, per_player, reveal_now};
+
+    /// The exit summary's counts (issue #29): the player's alone, each
+    /// local player's in split screen.
+    #[test]
+    fn the_summary_counts_each_local_player() {
+        assert_eq!(per_player(&[3, 1, 0, 0], 1), "3");
+        assert_eq!(per_player(&[3, 1, 0, 0], 0), "3", "nobody plays: the first, 0");
+        assert_eq!(per_player(&[3, 1, 2, 0], 3), "3, 1, 2");
+    }
 
     /// Review of the window fix (Critical 1): a hidden window shows with its
     /// first presented frame, and after `REVEAL_AFTER_FRAMES` attempts

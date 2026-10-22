@@ -81,6 +81,12 @@ struct Args {
     /// Deathmatch: bots against you (1 to 31; with --spectate, 2 to 32).
     #[arg(long, default_value_t = 3)]
     bots: usize,
+    /// Deathmatch: local players on this machine (1 to 4; issue #29):
+    /// keyboard 1, keyboard 2 (OLX's player 2's keys), then the first two
+    /// gamepads. With two or more, --bots may be 0. One view shows the
+    /// first player's worm until split screen's layout comes (issue #30).
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u8).range(1..=4))]
+    locals: u8,
     /// Deathmatch: the bots play alone and you watch (fast-forward with
     /// --speed, PageUp and PageDown).
     #[arg(long, conflicts_with = "replay")]
@@ -261,9 +267,10 @@ fn net_profile(name: &str) -> Result<Profile, String> {
 
 /// The flags that choose a game: with any of them on the command line the
 /// game plays it at once (scripted runs and tests); without, the menus.
-const GAME_FLAGS: [&str; 16] = [
+const GAME_FLAGS: [&str; 17] = [
     "mode",
     "bots",
+    "locals",
     "spectate",
     "difficulty",
     "lives",
@@ -298,6 +305,10 @@ fn direct(
         "--record records a Deathmatch (--mode deathmatch)"
     );
     anyhow::ensure!(!args.spectate || mode == Mode::Deathmatch, "--spectate watches a Deathmatch of bots");
+    anyhow::ensure!(
+        args.locals == 1 || (mode == Mode::Deathmatch && !args.spectate),
+        "--locals plays a Deathmatch (--mode deathmatch)"
+    );
     // The bundled content: OLR's own packs over `--content`.
     let roots = olr_content::bundled_roots(&args.content);
     let roots: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
@@ -317,6 +328,7 @@ fn direct(
             kill_limit: args.kill_limit,
             time_limit: args.time_limit,
             spectate: args.spectate,
+            locals: usize::from(args.locals),
         };
         setup::load_deathmatch(&roots, &args.mod_name, &args.level, &args.skin, &o)?
     } else {

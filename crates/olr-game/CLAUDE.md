@@ -10,7 +10,7 @@ weapons), a Deathmatch against bots (M6) and replays.
 cargo run --release -p olr-game                      # the menus
 cargo run --release -p olr-game -- --level "CastleStrike" --mod "MW 1.0" --targets 3
 cargo run --release -p olr-game -- --mode deathmatch --bots 4 --difficulty medium \
-    [--lives L] [--kill-limit K] [--time-limit M] [--seed S] [--record f.olrp]
+    [--locals N] [--lives L] [--kill-limit K] [--time-limit M] [--seed S] [--record f.olrp]
 cargo run --release -p olr-game -- --replay f.olrp [--speed 1|2|4|8|16|max]
 cargo run --release -p olr-game -- --spectate --bots 8 [--speed 16]   # bots alone, watched
 cargo run --release -p olr-game -- --host [name] [--port 23400]        # host online, the Lobby opens
@@ -211,16 +211,23 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   them. Settings (and profiles and own loadouts: `AppCommand::SaveLoadouts`
 → `Store::save_file`) are written at most once a second (`Shell::flush`) and
   at exit. The human's profile names and colours the local slot's worm
-  (`PlayerLook`) and its skin is that worm's (`Assets::skin`); every
+  (`PlayerLook`, `Assets::set_player_look`: the first local player's) and
+  its skin is that worm's; each local player is a `setup::LocalPlayer`
+  (`Assets::locals`, in local order: `look`, `skin`, `skin_id`,
+  `skin_hash`; `load_match_for(roots, options, skins)` gives player `k`
+  `skins[k]`, else the first, `load_match` one skin for all); several
+  players without a profile are "Player N" in `olr_present::default_colour(k)`,
+  one alone "You"; every
   other worm wears OLX's default skin (`Assets::bot_skin`, as OLX's bot
-  profiles) in OLX's bot colours away from the player's
-  (`olr_ui::bot_colours`). A Deathmatch's recorder gets those same names
-  and colours, the player's skin pack and hash and the default skin for
+  profiles) in OLX's bot colours away from every player's
+  (`olr_ui::bot_colours_away`). A Deathmatch's recorder gets those same names
+  and colours, each player's skin pack and hash and the default skin for
   the bots (`session::replay_looks`); a replay plays with its recorded
   names, colours and skins (`load_replay` fills `Assets::slot_skins` with
   `Content::skin_matching(id, hash)` for every worm, there being no own
   slot: a skin this install lacks, or has with other content, is the
-  default skin, with a warning). Weapon selection's Done arms the local slot.
+  default skin, with a warning). Weapon selection's Done arms the first local
+  slot (the menus' selection is one player's until issue #31).
   The menus list and play `--content` with the data directory's `packs/`
   over it (`Content::open_layers`, spec §9.4), and OLR's own packs
   between them (`olr_content::bundled_roots`, issue #7: `content/reloaded`
@@ -262,6 +269,18 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   handing egui-winit `CursorIcon::None`, which shows it again with egui's
   next icon; play uses no mouse but mouse controls' (`tests/watch.rs`,
   `the_cursor_hides_only_in_play`).
+- **Local players' inputs** (`players.rs`, issue #29): `LocalInputs`
+  holds one `olr_input::InputState` per local player, fitted to
+  `Session::locals` each tick (`fit(n)`: made afresh when the count
+  changes). One player alone is `InputState::new` (keyboard 1, the mouse,
+  every pad, as before seats); among several, player `k` is on
+  `SEATS[k]` (keyboard 1 with the mouse, keyboard 2, pad 0, pad 1) until
+  the menus seat players (issue #31). Every window, key and gilrs event
+  reaches every seat and each hears only its own devices (OLX
+  `CClient.cpp:1527-1551`), so one player's keys never reach another's
+  worm; any seat's pad Start pauses (`take_pause`). The first is
+  `first()` (mouse controls, the online player, the selection);
+  `held()` gives the overlay every player's CHANGE.
 - **Mouse controls** (issue #24, experimental; the controller is
   `olr-input`'s `mouse.rs`): Options → Keys' switch (`olr_ui::MouseSettings`,
   `Outcome::MouseControls` → `InputState::set_mouse_controls`, also at
@@ -322,8 +341,11 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   rest. egui hears each frame's real time (`app::egui_frame_time`, its
   `predicted_dt`: the game never asks egui for a repaint, so egui's
   `stable_dt`, which menu animations and the skin preview step by, would
-  otherwise be 1/60 s at any frame rate). Per tick: script steps, `input.latch_tick()`, `Session::tick` (`world.tick` →
-  its sounds, without others' rope throws, `audio.play_heard` at the views' centres (`Presentation::listeners`, one view today) → `Presentation::on_tick`, see
+  otherwise be 1/60 s at any frame rate). Per tick: script steps, the
+  local players' keys (`players::LocalInputs`, below: the first latched
+  with mouse controls' aim, then `latch`), `Shell::tick_locals` →
+  `Session::tick_locals` (`world.tick` →
+  its sounds, without others' rope throws, `audio.play_heard` at the views' centres (`Presentation::listeners`: a view per local player) → `Presentation::on_tick`, see
   `olr-present` → damage popups). Per frame: `Session::build` (scene,
   entities), the overlay, `Presentation::upload` (atlas if a worm was
   added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
@@ -374,14 +396,28 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `MatchDriver`'s bots, `ReplayDriver` (an `olr_replay::Cursor` checking
   every checksum; a divergence is shown and logged once, the replay stops
   at its end), or `Online` (`online.rs`).
-  **The local slot** (`Session::local`, `Assets::local_slot`: the
-  sandbox's 0, a Deathmatch's first player that is not a bot, an online
-  match's own slot; `None` for a replay, bots alone and an online match
-  watched) gets the player's keys, name, look, the crosshair (the scene's
+  **The local slots** (issue #29, split screen headless:
+  `Session::locals`, `Assets::local_slots`: the sandbox's 0, a
+  Deathmatch's players that are not bots in worm order (`--locals N`, 1
+  to `MAX_LOCALS` 4, `DeathmatchOptions::locals`: the humans first, then
+  the bots; a Deathmatch only, never with `--spectate`), an online
+  match's own slot; none for a replay, bots alone and an online match
+  watched; `Session::local`/`Assets::local_slot` the first) each get
+  their own player's keys (`Session::tick_locals(&[Keys])`, player `k`'s
+  to slot `k`, `Keys(0)` for a player missing; `tick(keys)` the first's
+  alone; OLX's `CClient.cpp:1527-1551`, each local worm its own input),
+  name, look, the crosshair (the scene's
   `local`; with no local slot a local game's worm 0 keeps it, as OLX's
-  local worms, and an online match watched has none), the camera
-  (`Presentation::follow`), the HUD, the big minimap dot, the highlighted scoreboard and results row (`Row::followed`), the
-  tally's player kills and `player_deaths`/`player_spawns`. Without one
+  local worms, and an online match watched has none), a view each
+  (`Presentation::set_views`, `followed_view(k)`: every player sees the
+  same 427 × 192, the fair-view rule, a deviation in `docs/porting/STATUS.md`;
+  the app draws view 0 until the layout, issue #30; a replay a view per
+  recorded viewer), the big minimap dot, its tally (`Tally::player_kills`,
+  `player_deaths`, `player_spawns`: one per local player, `[MAX_LOCALS]`,
+  OLX's per-worm counts, `CClient.cpp:1653-1744`). The first's is the
+  camera (`Presentation::follow`), the HUD and the highlighted scoreboard
+  and results row (`Row::followed`); the exit summary gives every
+  player's (`app::per_player`). Without one
   the camera and the HUD follow the worm chosen (`follow`, `follow_next`,
   worm 0 at first; `follow_next` skips worms that left, `World::gone`, and `after_tick` moves a watcher on from a followed worm that
   left, N89: `watch::the_watched_worm_moves_on_when_it_leaves` through a recorded replay with `Recorder::withdraw`, and
@@ -409,12 +445,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   popups) reads a `TickView`: a local tick's world and events, or an
   online match's `ConfirmedTick`.
   **Whose rope throws are heard** (`throw_sound.rs`, the user's playtest
-  report 2026-10-16): only the player's own, as OLX plays `smpNinja` in
+  report 2026-10-16): only the players' own, as OLX plays `smpNinja` in
   the human input handler alone (a bot's or a remote worm's throw is
-  silent): the local slot's, a replay's viewer's, nobody's for bots
+  silent): every local slot's, a replay's viewers', nobody's for bots
   alone or an online match watched. The simulation's THROW sounds carry
-  no owner, so `ThrowSounds::retain` keeps as many as that worm's
-  `NinjaRope::throws` grew since the last tick or poll (on the newest
+  no owner, so `ThrowSounds::retain` keeps as many as those worms'
+  `NinjaRope::throws` grew since the last tick or poll, summed (on the newest
   predicted world online, inside `OnlineDriver::present`; a rollback that
   takes throws back plays none); every other sound plays as before.
   `Session::sounds` is what the last tick or poll played (or would have,
@@ -1027,8 +1063,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `practice_holds_the_weapon_against_idle_targets`, and `session.rs`'s
   `practice_keeps_the_last_hit` (equal to the last `Damage` event; none
   outside a practice).
-- **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
-  worm 0, then the bots at one difficulty, OLX's LX56 settings, the
+- **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the humans
+  are worms 0 to `locals - 1`, then the bots at one difficulty, OLX's LX56 settings, the
   `Default` loadout: every weapon at 100 %, issue #5; there is no
   `--bonuses`: bonuses are gone from play, `SandboxOptions::bonuses` is
   the soak test's) feeds `olr_content::build_match`, the same assembly as
@@ -1060,7 +1096,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `GameOver` "Game Over", then after OLX's `GAMEOVER_WAIT` (3 s) the
   results (the menus' screen; the command line's:
   `olr_ui::screens::results::panel` with F5 rematch, Esc quit). `Session::tally` counts kills by bots,
-  the player and suicides (Kill events) over the run's match time.
+  each local player and suicides (Kill events) over the run's match time.
 - **Window** (`window.rs`, the user's ruling after the plan 6 playtest):
   not resizable, no maximise button; `--fullscreen` is borderless. It opens
   hidden and shows with its first presented frame (`app::reveal_now`, at
@@ -1116,16 +1152,18 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   every delta was handled.
 - **Overlay** (`overlay.rs`): names over worms (inside the picture at
   its edges: `name_rect`; only in game and not paused, `Shell::names_shown`,
-  never through the selection, the pause menu or the results); the
-  player's worm's label is its current weapon's name, in white, while the
-  change key is held now (`Overlay::changing`, the input's) or for
+  never through the selection, the pause menu or the results); each
+  local player's worm's label is its current weapon's name, in white, while
+  its change key is held now (`Overlay::changing[k]`, its input's) or for
   `WEAPON_NAME_TICKS` (OLX's 0.75 s) after a change made with it
-  (`Session::weapon_name`, `worm_label`; the change noted by
-  `Session::tick` and `Session::frame` from the player's keys,
-  `tests/weapon_name.rs`); else no name over the player's own worm (OLX
+  (`Session::weapon_name_of(k, held)`, `weapon_name` the first's,
+  `worm_label`; each change noted by `Session::tick_locals` and
+  `Session::frame` from that player's keys, OLX's per-worm
+  `bForceWeapon_Name`, `tests/weapon_name.rs`, `tests/locals.rs`); else no
+  name over a local player's own worm (OLX
   draws none over a local human worm; plan 15a Task 8: `worm_label(i,
-  local, ..)` is `None`; a game with no local slot names every worm);
-  under the place of the player's own worm's name, while
+  locals, ..)` is `None`; a game with no local slot names every worm);
+  under the place of each local player's worm's name, while
   its current weapon reloads, a reload bar filled to the slot's charge
   (`reload_fraction`, `reload_bar`: `RELOAD_WIDTH` 14 world pixels, OLX's
   reloading red brightened, outlined; the user's request 2026-10-18: one's
@@ -1243,8 +1281,15 @@ effect; the port is one below the ephemeral range, `unclaimable_port`, so
 no other test's port-0 bind takes it between the leave and the new host),
 `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
 budget, a recording replayed through a replay session),
+`tests/locals.rs` (issue #29: four local players on slots 0, 2, 3 and 5
+between two bots, each moved by its own scripted keys and no other's,
+their names, colours, skins and views, the throws heard each tick theirs
+alone, the tally, deaths and spawns each player's, the replay's rows the
+scripts' and its viewers the slots, played back with four views to the
+same checksums; each player's weapon name its own), `players.rs`' unit
+tests (each seat hears its own keys; any seat's Start pauses),
 `tests/throw_sound.rs` (only the player's rope throws are heard against
-seven bots, none for bots alone, a replay's viewer's; online, in
+seven bots, none for bots alone, a replay's viewers'; online, in
 `an_online_match_runs_headless`: the client's own only), `tests/menu.rs`
 (starts with missing or broken content, rapid menu actions) and
 `tests/profiles.rs` (the preview's textures; a menu match wears the

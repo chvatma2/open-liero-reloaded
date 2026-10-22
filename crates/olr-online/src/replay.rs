@@ -21,8 +21,8 @@ use crate::matches;
 pub fn same_match(a: &[u8], b: &[u8]) -> bool {
     match (olr_replay::Replay::decode(a), olr_replay::Replay::decode(b)) {
         (Ok(mut a), Ok(mut b)) => {
-            a.setup.viewer = None;
-            b.setup.viewer = None;
+            a.setup.viewers.clear();
+            b.setup.viewers.clear();
             a == b
         }
         _ => false,
@@ -57,7 +57,7 @@ pub fn make(content: &Content, record: &MatchRecord, viewer: Option<u8>) -> anyh
     let options = matches::resolve(content, &record.start)?;
     let built = content.build_match(&options)?;
     let (mut world, mut recorder) = (built.world, built.recorder);
-    recorder.set_viewer(viewer);
+    recorder.set_viewers(viewer.as_slice());
     // The lobby's looks of each slot as the match started (members' and
     // bots'), the same on every peer.
     recorder.set_looks(

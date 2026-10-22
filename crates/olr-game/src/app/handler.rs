@@ -51,12 +51,12 @@ impl ApplicationHandler for App {
         // The in-game chat's field has the keys: the game hears none.
         let chatting = self.shell.data.ingame_chat.is_some();
         if !(chatting && matches!(event, WindowEvent::KeyboardInput { .. })) {
-            self.input.on_window_event(&event);
+            self.inputs.on_window_event(&event);
         }
         // Mouse controls (issue #24): the buttons and the wheel are the
         // game's while it has the pointer; the cursor moves the pointer's.
         if self.pointer.active() {
-            self.input.on_mouse(&event);
+            self.inputs.first_mut().on_mouse(&event);
         }
         match &event {
             WindowEvent::CursorMoved { position, .. } => {
@@ -123,7 +123,7 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         if let Some(g) = &mut self.gilrs {
             while let Some(ev) = g.next_event() {
-                self.input.on_gamepad(&ev);
+                self.inputs.on_gamepad(&ev);
                 if let Some(c) = &mut self.shell.data.capture {
                     c.on_gamepad(&ev);
                 }
@@ -131,7 +131,7 @@ impl ApplicationHandler for App {
         }
         // A pad's Start pauses and resumes, as Esc (issue #28); the
         // editor's Play has no pause, a game without menus none either.
-        if self.input.take_pause() && self.cfg.menus && !self.shell.editing_play() {
+        if self.inputs.take_pause() && self.cfg.menus && !self.shell.editing_play() {
             let out = self.shell.act(olr_ui::UiAction::PadPause);
             self.outcomes(el, out);
         }

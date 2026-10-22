@@ -11,9 +11,14 @@ ticks and at the end.
   the encoding is the format). Learn the match API from
   `target/api/olr_sim.txt` and `olr_modes.txt`.
 - **What a replay holds** (`lib.rs`): `ReplaySetup` (the `MatchSetup`'s
-  settings, start, seed, worms, pool size, bonus weapons and the `viewer`,
-  the slot of the player whose game made it, `Recorder::set_viewer`, none
-  for bots alone or a spectator, a slot that is no worm refused by decode;
+  settings, start, seed, worms, pool size, bonus weapons and the
+  `viewers`, the local slots of the players whose game made it in local
+  order (issue #29: up to `MAX_VIEWERS` (4, split screen's views), so a
+  split-screen replay plays back with every view; `viewer()` the first,
+  where a watcher starts), `Recorder::set_viewers` (a slot that is no worm
+  or comes twice dropped, the first 4 kept), none for bots alone or a
+  spectator, decode refusing more than 4, a slot that is no worm or one
+  twice;
   `looks`, one `WormLook` (name, colour, skin pack id and content hash) per
   worm, `looks.rs`: presentation only, never in `MatchSetup`, the world or
   its checksums; `Recorder::new(.., looks)` and `set_looks` fit them to the
@@ -57,8 +62,8 @@ ticks and at the end.
 - **Withdrawals in play:** `Cursor::step` withdraws every `(t, worm)` with
   `t` the tick about to be played, in order, before `World::tick`; those
   with `t == ticks` after the last tick, before its checksum is checked.
-- **Format** (`wire.rs`, `mirror.rs`): `OLRP`, `FORMAT_VERSION` (u16 LE; 5 since the
-  16-bit keys, 4 the looks, 3 withdrawals),
+- **Format** (`wire.rs`, `mirror.rs`): `OLRP`, `FORMAT_VERSION` (u16 LE; 6 since the
+  local slots, 5 the 16-bit keys, 4 the looks, 3 withdrawals),
   then postcard; keys by worm, deflated (every key's low byte, then every
   high byte, so the mostly zero high plane costs next to nothing). Other versions are refused, never
   migrated, while no replay is published. The format has its own copies of
@@ -73,7 +78,7 @@ ticks and at the end.
   must be a pack id (`[a-z0-9-]`, at most `MAX_SKIN_ID` 64), else `Invalid`. A viewer picks skins with
   `Content::skin_matching(id, hash)`: never downloaded.
 - **Never panic on a replay:** `decode` checks every bound (`MAX_TICKS`,
-  `MAX_WORMS`, `MAX_SLOTS`, `MAX_SETUP_CALLS`, ordered checksums,
+  `MAX_WORMS`, `MAX_SLOTS`, `MAX_SETUP_CALLS`, `MAX_VIEWERS`, ordered checksums,
   withdrawals (at most `MAX_WORMS`, `t` ascending and at most `ticks`, worm
   below `MAX_WORMS`, none twice), the keys' exact size, inflated with a limit, settings and mode numbers in OLX's
   ranges: `SimSettings::validate`, `ModeSpec::validate`); `Replay::world`

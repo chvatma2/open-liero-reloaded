@@ -139,7 +139,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   sets the projectile pool (`MatchSetup::DEFAULT_POOL_CAPACITY`, OLX's
   3000, everywhere but `olr-cli stress`; the replay records it); chaos bots get the
   `ChaosCycle` respawn loadout; a bot whose `BotConfig::validate` fails is
-  refused; `Deathmatch::prepare`, `World::new`, a
+  refused; every human's worm, in worm order, is the replay's local slots
+  (`Recorder::set_viewers`, issue #29); `Deathmatch::prepare`, `World::new`, a
   started `Recorder` and the bots on one shared `AreaCache` (think in
   `bots` order). `olr-cli`'s golden checksum streams pin it.
   `MatchOptions::deathmatch(mod, level, seed, players)` gives the defaults

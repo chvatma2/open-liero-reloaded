@@ -1,4 +1,5 @@
-//! `olr-cli render-match`: the last frame of a headless bot match as a PNG,
+//! `olr-cli render-match`: the last frame of a headless bot match (its
+//! local players', `--locals`, too) as a PNG,
 //! drawn the way the game draws it (its look included), so agents can see
 //! a match on any packs, such as the look test level and mod (plan 15a
 //! Task 16), which no OLX trace can replay.
@@ -64,8 +65,11 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     let id =
         content.skin_id(&args.skin).with_context(|| format!("--skin {}: no such skin pack", args.skin))?;
     let skin = content.load_skin(&id)?;
+    // Each local player's worm has its crosshair (issue #29); without
+    // any, worm 0's, as the game draws a game nobody plays.
+    let locals = args.spec.locals;
     for i in 0..game.world().worms().len() {
-        present.add_worm(&skin, default_colour(i), i == 0, false);
+        present.add_worm(&skin, default_colour(i), i < locals.max(1), i < locals);
     }
     // `Match::ticks` counts settled ticks; this plays without settling.
     for _ in 0..args.spec.ticks {

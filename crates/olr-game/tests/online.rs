@@ -58,7 +58,7 @@ fn the_local_slot_drives_everything() {
     let bot = Player::Bot(BotConfig { difficulty: Difficulty::Xtreme, ..BotConfig::default() });
     let o = MatchOptions::deathmatch(MOD, LEVEL, 11, vec![bot, bot, Player::Human]);
     let mut a = setup::load_match(&[dir.as_path()], &o, "default").unwrap();
-    a.player = Some(PlayerLook { name: "Mine".into(), colour: [20, 90, 255] });
+    a.set_player_look(PlayerLook { name: "Mine".into(), colour: [20, 90, 255] });
     let mut s = Session::new(&a, viewport(), Interpolation::Linear, Audio::silent()).unwrap();
     assert_eq!(s.local(), Some(2));
     assert!(s.human());
@@ -115,9 +115,9 @@ fn the_local_slot_drives_everything() {
     }
     assert!(fired > 0, "the player's keys reach worm 2");
     assert!(deaths > 0, "the bots killed the player within {t} ticks");
-    assert_eq!(s.player_deaths, deaths);
-    assert_eq!(s.player_spawns, spawns);
-    assert_eq!(s.tally.player_kills, player_kills);
+    assert_eq!(s.player_deaths[0], deaths);
+    assert_eq!(s.player_spawns[0], spawns);
+    assert_eq!(s.tally.player_kills[0], player_kills);
     assert_eq!(s.tally.bot_kills, bot_kills);
     let view = hud::view(&s, &frame);
     let w = &s.world.worms()[2];

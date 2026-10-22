@@ -77,4 +77,12 @@ fn render_match_writes_a_png() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert!(stdout.contains("tick 30, 0 glowing discs"), "{stdout}");
     assert!(out.is_file());
+    // Issue #29: local players' worms (each with its crosshair) render too.
+    let o = Command::new(env!("CARGO_BIN_EXE_olr-cli"))
+        .args(["render-match", "--mod", "olx-classic", "--level", "olx-level-dirt-level", "--bots", "1"])
+        .args(["--locals", "2", "--seed", "1", "--ticks", "30", "--content", &content])
+        .args(["--out", out.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 }

@@ -260,10 +260,13 @@ pub fn build_match_spawning(
     let game = Deathmatch::prepare(dm, &mut setup).map_err(|e| anyhow!("{e}"))?;
     let world = World::new(setup.clone(), Box::new(game)).map_err(|e| anyhow!("{e}"))?;
     let mut recorder = Recorder::new(a.packs.clone(), &setup, &mode, default_looks(&o.players));
-    // The first human's worm: where a watcher of the replay starts.
-    recorder.set_viewer(
-        o.players.iter().position(|p| !matches!(p, Player::Bot(_))).and_then(|i| u8::try_from(i).ok()),
-    );
+    // Every human's worm, in worm order: the replay's local slots (issue
+    // #29), where a watcher's views start.
+    let humans: Vec<u8> = (0..n)
+        .filter(|&i| !matches!(o.players[i], Player::Bot(_)))
+        .filter_map(|i| u8::try_from(i).ok())
+        .collect();
+    recorder.set_viewers(&humans);
     recorder.start(&world).map_err(|e| anyhow!("{e}"))?;
     let cache = AreaCache::new(world.terrain());
     let bots = (0..n)

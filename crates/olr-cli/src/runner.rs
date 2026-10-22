@@ -1,5 +1,6 @@
 //! Headless bot matches (spec §7.1, §7.3): a Deathmatch of bots on
-//! imported content, played as fast as it goes, recorded, with the
+//! imported content (and local human players pressing scripted keys,
+//! `--locals`, issue #29), played as fast as it goes, recorded, with the
 //! invariants checked after every tick and a panic caught as a failure
 //! whose replay reproduces it.
 
@@ -16,7 +17,7 @@ use olr_sim::{EndReason, EventKind, Keys, MAX_WORMS, MatchResult, MatchSetup, Ti
 use crate::assets::LevelAssets;
 use crate::coverage::Coverage;
 use crate::invariants;
-use crate::spec::MatchSpec;
+use crate::spec::{MAX_LOCALS, MatchSpec, local_keys};
 
 /// Test hooks.
 #[derive(Clone, Copy, Debug, Default)]
@@ -181,6 +182,8 @@ pub struct Match {
     world: World,
     bots: Vec<Bot>,
     out: TickEvents,
+    /// Every worm's keys this tick: the local players' scripted ones
+    /// ([`local_keys`]), then the bots'.
     keys: Vec<Keys>,
     /// Every tick's keys, row by row.
     log: Vec<Keys>,
@@ -210,7 +213,9 @@ impl Match {
     /// its presentation; a generated level is made once).
     pub fn with_assets(assets: &LevelAssets, spec: &MatchSpec, opts: &Options) -> anyhow::Result<Match> {
         ensure!(spec.ticks <= MAX_TICKS, "at most {MAX_TICKS} ticks");
-        ensure!((2..=MAX_WORMS).contains(&spec.bots), "a Deathmatch of 2 to {MAX_WORMS} bots");
+        ensure!(spec.locals <= MAX_LOCALS, "at most {MAX_LOCALS} local players");
+        let worms = spec.locals + spec.bots;
+        ensure!((2..=MAX_WORMS).contains(&worms), "a Deathmatch of 2 to {MAX_WORMS} worms, not {worms}");
         let built = olr_content::build_match(assets.match_assets(), &spec.match_options())?;
         let BuiltMatch { setup, mode, world, bots, recorder: rec } = built;
         let stats = Stats {
@@ -226,8 +231,8 @@ impl Match {
             mode,
             world,
             out: TickEvents::new(),
-            keys: vec![Keys(0); bots.len()],
-            log: Vec::with_capacity(spec.ticks as usize * bots.len()),
+            keys: vec![Keys(0); worms],
+            log: Vec::with_capacity(spec.ticks as usize * worms),
             bots,
             rec,
             ticks: 0,
@@ -269,13 +274,17 @@ impl Match {
         self.stats.percentile_us(from, 0.99)
     }
 
-    /// The bots think (in worm order) and the world ticks. Allocates
-    /// nothing; a panic propagates (see [`Match::step`]).
+    /// The local players press their scripted keys, the bots think (in
+    /// worm order) and the world ticks. Allocates nothing; a panic
+    /// propagates (see [`Match::step`]).
     pub fn advance(&mut self) {
         let start = Instant::now();
+        for (player, k) in self.keys.iter_mut().take(self.spec.locals).enumerate() {
+            *k = local_keys(player, self.ticks);
+        }
         for (i, b) in self.bots.iter_mut().enumerate() {
             self.phase = Phase::Bot(i);
-            self.keys[i] = b.think(&self.world, &self.out);
+            self.keys[b.worm()] = b.think(&self.world, &self.out);
             let (used, budget) = (b.units_used(), b.budget());
             self.stats.units_max = self.stats.units_max.max(used);
             self.stats.units_total += u64::from(used);

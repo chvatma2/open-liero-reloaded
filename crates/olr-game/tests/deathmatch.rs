@@ -172,7 +172,7 @@ fn replay_session_matches_recorded_checksums() {
         ..DeathmatchOptions::default()
     };
     let mut a = setup::load_deathmatch(&[dir.as_path()], "MW 1.0", "Liero Factory", "default", &o).unwrap();
-    a.player = Some(setup::PlayerLook { name: "Ann".into(), colour: [10, 20, 30] });
+    a.set_player_look(setup::PlayerLook { name: "Ann".into(), colour: [10, 20, 30] });
     let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
     let mut s = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
     for t in 0..750 {

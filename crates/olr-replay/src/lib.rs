@@ -40,7 +40,8 @@ pub use record::Recorder;
 /// 3: withdrawals (plan 12d).
 /// 4: each worm's looks (name, colour, skin id, the hash as 32 bytes).
 /// 5: 16-bit keys (Strafe, Previous/Next weapon), high bytes after the low.
-pub const FORMAT_VERSION: u16 = 5;
+/// 6: the local slots (`viewers`, issue #29) in place of one viewer.
+pub const FORMAT_VERSION: u16 = 6;
 
 /// The first bytes of every replay file.
 pub const MAGIC: [u8; 4] = *b"OLRP";
@@ -58,6 +59,10 @@ pub const MAX_TICKS: u32 = 2 * 60 * 60 * 100;
 
 /// At most this many setup calls.
 pub const MAX_SETUP_CALLS: usize = 1024;
+
+/// At most this many local players' slots ([`ReplaySetup::viewers`]): split
+/// screen's views (`olr_scene::MAX_VIEWS`, issue #29).
+pub const MAX_VIEWERS: usize = 4;
 
 /// A content pack by id and content hash (`olr_pack::content_hash`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -103,9 +108,11 @@ pub struct ReplaySetup {
     pub pool_capacity: usize,
     pub bonus_weapons: Option<Vec<i32>>,
     pub calls: Vec<SetupCall>,
-    /// The worm of the player whose game made the replay (a watcher
-    /// starts on it); `None` for bots alone or an online spectator.
-    pub viewer: Option<u8>,
+    /// The worms of the players whose game made the replay, its local
+    /// slots in local order (issue #29: up to [`MAX_VIEWERS`] in split
+    /// screen; distinct worms): a watcher's views start on them, and their
+    /// rope throws are heard. Empty for bots alone or an online spectator.
+    pub viewers: Vec<u8>,
     /// Each worm's name, colour and skin, by worm (as many as `worms`).
     /// Presentation only: not part of the simulation or its checksums.
     pub looks: Vec<WormLook>,
@@ -138,9 +145,15 @@ impl ReplaySetup {
             pool_capacity: *pool_capacity,
             bonus_weapons: bonus_weapons.clone(),
             calls: Vec::new(),
-            viewer: None,
+            viewers: Vec::new(),
             looks: looks::fit(looks, worms.len()),
         }
+    }
+
+    /// The first local player's worm ([`ReplaySetup::viewers`]), where a
+    /// watcher starts; `None` when nobody played.
+    pub fn viewer(&self) -> Option<u8> {
+        self.viewers.first().copied()
     }
 
     /// The [`MatchSetup`] this describes, made of `assets`.

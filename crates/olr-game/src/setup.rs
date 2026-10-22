@@ -63,6 +63,9 @@ pub struct DeathmatchOptions {
     /// No human plays: `bots` bots (2 to `MAX_WORMS`) alone, watched
     /// (`--spectate`; fast-forward allowed, `speed.rs`).
     pub spectate: bool,
+    /// Local human players (`--locals`, issue #29): 1 to [`MAX_LOCALS`],
+    /// worms 0 to `locals - 1`, before the bots.
+    pub locals: usize,
 }
 
 impl Default for DeathmatchOptions {
@@ -77,23 +80,28 @@ impl Default for DeathmatchOptions {
             kill_limit: d.kill_limit,
             time_limit: d.time_limit,
             spectate: false,
+            locals: 1,
         }
     }
 }
 
 /// The match [`DeathmatchOptions`] describe on packs `mod_id` and
-/// `level_id`: the human is worm 0, then the bots (OLX's bots at one
-/// difficulty), under OLX's LX56 settings, the `Default` loadout (every
+/// `level_id`: the humans are worms 0 to `locals - 1` (one, or up to
+/// [`MAX_LOCALS`] in split screen, issue #29), then the bots (OLX's bots at
+/// one difficulty), under OLX's LX56 settings, the `Default` loadout (every
 /// weapon at 100 %: issue #5) and the Deathmatch rules given.
-/// The bots are capped so the worms fit `MAX_WORMS`. Spectating, the bots
-/// play alone (2 to `MAX_WORMS` of them).
+/// The bots are capped so the worms fit `MAX_WORMS`, and number at least
+/// one against a lone human (a Deathmatch needs two worms). Spectating, the
+/// bots play alone (2 to `MAX_WORMS` of them).
 pub fn match_options(o: &DeathmatchOptions, mod_id: &str, level_id: &str) -> MatchOptions {
     let bot = BotConfig { difficulty: o.difficulty, ..BotConfig::default() };
     let players: Vec<Player> = if o.spectate {
         vec![Player::Bot(bot); o.bots.clamp(2, MAX_WORMS)]
     } else {
-        let bots = o.bots.clamp(1, MAX_WORMS - 1);
-        std::iter::once(Player::Human).chain((0..bots).map(|_| Player::Bot(bot))).collect()
+        let locals = o.locals.clamp(1, MAX_LOCALS);
+        let bots = o.bots.clamp(2usize.saturating_sub(locals), MAX_WORMS - locals);
+        let humans = std::iter::repeat_n(Player::Human, locals);
+        humans.chain((0..bots).map(|_| Player::Bot(bot))).collect()
     };
     MatchOptions {
         mod_id: mod_id.into(),
@@ -123,6 +131,10 @@ pub fn resolve_id(given: &str, prefix: &str, ids: &[String]) -> anyhow::Result<S
 /// OLX's default skin's pack id.
 pub const DEFAULT_SKIN: &str = "olx-skin-default";
 
+/// The most local players (split screen, issue #29): one view each
+/// (`olr_scene::MAX_VIEWS`), as many local slots as a replay keeps.
+pub const MAX_LOCALS: usize = olr_scene::MAX_VIEWS;
+
 /// What the game plays.
 pub enum Game {
     /// The sandbox (spec §19 E11).
@@ -146,6 +158,39 @@ pub struct PlayerLook {
     pub colour: [u8; 3],
 }
 
+/// One local player's look and skin (issue #29: several play one
+/// machine's match, each its own).
+#[derive(Clone, Debug)]
+pub struct LocalPlayer {
+    /// Its name and colour (a profile's); `None`: "You" when it plays
+    /// alone, "Player N" among several, in the default colours
+    /// (`olr_present::default_colour` of its local number).
+    pub look: Option<PlayerLook>,
+    pub skin: LoadedSkin,
+    /// The pack id and content hash of `skin`, as a replay records them
+    /// (the default skin and `NO_SKIN_HASH` when the skin asked for is no
+    /// skin pack here).
+    pub skin_id: String,
+    pub skin_hash: String,
+}
+
+impl LocalPlayer {
+    /// The player wearing skin `skin` (a name or id; the default skin when
+    /// missing) of `content`, without a look.
+    fn wearing(content: &Content, skin: &str) -> LocalPlayer {
+        let skin_id = content.skin_id(skin).unwrap_or_else(|| skin.to_string());
+        let loaded = content.skin_or_default(&skin_id);
+        let (skin_id, skin_hash) = match content.pack_kind(&skin_id) {
+            Some(PackKind::Skin) => match content.pack_hash(&skin_id, PackKind::Skin) {
+                Ok(h) => (skin_id.clone(), h),
+                Err(_) => (DEFAULT_SKIN.to_string(), olr_content::NO_SKIN_HASH.to_string()),
+            },
+            _ => (DEFAULT_SKIN.to_string(), olr_content::NO_SKIN_HASH.to_string()),
+        };
+        LocalPlayer { look: None, skin: loaded, skin_id, skin_hash }
+    }
+}
+
 /// Everything a session draws and plays, loaded once: a restart (F5)
 /// builds a new world from it without decoding any image or sound again.
 pub struct Assets {
@@ -155,13 +200,12 @@ pub struct Assets {
     pub m: LoadedMod,
     pub level: LoadedLevel,
     pub theme: LoadedTheme,
-    /// The human's skin (its slot's when a human plays).
-    pub skin: LoadedSkin,
-    /// The pack id and content hash of [`Assets::skin`], as a replay
-    /// records them (the default skin and `NO_SKIN_HASH` when the profile's
-    /// skin is no skin pack here).
-    pub skin_id: String,
-    pub skin_hash: String,
+    /// The local players' looks and skins, in local order (the order of
+    /// [`Assets::local_slots`]; issue #29): player `k` plays local slot
+    /// `k`. One in a solo game (its look the menus' profile); none for a
+    /// replay or an online match watched. A local slot without one plays
+    /// in the default look and skin.
+    pub locals: Vec<LocalPlayer>,
     /// Everyone else's: OLX's default skin, as OLX's bot profiles have
     /// (`src/client/ProfileSystem.cpp:59`).
     pub bot_skin: LoadedSkin,
@@ -171,8 +215,6 @@ pub struct Assets {
     pub level_id: String,
     /// Every warning of the loading, to log once.
     pub warnings: Vec<String>,
-    /// The human's look (a profile's); `None`: "You" in the default colour.
-    pub player: Option<PlayerLook>,
     /// An online match's or a replay's skin of every slot, by slot (two
     /// slots may wear skins of one id and different content): the local
     /// player's by its id, every other (and every worm of a replay, whose
@@ -187,18 +229,19 @@ pub struct Assets {
     pub practice: bool,
 }
 
-/// The packs `mod_id`, `level_id` (with its theme) and skin `skin` (a
-/// name or id; the default skin when missing), resolved and loaded.
+/// The packs `mod_id`, `level_id` (with its theme) and the local players'
+/// skins `skins` (each a name or id; the default skin when missing),
+/// resolved and loaded.
 fn open(
     content: Arc<Content>,
     mod_id: String,
     level_id: String,
-    skin: &str,
+    skins: &[&str],
     game: Game,
 ) -> anyhow::Result<Assets> {
     let lvl = content.load_level(&level_id)?;
     let m = content.load_mod(&mod_id)?;
-    open_loaded(content, (mod_id, m), level_id, lvl, skin, game)
+    open_loaded(content, (mod_id, m), level_id, lvl, skins, game)
 }
 
 /// [`open`] with the mod and level given (an editor's Play: the level
@@ -208,37 +251,34 @@ fn open_loaded(
     (mod_id, m): (String, LoadedMod),
     level_id: String,
     lvl: LoadedLevel,
-    skin: &str,
+    skins: &[&str],
     game: Game,
 ) -> anyhow::Result<Assets> {
-    let skin_id = content.skin_id(skin).unwrap_or_else(|| skin.to_string());
     let theme = content.load_theme(&lvl.theme).with_context(|| format!("level {level_id}"))?;
-    let skin = content.skin_or_default(&skin_id);
-    let (skin_id, skin_hash) = match content.pack_kind(&skin_id) {
-        Some(PackKind::Skin) => match content.pack_hash(&skin_id, PackKind::Skin) {
-            Ok(h) => (skin_id.clone(), h),
-            Err(_) => (DEFAULT_SKIN.to_string(), olr_content::NO_SKIN_HASH.to_string()),
-        },
-        _ => (DEFAULT_SKIN.to_string(), olr_content::NO_SKIN_HASH.to_string()),
+    let locals: Vec<LocalPlayer> =
+        skins.iter().take(MAX_LOCALS).map(|skin| LocalPlayer::wearing(&content, skin)).collect();
+    let bot_skin = match locals.iter().find(|l| l.skin_id == DEFAULT_SKIN) {
+        Some(l) => l.skin.clone(),
+        None => content.skin_or_default(DEFAULT_SKIN),
     };
-    let bot_skin = if skin_id == DEFAULT_SKIN { skin.clone() } else { content.skin_or_default(DEFAULT_SKIN) };
-    let mut warnings = content.warnings().to_vec();
-    let loaded = m.warnings.iter().chain(&theme.warnings).chain(&skin.warnings).chain(&bot_skin.warnings);
-    warnings.extend(loaded.cloned());
+    let mut warnings: Vec<String> = content.warnings().to_vec();
+    let loaded = m.warnings.iter().chain(&theme.warnings).chain(&bot_skin.warnings);
+    for w in loaded.chain(locals.iter().flat_map(|l| &l.skin.warnings)) {
+        if !warnings.contains(w) {
+            warnings.push(w.clone());
+        }
+    }
     Ok(Assets {
         content,
         m,
         level: lvl,
         theme,
-        skin,
-        skin_id,
-        skin_hash,
+        locals,
         bot_skin,
         game,
         mod_id,
         level_id,
         warnings,
-        player: None,
         slot_skins: Vec::new(),
         edited: false,
         practice: false,
@@ -264,10 +304,11 @@ pub fn load(
     let content = Content::open_layers(roots)?;
     let (mod_id, level_id) = resolve(&content, mod_name, level)?;
     let setup = sandbox_setup(&SandboxOptions { mod_id: mod_id.clone(), level_id: level_id.clone(), ..o });
-    open(Arc::new(content), mod_id, level_id, skin, Game::Sandbox(setup))
+    open(Arc::new(content), mod_id, level_id, &[skin], Game::Sandbox(setup))
 }
 
-/// A Deathmatch against bots on the packs `--mod` and `--level` name.
+/// A Deathmatch against bots on the packs `--mod` and `--level` name,
+/// every local player (`--locals`) in skin `skin`.
 pub fn load_deathmatch(
     roots: &[&Path],
     mod_name: &str,
@@ -279,17 +320,27 @@ pub fn load_deathmatch(
     let (mod_id, level_id) = resolve(&content, mod_name, level)?;
     let packs = content.replay_packs(&mod_id, &level_id)?;
     let options = Box::new(match_options(o, &mod_id, &level_id));
-    open(Arc::new(content), mod_id, level_id, skin, Game::Deathmatch { options, packs, spawn: None })
+    let humans = options.players.iter().filter(|p| !matches!(p, Player::Bot(_))).count();
+    let skins = vec![skin; humans];
+    open(Arc::new(content), mod_id, level_id, &skins, Game::Deathmatch { options, packs, spawn: None })
 }
 
-/// The Deathmatch `o` describes (the menus' local play), its packs by id.
-/// A missing or broken pack is an error naming it.
+/// The Deathmatch `o` describes (the menus' local play), its packs by id,
+/// its local player in skin `skin`. A missing or broken pack is an error
+/// naming it.
 pub fn load_match(roots: &[&Path], o: &MatchOptions, skin: &str) -> anyhow::Result<Assets> {
+    load_match_for(roots, o, &[skin])
+}
+
+/// [`load_match`] with several local players (issue #29): local player
+/// `k` (the `k`-th human of `o.players`) wears `skins[k]`; one without a
+/// skin given plays in the default look and skin.
+pub fn load_match_for(roots: &[&Path], o: &MatchOptions, skins: &[&str]) -> anyhow::Result<Assets> {
     let content = Content::open_layers(roots)?;
     let packs = content.replay_packs(&o.mod_id, &o.level_id)?;
     let options = Box::new(o.clone());
     let game = Game::Deathmatch { options, packs, spawn: None };
-    open(Arc::new(content), o.mod_id.clone(), o.level_id.clone(), skin, game)
+    open(Arc::new(content), o.mod_id.clone(), o.level_id.clone(), skins, game)
 }
 
 /// The level an editor's Play is on: the level editor's edited level
@@ -430,7 +481,7 @@ pub fn load_edited(
         let packs = Packs { mod_pack: r(&mod_id), level: r(&level_id), theme: r(&level.theme) };
         Game::Deathmatch { options: Box::new(p.options(1)), packs, spawn }
     };
-    let mut a = open_loaded(Arc::new(content), (mod_id, m), level_id, level, skin, game)?;
+    let mut a = open_loaded(Arc::new(content), (mod_id, m), level_id, level, &[skin], game)?;
     a.edited = true;
     a.practice = play.practice.is_some();
     Ok(a)
@@ -451,12 +502,13 @@ pub fn load_online(
     my_slot: Option<u8>,
 ) -> anyhow::Result<Assets> {
     let s = &start.setup;
-    let mine = my_slot.and_then(|i| start.slots.get(usize::from(i))).map_or(DEFAULT_SKIN, |w| &w.look.skin);
+    let mine = my_slot.and_then(|i| start.slots.get(usize::from(i))).map(|w| w.look.skin.as_str());
     let game = Game::Online { start: Box::new(start.clone()), my_slot };
-    let mut a = open(content, s.mod_id.clone(), s.level_id.clone(), mine, game)?;
+    let mut a = open(content, s.mod_id.clone(), s.level_id.clone(), mine.as_slice(), game)?;
     for (i, w) in start.slots.iter().enumerate() {
-        let skin = if my_slot.is_some_and(|m| usize::from(m) == i) {
-            a.skin.clone()
+        let skin = if let Some(me) = a.locals.first().filter(|_| my_slot.is_some_and(|m| usize::from(m) == i))
+        {
+            me.skin.clone()
         } else {
             slot_skin(&mut a, &w.look.name, &w.look.skin, &w.look.skin_hash)
         };
@@ -561,7 +613,7 @@ pub fn load_replay(roots: &[&Path], file: &Path, cache_dirs: &[PathBuf]) -> anyh
         p.theme.id
     );
     let looks = replay.setup.looks.clone();
-    let mut a = open(Arc::new(content), mod_id, level_id, DEFAULT_SKIN, Game::Replay(Box::new(replay)))?;
+    let mut a = open(Arc::new(content), mod_id, level_id, &[], Game::Replay(Box::new(replay)))?;
     // A replay's viewer has no own slot: every worm's skin is its recorded
     // id and content hash, else the default skin (never downloaded).
     for l in &looks {
@@ -601,26 +653,51 @@ impl Assets {
         }
     }
 
-    /// The worm this player plays: the sandbox's 0, a Deathmatch's first
-    /// that is not a bot, an online match's own slot; `None` for a replay,
-    /// bots alone and an online match watched.
-    pub fn local_slot(&self) -> Option<u8> {
+    /// The worms the players here play, in local order (issue #29): the
+    /// sandbox's 0, a Deathmatch's humans (every worm that is not a bot,
+    /// in worm order, at most [`MAX_LOCALS`]), an online match's own slot;
+    /// none for a replay, bots alone and an online match watched.
+    pub fn local_slots(&self) -> Vec<u8> {
         match &self.game {
-            Game::Sandbox(_) => Some(0),
-            Game::Deathmatch { options, .. } => {
-                options.players.iter().position(|p| !matches!(p, Player::Bot(_))).map(|i| i as u8)
-            }
-            Game::Replay(_) => None,
-            Game::Online { my_slot, .. } => *my_slot,
+            Game::Sandbox(_) => vec![0],
+            Game::Deathmatch { options, .. } => (0..options.players.len())
+                .filter(|&i| !matches!(options.players[i], Player::Bot(_)))
+                .filter_map(|i| u8::try_from(i).ok())
+                .take(MAX_LOCALS)
+                .collect(),
+            Game::Replay(_) => Vec::new(),
+            Game::Online { my_slot, .. } => my_slot.iter().copied().collect(),
         }
     }
 
-    /// The worm the camera starts on: the player's own, else (a replay)
-    /// the worm of the player whose game made it, else worm 0.
-    pub fn first_followed(&self) -> u8 {
+    /// The first local player's worm ([`Assets::local_slots`]); `None` for
+    /// a replay, bots alone and an online match watched.
+    pub fn local_slot(&self) -> Option<u8> {
+        self.local_slots().first().copied()
+    }
+
+    /// The worms the views start on, one view each: the local players'
+    /// own, else (a replay) the worms of the players whose game made it
+    /// (`ReplaySetup::viewers`: a split-screen replay plays back with every
+    /// view), else worm 0.
+    pub fn first_followed(&self) -> Vec<u8> {
+        let locals = self.local_slots();
         match &self.game {
-            Game::Replay(r) if self.local_slot().is_none() => r.setup.viewer.unwrap_or(0),
-            _ => self.local_slot().unwrap_or(0),
+            _ if !locals.is_empty() => locals,
+            Game::Replay(r) if !r.setup.viewers.is_empty() => r.setup.viewers.clone(),
+            _ => vec![0],
+        }
+    }
+
+    /// Local player `k`'s look and skin, if it has its own.
+    pub fn local_player(&self, k: usize) -> Option<&LocalPlayer> {
+        self.locals.get(k)
+    }
+
+    /// Sets the first local player's look (the menus' profile).
+    pub fn set_player_look(&mut self, look: PlayerLook) {
+        if let Some(p) = self.locals.first_mut() {
+            p.look = Some(look);
         }
     }
 
@@ -1070,6 +1147,23 @@ mod tests {
         assert_eq!(watch(4).players.len(), 4);
         assert_eq!(watch(1).players.len(), 2);
         assert_eq!(watch(100).players.len(), MAX_WORMS);
+        // Issue #29: local players first, then the bots; two players need
+        // no bot, one does; at most MAX_LOCALS.
+        let locals = |locals, bots| {
+            let o = DeathmatchOptions { locals, bots, ..Default::default() };
+            let p = match_options(&o, "m", "l").players;
+            (p.iter().filter(|p| matches!(p, Player::Human)).count(), p.len())
+        };
+        assert_eq!(locals(4, 3), (4, 7));
+        assert!(
+            match_options(&DeathmatchOptions { locals: 4, ..Default::default() }, "m", "l").players[..4]
+                .iter()
+                .all(|p| *p == Player::Human)
+        );
+        assert_eq!(locals(2, 0), (2, 2));
+        assert_eq!(locals(1, 0), (1, 2));
+        assert_eq!(locals(9, 0), (MAX_LOCALS, MAX_LOCALS));
+        assert_eq!(locals(4, 100), (4, MAX_WORMS));
     }
 
     #[test]

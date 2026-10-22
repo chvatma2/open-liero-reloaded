@@ -5,11 +5,14 @@
 //! atlas images), sound, the damage popups and the match HUD's state
 //! (`hud.rs`). The window and GPU (`app.rs`, `gpu.rs`) drive it.
 //!
-//! The player plays the local slot ([`Session::local`]: any worm, not
-//! always worm 0; `None` when nobody here plays: a replay, bots alone, an
-//! online match watched). Its keys, name, look, camera, crosshair, HUD,
-//! minimap dot, scoreboard row, kills, deaths and spawns are that slot's.
-//! Every worm wears its own look ([`WormLook`]).
+//! The players play the local slots ([`Session::locals`]: one, or up to
+//! [`MAX_LOCALS`] in split screen, issue #29; any worms, not always worm 0;
+//! none when nobody here plays: a replay, bots alone, an online match
+//! watched). Each one's keys, name, look, camera (a view each), crosshair,
+//! minimap dot, kills, deaths, spawns, rope throws heard, weapon name and
+//! reload bar are its slot's; the HUD, scoreboard row and results follow
+//! the first ([`Session::local`]). Every worm wears its own look
+//! ([`WormLook`]).
 
 use std::time::Instant;
 
@@ -30,7 +33,7 @@ use olr_ui::hud::{Log, LogLine, Names, Results, message_text};
 use crate::drive::{MatchDriver, ReplayDriver};
 use crate::net::PolledEvents;
 use crate::online::OnlineDriver;
-use crate::setup::{Assets, DEFAULT_SKIN, Game};
+use crate::setup::{Assets, DEFAULT_SKIN, Game, MAX_LOCALS};
 use crate::throw_sound::ThrowSounds;
 
 /// How often (ticks) debug builds check that the colour terrain's material
@@ -65,7 +68,7 @@ pub struct Popup {
 pub enum Driver {
     /// The player (worm 0) and idle targets.
     Sandbox,
-    /// The player (its slot, if one plays) and bots.
+    /// The players (their slots, if any play) and bots.
     Match(Box<MatchDriver>),
     /// A replay's keys.
     Replay(ReplayDriver),
@@ -87,10 +90,10 @@ pub struct WormLook {
 /// summary.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Tally {
-    /// Kills of another worm by a bot, by the player (the local slot),
-    /// and suicides.
+    /// Kills of another worm by a bot, by each local player (in local
+    /// order: its local slot's; issue #29), and suicides.
     pub bot_kills: u64,
-    pub player_kills: u64,
+    pub player_kills: [u64; MAX_LOCALS],
     pub suicides: u64,
     /// Ticks played before a match ended.
     pub match_ticks: u64,
@@ -125,18 +128,19 @@ pub struct Session {
     /// The results, once the match ended.
     pub results: Option<Results>,
     pub tally: Tally,
-    /// The player's deaths and spawns this run (restarts included), for
-    /// the exit summary.
-    pub player_deaths: u32,
-    pub player_spawns: u32,
+    /// Each local player's deaths and spawns this run (restarts included),
+    /// in local order, for the exit summary.
+    pub player_deaths: [u32; MAX_LOCALS],
+    pub player_spawns: [u32; MAX_LOCALS],
     /// Rematches so far (the seed of rematch `n` is the match's plus `n`).
     pub rematches: u32,
     /// A person plays (`Assets::human_plays`, again at each restart; an
     /// online match always counts); otherwise the game is watched (a
     /// replay, bots alone) and may run fast (`speed.rs`).
     human: bool,
-    /// The slot this player controls; `None`: watching.
-    local: Option<u8>,
+    /// The slots the players here control, in local order; none:
+    /// watching.
+    locals: Vec<u8>,
     /// An online match ended: `world` is the one drawn, no longer the
     /// peer's.
     frozen: bool,
@@ -148,17 +152,18 @@ pub struct Session {
     pub sound: bool,
     /// The sounds the last tick or poll played ([`Session::sounds`]).
     heard: Vec<Event>,
-    /// Whose rope throws are heard: the player's own (OLX's).
+    /// Whose rope throws are heard: the players' own (OLX's).
     throws: ThrowSounds,
     keys: Vec<Keys>,
     /// Ticks since the match (re)started.
     ticks: u64,
     /// The tick the match ended in.
     ended_at: Option<u64>,
-    /// The weapon name shows over the player's worm until this tick: a
-    /// change made with the change key (OLX's `bForceWeapon_Name` and
-    /// `fForceWeapon_Time`, [`Session::weapon_name`]).
-    weapon_name_until: Option<u64>,
+    /// The weapon name shows over each local player's worm until this
+    /// tick, in local order: a change made with the change key (OLX's
+    /// `bForceWeapon_Name` and `fForceWeapon_Time`, per worm;
+    /// [`Session::weapon_name_of`]).
+    weapon_name_until: [Option<u64>; MAX_LOCALS],
     /// Worms the presentation knows (a worm spawned mid-match is added).
     shown: usize,
     /// OLX's default skin (a worm spawned mid-match wears it).
@@ -169,12 +174,12 @@ pub struct Session {
     last_hit: Option<Hit>,
 }
 
-/// The worm whose rope throws are heard ([`ThrowSounds`]): the player's,
-/// or a replay's viewer's (the player whose game it was).
-fn hears_throws_of(a: &Assets) -> Option<u8> {
+/// The worms whose rope throws are heard ([`ThrowSounds`]): the local
+/// players', or a replay's viewers' (the players whose game it was).
+fn hears_throws_of(a: &Assets) -> Vec<u8> {
     match &a.game {
-        Game::Replay(r) => r.setup.viewer,
-        _ => a.local_slot(),
+        Game::Replay(r) => r.setup.viewers.clone(),
+        _ => a.local_slots(),
     }
 }
 
@@ -202,23 +207,25 @@ fn rgb(c: olr_data::image::Rgba) -> [u8; 3] {
     [c.r, c.g, c.b]
 }
 
-/// A worm's name and colour, and whether it is the local player's.
+/// A worm's name and colour, and which local player plays it (its local
+/// number), if one does.
 struct Named {
     name: String,
     colour: [u8; 3],
-    local: bool,
+    local: Option<usize>,
 }
 
 /// The names and colours of `a`'s first `n` worms. An online match's are
 /// the lobby's (every member's and bot's), a replay's the recorded ones
-/// (olr-replay's format 4). Otherwise the player (the local slot) has the
-/// profile's name ("You" without one) and colour (else the default first
-/// colour); the others are numbered from 1 in worm order ("Target N" in the
-/// sandbox, "Bot N"), in OLX's bot colours away from the player's; a game
+/// (olr-replay's format 4). Otherwise each local player has its look's name
+/// and colour (a profile's), else "You" alone or "Player N" among several
+/// (issue #29: the event log names each), in the default colours by local
+/// number; the others are numbered from 1 in worm order ("Target N" in the
+/// sandbox, "Bot N"), in OLX's bot colours away from the players'; a game
 /// nobody plays numbers every worm from 1 in the default colours.
 fn named(a: &Assets, n: usize) -> Vec<Named> {
     let default =
-        |i: usize| Named { name: format!("Worm {}", i + 1), colour: rgb(default_colour(i)), local: false };
+        |i: usize| Named { name: format!("Worm {}", i + 1), colour: rgb(default_colour(i)), local: None };
     let recorded: Vec<(&str, [u8; 3])> = match &a.game {
         Game::Online { start, .. } => {
             start.slots.iter().map(|s| (s.look.name.as_str(), s.look.colour)).collect()
@@ -227,56 +234,66 @@ fn named(a: &Assets, n: usize) -> Vec<Named> {
         _ => Vec::new(),
     };
     if matches!(a.game, Game::Online { .. } | Game::Replay(_)) {
-        let known = recorded.iter().map(|&(name, colour)| Named { name: name.into(), colour, local: false });
+        let known = recorded.iter().map(|&(name, colour)| Named { name: name.into(), colour, local: None });
         return known.chain((recorded.len()..n).map(default)).take(n).collect();
     }
-    let local = a.local_slot().map(usize::from).filter(|&i| i < n);
-    let mine = a.player.as_ref().map_or_else(|| rgb(default_colour(0)), |p| p.colour);
-    let others = if local.is_some() { olr_ui::bot_colours(mine, n.saturating_sub(1)) } else { Vec::new() };
+    let locals: Vec<usize> = a.local_slots().into_iter().map(usize::from).filter(|&i| i < n).collect();
+    let look = |k: usize| a.local_player(k).and_then(|p| p.look.as_ref());
+    let colours: Vec<[u8; 3]> =
+        (0..locals.len()).map(|k| look(k).map_or_else(|| rgb(default_colour(k)), |p| p.colour)).collect();
+    let others = if locals.is_empty() {
+        Vec::new()
+    } else {
+        olr_ui::bot_colours_away(&colours, n.saturating_sub(locals.len()))
+    };
     let mut other = 0;
     (0..n)
         .map(|i| {
-            if Some(i) == local {
-                let name = a.player.as_ref().map_or_else(|| "You".into(), |p| p.name.clone());
-                return Named { name, colour: mine, local: true };
+            if let Some(k) = locals.iter().position(|&l| l == i) {
+                let name = match look(k) {
+                    Some(p) => p.name.clone(),
+                    None if locals.len() == 1 => "You".into(),
+                    None => format!("Player {}", k + 1),
+                };
+                return Named { name, colour: colours[k], local: Some(k) };
             }
             other += 1;
             let name = match a.game {
-                _ if local.is_none() => format!("Bot {}", i + 1),
+                _ if locals.is_empty() => format!("Bot {}", i + 1),
                 Game::Sandbox(_) => format!("Target {other}"),
                 _ => format!("Bot {other}"),
             };
             let colour = others.get(other - 1).copied().unwrap_or_else(|| rgb(default_colour(i)));
-            Named { name, colour, local: false }
+            Named { name, colour, local: None }
         })
         .collect()
 }
 
-/// The looks of `a`'s first `n` worms ([`named`]): the local player's skin is
-/// the profile's, every other worm's its slot's (an online match's or a
-/// replay's: [`Assets::skin_of_slot`]) or OLX's default skin.
+/// The looks of `a`'s first `n` worms ([`named`]): each local player's
+/// skin is its own (a profile's), every other worm's its slot's (an online
+/// match's or a replay's: [`Assets::skin_of_slot`]) or OLX's default skin.
 fn looks(a: &Assets, n: usize) -> Vec<WormLook> {
     named(a, n)
         .into_iter()
         .enumerate()
         .map(|(i, w)| {
-            let skin = if w.local { a.skin.clone() } else { a.skin_of_slot(i).clone() };
+            let own = w.local.and_then(|k| a.local_player(k)).map(|p| &p.skin);
+            let skin = own.unwrap_or_else(|| a.skin_of_slot(i)).clone();
             WormLook { name: w.name, colour: w.colour, skin }
         })
         .collect()
 }
 
 /// What a Deathmatch's replay records of its `n` worms' looks: [`named`]
-/// with the local player's skin pack and content hash, the default skin
+/// with each local player's skin pack and content hash, the default skin
 /// for every other worm (as the live game shows them).
 fn replay_looks(a: &Assets, n: usize) -> Vec<olr_replay::WormLook> {
     named(a, n)
         .into_iter()
         .map(|w| {
-            let (skin, skin_hash) = if w.local {
-                (a.skin_id.clone(), a.skin_hash.clone())
-            } else {
-                (DEFAULT_SKIN.into(), olr_content::NO_SKIN_HASH.into())
+            let (skin, skin_hash) = match w.local.and_then(|k| a.local_player(k)) {
+                Some(p) => (p.skin_id.clone(), p.skin_hash.clone()),
+                None => (DEFAULT_SKIN.into(), olr_content::NO_SKIN_HASH.into()),
             };
             olr_replay::WormLook { name: w.name, colour: w.colour, skin, skin_hash }
         })
@@ -420,9 +437,12 @@ impl Session {
             seed,
         };
         let mut present = Presentation::new(&setup, &world);
-        let local = a.local_slot();
-        let throws = ThrowSounds::new(hears_throws_of(a), &world);
-        present.follow(i32::from(a.first_followed()));
+        let locals = a.local_slots();
+        let throws = ThrowSounds::new(&hears_throws_of(a), &world);
+        // A view per local player (split screen, issue #29), or per viewer
+        // of a split-screen replay; one otherwise.
+        let views: Vec<i32> = a.first_followed().into_iter().map(i32::from).collect();
+        present.set_views(&views);
         let n = world.worms().len();
         let looks = looks(a, n.max(a.worms()));
         let mut s = Session {
@@ -437,11 +457,11 @@ impl Session {
             log: Log::default(),
             results: None,
             tally: Tally::default(),
-            player_deaths: 0,
-            player_spawns: 0,
+            player_deaths: [0; MAX_LOCALS],
+            player_spawns: [0; MAX_LOCALS],
             rematches: 0,
             human: a.human_plays(),
-            local,
+            locals,
             frozen: false,
             looks,
             sound: true,
@@ -450,7 +470,7 @@ impl Session {
             keys: vec![Keys(0); n],
             ticks: 0,
             ended_at: None,
-            weapon_name_until: None,
+            weapon_name_until: [None; MAX_LOCALS],
             shown: 0,
             default_skin: a.bot_skin.clone(),
             practice: a.practice(),
@@ -462,14 +482,15 @@ impl Session {
 
     /// Registers the worms the presentation does not know yet (all at the
     /// start; a worm a mode spawns mid-match later, in a default look,
-    /// which marks the atlas for upload). The local slot's worm has the
+    /// which marks the atlas for upload). Each local slot's worm has the
     /// crosshair; with none, a local game's worm 0 has it (a replay's,
     /// bots alone: OLX draws the crosshair of its local worms), an online
     /// match watched's none.
     fn show_new_worms(&mut self) {
         let n = self.with_world(|w| w.worms().len());
         let online = matches!(self.driver, Driver::Online(_));
-        let crosshair = self.local.or(if online { None } else { Some(0) });
+        let watched: &[u8] = if online { &[] } else { &[0] };
+        let crosshairs = if self.locals.is_empty() { watched.to_vec() } else { self.locals.clone() };
         while self.shown < n {
             let i = self.shown;
             if self.looks.len() <= i {
@@ -482,8 +503,8 @@ impl Session {
             }
             let look = &self.looks[i];
             let [r, g, b] = look.colour;
-            let mine = self.local.is_some_and(|l| usize::from(l) == i);
-            let aims = crosshair.is_some_and(|l| usize::from(l) == i);
+            let mine = self.locals.iter().any(|&l| usize::from(l) == i);
+            let aims = crosshairs.iter().any(|&l| usize::from(l) == i);
             self.present.add_worm(&look.skin, olr_data::image::Rgba::rgb(r, g, b), aims, mine);
             self.shown += 1;
         }
@@ -520,10 +541,16 @@ impl Session {
         &self.heard
     }
 
-    /// The slot this player controls; `None` when nobody here plays (a
-    /// replay, bots alone, an online match watched).
+    /// The slot the (first) player here controls; `None` when nobody here
+    /// plays (a replay, bots alone, an online match watched).
     pub fn local(&self) -> Option<u8> {
-        self.local
+        self.locals.first().copied()
+    }
+
+    /// The slots the players here control, in local order (issue #29: up
+    /// to [`MAX_LOCALS`]); none when nobody here plays.
+    pub fn locals(&self) -> &[u8] {
+        &self.locals
     }
 
     /// The worm the camera and the HUD follow: the local slot's, else the
@@ -532,39 +559,56 @@ impl Session {
         self.present.followed()
     }
 
-    /// The player's worm's current weapon index, while it is alive.
-    fn local_weapon(&self) -> Option<i32> {
-        let i = usize::from(self.local?);
-        self.with_world(|world| world.worms().get(i).filter(|w| w.alive).map(|w| w.current_weapon))
+    /// Each local player's worm's current weapon index, while it is
+    /// alive, in local order.
+    fn local_weapons(&self) -> [Option<i32>; MAX_LOCALS] {
+        let mut out = [None; MAX_LOCALS];
+        self.with_world(|world| {
+            for (o, &i) in out.iter_mut().zip(&self.locals) {
+                *o = world.worms().get(usize::from(i)).filter(|w| w.alive).map(|w| w.current_weapon);
+            }
+        });
+        out
     }
 
-    /// After a tick (or an online frame's ticks) whose player keys were
-    /// `keys`: a weapon change made with the change key held (the
-    /// player's worm, alive before and after, no longer holds weapon
-    /// `before`) shows its name for [`WEAPON_NAME_TICKS`] (OLX sets
-    /// `bForceWeapon_Name` when SelectWeapon and left or right change the
-    /// weapon).
+    /// After a tick (or an online frame's ticks) whose local players'
+    /// keys were `keys` (in local order): a weapon change made with the
+    /// change key held (a player's worm, alive before and after, no longer
+    /// holds weapon `before`) shows its name over that worm for
+    /// [`WEAPON_NAME_TICKS`] (OLX sets `bForceWeapon_Name` when
+    /// SelectWeapon and left or right change the weapon, per worm).
     ///
     /// OLX: src/common/CWormHuman.cpp:405-428
-    fn note_weapon_change(&mut self, before: Option<i32>, keys: Keys) {
-        let now = self.local_weapon();
-        // A worm that (re)spawned this tick did not change weapons.
-        if keys.0 & Keys::CHANGE != 0 && before.is_some() && now.is_some() && now != before {
-            self.weapon_name_until = Some(self.ticks + WEAPON_NAME_TICKS);
+    fn note_weapon_changes(&mut self, before: [Option<i32>; MAX_LOCALS], keys: &[Keys]) {
+        let now = self.local_weapons();
+        for (k, until) in self.weapon_name_until.iter_mut().enumerate() {
+            let held = keys.get(k).is_some_and(|k| k.0 & Keys::CHANGE != 0);
+            // A worm that (re)spawned this tick did not change weapons.
+            if held && before[k].is_some() && now[k].is_some() && now[k] != before[k] {
+                *until = Some(self.ticks + WEAPON_NAME_TICKS);
+            }
         }
     }
 
-    /// The weapon name over the player's worm (OLX's `CWorm::Draw`): the
-    /// worm and its current weapon's name while `held` (the change key,
-    /// as the input holds it now) or for [`WEAPON_NAME_TICKS`] after a
-    /// change made with it. Only the player's own worm (OLX: a local
-    /// human worm), alive and with a weapon; `None` otherwise (a replay,
-    /// bots alone, an online match watched).
+    /// The weapon name over the (first) player's worm:
+    /// [`Session::weapon_name_of`] of local player 0.
+    pub fn weapon_name(&self, held: bool) -> Option<(usize, String)> {
+        self.weapon_name_of(0, held)
+    }
+
+    /// The weapon name over local player `player`'s worm (OLX's
+    /// `CWorm::Draw`): the worm and its current weapon's name while `held`
+    /// (that player's change key, as its input holds it now) or for
+    /// [`WEAPON_NAME_TICKS`] after a change made with it. Only a player's
+    /// own worm (OLX: a local human worm), alive and with a weapon; `None`
+    /// otherwise (no such player: a replay, bots alone, an online match
+    /// watched).
     ///
     /// OLX: src/common/CWorm.cpp:1304-1315, src/gusanos/base_worm.cpp:678-684
-    pub fn weapon_name(&self, held: bool) -> Option<(usize, String)> {
-        let i = usize::from(self.local?);
-        let forced = self.weapon_name_until.is_some_and(|until| self.ticks <= until);
+    pub fn weapon_name_of(&self, player: usize, held: bool) -> Option<(usize, String)> {
+        let i = usize::from(*self.locals.get(player)?);
+        let until = self.weapon_name_until.get(player).copied().flatten();
+        let forced = until.is_some_and(|until| self.ticks <= until);
         if !(held || forced) {
             return None;
         }
@@ -579,7 +623,7 @@ impl Session {
     /// online match watched): the arrows choose the worm followed
     /// ([`Session::follow_next`]).
     pub fn spectating(&self) -> bool {
-        self.local.is_none()
+        self.locals.is_empty()
     }
 
     /// The camera and the HUD follow worm `slot`.
@@ -593,7 +637,7 @@ impl Session {
     /// is when every worm is gone.
     pub fn follow_next(&mut self, step: i32) {
         let (n, gone) = self.with_world(|w| (w.worms().len() as i64, w.gone()));
-        if self.local.is_some() || n == 0 {
+        if !self.locals.is_empty() || n == 0 {
             return;
         }
         let from = i64::from(self.followed());
@@ -647,11 +691,11 @@ impl Session {
         anyhow::ensure!(world.worms().len() == self.shown, "the restarted match has other worms");
         let old = self.take_replay();
         self.human = a.human_plays();
-        self.local = a.local_slot();
+        self.locals = a.local_slots();
         self.rematches = n;
         self.world = world;
         self.driver = driver;
-        self.throws = ThrowSounds::new(hears_throws_of(a), &self.world);
+        self.throws = ThrowSounds::new(&hears_throws_of(a), &self.world);
         self.present.restart(&self.world, &a.level, &a.theme);
         self.audio.stop_all();
         self.popups.clear();
@@ -661,7 +705,7 @@ impl Session {
         self.ended_at = None;
         self.time_left_ms = mode_time_left(&self.world);
         self.keys.fill(Keys(0));
-        self.weapon_name_until = None;
+        self.weapon_name_until = [None; MAX_LOCALS];
         // The rematch's bots think first: the last match's events are not theirs.
         self.events = TickEvents::new();
         self.ticks = 0;
@@ -723,22 +767,33 @@ impl Session {
         self.present.set_viewport(viewport);
     }
 
-    /// One 100 Hz tick with the player (the local slot) holding `player`
-    /// (the sandbox's targets hold nothing; a Deathmatch's bots think
-    /// first; bots alone and a replay ignore `player`; a replay plays its
-    /// keys and stops at its end; an online match never ticks here:
-    /// [`Session::frame`]): the simulation, then the cosmetic entities
-    /// (which replay the tick's terrain edits on the colour map and
-    /// rebuild any area the tick lost), the sounds at the view centre
-    /// (unless [`Session::sound`] is off), the scene's history and marks,
-    /// the damage popups and the HUD. Debug builds check every
-    /// [`DRIFT_CHECK_TICKS`] that the colour terrain has not drifted.
-    /// Whether the world ticked (not after a replay's end, nor online).
+    /// One 100 Hz tick with the (first) local player holding `player`
+    /// ([`Session::tick_locals`] of it alone).
     pub fn tick(&mut self, player: Keys) -> bool {
+        self.tick_locals(&[player])
+    }
+
+    /// One 100 Hz tick with each local player holding its keys of
+    /// `players`, in local order (issue #29: player `k`'s keys reach local
+    /// slot `k`'s worm and no other; a player without keys given holds
+    /// none, extra keys are ignored; the sandbox's targets hold nothing; a
+    /// Deathmatch's bots think first; bots alone and a replay ignore
+    /// `players`; a replay plays its keys and stops at its end; an online
+    /// match never ticks here: [`Session::frame`]): the simulation, then
+    /// the cosmetic entities (which replay the tick's terrain edits on the
+    /// colour map and rebuild any area the tick lost), the sounds at the
+    /// views' listeners (unless [`Session::sound`] is off), the scene's
+    /// history and marks, the damage popups and the HUD. Debug builds
+    /// check every [`DRIFT_CHECK_TICKS`] that the colour terrain has not
+    /// drifted. Whether the world ticked (not after a replay's end, nor
+    /// online).
+    pub fn tick_locals(&mut self, players: &[Keys]) -> bool {
         let ended = self.since_end();
-        let weapon = self.local_weapon();
-        if let Some(k) = self.local.and_then(|i| self.keys.get_mut(usize::from(i))) {
-            *k = player;
+        let weapons = self.local_weapons();
+        for (k, &slot) in self.locals.iter().enumerate() {
+            if let Some(key) = self.keys.get_mut(usize::from(slot)) {
+                *key = players.get(k).copied().unwrap_or(Keys(0));
+            }
         }
         match &mut self.driver {
             Driver::Sandbox => self.world.tick(&self.keys, &mut self.events),
@@ -763,7 +818,7 @@ impl Session {
         }
         self.present.on_tick(&self.world, &self.events);
         self.ticks += 1;
-        self.note_weapon_change(weapon, player);
+        self.note_weapon_changes(weapons, players);
         if cfg!(any(debug_assertions, test)) && self.ticks.is_multiple_of(DRIFT_CHECK_TICKS) {
             assert!(
                 !self.present.terrain_drift(&self.world),
@@ -795,7 +850,7 @@ impl Session {
             time_left_ms,
             player_deaths,
             player_spawns,
-            local,
+            locals,
             ticks,
             ..
         } = self;
@@ -826,7 +881,7 @@ impl Session {
         if results.is_none() {
             tally.match_ticks += 1;
         }
-        let me = local.map(i32::from);
+        let mine = |w: i32| locals.iter().position(|&l| i32::from(l) == w);
         let bot = |w: i32| match &*driver {
             Driver::Match(d) => d.bots.iter().any(|b| b.worm() as i32 == w),
             Driver::Online(d) => d.is_bot(w),
@@ -835,18 +890,22 @@ impl Session {
         for e in v.events {
             match e.kind {
                 EventKind::Kill { victim, killer } => {
-                    if Some(victim) == me {
-                        *player_deaths += 1;
+                    if let Some(k) = mine(victim) {
+                        player_deaths[k] += 1;
                     }
                     if killer == victim {
                         tally.suicides += 1;
                     } else if bot(killer) {
                         tally.bot_kills += 1;
-                    } else if Some(killer) == me {
-                        tally.player_kills += 1;
+                    } else if let Some(k) = mine(killer) {
+                        tally.player_kills[k] += 1;
                     }
                 }
-                EventKind::Spawned { worm } if Some(worm) == me => *player_spawns += 1,
+                EventKind::Spawned { worm } => {
+                    if let Some(k) = mine(worm) {
+                        player_spawns[k] += 1;
+                    }
+                }
                 EventKind::Message(m) => {
                     if let Some(line) = message_text(&m, names) {
                         log.push(LogLine::event(line));
@@ -879,7 +938,7 @@ impl Session {
         }
         // A watcher's camera moves on from a worm that left (N89).
         let f = self.followed();
-        if self.local.is_none()
+        if self.locals.is_empty()
             && f >= 0
             && self.with_world(|w| w.gone().checked_shr(f as u32).unwrap_or(0) & 1 != 0)
         {
@@ -903,7 +962,7 @@ impl Session {
     /// ([`PolledEvents::pumped`], handed back with the shell's events: a
     /// next match's session starts again too).
     pub fn frame(&mut self, now: Instant, local_keys: &mut olr_online::LocalKeys<'_>) -> PolledEvents {
-        let weapon = self.local_weapon();
+        let weapons = self.local_weapons();
         let Driver::Online(d) = &mut self.driver else { return PolledEvents::default() };
         let mut pressed = Keys(0);
         let mut keys = |f: &olr_online::KeysFor| {
@@ -913,7 +972,7 @@ impl Session {
         };
         let PolledEvents { events, pumped } = d.poll(now, &mut keys, &mut self.present);
         let rest = self.present_polled(events, pumped);
-        self.note_weapon_change(weapon, pressed);
+        self.note_weapon_changes(weapons, &[pressed]);
         PolledEvents { events: rest, pumped }
     }
 
@@ -1138,7 +1197,7 @@ mod tests {
         }
         assert!(busiest > 0, "explosions and dirt made entities");
         assert!(
-            !s.popups.is_empty() || s.player_deaths > 0 || s.world.worms()[0].health < 100.0,
+            !s.popups.is_empty() || s.player_deaths[0] > 0 || s.world.worms()[0].health < 100.0,
             "self-damage"
         );
         assert_ne!(s.world, start);
@@ -1185,8 +1244,51 @@ mod tests {
         };
         s.after_tick(Some(&c));
         let t = &s.tally;
-        assert_eq!((t.player_kills, t.bot_kills, t.suicides), (1, 2, 1), "kills by slot");
-        assert_eq!((s.player_deaths, s.player_spawns), (1, 1), "the local slot's death and spawn");
+        assert_eq!((t.player_kills[0], t.bot_kills, t.suicides), (1, 2, 1), "kills by slot");
+        assert_eq!((s.player_deaths[0], s.player_spawns[0]), (1, 1), "the local slot's death and spawn");
+    }
+
+    /// Issue #29: with several local players (slots 3 and 1, two bots
+    /// around them) each one's kills, deaths and spawns are its own, a kill
+    /// of one player by another counts for the killer.
+    #[test]
+    fn credit_goes_to_each_local_player() {
+        let Some(dir) = std::env::var_os("OLR_CONTENT_DIR").filter(|d| std::path::Path::new(d).is_dir())
+        else {
+            eprintln!("OLR_CONTENT_DIR not set; skipping");
+            return;
+        };
+        let bot = olr_content::Player::Bot(olr_bots::BotConfig::default());
+        let human = olr_content::Player::Human;
+        let players = vec![bot, human, bot, human];
+        let o = olr_content::MatchOptions::deathmatch("olx-classic", "olx-level-dirt-level", 3, players);
+        let a = crate::setup::load_match_for(&[std::path::Path::new(&dir)], &o, &["default"]).unwrap();
+        let vp = Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0);
+        let mut s = Session::new(&a, vp, Interpolation::Linear, Audio::silent()).unwrap();
+        assert_eq!(s.locals(), [1, 3]);
+        assert_eq!((s.names.of(1), s.names.of(3)), ("Player 1".into(), "Player 2".into()));
+        let kind = |kind| Event { substep: 0, death: false, kind };
+        let c = ConfirmedTick {
+            tick: 0,
+            events: vec![
+                kind(EventKind::Kill { victim: 0, killer: 3 }),
+                kind(EventKind::Kill { victim: 1, killer: 3 }),
+                kind(EventKind::Kill { victim: 3, killer: 1 }),
+                kind(EventKind::Kill { victim: 3, killer: 2 }),
+                kind(EventKind::Spawned { worm: 3 }),
+                kind(EventKind::Spawned { worm: 1 }),
+                kind(EventKind::Spawned { worm: 3 }),
+                kind(EventKind::Kill { victim: 1, killer: 1 }),
+            ],
+            scores: s.world.scores().to_vec(),
+            time_left_ms: None,
+            result: None,
+            positions: Vec::new(),
+        };
+        s.after_tick(Some(&c));
+        let t = &s.tally;
+        assert_eq!((t.player_kills, t.bot_kills, t.suicides), ([1, 2, 0, 0], 1, 1));
+        assert_eq!((s.player_deaths, s.player_spawns), ([2, 2, 0, 0], [1, 2, 0, 0]));
     }
 
     /// Debug builds catch a colour terrain that drifted from the world's

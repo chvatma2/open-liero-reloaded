@@ -797,7 +797,7 @@ impl Shell {
                 setup::load_edited(&root, &play, &profile.skin_id, prefs)?
             }
         };
-        assets.player = Some(PlayerLook { name: profile.name, colour: profile.colour });
+        assets.set_player_look(PlayerLook { name: profile.name, colour: profile.colour });
         self.log(std::mem::take(&mut assets.warnings));
         log::info!("game start: {}", assets.describe());
         let mut session = Session::new(&assets, self.cfg.viewport, self.cfg.interpolation, Audio::silent())?;
@@ -856,13 +856,19 @@ impl Shell {
         Ok(path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned()))
     }
 
-    /// One tick of the game playing, with the player holding `keys`,
-    /// unless the pause menu or the weapon selection holds it (the
-    /// replay records ticks only: a pause is not in it). Whether the
-    /// world ticked (not held, nor a replay at its end).
+    /// One tick of the game playing, with the (first) local player
+    /// holding `keys`, unless the pause menu or the weapon selection holds
+    /// it (the replay records ticks only: a pause is not in it). Whether
+    /// the world ticked (not held, nor a replay at its end).
     pub fn tick(&mut self, keys: Keys) -> bool {
+        self.tick_locals(&[keys])
+    }
+
+    /// [`Shell::tick`] with every local player's keys, in local order
+    /// (`Session::tick_locals`, issue #29).
+    pub fn tick_locals(&mut self, keys: &[Keys]) -> bool {
         let held = self.paused || self.ui.screen() == Screen::WeaponSelect;
-        self.session_mut().filter(|_| !held).is_some_and(|s| s.tick(keys))
+        self.session_mut().filter(|_| !held).is_some_and(|s| s.tick_locals(keys))
     }
 
     /// The game ends: its replay saved, the sound output kept.

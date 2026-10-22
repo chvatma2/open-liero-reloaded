@@ -258,22 +258,28 @@ fn replay_reports_the_first_mismatching_tick() {
     assert_eq!(player.tick(), 200);
 }
 
-/// The slot of the player whose game made the replay is recorded and
-/// survives the encoding; a slot that is no worm is dropped when
-/// recording, and none (bots alone) stays none.
+/// The local slots of the players whose game made the replay are recorded
+/// in local order and survive the encoding (issue #29: a split-screen
+/// replay plays back with every view); a slot that is no worm or comes
+/// twice is dropped when recording, at most `MAX_VIEWERS` are kept, and
+/// none (bots alone) stays none.
 #[test]
-fn the_viewer_is_recorded() {
-    let (setup, mode) = deathmatch(4, 6);
-    let make = |viewer: Option<u8>| {
+fn the_local_slots_are_recorded() {
+    let (setup, mode) = deathmatch(6, 6);
+    let make = |slots: &[u8]| {
         let world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
         let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
-        rec.set_viewer(viewer);
+        rec.set_viewers(slots);
         rec.start(&world).unwrap();
-        Replay::decode(&rec.finish(&world).unwrap().encode()).unwrap()
+        Replay::decode(&rec.finish(&world).unwrap().encode()).unwrap().setup
     };
-    assert_eq!(make(None).setup.viewer, None);
-    assert_eq!(make(Some(2)).setup.viewer, Some(2));
-    assert_eq!(make(Some(4)).setup.viewer, None, "worm 4 of 4 does not exist");
+    assert_eq!(make(&[]).viewers, [] as [u8; 0]);
+    assert_eq!(make(&[]).viewer(), None);
+    assert_eq!(make(&[2]).viewers, [2]);
+    let four = make(&[3, 0, 5, 1]);
+    assert_eq!((four.viewers.as_slice(), four.viewer()), (&[3, 0, 5, 1][..], Some(3)), "in local order");
+    assert_eq!(make(&[6, 2, 2]).viewers, [2], "worm 6 of 6 does not exist; 2 once");
+    assert_eq!(make(&[0, 1, 2, 3, 4]).viewers.len(), olr_replay::MAX_VIEWERS);
 }
 
 /// Review Focus 3: a replay of another format version is refused, never
@@ -574,15 +580,18 @@ fn the_looks_round_trip() {
     assert_eq!(finish_now(many, &setup, &mode).setup.looks.len(), 4);
 }
 
-/// A format-4 file (before 16-bit keys) is refused with the version error.
+/// A format-4 file (before 16-bit keys) or format-5 file (one viewer,
+/// before the local slots of issue #29) is refused with the version error.
 #[test]
-fn a_format_4_replay_is_refused() {
+fn an_older_format_replay_is_refused() {
     let (replay, ..) = record(10, 1);
-    let mut bytes = replay.encode();
-    bytes[4..6].copy_from_slice(&4u16.to_le_bytes());
-    assert_eq!(
-        Replay::decode(&bytes).unwrap_err(),
-        DecodeError::Version { found: 4, supported: FORMAT_VERSION }
-    );
-    assert_eq!(FORMAT_VERSION, 5);
+    for old in [4u16, 5] {
+        let mut bytes = replay.encode();
+        bytes[4..6].copy_from_slice(&old.to_le_bytes());
+        assert_eq!(
+            Replay::decode(&bytes).unwrap_err(),
+            DecodeError::Version { found: old, supported: FORMAT_VERSION }
+        );
+    }
+    assert_eq!(FORMAT_VERSION, 6);
 }
