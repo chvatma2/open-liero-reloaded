@@ -15,4 +15,9 @@
             damage: 4,
         ),
     ],
+    look: (
+        explosion_heat: (
+            amount: 300,
+        ),
+    ),
 )

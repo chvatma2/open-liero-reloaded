@@ -87,6 +87,10 @@
                         radius: 12,
                         reach: Pixels(260),
                     ),
+                    explosion_heat: (
+                        amount: 200,
+                        radius: 22,
+                    ),
                 ),
             ),
         ),

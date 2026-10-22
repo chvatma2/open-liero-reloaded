@@ -71,6 +71,10 @@
                                         depth: 30,
                                     ),
                                 ),
+                                heat: (
+                                    amount: 12,
+                                    radius: 6,
+                                ),
                             ),
                         ),
                     ),
