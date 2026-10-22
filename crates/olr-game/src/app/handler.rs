@@ -124,6 +124,10 @@ impl ApplicationHandler for App {
         if let Some(g) = &mut self.gilrs {
             while let Some(ev) = g.next_event() {
                 self.inputs.on_gamepad(&ev);
+                // The menus by pad (issue #31; they hear it when they show).
+                if let Some(p) = olr_input::PadEvent::from_gilrs(&ev.event) {
+                    self.shell.data.pad.on_pad(usize::from(ev.id), p);
+                }
                 if let Some(c) = &mut self.shell.data.capture {
                     c.on_gamepad(&ev);
                 }

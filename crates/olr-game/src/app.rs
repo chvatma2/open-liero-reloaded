@@ -1032,6 +1032,13 @@ impl App {
         let mut mod_editor = self.shell.mod_editor.as_mut();
         let modding = mod_editor.is_some();
         let menus = self.cfg.menus;
+        // The menus by pad (issue #31): its keys before the pass, as the
+        // window's; the editors hear none.
+        if menus && !skinning && !modding && !editing && !playing_edited {
+            input.events.extend(data.pad_events(&self.egui, ui_state));
+        } else {
+            data.pad.forget();
+        }
         let mut actions = Vec::new();
         let mut editor_actions = Vec::new();
         let mut skin_actions = Vec::new();
