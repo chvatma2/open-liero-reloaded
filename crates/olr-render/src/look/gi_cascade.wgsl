@@ -6,8 +6,9 @@
 @group(0) @binding(2) var level_reach: texture_2d<f32>;
 @group(0) @binding(3) var upper: texture_2d<f32>;
 @group(0) @binding(4) var seeds: texture_2d<f32>;
-// Plan 15c's bounce: each cell's albedo, the last frame's fluence, and the
-// look's globals (`frame.w`: the bounce, 0-0.9).
+// Plan 15c's bounce: each cell's albedo, the last frame's fluence (the
+// fluence itself, which `fs_fluence` rewrites only after the cascades;
+// issue #35), and the look's globals (`frame.w`: the bounce, 0-0.9).
 @group(0) @binding(5) var albedo_tex: texture_2d<f32>;
 @group(0) @binding(6) var history: texture_2d<f32>;
 @group(0) @binding(7) var<uniform> look: LookGlobals;

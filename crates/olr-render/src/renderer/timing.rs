@@ -36,7 +36,7 @@ pub enum PassGroup {
     JumpFlood,
     /// The radiance cascades.
     Cascades,
-    /// The fluence (and the history's clear on a fresh start).
+    /// The fluence (and its clear on a fresh start).
     Fluence,
     /// The ambient occlusion's rows (issue #10, only with occlusion).
     Occlusion,

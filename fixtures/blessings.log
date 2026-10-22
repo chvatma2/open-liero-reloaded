@@ -197,3 +197,5 @@
   fixtures/bench/quick.ron
 2026-10-22 bench-quick: #35: the lit frame's copies and gaps measured
   fixtures/bench/quick.ron
+2026-10-22 bench-quick: #35 item 1: the glow light's history copy dropped
+  fixtures/bench/quick.ron

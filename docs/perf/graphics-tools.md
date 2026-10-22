@@ -18,7 +18,7 @@ counted in one of twelve groups, in the GPU's order:
 | emission | the glow light's occluder map, play's discs, the emission |
 | jump flood | the flood's seed and its passes |
 | cascades | the radiance cascades, top down |
-| fluence | the fluence (and the history's clear on a fresh start) |
+| fluence | the fluence (and its clear on a fresh start) |
 | occlusion | the ambient occlusion's rows (only a level with occlusion) |
 | light sum | the light grid's sum |
 | soak | the soak, across and down |
@@ -29,7 +29,7 @@ counted in one of twelve groups, in the GPU's order:
 
 `gpu-bench` prints, per size, each group's p50 and p99 over the measured
 frames, then their p50s' sum against the frame's: the rest is copies (the
-occluder maps' copy, the glow light's history copy) and gaps between
+occluder maps' copy; the glow light's history copy until issue #35) and gaps between
 passes. Without timestamp queries it says once that they were not
 measured. The report (`--out`) holds them as `SizeReport::passes`.
 

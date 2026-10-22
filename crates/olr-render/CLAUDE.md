@@ -147,8 +147,9 @@ on screen or offscreen.
     60000 unlimited), the emission (glow × group × each pixel's flicker
     region, the discs added, solid share, albedo of rock and dirt), a
     jump-flood seed and its passes, the cascades from the top down, then the
-    fluence the sum samples bilinearly, copied into the history after each
-    frame. Rays march at full grid resolution, at most 128 steps, jumping
+    fluence the sum samples bilinearly, which is also the history the next
+    frame's bounce reads (the cascades run before `fs_fluence` rewrites it;
+    issue #35: no copy; a fresh start clears it). Rays march at full grid resolution, at most 128 steps, jumping
     by the flood's distance far from stoppers and walking cell by cell near
     them (a corner whose two side cells stop closes the ray: no light
     through a 1-px or diagonal wall,
@@ -311,7 +312,7 @@ on screen or offscreen.
   `PASS_SLOTS` 256 more; the first world pass's start is slot 0, the last
   upscale's end slot 1; a pass past them goes untimed), counted in its
   `PassGroup` (world and occluders; emission: the glow light's occluder
-  map, discs and emission; jump flood; cascades; fluence and the history's
+  map, discs and emission; jump flood; cascades; fluence and its
   clear; occlusion; light sum; soak; blur; bloom; composite; upscale; the
   timer's `pass` hands each pass its writes, `start_frame` clears them, the
   glow light's `encode` takes the timer): `GpuTimes::passes`, indexed as
