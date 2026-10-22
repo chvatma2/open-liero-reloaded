@@ -227,7 +227,8 @@ fn pack_of(
             }
             // A surface map that no longer fits its element is dropped.
             e.surface_map &= surface_fit(&e, &surface_file(&e.id), surface_maps, level.size).is_some();
-            e.back_surface_map &= surface_fit(&e, &surface_back_file(&e.id), surface_maps, level.size).is_some();
+            e.back_surface_map &=
+                surface_fit(&e, &surface_back_file(&e.id), surface_maps, level.size).is_some();
             e
         })
         .collect();
@@ -397,7 +398,14 @@ impl Document {
         let rect = if see_through != self.see_through { all } else { rect };
         let whole = rect.x == 0 && rect.y == 0 && rect.w >= size.0 && rect.h >= size.1;
         let holes_before = if whole { 0 } else { holes(&self.level.back, rect, s) };
-        bake_elements_with(&mut self.level, &items, &self.glow_masks, &self.surface_maps, &self.back_tile, rect);
+        bake_elements_with(
+            &mut self.level,
+            &items,
+            &self.glow_masks,
+            &self.surface_maps,
+            &self.back_tile,
+            rect,
+        );
         let distant = self.items.iter().filter(|i| i.element.distant.is_some());
         if whole || !distant.clone().eq(self.distant_items.iter()) {
             if !whole {

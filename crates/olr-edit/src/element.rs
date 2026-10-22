@@ -1062,7 +1062,9 @@ pub fn resize(
         let from = was.unwrap_or(((0, 0), old));
         let to = element_box(&e.kind, size).unwrap_or(((0, 0), size));
         let moved = ((from.0.0.saturating_add(offset.0), from.0.1.saturating_add(offset.1)), from.1);
-        for (file, on) in [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)] {
+        for (file, on) in
+            [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)]
+        {
             let Some(bytes) = src.files.get(&file).filter(|_| on) else { continue };
             let (w, h, values) = image_io::decode_grey_within(bytes, olr_format::image_io::LEVEL_ART)
                 .map_err(|m| bad(format!("{file}: {m}")))?;

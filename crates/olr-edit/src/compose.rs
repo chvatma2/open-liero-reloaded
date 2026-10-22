@@ -739,21 +739,14 @@ pub fn bake_elements_with(
     let materials: Vec<&str> =
         level.look.as_ref().map_or(Vec::new(), |l| l.materials.iter().map(|m| m.id.as_str()).collect());
     let n = materials.len();
-    let (layers, extras): (Vec<Layer>, Vec<(Option<LayerGlow>, bool, LayerSurface)>) = items
-        .iter()
-        .filter(|(e, _)| e.distant.is_none())
-        .filter_map(|(e, d)| {
-            let surface = layer_surface(e, painted, &materials, (w, h));
-            Some((Layer::new(e, d, (aw, ah), s)?, (layer_glow(e, masks, &groups, (w, h), s), e.clear, surface)))
-        })
-        .unzip();
-    let (glows, clears, surfaces): (Vec<Option<LayerGlow>>, Vec<bool>, Vec<LayerSurface>) =
-        extras.into_iter().fold((Vec::new(), Vec::new(), Vec::new()), |mut v, (g, c, m)| {
-            v.0.push(g);
-            v.1.push(c);
-            v.2.push(m);
-            v
-        });
+    let (mut layers, mut glows, mut clears, mut surfaces) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    for (e, d) in items.iter().filter(|(e, _)| e.distant.is_none()) {
+        let Some(layer) = Layer::new(e, d, (aw, ah), s) else { continue };
+        layers.push(layer);
+        glows.push(layer_glow(e, masks, &groups, (w, h), s));
+        clears.push(e.clear);
+        surfaces.push(layer_surface(e, painted, &materials, (w, h)));
+    }
     let mut surface = surfaces.iter().any(LayerSurface::any).then(|| match level.surface.take() {
         Some(m) if m.fits((w, h)) => m,
         _ => SurfaceMaps::empty((w, h)),
@@ -941,10 +934,15 @@ impl Baker {
 /// The painted surface maps of `src`'s elements in a level of `size`
 /// (issue #37), each decoded grey and of its element's
 /// [`surface_map_size`], by file.
-pub fn decode_surface_maps(src: &CompositionSource, size: (u32, u32)) -> Result<PaintedSurfaces, ComposeError> {
+pub fn decode_surface_maps(
+    src: &CompositionSource,
+    size: (u32, u32),
+) -> Result<PaintedSurfaces, ComposeError> {
     let mut out = PaintedSurfaces::new();
     for e in &src.composition.elements {
-        for (file, on) in [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)] {
+        for (file, on) in
+            [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)]
+        {
             if on {
                 let (_, values) = decode_surface_map(src, &file, surface_map_size(&e.kind, size))?;
                 out.insert(file, Arc::new(values));

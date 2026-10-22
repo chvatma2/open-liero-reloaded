@@ -18,4 +18,5 @@ mod new;
 mod pack;
 mod pixelate;
 mod skin;
+mod surface;
 mod textures;

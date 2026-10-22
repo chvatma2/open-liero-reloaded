@@ -27,7 +27,11 @@ fn the_built_in_set_loads_cleanly() {
         assert!(!m.notes.is_empty(), "{} says what it is", m.id);
     }
     let stone = list.iter().find(|m| m.id == "stone").unwrap().heat.as_ref().unwrap();
-    assert_eq!((stone.capacity, stone.conductivity, stone.cooling), (100, 100, 100), "stone is the reference");
+    assert_eq!(
+        (stone.capacity, stone.conductivity, stone.cooling),
+        (100, 100, 100),
+        "stone is the reference"
+    );
     let mut files: Vec<String> = std::fs::read_dir(&dir)
         .unwrap()
         .map(|e| e.unwrap().file_name().into_string().unwrap())
@@ -68,7 +72,10 @@ fn the_users_library_is_listed_after_and_capped() {
     assert_eq!(names, ["Basalt", "Lava rock"]);
     assert_eq!(warnings.len(), 2, "{warnings:?}");
     assert!(warnings.iter().any(|w| w.starts_with("material broken:")), "{warnings:?}");
-    assert!(warnings.iter().any(|w| w.starts_with("material other:") && w.contains("elsewhere")), "{warnings:?}");
+    assert!(
+        warnings.iter().any(|w| w.starts_with("material other:") && w.contains("elsewhere")),
+        "{warnings:?}"
+    );
     let (list, warnings) = list_library(&user, 1);
     assert_eq!(list.len(), 1);
     assert!(warnings.iter().any(|w| w.contains("more than 1 materials")), "{warnings:?}");
