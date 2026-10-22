@@ -4702,9 +4702,28 @@ camera per view and the nearest listener. As built:
   doubled. THROW and PICKUP still play at the listener, the first view's.
   With one view it is OLX's mix. If wrong: hear viewport 0 only by
   passing the first listener alone.
+- **Input seats** (issue #28, `olr_input::Seat`, `Seats`): keyboard 1
+  (the keys as before, and the mouse: only it has mouse controls),
+  keyboard 2 on the same keyboard and one seat per gamepad, events routed
+  by gilrs pad id; each seat has its own state, latch and Dig, as OLX's
+  controls per local player (presentation note §10.1). Keyboard 2's defaults are OLX's player 2 (`Options.cpp`
+  `ply_def2`, presentation note §10.1: the keypad, Strafe kp ., Previous/
+  Next kp 7/9); Dig, which OLX lacks, is kp 3. The bindings belong to the
+  seat (the maintainer's call): Options → Keys chooses Keyboard 1,
+  Keyboard 2 or Gamepads (every pad shares them), each under its own rule
+  (every action reachable by that seat's device alone: a keyboard-only
+  player 2 needs no pad input). A key both keyboards bind is allowed and
+  shown (one press is both players'). A profile's own bindings stay
+  keyboard 1's and the pads' (as before seats); keyboard 2's are always
+  the options'. A pad's Start pauses and resumes in game as Esc does
+  (OLX has no pad pause), never bound to an action (a file binding it
+  is repaired). An options file from before seats keeps its lists and
+  gets OLX's player 2. The match still has one local player, from
+  keyboard 1 and every pad as before (keyboard 2 heard by nobody) until
+  several local players play (#29).
 - **Not yet built:** several local players in the session, the layout
   and gaps (OLX fills them with `clViewportSplit`, black), the HUD,
-  input and menus (the issues that follow #27). `olr-cli gpu-bench
+  and menus by pad (the issues that follow #28). `olr-cli gpu-bench
   --views N` lays its views out in halves (top and bottom) or quarters
   for the measurement only.
 

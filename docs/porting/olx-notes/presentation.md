@@ -1035,6 +1035,9 @@ Player 1's keyboard defaults are slot 0, with gamepad `j1_*` in slot 1
 | PreviousWeapon / NextWeapon | `a` / `s` | `a` / `s` | `kp 7` / `kp 9` | `PREV_WEAPON` / `NEXT_WEAPON` (issue #23) |
 | Weapon1..5 | `1`..`5` | `1`..`5` | `6`..`0` | none |
 
+OLR's keyboard 2 seat (issue #28, `olr_input::Bindings::olx_keys2`) has
+the Player 2 column, and Dig (OLR's own action) on `kp 3`.
+
 The general keys are (`Options.cpp:82-83`):
 
 | Key | Action |
