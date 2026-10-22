@@ -4525,6 +4525,64 @@ built:
   weapons; the sandbox has the mod's first five, a Deathmatch the
   random ones of any edited Play), online play of an unsaved mod.
 
+## Mod editor art and sounds (issue #19)
+
+No OLX counterpart: OLX's mods have no glow, and its sprites are edited
+outside the game. The mod editor's Art, Sounds and Look, the glow masks
+they paint, and `olr-cli mod gfx|sfx`. No simulation, oracle, Classic or
+MW change: only the frame count of an image reaches the simulation, and
+nothing here changes one unasked. As built:
+
+- **Glow masks** (`docs/formats/mod.md`): `gfx/<name>.glow.png` beside
+  `gfx/<name>.png`, an 8-bit greyscale PNG of the image's size, 0 none
+  to 255 full, drawn in quarters (`olr_data::skin::glow_level`, the
+  skins' `GLOW_LEVELS`, issue #12). A mask without its image, of another
+  size or that is no greyscale PNG is a pack error on the mask
+  (`olr_pack::validate`); a mask of a used image is not "never used".
+  The game loads a mask that is wrong with a warning and draws its image
+  without glow: a bad mask never fails a match.
+- **Drawn as a skin's glow** (#12's method extended to projectiles): an
+  image with a mask gets one overlay per glow quarter in the atlas,
+  drawn over the sprite at the same frame, in a lit match only, at
+  `max(quarter × 25, the sprite's self-light)`. An unlit match (Classic
+  and MW on OLX levels) draws the sprite as before, so their look is
+  unchanged. The mask lights nothing by itself: a light is the Look
+  group's.
+- **Liero v1.0 Reloaded**: masks on the flame, napalm, blaster, mini nuke
+  and nuke (`content/reloaded/README.md`); its images stay Classic's
+  (a test), so its frame counts and play are unchanged.
+- **The Art section** paints with the skin editor's tools (its `paint`
+  module and `Frame`; a same-layer dependency) on one square frame at a
+  time: frames are the strip's height wide, as the simulation counts
+  them. A stroke is one undo step holding only the files it changed.
+  Adding or removing a frame, or a replacement PNG of another frame
+  count, asks first and says the weapon may then behave differently:
+  Play is the way to check (the issue's ruling: no frame-count
+  analysis).
+- **The preview** approximates play: the first user's animation (its
+  frame rate, as `proj_sim` steps it), or for heading frames a turn
+  through all of them in `PREVIEW_TURN_S` (3 s), else every frame at
+  `PREVIEW_FPS` (10); over a night background with the glow bright
+  (`art::dark`, the image at `PREVIEW_DARK` 25 %, the glow at full).
+- **Assets** (`olr_edit::mods::art`): new images (blank, or a copy),
+  PNG and sound (WAV or Ogg, checked as `olr-content` loads them; the
+  check moved to `olr-pack`) imports, rename (every field naming it
+  follows, the mask too) and remove, refused while a field uses it, the
+  users listed. A name taken gets a number.
+- **Sounds** play from the Sounds section through `Audio::preview`: one
+  file at the listener at the master volume, apart from the game's
+  voices (a new preview stops the last). OLX has no such preview.
+- **The import browser** is the mod editor's own (folders and the files
+  an import takes, hidden entries left out), following the level
+  editor's rather than sharing it (its purposes are a level's); the
+  host reads a regular file of at most a mod file's size.
+- **Look group**: a projectile's `glow`, `light`, `end_flash` and
+  `explosion`, a weapon's `muzzle_light`, each switched on with a
+  default and edited in place; a look all default is removed.
+- **Not built**: drawing a mask from the sprite's colours in the editor
+  (`olr-cli mod gfx glow --colour` does it), and frame-count checks
+  beyond the warning (as the issue rules).
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
