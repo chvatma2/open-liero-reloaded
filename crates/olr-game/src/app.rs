@@ -31,7 +31,7 @@ use winit::window::Window;
 use crate::autoplay::{self, Autoplay, Effect, Seen};
 use crate::clock::TickClock;
 use crate::editor::HostOut;
-use crate::editor::canvas::Canvas;
+use crate::editor::canvas::{Canvas, CanvasView};
 use crate::gpu::{Gpu, OverlayPaint};
 use crate::hud::{MinimapTexture, ScoreKey};
 use crate::latency::Latency;
@@ -84,20 +84,20 @@ pub struct Config {
 }
 
 /// The editor's uploads this frame (`outs`) into `canvas`'s map: a new
-/// document, a size or art-scale change, or the material view turned on or
-/// off rebuilds it whole (`full`: it goes up whole); an edit replaces its
+/// document, a size or art-scale change, or a view (the collision view,
+/// the Materials view) turned on or off rebuilds it whole (`full`: it goes up whole); an edit replaces its
 /// rectangle.
 fn canvas_outs(canvas: &mut Canvas, full: &mut bool, shell: &Shell, outs: Vec<HostOut>) {
     let Some(h) = &shell.editor else { return };
     let Some(doc) = h.state().document() else { return };
-    let material = h.state().material_view();
+    let view = CanvasView::of(h.state());
     for o in &outs {
         if let HostOut::Distant(layers) = o {
             canvas.set_distant(layers.clone());
         }
     }
-    if outs.contains(&HostOut::FullUpload) || !canvas.fits(doc) || canvas.showing_material() != material {
-        canvas.rebuild(doc, material);
+    if outs.contains(&HostOut::FullUpload) || !canvas.fits(doc) || canvas.showing() != view {
+        canvas.rebuild(doc, view);
         *full = true;
         return;
     }

@@ -144,6 +144,15 @@ impl EditorHost {
             }
             None => Vec::new(),
         };
+        // The surface material library (issue #43): the built-in
+        // materials beside the content directory, then the user's.
+        let builtin_materials = bundled.last().and_then(|c| olr_content::materials_dir(c));
+        let (materials, why) = olr_edit::material::list_materials(
+            builtin_materials.as_deref(),
+            store.materials_dir().as_deref(),
+        );
+        catalog.materials = materials;
+        warnings.extend(why);
         let assets_dir = store.assets_dir();
         catalog.assets = builtin_assets.clone();
         if let Some(dir) = &assets_dir {

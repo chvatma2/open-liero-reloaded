@@ -923,7 +923,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   header, the cap counted by name, a unique portable name, written through
   a hidden `.part`) and `RemoveTexture` (`remove_texture`, plain names
   only) answer `TexturesChanged` with the library re-listed, and `Failed`
-  when the change failed. Issue #9, the asset library: the built-in
+  when the change failed. Issue #43: `Catalog::materials` is
+  `olr_edit::material::list_materials` of `olr_content::materials_dir` of
+  the last bundled root and `Store::materials_dir()`, listed once at
+  `new` (a file that does not read a warning); an edited Play carries the
+  bake's surface maps (`edited_play_builds_a_sandbox_or_a_match`), so it
+  heats. Issue #9, the asset library: the built-in
   assets are `olr_content::assets_dir` of the last bundled root
   (`content/assets` beside `content/packs`, read-only, listed once at
   `new`), the user's `Store::assets_dir()` (`assets/`), both listed by
@@ -946,9 +951,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `setup::load_edited` of an `EditedPlay` with `PlayLevel::Edited` and
   `PlayMod::Installed`, no replay, `Assets::edited`; Closed brings the
   Editor screen back with the content listed again), and the app's
-  `editor::canvas::Canvas` (the bake's `ColorMap`, or the material view's
-  at art scale 1) gets its uploads (`replace_rect`, then `update_terrain`;
-  whole after a new document, a resize, a material-view toggle or a Play,
+  `editor::canvas::Canvas` (the bake's `ColorMap`, the collision view's
+  at art scale 1, or issue #43's Materials view's: the art at its scale,
+  each world pixel's surface material's tint (`olr_editor::surface_tint`)
+  half and half over it, grey without one; `CanvasView::of` the editor's
+  state) gets its uploads (`replace_rect`, then `update_terrain`;
+  whole after a new document, a resize, a view toggled or a Play,
   whose session had the renderer's terrain; dropped while the editor is
   closed or its Play runs) and draws a terrain-only list of the world under
   the whole canvas (black off the level: panning never changes its size, so
@@ -1000,7 +1008,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   a rectangle upload draws as a full one; `the_canvas_draws_lit`: a dark
   ambient darkens the canvas, Full bright is the art byte for byte),
   `editor::canvas`'s `the_canvas_frame_follows_the_document` and
-  `a_glow_edit_uploads_its_rectangle`, `main.rs`'s argument tests,
+  `a_glow_edit_uploads_its_rectangle`, `the_materials_view_tints_by_surface`, `main.rs`'s argument tests,
   `fixtures/autoplay/editor.ron` in `cargo xtask e2e`.
 - **Skin editor** (`editor/skin.rs`, `shell/editing.rs`, issue #14;
   decisions in `docs/porting/STATUS.md`, "Skin editor (issue #14)"):

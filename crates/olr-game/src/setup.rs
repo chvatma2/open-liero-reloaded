@@ -835,6 +835,21 @@ mod tests {
         lit.look = Some(olr_format::look::LookSource::default());
         let a = load_edited(&[root], &play(&lit, 0), DEFAULT_SKIN, &prefs).unwrap();
         assert!(a.level.has_look(), "the edited look plays");
+        assert!(a.level.surface.is_none());
+        // Issue #43: so do its surface materials, which heat in play.
+        let mut hot = lit.clone();
+        let stone = olr_format::materials::MaterialSource {
+            id: "stone".into(),
+            name: "Stone".into(),
+            notes: String::new(),
+            heat: None,
+        };
+        hot.look.as_mut().unwrap().materials.push(stone);
+        let n = (hot.size.0 * hot.size.1) as usize;
+        hot.surface =
+            Some(olr_format::levels::SurfaceMaps { world: hot.size, front: vec![1; n], back: vec![0; n] });
+        let a = load_edited(&[root], &play(&hot, 0), DEFAULT_SKIN, &prefs).unwrap();
+        assert_eq!(a.level.surface, hot.surface, "the edited level's materials play");
         let a = load_edited(&[root], &play(&level, 0), DEFAULT_SKIN, &prefs).unwrap();
         assert!(!a.level.has_look());
         let Game::Sandbox(setup) = &a.game else { panic!("0 bots is the sandbox") };

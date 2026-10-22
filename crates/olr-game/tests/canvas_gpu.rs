@@ -9,7 +9,7 @@ use olr_data::image::Rgba;
 use olr_edit::level::{Paint, Shape};
 use olr_editor::view::View;
 use olr_editor::{Catalog, Document, ThemeEntry};
-use olr_game::editor::canvas::Canvas;
+use olr_game::editor::canvas::{Canvas, CanvasView};
 use olr_render::{Offscreen, RenderSettings, UpscaleFilter};
 
 fn copy(from: &Path, to: &Path) {
@@ -58,6 +58,7 @@ fn the_canvas_draws_the_bake() {
         home: None,
         textures: Vec::new(),
         assets: Vec::new(),
+        materials: Vec::new(),
     };
     let mut doc = Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog).unwrap();
     let settings = RenderSettings { filter: UpscaleFilter::SharpBilinear };
@@ -71,7 +72,7 @@ fn the_canvas_draws_the_bake() {
     };
 
     let mut canvas = Canvas::new();
-    canvas.rebuild(&doc, false);
+    canvas.rebuild(&doc, CanvasView::Bake);
     let mut r = gpu.renderer(settings);
     r.upload_terrain(canvas.map_mut().unwrap());
     let before = picture(&mut canvas, &mut r);
@@ -90,7 +91,7 @@ fn the_canvas_draws_the_bake() {
     assert_ne!(updated, before, "the paint shows");
 
     let mut fresh = Canvas::new();
-    fresh.rebuild(&doc, false);
+    fresh.rebuild(&doc, CanvasView::Bake);
     let mut r2 = gpu.renderer(settings);
     r2.upload_terrain(fresh.map_mut().unwrap());
     assert_eq!(updated, picture(&mut fresh, &mut r2), "a rectangle upload equals a full one");
@@ -124,6 +125,7 @@ fn the_canvas_draws_lit() {
         home: None,
         textures: Vec::new(),
         assets: Vec::new(),
+        materials: Vec::new(),
     };
     let mut doc = Document::open(olr_edit::pack::load(&dir).unwrap(), dir, &catalog).unwrap();
     let mut look = olr_format::look::LookSource::default();
@@ -134,7 +136,7 @@ fn the_canvas_draws_lit() {
     let l = doc.level();
     let view = View::fit([size.0 as f32, size.1 as f32], (l.size.0 * l.art_scale, l.size.1 * l.art_scale));
     let mut canvas = Canvas::new();
-    canvas.rebuild(&doc, false);
+    canvas.rebuild(&doc, CanvasView::Bake);
     assert!(canvas.lit(&doc));
     let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::SharpBilinear });
     r.set_lighting(true);

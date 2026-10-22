@@ -2,8 +2,10 @@
 //! level's bake as an `olr_terrain::ColorMap`, drawn by `olr-render` (what
 //! you see is what plays) under the editor's egui panels and overlays.
 //! Each edit replaces only its dirty rectangle (`ColorMap::replace_rect`,
-//! then `Renderer::update_terrain`). The material view is a second map of
-//! `MATERIAL_PALETTE` colours at art scale 1, built when it is turned on.
+//! then `Renderer::update_terrain`). The collision view is a second map of
+//! `MATERIAL_PALETTE` colours at art scale 1, built when it is turned on;
+//! the Materials view (issue #43) one of the art tinted by each world
+//! pixel's surface material (`olr_editor::surface_tint`).
 //! A level with a look draws lit (plan 15a Task 19): the map carries the
 //! bake's glow and clear solids, and `look_frame` the document's look at
 //! the editor's clock and view mode.
@@ -18,17 +20,41 @@ use olr_look::{LevelLook, LookFrame, ViewMode};
 use olr_scene::{DrawList, View};
 use olr_terrain::{ColorMap, Terrain, ThemeArt};
 
+/// What the canvas's map shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CanvasView {
+    /// The bake, lit when the level has a look.
+    Bake,
+    /// The collision view: `MATERIAL_PALETTE` at art scale 1.
+    Material,
+    /// The Materials view (issue #43): the art tinted by surface material.
+    Surfaces,
+}
+
+impl CanvasView {
+    /// The view the editor's state asks for.
+    pub fn of(state: &olr_editor::EditorState) -> CanvasView {
+        if state.material_view() {
+            CanvasView::Material
+        } else if state.surface_view() {
+            CanvasView::Surfaces
+        } else {
+            CanvasView::Bake
+        }
+    }
+}
+
 /// The canvas's colour map and what it was built from.
 pub struct Canvas {
     map: Option<ColorMap>,
-    /// The map shows `MATERIAL_PALETTE` (art scale 1), not the bake.
-    showing_material: bool,
+    /// What the map shows: the bake, or a view's colours (unlit).
+    showing: CanvasView,
     /// The level's size (world pixels) and art scale: the editor's view
     /// maps the level's art pixels whichever map shows.
     level: (u32, u32),
     art_scale: u32,
-    /// The material view's images, kept so an upload repaints only its
-    /// rectangle.
+    /// The collision or Materials view's images, kept so an upload
+    /// repaints only its rectangle.
     palette: Option<(RgbaImage, RgbaImage)>,
     /// The document's look compiled, and the look it was compiled from:
     /// compiled again only when it changes.
@@ -52,6 +78,34 @@ fn palette(m: Material) -> Rgba {
     Rgba::rgb(MATERIAL_PALETTE[i], MATERIAL_PALETTE[i + 1], MATERIAL_PALETTE[i + 2])
 }
 
+/// The Materials view's colour of art pixel `(ax, ay)` of `l` (issue
+/// #43): the art half and half with its world pixel's surface material's
+/// tint (the front's where rock or dirt stands, else the back's); greyed
+/// and dark without one.
+fn surface_colour(l: &LevelSource, ax: u32, ay: u32) -> Rgba {
+    let s = l.art_scale.max(1);
+    let (x, y) = (ax / s, ay / s);
+    let i = y as usize * l.size.0 as usize + x as usize;
+    let solid = l.material.get(i).is_some_and(|m| *m != Material::Background);
+    let value = l
+        .surface
+        .as_ref()
+        .filter(|m| m.fits(l.size))
+        .map_or(0, |m| if solid { m.front[i] } else { m.back[i] });
+    let c = if ax < l.front.width() && ay < l.front.height() { l.front.get(ax, ay) } else { Rgba::BLACK };
+    match olr_editor::surface_tint(value) {
+        Some(t) => Rgba::rgb(
+            ((u16::from(c.r) + u16::from(t.r)) / 2) as u8,
+            ((u16::from(c.g) + u16::from(t.g)) / 2) as u8,
+            ((u16::from(c.b) + u16::from(t.b)) / 2) as u8,
+        ),
+        None => {
+            let grey = ((u16::from(c.r) * 3 + u16::from(c.g) * 6 + u16::from(c.b)) / 30) as u8;
+            Rgba::rgb(grey, grey, grey)
+        }
+    }
+}
+
 /// The level's material as a terrain (a level of another cell count, which
 /// `olr-format` never makes, is all rock).
 fn terrain(l: &LevelSource) -> Terrain {
@@ -70,7 +124,7 @@ impl Canvas {
     pub fn new() -> Canvas {
         Canvas {
             map: None,
-            showing_material: false,
+            showing: CanvasView::Bake,
             level: (0, 0),
             art_scale: 1,
             palette: None,
@@ -82,20 +136,31 @@ impl Canvas {
     }
 
     /// Rebuilds the map from `doc` (a new document, a resize or an art
-    /// scale changes its size; the material view turned on or off). The
-    /// caller uploads it whole (`Renderer::upload_terrain`).
-    pub fn rebuild(&mut self, doc: &Document, material_view: bool) {
+    /// scale changes its size; a view turned on or off). The caller
+    /// uploads it whole (`Renderer::upload_terrain`).
+    pub fn rebuild(&mut self, doc: &Document, view: CanvasView) {
         let l = doc.level();
         self.level = l.size;
         self.art_scale = l.art_scale.max(1);
-        self.showing_material = material_view;
+        self.showing = view;
         let t = terrain(l);
-        self.map = Some(if material_view {
+        self.map = Some(if view == CanvasView::Material {
             let mut img = RgbaImage::new(l.size.0, l.size.1);
             for (i, m) in l.material.iter().enumerate().take((l.size.0 * l.size.1) as usize) {
                 img.set(i as u32 % l.size.0, i as u32 / l.size.0, palette(*m));
             }
             let map = ColorMap::new(&t, &img, &img, 1, no_theme());
+            self.palette = Some((img.clone(), img));
+            map
+        } else if view == CanvasView::Surfaces {
+            let s = self.art_scale;
+            let mut img = RgbaImage::new(l.size.0 * s, l.size.1 * s);
+            for ay in 0..img.height() {
+                for ax in 0..img.width() {
+                    img.set(ax, ay, surface_colour(l, ax, ay));
+                }
+            }
+            let map = ColorMap::new(&t, &img, &img, s, no_theme());
             self.palette = Some((img.clone(), img));
             map
         } else {
@@ -115,11 +180,11 @@ impl Canvas {
     }
 
     /// Whether the canvas draws `doc` lit: a look, glow or clear solids,
-    /// and not the material view. The host turns the
+    /// and not a view's colours. The host turns the
     /// renderer's lighting on and uploads the map whole when it changes.
     pub fn lit(&self, doc: &Document) -> bool {
         let l = doc.level();
-        !self.showing_material && (l.look.is_some() || l.glow.is_some() || l.clear.is_some())
+        self.showing == CanvasView::Bake && (l.look.is_some() || l.glow.is_some() || l.clear.is_some())
     }
 
     /// The frame's look of `doc` at clock `t_ms` (the editor's) in `mode`;
@@ -147,9 +212,9 @@ impl Canvas {
         self.palette = None;
     }
 
-    /// Whether the map shows the material view.
-    pub fn showing_material(&self) -> bool {
-        self.showing_material
+    /// What the map shows.
+    pub fn showing(&self) -> CanvasView {
+        self.showing
     }
 
     /// Whether the map matches `doc`'s size and art scale (else it must be
@@ -157,11 +222,11 @@ impl Canvas {
     pub fn fits(&self, doc: &Document) -> bool {
         let l = doc.level();
         // A glow that came or went changes the map's channels: built again.
-        let glow = self.showing_material
+        let glow = self.showing != CanvasView::Bake
             || self.map.as_ref().is_some_and(|m| m.glow().is_some() == l.glow.is_some());
         // So does a see-through bake that came or went (issue #11).
-        let see_through =
-            self.showing_material || self.map.as_ref().is_some_and(|m| m.see_through() == doc.see_through());
+        let see_through = self.showing != CanvasView::Bake
+            || self.map.as_ref().is_some_and(|m| m.see_through() == doc.see_through());
         self.map.is_some()
             && self.level == l.size
             && self.art_scale == l.art_scale.max(1)
@@ -176,13 +241,13 @@ impl Canvas {
     }
 
     /// The distant layers for `Renderer::set_distant`, when they changed or
-    /// `full` (a whole upload); none in the material view, which leaves them
+    /// `full` (a whole upload); none in a view's colours, which leave them
     /// out.
     pub fn take_distant(&mut self, full: bool) -> Option<&[DistantLayer]> {
         if !std::mem::take(&mut self.distant_due) && !full {
             return None;
         }
-        Some(if self.showing_material { &[] } else { &self.distant })
+        Some(if self.showing == CanvasView::Bake { &self.distant } else { &[] })
     }
 
     /// `doc`'s world rectangle `r` into the map (`replace_rect`, art pixels
@@ -202,9 +267,16 @@ impl Canvas {
                 let (x1, y1) = ((r.x + r.w).min(l.size.0), (r.y + r.h).min(l.size.1));
                 for y in r.y..y1 {
                     for x in r.x..x1 {
-                        let c = palette(l.material[(y * l.size.0 + x) as usize]);
-                        front.set(x, y, c);
-                        back.set(x, y, c);
+                        for ay in y * s..(y + 1) * s {
+                            for ax in x * s..(x + 1) * s {
+                                let c = match self.showing {
+                                    CanvasView::Surfaces => surface_colour(l, ax, ay),
+                                    _ => palette(l.material[(y * l.size.0 + x) as usize]),
+                                };
+                                front.set(ax, ay, c);
+                                back.set(ax, ay, c);
+                            }
+                        }
                     }
                 }
                 map.replace_rect(art, front, back, &l.material);
@@ -312,6 +384,7 @@ mod tests {
             home: None,
             textures: Vec::new(),
             assets: Vec::new(),
+            materials: Vec::new(),
         };
         let pack = olr_edit::pack::load(&dir).unwrap();
         Some((tmp, Document::open(pack, dir, &catalog).unwrap()))
@@ -335,7 +408,7 @@ mod tests {
         let img = RgbaImage::new(size.0 * s, size.1 * s);
         Canvas {
             map: Some(ColorMap::new(&t, &img, &img, s, no_theme())),
-            showing_material: false,
+            showing: CanvasView::Bake,
             level: size,
             art_scale: s,
             palette: None,
@@ -394,7 +467,7 @@ mod tests {
     fn upload_replaces_only_its_rectangle() {
         let Some((_tmp, mut d)) = doc() else { return };
         let mut c = Canvas::new();
-        c.rebuild(&d, false);
+        c.rebuild(&d, CanvasView::Bake);
         assert!(c.fits(&d));
         let s = d.level().art_scale;
         c.map_mut().unwrap().take_dirty().for_each(drop);
@@ -425,8 +498,8 @@ mod tests {
         }
         assert!(map.take_dirty().next().is_some(), "marked for update_terrain");
         // The material view's map shows MATERIAL_PALETTE's colours.
-        c.rebuild(&d, true);
-        assert!(c.showing_material());
+        c.rebuild(&d, CanvasView::Material);
+        assert_eq!(c.showing(), CanvasView::Material);
         let l = d.level();
         let map = c.map_mut().unwrap();
         assert_eq!(map.art_scale(), 1);
@@ -442,7 +515,7 @@ mod tests {
     fn the_canvas_frame_follows_the_document() {
         let Some((_tmp, mut d)) = doc() else { return };
         let mut c = Canvas::new();
-        c.rebuild(&d, false);
+        c.rebuild(&d, CanvasView::Bake);
         assert!(!c.lit(&d), "no look: drawn as always");
         assert!(c.look_frame(&d, 0.0, ViewMode::Lit).is_none());
         let mut look = olr_format::look::LookSource::default();
@@ -453,7 +526,7 @@ mod tests {
         assert!((f.ambient[0] - 0.3).abs() < 1e-3 && f.emitters.is_empty());
         assert_eq!(c.look_frame(&d, 0.0, ViewMode::FullBright).unwrap().mode, ViewMode::FullBright);
         // The material view is never lit.
-        c.rebuild(&d, true);
+        c.rebuild(&d, CanvasView::Material);
         assert!(!c.lit(&d));
     }
 
@@ -465,12 +538,12 @@ mod tests {
     fn distant_layers_reach_the_canvas() {
         let Some((_tmp, mut d)) = doc() else { return };
         let mut c = Canvas::new();
-        c.rebuild(&d, false);
+        c.rebuild(&d, CanvasView::Bake);
         assert!(!c.map_mut().unwrap().see_through());
         d.set_distant("tunnels", Some(40)).unwrap();
         assert!(d.see_through());
         assert!(!c.fits(&d), "the map is not see-through yet: built again");
-        c.rebuild(&d, false);
+        c.rebuild(&d, CanvasView::Bake);
         assert!(c.fits(&d) && c.map_mut().unwrap().see_through());
         c.set_distant(d.level().distant.clone());
         assert_eq!(c.take_distant(false).map(<[_]>::len), Some(1));
@@ -481,20 +554,65 @@ mod tests {
         let (list, _) = c.draw(&view, rect, 1.5, olr_render::MAX_VIEW).unwrap();
         assert_eq!(list.parallax, Some(view.centre([400.0, 300.0], d.level().art_scale)));
         assert_eq!(list.camera(), (list.view.x + list.view.w / 2.0, list.view.y + list.view.h / 2.0));
-        c.rebuild(&d, true);
+        c.rebuild(&d, CanvasView::Material);
         assert!(c.fits(&d), "the material view is never see-through");
         assert_eq!(c.take_distant(true).map(<[_]>::len), Some(0), "the material view leaves them out");
+    }
+
+    /// Issue #43: the Materials view tints each art pixel by its world
+    /// pixel's surface material (the front where solid, else the back),
+    /// unlit, greyed without one, and a Surface brush dab repaints its
+    /// rectangle.
+    #[test]
+    fn the_materials_view_tints_by_surface() {
+        let Some((_tmp, mut d)) = doc() else { return };
+        let stone = olr_format::materials::MaterialSource {
+            id: "stone".into(),
+            name: "Stone".into(),
+            notes: String::new(),
+            heat: None,
+        };
+        d.add_material(stone).unwrap();
+        let mut c = Canvas::new();
+        c.rebuild(&d, CanvasView::Surfaces);
+        assert_eq!(c.showing(), CanvasView::Surfaces);
+        assert!(!c.lit(&d) && c.fits(&d), "a view's colours are unlit");
+        let l = d.level().clone();
+        let s = l.art_scale;
+        let i = (0..l.material.len()).find(|&i| l.material[i] != Material::Background).expect("solid") as u32;
+        let (x, y) = (i % l.size.0, i / l.size.0);
+        let map = c.map_mut().unwrap();
+        assert_eq!(map.art_scale(), s);
+        let shown = map.color_at(x.into(), y.into()).unwrap();
+        assert!(shown.r == shown.g && shown.g == shown.b, "no material: grey, {shown:?}");
+        map.take_dirty().for_each(drop);
+        // Stone painted on the base's front there: tinted, uploaded.
+        let before = d.surface_stroke_before("base", false).unwrap();
+        let shape = olr_edit::level::Shape::Rect { x: x as i32, y: y as i32, w: 1, h: 1 };
+        let r = d.paint_surface("base", false, &shape, 1).unwrap();
+        assert_eq!(d.surface_stroke_edits("base", before).len(), 2, "the map and its flag");
+        assert_eq!(d.level().surface.as_ref().map(|m| m.front[i as usize]), Some(1));
+        c.upload(&d, r);
+        let tint = olr_editor::surface_tint(1).unwrap();
+        let art = l.front.get(x * s, y * s);
+        let mix = |a: u8, b: u8| ((u16::from(a) + u16::from(b)) / 2) as u8;
+        let map = c.map_mut().unwrap();
+        assert_eq!(
+            map.color_at(x.into(), y.into()),
+            Some(Rgba::rgb(mix(art.r, tint.r), mix(art.g, tint.g), mix(art.b, tint.b)))
+        );
+        assert!(map.take_dirty().next().is_some());
     }
 
     #[test]
     fn a_glow_edit_uploads_its_rectangle() {
         let Some((_tmp, mut d)) = doc() else { return };
         let mut c = Canvas::new();
-        c.rebuild(&d, false);
+        c.rebuild(&d, CanvasView::Bake);
         let glow = olr_format::levels::ElementGlow { strength: 100, group: String::new(), mask: false };
         d.set_glow("tunnels", Some(glow)).unwrap();
         assert!(!c.fits(&d), "the map has no glow yet: built again");
-        c.rebuild(&d, false);
+        c.rebuild(&d, CanvasView::Bake);
         assert_eq!(c.map_mut().unwrap().glow(), d.level().glow.as_ref().map(|g| &g.front[..]));
         c.map_mut().unwrap().take_dirty().for_each(drop);
         let r =
