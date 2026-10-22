@@ -189,3 +189,5 @@
 2026-10-22 bless-render: #30: split screen's HUD snapshots for 2 and 4 views
   fixtures/ui/hud-1080p-2-views.png
   fixtures/ui/hud-1080p-4-views.png
+2026-10-22 bench-quick: #34: add the lit Castle Strike Reloaded frame (instructions and wall time)
+  fixtures/bench/quick.ron

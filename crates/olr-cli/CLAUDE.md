@@ -318,9 +318,19 @@ The headless command-line tool. Its commands:
   on Liero Factory, `WARM_TICKS` 2000), then the user-space instructions
   (`perfcount::Instructions`, through `perf-event2`) of `MATCH_TICKS` 300
   ticks (bots, tick, `on_tick`) and of `DRAW_LISTS` 60 draw-list builds,
-  and the fastest of `FRAMES` 7 offscreen 1080p frames in ms.
-  `QuickReport`'s numbers are `None`, with a notice, without an
-  instruction counter or a graphics adapter. Test: `tests/perfcount.rs`.
+  and the fastest of `FRAMES` 7 offscreen 1080p frames in ms. Issue #34:
+  then a lit frame (`quick_bench::warm_lit`: 8 chaos bots in Classic on
+  `LIT_LEVEL`, Castle Strike Reloaded, after `WARM_TICKS`; its look, the
+  flames' and the sky's glow groups and the fight's glowing discs, 32
+  today, `lit_discs`): after a first frame, `LIT_FRAMES` 5 at 1080p, the
+  fewest instructions of the uploads and `render_lit`'s encoding and
+  submit (`lit_frame_instructions`, about 1.36 M, steady to 0.1 %) and
+  the fastest wall time with the device waited for (`lit_frame_ms_min`,
+  about 190 ms on llvmpipe, nearly all the glow light's cascades): on the
+  software adapter a relative signal of the look passes' shader work,
+  never real milliseconds. `QuickReport`'s numbers are `None`, with a
+  notice, without an instruction counter or a graphics adapter; the lit
+  fields are `#[serde(default)]`. Test: `tests/perfcount.rs`.
 - `olr-cli net-sim [--mod M --level L --seed N --slots 8 --clients 3
   --spectators 1 --join-tick T --profile typical --drift-ppm P --ticks 1000
   --outage peer:from:until --net-seed N --difficulty D --exit

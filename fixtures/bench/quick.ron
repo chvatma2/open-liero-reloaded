@@ -5,8 +5,11 @@
         adapter: "llvmpipe (LLVM 21.1.8, 256 bits) (Vulkan, Cpu)",
     ),
     report: (
-        match_ticks_instructions: Some(115456984),
-        draw_lists_instructions: Some(3451066),
-        render_frame_ms_min: Some(3.114217),
+        match_ticks_instructions: Some(114733721),
+        draw_lists_instructions: Some(3535847),
+        render_frame_ms_min: Some(2.768441),
+        lit_frame_instructions: Some(1359160),
+        lit_frame_ms_min: Some(187.10254700000002),
+        lit_discs: Some(32),
     ),
 )

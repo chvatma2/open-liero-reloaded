@@ -2,6 +2,11 @@
 //! runner's sessions; `cargo xtask bench-quick` gates it). The match's
 //! ticks and draw lists are counted in instructions (`perfcount`), stable
 //! on a busy machine; the offscreen frame is the minimum wall time of a few.
+//! Issue #34: a lit frame of Castle Strike Reloaded too ([`warm_lit`]: its
+//! look, its glow groups and a fight's discs), its uploads and encoding
+//! counted in instructions and its fastest wall time on the software
+//! adapter, a relative signal of the look passes' shader work (never real
+//! milliseconds: `olr-cli gpu-bench --look` on a GPU measures those).
 //! `cargo xtask bench` stays the real measurement.
 
 use std::time::Instant;
@@ -16,7 +21,7 @@ use olr_sim::{Keys, TickEvents, World};
 use serde::{Deserialize, Serialize};
 
 use crate::perfcount::Instructions;
-use crate::spec::MatchSpec;
+use crate::spec::{MatchSpec, Personality};
 
 /// Ticks played before measuring (20 s: the bots spread out, fight, dig).
 pub const WARM_TICKS: u32 = 2000;
@@ -26,6 +31,12 @@ pub const MATCH_TICKS: u32 = 300;
 pub const DRAW_LISTS: u32 = 60;
 /// Offscreen 1080p frames timed; the fastest counts.
 pub const FRAMES: u32 = 7;
+/// The lit frame's level (issue #34): the flames' flicker and the sky's
+/// unlimited glow over the whole level, the most a level's look asks.
+pub const LIT_LEVEL: &str = "olr-level-castlestrike-reloaded";
+/// Lit 1080p frames counted and timed (about 0.3 s each on llvmpipe); the
+/// fewest instructions and the fastest wall time count.
+pub const LIT_FRAMES: u32 = 5;
 
 /// A Classic Deathmatch of 8 bots on Liero Factory after [`WARM_TICKS`]:
 /// the world, its bots, the last tick's events and its presentation (which
@@ -38,7 +49,20 @@ pub struct Warm {
 }
 
 pub fn warm(content: &Content) -> anyhow::Result<Warm> {
-    let mut spec = MatchSpec::new("olx-classic", "olx-level-liero-factory", 8, 5, WARM_TICKS);
+    warm_on(content, MatchSpec::new("olx-classic", "olx-level-liero-factory", 8, 5, WARM_TICKS))
+}
+
+/// The lit frame's match (issue #34): 8 chaos bots (they fire everything,
+/// so the frame has a fight's glowing discs) in Classic on [`LIT_LEVEL`]
+/// after [`WARM_TICKS`], drawn with the level's look.
+pub fn warm_lit(content: &Content) -> anyhow::Result<Warm> {
+    let mut spec = MatchSpec::new("olx-classic", LIT_LEVEL, 8, 5, WARM_TICKS);
+    spec.personality = Personality::Chaos;
+    warm_on(content, spec)
+}
+
+/// `spec`'s match, without limits, after [`WARM_TICKS`].
+fn warm_on(content: &Content, mut spec: MatchSpec) -> anyhow::Result<Warm> {
     spec.time_limit = 0.0;
     spec.kill_limit = 0;
     let built = content.build_match(&spec.match_options())?;
@@ -78,6 +102,31 @@ pub struct QuickReport {
     pub match_ticks_instructions: Option<u64>,
     pub draw_lists_instructions: Option<u64>,
     pub render_frame_ms_min: Option<f64>,
+    /// The lit Castle Strike frame's uploads and encoding (issue #34),
+    /// the fewest of [`LIT_FRAMES`].
+    #[serde(default)]
+    pub lit_frame_instructions: Option<u64>,
+    /// Its fastest wall time, the device waited for.
+    #[serde(default)]
+    pub lit_frame_ms_min: Option<f64>,
+    /// The glowing discs (play's lights) in the lit frame: said, not gated.
+    #[serde(default)]
+    pub lit_discs: Option<usize>,
+}
+
+/// A 1080p target of `gpu` to draw into.
+fn frame_target(gpu: &Offscreen) -> wgpu::TextureView {
+    let texture = gpu.device().create_texture(&wgpu::TextureDescriptor {
+        label: Some("quick-bench frame"),
+        size: wgpu::Extent3d { width: 1920, height: 1080, depth_or_array_layers: 1 },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: OUTPUT_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    texture.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
 /// Measures the warm match; `notice` hears why a number is missing.
@@ -107,34 +156,74 @@ pub fn run(content: &Content, notice: &mut dyn FnMut(String)) -> anyhow::Result<
         }
         Err(e) => notice(format!("no instruction counter ({e}): instructions not measured")),
     }
-    match Offscreen::new() {
-        Ok(gpu) => {
-            let mut renderer = gpu.renderer(RenderSettings::default());
-            let size = (1920, 1080);
-            let texture = gpu.device().create_texture(&wgpu::TextureDescriptor {
-                label: Some("quick-bench frame"),
-                size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: OUTPUT_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            });
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            let mut list = DrawList::new();
-            let mut best = f64::INFINITY;
-            for _ in 0..FRAMES {
-                let t0 = Instant::now();
-                w.present.build(&w.world, 1.0, &mut list);
-                w.present.upload(&mut renderer);
-                renderer.render(&list, &view, size);
-                gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
-                best = best.min(t0.elapsed().as_secs_f64() * 1000.0);
-            }
-            report.render_frame_ms_min = Some(best);
+    let gpu = match Offscreen::new() {
+        Ok(gpu) => gpu,
+        Err(e) => {
+            notice(format!("no graphics adapter ({e}): the frames not measured"));
+            return Ok(report);
         }
-        Err(e) => notice(format!("no graphics adapter ({e}): the frame not measured")),
+    };
+    let mut renderer = gpu.renderer(RenderSettings::default());
+    let size = (1920, 1080);
+    let view = frame_target(&gpu);
+    let mut list = DrawList::new();
+    let mut best = f64::INFINITY;
+    for _ in 0..FRAMES {
+        let t0 = Instant::now();
+        w.present.build(&w.world, 1.0, &mut list);
+        w.present.upload(&mut renderer);
+        renderer.render(&list, &view, size);
+        gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
+        best = best.min(t0.elapsed().as_secs_f64() * 1000.0);
     }
+    report.render_frame_ms_min = Some(best);
+    // The unlit match's world and renderer go before the lit one's.
+    drop((w, renderer));
+    lit_frame(content, &gpu, &mut report, notice)?;
     Ok(report)
+}
+
+/// The lit Castle Strike frame (issue #34) into `report`: a first frame
+/// makes the targets and uploads the level, then each of [`LIT_FRAMES`]
+/// builds the list (not counted), uploads and encodes it (counted) and
+/// waits for the device (timed with the rest).
+fn lit_frame(
+    content: &Content,
+    gpu: &Offscreen,
+    report: &mut QuickReport,
+    notice: &mut dyn FnMut(String),
+) -> anyhow::Result<()> {
+    let mut w = warm_lit(content)?;
+    let mut counter = Instructions::open().ok();
+    let mut renderer = gpu.renderer(RenderSettings::default());
+    let view = frame_target(gpu);
+    let area = [0, 0, 1920, 1080];
+    let mut list = DrawList::new();
+    w.present.build(&w.world, 1.0, &mut list);
+    w.present.upload(&mut renderer);
+    anyhow::ensure!(w.present.look().is_some(), "{LIT_LEVEL} has no look");
+    renderer.render_lit(&list, w.present.look(), &view, area);
+    gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
+    let (mut fewest, mut best) = (u64::MAX, f64::INFINITY);
+    for _ in 0..LIT_FRAMES {
+        let t0 = Instant::now();
+        w.present.build(&w.world, 1.0, &mut list);
+        let mut frame = || {
+            w.present.upload(&mut renderer);
+            renderer.render_lit(&list, w.present.look(), &view, area);
+        };
+        match counter.as_mut() {
+            Some(c) => fewest = fewest.min(c.measure(frame).1),
+            None => frame(),
+        }
+        gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
+        best = best.min(t0.elapsed().as_secs_f64() * 1000.0);
+    }
+    if counter.is_none() {
+        notice("no instruction counter: the lit frame's instructions not measured".into());
+    }
+    report.lit_frame_instructions = counter.and(Some(fewest));
+    report.lit_frame_ms_min = Some(best);
+    report.lit_discs = w.present.look().map(|l| l.emitters.len());
+    Ok(())
 }

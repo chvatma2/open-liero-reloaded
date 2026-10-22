@@ -84,7 +84,8 @@ enum Command {
     /// event, render and memory figures.
     Stress(stress_cmd::Args),
     /// A one-minute benchmark of one change: instruction counts of a warm match's ticks and
-    /// draw lists, and the fastest offscreen 1080p frame (`cargo xtask bench-quick`).
+    /// draw lists, the fastest offscreen 1080p frame, and a lit Castle Strike frame's
+    /// instructions and fastest time on the software adapter (`cargo xtask bench-quick`).
     QuickBench(quick_bench_cmd::Args),
     /// Times a rollback: restoring the world and re-simulating ticks (plan 9, spec §3.3).
     RollbackCost(rollback_cost_cmd::Args),

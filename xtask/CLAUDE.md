@@ -106,10 +106,12 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `olr-cli` in release, runs `quick-bench --out target/bench-quick.ron`
   and reads it strictly (`QuickReport`, unknown fields refused), then
   compares with `fixtures/bench/quick.ron` (`Baseline`: the `Host` and the
-  report): instructions of the match's ticks and draw lists fail over
-  `INSTR_TOLERANCE` (+15 %), the fastest 1080p frame over
-  `RENDER_TOLERANCE` (+50 %); a missing baseline or number, or another
-  host's baseline, is a notice. `--bless` writes the baseline, logged in
+  report): instructions of the match's ticks and draw lists and (issue
+  #34) of the lit Castle Strike frame's uploads and encoding fail over
+  `INSTR_TOLERANCE` (+15 %), the fastest unlit and lit 1080p frames over
+  `RENDER_TOLERANCE` (+50 %; `lit_discs` is only said); a missing
+  baseline or number (a baseline from before the lit frame reads, its lit
+  numbers notices), or another host's baseline, is a notice. `--bless` writes the baseline, logged in
   `fixtures/blessings.log`. Unit tests on `compare`.
 - `stress [--seconds 180]` (`bench::stress_command`): the long stress
   run, every `STRESS` configuration through `olr-cli stress` (progress and

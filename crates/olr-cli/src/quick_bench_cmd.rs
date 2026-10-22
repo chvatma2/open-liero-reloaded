@@ -34,6 +34,20 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         Some(ms) => println!("1080p frame: {ms:.2} ms (fastest of {})", quick_bench::FRAMES),
         None => println!("1080p frame: not measured"),
     }
+    println!(
+        "lit frame:   {} instructions (uploads and encoding, fewest of {}; {})",
+        show(report.lit_frame_instructions),
+        quick_bench::LIT_FRAMES,
+        quick_bench::LIT_LEVEL
+    );
+    match report.lit_frame_ms_min {
+        Some(ms) => println!(
+            "lit frame:   {ms:.2} ms (fastest of {}, {} glowing discs; software adapter: relative only)",
+            quick_bench::LIT_FRAMES,
+            report.lit_discs.unwrap_or(0)
+        ),
+        None => println!("lit frame:   not measured"),
+    }
     if let Some(path) = &args.out {
         let text = ron::ser::to_string_pretty(&report, ron::ser::PrettyConfig::default())?;
         std::fs::write(path, text + "\n")?;
