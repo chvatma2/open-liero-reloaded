@@ -618,9 +618,9 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   worm and puts the weapon name's top 15 world pixels above it, `y-30` at
   double resolution: where the name label sits here), kept inside the
   picture at its edges. The 0.75 s are counted in ticks, so they stand
-  still while the game is paused (OLX's run in real time). With one local
-  player (no split screen), OLX's weapon name of every local human worm in
-  every viewport is the player's worm's alone.
+  still while the game is paused (OLX's run in real time). Every local
+  player's worm has its own (issue #29: its own change, its own change
+  key held), as OLX's per-worm `bForceWeapon_Name`; a bot's never.
 - **Window** (`olr-game`, plan 6 hotfix, the user's ruling): the window
   cannot be drag-resized or maximised; its size comes from the defaults
   (later the options menu, M7) and `--fullscreen` (borderless). The game's
@@ -4718,12 +4718,28 @@ camera per view and the nearest listener. As built:
   the options'. A pad's Start pauses and resumes in game as Esc does
   (OLX has no pad pause), never bound to an action (a file binding it
   is repaired). An options file from before seats keeps its lists and
-  gets OLX's player 2. The match still has one local player, from
-  keyboard 1 and every pad as before (keyboard 2 heard by nobody) until
-  several local players play (#29).
-- **Not yet built:** several local players in the session, the layout
-  and gaps (OLX fills them with `clViewportSplit`, black), the HUD,
-  and menus by pad (the issues that follow #28). `olr-cli gpu-bench
+  gets OLX's player 2. A player alone plays from keyboard 1 and every
+  pad as before (keyboard 2 heard by nobody).
+- **Several local players** (issue #29, headless first): `olr-game`
+  holds a list of local players (`Assets::locals`, `Session::locals`),
+  each with its own slot, look, skin, keys (`Session::tick_locals`), view
+  (the fair view above), tally (kills, deaths, spawns), weapon name,
+  reload bar and rope throws heard, as OLX's local worms each with its
+  own viewport and counters (`CClient.cpp:1527-1551`, `1653-1744`;
+  `CClient_Draw.cpp:561-609`). Among several, player `k` sits on
+  keyboard 1 (with the mouse), keyboard 2, pad 0 or pad 1 (`players::SEATS`)
+  until the menus seat players (#31); each seat hears only its own
+  devices, so one player's keys never reach another's worm. `olr --mode
+  deathmatch --locals N` plays one (the humans worms 0 to N-1), and
+  `olr-cli match --locals N` one with scripted keys for tests. Replays
+  record every local slot (`ReplaySetup::viewers`, format 6), so a
+  split-screen replay plays back with a view each. Without a profile
+  each is "Player N" in OLX's default worm colour `N-1` (one alone stays
+  "You"); bots keep their colours away from every player's. The
+  simulation, the oracle and the match goldens are unchanged.
+- **Not yet built:** the layout on screen and gaps (OLX fills them with
+  `clViewportSplit`, black; the app draws the first player's view, #30),
+  a HUD per player, and joining and menus by pad (#31, #32). `olr-cli gpu-bench
   --views N` lays its views out in halves (top and bottom) or quarters
   for the measurement only.
 
