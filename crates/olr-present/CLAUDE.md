@@ -55,6 +55,11 @@ wired in the frame loop's order **once**, so each mode that draws a world
     at `restart`) go to `Renderer::set_distant` with every whole terrain
     upload; the colour map is see-through when there are any
     (`LoadedLevel::color_map`).
+  - Issue #39: every whole terrain upload first hands the renderer the
+    level's surface materials and maps (`LoadedLevel::surface`, again at
+    `restart`; `Renderer::set_surface`), so a level whose materials heat
+    gets a fresh heat texture. Nothing deposits heat or advances it yet
+    (issue 4/10).
   - `step_fx(&FxTick)`: `on_tick`'s entities and colour part for a tick
     described by hand (online play).
   - `restart(&world, &level, &theme)` for the same worms on a new world;

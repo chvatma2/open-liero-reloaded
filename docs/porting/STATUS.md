@@ -4872,9 +4872,9 @@ in a match yet (heat comes later). As built:
   pixels) override per pixel; 0, or a value past the look's materials,
   keeps the default. A plain level's maps survive being opened in the
   editor (the raster's or the three layers' painted maps).
-- **Not yet built** (later issues): `LevelPack` and the match
-  reading them (3/10), heat and its look, mods, the editors' material
-  tools (7/10). The level editor keeps painted maps as opened, re-lays
+- **Not yet built** (later issues): heat and its look (3/10, issue #39
+  below: `LevelPack` and the match read the maps there), mods, the
+  editors' material tools (7/10). The level editor keeps painted maps as opened, re-lays
   them on a level resize, resamples an image's on a new box size, drops
   them on split and merge down (as glow) and drops ones that no longer
   fit on saving.
@@ -4919,6 +4919,50 @@ built:
   data directory's `materials/` (`directories`, as `olr-ui`'s store) or
   `--user`; `level material add` takes the built-in copy when both
   libraries hold an id, and keeps the level's copy of one it has.
+
+## Heat in the renderer (issue #39)
+
+No OLX counterpart. The third of ten (the same spec): the renderer's heat
+behind a direct deposit API (`olr_render::Renderer::deposit_heat`,
+`advance_heat`, `reset_heat`); nothing deposits yet (explosions are
+4/10), so no level, golden or match changes. `LevelPack::surface` and
+`LoadedLevel::surface` carry the maps; `olr-present` hands them with the
+materials to `set_surface` on every whole terrain upload. As built
+(`crates/olr-render/CLAUDE.md`, Heat), the builder's calls:
+
+- **The texture** is `R16Uint`, degrees × 64 (GL renders into no
+  `R32Float`): 1/64 of a degree, so a slow cooling still moves it. The
+  step runs every 20 ms of match time (`HEAT_STEP_MS`), at most 250 a
+  frame (5 s; the rest wait for the next frames); a deposit lands before
+  the step it was made in, so the split of match time into frames never
+  changes the bytes.
+- **Stability by a clamped coefficient**, no substeps: each neighbour
+  gives at most 0.24 of the difference, so a step is a convex
+  combination (never above the hottest neighbour, never oscillating) for
+  every conductivity and capacity. Stone (100 everywhere) takes 0.05 a
+  neighbour a step; a pixel's own capacity scales what it takes, the
+  smaller conductivity of the pair what flows. Outside the level conducts
+  nothing (as rock with no material).
+- **Cooling** is `cooling% × (0.6 % of T + 0.05°)` a step beside air, so
+  every pixel reaches 0 (the linear part alone never would). A pixel with
+  no open 4-neighbour loses a quarter of that (the spec says only pixels
+  beside air cool; deviation: otherwise heat sealed in an insulator would
+  keep the pass running for ever). A back-wall pixel (open in the solid
+  map) counts as beside air.
+- **The active region** is at most 8 boxes on the CPU, grown a pixel a
+  step to 48 px past the deposit; a box is zeroed (a pass) and dropped
+  once an upper bound of its temperature, cooled at the slowest bulk rate,
+  is under the level's visible threshold (the lowest first ramp key) and
+  2 s passed since its last deposit (faint hits below the threshold may
+  pile up), or after 5 min of match time whatever its bound (a material
+  of cooling 0 lets go: the heat vanishes then, a deliberate cap). Heat
+  below the visible threshold is dropped with its box; it showed nothing.
+- **The look**: the ramp colour is mixed over the art by its glow and the
+  glow is the pixel's self-light, so it shows in the dark and in full
+  bright. A hot pixel emits linear colour × glow × `light`% (a glow group
+  at 100 % casts 1) with a reach of 200 px; the back wall's hot pixels
+  emit too (the emission reads the heat wherever the material rules).
+  Constants await a playtest (`docs/deferred-verification.md`).
 
 ## Kept OLX quirks
 

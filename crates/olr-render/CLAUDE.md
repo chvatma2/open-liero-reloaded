@@ -277,6 +277,62 @@ on screen or offscreen.
   references for tests (`shade_texel_table`). The light grid is rebuilt
   every lit frame; each pass group is timed with GPU timestamps when
   timing is on (below, issue #34).
+- **Heat** (issue #39, spec `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`;
+  `renderer/heat.rs`, `look/heat*.wgsl`; no OLX counterpart). Behind a
+  direct API (explosions deposit it from issue 4/10 on):
+  `set_surface(&[SurfaceMaterial], Option<&SurfaceMaps>)` before
+  `upload_terrain` (`olr_present::Presentation::upload` does it on a
+  whole upload); with lighting on, maps of the level's size and a
+  material that heats (`SurfaceMaterial::heats`: `sensitivity` above 0) make
+  `LookTextures::heat` (`HeatTextures`), made afresh by every
+  `upload_terrain` (a new level, a restart); otherwise there is none and
+  the level draws exactly as before (`no_materials_draws_todays_bytes`;
+  the lit terrain and the emission bind `HeatPipelines::none`'s dummy
+  group). `deposit_heat(HeatDeposit { pos, radius, amount })` (at most
+  `MAX_HEAT_DEPOSITS` 64 a frame, radius to `MAX_HEAT_RADIUS` 64, amount
+  to `MAX_HEAT_AMOUNT` 1000, a NaN dropped), `advance_heat(elapsed_ms)`
+  (match time, ticks never drawn included; a step each `HEAT_STEP_MS` 20,
+  at most `MAX_HEAT_STEPS` 250 a frame, the rest carried; each deposit
+  lands before the step it was made in, so N steps at once draw N single
+  steps' bytes), `reset_heat` (a replay seek), `has_heat`,
+  `heat_active`, `heat_texture`. The temperature is an `R16Uint` texture
+  at world size (degrees × `HEAT_SCALE` 64: GL renders into no
+  `R32Float`), with a scratch twin; a lit frame's first passes (once a
+  frame, however many views: `split_screen_steps_once_per_frame`) are
+  the frame's ops in order: deposits (falloff `1 − (d/R)²`, × the
+  material's sensitivity over its capacity), steps (into the scratch over
+  the active boxes, scissored, copied back) and zeroes. A step: each
+  4-neighbour gives `min(MAX_COUPLING 0.24, CONDUCT 0.05 ×
+  min(k_p, k_q) / c_p)` of its difference (conductivity, capacity as
+  shares of stone's; a convex combination, stable for every value), then
+  a pixel loses `q × (COOL_RATE 0.006 × T + COOL_MIN 0.05)` (q its
+  cooling share), a quarter of it (`BULK`) when neither it nor a
+  4-neighbour is open (the solid map); outside the level is rock that
+  conducts nothing; a pixel without a heating material holds none. The
+  visible surface's material rules (`surface_texels`: the front's where
+  the solid map is rock or dirt, else the back's; a dug pixel keeps its
+  heat under its back, `a_dug_pixel_is_ruled_by_its_back`). The CPU
+  (`HeatSim`) keeps at most 8 boxes: a deposit's square, grown a pixel a
+  step to `HEAT_SPREAD` (48) past it, overlapping ones joined; a box is
+  zeroed and dropped once an upper bound of its temperature
+  (`hot × (1 − α) − β`, the slowest cooling) is under the level's visible
+  threshold (its ramps' first key) and 100 steps passed since its last
+  deposit, or after 5 min of match time (a material that never cools);
+  when every box will cool before the next deposit it is zeroed at once.
+  No box, no pass (`nothing_hot_runs_no_pass`), and the materials
+  uniform's `on` is 0, so the look reads none. Look: the lit terrain mixes
+  its material's ramp colour (`HeatLook`, a 256-bin `Rgba8Unorm` row per
+  material from `olr_look`'s ramp, alpha the glow) over its art by the
+  glow and takes the glow as self-light (it shows in the dark and in full
+  bright, `a_hot_pixel_shows_its_colour_in_every_view`); the glow light's
+  emission adds its linear colour × glow × the material's `light` ×
+  `HEAT_CAST` (reach `HEAT_REACH` 200; `a_hot_pixel_adds_glow_light`).
+  Timed as `PassGroup::Heat`. Tests (GPU, `tests/gpu/heat.rs`): those
+  named and `a_deposit_heats_only_material_pixels_and_spreads_only_into_conducting_ones`,
+  `sensitivity_zero_never_heats`, `heat_cools_to_nothing`,
+  `stepping_n_ticks_at_once_equals_n_single_steps`,
+  `hostile_values_stay_bounded`, `a_reset_or_a_new_level_clears_the_heat`;
+  `heat.rs`'s unit tests (boxes, bounds, tables).
 - **Atlas** (`atlas.rs`): shelf packing, tallest first, ties by id
   (deterministic); texel (0, 0) is white. An image too large for the
   device is left out with a warning (`warnings()`), and any id the layout
@@ -331,7 +387,7 @@ on screen or offscreen.
   pair of its own (`PASS_BASE` 32, a resolve's 256-byte alignment, to
   `PASS_SLOTS` 256 more; the first world pass's start is slot 0, the last
   upscale's end slot 1; a pass past them goes untimed), counted in its
-  `PassGroup` (world and occluders; emission: the glow light's occluder
+  `PassGroup` (heat, issue #39; world and occluders; emission: the glow light's occluder
   map, discs and emission; jump flood; cascades; fluence and its
   clear; occlusion; light sum; soak; blur; bloom; composite; upscale; the
   timer's `pass` hands each pass its writes, `start_frame` clears them, the
@@ -394,6 +450,6 @@ floor, softness, glow light, clear solids, discs, bounce, flicker, glare,
 the disc cap, ambient occlusion, GL, several views (issue #26); issue #12:
 `a_double_skin_draws_at_four_texels_per_world_pixel`,
 `a_glowing_skin_pixel_is_bright_in_the_dark`,
-`a_skin_light_lights_the_air_and_a_wall_stops_it`) and goldens need
+`a_skin_light_lights_the_air_and_a_wall_stops_it`; issue #39: heat, `tests/gpu/heat.rs`) and goldens need
 `OLR_GPU_TESTS=1`; `cargo xtask full` sets it and runs them, skipping with a
 notice when no adapter opens (`cargo run -p olr-render --example adapter`).

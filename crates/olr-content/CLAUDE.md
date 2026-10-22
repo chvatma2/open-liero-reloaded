@@ -51,7 +51,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   clear solids: the renderer's look passes draw it. `from_source` compiles
   the editor's look as well (`olr_format::levels::compile_look`), and
   `color_map` hands the glow and clear flags to the `ColorMap`
-  (`set_glow`, `set_clear`). `LoadedMod::look` (`olr_look::ModLook`) is
+  (`set_glow`, `set_clear`). Issue #39: `LoadedLevel::surface` holds the
+  level's surface maps (`olr_pack::LevelPack::surface`, or the `LevelSource`'s
+  maps) for the renderer's heat
+  (`surface_maps_load_with_the_level`). `LoadedMod::look` (`olr_look::ModLook`) is
   indexed like `SimMod::projectiles` and `SimMod::weapons`, each
   projectile's look found by its `ModDef` key (`SimProjectile::key`), so
   shared and named projectiles and their children keep their looks (batch
