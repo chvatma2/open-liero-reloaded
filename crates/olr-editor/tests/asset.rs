@@ -148,7 +148,13 @@ fn placing_is_one_step_that_selects_the_new_elements_and_adds_lighting() {
     let look = doc.level().look.clone().expect("a look");
     let groups: Vec<&str> = look.glow_groups.iter().map(|g| g.id.as_str()).collect();
     assert_eq!(groups, ["screens", "displays"]);
-    assert_eq!(LookSource { glow_groups: Vec::new(), ..look.clone() }, LookSource::default());
+    // And its surface materials (issue #46: the factory's).
+    let materials: Vec<&str> = look.materials.iter().map(|m| m.id.as_str()).collect();
+    assert_eq!(materials, ["concrete", "metal", "glass"]);
+    assert_eq!(
+        LookSource { glow_groups: Vec::new(), materials: Vec::new(), ..look.clone() },
+        LookSource::default()
+    );
     assert_eq!(s.status().message.as_deref(), Some(olr_editor::asset_ops::ADDED_LIGHTING));
     // Placed where asked: the desk's box starts at the point.
     let at = |id: &str| {

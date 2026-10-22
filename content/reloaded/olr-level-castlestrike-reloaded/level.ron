@@ -30,5 +30,71 @@
                 reach: Unlimited,
             ),
         ],
+        materials: [
+            (
+                id: "stone",
+                name: "Stone",
+                notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+                heat: (
+                    capacity: 100,
+                    conductivity: 100,
+                    cooling: 100,
+                ),
+            ),
+            (
+                id: "brick",
+                name: "Brick",
+                notes: "Fired clay: holds its heat a long time, like a kiln.",
+                heat: (
+                    capacity: 120,
+                    conductivity: 70,
+                    cooling: 70,
+                ),
+            ),
+            (
+                id: "wood",
+                name: "Wood",
+                notes: "Smoulders: warms easily, keeps its heat where it lands and glows like embers.",
+                heat: (
+                    capacity: 50,
+                    conductivity: 15,
+                    cooling: 60,
+                    look: (
+                        ramp: [
+                            (
+                                temperature: 80,
+                                colour: "#300c00",
+                                glow: 0,
+                            ),
+                            (
+                                temperature: 250,
+                                colour: "#9a2400",
+                                glow: 45,
+                            ),
+                            (
+                                temperature: 550,
+                                colour: "#ff6410",
+                                glow: 85,
+                            ),
+                            (
+                                temperature: 1000,
+                                colour: "#ffc060",
+                                glow: 100,
+                            ),
+                        ],
+                    ),
+                ),
+            ),
+            (
+                id: "metal",
+                name: "Metal",
+                notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+                heat: (
+                    capacity: 80,
+                    conductivity: 600,
+                    cooling: 150,
+                ),
+            ),
+        ],
     ),
 )

@@ -9,6 +9,8 @@
                 material: Background,
                 size: (14, 14),
             ),
+            surface: "concrete",
+            surface_map: true,
         ),
         (
             id: "screens",
@@ -22,6 +24,7 @@
                 strength: 90,
                 group: "screens",
             ),
+            surface: "glass",
         ),
     ],
     glow_groups: [
@@ -29,6 +32,68 @@
             id: "screens",
             intensity: 150,
             reach: Pixels(18),
+        ),
+    ],
+    materials: [
+        (
+            id: "stone",
+            name: "Stone",
+            notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+            heat: (
+                capacity: 100,
+                conductivity: 100,
+                cooling: 100,
+            ),
+        ),
+        (
+            id: "concrete",
+            name: "Concrete",
+            notes: "Heavy and dense: slow to warm, slow to cool.",
+            heat: (
+                capacity: 140,
+                conductivity: 80,
+                cooling: 80,
+            ),
+        ),
+        (
+            id: "metal",
+            name: "Metal",
+            notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+            heat: (
+                capacity: 80,
+                conductivity: 600,
+                cooling: 150,
+            ),
+        ),
+        (
+            id: "glass",
+            name: "Glass",
+            notes: "Glows amber when hot and lights little around it.",
+            heat: (
+                capacity: 90,
+                conductivity: 40,
+                cooling: 70,
+                look: (
+                    ramp: [
+                        (
+                            temperature: 120,
+                            colour: "#401800",
+                            glow: 0,
+                        ),
+                        (
+                            temperature: 400,
+                            colour: "#d06010",
+                            glow: 60,
+                        ),
+                        (
+                            temperature: 1000,
+                            colour: "#ffd890",
+                            glow: 100,
+                        ),
+                    ],
+                    light: 50,
+                ),
+            ),
         ),
     ],
 )

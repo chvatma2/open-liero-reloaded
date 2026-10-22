@@ -11,7 +11,8 @@ README stays behind). `cargo xtask check` reads every one whole
 
 Each was cut from OLR's own Reloaded levels (`content/reloaded/`) with
 `olr-cli asset save`; to make one again, run its command from the
-repository's root.
+repository's root. They carry the surface materials their pixels have
+there (issue #46), so placed in a level they heat as they did in it.
 
 - `torch/`: **Torch**, a cavern torch of Castle Strike Reloaded, its
   flame glowing in group `flames` (`Flicker`). Cut from the layers under
