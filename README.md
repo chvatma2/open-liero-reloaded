@@ -230,9 +230,16 @@ copy it from the menu).
 - **Tools** (top): Select (V), Brush (B), Eraser (E), Rectangle (R), Ellipse
   (O), Line (L), Spawn (P), Eyedropper (I); paint a colour or the theme's
   front or back tile. Ctrl+Z / Ctrl+Y undo and redo, Ctrl+S saves, Delete
-  removes, Space-drag pans, the wheel zooms. **Material view** shows rock,
+  removes, Space-drag pans, the wheel zooms. **Collision view** shows rock,
   dirt and background; **Grid** draws a line every pixel when zoomed in,
   every 2, 4, 8 … pixels when zoomed out.
+- **Surface materials** (what explosions heat): the level's **Materials**
+  (under its look) are added from the library (**Add from library**: the
+  built-in ones and yours) and removed when nothing uses them; an
+  element's **Surface** (and **Back surface**, with back art) picks one
+  for all of it, and the **Surface brush** (U) paints one onto its own
+  pixels (or its back art's: Front / Back). **Materials view** tints
+  each pixel by its material, with a legend.
 - **Play** tries the level as it is: alone (0 bots) or a Deathmatch
   against up to 8 bots (of Local Play's saved difficulty, personality and
   weapon choice, with the Default loadout), the mod chosen beside it. Your worm starts at the

@@ -4002,8 +4002,8 @@ away. A layout change only: no tool, operation or format changes.
   name now) for AccessKit, never the element's Glow checkbox.
 - **Top: two bars** (`ui/toolbar.rs`). The session bar: File ▾ (Open…,
   Save, Close), Undo, Redo, the unsaved mark's kept space; at the right
-  View ▾ (Material view, Grid, Lit / Full bright / Light only, the
-  lights' clock) and Play with its ▾ ("Play options": the mod, a list,
+  View ▾ (Collision view, Grid, Lit / Full bright / Light only, Materials
+  view since issue #43, the lights' clock) and Play with its ▾ ("Play options": the mod, a list,
   and the bots). The ▾ are drawn (a font may lack the glyph); the menus
   are named without them (`labels::FILE`, `VIEW`, `PLAY_OPTIONS`). View
   and Play's menus stay open while used (a click outside closes them).
@@ -5097,6 +5097,44 @@ presentation tag, below); a mod without these fields heats as before
   light: Explosion heat (amount, own radius or the engine's) and Heat
   (amount a tick, radius), bounded by the caps; the World panel's Look
   edits `mod.ron`'s explosion light (not editable before) and heat.
+
+## Level editor materials (issue #43)
+
+No OLX counterpart. The seventh of ten (the spec's "Editors"): the level
+editor gives a level surface materials, per element and per pixel. The
+simulation, the oracle, every match and render golden are unchanged; a
+level using no materials saves as before. As built, the builder's calls:
+
+- **The level's Materials** (the Level panel, under its look, beside the
+  glow groups): a list of the look's materials, each with its Materials
+  view tint, **Add from library** (the built-in `content/materials` and
+  the data directory's `materials/`, a copy taken in: the level keeps
+  its own), and **Remove**, disabled while it is used, the users named
+  ("used by …": elements naming it as a surface or painting its value;
+  `olr_edit::look::material_users`, `Document::material_users`). Removing
+  one moves the materials after it down a value, the painted maps with
+  them (one step). Adding a material to a level without a look gives it
+  the default look (it plays lit); removing the look clears the
+  elements' surfaces and the painted maps in the same step.
+- **Pickers:** an element's Surface (None = the level's default),
+  Back surface only with back art (a drawn layer's back, or a raster),
+  and a distant layer's one Surface (it takes no painted map). A surface
+  must name a material of the level.
+- **Surface brush** (`Tool::Surface`, U, the rail beside the Glow
+  brush): paints a level material, or "Element's" (0, the element's
+  surface), onto the selected element's map at world resolution with
+  the brush's shapes and sizes; Front / Back with back art. A stroke is
+  one step (the map, then the element's flag); a map all 0 is dropped.
+  Locked and distant elements are refused.
+- **Views:** the old "Material view" (rock, dirt, background) is named
+  **Collision view** now, to tell it from the new **Materials view**,
+  which tints each pixel by its baked material (the front's, or the
+  back's where the front is carved; 50/50 with the art, untinted grey
+  where none) with a legend; the two are exclusive.
+- **Save and Play:** Save bakes `look/surface.png` (and the back's) from
+  the maps as `olr-edit` does (issue #37); Save as asset carries the
+  materials (issue #38); Play takes the edited level's baked surface, so
+  explosions heat it.
 
 ## Kept OLX quirks
 
