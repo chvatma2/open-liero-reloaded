@@ -1,0 +1,358 @@
+//! Issue #19: the Art and Sounds sections and the Look group, on a copy of
+//! Classic. Through the panels (`egui_kittest`): a frame painted in colour
+//! and glow and saved, the PNG changed only there and the mask read back
+//! (`paint_a_frame_and_save_it`); the projectile's and weapon's Look. On
+//! the state: new images, frames added and removed (asked), renames,
+//! imports through the browser, a replaced image, removal refused while
+//! used, sounds imported, played and removed.
+
+use egui_kittest::Harness;
+use egui_kittest::kittest::Queryable;
+use olr_data::image::Rgba;
+use olr_edit::mods::{self, art};
+use olr_format::image_io;
+use olr_format::look::{LightSource, ReachSource};
+use olr_mod_editor::ui::labels;
+use olr_mod_editor::{
+    ArtAction, BrowseAction, Dialog, FileEntry, Import, Item, ModAction as A, ModCommand as C,
+};
+use olr_vfs::VPath;
+
+use crate::common::{CLASSIC, editor, installed};
+use crate::flows::{App, click, harness, type_into};
+
+const MISSILE: &str = "gfx/missile.png";
+
+fn bytes_of(p: &olr_edit::pack::Pack, path: &str) -> Vec<u8> {
+    p.other.get(&VPath::new(path).unwrap()).cloned().unwrap_or_default()
+}
+
+/// The screen point of pixel `(x, y)` of the frame on the canvas.
+fn at(h: &Harness<'static, App>, x: i32, y: i32) -> egui::Pos2 {
+    let s = &h.state().state;
+    let rect = h.state().data.art_canvas().expect("the canvas was drawn");
+    let side = s.art_doc().unwrap().side() as f32;
+    let (z, (px, py)) = (s.tools().zoom, s.tools().pan);
+    let o = rect.center() - egui::vec2(side * z / 2.0, side * z / 2.0) + egui::vec2(px, py);
+    let o = egui::pos2(o.x.round(), o.y.round());
+    o + egui::vec2((x as f32 + 0.5) * z, (y as f32 + 0.5) * z)
+}
+
+/// A click of the canvas at pixel `(x, y)`: a stroke of one dab.
+fn dab(h: &mut Harness<'static, App>, x: i32, y: i32) {
+    let pos = at(h, x, y);
+    h.event(egui::Event::PointerMoved(pos));
+    h.run();
+    for pressed in [true, false] {
+        h.event(egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+        h.run();
+    }
+}
+
+/// The pixels of two same-sized images that differ.
+fn differing(a: &[u8], b: &[u8]) -> Vec<(u32, u32)> {
+    let (a, b) = (image_io::decode_rgba(a).unwrap(), image_io::decode_rgba(b).unwrap());
+    assert_eq!((a.width(), a.height()), (b.width(), b.height()));
+    let mut out = Vec::new();
+    for y in 0..a.height() {
+        for x in 0..a.width() {
+            if a.get(x, y) != b.get(x, y) {
+                out.push((x, y));
+            }
+        }
+    }
+    out
+}
+
+#[test]
+fn paint_a_frame_and_save_it() {
+    let Some(state) = editor() else { return };
+    let original = bytes_of(&installed(CLASSIC).unwrap(), MISSILE);
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = tmp.path().join("my-classic");
+    std::fs::create_dir_all(&dir).unwrap();
+    let mut h = harness(state, dir.clone());
+
+    // The image (the Art list's entry is below the weapons, out of the
+    // window): its users and frames.
+    h.get_by_label(&labels::image(MISSILE));
+    h.state_mut().state.update(A::Select(Item::Art(MISSILE.into())));
+    h.run();
+    assert_eq!(*h.state().state.item(), Item::Art(MISSILE.into()));
+    h.get_by_label_contains("Bazooka's shot");
+    assert_eq!(h.state().state.art_doc().unwrap().frames(), 18);
+    click(&mut h, &labels::frame(2));
+    assert_eq!(h.state().state.tools().frame, 2);
+
+    // Red at (5, 5) of the third frame: one step, that pixel alone.
+    type_into(&mut h, labels::HEX, "#ff0000");
+    assert_eq!(h.state().state.tools().colour, Rgba::rgb(255, 0, 0));
+    dab(&mut h, 5, 5);
+    let painted = bytes_of(h.state().state.pack(), MISSILE);
+    assert_eq!(differing(&original, &painted), [(2 * 12 + 5, 5)]);
+    let img = image_io::decode_rgba(&painted).unwrap();
+    assert_eq!(img.get(29, 5), Rgba::rgb(255, 0, 0));
+    assert_eq!(h.state().state.tools().recent, [Rgba::rgb(255, 0, 0)]);
+    h.get_by_label(labels::UNSAVED);
+
+    // Its glow, at full and half strength: the mask beside the image.
+    click(&mut h, labels::TARGET_GLOW);
+    dab(&mut h, 5, 5);
+    h.get_by_label("50 %").click();
+    h.run();
+    dab(&mut h, 4, 4);
+    let glow = art::glow(h.state().state.pack(), MISSILE).unwrap();
+    let lit: Vec<(usize, u8)> = glow.iter().copied().enumerate().filter(|(_, g)| *g > 0).collect();
+    let opaque = image_io::decode_rgba(&original).unwrap().get(28, 4).a != 0;
+    let mut want = vec![(5 * 216 + 29, 255)];
+    if opaque {
+        want.insert(0, (4 * 216 + 28, 128));
+    }
+    assert_eq!(lit, want, "glow only on opaque pixels");
+    // The painting was three steps; the colour image did not change for glow.
+    assert_eq!(bytes_of(h.state().state.pack(), MISSILE), painted);
+
+    // Saved and read back: the PNG changed only there, the mask kept.
+    click(&mut h, labels::SAVE);
+    assert!(h.query_by_label(labels::UNSAVED).is_none(), "{}", h.state().state.status());
+    let saved = olr_edit::pack::load(&dir).unwrap();
+    assert_eq!(differing(&original, &bytes_of(&saved, MISSILE)), [(29, 5)]);
+    assert_eq!(art::glow(&saved, MISSILE).unwrap(), glow);
+    assert!(mods::check(&saved).iter().all(|i| !i.is_error()));
+
+    // Undo takes the glow and the colour back, to Classic's own bytes.
+    for _ in 0..3 {
+        click(&mut h, labels::UNDO);
+    }
+    assert_eq!(bytes_of(h.state().state.pack(), MISSILE), original);
+    assert!(art::glow(h.state().state.pack(), MISSILE).unwrap().iter().all(|&g| g == 0));
+    assert_eq!(
+        h.state().state.art_doc().unwrap().frame(2).px[5 * 12 + 5].r,
+        image_io::decode_rgba(&original).unwrap().get(29, 5).r
+    );
+}
+
+#[test]
+fn new_images_frames_renames_and_imports() {
+    let Some(mut s) = editor() else { return };
+    s.update(A::AskNewImage(None));
+    assert_eq!(s.dialog(), Some(&Dialog::NewImage { copy_of: None }));
+    s.update(A::NewImage { name: "tip".into(), side: 6, frames: 2, copy_of: None });
+    assert_eq!(s.dialog(), None);
+    assert_eq!(*s.item(), Item::Art("gfx/tip.png".into()));
+    assert_eq!(s.art_doc().unwrap().frames(), 2);
+    // An unused image is a warning, not an error.
+    assert_eq!(s.errors(), 0);
+
+    // Add frame asks, then makes three; undo makes two again.
+    s.update(A::Art(ArtAction::AddFrame));
+    assert_eq!(s.dialog(), Some(&Dialog::FrameCount { image: "gfx/tip.png".into(), before: 2, after: 3 }));
+    s.update(A::Confirm(true));
+    assert_eq!(s.art_doc().unwrap().frames(), 3);
+    assert!(s.status().contains("Play"), "{}", s.status());
+    s.update(A::Art(ArtAction::RemoveFrame));
+    s.update(A::Confirm(false));
+    assert_eq!(s.art_doc().unwrap().frames(), 3, "cancelled");
+    s.update(A::Undo);
+    assert_eq!(s.art_doc().unwrap().frames(), 2);
+
+    // A copy keeps the glow.
+    s.update(A::Art(ArtAction::Target(olr_mod_editor::art::Target::Glow)));
+    s.update(A::Art(ArtAction::Tool(olr_mod_editor::art::Tool::Pencil)));
+    s.update(A::Art(ArtAction::Press { x: 0, y: 0 }));
+    s.update(A::Art(ArtAction::Release));
+    assert!(art::glow(s.pack(), "gfx/tip.png").unwrap().iter().all(|&g| g == 0), "no glow on a clear pixel");
+    s.update(A::Art(ArtAction::Target(olr_mod_editor::art::Target::Colour)));
+    s.update(A::Art(ArtAction::Press { x: 0, y: 0 }));
+    s.update(A::Art(ArtAction::Release));
+    s.update(A::Art(ArtAction::Target(olr_mod_editor::art::Target::Glow)));
+    s.update(A::Art(ArtAction::Press { x: 0, y: 0 }));
+    s.update(A::Art(ArtAction::Release));
+    assert_eq!(art::glow(s.pack(), "gfx/tip.png").unwrap()[0], 255);
+    s.update(A::AskNewImage(Some("gfx/tip.png".into())));
+    s.update(A::NewImage {
+        name: "tip2.png".into(),
+        side: 1,
+        frames: 1,
+        copy_of: Some("gfx/tip.png".into()),
+    });
+    assert_eq!(*s.item(), Item::Art("gfx/tip2.png".into()));
+    assert_eq!(art::glow(s.pack(), "gfx/tip2.png"), art::glow(s.pack(), "gfx/tip.png"));
+
+    // Renamed with its mask.
+    s.update(A::AskRename("gfx/tip2.png".into()));
+    s.update(A::RenameAsset { from: "gfx/tip2.png".into(), to: "gfx/point".into() });
+    assert_eq!(*s.item(), Item::Art("gfx/point.png".into()));
+    assert!(s.asset("gfx/point.glow.png").is_some() && s.asset("gfx/tip2.glow.png").is_none());
+
+    // Import PNG… through the browser: a folder listed, entered, a file picked.
+    let cmds = s.update(A::Import(Import::Image));
+    let C::List(home) = &cmds[0] else { panic!("{cmds:?}") };
+    let home = home.clone();
+    let e = |n: &str, d| FileEntry { name: n.into(), is_dir: d };
+    s.update(A::Listed { dir: home.clone(), entries: Ok(vec![e("art", true), e("notes.txt", false)]) });
+    assert_eq!(s.browser().unwrap().shown().len(), 1, "folders and PNGs only");
+    let cmds = s.update(A::Browse(BrowseAction::Pick("art".into())));
+    assert_eq!(cmds, [C::List(home.join("art"))]);
+    s.update(A::Listed { dir: home.join("art"), entries: Ok(vec![e("My Shot.png", false)]) });
+    s.update(A::Browse(BrowseAction::Select("My Shot.png".into())));
+    let cmds = s.update(A::Browse(BrowseAction::Choose));
+    assert_eq!(cmds, [C::ReadFile { import: Import::Image, path: home.join("art").join("My Shot.png") }]);
+    assert_eq!((s.dialog(), s.browser().is_none()), (None, true));
+    let png = art::blank_image(4, 3).unwrap();
+    s.update(A::FileRead { import: Import::Image, name: "My Shot.png".into(), bytes: png.clone() });
+    assert_eq!(*s.item(), Item::Art("gfx/my-shot.png".into()));
+    // The same name again gets a number.
+    s.update(A::FileRead { import: Import::Image, name: "My Shot.png".into(), bytes: png.clone() });
+    assert_eq!(*s.item(), Item::Art("gfx/my-shot-2.png".into()));
+    // The browser opens where the last file came from.
+    let cmds = s.update(A::Import(Import::Sound));
+    assert_eq!(cmds, [C::List(home.join("art"))]);
+    s.update(A::Confirm(false));
+    assert!(s.browser().is_none());
+
+    // A bad file is refused, never a crash.
+    s.update(A::FileRead { import: Import::Image, name: "bad.png".into(), bytes: b"not a png".to_vec() });
+    assert!(matches!(s.dialog(), Some(Dialog::Error(e)) if e.contains("bad.png")), "{:?}", s.dialog());
+    s.update(A::Confirm(true));
+    // Replace with PNG…: the same frame count at once, another asked first.
+    s.update(A::FileRead {
+        import: Import::Replace("gfx/my-shot.png".into()),
+        name: "x.png".into(),
+        bytes: art::blank_image(5, 3).unwrap(),
+    });
+    assert_eq!(s.art_doc().unwrap().size(), (15, 5));
+    s.update(A::FileRead {
+        import: Import::Replace("gfx/my-shot.png".into()),
+        name: "x.png".into(),
+        bytes: art::blank_image(5, 1).unwrap(),
+    });
+    assert_eq!(
+        s.dialog(),
+        Some(&Dialog::FrameCount { image: "gfx/my-shot.png".into(), before: 3, after: 1 })
+    );
+    s.update(A::Confirm(true));
+    assert_eq!(s.art_doc().unwrap().frames(), 1);
+}
+
+#[test]
+fn removal_is_refused_while_used() {
+    let Some(mut s) = editor() else { return };
+    s.update(A::Select(Item::Art(MISSILE.into())));
+    s.update(A::RemoveAsset(MISSILE.into()));
+    let Some(Dialog::Error(why)) = s.dialog().cloned() else { panic!("{:?}", s.dialog()) };
+    assert!(why.contains("Bazooka's shot") && why.contains(".gfx.file"), "{why}");
+    assert!(s.asset(MISSILE).is_some() && !s.can_undo());
+    s.update(A::Confirm(true));
+    // Unused, it goes, with its mask; undo brings both back.
+    s.update(A::AskNewImage(None));
+    s.update(A::NewImage { name: "spare".into(), side: 4, frames: 1, copy_of: None });
+    let path = "gfx/spare.png";
+    assert_eq!(*s.item(), Item::Art(path.into()));
+    // A name taken is refused, the dialog left open.
+    s.update(A::AskNewImage(None));
+    s.update(A::NewImage { name: "spare".into(), side: 4, frames: 1, copy_of: None });
+    assert!(s.status().contains("exists"), "{}", s.status());
+    s.update(A::Confirm(false));
+    s.update(A::Art(ArtAction::Press { x: 1, y: 1 }));
+    s.update(A::Art(ArtAction::Release));
+    s.update(A::Art(ArtAction::Target(olr_mod_editor::art::Target::Glow)));
+    s.update(A::Art(ArtAction::Press { x: 1, y: 1 }));
+    s.update(A::Art(ArtAction::Release));
+    assert!(s.asset("gfx/spare.glow.png").is_some());
+    s.update(A::RemoveAsset(path.into()));
+    assert!(s.asset(path).is_none() && s.asset("gfx/spare.glow.png").is_none() && s.dialog().is_none());
+    assert_ne!(*s.item(), Item::Art(path.into()));
+    s.update(A::Undo);
+    assert!(s.asset(path).is_some() && s.asset("gfx/spare.glow.png").is_some());
+}
+
+/// A short mono 16-bit WAV.
+fn wav(n: u32) -> Vec<u8> {
+    let mut b = Vec::new();
+    b.extend_from_slice(b"RIFF");
+    b.extend_from_slice(&(36 + n * 2).to_le_bytes());
+    b.extend_from_slice(b"WAVEfmt ");
+    b.extend_from_slice(&16u32.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&1u16.to_le_bytes());
+    b.extend_from_slice(&8000u32.to_le_bytes());
+    b.extend_from_slice(&16000u32.to_le_bytes());
+    b.extend_from_slice(&2u16.to_le_bytes());
+    b.extend_from_slice(&16u16.to_le_bytes());
+    b.extend_from_slice(b"data");
+    b.extend_from_slice(&(n * 2).to_le_bytes());
+    for i in 0..n {
+        b.extend_from_slice(&(((i as f32 * 0.3).sin() * 6000.0) as i16).to_le_bytes());
+    }
+    b
+}
+
+#[test]
+fn sounds_are_imported_played_and_removed() {
+    let Some(mut s) = editor() else { return };
+    let boom = wav(400);
+    s.update(A::FileRead { import: Import::Sound, name: "Big Boom.WAV".into(), bytes: boom.clone() });
+    assert_eq!(*s.item(), Item::Sounds);
+    assert_eq!(s.asset("sfx/big-boom.wav"), Some(&boom[..]));
+    assert_eq!(
+        s.update(A::PlaySound("sfx/big-boom.wav".into())),
+        [C::PlaySound { path: "sfx/big-boom.wav".into(), bytes: boom.clone() }]
+    );
+    // Not a sound: refused.
+    s.update(A::FileRead { import: Import::Sound, name: "x.ogg".into(), bytes: b"not a sound".to_vec() });
+    assert!(matches!(s.dialog(), Some(Dialog::Error(_))));
+    s.update(A::Confirm(true));
+    // Used by the bazooka's fire: not removed; renamed, the field follows.
+    s.update(A::Set { path: "weapons/bazooka.fire.sound".into(), value: "\"sfx/big-boom.wav\"".into() });
+    s.update(A::RemoveAsset("sfx/big-boom.wav".into()));
+    assert!(
+        matches!(s.dialog(), Some(Dialog::Error(e)) if e.contains("Bazooka's fire sound")),
+        "{:?}",
+        s.dialog()
+    );
+    s.update(A::Confirm(true));
+    s.update(A::RenameAsset { from: "sfx/big-boom.wav".into(), to: "sfx/boom.wav".into() });
+    assert_eq!(s.value("weapons/bazooka.fire.sound").as_deref(), Some("\"sfx/boom.wav\""));
+    assert!(s.asset("sfx/big-boom.wav").is_none());
+}
+
+#[test]
+fn the_look_group_edits_lights() {
+    let Some(state) = editor() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let mut h = harness(state, tmp.path().to_path_buf());
+    click(&mut h, "Bazooka");
+    click(&mut h, &labels::node("Shot"));
+    click(&mut h, labels::GO_PROJECTILE);
+    let look = "weapons/bazooka.fire.shot.projectile.look";
+    assert_eq!(h.state().state.value(look).as_deref(), Some("None"));
+    click(&mut h, labels::LIGHT);
+    type_into(&mut h, &labels::look(labels::LIGHT, "intensity (%)"), "80");
+    type_into(&mut h, &labels::look(labels::LIGHT, "colour"), "#ffa040");
+    type_into(&mut h, &labels::look(labels::LIGHT, "reach (px)"), "44");
+    let light: Option<LightSource> =
+        olr_mod_editor::state::get_as(h.state().state.src(), &format!("{look}.light")).flatten();
+    let light = light.expect("a light");
+    assert_eq!((light.intensity, light.reach), (80, ReachSource::Pixels(44)));
+    assert_eq!(light.colour.to_hex(), "#ffa040");
+    click(&mut h, labels::HAS_GLOW);
+    assert_eq!(h.state().state.value(&format!("{look}.glow")).as_deref(), Some("100"));
+    click(&mut h, labels::EXPLOSION);
+    assert!(h.state().state.value(&format!("{look}.explosion")).is_some_and(|v| v.contains("radius")));
+    // Every step undoes; the mod checks clean.
+    assert_eq!(h.state().state.errors(), 0, "{:?}", h.state().state.issues());
+
+    // The weapon's muzzle light.
+    click(&mut h, &labels::node("Bazooka"));
+    click(&mut h, labels::MUZZLE_LIGHT);
+    let muzzle = h.state().state.value("weapons/bazooka.look").unwrap_or_default();
+    assert!(muzzle.contains("muzzle_light"), "{muzzle}");
+    click(&mut h, labels::MUZZLE_LIGHT);
+    assert_eq!(h.state().state.value("weapons/bazooka.look").as_deref(), Some("None"));
+}

@@ -94,6 +94,9 @@
         // The real-transport tests run the dedicated server in-process
         // (plan 10 ruling PF2).
         ("olr-cli", "olr-server"),
+        // The mod editor's Art section paints with the skin editor's tools
+        // (issue #19).
+        ("olr-mod-editor", "olr-skin-editor"),
     ],
     no_std: ["olr-math", "olr-data", "olr-terrain", "olr-look", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby"],
     wasm: ["olr-math", "olr-data", "olr-terrain", "olr-look", "olr-sim", "olr-modes", "olr-bots", "olr-replay", "olr-proto", "olr-netcode", "olr-lobby", "olr-vfs", "olr-format", "olr-pack", "olr-import-lgs", "olr-import-lxl", "olr-import-gfx"],

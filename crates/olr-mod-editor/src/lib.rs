@@ -5,11 +5,19 @@
 //! with egui panels, the skin editor's pattern (`olr-skin-editor`).
 #![forbid(unsafe_code)]
 
+pub mod art;
+mod assets;
+pub mod browser;
 pub mod fields;
 pub mod history;
 pub mod state;
 pub mod tree;
 
-pub use state::{Choice, Dialog, Event, MAX_BOTS, ModAction, ModCommand, ModEditorState, PlaySettings};
+pub use assets::ArtTools;
+pub use browser::{FileEntry, Import};
+pub use state::{
+    ArtAction, BrowseAction, Choice, Dialog, Event, MAX_BOTS, ModAction, ModCommand, ModEditorState,
+    PlaySettings,
+};
 pub use tree::{Item, Node, NodeKind, SpawnAt};
 pub mod ui;

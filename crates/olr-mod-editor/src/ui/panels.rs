@@ -1,8 +1,9 @@
 //! The chosen node's panel: the world (name, notes, worm, rope, presets
-//! and loadouts), a weapon (its fields and fire), a spawn (its fields and
-//! projectile: its own or a shared one), a projectile (look, motion,
-//! trail, timer and its events) and a timer (its times and event). Each
-//! shows its common fields first and its rare ones under More ▸.
+//! and loadouts), a weapon (its fields, fire and Look: its muzzle light),
+//! a spawn (its fields and projectile: its own or a shared one), a
+//! projectile (graphics, Look, motion, trail, timer and its events) and a
+//! timer (its times and event). Each shows its common fields first and
+//! its rare ones under More ▸.
 
 use egui::Ui;
 use olr_data::restrictions::{ShippedLoadout, WeaponState};
@@ -10,7 +11,7 @@ use olr_edit::mods::path::Seg;
 use olr_format::mods::{Gfx, Projectile};
 
 use super::field::{self, has_more, section};
-use super::{Cx, caption, labels, relabel};
+use super::{Cx, caption, labels, look, relabel};
 use crate::fields::{self, Place};
 use crate::state::{Event, ModAction, PIXEL, get_as, ron};
 use crate::tree::{NodeKind, SpawnAt, node_of};
@@ -225,6 +226,9 @@ fn weapon(ui: &mut Ui, cx: &mut Cx, path: &str) {
     if kind == "Projectile" {
         link(ui, cx, labels::GO_SHOT, format!("{fire}.shot"));
     }
+    heading(ui, labels::LOOK);
+    let now = cx.state.src().weapons.iter().find(|(w, _)| *w == id).and_then(|(_, w)| w.look.clone());
+    look::weapon(ui, cx, path, now.as_ref());
     if (has_more("Weapon") || has_more(&owner)) && more(ui, cx, path) {
         section(ui, cx, "Weapon", path, "", Place::More);
         section(ui, cx, &owner, &fire, "", Place::More);
@@ -317,8 +321,10 @@ fn projectile(ui: &mut Ui, cx: &mut Cx, path: &str, shared: Option<&str>) {
         }
     }
     let Some(p) = get_as::<Projectile>(cx.state.src(), path) else { return };
-    heading(ui, "Look");
+    heading(ui, labels::GFX);
     gfx(ui, cx, path, &p);
+    heading(ui, labels::LOOK);
+    look::projectile(ui, cx, path, p.look.as_ref());
     heading(ui, "Motion");
     section(ui, cx, "Projectile", path, "", Place::Common);
     trail(ui, cx, path);

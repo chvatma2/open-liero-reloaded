@@ -18,16 +18,22 @@ pub enum Item {
     Weapon(String),
     /// A shared projectile, by id.
     Shared(String),
+    /// An image of the Art section (issue #19), by pack path (`gfx/<name>.png`).
+    Art(String),
+    /// The Sounds section (issue #19): every file in `sfx/`.
+    Sounds,
 }
 
 impl Item {
     /// The path of the item's own node (`mod`, `weapons/<id>`,
-    /// `projectiles/<id>`).
+    /// `projectiles/<id>`; an image's own path, `sfx` for the sounds).
     pub fn path(&self) -> String {
         match self {
             Item::World => "mod".into(),
             Item::Weapon(id) => format!("weapons/{id}"),
             Item::Shared(id) => format!("projectiles/{id}"),
+            Item::Art(path) => path.clone(),
+            Item::Sounds => "sfx".into(),
         }
     }
 }
@@ -66,7 +72,8 @@ pub struct Node {
     pub depth: usize,
 }
 
-/// The item's nodes, depth first. An item that is gone has none.
+/// The item's nodes, depth first. An item that is gone has none, and so
+/// have an image and the sounds (their panels are no trees).
 pub fn nodes(src: &ModSource, item: &Item) -> Vec<Node> {
     let mut out = Vec::new();
     match item {
@@ -85,6 +92,8 @@ pub fn nodes(src: &ModSource, item: &Item) -> Vec<Node> {
             let Some(p) = src.shared.get(id) else { return out };
             projectile(src, &item.path(), p, Some(id), 0, &mut vec![id.clone()], &mut out);
         }
+        // The Art and Sounds panels are not trees.
+        Item::Art(_) | Item::Sounds => {}
     }
     out
 }

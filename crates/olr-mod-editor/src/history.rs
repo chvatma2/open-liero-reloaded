@@ -1,6 +1,7 @@
 //! Undo and redo (issue #17): one step per change, each the mod as it was
-//! before it (its source and name, and its other files when the change
-//! brought files: a weapon copied from another mod). Restoring swaps the
+//! before it (its source and name, and the other files the change touched:
+//! a weapon copied from another mod, an image painted, a sound imported;
+//! issue #19 keeps only those files, not all of them). Restoring swaps the
 //! snapshot with the mod, so the same step redoes what it undid.
 
 use std::collections::BTreeMap;
@@ -18,26 +19,42 @@ pub struct Snapshot {
     src: ModSource,
     /// The manifest's name (a rename of the mod changes it).
     name: String,
-    /// The other files, only when the step changed them.
-    other: Option<BTreeMap<VPath, Vec<u8>>>,
+    /// The other files a step may change, each as it was (`None`: not
+    /// there); after [`Snapshot::keep_changed`], only those it changed.
+    files: BTreeMap<VPath, Option<Vec<u8>>>,
+    /// Whether the step may change files (every file is kept until
+    /// `keep_changed` drops those it did not change).
+    with_files: bool,
 }
 
 impl Snapshot {
     /// `pack`'s mod as it is now; `with_files` keeps its other files too.
     pub fn of(pack: &Pack, with_files: bool) -> Option<Snapshot> {
         let Source::Mod(src) = &pack.source else { return None };
-        Some(Snapshot {
-            src: src.clone(),
-            name: pack.manifest.name.clone(),
-            other: with_files.then(|| pack.other.clone()),
-        })
+        let files = match with_files {
+            true => pack.other.iter().map(|(p, b)| (p.clone(), Some(b.clone()))).collect(),
+            false => BTreeMap::new(),
+        };
+        Some(Snapshot { src: src.clone(), name: pack.manifest.name.clone(), files, with_files })
+    }
+
+    /// After the step: keeps only the files it changed, added (as absent)
+    /// or removed, so a step costs its own files' bytes.
+    pub fn keep_changed(&mut self, pack: &Pack) {
+        if !self.with_files {
+            return;
+        }
+        let added: Vec<VPath> = pack.other.keys().filter(|p| !self.files.contains_key(*p)).cloned().collect();
+        self.files.retain(|p, before| pack.other.get(p) != before.as_ref());
+        self.files.extend(added.into_iter().map(|p| (p, None)));
+        self.with_files = false;
     }
 
     /// Whether `pack` is as this snapshot holds it.
     pub fn same_as(&self, pack: &Pack) -> bool {
         matches!(&pack.source, Source::Mod(s) if *s == self.src)
             && pack.manifest.name == self.name
-            && self.other.as_ref().is_none_or(|o| *o == pack.other)
+            && self.files.iter().all(|(p, b)| pack.other.get(p) == b.as_ref())
     }
 
     /// Puts the snapshot back into `pack` (a change that failed half-way).
@@ -51,8 +68,12 @@ impl Snapshot {
             std::mem::swap(src, &mut self.src);
         }
         std::mem::swap(&mut pack.manifest.name, &mut self.name);
-        if let Some(other) = &mut self.other {
-            std::mem::swap(&mut pack.other, other);
+        for (p, b) in &mut self.files {
+            let now = match b.take() {
+                Some(bytes) => pack.other.insert(p.clone(), bytes),
+                None => pack.other.remove(p),
+            };
+            *b = now;
         }
     }
 }

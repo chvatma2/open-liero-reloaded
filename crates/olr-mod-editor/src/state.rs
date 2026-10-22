@@ -1,7 +1,9 @@
 //! The mod editor's state (issue #17): `ModEditorState::update(ModAction)
 //! -> Vec<ModCommand>` is pure; the host carries out the commands (`Save`,
-//! `LoadMod`, `Play`, `SavePlaySettings`, `Close`) and answers (`Saved`,
-//! `ModLoaded`, `PlayEnded`, `Failed`).
+//! `LoadMod`, `Play`, `SavePlaySettings`, `Close`; issue #19's `List`,
+//! `ReadFile`, `PlaySound`) and answers (`Saved`, `ModLoaded`,
+//! `PlayEnded`, `Failed`; `Listed`, `FileRead`). The Art and Sounds
+//! sections' work is in `assets.rs`.
 //!
 //! Every change goes through `olr_edit::mods` on the open pack and is one
 //! undo step. A field's value is set with `set_lenient`: a change that
@@ -10,6 +12,7 @@
 //! edited; Save refuses a mod with errors.
 
 use std::collections::BTreeMap;
+use std::path::PathBuf;
 
 use olr_data::image::Rgba;
 use olr_data::restrictions::{Preset, ShippedLoadout, WeaponState};
@@ -26,6 +29,8 @@ use olr_pack::Severity;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use crate::art::{ArtDoc, Target, Tool};
+use crate::browser::{Browser, FileEntry, Import};
 use crate::history::{History, Snapshot};
 use crate::tree::{self, Item, Node, SpawnAt};
 
@@ -118,6 +123,66 @@ pub enum Dialog {
     Note(String),
     /// What the host could not do.
     Error(String),
+    /// A new image (issue #19): blank of a size, or a copy of `copy_of`.
+    NewImage { copy_of: Option<String> },
+    /// An image or sound's new name.
+    Rename(String),
+    /// The import browser (`ModEditorState::browser`).
+    Browse,
+    /// An image's frame count changes (Add or Remove frame, a PNG of
+    /// another width): asked, since the frame count reaches play.
+    FrameCount { image: String, before: u32, after: u32 },
+}
+
+/// The Art section's painting (issue #19), on the image shown.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ArtAction {
+    Tool(Tool),
+    /// The brush, 1 or 2 pixels.
+    Size(u32),
+    /// What is painted: colour or glow.
+    Target(Target),
+    Colour(Rgba),
+    GlowStrength(u8),
+    /// Zoom in (positive) or out by steps of `art::ZOOMS`.
+    Zoom(i32),
+    Pan(f32, f32),
+    /// The previous frame shown faintly under the one painted.
+    Onion(bool),
+    /// The frame painted.
+    Frame(usize),
+    /// A press, a drag and a release on the canvas, in pixels from the
+    /// frame's top left: a stroke is one step.
+    Press {
+        x: i32,
+        y: i32,
+    },
+    Drag {
+        x: i32,
+        y: i32,
+    },
+    Release,
+    CopyFrame,
+    /// The copied frame over the chosen one (one step).
+    PasteFrame,
+    /// A copy of the chosen frame after it (asked: the frame count changes).
+    AddFrame,
+    /// The chosen frame removed (asked).
+    RemoveFrame,
+}
+
+/// The import browser's actions.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum BrowseAction {
+    /// A typed folder (relative to the one shown).
+    To(PathBuf),
+    Up,
+    /// An entry clicked.
+    Select(String),
+    /// An entry double clicked: a folder entered, a file imported.
+    Pick(String),
+    /// Choose: the entry selected picked.
+    Choose,
 }
 
 /// A dialog's answer.
@@ -235,6 +300,45 @@ pub enum ModAction {
     Failed(String),
     /// A message for the status bar.
     Note(String),
+    /// The Art section's painting (issue #19).
+    Art(ArtAction),
+    /// Ask for a new image: blank, or a copy of image `copy_of`.
+    AskNewImage(Option<String>),
+    /// A new image `name` (`gfx/` and `.png` added when missing): a copy
+    /// of `copy_of` (with its glow), else blank, `frames` square frames
+    /// of `side` pixels.
+    NewImage {
+        name: String,
+        side: u32,
+        frames: u32,
+        copy_of: Option<String>,
+    },
+    /// Ask for an image or sound's new name.
+    AskRename(String),
+    /// An image or sound renamed (its folder and an image's `.png` added
+    /// when missing), with every field naming it.
+    RenameAsset {
+        from: String,
+        to: String,
+    },
+    /// An image (with its glow mask) or sound removed: refused while used.
+    RemoveAsset(String),
+    /// Play sound `path` of the mod (the host plays it).
+    PlaySound(String),
+    /// Open the import browser.
+    Import(Import),
+    Browse(BrowseAction),
+    /// The host listed folder `dir` for the browser.
+    Listed {
+        dir: PathBuf,
+        entries: Result<Vec<FileEntry>, String>,
+    },
+    /// The host read the file picked for `import`: its file name and bytes.
+    FileRead {
+        import: Import,
+        name: String,
+        bytes: Vec<u8>,
+    },
 }
 
 /// What the host carries out.
@@ -251,6 +355,12 @@ pub enum ModCommand {
     SavePlaySettings(PlaySettings),
     /// Close the editor.
     Close,
+    /// List folder `dir` for the import browser (answer `Listed`).
+    List(PathBuf),
+    /// Read file `path` for `import` (answer `FileRead`, or `Failed`).
+    ReadFile { import: Import, path: PathBuf },
+    /// Play sound file `bytes` (the mod's `path`) once.
+    PlaySound { path: String, bytes: Vec<u8> },
 }
 
 /// The mod editor.
@@ -288,6 +398,19 @@ pub struct ModEditorState {
     generation: u64,
     dialog: Option<Dialog>,
     status: String,
+    /// Issue #19: the image the Art section shows, as painted, or why it
+    /// does not paint.
+    pub(crate) art: Option<Result<ArtDoc, String>>,
+    /// The paint tools (kept from image to image).
+    pub(crate) tools: crate::assets::ArtTools,
+    pub(crate) stroke: Option<crate::assets::ArtStroke>,
+    /// Bumped by every change of the image shown (its textures follow).
+    pub(crate) art_gen: u64,
+    pub(crate) browser: Option<Browser>,
+    /// Where the browser opens (the host's home, then the last folder picked from).
+    pub(crate) browse_dir: PathBuf,
+    /// An image change waiting for `Dialog::FrameCount`'s answer.
+    pub(crate) pending_image: Option<crate::assets::PendingImage>,
 }
 
 /// The value at `path` as `T`, if it reads.
@@ -431,6 +554,13 @@ impl ModEditorState {
             generation: 0,
             dialog: None,
             status: String::new(),
+            art: None,
+            tools: crate::assets::ArtTools::default(),
+            stroke: None,
+            art_gen: 0,
+            browser: None,
+            browse_dir: PathBuf::from("."),
+            pending_image: None,
         };
         s.refresh();
         Ok(s)
@@ -558,6 +688,12 @@ impl ModEditorState {
     pub fn status(&self) -> &str {
         &self.status
     }
+    pub(crate) fn set_status(&mut self, s: impl Into<String>) {
+        self.status = s.into();
+    }
+    pub(crate) fn set_dialog(&mut self, d: Option<Dialog>) {
+        self.dialog = d;
+    }
 
     /// The value at `path` as canonical RON.
     pub fn value(&self, path: &str) -> Option<String> {
@@ -576,8 +712,12 @@ impl ModEditorState {
     pub fn choices(&self, path: &str) -> Vec<&'static str> {
         mods::choices(self.src(), path).unwrap_or_default()
     }
-    /// The pack's files in asset folder `folder` (`gfx`, `sfx`), sorted.
+    /// The pack's files in asset folder `folder` (`gfx`, `sfx`), sorted;
+    /// `gfx`'s images only (no glow masks).
     pub fn assets(&self, folder: &str) -> Vec<String> {
+        if folder == "gfx" {
+            return mods::art::images(&self.pack);
+        }
         let prefix = format!("{folder}/");
         self.pack.other.keys().map(|p| p.to_string()).filter(|p| p.starts_with(&prefix)).collect()
     }
@@ -626,6 +766,16 @@ impl ModEditorState {
                 self.playing = false;
                 return Vec::new();
             }
+            ModAction::Listed { dir, entries } => {
+                if let Some(b) = &mut self.browser {
+                    b.listed(dir, entries);
+                }
+                return Vec::new();
+            }
+            ModAction::FileRead { import, name, bytes } if !self.playing => {
+                self.file_read(import, &name, &bytes);
+                return Vec::new();
+            }
             // Nothing else acts while Play's match runs.
             _ if self.playing => return Vec::new(),
             _ => {}
@@ -633,8 +783,20 @@ impl ModEditorState {
         if let Some(d) = self.dialog.clone() {
             return self.answer(d, a);
         }
+        // A stroke ends before anything else changes the mod.
+        if self.stroke.is_some() && !matches!(a, ModAction::Art(ArtAction::Drag { .. } | ArtAction::Release))
+        {
+            self.end_stroke();
+        }
         match a {
             ModAction::Select(item) => self.select(item),
+            ModAction::Art(a) => self.art_action(a),
+            ModAction::AskNewImage(copy_of) => self.dialog = Some(Dialog::NewImage { copy_of }),
+            ModAction::AskRename(path) => self.dialog = Some(Dialog::Rename(path)),
+            ModAction::RenameAsset { from, to } => self.rename_asset(&from, &to),
+            ModAction::RemoveAsset(path) => self.remove_asset(&path),
+            ModAction::PlaySound(path) => return self.play_sound(path),
+            ModAction::Import(import) => return self.open_browser(import),
             ModAction::Node(path) => {
                 if self.nodes().iter().any(|n| n.path == path) {
                     self.node = path;
@@ -842,6 +1004,28 @@ impl ModEditorState {
                 self.add_weapon(from, weapon);
                 Vec::new()
             }
+            (Dialog::NewImage { .. }, ModAction::NewImage { name, side, frames, copy_of }) => {
+                self.new_image(&name, side, frames, copy_of.as_deref());
+                Vec::new()
+            }
+            (Dialog::Rename(_), ModAction::RenameAsset { from, to }) => {
+                self.dialog = None;
+                self.rename_asset(&from, &to);
+                Vec::new()
+            }
+            (Dialog::Browse, ModAction::Browse(b)) => self.browse(b),
+            (Dialog::Browse, ModAction::Choice(_) | ModAction::Confirm(_)) => {
+                self.dialog = None;
+                self.browser = None;
+                Vec::new()
+            }
+            (Dialog::FrameCount { .. }, ModAction::Confirm(yes)) => {
+                self.dialog = None;
+                if let Some(p) = self.pending_image.take().filter(|_| yes) {
+                    self.apply_image(p);
+                }
+                Vec::new()
+            }
             (_, ModAction::Choice(_) | ModAction::Confirm(_)) => {
                 self.dialog = None;
                 self.close_after_save = false;
@@ -856,13 +1040,15 @@ impl ModEditorState {
 
     /// Runs `f` on the pack as one step (none when it changed nothing); a
     /// refusal leaves the pack as it was and says why. Whether it changed.
-    fn change(
+    pub(crate) fn change(
         &mut self,
         with_files: bool,
         f: impl FnOnce(&mut Pack) -> Result<Vec<Issue>, ModError>,
     ) -> bool {
-        let Some(before) = Snapshot::of(&self.pack, with_files) else { return false };
-        match f(&mut self.pack) {
+        let Some(mut before) = Snapshot::of(&self.pack, with_files) else { return false };
+        let result = f(&mut self.pack);
+        before.keep_changed(&self.pack);
+        match result {
             Ok(new) => {
                 if before.same_as(&self.pack) {
                     return false;
@@ -894,14 +1080,10 @@ impl ModEditorState {
     fn changed(&mut self) {
         self.generation += 1;
         self.refresh();
-        let exists = match &self.item {
-            Item::World => true,
-            Item::Weapon(id) => self.src().weapons.iter().any(|(w, _)| w == id),
-            Item::Shared(id) => self.src().shared.contains_key(id),
-        };
-        if !exists {
+        if !self.exists(&self.item) {
             self.item = Item::World;
         }
+        self.load_art();
         if !self.nodes().iter().any(|n| n.path == self.node) {
             self.node = self.item.path();
         }
@@ -911,22 +1093,44 @@ impl ModEditorState {
         self.issues = mods::check(&self.pack);
     }
 
-    fn select(&mut self, item: Item) {
-        let exists = match &item {
-            Item::World => true,
+    /// Whether `item` is in the mod.
+    fn exists(&self, item: &Item) -> bool {
+        match item {
+            Item::World | Item::Sounds => true,
             Item::Weapon(id) => self.src().weapons.iter().any(|(w, _)| w == id),
             Item::Shared(id) => self.src().shared.contains_key(id),
-        };
-        if exists {
+            Item::Art(path) => mods::art::images(&self.pack).contains(path),
+        }
+    }
+
+    pub(crate) fn select(&mut self, item: Item) {
+        if self.exists(&item) {
+            let other_image = self.item != item;
             self.node = item.path();
             self.item = item;
             self.focus = None;
+            if other_image {
+                self.tools.frame = 0;
+                self.tools.pan = (0.0, 0.0);
+            }
+            self.load_art();
         }
     }
 
     /// Shows the item and node holding `path` (a field, or a file's path)
     /// and marks the field.
     fn go_to(&mut self, path: &str) {
+        // Issue #19: an image's or a mask's problem shows the image, a
+        // sound's the sounds.
+        let image = olr_format::mods::image_of_mask(path).unwrap_or_else(|| path.to_string());
+        if self.exists(&Item::Art(image.clone())) {
+            self.select(Item::Art(image));
+            return;
+        }
+        if path.starts_with(olr_format::mods::SFX_DIR) {
+            self.select(Item::Sounds);
+            return;
+        }
         let file = olr_edit::mods::path::parse(self.src(), path).ok().map(|p| p.file).or_else(|| {
             let stem = path.strip_suffix(".ron").unwrap_or(path);
             File::of_pack_path(&format!("{stem}.ron"))

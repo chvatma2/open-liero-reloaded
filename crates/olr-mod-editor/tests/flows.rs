@@ -22,14 +22,14 @@ use olr_mod_editor::{Item, ModAction as A, ModCommand as C, ModEditorState, Node
 use crate::common::{CLASSIC, MW, editor, installed};
 
 /// The editor, what it asked the host to do, and where saves go.
-struct App {
-    state: ModEditorState,
-    data: ModEditorData,
-    commands: Vec<C>,
+pub(crate) struct App {
+    pub state: ModEditorState,
+    pub data: ModEditorData,
+    pub commands: Vec<C>,
     dir: PathBuf,
 }
 
-fn harness(state: ModEditorState, dir: PathBuf) -> Harness<'static, App> {
+pub(crate) fn harness(state: ModEditorState, dir: PathBuf) -> Harness<'static, App> {
     harness_sized(state, dir, egui::vec2(1500.0, 1000.0))
 }
 
@@ -62,7 +62,27 @@ fn harness_sized(state: ModEditorState, dir: PathBuf, size: egui::Vec2) -> Harne
                                 app.state.update(A::ModLoaded(id.clone(), Box::new(p)));
                             }
                         }
-                        C::Play { .. } | C::SavePlaySettings(_) | C::Close => {}
+                        // Issue #19: the browser's folders and files, from the disk.
+                        C::List(dir) => {
+                            let entries = std::fs::read_dir(dir).map_err(|e| e.to_string()).map(|rd| {
+                                rd.filter_map(Result::ok)
+                                    .map(|e| olr_mod_editor::FileEntry {
+                                        name: e.file_name().to_string_lossy().into_owned(),
+                                        is_dir: e.path().is_dir(),
+                                    })
+                                    .collect()
+                            });
+                            app.state.update(A::Listed { dir: dir.clone(), entries });
+                        }
+                        C::ReadFile { import, path } => {
+                            let name = path.file_name().unwrap().to_string_lossy().into_owned();
+                            let answer = match std::fs::read(path) {
+                                Ok(bytes) => A::FileRead { import: import.clone(), name, bytes },
+                                Err(e) => A::Failed(e.to_string()),
+                            };
+                            app.state.update(answer);
+                        }
+                        C::Play { .. } | C::SavePlaySettings(_) | C::Close | C::PlaySound { .. } => {}
                     }
                     app.commands.push(c);
                 }
@@ -78,13 +98,13 @@ fn label(key: &str) -> String {
     fields::get(key).unwrap_or_else(|| panic!("no field {key}")).label()
 }
 
-fn click(h: &mut Harness<'static, App>, label: &str) {
+pub(crate) fn click(h: &mut Harness<'static, App>, label: &str) {
     h.get_by_label(label).click();
     h.run();
 }
 
 /// Types `text` into the field named `name`, and Enter.
-fn type_into(h: &mut Harness<'static, App>, name: &str, text: &str) {
+pub(crate) fn type_into(h: &mut Harness<'static, App>, name: &str, text: &str) {
     h.get_by_label(name).click();
     h.run();
     h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);

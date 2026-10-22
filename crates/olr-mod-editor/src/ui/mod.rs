@@ -5,12 +5,18 @@
 //! projectile tree and the chosen node's panel in the middle, the problems
 //! below when shown, and the dialogs. `show` draws them from the state and
 //! returns the frame's actions; the host applies `olr_ui::theme`. Widgets
-//! have accessible names (`labels`) tests and scripts find them by.
+//! have accessible names (`labels`) tests and scripts find them by. Issue
+//! #19: the list's Art and Sounds, an image's painting panel (`art.rs`),
+//! the sounds (`sounds.rs`) and the projectile's and weapon's Look
+//! (`look.rs`).
 
+mod art;
 mod dialogs;
 mod field;
 mod list;
+mod look;
 mod panels;
+mod sounds;
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -82,6 +88,75 @@ pub mod labels {
     /// Add weapon's choice of a blank weapon.
     pub const BLANK: &str = "A blank weapon";
     pub const WEAPON_TO_COPY: &str = "Weapon to copy";
+    // Issue #19: the Art and Sounds sections.
+    pub const ART: &str = "Art";
+    pub const SOUNDS: &str = "Sounds";
+    pub const NEW_IMAGE: &str = "New image";
+    pub const IMPORT_PNG: &str = "Import PNG";
+    pub const IMPORT_SOUND: &str = "Import sound";
+    pub const REPLACE_PNG: &str = "Replace with PNG";
+    pub const COPY_IMAGE: &str = "Copy image";
+    pub const RENAME_ASSET: &str = "Rename";
+    pub const REMOVE_ASSET: &str = "Remove";
+    pub const IMAGE_NAME: &str = "Image name";
+    pub const FRAME_SIDE: &str = "Frame side (px)";
+    pub const FRAME_COUNT: &str = "Frames";
+    pub const MAKE: &str = "Make";
+    pub const NEW_NAME: &str = "New name";
+    pub const RENAME: &str = "Rename it";
+    pub const BROWSER_PATH: &str = "Path";
+    pub const UP: &str = "Up";
+    pub const CHOOSE: &str = "Choose";
+    /// The image's painting.
+    pub const CANVAS: &str = "Image canvas";
+    pub const TARGET_COLOUR: &str = "Colour";
+    pub const TARGET_GLOW: &str = "Glow";
+    pub const SIZE_1: &str = "1 px";
+    pub const SIZE_2: &str = "2 px";
+    pub const PAINT_COLOUR: &str = "Paint colour";
+    pub const HEX: &str = "Hex";
+    pub const GLOW_STRENGTH: &str = "Glow strength";
+    pub const ONION: &str = "Onion skin";
+    pub const COPY_FRAME: &str = "Copy frame";
+    pub const PASTE_FRAME: &str = "Paste frame";
+    pub const ADD_FRAME: &str = "Add frame";
+    pub const REMOVE_FRAME: &str = "Remove frame";
+    pub const ZOOM_IN: &str = "Zoom in";
+    pub const ZOOM_OUT: &str = "Zoom out";
+    pub const PREVIEW: &str = "Preview";
+    // The Look group.
+    pub const LOOK: &str = "Look";
+    pub const GLOW: &str = "Glow (%)";
+    pub const HAS_GLOW: &str = "Glows";
+    pub const LIGHT: &str = "Light";
+    pub const END_FLASH: &str = "End flash";
+    pub const EXPLOSION: &str = "Explosion light";
+    pub const MUZZLE_LIGHT: &str = "Muzzle light";
+    pub const UNLIMITED: &str = "unlimited reach";
+
+    /// A frame of the frames' grid.
+    pub fn frame(f: usize) -> String {
+        format!("Frame {}", f + 1)
+    }
+    /// An image of the left list.
+    pub fn image(path: &str) -> String {
+        format!("Image {path}")
+    }
+    /// A sound's Play button.
+    pub fn play_sound(path: &str) -> String {
+        format!("Play {path}")
+    }
+    /// A sound's Rename and Remove buttons.
+    pub fn rename_sound(path: &str) -> String {
+        format!("Rename {path}")
+    }
+    pub fn remove_sound(path: &str) -> String {
+        format!("Remove {path}")
+    }
+    /// A Look part's field: `Light colour`, `End flash reach (px)`.
+    pub fn look(part: &str, what: &str) -> String {
+        format!("{part} {what}")
+    }
 
     /// A field's Reset button.
     pub fn reset(field: &str) -> String {
@@ -140,6 +215,38 @@ pub struct ModEditorData {
     scrolled: u64,
     /// The new preset's name.
     new_preset: String,
+    /// The generation the thumbnails were made at (issue #19: a painted
+    /// image's thumbnail follows).
+    thumbs_gen: u64,
+    /// New image's fields.
+    new_image: NewImageDraft,
+    /// Rename's text (for the path being renamed).
+    rename: Option<(String, String)>,
+    /// The browser's typed path (for the folder shown).
+    browse_path: Option<(std::path::PathBuf, String)>,
+    /// The Art section's canvas, textures and typed colour.
+    art: art::ArtData,
+}
+
+/// New image's fields.
+struct NewImageDraft {
+    name: String,
+    side: u32,
+    frames: u32,
+}
+
+impl Default for NewImageDraft {
+    fn default() -> NewImageDraft {
+        NewImageDraft { name: String::new(), side: 8, frames: 1 }
+    }
+}
+
+impl ModEditorData {
+    /// Where the Art section's canvas was drawn last, if it was (tests
+    /// point into it).
+    pub fn art_canvas(&self) -> Option<egui::Rect> {
+        self.art.canvas
+    }
 }
 
 /// Draws the mod editor into `ui` and returns this frame's actions.
@@ -171,10 +278,17 @@ pub fn show(ui: &mut Ui, state: &ModEditorState, data: &mut ModEditorData) -> Ve
         });
     }
     egui::CentralPanel::default().show(ui, |ui| {
+        // The canvas takes the wheel (zoom) and drags: the Art panel does
+        // not scroll.
+        if matches!(state.item(), crate::tree::Item::Art(_)) {
+            art::show(ui, &mut cx);
+            return;
+        }
         egui::ScrollArea::vertical().id_salt("olr-mod-editor-panel").auto_shrink([false, false]).show(
             ui,
-            |ui| {
-                panels::show(ui, &mut cx);
+            |ui| match state.item() {
+                crate::tree::Item::Sounds => sounds::show(ui, &mut cx),
+                _ => panels::show(ui, &mut cx),
             },
         );
     });
@@ -373,6 +487,10 @@ pub(crate) fn relabel(r: &egui::Response, typ: egui::WidgetType, label: &str) {
 /// The thumbnail of the mod's image `path` (its first frame's texture and
 /// that frame's share of the width), if it decodes.
 pub(crate) fn thumb(ui: &Ui, cx: &mut Cx, path: &str) -> Option<(TextureHandle, f32)> {
+    if cx.data.thumbs_gen != cx.state.generation() {
+        cx.data.thumbs.clear();
+        cx.data.thumbs_gen = cx.state.generation();
+    }
     if !cx.data.thumbs.contains_key(path) {
         let img = cx.state.asset(path).and_then(|b| olr_format::image_io::decode_rgba(b).ok());
         let tex = img.map(|img| {
