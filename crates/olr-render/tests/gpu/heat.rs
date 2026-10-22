@@ -257,7 +257,8 @@ fn new_material_values_keep_the_heat() {
     assert!(r.set_surface_materials(&edited));
     assert_eq!(temps(&gpu, &r), before, "the heat is kept");
     let blue = frame(&gpu, &mut r, &dark());
-    let (x, y) = ((20 - 20) * 2 + 1, (60 - 30) * 2);
+    // World pixel (20, 60) is texel (0, 60) of the 2× frame from (20, 30).
+    let (x, y) = (1, 60);
     assert_ne!(blue.get(x, y), hot.get(x, y), "the next frame draws the new ramp");
     let c = blue.get(x, y);
     assert!(c.b > c.r && c.b > c.g, "blue: {c:?}");
