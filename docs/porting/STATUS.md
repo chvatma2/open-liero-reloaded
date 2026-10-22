@@ -5018,6 +5018,40 @@ builder's calls:
   and then cools). Goldens: `heat-fresh.png` (tick 380) and
   `heat-cooled.png` (tick 900) of two chaos bots, seed 1.
 
+## Distant layers heat as slices of the ball (issue #41)
+
+No OLX counterpart (distant layers are OLR's, issue #11). The fifth of
+ten (the same spec, "Distant layers: the ball"). A level without
+distant materials draws the same bytes (every render golden kept); the
+simulation and the match goldens never see it. As built, the builder's
+calls:
+
+- **`K`** (`olr_look::engine::HEAT_DEPTH_PX`) is 1.1 world pixels a
+  percent of depth: a Big Nuke's fragments (heat radius 22.5) reach a
+  layer of depth 20, a Bazooka's (17) depth 15. A layer gets a heat
+  texture only when its material heats and the renderer's largest
+  radius (64) reaches it: depth 58 at most.
+- **The back's share holds:** a layer's pixels count as back (as a wall
+  behind the explosion): `BACK_HEAT` (0.2) of the slice, every pixel
+  facing the air as it cools, so a layer never glows more than the back
+  wall would at its place. Within a layer heat spreads by its material
+  over the pixels its image covers; none to the level or another layer.
+- **Placement:** the circle's centre is the layer pixel drawn behind the
+  explosion (the renderer's rounded texel placement, `distant_origin`)
+  with the camera of the frame that first shows the explosion, the view
+  nearest it (by its rectangle; the first of those as near). Cameras move
+  per drawn frame, so unlike the plane's heat the spot depends on which
+  frame first shows the explosion (`render-match`'s one frame at the end
+  places it by the last camera); the amount does not.
+- **Look:** the lit distant pass mixes the layer's ramp colour over its
+  art and takes the glow as self-light; it casts no light (the glow light
+  reads only the level's heat), as the spec rules.
+- **Fixture:** `fixtures/look/levels/look-test-heat-distant`
+  (`fixtures/look/make-look-test-heat-distant.sh`: the heat cave of
+  stone open onto a wooden palisade at depth 8 before a stone sky at
+  depth 80, beyond reach). Golden: `heat-distant.png` (the heat match at
+  tick 380 there).
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
