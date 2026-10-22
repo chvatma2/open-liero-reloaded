@@ -39,7 +39,12 @@ fn material_ids(dir: &Path) -> Vec<String> {
 /// Material file `path` read (at most `MAX_RON_BYTES`) and checked: its
 /// id must be its file's name.
 pub fn read_file(path: &Path) -> Result<MaterialSource, String> {
-    let len = std::fs::metadata(path).map_err(|e| e.to_string())?.len();
+    let meta = std::fs::metadata(path).map_err(|e| e.to_string())?;
+    // A device or FIFO reports no length and may never end.
+    if !meta.is_file() {
+        return Err("not a file".into());
+    }
+    let len = meta.len();
     if len > MAX_RON_BYTES {
         return Err(format!("{len} bytes, above {MAX_RON_BYTES}"));
     }

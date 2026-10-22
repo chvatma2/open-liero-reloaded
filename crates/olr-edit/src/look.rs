@@ -9,6 +9,7 @@ use std::collections::BTreeSet;
 
 use olr_format::levels::{LevelSource, compile_level, composition_paths};
 use olr_format::look::{GlowGroupSource, LookSource, valid_group_id};
+use olr_format::materials::MaterialSource;
 
 use crate::level::EditError;
 use crate::pack::{Pack, Source};
@@ -44,6 +45,21 @@ pub fn add_group(level: &mut LevelSource, group: GlowGroupSource) -> Result<usiz
         }
         look.glow_groups.push(group);
         Ok(look.glow_groups.len() - 1)
+    })
+}
+
+/// Adds a copy of surface material `material` (issue #38; a library's)
+/// at the end of the level's materials, the default look made when it
+/// has none; returns its index (its map value is 1 + it). Its id must be
+/// new: a level keeps its own copy of a material it has.
+pub fn add_material(level: &mut LevelSource, material: MaterialSource) -> Result<usize, EditError> {
+    checked(level, |l| {
+        let look = l.look.get_or_insert_with(LookSource::default);
+        if look.materials.iter().any(|m| m.id == material.id) {
+            return Err(EditError::Look(format!("a material {:?} exists already", material.id)));
+        }
+        look.materials.push(material);
+        Ok(look.materials.len() - 1)
     })
 }
 
