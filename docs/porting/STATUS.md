@@ -5052,6 +5052,52 @@ calls:
   depth 80, beyond reach). Golden: `heat-distant.png` (the heat match at
   tick 380 there).
 
+## Mods' heat (issue #42)
+
+No OLX counterpart. The sixth of ten (the same spec, "In a mod"): a mod
+tunes its explosions' heat and lets projectiles heat what they pass.
+Presentation only: the simulation's mod, its checksums, the oracle and
+every match golden are unchanged (the explosion event only gained a
+presentation tag, below); a mod without these fields heats as before
+(every render golden kept). As built, the builder's calls:
+
+- **Fields** (`docs/formats/mod.md`): a projectile's
+  `look.explosion_heat` (`amount` percent of the engine's heat for the
+  explosion, 0-1000, default 100; `radius` world pixels 1-48, default the
+  engine's for the explosion) and the mod-wide `look.explosion_heat` for
+  projectiles without their own, falling back as `look.explosion` does
+  for light (a bonus blown up, which is no projectile's, keeps the
+  engine's); a projectile's `look.heat` (`amount` 1-100 degrees of stone a
+  tick, `radius` 1-16, both required). The radius cap is the engine's own
+  widest (48); a deposit stays at most 1000 whatever the percent.
+- **Which explosion is whose:** `EventKind::Explosion` gained `proj` (the
+  exploded projectile's `SimMod` index, -1 for none), the same tag as the
+  explosion entity's (issue #15), in no checksum; `Scene::explosions`
+  carries it.
+- **`amount × ticks elapsed at its drawn position`, a tick at a time:**
+  the spec's per-tick heat is deposited once a tick the projectile lives,
+  where it is after that tick (`Scene::hot_projectiles`, recorded per
+  tick as the explosions are), rather than once a frame at its
+  interpolated position times the ticks since the last frame. The sum is
+  the same, but a frame's one blob would depend on the frame rate (and
+  `render-match`, drawing once after hundreds of ticks, would leave one
+  spot instead of a path); a tick's deposit lands on the path itself and
+  the heat is the same however often frames are drawn (`olr-cli`'s
+  `a_projectiles_heat_warms_its_path_drawn_every_tick_or_once`). Keyed by
+  the tick's time, slot and serial through `olr-present`'s `Once`: a
+  re-simulated tick deposits nothing twice.
+- **Caps against a hostile mod** (heat every tick on every projectile):
+  at most `olr_scene::MAX_HOT_PER_TICK` (64) heating projectiles a tick
+  (slot order), each clamped to 100 degrees over 16 px, sharing the heat
+  queue (2048 between uploads) with the explosions in tick order; the
+  renderer's own caps (64 deposits a pass, `run_heat` between) then hold.
+  64 a tick at 100 Hz is up to 100 extra heat runs a second, a cost no mod
+  ships yet (Liero v1.0 Reloaded's values are Materials 10/10).
+- **Mod editor:** the projectile's Look group, beside the explosion
+  light: Explosion heat (amount, own radius or the engine's) and Heat
+  (amount a tick, radius), bounded by the caps; the World panel's Look
+  edits `mod.ron`'s explosion light (not editable before) and heat.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
