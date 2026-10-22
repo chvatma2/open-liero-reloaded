@@ -23,7 +23,9 @@ pub use migration::{
     AttemptOutcome, Attempted, CUT_OFF, HOST_LOST, LostWhy, MIGRATION_CONNECT_TIMEOUT, MigrationConfig,
     MigrationStep, stepped_down,
 };
-pub use peer::{LobbyHandle, OnlinePeer, PeerRole, RECORD_AFTER_END, Shutdown, StartError};
+pub use peer::{
+    KeysFor, LobbyHandle, LocalKeys, OnlinePeer, PeerRole, RECORD_AFTER_END, Shutdown, StartError,
+};
 pub use reach::{HostListen, Listening, Reachability, RelayJoin};
 
 // The game polls a peer from its UI thread and from its network pump

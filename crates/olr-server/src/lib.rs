@@ -406,7 +406,7 @@ impl Server {
         self.gap = self.now.map_or(Duration::ZERO, |t| now.saturating_duration_since(t));
         self.now = Some(now);
         self.relays(log);
-        let events = self.peer.poll(now, &mut || Keys(0), &mut |_, _, _| {});
+        let events = self.peer.poll(now, &mut |_| Keys(0), &mut |_, _, _| {});
         for e in events {
             self.on_event(e, log);
         }

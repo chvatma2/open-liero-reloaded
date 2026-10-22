@@ -48,7 +48,7 @@ use std::time::{Duration, Instant};
 
 use olr_netcode::TickInfo;
 use olr_netcode::world_sim::ConfirmedTick;
-use olr_online::{OnlineEvent, OnlinePeer};
+use olr_online::{LocalKeys, OnlineEvent, OnlinePeer};
 use olr_sim::{EventKind, Keys, TickEvents, World};
 
 /// The UI thread has not polled a peer for this long: the pump polls it
@@ -76,7 +76,7 @@ pub trait Poll: Send + 'static {
     fn poll(
         &mut self,
         now: Instant,
-        local_keys: &mut dyn FnMut() -> Keys,
+        local_keys: &mut LocalKeys<'_>,
         on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo),
     ) -> Vec<OnlineEvent>;
 }
@@ -85,7 +85,7 @@ impl Poll for OnlinePeer {
     fn poll(
         &mut self,
         now: Instant,
-        local_keys: &mut dyn FnMut() -> Keys,
+        local_keys: &mut LocalKeys<'_>,
         on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo),
     ) -> Vec<OnlineEvent> {
         OnlinePeer::poll(self, now, local_keys, on_tick)
@@ -315,7 +315,7 @@ impl<P: Poll> Inner<P> {
         let now = self.clamp(now);
         let stall = *self.stall.get_or_insert(now);
         let keys = if now.saturating_duration_since(stall) < PUMP_HOLD { self.latched } else { Keys(0) };
-        let events = self.peer.poll(now, &mut || keys, &mut |_, _, _| {});
+        let events = self.peer.poll(now, &mut |_| keys, &mut |_, _, _| {});
         self.pump_polls += 1;
         for e in events {
             self.queue_event(e);
@@ -432,7 +432,7 @@ impl<P: Poll> PeerHandle<P> {
     pub fn poll(
         &self,
         now: Instant,
-        local_keys: &mut dyn FnMut() -> Keys,
+        local_keys: &mut LocalKeys<'_>,
         on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo),
     ) -> PolledEvents {
         // Marked before the lock too: a pump about to poll stands back.
@@ -449,8 +449,8 @@ impl<P: Poll> PeerHandle<P> {
         }
         let pumped = inner.pumped.take();
         let mut latched = None;
-        let mut keys = || {
-            let k = local_keys();
+        let mut keys = |f: &olr_online::KeysFor| {
+            let k = local_keys(f);
             latched = Some(k);
             k
         };
@@ -629,11 +629,30 @@ mod tests {
         gate: Option<Arc<std::sync::atomic::AtomicU8>>,
     }
 
+    /// A world for the local keys' [`olr_online::KeysFor`]: Classic on
+    /// Dirt Level from the committed content, made once.
+    fn world() -> &'static World {
+        static WORLD: std::sync::OnceLock<World> = std::sync::OnceLock::new();
+        WORLD.get_or_init(|| {
+            let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/packs");
+            let content = olr_content::Content::open(&dir).expect("the committed content");
+            let setup = olr_content::SandboxSetup {
+                mod_id: "olx-classic".into(),
+                level_id: "olx-level-dirt-level".into(),
+                seed: 1,
+                settings: olr_sim::SimSettings::lx56(),
+                worms: vec![olr_content::SpawnSpec::default()],
+                restrictions: olr_content::DEFAULT_PRESET.into(),
+            };
+            content.new_world(&setup).expect("a sandbox world")
+        })
+    }
+
     impl Poll for Fake {
         fn poll(
             &mut self,
             now: Instant,
-            local_keys: &mut dyn FnMut() -> Keys,
+            local_keys: &mut LocalKeys<'_>,
             _on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo),
         ) -> Vec<OnlineEvent> {
             let start = Instant::now();
@@ -653,7 +672,7 @@ mod tests {
                     }
                 }
             }
-            let keys = local_keys();
+            let keys = local_keys(&olr_online::KeysFor { world: world(), slot: 0, ahead: 0 });
             if !self.delay.is_zero() {
                 std::thread::sleep(self.delay);
             }
@@ -685,7 +704,7 @@ mod tests {
     }
 
     fn ui_poll_with<P: Poll>(h: &PeerHandle<P>, keys: Keys) -> PolledEvents {
-        h.poll(Instant::now(), &mut || keys, &mut |_, _, _| {})
+        h.poll(Instant::now(), &mut |_| keys, &mut |_, _, _| {})
     }
 
     /// Waits (at most 5 s: a loaded machine) until the pump polled `n`

@@ -121,7 +121,7 @@ impl Peer {
         let now = Instant::now();
         let key = self.key[0];
         let mut n = 0u32;
-        let mut keys = || {
+        let mut keys = |_: &olr_online::KeysFor| {
             n += 1;
             Keys(u16::from((n / 25) as u8 ^ key) & !Keys::CHANGE)
         };

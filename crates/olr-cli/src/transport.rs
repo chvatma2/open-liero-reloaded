@@ -265,8 +265,9 @@ pub fn run_bot_client(
         if run.dropped.is_some() {
             break;
         }
-        let events = peer
-            .poll(now, &mut || brain.borrow().keys, &mut |w, e, info| brain.borrow_mut().on_tick(w, e, info));
+        let events = peer.poll(now, &mut |_| brain.borrow().keys, &mut |w, e, info| {
+            brain.borrow_mut().on_tick(w, e, info)
+        });
         for e in events {
             match e {
                 OnlineEvent::MatchStarting { start, my_slot } => {

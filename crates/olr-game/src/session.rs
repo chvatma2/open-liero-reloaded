@@ -902,12 +902,12 @@ impl Session {
     /// ticks the presentation starts again from the world
     /// ([`PolledEvents::pumped`], handed back with the shell's events: a
     /// next match's session starts again too).
-    pub fn frame(&mut self, now: Instant, local_keys: &mut dyn FnMut() -> Keys) -> PolledEvents {
+    pub fn frame(&mut self, now: Instant, local_keys: &mut olr_online::LocalKeys<'_>) -> PolledEvents {
         let weapon = self.local_weapon();
         let Driver::Online(d) = &mut self.driver else { return PolledEvents::default() };
         let mut pressed = Keys(0);
-        let mut keys = || {
-            let k = local_keys();
+        let mut keys = |f: &olr_online::KeysFor| {
+            let k = local_keys(f);
             pressed.0 |= k.0;
             k
         };

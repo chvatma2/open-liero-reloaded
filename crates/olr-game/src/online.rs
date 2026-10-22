@@ -33,7 +33,7 @@ use olr_online::OnlineEvent;
 use olr_present::Presentation;
 use olr_present::net::NetPresenter;
 use olr_proto::MatchStartWire;
-use olr_sim::{Event, Keys, Score, World};
+use olr_sim::{Event, Score, World};
 use olr_terrain::Area;
 
 use crate::net::{PeerHandle, PolledEvents};
@@ -160,7 +160,7 @@ impl OnlineDriver {
     pub(crate) fn poll(
         &mut self,
         now: Instant,
-        local_keys: &mut dyn FnMut() -> Keys,
+        local_keys: &mut olr_online::LocalKeys<'_>,
         present: &mut Presentation,
     ) -> PolledEvents {
         let mut ran = 0;
@@ -311,6 +311,7 @@ mod tests {
     use olr_audio::Audio;
     use olr_content::{MatchOptions, Player};
     use olr_scene::{Interpolation, Viewport};
+    use olr_sim::Keys;
     use olr_sim::{EventKind, TickEvents};
 
     /// `count` ticks of `world` from tick `from`, everyone firing and

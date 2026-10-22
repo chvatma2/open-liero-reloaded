@@ -112,6 +112,8 @@ pub enum Outcome {
     Video(VideoSettings),
     /// The player's keys changed.
     Bindings(Bindings),
+    /// Mouse controls on or off (issue #24).
+    MouseControls(bool),
     /// A new game plays: its images go to the renderer, the clock starts
     /// afresh (the loading time is not caught up).
     Started,
@@ -593,6 +595,7 @@ impl Shell {
             }
             AppCommand::ApplyAudio(a) => self.set_volume(&a),
             AppCommand::ApplyBindings(b) => out.push(Outcome::Bindings(b)),
+            AppCommand::ApplyMouseControls(on) => out.push(Outcome::MouseControls(on)),
             AppCommand::SaveSettings(mut s) => {
                 if let Some((file, o)) = &self.overrides {
                     o.unsaved(file, &mut s.video);

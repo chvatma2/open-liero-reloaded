@@ -1070,7 +1070,7 @@ fn a_silent_host_is_given_up() {
             opened = Some(now);
         }
         net.clear();
-        for e in client.poll(now, &mut || Keys(0), &mut |_, _, _| {}) {
+        for e in client.poll(now, &mut |_| Keys(0), &mut |_, _, _| {}) {
             if let OnlineEvent::Disconnected(why) | OnlineEvent::Refused(why) = e {
                 ended = Some((now, why));
             }

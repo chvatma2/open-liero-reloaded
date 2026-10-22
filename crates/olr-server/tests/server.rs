@@ -118,7 +118,7 @@ impl Client {
     fn poll(&mut self, now: Instant) {
         let pressed = &mut self.pressed;
         let seed = u32::from(self.key[0]);
-        let mut keys = || {
+        let mut keys = |_: &olr_online::KeysFor| {
             *pressed += 1;
             let k = (*pressed / 25).wrapping_mul(2_654_435_761).wrapping_add(seed) >> 24;
             Keys(u16::from(k as u8) & !Keys::CHANGE)
@@ -777,7 +777,7 @@ fn run_stops_on_its_flag_and_says_bye() {
         let start = Instant::now();
         while !f(events) {
             assert!(start.elapsed() < Duration::from_secs(10), "{what}: {}", log.text());
-            events.extend(p.poll(Instant::now(), &mut || Keys(0), &mut |_, _, _| {}));
+            events.extend(p.poll(Instant::now(), &mut |_| Keys(0), &mut |_, _, _| {}));
             std::thread::sleep(Duration::from_millis(1));
         }
     };

@@ -12,6 +12,7 @@ impl App {
             match o {
                 Outcome::Quit => el.exit(),
                 Outcome::Bindings(b) => self.input.set_bindings(b),
+                Outcome::MouseControls(on) => self.input.set_mouse_controls(on),
                 Outcome::Video(v) => self.apply_video(v),
                 Outcome::Started => {
                     if let Some(s) = self.shell.session_mut() {

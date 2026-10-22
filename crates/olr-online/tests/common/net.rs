@@ -90,7 +90,7 @@ impl Peer {
         let Some(p) = &mut self.p else { return };
         let pressed = &mut self.pressed;
         let seed = self.key[0] as u32;
-        let mut keys = || {
+        let mut keys = |_: &olr_online::KeysFor| {
             *pressed += 1;
             let k = (*pressed / 25).wrapping_mul(2_654_435_761).wrapping_add(seed) >> 24;
             Keys(u16::from(k as u8) & !Keys::CHANGE)

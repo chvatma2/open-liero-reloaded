@@ -512,12 +512,13 @@ impl OnlinePeer {
 
     /// Does what the network, the lobby and the match have for `now`:
     /// receives, runs the lobby, advances the match (the local player's
-    /// keys from `local_keys`; `on_tick` sees the world after each simulated
-    /// tick, re-simulated ones included), sends.
+    /// keys from `local_keys`, once per new tick, told what they are for:
+    /// [`KeysFor`]; `on_tick` sees the world after each simulated tick,
+    /// re-simulated ones included), sends.
     pub fn poll(
         &mut self,
         now: Instant,
-        local_keys: &mut dyn FnMut() -> Keys,
+        local_keys: &mut LocalKeys<'_>,
         on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo),
     ) -> Vec<OnlineEvent> {
         let epoch = *self.epoch.get_or_insert(now);
@@ -1475,19 +1476,20 @@ impl OnlinePeer {
     fn advance(
         &mut self,
         now: Instant,
-        local_keys: &mut dyn FnMut() -> Keys,
+        local_keys: &mut LocalKeys<'_>,
         on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo),
     ) {
         let now_us = self.now_us;
         let Some(g) = &mut self.game else { return };
         let ended = g.ended.is_some();
-        let mut no_keys = || Keys(0);
+        let mut no_keys = |_: &KeysFor| Keys(0);
         let mut no_tick = |_: &World, _: &TickEvents, _: TickInfo| {};
-        let keys: &mut dyn FnMut() -> Keys = if ended { &mut no_keys } else { local_keys };
+        let keys: &mut LocalKeys<'_> = if ended { &mut no_keys } else { local_keys };
         let on_tick: &mut dyn FnMut(&World, &TickEvents, TickInfo) =
             if ended { &mut no_tick } else { on_tick };
         let mut driver = PeerDriver {
             my_slot: g.my_slot,
+            next: g.session.current_tick(),
             keys,
             bots: g.bots.as_mut(),
             recorder: &mut g.recorder,
@@ -1743,30 +1745,58 @@ fn end_wire(last: Option<&(Vec<Score>, Option<MatchResult>)>, last_tick: u32) ->
     MatchEndWire { reason: reason.into(), rows, last_tick }
 }
 
+/// The local player's keys for a new tick, told what they are for
+/// (`OnlinePeer::poll`).
+pub type LocalKeys<'a> = dyn FnMut(&KeysFor) -> Keys + 'a;
+
+/// What the local player's keys are pressed for (issue #24: mouse
+/// controls' controller plans with the local worm).
+#[derive(Clone, Copy)]
+pub struct KeysFor<'a> {
+    /// The newest predicted world: the state before the next tick the
+    /// session simulates.
+    pub world: &'a World,
+    /// The local player's slot, its worm's index.
+    pub slot: u8,
+    /// How many ticks after that world's next tick the keys apply: the
+    /// match's input delay at a client (and at a host that took over),
+    /// 0 at the host.
+    pub ahead: u32,
+}
+
 /// The game's side of the session: the local player's keys, the host's
 /// bots, the tick records and the caller's view of each tick.
 struct PeerDriver<'a> {
     my_slot: Option<u8>,
-    keys: &'a mut dyn FnMut() -> Keys,
+    /// The next tick the session simulates (the world `local_inputs` sees
+    /// is the state before it).
+    next: u32,
+    keys: &'a mut LocalKeys<'a>,
     bots: Option<&'a mut HostBots>,
     recorder: &'a mut TickRecorder,
     on_tick: &'a mut dyn FnMut(&World, &TickEvents, TickInfo),
 }
 
 impl Driver<WorldSim> for PeerDriver<'_> {
-    fn local_inputs(&mut self, sim: &WorldSim, _tick: u32, slots: &[u8], out: &mut [Keys]) {
-        let human = self.my_slot.map(|s| (s, &mut *self.keys as &mut dyn FnMut() -> Keys));
+    fn local_inputs(&mut self, sim: &WorldSim, tick: u32, slots: &[u8], out: &mut [Keys]) {
+        let ahead = tick.saturating_sub(self.next);
+        let keys = &mut *self.keys;
+        let mut human_keys = |slot: u8| keys(&KeysFor { world: sim.world(), slot, ahead });
         match &mut self.bots {
-            Some(bots) => bots.press(sim, slots, out, human),
+            Some(bots) => match self.my_slot {
+                Some(s) => bots.press(sim, slots, out, Some((s, &mut || human_keys(s)))),
+                None => bots.press(sim, slots, out, None),
+            },
             None => {
                 for (&slot, key) in slots.iter().zip(out.iter_mut()) {
-                    *key = if Some(slot) == self.my_slot { (self.keys)() } else { Keys(0) };
+                    *key = if Some(slot) == self.my_slot { human_keys(slot) } else { Keys(0) };
                 }
             }
         }
     }
 
     fn simulated(&mut self, sim: &WorldSim, info: TickInfo) {
+        self.next = info.tick + 1;
         self.recorder.simulated(sim, info);
         (self.on_tick)(sim.world(), sim.events(), info);
     }
@@ -1868,6 +1898,44 @@ mod tests {
             (0..2).map(|i| SlotWire { member: None, bot: Some(i), look: look(), loadout: None }).collect();
         let start = MatchStartWire { seed: 1, setup, slots, input_delay: vec![], start_checksum: 0 };
         MatchRecord { start, rows: vec![[0; 32]; 50], checksums: vec![], gone: vec![] }
+    }
+
+    /// The local player's keys are asked with the newest predicted world,
+    /// the player's slot, and the ticks they apply after that world's next
+    /// one: a client's input delay, none at the host (issue #24).
+    #[test]
+    fn local_keys_are_told_the_world_and_the_look_ahead() {
+        let Some(c) = content() else { return };
+        let start = record(&c).start;
+        for (role, delay, want) in
+            [(Role::Client { host: HOST, slot: 1 }, 2, 2), (Role::Host { peers: vec![] }, 2, 0)]
+        {
+            let host = matches!(role, Role::Host { .. });
+            let world = matches::build(&c, &start).unwrap();
+            let mut session = Session::new(Config::new(2, delay), role, world.sim, 0);
+            let mut seen = vec![];
+            let mut keys = |k: &KeysFor| {
+                seen.push((k.slot, k.ahead, k.world.time()));
+                Keys(0)
+            };
+            let mut recorder = TickRecorder::default();
+            let mut on_tick = |_: &World, _: &TickEvents, _: TickInfo| {};
+            for t in 1..=5u64 {
+                let mut driver = PeerDriver {
+                    my_slot: Some(1),
+                    next: session.current_tick(),
+                    keys: &mut keys,
+                    bots: None,
+                    recorder: &mut recorder,
+                    on_tick: &mut on_tick,
+                };
+                session.advance(t * olr_netcode::TICK_US, &mut driver);
+            }
+            assert!(seen.len() >= 3, "host {host}: {} ticks", seen.len());
+            assert!(seen.iter().all(|s| s.0 == 1 && s.1 == want), "host {host}: {seen:?}");
+            // A new world each tick: the predicted one before it.
+            assert!(seen.windows(2).all(|p| p[0].2 < p[1].2), "host {host}");
+        }
     }
 
     /// A client whose host is not there: nothing but its replays happens.

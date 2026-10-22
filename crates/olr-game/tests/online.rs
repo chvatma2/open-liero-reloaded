@@ -181,7 +181,7 @@ fn endpoint() -> EndpointConfig {
 
 /// Polls `p` on the real clock with no keys.
 fn poll(p: &mut OnlinePeer) -> Vec<OnlineEvent> {
-    p.poll(Instant::now(), &mut || Keys(0), &mut |_, _, _| {})
+    p.poll(Instant::now(), &mut |_| Keys(0), &mut |_, _, _| {})
 }
 
 /// Polls the host and the client on the real clock until `done` holds
@@ -312,7 +312,7 @@ fn an_online_match_runs_headless() {
     let mut heard_throws = 0;
     for i in 1..=300u64 {
         let now = t0 + Duration::from_millis(10 * i);
-        let mut host_keys = || {
+        let mut host_keys = |_: &olr_online::KeysFor| {
             host_pressed += 1;
             let rope = if host_pressed.is_multiple_of(40) { Keys::ROPE } else { 0 };
             Keys(player_keys(host_pressed + 1000).0 | rope)
@@ -323,7 +323,7 @@ fn an_online_match_runs_headless() {
             }
         }
         // Ticks 50 to 52 change the weapon (Change, Change + Right, Change).
-        let mut keys = || {
+        let mut keys = |_: &olr_online::KeysFor| {
             pressed += 1;
             match pressed {
                 50 | 52 => Keys(Keys::CHANGE),
@@ -395,8 +395,8 @@ fn an_online_match_runs_headless() {
         i += 1;
         assert!(i < 1500, "the match ends for the client");
         let now = t0 + Duration::from_millis(10 * i);
-        host.poll(now, &mut || Keys(0), &mut |_, _, _| {});
-        let events = s.frame(now, &mut || Keys(0));
+        host.poll(now, &mut |_| Keys(0), &mut |_, _, _| {});
+        let events = s.frame(now, &mut |_| Keys(0));
         s.build(1.0, &mut list);
         if events.events.iter().any(|e| matches!(e, OnlineEvent::MatchEnded(_))) {
             ended = Some(s.with_world(World::clone));
@@ -408,8 +408,8 @@ fn an_online_match_runs_headless() {
     for _ in 0..100 {
         i += 1;
         let now = t0 + Duration::from_millis(10 * i);
-        host.poll(now, &mut || Keys(0), &mut |_, _, _| {});
-        s.frame(now, &mut || Keys(0));
+        host.poll(now, &mut |_| Keys(0), &mut |_, _, _| {});
+        s.frame(now, &mut |_| Keys(0));
         s.build(1.0, &mut list);
         assert!(s.with_world(|w| std::ptr::eq(w, &s.world)));
         assert!(s.with_world(|w| *w == kept), "frame {i}: the world drawn no longer changes");
@@ -502,7 +502,7 @@ pub(crate) fn frame(
 ) -> Vec<Outcome> {
     let mut out = Vec::new();
     for (i, sh) in shells.iter_mut().enumerate() {
-        out.extend(sh.net_frame(now, &mut || keys(i)));
+        out.extend(sh.net_frame(now, &mut |_| keys(i)));
         out.extend(sh.after_ticks());
         out.extend(sh.poll());
     }

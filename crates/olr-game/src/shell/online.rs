@@ -767,7 +767,7 @@ impl Shell {
     /// the match's session while one plays, `Session::frame`, the player's
     /// keys from `keys`: none while the match's menu, the chat or another
     /// screen has them) and its events carried out.
-    pub fn net_frame(&mut self, now: Instant, keys: &mut dyn FnMut() -> Keys) -> Vec<Outcome> {
+    pub fn net_frame(&mut self, now: Instant, keys: &mut olr_online::LocalKeys<'_>) -> Vec<Outcome> {
         let mut out = Vec::new();
         self.prune_unmapping();
         if !self.network_live() {
@@ -785,12 +785,12 @@ impl Shell {
         if let Some(h) = self.handle() {
             h.set_held(self.held_keys);
         }
-        let mut none = || Keys(0);
-        let keys: &mut dyn FnMut() -> Keys = if held { &mut none } else { keys };
+        let mut none = |_: &olr_online::KeysFor| Keys(0);
+        let keys: &mut olr_online::LocalKeys<'_> = if held { &mut none } else { keys };
         let polled = match &mut self.play {
             Some(p) if matches!(p.session.driver, Driver::Online(_)) => p.session.frame(now, keys),
             _ => match self.net.as_ref().and_then(|n| n.peer.as_ref()) {
-                Some(peer) => peer.poll(now, &mut || Keys(0), &mut |_, _, _| {}),
+                Some(peer) => peer.poll(now, &mut |_| Keys(0), &mut |_, _, _| {}),
                 None => PolledEvents::default(),
             },
         };
@@ -1359,7 +1359,7 @@ impl Shell {
     /// `--net-sim`'s host: polled; it starts whenever every player is ready.
     fn poll_sim_host(&mut self, now: Instant) {
         let Some(h) = &self.sim_host else { return };
-        for e in h.poll(now, &mut || Keys(0), &mut |_, _, _| {}).events {
+        for e in h.poll(now, &mut |_| Keys(0), &mut |_, _, _| {}).events {
             if let OnlineEvent::DesyncBundle(b) = e {
                 self.save_bundle(&b);
             }
