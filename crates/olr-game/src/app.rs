@@ -1008,17 +1008,15 @@ impl App {
         self.shell.data.held_by = self.inputs.held();
         self.shell.data.set_seats(self.inputs.menu_seats());
         // Only a joined pad's Start is the pause's (issue #32).
-        let pads: Vec<usize> = self
-            .shell
-            .local_seats()
-            .into_iter()
+        let seats = self.shell.local_seats();
+        let pads: Vec<usize> = seats
+            .iter()
             .filter_map(|s| match s {
-                olr_input::Seat::Pad(p) => Some(p),
+                olr_input::Seat::Pad(p) => Some(*p),
                 _ => None,
             })
             .collect();
-        let several = !self.shell.local_seats().is_empty();
-        self.shell.data.pad.set_players(several.then_some(pads));
+        self.shell.data.pad.set_players((!seats.is_empty()).then_some(pads));
         // Each local player's change key, for its weapon name (issue #29).
         let mut changing = [false; crate::setup::MAX_LOCALS];
         for (c, k) in changing.iter_mut().zip(self.inputs.held()) {

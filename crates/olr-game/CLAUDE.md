@@ -237,8 +237,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   (`UiState::lineup`) loads with `load_match_for`, local player `k`
   wearing its profile's skin and look (none: "Player N" in the default
   ones); `Shell::local_seats()` (the lineup's seats while that match
-  plays: none for one player as before, the sandbox, replays, online,
-  the editors' Play) is what the app seats the players on
+  plays, one joined player's too; none for a match started without the
+  join step, the sandbox, replays, online, the editors' Play) is what the app seats the players on
   (`LocalInputs::fit_to`). Every frame the app gives the menus each
   seat's input (`LocalInputs::menu_seats` → `MenuData::set_seats`), each
   player's keys (`MenuData::held_by`, the weapon selection) and the
