@@ -17,7 +17,7 @@ const OPTIONS: SceneOptions = SceneOptions { interpolation: Interpolation::Linea
 /// `seed`; `lit` gives it shade rules (occluders and look records).
 fn scene(target: i32, seed: u32, lit: bool) -> Scene {
     let mut s = Scene::new(Camera::new(Viewport::GAME, target, seed), OPTIONS, 2);
-    s.set_shades(lit.then(|| ShadeRules { floor: 50, projectile_glow: Vec::new() }));
+    s.set_shades(lit.then(|| ShadeRules { floor: 50, ..Default::default() }));
     s
 }
 

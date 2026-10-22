@@ -57,6 +57,10 @@ pub struct ShadeRules {
     pub floor: u8,
     /// Each projectile's glow (by `SimMod` index), percent.
     pub projectile_glow: Vec<Option<u8>>,
+    /// Whether each projectile (by `SimMod` index) heats the level while
+    /// it lives (issue #42): the scene records where it is each tick
+    /// ([`Scene::hot_projectiles`]). Empty: none does.
+    pub projectile_heat: Vec<bool>,
 }
 
 impl ShadeRules {
@@ -129,6 +133,9 @@ pub struct TickExplosion {
     pub pos: Vec2,
     /// OLX's `Explode` damage (it sizes the hole).
     pub damage: f32,
+    /// The exploded projectile's `SimMod` index, -1 for none (a bonus
+    /// blown up): issue #42, its look's explosion heat.
+    pub proj: i32,
     /// The tick it happened in.
     pub at: AbsTime,
     /// Its place among the tick's explosions, from 0: with `at`, a key a
@@ -136,7 +143,26 @@ pub struct TickExplosion {
     pub index: u16,
 }
 
-/// The most [`EndedProjectile`]s, [`Shot`]s and [`TickExplosion`]s kept
+/// A projectile whose look heats ([`ShadeRules::projectile_heat`]) where
+/// it was after a tick (issue #42): a lit match's heat a tick. Recorded per
+/// tick, so it never depends on the frame rate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HotProjectile {
+    pub slot: usize,
+    pub serial: u32,
+    /// Its `SimMod` index.
+    pub proj: usize,
+    pub pos: Vec2,
+    /// The tick.
+    pub at: AbsTime,
+}
+
+/// The most [`HotProjectile`]s a tick records, in slot order: a hostile
+/// mod heating every projectile heats with the first this many.
+pub const MAX_HOT_PER_TICK: usize = 64;
+
+/// The most [`EndedProjectile`]s, [`Shot`]s, [`TickExplosion`]s and
+/// [`HotProjectile`]s (each) kept
 /// between two [`Scene::clear_look_events`] (a host drawing no frame drops
 /// the rest).
 pub const LOOK_EVENTS: usize = 8192;
@@ -185,6 +211,7 @@ pub struct Scene {
     ended: Vec<EndedProjectile>,
     shots: Vec<Shot>,
     explosions: Vec<TickExplosion>,
+    hot: Vec<HotProjectile>,
 }
 
 impl Scene {
@@ -205,6 +232,7 @@ impl Scene {
             ended: Vec::new(),
             shots: Vec::new(),
             explosions: Vec::new(),
+            hot: Vec::new(),
         }
     }
 
@@ -311,21 +339,41 @@ impl Scene {
         &self.explosions
     }
 
-    /// Forgets the ended projectiles, shots and explosions (the
-    /// presentation took them).
+    /// The heating projectiles after each of those ticks (issue #42), in
+    /// tick then slot order, at most [`MAX_HOT_PER_TICK`] a tick (only with
+    /// shade rules that heat). A re-simulated tick reports them again.
+    pub fn hot_projectiles(&self) -> &[HotProjectile] {
+        &self.hot
+    }
+
+    /// Forgets the ended projectiles, shots, explosions and heating
+    /// projectiles (the presentation took them).
     pub fn clear_look_events(&mut self) {
         self.ended.clear();
         self.shots.clear();
         self.explosions.clear();
+        self.hot.clear();
     }
 
     /// With shade rules, records a tick's ended projectiles (in the
-    /// previous snapshot, not in the new one), shots and explosions. The
+    /// previous snapshot, not in the new one), shots, explosions and
+    /// heating projectiles (in the new one). The
     /// first tick re-simulated after a rollback follows a snapshot of the
     /// old timeline (a later time): no end is read from that pair.
     fn record_look_events(&mut self, world: &World, events: &TickEvents) {
-        if self.shades.is_none() {
-            return;
+        let Some(rules) = &self.shades else { return };
+        if !rules.projectile_heat.is_empty() {
+            let (at, mut n) = (world.time(), 0);
+            for q in self.cur.projectiles() {
+                if n == MAX_HOT_PER_TICK || self.hot.len() == LOOK_EVENTS {
+                    break;
+                }
+                if rules.projectile_heat.get(q.proj).copied().unwrap_or(false) {
+                    let (slot, serial, proj, pos) = (q.slot as usize, q.serial, q.proj, q.pos);
+                    self.hot.push(HotProjectile { slot, serial, proj, pos, at });
+                    n += 1;
+                }
+            }
         }
         let at = world.time();
         let follows = self.prev.time().is_some_and(|t| t < at);
@@ -352,9 +400,9 @@ impl Scene {
                 {
                     self.shots.push(Shot { worm, weapon: usize::try_from(weapon).unwrap_or(0), at });
                 }
-                olr_sim::EventKind::Explosion { pos, damage, .. } => {
+                olr_sim::EventKind::Explosion { pos, damage, proj, .. } => {
                     if self.explosions.len() < LOOK_EVENTS {
-                        self.explosions.push(TickExplosion { pos, damage, at, index });
+                        self.explosions.push(TickExplosion { pos, damage, proj, at, index });
                     }
                     index = index.saturating_add(1);
                 }

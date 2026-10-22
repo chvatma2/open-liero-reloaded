@@ -71,7 +71,8 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   (`olr-present` sets them; `None`, the default, draws every item lit, as
   always): `ShadeRules::floor` is the least self-light of projectiles and
   bonuses (worms take `Shade::WORM`), and `projectile_glow` (by `SimMod`
-  index) raises a projectile's to its look's glow. With rules the muzzle
+  index) raises a projectile's to its look's glow; `projectile_heat`
+  (issue #42, by `SimMod` index) marks the projectiles whose look heats, for the look records. With rules the muzzle
   flash and the beams glow, and the crosshair, health bars and laser-sight
   dots are markers (`Marks::draw`'s `lit`, `WormFrame::lit`).
 - **Occluders** (plan 15b): in a lit match `build` lists each living
@@ -92,7 +93,12 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   weapon's `WeaponFired`) and, issue #40, `explosions()` (`TickExplosion`:
   each `EventKind::Explosion`, a projectile's or a bonus blown up, never
   an explosive trail's or a beam's cosmetic: its position, damage, tick
-  and `index` among the tick's), per tick so end flashes, muzzle lights
+  and `index` among the tick's; issue #42: `proj`, the exploded
+  projectile, -1 for none) and, issue #42, `hot_projectiles()`
+  (`HotProjectile`: slot, serial, `SimMod` index, position and tick of
+  each projectile in the new snapshot that `ShadeRules::projectile_heat`
+  marks, slot order, at most `MAX_HOT_PER_TICK` (64) a tick; nothing when
+  the list is empty), per tick so end flashes, muzzle lights
   and heat never depend on the frame rate. `clear_look_events` forgets them (the
   presentation takes them each frame); at most `LOOK_EVENTS` (8192) of
   each are kept between two clears. The first tick re-simulated after a
