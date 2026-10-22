@@ -4656,7 +4656,7 @@ sandbox with existing settings. As built:
   chosen Castle Strike (`olx-level-castlestrike`, OLX's most open: a
   wide sky), else Play's level.
 
-## Split screen (issues #26 to #30)
+## Split screen (issues #26 to #31)
 
 Local split screen for 2 to 4 players (OLX's fork: up to four,
 `docs/porting/olx-notes/presentation.md` §1.1; `CClient.cpp:1527-1551`,
@@ -4762,7 +4762,21 @@ camera per view and the nearest listener. As built:
   every view. One player keeps the solo layout exactly (the HUD
   snapshots unchanged). `olr-cli render-match --locals N` draws every
   view (two stacked, three or four in a 2 × 2 grid).
-- **Not yet built:** joining and menus by pad (#31, #32); the weapon
+- **Menus by pad** (issue #31, `olr_ui::pad`; not OLX's: its menus take
+  no pad): any pad's d-pad and left stick move egui's keyboard focus
+  (OLR's own wish so a player on the couch needs no keyboard), A clicks
+  the focused widget, B is Esc (Back). It goes through egui's own focus
+  (arrow keys, Tab, Enter, Esc), so the keyboard and the mouse work as
+  before. A slider moves with left and right; a drop-down steps through
+  its choices with them, or A opens its list and A picks an entry; a
+  text field is skipped (there is no on-screen keyboard); up or down
+  finding nothing within egui's 45° goes on in the widgets' order (round
+  at either end), so every widget is reachable; the focused widget has a
+  ring in the accent colour while the pad leads. Nobody's pad drives the
+  menus while a match runs or on the weapon selection (the game's keys
+  drive it, a pad's too); the pause menu and its options hear only the
+  pad whose Start paused (any pad after Esc). The editors take no pad.
+- **Not yet built:** joining by pad (#32); the weapon
   selection, the pause menu and the results stay centred over the solo
   playfield's place. `olr-cli gpu-bench
   --views N` lays its views out in halves (top and bottom) or quarters

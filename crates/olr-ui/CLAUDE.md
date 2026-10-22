@@ -42,7 +42,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   profile's when it has its own (as before seats), else the options';
   keyboard 2's (`keys2`) always the options' (a profile's own is not
   read). `PadPause` (the app's, a pad's Start) toggles the pause in game
-  as Back does, and does nothing elsewhere (menus by pad: issue #31).
+  as Back does, and does nothing elsewhere (the menus by pad: `pad.rs`).
 - **Settings** (`settings.rs`): video (`WindowPreset`: 1280 × 720,
   1600 × 900, 1920 × 1080; fullscreen, borderless at the monitor's size,
   offered in the same "Display" list; v0.1.0's `window: Desktop` loads as
@@ -226,6 +226,38 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `MenuData::version` (the app's build version) shows in the main menu's
   bottom right corner (an area of its own, outside the menu's layout) and
   at About's top (the crate's version when empty).
+- **Menus by pad** (`pad.rs`, issue #31; not OLX's): `MenuData::pad`, a
+  `PadNav` the app feeds every pad event (`on_pad(gilrs id,
+  PadEvent)`); before each pass that draws the menus the app adds
+  `MenuData::pad_events(ctx, state)` to egui's input (none while the
+  options capture an input). Any pad's d-pad and left stick (pressed from
+  `STICK_THRESHOLD`, let go under `STICK_RELEASE`) are directions, a held
+  one repeating after `REPEAT_DELAY` every `REPEAT_EVERY`; A (South)
+  activates, B (East) is Back; Start stays the pause (`PadPause`). One
+  press a frame becomes egui's own key: an arrow (moves the focus, or a
+  focused slider), Tab when nothing is focused, Enter (clicks the
+  focused widget), Esc (Back). `PadNav::begin_pass`/`end_pass` (in
+  `show`) do the rest: a move is watched (`Landing`) and a text field it
+  lands on skipped the same way (a slider's value field too, which is
+  one when focused; A does nothing in one: no on-screen keyboard), up or
+  down finding nothing goes on in the widgets' order (Next/Previous,
+  round at the ends); `pad_choice(ui, combo, choices, current)` after
+  each `ComboBox` gives the pad's left or right step on the focused
+  drop-down (the keyboard's arrows still move the focus); A opens a
+  list, A on an entry picks it and closes the list, B closes it, the
+  focus back on the drop-down; `follow_focus(ui)` ends each scroll
+  area's content (egui scrolls to no focused widget); the focused
+  widget is ringed (`theme::focus_ring`, `FOCUS`) while the pad leads
+  (`active`: until a pointer press). Who (`who`): nobody in game unpaused
+  (the game has the pads) or on the weapon selection (`MenuData::held`
+  drives it); paused (the pause menu, its Options) the pad whose Start
+  paused (Start seen while the match ran), any after Esc; any elsewhere.
+  `forget()` drops the presses (the editors, a capture). Keyboard and
+  mouse use is unchanged. Tests: `tests/pad.rs` (a match started from
+  the main menu, the mod's drop-down by left/right and by its list;
+  Blood's slider and the HUD layout; text fields skipped; the pause menu
+  from the pad that paused only, after Esc any; the weapon selection
+  deaf; repeats and the stick's margin).
 - **Editor screen** (`screens/editor.rs`, plan 14c): Main's **Editor**
   (between Sandbox and Profiles; `Screen::Editor`, in `MENUS`), three
   tabs, Level, Skin (issue #14) and Mod (issue #17). Level: the
@@ -589,7 +621,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   the app's choice), `set_scale(ctx, native, height, ui_scale)` sets
   egui's zoom to it on a display of `native` pixels per point (every
   frame; it takes effect at the end of the pass); `BACKGROUND`, `ACCENT` (section titles),
-  `PRIMARY` (the primary action's fill), `section_frame()`.
+  `PRIMARY` (the primary action's fill), `section_frame()`, `FOCUS` and
+  `focus_ring` (the pad's focused widget, issue #31).
 
 Test: `cargo nextest run -p olr-ui` (`tests/store.rs`, `tests/state.rs`,
 `tests/flows.rs`: kittest flows by label and the local play's match
@@ -643,7 +676,7 @@ every widget in the window, a game selected and joined);
 `tests/ingame.rs`: the HUD layout (split screen's too, issue #30),
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
 `tests/hud_snapshots.rs`
-with `OLR_GPU_TESTS`).
+with `OLR_GPU_TESTS`; `tests/pad.rs`: the menus by pad, issue #31).
 - **Identity file** (`identity.ron`, plan 10): `Store::load_identity(fresh)`
   returns the install's 32-byte secret key, calling `fresh` (the caller's
   randomness) and writing `(version: 1, secret: "<64 hex>")` atomically

@@ -262,7 +262,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `Audio::set_volume` at once (`Shell::volume`). While the options capture
   an input, the app feeds `MenuData::capture` every window and gilrs event,
   and egui hears no key, nor while it is a mouse input (issue #25) a
-  mouse button or the wheel (`app::egui_hears`).
+  mouse button or the wheel (`app::egui_hears`). **Menus by pad** (issue
+  #31, olr-ui's `pad.rs`): every gilrs event also goes to
+  `MenuData::pad` (`handler.rs`), and a frame that draws the menus adds
+  `MenuData::pad_events` to egui's input before the pass (`App::frame`);
+  one that draws an editor, its Play or the skin or mod editor calls
+  `pad.forget()` instead.
 - **Mouse cursor** (the user's note, 2026-10-19): hidden while a match
   plays with nothing open (`app::cursor_hidden`: the game has the screen,
   not the editor's Play with its Stop button, not the in-game chat), by
