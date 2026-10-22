@@ -75,7 +75,8 @@ note §10).
   keyboards, then the pads first heard first), `get`, `latch_tick(seat)`,
   `held(seat)`. Pause: a heard pad's Start press (an edge) sets
   `take_pause()` (`InputState`'s, `Seats`' for any pad); Start presses no
-  action.
+  action. A menu driven by the game's keys (the join step, issue #32)
+  reads `actions_held()` (Dig's `DIG` bit included) and `start_held()`.
 - **Thresholds:** a trigger from 75 % of its travel, a stick from 60 %
   (OLX's `CInput`). Only gilrs's `ButtonChanged` (sent for every button)
   and `AxisChanged` are read; `Disconnected` releases that pad.

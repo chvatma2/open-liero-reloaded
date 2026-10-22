@@ -231,3 +231,22 @@ fn an_options_file_from_before_seats_is_repaired() {
     assert!(b.unreachable().is_empty());
     assert_eq!(b.keys, old.keys);
 }
+
+/// Issue #32: a menu driven by the game's keys reads each seat's actions
+/// held, Dig included, and whether its pad's Start is held; Start presses
+/// no action.
+#[test]
+fn a_seat_shows_its_actions_held_and_start() {
+    let mut s = Seats::default();
+    s.on_key(KeyCode::Numpad3, true);
+    let k2 = s.get(Seat::Keyboard2).unwrap();
+    assert_eq!(k2.actions_held(), Keys(olr_input::DIG));
+    assert_eq!(k2.held(), Keys(0), "the game's keys leave Dig out");
+    assert!(!k2.start_held());
+    s.on_pad(4, PadEvent::Button(Button::Start, 1.0));
+    let pad = s.get(Seat::Pad(4)).unwrap();
+    assert!(pad.start_held());
+    assert_eq!(pad.actions_held(), Keys(0));
+    s.on_pad(4, PadEvent::Button(Button::Start, 0.0));
+    assert!(!s.get(Seat::Pad(4)).unwrap().start_held());
+}

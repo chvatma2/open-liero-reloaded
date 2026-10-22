@@ -384,6 +384,17 @@ impl InputState {
         Keys(self.latch.held() & !DIG)
     }
 
+    /// The actions held now, Dig ([`DIG`]) included: what a menu driven
+    /// by the game's keys reads (the join step, issue #32).
+    pub fn actions_held(&self) -> Keys {
+        Keys(self.latch.held())
+    }
+
+    /// A heard pad's Start ([`PAD_PAUSE`]) is held now.
+    pub fn start_held(&self) -> bool {
+        self.pad.iter().any(|(_, i)| *i == PAD_PAUSE)
+    }
+
     /// The keys a stalled online game may repeat of the last ones latched
     /// (the network pump, `olr-game`): those [`InputState::held`], and in
     /// mouse mode the controller's own Up, Down and Strafe, without which
