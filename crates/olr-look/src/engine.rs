@@ -39,6 +39,51 @@ pub fn worm_floor_of(ambient: [u8; 3]) -> [f32; 3] {
     f.map(|v| v + t * (k - v))
 }
 
+/// The worm halo's reach past a living worm's silhouette on the level's
+/// back (depth 0), world pixels (issue #54: a soft dark outline on the
+/// background behind a worm, centred, with no direction).
+pub const WORM_HALO_RADIUS: f32 = 2.0;
+
+/// The worm halo's reach at [`WORM_HALO_FADE`], world pixels: a farther
+/// background takes a wider halo (issue #54).
+pub const WORM_HALO_RADIUS_MAX: f32 = 5.0;
+
+/// How much of the light the background right next to a worm loses on the
+/// level's back (issue #54); none at [`WORM_HALO_FADE`].
+pub const WORM_HALO_STRENGTH: f32 = 0.5;
+
+/// The depth (0-1, a distant layer's depth percent / 100) at which the
+/// worm halo ends (issue #54): none there or deeper.
+pub const WORM_HALO_FADE: f32 = 0.6;
+
+/// The worm halo's radius and strength on a background `depth` (0-1) back
+/// (issue #54): from [`WORM_HALO_RADIUS`] and [`WORM_HALO_STRENGTH`] at 0,
+/// linearly, to [`WORM_HALO_RADIUS_MAX`] and 0 at [`WORM_HALO_FADE`];
+/// `None` there or deeper (half an 8-bit step of tolerance: the renderer
+/// keeps the depth in a byte) and for a depth that is not a number.
+pub fn worm_halo_shape(depth: f32) -> Option<(f32, f32)> {
+    if depth.is_nan() || depth >= WORM_HALO_FADE - 0.5 / 255.0 {
+        return None;
+    }
+    let k = (depth / WORM_HALO_FADE).clamp(0.0, 1.0);
+    let radius = WORM_HALO_RADIUS + (WORM_HALO_RADIUS_MAX - WORM_HALO_RADIUS) * k;
+    Some((radius, WORM_HALO_STRENGTH * (1.0 - k)))
+}
+
+/// How much of its light a background pixel `d` world pixels from the
+/// nearest pixel of a living worm (centre to centre: 1 right next to it)
+/// loses, on a background `depth` back (issue #54): `s × (1 − x)²` with
+/// `x = (d − 1) / r` ([`worm_halo_shape`]'s `r` and `s`), 0 from `x = 1`
+/// on; the full `s` at `d` 1 or less. The renderer's composite is the same.
+pub fn worm_halo(d: f32, depth: f32) -> f32 {
+    let Some((r, s)) = worm_halo_shape(depth) else { return 0.0 };
+    if d.is_nan() {
+        return 0.0;
+    }
+    let x = ((d - 1.0) / r).max(0.0);
+    if x >= 1.0 { 0.0 } else { s * (1.0 - x) * (1.0 - x) }
+}
+
 fn flash(colour: [u8; 3], intensity: u16, reach: u16, ms: u32) -> Light {
     let key = |at_ms, level| Key { at_ms, level, colour: None };
     Light {

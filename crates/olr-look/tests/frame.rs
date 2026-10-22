@@ -309,6 +309,32 @@ fn solids_settings_are_bounded_and_off_without_a_look() {
     assert_eq!(f.occlusion, None, "none without a look");
 }
 
+/// Issue #54: the worm halo takes the full strength right next to a worm,
+/// fades as `(1 − x)²` to nothing `r` pixels past it, and is wider and
+/// fainter the deeper the background, none from the fade depth on.
+#[test]
+fn the_worm_halo_fades_out_and_back() {
+    let s = engine::WORM_HALO_STRENGTH;
+    let r = engine::WORM_HALO_RADIUS;
+    assert_eq!(engine::worm_halo(1.0, 0.0), s, "next to the silhouette");
+    assert_eq!(engine::worm_halo(0.0, 0.0), s, "inside it");
+    assert!(near(engine::worm_halo(2.0, 0.0), s * (1.0 - 1.0 / r).powi(2)));
+    assert_eq!(engine::worm_halo(r + 1.0, 0.0), 0.0, "r pixels past it");
+    let (r20, s20) = engine::worm_halo_shape(0.2).unwrap();
+    let (r50, s50) = engine::worm_halo_shape(0.5).unwrap();
+    assert!(r < r20 && r20 < r50 && r50 <= engine::WORM_HALO_RADIUS_MAX, "{r20} {r50}");
+    assert!(s > s20 && s20 > s50 && s50 > 0.0, "{s20} {s50}");
+    assert!(engine::worm_halo_shape(engine::WORM_HALO_FADE).is_none());
+    // A byte's rounding under the fade depth is the fade depth.
+    assert!(engine::worm_halo_shape(engine::WORM_HALO_FADE - 0.4 / 255.0).is_none());
+    assert!(engine::worm_halo_shape(0.9).is_none(), "a night sky at depth 90");
+    for bad in [f32::NAN, f32::INFINITY] {
+        assert_eq!(engine::worm_halo(bad, 0.0), 0.0);
+        assert_eq!(engine::worm_halo(1.0, bad), 0.0);
+    }
+    assert_eq!(engine::worm_halo(1.0, -1.0), s, "a depth below 0 is 0");
+}
+
 #[test]
 fn worm_floor_hues() {
     let k = olr_look::engine::WORM_FLOOR as f32 / 100.0;

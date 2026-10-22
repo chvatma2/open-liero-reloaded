@@ -120,6 +120,14 @@ own look. The simulation never sees it.
   20, a Bazooka's depth 15) and `heat_slice(heat, depth)`: the ball's
   circle at that `z`, radius `sqrt(R² − z²)`, amount `× (1 − z² / R²)`;
   `None` when `z ≥ R` or a value is not a positive number.
+  Issue #54, the worm halo (the renderer's composite darkens the
+  background round a living worm): `WORM_HALO_RADIUS` (2 world pixels
+  past the silhouette on the level's back), `WORM_HALO_RADIUS_MAX` (5, at
+  the fade depth), `WORM_HALO_STRENGTH` (0.5, the light lost right next
+  to the worm on the back), `WORM_HALO_FADE` (0.6: no halo at that depth
+  or deeper); `worm_halo_shape(depth)` (radius and strength, linear in
+  the depth; `None` from the fade depth less half a byte's step) and
+  `worm_halo(d, depth)` (`s × (1 − (d − 1)/r)²`, 0 past `r`).
 - **Surface materials** (`material.rs`, issue #37; spec
   `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`):
   `SurfaceMaterial { id, heat: Option<Heat> }` (`heats()`: a sensitivity
@@ -147,6 +155,7 @@ own look. The simulation never sees it.
   `explosion_heat_grows_with_the_damage_and_is_bounded` (issue #40),
   `mod_heat_scales_the_engines_capped_and_falls_back_to_the_mods` (issue #42),
   `distant_layers_take_the_balls_slice` (issue #41),
+  `the_worm_halo_fades_out_and_back` (issue #54),
   `worm_floor_hues`, `solids_settings_are_bounded_and_off_without_a_look`
   (the occlusion too, issue #10);
   plan 15c: `disc_calibration_matches_todays_light`,
