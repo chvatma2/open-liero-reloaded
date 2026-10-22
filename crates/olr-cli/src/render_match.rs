@@ -1,5 +1,6 @@
 //! `olr-cli render-match`: the last frame of a headless bot match (its
-//! local players', `--locals`, too) as a PNG,
+//! local players', `--locals`, too: two or more get a view each, split
+//! screen as the game lays it out on a 16:9 window, issue #30) as a PNG,
 //! drawn the way the game draws it (its look included), so agents can see
 //! a match on any packs, such as the look test level and mod (plan 15a
 //! Task 16), which no OLX trace can replay.
@@ -12,7 +13,7 @@ use olr_cli::runner::{Match, Options};
 use olr_cli::spec::MatchSpec;
 use olr_content::Content;
 use olr_present::{PresentSetup, Presentation, default_colour};
-use olr_render::{Offscreen, RenderSettings, UpscaleFilter};
+use olr_render::{Offscreen, RenderSettings, UpscaleFilter, ViewDraw};
 use olr_scene::{DrawList, Interpolation, SceneOptions, Viewport};
 
 /// Plays a headless bot match and renders its last tick offscreen.
@@ -38,6 +39,27 @@ pub struct Args {
     /// (the `reloaded` directory beside it) over it.
     #[arg(long, default_value = "content/packs")]
     content: PathBuf,
+}
+
+/// The seam between split screen's views, in world pixels: OLX's 4
+/// screen pixels at its 2 screen pixels a world pixel
+/// (`CClient.cpp:1653-1677`).
+const SEAM: i32 = 2;
+
+/// Where `n` views of `view` pixels go, `seam` pixels apart, and the
+/// picture's size: one alone; two stacked; three or four in a 2 × 2 grid,
+/// the empty quarter black (the game's arrangements on a 16:9 window,
+/// `olr_ui::hud::SplitLayout`).
+fn split_areas(n: usize, view: (u32, u32), seam: u32) -> (Vec<[u32; 4]>, (u32, u32)) {
+    let (cols, rows) = match n {
+        0 | 1 => (1, 1),
+        2 => (1, 2),
+        _ => (2, 2),
+    };
+    let areas = (0..n.max(1) as u32)
+        .map(|i| [(i % cols) * (view.0 + seam), (i / cols) * (view.1 + seam), view.0, view.1])
+        .collect();
+    (areas, (cols * view.0 + (cols - 1) * seam, rows * view.1 + (rows - 1) * seam))
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
@@ -71,28 +93,53 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     for i in 0..game.world().worms().len() {
         present.add_worm(&skin, default_colour(i), i < locals.max(1), i < locals);
     }
+    // Split screen (issue #30): a view on each local player's worm.
+    if locals >= 2 {
+        let ids: Vec<i32> = game.world().worms().iter().take(locals).map(|w| w.id).collect();
+        present.set_views(&ids);
+    }
     // `Match::ticks` counts settled ticks; this plays without settling.
     for _ in 0..args.spec.ticks {
         game.advance();
         present.on_tick(game.world(), game.events());
     }
-    let mut list = DrawList::new();
-    present.build(game.world(), 1.0, &mut list);
+    let mut lists: Vec<DrawList> = (0..present.views()).map(|_| DrawList::new()).collect();
+    present.build_views(game.world(), 1.0, &mut lists);
     let gpu = Offscreen::new()?;
     let mut renderer = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
     present.upload(&mut renderer);
     let px = |world: i32| ((world as f32 * args.scale).round() as u32).max(1);
-    let size = (px(viewport.width), px(viewport.height));
-    let img = gpu.render_lit_to_image(&mut renderer, &list, present.look(), size);
+    let view = (px(viewport.width), px(viewport.height));
+    let (areas, size) = split_areas(lists.len(), view, px(SEAM));
+    let draws: Vec<ViewDraw> =
+        lists.iter().zip(&areas).map(|(list, &area)| ViewDraw { list, area }).collect();
+    let img = gpu.render_views_to_image(&mut renderer, &draws, present.look(), size);
     std::fs::write(&args.out, olr_pack::image_io::encode_rgba(&img))
         .with_context(|| format!("writing {}", args.out.display()))?;
     let discs = present.look().map_or(0, |l| l.emitters.len());
+    let views = if draws.len() > 1 { format!(", {} views", draws.len()) } else { String::new() };
     println!(
-        "wrote {} ({}x{}, tick {}, {discs} glowing discs)",
+        "wrote {} ({}x{}{views}, tick {}, {discs} glowing discs)",
         args.out.display(),
         size.0,
         size.1,
         args.spec.ticks
     );
     Ok(true)
+}
+
+#[cfg(test)]
+mod tests {
+    /// One view alone; two stacked; three and four in a 2 × 2 grid, a seam
+    /// apart.
+    #[test]
+    fn views_are_laid_out_as_the_game_does_at_16_9() {
+        let v = (854, 384);
+        assert_eq!(super::split_areas(1, v, 4), (vec![[0, 0, 854, 384]], (854, 384)));
+        assert_eq!(super::split_areas(2, v, 4), (vec![[0, 0, 854, 384], [0, 388, 854, 384]], (854, 772)));
+        let (four, size) = super::split_areas(4, v, 4);
+        assert_eq!(size, (1712, 772));
+        assert_eq!(four, [[0, 0, 854, 384], [858, 0, 854, 384], [0, 388, 854, 384], [858, 388, 854, 384]]);
+        assert_eq!(super::split_areas(3, v, 4).1, size, "the fourth quarter empty");
+    }
 }

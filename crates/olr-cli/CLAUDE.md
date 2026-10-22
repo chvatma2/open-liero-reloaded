@@ -219,14 +219,18 @@ The headless command-line tool. Its commands:
   16 px). Tests:
   `tests/look_preview.rs` (`look_preview_writes_a_png` edits a copy of
   Dirt Level with `level look` and a glowing patch, `level group add` and
-  `level element set|glow`; `render_match_writes_a_png`).
+  `level element set|glow`; `render_match_writes_a_png`: also 2, 3 and 4 local players' views and the PNG's size, issue #30).
 - `olr-cli render-match <match flags> --out f.png [--scale 2] [--skin ID] [--packs DIR]... [--content DIR]`
   (plan 15a Task 16, `render_match.rs`) plays a headless bot match (the
   runner's `advance`, unsettled: no invariants, no recording) on
   `--content` with each `--packs` directory laid over it (the first wins;
   any packs, such as `fixtures/look/mods` and `fixtures/look/levels`,
   which no OLX trace replays) and draws its last tick as the game does,
-  look included; prints the number of glowing discs (play's lights). `--scale` is in (0, 16];
+  look included (issue #30: with `--locals` 2 or more a view on each
+  local player's worm, split screen as the game lays it out on a 16:9
+  window, `split_areas`: two stacked, three or four in a 2 × 2 grid with
+  the fourth quarter black, a seam of 2 world pixels, OLX's 4 screen
+  pixels; each view the solo view at `--scale`; it says how many views); prints the number of glowing discs (play's lights). `--scale` is in (0, 16];
   worms wear the default skin (issue #12: `--skin` a skin pack's id or
   OLX name, an error when unknown) and colours, worm 0 the local one; the
   packs' warnings print on stderr. The rocket golden (`look-rocket.png`)

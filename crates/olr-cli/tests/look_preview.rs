@@ -77,12 +77,20 @@ fn render_match_writes_a_png() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert!(stdout.contains("tick 30, 0 glowing discs"), "{stdout}");
     assert!(out.is_file());
-    // Issue #29: local players' worms (each with its crosshair) render too.
-    let o = Command::new(env!("CARGO_BIN_EXE_olr-cli"))
-        .args(["render-match", "--mod", "olx-classic", "--level", "olx-level-dirt-level", "--bots", "1"])
-        .args(["--locals", "2", "--seed", "1", "--ticks", "30", "--content", &content])
-        .args(["--out", out.to_str().unwrap()])
-        .output()
-        .unwrap();
-    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    // Issue #29: local players' worms (each with its crosshair) render too;
+    // issue #30: each in its own view, the solo view's size, a seam apart.
+    for (locals, size) in [(2, (854, 772)), (3, (1712, 772)), (4, (1712, 772))] {
+        let o = Command::new(env!("CARGO_BIN_EXE_olr-cli"))
+            .args(["render-match", "--mod", "olx-classic", "--level", "olx-level-dirt-level", "--bots", "1"])
+            .args(["--locals", &locals.to_string(), "--seed", "1", "--ticks", "30", "--content", &content])
+            .args(["--out", out.to_str().unwrap()])
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+        let stdout = String::from_utf8_lossy(&o.stdout);
+        assert!(stdout.contains(&format!("({}x{}, {locals} views,", size.0, size.1)), "{stdout}");
+        let png = std::fs::read(&out).unwrap();
+        let be = |at: usize| u32::from_be_bytes([png[at], png[at + 1], png[at + 2], png[at + 3]]);
+        assert_eq!((be(16), be(20)), size, "the PNG's size");
+    }
 }
