@@ -393,15 +393,23 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   build checks for updates: `cargo xtask dist` made it; else no notice and
   no option), `build_prerelease`, `flatpak` (`FlatpakChannel`: the branch
   is `beta`, the command switching branch), `offer` (`UpdateOffer`:
-  version, title, notes as plain text, the release page, `UpdateMethod::
+  version, title, `changes`: the `ReleaseNotes { heading, notes }` of
+  every release in the channel newer than the build up to this one,
+  newest first, and `left_out`, those over the caps (issue #22), the
+  release page, `UpdateMethod::
   {Portable, Portal, Command(cmd), Page}`) and `status` (`UpdateStatus::
   {Idle, Working { step, progress }, Installed, Failed(why),
   NotWritable(why), Outside { why, command }}`). Main shows "Update
   available: <version>" (`screens::update::NOTICE`) over its buttons, a
   primary-coloured button, only with an offer in an enabled build; it
   opens `Screen::Update` (in `MENUS`): the release's title, "Version X
-  (you have Y)", the page as a link, "Release notes" (selectable,
-  scrolling), and in the footer Update (`UiAction::InstallUpdate` →
+  (you have Y)", the page as a link, "Release notes" (`NOTES`;
+  selectable, scrolling; "No notes." for none), with more than one
+  release (`UpdateOffer::many`, those left out counted) "Changes since
+  your version" (`CHANGES`), each release's notes under its heading,
+  newest first, and with some left out a last line "N older releases are
+  not shown" (`not_shown`) with the page's link beside it, and in the
+  footer Update (`UiAction::InstallUpdate` →
   `AppCommand::InstallUpdate`, only on that screen; disabled while
   `Working`, with the step and a progress bar or a spinner below; a
   failure in red, Update retries), `INSTALLED` and "Restart now"
@@ -415,7 +423,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   changed = the build's own channel) → `SetIncludePrereleases(on)`
   (saved); under Flatpak the checkbox shows the branch's channel and
   toggling it shows the switch command instead (nothing saved). Tests:
-  `tests/update.rs`; `tests/layout.rs` checks the screen and its primary
+  `tests/update.rs` (issue #22: three releases' headings in order, the
+  "not shown" line and its link); `tests/layout.rs` checks the screen and its primary
   action.
 - **Replays** (`replays.rs`): `list(dir)` (the `.olrp` files, automatic
   saves newest first, each with `header_problem`: 6 bytes read),

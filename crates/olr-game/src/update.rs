@@ -30,7 +30,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, TryRecvError};
 use std::time::Duration;
 
-use olr_ui::update::{FlatpakChannel, UpdateData, UpdateMethod, UpdateOffer, UpdateStatus};
+use olr_ui::update::{FlatpakChannel, ReleaseNotes, UpdateData, UpdateMethod, UpdateOffer, UpdateStatus};
 use olr_update::flatpak::{FlatpakInfo, PortalProgress};
 use olr_update::install::{self, Plan, Recovery};
 use olr_update::manifest::{self, Sha256};
@@ -531,12 +531,23 @@ impl Updater {
             }
             data.status = UpdateStatus::Idle;
         }
-        data.offer = newest.as_ref().map(|r| UpdateOffer {
-            version: r.version_text().to_string(),
-            title: r.title.clone(),
-            notes: olr_update::notes::plain_text(&r.notes),
-            page: r.page.clone(),
-            method: self.install.method(channel),
+        data.offer = newest.as_ref().map(|r| {
+            // Every release taking this one skips, so a player who missed
+            // some builds reads all their changes (issue #22).
+            let changes =
+                olr_update::notes::changes(&release::since(&self.releases, &self.current, channel, r));
+            UpdateOffer {
+                version: r.version_text().to_string(),
+                title: r.title.clone(),
+                changes: changes
+                    .shown
+                    .into_iter()
+                    .map(|n| ReleaseNotes { heading: n.heading, notes: n.text })
+                    .collect(),
+                left_out: changes.left_out,
+                page: r.page.clone(),
+                method: self.install.method(channel),
+            }
         });
         self.offered = newest;
     }

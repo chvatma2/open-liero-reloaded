@@ -1,6 +1,7 @@
 //! The update notice and screen's data (issue #4), plain views the app
 //! fills: whether this build checks for updates at all, the release
-//! offered (its version, title and notes as text, how it installs), the
+//! offered (its version, title, how it installs, and the notes as text of
+//! every release it brings, issue #22), the
 //! install's progress, and under Flatpak the branch the game runs from.
 //! No networking here: the app (`olr-game`) checks GitHub, downloads,
 //! verifies and installs.
@@ -53,11 +54,31 @@ pub struct UpdateOffer {
     pub version: String,
     /// The release's title.
     pub title: String,
-    /// Its notes as plain text.
-    pub notes: String,
+    /// The notes of every release in the player's channel newer than
+    /// their build, up to this one, newest first (this one's alone when
+    /// it is the next).
+    pub changes: Vec<ReleaseNotes>,
+    /// The older ones of those not in `changes` (over its caps).
+    pub left_out: usize,
     /// Its page on GitHub (https).
     pub page: String,
     pub method: UpdateMethod,
+}
+
+/// One release's notes.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ReleaseNotes {
+    /// Its title and version: `0.2.0 development build 318 (v0.2.0-dev.318)`.
+    pub heading: String,
+    /// Its notes as plain text (empty: none).
+    pub notes: String,
+}
+
+impl UpdateOffer {
+    /// The notes cover more than the offered release.
+    pub fn many(&self) -> bool {
+        self.changes.len() + self.left_out > 1
+    }
 }
 
 /// How the offered release installs.

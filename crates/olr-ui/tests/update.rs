@@ -1,5 +1,6 @@
 //! Updates (issue #4): the main menu's notice only for an offered release
-//! in a build that checks, the Update screen's notes, Update, progress,
+//! in a build that checks, the Update screen's notes (every skipped
+//! release's, issue #22), Update, progress,
 //! errors, Restart and the release page, and the options' "Include
 //! pre-releases" (saved; under Flatpak the branch's, with the command
 //! switching it).
@@ -9,7 +10,7 @@ use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
 use olr_content::Catalog;
 use olr_ui::screens::{self, MenuData};
-use olr_ui::update::{FlatpakChannel, UpdateData, UpdateMethod, UpdateOffer, UpdateStatus};
+use olr_ui::update::{FlatpakChannel, ReleaseNotes, UpdateData, UpdateMethod, UpdateOffer, UpdateStatus};
 use olr_ui::{AppCommand, Profiles, Screen, Settings, UiAction, UiState};
 
 struct App {
@@ -22,7 +23,11 @@ pub fn offer(method: UpdateMethod) -> UpdateOffer {
     UpdateOffer {
         version: "0.2.1".into(),
         title: "Open Liero Reloaded 0.2.1".into(),
-        notes: "What's new\n\n• Update from the main menu".into(),
+        changes: vec![ReleaseNotes {
+            heading: "Open Liero Reloaded 0.2.1 (v0.2.1)".into(),
+            notes: "What's new\n\n• Update from the main menu".into(),
+        }],
+        left_out: 0,
         page: "https://github.com/o/r/releases/tag/v0.2.1".into(),
         method,
     }
@@ -79,6 +84,9 @@ fn the_notice_shows_only_an_offer_in_a_checking_build() {
     h.get_by_label("Version 0.2.1 (you have 0.2.0)");
     h.get_by_label_contains("Update from the main menu");
     h.get_by_label("Release notes");
+    // One release's notes need no heading of their own.
+    assert!(h.query_by_label("Open Liero Reloaded 0.2.1 (v0.2.1)").is_none());
+    assert!(h.query_by_label("Changes since your version").is_none());
     // Not forced: Back returns to the menu.
     h.get_by_label("Back").click();
     settle(&mut h);
@@ -126,6 +134,73 @@ fn update_installs_then_offers_a_restart() {
     h.get_by_label("Restart to finish the update to 0.2.1").click();
     settle(&mut h);
     assert_eq!(h.state().ui.screen(), Screen::Update);
+}
+
+/// Three development builds skipped, newest first.
+fn three_builds() -> UpdateOffer {
+    let notes = |n: u32, text: &str| ReleaseNotes {
+        heading: format!("0.2.0 development build {n} (v0.2.0-dev.{n})"),
+        notes: text.into(),
+    };
+    UpdateOffer {
+        version: "0.2.0-dev.320".into(),
+        title: "0.2.0 development build 320".into(),
+        changes: vec![notes(320, "• Faster menus"), notes(319, ""), notes(318, "• The mod editor")],
+        page: "https://github.com/o/r/releases/tag/v0.2.0-dev.320".into(),
+        ..offer(UpdateMethod::Portable)
+    }
+}
+
+#[test]
+fn every_skipped_release_shows_under_its_heading_newest_first() {
+    let mut h = harness(enabled(Some(three_builds())));
+    h.state_mut().ui.update(UiAction::Open(Screen::Update));
+    settle(&mut h);
+    h.get_by_label("Changes since your version");
+    assert!(h.query_by_label("Release notes").is_none());
+    let top = |h: &Harness<'static, App>, label: &str| h.get_by_label(label).rect().top();
+    let (a, b, c) = (
+        top(&h, "0.2.0 development build 320 (v0.2.0-dev.320)"),
+        top(&h, "0.2.0 development build 319 (v0.2.0-dev.319)"),
+        top(&h, "0.2.0 development build 318 (v0.2.0-dev.318)"),
+    );
+    assert!(a < b && b < c, "{a} {b} {c}");
+    // Each its notes below its heading; none said so.
+    let faster = top(&h, "• Faster menus");
+    let none = top(&h, "No notes.");
+    let editor = top(&h, "• The mod editor");
+    assert!(a < faster && faster < b && b < none && none < c && c < editor);
+    assert!(h.query_by_label_contains("not shown").is_none());
+}
+
+#[test]
+fn releases_over_the_caps_are_counted_with_the_release_page() {
+    let mut offer = three_builds();
+    offer.left_out = 7;
+    let mut h = harness(enabled(Some(offer)));
+    h.state_mut().ui.update(UiAction::Open(Screen::Update));
+    settle(&mut h);
+    let line = h.get_by_label("7 older releases are not shown").rect();
+    // The title's link, and the one beside the line.
+    let link = h.get_all_by_label("Open the release page").last().unwrap();
+    assert!((link.rect().center().y - line.center().y).abs() < 4.0, "beside the line");
+    link.click();
+    settle(&mut h);
+    assert_eq!(
+        h.state().commands,
+        [AppCommand::OpenUrl("https://github.com/o/r/releases/tag/v0.2.0-dev.320".into())]
+    );
+    assert_eq!(olr_ui::screens::update::not_shown(1), "1 older release is not shown");
+    // One release shown and others left out: still the changes.
+    let mut offer = three_builds();
+    offer.changes.truncate(1);
+    offer.left_out = 2;
+    let mut h = harness(enabled(Some(offer)));
+    h.state_mut().ui.update(UiAction::Open(Screen::Update));
+    settle(&mut h);
+    h.get_by_label("Changes since your version");
+    h.get_by_label("0.2.0 development build 320 (v0.2.0-dev.320)");
+    h.get_by_label("2 older releases are not shown");
 }
 
 #[test]

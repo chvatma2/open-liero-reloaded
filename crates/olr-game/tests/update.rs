@@ -181,8 +181,9 @@ fn release_zip(version: &str) -> Vec<u8> {
     z.finish().unwrap().into_inner()
 }
 
-/// The list GitHub would give: a final release and the newer pre-release
-/// `NEW` with its signed zip (the signature `sig` as given).
+/// The list GitHub would give: a final release, a pre-release between
+/// `OLD` and `NEW`, and the newer pre-release `NEW` with its signed zip
+/// (the signature `sig` as given).
 fn publish(routes: &Routes, zip: &[u8], sig: &str) {
     let zip_name = release::windows_zip_name(NEW);
     let list = format!(
@@ -191,6 +192,8 @@ fn publish(routes: &Routes, zip: &[u8], sig: &str) {
              "assets": [
                {{"name": "{zip_name}", "browser_download_url": "https://github.example/dl/zip", "size": {}}},
                {{"name": "{zip_name}.sig", "browser_download_url": "https://github.example/dl/sig", "size": 1}}]}},
+            {{"tag_name": "v0.2.0-dev.320.0aaaaaa", "name": "Dev build 320", "body": "- Fixes",
+              "prerelease": true, "html_url": "https://github.example/o/r/releases/tag/v0.2.0-dev.320.0aaaaaa"}},
             {{"tag_name": "v0.1.0", "name": "Open Liero Reloaded 0.1.0", "prerelease": false,
               "html_url": "https://github.example/o/r/releases/tag/v0.1.0"}}]"###,
         zip.len()
@@ -406,7 +409,17 @@ fn the_menus_offer_and_install_an_update() {
     poll_until(&mut sh, "offer", |d| d.offer.is_some());
     let offer = sh.data.update.offer.clone().unwrap();
     assert_eq!((offer.version.as_str(), offer.title.as_str()), (NEW, "Dev build 330"));
-    assert_eq!(offer.notes, "New\n• Updates from the menu");
+    // Every build skipped, newest first, the running one not.
+    let changes: Vec<(&str, &str)> =
+        offer.changes.iter().map(|n| (n.heading.as_str(), n.notes.as_str())).collect();
+    assert_eq!(
+        changes,
+        [
+            (format!("Dev build 330 (v{NEW})").as_str(), "New\n• Updates from the menu"),
+            ("Dev build 320 (v0.2.0-dev.320.0aaaaaa)", "• Fixes")
+        ]
+    );
+    assert_eq!(offer.left_out, 0);
     assert_eq!(offer.method, UpdateMethod::Portable);
     // Stable: v0.1.0 only, older than this build: nothing (no downgrade).
     sh.act(UiAction::SetIncludePrereleases(false));

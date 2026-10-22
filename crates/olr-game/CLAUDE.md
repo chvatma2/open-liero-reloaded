@@ -91,7 +91,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `Updater::poll` (every `Shell::poll`): the list, then the offer for the
   setting (`olr_update::channel`: under Flatpak the branch's; made again
   when the setting changes, never while installing or once installed),
-  its notes `notes::plain_text`, its `UpdateMethod` by `Install::detect`
+  the notes of every release it skips (issue #22: `release::since` of
+  the list already fetched, then `notes::changes`' headings, texts and
+  `left_out` into `UpdateOffer::changes`), its `UpdateMethod` by `Install::detect`
   (`Portable(folder of olr.exe)` on Windows, `Flatpak(/.flatpak-info)`:
   `Portal` on `stable`/`beta`, `Command(switch_command)` on an older
   bundle's `master`; else `Page`). `AppCommand::InstallUpdate` →
@@ -129,7 +131,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   another key's, a changed zip, an older release's signature, none, a cut
   download refused with the folder unchanged; a read-only folder; the
   fake portal's outcomes; the shell: a local build shows nothing, the
-  offer following Include pre-releases (no downgrade), Update off the UI
+  offer following Include pre-releases (no downgrade) with the notes of
+  both builds skipped, newest first, Update off the UI
   thread to Installed; an unreachable GitHub shows nothing), unit tests
   (`releases_url`, each install's method).
 - **Bug reports** (`report.rs`, `http.rs`, issue #3; the screen
