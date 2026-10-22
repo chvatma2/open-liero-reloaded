@@ -5,12 +5,18 @@
 // graded; a worm's pixel takes the light where it is, as a rope's does
 // (#53: no lit side); a marker shows its albedo. Opaque rock and dirt show
 // at most their art (#1). A distant layer's pixel takes less of the light
-// the farther it is (issue #11). Linear light, sRGB bytes in and out.
+// the farther it is (issue #11). The background round a living worm takes
+// less light, the worm halo (issue #54), by how far back it lies. Linear
+// light, sRGB bytes in and out.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(0) @binding(1) var albedo_tex: texture_2d<f32>;
 @group(0) @binding(2) var shade_tex: texture_2d<f32>;
 @group(0) @binding(3) var light_tex: texture_2d<f32>;
+// The occluder map (plan 15b): the living worms' bodies, one texel per
+// world pixel over the light grid, each its worm (index + 1), 0 none; the
+// worm halo reads it (issue #54).
+@group(0) @binding(4) var occluder_tex: texture_2d<u32>;
 // The bloom (plan 15c): the light above 1, spread; added before the grade
 // at `look.mode.w`'s strength.
 @group(0) @binding(5) var bloom_tex: texture_2d<f32>;
@@ -18,8 +24,8 @@
 @group(0) @binding(6) var solid_tex: texture_2d<u32>;
 
 // The view's worm boxes (issue #35): `count.x` boxes, each `[x0, y0, x1,
-// y1)` in light-grid texels (the occluder map's), holding every worm texel.
-// Bound for #54's halo; read by nothing yet (#53).
+// y1)` in light-grid texels (the occluder map's), holding every worm texel:
+// the worm halo searches the map only near one (issue #54).
 struct WormBoxes {
     count: vec4<i32>,
     boxes: array<vec4<i32>, WORM_BOXES>,
@@ -83,6 +89,64 @@ fn bloom_at(g: vec2<f32>) -> vec3<f32> {
     return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
 }
 
+// Whether occluder-map texel `p` lies within `n` texels of a worm box: no
+// worm texel lies farther (issue #35).
+fn near_box(p: vec2<i32>, n: i32) -> bool {
+    for (var i = 0; i < min(worm_boxes.count.x, WORM_BOXES); i++) {
+        let b = worm_boxes.boxes[i];
+        if all(p >= b.xy - vec2<i32>(n)) && all(p < b.zw + vec2<i32>(n)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// How much of its light background world pixel `w`, `depth` (0-1) back,
+// loses to the worm halo (issue #54; `olr_look::engine::worm_halo`): with
+// `d` the distance from its centre to the nearest living worm pixel's (1
+// right next to one) and `x = (d - 1) / r`, `s (1 - x)^2`, nothing from
+// `x = 1` on; `r` and `s` go linearly from WORM_HALO_RADIUS and
+// WORM_HALO_STRENGTH at depth 0 to WORM_HALO_RADIUS_MAX and 0 at
+// WORM_HALO_FADE (half a byte's step of tolerance: the depth is 8-bit),
+// none there or deeper. The same for every texel of a world pixel: never
+// finer than the art. Overlapping halos take the nearest worm, the
+// strongest, never the sum.
+fn worm_halo(w: vec2<i32>, depth: f32) -> f32 {
+    if depth >= WORM_HALO_FADE - 0.5 / 255.0 {
+        return 0.0;
+    }
+    let k = clamp(depth / WORM_HALO_FADE, 0.0, 1.0);
+    let r = WORM_HALO_RADIUS + (WORM_HALO_RADIUS_MAX - WORM_HALO_RADIUS) * k;
+    let s = WORM_HALO_STRENGTH * (1.0 - k) * look.distant.y;
+    if s <= 0.0 {
+        return 0.0;
+    }
+    // d < r + 1 only within ceil(r) pixels each way: a window of at most
+    // (2 WORM_HALO_RADIUS_MAX + 1)^2, searched only near a worm box.
+    let n = min(i32(ceil(r)), i32(ceil(WORM_HALO_RADIUS_MAX)));
+    if !near_box(w - vec2<i32>(look.occluders.xy), n) {
+        return 0.0;
+    }
+    let none = 2 * n * n + 1;
+    var best = none;
+    for (var dy = -n; dy <= n; dy++) {
+        for (var dx = -n; dx <= n; dx++) {
+            let d2 = dx * dx + dy * dy;
+            if d2 < best && worm_in(occluder_tex, look.occluders.xy, w + vec2<i32>(dx, dy)) != 0u {
+                best = d2;
+            }
+        }
+    }
+    if best >= none {
+        return 0.0;
+    }
+    let x = max((sqrt(f32(best)) - 1.0) / r, 0.0);
+    if x >= 1.0 {
+        return 0.0;
+    }
+    return s * (1.0 - x) * (1.0 - x);
+}
+
 @fragment
 fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let t = vec2<i32>(p.xy);
@@ -120,7 +184,8 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     var glare = look.mode.w;
     // So does opaque rock or dirt (#1: under a bright sky, rock soaked
     // above 1 and blooming read oversaturated, brighter than its art).
-    if shade.x > 0.0 || solid_px(w) {
+    let solid = solid_px(w);
+    if shade.x > 0.0 || solid {
         cap = min(cap, vec3<f32>(1.0));
         glare = 0.0;
     }
@@ -132,7 +197,25 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         here = base + (here - base) * (1.0 - d);
         glare = glare * (1.0 - d);
     }
-    let l = max(max(min(here, cap), vec3<f32>(shade.x)), least);
+    // The worm halo (issue #54) on the background only: the terrain's
+    // texels (its backing too) and a distant layer's, tagged in the marker
+    // channel (a see-through sprite over them blends the tag down: little
+    // or no halo); never rock or dirt, a glowing texel, a sprite or a
+    // worm. It darkens the light the texel takes and the bloom on it, not
+    // its self-light, floor or grade.
+    var lit = min(here, cap);
+    if shade.y > 0.125 && shade.y < 0.375 && shade.x <= 0.0 && !solid {
+        var depth = 0.0;
+        if look.distant.x > 0.5 {
+            depth = 1.0 - shade.w;
+        }
+        let halo = worm_halo(w, depth);
+        if halo > 0.0 {
+            lit = lit * (1.0 - halo);
+            glare = glare * (1.0 - halo);
+        }
+    }
+    let l = max(max(lit, vec3<f32>(shade.x)), least);
     var c = (a * l + bloom_at(g) * glare) * look.grade.x;
     c = (c - vec3<f32>(0.5)) * look.grade.y + vec3<f32>(0.5);
     let luma = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));

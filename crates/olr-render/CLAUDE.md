@@ -114,8 +114,13 @@ on screen or offscreen.
   bloom strength, `solid.w` the ambient occlusion's strength (0-1, 0
   none) and `worm_floor.w` its reach (issue #10); non-finite values
   become 0) and play's discs into an
-  instance buffer (`pack_emitters`). `LIGHT_PAD`, `MAX_SOAK`,
-  `BLOOM_RADIUS` and `OCCLUSION_PAD` are prepended to the shaders from Rust. **Plan 15c**
+  instance buffer (`pack_emitters`); issue #54: `distant.y` the worm
+  halo's strength scale (1; 0 with `set_worm_halo(false)`, tests) and
+  `distant.z` the background tag (0.25; 0 with
+  `set_background_tag(false)`, tests). `LIGHT_PAD`, `MAX_SOAK`,
+  `BLOOM_RADIUS`, `OCCLUSION_PAD`, `WORM_BOXES` and the worm halo's
+  `WORM_HALO_RADIUS`, `WORM_HALO_RADIUS_MAX`, `WORM_HALO_STRENGTH` and
+  `WORM_HALO_FADE` (`olr_look::engine`) are prepended to the shaders from Rust. **Plan 15c**
   (spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`): the
   glow light is the only light model (no placed lights, no shadow maps).
   A lit frame's passes, in order (`pass.rs`'s `draw`):
@@ -125,18 +130,27 @@ on screen or offscreen.
     item's from its `olr_scene::Shade` (three floats of the instance,
     `INSTANCE_FLOATS` 15; the floor kind 0, 1 or 2 there); the lit terrain's
     self-light is its glow × its group's self-light scale (1 for no group:
-    such a pixel glows, but casts nothing).
+    such a pixel glows, but casts nothing). **The background tag** (issue
+    #54): an opaque `Shade::LIT` sprite writes the terrain's shade, so
+    `terrain_lit` (its opaque backing too) and `fs_distant_lit` write
+    0.25 in the marker channel (`LookGlobals.distant.z`), which no other
+    pipeline writes and which changes no other byte
+    (`the_tag_changes_no_other_byte`); the composite reads a texel as
+    background when the channel lies in (0.125, 0.375) and as a marker
+    from 0.5, as before. A see-through sprite over the background blends
+    the tag down (little or no halo there). The floor kind is left alone
+    (0.25 there would round to 64/255, the solid floor).
   - **Occluders** (`occluder.wgsl`, plan 15b): the list's `occluders` (the
     living worms' bodies, `frame.rs`'s `occluder_instances`) drawn into an
     `R8Uint` occluder map, one texel per world pixel over the light grid
     (`LookGlobals.occluders`: origin and size), each opaque texel the worm's
     index + 1; cleared every lit frame. `worm_in` (`common.wgsl`) reads it.
-    No pass reads it since #53 (the maintainer's call, 2026-10-23: worm
+    No light pass reads it since #53 (the maintainer's call, 2026-10-23: worm
     shading and worms blocking light caused more glitches than they were
     worth): worms take no part in the light, which is byte for byte the
     same with or without them (`worms_change_no_light`: one view and two,
-    bounce on). It and the view's worm boxes (Soak's `look::worm_boxes`,
-    bound to the composite) are kept for #54's halo.
+    bounce on). The composite's worm halo reads it (binding 4) near the
+    view's worm boxes (Soak's `look::worm_boxes`, binding 7; issue #54).
   - **Glow light** (`gi.rs`, `gi_*.wgsl`, Task 12; plan 15c): radiance
     cascades over the whole level, fixed to the world (never
     camera-dependent): play's discs (`gi_dynamic.wgsl`: the first
@@ -212,8 +226,8 @@ on screen or offscreen.
     `LitTarget::worm_boxes` uniform (issue #35: `look::worm_boxes` of its
     occluder quads, a texel to spare, at most `WORM_BOXES` 32, the rest
     joined into the last; `worm_boxes_hold_every_quad`) is still written
-    each frame and bound to the composite (binding 7) for #54's halo; no
-    pass reads it yet. With a soak of 0
+    each frame and bound to the composite (binding 7), where the worm halo
+    reads it (issue #54). With a soak of 0
     the across pass, which would give back the sum texel for texel, does
     not run: the down pass reads the sum as its source (issue #35,
     `LitTarget::soak_binds[0]`, the across pass's;
@@ -251,9 +265,38 @@ on screen or offscreen.
     plan 15b's lit side is gone; `a_worm_takes_the_light_where_it_stands`,
     `a_rope_pixel_has_no_side`), at least the worm floor
     (`a_worm_against_a_wall_keeps_its_floor`,
-    `overlapping_worms_in_the_dark_keep_their_floor`); the composite reads
-    no occluder map (binding 7 is the view's worm boxes, unread until #54);
-    graded (exposure, contrast, saturation, tint) in linear light; a
+    `overlapping_worms_in_the_dark_keep_their_floor`).
+    **The worm halo** (issue #54, `worm_halo` in `composite.wgsl`, the CPU
+    twin `olr_look::engine::worm_halo`): a soft dark outline on the
+    background behind a living worm, centred (no direction: it cannot
+    drift, pop or flip), only in lit frames. It falls only on tagged
+    background texels (above) whose world pixel is not rock or dirt
+    (`solid_px`) and that do not glow (self-light 0: a lamp on the back
+    wall stays lit); never on a sprite or the worm. With `d` the distance
+    from the world pixel's centre to the nearest occluder-map texel's of
+    any worm (1 right next to the silhouette) and `x = (d − 1) / r`, the
+    light the texel takes (its ambient and glow light, capped, and the
+    bloom on it; not its self-light, floor or grade) is scaled by `1 − s ×
+    (1 − x)²`, nothing from `x = 1`: the same for every texel of a world
+    pixel. `r` and `s` go linearly with the background's depth (0 for the
+    level's back; `1 − shade.w` for a distant layer, read only with
+    `distant.x`) from `WORM_HALO_RADIUS` 2 and `WORM_HALO_STRENGTH` 0.5 to
+    `WORM_HALO_RADIUS_MAX` 5 and 0 at `WORM_HALO_FADE` 0.6 (half a byte's
+    step of tolerance), none deeper (a night sky at depth 90). A texel
+    outside every worm box grown by `ceil(r)` searches nothing; the
+    window is at most 11 × 11. Overlapping halos take the nearest worm
+    (the strongest, never the sum); each view draws its own from its own
+    occluder map, which covers its light grid, so a worm just outside a
+    view darkens its edge as a wider view shows it. The light grid is
+    untouched (`light_is_camera_independent`, `worms_change_no_light`
+    hold). Tests (GPU, `tests/gpu/halo.rs`):
+    `the_halo_darkens_the_back_round_a_worm`,
+    `a_deeper_layer_takes_a_wider_fainter_halo`,
+    `the_halo_spares_rock_glow_and_sprites`,
+    `overlapping_halos_take_the_strongest`, `the_halo_is_steady`,
+    `an_off_view_worm_halos_the_view_edge`,
+    `the_tag_changes_no_other_byte`.
+    Graded (exposure, contrast, saturation, tint) in linear light; a
     marker shows its albedo. View modes: lit, full bright (the albedo),
     light only (white albedo). The upscale pass reads the lit target.
   `LIGHT_PAD` is `MAX_SOAK` (12) + 4 + `BLOOM_RADIUS` (12): neither the
@@ -498,6 +541,7 @@ floor, softness, glow light, clear solids, discs, bounce, flicker, glare,
 the disc cap, ambient occlusion, GL, several views (issue #26); issue #12:
 `a_double_skin_draws_at_four_texels_per_world_pixel`,
 `a_glowing_skin_pixel_is_bright_in_the_dark`,
-`a_skin_light_lights_the_air_and_a_wall_stops_it`; issue #39: heat, `tests/gpu/heat.rs`) and goldens need
+`a_skin_light_lights_the_air_and_a_wall_stops_it`; issue #39: heat, `tests/gpu/heat.rs`; issue #54: the
+worm halo, `tests/gpu/halo.rs`) and goldens need
 `OLR_GPU_TESTS=1`; `cargo xtask full` sets it and runs them, skipping with a
 notice when no adapter opens (`cargo run -p olr-render --example adapter`).

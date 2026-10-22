@@ -7,6 +7,8 @@ use olr_render::{Offscreen, OffscreenOptions, Probe, RenderSettings, Renderer, U
 use olr_scene::{AtlasId, AtlasImage, DrawList, Item, Layer, Line, Rect, Sprite, View};
 use olr_terrain::{ColorEdit, ColorMap, Stamp, Terrain, ThemeArt};
 
+#[path = "gpu/halo.rs"]
+mod halo;
 #[path = "gpu/heat.rs"]
 mod heat;
 
@@ -1114,6 +1116,20 @@ fn push_bodies(l: &mut DrawList, bodies: &[Body]) {
     }
 }
 
+/// Each body as a white `Shade::WORM` sprite (plan 15b), the worm drawn
+/// over its occluder.
+fn push_worm_sprites(l: &mut DrawList, bodies: &[Body]) {
+    for &([x, y, w, h], _) in bodies {
+        let src = Rect { x: 0, y: 0, w: w as u32, h: h as u32 };
+        let tint = Rgba::rgb(255, 255, 255);
+        let shade = olr_scene::Shade::WORM;
+        l.sprite(
+            Layer::Worms,
+            Sprite { atlas: AtlasId(0), src, pos: [x, y], size: [w, h], flip: false, tint, shade },
+        );
+    }
+}
+
 /// A dark room's frame (ambient 0.05, worm floor 0.2) with each body drawn
 /// both as an occluder and as a white `Shade::WORM` sprite (plan 15b), at
 /// two output pixels per world pixel: world pixel (x, y) is output pixel
@@ -1138,20 +1154,7 @@ fn lit_worms(
     let mut l = list(View { x: 0.0, y: 0.0, w: w as f32, h: h as f32 });
     l.map = (w, h);
     push_bodies(&mut l, bodies);
-    for &([x, y, bw, bh], _) in bodies {
-        l.sprite(
-            Layer::Worms,
-            Sprite {
-                atlas: AtlasId(0),
-                src: Rect { x: 0, y: 0, w: bw as u32, h: bh as u32 },
-                pos: [x, y],
-                size: [bw, bh],
-                flip: false,
-                tint: Rgba::rgb(255, 255, 255),
-                shade: olr_scene::Shade::WORM,
-            },
-        );
-    }
+    push_worm_sprites(&mut l, bodies);
     more(&mut l);
     let img = gpu.render_lit_to_image(&mut r, &l, Some(&look), (2 * w, 2 * h));
     (r, img, look)
@@ -1283,14 +1286,7 @@ fn scene_light(gpu: &Offscreen, views: &[(View, [u32; 4])], bodies: &[Body]) -> 
             let mut l = list(view);
             l.map = (160, 60);
             push_bodies(&mut l, bodies);
-            for &([x, y, w, h], _) in bodies {
-                let src = Rect { x: 0, y: 0, w: w as u32, h: h as u32 };
-                let tint = Rgba::rgb(255, 255, 255);
-                let shade = olr_scene::Shade::WORM;
-                let sprite =
-                    Sprite { atlas: AtlasId(0), src, pos: [x, y], size: [w, h], flip: false, tint, shade };
-                l.sprite(Layer::Worms, sprite);
-            }
+            push_worm_sprites(&mut l, bodies);
             l
         })
         .collect();

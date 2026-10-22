@@ -1,7 +1,10 @@
 // The world pass with a look (plan 15a Task 9): the same quads as
 // world.wgsl into two targets, the albedo and its shade (self-light,
 // marker), blended alike. The terrain's self-light is its glow, or its
-// heat's (issue #39: group 3, `heat_reader.wgsl`).
+// heat's (issue #39: group 3, `heat_reader.wgsl`). The terrain (its opaque
+// backing too) and a distant layer write the background tag in the marker
+// channel (issue #54: `look.distant.z`, 0.25; a marker writes 1, a sprite
+// 0), which the composite's worm halo falls on.
 
 struct Globals {
     target_size: vec2<f32>,
@@ -33,7 +36,8 @@ struct QuadOut {
 
 struct LitOut {
     @location(0) colour: vec4<f32>,
-    // self-light, marker, solid floor, alpha
+    // self-light, marker (the background tag on the background, #54),
+    // floor kind, alpha
     @location(1) shade: vec4<f32>,
 };
 
@@ -101,7 +105,7 @@ fn terrain_lit(in: QuadOut, backing: bool) -> LitOut {
     }
     var out: LitOut;
     out.colour = c;
-    out.shade = vec4<f32>(self_light, 0.0, 0.0, 1.0);
+    out.shade = vec4<f32>(self_light, look.distant.z, 0.0, 1.0);
     return out;
 }
 
@@ -136,6 +140,6 @@ fn fs_distant_lit(in: QuadOut) -> LitOut {
     }
     var out: LitOut;
     out.colour = vec4<f32>(c.rgb, 1.0);
-    out.shade = vec4<f32>(self_light, 0.0, 0.0, 1.0 - clamp(in.shade.x, 0.0, 0.99));
+    out.shade = vec4<f32>(self_light, look.distant.z, 0.0, 1.0 - clamp(in.shade.x, 0.0, 0.99));
     return out;
 }

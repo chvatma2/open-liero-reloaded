@@ -13,13 +13,21 @@ use crate::frame::{WorldFrame, look_texture_sizes};
 /// The shared WGSL of every look pass.
 const COMMON: &str = include_str!("../look/common.wgsl");
 
-/// [`COMMON`] after the Rust constants the shaders share.
+/// [`COMMON`] after the Rust constants the shaders share (issue #54: the
+/// worm halo's, `olr_look::engine`'s).
 pub(super) fn common() -> String {
+    use olr_look::engine::{WORM_HALO_FADE, WORM_HALO_RADIUS, WORM_HALO_RADIUS_MAX, WORM_HALO_STRENGTH};
     format!(
-        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\nconst OCCLUSION_PAD: i32 = {OCCLUSION_PAD};\nconst WORM_BOXES: i32 = {WORM_BOXES};\n{COMMON}",
+        "const LIGHT_PAD: f32 = {LIGHT_PAD}.0;\nconst MAX_SOAK: i32 = {};\nconst BLOOM_RADIUS: i32 = {BLOOM_RADIUS};\nconst OCCLUSION_PAD: i32 = {OCCLUSION_PAD};\nconst WORM_BOXES: i32 = {WORM_BOXES};\nconst WORM_HALO_RADIUS: f32 = {WORM_HALO_RADIUS:?};\nconst WORM_HALO_RADIUS_MAX: f32 = {WORM_HALO_RADIUS_MAX:?};\nconst WORM_HALO_STRENGTH: f32 = {WORM_HALO_STRENGTH:?};\nconst WORM_HALO_FADE: f32 = {WORM_HALO_FADE:?};\n{COMMON}",
         olr_look::MAX_SOAK
     )
 }
+
+/// The background tag (issue #54): the shade's marker channel of the lit
+/// terrain (its opaque backing too) and of a distant layer, so the
+/// composite tells the background from an opaque sprite, whose shade is
+/// otherwise the terrain's. A marker writes 1, anything else 0.
+const BACKGROUND_TAG: f32 = 0.25;
 
 /// Groups in the globals (a group map value is one byte, 0 none).
 pub(super) const GROUPS: usize = 255;
@@ -146,12 +154,13 @@ pub(super) struct LitTarget {
     /// Reading 0 (the across soak's, and with no soak the down soak's:
     /// issue #35, no across pass) and reading 1 (the down soak's).
     pub(super) soak_binds: [wgpu::BindGroup; 2],
-    /// The view's worm boxes ([`WormBoxes`], issue #35), bound to the
-    /// composite for #54's halo; read by no pass yet (#53).
+    /// The view's worm boxes ([`WormBoxes`], issue #35): where the
+    /// composite's worm halo searches the occluder map (issue #54).
     pub(super) worm_boxes: wgpu::Buffer,
     pub(super) composite_bind: wgpu::BindGroup,
     /// The occluder map (plan 15b): one texel per world pixel of the grid,
-    /// the living worms' bodies; it takes no part in the light (#53).
+    /// the living worms' bodies; it takes no part in the light (#53), the
+    /// composite's worm halo reads it (issue #54).
     pub(super) occluder_view: wgpu::TextureView,
     /// The occluder pass's group 0: [`Self::globals`].
     pub(super) occluder_globals_bind: wgpu::BindGroup,
@@ -200,6 +209,12 @@ pub(super) struct LookState {
     pub(super) emitter_count: u32,
     /// Whether the bloom is added (tests turn it off: `Renderer::set_bloom`).
     pub(super) bloom: bool,
+    /// Whether the worm halo darkens the background (issue #54; tests turn
+    /// it off: `Renderer::set_worm_halo`).
+    pub(super) halo: bool,
+    /// Whether the background is tagged (issue #54; tests turn it off:
+    /// `Renderer::set_background_tag`, part 1's shade bytes).
+    pub(super) tag: bool,
     /// The terrain opaque under a level's distant layers, and the layers
     /// (issue #11).
     pub(super) backing_pipeline: wgpu::RenderPipeline,
@@ -302,8 +317,8 @@ pub(super) const WORM_BOXES: usize = 32;
 pub(super) type WormBoxes = [[i32; 4]; 1 + WORM_BOXES];
 
 /// The boxes of a view's occluder quads (`occluders`, their `dst` in the
-/// occluder map's texels, which are the light grid's; issue #35, for #54's
-/// halo since #53): each `[x0, y0, x1, y1)`, a texel wider every way than
+/// occluder map's texels, which are the light grid's; issue #35, the worm
+/// halo's since #54): each `[x0, y0, x1, y1)`, a texel wider every way than
 /// the texels the quad can cover, so no worm texel lies outside them; past
 /// [`WORM_BOXES`] quads the last box holds the rest. `out[0][0]` is the
 /// count.
@@ -479,6 +494,7 @@ impl LookState {
                 entry(1, frag, FLOAT_TEXTURE),
                 entry(2, frag, FLOAT_TEXTURE),
                 entry(3, frag, FLOAT_TEXTURE),
+                entry(4, frag, UINT_TEXTURE),
                 entry(5, frag, FLOAT_TEXTURE),
                 entry(6, frag, UINT_TEXTURE),
                 entry(7, frag, super::UNIFORM),
@@ -559,6 +575,8 @@ impl LookState {
             packed_emitters: Vec::with_capacity(emitter_floats),
             emitter_count: 0,
             bloom: true,
+            halo: true,
+            tag: true,
             backing_pipeline,
             distant_pipeline,
             heat,
@@ -676,6 +694,7 @@ impl LookState {
                 tex(1, albedo),
                 tex(2, shade),
                 tex(3, &views[1]),
+                tex(4, &occluder_view),
                 tex(5, &bloom_views[0]),
                 tex(6, solid),
                 wgpu::BindGroupEntry { binding: 7, resource: worm_boxes.as_entire_binding() },
@@ -909,8 +928,10 @@ impl LookState {
         let [r, g, b] = look.worm_floor;
         p.extend([r, g, b, reach]);
         p.extend(occluder_rect(frame));
-        // Whether the level draws distant layers (issue #11).
-        p.extend([f32::from(u8::from(distant)), 0.0, 0.0, 0.0]);
+        // Whether the level draws distant layers (issue #11); the worm
+        // halo's strength scale and the background tag (issue #54).
+        let tag = if self.tag { BACKGROUND_TAG } else { 0.0 };
+        p.extend([f32::from(u8::from(distant)), f32::from(u8::from(self.halo)), tag, 0.0]);
         debug_assert_eq!(p.len(), GLOBAL_HEAD);
         // Only the frame's groups (issue #35: the shaders read no group
         // past `mode.y`): cast and self-light scale, reach and own colour,
@@ -968,6 +989,24 @@ impl Renderer {
     pub fn set_bloom(&mut self, on: bool) {
         if let Some(l) = self.look.as_mut() {
             l.bloom = on;
+        }
+    }
+
+    /// Turns the worm halo off or on (issue #54; tests: a lit frame with
+    /// the halo's strength 0).
+    #[doc(hidden)]
+    pub fn set_worm_halo(&mut self, on: bool) {
+        if let Some(l) = self.look.as_mut() {
+            l.halo = on;
+        }
+    }
+
+    /// Turns the background tag off or on (issue #54; tests: off, the lit
+    /// world pass writes part 1's shade bytes).
+    #[doc(hidden)]
+    pub fn set_background_tag(&mut self, on: bool) {
+        if let Some(l) = self.look.as_mut() {
+            l.tag = on;
         }
     }
 

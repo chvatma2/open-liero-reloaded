@@ -187,7 +187,7 @@ impl Renderer {
                 state.pack(look, &plan.frame, !plan.distant.is_empty());
                 if let Some(lt) = &t.lit {
                     self.queue.write_buffer(&lt.globals, 0, bytemuck::cast_slice(&state.packed));
-                    // The worm boxes (issue #35; #54's halo): only those in use.
+                    // The worm boxes (issue #35; the worm halo's, #54): only those in use.
                     let mut boxes = [[0; 4]; 1 + WORM_BOXES];
                     let occluders = plan.occluders.start as usize..plan.occluders.end as usize;
                     worm_boxes(&self.instances[occluders], &mut boxes);

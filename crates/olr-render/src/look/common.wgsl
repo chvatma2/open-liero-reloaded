@@ -35,14 +35,18 @@ struct LookGlobals {
     // the occluder map (plan 15b): origin x, y (world px), width, height (texels)
     occluders: vec4<f32>,
     // 1 when the level draws distant layers (issue #11: the shade's alpha
-    // is then 1 - their depth), 0, 0, 0
+    // is then 1 - their depth), the worm halo's strength scale (issue #54:
+    // 1, 0 off for tests), the background tag the lit terrain and distant
+    // layers write in the shade's marker channel (issue #54: 0.25), 0
     distant: vec4<f32>,
     groups: array<Group, 255>,
 };
 
 // LIGHT_PAD (world pixels the light grid reaches past the world target on
-// every side), MAX_SOAK, BLOOM_RADIUS and OCCLUSION_PAD (the occlusion's
-// longest reach: its rows reach that far above and below the light grid)
+// every side), MAX_SOAK, BLOOM_RADIUS, OCCLUSION_PAD (the occlusion's
+// longest reach: its rows reach that far above and below the light grid),
+// WORM_BOXES and the worm halo's WORM_HALO_RADIUS, WORM_HALO_RADIUS_MAX,
+// WORM_HALO_STRENGTH and WORM_HALO_FADE (issue #54, `olr_look::engine`)
 // are prepended from the Rust constants.
 
 const TAU: f32 = 6.2831853;
