@@ -291,7 +291,11 @@ The headless command-line tool. Its commands:
   `look-test-heat-mod` (a Bazooka, a Minigun and a Nuke reloading in
   12.5 s) on `look-test-heat` (a dark cave of stone, dirt, wood, metal and
   brick, `fixtures/look/make-look-test-heat.sh`): a nuke's rims glowing,
-  then cooled.
+  then cooled. Issue #41's `heat-distant.png` (tick 380): the same match
+  on `look-test-heat-distant` (the cave open onto a wooden palisade at
+  depth 8 before a stone sky at depth 80,
+  `fixtures/look/make-look-test-heat-distant.sh`): the palisade glowing
+  in the explosions' slices, the sky beyond their reach.
 - `olr-cli frame-hashes <match flags> [--frames 30] [--content DIR] [--out f.ron]`
   (issue #34, `frame_hash.rs`, the command in `frame_hashes_cmd.rs`):
   byte identity. Plays a headless bot match as `render-match` does (the

@@ -214,3 +214,5 @@
 2026-10-22 bless-render: #40: explosions heat the level: heat-fresh.png and heat-cooled.png, render-match of the heat test level and mod
   fixtures/render/heat-cooled.png
   fixtures/render/heat-fresh.png
+2026-10-22 bless-render: #41: heat-distant, a near distant layer heated as slices of the explosions' ball
+  fixtures/render/heat-distant.png

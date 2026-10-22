@@ -420,6 +420,11 @@ fn lit_frames_keep_their_bytes() {
 /// (`fixtures/look/mods/look-test-heat-mod`: a Bazooka, a Minigun and a
 /// Nuke, Classic's with a 12.5 s reload), seed 1, `ticks` ticks.
 fn heat_match(name: &str, ticks: &str) {
+    heat_match_on(name, "look-test-heat", ticks);
+}
+
+/// [`heat_match`] on the fixture level `level`.
+fn heat_match_on(name: &str, level: &str, ticks: &str) {
     let Some(content) = content_dir() else { return };
     let (mods, levels) = (root().join("fixtures/look/mods"), root().join("fixtures/look/levels"));
     let args = [
@@ -427,7 +432,7 @@ fn heat_match(name: &str, ticks: &str) {
         "--mod",
         "look-test-heat-mod",
         "--level",
-        "look-test-heat",
+        level,
         "--bots",
         "2",
         "--personality",
@@ -459,6 +464,16 @@ fn heat_fresh_rims_glow() {
 #[test]
 fn heat_cooled_rims() {
     heat_match("heat-cooled.png", "900");
+}
+
+/// Issue #41: [`heat_match`] on its distant copy
+/// (`fixtures/look/levels/look-test-heat-distant`: the cave open onto a
+/// wooden palisade at depth 8 before a stone sky at depth 80): behind each
+/// explosion the palisade glows in a smaller circle than the floor's rim,
+/// and the sky, beyond any explosion's reach, stays as it was.
+#[test]
+fn heat_distant_layer_glows() {
+    heat_match_on("heat-distant.png", "look-test-heat-distant", "380");
 }
 
 /// Issue #40: the heat does not depend on the frame rate: [`heat_match`]'s
