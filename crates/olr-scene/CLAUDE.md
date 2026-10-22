@@ -89,8 +89,11 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   (`EndedProjectile`: a projectile in the previous snapshot whose slot is
   empty or holds another serial, at its last position; `ProjSnap` now
   keeps `proj` and `spawn_time`) and `shots()` (`Shot`: a projectile
-  weapon's `WeaponFired`), per tick so end flashes and muzzle lights never
-  depend on the frame rate. `clear_look_events` forgets them (the
+  weapon's `WeaponFired`) and, issue #40, `explosions()` (`TickExplosion`:
+  each `EventKind::Explosion`, a projectile's or a bonus blown up, never
+  an explosive trail's or a beam's cosmetic: its position, damage, tick
+  and `index` among the tick's), per tick so end flashes, muzzle lights
+  and heat never depend on the frame rate. `clear_look_events` forgets them (the
   presentation takes them each frame); at most `LOOK_EVENTS` (8192) of
   each are kept between two clears. The first tick re-simulated after a
   rollback reads no ends (its previous snapshot is the old timeline's, a

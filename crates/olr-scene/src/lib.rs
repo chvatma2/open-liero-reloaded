@@ -120,8 +120,25 @@ pub struct Shot {
     pub at: AbsTime,
 }
 
-/// The most [`EndedProjectile`]s and [`Shot`]s kept between two
-/// [`Scene::clear_look_events`] (a host drawing no frame drops the rest).
+/// An explosion in a tick (`EventKind::Explosion`: a projectile's or a
+/// bonus blown up; an explosive trail or a beam only spawns its cosmetic,
+/// never this): a lit match's heat (issue #40). Recorded per tick, so it
+/// never depends on the frame rate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TickExplosion {
+    pub pos: Vec2,
+    /// OLX's `Explode` damage (it sizes the hole).
+    pub damage: f32,
+    /// The tick it happened in.
+    pub at: AbsTime,
+    /// Its place among the tick's explosions, from 0: with `at`, a key a
+    /// re-simulated tick gives again.
+    pub index: u16,
+}
+
+/// The most [`EndedProjectile`]s, [`Shot`]s and [`TickExplosion`]s kept
+/// between two [`Scene::clear_look_events`] (a host drawing no frame drops
+/// the rest).
 pub const LOOK_EVENTS: usize = 8192;
 
 /// The most views a scene draws ([`Scene::add_view`]): OLX's fork splits
@@ -163,10 +180,11 @@ pub struct Scene {
     /// With rules, what the last build placed (reused, grown once).
     drawn: Vec<DrawnProjectile>,
     worms: Vec<DrawnWorm>,
-    /// With rules, the ticks' ended projectiles and shots since the last
-    /// [`Scene::clear_look_events`].
+    /// With rules, the ticks' ended projectiles, shots and explosions
+    /// since the last [`Scene::clear_look_events`].
     ended: Vec<EndedProjectile>,
     shots: Vec<Shot>,
+    explosions: Vec<TickExplosion>,
 }
 
 impl Scene {
@@ -186,6 +204,7 @@ impl Scene {
             worms: Vec::new(),
             ended: Vec::new(),
             shots: Vec::new(),
+            explosions: Vec::new(),
         }
     }
 
@@ -286,16 +305,24 @@ impl Scene {
         &self.shots
     }
 
-    /// Forgets the ended projectiles and shots (the presentation took them).
+    /// The explosions in those ticks (issue #40), in tick then event order
+    /// (only with shade rules). A re-simulated tick reports them again.
+    pub fn explosions(&self) -> &[TickExplosion] {
+        &self.explosions
+    }
+
+    /// Forgets the ended projectiles, shots and explosions (the
+    /// presentation took them).
     pub fn clear_look_events(&mut self) {
         self.ended.clear();
         self.shots.clear();
+        self.explosions.clear();
     }
 
     /// With shade rules, records a tick's ended projectiles (in the
-    /// previous snapshot, not in the new one) and shots. The first tick
-    /// re-simulated after a rollback follows a snapshot of the old
-    /// timeline (a later time): no end is read from that pair.
+    /// previous snapshot, not in the new one), shots and explosions. The
+    /// first tick re-simulated after a rollback follows a snapshot of the
+    /// old timeline (a later time): no end is read from that pair.
     fn record_look_events(&mut self, world: &World, events: &TickEvents) {
         if self.shades.is_none() {
             return;
@@ -316,12 +343,22 @@ impl Scene {
             }
         }
         let m = world.sim_mod();
+        let mut index = 0u16;
         for e in events {
-            if let olr_sim::EventKind::WeaponFired { worm, weapon } = e.kind
-                && m.weapon(weapon).is_some_and(|w| w.kind == olr_sim::WeaponType::Projectile)
-                && self.shots.len() < LOOK_EVENTS
-            {
-                self.shots.push(Shot { worm, weapon: usize::try_from(weapon).unwrap_or(0), at });
+            match e.kind {
+                olr_sim::EventKind::WeaponFired { worm, weapon }
+                    if m.weapon(weapon).is_some_and(|w| w.kind == olr_sim::WeaponType::Projectile)
+                        && self.shots.len() < LOOK_EVENTS =>
+                {
+                    self.shots.push(Shot { worm, weapon: usize::try_from(weapon).unwrap_or(0), at });
+                }
+                olr_sim::EventKind::Explosion { pos, damage, .. } => {
+                    if self.explosions.len() < LOOK_EVENTS {
+                        self.explosions.push(TickExplosion { pos, damage, at, index });
+                    }
+                    index = index.saturating_add(1);
+                }
+                _ => {}
             }
         }
     }
