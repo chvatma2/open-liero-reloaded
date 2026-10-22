@@ -355,7 +355,9 @@ Not a pack: the level editor's ready-made piece of a level, a folder
 `<asset-id>/` holding `asset.ron`, its elements' files without `editor/`
 (here `layers/torch.png` and `glow/torch.png`, each 14 × 16) and
 `thumb.png`. Its elements are a composition's, placed from the asset's
-top-left corner, and it carries the glow groups they name:
+top-left corner, and it carries the glow groups they name (and the
+surface materials, `materials`, with their painted maps in `surface/`;
+placing joins those a level has by id and adds the others):
 
 <!-- file: asset/asset.ron -->
 ```ron
@@ -435,6 +437,13 @@ lights little around it:
     ),
 )
 ```
+
+From the command line (`olr-cli`'s `CLAUDE.md`): `olr-cli material list`
+prints the library, `olr-cli level material add <pack> stone wood`
+copies materials into a level, `olr-cli level element set <pack> rock
+--surface stone` gives an element one, and `olr-cli level element
+surface <pack> rock --rule 'rock:808080/20=stone' --rule '*=none'`
+paints its map by collision kind and art colour.
 
 ### A skin
 

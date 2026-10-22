@@ -4872,14 +4872,53 @@ in a match yet (heat comes later). As built:
   pixels) override per pixel; 0, or a value past the look's materials,
   keeps the default. A plain level's maps survive being opened in the
   editor (the raster's or the three layers' painted maps).
-- **Not yet built** (later issues): assets carrying materials and
-  `olr-cli` operations (2/10; until then an asset refuses surfaces and
-  Save as asset, paste and placing strip them), `LevelPack` and the match
+- **Not yet built** (later issues): `LevelPack` and the match
   reading them (3/10), heat and its look, mods, the editors' material
   tools (7/10). The level editor keeps painted maps as opened, re-lays
   them on a level resize, resamples an image's on a new box size, drops
   them on split and merge down (as glow) and drops ones that no longer
   fit on saving.
+
+## Surface materials in assets and olr-cli (issue #38)
+
+No OLX counterpart. The second of ten (the same spec): assets carry
+materials, and `olr-cli` gives a level materials without the editor. As
+built:
+
+- **Assets.** `asset.ron`'s `materials` holds the materials the elements
+  name (a `surface`, a `back_surface` or a painted map's value), each
+  used, at most 255; the painted maps are `surface/<id>.png` and
+  `.back.png` in the folder, their values indexing the asset's own list.
+  Without materials an asset writes no `materials`, no surfaces and no
+  maps: every built-in asset is byte for byte what its command made
+  before. An asset still holds no distant layer.
+- **Saving.** A cut (elements or a rectangle) keeps each element's
+  surfaces, re-lays its maps with the crop and carries the look's
+  materials it names, in the look's order, the maps re-numbered to them;
+  a surface naming none of the look's materials goes (it named nothing).
+  A raster cut as a drawn layer keeps its `surface`, `back_surface` and
+  maps: where its background shows its own art in the drawn layer, the
+  back map still applies there (an edge case, a raster is rarely cut).
+- **Placing** joins a material the level has by id, the level's settings
+  kept (never replaced), and adds the others after the level's, exactly
+  as glow groups; a level without a look gets the default one (it plays
+  lit). The landed elements keep their surfaces, their maps re-numbered
+  to the level's materials. The editor's placing does the same in one
+  step; its paste still lands no surfaces (the clipboard holds none; the
+  editor's material tools are 7/10).
+- **The colour rule** (`olr-cli level element surface --rule`), the
+  builder's call: `[rock:|dirt:|background:]COLOUR[/TOLERANCE]=MATERIAL`,
+  first match wins, unmatched pixels keep their value, so a script's
+  rules re-run to the same files. A world pixel's colour is its block's
+  centre art pixel (as the bake picks a pixel's group), compared by
+  `level::similar` (the editor's percent tolerance, alpha included); a
+  transparent one (not covered) is never painted. `--map` takes a
+  greyscale PNG of values instead, and `level material list` prints the
+  values.
+- **The library on the command line**: the user's library is the game's
+  data directory's `materials/` (`directories`, as `olr-ui`'s store) or
+  `--user`; `level material add` takes the built-in copy when both
+  libraries hold an id, and keeps the level's copy of one it has.
 
 ## Kept OLX quirks
 
