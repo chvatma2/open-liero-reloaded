@@ -5136,6 +5136,55 @@ level using no materials saves as before. As built, the builder's calls:
   materials (issue #38); Play takes the edited level's baked surface, so
   explosions heat it.
 
+## Material editor (issue #44)
+
+No OLX counterpart. The eighth of ten (the spec's "Material editor"): a
+new crate, `olr-material-editor`, hosted by `olr-game`
+(`editor/material.rs`), opened from the Editor screen's **Material** tab.
+Nothing in play, the oracle or any golden changes. As built, the
+builder's calls:
+
+- **One editor over the whole library**, not one material a session: the
+  Material tab offers the recoveries and **Open the material editor**;
+  the editor lists the built-in materials (`content/materials`, read-only)
+  and the user's (`materials/` of the data directory), and one is open at
+  a time. Another one opened, New, Copy or Close with unsaved changes
+  asks first (Save changes, Don't save, Cancel).
+- **New and Copy write the new file at once** (the mod editor's Edit a
+  copy makes its pack the same way): a name is asked, the id is its slug
+  (`free_id`: letters and digits, `-` for the rest, `-2`, `-3`, … until it
+  is free of the built-in and the user's ids, so a level's copy is never
+  joined with another material by id). New starts from stone's heat and
+  the engine's ramp; Copy (a built-in one's **Edit a copy**) takes the
+  material as shown. **Rename** asks a name and renames the file too (the
+  id follows the name, kept when its slug is the same); the saved values
+  go to the new file, unsaved changes stay unsaved. **Delete** asks
+  first. None of them is an undo step: they are file operations.
+- **Fields are clamped as they are set**, to `olr_look`'s bounds (the
+  sensitivity and light 0-100, the capacity 10-1000, the conductivity
+  0-1000, the cooling 1-1000, a key's glow 0-100), and a ramp key's
+  temperature to between its neighbours' (1-1000 at the ends), so an
+  edited material is always valid; Save still checks
+  (`compile_material`) for a recovered one. Each number is a typed field
+  and a slider with its bounds beside it.
+- **The colour ramp**: "Own colour ramp" off is the engine's lava ramp
+  (an empty `ramp`); on starts from the lava ramp's six keys. **Add key**
+  puts a key in the middle of the widest gap (of equal ones the hottest),
+  coloured as the ramp is there; at most `MAX_RAMP_KEYS` (16). The strip
+  draws the colour from 0 to 1000 over the glow, checks where a pixel
+  shows its art, the keys marked.
+- **Recovery** is one file a material, `material-recovery/<id>.ron` (the
+  material as edited, written canonically but unchecked), every
+  `RECOVERY_INTERVAL` while there are unsaved changes, removed once they
+  are saved or thrown away, or another material's copy is written; a
+  recovered material whose library file is gone is listed as "(not
+  saved)" and written again by Save.
+- **No `olr-skin-editor` dependency**: its widgets are crate-private and
+  the material editor needs none of its painting; the colour is egui's
+  picker and a `#rrggbb` field.
+- **The preview's place** is the right panel ("Heat preview"), empty
+  until Materials 9/10's live previews; the ramp strip is beside the keys.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
