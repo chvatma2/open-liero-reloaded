@@ -10,6 +10,7 @@ use std::path::Path;
 use olr_audio::Audio;
 use olr_bots::BotConfig;
 use olr_content::{MatchOptions, Player};
+use olr_game::hud::{self, Frame};
 use olr_game::session::{Driver, Session};
 use olr_game::setup::{self, Assets, DeathmatchOptions, MAX_LOCALS, PlayerLook};
 use olr_present::default_colour;
@@ -95,6 +96,23 @@ fn four_local_players_replay_from_their_recording() {
     let bots = olr_ui::bot_colours_away(&SLOTS.map(|i| s.colour(usize::from(i))), 2);
     assert_eq!([s.colour(1), s.colour(4)], [bots[0], bots[1]], "the bots' away from every player's");
     assert_eq!((s.names.of(1), s.names.of(4)), ("Bot 1".into(), "Bot 2".into()));
+    // Split screen's HUD (issue #30): a compact one per view, each the
+    // player's own name and colour, in view order; no keys.
+    let hud = hud::view(&s, &Frame::default());
+    let shown: Vec<(String, [u8; 3])> = hud
+        .views
+        .iter()
+        .map(|v| {
+            let c = v.colour;
+            (v.worm.as_ref().map(|w| w.name.clone()).unwrap_or_default(), [c.r(), c.g(), c.b()])
+        })
+        .collect();
+    let want: Vec<(String, [u8; 3])> =
+        SLOTS.iter().zip(&names).map(|(&i, n)| (n.clone(), s.colour(usize::from(i)))).collect();
+    assert_eq!(shown, want);
+    assert_eq!(hud.hint, None, "the views' corners are their HUDs'");
+    let big: Vec<bool> = hud.minimap.iter().flat_map(|m| m.dots.iter().map(|d| d.big)).collect();
+    assert!(big.is_empty(), "no minimap texture, no dots");
     let skin = |i: usize| s.looks()[i].skin.skin.def.name.clone();
     assert_eq!(
         (skin(0), skin(2), skin(3), skin(5)),
@@ -172,6 +190,13 @@ fn four_local_players_replay_from_their_recording() {
         assert_eq!(r.present.followed_view(v), Some(i32::from(slot)));
     }
     assert_eq!(SLOTS.map(|i| r.names.of(i32::from(i))).to_vec(), names);
+    // Played back split, a compact HUD per view, each viewer's.
+    let back: Vec<String> = hud::view(&r, &Frame::default())
+        .views
+        .iter()
+        .filter_map(|v| v.worm.as_ref().map(|w| w.name.clone()))
+        .collect();
+    assert_eq!(back, names);
     let mut heard_back = 0;
     while r.tick(Keys(Keys::FIRE)) {
         heard_back += r.sounds().iter().filter(|e| is_throw(e)).count();
@@ -195,6 +220,13 @@ fn weapon_names_are_each_players() {
     assert_eq!(a.worms(), 2, "two players, no bot");
     let mut s = session(&a);
     assert_eq!((s.names.of(0), s.names.of(1)), ("Player 1".into(), "Player 2".into()));
+    assert_eq!(hud::view(&s, &Frame::default()).views.len(), 2, "split screen's HUD (issue #30)");
+    // One player alone: the solo HUD, with its keys.
+    let one = DeathmatchOptions { locals: 1, ..o.clone() };
+    let solo =
+        session(&setup::load_deathmatch(&[dir.as_path()], "Classic", "Dirt Level", "default", &one).unwrap());
+    let solo = hud::view(&solo, &Frame::default());
+    assert!(solo.views.is_empty() && solo.hint.is_some() && solo.worm.is_some());
     for _ in 0..30 {
         s.tick_locals(&[Keys(0), Keys(0)]);
     }

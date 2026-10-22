@@ -9,8 +9,7 @@ use std::time::{Duration, Instant};
 
 use anyhow::Context as _;
 use olr_data::image::RgbaImage;
-use olr_render::{RenderSettings, Renderer};
-use olr_scene::DrawList;
+use olr_render::{RenderSettings, Renderer, ViewDraw};
 use winit::window::Window;
 
 use crate::latency::PresentTiming;
@@ -67,9 +66,10 @@ pub struct OverlayPaint<'a> {
     pub pixels_per_point: f32,
 }
 
-/// A world to draw: its list, its look (plan 15a: a level or mod with a
-/// look), and the `[x, y, w, h]` pixels of the window it fills.
-pub type World<'a> = (&'a DrawList, Option<&'a olr_look::LookFrame>, [u32; 4]);
+/// A world to draw: its views, each a list and the `[x, y, w, h]` pixels
+/// of the window it fills (one, or split screen's, issue #30), and its
+/// look (plan 15a: a level or mod with a look).
+pub type World<'a> = (&'a [ViewDraw<'a>], Option<&'a olr_look::LookFrame>);
 
 pub struct Gpu {
     window: Arc<Window>,
@@ -287,8 +287,9 @@ impl Gpu {
         Some(Acquired { frame, wait: t0.elapsed() })
     }
 
-    /// Draws `world` (a list, its look, and the `[x, y, w, h]` pixels it fills: a
-    /// game's playfield, `app::playfield`, or the editor's canvas; none:
+    /// Draws `world` (its views, each a list and the `[x, y, w, h]` pixels
+    /// it fills: a game's playfield, `app::playfield`, split screen's views,
+    /// `app::playfields`, or the editor's canvas; and its look; none:
     /// black, as behind the menus) and the overlay into `frame` and
     /// presents it, applying
     /// the overlay's texture changes (`textures`, left empty) whether or
@@ -330,8 +331,9 @@ impl Gpu {
         view: &wgpu::TextureView,
         size: (u32, u32),
     ) {
-        if let Some((list, look, area)) = world {
-            self.renderer.render_lit(list, look, view, area);
+        // Black, then each view in its area (one view is `render_lit`'s).
+        if let Some((views, look)) = world {
+            self.renderer.render_views(views, look, view);
         }
         let load = if world.is_some() { wgpu::LoadOp::Load } else { wgpu::LoadOp::Clear(wgpu::Color::BLACK) };
         let (device, queue) = (self.renderer.device().clone(), self.renderer.queue().clone());

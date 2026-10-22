@@ -1076,6 +1076,14 @@ impl Session {
         let Session { driver, world, frozen, present, .. } = self;
         with_drawn(driver, world, *frozen, |w| present.build(w, alpha, list));
     }
+
+    /// [`Session::build`] of every view (split screen, issue #30), view
+    /// `v` into `lists[v]`: as many as both have
+    /// (`Presentation::build_views`).
+    pub fn build_views(&mut self, alpha: f32, lists: &mut [DrawList]) {
+        let Session { driver, world, frozen, present, .. } = self;
+        with_drawn(driver, world, *frozen, |w| present.build_views(w, alpha, lists));
+    }
 }
 
 /// `f` with the world a session draws: its own, or an online match's

@@ -21,7 +21,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use olr_input::{Action, KeyCode, LocalWorm};
-use olr_render::UpscaleFilter;
+use olr_render::{UpscaleFilter, ViewDraw};
 use olr_scene::{DrawList, Interpolation};
 use winit::event::{ElementState, KeyEvent};
 use winit::event_loop::ActiveEventLoop;
@@ -156,7 +156,9 @@ pub struct App {
     inputs: LocalInputs,
     gilrs: Option<gilrs::Gilrs>,
     clock: TickClock,
-    list: DrawList,
+    /// A draw list per view (split screen: one per local player, issue
+    /// #30); at least one.
+    lists: Vec<DrawList>,
     /// The level editor's canvas (plan 14c): its colour map and the frame's
     /// terrain-only list.
     canvas: Canvas,
@@ -339,6 +341,23 @@ pub fn playfield(size: (u32, u32)) -> [u32; 4] {
     ]
 }
 
+/// The views' areas in a window of `size` pixels, `[x, y, w, h]` each:
+/// one view's is the [`playfield`]; 2 to 4 are split screen's (issue #30,
+/// `olr_ui::hud::SplitLayout`: each the playfield's shape, the solo view
+/// smaller), whole pixels, all of one size.
+pub fn playfields(size: (u32, u32), n: usize) -> Vec<[u32; 4]> {
+    if n <= 1 {
+        return vec![playfield(size)];
+    }
+    let window = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(size.0 as f32, size.1 as f32));
+    let l = olr_ui::hud::SplitLayout::new(window, n);
+    // Whole pixels, the size rounded down so no view leaves the window.
+    let first = l.views()[0];
+    let (w, h) = ((first.width().floor().max(1.0) as u32), (first.height().floor().max(1.0) as u32));
+    let at = |v: f32, len: u32, room: u32| (v.round().max(0.0) as u32).min(room.saturating_sub(len));
+    l.views().iter().map(|v| [at(v.left(), w, size.0), at(v.top(), h, size.1), w, h]).collect()
+}
+
 /// The height, in pixels, the UI's scale follows
 /// (`olr_ui::theme::pixels_per_point`): in game the window's 16:9 frame's,
 /// so the HUD and the game's panels take the same share of it on every
@@ -388,7 +407,7 @@ impl App {
             inputs,
             gilrs,
             clock: TickClock::new(),
-            list: DrawList::new(),
+            lists: vec![DrawList::new()],
             canvas: Canvas::new(),
             canvas_list: None,
             canvas_full: true,
@@ -903,7 +922,10 @@ impl App {
             if s.present.scene.options.interpolation != Interpolation::Latest {
                 alpha = s.online_alpha(now).unwrap_or(interpolate);
             }
-            s.build(alpha, &mut self.list);
+            // A list per view (split screen, issue #30).
+            let n = s.present.views().max(1);
+            self.lists.resize_with(n, DrawList::new);
+            s.build_views(alpha, &mut self.lists);
             self.meter.peak_entities = self.meter.peak_entities.max(s.present.fx.len());
             let projectiles = s.with_world(|w| w.projectiles().count());
             self.meter.peak_projectiles = self.meter.peak_projectiles.max(projectiles);
@@ -925,13 +947,21 @@ impl App {
         let height = scale_height(size, self.shell.play.is_some());
         olr_ui::theme::set_scale(&self.egui, native, height, self.ui_scale);
         let ppp = native * self.egui.zoom_factor();
-        let src = (
-            self.list.view.w * w.gpu.renderer.scale() as f32,
-            self.list.view.h * w.gpu.renderer.scale() as f32,
-        );
-        // The world in the playfield: the 16:9 frame above the HUD's bar.
-        let dest = w.gpu.renderer.dest_rect_in(src, playfield(size));
-        let map = ScreenMap { view: self.list.view, dest, pixels_per_point: ppp };
+        // The world in the playfield, the 16:9 frame above the HUD's bar,
+        // or split screen's views (issue #30); a screen map each.
+        let views = self.shell.session().map_or(1, |s| s.present.views()).clamp(1, self.lists.len());
+        let areas = playfields(size, views);
+        let maps: Vec<ScreenMap> = areas
+            .iter()
+            .zip(&self.lists)
+            .map(|(&area, list)| {
+                let scale = w.gpu.renderer.scale() as f32;
+                let src = (list.view.w * scale, list.view.h * scale);
+                let dest = w.gpu.renderer.dest_rect_in(src, area);
+                ScreenMap { view: list.view, dest, pixels_per_point: ppp }
+            })
+            .collect();
+        let (map, dest) = (maps[0], maps[0].dest);
         // Mouse controls' pointer (issue #24): the view drawn and the local
         // worm in it, as the controller aims from them.
         if self.inputs.first().mouse_controls() {
@@ -973,7 +1003,7 @@ impl App {
             session: &p.session,
             edited: edited_play,
             alpha,
-            map,
+            maps: &maps,
             debug: self.debug,
             show_scores: self.scores.shown(),
             stats: &self.stats,
@@ -1111,9 +1141,11 @@ impl App {
         let paint = OverlayPaint { jobs: &jobs, pixels_per_point: out.pixels_per_point };
         // The images and terrain the ticks since the last frame changed
         // (the colour map merges their dirty rectangles), then the frame.
+        let draws: Vec<ViewDraw> =
+            self.lists.iter().zip(&areas).map(|(list, &area)| ViewDraw { list, area }).collect();
         let world = self.shell.play.as_mut().map(|p| {
             p.session.present.upload(&mut w.gpu.renderer);
-            (&self.list, p.session.present.look(), playfield(size))
+            (&draws[..], p.session.present.look())
         });
         // The editor's canvas: its map's changes, then its part of the window
         // (drawn sharp: the overlays sit on it at any zoom).
@@ -1124,6 +1156,7 @@ impl App {
             .filter(|_| editing)
             .map(|h| (h.state().view(), h.data_ref().canvas_rect()));
         let mut filter = None;
+        let canvas_draw;
         let world = match editor_view {
             Some((view, Some(rect))) => {
                 // A level with a look draws lit (plan 15a Task 19): the
@@ -1163,7 +1196,8 @@ impl App {
                     }
                     _ => None,
                 };
-                self.canvas_list.as_ref().map(|(l, a)| (l, look, *a))
+                canvas_draw = self.canvas_list.as_ref().map(|(list, area)| [ViewDraw { list, area: *area }]);
+                canvas_draw.as_ref().map(|d| (&d[..], look))
             }
             Some((_, None)) => None,
             None => world,
@@ -1511,6 +1545,54 @@ mod tests {
         for size in [(0, 0), (1, 1), (5, 3000), (3000, 5)] {
             let [x, y, w, h] = playfield(size);
             assert!(w >= 1 && h >= 1 && x <= size.0 && y <= size.1, "{size:?}");
+        }
+    }
+
+    /// Split screen (issue #30): one view is the playfield; 2 to 4 are
+    /// equal whole-pixel areas of the playfield's shape, apart, inside
+    /// the window, the view's picture filling each.
+    #[test]
+    fn split_views_are_equal_whole_pixel_areas() {
+        use super::{playfield, playfields};
+        use olr_render::{UpscaleFilter, dest_rect_in};
+        let view = olr_scene::Viewport::GAME;
+        let src = (view.width as f32 * 2.0, view.height as f32 * 2.0);
+        for size in
+            [(1280, 720), (1920, 1080), (2560, 1440), (3440, 1440), (2560, 1600), (1024, 768), (5120, 1440)]
+        {
+            assert_eq!(playfields(size, 1), [playfield(size)]);
+            let field = playfield(size);
+            for n in 2..=4 {
+                let areas = playfields(size, n);
+                assert_eq!(areas.len(), n, "{size:?}");
+                for (i, &[x, y, w, h]) in areas.iter().enumerate() {
+                    let at = format!("{n} views on {size:?}: {areas:?}");
+                    assert_eq!([w, h], [areas[0][2], areas[0][3]], "{at}");
+                    assert!(x + w <= size.0 && y + h <= size.1, "{at}");
+                    assert!(w <= field[2] && h <= field[3], "smaller than the solo view at {at}");
+                    let shape = (w as f32 / h as f32) / (field[2] as f32 / field[3] as f32);
+                    assert!((shape - 1.0).abs() < 0.01, "the playfield's shape at {at}");
+                    let [px, py, pw, ph] = dest_rect_in(UpscaleFilter::SharpBilinear, src, areas[i]);
+                    assert!(
+                        (px - x as f32).abs() <= 2.0
+                            && (py - y as f32).abs() <= 2.0
+                            && (pw - w as f32).abs() <= 3.0
+                            && (ph - h as f32).abs() <= 3.0,
+                        "the picture fills view {i} at {at}"
+                    );
+                    for &[u, v, _, _] in &areas[i + 1..] {
+                        let apart = u >= x + w || x >= u + w || v >= y + h || y >= v + h;
+                        assert!(apart, "views overlap at {at}");
+                    }
+                }
+            }
+        }
+        for size in [(0, 0), (1, 1), (5, 3000), (3000, 5)] {
+            for n in 2..=4 {
+                for [x, y, w, h] in playfields(size, n) {
+                    assert!(w >= 1 && h >= 1 && x <= size.0 && y <= size.1, "{size:?}");
+                }
+            }
         }
     }
 }

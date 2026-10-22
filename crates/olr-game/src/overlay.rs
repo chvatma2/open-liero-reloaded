@@ -73,7 +73,9 @@ pub struct Overlay<'a> {
     /// The level editor's Play (its HUD's keys, the Stop button).
     pub edited: bool,
     pub alpha: f32,
-    pub map: ScreenMap,
+    /// Each view's screen map, in view order (one, or split screen's,
+    /// issue #30); never empty.
+    pub maps: &'a [ScreenMap],
     pub debug: bool,
     /// Tab held: the scoreboard.
     pub show_scores: bool,
@@ -109,6 +111,18 @@ pub struct Overlay<'a> {
     /// Mouse controls' cursor (issue #24, `pointer.rs`), in points, while
     /// the game has the pointer: the target marker.
     pub marker: Option<Pos2>,
+}
+
+impl Overlay<'_> {
+    /// The first view's screen map (the first player's: mouse controls'
+    /// marker, the top lines, F3's numbers).
+    pub fn map(&self) -> ScreenMap {
+        self.maps.first().copied().unwrap_or(ScreenMap {
+            view: View { x: 0.0, y: 0.0, w: 1.0, h: 1.0 },
+            dest: [0.0; 4],
+            pixels_per_point: 1.0,
+        })
+    }
 }
 
 /// Mouse controls' target marker (issue #24) at `at`: a small ring with a
@@ -222,28 +236,22 @@ fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, co
     p.text(pos, anchor, text, font, colour);
 }
 
-/// Paints the overlay into `ui` (the whole window).
-pub fn paint(ui: &egui::Ui, o: &Overlay) {
-    // Names and popups stay on the picture, never on the bars around it.
-    let world_p = ui.painter().with_clip_rect(o.map.points_rect());
-    let p = &world_p;
-    let s = o.session;
-    let small = FontId::proportional(13.0);
-    let k = o.map.scale();
-    let worms = crate::hud::worms_on_screen(s, &o.map, o.alpha);
-    if let Some(at) = o.marker {
-        target_marker(p, at, k);
-    }
-    if o.names {
-        let bounds = o.map.points_rect().intersect(ui.max_rect());
+/// What every view's labels show: the local players' worms (no name of
+/// their own), their weapon names while they show, their reloads.
+struct Labels {
+    locals: Vec<usize>,
+    weapons: Vec<(usize, String)>,
+    reloads: Vec<(usize, f32)>,
+}
+
+impl Labels {
+    fn of(o: &Overlay) -> Labels {
+        let s = o.session;
         // Each local player's weapon name and reload (issue #29: every
         // player's own).
         let locals: Vec<usize> = s.locals().iter().map(|&l| usize::from(l)).collect();
         let weapons: Vec<(usize, String)> =
             (0..locals.len()).filter_map(|k| s.weapon_name_of(k, o.changing.get(k) == Some(&true))).collect();
-        let ids: Vec<i32> = s.with_world(|w| {
-            worms.iter().map(|&(i, _)| w.worms().get(i).map_or(i as i32, |w| w.id)).collect()
-        });
         // The players' own worms' reload, under their names (the user's
         // request: only one's own; the others' stays hidden, as in OLX).
         let reloads: Vec<(usize, f32)> = s.with_world(|w| {
@@ -253,9 +261,28 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
             };
             locals.iter().filter_map(|&i| reload(i)).collect()
         });
+        Labels { locals, weapons, reloads }
+    }
+}
+
+/// One view's worm names, reload bars and damage popups, on its own
+/// picture (`map`; split screen draws them in every view, issue #30).
+fn view_labels(ui: &egui::Ui, o: &Overlay, map: &ScreenMap, labels: Option<&Labels>) {
+    // Names and popups stay on the picture, never on the bars around it.
+    let world_p = ui.painter().with_clip_rect(map.points_rect());
+    let p = &world_p;
+    let s = o.session;
+    let small = FontId::proportional(13.0);
+    let k = map.scale();
+    if let Some(Labels { locals, weapons, reloads }) = labels {
+        let worms = crate::hud::worms_on_screen(s, map, o.alpha);
+        let bounds = map.points_rect().intersect(ui.max_rect());
+        let ids: Vec<i32> = s.with_world(|w| {
+            worms.iter().map(|&(i, _)| w.worms().get(i).map_or(i as i32, |w| w.id)).collect()
+        });
         for (&(i, at), &id) in worms.iter().zip(&ids) {
             let name = s.names.of(id);
-            let label = worm_label(i, &locals, &name, &weapons);
+            let label = worm_label(i, locals, &name, weapons);
             // Without a label (the player's own worm), the reload bar keeps
             // the place the name's label would take.
             let (text, colour) = label.unwrap_or((&name, NAME_COLOUR));
@@ -280,7 +307,7 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
     }
     for pop in &s.popups {
         let t = pop.age as f32 / POPUP_TICKS as f32;
-        let at = o.map.to_points(pop.pos) - egui::vec2(0.0, (20.0 + 20.0 * t) * k);
+        let at = map.to_points(pop.pos) - egui::vec2(0.0, (20.0 + 20.0 * t) * k);
         let fade = (255.0 * (1.0 - t)) as u8;
         let text = format!("-{}", pop.amount.round() as i32);
         shadowed(
@@ -292,10 +319,24 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
             Color32::from_rgba_unmultiplied(255, 80, 60, fade),
         );
     }
+}
+
+/// Paints the overlay into `ui` (the whole window).
+pub fn paint(ui: &egui::Ui, o: &Overlay) {
+    let s = o.session;
+    let map = o.map();
+    if let Some(at) = o.marker {
+        target_marker(&ui.painter().with_clip_rect(map.points_rect()), at, map.scale());
+    }
+    let labels = o.names.then(|| Labels::of(o));
+    for m in o.maps {
+        view_labels(ui, o, m, labels.as_ref());
+    }
+    let p = &ui.painter().with_clip_rect(map.points_rect());
     // The practice's last hit, at the picture's top centre (the HUD's keys
     // and F2's counters take the corners, the Stop button the bottom left).
     if let Some(hit) = s.last_hit() {
-        let r = o.map.points_rect();
+        let r = map.points_rect();
         let text = last_hit_text(&hit, &s.names.of(hit.worm));
         let at = egui::pos2(r.center().x, r.top() + 8.0);
         shadowed(p, at, Align2::CENTER_TOP, &text, FontId::proportional(16.0), LAST_HIT_COLOUR);
@@ -316,10 +357,10 @@ pub fn paint(ui: &egui::Ui, o: &Overlay) {
         debug(ui.painter(), ui.max_rect(), o);
     }
     if let Some(net) = &o.net {
-        network(ui.painter(), o.map.points_rect().intersect(ui.max_rect()), net);
+        network(ui.painter(), map.points_rect().intersect(ui.max_rect()), net);
     }
     if let Some((text, colour)) = top_line(o.migrating.as_deref(), o.lagging) {
-        let r = o.map.points_rect();
+        let r = map.points_rect();
         // A long line (a long name) is cut to the picture, never past it.
         let font = FontId::proportional(20.0);
         let p = ui.painter().with_clip_rect(r);

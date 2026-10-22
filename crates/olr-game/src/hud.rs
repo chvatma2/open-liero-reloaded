@@ -4,7 +4,7 @@
 
 use egui::{Color32, Pos2, TextureHandle, TextureOptions, pos2, vec2};
 use olr_scene::Blend;
-use olr_ui::hud::{Dot, HudView, MinimapView, Notice, WormHud, minimap};
+use olr_ui::hud::{Dot, HudView, MinimapView, Notice, ViewHud, WormHud, minimap};
 
 use crate::overlay::ScreenMap;
 use crate::session::{Driver, Session};
@@ -129,14 +129,27 @@ pub fn worms_on_screen(s: &Session, map: &ScreenMap, alpha: f32) -> Vec<(usize, 
 /// followed worm's row highlighted), the minimap (the players' dots the
 /// big ones; "Game Over" until the results show) and the keys. An online
 /// match's lives, kills, deaths and scoreboard are its confirmed tick's
-/// (spec §3.4); its health and weapons the newest predicted tick's.
+/// (spec §3.4); its health and weapons the newest predicted tick's. With
+/// several views (split screen, issue #30) each view's worm and colour
+/// too, for its compact HUD.
 pub fn view(s: &Session, f: &Frame) -> HudView {
     let Frame { scores, minimap, time, menus, edited, speed, .. } = *f;
     let followed = s.followed();
     let local = s.local().map(i32::from);
+    let views = s.present.views();
+    let viewed: Vec<i32> =
+        if views >= 2 { (0..views).filter_map(|v| s.present.followed_view(v)).collect() } else { Vec::new() };
     // The world read once, under an online peer's lock.
-    let (mut worm, map, dots) = s.with_world(|world| {
-        let worm = usize::try_from(followed).ok().and_then(|i| WormHud::of(world, i, &s.names));
+    let (mut worm, mut split, map, dots) = s.with_world(|world| {
+        let hud = |id: i32| usize::try_from(id).ok().and_then(|i| WormHud::of(world, i, &s.names));
+        let worm = hud(followed);
+        let split: Vec<ViewHud> = viewed
+            .iter()
+            .map(|&id| {
+                let [r, g, b] = usize::try_from(id).map_or([0; 3], |i| s.colour(i));
+                ViewHud { worm: hud(id), colour: Color32::from_rgb(r, g, b) }
+            })
+            .collect();
         let t = world.terrain();
         let map = vec2(t.width() as f32, t.height() as f32);
         let dots: Vec<Dot> = minimap
@@ -151,9 +164,10 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
                         Dot {
                             pos: pos2(w.pos.x, w.pos.y),
                             colour: Color32::from_rgb(r, g, b),
-                            // Every local player's dot is big (issue #29).
+                            // Every local player's dot is big (issue #29),
+                            // a replay's every view's (issue #30).
                             big: if s.locals().is_empty() {
-                                followed == i as i32
+                                followed == i as i32 || viewed.contains(&(i as i32))
                             } else {
                                 s.locals().iter().any(|&l| usize::from(l) == i)
                             },
@@ -162,20 +176,23 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
                     .collect()
             })
             .unwrap_or_default();
-        (worm, map, dots)
+        (worm, split, map, dots)
     });
-    if let Some(w) = worm.as_mut().filter(|_| f.selecting) {
-        w.slots.clear();
-    }
-    // The deaths and suicides are the board's (every one, not the worm's
-    // score-gated counters: `docs/porting/STATUS.md`); online, the lives
-    // and kills too (the confirmed tick's).
-    if let Some(w) = worm.as_mut()
-        && let Some(c) = s.scores().iter().find(|c| c.worm == followed)
-    {
-        (w.deaths, w.suicides) = (c.deaths, c.suicides);
-        if let Driver::Online(_) = &s.driver {
-            (w.lives, w.kills) = (c.lives, c.kills);
+    let shown = std::iter::once((followed, worm.as_mut()))
+        .chain(viewed.iter().copied().zip(split.iter_mut().map(|v| v.worm.as_mut())));
+    for (id, w) in shown {
+        let Some(w) = w else { continue };
+        if f.selecting {
+            w.slots.clear();
+        }
+        // The deaths and suicides are the board's (every one, not the
+        // worm's score-gated counters: `docs/porting/STATUS.md`); online,
+        // the lives and kills too (the confirmed tick's).
+        if let Some(c) = s.scores().iter().find(|c| c.worm == id) {
+            (w.deaths, w.suicides) = (c.deaths, c.suicides);
+            if let Driver::Online(_) = &s.driver {
+                (w.lives, w.kills) = (c.lives, c.kills);
+            }
         }
     }
     let mut notices = Vec::new();
@@ -231,8 +248,10 @@ pub fn view(s: &Session, f: &Frame) -> HudView {
             .then(|| olr_ui::hud::rows(s.scores(), &s.names, Some(followed))),
         minimap,
         game_over: s.results.is_some() && !s.results_shown(),
-        hint: Some(hint),
+        // Split screen shows no keys: the views' corners are their HUDs'.
+        hint: split.is_empty().then_some(hint),
         arrangement: f.arrangement,
+        views: split,
     }
 }
 

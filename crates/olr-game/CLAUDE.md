@@ -329,6 +329,19 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   #12: whole multiples of the level's own scale, whatever the skins). The
   view is `olr_scene::Viewport::GAME` (427 × 192 world pixels) for every
   window and HUD layout (spec §19 E4 amended): resizes do not touch it.
+  **Split screen** (issue #30): with 2 to 4 views (`Presentation::views`,
+  a draw list each, `App::lists`, `Session::build_views`),
+  `playfields(size, n)` gives each view's area from
+  `olr_ui::hud::SplitLayout` (the playfield's shape, smaller: the same
+  world area; equal whole pixels, rounded down so none leaves the
+  window; one view is `playfield`), `Gpu::draw` renders them all
+  (`Renderer::render_views`, black around and between them) and the
+  overlay paints a `ScreenMap` per view (`Overlay::maps`; `map()` the
+  first's: mouse controls, the top lines, F3): each view's worm names,
+  weapon names, reload bars and damage popups on its own picture
+  (`overlay::view_labels`), the HUD's compact panels and shared minimap,
+  clock and log (`olr_ui::hud::show`). Test
+  `split_views_are_equal_whole_pixel_areas`.
   The UI's scale: every frame `olr_ui::theme::set_scale` with the
   display's scale factor, `scale_height(size, in_game)` (the frame's
   height in game, the window's in the menus) and the options' UI scale
@@ -351,8 +364,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   added, terrain dirty rectangles), `Gpu::present`, then a screenshot if
   one is due (one that fails is a warning, never the end of the game).
   **Lit matches** (plan 15a Tasks 13, 19): `Gpu::present` and
-  `Gpu::screenshot` take a `gpu::World`, `(list, Option<&LookFrame>,
-  area)`; a match passes `Presentation::look()` (`Some` when the level or
+  `Gpu::screenshot` take a `gpu::World`, `(&[ViewDraw], Option<&LookFrame>)`
+  (each view's list and area; one but in split screen, issue #30); a match passes `Presentation::look()` (`Some` when the level or
   the mod has a look, `Presentation::has_look`), and
   `Presentation::upload` turns the renderer's lighting on or off to match,
   uploading the terrain whole when it changes. The game builds no look of
@@ -411,7 +424,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   local worms, and an online match watched has none), a view each
   (`Presentation::set_views`, `followed_view(k)`: every player sees the
   same 427 × 192, the fair-view rule, a deviation in `docs/porting/STATUS.md`;
-  the app draws view 0 until the layout, issue #30; a replay a view per
+  the app draws them all in split screen's layout, issue #30; a replay a view per
   recorded viewer), the big minimap dot, its tally (`Tally::player_kills`,
   `player_deaths`, `player_spawns`: one per local player, `[MAX_LOCALS]`,
   OLX's per-worm counts, `CClient.cpp:1653-1744`). The first's is the
@@ -1080,7 +1093,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
 - **Match HUD** (`olr_ui::hud`, an opaque bar along the bottom, or the
   side layout: `Frame::arrangement`, the options' `hud_layout`;
   `hud::view(session, &Frame)` builds its `HudView` from
-  the session and the frame; no weapon rows
+  the session and the frame; with 2 or more views (split screen, issue
+  #30) also `HudView::views`, each view's followed worm (`followed_view`)
+  and colour for its compact HUD, without the keys (`tests/locals.rs`:
+  four players' names and colours in view order, a split replay's
+  viewers, one player alone the solo HUD), and every view's worm's
+  minimap dot big in a replay; no weapon rows
   while the selection is open, `Shell::selecting`, the world's being a
   placeholder until Done): names ("You", "Bot N"; a replay's recorded names,
   over the worms on screen: `worms_on_screen`), the event log
@@ -1286,7 +1304,8 @@ between two bots, each moved by its own scripted keys and no other's,
 their names, colours, skins and views, the throws heard each tick theirs
 alone, the tally, deaths and spawns each player's, the replay's rows the
 scripts' and its viewers the slots, played back with four views to the
-same checksums; each player's weapon name its own), `players.rs`' unit
+same checksums; each player's weapon name its own; issue #30: the
+HUD's compact panel per view, live and played back), `players.rs`' unit
 tests (each seat hears its own keys; any seat's Start pauses),
 `tests/throw_sound.rs` (only the player's rope throws are heard against
 seven bots, none for bots alone, a replay's viewers'; online, in
