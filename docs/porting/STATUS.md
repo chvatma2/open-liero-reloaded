@@ -41,7 +41,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Presentation (spec §19 E1-E4): camera (hard lock, clamp, shake, dead worm, respawn), skin frames (the facing-left mirror one column off), crosshair, muzzle flash, old-style health bar, rope, laser sights, beams, projectile frames (animation, special angle, angle, rotation with the `RotIncrement` bump), bonuses (blinking), layer order; interpolation (E2) | `src/client/CViewport.cpp:118-472`, `src/common/CWorm.cpp:1016-1300`, `src/client/CGameSkin.cpp:584-601`, `src/client/CNinjaRope.cpp:132-180`, `src/common/CProjectile.cpp:227-300`, `src/common/CBonus.cpp:49-76`, `src/client/Entity.cpp:30-157`, `305-314`, `src/client/GfxPrimitives.cpp:1795-2520`, `src/gusanos/viewport.cpp:105-253` | `olr-scene` | done (plan 5 task 3) | `camera_locks_clamps_and_shakes_like_olx`, `skin_frame_matches_olx_table`, `projectile_frames_match_olx`, `interpolation_never_blends_reused_slots_or_respawns`, `draw_list_order_matches_olx_layers`, `beams_and_laser_sights_live_two_entity_passes`; scene snapshots (`olr-scene/tests/snapshots`) |
 | Renderer (spec §8.2, §19 E3): art-scale world pass (terrain, instanced sprites from one atlas, world-pixel lines), upscale (integer nearest, sharp bilinear), offscreen PNGs; OLX's corner-rule colour key for sprites lives in the importers since plan 13c (`olr_format::image_io::olx_sprite_to_alpha`, applied once at import; the renderer draws the alpha it is given) | `src/client/GfxPrimitives.cpp:116-150` (`SetColorKey`); OLX blits with SDL onto a 2× screen | `olr-render`, `olr_format::image_io`, `olr-cli render` | done (plan 5 task 5) | `dirty_rect_upload_equals_full_upload`, `upscale_filters_are_selectable`, `missing_assets_use_placeholders`, `srgb_targets_show_the_same_colours`; several views a frame (issue #26, split screen's fair view: "Split screen (issue #26)" below): `two_views_in_one_frame_match_single_views`, `the_glow_light_steps_once_a_frame_with_four_views`, `a_view_draws_only_its_area`; goldens `fixtures/render/frame-*.png` (`olr-cli/tests/render_golden.rs`, `cargo xtask full`) |
 | Cosmetic entities (spec §19 E1, E8): the pool (OLX's 1024 slots with `olx_quirks`; 16384 with a death reserve in play since 2026-10-13, see Deliberate deviations), per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `olr-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits`; the player's blood amount (issue #6, Deliberate deviations): `tests/blood.rs` |
-| Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits (a death sound steals since 2026-10-13, see Deliberate deviations), live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `olr-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
+| Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits (a death sound steals since 2026-10-13, see Deliberate deviations), live voices re-mixed as the listener moves, silence without a device; with several local views (issue #27) each sound heard from the nearest (a deviation: "Split screen (issue #26)" below) | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `olr-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`, `each_sound_is_heard_from_the_nearest_listener`; `device_check` example (`cargo xtask full`) |
 | Whose rope throws are heard (the user's playtest report, 2026-10-16: every worm's throw played map-wide at gain 1.0, about 7 to 12 starts a second with 7 to 8 bots): only the player's own (the local slot; a replay's viewer), as OLX plays `smpNinja` only in the human input handler; a bot's or a remote worm's throw is silent. `olr-sim`'s THROW events carry no owner, so the session keeps as many as the player's `NinjaRope::throws` grew (they all play at the listener) | `src/common/CWormHuman.cpp:340-342`, `555-563`, `570-574`, `src/common/CWormBot.cpp:1753`, `3823`, `src/common/PhysicsLX56.cpp:300-303` | `olr-game::throw_sound`, `Session::sounds` | done (2026-10-16) | `only_the_players_rope_throws_are_heard`, `bots_alone_throw_silently`, `a_replay_hears_its_viewers_throws`, `an_online_match_runs_headless`; a throw while the worm may not use the rope (`can_use_ninja` false, never set today) is not heard, OLX's is |
 | Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults (Strafe, Previous/Next weapon since issue #23), trigger and stick thresholds, presses and releases latched between ticks; a Dig action pressing OLX's dig gesture (issue #23, not OLX's) | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226`, `src/common/CWormHuman.cpp:357-394` (Dig's 0.2 s repeat) | `olr-input` | done (plan 5 task 6; issue #23) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release`, `dig_presses_the_other_direction_for_one_tick`, `held_dig_digs_every_twenty_ticks`, `dig_digs_exactly_as_the_gesture`, `the_new_actions_rebind_and_an_older_file_gets_their_defaults` |
 | Mouse controls (issue #24, experimental): left click Shoot, right click Rope, the wheel Previous/Next weapon, Space Jump, A/D strafe, S Dig, rebindable (issue #25: the mouse's buttons and wheel, mouse mode's own keys); the worm faces and aims at the cursor through a client-side controller pressing a key player's keys (never OLX's direct mouse aim); the pointer grabbed in a match | `src/common/CWormHuman.cpp:81-560` (the input read it plans with; `:280-306`, OLX's mouse aim, deliberately not ported) | `olr-input::mouse`, `olr-game::pointer`, `olr-online::KeysFor` | done (issue #24; playtest owed: `docs/deferred-verification.md`) | `aim_is_no_faster_than_holding_the_key_and_settles`, `facing_follows_the_cursor_with_hysteresis`, `turning_never_digs`, `a_and_d_strafe_and_the_gesture_passes_through`, `wheel_notches_press_one_each`, `the_cursor_aims_and_turns_a_real_worm`, `a_and_d_keep_the_facing_online_and_in_a_stall`, `wheel_notches_change_the_weapon_one_each`, `a_mouse_player_and_a_key_player_pressing_the_same_keys_agree`, `local_keys_are_told_the_world_and_the_look_ahead`, `the_grab_falls_back_and_frees`, `mouse_controls_are_switched_in_the_keys_tab`; #25: `every_mouse_input_is_captured_and_bound`, `mouse_mode_has_its_own_keys_and_rule`, `the_unreachable_rule_holds_in_both_modes`, `a_file_from_before_mouse_bindings_is_repaired`, `rebound_mouse_inputs_press_their_actions`, `rebound_buttons_work_in_the_controller_on_a_real_worm`, `the_keys_screen_rebinds_mouse_controls`, `an_options_file_from_before_mouse_bindings_is_repaired` |
@@ -4661,7 +4661,8 @@ sandbox with existing settings. As built:
 Local split screen for 2 to 4 players (OLX's fork: up to four,
 `docs/porting/olx-notes/presentation.md` §1.1; `CClient.cpp:1527-1551`,
 `1653-1744`; `CClient_Draw.cpp:561-609`). Issue #26 is its first part:
-the renderer draws several views in one frame. As built:
+the renderer draws several views in one frame; issue #27 the second: a
+camera per view and the nearest listener. As built:
 
 - **The fair view** (the maintainer's ruling, a deliberate deviation):
   every local player sees the same area of the level as a solo player,
@@ -4677,10 +4678,35 @@ the renderer draws several views in one frame. As built:
   map into which each view's (over its light grid) is copied, so a worm
   shadows the glow light where any view's light grid holds it. One view
   draws exactly as before (the goldens are unchanged).
-- **Not yet built:** a camera per view, the layout and gaps (OLX fills
-  them with `clViewportSplit`, black), the HUD, input and menus (the
-  issues that follow #26). `olr-cli gpu-bench --views N` lays its views
-  out in halves (top and bottom) or quarters for the measurement only.
+- **A camera per view** (issue #27): one `olr_scene::Scene` holds a
+  camera per view (`Scene::add_view`, `olr_present::Presentation::
+  set_views`, at most four), each following its own worm with the solo
+  rules (hard lock, clamp, shake for an explosion in its own view, a dead
+  worm's view staying, the jump at its respawn), as OLX's viewport per
+  local player (`CClient.cpp:1527-1551`). The rest is one: the snapshots
+  and marks, the entities (`Fx`), the colour map, the look frame and its
+  records (shots, ended projectiles, drawn projectiles and worms, taken
+  from the first view's pass). `build_views` draws a list per view; view
+  `v`'s is what one view with `v`'s camera draws, laser-sight dots and
+  all (their generator moves on once a frame, every view drawing the
+  same dots). One view draws exactly as before (scene snapshots, match
+  and render goldens unchanged).
+- **The nearest listener** (the maintainer's call in issue #27, a
+  deliberate deviation): OLX's OpenAL hears viewport 0's listener only
+  (`src/sound/sfxdriver_openal.cpp:55-65`, presentation note §1.6), so a
+  second player would hear their own fight from the first's view. OLR
+  hears each positional sound once, from the local view whose centre is
+  nearest to it (`olr_audio::mix::nearest`, the first of equally near
+  ones), and re-mixes each playing voice from the view now nearest
+  (`Audio::play_heard`, `Voices::follow_nearest`); one mix, nothing
+  doubled. THROW and PICKUP still play at the listener, the first view's.
+  With one view it is OLX's mix. If wrong: hear viewport 0 only by
+  passing the first listener alone.
+- **Not yet built:** several local players in the session, the layout
+  and gaps (OLX fills them with `clViewportSplit`, black), the HUD,
+  input and menus (the issues that follow #27). `olr-cli gpu-bench
+  --views N` lays its views out in halves (top and bottom) or quarters
+  for the measurement only.
 
 ## Kept OLX quirks
 
