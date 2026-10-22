@@ -21,7 +21,7 @@ modernized for current displays.
    "<why>"`); run it before merging bot, rendering, audio, network or
    performance-sensitive changes. `cargo xtask stress` is the long engine
    stress run. `cargo xtask check --render` adds the render goldens, HUD
-   snapshots and renderer GPU tests to `check` (what a rendering change
+   snapshots, renderer GPU tests and the material editor's preview's to `check` (what a rendering change
    needs, without the rest of `full`); `cargo xtask bench-quick` is a
    one-minute instruction-count benchmark of one change (`bench` stays the
    real one).

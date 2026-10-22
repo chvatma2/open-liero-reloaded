@@ -82,14 +82,20 @@ pub const GPU_TESTS: &[(&str, &str)] = &[
     ("olr-cli", "gpu_bench"),
     ("olr-game", "soak"),
     ("olr-game", "canvas_gpu"),
+    ("olr-game", "preview_gpu"),
     ("olr-ui", "hud_snapshots"),
 ];
 
 /// The GPU tests a rendering change needs (`check --render`): the
-/// renderer's GPU tests, the render goldens and the HUD snapshots, without
-/// the soak and the GPU benchmarks of [`GPU_TESTS`].
-pub const RENDER_TESTS: &[(&str, &str)] =
-    &[("olr-render", "gpu"), ("olr-cli", "render_golden"), ("olr-ui", "hud_snapshots")];
+/// renderer's GPU tests, the render goldens, the HUD snapshots and the
+/// material editor's heat preview (issue #45), without the soak, the
+/// canvas and the GPU benchmarks of [`GPU_TESTS`].
+pub const RENDER_TESTS: &[(&str, &str)] = &[
+    ("olr-render", "gpu"),
+    ("olr-cli", "render_golden"),
+    ("olr-ui", "hud_snapshots"),
+    ("olr-game", "preview_gpu"),
+];
 
 /// Whether `olr-render`'s `adapter` example opens a graphics adapter:
 /// `Ok(Ok(adapter))` when it does, `Ok(Err(notice))` when none opens, `Err`
@@ -282,6 +288,10 @@ mod tests {
     #[test]
     fn the_gpu_tier_names_test_binaries() {
         assert!(GPU_TESTS.contains(&("olr-game", "canvas_gpu")));
+        assert!(GPU_TESTS.contains(&("olr-game", "preview_gpu")));
+        for t in RENDER_TESTS {
+            assert!(GPU_TESTS.contains(t), "{t:?} is in the GPU tier");
+        }
         for (package, test) in GPU_TESTS {
             let dir = crate::root().join("crates").join(package);
             let manifest = std::fs::read_to_string(dir.join("Cargo.toml")).unwrap();
