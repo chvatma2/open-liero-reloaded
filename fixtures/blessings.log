@@ -224,3 +224,9 @@
   fixtures/render/look-glow-tip.png
   fixtures/render/look-rocket.png
   fixtures/render/look-skin.png
+2026-10-22 bless-render: #54: worm halo on the background
+  fixtures/render/lit-hashes.ron
+  fixtures/render/look-blast.png
+  fixtures/render/look-glow-tip.png
+  fixtures/render/look-rocket.png
+  fixtures/render/look-skin.png
