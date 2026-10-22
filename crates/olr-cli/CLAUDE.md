@@ -71,7 +71,7 @@ The headless command-line tool. Its commands:
   pack, applies, bakes (`compose::bake`, the back tile of the level's
   theme in `--content`, `content/packs` by default) and saves; the first
   on a plain level composes it (raster `base`). `list` prints `<i>: <id>
-  <Image|Drawn|Raster> <material|->[ "<name>"][ hidden][ locked][ distant N%]`, bottom
+  <Image|Drawn|Raster> <material|->[ "<name>"][ hidden][ locked][ distant N%][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map]`, bottom
   first, from `composition.ron` alone (`read_composition`); `add-image`
   reads its file bounded (`level_cmd::read_bounded`), applies its settings
   with the image (`add_image_with`) and prints `added element <id>`; `set`
@@ -111,6 +111,42 @@ The headless command-line tool. Its commands:
   low: 60, high: 100)`. Tests: `tests/level.rs`'s
   `look_cli_sets_every_field`, `groups_round_trip_through_the_cli`,
   `bad_look_values_are_errors`.
+- Surface materials (`material_cmd.rs`, issue #38; spec
+  `2026-10-22-materials-and-heat-design.md`): `olr-cli material list
+  [--content DIR] [--user DIR]` prints the library (`olr_edit::material::
+  list_materials`: the built-in `materials/` beside `--content`, then
+  the user's, `--user` or `materials/` in the game's data directory by
+  `directories`, as the game's store), one `<id> "<name>"
+  built-in|user heat: sensitivity S, capacity C, conductivity K, cooling
+  L, light P` (or ` no heat`) a line, unreadable files as warnings;
+  `material check <file>…` reads each (`read_file`: a regular file within
+  `MAX_RON_BYTES`, its id its name), printing `<file>: <id> "<name>"…`
+  or `<file>: error: …`, and exits 1 if any fails. `level material list
+  <pack>` prints `<value>: <id> "<name>"` (the value naming it in
+  painted maps); `level material add <pack> [<id>…] [--file F…]
+  [--content DIR] [--user DIR]` copies library materials (the built-in
+  one first on a clash) or files into the look (`look::add_material`, a
+  look made when the level has none, the thumbnail refreshed lit),
+  printing `added material <id> (<value>)`, or `kept material <id> (the
+  level has it)` for one it has (the level's copy kept: re-runnable).
+  `level element set --surface ID|none --back-surface ID|none`
+  (`Property::Surface`, `BackSurface`) and `level element surface <pack>
+  <id> [--back] (--map PNG | --rule R… | --clear)` paint an element's
+  map (`--back`: its back art's) at world resolution over its box (a
+  raster's: the level): `--map` a greyscale PNG of values
+  (`set_surface_map`; `v` the level's material `v`, 0 the element's
+  own), `--clear` removes it, and each `--rule
+  [rock:|dirt:|background:]COLOUR[/TOLERANCE]=MATERIAL` (COLOUR `RRGGBB`
+  or `*`, TOLERANCE percent, default 0, MATERIAL an id or `none`) is a
+  `SurfaceRule` of `surface_by_colour`: the first rule a covered pixel
+  matches wins, the rest keep their value, and it prints `<n> pixels
+  matched`; the same rules always write the same files (a script assigns
+  materials by art colour reproducibly). Each bakes and saves as `level
+  element …`; a refusal writes nothing. Tests: `tests/material.rs` (the
+  library, hostile material files, every operation on a copy of
+  `fixtures/edit/composed-level` with `pack check` clean after and the
+  rules re-run byte for byte, hostile input refused with the pack
+  unchanged, assets carrying materials through save and place).
 - `olr-cli scenario [name...] [--dump F] [--all | --fields a+b] [--time F.ron]` replays oracle
   scenarios in `olr-sim` and prints the first divergence of each. `--time`
   (plan 8, `timing.rs`: `time_scenario`, `TimingReport`) instead times each
@@ -140,12 +176,16 @@ The headless command-line tool. Its commands:
   (`from_elements`) or the world rectangle of every visible layer, or of
   `--layers` (`cut_rect`; off the level's top-left it starts at it),
   encodes it with its lit thumbnail and writes the folder anew; it prints
-  `saved asset "<name>" (W × H, N elements[, glow groups …]) to <dir>`.
-  `place` is one save, baked as `level element …`
-  (`place_in_pack`), printing `added element <id>` per piece, `added glow
-  group <g>`, `joined glow group <g>` and, for a level that had no look,
-  `ADDED_LIGHTING`. `check` reads each folder whole (`load_dir`), prints
-  `<dir>: "<name>", W × H, N elements` or `<dir>: error: …`, and exits 1
+  `saved asset "<name>" (W × H, N elements[, glow groups …][, materials
+  …]) to <dir>` (issue #38: the surface materials its elements name, and
+  their painted maps, travel with it). `place` is one save, baked as
+  `level element …` (`place_in_pack`), printing `added element <id>` per
+  piece, `added glow group <g>`, `joined glow group <g>`, `added material
+  <m>`, `joined material <m>` (the level's copy kept) and, for a level
+  that had no look, `ADDED_LIGHTING` (or, with materials and no glow,
+  `added a look to hold the asset's materials …`). `check` reads each
+  folder whole (`load_dir`), prints `<dir>: "<name>", W × H, N
+  elements[, materials …]` or `<dir>: error: …`, and exits 1
   if any fails. The built-in assets (`content/assets/`) are made with
   `save` from `content/reloaded/` (their commands in its README). Tests:
   `tests/asset.rs` (every built-in asset checks and is what its README

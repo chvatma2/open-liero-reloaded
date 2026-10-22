@@ -3533,6 +3533,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "clap",
+ "directories",
  "divan",
  "insta",
  "olr-bots",

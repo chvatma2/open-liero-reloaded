@@ -51,6 +51,8 @@ anyhow.workspace = true
 clap.workspace = true
 serde = { workspace = true, features = ["std"] }
 ron.workspace = true
+# `material list`'s default user library: the game's data directory.
+directories.workspace = true
 tempfile.workspace = true
 # `quick-bench`: user-space instruction counts (`perfcount.rs`).
 perf-event2.workspace = true

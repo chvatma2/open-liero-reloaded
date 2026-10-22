@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 
 use clap::{Subcommand, ValueEnum};
 use olr_edit::compose::{bake, theme_back_tile};
-use olr_edit::element::{self, Property};
+use olr_edit::element::{self, Property, SurfaceRule};
 use olr_edit::pack::{Pack, Source, load, save};
 use olr_format::levels::{Dither, ElementKind, ElementMaterial};
 
@@ -100,7 +100,7 @@ fn parse_colours(s: &str) -> Result<Colours, String> {
 
 #[derive(Subcommand)]
 pub(crate) enum ElementCommand {
-    /// Print each element, bottom first: `<index>: <id> <kind> <material>["<name>"][ hidden][ locked][ distant <depth>%]`.
+    /// Print each element, bottom first: `<index>: <id> <kind> <material>["<name>"][ hidden][ locked][ distant <depth>%][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map]`.
     List { pack: PathBuf },
     /// Add an image element on top, from a PNG or JPEG.
     AddImage {
@@ -179,6 +179,47 @@ pub(crate) enum ElementCommand {
         /// moves to the top of the distant layers, below every other.
         #[arg(long, value_parser = clap::value_parser!(u8).range(0..=99))]
         distant: Option<u8>,
+        /// Its pixels' surface material: the id of one of the level's
+        /// materials (`level material add`), or none (issue #38).
+        #[arg(long, value_parser = parse_surface)]
+        surface: Option<Surface>,
+        /// Its back art's surface material, or none (a drawn layer with back
+        /// art, a raster).
+        #[arg(long, value_parser = parse_surface)]
+        back_surface: Option<Surface>,
+        #[command(flatten)]
+        content: ContentArg,
+    },
+    /// Paint an element's surface material map (issue #38), at world
+    /// resolution over its box (a raster's: the level): from a PNG of map
+    /// values, by rules of collision kind and colour, or cleared. A value
+    /// `v` is the level's material `v` (`level material list`), 0 the
+    /// element's own `--surface`.
+    Surface {
+        pack: PathBuf,
+        id: String,
+        /// The back art's map (an element with back art) instead of its
+        /// pixels'.
+        #[arg(long)]
+        back: bool,
+        /// A greyscale PNG of the element's box in world pixels: each pixel
+        /// a map value; it replaces the map whole.
+        #[arg(long, conflicts_with_all = ["rule", "clear"])]
+        map: Option<PathBuf>,
+        /// `[rock:|dirt:|background:]COLOUR[/TOLERANCE]=MATERIAL`: the
+        /// element's covered world pixels of that collision kind (any
+        /// without one) whose colour (its art pixel at the centre; the back
+        /// art's with --back) is alike to COLOUR (RRGGBB, or `*` for any),
+        /// within TOLERANCE percent (default 0: exact), are made of
+        /// MATERIAL (an id of the level's materials, or `none`: the
+        /// element's own). Repeatable: the first rule a pixel matches
+        /// wins; pixels no rule matches keep their value. The same rules
+        /// always paint the same map.
+        #[arg(long, value_parser = parse_rule, required_unless_present_any = ["map", "clear"])]
+        rule: Vec<SurfaceRule>,
+        /// Remove the map: every pixel the element's own surface.
+        #[arg(long, conflicts_with = "rule")]
+        clear: bool,
         #[command(flatten)]
         content: ContentArg,
     },
@@ -373,6 +414,16 @@ fn list(dir: &Path) -> anyhow::Result<bool> {
         if let Some(d) = e.distant {
             line.push_str(&format!(" distant {d}%"));
         }
+        for (label, id) in [("surface", &e.surface), ("back-surface", &e.back_surface)] {
+            if let Some(id) = id {
+                line.push_str(&format!(" {label} {id}"));
+            }
+        }
+        for (label, on) in [("surface-map", e.surface_map), ("back-surface-map", e.back_surface_map)] {
+            if on {
+                line.push_str(&format!(" {label}"));
+            }
+        }
         println!("{line}");
     }
     Ok(true)
@@ -441,6 +492,8 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             glow_group,
             clear,
             distant,
+            surface,
+            back_surface,
             content,
         } => edit(pack, content, |p| {
             let glow = glow_property(p, id, *glow, glow_group.as_deref())?;
@@ -460,6 +513,8 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
                 glow,
                 clear.map(Property::Clear),
                 distant.map(|d| Property::Distant((d > 0).then_some(d))),
+                surface.clone().map(|Surface(m)| Property::Surface(m)),
+                back_surface.clone().map(|Surface(m)| Property::BackSurface(m)),
                 locked.filter(|l| *l).map(Property::Locked),
             ];
             let properties: Vec<Property> = properties.into_iter().flatten().collect();
@@ -509,6 +564,26 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             element::erase(p, id, &shape.shape())?;
             Ok(Vec::new())
         }),
+        ElementCommand::Surface { pack, id, back, map, rule, clear, content } => {
+            let values = match map {
+                Some(f) => {
+                    let bytes = read_bounded(f).map_err(|e| anyhow::anyhow!(e))?;
+                    let (_, _, v) =
+                        olr_format::image_io::decode_grey_within(&bytes, olr_format::image_io::LEVEL_ART)
+                            .map_err(|e| anyhow::anyhow!("{}: {e}", f.display()))?;
+                    Some(v)
+                }
+                None => None,
+            };
+            edit(pack, content, |p| {
+                if *clear || values.is_some() {
+                    element::set_surface_map(p, id, *back, values.as_deref())?;
+                    return Ok(Vec::new());
+                }
+                let n = element::surface_by_colour(p, id, *back, rule)?;
+                Ok(vec![format!("{n} pixels matched")])
+            })
+        }
         ElementCommand::Glow { tolerance: Some(_), target: MaskTarget { colour_at: None, .. }, .. } => {
             anyhow::bail!("--tolerance takes --colour-at")
         }
@@ -522,6 +597,57 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             Ok(Vec::new())
         }),
     }
+}
+
+/// `--surface`'s value: a material id, or none. A type of its own, as
+/// `Colours`.
+#[derive(Clone)]
+pub(crate) struct Surface(Option<String>);
+
+fn parse_surface(s: &str) -> Result<Surface, String> {
+    if s == "none" { Ok(Surface(None)) } else { Ok(Surface(Some(s.to_string()))) }
+}
+
+/// A `--rule` of `surface`: `[rock:|dirt:|background:]COLOUR[/TOLERANCE]=MATERIAL`.
+fn parse_rule(s: &str) -> Result<SurfaceRule, String> {
+    let (what, material) = s.rsplit_once('=').ok_or_else(|| format!("{s:?}: no `=MATERIAL`"))?;
+    let (kind, colour) = match what.split_once(':') {
+        Some((k, c)) => {
+            let kind = match k {
+                "rock" => ElementMaterial::Rock,
+                "dirt" => ElementMaterial::Dirt,
+                "background" => ElementMaterial::Background,
+                _ => return Err(format!("{k:?}: rock, dirt or background")),
+            };
+            (Some(kind), c)
+        }
+        None => (None, what),
+    };
+    let (colour, tolerance) = match colour.split_once('/') {
+        Some((c, t)) => {
+            let t: u8 =
+                t.parse().ok().filter(|t| *t <= 100).ok_or_else(|| format!("{t:?}: a tolerance 0 to 100"))?;
+            (c, t)
+        }
+        None => (colour, 0),
+    };
+    let colour = match colour {
+        "*" => None,
+        c => {
+            let hex = c.strip_prefix('#').unwrap_or(c);
+            if hex.len() != 6 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
+                return Err(format!("{c:?}: a colour RRGGBB or `*`"));
+            }
+            let byte = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0);
+            Some(olr_data::image::Rgba::rgb(byte(0), byte(2), byte(4)))
+        }
+    };
+    let material = match material {
+        "none" => None,
+        "" => return Err(format!("{s:?}: no material after `=`")),
+        m => Some(m.to_string()),
+    };
+    Ok(SurfaceRule { kind, colour, tolerance, material })
 }
 
 /// `set`'s `--glow` and `--glow-group` as one property: a strength of 0

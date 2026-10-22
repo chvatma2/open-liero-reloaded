@@ -3,7 +3,10 @@
 //! elements, or a world rectangle of every visible layer) and writes its
 //! folder; `place` puts one into a level pack (one save, baked, as `level
 //! element …`); `check` reads asset folders whole. The cut and the placing
-//! are `olr_edit::asset`'s, shared with the editor.
+//! are `olr_edit::asset`'s, shared with the editor. An asset carries the
+//! glow groups and surface materials (issue #38) its elements name;
+//! placing joins those the level has (by id, its own settings kept) and
+//! adds the others.
 
 use std::path::{Path, PathBuf};
 
@@ -101,19 +104,18 @@ fn save(
     crate::pack_cmd::warn(
         &asset::save_dir(out, &src).map_err(|e| anyhow::anyhow!("{}: {e}", out.display()))?,
     );
+    let list = |label: &str, ids: Vec<&str>| match ids.len() {
+        0 => String::new(),
+        _ => format!(", {label} {}", ids.join(", ")),
+    };
     println!(
-        "saved asset {:?} ({} × {}, {}{}) to {}",
+        "saved asset {:?} ({} × {}, {}{}{}) to {}",
         made.name,
         made.size.0,
         made.size.1,
         count_elements(made.pieces.len()),
-        match made.groups.len() {
-            0 => String::new(),
-            _ => format!(
-                ", glow groups {}",
-                made.groups.iter().map(|g| g.id.as_str()).collect::<Vec<_>>().join(", ")
-            ),
-        },
+        list("glow groups", made.groups.iter().map(|g| g.id.as_str()).collect()),
+        list("materials", made.materials.iter().map(|m| m.id.as_str()).collect()),
         out.display()
     );
     Ok(true)
@@ -132,8 +134,17 @@ fn place(dir: &Path, asset_dir: &Path, at: (i32, i32), content: &Path) -> anyhow
     for g in &placed.groups.joined {
         messages.push(format!("joined glow group {g}"));
     }
+    for m in &placed.materials.added {
+        messages.push(format!("added material {m}"));
+    }
+    for m in &placed.materials.joined {
+        messages.push(format!("joined material {m}"));
+    }
     if placed.groups.added_look {
         messages.push(olr_edit::asset::ADDED_LIGHTING.to_string());
+    }
+    if placed.materials.added_look && !placed.groups.added_look {
+        messages.push("added a look to hold the asset's materials (the level plays lit)".to_string());
     }
     save_and_print(dir, &pack, &messages)
 }
@@ -143,8 +154,15 @@ fn check(dirs: &[PathBuf]) -> bool {
     for dir in dirs {
         match asset::load_dir(dir) {
             Ok(a) => {
+                let materials = match a.materials.len() {
+                    0 => String::new(),
+                    _ => format!(
+                        ", materials {}",
+                        a.materials.iter().map(|m| m.id.as_str()).collect::<Vec<_>>().join(", ")
+                    ),
+                };
                 println!(
-                    "{}: {:?}, {} × {}, {}",
+                    "{}: {:?}, {} × {}, {}{materials}",
                     dir.display(),
                     a.name,
                     a.size.0,

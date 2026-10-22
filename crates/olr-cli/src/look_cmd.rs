@@ -161,7 +161,7 @@ fn parse_animation(s: &str) -> Result<AnimationSource, String> {
 
 /// Refreshes the level's thumbnail (lit by its look, the user's note
 /// 2026-10-19) and saves, then prints `messages`.
-fn save(dir: &Path, pack: &mut olr_edit::pack::Pack, messages: &[String]) -> anyhow::Result<bool> {
+pub(crate) fn save(dir: &Path, pack: &mut olr_edit::pack::Pack, messages: &[String]) -> anyhow::Result<bool> {
     if let Source::Level(l) = &mut pack.source {
         olr_edit::level::refresh_thumb(l);
     }

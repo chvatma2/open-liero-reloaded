@@ -108,6 +108,13 @@ enum LevelCommand {
         #[command(subcommand)]
         command: crate::look_cmd::GroupCommand,
     },
+    /// The level's surface materials (issue #38): list them, copy the
+    /// library's in. Elements name them: `level element set --surface`,
+    /// `level element surface`.
+    Material {
+        #[command(subcommand)]
+        command: crate::material_cmd::LevelMaterialCommand,
+    },
     /// Draw the level (front, or with --material its material) to a PNG with
     /// each spawn marked; the pack is not changed.
     Preview {
@@ -320,6 +327,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         LevelCommand::Element { command } => element_cmd::run(command),
         LevelCommand::Look(a) => crate::look_cmd::look_cmd(a),
         LevelCommand::Group { command } => crate::look_cmd::group_cmd(command),
+        LevelCommand::Material { command } => crate::material_cmd::level_cmd(command),
         LevelCommand::Bake { pack, content } => element_cmd::bake_cmd(pack, content),
         LevelCommand::Object { command } => match command {
             ObjectCommand::List { pack } => {

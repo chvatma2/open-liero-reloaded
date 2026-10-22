@@ -9,6 +9,7 @@ mod level_cmd;
 mod look_cmd;
 mod look_preview;
 mod match_cmd;
+mod material_cmd;
 mod mod_cmd;
 #[cfg(feature = "nat-tools")]
 mod nat_tools;
@@ -60,6 +61,9 @@ enum Command {
     /// The level editor's assets: save one from a level pack, place one in a level pack,
     /// check asset folders.
     Asset(asset_cmd::Args),
+    /// The surface material library (built-in and the user's): list it, check
+    /// material files. A level's own: `olr-cli level material`.
+    Material(material_cmd::Args),
     /// Play a headless bot match on any packs and render its last tick to a PNG, offscreen.
     RenderMatch(render_match::Args),
     /// Play a headless bot match and hash the exact bytes of its last frames' light grid and
@@ -122,6 +126,7 @@ fn main() -> ExitCode {
         Command::Render(args) => render::run(&args),
         Command::LookPreview(args) => look_preview::run(&args),
         Command::Asset(args) => asset_cmd::run(&args),
+        Command::Material(args) => material_cmd::run(&args),
         Command::RenderMatch(args) => render_match::run(&args),
         Command::FrameHashes(args) => frame_hashes_cmd::run(&args),
         Command::Match(args) => match_cmd::run(&args),
