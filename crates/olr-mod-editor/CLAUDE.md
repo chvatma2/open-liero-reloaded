@@ -10,7 +10,7 @@ Editor screen's Mod tab (`olr-ui`).
   `olr-format` (the mod format, `ModEditorFile`, canonical RON),
   `olr-edit` (`mods`: get, set, weapons, shared projectiles, check,
   `mods::art`'s assets; `pack::Pack`), `olr-pack` (`Severity`), `olr-vfs`,
-  `olr-look` (`engine::MAX_EXPLOSION_RADIUS`), `olr-skin-editor` (the
+  `olr-look` (`engine::MAX_EXPLOSION_RADIUS`, issue #42's heat caps), `olr-skin-editor` (the
   painting: `Frame`, `paint`, `Tool`, the zooms and glow strengths; a
   same-layer pair in `xtask/layers.ron`) and egui 0.36.2; not
   on `olr-ui`, `olr-game` or files (the host loads, saves and keeps the
@@ -93,7 +93,16 @@ Editor screen's Mod tab (`olr-ui`).
   sound… (WAV or Ogg, checked as the game loads them).
 - **Look** (`ui/look.rs`): the projectile panel's Look group (`glow`,
   `light`, `end_flash`, `explosion`) and the weapon's (`muzzle_light`),
-  each set whole as `<path>.look` (a look all default is `None`).
+  each set whole as `<path>.look` (a look all default is `None`). Issue
+  #42, beside the explosion light: `explosion_heat` (`labels::
+  EXPLOSION_HEAT`: switched on, the engine's, `amount` 100 %; its amount
+  0-`MAX_EXPLOSION_HEAT_AMOUNT` %, `OWN_RADIUS` and the radius
+  1-`MAX_EXPLOSION_HEAT_RADIUS`, off the engine's) and `heat`
+  (`labels::HEAT`: switched on, a flame's 5 a tick over 4 px; `amount a
+  tick` 1-`MAX_PROJECTILE_HEAT`, the radius 1-`MAX_PROJECTILE_HEAT_RADIUS`),
+  the bounds `olr_look::engine`'s; and the World panel's Look
+  (`mod_wide`): `mod.ron`'s `look`, the explosion light and heat of every
+  projectile without its own, set whole as `mod.look`.
 - **Play** (issue #18; STATUS.md "Mod editor Play (issue #18)"): the
   session bar's Play and its ▾ (the level editor's `play_menu`: the
   installed levels by name, a list that scrolls, and 0 to `MAX_BOTS`, 8,
@@ -140,7 +149,9 @@ Editor screen's Mod tab (`olr-ui`).
   (issue #19: a frame painted and saved changes the PNG only there, the
   mask round-trips, undo back to the bytes; new images, frames, renames
   and imports through the browser; removal refused while used; sounds
-  imported, played and removed; the Look group's lights; a broken image
+  imported, played and removed; the Look group's lights; issue #42's
+  `the_look_group_edits_heat`: a projectile's explosion heat and heat a
+  tick, their bounds, and the mod's own on the World panel; a broken image
   and a mask of the wrong size never crash); the test host
   answers `List` and `ReadFile` from the disk.
 

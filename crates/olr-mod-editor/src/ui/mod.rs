@@ -135,6 +135,10 @@ pub mod labels {
     pub const LIGHT: &str = "Light";
     pub const END_FLASH: &str = "End flash";
     pub const EXPLOSION: &str = "Explosion light";
+    pub const EXPLOSION_HEAT: &str = "Explosion heat";
+    pub const HEAT: &str = "Heat";
+    /// An explosion heat's own radius, else the engine's (issue #42).
+    pub const OWN_RADIUS: &str = "own radius";
     pub const MUZZLE_LIGHT: &str = "Muzzle light";
     pub const UNLIMITED: &str = "unlimited reach";
 

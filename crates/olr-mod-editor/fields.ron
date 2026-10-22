@@ -247,7 +247,7 @@
         range: None,
         place: Panel,
         asset: None,
-        help: "The projectile\'s look (look system): glow, a light, an end flash; presentation only. Default none.",
+        help: "The projectile\'s look (look system): glow, a light, an end flash, its explosions\' light and heat, its heat a tick; presentation only. Default none.",
     ),
     (
         key: "WeaponState::Enabled",

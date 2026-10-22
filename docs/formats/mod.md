@@ -143,7 +143,7 @@ A projectile (OLX `proj_t`, `include/ProjectileDesc.h:80-121`), inline in a spaw
 | `hit_terrain` | list of [Effect](#effect) | `[]` | When the projectile hits rock or dirt (OLX `Hit`). `[]` = OLX's `Nothing`. The effect kind also selects the collision physics: `Bounce`, `Nothing` (half-move), `GoThrough` (no stop), `Explode` in dirt only (keeps position); everything else stops at the last safe position (`mod-fields.md` §7). At most `MAX_EFFECTS` (16). |
 | `hit_worm` | list of [Effect](#effect) | `[]` | When it hits a worm (OLX `PlayerHit`). `[]` = `Nothing`, which also turns worm collision off; `GoThrough` hits but does not stop. At most `MAX_EFFECTS` (16). |
 | `spawns` | map of name → [EventSpawn](#spawn) | `{}` | Named spawns that `Spawn(<name>)` effects use. This runtime takes at most one, shared by all events (OLX `GeneralSpawnInfo`, expanded as `<path>.spawn`). |
-| `look` | [ProjectileLookSource](#projectilelooksource) (optional) | none | The projectile's look (look system): glow, a light, an end flash; presentation only. Default none. |
+| `look` | [ProjectileLookSource](#projectilelooksource) (optional) | none | The projectile's look (look system): glow, a light, an end flash, its explosions' light and heat, its heat a tick; presentation only. Default none. |
 
 Example:
 

@@ -1,7 +1,9 @@
 //! The Look group (issue #19), as the level editor edits its glow groups
 //! (`olr-editor`'s `ui/look.rs`): a projectile's `glow`, `light`,
 //! `end_flash` and `explosion`, a weapon's `muzzle_light`, each a switch
-//! and its colour, intensity, reach and animation. Presentation only: the
+//! and its colour, intensity, reach and animation; issue #42: beside the
+//! explosion light, a projectile's `explosion_heat` and `heat`, and the
+//! mod's own (`mod.ron`'s `look`: its `explosion` and `explosion_heat`). Presentation only: the
 //! simulation never reads a look. Each field commits once (a number when
 //! its drag stops or its typing ends, a colour's `#rrggbb` when its field
 //! loses the keyboard); the whole look is set back as one change.
@@ -10,8 +12,11 @@ use egui::Ui;
 use olr_data::image::Rgba;
 use olr_format::Colour;
 use olr_format::look::{
-    AnimationSource, ExplosionLightSource, KeySource, LightSource, ProjectileLookSource, PulseShape,
-    ReachSource, WeaponLookSource,
+    AnimationSource, ExplosionHeatSource, ExplosionLightSource, KeySource, LightSource, ModWideLookSource,
+    ProjectileHeatSource, ProjectileLookSource, PulseShape, ReachSource, WeaponLookSource,
+};
+use olr_look::engine::{
+    MAX_EXPLOSION_HEAT_AMOUNT, MAX_EXPLOSION_HEAT_RADIUS, MAX_PROJECTILE_HEAT, MAX_PROJECTILE_HEAT_RADIUS,
 };
 
 use super::{Cx, caption, labels, relabel};
@@ -324,18 +329,17 @@ fn light(
     out.map(Some)
 }
 
-/// An explosion light's switch and fields.
+/// An explosion light's switch (`hover` its meaning) and fields.
 fn explosion(
     ui: &mut Ui,
     cx: &mut Cx,
     key: &str,
     now: Option<&ExplosionLightSource>,
+    hover: &str,
 ) -> Option<Option<ExplosionLightSource>> {
     let part = labels::EXPLOSION;
     let mut on = now.is_some();
-    let r = ui
-        .checkbox(&mut on, part)
-        .on_hover_text("Its explosion's light, in place of the mod's or the engine's");
+    let r = ui.checkbox(&mut on, part).on_hover_text(hover);
     if r.changed() {
         return Some(on.then(new_explosion));
     }
@@ -383,6 +387,99 @@ fn explosion(
     out.map(Some)
 }
 
+/// An explosion heat when it is switched on: the engine's.
+const NEW_EXPLOSION_HEAT: ExplosionHeatSource = ExplosionHeatSource { amount: 100, radius: None };
+
+/// A projectile's heat a tick when it is switched on: a flame's.
+const NEW_HEAT: ProjectileHeatSource = ProjectileHeatSource { amount: 5, radius: 4 };
+
+/// An explosion heat's switch (`hover` its meaning) and fields (issue
+/// #42): its amount, percent of the engine's, and its own radius or the
+/// engine's.
+fn explosion_heat(
+    ui: &mut Ui,
+    cx: &mut Cx,
+    key: &str,
+    now: Option<&ExplosionHeatSource>,
+    hover: &str,
+) -> Option<Option<ExplosionHeatSource>> {
+    let part = labels::EXPLOSION_HEAT;
+    let mut on = now.is_some();
+    let r = ui.checkbox(&mut on, part).on_hover_text(hover);
+    if r.changed() {
+        return Some(on.then_some(NEW_EXPLOSION_HEAT));
+    }
+    let h = now?;
+    let mut out = None;
+    ui.indent(("olr-mod-editor-look", key), |ui| {
+        ui.horizontal(|ui| {
+            let max = i64::from(MAX_EXPLOSION_HEAT_AMOUNT);
+            let label = labels::look(part, "amount (%)");
+            if let Some(v) = number(ui, cx, &format!("{key}/amount"), &label, h.amount.into(), 0..=max) {
+                out = Some(ExplosionHeatSource { amount: v as u16, ..h.clone() });
+            }
+        });
+        ui.horizontal(|ui| {
+            let mut own = h.radius.is_some();
+            let r = ui
+                .checkbox(&mut own, "Own radius")
+                .on_hover_text("Off: the engine's for the explosion, which grows with its damage");
+            relabel(&r, egui::WidgetType::Checkbox, &labels::look(part, labels::OWN_RADIUS));
+            if r.changed() {
+                out = Some(ExplosionHeatSource { radius: own.then_some(16), ..h.clone() });
+            }
+            let max = MAX_EXPLOSION_HEAT_RADIUS as i64;
+            if let Some(radius) = h.radius
+                && let Some(v) = number(
+                    ui,
+                    cx,
+                    &format!("{key}/radius"),
+                    &labels::look(part, "radius (px)"),
+                    radius.into(),
+                    1..=max,
+                )
+            {
+                out = Some(ExplosionHeatSource { radius: Some(v as u16), ..h.clone() });
+            }
+        });
+    });
+    out.map(Some)
+}
+
+/// A projectile's heat a tick: its switch, amount and radius (issue #42).
+fn heat(
+    ui: &mut Ui,
+    cx: &mut Cx,
+    key: &str,
+    now: Option<&ProjectileHeatSource>,
+) -> Option<Option<ProjectileHeatSource>> {
+    let part = labels::HEAT;
+    let mut on = now.is_some();
+    let r = ui.checkbox(&mut on, part).on_hover_text(
+        "Heat it leaves where it is each tick it lives (flames, napalm, a hot slug), in a level whose materials heat",
+    );
+    if r.changed() {
+        return Some(on.then_some(NEW_HEAT));
+    }
+    let h = now?;
+    let mut out = None;
+    ui.indent(("olr-mod-editor-look", key), |ui| {
+        ui.horizontal(|ui| {
+            let max = i64::from(MAX_PROJECTILE_HEAT);
+            let label = labels::look(part, "amount a tick");
+            if let Some(v) = number(ui, cx, &format!("{key}/amount"), &label, h.amount.into(), 1..=max) {
+                out = Some(ProjectileHeatSource { amount: v as u16, ..h.clone() });
+            }
+            let max = i64::from(MAX_PROJECTILE_HEAT_RADIUS);
+            let label = labels::look(part, "radius (px)");
+            if let Some(v) = number(ui, cx, &format!("{key}/radius"), &label, h.radius.into(), 1..=max) {
+                out = Some(ProjectileHeatSource { radius: v as u16, ..h.clone() });
+            }
+        });
+    });
+    out.map(Some)
+}
+
 /// The projectile at `path`'s Look group.
 pub(super) fn projectile(ui: &mut Ui, cx: &mut Cx, path: &str, now: Option<&ProjectileLookSource>) {
     let look = now.cloned().unwrap_or_default();
@@ -408,12 +505,41 @@ pub(super) fn projectile(ui: &mut Ui, cx: &mut Cx, path: &str, now: Option<&Proj
     if let Some(l) = light(ui, cx, &format!("{path}/end_flash"), labels::END_FLASH, look.end_flash.as_ref()) {
         new = Some(ProjectileLookSource { end_flash: l, ..look.clone() });
     }
-    if let Some(e) = explosion(ui, cx, &format!("{path}/explosion"), look.explosion.as_ref()) {
+    let hover = "Its explosion's light, in place of the mod's or the engine's";
+    if let Some(e) = explosion(ui, cx, &format!("{path}/explosion"), look.explosion.as_ref(), hover) {
         new = Some(ProjectileLookSource { explosion: e, ..look.clone() });
+    }
+    let hover = "Its explosions' heat in a level whose materials heat, in place of the mod's or the engine's";
+    let now = look.explosion_heat.as_ref();
+    if let Some(h) = explosion_heat(ui, cx, &format!("{path}/explosion_heat"), now, hover) {
+        new = Some(ProjectileLookSource { explosion_heat: h, ..look.clone() });
+    }
+    if let Some(h) = heat(ui, cx, &format!("{path}/heat"), look.heat.as_ref()) {
+        new = Some(ProjectileLookSource { heat: h, ..look.clone() });
     }
     if let Some(n) = new {
         let value = if n == ProjectileLookSource::default() { None } else { Some(n) };
         cx.commits.push(ModAction::Set { path: format!("{path}.look"), value: ron(&value) });
+    }
+}
+
+/// The mod's own look (`mod.ron`'s `look`, issue #42): the explosion light
+/// and heat of every projectile without its own.
+pub(super) fn mod_wide(ui: &mut Ui, cx: &mut Cx, now: Option<&ModWideLookSource>) {
+    let look = now.cloned().unwrap_or_default();
+    ui.weak("Every projectile's explosions without their own, in a lit level: presentation only.");
+    let mut new = None;
+    let hover = "The light of every projectile's explosion without its own, in place of the engine's";
+    if let Some(e) = explosion(ui, cx, "mod/explosion", look.explosion.as_ref(), hover) {
+        new = Some(ModWideLookSource { explosion: e, ..look.clone() });
+    }
+    let hover = "The heat of every projectile's explosion without its own, in a level whose materials heat, in place of the engine's";
+    if let Some(h) = explosion_heat(ui, cx, "mod/explosion_heat", look.explosion_heat.as_ref(), hover) {
+        new = Some(ModWideLookSource { explosion_heat: h, ..look.clone() });
+    }
+    if let Some(n) = new {
+        let value = if n == ModWideLookSource::default() { None } else { Some(n) };
+        cx.commits.push(ModAction::Set { path: "mod.look".into(), value: ron(&value) });
     }
 }
 

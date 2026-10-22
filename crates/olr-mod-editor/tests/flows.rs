@@ -30,8 +30,10 @@ pub(crate) struct App {
     dir: PathBuf,
 }
 
+/// A window tall enough for a projectile's panel, its Look group (issue
+/// #42's heat too) above its events, without scrolling.
 pub(crate) fn harness(state: ModEditorState, dir: PathBuf) -> Harness<'static, App> {
-    harness_sized(state, dir, egui::vec2(1500.0, 1000.0))
+    harness_sized(state, dir, egui::vec2(1500.0, 1100.0))
 }
 
 fn harness_sized(state: ModEditorState, dir: PathBuf, size: egui::Vec2) -> Harness<'static, App> {

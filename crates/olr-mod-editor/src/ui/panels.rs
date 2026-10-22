@@ -90,6 +90,9 @@ fn world(ui: &mut Ui, cx: &mut Cx) {
         section(ui, cx, "Worm", "mod.worm", "", Place::More);
         section(ui, cx, "Rope", "mod.rope", "", Place::More);
     }
+    heading(ui, labels::LOOK);
+    let now = cx.state.src().look.clone();
+    look::mod_wide(ui, cx, now.as_ref());
     presets(ui, cx);
 }
 

@@ -358,6 +358,71 @@ fn the_look_group_edits_lights() {
     assert_eq!(h.state().state.value("weapons/bazooka.look").as_deref(), Some("None"));
 }
 
+/// Issue #42: beside the explosion light, a projectile's explosion heat
+/// (its amount, its own radius or the engine's) and its heat a tick, and
+/// the mod's own explosion light and heat on the World panel, each within
+/// its bounds, the mod checking clean.
+#[test]
+fn the_look_group_edits_heat() {
+    use olr_format::look::{
+        ExplosionHeatSource, ModWideLookSource, ProjectileHeatSource, ProjectileLookSource,
+    };
+    let Some(state) = editor() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let mut h = harness(state, tmp.path().to_path_buf());
+    click(&mut h, "Bazooka");
+    click(&mut h, &labels::node("Shot"));
+    click(&mut h, labels::GO_PROJECTILE);
+    let path = "weapons/bazooka.fire.shot.projectile";
+    let look = |h: &Harness<'static, App>| -> ProjectileLookSource {
+        olr_mod_editor::state::get_as(h.state().state.src(), &format!("{path}.look"))
+            .flatten()
+            .unwrap_or_default()
+    };
+    let heat = labels::EXPLOSION_HEAT;
+    click(&mut h, heat);
+    assert_eq!(
+        look(&h).explosion_heat,
+        Some(ExplosionHeatSource { amount: 100, radius: None }),
+        "the engine's"
+    );
+    type_into(&mut h, &labels::look(heat, "amount (%)"), "250");
+    click(&mut h, &labels::look(heat, labels::OWN_RADIUS));
+    type_into(&mut h, &labels::look(heat, "radius (px)"), "30");
+    assert_eq!(look(&h).explosion_heat, Some(ExplosionHeatSource { amount: 250, radius: Some(30) }));
+    // The bounds hold: a radius past the engine's widest is the widest.
+    type_into(&mut h, &labels::look(heat, "radius (px)"), "90");
+    assert_eq!(look(&h).explosion_heat.unwrap().radius, Some(48));
+    click(&mut h, labels::HEAT);
+    type_into(&mut h, &labels::look(labels::HEAT, "amount a tick"), "7");
+    type_into(&mut h, &labels::look(labels::HEAT, "radius (px)"), "3");
+    assert_eq!(look(&h).heat, Some(ProjectileHeatSource { amount: 7, radius: 3 }));
+    type_into(&mut h, &labels::look(labels::HEAT, "amount a tick"), "500");
+    assert_eq!(look(&h).heat.unwrap().amount, 100, "at most the cap");
+    assert!(look(&h).explosion.is_none(), "heat is not light");
+    assert_eq!(h.state().state.errors(), 0, "{:?}", h.state().state.issues());
+    // Switched off again, the look is none.
+    click(&mut h, heat);
+    click(&mut h, labels::HEAT);
+    assert_eq!(h.state().state.value(&format!("{path}.look")).as_deref(), Some("None"));
+
+    // The mod's own, on the World panel: `mod.ron`'s look.
+    click(&mut h, labels::WORLD);
+    let wide = |h: &Harness<'static, App>| h.state().state.src().look.clone().unwrap_or_default();
+    click(&mut h, heat);
+    type_into(&mut h, &labels::look(heat, "amount (%)"), "40");
+    click(&mut h, labels::EXPLOSION);
+    let w: ModWideLookSource = wide(&h);
+    assert_eq!(w.explosion_heat, Some(ExplosionHeatSource { amount: 40, radius: None }));
+    assert!(w.explosion.is_some_and(|e| e.radius == 7));
+    assert_eq!(h.state().state.errors(), 0, "{:?}", h.state().state.issues());
+    let compiled = olr_format::mods::compile_mod_look(h.state().state.src()).unwrap();
+    assert_eq!(compiled.explosion_heat, Some(olr_look::ExplosionHeatLook { amount: 40, radius: None }));
+    click(&mut h, heat);
+    click(&mut h, labels::EXPLOSION);
+    assert!(h.state().state.src().look.is_none(), "all default is none");
+}
+
 /// A broken image and a mask of the wrong size open, list and draw
 /// without a crash: the image says why it does not paint, the mask is
 /// noted and painting glow replaces it with one that fits.
