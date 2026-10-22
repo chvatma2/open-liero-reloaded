@@ -67,6 +67,7 @@ fn a_planted_desync_is_repaired_and_pinpointed() {
         profile_changes: vec![],
         migration: false,
         strafe: false,
+        weapon_keys: false,
         faults: vec![(1, 400, 3, 7.0)],
     };
     let dir = tempfile::tempdir().unwrap();

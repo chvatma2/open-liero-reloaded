@@ -90,6 +90,9 @@ struct NetSpecArgs {
     /// Every bot also presses Strafe and Previous/Next weapon (issue #23).
     #[arg(long)]
     strafe: bool,
+    /// Every bot also holds Weapon 1-5 (issue #48).
+    #[arg(long)]
+    weapon_keys: bool,
 }
 
 impl From<NetSpecArgs> for NetSpec {
@@ -114,6 +117,7 @@ impl From<NetSpecArgs> for NetSpec {
             profile_changes: a.profile_changes,
             migration: a.migration,
             strafe: a.strafe,
+            weapon_keys: a.weapon_keys,
         }
     }
 }

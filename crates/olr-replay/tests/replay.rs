@@ -86,6 +86,35 @@ fn the_new_keys_round_trip() {
     assert_eq!(run.world, world);
 }
 
+/// Weapon 1-5 (issue #48, the keys' top five bits) are recorded and
+/// replayed: the replay rebuilds a world whose worms selected slots.
+#[test]
+fn the_weapon_keys_round_trip() {
+    let (setup, mode) = deathmatch(2, 4);
+    let mut world = World::new(setup.clone(), mode.game_mode(&setup.settings).unwrap()).unwrap();
+    let mut rec = Recorder::new(packs(), &setup, &mode, vec![]);
+    rec.start(&world).unwrap();
+    let mut out = TickEvents::new();
+    let mut selected = Vec::new();
+    for t in 0..400u32 {
+        let held = |k: u32| if t % 50 < 10 { Keys::WEAPONS[(t / 50 + k) as usize % 5] } else { 0 };
+        let row = [Keys(held(0) | Keys::RIGHT), Keys(held(2))];
+        world.tick(&row, &mut out);
+        rec.push(&row, &world).unwrap();
+        selected.push(world.worms()[0].current_weapon);
+    }
+    selected.sort_unstable();
+    selected.dedup();
+    assert!(selected.len() > 1, "the keys selected slots: {selected:?}");
+    let replay = rec.finish(&world).unwrap();
+    let decoded = Replay::decode(&replay.encode()).unwrap();
+    assert_eq!(decoded, replay, "encoding round-trips");
+    assert_eq!(decoded.row(55), &[Keys(Keys::WEAPON2 | Keys::RIGHT), Keys(Keys::WEAPON4)]);
+    assert_eq!(decoded.row(205), &[Keys(Keys::WEAPON5 | Keys::RIGHT), Keys(Keys::WEAPON2)]);
+    let run = decoded.play(decoded.world(assets()).unwrap()).unwrap();
+    assert_eq!(run.world, world);
+}
+
 /// A withdrawal is recorded at its tick and replayed there.
 #[test]
 fn a_withdrawal_replays_at_its_tick() {

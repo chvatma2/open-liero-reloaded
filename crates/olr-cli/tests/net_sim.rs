@@ -26,6 +26,7 @@ fn spec(profile: &str, seed: u32) -> NetSpec {
         profile_changes: vec![],
         migration: false,
         strafe: false,
+        weapon_keys: false,
     }
 }
 
@@ -62,6 +63,22 @@ fn strafing_bots_play_online() {
     for slot in [0, 5] {
         let has = |bit: u16| log.iter().any(|row| row[slot] & bit != 0);
         assert!(has(Keys::STRAFE) && has(Keys::NEXT_WEAPON) && has(Keys::PREV_WEAPON), "slot {slot}");
+    }
+    assert!(r.report.stats.values().any(|s| s.rollbacks > 0), "rollbacks replayed the new keys");
+}
+
+/// Issue #48: Weapon 1-5 go through the netcode (a bad network's
+/// rollbacks included) and every peer agrees.
+#[test]
+fn bots_holding_the_weapon_keys_play_online() {
+    let Some(c) = content() else { return };
+    let s = NetSpec { weapon_keys: true, ..spec("bad", 7) };
+    let r = pass(&c, &s);
+    let log = &r.report.host_log;
+    for slot in [0, 5] {
+        for bit in Keys::WEAPONS {
+            assert!(log.iter().any(|row| row[slot] & bit != 0), "slot {slot}, {bit:#06x}");
+        }
     }
     assert!(r.report.stats.values().any(|s| s.rollbacks > 0), "rollbacks replayed the new keys");
 }

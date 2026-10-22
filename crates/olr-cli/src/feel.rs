@@ -91,6 +91,7 @@ pub fn feel_spec(profile: &str, seed: u32) -> NetSpec {
         profile_changes: vec![],
         migration: false,
         strafe: false,
+        weapon_keys: false,
         faults: vec![],
     }
 }

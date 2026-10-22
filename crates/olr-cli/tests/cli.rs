@@ -574,6 +574,7 @@ fn net_sim_migration_flags_run_and_replay() {
         profile_changes: vec![],
         migration: false,
         strafe: false,
+        weapon_keys: false,
     };
     let case = olr_cli::netsim::NetCase { spec, failure: None };
     let path = tmp.path().join("case.ron");

@@ -416,12 +416,14 @@ The headless command-line tool. Its commands:
   --spectators 1 --join-tick T --profile typical --drift-ppm P --ticks 1000
   --outage peer:from:until --net-seed N --difficulty D --exit
   peer:tick:crash|leave --host-freeze from:until --profile-change
-  tick:peer:profile --migration --strafe] [--from CASE.ron]
+  tick:peer:profile --migration --strafe --weapon-keys] [--from CASE.ron]
   [--seeds a..b] [--content DIR] [--failures DIR]` (plan 9, `netsim.rs`, the
   command in `net_sim_cmd.rs`): an online match of bots in one process over
   `olr-netcode`'s network model (`--strafe`, `NetSpec::strafe`, issue #23:
   the bots also hold Strafe a third of the time and tap Next/Previous weapon,
-  `netsim::extra_keys`, so the 16-bit keys cross the wire). Every peer (host, clients, spectators) builds
+  `netsim::extra_keys`, so the 16-bit keys cross the wire; `--weapon-keys`,
+  `NetSpec::weapon_keys`, issue #48: they also hold Weapon 1-5 in turn,
+  `netsim::weapon_keys`, the keys' top five bits). Every peer (host, clients, spectators) builds
   its own `World` and area cache from the same `MatchOptions` (all worms
   `Player::Bot`); a peer runs only the bots of its local slots (the host
   `clients..slots`, client `k` = peer `1 + k` slot `k`), thinking with its
