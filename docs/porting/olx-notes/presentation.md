@@ -1078,6 +1078,12 @@ which `olr-sim::physics::get_input` ports:
 - **Respawn.** Jump while dead and allowed requests a respawn (`:115-119`).
 - The quick-select keys (Weapon1-5) have no equivalent among the sim's 11
   keys.
+- **Mouse.** OLX's mouse mode and twin-stick aim set the angle directly
+  (up to 100°/s, no acceleration, `:280-306`). The remake does not port
+  them: its experimental mouse controls (`olr-input`'s controller, issue
+  #24) press the keys above for the player (Up/Down toward the cursor,
+  a one-tick Left or Right to face it, Strafe with A and D, a
+  Previous/Next press per wheel notch), never faster than keys.
 
 The keys are latched between sub-steps (`docs/porting/STATUS.md`, Input).
 
