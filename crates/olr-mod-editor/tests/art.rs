@@ -4,7 +4,8 @@
 //! (`paint_a_frame_and_save_it`); the projectile's and weapon's Look. On
 //! the state: new images, frames added and removed (asked), renames,
 //! imports through the browser, a replaced image, removal refused while
-//! used, sounds imported, played and removed.
+//! used, sounds imported, played and removed; a bad image or mask never
+//! crashes.
 
 use egui_kittest::Harness;
 use egui_kittest::kittest::Queryable;
@@ -355,4 +356,41 @@ fn the_look_group_edits_lights() {
     assert!(muzzle.contains("muzzle_light"), "{muzzle}");
     click(&mut h, labels::MUZZLE_LIGHT);
     assert_eq!(h.state().state.value("weapons/bazooka.look").as_deref(), Some("None"));
+}
+
+/// A broken image and a mask of the wrong size open, list and draw
+/// without a crash: the image says why it does not paint, the mask is
+/// noted and painting glow replaces it with one that fits.
+#[test]
+fn a_bad_image_or_mask_never_crashes() {
+    let Some(mut pack) = crate::common::classic_copy() else { return };
+    pack.other.insert(VPath::new("gfx/broken.png").unwrap(), b"\x89PNG\r\n\x1a\nnot really".to_vec());
+    pack.other.insert(VPath::new("gfx/missile.glow.png").unwrap(), art::blank_image(3, 1).unwrap());
+    let base = mods::source(&installed(CLASSIC).unwrap()).unwrap().clone();
+    let state = olr_mod_editor::ModEditorState::new(pack, Some(base), Vec::new(), false).unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let mut h = harness(state, tmp.path().to_path_buf());
+    h.run();
+    h.state_mut().state.update(A::Select(Item::Art("gfx/broken.png".into())));
+    h.run();
+    assert!(matches!(h.state().state.art(), Some(Err(_))), "the broken image does not paint");
+    assert!(h.state().state.art_doc().is_none());
+    h.state_mut().state.update(A::Art(ArtAction::Press { x: 1, y: 1 }));
+    h.state_mut().state.update(A::Art(ArtAction::Release));
+    h.state_mut().state.update(A::Select(Item::Art(MISSILE.into())));
+    h.run();
+    let doc = h.state().state.art_doc().expect("the missile paints");
+    assert!(doc.mask_note().is_some(), "the mask that does not fit is noted");
+    // Glow paints only where there is colour.
+    let frame = doc.frame(0);
+    let i = frame.px.iter().position(|p| p.a != 0).expect("an opaque pixel") as i32;
+    let (x, y) = (i % frame.w as i32, i / frame.w as i32);
+    let s = &mut h.state_mut().state;
+    s.update(A::Art(ArtAction::Target(olr_mod_editor::art::Target::Glow)));
+    s.update(A::Art(ArtAction::Press { x, y }));
+    s.update(A::Art(ArtAction::Release));
+    let (w, hh) = image_io::png_size(&bytes_of(s.pack(), MISSILE)).unwrap();
+    let mask = bytes_of(s.pack(), "gfx/missile.glow.png");
+    assert_eq!(image_io::png_size(&mask), Some((w, hh)), "the new mask fits");
+    h.run();
 }

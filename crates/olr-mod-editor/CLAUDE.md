@@ -125,7 +125,8 @@ Editor screen's Mod tab (`olr-ui`).
   (issue #19: a frame painted and saved changes the PNG only there, the
   mask round-trips, undo back to the bytes; new images, frames, renames
   and imports through the browser; removal refused while used; sounds
-  imported, played and removed; the Look group's lights); the test host
+  imported, played and removed; the Look group's lights; a broken image
+  and a mask of the wrong size never crash); the test host
   answers `List` and `ReadFile` from the disk.
 
 Test: `cargo nextest run -p olr-mod-editor`.
