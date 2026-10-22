@@ -118,7 +118,7 @@ fn the_dig_bit_never_reaches_the_simulation() {
     s.on_key(DIG, true);
     assert_eq!(s.held(), Keys(0));
     for _ in 0..50 {
-        assert_eq!(s.latch_tick().0 & !Keys::ALL, 0);
+        assert_eq!(s.latch_tick().0 & !(Keys::LEFT | Keys::RIGHT), 0, "the gesture alone");
     }
 }
 

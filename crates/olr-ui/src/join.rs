@@ -14,8 +14,7 @@
 //! Pure logic: the screen (`screens/join.rs`) draws it, the app gives
 //! each seat's input ([`SeatInput`], every frame).
 
-use olr_input::{DIG, Seat};
-use olr_sim::Keys;
+use olr_input::{Action, Seat};
 
 use crate::state::UiAction;
 
@@ -32,12 +31,12 @@ pub struct Joined {
 }
 
 /// One seat's input now, as the app reads it every frame: its actions
-/// held (Dig's `DIG` bit included: `InputState::actions_held`) and
-/// whether its pad's Start is held.
+/// held (the mask of `Action::bit`, Dig's `DIG` included:
+/// `InputState::actions_held`) and whether its pad's Start is held.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SeatInput {
     pub seat: Seat,
-    pub held: Keys,
+    pub held: u32,
     pub start: bool,
 }
 
@@ -82,11 +81,11 @@ impl JoinStep {
         for s in seats {
             let last = self.last.iter().find(|l| l.seat == s.seat);
             let (held, start) = match (self.primed, last) {
-                (false, _) => (s.held.0, s.start),
-                (true, Some(l)) => (l.held.0, l.start),
+                (false, _) => (s.held, s.start),
+                (true, Some(l)) => (l.held, l.start),
                 (true, None) => (0, false),
             };
-            let pressed = s.held.0 & !held;
+            let pressed = s.held & !held;
             let start = s.start && !start;
             if pressed == 0 && !start {
                 continue;
@@ -96,16 +95,16 @@ impl JoinStep {
                 continue;
             };
             let seat = s.seat;
-            if start || pressed & (Keys::FIRE | Keys::JUMP) != 0 {
+            if start || pressed & (Action::Shoot.bit() | Action::Jump.bit()) != 0 {
                 out.push(UiAction::SetReady { seat, ready: !j.ready });
-            } else if pressed & (Keys::ROPE | DIG) != 0 {
+            } else if pressed & (Action::Rope.bit() | Action::Dig.bit()) != 0 {
                 out.push(if j.ready {
                     UiAction::SetReady { seat, ready: false }
                 } else {
                     UiAction::LeaveSeat(seat)
                 });
             } else if !j.ready {
-                let by = i32::from(pressed & Keys::RIGHT != 0) - i32::from(pressed & Keys::LEFT != 0);
+                let by = i32::from(pressed & Action::Right.bit() != 0) - i32::from(pressed & Action::Left.bit() != 0);
                 if by != 0 {
                     out.push(UiAction::StepProfile { seat, by });
                 }

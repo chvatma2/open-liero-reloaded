@@ -76,16 +76,16 @@ fn tick_latch_sees_every_press_and_release() {
     for start in [false, true] {
         for n in 0..=4u32 {
             let mut l = TickLatch::default();
-            l.set(start as u16);
+            l.set(start as u32);
             l.latch();
             let mut now = start;
             for _ in 0..n {
                 now = !now;
-                l.set(now as u16);
+                l.set(now as u32);
             }
-            let a = l.latch().0 & 1 == 1;
-            let b = l.latch().0 & 1 == 1;
-            let c = l.latch().0 & 1 == 1;
+            let a = l.latch() & 1 == 1;
+            let b = l.latch() & 1 == 1;
+            let c = l.latch() & 1 == 1;
             let pressed = (!start && n >= 1) || (start && n >= 2);
             let released = start && n >= 1;
             if pressed {
@@ -138,10 +138,11 @@ fn default_bindings_match_olx() {
     inputs.dedup();
     assert_eq!(inputs.len(), b.pad.len(), "one action per default pad input");
 
-    // Every action maps to its own Keys bit; Dig to olr-input's own.
-    let bits: Vec<u16> = Action::ALL.iter().map(|a| a.bit()).collect();
+    // Every action maps to its own Keys bit; Dig to olr-input's own,
+    // beyond the simulation's 16 bits.
+    let bits: Vec<u32> = Action::ALL.iter().map(|a| a.bit()).collect();
     assert_eq!(bits, [1, 2, 4, 8, 16, 32, 64, 128, 256, 512, 1024, DIG]);
-    assert_eq!(Keys::ALL & DIG, 0);
+    assert!(DIG > u32::from(u16::MAX));
 
     // Spec §8.5: no default key, or pair of them, is a shortcut the browser
     // keeps (such as Ctrl+W); such a binding is reported.

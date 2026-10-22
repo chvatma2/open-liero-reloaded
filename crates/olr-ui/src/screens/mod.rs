@@ -318,7 +318,7 @@ impl MenuData {
     /// that press something (`seats_used`).
     pub fn set_seats(&mut self, seats: Vec<SeatInput>) {
         for s in &seats {
-            if s.held.0 != 0 || s.start {
+            if s.held != 0 || s.start {
                 self.seats_used.insert(s.seat);
             }
         }

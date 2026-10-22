@@ -24,7 +24,7 @@ use crate::bindings::DIG;
 /// OLX: src/common/CWormHuman.cpp:357-394 (`carveDelay = 0.2f`)
 pub const DIG_REPEAT_TICKS: u32 = 20;
 
-const SIDES: u16 = Keys::LEFT | Keys::RIGHT;
+const SIDES: u32 = (Keys::LEFT | Keys::RIGHT) as u32;
 
 /// The Dig action's state between ticks.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -36,11 +36,12 @@ pub(crate) struct Dig {
 }
 
 impl Dig {
-    /// One tick: `keys` as latched (with the [`DIG`] bit), `last` what the
-    /// last tick saw. Returns the simulation's keys and the bits the dig
+    /// One tick: the actions' bits as latched (with the [`DIG`] bit),
+    /// `last` what the last tick saw. Returns the simulation's keys'
+    /// bits and the bits the dig
     /// pressed, which the latch must release next tick
     /// ([`crate::TickLatch::tap`]).
-    pub(crate) fn tick(&mut self, keys: u16, last: u16) -> (u16, u16) {
+    pub(crate) fn tick(&mut self, keys: u32, last: u32) -> (u32, u32) {
         let held = keys & DIG != 0;
         let keys = keys & !DIG;
         if held {
@@ -56,7 +57,7 @@ impl Dig {
             return (keys, 0);
         }
         let sides = keys & SIDES;
-        if keys & Keys::CHANGE != 0 || sides == SIDES {
+        if keys & u32::from(Keys::CHANGE) != 0 || sides == SIDES {
             self.due = false;
             return (keys, 0);
         }

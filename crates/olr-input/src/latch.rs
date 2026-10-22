@@ -1,10 +1,8 @@
 //! Presses and releases between two 100 Hz ticks, latched so the tick sees
 //! each of them (spec §8.5).
 
-use olr_sim::Keys;
-
-/// The key bits as the device reports them between ticks, and as the
-/// ticks see them.
+/// The actions' bits ([`crate::Action::bit`]) as the devices report them
+/// between ticks, and as the ticks see them.
 ///
 /// - A key pressed since the last tick is down for this tick, even if it
 ///   was released again (a tap shorter than a tick).
@@ -17,21 +15,21 @@ use olr_sim::Keys;
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct TickLatch {
     /// What the device says now.
-    held: u16,
+    held: u32,
     /// What the last tick saw.
-    seen: u16,
+    seen: u32,
     /// Pressed since the last tick.
-    pressed: u16,
+    pressed: u32,
     /// Released since the last tick.
-    released: u16,
+    released: u32,
     /// Pressed again after a release of a key the last tick saw down: down
     /// for the tick after the next.
-    again: u16,
+    again: u32,
 }
 
 impl TickLatch {
     /// The device now holds `now`.
-    pub fn set(&mut self, now: u16) {
+    pub fn set(&mut self, now: u32) {
         let down = now & !self.held;
         let up = self.held & !now;
         // A press after a release of a key the last tick saw down waits a
@@ -44,12 +42,12 @@ impl TickLatch {
     }
 
     /// What the device holds now.
-    pub fn held(&self) -> u16 {
+    pub fn held(&self) -> u32 {
         self.held
     }
 
-    /// The keys for the next tick; starts latching anew.
-    pub fn latch(&mut self) -> Keys {
+    /// The bits for the next tick; starts latching anew.
+    pub fn latch(&mut self) -> u32 {
         let kept = self.seen & self.held & !self.released;
         let new = !self.seen & (self.held | self.pressed);
         let out = kept | new;
@@ -57,12 +55,12 @@ impl TickLatch {
         self.pressed = self.again;
         self.again = 0;
         self.released = 0;
-        Keys(out)
+        out
     }
 
     /// What the last tick saw: its [`TickLatch::latch`], and any
     /// [`TickLatch::tap`] on top.
-    pub fn last(&self) -> u16 {
+    pub fn last(&self) -> u32 {
         self.seen
     }
 
@@ -70,7 +68,7 @@ impl TickLatch {
     /// (a press made for it, such as the dig gesture): they are up for the
     /// next tick, as a release, and a press of one of them made meanwhile
     /// is down for the tick after.
-    pub fn tap(&mut self, bits: u16) {
+    pub fn tap(&mut self, bits: u32) {
         let bits = bits & !self.held;
         self.seen |= bits;
         self.released |= bits;

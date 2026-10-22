@@ -35,7 +35,7 @@ fn keyboard_1_and_2_held_at_once_give_each_seat_its_own_keys() {
             // The dig gesture, from no direction held: both tapped.
             assert_eq!(keys, Keys(Keys::LEFT | Keys::RIGHT), "{a:?}");
         } else {
-            assert_eq!(keys, Keys(a.bit()), "{a:?}");
+            assert_eq!(u32::from(keys.0), a.bit(), "{a:?}");
         }
         assert_eq!(s.latch_tick(Seat::Keyboard1), Keys(0), "{a:?} is keyboard 2's alone");
         s.on_key(k, false);
@@ -240,13 +240,13 @@ fn a_seat_shows_its_actions_held_and_start() {
     let mut s = Seats::default();
     s.on_key(KeyCode::Numpad3, true);
     let k2 = s.get(Seat::Keyboard2).unwrap();
-    assert_eq!(k2.actions_held(), Keys(olr_input::DIG));
+    assert_eq!(k2.actions_held(), olr_input::DIG);
     assert_eq!(k2.held(), Keys(0), "the game's keys leave Dig out");
     assert!(!k2.start_held());
     s.on_pad(4, PadEvent::Button(Button::Start, 1.0));
     let pad = s.get(Seat::Pad(4)).unwrap();
     assert!(pad.start_held());
-    assert_eq!(pad.actions_held(), Keys(0));
+    assert_eq!(pad.actions_held(), 0);
     s.on_pad(4, PadEvent::Button(Button::Start, 0.0));
     assert!(!s.get(Seat::Pad(4)).unwrap().start_held());
 }

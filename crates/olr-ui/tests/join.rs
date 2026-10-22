@@ -31,12 +31,13 @@ fn profiles() -> Profiles {
     p
 }
 
-fn input(seat: Seat, keys: u16) -> SeatInput {
-    SeatInput { seat, held: Keys(keys), start: false }
+fn input(seat: Seat, keys: impl Into<u32>) -> SeatInput {
+    SeatInput { seat, held: keys.into(), start: false }
 }
 
 /// Every seat of `seats` holding nothing but `seat`, which holds `keys`.
-fn only(seats: &[Seat], seat: Seat, keys: u16) -> Vec<SeatInput> {
+fn only(seats: &[Seat], seat: Seat, keys: impl Into<u32>) -> Vec<SeatInput> {
+    let keys = keys.into();
     seats.iter().map(|&s| input(s, if s == seat { keys } else { 0 })).collect()
 }
 
@@ -48,9 +49,9 @@ fn seats_frame(h: &mut Harness<'static, App>, seats: Vec<SeatInput>) {
 }
 
 /// `seat` presses `keys` and lets go, every other seat of `all` idle.
-fn tap(h: &mut Harness<'static, App>, all: &[Seat], seat: Seat, keys: u16) {
+fn tap(h: &mut Harness<'static, App>, all: &[Seat], seat: Seat, keys: impl Into<u32>) {
     seats_frame(h, only(all, seat, keys));
-    seats_frame(h, only(all, seat, 0));
+    seats_frame(h, only(all, seat, 0u32));
 }
 
 fn lineup(h: &Harness<'static, App>) -> Vec<Joined> {
@@ -133,7 +134,7 @@ fn at_join(seats: &[Seat]) -> Harness<'static, App> {
     ui.update(UiAction::OpenJoin(K1));
     let mut h = harness(ui);
     // The first frame notes what is held.
-    seats_frame(&mut h, only(seats, K1, 0));
+    seats_frame(&mut h, only(seats, K1, 0u32));
     h
 }
 
@@ -219,7 +220,7 @@ fn players_leave_and_the_mouse_acts_on_keyboard_1_alone() {
     h.run();
     assert_eq!(lineup(&h)[0].seat, K1, "keyboard 1 first again");
     // Pad 0 unplugged: its player leaves.
-    seats_frame(&mut h, vec![input(K1, 0), input(K2, 0)]);
+    seats_frame(&mut h, vec![input(K1, 0u32), input(K2, 0u32)]);
     assert_eq!(lineup(&h).iter().map(|j| j.seat).collect::<Vec<_>>(), [K1]);
     // Join's Start: the players joined, ready or not.
     h.get_by_label("Start").click();
@@ -233,11 +234,11 @@ fn players_leave_and_the_mouse_acts_on_keyboard_1_alone() {
 fn start_joins_and_readies_and_a_held_button_is_no_press() {
     let mut step = JoinStep::default();
     let pad = Seat::Pad(1);
-    let held = [SeatInput { seat: pad, held: Keys(Keys::JUMP), start: true }];
+    let held = [SeatInput { seat: pad, held: Keys::JUMP.into(), start: true }];
     assert!(step.on_seats(&[], &held).is_empty(), "held as it opened");
-    let free = [SeatInput { seat: pad, held: Keys(0), start: false }];
+    let free = [SeatInput { seat: pad, held: 0, start: false }];
     assert!(step.on_seats(&[], &free).is_empty());
-    let start = [SeatInput { seat: pad, held: Keys(0), start: true }];
+    let start = [SeatInput { seat: pad, held: 0, start: true }];
     assert_eq!(step.on_seats(&[], &start), [UiAction::JoinSeat(pad)]);
     let joined = [Joined { seat: pad, profile: None, ready: false }];
     step.on_seats(&joined, &free);

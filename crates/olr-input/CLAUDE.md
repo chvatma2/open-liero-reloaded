@@ -11,9 +11,11 @@ note §10).
   `gilrs` 0.11.2, `serde`. `#![forbid(unsafe_code)]`. It opens no device:
   the caller owns the window and the `Gilrs` context and passes events in.
 - **Bindings** (`bindings.rs`): `Action` is OLX's control with a sim key
-  (Weapon1-5 have none), plus `Dig`, olr-input's own (`DIG`, bit 15, never
-  reaches the sim). `Bindings::olx()` (the default) is OLX's player 1:
-  arrows, Shoot `ControlLeft`, Jump `AltLeft`, Rope `KeyX`, SelectWeapon
+  (Weapon1-5 have none), plus `Dig`, olr-input's own. `Action::bit()` is
+  its bit in the actions' `u32` mask: the sim's `Keys` bit, or `DIG` (bit
+  16, beyond the sim's 16 bits; never reaches the sim). `key_bits`,
+  `pad_bits`, `mouse_bits`, `TickLatch` and `actions_held()` are masks.
+  `Bindings::olx()` (the default) is OLX's player 1: arrows, Shoot `ControlLeft`, Jump `AltLeft`, Rope `KeyX`, SelectWeapon
   `ShiftLeft`, Strafe `KeyZ`, Previous/NextWeapon `KeyA`/`KeyS`, and Dig
   `KeyC` (free in OLX's defaults); pad d-pad, right trigger, A, Y, left
   trigger, plus left stick X / right stick Y as digital directions (OLX's

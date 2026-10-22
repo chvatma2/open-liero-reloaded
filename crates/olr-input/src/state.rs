@@ -6,7 +6,7 @@ use olr_sim::Keys;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-use crate::bindings::{Bindings, DIG, MouseInput, PAD_PAUSE, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD};
+use crate::bindings::{Bindings, MouseInput, PAD_PAUSE, PadInput, STICK_THRESHOLD, TRIGGER_THRESHOLD};
 use crate::dig::Dig;
 use crate::latch::TickLatch;
 use crate::mouse::{LocalWorm, MADE_UP, MouseController, Notch};
@@ -74,9 +74,9 @@ struct Mouse {
     buttons: Vec<MouseInput>,
     /// The wheel's turn not yet a whole notch, in notches (up positive).
     wheel: f32,
-    /// A notch's bits pressed and released at once (not the weapon
-    /// changes, which the controller presses).
-    tap: u16,
+    /// A notch's actions' bits pressed and released at once (not the
+    /// weapon changes, which the controller presses).
+    tap: u32,
     controller: MouseController,
 }
 
@@ -262,13 +262,13 @@ impl InputState {
     fn notch(&mut self, input: MouseInput) {
         let bits = self.active.mouse_bits(&[input]);
         let Some(m) = &mut self.mouse else { return };
-        if bits & Keys::PREV_WEAPON != 0 {
+        if bits & u32::from(Keys::PREV_WEAPON) != 0 {
             m.controller.notch(Notch::Previous);
         }
-        if bits & Keys::NEXT_WEAPON != 0 {
+        if bits & u32::from(Keys::NEXT_WEAPON) != 0 {
             m.controller.notch(Notch::Next);
         }
-        let tap = bits & !(Keys::PREV_WEAPON | Keys::NEXT_WEAPON);
+        let tap = bits & !u32::from(Keys::PREV_WEAPON | Keys::NEXT_WEAPON);
         if tap != 0 {
             m.tap = tap;
             self.update();
@@ -381,13 +381,14 @@ impl InputState {
     /// The keys held now, unlatched (Dig's gesture not included; in mouse
     /// mode the buttons included, the controller's own keys not).
     pub fn held(&self) -> Keys {
-        Keys(self.latch.held() & !DIG)
+        sim_keys(self.latch.held())
     }
 
-    /// The actions held now, Dig ([`DIG`]) included: what a menu driven
-    /// by the game's keys reads (the join step, issue #32).
-    pub fn actions_held(&self) -> Keys {
-        Keys(self.latch.held())
+    /// The actions held now ([`crate::Action::bit`]'s mask), Dig
+    /// ([`crate::DIG`]) included: what a menu driven by the game's keys reads
+    /// (the join step, issue #32).
+    pub fn actions_held(&self) -> u32 {
+        self.latch.held()
     }
 
     /// A heard pad's Start ([`PAD_PAUSE`]) is held now.
@@ -419,11 +420,12 @@ impl InputState {
     pub fn latch_tick_for(&mut self, local: Option<&LocalWorm>, cursor: Option<[f32; 2]>) -> Keys {
         let last = self.latch.last();
         let latched = self.latch.latch();
-        let (keys, pressed) = self.dig.tick(latched.0, last);
+        let (keys, pressed) = self.dig.tick(latched, last);
         self.latch.tap(pressed);
+        let keys = sim_keys(keys);
         match &mut self.mouse {
-            Some(m) => m.controller.keys(local, cursor, Keys(keys)),
-            None => Keys(keys),
+            Some(m) => m.controller.keys(local, cursor, keys),
+            None => keys,
         }
     }
 
@@ -434,4 +436,10 @@ impl InputState {
         let mouse = self.mouse.as_ref().map_or(0, |m| self.active.mouse_bits(&m.buttons) | m.tap);
         self.latch.set(keys | pad | mouse);
     }
+}
+
+/// The simulation's keys of an actions' mask: its low 16 bits, without
+/// [`crate::DIG`] (olr-input's own).
+fn sim_keys(bits: u32) -> Keys {
+    Keys((bits & u32::from(Keys::ALL)) as u16)
 }

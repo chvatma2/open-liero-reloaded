@@ -8,10 +8,10 @@ use serde::{Deserialize, Serialize};
 use winit::keyboard::KeyCode;
 
 /// The bit [`Action::Dig`] sets in [`Bindings::key_bits`] and
-/// [`Bindings::pad_bits`]: olr-input's own, above the simulation's
-/// [`Keys::ALL`], never sent to it ([`crate::InputState::latch_tick`] turns
-/// it into the dig gesture).
-pub const DIG: u16 = 1 << 15;
+/// [`Bindings::pad_bits`]: olr-input's own, above the simulation's 16-bit
+/// [`Keys`] in the actions' `u32` mask, never sent to it
+/// ([`crate::InputState::latch_tick`] turns it into the dig gesture).
+pub const DIG: u32 = 1 << 16;
 
 /// A control of OLX's `ply_keys` that the simulation has a key for (spec §19
 /// E5; Weapon1-5 have none), plus [`Action::Dig`], which presses the dig
@@ -58,9 +58,10 @@ impl Action {
         Action::Dig,
     ];
 
-    /// The [`Keys`] bit this action sets ([`DIG`] for Dig).
-    pub fn bit(self) -> u16 {
-        match self {
+    /// The bit this action sets in the actions' mask: its [`Keys`] bit
+    /// ([`DIG`] for Dig).
+    pub fn bit(self) -> u32 {
+        u32::from(match self {
             Action::Up => Keys::UP,
             Action::Down => Keys::DOWN,
             Action::Left => Keys::LEFT,
@@ -72,8 +73,8 @@ impl Action {
             Action::Strafe => Keys::STRAFE,
             Action::PreviousWeapon => Keys::PREV_WEAPON,
             Action::NextWeapon => Keys::NEXT_WEAPON,
-            Action::Dig => DIG,
-        }
+            Action::Dig => return DIG,
+        })
     }
 }
 
@@ -322,18 +323,18 @@ impl Bindings {
         Bindings { keys, pad, mouse_keys: Vec::new(), mouse, keys2: Vec::new() }
     }
 
-    /// The [`Keys`] bits (and [`DIG`]) the held keyboard keys set.
-    pub fn key_bits(&self, held: &[KeyCode]) -> u16 {
+    /// The actions' mask ([`Action::bit`]) the held keyboard keys set.
+    pub fn key_bits(&self, held: &[KeyCode]) -> u32 {
         self.keys.iter().filter(|(_, k)| held.contains(k)).fold(0, |b, (a, _)| b | a.bit())
     }
 
-    /// The [`Keys`] bits (and [`DIG`]) the held gamepad inputs set.
-    pub fn pad_bits(&self, held: impl Fn(PadInput) -> bool) -> u16 {
+    /// The actions' mask ([`Action::bit`]) the held gamepad inputs set.
+    pub fn pad_bits(&self, held: impl Fn(PadInput) -> bool) -> u32 {
         self.pad.iter().filter(|(_, p)| held(*p)).fold(0, |b, (a, _)| b | a.bit())
     }
 
-    /// The [`Keys`] bits (and [`DIG`]) the held mouse inputs set.
-    pub fn mouse_bits(&self, held: &[MouseInput]) -> u16 {
+    /// The actions' mask ([`Action::bit`]) the held mouse inputs set.
+    pub fn mouse_bits(&self, held: &[MouseInput]) -> u32 {
         self.mouse.iter().filter(|(_, m)| held.contains(m)).fold(0, |b, (a, _)| b | a.bit())
     }
 

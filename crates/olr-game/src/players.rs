@@ -368,9 +368,9 @@ mod tests {
         inputs.on_pad(2, PadEvent::Button(Button::Start, 1.0));
         let menus = inputs.menu_seats();
         let of = |s: Seat| *menus.iter().find(|i| i.seat == s).unwrap();
-        assert_eq!(of(Seat::Keyboard2).held, Keys(olr_input::DIG));
+        assert_eq!(of(Seat::Keyboard2).held, olr_input::DIG);
         assert!(of(Seat::Pad(2)).start);
-        assert_eq!(of(Seat::Keyboard1).held, Keys(0));
+        assert_eq!(of(Seat::Keyboard1).held, 0);
     }
 
     /// Issue #32: a joined pad unplugged leaves its worm standing still;
