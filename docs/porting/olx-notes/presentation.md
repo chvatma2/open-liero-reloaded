@@ -1031,8 +1031,8 @@ Player 1's keyboard defaults are slot 0, with gamepad `j1_*` in slot 1
 | Jump | `lalt` | `lmeta` | `kp enter` | `JUMP` |
 | Rope | `x` | `x` | `kp -` | `ROPE` |
 | SelectWeapon | `lshift` | `space` | `kp 0` | `CHANGE` |
-| Strafe | `z` | `c` | `kp .` | none (strafing is off; the sim does not port it) |
-| PreviousWeapon / NextWeapon | `a` / `s` | `a` / `s` | `kp 7` / `kp 9` | none |
+| Strafe | `z` | `c` | `kp .` | `STRAFE` (issue #23) |
+| PreviousWeapon / NextWeapon | `a` / `s` | `a` / `s` | `kp 7` / `kp 9` | `PREV_WEAPON` / `NEXT_WEAPON` (issue #23) |
 | Weapon1..5 | `1`..`5` | `1`..`5` | `6`..`0` | none |
 
 The general keys are (`Options.cpp:82-83`):
@@ -1058,20 +1058,26 @@ which `olr-sim::physics::get_input` ports:
 
 - **Aim.** Up and Down change the aim speed (LX56 aim).
 - **Moving and facing.** Left and Right set facing and move, unless
-  SelectWeapon is held.
+  SelectWeapon is held. While Strafe is held they move without turning the
+  worm (`:465-503`; OLX only when the host allows strafing, the remake
+  always).
 - **Digging** is a *tap* of the opposite direction while holding a direction
-  (`rightOnce` while Left is held, and vice versa, `:470-499`). There is no dig
-  key.
+  (`rightOnce` while Left is held, and vice versa, `:470-499`). OLX has no dig
+  key; the remake's Dig action (`olr-input`, issue #23) presses this gesture
+  for the player, again every 0.2 s while held.
 - **Changing weapon.** `CHANGE` (SelectWeapon) is a **hold modifier**: while it
   is held, a Left or Right tap cycles the weapon, and movement is suppressed. On
   its own it does nothing (`:405-428`). The weapon cannot change while firing
   unless `WeaponCombos` is on.
+- **Previous/Next weapon.** A press of either steps the weapon by one,
+  wrapping, under the same firing rule, after SelectWeapon's change in the
+  same frame; both at once cancel (`:443-456`).
 - **Rope.** `ROPE` is the dedicated rope key: a press shoots the rope and plays
   the throw sound (`:567-576`). Jump releases an attached rope (`:535-540`).
   `Game.OldSkoolRope` (SelectWeapon+Jump) is off by default and not ported.
 - **Respawn.** Jump while dead and allowed requests a respawn (`:115-119`).
-- The prev/next and quick-select keys and strafe have no equivalent among the
-  sim's 8 keys.
+- The quick-select keys (Weapon1-5) have no equivalent among the sim's 11
+  keys.
 
 The keys are latched between sub-steps (`docs/porting/STATUS.md`, Input).
 
@@ -1222,6 +1228,8 @@ Not needed:
 11. **Keys missing from the sim.** Prev/Next weapon, Weapon1–5 and Strafe exist
     in OLX's defaults but not in the sim's 8 keys. Leave them out (classic LX
     feel), or extend `Keys`, which is a sim change.
+    **Resolved** (issue #23): `Keys` is 16 bits with `STRAFE`, `PREV_WEAPON`
+    and `NEXT_WEAPON`; Weapon1-5 stay out.
 12. **Laser sight wraps at the map edge.** The trace reads material with
     wrap-around even on finite maps (`getMaterialWrapped`). At a map edge the
     line can run past the border until wrapped material stops it, up to

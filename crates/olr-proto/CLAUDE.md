@@ -5,7 +5,7 @@ control messages, the frame delta codec and the simulation fingerprint;
 plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
 
 - **Layer 4, `#![no_std]` + `alloc`, wasm32.** Depends on `olr-data` (`text`: name rules), serde and postcard
-  only (keys are plain bytes).
+  only (keys are plain `u16`s, postcard varints: one byte below 128).
 - **Datagrams** (unreliable inputs channel): `Datagram::Client(ClientInputs)`
   carries the sender's own keys for ticks `first..`, its `ack` and next
   `tick`; `Datagram::Host(HostInputs)` carries `Frame`s for ticks `first..`,
@@ -76,8 +76,9 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   never listed, plan 13c).
   `MAX_ARCHIVE_BYTES` restates olr-pack's `MAX_ARCHIVE`. `valid_hash` is 64
   lowercase hex; `NO_HASH` is valid and means unknown. `Look::skin_hash`
-  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 4 (3: plan 13c, skins are matched by id and hash, never transferred;
-  4: issue #5, `MatchSetupWire::loadout` replaces `bonuses`, `loading_time` and `restrictions`).
+  and `Member::download` (percent) are new; `PROTOCOL_VERSION` is 5 (3: plan 13c, skins are matched by id and hash, never transferred;
+  4: issue #5, `MatchSetupWire::loadout` replaces `bonuses`, `loading_time` and `restrictions`;
+  5: issue #23, keys are `u16` (Strafe, Previous/NextWeapon) and the state transfer's latches gained three).
 - **Loadouts** (issue #5): `MatchSetupWire::loadout` is a `LoadoutWire {
   name, weapons, loading_time, unique }`, the host's loadout in full
   (weapons by the mod's names, empty for every weapon); `valid_loadout`:
@@ -115,7 +116,7 @@ plan 12b: a member's `Path`, the STUN binding codec and `is_global`.
   decoders refuse.
 - **Frame delta rule** (`frames.rs`): `known` = slots whose final input the
   host has; `changed ⊆ known` = slots differing from the previous tick, one
-  key byte each in slot order. An unchanged known slot repeats the previous
+  key (`u16`) each in slot order. An unchanged known slot repeats the previous
   frame's value, or `base(slot)` (the receiver's value at `first - 1`) in the
   first frame; before tick 0 every slot is `0`. `decode_frames` may call
   `out` before a later frame proves invalid: collect, then apply on `Ok`.

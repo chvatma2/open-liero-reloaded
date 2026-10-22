@@ -57,9 +57,10 @@ ticks and at the end.
 - **Withdrawals in play:** `Cursor::step` withdraws every `(t, worm)` with
   `t` the tick about to be played, in order, before `World::tick`; those
   with `t == ticks` after the last tick, before its checksum is checked.
-- **Format** (`wire.rs`, `mirror.rs`): `OLRP`, `FORMAT_VERSION` (u16 LE; 4 since the
-  looks, 3 withdrawals),
-  then postcard; keys by worm, deflated. Other versions are refused, never
+- **Format** (`wire.rs`, `mirror.rs`): `OLRP`, `FORMAT_VERSION` (u16 LE; 5 since the
+  16-bit keys, 4 the looks, 3 withdrawals),
+  then postcard; keys by worm, deflated (every key's low byte, then every
+  high byte, so the mostly zero high plane costs next to nothing). Other versions are refused, never
   migrated, while no replay is published. The format has its own copies of
   `SimSettings`, `WormSetup`, `Loadout`, `Slot` and `DeathmatchSettings`,
   converted by naming every field: a new field there does not compile until

@@ -474,7 +474,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   (`PeerHandle::poll` keeps the last its `local_keys` gave, masked by
   `PeerHandle::set_held`: `App::net_step` gives `InputState::held` through
   `Shell::set_held_keys` before each network frame, so a tap is not
-  repeated) for `PUMP_HOLD` (250 ms) of the
+  repeated, nor are Dig's taps: `held` has no gesture keys) for `PUMP_HOLD` (250 ms) of the
   stall, then `Keys(0)` (a long drag does not keep firing); the input
   latch is untouched, nothing is drawn, the host's bots think inside the
   peer; its events wait for the UI's next poll, except the presentation's

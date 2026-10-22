@@ -15,7 +15,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Oracle v2: message delivery (spec §18 D10); weapon, damage and bonus scenarios | `src/common/CChannel.cpp:69-85`, `src/client/CClient_Parse.cpp:468`, `src/server/CServer_Parse.cpp:90` | `tools/olx-oracle`, `xtask oracle-gen-weapons`, `fixtures/oracle/weapons/` | done (plan 4 task 3) | 88 weapon scenarios and 10 special ones recorded twice and identical; `olr-oracle/tests/fixtures.rs` checks what each shows |
 | Frame and physics clocks | `src/game/Game.cpp:897-959`, `src/client/CClient_Game.cpp:60-222` | `olr-sim::World::tick` | ported | all 7 oracle scenarios, bit for bit; `docs/porting/timing.md` |
 | Worm movement and collision | `src/common/PhysicsLX56.cpp:88-469` | `olr-sim::physics` | ported | `fall`, `walk`, `jump`, `dig` |
-| Keyboard input (aim, move, jump, dig, rope) | `src/common/CWormHuman.cpp:81-560`, `src/client/CInput.cpp` | `olr-sim::physics::get_input`, `olr-sim::input` | ported (keyboard, LX56 aim) | `aim`, `tap`, `walk`, `jump`, `dig`, `rope` |
+| Keyboard input (aim, move, jump, dig, rope, strafe, previous/next weapon) | `src/common/CWormHuman.cpp:81-560` (strafe `:465-503`, previous/next `:443-456`), `src/client/CInput.cpp` | `olr-sim::physics::get_input`, `olr-sim::input` | ported (keyboard, LX56 aim; strafe and previous/next by issue #23, their oracle traces owed: `docs/deferred-verification.md`) | `aim`, `tap`, `walk`, `jump`, `dig`, `rope`, `strafe_moves_both_ways_without_turning`, `previous_and_next_weapon_wrap`, `previous_and_next_weapon_stack_with_select_weapon`, `previous_and_next_weapon_wait_while_firing_without_combos`, `the_new_keys_are_hashed_only_when_not_at_rest` |
 | Ninja rope | `src/client/CNinjaRope.cpp`, `PhysicsLX56.cpp:505-604` | `olr-sim::rope` | ported | `rope` |
 | Hole carving (material) | `src/common/CMap.cpp:1005-1105`, `2172-2199` | `olr-terrain::Terrain::carve_hole` | ported | `dig` (244 dirt cells), spawn holes (`mh` at frame −1) |
 | Float `sinf`/`cosf` (aim directions) | glibc 2.35 `sysdeps/ieee754/flt-32/s_sinf.c`, `s_cosf.c` (x86-64 FMA variant) | `olr-math::trig` | ported | all 2³² inputs bit-identical to the oracle container's glibc (a throwaway FFI comparator run in `rl-olx-src`) |
@@ -43,7 +43,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Cosmetic entities (spec §19 E1, E8): the pool (OLX's 1024 slots with `olx_quirks`; 16384 with a death reserve in play since 2026-10-13, see Deliberate deviations), per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `olr-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits`; the player's blood amount (issue #6, Deliberate deviations): `tests/blood.rs` |
 | Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits (a death sound steals since 2026-10-13, see Deliberate deviations), live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `olr-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
 | Whose rope throws are heard (the user's playtest report, 2026-10-16: every worm's throw played map-wide at gain 1.0, about 7 to 12 starts a second with 7 to 8 bots): only the player's own (the local slot; a replay's viewer), as OLX plays `smpNinja` only in the human input handler; a bot's or a remote worm's throw is silent. `olr-sim`'s THROW events carry no owner, so the session keeps as many as the player's `NinjaRope::throws` grew (they all play at the listener) | `src/common/CWormHuman.cpp:340-342`, `555-563`, `570-574`, `src/common/CWormBot.cpp:1753`, `3823`, `src/common/PhysicsLX56.cpp:300-303` | `olr-game::throw_sound`, `Session::sounds` | done (2026-10-16) | `only_the_players_rope_throws_are_heard`, `bots_alone_throw_silently`, `a_replay_hears_its_viewers_throws`, `an_online_match_runs_headless`; a throw while the worm may not use the rope (`can_use_ninja` false, never set today) is not heard, OLX's is |
-| Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults, trigger and stick thresholds, presses and releases latched between ticks | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226` | `olr-input` | done (plan 5 task 6) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release` |
+| Input devices (spec §8.5, §19 E5): OLX's player 1 keyboard and gamepad defaults (Strafe, Previous/Next weapon since issue #23), trigger and stick thresholds, presses and releases latched between ticks; a Dig action pressing OLX's dig gesture (issue #23, not OLX's) | `src/client/Options.cpp:45-73`, `src/client/CInput.cpp:200-226`, `src/common/CWormHuman.cpp:357-394` (Dig's 0.2 s repeat) | `olr-input` | done (plan 5 task 6; issue #23) | `default_bindings_match_olx`, `gamepad_maps_to_keys`, `tap_between_ticks_is_latched`, `tick_latch_sees_every_press_and_release`, `dig_presses_the_other_direction_for_one_tick`, `held_dig_digs_every_twenty_ticks`, `dig_digs_exactly_as_the_gesture`, `the_new_actions_rebind_and_an_older_file_gets_their_defaults` |
 | Game loop and sandbox (spec §8.6, §19 E10-E12): fixed 100 Hz tick, interpolated frames, catch-up cap, window surface states, WSL GPU defaults, F5 restart from assets loaded once, overlay | `src/game/Game.cpp:897-959` (the frame clock it drives) | `olr-game` | done (plan 5 task 7) | `loop_never_runs_more_than_n_catchup_ticks`, `surface_survives_resize_and_outdated`, `sandbox_setup_spawns_targets`, `session_plays_and_restarts_from_loaded_assets`; scripted runs in a WSLg window on all 4 levels × 2 mods |
 | Long sessions (plan 5 review focus 5): 60 000 ticks (10 minutes) of the sandbox with chaos keys, `olr-fx`, mock audio and an offscreen render every 10th tick | — | `olr-game/tests/soak.rs` | done (plan 5 task 8) | `soak_sandbox_10_minutes_headless` (`cargo xtask full`, about 15 s): cosmetic entities, projectiles, entity count, audio voices, popups, instance buffer, atlas and terrain texture stay bounded, no panic |
 | Match API (spec §20 F6, F9): `MatchSetup`, `GameMode` callbacks and commands, `Message` and `GameOver` events; game over's effects on the simulation (kills ignored, no respawns or bonus spawns, no input or shooting, the client's projectiles cleared, the physics stopped after `GAMEOVER_WAIT`) | `src/server/CGameMode.cpp:69-252`, `src/server/CServer.cpp:532-625`, `src/server/CServer_Game.cpp:38-42`, `108-113`, `167-261`, `src/client/CClient_Game.cpp:76-91`, `116-117`, `src/common/PhysicsLX56.cpp:300`, `src/client/CClient_Parse.cpp:1436-1451`, `src/game/Game.cpp:1267-1276`, `include/FastVector.h:72-77`, `src/common/Physics.cpp:36-44` | `olr-sim::{setup, mode, referee}` | done (plan 6 task 1) | `oracle_mode_matches_the_hard_coded_credit` and the oracle (unchanged), `mode_commands_apply_inside_tick_deterministically`, `game_over_stops_kills_spawns_input_and_bonuses`, `give_weapon_mid_match_does_not_allocate`; the oracle scenario `dm-kill-limit` (plan 6 task 2): the end in the kill's frame, the client's projectiles cleared, input ignored, no respawn, the physics stopped 300 frames later (`physics_stops_at_exactly_three_seconds_like_olx`) |
@@ -562,13 +562,27 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
     not emit them yet).
 - **Input devices** (`olr-input`, plan 5 task 6):
   - OLX's twin-stick controls (left stick walks, right stick aims
-    analogue) are not ported: the sim has 8 digital keys. The left stick's
+    analogue) are not ported: the sim has 11 digital keys. The left stick's
     X axis presses Left/Right and the right stick's Y axis Up/Down, from
     OLX's 60 % deadzone.
   - Mouse aiming (spec §8.5) is not implemented yet.
   - Between ticks, a key released and pressed again is up for one tick and
     down for the next, so the sim sees both edges (OLX's `CInput` reads the
     devices every sub-step and needs no tick latch).
+  - *Strafing is always allowed* (issue #23). OLX allows it only when the
+    host says so (`isHostAllowingStrafing`, `lx:strafingAllowed`,
+    `CServer_Parse.cpp:1515-1520`), from the host's `AllowStrafing` option
+    (`Options.cpp:331`, on by default); OLR has no such option, so the sim
+    acts as OLX's default.
+  - *Dig* (issue #23) is OLR's own action: OLX has no dig key. It presses
+    OLX's gesture for the player in `olr-input` (one direction held: a tap
+    of the other; none held: both; both or SelectWeapon held: nothing; a
+    key down at the last tick waits one tick), so the sim and the wire see
+    only the classic keys. Held, it digs again every 0.2 s, the
+    rate of OLX's auto-carve (`CWormHuman.cpp:357-394`). Its keyboard
+    default `C` and the pad defaults of the four new actions (Strafe X /
+    west, Previous/Next weapon the bumpers, Dig B / east) are OLR's: OLX's
+    gamepad slot binds none of them. Weapon1-5 are still not ported.
 - **Game loop** (`olr-game`, plan 5 task 7): the 100 Hz ticks are drawn
   at the display's rate with interpolation (spec §8.6); at most 10 ticks
   run per drawn frame, and the rest of a longer stall is dropped. The
@@ -642,7 +656,9 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   number of keys and gamepad inputs, a key another action has is moved or
   shared only on the player's choice, an action never loses its last key
   or last gamepad input (a hand-edited file that leaves one without gets
-  OLX's default back, with a warning), and the game's own keys (Esc, F2,
+  OLX's default back, with a warning; an options file from before
+  issue #23 so gets the defaults of Strafe, Previous/Next weapon and Dig),
+  and the game's own keys (Esc, F2,
   F5, Tab, H; PageUp and PageDown since task 8) cannot be bound. Capture is OLX's "Input for:" box (Esc
   cancels). The match is set up in local play only, before each game (it
   remembers the last); the options have no Gameplay tab (removed after the
