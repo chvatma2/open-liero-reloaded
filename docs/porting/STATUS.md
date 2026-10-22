@@ -4656,7 +4656,7 @@ sandbox with existing settings. As built:
   chosen Castle Strike (`olx-level-castlestrike`, OLX's most open: a
   wide sky), else Play's level.
 
-## Split screen (issue #26)
+## Split screen (issues #26 to #30)
 
 Local split screen for 2 to 4 players (OLX's fork: up to four,
 `docs/porting/olx-notes/presentation.md` §1.1; `CClient.cpp:1527-1551`,
@@ -4737,9 +4737,34 @@ camera per view and the nearest listener. As built:
   each is "Player N" in OLX's default worm colour `N-1` (one alone stays
   "You"); bots keep their colours away from every player's. The
   simulation, the oracle and the match goldens are unchanged.
-- **Not yet built:** the layout on screen and gaps (OLX fills them with
-  `clViewportSplit`, black; the app draws the first player's view, #30),
-  a HUD per player, and joining and menus by pad (#31, #32). `olr-cli gpu-bench
+- **The layout on screen** (issue #30, `olr_ui::hud::SplitLayout`): 2,
+  3 and 4 equal views, each the solo playfield's shape (the fair view
+  above: the same 427 × 192 world pixels, smaller), at the largest size
+  the window allows, with a thin black seam between them (OLX: 4 screen
+  pixels of 480, filled with `clViewportSplit`, black;
+  `CClient.cpp:1653-1677`, `CClient_Draw.cpp:561-609`; OLR's seam is
+  the same share of the frame's height, 6 of 720). *Arrangement* (a
+  deviation, from the fair view): OLX puts two players side by side and
+  three or four in quarters; OLR's views are wide, so two are stacked
+  top and bottom (the maintainer's call), three and four in a 2 × 2
+  grid, and side by side, or in a row, where a window is wide enough
+  for that to give larger views (`split::candidates`, the largest
+  wins). With three in the grid the fourth quarter holds the shared
+  minimap, as OLX's radar; with two and four the minimap, the clock and
+  the event log go in a strip under the views or the columns beside
+  them, whichever leaves larger views. One minimap and one log for all
+  players, every local player's dot big. *A compact HUD in each view*
+  at its bottom left, where OLX's fork drew each viewport's bars
+  (`CClient_Draw.cpp:1192-1257`): the player's colour and name, lives
+  and kills, the health bar, the weapon in hand and its charge in OLX's
+  bar colours; the solo bar gives way to it, and the keys are not shown.
+  Worm names, weapon names, reload bars and damage popups are drawn in
+  every view. One player keeps the solo layout exactly (the HUD
+  snapshots unchanged). `olr-cli render-match --locals N` draws every
+  view (two stacked, three or four in a 2 × 2 grid).
+- **Not yet built:** joining and menus by pad (#31, #32); the weapon
+  selection, the pause menu and the results stay centred over the solo
+  playfield's place. `olr-cli gpu-bench
   --views N` lays its views out in halves (top and bottom) or quarters
   for the measurement only.
 
