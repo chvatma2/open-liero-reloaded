@@ -259,7 +259,9 @@ fn used_materials(
         for id in [&e.surface, &e.back_surface].into_iter().flatten() {
             used.extend(materials.iter().position(|m| m.id == *id));
         }
-        for (file, on) in [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)] {
+        for (file, on) in
+            [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)]
+        {
             if on {
                 let (_, values) = decode_surface_map(src, &file, surface_map_size(&e.kind, size))?;
                 let mut seen = [false; 256];
