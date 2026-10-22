@@ -39,7 +39,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | Core pack: shared game sprites, game sounds (`.ogg`), `colours.cfg` (spec §19 E9) | `src/client/DeprecatedGUI/Graphics.cpp:56-97`, `134-321`, `src/common/CWorm.cpp:661`, `src/game/Sounds.cpp:25-30`, `src/common/StringUtils.cpp:409-447` | `olr-import-gfx::import_core`, `olr-pack::CorePack`, `olr-content::CorePack` | done (plan 5 task 1) | `olr-content/tests/content.rs` (`loads_every_manifest_item`), the corpus snapshot |
 | Colour terrain (spec §19 E7): carve (back pixels, brown rim), `PlaceDirt` (`FrontTile`), `PlaceGreenDirt` (OLX's shades), beam holes, blood and gib stains, dirty rectangles | `src/common/CMap.cpp:1005-1340`, `2355-2373`, `src/client/Entity.cpp:355-390`, `src/client/GfxPrimitives.cpp` (`DrawImageStretch2`) | `olr-terrain::ColorMap`, `olr-content::{color_edit, apply_edits}` | done (plan 5 task 2) | `olr-terrain` colour tests; `olr-content/tests/color.rs` (`color_map_agrees_with_material_after_a_match`, 3000 ticks); golden `fixtures/render/dig-color.png` (`olr-scenario/tests/render_golden.rs`) |
 | Presentation (spec §19 E1-E4): camera (hard lock, clamp, shake, dead worm, respawn), skin frames (the facing-left mirror one column off), crosshair, muzzle flash, old-style health bar, rope, laser sights, beams, projectile frames (animation, special angle, angle, rotation with the `RotIncrement` bump), bonuses (blinking), layer order; interpolation (E2) | `src/client/CViewport.cpp:118-472`, `src/common/CWorm.cpp:1016-1300`, `src/client/CGameSkin.cpp:584-601`, `src/client/CNinjaRope.cpp:132-180`, `src/common/CProjectile.cpp:227-300`, `src/common/CBonus.cpp:49-76`, `src/client/Entity.cpp:30-157`, `305-314`, `src/client/GfxPrimitives.cpp:1795-2520`, `src/gusanos/viewport.cpp:105-253` | `olr-scene` | done (plan 5 task 3) | `camera_locks_clamps_and_shakes_like_olx`, `skin_frame_matches_olx_table`, `projectile_frames_match_olx`, `interpolation_never_blends_reused_slots_or_respawns`, `draw_list_order_matches_olx_layers`, `beams_and_laser_sights_live_two_entity_passes`; scene snapshots (`olr-scene/tests/snapshots`) |
-| Renderer (spec §8.2, §19 E3): art-scale world pass (terrain, instanced sprites from one atlas, world-pixel lines), upscale (integer nearest, sharp bilinear), offscreen PNGs; OLX's corner-rule colour key for sprites lives in the importers since plan 13c (`olr_format::image_io::olx_sprite_to_alpha`, applied once at import; the renderer draws the alpha it is given) | `src/client/GfxPrimitives.cpp:116-150` (`SetColorKey`); OLX blits with SDL onto a 2× screen | `olr-render`, `olr_format::image_io`, `olr-cli render` | done (plan 5 task 5) | `dirty_rect_upload_equals_full_upload`, `upscale_filters_are_selectable`, `missing_assets_use_placeholders`, `srgb_targets_show_the_same_colours`; goldens `fixtures/render/frame-*.png` (`olr-cli/tests/render_golden.rs`, `cargo xtask full`) |
+| Renderer (spec §8.2, §19 E3): art-scale world pass (terrain, instanced sprites from one atlas, world-pixel lines), upscale (integer nearest, sharp bilinear), offscreen PNGs; OLX's corner-rule colour key for sprites lives in the importers since plan 13c (`olr_format::image_io::olx_sprite_to_alpha`, applied once at import; the renderer draws the alpha it is given) | `src/client/GfxPrimitives.cpp:116-150` (`SetColorKey`); OLX blits with SDL onto a 2× screen | `olr-render`, `olr_format::image_io`, `olr-cli render` | done (plan 5 task 5) | `dirty_rect_upload_equals_full_upload`, `upscale_filters_are_selectable`, `missing_assets_use_placeholders`, `srgb_targets_show_the_same_colours`; several views a frame (issue #26, split screen's fair view: "Split screen (issue #26)" below): `two_views_in_one_frame_match_single_views`, `the_glow_light_steps_once_a_frame_with_four_views`, `a_view_draws_only_its_area`; goldens `fixtures/render/frame-*.png` (`olr-cli/tests/render_golden.rs`, `cargo xtask full`) |
 | Cosmetic entities (spec §19 E1, E8): the pool (OLX's 1024 slots with `olx_quirks`; 16384 with a death reserve in play since 2026-10-13, see Deliberate deviations), per-sub-step physics and animation, stains, blood drips, gib spins and colours, drawing and clipping | `src/client/Entity.cpp:161-468`, `include/FastVector.h`, `src/common/CWorm.cpp:671-757`, `src/common/CMap.cpp:338-352` | `olr-fx` | done (plan 5 task 4) | `blood_falls_and_stains_like_olx`, `explosion_frames_and_invisible_start`, `gibs_use_the_victims_colour`, `entity_cap_drops_new_ones`, `animations_live_as_long_as_olx`, `fx_never_touches_sim_randomness`, `colour_edits_follow_the_sim_like_apply_edits`; the player's blood amount (issue #6, Deliberate deviations): `tests/blood.rs` |
 | Sound (spec §8.4, §19 E1, E12): positional mix (gain 0.7, inverse distance clamped, reference 50, rolloff 2, listener 20 px out at the view centre), THROW and PICKUP at the listener with gain 1.0, voice limits (a death sound steals since 2026-10-13, see Deliberate deviations), live voices re-mixed as the listener moves, silence without a device | `src/sound/sound_sample_openal.cpp:206-270`, `src/sound/sfx.cpp:120-134`, `src/sound/sfxdriver_openal.cpp:43-92`, `src/game/Sounds.cpp:25-30`, `src/common/CGameScript.cpp:1185-1205` | `olr-audio` | done (plan 5 task 6) | `positional_gain_matches_olx_openal_defaults`, `voice_limits`, `silent_when_no_device`, `plays_events_on_a_mock_device`, `decodes_every_mod_sound`; `device_check` example (`cargo xtask full`) |
 | Whose rope throws are heard (the user's playtest report, 2026-10-16: every worm's throw played map-wide at gain 1.0, about 7 to 12 starts a second with 7 to 8 bots): only the player's own (the local slot; a replay's viewer), as OLX plays `smpNinja` only in the human input handler; a bot's or a remote worm's throw is silent. `olr-sim`'s THROW events carry no owner, so the session keeps as many as the player's `NinjaRope::throws` grew (they all play at the listener) | `src/common/CWormHuman.cpp:340-342`, `555-563`, `570-574`, `src/common/CWormBot.cpp:1753`, `3823`, `src/common/PhysicsLX56.cpp:300-303` | `olr-game::throw_sound`, `Session::sounds` | done (2026-10-16) | `only_the_players_rope_throws_are_heard`, `bots_alone_throw_silently`, `a_replay_hears_its_viewers_throws`, `an_online_match_runs_headless`; a throw while the worm may not use the rope (`can_use_ninja` false, never set today) is not heard, OLX's is |
@@ -4655,6 +4655,32 @@ sandbox with existing settings. As built:
   the targets and Fast reload in `<data>/mod-editor.ron`); until one is
   chosen Castle Strike (`olx-level-castlestrike`, OLX's most open: a
   wide sky), else Play's level.
+
+## Split screen (issue #26)
+
+Local split screen for 2 to 4 players (OLX's fork: up to four,
+`docs/porting/olx-notes/presentation.md` §1.1; `CClient.cpp:1527-1551`,
+`1653-1744`; `CClient_Draw.cpp:561-609`). Issue #26 is its first part:
+the renderer draws several views in one frame. As built:
+
+- **The fair view** (the maintainer's ruling, a deliberate deviation):
+  every local player sees the same area of the level as a solo player,
+  `olr_scene::Viewport::GAME`'s 427 × 192 world pixels, drawn smaller to
+  share the screen. OLX's split gives each player less of the level
+  instead (two: 159 × 240 world pixels each at 640 × 480; three or four:
+  159 × 119). Each view keeps its own world target, light grid, bloom
+  and composite at the solo size; only the upscale into its part of the
+  screen is smaller (`Renderer::render_views`).
+- **One glow light a frame.** The glow light (plan 15c) is world-fixed
+  and runs once a frame for every view, one history step a frame,
+  whatever the number of views: its emission reads a level-wide occluder
+  map into which each view's (over its light grid) is copied, so a worm
+  shadows the glow light where any view's light grid holds it. One view
+  draws exactly as before (the goldens are unchanged).
+- **Not yet built:** a camera per view, the layout and gaps (OLX fills
+  them with `clViewportSplit`, black), the HUD, input and menus (the
+  issues that follow #26). `olr-cli gpu-bench --views N` lays its views
+  out in halves (top and bottom) or quarters for the measurement only.
 
 ## Kept OLX quirks
 
