@@ -184,3 +184,5 @@
   fixtures/render/look-skin.png
 2026-10-21 bless-render: #15: new golden look-blast.png, the look test mod's copy whose rocket explodes in a large blue light
   fixtures/render/look-blast.png
+2026-10-22 bless-render: #19: a glow-masked rocket tip shows bright in the dark (look-glow-tip.png)
+  fixtures/render/look-glow-tip.png

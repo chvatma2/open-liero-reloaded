@@ -234,7 +234,11 @@ The headless command-line tool. Its commands:
   look-test --bots 3 --personality chaos --seed 1 --ticks 300`); a bot
   change moves it (re-bless with a reason). Issue #15's `look-blast.png`
   is the same match with `look-test-blast-mod` (`fixtures/look/mods`, a
-  copy whose Glow Rocket explodes in a large blue light). Issue #12's `look-skin.png`:
+  copy whose Glow Rocket explodes in a large blue light). Issue #19's
+  `look-glow-tip.png` is the same match with `look-test-glow-mod`, whose
+  Glow Rocket is Classic's missile with a hot-painted tip and its glow
+  mask (`gfx/rocket.glow.png`, made with `mod gfx import` and `mod gfx
+  glow --colour`), no whole-sprite glow. Issue #12's `look-skin.png`:
   idle bots wearing `fixtures/look/skins/look-test-skin` (double
   resolution, a glowing visor, a light) on
   `fixtures/look/levels/look-test-skin-level` (`--seed 4 --ticks 500

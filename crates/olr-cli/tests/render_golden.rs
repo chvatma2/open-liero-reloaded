@@ -296,6 +296,39 @@ fn look_blue_explosion() {
     compare("look-blast.png", &args, &[]);
 }
 
+/// Issue #19: [`look_rocket`]'s match with the look test glow mod
+/// (`fixtures/look/mods/look-test-glow-mod`), whose Glow Rocket is an image
+/// (Classic's missile, its tip painted hot with `olr-cli mod gfx`) with a
+/// glow mask on the tip (`gfx/rocket.glow.png`) and no whole-sprite glow:
+/// the tips show bright in the dark, the rest of the sprite as lit.
+#[test]
+fn look_glowing_rocket_tip() {
+    let Some(content) = content_dir() else { return };
+    let (mods, levels) = (root().join("fixtures/look/mods"), root().join("fixtures/look/levels"));
+    let args = [
+        "render-match",
+        "--mod",
+        "look-test-glow-mod",
+        "--level",
+        "look-test",
+        "--bots",
+        "3",
+        "--personality",
+        "chaos",
+        "--seed",
+        "1",
+        "--ticks",
+        "300",
+        "--packs",
+        mods.to_str().unwrap(),
+        "--packs",
+        levels.to_str().unwrap(),
+        "--content",
+        &content,
+    ];
+    compare("look-glow-tip.png", &args, &[]);
+}
+
 /// Issue #12: idle bots on the dark skin test level (`fixtures/look/levels/
 /// look-test-skin-level`) wearing the hand-made double-resolution skin
 /// (`fixtures/look/skins/look-test-skin`, art scale 4): its cyan visor
