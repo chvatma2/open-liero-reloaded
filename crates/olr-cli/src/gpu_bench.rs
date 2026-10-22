@@ -5,7 +5,8 @@
 //! when the device has them (`GpuReport::timestamps`; else only the wall
 //! time of the frame waited for, said so). Then the shader-headroom probe
 //! (`olr_render::Probe`) at each size. The scene is `Viewport::GAME` over
-//! the whole target (no HUD; plan 8 ruling P11).
+//! the whole target (no HUD; plan 8 ruling P11), or with `--views N`
+//! (issue #26) N views of it in one frame ([`view_areas`]).
 
 use std::time::Instant;
 
@@ -13,7 +14,7 @@ use anyhow::{Context as _, anyhow, bail, ensure};
 use olr_content::{Content, World};
 use olr_present::{PresentSetup, Presentation, default_colour};
 use olr_render::{
-    AdapterPreference, GpuTimes, OUTPUT_FORMAT, Offscreen, OffscreenOptions, Probe, RenderSettings,
+    AdapterPreference, GpuTimes, OUTPUT_FORMAT, Offscreen, OffscreenOptions, Probe, RenderSettings, ViewDraw,
 };
 use olr_replay::{Cursor, Replay};
 use olr_scene::{DrawList, Interpolation, SceneOptions, Viewport};
@@ -44,6 +45,38 @@ pub struct BenchConfig {
     /// [`bench_look`] with this ambient occlusion (`--occlusion`, issue
     /// #10); only with `look`.
     pub occlusion: Option<olr_look::Occlusion>,
+    /// Views drawn each frame (`--views`, issue #26), 1 to [`MAX_VIEWS`]:
+    /// the replay's camera, then views spread over the level
+    /// ([`spread_view`]), in [`view_areas`].
+    pub views: u32,
+}
+
+/// The most views `--views` draws (split screen's four players).
+pub const MAX_VIEWS: u32 = 4;
+
+/// Where `n` views (1 to [`MAX_VIEWS`]) lie in a `size` target, split as
+/// local play could (issue #26; the game's own layout is a later issue's):
+/// one, the whole; two, the top and bottom halves (a wide view keeps more
+/// of its size so); three or four, the quarters.
+pub fn view_areas(size: (u32, u32), n: u32) -> Vec<[u32; 4]> {
+    let (w, h) = size;
+    let (hw, hh) = (w / 2, h / 2);
+    match n {
+        0 | 1 => vec![[0, 0, w, h]],
+        2 => vec![[0, 0, w, hh], [0, hh, w, h - hh]],
+        _ => [[0, 0, hw, hh], [hw, 0, w - hw, hh], [0, hh, hw, h - hh], [hw, hh, w - hw, h - hh]]
+            [..n.min(MAX_VIEWS) as usize]
+            .to_vec(),
+    }
+}
+
+/// View `k` of `n` (1 or more: 0 is the replay's camera) of a `view`-sized
+/// window on a `map`-sized level: centred on the level's `k / n` across,
+/// at `view`'s height, inside the level.
+pub fn spread_view(view: olr_scene::View, map: (u32, u32), k: u32, n: u32) -> olr_scene::View {
+    let centre = map.0 as f32 * k as f32 / n.max(1) as f32;
+    let x = (centre - view.w / 2.0).min(map.0 as f32 - view.w).max(0.0);
+    olr_scene::View { x, ..view }
 }
 
 /// The probe at one pass count.
@@ -220,6 +253,26 @@ fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1000.0
 }
 
+/// Draws the frame's `list` into the first of `areas` of `target` and, when
+/// there are more, the other views: `others` (reused), the same frame seen
+/// elsewhere ([`spread_view`]).
+fn draw(
+    renderer: &mut olr_render::Renderer,
+    (list, others): (&DrawList, &mut [DrawList]),
+    areas: &[[u32; 4]],
+    look: Option<&olr_look::LookFrame>,
+    target: &wgpu::TextureView,
+) {
+    let n = areas.len() as u32;
+    for (k, other) in others.iter_mut().enumerate() {
+        other.clone_from(list);
+        other.view = spread_view(list.view, list.map, k as u32 + 1, n);
+    }
+    let lists = std::iter::once(list).chain(others.iter());
+    let views: Vec<ViewDraw> = lists.zip(areas).map(|(list, &area)| ViewDraw { list, area }).collect();
+    renderer.render_views(&views, look, target);
+}
+
 /// Plays on to the next recorded checksum and compares: the scene drawn is
 /// the recorded match (a generated level made differently, on another
 /// platform, would not be).
@@ -257,6 +310,7 @@ pub fn run(
         (l.look, l.glow) = (Some(look), Some(glow));
     }
     ensure!(cfg.look || cfg.occlusion.is_none(), "the occlusion needs the look");
+    ensure!((1..=MAX_VIEWS).contains(&cfg.views), "{} views: from 1 to {MAX_VIEWS}", cfg.views);
     let gpu = Offscreen::open(&cfg.options)?;
     let info = gpu.adapter_info().clone();
     check_adapter(cfg.options.prefer, info.device_type, &info.name)?;
@@ -280,6 +334,9 @@ pub fn run(
         look: cfg.look,
         ..GpuReport::default()
     };
+    if cfg.views > 1 {
+        report.scene.push_str(&format!(", {} views", cfg.views));
+    }
     let end = cfg.start_tick.saturating_add(cfg.frames).min(replay.ticks());
     for &size in &cfg.sizes {
         progress(format!("{}x{}: playing to tick {}", size.0, size.1, cfg.start_tick));
@@ -308,6 +365,9 @@ pub fn run(
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
         let (mut out, mut list, mut shown) = (TickEvents::new(), DrawList::new(), 0);
+        let areas = view_areas(size, cfg.views);
+        // The other views' lists: the frame's, seen elsewhere.
+        let mut others = vec![DrawList::new(); areas.len() - 1];
         let mut cursor = Cursor::default();
         while cursor.tick() < cfg.start_tick {
             if !cursor.step(replay, &mut world, &mut out).map_err(|m| anyhow!("the replay diverged: {m}"))? {
@@ -322,7 +382,7 @@ pub fn run(
         // A first frame makes the world target and uploads everything.
         present.build(&world, 1.0, &mut list);
         present.upload(&mut renderer);
-        renderer.render_lit(&list, present.look(), &view, [0, 0, size.0, size.1]);
+        draw(&mut renderer, (&list, &mut others), &areas, present.look(), &view);
         gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
         let _ = renderer.gpu_times();
         let (mut tick, mut cpu, mut frame, mut total, mut gpu_ms) = (vec![], vec![], vec![], vec![], vec![]);
@@ -339,7 +399,7 @@ pub fn run(
             let t1 = Instant::now();
             present.build(&world, 1.0, &mut list);
             present.upload(&mut renderer);
-            renderer.render_lit(&list, present.look(), &view, [0, 0, size.0, size.1]);
+            draw(&mut renderer, (&list, &mut others), &areas, present.look(), &view);
             cpu.push(ms(t1));
             gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
             frame.push(ms(t1));
@@ -361,7 +421,7 @@ pub fn run(
             let (mut wall, mut on_gpu, mut dropped) = (vec![], vec![], 0);
             for _ in 0..cfg.probe_frames {
                 let t0 = Instant::now();
-                renderer.render_lit(&list, present.look(), &view, [0, 0, size.0, size.1]);
+                draw(&mut renderer, (&list, &mut others), &areas, present.look(), &view);
                 gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
                 wall.push(ms(t0));
                 match probe_sample(renderer.gpu_times(), passes) {
@@ -416,6 +476,25 @@ mod tests {
         assert!(lit > 0 && lit < glow.front.len() / 10, "{lit}");
         assert!(glow.groups.iter().all(|&g| g <= 1) && glow.groups.contains(&1));
         assert_eq!(bench_look((504, 350), 2), (look, glow));
+    }
+
+    /// Issue #26: `--views` splits the target without gap or overlap, and
+    /// the other views lie inside the level, spread across it.
+    #[test]
+    fn views_split_the_target_and_spread_over_the_level() {
+        for n in 1..=MAX_VIEWS {
+            let areas = view_areas((1921, 1081), n);
+            assert_eq!(areas.len(), n as usize);
+            let covered: u64 = areas.iter().map(|a| u64::from(a[2]) * u64::from(a[3])).sum();
+            let whole = if n == 3 { 1921 * 1081 - 961 * 541 } else { 1921 * 1081 };
+            assert_eq!(covered, whole, "{n} views");
+        }
+        assert_eq!(view_areas((1920, 1080), 2), [[0, 0, 1920, 540], [0, 540, 1920, 540]]);
+        let view = olr_scene::View { x: 0.0, y: 50.0, w: 427.0, h: 192.0 };
+        let xs: Vec<f32> = (1..4).map(|k| spread_view(view, (1350, 550), k, 4).x).collect();
+        assert!(xs.windows(2).all(|w| w[0] < w[1]) && xs[2] <= 1350.0 - 427.0, "{xs:?}");
+        assert_eq!(spread_view(view, (400, 200), 1, 2).x, 0.0, "a level narrower than the view");
+        assert_eq!(spread_view(view, (1350, 550), 1, 2).y, 50.0);
     }
 
     #[test]

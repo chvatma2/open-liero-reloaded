@@ -43,6 +43,7 @@ fn a_recorded_match_is_drawn_timed_and_probed() {
         options: OffscreenOptions { timestamps: true, ..OffscreenOptions::default() },
         look: false,
         occlusion: None,
+        views: 1,
     };
     let r = gpu_bench::run(&content, &replay, &cfg, &mut |_| {}).unwrap();
     eprintln!("gpu-bench on {} ({}, {}), timestamps {}", r.adapter, r.backend, r.device_type, r.timestamps);
@@ -75,6 +76,18 @@ fn a_recorded_match_is_drawn_timed_and_probed() {
     assert!(occluded.look && occluded.scene.contains("occlusion 60 % over 12 px"), "{}", occluded.scene);
     let unlit = BenchConfig { occlusion, ..cfg.clone() };
     assert!(gpu_bench::run(&content, &replay, &unlit, &mut |_| {}).is_err(), "occlusion needs the look");
+    // `--views` (issue #26): four lit views a frame, said so; 0 or 5 refused.
+    let split = BenchConfig { look: true, views: 4, ..cfg.clone() };
+    let split = gpu_bench::run(&content, &replay, &split, &mut |_| {}).unwrap();
+    assert!(split.scene.ends_with(", 4 views") && split.sizes[0].frames == 50, "{}", split.scene);
+    if r.timestamps {
+        let (four, one) = (split.sizes[0].gpu_ms.unwrap().p50, lit.sizes[0].gpu_ms.unwrap().p50);
+        assert!(four > one, "four views cost more GPU time than one: {four} {one}");
+    }
+    for views in [0, 5] {
+        let bad = BenchConfig { views, ..cfg.clone() };
+        assert!(gpu_bench::run(&content, &replay, &bad, &mut |_| {}).is_err(), "{views} views");
+    }
     let mut tampered = replay.clone();
     *tampered.row_mut(150).first_mut().unwrap() = olr_sim::Keys(0xFF);
     let e = gpu_bench::run(&content, &tampered, &cfg, &mut |_| {}).expect_err("a different match is refused");

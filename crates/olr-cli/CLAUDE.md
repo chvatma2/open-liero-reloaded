@@ -567,7 +567,7 @@ The headless command-line tool. Its commands:
   [--start-tick 1000] [--frames 600] [--probe-passes 0,1,2,4,8,16,32]
   [--probe-taps 9] [--probe-frames 120] [--adapter hardware|software]
   [--backend auto|gl|vulkan|dx12] [--content DIR] [--out F.ron]
-  [--list-adapters] [--look [--occlusion S[,R]]]`: the GPU half of the
+  [--list-adapters] [--look [--occlusion S[,R]]] [--views 1..4]`: the GPU half of the
   performance envelope (plan 8,
   `gpu_bench.rs`, the command in `gpu_bench_cmd.rs`). A recorded match
   (`stress --record`) on the assets its packs name (`LevelAssets`, so a
@@ -577,7 +577,11 @@ The headless command-line tool. Its commands:
   HUD: ruling P11), the device waited for after each frame (`--look`: the
   level drawn with `gpu_bench::bench_look`; `--occlusion` (issue #10,
   only with it) adds ambient occlusion to that look, named in the report's
-  `scene`); then the
+  `scene`; `--views N`, issue #26: N views a frame through
+  `Renderer::render_views`, the replay's camera and copies of its list
+  moved across the level, `gpu_bench::spread_view`, in the target's top
+  and bottom halves or quarters, `gpu_bench::view_areas`, named in
+  `scene` as `, N views`; the report's form is unchanged); then the
   shader-headroom probe (`olr_render::Probe`, 0 passes first: the
   baseline, which runs the probe's untimed seed of the drawn frame too) for `--probe-frames` frames at each pass count. `GpuReport`
   (RON with `--out`; `cargo xtask envelope` reads it): adapter, backend,
@@ -817,8 +821,9 @@ instead of reading as 0 (rewrite with `OLR_BLESS_TOOL_OUTPUT=1`).
 records a short stress match and runs `gpu_bench::run` on it on the
 software adapter at 320 × 180 with a 2-pass probe (GPU probe time above 0
 when the adapter has timestamps; lavapipe has them), `--look` and, issue
-#10, `--occlusion` (refused without the look), and a tampered replay is
-refused at its checksum.
+#10, `--occlusion` (refused without the look), issue #26's `--views 4`
+(lit, costing more GPU time than one view; 0 and 5 refused), and a
+tampered replay is refused at its checksum.
 `benches/game.rs` (divan, `cargo xtask bench`): 8 bots' think + tick and a
 draw-list build on a warm Classic match (needs `OLR_CONTENT_DIR`).
 `tests/render_golden.rs` (the GPU frame goldens) runs in `cargo xtask full`

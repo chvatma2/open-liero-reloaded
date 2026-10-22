@@ -67,6 +67,11 @@ pub struct Args {
     /// (percent 1-100, world pixels 2-32, default 12; issue #10).
     #[arg(long, requires = "look", value_parser = parse_occlusion)]
     occlusion: Option<olr_look::Occlusion>,
+    /// Views drawn each frame, 1 to 4 (issue #26, split screen): the
+    /// replay's camera and views spread over the level, in the target's
+    /// halves (2) or quarters (3, 4).
+    #[arg(long, default_value_t = 1, value_parser = clap::value_parser!(u32).range(1..=4))]
+    views: u32,
 }
 
 fn parse_occlusion(s: &str) -> Result<olr_look::Occlusion, String> {
@@ -123,6 +128,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         },
         look: args.look,
         occlusion: args.occlusion,
+        views: args.views,
     };
     let content = olr_content::Content::open_bundled(&args.content)?;
     let report = gpu_bench::run(&content, &replay, &cfg, &mut |l| eprintln!("  {l}"))?;
