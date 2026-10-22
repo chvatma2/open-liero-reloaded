@@ -33,6 +33,22 @@ pub struct QuickReport {
     /// Its glowing discs: said, never compared.
     #[serde(default)]
     pub lit_discs: Option<usize>,
+    /// Issue #35, said, never compared: a lit frame's uploaded bytes, its
+    /// passes and each pass group's fastest software-adapter ms.
+    #[serde(default)]
+    pub lit_frame_upload_bytes: Option<u64>,
+    #[serde(default)]
+    pub lit_passes: Option<u32>,
+    #[serde(default)]
+    pub lit_pass_ms: Vec<(String, f64)>,
+    /// The lit match's terrain uploads over its ticks: instructions
+    /// (gated), texture writes and bytes (said).
+    #[serde(default)]
+    pub terrain_upload_instructions: Option<u64>,
+    #[serde(default)]
+    pub terrain_upload_writes: Option<u64>,
+    #[serde(default)]
+    pub terrain_upload_bytes: Option<u64>,
 }
 
 /// The stored baseline: this machine's numbers.
@@ -84,6 +100,12 @@ pub fn compare(base: &QuickReport, now: &QuickReport, notices: &mut Vec<String>)
         base.lit_frame_ms_min.map(|m| m * 1000.0),
         now.lit_frame_ms_min.map(|m| m * 1000.0),
         RENDER_TOLERANCE,
+    );
+    check(
+        "terrain uploads (instructions)",
+        instr(base.terrain_upload_instructions),
+        instr(now.terrain_upload_instructions),
+        INSTR_TOLERANCE,
     );
     regressions
 }
@@ -158,6 +180,8 @@ mod tests {
             lit_frame_instructions: Some(5000),
             lit_frame_ms_min: Some(100.0),
             lit_discs: Some(3),
+            terrain_upload_instructions: Some(7000),
+            ..QuickReport::default()
         }
     }
 
@@ -208,6 +232,21 @@ mod tests {
         let old: QuickReport = ron::from_str(old).unwrap();
         let mut notices = Vec::new();
         assert!(compare(&old, &base, &mut notices).is_empty());
-        assert_eq!(notices.len(), 2, "{notices:?}");
+        assert_eq!(notices.len(), 3, "{notices:?}");
+    }
+
+    /// Issue #35: the terrain uploads' instructions gate; a baseline
+    /// before them reads, their number a notice.
+    #[test]
+    fn terrain_upload_regressions_fail() {
+        let base = report(1000, 1000, 10.0);
+        let worse = QuickReport { terrain_upload_instructions: Some(8100), ..base.clone() };
+        let lines = compare(&base, &worse, &mut Vec::new());
+        assert_eq!(lines.len(), 1, "{lines:?}");
+        assert!(lines[0].starts_with("terrain uploads"), "{lines:?}");
+        let old = QuickReport { terrain_upload_instructions: None, ..base.clone() };
+        let mut notices = Vec::new();
+        assert!(compare(&old, &base, &mut notices).is_empty());
+        assert_eq!(notices.len(), 1, "{notices:?}");
     }
 }

@@ -213,7 +213,7 @@ fn r8(device: &wgpu::Device, label: &str, size: (u32, u32), format: wgpu::Textur
 /// Writes rectangle `r` (texels) of a `width`-texel-wide one-byte-per-texel
 /// image into `texture`, clipped to it.
 pub(super) fn write_bytes(
-    queue: &wgpu::Queue,
+    queue: &super::uploads::Queue,
     texture: &wgpu::Texture,
     (data, width): (&[u8], u32),
     r: Rect,
@@ -243,7 +243,7 @@ pub(super) fn write_bytes(
 }
 
 /// [`write_bytes`] for two bytes a texel (`R16Uint`).
-fn write_u16(queue: &wgpu::Queue, texture: &wgpu::Texture, (data, width): (&[u16], u32), r: Rect) {
+fn write_u16(queue: &super::uploads::Queue, texture: &wgpu::Texture, (data, width): (&[u16], u32), r: Rect) {
     let (tw, th) = (texture.width(), texture.height());
     let (w, h) = (r.w.min(tw.saturating_sub(r.x)), r.h.min(th.saturating_sub(r.y)));
     let end =
@@ -669,7 +669,7 @@ impl LookState {
     pub(super) fn upload(
         &mut self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
+        queue: &super::uploads::Queue,
         map: &ColorMap,
         terrain: &wgpu::Texture,
         max_dim: u32,
@@ -771,7 +771,7 @@ impl LookState {
     /// Writes art rectangle `r` of `map`'s glow, and the world rectangle
     /// holding it of its groups and material (a clear solid as background,
     /// so light passes it).
-    pub(super) fn write(&mut self, queue: &wgpu::Queue, map: &ColorMap, r: Rect) {
+    pub(super) fn write(&mut self, queue: &super::uploads::Queue, map: &ColorMap, r: Rect) {
         let Some(t) = &mut self.textures else { return };
         let wr = world_rect(r, t.art_scale);
         if let (Some(glow), Some(groups)) = (map.glow(), map.glow_groups()) {
@@ -827,7 +827,7 @@ impl LookState {
 
     /// Labels the flicker regions for the groups `look` flickers, when they
     /// are not the ones labelled, and uploads the whole map (plan 15c).
-    pub(super) fn sync_regions(&mut self, queue: &wgpu::Queue, look: &LookFrame) {
+    pub(super) fn sync_regions(&mut self, queue: &super::uploads::Queue, look: &LookFrame) {
         let Some(t) = &mut self.textures else { return };
         let mut mask = [false; GROUPS];
         for (m, g) in mask.iter_mut().zip(&look.groups) {

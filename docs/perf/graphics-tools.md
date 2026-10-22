@@ -66,6 +66,14 @@ first frame that makes the targets:
   the unlit frame: a relative signal of the look passes' shader work
   (their invocations and arithmetic), never real milliseconds.
 
+Issue #35 added, said but not gated: the bytes a lit frame uploads
+(`lit_frame_upload_bytes`, `Renderer::uploads`), its passes
+(`lit_passes`) and each pass group's fastest time on the software
+adapter (`lit_pass_ms`, from GPU timestamps on frames timed apart), and
+the terrain's uploads over 100 more ticks of the lit match
+(`terrain_upload_instructions`, gated at +15 %, with its texture writes
+and bytes): the signals an optimisation of passes or uploads shows.
+
 The baseline is `fixtures/bench/quick.ron`, re-blessed with
 `cargo xtask bench-quick --bless --reason "<why>"`.
 

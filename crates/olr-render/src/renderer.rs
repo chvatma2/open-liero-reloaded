@@ -15,12 +15,14 @@ mod pass;
 mod probe;
 mod regions;
 mod timing;
+mod uploads;
 
 pub use gi::{GI_CELL_BUDGET, gi_cell};
 pub use look::WORM_SHADOW;
 pub use pass::ViewDraw;
 pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};
 pub use timing::{GpuTimes, PASS_GROUPS, PassGroup, PassSpan, gpu_times};
+pub use uploads::Uploads;
 
 /// The world pass's and atlas's texel format (gamma-space RGBA, like OLX's
 /// surfaces: blending happens on the stored bytes).
@@ -91,7 +93,8 @@ struct Target {
 /// upscale to the output with the selected [`UpscaleFilter`].
 pub struct Renderer {
     device: wgpu::Device,
-    queue: wgpu::Queue,
+    /// The queue, counting the renderer's uploads ([`Renderer::uploads`]).
+    queue: uploads::Queue,
     srgb: bool,
     pub settings: RenderSettings,
     world_pipeline: wgpu::RenderPipeline,
@@ -309,7 +312,7 @@ impl Renderer {
         let instance_buffer = Self::instance_buffer(&device, 1024);
         Renderer {
             device,
-            queue,
+            queue: uploads::Queue::new(queue),
             srgb: surface_format.is_srgb(),
             settings,
             world_pipeline,
@@ -364,6 +367,13 @@ impl Renderer {
 
     pub fn queue(&self) -> &wgpu::Queue {
         &self.queue
+    }
+
+    /// What the renderer has written to the device so far (issue #35,
+    /// benchmarks): its texture and buffer writes and their bytes;
+    /// [`Uploads::since`] an earlier reading gives a frame's.
+    pub fn uploads(&self) -> Uploads {
+        self.queue.uploads()
     }
 
     /// What went wrong with content so far (an image or a map too large
@@ -592,7 +602,7 @@ impl Renderer {
     /// Writes rectangle `r` of a `width`-wide RGBA image into the terrain
     /// texture, clipped to it.
     fn write_rect(
-        queue: &wgpu::Queue,
+        queue: &uploads::Queue,
         terrain: Option<&Terrain>,
         (pixels, width): (&[u8], u32),
         r: olr_terrain::Rect,

@@ -48,6 +48,20 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         ),
         None => println!("lit frame:   not measured"),
     }
+    if let Some(bytes) = report.lit_frame_upload_bytes {
+        println!("lit frame:   {bytes} bytes uploaded");
+    }
+    if let Some(passes) = report.lit_passes {
+        let groups: Vec<String> = report.lit_pass_ms.iter().map(|(g, ms)| format!("{g} {ms:.2}")).collect();
+        println!("lit frame:   {passes} passes; fastest ms per group: {}", groups.join(", "));
+    }
+    println!(
+        "terrain:     {} instructions, {} texture writes, {} bytes ({} ticks' uploads)",
+        show(report.terrain_upload_instructions),
+        show(report.terrain_upload_writes),
+        show(report.terrain_upload_bytes),
+        quick_bench::TERRAIN_TICKS
+    );
     if let Some(path) = &args.out {
         let text = ron::ser::to_string_pretty(&report, ron::ser::PrettyConfig::default())?;
         std::fs::write(path, text + "\n")?;

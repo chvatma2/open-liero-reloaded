@@ -193,3 +193,5 @@
   fixtures/bench/quick.ron
 2026-10-22 bless-render: #34: the byte-identity hashes of a lit Castle Strike Reloaded match (new fixture)
   fixtures/render/lit-hashes.ron
+2026-10-22 bench-quick: #35: the lit frame's uploads and passes and the terrain's uploads measured
+  fixtures/bench/quick.ron

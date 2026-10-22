@@ -353,7 +353,14 @@ The headless command-line tool. Its commands:
   the fastest wall time with the device waited for (`lit_frame_ms_min`,
   about 190 ms on llvmpipe, nearly all the glow light's cascades): on the
   software adapter a relative signal of the look passes' shader work,
-  never real milliseconds. `QuickReport`'s numbers are `None`, with a
+  never real milliseconds. Issue #35 (said, not gated): a lit frame's
+  uploaded bytes (`lit_frame_upload_bytes`, `Renderer::uploads`), then,
+  timed apart on the same device (opened with `timestamps`), its passes
+  (`lit_passes`, `GpuTimes::pass_count`) and each pass group's fastest
+  ms of `LIT_FRAMES` (`lit_pass_ms`); then `TERRAIN_TICKS` 100 more ticks
+  of the lit match, each tick's `Presentation::upload` counted
+  (`terrain_upload_instructions`, gated like the others) with its texture
+  writes and bytes (`terrain_upload_writes`, `terrain_upload_bytes`). `QuickReport`'s numbers are `None`, with a
   notice, without an instruction counter or a graphics adapter; the lit
   fields are `#[serde(default)]`. Test: `tests/perfcount.rs`.
 - `olr-cli net-sim [--mod M --level L --seed N --slots 8 --clients 3

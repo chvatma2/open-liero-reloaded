@@ -7,6 +7,9 @@
 //! counted in instructions and its fastest wall time on the software
 //! adapter, a relative signal of the look passes' shader work (never real
 //! milliseconds: `olr-cli gpu-bench --look` on a GPU measures those).
+//! Issue #35: the lit frame's uploads, passes and each pass group's
+//! fastest software-adapter time, and the terrain's uploads over
+//! [`TERRAIN_TICKS`] ticks of its match, so each optimisation shows its gain.
 //! `cargo xtask bench` stays the real measurement.
 
 use std::time::Instant;
@@ -15,7 +18,7 @@ use anyhow::Context;
 use olr_bots::Bot;
 use olr_content::Content;
 use olr_present::{PresentSetup, Presentation, default_colour};
-use olr_render::{OUTPUT_FORMAT, Offscreen, RenderSettings};
+use olr_render::{OUTPUT_FORMAT, Offscreen, OffscreenOptions, PASS_GROUPS, PassGroup, RenderSettings};
 use olr_scene::{DrawList, Interpolation, SceneOptions, Viewport};
 use olr_sim::{Keys, TickEvents, World};
 use serde::{Deserialize, Serialize};
@@ -37,6 +40,9 @@ pub const LIT_LEVEL: &str = "olr-level-castlestrike-reloaded";
 /// Lit 1080p frames counted and timed (about 0.3 s each on llvmpipe); the
 /// fewest instructions and the fastest wall time count.
 pub const LIT_FRAMES: u32 = 5;
+/// Ticks of the lit match whose terrain uploads are counted (issue #35:
+/// digs and blood stains, each tick's dirty rectangles uploaded).
+pub const TERRAIN_TICKS: u32 = 100;
 
 /// A Classic Deathmatch of 8 bots on Liero Factory after [`WARM_TICKS`]:
 /// the world, its bots, the last tick's events and its presentation (which
@@ -112,6 +118,26 @@ pub struct QuickReport {
     /// The glowing discs (play's lights) in the lit frame: said, not gated.
     #[serde(default)]
     pub lit_discs: Option<usize>,
+    /// Issue #35, said, not gated: the bytes a lit frame writes to the
+    /// device (textures and buffers; no terrain changes between them).
+    #[serde(default)]
+    pub lit_frame_upload_bytes: Option<u64>,
+    /// The render passes of a lit frame (GPU timestamps; `None` without them).
+    #[serde(default)]
+    pub lit_passes: Option<u32>,
+    /// Each pass group a lit frame runs, by name, and its fastest time of
+    /// [`LIT_FRAMES`] on the software adapter (ms; relative only).
+    #[serde(default)]
+    pub lit_pass_ms: Vec<(String, f64)>,
+    /// The instructions of [`TERRAIN_TICKS`] ticks' uploads of the lit
+    /// match (the dirty rectangles of its digs and stains; gated).
+    #[serde(default)]
+    pub terrain_upload_instructions: Option<u64>,
+    /// Their texture writes and bytes (said).
+    #[serde(default)]
+    pub terrain_upload_writes: Option<u64>,
+    #[serde(default)]
+    pub terrain_upload_bytes: Option<u64>,
 }
 
 /// A 1080p target of `gpu` to draw into.
@@ -156,7 +182,9 @@ pub fn run(content: &Content, notice: &mut dyn FnMut(String)) -> anyhow::Result<
         }
         Err(e) => notice(format!("no instruction counter ({e}): instructions not measured")),
     }
-    let gpu = match Offscreen::new() {
+    // Timestamps for the lit frame's passes (issue #35); timing is off
+    // for every counted and timed frame.
+    let gpu = match Offscreen::open(&OffscreenOptions { timestamps: true, ..OffscreenOptions::default() }) {
         Ok(gpu) => gpu,
         Err(e) => {
             notice(format!("no graphics adapter ({e}): the frames not measured"));
@@ -205,9 +233,11 @@ fn lit_frame(
     renderer.render_lit(&list, w.present.look(), &view, area);
     gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
     let (mut fewest, mut best) = (u64::MAX, f64::INFINITY);
+    let mut uploads = 0;
     for _ in 0..LIT_FRAMES {
         let t0 = Instant::now();
         w.present.build(&w.world, 1.0, &mut list);
+        let before = renderer.uploads();
         let mut frame = || {
             w.present.upload(&mut renderer);
             renderer.render_lit(&list, w.present.look(), &view, area);
@@ -216,14 +246,74 @@ fn lit_frame(
             Some(c) => fewest = fewest.min(c.measure(frame).1),
             None => frame(),
         }
+        let u = renderer.uploads().since(before);
+        uploads = u.texture_bytes + u.buffer_bytes;
         gpu.device().poll(wgpu::PollType::wait_indefinitely()).context("the device")?;
         best = best.min(t0.elapsed().as_secs_f64() * 1000.0);
     }
     if counter.is_none() {
         notice("no instruction counter: the lit frame's instructions not measured".into());
     }
-    report.lit_frame_instructions = counter.and(Some(fewest));
+    report.lit_frame_instructions = counter.as_ref().and(Some(fewest));
     report.lit_frame_ms_min = Some(best);
     report.lit_discs = w.present.look().map(|l| l.emitters.len());
+    report.lit_frame_upload_bytes = Some(uploads);
+    // Each pass group's fastest time, timed apart from the frames above.
+    if renderer.enable_gpu_timing() {
+        let mut fastest = [f64::INFINITY; PASS_GROUPS];
+        let mut passes = None;
+        for _ in 0..LIT_FRAMES {
+            w.present.build(&w.world, 1.0, &mut list);
+            w.present.upload(&mut renderer);
+            renderer.render_lit(&list, w.present.look(), &view, area);
+            if let Some(t) = renderer.gpu_times() {
+                passes = Some(t.pass_count);
+                for (f, ms) in fastest.iter_mut().zip(t.passes) {
+                    *f = f.min(ms);
+                }
+            }
+        }
+        report.lit_passes = passes;
+        report.lit_pass_ms = PassGroup::ALL
+            .iter()
+            .zip(fastest)
+            .filter(|&(_, ms)| ms.is_finite() && ms > 0.0)
+            .map(|(g, ms)| (g.name().to_string(), ms))
+            .collect();
+    } else {
+        notice("no GPU timestamps: the lit frame's passes not measured".into());
+    }
+    terrain_uploads(&mut w, &mut renderer, counter.as_mut(), report);
     Ok(())
+}
+
+/// The lit match's terrain uploads (issue #35) into `report`: each of
+/// [`TERRAIN_TICKS`] ticks played (not counted), then its dirty
+/// rectangles uploaded (counted, in instructions and in writes).
+fn terrain_uploads(
+    w: &mut Warm,
+    renderer: &mut olr_render::Renderer,
+    mut counter: Option<&mut Instructions>,
+    report: &mut QuickReport,
+) {
+    let mut keys = vec![Keys(0); w.bots.len()];
+    let before = renderer.uploads();
+    let mut instructions = 0;
+    for _ in 0..TERRAIN_TICKS {
+        for (i, b) in w.bots.iter_mut().enumerate() {
+            keys[i] = b.think(&w.world, &w.events);
+        }
+        w.world.tick(&keys, &mut w.events);
+        w.present.on_tick(&w.world, &w.events);
+        match counter.as_deref_mut() {
+            Some(c) => instructions += c.measure(|| w.present.upload(renderer)).1,
+            None => w.present.upload(renderer),
+        }
+        // The writes' staging goes to the device each tick, as a frame's would.
+        renderer.queue().submit([]);
+    }
+    let u = renderer.uploads().since(before);
+    report.terrain_upload_instructions = counter.and(Some(instructions));
+    report.terrain_upload_writes = Some(u.texture_writes);
+    report.terrain_upload_bytes = Some(u.texture_bytes);
 }

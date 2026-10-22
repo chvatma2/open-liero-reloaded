@@ -107,6 +107,9 @@ pub struct GpuTimes {
     /// for a group the frame ran none of). The frame less their sum is the
     /// copies and the gaps between passes.
     pub passes: [f64; PASS_GROUPS],
+    /// The passes timed (issue #35: what a change saves in passes; the
+    /// probe's not counted).
+    pub pass_count: u32,
 }
 
 /// The slots' `ticks` at `period_ns` a tick as [`GpuTimes`], the passes'
@@ -122,6 +125,7 @@ pub fn gpu_times(ticks: &[u64], period_ns: f32, probe: bool, spans: &[PassSpan])
         frame_ms: span(0, 1),
         probe_ms: if probe { span(2, 3) } else { 0.0 },
         passes: [0.0; PASS_GROUPS],
+        pass_count: spans.len() as u32,
     };
     for &(group, begin, end) in spans {
         t.passes[group as usize] += span(begin, end);
@@ -303,6 +307,7 @@ mod tests {
         assert!((ms(PassGroup::Soak) - 1.5).abs() < 1e-9, "{t:?}");
         assert!((ms(PassGroup::Upscale) - 1.0).abs() < 1e-9, "{t:?}");
         assert_eq!(ms(PassGroup::Cascades), 0.0, "no cascade pass ran");
+        assert_eq!(t.pass_count, 4, "every pass counted");
         // A span past the slots read, or never written, counts 0.
         let t = gpu_times(&ticks[..4], 1.0, false, &spans);
         assert_eq!((t.passes[PassGroup::Soak as usize], t.frame_ms), (0.0, 8.0));

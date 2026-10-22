@@ -266,6 +266,12 @@ on screen or offscreen.
   (the default: fills the output keeping aspect, texel edges blend over
   one output pixel). The sub-pixel camera only moves the source rectangle.
   An sRGB target gets linear values, so it shows the same bytes.
+- **Counted uploads** (issue #35, `renderer/uploads.rs`): the renderer's
+  queue is `uploads::Queue`, which counts every `write_texture` (its
+  extent's texel bytes) and `write_buffer` made through it;
+  `Renderer::uploads()` gives the totals (`Uploads`, `since` an earlier
+  reading), `olr-cli quick-bench` shows them. `GpuTimes::pass_count` is
+  the passes a timed frame ran.
 - **No per-frame allocation** of its own once warm: instance, dirty and
   view-plan buffers are reused, the world targets and instance buffer are
   recreated only when they must grow or change size (`frame.rs`'s
