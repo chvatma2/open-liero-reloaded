@@ -195,3 +195,5 @@
   fixtures/render/lit-hashes.ron
 2026-10-22 bench-quick: #35: the lit frame's uploads and passes and the terrain's uploads measured
   fixtures/bench/quick.ron
+2026-10-22 bench-quick: #35: the lit frame's copies and gaps measured
+  fixtures/bench/quick.ron

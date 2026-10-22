@@ -41,6 +41,8 @@ pub struct QuickReport {
     pub lit_passes: Option<u32>,
     #[serde(default)]
     pub lit_pass_ms: Vec<(String, f64)>,
+    #[serde(default)]
+    pub lit_between_ms: Option<f64>,
     /// The lit match's terrain uploads over its ticks: instructions
     /// (gated), texture writes and bytes (said).
     #[serde(default)]

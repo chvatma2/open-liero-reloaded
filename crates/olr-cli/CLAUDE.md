@@ -357,7 +357,7 @@ The headless command-line tool. Its commands:
   uploaded bytes (`lit_frame_upload_bytes`, `Renderer::uploads`), then,
   timed apart on the same device (opened with `timestamps`), its passes
   (`lit_passes`, `GpuTimes::pass_count`) and each pass group's fastest
-  ms of `LIT_FRAMES` (`lit_pass_ms`); then `TERRAIN_TICKS` 100 more ticks
+  ms of `LIT_FRAMES` (`lit_pass_ms`) and the frame's time less its passes' (`lit_between_ms`: copies and gaps); then `TERRAIN_TICKS` 100 more ticks
   of the lit match, each tick's `Presentation::upload` counted
   (`terrain_upload_instructions`, gated like the others) with its texture
   writes and bytes (`terrain_upload_writes`, `terrain_upload_bytes`). `QuickReport`'s numbers are `None`, with a

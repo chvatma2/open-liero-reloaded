@@ -54,6 +54,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     if let Some(passes) = report.lit_passes {
         let groups: Vec<String> = report.lit_pass_ms.iter().map(|(g, ms)| format!("{g} {ms:.2}")).collect();
         println!("lit frame:   {passes} passes; fastest ms per group: {}", groups.join(", "));
+        if let Some(ms) = report.lit_between_ms {
+            println!("lit frame:   {ms:.2} ms of copies and gaps between passes");
+        }
     }
     println!(
         "terrain:     {} instructions, {} texture writes, {} bytes ({} ticks' uploads)",

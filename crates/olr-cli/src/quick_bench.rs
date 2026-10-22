@@ -129,6 +129,10 @@ pub struct QuickReport {
     /// [`LIT_FRAMES`] on the software adapter (ms; relative only).
     #[serde(default)]
     pub lit_pass_ms: Vec<(String, f64)>,
+    /// The frame's GPU time less its passes' (the copies and the gaps
+    /// between passes), the fastest of [`LIT_FRAMES`] (ms; relative only).
+    #[serde(default)]
+    pub lit_between_ms: Option<f64>,
     /// The instructions of [`TERRAIN_TICKS`] ticks' uploads of the lit
     /// match (the dirty rectangles of its digs and stains; gated).
     #[serde(default)]
@@ -262,18 +266,21 @@ fn lit_frame(
     if renderer.enable_gpu_timing() {
         let mut fastest = [f64::INFINITY; PASS_GROUPS];
         let mut passes = None;
+        let mut between = f64::INFINITY;
         for _ in 0..LIT_FRAMES {
             w.present.build(&w.world, 1.0, &mut list);
             w.present.upload(&mut renderer);
             renderer.render_lit(&list, w.present.look(), &view, area);
             if let Some(t) = renderer.gpu_times() {
                 passes = Some(t.pass_count);
+                between = between.min(t.frame_ms - t.passes.iter().sum::<f64>());
                 for (f, ms) in fastest.iter_mut().zip(t.passes) {
                     *f = f.min(ms);
                 }
             }
         }
         report.lit_passes = passes;
+        report.lit_between_ms = between.is_finite().then_some(between);
         report.lit_pass_ms = PassGroup::ALL
             .iter()
             .zip(fastest)
