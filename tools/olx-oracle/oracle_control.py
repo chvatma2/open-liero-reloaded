@@ -9,7 +9,8 @@ The scenario comes from the JSON file named by ORACLE_SCENARIO, written by
 `cargo xtask oracle-record`:
   level, mod, seed, frames, settings {setvar name: value}, worms [{x, y}],
   inputs [[frame, worm index, key mask]] (OracleHooks.h's KEY_* bits:
-  up 1 ... change 128, strafe 256, prev 512, next 1024),
+  up 1 ... change 128, strafe 256, prev 512, next 1024, weapon1 2048 ...
+  weapon5 32768),
   weapons [{worm, names, current}], health [[worm index, hp]],
   bonuses [[frame, x, y, "health"|"weapon", weapon name or ""]],
   out (trace path).
@@ -20,8 +21,8 @@ import json
 import os
 import sys
 
-# Every key bit OracleHooks.h declares (KEY_UP ... KEY_NEXT).
-KEY_BITS = 2047
+# Every key bit OracleHooks.h declares (KEY_UP ... KEY_WEAPON5).
+KEY_BITS = 65535
 
 
 def emit(msg):

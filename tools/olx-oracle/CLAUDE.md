@@ -9,7 +9,7 @@ you rarely need to touch these files.
 - `Dockerfile`: OLX at commit `d1ad953f` from GitHub, plus the patch, built as a
   headless dedicated server (Ubuntu 22.04, as OLX's own Docker image).
   The image tag is a hash of the three files here, so any edit rebuilds it.
-- `oracle-hooks.patch`: the test hooks, 18 OLX files and about 860 added lines.
+- `oracle-hooks.patch`: the test hooks, 19 OLX files and about 880 added lines.
 - `oracle_control.py`: drives one recording over OLX's dedicated-control pipe.
 
 ## What the patch adds
@@ -19,7 +19,10 @@ you rarely need to touch these files.
     OLX's human input handler with virtual keys (`CInput::virt`), so aim,
     facing, rope, firing and weapon switching run through OLX's real keyboard code.
     The bits are the classic 8, then `KEY_STRAFE` 256, `KEY_PREV` 512 and
-    `KEY_NEXT` 1024 (issue #23; `oracle_control.py`'s `KEY_BITS`); a frame
+    `KEY_NEXT` 1024 (issue #23), then `KEY_WEAPON1` 2048 to `KEY_WEAPON5`
+    32768 (issue #48: the handler's `cWeapons[i]`, reached through the
+    patch's `CWormHumanInputHandler::getInputWeaponSlot(i)`;
+    `oracle_control.py`'s `KEY_BITS`); a frame
     holding Strafe fails while the host does not allow strafing (OLR always
     does, so a trace recorded without it would not be OLR's rule).
   - `frame bonus x y health|weapon [name]` lines place a bonus at the start of

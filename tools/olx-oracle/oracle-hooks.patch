@@ -16,7 +16,7 @@ index bd9eaa4..fdbf335 100644
  	bool	Compile(const std::string& dir);
  
 diff --git a/include/CInput.h b/include/CInput.h
-index 7ca1b1f..076c115 100644
+index 7ca1b1f..2c68460 100644
 --- a/include/CInput.h
 +++ b/include/CInput.h
 @@ -48,6 +48,11 @@
@@ -90,6 +90,19 @@ index e3c7780..be0bd6c 100644
  	void		WormShoot(CWorm *w);
  	void		WormShootEnd(CWorm* w, const weapon_t* weapon);
      void        RecheckGame();
+diff --git a/include/CWormHuman.h b/include/CWormHuman.h
+index b4d93cb..d21a28b 100644
+--- a/include/CWormHuman.h
++++ b/include/CWormHuman.h
+@@ -64,6 +64,8 @@ public:
+ 	CInput &	getInputStrafe()				{ return cStrafe; };
+ 	CInput &	getInputPrevWeapon()			{ return cPrevWeapon; };
+ 	CInput &	getInputNextWeapon()			{ return cNextWeapon; };
++	// Weapon slot i's quick-select key (SIN_WEAPON1 + i; OracleHooks).
++	CInput &	getInputWeaponSlot(int i)		{ return cWeapons[i]; };
+ 	
+ 	bool	canType();
+ 	
 diff --git a/include/Entity.h b/include/Entity.h
 index 5f73e25..c12907c 100644
 --- a/include/Entity.h
@@ -104,10 +117,10 @@ index 5f73e25..c12907c 100644
  void	DrawEntities(SDL_Surface * bmpDest, CViewport *v);
 diff --git a/include/OracleHooks.h b/include/OracleHooks.h
 new file mode 100644
-index 0000000..67859eb
+index 0000000..5258286
 --- /dev/null
 +++ b/include/OracleHooks.h
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,76 @@
 +/*
 +	OpenLieroX
 +
@@ -129,6 +142,8 @@ index 0000000..67859eb
 +		KEY_UP = 1, KEY_DOWN = 2, KEY_LEFT = 4, KEY_RIGHT = 8,
 +		KEY_JUMP = 16, KEY_FIRE = 32, KEY_ROPE = 64, KEY_CHANGE = 128,
 +		KEY_STRAFE = 256, KEY_PREV = 512, KEY_NEXT = 1024,
++		KEY_WEAPON1 = 2048, KEY_WEAPON2 = 4096, KEY_WEAPON3 = 8192,
++		KEY_WEAPON4 = 16384, KEY_WEAPON5 = 32768,
 +	};
 +	// While recording, tLX->currentTime = simulationTime + CLOCK_OFFSET_MS
 +	// during each frame and during shot delivery (OLR spec §18 D2).
@@ -243,7 +258,7 @@ index d11613c..ca54d07 100644
  // Clear all the entities
  void ClearEntities()
 diff --git a/src/common/CGameScript.cpp b/src/common/CGameScript.cpp
-index 0a707e5..eb10a52 100644
+index 0a707e5..ee6cf79 100644
 --- a/src/common/CGameScript.cpp
 +++ b/src/common/CGameScript.cpp
 @@ -934,11 +934,13 @@ proj_t *CGameScript::LoadProjectile(FILE *fp, bool loadImagesAndSounds, int dept
@@ -378,10 +393,10 @@ index feb1223..5fa508d 100644
  	caller->writeMsg("GameState: " + Game::StateAsStr(game.state), CNC_DEV);
 diff --git a/src/common/OracleHooks.cpp b/src/common/OracleHooks.cpp
 new file mode 100644
-index 0000000..e552e46
+index 0000000..20e86f7
 --- /dev/null
 +++ b/src/common/OracleHooks.cpp
-@@ -0,0 +1,679 @@
+@@ -0,0 +1,684 @@
 +/*
 +	OpenLieroX
 +
@@ -443,6 +458,7 @@ index 0000000..e552e46
 +
 +struct Keys {
 +	VirtualKey up, down, left, right, jump, fire, rope, change, strafe, prev, next;
++	VirtualKey weapons[5]; // Weapon1 ... Weapon5
 +};
 +
 +struct Event { int worm; unsigned mask; };
@@ -512,6 +528,8 @@ index 0000000..e552e46
 +	setKey(k.strafe, m & KEY_STRAFE);
 +	setKey(k.prev, m & KEY_PREV);
 +	setKey(k.next, m & KEY_NEXT);
++	for(int i = 0; i < 5; i++)
++		setKey(k.weapons[i], m & (KEY_WEAPON1 << i));
 +}
 +
 +static CWorm* localWorm(int wormId, std::string& err) {
@@ -540,6 +558,8 @@ index 0000000..e552e46
 +	h->getInputStrafe().virt = &keys.strafe;
 +	h->getInputPrevWeapon().virt = &keys.prev;
 +	h->getInputNextWeapon().virt = &keys.next;
++	for(int i = 0; i < 5; i++)
++		h->getInputWeaponSlot(i).virt = &keys.weapons[i];
 +	return true;
 +}
 +

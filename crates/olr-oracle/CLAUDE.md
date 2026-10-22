@@ -29,7 +29,8 @@ OpenLieroX, and first-divergence comparison.
     reproduces so far); `compare` checks all of them.
 - **Key masks** match `OracleHooks.h` in `tools/olx-oracle/oracle-hooks.patch`.
   Change both together. `Keys` is a `u16`: the classic 8, then `strafe`,
-  `prev`, `next` (issue #23). `fixtures/oracle-pending/` holds scenarios
+  `prev`, `next` (issue #23), then `weapon1` to `weapon5` (issue #48).
+  `fixtures/oracle-pending/` holds scenarios
   waiting for their trace (no Docker when written; its README, and
   `docs/deferred-verification.md`); `pending_scenarios_parse` only parses them.
 

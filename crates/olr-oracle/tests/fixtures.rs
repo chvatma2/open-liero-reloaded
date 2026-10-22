@@ -118,8 +118,9 @@ fn worm(t: &Trace) -> impl Iterator<Item = &WormRec> {
     t.frames.iter().map(|f| &f.w[0])
 }
 
-/// Issue #23's scenarios await their traces in `fixtures/oracle-pending/`
-/// (its README): they parse, with the new keys' names.
+/// Issue #23's and #48's scenarios await their traces in
+/// `fixtures/oracle-pending/` (its README): they parse, with the new keys'
+/// names.
 #[test]
 fn pending_scenarios_parse() {
     let pending = dir().join("../oracle-pending");
@@ -128,11 +129,12 @@ fn pending_scenarios_parse() {
         let p = e.unwrap().path();
         if p.extension().is_some_and(|x| x == "ron") {
             let sc = Scenario::from_ron(&std::fs::read_to_string(&p).unwrap()).unwrap();
-            assert!(sc.inputs.iter().any(|c| ["strafe", "prev", "next"].iter().any(|k| c.keys.contains(k))));
+            let new = ["strafe", "prev", "next", "weapon1", "weapon2", "weapon3", "weapon4", "weapon5"];
+            assert!(sc.inputs.iter().any(|c| new.iter().any(|k| c.keys.contains(k))));
             n += 1;
         }
     }
-    assert_eq!(n, 3);
+    assert_eq!(n, 4);
 }
 
 #[test]
