@@ -61,7 +61,7 @@ const PAGES: &[Page] = &[
             "The mod's weapon-restriction presets by name (OLX's `.wps` files), optional; the game's \
              default is `Standard 100lt`.",
         )],
-        files: &["gfx/<file>.png", "sfx/<file>"],
+        files: &["gfx/<file>.png", "gfx/<file>.glow.png", "sfx/<file>"],
     },
     Page {
         kind: "level",

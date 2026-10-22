@@ -1,5 +1,15 @@
 //! The mod authoring format (spec §2): `mod.ron`, `weapons/<id>.ron`,
 //! `projectiles/<id>.ron` (shared projectiles) and `restrictions.ron`.
+//!
+//! The assets beside them: images in `gfx/` (PNG with alpha, a strip of
+//! square frames: frame count = width ÷ height, the only thing about an
+//! image the simulation reads) and sounds in `sfx/` (WAV or Ogg Vorbis). An
+//! image `gfx/<name>.png` may have a glow mask, `gfx/<name>.glow.png`
+//! (issue #19): an 8-bit greyscale PNG of the image's size, 0 no glow to
+//! 255 full, drawn in quarters (64 and above is a quarter or more; below
+//! 32 none). A glowing pixel shows bright whatever a level's darkness, in
+//! its own colour; a projectile's `look.glow` still brightens its whole
+//! sprite. A mask without its image, or of another size, is an error.
 
 use std::collections::BTreeMap;
 
@@ -9,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::defaults as d;
 
+mod art;
 mod compile;
 mod editor;
 mod files;
@@ -17,6 +28,10 @@ mod lift;
 mod spawn;
 mod types;
 
+pub use art::{
+    GFX_DIR, GLOW_MASK_SUFFIX, SFX_DIR, decode_glow_mask, encode_glow_mask, glow_mask_of, image_of_mask,
+    is_glow_mask, is_image,
+};
 pub use compile::{
     MAX_AMOUNT, MAX_COLOURS, MAX_EFFECTS, MAX_INLINE_DEPTH, MAX_LOADOUTS, MAX_SHARED, MAX_WEAPONS,
     ModLookSource, compile_mod, compile_mod_look, mod_errors, valid_id,
