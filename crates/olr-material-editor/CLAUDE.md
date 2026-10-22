@@ -1,6 +1,7 @@
 # olr-material-editor
 
-The surface material editor (issue #44, Materials 8/10; the spec is
+The surface material editor (issue #44, Materials 8/10, and issue #45's
+live previews, Materials 9/10; the spec is
 `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`,
 decisions in `docs/porting/STATUS.md`, "Material editor (issue #44)"):
 the built-in materials and the user's listed, made, copied, renamed,
@@ -22,7 +23,8 @@ from the Editor screen's Material tab (`olr-ui`).
   (New and Copy: a new file, never over one), `Save(m)` (checked),
   `Rename { from, to }` (the saved values under the new id and name, the
   old file removed), `Delete(id)`, `Close`; answers `Created`, `Saved`,
-  `Renamed`, `Deleted`, `Failed(why)` (an error dialog), `Note`. Widgets
+  `Renamed`, `Deleted`, `Failed(why)` (an error dialog), `Note`; and the
+  preview's `Preview(PreviewCommand)` (below), never answered. Widgets
   are found by `ui::labels` (the fields' names, "Capacity %", and
   `labels::key_temperature(i)` and the like for the ramp's keys, numbered
   from 1); the list's entries by the materials' names.
@@ -48,10 +50,34 @@ from the Editor screen's Material tab (`olr-ui`).
   middle (`fields.rs`: name and file, Edit a copy, the problems, Notes,
   Takes heat, the four heat numbers and Light as a typed field, a slider
   and their bounds, Own colour ramp, the ramp's strip, `strip`, and its
-  keys, Add key), the preview's place on the right (`labels::PREVIEW`,
-  empty until Materials 9/10), the status at the bottom, the dialogs
+  keys, Add key), the live preview on the right (below), the status at
+  the bottom, the dialogs
   (`dialogs.rs`: the name with the file it gets, Delete, unsaved changes,
   errors; Escape cancels). Ctrl+Z/Y/S when no field has the keyboard.
+- **Live preview** (issue #45, `preview.rs`, `ui/mod.rs`'s `preview`):
+  the host (`olr-game`'s `editor/heat_preview.rs`) renders the scene with
+  `olr-render`'s heat pass on a renderer of its own and hands the panel
+  an egui texture (`MaterialEditorData::set_preview(PreviewImage)`; none:
+  the place says it needs a graphics device); this crate stays free of
+  `olr-render`. The scene's layout is this crate's (`preview::PATCH` 64
+  × 72 world pixels, `DIVIDER` 8, `SCENE` 136 × 72; `patch_x`,
+  `patch_at`): the material open on the left patch (the document as
+  edited, read by the host each frame: a field edit changes the next
+  frame), the one compared on the right. `MaterialAction::Preview(
+  PreviewAction)` acts whatever is open, dialogs and built-in materials
+  too, and never touches the material: `Blast([x, y])` (a pixel of a
+  patch; both are blasted there) asks `PreviewCommand::Blast { at, size
+  }`, `Size(BlastSize)` (`Small`, `Bazooka`, `Nuke`: OLX damage 3, 4,
+  15, the default Bazooka) sets the next blast's, `Scale(TimeScale)`
+  (1×, 4×) asks `TimeScale(factor)` when it changes, `Restart` asks
+  `Restart`, `Compare(Option<Key>)` sets the material compared (a key not
+  listed is none); `update` asks `SetCompare(material)` whenever the
+  library's copy of it changes (picked, saved, renamed, which it
+  follows, deleted: none). `PreviewSettings` (`state.preview()`),
+  `compare_material()`. Labels: `PREVIEW` (the picture; a click on a
+  patch blasts, on the wall nothing), the sizes' and scales' own
+  (`BlastSize::label`, `TimeScale::label`), `RESTART`, `COMPARE` (a
+  combo box: `COMPARE_NONE`, `labels::compare_entry(name, builtin)`).
 - **Tests** (`tests/`, one binary, no content needed: `common.rs`'s
   library of Stone and Wood built in and the user's Lava rock): `state.rs`
   (built-in read-only, every field's bounds, the ramp's keys, New and
@@ -59,6 +85,10 @@ from the Editor screen's Material tab (`olr-ui`).
   Delete, a recovered material, `free_id`) and `flows.rs`
   (`egui_kittest`, a test host keeping the user's files in memory:
   create, edit and save; Edit a copy of a built-in one; a field's bounds;
-  Delete and Rename; a recovered material saved and Close asking).
+  Delete and Rename; a recovered material saved and Close asking);
+  `preview.rs` (issue #45: the controls' commands, a dialog open too;
+  the material compared following the library; the panel's picture
+  clicked and its controls by label). The picture itself is tested by
+  `olr-game`'s GPU tests (`tests/preview_gpu.rs`).
 
 Test: `cargo nextest run -p olr-material-editor`.

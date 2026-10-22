@@ -15,15 +15,15 @@ use olr_material_editor::{Key, MaterialAction as A, MaterialCommand as C, Materi
 use crate::common::{library, material};
 
 /// The editor, what it asked the host to do, and the user's library.
-struct App {
-    state: MaterialEditorState,
-    data: MaterialEditorData,
-    commands: Vec<C>,
+pub(crate) struct App {
+    pub(crate) state: MaterialEditorState,
+    pub(crate) data: MaterialEditorData,
+    pub(crate) commands: Vec<C>,
     /// The user's files by id: their text, as the host writes them.
     files: BTreeMap<String, String>,
 }
 
-fn harness(state: MaterialEditorState) -> Harness<'static, App> {
+pub(crate) fn harness(state: MaterialEditorState) -> Harness<'static, App> {
     let files = state
         .library()
         .iter()
@@ -59,7 +59,7 @@ fn harness(state: MaterialEditorState) -> Harness<'static, App> {
                             app.files.remove(id);
                             Some(A::Deleted(id.clone()))
                         }
-                        C::Close => None,
+                        C::Close | C::Preview(_) => None,
                     };
                     queue.extend(answer);
                     app.commands.push(c);
@@ -72,7 +72,7 @@ fn harness(state: MaterialEditorState) -> Harness<'static, App> {
     h
 }
 
-fn click(h: &mut Harness<'static, App>, label: &str) {
+pub(crate) fn click(h: &mut Harness<'static, App>, label: &str) {
     h.get_by_label(label).click();
     h.run();
 }

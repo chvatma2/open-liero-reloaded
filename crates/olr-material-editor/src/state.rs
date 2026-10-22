@@ -11,7 +11,13 @@
 //! field is clamped to its bounds as it is set and a ramp key's
 //! temperature to between its neighbours', so an edited material is valid;
 //! Save still checks (`olr_format::materials::compile_material`).
+//!
+//! Issue #45: the live preview's controls (`MaterialAction::Preview`) act
+//! whatever is open, dialogs too, and ask the host's preview through
+//! `MaterialCommand::Preview`; the material compared follows the library
+//! (renamed, saved, deleted: `SetCompare` again).
 
+use crate::preview::{PreviewAction, PreviewCommand, PreviewSettings};
 use olr_data::image::Rgba;
 use olr_edit::material::MaterialEntry;
 use olr_format::Colour;
@@ -153,6 +159,8 @@ pub enum MaterialAction {
     Failed(String),
     /// Something to say in the status bar.
     Note(String),
+    /// The live preview's controls (issue #45).
+    Preview(PreviewAction),
 }
 
 /// What the editor asks the host to do.
@@ -171,6 +179,8 @@ pub enum MaterialCommand {
     Delete(String),
     /// The editor is done (after any unsaved changes' question).
     Close,
+    /// The live preview's (issue #45); no answer.
+    Preview(PreviewCommand),
 }
 
 /// The material open and its history.
@@ -198,6 +208,8 @@ pub struct MaterialEditorState {
     /// Moves on with every change of the open material or its identity
     /// (the panels drop their drafts).
     generation: u64,
+    /// The live preview's controls (issue #45).
+    preview: PreviewSettings,
 }
 
 /// A new material named `name`, id `id`: stone's heat, the engine's ramp.
@@ -362,6 +374,7 @@ impl MaterialEditorState {
             pending: None,
             status: String::new(),
             generation: 0,
+            preview: PreviewSettings::default(),
         };
         let first = s.library.iter().find(|e| !e.builtin).or(s.library.first());
         if let Some(e) = first {
@@ -479,7 +492,51 @@ impl MaterialEditorState {
         }
     }
 
+    /// The live preview's controls as set (issue #45).
+    pub fn preview(&self) -> &PreviewSettings {
+        &self.preview
+    }
+
+    /// The library's material the preview compares with, as listed.
+    pub fn compare_material(&self) -> Option<&MaterialSource> {
+        self.preview.compare.as_ref().and_then(|k| self.entry(k)).map(|e| &e.material)
+    }
+
     pub fn update(&mut self, a: MaterialAction) -> Vec<MaterialCommand> {
+        let before = self.compare_material().cloned();
+        let mut out = self.act(a);
+        if self.compare_material() != before.as_ref() {
+            out.push(MaterialCommand::Preview(PreviewCommand::SetCompare(self.compare_material().cloned())));
+        }
+        out
+    }
+
+    /// The preview's controls: they never touch the material open.
+    fn preview_action(&mut self, a: PreviewAction) -> Vec<MaterialCommand> {
+        let c = match a {
+            PreviewAction::Blast(at) => PreviewCommand::Blast { at, size: self.preview.size },
+            PreviewAction::Size(size) => {
+                self.preview.size = size;
+                return Vec::new();
+            }
+            PreviewAction::Scale(scale) => {
+                if self.preview.scale == scale {
+                    return Vec::new();
+                }
+                self.preview.scale = scale;
+                PreviewCommand::TimeScale(scale.factor())
+            }
+            PreviewAction::Compare(key) => {
+                // `update` says the new material, when it changed.
+                self.preview.compare = key.filter(|k| self.entry(k).is_some());
+                return Vec::new();
+            }
+            PreviewAction::Restart => PreviewCommand::Restart,
+        };
+        vec![MaterialCommand::Preview(c)]
+    }
+
+    fn act(&mut self, a: MaterialAction) -> Vec<MaterialCommand> {
         use MaterialAction as A;
         // The host's answers act whatever is open.
         match a {
@@ -502,6 +559,7 @@ impl MaterialEditorState {
                 self.status = n;
                 return Vec::new();
             }
+            A::Preview(p) => return self.preview_action(p),
             _ => {}
         }
         if let Some(d) = self.dialog.clone() {
@@ -770,6 +828,9 @@ impl MaterialEditorState {
     fn renamed(&mut self, from: &str, to: MaterialSource) {
         self.status = format!("Renamed to {}", to.name);
         self.library.retain(|e| e.builtin || e.material.id != from);
+        if self.preview.compare == Some(Key::user(from)) {
+            self.preview.compare = Some(Key::user(&to.id));
+        }
         if let Some(o) = &mut self.open
             && !o.key.builtin
             && o.key.id == from
@@ -795,6 +856,9 @@ impl MaterialEditorState {
             .unwrap_or_else(|| id.to_string());
         self.status = format!("Deleted {name}");
         self.library.retain(|e| e.builtin || e.material.id != id);
+        if self.preview.compare == Some(Key::user(id)) {
+            self.preview.compare = None;
+        }
         if self.open.as_ref().is_some_and(|o| !o.key.builtin && o.key.id == id) {
             self.open = None;
             self.generation += 1;
