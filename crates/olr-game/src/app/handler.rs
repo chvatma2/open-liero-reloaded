@@ -129,6 +129,12 @@ impl ApplicationHandler for App {
                 }
             }
         }
+        // A pad's Start pauses and resumes, as Esc (issue #28); the
+        // editor's Play has no pause, a game without menus none either.
+        if self.input.take_pause() && self.cfg.menus && !self.shell.editing_play() {
+            let out = self.shell.act(olr_ui::UiAction::PadPause);
+            self.outcomes(el, out);
+        }
         let Some(w) = &self.win else { return };
         if w.gpu.drawable() {
             if std::mem::take(&mut self.paused) {
