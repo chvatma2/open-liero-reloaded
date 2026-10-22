@@ -2,6 +2,7 @@
 //! release a player is offered: the newest in their channel that is newer
 //! than their build. Drafts, tags that are no version and `.dirty` builds
 //! are never offered, nor anything at or below the build (no downgrade).
+//! The releases skipped by taking the offer are the changes shown.
 
 use serde::Deserialize;
 
@@ -156,6 +157,29 @@ pub fn newest<'a>(releases: &'a [Release], current: &Version, channel: Channel) 
             Some(b) if !r.version.is_newer_than(&b.version) => Some(b),
             _ => Some(r),
         })
+}
+
+/// The releases a build `current` on `channel` skips by taking `offered`:
+/// those in the channel newer than it, up to and including `offered`,
+/// newest first (GitHub's order among equals). `.dirty` builds never
+/// count, as they are never offered.
+pub fn since<'a>(
+    releases: &'a [Release],
+    current: &Version,
+    channel: Channel,
+    offered: &Release,
+) -> Vec<&'a Release> {
+    let mut list: Vec<&Release> = releases
+        .iter()
+        .filter(|r| {
+            channel.includes(r)
+                && !r.version.is_dirty()
+                && r.version.is_newer_than(current)
+                && !r.version.is_newer_than(&offered.version)
+        })
+        .collect();
+    list.sort_by(|a, b| b.version.precedence(&a.version));
+    list
 }
 
 /// The release zip's name for Windows, as `cargo xtask dist` writes it.

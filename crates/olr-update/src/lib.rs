@@ -5,13 +5,15 @@
 //! - [`version`]: versions ordered by semver precedence, `dev` builds by
 //!   their commit count.
 //! - [`release`]: GitHub's release list, the channels, the newest release
-//!   newer than the build (never a downgrade).
+//!   newer than the build (never a downgrade), the releases skipped by
+//!   taking it.
 //! - [`manifest`]: the Windows zip's signed manifest (ed25519 over the
 //!   version, the zip's name, size and SHA-256).
 //! - [`install`]: the portable folder's swap, safe against interruption.
 //! - [`flatpak`]: the Flatpak repository, `/.flatpak-info`, the commands
 //!   shown, the portal's progress.
-//! - [`notes`]: a release's Markdown notes as plain text.
+//! - [`notes`]: a release's Markdown notes as plain text; the skipped
+//!   releases' notes, capped.
 
 pub mod flatpak;
 pub mod install;

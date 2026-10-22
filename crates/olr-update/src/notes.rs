@@ -1,10 +1,56 @@
 //! A release's notes (GitHub's Markdown) as readable plain text for the
 //! update screen: headings, emphasis, links and code marks become text,
 //! list items bullets, HTML comments and tags go. Line structure is
-//! kept; nothing is lost but markup.
+//! kept; nothing is lost but markup. [`changes`]: the notes of every
+//! release a player skips, each under its heading, within caps.
 
-/// The most characters of notes shown.
+use crate::release::Release;
+
+/// The most characters of notes shown (one release's, and all of
+/// [`changes`]' together).
 pub const MAX_NOTES_CHARS: usize = 20_000;
+
+/// The most releases whose notes [`changes`] shows.
+pub const MAX_RELEASES: usize = 10;
+
+/// One release's notes under its heading.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReleaseNotes {
+    /// Its title and tag: `0.2.0 development build 318 (v0.2.0-dev.318)`;
+    /// the tag alone for a release titled by it.
+    pub heading: String,
+    /// [`plain_text`] of its notes (empty: none).
+    pub text: String,
+}
+
+/// The notes [`changes`] shows, and how many releases it leaves out.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Changes {
+    pub shown: Vec<ReleaseNotes>,
+    /// The older releases not shown (over the caps).
+    pub left_out: usize,
+}
+
+/// The notes of `releases` (newest first, as `release::since` lists
+/// them) in that order: at most [`MAX_RELEASES`], and the heading and
+/// text of all together at most [`MAX_NOTES_CHARS`] characters, the
+/// newest always shown (its text capped alone); the rest are left out.
+pub fn changes(releases: &[&Release]) -> Changes {
+    let mut out = Changes::default();
+    let mut chars = 0;
+    for (i, r) in releases.iter().enumerate() {
+        let heading = if r.title == r.tag { r.tag.clone() } else { format!("{} ({})", r.title, r.tag) };
+        let text = plain_text(&r.notes);
+        let len = heading.chars().count() + text.chars().count();
+        if i >= MAX_RELEASES || (i > 0 && chars + len > MAX_NOTES_CHARS) {
+            out.left_out = releases.len() - i;
+            break;
+        }
+        chars += len;
+        out.shown.push(ReleaseNotes { heading, text });
+    }
+    out
+}
 
 /// `markdown` as plain text.
 pub fn plain_text(markdown: &str) -> String {

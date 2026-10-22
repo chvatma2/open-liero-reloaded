@@ -21,7 +21,10 @@ views; `cargo xtask publish` signs and publishes with the same formats.
   (the setting "Include pre-releases", `None` = the build's), `includes`
   (Stable: not marked pre-release and no `-…` version). `newest(releases,
   current, channel)`: the newest strictly newer one, never a downgrade or a
-  `.dirty` build. Asset names as `dist` and `publish` write them:
+  `.dirty` build. `since(releases, current, channel, offered)` (issue
+  #22): the releases taking the offer skips, the ones in the channel
+  newer than the build up to and including the offer (no `.dirty`),
+  newest first by `precedence` (GitHub's order is not relied on). Asset names as `dist` and `publish` write them:
   `windows_zip_name`, `flatpak_bundle_name`, `folder_name`,
   `signature_name` (`<file>.sig`). `lib.rs`' `channel(setting, build,
   flatpak)`: under Flatpak the branch's (`stable`/`beta`), else the
@@ -70,10 +73,16 @@ views; `cargo xtask publish` signs and publishes with the same formats.
   for more permissions).
 - **Notes** (`notes.rs`): `plain_text(markdown)`: headings, emphasis,
   links (`text (url)`), code marks, tags and comments become text, list
-  items `•`, at most `MAX_NOTES_CHARS`.
+  items `•`, at most `MAX_NOTES_CHARS`. `changes(&since)` (issue #22):
+  each release's `ReleaseNotes { heading, text }` in order (the heading
+  "<title> (<tag>)", the tag alone when it is the title; the text
+  `plain_text`, empty for none), at most `MAX_RELEASES` (10) and
+  `MAX_NOTES_CHARS` of headings and texts together (the newest always);
+  `left_out` counts the rest.
 
 Never panics on what GitHub, a zip, a journal or a file says. Tests:
-`tests/releases.rs` (the list, every channel's offer, no downgrade),
+`tests/releases.rs` (the list, every channel's offer, no downgrade, the
+skipped releases per channel and their notes' caps),
 `tests/install.rs` (the swap; an interruption before every step, then
 `recover`; bad zips; a folder without a manifest; a read-only folder),
 unit tests per module.
