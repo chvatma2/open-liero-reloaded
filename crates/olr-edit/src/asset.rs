@@ -126,6 +126,9 @@ fn plain(e: &Element) -> Element {
     Element { visible: true, locked: false, ..e.clone() }
 }
 
+/// An element's painted surface maps, its pixels' and its back art's.
+pub type SurfacePair = (Option<Arc<Vec<u8>>>, Option<Arc<Vec<u8>>>);
+
 /// The world box element `e`'s painted surface maps cover in a level of
 /// `size`: its box, a raster's the level.
 fn surface_box(e: &Element, size: (u32, u32)) -> ((i32, i32), (u32, u32)) {
@@ -141,7 +144,7 @@ fn fit_surfaces(
     front: Option<Arc<Vec<u8>>>,
     back: Option<Arc<Vec<u8>>>,
     size: (u32, u32),
-) -> (Option<Arc<Vec<u8>>>, Option<Arc<Vec<u8>>>) {
+) -> SurfacePair {
     let b = surface_map_size(&e.kind, size);
     let cells = u64::from(b.0) * u64::from(b.1);
     let keep = |on: bool, m: Option<Arc<Vec<u8>>>| {
@@ -676,7 +679,7 @@ pub fn land_surfaces(
     change: &MaterialChange,
     materials: &[MaterialSource],
     size: (u32, u32),
-) -> (Option<Arc<Vec<u8>>>, Option<Arc<Vec<u8>>>) {
+) -> SurfacePair {
     let renumber = change.renumbering(materials);
     let p = piece.element;
     (e.surface, e.back_surface) = (p.surface.clone(), p.back_surface.clone());
