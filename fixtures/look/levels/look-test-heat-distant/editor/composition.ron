@@ -1,0 +1,38 @@
+(
+    elements: [
+        (
+            id: "sky",
+            name: "Sky",
+            kind: Drawn(
+                material: Background,
+            ),
+            distant: 80,
+            surface: "stone",
+        ),
+        (
+            id: "palisade",
+            name: "Palisade",
+            kind: Drawn(
+                material: Background,
+            ),
+            distant: 8,
+            surface: "wood",
+        ),
+        (
+            id: "ceiling",
+            name: "Ceiling",
+            kind: Drawn(
+                material: Rock,
+            ),
+            surface: "stone",
+        ),
+        (
+            id: "floor",
+            name: "Floor",
+            kind: Drawn(
+                material: Rock,
+            ),
+            surface: "stone",
+        ),
+    ],
+)

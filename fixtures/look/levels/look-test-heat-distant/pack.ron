@@ -1,0 +1,10 @@
+(
+    format_version: 5,
+    id: "look-test-heat-distant",
+    name: "Look Test Heat Distant",
+    version: "0.1.0",
+    kind: Level,
+    authors: [],
+    origin: None,
+    license: None,
+)
