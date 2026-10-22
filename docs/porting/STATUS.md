@@ -3819,7 +3819,11 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
   verify by playthrough.
 - **Not measured yet:** the cascades' cost at a cell a world pixel, the
   bounce copy and the bloom passes, on Windows at 1080p with the user's
-  consent.
+  consent. Issue #34 built the tools (`docs/perf/graphics-tools.md`):
+  `olr-cli gpu-bench` prints each pass group's GPU time, `bench-quick`
+  draws a lit Castle Strike frame, and `fixtures/render/lit-hashes.ron`
+  holds a lit match's exact bytes; the Windows table is deferred
+  (`docs/deferred-verification.md`).
 - **Follow-ups** (the final review, 2026-10-20; open):
   - *Important, the user's call:* thin walls leak at cells of 2+ world
     pixels (levels over 2^20 px, or cropped by the device): raise
@@ -3839,8 +3843,8 @@ Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
     (allocate lazily; bitset stamps).
   - Bloom no longer comes from glowing pixels' own brightness (a "My
     calls" item changed by Task 8's ruling; renders approved): confirm.
-  - `gpu_bench_cmd.rs`'s `--look` doc still says placed lights and soft
-    shadows; `bench_look` has no `Flicker` group.
+  - `bench_look` has no `Flicker` group (`--look`'s doc no longer says
+    placed lights and soft shadows: issue #34).
   - Overlapping discs share the largest reach (max-blended).
   - A faint static star-ray pattern around small bright sources (the
     cascades' directions), seen in the look goldens.
