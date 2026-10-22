@@ -139,6 +139,7 @@ fn room_level() -> olr_pack::LevelPack {
         clear: None,
         distant: Vec::new(),
         surface: None,
+        distant_surface: Vec::new(),
     }
 }
 
@@ -538,6 +539,7 @@ fn scaled_level(id: &str, size: u32, art_scale: u32) -> olr_pack::LevelPack {
         clear: None,
         distant: Vec::new(),
         surface: None,
+        distant_surface: Vec::new(),
     }
 }
 
@@ -742,6 +744,7 @@ fn the_first_spawn_is_used_only_when_inside_the_level() {
         clear: None,
         distant: Vec::new(),
         surface: None,
+        distant_surface: Vec::new(),
     };
     assert_eq!(level(&[(-1, 5), (10, 10)]).first_spawn(), None, "only the first one counts");
     assert_eq!(level(&[(10, 10)]).first_spawn(), Some((10, 10)));
@@ -882,4 +885,13 @@ fn surface_maps_load_with_the_level() {
     assert_eq!(loaded.surface.as_ref(), Some(&maps));
     assert_eq!(loaded.look.unwrap().materials[0].id, "stone");
     assert_eq!(olr_content::LoadedLevel::from_source(&src).unwrap().surface, Some(maps));
+    assert!(loaded.distant_surface.is_empty());
+    // Issue #41: a distant layer's material, as a value in the look's.
+    let image = RgbaImage::new(4, 4);
+    src.distant = vec![olr_data::level::DistantLayer { image, at: (0, 0), depth: 10 }; 2];
+    src.distant_surfaces = vec![None, Some("stone".into())];
+    olr_format::levels::write_level_files(&mut DirFs::new(&pack), &src).unwrap();
+    let content = Content::open(dir.path()).unwrap();
+    assert_eq!(content.load_level("test-level").unwrap().distant_surface, [0, 1]);
+    assert_eq!(olr_content::LoadedLevel::from_source(&src).unwrap().distant_surface, [0, 1]);
 }

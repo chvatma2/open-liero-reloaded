@@ -54,7 +54,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   (`set_glow`, `set_clear`). Issue #39: `LoadedLevel::surface` holds the
   level's surface maps (`olr_pack::LevelPack::surface`, or the `LevelSource`'s
   maps) for the renderer's heat
-  (`surface_maps_load_with_the_level`). `LoadedMod::look` (`olr_look::ModLook`) is
+  (`surface_maps_load_with_the_level`); issue #41: `distant_surface`
+  each distant layer's material as a value in the look's
+  (`LevelPack::distant_surface`, or `distant_surface_values` of the
+  source). `LoadedMod::look` (`olr_look::ModLook`) is
   indexed like `SimMod::projectiles` and `SimMod::weapons`, each
   projectile's look found by its `ModDef` key (`SimProjectile::key`), so
   shared and named projectiles and their children keep their looks (batch

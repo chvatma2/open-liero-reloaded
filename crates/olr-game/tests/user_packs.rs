@@ -52,6 +52,7 @@ fn level(root: &Path, id: &str, name: &str) {
             clear: None,
             distant: Vec::new(),
             surface: None,
+            distant_surface: Vec::new(),
         },
     )
     .unwrap();

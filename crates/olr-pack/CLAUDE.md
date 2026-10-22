@@ -70,6 +70,9 @@ header's size); content hashing; validation.
   (`check_surfaces`, `check_surface_maps`; `surface_maps_are_validated`).
   Issue #39: `read_level` keeps the maps in `LevelPack::surface` for the
   renderer's heat; `write_level` writes none (the format's writer does).
+  Issue #41: `LevelPack::distant_surface` is each distant layer's material
+  as a value in the look's (`olr_format::levels::distant_surface_values`),
+  for the renderer's heat on distant layers; not written either.
 - **Presentation-only files** (`PRESENTATION_FILES`: `thumb.png`) are left out of
   `content_hash` like `pack.ron` (plan 7 ruling Q4): adding or changing a thumbnail
   keeps every replay of the pack valid (`hash::thumbnails_are_not_content`).

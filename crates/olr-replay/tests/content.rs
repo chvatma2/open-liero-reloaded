@@ -123,6 +123,7 @@ fn level_pack(rock: bool) -> olr_pack::LevelPack {
         clear: None,
         distant: Vec::new(),
         surface: None,
+        distant_surface: Vec::new(),
     }
 }
 

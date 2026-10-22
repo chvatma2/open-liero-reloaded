@@ -43,6 +43,11 @@ pub struct LevelPack {
     /// issue #37), each world pixel's value in the look's `materials`; read
     /// for the renderer's heat (issue #39). Not written by [`write_level`].
     pub surface: Option<olr_format::levels::SurfaceMaps>,
+    /// Each distant layer's surface material as a value in the look's
+    /// `materials` (`level.ron`'s `distant[i].surface`, issue #41: the
+    /// renderer heats a layer by it), 0 none; past its end, none. Not
+    /// written by [`write_level`].
+    pub distant_surface: Vec<u8>,
     /// What [`read_level`] left out of a look that did not check.
     pub warnings: Vec<String>,
 }
@@ -134,6 +139,7 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
     let (src, warnings) = olr_format::levels::read_level_files_lenient(src)?;
     let level = compile_level(&src)?;
     let look = olr_format::levels::compile_look(&src)?;
+    let distant_surface = olr_format::levels::distant_surface_values(&src);
     Ok(LevelPack {
         manifest,
         level,
@@ -143,6 +149,7 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
         clear: src.clear,
         distant: src.distant,
         surface: src.surface,
+        distant_surface,
         warnings,
     })
 }
@@ -184,6 +191,7 @@ pub(crate) mod tests {
             clear: None,
             distant: Vec::new(),
             surface: None,
+            distant_surface: Vec::new(),
             warnings: Vec::new(),
         }
     }

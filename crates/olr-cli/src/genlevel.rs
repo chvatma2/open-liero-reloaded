@@ -168,6 +168,7 @@ impl GenLevel {
             clear: None,
             distant: Vec::new(),
             surface: None,
+            distant_surface: Vec::new(),
         }
     }
 }

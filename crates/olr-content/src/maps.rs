@@ -44,6 +44,10 @@ pub struct LoadedLevel {
     /// the look's `materials`, for the renderer's heat (issue #39); `None`
     /// for a level without materials.
     pub surface: Option<olr_look::SurfaceMaps>,
+    /// Each distant layer's surface material as a value in the look's
+    /// `materials` (issue #41, the renderer heats a layer by it), 0 none;
+    /// past its end, none.
+    pub distant_surface: Vec<u8>,
     /// What loading left out of a look that did not check, to log once.
     pub warnings: Vec<String>,
 }
@@ -60,12 +64,13 @@ impl LoadedLevel {
             clear: src.clear.clone(),
             distant: src.distant.clone(),
             surface: src.surface.clone(),
+            distant_surface: olr_format::levels::distant_surface_values(src),
         };
         LoadedLevel::from_level(olr_format::levels::compile_level(src)?, extras, Vec::new())
     }
 
     fn from_level(l: Level, extras: Extras, warnings: Vec<String>) -> anyhow::Result<LoadedLevel> {
-        let Extras { look, glow, clear, distant, surface } = extras;
+        let Extras { look, glow, clear, distant, surface, distant_surface } = extras;
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
         Ok(LoadedLevel {
             name: l.def.name,
@@ -80,6 +85,7 @@ impl LoadedLevel {
             clear,
             distant,
             surface,
+            distant_surface,
             warnings,
         })
     }
@@ -115,6 +121,7 @@ struct Extras {
     clear: Option<Vec<u8>>,
     distant: Vec<olr_data::level::DistantLayer>,
     surface: Option<olr_look::SurfaceMaps>,
+    distant_surface: Vec<u8>,
 }
 
 /// A theme: the stamps the map is edited with and the tiles dirt is drawn
@@ -202,6 +209,7 @@ impl Content {
             clear: pack.clear,
             distant: pack.distant,
             surface: pack.surface,
+            distant_surface: pack.distant_surface,
         };
         LoadedLevel::from_level(pack.level, extras, warnings).with_context(|| format!("level pack {id}"))
     }
