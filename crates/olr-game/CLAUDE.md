@@ -957,6 +957,20 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   Stop (`stop_edited`, which answers `PlayEnded`), F5, a match over and
   the window's close (the match ends first) as there; a Play that does
   not load is the editor's error dialog ("The mod could not be played").
+  **Practice** (issue #20; STATUS.md "Mod editor practice (issue #20)"):
+  `ModCommand::Practice` is an `EditedPlay` with `practice:
+  Some(olr_mod_editor::Practice)` (`None` for every other Play), run as
+  Play is; `setup::practice_setup` makes it a sandbox: the weapon in the
+  player's first slot, then the mod's first others, 1 to 4 idle targets
+  (pressing nothing, as `Personality::Idle`), `LoadingTime` 100, or
+  `FAST_LOADING_TIME` (0) with Fast reload; a weapon the mod lacks is the
+  editor's error dialog. `Assets::practice` turns on the targets' health
+  bars (`SceneOptions::show_health_bars`, off in every other game) and
+  `Session::last_hit` (the last `Damage` event's `Hit { worm, amount,
+  dealt }`, cleared by a restart; `None` in other games), which the
+  overlay draws at the picture's top centre (`overlay::last_hit_text`).
+  `play_settings` fills the practice level with `shell::editing`'s
+  `PRACTICE_LEVEL` (Castle Strike) until one installed is chosen.
   **Art and sounds** (issue #19; STATUS.md "Mod editor art and sounds
   (issue #19)"): the import browser opens in the home folder
   (`set_browse_dir`); `ModCommand::List` is `files::list` (as the level
@@ -972,14 +986,18 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   by the next run, recovered, removed on Save and Close; the window's
   close asking; issue #18's
   `play_runs_the_unsaved_mod_and_escape_comes_back` and
-  `closing_the_window_during_play_asks_first`; issue #19's
+  `closing_the_window_during_play_asks_first`; issue #20's
+  `practice_runs_the_weapon_shown_and_escape_comes_back`; issue #19's
   `an_imported_sound_plays_in_play`: imported through the host's browser,
   ▶, set as the bazooka's fire sound, in the match's mod, decoded by a
   mock device and heard when fired; and
   `a_look_light_set_in_the_editor_lights_the_level_in_play`: Classic's
   copy unlit, the rocket's light makes the match lit and is an emitter
-  of its colour), `files`' `an_import_reads_a_bounded_regular_file` and `setup.rs`'s
-  `edited_play_runs_the_unsaved_mod_on_an_installed_level`.
+  of its colour), `files`' `an_import_reads_a_bounded_regular_file`, `setup.rs`'s
+  `edited_play_runs_the_unsaved_mod_on_an_installed_level` and
+  `practice_holds_the_weapon_against_idle_targets`, and `session.rs`'s
+  `practice_keeps_the_last_hit` (equal to the last `Damage` event; none
+  outside a practice).
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the human is
   worm 0, then the bots at one difficulty, OLX's LX56 settings, the
   `Default` loadout: every weapon at 100 %, issue #5; there is no

@@ -4523,7 +4523,8 @@ built:
   written meanwhile.
 - **Not built** (the issue's non-goals): practice setup (choosing the
   weapons; the sandbox has the mod's first five, a Deathmatch the
-  random ones of any edited Play), online play of an unsaved mod.
+  random ones of any edited Play; issue #20 added a practice beside
+  Play), online play of an unsaved mod.
 
 ## Mod editor art and sounds (issue #19)
 
@@ -4582,6 +4583,44 @@ nothing here changes one unasked. As built:
 - **Not built**: drawing a mask from the sprite's colours in the editor
   (`olr-cli mod gfx glow --colour` does it), and frame-count checks
   beyond the warning (as the issue rules).
+
+## Mod editor practice (issue #20)
+
+No OLX counterpart. Play ▾'s **Practice with this weapon**, beside the
+mod editor's Play (issue #18), which stays as it was. No simulation
+rule, oracle, golden, bot or normal-match change: a practice is the
+sandbox with existing settings. As built:
+
+- **The weapon shown.** Enabled while the list shows a weapon (any node
+  of its tree); it takes the mod as it is, unsaved changes included, and
+  is refused with errors as Play is. The player holds the weapon in its
+  first slot and the mod's first other weapons in the other four
+  (`setup::practice_setup`; the sandbox's own loadout is the mod's
+  first five): the rest of the loadout is the builder's call.
+- **The sandbox, not a Deathmatch.** One to four targets (Play ▾'s
+  Targets, 1 by default) are the sandbox's idle targets
+  (`SandboxOptions::targets`): they press nothing, as
+  `olr_bots::Personality::Idle`, and the sandbox's LX56 settings
+  (`MaxRespawnTime` 0) respawn them after `RespawnTime`. Worms spawn at
+  `FindSpot` positions; the match never ends (no lives, kill or time
+  limit), Escape or Stop returns to the editor where it was, F5 restarts.
+  Running Idle bots through a Deathmatch would add its end, its weapon
+  selection and the bots' loadouts for the same idle worms.
+- **Reloading.** `LoadingTime` 100 % (LX56's), so the weapon's own
+  `recharge` shows; Play ▾'s **Fast reload** (off by default) sets
+  `LoadingTime` 0, which fills the charge at once (`olr_sim`'s
+  `simulate_worm_weapon`), leaving only the weapon's rate of fire.
+- **What shows.** The targets' health bars (`SceneOptions::
+  show_health_bars`, OLX's `ShowWormHealth`; off in every other game, so
+  the issue's "already show" holds only from here) and the last hit at
+  the picture's top centre: `Last hit: <amount> on <name>`, and `(took
+  <dealt>)` when the worm had less health, from the last
+  `EventKind::Damage` (`Session::last_hit`, kept only in a practice; a
+  restart forgets it). The summed damage popups stay as in any game.
+- **The level.** Play ▾'s Practice level, its own list (remembered with
+  the targets and Fast reload in `<data>/mod-editor.ron`); until one is
+  chosen Castle Strike (`olx-level-castlestrike`, OLX's most open: a
+  wide sky), else Play's level.
 
 ## Kept OLX quirks
 

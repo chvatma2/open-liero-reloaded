@@ -19,7 +19,8 @@ Editor screen's Mod tab (`olr-ui`).
   -> Vec<ModCommand>` is pure; `ui::show(ui, &state, &mut ModEditorData)`
   draws egui and returns actions (fields' commits first). Commands:
   `Save(pack)` (checked: no errors), `LoadMod(id)` (Add weapon's copies),
-  `Play { pack, level, bots }`, `SavePlaySettings`, `Close`, `List(dir)`
+  `Play { pack, level, bots }`, `Practice { pack, level, practice }`
+  (issue #20), `SavePlaySettings`, `Close`, `List(dir)`
   (the import browser's folder), `ReadFile { import, path }` (a file
   picked), `PlaySound { path, bytes }` (the Sounds section's ▶); answers
   `Saved`, `ModLoaded(id, pack)`, `PlayEnded`, `Listed { dir, entries }`,
@@ -105,6 +106,18 @@ Editor screen's Mod tab (`olr-ui`).
   (nothing but the host's answers acts) until `PlayEnded`. The state and
   the panels' data stay as they were (item, node, history, scroll: egui
   keeps the scroll while the host draws the match instead).
+- **Practice** (issue #20; STATUS.md "Mod editor practice (issue #20)"):
+  Play ▾'s second part: Practice with this weapon (`labels::PRACTICE`,
+  enabled while the item is a weapon, `practice_weapon()`; it closes the
+  menu), the Practice level (its own list, `labels::practice_level`;
+  `practice_level()` is the one chosen when installed, else Play's), 1
+  to `MAX_TARGETS`, 4, targets (`labels::practice_targets`) and Fast
+  reload (`labels::FAST_RELOAD`), kept in `PlaySettings` (`practice_level`,
+  `targets`, `fast_reload`; `serde(default)`, so an older file reads) and
+  sent with `SavePlaySettings`. `ModAction::Practice` checks as Play
+  does and sends `ModCommand::Practice { pack, level, practice:
+  Practice { weapon, targets, fast_reload } }`; the state is `playing()`
+  until `PlayEnded`, as Play's.
 - **Panels** (`ui/`): session bar (Save, Close, Undo, Redo, the unsaved
   mark, the problems' count toggling their list; Play and Play ▾ at the
   right), the left list
@@ -121,7 +134,9 @@ Editor screen's Mod tab (`olr-ui`).
   the save; the fire's kind, an effect, a weapon copied from MW; issue
   #18's `play_the_unsaved_mod_and_come_back`, its test host drawing no
   editor while Play's match runs; `state.rs`'s
-  `play_chooses_an_installed_level_and_waits_for_its_end`) and `art.rs`
+  `play_chooses_an_installed_level_and_waits_for_its_end`; issue #20's
+  `practice_with_the_weapon_shown_and_come_back` and `state.rs`'s
+  `practice_is_with_the_weapon_shown`) and `art.rs`
   (issue #19: a frame painted and saved changes the PNG only there, the
   mask round-trips, undo back to the bytes; new images, frames, renames
   and imports through the browser; removal refused while used; sounds
