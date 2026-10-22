@@ -47,9 +47,10 @@ const INPUT_FRAMES: u64 = 3;
 const RECLICK_FRAMES: u64 = 30;
 
 /// The screens' names, as `WaitFor` and `Assert(Screen(..))` give them.
-pub const SCREENS: [(&str, Screen); 13] = [
+pub const SCREENS: [(&str, Screen); 14] = [
     ("Main", Screen::Main),
     ("LocalPlay", Screen::LocalPlay),
+    ("Join", Screen::Join),
     ("Profiles", Screen::Profiles),
     ("Options", Screen::Options),
     ("WeaponSelect", Screen::WeaponSelect),
@@ -136,6 +137,10 @@ pub enum Do {
     /// Holds or lets go of the key bound to a game action.
     Press(Action),
     Release(Action),
+    /// The same on keyboard 2 (its own keys, `Bindings::keys2`: a second
+    /// local player, issue #32; the join step hears it too).
+    Press2(Action),
+    Release2(Action),
     /// Waits for a screen ([`SCREENS`]'s names).
     WaitFor(String),
     /// Waits this many frames.
@@ -257,6 +262,8 @@ pub enum Effect {
     Key(KeyCode, bool),
     /// The key bound to an action went down (true) or up.
     Action(Action, bool),
+    /// Keyboard 2's key bound to an action went down (true) or up.
+    Action2(Action, bool),
     /// The script passed: quit.
     Quit,
     /// The script failed: stop with this error.
@@ -632,6 +639,10 @@ impl Autoplay {
                     out.push(Effect::Action(*a, matches!(step.ui, Do::Press(_))));
                     self.done(seen.frame, "");
                 }
+                Do::Press2(a) | Do::Release2(a) => {
+                    out.push(Effect::Action2(*a, matches!(step.ui, Do::Press2(_))));
+                    self.done(seen.frame, "");
+                }
                 Do::WaitFor(name) => {
                     let want = screen(name);
                     if seen.screen.is_some() && seen.screen == want {
@@ -764,6 +775,9 @@ mod tests {
                 (ui: Key("Escape")),
                 (ui: Press(Shoot)),
                 (ui: Release(Shoot)),
+                (ui: Press2(Jump)),
+                (ui: Release2(Jump)),
+                (ui: WaitFor("Join")),
                 (ui: Wait(3)),
                 (ui: Screenshot("menu-1")),
                 (ui: Assert(WindowSize(1280, 720))),
@@ -773,7 +787,8 @@ mod tests {
             ])"#,
         )
         .unwrap();
-        assert_eq!(steps.len(), 11);
+        assert_eq!(steps.len(), 14);
+        assert_eq!(steps[5].ui, Do::Press2(Action::Jump));
         assert_eq!((steps[1].at_frame, steps[1].within), (5, 30));
         assert_eq!(steps[0].within, DEFAULT_WITHIN);
         assert_eq!(steps[3].ui, Do::Press(Action::Shoot));
