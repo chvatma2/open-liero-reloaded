@@ -56,13 +56,14 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
             let v = textureLoad(groups_tex, clamped(w, textureDimensions(groups_tex)), 0).r;
             let g = textureLoad(glow_tex, art, 0).r;
             if g > 0.0 && v > 0u && v <= min(count, 255u) {
-                let info = look.group_info[v - 1u];
+                let group = look.groups[v - 1u];
+                let info = group.info;
                 var colour = vec3<f32>(1.0);
                 if info.y > 0.5 {
                     colour = to_linear(textureLoad(terrain_tex, clamped(art, textureDimensions(terrain_tex)), 0).rgb);
                 }
                 let region = textureLoad(regions_tex, clamped(w, textureDimensions(regions_tex)), 0).r;
-                em += colour * look.groups[v - 1u].rgb * g * region_flicker(look.group_flicker[v - 1u], region);
+                em += colour * group.light.rgb * g * region_flicker(group.flicker, region);
                 reach = max(reach, info.x);
             }
         }

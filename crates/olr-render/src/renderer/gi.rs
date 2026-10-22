@@ -545,23 +545,22 @@ impl GiState {
                     targets: &[&wgpu::TextureView],
                     work: Option<(&wgpu::RenderPipeline, &wgpu::BindGroup)>,
                     group1: Option<&wgpu::BindGroup>| {
-            let attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = targets
-                .iter()
-                .map(|view| {
-                    Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        depth_slice: None,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                            store: wgpu::StoreOp::Store,
-                        },
-                    })
+            // At most three targets, kept on the stack (issue #35: no
+            // allocation a pass).
+            let attachments: [Option<wgpu::RenderPassColorAttachment>; 3] = std::array::from_fn(|i| {
+                targets.get(i).map(|view| wgpu::RenderPassColorAttachment {
+                    view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
                 })
-                .collect();
+            });
             let mut p = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("olr-render gi"),
-                color_attachments: &attachments,
+                color_attachments: &attachments[..targets.len().min(3)],
                 depth_stencil_attachment: None,
                 timestamp_writes: stamp(group),
                 occlusion_query_set: None,

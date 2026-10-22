@@ -24,8 +24,13 @@ pub(super) fn common() -> String {
 /// Groups in the globals (a group map value is one byte, 0 none).
 pub(super) const GROUPS: usize = 255;
 
-/// The globals' floats: nine vec4s, then three arrays of [`GROUPS`] vec4s.
-pub(super) const GLOBAL_FLOATS: usize = 4 * (10 + 3 * GROUPS);
+/// The globals' floats: ten vec4s, then [`GROUPS`] groups of three vec4s
+/// (cast, info, flicker). A frame packs and writes only its groups
+/// ([`GLOBAL_HEAD`] and 12 floats a group; issue #35).
+pub(super) const GLOBAL_FLOATS: usize = GLOBAL_HEAD + 12 * GROUPS;
+
+/// The globals' floats before the groups.
+const GLOBAL_HEAD: usize = 4 * 10;
 
 /// The occluder map's format (plan 15b): each texel a worm's index + 1, 0
 /// none (GL renders into `R8Uint`).
@@ -886,7 +891,8 @@ impl LookState {
         }
     }
 
-    /// Packs `look` into the globals' floats for a view drawn at `frame`,
+    /// Packs `look` into the globals' floats for a view drawn at `frame`
+    /// (the head and the frame's groups only: what is written each frame),
     /// with distant layers when `distant` (issue #11: the composite then
     /// reads their depth from the shade's alpha), its occluder map at
     /// `occluders` (origin x, y in world pixels, width, height: the view's
@@ -934,23 +940,16 @@ impl LookState {
         p.extend(occluders);
         // Whether the level draws distant layers (issue #11).
         p.extend([f32::from(u8::from(distant)), 0.0, 0.0, 0.0]);
-        for i in 0..GROUPS {
-            match look.groups.get(i) {
-                Some(g) => p.extend([g.cast[0], g.cast[1], g.cast[2], g.self_scale]),
-                None => p.extend([0.0; 4]),
-            }
-        }
-        for i in 0..GROUPS {
-            match look.groups.get(i) {
-                Some(g) => p.extend([g.reach.min(1e9), f32::from(u8::from(g.own_colour)), 0.0, 0.0]),
-                None => p.extend([0.0; 4]),
-            }
-        }
-        // Each group's flicker (plan 15c): speed, depth, clock, seed (24
-        // bits, whole in f32); a speed of 0 is no flicker.
-        for i in 0..GROUPS {
-            match look.groups.get(i).and_then(|g| g.flicker.map(|f| (g, f))) {
-                Some((g, (speed, depth))) => {
+        debug_assert_eq!(p.len(), GLOBAL_HEAD);
+        // Only the frame's groups (issue #35: the shaders read no group
+        // past `mode.y`): cast and self-light scale, reach and own colour,
+        // then the flicker (plan 15c): speed, depth, clock, seed (24 bits,
+        // whole in f32); a speed of 0 is no flicker.
+        for g in look.groups.iter().take(GROUPS) {
+            p.extend([g.cast[0], g.cast[1], g.cast[2], g.self_scale]);
+            p.extend([g.reach.min(1e9), f32::from(u8::from(g.own_colour)), 0.0, 0.0]);
+            match g.flicker {
+                Some((speed, depth)) => {
                     p.extend([speed.max(1.0), depth, g.t_ms, (g.seed & 0xff_ffff) as f32])
                 }
                 None => p.extend([0.0; 4]),

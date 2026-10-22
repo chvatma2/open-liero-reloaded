@@ -209,3 +209,5 @@
   fixtures/bench/quick.ron
 2026-10-22 bench-quick: #35 item 6: no across blur at softness 0, no across soak at soak 0
   fixtures/bench/quick.ron
+2026-10-22 bench-quick: #35 item 7: only the frame's glow groups written, no allocation a glow-light pass
+  fixtures/bench/quick.ron

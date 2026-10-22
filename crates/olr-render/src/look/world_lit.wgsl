@@ -88,7 +88,7 @@ fn terrain_lit(in: QuadOut, backing: bool) -> LitOut {
     var scale = 1.0;
     if v > 0u && v <= min(u32(look.mode.y), 255u) {
         let region = textureLoad(regions_tex, clamp(w, vec2<i32>(0), vec2<i32>(textureDimensions(regions_tex)) - vec2<i32>(1)), 0).r;
-        scale = look.groups[v - 1u].w * region_flicker(look.group_flicker[v - 1u], region);
+        scale = look.groups[v - 1u].light.w * region_flicker(look.groups[v - 1u].flicker, region);
     }
     var out: LitOut;
     out.colour = c;

@@ -1,6 +1,19 @@
 // The look's per-frame globals (plan 15a): one uniform shared by every look
 // pass. Every field is a vec4 (std140-safe); `groups[v - 1]` is a group map
-// value v's group (0 is no group).
+// value v's group (0 is no group). Only the first `mode.y` groups are
+// written each frame (issue #35); none past them is ever read.
+
+// One glow group (issue #35: the three together, so a frame's groups are
+// one run of the buffer). `cast` is a WGSL keyword: `light`.
+struct Group {
+    // rgb cast (linear, × intensity × animation), self-light scale
+    light: vec4<f32>,
+    // reach (world px; 1e9 unlimited), own colour (1) or tint (0), 0, 0
+    info: vec4<f32>,
+    // a flicker's speed (0: none), depth (percent), clock (ms), seed (plan
+    // 15c: each region flickers on its own)
+    flicker: vec4<f32>,
+};
 
 struct LookGlobals {
     // rgb ambient (linear), max light
@@ -24,13 +37,7 @@ struct LookGlobals {
     // 1 when the level draws distant layers (issue #11: the shade's alpha
     // is then 1 - their depth), 0, 0, 0
     distant: vec4<f32>,
-    // per group: rgb cast (linear, × intensity × animation), self-light scale
-    groups: array<vec4<f32>, 255>,
-    // per group: reach (world px; 1e9 unlimited), own colour (1) or tint (0), 0, 0
-    group_info: array<vec4<f32>, 255>,
-    // per group: a flicker's speed (0: none), depth (percent), clock (ms),
-    // seed (plan 15c: each region flickers on its own)
-    group_flicker: array<vec4<f32>, 255>,
+    groups: array<Group, 255>,
 };
 
 // LIGHT_PAD (world pixels the light grid reaches past the world target on
@@ -106,7 +113,7 @@ fn flicker(t_ms: f32, speed: f32, depth: f32, seed: u32) -> f32 {
     return 1.0 - clamp(depth / 100.0, 0.0, 1.0) * v;
 }
 
-// A group's flicker `f` (`LookGlobals.group_flicker`) in region `region`
+// A group's flicker `f` (`Group.flicker`) in region `region`
 // (plan 15c): 1 for a group that does not flicker.
 fn region_flicker(f: vec4<f32>, region: u32) -> f32 {
     if f.x <= 0.0 {

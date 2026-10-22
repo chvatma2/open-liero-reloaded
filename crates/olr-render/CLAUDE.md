@@ -105,9 +105,12 @@ on screen or offscreen.
   (`a_lamp_shines_through_a_clear_wall`, `glow_light_passes_a_clear_wall`,
   `a_clear_solid_takes_no_soak_or_floor`). The `LookFrame` is packed each
   frame into one uniform (`LookGlobals`, `look/common.wgsl`, every field a
-  vec4; 255 groups, `groups[v - 1]` for group value v, 0 none, in three
-  arrays: cast and self-light scale, reach and own colour, and plan 15c's
-  flicker (speed, depth, clock, seed); `frame.w` the bounce, `mode.w` the
+  vec4; 255 groups, `groups[v - 1]` for group value v, 0 none, each a
+  `Group` of three vec4s: `light` (the cast, `cast` being a WGSL keyword)
+  and self-light scale, `info` (reach and own colour), and plan 15c's
+  `flicker` (speed, depth, clock, seed); issue #35: only the frame's
+  groups are packed and written, `mode.y` of them, the shaders reading
+  none past it; `frame.w` the bounce, `mode.w` the
   bloom strength, `solid.w` the ambient occlusion's strength (0-1, 0
   none) and `worm_floor.w` its reach (issue #10); non-finite values
   become 0) and play's discs into an
@@ -290,7 +293,8 @@ on screen or offscreen.
   reading), `olr-cli quick-bench` shows them. `GpuTimes::pass_count` is
   the passes a timed frame ran.
 - **No per-frame allocation** of its own once warm: instance, dirty and
-  view-plan buffers are reused, the world targets and instance buffer are
+  view-plan buffers are reused (issue #35: the glow light's passes keep
+  their attachments on the stack), the world targets and instance buffer are
   recreated only when they must grow or change size (`frame.rs`'s
   no-alloc test).
 - **Offscreen** (`offscreen.rs`): `Offscreen::new()` opens a device without
