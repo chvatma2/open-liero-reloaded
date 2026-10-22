@@ -35,7 +35,9 @@ const AIM_MAX_SPEED: f32 = 100.0;
 const AIM_ACCEL: f32 = 500.0;
 
 /// The keyboard part of `CWormHumanInputHandler::getInput` with OLX's default
-/// client options (no mouse aim, no strafing, no old-school rope).
+/// client options (no mouse aim, no old-school rope). Strafing is always
+/// allowed, as if every host had `AllowStrafing` on (OLX's default; a
+/// deliberate deviation, `docs/porting/STATUS.md`).
 pub(crate) fn get_input(
     w: &mut Worm,
     keys: &mut Latches,
@@ -89,19 +91,34 @@ pub(crate) fn get_input(
     // Taken before this read changes the facing direction.
     let ninja_dir = w.face_direction();
 
-    // `src/common/CWormHuman.cpp:401-421`: with `WeaponCombos` the weapon can change while firing.
+    // `src/common/CWormHuman.cpp:401-431`: with `WeaponCombos` the weapon can change while firing.
     w.state.shoot = keys.fire.is_down();
     let slots = w.slots.len() as i32;
-    if slots > 0 && (!w.state.shoot || s.weapon_combos) && keys.change.is_down() {
-        let change = right_once as i32 - left_once as i32;
-        w.current_weapon = (w.current_weapon + change).rem_euclid(slots);
+    if slots > 0 && (!w.state.shoot || s.weapon_combos) {
+        if keys.change.is_down() {
+            let change = right_once as i32 - left_once as i32;
+            w.current_weapon = (w.current_weapon + change).rem_euclid(slots);
+        }
+        // OLX: src/common/CWormHuman.cpp:443-456: a press of Previous or
+        // Next weapon steps the slot by `next - prev`, wrapping, on top of
+        // a SelectWeapon + Left/Right change of the same read.
+        let change = keys.next_weapon.is_once() as i32 - keys.prev_weapon.is_once() as i32;
+        if change != 0 {
+            w.current_weapon = (w.current_weapon + change).rem_euclid(slots);
+        }
     }
 
+    // OLX: src/common/CWormHuman.cpp:465-503: while Strafe is held, Left and
+    // Right set the move direction only, so the worm keeps facing (and
+    // aiming) the way it did (`isHostAllowingStrafing()` is always true here).
+    let strafe = keys.strafe.is_down();
     if !keys.change.is_down() {
         if keys.left.is_down() {
             w.state.moving = true;
             if !keys.right.is_down() {
-                w.face = Dir::Left;
+                if !strafe {
+                    w.face = Dir::Left;
+                }
                 w.move_dir = Dir::Left;
             }
             if right_once {
@@ -111,7 +128,9 @@ pub(crate) fn get_input(
         if keys.right.is_down() {
             w.state.moving = true;
             if !keys.left.is_down() {
-                w.face = Dir::Right;
+                if !strafe {
+                    w.face = Dir::Right;
+                }
                 w.move_dir = Dir::Right;
             }
             if left_once {
@@ -426,3 +445,7 @@ fn bounce(v: &mut f32) {
         *v = 0.0;
     }
 }
+
+#[cfg(test)]
+#[path = "physics_tests.rs"]
+mod tests;
