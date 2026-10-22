@@ -91,7 +91,7 @@ const CHECK_CONFIG: &str = "// `cargo xtask dist`'s check: by address only, noth
     fill_bots: 2,
     min_players: 1,
     rotation: [
-        (mod: \"olx-classic\", level: \"olx-level-dirt-level\", time_limit: 0.2, kill_limit: 0, lives: -2, bonuses: true),
+        (mod: \"olx-classic\", level: \"olx-level-dirt-level\", time_limit: 0.2, kill_limit: 0, lives: -2),
         (mod: \"olx-classic\", level: \"olr-level-liero-factory-reloaded\"),
         (mod: \"olx-classic\", level: \"olr-level-castlestrike-reloaded\"),
     ],
