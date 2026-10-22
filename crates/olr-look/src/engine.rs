@@ -65,6 +65,47 @@ pub fn explosion_light(size: i32) -> Light {
     flash([255, 200, 140], (60 + 8 * s).min(250), (24 + 8 * s).min(4096), EXPLOSION_MS)
 }
 
+/// The heat an explosion leaves (issue #40): the renderer's deposit, its
+/// centre and falloff `1 - (d / radius)²` as the renderer's.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ExplosionHeat {
+    /// World pixels.
+    pub radius: f32,
+    /// The temperature it gives stone at its centre, 1 to
+    /// [`crate::MAX_TEMPERATURE`].
+    pub amount: f32,
+}
+
+/// The widest engine explosion heat, world pixels (the renderer takes 64).
+pub const MAX_EXPLOSION_HEAT_RADIUS: f32 = 48.0;
+
+/// The radii of OLX's hole stamps by hole size (damage 0 to 4 and up): the
+/// dirt theme's `holes/1-5.png`, 5, 7, 9, 11 and 15 pixels across. The
+/// heat reaches past the crater the explosion carves.
+///
+/// OLX: src/common/CMap.cpp:1005-1105
+const HOLE_RADII: [f32; 5] = [2.5, 3.5, 4.5, 5.5, 7.5];
+
+/// The engine's heat of an explosion of `damage` (OLX's `Explode` damage,
+/// which also sizes its hole; issue #40, spec
+/// `2026-10-22-materials-and-heat-design.md`): `amount` 1.2 × damage⁴ up to
+/// [`crate::MAX_TEMPERATURE`], `radius` twice the hole's radius plus half
+/// the damage, up to [`MAX_EXPLOSION_HEAT_RADIUS`]. Calibrated on stone: a
+/// minigun hit (damage 3) leaves its rim under the lava ramp's first key
+/// (100) unless hits pile up; a Bazooka's (4) rim glows a few pixels deep;
+/// a Big Nuke's fragments (15) leave a wide patch near white. `None` for a
+/// damage of 0 or less, or not a number.
+pub fn explosion_heat(damage: f32) -> Option<ExplosionHeat> {
+    if damage.is_nan() || damage <= 0.0 {
+        return None;
+    }
+    let s = damage.min(1000.0);
+    let hole = HOLE_RADII[(s as usize).min(HOLE_RADII.len() - 1)];
+    let amount = (1.2 * s * s * s * s).min(f32::from(crate::MAX_TEMPERATURE));
+    (amount >= 1.0)
+        .then_some(ExplosionHeat { radius: (2.0 * hole + s / 2.0).min(MAX_EXPLOSION_HEAT_RADIUS), amount })
+}
+
 /// The largest disc a mod's explosion light may ask for, world pixels
 /// (issue #15): the renderer's largest disc. `olr-format` refuses more,
 /// [`crate::ExplosionLight::radius`] clamps to it.

@@ -143,6 +143,32 @@ fn engine_numbers_match_r13() {
     assert!(m.animation.ended(51.0) && !m.animation.ended(49.0));
 }
 
+/// Issue #40: the engine's explosion heat grows with the damage, reaches
+/// past the hole it carves, and stays bounded; nothing for no damage.
+#[test]
+fn explosion_heat_grows_with_the_damage_and_is_bounded() {
+    let h = |d: f32| engine::explosion_heat(d).unwrap();
+    // A minigun hit (3) stays under the lava ramp's first key at its rim
+    // (6 px out of its 5.5 px hole), even at its centre barely over it.
+    let minigun = h(3.0);
+    assert_eq!(minigun.radius, 12.5);
+    assert!((97.0..98.0).contains(&minigun.amount));
+    assert!(minigun.amount * (1.0 - (6.0f32 / minigun.radius).powi(2)) < 100.0);
+    // A Bazooka's (4) rim, 8 px out, glows.
+    let bazooka = h(4.0);
+    assert_eq!(bazooka.radius, 17.0);
+    assert!(bazooka.amount * (1.0 - (8.0f32 / bazooka.radius).powi(2)) > 200.0);
+    // A Big Nuke's fragments (15): hot and wide.
+    assert_eq!((h(15.0).amount, h(15.0).radius), (1000.0, 22.5));
+    assert!(h(2.0).amount < minigun.amount && minigun.amount < bazooka.amount);
+    for d in [1e9, f32::INFINITY, f32::MAX] {
+        assert_eq!((h(d).amount, h(d).radius), (1000.0, engine::MAX_EXPLOSION_HEAT_RADIUS), "{d}");
+    }
+    for d in [0.0, -5.0, f32::NAN, f32::NEG_INFINITY, 0.5] {
+        assert!(engine::explosion_heat(d).is_none(), "{d}");
+    }
+}
+
 /// Issue #15: a mod's explosion light flashes as the engine's, capped;
 /// a projectile's own wins over the mod's, and -1 (no projectile) has none.
 #[test]

@@ -94,7 +94,14 @@ own look. The simulation never sees it.
   `MAX_EXPLOSION_REACH` (4096), a mod explosion light's caps, and
   `explosion_flash(colour, intensity, reach)` (the engine's flash keys
   over `EXPLOSION_MS`, capped): a mod's explosion light without an
-  animation.
+  animation. Issue #40: `explosion_heat(damage)` (`ExplosionHeat { radius,
+  amount }`, the renderer's deposit: `amount` `1.2 × damage⁴` degrees up to
+  `MAX_TEMPERATURE`, `radius` twice OLX's hole radius for the damage
+  (`HOLE_RADII`, the dirt theme's 2.5-7.5 px for hole sizes 0-4) plus half
+  the damage, up to `MAX_EXPLOSION_HEAT_RADIUS` 48; `None` for no damage
+  or NaN): a minigun hit (3) under the lava ramp's first key at its rim, a
+  Bazooka's (4) rim glowing a few pixels deep, a Big Nuke's fragments
+  (15) far more.
 - **Surface materials** (`material.rs`, issue #37; spec
   `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`):
   `SurfaceMaterial { id, heat: Option<Heat> }` (`heats()`: a sensitivity
@@ -109,8 +116,9 @@ own look. The simulation never sees it.
   `SurfaceMaps { world, front, back }` (a value per world pixel, `v` the
   look's `materials[v - 1]`, 0 none; `fits`, `is_empty`, `highest`).
   `LevelLook::materials` (at most `MAX_MATERIALS` 255) and
-  `LevelLook::material(v)` (`None` for 0 or past the list). Nothing reads
-  them yet: heat comes in a later issue.
+  `LevelLook::material(v)` (`None` for 0 or past the list). The renderer
+  heats them (issue #39); explosions deposit the engine's heat (issue
+  #40, `olr-present`).
 - **Tests** (`tests/`, one binary): `anim.rs` (pulse shapes at their
   quarter points, keys interpolating, carrying colour and ending, flicker
   deterministic and bounded, phases, `hostile_animations_never_panic`) and
@@ -118,6 +126,7 @@ own look. The simulation never sees it.
   animated group, `light_at`, `engine_numbers_match_r13`,
   `skin_light_is_steady_and_capped`,
   `explosion_lights_are_capped_and_fall_back_to_the_mods` (issue #15),
+  `explosion_heat_grows_with_the_damage_and_is_bounded` (issue #40),
   `worm_floor_hues`, `solids_settings_are_bounded_and_off_without_a_look`
   (the occlusion too, issue #10);
   plan 15c: `disc_calibration_matches_todays_light`,
