@@ -176,20 +176,42 @@ impl Offscreen {
         look: Option<&olr_look::LookFrame>,
         size: (u32, u32),
     ) -> RgbaImage {
-        let size = (size.0.max(1), size.1.max(1));
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+        let texture = self.output_texture(size);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        renderer.render_lit(list, look, &view, [0, 0, texture.width(), texture.height()]);
+        self.read_texture(&texture)
+    }
+
+    /// Several views in one frame ([`Renderer::render_views`], issue #26)
+    /// on a `size` target, read back.
+    pub fn render_views_to_image(
+        &self,
+        renderer: &mut Renderer,
+        views: &[crate::ViewDraw],
+        look: Option<&olr_look::LookFrame>,
+        size: (u32, u32),
+    ) -> RgbaImage {
+        let texture = self.output_texture(size);
+        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        renderer.render_views(views, look, &view);
+        self.read_texture(&texture)
+    }
+
+    /// An [`OUTPUT_FORMAT`] texture of `size` (at least 1 × 1) to draw
+    /// into and read back (`COPY_SRC`, `COPY_DST`).
+    pub fn output_texture(&self, size: (u32, u32)) -> wgpu::Texture {
+        self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("olr-render output"),
-            size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: OUTPUT_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
-        });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        renderer.render_lit(list, look, &view, [0, 0, size.0, size.1]);
-        self.read_texture(&texture)
+        })
     }
 
     /// [`Offscreen::render_to_image`], written to `path` as a PNG.
@@ -214,7 +236,17 @@ impl Offscreen {
     /// The renderer's light grid as last drawn ([`Renderer::light_grid`]):
     /// where it lies and each texel's linear light.
     pub fn read_light(&self, renderer: &Renderer) -> Option<(crate::LightGrid, Vec<[f32; 3]>)> {
-        let (texture, grid) = renderer.light_grid()?;
+        self.read_view_light(renderer, 0)
+    }
+
+    /// [`Offscreen::read_light`] of view `view` of the last frame
+    /// ([`Renderer::view_light_grid`]).
+    pub fn read_view_light(
+        &self,
+        renderer: &Renderer,
+        view: usize,
+    ) -> Option<(crate::LightGrid, Vec<[f32; 3]>)> {
+        let (texture, grid) = renderer.view_light_grid(view)?;
         let bytes = self.read_bytes(texture);
         let half = |b: &[u8]| f16_to_f32(u16::from_le_bytes([b[0], b[1]]));
         let light = bytes

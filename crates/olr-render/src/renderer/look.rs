@@ -54,6 +54,15 @@ pub(super) struct LookTextures {
     regions: super::regions::Regions,
     /// The level's glow light.
     pub(super) gi: super::gi::GiState,
+    /// The glow light's occluder map (issue #26): one texel per world pixel
+    /// of the level (cropped like the solid map), cleared each lit frame,
+    /// then each view's occluder map copied in, so the glow light, run once
+    /// a frame, sees the worms of every view's light grid (one view: its
+    /// own, as before).
+    pub(super) gi_occluders: wgpu::Texture,
+    pub(super) gi_occluder_view: wgpu::TextureView,
+    /// [`Self::gi_occluders`] for the emission ([`LookState::occluder_layout`]).
+    pub(super) gi_occluder_bind: wgpu::BindGroup,
 }
 
 /// The light grid's format.
@@ -87,12 +96,16 @@ pub(super) const OCCLUSION_PAD: u32 = olr_look::MAX_OCCLUSION_REACH as u32;
 /// starting value judged on the day Castle Strike).
 pub(super) const BLOOM_STRENGTH: f32 = 0.6;
 
-/// One world target's look passes: the light grid (gathered into 0, soaked
-/// into solids across into 1 and down into 2, blurred across into 0 and
-/// down, capped and banded, into 1) and the lit target the upscale reads.
+/// One world target's look passes (one a view, issue #26): the light grid
+/// (gathered into 0, soaked into solids across into 1 and down into 2,
+/// blurred across into 0 and down, capped and banded, into 1) and the lit
+/// target the upscale reads.
 pub(super) struct LitTarget {
     /// World pixels: the light grid's size.
     pub(super) grid: (u32, u32),
+    /// The view's look globals (`LookGlobals`, [`GLOBAL_FLOATS`] floats:
+    /// where its world target and occluder map lie), which its passes read.
+    pub(super) globals: wgpu::Buffer,
     pub(super) light: [wgpu::Texture; 3],
     pub(super) views: [wgpu::TextureView; 3],
     /// The sum pass's, the across blur's (reads 2) and the down blur's (reads 0).
@@ -111,9 +124,10 @@ pub(super) struct LitTarget {
     pub(super) soak_binds: [wgpu::BindGroup; 2],
     pub(super) composite_bind: wgpu::BindGroup,
     /// The occluder map (plan 15b): one texel per world pixel of the grid.
+    pub(super) occluders: wgpu::Texture,
     pub(super) occluder_view: wgpu::TextureView,
-    /// The occluder map for the passes that read it ([`LookState::occluder_layout`]).
-    pub(super) occluder_bind: wgpu::BindGroup,
+    /// The occluder pass's group 0: [`Self::globals`].
+    pub(super) occluder_globals_bind: wgpu::BindGroup,
     pub(super) lit_view: wgpu::TextureView,
     /// The upscale pass's view of the lit target.
     pub(super) upscale_bind: wgpu::BindGroup,
@@ -133,14 +147,17 @@ pub(super) struct LookState {
     pub(super) soak_h_pipeline: wgpu::RenderPipeline,
     pub(super) soak_v_pipeline: wgpu::RenderPipeline,
     pub(super) soak_layout: wgpu::BindGroupLayout,
-    /// Draws the occluder map (plan 15b): group 0 the globals, group 1 the atlas.
+    /// Draws the occluder map (plan 15b): group 0 the view's globals, group 1 the atlas.
     pub(super) occluder_pipeline: wgpu::RenderPipeline,
-    pub(super) occluder_globals_bind: wgpu::BindGroup,
+    occluder_globals_layout: wgpu::BindGroupLayout,
     /// One `R8Uint` texture: the occluder map, as the passes read it.
     pub(super) occluder_layout: wgpu::BindGroupLayout,
     pub(super) light_layout: wgpu::BindGroupLayout,
     pub(super) composite_layout: wgpu::BindGroupLayout,
     pub(super) layout: wgpu::BindGroupLayout,
+    /// The frame's globals (issue #26): the glow light's and the lit
+    /// terrain's, which read none of a view's fields; their occluder map
+    /// is the level's ([`LookTextures::gi_occluders`]).
     pub(super) globals: wgpu::Buffer,
     pub(super) gi: super::gi::GiPipelines,
     /// A 1 × 1 dark glow light, bound before a level's exists.
@@ -160,9 +177,6 @@ pub(super) struct LookState {
     pub(super) emitter_count: u32,
     /// Whether the bloom is added (tests turn it off: `Renderer::set_bloom`).
     pub(super) bloom: bool,
-    /// Whether this frame draws distant layers (issue #11): the composite
-    /// then reads their depth from the shade's alpha.
-    pub(super) distant: bool,
     /// The terrain opaque under a level's distant layers, and the layers
     /// (issue #11).
     pub(super) backing_pipeline: wgpu::RenderPipeline,
@@ -260,6 +274,18 @@ fn world_rect(r: Rect, s: u32) -> Rect {
     let (x0, y0) = (r.x / s, r.y / s);
     let (x1, y1) = (r.x.saturating_add(r.w).div_ceil(s), r.y.saturating_add(r.h).div_ceil(s));
     Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}
+
+/// Where a view's occluder map lies (plan 15b: over its light grid): origin
+/// x, y (world pixels), width, height.
+pub(super) fn occluder_rect(frame: &WorldFrame) -> [f32; 4] {
+    let pad = LIGHT_PAD as i32;
+    [
+        (frame.origin.0 - pad) as f32,
+        (frame.origin.1 - pad) as f32,
+        (frame.size.0 + 2 * LIGHT_PAD) as f32,
+        (frame.size.1 + 2 * LIGHT_PAD) as f32,
+    ]
 }
 
 impl LookState {
@@ -443,11 +469,6 @@ impl LookState {
             label: Some("olr-render occluder globals"),
             entries: &[entry(0, wgpu::ShaderStages::VERTEX, super::UNIFORM)],
         });
-        let occluder_globals_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("olr-render occluder globals"),
-            layout: &occluder_globals_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
-        });
         let occluder_pipeline = pipeline(
             device,
             "olr-render occluders",
@@ -472,7 +493,7 @@ impl LookState {
             soak_v_pipeline,
             soak_layout,
             occluder_pipeline,
-            occluder_globals_bind,
+            occluder_globals_layout,
             occluder_layout,
             light_layout,
             composite_layout,
@@ -487,7 +508,6 @@ impl LookState {
             packed_emitters: Vec::with_capacity(emitter_floats),
             emitter_count: 0,
             bloom: true,
-            distant: false,
             backing_pipeline,
             distant_pipeline,
         }
@@ -495,7 +515,8 @@ impl LookState {
 
     /// The look passes' textures for a world target of `texels` (`grid`
     /// world pixels): its light grid and lit target, bound to `albedo` and
-    /// `shade` (the world pass's targets) and to the upscale.
+    /// `shade` (the world pass's targets) and to the upscale, and its own
+    /// globals.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn target(
         &self,
@@ -529,7 +550,13 @@ impl LookState {
         fn tex(binding: u32, view: &wgpu::TextureView) -> wgpu::BindGroupEntry<'_> {
             wgpu::BindGroupEntry { binding, resource: wgpu::BindingResource::TextureView(view) }
         }
-        let uniform = || wgpu::BindGroupEntry { binding: 0, resource: self.globals.as_entire_binding() };
+        let globals = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("olr-render view look globals"),
+            size: (GLOBAL_FLOATS * 4) as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let uniform = || wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() };
         let solid = self.textures.as_ref().map_or(&self.no_solid, |t| &t.solid_view);
         let groups =
             self.textures.as_ref().map(|t| t.groups.create_view(&wgpu::TextureViewDescriptor::default()));
@@ -570,10 +597,10 @@ impl LookState {
             view_formats: &[],
         });
         let occluder_view = occluders.create_view(&wgpu::TextureViewDescriptor::default());
-        let occluder_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("olr-render occluders"),
-            layout: &self.occluder_layout,
-            entries: &[tex(0, &occluder_view)],
+        let occluder_globals_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("olr-render occluder globals"),
+            layout: &self.occluder_globals_layout,
+            entries: &[uniform()],
         });
         // The across soak (reads 0) writes 1 and the rows into the bloom's
         // spare 1 (free until the bloom); the down soak reads 1, the sum and
@@ -619,6 +646,7 @@ impl LookState {
         });
         LitTarget {
             grid,
+            globals,
             light,
             views,
             binds,
@@ -628,8 +656,9 @@ impl LookState {
             bloom_binds,
             soak_binds,
             composite_bind,
+            occluders,
             occluder_view,
-            occluder_bind,
+            occluder_globals_bind,
             lit_view,
             upscale_bind,
         }
@@ -682,6 +711,32 @@ impl LookState {
         // Over the level the device keeps (cropped like the terrain): past it
         // is open, as for the soak.
         let gi = super::gi::GiState::new(device, &self.gi, sizes.world, max_dim, &inputs);
+        let gi_occluders = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("olr-render glow light occluders"),
+            size: wgpu::Extent3d {
+                width: sizes.world.0.max(1),
+                height: sizes.world.1.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: OCCLUDER_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST
+                | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let gi_occluder_view = view(&gi_occluders);
+        let gi_occluder_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("olr-render glow light occluders"),
+            layout: &self.occluder_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&gi_occluder_view),
+            }],
+        });
         let t = LookTextures {
             glow,
             groups,
@@ -694,6 +749,9 @@ impl LookState {
             regions: super::regions::Regions::new(level, map.glow_groups()),
             region_map,
             gi,
+            gi_occluders,
+            gi_occluder_view,
+            gi_occluder_bind,
         };
         let whole = Rect { x: 0, y: 0, w: map.width(), h: map.height() };
         if map.glow().is_none() {
@@ -752,7 +810,7 @@ impl LookState {
     /// unlimited) and radiance ([`olr_look::engine::disc_radiance`]). A disc
     /// whose position or reach is not a number, or that gives no light, is
     /// left out.
-    fn pack_emitters(&mut self, look: &LookFrame) {
+    pub(super) fn pack_emitters(&mut self, look: &LookFrame) {
         let e = &mut self.packed_emitters;
         e.clear();
         for f in look.emitters.iter().take(olr_look::MAX_EMITTERS) {
@@ -781,8 +839,12 @@ impl LookState {
         }
     }
 
-    /// Packs `look` (and where this frame draws) into the globals' floats.
-    pub(super) fn pack(&mut self, look: &LookFrame, frame: &WorldFrame) {
+    /// Packs `look` into the globals' floats for a view drawn at `frame`,
+    /// with distant layers when `distant` (issue #11: the composite then
+    /// reads their depth from the shade's alpha), its occluder map at
+    /// `occluders` (origin x, y in world pixels, width, height: the view's
+    /// [`occluder_rect`], or the level's for the frame's globals).
+    pub(super) fn pack(&mut self, look: &LookFrame, frame: &WorldFrame, distant: bool, occluders: [f32; 4]) {
         let p = &mut self.packed;
         p.clear();
         let (level, art_scale, cell) =
@@ -802,8 +864,6 @@ impl LookState {
         let bounce = if look.bounce.is_finite() { look.bounce.clamp(0.0, 0.9) } else { 0.0 };
         p.extend([frame.origin.0 as f32, frame.origin.1 as f32, frame.scale as f32, bounce]);
         p.extend([level.0 as f32, level.1 as f32, art_scale as f32, cell as f32]);
-        self.pack_emitters(look);
-        let p = &mut self.packed;
         let mode = match look.mode {
             ViewMode::Lit => 0.0,
             ViewMode::FullBright => 1.0,
@@ -824,16 +884,9 @@ impl LookState {
         p.extend([r, g, b, strength]);
         let [r, g, b] = look.worm_floor;
         p.extend([r, g, b, reach]);
-        // The occluder map covers the light grid (plan 15b).
-        let (pad, grid) = (LIGHT_PAD as i32, frame.size.0 + 2 * LIGHT_PAD);
-        p.extend([
-            (frame.origin.0 - pad) as f32,
-            (frame.origin.1 - pad) as f32,
-            grid as f32,
-            (frame.size.1 + 2 * LIGHT_PAD) as f32,
-        ]);
+        p.extend(occluders);
         // Whether the level draws distant layers (issue #11).
-        p.extend([f32::from(u8::from(self.distant)), 0.0, 0.0, 0.0]);
+        p.extend([f32::from(u8::from(distant)), 0.0, 0.0, 0.0]);
         for i in 0..GROUPS {
             match look.groups.get(i) {
                 Some(g) => p.extend([g.cast[0], g.cast[1], g.cast[2], g.self_scale]),
@@ -878,8 +931,8 @@ impl Renderer {
             (false, true) => self.look = None,
             _ => return,
         }
-        // The world target gains or loses its shade target.
-        self.target = None;
+        // The world targets gain or lose their shade targets.
+        self.targets.clear();
     }
 
     /// Forgets the light's history (plan 15c: bounce reads the last frame's
@@ -904,16 +957,29 @@ impl Renderer {
         self.look.is_some()
     }
 
-    /// The view's light grid as last drawn (tests): the texture
+    /// The first view's light grid as last drawn (tests): the texture
     /// (RGBA16Float) and where it lies; `None` before a lit frame.
     pub fn light_grid(&self) -> Option<(&wgpu::Texture, crate::LightGrid)> {
-        let t = self.target.as_ref()?;
+        self.view_light_grid(0)
+    }
+
+    /// View `view`'s light grid as last drawn ([`Renderer::render_views`]):
+    /// as [`Renderer::light_grid`]; `None` for a view never drawn lit.
+    pub fn view_light_grid(&self, view: usize) -> Option<(&wgpu::Texture, crate::LightGrid)> {
+        let t = self.targets.get(view)?;
         let lit = t.lit.as_ref()?;
         let pad = LIGHT_PAD as i32;
         Some((
             &lit.light[1],
             crate::LightGrid { origin: (t.origin.0 - pad, t.origin.1 - pad), size: lit.grid },
         ))
+    }
+
+    /// How many history steps the glow light has taken (tests, issue #26:
+    /// one a lit frame that casts light, however many views it draws).
+    #[doc(hidden)]
+    pub fn glow_light_steps(&self) -> u64 {
+        self.glow_light_steps
     }
 
     /// The glow texture (tests); `None` without lighting or a terrain.

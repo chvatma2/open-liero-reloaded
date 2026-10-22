@@ -18,6 +18,7 @@ mod timing;
 
 pub use gi::{GI_CELL_BUDGET, gi_cell};
 pub use look::WORM_SHADOW;
+pub use pass::ViewDraw;
 pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};
 pub use timing::{GpuTimes, gpu_times};
 
@@ -62,13 +63,20 @@ struct Distant {
     layer: olr_data::level::DistantLayer,
 }
 
-/// The world-pass target and the upscale pass's view of it.
+/// One view's world-pass target and the upscale pass's view of it (issue
+/// #26: one a view, each with uniforms of its own, so every view of a
+/// frame is encoded before the one submit).
 struct Target {
     frame_size: (u32, u32),
     /// The texture's size: `frame_size`, unless the device's limit cut it.
     size: (u32, u32),
     view: wgpu::TextureView,
     bind: wgpu::BindGroup,
+    /// The world pass's globals (the target's size) and their bind.
+    globals: wgpu::Buffer,
+    globals_bind: wgpu::BindGroup,
+    /// The upscale pass's uniform, which `bind` and the lit target's read.
+    upscale_uniform: wgpu::Buffer,
     /// With lighting: the second target, each texel's shade (self-light,
     /// marker), drawn with the albedo.
     shade: Option<wgpu::TextureView>,
@@ -95,9 +103,6 @@ pub struct Renderer {
     texture_layout: wgpu::BindGroupLayout,
     globals_layout: wgpu::BindGroupLayout,
     upscale_layout: wgpu::BindGroupLayout,
-    globals: wgpu::Buffer,
-    globals_bind: wgpu::BindGroup,
-    upscale_uniform: wgpu::Buffer,
     sampler: wgpu::Sampler,
     atlas: Option<(AtlasLayout, wgpu::BindGroup)>,
     /// The highest `px_per_world` of the atlas's images (issue #12: a
@@ -108,7 +113,10 @@ pub struct Renderer {
     distant: Vec<Distant>,
     /// This frame's distant quads: the layer and its instance.
     distant_draws: Vec<(usize, u32)>,
-    target: Option<Target>,
+    /// Each view's world target (issue #26), the first view's first.
+    targets: Vec<Target>,
+    /// This frame's views: their frames and instance ranges.
+    plans: Vec<pass::ViewPlan>,
     instances: Vec<Instance>,
     raw: Vec<[f32; crate::frame::INSTANCE_FLOATS]>,
     instance_buffer: wgpu::Buffer,
@@ -120,6 +128,9 @@ pub struct Renderer {
     probe: Option<probe::ProbeState>,
     /// The look's state, with lighting on ([`Renderer::set_lighting`]).
     look: Option<look::LookState>,
+    /// The glow light's history steps so far (tests: one a lit frame,
+    /// however many views it draws).
+    glow_light_steps: u64,
 }
 
 fn texture(
@@ -289,21 +300,6 @@ impl Renderer {
             &[(surface_format, None)],
             wgpu::PrimitiveTopology::TriangleList,
         );
-        let uniform = |label, size| {
-            device.create_buffer(&wgpu::BufferDescriptor {
-                label: Some(label),
-                size,
-                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                mapped_at_creation: false,
-            })
-        };
-        let globals = uniform("olr-render globals", 16);
-        let upscale_uniform = uniform("olr-render upscale", 48);
-        let globals_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("olr-render globals"),
-            layout: &globals_layout,
-            entries: &[wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }],
-        });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("olr-render linear"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -323,16 +319,14 @@ impl Renderer {
             texture_layout,
             globals_layout,
             upscale_layout,
-            globals,
-            globals_bind,
-            upscale_uniform,
             sampler,
             atlas: None,
             sprite_scale: 1,
             terrain: None,
             distant: Vec::new(),
             distant_draws: Vec::new(),
-            target: None,
+            targets: Vec::new(),
+            plans: Vec::new(),
             instances: Vec::with_capacity(4 * DrawList::RESERVED),
             raw: Vec::with_capacity(4 * DrawList::RESERVED),
             instance_buffer,
@@ -341,7 +335,18 @@ impl Renderer {
             timer: None,
             probe: None,
             look: None,
+            glow_light_steps: 0,
         }
+    }
+
+    /// A uniform buffer of `size` bytes, written each frame.
+    fn uniform(&self, label: &str, size: u64) -> wgpu::Buffer {
+        self.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(label),
+            size,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        })
     }
 
     fn instance_buffer(device: &wgpu::Device, count: usize) -> wgpu::Buffer {
@@ -517,8 +522,8 @@ impl Renderer {
         self.write_terrain(map, olr_terrain::Rect { x: 0, y: 0, w: map.width(), h: map.height() });
         if let (Some(look), Some(t)) = (self.look.as_mut(), &self.terrain) {
             look.upload(&self.device, &self.queue, map, &t.texture, max);
-            // The world target's light passes bind the new level's glow light.
-            self.target = None;
+            // The world targets' light passes bind the new level's glow light.
+            self.targets.clear();
         }
     }
 

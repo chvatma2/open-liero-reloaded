@@ -515,7 +515,8 @@ impl GiState {
     /// casts light and no disc glows) the fluence is only cleared.
     /// `occluders` is the occluder map's bind group (plan 15b): living worms
     /// block glow light. `discs` holds `count` discs ([`EMITTER_FLOATS`]
-    /// each, plan 15c).
+    /// each, plan 15c). Returns whether the history took a step (the
+    /// renderer encodes it once a frame, however many views: issue #26).
     pub(super) fn encode(
         &self,
         encoder: &mut wgpu::CommandEncoder,
@@ -523,7 +524,7 @@ impl GiState {
         casting: bool,
         occluders: &wgpu::BindGroup,
         (discs, count): (&wgpu::Buffer, u32),
-    ) {
+    ) -> bool {
         let pass = |encoder: &mut wgpu::CommandEncoder,
                     targets: &[&wgpu::TextureView],
                     work: Option<(&wgpu::RenderPipeline, &wgpu::BindGroup)>,
@@ -562,7 +563,7 @@ impl GiState {
         if !casting {
             pass(encoder, &[&self.fluence], None, None);
             self.reset();
-            return;
+            return false;
         }
         if self.fresh.replace(false) {
             pass(encoder, &[&self.history], None, None);
@@ -611,6 +612,7 @@ impl GiState {
             self.history_texture.as_image_copy(),
             self.fluence_texture.size(),
         );
+        true
     }
 
     /// Forgets the light's history: the next frame bounces nothing old.

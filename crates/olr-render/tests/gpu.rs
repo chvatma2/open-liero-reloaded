@@ -2421,3 +2421,163 @@ fn a_glowing_skin_pixel_is_bright_in_the_dark() {
     );
     assert!(dark.r > 0 && dark.r < 60, "the plain one is dark: {dark:?}");
 }
+
+/// A 300 × 80 room for the split-screen tests (issue #26): rock walls and
+/// floor, two glowing pillars in group 1 far apart (x 40 and 230).
+fn two_rooms() -> ColorMap {
+    let rock = |x: u32, y: u32| y >= 70 || !(2..298).contains(&x) || x == 120 || x == 170;
+    let glows = |x: u32, y: u32| (x == 40 || x == 230) && (30..60).contains(&y);
+    glowing_room(300, 80, rock, glows)
+}
+
+/// The views of the split-screen tests: two places far apart, each 100 ×
+/// 60 world pixels, side by side in a 400 × 120 target.
+fn far_views() -> [(View, [u32; 4]); 2] {
+    [
+        (View { x: 0.0, y: 10.0, w: 100.0, h: 60.0 }, [0, 0, 200, 120]),
+        (View { x: 195.5, y: 12.0, w: 100.0, h: 60.0 }, [200, 0, 200, 120]),
+    ]
+}
+
+/// The pixels of `area` in `img`.
+fn crop(img: &RgbaImage, [x0, y0, w, h]: [u32; 4]) -> Vec<Rgba> {
+    (y0..y0 + h).flat_map(|y| (x0..x0 + w).map(move |x| img.get(x, y))).collect()
+}
+
+/// Issue #26: two views of different places drawn in one frame each show
+/// what a frame of that view alone shows, unlit and lit (glow light, a
+/// disc in each place and a worm, which every view's list holds, in the
+/// first): their pictures and light grids alike.
+#[test]
+fn two_views_in_one_frame_match_single_views() {
+    let Some(gpu) = offscreen() else { return };
+    let map = two_rooms();
+    let mut look = glow_look(1.0, 80.0);
+    look.bounce = 0.0;
+    look.emitters.extend([disc([60.5, 40.5], 3.0, 60.0), disc([250.5, 45.5], 2.0, 60.0)]);
+    let lists = far_views().map(|(view, _)| {
+        let mut l = list(view);
+        l.map = (300, 80);
+        push_bodies(&mut l, &[([50.0, 50.0, 4.0, 6.0], 1)]);
+        l
+    });
+    let areas = far_views().map(|(_, area)| area);
+    let renderer = || {
+        let mut r = gpu.renderer(RenderSettings::default());
+        r.upload_images(&[white_image()]);
+        r.set_lighting(true);
+        r.upload_terrain(&map);
+        r
+    };
+    for look in [None, Some(&look)] {
+        let mut both = renderer();
+        let views = [0, 1].map(|i| olr_render::ViewDraw { list: &lists[i], area: areas[i] });
+        let img = gpu.render_views_to_image(&mut both, &views, look, (400, 120));
+        for i in 0..2 {
+            let mut alone = renderer();
+            let one = gpu.render_views_to_image(&mut alone, &views[i..=i], look, (400, 120));
+            assert!(crop(&one, areas[i]) == crop(&img, areas[i]), "view {i}, lit {}", look.is_some());
+            assert!(crop(&one, areas[1 - i]).iter().all(|&p| p == Rgba::rgb(0, 0, 0)), "only its area");
+            if look.is_some() {
+                let (grid, light) = gpu.read_light(&alone).unwrap();
+                let (grid2, light2) = gpu.read_view_light(&both, i).unwrap();
+                assert_eq!(grid, grid2, "view {i}'s light grid");
+                assert!(light == light2, "view {i}'s light");
+            }
+        }
+        if let Some(look) = look {
+            // The lit frame lights each place (a worthwhile comparison).
+            assert_ne!(gpu.render_lit_to_image(&mut renderer(), &lists[0], Some(look), (200, 120)), {
+                let mut dark = look.clone();
+                dark.emitters.clear();
+                dark.groups[0].cast = [0.0; 3];
+                gpu.render_lit_to_image(&mut renderer(), &lists[0], Some(&dark), (200, 120))
+            });
+        }
+    }
+}
+
+/// Issue #26: the glow light runs once a frame however many views it
+/// draws: its history takes one step a frame, so with bounce four views'
+/// light, frame after frame, is a single view's.
+#[test]
+fn the_glow_light_steps_once_a_frame_with_four_views() {
+    let Some(gpu) = offscreen() else { return };
+    let map = corridor(|_, _| WHITE);
+    let mut look = dim(0.1);
+    look.max_light = 1e4;
+    look.bounce = 0.6;
+    look.emitters.push(olr_look::FrameLight { colour: [4.0; 3], ..disc([20.5, 15.5], 3.0, 200.0) });
+    let view = |x: f32, y: f32| {
+        let mut l = list(View { x, y, w: 60.0, h: 40.0 });
+        l.map = (100, 60);
+        l
+    };
+    let lists = [view(40.0, 15.0), view(0.0, 0.0), view(40.0, 15.0), view(30.5, 20.0)];
+    let areas = [[0, 0, 120, 80], [120, 0, 120, 80], [0, 80, 120, 80], [120, 80, 120, 80]];
+    let views: Vec<_> = (0..4).map(|i| olr_render::ViewDraw { list: &lists[i], area: areas[i] }).collect();
+    let lit = || {
+        let mut r = gpu.renderer(RenderSettings::default());
+        r.set_lighting(true);
+        r.upload_terrain(&map);
+        r
+    };
+    let (mut four, mut one) = (lit(), lit());
+    let mut last = None;
+    for frame in 1..=4 {
+        gpu.render_views_to_image(&mut four, &views, Some(&look), (240, 160));
+        gpu.render_views_to_image(&mut one, &views[..1], Some(&look), (240, 160));
+        assert_eq!((four.glow_light_steps(), one.glow_light_steps()), (frame, frame));
+        let light = gpu.read_view_light(&four, 0).unwrap().1;
+        assert!(light == gpu.read_light(&one).unwrap().1, "frame {frame}: four views light as one");
+        assert!(light == gpu.read_view_light(&four, 2).unwrap().1, "frame {frame}: views 0 and 2 alike");
+        assert!(last.as_ref() != Some(&light), "frame {frame}: the bounce still moves the light");
+        last = Some(light);
+    }
+}
+
+/// Issue #26: a view drawn over a target (`render_views_over`) writes only
+/// its area, its black bars too; `render_views` clears the rest to black.
+#[test]
+fn a_view_draws_only_its_area() {
+    let Some(gpu) = offscreen() else { return };
+    let map = map();
+    let l = list(View { x: 20.0, y: 30.0, w: 80.0, h: 60.0 });
+    let area = [40, 20, 70, 70];
+    let views = [olr_render::ViewDraw { list: &l, area }];
+    for lit in [false, true] {
+        let mut r = gpu.renderer(RenderSettings::default());
+        r.set_lighting(lit);
+        r.upload_terrain(&map);
+        let look = dim(0.5);
+        let look = lit.then_some(&look);
+        let texture = gpu.output_texture((160, 120));
+        let magenta = [255u8, 0, 255, 255].repeat(160 * 120);
+        gpu.queue().write_texture(
+            texture.as_image_copy(),
+            &magenta,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(160 * 4),
+                rows_per_image: Some(120),
+            },
+            texture.size(),
+        );
+        r.render_views_over(&views, look, &texture.create_view(&Default::default()));
+        let over = gpu.read_texture(&texture);
+        let cleared = gpu.render_views_to_image(&mut r, &views, look, (160, 120));
+        for y in 0..120 {
+            for x in 0..160 {
+                let inside = (40..110).contains(&x) && (20..90).contains(&y);
+                let want = if inside { cleared.get(x, y) } else { Rgba::MAGENTA };
+                assert_eq!(over.get(x, y), want, "lit {lit}: ({x}, {y})");
+                if !inside {
+                    assert_eq!(cleared.get(x, y), Rgba::rgb(0, 0, 0), "lit {lit}: ({x}, {y}) cleared");
+                }
+            }
+        }
+        // The area holds the picture and its bars (80 × 60 into 70 × 70).
+        assert_eq!(over.get(40, 20), Rgba::rgb(0, 0, 0), "a bar");
+        assert_ne!(over.get(75, 55), Rgba::rgb(0, 0, 0), "the picture");
+    }
+}

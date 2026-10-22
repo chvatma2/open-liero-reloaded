@@ -23,7 +23,36 @@ on screen or offscreen.
   unchanged `render`/`render_in` (Task 9 ruling: their callers keep their
   signatures); `None`, or lighting off (the default), draws exactly
   `render_in`'s bytes (`look_none_draws_todays_bytes`). `set_lighting`
-  resets the world target only on a change; `lighting()` says which.
+  resets the world targets only on a change; `lighting()` says which.
+- **Several views a frame** (issue #26, split screen; `pass.rs`):
+  `render_views(&[ViewDraw { list, area }], Option<&LookFrame>, &view)`
+  clears the target once, then draws each view into its `area` (clipped
+  to the target, the upscale scissored to it: its black bars are its
+  own, nothing outside is touched); `render_views_over` is it without the
+  clear (the rest of the target is left as it was). `render_lit` is
+  `render_views` of one view, `render_in` the same unlit: one view draws
+  exactly as before (the goldens). Each view has its own `Target` (world
+  target, shade, `LitTarget`: light grid, bloom, occluder map, composite,
+  lit target) at its view's size, made in order and kept while the count
+  shrinks, and its own uniforms (the world pass's globals, the upscale's,
+  the look's `LookGlobals` in `LitTarget::globals`), so every view is
+  encoded into one command encoder and one submit: all views' world and
+  occluder passes, the glow light once, all views' look passes, then
+  all upscales. The glow light reads the frame's globals
+  (`LookState::globals`: the first view's look with the level's occluder
+  map; the lit terrain's group 2 reads them too, none of a view's fields)
+  and its own occluder map (`LookTextures::gi_occluders`, `R8Uint` at the
+  world size, cleared each lit frame, each view's map copied in where it
+  lies in the level, `copy_occluders`: exactly one view's bytes for one
+  view); one history step a frame (`glow_light_steps()`, tests). The
+  instance buffer holds every view's quads (`ViewPlan`: its terrain,
+  distant, sprite and occluder ranges). `view_light_grid(i)` is view
+  `i`'s light grid (`light_grid()` the first's). Tests (GPU):
+  `two_views_in_one_frame_match_single_views` (unlit and lit, pictures
+  and light grids, a worm in one view),
+  `the_glow_light_steps_once_a_frame_with_four_views` (with bounce: four
+  views' light frame after frame is one view's; fails with the glow
+  light run per view), `a_view_draws_only_its_area`.
 - **Distant layers** (issue #11): `set_distant(&[DistantLayer])` makes
   one texture per layer (an empty one, or one past the device's texture
   side, skipped with a warning; `set_distant(&[])` drops them). Each frame
@@ -96,7 +125,8 @@ on screen or offscreen.
     living worms' bodies, `frame.rs`'s `occluder_instances`) drawn into an
     `R8Uint` occluder map, one texel per world pixel over the light grid
     (`LookGlobals.occluders`: origin and size), each opaque texel the worm's
-    index + 1; cleared every lit frame. `worm_in` (`common.wgsl`) reads it.
+    index + 1; cleared every lit frame. `worm_in` (`common.wgsl`) reads it;
+    the glow light reads the level-wide copy (issue #26, above).
     The glow light's emission marks a mostly-worm cell (2 + its rock
     share; not in a cell a disc lights, a muzzle flash inside its worm),
     keeping the glow under it; the cascades let a worm stop a ray only
@@ -125,7 +155,8 @@ on screen or offscreen.
     `a_one_pixel_wall_stops_light_right_behind_it`,
     `a_diagonal_wall_one_pixel_thin_stops_light`); a cascade merges only
     the upper probes whose ray start its ray's end can see (the bilinear
-    fix). A march that runs out of steps counts as blocked; a disc sum, a
+    fix). It runs once a frame however many views (issue #26). A march
+    that runs out of steps counts as blocked; a disc sum, a
     ray and the history are clamped (16384) and never NaN
     (`stacked_bright_discs_never_poison_the_light`,
     `a_long_low_tunnel_takes_no_light_through_rock`). A ray meeting rock or dirt takes its albedo × the history's
@@ -234,17 +265,21 @@ on screen or offscreen.
   (the default: fills the output keeping aspect, texel edges blend over
   one output pixel). The sub-pixel camera only moves the source rectangle.
   An sRGB target gets linear values, so it shows the same bytes.
-- **No per-frame allocation** of its own once warm: instance and dirty
-  buffers are reused, the world target and instance buffer are recreated
-  only when they must grow or change size (`frame.rs`'s no-alloc test).
+- **No per-frame allocation** of its own once warm: instance, dirty and
+  view-plan buffers are reused, the world targets and instance buffer are
+  recreated only when they must grow or change size (`frame.rs`'s
+  no-alloc test).
 - **Offscreen** (`offscreen.rs`): `Offscreen::new()` opens a device without
   a surface, preferring a software rasteriser (lavapipe on Vulkan, then
   llvmpipe on GL) so goldens are the same everywhere; `WGPU_BACKEND` and
   the other `WGPU_*` variables narrow the choice. `render_to_image`,
   `render_to_png`, `read_texture`; `render_lit_to_image(renderer, list,
-  look, size)` (plan 15a; `render_to_image` is it with `None`), `read_light`
-  (the light grid as last drawn, `Renderer::light_grid`: its `LightGrid`
-  and each texel's linear light, f16 decoded), `read_bytes` (any
+  look, size)` (plan 15a; `render_to_image` is it with `None`),
+  `render_views_to_image(renderer, views, look, size)` (issue #26),
+  `output_texture(size)` (a target to draw into, read back and write),
+  `read_light` (the light grid as last drawn, `Renderer::light_grid`: its
+  `LightGrid` and each texel's linear light, f16 decoded),
+  `read_view_light(renderer, i)` (view `i`'s), `read_bytes` (any
   `COPY_SRC` texture's texels). `NoAdapter` means skip, never panic.
   `Offscreen::open(&OffscreenOptions)` chooses otherwise (`new()` is
   `open` of the default, unchanged): `prefer: AdapterPreference::Hardware`
@@ -256,8 +291,8 @@ on screen or offscreen.
   lists every adapter found (`olr-cli gpu-bench --list-adapters`).
 - **Bench only (plan 8)**, off by default so goldens cannot move:
   `enable_gpu_timing` (true when the device has timestamps) and
-  `gpu_times` (`timing.rs`: slot 0 at the world pass's start, 1 at the
-  upscale pass's end, 2 and 3 around the probe: the first pass's start
+  `gpu_times` (`timing.rs`: slot 0 at the first view's world pass's
+  start, 1 at the last view's upscale pass's end, 2 and 3 around the probe: the first pass's start
   and the last's end, the passes between asking for none, which wgpu refuses
   when empty; only the slots a frame
   wrote are resolved, the probe's only when it ran, since Vulkan resolves
@@ -265,7 +300,7 @@ on screen or offscreen.
   is read once). `set_probe(Some(Probe { passes, taps }))` (`probe.rs`,
   `probe.wgsl`, clamped to `MAX_PROBE_PASSES`/`MAX_PROBE_TAPS`): after
   each frame, an untimed seed pass (`fs_seed`) stretches the drawn frame
-  (the world target) into the first pass's source (even with 0 passes,
+  (the first view's world target, at its area's size) into the first pass's source (even with 0 passes,
   so a baseline's wall time holds it), then `passes` ping-pong blur
   passes of `taps` taps at the output's size into the probe's own two
   textures: they blur a real picture, never a blank one a GPU would
@@ -311,7 +346,7 @@ geometry, image diff, `shade_texel_table`, the cascades' layout). The GPU
 tests (`tests/gpu.rs`; the look's read the light grid back with
 `read_light`: ambient, steps, view modes, walls, reach, edges, soak and
 floor, softness, glow light, clear solids, discs, bounce, flicker, glare,
-the disc cap, ambient occlusion, GL; issue #12:
+the disc cap, ambient occlusion, GL, several views (issue #26); issue #12:
 `a_double_skin_draws_at_four_texels_per_world_pixel`,
 `a_glowing_skin_pixel_is_bright_in_the_dark`,
 `a_skin_light_lights_the_air_and_a_wall_stops_it`) and goldens need
