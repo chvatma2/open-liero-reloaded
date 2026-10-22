@@ -108,8 +108,10 @@ pub struct Element {
     /// Its pixels' surface material (issue #37; presentation only): the id
     /// of one of `level.ron`'s `look.materials`. It lands where its pixels
     /// land: a Rock or Dirt element's in `look/surface.png`, a Background
-    /// element's in `look/surface-back.png`; on a mixed layer or a raster
-    /// each pixel by its own collision material. A distant layer takes it
+    /// element's in `look/surface-back.png`; on a mixed layer each pixel
+    /// by its own collision material, and on a raster its solid pixels in
+    /// front (its background pixels show its back art: `back_surface`).
+    /// A distant layer takes it
     /// for the whole layer; an asset carries none (yet). Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<String>,
