@@ -1,7 +1,9 @@
 //! Heat (issue #39): the heat texture, its step, its look and its light.
 
 use olr_look::{Heat, LookFrame, RampKey, SurfaceMaps, SurfaceMaterial, ViewMode};
-use olr_render::{HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer};
+use olr_render::{
+    BACK_HEAT, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer,
+};
 
 use super::*;
 
@@ -264,6 +266,63 @@ fn stepping_n_ticks_at_once_equals_n_single_steps() {
         frame(&gpu, &mut once, &dark());
     }
     assert!(temps(&gpu, &once) == before);
+}
+
+/// Issue #40: `run_heat` runs what the next frame would, so a host that
+/// deposits past [`MAX_HEAT_DEPOSITS`] or falls more than
+/// [`MAX_HEAT_STEPS`] behind between frames, running it whenever the
+/// deposits fill up or the steps pile up, draws the heat of a frame every
+/// tick.
+#[test]
+fn running_heat_between_frames_equals_a_frame_a_tick() {
+    let Some(gpu) = offscreen() else { return };
+    let mut single = heated(&gpu);
+    let mut batched = heated(&gpu);
+    let ticks = 2 * MAX_HEAT_STEPS * HEAT_STEP_MS / 10 + 40;
+    for tick in 0..ticks {
+        for k in 0..3 {
+            // A blast every tick of the first 60, three a tick: 180 in all.
+            if tick < 60 {
+                let d = blast(4.0 + (tick % 30) as f32, 40.0 + (k * 10) as f32, 3.0);
+                if batched.heat_waiting() == MAX_HEAT_DEPOSITS {
+                    batched.run_heat();
+                }
+                single.deposit_heat(d);
+                batched.deposit_heat(d);
+            }
+        }
+        single.advance_heat(10);
+        batched.advance_heat(10);
+        frame(&gpu, &mut single, &dark());
+        while batched.heat_behind() > u64::from(MAX_HEAT_STEPS) {
+            batched.run_heat();
+        }
+    }
+    assert!(single.heat_steps() > u64::from(MAX_HEAT_STEPS), "past a frame's steps");
+    frame(&gpu, &mut batched, &dark());
+    assert_eq!((single.heat_steps(), single.heat_behind()), (batched.heat_steps(), 0));
+    assert!(temps(&gpu, &single) == temps(&gpu, &batched), "the same heat");
+    assert!(temps(&gpu, &single).iter().any(|&t| t > 1.0), "still warm");
+    // Without heat it does nothing.
+    let mut plain = lit(&gpu);
+    plain.upload_terrain(&map());
+    plain.deposit_heat(blast(20.0, 70.0, 10.0));
+    plain.run_heat();
+    assert_eq!((plain.heat_waiting(), plain.heat_behind(), plain.heat_passes()), (0, 0, 0));
+}
+
+/// Issue #40: a back pixel (no rock or dirt: [`map`] below row 80, its
+/// back stone left of 40) takes [`BACK_HEAT`] of a deposit, a front pixel
+/// all of it.
+#[test]
+fn the_back_takes_a_share_of_a_deposit() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = heated(&gpu);
+    r.deposit_heat(HeatDeposit { pos: [20.5, 40.5], radius: 4.0, amount: 800.0 });
+    r.deposit_heat(HeatDeposit { pos: [20.5, 85.5], radius: 4.0, amount: 800.0 });
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    assert_eq!((at(&t, 20, 40), at(&t, 20, 85)), (800.0, 800.0 * BACK_HEAT));
 }
 
 /// With nothing hot no heat pass runs; a deposit runs them.

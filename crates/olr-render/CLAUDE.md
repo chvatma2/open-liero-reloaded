@@ -279,7 +279,7 @@ on screen or offscreen.
   timing is on (below, issue #34).
 - **Heat** (issue #39, spec `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`;
   `renderer/heat.rs`, `look/heat*.wgsl`; no OLX counterpart). Behind a
-  direct API (explosions deposit it from issue 4/10 on):
+  direct API (issue #40: `olr-present` deposits each explosion's heat):
   `set_surface(&[SurfaceMaterial], Option<&SurfaceMaps>)` before
   `upload_terrain` (`olr_present::Presentation::upload` does it on a
   whole upload); with lighting on, maps of the level's size and a
@@ -295,12 +295,20 @@ on screen or offscreen.
   at most `MAX_HEAT_STEPS` 250 a frame, the rest carried; each deposit
   lands before the step it was made in, so N steps at once draw N single
   steps' bytes), `reset_heat` (a replay seek), `has_heat`,
-  `heat_active`, `heat_texture`. The temperature is an `R16Uint` texture
+  `heat_active`, `heat_texture`. Issue #40: `run_heat()` runs what the
+  next lit frame would (the waiting deposits, at most `MAX_HEAT_STEPS`
+  steps) in a submit of its own, so a host that deposits more than
+  `MAX_HEAT_DEPOSITS` or lets more steps fall due between frames
+  (`heat_waiting()`, `heat_behind()`) drops and delays nothing
+  (`running_heat_between_frames_equals_a_frame_a_tick`). The temperature is an `R16Uint` texture
   at world size (degrees × `HEAT_SCALE` 64: GL renders into no
   `R32Float`), with a scratch twin; a lit frame's first passes (once a
   frame, however many views: `split_screen_steps_once_per_frame`) are
   the frame's ops in order: deposits (falloff `1 − (d/R)²`, × the
-  material's sensitivity over its capacity), steps (into the scratch over
+  material's sensitivity over its capacity; issue #40: × `BACK_HEAT` 0.2
+  on a back pixel, where no rock or dirt stands: the wall lies behind the
+  explosion; each deposit added in whole texel units, so deposits landing
+  in one pass or several give the same bytes), steps (into the scratch over
   the active boxes, scissored, copied back) and zeroes. A step: each
   4-neighbour gives `min(MAX_COUPLING 0.24, CONDUCT 0.05 ×
   min(k_p, k_q) / c_p)` of its difference (conductivity, capacity as
@@ -423,7 +431,10 @@ on screen or offscreen.
   `look-test-distant` (issue #11: a night sky at depth 90 and a far city at
   55 seen through two gaps); `look-rocket.png` is
   `olr-cli render-match` of chaos bots with the look test mod
-  (`fixtures/look/mods`), seed 1, 300 ticks. Byte identity (issue #34):
+  (`fixtures/look/mods`), seed 1, 300 ticks; issue #40's `heat-fresh.png`
+  and `heat-cooled.png` are `render-match` of the heat test level and mod
+  (`look-test-heat`, `look-test-heat-mod`): rims glowing, then cooled.
+  Byte identity (issue #34):
   `fixtures/render/lit-hashes.ron`, `olr-cli frame-hashes` of a lit Castle
   Strike Reloaded match, a hash of the exact bytes of each frame's light
   grid and lit target (no tolerance; only on the adapter that recorded

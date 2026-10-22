@@ -20,7 +20,7 @@ mod uploads;
 
 pub use gi::{GI_CELL_BUDGET, gi_cell};
 pub use heat::{
-    HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, MAX_HEAT_AMOUNT, MAX_HEAT_DEPOSITS, MAX_HEAT_RADIUS,
+    BACK_HEAT, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, MAX_HEAT_AMOUNT, MAX_HEAT_DEPOSITS, MAX_HEAT_RADIUS,
     MAX_HEAT_STEPS,
 };
 pub use look::WORM_SHADOW;

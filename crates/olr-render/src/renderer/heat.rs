@@ -73,6 +73,11 @@ const COOL_MIN: f32 = 0.05;
 /// (every pixel cools in the end, even inside an insulator).
 const BULK: f32 = 0.25;
 
+/// The share of a deposit a back pixel (where no rock or dirt stands)
+/// takes (issue #40): the back wall lies behind the explosion, so one in
+/// the open warms it only faintly; a crater's rim takes it whole.
+pub const BACK_HEAT: f32 = 0.2;
+
 /// The light a fully glowing hot pixel casts, × its colour (linear) × its
 /// material's `light` (a glow group's at 100 % intensity casts 1).
 pub(super) const HEAT_CAST: f32 = 1.0;
@@ -294,6 +299,16 @@ impl HeatSim {
     /// Whether any pixel may be hot (a box, or a deposit waiting).
     pub(super) fn active(&self) -> bool {
         !self.boxes.is_empty() || !self.pending.is_empty()
+    }
+
+    /// The deposits waiting for a frame.
+    pub(super) fn waiting(&self) -> usize {
+        self.pending.len()
+    }
+
+    /// The steps the match time asked for that have not run.
+    pub(super) fn behind(&self) -> u64 {
+        self.due - self.done
     }
 
     /// Queues `d` for the next frame (dropped past [`MAX_HEAT_DEPOSITS`],
@@ -553,7 +568,7 @@ const FLOAT: wgpu::BindingType = wgpu::BindingType::Texture {
 /// The WGSL the heat passes and readers share, after the Rust constants.
 pub(super) fn heat_common() -> String {
     format!(
-        "const HEAT_SCALE: f32 = {HEAT_SCALE:?};\nconst HEAT_MAX: f32 = {HEAT_MAX:?};\nconst RAMP_BINS: i32 = {RAMP_BINS};\nconst HEAT_CAST: f32 = {HEAT_CAST:?};\nconst HEAT_REACH: f32 = {HEAT_REACH:?};\nconst MAX_COUPLING: f32 = {MAX_COUPLING:?};\nconst COOL_RATE: f32 = {COOL_RATE:?};\nconst COOL_MIN: f32 = {COOL_MIN:?};\nconst BULK: f32 = {BULK:?};\nconst MAX_HEAT_DEPOSITS: u32 = {MAX_HEAT_DEPOSITS}u;\n{}",
+        "const HEAT_SCALE: f32 = {HEAT_SCALE:?};\nconst HEAT_MAX: f32 = {HEAT_MAX:?};\nconst RAMP_BINS: i32 = {RAMP_BINS};\nconst HEAT_CAST: f32 = {HEAT_CAST:?};\nconst HEAT_REACH: f32 = {HEAT_REACH:?};\nconst MAX_COUPLING: f32 = {MAX_COUPLING:?};\nconst COOL_RATE: f32 = {COOL_RATE:?};\nconst COOL_MIN: f32 = {COOL_MIN:?};\nconst BULK: f32 = {BULK:?};\nconst BACK_HEAT: f32 = {BACK_HEAT:?};\nconst MAX_HEAT_DEPOSITS: u32 = {MAX_HEAT_DEPOSITS}u;\n{}",
         include_str!("../look/heat_common.wgsl")
     )
 }
@@ -992,6 +1007,38 @@ impl super::Renderer {
         if let Some(s) = self.heat_sim() {
             s.reset();
         }
+    }
+
+    /// Runs the heat's waiting deposits and due steps now, as the next lit
+    /// frame would (at most [`MAX_HEAT_STEPS`] steps), in a submit of their
+    /// own (issue #40): a host that deposits more than
+    /// [`MAX_HEAT_DEPOSITS`] between frames, or lets more steps fall due,
+    /// drops and delays nothing. However the work is split between these
+    /// and frames, the heat is the same. Nothing without heat.
+    pub fn run_heat(&mut self) {
+        let Some(state) = self.look.as_mut() else { return };
+        let Some(h) = state.textures.as_mut().and_then(|t| t.heat.as_mut()) else { return };
+        h.prepare(&self.queue);
+        if h.sim.ops.is_empty() {
+            return;
+        }
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("olr-render heat") });
+        h.encode(&mut encoder, &state.heat, |_| None);
+        self.queue.submit([encoder.finish()]);
+    }
+
+    /// The heat deposits waiting for the next frame (at most
+    /// [`MAX_HEAT_DEPOSITS`]; 0 without heat).
+    pub fn heat_waiting(&self) -> usize {
+        self.heat_textures().map_or(0, |h| h.sim.waiting())
+    }
+
+    /// The heat steps the match time asked for that have not run yet (0
+    /// without heat): past [`MAX_HEAT_STEPS`], the next frame leaves some.
+    pub fn heat_behind(&self) -> u64 {
+        self.heat_textures().map_or(0, |h| h.sim.behind())
     }
 
     /// Whether the level has heat (its materials heat, lighting on).

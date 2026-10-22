@@ -53,7 +53,10 @@ fn written(t: f32) -> vec4<u32> {
 }
 
 // Each deposit of the pass's range adds amount × (1 - (d / radius)²) ×
-// the material's gain; a pixel of no heating material holds none.
+// the material's gain (BACK_HEAT of it on the back, issue #40), in whole
+// texel units (issue #40: integer sums below 2^24 are exact, so deposits
+// landing in one pass or in several give the same texel); a pixel of no
+// heating material holds none.
 @fragment
 fn fs_heat_deposit(in: DepositOut) -> @location(0) vec4<u32> {
     let w = vec2<i32>(floor(in.pos.xy));
@@ -62,13 +65,14 @@ fn fs_heat_deposit(in: DepositOut) -> @location(0) vec4<u32> {
         return vec4<u32>(0u);
     }
     var t = temp(w);
+    let gain = mat.x * select(BACK_HEAT, 1.0, heat_is_solid(solid_tex, w));
     let c = vec2<f32>(w) + vec2<f32>(0.5);
     let end = min(u32(max(in.range.y, 0.0)), MAX_HEAT_DEPOSITS);
     for (var i = u32(max(in.range.x, 0.0)); i < end; i++) {
         let d = deposits.d[i];
         let x = length(c - d.xy) / max(d.z, 0.5);
         if x < 1.0 {
-            t += max(d.w, 0.0) * (1.0 - x * x) * mat.x * HEAT_SCALE;
+            t += floor(max(d.w, 0.0) * (1.0 - x * x) * gain * HEAT_SCALE);
         }
     }
     return written(t);
