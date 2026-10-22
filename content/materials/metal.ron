@@ -1,0 +1,10 @@
+(
+    id: "metal",
+    name: "Metal",
+    notes: "Steel: heat runs far through it, so a blast warms a wide patch less; it sheds heat fast to the air.",
+    heat: (
+        capacity: 80,
+        conductivity: 600,
+        cooling: 150,
+    ),
+)

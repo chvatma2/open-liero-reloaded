@@ -1,0 +1,10 @@
+(
+    id: "brick",
+    name: "Brick",
+    notes: "Fired clay: holds its heat a long time, like a kiln.",
+    heat: (
+        capacity: 120,
+        conductivity: 70,
+        cooling: 70,
+    ),
+)

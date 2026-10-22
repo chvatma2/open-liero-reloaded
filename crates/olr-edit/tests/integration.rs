@@ -12,6 +12,7 @@ mod guide;
 mod level;
 mod look;
 mod mask;
+mod material;
 mod mods;
 mod new;
 mod pack;

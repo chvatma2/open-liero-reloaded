@@ -63,6 +63,11 @@ pub const RELOADED_LEFT_OUT: [&str; 1] = ["README.md"];
 pub const ASSETS: &str = "content/assets";
 /// Files at the top of the built-in assets the programs never read.
 pub const ASSETS_LEFT_OUT: [&str; 1] = ["README.md"];
+/// The built-in surface materials (issue #37), beside the content
+/// (`olr_content::MATERIALS_DIR`) at the same path in the folder.
+pub const MATERIALS: &str = "content/materials";
+/// Files of the built-in materials the programs never read.
+pub const MATERIALS_LEFT_OUT: [&str; 1] = ["README.md"];
 /// The levels in [`RELOADED`] a release must hold: the verification
 /// finds each in the folder, and its server's rotation names them.
 pub const RELOADED_LEVELS: [&str; 2] =
@@ -178,11 +183,30 @@ pub fn copy_assets(from: &Path, to: &Path) -> Result<(), String> {
     copy_dir(from, to, &ASSETS_LEFT_OUT)
 }
 
+/// Copies the built-in materials `from` to `to`, leaving out
+/// `MATERIALS_LEFT_OUT`.
+pub fn copy_materials(from: &Path, to: &Path) -> Result<(), String> {
+    copy_dir(from, to, &MATERIALS_LEFT_OUT)
+}
+
 /// An error unless the release folder holds every level of
-/// [`RELOADED_LEVELS`] and every built-in asset of the repository's
-/// [`ASSETS`] (its `asset.ron`).
+/// [`RELOADED_LEVELS`], every built-in asset of the repository's
+/// [`ASSETS`] (its `asset.ron`) and every built-in material of its
+/// [`MATERIALS`] (`<id>.ron`).
 fn check_reloaded(folder: &Path) -> Result<(), String> {
     let at = |rel: &str| rel.split('/').fold(folder.to_path_buf(), |d, c| d.join(c));
+    let mut materials: Vec<String> = std::fs::read_dir(root().join(MATERIALS))
+        .map_err(|e| format!("{MATERIALS}: {e}"))?
+        .filter_map(Result::ok)
+        .filter_map(|e| e.file_name().to_str().map(str::to_string))
+        .filter(|f| f.ends_with(".ron") && !f.starts_with('.'))
+        .collect();
+    materials.sort();
+    let lacking: Vec<&str> =
+        materials.iter().map(String::as_str).filter(|f| !at(MATERIALS).join(f).is_file()).collect();
+    if !lacking.is_empty() {
+        return Err(format!("{MATERIALS} lacks {}", lacking.join(", ")));
+    }
     let mut assets: Vec<String> = std::fs::read_dir(root().join(ASSETS))
         .map_err(|e| format!("{ASSETS}: {e}"))?
         .filter_map(Result::ok)
@@ -360,6 +384,7 @@ pub fn stage(platform: Platform, build: &Path, dir: &Path, version: &str) -> Res
     copy_content(&repo.join(CONTENT), &folder.join(CONTENT))?;
     copy_reloaded(&repo.join(RELOADED), &folder.join(RELOADED))?;
     copy_assets(&repo.join(ASSETS), &folder.join(ASSETS))?;
+    copy_materials(&repo.join(MATERIALS), &folder.join(MATERIALS))?;
     write_install_manifest(&folder)?;
     Ok(folder)
 }
@@ -827,6 +852,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let folder = t.path().join("out");
         copy_assets(&root().join(ASSETS), &folder.join(ASSETS)).unwrap();
+        copy_materials(&root().join(MATERIALS), &folder.join(MATERIALS)).unwrap();
         assert!(check_reloaded(&folder).unwrap_err().contains(RELOADED_LEVELS[0]));
         let from = root().join(RELOADED);
         copy_reloaded(&from, &folder.join(RELOADED)).unwrap();
@@ -845,12 +871,29 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let folder = t.path().join("out");
         copy_reloaded(&root().join(RELOADED), &folder.join(RELOADED)).unwrap();
+        copy_materials(&root().join(MATERIALS), &folder.join(MATERIALS)).unwrap();
         assert!(check_reloaded(&folder).unwrap_err().contains("torch"));
         let from = root().join(ASSETS);
         copy_assets(&from, &folder.join(ASSETS)).unwrap();
         check_reloaded(&folder).unwrap();
         assert!(from.join("README.md").is_file() && !folder.join(ASSETS).join("README.md").exists());
         assert!(folder.join(ASSETS).join("torch").join("thumb.png").is_file());
+    }
+
+    /// Issue #37: the built-in materials ship beside the content, without
+    /// their README, and the release must hold every one.
+    #[test]
+    fn the_built_in_materials_ship_beside_the_content() {
+        let t = tempfile::tempdir().unwrap();
+        let folder = t.path().join("out");
+        copy_reloaded(&root().join(RELOADED), &folder.join(RELOADED)).unwrap();
+        copy_assets(&root().join(ASSETS), &folder.join(ASSETS)).unwrap();
+        assert!(check_reloaded(&folder).unwrap_err().contains("stone.ron"));
+        let from = root().join(MATERIALS);
+        copy_materials(&from, &folder.join(MATERIALS)).unwrap();
+        check_reloaded(&folder).unwrap();
+        assert!(from.join("README.md").is_file() && !folder.join(MATERIALS).join("README.md").exists());
+        assert!(folder.join(MATERIALS).join("glass.ron").is_file());
     }
 
     #[test]

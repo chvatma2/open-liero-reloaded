@@ -54,6 +54,8 @@ pub const MOD_RECOVERY_DIR: &str = "mod-recovery";
 pub const TEXTURES_DIR: &str = "textures";
 /// The level editor's asset library, the user's (issue #9).
 pub const ASSETS_DIR: &str = "assets";
+/// The user's surface material library (issue #37), beside `assets/`.
+pub const MATERIALS_DIR: &str = "materials";
 /// The version of a file [`Store::save_file`] writes.
 pub const FILE_VERSION: u32 = 1;
 /// Downloaded content in the cache directory (plan 11, ruling N30).
@@ -254,6 +256,12 @@ impl Store {
     /// directory.
     pub fn assets_dir(&self) -> Option<PathBuf> {
         self.dir.as_ref().map(|d| d.join(ASSETS_DIR))
+    }
+
+    /// The user's own surface materials (issue #37), if there is a data
+    /// directory.
+    pub fn materials_dir(&self) -> Option<PathBuf> {
+        self.dir.as_ref().map(|d| d.join(MATERIALS_DIR))
     }
 
     /// A RON file of the data directory (`name`, such as `editor.ron`)

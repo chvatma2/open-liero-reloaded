@@ -1,0 +1,30 @@
+(
+    id: "glass",
+    name: "Glass",
+    notes: "Glows amber when hot and lights little around it.",
+    heat: (
+        capacity: 90,
+        conductivity: 40,
+        cooling: 70,
+        look: (
+            ramp: [
+                (
+                    temperature: 120,
+                    colour: "#401800",
+                    glow: 0,
+                ),
+                (
+                    temperature: 400,
+                    colour: "#d06010",
+                    glow: 60,
+                ),
+                (
+                    temperature: 1000,
+                    colour: "#ffd890",
+                    glow: 100,
+                ),
+            ],
+            light: 50,
+        ),
+    ),
+)

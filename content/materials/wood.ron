@@ -1,0 +1,34 @@
+(
+    id: "wood",
+    name: "Wood",
+    notes: "Smoulders: warms easily, keeps its heat where it lands and glows like embers.",
+    heat: (
+        capacity: 50,
+        conductivity: 15,
+        cooling: 60,
+        look: (
+            ramp: [
+                (
+                    temperature: 80,
+                    colour: "#300c00",
+                    glow: 0,
+                ),
+                (
+                    temperature: 250,
+                    colour: "#9a2400",
+                    glow: 45,
+                ),
+                (
+                    temperature: 550,
+                    colour: "#ff6410",
+                    glow: 85,
+                ),
+                (
+                    temperature: 1000,
+                    colour: "#ffc060",
+                    glow: 100,
+                ),
+            ],
+        ),
+    ),
+)

@@ -1,0 +1,10 @@
+(
+    id: "concrete",
+    name: "Concrete",
+    notes: "Heavy and dense: slow to warm, slow to cool.",
+    heat: (
+        capacity: 140,
+        conductivity: 80,
+        cooling: 80,
+    ),
+)

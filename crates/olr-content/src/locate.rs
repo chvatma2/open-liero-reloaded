@@ -26,6 +26,17 @@ pub fn assets_dir(content: &Path) -> Option<PathBuf> {
     content.parent().map(|dir| dir.join(ASSETS_DIR))
 }
 
+/// The directory of the built-in surface materials, beside a content
+/// directory (so `content/materials` beside `content/packs`, issue #37):
+/// read-only, shipped with the packs.
+pub const MATERIALS_DIR: &str = "materials";
+
+/// The built-in materials' directory of content directory `content`
+/// ([`MATERIALS_DIR`] beside it; it may not exist).
+pub fn materials_dir(content: &Path) -> Option<PathBuf> {
+    content.parent().map(|dir| dir.join(MATERIALS_DIR))
+}
+
 /// `<exe dir>/content/packs` when that directory exists (`exe` is the
 /// running executable's path, `std::env::current_exe()`), else
 /// `content/packs` relative to the working directory.

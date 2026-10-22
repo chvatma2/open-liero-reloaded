@@ -1,0 +1,10 @@
+(
+    id: "sand",
+    name: "Sand",
+    notes: "Loose grains: hot at the surface, little depth, quick to cool.",
+    heat: (
+        capacity: 60,
+        conductivity: 30,
+        cooling: 130,
+    ),
+)

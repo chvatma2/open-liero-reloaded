@@ -1,0 +1,10 @@
+(
+    id: "dirt",
+    name: "Dirt",
+    notes: "Earth: warms quickly at the surface but holds little heat and passes it on poorly.",
+    heat: (
+        capacity: 70,
+        conductivity: 40,
+        cooling: 120,
+    ),
+)
