@@ -324,6 +324,18 @@ operations.
     `check(pack)`, `check_dir(dir)`, `source_issues`: validate's, every
     `mod_errors` error and missing asset at its path, unparsable files,
     unused assets and shared projectiles; errors first.
+  - **`art`** (issue #19, the mod editor's Art and Sounds, `olr-cli mod
+    gfx|sfx`): `images` (`gfx/*.png` but the masks), `sounds`, `users`
+    (`AssetUser { path, label }`: "Bazooka's shot", "Bazooka's fire
+    sound"), `image_frames` (a PNG within `IMAGES`, at least as wide as
+    tall), `check_sound` (`olr_pack::sounds`: WAV or Ogg in the limits),
+    `import_image`/`import_sound` (a new plain name in `gfx/`/`sfx/`),
+    `set_image` (`ImageChange`: frames before and after, `changes_play`;
+    a mask that no longer fits goes), `glow`/`set_glow` (values of the
+    image's size; all 0 removes the mask)/`set_glow_png`, `remove`
+    (refused while used, listing the users; an image's mask goes with
+    it), `rename` (file, mask and every field naming it, one `commit`),
+    `blank_image`. A refusal (`ModError::Refused`) changes nothing.
   - `walk` (private): every spawn and projectile with its path and key,
     `fresh_keys` (explicit ids where inline keys would clash), shared
     references and asset references.
@@ -349,7 +361,10 @@ operations.
   following, a weapon of MW with its projectiles and files, used-by
   against the files, inline and share round trips, check listing several
   errors, unparsable files never a panic; issue #17's
-  `a_lenient_set_keeps_the_error_and_the_save_refuses_it`),
+  `a_lenient_set_keeps_the_error_and_the_save_refuses_it`), `art.rs`
+  (issue #19: users named and a used file kept, imports checked, a glow
+  mask round-tripping and refused at another size, a replaced image's
+  frames, a rename following its users),
   `level.rs` (a proptest of the background invariant at art scales 1-4)
   and `guide.rs` (`docs/formats/README.md`'s examples parse, are canonical
   and check clean, the composed level's files generated; the asset

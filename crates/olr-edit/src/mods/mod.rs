@@ -16,7 +16,9 @@
 //!   [`copy_weapon`], [`rename_weapon`]; the mod: [`rename_mod`].
 //! - Shared projectiles: [`used_by`], [`inline`], [`share`].
 //! - [`check`], [`check_dir`]: every error and warning, located.
+//! - Images, their glow masks and sounds (issue #19): [`art`].
 
+pub mod art;
 mod check;
 mod node;
 pub mod path;

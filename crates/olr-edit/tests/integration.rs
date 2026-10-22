@@ -1,5 +1,6 @@
 //! `olr-edit`'s integration tests: one binary (CLAUDE.md rule 2).
 
+mod art;
 mod asset;
 mod common;
 mod compose;
