@@ -72,6 +72,15 @@ header's size); content hashing; validation.
 - `read_core` is strict (what `validate` reports); `read_core_tolerant`
   leaves out each undecodable sprite or missing sound file and returns its
   error, for loaders that put a placeholder in its place.
+- **Glow masks** (issue #19, `olr_format::mods::image_of_mask`): `validate`
+  checks a mod's `gfx/<name>.glow.png` against its image: none, or a mask
+  of another size (`png_size`) or that does not decode as greyscale
+  (`decode_glow_mask`), is an error on the mask; a mask whose image is
+  used is not "asset is never used" (`glow_masks_go_with_their_images`).
+- **Sounds** (`sounds`, moved from `olr-content` in issue #19):
+  `check_sound` (at most `MAX_SOUND_BYTES` 2 MiB and `MAX_SOUND_SECONDS`
+  60 s by the header) and `is_sound` (`OggS` or `RIFF`…`WAVE`), for the
+  game's loads and the editors' imports alike.
 - `validate` never panics and reports `file:line:col` for RON errors.
   Errors: unknown references, cycles, missing assets. Warnings: unused items;
   `<path>: not read by the format` for each file outside the kind's

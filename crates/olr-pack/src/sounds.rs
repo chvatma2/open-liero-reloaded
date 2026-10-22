@@ -1,5 +1,7 @@
 //! Limits on the sound files a pack may make the game decode: a hostile
-//! pack must not make `olr-audio` decode hours of audio into memory.
+//! pack must not make `olr-audio` decode hours of audio into memory. Here
+//! (moved from `olr-content` in issue #19) so the editors' imports check
+//! a sound as the game will.
 //!
 //! OLX's largest sound (MW 1.0's `infest.ogg`) is 36 KB and a few seconds
 //! long, so the limits leave a wide margin.
@@ -31,6 +33,12 @@ pub fn check_sound(bytes: &[u8]) -> Result<(), String> {
         Some(s) if s > MAX_SOUND_SECONDS => Err(format!("{s:.0} s long, more than {MAX_SOUND_SECONDS} s")),
         _ => Ok(()),
     }
+}
+
+/// Whether `bytes` starts as a sound the game reads (issue #19: what the
+/// editors import): Ogg (`OggS`) or WAV (`RIFF` … `WAVE`).
+pub fn is_sound(bytes: &[u8]) -> bool {
+    bytes.starts_with(b"OggS") || bytes.starts_with(b"RIFF") && bytes.get(8..12) == Some(b"WAVE")
 }
 
 fn u32_at(b: &[u8], at: usize) -> Option<u32> {
@@ -146,5 +154,6 @@ mod tests {
             let _ = check_sound(&w[..n]);
         }
         check_sound(b"not a sound").unwrap();
+        assert!(is_sound(&v) && is_sound(&w) && !is_sound(b"not a sound") && !is_sound(b"RIFF\0\0\0\0AVI "));
     }
 }

@@ -209,7 +209,7 @@ pub fn check_files(src: &dyn ContentSource) -> Vec<Issue> {
 
 /// `olr_pack::validate`'s warnings about what nothing uses, from the
 /// source: shared projectiles no spawn names, and files in `gfx/` and
-/// `sfx/` no field names.
+/// `sfx/` no field names (a glow mask goes with its image).
 fn unused(src: &ModSource, assets: &BTreeSet<String>) -> Vec<Issue> {
     let warn = |file: String, message: &str| {
         let path = File::of_pack_path(&file).map(|f| f.to_string());
@@ -232,6 +232,8 @@ fn unused(src: &ModSource, assets: &BTreeSet<String>) -> Vec<Issue> {
         assets
             .iter()
             .filter(|a| (a.starts_with("gfx/") || a.starts_with("sfx/")) && !named.contains(*a))
+            // Issue #19: a glow mask is used with its image.
+            .filter(|a| olr_format::mods::image_of_mask(a).is_none_or(|image| !named.contains(&image)))
             .map(|a| warn(a.clone(), "asset is never used")),
     );
     out

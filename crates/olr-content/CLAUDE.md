@@ -69,7 +69,8 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   a pack read elsewhere (issue #18: the mod editor's unsaved mod, from
   `olr_edit::pack::mod_pack`), its game sounds from this content's core
   pack (`a_mod_pack_given_loads_as_an_installed_one`).
-- **Hostile sounds** (`sounds.rs`): a sound above `MAX_SOUND_BYTES` (2 MiB)
+- **Hostile sounds** (`olr_pack::sounds`, re-exported; moved there in
+  issue #19 so the editors' imports check a sound as the game does): a sound above `MAX_SOUND_BYTES` (2 MiB)
   or longer than `MAX_SOUND_SECONDS` (60 s) by its header (Ogg granule over
   rate, WAV data over byte rate) is silence with a warning, from a mod or
   the core pack, so `olr-audio` never decodes it (`check_sound`). A stream

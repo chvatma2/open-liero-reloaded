@@ -256,6 +256,23 @@ fn check_mod(pack: &ModPack) -> Vec<Diagnostic> {
             }
             continue;
         }
+        // Issue #19: a glow mask goes with its image, of its size.
+        if let Some(image) = olr_format::mods::image_of_mask(path.as_str()) {
+            let found = VPath::new(&image).ok().and_then(|p| pack.assets.get(&p));
+            let problem = match found.map(|img| crate::image_io::png_size(img)) {
+                None => Some(format!("a glow mask without its image {image:?}")),
+                Some(None) => Some(format!("its image {image:?} is not a PNG")),
+                Some(Some(size)) => olr_format::mods::decode_glow_mask(bytes, size)
+                    .err()
+                    .map(|e| format!("glow mask of {image:?}: {e}")),
+            };
+            if let Some(message) = problem {
+                out.push(Diagnostic::new(Error, path.as_str(), message));
+            } else if !used_assets.contains(image.as_str()) {
+                out.push(Diagnostic::new(Warning, path.as_str(), "asset is never used"));
+            }
+            continue;
+        }
         if !used_assets.contains(path.as_str()) {
             let asset = MOD_ASSET_DIRS.iter().any(|d| path.as_str().starts_with(d));
             out.push(Diagnostic::new(
@@ -374,6 +391,48 @@ mod tests {
         assert_eq!(d.len(), 1, "{d:?}");
         assert_eq!((d[0].file.as_deref(), d[0].line), (Some("weapons/rocket.ron"), None));
         assert!(d[0].message.contains("fire.shot.amount"), "{}", d[0].message);
+    }
+
+    /// Issue #19: a used image's glow mask is no unused asset; a mask
+    /// without its image, of another size or cut short is an error.
+    #[test]
+    fn glow_masks_go_with_their_images() {
+        let png = |w, h| crate::image_io::encode_rgba(&olr_data::image::RgbaImage::new(w, h));
+        let mask = |w, h| olr_format::mods::encode_glow_mask((w, h), &vec![255; (w * h) as usize]);
+        let mut pack = sample_mod();
+        pack.assets.insert(VPath::new("gfx/missile.png").unwrap(), png(8, 4));
+        pack.assets.insert(VPath::new("gfx/missile.glow.png").unwrap(), mask(8, 4));
+        assert_eq!(validate(&written(&pack)), vec![]);
+        let check = |path: &str, bytes: Vec<u8>| {
+            let mut p = pack.clone();
+            p.assets.insert(VPath::new(path).unwrap(), bytes);
+            validate(&written(&p)).iter().map(|d| d.to_string()).collect::<Vec<_>>()
+        };
+        let d = check("gfx/missile.glow.png", mask(4, 4));
+        assert!(
+            d.len() == 1 && d[0].starts_with("error: gfx/missile.glow.png: ") && d[0].contains("4 × 4"),
+            "{d:?}"
+        );
+        let d = check("gfx/other.glow.png", mask(8, 4));
+        assert_eq!(
+            d,
+            vec!["error: gfx/other.glow.png: a glow mask without its image \"gfx/other.png\"".to_string()]
+        );
+        let cut = mask(8, 4)[..30].to_vec();
+        let d = check("gfx/missile.glow.png", cut);
+        assert!(d.len() == 1 && d[0].starts_with("error: gfx/missile.glow.png"), "{d:?}");
+        // An unused image's mask is as unused as it.
+        let mut p = pack.clone();
+        p.assets.insert(VPath::new("gfx/extra.png").unwrap(), png(2, 2));
+        p.assets.insert(VPath::new("gfx/extra.glow.png").unwrap(), mask(2, 2));
+        let d: Vec<String> = validate(&written(&p)).iter().map(|d| d.to_string()).collect();
+        assert_eq!(
+            d,
+            vec![
+                "warning: gfx/extra.glow.png: asset is never used".to_string(),
+                "warning: gfx/extra.png: asset is never used".to_string()
+            ]
+        );
     }
 
     #[test]

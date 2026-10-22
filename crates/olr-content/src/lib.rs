@@ -24,7 +24,6 @@ mod placeholder;
 mod replay;
 mod sandbox;
 mod skins;
-mod sounds;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -50,6 +49,7 @@ pub use matches::{
     build_match_spawning, default_looks,
 };
 pub use mods::{LoadedMod, check_frames};
+pub use olr_pack::sounds::{MAX_SOUND_BYTES, MAX_SOUND_SECONDS, check_sound};
 pub use placeholder::{PLACEHOLDER, placeholder_image};
 pub use replay::replay_assets_from;
 pub use sandbox::{SANDBOX_START, SandboxSetup, SpawnSpec, match_setup, new_world_from};
@@ -57,7 +57,6 @@ pub use skins::{
     FULL_LIGHT_GLOW, GLOW_LEVELS, SHEET_FRAMES, SkinFrameLight, SkinInfo, SkinLights, SkinSource, glow_level,
     resolve_id, skin_source, skin_sprite,
 };
-pub use sounds::{MAX_SOUND_BYTES, MAX_SOUND_SECONDS, check_sound};
 
 #[doc(no_inline)]
 pub use olr_data::loadouts::{DEFAULT_LOADOUT, MatchLoadout};

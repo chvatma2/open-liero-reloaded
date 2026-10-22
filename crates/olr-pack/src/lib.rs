@@ -15,6 +15,7 @@ mod level_pack;
 mod mod_pack;
 mod ron_io;
 mod skin_pack;
+pub mod sounds;
 mod theme_pack;
 mod validate;
 
