@@ -5,7 +5,9 @@
 
 use std::path::{Path, PathBuf};
 
-use olr_content::{Content, LoadedMod, LoadedSkin, SandboxSetup, SpawnSpec, olx_level_id, olx_mod_id};
+use olr_content::{
+    Content, LoadedLevel, LoadedMod, LoadedSkin, SandboxSetup, SpawnSpec, olx_level_id, olx_mod_id,
+};
 use olr_data::skin::{MaskKind, SkinLight};
 use olr_look::{
     Ambient, Animation, GlowColour, GlowGroup, Grade, Key, LevelLook, Light, ModLook, ProjectileLook, Reach,
@@ -905,18 +907,33 @@ fn play_heated(
     level_look: Option<LevelLook>,
     surface: bool,
     stride: i64,
+    each: impl FnMut(&mut Presentation, &World, &[olr_sim::Event]),
+) {
+    let maps = |level: &mut LoadedLevel| {
+        let world = (level.material.width(), level.material.height());
+        level.surface = surface.then(|| {
+            let mut m = olr_look::SurfaceMaps::empty(world);
+            m.front.fill(1);
+            m.back.fill(1);
+            m
+        });
+    };
+    play_level(content, name, level_look, maps, stride, each);
+}
+
+/// [`play_heated`] with the level made as `prepare` makes it.
+fn play_level(
+    content: &Content,
+    name: &str,
+    level_look: Option<LevelLook>,
+    prepare: impl FnOnce(&mut LoadedLevel),
+    stride: i64,
     mut each: impl FnMut(&mut Presentation, &World, &[olr_sim::Event]),
 ) {
     let (sc, trace) = olr_scenario::load_fixture(&fixtures(), name).unwrap();
     let mut level = content.load_level(&olx_level_id(&sc.level)).unwrap();
     level.look = level_look;
-    let world = (level.material.width(), level.material.height());
-    level.surface = surface.then(|| {
-        let mut m = olr_look::SurfaceMaps::empty(world);
-        m.front.fill(1);
-        m.back.fill(1);
-        m
-    });
+    prepare(&mut level);
     let theme = content.load_theme(&level.theme).unwrap();
     let m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();
     let setup = PresentSetup {
@@ -1022,4 +1039,26 @@ fn only_a_level_whose_materials_heat_queues_heat() {
             assert!(p.heat_waiting().is_empty() && p.blasts_started().is_empty());
         });
     }
+    // Issue #41: a distant layer's material that heats is enough; one
+    // that does not, or none, is not.
+    for (value, heats) in [(1, true), (0, false), (2, false)] {
+        let look =
+            LevelLook { materials: [heated_look().materials, cold_materials()].concat(), ..heated_look() };
+        let mut queued = false;
+        play_level(
+            &content,
+            BAZOOKA,
+            Some(look),
+            |l| l.distant_surface = vec![0, value],
+            1,
+            |p, _, _| {
+                queued |= !p.heat_waiting().is_empty();
+            },
+        );
+        assert_eq!(queued, heats, "distant value {value}");
+    }
+}
+
+fn cold_materials() -> Vec<olr_look::SurfaceMaterial> {
+    vec![olr_look::SurfaceMaterial { id: "cold".into(), heat: None }]
 }

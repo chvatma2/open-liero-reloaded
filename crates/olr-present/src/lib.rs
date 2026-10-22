@@ -34,7 +34,7 @@ use olr_content::{CorePack, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
 use olr_data::image::Rgba;
 use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
 use olr_look::{LevelLook, LookFrame, ModLook};
-use olr_render::{MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer};
+use olr_render::{HeatView, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer};
 use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, ShadeRules, Viewport};
 use olr_sim::{TickEvents, World};
 use olr_terrain::ColorMap;
@@ -88,6 +88,9 @@ pub struct Presentation {
     /// its look's materials before each whole terrain upload (issue #39:
     /// its heat).
     surface: Option<olr_look::SurfaceMaps>,
+    /// Each distant layer's surface material value (issue #41), given to
+    /// the renderer with the surface maps.
+    distant_surface: Vec<u8>,
     /// The level or the mod has a look: the renderer's look passes draw it.
     lit: bool,
     /// The frame's look, rebuilt by every lit [`Presentation::build`].
@@ -109,10 +112,13 @@ pub struct Presentation {
 }
 
 /// Whether `level`'s surface materials heat (issue #40): a material that
-/// does in its look, and maps.
+/// does in its look, and maps; or (issue #41) a distant layer's material
+/// that does.
 fn heats(level: &LoadedLevel) -> bool {
-    level.surface.is_some()
-        && level.look.as_ref().is_some_and(|l| l.materials.iter().any(|m| m.heats().is_some()))
+    let Some(look) = &level.look else { return false };
+    let heating = |m: Option<&olr_look::SurfaceMaterial>| m.is_some_and(|m| m.heats().is_some());
+    (level.surface.is_some() && look.materials.iter().any(|m| heating(Some(m))))
+        || level.distant_surface.iter().any(|&v| heating(look.material(v)))
 }
 
 /// The most heat catch-up runs an upload makes: a box lives at most 15 000
@@ -148,6 +154,7 @@ impl Presentation {
             level_look: s.level.look.clone(),
             distant: s.level.distant.clone(),
             surface: s.level.surface.clone(),
+            distant_surface: s.level.distant_surface.clone(),
             lit,
             look: LookFrame::default(),
             mod_look: s.m.look.clone(),
@@ -306,6 +313,7 @@ impl Presentation {
         self.color = level.color_map(theme);
         self.distant = level.distant.clone();
         self.surface = level.surface.clone();
+        self.distant_surface = level.distant_surface.clone();
         self.heats = heats(level);
         self.terrain_new = true;
         // The heat starts afresh with the terrain upload.
@@ -461,6 +469,7 @@ impl Presentation {
             // The heat (issue #39) is made afresh with the terrain.
             let materials = self.level_look.as_ref().map_or(&[][..], |l| &l.materials[..]);
             renderer.set_surface(materials, self.surface.as_ref());
+            renderer.set_distant_surface(&self.distant_surface);
             renderer.upload_terrain(&self.color);
             renderer.set_distant(&self.distant);
         } else {
@@ -481,6 +490,13 @@ impl Presentation {
             return;
         }
         let ms = |d: u64| u32::try_from(d).unwrap_or(u32::MAX);
+        // Issue #41: the distant layers' slices are placed by the views of
+        // the frame built, the one first showing the explosions.
+        let mut views = [HeatView::centred(olr_scene::View::default()); olr_scene::MAX_VIEWS];
+        for (v, c) in views.iter_mut().zip(self.scene.cameras()) {
+            *v = HeatView::centred(c.view());
+        }
+        let views = &views[..self.scene.views().min(olr_scene::MAX_VIEWS)];
         let mut clock = self.heat_clock;
         for &(at, deposit) in self.dynamic.heat() {
             if at > clock {
@@ -490,7 +506,7 @@ impl Presentation {
             if r.heat_waiting() >= MAX_HEAT_DEPOSITS {
                 r.run_heat();
             }
-            r.deposit_heat(deposit);
+            r.deposit_heat_seen(deposit, views);
         }
         self.dynamic.clear_heat();
         if self.heat_now > clock {

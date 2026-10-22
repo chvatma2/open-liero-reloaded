@@ -58,11 +58,14 @@ wired in the frame loop's order **once**, so each mode that draws a world
   - Issue #39: every whole terrain upload first hands the renderer the
     level's surface materials and maps (`LoadedLevel::surface`, again at
     `restart`; `Renderer::set_surface`), so a level whose materials heat
-    gets a fresh heat texture.
+    gets a fresh heat texture. Issue #41: and each distant layer's
+    material value (`LoadedLevel::distant_surface`,
+    `Renderer::set_distant_surface`), so `set_distant` heats the layers.
   - **Heat** (issue #40, spec
     `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`): in
     a level whose materials heat (its look has one that `heats()`, and
-    surface maps; `heats`, again at `restart`) each explosion of the
+    surface maps, or issue #41 a distant layer's material heats; `heats`,
+    again at `restart`) each explosion of the
     scene's per-tick records (`Scene::explosions`: a projectile's or a
     bonus blown up; an explosive trail or a beam never makes one) queues
     the engine's heat (`olr_look::engine::explosion_heat` of its damage)
@@ -72,7 +75,10 @@ wired in the frame loop's order **once**, so each mode that draws a world
     `olr-fx` entities, which a frame can miss. The queue (`HEAT_QUEUE`
     2048, reserved at the first) holds each deposit with its tick's time
     until `upload`, which after the terrain hands the renderer each one
-    after `advance_heat` up to its tick, then the time up to the frame
+    after `advance_heat` up to its tick (issue #41: `deposit_heat_seen`
+    with every view's camera as last built, `HeatView::centred`, the frame
+    that first shows the explosion: the renderer places the distant
+    layers' slices by the nearest), then the time up to the frame
     built (`heat_now`, the world's time, ticks never drawn included;
     `heat_clock` the time handed so far), running `Renderer::run_heat`
     whenever `MAX_HEAT_DEPOSITS` wait or more than `MAX_HEAT_STEPS` are
@@ -209,7 +215,7 @@ the same whatever the look); issue #40's
 explosion, at its place and the engine's size, none for the trail's many
 puffs), `explosion_heat_does_not_depend_on_the_frame_rate` (a frame
 every 1, 4 or 7 ticks queues the same deposits) and
-`only_a_level_whose_materials_heat_queues_heat`; `tests/net.rs`'s event keys leave an
+`only_a_level_whose_materials_heat_queues_heat` (issue #41: a distant layer's heating material too); `tests/net.rs`'s event keys leave an
 explosion's projectile out; `tests/no_alloc.rs`, its own binary, a warm
 lit build with every dynamic light, own and mod-wide explosion lights
 included, allocates nothing). They need

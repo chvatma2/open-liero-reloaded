@@ -224,6 +224,12 @@ impl HeatView {
     pub fn of(list: &DrawList) -> HeatView {
         HeatView { view: list.view, camera: list.camera() }
     }
+
+    /// A view whose distant layers scroll by its centre (play's: a list
+    /// without [`DrawList::parallax`]).
+    pub fn centred(view: View) -> HeatView {
+        HeatView { view, camera: (view.x + view.w / 2.0, view.y + view.h / 2.0) }
+    }
 }
 
 /// The view of `views` nearest `pos` (by the distance to its rectangle,
