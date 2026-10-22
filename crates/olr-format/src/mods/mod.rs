@@ -6,8 +6,8 @@
 //! image the simulation reads) and sounds in `sfx/` (WAV or Ogg Vorbis). An
 //! image `gfx/<name>.png` may have a glow mask, `gfx/<name>.glow.png`
 //! (issue #19): an 8-bit greyscale PNG of the image's size, 0 no glow to
-//! 255 full, drawn in quarters (64 and above is a quarter or more; below
-//! 32 none). A glowing pixel shows bright whatever a level's darkness, in
+//! 255 full, drawn in the nearest quarter (below 32 none, 224 and above
+//! full). A glowing pixel shows bright whatever a level's darkness, in
 //! its own colour; a projectile's `look.glow` still brightens its whole
 //! sprite. A mask without its image, or of another size, is an error.
 
