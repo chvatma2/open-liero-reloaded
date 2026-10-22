@@ -575,6 +575,7 @@ pub fn encode(asset: &Asset) -> Result<AssetSource, AssetError> {
         size: asset.size,
         elements,
         glow_groups: asset.groups.clone(),
+        materials: Vec::new(),
     };
     let mut src = AssetSource { file, files, thumb: None };
     let decoded = decode(&src)?;

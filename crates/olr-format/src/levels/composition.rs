@@ -111,8 +111,8 @@ pub struct Element {
     /// element's in `look/surface-back.png`; on a mixed layer each pixel
     /// by its own collision material, and on a raster its solid pixels in
     /// front (its background pixels show its back art: `back_surface`).
-    /// A distant layer takes it
-    /// for the whole layer; an asset carries none (yet). Default none.
+    /// A distant layer takes it for the whole layer. In an asset, one of
+    /// the asset's `materials` (issue #38). Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub surface: Option<String>,
     /// Its back art's surface material: the id of one of the look's

@@ -2,17 +2,18 @@
 //! dropped into any level by the editor's Assets tab or `olr-cli asset
 //! place`. It is a folder, `<asset-id>/`, holding `asset.ron` (its name,
 //! the art scale it was made at, its size, its elements and the glow
-//! groups they name), the elements' files (`images/<source>`,
-//! `layers/<id>.png`, `layers/<id>.material.png`, `layers/<id>.back.png`,
-//! `masks/<id>.png`, `glow/<id>.png`: a level composition's `editor/`
-//! files, without `editor/`) and `thumb.png`, the asset drawn lit under a
+//! groups and surface materials they name), the elements' files
+//! (`images/<source>`, `layers/<id>.png`, `layers/<id>.material.png`,
+//! `layers/<id>.back.png`, `masks/<id>.png`, `glow/<id>.png`,
+//! `surface/<id>.png`, `surface/<id>.back.png`: a level composition's
+//! `editor/` files, without `editor/`) and `thumb.png`, the asset drawn lit under a
 //! dark preview look. Elements are a level's composition elements (see
 //! the level page), placed relative to the asset's top-left corner; an
 //! asset holds no raster. A placed asset is ordinary elements: no level
 //! refers to its folder. An asset folder is untrusted content: reading
 //! checks it with the level format's limits.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use olr_vfs::{ContentSink, ContentSource, VPath};
 use serde::{Deserialize, Serialize};
@@ -21,9 +22,11 @@ use crate::FormatError;
 use crate::image_io;
 use crate::levels::{
     CompositionSource, EDITOR_DIR, Element, ElementKind, MAX_ART_SCALE, MAX_ELEMENTS, MAX_SIDE,
-    MAX_THUMB_BYTES, MAX_THUMB_SIDE, check_composition, check_glow_groups, element_files,
+    MAX_THUMB_BYTES, MAX_THUMB_SIDE, check_composition, check_glow_groups, check_surface_maps,
+    check_surfaces, decode_surface_map, element_files, surface_back_file, surface_file, surface_map_size,
 };
 use crate::look::{GlowGroupSource, LookSource};
+use crate::materials::MaterialSource;
 use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
 
 /// An asset's description in its folder.
@@ -59,6 +62,15 @@ pub struct AssetFile {
     /// settings kept; a missing one is added with these. Default none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub glow_groups: Vec<GlowGroupSource>,
+    /// The surface materials its elements name (issue #38), at most 255,
+    /// ids unique, each named by one at least (a `surface`, a
+    /// `back_surface` or a painted map's value: `v` is `materials[v - 1]`
+    /// here, as in a level). Placed in a level, a material the level has
+    /// (by id) is joined, its own settings kept, and the painted maps
+    /// follow its index there; a missing one is added with these. Default
+    /// none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub materials: Vec<MaterialSource>,
 }
 
 fn one() -> u32 {
@@ -107,7 +119,12 @@ fn of_asset(e: FormatError) -> FormatError {
             strip_editor(f).to_string()
         }
     };
-    let text = |m: &str| m.replace(crate::levels::COMPOSITION_FILE, ASSET_FILE).replace("editor/", "");
+    let text = |m: &str| {
+        m.replace(crate::levels::COMPOSITION_FILE, ASSET_FILE)
+            .replace("editor/", "")
+            .replace("level.ron's look", ASSET_FILE)
+            .replace("the look has", "the asset has")
+    };
     match e {
         FormatError::Parse { file: f, line, col, message } => {
             FormatError::Parse { file: file(&f), line, col, message: text(&message) }
@@ -156,7 +173,10 @@ fn check_names(file: &AssetFile) -> Result<(), FormatError> {
 /// (`check_composition`: ids, image fields, the pixel budget, every file
 /// present, each file's size from its header, glow masks of the box's
 /// size), no raster; every glow naming one of the asset's groups, the
-/// groups valid (`compile_look_source`) and each named.
+/// groups valid (`compile_look_source`) and each named; every surface
+/// naming one of the asset's materials, the materials valid, the painted
+/// surface maps of their boxes with values within the materials, and each
+/// material named (issue #38).
 pub fn check_asset(src: &AssetSource) -> Result<(), FormatError> {
     let f = &src.file;
     let name_len = f.name.chars().count();
@@ -183,14 +203,15 @@ pub fn check_asset(src: &AssetSource) -> Result<(), FormatError> {
     if let Some(i) = f.elements.iter().position(|e| e.distant.is_some()) {
         return Err(invalid(&format!("elements[{i}].distant"), "an asset carries no distant layer"));
     }
-    // Materials 1/10 (issue #37): assets carry no materials yet.
-    if let Some(i) = f.elements.iter().position(|e| e.clone().without_surfaces() != *e) {
-        return Err(invalid(&format!("elements[{i}].surface"), "an asset carries no surface materials"));
-    }
-    let look = LookSource { glow_groups: f.glow_groups.clone(), ..LookSource::default() };
-    crate::look::compile_look_source(&look, ASSET_FILE)?;
+    let look = LookSource {
+        glow_groups: f.glow_groups.clone(),
+        materials: f.materials.clone(),
+        ..LookSource::default()
+    };
+    crate::look::compile_look_source(&look, ASSET_FILE).map_err(look_paths)?;
     let composition = as_composition(src);
     check_glow_groups(&composition.composition, Some(&look)).map_err(of_asset)?;
+    check_surfaces(&composition.composition, Some(&look)).map_err(of_asset)?;
     for (i, g) in f.glow_groups.iter().enumerate() {
         if !f.elements.iter().any(|e| e.glow.as_ref().is_some_and(|x| x.group == g.id)) {
             return Err(invalid(
@@ -199,7 +220,57 @@ pub fn check_asset(src: &AssetSource) -> Result<(), FormatError> {
             ));
         }
     }
-    check_composition(&composition, f.size, f.art_scale).map_err(of_asset)
+    check_composition(&composition, f.size, f.art_scale).map_err(of_asset)?;
+    check_surface_maps(&composition, f.size, f.materials.len()).map_err(of_asset)?;
+    let used = used_materials(&composition, f.size, &f.materials).map_err(of_asset)?;
+    for (i, m) in f.materials.iter().enumerate() {
+        if !used.contains(&i) {
+            return Err(invalid(
+                &format!("materials[{i}]"),
+                format!("no element is made of material {:?}", m.id),
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// A look error said of `asset.ron`'s own fields: `look.materials[i]` is
+/// `materials[i]` there.
+fn look_paths(e: FormatError) -> FormatError {
+    match e {
+        FormatError::Invalid { file, path, message } => FormatError::Invalid {
+            file,
+            path: path.strip_prefix("look.").map_or(path.clone(), str::to_string),
+            message,
+        },
+        e => e,
+    }
+}
+
+/// The indices of `materials` that `src`'s elements (a level of `size`)
+/// name: by `surface` or `back_surface`, or by a value of a painted map.
+fn used_materials(
+    src: &CompositionSource,
+    size: (u32, u32),
+    materials: &[MaterialSource],
+) -> Result<BTreeSet<usize>, FormatError> {
+    let mut used = BTreeSet::new();
+    for e in &src.composition.elements {
+        for id in [&e.surface, &e.back_surface].into_iter().flatten() {
+            used.extend(materials.iter().position(|m| m.id == *id));
+        }
+        for (file, on) in [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)] {
+            if on {
+                let (_, values) = decode_surface_map(src, &file, surface_map_size(&e.kind, size))?;
+                let mut seen = [false; 256];
+                for v in values {
+                    seen[usize::from(v)] = true;
+                }
+                used.extend((1..256).filter(|v| seen[*v]).map(|v| v - 1));
+            }
+        }
+    }
+    Ok(used)
 }
 
 /// The asset folder `src`: `asset.ron`, then its elements' files (each at
@@ -311,6 +382,7 @@ mod tests {
                 size: (4, 3),
                 elements: vec![element],
                 glow_groups: vec![group("flames")],
+                materials: Vec::new(),
             },
             files,
             thumb: Some(image_io::encode_rgba(&RgbaImage::new(16, 12))),
@@ -374,6 +446,101 @@ mod tests {
         let mut fs = MemFs::new();
         fs.write(&VPath::new(ASSET_FILE).unwrap(), text.as_bytes()).unwrap();
         assert!(read_asset_files(&fs).unwrap_err().to_string().contains("not a valid id"));
+    }
+
+    fn material(id: &str) -> MaterialSource {
+        MaterialSource { id: id.into(), name: id.into(), notes: String::new(), heat: None }
+    }
+
+    /// `sample()` made of stone, with a painted map naming wood at one
+    /// pixel (issue #38).
+    fn with_materials() -> AssetSource {
+        let mut s = sample();
+        let e = &mut s.file.elements[0];
+        e.surface = Some("stone".into());
+        e.surface_map = true;
+        let mut map = [0u8; 12];
+        map[5] = 2;
+        s.files.insert("surface/torch.png".into(), image_io::encode_grey(4, 3, &map));
+        s.file.materials = vec![material("stone"), material("wood")];
+        s
+    }
+
+    #[test]
+    fn an_asset_round_trips_its_materials_and_maps() {
+        let src = with_materials();
+        check_asset(&src).unwrap();
+        let mut fs = MemFs::new();
+        write_asset_files(&mut fs, &src).unwrap();
+        assert!(fs.read(&VPath::new("surface/torch.png").unwrap()).is_ok());
+        assert_eq!(read_asset_files(&fs).unwrap(), src);
+        let text = to_canonical(ASSET_FILE, &src.file).unwrap();
+        assert!(text.contains("materials: [") && text.contains("surface: \"stone\""), "{text}");
+    }
+
+    /// An asset without materials writes no `materials` (its bytes as
+    /// before issue #38).
+    #[test]
+    fn an_asset_without_materials_names_none() {
+        let text = to_canonical(ASSET_FILE, &sample().file).unwrap();
+        assert!(!text.contains("materials") && !text.contains("surface"), "{text}");
+    }
+
+    #[test]
+    fn bad_materials_are_refused_with_a_message() {
+        let mut s = with_materials();
+        s.file.elements[0].surface = Some("lava".into());
+        let e = check_asset(&s).unwrap_err().to_string();
+        assert!(e.contains("elements[0].surface") && e.contains("lava") && !e.contains("level.ron"), "{e}");
+        let mut s = with_materials();
+        s.file.materials.push(material("glass"));
+        let e = check_asset(&s).unwrap_err().to_string();
+        assert!(e.contains("materials[2]") && e.contains("glass"), "{e}");
+        let mut s = with_materials();
+        s.file.materials[1].id = "stone".into();
+        let e = check_asset(&s).unwrap_err().to_string();
+        assert!(e.contains("materials[1].id") && !e.contains("look."), "{e}");
+        let mut s = with_materials();
+        s.file.materials[0].name = String::new();
+        assert!(check_asset(&s).unwrap_err().to_string().contains("materials[0].name"));
+        let mut s = with_materials();
+        let mut map = [0u8; 12];
+        map[2] = 3;
+        s.files.insert("surface/torch.png".into(), image_io::encode_grey(4, 3, &map));
+        let e = check_asset(&s).unwrap_err().to_string();
+        assert!(e.starts_with("surface/torch.png") && e.contains("material 3"), "{e}");
+        let mut s = with_materials();
+        s.files.insert("surface/torch.png".into(), image_io::encode_grey(8, 6, &[0; 48]));
+        let e = check_asset(&s).unwrap_err().to_string();
+        assert!(e.starts_with("surface/torch.png") && e.contains("4x3"), "{e}");
+        let mut s = with_materials();
+        s.files.insert("surface/torch.png".into(), b"not a png".to_vec());
+        assert!(check_asset(&s).is_err());
+        let mut s = with_materials();
+        s.files.remove("surface/torch.png");
+        let e = check_asset(&s).unwrap_err().to_string();
+        assert!(e.contains("surface/torch.png: missing"), "{e}");
+        // A back surface needs back art.
+        let mut s = with_materials();
+        s.file.elements[0].back_surface = Some("wood".into());
+        assert!(check_asset(&s).unwrap_err().to_string().contains("back_surface"));
+        let mut s = with_materials();
+        s.file.materials = (0..256).map(|i| material(&format!("m{i}"))).collect();
+        assert!(check_asset(&s).unwrap_err().to_string().contains("above 255"));
+    }
+
+    /// A material named only by a painted map's value is used.
+    #[test]
+    fn a_painted_value_names_its_material() {
+        let mut s = with_materials();
+        s.file.elements[0].surface = None;
+        assert!(check_asset(&s).unwrap_err().to_string().contains("materials[0]"));
+        let mut map = [0u8; 12];
+        (map[0], map[5]) = (1, 2);
+        s.files.insert("surface/torch.png".into(), image_io::encode_grey(4, 3, &map));
+        check_asset(&s).unwrap();
+        s.files.insert("surface/torch.png".into(), image_io::encode_grey(4, 3, &[0; 12]));
+        assert!(check_asset(&s).unwrap_err().to_string().contains("materials[0]"));
     }
 
     #[test]

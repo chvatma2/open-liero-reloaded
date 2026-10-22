@@ -157,6 +157,8 @@ const PAGES: &[Page] = &[
             "layers/<id>.back.png",
             "masks/<id>.png",
             "glow/<id>.png",
+            "surface/<id>.png",
+            "surface/<id>.back.png",
             "thumb.png",
         ],
     },
