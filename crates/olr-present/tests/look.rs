@@ -879,3 +879,147 @@ fn a_projectiles_glowing_pixels_draw_bright_in_a_lit_match() {
         assert_eq!(glowing > 10, lit, "{glowing}");
     }
 }
+
+/// Issue #40: [`look`] with stone, a material that heats.
+fn heated_look() -> LevelLook {
+    let heat = olr_look::Heat {
+        sensitivity: 100,
+        capacity: 100,
+        conductivity: 100,
+        cooling: 100,
+        ramp: Vec::new(),
+        light: 100,
+    };
+    LevelLook {
+        materials: vec![olr_look::SurfaceMaterial { id: "stone".into(), heat: Some(heat) }],
+        ..look()
+    }
+}
+
+/// Plays scenario `name` on its level with `level_look` and, with
+/// `surface`, every world pixel stone front and back; a frame after every
+/// `stride`th tick, `each` given the frame's events since the last one.
+fn play_heated(
+    content: &Content,
+    name: &str,
+    level_look: Option<LevelLook>,
+    surface: bool,
+    stride: i64,
+    mut each: impl FnMut(&mut Presentation, &World, &[olr_sim::Event]),
+) {
+    let (sc, trace) = olr_scenario::load_fixture(&fixtures(), name).unwrap();
+    let mut level = content.load_level(&olx_level_id(&sc.level)).unwrap();
+    level.look = level_look;
+    let world = (level.material.width(), level.material.height());
+    level.surface = surface.then(|| {
+        let mut m = olr_look::SurfaceMaps::empty(world);
+        m.front.fill(1);
+        m.back.fill(1);
+        m
+    });
+    let theme = content.load_theme(&level.theme).unwrap();
+    let m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();
+    let setup = PresentSetup {
+        core: content.core(),
+        m: &m,
+        level: &level,
+        theme: &theme,
+        viewport: Viewport::GAME,
+        options: SceneOptions { interpolation: Interpolation::Linear, show_health_bars: true },
+        seed: 1,
+    };
+    let skin = content.skin_or_default("olx-skin-default");
+    let (mut present, mut list, mut events) = (None, DrawList::new(), Vec::new());
+    olr_scenario::play(content, &sc, &trace, |world, f, tick| {
+        let p = present.get_or_insert_with(|| {
+            let mut p = Presentation::new(&setup, world);
+            for i in 0..sc.worms.len() {
+                p.add_worm(&skin, default_colour(i), i == 0, i == 0);
+            }
+            p
+        });
+        if f >= 0 {
+            p.on_tick(world, tick);
+            events.extend(tick.iter().copied());
+        }
+        if f.rem_euclid(stride) == 0 {
+            p.build(world, 0.5, &mut list);
+            each(p, world, &events);
+            events.clear();
+        }
+    })
+    .unwrap();
+}
+
+/// Issue #40: each explosion (a projectile's, from the tick's records)
+/// leaves the engine's heat once, where it happened; napalm's explosive
+/// trail, whose cosmetic explosions outnumber them, leaves none.
+#[test]
+fn explosions_heat_once_and_trails_never() {
+    let Some(content) = content() else { return };
+    let (mut blasts, mut trails, mut heat) = (Vec::new(), 0, Vec::new());
+    play_heated(&content, "weapons/classic/napalm", Some(heated_look()), true, 1, |p, _, events| {
+        for e in events {
+            match e.kind {
+                olr_sim::EventKind::Explosion { pos, damage, .. } => blasts.push((pos, damage)),
+                olr_sim::EventKind::SpawnCosmetic {
+                    kind: olr_sim::CosmeticKind::Explosion { proj: -1, .. },
+                    ..
+                } => trails += 1,
+                _ => {}
+            }
+        }
+        heat.extend(p.blasts_started().iter().copied());
+        assert_eq!(p.heat_waiting().len(), heat.len(), "queued until an upload");
+        if let Some(&(_, d)) = p.heat_waiting().last().filter(|_| !p.blasts_started().is_empty()) {
+            let &(pos, damage) = blasts.last().unwrap();
+            let h = engine::explosion_heat(damage).unwrap();
+            assert_eq!((d.pos, d.radius, d.amount), ([pos.x, pos.y], h.radius, h.amount));
+        }
+    });
+    let heating = blasts.iter().filter(|(_, d)| engine::explosion_heat(*d).is_some()).count();
+    assert!(heating > 0 && trails > heating, "{heating} explosions, {trails} trail puffs");
+    assert_eq!(heat.len(), heating, "one deposit an explosion, none a trail puff");
+    let mut keys = heat.clone();
+    keys.sort();
+    keys.dedup();
+    assert_eq!(keys.len(), heat.len(), "each once");
+}
+
+/// Issue #40: the heat queued is the same whether a frame is drawn every
+/// tick or every fourth (it goes to the renderer with each tick's time).
+#[test]
+fn explosion_heat_does_not_depend_on_the_frame_rate() {
+    let Some(content) = content() else { return };
+    let (mut runs, mut until) = (Vec::new(), u64::MAX);
+    for stride in [1, 4, 7] {
+        let (mut last, mut at) = (Vec::new(), 0);
+        play_heated(&content, BAZOOKA, Some(heated_look()), true, stride, |p, world, _| {
+            last = p.heat_waiting().to_vec();
+            at = world.time().0;
+        });
+        until = until.min(at);
+        runs.push(last);
+    }
+    // Up to the last tick every run drew.
+    runs.iter_mut().for_each(|r| r.retain(|&(t, _)| t <= until));
+    assert!(runs[0].len() > 5, "{} deposits", runs[0].len());
+    assert!(runs.iter().all(|r| *r == runs[0]));
+}
+
+/// Issue #40: no heat without a material that heats and maps, nor unlit.
+#[test]
+fn only_a_level_whose_materials_heat_queues_heat() {
+    let Some(content) = content() else { return };
+    let cold = LevelLook {
+        materials: vec![olr_look::SurfaceMaterial { id: "cold".into(), heat: None }],
+        ..heated_look()
+    };
+    for (level, surface) in
+        [(Some(heated_look()), false), (Some(cold), true), (Some(look()), true), (None, true)]
+    {
+        play_heated(&content, BAZOOKA, level, surface, 1, |p, _, _| {
+            assert!(p.heat_waiting().is_empty() && p.blasts_started().is_empty());
+        });
+    }
+}

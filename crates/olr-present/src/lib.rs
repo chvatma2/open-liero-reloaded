@@ -28,13 +28,13 @@
 mod look;
 pub mod net;
 
-pub use look::FlashKey;
+pub use look::{BlastKey, FlashKey};
 
 use olr_content::{CorePack, LoadedLevel, LoadedMod, LoadedSkin, LoadedTheme};
 use olr_data::image::Rgba;
 use olr_fx::{Fx, FxAssets, FxImages, FxTick, default_dirt_colour};
 use olr_look::{LevelLook, LookFrame, ModLook};
-use olr_render::Renderer;
+use olr_render::{MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer};
 use olr_scene::{Camera, DrawList, Scene, SceneAssets, SceneOptions, ShadeRules, Viewport};
 use olr_sim::{TickEvents, World};
 use olr_terrain::ColorMap;
@@ -94,9 +94,31 @@ pub struct Presentation {
     look: LookFrame,
     /// The mod's look (projectile and weapon lights).
     mod_look: ModLook,
-    /// The dynamic lights' state (end flashes).
+    /// The dynamic lights' state (end flashes) and the heat waiting.
     dynamic: look::Dynamic,
+    /// Issue #40: the level's materials heat (its look has one that does,
+    /// and surface maps): explosions queue heat.
+    heats: bool,
+    /// The match time (ms) the last built frame showed, and the time the
+    /// renderer's heat has been advanced to.
+    heat_now: u64,
+    heat_clock: u64,
+    /// The renderer's heat clears with the next upload (a loaded state or
+    /// a seek).
+    heat_reset: bool,
 }
+
+/// Whether `level`'s surface materials heat (issue #40): a material that
+/// does in its look, and maps.
+fn heats(level: &LoadedLevel) -> bool {
+    level.surface.is_some()
+        && level.look.as_ref().is_some_and(|l| l.materials.iter().any(|m| m.heats().is_some()))
+}
+
+/// The most heat catch-up runs an upload makes: a box lives at most 15 000
+/// steps, 60 runs of [`MAX_HEAT_STEPS`], so the renderer is caught up long
+/// before.
+const HEAT_RUNS: u32 = 64;
 
 impl Presentation {
     /// The presentation of `world`, at its start (the first tick blends
@@ -130,6 +152,10 @@ impl Presentation {
             look: LookFrame::default(),
             mod_look: s.m.look.clone(),
             dynamic: look::Dynamic::default(),
+            heats: heats(s.level),
+            heat_now: world.time().0,
+            heat_clock: world.time().0,
+            heat_reset: false,
         }
     }
 
@@ -156,6 +182,28 @@ impl Presentation {
         self.dynamic.started()
     }
 
+    /// The explosions whose heat the last frame queued (issue #40; tests
+    /// and tools): each once, whatever the re-simulations.
+    pub fn blasts_started(&self) -> &[BlastKey] {
+        self.dynamic.blasts()
+    }
+
+    /// The heat waiting for the next [`Presentation::upload`], each with
+    /// its tick's time (ms), in tick order (issue #40; tests and tools).
+    pub fn heat_waiting(&self) -> &[(u64, olr_render::HeatDeposit)] {
+        self.dynamic.heat()
+    }
+
+    /// Clears the level's heat (issue #40: a replay seek to `world`): the
+    /// heat waiting goes and the renderer's clears with the next upload;
+    /// explosions heat again from `world`'s time.
+    pub fn reset_heat(&mut self, world: &World) {
+        self.dynamic.clear_heat();
+        self.heat_reset = true;
+        self.heat_now = world.time().0;
+        self.heat_clock = self.heat_now;
+    }
+
     /// Rebuilds the frame's look ([`Presentation::build`] does, after the
     /// scene and the entities): the level's part at the match clock (the
     /// world's time, `alpha` of a tick on), then the projectiles', end
@@ -170,7 +218,9 @@ impl Presentation {
         let t_ms = world.time().0 as f64 + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
         self.look.begin(self.level_look.as_ref(), t_ms);
         let skins = self.level_look.is_some().then_some(&self.assets);
-        self.dynamic.push(&mut self.look, &self.mod_look, &mut self.scene, &self.fx, skins, t_ms);
+        let (m, heats) = (&self.mod_look, self.heats);
+        self.dynamic.push(&mut self.look, m, &mut self.scene, &self.fx, skins, t_ms, heats);
+        self.heat_now = world.time().0;
     }
 
     /// A cosmetic-entity pool of `capacity` instead of the match's
@@ -256,7 +306,10 @@ impl Presentation {
         self.color = level.color_map(theme);
         self.distant = level.distant.clone();
         self.surface = level.surface.clone();
+        self.heats = heats(level);
         self.terrain_new = true;
+        // The heat starts afresh with the terrain upload.
+        (self.heat_now, self.heat_clock, self.heat_reset) = (world.time().0, world.time().0, false);
     }
 
     /// The world's state was replaced by a loaded one (online play's
@@ -268,6 +321,7 @@ impl Presentation {
         self.scene.start(world);
         self.fx.clear();
         self.dynamic.clear();
+        self.reset_heat(world);
     }
 
     /// The first view's camera follows worm `worm` (by id) from the next
@@ -386,7 +440,13 @@ impl Presentation {
     /// (a new world or renderer) with the level's distant layers, else the
     /// rectangles the ticks since the last upload changed. A whole upload
     /// gives the renderer the level's surface materials first (issue #39:
-    /// a level whose materials heat gets a fresh heat texture).
+    /// a level whose materials heat gets a fresh heat texture). Then the
+    /// heat (issue #40): the explosions' deposits since the last upload,
+    /// each after the match time up to its tick, then the time up to the
+    /// frame built (ticks never drawn included), running the renderer's
+    /// heat between (`Renderer::run_heat`) whenever its deposits fill up or
+    /// its steps fall more than a frame's behind, so the heat is the same
+    /// however often frames are drawn.
     pub fn upload(&mut self, renderer: &mut Renderer) {
         // A look needs the renderer's look textures, uploaded with the map.
         if renderer.lighting() != self.lit {
@@ -405,6 +465,44 @@ impl Presentation {
             renderer.set_distant(&self.distant);
         } else {
             renderer.update_terrain(&mut self.color);
+        }
+        self.upload_heat(renderer);
+    }
+
+    /// [`Presentation::upload`]'s heat, after the terrain: deposits land
+    /// on the craters their explosions carved.
+    fn upload_heat(&mut self, r: &mut Renderer) {
+        if core::mem::take(&mut self.heat_reset) {
+            r.reset_heat();
+        }
+        if !r.has_heat() {
+            self.dynamic.clear_heat();
+            self.heat_clock = self.heat_clock.max(self.heat_now);
+            return;
+        }
+        let ms = |d: u64| u32::try_from(d).unwrap_or(u32::MAX);
+        let mut clock = self.heat_clock;
+        for &(at, deposit) in self.dynamic.heat() {
+            if at > clock {
+                r.advance_heat(ms(at - clock));
+                clock = at;
+            }
+            if r.heat_waiting() >= MAX_HEAT_DEPOSITS {
+                r.run_heat();
+            }
+            r.deposit_heat(deposit);
+        }
+        self.dynamic.clear_heat();
+        if self.heat_now > clock {
+            r.advance_heat(ms(self.heat_now - clock));
+            clock = self.heat_now;
+        }
+        self.heat_clock = clock;
+        for _ in 0..HEAT_RUNS {
+            if r.heat_behind() <= u64::from(MAX_HEAT_STEPS) {
+                break;
+            }
+            r.run_heat();
         }
     }
 }

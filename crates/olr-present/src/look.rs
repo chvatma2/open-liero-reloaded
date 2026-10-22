@@ -13,17 +13,33 @@
 //! (`Scene::ended_projectiles`, `Scene::shots`), so they never depend on
 //! the frame rate (spec §Fair play), and run their keys from the tick they
 //! started. A re-simulated tick reports them again: each starts once.
+//!
+//! Issue #40: in a level whose surface materials heat, each explosion
+//! (`Scene::explosions`) leaves the engine's heat
+//! (`engine::explosion_heat`) once, the same way, queued with its tick's
+//! time for the renderer (`Presentation::upload`).
 
 use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
 
 use olr_fx::{Entity, Fx, Kind};
 use olr_look::{Light, LookFrame, MAX_EMITTERS, ModLook, engine, light_at};
+use olr_render::HeatDeposit;
 use olr_scene::{Scene, SceneAssets};
 
 /// An end flash's identity: the projectile's slot, serial, `SimMod` index
 /// and spawn time (ms), which a corrected timeline cannot give another.
 pub type FlashKey = (usize, u32, usize, u64);
+
+/// An explosion's identity for its heat (issue #40): its tick's time (ms)
+/// and its place among the tick's explosions, which a re-simulated tick
+/// gives again. A correction moving it leaves the heat where it first
+/// landed.
+pub type BlastKey = (u64, u16);
+
+/// The most heat deposits queued for the renderer between two uploads
+/// (reserved at the first): a host that never uploads drops the rest.
+const HEAT_QUEUE: usize = 2048;
 
 /// How long a started flash or muzzle light is remembered, ms: well past
 /// the rollback window (28 ticks), so neither a re-simulation nor a
@@ -105,6 +121,12 @@ pub(crate) struct Dynamic {
     shot: Once<(i32, u64)>,
     /// The flashes the last frame started.
     started: Vec<FlashKey>,
+    /// Issue #40: the explosions whose heat was queued, the heat waiting
+    /// for the renderer (each with its tick's time, ms, in order) and the
+    /// explosions the last frame queued.
+    heated: Once<BlastKey>,
+    heat: Vec<(u64, HeatDeposit)>,
+    blasts: Vec<BlastKey>,
     /// The engine's lights, made once: the muzzle's, and explosions' by size.
     muzzle: Option<Light>,
     explosions: Vec<(i32, Light)>,
@@ -120,6 +142,9 @@ impl Dynamic {
         self.muzzles.clear();
         self.shot.clear();
         self.started.clear();
+        self.heated.clear();
+        self.heat.clear();
+        self.blasts.clear();
     }
 
     /// Overrides the engine's skin-light switch ([`engine::SKIN_LIGHT`]).
@@ -132,11 +157,28 @@ impl Dynamic {
         &self.started
     }
 
+    /// The explosions whose heat the last frame queued.
+    pub(crate) fn blasts(&self) -> &[BlastKey] {
+        &self.blasts
+    }
+
+    /// The heat waiting for the renderer, in tick order (issue #40).
+    pub(crate) fn heat(&self) -> &[(u64, HeatDeposit)] {
+        &self.heat
+    }
+
+    /// Forgets the heat waiting (the renderer took it).
+    pub(crate) fn clear_heat(&mut self) {
+        self.heat.clear();
+    }
+
     /// Adds the frame's dynamic lights to `look` at the match clock `t_ms`,
     /// starting the flashes and muzzle lights of the scene's ticks since the
     /// last frame (and clearing them). `skins`, the worms' looks, only in a
     /// level with a look (issue #12: a level without one has no darkness):
-    /// each drawn worm's skin light, last.
+    /// each drawn worm's skin light, last. With `heats` (the level's
+    /// materials heat, issue #40) each explosion's heat is queued once.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn push(
         &mut self,
         look: &mut LookFrame,
@@ -145,6 +187,7 @@ impl Dynamic {
         fx: &Fx,
         skins: Option<&SceneAssets>,
         t_ms: f64,
+        heats: bool,
     ) {
         let projectile = |proj: usize| m.projectiles.get(proj).and_then(Option::as_ref);
         let flash = |proj: usize| projectile(proj).and_then(|p| p.end_flash.as_ref());
@@ -176,6 +219,25 @@ impl Dynamic {
                     identity,
                     start_ms: at,
                 });
+            }
+        }
+        // Issue #40: each explosion's heat, once, at its tick's time: from
+        // the per-tick records, never the entities a frame may miss.
+        self.blasts.clear();
+        for x in scene.explosions().iter().filter(|_| heats) {
+            let key = (x.at.0, x.index);
+            if let Some(h) = engine::explosion_heat(x.damage)
+                && self.heat.len() < HEAT_QUEUE
+                && self.heated.start(key, x.at.0 as f64, t_ms)
+            {
+                if self.heat.capacity() == 0 {
+                    self.heat.reserve_exact(HEAT_QUEUE);
+                }
+                let deposit = HeatDeposit { pos: [x.pos.x, x.pos.y], radius: h.radius, amount: h.amount };
+                self.heat.push((x.at.0, deposit));
+                if self.blasts.len() < HEAT_QUEUE {
+                    self.blasts.push(key);
+                }
             }
         }
         scene.clear_look_events();

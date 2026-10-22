@@ -679,6 +679,63 @@ fn end_flashes_once_per_projectile_through_rollbacks() {
     assert!(flashed.len() > 5, "{} flashes", flashed.len());
 }
 
+/// Issue #40: in a level whose materials heat, each explosion leaves its
+/// heat once whatever the re-simulations (a re-simulated tick reports it
+/// again; its key, the tick and its place, is remembered).
+#[test]
+fn explosions_heat_once_through_rollbacks() {
+    let Some(c) = content() else { return };
+    let mut p = packs(&c);
+    let heat = olr_look::Heat {
+        sensitivity: 100,
+        capacity: 100,
+        conductivity: 100,
+        cooling: 100,
+        ramp: Vec::new(),
+        light: 100,
+    };
+    let mut look = olr_look::LevelLook {
+        ambient: olr_look::Ambient { colour: [255; 3], intensity: 20 },
+        occlusion: None,
+        max_light: 100,
+        light_steps: 0,
+        softness: 0,
+        light_soak: 0,
+        solid_floor: olr_look::Ambient { colour: [255; 3], intensity: 0 },
+        grade: Default::default(),
+        groups: Vec::new(),
+        materials: Vec::new(),
+    };
+    look.materials.push(olr_look::SurfaceMaterial { id: "stone".into(), heat: Some(heat) });
+    p.level.look = Some(look);
+    let mut maps = olr_look::SurfaceMaps::empty((p.level.material.width(), p.level.material.height()));
+    maps.front.fill(1);
+    p.level.surface = Some(maps);
+    let mut peer = peer(&c, &p);
+    let (mut list, mut heated, mut sounds) = (DrawList::new(), BTreeSet::new(), Vec::new());
+    let (mut resims, mut resim_blasts) = (0, 0);
+    while peer.confirmed < TICKS {
+        let target = (peer.current + FRAME).min(TICKS);
+        let conf = if target == TICKS { TICKS } else { target.saturating_sub(LAG) };
+        let (restored, ticked, _) = peer.advance(target, conf);
+        resims += ticked.iter().filter(|t| t.resim).count();
+        resim_blasts += ticked
+            .iter()
+            .filter(|t| t.resim)
+            .flat_map(|t| &t.events)
+            .filter(|e| matches!(e.kind, EventKind::Explosion { .. }))
+            .count();
+        peer.net.apply(&mut peer.present, peer.sim.world(), &restored, &ticked, &mut sounds);
+        peer.present.build(peer.sim.world(), 1.0, &mut list);
+        for k in peer.present.blasts_started() {
+            assert!(heated.insert(*k), "{k:?} heated twice");
+        }
+    }
+    assert!(resims > 0 && resim_blasts > 0, "explosions were re-simulated");
+    assert!(heated.len() > 5, "{} explosions heated", heated.len());
+    assert_eq!(peer.present.heat_waiting().len(), heated.len(), "one deposit each");
+}
+
 /// Review Focus 2 of plan 15a: after a loaded state (a desync repair) the
 /// colour terrain's glow is the glow rebuilt from the world's material.
 #[test]
