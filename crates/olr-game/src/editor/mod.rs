@@ -33,7 +33,7 @@ use olr_editor::{
 };
 use olr_ui::{AppCommand, Store};
 
-use crate::setup::EditedPlay;
+use crate::setup::{EditedPlay, PlayLevel, PlayMod};
 
 /// How often the recovery copy is written while there are unsaved changes.
 pub const RECOVERY_INTERVAL: Duration = Duration::from_secs(120);
@@ -433,7 +433,8 @@ impl EditorHost {
                 queue.push_back(EditorAction::Saved(result));
             }
             EditorCommand::Play { level, mod_id, bots } => {
-                out.push(HostOut::Play(Box::new(EditedPlay { level: *level, mod_id, bots })));
+                let (level, game_mod) = (PlayLevel::Edited(level), PlayMod::Installed(mod_id));
+                out.push(HostOut::Play(Box::new(EditedPlay { level, game_mod, bots })));
             }
             EditorCommand::SaveSettings(s) => {
                 if let Err(e) = self.store.save_file(EDITOR_FILE, &s) {

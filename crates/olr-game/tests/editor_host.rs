@@ -250,7 +250,9 @@ fn play_and_close_reach_the_app() {
         _ => None,
     });
     let play = play.expect("Play reaches the app");
-    assert_eq!(play.level.size, (120, 80));
+    let olr_game::setup::PlayLevel::Edited(level) = &play.level else { panic!("the edited level") };
+    assert_eq!(level.size, (120, 80));
+    assert_eq!(play.game_mod, olr_game::setup::PlayMod::Installed(h.state().settings().play_mod.clone()));
     assert_eq!(play.bots, h.state().settings().play_bots);
     h.act(vec![A::PlayEnded]);
     let out = h.act(vec![A::Close]);

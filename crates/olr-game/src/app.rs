@@ -946,8 +946,8 @@ impl App {
             if let Some(h) = skin_editor.as_deref_mut() {
                 let (state, data) = h.parts();
                 skin_actions = olr_skin_editor::ui::show(ui, state, data);
-            } else if let Some(h) = mod_editor.as_deref_mut() {
-                // The mod editor (issue #17) likewise.
+            } else if let Some(h) = mod_editor.as_deref_mut().filter(|_| !playing_edited) {
+                // The mod editor (issue #17) likewise, but for its Play's match.
                 let (state, data) = h.parts();
                 mod_actions = olr_mod_editor::ui::show(ui, state, data);
             } else if let Some(h) = editor.as_deref_mut().filter(|_| editing) {
@@ -1147,6 +1147,9 @@ impl App {
             self.stop_edited();
             if over && let Some(h) = self.shell.editor() {
                 h.act(vec![olr_editor::EditorAction::Note("the match is over".into())]);
+            }
+            if over && let Some(h) = self.shell.mod_editor() {
+                h.act(vec![olr_mod_editor::ModAction::Note("the match is over".into())]);
             }
         }
         if menus {

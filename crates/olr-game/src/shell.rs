@@ -125,7 +125,8 @@ enum Launch {
     Match(Box<MatchOptions>),
     Sandbox,
     Replay(PathBuf),
-    /// The level editor's Play (plan 14c): no replay is saved.
+    /// An editor's Play (plan 14c; the mod editor's, issue #18): no replay
+    /// is saved.
     Edited(Box<EditedPlay>),
 }
 
@@ -549,8 +550,8 @@ impl Shell {
         out
     }
 
-    /// The level editor's Play: loaded by the next [`Shell::poll`], as a
-    /// menu start is.
+    /// An editor's Play: loaded by the next [`Shell::poll`], as a menu
+    /// start is.
     pub fn play_edited(&mut self, play: EditedPlay) {
         self.pending = Some(Launch::Edited(Box::new(play)));
     }
@@ -664,17 +665,22 @@ impl Shell {
     }
 
     fn launch_reported(&mut self, launch: Launch) -> Vec<Outcome> {
-        // The editor's Play: the menus' state is not the game's.
+        // An editor's Play: the menus' state is not the game's.
         if matches!(launch, Launch::Edited(_)) {
             return match self.launch(launch) {
                 Ok(()) => vec![Outcome::Started],
                 Err(e) => {
                     let why = format!("{e:#}");
-                    log::warn!("could not play the level: {why}");
                     self.stop_edited();
                     if let Some(h) = &mut self.editor {
+                        log::warn!("could not play the level: {why}");
                         h.act(vec![olr_editor::EditorAction::Failed(format!(
                             "The level could not be played: {why}"
+                        ))]);
+                    } else if let Some(h) = &mut self.mod_editor {
+                        log::warn!("could not play the mod: {why}");
+                        h.act(vec![olr_mod_editor::ModAction::Failed(format!(
+                            "The mod could not be played: {why}"
                         ))]);
                     }
                     Vec::new()

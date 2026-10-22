@@ -5,7 +5,8 @@
 //! unsaved changes (Review Focus 1). The skin editor (issue #14) likewise:
 //! the Skin tab's commands open a `SkinHost`; each save lists the content
 //! again, so the profiles' skin picker offers the skin at once. And the mod
-//! editor (issue #17): the Mod tab's commands open a `ModHost`.
+//! editor (issue #17): the Mod tab's commands open a `ModHost`; its Play
+//! (issue #18) runs as an edited game as the level editor's does.
 
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -14,7 +15,7 @@ use olr_editor::EditorAction;
 use olr_ui::{AppCommand, Screen, UiAction};
 
 use super::Shell;
-use crate::editor::mods::{ModHost, ModOut};
+use crate::editor::mods::{MOD_PLAY_FILE, ModHost, ModOut};
 use crate::editor::skin::{SkinHost, SkinOut};
 use crate::editor::{self, CloseDecision, EditorHost, HostOut};
 
@@ -28,9 +29,9 @@ impl Shell {
         self.editor.as_mut()
     }
 
-    /// Whether the editor's Play runs.
+    /// Whether an editor's Play runs (the level editor's or the mod editor's).
     pub fn editing_play(&self) -> bool {
-        self.editor.is_some() && self.play.is_some()
+        (self.editor.is_some() || self.mod_editor.is_some()) && self.play.is_some()
     }
 
     /// The Editor screen's commands (`AppCommand::{EditLevel, CopyLevel,
@@ -125,7 +126,7 @@ impl Shell {
         }
     }
 
-    /// The editor's Play ends (Esc, Stop, or the load failed): back to the
+    /// An editor's Play ends (Esc, Stop, or the load failed): back to the
     /// editor exactly as it was; the match is thrown away.
     pub fn stop_edited(&mut self) {
         if self.play.is_some() {
@@ -133,6 +134,9 @@ impl Shell {
         }
         if let Some(h) = &mut self.editor {
             h.act(vec![EditorAction::PlayEnded]);
+        }
+        if let Some(h) = &mut self.mod_editor {
+            h.act(vec![olr_mod_editor::ModAction::PlayEnded]);
         }
     }
 
@@ -256,8 +260,9 @@ impl Shell {
             self.refresh_editor_packs();
         }
         match opened {
-            Ok(h) => {
+            Ok(mut h) => {
                 self.data.editor_message = None;
+                h.set_play(self.levels(), self.play_settings());
                 self.mod_editor = Some(h);
             }
             Err(why) => {
@@ -267,9 +272,27 @@ impl Shell {
         }
     }
 
+    /// The installed levels (pack id, name), for the mod editor's Play.
+    fn levels(&self) -> Vec<(String, String)> {
+        self.data.catalog.levels.iter().map(|l| (l.id.clone(), l.name.clone())).collect()
+    }
+
+    /// The mod editor's Play settings remembered (`MOD_PLAY_FILE`); without
+    /// a level installed there, Local Play's level.
+    fn play_settings(&mut self) -> olr_mod_editor::PlaySettings {
+        let loaded = self.store.load_file::<olr_mod_editor::PlaySettings>(MOD_PLAY_FILE);
+        self.log(loaded.warnings);
+        let mut play = loaded.value.unwrap_or_default();
+        if !self.data.catalog.levels.iter().any(|l| l.id == play.level) {
+            play.level = self.ui.settings().gameplay.match_prefs.level_id.clone();
+        }
+        play
+    }
+
     /// One frame of the mod editor: `actions` from
     /// `olr_mod_editor::ui::show` and the recovery timer at `now`. A save
-    /// lists the content again; Close brings the Editor screen back.
+    /// lists the content again; Play loads the edited game; Close brings the
+    /// Editor screen back.
     pub fn mod_frame(&mut self, actions: Vec<olr_mod_editor::ModAction>, now: Instant) {
         let Some(host) = &mut self.mod_editor else { return };
         let out = host.act(actions);
@@ -277,12 +300,24 @@ impl Shell {
         for w in host.take_warnings() {
             log::warn!("mod editor: {w}");
         }
-        if out.contains(&ModOut::Saved) {
-            self.list_content();
-            self.refresh_editor_packs();
-        }
-        if out.contains(&ModOut::Closed) {
-            self.close_mod_editor();
+        for o in out {
+            match o {
+                ModOut::Saved => {
+                    self.list_content();
+                    self.refresh_editor_packs();
+                }
+                ModOut::Play(p) => self.play_edited(*p),
+                ModOut::SavePlaySettings(s) => {
+                    if let Err(e) = self.store.save_file(MOD_PLAY_FILE, &s) {
+                        let why = format!("saving the mod editor's Play settings: {e:#}");
+                        log::warn!("mod editor: {why}");
+                        if let Some(h) = &mut self.mod_editor {
+                            h.act(vec![olr_mod_editor::ModAction::Note(why)]);
+                        }
+                    }
+                }
+                ModOut::Closed => self.close_mod_editor(),
+            }
         }
     }
 
@@ -300,6 +335,9 @@ impl Shell {
     pub fn request_close(&mut self) -> CloseDecision {
         if self.editing_play() {
             self.end();
+            if let Some(h) = &mut self.mod_editor {
+                h.act(vec![olr_mod_editor::ModAction::PlayEnded]);
+            }
         }
         if let Some(h) = &mut self.skin_editor {
             if h.act(vec![olr_skin_editor::SkinAction::Close]).contains(&SkinOut::Closed) {

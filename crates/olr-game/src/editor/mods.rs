@@ -8,8 +8,11 @@
 //! refuses errors); the shell lists the content again. Unsaved work is
 //! kept in a recovery copy in `Store::mod_recovery_dir` (the level
 //! editor's `recovery.rs`), written every `RECOVERY_INTERVAL` while there
-//! are unsaved changes and removed on save and Close. No window: the app
-//! draws `olr_mod_editor::ui::show`.
+//! are unsaved changes and removed on save and Close. Play (issue #18)
+//! runs the mod as it is, unsaved changes included, as an edited game
+//! (`setup::PlayMod::Edited` on an installed level); its level and bots
+//! are remembered in `MOD_PLAY_FILE`. No window: the app draws
+//! `olr_mod_editor::ui::show`.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -21,18 +24,26 @@ use olr_edit::new::{Template, new_pack, pack_id};
 use olr_edit::pack::{Pack, Source};
 use olr_format::mods::{MOD_EDITOR_FILE, ModEditorFile, ModSource};
 use olr_mod_editor::ui::ModEditorData;
-use olr_mod_editor::{ModAction, ModCommand, ModEditorState};
+use olr_mod_editor::{ModAction, ModCommand, ModEditorState, PlaySettings};
 use olr_ui::AppCommand;
 
 use super::RECOVERY_INTERVAL;
 use super::files::{inside, mod_dirs};
 use super::recovery::{self, RecoveryInfo};
+use crate::setup::{EditedPlay, PlayLevel, PlayMod};
+
+/// Play's level and bots (`PlaySettings`) in the data directory (issue #18).
+pub const MOD_PLAY_FILE: &str = "mod-editor.ron";
 
 /// What the shell does after a frame of the mod editor.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ModOut {
     /// The pack was written: the content is listed again.
     Saved,
+    /// Play: the shell loads the edited game (answer `PlayEnded`).
+    Play(Box<EditedPlay>),
+    /// Play's level or bots changed: the shell stores them.
+    SavePlaySettings(PlaySettings),
     /// The editor closed.
     Closed,
 }
@@ -160,6 +171,12 @@ impl ModHost {
         &self.state
     }
 
+    /// Play's levels (the installed ones: pack id, name) and its
+    /// remembered level and bots.
+    pub fn set_play(&mut self, levels: Vec<(String, String)>, play: PlaySettings) {
+        self.state.set_play(levels, play);
+    }
+
     /// The state and the panels' data, for `olr_mod_editor::ui::show`.
     pub fn parts(&mut self) -> (&ModEditorState, &mut ModEditorData) {
         (&self.state, &mut self.data)
@@ -197,6 +214,11 @@ impl ModHost {
                             Err(why) => queue.push_front(ModAction::Failed(why)),
                         }
                     }
+                    ModCommand::Play { pack, level, bots } => {
+                        let (level, game_mod) = (PlayLevel::Installed(level), PlayMod::Edited(pack));
+                        out.push(ModOut::Play(Box::new(EditedPlay { level, game_mod, bots })));
+                    }
+                    ModCommand::SavePlaySettings(s) => out.push(ModOut::SavePlaySettings(s)),
                     ModCommand::Close => {
                         self.discard_recovery();
                         out.push(ModOut::Closed);

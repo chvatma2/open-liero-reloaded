@@ -180,7 +180,7 @@ pub struct Assets {
     /// (`Content::skin_matching`), the default skin when it does not
     /// match. Empty in every other game.
     pub slot_skins: Vec<LoadedSkin>,
-    /// The level editor's Play (`load_edited`): its replay is never saved.
+    /// An editor's Play (`load_edited`): its replay is never saved.
     pub edited: bool,
 }
 
@@ -194,20 +194,21 @@ fn open(
     game: Game,
 ) -> anyhow::Result<Assets> {
     let lvl = content.load_level(&level_id)?;
-    open_level(content, mod_id, level_id, lvl, skin, game)
+    let m = content.load_mod(&mod_id)?;
+    open_loaded(content, (mod_id, m), level_id, lvl, skin, game)
 }
 
-/// [`open`] with the level given (the editor's, loaded from no pack).
-fn open_level(
+/// [`open`] with the mod and level given (an editor's Play: the level
+/// editor's level, the mod editor's mod, loaded from no pack).
+fn open_loaded(
     content: Arc<Content>,
-    mod_id: String,
+    (mod_id, m): (String, LoadedMod),
     level_id: String,
     lvl: LoadedLevel,
     skin: &str,
     game: Game,
 ) -> anyhow::Result<Assets> {
     let skin_id = content.skin_id(skin).unwrap_or_else(|| skin.to_string());
-    let m = content.load_mod(&mod_id)?;
     let theme = content.load_theme(&lvl.theme).with_context(|| format!("level {level_id}"))?;
     let skin = content.skin_or_default(&skin_id);
     let (skin_id, skin_hash) = match content.pack_kind(&skin_id) {
@@ -287,13 +288,30 @@ pub fn load_match(roots: &[&Path], o: &MatchOptions, skin: &str) -> anyhow::Resu
     open(Arc::new(content), o.mod_id.clone(), o.level_id.clone(), skin, game)
 }
 
-/// What the level editor's Play asks for (plan 14c R3): the edited level
-/// itself (no pack), the mod by pack id, and 0 to `olr_editor::MAX_BOTS`
-/// bots.
+/// The level an editor's Play is on: the level editor's edited level
+/// itself (no pack), or an installed one by pack id (the mod editor's).
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlayLevel {
+    Edited(Box<LevelSource>),
+    Installed(String),
+}
+
+/// The mod an editor's Play runs: an installed one by pack id (the level
+/// editor's), or the mod editor's pack as it is, unsaved changes included
+/// (issue #18), compiled and validated as a saved one is
+/// (`olr_edit::pack::mod_pack`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum PlayMod {
+    Installed(String),
+    Edited(Box<olr_edit::pack::Pack>),
+}
+
+/// What an editor's Play asks for (plan 14c R3; issue #18): its level, its
+/// mod, and 0 to `olr_editor::MAX_BOTS` bots.
 #[derive(Clone, Debug, PartialEq)]
 pub struct EditedPlay {
-    pub level: LevelSource,
-    pub mod_id: String,
+    pub level: PlayLevel,
+    pub game_mod: PlayMod,
     pub bots: u8,
 }
 
@@ -301,15 +319,18 @@ pub struct EditedPlay {
 /// in no pack): for messages; `Assets::edited` marks the play.
 pub const EDITED_LEVEL: &str = "edited level";
 
-/// The editor's Play (plan 14c R3, R4) on the edited level: the sandbox
+/// An editor's Play (plan 14c R3, R4; issue #18) on its level: the sandbox
 /// for 0 bots (the player alone, no targets), else a Deathmatch against
 /// that many bots (capped at `olr_editor::MAX_BOTS`) of the Local Play
 /// screen's saved level, personality and loadout (`prefs`), under OLX's
-/// Deathmatch defaults. The human worm first spawns at the level's first
-/// spawn when it lies inside the level and out of rock
-/// (`LoadedLevel::first_spawn`), else at a free spot. The mod, theme,
-/// core and skin `skin` come by id from `roots`. Its replay is never
-/// saved (the shell's `Launch::Edited`), so its level pack ref has no hash.
+/// Deathmatch defaults. On the edited level the human worm first spawns at
+/// its first spawn when it lies inside the level and out of rock
+/// (`LoadedLevel::first_spawn`), else at a free spot; on an installed level
+/// at a free spot, as any match. The theme, core and skin `skin` come by id
+/// from `roots`, and so do an installed level and mod; the edited mod is
+/// refused when it would not save, then loaded as an installed one
+/// (`Content::load_mod_pack`). Its replay is never saved (the shell's
+/// `Launch::Edited`), so its pack refs have no hash.
 pub fn load_edited(
     roots: &[&Path],
     play: &EditedPlay,
@@ -317,9 +338,23 @@ pub fn load_edited(
     prefs: &olr_ui::MatchPrefs,
 ) -> anyhow::Result<Assets> {
     let content = Content::open_layers(roots)?;
-    let level = LoadedLevel::from_source(&play.level).context("the edited level")?;
-    let spawn = level.first_spawn();
-    let (mod_id, level_id) = (play.mod_id.clone(), EDITED_LEVEL.to_string());
+    let (level, level_id, spawn) = match &play.level {
+        PlayLevel::Edited(src) => {
+            let level = LoadedLevel::from_source(src).context("the edited level")?;
+            let spawn = level.first_spawn();
+            (level, EDITED_LEVEL.to_string(), spawn)
+        }
+        PlayLevel::Installed(id) => (content.load_level(id)?, id.clone(), None),
+    };
+    let (mod_id, m) = match &play.game_mod {
+        PlayMod::Installed(id) => (id.clone(), content.load_mod(id)?),
+        PlayMod::Edited(pack) => {
+            let id = pack.manifest.id.clone();
+            let read = olr_edit::pack::mod_pack(pack).context("the edited mod")?;
+            let m = content.load_mod_pack(&id, read).context("the edited mod")?;
+            (id, m)
+        }
+    };
     let bots = play.bots.min(olr_editor::MAX_BOTS);
     let game = if bots == 0 {
         let o = SandboxOptions {
@@ -346,7 +381,7 @@ pub fn load_edited(
         let packs = Packs { mod_pack: r(&mod_id), level: r(&level_id), theme: r(&level.theme) };
         Game::Deathmatch { options: Box::new(p.options(1)), packs, spawn }
     };
-    let mut a = open_level(Arc::new(content), mod_id, level_id, level, skin, game)?;
+    let mut a = open_loaded(Arc::new(content), (mod_id, m), level_id, level, skin, game)?;
     a.edited = true;
     Ok(a)
 }
@@ -494,8 +529,8 @@ impl Assets {
         olr_content::new_world_from(&self.m, &self.level, &self.theme, setup)
     }
 
-    /// Whether this is the level editor's Play (`load_edited`), whose
-    /// replay is never saved.
+    /// Whether this is an editor's Play (`load_edited`), whose replay is
+    /// never saved.
     pub fn edited(&self) -> bool {
         self.edited
     }
@@ -643,8 +678,8 @@ mod tests {
         let at = (0..h).flat_map(|y| (0..w).map(move |x| (x, y))).find(|&(x, y)| open(x, y)).unwrap();
         level.objects = vec![LevelObject::Spawn { at, notes: String::new() }];
         let play = |level: &olr_format::levels::LevelSource, bots| EditedPlay {
-            level: level.clone(),
-            mod_id: "olx-classic".into(),
+            level: PlayLevel::Edited(Box::new(level.clone())),
+            game_mod: PlayMod::Installed("olx-classic".into()),
             bots,
         };
         let prefs = olr_ui::MatchPrefs::default();
@@ -717,8 +752,62 @@ mod tests {
         // More bots than Play allows are capped; a missing mod is an error.
         let a = load_edited(&[root], &play(&level, 200), DEFAULT_SKIN, &prefs).unwrap();
         assert_eq!(a.worms(), 1 + usize::from(olr_editor::MAX_BOTS));
-        let bad = EditedPlay { mod_id: "no-such-mod".into(), ..play(&level, 0) };
+        let bad = EditedPlay { game_mod: PlayMod::Installed("no-such-mod".into()), ..play(&level, 0) };
         assert!(load_edited(&[root], &bad, DEFAULT_SKIN, &prefs).is_err());
+    }
+
+    /// Issue #18: the mod editor's Play runs its mod as it is, unsaved
+    /// changes included (the session plays `Assets::m`), on an installed
+    /// level; a mod that would not save does not start.
+    #[test]
+    fn edited_play_runs_the_unsaved_mod_on_an_installed_level() {
+        let Some(dir) = std::env::var_os("OLR_CONTENT_DIR").filter(|d| Path::new(d).is_dir()) else {
+            eprintln!("OLR_CONTENT_DIR not set; skipping");
+            return;
+        };
+        let root = Path::new(&dir);
+        let mut pack = olr_edit::pack::load(&root.join("olx-classic")).unwrap();
+        pack.manifest.id = "my-classic".into();
+        olr_edit::mods::set(&mut pack, "weapons/bazooka.fire.shot.speed", "150").unwrap();
+        let prefs = olr_ui::MatchPrefs::default();
+        let play = |pack: &olr_edit::pack::Pack, bots| EditedPlay {
+            level: PlayLevel::Installed("olx-level-dirt-level".into()),
+            game_mod: PlayMod::Edited(Box::new(pack.clone())),
+            bots,
+        };
+        let speed = |a: &Assets| {
+            let w = a.m.sim.weapons().iter().find(|w| w.id == "bazooka").unwrap();
+            w.spawn.as_ref().unwrap().speed
+        };
+        for bots in [0, 2] {
+            let a = load_edited(&[root], &play(&pack, bots), DEFAULT_SKIN, &prefs).unwrap();
+            assert_eq!(speed(&a), 150, "the unsaved speed");
+            assert!(a.edited());
+            assert_eq!((a.mod_id.as_str(), a.level_id.as_str()), ("my-classic", "olx-level-dirt-level"));
+            match &a.game {
+                Game::Sandbox(s) => assert_eq!((bots, s.worms[0].pos), (0, None)),
+                Game::Deathmatch { options, spawn, .. } => {
+                    assert_eq!((options.players.len(), *spawn), (3, None), "a free spot")
+                }
+                _ => panic!("a sandbox or a Deathmatch"),
+            }
+            let s = crate::session::Session::new(
+                &a,
+                olr_scene::Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0),
+                olr_scene::Interpolation::Linear,
+                olr_audio::Audio::silent(),
+            )
+            .unwrap();
+            let w = s.world.sim_mod().weapons().iter().find(|w| w.id == "bazooka").unwrap();
+            assert_eq!(w.spawn.as_ref().unwrap().speed, 150, "the session's world plays it");
+        }
+        let installed = EditedPlay { game_mod: PlayMod::Installed("olx-classic".into()), ..play(&pack, 0) };
+        assert_eq!(speed(&load_edited(&[root], &installed, DEFAULT_SKIN, &prefs).unwrap()), 140);
+        // A cycle: refused as a save is.
+        let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
+        olr_edit::mods::set_lenient(&mut pack, "projectiles/bazooka.spawn.spawns", cycle).unwrap();
+        let e = load_edited(&[root], &play(&pack, 0), DEFAULT_SKIN, &prefs).err().unwrap();
+        assert!(format!("{e:#}").contains("the edited mod"), "{e:#}");
     }
 
     /// The skin constants olr-content and olr-proto/olr-game each define

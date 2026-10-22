@@ -3,7 +3,9 @@
 //! Classic (Classic untouched), edited and saved, listed as the user's and
 //! opened again with Classic's values as the originals; a built-in mod
 //! refused for Edit; unsaved work kept in a recovery copy and recovered;
-//! the window's close asking first. Over the bundled content
+//! the window's close asking first; Play (issue #18) running the unsaved
+//! mod on the level and bots chosen, refused with an error, and Escape
+//! back to the editor as it was. Over the bundled content
 //! (`OLR_CONTENT_DIR`; skipped without it).
 
 use std::collections::BTreeMap;
@@ -161,4 +163,90 @@ fn closing_the_window_asks_first() {
     sh.mod_frame(vec![A::Choice(olr_mod_editor::Choice::DontSave)], Instant::now());
     assert!(!sh.mod_editor_open());
     assert_eq!(sh.request_close(), CloseDecision::Quit);
+}
+
+fn bazooka_speed(sh: &Shell) -> i32 {
+    let p = sh.play.as_ref().expect("a game plays");
+    let w = p.assets.m.sim.weapons().iter().find(|w| w.id == "bazooka").unwrap();
+    w.spawn.as_ref().unwrap().speed
+}
+
+/// Issue #18: Play runs a match of the mod as it is, unsaved changes
+/// included, on the level and bots of Play ▾ (remembered in the data
+/// directory); Escape (`stop_edited`) returns to the editor where it was,
+/// nothing saved; a mod with errors does not start and its problems show.
+#[test]
+fn play_runs_the_unsaved_mod_and_escape_comes_back() {
+    let Some((tmp, root, mut sh)) = shell() else { return };
+    sh.act(UiAction::NewMod { from: CLASSIC.into(), name: "Fast".into() });
+    assert!(sh.mod_editor_open(), "{:?}", sh.data.editor_message);
+    let level = "olx-level-liero-factory";
+    let local = sh.ui.settings().gameplay.match_prefs.level_id.clone();
+    let s = sh.mod_editor().unwrap().state();
+    assert!(s.levels().iter().any(|(id, _)| id == level), "the installed levels");
+    assert_eq!(s.play_level().map(|(id, _)| id.clone()), Some(local), "Local Play's level at first");
+
+    let speed = "weapons/bazooka.fire.shot.speed";
+    let t = Instant::now();
+    sh.mod_frame(vec![A::Select(olr_mod_editor::Item::Weapon("bazooka".into())), set(speed, "150")], t);
+    sh.mod_frame(vec![A::PlayLevel(level.into()), A::PlayBots(2), A::Play], t);
+    assert!(tmp.path().join(olr_game::editor::mods::MOD_PLAY_FILE).is_file(), "remembered");
+    sh.poll();
+    assert!(sh.editing_play(), "{:?}", sh.mod_editor().unwrap().state().dialog());
+    assert_eq!(bazooka_speed(&sh), 150, "the unsaved speed plays");
+    let p = sh.play.as_ref().unwrap();
+    assert!(p.assets.edited(), "no replay is saved");
+    assert_eq!(p.assets.level_id, level);
+    assert_eq!(p.assets.worms(), 3, "the player and 2 bots");
+    assert!(sh.mod_editor().unwrap().state().playing());
+    // The game plays; the editor waits.
+    for _ in 0..50 {
+        sh.tick(olr_sim::Keys(0));
+    }
+    sh.mod_frame(Vec::new(), t);
+
+    // Escape: back where it was, unsaved.
+    sh.stop_edited();
+    assert!(!sh.editing_play() && sh.play.is_none());
+    let s = sh.mod_editor().unwrap().state();
+    assert!(!s.playing());
+    assert_eq!(s.item(), &olr_mod_editor::Item::Weapon("bazooka".into()));
+    assert!(s.dirty() && s.can_undo());
+    assert_eq!(s.value(speed).as_deref(), Some("150"));
+    let saved = olr_edit::pack::load(&tmp.path().join("packs/fast")).unwrap();
+    assert_eq!(olr_edit::mods::get(olr_edit::mods::source(&saved).unwrap(), speed).unwrap(), "140");
+
+    // A mod with errors does not start; the problems show.
+    let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
+    sh.mod_frame(vec![set("projectiles/bazooka.spawn.spawns", cycle), A::ShowProblems(false), A::Play], t);
+    sh.poll();
+    assert!(!sh.editing_play() && sh.play.is_none());
+    let s = sh.mod_editor().unwrap().state();
+    assert!(!s.playing() && s.show_problems() && s.errors() > 0);
+    assert!(s.status().starts_with("Not played"), "{}", s.status());
+
+    // The next session remembers Play's level and bots.
+    sh.mod_frame(vec![A::Undo, A::Save, A::Close], t);
+    assert!(!sh.mod_editor_open());
+    drop(sh);
+    let mut sh = shell_on(&root, tmp.path());
+    sh.act(UiAction::EditMod("fast".into()));
+    let s = sh.mod_editor().unwrap().state();
+    assert_eq!((s.play_level().map(|(id, _)| id.as_str()), s.play_bots()), (Some(level), 2));
+}
+
+/// Issue #18: closing the window during Play ends the match, then asks
+/// about the unsaved changes.
+#[test]
+fn closing_the_window_during_play_asks_first() {
+    let Some((_tmp, _root, mut sh)) = shell() else { return };
+    sh.act(UiAction::NewMod { from: CLASSIC.into(), name: "Asked".into() });
+    sh.mod_frame(vec![set("mod.worm.gravity", "120.0"), A::PlayBots(0), A::Play], Instant::now());
+    sh.poll();
+    assert!(sh.editing_play());
+    assert_eq!(sh.request_close(), CloseDecision::Wait);
+    assert!(!sh.editing_play());
+    let s = sh.mod_editor().unwrap().state();
+    assert!(!s.playing());
+    assert_eq!(s.dialog(), Some(&Dialog::Unsaved));
 }
