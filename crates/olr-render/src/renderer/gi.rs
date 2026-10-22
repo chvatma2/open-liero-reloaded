@@ -11,6 +11,7 @@
 //! leaked through thin walls (plan 15a Task 12). Cascades are added until
 //! their intervals reach the grid's diagonal.
 
+use super::timing::{PassGroup, Timer};
 use super::{entry, pipeline};
 
 /// The most cells the glow light's grid holds (plan 15a R13; plan 15c:
@@ -524,8 +525,12 @@ impl GiState {
         casting: bool,
         occluders: &wgpu::BindGroup,
         (discs, count): (&wgpu::Buffer, u32),
+        timer: Option<&Timer>,
     ) -> bool {
+        // Each pass timed in its group (bench only, issue #34).
+        let stamp = |group| timer.and_then(|t| t.pass(group, None, None));
         let pass = |encoder: &mut wgpu::CommandEncoder,
+                    group: PassGroup,
                     targets: &[&wgpu::TextureView],
                     work: Option<(&wgpu::RenderPipeline, &wgpu::BindGroup)>,
                     group1: Option<&wgpu::BindGroup>| {
@@ -547,7 +552,7 @@ impl GiState {
                 label: Some("olr-render gi"),
                 color_attachments: &attachments,
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: stamp(group),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -561,12 +566,12 @@ impl GiState {
             }
         };
         if !casting {
-            pass(encoder, &[&self.fluence], None, None);
+            pass(encoder, PassGroup::Fluence, &[&self.fluence], None, None);
             self.reset();
             return false;
         }
         if self.fresh.replace(false) {
-            pass(encoder, &[&self.history], None, None);
+            pass(encoder, PassGroup::Fluence, &[&self.history], None, None);
         }
         {
             let both = [&self.dynamic.0, &self.dynamic.1];
@@ -585,7 +590,7 @@ impl GiState {
                 label: Some("olr-render gi dynamic"),
                 color_attachments: &attachments,
                 depth_stencil_attachment: None,
-                timestamp_writes: None,
+                timestamp_writes: stamp(PassGroup::Emission),
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
@@ -597,15 +602,19 @@ impl GiState {
             }
         }
         let emission = Some((&pipes.emission, &self.emission_bind));
-        pass(encoder, &[&self.emission.0, &self.emission.1, &self.emission.2], emission, Some(occluders));
-        pass(encoder, &[&self.seeds[0]], Some((&pipes.seed, &self.seed_bind)), None);
+        let emitted = [&self.emission.0, &self.emission.1, &self.emission.2];
+        pass(encoder, PassGroup::Emission, &emitted, emission, Some(occluders));
+        let seed = Some((&pipes.seed, &self.seed_bind));
+        pass(encoder, PassGroup::JumpFlood, &[&self.seeds[0]], seed, None);
         for (target, b) in &self.jfa {
-            pass(encoder, &[&self.seeds[*target]], Some((&pipes.jfa, b)), None);
+            pass(encoder, PassGroup::JumpFlood, &[&self.seeds[*target]], Some((&pipes.jfa, b)), None);
         }
         for i in (0..self.cascades.len()).rev() {
-            pass(encoder, &[&self.cascades[i]], Some((&pipes.cascade, &self.cascade_binds[i])), None);
+            let cascade = Some((&pipes.cascade, &self.cascade_binds[i]));
+            pass(encoder, PassGroup::Cascades, &[&self.cascades[i]], cascade, None);
         }
-        pass(encoder, &[&self.fluence], Some((&pipes.fluence, &self.fluence_bind)), None);
+        let fluence = Some((&pipes.fluence, &self.fluence_bind));
+        pass(encoder, PassGroup::Fluence, &[&self.fluence], fluence, None);
         // The next frame's bounce reads this frame's light.
         encoder.copy_texture_to_texture(
             self.fluence_texture.as_image_copy(),

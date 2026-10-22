@@ -20,7 +20,7 @@ pub use gi::{GI_CELL_BUDGET, gi_cell};
 pub use look::WORM_SHADOW;
 pub use pass::ViewDraw;
 pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};
-pub use timing::{GpuTimes, gpu_times};
+pub use timing::{GpuTimes, PASS_GROUPS, PassGroup, PassSpan, gpu_times};
 
 /// The world pass's and atlas's texel format (gamma-space RGBA, like OLX's
 /// surfaces: blending happens on the stored bytes).

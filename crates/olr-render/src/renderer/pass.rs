@@ -7,6 +7,7 @@ use olr_look::LookFrame;
 use olr_scene::DrawList;
 
 use super::look::{LIGHT_PAD, occluder_rect};
+use super::timing::PassGroup;
 use super::{Renderer, Target, WORLD_FORMAT, texture, upscale_uniform};
 use crate::frame::{WorldFrame, distant_instance, occluder_instances, push_instances, terrain_instance};
 
@@ -203,16 +204,16 @@ impl Renderer {
 
         let mut encoder =
             self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("olr-render") });
-        // Only the first view's world pass and the last view's upscale are
-        // stamped; wgpu refuses a pass's writes with neither index.
-        let stamp = |begin: Option<u32>, end: Option<u32>| {
-            let t = self.timer.as_ref().filter(|_| begin.is_some() || end.is_some());
-            t.map(|t| wgpu::RenderPassTimestampWrites {
-                query_set: &t.set,
-                beginning_of_pass_write_index: begin,
-                end_of_pass_write_index: end,
-            })
-        };
+        // Timed (bench only): the first view's world pass starts at slot
+        // 0, the last view's upscale ends at slot 1, and every pass writes
+        // a pair of its own, counted in its group (issue #34).
+        if let Some(t) = &self.timer {
+            t.start_frame();
+        }
+        let timer = self.timer.as_ref();
+        let stamp =
+            |group, begin: Option<u32>, end: Option<u32>| timer.and_then(|t| t.pass(group, begin, end));
+        let group = |g| stamp(g, None, None);
         let views_drawn = self.plans.iter().zip(&self.targets);
         for (i, (plan, world)) in views_drawn.clone().enumerate() {
             let lit = look.and(self.look.as_ref()).zip(world.shade.as_ref());
@@ -223,11 +224,14 @@ impl Renderer {
                     "olr-render world lit",
                     &world.view,
                     shade,
-                    stamp((i == 0).then_some(0), None),
+                    stamp(PassGroup::World, (i == 0).then_some(0), None),
                 ),
-                None => {
-                    begin(&mut encoder, "olr-render world", &world.view, stamp((i == 0).then_some(0), None))
-                }
+                None => begin(
+                    &mut encoder,
+                    "olr-render world",
+                    &world.view,
+                    stamp(PassGroup::World, (i == 0).then_some(0), None),
+                ),
             };
             pass.set_bind_group(0, &world.globals_bind, &[]);
             pass.set_vertex_buffer(0, self.instance_buffer.slice(..));
@@ -285,7 +289,8 @@ impl Renderer {
             drop(pass);
             if let (Some((state, _)), Some(lt)) = (lit, world.lit.as_ref()) {
                 // Cleared every lit frame: only this frame's worms occlude.
-                let mut pass = begin(&mut encoder, "olr-render occluders", &lt.occluder_view, None);
+                let mut pass =
+                    begin(&mut encoder, "olr-render occluders", &lt.occluder_view, group(PassGroup::World));
                 if let Some((_, bind)) = &self.atlas
                     && !plan.occluders.is_empty()
                 {
@@ -303,7 +308,8 @@ impl Renderer {
             && let Some(tex) = &state.textures
             && !views.is_empty()
         {
-            drop(begin(&mut encoder, "olr-render glow light occluders", &tex.gi_occluder_view, None));
+            let clear = group(PassGroup::Emission);
+            drop(begin(&mut encoder, "olr-render glow light occluders", &tex.gi_occluder_view, clear));
             for (plan, world) in views_drawn.clone() {
                 if let Some(lt) = &world.lit {
                     copy_occluders(&mut encoder, &lt.occluders, &plan.frame, &tex.gi_occluders);
@@ -311,45 +317,69 @@ impl Renderer {
             }
             let casting = !look.groups.is_empty() || state.emitter_count > 0;
             let discs = (&state.emitters, state.emitter_count);
-            if tex.gi.encode(&mut encoder, &state.gi, casting, &tex.gi_occluder_bind, discs) {
+            if tex.gi.encode(&mut encoder, &state.gi, casting, &tex.gi_occluder_bind, discs, timer) {
                 self.glow_light_steps += 1;
             }
         }
         for (_, world) in views_drawn.clone() {
             let lit_target = look.and(self.look.as_ref()).and(world.shade.as_ref()).and(world.lit.as_ref());
             let (Some(lt), Some(state)) = (lit_target, self.look.as_ref()) else { continue };
-            let full = |encoder: &mut wgpu::CommandEncoder, view, pipeline, bind| {
-                let mut pass = begin(encoder, "olr-render look", view, None);
+            let full = |encoder: &mut wgpu::CommandEncoder, g, view, pipeline, bind| {
+                let mut pass = begin(encoder, "olr-render look", view, group(g));
                 pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, bind, &[]);
                 pass.draw(0..3, 0..1);
             };
             // The ambient occlusion's rows (issue #10), only when the level has it.
             if look.is_some_and(|l| l.occlusion.is_some_and(|o| o.strength > 0)) {
-                full(&mut encoder, &lt.occlusion_view, &state.occlusion_pipeline, &lt.occlusion_bind);
+                full(
+                    &mut encoder,
+                    PassGroup::Occlusion,
+                    &lt.occlusion_view,
+                    &state.occlusion_pipeline,
+                    &lt.occlusion_bind,
+                );
             }
-            full(&mut encoder, &lt.views[0], &state.sum_pipeline, &lt.binds[0]);
+            full(&mut encoder, PassGroup::Sum, &lt.views[0], &state.sum_pipeline, &lt.binds[0]);
             {
                 // The across soak, and the rows for the deeper rock.
-                let mut pass =
-                    begin_two(&mut encoder, "olr-render look", &lt.views[1], &lt.bloom_views[1], None);
+                let (views, g) = ([&lt.views[1], &lt.bloom_views[1]], group(PassGroup::Soak));
+                let mut pass = begin_two(&mut encoder, "olr-render look", views[0], views[1], g);
                 pass.set_pipeline(&state.soak_h_pipeline);
                 pass.set_bind_group(0, &lt.soak_binds[0], &[]);
                 pass.draw(0..3, 0..1);
             }
-            full(&mut encoder, &lt.views[2], &state.soak_v_pipeline, &lt.soak_binds[1]);
-            full(&mut encoder, &lt.views[0], &state.blur_h_pipeline, &lt.binds[1]);
+            full(&mut encoder, PassGroup::Soak, &lt.views[2], &state.soak_v_pipeline, &lt.soak_binds[1]);
+            full(&mut encoder, PassGroup::Blur, &lt.views[0], &state.blur_h_pipeline, &lt.binds[1]);
             {
                 // The toned light and the light above 1 (plan 15c's bloom).
-                let mut pass =
-                    begin_two(&mut encoder, "olr-render look", &lt.views[1], &lt.bloom_views[0], None);
+                let (views, g) = ([&lt.views[1], &lt.bloom_views[0]], group(PassGroup::Blur));
+                let mut pass = begin_two(&mut encoder, "olr-render look", views[0], views[1], g);
                 pass.set_pipeline(&state.blur_v_pipeline);
                 pass.set_bind_group(0, &lt.binds[2], &[]);
                 pass.draw(0..3, 0..1);
             }
-            full(&mut encoder, &lt.bloom_views[1], &state.bloom_h_pipeline, &lt.bloom_binds[0]);
-            full(&mut encoder, &lt.bloom_views[0], &state.bloom_v_pipeline, &lt.bloom_binds[1]);
-            full(&mut encoder, &lt.lit_view, &state.composite_pipeline, &lt.composite_bind);
+            full(
+                &mut encoder,
+                PassGroup::Bloom,
+                &lt.bloom_views[1],
+                &state.bloom_h_pipeline,
+                &lt.bloom_binds[0],
+            );
+            full(
+                &mut encoder,
+                PassGroup::Bloom,
+                &lt.bloom_views[0],
+                &state.bloom_v_pipeline,
+                &lt.bloom_binds[1],
+            );
+            full(
+                &mut encoder,
+                PassGroup::Composite,
+                &lt.lit_view,
+                &state.composite_pipeline,
+                &lt.composite_bind,
+            );
         }
         // Each view's upscale into its area only; the first clears the
         // whole target when asked.
@@ -357,7 +387,7 @@ impl Renderer {
         for (i, (v, (_, world))) in views.iter().zip(views_drawn.clone()).enumerate() {
             let load =
                 if clear && i == 0 { wgpu::LoadOp::Clear(wgpu::Color::BLACK) } else { wgpu::LoadOp::Load };
-            let stamp = stamp(None, (i == last).then_some(1));
+            let stamp = stamp(PassGroup::Upscale, None, (i == last).then_some(1));
             let mut pass = begin_with(&mut encoder, "olr-render upscale", target, load, stamp);
             let lit = look.and(self.look.as_ref()).and(world.shade.as_ref()).and(world.lit.as_ref());
             if let Some([x, y, w, h]) = clip(v.area, out) {

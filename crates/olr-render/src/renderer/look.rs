@@ -975,6 +975,13 @@ impl Renderer {
         ))
     }
 
+    /// View `view`'s lit target as last drawn (`Rgba8Unorm`, `COPY_SRC`:
+    /// the composite before the upscale; `olr-cli frame-hashes`' byte
+    /// identity, issue #34); `None` for a view never drawn lit.
+    pub fn view_lit_target(&self, view: usize) -> Option<&wgpu::Texture> {
+        Some(self.targets.get(view)?.lit.as_ref()?.lit_view.texture())
+    }
+
     /// How many history steps the glow light has taken (tests, issue #26:
     /// one a lit frame that casts light, however many views it draws).
     #[doc(hidden)]

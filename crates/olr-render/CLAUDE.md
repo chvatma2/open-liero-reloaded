@@ -255,7 +255,8 @@ on screen or offscreen.
   **CPU model** (`look/mod.rs`): `shade_texel` (one composite texel),
   `grade_linear`, `linear_to_srgb`, `LightGrid` (where the grid lies),
   references for tests (`shade_texel_table`). The light grid is rebuilt
-  every lit frame; no GPU timestamps around the look passes yet.
+  every lit frame; each pass group is timed with GPU timestamps when
+  timing is on (below, issue #34).
 - **Atlas** (`atlas.rs`): shelf packing, tallest first, ties by id
   (deterministic); texel (0, 0) is white. An image too large for the
   device is left out with a warning (`warnings()`), and any id the layout
@@ -280,7 +281,9 @@ on screen or offscreen.
   `read_light` (the light grid as last drawn, `Renderer::light_grid`: its
   `LightGrid` and each texel's linear light, f16 decoded),
   `read_view_light(renderer, i)` (view `i`'s), `read_bytes` (any
-  `COPY_SRC` texture's texels). `NoAdapter` means skip, never panic.
+  `COPY_SRC` texture's texels; issue #34: `Renderer::view_lit_target(i)`,
+  view `i`'s lit target as last drawn, the composite before the upscale,
+  for `olr-cli frame-hashes`' byte identity). `NoAdapter` means skip, never panic.
   `Offscreen::open(&OffscreenOptions)` chooses otherwise (`new()` is
   `open` of the default, unchanged): `prefer: AdapterPreference::Hardware`
   ranks a discrete GPU, then an integrated one, software last; `backends`
@@ -297,7 +300,18 @@ on screen or offscreen.
   when empty; only the slots a frame
   wrote are resolved, the probe's only when it ran, since Vulkan resolves
   with a wait; reading waits for the frame, so offscreen only; each frame
-  is read once). `set_probe(Some(Probe { passes, taps }))` (`probe.rs`,
+  is read once). Issue #34: every pass of a timed frame also writes a
+  pair of its own (`PASS_BASE` 32, a resolve's 256-byte alignment, to
+  `PASS_SLOTS` 256 more; the first world pass's start is slot 0, the last
+  upscale's end slot 1; a pass past them goes untimed), counted in its
+  `PassGroup` (world and occluders; emission: the glow light's occluder
+  map, discs and emission; jump flood; cascades; fluence and the history's
+  clear; occlusion; light sum; soak; blur; bloom; composite; upscale; the
+  timer's `pass` hands each pass its writes, `start_frame` clears them, the
+  glow light's `encode` takes the timer): `GpuTimes::passes`, indexed as
+  `PassGroup::ALL`, 0 for a group not run; the frame less their sum is the
+  copies and gaps between passes (`passes_add_up_in_their_groups`).
+  `olr-cli gpu-bench` prints them as a table. `set_probe(Some(Probe { passes, taps }))` (`probe.rs`,
   `probe.wgsl`, clamped to `MAX_PROBE_PASSES`/`MAX_PROBE_TAPS`): after
   each frame, an untimed seed pass (`fs_seed`) stretches the drawn frame
   (the first view's world target, at its area's size) into the first pass's source (even with 0 passes,
