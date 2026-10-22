@@ -48,10 +48,17 @@ impl ApplicationHandler for App {
                 }
             }
         }
-        // The in-game chat's field has the keys: the game hears none.
-        let chatting = self.shell.data.ingame_chat.is_some();
-        if !(chatting && matches!(event, WindowEvent::KeyboardInput { .. })) {
-            self.inputs.on_window_event(&event);
+        // A key is the game's unless the in-game chat's field has it
+        // (`App::game_key`); repeats are not presses.
+        match &event {
+            WindowEvent::KeyboardInput { event: key, .. } => {
+                if let winit::keyboard::PhysicalKey::Code(code) = key.physical_key
+                    && !key.repeat
+                {
+                    self.game_key(code, key.state.is_pressed());
+                }
+            }
+            _ => self.inputs.on_window_event(&event),
         }
         // Mouse controls (issue #24): the buttons and the wheel are the
         // game's while it has the pointer; the cursor moves the pointer's.

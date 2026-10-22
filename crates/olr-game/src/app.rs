@@ -781,7 +781,7 @@ impl App {
     /// hears it, keyboard 1's takes it.
     pub fn press(&mut self, action: Action, pressed: bool) {
         if let Some(k) = self.key_of(action) {
-            self.inputs.on_key(k, pressed);
+            self.game_key(k, pressed);
         }
     }
 
@@ -790,7 +790,17 @@ impl App {
     pub fn press2(&mut self, action: Action, pressed: bool) {
         let keys2 = &self.inputs.first().bindings().keys2;
         if let Some(&(_, k)) = keys2.iter().find(|(a, _)| *a == action) {
-            self.inputs.on_key(k, pressed);
+            self.game_key(k, pressed);
+        }
+    }
+
+    /// A physical key went down or up: every seat hears it, unless the
+    /// in-game chat's field has the keys. So text typed there (digits
+    /// included, issue #48: OLX keeps keys bound to weapon slots from
+    /// its chat, `src/common/CWorm.cpp:1561-1565`) presses nothing.
+    fn game_key(&mut self, code: KeyCode, down: bool) {
+        if self.shell.data.ingame_chat.is_none() {
+            self.inputs.on_key(code, down);
         }
     }
 

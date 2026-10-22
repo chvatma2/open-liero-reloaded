@@ -760,8 +760,10 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   lingering relays, a lookup or a replay being made alone
   (`a_hidden_window_wakes_by_what_is_live`). **In-game chat**: the options' `online.chat_key` (T)
   opens olr-ui's field over the playfield (`Shell::open_chat`, from
-  `App::key`); while it is open no key reaches the game (`handler.rs`,
-  `App::key`) and those held are released. **Network
+  `App::key`); while it is open no key reaches the game (`App::game_key`,
+  for the window's keys and `App::press` alike; `App::key`) and those
+  held are released, so digits typed there select no weapon, not even
+  once it closes (issue #48, `online::digits_typed_in_chat_select_no_weapon`). **Network
   overlay** (F3, spec §7.3, `overlay::network`): ping, input delay,
   rollback depth last and p99 over 5 s (`net::NetMeter` on the session's
   depth histogram), the last second's deepest, loss, corrections per
@@ -1295,7 +1297,12 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   never through the selection, the pause menu or the results); each
   local player's worm's label is its current weapon's name, in white, while
   its change key is held now (`Overlay::changing[k]`, its input's) or for
-  `WEAPON_NAME_TICKS` (OLX's 0.75 s) after a change made with it
+  `WEAPON_NAME_TICKS` (OLX's 0.75 s) after a change made with it, with
+  Previous/Next weapon or a Weapon 1-5 key (a change within
+  `WEAPON_KEY_TICKS` of one held: a tap is read a tick or the input
+  delay later), and after every tick a Weapon 1-5 key selects with
+  (issue #48: held or pressed for the current slot, changed or not; not
+  while firing without `WeaponCombos`, nor beyond the slots in play)
   (`Session::weapon_name_of(k, held)`, `weapon_name` the first's,
   `worm_label`; each change noted by `Session::tick_locals` and
   `Session::frame` from that player's keys, OLX's per-worm

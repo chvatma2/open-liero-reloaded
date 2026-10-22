@@ -1,8 +1,9 @@
 //! OLX's weapon name over the local worm (`CWorm::Draw`,
 //! `src/common/CWorm.cpp:1304-1315` at `d1ad953f`): while the player holds
-//! the change-weapon key, and for 0.75 s after a change made with it, the
-//! player's worm shows its current weapon's name; bots and a game nobody
-//! plays show none. Played headless through `Session`; Classic on Dirt
+//! the change-weapon key, for 0.75 s after a change made with it or with
+//! Previous/Next weapon, and while a Weapon 1-5 key selects and 0.75 s
+//! after (`CWormHuman.cpp:405-457`), the player's worm shows its current
+//! weapon's name; bots and a game nobody plays show none. Played headless through `Session`; Classic on Dirt
 //! Level from `OLR_CONTENT_DIR`, skipped with a notice without it.
 
 use olr_audio::Audio;
@@ -89,6 +90,88 @@ fn the_weapon_name_shows_while_changing() {
     assert!(s.weapon_name(false).is_some());
     s.restart(&a).unwrap();
     assert_eq!(s.weapon_name(false), None, "a restart clears it");
+}
+
+/// Ticks with nothing held until the name is gone (at most
+/// `WEAPON_NAME_TICKS` and a read later).
+fn settle(s: &mut Session) {
+    for _ in 0..WEAPON_NAME_TICKS + 3 {
+        s.tick(Keys(0));
+    }
+    assert_eq!(s.weapon_name(false), None);
+}
+
+/// Issue #48 (and #23's gap): Previous and Next weapon show the name when
+/// they change the weapon, a tap read a tick or two later included, for
+/// 0.75 s; held on, they change nothing more and leave no new tail.
+#[test]
+fn the_weapon_name_shows_after_previous_and_next() {
+    let Some(dir) = content_dir() else { return };
+    let (_a, mut s) = sandbox(&dir);
+    settle(&mut s);
+    let before = s.world.worms()[0].current_weapon;
+    s.tick(Keys(Keys::NEXT_WEAPON));
+    for _ in 0..3 {
+        s.tick(Keys(0));
+    }
+    assert_eq!(s.world.worms()[0].current_weapon, before + 1, "Next, tapped");
+    let next = current_name(&s, 0);
+    assert_eq!(s.weapon_name(false), Some((0, next.clone())));
+    settle(&mut s);
+
+    // Held on: one change, then no new tail.
+    for _ in 0..4 {
+        s.tick(Keys(Keys::PREV_WEAPON));
+    }
+    assert_eq!(s.world.worms()[0].current_weapon, before, "Previous: back");
+    let first = current_name(&s, 0);
+    assert_eq!(s.weapon_name(false), Some((0, first.clone())));
+    let mut shown = 4;
+    while s.weapon_name(false).is_some() {
+        s.tick(Keys(Keys::PREV_WEAPON));
+        shown += 1;
+        assert!(shown <= WEAPON_NAME_TICKS + 4, "hidden 0.75 s after the change");
+    }
+    assert_eq!(s.world.worms()[0].current_weapon, before, "held: no repeat");
+}
+
+/// Issue #48: a Weapon 1-5 key shows the name at every read it selects
+/// with, changed or not, and for 0.75 s after it is released.
+#[test]
+fn the_weapon_name_shows_after_a_quick_select() {
+    let Some(dir) = content_dir() else { return };
+    let (_a, mut s) = sandbox(&dir);
+    settle(&mut s);
+    assert!(s.world.worms()[0].slots.len() >= 3);
+    for _ in 0..3 {
+        s.tick(Keys(Keys::WEAPON3));
+    }
+    assert_eq!(s.world.worms()[0].current_weapon, 2);
+    let third = current_name(&s, 0);
+    assert_eq!(s.weapon_name(false), Some((0, third.clone())));
+    // Held: up all the while, and 0.75 s after the release.
+    for _ in 0..3 * WEAPON_NAME_TICKS {
+        s.tick(Keys(Keys::WEAPON3));
+        assert_eq!(s.weapon_name(false), Some((0, third.clone())));
+    }
+    for t in 1..WEAPON_NAME_TICKS {
+        s.tick(Keys(0));
+        assert_eq!(s.weapon_name(false), Some((0, third.clone())), "{t} ticks after the release");
+    }
+    settle(&mut s);
+    // The current slot's key, tapped: no change, the name all the same.
+    s.tick(Keys(Keys::WEAPON3));
+    s.tick(Keys(0));
+    assert_eq!(s.world.worms()[0].current_weapon, 2);
+    assert_eq!(s.weapon_name(false), Some((0, third)));
+    settle(&mut s);
+    // A key beyond the worm's slots selects nothing in play: no name.
+    let slots = s.world.worms()[0].slots.len();
+    if slots < 5 {
+        s.tick(Keys(Keys::WEAPONS[slots]));
+        s.tick(Keys(0));
+        assert_eq!(s.weapon_name(false), None, "Weapon{} with {slots} slots", slots + 1);
+    }
 }
 
 /// In a Deathmatch whose player is slot 2, after two bots, the name is

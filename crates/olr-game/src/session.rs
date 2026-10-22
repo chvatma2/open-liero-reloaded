@@ -47,11 +47,21 @@ pub const POPUP_TICKS: u32 = 100;
 /// Hits on one worm this close together (ticks) show as one number.
 pub const MERGE_TICKS: u32 = 30;
 
-/// How long the weapon name stays over the player's worm after a change
-/// (ticks): OLX's `fForceWeapon_Time = tLX->currentTime + 0.75f`.
+/// How long the weapon name stays over the player's worm after a change,
+/// or a Weapon 1-5 key's read (ticks): OLX's `fForceWeapon_Time =
+/// tLX->currentTime + 0.75f`.
 ///
-/// OLX: src/common/CWormHuman.cpp:405-428
+/// OLX: src/common/CWormHuman.cpp:405-457
 pub const WEAPON_NAME_TICKS: u64 = 75;
+
+/// A weapon change this many ticks after a weapon key was held is that
+/// key's (and shows the name): the simulation reads a key at its next
+/// sub-step (a tick may run none), online after the input delay (at most
+/// 3 ticks).
+pub const WEAPON_KEY_TICKS: u64 = 10;
+
+/// Weapon 1-5's key bits.
+const WEAPON_BITS: u16 = Keys::WEAPON1 | Keys::WEAPON2 | Keys::WEAPON3 | Keys::WEAPON4 | Keys::WEAPON5;
 
 /// A damage number floating up from a worm (spec §19 E10).
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -160,10 +170,13 @@ pub struct Session {
     /// The tick the match ended in.
     ended_at: Option<u64>,
     /// The weapon name shows over each local player's worm until this
-    /// tick, in local order: a change made with the change key (OLX's
-    /// `bForceWeapon_Name` and `fForceWeapon_Time`, per worm;
-    /// [`Session::weapon_name_of`]).
+    /// tick, in local order: a change made with a weapon key, or a Weapon
+    /// 1-5 key held (OLX's `bForceWeapon_Name` and `fForceWeapon_Time`,
+    /// per worm; [`Session::weapon_name_of`]).
     weapon_name_until: [Option<u64>; MAX_LOCALS],
+    /// The last tick each local player held a key that changes the
+    /// weapon (SelectWeapon, Previous/Next, Weapon 1-5), in local order.
+    weapon_key_at: [Option<u64>; MAX_LOCALS],
     /// Worms the presentation knows (a worm spawned mid-match is added).
     shown: usize,
     /// OLX's default skin (a worm spawned mid-match wears it).
@@ -471,6 +484,7 @@ impl Session {
             ticks: 0,
             ended_at: None,
             weapon_name_until: [None; MAX_LOCALS],
+            weapon_key_at: [None; MAX_LOCALS],
             shown: 0,
             default_skin: a.bot_skin.clone(),
             practice: a.practice(),
@@ -572,22 +586,59 @@ impl Session {
     }
 
     /// After a tick (or an online frame's ticks) whose local players'
-    /// keys were `keys` (in local order): a weapon change made with the
-    /// change key held (a player's worm, alive before and after, no longer
-    /// holds weapon `before`) shows its name over that worm for
-    /// [`WEAPON_NAME_TICKS`] (OLX sets `bForceWeapon_Name` when
-    /// SelectWeapon and left or right change the weapon, per worm).
+    /// keys were `keys` (in local order): shows the weapon's name over a
+    /// player's worm (alive before and after) for [`WEAPON_NAME_TICKS`],
+    /// as OLX sets `bForceWeapon_Name` per worm:
+    /// - when SelectWeapon with Left or Right, Previous or Next weapon,
+    ///   or a Weapon 1-5 key changed the weapon (it no longer holds weapon
+    ///   `before`, and one of those keys was held within
+    ///   [`WEAPON_KEY_TICKS`]: the simulation reads a tap at its next
+    ///   sub-step, online after the input delay; a beam's delivery also
+    ///   changes it, `olr-sim`'s `beam.rs`, without a name);
+    /// - at every read a Weapon 1-5 key selects with (issue #48), changed
+    ///   or not: held, or pressed for the current slot, the name stays up.
+    ///   Not while firing without `WeaponCombos`, nor for a key beyond
+    ///   the worm's slots in play (it selects nothing: `olr-sim`'s
+    ///   `select_slot`).
     ///
-    /// OLX: src/common/CWormHuman.cpp:405-428
+    /// OLX: src/common/CWormHuman.cpp:405-457
     fn note_weapon_changes(&mut self, before: [Option<i32>; MAX_LOCALS], keys: &[Keys]) {
+        let changers = Keys::CHANGE | Keys::PREV_WEAPON | Keys::NEXT_WEAPON | WEAPON_BITS;
         let now = self.local_weapons();
+        let quick = self.quick_selects(keys);
+        let ticks = self.ticks;
         for (k, until) in self.weapon_name_until.iter_mut().enumerate() {
-            let held = keys.get(k).is_some_and(|k| k.0 & Keys::CHANGE != 0);
+            let at = &mut self.weapon_key_at[k];
+            if keys.get(k).is_some_and(|k| k.0 & changers != 0) {
+                *at = Some(ticks);
+            }
+            let by_key = at.is_some_and(|t| ticks.saturating_sub(t) <= WEAPON_KEY_TICKS);
             // A worm that (re)spawned this tick did not change weapons.
-            if held && before[k].is_some() && now[k].is_some() && now[k] != before[k] {
-                *until = Some(self.ticks + WEAPON_NAME_TICKS);
+            let alive = before[k].is_some() && now[k].is_some();
+            if alive && ((by_key && now[k] != before[k]) || quick[k]) {
+                *until = Some(ticks + WEAPON_NAME_TICKS);
             }
         }
+    }
+
+    /// Whether each local player's `keys` hold a Weapon 1-5 key that
+    /// selects a slot of its worm: one it has (any, with `olx_quirks`,
+    /// which wraps), and Shoot not held unless `WeaponCombos` allows it.
+    ///
+    /// OLX: src/common/CWormHuman.cpp:401-403, :430-440
+    fn quick_selects(&self, keys: &[Keys]) -> [bool; MAX_LOCALS] {
+        let mut out = [false; MAX_LOCALS];
+        self.with_world(|world| {
+            let s = world.settings();
+            for ((o, &i), k) in out.iter_mut().zip(&self.locals).zip(keys) {
+                let Some(w) = world.worms().get(usize::from(i)) else { continue };
+                let slots = w.slots.len();
+                let free = k.0 & Keys::FIRE == 0 || s.weapon_combos;
+                let reaches = |n: usize| n < slots || (s.olx_quirks && slots > 0);
+                *o = free && Keys::WEAPONS.iter().enumerate().any(|(n, b)| k.0 & b != 0 && reaches(n));
+            }
+        });
+        out
     }
 
     /// The weapon name over the (first) player's worm:
@@ -599,7 +650,8 @@ impl Session {
     /// The weapon name over local player `player`'s worm (OLX's
     /// `CWorm::Draw`): the worm and its current weapon's name while `held`
     /// (that player's change key, as its input holds it now) or for
-    /// [`WEAPON_NAME_TICKS`] after a change made with it. Only a player's
+    /// [`WEAPON_NAME_TICKS`] after a change made with it, with Previous or
+    /// Next weapon, or a Weapon 1-5 key (`note_weapon_changes`). Only a player's
     /// own worm (OLX: a local human worm), alive and with a weapon; `None`
     /// otherwise (no such player: a replay, bots alone, an online match
     /// watched).
@@ -706,6 +758,7 @@ impl Session {
         self.time_left_ms = mode_time_left(&self.world);
         self.keys.fill(Keys(0));
         self.weapon_name_until = [None; MAX_LOCALS];
+        self.weapon_key_at = [None; MAX_LOCALS];
         // The rematch's bots think first: the last match's events are not theirs.
         self.events = TickEvents::new();
         self.ticks = 0;

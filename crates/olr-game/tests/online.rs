@@ -780,6 +780,60 @@ fn chat_reaches_the_other_player_in_game() {
     });
 }
 
+/// Issue #48: digits typed in the in-game chat select no weapon (OLX
+/// starts no chat with a key bound to a control, `CWorm.cpp:1548-1567`):
+/// while the field is open the game hears no key, so the client's
+/// Weapon 3 key typed there reaches neither its worm nor the host, not
+/// even once the chat is closed (the latch would keep a press heard);
+/// pressed then, it selects the third slot on both.
+#[test]
+fn digits_typed_in_chat_select_no_weapon() {
+    let Some(dir) = content_dir() else { return };
+    let (mut h, mut c) = host_and_client(&dir, 1.0, None);
+    start_match(&mut h, &mut c);
+    let (mut host, mut client) = (app_of(h), app_of(c));
+    let slot = usize::from(client.shell().session().and_then(Session::local).expect("Anna plays"));
+    let worm = |a: &App| {
+        a.shell().session().unwrap().with_world(|w| (w.worms()[slot].alive, w.worms()[slot].current_weapon))
+    };
+    let mut seen = Default::default();
+    let start = Instant::now();
+    while !worm(&client).0 || !worm(&host).0 {
+        assert!(start.elapsed() < Duration::from_secs(10), "Anna's worm spawns");
+        both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(50));
+    }
+    assert_eq!((worm(&client).1, worm(&host).1), (0, 0));
+
+    assert!(client.shell_mut().open_chat());
+    client.press(Action::Weapon3, true);
+    both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(100));
+    client.press(Action::Weapon3, false);
+    client.shell_mut().data.ingame_chat = None;
+    both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(500));
+    assert_eq!((worm(&client).1, worm(&host).1), (0, 0), "typed in chat: no weapon selected");
+    let pressed = host
+        .shell()
+        .with_peer(|p| {
+            let s = p.match_session()?;
+            let log = s.input_log();
+            Some((0..s.confirmed()).any(|t| log.get(t, slot as u8).is_some_and(|k| k & Keys::WEAPON3 != 0)))
+        })
+        .flatten()
+        .expect("the host's match");
+    assert!(!pressed, "the key never reached the host");
+
+    client.press(Action::Weapon3, true);
+    let start = Instant::now();
+    while worm(&client).1 != 2 || worm(&host).1 != 2 {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "the chat closed, Weapon 3 selects: {:?}",
+            worm(&host)
+        );
+        both_frames([&mut host, &mut client], &mut seen, Duration::from_millis(50));
+    }
+}
+
 /// Decision N21: the app's frame without a window that can draw (what
 /// `about_to_wait` runs while the window is hidden) still polls the
 /// network and advances the online match.
