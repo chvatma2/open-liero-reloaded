@@ -2,7 +2,7 @@
 
 Keyboard, gamepad and mouse input for one player, or for each input seat
 (keyboard 1, keyboard 2, each gamepad: issue #28), turned into the
-simulation's 11 `Keys` once per tick (spec §8.5, §19 E5; presentation
+simulation's 16 `Keys` once per tick (spec §8.5, §19 E5; presentation
 note §10).
 
 - **Layer 5, uses `std`.** Depends on `olr-sim` (`Keys`, `World` for the
@@ -11,27 +11,34 @@ note §10).
   `gilrs` 0.11.2, `serde`. `#![forbid(unsafe_code)]`. It opens no device:
   the caller owns the window and the `Gilrs` context and passes events in.
 - **Bindings** (`bindings.rs`): `Action` is OLX's control with a sim key
-  (Weapon1-5 have none), plus `Dig`, olr-input's own. `Action::bit()` is
+  (Weapon1-5 since issue #48, `Action::WEAPONS`), plus `Dig`, olr-input's
+  own. `Action::bit()` is
   its bit in the actions' `u32` mask: the sim's `Keys` bit, or `DIG` (bit
   16, beyond the sim's 16 bits; never reaches the sim). `key_bits`,
   `pad_bits`, `mouse_bits`, `TickLatch` and `actions_held()` are masks.
-  `Bindings::olx()` (the default) is OLX's player 1: arrows, Shoot `ControlLeft`, Jump `AltLeft`, Rope `KeyX`, SelectWeapon
-  `ShiftLeft`, Strafe `KeyZ`, Previous/NextWeapon `KeyA`/`KeyS`, and Dig
-  `KeyC` (free in OLX's defaults); pad d-pad, right trigger, A, Y, left
+  `Bindings::olx()` (the default) is OLX's player 1: arrows, Shoot
+  `ControlLeft`, Jump `AltLeft`, Rope `KeyX`, SelectWeapon `ShiftLeft`,
+  Strafe `KeyZ`, Previous/NextWeapon `KeyA`/`KeyS`, Dig
+  `KeyC` (free in OLX's defaults), and Weapon1-5 `Digit1`-`Digit5` (listed
+  after Dig, so a repaired older file equals the defaults); pad d-pad,
+  right trigger, A, Y, left
   trigger, plus left stick X / right stick Y as digital directions (OLX's
   analogue twin-stick is not ported), Strafe West, Previous/NextWeapon the
   bumpers (`LeftTrigger`/`RightTrigger`), Dig East (OLX binds no pad input
-  to the new four). Several inputs may share an action. Serde for M7's options.
+  to the new four), no Weapon1-5 (OLX's none: `PAD_OPTIONAL`, the actions
+  a pad need not have). Several inputs may share an action. Serde for M7's options.
   `browser_conflicts()` / `is_browser_reserved` flag bound keys that form
   a shortcut browsers keep (Ctrl+W, ...; each keyboard list on its own);
   the defaults have none. Mouse controls' own lists (issue #25):
-  `mouse_keys` (their keyboard, in place of `keys`, default `MOUSE_KEYS`)
+  `mouse_keys` (their keyboard, in place of `keys`, default `MOUSE_KEYS`,
+  Weapon1-5 on 1-5 too)
   and `mouse` (`MouseInput`: Left, Right, Middle, Back, Forward buttons,
   WheelUp, WheelDown; default `MOUSE_BUTTONS`), never of `MOUSE_MADE`
   (Up, Down, SelectWeapon, Strafe: the controller's); `mouse_bits`.
   `keys2` (issue #28): keyboard 2's keys, `Bindings::olx_keys2()` (OLX's
   `ply_def2`: kp 8/5/4/6, Shoot kp +, Jump kp enter, Rope kp -,
-  SelectWeapon kp 0, Strafe kp ., Previous/Next kp 7/9; Dig kp 3, OLR's);
+  SelectWeapon kp 0, Strafe kp ., Previous/Next kp 7/9, Weapon1-5 6 7 8 9
+  0; Dig kp 3, OLR's);
   `pad` is every gamepad seat's. `PAD_PAUSE` (the pad's Start) is the
   game's pause, never bound (OLX binds none). `shared_keys(mouse_controls)`:
   the keys keyboard 2 and keyboard 1's list in that mode both bind (one
@@ -45,7 +52,8 @@ note §10).
   alone, issue #28; `Mode::devices`; `Mode::binds(action, device)`);
   `of(mode, action, device)`, `actions_of(mode, input)`, `unreachable()`
   (every seat's and mode's gaps, `(Action, Need)`: `Need::Key` (keyboard
-  1, mouse controls off), `PadInput` and `Keyboard2Key`, every action;
+  1, mouse controls off) and `Keyboard2Key`, every action; `PadInput`,
+  every action but `PAD_OPTIONAL`'s (Weapon1-5, issue #48);
   `KeyOrMouse` with mouse controls on, every action but `MOUSE_MADE`'s);
   `bind(mode, action, input, Resolve::{Share, Move})` and `unbind` refuse
   (`RebindError::Unreachable { action, need }`, nothing changed) any step

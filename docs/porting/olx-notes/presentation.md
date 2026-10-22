@@ -1033,7 +1033,7 @@ Player 1's keyboard defaults are slot 0, with gamepad `j1_*` in slot 1
 | SelectWeapon | `lshift` | `space` | `kp 0` | `CHANGE` |
 | Strafe | `z` | `c` | `kp .` | `STRAFE` (issue #23) |
 | PreviousWeapon / NextWeapon | `a` / `s` | `a` / `s` | `kp 7` / `kp 9` | `PREV_WEAPON` / `NEXT_WEAPON` (issue #23) |
-| Weapon1..5 | `1`..`5` | `1`..`5` | `6`..`0` | none |
+| Weapon1..5 | `1`..`5` | `1`..`5` | `6`..`0` | `WEAPON1`..`WEAPON5` (issue #48) |
 
 OLR's keyboard 2 seat (issue #28, `olr_input::Bindings::olx_keys2`) has
 the Player 2 column, and Dig (OLR's own action) on `kp 3`.
@@ -1079,8 +1079,12 @@ which `olr-sim::physics::get_input` ports:
   the throw sound (`:567-576`). Jump releases an attached rope (`:535-540`).
   `Game.OldSkoolRope` (SelectWeapon+Jump) is off by default and not ported.
 - **Respawn.** Jump while dead and allowed requests a respawn (`:115-119`).
-- The quick-select keys (Weapon1-5) have no equivalent among the sim's 11
-  keys.
+- **Quick-select.** Each of Weapon1-5 held selects its slot (`isDown`,
+  held, not once), after SelectWeapon's change and before Previous/Next,
+  under the same firing rule; with several held the highest wins; the
+  weapon's name shows at every such read (`:430-440`). OLX wraps a key
+  beyond the worm's slots (`MOD`); the remake ignores it in play (issue
+  #48, `docs/porting/STATUS.md`).
 - **Mouse.** OLX's mouse mode and twin-stick aim set the angle directly
   (up to 100°/s, no acceleration, `:280-306`). The remake does not port
   them: its experimental mouse controls (`olr-input`'s controller, issue
@@ -1238,7 +1242,8 @@ Not needed:
     in OLX's defaults but not in the sim's 8 keys. Leave them out (classic LX
     feel), or extend `Keys`, which is a sim change.
     **Resolved** (issue #23): `Keys` is 16 bits with `STRAFE`, `PREV_WEAPON`
-    and `NEXT_WEAPON`; Weapon1-5 stay out.
+    and `NEXT_WEAPON`; Weapon1-5 stayed out until issue #48 gave them
+    bits 11-15 (`WEAPON1`..`WEAPON5`).
 12. **Laser sight wraps at the map edge.** The trace reads material with
     wrap-around even on finite maps (`getMaterialWrapped`). At a map edge the
     line can run past the border until wrapped material stops it, up to

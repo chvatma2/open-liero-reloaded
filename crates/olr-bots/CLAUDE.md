@@ -69,7 +69,7 @@ loadouts, §4 the recommendations this crate follows).
   `path.rs` the 50 px splitting; `follow.rs` the node advance (8 nodes
   ahead) and the jump check; `trace.rs` `simpleTraceLine`,
   `fastTraceLine`, `traceWormLine`. Nothing allocates after `new`.
-- **Motor** (`motor.rs`, F3, notes §4.4): `Intent` to the classic 8 keys (never Strafe or Previous/Next weapon) under
+- **Motor** (`motor.rs`, F3, notes §4.4): `Intent` to the classic 8 keys (never Strafe, Previous/Next weapon or Weapon 1-5) under
   `olr-sim`'s input rules (aim speed controller ~100°/s, face tap, jump and
   rope press edges, CHANGE+arrow weapon switching, carve combo).
 - **Aim** (`aim.rs`, F2): `olx_direct` (`AI_SetAim`'s angle),

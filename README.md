@@ -140,10 +140,18 @@ The game's keys are OLX's player 1 defaults, changed in Options → Keys:
 | Left Alt | jump |
 | X | ninja rope |
 | Left Shift + Left/Right | change weapon |
+| Z (held) | strafe: move without turning |
+| A / S | previous / next weapon |
+| 1 to 5 | select weapon 1 to 5 (held: again at every step) |
+| C | dig (held: again every 0.2 s) |
 
 A gamepad works too: D-pad or left stick to walk, right stick to aim, right
 trigger shoots, A (south) jumps, Y (north) throws the rope, left trigger +
-Left/Right changes weapon.
+Left/Right changes weapon, X (west) strafes, the left and right bumpers
+select the previous and next weapon, B (east) digs. Weapon 1 to 5 have no
+gamepad button unless you bind one. A second player on the same keyboard
+(keyboard 2) has OLX's player 2 keys: the numeric keypad, and 6 to 0 for
+weapon 1 to 5.
 
 These keys are fixed (they cannot be bound to actions):
 

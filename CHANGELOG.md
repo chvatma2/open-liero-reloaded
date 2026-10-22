@@ -115,6 +115,14 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   both ways, light and dark, glow shown). **Firefly**, a double-resolution
   skin made with them, ships with the game: its tail lantern glows and
   lights the worm's surroundings in lit levels. Pick it in Profiles.
+- OpenLieroX's **Weapon 1 to 5** keys: holding one selects that weapon
+  slot (by default 1 to 5, keyboard 2's 6 to 0; no gamepad button unless
+  you bind one in Options → Keys). A key beyond the worm's slots does
+  nothing. The weapon's name shows over your worm after a quick-select
+  and, as in OpenLieroX, after Previous/Next weapon. Older settings files
+  get the new keys; digits typed in the in-game chat select nothing.
+  Online play, replays and desync bundles from earlier builds are not
+  compatible.
 
 ### Changed
 
