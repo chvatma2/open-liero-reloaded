@@ -257,6 +257,33 @@ impl World {
         self.substeps
     }
 
+    /// How many physics sub-steps, each one input read of every worm, the
+    /// tick `ahead` ticks after the next one runs (0: the next tick), from
+    /// the two clocks as they stand, if the physics is not frozen meanwhile
+    /// (the match's end). Changes nothing: a client-side controller plans
+    /// its keys with it (issue #24).
+    pub fn substeps_ahead(&self, ahead: u32) -> u32 {
+        let (step, frame) = (self.step_clock(), self.frame_dt());
+        let (mut physics, mut time) = (self.physics_time, self.time);
+        let mut n = 0;
+        for _ in 0..=ahead {
+            n = 0;
+            while physics + step <= time {
+                physics += step;
+                n += 1;
+            }
+            time += frame;
+        }
+        n
+    }
+
+    /// Worm `i`'s key latches as the last tick left them: a press made in a
+    /// tick that ran no sub-step is still pending. Changes nothing: a
+    /// client-side controller plans its keys with it (issue #24).
+    pub fn latches(&self, i: usize) -> Option<&Latches> {
+        self.latches.get(i)
+    }
+
     /// Whether OLX has set projectile type `proj`'s zero `RotIncrement` to 1
     /// (`Proj_SpawnInfo::apply`, `PhysicsLX56_Projectiles.cpp:590-593`): a
     /// projectile of that type was spawned with `UseRandomRot`. From then on

@@ -71,6 +71,9 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
 - **Two clocks.** `tick` is one 100 Hz frame. Inside it, LX56 physics runs in
   `1000 / LX56PhysicsFPS` ms sub-steps (11 ms by default) while the physics
   clock is behind the frame clock, so some frames run no sub-step.
+  `substeps_ahead(k)` foretells the sub-steps of the tick `k` after the
+  next and `latches(i)` shows a worm's pending presses, both read-only,
+  for `olr-input`'s mouse controller (issue #24).
 - **Input** (`input.rs`): keys are latched between reads exactly like OLX's
   `CInput`. See `docs/porting/STATUS.md`. `Keys` is a `u16` of 11 bits: the
   classic 8, then `STRAFE`, `PREV_WEAPON`, `NEXT_WEAPON` (issue #23;

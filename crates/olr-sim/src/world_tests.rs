@@ -46,6 +46,34 @@ fn physics_steps_follow_the_two_clocks() {
 }
 
 #[test]
+fn substeps_ahead_foretells_the_ticks() {
+    let mut w = world(Material::Background);
+    w.spawn_worm(100, 20);
+    let mut foretold: Vec<Vec<u32>> = vec![];
+    let mut ran = vec![];
+    let (mut last, mut pending) = (Keys(0), false);
+    for t in 0..40 {
+        foretold.push((0..4).map(|k| w.substeps_ahead(k)).collect());
+        let keys = if t % 3 == 0 { Keys(Keys::LEFT) } else { Keys(0) };
+        w.tick_new(&[keys]);
+        ran.push(u32::from(w.substeps_last_tick()));
+        // A press stays pending through ticks with no sub-step.
+        pending = (pending || keys.0 & !last.0 != 0) && ran[t] == 0;
+        assert_eq!(w.latches(0).unwrap().left.is_once(), pending, "tick {t}");
+        last = keys;
+    }
+    assert!(ran.contains(&0), "some ticks run no sub-step");
+    for (t, f) in foretold.iter().enumerate() {
+        for (k, n) in f.iter().enumerate() {
+            if let Some(r) = ran.get(t + k) {
+                assert_eq!(n, r, "tick {t} foretold {k} ahead");
+            }
+        }
+    }
+    assert!(w.latches(1).is_none());
+}
+
+#[test]
 fn gus_speed_round_trip_matches_olx() {
     // From the oracle: OLX turns 6.60000134 into 6.60000086 between frames 7 and 8 of `fall`.
     let mut w = world(Material::Background);
