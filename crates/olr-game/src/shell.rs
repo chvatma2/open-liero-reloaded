@@ -570,7 +570,8 @@ impl Shell {
             | AppCommand::RecoverMod(_)
             | AppCommand::DiscardModRecovery(_) => self.mod_command(c),
             AppCommand::SetPaused(on) => self.paused = on,
-            AppCommand::ArmPlayer(weapons) => self.arm(weapons),
+            AppCommand::ArmPlayer(weapons) => self.arm(&[weapons]),
+            AppCommand::ArmPlayers(weapons) => self.arm(&weapons),
             AppCommand::SaveReplay => {
                 let saved = self.keep_replay();
                 for c in self.ui.update(UiAction::ReplaySaved(saved)) {
@@ -688,12 +689,19 @@ impl Shell {
         match self.launch(launch) {
             Ok(()) => {
                 let mut out = self.act(UiAction::MatchStarted);
-                // OLX skips the selection when there is no choice to make.
+                // OLX skips the selection when there is no choice to make
+                // (for every local player, issue #32).
                 if self.ui.screen() == Screen::WeaponSelect
                     && let Some(menu) = self.data.weapons.as_ref().filter(|m| !m.needs_choice())
                 {
                     let weapons = WeaponSelect::new(menu, &[]).slots();
-                    out.extend(self.act(UiAction::ChooseWeapons { weapons, names: Vec::new() }));
+                    for player in 0..self.ui.local_players() {
+                        out.extend(self.act(UiAction::ChooseWeaponsOf {
+                            player,
+                            weapons,
+                            names: Vec::new(),
+                        }));
+                    }
                 }
                 out.push(Outcome::Started);
                 out
@@ -770,7 +778,19 @@ impl Shell {
         let profile = self.ui.profiles().selected().cloned().unwrap_or_default();
         let roots = self.roots();
         let root: Vec<&Path> = roots.iter().map(PathBuf::as_path).collect();
+        // The join step's players (issue #32), each with its profile's
+        // look and skin (none: "Player N" in the default ones).
+        let lineup: Vec<Option<olr_ui::Profile>> =
+            (0..self.ui.lineup().len()).map(|k| self.ui.player_profile(k).cloned()).collect();
+        let several = matches!(launch, Launch::Match(_)) && !lineup.is_empty();
         let mut assets = match launch {
+            Launch::Match(o) if several => {
+                let skins: Vec<&str> = lineup
+                    .iter()
+                    .map(|p| p.as_ref().map_or(setup::DEFAULT_SKIN, |p| p.skin_id.as_str()))
+                    .collect();
+                setup::load_match_for(&root, &o, &skins)?
+            }
             Launch::Match(o) => setup::load_match(&root, &o, &profile.skin_id)?,
             Launch::Replay(path) => {
                 log::info!("playing the replay {}", path.display());
@@ -781,7 +801,13 @@ impl Shell {
                 setup::load_edited(&root, &play, &profile.skin_id, prefs)?
             }
         };
-        assets.set_player_look(PlayerLook { name: profile.name, colour: profile.colour });
+        if several {
+            for (l, p) in assets.locals.iter_mut().zip(&lineup) {
+                l.look = p.as_ref().map(|p| PlayerLook { name: p.name.clone(), colour: p.colour });
+            }
+        } else {
+            assets.set_player_look(PlayerLook { name: profile.name, colour: profile.colour });
+        }
         self.log(std::mem::take(&mut assets.warnings));
         log::info!("game start: {}", assets.describe());
         let mut session = Session::new(&assets, self.cfg.viewport, self.cfg.interpolation, Audio::silent())?;
@@ -799,29 +825,48 @@ impl Shell {
         Ok(())
     }
 
-    /// The weapon selection's choice: the human (the local slot) starts
-    /// with `weapons` (none enabled: -1s, the random loadout stays). The
-    /// world is built again from the options with them; no tick has
-    /// played. Weapons the match cannot be built with leave its options as
-    /// they were.
-    fn arm(&mut self, weapons: [i32; MAX_SLOTS]) {
+    /// The weapon selection's choice: local player `k` (the `k`-th local
+    /// slot) starts with `weapons[k]` (none enabled: -1s, its random
+    /// loadout stays; issue #32: every player at once). The world is built
+    /// again from the options with them; no tick has played. Weapons the
+    /// match cannot be built with leave its options as they were.
+    fn arm(&mut self, weapons: &[[i32; MAX_SLOTS]]) {
         let Some(p) = &mut self.play else { return };
-        let Some(slot) = p.session.local().map(usize::from) else { return };
+        let slots: Vec<usize> = p.session.locals().iter().map(|&s| usize::from(s)).collect();
         let Game::Deathmatch { options, .. } = &mut p.assets.game else { return };
-        if weapons.iter().any(|&w| w < 0) {
+        let before = options.players.clone();
+        let mut armed = false;
+        for (&slot, w) in slots.iter().zip(weapons) {
+            if w.iter().all(|&w| w >= 0)
+                && let Some(mine) = options.players.get_mut(slot)
+            {
+                *mine = Player::HumanWith(*w);
+                armed = true;
+            }
+        }
+        if !armed {
             return;
         }
-        let Some(mine) = options.players.get_mut(slot) else { return };
-        let before = std::mem::replace(mine, Player::HumanWith(weapons));
         if let Err(e) = p.session.rebuild(&p.assets) {
             // Options `build_match` refuses would fail every rematch too:
             // the match keeps the ones it was built with.
             log::warn!("arming the player: {e:#}");
-            if let Game::Deathmatch { options, .. } = &mut p.assets.game
-                && let Some(mine) = options.players.get_mut(slot)
-            {
-                *mine = before;
+            if let Game::Deathmatch { options, .. } = &mut p.assets.game {
+                options.players = before;
             }
+        }
+    }
+
+    /// The input seats of the local players of the match playing, in
+    /// local order: the join step's (issue #32); none for one player as
+    /// before it, or for any other game.
+    pub fn local_seats(&self) -> Vec<olr_input::Seat> {
+        let n = self.session().map_or(0, |s| s.locals().len());
+        let seats: Vec<olr_input::Seat> = self.ui.lineup().iter().map(|j| j.seat).collect();
+        if self.ui.game() == Some(olr_ui::Game::Match) && !self.editing_play() && seats.len() == n {
+            seats
+        } else {
+            Vec::new()
         }
     }
 

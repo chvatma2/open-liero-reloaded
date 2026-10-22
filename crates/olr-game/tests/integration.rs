@@ -10,6 +10,7 @@ mod downloads;
 mod editor_host;
 mod finding;
 mod ingame;
+mod join;
 mod locals;
 mod menu;
 mod mod_editor;

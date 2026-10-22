@@ -772,10 +772,20 @@ impl App {
     }
 
     /// Presses (or releases) the key bound to `action` through the input
-    /// path, as a player would (autoplay's `Press`, tests).
+    /// path, as a player would (autoplay's `Press`, tests): every seat
+    /// hears it, keyboard 1's takes it.
     pub fn press(&mut self, action: Action, pressed: bool) {
         if let Some(k) = self.key_of(action) {
-            self.inputs.first_mut().on_key(k, pressed);
+            self.inputs.on_key(k, pressed);
+        }
+    }
+
+    /// [`App::press`] on keyboard 2 (its own keys, issue #32): every seat
+    /// hears it, keyboard 2's take it.
+    pub fn press2(&mut self, action: Action, pressed: bool) {
+        let keys2 = &self.inputs.first().bindings().keys2;
+        if let Some(&(_, k)) = keys2.iter().find(|(a, _)| *a == action) {
+            self.inputs.on_key(k, pressed);
         }
     }
 
@@ -853,9 +863,10 @@ impl App {
                 Command::Fullscreen(on) => self.requests.fullscreen(on),
             }
         }
-        // A seat per local player (issue #29); the first plays with mouse
-        // controls' aim.
-        self.inputs.fit(self.shell.session().map_or(1, |s| s.locals().len()));
+        // A seat per local player (issue #29), the join step's (issue #32);
+        // the first plays with mouse controls' aim.
+        let seats = self.shell.local_seats();
+        self.inputs.fit_to(self.shell.session().map_or(1, |s| s.locals().len()), &seats);
         let local = if self.inputs.first().mouse_controls() { self.local_worm() } else { None };
         let first = self.inputs.first_mut().latch_tick_for(local.as_ref(), self.pointer.aim());
         let keys = self.inputs.latch(first);
@@ -991,8 +1002,23 @@ impl App {
             }
         };
         let time = (now - start).as_secs_f64();
-        // The weapon selection reads the game's keys, keyboard or gamepad.
+        // The weapon selection reads the game's keys, keyboard or gamepad:
+        // each local player's own (issue #32); the join step every seat's.
         self.shell.data.held = self.inputs.first().held();
+        self.shell.data.held_by = self.inputs.held();
+        self.shell.data.set_seats(self.inputs.menu_seats());
+        // Only a joined pad's Start is the pause's (issue #32).
+        let pads: Vec<usize> = self
+            .shell
+            .local_seats()
+            .into_iter()
+            .filter_map(|s| match s {
+                olr_input::Seat::Pad(p) => Some(p),
+                _ => None,
+            })
+            .collect();
+        let several = !self.shell.local_seats().is_empty();
+        self.shell.data.pad.set_players(several.then_some(pads));
         // Each local player's change key, for its weapon name (issue #29).
         let mut changing = [false; crate::setup::MAX_LOCALS];
         for (c, k) in changing.iter_mut().zip(self.inputs.held()) {
@@ -1405,6 +1431,7 @@ impl App {
                 self.key(el, code, pressed, false)?;
             }
             Effect::Action(a, pressed) => self.press(a, pressed),
+            Effect::Action2(a, pressed) => self.press2(a, pressed),
             Effect::Quit => {
                 log::info!("autoplay passed ({} frames)", self.frames);
                 el.exit();

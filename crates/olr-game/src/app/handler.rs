@@ -123,6 +123,11 @@ impl ApplicationHandler for App {
     fn about_to_wait(&mut self, el: &ActiveEventLoop) {
         if let Some(g) = &mut self.gilrs {
             while let Some(ev) = g.next_event() {
+                // A pad plugged in again takes its player's seat back by its
+                // UUID (issue #32).
+                if let Some(pad) = g.connected_gamepad(ev.id) {
+                    self.inputs.pad_seen(usize::from(ev.id), pad.uuid());
+                }
                 self.inputs.on_gamepad(&ev);
                 // The menus by pad (issue #31; they hear it when they show).
                 if let Some(p) = olr_input::PadEvent::from_gilrs(&ev.event) {
@@ -132,6 +137,12 @@ impl ApplicationHandler for App {
                     c.on_gamepad(&ev);
                 }
             }
+        }
+        // The players' lineup follows a pad plugged in again (issue #32).
+        for (from, to) in self.inputs.take_reseated() {
+            log::info!("{} plays from {} now", olr_ui::join::seat_name(from), olr_ui::join::seat_name(to));
+            let out = self.shell.act(olr_ui::UiAction::Reseat { from, to });
+            self.outcomes(el, out);
         }
         // A pad's Start pauses and resumes, as Esc (issue #28); the
         // editor's Play has no pause, a game without menus none either.

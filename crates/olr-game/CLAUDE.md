@@ -228,7 +228,24 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `Content::skin_matching(id, hash)` for every worm, there being no own
   slot: a skin this install lacks, or has with other content, is the
   default skin, with a warning). Weapon selection's Done arms the first local
-  slot (the menus' selection is one player's until issue #31).
+  slot; with several local players (issue #32) `ArmPlayers` arms each
+  local slot with its player's choice in one rebuild (`Shell::arm`; a
+  player without an enabled weapon keeps the random draw), and a match
+  without a choice skips every player's selection.
+  **The join step** (issue #32; the screens, the lineup and the seats'
+  rules are olr-ui's `join.rs`): a match started from the join step
+  (`UiState::lineup`) loads with `load_match_for`, local player `k`
+  wearing its profile's skin and look (none: "Player N" in the default
+  ones); `Shell::local_seats()` (the lineup's seats while that match
+  plays: none for one player as before, the sandbox, replays, online,
+  the editors' Play) is what the app seats the players on
+  (`LocalInputs::fit_to`). Every frame the app gives the menus each
+  seat's input (`LocalInputs::menu_seats` → `MenuData::set_seats`), each
+  player's keys (`MenuData::held_by`, the weapon selection) and the
+  joined pads (`PadNav::set_players`: only their Start is the pause's);
+  `about_to_wait` tells the lineup of a pad plugged in again
+  (`take_reseated` → `UiAction::Reseat`, logged `Gamepad N plays from
+  Gamepad M now`). Test: `tests/join.rs`.
   The menus list and play `--content` with the data directory's `packs/`
   over it (`Content::open_layers`, spec §9.4), and OLR's own packs
   between them (`olr_content::bundled_roots`, issue #7: `content/reloaded`
@@ -277,16 +294,29 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `the_cursor_hides_only_in_play`).
 - **Local players' inputs** (`players.rs`, issue #29): `LocalInputs`
   holds one `olr_input::InputState` per local player, fitted to
-  `Session::locals` each tick (`fit(n)`: made afresh when the count
-  changes). One player alone is `InputState::new` (keyboard 1, the mouse,
-  every pad, as before seats); among several, player `k` is on
-  `SEATS[k]` (keyboard 1 with the mouse, keyboard 2, pad 0, pad 1) until
-  the menus seat players (issue #31). Every window, key and gilrs event
+  `Session::locals` each tick (`fit_to(n, Shell::local_seats())`: the
+  join step's seats, issue #32, else `fit(n)`; made afresh when they
+  change). One player alone is `InputState::new` (keyboard 1, the mouse,
+  every pad, as before seats); among several, each on its lineup seat
+  (keyboard 1 first: the mouse's player is local player 1, its view the
+  first, so mouse controls' pointer stays in it; a lineup without
+  keyboard 1 has no mouse controls), or for the command line's
+  `--locals N` player `k` on `SEATS[k]` (keyboard 1 with the mouse,
+  keyboard 2, pad 0, pad 1). Every window, key and gilrs event
   reaches every seat and each hears only its own devices (OLX
   `CClient.cpp:1527-1551`), so one player's keys never reach another's
   worm; any seat's pad Start pauses (`take_pause`). The first is
   `first()` (mouse controls, the online player, the selection);
-  `held()` gives the overlay every player's CHANGE.
+  `held()` gives the overlay every player's CHANGE and the weapon
+  selection each player's keys. It also holds the menus' seats (an
+  `olr_input::Seats`: keyboard 1, keyboard 2, every pad heard;
+  `menu_seats()`, the join step's). **Unplugged** (issue #32): a joined
+  pad's `Disconnected` releases its player's keys (its worm stands
+  still) and the player waits for it (`unplugged()`); the same gilrs id
+  coming back plays on; another id takes the seat back by the gilrs
+  UUID it connects with (`pad_seen`, the app's for every gilrs event,
+  from `connected_gamepad`), else the first pad no player has that
+  presses a button (that press only claims it); `take_reseated()`.
 - **Mouse controls** (issue #24, experimental; the controller is
   `olr-input`'s `mouse.rs`): Options → Keys' switch (`olr_ui::MouseSettings`,
   `Outcome::MouseControls` → `InputState::set_mouse_controls`, also at
@@ -1227,7 +1257,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   machine, `click_until_clicks_again_until_its_effect_shows`),
   `Key(name)` (egui and `App::key`, as the window delivers a key),
   `Type(text)` (egui's text event to the focused field: click it first),
-  `Press`/`Release(action)` (the input path), `WaitFor(screen)`,
+  `Press`/`Release(action)` (the input path, every seat hearing it),
+  `Press2`/`Release2(action)` (keyboard 2's key for it: a second local
+  player, issue #32; pads cannot be faked), `WaitFor(screen)`,
   `Wait(frames)`, `Drag(label, from, to)` and `ClickAt(label, at)`
   (fractions of the widget's rect, written `(0.3, 0.5)`; a drag moves in
   `DRAG_STEPS`, 8, one a frame: the editor's canvas), `Screenshot(name)`
@@ -1305,14 +1337,23 @@ effect; the port is one below the ephemeral range, `unclaimable_port`, so
 no other test's port-0 bind takes it between the leave and the new host),
 `tests/deathmatch.rs` (a Deathmatch to its results, the bots' think
 budget, a recording replayed through a replay session),
-`tests/locals.rs` (issue #29: four local players on slots 0, 2, 3 and 5
+`tests/join.rs` (issue #32: 2, 3 and 4 seats, keyboards and fake pads,
+join local play through the menus' join step, each steps its own
+profile, readies, loads with a worm each in its profile's look and
+skin, chooses its weapons with its own keys, the last Done arming all;
+in play only its own keys reach its worm; a joined pad's Start pauses
+and the pause menu hears it alone, an unjoined pad's does not; pad 4
+unplugged stands still, back as pad 9 its first button claims the seat,
+the lineup follows and F5's rematch keeps it), `tests/locals.rs` (issue #29: four local players on slots 0, 2, 3 and 5
 between two bots, each moved by its own scripted keys and no other's,
 their names, colours, skins and views, the throws heard each tick theirs
 alone, the tally, deaths and spawns each player's, the replay's rows the
 scripts' and its viewers the slots, played back with four views to the
 same checksums; each player's weapon name its own; issue #30: the
 HUD's compact panel per view, live and played back), `players.rs`' unit
-tests (each seat hears its own keys; any seat's Start pauses),
+tests (each seat hears its own keys; any seat's Start pauses; issue
+#32: the join step's seats, the menus' seats, a pad back by UUID or by
+a button),
 `tests/throw_sound.rs` (only the player's rope throws are heard against
 seven bots, none for bots alone, a replay's viewers'; online, in
 `an_online_match_runs_headless`: the client's own only), `tests/menu.rs`
