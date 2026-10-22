@@ -91,6 +91,23 @@ Remade OLX content is named "<Old name> Reloaded".
     oranges but the darkest), the Mini Nuke's centre (`#ecb400`, and
     `#d08c00` at 75 %) and the Big Nuke's top (as the Napalm's, with
     `#a65000` at 50 %).
+  - Heat (issue #46, `docs/formats/mod.md`'s `explosion_heat` and
+    `heat`; the engine's heat is `1.2 × damage⁴` degrees of stone at the
+    centre, at most 1000, over twice the hole's radius plus half the
+    damage): every explosion not named here keeps the engine's. The
+    flames heat what they pass, 8 degrees a tick over 5 pixels (a wall
+    they play on warms; one they only pass, as a back wall, takes a
+    fifth), and Napalm's burning drops 12 over 6 (their landing keeps
+    the engine's 750 over 17.5). Bazooka 150 % over 18 pixels (its rim
+    glowing orange-yellow; a worm hit's 1000 kept to 18 pixels, not
+    28.5). Mine, Bouncy Mine and Float Mine 400 % over 20 (their timed
+    blast of damage 3 would barely glow; a worm hit's 1000 not over
+    31), Booby Trap the engine's amount over 20. Mini Nuke's detonation
+    200 % over 22 (its bomblets the engine's). Big Nuke's 50 bomblets
+    80 % over 24 (a wide orange-white field rather than 50 white discs;
+    its detonation has no damage and so no heat), their sparks
+    (`projectiles/big-nuke.spawn.spawn.ron`, also the Mini Nuke's) 300 %
+    of their faint 97.
 
 - `olr-level-liero-factory-reloaded/`: **Liero Factory Reloaded** (issue
   #7). OLX's Liero Factory (`origin`: `Liero Factory.lxl` at `d1ad953f`)
@@ -115,6 +132,48 @@ Remade OLX content is named "<Old name> Reloaded".
   unlimited reach) so daylight comes in through the hall, the loft and
   the towers, and the cavern torches and the hall's candles flickering
   (group `flames`).
+- **Surface materials** (issue #46; `docs/formats/material.md`, the
+  spec `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`):
+  both levels hold copies of the built-in materials they use, so
+  explosions leave them hot; their collision material, `front.png` and
+  `back.png` are unchanged (and so every match). Each element has a
+  default, then a rule paints its pixels by collision kind and art
+  colour (`tools/levels/reloaded_materials.py`, its `factory` and
+  `castle`), one exact-colour `olr-cli level element surface --rule`
+  per colour unlike the default:
+  - Liero Factory Reloaded (stone, concrete, metal, wood, dirt, glass):
+    `rock` stone, `dirt` dirt, `background` concrete, `sky` none, the
+    `lamps`, `glass`, `screens` and `displays` layers (and their
+    `-in-rock` ones) glass, the `beacons` metal. The rule: in rock, pure
+    grey (r = g = b) is the cave's stone, a grey tinted warm the
+    building's concrete, a grey tinted blue or near white steel (metal),
+    brown, olive and green wood (desks, crates), any other colour
+    painted machinery (metal: the truck, the red machine and pipe, the
+    teal device, the orange control room); in dirt, the tunnels'
+    saturated orange-brown earth is dirt, the pure browns of the rack
+    and the crates, the plants and the sofa wood, greys and gold metal;
+    in the background, the cave's dark pure grey stone, the red pipe
+    and truck metal, the sky none (the `sky` layer covers it), the rest
+    concrete.
+  - Castle Strike Reloaded (stone, brick, wood, metal): `rock` stone,
+    `dirt` wood (barrels, logs, sacks, food), `background` stone (it
+    shows only at the torches), `background-2` none (it holds the sky
+    and the hills; the rule paints the rest). The rule: grey is stone,
+    the sandstone walls' beige stone, browns wood (floors, beams,
+    furniture, the hall's ceiling, barrels), the red roof tiles brick;
+    in the dirt, greys are the tankards' metal and the rest wood; in the
+    backgrounds, the sky, the water and the hills none.
+
+  Made with (`--preview DIR` writes each ruled element's materials as a
+  false-colour PNG instead; the built-in assets cut from these levels,
+  `content/assets/`, carry their materials, so their commands were run
+  again):
+
+  ```sh
+  cargo build -p olr-cli
+  python3 -I tools/levels/reloaded_materials.py target/debug/olr-cli
+  ```
+
 - `olr-skin-firefly/`: **Firefly** (issue #13), a double-resolution skin
   (art scale 4, 40 × 36 frames) for judging double resolution and the
   skin light in play. OLX's default skin (`origin`:

@@ -5237,6 +5237,49 @@ play, the oracle or any golden changes. As built, the builder's calls:
   the library's copy changes (saved, renamed, which it follows; deleted:
   none).
 
+## The Reloaded content's materials and heat (issue #46)
+
+No OLX counterpart. The last of ten (the same spec): OLR's own Reloaded
+levels get surface materials and Liero v1.0 Reloaded heat values
+(`content/reloaded/README.md` lists them). The levels' collision
+material, front and back are byte for byte as before, so every match
+golden and the oracle are unchanged. As built, the builder's calls:
+
+- **The rule is a script**, `tools/levels/reloaded_materials.py`: it
+  reads each element's art, sorts every colour it holds into a material
+  by collision kind and colour (a function per level: hue, saturation
+  and how grey), and hands `olr-cli level element surface` one
+  exact-colour `--rule` per colour unlike the element's default (in
+  batches of 400), after `--clear`, so a run always makes the same
+  files. Colour boxes (`--rule`'s tolerance) cannot tell the factory's
+  stone from its concrete: the art's cave rock is pure grey and the
+  building a grey a step warm, which only exact colours separate.
+  `--preview DIR` draws the result as false colours without editing.
+- **No material is a default, not a painted value**: a painted 0 means
+  the element's default, so an element holding pixels that must not heat
+  (Castle Strike's `background-2`: the sky, the hills, the water) has no
+  default and the rule paints the rest; the factory's sky is a layer of
+  its own. Castle Strike's `background` keeps a default (stone): it
+  shows only at the torches, where `background-2` is cut away.
+- **Locked layers** (the factory's glowing ones) are unlocked for the
+  edit and locked again; each takes one material whole, no rule.
+- **The built-in assets** cut from these levels (`content/assets/`)
+  were saved again by their README commands and now carry their
+  materials (`olr-cli`'s `built_in_assets_are_what_their_commands_make`).
+- **The mod's values** keep the engine's heat where it reads well and
+  tune the big explosives: a percent of the engine's amount cannot heat
+  an explosion of no damage (Big Nuke's detonation stays cold, its
+  bomblets carry the blast), and it saturates at 1000 for a worm hit
+  (damage 27-32), so the mines' and Bazooka's own radius keeps those
+  from glowing 28-31 pixels wide. The flames' 8 a tick over 5 pixels was
+  where flamed walls began to show in `render-match` frames (3 hardly
+  did: the flames fly in the open, where the back wall takes a fifth).
+- **Renders for review** were made with `render-match` (a scripted local
+  worm and a chaos bot, review copies of the mod with only the Bazooka,
+  nukes and Mine, or only the Flamer or Napalm) and the same frames on
+  the levels without materials; they are not goldens. The playtest and
+  the Big Nuke frame are in `docs/deferred-verification.md`.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
