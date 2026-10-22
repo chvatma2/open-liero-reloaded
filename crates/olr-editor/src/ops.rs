@@ -280,6 +280,10 @@ impl Document {
             glow: None,
             clear: false,
             distant: None,
+            surface: None,
+            back_surface: None,
+            surface_map: false,
+            back_surface_map: false,
         };
         self.check_with(|es| es.push(element.clone()))?;
         let bytes = Arc::new(bytes);
@@ -551,6 +555,10 @@ impl Document {
             glow: None,
             clear: false,
             distant: None,
+            surface: None,
+            back_surface: None,
+            surface_map: false,
+            back_surface_map: false,
         };
         self.check_with(|es| es.push(element.clone()))?;
         let id = element.id.clone();
@@ -578,6 +586,10 @@ impl Document {
             glow: None,
             clear: false,
             distant: None,
+            surface: None,
+            back_surface: None,
+            surface_map: false,
+            back_surface_map: false,
         };
         self.check_with(|es| es.push(element.clone()))?;
         let (w, h) = self.level.size;
@@ -619,6 +631,10 @@ impl Document {
                 glow: None,
                 clear: false,
                 distant: None,
+                surface: None,
+                back_surface: None,
+                surface_map: false,
+                back_surface_map: false,
             });
             new
         })
@@ -1191,6 +1207,8 @@ impl Document {
             glow: None,
             clear: None,
             distant: Vec::new(),
+            surface: None,
+            distant_surfaces: Vec::new(),
         };
         edit(&mut tmp)?;
         Ok(self.change(Edit::Objects { before, after: tmp.objects }))

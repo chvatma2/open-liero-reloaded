@@ -27,6 +27,17 @@
 //! front over background blocks); without one, every back pixel is opaque,
 //! as always.
 //!
+//! Surface materials (issue #37) follow where the pixels land: a world
+//! pixel's front material (`look/surface.png`) is the surface of the
+//! element giving its material when that is rock or dirt, else none; its
+//! back material (`look/surface-back.png`) is that of the element giving
+//! its centre art pixel's back (else the first back art pixel of its block
+//! that has one): its `surface` when the back is its own art (a background
+//! element, a mixed layer's background cell), its `back_surface` when it is
+//! back art. A painted map's value overrides the default per pixel (0
+//! keeps it). The maps are `None` when no pixel has a material; a distant
+//! element's `surface` is its layer's.
+//!
 //! Integer arithmetic only: the same composition bakes to the same bytes
 //! on every platform.
 
@@ -40,8 +51,9 @@ use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
     Composition, CompositionSource, Element, ElementKind, ElementMaterial, GlowLayers, LevelSource,
-    check_composition, drawn_box, drawn_files, element_box, encode_material, glow_file, image_file,
-    mask_file, raster_files, write_level_files,
+    SurfaceMaps, check_composition, decode_surface_map, drawn_box, drawn_files, element_box, encode_material,
+    glow_file, image_file, mask_file, raster_files, surface_back_file, surface_file, surface_map_size,
+    write_level_files,
 };
 use olr_format::themes::read_theme_files;
 use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
@@ -512,7 +524,16 @@ fn distant_layer(e: &Element, d: &Decoded, size: (u32, u32), s: u32) -> Option<D
 /// leaves them, so an editor calls this when a distant element changes.
 pub fn bake_distant(level: &mut LevelSource, items: &[(&Element, &Decoded)]) {
     let (size, s) = (level.size, level.art_scale);
-    level.distant = items.iter().filter_map(|(e, d)| distant_layer(e, d, size, s)).collect();
+    let has = |id: &String| level.look.as_ref().is_some_and(|l| l.materials.iter().any(|m| m.id == *id));
+    let (layers, mut surfaces): (Vec<DistantLayer>, Vec<Option<String>>) = items
+        .iter()
+        .filter_map(|(e, d)| Some((distant_layer(e, d, size, s)?, e.surface.clone().filter(has))))
+        .unzip();
+    while surfaces.last().is_some_and(Option::is_none) {
+        surfaces.pop();
+    }
+    level.distant = layers;
+    level.distant_surfaces = surfaces;
 }
 
 /// Whether `items` hold a visible distant element that bakes (its data
@@ -594,6 +615,78 @@ fn cell_group((x0, y0, s): (u32, u32, u32), (cx, cy): (u32, u32), glowing: &dyn 
     }
 }
 
+/// The painted surface maps of a composition's elements (issue #37), by
+/// file (`editor/surface/<id>.png`, `editor/surface/<id>.back.png`): each
+/// its element's box at world resolution ([`surface_map_size`]).
+pub type PaintedSurfaces = BTreeMap<String, Arc<Vec<u8>>>;
+
+/// A painted surface map over its element's box: the values, the box's
+/// origin and size in world pixels.
+type BoxMap<'a> = (&'a [u8], (i64, i64), (u32, u32));
+
+/// One element's surface materials as the bake reads them: map values (1
+/// + an index in the level's materials, 0 none).
+#[derive(Default)]
+struct LayerSurface<'a> {
+    /// Its pixels' default.
+    front: u8,
+    /// Its back art's default.
+    back: u8,
+    front_map: Option<BoxMap<'a>>,
+    back_map: Option<BoxMap<'a>>,
+}
+
+impl LayerSurface<'_> {
+    /// Its pixels' material (`back`: its back art's) at world pixel
+    /// `(x, y)`: the painted value, else the default.
+    fn at(&self, back: bool, x: u32, y: u32, materials: usize) -> u8 {
+        let (default, map) = if back { (self.back, self.back_map) } else { (self.front, self.front_map) };
+        let Some((values, origin, size)) = map else { return default };
+        let (lx, ly) = (i64::from(x) - origin.0, i64::from(y) - origin.1);
+        if !(0..i64::from(size.0)).contains(&lx) || !(0..i64::from(size.1)).contains(&ly) {
+            return default;
+        }
+        match values.get(ly as usize * size.0 as usize + lx as usize).copied().unwrap_or(0) {
+            v if v == 0 || usize::from(v) > materials => default,
+            v => v,
+        }
+    }
+
+    /// Whether it names any material.
+    fn any(&self) -> bool {
+        self.front > 0 || self.back > 0 || self.front_map.is_some() || self.back_map.is_some()
+    }
+}
+
+/// `e`'s surface materials in a level of `size` with `materials` (ids in
+/// order): an id naming no material is none, a painted map not fitting
+/// its box is left out.
+fn layer_surface<'a>(
+    e: &Element,
+    painted: &'a PaintedSurfaces,
+    materials: &[&str],
+    size: (u32, u32),
+) -> LayerSurface<'a> {
+    let index = |id: &Option<String>| {
+        id.as_deref()
+            .and_then(|id| materials.iter().position(|m| *m == id))
+            .and_then(|i| u8::try_from(i + 1).ok())
+            .unwrap_or(0)
+    };
+    let origin = element_box(&e.kind, size).map_or((0, 0), |(at, _)| (i64::from(at.0), i64::from(at.1)));
+    let b = surface_map_size(&e.kind, size);
+    let map = |on: bool, file: String| -> Option<BoxMap<'a>> {
+        let m = painted.get(&file).filter(|_| on)?;
+        (m.len() as u64 == u64::from(b.0) * u64::from(b.1)).then_some((&m[..], origin, b))
+    };
+    LayerSurface {
+        front: index(&e.surface),
+        back: if e.has_back_art() { index(&e.back_surface) } else { 0 },
+        front_map: map(e.surface_map, surface_file(&e.id)),
+        back_map: map(e.back_surface_map && e.has_back_art(), surface_back_file(&e.id)),
+    }
+}
+
 /// Rebakes `rect` (clipped) of `level`'s material, front and back from
 /// decoded elements, bottom to top (rulings R3-R5 of plan 14a). A visible
 /// image whose grid is `None`, and data of a size the level or the
@@ -607,10 +700,12 @@ pub fn bake_elements(
     back_tile: &RgbaImage,
     rect: Rect,
 ) {
-    bake_elements_with(level, items, &GlowMasks::new(), back_tile, rect);
+    bake_elements_with(level, items, &GlowMasks::new(), &PaintedSurfaces::new(), back_tile, rect);
 }
 
-/// [`bake_elements`] with the elements' glow masks. The level's glow
+/// [`bake_elements`] with the elements' glow masks and painted surface
+/// maps. The level's surface maps are baked too (issue #37): none when no
+/// pixel has a material of the level's look. The level's glow
 /// (`look/`) is baked too: none when no visible element glows (with a group
 /// the level's look has), else its layers, made empty first when the level
 /// had none. Distant elements give no material or art: the back pixels no
@@ -621,6 +716,7 @@ pub fn bake_elements_with(
     level: &mut LevelSource,
     items: &[(&Element, &Decoded)],
     masks: &GlowMasks,
+    painted: &PaintedSurfaces,
     back_tile: &RgbaImage,
     rect: Rect,
 ) {
@@ -640,14 +736,38 @@ pub fn bake_elements_with(
     }
     let groups: Vec<&str> =
         level.look.as_ref().map_or(Vec::new(), |l| l.glow_groups.iter().map(|g| g.id.as_str()).collect());
-    let (layers, extras): (Vec<Layer>, Vec<(Option<LayerGlow>, bool)>) = items
+    let materials: Vec<&str> =
+        level.look.as_ref().map_or(Vec::new(), |l| l.materials.iter().map(|m| m.id.as_str()).collect());
+    let n = materials.len();
+    let (layers, extras): (Vec<Layer>, Vec<(Option<LayerGlow>, bool, LayerSurface)>) = items
         .iter()
         .filter(|(e, _)| e.distant.is_none())
         .filter_map(|(e, d)| {
-            Some((Layer::new(e, d, (aw, ah), s)?, (layer_glow(e, masks, &groups, (w, h), s), e.clear)))
+            let surface = layer_surface(e, painted, &materials, (w, h));
+            Some((Layer::new(e, d, (aw, ah), s)?, (layer_glow(e, masks, &groups, (w, h), s), e.clear, surface)))
         })
         .unzip();
-    let (glows, clears): (Vec<Option<LayerGlow>>, Vec<bool>) = extras.into_iter().unzip();
+    let (glows, clears, surfaces): (Vec<Option<LayerGlow>>, Vec<bool>, Vec<LayerSurface>) =
+        extras.into_iter().fold((Vec::new(), Vec::new(), Vec::new()), |mut v, (g, c, m)| {
+            v.0.push(g);
+            v.1.push(c);
+            v.2.push(m);
+            v
+        });
+    let mut surface = surfaces.iter().any(LayerSurface::any).then(|| match level.surface.take() {
+        Some(m) if m.fits((w, h)) => m,
+        _ => SurfaceMaps::empty((w, h)),
+    });
+    // The back material of the element giving art pixel (ax, ay)'s back
+    // (its own art's surface, else its back art's), at world pixel (x, y).
+    let back_surface = |ax: u32, ay: u32, x: u32, y: u32| {
+        layers
+            .iter()
+            .zip(&surfaces)
+            .rev()
+            .find_map(|(l, m)| l.backdrop(ax, ay).map(|(_, own)| m.at(!own, x, y, n)))
+            .unwrap_or(0)
+    };
     let cells = w as usize * h as usize;
     let mut clear = clears.iter().any(|c| *c).then(|| match level.clear.take() {
         Some(c) if c.len() == cells => c,
@@ -680,15 +800,24 @@ pub fn bake_elements_with(
         for x in rect.x.min(w)..x1 {
             let cell = y as usize * w as usize + x as usize;
             let (cx, cy) = (x * s + s / 2, y * s + s / 2);
-            let (material, is_clear) = layers
+            let (material, is_clear, giver) = layers
                 .iter()
                 .zip(&clears)
+                .zip(&surfaces)
                 .rev()
-                .find_map(|(l, c)| l.material(cell, cx, cy).map(|m| (m, *c)))
-                .unwrap_or((Material::Background, false));
+                .find_map(|((l, c), m)| l.material(cell, cx, cy).map(|mat| (mat, *c, Some(m))))
+                .unwrap_or((Material::Background, false, None));
             level.material[cell] = material;
             if let Some(c) = clear.as_mut() {
                 c[cell] = u8::from(is_clear && material != Material::Background) * 255;
+            }
+            if let Some(m) = surface.as_mut() {
+                m.front[cell] = match giver {
+                    Some(g) if material != Material::Background => g.at(false, x, y, n),
+                    _ => 0,
+                };
+                let block = (x * s, y * s, s);
+                m.back[cell] = cell_group(block, (cx, cy), &|ax, ay| back_surface(ax, ay, x, y));
             }
             for ay in y * s..(y + 1) * s {
                 for ax in x * s..(x + 1) * s {
@@ -735,6 +864,7 @@ pub fn bake_elements_with(
     // A glow left with nothing glowing is no glow; so are clear flags.
     level.glow = glow.filter(|g| g.front.iter().chain(&g.back).any(|v| *v > 0));
     level.clear = clear.filter(|c| c.iter().any(|v| *v > 0));
+    level.surface = surface.filter(|m| !m.is_empty());
 }
 
 /// Decoded elements and processed images of one composition, ready to
@@ -747,6 +877,8 @@ pub struct Baker {
     items: Vec<(Element, Decoded)>,
     /// The elements' glow masks.
     masks: GlowMasks,
+    /// The elements' painted surface maps.
+    painted: PaintedSurfaces,
 }
 
 impl Baker {
@@ -790,7 +922,8 @@ impl Baker {
             .map(|e| Ok((e.clone(), decode_element(src, e, size, s, cache)?)))
             .collect::<Result<_, ComposeError>>()?;
         let masks = decode_glow_masks(src, size, s)?;
-        Ok(Baker { size, art_scale, back_tile: back_tile.clone(), items, masks })
+        let painted = decode_surface_maps(src, size)?;
+        Ok(Baker { size, art_scale, back_tile: back_tile.clone(), items, masks, painted })
     }
 
     /// Rebakes `rect` (clipped to the level) of `level`'s material, front
@@ -801,8 +934,24 @@ impl Baker {
             return;
         }
         let items: Vec<(&Element, &Decoded)> = self.items.iter().map(|(e, d)| (e, d)).collect();
-        bake_elements_with(level, &items, &self.masks, &self.back_tile, rect);
+        bake_elements_with(level, &items, &self.masks, &self.painted, &self.back_tile, rect);
     }
+}
+
+/// The painted surface maps of `src`'s elements in a level of `size`
+/// (issue #37), each decoded grey and of its element's
+/// [`surface_map_size`], by file.
+pub fn decode_surface_maps(src: &CompositionSource, size: (u32, u32)) -> Result<PaintedSurfaces, ComposeError> {
+    let mut out = PaintedSurfaces::new();
+    for e in &src.composition.elements {
+        for (file, on) in [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)] {
+            if on {
+                let (_, values) = decode_surface_map(src, &file, surface_map_size(&e.kind, size))?;
+                out.insert(file, Arc::new(values));
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// The glow masks of `src`'s elements in a level of `size` at art scale
@@ -984,6 +1133,8 @@ fn as_level(
         glow: None,
         clear: None,
         distant: Vec::new(),
+        surface: None,
+        distant_surfaces: Vec::new(),
     }
 }
 
@@ -1089,22 +1240,23 @@ pub fn bake(
 }
 
 /// A level's distant layers as distant drawn elements (`distant-1`, ...,
-/// far to near), each boxed where its layer lies: they bake back to the
-/// same layers. A layer whose size is not a multiple of the art scale (the
-/// format refuses one) is left out.
+/// far to near), each boxed where its layer lies, with its surface: they
+/// bake back to the same layers. A layer whose size is not a multiple of
+/// the art scale (the format refuses one) is left out.
 pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded)> {
     let s = level.art_scale.max(1);
     level
         .distant
         .iter()
-        .filter(|d| {
+        .zip((0..).map(|j| level.distant_surfaces.get(j).cloned().flatten()))
+        .filter(|(d, _)| {
             d.image.width() % s == 0
                 && d.image.height() % s == 0
                 && d.image.width() > 0
                 && d.image.height() > 0
         })
         .enumerate()
-        .map(|(i, d)| {
+        .map(|(i, (d, surface))| {
             let e = Element {
                 id: format!("distant-{}", i + 1),
                 name: format!("Distant {}", i + 1),
@@ -1120,6 +1272,10 @@ pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded)> {
                 glow: None,
                 clear: false,
                 distant: Some(d.depth),
+                surface,
+                back_surface: None,
+                surface_map: false,
+                back_surface_map: false,
             };
             (e, Decoded::Drawn { art: d.image.clone(), cells: None, back: None })
         })
@@ -1127,10 +1283,11 @@ pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded)> {
 }
 
 /// `level` as a composition of one raster element `base` (ruling R6): its
-/// material, front and back encoded as `write_level_files` encodes them;
-/// its distant layers below it ([`distant_elements`]).
+/// material, front and back encoded as `write_level_files` encodes them,
+/// its surface maps (issue #37) as the raster's painted ones; its distant
+/// layers below it ([`distant_elements`]).
 pub fn compose_from(level: &LevelSource) -> CompositionSource {
-    let element = Element {
+    let mut element = Element {
         id: "base".into(),
         name: "Base".into(),
         visible: true,
@@ -1139,6 +1296,10 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         glow: None,
         clear: false,
         distant: None,
+        surface: None,
+        back_surface: None,
+        surface_map: false,
+        back_surface_map: false,
     };
     let [m, f, b] = raster_files(&element.id);
     let mut files: BTreeMap<String, Vec<u8>> = [
@@ -1148,6 +1309,12 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
     ]
     .into_iter()
     .collect();
+    if let Some(maps) = level.surface.as_ref().filter(|m| m.fits(level.size)) {
+        let (w, h) = level.size;
+        (element.surface_map, element.back_surface_map) = (true, true);
+        files.insert(surface_file(&element.id), image_io::encode_grey(w, h, &maps.front));
+        files.insert(surface_back_file(&element.id), image_io::encode_grey(w, h, &maps.back));
+    }
     let mut elements = Vec::new();
     for (e, d) in distant_elements(level) {
         files.extend(encode_decoded(&e, &d, level.size));
@@ -1208,6 +1375,10 @@ pub fn split_layers(
             glow: None,
             clear: false,
             distant: None,
+            surface: None,
+            back_surface: None,
+            surface_map: false,
+            back_surface_map: false,
         };
         (e, Decoded::Drawn { art, cells: None, back: None })
     };
@@ -1221,7 +1392,9 @@ pub fn split_layers(
 /// A level without a composition as the editor opens it: its material,
 /// front and back as three drawn layers (`split_layers`: `background`,
 /// `dirt`, `rock`) over its distant layers ([`distant_elements`]), which
-/// bake back to its files byte for byte.
+/// bake back to its files byte for byte; its surface maps (issue #37) are
+/// the layers' painted ones, the back map the background's and the front
+/// map the dirt's and the rock's.
 pub fn split_from(level: &LevelSource) -> CompositionSource {
     let mut layers = distant_elements(level);
     layers.extend(split_layers(
@@ -1234,8 +1407,14 @@ pub fn split_from(level: &LevelSource) -> CompositionSource {
     ));
     let mut files = BTreeMap::new();
     let mut elements = Vec::new();
-    for (e, d) in layers {
+    let maps = level.surface.as_ref().filter(|m| m.fits(level.size));
+    for (mut e, d) in layers {
         files.extend(encode_decoded(&e, &d, level.size));
+        if let (Some(m), false) = (maps, e.is_distant()) {
+            let values = if e.id == "background" { &m.back } else { &m.front };
+            e.surface_map = true;
+            files.insert(surface_file(&e.id), image_io::encode_grey(level.size.0, level.size.1, values));
+        }
         elements.push(e);
     }
     CompositionSource { composition: Composition { elements }, files }
@@ -1272,7 +1451,7 @@ pub fn theme_back_tile(content: &Path, theme: &str) -> Result<RgbaImage, Compose
 
 /// The files a bake writes that it can leave stale (and `level.ron`'s
 /// distant layers and their images, `distant/<i>.png`).
-const BAKED: [&str; 9] = [
+const BAKED: [&str; 11] = [
     "material.png",
     "front.png",
     "back.png",
@@ -1282,12 +1461,15 @@ const BAKED: [&str; 9] = [
     "look/groups.png",
     "look/groups-back.png",
     "look/clear.png",
+    "look/surface.png",
+    "look/surface-back.png",
 ];
 
 /// The baked files of `pack` (a composed level) that differ from what its
 /// composition bakes to, in `BAKED`'s order: `material.png`, `front.png`,
-/// `back.png`, `thumb.png`, then the four `look/` glow images and
-/// `look/clear.png`, then `level.ron` when its distant layers differ and
+/// `back.png`, `thumb.png`, then the four `look/` glow images,
+/// `look/clear.png` and the two surface maps, then `level.ron` when its
+/// distant layers (or their surfaces) differ and
 /// the `distant/<i>.png` images that do, either side's. Empty for any other
 /// pack.
 pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeError> {
@@ -1306,7 +1488,7 @@ pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeE
     };
     let mut out: Vec<String> = BAKED.iter().filter(|f| differs(f)).map(|f| f.to_string()).collect();
     let entries = |l: &LevelSource| l.distant.iter().map(|d| (d.at, d.depth)).collect::<Vec<_>>();
-    if entries(level) != entries(&baked) {
+    if entries(level) != entries(&baked) || level.distant_surfaces != baked.distant_surfaces {
         out.push("level.ron".into());
     }
     let n = level.distant.len().max(baked.distant.len());

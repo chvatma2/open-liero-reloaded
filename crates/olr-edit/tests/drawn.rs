@@ -149,6 +149,10 @@ fn element(id: &str, kind: ElementKind) -> Element {
         glow: None,
         clear: false,
         distant: None,
+        surface: None,
+        back_surface: None,
+        surface_map: false,
+        back_surface_map: false,
     }
 }
 

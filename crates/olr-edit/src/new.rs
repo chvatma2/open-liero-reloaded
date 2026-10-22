@@ -234,6 +234,8 @@ fn level_template(name: &str, (w, h): (u32, u32), theme: &str) -> Result<LevelSo
         glow: None,
         clear: None,
         distant: Vec::new(),
+        surface: None,
+        distant_surfaces: Vec::new(),
     };
     crate::level::refresh_thumb(&mut level);
     Ok(level)

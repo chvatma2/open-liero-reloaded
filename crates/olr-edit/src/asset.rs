@@ -28,7 +28,7 @@ use olr_format::look::{AmbientSource, GlowGroupSource, LookSource};
 use olr_vfs::DirFs;
 
 use crate::compose::{
-    ComposeError, Decoded, GlowMasks, ImageCache, Rect, bake_elements_with, decode_element,
+    ComposeError, Decoded, GlowMasks, ImageCache, PaintedSurfaces, Rect, bake_elements_with, decode_element,
     decode_glow_masks, encode_decoded,
 };
 use crate::drawn::{self, Placed};
@@ -107,9 +107,10 @@ pub struct LevelPieces<'a> {
     pub look: Option<&'a LookSource>,
 }
 
-/// An element as an asset holds it: shown and unlocked.
+/// An element as an asset holds it: shown and unlocked, without surface
+/// materials (an asset carries none yet, issue #37).
 fn plain(e: &Element) -> Element {
-    Element { visible: true, locked: false, ..e.clone() }
+    Element { visible: true, locked: false, ..e.clone() }.without_surfaces()
 }
 
 /// `p`'s pixels within world rectangle `r` (`None` when they do not meet).
@@ -389,7 +390,9 @@ pub fn land(
     let (size, s) = (to.size, to.art_scale);
     let from = from.clamp(1, MAX_ART_SCALE);
     let source_id = &piece.element.id;
-    let mut e = piece.element.clone();
+    // Its surface materials stay behind (issue #37: their painted maps are
+    // not a piece's, and the level landed in may lack the materials).
+    let mut e = piece.element.clone().without_surfaces();
     let names = to.elements.iter().map(|x| if x.name.is_empty() { x.id.as_str() } else { x.name.as_str() });
     let wanted = name
         .map(str::to_string)
@@ -603,11 +606,20 @@ pub fn thumbnail(asset: &Asset) -> RgbaImage {
         glow: None,
         clear: None,
         distant: Vec::new(),
+        surface: None,
+        distant_surfaces: Vec::new(),
     };
     let masks: GlowMasks =
         asset.pieces.iter().filter_map(|p| Some((p.element.id.clone(), p.glow_mask.clone()?))).collect();
     let items: Vec<(&Element, &Decoded)> = asset.pieces.iter().map(|p| (&p.element, &p.decoded)).collect();
-    bake_elements_with(&mut level, &items, &masks, &RgbaImage::new(0, 0), Rect { x: 0, y: 0, w, h });
+    bake_elements_with(
+        &mut level,
+        &items,
+        &masks,
+        &PaintedSurfaces::new(),
+        &RgbaImage::new(0, 0),
+        Rect { x: 0, y: 0, w, h },
+    );
     level_thumbnail(&level)
 }
 

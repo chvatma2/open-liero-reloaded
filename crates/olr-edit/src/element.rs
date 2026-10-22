@@ -12,6 +12,7 @@ use olr_format::image_io::{self, IMAGES};
 use olr_format::levels::{
     CompositionSource, Dither, Element, ElementGlow, ElementKind, ElementMaterial, LevelSource, MAX_ELEMENTS,
     check_composition, element_box, element_files, glow_file, image_file, layer_file, raster_files,
+    surface_back_file, surface_file, surface_map_size,
 };
 
 use crate::compose::{Decoded, ImageCache, compose_from, decode_element, encode_decoded, resize_decoded};
@@ -88,6 +89,7 @@ fn commit<T>(
     let was_valid = pack.composition.as_ref().is_none_or(|c| check_composition(c, size, art_scale).is_ok());
     let mut src = pack.composition.clone().unwrap_or_else(|| compose_from(l));
     let out = edit(&mut src)?;
+    fit_surface_maps(&mut src, size);
     check_composition(&src, size, art_scale).map_err(|e| {
         ElementError::BadValue(if context.is_empty() || !was_valid {
             e.to_string()
@@ -100,6 +102,52 @@ fn commit<T>(
     src.files.retain(|f, _| named.contains(f));
     pack.composition = Some(src);
     Ok(out)
+}
+
+/// Keeps every element's surface materials fitting it in a level of
+/// `size` (issue #37): a back surface and its map go with the back art,
+/// a distant layer's painted maps go, and so does a painted map that is
+/// missing or not of its element's [`surface_map_size`] (an edit the maps
+/// did not follow).
+pub fn fit_surface_maps(src: &mut CompositionSource, size: (u32, u32)) {
+    for e in &mut src.composition.elements {
+        if !e.has_back_art() {
+            (e.back_surface, e.back_surface_map) = (None, false);
+        }
+        if e.is_distant() {
+            (e.surface_map, e.back_surface_map) = (false, false);
+        }
+        let want = surface_map_size(&e.kind, size);
+        let fits = |file: String| src.files.get(&file).and_then(|b| image_io::png_size(b)) == Some(want);
+        e.surface_map &= fits(surface_file(&e.id));
+        e.back_surface_map &= fits(surface_back_file(&e.id));
+    }
+}
+
+/// A painted surface map (`values`, world pixels of box `from`) laid on
+/// box `to`: world pixel `(x, y)` keeps its value, the rest 0 (the
+/// element's default).
+fn relay_surface(values: &[u8], from: ((i32, i32), (u32, u32)), to: ((i32, i32), (u32, u32))) -> Vec<u8> {
+    let (fw, fh) = (i64::from(from.1.0), i64::from(from.1.1));
+    let (tw, th) = (i64::from(to.1.0), i64::from(to.1.1));
+    let mut out = vec![0u8; (tw * th).max(0) as usize];
+    if values.len() as i64 != fw * fh {
+        return out;
+    }
+    let (dx, dy) = (i64::from(to.0.0) - i64::from(from.0.0), i64::from(to.0.1) - i64::from(from.0.1));
+    for y in 0..th {
+        let fy = y + dy;
+        if !(0..fh).contains(&fy) {
+            continue;
+        }
+        for x in 0..tw {
+            let fx = x + dx;
+            if (0..fw).contains(&fx) {
+                out[(y * tw + x) as usize] = values[(fy * fw + fx) as usize];
+            }
+        }
+    }
+    out
 }
 
 /// The element `id`, by index.
@@ -285,6 +333,10 @@ pub fn add_image_with(
                 glow: None,
                 clear: false,
                 distant: None,
+                surface: None,
+                back_surface: None,
+                surface_map: false,
+                back_surface_map: false,
             },
         )?;
         for p in settings {
@@ -313,6 +365,10 @@ pub fn add_layer(pack: &mut Pack, material: ElementMaterial, name: &str) -> Resu
                 glow: None,
                 clear: false,
                 distant: None,
+                surface: None,
+                back_surface: None,
+                surface_map: false,
+                back_surface_map: false,
             },
         )?;
         Ok(id)
@@ -380,6 +436,22 @@ pub fn set_all(pack: &mut Pack, id: &str, properties: &[Property]) -> Result<(),
             let (tw, th) = (to.0.saturating_mul(s), to.1.saturating_mul(s));
             let resampled = crate::glow::resample_mask(&mask, (w, h), (tw, th));
             src.files.insert(file, image_io::encode_grey(tw, th, &resampled));
+        }
+        // So do its painted surface maps, at world resolution (issue #37).
+        if let (Some((_, from)), Some((_, to))) = (was, element_box(&e.kind, size))
+            && from != to
+        {
+            for file in [surface_file(id), surface_back_file(id)] {
+                let Some(bytes) = src.files.get(&file) else { continue };
+                let Ok((w, h, values)) = image_io::decode_grey_within(bytes, olr_format::image_io::LEVEL_ART)
+                else {
+                    continue;
+                };
+                if (w, h) == from {
+                    let resampled = crate::glow::resample_mask(&values, from, to);
+                    src.files.insert(file, image_io::encode_grey(to.0, to.1, &resampled));
+                }
+            }
         }
         Ok(())
     })
@@ -854,6 +926,10 @@ pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
                 glow: None,
                 clear: false,
                 distant: None,
+                surface: None,
+                back_surface: None,
+                surface_map: false,
+                back_surface_map: false,
             });
             new
         })
@@ -978,6 +1054,21 @@ pub fn resize(
                 let relaid = crate::glow::relay_mask(&mask, moved, new, s);
                 let (nw, nh) = (new.1.0.saturating_mul(s), new.1.1.saturating_mul(s));
                 src.files.insert(file, image_io::encode_grey(nw, nh, &relaid));
+            }
+        }
+        // Painted surface maps (issue #37) follow it the same way at world
+        // resolution, a raster's as the level's own pixels; the new area
+        // takes the element's defaults.
+        let from = was.unwrap_or(((0, 0), old));
+        let to = element_box(&e.kind, size).unwrap_or(((0, 0), size));
+        let moved = ((from.0.0.saturating_add(offset.0), from.0.1.saturating_add(offset.1)), from.1);
+        for (file, on) in [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)] {
+            let Some(bytes) = src.files.get(&file).filter(|_| on) else { continue };
+            let (w, h, values) = image_io::decode_grey_within(bytes, olr_format::image_io::LEVEL_ART)
+                .map_err(|m| bad(format!("{file}: {m}")))?;
+            if (w, h) == from.1 {
+                let relaid = relay_surface(&values, moved, to);
+                src.files.insert(file, image_io::encode_grey(to.1.0, to.1.1, &relaid));
             }
         }
     }

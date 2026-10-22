@@ -627,6 +627,10 @@ pub fn merge_down(
         glow: None,
         clear: false,
         distant: None,
+        surface: None,
+        back_surface: None,
+        surface_map: false,
+        back_surface_map: false,
     };
     Ok((element, decoded))
 }
@@ -666,6 +670,10 @@ pub fn split_element(
             glow: None,
             clear: false,
             distant: None,
+            surface: None,
+            back_surface: None,
+            surface_map: false,
+            back_surface_map: false,
         };
         out.push((element, decoded));
     }

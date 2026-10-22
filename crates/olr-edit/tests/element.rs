@@ -40,6 +40,8 @@ fn pack(w: u32, h: u32, s: u32) -> Pack {
         glow: None,
         clear: None,
         distant: Vec::new(),
+        surface: None,
+        distant_surfaces: Vec::new(),
     };
     Pack { manifest, source: Source::Level(level), composition: None, other: BTreeMap::new() }
 }
@@ -482,6 +484,10 @@ fn new_ids_reserve_masks_and_layer_files() {
         glow: None,
         clear: false,
         distant: None,
+        surface: None,
+        back_surface: None,
+        surface_map: false,
+        back_surface_map: false,
     };
     assert_ne!(new_element_id(&[wall], &Default::default(), "wall.material", "layer"), "wall.material");
 }

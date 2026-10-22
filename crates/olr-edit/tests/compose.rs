@@ -36,6 +36,8 @@ fn level(w: u32, h: u32, s: u32) -> LevelSource {
         glow: None,
         clear: None,
         distant: Vec::new(),
+        surface: None,
+        distant_surfaces: Vec::new(),
     }
 }
 
@@ -67,6 +69,10 @@ fn element(id: &str, kind: ElementKind) -> Element {
         glow: None,
         clear: false,
         distant: None,
+        surface: None,
+        back_surface: None,
+        surface_map: false,
+        back_surface_map: false,
     }
 }
 

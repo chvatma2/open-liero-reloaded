@@ -168,6 +168,10 @@ fn composed(dir: &std::path::Path) -> olr_edit::pack::Pack {
         glow: None,
         clear: false,
         distant: None,
+        surface: None,
+        back_surface: None,
+        surface_map: false,
+        back_surface_map: false,
     });
     pack.composition = Some(src);
     pack

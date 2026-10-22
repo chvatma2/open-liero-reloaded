@@ -58,6 +58,8 @@ fn pack(w: u32, h: u32, s: u32, look: Option<LookSource>) -> Pack {
         glow: None,
         clear: None,
         distant: Vec::new(),
+        surface: None,
+        distant_surfaces: Vec::new(),
     };
     Pack { manifest, source: Source::Level(level), composition: None, other: BTreeMap::new() }
 }

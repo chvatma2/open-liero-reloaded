@@ -9,14 +9,15 @@ use std::sync::Arc;
 use olr_data::image::RgbaImage;
 use olr_data::manifest::PackManifest;
 use olr_edit::compose::{
-    Decoded, GlowMasks, ImageCache, Rect, bake_distant, bake_elements_with, decode_element,
-    decode_glow_masks, encode_decoded, has_distant,
+    Decoded, GlowMasks, ImageCache, PaintedSurfaces, Rect, bake_distant, bake_elements_with, decode_element,
+    decode_glow_masks, decode_surface_maps, encode_decoded, has_distant,
 };
 use olr_edit::level::refresh_thumb;
 use olr_edit::pack::{Pack, Source};
 use olr_format::levels::{
     Composition, CompositionSource, Element, ElementKind, GlowLayers, LevelObject, LevelSource,
-    check_composition, check_elements, element_box, glow_file, image_file,
+    check_composition, check_elements, element_box, glow_file, image_file, surface_back_file, surface_file,
+    surface_map_size,
 };
 use olr_pack::Severity;
 use olr_vfs::VPath;
@@ -84,6 +85,10 @@ pub struct Document {
     /// The elements' painted glow masks (look system), by element id: each
     /// its box at art resolution, 0-255.
     pub(crate) glow_masks: GlowMasks,
+    /// The elements' painted surface maps as opened (issue #37; the editor
+    /// does not paint them yet), by file: baked with, and saved while they
+    /// fit their element.
+    pub(crate) surface_maps: PaintedSurfaces,
     /// A plain level's glow and clear flags, made outside the editor (batch
     /// A review I2): kept as they are while no element glows or is clear.
     pub(crate) kept: Option<Kept>,
@@ -139,6 +144,7 @@ pub struct PackSnapshot {
     stored: BTreeMap<String, Vec<u8>>,
     rebaked: bool,
     glow_masks: GlowMasks,
+    surface_maps: PaintedSurfaces,
 }
 
 impl PackSnapshot {
@@ -153,6 +159,7 @@ impl PackSnapshot {
             &self.stored,
             self.rebaked,
             &self.glow_masks,
+            &self.surface_maps,
         )
     }
 }
@@ -168,6 +175,7 @@ fn pack_of(
     stored: &BTreeMap<String, Vec<u8>>,
     rebaked: bool,
     glow_masks: &GlowMasks,
+    surface_maps: &PaintedSurfaces,
 ) -> Pack {
     let mut files = BTreeMap::new();
     for i in items {
@@ -191,6 +199,13 @@ fn pack_of(
                 files.insert(glow_file(&i.element.id), olr_format::image_io::encode_grey(w, h, mask));
             }
         }
+        // Painted surface maps (issue #37): its box at world resolution.
+        for file in surface_files(&i.element) {
+            if let Some(map) = surface_fit(&i.element, &file, surface_maps, level.size) {
+                let (w, h) = surface_map_size(&i.element.kind, level.size);
+                files.insert(file, olr_format::image_io::encode_grey(w, h, map));
+            }
+        }
     }
     let mut level = level.clone();
     // A look changes the thumbnail too (drawn lit, the user's note
@@ -210,6 +225,9 @@ fn pack_of(
             if let Some(g) = e.glow.as_mut().filter(|g| g.mask && !fits(&i.element)) {
                 g.mask = false;
             }
+            // A surface map that no longer fits its element is dropped.
+            e.surface_map &= surface_fit(&e, &surface_file(&e.id), surface_maps, level.size).is_some();
+            e.back_surface_map &= surface_fit(&e, &surface_back_file(&e.id), surface_maps, level.size).is_some();
             e
         })
         .collect();
@@ -220,6 +238,21 @@ fn pack_of(
         composition: Some(CompositionSource { composition, files }),
         other: other.clone(),
     }
+}
+
+/// The painted surface map files element `e` names.
+fn surface_files(e: &Element) -> Vec<String> {
+    [(surface_file(&e.id), e.surface_map), (surface_back_file(&e.id), e.back_surface_map)]
+        .into_iter()
+        .filter_map(|(f, on)| on.then_some(f))
+        .collect()
+}
+
+/// Painted surface map `file` of `e` in a level of `size`, when it is in
+/// `maps` and of `e`'s size.
+fn surface_fit<'a>(e: &Element, file: &str, maps: &'a PaintedSurfaces, size: (u32, u32)) -> Option<&'a [u8]> {
+    let (w, h) = surface_map_size(&e.kind, size);
+    maps.get(file).filter(|m| m.len() as u64 == u64::from(w) * u64::from(h)).map(|m| m.as_slice())
 }
 
 impl std::fmt::Debug for Document {
@@ -251,6 +284,7 @@ impl Document {
         let src = composition.unwrap_or_else(|| olr_edit::compose::split_from(&level));
         check_composition(&src, level.size, level.art_scale).map_err(|e| DocError::Bad(e.to_string()))?;
         let glow_masks = decode_glow_masks(&src, level.size, level.art_scale)?;
+        let surface_maps = decode_surface_maps(&src, level.size)?;
         let kept = (plain && (level.glow.is_some() || level.clear.is_some())).then(|| Kept {
             glow: level.glow.clone(),
             clear: level.clear.clone(),
@@ -301,6 +335,7 @@ impl Document {
             themes: [(theme.id.clone(), (theme.front_tile.clone(), theme.back_tile.clone()))].into(),
             rebaked: false,
             glow_masks,
+            surface_maps,
             kept,
             see_through: false,
             distant_items: Vec::new(),
@@ -362,7 +397,7 @@ impl Document {
         let rect = if see_through != self.see_through { all } else { rect };
         let whole = rect.x == 0 && rect.y == 0 && rect.w >= size.0 && rect.h >= size.1;
         let holes_before = if whole { 0 } else { holes(&self.level.back, rect, s) };
-        bake_elements_with(&mut self.level, &items, &self.glow_masks, &self.back_tile, rect);
+        bake_elements_with(&mut self.level, &items, &self.glow_masks, &self.surface_maps, &self.back_tile, rect);
         let distant = self.items.iter().filter(|i| i.element.distant.is_some());
         if whole || !distant.clone().eq(self.distant_items.iter()) {
             if !whole {
@@ -469,6 +504,7 @@ impl Document {
             &self.stored,
             self.rebaked,
             &self.glow_masks,
+            &self.surface_maps,
         )
     }
 
@@ -484,6 +520,7 @@ impl Document {
             stored: self.stored.clone(),
             rebaked: self.rebaked,
             glow_masks: self.glow_masks.clone(),
+            surface_maps: self.surface_maps.clone(),
         }
     }
 
