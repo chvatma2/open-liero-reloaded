@@ -20,6 +20,7 @@ pub(super) enum Icon {
     Wand,
     Eyedropper,
     Glow,
+    Surface,
     Spawn,
     Round,
     Square,
@@ -40,6 +41,7 @@ impl Icon {
             Tool::Fill => Icon::Fill,
             Tool::SelectPixels => Icon::SelectPixels,
             Tool::Glow => Icon::Glow,
+            Tool::Surface => Icon::Surface,
         }
     }
 }
@@ -129,6 +131,13 @@ pub(super) fn paint(painter: &Painter, rect: Rect, icon: Icon, stroke: Stroke) {
                 let (c, s) = (a.cos(), a.sin());
                 line(&[(0.5 + 0.28 * c, 0.5 + 0.28 * s), (0.5 + 0.42 * c, 0.5 + 0.42 * s)]);
             }
+        }
+        // A swatch of hatched material.
+        Icon::Surface => {
+            closed(&[(0.15, 0.15), (0.85, 0.15), (0.85, 0.85), (0.15, 0.85)]);
+            line(&[(0.15, 0.5), (0.5, 0.15)]);
+            line(&[(0.15, 0.85), (0.85, 0.15)]);
+            line(&[(0.5, 0.85), (0.85, 0.5)]);
         }
         Icon::Spawn => {
             line(&[(0.3, 0.9), (0.3, 0.1)]);

@@ -1,7 +1,8 @@
 //! The selection's properties, each committed once (`number`, `text`).
 //! An element's are shortened (issue #8): its name, what it is (Rock,
-//! Dirt or Background), its glow, its place, and the rest under "More",
-//! folded by default (`EditorSettings::more_open`).
+//! Dirt or Background), its glow, its surface materials (issue #43), its
+//! place, and the rest under "More", folded by default
+//! (`EditorSettings::more_open`).
 
 use egui::Ui;
 use olr_edit::element::Property;
@@ -73,6 +74,7 @@ fn element(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, ou
         }
     }
     super::look::element_glow(ui, state, data, e, out);
+    super::look::element_surfaces(ui, state, e, out);
     place(ui, data, e, out);
     ui.separator();
     let open = state.settings().more_open;

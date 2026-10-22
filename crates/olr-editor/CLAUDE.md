@@ -31,7 +31,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   changes. Saves are answered in order (`saves`: each one's follow-up and
   the change count it was sent at), so an edit made meanwhile stays unsaved.
 - **Catalog** (`catalog.rs`): the installed themes (with their tiles) and
-  mods the host passes in; `EditorSettings` (Play's mod and bots, R9; the
+  mods the host passes in, and the surface material library (issue #43,
+  `materials`: `olr_edit::material::MaterialEntry`, built-in first); `EditorSettings` (Play's mod and bots, R9; the
   browser's `browse_dir`, plan 14c; whether the properties' "More" and the
   lighting's "Fine tuning" are open, issue #8).
 - **File browser** (`browser.rs`, `ui/browser.rs`, plan 14c R9): `Browse(
@@ -92,15 +93,17 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   smallest power of two at least 8 points apart).
 - **Panels** (`ui/`; issue #8's layout, STATUS.md "Level editor layout
   (issue #8)"): on top the session bar (File ▾: Open…, Save, Close; Undo,
-  Redo, the unsaved mark's kept space; at the right View ▾: Material
-  view, Grid, the light views and the lights' clock; Play and its ▾, the
+  Redo, the unsaved mark's kept space; at the right View ▾: Collision
+  view (rock, dirt, background; "Material view" before issue #43), Grid,
+  the light views, the Materials view and the lights' clock; Play and its ▾, the
   mod and bots) and the tool options bar (`toolbar.rs`: the chosen tool's
   options only: the brush for `Tool::uses_brush`, the paint for
   `Tool::lays_paint`, then its own; empty but as tall without any); on
   the left the tool rail (`rail.rs`, icons drawn in `icons.rs`): Import,
   Select, Draw ▸, Pixels ▸ (`ToolGroup`: a click chooses the group's
   last tool, `EditorState::last_tool`; a second click, the corner mark or
-  a right click opens the flyout), Glow (named "Glow brush"), Spawn; on
+  a right click opens the flyout), Glow (named "Glow brush"), Surface
+  (named "Surface brush", issue #43), Spawn; on
   the right one panel (at least 260 points): the tabs Elements (drag a
   name to reorder, eye and lock, Add layer) | Assets (issue #9, below) |
   Spawns (`PanelTab`, following the selection), then the selection's
@@ -193,8 +196,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     with any group and glow the stroke made, or none when the mask did not
     change; an element without a glow gets one in a new group, dark but
     for what is painted; a glow without a mask starts whole) at the
-    brush's strength (`GlowStrength`, 0 erases). `Tool::ALL` (12) is every
-    shortcut; the rail groups them (issue #8). Plan 15c removed
+    brush's strength (`GlowStrength`, 0 erases). `Tool::ALL` (13 with
+    issue #43's Surface brush, U) is every shortcut; the rail groups them (issue #8). Plan 15c removed
     the Light tool (K) and light objects: glowing pixels are a level's
     light (`the_editor_has_no_light_tool`).
   - **Glow on selected pixels** (the user's playtest, 2026-10-19): Select
@@ -301,8 +304,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   re-lays them with their layers (`Whole::surfaces`, the new area 0) and
   an image's new box size resamples them (`Edit::SurfaceMap`, in the same
   step); split and merge down drop surfaces as they drop glow; saving
-  drops a map flag whose map no longer fits. No panel edits materials yet
-  (materials 7/10). Test: `tests/surface.rs`. Issue #38: Save as asset
+  drops a map flag whose map no longer fits. Test: `tests/surface.rs`. Issue #38: Save as asset
   hands `olr_edit::asset` the elements' painted maps (`pieces`), so the
   asset carries the materials they name; `place_asset` joins or adds the
   asset's materials with its glow groups (`with_materials`, one look
@@ -311,11 +313,53 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   `Edit::Element`; the same step). A paste still lands no surfaces.
   Test: `asset.rs`'s
   `placing_joins_or_adds_materials_and_lands_painted_maps`.
+- **The level editor's materials** (issue #43; STATUS.md "Level editor
+  materials (issue #43)"; spec
+  `2026-10-22-materials-and-heat-design.md` §Editors):
+  - **Document** (`surface_ops.rs`): `materials()`, `material_value(id)`
+    (1 + its index), `surface_map(e, back)` (flagged and fitting: what
+    bakes), `material_users(id)` (elements naming it or painting its
+    value, by name), `add_material` (a copy; a level without a look gets
+    the default one; its id new, at most `MAX_MATERIALS`) and
+    `remove_material` (refused while used, naming the users), both through
+    `set_look`. `look_change` keeps the painted maps naming the same
+    materials by id (`surface_maps_change`: `Edit::SurfaceMap`s) and
+    clears a surface naming a material gone (with an unglow, one
+    `Edit::Element`; Remove look takes them all, one step); `Edit::Look`
+    rebakes when the materials' ids change. `set` refuses a surface naming
+    no material of the level; `with_property` takes `Surface` and
+    `BackSurface` (back art only).
+  - **The Surface brush** (`Tool::Surface`, U; `Drag::Surface`):
+    `surface_stroke_before(id, back)` (refused for a locked or distant
+    element, a back map without back art), `paint_surface` (world
+    resolution, the brush's shapes through `glow::paint_mask` at scale 1;
+    a map not flagged or not fitting starts at 0) and
+    `surface_stroke_edits` (one step: the map, then the flag's
+    `Edit::Element`; a map all 0 is none; no change, no step). The state's
+    `surface_paint` (an id; `None` the element's own: 0), `surface_back`
+    (only with back art; else the front).
+  - **The Materials view** (`SurfaceView`, `surface_view()`; never with
+    the collision view): the host tints the canvas (`surface_tint(v)`,
+    `SURFACE_TINTS`, cycling 12); `ui/canvas.rs`'s legend (`labels::
+    LEGEND`, `legend_tint(name)` swatches, "None" last).
+  - **Panels**: the level panel's Materials after its Lighting
+    (`look::level_materials`: each tint, name, "used by …" and Remove,
+    disabled while used, `labels::remove_material(name)`; "Add from
+    library" with Built-in and Yours, one the level has disabled); an
+    element's Surface and, with back art and not distant, Back surface
+    pickers under its Glow (`element_surfaces`); the Surface brush's
+    options: the brush, its Material (`BRUSH_MATERIAL`, "Element's" or
+    the level's) in a fixed slot, then Front and Back when the selected
+    element has back art. Save as asset and Play needed no change.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the
   `egui_kittest` flow `save_and_place_through_the_panels`; the test host
-  keeps a library, `common::set_library`), `document.rs`, `history.rs` (the
+  keeps a library, `common::set_library`; `common::catalog` lists
+  `content/materials`), `materials.rs` (issue #43: the library, users
+  and removal, the brush front and back with undo and refusals, the
+  views taking turns, a save baking the maps, a level without materials
+  saved without them), `document.rs`, `history.rs` (the
   undo proptest, the cap), `surface.rs` (issue #37), `state.rs` (a synchronous test host in
   `common.rs`), `tools.rs` (the ignored `brush_dab_speed`: about 2 ms in
   release for a size-16 dab on Castle Strike), `look.rs` (plan 15a: glow,
@@ -328,7 +372,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   `choose_a_tool_from_a_flyout`, `a_group_button_brings_back_its_last_tool`,
   `the_rail_highlights_the_chosen_tool`, `the_tool_options_follow_the_tool`,
   `more_and_fine_tuning_fold_and_are_remembered`, `make_parts_glow`,
-  `the_tab_follows_the_selection`). The content tests skip without
+  `the_tab_follows_the_selection`; issue #43's
+  `materials_through_the_panels`). The content tests skip without
   `OLR_CONTENT_DIR`.
 
 Test: `cargo nextest run -p olr-editor`.

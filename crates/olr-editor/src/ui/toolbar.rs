@@ -22,6 +22,8 @@ const MARK_WIDTH: f32 = 110.0;
 const BY_COLOUR_WIDTH: f32 = 220.0;
 /// "Paint as"'s picker width.
 const PAINT_AS_WIDTH: f32 = 110.0;
+/// The Surface brush's material picker's width.
+const SURFACE_WIDTH: f32 = 130.0;
 /// The crater picker's width.
 const CRATER_WIDTH: f32 = 80.0;
 /// The palette button's width, its swatch shown or not.
@@ -156,8 +158,8 @@ fn play_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut 
     r.on_hover_text(format!("the test match: {current}, {bots} bot{}", if bots == 1 { "" } else { "s" }));
 }
 
-/// View ▾: the material view, the grid, the light views and the lights'
-/// clock.
+/// View ▾: the collision view, the grid, the light views, the Materials
+/// view (issue #43) and the lights' clock.
 fn view_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     menu(ui, "View", labels::VIEW, Some(stays_open()), |ui| {
         let mut material = state.material_view();
@@ -177,6 +179,14 @@ fn view_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut 
             if ui.selectable_label(state.view_mode() == mode, label).clicked() {
                 out.push(EditorAction::SetViewMode(mode));
             }
+        }
+        let mut surfaces = state.surface_view();
+        if ui
+            .checkbox(&mut surfaces, labels::SURFACE_VIEW)
+            .on_hover_text("each pixel tinted by its surface material (the back where the front is dug)")
+            .changed()
+        {
+            out.push(EditorAction::SurfaceView(surfaces));
         }
         ui.separator();
         let (label, action) = if state.clock_running() {
@@ -588,7 +598,59 @@ fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
                 out.push(EditorAction::GlowStrength(v as u8));
             }
         }
+        Tool::Surface => surface_options(ui, state, out),
         Tool::Select | Tool::Spawn | Tool::Eyedropper => {}
+    }
+}
+
+/// The Surface brush's options (issue #43): its material (one of the
+/// level's, or the element's own default), and Front and Back when the
+/// selected element has back art.
+fn surface_options(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    let current = state.surface_paint();
+    let name = |id: Option<&str>| match id {
+        Some(id) => {
+            doc.materials().iter().find(|m| m.id == id).map_or_else(|| id.to_string(), |m| m.name.clone())
+        }
+        None => labels::DEFAULT_SURFACE.to_string(),
+    };
+    let label = ui.label(labels::BRUSH_MATERIAL);
+    fixed(ui, SURFACE_WIDTH, |ui| {
+        egui::ComboBox::from_id_salt("olr-editor-surface-paint")
+            .selected_text(name(current))
+            .width(SURFACE_WIDTH)
+            .truncate()
+            .show_ui(ui, |ui| {
+                let choices =
+                    std::iter::once(None).chain(doc.materials().iter().map(|m| Some(m.id.as_str())));
+                for id in choices {
+                    if ui.selectable_label(id == current, name(id)).clicked() && id != current {
+                        out.push(EditorAction::SurfacePaint(id.map(str::to_string)));
+                    }
+                }
+            })
+            .response
+            .labelled_by(label.id)
+            .on_hover_text("the element's own surface (Element's) or one of the level's materials");
+    });
+    let back_art = match state.selection() {
+        crate::state::Selection::Element(id) => doc.index_of(id).is_some_and(|i| {
+            let e = &doc.items()[i].element;
+            e.has_back_art() && !e.is_distant()
+        }),
+        _ => false,
+    };
+    if back_art {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (back, n, hover) in [
+            (false, labels::SURFACE_FRONT, "paint the element's own pixels"),
+            (true, labels::SURFACE_BACK, "paint its back art: what shows where its front is dug"),
+        ] {
+            if ui.selectable_label(state.surface_back() == back, n).on_hover_text(hover).clicked() {
+                out.push(EditorAction::SurfaceBack(back));
+            }
+        }
     }
 }
 

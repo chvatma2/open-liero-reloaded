@@ -21,6 +21,10 @@ pub struct Catalog {
     /// The asset library (issue #9): the built-in assets, then the user's,
     /// each in the host's order.
     pub assets: Vec<AssetEntry>,
+    /// The surface material library (issue #43;
+    /// `olr_edit::material::list_materials`): the built-in materials, then
+    /// the user's. A level holds copies of those it uses.
+    pub materials: Vec<olr_edit::material::MaterialEntry>,
 }
 
 /// An asset of the library, by where it is: built in (shipped with the

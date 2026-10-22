@@ -429,7 +429,7 @@ fn theme(h: &mut Harness<'static, App>) {
 }
 
 /// The session bar's and the rail's controls: always shown.
-const BARS: [&str; 12] = [
+const BARS: [&str; 13] = [
     labels::FILE,
     labels::UNDO,
     labels::REDO,
@@ -441,6 +441,7 @@ const BARS: [&str; 12] = [
     labels::DRAW,
     labels::PIXELS,
     labels::TOOL_GLOW,
+    labels::TOOL_SURFACE,
     "Spawn",
 ];
 
@@ -461,6 +462,7 @@ fn options_of(tool: Tool) -> Vec<&'static str> {
         Tool::Fill => &[labels::PAINT_AS, labels::TOLERANCE][..],
         Tool::SelectPixels => &[labels::BY_COLOUR, labels::GLOW_SELECTION, labels::GLOW_STRENGTH_BRUSH][..],
         Tool::Glow => &[labels::BY_COLOUR, labels::GLOW_STRENGTH_BRUSH][..],
+        Tool::Surface => &[labels::BRUSH_MATERIAL][..],
         Tool::Select | Tool::Spawn | Tool::Eyedropper => &[][..],
     });
     v
@@ -1199,4 +1201,116 @@ fn the_tab_follows_the_selection() {
     // An element selected otherwise (the list, a shortcut's action) shows Elements.
     act(&mut h, A::Select(Selection::Element("tiny".into())));
     assert_eq!(h.state().state.tab(), PanelTab::Elements);
+}
+
+/// Issue #43 through the panels, by label: a material added from the
+/// library, a surface picked for an element, the Surface brush on its
+/// front and back (each stroke one undo), the Materials view's legend, and
+/// a save that bakes the maps and opens again as it was.
+#[test]
+fn materials_through_the_panels() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    let materials = |h: &Harness<'static, App>| -> Vec<String> {
+        h.state().state.document().unwrap().materials().iter().map(|m| m.id.clone()).collect()
+    };
+    // Nothing selected: the level's panel, its Materials last.
+    for name in ["Stone", "Wood"] {
+        h.get_by_label(labels::ADD_MATERIAL).scroll_to_me();
+        h.run();
+        h.get_by_label(labels::ADD_MATERIAL).click();
+        h.run();
+        h.get_by_role_and_label(Role::Button, name).click();
+        h.run();
+    }
+    assert_eq!(materials(&h), ["stone", "wood"]);
+    assert!(h.query_by_label(&labels::remove_material("Stone")).is_some());
+
+    // The wall's surfaces: Surface and, with its back art, Back surface.
+    h.get_by_label("Wall").click();
+    h.run();
+    let picker = |h: &mut Harness<'static, App>, label: &str, choice: &str| {
+        h.get_by_role_and_label(Role::ComboBox, label).click();
+        h.run();
+        h.get_by_role_and_label(Role::Button, choice).click();
+        h.run();
+    };
+    picker(&mut h, labels::SURFACE, "Stone");
+    picker(&mut h, labels::BACK_SURFACE, "Wood");
+    let wall = |h: &Harness<'static, App>| {
+        let d = h.state().state.document().unwrap();
+        d.items()[d.index_of("wall").unwrap()].element.clone()
+    };
+    assert_eq!(
+        (wall(&h).surface.as_deref(), wall(&h).back_surface.as_deref()),
+        (Some("stone"), Some("wood"))
+    );
+    // A material in use is not removed: the level's panel says who uses it.
+    act(&mut h, A::Select(Selection::None));
+    h.get_by_label(&labels::remove_material("Stone")).scroll_to_me();
+    h.run();
+    assert!(h.get_by_label(&labels::remove_material("Stone")).accesskit_node().is_disabled());
+    assert_eq!(h.query_all_by_label("used by Wall").count(), 2, "stone and wood");
+
+    // The Surface brush: wood on the front, stone on the back.
+    h.get_by_label("Wall").click();
+    h.run();
+    h.get_by_label(labels::TOOL_SURFACE).click();
+    h.run();
+    assert_eq!(h.state().state.tool(), Tool::Surface);
+    picker(&mut h, labels::BRUSH_MATERIAL, "Wood");
+    let stroke = |h: &mut Harness<'static, App>, dy: f32| {
+        let start = canvas_point(h, (-20.0, dy));
+        hover(h, start);
+        press(h, start, true);
+        let end = canvas_point(h, (20.0, dy));
+        hover(h, end);
+        press(h, end, false);
+    };
+    let maps = |h: &Harness<'static, App>| {
+        let d = h.state().state.document().unwrap();
+        let e = wall(h);
+        (d.surface_map(&e, false).is_some(), d.surface_map(&e, true).is_some())
+    };
+    stroke(&mut h, 0.0);
+    assert_eq!(maps(&h), (true, false));
+    h.get_by_label(labels::SURFACE_BACK).click();
+    h.run();
+    picker(&mut h, labels::BRUSH_MATERIAL, "Stone");
+    stroke(&mut h, 20.0);
+    assert_eq!(maps(&h), (true, true));
+    h.get_by_label(labels::UNDO).click();
+    h.run();
+    assert_eq!(maps(&h), (true, false), "one undo a stroke");
+    h.get_by_label(labels::REDO).click();
+    h.run();
+    assert_eq!(maps(&h), (true, true));
+
+    // The Materials view: its legend names every material and none.
+    assert!(h.query_by_label(labels::LEGEND).is_none());
+    h.get_by_label(labels::VIEW).click();
+    h.run();
+    h.get_by_label(labels::SURFACE_VIEW).click();
+    h.run();
+    assert!(h.state().state.surface_view());
+    h.get_by_label(labels::LEGEND);
+    for name in ["Stone", "Wood", labels::NO_SURFACE] {
+        h.get_by_label(&labels::legend_tint(name));
+    }
+
+    // Saved and opened again: the maps baked and kept.
+    act(&mut h, A::Save);
+    let doc = h.state().state.document().unwrap();
+    let (dir, baked) = (doc.dir().to_path_buf(), doc.level().surface.clone());
+    assert!(baked.is_some(), "the bake has surfaces");
+    let root = content().unwrap();
+    let again = olr_editor::Document::open(
+        olr_edit::pack::load(&dir).unwrap(),
+        dir.clone(),
+        &crate::common::catalog(&root),
+    )
+    .unwrap();
+    assert_eq!(again.level().surface, baked);
+    let e = &again.items()[again.index_of("wall").unwrap()].element;
+    assert!(e.surface_map && e.back_surface_map);
+    assert!(dir.join("look/surface.png").is_file() && dir.join("editor/surface/wall.back.png").is_file());
 }

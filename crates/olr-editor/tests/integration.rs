@@ -9,6 +9,7 @@ mod document;
 mod flows;
 mod history;
 mod look;
+mod materials;
 mod state;
 mod surface;
 mod tools;

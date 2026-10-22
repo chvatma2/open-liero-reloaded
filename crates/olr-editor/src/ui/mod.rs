@@ -31,7 +31,11 @@ pub mod labels {
     pub const FILE: &str = "File";
     pub const VIEW: &str = "View";
     pub const PLAY_OPTIONS: &str = "Play options";
-    pub const MATERIAL_VIEW: &str = "Material view";
+    /// The collision view: rock, dirt and background in their colours.
+    pub const MATERIAL_VIEW: &str = "Collision view";
+    /// Issue #43: the surface materials' tints, with a legend.
+    pub const SURFACE_VIEW: &str = "Materials view";
+    pub const LEGEND: &str = "Legend";
     pub const GRID: &str = "Grid";
     // The rail's group buttons (`ToolGroup::name`); its other buttons are
     // named by their tool (`Tool::name`), Import by `IMPORT_IMAGE`.
@@ -140,6 +144,30 @@ pub mod labels {
     pub const KEEP_BOTH: &str = "Keep both";
     pub const BUILT_IN: &str = "Built-in";
     pub const YOURS: &str = "Yours";
+    // Surface materials (issue #43).
+    pub const MATERIALS: &str = "Materials";
+    pub const ADD_MATERIAL: &str = "Add from library";
+    pub const SURFACE: &str = "Surface";
+    pub const BACK_SURFACE: &str = "Back surface";
+    /// A surface picker's "no material".
+    pub const NO_SURFACE: &str = "None";
+    pub const TOOL_SURFACE: &str = "Surface brush";
+    /// The Surface brush's material picker, its "the element's default",
+    /// and its front and back switch.
+    pub const BRUSH_MATERIAL: &str = "Material";
+    pub const DEFAULT_SURFACE: &str = "Element's";
+    pub const SURFACE_FRONT: &str = "Front";
+    pub const SURFACE_BACK: &str = "Back";
+
+    /// A material's Remove button's name (issue #43).
+    pub fn remove_material(name: &str) -> String {
+        format!("Remove {name}")
+    }
+
+    /// A material's swatch's name in the Materials view's legend.
+    pub fn legend_tint(name: &str) -> String {
+        format!("{name} tint")
+    }
 }
 
 /// Transient UI state: value and text drafts, the canvas rect last drawn,

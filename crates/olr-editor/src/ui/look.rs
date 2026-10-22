@@ -1,8 +1,8 @@
 //! The look's panels (plan 15a Task 18; look system §The level editor;
 //! issue #8's layout): the level's Lighting section (ambient and glow
-//! groups; the rarely used values under "Fine tuning"), an element's glow
-//! (with "Make parts glow…") and whether it lets light through, and the
-//! animation editor. Every field commits once, as every editor field
+//! groups; the rarely used values under "Fine tuning"), its Materials
+//! (issue #43), an element's glow (with "Make parts glow…"), its surface
+//! materials and whether it lets light through, and the animation editor. Every field commits once, as every editor field
 //! does; colours are `#rrggbb` text.
 
 use egui::Ui;
@@ -414,5 +414,133 @@ pub(super) fn element_clear(ui: &mut Ui, e: &Element, out: &mut Vec<EditorAction
         .changed()
     {
         out.push(EditorAction::Set(e.id.clone(), Property::Clear(clear)));
+    }
+}
+
+/// The swatch of a material's tint (the Materials view's), `side` points.
+pub(super) fn tint_swatch(ui: &mut Ui, value: u8, side: f32, name: &str) -> egui::Response {
+    let (rect, r) = ui.allocate_exact_size(egui::vec2(side, side), egui::Sense::hover());
+    let fill = match crate::state::surface_tint(value) {
+        Some(c) => egui::Color32::from_rgb(c.r, c.g, c.b),
+        None => egui::Color32::from_gray(90),
+    };
+    ui.painter().rect(
+        rect,
+        2.0,
+        fill,
+        ui.visuals().widgets.noninteractive.bg_stroke,
+        egui::StrokeKind::Inside,
+    );
+    super::relabel(&r, egui::WidgetType::Other, None, name);
+    r
+}
+
+/// The level's Materials (issue #43), beside its lighting: each with its
+/// Materials view tint, who uses it, and Remove (only when nothing uses
+/// it); "Add from library" copies a built-in or user's material in.
+pub(super) fn level_materials(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    ui.separator();
+    ui.label(egui::RichText::new(labels::MATERIALS).strong())
+        .on_hover_text("what the level's pixels are made of: how they take heat from explosions");
+    for (i, m) in doc.materials().iter().enumerate() {
+        let users = doc.material_users(&m.id);
+        ui.horizontal(|ui| {
+            let side = ui.spacing().interact_size.y * 0.7;
+            tint_swatch(ui, u8::try_from(i + 1).unwrap_or(0), side, &format!("{} colour", m.name));
+            ui.label(&m.name);
+            let hover = if users.is_empty() {
+                "remove it from the level".to_string()
+            } else {
+                format!("used by {}: change their surfaces first", users.join(", "))
+            };
+            let r = ui
+                .add_enabled(users.is_empty(), egui::Button::new(labels::REMOVE).small())
+                .on_hover_text(&hover)
+                .on_disabled_hover_text(&hover);
+            super::relabel(&r, egui::WidgetType::Button, None, &labels::remove_material(&m.name));
+            if r.clicked() {
+                out.push(EditorAction::RemoveMaterial(m.id.clone()));
+            }
+        });
+        if !users.is_empty() {
+            ui.weak(format!("used by {}", users.join(", ")));
+        }
+    }
+    let library = &state.catalog().materials;
+    ui.add_enabled_ui(!library.is_empty(), |ui| {
+        ui.menu_button(labels::ADD_MATERIAL, |ui| {
+            for (builtin, heading) in [(true, labels::BUILT_IN), (false, labels::YOURS)] {
+                let mut entries = library.iter().filter(|e| e.builtin == builtin).peekable();
+                if entries.peek().is_none() {
+                    continue;
+                }
+                ui.label(egui::RichText::new(heading).strong());
+                for e in entries {
+                    let has = doc.material_value(&e.material.id).is_some();
+                    let r = ui
+                        .add_enabled(!has, egui::Button::new(&e.material.name))
+                        .on_disabled_hover_text("the level has it");
+                    if r.clicked() {
+                        out.push(EditorAction::AddMaterial { builtin, id: e.material.id.clone() });
+                        ui.close();
+                    }
+                }
+            }
+        })
+        .response
+        .on_hover_text("copy a material from the library into the level");
+    });
+}
+
+/// An element's surface materials (issue #43): its Surface (its own
+/// pixels', or a distant layer's whole), and its Back surface when it has
+/// back art; each one of the level's materials or none. The Surface
+/// brush paints them per pixel over these.
+pub(super) fn element_surfaces(ui: &mut Ui, state: &EditorState, e: &Element, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    ui.separator();
+    let materials = doc.materials();
+    let hint = if materials.is_empty() {
+        "add materials to the level first (its settings, with nothing selected)"
+    } else {
+        "what its pixels are made of: how they take heat"
+    };
+    let pickers = if e.has_back_art() && !e.is_distant() {
+        &[(false, labels::SURFACE), (true, labels::BACK_SURFACE)][..]
+    } else {
+        &[(false, labels::SURFACE)][..]
+    };
+    for &(back, label) in pickers {
+        let now = if back { &e.back_surface } else { &e.surface };
+        let name = |id: Option<&String>| match id {
+            Some(id) => materials.iter().find(|m| m.id == *id).map_or_else(|| id.clone(), |m| m.name.clone()),
+            None => labels::NO_SURFACE.to_string(),
+        };
+        ui.horizontal(|ui| {
+            let l = ui.label(label);
+            ui.add_enabled_ui(!e.locked, |ui| {
+                egui::ComboBox::from_id_salt(format!("{}/{label}", e.id))
+                    .selected_text(name(now.as_ref()))
+                    .show_ui(ui, |ui| {
+                        let choices = std::iter::once(None).chain(materials.iter().map(|m| Some(&m.id)));
+                        for id in choices {
+                            if ui.selectable_label(id == now.as_ref(), name(id)).clicked()
+                                && id != now.as_ref()
+                            {
+                                let id = id.cloned();
+                                let p = if back { Property::BackSurface(id) } else { Property::Surface(id) };
+                                out.push(EditorAction::Set(e.id.clone(), p));
+                            }
+                        }
+                    })
+                    .response
+                    .labelled_by(l.id)
+                    .on_hover_text(hint);
+            });
+        });
+    }
+    if e.surface_map || e.back_surface_map {
+        ui.weak("painted with the Surface brush (U)");
     }
 }

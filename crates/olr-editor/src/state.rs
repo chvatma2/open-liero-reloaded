@@ -106,6 +106,29 @@ pub enum Dialog {
     RemoveAsset { id: String, name: String },
 }
 
+/// The surface materials' tints in the Materials view and its legend
+/// (issue #43): value `v` (`materials[v - 1]`) shows `SURFACE_TINTS[(v -
+/// 1) % 12]`; 0, no material, shows the art greyed.
+pub const SURFACE_TINTS: [Rgba; 12] = [
+    Rgba::rgb(230, 25, 75),
+    Rgba::rgb(60, 180, 75),
+    Rgba::rgb(255, 225, 25),
+    Rgba::rgb(0, 130, 200),
+    Rgba::rgb(245, 130, 48),
+    Rgba::rgb(145, 30, 180),
+    Rgba::rgb(70, 240, 240),
+    Rgba::rgb(240, 50, 230),
+    Rgba::rgb(210, 245, 60),
+    Rgba::rgb(250, 190, 212),
+    Rgba::rgb(0, 128, 128),
+    Rgba::rgb(170, 110, 40),
+];
+
+/// The Materials view's tint of map value `v`; `None` for 0 (no material).
+pub fn surface_tint(v: u8) -> Option<Rgba> {
+    v.checked_sub(1).map(|i| SURFACE_TINTS[usize::from(i) % SURFACE_TINTS.len()])
+}
+
 /// The look preview's clock (plan 15a Task 17; spec §The level editor).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ClockAction {
@@ -290,6 +313,25 @@ pub enum EditorAction {
     },
     MaterialView(bool),
     Grid(bool),
+    // Surface materials (issue #43).
+    /// The Materials view: the canvas tints each pixel by its surface
+    /// material (front, or back where the front is carved), with a legend.
+    SurfaceView(bool),
+    /// Copies the library's material (`Catalog::materials`, by where it is
+    /// and its id) into the level's materials; one step.
+    AddMaterial {
+        builtin: bool,
+        id: String,
+    },
+    /// Removes the level's material `id` (refused while in use, naming the
+    /// elements using it); one step.
+    RemoveMaterial(String),
+    /// What the Surface brush paints: one of the level's materials, by id;
+    /// `None` the element's default.
+    SurfacePaint(Option<String>),
+    /// The Surface brush paints the selected element's back art (when it
+    /// has back art), not its own pixels.
+    SurfaceBack(bool),
     // The look (plan 15a Task 17).
     /// Element `id`'s glow; `None` removes it. A glow naming no group of the
     /// look gets a new one named after the element.
@@ -450,6 +492,12 @@ pub struct EditorState {
     /// The view fits the level on the next `Canvas`.
     pub(crate) fit_pending: bool,
     pub(crate) material_view: bool,
+    /// The Materials view (issue #43); never with the material view.
+    pub(crate) surface_view: bool,
+    /// The Surface brush's material (an id of the level's; `None` the
+    /// element's default) and whether it paints back art.
+    pub(crate) surface_paint: Option<String>,
+    pub(crate) surface_back: bool,
     pub(crate) grid: bool,
     /// The pointer drag in progress.
     pub(crate) drag: Option<Drag>,
@@ -524,6 +572,9 @@ impl EditorState {
             canvas: None,
             fit_pending: false,
             material_view: false,
+            surface_view: false,
+            surface_paint: None,
+            surface_back: false,
             grid: false,
             drag: None,
             changes: 0,
@@ -699,6 +750,7 @@ impl EditorState {
                 | EditorAction::Pan(_)
                 | EditorAction::Zoom { .. }
                 | EditorAction::MaterialView(_)
+                | EditorAction::SurfaceView(_)
                 | EditorAction::Grid(_)
                 | EditorAction::SetViewMode(_)
                 | EditorAction::Clock(_)
@@ -715,6 +767,9 @@ impl EditorState {
                 | EditorAction::Pan(_)
                 | EditorAction::Zoom { .. }
                 | EditorAction::MaterialView(_)
+                | EditorAction::SurfaceView(_)
+                | EditorAction::SurfacePaint(_)
+                | EditorAction::SurfaceBack(_)
                 | EditorAction::Grid(_)
                 | EditorAction::Brush(_)
                 | EditorAction::Paint(_)
@@ -1146,7 +1201,39 @@ impl EditorState {
             }
             EditorAction::MaterialView(on) => {
                 self.material_view = on;
+                self.surface_view &= !on;
                 Vec::new()
+            }
+            EditorAction::SurfaceView(on) => {
+                self.surface_view = on;
+                self.material_view &= !on;
+                Vec::new()
+            }
+            EditorAction::SurfacePaint(id) => {
+                self.surface_paint = id;
+                Vec::new()
+            }
+            EditorAction::SurfaceBack(on) => {
+                self.surface_back = on;
+                Vec::new()
+            }
+            EditorAction::AddMaterial { builtin, id } => {
+                let found =
+                    self.catalog.materials.iter().find(|m| m.builtin == builtin && m.material.id == id);
+                let Some(m) = found.map(|m| m.material.clone()) else { return Vec::new() };
+                let name = m.name.clone();
+                let cmds = self.edits(|d| d.add_material(m));
+                if !cmds.is_empty() {
+                    self.status.message = Some(format!("added {name} to the level's materials"));
+                }
+                cmds
+            }
+            EditorAction::RemoveMaterial(id) => {
+                let cmds = self.edits(|d| d.remove_material(&id));
+                if self.surface_paint.as_ref() == Some(&id) && !cmds.is_empty() {
+                    self.surface_paint = None;
+                }
+                cmds
             }
             EditorAction::Grid(on) => {
                 self.grid = on;
@@ -1328,6 +1415,24 @@ impl EditorState {
 
     pub fn material_view(&self) -> bool {
         self.material_view
+    }
+
+    /// Whether the canvas shows the Materials view (issue #43).
+    pub fn surface_view(&self) -> bool {
+        self.surface_view
+    }
+
+    /// The Surface brush's material: one of the level's, by id; `None`
+    /// the element's default (a material the level no longer has reads as
+    /// `None`).
+    pub fn surface_paint(&self) -> Option<&str> {
+        let id = self.surface_paint.as_deref()?;
+        self.doc.as_ref().and_then(|d| d.material_value(id)).map(|_| id)
+    }
+
+    /// Whether the Surface brush paints the selected element's back art.
+    pub fn surface_back(&self) -> bool {
+        self.surface_back
     }
 
     pub fn grid(&self) -> bool {

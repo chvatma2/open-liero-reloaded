@@ -43,7 +43,13 @@ pub fn catalog(root: &Path) -> Catalog {
         home: None,
         textures: Vec::new(),
         assets: Vec::new(),
+        materials: olr_edit::material::list_materials(Some(&built_in_materials()), None).0,
     }
+}
+
+/// The repository's built-in surface materials (`content/materials`).
+pub fn built_in_materials() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content/materials")
 }
 
 /// Copies the pack at `root.join(path)` (`path` may be absolute) into a

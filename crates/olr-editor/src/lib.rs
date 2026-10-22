@@ -14,6 +14,7 @@ pub mod look_ops;
 pub mod ops;
 mod pointer;
 pub mod state;
+pub mod surface_ops;
 pub mod tools;
 pub mod ui;
 pub mod view;
@@ -25,5 +26,5 @@ pub use olr_pack::Severity;
 pub use ops::Change;
 pub use state::{
     Choice, Dialog, EditorAction, EditorCommand, EditorState, MAX_BOTS, NewLevel, PanelTab, Pending,
-    Selection, Status,
+    SURFACE_TINTS, Selection, Status, surface_tint,
 };

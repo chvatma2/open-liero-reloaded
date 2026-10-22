@@ -99,22 +99,37 @@ impl Document {
         self.check_look(after.as_ref(), &self.level.objects)?;
         let kept: Vec<&str> =
             after.iter().flat_map(|l| l.glow_groups.iter().map(|g| g.id.as_str())).collect();
+        // Issue #43: the painted maps follow the materials by id, and a
+        // surface naming a material gone is cleared.
+        let materials = after.as_ref().map_or(&[][..], |l| &l.materials[..]);
+        let has = |id: &Option<String>| id.as_ref().is_none_or(|id| materials.iter().any(|m| m.id == *id));
         let mut edits = vec![Edit::Look {
             before: self.level.look.clone().map(Box::new),
             after: after.clone().map(Box::new),
         }];
+        edits.extend(self.surface_maps_change(self.materials(), materials));
         for (index, item) in self.items.iter().enumerate() {
-            let Some(g) = &item.element.glow else { continue };
-            if kept.contains(&g.group.as_str()) {
+            let before = &item.element;
+            let unglow = before.glow.as_ref().is_some_and(|g| !kept.contains(&g.group.as_str()));
+            let (surface, back_surface) = (has(&before.surface), has(&before.back_surface));
+            if !unglow && surface && back_surface {
                 continue;
             }
-            if item.element.locked {
-                return Err(DocError::Locked(item.element.id.clone()));
+            if before.locked {
+                return Err(DocError::Locked(before.id.clone()));
             }
-            let before = item.element.clone();
-            let after = olr_format::levels::Element { glow: None, ..before.clone() };
-            edits.extend(self.mask_dropped(&before));
-            edits.push(Edit::Element { index, before, after });
+            let mut after = before.clone();
+            if unglow {
+                after.glow = None;
+                edits.extend(self.mask_dropped(before));
+            }
+            if !surface {
+                after.surface = None;
+            }
+            if !back_surface {
+                after.back_surface = None;
+            }
+            edits.push(Edit::Element { index, before: before.clone(), after });
         }
         Ok(edits)
     }

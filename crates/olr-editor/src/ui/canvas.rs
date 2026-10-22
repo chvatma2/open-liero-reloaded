@@ -202,6 +202,37 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
             Color32::YELLOW,
         );
     }
+    if state.surface_view() {
+        legend(ui, state, rect);
+    }
+}
+
+/// The Materials view's legend (issue #43), at the canvas's bottom left:
+/// each of the level's materials' tint and name, then "None".
+fn legend(ui: &Ui, state: &EditorState, canvas: egui::Rect) {
+    let Some(doc) = state.document() else { return };
+    egui::Area::new(egui::Id::new("olr-editor-legend"))
+        .fixed_pos(canvas.left_bottom() + egui::vec2(8.0, -8.0))
+        .pivot(egui::Align2::LEFT_BOTTOM)
+        .interactable(false)
+        .show(ui.ctx(), |ui| {
+            egui::Frame::popup(ui.style()).show(ui, |ui| {
+                ui.label(egui::RichText::new(labels::LEGEND).strong());
+                let side = ui.text_style_height(&egui::TextStyle::Body);
+                let rows = doc
+                    .materials()
+                    .iter()
+                    .enumerate()
+                    .map(|(i, m)| (u8::try_from(i + 1).unwrap_or(0), &m.name));
+                let none = labels::NO_SURFACE.to_string();
+                for (v, name) in rows.chain([(0, &none)]) {
+                    ui.horizontal(|ui| {
+                        super::look::tint_swatch(ui, v, side, &labels::legend_tint(name));
+                        ui.label(name);
+                    });
+                }
+            });
+        });
 }
 
 /// The world pixels between two grid lines at `unit` points per world

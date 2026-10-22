@@ -53,6 +53,9 @@ pub(crate) enum Drag {
     /// Glow brush dabs on element `id`'s mask (plan 15a); `before` is the
     /// mask and its flag as the stroke began.
     Glow { id: String, before: crate::look_ops::GlowStrokeStart, last: (i32, i32) },
+    /// Surface brush dabs of map value `value` on element `id`'s map
+    /// (issue #43); `before` is the map and the element as it began.
+    Surface { id: String, before: Box<crate::surface_ops::SurfaceStrokeStart>, last: (i32, i32), value: u8 },
 }
 
 fn add(a: i32, b: i64) -> i32 {
@@ -584,6 +587,38 @@ impl EditorState {
                 self.drag = Some(Drag::Glow { id, before, last: world });
                 vec![EditorCommand::Upload(rect)]
             }
+            Tool::Surface => {
+                let Selection::Element(id) = self.selection.clone() else {
+                    self.status.message = Some("select an element to paint its surface".into());
+                    return Vec::new();
+                };
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let back = self.surface_back
+                    && doc.index_of(&id).is_some_and(|i| doc.items()[i].element.has_back_art());
+                let value = match &self.surface_paint {
+                    Some(m) => match doc.material_value(m) {
+                        Some(v) => v,
+                        None => {
+                            self.status.message =
+                                Some(format!("the level has no material {m:?}: pick another"));
+                            return Vec::new();
+                        }
+                    },
+                    None => 0,
+                };
+                let before = match doc.surface_stroke_before(&id, back) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        self.status.message = Some(e.to_string());
+                        return Vec::new();
+                    }
+                };
+                let shape = self.dab(world);
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let rect = doc.paint_surface(&id, back, &shape, value).unwrap_or(NOTHING);
+                self.drag = Some(Drag::Surface { id, before: Box::new(before), last: world, value });
+                vec![EditorCommand::Upload(rect)]
+            }
             Tool::Spawn => {
                 let cmds = self.edit(|d| d.add_spawn(world));
                 if !cmds.is_empty()
@@ -775,6 +810,25 @@ impl EditorState {
                 self.drag = Some(Drag::Glow { id, before, last: world });
                 rect.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
             }
+            Drag::Surface { id, before, last, value } => {
+                if world == last {
+                    return Vec::new();
+                }
+                let shapes = self.joins(last, world);
+                let back = before.back;
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let mut rect = None;
+                for shape in &shapes {
+                    if let Ok(r) = doc.paint_surface(&id, back, shape, value)
+                        && r.w > 0
+                        && r.h > 0
+                    {
+                        rect = Some(Rect::union(rect, r));
+                    }
+                }
+                self.drag = Some(Drag::Surface { id, before, last: world, value });
+                rect.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
+            }
             Drag::Stroke { id, before, last, rect, stroke, begun, paint } => {
                 if world == last {
                     return Vec::new();
@@ -886,6 +940,14 @@ impl EditorState {
             }
             Drag::Glow { id, before, .. } => {
                 let edits = doc.glow_stroke_edits(&id, before);
+                if edits.is_empty() {
+                    return Vec::new();
+                }
+                self.history.push(edits);
+                self.committed(NOTHING)
+            }
+            Drag::Surface { id, before, .. } => {
+                let edits = doc.surface_stroke_edits(&id, *before);
                 if edits.is_empty() {
                     return Vec::new();
                 }
@@ -1024,7 +1086,7 @@ impl EditorState {
                 }
             }
         }
-        if matches!(self.tool, Tool::Brush | Tool::Eraser | Tool::Glow)
+        if matches!(self.tool, Tool::Brush | Tool::Eraser | Tool::Glow | Tool::Surface)
             && let Some(centre) = self.status.cursor
         {
             // A crater's outline spans its extent (plan 14e R4).

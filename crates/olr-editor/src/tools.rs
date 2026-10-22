@@ -3,7 +3,7 @@
 use olr_data::image::Rgba;
 use olr_edit::compose::Rect;
 
-/// The canvas tools; their shortcut letters are V B E R O L P I W G M H.
+/// The canvas tools; their shortcut letters are V B E R O L P I W G M H U.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Tool {
     Select,
@@ -23,11 +23,13 @@ pub enum Tool {
     SelectPixels,
     /// Paints the selected glowing element's glow mask (plan 15a R12).
     Glow,
+    /// Paints the selected element's surface material map (issue #43).
+    Surface,
 }
 
 impl Tool {
     /// Every tool (each has its shortcut).
-    pub const ALL: [Tool; 12] = [
+    pub const ALL: [Tool; 13] = [
         Tool::Select,
         Tool::Brush,
         Tool::Eraser,
@@ -40,6 +42,7 @@ impl Tool {
         Tool::Fill,
         Tool::SelectPixels,
         Tool::Glow,
+        Tool::Surface,
     ];
 
     /// The shortcut letter.
@@ -57,6 +60,7 @@ impl Tool {
             Tool::Fill => 'G',
             Tool::SelectPixels => 'M',
             Tool::Glow => 'H',
+            Tool::Surface => 'U',
         }
     }
 
@@ -74,6 +78,7 @@ impl Tool {
             Tool::Fill => "Fill",
             Tool::SelectPixels => "Select pixels",
             Tool::Glow => "Glow brush",
+            Tool::Surface => "Surface brush",
         }
     }
 
@@ -83,9 +88,9 @@ impl Tool {
     }
 
     /// Whether the tool dabs with the brush (its shape and size): the
-    /// painting tools and the Glow brush (`pointer.rs`).
+    /// painting tools, the Glow brush and the Surface brush (`pointer.rs`).
     pub fn uses_brush(self) -> bool {
-        self.paints() || self == Tool::Glow
+        self.paints() || matches!(self, Tool::Glow | Tool::Surface)
     }
 
     /// Whether the tool lays the paint (a colour, a tile or a texture).

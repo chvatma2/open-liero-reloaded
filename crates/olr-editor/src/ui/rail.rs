@@ -1,6 +1,6 @@
 //! The tool rail (issue #8): one column of buttons, each an icon over a
 //! short label: Import, set apart at the top, then Select, Draw ▸,
-//! Pixels ▸, Glow and Spawn. A group's button (its corner mark) shows the
+//! Pixels ▸, Glow, Surface and Spawn. A group's button (its corner mark) shows the
 //! icon of its tool chosen last, and one click chooses that tool again; a
 //! second click, a click on the corner mark or a right click opens its
 //! flyout, which lists the group's tools with their shortcuts. A pick, a
@@ -38,6 +38,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>
     }
     // Its label is the brush's, never the element's Glow checkbox's.
     single(ui, state, Tool::Glow, "Glow", out);
+    single(ui, state, Tool::Surface, "Surface", out);
     single(ui, state, Tool::Spawn, "Spawn", out);
 }
 

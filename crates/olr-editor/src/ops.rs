@@ -124,6 +124,11 @@ pub(crate) fn with_property(e: &mut Element, property: Property, level: (u32, u3
         }
         Property::Glow(g) => e.glow = g,
         Property::Clear(c) => e.clear = c,
+        // Issue #43: a back surface needs back art (`Document::set` checks
+        // the id is one of the level's materials).
+        Property::Surface(m) => e.surface = m,
+        Property::BackSurface(_) if !e.has_back_art() => return Err(wrong("an element with back art")),
+        Property::BackSurface(m) => e.back_surface = m,
         // Issue #11: an image or drawn element (`Document::set_distant`
         // keeps the order).
         Property::Distant(_) if matches!(e.kind, ElementKind::Raster) => {
@@ -769,6 +774,11 @@ impl Document {
                 _ => NOTHING,
             };
             return Ok(Change { edit, dirty });
+        }
+        if let Property::Surface(Some(m)) | Property::BackSurface(Some(m)) = &property
+            && self.material_value(m).is_none()
+        {
+            return Err(DocError::Bad(format!("no material {m:?} in the level's materials (add it first)")));
         }
         let before = self.items[index].element.clone();
         let mut after = before.clone();
@@ -1592,9 +1602,12 @@ impl Document {
             Edit::Look { before, after } => {
                 let (from, to) = if forward { (before, after) } else { (after, before) };
                 self.level.look = to.as_deref().cloned();
-                // The bake numbers groups by their order: other groups, another bake.
+                // The bake numbers groups and materials (issue #43) by their
+                // order: others, another bake.
                 let ids = |l: &Option<Box<olr_format::look::LookSource>>| {
-                    l.iter().flat_map(|l| l.glow_groups.iter().map(|g| g.id.clone())).collect::<Vec<_>>()
+                    let groups = l.iter().flat_map(|l| l.glow_groups.iter().map(|g| g.id.clone()));
+                    let materials = l.iter().flat_map(|l| l.materials.iter().map(|m| format!("/{}", m.id)));
+                    groups.chain(materials).collect::<Vec<_>>()
                 };
                 if ids(from) == ids(to) { NOTHING } else { self.all() }
             }
