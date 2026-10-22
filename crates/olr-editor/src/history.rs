@@ -83,6 +83,14 @@ pub enum Edit {
         before: Option<Arc<Vec<u8>>>,
         after: Option<Arc<Vec<u8>>>,
     },
+    /// Element `id`'s painted surface map `file` (issue #37; world pixels
+    /// of its box), before and after; `None` is no map.
+    SurfaceMap {
+        id: String,
+        file: String,
+        before: Option<Arc<Vec<u8>>>,
+        after: Option<Arc<Vec<u8>>>,
+    },
 }
 
 /// A drawn layer's pixels over a rectangle of its box: its art, and its
@@ -137,6 +145,8 @@ pub struct Whole {
     pub level: LevelSource,
     pub items: Vec<Item>,
     pub masks: olr_edit::compose::GlowMasks,
+    /// The painted surface maps (issue #37), by file.
+    pub surfaces: olr_edit::compose::PaintedSurfaces,
 }
 
 /// Bytes an image holds.
@@ -184,10 +194,13 @@ impl Edit {
             Edit::Objects { before, after } => before == after,
             Edit::Meta { before, after } => before == after,
             Edit::Whole { before, after } => {
-                before.level == after.level && before.items == after.items && before.masks == after.masks
+                before.level == after.level
+                    && before.items == after.items
+                    && before.masks == after.masks
+                    && before.surfaces == after.surfaces
             }
             Edit::Look { before, after } => before == after,
-            Edit::GlowMask { before, after, .. } => before == after,
+            Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => before == after,
         }
     }
 
@@ -213,7 +226,7 @@ impl Edit {
             Edit::Whole { before, after } => before.bytes() + after.bytes(),
             Edit::Look { .. } => 2 * std::mem::size_of::<LookSource>(),
             // Masks count once each, by address, as grids do (`grids`).
-            Edit::GlowMask { .. } => 0,
+            Edit::GlowMask { .. } | Edit::SurfaceMap { .. } => 0,
         }
     }
 
@@ -226,9 +239,12 @@ impl Edit {
             }
             Edit::Whole { before, after } => grids(before.items.iter().chain(&after.items))
                 .chain(before.masks.values().chain(after.masks.values()).map(mask))
+                .chain(before.surfaces.values().chain(after.surfaces.values()).map(mask))
                 .collect(),
             Edit::Layer { before, after, .. } => grids([&**before, &**after].into_iter()).collect(),
-            Edit::GlowMask { before, after, .. } => before.iter().chain(after).map(mask).collect(),
+            Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => {
+                before.iter().chain(after).map(mask).collect()
+            }
             _ => Vec::new(),
         }
     }

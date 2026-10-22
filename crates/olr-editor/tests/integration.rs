@@ -10,4 +10,5 @@ mod flows;
 mod history;
 mod look;
 mod state;
+mod surface;
 mod tools;

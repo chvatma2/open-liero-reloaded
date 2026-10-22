@@ -4877,7 +4877,9 @@ in a match yet (heat comes later). As built:
   Save as asset, paste and placing strip them), `LevelPack` and the match
   reading them (3/10), heat and its look, mods, the editors' material
   tools (7/10). The level editor keeps painted maps as opened, re-lays
-  them on a resize and drops ones that no longer fit.
+  them on a level resize, resamples an image's on a new box size, drops
+  them on split and merge down (as glow) and drops ones that no longer
+  fit on saving.
 
 ## Kept OLX quirks
 

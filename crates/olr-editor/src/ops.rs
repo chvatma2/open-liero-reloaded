@@ -17,7 +17,7 @@ use olr_edit::pixelate::Pixelation;
 use olr_format::image_io::{LEVEL_ART, check_size};
 use olr_format::levels::{
     Composition, Dither, Element, ElementKind, ElementMaterial, LevelSource, MAX_ART_SCALE,
-    MAX_COMPOSED_PIXELS, MAX_ELEMENTS, check_elements, drawn_box,
+    MAX_COMPOSED_PIXELS, MAX_ELEMENTS, check_elements, drawn_box, surface_back_file, surface_file,
 };
 
 use crate::catalog::Catalog;
@@ -1247,7 +1247,12 @@ impl Document {
     }
 
     fn whole(&self) -> Whole {
-        Whole { level: self.level.clone(), items: self.items.clone(), masks: self.glow_masks.clone() }
+        Whole {
+            level: self.level.clone(),
+            items: self.items.clone(),
+            masks: self.glow_masks.clone(),
+            surfaces: self.surface_maps.clone(),
+        }
     }
 
     /// As `olr-cli level resize`: the elements follow (`resize_decoded`),
@@ -1302,8 +1307,22 @@ impl Document {
             let moved = ((at.0.saturating_add(offset.0), at.1.saturating_add(offset.1)), b);
             masks.insert(now.element.id.clone(), Arc::new(crate::look_ops::relay_mask(m, moved, new, s)));
         }
+        // Painted surface maps follow them at world resolution (issue #37),
+        // a raster's as the level's pixels; the new area takes the defaults.
+        let mut surfaces = self.surface_maps.clone();
+        for (was, now) in self.items.iter().zip(&items) {
+            let from = olr_format::levels::element_box(&was.element.kind, old).unwrap_or(((0, 0), old));
+            let to = olr_format::levels::element_box(&now.element.kind, size).unwrap_or(((0, 0), size));
+            let moved = ((from.0.0.saturating_add(offset.0), from.0.1.saturating_add(offset.1)), from.1);
+            for file in [surface_file(&was.element.id), surface_back_file(&was.element.id)] {
+                if let Some(m) = self.surface_maps.get(&file) {
+                    surfaces.insert(file, Arc::new(olr_edit::element::relay_surface(m, moved, to)));
+                }
+            }
+        }
         let before = Box::new(self.whole());
-        Ok(self.change(Edit::Whole { before, after: Box::new(Whole { level, items, masks }) }))
+        let after = Box::new(Whole { level, items, masks, surfaces });
+        Ok(self.change(Edit::Whole { before, after }))
     }
 
     /// Rescales drawn and raster layers (`rescale_art`) and reprocesses images.
@@ -1368,7 +1387,8 @@ impl Document {
             g.art = to_art;
         }
         let before = Box::new(self.whole());
-        Ok(self.change(Edit::Whole { before, after: Box::new(Whole { level, items, masks }) }))
+        let surfaces = self.surface_maps.clone();
+        Ok(self.change(Edit::Whole { before, after: Box::new(Whole { level, items, masks, surfaces }) }))
     }
 
     /// An image element's original bytes.
@@ -1565,6 +1585,7 @@ impl Document {
                 self.level = w.level.clone();
                 self.items = w.items.clone();
                 self.glow_masks = w.masks.clone();
+                self.surface_maps = w.surfaces.clone();
                 self.keep_from_level();
                 self.all()
             }
@@ -1582,6 +1603,16 @@ impl Document {
                 match to {
                     Some(m) => self.glow_masks.insert(id.clone(), m.clone()),
                     None => self.glow_masks.remove(id),
+                };
+                match self.index_of(id) {
+                    Some(i) => self.element_rect(&self.items[i].element),
+                    None => NOTHING,
+                }
+            }
+            Edit::SurfaceMap { id, file, before, after } => {
+                match if forward { after } else { before } {
+                    Some(m) => self.surface_maps.insert(file.clone(), m.clone()),
+                    None => self.surface_maps.remove(file),
                 };
                 match self.index_of(id) {
                     Some(i) => self.element_rect(&self.items[i].element),

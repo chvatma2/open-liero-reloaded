@@ -297,16 +297,18 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   see-through, and the list's 🌄 mark. Tests: `tests/distant.rs`.
 - **Surface materials** (issue #37; the bake is `olr_edit::compose`'s):
   the document keeps the painted surface maps as opened
-  (its `surface_maps`, `PaintedSurfaces`) and bakes with them; the
-  edits keep them as `olr_edit::element` fits them, and saving drops a
-  map flag whose map no longer fits. No panel edits materials yet
-  (materials 7/10).
+  (its `surface_maps`, `PaintedSurfaces`) and bakes with them. A resize
+  re-lays them with their layers (`Whole::surfaces`, the new area 0) and
+  an image's new box size resamples them (`Edit::SurfaceMap`, in the same
+  step); split and merge down drop surfaces as they drop glow; saving
+  drops a map flag whose map no longer fits. No panel edits materials yet
+  (materials 7/10). Test: `tests/surface.rs`.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the
   `egui_kittest` flow `save_and_place_through_the_panels`; the test host
   keeps a library, `common::set_library`), `document.rs`, `history.rs` (the
-  undo proptest, the cap), `state.rs` (a synchronous test host in
+  undo proptest, the cap), `surface.rs` (issue #37), `state.rs` (a synchronous test host in
   `common.rs`), `tools.rs` (the ignored `brush_dab_speed`: about 2 ms in
   release for a size-16 dab on Castle Strike), `look.rs` (plan 15a: glow,
   groups, the clock, masks through resizes and pastes, the object

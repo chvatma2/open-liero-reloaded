@@ -9,7 +9,9 @@ use olr_data::image::RgbaImage;
 use olr_edit::compose::Rect;
 use olr_edit::element::Property;
 use olr_edit::level::{Shape, shape_bounds};
-use olr_format::levels::{ElementGlow, LevelObject, LevelSource, compile_look, element_box};
+use olr_format::levels::{
+    ElementGlow, LevelObject, LevelSource, compile_look, element_box, surface_back_file, surface_file,
+};
 use olr_format::look::{
     AnimationSource, GlowColourSource, GlowGroupSource, LookSource, ReachSource, valid_group_id,
 };
@@ -173,7 +175,7 @@ impl Document {
         let change = self.set(id, property)?;
         let mut edits = vec![change.edit];
         let mut dirty = change.dirty;
-        if let (Some(was), Some(i)) = (before, self.index_of(id))
+        if let (Some(was), Some(i)) = (before.as_ref(), self.index_of(id))
             && let Some(m) = self.glow_masks.get(id).cloned()
             && let (Some((_, ob)), Some((_, nb))) =
                 (element_box(&was.kind, size), element_box(&self.items[i].element.kind, size))
@@ -184,6 +186,24 @@ impl Document {
             let r = self.apply(&edit, true);
             dirty = Rect::union(Some(dirty), r);
             edits.push(edit);
+        }
+        // So do its painted surface maps, at world resolution (issue #37).
+        if let (Some(was), Some(i)) = (before.as_ref(), self.index_of(id))
+            && let (Some((_, ob)), Some((_, nb))) =
+                (element_box(&was.kind, size), element_box(&self.items[i].element.kind, size))
+            && ob != nb
+        {
+            for file in [surface_file(id), surface_back_file(id)] {
+                // One that does not fit its old box is left as it is (and
+                // dropped on saving).
+                let fits = |m: &&Arc<Vec<u8>>| m.len() == ob.0 as usize * ob.1 as usize;
+                let Some(m) = self.surface_maps.get(&file).filter(fits).cloned() else { continue };
+                let after = Arc::new(resample_mask(&m, ob, nb));
+                let edit = Edit::SurfaceMap { id: id.into(), file, before: Some(m), after: Some(after) };
+                let r = self.apply(&edit, true);
+                dirty = Rect::union(Some(dirty), r);
+                edits.push(edit);
+            }
         }
         Ok((edits, dirty))
     }
