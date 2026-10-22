@@ -22,6 +22,10 @@ pub struct LoadedMod {
     /// `gfx/missile.png`, the projectiles' `file`); a projectile image that
     /// is missing or unreadable is a one-frame placeholder.
     pub images: BTreeMap<String, RgbaImage>,
+    /// The images' glow masks (issue #19, `gfx/<name>.glow.png`), by the
+    /// image's pack path: one value per pixel, row by row, of the image's
+    /// size. A mask that does not fit or decode is left out with a warning.
+    pub glow: BTreeMap<String, Vec<u8>>,
     /// Sound bytes by [`SimMod::sounds`] name: the mod's from its pack, OLX's
     /// game sounds (`olx:` names) from the core pack. A missing sound is
     /// absent: silence.
@@ -43,6 +47,17 @@ pub struct LoadedMod {
 }
 
 impl LoadedMod {
+    /// Image `file`'s glowing pixels (issue #19), one image per glow
+    /// strength that has any: `(strength, image)`, the strength 1 to
+    /// [`crate::GLOW_LEVELS`] (quarters of full glow, as a skin's), each
+    /// image the sprite's pixels of that strength (transparent elsewhere).
+    /// Drawn over the sprite with that self-light, they show bright
+    /// whatever the darkness. Empty without a mask.
+    pub fn glow_overlays(&self, file: &str) -> Vec<(usize, RgbaImage)> {
+        let (Some(img), Some(mask)) = (self.images.get(file), self.glow.get(file)) else { return Vec::new() };
+        glow_overlays(img, mask)
+    }
+
     /// The restrictions a match of this mod plays with when its
     /// `WeaponRestrictionsFile` is `file` (such as
     /// [`olr_data::restrictions::DEFAULT_PRESET`]): OLX's `CWpnRest` after
@@ -63,6 +78,29 @@ impl LoadedMod {
             }
         }
     }
+}
+
+/// `img`'s pixels by glow strength of `mask` (its values row by row; one
+/// of another size gives none): [`LoadedMod::glow_overlays`].
+pub fn glow_overlays(img: &RgbaImage, mask: &[u8]) -> Vec<(usize, RgbaImage)> {
+    let (w, h) = (img.width(), img.height());
+    if mask.len() != w as usize * h as usize {
+        return Vec::new();
+    }
+    let mut out: Vec<(usize, RgbaImage)> = Vec::new();
+    for level in 1..=crate::GLOW_LEVELS {
+        let mut layer: Option<RgbaImage> = None;
+        for y in 0..h {
+            for x in 0..w {
+                let p = img.get(x, y);
+                if p.a != 0 && crate::glow_level(mask[(y * w + x) as usize]) == level {
+                    layer.get_or_insert_with(|| RgbaImage::new(w, h)).set(x, y, p);
+                }
+            }
+        }
+        out.extend(layer.map(|l| (level, l)));
+    }
+    out
 }
 
 /// Every image projectile must know its image's frame count: OLX's client
@@ -166,6 +204,20 @@ impl Content {
                 frames.insert(file.clone(), 1);
             }
         }
+        let mut glow = BTreeMap::new();
+        for (path, bytes) in &pack.assets {
+            let Some(image) = olr_format::mods::image_of_mask(path.as_str()) else { continue };
+            let Some(img) = images.get(&image) else {
+                warnings.push(format!("{id}/{path}: a glow mask without its image"));
+                continue;
+            };
+            match olr_format::mods::decode_glow_mask(bytes, (img.width(), img.height())) {
+                Ok(values) => {
+                    glow.insert(image, values);
+                }
+                Err(e) => warnings.push(format!("{id}/{path}: {e}: the image draws without its glow")),
+            }
+        }
         let sim = SimMod::compile(&pack.def, &frames).map_err(|e| anyhow::anyhow!("{id}: {e}"))?;
         let mut sounds = BTreeMap::new();
         for name in sim.sounds() {
@@ -198,7 +250,18 @@ impl Content {
         };
         let (name, restrictions) = (pack.def.name, pack.def.restrictions);
         let (worm, rope) = (pack.def.worm, pack.def.rope);
-        Ok(LoadedMod { sim: Arc::new(sim), images, sounds, warnings, name, restrictions, worm, rope, look })
+        Ok(LoadedMod {
+            sim: Arc::new(sim),
+            images,
+            glow,
+            sounds,
+            warnings,
+            name,
+            restrictions,
+            worm,
+            rope,
+            look,
+        })
     }
 }
 

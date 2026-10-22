@@ -806,3 +806,45 @@ fn distant_layers_load_and_make_the_map_see_through() {
     plain.distant.clear();
     assert!(plain.color_map(&theme).pixels().chunks(4).all(|p| p[3] == 255));
 }
+
+/// Issue #19: Classic's missile with a glow mask loads it, its glowing
+/// pixels as overlays per strength; a mask of another size is left out
+/// with a warning, and the mod plays as before either way.
+#[test]
+fn a_mod_image_loads_with_its_glow_mask() {
+    let Some(dir) = content_dir() else { return };
+    let content = Content::open(Path::new(&dir)).unwrap();
+    let mut pack = olr_pack::read_mod(&DirFs::new(Path::new(&dir).join("olx-classic"))).unwrap();
+    let plain = content.load_mod_pack("olx-classic", pack.clone()).unwrap();
+    let file = "gfx/missile.png";
+    let img = plain.images[file].clone();
+    let (w, h) = (img.width(), img.height());
+    // The first opaque pixel glows full, the second a quarter.
+    let opaque: Vec<usize> =
+        (0..(w * h) as usize).filter(|&i| img.as_raw()[i * 4 + 3] != 0).take(2).collect();
+    let mut values = vec![0u8; (w * h) as usize];
+    values[opaque[0]] = 255;
+    values[opaque[1]] = 64;
+    let mask = olr_format::mods::encode_glow_mask((w, h), &values);
+    pack.assets.insert(VPath::new("gfx/missile.glow.png").unwrap(), mask);
+    let m = content.load_mod_pack("olx-classic", pack.clone()).unwrap();
+    assert_eq!(m.glow[file], values);
+    assert_eq!(m.sim, plain.sim, "a mask never reaches the simulation");
+    let overlays = m.glow_overlays(file);
+    let levels: Vec<usize> = overlays.iter().map(|(l, _)| *l).collect();
+    assert_eq!(levels, vec![1, 4]);
+    let at = |i: usize| (i as u32 % w, i as u32 / w);
+    let (x, y) = at(opaque[0]);
+    assert_eq!(overlays[1].1.get(x, y), img.get(x, y));
+    assert_eq!(overlays[0].1.get(x, y).a, 0);
+    assert!(plain.glow.is_empty() && plain.glow_overlays(file).is_empty());
+    let wrong = olr_format::mods::encode_glow_mask((w + 1, h), &vec![255; ((w + 1) * h) as usize]);
+    pack.assets.insert(VPath::new("gfx/missile.glow.png").unwrap(), wrong);
+    let m = content.load_mod_pack("olx-classic", pack).unwrap();
+    assert!(m.glow.is_empty());
+    assert!(
+        m.warnings.iter().any(|w| w.contains("gfx/missile.glow.png") && w.contains("without its glow")),
+        "{:?}",
+        m.warnings
+    );
+}

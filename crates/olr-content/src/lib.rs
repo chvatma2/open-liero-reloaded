@@ -48,7 +48,7 @@ pub use matches::{
     BuiltMatch, CPU_COLOURS, MatchAssets, MatchOptions, Player, WeaponChoice, build_match,
     build_match_spawning, default_looks,
 };
-pub use mods::{LoadedMod, check_frames};
+pub use mods::{LoadedMod, check_frames, glow_overlays};
 pub use olr_pack::sounds::{MAX_SOUND_BYTES, MAX_SOUND_SECONDS, check_sound};
 pub use placeholder::{PLACEHOLDER, placeholder_image};
 pub use replay::replay_assets_from;

@@ -68,7 +68,12 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   pack's PNGs (spec §18 D3). `load_mod_pack(id, ModPack)` is `load_mod` on
   a pack read elsewhere (issue #18: the mod editor's unsaved mod, from
   `olr_edit::pack::mod_pack`), its game sounds from this content's core
-  pack (`a_mod_pack_given_loads_as_an_installed_one`).
+  pack (`a_mod_pack_given_loads_as_an_installed_one`). Issue #19:
+  `LoadedMod::glow` holds each image's glow mask (`gfx/<name>.glow.png`,
+  `olr_format::mods::decode_glow_mask`: of the image's size, else left
+  out with a warning), and `glow_overlays(file)` its glowing pixels per
+  quarter, as a skin's (`a_mod_image_loads_with_its_glow_mask`); the
+  simulation never sees a mask.
 - **Hostile sounds** (`olr_pack::sounds`, re-exported; moved there in
   issue #19 so the editors' imports check a sound as the game does): a sound above `MAX_SOUND_BYTES` (2 MiB)
   or longer than `MAX_SOUND_SECONDS` (60 s) by its header (Ogg granule over
