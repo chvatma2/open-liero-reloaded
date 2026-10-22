@@ -69,6 +69,28 @@ pub fn mix(listener: Vec2, source: Vec2, gain: f32, volume: f32) -> Mix {
     Mix { amplitude, pan }
 }
 
+/// The listener of `listeners` nearest to `source` (the first of equally
+/// near ones; `Vec2::ZERO` for none): split screen hears each sound from
+/// the nearest local player's view (a deliberate deviation: OLX's OpenAL
+/// uses viewport 0's listener only, `src/sound/sfxdriver_openal.cpp:55-65`;
+/// `docs/porting/STATUS.md`), so no player is deaf to their own fight.
+pub fn nearest(listeners: &[Vec2], source: Vec2) -> Vec2 {
+    let mut best = (f32::INFINITY, listeners.first().copied().unwrap_or(Vec2::ZERO));
+    for &l in listeners {
+        let d = distance(l, source);
+        if d < best.0 {
+            best = (d, l);
+        }
+    }
+    best.1
+}
+
+/// [`mix`] heard from the [`nearest`] of `listeners`: with one listener,
+/// exactly `mix`.
+pub fn mix_nearest(listeners: &[Vec2], source: Vec2, gain: f32, volume: f32) -> Mix {
+    mix(nearest(listeners, source), source, gain, volume)
+}
+
 /// An amplitude factor in decibels, as kira takes volumes; kira treats
 /// [`SILENCE_DB`] and below as silent.
 pub fn decibels(amplitude: f32) -> f32 {

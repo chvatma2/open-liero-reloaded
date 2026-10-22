@@ -15,6 +15,10 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
   PICKUP (`is_global`) start at the listener with gain 1.0 (OLX's `play`).
   The game passes only the player's own THROW sounds (`olr-game`'s
   `throw_sound`: OLX plays none for a bot's or a remote worm's throw).
+  **Several listeners** (issue #27, split screen; a deliberate deviation,
+  STATUS): `nearest(listeners, source)` is the listener nearest to a
+  source (the first of equally near ones), `mix_nearest` mixes from it;
+  with one listener it is `mix`. OLX's OpenAL hears viewport 0 only.
 - **Voices** (`voices.rs`, pure): `max_plays` is OLX's `maxplaying` (throw
   4, other game sounds 2, mod sounds 10), `GLOBAL_VOICES` 256 (OpenAL
   Soft's default source count); `admit` says `Start`, `Steal(victim)` or
@@ -25,7 +29,8 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
   starts the new voice first, then `replace`s the victim and stops it
   with a 5 ms fade (a start that fails takes nothing). Sources stay where they started and every play call re-mixes the
   live voices for the moved listener (OpenAL recomputes as the listener
-  follows the view).
+  follows the view); `follow_nearest(&[listener])` re-mixes each voice
+  from the listener now nearest to it.
 - **Device** (`audio.rs`): `Audio::new()` opens kira's default backend;
   when it fails the game runs silently (`is_silent`) and
   `take_warnings()` says so once (E12). `Audio<B>` is generic over kira's
@@ -33,7 +38,11 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
   &CorePack)` decodes the mod's sounds when content loads (by
   `SimMod::sounds()` index; `olx:` names fall back to the core pack); an
   undecodable sound is a warning and plays nothing. `play_events` once per
-  tick with the view centre; `stop_all` on a restart. `set_volume`
+  tick with the view centre, or `play_events_heard` (`play_heard` for any
+  events) with every local view's centre (`olr_present::Presentation::
+  listeners`, what the game passes): each positional sound starts once,
+  mixed from the nearest view, nothing doubled; THROW and PICKUP at the
+  first listener; no listeners keep the last ones; `stop_all` on a restart. `set_volume`
   re-mixes the voices playing at once (OLX's `SetSoundVolume`), so the
   options apply it live.
   `preview(bytes)` (issue #19, the mod editor's Sounds) decodes and plays
@@ -46,6 +55,7 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
   `pcm.!default pulse` / `ctl.!default pulse` (WSLg's PulseServer).
 
 Test: `cargo nextest run -p olr-audio` (pure maths and limits, a mock
-device, silence without one, `a_preview_plays_a_sound_file_alone`; `decodes_every_mod_sound` needs
+device, silence without one, `a_preview_plays_a_sound_file_alone`,
+issue #27's `each_sound_is_heard_from_the_nearest_listener`; `decodes_every_mod_sound` needs
 `OLR_CONTENT_DIR`). The real device: `cargo run -p olr-audio --example
 device_check` (exit 3 means no device opened); `cargo xtask full` runs it.

@@ -1,11 +1,11 @@
-//! Which sounds may start, and the live voices' mix as the listener moves.
+//! Which sounds may start, and the live voices' mix as the listeners move.
 //! Pure: a voice is anything that says whether it still plays and takes a
 //! new [`Mix`].
 
 use olr_math::Vec2;
 use olr_sim::{GAME_SOUNDS, SoundId};
 
-use crate::mix::{Mix, mix};
+use crate::mix::{Mix, mix_nearest};
 
 /// A playing sound, as [`Voices`] sees it.
 pub trait Voice {
@@ -141,8 +141,15 @@ impl<V: Voice> Voices<V> {
     /// Re-mixes every voice for a listener now at `listener`: OpenAL
     /// sources stay where they started while the listener follows the view.
     pub fn follow(&mut self, listener: Vec2, volume: f32) {
+        self.follow_nearest(&[listener], volume);
+    }
+
+    /// [`Voices::follow`] for several listeners (split screen): each voice
+    /// is heard from the listener now nearest to its source
+    /// ([`crate::mix::nearest`]), once.
+    pub fn follow_nearest(&mut self, listeners: &[Vec2], volume: f32) {
         for l in &mut self.live {
-            l.voice.set_mix(mix(listener, l.source, l.gain, volume));
+            l.voice.set_mix(mix_nearest(listeners, l.source, l.gain, volume));
         }
     }
 

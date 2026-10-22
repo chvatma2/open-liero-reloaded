@@ -9,7 +9,7 @@ use olr_audio::kira::backend::Renderer;
 use olr_audio::kira::backend::mock::{MockBackend, MockBackendSettings};
 use olr_audio::{
     Admit, Audio, DEFAULT_VOLUME, GLOBAL_GAIN, GLOBAL_VOICES, Mix, SOURCE_GAIN, Voice, Voices, attenuation,
-    decibels, is_global, max_plays, mix,
+    decibels, is_global, max_plays, mix, mix_nearest, nearest,
 };
 use olr_content::Content;
 use olr_data::manifest::PackKind;
@@ -158,6 +158,52 @@ fn voice_limits() {
     let m = v.voices_mut().next().and_then(|f| f.mix).expect("re-mixed");
     assert_eq!(m, mix(Vec2::new(160.0, 0.0), Vec2::ZERO, SOURCE_GAIN, 1.0));
     assert!(m.pan < -0.9 && m.amplitude < 0.15, "{m:?}");
+}
+
+/// Split screen (issue #27, a deliberate deviation: OLX hears viewport 0
+/// only): each sound is heard once, from the local view nearest to it; one
+/// listener mixes as before.
+#[test]
+fn each_sound_is_heard_from_the_nearest_listener() {
+    let (a, b) = (Vec2::new(100.0, 100.0), Vec2::new(900.0, 100.0));
+    assert_eq!(nearest(&[a, b], Vec2::new(200.0, 300.0)), a);
+    assert_eq!(nearest(&[a, b], Vec2::new(700.0, 0.0)), b);
+    assert_eq!(nearest(&[a, b], Vec2::new(500.0, 100.0)), a, "the first of equally near ones");
+    assert_eq!(nearest(&[b], Vec2::ZERO), b, "one listener hears everything");
+    assert_eq!(nearest(&[], Vec2::new(5.0, 5.0)), Vec2::ZERO);
+    assert_eq!(
+        nearest(&[Vec2::new(f32::NAN, 0.0), b], Vec2::ZERO),
+        b,
+        "never a NaN listener over a real one"
+    );
+    let gun = Vec2::new(880.0, 110.0);
+    assert_eq!(mix_nearest(&[a, b], gun, SOURCE_GAIN, 1.0), mix(b, gun, SOURCE_GAIN, 1.0));
+    assert_eq!(mix_nearest(&[a], gun, SOURCE_GAIN, 1.0), mix(a, gun, SOURCE_GAIN, 1.0), "one: as before");
+    let near = mix_nearest(&[a, b], gun, SOURCE_GAIN, 1.0).amplitude;
+    assert!(close(near, SOURCE_GAIN) && near > 4.0 * mix(a, gun, SOURCE_GAIN, 1.0).amplitude, "{near}");
+
+    // Live voices follow the listener now nearest to their source.
+    let mut v = Voices::new(GLOBAL_VOICES);
+    v.push(SoundId(9), Vec2::new(120.0, 100.0), SOURCE_GAIN, fake());
+    v.push(SoundId(9), gun, SOURCE_GAIN, fake());
+    v.follow_nearest(&[a, b], 1.0);
+    let mixes: Vec<Mix> = v.voices_mut().map(|f| f.mix.expect("re-mixed")).collect();
+    assert_eq!(mixes, [mix(a, Vec2::new(120.0, 100.0), SOURCE_GAIN, 1.0), mix(b, gun, SOURCE_GAIN, 1.0)]);
+    // The second view moves off: its sound is heard from the first.
+    let gone = Vec2::new(3000.0, 2000.0);
+    v.follow_nearest(&[a, gone], 1.0);
+    let m = v.voices_mut().nth(1).and_then(|f| f.mix).expect("re-mixed");
+    assert_eq!(m, mix(a, gun, SOURCE_GAIN, 1.0));
+
+    // On a device: one voice a sound, however many listeners.
+    let mut audio = Audio::<MockBackend>::with_backend(MockBackendSettings { sample_rate: 8000 });
+    let good = wav(800);
+    audio.load_sounds(&names(), |_| Some(&good[..]));
+    let ev = [sound(SoundId(6), 120.0), sound(SoundId(6), 880.0), sound(SoundId::THROW, 0.0)];
+    audio.play_heard(&ev, &[a, b, a, b]);
+    assert_eq!(audio.playing(), 3, "nothing doubled");
+    audio.play_heard(&[], &[]);
+    assert_eq!(audio.playing(), 3, "no listeners keep the last");
 }
 
 /// A death sound is never skipped (the user's ruling; OLX skips it): at its

@@ -15,7 +15,7 @@ use olr_content::{CorePack, LoadedMod};
 use olr_math::Vec2;
 use olr_sim::{Event, EventKind, GAME_SOUND_PREFIX, SoundId, TickEvents};
 
-use crate::mix::{DEFAULT_VOLUME, GLOBAL_GAIN, Mix, SOURCE_GAIN, decibels, mix};
+use crate::mix::{DEFAULT_VOLUME, GLOBAL_GAIN, Mix, SOURCE_GAIN, decibels, mix, mix_nearest};
 use crate::voices::{Admit, GLOBAL_VOICES, Voice, Voices};
 
 /// How long a voice a death sound takes the place of fades out.
@@ -70,8 +70,9 @@ pub struct Audio<B: Backend = DefaultBackend> {
     sounds: Vec<Option<StaticSoundData>>,
     voices: Voices<StaticSoundHandle>,
     volume: f32,
-    /// Where the listener was last (the view centre of the last tick).
-    listener: Vec2,
+    /// Where the listeners were last (each view's centre at the last tick;
+    /// never empty, the first the global sounds' and the preview's).
+    listeners: Vec<Vec2>,
     /// The mod editor's sound preview playing (issue #19), apart from
     /// the game's voices.
     preview: Option<StaticSoundHandle>,
@@ -120,7 +121,7 @@ impl<B: Backend> Audio<B> {
             sounds: Vec::new(),
             voices: Voices::new(GLOBAL_VOICES),
             volume: DEFAULT_VOLUME,
-            listener: Vec2::ZERO,
+            listeners: vec![Vec2::ZERO],
             preview: None,
             warnings: Vec::new(),
         }
@@ -148,7 +149,7 @@ impl<B: Backend> Audio<B> {
     /// OLX: src/sound/Sounds.cpp:164-174, src/sound/sfxdriver_openal.cpp:88-93.
     pub fn set_volume(&mut self, volume: f32) {
         self.volume = if volume.is_finite() { volume.clamp(0.0, 1.0) } else { DEFAULT_VOLUME };
-        self.voices.follow(self.listener, self.volume);
+        self.voices.follow_nearest(&self.listeners, self.volume);
     }
 
     /// How many voices play (for the debug overlay).
@@ -211,12 +212,33 @@ impl<B: Backend> Audio<B> {
         self.play(events.as_slice(), listener);
     }
 
+    /// [`Audio::play_events`] for several listeners (split screen: each
+    /// view's centre, `olr_present::Presentation::listeners`): each
+    /// positional sound is heard once, from the listener nearest to it
+    /// ([`crate::mix::nearest`]; a deliberate deviation from OLX, which
+    /// hears viewport 0 only), and the playing voices are re-mixed the
+    /// same way. THROW and PICKUP play at the first listener. With one
+    /// listener it is [`Audio::play_events`]; with none the last ones
+    /// stay.
+    pub fn play_events_heard(&mut self, events: &TickEvents, listeners: &[Vec2]) {
+        self.play_heard(events.as_slice(), listeners);
+    }
+
     /// [`Audio::play_events`] for any events.
     pub fn play(&mut self, events: &[Event], listener: Vec2) {
+        self.play_heard(events, &[listener]);
+    }
+
+    /// [`Audio::play_events_heard`] for any events.
+    pub fn play_heard(&mut self, events: &[Event], listeners: &[Vec2]) {
         let Some(manager) = &mut self.manager else { return };
-        self.listener = listener;
+        if !listeners.is_empty() {
+            self.listeners.clear();
+            self.listeners.extend_from_slice(listeners);
+        }
+        let listeners = &self.listeners[..];
         self.voices.prune();
-        self.voices.follow(listener, self.volume);
+        self.voices.follow_nearest(listeners, self.volume);
         for e in events {
             let EventKind::Sound { id, pos } = e.kind else { continue };
             let Some(Some(data)) = self.sounds.get(usize::from(id.0)) else { continue };
@@ -224,8 +246,8 @@ impl<B: Backend> Audio<B> {
             if admit == Admit::Skip {
                 continue;
             }
-            let (source, gain) = if is_global(id) { (listener, GLOBAL_GAIN) } else { (pos, SOURCE_GAIN) };
-            let m = mix(listener, source, gain, self.volume);
+            let (source, gain) = if is_global(id) { (listeners[0], GLOBAL_GAIN) } else { (pos, SOURCE_GAIN) };
+            let m = mix_nearest(listeners, source, gain, self.volume);
             let data = data.volume(Decibels(decibels(m.amplitude))).panning(Panning(m.pan));
             // A start that fails takes nothing: a stolen voice plays on.
             let Ok(handle) = manager.play(data) else { continue };
@@ -252,7 +274,8 @@ impl<B: Backend> Audio<B> {
             old.stop(Tween { duration: STEAL_FADE, ..Tween::default() });
         }
         let data = decode(bytes)?;
-        let m = mix(self.listener, self.listener, GLOBAL_GAIN, self.volume);
+        let listener = self.listeners[0];
+        let m = mix(listener, listener, GLOBAL_GAIN, self.volume);
         let data = data.volume(Decibels(decibels(m.amplitude))).panning(Panning(m.pan));
         self.preview = Some(manager.play(data).map_err(|e| e.to_string())?);
         Ok(())

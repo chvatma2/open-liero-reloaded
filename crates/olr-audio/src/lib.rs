@@ -4,7 +4,8 @@
 //! - **Mix** ([`mix`]): positional sounds at gain 0.7 with OpenAL's
 //!   inverse-distance-clamped attenuation (reference 50 px, rolloff 2) for a
 //!   listener 20 px out of the world plane at the view centre; THROW and
-//!   PICKUP at the listener with gain 1.0. Pure maths.
+//!   PICKUP at the listener with gain 1.0; with several listeners (split
+//!   screen) each sound is heard from the nearest. Pure maths.
 //! - **Voices** ([`voices`]): OLX's per-sound limits (throw 4, other game
 //!   sounds 2, mod sounds 10) and a global one; a start beyond them is
 //!   skipped. Live voices are re-mixed as the listener moves, like OpenAL
@@ -17,7 +18,7 @@
 pub use audio::{Audio, is_global};
 pub use mix::{
     DEFAULT_VOLUME, GLOBAL_GAIN, LISTENER_DISTANCE, Mix, REFERENCE_DISTANCE, ROLLOFF, SILENCE_DB,
-    SOURCE_GAIN, attenuation, decibels, mix,
+    SOURCE_GAIN, attenuation, decibels, mix, mix_nearest, nearest,
 };
 pub use voices::{Admit, GLOBAL_VOICES, Victim, Voice, Voices, max_plays};
 
