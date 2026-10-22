@@ -9,7 +9,10 @@
 //! material as edited), written every `RECOVERY_INTERVAL` while there are
 //! unsaved changes, as the other editors' are (`recovery.rs`), and removed
 //! once they are saved or thrown away. No window: the app draws
-//! `olr_material_editor::ui::show`.
+//! `olr_material_editor::ui::show`. Issue #45: the editor's preview
+//! commands wait here for the app (`take_preview`), whose
+//! `heat_preview::HeatPreview` renders the picture the panels show
+//! (`set_preview`).
 
 use std::io::Read as _;
 use std::path::{Path, PathBuf};
@@ -17,8 +20,8 @@ use std::time::Instant;
 
 use olr_format::materials::{MaterialSource, material_file, material_text, valid_material_id};
 use olr_format::ron_io::{MAX_RON_BYTES, from_canonical, to_canonical};
-use olr_material_editor::ui::MaterialEditorData;
-use olr_material_editor::{MaterialAction, MaterialCommand, MaterialEditorState};
+use olr_material_editor::ui::{MaterialEditorData, PreviewImage};
+use olr_material_editor::{MaterialAction, MaterialCommand, MaterialEditorState, PreviewCommand};
 use olr_ui::AppCommand;
 
 use super::RECOVERY_INTERVAL;
@@ -48,7 +51,12 @@ pub struct MaterialHost {
     written: Option<String>,
     /// What went wrong outside a command (a recovery copy), for the log.
     warnings: Vec<String>,
+    /// The preview's commands since the app last took them (issue #45).
+    preview: Vec<PreviewCommand>,
 }
+
+/// The most preview commands kept for the app (a frame asks one or two).
+pub const MAX_PREVIEW_COMMANDS: usize = 64;
 
 /// Writes `text` to `path` through a hidden sibling and a rename: a crash
 /// leaves the old file or the new one, never half of one.
@@ -165,6 +173,7 @@ impl MaterialHost {
             dirty_since: None,
             written,
             warnings,
+            preview: Vec::new(),
         })
     }
 
@@ -180,6 +189,18 @@ impl MaterialHost {
     /// The user's library.
     pub fn user_dir(&self) -> &Path {
         &self.user_dir
+    }
+
+    /// The picture the preview shows (issue #45; none: its place says it
+    /// needs a graphics device).
+    pub fn set_preview(&mut self, image: Option<PreviewImage>) {
+        self.data.set_preview(image);
+    }
+
+    /// The preview's commands since the last call, in order, for the app's
+    /// `HeatPreview` (issue #45).
+    pub fn take_preview(&mut self) -> Vec<PreviewCommand> {
+        std::mem::take(&mut self.preview)
     }
 
     /// What went wrong since the last call (the listing, a recovery copy),
@@ -203,6 +224,14 @@ impl MaterialHost {
                     MaterialCommand::Delete(id) => self.delete(&id).map(|()| MaterialAction::Deleted(id)),
                     MaterialCommand::Close => {
                         out.push(MaterialOut::Closed);
+                        continue;
+                    }
+                    MaterialCommand::Preview(p) => {
+                        // Never more than a bound: an app without a
+                        // preview takes none.
+                        if self.preview.len() < MAX_PREVIEW_COMMANDS {
+                            self.preview.push(p);
+                        }
                         continue;
                     }
                 };

@@ -8,6 +8,7 @@
 
 pub mod canvas;
 mod files;
+pub mod heat_preview;
 pub mod material;
 pub mod mods;
 mod recovery;

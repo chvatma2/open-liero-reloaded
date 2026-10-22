@@ -97,5 +97,8 @@ name = "soak"
 [[test]]
 name = "canvas_gpu"
 
+[[test]]
+name = "preview_gpu"
+
 [lints]
 workspace = true
