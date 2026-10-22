@@ -72,6 +72,9 @@ pub struct Audio<B: Backend = DefaultBackend> {
     volume: f32,
     /// Where the listener was last (the view centre of the last tick).
     listener: Vec2,
+    /// The mod editor's sound preview playing (issue #19), apart from
+    /// the game's voices.
+    preview: Option<StaticSoundHandle>,
     warnings: Vec<String>,
 }
 
@@ -118,6 +121,7 @@ impl<B: Backend> Audio<B> {
             voices: Voices::new(GLOBAL_VOICES),
             volume: DEFAULT_VOLUME,
             listener: Vec2::ZERO,
+            preview: None,
             warnings: Vec::new(),
         }
     }
@@ -235,6 +239,28 @@ impl<B: Backend> Audio<B> {
                 _ => self.voices.push(id, source, gain, handle),
             }
         }
+    }
+
+    /// Plays sound file `bytes` (OGG or WAV) once at the listener, as a
+    /// global sound at the master volume: the mod editor's preview (issue
+    /// #19). A preview still playing stops first; the game's voices and
+    /// loaded sounds are left alone. Silent without a device; why it did
+    /// not play when it does not decode.
+    pub fn preview(&mut self, bytes: &[u8]) -> Result<(), String> {
+        let Some(manager) = &mut self.manager else { return Ok(()) };
+        if let Some(mut old) = self.preview.take() {
+            old.stop(Tween { duration: STEAL_FADE, ..Tween::default() });
+        }
+        let data = decode(bytes)?;
+        let m = mix(self.listener, self.listener, GLOBAL_GAIN, self.volume);
+        let data = data.volume(Decibels(decibels(m.amplitude))).panning(Panning(m.pan));
+        self.preview = Some(manager.play(data).map_err(|e| e.to_string())?);
+        Ok(())
+    }
+
+    /// Whether a preview plays ([`Audio::preview`]).
+    pub fn previewing(&self) -> bool {
+        self.preview.as_ref().is_some_and(Voice::playing)
     }
 
     /// Stops every voice (a restart).

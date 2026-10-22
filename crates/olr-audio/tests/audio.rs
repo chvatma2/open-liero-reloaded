@@ -377,3 +377,23 @@ fn decodes_every_mod_sound() {
         }
     }
 }
+
+/// Issue #19: the mod editor's preview plays one sound file at a time,
+/// apart from the game's voices and sounds; a file that does not decode
+/// says so, and without a device nothing plays.
+#[test]
+fn a_preview_plays_a_sound_file_alone() {
+    let mut a = Audio::<MockBackend>::with_backend(MockBackendSettings { sample_rate: 8000 });
+    let good = wav(800);
+    a.load_sounds(&names(), |_| Some(&good[..]));
+    a.preview(&wav(400)).unwrap();
+    assert!(a.previewing());
+    assert_eq!(a.playing(), 0, "not one of the game's voices");
+    a.preview(&wav(400)).unwrap();
+    assert!(a.previewing());
+    let e = a.preview(b"RIFF not a wav").unwrap_err();
+    assert!(!e.is_empty());
+    assert!(a.has_sound(SoundId::THROW), "the game's sounds stay loaded");
+    let mut silent = Audio::<MockBackend>::silent();
+    assert!(silent.preview(&good).is_ok() && !silent.previewing());
+}

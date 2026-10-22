@@ -36,12 +36,16 @@ OpenAL driver does (spec §8.4, §19 E1/E12; presentation note §8).
   tick with the view centre; `stop_all` on a restart. `set_volume`
   re-mixes the voices playing at once (OLX's `SetSoundVolume`), so the
   options apply it live.
+  `preview(bytes)` (issue #19, the mod editor's Sounds) decodes and plays
+  one sound file at the listener (global gain, the master volume), apart
+  from the voices and the loaded sounds, stopping a preview still playing
+  (`previewing`); one that does not decode is an `Err`.
 - Beams fire silently: the data model gives beam weapons no sound and the
   simulation emits none for their shots.
 - **WSL:** sound needs `libasound2-plugins` and `~/.asoundrc` with
   `pcm.!default pulse` / `ctl.!default pulse` (WSLg's PulseServer).
 
 Test: `cargo nextest run -p olr-audio` (pure maths and limits, a mock
-device, silence without one; `decodes_every_mod_sound` needs
+device, silence without one, `a_preview_plays_a_sound_file_alone`; `decodes_every_mod_sound` needs
 `OLR_CONTENT_DIR`). The real device: `cargo run -p olr-audio --example
 device_check` (exit 3 means no device opened); `cargo xtask full` runs it.
