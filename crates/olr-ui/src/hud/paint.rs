@@ -2,11 +2,12 @@
 //! (`docs/porting/olx-notes/presentation.md` §9) in an opaque bar along
 //! the bottom, text with a one-pixel shadow.
 
-use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, RichText, Stroke, Ui, pos2, vec2};
+use egui::{Align2, Color32, FontId, Painter, Pos2, Rect, RichText, Stroke, StrokeKind, Ui, pos2, vec2};
 
 use super::layout::HudLayout;
 use super::minimap::{ALPHA, dot_colour, dot_rect};
 use super::model::{LineKind, LogLine, Row, clock, lives_text};
+use super::split::{Shared, SplitLayout, ViewPanel};
 use super::view::{Bar, HudView, MinimapView, WormHud};
 
 /// OLX's clock turns `(255, 50, 50)` in the last 10 s (`CClient_Draw.cpp:762-787`).
@@ -36,8 +37,13 @@ fn shadowed(p: &Painter, pos: Pos2, anchor: Align2, text: &str, font: FontId, co
 
 /// Paints `view` over `ui`'s whole area: the bar along the bottom
 /// (opaque: the game draws above it), the clock, notices and keys over the
-/// playfield.
+/// playfield; with two or more views (`HudView::views`), split screen's
+/// layout instead.
 pub fn show(ui: &Ui, view: &HudView) {
+    if view.views.len() >= 2 {
+        show_split(ui, view);
+        return;
+    }
     let l = HudLayout::new(ui.max_rect(), view.arrangement);
     let p = ui.painter();
     p.rect_filled(l.bar, 0.0, BAR_FILL);
@@ -57,10 +63,12 @@ pub fn show(ui: &Ui, view: &HudView) {
         }
     }
     if let Some(m) = &view.minimap {
-        minimap(p, &l, m);
+        minimap(p, l.minimap, m);
     }
-    log(p, &l, &view.log);
-    top(p, &l, view);
+    // In the bar, an inset; beside the frame the column is the log's.
+    let lines = Lines { rect: l.log, unit: l.unit, text: l.log_text, line: l.line, inset: l.sides.is_none() };
+    log(p, &lines, &view.log);
+    top(p, &Top { clock: l.clock, unit: l.unit, text: l.text, line: l.line }, view);
     if let (Some(hint), Some(rect)) = (&view.hint, l.hint) {
         let p = p.with_clip_rect(rect);
         let font = FontId::proportional(l.text * 0.85);
@@ -76,19 +84,130 @@ pub fn show(ui: &Ui, view: &HudView) {
     }
 }
 
+/// Split screen (issue #30): the views' seams are the game's black; the
+/// shared space opaque as the bar, holding the minimap, the clock and the
+/// log; a compact HUD in each view; "Game Over" and the scoreboard
+/// centred on the screen. No keys: the views' corners are their HUDs'.
+fn show_split(ui: &Ui, view: &HudView) {
+    let l = SplitLayout::new(ui.max_rect(), view.views.len());
+    let p = ui.painter();
+    for r in l.panels() {
+        p.rect_filled(r, 0.0, BAR_FILL);
+    }
+    for (i, v) in view.views.iter().enumerate() {
+        if let (Some(w), Some(panel)) = (&v.worm, l.view_panel(i)) {
+            compact(p, &panel, l.unit, w, v.colour);
+        }
+    }
+    if let Some(m) = &view.minimap {
+        minimap(p, l.minimap, m);
+    }
+    let inset = l.shared != Shared::Sides;
+    let lines = Lines { rect: l.log, unit: l.unit, text: l.log_text, line: l.line, inset };
+    log(p, &lines, &view.log);
+    top(p, &Top { clock: l.clock, unit: l.unit, text: l.text, line: l.line }, view);
+    if view.game_over {
+        let at = l.screen.center();
+        let font = FontId::proportional(40.0 * l.unit);
+        shadowed(p, at, Align2::CENTER_CENTER, "Game Over", font, Color32::from_rgb(255, 200, 80));
+    }
+    if let Some(rows) = view.scoreboard.as_ref().filter(|r| !r.is_empty()) {
+        scoreboard(ui, rows, egui::Vec2::ZERO);
+    }
+}
+
+/// A view's compact HUD (issue #30; OLX's fork drew each viewport's
+/// health and weapon bars at its bottom left, `CClient_Draw.cpp:1192-1257`):
+/// the player's colour and name with its lives and kills, the health bar
+/// (or why the worm is down), the weapon in hand with its charge in OLX's
+/// bar colours.
+fn compact(p: &Painter, v: &ViewPanel, k: f32, w: &WormHud, colour: Color32) {
+    p.rect_filled(v.panel, 4.0 * k, Color32::from_black_alpha(160));
+    let font = FontId::proportional(v.text);
+    let row = v.name;
+    let side = row.height() * 0.7;
+    let swatch = Rect::from_center_size(pos2(row.left() + side / 2.0, row.center().y), vec2(side, side));
+    p.rect_filled(swatch, 2.0 * k, colour);
+    p.rect_stroke(swatch, 2.0 * k, Stroke::new(1.0, Color32::from_black_alpha(200)), StrokeKind::Inside);
+    // The kills and lives right, the name in what is left.
+    let mut right = row.right();
+    let kills = shadowed(
+        p,
+        pos2(right, row.center().y),
+        Align2::RIGHT_CENTER,
+        &format!("Kills {}", w.kills),
+        font.clone(),
+        KILLS,
+    );
+    right = kills.left() - 6.0 * k;
+    if w.lives != -2 {
+        let at = pos2(right, row.center().y);
+        let lives = format!("Lives {}", lives_text(w.lives));
+        right = shadowed(p, at, Align2::RIGHT_CENTER, &lives, font.clone(), LIVES).left() - 6.0 * k;
+    }
+    let name = Rect::from_min_max(pos2(swatch.right() + 4.0 * k, row.top()), pos2(right, row.bottom()));
+    if name.width() > 0.0 {
+        let at = pos2(name.left(), row.center().y);
+        shadowed(&p.with_clip_rect(name), at, Align2::LEFT_CENTER, &w.name, font.clone(), Color32::WHITE);
+    }
+    let bar = v.health;
+    if w.alive {
+        p.rect_filled(bar, 2.0 * k, BAR_BG);
+        let fill = Rect::from_min_size(bar.min, vec2(bar.width() * w.health / 100.0, bar.height()));
+        p.rect_filled(fill, 2.0 * k, HEALTH);
+    } else {
+        let text = w.status.as_deref().unwrap_or("Dead");
+        let clip = p.with_clip_rect(bar.expand2(vec2(0.0, 3.0 * k)));
+        let small = FontId::proportional(v.text * 0.85);
+        shadowed(&clip, bar.center(), Align2::CENTER_CENTER, text, small, Color32::from_rgb(255, 200, 80));
+    }
+    if let Some(s) = w.slots.get(w.current).filter(|_| w.alive) {
+        let r = v.weapon;
+        let split = r.left() + r.width() * 0.58;
+        let name = Rect::from_min_max(r.min, pos2(split - 4.0 * k, r.bottom()));
+        let at = pos2(r.left(), r.center().y);
+        shadowed(&p.with_clip_rect(name), at, Align2::LEFT_CENTER, &s.name, font, WEAPON_LABEL);
+        let bar = Rect::from_min_max(pos2(split, r.top()), r.right_bottom()).shrink2(vec2(0.0, 3.0 * k));
+        p.rect_filled(bar, 1.0, Color32::from_black_alpha(160));
+        p.rect_filled(
+            Rect::from_min_size(bar.min, vec2(bar.width() * s.charge, bar.height())),
+            1.0,
+            bar_colour(s.bar),
+        );
+    }
+}
+
+/// OLX's weapon bar colour of a state.
+fn bar_colour(bar: Bar) -> Color32 {
+    match bar {
+        Bar::Ready => READY,
+        Bar::Reloading => RELOADING,
+        Bar::Cooldown => COOLDOWN,
+    }
+}
+
+/// Where the event log goes and how it reads.
+struct Lines {
+    rect: Rect,
+    unit: f32,
+    text: f32,
+    line: f32,
+    /// Drawn on an inset (in a bar); else its column is its own.
+    inset: bool,
+}
+
 /// The event log, the newest line at the bottom, a long one wrapped;
 /// older ones go up and off the top.
-fn log(p: &Painter, l: &HudLayout, lines: &[LogLine]) {
-    let r = l.log;
+fn log(p: &Painter, l: &Lines, lines: &[LogLine]) {
+    let r = l.rect;
     if r.width() <= 0.0 || r.height() <= 0.0 {
         return;
     }
-    if l.sides.is_none() {
-        // In the bar, an inset; beside the frame the column is the log's.
+    if l.inset {
         p.rect_filled(r.expand(2.0 * l.unit), 4.0 * l.unit, LOG_FILL);
     }
     let clip = p.with_clip_rect(r);
-    let font = FontId::proportional(l.log_text);
+    let font = FontId::proportional(l.text);
     let pad = 4.0 * l.unit;
     let mut bottom = r.bottom();
     for line in lines.iter().rev() {
@@ -162,17 +281,21 @@ fn weapons(p: &Painter, l: &HudLayout, w: &WormHud) {
         let bar =
             Rect::from_min_max(pos2(split, row.top()), row.right_bottom()).shrink2(vec2(3.0, 4.0) * l.unit);
         p.rect_filled(bar, 1.0, Color32::from_black_alpha(160));
-        let fore = match s.bar {
-            Bar::Ready => READY,
-            Bar::Reloading => RELOADING,
-            Bar::Cooldown => COOLDOWN,
-        };
+        let fore = bar_colour(s.bar);
         p.rect_filled(Rect::from_min_size(bar.min, vec2(bar.width() * s.charge, bar.height())), 1.0, fore);
     }
 }
 
+/// Where the clock goes and how it reads.
+struct Top {
+    clock: Rect,
+    unit: f32,
+    text: f32,
+    line: f32,
+}
+
 /// The clock and kill limit, and the notices under them.
-fn top(p: &Painter, l: &HudLayout, v: &HudView) {
+fn top(p: &Painter, l: &Top, v: &HudView) {
     let c = l.clock;
     let big = FontId::monospace(20.0 * l.unit);
     let small = FontId::proportional(l.text * 0.85);
@@ -216,8 +339,7 @@ fn top(p: &Painter, l: &HudLayout, v: &HudView) {
 
 /// The level at half opacity and a blinking dot per worm (no view
 /// rectangle: the player's bigger dot is enough, the user's ruling).
-fn minimap(p: &Painter, l: &HudLayout, m: &MinimapView) {
-    let r = l.minimap;
+fn minimap(p: &Painter, r: Rect, m: &MinimapView) {
     if r.width() <= 0.0 {
         return;
     }

@@ -1,5 +1,6 @@
-//! Image snapshots of the HUD (plan 7 task 5) at 1080p and 1440p, and the
-//! side layout at 3440 × 1440,
+//! Image snapshots of the HUD (plan 7 task 5) at 1080p and 1440p, the
+//! side layout at 3440 × 1440, and split screen's 2 and 4 views at 1080p
+//! (issue #30),
 //! rendered by egui's wgpu renderer (`egui_kittest`, its software adapter
 //! preferred) and compared with `fixtures/ui/hud-*.png`. They need a
 //! graphics adapter: the GPU tier (`cargo xtask full`, `OLR_GPU_TESTS`)
@@ -9,7 +10,10 @@
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 use egui_kittest::{Harness, SnapshotOptions};
 use olr_ui::HudArrangement;
-use olr_ui::hud::{self, Bar, Dot, HudView, LogLine, MinimapView, Notice, Row, SlotHud, WormHud, minimap};
+use olr_ui::hud::{
+    self, Bar, Dot, HudView, LogLine, MinimapView, Notice, Row, SlotHud, SplitLayout, ViewHud, WormHud,
+    minimap,
+};
 
 /// The accepted snapshots, from the crate's directory.
 const DIR: &str = "../../fixtures/ui";
@@ -59,27 +63,57 @@ fn row(worm: i32, name: &str, kills: i32, deaths: i32, damage: i32) -> Row {
     }
 }
 
-fn view(texture: egui::TextureId, scores: bool, arrangement: HudArrangement) -> HudView {
+fn worm() -> WormHud {
     let slot = |name: &str, charge, bar| SlotHud { name: name.into(), charge, bar };
+    WormHud {
+        name: "OpenLieroXor".into(),
+        health: 72.0,
+        alive: true,
+        lives: 3,
+        kills: 4,
+        deaths: 2,
+        suicides: 0,
+        slots: vec![
+            slot("Minigun", 1.0, Bar::Ready),
+            slot("Super Shotgun", 0.35, Bar::Reloading),
+            slot("Blaster", 0.8, Bar::Cooldown),
+            slot("Gauss Gun", 1.0, Bar::Ready),
+            slot("Big Nuke", 0.1, Bar::Reloading),
+        ],
+        current: 1,
+        status: None,
+    }
+}
+
+/// Split screen's players (issue #30): four, each in its own state (one
+/// dead, one firing, one out of lives), with `n` of them shown.
+fn players(n: usize) -> Vec<ViewHud> {
+    let base = worm();
+    let p2 = WormHud {
+        name: "Kid".into(),
+        health: 0.0,
+        alive: false,
+        kills: 1,
+        status: Some("Dead".into()),
+        ..base.clone()
+    };
+    let p3 = WormHud { name: "Martin".into(), health: 31.0, lives: -2, kills: 9, current: 2, ..base.clone() };
+    let p4 = WormHud { name: "Guest".into(), current: 4, ..base.clone() };
+    [
+        (base, Color32::from_rgb(0, 177, 0)),
+        (p2, Color32::from_rgb(230, 40, 40)),
+        (p3, Color32::from_rgb(60, 110, 255)),
+        (p4, Color32::from_rgb(240, 200, 0)),
+    ]
+    .into_iter()
+    .take(n)
+    .map(|(w, colour)| ViewHud { worm: Some(w), colour })
+    .collect()
+}
+
+fn view(texture: egui::TextureId, scores: bool, arrangement: HudArrangement, views: usize) -> HudView {
     HudView {
-        worm: Some(WormHud {
-            name: "OpenLieroXor".into(),
-            health: 72.0,
-            alive: true,
-            lives: 3,
-            kills: 4,
-            deaths: 2,
-            suicides: 0,
-            slots: vec![
-                slot("Minigun", 1.0, Bar::Ready),
-                slot("Super Shotgun", 0.35, Bar::Reloading),
-                slot("Blaster", 0.8, Bar::Cooldown),
-                slot("Gauss Gun", 1.0, Bar::Ready),
-                slot("Big Nuke", 0.1, Bar::Reloading),
-            ],
-            current: 1,
-            status: None,
-        }),
+        worm: Some(worm()),
         log: [
             "Bot 2 killed Bot 1",
             "OpenLieroXor drew first blood",
@@ -108,10 +142,11 @@ fn view(texture: egui::TextureId, scores: bool, arrangement: HudArrangement) -> 
         game_over: false,
         hint: Some("Tab scores   F2 debug   F5 rematch   Esc pause".into()),
         arrangement,
+        views: if views >= 2 { players(views) } else { Vec::new() },
     }
 }
 
-fn snapshot(size: (f32, f32), name: &str, scores: bool, arrangement: HudArrangement) {
+fn snapshot(size: (f32, f32), name: &str, scores: bool, arrangement: HudArrangement, views: usize) {
     let mut h =
         Harness::builder().with_size(vec2(size.0, size.1)).with_pixels_per_point(1.0).wgpu().build_ui_state(
             move |ui, tex: &mut Option<TextureHandle>| {
@@ -120,13 +155,20 @@ fn snapshot(size: (f32, f32), name: &str, scores: bool, arrangement: HudArrangem
                     let img: ColorImage = minimap::image(&px, w, hgt, minimap::TEXTURE_SIZE);
                     ui.ctx().load_texture("minimap", img, TextureOptions::LINEAR)
                 });
-                // The game behind the HUD.
-                ui.painter().rect_filled(
-                    Rect::from_min_size(Pos2::ZERO, vec2(size.0, size.1)),
-                    0.0,
-                    Color32::from_rgb(70, 50, 30),
-                );
-                hud::show(ui, &view(t.id(), scores, arrangement));
+                // The game behind the HUD: the whole window, or split
+                // screen's views on black.
+                let screen = Rect::from_min_size(Pos2::ZERO, vec2(size.0, size.1));
+                let earth = Color32::from_rgb(70, 50, 30);
+                if views >= 2 {
+                    ui.painter().rect_filled(screen, 0.0, Color32::BLACK);
+                    // Where the HUD lays the views out: its own area.
+                    for v in SplitLayout::new(ui.max_rect(), views).views() {
+                        ui.painter().rect_filled(*v, 0.0, earth);
+                    }
+                } else {
+                    ui.painter().rect_filled(screen, 0.0, earth);
+                }
+                hud::show(ui, &view(t.id(), scores, arrangement, views));
             },
             None,
         );
@@ -146,7 +188,7 @@ fn hud_snapshot_1080p() {
     if !gpu_tests() {
         return;
     }
-    snapshot((1920.0, 1080.0), "hud-1080p", false, HudArrangement::Auto);
+    snapshot((1920.0, 1080.0), "hud-1080p", false, HudArrangement::Auto, 1);
 }
 
 #[test]
@@ -154,7 +196,7 @@ fn hud_snapshot_1440p_with_scores() {
     if !gpu_tests() {
         return;
     }
-    snapshot((2560.0, 1440.0), "hud-1440p", true, HudArrangement::Auto);
+    snapshot((2560.0, 1440.0), "hud-1440p", true, HudArrangement::Auto, 1);
 }
 
 /// An ultrawide window's side layout: the health and weapons left of the
@@ -164,5 +206,25 @@ fn hud_snapshot_3440x1440_side_panels() {
     if !gpu_tests() {
         return;
     }
-    snapshot((3440.0, 1440.0), "hud-3440x1440-sides", false, HudArrangement::Sides);
+    snapshot((3440.0, 1440.0), "hud-3440x1440-sides", false, HudArrangement::Sides, 1);
+}
+
+/// Split screen's two views (issue #30): stacked, a compact HUD in each,
+/// the shared minimap, clock and log in the columns beside them.
+#[test]
+fn hud_snapshot_1080p_two_views() {
+    if !gpu_tests() {
+        return;
+    }
+    snapshot((1920.0, 1080.0), "hud-1080p-2-views", false, HudArrangement::Auto, 2);
+}
+
+/// Split screen's four views (issue #30): a 2 × 2 grid, the shared
+/// minimap, clock and log in the strip under it; the scoreboard over all.
+#[test]
+fn hud_snapshot_1080p_four_views() {
+    if !gpu_tests() {
+        return;
+    }
+    snapshot((1920.0, 1080.0), "hud-1080p-4-views", true, HudArrangement::Auto, 4);
 }

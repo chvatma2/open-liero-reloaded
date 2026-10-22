@@ -186,3 +186,6 @@
   fixtures/render/look-blast.png
 2026-10-22 bless-render: #19: a glow-masked rocket tip shows bright in the dark (look-glow-tip.png)
   fixtures/render/look-glow-tip.png
+2026-10-22 bless-render: #30: split screen's HUD snapshots for 2 and 4 views
+  fixtures/ui/hud-1080p-2-views.png
+  fixtures/ui/hud-1080p-4-views.png

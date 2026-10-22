@@ -99,6 +99,16 @@ impl WormHud {
     }
 }
 
+/// One split-screen view's player (issue #30): what the view's compact
+/// HUD shows.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ViewHud {
+    /// The worm the view follows (`None`: nothing to show).
+    pub worm: Option<WormHud>,
+    /// The worm's game colour.
+    pub colour: Color32,
+}
+
 /// A worm on the minimap (`drawOnMiniMap`, `CMap.cpp:1708-1770`).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Dot {
@@ -152,4 +162,8 @@ pub struct HudView {
     pub hint: Option<String>,
     /// Where the HUD goes on a window wider than 16:9 (the options').
     pub arrangement: HudArrangement,
+    /// Split screen's views, in view order (issue #30): two or more lay
+    /// the screen out as [`super::SplitLayout`], a compact HUD in each;
+    /// none or one is the solo HUD (`worm`).
+    pub views: Vec<ViewHud>,
 }

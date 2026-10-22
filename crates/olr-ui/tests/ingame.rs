@@ -8,15 +8,16 @@ use egui_kittest::kittest::Queryable;
 use olr_content::Catalog;
 use olr_sim::{Keys, MAX_SLOTS};
 use olr_ui::HudArrangement::{self, Auto, Bar, Sides};
-use olr_ui::hud::{HudLayout, Results, Row};
+use olr_ui::hud::{HudLayout, Results, Row, Shared, SplitLayout, split};
 use olr_ui::screens::{self, MenuData};
 use olr_ui::weapon_select::{WeaponMenu, WeaponSelect};
 use olr_ui::{AppCommand, Game, Profiles, Screen, Settings, UiAction, UiState};
 
-/// The overlap of two rectangles has an area (touching edges do not count).
+/// The overlap of two rectangles has an area (touching edges do not count,
+/// nor a rounding error's sliver).
 fn overlap(a: Rect, b: Rect) -> bool {
     let i = a.intersect(b);
-    i.width() > 0.0 && i.height() > 0.0
+    i.width() > 1e-3 && i.height() > 1e-3
 }
 
 /// The game is designed for a 16:9 frame, the largest centred in the
@@ -161,6 +162,143 @@ fn sides_hold(screen: Rect, bar: &HudLayout) {
 }
 
 /// A mod of 7 weapons; the restrictions enable 0, 2, 4 and 5.
+/// Split screen (issue #30): 2, 3 and 4 views, each the solo playfield
+/// (16 : 7.2, the same 427 × 192 world pixels) scaled down, all equal, a
+/// seam between neighbours, at the largest size any listed arrangement
+/// gives with room for the shared minimap, clock and log; those in the
+/// spare space, on no view; a compact HUD inside each view. The same
+/// picture at every UI scale, and no size panics.
+#[test]
+fn split_layout_holds_at_all_scales() {
+    let sizes = [
+        (1280.0, 720.0),
+        (1920.0, 1080.0),
+        (2560.0, 1440.0),
+        (3840.0, 2160.0),
+        (2560.0, 1080.0),
+        (3440.0, 1440.0),
+        (5120.0, 1440.0),
+        (2560.0, 1600.0),
+        (1920.0, 1200.0),
+        (1024.0, 768.0),
+        (1280.0, 1024.0),
+        (1080.0, 1920.0),
+    ];
+    let solo = |screen: Rect| olr_ui::hud::playfield(screen);
+    for n in 2..=4 {
+        for &(w, h) in &sizes {
+            let full = SplitLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(w, h)), n);
+            for ppp in [0.5, 1.0, 1.5, 2.0, 3.0, 4.0] {
+                let screen = Rect::from_min_size(Pos2::ZERO, vec2(w / ppp, h / ppp));
+                let l = SplitLayout::new(screen, n);
+                let at = format!("{n} views on {w}x{h} at {ppp}: {l:?}");
+                assert_eq!(l.views().len(), n, "{at}");
+                let first = l.views()[0];
+                let field = solo(screen);
+                // The solo view's shape, smaller: the same world area.
+                assert!((first.aspect_ratio() - field.aspect_ratio()).abs() < 1e-3, "{at}");
+                assert!(first.height() <= field.height() + 1e-3, "{at}");
+                for (i, v) in l.views().iter().enumerate() {
+                    assert!((v.size() - first.size()).length() < 1e-3, "view {i} differs at {at}");
+                    assert!(screen.expand(1e-2).contains_rect(*v), "view {i} leaves the screen at {at}");
+                    for (j, u) in l.views().iter().enumerate().skip(i + 1) {
+                        assert!(!overlap(*v, *u), "views {i} and {j} overlap at {at}");
+                        // Neighbours: a seam apart.
+                        let dx = (u.left() - v.right()).max(v.left() - u.right());
+                        let dy = (u.top() - v.bottom()).max(v.top() - u.bottom());
+                        let gap = dx.max(dy);
+                        assert!(gap >= l.seam - 1e-3, "views {i} and {j} closer than the seam at {at}");
+                    }
+                }
+                assert!((l.seam - 6.0 * l.unit).abs() < 1e-4, "{at}");
+                // The largest: no listed arrangement gives larger views,
+                // and the chosen grid fills its room one way.
+                let k = l.unit;
+                let room = |shared: Shared| match shared {
+                    Shared::Cell => (screen.width(), screen.height()),
+                    Shared::Bottom => (screen.width(), screen.height() - 120.0 * k),
+                    Shared::Sides => (screen.width() - 360.0 * k, screen.height()),
+                };
+                let largest = |cols: usize, rows: usize, shared| {
+                    let (rw, rh) = room(shared);
+                    let by_w = (rw - (cols - 1) as f32 * l.seam) / cols as f32 / (16.0 / 7.2);
+                    let by_h = (rh - (rows - 1) as f32 * l.seam) / rows as f32;
+                    by_w.min(by_h)
+                };
+                for &(cols, rows, shared) in split::candidates(n) {
+                    assert!(
+                        largest(cols, rows, shared) <= first.height() * (1.0 + 2e-4),
+                        "{cols}x{rows} {shared:?} is larger at {at}"
+                    );
+                }
+                assert!((largest(l.cols, l.rows, l.shared) - first.height()).abs() < 1e-2, "{at}");
+                if n == 3 {
+                    // Three in the grid leave a quadrant: the shared space.
+                    assert!(l.shared == Shared::Cell || l.cols * l.rows == 3, "{at}");
+                }
+                // The shared parts: in the spare space, apart, large enough.
+                let parts = [("clock", l.clock), ("minimap", l.minimap), ("log", l.log)];
+                for (name, r) in parts {
+                    assert!(screen.expand(1e-2).contains_rect(r), "{name} leaves the screen at {at}");
+                    assert!(
+                        l.panels().any(|p| p.expand(1e-2).contains_rect(r)),
+                        "{name} in no panel at {at}"
+                    );
+                    for v in l.views() {
+                        assert!(!overlap(r, *v), "{name} over a view at {at}");
+                    }
+                }
+                for (i, (a, ra)) in parts.iter().enumerate() {
+                    for (b, rb) in &parts[i + 1..] {
+                        assert!(!overlap(*ra, *rb), "{a} over {b} at {at}");
+                    }
+                }
+                for p in l.panels() {
+                    for v in l.views() {
+                        assert!(!overlap(p, *v), "a panel over a view at {at}");
+                    }
+                }
+                assert!((l.minimap.aspect_ratio() - 119.0 / 94.0).abs() < 1e-3, "{at}");
+                assert!(l.minimap.height() >= 100.0 * k, "the minimap too small at {at}");
+                assert!(l.log_lines() >= 4, "the log shows its lines at {at}");
+                // A compact HUD in each view, a small part of it.
+                for (i, v) in l.views().iter().enumerate() {
+                    let p = l.view_panel(i).unwrap_or_else(|| panic!("no panel {i} at {at}"));
+                    assert!(v.contains_rect(p.panel), "panel {i} leaves its view at {at}");
+                    for r in [p.name, p.health, p.weapon] {
+                        assert!(p.panel.contains_rect(r), "{at}");
+                    }
+                    assert!(!overlap(p.name, p.health) && !overlap(p.health, p.weapon), "{at}");
+                    assert!(p.panel.height() <= 0.25 * v.height(), "panel {i} too tall at {at}");
+                    assert!(p.panel.width() <= 0.5 * v.width() + 1e-3, "panel {i} too wide at {at}");
+                }
+                assert!(l.view_panel(n).is_none(), "{at}");
+                // The same picture at every UI scale.
+                assert_eq!((l.cols, l.rows, l.shared), (full.cols, full.rows, full.shared), "{at}");
+                let scaled = |r: Rect| Rect::from_min_size((r.min.to_vec2() * ppp).to_pos2(), r.size() * ppp);
+                for (a, b) in [(first, full.views()[0]), (l.minimap, full.minimap), (l.log, full.log)] {
+                    let a = scaled(a);
+                    assert!((a.min - b.min).length() < 1e-1 && (a.size() - b.size()).length() < 1e-1, "{at}");
+                }
+            }
+        }
+    }
+    // The maintainer's at 16:9: 2 stacked, 3 and 4 in a 2 × 2 grid.
+    let hd = Rect::from_min_size(Pos2::ZERO, vec2(1920.0, 1080.0));
+    let grid = |n| {
+        let l = SplitLayout::new(hd, n);
+        (l.cols, l.rows)
+    };
+    assert_eq!([grid(2), grid(3), grid(4)], [(1, 2), (2, 2), (2, 2)]);
+    // No size or count panics.
+    for (w, h) in [(0.0, 0.0), (1.0, 1.0), (f32::NAN, 100.0), (f32::INFINITY, 1080.0)] {
+        for n in 0..7 {
+            let l = SplitLayout::new(Rect::from_min_size(Pos2::ZERO, vec2(w, h)), n);
+            let _ = (l.views(), l.view_panel(0), l.log_lines(), l.minimap_scale());
+        }
+    }
+}
+
 fn menu() -> WeaponMenu {
     let names = ["Bazooka", "Minigun", "Laser", "Nuke", "Rifle", "Shotgun", "Mine"];
     WeaponMenu {
@@ -573,8 +711,20 @@ fn hud_paints_at_every_scale() {
         hint: Some("Tab scores   F2 debug   F5 rematch   Esc pause".into()),
         ..HudView::default()
     };
+    // Split screen's too (issue #30), with a player not shown yet.
+    let player = olr_ui::hud::ViewHud { worm: view.worm.clone(), colour: egui::Color32::GREEN };
+    let none = olr_ui::hud::ViewHud { worm: None, colour: egui::Color32::BLACK };
+    let mut views = vec![view.clone()];
+    for n in 2..=4 {
+        let mut v = view.clone();
+        v.views = vec![player.clone(); n];
+        v.views[n - 1] = none.clone();
+        views.push(v);
+    }
     for (w, h) in [(1280.0, 720.0), (1920.0, 1080.0), (2560.0, 1440.0), (3440.0, 1440.0)] {
-        for scale in [0.5, 1.0, 1.5, 2.0, 3.0] {
+        for (scale, view) in
+            [0.5, 1.0, 1.5, 2.0, 3.0].into_iter().flat_map(|s| views.iter().map(move |v| (s, v)))
+        {
             let v = view.clone();
             let mut harness = Harness::builder()
                 .with_size(vec2(w / scale, h / scale))

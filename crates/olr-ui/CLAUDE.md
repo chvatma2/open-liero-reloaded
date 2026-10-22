@@ -496,8 +496,36 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   wrapped; nothing fades; a worm without slots shows no weapon
   rows; the scoreboard centred over the playfield; `table`). The weapon
   selection, the pause menu and the results centre over the playfield
-  (`screens::playfield`). Image snapshots at 1080p, 1440p and the side
-  layout at 3440 × 1440 (`tests/hud_snapshots.rs` against `fixtures/ui/`, in the GPU tier
+  (`screens::playfield`). **Split screen** (issue #30, `split.rs`;
+  `HudView::views`, a `ViewHud { worm, colour }` per view, two or more:
+  the split layout, none or one: the solo HUD, unchanged):
+  `SplitLayout::new(screen, count)` (2 to `MAX_VIEWS` 4, pure, sized by
+  the frame's `unit` as the solo layout, so the same picture in points
+  or pixels and at every UI scale): every view the solo playfield's
+  shape (16 : 7.2: the same 427 × 192 world pixels, smaller; the
+  maintainer's fair view), all equal, a seam of 6 reference points
+  (OLX's 4 pixels of 480) between neighbours, at the largest size of
+  `candidates(count)`, each with room for its `Shared` space (the
+  earlier on a tie: the maintainer's first, 2 stacked, 3 and 4 in a
+  2 × 2 grid; side by side or in a row on a wide enough window): `Cell`
+  (3 in the grid: the empty quadrant, as OLX's radar), `Bottom` (a strip
+  under the views of at least 120 reference points, as the bar: clock
+  left, minimap centred, log right) or `Sides` (a column of at least 180
+  each side: clock and minimap left, log right; the side layout's
+  columns). One shared clock with the notices, minimap (at most 200
+  high, every local player's dot big) and log; `view_panel(i)`: view
+  `i`'s compact HUD at its bottom left (OLX's fork drew each viewport's
+  bars there): the player's colour and name with lives and kills, the
+  health bar (or the status), the weapon in hand and its charge in OLX's
+  bar colours. No keys; "Game Over" and the scoreboard centre on the
+  screen. `HudArrangement` is the solo layout's; split screen picks its
+  own. Tests: `split_layout_holds_at_all_scales` (`tests/ingame.rs`: 2,
+  3 and 4 views on 12 window shapes, ultrawide and portrait, at six
+  scales: equal, the playfield's shape, seams, the largest, the shared
+  parts in the spare space on no view, each compact HUD in its view,
+  scale-free; no size or count panics), `hud_paints_at_every_scale` (2
+  to 4 views too). Image snapshots at 1080p, 1440p, the side
+  layout at 3440 × 1440 and split screen's 2 and 4 views at 1080p (`tests/hud_snapshots.rs` against `fixtures/ui/`, in the GPU tier
   with `OLR_GPU_TESTS`; `cargo xtask bless-render --reason` re-records them, logged).
 - **Weapon selection** (`weapon_select.rs`, §21 G4): `WeaponMenu` (names,
   enabled, `findEnabledWeapon`'s fallback, seed, `unique`: the loadout's
@@ -612,7 +640,7 @@ a click and every widget of it in the window: `form_name` takes at most
 rows wrap), `the_internet_table_fits_and_a_game_can_be_joined` (the
 same sizes and 4K, headers on wide screens, two lines on narrow: long names, "8/8 +24 bots (playing)", every region;
 every widget in the window, a game selected and joined);
-`tests/ingame.rs`: the HUD layout,
+`tests/ingame.rs`: the HUD layout (split screen's too, issue #30),
 the weapon selection, the pause menu, Esc/F5 repeats, the results;
 `tests/hud_snapshots.rs`
 with `OLR_GPU_TESTS`).
