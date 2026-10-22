@@ -251,7 +251,15 @@ impl MatchPrefs {
 
     /// The match to build on `seed` (`olr_content::build_match`'s input).
     pub fn options(&self, seed: u32) -> MatchOptions {
-        let bots = usize::from(self.bots.clamp(1, MAX_BOTS));
+        self.options_for(seed, 1)
+    }
+
+    /// [`MatchPrefs::options`] with `humans` local players (issue #32's
+    /// join step: 1 to 4), worms 0 to `humans - 1`, then the bots, as many
+    /// as there is room for.
+    pub fn options_for(&self, seed: u32, humans: usize) -> MatchOptions {
+        let humans = humans.clamp(1, MAX_WORMS - 1);
+        let bots = usize::from(self.bots.clamp(1, MAX_BOTS)).min(MAX_WORMS - humans);
         let bot = |i: usize| BotConfig {
             personality: self.personality.personality(),
             difficulty: self.bot_level(i).difficulty(),
@@ -263,7 +271,9 @@ impl MatchPrefs {
             level_id: self.level_id.clone(),
             seed,
             settings: SimSettings::lx56(),
-            players: std::iter::once(Player::Human).chain((0..bots).map(|i| Player::Bot(bot(i)))).collect(),
+            players: std::iter::repeat_n(Player::Human, humans)
+                .chain((0..bots).map(|i| Player::Bot(bot(i))))
+                .collect(),
             deathmatch: self.rules.deathmatch(),
             weapons: WeaponChoice::Loadout(self.weapons.clone()),
             pool_capacity: olr_sim::MatchSetup::DEFAULT_POOL_CAPACITY,

@@ -18,6 +18,7 @@ mod editor;
 mod host;
 mod host_lost;
 mod ingame;
+mod join;
 mod keys;
 mod loadouts;
 mod lobby;
@@ -33,11 +34,14 @@ pub mod update;
 mod weapon_select;
 
 pub use host_lost::{HOST_LOST_REPLAY, HOST_LOST_TITLE, STEPPED_DOWN_TITLE};
+pub use join::{JOIN_HELP, JOIN_KEYBOARD_1, PRESS_TO_JOIN};
 pub use keys::{
     GAME_KEYS, MOUSE_CONTROLS, MOUSE_KEYS_NOTE, MOUSE_MADE, MOUSE_NOTE, RESET_KEYS, RESET_KEYS2, RESET_MOUSE,
     RESET_PAD, seat_note, shared_note,
 };
 pub use loadouts::{NO_WEAPON, READ_ONLY, UNIQUE_HINT};
+pub use local_play::JOIN_HINT;
+pub use weapon_select::WAITING;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
@@ -47,11 +51,12 @@ use egui::{
     Ui, UiBuilder, Vec2, pos2, vec2,
 };
 use olr_content::Catalog;
-use olr_input::Capture;
+use olr_input::{Capture, Seat};
 use olr_sim::{Keys, MAX_SLOTS};
 
 use crate::hud::LogLine;
 use crate::hud::Results;
+use crate::join::{JoinStep, SeatInput};
 use crate::online::{DownloadCacheView, InternetView, LanEntry, LobbyView};
 use crate::pad::PadNav;
 use crate::replays::ReplayFile;
@@ -92,6 +97,17 @@ pub struct MenuData {
     /// The game's keys the player holds now (the app feeds them every
     /// frame): the weapon selection reads them, keyboard or gamepad.
     pub held: Keys,
+    /// Each local player's keys held now, in local order (issue #32: the
+    /// app feeds them every frame; empty: `held` is the one player's):
+    /// each player's weapon selection reads its own.
+    pub held_by: Vec<Keys>,
+    /// Every seat's input now (keyboard 1, keyboard 2, each pad heard;
+    /// [`MenuData::set_seats`], the app's, every frame): the join step
+    /// reads them.
+    pub seats: Vec<SeatInput>,
+    /// The seats that pressed something this run: local play's Start
+    /// opens the join step when two or more did (issue #32).
+    pub seats_used: BTreeSet<Seat>,
     /// The finished match's results (the app sets them when they show).
     pub results: Option<Results>,
     /// The games announced on the network (the app keeps it current).
@@ -161,8 +177,10 @@ pub struct MenuData {
     pub pad: PadNav,
     /// A text field had the focus as the last frame ended.
     typing: bool,
-    /// The weapon selection in progress.
-    select: Option<WeaponSelect>,
+    /// The weapon selection in progress: one per local player.
+    selects: Vec<WeaponSelect>,
+    /// The join step's presses (issue #32).
+    join: JoinStep,
     /// The thumbnails decoded so far by level id (`None`: unreadable, its
     /// placeholder stays; tried once).
     thumbs: BTreeMap<String, Option<TextureHandle>>,
@@ -199,6 +217,9 @@ impl MenuData {
             capture: None,
             weapons: None,
             held: Keys(0),
+            held_by: Vec::new(),
+            seats: Vec::new(),
+            seats_used: BTreeSet::new(),
             results: None,
             lan_games: Vec::new(),
             internet: InternetView::default(),
@@ -225,7 +246,8 @@ impl MenuData {
             update: Default::default(),
             pad: PadNav::default(),
             typing: false,
-            select: None,
+            selects: Vec::new(),
+            join: JoinStep::default(),
             thumbs: BTreeMap::new(),
             decodes_left: THUMB_DECODES_PER_FRAME,
             warnings: Vec::new(),
@@ -271,9 +293,25 @@ impl MenuData {
     }
 
     /// The weapons the selection shows now, by mod id (`None` when no
-    /// selection is open).
+    /// selection is open): local player 1's.
     pub fn weapon_choice(&self) -> Option<[i32; MAX_SLOTS]> {
-        self.select.as_ref().map(WeaponSelect::slots)
+        self.weapon_choice_of(0)
+    }
+
+    /// Local player `k`'s weapons in the selection now.
+    pub fn weapon_choice_of(&self, k: usize) -> Option<[i32; MAX_SLOTS]> {
+        self.selects.get(k).map(WeaponSelect::slots)
+    }
+
+    /// Every seat's input now (the app's, every frame), noting the seats
+    /// that press something (`seats_used`).
+    pub fn set_seats(&mut self, seats: Vec<SeatInput>) {
+        for s in &seats {
+            if s.held.0 != 0 || s.start {
+                self.seats_used.insert(s.seat);
+            }
+        }
+        self.seats = seats;
     }
 
     /// Reads the replays directory again.
@@ -377,9 +415,19 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
             Screen::Editor => data.editor = editor::View::default(),
             Screen::Report => data.report.enter(data.replays_dir.as_deref(), &data.catalog),
             Screen::WeaponSelect => {
-                let remembered = state.profiles().selected().map(|p| p.weapons.as_slice()).unwrap_or(&[]);
-                data.select = data.weapons.as_ref().map(|m| WeaponSelect::new(m, remembered));
+                let menu = data.weapons.clone();
+                // The lobby's choice is this player's alone.
+                let n = if state.is_online() { 1 } else { state.local_players() };
+                data.selects = menu.map_or_else(Vec::new, |m| {
+                    (0..n)
+                        .map(|k| {
+                            let remembered = state.player_profile(k).map(|p| p.weapons.as_slice());
+                            WeaponSelect::new(&m, remembered.unwrap_or(&[]))
+                        })
+                        .collect()
+                });
             }
+            Screen::Join => data.join = JoinStep::default(),
             _ => {}
         }
     }
@@ -387,7 +435,7 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
         data.capture = None;
     }
     if screen != Screen::WeaponSelect {
-        data.select = None;
+        data.selects.clear();
     }
     if screen != Screen::InGame {
         data.ingame_chat = None;
@@ -406,13 +454,14 @@ pub fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData) -> Vec<UiAction> 
         (screen == Screen::Options && data.options.keys.busy(data.capture.is_some())) || data.window_open();
     match screen {
         Screen::InGame => ingame::show(ui, state, data, &mut out),
-        Screen::WeaponSelect => weapon_select::show(ui, data, &mut out),
+        Screen::WeaponSelect => weapon_select::show(ui, state, data, &mut out),
         Screen::Results => results::show(ui, state, data, &mut out),
         _ => {
             let frame = egui::Frame::central_panel(ui.style()).fill(theme::BACKGROUND);
             egui::CentralPanel::default().frame(frame).show(ui, |ui| match screen {
                 Screen::Main => main::show(ui, state, data, &mut out),
                 Screen::LocalPlay => local_play::show(ui, state, data, &mut out),
+                Screen::Join => join::show(ui, state, data, &mut out),
                 Screen::Profiles => profiles::show(ui, state, data, &mut out),
                 Screen::Replays => replays::show(ui, state, data, &mut out),
                 Screen::Options => options::show(ui, state, data, &mut out),

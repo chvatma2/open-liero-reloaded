@@ -8,6 +8,7 @@
 mod editor;
 mod flows;
 mod ingame;
+mod join;
 mod layout;
 mod loadouts;
 mod online;

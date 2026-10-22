@@ -22,9 +22,11 @@
 //! - a scroll area shows the widget the pad focused ([`follow_focus`]).
 //!
 //! Who: any pad in the menus; nobody while a match runs (the game has
-//! the pads) or on the weapon selection (the game's keys drive it, a
-//! pad's too); while paused, only the pad whose Start paused (any pad
-//! after Esc paused).
+//! the pads), on the weapon selection or on local play's join step (the
+//! game's keys drive them, a pad's too: issue #32); while paused, only the
+//! pad whose Start paused (any pad after Esc paused). With several local
+//! players (issue #32) only a joined pad's Start pauses
+//! ([`PadNav::set_players`]).
 
 use std::collections::VecDeque;
 
@@ -194,6 +196,10 @@ pub struct PadNav {
     follow: u8,
     /// The drop-downs the last pass drew ([`pad_choice`]).
     combos: Vec<Id>,
+    /// The pad whose press this pass carries ([`PadNav::carried`]).
+    carried: Option<usize>,
+    /// The pads of the local players playing (`None`: any pad plays).
+    players: Option<Vec<usize>>,
 }
 
 impl PadNav {
@@ -205,7 +211,9 @@ impl PadNav {
                 match (v >= 0.5, at) {
                     (true, None) => {
                         self.starts.push(pad);
-                        self.last_start = Some(pad);
+                        if self.players.as_ref().is_none_or(|p| p.contains(&pad)) {
+                            self.last_start = Some(pad);
+                        }
                     }
                     (false, Some(i)) => {
                         self.starts.swap_remove(i);
@@ -260,9 +268,24 @@ impl PadNav {
         }
     }
 
+    /// The pads of the local players playing (issue #32: the joined pads
+    /// of several; `None`: one player, any pad): only their Start pauses,
+    /// so only one of them is the pad that paused.
+    pub fn set_players(&mut self, pads: Option<Vec<usize>>) {
+        self.players = pads;
+    }
+
+    /// The pad whose press this pass carries (its A clicking the focused
+    /// widget: local play's Start knows the seat that pressed it, issue
+    /// #32); `None`: no pad's.
+    pub fn carried(&self) -> Option<usize> {
+        self.carried
+    }
+
     /// The menus hear no pad now: the presses are dropped and what is
     /// held does not repeat (the editors, a capture, a match running).
     pub fn forget(&mut self) {
+        self.carried = None;
         self.queue.clear();
         for h in &mut self.held {
             h.stale = true;
@@ -289,7 +312,7 @@ impl PadNav {
             self.pauser = None;
         }
         match (screen, self.pauser) {
-            (Screen::WeaponSelect, _) => Who::Nobody,
+            (Screen::WeaponSelect | Screen::Join, _) => Who::Nobody,
             (_, Some(p)) => Who::Only(p),
             (_, None) => Who::Anyone,
         }
@@ -300,6 +323,7 @@ impl PadNav {
     pub fn next(&mut self, now: f64, who: Who) -> Option<Nav> {
         while let Some((pad, nav)) = self.queue.pop_front() {
             if who.hears(pad) {
+                self.carried = Some(pad);
                 if let Some(h) = self.held.iter_mut().find(|h| h.pad == pad && h.nav == nav) {
                     h.next = Some(now + REPEAT_DELAY);
                 }
@@ -417,6 +441,7 @@ impl PadNav {
     /// At the end of a menus' pass: the focus ring, and the drop-downs
     /// drawn for the next frame's left and right.
     pub fn end_pass(&mut self, ui: &Ui) {
+        self.carried = None;
         let ctx = ui.ctx();
         self.combos = ctx.data_mut(|d| d.remove_temp::<Vec<Id>>(combos_id())).unwrap_or_default();
         ctx.data_mut(|d| d.remove::<(Id, i32)>(step_id()));

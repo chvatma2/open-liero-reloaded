@@ -45,6 +45,15 @@
 //!   are chosen again) and whose Save replay keeps the match's replay.
 //!   Restart (F5) plays the game again in place: a Deathmatch's rematch
 //!   (same weapons) or a replay from the start.
+//! - **The join step** (issue #32): when two seats or more were used
+//!   this run, Local Play's Start opens Join (`OpenJoin(seat)`, the seat
+//!   that pressed it joined); there each seat's own keys join it
+//!   (`JoinSeat`), step its profile (`StepProfile`), ready it (`SetReady`)
+//!   or leave (`LeaveSeat`); every player ready, or Join's Start, starts
+//!   the match with one human a player (the lineup, `lineup()`; keyboard
+//!   1 first). A match of several starts with a weapon selection each
+//!   (`ChooseWeaponsOf`, then `ArmPlayers`). A pad plugged in again in
+//!   another's place keeps its player (`Reseat`, the app's).
 //! - **Bug reports** (issue #3): Main opens Report (`PrepareReport`: the
 //!   app gathers the automatic section); its Send is `SendReport`, which
 //!   the app sends off the UI thread. Nothing is sent otherwise.
@@ -61,9 +70,10 @@ use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use olr_content::MatchOptions;
-use olr_input::Bindings;
+use olr_input::{Bindings, Seat};
 use olr_sim::MAX_SLOTS;
 
+use crate::join::{Joined, MAX_LOCAL_PLAYERS, seat_rank};
 use crate::loadouts::OwnLoadouts;
 use crate::match_prefs::MatchPrefs;
 use crate::online::{FindingSettings, HostPrefs, LobbyCommand, Password, key_hex};
@@ -77,6 +87,9 @@ pub enum Screen {
     Main,
     /// Mod, level, Deathmatch settings, bots and difficulty.
     LocalPlay,
+    /// Local play's join step (issue #32): each seat joins, picks a
+    /// profile and readies.
+    Join,
     Profiles,
     Options,
     /// OLX's weapon selection before the match (§21 G4).
@@ -144,10 +157,43 @@ pub enum UiAction {
     LeaveMatch,
     /// The weapon selection's Done: the weapons by mod id, slot by slot,
     /// and their names (remembered in the profile; none: nothing to
-    /// remember, as when there was no choice).
+    /// remember, as when there was no choice). Local player 1's
+    /// (`ChooseWeaponsOf { player: 0, .. }`).
     ChooseWeapons {
         weapons: [i32; MAX_SLOTS],
         names: Vec<String>,
+    },
+    /// Local player `player`'s Done (issue #32: each chooses at once, in
+    /// their own view); the match plays when every player is done.
+    ChooseWeaponsOf {
+        player: usize,
+        weapons: [i32; MAX_SLOTS],
+        names: Vec<String>,
+    },
+    /// Local Play's Start when several seats were used (issue #32): the
+    /// join step, `seat` (the one that pressed Start) joined.
+    OpenJoin(Seat),
+    /// The join step: a seat pressed a button and joins.
+    JoinSeat(Seat),
+    /// The join step: a seat's player leaves.
+    LeaveSeat(Seat),
+    /// The join step: a seat's player steps `by` through the profiles no
+    /// other player has (and none: "Player N").
+    StepProfile {
+        seat: Seat,
+        by: i32,
+    },
+    /// The join step: a seat's player is ready or not; every player
+    /// ready starts the match.
+    SetReady {
+        seat: Seat,
+        ready: bool,
+    },
+    /// The app: a pad came back as another pad (unplugged and plugged in
+    /// again, issue #32): its player's seat is `to` now.
+    Reseat {
+        from: Seat,
+        to: Seat,
     },
     /// The results' Save replay.
     SaveReplay,
@@ -302,6 +348,9 @@ pub enum AppCommand {
     /// with these weapons (`olr_content::Player::HumanWith` in its options,
     /// so the replay holds them).
     ArmPlayer([i32; MAX_SLOTS]),
+    /// Every local player's choice (issue #32: several), in local order:
+    /// as `ArmPlayer`, local player `k` (the `k`-th human) with `k`'s.
+    ArmPlayers(Vec<[i32; MAX_SLOTS]>),
     /// Keep the finished match's replay as a file of its own (then report
     /// [`UiAction::ReplaySaved`]).
     SaveReplay,
@@ -439,6 +488,12 @@ pub struct UiState {
     connecting: Option<Screen>,
     /// A lobby is up (`LobbyJoined` until the player leaves it).
     online: bool,
+    /// The local players who joined (issue #32), keyboard 1 first, then
+    /// keyboard 2, then the pads as they joined; empty: one player, the
+    /// selected profile's, on every device (as before the join step).
+    lineup: Vec<Joined>,
+    /// Each local player's weapons chosen so far (the selection).
+    chosen: Vec<Option<([i32; MAX_SLOTS], Vec<String>)>>,
 }
 
 impl UiState {
@@ -458,6 +513,8 @@ impl UiState {
             message: None,
             connecting: None,
             online: false,
+            lineup: Vec::new(),
+            chosen: Vec::new(),
         }
     }
 
@@ -495,6 +552,48 @@ impl UiState {
             Some(own) => Bindings { keys2: self.settings.input.keys2.clone(), ..own.clone() },
             None => self.settings.input.clone(),
         }
+    }
+
+    /// The local players who joined (issue #32), in local order: keyboard
+    /// 1 first, then keyboard 2, then the pads as they joined. Empty: one
+    /// player as before the join step (the selected profile, keyboard 1
+    /// and every pad).
+    pub fn lineup(&self) -> &[Joined] {
+        &self.lineup
+    }
+
+    /// How many local players a match from local play has: the lineup's,
+    /// one without.
+    pub fn local_players(&self) -> usize {
+        self.lineup.len().max(1)
+    }
+
+    /// Local player `k`'s profile: a joined player's own (none: "Player
+    /// N"), the selected one for the one player without a lineup.
+    pub fn player_profile(&self, k: usize) -> Option<&crate::profiles::Profile> {
+        if self.lineup.is_empty() {
+            return if k == 0 { self.profiles.selected() } else { None };
+        }
+        self.lineup.get(k)?.profile.and_then(|p| self.profiles.list.get(p))
+    }
+
+    /// Local player `k`'s name: its profile's, else "Player N".
+    pub fn player_name(&self, k: usize) -> String {
+        self.player_profile(k).map_or_else(|| format!("Player {}", k + 1), |p| p.name.clone())
+    }
+
+    /// The local player on keyboard 1, who has the mouse (the one player
+    /// without a lineup); `None`: keyboard 1 did not join.
+    pub fn mouse_player(&self) -> Option<usize> {
+        if self.lineup.is_empty() {
+            return Some(0);
+        }
+        self.lineup.iter().position(|j| j.seat == Seat::Keyboard1)
+    }
+
+    /// Local player `k` has chosen their weapons (the selection of several).
+    pub fn has_chosen(&self, k: usize) -> bool {
+        self.chosen.get(k).is_some_and(Option::is_some)
     }
 
     /// A start was asked for and the app has not answered.
@@ -587,6 +686,47 @@ impl UiState {
             | UiAction::RecoverMod(_)
             | UiAction::DiscardModRecovery(_) => self.editor(action),
             UiAction::Back => self.back(),
+            UiAction::OpenJoin(seat) => {
+                if self.screen == Screen::LocalPlay && self.play == Play::None {
+                    self.lineup.clear();
+                    self.go(Screen::Join);
+                    self.join_seat(seat);
+                }
+                Vec::new()
+            }
+            UiAction::JoinSeat(seat) => {
+                if self.screen == Screen::Join && !self.is_starting() {
+                    self.join_seat(seat);
+                }
+                Vec::new()
+            }
+            UiAction::LeaveSeat(seat) => {
+                if self.screen == Screen::Join && !self.is_starting() {
+                    self.lineup.retain(|j| j.seat != seat);
+                }
+                Vec::new()
+            }
+            UiAction::StepProfile { seat, by } => {
+                self.step_profile(seat, by);
+                Vec::new()
+            }
+            UiAction::SetReady { seat, ready } => {
+                if self.screen != Screen::Join || self.is_starting() {
+                    return Vec::new();
+                }
+                if let Some(j) = self.lineup.iter_mut().find(|j| j.seat == seat) {
+                    j.ready = ready;
+                }
+                if self.lineup.iter().all(|j| j.ready) { self.start_match() } else { Vec::new() }
+            }
+            UiAction::Reseat { from, to } => {
+                if !self.lineup.iter().any(|j| j.seat == to)
+                    && let Some(j) = self.lineup.iter_mut().find(|j| j.seat == from)
+                {
+                    j.seat = to;
+                }
+                Vec::new()
+            }
             UiAction::PadPause if self.screen == Screen::InGame && !self.is_starting() => {
                 self.set_paused(!self.paused)
             }
@@ -596,6 +736,7 @@ impl UiState {
                 if self.screen != Screen::Replays || self.play != Play::None {
                     return Vec::new();
                 }
+                self.lineup.clear();
                 self.message = None;
                 self.play = Play::Starting { from: Screen::Replays, game: Game::Replay };
                 vec![AppCommand::PlayReplay(path)]
@@ -617,7 +758,10 @@ impl UiState {
             }
             UiAction::Resume => self.set_paused(false),
             UiAction::LeaveMatch => self.leave(),
-            UiAction::ChooseWeapons { weapons, names } => self.choose_weapons(weapons, names),
+            UiAction::ChooseWeapons { weapons, names } => self.choose_weapons(0, weapons, names),
+            UiAction::ChooseWeaponsOf { player, weapons, names } => {
+                self.choose_weapons(player, weapons, names)
+            }
             UiAction::SaveReplay => {
                 if self.screen == Screen::Results
                     && self.play == Play::Running(Game::Match)
@@ -742,6 +886,7 @@ impl UiState {
                     self.play = Play::Running(game);
                     self.paused = false;
                     self.replay_saved = false;
+                    self.chosen = vec![None; self.local_players()];
                     // OLX's weapon selection before a Deathmatch (§21 G4).
                     self.go(if game == Game::Match { Screen::WeaponSelect } else { Screen::InGame });
                 }
@@ -752,6 +897,9 @@ impl UiState {
                     self.play = Play::None;
                     self.go(from);
                     self.message = Some(why);
+                    for j in &mut self.lineup {
+                        j.ready = false;
+                    }
                 }
                 Vec::new()
             }
@@ -974,6 +1122,11 @@ impl UiState {
                 Vec::new()
             }
             Screen::Lobby => self.leave_online(),
+            Screen::Join => {
+                self.lineup.clear();
+                self.go(Screen::LocalPlay);
+                Vec::new()
+            }
             Screen::HostLost => {
                 self.go(Screen::Multiplayer);
                 Vec::new()
@@ -1032,44 +1185,126 @@ impl UiState {
                 vec![AppCommand::EndMatch, AppCommand::LeaveOnline]
             }
             (false, _) => {
+                self.lineup.clear();
                 self.go(Screen::Main);
                 vec![AppCommand::EndMatch]
             }
         }
     }
 
-    /// The weapon selection's Done: the player armed, the match on; the
-    /// names (if any) remembered in the profile playing, as OLX's profile
-    /// keeps its weapon slots (`CWormHuman.cpp:924-926`, saved on Done: `:939`, `:948`).
-    fn choose_weapons(&mut self, weapons: [i32; MAX_SLOTS], names: Vec<String>) -> Vec<AppCommand> {
+    /// The weapon selection's Done of local player `player`: when every
+    /// player is done, they are armed and the match plays; the names (if
+    /// any) remembered in each player's profile, as OLX's profile keeps
+    /// its weapon slots (`CWormHuman.cpp:924-926`, saved on Done: `:939`,
+    /// `:948`). The lobby's choice is player 1's alone.
+    fn choose_weapons(
+        &mut self,
+        player: usize,
+        weapons: [i32; MAX_SLOTS],
+        names: Vec<String>,
+    ) -> Vec<AppCommand> {
         let lobby = self.online && self.screen == Screen::WeaponSelect && self.play == Play::None;
-        if !lobby && (self.screen != Screen::WeaponSelect || self.play != Play::Running(Game::Match)) {
+        if lobby {
+            if player != 0 {
+                return Vec::new();
+            }
+            self.go(Screen::Lobby);
+            let mut out = vec![AppCommand::Lobby(LobbyCommand::Loadout(Some(weapons)))];
+            out.extend(self.remember_weapons(0, names));
+            return out;
+        }
+        if self.screen != Screen::WeaponSelect || self.play != Play::Running(Game::Match) {
             return Vec::new();
         }
-        // The lobby's choice goes to the lobby, not into a local match.
-        let mut out = if lobby {
-            self.go(Screen::Lobby);
-            vec![AppCommand::Lobby(LobbyCommand::Loadout(Some(weapons)))]
-        } else {
-            self.go(Screen::InGame);
-            vec![AppCommand::ArmPlayer(weapons)]
+        self.chosen.resize(self.local_players(), None);
+        match self.chosen.get_mut(player) {
+            Some(c @ None) => *c = Some((weapons, names)),
+            _ => return Vec::new(),
+        }
+        if self.chosen.iter().any(Option::is_none) {
+            return Vec::new();
+        }
+        let chosen: Vec<_> = std::mem::take(&mut self.chosen).into_iter().flatten().collect();
+        self.go(Screen::InGame);
+        let mut out = match chosen.as_slice() {
+            [(w, _)] => vec![AppCommand::ArmPlayer(*w)],
+            _ => vec![AppCommand::ArmPlayers(chosen.iter().map(|(w, _)| *w).collect())],
         };
-        // The profile `Profiles::selected` gives.
-        let selected =
-            if self.profiles.selected < self.profiles.list.len() { self.profiles.selected } else { 0 };
-        if let Some(p) = self.profiles.list.get_mut(selected)
-            && !names.is_empty()
-            && p.weapons != names
-        {
-            p.weapons = names;
+        let mut save = false;
+        for (k, (_, names)) in chosen.into_iter().enumerate() {
+            save |= !self.remember_weapons(k, names).is_empty();
+        }
+        if save {
             out.push(AppCommand::SaveProfiles(self.profiles.clone()));
         }
         out
     }
 
+    /// Remembers local player `k`'s weapon `names` in its profile (the
+    /// selected one without a lineup; none for a player without one):
+    /// `SaveProfiles` when they changed.
+    fn remember_weapons(&mut self, k: usize, names: Vec<String>) -> Vec<AppCommand> {
+        let profile = if self.lineup.is_empty() {
+            (k == 0).then(|| {
+                if self.profiles.selected < self.profiles.list.len() { self.profiles.selected } else { 0 }
+            })
+        } else {
+            self.lineup.get(k).and_then(|j| j.profile)
+        };
+        match profile.and_then(|i| self.profiles.list.get_mut(i)) {
+            Some(p) if !names.is_empty() && p.weapons != names => {
+                p.weapons = names;
+                vec![AppCommand::SaveProfiles(self.profiles.clone())]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Seat `seat` joins (at most [`MAX_LOCAL_PLAYERS`], once), in its
+    /// place: keyboard 1 first, keyboard 2, then the pads as they join;
+    /// with the first profile no other player has (keyboard 1's the
+    /// selected one first, the others' the selected one last), else none.
+    fn join_seat(&mut self, seat: Seat) {
+        if self.lineup.len() >= MAX_LOCAL_PLAYERS || self.lineup.iter().any(|j| j.seat == seat) {
+            return;
+        }
+        let n = self.profiles.list.len();
+        let sel = self.profiles.selected.min(n.saturating_sub(1));
+        let mut order: Vec<usize> = (0..n).filter(|&i| i != sel).collect();
+        if n > 0 {
+            if seat == Seat::Keyboard1 { order.insert(0, sel) } else { order.push(sel) }
+        }
+        let profile = order.into_iter().find(|&p| !self.lineup.iter().any(|j| j.profile == Some(p)));
+        let at =
+            self.lineup.iter().position(|j| seat_rank(j.seat) > seat_rank(seat)).unwrap_or(self.lineup.len());
+        self.lineup.insert(at, Joined { seat, profile, ready: false });
+    }
+
+    /// Seat `seat`'s player (not ready) steps `by` through the profiles
+    /// no other player has, then none ("Player N"), round.
+    fn step_profile(&mut self, seat: Seat, by: i32) {
+        if self.screen != Screen::Join || self.is_starting() || by == 0 {
+            return;
+        }
+        let Some(at) = self.lineup.iter().position(|j| j.seat == seat && !j.ready) else { return };
+        let others: Vec<usize> =
+            self.lineup.iter().filter(|j| j.seat != seat).filter_map(|j| j.profile).collect();
+        let mut choices: Vec<Option<usize>> =
+            (0..self.profiles.list.len()).filter(|p| !others.contains(p)).map(Some).collect();
+        choices.push(None);
+        let here = choices.iter().position(|c| *c == self.lineup[at].profile).unwrap_or(0) as i32;
+        let to = (here + by).rem_euclid(choices.len() as i32) as usize;
+        self.lineup[at].profile = choices[to];
+    }
+
     fn start_match(&mut self) -> Vec<AppCommand> {
         let mut out = match (self.screen, self.play) {
-            (Screen::LocalPlay, Play::None) => Vec::new(),
+            (Screen::LocalPlay, Play::None) => {
+                // One player, as before the join step.
+                self.lineup.clear();
+                Vec::new()
+            }
+            (Screen::Join, Play::None) if !self.lineup.is_empty() => Vec::new(),
             // A rematch: the match over ends first.
             (Screen::Results, Play::Running(Game::Match)) => vec![AppCommand::EndMatch],
             _ => return Vec::new(),
@@ -1077,8 +1312,10 @@ impl UiState {
         let seed = self.seed;
         self.seed = self.seed.wrapping_add(1);
         self.message = None;
-        self.play = Play::Starting { from: Screen::LocalPlay, game: Game::Match };
-        out.push(AppCommand::StartMatch(self.settings.gameplay.match_prefs.options(seed)));
+        let from = if self.screen == Screen::Join { Screen::Join } else { Screen::LocalPlay };
+        self.play = Play::Starting { from, game: Game::Match };
+        let humans = self.local_players();
+        out.push(AppCommand::StartMatch(self.settings.gameplay.match_prefs.options_for(seed, humans)));
         out
     }
 

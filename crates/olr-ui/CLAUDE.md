@@ -45,6 +45,40 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   keyboard 2's (`keys2`) always the options' (a profile's own is not
   read). `PadPause` (the app's, a pad's Start) toggles the pause in game
   as Back does, and does nothing elsewhere (the menus by pad: `pad.rs`).
+  **The join step** (issue #32, `join.rs`, `screens/join.rs`; not
+  OLX's): `MenuData::set_seats` (the app's, every frame: each seat's
+  `SeatInput { seat, held, start }`, its actions held with Dig and its
+  pad's Start) notes `seats_used`, the seats that pressed something this
+  run. Local Play's Start with two or more used is `OpenJoin(seat)` (the
+  pad whose A pressed it, `PadNav::carried`, else keyboard 1), else
+  `StartMatch` as before (a solo player sees nothing new; then the
+  Players panel's `JOIN_HINT` shows too). `Screen::Join` ("Players"):
+  `lineup()` (`Joined { seat, profile: Option<usize>, ready }`, at most
+  `MAX_LOCAL_PLAYERS` 4, keyboard 1 first, keyboard 2, then the pads as
+  they joined: `seat_rank`; so keyboard 1's player, the mouse's, is local
+  player 1); `JoinStep::on_seats(lineup, seats)` turns each seat's
+  presses (edges; the first call only notes what is held) into its own
+  card's actions: any press of a seat not in `JoinSeat` (the first
+  profile no other player has, keyboard 1 the selected one first, else
+  none: "Player N"), Left/Right `StepProfile` (round through the free
+  profiles and none; not while ready), Fire, Jump or Start `SetReady`
+  (toggled), Rope or Dig `LeaveSeat` (a ready player first not ready), a
+  joined pad no longer heard (unplugged) leaves. Every player ready, or
+  Join's Start (the mouse), is `StartMatch`: `MatchPrefs::options_for(
+  seed, humans)` (the humans worms 0 to n-1, then the bots, as many as
+  fit in `MAX_WORMS`); a failure returns to Join (not ready). The mouse
+  acts on keyboard 1's card alone (◀ ▶, Ready, Leave; "Join with keyboard
+  1" in the first free place); Back (Esc) returns to Local Play and
+  clears the lineup, as does a start from Local Play, the sandbox, a
+  replay or leaving the match. `local_players()`, `player_profile(k)`,
+  `player_name(k)`, `mouse_player()` (keyboard 1's local number, the
+  one player's 0). `Reseat { from, to }` (the app's: a pad plugged in
+  again as another) moves a player's seat unless another has `to`.
+  Tests: `tests/join.rs` (the step only after two seats, the pad that
+  pressed Start in, 2, 3 and 4 seats joining in order with their own
+  profiles and none touching another's card, leaving, Start, the held
+  press, the weapon selection of three, the pause from a joined pad, a
+  reseat).
 - **Settings** (`settings.rs`): video (`WindowPreset`: 1280 × 720,
   1600 × 900, 1920 × 1080; fullscreen, borderless at the monitor's size,
   offered in the same "Display" list; v0.1.0's `window: Desktop` loads as
@@ -251,9 +285,12 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   area's content (egui scrolls to no focused widget); the focused
   widget is ringed (`theme::focus_ring`, `FOCUS`) while the pad leads
   (`active`: until a pointer press). Who (`who`): nobody in game unpaused
-  (the game has the pads) or on the weapon selection (`MenuData::held`
-  drives it); paused (the pause menu, its Options) the pad whose Start
-  paused (Start seen while the match ran), any after Esc; any elsewhere.
+  (the game has the pads), on the weapon selection (`MenuData::held`
+  drives it) or the join step (the seats drive it, issue #32); paused
+  (the pause menu, its Options) the pad whose Start paused (Start seen
+  while the match ran; with several local players only a joined pad's,
+  `set_players`, the app's), any after Esc; any elsewhere. `carried()`:
+  the pad whose press this pass carries (local play's Start).
   `forget()` drops the presses (the editors, a capture). Keyboard and
   mouse use is unchanged. Tests: `tests/pad.rs` (a match started from
   the main menu, the mod's drop-down by left/right and by its list;
@@ -569,7 +606,16 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   `change` (OLX's loop over the enabled weapons; under the unique rule
   over those no other slot holds, unless every enabled weapon is in one), `random` (`get_random_weapons`),
   `on_keys(menu, held, now)` (edges, auto-repeat, × 6 with Select weapon,
-  Done on Fire's release).
+  Done on Fire's release). Several local players (issue #32) choose at
+  once (`MenuData`'s selection per player, `weapon_choice_of(k)`, each
+  from its profile's weapons): a panel each centred on its own view
+  (`SplitLayout`, headed by the player's name, no help lines), driven by
+  that player's keys (`MenuData::held_by`, the app's, local order); the
+  mouse acts on keyboard 1's player's panel alone (the others' rows are
+  labels); Done is `ChooseWeaponsOf { player, .. }`, the panel then says
+  `WAITING`; when every player is done, `ArmPlayers(each's)` (one player:
+  `ArmPlayer`, as before) and each profile remembers its own player's
+  names.
 - **Profiles** (`profiles.rs`): `Profile { name, skin_id, colour, bindings,
   weapons }` (OLX's "OpenLieroXor" by default; `weapons`: the last
   selection by name, OLX's `DEFAULT_WEAPONS` at first), `Profiles { list,

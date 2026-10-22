@@ -85,8 +85,9 @@ fn widgets(h: &Harness<'static, App>) -> Vec<(String, Rect)> {
 
 /// The screens to check: each opened from the main menu, then the
 /// options' and the Multiplayer screen's tabs clicked.
-const SCREENS: [(Screen, Option<&str>); 17] = [
+const SCREENS: [(Screen, Option<&str>); 18] = [
     (Screen::LocalPlay, None),
+    (Screen::Join, None),
     (Screen::Options, None),
     (Screen::Options, Some("Audio")),
     (Screen::Options, Some("Keys")),
@@ -162,11 +163,17 @@ fn reach(harness: &mut Harness<'static, App>, screen: Screen) {
     };
     let path: &[Screen] = match screen {
         Screen::Host | Screen::Lobby => &[Screen::Multiplayer, Screen::Host],
+        Screen::Join => &[Screen::LocalPlay],
         Screen::Main => &[],
         s => &[s],
     };
     for s in path {
         app.ui.update(UiAction::Open(*s));
+    }
+    if screen == Screen::Join {
+        // Issue #32: keyboard 1 and a pad in.
+        app.ui.update(UiAction::OpenJoin(olr_input::Seat::Keyboard1));
+        app.ui.update(UiAction::JoinSeat(olr_input::Seat::Pad(0)));
     }
     if screen == Screen::Lobby {
         app.ui.update(UiAction::Host(olr_ui::HostPrefs::default()));
@@ -181,6 +188,7 @@ fn reach(harness: &mut Harness<'static, App>, screen: Screen) {
 fn title_of(screen: Screen) -> &'static str {
     match screen {
         Screen::LocalPlay => "Local Play",
+        Screen::Join => "Players",
         Screen::Options => "Options",
         Screen::Profiles => "Profiles",
         Screen::Replays => "Replays",
@@ -203,6 +211,7 @@ fn the_primary_action_is_centred_below() {
         let mut harness = harness(egui::vec2(w, h), 1.0);
         for (screen, label) in [
             (Screen::LocalPlay, "Start"),
+            (Screen::Join, "Start"),
             (Screen::Multiplayer, "Host a game"),
             (Screen::Host, "Start hosting"),
             (Screen::Report, "Send"),

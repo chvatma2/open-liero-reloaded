@@ -10,6 +10,7 @@
 //! are gone.
 
 use egui::{Color32, ComboBox, RichText, ScrollArea, Sense, Slider, Ui, Vec2};
+use olr_input::Seat;
 
 use super::{
     MenuData, columns, footer, form_check_row, form_row, loadouts, message, page, primary, section,
@@ -112,6 +113,10 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
                     profiles.selected = selected;
                 });
                 bots(ui, data, &mut p);
+                // Issue #32: shown only once another seat was used.
+                if data.seats_used.len() > 1 {
+                    ui.label(RichText::new(JOIN_HINT).weak());
+                }
             });
             crate::pad::follow_focus(ui);
         });
@@ -128,9 +133,18 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
         out.push(UiAction::SetProfiles(profiles));
     }
     if start {
-        out.push(UiAction::StartMatch);
+        // Several seats used this run: each player joins first (issue
+        // #32), the seat that pressed Start already in. One: as before.
+        if data.seats_used.len() > 1 {
+            out.push(UiAction::OpenJoin(data.pad.carried().map_or(Seat::Keyboard1, Seat::Pad)));
+        } else {
+            out.push(UiAction::StartMatch);
+        }
     }
 }
+
+/// The Players panel's line once several seats were used (issue #32).
+pub const JOIN_HINT: &str = "Several players here: after Start, each joins with a button of their own.";
 
 /// The mod picker; a new mod keeps the loadout's name when it has one of
 /// that name (`MatchPrefs::set_mod`).
