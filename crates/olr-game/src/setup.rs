@@ -810,6 +810,12 @@ mod tests {
         assert!(format!("{e:#}").contains("the edited mod"), "{e:#}");
     }
 
+    /// Both editors' Play offer the same bots (no content needed).
+    #[test]
+    fn the_editors_bots_agree() {
+        assert_eq!(olr_mod_editor::MAX_BOTS, olr_editor::MAX_BOTS);
+    }
+
     /// The skin constants olr-content and olr-proto/olr-game each define
     /// agree (no content needed).
     #[test]
