@@ -413,3 +413,172 @@ fn lit_frames_keep_their_bytes() {
         }
     }
 }
+
+/// Issue #40's heat match: two chaos bots on the heat test level
+/// (`fixtures/look/levels/look-test-heat`: stone, dirt, wood, metal and
+/// brick in a dark cave) with the heat test mod
+/// (`fixtures/look/mods/look-test-heat-mod`: a Bazooka, a Minigun and a
+/// Nuke, Classic's with a 12.5 s reload), seed 1, `ticks` ticks.
+fn heat_match(name: &str, ticks: &str) {
+    let Some(content) = content_dir() else { return };
+    let (mods, levels) = (root().join("fixtures/look/mods"), root().join("fixtures/look/levels"));
+    let args = [
+        "render-match",
+        "--mod",
+        "look-test-heat-mod",
+        "--level",
+        "look-test-heat",
+        "--bots",
+        "2",
+        "--personality",
+        "chaos",
+        "--seed",
+        "1",
+        "--ticks",
+        ticks,
+        "--packs",
+        mods.to_str().unwrap(),
+        "--packs",
+        levels.to_str().unwrap(),
+        "--content",
+        &content,
+    ];
+    compare(name, &args, &[]);
+}
+
+/// Issue #40: the nuke's fragments have just carved the floor and the
+/// mound: their rims glow from yellow-white to orange, the right dirt
+/// wall's Bazooka craters orange, and the hot rock lights the cave.
+#[test]
+fn heat_fresh_rims_glow() {
+    heat_match("heat-fresh.png", "380");
+}
+
+/// Issue #40: [`heat_fresh_rims_glow`]'s match 5.2 s later, nothing fired
+/// since (the weapons reload): the rims have cooled to dull orange and red.
+#[test]
+fn heat_cooled_rims() {
+    heat_match("heat-cooled.png", "900");
+}
+
+/// Issue #40: the heat does not depend on the frame rate: [`heat_match`]'s
+/// match drawn every tick and drawn once at its end (as `render-match`
+/// does) leave the same heat, except where the terrain changed after heat
+/// landed on it (a frame drawn every tick saw the pixel before it was dug;
+/// one frame at the end sees only the dug pixel).
+#[test]
+fn heat_is_the_same_drawn_every_tick_or_once() {
+    use olr_cli::assets::LevelAssets;
+    use olr_cli::runner::{Match, Options};
+    use olr_cli::spec::{MatchSpec, Personality};
+    use olr_present::{PresentSetup, Presentation, default_colour};
+    use olr_render::{HEAT_SCALE, Offscreen, RenderSettings, UpscaleFilter};
+    use olr_scene::{DrawList, Interpolation, SceneOptions, Viewport};
+
+    let Some(dir) = content_dir() else { return };
+    let gpu = match Offscreen::new() {
+        Ok(gpu) => gpu,
+        Err(e) => {
+            eprintln!("{e}; skipping");
+            return;
+        }
+    };
+    let (mods, levels) = (root().join("fixtures/look/mods"), root().join("fixtures/look/levels"));
+    let bundled = olr_content::bundled_roots(Path::new(&dir));
+    let roots: Vec<&Path> = [&mods, &levels].into_iter().chain(&bundled).map(PathBuf::as_path).collect();
+    let content = olr_content::Content::open_layers(&roots).unwrap();
+    let mut spec = MatchSpec::new("look-test-heat-mod", "look-test-heat", 2, 1, 400);
+    spec.personality = Personality::Chaos;
+    let assets = LevelAssets::load(&content, &spec.mod_id, &spec.level_id).unwrap();
+    let size = (Viewport::GAME.width as u32, Viewport::GAME.height as u32);
+    let output = gpu.output_texture(size);
+    let view = output.create_view(&wgpu::TextureViewDescriptor::default());
+    // The heat after the match, drawing a frame after every `stride`th tick
+    // and after the last; and each world pixel's last change of material
+    // and first heat within its reach (match ms; `u64::MAX` none).
+    let play = |stride: u32| {
+        let mut game = Match::with_assets(&assets, &spec, &Options::default()).unwrap();
+        let setup = PresentSetup {
+            core: content.core(),
+            m: &assets.m,
+            level: &assets.level,
+            theme: &assets.theme,
+            viewport: Viewport::GAME,
+            options: SceneOptions { interpolation: Interpolation::Latest, show_health_bars: false },
+            seed: spec.seed,
+        };
+        let mut present = Presentation::new(&setup, game.world());
+        let skin = content.skin_or_default("olx-skin-default");
+        for i in 0..game.world().worms().len() {
+            present.add_worm(&skin, default_colour(i), i == 0, false);
+        }
+        let mut renderer = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
+        let (w, h) = (game.world().terrain().width(), game.world().terrain().height());
+        let n = w as usize * h as usize;
+        let (mut list, mut changed, mut heated) = (DrawList::new(), vec![0; n], vec![u64::MAX; n]);
+        for tick in 1..=spec.ticks {
+            let before = game.world().terrain().clone();
+            game.advance();
+            present.on_tick(game.world(), game.events());
+            let now = game.world().time().0;
+            for (i, c) in changed.iter_mut().enumerate() {
+                let (x, y) = ((i % w as usize) as i64, (i / w as usize) as i64);
+                if before.material(x, y) != game.world().terrain().material(x, y) {
+                    *c = now;
+                }
+            }
+            if tick % stride == 0 || tick == spec.ticks {
+                present.build(game.world(), 1.0, &mut list);
+                // Heat may reach a deposit's circle and spread 48 px past it.
+                for &(at, d) in present.heat_waiting() {
+                    let r = d.radius as i64 + 48;
+                    let (cx, cy) = (d.pos[0] as i64, d.pos[1] as i64);
+                    for y in (cy - r).max(0)..(cy + r + 1).min(i64::from(h)) {
+                        for x in (cx - r).max(0)..(cx + r + 1).min(i64::from(w)) {
+                            let i = y as usize * w as usize + x as usize;
+                            heated[i] = heated[i].min(at);
+                        }
+                    }
+                }
+                present.upload(&mut renderer);
+                renderer.render_lit(&list, present.look(), &view, [0, 0, size.0, size.1]);
+            }
+        }
+        assert!(renderer.has_heat(), "the heat test level heats");
+        let heat: Vec<u16> = gpu
+            .read_bytes(renderer.heat_texture().unwrap())
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|b| u16::from_le_bytes(*b))
+            .collect();
+        // Dug or filled after heat may have reached it.
+        let late: Vec<bool> = changed.iter().zip(&heated).map(|(&c, &h)| h != u64::MAX && c > h).collect();
+        (heat, late, (w as usize, h as usize))
+    };
+    let (every, changed, (w, h)) = play(1);
+    let (once, _, _) = play(spec.ticks);
+    assert_eq!(every.len(), w * h);
+    // A difference must lie near such a pixel, where conduction carries it.
+    let hot = every.iter().filter(|&&v| f32::from(v) > HEAT_SCALE).count();
+    let (mut same, mut differ, mut near) = (0, 0, 0);
+    for (i, (a, b)) in every.iter().zip(&once).enumerate() {
+        if a == b {
+            same += 1;
+            continue;
+        }
+        differ += 1;
+        let (x, y) = (i % w, i / w);
+        let by_dig = (y.saturating_sub(R)..(y + R + 1).min(h))
+            .any(|yy| (x.saturating_sub(R)..(x + R + 1).min(w)).any(|xx| changed[yy * w + xx]));
+        near += usize::from(by_dig);
+    }
+    eprintln!("{hot} hot texels; {same} the same, {differ} differ, {near} of them near a dug pixel");
+    assert!(hot > 1000, "the match heated the level: {hot} texels");
+    assert_eq!(differ, near, "the heat differs only where the terrain changed after it landed");
+    assert!(differ * 4 < hot, "most of the heat is the same: {differ} of {hot} differ");
+}
+
+/// How far from a pixel dug after heat landed [`heat_is_the_same_drawn_every_tick_or_once`]
+/// allows a difference, world pixels.
+const R: usize = 24;

@@ -211,3 +211,6 @@
   fixtures/bench/quick.ron
 2026-10-22 bench-quick: #35 item 7: only the frame's glow groups written, no allocation a glow-light pass
   fixtures/bench/quick.ron
+2026-10-22 bless-render: #40: explosions heat the level: heat-fresh.png and heat-cooled.png, render-match of the heat test level and mod
+  fixtures/render/heat-cooled.png
+  fixtures/render/heat-fresh.png

@@ -286,7 +286,12 @@ The headless command-line tool. Its commands:
   idle bots wearing `fixtures/look/skins/look-test-skin` (double
   resolution, a glowing visor, a light) on
   `fixtures/look/levels/look-test-skin-level` (`--seed 4 --ticks 500
-  --scale 4`).
+  --scale 4`). Issue #40's `heat-fresh.png` (tick 380) and
+  `heat-cooled.png` (tick 900): two chaos bots, seed 1, with
+  `look-test-heat-mod` (a Bazooka, a Minigun and a Nuke reloading in
+  12.5 s) on `look-test-heat` (a dark cave of stone, dirt, wood, metal and
+  brick, `fixtures/look/make-look-test-heat.sh`): a nuke's rims glowing,
+  then cooled.
 - `olr-cli frame-hashes <match flags> [--frames 30] [--content DIR] [--out f.ron]`
   (issue #34, `frame_hash.rs`, the command in `frame_hashes_cmd.rs`):
   byte identity. Plays a headless bot match as `render-match` does (the
@@ -931,8 +936,12 @@ each above 0), `--look` and, issue
 tampered replay is refused at its checksum.
 `benches/game.rs` (divan, `cargo xtask bench`): 8 bots' think + tick and a
 draw-list build on a warm Classic match (needs `OLR_CONTENT_DIR`).
-`tests/render_golden.rs` (the GPU frame goldens, and issue #34's
-`lit_frames_keep_their_bytes`) runs in `cargo xtask full` and `check
+`tests/render_golden.rs` (the GPU frame goldens, issue #34's
+`lit_frames_keep_their_bytes`, and issue #40's
+`heat_is_the_same_drawn_every_tick_or_once`: the heat match drawn every
+tick and drawn once leave the same heat texture, except within 24 px of a
+pixel dug or filled after heat reached it, at most a quarter of the hot
+texels) runs in `cargo xtask full` and `check
 --render` (`OLR_GPU_TESTS=1`). `tests/matches.rs` (two 8-bot matches, determinism and
 round trip; failure capture through the binary) and `tests/golden.rs` (the
 golden checksum streams in `fixtures/matches/`; accept a change with `cargo
