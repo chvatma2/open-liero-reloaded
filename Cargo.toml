@@ -37,6 +37,7 @@ olr-edit = { path = "crates/olr-edit" }
 olr-editor = { path = "crates/olr-editor" }
 olr-skin-editor = { path = "crates/olr-skin-editor" }
 olr-mod-editor = { path = "crates/olr-mod-editor" }
+olr-material-editor = { path = "crates/olr-material-editor" }
 olr-import-lgs = { path = "crates/olr-import-lgs" }
 olr-import-lxl = { path = "crates/olr-import-lxl" }
 olr-import-gfx = { path = "crates/olr-import-gfx" }

@@ -1,0 +1,26 @@
+[package]
+name = "olr-material-editor"
+description = "The surface material editor: the built-in and the user's materials listed, made, copied, renamed, deleted and their fields edited with undo, as pure state a host drives, with egui panels (tested headless)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+autotests = false
+
+[dependencies]
+olr-data.workspace = true
+olr-format.workspace = true
+olr-edit.workspace = true
+olr-look.workspace = true
+egui.workspace = true
+
+[dev-dependencies]
+egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+
+[[test]]
+name = "integration"
+path = "tests/integration.rs"
+
+[lints]
+workspace = true
