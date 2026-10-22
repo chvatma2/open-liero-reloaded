@@ -1122,7 +1122,7 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `practice_keeps_the_last_hit` (equal to the last `Damage` event; none
   outside a practice).
 - **Material editor** (`editor/material.rs`, `shell/editing.rs`, issue
-  #44; decisions in `docs/porting/STATUS.md`, "Material editor (issue
+  #44, its previews issue #45 below; decisions in `docs/porting/STATUS.md`, "Material editor (issue
   #44)"): `MaterialHost` holds `olr-material-editor`'s state and does its
   disk work. The Material tab's `AppCommand::OpenMaterialEditor` lists
   the built-in materials (`olr_content::materials_dir` of the last bundled
@@ -1156,6 +1156,48 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   save and Close; damaged copies listed and refused; through the shell
   over the bundled content: the tab opens it on the built-in set, the
   window's close asks, a crash's copy is offered and discarded).
+  **Live previews** (issue #45; STATUS.md "Material editor's live
+  previews (issue #45)"): `editor/heat_preview.rs`'s `HeatPreview` is a
+  second `olr-render` `Renderer` (lit, IntegerNearest, `OUTPUT_FORMAT`)
+  on the window's device, drawing `olr_material_editor::preview`'s scene
+  (`SCENE` 136 × 72: two identical patches of air over dirt with a rock
+  boulder and bedrock, a material on their front and back wall, value 1
+  the material open and 2 the one compared, an 8-pixel rock wall without
+  one between them) under a dark `LookFrame` (ambient 0.1) into a
+  `PICTURE` texture (`PICTURE_SCALE` 4 texels a world pixel).
+  `command(PreviewCommand)`: `Blast { at, size }` carves the theme's hole
+  `clamp(damage, 0, 4)` at that pixel of both patches
+  (`ColorEdit::Carve`) and deposits `olr_look::engine::explosion_heat`
+  there; `SetCompare(m)`, `Restart` (the scene again: `upload_terrain`
+  clears the heat), `TimeScale(f)` (clamped to `MAX_TIME_SCALE` 16).
+  `set_open(m)` each frame: a changed material changes the table
+  (`Renderer::set_surface_materials`, the heat kept; `set_surface` when
+  there is no heat to keep; a material that does not check keeps the last
+  values). `frame(elapsed_ms)`: `advance_heat(min(ms, MAX_FRAME_MS 100) ×
+  scale)`, `update_terrain`, `render_lit`; after the heat went idle
+  `SETTLE_FRAMES` (30) more, then none until a change (returns whether
+  it drew; `drawn()`). `round_holes()` stands in for a theme's holes.
+  `MaterialHost` queues the editor's `MaterialCommand::Preview`s
+  (`take_preview`, at most `MAX_PREVIEW_COMMANDS` 64 kept), holds the
+  holes (`set_holes`: `Shell::material_command` loads `PREVIEW_THEME`,
+  `olx-theme-dirt`, from the content) and hands the panel its picture
+  (`set_preview(PreviewImage)`). The app (`app/preview.rs`, the field
+  `App::material_preview`): `sync` before the UI makes it as the editor
+  opens (from the editor's state: material, compare, time scale),
+  registers its view (`Gpu::register_texture`, egui-wgpu's native
+  texture, linear; `free_texture` on the first frame after the editor
+  closed); `frame` after `Shell::material_frame` carries out the
+  commands, gives the material open and, only when the editor was drawn
+  that frame, steps and draws it (a window made again keeps it: the
+  device stays). Closed or hidden it costs nothing. Tests:
+  `tests/preview_gpu.rs` (a binary of its own in the GPU tier and `check
+  --render`, `OLR_GPU_TESTS`: `a_blast_heats_the_patch_and_it_glows`,
+  `the_heat_cools_and_an_idle_preview_draws_nothing` (4× steps four
+  times as fast), `side_by_side_draws_two_materials_differently`,
+  `a_field_edit_changes_the_next_frame_and_keeps_the_heat`),
+  `tests/material_editor.rs`' `the_previews_commands_wait_for_the_app`
+  and the dirt theme's holes, `heat_preview`'s unit tests (the scene's
+  patches identical, the wall without a material; the discs).
 - **Deathmatch** (plan 6 ruling R5): `setup::match_options` (the humans
   are worms 0 to `locals - 1`, then the bots at one difficulty, OLX's LX56 settings, the
   `Default` loadout: every weapon at 100 %, issue #5; there is no

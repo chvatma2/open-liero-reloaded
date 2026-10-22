@@ -5185,6 +5185,58 @@ builder's calls:
 - **The preview's place** is the right panel ("Heat preview"), empty
   until Materials 9/10's live previews; the ramp strip is beside the keys.
 
+## Material editor's live previews (issue #45)
+
+No OLX counterpart. The ninth of ten (the spec's "Previews"): the
+material editor's right panel shows the material open and one compared,
+blasted and heating, drawn by the real renderer's heat pass. Nothing in
+play, the oracle or any golden changes. As built, the builder's calls:
+
+- **The host renders, the editor asks**: `olr-game` owns a second
+  `Renderer` on the window's device (`editor/heat_preview.rs`,
+  `HeatPreview`) drawing into an offscreen texture registered with
+  egui-wgpu (`Gpu::register_texture`); the editor crate stays free of
+  `olr-render` and asks through `PreviewCommand::{Blast, SetCompare,
+  Restart, TimeScale}`, the material open read from its state every
+  frame. The preview exists only while the editor is open (made on its
+  first frame, its texture freed on the frame after it closes) and draws
+  only on frames that draw the editor; once nothing is hot it draws 30
+  more frames (`SETTLE_FRAMES`, the glow light settling) and then none
+  until something changes.
+- **One scene, two patches**: a level of 136 × 72 world pixels, two
+  identical 64 × 72 patches (open air over dirt, a rock boulder and
+  bedrock) split by an 8-pixel rock wall without a material, which
+  neither heats nor lets light through, so the patches never warm or
+  light each other. The material open is value 1 (its front and its
+  back wall), the one compared value 2; none compared is a material that
+  never heats. The look is the engine's at an ambient of 0.1 (dark: the
+  air shows almost nothing, solids their floor light, the glow all of
+  it).
+- **A blast is play's**: a click on either patch blasts both at that
+  pixel. Small, Bazooka and Nuke are OLX damage 3, 4 and 15 (the engine
+  heat curve's calibration points: a minigun hit, a Bazooka, a Big Nuke
+  fragment); the crater is the theme's hole `clamp(damage, 0, 4)` as
+  `CarveHole` takes it (`ColorEdit::Carve`, the dirt theme's holes when
+  the content has them, else discs of their sizes), so only dirt is dug;
+  the heat is `olr_look::engine::explosion_heat(damage)` deposited at
+  the pixel's centre after the carve, as `olr-present` does.
+- **Its clock** is the frame's time, at most 100 ms a frame
+  (`MAX_FRAME_MS`: a stall or a hidden window is not caught up), times
+  the time scale (1× or 4×); Restart builds the scene again (craters
+  filled, the heat gone).
+- **Edits apply live**: a changed field changes the renderer's material
+  table without touching the heat (`Renderer::set_surface_materials`,
+  new in `olr-render`: the table, the ramps and the bounds rewritten, the
+  temperatures, boxes and clock kept); only when no material heats any
+  more (or none did) is the surface made again, and then there is no
+  heat to keep. A material that does not check keeps the last values
+  that did. Selecting another material keeps the left patch's heat under
+  the new one.
+- **The material compared** is any of the library's (the open one too:
+  its saved form beside the edited one); the editor sends it again when
+  the library's copy changes (saved, renamed, which it follows; deleted:
+  none).
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
