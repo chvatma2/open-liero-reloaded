@@ -4964,6 +4964,60 @@ materials to `set_surface` on every whole terrain upload. As built
   emit too (the emission reads the heat wherever the material rules).
   Constants await a playtest (`docs/deferred-verification.md`).
 
+## Explosions heat the level (issue #40)
+
+No OLX counterpart. The fourth of ten (the same spec): explosions deposit
+the engine's heat into the renderer's (issue #39). The simulation, the
+oracle and every match golden are unchanged; a level without heating
+materials draws the same bytes (every render golden kept). As built, the
+builder's calls:
+
+- **What heats:** each `EventKind::Explosion` (`effects::explosion`: a
+  projectile's explosion and a bonus blown up), recorded per tick by
+  `olr_scene::Scene::explosions` beside the ended projectiles and shots.
+  An explosive trail or a beam only spawns its cosmetic explosion, never
+  that event, so it deposits nothing. Each is keyed by its tick's time and
+  its place among the tick's explosions through `olr-present`'s `Once`
+  memory: a re-simulated tick deposits nothing twice (a correction moving
+  it leaves the heat where it first landed).
+- **The engine's curve** (`olr_look::engine::explosion_heat`, by OLX's
+  `Explode` damage, which also sizes the hole): `1.2 × damage⁴` degrees
+  at the centre (at most 1000), over twice the hole's radius (OLX's dirt
+  theme holes, 2.5-7.5 px) plus half the damage (at most 48 px). A minigun
+  hit (3: 97° over 12.5 px) stays under the lava ramp's first key (100);
+  a Bazooka (4: 307° over 17 px) leaves its rim glowing a few pixels deep;
+  a Big Nuke's fragments (15: 1000° over 22.5 px) pile up white-hot. A
+  theme with other holes keeps the curve.
+- **The back takes a fifth** (`olr_render::BACK_HEAT`, 0.2): a back pixel
+  (no rock or dirt) lies behind the explosion, so an explosion in the
+  open only warms the wall behind it, while a crater's rim takes the
+  whole deposit. Taken whole, mid-air rockets left glowing discs on the
+  back wall (the spec says only that the exposed back takes heat).
+- **Frame-rate independence.** `Presentation::upload` hands the renderer,
+  after the terrain, each deposit after the match time up to its tick,
+  then the time up to the frame (ticks never drawn included), and runs
+  the renderer's heat between (`Renderer::run_heat`) whenever 64
+  deposits wait or more than 250 steps are due, so nothing is dropped or
+  delayed. The deposit pass adds each deposit in whole texel units, so
+  deposits landing in one pass or several give the same bytes. The heat
+  still reads the terrain as last uploaded: a frame drawn once at the end
+  of a match sees only the final terrain, so where a pixel was dug or
+  filled after heat reached it, the heat differs from a frame drawn every
+  tick (in the test match, 13 % of hot texels, all within 24 px of such a
+  pixel; `olr-cli`'s `heat_is_the_same_drawn_every_tick_or_once`). In
+  play a frame draws one or two ticks.
+- **Resets:** a restart (a fresh heat texture with the terrain), a loaded
+  state (online repair or a late spectator) and
+  `Presentation::reset_heat` (for a replay seek: replays have none yet,
+  they only play forward or restart).
+- **Fixtures:** `fixtures/look/levels/look-test-heat` (a dark cave of
+  stone, dirt, wood, metal and brick, made by
+  `fixtures/look/make-look-test-heat.sh`) and
+  `fixtures/look/mods/look-test-heat-mod` (Classic's Bazooka and Minigun
+  and a smaller Big Nuke, pixel art, a 12.5 s reload, so one volley heats
+  and then cools). Goldens: `heat-fresh.png` (tick 380) and
+  `heat-cooled.png` (tick 900) of two chaos bots, seed 1.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
