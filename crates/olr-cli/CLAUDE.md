@@ -945,7 +945,12 @@ draw-list build on a warm Classic match (needs `OLR_CONTENT_DIR`).
 `heat_is_the_same_drawn_every_tick_or_once`: the heat match drawn every
 tick and drawn once leave the same heat texture, except within 24 px of a
 pixel dug or filled after heat reached it, at most a quarter of the hot
-texels) runs in `cargo xtask full` and `check
+texels; issue #42's
+`a_projectiles_heat_warms_its_path_drawn_every_tick_or_once`: the same
+match with every Minigun bullet's look heating a tick and the mod's
+`explosion_heat` at 0 %, hot only along the bullets' paths, the same drawn
+every tick or once, and nothing hot without the bullets' heat; both play
+through `HeatMatch`) runs in `cargo xtask full` and `check
 --render` (`OLR_GPU_TESTS=1`). `tests/matches.rs` (two 8-bot matches, determinism and
 round trip; failure capture through the binary) and `tests/golden.rs` (the
 golden checksum streams in `fixtures/matches/`; accept a change with `cargo

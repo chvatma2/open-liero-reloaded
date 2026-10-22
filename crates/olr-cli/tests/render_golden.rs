@@ -483,41 +483,98 @@ fn heat_distant_layer_glows() {
 /// one frame at the end sees only the dug pixel).
 #[test]
 fn heat_is_the_same_drawn_every_tick_or_once() {
-    use olr_cli::assets::LevelAssets;
-    use olr_cli::runner::{Match, Options};
-    use olr_cli::spec::{MatchSpec, Personality};
-    use olr_present::{PresentSetup, Presentation, default_colour};
-    use olr_render::{HEAT_SCALE, Offscreen, RenderSettings, UpscaleFilter};
-    use olr_scene::{DrawList, Interpolation, SceneOptions, Viewport};
+    let Some(h) = HeatMatch::open() else { return };
+    let (every, changed, size) = h.play(1, |_| {});
+    let (once, _, _) = h.play(h.spec.ticks, |_| {});
+    let hot = same_but_where_dug(&every, &once, &changed, size);
+    assert!(hot > 1000, "the match heated the level: {hot} texels");
+}
 
-    let Some(dir) = content_dir() else { return };
-    let gpu = match Offscreen::new() {
-        Ok(gpu) => gpu,
-        Err(e) => {
-            eprintln!("{e}; skipping");
-            return;
+/// Issue #42: a projectile whose look has `heat` warms the level along its
+/// path, the same drawn every tick or once: [`heat_match`]'s match with
+/// every Minigun bullet heating each tick and no explosion heating
+/// (`explosion_heat` 0 %) is hot only by the bullets' paths; with neither,
+/// nothing is.
+#[test]
+fn a_projectiles_heat_warms_its_path_drawn_every_tick_or_once() {
+    let Some(h) = HeatMatch::open() else { return };
+    let cold = |m: &mut olr_look::ModLook| {
+        m.explosion_heat = Some(olr_look::ExplosionHeatLook { amount: 0, radius: None });
+    };
+    let hot = |m: &mut olr_look::ModLook| {
+        cold(m);
+        let bullets = h.assets.m.sim.projectiles().iter().map(|p| p.key.starts_with("minigun"));
+        for (look, bullet) in m.projectiles.iter_mut().zip(bullets) {
+            if bullet {
+                let heat = olr_look::ProjectileHeat { amount: 40, radius: 6 };
+                look.get_or_insert_with(Default::default).heat = Some(heat);
+            }
         }
     };
-    let (mods, levels) = (root().join("fixtures/look/mods"), root().join("fixtures/look/levels"));
-    let bundled = olr_content::bundled_roots(Path::new(&dir));
-    let roots: Vec<&Path> = [&mods, &levels].into_iter().chain(&bundled).map(PathBuf::as_path).collect();
-    let content = olr_content::Content::open_layers(&roots).unwrap();
-    let mut spec = MatchSpec::new("look-test-heat-mod", "look-test-heat", 2, 1, 400);
-    spec.personality = Personality::Chaos;
-    let assets = LevelAssets::load(&content, &spec.mod_id, &spec.level_id).unwrap();
-    let size = (Viewport::GAME.width as u32, Viewport::GAME.height as u32);
-    let output = gpu.output_texture(size);
-    let view = output.create_view(&wgpu::TextureViewDescriptor::default());
-    // The heat after the match, drawing a frame after every `stride`th tick
-    // and after the last; and each world pixel's last change of material
-    // and first heat within its reach (match ms; `u64::MAX` none).
-    let play = |stride: u32| {
-        let mut game = Match::with_assets(&assets, &spec, &Options::default()).unwrap();
+    let (none, _, _) = h.play(h.spec.ticks, cold);
+    assert!(none.iter().all(|&v| v == 0), "no explosion heat and no bullet heat: cold");
+    let (every, changed, size) = h.play(1, hot);
+    let (once, _, _) = h.play(h.spec.ticks, hot);
+    let warm = same_but_where_dug(&every, &once, &changed, size);
+    assert!(warm > 200, "the bullets warmed their paths: {warm} texels");
+}
+
+/// [`heat_match`]'s match, played headless with its heat drawn.
+struct HeatMatch {
+    gpu: olr_render::Offscreen,
+    content: olr_content::Content,
+    spec: olr_cli::spec::MatchSpec,
+    assets: olr_cli::assets::LevelAssets,
+}
+
+impl HeatMatch {
+    /// `None` without content or an adapter (skipped).
+    fn open() -> Option<HeatMatch> {
+        use olr_cli::spec::{MatchSpec, Personality};
+        let dir = content_dir()?;
+        let gpu = match olr_render::Offscreen::new() {
+            Ok(gpu) => gpu,
+            Err(e) => {
+                eprintln!("{e}; skipping");
+                return None;
+            }
+        };
+        let (mods, levels) = (root().join("fixtures/look/mods"), root().join("fixtures/look/levels"));
+        let bundled = olr_content::bundled_roots(Path::new(&dir));
+        let roots: Vec<&Path> = [&mods, &levels].into_iter().chain(&bundled).map(PathBuf::as_path).collect();
+        let content = olr_content::Content::open_layers(&roots).unwrap();
+        let mut spec = MatchSpec::new("look-test-heat-mod", "look-test-heat", 2, 1, 400);
+        spec.personality = Personality::Chaos;
+        let assets = olr_cli::assets::LevelAssets::load(&content, &spec.mod_id, &spec.level_id).unwrap();
+        Some(HeatMatch { gpu, content, spec, assets })
+    }
+
+    /// The heat after the match (texels of the level's heat texture), its
+    /// mod's look made as `look` makes it, drawing a frame after every
+    /// `stride`th tick and after the last; and whether each world pixel's
+    /// material changed after heat may have reached it.
+    fn play(
+        &self,
+        stride: u32,
+        look: impl FnOnce(&mut olr_look::ModLook),
+    ) -> (Vec<u16>, Vec<bool>, (usize, usize)) {
+        use olr_cli::runner::{Match, Options};
+        use olr_present::{PresentSetup, Presentation, default_colour};
+        use olr_render::{RenderSettings, UpscaleFilter};
+        use olr_scene::{DrawList, Interpolation, SceneOptions, Viewport};
+
+        let (gpu, content, spec) = (&self.gpu, &self.content, &self.spec);
+        let mut m = self.assets.m.clone();
+        look(&mut m.look);
+        let size = (Viewport::GAME.width as u32, Viewport::GAME.height as u32);
+        let output = gpu.output_texture(size);
+        let view = output.create_view(&wgpu::TextureViewDescriptor::default());
+        let mut game = Match::with_assets(&self.assets, spec, &Options::default()).unwrap();
         let setup = PresentSetup {
             core: content.core(),
-            m: &assets.m,
-            level: &assets.level,
-            theme: &assets.theme,
+            m: &m,
+            level: &self.assets.level,
+            theme: &self.assets.theme,
             viewport: Viewport::GAME,
             options: SceneOptions { interpolation: Interpolation::Latest, show_health_bars: false },
             seed: spec.seed,
@@ -530,6 +587,8 @@ fn heat_is_the_same_drawn_every_tick_or_once() {
         let mut renderer = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
         let (w, h) = (game.world().terrain().width(), game.world().terrain().height());
         let n = w as usize * h as usize;
+        // Each world pixel's last change of material and first heat within
+        // its reach (match ms; `u64::MAX` none).
         let (mut list, mut changed, mut heated) = (DrawList::new(), vec![0; n], vec![u64::MAX; n]);
         for tick in 1..=spec.ticks {
             let before = game.world().terrain().clone();
@@ -570,14 +629,17 @@ fn heat_is_the_same_drawn_every_tick_or_once() {
         // Dug or filled after heat may have reached it.
         let late: Vec<bool> = changed.iter().zip(&heated).map(|(&c, &h)| h != u64::MAX && c > h).collect();
         (heat, late, (w as usize, h as usize))
-    };
-    let (every, changed, (w, h)) = play(1);
-    let (once, _, _) = play(spec.ticks);
+    }
+}
+
+/// Asserts that two heat textures of a level of `(w, h)` are the same but
+/// near the pixels `changed` marks (where conduction carries a
+/// difference), and those few; the texels hot in `every`.
+fn same_but_where_dug(every: &[u16], once: &[u16], changed: &[bool], (w, h): (usize, usize)) -> usize {
     assert_eq!(every.len(), w * h);
-    // A difference must lie near such a pixel, where conduction carries it.
-    let hot = every.iter().filter(|&&v| f32::from(v) > HEAT_SCALE).count();
+    let hot = every.iter().filter(|&&v| f32::from(v) > olr_render::HEAT_SCALE).count();
     let (mut same, mut differ, mut near) = (0, 0, 0);
-    for (i, (a, b)) in every.iter().zip(&once).enumerate() {
+    for (i, (a, b)) in every.iter().zip(once).enumerate() {
         if a == b {
             same += 1;
             continue;
@@ -589,9 +651,9 @@ fn heat_is_the_same_drawn_every_tick_or_once() {
         near += usize::from(by_dig);
     }
     eprintln!("{hot} hot texels; {same} the same, {differ} differ, {near} of them near a dug pixel");
-    assert!(hot > 1000, "the match heated the level: {hot} texels");
     assert_eq!(differ, near, "the heat differs only where the terrain changed after it landed");
     assert!(differ * 4 < hot, "most of the heat is the same: {differ} of {hot} differ");
+    hot
 }
 
 /// How far from a pixel dug after heat landed [`heat_is_the_same_drawn_every_tick_or_once`]
