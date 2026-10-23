@@ -1,6 +1,22 @@
 (
     elements: [
         (
+            id: "sky",
+            name: "Sky",
+            locked: true,
+            kind: Image(
+                material: Background,
+                source: "sky.png",
+                at: (0, 0),
+                size: (1200, 480),
+            ),
+            glow: (
+                strength: 35,
+                group: "sky",
+            ),
+            distant: 90,
+        ),
+        (
             id: "background",
             name: "Background",
             kind: Drawn(
@@ -26,18 +42,6 @@
             ),
             surface: "stone",
             surface_map: true,
-        ),
-        (
-            id: "sky",
-            name: "Sky",
-            locked: true,
-            kind: Drawn(
-                material: Background,
-            ),
-            glow: (
-                strength: 35,
-                group: "sky",
-            ),
         ),
         (
             id: "lamps",

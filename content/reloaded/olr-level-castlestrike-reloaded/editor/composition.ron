@@ -1,6 +1,21 @@
 (
     elements: [
         (
+            id: "sky",
+            name: "Sky",
+            kind: Image(
+                material: Background,
+                source: "sky.png",
+                at: (0, 0),
+                size: (1350, 550),
+            ),
+            glow: (
+                strength: 100,
+                group: "sky",
+            ),
+            distant: 85,
+        ),
+        (
             id: "background",
             name: "Background",
             kind: Drawn(

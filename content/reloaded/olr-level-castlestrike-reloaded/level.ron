@@ -98,4 +98,12 @@
             ),
         ],
     ),
+    distant: [
+        (
+            depth: 85,
+            at: (0, 0),
+            glow: 100,
+            glow_group: "sky",
+        ),
+    ],
 )

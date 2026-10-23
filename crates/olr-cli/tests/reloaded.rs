@@ -3,7 +3,8 @@
 //! `skin.rs`), shipped beside the imported ones: each
 //! checks clean against the committed content, none shares an id with it,
 //! the game's content lists them, a bot match plays on each, Liero Factory
-//! Reloaded is OLX's Liero Factory byte for byte but for its look, and
+//! Reloaded is OLX's Liero Factory but for its look and its distant sky's
+//! stars (issue #63), and
 //! Liero v1.0 Reloaded plays exactly as Classic (`olx-classic`) but for its
 //! name and look. On the GPU tier each plays and draws lit.
 
@@ -92,12 +93,45 @@ fn the_bundled_content_lists_the_reloaded_levels() {
 
 /// The factory's gameplay and art are OLX's: its composition (checked
 /// fresh by `reloaded_packs_check_clean`) bakes the imported level's
-/// material, front and back byte for byte; only the look is added.
+/// material byte for byte, and its front and back pixel for pixel but
+/// where the sky is see-through (issue #63): there the distant sky
+/// (`distant/0.png`, level-sized at its reference placement) shows the
+/// imported sky, but for its stars. Only the look and the stars are added.
 #[test]
 fn the_factory_is_the_imported_level_but_for_its_look() {
+    use olr_format::image_io::decode_rgba;
     let (ours, olx) = (reloaded_dir().join(FACTORY), packs_dir().join("olx-level-liero-factory"));
-    for file in ["material.png", "front.png", "back.png"] {
-        assert!(std::fs::read(ours.join(file)).unwrap() == std::fs::read(olx.join(file)).unwrap(), "{file}");
+    let read = |p: PathBuf| decode_rgba(&std::fs::read(&p).unwrap()).unwrap();
+    assert!(
+        std::fs::read(ours.join("material.png")).unwrap() == std::fs::read(olx.join("material.png")).unwrap()
+    );
+    let sky = read(ours.join("distant/0.png"));
+    for file in ["front.png", "back.png"] {
+        let (a, b) = (read(ours.join(file)), read(olx.join(file)));
+        assert_eq!((a.width(), a.height()), (b.width(), b.height()), "{file}");
+        assert_eq!((sky.width(), sky.height()), (a.width(), a.height()), "the sky is level-sized");
+        let (mut through, mut stars) = (0, 0);
+        for y in 0..a.height() {
+            for x in 0..a.width() {
+                let (p, old) = (a.get(x, y), b.get(x, y));
+                if p.a != 0 {
+                    assert_eq!(p, old, "{file} ({x}, {y})");
+                    continue;
+                }
+                through += 1;
+                let s = sky.get(x, y);
+                assert!(p.same_rgb(s), "{file} ({x}, {y}): the distant sky's colour");
+                // A star is pale; the sky is blue.
+                if !s.same_rgb(old) {
+                    assert!(s.r >= 0x90, "{file} ({x}, {y}): only a star differs from OLX's sky");
+                    stars += 1;
+                }
+            }
+        }
+        assert!(
+            through > 100_000 && stars > 0 && stars * 100 < through,
+            "{file}: {through} see-through, {stars} stars"
+        );
     }
     let (a, b) = (
         olr_pack::read_manifest(&DirFs::new(&ours)).unwrap(),
