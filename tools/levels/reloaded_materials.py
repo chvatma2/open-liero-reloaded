@@ -169,7 +169,6 @@ LEVELS = {
             "background": "concrete",
             "dirt": "dirt",
             "rock": "stone",
-            "sky": None,
             "lamps": "glass",
             "glass": "glass",
             "screens": "glass",
@@ -212,18 +211,20 @@ PREVIEW = {
 def elements(level):
     """Each element's collision kind (`rock`, `dirt`, `background`) and
     whether it is locked, from the composition (canonical: one field a
-    line)."""
-    out, element, locked = {}, None, False
+    line). A distant layer (the skies, issue #63) is left out: it has one
+    material whole and no painted map."""
+    out, element, locked, distant = {}, None, False, set()
     for line in open(os.path.join(level, "editor", "composition.ron")):
         line = line.strip()
         if line.startswith("id:"):
             element, locked = line.split('"')[1], False
         elif line.startswith("locked:"):
             locked = "true" in line
-        elif line.startswith("material:") and element is not None:
+        elif line.startswith("material:") and element is not None and element not in out:
             out[element] = (line.split(":")[1].strip().rstrip(",").lower(), locked)
-            element = None
-    return out
+        elif line.startswith("distant:") and element is not None:
+            distant.add(element)
+    return {e: k for e, k in out.items() if e not in distant}
 
 
 def rules(level, element, kind, rule, default):

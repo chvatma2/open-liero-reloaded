@@ -14,3 +14,11 @@ byte for byte, and running one again changes nothing.
   one exact-colour `--rule` per colour. `--preview DIR` writes each ruled
   element's materials as false-colour PNGs instead. Never changes a
   level's `material.png`, `front.png` or `back.png`.
+- `reloaded_skies.py` (issue #63): the two levels' skies onto glowing
+  distant layers: the sky region erased from every back element
+  (`level element erase --mask`), a level-sized image at (0, 0) showing
+  the old sky at its reference placement and the sky's radial gradient
+  beyond it (fitted centre, colours by distance), Liero Factory's with
+  stars (SplitMix64, seed 63). Writes its images to
+  `target/reloaded-skies/`; a level already holding a distant layer is
+  left alone. `reloaded_materials.py` leaves distant elements out.
