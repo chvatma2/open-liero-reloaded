@@ -84,9 +84,19 @@ The headless command-line tool. Its commands:
   `pack check --content DIR` adds, for each valid composed level, an
   error per stale baked file (`<file>: differs from the composition's
   bake (run olr-cli level bake)`) or a warning when its theme is missing;
-  both count in the summary. Tests: `tests/element.rs` (plan 15a:
+  both count in the summary. Issue #59, layer folders: `group <pack>
+  [--name N] <id>…` (elements and folders, `element::group`) prints
+  `added folder <id>`, `ungroup <pack> <folder>`, `set <id> --folder
+  <folder|none>` (`element::move_to`, before the other flags: an order
+  change a lock allows); `set <folder> --name/--visible/--locked`,
+  `raise`, `lower` and `remove` take folder ids; `list` prints `folder
+  <id>[ "<name>"][ hidden][ locked][ collapsed]` before a folder's first
+  member, members indented two spaces per folder (walks bounded:
+  `folder_chain`), and a level without folders exactly as before. Tests:
+  `tests/element.rs` (plan 15a:
   `cli_sets_and_paints_glow`, `cli_glows_pixels_by_colour`,
-  `cli_sets_clear`; issue #11: `cli_sets_and_clears_distant`).
+  `cli_sets_clear`; issue #11: `cli_sets_and_clears_distant`; issue #59:
+  `cli_groups_elements_into_folders`).
 - `olr-cli level look <pack> [--ambient RRGGBB:PCT] [--occlusion
   S[,R] | --no-occlusion] [--max-light P]
   [--steps N] [--softness N] [--soak N] [--solid-floor RRGGBB:PCT]
@@ -181,7 +191,9 @@ The headless command-line tool. Its commands:
   their painted maps, travel with it). `place` is one save, baked as
   `level element …` (`place_in_pack`), printing `added element <id>` per
   piece, `added glow group <g>`, `joined glow group <g>`, `added material
-  <m>`, `joined material <m>` (the level's copy kept) and, for a level
+  <m>`, `joined material <m>` (the level's copy kept; after the pieces,
+  `added folder <id>`: issue #59, an asset of two pieces or more lands
+  in a folder named after it) and, for a level
   that had no look, `ADDED_LIGHTING` (or, with materials and no glow,
   `added a look to hold the asset's materials …`). `check` reads each
   folder whole (`load_dir`), prints `<dir>: "<name>", W × H, N
@@ -190,7 +202,8 @@ The headless command-line tool. Its commands:
   `save` from `content/reloaded/` (their commands in its README). Tests:
   `tests/asset.rs` (every built-in asset checks and is what its README
   command makes, the torch carries `flames` and not `sky`, save and place
-  round trip, bad folders and arguments refused).
+  round trip, bad folders and arguments refused; issue #59's
+  `cli_places_a_multi_piece_asset_in_a_folder`).
 - `olr-cli skin new <out-dir> [--from <skin>] [--double] --name <name>
   [--id ID]`, `skin double <skin> --out <dir> [--name N] [--id ID]`,
   `skin check <dir>…` and `skin preview <skin> --colour RRGGBB --out

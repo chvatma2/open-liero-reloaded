@@ -100,8 +100,31 @@ fn parse_colours(s: &str) -> Result<Colours, String> {
 
 #[derive(Subcommand)]
 pub(crate) enum ElementCommand {
-    /// Print each element, bottom first: `<index>: <id> <kind> <material>["<name>"][ hidden][ locked][ distant <depth>%][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map]`.
+    /// Print each element, bottom first: `<index>: <id> <kind> <material>["<name>"][ hidden][ locked][ distant <depth>%][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map]`;
+    /// a layer folder as `folder <id>["<name>"][ hidden][ locked][ collapsed]`
+    /// before its members, each member indented two spaces per folder.
     List { pack: PathBuf },
+    /// Group elements and folders into a new layer folder inside the
+    /// innermost folder they share (members not one block move to the
+    /// topmost one's place first); prints `added folder <id>`.
+    Group {
+        pack: PathBuf,
+        /// The folder's name (default "Folder N").
+        #[arg(long, default_value = "")]
+        name: String,
+        /// The elements' and folders' ids.
+        #[arg(required = true)]
+        ids: Vec<String>,
+        #[command(flatten)]
+        content: ContentArg,
+    },
+    /// Ungroup a layer folder: its members go to its parent, in order.
+    Ungroup {
+        pack: PathBuf,
+        folder: String,
+        #[command(flatten)]
+        content: ContentArg,
+    },
     /// Add an image element on top, from a PNG or JPEG.
     AddImage {
         pack: PathBuf,
@@ -140,10 +163,16 @@ pub(crate) enum ElementCommand {
         #[command(flatten)]
         content: ContentArg,
     },
-    /// Set an element's properties.
+    /// Set an element's properties, or a folder's name, visibility, lock
+    /// and folder.
     Set {
         pack: PathBuf,
         id: String,
+        /// Move it (a folder with everything it holds) into this folder, on
+        /// top, or `none`: out to the top level, just above the folder it
+        /// leaves.
+        #[arg(long)]
+        folder: Option<String>,
         #[arg(long)]
         name: Option<String>,
         #[arg(long)]
@@ -240,21 +269,23 @@ pub(crate) enum ElementCommand {
         #[command(flatten)]
         content: ContentArg,
     },
-    /// Remove an element and its files.
+    /// Remove an element and its files, or a folder with everything in it.
     Remove {
         pack: PathBuf,
         id: String,
         #[command(flatten)]
         content: ContentArg,
     },
-    /// Move an element one step up.
+    /// Move an element or folder one step up: past its neighbour, a
+    /// folder's whole block; at the top of a folder, out of it.
     Raise {
         pack: PathBuf,
         id: String,
         #[command(flatten)]
         content: ContentArg,
     },
-    /// Move an element one step down.
+    /// Move an element or folder one step down: past its neighbour, a
+    /// folder's whole block; at the bottom of a folder, out of it.
     Lower {
         pack: PathBuf,
         id: String,
@@ -392,16 +423,37 @@ fn material_name(m: ElementMaterial) -> &'static str {
 
 fn list(dir: &Path) -> anyhow::Result<bool> {
     // `composition.ron` alone: the list still shows a stack whose files
-    // are broken.
+    // are broken. Its folders are unchecked too: every walk is bounded
+    // (`folder_chain`).
     let composition = olr_format::levels::read_composition(&olr_vfs::DirFs::new(dir))
         .map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
-    for (i, e) in composition.iter().flat_map(|c| c.elements.iter()).enumerate() {
+    let Some(c) = composition else { return Ok(true) };
+    // The folders printed around the current element, outermost first.
+    let mut open: Vec<&str> = Vec::new();
+    for (i, e) in c.elements.iter().enumerate() {
+        let mut chain = olr_format::levels::folder_chain(&c, e.folder.as_deref());
+        chain.reverse();
+        let common = open.iter().zip(&chain).take_while(|(o, f)| **o == f.id).count();
+        open.truncate(common);
+        for f in &chain[common..] {
+            let mut line = format!("{}folder {}", "  ".repeat(open.len()), f.id);
+            if !f.name.is_empty() {
+                line.push_str(&format!(" {:?}", f.name));
+            }
+            for (label, on) in [("hidden", !f.visible), ("locked", f.locked), ("collapsed", f.collapsed)] {
+                if on {
+                    line.push_str(&format!(" {label}"));
+                }
+            }
+            println!("{line}");
+            open.push(&f.id);
+        }
         let (kind, material) = match &e.kind {
             ElementKind::Image { material, .. } => ("Image", material_name(*material)),
             ElementKind::Drawn { material, .. } => ("Drawn", material_name(*material)),
             ElementKind::Raster => ("Raster", "-"),
         };
-        let mut line = format!("{i}: {} {kind} {material}", e.id);
+        let mut line = format!("{}{i}: {} {kind} {material}", "  ".repeat(open.len()), e.id);
         if !e.name.is_empty() {
             line.push_str(&format!(" {:?}", e.name));
         }
@@ -432,6 +484,13 @@ fn list(dir: &Path) -> anyhow::Result<bool> {
 pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
     match command {
         ElementCommand::List { pack } => list(pack),
+        ElementCommand::Group { pack, name, ids, content } => {
+            edit(pack, content, |p| Ok(vec![format!("added folder {}", element::group(p, ids, name)?)]))
+        }
+        ElementCommand::Ungroup { pack, folder, content } => edit(pack, content, |p| {
+            element::ungroup(p, folder)?;
+            Ok(Vec::new())
+        }),
         ElementCommand::AddImage {
             pack,
             file,
@@ -478,6 +537,7 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
         ElementCommand::Set {
             pack,
             id,
+            folder,
             name,
             visible,
             locked,
@@ -518,7 +578,13 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
                 locked.filter(|l| *l).map(Property::Locked),
             ];
             let properties: Vec<Property> = properties.into_iter().flatten().collect();
-            element::set_all(p, id, &properties)?;
+            // The move first: an order change, which a lock allows.
+            if let Some(f) = folder {
+                element::move_to(p, id, Some(f.as_str()).filter(|f| *f != "none"), None)?;
+            }
+            if !properties.is_empty() || folder.is_none() {
+                element::set_all(p, id, &properties)?;
+            }
             Ok(Vec::new())
         }),
         ElementCommand::Remove { pack, id, content } => edit(pack, content, |p| {

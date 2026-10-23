@@ -559,3 +559,101 @@ fn cli_sets_and_clears_distant() {
     assert!(!std::fs::read_to_string(pack.join("level.ron")).unwrap().contains("distant"));
     assert!(!back(), "no distant layer, no see-through pixel");
 }
+
+/// Issue #59: layer folders through `group`, `ungroup`, `set --folder`,
+/// `list`, and the commands taking folder ids or keeping folders.
+#[test]
+fn cli_groups_elements_into_folders() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    let run = |args: &[&str]| {
+        let mut a = vec!["level", "element"];
+        a.extend_from_slice(args);
+        if !matches!(args[0], "list") {
+            a.extend_from_slice(&["--content", "{content}"]);
+        }
+        ok(&cli(&a, &pack, &content))
+    };
+    let check = || ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+    run(&["add-layer", "{pack}", "--material", "dirt", "--name", "Glow"]);
+    assert_eq!(run(&["group", "{pack}", "--name", "Lamp", "sign", "cave"]), "added folder lamp\n");
+    assert_eq!(
+        run(&["list", "{pack}"]),
+        "0: base Raster - \"Base\"\nfolder lamp \"Lamp\"\n  1: sign Image Rock \"Sign\"\n  2: cave Drawn Background \"Cave\"\n3: glow Drawn Dirt \"Glow\"\n"
+    );
+    run(&["set", "{pack}", "glow", "--folder", "lamp"]);
+    assert_eq!(run(&["group", "{pack}", "cave", "glow"]), "added folder folder-1\n");
+    run(&["set", "{pack}", "folder-1", "--name", "Inner", "--visible", "false", "--locked", "true"]);
+    assert_eq!(
+        run(&["list", "{pack}"]),
+        "0: base Raster - \"Base\"\nfolder lamp \"Lamp\"\n  1: sign Image Rock \"Sign\"\n  folder folder-1 \"Inner\" hidden locked\n    2: cave Drawn Background \"Cave\"\n    3: glow Drawn Dirt \"Glow\"\n"
+    );
+    assert!(check().contains("0 errors"));
+    // A locked folder locks its members' content, not their order.
+    let o = cli(
+        &[
+            "level",
+            "element",
+            "draw",
+            "{pack}",
+            "glow",
+            "--rect",
+            "0,0,2,2",
+            "--colour",
+            "ffffff",
+            "--content",
+            "{content}",
+        ],
+        &pack,
+        &content,
+    );
+    assert!(String::from_utf8_lossy(&o.stderr).contains("\"glow\" is locked"), "{o:?}");
+    run(&["lower", "{pack}", "folder-1"]);
+    run(&["set", "{pack}", "folder-1", "--visible", "true", "--locked", "false"]);
+    assert!(
+        run(&["list", "{pack}"]).contains("folder lamp \"Lamp\"\n  folder folder-1 \"Inner\"\n    1: cave")
+    );
+    // Duplicate, merge down and split keep the folder.
+    assert_eq!(run(&["duplicate", "{pack}", "glow"]), "added element glow-2\n");
+    assert!(run(&["list", "{pack}"]).contains("    3: glow-2 Drawn Dirt \"Glow 2\""));
+    run(&["merge-down", "{pack}", "glow-2"]);
+    let parts = run(&["split", "{pack}", "cave"]);
+    let list = run(&["list", "{pack}"]);
+    for line in parts.lines() {
+        let id = line.strip_prefix("added element ").unwrap();
+        assert!(list.contains(&format!("    1: {id} ")) || list.contains(&format!("    2: {id} ")), "{list}");
+    }
+    // A layer made distant leaves its folders.
+    run(&["add-layer", "{pack}", "--material", "background", "--name", "Sky"]);
+    run(&["set", "{pack}", "sky", "--folder", "folder-1"]);
+    let list = run(&["list", "{pack}"]);
+    assert!(list.lines().any(|l| l.starts_with("    ") && l.contains(": sky ")), "{list}");
+    run(&["set", "{pack}", "sky", "--distant", "50"]);
+    assert!(run(&["list", "{pack}"]).starts_with("0: sky Drawn Background \"Sky\" distant 50%\n"));
+    // Out to the top level, ungroup, raise a folder, remove one.
+    run(&["set", "{pack}", "glow", "--folder", "none"]);
+    assert!(run(&["list", "{pack}"]).ends_with("glow Drawn Dirt \"Glow\"\n"));
+    run(&["ungroup", "{pack}", "folder-1"]);
+    run(&["raise", "{pack}", "lamp"]);
+    let list = run(&["list", "{pack}"]);
+    let lamp = list.find("folder lamp").unwrap();
+    assert!(list.find("glow Drawn").unwrap() < lamp, "the folder raised past glow: {list}");
+    run(&["remove", "{pack}", "lamp"]);
+    assert_eq!(
+        run(&["list", "{pack}"]),
+        "0: sky Drawn Background \"Sky\" distant 50%\n1: base Raster - \"Base\"\n2: glow Drawn Dirt \"Glow\"\n"
+    );
+    assert!(check().contains("0 errors"));
+    // Unknown folders are refused, and nothing is written.
+    let before = tree(&pack);
+    let o = cli(
+        &["level", "element", "set", "{pack}", "glow", "--folder", "nowhere", "--content", "{content}"],
+        &pack,
+        &content,
+    );
+    assert!(!o.status.success());
+    let o =
+        cli(&["level", "element", "ungroup", "{pack}", "glow", "--content", "{content}"], &pack, &content);
+    assert!(String::from_utf8_lossy(&o.stderr).contains("not a folder"), "{o:?}");
+    assert_eq!(tree(&pack), before);
+}

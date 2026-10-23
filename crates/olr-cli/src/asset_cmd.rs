@@ -128,6 +128,9 @@ fn place(dir: &Path, asset_dir: &Path, at: (i32, i32), content: &Path) -> anyhow
         asset::place_in_pack(&mut pack, &a, at).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))?;
     bake_pack(dir, &mut pack, content)?;
     let mut messages: Vec<String> = placed.ids.iter().map(|id| format!("added element {id}")).collect();
+    if let Some(f) = &placed.folder {
+        messages.push(format!("added folder {f}"));
+    }
     for g in &placed.groups.added {
         messages.push(format!("added glow group {g}"));
     }
