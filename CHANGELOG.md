@@ -199,6 +199,11 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
 
 ### Fixed
 
+- The Windows zip extracts with Explorer's **Extract All** without a
+  "path too long" warning: every file is within 80 characters of the
+  game's folder. Imported nested projectiles have shorter ids
+  (`rocket.spawn.trail` is `rocket.st`) and Liero Factory Reloaded's rock
+  layers are `rock-display`, `rock-screens` and `rock-beacons`.
 - Every menu screen, Options tab and dialog now fits the window at UI
   scale 3 in fullscreen on 16:10 and 4:3 screens: the Video tab, Local
   Play, the lobby, the profiles, Keys and the editors put side-by-side

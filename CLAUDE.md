@@ -85,6 +85,14 @@ re-records them and logs the reason in `fixtures/blessings.log`;
 
 ## Content
 
+**Shipped paths stay within 80 characters** of the release's top folder
+(`content/…`, issue #64): Windows Explorer's Extract All stops at its
+259-character path limit, and the zip's name and its top folder already
+spend about 123 of them. Keep level, element, asset, material and sky
+file names short; `check` (`xtask`'s
+`the_shipped_content_keeps_its_paths_short`) and `dist` fail on a
+longer one.
+
 The converted packs are committed in `content/packs/` (the default
 `--content`), so a fresh clone plays and tests offline. OLR's own
 hand-made packs (the Reloaded levels, Liero v1.0 Reloaded, the

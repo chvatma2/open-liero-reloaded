@@ -12,6 +12,12 @@ Imports OLX `script.lgs` gamescript **version 7** mods into `ModPack`s.
 - **Mod images are keyed once, here** (`keyed_image`): a `gfx/` file is decoded, OLX's
   colour key (`olx_sprite_to_alpha`) made transparent and written as an alpha PNG; nothing
   keys at load. A file that does not decode is kept as it is, with a warning.
+- **Nested projectile names** (issue #64, `intern`): a weapon's
+  projectile is named after the weapon id, its children by
+  `olr_data::mod_def::child_key` (`rocket.s`, `rocket.st`,
+  `medical-camp.s3ts9t`), the format's derived keys, so lifted files
+  carry no `id`; an identical definition reuses the first name, and a
+  name taken by another definition gets `-2`.
 - **Portable pack names** (plan 11 review C1): a weapon id that is a
   Windows device name gets `-2` (`con-2`), and an asset whose OLX file name
   is not portable (`olr_vfs::non_portable`) is not taken (a warning; a

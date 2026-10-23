@@ -5716,6 +5716,40 @@ built:
   the glow light's passes; distant layers still never collide and are
   never clear.
 
+## Short shipped paths (issue #64)
+
+Explorer's **Extract All** stops at `MAX_PATH` (259) and extracts the
+Windows zip into a folder named after it, so the version is in the path
+twice before the zip's top folder (about 123 characters before
+`content\` for a 4-letter user name). Every file the release ships is
+now at most 80 characters below that top folder (`content/…`,
+`olr.exe`), leaving room for a longer user name, OneDrive and the
+updater's `.olr-update\new\`. The zip's name and top folder, which
+installed builds' updates rely on, are unchanged. As built:
+
+- **Compact projectile keys.** OLX names nothing: a nested projectile's
+  key is OLR's. `olr_data::mod_def::child_key` gives the root's name, a
+  dot and the chain from it as `s` (spawn) and `t` (trail), a run its
+  letter and count: `rocket.spawn` became `rocket.s`,
+  `medical-camp.spawn.spawn.spawn.trail.spawn…` (137 characters as a
+  path) `medical-camp.s3ts9t`. Both the importer (`intern`) and the
+  format (`compile_mod`'s and `lift_mod`'s derived keys, `olr_edit`'s
+  walk) use it, so imported files still carry no explicit `id`; a key
+  ending in no such chain is a root (`crackler.trail` → `crackler.trail.s`).
+  The simulation's own occurrence names (`SimProjectile::name`,
+  `<path>.spawn`, as the oracle traces' headers name OLX's projectiles)
+  and its load order are unchanged: the oracle and the match goldens
+  hold. `content/packs` is re-imported (names only) and Liero v1.0
+  Reloaded's shared projectiles follow Classic's (`bazooka.s`,
+  `big-nuke.s2`, `crackler.t`), as its `ModDef` must equal Classic's.
+- **Liero Factory Reloaded's rock layers** are `rock-display`,
+  `rock-screens` and `rock-beacons` (were `displays-in-rock`, …): its
+  `editor/layers/` is 64 characters. The bake and the `lit-sign` asset
+  are otherwise byte for byte as before.
+- **The guards:** `xtask`'s `the_shipped_content_keeps_its_paths_short`
+  (in `check`) and `write_zip`, which refuses a zip with any longer
+  entry below its top folder (`dist::MAX_SHIPPED_PATH`, UTF-16 units).
+
 ## Every screen fits (issue #49)
 
 No OLX counterpart (OLX's menus are a fixed 640 × 480). Every menu

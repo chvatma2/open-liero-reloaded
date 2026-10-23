@@ -22,6 +22,13 @@ skins with colorization masks, themes, and pack manifests.
   `ShippedLoadout { loading_time, unique }` (`mod.ron`'s `loadouts`, keyed
   by preset name; here so the format docs read it) is
   `ModDef::loadouts`.
+- **Nested projectile keys** (`mod_def::child_key`, issue #64, not
+  OLX's): a child's key is the root's name, a dot and the chain as `s`
+  (spawn, `ChildLink::Spawn`) and `t` (trail), a run its letter and count
+  (`rocket.s`, `rocket.s2t`); a parent ending in no such chain is a root.
+  Keys name `projectiles/<key>.ron`, kept short for Windows; the importer
+  and `olr-format` share it. Unit tests: the forms, roots, uniqueness of
+  every chain up to 10 links.
 - **Distant layers** (`level.rs`, issue #11, not OLX's): `DistantLayer
   { image, at, depth }`, a level's parallax decoration (art resolution,
   binary alpha; `at` the top-left in world pixels with the camera at the
