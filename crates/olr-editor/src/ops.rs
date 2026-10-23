@@ -210,8 +210,12 @@ impl Document {
         if elements.len() > MAX_ELEMENTS {
             return Err(DocError::Bad(format!("a level holds at most {MAX_ELEMENTS} elements")));
         }
-        let total = check_elements(&Composition { elements: elements.to_vec() }, size, art_scale)
-            .map_err(|e| DocError::Bad(e.to_string()))?;
+        let total = check_elements(
+            &Composition { elements: elements.to_vec(), folders: Vec::new() },
+            size,
+            art_scale,
+        )
+        .map_err(|e| DocError::Bad(e.to_string()))?;
         // The masks of the elements that stay (a merge or split may take one).
         let masks: u64 = self
             .items
@@ -271,6 +275,7 @@ impl Document {
             name: stem.into(),
             visible: true,
             locked: false,
+            folder: None,
             kind: ElementKind::Image {
                 material: ElementMaterial::Dirt,
                 source: source.clone(),
@@ -556,6 +561,7 @@ impl Document {
             name,
             visible: true,
             locked: false,
+            folder: None,
             kind,
             glow: None,
             clear: false,
@@ -587,6 +593,7 @@ impl Document {
             name: name.into(),
             visible: true,
             locked: false,
+            folder: None,
             kind: ElementKind::drawn(material),
             glow: None,
             clear: false,
@@ -632,6 +639,7 @@ impl Document {
                 name: name.into(),
                 visible: true,
                 locked: false,
+                folder: None,
                 kind: ElementKind::Raster,
                 glow: None,
                 clear: false,

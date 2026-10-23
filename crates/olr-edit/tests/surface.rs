@@ -65,6 +65,7 @@ fn element(id: &str, kind: ElementKind, surface: Option<&str>, back_surface: Opt
         name: String::new(),
         visible: true,
         locked: false,
+        folder: None,
         kind,
         glow: None,
         clear: false,

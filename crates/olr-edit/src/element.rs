@@ -324,6 +324,7 @@ pub fn add_image_with(
                 name: name.into(),
                 visible: true,
                 locked: false,
+                folder: None,
                 kind: ElementKind::Image {
                     material,
                     source,
@@ -366,6 +367,7 @@ pub fn add_layer(pack: &mut Pack, material: ElementMaterial, name: &str) -> Resu
                 name: name.into(),
                 visible: true,
                 locked: false,
+                folder: None,
                 kind: ElementKind::drawn(material),
                 glow: None,
                 clear: false,
@@ -1139,6 +1141,7 @@ pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
                 name: String::new(),
                 visible: true,
                 locked: false,
+                folder: None,
                 kind: ElementKind::Raster,
                 glow: None,
                 clear: false,

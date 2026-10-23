@@ -145,6 +145,7 @@ fn element(id: &str, kind: ElementKind) -> Element {
         name: id.into(),
         visible: true,
         locked: false,
+        folder: None,
         kind,
         glow: None,
         clear: false,

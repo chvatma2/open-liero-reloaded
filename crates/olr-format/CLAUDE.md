@@ -306,6 +306,26 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   element's box (`None` for a raster). `check_glow_groups(c, look)`: every
   element's glow names a group of the level's look (an error on
   `composition.ron`); `olr-pack`'s `validate` calls it.
+  Issue #59, layer folders (STATUS.md "Layer folders (issues #59, #60,
+  #61)"): `Composition::folders` (`Folder { id, name, visible, locked,
+  collapsed, parent }`, `Folder::new`) and `Element::folder` (its
+  innermost), both left out when empty, so a composition without folders
+  writes byte for byte as before. `check_folders` (the end of
+  `check_elements`) holds the rules, each an error naming the folder: at
+  most `MAX_FOLDERS` (256), ids valid and unique among elements and
+  folders, every `parent` and `folder` known, no cycle, at most
+  `MAX_FOLDER_DEPTH` (16) deep, every folder's elements (its subfolders'
+  too) one contiguous run, never empty, all distant or none, and
+  `folders` ordered by run start, a parent before its children.
+  `folder_chain(c, folder)` walks up the parents, innermost first,
+  stopping at an unknown id, a repeat and `MAX_FOLDER_DEPTH`: safe on an
+  unchecked composition (`read_composition`, which also refuses more
+  than `MAX_FOLDERS`). `check_asset` refuses an element naming a folder.
+  Tests: `composition.rs`' `nested_folders_round_trip_in_canonical_order`,
+  `folder_rules_are_refused_naming_the_folder`,
+  `folder_chains_stop_on_a_cycle_and_at_the_depth_limit`,
+  `compositions_without_folders_write_as_before` (every committed
+  composition).
 - **Assets** (`assets.rs`, issue #9; the level editor's library, not a
   pack kind): `AssetFile` is `asset.ron` (`ASSET_FILE`: name 1 to
   `MAX_ASSET_NAME` (64) characters, `art_scale`, `size`, composition

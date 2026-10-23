@@ -15,6 +15,10 @@ use olr_format::look::LookSource;
 use crate::document::Item;
 
 /// A reversible change of the document.
+// An element's two copies make `Element` the largest variant; issue
+// #59's `folder` took it past clippy's line. Steps are few and bounded
+// (`MAX_BYTES`), so they stay unboxed.
+#[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug)]
 pub enum Edit {
     /// A drawn layer's pixels over `rect` (world pixels of its box, from

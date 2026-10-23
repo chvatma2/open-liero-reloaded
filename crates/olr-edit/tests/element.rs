@@ -480,6 +480,7 @@ fn new_ids_reserve_masks_and_layer_files() {
         name: String::new(),
         visible: true,
         locked: false,
+        folder: None,
         kind: ElementKind::drawn(ElementMaterial::Dirt),
         glow: None,
         clear: false,

@@ -104,7 +104,7 @@ fn strip_editor(path: &str) -> &str {
 /// decode it as one of a level of the asset's size.
 pub fn as_composition(src: &AssetSource) -> CompositionSource {
     CompositionSource {
-        composition: crate::levels::Composition { elements: src.file.elements.clone() },
+        composition: crate::levels::Composition { elements: src.file.elements.clone(), folders: Vec::new() },
         files: src.files.iter().map(|(k, v)| (format!("{EDITOR_DIR}/{k}"), v.clone())).collect(),
     }
 }
@@ -202,6 +202,9 @@ pub fn check_asset(src: &AssetSource) -> Result<(), FormatError> {
     }
     if let Some(i) = f.elements.iter().position(|e| e.distant.is_some()) {
         return Err(invalid(&format!("elements[{i}].distant"), "an asset carries no distant layer"));
+    }
+    if let Some(i) = f.elements.iter().position(|e| e.folder.is_some()) {
+        return Err(invalid(&format!("elements[{i}].folder"), "an asset carries no layer folder"));
     }
     let look = LookSource {
         glow_groups: f.glow_groups.clone(),
@@ -362,6 +365,7 @@ mod tests {
             name: "Torch".into(),
             visible: true,
             locked: false,
+            folder: None,
             kind: ElementKind::Drawn {
                 material: ElementMaterial::Background,
                 at: (0, 0),
@@ -430,6 +434,10 @@ mod tests {
         s.file.glow_groups.clear();
         s.file.elements[0].distant = Some(50);
         assert!(check_asset(&s).unwrap_err().to_string().contains("no distant layer"));
+        // Issue #59: nor any folder.
+        let mut s = sample();
+        s.file.elements[0].folder = Some("lamp".into());
+        assert!(check_asset(&s).unwrap_err().to_string().contains("no layer folder"));
         let mut s = sample();
         s.files.remove("layers/torch.png");
         let e = check_asset(&s).unwrap_err().to_string();

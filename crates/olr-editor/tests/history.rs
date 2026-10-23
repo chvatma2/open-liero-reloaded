@@ -407,6 +407,7 @@ fn the_new_edits_count_their_bytes() {
             name: String::new(),
             visible: true,
             locked: false,
+            folder: None,
             kind: ElementKind::drawn(ElementMaterial::Dirt),
             glow: None,
             clear: false,

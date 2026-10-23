@@ -21,6 +21,11 @@ pub const EDITOR_DIR: &str = "editor";
 pub const COMPOSITION_FILE: &str = "editor/composition.ron";
 /// The most elements a composition holds.
 pub const MAX_ELEMENTS: usize = 256;
+/// The most folders a composition holds.
+pub const MAX_FOLDERS: usize = 256;
+/// The most folders nested in one another: a top-level folder lies at
+/// depth 1.
+pub const MAX_FOLDER_DEPTH: usize = 16;
 /// The largest `pixel_size` of an image element.
 pub const MAX_PIXEL_SIZE: u32 = 64;
 /// The most pixels a composition's elements decode to together (each
@@ -57,12 +62,57 @@ fn is_threshold(v: &u8) -> bool {
     *v == 128
 }
 
-/// `editor/composition.ron`: the level's elements, bottom to top.
+/// `editor/composition.ron`: the level's elements, bottom to top, and
+/// the folders holding them (issue #59).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Composition {
     /// Bottom to top; at most `MAX_ELEMENTS` (256).
     pub elements: Vec<Element>,
+    /// The layer folders (issue #59): an object's pieces kept together, to
+    /// any depth up to `MAX_FOLDER_DEPTH` (16), at most `MAX_FOLDERS`
+    /// (256). A folder holds the elements naming it in `folder` and the
+    /// folders naming it as `parent`; its elements, its subfolders'
+    /// included, are one block of `elements`, never none, and either all
+    /// distant or none. Listed by where each block starts, a parent before
+    /// its children. Default none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders: Vec<Folder>,
+}
+
+/// A layer folder of a composition (issue #59): its members are shown,
+/// hidden and locked with it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Folder {
+    /// A slug unique in the level among the elements' and folders' ids
+    /// (`[a-z0-9_.-]`, not starting with `.`).
+    pub id: String,
+    /// Shown in the editor's element list.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub name: String,
+    /// A hidden folder hides every member: an element is baked when it and
+    /// every folder holding it are visible. Default true.
+    #[serde(default = "yes", skip_serializing_if = "is_true")]
+    pub visible: bool,
+    /// A locked folder locks every member: an element is locked when it or
+    /// any folder holding it is. Default false.
+    #[serde(default, skip_serializing_if = "d::is_false")]
+    pub locked: bool,
+    /// Folded shut in the editor's element list (the editor's only).
+    /// Default false.
+    #[serde(default, skip_serializing_if = "d::is_false")]
+    pub collapsed: bool,
+    /// The id of the folder holding it; none: the top level. Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<String>,
+}
+
+impl Folder {
+    /// A visible, unlocked, open folder.
+    pub fn new(id: &str, name: &str, parent: Option<String>) -> Folder {
+        Folder { id: id.into(), name: name.into(), visible: true, locked: false, collapsed: false, parent }
+    }
 }
 
 /// One element of a composition.
@@ -81,6 +131,10 @@ pub struct Element {
     /// The editor does not change a locked element.
     #[serde(default, skip_serializing_if = "d::is_false")]
     pub locked: bool,
+    /// The id of its innermost folder (issue #59); none: the top level.
+    /// An asset's elements name none. Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
     /// What the element is.
     pub kind: ElementKind,
     /// Its pixels glow (look system): an image or drawn element only.
@@ -397,6 +451,16 @@ fn too_many(n: usize) -> Option<FormatError> {
     })
 }
 
+fn too_many_folders(n: usize) -> Option<FormatError> {
+    (n > MAX_FOLDERS).then(|| {
+        FormatError::invalid(
+            COMPOSITION_FILE,
+            "folders",
+            format!("{n} folders: more than {MAX_FOLDERS} folders"),
+        )
+    })
+}
+
 /// `editor/composition.ron` alone, without its elements' files: `None`
 /// when the pack has none; more than `MAX_ELEMENTS` is an error.
 pub fn read_composition(src: &dyn ContentSource) -> Result<Option<Composition>, FormatError> {
@@ -406,6 +470,9 @@ pub fn read_composition(src: &dyn ContentSource) -> Result<Option<Composition>, 
     }
     let composition: Composition = from_canonical(COMPOSITION_FILE, &read_text(src, COMPOSITION_FILE)?)?;
     if let Some(e) = too_many(composition.elements.len()) {
+        return Err(e);
+    }
+    if let Some(e) = too_many_folders(composition.folders.len()) {
         return Err(e);
     }
     Ok(Some(composition))
@@ -857,7 +924,177 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
             }
         }
     }
+    check_folders(c)?;
     Ok(pixels)
+}
+
+/// The folders holding `folder` and itself, innermost first: `folder`,
+/// its parent, and so on up to the top level. Safe on an unchecked
+/// composition: the walk stops at an unknown id, at a folder seen before
+/// (a cycle) and after `MAX_FOLDER_DEPTH` folders.
+pub fn folder_chain<'a>(c: &'a Composition, folder: Option<&str>) -> Vec<&'a Folder> {
+    let mut out: Vec<&Folder> = Vec::new();
+    let mut at = folder;
+    while let Some(id) = at {
+        if out.len() >= MAX_FOLDER_DEPTH || out.iter().any(|f| f.id == id) {
+            break;
+        }
+        let Some(f) = c.folders.iter().find(|f| f.id == id) else { break };
+        out.push(f);
+        at = f.parent.as_deref();
+    }
+    out
+}
+
+/// The folder rules (issue #59): at most `MAX_FOLDERS`; ids valid and
+/// unique among the elements' and folders'; every `parent` and element
+/// `folder` naming a folder; no cycle, at most `MAX_FOLDER_DEPTH` deep;
+/// every folder's elements (its subfolders' included) one block of
+/// `elements`, never empty, either all distant or none; `folders` listed
+/// by where each block starts, a parent before its children. An error
+/// names the folder.
+pub fn check_folders(c: &Composition) -> Result<(), FormatError> {
+    let folders = &c.folders;
+    if folders.is_empty() {
+        if let Some((i, e)) = c.elements.iter().enumerate().find(|(_, e)| e.folder.is_some()) {
+            return Err(FormatError::invalid(
+                COMPOSITION_FILE,
+                &format!("elements[{i}].folder"),
+                format!("element {:?}: no folder {:?}", e.id, e.folder.as_deref().unwrap_or_default()),
+            ));
+        }
+        return Ok(());
+    }
+    if let Some(e) = too_many_folders(folders.len()) {
+        return Err(e);
+    }
+    let bad = |i: usize, field: &str, message: String| {
+        FormatError::invalid(COMPOSITION_FILE, &format!("folders[{i}].{field}"), message)
+    };
+    let mut index: BTreeMap<&str, usize> = BTreeMap::new();
+    for (i, f) in folders.iter().enumerate() {
+        if !crate::mods::valid_id(&f.id) {
+            return Err(bad(i, "id", format!("folder {:?}: not a valid id", f.id)));
+        }
+        if index.insert(f.id.as_str(), i).is_some() {
+            return Err(bad(i, "id", format!("folder {:?}: duplicate id", f.id)));
+        }
+        if c.elements.iter().any(|e| e.id == f.id) {
+            return Err(bad(i, "id", format!("folder {:?}: an element has the same id", f.id)));
+        }
+    }
+    for (i, f) in folders.iter().enumerate() {
+        if let Some(p) = &f.parent
+            && !index.contains_key(p.as_str())
+        {
+            return Err(bad(i, "parent", format!("folder {:?}: no folder {p:?}", f.id)));
+        }
+    }
+    for (i, e) in c.elements.iter().enumerate() {
+        if let Some(f) = &e.folder
+            && !index.contains_key(f.as_str())
+        {
+            return Err(FormatError::invalid(
+                COMPOSITION_FILE,
+                &format!("elements[{i}].folder"),
+                format!("element {:?}: no folder {f:?}", e.id),
+            ));
+        }
+    }
+    // Every folder's depth (1 at the top level), each walk bounded.
+    let mut depth = vec![0usize; folders.len()];
+    for (i, f) in folders.iter().enumerate() {
+        let mut seen = vec![i];
+        let mut at = f.parent.as_deref();
+        while let Some(p) = at {
+            let j = index[p];
+            if seen.contains(&j) {
+                return Err(bad(
+                    j,
+                    "parent",
+                    format!("folder {:?} holds itself: its parents make a cycle", folders[j].id),
+                ));
+            }
+            seen.push(j);
+            if seen.len() > MAX_FOLDER_DEPTH {
+                return Err(bad(
+                    i,
+                    "parent",
+                    format!("folder {:?}: more than {MAX_FOLDER_DEPTH} folders deep", f.id),
+                ));
+            }
+            at = folders[j].parent.as_deref();
+        }
+        depth[i] = seen.len();
+    }
+    // Each folder's members: the first and last element, how many, and
+    // whether distant and ordinary ones mix.
+    let mut first = vec![usize::MAX; folders.len()];
+    let mut last = vec![0usize; folders.len()];
+    let mut count = vec![0usize; folders.len()];
+    let mut distant = vec![(false, false); folders.len()];
+    for (k, e) in c.elements.iter().enumerate() {
+        let mut at = e.folder.as_deref();
+        while let Some(id) = at {
+            let j = index[id];
+            first[j] = first[j].min(k);
+            last[j] = k;
+            count[j] += 1;
+            if e.is_distant() {
+                distant[j].0 = true;
+            } else {
+                distant[j].1 = true;
+            }
+            at = folders[j].parent.as_deref();
+        }
+    }
+    for (i, f) in folders.iter().enumerate() {
+        if count[i] == 0 {
+            return Err(bad(
+                i,
+                "id",
+                format!("folder {:?} is empty: a folder holds at least one element", f.id),
+            ));
+        }
+        if count[i] != last[i] - first[i] + 1 {
+            let gap = (first[i]..=last[i])
+                .find(|k| !folder_chain(c, c.elements[*k].folder.as_deref()).iter().any(|x| x.id == f.id))
+                .unwrap_or(first[i]);
+            return Err(bad(
+                i,
+                "id",
+                format!(
+                    "folder {:?}: its elements are not one block of the stack (elements[{gap}], {:?}, lies between them)",
+                    f.id, c.elements[gap].id
+                ),
+            ));
+        }
+        if distant[i] == (true, true) {
+            return Err(bad(
+                i,
+                "id",
+                format!(
+                    "folder {:?} holds distant and other elements: a distant layer shares no folder with them",
+                    f.id
+                ),
+            ));
+        }
+    }
+    // The canonical order: by where each block starts, a parent (less
+    // deep) before its children.
+    for i in 1..folders.len() {
+        if (first[i - 1], depth[i - 1]) >= (first[i], depth[i]) {
+            return Err(bad(
+                i,
+                "id",
+                format!(
+                    "folder {:?} is out of order: folders are listed by where their elements start, a parent before its children",
+                    folders[i].id
+                ),
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// What a distant element `e` of `depth` may be (issue #11): a Background
@@ -939,6 +1176,7 @@ mod tests {
             name: String::new(),
             visible: true,
             locked: false,
+            folder: None,
             kind,
             glow: None,
             clear: false,
@@ -978,6 +1216,7 @@ mod tests {
                         },
                     ),
                 ],
+                folders: Vec::new(),
             },
             files,
         }
@@ -1250,6 +1489,7 @@ mod tests {
             name: String::new(),
             visible: true,
             locked: false,
+            folder: None,
             kind: ElementKind::Drawn {
                 material: ElementMaterial::Dirt,
                 at: (0, 0),
@@ -1274,7 +1514,7 @@ mod tests {
         at_limit.files.insert(mask_file("e0"), image_io::encode_grey(10, 10, &[255; 100]));
         let e = check_composition(&at_limit, (4, 3), 2).unwrap_err().to_string();
         assert!(e.contains("masks"), "{e}");
-        let mut c = Composition { elements: (0..3).map(wall).collect() };
+        let mut c = Composition { elements: (0..3).map(wall).collect(), folders: Vec::new() };
         check_elements(&c, (4, 3), 2).unwrap();
         c.elements.push(wall(3));
         let e = check_elements(&c, (4, 3), 2).unwrap_err().to_string();
@@ -1465,5 +1705,150 @@ mod tests {
         t.files.insert(surface_file("sky"), image_io::encode_grey(4, 3, &[0; 12]));
         let e = check_composition(&t, (4, 3), 2).unwrap_err().to_string();
         assert!(e.contains("one surface for the whole layer"), "{e}");
+    }
+
+    /// Issue #59: `sample` with the sky, ground and wall in `outer`, the
+    /// ground in `inner` within it.
+    fn foldered() -> CompositionSource {
+        let mut s = sample();
+        let c = &mut s.composition;
+        c.folders = vec![
+            Folder { name: "Outer".into(), locked: true, ..Folder::new("outer", "", None) },
+            Folder { visible: false, collapsed: true, ..Folder::new("inner", "", Some("outer".into())) },
+        ];
+        c.elements[1].folder = Some("outer".into());
+        c.elements[2].folder = Some("inner".into());
+        c.elements[3].folder = Some("outer".into());
+        s
+    }
+
+    #[test]
+    fn nested_folders_round_trip_in_canonical_order() {
+        let src = foldered();
+        check_composition(&src, (4, 3), 2).unwrap();
+        let mut fs = MemFs::new();
+        write_composition_files(&mut fs, &src).unwrap();
+        assert_eq!(read_composition_files(&fs).unwrap().unwrap(), src);
+        let text = String::from_utf8(fs.read(&VPath::new(COMPOSITION_FILE).unwrap()).unwrap()).unwrap();
+        assert_eq!(crate::canonical_text(COMPOSITION_FILE, &text).unwrap(), text);
+        assert!(text.contains("folder: \"inner\""), "{text}");
+        assert!(text.contains("parent: \"outer\""), "{text}");
+        assert!(text.find("id: \"outer\"").unwrap() < text.find("id: \"inner\"").unwrap(), "{text}");
+        // Defaults are left out: `outer` is visible and open.
+        assert_eq!(text.matches("visible").count(), 1, "{text}");
+        assert_eq!(text.matches("collapsed").count(), 1, "{text}");
+        // A child listed before its parent is out of order.
+        let mut s = foldered();
+        s.composition.folders.reverse();
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("\"outer\" is out of order"), "{e}");
+    }
+
+    /// Issue #59: each rule broken is an error naming the folder.
+    #[test]
+    #[allow(clippy::type_complexity)]
+    fn folder_rules_are_refused_naming_the_folder() {
+        let cases: Vec<(&str, Box<dyn Fn(&mut Composition)>)> = vec![
+            ("no folder \"nowhere\"", Box::new(|c| c.folders[1].parent = Some("nowhere".into()))),
+            (
+                "element \"wall\": no folder \"gone\"",
+                Box::new(|c| c.elements[3].folder = Some("gone".into())),
+            ),
+            ("\"outer\" holds itself", Box::new(|c| c.folders[0].parent = Some("inner".into()))),
+            ("\"inner\" holds itself", Box::new(|c| c.folders[1].parent = Some("inner".into()))),
+            (
+                "\"f0\": more than 16 folders deep",
+                Box::new(|c| {
+                    // f0 → f1 → … → f15 → outer: 17 deep (inner, below f0, too).
+                    let mut parent = "outer".to_string();
+                    for i in (0..16).rev() {
+                        c.folders.insert(1, Folder::new(&format!("f{i}"), "", Some(parent.clone())));
+                        parent = format!("f{i}");
+                    }
+                    c.folders.last_mut().unwrap().parent = Some("f0".into());
+                }),
+            ),
+            (
+                "folder \"inner\": its elements are not one block",
+                Box::new(|c| {
+                    c.elements[1].folder = Some("inner".into());
+                    c.elements[2].folder = Some("outer".into());
+                    c.elements[3].folder = Some("inner".into());
+                }),
+            ),
+            (
+                "folder \"outer\": its elements are not one block",
+                Box::new(|c| {
+                    c.elements[0].folder = Some("outer".into());
+                    c.elements[1].folder = None;
+                }),
+            ),
+            (
+                "folder \"spare\" is empty",
+                Box::new(|c| c.folders.push(Folder::new("spare", "", Some("outer".into())))),
+            ),
+            ("folder \"sky\": an element has the same id", Box::new(|c| c.folders[1].id = "sky".into())),
+            ("folder \"outer\": duplicate id", Box::new(|c| c.folders[1].id = "outer".into())),
+            ("folder \"Bad\": not a valid id", Box::new(|c| c.folders[1].id = "Bad".into())),
+            (
+                "folder \"outer\" holds distant and other elements",
+                Box::new(|c| {
+                    c.elements.remove(0);
+                    c.elements[0].distant = Some(50);
+                }),
+            ),
+            (
+                "more than 256 folders",
+                Box::new(|c| {
+                    c.folders = (0..=MAX_FOLDERS).map(|i| Folder::new(&format!("x{i}"), "", None)).collect();
+                }),
+            ),
+        ];
+        for (want, edit) in cases {
+            let mut s = foldered();
+            edit(&mut s.composition);
+            let e = check_folders(&s.composition).unwrap_err().to_string();
+            assert!(e.contains(want), "{want}: {e}");
+            // `check_elements` (and so every load) applies them.
+            assert!(check_elements(&s.composition, (4, 3), 2).is_err(), "{want}");
+        }
+        check_folders(&foldered().composition).unwrap();
+        // Without folders, an element naming one is refused too.
+        let mut s = sample();
+        s.composition.elements[2].folder = Some("lost".into());
+        assert!(check_folders(&s.composition).unwrap_err().to_string().contains("no folder \"lost\""));
+    }
+
+    /// Issue #59: the walk up the parents is safe on an unchecked cycle.
+    #[test]
+    fn folder_chains_stop_on_a_cycle_and_at_the_depth_limit() {
+        let mut c = foldered().composition;
+        c.folders[0].parent = Some("inner".into());
+        let chain: Vec<&str> = folder_chain(&c, Some("inner")).iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(chain, ["inner", "outer"]);
+        assert!(folder_chain(&c, Some("nowhere")).is_empty());
+        c.folders = (0..40).map(|i| Folder::new(&format!("f{i}"), "", Some(format!("f{}", i + 1)))).collect();
+        assert_eq!(folder_chain(&c, Some("f0")).len(), MAX_FOLDER_DEPTH);
+    }
+
+    /// Issue #59: a composition without folders reads and writes byte for
+    /// byte as before: every committed one.
+    #[test]
+    fn compositions_without_folders_write_as_before() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let mut n = 0;
+        for dir in ["content/reloaded", "content/playtest", "fixtures/look/levels", "fixtures/edit"] {
+            let Ok(packs) = std::fs::read_dir(root.join(dir)) else { continue };
+            for pack in packs.flatten() {
+                let file = pack.path().join(COMPOSITION_FILE);
+                let Ok(text) = std::fs::read_to_string(&file) else { continue };
+                let c: Composition = from_canonical(COMPOSITION_FILE, &text).unwrap();
+                assert!(c.folders.is_empty() && c.elements.iter().all(|e| e.folder.is_none()));
+                check_folders(&c).unwrap();
+                assert_eq!(to_canonical(COMPOSITION_FILE, &c).unwrap(), text, "{}", file.display());
+                n += 1;
+            }
+        }
+        assert!(n >= 2, "the committed compositions: {n}");
     }
 }

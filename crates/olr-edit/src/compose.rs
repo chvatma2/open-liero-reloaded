@@ -1260,6 +1260,7 @@ pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded)> {
                 name: format!("Distant {}", i + 1),
                 visible: true,
                 locked: false,
+                folder: None,
                 kind: ElementKind::Drawn {
                     material: ElementMaterial::Background,
                     at: d.at,
@@ -1290,6 +1291,7 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         name: "Base".into(),
         visible: true,
         locked: false,
+        folder: None,
         kind: ElementKind::Raster,
         glow: None,
         clear: false,
@@ -1319,7 +1321,7 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         elements.push(e);
     }
     elements.push(element);
-    CompositionSource { composition: Composition { elements }, files }
+    CompositionSource { composition: Composition { elements, folders: Vec::new() }, files }
 }
 
 /// A level's own material, front and back as three drawn layers, bottom
@@ -1369,6 +1371,7 @@ pub fn split_layers(
             name: name.into(),
             visible: true,
             locked: false,
+            folder: None,
             kind: ElementKind::drawn(material),
             glow: None,
             clear: false,
@@ -1415,7 +1418,7 @@ pub fn split_from(level: &LevelSource) -> CompositionSource {
         }
         elements.push(e);
     }
-    CompositionSource { composition: Composition { elements }, files }
+    CompositionSource { composition: Composition { elements, folders: Vec::new() }, files }
 }
 
 /// The `back_tile` of the theme pack whose manifest id is `theme` among

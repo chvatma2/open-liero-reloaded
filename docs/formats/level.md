@@ -45,11 +45,12 @@ Example:
 
 ## Composition (`editor/composition.ron`)
 
-`editor/composition.ron`: the level's elements, bottom to top.
+`editor/composition.ron`: the level's elements, bottom to top, and the folders holding them (issue #59).
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `elements` | list of [Element](#element) | required | Bottom to top; at most `MAX_ELEMENTS` (256). |
+| `folders` | list of [Folder](#folder) | `[]` | The layer folders (issue #59): an object's pieces kept together, to any depth up to `MAX_FOLDER_DEPTH` (16), at most `MAX_FOLDERS` (256). A folder holds the elements naming it in `folder` and the folders naming it as `parent`; its elements, its subfolders' included, are one block of `elements`, never none, and either all distant or none. Listed by where each block starts, a parent before its children. Default none. |
 
 Example:
 
@@ -145,6 +146,7 @@ One element of a composition.
 | `name` | string | `""` | Shown in the editor's element list. |
 | `visible` | boolean | `true` | Hidden elements are left out of the bake. Default true. |
 | `locked` | boolean | `false` | The editor does not change a locked element. |
+| `folder` | string (optional) | none | The id of its innermost folder (issue #59); none: the top level. An asset's elements name none. Default none. |
 | `kind` | [ElementKind](#elementkind) | required | What the element is. |
 | `glow` | [ElementGlow](#elementglow) (optional) | none | Its pixels glow (look system): an image or drawn element only. Default none. |
 | `clear` | boolean | `false` | Its rock and dirt let light through (look system §Clear solids): worms and projectiles still collide. An image or drawn element only. Default false. |
@@ -153,6 +155,21 @@ One element of a composition.
 | `back_surface` | string (optional) | none | Its back art's surface material: the id of one of the look's materials, landing in `look/surface-back.png`. Only with back art (a drawn layer with `back`, a raster). Default none. |
 | `surface_map` | boolean | `false` | A painted map of its pixels' surface materials (`editor/surface/<id>.png`, 8-bit grey at world resolution: its box, a raster's the level's size): `v` is the look's `materials[v - 1]`, 0 its `surface`. Not on a distant layer. Default false. |
 | `back_surface_map` | boolean | `false` | A painted map of its back art's surface materials (`editor/surface/<id>.back.png`, as `surface_map`'s; 0 its `back_surface`). Only with back art. Default false. |
+
+<a id="folder"></a>
+
+## Folder
+
+A layer folder of a composition (issue #59): its members are shown, hidden and locked with it.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `id` | string | required | A slug unique in the level among the elements' and folders' ids (`[a-z0-9_.-]`, not starting with `.`). |
+| `name` | string | `""` | Shown in the editor's element list. |
+| `visible` | boolean | `true` | A hidden folder hides every member: an element is baked when it and every folder holding it are visible. Default true. |
+| `locked` | boolean | `false` | A locked folder locks every member: an element is locked when it or any folder holding it is. Default false. |
+| `collapsed` | boolean | `false` | Folded shut in the editor's element list (the editor's only). Default false. |
+| `parent` | string (optional) | none | The id of the folder holding it; none: the top level. Default none. |
 
 <a id="ambientsource"></a>
 

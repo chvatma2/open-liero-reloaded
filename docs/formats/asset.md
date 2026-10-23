@@ -66,6 +66,7 @@ One element of a composition.
 | `name` | string | `""` | Shown in the editor's element list. |
 | `visible` | boolean | `true` | Hidden elements are left out of the bake. Default true. |
 | `locked` | boolean | `false` | The editor does not change a locked element. |
+| `folder` | string (optional) | none | The id of its innermost folder (issue #59); none: the top level. An asset's elements name none. Default none. |
 | `kind` | [ElementKind](#elementkind) | required | What the element is. |
 | `glow` | [ElementGlow](#elementglow) (optional) | none | Its pixels glow (look system): an image or drawn element only. Default none. |
 | `clear` | boolean | `false` | Its rock and dirt let light through (look system §Clear solids): worms and projectiles still collide. An image or drawn element only. Default false. |

@@ -232,7 +232,7 @@ fn pack_of(
             e
         })
         .collect();
-    let composition = Composition { elements };
+    let composition = Composition { elements, folders: Vec::new() };
     Pack {
         manifest: manifest.clone(),
         source: Source::Level(level),
@@ -496,7 +496,7 @@ impl Document {
 
     /// The composition as `composition.ron` holds it.
     pub(crate) fn composition(&self) -> Composition {
-        Composition { elements: self.items.iter().map(|i| i.element.clone()).collect() }
+        Composition { elements: self.items.iter().map(|i| i.element.clone()).collect(), folders: Vec::new() }
     }
 
     /// The pack to save: the composition (`encode_decoded`, originals as

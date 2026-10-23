@@ -511,6 +511,7 @@ mod tests {
             name: String::new(),
             visible: true,
             locked: false,
+            folder: None,
             kind: olr_format::levels::ElementKind::Raster,
             glow: None,
             clear: false,
@@ -521,7 +522,7 @@ mod tests {
             back_surface_map: false,
         };
         let src = olr_format::levels::CompositionSource {
-            composition: olr_format::levels::Composition { elements: vec![element] },
+            composition: olr_format::levels::Composition { elements: vec![element], folders: Vec::new() },
             files: base,
         };
         let mut fs = fs;
