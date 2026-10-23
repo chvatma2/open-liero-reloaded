@@ -6,6 +6,7 @@ use olr_format::materials::{HeatLookSource, HeatSource, MaterialSource};
 /// A material of id `id`, name `name`, heating as `capacity` says.
 pub fn material(id: &str, name: &str, capacity: u16) -> MaterialSource {
     MaterialSource {
+        light_soak: None,
         id: id.into(),
         name: name.into(),
         notes: String::new(),

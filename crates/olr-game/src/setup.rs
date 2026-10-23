@@ -839,6 +839,7 @@ mod tests {
         // Issue #43: so do its surface materials, which heat in play.
         let mut hot = lit.clone();
         let stone = olr_format::materials::MaterialSource {
+            light_soak: None,
             id: "stone".into(),
             name: "Stone".into(),
             notes: String::new(),

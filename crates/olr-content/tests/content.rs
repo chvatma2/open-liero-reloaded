@@ -868,6 +868,7 @@ fn surface_maps_load_with_the_level() {
     let mut src = olr_format::levels::read_level_files(&DirFs::new(&pack)).unwrap();
     src.look = Some(olr_format::look::LookSource {
         materials: vec![olr_format::materials::MaterialSource {
+            light_soak: None,
             id: "stone".into(),
             name: "Stone".into(),
             notes: String::new(),

@@ -22,7 +22,7 @@ use crate::{Colour, FormatError};
 
 pub use olr_look::{
     MAX_CAPACITY, MAX_CONDUCTIVITY, MAX_COOLING, MAX_GLOW, MAX_MATERIALS, MAX_RAMP_KEYS, MAX_SENSITIVITY,
-    MAX_TEMPERATURE, MIN_CAPACITY, MIN_COOLING,
+    MAX_SOAK, MAX_TEMPERATURE, MIN_CAPACITY, MIN_COOLING,
 };
 
 /// The longest material name, in characters.
@@ -52,6 +52,11 @@ pub struct MaterialSource {
     /// Free text for authors; ignored by the game.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub notes: String,
+    /// How deep light soaks into its rock and dirt from the air beside
+    /// them, world pixels, 0 to 12 (issue #57): thin for concrete and stone,
+    /// deeper for furniture. Default none: the level's `look.light_soak`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light_soak: Option<u8>,
     /// How it takes heat, spreads it, loses it and shows it. Default none:
     /// it never heats.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -175,8 +180,11 @@ pub fn compile_material(
             format!("{chars} characters, not 1 to {MAX_MATERIAL_NAME}"),
         ));
     }
+    if let Some(soak) = m.light_soak {
+        within(soak.into(), 0, MAX_SOAK.into(), file, &at(path, "light_soak"))?;
+    }
     let heat = m.heat.as_ref().map(|h| compile_heat(h, file, &at(path, "heat"))).transpose()?;
-    Ok(olr_look::SurfaceMaterial { id: m.id.clone(), heat })
+    Ok(olr_look::SurfaceMaterial { id: m.id.clone(), heat, light_soak: m.light_soak })
 }
 
 fn compile_heat(h: &HeatSource, file: &str, path: &str) -> Result<olr_look::Heat, FormatError> {
@@ -281,6 +289,7 @@ mod tests {
             id: "stone".into(),
             name: "Stone".into(),
             notes: String::new(),
+            light_soak: None,
             heat: Some(HeatSource {
                 sensitivity: 100,
                 capacity: 100,
@@ -329,6 +338,7 @@ mod tests {
             ("id", Box::new(|m| m.id = "x".repeat(65))),
             ("name", Box::new(|m| m.name.clear())),
             ("name", Box::new(|m| m.name = "n".repeat(65))),
+            ("light_soak", Box::new(|m| m.light_soak = Some(13))),
             ("heat.sensitivity", Box::new(|m| m.heat.as_mut().unwrap().sensitivity = 101)),
             ("heat.capacity", Box::new(|m| m.heat.as_mut().unwrap().capacity = 9)),
             ("heat.capacity", Box::new(|m| m.heat.as_mut().unwrap().capacity = 1001)),
@@ -371,6 +381,28 @@ mod tests {
         (h.sensitivity, h.capacity, h.conductivity, h.cooling, h.look.light) = (100, 1000, 1000, 1000, 100);
         set_ramp(&mut m, &[(1, "#000000", 0), (1000, "#ffffff", 100)]);
         compile_material(&m, "x.ron", "").unwrap();
+    }
+
+    /// Issue #57: a material's own light soak round-trips, 0 to 12; none
+    /// is the level's.
+    #[test]
+    fn light_soak_round_trips() {
+        let mut m = MaterialSource { heat: None, ..stone() };
+        assert_eq!(compile_material(&m, "stone.ron", "").unwrap().light_soak, None);
+        let text = material_text(&m).unwrap();
+        assert!(!text.contains("light_soak"), "{text}");
+        assert_eq!(read_material("stone.ron", &text).unwrap().light_soak, None, "absent is none");
+        for soak in [0, 2, MAX_SOAK] {
+            m.light_soak = Some(soak);
+            let text = material_text(&m).unwrap();
+            assert!(text.contains(&format!("light_soak: {soak},")), "{text}");
+            assert_eq!(read_material("stone.ron", &text).unwrap(), m);
+            assert_eq!(compile_material(&m, "stone.ron", "").unwrap().light_soak, Some(soak));
+        }
+        let e = read_material("stone.ron", "(id: \"stone\", name: \"Stone\", light_soak: 13)")
+            .unwrap_err()
+            .to_string();
+        assert!(e.contains("light_soak") && e.contains("13"), "{e}");
     }
 
     fn set_ramp(m: &mut MaterialSource, keys: &[(u16, &str, u8)]) {

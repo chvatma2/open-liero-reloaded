@@ -667,6 +667,7 @@ mod tests {
     fn with_surface() -> LevelSource {
         let mut src = crate::levels::tests::tiny(1);
         let material = |id: &str| crate::materials::MaterialSource {
+            light_soak: None,
             id: id.into(),
             name: id.into(),
             notes: String::new(),

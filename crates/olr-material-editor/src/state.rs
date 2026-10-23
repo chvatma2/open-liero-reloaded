@@ -215,6 +215,7 @@ pub struct MaterialEditorState {
 /// A new material named `name`, id `id`: stone's heat, the engine's ramp.
 pub fn new_material(id: &str, name: &str) -> MaterialSource {
     MaterialSource {
+        light_soak: None,
         id: id.to_string(),
         name: name.to_string(),
         notes: String::new(),

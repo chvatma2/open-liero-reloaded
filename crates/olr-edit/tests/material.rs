@@ -49,7 +49,13 @@ fn write(dir: &Path, name: &str, text: &str) {
 }
 
 fn mine(id: &str, name: &str) -> String {
-    let m = MaterialSource { id: id.into(), name: name.into(), notes: String::new(), heat: None };
+    let m = MaterialSource {
+        light_soak: None,
+        id: id.into(),
+        name: name.into(),
+        notes: String::new(),
+        heat: None,
+    };
     material_text(&m).unwrap()
 }
 

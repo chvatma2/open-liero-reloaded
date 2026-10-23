@@ -451,7 +451,7 @@ mod tests {
     }
 
     fn material(id: &str) -> MaterialSource {
-        MaterialSource { id: id.into(), name: id.into(), notes: String::new(), heat: None }
+        MaterialSource { id: id.into(), name: id.into(), notes: String::new(), heat: None, light_soak: None }
     }
 
     /// `sample()` made of stone, with a painted map naming wood at one

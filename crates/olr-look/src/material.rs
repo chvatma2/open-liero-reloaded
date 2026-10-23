@@ -130,12 +130,22 @@ pub struct SurfaceMaterial {
     pub id: String,
     /// `None`: it never heats.
     pub heat: Option<Heat>,
+    /// How deep light soaks into its opaque pixels from the air beside
+    /// them, world pixels (issue #57); `None`: the level's
+    /// [`crate::LevelLook::light_soak`].
+    pub light_soak: Option<u8>,
 }
 
 impl SurfaceMaterial {
     /// Its heat when it takes any (a sensitivity above 0).
     pub fn heats(&self) -> Option<&Heat> {
         self.heat.as_ref().filter(|h| h.sensitivity() > 0)
+    }
+
+    /// Its own light soak (issue #57), at most [`crate::MAX_SOAK`];
+    /// `None` takes the level's.
+    pub fn light_soak(&self) -> Option<u8> {
+        self.light_soak.map(|s| s.min(crate::MAX_SOAK))
     }
 }
 

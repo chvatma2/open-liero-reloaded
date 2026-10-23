@@ -706,7 +706,7 @@ fn explosions_heat_once_through_rollbacks() {
         groups: Vec::new(),
         materials: Vec::new(),
     };
-    look.materials.push(olr_look::SurfaceMaterial { id: "stone".into(), heat: Some(heat) });
+    look.materials.push(olr_look::SurfaceMaterial { id: "stone".into(), heat: Some(heat), light_soak: None });
     p.level.look = Some(look);
     let mut maps = olr_look::SurfaceMaps::empty((p.level.material.width(), p.level.material.height()));
     maps.front.fill(1);

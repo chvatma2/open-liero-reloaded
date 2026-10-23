@@ -22,7 +22,7 @@ const BROWN: Rgba = Rgba::rgb(120, 70, 20);
 const RUST: Rgba = Rgba::rgb(150, 60, 30);
 
 fn material(id: &str) -> MaterialSource {
-    MaterialSource { id: id.into(), name: id.into(), notes: String::new(), heat: None }
+    MaterialSource { id: id.into(), name: id.into(), notes: String::new(), heat: None, light_soak: None }
 }
 
 /// A 10 × 6 level at art scale `s` whose look has stone (1), wood (2) and

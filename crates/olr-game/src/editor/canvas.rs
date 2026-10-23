@@ -567,6 +567,7 @@ mod tests {
     fn the_materials_view_tints_by_surface() {
         let Some((_tmp, mut d)) = doc() else { return };
         let stone = olr_format::materials::MaterialSource {
+            light_soak: None,
             id: "stone".into(),
             name: "Stone".into(),
             notes: String::new(),

@@ -13,7 +13,7 @@ fn heat(sensitivity: u8, conductivity: u16, light: u8) -> Heat {
 }
 
 fn material(id: &str, heat: Option<Heat>) -> SurfaceMaterial {
-    SurfaceMaterial { id: id.into(), heat }
+    SurfaceMaterial { id: id.into(), heat, light_soak: None }
 }
 
 /// 1 stone, 2 an insulator (it heats but conducts nothing), 3 numb

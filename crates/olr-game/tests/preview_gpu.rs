@@ -30,6 +30,7 @@ fn offscreen() -> Option<Offscreen> {
 /// Stone's heat (every value 100), the engine's ramp.
 fn stone() -> MaterialSource {
     MaterialSource {
+        light_soak: None,
         id: "stone".into(),
         name: "Stone".into(),
         notes: String::new(),

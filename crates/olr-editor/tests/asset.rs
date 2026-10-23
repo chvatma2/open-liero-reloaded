@@ -199,6 +199,7 @@ fn placing_joins_a_group_the_level_has_and_adds_one_it_lacks() {
 
 fn material(id: &str, name: &str) -> olr_format::materials::MaterialSource {
     olr_format::materials::MaterialSource {
+        light_soak: None,
         id: id.into(),
         name: name.into(),
         notes: String::new(),

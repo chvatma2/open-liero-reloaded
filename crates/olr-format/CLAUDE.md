@@ -234,7 +234,9 @@ packs' format (version 5); `olr-pack` reads and writes through them.
 - **Surface materials** (`materials.rs`, `levels/`, issue #37; spec
   `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`; the
   page `docs/formats/material.md`; STATUS.md "Surface materials (issue
-  #37)"): `MaterialSource { id, name, notes, heat: Option<HeatSource> }`
+  #37)"): `MaterialSource { id, name, notes, light_soak: Option<u8>,
+  heat: Option<HeatSource> }` (issue #57: `light_soak` 0-`MAX_SOAK` 12,
+  none the level's `look.light_soak`; `light_soak_round_trips`)
   (`HeatSource { sensitivity 0-100 default 100, capacity 10-1000,
   conductivity 0-1000, cooling 1-1000, look: HeatLookSource { ramp of
   1-16 `RampKeySource { temperature 1-1000 rising, colour opaque, glow

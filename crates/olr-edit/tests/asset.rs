@@ -429,6 +429,7 @@ fn the_library_adds_imports_lists_and_removes() {
 
 fn material(id: &str, name: &str) -> olr_format::materials::MaterialSource {
     olr_format::materials::MaterialSource {
+        light_soak: None,
         id: id.into(),
         name: name.into(),
         notes: String::new(),

@@ -893,7 +893,7 @@ fn heated_look() -> LevelLook {
         light: 100,
     };
     LevelLook {
-        materials: vec![olr_look::SurfaceMaterial { id: "stone".into(), heat: Some(heat) }],
+        materials: vec![olr_look::SurfaceMaterial { id: "stone".into(), heat: Some(heat), light_soak: None }],
         ..look()
     }
 }
@@ -1045,7 +1045,7 @@ fn explosion_heat_does_not_depend_on_the_frame_rate() {
 fn only_a_level_whose_materials_heat_queues_heat() {
     let Some(content) = content() else { return };
     let cold = LevelLook {
-        materials: vec![olr_look::SurfaceMaterial { id: "cold".into(), heat: None }],
+        materials: vec![olr_look::SurfaceMaterial { id: "cold".into(), heat: None, light_soak: None }],
         ..heated_look()
     };
     for (level, surface) in
@@ -1076,7 +1076,7 @@ fn only_a_level_whose_materials_heat_queues_heat() {
 }
 
 fn cold_materials() -> Vec<olr_look::SurfaceMaterial> {
-    vec![olr_look::SurfaceMaterial { id: "cold".into(), heat: None }]
+    vec![olr_look::SurfaceMaterial { id: "cold".into(), heat: None, light_soak: None }]
 }
 
 /// [`play_heated`] on every world pixel stone, the mod's look made as

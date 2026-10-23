@@ -115,7 +115,7 @@ A level's look: darkness, light settings, grade and glow groups. A level without
 | `max_light` | integer | `100` | The brightest light, percent, 100 to 200 (above 100, flashes brighten a lit level). Default 100. |
 | `light_steps` | integer | `0` | Bands the light: 0 (off) or 2 to 32. Default 0. |
 | `softness` | integer | `0` | Blurs the light, world pixels, 0 to 4. Default 0. |
-| `light_soak` | integer | `8` | How deep light soaks into solids from the air beside them, world pixels, 0 to 12, fading with depth. Default 8. |
+| `light_soak` | integer | `8` | How deep light soaks into solids from the air beside them, world pixels, 0 to 12, fading with depth, unless the pixel's material sets its own (issue #57: `look.materials`' `light_soak`). Default 8. |
 | `solid_floor` | [SolidFloorSource](#solidfloorsource) | each field's default | The least light of an opaque solid. Default white at 30. |
 | `grade` | [GradeSource](#gradesource) | each field's default | Default none. |
 | `glow_groups` | list of [GlowGroupSource](#glowgroupsource) | `[]` | At most 255. Default none. |
@@ -226,6 +226,7 @@ A surface material: a file `<id>.ron` of a material library, or one of a level's
 | `id` | string | required | 1 to 64 bytes of `[a-z0-9_-]`, starting with a letter or digit; unique in a level, and a library file's name (`<id>.ron`). A level's elements name it. |
 | `name` | string | required | Shown in the editors, 1 to 64 characters. |
 | `notes` | string | `""` | Free text for authors; ignored by the game. |
+| `light_soak` | integer (optional) | none | How deep light soaks into its rock and dirt from the air beside them, world pixels, 0 to 12 (issue #57): thin for concrete and stone, deeper for furniture. Default none: the level's `look.light_soak`. |
 | `heat` | [HeatSource](#heatsource) (optional) | none | How it takes heat, spreads it, loses it and shows it. Default none: it never heats. |
 
 <a id="elementkind"></a>

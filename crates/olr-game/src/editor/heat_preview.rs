@@ -145,7 +145,9 @@ fn scene() -> (MaterialGrid, RgbaImage, RgbaImage, SurfaceMaps) {
 fn table(materials: &[Option<SurfaceMaterial>; 2]) -> Vec<SurfaceMaterial> {
     materials
         .iter()
-        .map(|m| m.clone().unwrap_or_else(|| SurfaceMaterial { id: "none".into(), heat: None }))
+        .map(|m| {
+            m.clone().unwrap_or_else(|| SurfaceMaterial { id: "none".into(), heat: None, light_soak: None })
+        })
         .collect()
 }
 

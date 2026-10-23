@@ -1358,6 +1358,7 @@ mod tests {
 
     fn stone() -> SurfaceMaterial {
         SurfaceMaterial {
+            light_soak: None,
             id: "stone".into(),
             heat: Some(Heat {
                 sensitivity: 100,
@@ -1380,7 +1381,7 @@ mod tests {
 
     #[test]
     fn only_heating_materials_make_tables() {
-        let cold = SurfaceMaterial { id: "cold".into(), heat: None };
+        let cold = SurfaceMaterial { id: "cold".into(), heat: None, light_soak: None };
         assert!(tables(std::slice::from_ref(&cold)).is_none());
         let mut numb = stone();
         numb.heat.as_mut().unwrap().sensitivity = 0;
@@ -1505,7 +1506,7 @@ mod tests {
         assert_eq!(nearest(&views, [18.0, -3.0]).unwrap().camera.0, 20.0, "the nearest edge");
         assert_eq!(nearest(&views, [f32::NAN, 0.0]).unwrap().camera.0, 0.0);
         assert!(nearest(&[], [0.0, 0.0]).is_none());
-        let cold = SurfaceMaterial { id: "cold".into(), heat: None };
+        let cold = SurfaceMaterial { id: "cold".into(), heat: None, light_soak: None };
         let (params, ..) = tables(&[stone(), cold]).unwrap();
         assert!(layer_heats(&params, 1, 58) && !layer_heats(&params, 1, 59), "z < 64");
         assert!(layer_heats(&params, 1, 0), "depth 0 counts as 1");

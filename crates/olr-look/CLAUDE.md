@@ -130,8 +130,9 @@ own look. The simulation never sees it.
   `worm_halo(d, depth)` (`s × (1 − (d − 1)/r)²`, 0 past `r`).
 - **Surface materials** (`material.rs`, issue #37; spec
   `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`):
-  `SurfaceMaterial { id, heat: Option<Heat> }` (`heats()`: a sensitivity
-  above 0), `Heat { sensitivity, capacity, conductivity, cooling, ramp,
+  `SurfaceMaterial { id, heat: Option<Heat>, light_soak: Option<u8> }`
+  (`heats()`: a sensitivity above 0; issue #57: `light_soak()` its own
+  soak clamped to `MAX_SOAK`, `None` the level's), `Heat { sensitivity, capacity, conductivity, cooling, ramp,
   light }` (percent of stone's 100; each accessor clamps to the limits:
   `MAX_SENSITIVITY` 100, `MIN_CAPACITY`-`MAX_CAPACITY` 10-1000,
   `MAX_CONDUCTIVITY` 1000, `MIN_COOLING`-`MAX_COOLING` 1-1000; `ramp()` is

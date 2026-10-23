@@ -327,7 +327,8 @@ pub struct LookSource {
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub softness: u8,
     /// How deep light soaks into solids from the air beside them, world
-    /// pixels, 0 to 12, fading with depth. Default 8.
+    /// pixels, 0 to 12, fading with depth, unless the pixel's material sets
+    /// its own (issue #57: `look.materials`' `light_soak`). Default 8.
     #[serde(default = "light_soak", skip_serializing_if = "is_light_soak")]
     pub light_soak: u8,
     /// The least light of an opaque solid. Default white at 30.

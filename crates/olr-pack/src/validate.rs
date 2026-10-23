@@ -552,6 +552,7 @@ mod tests {
         let mut level = olr_format::levels::read_level_files(&fs).unwrap();
         level.look = Some(olr_format::look::LookSource {
             materials: vec![olr_format::materials::MaterialSource {
+                light_soak: None,
                 id: "stone".into(),
                 name: "Stone".into(),
                 notes: String::new(),

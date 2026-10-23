@@ -59,7 +59,7 @@ fn hostile_values_are_clamped_and_never_panic() {
             assert!(g <= 100);
         }
     }
-    let m = SurfaceMaterial { id: "x".into(), heat: Some(Heat { sensitivity: 0, ..wild }) };
+    let m = SurfaceMaterial { id: "x".into(), heat: Some(Heat { sensitivity: 0, ..wild }), light_soak: None };
     assert!(m.heats().is_none(), "sensitivity 0 is no heat");
 }
 

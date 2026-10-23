@@ -14,7 +14,7 @@ use olr_format::materials::MaterialSource;
 use crate::common::{catalog, content};
 
 fn material(id: &str) -> MaterialSource {
-    MaterialSource { id: id.into(), name: id.into(), notes: String::new(), heat: None }
+    MaterialSource { id: id.into(), name: id.into(), notes: String::new(), heat: None, light_soak: None }
 }
 
 #[test]
