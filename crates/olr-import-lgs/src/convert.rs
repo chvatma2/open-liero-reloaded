@@ -269,6 +269,32 @@ mod tests {
         assert_eq!(d.projectiles["rocket"].event_spawn.as_ref().unwrap().projectile, "rocket.s");
     }
 
+    /// Issue #64: a nested projectile is named by its compact chain.
+    #[test]
+    fn nested_projectiles_are_named_by_a_compact_chain() {
+        fn sparks(b: Lgs) -> Lgs {
+            b.pixel_projectile(5, None)
+        }
+        fn bomblet(b: Lgs) -> Lgs {
+            b.pixel_projectile(4, Some(sparks))
+        }
+        fn shell(b: Lgs) -> Lgs {
+            b.pixel_projectile(3, Some(bomblet))
+        }
+        let script = Lgs::header("Tiny", 1)
+            .projectile_weapon("Cluster", None)
+            .pixel_projectile(12, Some(shell))
+            .footer()
+            .0;
+        let m = import_mod(&gamedir(script), &VPath::new("Tiny").unwrap(), origin()).unwrap();
+        let d = &m.pack.def;
+        assert_eq!(
+            d.projectiles.keys().collect::<Vec<_>>(),
+            ["cluster", "cluster.s", "cluster.s2", "cluster.s3"]
+        );
+        assert_eq!(d.projectiles["cluster.s2"].event_spawn.as_ref().unwrap().projectile, "cluster.s3");
+    }
+
     #[test]
     fn sounds_resolve_like_olx_and_missing_ones_are_dropped() {
         let fs = gamedir(two_weapons());
