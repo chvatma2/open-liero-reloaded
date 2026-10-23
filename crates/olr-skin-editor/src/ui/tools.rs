@@ -2,7 +2,7 @@
 //! switch), the tools and the brush size, the paint colour with the
 //! recent ones or the glow strength, the onion skin, and the frame
 //! operations (copy, paste to the frame, its row or its column, flip,
-//! shift by a pixel).
+//! shift by a pixel). Its rows wrap in a narrow panel (issue #55).
 
 use egui::{RichText, Ui};
 use olr_data::image::Rgba;
@@ -48,7 +48,7 @@ pub(super) fn show(
         }
     });
     ui.add_enabled_ui(state.tool().sized(), |ui| {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for (size, label) in [(1, labels::SIZE_1), (2, labels::SIZE_2)] {
                 if ui.selectable_label(state.size() == size, label).clicked() {
                     out.push(SkinAction::Size(size));
@@ -62,7 +62,7 @@ pub(super) fn show(
         _ => colour(ui, state, data, out),
     }
     ui.separator();
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let l = ui.label(labels::ONION);
         egui::ComboBox::from_id_salt("olr-skin-editor-onion")
             .selected_text(state.onion().name())
@@ -93,7 +93,7 @@ pub(super) fn show(
             }
         }
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button(labels::FLIP).on_hover_text("Mirror left to right").clicked() {
             out.push(SkinAction::Flip { vertical: false });
         }
@@ -101,7 +101,7 @@ pub(super) fn show(
             out.push(SkinAction::Flip { vertical: true });
         }
     });
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         ui.label("Shift");
         for (text, label, dx, dy) in [
             ("←", labels::SHIFT_LEFT, -1, 0),
@@ -124,7 +124,7 @@ pub(super) fn show(
 
 /// The paint colour: a picker, its `#rrggbb` and the recent colours.
 fn colour(ui: &mut Ui, state: &SkinEditorState, data: &mut SkinEditorData, out: &mut Vec<SkinAction>) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         let c = state.colour();
         let mut c32 = colour32(c);
         let r = egui::widgets::color_picker::color_edit_button_srgba(
@@ -173,7 +173,7 @@ fn colour(ui: &mut Ui, state: &SkinEditorState, data: &mut SkinEditorData, out: 
 /// The glow painted: a quarter to full, as the game draws it.
 fn glow_strength(ui: &mut Ui, state: &SkinEditorState, out: &mut Vec<SkinAction>) {
     ui.label(labels::GLOW_STRENGTH);
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         for g in GLOW_STRENGTHS {
             let text = format!("{} %", (u32::from(g) * 100 + 127) / 255);
             if ui.selectable_label(state.glow_strength() == g, RichText::new(text)).clicked() {

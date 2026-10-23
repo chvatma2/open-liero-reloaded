@@ -7,7 +7,7 @@
 use egui::{Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, vec2};
 use olr_data::image::{Rgba, RgbaImage};
 
-use super::{SkinEditorData, checks, frame_texture, labels, relabel, texture};
+use super::{SkinEditorData, checks, frame_texture, labels, relabel, text_width, texture};
 use crate::paint::Target;
 use crate::state::{GRID_ZOOM, SkinAction, SkinEditorState};
 
@@ -16,6 +16,8 @@ const ONION_ALPHA: f32 = 0.35;
 /// The player-colour overlay's colour and the glow's.
 const TINT_OVERLAY: Rgba = Rgba { r: 255, g: 0, b: 220, a: 150 };
 const GLOW_OVERLAY: [u8; 3] = [255, 236, 64];
+/// How the canvas pans and zooms.
+const PAN_HINT: &str = "right drag pans, the wheel zooms";
 
 pub(super) fn show(
     ui: &mut Ui,
@@ -23,14 +25,21 @@ pub(super) fn show(
     data: &mut SkinEditorData,
     out: &mut Vec<SkinAction>,
 ) {
-    ui.horizontal(|ui| {
+    ui.horizontal_wrapped(|ui| {
         if ui.button("−").on_hover_text(labels::ZOOM_OUT).clicked() {
             out.push(SkinAction::Zoom(-1));
         }
         if ui.button("+").on_hover_text(labels::ZOOM_IN).clicked() {
             out.push(SkinAction::Zoom(1));
         }
-        ui.weak(format!("{} points a pixel · right drag pans, the wheel zooms", state.zoom()));
+        // How to pan and zoom shows when it fits on a line, else on hover.
+        let zoom = format!("{} points a pixel", state.zoom());
+        let hint = format!("{zoom} · {PAN_HINT}");
+        if text_width(ui, &hint, egui::TextStyle::Body) <= ui.available_width() {
+            ui.weak(hint);
+        } else {
+            ui.weak(zoom).on_hover_text(PAN_HINT);
+        }
     });
     let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
     relabel(&response, egui::WidgetType::Other, labels::CANVAS);

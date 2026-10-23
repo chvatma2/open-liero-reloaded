@@ -4,8 +4,10 @@
 //! operations), the frames and the preview and the skin's settings on the
 //! right, the chosen frame large in the middle, and the dialogs. `show`
 //! draws them from the state and returns the frame's actions; the host
-//! applies `olr_ui::theme`. Images are egui textures made here (the
-//! level editor's swatches' way): the host does no GPU work.
+//! applies `olr_ui::theme`. They fit any window (issue #55): the side
+//! panels take a share of its width, and below [`NARROW`] one shows at a
+//! time (the session bar's Tools | Frames). Images are egui textures made
+//! here (the level editor's swatches' way): the host does no GPU work.
 
 mod canvas;
 mod dialogs;
@@ -71,6 +73,34 @@ pub mod labels {
     pub const DONT_SAVE: &str = "Don't save";
     pub const CANCEL: &str = "Cancel";
     pub const OK: &str = "OK";
+    // The narrow window's switch between the side panels.
+    pub const SHOW_TOOLS: &str = "Tools";
+    pub const SHOW_FRAMES: &str = "Frames";
+}
+
+/// Below this width (points) one side panel shows at a time.
+pub const NARROW: f32 = 900.0;
+/// The tools panel: its share of the window's width, and its widths
+/// (points, its frame's margins in).
+const TOOLS_SHARE: f32 = 0.2;
+const TOOLS_MIN: f32 = 200.0;
+const TOOLS_MAX: f32 = 220.0;
+/// The frames panel: its share and its narrowest (the frames at about
+/// `frames::MIN_THUMB` wide); at most what the frames need at full size.
+const FRAMES_SHARE: f32 = 0.37;
+const FRAMES_MIN: f32 = 240.0;
+/// A narrow window's side panel's share.
+const NARROW_SHARE: f32 = 0.55;
+/// The passes the side panels' scroll areas follow a focus that moved
+/// otherwise than by the pointer.
+const FOLLOW_PASSES: u8 = 8;
+
+/// The side panel a narrow window shows.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum Side {
+    #[default]
+    Tools,
+    Frames,
 }
 
 /// What the preview's textures show: the skin's generation, the frame,
@@ -105,6 +135,11 @@ pub struct SkinEditorData {
     /// A paint drag that began on the canvas, and the art pixel last sent.
     canvas_drag: bool,
     last_pixel: Option<(i32, i32)>,
+    /// The side panel a narrow window shows.
+    side: Side,
+    /// The focus last seen, and the passes left to follow it.
+    seen_focus: Option<egui::Id>,
+    follow: u8,
 }
 
 impl SkinEditorData {
@@ -124,9 +159,29 @@ impl SkinEditorData {
 pub fn show(ui: &mut Ui, state: &SkinEditorState, data: &mut SkinEditorData) -> Vec<SkinAction> {
     let mut out = Vec::new();
     let mut fields = Vec::new();
-    egui::Panel::top("olr-skin-editor-session").show(ui, |ui| session(ui, state, &mut out));
+    see_focus(ui.ctx(), data);
+    let follow = data.follow > 0;
+    data.follow = data.follow.saturating_sub(1);
+    if follow {
+        ui.ctx().request_repaint();
+    }
+    let width = ui.available_rect_before_wrap().width();
+    let narrow = width < NARROW;
+    // A side panel's frame and its scroll bar's room.
+    let margins = egui::Frame::side_top_panel(ui.style()).total_margin().sum().x
+        + ui.spacing().scroll.allocated_width();
+    let (tools_w, frames_w) = {
+        let share = |s: f32, min: f32, max: f32| (width * s).clamp(min, max.max(min)).min(width);
+        let frames_max = frames::full_width(ui) + margins;
+        if narrow {
+            (share(NARROW_SHARE, TOOLS_MIN, TOOLS_MAX), share(NARROW_SHARE, FRAMES_MIN, frames_max))
+        } else {
+            (share(TOOLS_SHARE, TOOLS_MIN, TOOLS_MAX), share(FRAMES_SHARE, FRAMES_MIN, frames_max))
+        }
+    };
+    egui::Panel::top("olr-skin-editor-session").show(ui, |ui| session(ui, state, data, narrow, &mut out));
     egui::Panel::bottom("olr-skin-editor-status").show(ui, |ui| {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             let doc = state.doc();
             let (w, h) = doc.frame_size();
             let kind = if doc.is_classic() { "classic" } else { "double resolution" };
@@ -135,27 +190,49 @@ pub fn show(ui: &mut Ui, state: &SkinEditorState, data: &mut SkinEditorData) -> 
             ui.label(state.status());
         });
     });
-    egui::Panel::left("olr-skin-editor-tools").exact_size(220.0).resizable(false).show(ui, |ui| {
-        egui::ScrollArea::vertical().id_salt("olr-skin-editor-tools").show(ui, |ui| {
-            tools::show(ui, state, data, &mut out);
+    if !narrow || data.side == Side::Tools {
+        egui::Panel::left("olr-skin-editor-tools").exact_size(tools_w).resizable(false).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("olr-skin-editor-tools").show(ui, |ui| {
+                tools::show(ui, state, data, &mut out);
+                follow_focus(ui, follow);
+            });
         });
-    });
-    egui::Panel::right("olr-skin-editor-frames").exact_size(470.0).resizable(false).show(ui, |ui| {
-        egui::ScrollArea::vertical().id_salt("olr-skin-editor-frames").show(ui, |ui| {
-            frames::show(ui, state, data, &mut out, &mut fields);
+    }
+    if !narrow || data.side == Side::Frames {
+        egui::Panel::right("olr-skin-editor-frames").exact_size(frames_w).resizable(false).show(ui, |ui| {
+            egui::ScrollArea::vertical().id_salt("olr-skin-editor-frames").show(ui, |ui| {
+                frames::show(ui, state, data, &mut out, &mut fields);
+                follow_focus(ui, follow);
+            });
         });
-    });
+    }
     egui::CentralPanel::default().show(ui, |ui| canvas::show(ui, state, data, &mut out));
     dialogs::show(ui.ctx(), state, data, &mut out);
     shortcuts(ui, state, &mut out);
+    see_focus(ui.ctx(), data);
     // A field's last value is in before a click that ended its edit acts.
     fields.extend(out);
     fields
 }
 
-/// Save, Close, Undo and Redo, the skin's name and the unsaved mark.
-fn session(ui: &mut Ui, state: &SkinEditorState, out: &mut Vec<SkinAction>) {
-    ui.horizontal(|ui| {
+/// The narrow window's switch, Save, Close, Undo and Redo, the skin's
+/// name and the unsaved mark.
+fn session(
+    ui: &mut Ui,
+    state: &SkinEditorState,
+    data: &mut SkinEditorData,
+    narrow: bool,
+    out: &mut Vec<SkinAction>,
+) {
+    ui.horizontal_wrapped(|ui| {
+        if narrow {
+            for (side, label) in [(Side::Tools, labels::SHOW_TOOLS), (Side::Frames, labels::SHOW_FRAMES)] {
+                if ui.selectable_label(data.side == side, label).clicked() {
+                    data.side = side;
+                }
+            }
+            ui.separator();
+        }
         if ui.button(labels::SAVE).clicked() {
             out.push(SkinAction::Save);
         }
@@ -210,6 +287,77 @@ fn shortcuts(ui: &Ui, state: &SkinEditorState, out: &mut Vec<SkinAction>) {
             }
         }
     });
+}
+
+/// Notes a focus that moved otherwise than by the pointer (Tab, a
+/// screen reader): the side panels' scroll areas follow it for the next
+/// passes (`olr_ui::pad`'s `see_focus`, the editor's own).
+fn see_focus(ctx: &egui::Context, data: &mut SkinEditorData) {
+    let focused = ctx.memory(|m| m.focused());
+    if focused == data.seen_focus {
+        return;
+    }
+    data.seen_focus = focused;
+    let pointer = ctx.input(|i| i.pointer.any_pressed() || i.pointer.any_released() || i.pointer.any_down());
+    if focused.is_some() && !pointer {
+        data.follow = FOLLOW_PASSES;
+    }
+}
+
+/// Ends a side panel's scroll area's content (`ui`): while `follow`,
+/// scrolls the focused widget into view when it is in this area and not
+/// all shown (egui scrolls to no focused widget by itself). The editor's
+/// own `olr_ui::pad::follow_focus` (it does not depend on `olr-ui`).
+fn follow_focus(ui: &Ui, follow: bool) {
+    if !follow {
+        return;
+    }
+    let ctx = ui.ctx();
+    let Some(r) = ctx.memory(|m| m.focused()).and_then(|id| ctx.read_response(id)) else { return };
+    if r.layer_id != ui.layer_id() || !ui.min_rect().contains(r.rect.center()) {
+        return;
+    }
+    if ui.clip_rect().contains_rect(r.rect) {
+        return;
+    }
+    // Where it was when this area last scrolled to it: it did not move.
+    let last = ui.id().with("olr-skin-editor follow last");
+    if ctx.data(|d| d.get_temp::<(egui::Id, egui::Rect)>(last)) == Some((r.id, r.rect)) {
+        return;
+    }
+    ctx.data_mut(|d| d.insert_temp(last, (r.id, r.rect)));
+    ui.scroll_to_rect(r.rect, None);
+}
+
+/// The width (points) of `text` in `style`, unwrapped.
+pub(crate) fn text_width(ui: &Ui, text: &str, style: egui::TextStyle) -> f32 {
+    egui::WidgetText::from(text)
+        .into_galley(ui, Some(egui::TextWrapMode::Extend), f32::INFINITY, style)
+        .size()
+        .x
+}
+
+/// `label` and the control `add` makes (given the label's id and the
+/// width it may take), side by side when the control has `needs` points
+/// beside the label, else the label above it.
+pub(crate) fn beside<R>(
+    ui: &mut Ui,
+    label: &str,
+    needs: f32,
+    add: impl FnOnce(&mut Ui, egui::Id, f32) -> R,
+) -> R {
+    let room =
+        ui.available_width() - text_width(ui, label, egui::TextStyle::Body) - ui.spacing().item_spacing.x;
+    if room >= needs {
+        ui.horizontal(|ui| {
+            let l = ui.label(label);
+            add(ui, l.id, room)
+        })
+        .inner
+    } else {
+        let l = ui.label(label);
+        add(ui, l.id, ui.available_width())
+    }
 }
 
 /// Names `r` `label` for AccessKit, whatever it shows.
