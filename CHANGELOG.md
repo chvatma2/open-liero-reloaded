@@ -177,6 +177,9 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   scrolls it. Keyboard and gamepad focus scroll every control into view.
 - In split screen the pause menu and the results sit at the window's
   centre, not over the first player's view.
+- The skin editor fits every window: its frames shrink to the panel, its
+  text wraps, and a narrow window shows the tools or the frames beside the
+  canvas (Tools | Frames); a control focused with Tab scrolls into view.
 - Each mod now plays with its own worm and rope physics, as in OpenLieroX.
   Modern Warfare 1.0 had been playing with Liero v1.0's gravity, jump and
   ninja rope; its worms now fall more slowly, jump higher and its rope pulls

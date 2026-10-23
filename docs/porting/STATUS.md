@@ -4419,6 +4419,17 @@ No OLX counterpart (OLX's skins are made in an image editor). As built:
   between 90° up and 60° down (OLX's player menu), turning round after
   every sweep; its frame is the game's (`CWorm.cpp:1225-1244`, not the
   menu's formula). Shown at 3 and 7 points a world pixel.
+- **Fits every window** (issue #55). The side panels take a share of
+  the window's width (tools 20 %, 200-220 points; frames 37 %, from 240
+  points); below 900 points one shows at a time (Tools | Frames in the
+  session bar). The frames panel's widest is what the frames need at full
+  size (about 510 points in the game's fonts), not the issue's 470: within
+  470 points the grid's "Walk n" column and spacing leave no room for 60 ×
+  54 frames, which the issue also asks for at 1400 × 860. The aim columns
+  are headed 1 to 7 (the hint above the grid and on hover); the
+  preview's enlarged pair shrinks by whole points a pixel, then wraps under
+  the game-size one. In a canvas too narrow for its hint line, how to pan
+  and zoom is the zoom label's hover text.
 - **No recovery copy.** Unlike the level editor, a crash or a kill loses
   the skin's unsaved changes; closing (the editor's Close or the window's)
   asks first. A skin is small and saved in a moment.

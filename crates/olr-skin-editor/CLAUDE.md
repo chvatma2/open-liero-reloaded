@@ -9,7 +9,8 @@ Editor screen's Skin tab (`olr-ui`).
 - **Layer 5, `std`, `#![forbid(unsafe_code)]`.** Depends on `olr-data`,
   `olr-format` (`SkinSource`, `compile_skin`), `olr-edit` (`skin::blank`,
   `skin::double`, `skin::preview_frame`), `olr-look` (the skin light's
-  caps) and egui 0.36.2; not on `olr-ui`, `olr-editor`, `olr-render` or
+  caps) and egui 0.36.2; not on `olr-ui` (a dev-dependency for the
+  tests' theme only), `olr-editor`, `olr-render` or
   files (the host reads and writes packs and applies `olr_ui::theme`).
   Not wasm. Tests use `egui_kittest`.
 - **The pattern** (`olr-editor`'s, followed rather than shared: its
@@ -71,14 +72,32 @@ Editor screen's Skin tab (`olr-ui`).
   Make double resolution for a classic skin), dialogs (`dialogs.rs`).
   Shortcuts (Ctrl+Z/Y/S, Ctrl+C/V for a frame, the tools' keys) not while
   a dialog is open or a field has the keyboard.
+  Sizing (issue #55): each side panel is a share of the window's width
+  each frame (`TOOLS_*`, `FRAMES_*` in `ui/mod.rs`; the frames panel at
+  most what the frames need at full size, `frames::full_width`); below
+  `NARROW` (900 points) the session bar's Tools | Frames switch
+  (`labels::SHOW_TOOLS`, `SHOW_FRAMES`; `SkinEditorData`'s, no editor
+  state) shows one, the canvas keeping the `CentralPanel`. The frames
+  shrink to the panel (`THUMB` down to `MIN_THUMB`, 10 : 9; the aim
+  columns headed 1 to 7), the preview's enlarged pair shrinks then wraps,
+  fields and sliders go under their labels when narrow (`beside`), and
+  the bars, the canvas's hint and the dialogs' rows wrap. Each side
+  panel's scroll area follows a focus moved by Tab or AccessKit
+  (`follow_focus`, `olr_ui::pad`'s, the editor's own). Never a horizontal
+  scroll, a smaller font or a scrolled canvas.
 - **Tests** (`tests/`, one binary): `state.rs` (strokes as steps, every
   tool and target, paste to a row and a column, flip and shift, onion,
   settings within the caps, Make double resolution and its undo, the
   first save's name, Close asking, recent colours, the preview's walk
-  covering all 21 frames both ways, other layouts refused) and `flows.rs`
+  covering all 21 frames both ways, other layouts refused), `flows.rs`
   (`egui_kittest`: paint, paste to a row, tint, glow, light, undo, redo,
   Make double resolution and save through the panels; shift, flip and
-  the onion skin; Close asking; the preview), on a synthetic classic skin
-  (`common.rs`): no content needed.
+  the onion skin; Close asking; the preview) and `fits.rs` (issue #55:
+  at `olr-ui/tests/fits.rs`' window sizes and 1400 × 860, in
+  `olr_ui::theme`, a dev-dependency, classic and double resolution with
+  the skin light, both switch positions and the Name dialog: every widget
+  across the window and the frames panel, every control focused whole in
+  the window; full-size frames at 1400 × 860), on a synthetic classic
+  skin (`common.rs`): no content needed.
 
 Test: `cargo nextest run -p olr-skin-editor`.
