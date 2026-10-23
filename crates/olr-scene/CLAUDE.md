@@ -132,14 +132,22 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   slides). Bonuses blend within one bonus (slot and `spawn_time`). Laser
   sights and beams start at their worm as drawn, and a hook on a worm
   sits on that worm as drawn (`tests/anchors.rs`), so nothing trails the
-  blended worm.
+  blended worm. Issue #58: `Blend::worm` blends each state at
+  `worm_draw_pos` (`WormSnap::on_ground`): a living worm on the ground at
+  its `y` truncated to a whole world pixel (OLX's `(int)y`), else exact, so
+  a standing worm and its camera stay still through OLX's ground sawtooth,
+  a step is a one-pixel blend over the tick and a landing or take-off moves
+  less than a pixel (`tests/grounded.rs`). Everything drawn on a worm, the
+  camera and the HUD's names read it.
   `Interpolation::Latest` is OLX: the latest state at whole pixels.
 - **Exact OLX math** (`worm.rs`, `projectile.rs`, `marks.rs`, `camera.rs`):
   each function cites its OLX source. Offsets are OLX's screen pixels
   (half world pixels) from the drawn position. Deviations are listed in
   `docs/porting/STATUS.md` (presentation rows).
 
-Test: `cargo nextest run -p olr-scene` (issue #12: `frames.rs`'s
+Test: `cargo nextest run -p olr-scene` (issue #58's `grounded.rs`:
+`a_standing_worm_draws_still`, `landing_draws_no_jump`,
+`a_worm_walking_over_a_step_moves_at_most_a_pixel_a_tick`; issue #12: `frames.rs`'s
 `skin_frame_picks_double_frames`; issue #27's `views.rs`:
 `two_cameras_follow_two_worms_through_shake_death_and_respawn`, unlit and
 lit, each view's list the single view's frame for frame,

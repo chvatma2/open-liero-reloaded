@@ -194,6 +194,9 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   Modern Warfare 1.0 had been playing with Liero v1.0's gravity, jump and
   ninja rope; its worms now fall more slowly, jump higher and its rope pulls
   as MW intends.
+- A worm standing on the ground no longer bobs up and down a pixel, and
+  neither does the camera following it: with smooth movement on, a worm on
+  the ground is drawn at whole pixels vertically, as in OpenLieroX.
 
 ## 0.1.0 - 2026-10-16
 

@@ -517,7 +517,15 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
   - *Interpolation* (E2, the default) draws positions between the last two
     ticks at sub-pixel precision, without OLX's `(int)` truncation; the
     camera follows the blended position. `Interpolation::Latest` is OLX's
-    whole-pixel drawing of the latest state.
+    whole-pixel drawing of the latest state. Issue #58: a living worm on the
+    ground (`Worm::on_ground`) in either state is blended from that state's
+    `y` truncated to a whole world pixel, OLX's `(int)y`; `x` and a worm in
+    the air stay exact. OLX's ground contact lets a standing worm's `y` creep
+    down about 0.012 px a tick and pushes it back up a pixel once it crosses
+    one (`fixtures/oracle/fall`), which OLX's whole pixels never show; drawn
+    exactly, the worm and the camera bobbed a pixel. A presentation deviation
+    from exact blending that restores OLX's look; the simulation is
+    unchanged.
   - *Per tick, not per drawn frame:* OLX shows the muzzle flash and the
     green crosshair for one drawn frame (about one tick at its 95 FPS cap);
     the scene shows them for every frame drawn of that tick. The shake's
