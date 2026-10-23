@@ -83,7 +83,13 @@ impl Repo {
 
     /// No changes and no untracked files outside `target/`.
     pub fn is_clean(&self) -> Result<bool> {
-        Ok(self.git(&["status", "--porcelain", "--", ".", ":(exclude)target"])?.is_empty())
+        Ok(self.uncommitted()?.is_empty())
+    }
+
+    /// The changed and untracked paths outside `target/`, as
+    /// `git status --porcelain` lines (`?? tools/__pycache__/`).
+    pub fn uncommitted(&self) -> Result<Vec<String>> {
+        Ok(lines(&self.git(&["status", "--porcelain", "--", ".", ":(exclude)target"])?))
     }
 
     /// `path` at `rev`, empty if it does not exist there.

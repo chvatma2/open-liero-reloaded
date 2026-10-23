@@ -74,7 +74,10 @@ fn subjects_and_files_between() {
     assert_eq!(repo.show(&head, "b.md").unwrap(), "2");
     assert_eq!(repo.show(&base, "b.md").unwrap(), "");
     std::fs::write(repo.dir.join("b.md"), "dirty").unwrap();
+    std::fs::create_dir(repo.dir.join("c")).unwrap();
+    std::fs::write(repo.dir.join("c/new.txt"), "").unwrap();
     assert!(!repo.is_clean().unwrap());
+    assert_eq!(repo.uncommitted().unwrap(), [" M b.md", "?? c/"]);
 }
 
 #[test]

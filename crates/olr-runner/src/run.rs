@@ -225,8 +225,9 @@ fn local_time() -> Result<(u32, u32, u32)> {
 /// The session's commits: clean, on the `main` it started from, present,
 /// numbered and off protected paths. Returns the changed files.
 fn gate_commits(repo: &Repo, s: &Settings, base: &str, n: u64) -> Result<Result<Vec<String>, HandBack>> {
-    if !repo.is_clean()? {
-        return Ok(Err(HandBack::DirtyTree));
+    let dirty = repo.uncommitted()?;
+    if !dirty.is_empty() {
+        return Ok(Err(HandBack::DirtyTree(dirty)));
     }
     if !repo.is_ancestor(base)? {
         return Ok(Err(HandBack::NotOnMain));

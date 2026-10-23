@@ -14,7 +14,8 @@ pub enum HandBack {
     Blocked(String),
     NoResult(String),
     Watchdog(&'static str),
-    DirtyTree,
+    /// `git status --porcelain` lines.
+    DirtyTree(Vec<String>),
     NoCommits,
     BadSubjects(Vec<String>),
     Protected(Vec<String>),
@@ -38,7 +39,7 @@ impl HandBack {
             HandBack::Blocked(reason) => format!("The session stopped as blocked:\n\n{reason}"),
             HandBack::NoResult(why) => format!("The session ended without a usable result: {why}"),
             HandBack::Watchdog(why) => format!("The watchdog stopped the session: {why}."),
-            HandBack::DirtyTree => "The session left uncommitted changes.".into(),
+            HandBack::DirtyTree(paths) => format!("The session left uncommitted changes:\n{}", list(paths)),
             HandBack::NoCommits => "The session made no commits.".into(),
             HandBack::BadSubjects(s) => format!("Commit subjects without the issue number:\n{}", list(s)),
             HandBack::Protected(files) => format!("The change touches protected paths:\n{}", list(files)),
