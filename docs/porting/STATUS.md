@@ -5375,6 +5375,59 @@ golden and the oracle are unchanged. As built, the builder's calls:
   the levels without materials; they are not goldens. The playtest and
   the Big Nuke frame are in `docs/deferred-verification.md`.
 
+## Heat stops at the rock face (issue #56)
+
+No OLX counterpart. An explosion (or a mod's projectile heat, issue #42:
+the same deposit) heats only what it reaches, and conduction carries the
+heat in. This replaces issue #40's rule, under which a deposit heated
+every material pixel in its radius (rock and dirt whole however deep,
+the back a fifth): heat glowed deep inside solid rock, in a tunnel
+behind a wall and on both faces of a wall. Presentation only: the
+simulation, the oracle and every match golden are unchanged. As built,
+the builder's calls:
+
+- **The walk** (`heat.wgsl`'s `heat_reach`): for each pixel in a
+  deposit's circle whose material heats, a grid walk from the deposit's
+  centre to the pixel's centre through the pixels the segment crosses,
+  the centre's own and the pixel included, each classed by the solid map.
+  Before the first rock or dirt pixel a back pixel takes `BACK_HEAT`
+  (0.2) as before; the first `HEAT_SKIN` (2) solid pixels in a row are
+  the skin, the k-th taking `HEAT_SKIN_GAIN` (1.0) × `HEAT_SKIN_WEIGHTS`
+  (1, 0.5)'s k-th; past them (deeper rock, or the air once the walk
+  leaves the rock) a pixel takes nothing. A centre in rock is its own
+  skin's first pixel: it heats its pixel and the 8 round it. The
+  constants are `olr_render`'s (`renderer/heat.rs`), prepended to the
+  shaders; the maintainer tunes `HEAT_SKIN_GAIN` in play.
+- **Corners:** passing exactly through a corner (within 10⁻⁵ of the
+  segment) whose two side pixels are both rock or dirt counts as meeting
+  the first solid pixel, the glow light's rule, so no heat slips through
+  a diagonal wall one pixel thin. Once the walk is in the rock a corner
+  adds nothing (a diagonal step through rock is one pixel deeper, not
+  two). Outside the solid map is open, as for the glow light.
+- **Grazing angles:** a face pixel seen at a shallow angle is reached
+  through its neighbours on the face, so it takes the half of a second
+  skin pixel or nothing; a flat face heats whole within about 45° of its
+  normal from the centre, and conduction along the face evens the rim
+  out. The issue's walk, kept as specified.
+- **Cost:** the walk stops as soon as the pixel is shielded or past the
+  skin, runs only inside the circle and for a heating material, and
+  visits at most `HEAT_WALK_STEPS` (2 × `MAX_HEAT_RADIUS` + 4, 132)
+  pixels. Each deposit still adds whole texel units, so deposits in one
+  pass or several give the same bytes; the CPU's boxes and bounds hold
+  (the walk only ever puts in less heat).
+- **Distant layers** (issue #41) are unchanged: their solid map is all
+  background, so a walk there never meets rock and gives the old bytes.
+- **Timing:** the walk reads the solid map as the frame draws it, the
+  crater already dug, so its rim heats (as `BACK_HEAT`'s rule).
+- **Tests adjusted:** `tests/gpu/heat.rs`'s
+  `a_deposit_heats_only_material_pixels_and_spreads_only_into_conducting_ones`,
+  `heat_cools_to_nothing`, `a_hot_pixel_adds_glow_light`,
+  `a_hot_pixel_shows_its_colour_in_every_view` and
+  `a_dug_pixel_is_ruled_by_its_back` deposited inside the test level's
+  dirt and read heat deep in it; their blasts now lie in the air beside a
+  face (the first over each material, the last with a blast of its own
+  past the hole).
+
 ## Every screen fits (issue #49)
 
 No OLX counterpart (OLX's menus are a fixed 640 × 480). Every menu

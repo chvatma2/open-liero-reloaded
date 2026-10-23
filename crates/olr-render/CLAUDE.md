@@ -347,9 +347,18 @@ on screen or offscreen.
   `R32Float`), with a scratch twin; a lit frame's first passes (once a
   frame, however many views: `split_screen_steps_once_per_frame`) are
   the frame's ops in order: deposits (falloff `1 − (d/R)²`, × the
-  material's sensitivity over its capacity; issue #40: × `BACK_HEAT` 0.2
-  on a back pixel, where no rock or dirt stands: the wall lies behind the
-  explosion; each deposit added in whole texel units, so deposits landing
+  material's sensitivity over its capacity, × what the deposit reaches;
+  issue #56, `heat_reach`: a grid walk from the centre to the pixel's
+  centre over the solid map, the centre's pixel and the pixel included,
+  a corner closed when both pixels beside it are rock or dirt (the glow
+  light's rule), outside the map open; before the first rock or dirt
+  pixel a back pixel takes `BACK_HEAT` 0.2 (issue #40: the wall lies
+  behind the explosion); the first `HEAT_SKIN` 2 solid pixels in a row
+  are the skin, the k-th taking `HEAT_SKIN_GAIN` 1.0 ×
+  `HEAT_SKIN_WEIGHTS[k − 1]` (1, 0.5); past them, deeper rock or the air
+  behind it, nothing, so conduction carries the heat in; a centre in rock
+  is its own skin's first pixel; a walk visits at most `HEAT_WALK_STEPS`
+  pixels; each deposit added in whole texel units, so deposits landing
   in one pass or several give the same bytes), steps (into the scratch over
   the active boxes, scissored, copied back) and zeroes. A step: each
   4-neighbour gives `min(MAX_COUPLING 0.24, CONDUCT 0.05 ×
@@ -379,6 +388,10 @@ on screen or offscreen.
   `HEAT_CAST` (reach `HEAT_REACH` 200; `a_hot_pixel_adds_glow_light`).
   Timed as `PassGroup::Heat`. Tests (GPU, `tests/gpu/heat.rs`): those
   named and `a_deposit_heats_only_material_pixels_and_spreads_only_into_conducting_ones`,
+  issue #56's `a_deposit_heats_only_the_rock_face`,
+  `heat_soaks_inward_from_the_face`, `a_wall_shields_what_is_behind_it`,
+  `a_diagonal_wall_shields_too`, `a_deposit_inside_rock_heats_round_its_centre`,
+  `the_back_in_sight_takes_its_share`,
   `sensitivity_zero_never_heats`, `heat_cools_to_nothing`,
   `new_material_values_keep_the_heat`,
   `stepping_n_ticks_at_once_equals_n_single_steps`,
@@ -393,7 +406,8 @@ on screen or offscreen.
   `HeatTextures` of its own at its world size (art ÷ the level's art
   scale): the level's table, surface texels its material front and back
   where its image covers (`layer_texels`), a solid map all background, so
-  it takes `BACK_HEAT` (it lies behind the explosion) and cools as faced
+  it takes `BACK_HEAT` (it lies behind the explosion; a walk there never
+  meets rock, issue #56) and cools as faced
   by the air; no conduction to the level or between layers (`set_lighting`
   remakes them, `upload_terrain` resets them; `set_surface` with maps
   naming nothing keeps the table for them). `deposit_heat_seen(deposit,

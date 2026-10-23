@@ -143,6 +143,10 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   it readable: tight on the level's back wall, wider and fainter on far
   distant layers, none on the farthest (a night sky), on rock or on
   glowing pixels.
+- Explosions heat only what they reach: the open back wall and the
+  outer two pixels of the rock or dirt they meet, from which the heat
+  soaks in. No more glow deep inside rock, in a tunnel behind a wall or
+  on a wall's far face.
 
 - Content packs are in the new format, version 5. Re-import packs you
   made with `cargo xtask fetch-olx-content` or `olr-cli import`; packs of
