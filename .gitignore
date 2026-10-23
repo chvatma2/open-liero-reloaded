@@ -1,4 +1,6 @@
 /target
+# Python byte code, from tools/ scripts that import one another
+__pycache__/
 # egui_kittest's snapshot by-products (the accepted images are committed)
 /fixtures/ui/*.new.png
 /fixtures/ui/*.diff.png
