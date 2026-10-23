@@ -90,8 +90,8 @@ impl Shade {
 /// A living worm's body (plan 15b, spec
 /// `2026-10-19-worm-lighting-design.md`): cut as its skin sprite, its
 /// opaque pixels are the worm's silhouette in the renderer's occluder map.
-/// Since #53 it stops no light (the name is plan 15b's); #54's halo is to
-/// use it. `worm` is the worm's index + 1 (1-255). Only a lit match lists
+/// Since #53 it stops no light (the name is plan 15b's); the renderer's
+/// worm halo (issue #54) darkens the background round it. `worm` is the worm's index + 1 (1-255). Only a lit match lists
 /// them.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Occluder {

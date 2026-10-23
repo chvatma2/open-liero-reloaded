@@ -3728,7 +3728,7 @@ Spec `docs/superpowers/specs/2026-10-19-worm-lighting-design.md`, plan
 - **Worms block light — removed by issue #53** (glitches outweighed the benefit, the maintainer's call, 2026-10-23: worms
   no longer block any light, and the light grid is byte for byte the same
   with or without them, `worms_change_no_light`; the occluder map is
-  still drawn, for #54's halo). As it was (since 2026-10-20 only over 4
+  still drawn: the worm halo of issue #54 reads it). As it was (since 2026-10-20 only over 4
   world pixels: see "Glowing light (plan 15c)", short worm shadows): the scene lists each living worm's body (its skin
   frame) as an `Occluder` (`DrawList::occluders`, worm index + 1) in a lit
   match, whatever the view. The renderer draws them each lit frame into an
@@ -3764,6 +3764,58 @@ Spec `docs/superpowers/specs/2026-10-19-worm-lighting-design.md`, plan
   no occluder cost: no facing lookups, no level-wide occluder copy, no
   worm reads in the emission, cascades or soak; only the occluder map's
   draw remains (in the world group).
+
+## Worm halo (issue #54)
+
+Part 2 of 2 of the worms' look after #53 took them out of the light: a
+steady cue that keeps a worm readable and lifts it off the level. No OLX
+counterpart (OLX draws no light). As built:
+
+- **A centred halo, not a shadow** (the maintainer's choice,
+  2026-10-23): a soft dark outline on the background behind each living
+  worm, with no direction, so it cannot drift, pop or flip. It is drawn in
+  the composite (`composite.wgsl`'s `worm_halo`; no new pass) and only in
+  lit frames: an unlit match draws today's bytes, and the light grid is
+  untouched (`light_is_camera_independent`, `worms_change_no_light`).
+- **Only on the background**: the level's back (terrain texels whose
+  world pixel is not rock or dirt, the opaque backing under see-through
+  pixels included) and distant layers (issue #11). Never on rock or dirt,
+  a glowing texel (a lamp on the back wall, and so a glowing sky such as
+  Castle Strike Reloaded's, takes none), any sprite or the worm. An
+  opaque `Shade::LIT` sprite writes the terrain's shade, so the lit
+  terrain and the distant layers write a **background tag**, 0.25 in the
+  shade's marker channel; the composite reads (0.125, 0.375) as
+  background and 0.5 or more as a marker, as before. A see-through sprite
+  over the background blends the tag down and takes little or no halo
+  (accepted). With the halo off the tag changes no byte
+  (`the_tag_changes_no_other_byte`; `lit-hashes.ron` drawn with the halo
+  off was #53's).
+- **Shape**: per world pixel (never finer than the art), `d` the distance
+  from its centre to the nearest pixel of any living worm's body in the
+  view's occluder map (1 right next to the silhouette), `x = (d − 1) /
+  r`: the light the texel takes (ambient and glow light, capped, and the
+  bloom on it; not its self-light, floor or grade) is scaled by `1 − s ×
+  (1 − x)²`, nothing from `x = 1` (`olr_look::engine::worm_halo`, the
+  CPU twin). The search runs only within `ceil(r)` of a worm box (at most
+  11 × 11). Overlapping halos take the strongest (the nearest worm),
+  never the sum. Each view draws it from its own occluder map, which
+  covers the view, its margin and `LIGHT_PAD`, so a worm just outside a
+  view darkens its edge as a wider view shows it.
+- **Depth**: 0 for the level's back, `1 − shade alpha` for a distant
+  layer (8-bit: compared with half a step of tolerance). `r` and `s` go
+  linearly from their depth-0 values to `WORM_HALO_RADIUS_MAX` and 0 at
+  `WORM_HALO_FADE`; nothing at or past it (a night sky at depth 90).
+- **Final constants** (`olr_look::engine`, prepended to the shaders):
+  `WORM_HALO_RADIUS` 2 world pixels, `WORM_HALO_RADIUS_MAX` 5,
+  `WORM_HALO_STRENGTH` 0.5, `WORM_HALO_FADE` 0.6: the issue's starting
+  values, kept after looking at the re-blessed `look-rocket.png` (a clear
+  dark outline round the worms on the lit back wall) and `render-match`
+  frames of Castle Strike Reloaded and its night playtest copy and of
+  `look-test-distant` on the software adapter. Not yet judged in play
+  (`docs/deferred-verification.md`).
+- **Not done** (the issue's non-goals): no light-dependent or directional
+  shadow, no per-player toggle, no per-level or per-mod setting, no halo
+  for ropes, hooks, projectiles, bonuses or dead worms.
 
 ## Glowing light (plan 15c)
 

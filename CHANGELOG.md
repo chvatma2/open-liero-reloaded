@@ -139,6 +139,10 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   OLX's one-pixel offset.
 - In lit levels worms no longer cast shadows or have a lit side: a worm
   takes the light where it stands, never darker than its floor.
+- In lit levels a soft dark halo on the background behind each worm keeps
+  it readable: tight on the level's back wall, wider and fainter on far
+  distant layers, none on the farthest (a night sky), on rock or on
+  glowing pixels.
 
 - Content packs are in the new format, version 5. Re-import packs you
   made with `cargo xtask fetch-olx-content` or `olr-cli import`; packs of
