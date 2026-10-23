@@ -230,3 +230,8 @@
   fixtures/render/look-glow-tip.png
   fixtures/render/look-rocket.png
   fixtures/render/look-skin.png
+2026-10-23 bless-render: #56: heat stops at the rock face
+  fixtures/render/heat-cooled.png
+  fixtures/render/heat-distant.png
+  fixtures/render/heat-fresh.png
+  fixtures/render/lit-hashes.ron
