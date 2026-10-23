@@ -48,8 +48,10 @@ from the Editor screen's Material tab (`olr-ui`).
   material, the unsaved mark), the library on the left (`list`: New
   material, Copy, Rename, Delete; Built in, Yours), the fields in the
   middle (`fields.rs`: name and file, Edit a copy, the problems, Notes,
-  Takes heat, the four heat numbers and Light as a typed field, a slider
-  and their bounds, Own colour ramp, the ramp's strip, `strip`, and its
+  issue #57's Light soak (a combo box, `labels::LIGHT_SOAK`: "Level's",
+  `LIGHT_SOAK_LEVEL`, none, or `labels::soak_px(n)` 0 to 12 px;
+  `Edit::LightSoak`, clamped, undone like any field), Takes heat, the
+  four heat numbers and Light as a typed field, a slider and their bounds, Own colour ramp, the ramp's strip, `strip`, and its
   keys, Add key), the live preview on the right (below), the status at
   the bottom, the dialogs
   (`dialogs.rs`: the name with the file it gets, Delete, unsaved changes,
@@ -78,6 +80,10 @@ from the Editor screen's Material tab (`olr-ui`).
   patch blasts, on the wall nothing), the sizes' and scales' own
   (`BlastSize::label`, `TimeScale::label`), `RESTART`, `COMPARE` (a
   combo box: `COMPARE_NONE`, `labels::compare_entry(name, builtin)`).
+  The preview draws lit solids, so it shows a material's own light soak
+  (issue #57): its look has no level look, so the level's soak there is
+  0 ("Level's" soaks nothing) and the hot rim's glow light seeps into the
+  patch's rock and dirt as deep as the material's soak.
 - **Tests** (`tests/`, one binary, no content needed: `common.rs`'s
   library of Stone and Wood built in and the user's Lava rock): `state.rs`
   (built-in read-only, every field's bounds, the ramp's keys, New and
@@ -85,6 +91,7 @@ from the Editor screen's Material tab (`olr-ui`).
   Delete, a recovered material, `free_id`) and `flows.rs`
   (`egui_kittest`, a test host keeping the user's files in memory:
   create, edit and save; Edit a copy of a built-in one; a field's bounds;
+  issue #57's `light_soak_is_set_saved_and_undone`;
   Delete and Rename; a recovered material saved and Close asking);
   `preview.rs` (issue #45: the controls' commands, a dialog open too;
   the material compared following the library; the panel's picture

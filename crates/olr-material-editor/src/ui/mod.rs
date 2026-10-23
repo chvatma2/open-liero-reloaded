@@ -36,6 +36,9 @@ pub mod labels {
     pub const EDIT_A_COPY: &str = "Edit a copy";
     // The fields.
     pub const NOTES: &str = "Notes";
+    /// Issue #57: the light soak's choice, the level's or its own.
+    pub const LIGHT_SOAK: &str = "Light soak";
+    pub const LIGHT_SOAK_LEVEL: &str = "Level's";
     pub const HEATS: &str = "Takes heat";
     pub const SENSITIVITY: &str = "Sensitivity %";
     pub const CAPACITY: &str = "Capacity %";
@@ -71,6 +74,11 @@ pub mod labels {
     pub const OK: &str = "OK";
 
     /// A number field's slider.
+    /// The light soak's choice of `px` world pixels.
+    pub fn soak_px(px: u8) -> String {
+        format!("{px} px")
+    }
+
     pub fn slider(name: &str) -> String {
         format!("{name} slider")
     }

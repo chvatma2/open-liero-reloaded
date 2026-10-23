@@ -27,7 +27,7 @@ use olr_format::materials::{
 };
 use olr_look::{
     LAVA_RAMP, MAX_CAPACITY, MAX_CONDUCTIVITY, MAX_COOLING, MAX_GLOW, MAX_RAMP_KEYS, MAX_SENSITIVITY,
-    MAX_TEMPERATURE, MIN_CAPACITY, MIN_COOLING, RampKey, ramp_at,
+    MAX_SOAK, MAX_TEMPERATURE, MIN_CAPACITY, MIN_COOLING, RampKey, ramp_at,
 };
 
 /// The most undo steps kept.
@@ -101,6 +101,8 @@ pub enum Choice {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Edit {
     Notes(String),
+    /// Its own light soak, world pixels (issue #57), or the level's (`None`).
+    LightSoak(Option<i64>),
     /// Whether it heats at all (on: stone's heat).
     Heats(bool),
     Sensitivity(i64),
@@ -327,9 +329,16 @@ fn edited(m: &MaterialSource, e: &Edit) -> Option<MaterialSource> {
         m.heat = on.then(stone_heat);
         return Some(m);
     }
+    if let Edit::LightSoak(v) = *e {
+        m.light_soak = match v {
+            Some(v) => Some(clamp(v, 0, MAX_SOAK.into())?),
+            None => None,
+        };
+        return Some(m);
+    }
     let h = m.heat.as_mut()?;
     match *e {
-        Edit::Notes(_) | Edit::Heats(_) => {}
+        Edit::Notes(_) | Edit::Heats(_) | Edit::LightSoak(_) => {}
         Edit::Sensitivity(v) => h.sensitivity = clamp(v, 0, MAX_SENSITIVITY.into())?,
         Edit::Capacity(v) => h.capacity = clamp(v, MIN_CAPACITY.into(), MAX_CAPACITY.into())?,
         Edit::Conductivity(v) => h.conductivity = clamp(v, 0, MAX_CONDUCTIVITY.into())?,

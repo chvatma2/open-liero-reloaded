@@ -3,12 +3,13 @@
 //! the heat's numbers (each typed or slid, within its bounds, the bounds
 //! beside it), the light and the colour ramp: the engine's or its own
 //! keys (temperature, colour, glow; added and removed), drawn as a strip.
+//! Issue #57: the light soak, the level's or its own 0 to 12 px.
 
 use egui::{RichText, Ui};
 use olr_format::materials::MaterialSource;
 use olr_look::{
-    MAX_CAPACITY, MAX_CONDUCTIVITY, MAX_COOLING, MAX_GLOW, MAX_RAMP_KEYS, MAX_SENSITIVITY, MAX_TEMPERATURE,
-    MIN_CAPACITY, MIN_COOLING,
+    MAX_CAPACITY, MAX_CONDUCTIVITY, MAX_COOLING, MAX_GLOW, MAX_RAMP_KEYS, MAX_SENSITIVITY, MAX_SOAK,
+    MAX_TEMPERATURE, MIN_CAPACITY, MIN_COOLING,
 };
 
 use super::{MaterialEditorData, caption, labels, relabel, strip};
@@ -68,6 +69,8 @@ fn body(ui: &mut Ui, cx: &mut Cx, m: &MaterialSource) {
     {
         cx.commits.push(MaterialAction::Set(Edit::Notes(t)));
     }
+    ui.add_space(8.0);
+    light_soak(ui, cx, m.light_soak);
     ui.add_space(8.0);
     let mut heats = m.heat.is_some();
     let r = ui.checkbox(&mut heats, labels::HEATS).on_hover_text(
@@ -186,6 +189,28 @@ fn body(ui: &mut Ui, cx: &mut Cx, m: &MaterialSource) {
     if r.clicked() {
         cx.commits.push(MaterialAction::Set(Edit::AddKey));
     }
+}
+
+/// The light soak (issue #57): the level's, or its own world pixels.
+fn light_soak(ui: &mut Ui, cx: &mut Cx, soak: Option<u8>) {
+    let shown = soak.map_or(labels::LIGHT_SOAK_LEVEL.to_string(), labels::soak_px);
+    ui.horizontal(|ui| {
+        let r = egui::ComboBox::from_label(labels::LIGHT_SOAK).selected_text(shown).show_ui(ui, |ui| {
+            let mut pick = |ui: &mut Ui, v: Option<u8>, text: &str| {
+                if ui.selectable_label(soak == v, text).clicked() && soak != v {
+                    cx.commits.push(MaterialAction::Set(Edit::LightSoak(v.map(i64::from))));
+                }
+            };
+            pick(ui, None, labels::LIGHT_SOAK_LEVEL);
+            for px in 0..=MAX_SOAK {
+                pick(ui, Some(px), &labels::soak_px(px));
+            }
+        });
+        r.response.on_hover_text(
+            "How deep light seeps into its rock and dirt from the air beside them: thin for concrete \
+             and stone, deeper for furniture. Level's: the level's own light soak",
+        );
+    });
 }
 
 /// A number's row of the grid: its name, its field and slider, its bounds.

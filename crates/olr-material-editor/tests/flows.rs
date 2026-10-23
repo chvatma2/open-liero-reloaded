@@ -184,6 +184,34 @@ fn edit_a_copy_of_a_built_in_material() {
     }));
 }
 
+/// Issue #57: the light soak set through the fields, saved, and undone.
+#[test]
+fn light_soak_is_set_saved_and_undone() {
+    let mut h = harness(MaterialEditorState::new(library()));
+    assert_eq!(doc(&h).light_soak, None, "the level's");
+    click(&mut h, labels::LIGHT_SOAK);
+    click(&mut h, &labels::soak_px(2));
+    assert_eq!(doc(&h).light_soak, Some(2));
+    assert!(h.query_by_label(labels::UNSAVED).is_some());
+    click(&mut h, labels::SAVE);
+    assert_eq!(file(&h, "lava-rock").light_soak, Some(2));
+    assert!(h.state().files["lava-rock"].contains("light_soak: 2,"));
+    click(&mut h, labels::LIGHT_SOAK);
+    click(&mut h, labels::LIGHT_SOAK_LEVEL);
+    assert_eq!(doc(&h).light_soak, None);
+    click(&mut h, labels::UNDO);
+    assert_eq!(doc(&h).light_soak, Some(2), "undo restores it");
+    click(&mut h, labels::UNDO);
+    assert_eq!(doc(&h).light_soak, None);
+    click(&mut h, labels::REDO);
+    assert_eq!(doc(&h).light_soak, Some(2));
+    // Its bounds: 0 to 12, whatever is asked.
+    for (asked, got) in [(99, olr_look::MAX_SOAK), (-3, 0)] {
+        h.state_mut().state.update(A::Set(olr_material_editor::Edit::LightSoak(Some(asked))));
+        assert_eq!(doc(&h).light_soak, Some(got));
+    }
+}
+
 #[test]
 fn a_field_keeps_to_its_bounds() {
     let mut h = harness(MaterialEditorState::new(library()));
