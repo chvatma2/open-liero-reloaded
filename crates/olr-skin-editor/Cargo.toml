@@ -17,6 +17,7 @@ egui.workspace = true
 
 [dev-dependencies]
 egui_kittest = { workspace = true, features = ["wgpu", "snapshot"] }
+olr-ui.workspace = true
 
 [[test]]
 name = "integration"

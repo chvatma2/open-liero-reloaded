@@ -2,5 +2,6 @@
 //! module here.
 
 mod common;
+mod fits;
 mod flows;
 mod state;
