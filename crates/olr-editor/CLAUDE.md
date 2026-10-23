@@ -63,7 +63,9 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   `open` gives a plain level its three drawn layers (`olr_edit::compose::
   split_from`: `background`, `dirt`, `rock`, which bake back to its files
   byte for byte, the playtest's request: a loaded map can be erased and
-  painted) and rebakes; `split(id)` turns a raster element into the same
+  painted) and rebakes; a level holding layer folders (issue #59) does not
+  open (`FOLDERS_REFUSED`, `a_level_with_folders_does_not_open_yet`)
+  until the document edits them (issue #60); `split(id)` turns a raster element into the same
   three layers in its place (`EditorAction::Split`, the properties' "Split
   into layers": one step); `to_pack`
   (or a `snapshot()`'s, which a thread may make: `PackSnapshot`) encodes

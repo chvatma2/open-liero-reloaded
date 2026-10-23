@@ -606,3 +606,16 @@ fn a_look_shows_in_the_saved_thumbnail() {
     doc.set_look(Some(dark)).unwrap();
     assert_ne!(crate::common::files(&doc)["thumb.png"], before);
 }
+
+/// Issue #59: layer folders reach the editor with issue #60; until then
+/// a level holding them does not open, so no save drops them.
+#[test]
+fn a_level_with_folders_does_not_open_yet() {
+    let Some(root) = content() else { return };
+    let (_tmp, dir) = copy_pack(&root, &fixture());
+    let mut pack = olr_edit::pack::load(&dir).unwrap();
+    let first = pack.composition.as_ref().unwrap().composition.elements[0].id.clone();
+    olr_edit::element::group(&mut pack, &[first], "Folder").unwrap();
+    let e = Document::open(pack, dir, &catalog(&root)).unwrap_err();
+    assert!(matches!(&e, DocError::Bad(m) if m == olr_editor::document::FOLDERS_REFUSED), "{e}");
+}

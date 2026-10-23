@@ -266,6 +266,10 @@ impl std::fmt::Debug for Document {
     }
 }
 
+/// Why a level holding layer folders does not open (issue #59).
+pub const FOLDERS_REFUSED: &str = "this level has layer folders, which the editor cannot edit yet: \
+     open it after ungrouping them (olr-cli level element ungroup)";
+
 impl Document {
     /// A level pack as the editor edits it: a plain level becomes its
     /// raster base (`compose_from`); every element decoded; the theme's
@@ -284,6 +288,11 @@ impl Document {
         let plain = composition.is_none();
         let src = composition.unwrap_or_else(|| olr_edit::compose::split_from(&level));
         check_composition(&src, level.size, level.art_scale).map_err(|e| DocError::Bad(e.to_string()))?;
+        // Layer folders (issue #59) come to the editor with issue #60: until
+        // then a level holding them opens nowhere, so no save drops them.
+        if !src.composition.folders.is_empty() {
+            return Err(DocError::Bad(FOLDERS_REFUSED.into()));
+        }
         let glow_masks = decode_glow_masks(&src, level.size, level.art_scale)?;
         let surface_maps = decode_surface_maps(&src, level.size)?;
         let kept = (plain && (level.glow.is_some() || level.clear.is_some())).then(|| Kept {
