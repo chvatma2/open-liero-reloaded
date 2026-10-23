@@ -148,19 +148,6 @@ pub struct DistantGlow {
     pub mask: Option<Vec<u8>>,
 }
 
-impl DistantGlow {
-    /// Its glow at art pixel `i` of the layer (row-major) as the bake
-    /// writes it, 0-255: the strength percent as 0-255, × the mask's value
-    /// / 255, rounded (`olr_edit::compose`'s element glow).
-    pub fn at(&self, i: usize) -> u8 {
-        let strength = (u32::from(self.strength.min(100)) * 255 + 50) / 100;
-        match &self.mask {
-            None => strength as u8,
-            Some(m) => ((strength * u32::from(m.get(i).copied().unwrap_or(0)) + 127) / 255) as u8,
-        }
-    }
-}
-
 impl DistantLayer {
     /// Its top-left in world pixels with the camera's centre at `camera` in
     /// a level of `size` world pixels: `at + depth × (camera − size / 2)`,
