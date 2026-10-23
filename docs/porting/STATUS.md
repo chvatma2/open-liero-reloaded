@@ -5663,6 +5663,59 @@ Elements tree and canvas. As built in part 1, the builder's calls:
   members indented two spaces per folder; a level without folders prints
   exactly as before.
 
+## Glowing distant layers (issue #62)
+
+Part 1 of 2 (part 2, #63, puts the Reloaded skies on parallax layers). A
+distant (parallax) layer may glow, as an ordinary image or drawn element
+does (`Element::glow`: strength, group, painted mask); before, the format
+refused it. No OLX counterpart (OLX has neither parallax nor light). As
+built:
+
+- **The light is baked at the reference placement.** The glow light runs
+  once a frame for the whole world (issue #26), but a distant layer is
+  drawn at a different world place for every camera (`at + depth ×
+  (camera − centre)`): light following it would need one glow-light run
+  per view. So a layer's light comes from where it lies with the camera
+  at the level's centre (its box, `at`): the bake (`olr_edit::compose`)
+  writes, for every see-through back pixel (no element covers it), the
+  glow and group of the nearest visible distant layer covering it there
+  into `look/glow-back.png` and `look/groups-back.png`, exactly as a
+  glowing back element would, and that layer's colour at alpha 0 (so a
+  group coloured `Own` emits the layer's colour). The nearest covering
+  layer is opaque: a nearer layer that does not glow hides a farther one
+  that does; an opaque back pixel never takes a distant glow. The
+  renderer's emission is unchanged (it reads the glow maps whatever the
+  back's alpha), so the light enters the level through the openings with
+  no per-view cost, and a glowing sky element replaced by a glowing
+  distant layer of the same art and glow lights the level the same.
+- **The picture is lit by its own glow where it is drawn.** The distant
+  quad's instance carries the group and the strength (the shade's `y` and
+  `z`; `INSTANCE_FLOATS` unchanged), a mask texture per layer; the lit
+  distant shader gives a texel self-light `strength × mask × the group's
+  self-light scale`, with the group's flicker (the layer flickers as one
+  region), at its drawn (parallax) place; a hot layer (issue #41) takes
+  the larger self-light. The composite floors the light at self-light and
+  shows a self-lit texel's art with no glare, so a glowing sky shows its
+  art as before. The drawn pixels never cast light nor feed the bloom.
+  Unlit frames draw the layer's art as before.
+- **The trade-off, for authors.** A small bright feature on a distant
+  layer (a lit window in a far city) lights the level as if the camera
+  were at the level's centre: with the camera far from the centre, its
+  light and its drawn place part. A broad source (sky, sunset, moon glow)
+  shows no difference. `docs/formats/level.md`'s `DistantEntry` and the
+  editor's Glow hint on a distant layer say so.
+- **The format.** `level.ron`'s `DistantEntry` gains `glow` (percent) and
+  `glow_group` (an id of the look's groups), and a painted mask is
+  `distant/<i>-glow.png` (grey, the layer's art size); a level without a
+  glowing distant layer reads and writes byte for byte as before. The
+  lenient reader plays a bad distant glow without glow. A removed glow
+  group unglows the distant layers naming it. `asset.md` changed only in
+  the shared `Element::distant` text (it said "no glow"); assets still
+  carry no distant layers.
+- **Not done** (the issue's non-goals): no per-view light, no change to
+  the glow light's passes; distant layers still never collide and are
+  never clear.
+
 ## Every screen fits (issue #49)
 
 No OLX counterpart (OLX's menus are a fixed 640 × 480). Every menu

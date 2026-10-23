@@ -135,6 +135,13 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   put the selection in a new folder (Ctrl+G; Ctrl+Shift+G ungroups). On
   the canvas a click selects a whole object, a double click goes inside
   it, Alt+click picks one piece and Escape goes back up.
+- **Glowing distant layers**: a parallax layer may glow. Its light falls
+  on the level through the openings in the back as if the camera were at
+  the level's centre (once a frame, whatever the number of views), and
+  the layer itself shows its art in the dark wherever it scrolls. The
+  level editor's Glow controls and brush and `olr-cli level element set
+  --glow`/`glow` work on a distant layer; `list` shows each element's
+  glow.
 
 ### Changed
 
