@@ -59,7 +59,11 @@ The headless command-line tool. Its commands:
   true|false` (its rock and dirt let light through, still solid); issue
   #11: `set --distant N` (1-99 percent, near to far; 0 makes it ordinary
   again) makes an image or plain drawn background layer distant, moved to
-  the top of the distant layers (`list` adds ` distant N%`), and
+  the top of the distant layers (`list` adds ` distant N%`); issue #62:
+  `set --glow`/`--glow-group` and `glow` work on a distant layer as on
+  any (its light baked at its box where the back is see-through, its glow
+  in `level.ron`'s `distant` and its mask in `distant/<i>-glow.png`), and
+  `list` adds ` glow S% <group>[ masked]` for every glowing element; and
   `glow <id> (--rect|--circle|--colour-at X,Y [--tolerance N]) --strength
   S` painting a glowing element's glow mask (`element::paint_glow`, a
   first mask whole; 0 erases) or lighting the connected pixels alike in
@@ -71,7 +75,7 @@ The headless command-line tool. Its commands:
   pack, applies, bakes (`compose::bake`, the back tile of the level's
   theme in `--content`, `content/packs` by default) and saves; the first
   on a plain level composes it (raster `base`). `list` prints `<i>: <id>
-  <Image|Drawn|Raster> <material|->[ "<name>"][ hidden][ locked][ distant N%][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map]`, bottom
+  <Image|Drawn|Raster> <material|->[ "<name>"][ hidden][ locked][ distant N%][ glow S% <group>[ masked]][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map]`, bottom
   first, from `composition.ron` alone (`read_composition`); `add-image`
   reads its file bounded (`level_cmd::read_bounded`), applies its settings
   with the image (`add_image_with`) and prints `added element <id>`; `set`
@@ -95,7 +99,8 @@ The headless command-line tool. Its commands:
   `folder_chain`), and a level without folders exactly as before. Tests:
   `tests/element.rs` (plan 15a:
   `cli_sets_and_paints_glow`, `cli_glows_pixels_by_colour`,
-  `cli_sets_clear`; issue #11: `cli_sets_and_clears_distant`; issue #59:
+  `cli_sets_clear`; issue #11: `cli_sets_and_clears_distant`; issue #62:
+  `cli_glows_a_distant_layer`; issue #59:
   `cli_groups_elements_into_folders`).
 - `olr-cli level look <pack> [--ambient RRGGBB:PCT] [--occlusion
   S[,R] | --no-occlusion] [--max-light P]

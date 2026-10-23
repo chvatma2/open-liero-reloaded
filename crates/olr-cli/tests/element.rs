@@ -560,6 +560,53 @@ fn cli_sets_and_clears_distant() {
     assert!(!back(), "no distant layer, no see-through pixel");
 }
 
+/// Issue #62: `set --glow N --glow-group G` and `glow` work on a distant
+/// layer: its light baked where the back is see-through, its glow and mask
+/// in `level.ron` and `distant/<i>-glow.png`, listed.
+#[test]
+fn cli_glows_a_distant_layer() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    add_look(&pack);
+    let run = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        cli(&all, &pack, &content)
+    };
+    ok(&run(&["set", "{pack}", "cave", "--distant", "60", "--name", "Sky"]));
+    ok(&run(&["set", "{pack}", "base", "--visible", "false"]));
+    ok(&run(&["set", "{pack}", "cave", "--glow", "70", "--glow-group", "lava"]));
+    let list = ok(&cli(&["level", "element", "list", "{pack}"], &pack, &content));
+    assert_eq!(
+        list.lines().next(),
+        Some("0: cave Drawn Background \"Sky\" distant 60% glow 70% lava"),
+        "{list}"
+    );
+    let level = olr_format::levels::read_level_files(&olr_vfs::DirFs::new(&pack)).unwrap();
+    let glow = level.distant[0].glow.clone().expect("the distant layer glows");
+    assert_eq!((glow.group, glow.strength, glow.mask.is_some()), (1, 70, false));
+    // Its light baked where the back is see-through, at 70 % of 255.
+    let baked = level.glow.as_ref().expect("its light is baked");
+    let (holes, lit): (Vec<_>, Vec<_>) =
+        level.back.as_raw().as_chunks::<4>().0.iter().zip(&baked.back).partition(|(p, _)| p[3] == 0);
+    assert!(holes.iter().any(|(_, v)| **v == 179) && lit.iter().all(|(_, v)| **v == 0));
+    let ron = std::fs::read_to_string(pack.join("level.ron")).unwrap();
+    assert!(ron.contains("glow: 70") && ron.contains("glow_group: \"lava\""), "{ron}");
+    // Its mask painted: in the composition and beside its image.
+    ok(&run(&["glow", "{pack}", "cave", "--rect", "0,0,10,10", "--strength", "0"]));
+    let list = ok(&cli(&["level", "element", "list", "{pack}"], &pack, &content));
+    assert!(list.lines().next().unwrap().ends_with("glow 70% lava masked"), "{list}");
+    assert!(pack.join("editor/glow/cave.png").is_file() && pack.join("distant/0-glow.png").is_file());
+    let check = ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+    assert!(check.contains("0 errors"), "{check}");
+    // --glow 0 removes it.
+    ok(&run(&["set", "{pack}", "cave", "--glow", "0"]));
+    assert!(!pack.join("distant/0-glow.png").exists());
+    let ron = std::fs::read_to_string(pack.join("level.ron")).unwrap();
+    assert!(!ron.contains("glow_group:") && !ron.contains("glow: "), "{ron}");
+}
+
 /// Issue #59: layer folders through `group`, `ungroup`, `set --folder`,
 /// `list`, and the commands taking folder ids or keeping folders.
 #[test]

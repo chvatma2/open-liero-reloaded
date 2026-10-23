@@ -100,7 +100,7 @@ fn parse_colours(s: &str) -> Result<Colours, String> {
 
 #[derive(Subcommand)]
 pub(crate) enum ElementCommand {
-    /// Print each element, bottom first: `<index>: <id> <kind> <material>["<name>"][ hidden][ locked][ distant <depth>%][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map]`;
+    /// Print each element, bottom first: `<index>: <id> <kind> <material>["<name>"][ hidden][ locked][ distant <depth>%][ glow <strength>% <group>[ masked]][ surface <id>][ back-surface <id>][ surface-map][ back-surface-map]`;
     /// a layer folder as `folder <id>["<name>"][ hidden][ locked][ collapsed]`
     /// before its members, each member indented two spaces per folder.
     List { pack: PathBuf },
@@ -465,6 +465,14 @@ fn list(dir: &Path) -> anyhow::Result<bool> {
         }
         if let Some(d) = e.distant {
             line.push_str(&format!(" distant {d}%"));
+        }
+        if let Some(g) = &e.glow {
+            line.push_str(&format!(
+                " glow {}% {}{}",
+                g.strength,
+                g.group,
+                if g.mask { " masked" } else { "" }
+            ));
         }
         for (label, id) in [("surface", &e.surface), ("back-surface", &e.back_surface)] {
             if let Some(id) = id {

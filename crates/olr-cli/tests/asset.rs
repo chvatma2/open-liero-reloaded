@@ -202,7 +202,7 @@ fn cli_places_a_multi_piece_asset_in_a_folder() {
     let o = cli(&["level", "element", "list", level]);
     assert_eq!(
         text(&o),
-        "0: base Raster - \"Base\"\nfolder ceiling-lamp \"Ceiling lamp\"\n  1: ceiling-lamp-rock Drawn Rock \"Ceiling lamp Rock\" surface stone surface-map\n  2: ceiling-lamp-lamps Drawn Background \"Ceiling lamp Lamps\" surface glass\n",
+        "0: base Raster - \"Base\"\nfolder ceiling-lamp \"Ceiling lamp\"\n  1: ceiling-lamp-rock Drawn Rock \"Ceiling lamp Rock\" surface stone surface-map\n  2: ceiling-lamp-lamps Drawn Background \"Ceiling lamp Lamps\" glow 100% lamps surface glass\n",
     );
     let o = cli(&["pack", "check", level]);
     assert!(o.status.success(), "{}", text(&o));
