@@ -44,7 +44,7 @@ there (issue #46), so placed in a level they heat as they did in it.
 - `lit-sign/`: **Lit sign**, the "13-37 -LD-" board set in rock, group
   `displays` (`Flicker`).
 
-      olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 934,299,31,21 --layers rock,displays-in-rock --name "Lit sign" --out content/assets/lit-sign
+      olr-cli asset save content/reloaded/olr-level-liero-factory-reloaded --rect 934,299,31,21 --layers rock,rock-display --name "Lit sign" --out content/assets/lit-sign
 
 - `warning-beacon/`: **Warning beacon**, a roof speaker's red ring on its
   box, group `beacons` (`Pulse`).

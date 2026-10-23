@@ -79,7 +79,7 @@
             surface: "glass",
         ),
         (
-            id: "screens-in-rock",
+            id: "rock-screens",
             name: "Screens in rock",
             locked: true,
             kind: Drawn(
@@ -105,7 +105,7 @@
             surface: "glass",
         ),
         (
-            id: "displays-in-rock",
+            id: "rock-display",
             name: "Displays in rock",
             locked: true,
             kind: Drawn(
@@ -131,7 +131,7 @@
             surface: "metal",
         ),
         (
-            id: "beacons-in-rock",
+            id: "rock-beacons",
             name: "Beacons in rock",
             locked: true,
             kind: Drawn(
