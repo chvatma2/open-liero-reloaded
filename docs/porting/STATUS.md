@@ -5426,7 +5426,12 @@ the builder's calls:
   `a_dug_pixel_is_ruled_by_its_back` deposited inside the test level's
   dirt and read heat deep in it; their blasts now lie in the air beside a
   face (the first over each material, the last with a blast of its own
-  past the hole).
+  past the hole). The material editor's preview (`olr-game`'s
+  `a_blast_heats_the_patch_and_it_glows`) asks its rim 12 more red, not
+  30: only the rim's outer 2 px glow now (43 to 60 on lavapipe).
+- **Goldens:** `heat-fresh.png`, `heat-cooled.png`, `heat-distant.png`
+  (its level plane) and `lit-hashes.ron` (the Reloaded content heats)
+  re-blessed: thin hot rims, the rock behind them cold.
 
 ## Every screen fits (issue #49)
 
