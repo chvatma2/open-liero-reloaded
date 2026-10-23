@@ -10,7 +10,7 @@ use olr_edit::asset::{
     with_materials,
 };
 use olr_edit::compose::Rect;
-use olr_format::levels::{ElementKind, surface_back_file, surface_file};
+use olr_format::levels::{Element, ElementKind, surface_back_file, surface_file};
 
 use crate::document::{DocError, Document};
 
@@ -20,12 +20,14 @@ use crate::history::Edit;
 
 pub use olr_edit::asset::ADDED_LIGHTING;
 
-/// A placing done: its edits (applied: one step), the new elements' ids
-/// and what the status bar says.
+/// A placing done: its edits (applied: one step), the new elements' ids,
+/// the folder holding them (issue #60: two pieces or more) and what the
+/// status bar says.
 #[derive(Debug)]
 pub struct Placed {
     pub edits: Vec<Edit>,
     pub ids: Vec<String>,
+    pub folder: Option<String>,
     pub note: Option<String>,
 }
 
@@ -43,15 +45,24 @@ impl Document {
             .collect()
     }
 
+    /// The items' elements as cut: a hidden folder's members hidden (issue
+    /// #60).
+    fn seen(&self) -> Vec<Element> {
+        (0..self.items.len())
+            .map(|i| Element { visible: self.shown_at(i), ..self.items[i].element.clone() })
+            .collect()
+    }
+
     /// The document's elements as `olr_edit::asset` cuts them (`originals`
-    /// from `originals_by_item`).
-    fn pieces<'a>(&'a self, originals: &'a [Original]) -> LevelPieces<'a> {
+    /// from `originals_by_item`, `seen` from `seen`).
+    fn pieces<'a>(&'a self, originals: &'a [Original], seen: &'a [Element]) -> LevelPieces<'a> {
         let pieces = self
             .items
             .iter()
             .zip(originals)
-            .map(|(i, o)| PieceRef {
-                element: &i.element,
+            .zip(seen)
+            .map(|((i, o), element)| PieceRef {
+                element,
                 decoded: &i.decoded,
                 original: o.as_ref(),
                 glow_mask: self
@@ -81,14 +92,16 @@ impl Document {
     /// `name`.
     pub fn asset_of_elements(&self, ids: &[String], name: &str) -> Result<Asset, DocError> {
         let originals = self.originals_by_item();
-        from_elements(&self.pieces(&originals), ids, name).map_err(|e| DocError::Bad(e.to_string()))
+        from_elements(&self.pieces(&originals, &self.seen()), ids, name)
+            .map_err(|e| DocError::Bad(e.to_string()))
     }
 
     /// An asset cut out of world rectangle `rect` of every visible layer
     /// (`olr_edit::asset::cut_rect`), named `name`.
     pub fn asset_of_rect(&self, rect: Rect, name: &str) -> Result<Asset, DocError> {
         let originals = self.originals_by_item();
-        cut_rect(&self.pieces(&originals), rect, None, name).map_err(|e| DocError::Bad(e.to_string()))
+        cut_rect(&self.pieces(&originals, &self.seen()), rect, None, name)
+            .map_err(|e| DocError::Bad(e.to_string()))
     }
 
     /// Places `asset` with its top-left at world pixel `at`, one step (issue
@@ -98,8 +111,10 @@ impl Document {
     /// status bar says so) and its surface materials (issue #38,
     /// `with_materials`: the same), then each piece on top as a paste lands
     /// it (new ids and names, resampled to the level's art scale, masks
-    /// kept), with its surfaces and painted maps (`land_surfaces`). A
-    /// refusal undoes what it did.
+    /// kept), with its surfaces and painted maps (`land_surfaces`); two
+    /// pieces or more then go into a new folder named after the asset
+    /// (issue #60, as `olr_edit::asset::place_in_pack`). A refusal undoes
+    /// what it did.
     pub fn place_asset(&mut self, asset: &Asset, at: (i32, i32)) -> Result<Placed, DocError> {
         let change = with_groups(self.level.look.as_ref(), &asset.groups);
         let look = if change.changes() { Some(&change.look) } else { self.level.look.as_ref() };
@@ -135,8 +150,21 @@ impl Document {
                 }
             }
         }
+        let mut folder = None;
+        if ids.len() > 1 {
+            match self.group(&ids, &asset.name) {
+                Ok((more, _, id)) => {
+                    edits.extend(more);
+                    folder = Some(id);
+                }
+                Err(e) => {
+                    self.roll_back(&edits);
+                    return Err(e);
+                }
+            }
+        }
         let note = change.added_look.then(|| ADDED_LIGHTING.to_string());
-        Ok(Placed { edits, ids, note })
+        Ok(Placed { edits, ids, folder, note })
     }
 
     /// Gives landed element `id` the surface materials of asset piece

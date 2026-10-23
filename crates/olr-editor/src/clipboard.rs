@@ -2,7 +2,7 @@
 //! elements"): it outlives the open document, so copies go across levels;
 //! the system clipboard is not used.
 
-use olr_format::levels::LevelObject;
+use olr_format::levels::{Folder, LevelObject};
 
 use crate::history::Snapshot;
 use crate::ops::PixelClip;
@@ -13,9 +13,11 @@ pub const PASTE_STEP: (i32, i32) = (4, 4);
 /// What was copied.
 #[derive(Clone, Debug)]
 pub enum Clipboard {
-    /// Elements, at the art scale they came from; the next paste moves them
-    /// by `offset` (`PASTE_STEP` more each paste, so pastes cascade).
-    Elements { art_scale: u32, items: Vec<Snapshot>, offset: (i32, i32) },
+    /// Elements, at the art scale they came from, and the folders they fill
+    /// (issue #60, `Document::copy_tree`: the copies name these, which a
+    /// paste makes anew); the next paste moves them by `offset`
+    /// (`PASTE_STEP` more each paste, so pastes cascade).
+    Elements { art_scale: u32, items: Vec<Snapshot>, folders: Vec<Folder>, offset: (i32, i32) },
     /// A rectangle of a drawn layer's pixels copied at world pixel `at`
     /// (plan 14e R7); pasted as a new layer at `at + offset`.
     Pixels { art_scale: u32, at: (i32, i32), clip: PixelClip, offset: (i32, i32) },

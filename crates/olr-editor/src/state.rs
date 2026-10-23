@@ -1495,14 +1495,19 @@ impl EditorState {
             self.clipboard = Some(Clipboard::Objects { objects: vec![o.clone()], offset: PASTE_STEP });
             return true;
         }
-        let items = doc.copy(&self.selection.ids());
+        // A folder all of whose elements are selected comes along (issue #60).
+        let (items, folders) = doc.copy_tree(&self.selection.ids());
         if items.is_empty() {
             self.status.message = Some(NOTHING_TO_COPY.into());
             return false;
         }
         let n = items.len();
-        self.clipboard =
-            Some(Clipboard::Elements { art_scale: doc.level().art_scale, items, offset: PASTE_STEP });
+        self.clipboard = Some(Clipboard::Elements {
+            art_scale: doc.level().art_scale,
+            items,
+            folders,
+            offset: PASTE_STEP,
+        });
         self.status.message = Some(match n {
             1 => "copied 1 element".into(),
             n => format!("copied {n} elements"),
@@ -1570,8 +1575,8 @@ impl EditorState {
             };
         }
         let done = match clip {
-            Clipboard::Elements { art_scale, items, offset } => {
-                doc.paste(items, *art_scale, *offset).map(|(edits, ids)| (edits, ids, offset))
+            Clipboard::Elements { art_scale, items, folders, offset } => {
+                doc.paste_tree(items, folders, *art_scale, *offset).map(|(edits, ids)| (edits, ids, offset))
             }
             Clipboard::Pixels { art_scale, at, clip, offset } => {
                 let to = (at.0.saturating_add(offset.0), at.1.saturating_add(offset.1));
@@ -1686,11 +1691,15 @@ impl EditorState {
     }
 
     /// The selection of `ids` (plan 14e R8): those that exist, each once, in
-    /// stack order; one is `Element`, none `None`.
+    /// stack order; one is `Element`, none `None`. A folder's id stands for
+    /// its elements (issue #60; issue #61 selects the folder itself).
     pub(crate) fn group(&self, ids: Vec<String>) -> Selection {
         let Some(doc) = &self.doc else { return Selection::None };
-        let mut found: Vec<(usize, String)> =
-            ids.into_iter().filter_map(|id| Some((doc.index_of(&id)?, id))).collect();
+        let ids = ids.into_iter().flat_map(|id| match doc.index_of(&id) {
+            Some(_) => vec![id],
+            None => doc.folder_members(&id),
+        });
+        let mut found: Vec<(usize, String)> = ids.filter_map(|id| Some((doc.index_of(&id)?, id))).collect();
         found.sort();
         found.dedup();
         match found.len() {
