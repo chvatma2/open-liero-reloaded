@@ -104,8 +104,9 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   last tool, `EditorState::last_tool`; a second click, the corner mark or
   a right click opens the flyout), Glow (named "Glow brush"), Surface
   (named "Surface brush", issue #43), Spawn; on
-  the right one panel (at least 260 points): the tabs Elements (drag a
-  name to reorder, eye and lock, Add layer) | Assets (issue #9, below) |
+  the right one panel (at least 260 points): the tabs Elements (the
+  folder tree, issue #61: drag a name to reorder, eye and lock, Add
+  layer, New folder) | Assets (issue #9, below) |
   Spawns (`PanelTab`, following the selection), then the selection's
   properties (Name, "What is it?", Glow with "Make parts glow…", Place;
   the rest under "More") or the level's (its Lighting's rarer values
@@ -158,7 +159,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     "Yours" (Remove for the chosen one of yours), "Import texture…";
     swatches cached in `EditorData` by key, dropped when no longer listed.
   - **Multi-select**: `Selection::Many` (stack order; `group` normalises,
-    `has`, `ids`), `SelectToggle`/`SelectRange` (the list's Ctrl and Shift
+    `has`, `ids`; folders too, issue #61), `SelectToggle`/`SelectRange` (the list's Ctrl and Shift
     clicks), `Pointer { toggle }` (Ctrl on the canvas), `Drag::MoveMany`,
     `SetMany`; `Document::set_many`, `move_many`, `remove_many` (one step
     each, a locked member refusing, named); the group panel. The
@@ -385,9 +386,56 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     the block on top outside the level's folders; `copy` is flat);
     `place_asset` groups two pieces or more into a folder named after
     the asset (`Placed::folder`); the pieces cut by `asset_of_*` carry
-    the effective `visible`. `EditorState::group` takes a folder id as
-    its elements. Test: `tests/folders.rs`, and the history proptest's
-    folder operations.
+    the effective `visible`. Test: `tests/folders.rs`, and the history
+    proptest's folder operations.
+- **Folders in the editor's UI** (issue #61; STATUS.md "Layer folders",
+  part 3):
+  - **Selection**: `Selection::Folder(id)`; `Many` holds elements and
+    folders (`EditorState::group`: stack order, a folder where its run
+    starts, an id a selected folder holds left out); `has` and `ids`
+    are the items themselves, `selected_elements()` (`elements_of`)
+    their elements. The drag, the arrows, `SetMany` (folder ids
+    expanded), Remove (`Document::remove_items`), Copy/Cut, Paste (its
+    top-level items selected) and Save as asset act on a folder as one
+    step; `AssetRead` selects a placed asset's folder.
+  - **Document** (`folder_ops.rs`): `parent_of`, `folders_holding`
+    (outermost first), `children`, `rows()` (the list's `Row`s, top
+    first, a folded folder's members left out), `drop_row(id,
+    RowDrop::{Above, Below, Into})` (through `move_into`), `remove_items`.
+  - **Elements list** (`ui/elements.rs`): rows indented `INDENT` per
+    level; a folder row's fold arrow, eye and lock (`labels::fold`,
+    `folder_visible`, `folder_locked`, by its name; `SetFolder`), an eye
+    or lock a parent overrides dimmed; a click selects, Ctrl toggles,
+    Shift takes the rows shown (`SelectRange`). A dropped row takes the
+    place of the row it lands on, in its folder (below it from above);
+    a folder row's middle takes it in on top (`EDGE`: the top 30 %, and
+    a folded one's bottom 30 %, drop beside); a line or outline shows
+    where; a refusal is the status message. A level without folders
+    reorders with `MoveElement` as before. `labels::NEW_FOLDER` beside
+    Add layer.
+  - **Canvas clicks** (`pointer.rs`, Select): `click_pick` (inside the
+    `focus`, its child holding the hit; else the outermost folder, or
+    the element; a click outside leaves the focus); a selected item on
+    the hit's path stays and drags (a folder only once selected);
+    `DoubleClick` goes one level in and focuses the folder; `AltDown`
+    (Alt+press; a press for other tools) selects the element itself;
+    Ctrl toggles at `click_pick`'s level; `SelectParent` (Escape after
+    the popup, `CancelPlacing`, `DropPixels`) selects the parent folder,
+    else none. A selected folder's overlay is one `Overlay::Box` around
+    its shown members. Tools needing one element add
+    `DOUBLE_CLICK_INTO` to their refusal (`one_element`).
+  - **Shortcuts**: Ctrl+Shift+G (`Ungroup`) checked before Ctrl+G
+    (`GroupSelection`), both before G (Fill); `labels::NEW_FOLDER_KEYS`,
+    `UNGROUP_KEYS`. The folder panel: Name, Visible, Locked,
+    `labels::UNGROUP`, its elements' shared fields.
+  - Tests: `tests/folders.rs` (clicks and double clicks, Alt, Escape,
+    folder drags and nudges, copy, delete, save, Ctrl+G, placing, the
+    tools' refusal) and `flows.rs` (`the_list_shows_the_folder_tree`,
+    `rows_drag_into_out_of_and_between_folders`,
+    `shift_selects_the_rows_shown`,
+    `canvas_double_click_alt_click_and_escape` (frames 1/60 s apart:
+    `harness_at`), `ctrl_g_groups_and_ctrl_shift_g_ungroups`,
+    `a_folders_panel_renames_it`).
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the

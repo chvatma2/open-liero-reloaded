@@ -129,8 +129,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   change them, `list` shows the tree, and placing an asset of several
   pieces puts them in a folder named after it. The level editor opens and
   saves them, undoes every folder change, copies and pastes a folder with
-  its subfolders, and places an asset of several pieces in a folder; its
-  Elements list shows them as a tree in a later build.
+  its subfolders, and places an asset of several pieces in a folder.
+  Its Elements list shows them as a tree: fold a folder, hide or lock it
+  with its eye and lock, drag rows into, out of and between folders, or
+  put the selection in a new folder (Ctrl+G; Ctrl+Shift+G ungroups). On
+  the canvas a click selects a whole object, a double click goes inside
+  it, Alt+click picks one piece and Escape goes back up.
 
 ### Changed
 

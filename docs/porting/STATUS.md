@@ -5598,7 +5598,66 @@ Elements tree and canvas. As built in part 1, the builder's calls:
     elements (part 3 selects the folder). Save as asset saves the pieces
     flat (`plain`), a hidden folder's members cut as hidden.
   - **Selection** is unchanged (`Element`, `Many`); `EditorState::group`
-    takes a folder id as its elements rather than dropping it.
+    takes a folder id as its elements rather than dropping it (part 3
+    selects the folder itself).
+- **The editor's tree and canvas** (part 3, issue #61; Figma's and
+  Illustrator's behaviour, the maintainer's choice 2026-10-23):
+  - **Selection:** `Selection::Folder(id)` stands for the folder's whole
+    run; `Many` holds elements and folders in stack order (a folder by
+    where its run starts), leaving out an id a selected folder holds
+    (`EditorState::group`). `selected_elements()` expands the folders;
+    the drag (`Drag::MoveMany`), the arrows, `SetMany`, delete
+    (`Document::remove_items`, the emptied folders in the same step),
+    copy and cut (`copy_tree` of the folder ids) and Save as asset (named
+    after a lone folder) each act on it as one step. A paste selects its
+    top-level items, so a pasted folder is selected whole; placing an
+    asset of two pieces or more selects its folder.
+  - **The Elements list** is the tree (`Document::rows`: top first, a
+    folded folder's members left out): a folder row has a fold arrow, an
+    eye, a lock, a mark and its name; members are indented 14 points per
+    level, and an eye or lock a folder holding it overrides is dimmed. A
+    click selects a folder, Ctrl adds it, Shift selects the rows shown
+    between (a folder row standing for its folder, so a range over a
+    folder's row and its members' is the folder). A row dropped on
+    another takes its place, in that row's folder (below it when it came
+    from above, as the flat list always did), so a drop on a row outside
+    a folder moves it out; one dropped on a folder row's middle goes into
+    it, on top; the top 30 % of a folder row (and the bottom 30 % of a
+    folded one) drops beside it. A line or the folder's outline shows
+    where. These are `Document::drop_row` (`RowDrop::{Above, Below,
+    Into}`, through `move_into`), and a drop the folder rules or the
+    distant order refuse says why in the status bar. A level without
+    folders still reorders through `MoveElement` (`move_to`, which clamps
+    a drop across the distant layers rather than refusing it). "New
+    folder" beside Add layer groups the selection.
+  - **Canvas clicks** (Select): a click selects the outermost folder
+    holding the element hit, or the element; a selected item on the way
+    to the element hit (the folder, a member of the group, the element
+    itself) stays selected and drags, so a folder moves only once
+    selected (as a drawn layer). A double click (`EditorAction::
+    DoubleClick`) selects the selected folder's child holding the hit
+    and makes that folder the focus (`EditorState::focus`): plain clicks
+    on its members then pick its children, and a click outside it (or on
+    nothing) leaves it. Alt+click (`EditorAction::AltDown`, a press for
+    any other tool) selects the element itself and focuses its folder;
+    a list click focuses the item's folder. Ctrl+click toggles at the
+    level a plain click picks. Escape, after closing a popup,
+    `CancelPlacing` and `DropPixels`, selects the parent folder
+    (`SelectParent`), and at the top level clears the selection; not
+    when a text field had the keyboard as the frame began (its Escape
+    drops the draft). A selected folder's outline is one box around its
+    shown members' boxes.
+  - **Shortcuts:** Ctrl+G groups the selection (`GroupSelection`, the
+    new folder selected), Ctrl+Shift+G ungroups the selected folder
+    (`Ungroup`, its children selected); Ctrl+Shift+G is checked first
+    (`consume_key` ignores an extra Shift), both before G (Fill).
+  - **The properties** of a folder: Name (committed when typing ends),
+    Visible and Locked (its own), Ungroup, then its elements' count and
+    the group panel's shared material, Delete and Save as asset.
+  - **Tools needing one element** (the brush, eraser and Restore, the
+    shapes, Fill, the Wand, Select pixels, Glow and Surface brushes)
+    refuse a folder as they refuse a group, their message adding how to
+    go inside (`DOUBLE_CLICK_INTO`).
 - **`olr-cli level element list`** prints a folder as `folder <id>[
   "<name>"][ hidden][ locked][ collapsed]` before its first member,
   members indented two spaces per folder; a level without folders prints
