@@ -239,7 +239,7 @@ fn a_distant_layer_takes_one_surface() {
 fn a_plain_levels_maps_bake_back() {
     let mut l = level(6, 1, 1);
     bake_all(&mut l, &row(), &PaintedSurfaces::new());
-    l.distant = vec![DistantLayer { image: solid(2, 1), at: (0, 0), depth: 50 }];
+    l.distant = vec![DistantLayer { image: solid(2, 1), at: (0, 0), depth: 50, glow: None }];
     l.distant_surfaces = vec![Some("stone".into())];
     let want = (l.surface.clone(), l.distant_surfaces.clone());
     assert!(want.0.is_some());

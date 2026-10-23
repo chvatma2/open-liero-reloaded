@@ -147,7 +147,17 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   (`olr_data::level::DistantLayer`s, far to near), `level.ron`'s
   `distant` list (`DistantEntry { depth, at }`, left out when empty) and
   `distant/<i>.png` (`DISTANT_DIR`, `distant_file(i)`; RGBA at art
-  resolution, each side a multiple of the art scale). `check_distant_layers`:
+  resolution, each side a multiple of the art scale). Issue #62: a
+  layer's `DistantLayer::glow` is `DistantEntry`'s `glow` (percent 1-100,
+  0 none, left out) and `glow_group` (an id of the look's glow groups,
+  read as 1 + its index: an unknown id reads as 0) and its mask
+  `distant/<i>-glow.png` (`distant_glow_file(i)`, grey, the image's size,
+  read only for a glowing layer); `check_distant_glows` (in `check`)
+  refuses a strength outside 1-100, a group the look lacks and a mask of
+  another size; the lenient reader plays the layers without glow ("…:
+  the level's distant layers play without glow"), and a dropped look
+  drops their glow; `file_paths` lists the masks
+  (`distant_glows_round_trip_and_name_the_looks_groups`). `check_distant_layers`:
   at most `MAX_DISTANT` (16), depth 1-99, `at` within `MAX_DISTANT_AT`
   (4 × `MAX_SIDE`) of the origin, each image within `MAX_SIDE` × art scale
   a side and `LEVEL_ART`, their pixels together within
@@ -157,8 +167,8 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   is alpha 0 where a see-through back pixel lets them show (the bake's,
   `olr-edit`). A composition's `Element::distant` (depth, `None` for an
   ordinary element; `is_distant`): `check_elements` allows it on an image
-  or a plain drawn (not mixed, no back art) Background element, without
-  glow or clear, 1-99, every distant element below every other
+  or a plain drawn (not mixed, no back art) Background element, never
+  clear (it may glow, issue #62), 1-99, every distant element below every other
   (`check_distant`), at most `MAX_DISTANT`, `at` within `MAX_DISTANT_AT`,
   their art pixels within `LEVEL_ART.max_pixels`; an asset carries none
   (`check_asset`). The thumbnail (`thumb.rs`' `seen`) shows them from the

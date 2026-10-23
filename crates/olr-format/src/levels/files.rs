@@ -1,7 +1,7 @@
 //! A level's files. Other paths (`pack.ron`, ...) belong to `olr-pack`
 //! and are ignored here.
 
-use olr_data::level::{DistantLayer, Material};
+use olr_data::level::{DistantGlow, DistantLayer, Material};
 use olr_vfs::{ContentSink, ContentSource, VPath};
 use serde::{Deserialize, Serialize};
 
@@ -9,7 +9,7 @@ use super::{
     BACK_FILE, CLEAR_FILE, FRONT_FILE, GLOW_BACK_FILE, GLOW_FILE, GROUPS_BACK_FILE, GROUPS_FILE, LEVEL_FILE,
     LOOK_FILES, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_DISTANT, MAX_THUMB_BYTES,
     SURFACE_BACK_FILE, SURFACE_FILE, SURFACE_FILES, SurfaceMaps, THUMB_FILE, check, check_distant_layers,
-    check_header, check_thumb, distant_file,
+    check_header, check_thumb, distant_file, distant_glow_file,
 };
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, LEVEL_ART};
@@ -86,6 +86,27 @@ pub(crate) struct DistantEntry {
     /// past the largest radius, 64). A hot layer glows but casts no light.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     surface: Option<String>,
+    /// The layer's glow strength (issue #62): percent, 1 to 100, with
+    /// `glow_group`; default none. Its light is baked into the level's
+    /// `look/glow-back.png` and `look/groups-back.png` where it covers a
+    /// see-through back pixel with the camera at the level's centre (its
+    /// reference placement, `at`); its picture is lit by its own glow
+    /// wherever it is drawn. A small bright feature (a lit window in a far
+    /// city) lights the level as seen from the centre, so with the camera
+    /// far from it its light and its drawn place part; a broad source (a
+    /// sky, a sunset, moon glow) shows no difference. Its painted mask,
+    /// when it has one, is `distant/<i>-glow.png` (grey, the image's size:
+    /// 0 no glow to 255 full).
+    #[serde(default, skip_serializing_if = "is_zero")]
+    glow: u8,
+    /// The id of the layer's glow group in the look's `glow_groups` (issue
+    /// #62), with `glow`. Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    glow_group: Option<String>,
+}
+
+fn is_zero(v: &u8) -> bool {
+    *v == 0
 }
 
 fn write_bytes(sink: &mut dyn ContentSink, file: &str, bytes: &[u8]) -> Result<(), FormatError> {
@@ -115,6 +136,9 @@ pub fn file_paths(src: &LevelSource) -> Vec<String> {
         out.extend(SURFACE_FILES.map(String::from));
     }
     out.extend((0..src.distant.len()).map(distant_file));
+    let masked =
+        src.distant.iter().enumerate().filter(|(_, d)| d.glow.as_ref().is_some_and(|g| g.mask.is_some()));
+    out.extend(masked.map(|(i, _)| distant_glow_file(i)));
     out
 }
 
@@ -144,6 +168,8 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
                 depth: d.depth,
                 at: d.at,
                 surface: src.distant_surfaces.get(i).cloned().flatten(),
+                glow: d.glow.as_ref().map_or(0, |g| g.strength),
+                glow_group: d.glow.as_ref().and_then(|g| group_id(src, g.group)),
             })
             .collect(),
     };
@@ -175,17 +201,33 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
     }
     for (i, d) in src.distant.iter().enumerate() {
         write_bytes(sink, &distant_file(i), &image_io::encode_rgba(&d.image))?;
+        if let Some(mask) = d.glow.as_ref().and_then(|g| g.mask.as_ref()) {
+            let (w, h) = (d.image.width(), d.image.height());
+            write_bytes(sink, &distant_glow_file(i), &image_io::encode_grey(w, h, mask))?;
+        }
     }
     Ok(())
+}
+
+/// The id of glow group value `group` (1 + its index) in `src`'s look.
+fn group_id(src: &LevelSource, group: u8) -> Option<String> {
+    let i = usize::from(group).checked_sub(1)?;
+    src.look.as_ref()?.glow_groups.get(i).map(|g| g.id.clone())
 }
 
 /// The distant layers `entries` name (`distant/<i>.png`), each image's
 /// size checked from its header before decoding (`check_distant_layers`
 /// then checks them together).
+///
+/// A layer's glow (issue #62) names its group by id: one the look lacks is
+/// group 0, which `check_distant_glows` refuses (the lenient reader plays
+/// the layers without glow); its mask, `distant/<i>-glow.png` when present,
+/// is read only for a layer that glows and must be the image's size.
 fn read_distant(
     src: &dyn ContentSource,
     entries: &[DistantEntry],
     art_scale: u32,
+    look: Option<&LookSource>,
 ) -> Result<Vec<DistantLayer>, FormatError> {
     if entries.len() > MAX_DISTANT {
         return Err(FormatError::invalid(
@@ -203,9 +245,33 @@ fn read_distant(
         }
         let image = image_io::decode_rgba_within(&bytes, LEVEL_ART)
             .map_err(|message| FormatError::Io { file: file.clone(), message })?;
-        out.push(DistantLayer { image, at: e.at, depth: e.depth });
+        let glow = match (e.glow, &e.glow_group) {
+            (0, None) => None,
+            (strength, id) => {
+                let groups = look.map_or(&[][..], |l| &l.glow_groups[..]);
+                let index = id.as_ref().and_then(|id| groups.iter().position(|g| g.id == *id));
+                let group = index.and_then(|i| u8::try_from(i + 1).ok()).unwrap_or(0);
+                let mask = read_distant_mask(src, i, (image.width(), image.height()))?;
+                Some(DistantGlow { group, strength, mask })
+            }
+        };
+        out.push(DistantLayer { image, at: e.at, depth: e.depth, glow });
     }
     Ok(out)
+}
+
+/// The `i`-th distant layer's glow mask (`distant/<i>-glow.png`), when
+/// present: grey, of the layer's image `size`.
+fn read_distant_mask(
+    src: &dyn ContentSource,
+    i: usize,
+    size: (u32, u32),
+) -> Result<Option<Vec<u8>>, FormatError> {
+    let file = distant_glow_file(i);
+    if !VPath::new(&file).is_ok_and(|p| src.exists(&p)) {
+        return Ok(None);
+    }
+    read_grey(src, &file, size).map(Some)
 }
 
 /// Reads an 8-bit grey look image, checking its header size first.
@@ -385,6 +451,7 @@ pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource,
         level.glow = None;
         level.surface = None;
         level.distant_surfaces.clear();
+        level.distant.iter_mut().for_each(|d| d.glow = None);
     }
     if let Some(g) = &level.glow
         && let Err(e) = super::check_glow(&level, g)
@@ -397,6 +464,10 @@ pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource,
     {
         warnings.push(format!("{e}: the level plays without surface materials"));
         level.surface = None;
+    }
+    if let Err(e) = super::check_distant_glows(&level) {
+        warnings.push(format!("{e}: the level's distant layers play without glow"));
+        level.distant.iter_mut().for_each(|d| d.glow = None);
     }
     if let Err(e) = super::check_distant_surfaces(&level) {
         warnings.push(format!("{e}: the level's distant layers play without surface materials"));
@@ -449,7 +520,7 @@ fn read_base(
     let front = read_art(src, FRONT_FILE, art)?;
     let back = read_art(src, BACK_FILE, art)?;
     let glow = read_glow(src, art, file.size);
-    let distant = read_distant(src, &file.distant, file.art_scale);
+    let distant = read_distant(src, &file.distant, file.art_scale, file.look.as_ref());
     let distant_surfaces = trimmed(file.distant.iter().map(|e| e.surface.clone()).collect());
     let level = LevelSource {
         name: file.name,
@@ -584,8 +655,8 @@ mod tests {
         let mut image = olr_data::image::RgbaImage::new(2 * art_scale, art_scale);
         image.set(0, 0, olr_data::image::Rgba::rgb(9, 8, 7));
         src.distant = vec![
-            DistantLayer { image: image.clone(), at: (-3, 1), depth: 40 },
-            DistantLayer { image, at: (0, 0), depth: 99 },
+            DistantLayer { image: image.clone(), at: (-3, 1), depth: 40, glow: None },
+            DistantLayer { image, at: (0, 0), depth: 99, glow: None },
         ];
         src
     }
@@ -652,6 +723,65 @@ mod tests {
         let mut src = with_distant(1);
         src.distant = vec![src.distant[0].clone(); MAX_DISTANT + 1];
         assert!(write_level_files(&mut MemFs::new(), &src).unwrap_err().to_string().contains("above 16"));
+    }
+
+    /// Issue #62: a distant layer's glow (strength, group by id, painted
+    /// mask) round-trips; a group the look lacks or a mask of the wrong
+    /// size is refused, and played without.
+    #[test]
+    fn distant_glows_round_trip_and_name_the_looks_groups() {
+        let mut src = with_distant(2);
+        let group = |id: &str| crate::look::GlowGroupSource {
+            id: id.into(),
+            colour: Default::default(),
+            intensity: 100,
+            reach: crate::look::ReachSource::Unlimited,
+            animation: Default::default(),
+            phase_ms: None,
+        };
+        src.look = Some(crate::look::LookSource {
+            glow_groups: vec![group("lamp"), group("sky")],
+            ..crate::look::LookSource::default()
+        });
+        let (w, h) = (src.distant[1].image.width(), src.distant[1].image.height());
+        src.distant[0].glow = Some(DistantGlow { group: 2, strength: 60, mask: None });
+        src.distant[1].glow = Some(DistantGlow {
+            group: 1,
+            strength: 100,
+            mask: Some((0..w * h).map(|v| (v * 50) as u8).collect()),
+        });
+        let mut fs = MemFs::new();
+        write_level_files(&mut fs, &src).unwrap();
+        let mut names: Vec<String> = fs.files().map(|(p, _)| p.to_string()).collect();
+        assert!(
+            names.contains(&"distant/1-glow.png".to_string())
+                && !names.contains(&"distant/0-glow.png".to_string())
+        );
+        let mut paths = file_paths(&src);
+        paths.sort();
+        names.sort();
+        assert_eq!(paths, names);
+        let text = String::from_utf8(fs.files().find(|(p, _)| p.as_str() == "level.ron").unwrap().1.to_vec())
+            .unwrap();
+        assert!(text.contains("glow: 60") && text.contains("glow_group: \"sky\""), "{text}");
+        assert_eq!(read_level_files(&fs).unwrap(), src);
+        assert_eq!(read_level_files_lenient(&fs).unwrap(), (src.clone(), Vec::new()));
+        // A group the look lacks.
+        let unknown = text.replace("glow_group: \"sky\"", "glow_group: \"moon\"");
+        let bad = fs.clone().with("level.ron", unknown.into_bytes());
+        let e = read_level_files(&bad).unwrap_err().to_string();
+        assert!(e.contains("distant[0].glow_group"), "{e}");
+        let (level, warnings) = read_level_files_lenient(&bad).unwrap();
+        assert!(level.distant.len() == 2 && level.distant.iter().all(|d| d.glow.is_none()));
+        assert!(warnings[0].contains("without glow"), "{warnings:?}");
+        // A strength out of range, a mask of the wrong size.
+        let mut wrong = src.clone();
+        wrong.distant[0].glow.as_mut().unwrap().strength = 101;
+        assert!(
+            write_level_files(&mut MemFs::new(), &wrong).unwrap_err().to_string().contains("distant[0].glow")
+        );
+        let small = fs.clone().with("distant/1-glow.png", image_io::encode_grey(1, 1, &[255]));
+        assert!(read_level_files(&small).unwrap_err().to_string().contains("distant/1-glow.png"));
     }
 
     #[test]

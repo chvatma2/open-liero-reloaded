@@ -90,6 +90,11 @@ pub fn distant_file(i: usize) -> String {
     format!("{DISTANT_DIR}/{i}.png")
 }
 
+/// The `i`-th distant layer's glow mask (issue #62): `distant/<i>-glow.png`.
+pub fn distant_glow_file(i: usize) -> String {
+    format!("{DISTANT_DIR}/{i}-glow.png")
+}
+
 /// A distant layer's image size (art pixels) for a level at `art_scale`:
 /// each side 1 to `MAX_SIDE` world pixels, a whole number of them, and the
 /// art within `LEVEL_ART`.
@@ -329,6 +334,41 @@ pub(crate) fn check_surface(src: &LevelSource, maps: &SurfaceMaps) -> Result<(),
     Ok(())
 }
 
+/// The distant layers' glows (issue #62): each of strength 1-100, naming
+/// a glow group of the look, its mask (if any) one value per art pixel of
+/// its image.
+pub(crate) fn check_distant_glows(src: &LevelSource) -> Result<(), FormatError> {
+    let groups = src.look.as_ref().map_or(0, |l| l.glow_groups.len());
+    for (i, d) in src.distant.iter().enumerate() {
+        let Some(g) = &d.glow else { continue };
+        if !(1..=100).contains(&g.strength) {
+            return Err(FormatError::invalid(
+                LEVEL_FILE,
+                &format!("distant[{i}].glow"),
+                format!("{}: 1 to 100, with a glow_group", g.strength),
+            ));
+        }
+        if g.group == 0 || usize::from(g.group) > groups {
+            return Err(FormatError::invalid(
+                LEVEL_FILE,
+                &format!("distant[{i}].glow_group"),
+                format!("names no glow group of the look's {groups}"),
+            ));
+        }
+        let pixels = u64::from(d.image.width()) * u64::from(d.image.height());
+        if let Some(m) = &g.mask
+            && m.len() as u64 != pixels
+        {
+            return Err(FormatError::invalid(
+                &distant_glow_file(i),
+                "",
+                format!("{} values, the layer's image has {pixels} pixels", m.len()),
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// The distant layers' surfaces: at most one per layer, each naming a
 /// material of the look.
 pub(crate) fn check_distant_surfaces(src: &LevelSource) -> Result<(), FormatError> {
@@ -444,6 +484,7 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
     }
     check_distant_layers(&src.distant, src.art_scale)?;
     check_distant_surfaces(src)?;
+    check_distant_glows(src)?;
     for (file, img) in [(FRONT_FILE, &src.front), (BACK_FILE, &src.back)] {
         if (img.width(), img.height()) != (aw, ah) {
             return Err(FormatError::invalid(

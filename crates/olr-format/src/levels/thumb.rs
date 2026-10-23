@@ -379,8 +379,8 @@ mod tests {
             far.set(x, y, Rgba::rgb(200, 0, 0));
         }
         level.distant = vec![
-            olr_data::level::DistantLayer { image: far, at: (0, 0), depth: 90 },
-            olr_data::level::DistantLayer { image: near, at: (0, 0), depth: 10 },
+            olr_data::level::DistantLayer { image: far, at: (0, 0), depth: 90, glow: None },
+            olr_data::level::DistantLayer { image: near, at: (0, 0), depth: 10, glow: None },
         ];
         let (art, depth) = seen(&level);
         assert_eq!(art.get(0, 0), Rgba::rgb(0, 0, 200));

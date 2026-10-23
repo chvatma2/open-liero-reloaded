@@ -798,7 +798,7 @@ fn distant_layers_load_and_make_the_map_see_through() {
         }
     }
     let image = filled(10, 10, Rgba::rgb(50, 60, 200));
-    pack.distant = vec![olr_data::level::DistantLayer { image, at: (45, 45), depth: 70 }];
+    pack.distant = vec![olr_data::level::DistantLayer { image, at: (45, 45), depth: 70, glow: None }];
     olr_pack::write_level(&mut DirFs::new(tmp.path().join("test-level")), &pack).unwrap();
     let content = Content::open(tmp.path()).unwrap();
     let level = content.load_level("test-level").unwrap();
@@ -889,7 +889,7 @@ fn surface_maps_load_with_the_level() {
     assert!(loaded.distant_surface.is_empty());
     // Issue #41: a distant layer's material, as a value in the look's.
     let image = RgbaImage::new(4, 4);
-    src.distant = vec![olr_data::level::DistantLayer { image, at: (0, 0), depth: 10 }; 2];
+    src.distant = vec![olr_data::level::DistantLayer { image, at: (0, 0), depth: 10, glow: None }; 2];
     src.distant_surfaces = vec![None, Some("stone".into())];
     olr_format::levels::write_level_files(&mut DirFs::new(&pack), &src).unwrap();
     let content = Content::open(dir.path()).unwrap();

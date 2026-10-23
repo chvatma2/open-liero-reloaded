@@ -127,6 +127,38 @@ pub struct DistantLayer {
     /// almost like it) to [`MAX_DEPTH`] (far: almost still, ambient light
     /// only).
     pub depth: u8,
+    /// Its glow (issue #62), when it glows: its light is baked into the
+    /// level's glow maps at this placement (`at`), its picture lit by it
+    /// where it is drawn.
+    pub glow: Option<DistantGlow>,
+}
+
+/// A distant layer's glow (issue #62): the drawn layer shows its art at
+/// `strength` × its mask × its group's self-light scale; its light is the
+/// level's (baked at its reference placement), never its own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DistantGlow {
+    /// Its glow group as the group maps hold it: 1 + its index in the
+    /// level look's glow groups (never 0).
+    pub group: u8,
+    /// Percent, 1 to 100.
+    pub strength: u8,
+    /// A painted mask, one value per art pixel of the layer's image
+    /// (row-major, 0 no glow to 255 full); `None` glows uniform.
+    pub mask: Option<Vec<u8>>,
+}
+
+impl DistantGlow {
+    /// Its glow at art pixel `i` of the layer (row-major) as the bake
+    /// writes it, 0-255: the strength percent as 0-255, × the mask's value
+    /// / 255, rounded (`olr_edit::compose`'s element glow).
+    pub fn at(&self, i: usize) -> u8 {
+        let strength = (u32::from(self.strength.min(100)) * 255 + 50) / 100;
+        match &self.mask {
+            None => strength as u8,
+            Some(m) => ((strength * u32::from(m.get(i).copied().unwrap_or(0)) + 127) / 255) as u8,
+        }
+    }
 }
 
 impl DistantLayer {

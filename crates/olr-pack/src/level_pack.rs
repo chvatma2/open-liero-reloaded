@@ -211,7 +211,7 @@ pub(crate) mod tests {
         let mut pack = sample_level();
         let mut image = RgbaImage::new(4, 2);
         image.set(1, 1, Rgba::rgb(4, 5, 6));
-        pack.distant = vec![olr_data::level::DistantLayer { image, at: (-1, 2), depth: 70 }];
+        pack.distant = vec![olr_data::level::DistantLayer { image, at: (-1, 2), depth: 70, glow: None }];
         let mut fs = MemFs::new();
         write_level(&mut fs, &pack).unwrap();
         assert_eq!(read_level(&fs).unwrap(), pack);

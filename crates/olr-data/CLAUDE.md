@@ -28,7 +28,11 @@ skins with colorization masks, themes, and pack manifests.
   level's centre; `depth` percent `MIN_DEPTH` 1 to `MAX_DEPTH` 99).
   `position(camera, size)` is `at + depth × (camera − size / 2)`, exact
   (a camera that is not finite counts as the centre); the renderer
-  rounds it to its texels. No simulation reads them.
+  rounds it to its texels. No simulation reads them. Issue #62: `glow:
+  Option<DistantGlow { group, strength, mask }>` (the group maps' value,
+  1 + the look's group index; percent 1-100; a grey mask per art pixel or
+  `None`); `DistantGlow::at(i)` is the bake's byte at art pixel `i`
+  (`olr_edit::compose`'s element glow rounding).
 - **Loadouts** (`loadouts.rs`, issue #5, not OLX's): `MatchLoadout { name,
   weapons, loading_time, unique }` (weapons by the mod's names; empty means
   every weapon: `Default`, `DEFAULT_LOADOUT`, `MatchLoadout::default()`,

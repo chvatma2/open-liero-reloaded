@@ -379,8 +379,12 @@ impl EditorState {
         let (Some(depth), Some(camera), Some(doc)) = (e.distant, self.parallax_camera(), &self.doc) else {
             return (0, 0);
         };
-        let layer =
-            olr_data::level::DistantLayer { image: olr_data::image::RgbaImage::new(0, 0), at: (0, 0), depth };
+        let layer = olr_data::level::DistantLayer {
+            image: olr_data::image::RgbaImage::new(0, 0),
+            at: (0, 0),
+            depth,
+            glow: None,
+        };
         let (x, y) = layer.position(camera, doc.level().size);
         let whole = |v: f32| v.round().clamp(i32::MIN as f32, i32::MAX as f32) as i32;
         (whole(x), whole(y))

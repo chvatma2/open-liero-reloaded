@@ -152,8 +152,10 @@ pub struct Element {
     /// pixels the elements in front leave uncovered, moving by `1 - depth`
     /// of the camera's movement; its box lies where it is drawn with the
     /// camera (the view's centre) at the level's centre. Decoration only:
-    /// no collision material, no glow, never clear; one `surface` for the
-    /// whole layer. A Background image or plain drawn
+    /// no collision material, never clear; one `surface` for the whole
+    /// layer. It may glow (issue #62): its light falls on the level from
+    /// its box (the camera at the level's centre), its picture glows where
+    /// it is drawn. A Background image or plain drawn
     /// layer only, and every distant element lies below every other one;
     /// an asset carries none.
     /// Default none.
@@ -1098,8 +1100,8 @@ pub fn check_folders(c: &Composition) -> Result<(), FormatError> {
 }
 
 /// What a distant element `e` of `depth` may be (issue #11): a Background
-/// image or plain drawn layer of depth 1 to 99 that neither glows nor is
-/// clear; the reason it may not, else `Ok`.
+/// image or plain drawn layer of depth 1 to 99 that is not clear (it may
+/// glow, issue #62); the reason it may not, else `Ok`.
 pub fn check_distant(e: &Element, depth: u8) -> Result<(), String> {
     use olr_data::level::{MAX_DEPTH, MIN_DEPTH};
     if !(MIN_DEPTH..=MAX_DEPTH).contains(&depth) {
@@ -1116,9 +1118,6 @@ pub fn check_distant(e: &Element, depth: u8) -> Result<(), String> {
             return Err("a layer with back art cannot be distant".into());
         }
         _ => return Err("only a background element can be distant".into()),
-    }
-    if e.glow.is_some() {
-        return Err("a distant layer cannot glow".into());
     }
     if e.clear {
         return Err("a distant layer cannot be clear".into());
@@ -1397,7 +1396,7 @@ mod tests {
 
     /// Issue #11: a distant element is a background image or plain drawn
     /// layer, below every element that is not distant, of depth 1 to 99,
-    /// neither glowing nor clear.
+    /// never clear; it may glow (issue #62).
     #[test]
     fn distant_elements_follow_their_rules() {
         let mut s = sample();
@@ -1417,8 +1416,12 @@ mod tests {
         s.composition.elements[0].clear = true;
         assert!(check_composition(&s, (4, 3), 2).unwrap_err().to_string().contains("cannot be clear"));
         s.composition.elements[0].clear = false;
+        // Issue #62: a distant layer may glow, and its glow round-trips.
         s.composition.elements[0].glow = Some(ElementGlow { strength: 10, group: "g".into(), mask: false });
-        assert!(check_composition(&s, (4, 3), 2).unwrap_err().to_string().contains("cannot glow"));
+        check_composition(&s, (4, 3), 2).unwrap();
+        let mut fs = MemFs::new();
+        write_composition_files(&mut fs, &s).unwrap();
+        assert_eq!(read_composition_files(&fs).unwrap().unwrap().composition, s.composition);
         s.composition.elements[0].glow = None;
         // A plain background drawn layer may be distant too; dirt, a mixed
         // layer or one with back art may not.
