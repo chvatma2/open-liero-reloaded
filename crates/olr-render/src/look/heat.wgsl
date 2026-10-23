@@ -52,11 +52,72 @@ fn written(t: f32) -> vec4<u32> {
     return vec4<u32>(u32(clamp(floor(t), 0.0, HEAT_MAX)), 0u, 0u, 0u);
 }
 
+// Whether world pixel `q` of the solid map is rock or dirt for a
+// deposit's walk: outside the map is open.
+fn walk_solid(q: vec2<i32>, size: vec2<i32>) -> bool {
+    return all(q >= vec2<i32>(0)) && all(q < size) && heat_is_solid(solid_tex, q);
+}
+
+// The share of a deposit's gain world pixel `w` takes by what the deposit
+// at `o` reaches (issue #56): a walk from `o` to `w`'s centre through the
+// pixels the segment crosses, `o`'s own and `w` included. Before the first
+// rock or dirt pixel all is in sight: a back pixel takes BACK_HEAT. The
+// first HEAT_SKIN solid pixels in a row are the skin: the k-th takes
+// HEAT_SKIN_GAIN × HEAT_SKIN_WEIGHTS[k - 1]. Past them (deeper rock, or
+// the air past it) a pixel is shielded and takes 0. Passing a corner whose
+// two side pixels are solid counts as meeting a solid pixel (the glow
+// light's rule), so nothing slips through a diagonal wall one pixel thin.
+// Each boundary's crossing is divided afresh (no sum drifts), so a segment
+// through a corner meets it within the tolerance.
+fn heat_reach(o: vec2<f32>, w: vec2<i32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(solid_tex));
+    let dir = vec2<f32>(w) + vec2<f32>(0.5) - o;
+    let step = vec2<i32>(select(-1, 1, dir.x > 0.0), select(-1, 1, dir.y > 0.0));
+    let ahead = max(step, vec2<i32>(0));
+    var q = vec2<i32>(floor(o));
+    // the solid pixels met in a row since the first
+    var k = 0u;
+    for (var n = 0; n < HEAT_WALK_STEPS; n++) {
+        let solid = walk_solid(q, size);
+        if solid {
+            k += 1u;
+            if k > HEAT_SKIN {
+                return 0.0;
+            }
+        } else if k > 0u {
+            return 0.0;
+        }
+        if all(q == w) {
+            if !solid {
+                return BACK_HEAT;
+            }
+            let weights = HEAT_SKIN_WEIGHTS;
+            return HEAT_SKIN_GAIN * weights[k - 1u];
+        }
+        // The segment's parameter at the next pixel boundary along each axis.
+        let b = vec2<f32>(q + ahead);
+        let tx = select(1e9, (b.x - o.x) / dir.x, dir.x != 0.0);
+        let ty = select(1e9, (b.y - o.y) / dir.y, dir.y != 0.0);
+        if abs(tx - ty) < 1e-5 {
+            // Through a corner: both pixels beside it solid close it.
+            if k == 0u && walk_solid(q + vec2<i32>(step.x, 0), size) && walk_solid(q + vec2<i32>(0, step.y), size) {
+                k = 1u;
+            }
+            q += step;
+        } else if tx < ty {
+            q.x += step.x;
+        } else {
+            q.y += step.y;
+        }
+    }
+    return 0.0;
+}
+
 // Each deposit of the pass's range adds amount × (1 - (d / radius)²) ×
-// the material's gain (BACK_HEAT of it on the back, issue #40), in whole
-// texel units (issue #40: integer sums below 2^24 are exact, so deposits
-// landing in one pass or in several give the same texel); a pixel of no
-// heating material holds none.
+// the material's gain × the share its walk gives (`heat_reach`, issue
+// #56), in whole texel units (issue #40: integer sums below 2^24 are
+// exact, so deposits landing in one pass or in several give the same
+// texel); a pixel of no heating material holds none.
 @fragment
 fn fs_heat_deposit(in: DepositOut) -> @location(0) vec4<u32> {
     let w = vec2<i32>(floor(in.pos.xy));
@@ -65,13 +126,13 @@ fn fs_heat_deposit(in: DepositOut) -> @location(0) vec4<u32> {
         return vec4<u32>(0u);
     }
     var t = temp(w);
-    let gain = mat.x * select(BACK_HEAT, 1.0, heat_is_solid(solid_tex, w));
     let c = vec2<f32>(w) + vec2<f32>(0.5);
     let end = min(u32(max(in.range.y, 0.0)), MAX_HEAT_DEPOSITS);
     for (var i = u32(max(in.range.x, 0.0)); i < end; i++) {
         let d = deposits.d[i];
         let x = length(c - d.xy) / max(d.z, 0.5);
         if x < 1.0 {
+            let gain = mat.x * heat_reach(d.xy, w);
             t += floor(max(d.w, 0.0) * (1.0 - x * x) * gain * HEAT_SCALE);
         }
     }

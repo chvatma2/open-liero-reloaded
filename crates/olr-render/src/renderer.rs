@@ -20,8 +20,8 @@ mod uploads;
 
 pub use gi::{GI_CELL_BUDGET, gi_cell};
 pub use heat::{
-    BACK_HEAT, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_AMOUNT, MAX_HEAT_DEPOSITS,
-    MAX_HEAT_RADIUS, MAX_HEAT_STEPS,
+    BACK_HEAT, HEAT_SCALE, HEAT_SKIN, HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS, HEAT_STEP_MS, HeatDeposit, HeatView,
+    MAX_HEAT_AMOUNT, MAX_HEAT_DEPOSITS, MAX_HEAT_RADIUS, MAX_HEAT_STEPS,
 };
 pub use pass::ViewDraw;
 pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};

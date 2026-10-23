@@ -2,7 +2,8 @@
 
 use olr_look::{Heat, LookFrame, RampKey, SurfaceMaps, SurfaceMaterial, ViewMode};
 use olr_render::{
-    BACK_HEAT, HEAT_SCALE, HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer,
+    BACK_HEAT, HEAT_SCALE, HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS, HEAT_STEP_MS, HeatDeposit, HeatView,
+    MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer,
 };
 
 use super::*;
@@ -69,6 +70,51 @@ fn heated(gpu: &Offscreen) -> Renderer {
     r.upload_terrain(&map());
     assert!(r.has_heat());
     r
+}
+
+/// Issue #56: a 120 × 90 level like [`map`], dirt but for open air where
+/// `open(x, y)` (world pixels) and in the last ten rows.
+fn level(open: impl Fn(u32, u32) -> bool) -> ColorMap {
+    let cells = (0..120 * 90)
+        .map(|i| if i / 120 >= 80 || open(i % 120, i / 120) { Material::Background } else { Material::Dirt })
+        .collect();
+    let t = Terrain::from_grid(&MaterialGrid::from_cells(120, 90, cells).unwrap());
+    let mut front = RgbaImage::new(240, 180);
+    for y in 0..180 {
+        for x in 0..240 {
+            front.set(x, y, palette(x / 2, y / 2));
+        }
+    }
+    let theme =
+        ThemeArt { holes: Vec::new(), green_mask: None, front_tile: solid(4, 4, Rgba::rgb(120, 80, 40)) };
+    ColorMap::new(&t, &front, &solid(240, 180, Rgba::rgb(0, 0, 40)), 2, theme)
+}
+
+/// Issue #56: a [`level`] open above row 40, its face.
+fn surface() -> ColorMap {
+    level(|_, y| y < 40)
+}
+
+/// `map` lit, with [`materials`] on [`maps`].
+fn heated_level(gpu: &Offscreen, map: &ColorMap) -> Renderer {
+    let mut r = lit(gpu);
+    r.set_surface(&materials(), Some(&maps()));
+    r.upload_terrain(map);
+    assert!(r.has_heat());
+    r
+}
+
+/// Issue #56: what deposit `d` gives stone at world pixel `(x, y)` by its
+/// falloff alone, degrees.
+fn falloff(d: HeatDeposit, x: usize, y: usize) -> f32 {
+    let (dx, dy) = (x as f32 + 0.5 - d.pos[0], y as f32 + 0.5 - d.pos[1]);
+    let q = (dx * dx + dy * dy) / (d.radius * d.radius);
+    if q < 1.0 { d.amount * (1.0 - q) } else { 0.0 }
+}
+
+/// Issue #56: whether `got` is `want` to the texel units' rounding.
+fn near(got: f32, want: f32) -> bool {
+    (got - want).abs() <= 2.0 / HEAT_SCALE
 }
 
 /// Each world pixel's temperature, degrees.
@@ -148,13 +194,19 @@ fn no_materials_draws_todays_bytes() {
 }
 
 /// A deposit heats only pixels whose material heats, by the deposit's
-/// falloff, and heat spreads only into conducting materials.
+/// falloff, and heat spreads only into conducting materials. (Issue #56:
+/// the deposits lie in the air above [`surface`]'s face at row 40, which
+/// they heat, one over each material: a walk meets the face's pixels
+/// nearer than the target first at a shallow angle; they lay inside the
+/// dirt and heated it deep.)
 #[test]
 fn a_deposit_heats_only_material_pixels_and_spreads_only_into_conducting_ones() {
     let Some(gpu) = offscreen() else { return };
-    let mut r = heated(&gpu);
-    // Across stone (to 40), the insulator (to 60) and numb (to 80).
-    r.deposit_heat(HeatDeposit { pos: [50.0, 40.0], radius: 25.0, amount: 800.0 });
+    let mut r = heated_level(&gpu, &surface());
+    // Over stone (to 40), the insulator (to 60) and numb (to 80).
+    r.deposit_heat(HeatDeposit { pos: [50.0, 39.0], radius: 25.0, amount: 800.0 });
+    r.deposit_heat(HeatDeposit { pos: [30.0, 39.0], radius: 6.0, amount: 800.0 });
+    r.deposit_heat(HeatDeposit { pos: [65.0, 39.0], radius: 6.0, amount: 800.0 });
     frame(&gpu, &mut r, &dark());
     let t = temps(&gpu, &r);
     assert!(at(&t, 30, 40) > 100.0, "stone heats: {}", at(&t, 30, 40));
@@ -164,28 +216,28 @@ fn a_deposit_heats_only_material_pixels_and_spreads_only_into_conducting_ones() 
     assert_eq!(at(&t, 65, 40), 0.0, "numb never heats");
     assert_eq!(at(&t, 50, 10), 0.0, "past the radius");
     // Cold and no material hold none.
-    r.deposit_heat(blast(100.0, 40.0, 15.0));
+    r.deposit_heat(blast(100.0, 39.0, 15.0));
     frame(&gpu, &mut r, &dark());
     let t = temps(&gpu, &r);
     assert!((86..115).all(|x| at(&t, x, 40) == 0.0), "cold and none hold no heat");
 
     // Spreading: in stone it goes past its circle; in the insulator not;
     // from stone it never enters the insulator.
-    let mut r = heated(&gpu);
-    r.deposit_heat(blast(15.0, 40.0, 3.0));
-    r.deposit_heat(blast(50.0, 40.0, 3.0));
-    r.deposit_heat(blast(37.0, 20.0, 2.5));
+    let mut r = heated_level(&gpu, &surface());
+    r.deposit_heat(blast(15.0, 39.0, 3.0));
+    r.deposit_heat(blast(50.0, 39.0, 3.0));
+    r.deposit_heat(blast(37.0, 39.0, 2.5));
     frame(&gpu, &mut r, &dark());
     let before = temps(&gpu, &r);
     assert_eq!(at(&before, 22, 40), 0.0);
     steps(&gpu, &mut r, 60);
     let t = temps(&gpu, &r);
     assert!(at(&t, 22, 40) > 0.0, "stone conducts: {}", at(&t, 22, 40));
-    assert!(at(&t, 15, 47) > 0.0);
+    assert!(at(&t, 15, 46) > 0.0);
     assert_eq!(at(&t, 57, 40), 0.0, "the insulator conducts nothing");
     assert!(at(&t, 50, 40) > 0.0, "and keeps its own heat");
-    assert!(at(&t, 38, 20) > 0.0);
-    assert!((40..46).all(|x| at(&t, x, 20) == 0.0), "stone's heat stops at the insulator");
+    assert!(at(&t, 38, 40) > 0.0);
+    assert!((40..46).all(|x| (40..44).all(|y| at(&t, x, y) == 0.0)), "stone's heat stops at the insulator");
     assert_eq!(r.heat_steps(), 60);
 }
 
@@ -208,20 +260,22 @@ fn sensitivity_zero_never_heats() {
 }
 
 /// Heat cools to nothing (the rim beside the air first), the boxes go
-/// and the passes stop.
+/// and the passes stop. (Issue #56: the blast lies in the air below the
+/// dirt's face, where it lay inside the dirt and heated it deep.)
 #[test]
 fn heat_cools_to_nothing() {
     let Some(gpu) = offscreen() else { return };
     let mut r = heated(&gpu);
-    r.deposit_heat(blast(20.0, 76.0, 8.0));
+    r.deposit_heat(blast(20.0, 82.0, 8.0));
     frame(&gpu, &mut r, &dark());
     let start = temps(&gpu, &r);
     assert!(at(&start, 20, 79) > 800.0, "the rim: {}", at(&start, 20, 79));
     steps(&gpu, &mut r, 100);
     let t = temps(&gpu, &r);
     assert!(at(&t, 20, 79) < at(&start, 20, 79) * 0.6, "it cools: {}", at(&t, 20, 79));
-    // (20, 72) started as hot, as far from the centre inside.
-    assert!(at(&t, 20, 79) < at(&t, 20, 72), "the rim beside the air faster than inside");
+    // (20, 78), the skin's second pixel, is not beside the air.
+    let kept = |x, y| at(&t, x, y) / at(&start, x, y);
+    assert!(kept(20, 79) < kept(20, 78), "the rim beside the air faster than inside");
     let mut seconds = 0;
     while r.heat_active() {
         r.advance_heat(1000);
@@ -368,6 +422,130 @@ fn the_back_takes_a_share_of_a_deposit() {
     assert_eq!((at(&t, 20, 40), at(&t, 20, 85)), (800.0, 800.0 * BACK_HEAT));
 }
 
+/// Issue #56: a blast in the air beside a thick rock block heats its face
+/// whole, the next pixel in half of it, and nothing deeper.
+#[test]
+fn a_deposit_heats_only_the_rock_face() {
+    let Some(gpu) = offscreen() else { return };
+    // Stone's columns: rock above row 50, the face row 49.
+    let mut r = heated_level(&gpu, &level(|_, y| y >= 50));
+    let d = HeatDeposit { pos: [20.5, 55.5], radius: 20.0, amount: 1000.0 };
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    let skin = |k: usize, x, y| falloff(d, x, y) * HEAT_SKIN_GAIN * HEAT_SKIN_WEIGHTS[k];
+    for x in 14..=26 {
+        assert!(near(at(&t, x, 49), skin(0, x, 49)), "the face at {x}: {}", at(&t, x, 49));
+    }
+    // Farther out a walk to row 48 crosses two pixels of the face first.
+    for x in 18..=22 {
+        assert!(near(at(&t, x, 48), skin(1, x, 48)), "the next pixel at {x}: {}", at(&t, x, 48));
+    }
+    assert!(at(&t, 20, 49) > 900.0);
+    assert!((0..48).all(|y| (0..120).all(|x| at(&t, x, y) == 0.0)), "nothing deeper");
+}
+
+/// Issue #56: conduction carries the face's heat in: after some steps
+/// the pixels 3 and 4 deep are warm, cooler than the face.
+#[test]
+fn heat_soaks_inward_from_the_face() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = heated_level(&gpu, &level(|_, y| y >= 50));
+    r.deposit_heat(HeatDeposit { pos: [20.5, 55.5], radius: 20.0, amount: 1000.0 });
+    frame(&gpu, &mut r, &dark());
+    let before = temps(&gpu, &r);
+    steps(&gpu, &mut r, 40);
+    let t = temps(&gpu, &r);
+    for y in [47, 46] {
+        assert!(at(&t, 20, y) > at(&before, 20, y), "{y} warms: {}", at(&t, 20, y));
+        assert!(at(&t, 20, y) > 1.0, "{y} is warm: {}", at(&t, 20, y));
+        assert!(at(&t, 20, y) < at(&t, 20, 49), "{y} is cooler than the face");
+    }
+}
+
+/// Issue #56: a rock wall 3 pixels thick between a blast and a tunnel in
+/// its radius shields the wall's far face and the tunnel's back.
+#[test]
+fn a_wall_shields_what_is_behind_it() {
+    let Some(gpu) = offscreen() else { return };
+    // A cave in stone's columns, rows 30 to 60, cut by a wall at 20 to 22.
+    let cave = level(|x, y| (30..60).contains(&y) && x < 40 && !(20..23).contains(&x));
+    let mut r = heated_level(&gpu, &cave);
+    let d = HeatDeposit { pos: [14.5, 45.5], radius: 20.0, amount: 1000.0 };
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    assert!(near(at(&t, 17, 45), falloff(d, 17, 45) * BACK_HEAT), "the back in sight");
+    assert!(near(at(&t, 20, 45), falloff(d, 20, 45) * HEAT_SKIN_GAIN), "the wall's face");
+    assert!(at(&t, 21, 45) > 0.0, "the skin's second pixel");
+    assert!((0..90).all(|y| (22..120).all(|x| at(&t, x, y) == 0.0)), "the far face and the tunnel take none");
+}
+
+/// Issue #56: a diagonal wall one pixel thin (its pixels touching at
+/// corners) shields what lies behind it: a walk through a corner both of
+/// whose sides are rock meets rock.
+#[test]
+fn a_diagonal_wall_shields_too() {
+    let Some(gpu) = offscreen() else { return };
+    // Open in stone's columns, rows 10 to 80, but for the wall x + y = 60.
+    let cave = level(|x, y| (10..80).contains(&y) && x < 40 && x + y != 60);
+    let mut r = heated_level(&gpu, &cave);
+    let d = HeatDeposit { pos: [18.5, 30.5], radius: 24.0, amount: 1000.0 };
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    assert!(near(at(&t, 30, 30), falloff(d, 30, 30) * HEAT_SKIN_GAIN), "the wall's face");
+    assert!(near(at(&t, 25, 30), falloff(d, 25, 30) * BACK_HEAT), "the back in sight");
+    let behind = (10..80).flat_map(|y| (0..40).map(move |x| (x, y))).filter(|&(x, y)| x + y > 60);
+    for (x, y) in behind {
+        assert_eq!(at(&t, x, y), 0.0, "({x}, {y}) behind the wall");
+    }
+}
+
+/// Issue #56: a blast centred inside rock heats its own pixel whole and
+/// the skin's next pixels round it in half, nothing past them.
+#[test]
+fn a_deposit_inside_rock_heats_round_its_centre() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = heated(&gpu);
+    let d = HeatDeposit { pos: [20.5, 40.5], radius: 10.0, amount: 1000.0 };
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    for y in 0..90 {
+        for x in 0..120 {
+            let k = (x as i32 - 20).abs().max((y as i32 - 40).abs());
+            let want = match k {
+                0 => falloff(d, x, y) * HEAT_SKIN_GAIN * HEAT_SKIN_WEIGHTS[0],
+                1 => falloff(d, x, y) * HEAT_SKIN_GAIN * HEAT_SKIN_WEIGHTS[1],
+                _ => 0.0,
+            };
+            assert!(near(at(&t, x, y), want), "({x}, {y}): {} for {want}", at(&t, x, y));
+        }
+    }
+}
+
+/// Issue #56: every back pixel in sight of a blast, no rock or dirt on
+/// the way, takes [`BACK_HEAT`] of it as before.
+#[test]
+fn the_back_in_sight_takes_its_share() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = heated(&gpu);
+    // [`map`]'s open rows 80 to 90; its back is stone left of 40.
+    let d = HeatDeposit { pos: [20.5, 85.5], radius: 9.0, amount: 1000.0 };
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    let mut seen = 0;
+    for y in 80..90 {
+        for x in 0..40 {
+            assert!(near(at(&t, x, y), falloff(d, x, y) * BACK_HEAT), "({x}, {y}): {}", at(&t, x, y));
+            seen += usize::from(at(&t, x, y) > 0.0);
+        }
+    }
+    assert!(seen > 150, "{seen} warm");
+}
+
 /// With nothing hot no heat pass runs; a deposit runs them.
 #[test]
 fn nothing_hot_runs_no_pass() {
@@ -458,7 +636,8 @@ fn split_screen_steps_once_per_frame() {
 
 /// A hot pixel lights the dark air by its material's light; one whose
 /// light is 0 shows hot but lights nothing. (In the insulator's columns,
-/// whose air has no back wall to heat.)
+/// whose air has no back wall to heat; issue #56: the blast lies in the
+/// air below the face it heats, where it lay inside the dirt.)
 #[test]
 fn a_hot_pixel_adds_glow_light() {
     let Some(gpu) = offscreen() else { return };
@@ -470,7 +649,7 @@ fn a_hot_pixel_adds_glow_light() {
         r.upload_terrain(&map());
         let cold = frame(&gpu, &mut r, &dark());
         let (grid, before) = gpu.read_light(&r).unwrap();
-        r.deposit_heat(blast(50.0, 76.0, 8.0));
+        r.deposit_heat(blast(50.0, 82.0, 8.0));
         let hot = frame(&gpu, &mut r, &dark());
         let (_, after) = gpu.read_light(&r).unwrap();
         let i = |x: i32, y: i32| ((y - grid.origin.1) * grid.size.0 as i32 + (x - grid.origin.0)) as usize;
@@ -486,7 +665,8 @@ fn a_hot_pixel_adds_glow_light() {
 }
 
 /// A hot pixel shows its ramp's colour over its art, lit, in the dark,
-/// and in the editor's full-bright view.
+/// and in the editor's full-bright view. (Issue #56: the blast lies in
+/// the air below the face it heats, where it lay inside the dirt.)
 #[test]
 fn a_hot_pixel_shows_its_colour_in_every_view() {
     let Some(gpu) = offscreen() else { return };
@@ -495,21 +675,24 @@ fn a_hot_pixel_shows_its_colour_in_every_view() {
         look.mode = mode;
         let mut r = heated(&gpu);
         let cold = frame(&gpu, &mut r, &look);
-        r.deposit_heat(blast(30.0, 60.0, 8.0));
+        r.deposit_heat(blast(30.0, 81.0, 8.0));
         let hot = frame(&gpu, &mut r, &look);
-        // World pixel (30, 60) is texel (20, 60) of the 2× frame.
-        let (x, y) = ((30 - 20) * 2, (60 - 30) * 2);
+        // World pixel (30, 79), the face, is texel (20, 98) of the 2× frame.
+        let (x, y) = ((30 - 20) * 2, (79 - 30) * 2);
         let c = hot.get(x, y);
         assert!(c.r >= 240 && c.g >= 200 && c.b >= 160, "{mode:?}: yellow-white at the centre: {c:?}");
         assert_ne!(cold.get(x, y), c);
-        let edge = hot.get((35 - 20) * 2, y);
-        assert!(edge.r > edge.b, "{mode:?}: redder at the edge: {edge:?}");
+        // (30, 78), the skin's second pixel, takes half.
+        let edge = hot.get(x, y - 2);
+        assert!(edge.r > edge.b, "{mode:?}: redder at half the heat: {edge:?}");
         assert_eq!(hot.get(0, 0), cold.get(0, 0), "{mode:?}: far pixels unchanged");
     }
 }
 
 /// A pixel dug out keeps its heat when its back material heats, and loses
-/// it where the back holds none.
+/// it where the back holds none. (Issue #56: a blast inside the dirt
+/// heats only round its centre, so the insulator's pixel kept is a blast
+/// of its own past the hole, where one blast heated it deep.)
 #[test]
 fn a_dug_pixel_is_ruled_by_its_back() {
     let Some(gpu) = offscreen() else { return };
@@ -520,6 +703,7 @@ fn a_dug_pixel_is_ruled_by_its_back() {
     map.take_dirty().for_each(drop);
     r.deposit_heat(blast(20.0, 40.0, 6.0));
     r.deposit_heat(blast(50.0, 40.0, 10.0));
+    r.deposit_heat(blast(50.0, 31.0, 4.0));
     frame(&gpu, &mut r, &dark());
     map.apply(ColorEdit::Carve { hole: 2, x: 20, y: 40 });
     map.apply(ColorEdit::Carve { hole: 2, x: 50, y: 40 });
@@ -528,7 +712,7 @@ fn a_dug_pixel_is_ruled_by_its_back() {
     let t = temps(&gpu, &r);
     assert!(at(&t, 20, 40) > 500.0, "its back is stone: {}", at(&t, 20, 40));
     assert_eq!(at(&t, 50, 40), 0.0, "no back material: no heat");
-    assert!(at(&t, 50, 31) > 0.0, "the insulator round the hole keeps its heat");
+    assert!(at(&t, 50, 31) > 0.0, "the insulator past the hole keeps its heat");
 }
 
 /// A reset, a new level or a restart clears the heat.

@@ -79,6 +79,23 @@ const BULK: f32 = 0.25;
 /// the open warms it only faintly; a crater's rim takes it whole.
 pub const BACK_HEAT: f32 = 0.2;
 
+/// The rock or dirt pixels a deposit heats along its line of sight
+/// (issue #56): the first `HEAT_SKIN` solid ones a walk from its centre
+/// meets; what lies past them takes nothing (conduction carries it in).
+pub const HEAT_SKIN: usize = 2;
+
+/// The share of a deposit the skin takes, × [`HEAT_SKIN_WEIGHTS`] (issue
+/// #56; the maintainer tunes it in play).
+pub const HEAT_SKIN_GAIN: f32 = 1.0;
+
+/// The skin's k-th solid pixel's weight along the walk (issue #56): the
+/// face whole, the next pixel in half.
+pub const HEAT_SKIN_WEIGHTS: [f32; HEAT_SKIN] = [1.0, 0.5];
+
+/// The most pixels a deposit's walk visits: a segment no longer than
+/// [`MAX_HEAT_RADIUS`] crosses at most its two extents' cells and one.
+const HEAT_WALK_STEPS: i32 = 2 * MAX_HEAT_RADIUS as i32 + 4;
+
 /// The light a fully glowing hot pixel casts, × its colour (linear) × its
 /// material's `light` (a glow group's at 100 % intensity casts 1).
 pub(super) const HEAT_CAST: f32 = 1.0;
@@ -676,7 +693,8 @@ const FLOAT: wgpu::BindingType = wgpu::BindingType::Texture {
 /// The WGSL the heat passes and readers share, after the Rust constants.
 pub(super) fn heat_common() -> String {
     format!(
-        "const HEAT_SCALE: f32 = {HEAT_SCALE:?};\nconst HEAT_MAX: f32 = {HEAT_MAX:?};\nconst RAMP_BINS: i32 = {RAMP_BINS};\nconst HEAT_CAST: f32 = {HEAT_CAST:?};\nconst HEAT_REACH: f32 = {HEAT_REACH:?};\nconst MAX_COUPLING: f32 = {MAX_COUPLING:?};\nconst COOL_RATE: f32 = {COOL_RATE:?};\nconst COOL_MIN: f32 = {COOL_MIN:?};\nconst BULK: f32 = {BULK:?};\nconst BACK_HEAT: f32 = {BACK_HEAT:?};\nconst MAX_HEAT_DEPOSITS: u32 = {MAX_HEAT_DEPOSITS}u;\n{}",
+        "const HEAT_SCALE: f32 = {HEAT_SCALE:?};\nconst HEAT_MAX: f32 = {HEAT_MAX:?};\nconst RAMP_BINS: i32 = {RAMP_BINS};\nconst HEAT_CAST: f32 = {HEAT_CAST:?};\nconst HEAT_REACH: f32 = {HEAT_REACH:?};\nconst MAX_COUPLING: f32 = {MAX_COUPLING:?};\nconst COOL_RATE: f32 = {COOL_RATE:?};\nconst COOL_MIN: f32 = {COOL_MIN:?};\nconst BULK: f32 = {BULK:?};\nconst BACK_HEAT: f32 = {BACK_HEAT:?};\nconst HEAT_SKIN: u32 = {HEAT_SKIN}u;\nconst HEAT_SKIN_GAIN: f32 = {HEAT_SKIN_GAIN:?};\nconst HEAT_SKIN_WEIGHTS = array<f32, {HEAT_SKIN}>({});\nconst HEAT_WALK_STEPS: i32 = {HEAT_WALK_STEPS};\nconst MAX_HEAT_DEPOSITS: u32 = {MAX_HEAT_DEPOSITS}u;\n{}",
+        HEAT_SKIN_WEIGHTS.map(|w| format!("{w:?}")).join(", "),
         include_str!("../look/heat_common.wgsl")
     )
 }

@@ -1,7 +1,8 @@
 // Heat (issue #39): the materials table and what the heat passes and their
 // readers share. HEAT_SCALE (texel units a degree), HEAT_MAX, RAMP_BINS,
-// HEAT_CAST, HEAT_REACH, MAX_COUPLING, COOL_RATE, COOL_MIN, BULK, BACK_HEAT
-// and MAX_HEAT_DEPOSITS are prepended from the Rust constants (`heat.rs`).
+// HEAT_CAST, HEAT_REACH, MAX_COUPLING, COOL_RATE, COOL_MIN, BULK, BACK_HEAT,
+// HEAT_SKIN, HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS, HEAT_WALK_STEPS and
+// MAX_HEAT_DEPOSITS are prepended from the Rust constants (`heat.rs`).
 
 // One material value's: `a` its gain (degrees a deposit's degree gives it),
 // conduction, 1 / capacity (0: it holds no heat), cooling; `b.x` the share
