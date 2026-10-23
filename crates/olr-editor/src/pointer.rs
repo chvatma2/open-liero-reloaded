@@ -242,9 +242,11 @@ impl EditorState {
             Selection::Element(id) => id.clone(),
             _ => String::new(),
         };
-        let item = doc.index_of(&id).map(|i| &doc.items()[i]);
+        let found = doc.index_of(&id);
+        let item = found.map(|i| &doc.items()[i]);
         let why = match item {
-            Some(item) if item.element.locked => format!("element {id:?} is locked"),
+            // Locked itself or by a folder (issue #60).
+            Some(_) if found.is_some_and(|i| doc.locked_at(i)) => format!("element {id:?} is locked"),
             Some(item) if matches!(item.decoded, Decoded::Drawn { .. }) => return Some(id),
             Some(item) if matches!(item.decoded, Decoded::Image { .. }) && picture => return Some(id),
             Some(item) if matches!(item.decoded, Decoded::Image { .. }) => {
@@ -650,8 +652,8 @@ impl EditorState {
         if let Selection::Element(id) = &self.selection
             && let Some(i) = doc.index_of(id)
             && let e = &doc.items()[i].element
-            && !e.locked
-            && e.visible
+            && !doc.locked_at(i)
+            && doc.shown_at(i)
             && let Some(b) = image_box(e)
         {
             let reach = HANDLE_REACH / (self.view.scale() * doc.level().art_scale as f32);
@@ -684,13 +686,12 @@ impl EditorState {
         if let (Selection::Many(ids), Some(item)) = (&self.selection, hit)
             && ids.contains(&item.element.id)
         {
-            let befores: Vec<Element> = ids
-                .iter()
-                .filter_map(|id| doc.index_of(id))
-                .map(|i| doc.items()[i].element.clone())
-                .collect();
-            match befores.iter().find(|e| e.locked) {
-                Some(e) => self.status.message = Some(format!("element {:?} is locked", e.id)),
+            let found: Vec<usize> = ids.iter().filter_map(|id| doc.index_of(id)).collect();
+            let befores: Vec<Element> = found.iter().map(|&i| doc.items()[i].element.clone()).collect();
+            match found.iter().find(|&&i| doc.locked_at(i)) {
+                Some(&i) => {
+                    self.status.message = Some(format!("element {:?} is locked", doc.items()[i].element.id))
+                }
                 None => self.drag = Some(Drag::MoveMany { befores, from: world }),
             }
             return Vec::new();
@@ -698,11 +699,12 @@ impl EditorState {
         match hit {
             Some(item) => {
                 let e = item.element.clone();
+                let locked = doc.index_of(&e.id).is_some_and(|i| doc.locked_at(i));
                 // A drawn layer moves only once selected: a click on the map
                 // never drags a whole layer by accident.
                 let moves = image_box(&e).is_some() || self.selection == Selection::Element(e.id.clone());
                 self.selection = Selection::Element(e.id.clone());
-                if e.locked {
+                if locked {
                     self.status.message = Some(format!("element {:?} is locked", e.id));
                 } else if moves {
                     self.drag = Some(Drag::Move { before: e, from: world });
@@ -713,16 +715,18 @@ impl EditorState {
         Vec::new()
     }
 
-    /// The topmost visible image box or covered drawn pixel under world
-    /// pixel `world` (plan 14d R9): its id.
+    /// The topmost shown image box or covered drawn pixel under world
+    /// pixel `world` (plan 14d R9): its id. A member of a hidden folder is
+    /// not shown (issue #60).
     fn hit(&self, world: (i32, i32)) -> Option<String> {
         let doc = self.doc.as_ref()?;
         let (level, s) = (doc.level().size, doc.level().art_scale);
         doc.items()
             .iter()
+            .enumerate()
             .rev()
-            .find(|item| {
-                item.element.visible
+            .find(|(i, item)| {
+                doc.shown_at(*i)
                     && match &item.element.kind {
                         ElementKind::Image { .. } => image_box(&item.element)
                             .is_some_and(|b| contains(b, unshift(world, self.parallax(&item.element)))),
@@ -732,7 +736,7 @@ impl EditorState {
                         ElementKind::Raster => false,
                     }
             })
-            .map(|item| item.element.id.clone())
+            .map(|(_, item)| item.element.id.clone())
     }
 
     fn drag_to(&mut self, world: (i32, i32), shift: bool) -> Vec<EditorCommand> {
@@ -1035,24 +1039,25 @@ impl EditorState {
             }
             _ => (0, 0),
         };
-        for item in doc.items() {
+        for (i, item) in doc.items().iter().enumerate() {
             let e = &item.element;
-            // Images' boxes, and the selected drawn layer's (plan 14d R9).
+            // Images' boxes, and the selected drawn layer's (plan 14d R9);
+            // shown and locked as their folders make them (issue #60).
             let b = image_box(e).or_else(|| drawn_box(&e.kind, size).filter(|_| selected(&e.id)));
-            if let (true, Some(b)) = (e.visible, b) {
+            if let (true, Some(b)) = (doc.shown_at(i), b) {
                 let b = (shifted(b.0, self.parallax(e)), b.1);
                 out.push(Overlay::Box {
                     rect: box_rect(b, size),
                     selected: selected(&e.id),
-                    locked: e.locked,
+                    locked: doc.locked_at(i),
                 });
             }
         }
         if let Selection::Element(id) = &self.selection
             && let Some(i) = doc.index_of(id)
             && let e = &doc.items()[i].element
-            && !e.locked
-            && e.visible
+            && !doc.locked_at(i)
+            && doc.shown_at(i)
             && let Some(b) = image_box(e)
         {
             let by = self.parallax(e);

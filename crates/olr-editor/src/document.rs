@@ -12,10 +12,11 @@ use olr_edit::compose::{
     Decoded, GlowMasks, ImageCache, PaintedSurfaces, Rect, bake_distant, bake_elements_with, decode_element,
     decode_glow_masks, decode_surface_maps, encode_decoded, has_distant,
 };
+use olr_edit::folders;
 use olr_edit::level::refresh_thumb;
 use olr_edit::pack::{Pack, Source};
 use olr_format::levels::{
-    Composition, CompositionSource, Element, ElementKind, GlowLayers, LevelObject, LevelSource,
+    Composition, CompositionSource, Element, ElementKind, Folder, GlowLayers, LevelObject, LevelSource,
     check_composition, check_elements, element_box, glow_file, image_file, surface_back_file, surface_file,
     surface_map_size,
 };
@@ -68,6 +69,11 @@ pub struct Document {
     pub(crate) level: LevelSource,
     /// Bottom to top.
     pub(crate) items: Vec<Item>,
+    /// The layer folders (issue #60) the items' `folder` names. A folder a
+    /// removal or a move emptied may stay listed, so that its undo finds
+    /// it; `composition()` leaves such folders out and lists the rest in
+    /// the canonical order (`olr_edit::folders::tidy`).
+    pub(crate) folders: Vec<Folder>,
     /// Image originals by source name, as stored.
     pub(crate) originals: BTreeMap<String, Arc<Vec<u8>>>,
     pub(crate) cache: ImageCache,
@@ -140,6 +146,7 @@ pub struct PackSnapshot {
     other: BTreeMap<VPath, Vec<u8>>,
     level: LevelSource,
     items: Vec<Item>,
+    folders: Vec<Folder>,
     originals: BTreeMap<String, Arc<Vec<u8>>>,
     stored: BTreeMap<String, Vec<u8>>,
     rebaked: bool,
@@ -155,6 +162,7 @@ impl PackSnapshot {
             &self.other,
             &self.level,
             &self.items,
+            &self.folders,
             &self.originals,
             &self.stored,
             self.rebaked,
@@ -171,6 +179,7 @@ fn pack_of(
     other: &BTreeMap<VPath, Vec<u8>>,
     level: &LevelSource,
     items: &[Item],
+    folders: &[Folder],
     originals: &BTreeMap<String, Arc<Vec<u8>>>,
     stored: &BTreeMap<String, Vec<u8>>,
     rebaked: bool,
@@ -232,13 +241,21 @@ fn pack_of(
             e
         })
         .collect();
-    let composition = Composition { elements, folders: Vec::new() };
+    let composition = tidied(elements, folders);
     Pack {
         manifest: manifest.clone(),
         source: Source::Level(level),
         composition: Some(CompositionSource { composition, files }),
         other: other.clone(),
     }
+}
+
+/// `elements` with the folders of `folders` they use, in the canonical
+/// order (`olr_edit::folders::tidy`): the composition as saved.
+pub(crate) fn tidied(elements: Vec<Element>, folders: &[Folder]) -> Composition {
+    let mut c = Composition { elements, folders: folders.to_vec() };
+    folders::tidy(&mut c);
+    c
 }
 
 /// The painted surface map files element `e` names.
@@ -266,10 +283,6 @@ impl std::fmt::Debug for Document {
     }
 }
 
-/// Why a level holding layer folders does not open (issue #59).
-pub const FOLDERS_REFUSED: &str = "this level has layer folders, which the editor cannot edit yet: \
-     open it after ungrouping them (olr-cli level element ungroup)";
-
 impl Document {
     /// A level pack as the editor edits it: a plain level becomes its
     /// raster base (`compose_from`); every element decoded; the theme's
@@ -288,11 +301,6 @@ impl Document {
         let plain = composition.is_none();
         let src = composition.unwrap_or_else(|| olr_edit::compose::split_from(&level));
         check_composition(&src, level.size, level.art_scale).map_err(|e| DocError::Bad(e.to_string()))?;
-        // Layer folders (issue #59) come to the editor with issue #60: until
-        // then a level holding them opens nowhere, so no save drops them.
-        if !src.composition.folders.is_empty() {
-            return Err(DocError::Bad(FOLDERS_REFUSED.into()));
-        }
         let glow_masks = decode_glow_masks(&src, level.size, level.art_scale)?;
         let surface_maps = decode_surface_maps(&src, level.size)?;
         let kept = (plain && (level.glow.is_some() || level.clear.is_some())).then(|| Kept {
@@ -338,6 +346,7 @@ impl Document {
             other,
             level: level.clone(),
             items,
+            folders: src.composition.folders.clone(),
             originals,
             cache,
             front_tile: theme.front_tile.clone(),
@@ -399,8 +408,16 @@ impl Document {
     /// distant layer) rebakes the whole level; the level's distant layers
     /// are made again when the distant items changed
     /// (`distant_generation` counts it).
+    ///
+    /// Issue #60: it bakes the effective `visible` (a hidden folder hides
+    /// its members), and so compares the distant items: hiding a folder of
+    /// distant layers makes them again.
     pub fn rebake(&mut self, rect: Rect) {
-        let items: Vec<(&Element, &Decoded)> = self.items.iter().map(|i| (&i.element, &i.decoded)).collect();
+        let baked = self.baked_elements();
+        let items: Vec<(&Element, &Decoded)> = match &baked {
+            Some(es) => es.iter().zip(&self.items).map(|(e, i)| (e, &i.decoded)).collect(),
+            None => self.items.iter().map(|i| (&i.element, &i.decoded)).collect(),
+        };
         let (size, s) = (self.level.size, self.level.art_scale);
         let see_through = has_distant(&items, size, s);
         let all = Rect { x: 0, y: 0, w: size.0, h: size.1 };
@@ -415,12 +432,13 @@ impl Document {
             &self.back_tile,
             rect,
         );
-        let distant = self.items.iter().filter(|i| i.element.distant.is_some());
-        if whole || !distant.clone().eq(self.distant_items.iter()) {
+        let distant = items.iter().filter(|(e, _)| e.distant.is_some()).copied();
+        if whole || !distant.clone().eq(self.distant_items.iter().map(|i| (&i.element, &i.decoded))) {
             if !whole {
                 bake_distant(&mut self.level, &items);
             }
-            self.distant_items = distant.cloned().collect();
+            self.distant_items =
+                distant.map(|(e, d)| Item { element: e.clone(), decoded: d.clone() }).collect();
             self.distant_generation += 1;
         }
         self.see_through = see_through;
@@ -503,9 +521,55 @@ impl Document {
         self.other.keys().map(|p| p.as_str().to_string()).collect()
     }
 
-    /// The composition as `composition.ron` holds it.
-    pub(crate) fn composition(&self) -> Composition {
-        Composition { elements: self.items.iter().map(|i| i.element.clone()).collect(), folders: Vec::new() }
+    /// The composition as `composition.ron` holds it: the folders in use,
+    /// in the canonical order.
+    pub fn composition(&self) -> Composition {
+        tidied(self.items.iter().map(|i| i.element.clone()).collect(), &self.folders)
+    }
+
+    /// The layer folders in use (issue #60), in the canonical order: by
+    /// where each one's elements start, a parent before its children.
+    pub fn folders(&self) -> Vec<Folder> {
+        self.composition().folders
+    }
+
+    /// The folders as a composition without elements: what the effective
+    /// flags read (`olr_edit::folders`' walks up the parents).
+    pub(crate) fn folder_view(&self) -> Composition {
+        Composition { elements: Vec::new(), folders: self.folders.clone() }
+    }
+
+    /// Whether item `i` is shown: it and every folder holding it visible
+    /// (`olr_edit::folders::shown`).
+    pub fn shown_at(&self, i: usize) -> bool {
+        self.items.get(i).is_some_and(|it| {
+            it.element.visible
+                && (it.element.folder.is_none() || folders::shown(&self.folder_view(), &it.element))
+        })
+    }
+
+    /// Whether item `i` is locked: it or any folder holding it
+    /// (`olr_edit::folders::locked`).
+    pub fn locked_at(&self, i: usize) -> bool {
+        self.items.get(i).is_some_and(|it| {
+            it.element.locked
+                || (it.element.folder.is_some() && folders::locked(&self.folder_view(), &it.element))
+        })
+    }
+
+    /// The items' elements as the bake sees them: a hidden folder hides its
+    /// members (issue #60); `None` when no folder is hidden (the items' own).
+    fn baked_elements(&self) -> Option<Vec<Element>> {
+        if self.folders.iter().all(|f| f.visible) {
+            return None;
+        }
+        let view = self.folder_view();
+        Some(
+            self.items
+                .iter()
+                .map(|i| Element { visible: folders::shown(&view, &i.element), ..i.element.clone() })
+                .collect(),
+        )
     }
 
     /// The pack to save: the composition (`encode_decoded`, originals as
@@ -517,6 +581,7 @@ impl Document {
             &self.other,
             &self.level,
             &self.items,
+            &self.folders,
             &self.originals,
             &self.stored,
             self.rebaked,
@@ -533,6 +598,7 @@ impl Document {
             other: self.other.clone(),
             level: self.level.clone(),
             items: self.items.clone(),
+            folders: self.folders.clone(),
             originals: self.originals.clone(),
             stored: self.stored.clone(),
             rebaked: self.rebaked,

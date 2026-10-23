@@ -9,6 +9,7 @@ pub mod browser;
 pub mod catalog;
 pub mod clipboard;
 pub mod document;
+pub mod folder_ops;
 pub mod history;
 pub mod look_ops;
 pub mod ops;

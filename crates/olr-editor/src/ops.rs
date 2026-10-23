@@ -16,12 +16,12 @@ use olr_edit::mask::{Mask, mask_colour, mask_shape, original_pixel};
 use olr_edit::pixelate::Pixelation;
 use olr_format::image_io::{LEVEL_ART, check_size};
 use olr_format::levels::{
-    Composition, Dither, Element, ElementKind, ElementMaterial, LevelSource, MAX_ART_SCALE,
-    MAX_COMPOSED_PIXELS, MAX_ELEMENTS, check_elements, drawn_box, surface_back_file, surface_file,
+    Dither, Element, ElementKind, ElementMaterial, LevelSource, MAX_ART_SCALE, MAX_COMPOSED_PIXELS,
+    MAX_ELEMENTS, check_elements, drawn_box, surface_back_file, surface_file,
 };
 
 use crate::catalog::Catalog;
-use crate::document::{DocError, Document, Item};
+use crate::document::{DocError, Document, Item, tidied};
 use crate::history::{Edit, LevelMeta, Patch, Snapshot, Whole};
 
 /// Why painting on a picture is refused.
@@ -107,10 +107,16 @@ fn grid_key(e: &Element) -> Option<(&str, (u32, u32), Pixelation, bool)> {
     }
 }
 
-/// Sets one property of `e`, as `olr_edit::element::set` does (a locked
-/// element takes only `Locked`).
-pub(crate) fn with_property(e: &mut Element, property: Property, level: (u32, u32)) -> Result<(), DocError> {
-    if e.locked && !matches!(property, Property::Locked(_)) {
+/// Sets one property of `e`, as `olr_edit::element::set` does: a locked
+/// element takes only `Locked`. `locked` is its effective lock (issue #60:
+/// it, or a folder holding it, `Document::locked_at`).
+pub(crate) fn with_property(
+    e: &mut Element,
+    property: Property,
+    level: (u32, u32),
+    locked: bool,
+) -> Result<(), DocError> {
+    if locked && !matches!(property, Property::Locked(_)) {
         return Err(DocError::Locked(e.id.clone()));
     }
     let wrong = |want| DocError::WrongKind { id: e.id.clone(), want };
@@ -178,10 +184,10 @@ impl Document {
         self.index_of(id).ok_or_else(|| DocError::NoElement(id.into()))
     }
 
-    /// `id` (found) when it is not locked.
+    /// `id` (found) when it is not locked, nor any folder holding it.
     pub(crate) fn unlocked(&self, id: &str) -> Result<usize, DocError> {
         let i = self.find(id)?;
-        if self.items[i].element.locked {
+        if self.locked_at(i) {
             return Err(DocError::Locked(id.into()));
         }
         Ok(i)
@@ -210,12 +216,9 @@ impl Document {
         if elements.len() > MAX_ELEMENTS {
             return Err(DocError::Bad(format!("a level holds at most {MAX_ELEMENTS} elements")));
         }
-        let total = check_elements(
-            &Composition { elements: elements.to_vec(), folders: Vec::new() },
-            size,
-            art_scale,
-        )
-        .map_err(|e| DocError::Bad(e.to_string()))?;
+        // The folders the elements use (issue #60), as saved.
+        let total = check_elements(&tidied(elements.to_vec(), &self.folders), size, art_scale)
+            .map_err(|e| DocError::Bad(e.to_string()))?;
         // The masks of the elements that stay (a merge or split may take one).
         let masks: u64 = self
             .items
@@ -271,7 +274,7 @@ impl Document {
         let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
         let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         let element = Element {
-            id: new_element_id(&elements, &[], &stray, stem, "image"),
+            id: new_element_id(&elements, &self.folders, &stray, stem, "image"),
             name: stem.into(),
             visible: true,
             locked: false,
@@ -334,9 +337,20 @@ impl Document {
         Ok(Decoded::Image { grid: Some(grid), mask })
     }
 
-    /// Copies of `ids` in stack order (plan 14e R6): a drawn layer cropped
-    /// to its covered pixels, an image with its original.
+    /// Copies of `ids` in stack order (plan 14e R6), flat: in no folder
+    /// (`copy_tree` copies folders too).
     pub fn copy(&self, ids: &[String]) -> Vec<Snapshot> {
+        let mut items = self.copy_items(ids);
+        for s in &mut items {
+            s.item.element.folder = None;
+        }
+        items
+    }
+
+    /// Copies of elements `ids` in stack order (plan 14e R6): a drawn layer
+    /// cropped to its covered pixels, an image with its original; each
+    /// naming the level's folder it is in.
+    pub(crate) fn copy_items(&self, ids: &[String]) -> Vec<Snapshot> {
         let (size, s) = (self.level.size, self.level.art_scale);
         let mut found: Vec<usize> = ids.iter().filter_map(|id| self.index_of(id)).collect();
         found.sort_unstable();
@@ -436,7 +450,7 @@ impl Document {
         let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         let landing = olr_edit::asset::Landing {
             elements: &elements,
-            folders: &[],
+            folders: &self.folders,
             stray: &stray,
             originals: &self.originals,
             size,
@@ -558,7 +572,7 @@ impl Document {
         let name =
             if names.clone().any(|n| n == "Pasted") { copy_name("Pasted", names) } else { "Pasted".into() };
         let element = Element {
-            id: new_element_id(&elements, &[], &self.stray_files(), &name, "pasted"),
+            id: new_element_id(&elements, &self.folders, &self.stray_files(), &name, "pasted"),
             name,
             visible: true,
             locked: false,
@@ -590,7 +604,7 @@ impl Document {
     pub fn add_layer(&mut self, material: ElementMaterial, name: &str) -> Result<Change, DocError> {
         let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         let element = Element {
-            id: new_element_id(&elements, &[], &self.stray_files(), name, "layer"),
+            id: new_element_id(&elements, &self.folders, &self.stray_files(), name, "layer"),
             name: name.into(),
             visible: true,
             locked: false,
@@ -632,8 +646,10 @@ impl Document {
         let mut others: Vec<Element> =
             self.items.iter().filter(|i| i.element.id != id).map(|i| i.element.clone()).collect();
         let stray = self.stray_files();
-        let parts = drawn::split_element(&item.element, &item.decoded, size, s, |name, fallback| {
-            let new = new_element_id(&others, &[], &stray, name, fallback);
+        // As the bake sees it: a hidden folder hides it (issue #60).
+        let seen = Element { visible: self.shown_at(index), ..item.element.clone() };
+        let parts = drawn::split_element(&seen, &item.decoded, size, s, |name, fallback| {
+            let new = new_element_id(&others, &self.folders, &stray, name, fallback);
             // A raster's files cover a mixed layer's: none of them taken.
             others.push(Element {
                 id: new.clone(),
@@ -656,6 +672,11 @@ impl Document {
         if parts.is_empty() {
             return Err(DocError::Bad(format!("{id:?} has no pixels to split")));
         }
+        // The parts take its folder (issue #60).
+        let parts: Vec<(Element, Decoded)> = parts
+            .into_iter()
+            .map(|(e, d)| (Element { folder: item.element.folder.clone(), ..e }, d))
+            .collect();
         self.check_with(|es| {
             es.splice(index..=index, parts.iter().map(|(e, _)| e.clone()));
         })?;
@@ -693,13 +714,18 @@ impl Document {
         if le.element.is_distant() || ue.element.is_distant() {
             return Err(DocError::Bad("a distant layer does not merge".into()));
         }
-        let (element, decoded) = drawn::merge_down(
-            (&le.element, &le.decoded),
-            (&ue.element, &ue.decoded),
+        // The layers as the bake sees them: a hidden folder hides them
+        // (issue #60).
+        let seen = |i: usize, e: &Element| Element { visible: self.shown_at(i), ..e.clone() };
+        let (mut element, decoded) = drawn::merge_down(
+            (&seen(lower, &le.element), &le.decoded),
+            (&seen(upper, &ue.element), &ue.decoded),
             self.level.size,
             self.level.art_scale,
         )
         .map_err(|e| DocError::Bad(e.to_string()))?;
+        // It keeps the lower layer's folder.
+        element.folder = le.element.folder.clone();
         self.check_with(|es| {
             es[lower] = element.clone();
             es.remove(upper);
@@ -791,7 +817,7 @@ impl Document {
         }
         let before = self.items[index].element.clone();
         let mut after = before.clone();
-        with_property(&mut after, property, self.level.size)?;
+        with_property(&mut after, property, self.level.size, self.locked_at(index))?;
         self.check_with(|es| es[index] = after.clone())?;
         Ok(self.change(Edit::Element { index, before, after }))
     }
@@ -812,7 +838,7 @@ impl Document {
     /// The first of `ids` that is locked, as the refusal naming it.
     fn none_locked(&self, ids: &[String]) -> Result<(), DocError> {
         for id in ids {
-            if self.items[self.find(id)?].element.locked {
+            if self.locked_at(self.find(id)?) {
                 return Err(DocError::Locked(id.clone()));
             }
         }
@@ -895,7 +921,9 @@ impl Document {
     /// Moves the element to `index` (bottom 0, clamped to the top); allowed
     /// when locked (ruling R4). Distant layers stay below the rest (issue
     /// #11): the index is clamped to the element's own group, and a move
-    /// that clamping undoes is refused with `DISTANT_ORDER`.
+    /// that clamping undoes is refused with `DISTANT_ORDER`. Issue #60: it
+    /// leaves or joins the folder its new place lies in (`landing_folder`),
+    /// in the same edit.
     pub fn move_to(&mut self, id: &str, index: usize) -> Result<Change, DocError> {
         let from = self.find(id)?;
         let to = index.min(self.items.len() - 1);
@@ -909,7 +937,16 @@ impl Document {
         if clamped == from && to != from {
             return Err(DocError::Bad(DISTANT_ORDER.into()));
         }
-        Ok(self.change(Edit::Move { from, to: clamped }))
+        let before = self.items[from].element.folder.clone();
+        let after = self.landing_folder(from, clamped);
+        if before != after {
+            let mut elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
+            let mut e = elements.remove(from);
+            e.folder = after.clone();
+            elements.insert(clamped, e);
+            self.check_with(|es| *es = elements)?;
+        }
+        Ok(self.change(Edit::Move { from, to: clamped, before, after }))
     }
 
     /// How many distant layers the document holds (all at the bottom).
@@ -925,12 +962,15 @@ impl Document {
         let index = self.find(id)?;
         let before = self.items[index].element.clone();
         let mut after = before.clone();
-        with_property(&mut after, Property::Distant(depth), self.level.size)?;
+        with_property(&mut after, Property::Distant(depth), self.level.size, self.locked_at(index))?;
         if before.is_distant() == after.is_distant() {
             self.check_with(|es| es[index] = after.clone())?;
             let c = self.change(Edit::Element { index, before, after });
             return Ok((vec![c.edit], c.dirty));
         }
+        // It leaves its folders: distant layers share none with the others
+        // (issue #60, as `olr_edit::element::set`).
+        after.folder = None;
         // Its place: the top of the distant layers without it.
         let to =
             self.items.iter().enumerate().filter(|(i, it)| *i != index && it.element.is_distant()).count();
@@ -938,7 +978,11 @@ impl Document {
             es.remove(index);
             es.insert(to, after.clone());
         })?;
-        let edits = vec![Edit::Move { from: index, to }, Edit::Element { index: to, before, after }];
+        let folder = before.folder.clone();
+        let edits = vec![
+            Edit::Move { from: index, to, before: folder.clone(), after: folder },
+            Edit::Element { index: to, before, after },
+        ];
         Ok(self.apply_all(edits))
     }
 
@@ -1541,11 +1585,20 @@ impl Document {
             }
             Edit::Element { index, before, after } => {
                 let (from, to) = if forward { (before, after) } else { (after, before) };
-                let Some(item) = self.items.get_mut(*index) else { return NOTHING };
-                item.element = to.clone();
-                // A rename or a lock changes no pixel.
-                let same = Element { name: to.name.clone(), locked: to.locked, ..from.clone() };
-                if same == *to {
+                if *index >= self.items.len() {
+                    return NOTHING;
+                }
+                let shown = self.shown_at(*index);
+                self.items[*index].element = to.clone();
+                // A rename or a lock changes no pixel, nor a folder that
+                // leaves it shown as it was (issue #60).
+                let same = Element {
+                    name: to.name.clone(),
+                    locked: to.locked,
+                    folder: to.folder.clone(),
+                    ..from.clone()
+                };
+                if same == *to && shown == self.shown_at(*index) {
                     return NOTHING;
                 }
                 // A move or a material change keeps the grid: no lookup.
@@ -1572,15 +1625,28 @@ impl Document {
                 }
                 self.element_rect(&item.item.element)
             }
-            Edit::Move { from, to } => {
+            Edit::Move { from, to, before, after } => {
                 let (a, b) = if forward { (*from, *to) } else { (*to, *from) };
                 if a >= self.items.len() || b >= self.items.len() {
                     return NOTHING;
                 }
-                let item = self.items.remove(a);
+                let mut item = self.items.remove(a);
+                item.element.folder = if forward { after } else { before }.clone();
                 let rect = self.element_rect(&item.element);
                 self.items.insert(b, item);
                 rect
+            }
+            Edit::Folders { before, after } => {
+                let shown: Vec<bool> = (0..self.items.len()).map(|i| self.shown_at(i)).collect();
+                self.folders = if forward { after } else { before }.clone();
+                // The members a folder's visibility hid or showed rebake.
+                let mut dirty = None;
+                for (i, was) in shown.into_iter().enumerate() {
+                    if was != self.shown_at(i) {
+                        dirty = Some(Rect::union(dirty, self.element_rect(&self.items[i].element)));
+                    }
+                }
+                dirty.unwrap_or(NOTHING)
             }
             Edit::Objects { before, after } => {
                 self.level.objects = if forward { after } else { before }.clone();

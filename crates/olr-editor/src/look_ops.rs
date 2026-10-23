@@ -115,7 +115,7 @@ impl Document {
             if !unglow && surface && back_surface {
                 continue;
             }
-            if before.locked {
+            if self.locked_at(index) {
                 return Err(DocError::Locked(before.id.clone()));
             }
             let mut after = before.clone();
@@ -169,7 +169,7 @@ impl Document {
         }
         let before = self.items[index].element.clone();
         let mut after = before.clone();
-        with_property(&mut after, Property::Glow(glow.clone()), self.level.size)?;
+        with_property(&mut after, Property::Glow(glow.clone()), self.level.size, self.locked_at(index))?;
         self.check_with(|es| es[index] = after.clone())?;
         if glow.is_none() {
             edits.extend(self.mask_dropped(&before));

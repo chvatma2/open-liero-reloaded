@@ -9,7 +9,7 @@ use std::sync::Arc;
 use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_edit::compose::{Decoded, Rect};
-use olr_format::levels::{Element, LevelObject, LevelSource};
+use olr_format::levels::{Element, Folder, LevelObject, LevelSource};
 use olr_format::look::LookSource;
 
 use crate::document::Item;
@@ -58,9 +58,20 @@ pub enum Edit {
         index: usize,
         item: Box<Snapshot>,
     },
+    /// An element moved from index `from` to `to`, its `folder` from
+    /// `before` to `after` (issue #60: it leaves or joins the folder its new
+    /// place lies in).
     Move {
         from: usize,
         to: usize,
+        before: Option<String>,
+        after: Option<String>,
+    },
+    /// The layer folders (issue #60), the whole list before and after; an
+    /// element's `folder` travels in its `Element` or `Move` edit.
+    Folders {
+        before: Vec<Folder>,
+        after: Vec<Folder>,
     },
     Objects {
         before: Vec<LevelObject>,
@@ -156,6 +167,11 @@ pub struct Whole {
     pub surfaces: olr_edit::compose::PaintedSurfaces,
 }
 
+/// Bytes a folder holds.
+fn folder(f: &Folder) -> usize {
+    std::mem::size_of::<Folder>() + f.id.len() + f.name.len() + f.parent.as_ref().map_or(0, String::len)
+}
+
 /// Bytes an image holds.
 fn image(i: &RgbaImage) -> usize {
     i.as_raw().len()
@@ -197,7 +213,8 @@ impl Edit {
             Edit::Mask { before, after, .. } => before == after,
             Edit::Element { before, after, .. } => before == after,
             Edit::Insert { .. } | Edit::Remove { .. } => false,
-            Edit::Move { from, to } => from == to,
+            Edit::Move { from, to, before, after } => from == to && before == after,
+            Edit::Folders { before, after } => before == after,
             Edit::Objects { before, after } => before == after,
             Edit::Meta { before, after } => before == after,
             Edit::Whole { before, after } => {
@@ -223,7 +240,10 @@ impl Edit {
             Edit::Insert { item: s, .. } | Edit::Remove { item: s, .. } => {
                 item(&s.item) + s.original.as_ref().map_or(0, |(_, b)| b.len())
             }
-            Edit::Move { .. } => 0,
+            Edit::Move { before, after, .. } => {
+                before.as_ref().map_or(0, String::len) + after.as_ref().map_or(0, String::len)
+            }
+            Edit::Folders { before, after } => before.iter().chain(after).map(folder).sum(),
             Edit::Objects { before, after } => {
                 (before.len() + after.len()) * std::mem::size_of::<LevelObject>()
             }
