@@ -236,11 +236,12 @@ fn a_hidden_folder_hides_its_members() {
         s.selection().clone()
     };
     let (_t, mut s) = editor_at(&root, &dir);
-    assert_eq!(click(&mut s), Selection::Element("tiny".into()));
+    // A click selects the folder holding it (issue #61).
+    assert_eq!(click(&mut s), Selection::Folder(f.clone()));
     olr_edit::element::set(&mut pack, &f, Property::Visible(false)).unwrap();
     olr_edit::pack::save(&dir, &pack).unwrap();
     let (_t, mut s) = editor_at(&root, &dir);
-    assert_ne!(click(&mut s), Selection::Element("tiny".into()), "a hidden folder's member is not hit");
+    assert_ne!(click(&mut s), Selection::Folder(f), "a hidden folder's member is not hit");
 }
 
 /// Plan 14d R4: a locked folder refuses its members' content changes, not
@@ -323,8 +324,8 @@ fn placing_a_two_piece_asset_gives_a_folder() {
     assert!(again.pieces.iter().all(|p| p.element.folder.is_none()));
 }
 
-/// The editor selects a placed asset's elements, and copies a folder whose
-/// elements are all selected.
+/// The editor copies a folder whose elements are all selected, and selects
+/// the pasted folder.
 #[test]
 fn the_editor_copies_a_filled_folder() {
     let Some(root) = content() else { return };
@@ -339,6 +340,7 @@ fn the_editor_copies_a_filled_folder() {
     run(&mut s, A::Paste);
     let doc = s.document().unwrap();
     assert_eq!(doc.folders().len(), 2, "the folder pasted anew");
-    let Selection::Many(new) = s.selection().clone() else { panic!("the copies selected") };
-    assert_eq!(new.len(), 2);
+    // The new folder is selected whole (issue #61).
+    let Selection::Folder(new) = s.selection().clone() else { panic!("the copy selected") };
+    assert_eq!(doc.folder_members(&new).len(), 2);
 }

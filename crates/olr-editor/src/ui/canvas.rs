@@ -1,7 +1,8 @@
 //! The canvas: a frame without fill (the host draws the bake under it,
 //! plan 14c) with the overlays on top. Pointer events become world-pixel
 //! `Pointer` actions through the view (ruling R7); Space and a drag pans,
-//! the wheel zooms.
+//! the wheel zooms. Issue #61: an Alt+press is `AltDown`, a double click
+//! `DoubleClick`.
 
 use egui::{Color32, Key, Pos2, Sense, Stroke, StrokeKind, Ui};
 
@@ -33,13 +34,13 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
     let world = |p: Pos2| view.to_world([p.x - rect.min.x, p.y - rect.min.y], s);
 
     // The pointer.
-    let (pos, pressed, down, released, (shift, toggle), delta, scroll, space) = ui.input(|i| {
+    let (pos, pressed, down, released, (shift, toggle, alt), delta, scroll, space, double) = ui.input(|i| {
         (
             i.pointer.latest_pos(),
             i.pointer.primary_pressed(),
             i.pointer.primary_down(),
             i.pointer.primary_released(),
-            (i.modifiers.shift, i.modifiers.command),
+            (i.modifiers.shift, i.modifiers.command, i.modifiers.alt),
             i.pointer.delta(),
             i.events
                 .iter()
@@ -50,6 +51,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
                 })
                 .sum::<i32>(),
             i.key_down(Key::Space),
+            i.pointer.button_double_clicked(egui::PointerButton::Primary),
         )
     });
     let over = pos.is_some_and(|p| rect.contains(p)) && ui.rect_contains_pointer(rect);
@@ -83,13 +85,20 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
             // stroke is no click: it would not close it).
             egui::Popup::close_all(ui.ctx());
             data.canvas_drag = true;
-            send(PointerKind::Down);
+            if alt {
+                out.push(EditorAction::AltDown { world: w });
+            } else {
+                send(PointerKind::Down);
+            }
         } else if released {
             // Ended above.
         } else if (down && data.canvas_drag || over) && data.last_world != Some(w) {
             send(PointerKind::Move);
         }
         data.last_world = Some(w);
+        if double && over && state.dialog().is_none() && state.browser().is_none() {
+            out.push(EditorAction::DoubleClick { world: w });
+        }
     }
     // An asset dragged from the Assets tab lands where it is let go.
     let carried = egui::DragAndDrop::payload::<AssetKey>(ui.ctx());

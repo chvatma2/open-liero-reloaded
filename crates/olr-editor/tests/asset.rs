@@ -142,7 +142,9 @@ fn placing_is_one_step_that_selects_the_new_elements_and_adds_lighting() {
     assert_eq!(doc.items().len(), before + 3);
     let ids = top_ids(&s, 3);
     assert_eq!(ids, ["control-desk-background", "control-desk-screens", "control-desk-displays"]);
-    assert_eq!(s.selection(), &Selection::Many(ids.clone()));
+    // Its folder is selected (issue #61).
+    let Selection::Folder(f) = s.selection().clone() else { panic!("the folder selected") };
+    assert_eq!(doc.folder_members(&f), ids);
     assert_eq!(s.tab(), PanelTab::Elements);
     // The level had no look: the default one with the asset's groups.
     let look = doc.level().look.clone().expect("a look");

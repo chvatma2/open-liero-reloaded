@@ -59,6 +59,12 @@ pub mod labels {
     pub const SAVE: &str = "Save";
     pub const PLAY: &str = "Play";
     pub const ADD_LAYER: &str = "Add layer";
+    // Layer folders (issue #61): the button beside Add layer and the
+    // folder panel's, with their shortcuts.
+    pub const NEW_FOLDER: &str = "New folder";
+    pub const NEW_FOLDER_KEYS: &str = "Ctrl+G";
+    pub const UNGROUP: &str = "Ungroup";
+    pub const UNGROUP_KEYS: &str = "Ctrl+Shift+G";
     pub const IMPORT_IMAGE: &str = "Import image…";
     pub const OPEN: &str = "Open…";
     pub const CLOSE: &str = "Close";
@@ -164,6 +170,20 @@ pub mod labels {
         format!("Remove {name}")
     }
 
+    /// A folder row's fold arrow, eye and lock in the Elements list (issue
+    /// #61), by the folder's name.
+    pub fn fold(name: &str) -> String {
+        format!("Fold {name}")
+    }
+
+    pub fn folder_visible(name: &str) -> String {
+        format!("{VISIBLE}: {name}")
+    }
+
+    pub fn folder_locked(name: &str) -> String {
+        format!("{LOCKED}: {name}")
+    }
+
     /// A material's swatch's name in the Materials view's legend.
     pub fn legend_tint(name: &str) -> String {
         format!("{name} tint")
@@ -250,6 +270,8 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
     data.drawn.clear();
     // A popup open (a flyout, a menu) takes Escape for itself.
     let popup = egui::Popup::is_any_open(ui.ctx());
+    // A text field's Escape (it drops the draft) leaves the selection.
+    let typing = ui.ctx().egui_wants_keyboard_input();
     let (mut toolbar, mut list, mut fields, mut canvas, mut dialogs) =
         (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
     egui::Panel::top("olr-editor-session").show(ui, |ui| toolbar::session(ui, state, data, &mut toolbar));
@@ -282,13 +304,15 @@ pub fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData) -> Vec<Edit
     data.texts.retain(|k, _| drawn.contains(k));
     data.drawn = drawn;
     let mut out = fields;
-    shortcuts(ui, state, popup, &mut out);
+    shortcuts(ui, state, popup || typing, &mut out);
     out.extend(list.into_iter().chain(canvas).chain(toolbar).chain(dialogs));
     out
 }
 
 /// The shortcuts, when no text field has the keyboard and no dialog is
-/// open; Escape not while a popup was open (it closes the popup).
+/// open; Escape not while a popup was open (it closes the popup) nor a
+/// text field had the keyboard as the frame began (it drops the draft):
+/// `popup`.
 fn shortcuts(ui: &Ui, state: &EditorState, popup: bool, out: &mut Vec<EditorAction>) {
     // Not while typing, nor while a widget is dragged (its draft would
     // outlive the change a shortcut makes).
@@ -315,6 +339,18 @@ fn shortcuts(ui: &Ui, state: &EditorState, popup: bool, out: &mut Vec<EditorActi
         }
         if !popup && state.pixel_rect().is_some() && i.consume_key(Modifiers::NONE, Key::Escape) {
             out.push(EditorAction::DropPixels);
+        }
+        // Then up a level, and at the top level no selection (issue #61).
+        if !popup && i.consume_key(Modifiers::NONE, Key::Escape) {
+            out.push(EditorAction::SelectParent);
+        }
+        // Ctrl+Shift+G before Ctrl+G (`consume_key` ignores an extra
+        // Shift), both before the tools' G (Fill).
+        if i.consume_key(Modifiers::COMMAND | Modifiers::SHIFT, Key::G) {
+            out.push(EditorAction::Ungroup);
+        }
+        if i.consume_key(Modifiers::COMMAND, Key::G) {
+            out.push(EditorAction::GroupSelection);
         }
         // Ctrl+C, X and V: as keys, or as the window's copy, cut and paste
         // events (plan 14e R9); one action each per frame.

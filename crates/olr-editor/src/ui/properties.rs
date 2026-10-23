@@ -2,13 +2,16 @@
 //! An element's are shortened (issue #8): its name, what it is (Rock,
 //! Dirt or Background), its glow, its surface materials (issue #43), its
 //! place, and the rest under "More", folded by default
-//! (`EditorSettings::more_open`).
+//! (`EditorSettings::more_open`). A folder's (issue #61): its name,
+//! Visible and Locked, Ungroup, then a group's shared fields for its
+//! elements.
 
 use egui::Ui;
 use olr_edit::element::Property;
 use olr_format::levels::{Dither, ElementKind, ElementMaterial, LevelObject, MAX_PIXEL_SIZE, MAX_SIDE};
 
 use super::{EditorData, labels, number, slider, text};
+use crate::folder_ops::FolderField;
 use crate::state::{EditorAction, EditorState, Selection};
 use olr_data::level::{MAX_DEPTH, MIN_DEPTH};
 use olr_format::levels::Element;
@@ -34,7 +37,8 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out:
             }
         }
         Selection::Element(id) => element(ui, state, data, id, out),
-        Selection::Many(ids) => group(ui, state, ids, out),
+        Selection::Folder(id) => folder(ui, state, data, id, out),
+        Selection::Many(_) => group(ui, state, out),
         Selection::None => {}
     }
 }
@@ -255,11 +259,52 @@ fn more(ui: &mut Ui, data: &mut EditorData, e: &Element, index: usize, out: &mut
     }
 }
 
+/// A folder's panel (issue #61): its Name (committed when typing ends),
+/// Visible and Locked (its own), Ungroup, then its elements' count and
+/// shared material, Delete and Save as asset.
+fn folder(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    let Some(f) = doc.folders().into_iter().find(|f| f.id == id) else { return };
+    let set = |out: &mut Vec<EditorAction>, field: FolderField| {
+        out.push(EditorAction::SetFolder(id.to_string(), field))
+    };
+    ui.heading("Folder");
+    ui.weak(&f.id);
+    if let Some(name) = text(ui, data, &format!("{id}/name"), labels::NAME, &f.name, false) {
+        set(out, FolderField::Name(name));
+    }
+    let mut visible = f.visible;
+    if ui.checkbox(&mut visible, labels::VISIBLE).changed() {
+        set(out, FolderField::Visible(visible));
+    }
+    let mut locked = f.locked;
+    if ui.checkbox(&mut locked, labels::LOCKED).changed() {
+        set(out, FolderField::Locked(locked));
+    }
+    if ui
+        .button(labels::UNGROUP)
+        .on_hover_text(format!("its members take its place ({})", labels::UNGROUP_KEYS))
+        .clicked()
+    {
+        out.push(EditorAction::Ungroup);
+    }
+    ui.separator();
+    let ids = state.selected_elements();
+    ui.weak(format!("{} elements", ids.len()));
+    shared(ui, state, &ids, olr_edit::folders::folder_locked(&doc.composition(), id), out);
+    if ui.button("Delete").on_hover_text("the folder and everything in it").clicked() {
+        out.push(EditorAction::Remove);
+    }
+    save_as_asset(ui, state, out);
+}
+
 /// A group's panel (plan 14e R8): the count, Visible and Locked (on when
 /// all are), the material when all are images or drawn layers ("Different"
-/// when they disagree); no Merge down nor Split.
-fn group(ui: &mut Ui, state: &EditorState, ids: &[String], out: &mut Vec<EditorAction>) {
+/// when they disagree); no Merge down nor Split. A selected folder stands
+/// for its elements (issue #61).
+fn group(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>) {
     let Some(doc) = state.document() else { return };
+    let ids = state.selected_elements();
     let members: Vec<_> =
         ids.iter().filter_map(|id| doc.index_of(id)).map(|i| &doc.items()[i].element).collect();
     ui.heading(format!("{} elements", members.len()));
@@ -272,6 +317,21 @@ fn group(ui: &mut Ui, state: &EditorState, ids: &[String], out: &mut Vec<EditorA
     if ui.checkbox(&mut locked, labels::LOCKED).changed() {
         set(out, Property::Locked(locked));
     }
+    shared(ui, state, &ids, false, out);
+    if ui.button("Delete").clicked() {
+        out.push(EditorAction::Remove);
+    }
+    save_as_asset(ui, state, out);
+}
+
+/// The fields elements `ids` share (plan 14e R8): the material when all
+/// are images or drawn layers ("Different" when they disagree), disabled
+/// when `locked`.
+fn shared(ui: &mut Ui, state: &EditorState, ids: &[String], locked: bool, out: &mut Vec<EditorAction>) {
+    let Some(doc) = state.document() else { return };
+    let members: Vec<_> =
+        ids.iter().filter_map(|id| doc.index_of(id)).map(|i| &doc.items()[i].element).collect();
+    let set = |out: &mut Vec<EditorAction>, p: Property| out.push(EditorAction::SetMany(ids.to_vec(), p));
     let materials: Option<Vec<(ElementMaterial, bool)>> = members
         .iter()
         .map(|e| match &e.kind {
@@ -287,7 +347,7 @@ fn group(ui: &mut Ui, state: &EditorState, ids: &[String], out: &mut Vec<EditorA
             Some((m, false)) if same => Some(m),
             _ => None,
         };
-        if let Some(m) = what_is_it(ui, current, false) {
+        if let Some(m) = what_is_it(ui, current, locked) {
             set(out, Property::Material(m));
         }
         if !same {
@@ -296,8 +356,4 @@ fn group(ui: &mut Ui, state: &EditorState, ids: &[String], out: &mut Vec<EditorA
             ui.weak("Mixed");
         }
     }
-    if ui.button("Delete").clicked() {
-        out.push(EditorAction::Remove);
-    }
-    save_as_asset(ui, state, out);
 }

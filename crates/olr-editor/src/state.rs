@@ -35,31 +35,41 @@ const BY_COLOUR_TAKES_A_RECTANGLE: &str =
 pub enum Selection {
     None,
     Element(String),
+    /// A layer folder, standing for its whole run (issue #61).
+    Folder(String),
     /// A level object, by index.
     Object(usize),
-    /// Two elements or more, in stack order, bottom first (plan 14e R8).
+    /// Two elements or folders or more, in stack order, bottom first (plan
+    /// 14e R8; a folder by where its run starts, issue #61); none inside
+    /// another.
     Many(Vec<String>),
 }
 
 impl Selection {
-    /// Whether element `id` is selected, alone or in a group.
+    /// Whether element or folder `id` is selected itself, alone or with
+    /// others (a folder's members are not).
     pub fn has(&self, id: &str) -> bool {
         match self {
-            Selection::Element(e) => e == id,
+            Selection::Element(e) | Selection::Folder(e) => e == id,
             Selection::Many(ids) => ids.iter().any(|e| e == id),
             _ => false,
         }
     }
 
-    /// The selected elements' ids (none for an object).
+    /// The selected elements' and folders' ids (none for an object).
     pub fn ids(&self) -> Vec<String> {
         match self {
-            Selection::Element(e) => vec![e.clone()],
+            Selection::Element(e) | Selection::Folder(e) => vec![e.clone()],
             Selection::Many(ids) => ids.clone(),
             _ => Vec::new(),
         }
     }
 }
+
+/// Added to a refusal of a tool needing one element while a folder is
+/// selected (issue #61).
+pub const DOUBLE_CLICK_INTO: &str =
+    "a folder is selected: double-click into the object (or Alt+click) to select one of its elements";
 
 /// The right panel's tabs (issue #8): the element list, the asset library
 /// (issue #9) and the spawns. The tab follows the selection; otherwise only
@@ -241,10 +251,27 @@ pub enum EditorAction {
     Set(String, Property),
     /// One property on each of several elements, one step (plan 14e R8).
     SetMany(Vec<String>, Property),
-    /// Ctrl+click: element `id` in or out of the selection.
+    /// Ctrl+click: element or folder `id` in or out of the selection.
     SelectToggle(String),
-    /// Shift+click: the elements from the single selection to `id`.
+    /// Shift+click: the Elements list's rows shown from the single
+    /// selection's to `id`'s (a folder row standing for its folder).
     SelectRange(String),
+    /// Escape (issue #61): a folder's member selects its folder; at the top
+    /// level the selection clears.
+    SelectParent,
+    /// Ctrl+G: the selected elements and folders into a new folder, which is
+    /// selected; one step.
+    GroupSelection,
+    /// Ctrl+Shift+G: the selected folder's members take its place; one step.
+    Ungroup,
+    /// A field of folder `id` (the list's eye, lock and fold arrow, the
+    /// properties); one step.
+    SetFolder(String, crate::folder_ops::FolderField),
+    /// A row dragged in the Elements list and dropped (issue #61); one step.
+    DropRow {
+        id: String,
+        at: crate::folder_ops::RowDrop,
+    },
     /// Deletes the selected element(s) or object.
     Remove,
     /// Copies the selected elements to the editor's clipboard (plan 14e R6).
@@ -298,6 +325,17 @@ pub enum EditorAction {
         world: (i32, i32),
         shift: bool,
         toggle: bool,
+    },
+    /// A double click on the canvas (issue #61): with Select, one level
+    /// deeper into the selected folder toward the element under it.
+    DoubleClick {
+        world: (i32, i32),
+    },
+    /// An Alt+press on the canvas (issue #61): with Select, the element under
+    /// it itself, at any depth, then as a press; another tool takes it as a
+    /// press.
+    AltDown {
+        world: (i32, i32),
     },
     /// Moves the selected image's box (the arrow keys).
     Nudge {
@@ -543,6 +581,9 @@ pub struct EditorState {
     /// The document's `distant_generation` last sent (`Distant`); `None`
     /// before a document's first.
     pub(crate) distant_sent: Option<u64>,
+    /// The folder a double click went into (issue #61): plain clicks on its
+    /// members select its children; a click outside it, or Escape, leaves.
+    pub(crate) focus: Option<String>,
 }
 
 impl EditorState {
@@ -596,6 +637,7 @@ impl EditorState {
             placing: false,
             assets_generation: 0,
             distant_sent: None,
+            focus: None,
         }
     }
 
@@ -710,6 +752,47 @@ impl EditorState {
         &self.selection
     }
 
+    /// The folder clicks on the canvas are inside (issue #61): its members'
+    /// clicks select its children.
+    pub fn focus(&self) -> Option<&str> {
+        let f = self.focus.as_deref()?;
+        self.doc.as_ref().is_some_and(|d| d.is_folder(f)).then_some(f)
+    }
+
+    /// The selected elements, a folder's members included, in stack order
+    /// (issue #61).
+    pub fn selected_elements(&self) -> Vec<String> {
+        self.elements_of(self.selection.ids())
+    }
+
+    /// `ids`' elements, a folder's members for a folder, each once, in
+    /// stack order.
+    pub(crate) fn elements_of(&self, ids: Vec<String>) -> Vec<String> {
+        let Some(doc) = &self.doc else { return Vec::new() };
+        let mut found: Vec<(usize, String)> = ids
+            .into_iter()
+            .flat_map(|id| match doc.index_of(&id) {
+                Some(_) => vec![id],
+                None => doc.folder_members(&id),
+            })
+            .filter_map(|id| Some((doc.index_of(&id)?, id)))
+            .collect();
+        found.sort();
+        found.dedup();
+        found.into_iter().map(|f| f.1).collect()
+    }
+
+    /// Whether the selection holds a folder (issue #61).
+    pub(crate) fn selects_folder(&self) -> bool {
+        self.doc.as_ref().is_some_and(|d| self.selection.ids().iter().any(|id| d.is_folder(id)))
+    }
+
+    /// Why a tool needing one element refused: `why`, and with a folder
+    /// selected, how to select one of its elements (issue #61).
+    pub(crate) fn one_element(&self, why: &str) -> String {
+        if self.selects_folder() { format!("{why} ({DOUBLE_CLICK_INTO})") } else { why.to_string() }
+    }
+
     pub fn can_undo(&self) -> bool {
         self.history.can_undo()
     }
@@ -763,6 +846,9 @@ impl EditorState {
         let view_only = matches!(
             action,
             EditorAction::Pointer { .. }
+                | EditorAction::DoubleClick { .. }
+                | EditorAction::AltDown { .. }
+                | EditorAction::SelectParent
                 | EditorAction::Canvas(_)
                 | EditorAction::Pan(_)
                 | EditorAction::Zoom { .. }
@@ -810,7 +896,7 @@ impl EditorState {
         // or on the canvas with Select or Spawn.
         let selects = match action {
             EditorAction::Select(_) => true,
-            EditorAction::Pointer { kind: PointerKind::Down, .. } => {
+            EditorAction::Pointer { kind: PointerKind::Down, .. } | EditorAction::AltDown { .. } => {
                 matches!(self.tool, Tool::Select | Tool::Spawn)
             }
             _ => false,
@@ -823,7 +909,9 @@ impl EditorState {
         if selects || self.selection != before {
             match self.selection {
                 Selection::Object(_) => self.tab = PanelTab::Spawns,
-                Selection::Element(_) | Selection::Many(_) => self.tab = PanelTab::Elements,
+                Selection::Element(_) | Selection::Folder(_) | Selection::Many(_) => {
+                    self.tab = PanelTab::Elements
+                }
                 Selection::None => {}
             }
         }
@@ -993,8 +1081,29 @@ impl EditorState {
                     Selection::Many(ids) => self.group(ids),
                     s => s,
                 };
+                // Clicks on the canvas pick the selected item's siblings
+                // (issue #61).
+                self.focus = match (&self.selection, &self.doc) {
+                    (Selection::Element(id) | Selection::Folder(id), Some(d)) => d.parent_of(id),
+                    _ => None,
+                };
                 Vec::new()
             }
+            EditorAction::SelectParent => {
+                let parent = match (&self.selection, &self.doc) {
+                    (Selection::Element(id) | Selection::Folder(id), Some(d)) => d.parent_of(id),
+                    _ => None,
+                };
+                self.focus = parent.as_ref().and_then(|p| self.doc.as_ref()?.parent_of(p));
+                self.selection = parent.map_or(Selection::None, Selection::Folder);
+                Vec::new()
+            }
+            EditorAction::GroupSelection => self.group_selection(),
+            EditorAction::Ungroup => self.ungroup(),
+            EditorAction::SetFolder(id, field) => self.edit(|d| d.set_folder(&id, field)),
+            EditorAction::DropRow { id, at } => self.edits(|d| d.drop_row(&id, &at)),
+            EditorAction::DoubleClick { world } => self.double_click(world),
+            EditorAction::AltDown { world } => self.alt_down(world),
             EditorAction::SelectToggle(id) => {
                 let mut ids = self.selection.ids();
                 match ids.iter().position(|e| *e == id) {
@@ -1008,12 +1117,17 @@ impl EditorState {
             }
             EditorAction::SelectRange(id) => {
                 let anchor = match &self.selection {
-                    Selection::Element(a) => Some(a.clone()),
+                    Selection::Element(a) | Selection::Folder(a) => Some(a.clone()),
                     _ => None,
                 };
+                // The rows shown in between, in list order (issue #61).
                 let range = self.doc.as_ref().and_then(|d| {
-                    let (a, b) = (d.index_of(anchor.as_deref()?)?, d.index_of(&id)?);
-                    Some(d.items()[a.min(b)..=a.max(b)].iter().map(|i| i.element.id.clone()).collect())
+                    let rows = d.rows();
+                    let (a, b) = (
+                        rows.iter().position(|r| Some(&r.id) == anchor.as_ref())?,
+                        rows.iter().position(|r| r.id == id)?,
+                    );
+                    Some(rows[a.min(b)..=a.max(b)].iter().map(|r| r.id.clone()).collect())
                 });
                 self.selection = self.group(range.unwrap_or_else(|| vec![id]));
                 Vec::new()
@@ -1083,12 +1197,17 @@ impl EditorState {
                 }
                 Vec::new()
             }
-            EditorAction::SetMany(ids, property) => self.group_edit(|d| d.set_many(&ids, property)),
+            EditorAction::SetMany(ids, property) => {
+                // A folder stands for its elements (issue #61).
+                let ids = self.elements_of(ids);
+                self.group_edit(|d| d.set_many(&ids, property))
+            }
             EditorAction::Remove => match self.selection.clone() {
                 Selection::Element(id) => self.removed(|d| d.remove(&id)),
                 Selection::Object(i) => self.removed(|d| d.remove_object(i)),
-                Selection::Many(ids) => {
-                    let cmds = self.group_edit(|d| d.remove_many(&ids));
+                Selection::Folder(_) | Selection::Many(_) => {
+                    let ids = self.selection.ids();
+                    let cmds = self.group_edit(|d| d.remove_items(&ids));
                     if !cmds.is_empty() {
                         self.selection = Selection::None;
                     }
@@ -1253,6 +1372,7 @@ impl EditorState {
         self.fit();
         self.history = History::new();
         self.selection = Selection::None;
+        self.focus = None;
         self.dirty = false;
         self.dialog = None;
         self.status.message = None;
@@ -1590,7 +1710,11 @@ impl EditorState {
                 *offset = (offset.0.saturating_add(PASTE_STEP.0), offset.1.saturating_add(PASTE_STEP.1));
                 let dirty = doc.all();
                 self.history.push(edits);
-                self.selection = self.group(ids);
+                // A pasted folder is selected whole (issue #61).
+                let tops =
+                    ids.into_iter().map(|id| doc.folders_holding(&id).into_iter().next().unwrap_or(id));
+                let tops: Vec<String> = tops.collect();
+                self.selection = self.group(tops);
                 self.committed(dirty)
             }
             Err(e) => {
@@ -1612,14 +1736,19 @@ impl EditorState {
         let made = if let Some(rect) = self.pixel_world {
             doc.asset_of_rect(rect, "Asset")
         } else {
-            let ids = self.selection.ids();
+            let ids = self.selected_elements();
             if ids.is_empty() {
                 self.status.message =
                     Some("nothing to save: select elements, or pixels with Select pixels (M)".into());
                 return Vec::new();
             }
-            let name = match ids.as_slice() {
-                [id] => doc.index_of(id).map_or("Asset", |i| doc.items[i].element.name.as_str()),
+            // A folder's asset is named after it (issue #61).
+            let folders = doc.folders();
+            let name = match self.selection.ids().as_slice() {
+                [id] => doc.index_of(id).map_or_else(
+                    || folders.iter().find(|f| f.id == *id).map_or("Asset", |f| f.name.as_str()),
+                    |i| doc.items[i].element.name.as_str(),
+                ),
                 _ => "Asset",
             };
             doc.asset_of_elements(&ids, name)
@@ -1677,7 +1806,11 @@ impl EditorState {
             Ok(placed) => {
                 let dirty = doc.all();
                 self.history.push(placed.edits);
-                self.selection = self.group(placed.ids);
+                // Two pieces or more are a folder, selected (issue #61).
+                self.selection = match placed.folder {
+                    Some(f) => Selection::Folder(f),
+                    None => self.group(placed.ids),
+                };
                 self.tab = PanelTab::Elements;
                 let cmds = self.committed(dirty);
                 self.status.message = placed.note;
@@ -1690,22 +1823,86 @@ impl EditorState {
         }
     }
 
-    /// The selection of `ids` (plan 14e R8): those that exist, each once, in
-    /// stack order; one is `Element`, none `None`. A folder's id stands for
-    /// its elements (issue #60; issue #61 selects the folder itself).
+    /// The selection of `ids` (plan 14e R8): the elements and folders that
+    /// exist, each once, in stack order (a folder where its run starts, before
+    /// its subfolders); one lying in another selected folder is left out (the
+    /// folder stands for it, issue #61); one is `Element` or `Folder`, none
+    /// `None`.
     pub(crate) fn group(&self, ids: Vec<String>) -> Selection {
         let Some(doc) = &self.doc else { return Selection::None };
-        let ids = ids.into_iter().flat_map(|id| match doc.index_of(&id) {
-            Some(_) => vec![id],
-            None => doc.folder_members(&id),
-        });
-        let mut found: Vec<(usize, String)> = ids.filter_map(|id| Some((doc.index_of(&id)?, id))).collect();
+        // (where it starts, how deep, whether an element, id)
+        let mut found: Vec<(usize, usize, bool, String)> = ids
+            .into_iter()
+            .filter_map(|id| {
+                let depth = doc.folders_holding(&id).len();
+                match doc.index_of(&id) {
+                    Some(i) => Some((i, depth, true, id)),
+                    None => {
+                        let first = doc.folder_members(&id).first().and_then(|m| doc.index_of(m))?;
+                        Some((first, depth, false, id))
+                    }
+                }
+            })
+            .collect();
         found.sort();
         found.dedup();
+        let folders: Vec<String> = found.iter().filter(|f| !f.2).map(|f| f.3.clone()).collect();
+        found.retain(|f| !doc.folders_holding(&f.3).iter().any(|h| folders.contains(h)));
         match found.len() {
             0 => Selection::None,
-            1 => Selection::Element(found.remove(0).1),
-            _ => Selection::Many(found.into_iter().map(|f| f.1).collect()),
+            1 => match found.remove(0) {
+                (_, _, true, id) => Selection::Element(id),
+                (_, _, false, id) => Selection::Folder(id),
+            },
+            _ => Selection::Many(found.into_iter().map(|f| f.3).collect()),
+        }
+    }
+
+    /// Ctrl+G (issue #61): the selected elements and folders into a new
+    /// folder, selected; one step.
+    fn group_selection(&mut self) -> Vec<EditorCommand> {
+        let ids = self.selection.ids();
+        let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+        if ids.is_empty() {
+            self.status.message = Some("select elements or folders to put in a new folder".into());
+            return Vec::new();
+        }
+        match doc.group(&ids, "") {
+            Ok((edits, dirty, id)) => {
+                self.history.push(edits);
+                self.selection = Selection::Folder(id);
+                self.committed(dirty)
+            }
+            Err(e) => {
+                self.status.message = Some(e.to_string());
+                Vec::new()
+            }
+        }
+    }
+
+    /// Ctrl+Shift+G (issue #61): the selected folder's members take its
+    /// place, selected; one step.
+    fn ungroup(&mut self) -> Vec<EditorCommand> {
+        let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+        let Selection::Folder(id) = self.selection.clone() else {
+            self.status.message = Some("select a folder to ungroup".into());
+            return Vec::new();
+        };
+        let children = doc.children(Some(&id));
+        let parent = doc.parent_of(&id);
+        match doc.ungroup(&id) {
+            Ok((edits, dirty)) => {
+                self.history.push(edits);
+                if self.focus.as_ref() == Some(&id) {
+                    self.focus = parent;
+                }
+                self.selection = self.group(children);
+                self.committed(dirty)
+            }
+            Err(e) => {
+                self.status.message = Some(e.to_string());
+                Vec::new()
+            }
         }
     }
 
@@ -1784,6 +1981,7 @@ impl EditorState {
         // A selection the step removed goes.
         match &self.selection {
             Selection::Element(id) if doc.index_of(id).is_none() => self.selection = Selection::None,
+            Selection::Folder(id) if !doc.is_folder(id) => self.selection = Selection::None,
             Selection::Object(i) if *i >= doc.level().objects.len() => self.selection = Selection::None,
             Selection::Many(ids) => self.selection = self.group(ids.clone()),
             _ => {}

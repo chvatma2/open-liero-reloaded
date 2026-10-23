@@ -252,7 +252,7 @@ impl EditorState {
             Some(item) if matches!(item.decoded, Decoded::Image { .. }) => {
                 "erase on a picture; merge it into a layer to paint it".into()
             }
-            _ => "select a drawn layer to paint".into(),
+            _ => self.one_element("select a drawn layer to paint"),
         };
         self.status.message = Some(why);
         None
@@ -403,6 +403,24 @@ impl EditorState {
         shift: bool,
         toggle: bool,
     ) -> Vec<EditorCommand> {
+        self.pointer_at(kind, world, shift, toggle, false)
+    }
+
+    /// An Alt+press (issue #61): with Select, the element under the pointer
+    /// itself, at any depth; another tool takes it as a press.
+    pub(crate) fn alt_down(&mut self, world: (i32, i32)) -> Vec<EditorCommand> {
+        self.pointer_at(PointerKind::Down, world, false, false, true)
+    }
+
+    /// A pointer event; `deep` (Alt) presses select the element itself.
+    fn pointer_at(
+        &mut self,
+        kind: PointerKind,
+        world: (i32, i32),
+        shift: bool,
+        toggle: bool,
+        deep: bool,
+    ) -> Vec<EditorCommand> {
         if self.dialog.is_some() {
             // A drag still ends on its Up.
             return if kind == PointerKind::Up { self.release() } else { Vec::new() };
@@ -422,7 +440,7 @@ impl EditorState {
             _ => self.to_layer(world),
         };
         match kind {
-            PointerKind::Down => self.down(world, toggle),
+            PointerKind::Down => self.down(world, toggle, deep),
             PointerKind::Move => self.drag_to(world, shift),
             PointerKind::Up => {
                 let cmds = self.drag_to(world, shift);
@@ -431,19 +449,67 @@ impl EditorState {
         }
     }
 
-    fn down(&mut self, world: (i32, i32), toggle: bool) -> Vec<EditorCommand> {
+    fn down(&mut self, world: (i32, i32), toggle: bool, deep: bool) -> Vec<EditorCommand> {
         // A drag whose Up never came ends here.
         let mut cmds = self.release();
-        cmds.extend(self.press(world, toggle));
+        cmds.extend(self.press(world, toggle, deep));
         cmds
     }
 
-    fn press(&mut self, world: (i32, i32), toggle: bool) -> Vec<EditorCommand> {
+    /// A double click (issue #61): with Select and a folder selected on the
+    /// way to the element under the pointer, its child holding that element
+    /// is selected and the folder becomes the focus.
+    pub(crate) fn double_click(&mut self, world: (i32, i32)) -> Vec<EditorCommand> {
+        if self.tool != Tool::Select || self.dialog.is_some() {
+            return Vec::new();
+        }
+        let (Some(hit), Selection::Folder(f)) = (self.hit(world), self.selection.clone()) else {
+            return Vec::new();
+        };
+        let Some(doc) = &self.doc else { return Vec::new() };
+        let path = path_to(doc, &hit);
+        if let Some(k) = path.iter().position(|p| *p == f)
+            && let Some(child) = path.get(k + 1)
+        {
+            self.selection = if doc.is_folder(child) {
+                Selection::Folder(child.clone())
+            } else {
+                Selection::Element(child.clone())
+            };
+            self.focus = Some(f);
+        }
+        Vec::new()
+    }
+
+    /// What a plain click on element `hit` selects (issue #61): inside the
+    /// focus, the focus's child holding it; else the outermost folder
+    /// holding it, or the element when none does. A click outside the
+    /// focus leaves it.
+    fn click_pick(&mut self, hit: &str) -> String {
+        let Some(doc) = &self.doc else { return hit.to_string() };
+        let path = path_to(doc, hit);
+        let inside = self.focus.as_ref().and_then(|f| path.iter().position(|p| p == f));
+        if inside.is_none() {
+            self.focus = None;
+        }
+        match inside {
+            Some(k) => path.get(k + 1),
+            None => path.first(),
+        }
+        .cloned()
+        .unwrap_or_else(|| hit.to_string())
+    }
+
+    fn press(&mut self, world: (i32, i32), toggle: bool, deep: bool) -> Vec<EditorCommand> {
         match self.tool {
+            Tool::Select if deep => self.select_down(world, true),
             Tool::Select if toggle => {
-                // Ctrl+click: the element under the pointer in or out of the
-                // selection (plan 14e R8).
-                if let Some(id) = self.hit(world) {
+                // Ctrl+click: what a plain click would pick in or out of the
+                // selection (plan 14e R8; issue #61).
+                if let Some(hit) = self.hit(world) {
+                    let focus = self.focus.clone();
+                    let id = self.click_pick(&hit);
+                    self.focus = focus;
                     let mut ids = self.selection.ids();
                     match ids.iter().position(|e| *e == id) {
                         Some(i) => {
@@ -455,7 +521,7 @@ impl EditorState {
                 }
                 Vec::new()
             }
-            Tool::Select => self.select_down(world),
+            Tool::Select => self.select_down(world, false),
             Tool::Brush | Tool::Eraser => {
                 let erase = self.tool == Tool::Eraser;
                 let Some(id) = self.paint_target(erase) else { return Vec::new() };
@@ -479,7 +545,7 @@ impl EditorState {
             }
             Tool::Wand => {
                 if !matches!(self.selection, Selection::Element(_)) {
-                    self.status.message = Some("select a picture to remove a colour from".into());
+                    self.status.message = Some(self.one_element("select a picture to remove a colour from"));
                     return Vec::new();
                 }
                 let Some(id) = self.paint_target(true) else { return Vec::new() };
@@ -530,7 +596,7 @@ impl EditorState {
                 // The connected pixels alike in colour (the user's request,
                 // 2026-10-19); Ctrl adds to the selection.
                 let Selection::Element(id) = self.selection.clone() else {
-                    self.status.message = Some("select an element to pick its pixels".into());
+                    self.status.message = Some(self.one_element("select an element to pick its pixels"));
                     return Vec::new();
                 };
                 let Some(doc) = &self.doc else { return Vec::new() };
@@ -566,7 +632,7 @@ impl EditorState {
             }
             Tool::Glow => {
                 let Selection::Element(id) = self.selection.clone() else {
-                    self.status.message = Some("select an element to paint its glow".into());
+                    self.status.message = Some(self.one_element("select an element to paint its glow"));
                     return Vec::new();
                 };
                 // By colour: one click, one step (the user's request, 2026-10-19).
@@ -591,7 +657,7 @@ impl EditorState {
             }
             Tool::Surface => {
                 let Selection::Element(id) = self.selection.clone() else {
-                    self.status.message = Some("select an element to paint its surface".into());
+                    self.status.message = Some(self.one_element("select an element to paint its surface"));
                     return Vec::new();
                 };
                 let Some(doc) = self.doc.as_mut() else { return Vec::new() };
@@ -646,7 +712,10 @@ impl EditorState {
         }
     }
 
-    fn select_down(&mut self, world: (i32, i32)) -> Vec<EditorCommand> {
+    /// Select's press: a handle, a spawn, else what the click picks (issue
+    /// #61: a selected item under the pointer stays selected and drags;
+    /// else `click_pick`'s, or with `deep` (Alt) the element itself).
+    fn select_down(&mut self, world: (i32, i32), deep: bool) -> Vec<EditorCommand> {
         let Some(doc) = &self.doc else { return Vec::new() };
         // A handle of the selected unlocked image.
         if let Selection::Element(id) = &self.selection
@@ -681,12 +750,24 @@ impl EditorState {
             self.drag = Some(Drag::Spawn { index, before: doc.level().objects.clone(), grab });
             return Vec::new();
         }
-        let hit = self.hit(world).and_then(|id| doc.index_of(&id)).map(|i| &doc.items()[i]);
-        // A press on a group's member drags the group (plan 14e R8).
-        if let (Selection::Many(ids), Some(item)) = (&self.selection, hit)
-            && ids.contains(&item.element.id)
-        {
-            let found: Vec<usize> = ids.iter().filter_map(|id| doc.index_of(id)).collect();
+        let Some(hit) = self.hit(world) else {
+            self.selection = Selection::None;
+            self.focus = None;
+            return Vec::new();
+        };
+        // The folders holding the element under the pointer, outermost
+        // first, and the element (issue #61).
+        let path = path_to(doc, &hit);
+        // A press on a group's member, or on a selected folder's, drags the
+        // group (plan 14e R8; issue #61); a folder moves only once selected.
+        let group = match &self.selection {
+            Selection::Many(ids) => !deep && ids.iter().any(|id| path.contains(id)),
+            Selection::Folder(f) => !deep && path.contains(f),
+            _ => false,
+        };
+        if group {
+            let found: Vec<usize> =
+                self.selected_elements().iter().filter_map(|id| doc.index_of(id)).collect();
             let befores: Vec<Element> = found.iter().map(|&i| doc.items()[i].element.clone()).collect();
             match found.iter().find(|&&i| doc.locked_at(i)) {
                 Some(&i) => {
@@ -696,7 +777,22 @@ impl EditorState {
             }
             return Vec::new();
         }
-        match hit {
+        let kept = matches!(&self.selection, Selection::Element(e) if !deep && path.contains(e));
+        let picked = if deep {
+            self.focus = doc.parent_of(&hit);
+            hit
+        } else if kept {
+            hit
+        } else {
+            self.click_pick(&hit)
+        };
+        let Some(doc) = &self.doc else { return Vec::new() };
+        if doc.is_folder(&picked) {
+            // A press on an unselected folder selects it (issue #61).
+            self.selection = Selection::Folder(picked);
+            return Vec::new();
+        }
+        match doc.index_of(&picked).map(|i| &doc.items()[i]) {
             Some(item) => {
                 let e = item.element.clone();
                 let locked = doc.index_of(&e.id).is_some_and(|i| doc.locked_at(i));
@@ -1008,9 +1104,10 @@ impl EditorState {
     }
 
     /// Moves the selected image's or drawn layer's box by `(dx, dy)`, or
-    /// each of a group's (plan 14e R8): one step.
+    /// each of a group's or a folder's (plan 14e R8, issue #61): one step.
     pub(crate) fn nudge(&mut self, dx: i32, dy: i32) -> Vec<EditorCommand> {
-        if let Selection::Many(ids) = self.selection.clone() {
+        if let Selection::Many(_) | Selection::Folder(_) = self.selection {
+            let ids = self.selected_elements();
             return self.group_edit(|d| d.move_many(&ids, (dx, dy)));
         }
         let Selection::Element(id) = self.selection.clone() else { return Vec::new() };
@@ -1051,6 +1148,25 @@ impl EditorState {
                     selected: selected(&e.id),
                     locked: doc.locked_at(i),
                 });
+            }
+        }
+        // A selected folder: one outline around its shown members' boxes
+        // (issue #61).
+        for f in self.selection.ids().iter().filter(|id| doc.is_folder(id)) {
+            let mut rect = None;
+            for m in doc.folder_members(f) {
+                let Some(i) = doc.index_of(&m) else { continue };
+                let e = &doc.items()[i].element;
+                if let (true, Some(b)) = (doc.shown_at(i), element_box(e, size)) {
+                    let r = box_rect((shifted(b.0, self.parallax(e)), b.1), size);
+                    if r.w > 0 && r.h > 0 {
+                        rect = Some(Rect::union(rect, r));
+                    }
+                }
+            }
+            if let Some(rect) = rect {
+                let locked = olr_edit::folders::folder_locked(&doc.composition(), f);
+                out.push(Overlay::Box { rect, selected: true, locked });
             }
         }
         if let Selection::Element(id) = &self.selection
@@ -1100,6 +1216,14 @@ impl EditorState {
         }
         out
     }
+}
+
+/// The folders holding element `id` in `doc`, outermost first, then the
+/// element (issue #61).
+fn path_to(doc: &Document, id: &str) -> Vec<String> {
+    let mut path = doc.folders_holding(id);
+    path.push(id.to_string());
+    path
 }
 
 /// Two pixel selections (world rectangles, a flag per art pixel at art
