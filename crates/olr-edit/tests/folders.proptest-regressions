@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc a8684044d6e88d8ce85c232af6fffd6730b5fd076367bf01691adc837ac76841 # shrinks to ops = [Move(24, None, Some(2))]
+cc 80d7f13d967ea137626caf0c232b60f8b37bcb04ee093bc9fdd433a8408a27f1 # shrinks to ops = [Group([2, 3]), Group([26, 32]), Group([45]), Group([27, 17, 29]), RemoveElement(16), RemoveFolder(0), RemoveFolder(0), RemoveElement(0), Group([0]), RemoveFolder(0), Move(0, None, None)]

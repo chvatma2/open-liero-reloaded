@@ -333,10 +333,10 @@ fn new_element_id_and_source_name_follow_r7_r8() {
         .cloned()
         .collect();
     let none = std::collections::BTreeSet::new();
-    assert_eq!(new_element_id(&ground, &none, "Ground", "layer"), "ground-2");
+    assert_eq!(new_element_id(&ground, &[], &none, "Ground", "layer"), "ground-2");
     // A stray file a new element would overwrite is skipped too.
     let stray: std::collections::BTreeSet<String> = ["editor/layers/ground-2.png".to_string()].into();
-    assert_eq!(new_element_id(&ground, &stray, "Ground", "layer"), "ground-3");
+    assert_eq!(new_element_id(&ground, &[], &stray, "Ground", "layer"), "ground-3");
     assert_eq!(new_source_name(["a.png"].into_iter(), "A.PNG"), "A-2.PNG");
     assert_eq!(new_source_name([].into_iter(), "CON.png"), "CON-2.png");
 }
@@ -474,7 +474,7 @@ fn a_layer_moved_back_to_the_origin_follows_the_level_again() {
 fn new_ids_reserve_masks_and_layer_files() {
     use olr_format::levels::Element;
     let files: std::collections::BTreeSet<String> = ["editor/masks/x.png".to_string()].into();
-    assert_ne!(new_element_id(&[], &files, "x", "image"), "x");
+    assert_ne!(new_element_id(&[], &[], &files, "x", "image"), "x");
     let wall = Element {
         id: "wall".into(),
         name: String::new(),
@@ -490,7 +490,7 @@ fn new_ids_reserve_masks_and_layer_files() {
         surface_map: false,
         back_surface_map: false,
     };
-    assert_ne!(new_element_id(&[wall], &Default::default(), "wall.material", "layer"), "wall.material");
+    assert_ne!(new_element_id(&[wall], &[], &Default::default(), "wall.material", "layer"), "wall.material");
 }
 
 /// Plan 14d minors: a mixed layer made plain drops its material file.

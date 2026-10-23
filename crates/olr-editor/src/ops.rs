@@ -271,7 +271,7 @@ impl Document {
         let stem = file_name.rsplit_once('.').map_or(file_name, |(stem, _)| stem);
         let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         let element = Element {
-            id: new_element_id(&elements, &stray, stem, "image"),
+            id: new_element_id(&elements, &[], &stray, stem, "image"),
             name: stem.into(),
             visible: true,
             locked: false,
@@ -436,6 +436,7 @@ impl Document {
         let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         let landing = olr_edit::asset::Landing {
             elements: &elements,
+            folders: &[],
             stray: &stray,
             originals: &self.originals,
             size,
@@ -557,7 +558,7 @@ impl Document {
         let name =
             if names.clone().any(|n| n == "Pasted") { copy_name("Pasted", names) } else { "Pasted".into() };
         let element = Element {
-            id: new_element_id(&elements, &self.stray_files(), &name, "pasted"),
+            id: new_element_id(&elements, &[], &self.stray_files(), &name, "pasted"),
             name,
             visible: true,
             locked: false,
@@ -589,7 +590,7 @@ impl Document {
     pub fn add_layer(&mut self, material: ElementMaterial, name: &str) -> Result<Change, DocError> {
         let elements: Vec<Element> = self.items.iter().map(|i| i.element.clone()).collect();
         let element = Element {
-            id: new_element_id(&elements, &self.stray_files(), name, "layer"),
+            id: new_element_id(&elements, &[], &self.stray_files(), name, "layer"),
             name: name.into(),
             visible: true,
             locked: false,
@@ -632,7 +633,7 @@ impl Document {
             self.items.iter().filter(|i| i.element.id != id).map(|i| i.element.clone()).collect();
         let stray = self.stray_files();
         let parts = drawn::split_element(&item.element, &item.decoded, size, s, |name, fallback| {
-            let new = new_element_id(&others, &stray, name, fallback);
+            let new = new_element_id(&others, &[], &stray, name, fallback);
             // A raster's files cover a mixed layer's: none of them taken.
             others.push(Element {
                 id: new.clone(),

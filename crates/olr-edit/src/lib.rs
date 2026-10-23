@@ -9,6 +9,7 @@ pub mod compose;
 pub mod drawn;
 pub mod element;
 pub mod fmt;
+pub mod folders;
 pub mod glow;
 pub mod level;
 pub mod look;

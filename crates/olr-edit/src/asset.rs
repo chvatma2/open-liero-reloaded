@@ -121,9 +121,10 @@ pub struct LevelPieces<'a> {
     pub look: Option<&'a LookSource>,
 }
 
-/// An element as an asset holds it: shown and unlocked.
-fn plain(e: &Element) -> Element {
-    Element { visible: true, locked: false, ..e.clone() }
+/// An element as an asset holds it: shown, unlocked and in no folder
+/// (asset files carry none, issue #59).
+pub fn plain(e: &Element) -> Element {
+    Element { visible: true, locked: false, folder: None, ..e.clone() }
 }
 
 /// An element's painted surface maps, its pixels' and its back art's.
@@ -482,6 +483,8 @@ fn clip(r: Rect, size: (u32, u32)) -> Rect {
 /// scale.
 pub struct Landing<'a> {
     pub elements: &'a [Element],
+    /// The level's folders: a landed id is none of theirs (issue #59).
+    pub folders: &'a [olr_format::levels::Folder],
     pub stray: &'a BTreeSet<String>,
     pub originals: &'a BTreeMap<String, Arc<Vec<u8>>>,
     pub size: (u32, u32),
@@ -511,6 +514,8 @@ pub fn land(
     // Its surface materials stay behind (issue #37: their painted maps are
     // not a piece's, and the level landed in may lack the materials).
     let mut e = piece.element.clone().without_surfaces();
+    // It lands in no folder: `place_in_pack` groups an asset's pieces.
+    e.folder = None;
     let names = to.elements.iter().map(|x| if x.name.is_empty() { x.id.as_str() } else { x.name.as_str() });
     let wanted = name
         .map(str::to_string)
@@ -522,7 +527,7 @@ pub fn land(
     } else {
         copy_name(&wanted, names)
     };
-    e.id = new_element_id(to.elements, to.stray, &e.name, "copy");
+    e.id = new_element_id(to.elements, to.folders, to.stray, &e.name, "copy");
     let shift = |a: (i32, i32)| {
         let add =
             |v: i32, d: i32| (i64::from(v) + i64::from(d)).clamp(i32::MIN.into(), i32::MAX.into()) as i32;
@@ -1003,7 +1008,9 @@ impl DecodedLevel {
                 _ => None,
             };
             pieces.push(Piece {
-                element: e.clone(),
+                // Its effective flags: a hidden folder's members are cut as
+                // hidden (issue #59).
+                element: crate::folders::fold(&src.composition, e),
                 decoded,
                 original,
                 glow_mask: masks.get(&e.id).cloned(),
@@ -1030,6 +1037,9 @@ impl DecodedLevel {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Placement {
     pub ids: Vec<String>,
+    /// The folder holding the pieces, named after the asset (issue #59);
+    /// none for a single piece.
+    pub folder: Option<String>,
     pub groups: GroupChange,
     pub materials: MaterialChange,
 }
@@ -1042,7 +1052,8 @@ pub struct Placement {
 /// resampled to the level's art scale, masks kept; its surfaces kept and
 /// its painted maps' values re-numbered to the level's materials), their
 /// files written
-/// into the composition (a level without one gets its raster base first,
+/// into the composition, two pieces or more in a new folder named after
+/// the asset (issue #59) (a level without one gets its raster base first,
 /// `element::ensure_composed`). Checked whole; the pack is unchanged on a
 /// refusal. Not baked: the caller bakes and saves.
 pub fn place_in_pack(
@@ -1077,6 +1088,7 @@ pub fn place_in_pack(
         let taken: BTreeSet<String> = src.files.keys().chain(&stray).cloned().collect();
         let landing = Landing {
             elements: &src.composition.elements,
+            folders: &src.composition.folders,
             stray: &taken,
             originals: &originals,
             size,
@@ -1120,6 +1132,16 @@ pub fn place_in_pack(
         ids.push(e.id.clone());
         src.composition.elements.push(landed.element);
     }
+    // A multi-piece asset lands as one folder named after it (issue #59);
+    // one piece stays plain.
+    let folder = if ids.len() > 1 {
+        Some(
+            crate::folders::group(&mut src.composition, &ids, &asset.name)
+                .map_err(|e| AssetError::Bad(e.to_string()))?,
+        )
+    } else {
+        None
+    };
     olr_format::levels::check_composition(src, size, s)?;
     olr_format::levels::check_glow_groups(&src.composition, level.look.as_ref())?;
     olr_format::levels::check_surfaces(&src.composition, level.look.as_ref())?;
@@ -1127,7 +1149,7 @@ pub fn place_in_pack(
     olr_format::levels::check_surface_maps(src, size, n)?;
     olr_format::levels::compile_look(level)?;
     *pack = copy;
-    Ok(Placement { ids, groups, materials })
+    Ok(Placement { ids, folder, groups, materials })
 }
 
 // The asset library (the editor's host and its tests): a folder of asset

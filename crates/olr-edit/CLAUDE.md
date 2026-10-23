@@ -418,6 +418,47 @@ operations.
   `renumber_removed`: the removed value 0, those above down one) and
   `names_material`, which the editor shares. Tests: `surface_ops.rs`'s
   `a_material_in_use_is_not_removed`, `renumbering_drops_the_removed_value`.
+- **Issue #59, layer folders** (the format is `olr-format`'s
+  `Composition::folders`, `Element::folder` and `check_folders`; STATUS.md
+  "Layer folders (issues #59, #60, #61)"):
+  - **`folders`** holds every tree computation once (the editor's
+    document calls it in issue #60): it re-exports the format's
+    `check_folders` and `folder_chain`; `shown`, `locked`,
+    `folder_locked`, `fold`/`folded` (effective flags: shown when it and
+    every folder holding it are visible, locked when any is), `holds`,
+    `members`, `parent_of`, `depth`, `tidy` (drops folders holding no
+    element and orders the rest canonically; safe unchecked),
+    `default_name` ("Folder n"), `new_folder_id`, `tree`/`flatten`
+    (`Node`: the runs as a tree, written back canonical, empty folders
+    left out), `group` (inside the innermost shared folder; scattered
+    members first to the topmost one's place), `ungroup`, `move_to`
+    (into a folder on top or at a position; out to a holding folder
+    just above the one it leaves), `raise`/`lower` (past a sibling, a
+    folder's whole run; out at a folder's edge; `DISTANT_ORDER`) and
+    `remove_folder`. Each refuses a result breaking a rule or the
+    distant order, leaving the composition as it was (`FolderError`).
+  - **`element`**: `commit` runs `folders::tidy` after every edit (an
+    edit emptying a folder removes it); `unlocked` and `set` use the
+    effective lock (a lock refuses content, not order); `raise`, `lower`
+    and `remove` take folder ids (a folder removed with its contents,
+    refused while any is locked); `set_all` on a folder id takes `Name`,
+    `Visible` and `Locked` (a locked folder only `Locked`); `group`,
+    `ungroup`, `move_to`; `new_element_id` takes the folders (one id
+    namespace) and `new_folder_id` is re-exported; `split`'s parts take
+    the element's folder, `merge_down` the lower one's, `duplicate` the
+    original's; `Property::Distant` takes an element out of its folders.
+  - **The bake**: `Baker::new_cached` bakes folded clones and decodes by
+    the element's own flags (a folder's visibility rebakes, never
+    re-decodes); `asset::DecodedLevel::of_pack` folds too; `asset::plain`
+    and `land` clear `folder` (`Landing::folders` keeps landed ids off
+    the folders'); `place_in_pack` groups two pieces or more in a folder
+    named after the asset (`Placement::folder`).
+  - Tests: `tests/folders.rs` (group contiguous, scattered and nested,
+    ungroup, move in and out, raise and lower at folder edges, distant
+    layers, remove, `tidy`, equal trees writing alike, cycle-safe walks,
+    the proptest `every_operation_keeps_the_rules`, a hidden folder in
+    the bake, no re-decode, a locked folder, duplicate/merge/split/
+    distant in folders, a folder's properties).
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: round trips
   through a folder at art scales 1 and 2, masks and groups joined or
   added, resampling across scales, the rectangle's rules, a picture kept

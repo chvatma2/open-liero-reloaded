@@ -908,11 +908,13 @@ impl Baker {
             }
         }
         check_composition(src, size, art_scale)?;
-        let items = src
-            .composition
+        // Each element decoded by its own flags, baked by its effective
+        // ones (issue #59): a folder's visibility rebakes, never re-decodes.
+        let c = &src.composition;
+        let items = c
             .elements
             .iter()
-            .map(|e| Ok((e.clone(), decode_element(src, e, size, s, cache)?)))
+            .map(|e| Ok((crate::folders::fold(c, e), decode_element(src, e, size, s, cache)?)))
             .collect::<Result<_, ComposeError>>()?;
         let masks = decode_glow_masks(src, size, s)?;
         let painted = decode_surface_maps(src, size)?;

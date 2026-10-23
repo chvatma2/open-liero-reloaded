@@ -10,13 +10,15 @@ use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_format::image_io::{self, IMAGES};
 use olr_format::levels::{
-    CompositionSource, Dither, Element, ElementGlow, ElementKind, ElementMaterial, LevelSource, MAX_ELEMENTS,
-    check_composition, check_elements, element_box, element_files, glow_file, image_file, layer_file,
-    raster_files, surface_back_file, surface_file, surface_map_size,
+    CompositionSource, Dither, Element, ElementGlow, ElementKind, ElementMaterial, Folder, LevelSource,
+    MAX_ELEMENTS, check_composition, check_elements, element_box, element_files, glow_file, image_file,
+    layer_file, raster_files, surface_back_file, surface_file, surface_map_size,
 };
 
 use crate::compose::{Decoded, ImageCache, compose_from, decode_element, encode_decoded, resize_decoded};
 use crate::drawn;
+pub use crate::folders::new_folder_id;
+use crate::folders::{self, FolderError};
 use crate::level::{Paint, Shape};
 use crate::mask::{Mask, mask_colour, mask_shape, original_pixel};
 use crate::pack::{Pack, Source};
@@ -35,6 +37,15 @@ pub enum ElementError {
     TooMany,
     #[error("{0}")]
     BadValue(String),
+}
+
+impl From<FolderError> for ElementError {
+    fn from(e: FolderError) -> Self {
+        match e {
+            FolderError::NoItem(id) => ElementError::NoElement(id),
+            other => ElementError::BadValue(other.to_string()),
+        }
+    }
 }
 
 /// A settable property of an element.
@@ -94,6 +105,9 @@ fn commit<T>(
     let was_valid = pack.composition.as_ref().is_none_or(|c| check_composition(c, size, art_scale).is_ok());
     let mut src = pack.composition.clone().unwrap_or_else(|| compose_from(l));
     let out = edit(&mut src)?;
+    // An edit emptying a folder removes it; the folders stay in their
+    // canonical order (issue #59).
+    folders::tidy(&mut src.composition);
     fit_surface_maps(&mut src, size);
     check_composition(&src, size, art_scale).map_err(|e| {
         ElementError::BadValue(if context.is_empty() || !was_valid {
@@ -160,10 +174,10 @@ fn find(src: &CompositionSource, id: &str) -> Result<usize, ElementError> {
     src.composition.elements.iter().position(|e| e.id == id).ok_or_else(|| ElementError::NoElement(id.into()))
 }
 
-/// `id` (found) when it is not locked.
+/// `id` (found) when it is not locked, nor any folder holding it.
 fn unlocked(src: &CompositionSource, id: &str) -> Result<usize, ElementError> {
     let i = find(src, id)?;
-    if src.composition.elements[i].locked {
+    if folders::locked(&src.composition, &src.composition.elements[i]) {
         return Err(ElementError::Locked(id.into()));
     }
     Ok(i)
@@ -175,7 +189,7 @@ const MAX_ID: usize = 64;
 /// `base` made a slug (ruling R8): lowercase, every character outside
 /// `[a-z0-9_.-]` a `-`, not starting with `.`, at most `MAX_ID` bytes;
 /// `fallback` when empty.
-fn slug(base: &str, fallback: &str) -> String {
+pub(crate) fn slug(base: &str, fallback: &str) -> String {
     let s: String = base
         .chars()
         .map(|c| c.to_ascii_lowercase())
@@ -190,7 +204,7 @@ fn slug(base: &str, fallback: &str) -> String {
 
 /// `base`, or `base-2`, `base-3`, … (`base` shortened so the whole stays
 /// within `MAX_ID` bytes): the first that is not `taken`.
-fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
+pub(crate) fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
     std::iter::once(base.to_string())
         .chain((2u32..).map(|i| {
             let suffix = format!("-{i}");
@@ -201,10 +215,17 @@ fn unique(base: &str, taken: impl Fn(&str) -> bool) -> String {
 }
 
 /// A new id from `name` (ruling R8 of plan 14a, at most 64 bytes) not
-/// taken by `elements`: not an id in use, and its files (`<id>.png` and a
-/// raster's) neither another element's, nor among `files` (the pack's
-/// others, stray ones included), nor a name some file system refuses.
-pub fn new_element_id(elements: &[Element], files: &BTreeSet<String>, name: &str, fallback: &str) -> String {
+/// taken by `elements` or `folders` (issue #59: one namespace): not an id
+/// in use, and its files (`<id>.png` and a raster's) neither another
+/// element's, nor among `files` (the pack's others, stray ones included),
+/// nor a name some file system refuses.
+pub fn new_element_id(
+    elements: &[Element],
+    folders: &[Folder],
+    files: &BTreeSet<String>,
+    name: &str,
+    fallback: &str,
+) -> String {
     // Every file an element may come to hold: a drawn layer's material and
     // back art, an image's mask (plan 14d).
     let may_hold = |e: &Element| -> Vec<String> {
@@ -221,6 +242,7 @@ pub fn new_element_id(elements: &[Element], files: &BTreeSet<String>, name: &str
         let mut files = vec![layer_file(c), olr_format::levels::mask_file(c)];
         files.extend(raster_files(c));
         elements.iter().any(|e| e.id == c)
+            || folders.iter().any(|f| f.id == c)
             || files.iter().any(|f| {
                 used.contains(f) || olr_vfs::non_portable(f.rsplit('/').next().unwrap_or(f)).is_some()
             })
@@ -235,7 +257,7 @@ fn stray(pack: &Pack) -> BTreeSet<String> {
 
 fn new_id(src: &CompositionSource, stray: &BTreeSet<String>, name: &str, fallback: &str) -> String {
     let files: BTreeSet<String> = src.files.keys().chain(stray).cloned().collect();
-    new_element_id(&src.composition.elements, &files, name, fallback)
+    new_element_id(&src.composition.elements, &src.composition.folders, &files, name, fallback)
 }
 
 /// `file_name`, or `-2`, `-3`, … before its extension, until it is not
@@ -413,6 +435,11 @@ pub fn set(pack: &mut Pack, id: &str, property: Property) -> Result<(), ElementE
 /// checked once, as `set` checks one.
 pub fn set_all(pack: &mut Pack, id: &str, properties: &[Property]) -> Result<(), ElementError> {
     let context: Vec<&str> = properties.iter().map(field).collect();
+    if pack.composition.as_ref().is_some_and(|c| c.composition.folders.iter().any(|f| f.id == id)) {
+        return commit(pack, &context.join(", "), |src| {
+            properties.iter().try_for_each(|p| set_folder(&mut src.composition, id, p))
+        });
+    }
     let l = level(pack)?;
     let size = l.size;
     for p in properties {
@@ -471,6 +498,28 @@ pub fn set_all(pack: &mut Pack, id: &str, properties: &[Property]) -> Result<(),
     })
 }
 
+/// Sets one property of folder `id` of `c` (issue #59): its name,
+/// visibility or lock. A locked folder, or one in a locked folder, takes
+/// only `Locked`.
+fn set_folder(c: &mut olr_format::levels::Composition, id: &str, p: &Property) -> Result<(), ElementError> {
+    if folders::folder_locked(c, id) && !matches!(p, Property::Locked(_)) {
+        return Err(ElementError::Locked(id.into()));
+    }
+    let f = c.folders.iter_mut().find(|f| f.id == id).ok_or_else(|| ElementError::NoElement(id.into()))?;
+    match p {
+        Property::Name(n) => f.name = n.clone(),
+        Property::Visible(v) => f.visible = *v,
+        Property::Locked(v) => f.locked = *v,
+        _ => {
+            return Err(ElementError::WrongKind {
+                id: id.into(),
+                want: "an element (a folder takes a name, visibility and a lock)",
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Sets one property of element `id` in `src` (a level of `size`), unchecked.
 fn apply(
     src: &mut CompositionSource,
@@ -480,8 +529,9 @@ fn apply(
 ) -> Result<(), ElementError> {
     {
         let i = find(src, id)?;
+        let locked = folders::locked(&src.composition, &src.composition.elements[i]);
         let e = &mut src.composition.elements[i];
-        if e.locked && !matches!(property, Property::Locked(_)) {
+        if locked && !matches!(property, Property::Locked(_)) {
             return Err(ElementError::Locked(id.into()));
         }
         let wrong = |want| ElementError::WrongKind { id: id.into(), want };
@@ -503,6 +553,9 @@ fn apply(
                 let was = e.distant.is_some();
                 e.distant = d;
                 if was != d.is_some() {
+                    // It leaves its folders: distant layers share none with
+                    // the others (issue #59).
+                    e.folder = None;
                     let e = src.composition.elements.remove(i);
                     // The top of the distant layers, or just above them.
                     let at = src.composition.elements.iter().take_while(|x| x.is_distant()).count();
@@ -859,9 +912,21 @@ pub fn surface_by_colour(
     })
 }
 
-/// Removes element `id` and the files no other element uses.
+/// Removes element `id` and the files no other element uses; a folder
+/// with everything it holds (issue #59), refused while any of it is
+/// locked.
 pub fn remove(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
     commit(pack, "", |src| {
+        if src.composition.folders.iter().any(|f| f.id == id) {
+            let c = &src.composition;
+            if let Some(e) = c.elements.iter().find(|e| folders::holds(c, id, e) && folders::locked(c, e)) {
+                return Err(ElementError::Locked(e.id.clone()));
+            }
+            for e in folders::remove_folder(&mut src.composition, id)? {
+                drop_files(src, &e);
+            }
+            return Ok(());
+        }
         let i = unlocked(src, id)?;
         let e = src.composition.elements.remove(i);
         for f in element_files(&e) {
@@ -873,45 +938,47 @@ pub fn remove(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
     })
 }
 
-/// Why elements `a` and `b` cannot swap places (issue #11): a distant
-/// layer stays below every element that is not.
-fn swap_refused(a: &Element, b: &Element) -> Option<ElementError> {
-    (a.is_distant() != b.is_distant()).then(|| ElementError::BadValue(DISTANT_ORDER.into()))
-}
-
 /// Why a move across the distant layers' edge is refused (issue #11).
 pub const DISTANT_ORDER: &str = "distant layers stay below every other element";
 
-/// Moves element `id` one step up; the top one stays. A distant layer
-/// stays below every other element (refused, [`DISTANT_ORDER`]).
+/// Moves element or folder `id` one step up (`folders::raise`: a
+/// folder past its neighbour, an element at a folder's top out of it);
+/// the top one stays. A distant layer stays below every other element
+/// (refused, [`DISTANT_ORDER`]).
 pub fn raise(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
-    commit(pack, "", |src| {
-        let i = find(src, id)?;
-        let e = &src.composition.elements;
-        if i + 1 < e.len() {
-            if let Some(why) = swap_refused(&e[i], &e[i + 1]) {
-                return Err(why);
-            }
-            src.composition.elements.swap(i, i + 1);
-        }
-        Ok(())
-    })
+    commit(pack, "", |src| Ok(folders::raise(&mut src.composition, id)?))
 }
 
-/// Moves element `id` one step down; the bottom one stays. An element that
-/// is not distant stays above the distant layers (refused).
+/// Moves element or folder `id` one step down (`folders::lower`); the
+/// bottom one stays. An element that is not distant stays above the
+/// distant layers (refused).
 pub fn lower(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
-    commit(pack, "", |src| {
-        let i = find(src, id)?;
-        let e = &src.composition.elements;
-        if i > 0 {
-            if let Some(why) = swap_refused(&e[i], &e[i - 1]) {
-                return Err(why);
-            }
-            src.composition.elements.swap(i, i - 1);
-        }
-        Ok(())
-    })
+    commit(pack, "", |src| Ok(folders::lower(&mut src.composition, id)?))
+}
+
+/// Groups elements and folders `ids` into a new folder (issue #59,
+/// `folders::group`), named `name` ("Folder n" when empty); returns its
+/// id. Locked members group too.
+pub fn group(pack: &mut Pack, ids: &[String], name: &str) -> Result<String, ElementError> {
+    commit(pack, "", |src| Ok(folders::group(&mut src.composition, ids, name)?))
+}
+
+/// Ungroups folder `id` (`folders::ungroup`): its members go to its
+/// parent, in order.
+pub fn ungroup(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
+    commit(pack, "", |src| Ok(folders::ungroup(&mut src.composition, id)?))
+}
+
+/// Moves element or folder `id` into folder `into` (none: the top level)
+/// at `position` among its children (`folders::move_to`: without one,
+/// above the folder it leaves or on top of `into`).
+pub fn move_to(
+    pack: &mut Pack,
+    id: &str,
+    into: Option<&str>,
+    position: Option<usize>,
+) -> Result<(), ElementError> {
+    commit(pack, "", |src| Ok(folders::move_to(&mut src.composition, id, into, position)?))
 }
 
 /// Element `i`'s data decoded (a level of `size` at art scale `s`).
@@ -1108,9 +1175,13 @@ pub fn merge_down(pack: &mut Pack, id: &str) -> Result<(), ElementError> {
             return Err(ElementError::BadValue("a distant layer does not merge".into()));
         }
         let (ld, ud) = (decoded(src, lower, size, s)?, decoded(src, upper, size, s)?);
-        let (le, ue) = (src.composition.elements[lower].clone(), src.composition.elements[upper].clone());
-        let (merged, d) = drawn::merge_down((&le, &ld), (&ue, &ud), size, s)
+        // The layers as the bake sees them: a hidden folder hides them.
+        let c = &src.composition;
+        let (le, ue) = (folders::fold(c, &c.elements[lower]), folders::fold(c, &c.elements[upper]));
+        let (mut merged, d) = drawn::merge_down((&le, &ld), (&ue, &ud), size, s)
             .map_err(|e| ElementError::BadValue(e.to_string()))?;
+        // It keeps the lower layer's folder (issue #59).
+        merged.folder = le.folder.clone();
         let gone = src.composition.elements.remove(upper);
         drop_files(src, &gone);
         store(src, lower, merged, &d, size);
@@ -1130,11 +1201,12 @@ pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
             return Err(ElementError::BadValue("a distant layer does not split".into()));
         }
         let d = decoded(src, i, size, s)?;
-        let e = src.composition.elements[i].clone();
+        let e = folders::fold(&src.composition, &src.composition.elements[i]);
         let mut taken: Vec<Element> =
             src.composition.elements.iter().filter(|o| o.id != id).cloned().collect();
+        let folder_list = src.composition.folders.clone();
         let parts = drawn::split_element(&e, &d, size, s, |name, fallback| {
-            let new = new_element_id(&taken, &stray, name, fallback);
+            let new = new_element_id(&taken, &folder_list, &stray, name, fallback);
             // A raster's files cover a mixed layer's: none of them taken.
             taken.push(Element {
                 id: new.clone(),
@@ -1160,7 +1232,9 @@ pub fn split(pack: &mut Pack, id: &str) -> Result<Vec<String>, ElementError> {
         let gone = src.composition.elements.remove(i);
         drop_files(src, &gone);
         let mut ids = Vec::new();
-        for (k, (part, data)) in parts.into_iter().enumerate() {
+        for (k, (mut part, data)) in parts.into_iter().enumerate() {
+            // The parts take the split element's folder (issue #59).
+            part.folder = e.folder.clone();
             ids.push(part.id.clone());
             src.composition.elements.insert(i + k, part.clone());
             store(src, i + k, part, &data, size);

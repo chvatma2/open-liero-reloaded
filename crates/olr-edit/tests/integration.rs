@@ -7,6 +7,7 @@ mod compose;
 mod drawn;
 mod element;
 mod fmt;
+mod folders;
 mod glow;
 mod guide;
 mod level;
