@@ -381,6 +381,81 @@ impl ActionKind {
     }
 }
 
+/// How a projectile is reached from its parent: its event spawn or its trail.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChildLink {
+    Spawn,
+    Trail,
+}
+
+impl ChildLink {
+    /// The link's letter in a compact key: `s` or `t`.
+    pub fn letter(self) -> char {
+        match self {
+            ChildLink::Spawn => 's',
+            ChildLink::Trail => 't',
+        }
+    }
+}
+
+/// The key of `parent`'s child reached by `link` (issue #64): the root's
+/// name, a dot, then the chain from the root as `s` (spawn) and `t`
+/// (trail), a run of one link its letter and its count (`rocket` →
+/// `rocket.s`, `rocket.s` → `rocket.s2`, `rocket.s2` → `rocket.s2t`). A
+/// parent whose part after its last dot is no compact chain is a root, so
+/// a key only ever grows by its last run. Keys name files
+/// (`projectiles/<key>.ron`), which stay short on Windows this way.
+pub fn child_key(parent: &str, link: ChildLink) -> String {
+    let (root, mut runs) = match parent.rsplit_once('.') {
+        Some((root, chain)) if !root.is_empty() => match parse_chain(chain) {
+            Some(runs) => (root, runs),
+            None => (parent, Vec::new()),
+        },
+        _ => (parent, Vec::new()),
+    };
+    match runs.last_mut() {
+        Some((l, n)) if *l == link.letter() => *n += 1,
+        _ => runs.push((link.letter(), 1)),
+    }
+    let mut key = String::from(root);
+    key.push('.');
+    for (l, n) in runs {
+        key.push(l);
+        if n > 1 {
+            key.push_str(&alloc::format!("{n}"));
+        }
+    }
+    key
+}
+
+/// A compact chain's runs (letter, count), or `None` when `chain` is not
+/// one as `child_key` writes it: alternating letters, a count of 2 or more
+/// without a leading zero.
+fn parse_chain(chain: &str) -> Option<Vec<(char, u32)>> {
+    let mut runs: Vec<(char, u32)> = Vec::new();
+    let mut rest = chain;
+    while let Some(l) = rest.chars().next() {
+        if l != 's' && l != 't' || runs.last().is_some_and(|(p, _)| *p == l) {
+            return None;
+        }
+        rest = &rest[1..];
+        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let n = if digits == 0 {
+            1
+        } else {
+            let count = &rest[..digits];
+            let n: u32 = count.parse().ok()?;
+            if count.starts_with('0') || n < 2 || n == u32::MAX {
+                return None;
+            }
+            n
+        };
+        rest = &rest[digits..];
+        runs.push((l, n));
+    }
+    if runs.is_empty() { None } else { Some(runs) }
+}
+
 impl ProjectileDef {
     /// Names of the projectiles this one can spawn (event spawn, then trail).
     pub fn children(&self) -> impl Iterator<Item = &str> {
@@ -438,6 +513,44 @@ mod tests {
             hit: ActionDef { damage: 5, ..ActionDef::olx_default(ActionKind::Explode) },
             player_hit: ActionDef::olx_default(ActionKind::Injure),
             event_spawn: Some(SpawnDef::olx_default("bits".to_string())),
+        }
+    }
+
+    /// The key `child_key` gives at the end of `chain` (`s`, `t`) from `root`.
+    fn chain_key(root: &str, chain: &str) -> String {
+        chain.chars().fold(root.to_string(), |key, c| {
+            child_key(&key, if c == 's' { ChildLink::Spawn } else { ChildLink::Trail })
+        })
+    }
+
+    #[test]
+    fn child_keys_are_compact_chains() {
+        assert_eq!(child_key("rocket", ChildLink::Spawn), "rocket.s");
+        assert_eq!(child_key("rocket", ChildLink::Trail), "rocket.t");
+        assert_eq!(chain_key("rocket", "st"), "rocket.st");
+        assert_eq!(chain_key("rocket", "ss"), "rocket.s2");
+        assert_eq!(
+            chain_key("medical-camp", &["sss", "t", &"s".repeat(9), "t"].concat()),
+            "medical-camp.s3ts9t"
+        );
+        assert_eq!(chain_key("sunray-grenade", "sttttsttttt"), "sunray-grenade.st4st5");
+        assert_eq!(chain_key("a", &"s".repeat(12)), "a.s12");
+        // A parent that is no compact chain is a root.
+        assert_eq!(child_key("crackler.trail", ChildLink::Spawn), "crackler.trail.s");
+        for root in ["x.s1", "x.s02", "x.ss", "x.s2s", "x.", ".s", "x.sx", "x.é"] {
+            assert_eq!(child_key(root, ChildLink::Trail), alloc::format!("{root}.t"), "{root}");
+        }
+        assert_eq!(child_key("x.s4294967295", ChildLink::Spawn), "x.s4294967295.s");
+    }
+
+    #[test]
+    fn child_keys_are_unique_per_root() {
+        let mut seen = alloc::collections::BTreeSet::new();
+        for len in 1..=10u32 {
+            for bits in 0..(1u32 << len) {
+                let chain: String = (0..len).map(|i| if bits >> i & 1 == 0 { 's' } else { 't' }).collect();
+                assert!(seen.insert(chain_key("w", &chain)), "{chain}");
+            }
         }
     }
 
