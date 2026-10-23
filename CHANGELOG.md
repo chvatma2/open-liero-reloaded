@@ -147,6 +147,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   outer two pixels of the rock or dirt they meet, from which the heat
   soaks in. No more glow deep inside rock, in a tunnel behind a wall or
   on a wall's far face.
+- A surface material may set its own light soak (`light_soak`, 0 to 12
+  px; the material editor's Light soak): how deep light seeps into its
+  rock and dirt. Concrete, stone and brick soak 2 px, so Liero Factory
+  Reloaded's slabs and Castle Strike Reloaded's stone walls are lit only
+  at their face, no longer in blobs at the lamps' corners; furniture and
+  everything else keeps the level's soak.
 
 - Content packs are in the new format, version 5. Re-import packs you
   made with `cargo xtask fetch-olx-content` or `olr-cli import`; packs of

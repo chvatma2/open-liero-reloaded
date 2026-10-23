@@ -5433,6 +5433,52 @@ the builder's calls:
   (its level plane) and `lit-hashes.ron` (the Reloaded content heats)
   re-blessed: thin hot rims, the rock behind them cold.
 
+## Light soak by material (issue #57)
+
+No OLX counterpart. The light soak (how deep light seeps into rock and
+dirt from the air beside them) was one number per level; it now belongs
+to the surface material too: `MaterialSource::light_soak` (0 to
+`MAX_SOAK` 12, none the level's `look.light_soak`), carried into
+`olr_look::SurfaceMaterial::light_soak` by every copy (a level's
+`look.materials`, the library, the assets). The fade curve and the
+brightest-in-a-square rule are unchanged; heat is unchanged. As built,
+the builder's calls:
+
+- **Whose soak:** an opaque solid texel's front surface material's (the
+  visible surface rule of heat: the front's where rock or dirt stands;
+  the soak reads only opaque solids, so the back never counts), else the
+  level's. A pixel outside the maps, with no material or a material
+  without `light_soak`, takes the level's.
+- **The two passes** each take the receiving texel's radius `r` and fade
+  with `fade(i, r + 1)`. At a border between materials the down pass
+  reads its column's across results, made with those texels' radii: a
+  texel of a thin material next to a deep one can take, down its column,
+  light its neighbour soaked across. Accepted (the issue's ruling).
+- **The map:** the front surface map is static; the solid map beside it
+  follows every dirty rectangle, so digging and new dirt change the soak
+  at once. The soak binds the heat's own surface texture when the level
+  heats, else an `R8Uint` front map of its own: one copy either way.
+- **Bytes:** a level without a material that sets a soak draws today's
+  bytes (the plain soak pipelines, no table, no map); one with such a
+  material runs the across pass even at a level soak of 0.
+- **`olr-cli look-preview`** now hands the renderer the level's surface
+  materials and maps as play does (it gave none before, so it showed no
+  material soak and no cold heat; with nothing hot the heat changes no
+  byte).
+- **Content:** Liero Factory Reloaded's `concrete` and `stone` (its
+  floors, ceilings, walls and ground) and Castle Strike Reloaded's
+  `stone` soak 2; the levels' own soak stays (6 and 12), so the
+  factory's furniture (already `metal` and `wood` in its surface map, no
+  re-paint needed) and the castle's brick, wood and metal keep their
+  light. The library's `concrete`, `stone` and `brick` soak 2; the
+  built-in assets cut from those levels were saved again with
+  `olr-cli asset save` (their commands in `content/assets/README.md`)
+  and differ only by the soak of their copies.
+- **Material editor:** a Light soak combo box ("Level's", 0 to 12 px).
+  The live preview draws lit solids with no level look (the level's soak
+  0 there), so a material's own soak shows as the hot rim's light seeping
+  in.
+
 ## Every screen fits (issue #49)
 
 No OLX counterpart (OLX's menus are a fixed 640 × 480). Every menu
