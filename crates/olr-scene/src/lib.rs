@@ -27,7 +27,9 @@ pub use draw_list::{
 };
 pub use marks::Marks;
 pub use projectile::{draw_bonus, draw_projectile, frame_x, framestep};
-pub use snapshot::{Blend, BonusSnap, Interpolation, ProjBlend, ProjSnap, Snapshot, WormSnap, worm_blends};
+pub use snapshot::{
+    Blend, BonusSnap, Interpolation, ProjBlend, ProjSnap, Snapshot, WormSnap, worm_blends, worm_draw_pos,
+};
 pub use worm::{
     BODY_OFFSET, CROSSHAIR_DISTANCE, WormExtras, WormFrame, crosshair_offset, draw_worm, health_segments,
     muzzle_frame, skin_frame, skin_frame_index,

@@ -9,6 +9,8 @@ use olr_sim::{Bonus, MAX_BONUSES, MAX_WORMS, Projectile, ProjectilePool, World, 
 pub struct WormSnap {
     pub alive: bool,
     pub pos: Vec2,
+    /// [`Worm::on_ground`]: drawn at a whole-pixel `y` (issue #58).
+    pub on_ground: bool,
     pub angle: f32,
     /// The walk frame (`fFrame`).
     pub frame: f32,
@@ -27,6 +29,7 @@ impl WormSnap {
         WormSnap {
             alive: w.alive,
             pos: w.pos,
+            on_ground: w.on_ground,
             angle: w.angle,
             frame: w.frame,
             time_of_death: w.time_of_death,
@@ -160,6 +163,19 @@ pub fn worm_blends(prev: &WormSnap, cur: &Worm) -> bool {
     prev.alive == cur.alive && prev.time_of_death == cur.time_of_death
 }
 
+/// A worm state's position as [`Interpolation::Linear`] blends it: a
+/// living worm on the ground at its `y` truncated to a whole world pixel,
+/// as OLX draws it (`(int)y`), else exact. OLX's ground contact lets a
+/// standing worm's `y` creep down about 0.012 px a tick and pushes it back
+/// up a pixel once it crosses one (`fixtures/oracle/fall`); drawn at
+/// sub-pixel precision that sawtooth bobs the worm and the camera (issue
+/// #58). `x` stays exact.
+///
+/// OLX: src/common/CWorm.cpp:1016-1334 (`physicToReal` truncates the drawn position)
+pub fn worm_draw_pos(pos: Vec2, alive: bool, on_ground: bool) -> Vec2 {
+    if alive && on_ground { Vec2::new(pos.x, (pos.y as i32) as f32) } else { pos }
+}
+
 fn lerp(a: Vec2, b: Vec2, t: f32) -> Vec2 {
     a + (b - a) * t
 }
@@ -196,11 +212,16 @@ impl<'a> Blend<'a> {
         self.prev.worms.get(i).filter(|p| worm_blends(p, w))
     }
 
-    /// Worm `i`'s drawn position (unsnapped).
+    /// Worm `i`'s drawn position (unsnapped). Linear: each state at
+    /// [`worm_draw_pos`] (a grounded worm's `y` on a whole pixel), blended.
     pub fn worm(&self, i: usize, w: &Worm) -> Vec2 {
+        if self.exact() {
+            return w.pos;
+        }
+        let cur = worm_draw_pos(w.pos, w.alive, w.on_ground);
         match self.prev_worm(i, w) {
-            Some(p) => lerp(p.pos, w.pos, self.alpha),
-            None => w.pos,
+            Some(p) => lerp(worm_draw_pos(p.pos, p.alive, p.on_ground), cur, self.alpha),
+            None => cur,
         }
     }
 

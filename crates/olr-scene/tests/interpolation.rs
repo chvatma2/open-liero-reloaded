@@ -5,7 +5,7 @@ use crate::common;
 
 use olr_data::image::Rgba;
 use olr_math::Vec2;
-use olr_scene::{Blend, DrawList, Interpolation, Item, Layer, SceneOptions, Sprite};
+use olr_scene::{Blend, DrawList, Interpolation, Item, Layer, SceneOptions, Sprite, worm_draw_pos};
 
 fn lerp(a: Vec2, b: Vec2) -> Vec2 {
     a + (b - a) * 0.5
@@ -70,10 +70,12 @@ fn interpolation_never_blends_reused_slots_or_respawns() {
         for (i, w) in world.worms().iter().enumerate() {
             let Some(p) = prev.get(i) else { continue };
             let same_life = p.alive == w.alive && p.time_of_death == w.time_of_death;
+            // Issue #58: a grounded state at its whole-pixel `y`.
+            let cur = worm_draw_pos(w.pos, w.alive, w.on_ground);
             if same_life {
-                assert_eq!(blend.worm(i, w), lerp(p.pos, w.pos));
+                assert_eq!(blend.worm(i, w), lerp(worm_draw_pos(p.pos, p.alive, p.on_ground), cur));
             } else {
-                assert_eq!(blend.worm(i, w), w.pos, "worm {i} at frame {frame}");
+                assert_eq!(blend.worm(i, w), cur, "worm {i} at frame {frame}");
                 deaths += usize::from(p.alive && !w.alive);
                 respawns += usize::from(!p.alive && w.alive);
             }
@@ -83,12 +85,13 @@ fn interpolation_never_blends_reused_slots_or_respawns() {
         if w.alive && prev.get(1).is_some_and(|p| !p.alive) {
             // The respawned worm is drawn where it is, not on the way.
             let s = skin(&list, assets, 1).expect("the respawned worm is drawn");
-            assert_eq!(s.pos, [w.pos.x - 5.0, w.pos.y - 4.5]);
+            let at = worm_draw_pos(w.pos, w.alive, w.on_ground);
+            assert_eq!(s.pos, [at.x - 5.0, at.y - 4.5]);
             // And the camera snapped to it in one frame.
             let v = list.view;
             let (mw, mh) = (world.terrain().width() as f32, world.terrain().height() as f32);
-            let x = (w.pos.x - v.w.div_euclid(2.0)).clamp(0.0, mw - v.w);
-            let y = (w.pos.y - v.h.div_euclid(2.0)).clamp(0.0, mh - v.h);
+            let x = (at.x - v.w.div_euclid(2.0)).clamp(0.0, mw - v.w);
+            let y = (at.y - v.h.div_euclid(2.0)).clamp(0.0, mh - v.h);
             assert_eq!((v.x, v.y), (x, y));
         }
         if !w.alive {
