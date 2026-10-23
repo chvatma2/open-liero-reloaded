@@ -119,12 +119,19 @@ fn fs_terrain_backing_lit(in: QuadOut) -> LitOut {
     return terrain_lit(in, true);
 }
 
+// A distant layer's glow mask (issue #62): its image's size, or 1 × 1 full.
+@group(1) @binding(1) var distant_mask: texture_2d<f32>;
+
 // A distant layer's pixel (issue #11): opaque where it covers; its shade
 // holds its depth as 1 - alpha (the composite lights it by 1 - depth of
-// the light beyond the ambient). Issue #41: hot (group 3 is the layer's
-// own heat, at its world pixel), it shows its ramp colour and glows as the
-// lit terrain does; cold, it holds no self-light. The glow light never
-// reads it: a layer casts nothing.
+// the light beyond the ambient). Issue #62: glowing (the instance's shade
+// y its group, z its strength), its self-light is strength × mask × the
+// group's self-light scale, with the group's flicker (the layer one
+// region), where it is drawn. Issue #41: hot (group 3 is the layer's own
+// heat, at its world pixel), it shows its ramp colour and glows as the lit
+// terrain does, the larger self-light kept; cold and not glowing, it holds
+// none. The glow light never reads it: a layer casts nothing (its light is
+// the level's, baked at its reference placement).
 @fragment
 fn fs_distant_lit(in: QuadOut) -> LitOut {
     let t = texel(in);
@@ -133,10 +140,17 @@ fn fs_distant_lit(in: QuadOut) -> LitOut {
         discard;
     }
     var self_light = 0.0;
+    let v = u32(max(in.shade.y, 0.0) + 0.5);
+    if v > 0u && v <= min(u32(look.mode.y), 255u) && in.shade.z > 0.0 {
+        let msize = vec2<i32>(textureDimensions(distant_mask));
+        let m = textureLoad(distant_mask, clamp(t, vec2<i32>(0), msize - vec2<i32>(1)), 0).r;
+        let g = look.groups[v - 1u];
+        self_light = clamp(in.shade.z * m * g.light.w * region_flicker(g.flicker, 0u), 0.0, 1.0);
+    }
     let heat = heat_at(t / max(i32(look.level.z), 1));
     if heat.colour.a > 0.0 {
         c = vec4<f32>(mix(c.rgb, heat.colour.rgb, heat.colour.a), c.a);
-        self_light = heat.colour.a;
+        self_light = max(self_light, heat.colour.a);
     }
     var out: LitOut;
     out.colour = vec4<f32>(c.rgb, 1.0);

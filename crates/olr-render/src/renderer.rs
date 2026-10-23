@@ -65,6 +65,9 @@ struct Terrain {
 /// A distant layer's texture (issue #11) and where it lies.
 struct Distant {
     bind: wgpu::BindGroup,
+    /// The lit pipeline's: its texture and its glow mask (issue #62; the
+    /// renderer's `no_mask`, full, when it has none).
+    lit_bind: wgpu::BindGroup,
     /// Its size in art pixels.
     art: (u32, u32),
     layer: olr_data::level::DistantLayer,
@@ -131,6 +134,11 @@ pub struct Renderer {
     distant_pipeline: wgpu::RenderPipeline,
     upscale_pipeline: wgpu::RenderPipeline,
     texture_layout: wgpu::BindGroupLayout,
+    /// A distant layer's texture and glow mask (issue #62): the lit
+    /// distant pipeline's group 1.
+    distant_layout: wgpu::BindGroupLayout,
+    /// A 1 × 1 full mask: a distant layer that glows uniform, or not at all.
+    no_mask: wgpu::Texture,
     globals_layout: wgpu::BindGroupLayout,
     upscale_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -167,6 +175,30 @@ pub struct Renderer {
     /// Each distant layer's surface material value (issue #41,
     /// [`Renderer::set_distant_surface`]), 0 none.
     distant_surface: Vec<u8>,
+}
+
+/// A grey glow mask (issue #62) of `size`, one byte a texel.
+fn mask_texture(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    size: (u32, u32),
+    values: &[u8],
+) -> wgpu::Texture {
+    device.create_texture_with_data(
+        queue,
+        &wgpu::TextureDescriptor {
+            label: Some("olr-render distant glow mask"),
+            size: wgpu::Extent3d { width: size.0, height: size.1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::R8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        },
+        wgpu::util::TextureDataOrder::LayerMajor,
+        values,
+    )
 }
 
 fn texture(
@@ -292,6 +324,11 @@ impl Renderer {
             label: Some("olr-render texture"),
             entries: &[entry(0, frag, TEXTURE)],
         });
+        let distant_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("olr-render distant"),
+            entries: &[entry(0, frag, TEXTURE), entry(1, frag, TEXTURE)],
+        });
+        let no_mask = mask_texture(&device, &queue, (1, 1), &[255]);
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render globals"),
             entries: &[entry(0, wgpu::ShaderStages::VERTEX, UNIFORM)],
@@ -353,6 +390,8 @@ impl Renderer {
             distant_pipeline,
             upscale_pipeline,
             texture_layout,
+            distant_layout,
+            no_mask,
             globals_layout,
             upscale_layout,
             sampler,
@@ -614,7 +653,28 @@ impl Renderer {
                 l.image.as_raw(),
             );
             let bind = self.bind_texture("olr-render distant", &texture);
-            self.distant.push(Distant { bind, art, layer: l.clone(), index: i, heat: None });
+            // Its glow mask (issue #62), when painted and of its size.
+            let pixels = art.0 as usize * art.1 as usize;
+            let mask = l.glow.as_ref().and_then(|g| g.mask.as_ref()).filter(|m| m.len() == pixels);
+            let mask = mask.map(|m| mask_texture(&self.device, &self.queue, art, m));
+            let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
+            let lit_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("olr-render distant lit"),
+                layout: &self.distant_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&view(&texture)),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(&view(
+                            mask.as_ref().unwrap_or(&self.no_mask),
+                        )),
+                    },
+                ],
+            });
+            self.distant.push(Distant { bind, lit_bind, art, layer: l.clone(), index: i, heat: None });
         }
         self.make_distant_heat();
     }

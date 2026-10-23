@@ -115,7 +115,10 @@ impl Renderer {
             let camera = list.camera();
             for (k, d) in self.distant.iter().enumerate() {
                 let at = d.layer.position(camera, list.map);
-                if let Some(i) = distant_instance(&frame, at, d.art, t.art_scale, list.map, d.layer.depth) {
+                let glow = d.layer.glow.as_ref().map(|g| (g.group, g.strength));
+                if let Some(i) =
+                    distant_instance(&frame, at, d.art, t.art_scale, list.map, d.layer.depth, glow)
+                {
                     self.distant_draws.push((k, self.instances.len() as u32));
                     self.instances.push(i);
                 }
@@ -264,7 +267,8 @@ impl Renderer {
                 pass.set_pipeline(pipeline);
                 for &(k, i) in &self.distant_draws[plan.distant.clone()] {
                     let d = &self.distant[k];
-                    pass.set_bind_group(1, &d.bind, &[]);
+                    // Lit, its glow mask too (issue #62).
+                    pass.set_bind_group(1, if none.is_some() { &d.lit_bind } else { &d.bind }, &[]);
                     if let Some(none) = none {
                         pass.set_bind_group(3, d.heat.as_ref().map_or(none, |h| &h.look_bind), &[]);
                     }

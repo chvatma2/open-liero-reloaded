@@ -148,7 +148,10 @@ pub fn terrain_instance(frame: &WorldFrame, map: (u32, u32), art: (u32, u32)) ->
 /// [`olr_data::level::DistantLayer::position`]), offset by whole target
 /// texels from the frame's snapped origin (rounded: no shimmer), clipped
 /// to the level (`map` world pixels) and to the target. `shade[0]` is its
-/// depth (0-1, the lit pass's). `None` when nothing of it shows.
+/// depth (0-1, the lit pass's); issue #62: `shade[1]` its glow group (the
+/// group maps' value, 0 none) and `shade[2]` its glow strength (0-1, as the
+/// bake quantises it to a byte) from `glow` (group, strength percent).
+/// `None` when nothing of it shows.
 pub fn distant_instance(
     frame: &WorldFrame,
     at: (f32, f32),
@@ -156,6 +159,7 @@ pub fn distant_instance(
     art_scale: u32,
     map: (u32, u32),
     depth: u8,
+    glow: Option<(u8, u8)>,
 ) -> Option<Instance> {
     if !at.0.is_finite() || !at.1.is_finite() || art.0 == 0 || art.1 == 0 {
         return None;
@@ -176,11 +180,17 @@ pub fn distant_instance(
         return None;
     }
     let src = [(cx0 - x0) / k, (cy0 - y0) / k, (cx1 - cx0) / k, (cy1 - cy0) / k];
+    let (group, strength) = match glow {
+        Some((g, pct)) if g > 0 && pct > 0 => {
+            (g, ((u32::from(pct.min(100)) * 255 + 50) / 100) as f32 / 255.0)
+        }
+        _ => (0, 0.0),
+    };
     Some(Instance {
         dst: [cx0 as f32, cy0 as f32, (cx1 - cx0) as f32, (cy1 - cy0) as f32],
         src: src.map(|v| v as f32),
         tint: [1.0; 4],
-        shade: [f32::from(depth.min(100)) / 100.0, 0.0, 0.0],
+        shade: [f32::from(depth.min(100)) / 100.0, f32::from(group), strength],
     })
 }
 
@@ -334,22 +344,27 @@ mod tests {
         let f = WorldFrame::new(View { x: 10.0, y: 20.0, w: 100.0, h: 80.0 }, 2);
         assert_eq!(f.origin, (9, 19));
         // At art scale 1 an art pixel is two texels; 0.3 world px rounds to 1 texel.
-        let i = distant_instance(&f, (20.3, 30.0), (8, 4), 1, (500, 500), 40).unwrap();
+        let i = distant_instance(&f, (20.3, 30.0), (8, 4), 1, (500, 500), 40, None).unwrap();
         assert_eq!(i.dst, [23.0, 22.0, 16.0, 8.0]);
         assert_eq!(i.src, [0.0, 0.0, 8.0, 4.0]);
-        assert_eq!(i.shade[0], 0.4);
+        assert_eq!(i.shade, [0.4, 0.0, 0.0]);
+        // Issue #62: its glow's group and strength (a byte's, as baked).
+        let glow = |g| distant_instance(&f, (20.3, 30.0), (8, 4), 1, (500, 500), 40, g).unwrap().shade;
+        assert_eq!(glow(Some((3, 100))), [0.4, 3.0, 1.0]);
+        assert_eq!(glow(Some((3, 50))), [0.4, 3.0, 128.0 / 255.0]);
+        assert_eq!(glow(Some((0, 50))), [0.4, 0.0, 0.0]);
         // Left of the level: nothing shows.
-        assert!(distant_instance(&f, (-30.0, 30.0), (16, 4), 1, (500, 500), 40).is_none());
+        assert!(distant_instance(&f, (-30.0, 30.0), (16, 4), 1, (500, 500), 40, None).is_none());
         let f = WorldFrame::new(View { x: -5.0, y: 0.0, w: 100.0, h: 80.0 }, 2);
-        let i = distant_instance(&f, (-3.0, 0.0), (16, 4), 1, (500, 500), 40).unwrap();
+        let i = distant_instance(&f, (-3.0, 0.0), (16, 4), 1, (500, 500), 40, None).unwrap();
         // World x 0 is texel 12; the layer starts at texel 6.
         assert_eq!((i.dst[0], i.dst[2]), (12.0, 26.0));
         assert_eq!((i.src[0], i.src[2]), (3.0, 13.0));
         // Past the level's right edge, and wholly outside the target.
-        let i = distant_instance(&f, (5.0, 0.0), (16, 4), 1, (10, 10), 40).unwrap();
+        let i = distant_instance(&f, (5.0, 0.0), (16, 4), 1, (10, 10), 40, None).unwrap();
         assert_eq!(i.dst[2], 10.0);
-        assert!(distant_instance(&f, (900.0, 0.0), (16, 4), 1, (5000, 10), 40).is_none());
-        assert!(distant_instance(&f, (f32::NAN, 0.0), (16, 4), 1, (50, 10), 40).is_none());
+        assert!(distant_instance(&f, (900.0, 0.0), (16, 4), 1, (5000, 10), 40, None).is_none());
+        assert!(distant_instance(&f, (f32::NAN, 0.0), (16, 4), 1, (50, 10), 40, None).is_none());
         // Issue #41: where the quad's top-left lies in the world.
         let f = WorldFrame::new(View { x: 10.0, y: 20.0, w: 100.0, h: 80.0 }, 2);
         assert_eq!(distant_origin(&f, (20.3, 30.0)), Some((20.5, 30.0)), "texel 23 of origin 9");

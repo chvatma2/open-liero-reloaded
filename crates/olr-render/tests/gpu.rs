@@ -7,6 +7,8 @@ use olr_render::{Offscreen, OffscreenOptions, Probe, RenderSettings, Renderer, U
 use olr_scene::{AtlasId, AtlasImage, DrawList, Item, Layer, Line, Rect, Sprite, View};
 use olr_terrain::{ColorEdit, ColorMap, Stamp, Terrain, ThemeArt};
 
+#[path = "gpu/distant_glow.rs"]
+mod distant_glow;
 #[path = "gpu/halo.rs"]
 mod halo;
 #[path = "gpu/heat.rs"]
@@ -2180,7 +2182,7 @@ const SKY: Rgba = Rgba::rgb(220, 20, 20);
 
 /// A distant layer of `w` × `h` art pixels of `c` at `at`, `depth` percent.
 fn layer(w: u32, h: u32, c: Rgba, at: (i32, i32), depth: u8) -> olr_data::level::DistantLayer {
-    olr_data::level::DistantLayer { image: solid(w, h, c), at, depth }
+    olr_data::level::DistantLayer { image: solid(w, h, c), at, depth, glow: None }
 }
 
 /// The first output column of row `y` showing `c`.

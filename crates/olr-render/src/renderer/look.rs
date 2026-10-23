@@ -410,6 +410,7 @@ impl LookState {
         device: &wgpu::Device,
         globals_layout: &wgpu::BindGroupLayout,
         texture_layout: &wgpu::BindGroupLayout,
+        distant_layout: &wgpu::BindGroupLayout,
     ) -> LookState {
         let frag = wgpu::ShaderStages::FRAGMENT;
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -473,7 +474,7 @@ impl LookState {
             "olr-render distant lit",
             &source,
             ("vs_world", "fs_distant_lit"),
-            &[Some(globals_layout), Some(texture_layout), Some(&layout), Some(&heat.look_layout)],
+            &[Some(globals_layout), Some(distant_layout), Some(&layout), Some(&heat.look_layout)],
             &[Some(quads())],
             &[(WORLD_FORMAT, None), (SHADE_FORMAT, None)],
             wgpu::PrimitiveTopology::TriangleStrip,
@@ -1019,7 +1020,12 @@ impl Renderer {
     pub fn set_lighting(&mut self, on: bool) {
         match (on, self.look.is_some()) {
             (true, false) => {
-                self.look = Some(LookState::new(&self.device, &self.globals_layout, &self.texture_layout));
+                self.look = Some(LookState::new(
+                    &self.device,
+                    &self.globals_layout,
+                    &self.texture_layout,
+                    &self.distant_layout,
+                ));
             }
             (false, true) => self.look = None,
             _ => return,

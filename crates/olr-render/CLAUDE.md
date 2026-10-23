@@ -76,6 +76,26 @@ on screen or offscreen.
   `distant_quads_snap_to_texels_and_clip_to_the_level` (and
   `distant_origin`, where the quad's top-left lies in the world: issue
   #41's heat placement). Issue #41: a layer may heat (Heat, below).
+  **Glowing layers** (issue #62; STATUS.md "Glowing distant layers
+  (issue #62)"): a layer's light is not its own: the bake writes it into
+  the level's back glow and groups at its reference placement (the camera
+  at the level's centre), so the emission, unchanged, casts it once a
+  frame for every view (it reads the glow maps whatever the back's
+  alpha). Its picture: `distant_instance` takes `glow` (group, strength
+  percent) into the shade's `y` (the group's value) and `z` (the strength
+  as the bake's byte, 0-1), `INSTANCE_FLOATS` unchanged; `set_distant`
+  makes each layer's mask an `R8Unorm` texture (`no_mask`, 1 × 1 full,
+  without one) and a `lit_bind` (`distant_layout`: the image and the
+  mask, group 1 of the lit distant pipeline; unlit frames bind the image
+  alone and draw as before); `fs_distant_lit` gives a texel self-light
+  `strength × mask × the group's self-light scale × its flicker` (the
+  layer one region, 0), the larger of it and a hot layer's, so the
+  composite shows a glowing sky's art. Its drawn pixels feed no light and
+  no bloom. Tests (GPU, `tests/gpu/distant_glow.rs`):
+  `a_glowing_distant_layer_shows_its_art_in_the_dark`,
+  `a_distant_layers_light_stays_put_as_the_camera_pans`,
+  `a_glowing_layers_drawn_pixels_feed_no_bloom`,
+  `a_see_through_glow_lights_as_an_opaque_one`.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel
   (`MIN_SCALE` 2, OLX's sprite art, or the level's art scale if larger:
@@ -453,7 +473,8 @@ on screen or offscreen.
   `distant_heat_texture(i)`, `i` in `set_distant`'s list). Look: the lit
   distant pipeline binds the look (group 2) and the layer's heat look
   (group 3, or `none`); `fs_distant_lit` mixes the ramp colour over its
-  art by the glow and takes the glow as self-light (cold: the same bytes).
+  art by the glow and takes the glow as self-light, the larger of it and
+  the layer's own glow (issue #62; cold: the same bytes).
   It casts no light: the emission reads only the level's heat (a layer's
   placement differs per view, the glow light is one a frame). Tests
   (GPU): `a_near_layer_takes_a_smaller_circle_than_the_plane`,
