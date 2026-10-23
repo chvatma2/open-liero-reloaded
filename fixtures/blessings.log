@@ -235,3 +235,5 @@
   fixtures/render/heat-distant.png
   fixtures/render/heat-fresh.png
   fixtures/render/lit-hashes.ron
+2026-10-23 bless-render: #57: per-material light soak (Castle Strike Reloaded's stone soaks 2)
+  fixtures/render/lit-hashes.ron
