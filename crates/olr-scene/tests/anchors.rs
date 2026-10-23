@@ -68,11 +68,17 @@ fn trunc(p: Vec2) -> (i32, i32) {
     (p.x as i32, p.y as i32)
 }
 
+/// Worm 0 on the ground in both states, at a fractional `y` now: drawn at
+/// its whole-pixel `y` (issue #58), not where it is.
+fn standing(scene: &Scene, worm: &olr_sim::Worm) -> bool {
+    scene.prev().worms()[0].on_ground && worm.on_ground && worm.pos.y.fract() != 0.0
+}
+
 #[test]
 fn beams_start_at_the_drawn_worm() {
     let Some(content) = common::content() else { return };
     let (mut w, assets) = world(&content, "Laser", &[], false);
-    let mut moved = 0;
+    let (mut moved, mut grounded) = (0, 0);
     run(
         &mut w,
         &assets,
@@ -85,18 +91,20 @@ fn beams_start_at_the_drawn_worm() {
                 if let Item::Line(l) = item {
                     assert_eq!(l.a, trunc(drawn), "the beam starts at the drawn worm");
                     moved += usize::from(trunc(drawn) != trunc(worm.pos));
+                    grounded += usize::from(standing(scene, worm));
                 }
             }
         },
     );
     assert!(moved > 0, "the worm never moved while a beam showed");
+    assert!(grounded > 0, "no beam from a grounded worm at a fractional y");
 }
 
 #[test]
 fn laser_sights_start_at_the_drawn_worm() {
     let Some(content) = common::content() else { return };
     let (mut w, assets) = world(&content, "Rifle", &[], false);
-    let mut moved = 0;
+    let (mut moved, mut grounded) = (0, 0);
     run(
         &mut w,
         &assets,
@@ -129,9 +137,11 @@ fn laser_sights_start_at_the_drawn_worm() {
                 }
             }
             moved += usize::from(trunc(drawn) != trunc(worm.pos));
+            grounded += usize::from(standing(scene, worm));
         },
     );
     assert!(moved > 0, "the worm never moved while its laser sight showed");
+    assert!(grounded > 0, "no laser sight from a grounded worm at a fractional y");
 }
 
 #[test]
