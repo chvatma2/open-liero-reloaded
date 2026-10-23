@@ -54,7 +54,11 @@ ron.workspace = true
 # `material list`'s default user library: the game's data directory.
 directories.workspace = true
 tempfile.workspace = true
-# `quick-bench`: user-space instruction counts (`perfcount.rs`).
+
+# `quick-bench`: user-space instruction counts (`perfcount.rs`), Linux
+# only: elsewhere there is no counter, and the Windows build (`xtask
+# windows`, the envelope's GPU runs) needs olr-cli.
+[target.'cfg(target_os = "linux")'.dependencies]
 perf-event2.workspace = true
 
 [features]

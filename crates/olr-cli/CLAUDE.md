@@ -413,7 +413,7 @@ The headless command-line tool. Its commands:
   benchmark, `cargo xtask bench-quick` gates it): the warm match of
   `benches/game.rs` (`quick_bench::warm`, shared by both: 8 Classic bots
   on Liero Factory, `WARM_TICKS` 2000), then the user-space instructions
-  (`perfcount::Instructions`, through `perf-event2`) of `MATCH_TICKS` 300
+  (`perfcount::Instructions`, through `perf-event2`; Linux only, elsewhere none) of `MATCH_TICKS` 300
   ticks (bots, tick, `on_tick`) and of `DRAW_LISTS` 60 draw-list builds,
   and the fastest of `FRAMES` 7 offscreen 1080p frames in ms. Issue #34:
   then a lit frame (`quick_bench::warm_lit`: 8 chaos bots in Classic on
