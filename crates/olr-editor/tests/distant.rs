@@ -209,3 +209,72 @@ fn the_canvas_shows_and_hits_distant_layers_where_they_draw() {
     }
     assert_eq!(state.selection(), &Selection::None);
 }
+
+/// Issue #62: a distant layer glows through its properties' Glow switch
+/// (a new group, one step), its light baked into the level's back glow
+/// where the back is see-through and sent with the layers; the Glow brush
+/// paints its mask where it shows; each undoes.
+#[test]
+fn a_distant_layer_glows_and_lights_the_level() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut state) = editor(&root);
+    let sky = import(&mut state);
+    run(&mut state, A::Set(sky.clone(), Property::Material(olr_format::levels::ElementMaterial::Background)));
+    run(&mut state, A::Set(sky.clone(), Property::Distant(Some(50))));
+    run(&mut state, A::Set("base".into(), Property::Visible(false)));
+    run(&mut state, A::Canvas([800.0, 600.0]));
+    let mut h = harness(state);
+    h.run();
+    h.get_by_label(labels::GLOW).click();
+    h.run();
+    let glow = |h: &Harness<'static, App>| {
+        let d = h.state().state.document().unwrap();
+        d.items()[d.index_of(&sky).unwrap()].element.glow.clone()
+    };
+    let g = glow(&h).expect("the distant layer glows");
+    assert_eq!((g.strength, g.mask), (100, false));
+    let doc = h.state().state.document().unwrap();
+    let groups: Vec<_> =
+        doc.level().look.iter().flat_map(|l| l.glow_groups.iter().map(|g| g.id.clone())).collect();
+    assert_eq!(groups, std::slice::from_ref(&g.group));
+    // Baked at its box: the back glows full where it covers.
+    let ElementKind::Image { at, size: b, .. } = doc.items()[0].element.kind.clone() else {
+        panic!("an image")
+    };
+    let s = doc.level().art_scale;
+    let (cx, cy) = ((at.0 + b.0 as i32 / 2) as u32, (at.1 + b.1 as i32 / 2) as u32);
+    let aw = doc.level().size.0 * s;
+    let level_glow = doc.level().glow.as_ref().expect("the level glows");
+    assert_eq!(level_glow.back[(cy * s * aw + cx * s) as usize], 255);
+    assert_eq!(level_glow.groups_back[(cy * doc.level().size.0 + cx) as usize], 1);
+    let layers = sent(&h.state().commands).unwrap();
+    assert_eq!(layers[0].glow.as_ref().map(|g| (g.group, g.strength)), Some((1, 100)));
+    // The Glow brush at 0 % erases its mask where the layer shows.
+    let app = h.state_mut();
+    run(&mut app.state, A::Select(Selection::Element(sky.clone())));
+    run(&mut app.state, A::Tool(Tool::Glow));
+    run(&mut app.state, A::GlowStrength(0));
+    let camera = app.state.parallax_camera().unwrap();
+    let size = app.state.document().unwrap().level().size;
+    let d = |c: f32, side: u32| (0.5 * (c - side as f32 / 2.0)).round() as i32;
+    let shown = (cx as i32 + d(camera.0, size.0), cy as i32 + d(camera.1, size.1));
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        let c = run(&mut app.state, A::Pointer { kind, world: shown, shift: false, toggle: false });
+        app.commands.extend(c);
+    }
+    let state = &h.state().state;
+    assert!(glow(&h).unwrap().mask, "painted");
+    let doc = state.document().unwrap();
+    let local = ((cy - at.1 as u32) * s * b.0 * s + (cx - at.0 as u32) * s) as usize;
+    assert_eq!(doc.glow_mask(&sky).unwrap()[local], 0);
+    assert_eq!(doc.level().glow.as_ref().unwrap().back[(cy * s * aw + cx * s) as usize], 0, "baked dark");
+    let layers = sent(&h.state().commands).unwrap();
+    assert_eq!(layers[0].glow.as_ref().unwrap().mask.as_ref().unwrap()[local], 0, "sent again");
+    // Undone: the mask, then the glow.
+    act(&mut h, A::Undo);
+    assert!(!glow(&h).unwrap().mask);
+    act(&mut h, A::Undo);
+    assert_eq!(glow(&h), None);
+    assert!(h.state().state.document().unwrap().level().glow.is_none());
+    assert!(sent(&h.state().commands).unwrap()[0].glow.is_none());
+}

@@ -361,11 +361,10 @@ pub(super) fn element_glow(
     let set_glow =
         |out: &mut Vec<EditorAction>, glow| out.push(EditorAction::SetGlow { id: e.id.clone(), glow });
     let mut on = e.glow.is_some();
-    if ui
-        .add_enabled(!e.locked, egui::Checkbox::new(&mut on, labels::GLOW))
-        .on_hover_text("the whole element glows")
-        .changed()
-    {
+    // Issue #62: a distant layer's light is cast from where it lies with
+    // the camera at the level's centre.
+    let hint = if e.is_distant() { labels::DISTANT_GLOW_HINT } else { "the whole element glows" };
+    if ui.add_enabled(!e.locked, egui::Checkbox::new(&mut on, labels::GLOW)).on_hover_text(hint).changed() {
         let glow = on.then(|| ElementGlow { strength: 100, group: String::new(), mask: false });
         set_glow(out, glow);
     }

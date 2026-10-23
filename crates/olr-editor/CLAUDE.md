@@ -298,7 +298,14 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   Depth slider (`ui::slider`, "near" to "far", committed when the drag
   stops; `ops::DEFAULT_DEPTH` 50) right under "What is it?" for a
   Background element, the hint `labels::DISTANT_HINT` while nothing is
-  see-through, and the list's 🌄 mark. Tests: `tests/distant.rs`.
+  see-through, and the list's 🌄 mark. Issue #62: a distant element
+  shows the Glow controls as any (strength, group, Make parts glow…, the
+  Glow brush where it shows, each with undo; the switch's hint
+  `labels::DISTANT_GLOW_HINT` says its light falls from its reference
+  placement); `rebake` makes the distant layers again when a distant
+  element's glow mask changes too (`distant_masks`), so the lit canvas
+  shows the sky's baked light and its glowing picture. Tests:
+  `tests/distant.rs` (issue #62: `a_distant_layer_glows_and_lights_the_level`).
 - **Surface materials** (issue #37; the bake is `olr_edit::compose`'s):
   the document keeps the painted surface maps as opened
   (its `surface_maps`, `PaintedSurfaces`) and bakes with them. A resize

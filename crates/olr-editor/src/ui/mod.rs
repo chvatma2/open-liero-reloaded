@@ -132,6 +132,9 @@ pub mod labels {
     /// Shown while a distant layer is selected and no back pixel is
     /// see-through.
     pub const DISTANT_HINT: &str = "Nothing in front is see-through yet: erase parts of the background layer, or use Remove colour on it, to show this layer";
+    /// The Glow switch's hint on a distant layer (issue #62): its light
+    /// is cast from its reference placement.
+    pub const DISTANT_GLOW_HINT: &str = "the whole layer glows and shows its art in the dark; its light falls on the level from where the layer lies with the camera at the level's centre, so a small bright spot (a far window) lights the level off its drawn place when the camera is far from the centre; a broad sky or sunset shows no difference";
     pub const TOOL_GLOW: &str = "Glow brush";
     /// The Glow brush's and Glow selection's glow % (one value).
     pub const GLOW_STRENGTH_BRUSH: &str = "Glow %";
