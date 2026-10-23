@@ -46,14 +46,14 @@ use std::path::Path;
 use std::sync::Arc;
 
 use olr_data::image::{Rgba, RgbaImage};
-use olr_data::level::{DistantLayer, MAX_DEPTH, MIN_DEPTH, Material};
+use olr_data::level::{DistantGlow, DistantLayer, MAX_DEPTH, MIN_DEPTH, Material};
 use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
-    Composition, CompositionSource, Element, ElementKind, ElementMaterial, GlowLayers, LevelSource,
-    SurfaceMaps, check_composition, decode_surface_map, drawn_box, drawn_files, element_box, encode_material,
-    glow_file, image_file, mask_file, raster_files, surface_back_file, surface_file, surface_map_size,
-    write_level_files,
+    Composition, CompositionSource, Element, ElementGlow, ElementKind, ElementMaterial, GlowLayers,
+    LevelSource, SurfaceMaps, check_composition, decode_surface_map, drawn_box, drawn_files, element_box,
+    encode_material, glow_file, image_file, mask_file, raster_files, surface_back_file, surface_file,
+    surface_map_size, write_level_files,
 };
 use olr_format::themes::read_theme_files;
 use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
@@ -475,9 +475,18 @@ fn back_at(layers: &[Layer], back_tile: &RgbaImage, see_through: bool, ax: u32, 
 }
 
 /// `e`'s art as a distant layer in a level of `size` at art scale `s`:
-/// its box's art, opaque where it covers and alpha 0 elsewhere; `None`
-/// when it is not a visible distant element or its data does not fit.
-fn distant_layer(e: &Element, d: &Decoded, size: (u32, u32), s: u32) -> Option<DistantLayer> {
+/// its box's art, opaque where it covers and alpha 0 elsewhere, and its
+/// glow (issue #62: a group of `groups`, ids in order, and its mask from
+/// `masks`, when it fits); `None` when it is not a visible distant element
+/// or its data does not fit.
+fn distant_layer(
+    e: &Element,
+    d: &Decoded,
+    masks: &GlowMasks,
+    groups: &[&str],
+    size: (u32, u32),
+    s: u32,
+) -> Option<DistantLayer> {
     let depth = e.distant?.clamp(MIN_DEPTH, MAX_DEPTH);
     if !e.visible {
         return None;
@@ -515,25 +524,39 @@ fn distant_layer(e: &Element, d: &Decoded, size: (u32, u32), s: u32) -> Option<D
         }
         _ => return None,
     }
-    Some(DistantLayer { image, at, depth })
+    let glow = layer_glow(e, masks, groups, size, s).map(|g| DistantGlow {
+        group: g.group,
+        strength: e.glow.as_ref().map_or(0, |g| g.strength.min(100)),
+        mask: g.mask.map(|(m, ..)| m.to_vec()),
+    });
+    Some(DistantLayer { image, at, depth, glow })
 }
 
 /// Remakes `level`'s distant layers from `items` (bottom to top): every
-/// visible distant element's (issue #11), far to near. A full bake
-/// (`bake_elements_with` over the whole level) does it; a region bake
-/// leaves them, so an editor calls this when a distant element changes.
-pub fn bake_distant(level: &mut LevelSource, items: &[(&Element, &Decoded)]) {
+/// visible distant element's (issue #11), far to near, with its glow
+/// (issue #62; its mask from `masks`). A full bake (`bake_elements_with`
+/// over the whole level) does it; a region bake leaves them, so an editor
+/// calls this when a distant element changes.
+pub fn bake_distant(level: &mut LevelSource, items: &[(&Element, &Decoded)], masks: &GlowMasks) {
     let (size, s) = (level.size, level.art_scale);
     let has = |id: &String| level.look.as_ref().is_some_and(|l| l.materials.iter().any(|m| m.id == *id));
+    let groups = glow_group_ids(level);
     let (layers, mut surfaces): (Vec<DistantLayer>, Vec<Option<String>>) = items
         .iter()
-        .filter_map(|(e, d)| Some((distant_layer(e, d, size, s)?, e.surface.clone().filter(has))))
+        .filter_map(|(e, d)| {
+            Some((distant_layer(e, d, masks, &groups, size, s)?, e.surface.clone().filter(has)))
+        })
         .unzip();
     while surfaces.last().is_some_and(Option::is_none) {
         surfaces.pop();
     }
     level.distant = layers;
     level.distant_surfaces = surfaces;
+}
+
+/// The ids of `level`'s glow groups, in order.
+fn glow_group_ids(level: &LevelSource) -> Vec<&str> {
+    level.look.as_ref().map_or(Vec::new(), |l| l.glow_groups.iter().map(|g| g.id.as_str()).collect())
 }
 
 /// Whether `items` hold a visible distant element that bakes (its data
@@ -732,16 +755,25 @@ pub fn bake_elements_with(
     }
     let see_through = has_distant(items, (w, h), s);
     if rect.x == 0 && rect.y == 0 && rect.w >= w && rect.h >= h {
-        bake_distant(level, items);
+        bake_distant(level, items, masks);
     }
-    let groups: Vec<&str> =
-        level.look.as_ref().map_or(Vec::new(), |l| l.glow_groups.iter().map(|g| g.id.as_str()).collect());
+    let groups = glow_group_ids(level);
     let materials: Vec<&str> =
         level.look.as_ref().map_or(Vec::new(), |l| l.materials.iter().map(|m| m.id.as_str()).collect());
     let n = materials.len();
     let (mut layers, mut glows, mut clears, mut surfaces) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
-    for (e, d) in items.iter().filter(|(e, _)| e.distant.is_none()) {
+    // The distant layers at their reference placement (issue #62: the
+    // camera at the level's centre, their box), far to near, with their
+    // glow: only where the back is see-through.
+    let mut distant = Vec::new();
+    for (e, d) in items.iter() {
         let Some(layer) = Layer::new(e, d, (aw, ah), s) else { continue };
+        if e.distant.is_some() {
+            if see_through {
+                distant.push((layer, layer_glow(e, masks, &groups, (w, h), s)));
+            }
+            continue;
+        }
         layers.push(layer);
         glows.push(layer_glow(e, masks, &groups, (w, h), s));
         clears.push(e.clear);
@@ -766,7 +798,7 @@ pub fn bake_elements_with(
         Some(c) if c.len() == cells => c,
         _ => vec![0; cells],
     });
-    let mut glow = if glows.iter().any(Option::is_some) {
+    let mut glow = if glows.iter().any(Option::is_some) || distant.iter().any(|(_, g)| g.is_some()) {
         match level.glow.take() {
             Some(g) if g.fits((aw, ah), (w, h)) => Some(g),
             _ => Some(GlowLayers::empty((aw, ah), (w, h))),
@@ -779,13 +811,24 @@ pub fn bake_elements_with(
     let front_glow = |ax: u32, ay: u32| {
         layers.iter().zip(&glows).rev().find(|(l, _)| l.front(ax, ay).is_some()).and_then(|(_, g)| g.as_ref())
     };
-    let back_glow = |ax: u32, ay: u32| {
-        layers
+    // Issue #62: a back pixel no element covers (see-through) takes the
+    // glow of the nearest distant layer covering it at its reference
+    // placement, and its colour (`back_at`'s alpha 0 kept) where it glows.
+    let distant_glow = |ax: u32, ay: u32| {
+        distant
             .iter()
-            .zip(&glows)
             .rev()
-            .find_map(|(l, g)| l.backdrop(ax, ay).map(|(_, own)| g.as_ref().filter(|_| own)))
-            .flatten()
+            .find_map(|(l, g)| l.front(ax, ay).map(|c| (c, g.as_ref())))
+            .and_then(|(c, g)| Some((c, g?)).filter(|(_, g)| g.at(ax, ay) > 0))
+    };
+    let back_glow = |ax: u32, ay: u32| match layers
+        .iter()
+        .zip(&glows)
+        .rev()
+        .find_map(|(l, g)| l.backdrop(ax, ay).map(|(_, own)| g.as_ref().filter(|_| own)))
+    {
+        Some(g) => g,
+        None => distant_glow(ax, ay).map(|(_, g)| g),
     };
     let x1 = rect.x.saturating_add(rect.w).min(w);
     let y1 = rect.y.saturating_add(rect.h).min(h);
@@ -814,7 +857,12 @@ pub fn bake_elements_with(
             }
             for ay in y * s..(y + 1) * s {
                 for ax in x * s..(x + 1) * s {
-                    let back = back_at(&layers, back_tile, see_through, ax, ay);
+                    let mut back = back_at(&layers, back_tile, see_through, ax, ay);
+                    if back.a == 0
+                        && let Some((c, _)) = distant_glow(ax, ay)
+                    {
+                        back = Rgba { a: 0, ..c };
+                    }
                     // A solid block is never see-through.
                     let front = if material == Material::Background {
                         back
@@ -1239,12 +1287,18 @@ pub fn bake(
     Ok(())
 }
 
+/// An element file: its pack path and its bytes.
+pub type ElementFile = (String, Vec<u8>);
+
 /// A level's distant layers as distant drawn elements (`distant-1`, ...,
-/// far to near), each boxed where its layer lies, with its surface: they
-/// bake back to the same layers. A layer whose size is not a multiple of
-/// the art scale (the format refuses one) is left out.
-pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded)> {
+/// far to near), each boxed where its layer lies, with its surface and its
+/// glow (issue #62: a group the look lacks left out), and its glow mask's
+/// file (`editor/glow/<id>.png`) when painted: they bake back to the same
+/// layers. A layer whose size is not a multiple of the art scale (the
+/// format refuses one) is left out.
+pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded, Option<ElementFile>)> {
     let s = level.art_scale.max(1);
+    let groups = glow_group_ids(level);
     level
         .distant
         .iter()
@@ -1257,8 +1311,20 @@ pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded)> {
         })
         .enumerate()
         .map(|(i, (d, surface))| {
+            let id = format!("distant-{}", i + 1);
+            let glow = d.glow.as_ref().and_then(|g| {
+                let group = groups.get(usize::from(g.group).checked_sub(1)?)?;
+                Some((
+                    ElementGlow { strength: g.strength, group: group.to_string(), mask: g.mask.is_some() },
+                    g,
+                ))
+            });
+            let mask = glow
+                .as_ref()
+                .and_then(|(_, g)| g.mask.as_ref())
+                .map(|m| (glow_file(&id), image_io::encode_grey(d.image.width(), d.image.height(), m)));
             let e = Element {
-                id: format!("distant-{}", i + 1),
+                id,
                 name: format!("Distant {}", i + 1),
                 visible: true,
                 locked: false,
@@ -1270,7 +1336,7 @@ pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded)> {
                     mixed: false,
                     back: false,
                 },
-                glow: None,
+                glow: glow.map(|(g, _)| g),
                 clear: false,
                 distant: Some(d.depth),
                 surface,
@@ -1278,7 +1344,7 @@ pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded)> {
                 surface_map: false,
                 back_surface_map: false,
             };
-            (e, Decoded::Drawn { art: d.image.clone(), cells: None, back: None })
+            (e, Decoded::Drawn { art: d.image.clone(), cells: None, back: None }, mask)
         })
         .collect()
 }
@@ -1318,8 +1384,9 @@ pub fn compose_from(level: &LevelSource) -> CompositionSource {
         files.insert(surface_back_file(&element.id), image_io::encode_grey(w, h, &maps.back));
     }
     let mut elements = Vec::new();
-    for (e, d) in distant_elements(level) {
+    for (e, d, mask) in distant_elements(level) {
         files.extend(encode_decoded(&e, &d, level.size));
+        files.extend(mask);
         elements.push(e);
     }
     elements.push(element);
@@ -1399,7 +1466,12 @@ pub fn split_layers(
 /// the layers' painted ones, the back map the background's and the front
 /// map the dirt's and the rock's.
 pub fn split_from(level: &LevelSource) -> CompositionSource {
-    let mut layers = distant_elements(level);
+    let mut files = BTreeMap::new();
+    let mut layers = Vec::new();
+    for (e, d, mask) in distant_elements(level) {
+        files.extend(mask);
+        layers.push((e, d));
+    }
     layers.extend(split_layers(
         &level.material,
         &level.front,
@@ -1408,7 +1480,6 @@ pub fn split_from(level: &LevelSource) -> CompositionSource {
         level.art_scale,
         ["background", "dirt", "rock"],
     ));
-    let mut files = BTreeMap::new();
     let mut elements = Vec::new();
     let maps = level.surface.as_ref().filter(|m| m.fits(level.size));
     for (mut e, d) in layers {
@@ -1472,9 +1543,9 @@ const BAKED: [&str; 11] = [
 /// composition bakes to, in `BAKED`'s order: `material.png`, `front.png`,
 /// `back.png`, `thumb.png`, then the four `look/` glow images,
 /// `look/clear.png` and the two surface maps, then `level.ron` when its
-/// distant layers (or their surfaces) differ and
-/// the `distant/<i>.png` images that do, either side's. Empty for any other
-/// pack.
+/// distant layers (or their surfaces or glows, issue #62) differ and the
+/// `distant/<i>.png` images and `distant/<i>-glow.png` masks that do,
+/// either side's. Empty for any other pack.
 pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeError> {
     let (Source::Level(level), Some(src)) = (&pack.source, &pack.composition) else { return Ok(Vec::new()) };
     let mut baked = level.clone();
@@ -1490,11 +1561,17 @@ pub fn stale(pack: &Pack, back_tile: &RgbaImage) -> Result<Vec<String>, ComposeE
         now.read(&path).ok() != then.read(&path).ok()
     };
     let mut out: Vec<String> = BAKED.iter().filter(|f| differs(f)).map(|f| f.to_string()).collect();
-    let entries = |l: &LevelSource| l.distant.iter().map(|d| (d.at, d.depth)).collect::<Vec<_>>();
+    let entries = |l: &LevelSource| {
+        let glow = |d: &DistantLayer| d.glow.as_ref().map(|g| (g.group, g.strength));
+        l.distant.iter().map(|d| (d.at, d.depth, glow(d))).collect::<Vec<_>>()
+    };
     if entries(level) != entries(&baked) || level.distant_surfaces != baked.distant_surfaces {
         out.push("level.ron".into());
     }
     let n = level.distant.len().max(baked.distant.len());
-    out.extend((0..n).map(olr_format::levels::distant_file).filter(|f| differs(f)));
+    for i in 0..n {
+        let files = [olr_format::levels::distant_file(i), olr_format::levels::distant_glow_file(i)];
+        out.extend(files.into_iter().filter(|f| differs(f)));
+    }
     Ok(out)
 }

@@ -104,6 +104,9 @@ pub struct Document {
     /// The distant items as the level's distant layers were last made from
     /// (`bake_distant` runs again only when they differ).
     pub(crate) distant_items: Vec<Item>,
+    /// Their glow masks as they were made from (issue #62: a painted
+    /// distant glow makes them again).
+    pub(crate) distant_masks: Vec<Option<std::sync::Arc<Vec<u8>>>>,
     /// Counts the changes of the level's distant layers.
     pub(crate) distant_generation: u64,
     /// The back art's see-through pixels (alpha 0), counted.
@@ -358,6 +361,7 @@ impl Document {
             kept,
             see_through: false,
             distant_items: Vec::new(),
+            distant_masks: Vec::new(),
             distant_generation: 0,
             holes: 0,
         };
@@ -433,10 +437,16 @@ impl Document {
             rect,
         );
         let distant = items.iter().filter(|(e, _)| e.distant.is_some()).copied();
-        if whole || !distant.clone().eq(self.distant_items.iter().map(|i| (&i.element, &i.decoded))) {
+        let masks = distant.clone().map(|(e, _)| self.glow_masks.get(&e.id));
+        let same_masks = masks.clone().eq(self.distant_masks.iter().map(Option::as_ref));
+        if whole
+            || !same_masks
+            || !distant.clone().eq(self.distant_items.iter().map(|i| (&i.element, &i.decoded)))
+        {
             if !whole {
-                bake_distant(&mut self.level, &items);
+                bake_distant(&mut self.level, &items, &self.glow_masks);
             }
+            self.distant_masks = masks.map(|m| m.cloned()).collect();
             self.distant_items =
                 distant.map(|(e, d)| Item { element: e.clone(), decoded: d.clone() }).collect();
             self.distant_generation += 1;

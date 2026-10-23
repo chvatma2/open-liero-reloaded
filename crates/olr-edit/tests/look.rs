@@ -104,12 +104,21 @@ fn removing_a_group_renumbers_and_unglows() {
     g.back = vec![20, 0, 0, 23, 0, 0, 0, 0];
     g.groups_back = vec![1, 0, 0, 2, 0, 0, 0, 0];
     l.glow = Some(g);
+    // Issue #62: distant layers glowing in a and in b.
+    let layer = |group: u8| olr_data::level::DistantLayer {
+        image: RgbaImage::new(2, 1),
+        at: (0, 0),
+        depth: 50,
+        glow: Some(olr_data::level::DistantGlow { group, strength: 40, mask: None }),
+    };
+    l.distant = vec![layer(1), layer(2)];
     let mut p = pack(l);
     add_layer(&mut p, ElementMaterial::Dirt, "Lava").unwrap();
     set(&mut p, "lava", Property::Glow(Some(ElementGlow { strength: 50, group: "a".into(), mask: false })))
         .unwrap();
     let unglowed = remove_group(&mut p, "a").unwrap();
-    assert_eq!(unglowed, ["lava"]);
+    // Composing the level made its distant layers elements, glow and all.
+    assert_eq!(unglowed, ["distant-1", "lava"]);
     let l = level_of(&p);
     assert_eq!(l.look.as_ref().unwrap().glow_groups.iter().map(|g| g.id.as_str()).collect::<Vec<_>>(), ["b"]);
     let g = l.glow.as_ref().unwrap();
@@ -117,8 +126,10 @@ fn removing_a_group_renumbers_and_unglows() {
     assert_eq!(g.groups, [0, 0, 1, 1, 0, 0, 0, 0]);
     assert_eq!(g.back, [0, 0, 0, 23, 0, 0, 0, 0]);
     assert_eq!(g.groups_back, [0, 0, 0, 1, 0, 0, 0, 0]);
+    let glows: Vec<_> = l.distant.iter().map(|d| d.glow.as_ref().map(|g| g.group)).collect();
+    assert_eq!(glows, [None, Some(1)]);
     let e = &p.composition.as_ref().unwrap().composition.elements;
-    assert!(e.iter().all(|e| e.glow.is_none()));
+    assert!(e.iter().all(|e| e.glow.is_none() || e.id == "distant-2"));
     assert!(remove_group(&mut p, "a").is_err());
 }
 

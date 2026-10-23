@@ -255,7 +255,25 @@ operations.
   longer distant; `raise`/`lower` refuse to cross the boundary
   (`DISTANT_ORDER`), `merge_down` and `split` refuse a distant layer;
   `asset::from_elements` and `cut_rect` leave distant elements out (Save
-  as asset). Tests: `compose.rs`'s
+  as asset). Issue #62 (STATUS.md "Glowing distant layers (issue
+  #62)"): a distant element may glow. `bake_distant(level, items, masks)`
+  gives each layer its `DistantGlow` (the element's strength, its group's
+  value, its mask when it fits); in the pixel bake a see-through back
+  pixel (no element covers it) takes the glow of the nearest visible
+  distant layer covering it at its reference placement (its box: the
+  camera at the level's centre) into `glow.back` and `groups_back` (and
+  the front over background), exactly as a glowing back element would,
+  and that layer's RGB at alpha 0 where it glows; a nearer layer that
+  does not glow there hides a farther one; an opaque back pixel never
+  takes one. `distant_elements` gives a glowing layer back as a glowing
+  element with its mask's file (`editor/glow/<id>.png`; `compose_from`
+  and `split_from` add it), `stale` compares the glows and
+  `distant/<i>-glow.png`, and `look::remove_group` unglows a plain level's
+  distant layers of the group and renumbers the rest. Tests:
+  `tests/distant_glow.rs` (the glow and group taken, a nearer layer
+  hiding, a mask, no glow baking as before, a distant sky baking the maps
+  an ordinary one does, split and bake back, `stale`), `look.rs`'
+  `removing_a_group_renumbers_and_unglows`. Issue #11's tests: `compose.rs`'s
   `distant_layers_make_uncovered_back_pixels_see_through`,
   `distant_layers_split_and_bake_back`; `element.rs`'s
   `distant_layers_keep_below_the_rest`, `an_asset_carries_no_distant_layer`.

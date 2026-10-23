@@ -4,6 +4,7 @@ mod art;
 mod asset;
 mod common;
 mod compose;
+mod distant_glow;
 mod drawn;
 mod element;
 mod fmt;

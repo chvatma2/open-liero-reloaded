@@ -268,6 +268,16 @@ pub fn remove_group(pack: &mut Pack, id: &str) -> Result<Vec<String>, EditError>
                 }
             }
         }
+        // A distant layer of the group loses its glow (issue #62); those
+        // above move down one.
+        let named = (k + 1) as u8;
+        for d in &mut l.distant {
+            match d.glow.as_mut() {
+                Some(g) if g.group == named => d.glow = None,
+                Some(g) if g.group > named => g.group -= 1,
+                _ => {}
+            }
+        }
         // A glow left with nothing glowing is no glow.
         if l.glow.as_ref().is_some_and(|g| g.front.iter().chain(&g.back).all(|v| *v == 0)) {
             l.glow = None;
