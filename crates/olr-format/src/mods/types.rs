@@ -132,7 +132,8 @@ pub enum SpecialKind {
 #[serde(deny_unknown_fields)]
 pub struct Projectile {
     /// The runtime id, written only when it differs from the one derived
-    /// from its place (`<weapon id>`, then `.spawn` / `.trail` per level).
+    /// from its place: `<weapon id>`, then the chain of spawns and trails
+    /// as `s` and `t`, a run its letter and count (`gun.s`, `gun.s2t`).
     /// Never set in `projectiles/` files (their id is the file name).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,

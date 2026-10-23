@@ -657,5 +657,6 @@ Research offered `Hurt` for `InjureWorm` and `Sparks` for `Explosive`; the names
 
 A shared projectile's key is its file id. An inline projectile's key is its
 `id` when it has one, otherwise one derived from its place: the weapon id for
-a shot, then `<parent key>.spawn` or `<parent key>.trail`. An event spawn
+a shot, then `<parent key>.spawn` or `<parent key>.trail` (issue #64: now
+compact, `olr_data::mod_def::child_key`: `gun.s`, `gun.st`, `gun.s3t`). An event spawn
 is always named `spawn` when lifted (`LIFTED_SPAWN`).

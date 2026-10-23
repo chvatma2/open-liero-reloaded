@@ -148,7 +148,7 @@
         range: None,
         place: More,
         asset: None,
-        help: "The runtime id, written only when it differs from the one derived from its place (`<weapon id>`, then `.spawn` / `.trail` per level). Never set in `projectiles/` files (their id is the file name).",
+        help: "The runtime id, written only when it differs from the one derived from its place: `<weapon id>`, then the chain of spawns and trails as `s` and `t`, a run its letter and count (`gun.s`, `gun.s2t`). Never set in `projectiles/` files (their id is the file name).",
     ),
     (
         key: "Projectile.notes",

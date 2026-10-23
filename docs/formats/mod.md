@@ -132,7 +132,7 @@ A projectile (OLX `proj_t`, `include/ProjectileDesc.h:80-121`), inline in a spaw
 
 | Field | Type | Default | Meaning |
 |---|---|---|---|
-| `id` | string (optional) | none | The runtime id, written only when it differs from the one derived from its place (`<weapon id>`, then `.spawn` / `.trail` per level). Never set in `projectiles/` files (their id is the file name). |
+| `id` | string (optional) | none | The runtime id, written only when it differs from the one derived from its place: `<weapon id>`, then the chain of spawns and trails as `s` and `t`, a run its letter and count (`gun.s`, `gun.s2t`). Never set in `projectiles/` files (their id is the file name). |
 | `notes` | string | `""` | Free text for authors; ignored by the game. |
 | `gfx` | [Gfx](#gfx) | required | Simulation data, not only looks: the colour count, rotation and animation affect play (`mod-fields.md` §1.2, §8). |
 | `size` | (integer, integer) (optional) | none | Collision box in px (OLX `width`, `height`; radius = half). Default (2, 2) for `Pixels`, (4, 4) for `Image` (`CGameScript.cpp:873-878`). |

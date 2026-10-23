@@ -92,8 +92,11 @@ shared: `shared: "<id>"` names `projectiles/<id>.ron`, for a projectile
 that several spawns make. Every projectile has a key, by which the
 compiled mod's definitions name their children (the simulation never
 reads the key strings): a shared projectile's key is its file id; an inline projectile's key is its `id` when set, and
-otherwise comes from its place: the weapon id for a shot, then
-`<parent>.spawn` for an event spawn and `<parent>.trail` for a trail. Two
+otherwise comes from its place: the weapon id for a shot, then a dot and
+the chain from it, `s` for an event spawn and `t` for a trail, a run of
+one link written as its letter and count (`gun.s`, `gun.st`, `gun.s3t`;
+a parent key ending in no such chain starts one: `big.trail` → `big.trail.s`).
+Keys name `projectiles/<key>.ron` files, so they stay short. Two
 projectiles with the same key, and cycles between shared projectiles, are
 errors.
 

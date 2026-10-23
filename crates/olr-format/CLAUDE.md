@@ -44,7 +44,10 @@ packs' format (version 5); `olr-pack` reads and writes through them.
     canonical field order puts its parameters before `shared`/`projectile`.
   - **Key rule.** A shared projectile's key is its file id. An inline
     projectile's key is its `id`, else derived from its place: the weapon
-    id for a shot, then `<parent>.spawn` or `<parent>.trail`. Keys matter
+    id for a shot, then (issue #64, `olr_data::mod_def::child_key`) the
+    chain as `s` (spawn) and `t` (trail), a run its letter and count:
+    `gun.s`, `gun.s2t`; a parent ending in no such chain starts one
+    (`crackler.trail` → `crackler.trail.s`). Keys matter
     because `SimMod` keeps definitions that name their children by key.
     `lift_mod` shares a projectile that is referenced other than once.
   - **What LX56 cannot express is a compile error:** more than one effect
