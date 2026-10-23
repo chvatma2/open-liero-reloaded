@@ -48,7 +48,7 @@ cascades 211 ms, jump flood 37, soak 12, emission 6, bloom 6, world 3,
 composite 2.5, blur 2.4, fluence 2.4, upscale 2.2, light sum 1.3; 7.6 ms
 of copies and gaps. A CPU rasteriser weighs passes otherwise than a GPU
 (bandwidth, caches, parallelism), so rank the next issue's work by the
-Windows numbers (`docs/deferred-verification.md`, #34), not these.
+Windows numbers (`2026-10-0.2-windows-1080p.md`), not these.
 Issue #35's optimisations and the bigger ideas they left are in
 `2026-10-graphics-candidates.md` (lavapipe per pass before and after).
 

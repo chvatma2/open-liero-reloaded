@@ -11,8 +11,8 @@ Reloaded frame at 1080p (8 chaos bots after 2000 ticks, 32 glowing
 discs; `docs/perf/graphics-tools.md`). A CPU rasteriser weighs passes
 otherwise than a GPU: they rank the work and show a change's direction,
 never real milliseconds. The real per-pass times are the Windows 1080p
-measurement (`docs/deferred-verification.md`, #34 and #35); once the
-maintainer has run it, replace the lavapipe columns' shares with its.
+measurement (`2026-10-0.2-windows-1080p.md`, 2026-10-23), summed up in
+"On hardware" below.
 
 ## The frame today
 
@@ -98,6 +98,26 @@ All together (A/B of the commit before #35's optimisations and the
 last): the lavapipe lit frame 188.5 → 174.6 ms (−7.4 %), encoding
 1.359 M → 1.291 M instructions (−5 %), 37 → 36 passes, 75.2 → 51.1 KB
 uploaded a frame. None was dropped.
+
+### On hardware (2026-10-23)
+
+The Windows 1080p measurement (`2026-10-0.2-windows-1080p.md`): the
+native olr-cli at a13c69c9 and at 01503b4a, each drawing its own
+recording of the 8-bot Castle Strike Reloaded match, Vulkan (DX12 could
+not compile the soak at these commits), GPU ms p50:
+
+| Scene | GPU | before | after #35 | jump flood | cascades | soak |
+|---|---|---|---|---|---|---|
+| own look | RTX 5070 Ti | 2.51 | 2.39 (−5 %) | 0.20 → 0.18 | 1.56 → 1.49 | 0.46 → 0.45 |
+| own look | integrated (AMD) | 75.5 | 71.1 (−6 %) | 8.27 → 7.30 | 59.4 → 57.7 | 3.62 → 2.41 |
+| `--look` | RTX 5070 Ti | 3.09 | 2.98 (−4 %) | 0.20 → 0.18 | 2.15 → 2.07 | 0.46 → 0.44 |
+| `--look` | integrated (AMD) | 114.8 | 109.1 (−5 %) | 8.17 → 7.28 | 98.5 → 95.5 | 3.53 → 2.29 |
+
+The hardware shares: the cascades are 75 to 92 % of the GPU frame and
+the jump flood 5 to 10 %, on both GPUs; every other group is under
+0.05 ms on the RTX. So the cascades weigh more than lavapipe's 68 %, the
+flood less than its 19 %: A and D are the levers, B saves a few percent
+at most.
 
 ## Part 2: the bigger ideas (not done)
 
@@ -220,6 +240,6 @@ or a fine 1-pixel grid over each view with a coarse one over the level.
 ## Order suggested
 
 B and E's seed fold first (cheap, measurable on the next bench-quick);
-then the Windows table (deferred #34, #35) to size A against D; then A as
+then the Windows table (done: "On hardware" above) to size A against D; then A as
 a design. C waits on a measurement of the merge's share; F stays a
 fallback.
