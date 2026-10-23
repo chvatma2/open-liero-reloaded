@@ -7,6 +7,7 @@ mod common;
 mod distant;
 mod document;
 mod flows;
+mod folders;
 mod history;
 mod look;
 mod materials;

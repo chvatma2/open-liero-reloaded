@@ -5,6 +5,7 @@ use olr_data::level::Material;
 use olr_edit::compose::Rect;
 use olr_edit::element::Property;
 use olr_edit::level::{Paint, Shape};
+use olr_editor::folder_ops::FolderField;
 use olr_editor::history::{Edit, History, LevelMeta, Patch};
 use olr_editor::{DocError, Document};
 use olr_format::levels::{ElementKind, ElementMaterial};
@@ -72,6 +73,10 @@ fn operate(doc: &mut Document, h: &mut History, cat: &olr_editor::Catalog, op: (
     let ids: Vec<String> = doc.items().iter().map(|i| i.element.id.clone()).collect();
     let id = ids[a.unsigned_abs() as usize % ids.len()].clone();
     let objects = doc.level().objects.len().max(1);
+    // Issue #60: a folder of the level's, when it has any.
+    let folders = doc.folders();
+    let folder = folders.get(b.unsigned_abs() as usize % folders.len().max(1)).map(|f| f.id.clone());
+    let other = ids[b.unsigned_abs() as usize % ids.len()].clone();
     // A stroke into `target` of `material` (or erasing), as the pointer
     // makes one: its conversion first, then its pixels.
     let stroke = |doc: &mut Document, target: &str, erase: bool, material: Option<Material>| {
@@ -120,6 +125,36 @@ fn operate(doc: &mut Document, h: &mut History, cat: &olr_editor::Catalog, op: (
         18 => doc.merge_down(&id),
         19 => doc.split(&id),
         20 => stroke(doc, "wall", true, None),
+        // Issue #60: layer folders.
+        21 => doc.group(&[id, other], if b % 2 == 0 { "" } else { "F" }).map(|r| r.0),
+        22 => folder.map_or(Ok(Vec::new()), |f| doc.ungroup(&f).map(|r| r.0)),
+        23 => doc.move_into(&id, folder.as_deref().filter(|_| a % 3 != 0), None).map(|r| r.0),
+        24 => folder.map_or(Ok(Vec::new()), |f| {
+            let field = match a.unsigned_abs() % 4 {
+                0 => FolderField::Visible(b % 2 == 0),
+                1 => FolderField::Locked(b % 2 == 0),
+                2 => FolderField::Collapsed(b % 2 == 0),
+                _ => FolderField::Name(format!("f{b}")),
+            };
+            doc.set_folder(&f, field).map(|c| vec![c.edit])
+        }),
+        25 => folder.map_or(Ok(Vec::new()), |f| doc.remove_folder(&f).map(|r| r.0)),
+        26 => doc.duplicate(&id).map(|r| r.0),
+        // A background element made distant, or no longer (one step).
+        27 => doc.set(&id, Property::Material(ElementMaterial::Background)).and_then(|c| {
+            match doc.set_distant(&id, (b % 2 == 0).then_some(40)) {
+                Ok((edits, _)) => Ok(std::iter::once(c.edit).chain(edits).collect()),
+                Err(e) => {
+                    doc.apply(&c.edit, false);
+                    Err(e)
+                }
+            }
+        }),
+        28 => {
+            let (items, copied) = doc.copy_tree(&[folder.unwrap_or(id)]);
+            let s = doc.level().art_scale;
+            doc.paste_tree(&items, &copied, s, (a % 9, b % 9)).map(|r| r.0)
+        }
         _ => doc
             .resize(
                 (504 + a.unsigned_abs() % 20, 350 + b.unsigned_abs() % 20),
@@ -140,7 +175,7 @@ proptest! {
     #![proptest_config(ProptestConfig::with_cases(24))]
     #[test]
     fn every_operation_undoes_to_the_same_files(
-        ops in prop::collection::vec((0u8..21, -20i32..520, -20i32..360), 1..=6),
+        ops in prop::collection::vec((0u8..29, -20i32..520, -20i32..360), 1..=6),
     ) {
         let Some(root) = content() else { return Ok(()) };
         let (_tmp, mut doc) = open_fixture(&root);
