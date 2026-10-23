@@ -247,7 +247,9 @@ The headless command-line tool. Its commands:
   `Viewport::GAME`. It
   reads the pack's level files strictly (`read_level_files`), its theme
   from `--content` (`content/packs`), and draws through the real renderer
-  offscreen (`set_lighting`, `render_lit_to_image`) with IntegerNearest at
+  offscreen (`set_lighting`, `render_lit_to_image`; issue #57: the
+  level's surface materials and maps first, `set_surface`, as play's, so
+  a material's own light soak shows) with IntegerNearest at
   854 × 384 by default, the level's distant layers too (issue #11,
   `Renderer::set_distant`; `render-match` draws them through
   `olr-present`); the renderer's warnings print on stderr.

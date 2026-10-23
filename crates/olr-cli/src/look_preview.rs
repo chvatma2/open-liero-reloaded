@@ -2,7 +2,9 @@
 //! [--size WxH] [--content DIR] --out f.png` (look system, plan 15a Task 13):
 //! a level drawn with its look and no match, centred on a world position at
 //! a clock time, through the real renderer offscreen. The fast loop for
-//! agents and the look goldens.
+//! agents and the look goldens. Issue #57: the level's surface materials
+//! and maps go to the renderer as play's `olr-present` hands them, so a
+//! material's own light soak shows (and its heat would, cold here).
 
 use std::path::PathBuf;
 
@@ -68,6 +70,9 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
     let gpu = Offscreen::new()?;
     let mut renderer = gpu.renderer(RenderSettings { filter: UpscaleFilter::IntegerNearest });
     renderer.set_lighting(true);
+    let materials = level.look.as_ref().map_or(&[][..], |l| &l.materials[..]);
+    renderer.set_surface(materials, level.surface.as_ref());
+    renderer.set_distant_surface(&level.distant_surface);
     renderer.upload_terrain(&map);
     renderer.set_distant(&level.distant);
     let img = gpu.render_lit_to_image(&mut renderer, &list, Some(&look), args.size);
