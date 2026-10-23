@@ -128,7 +128,9 @@ fn a_blast_heats_the_patch_and_it_glows() {
     assert_eq!(hottest(&t, 1), 0.0, "no material on the right: no heat");
     let hot = picture(&gpu, &p);
     let (was, now) = (reddest(&around(&cold, 0, 10)), reddest(&around(&hot, 0, 10)));
-    assert!(now > was + 30, "the crater's rim glows in the dark: red {now} against {was}");
+    // Issue #56: only the rim's outer 2 px take the heat (red 43 to 60 on
+    // lavapipe), where the dirt behind it glowed too (30 more).
+    assert!(now > was + 12, "the crater's rim glows in the dark: red {now} against {was}");
     // The right patch's crater is carved too, but cold.
     assert!(reddest(&around(&hot, 1, 10)) <= reddest(&around(&cold, 1, 10)) + 4);
     // A nuke-like blast is hotter still; a small one, on stone, stays under
