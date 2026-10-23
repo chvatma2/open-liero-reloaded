@@ -718,7 +718,7 @@ fn heat_texture(
     plain_texture(device, label, size, HEAT_FORMAT, usage)
 }
 
-fn plain_texture(
+pub(super) fn plain_texture(
     device: &wgpu::Device,
     label: &str,
     size: (u32, u32),
@@ -746,7 +746,7 @@ fn uniform(device: &wgpu::Device, label: &str, size: u64) -> wgpu::Buffer {
     })
 }
 
-fn view(t: &wgpu::Texture) -> wgpu::TextureView {
+pub(super) fn view(t: &wgpu::Texture) -> wgpu::TextureView {
     t.create_view(&wgpu::TextureViewDescriptor::default())
 }
 
@@ -842,6 +842,9 @@ pub(super) struct HeatTextures {
     /// the solid map).
     pub(super) heat: wgpu::Texture,
     heat_view: wgpu::TextureView,
+    /// The surface texels (front, back; `Rg8Uint`), which the material
+    /// soak reads too (issue #57: one copy of the map).
+    pub(super) surface_view: wgpu::TextureView,
     /// A step's target, copied back over the boxes.
     scratch: wgpu::Texture,
     scratch_view: wgpu::TextureView,
@@ -955,6 +958,7 @@ impl HeatTextures {
         HeatTextures {
             heat,
             heat_view,
+            surface_view,
             scratch,
             scratch_view,
             params,
@@ -1118,20 +1122,26 @@ impl super::Renderer {
     /// that heats gets a heat texture, made afresh by every
     /// [`super::Renderer::upload_terrain`] (a new level, a restart) and
     /// now when the terrain is up. `None`, or materials that never heat,
-    /// make none: the level draws and costs exactly as without.
+    /// make none: the level draws and costs exactly as without. Issue
+    /// #57: such maps and a material that sets its own `light_soak` make
+    /// the material soak (`soak.rs`), heat or none; without one the soak
+    /// is the level's alone, as before.
     ///
     /// Issue #41: the distant layers take these materials (by
     /// [`Renderer::set_distant_surface`]'s values) at the next
     /// [`Renderer::set_distant`].
     pub fn set_surface(&mut self, materials: &[SurfaceMaterial], maps: Option<&SurfaceMaps>) {
-        self.surface = tables(materials).map(|tables| super::Surface {
+        let (tables, soak) = (tables(materials), super::soak::soak_table(materials));
+        self.surface = (tables.is_some() || soak.is_some()).then(|| super::Surface {
             maps: maps.and_then(|m| Some((m.world, surface_texels(m, m.world)?))),
             tables,
+            soak,
         });
         if let Some(look) = &mut self.look
             && let Some(t) = &mut look.textures
         {
-            t.set_heat(&self.device, &self.queue, &look.heat, self.surface.as_ref());
+            let layouts = (&look.heat, &look.soak_material_layout);
+            t.set_surface(&self.device, &self.queue, layouts, self.surface.as_ref());
         }
     }
 
@@ -1140,9 +1150,10 @@ impl super::Renderer {
     /// in the same order, as [`Renderer::set_surface`] was given, a
     /// field changed. The temperatures, the active boxes and the clock stay;
     /// the next frame steps and draws by the new values (the distant
-    /// layers' too). `false`, changing nothing, when there is no heat to
-    /// keep (none was made, or none of `materials` heats): then
-    /// [`Renderer::set_surface`] with the maps is the call.
+    /// layers' too), and soaks by their soaks (issue #57). `false`,
+    /// changing nothing, when there is no heat to keep (none was made, or
+    /// none of `materials` heats): then [`Renderer::set_surface`] with the
+    /// maps is the call.
     pub fn set_surface_materials(&mut self, materials: &[SurfaceMaterial]) -> bool {
         let (Some(tables), Some(surface)) = (tables(materials), self.surface.as_mut()) else {
             return false;
@@ -1152,11 +1163,19 @@ impl super::Renderer {
         {
             return false;
         }
-        surface.tables = tables.clone();
+        surface.tables = Some(tables.clone());
+        surface.soak = super::soak::soak_table(materials);
         let level = self.look.as_mut().and_then(|l| l.textures.as_mut()?.heat.as_mut());
         let layers = self.distant.iter_mut().filter_map(|d| d.heat.as_mut());
         for h in level.into_iter().chain(layers) {
             h.set_tables(&self.queue, tables.clone());
+        }
+        // The soak lends the heat's map: only its table changes, or it
+        // comes or goes.
+        if let Some(look) = &mut self.look
+            && let Some(t) = &mut look.textures
+        {
+            t.set_soak(&self.device, &self.queue, &look.soak_material_layout, self.surface.as_ref());
         }
         true
     }
@@ -1178,11 +1197,12 @@ impl super::Renderer {
         let max = self.max_dim();
         for d in &mut self.distant {
             d.heat = None;
-            let (Some(state), Some(scale), Some(surface)) = (&self.look, scale, &self.surface) else {
+            let tables = self.surface.as_ref().and_then(|s| s.tables.as_ref());
+            let (Some(state), Some(scale), Some(tables)) = (&self.look, scale, tables) else {
                 continue;
             };
             let v = self.distant_surface.get(d.index).copied().unwrap_or(0);
-            if !layer_heats(&surface.tables.0, v, d.layer.depth) {
+            if !layer_heats(&tables.0, v, d.layer.depth) {
                 continue;
             }
             let s = scale.max(1);
@@ -1196,7 +1216,7 @@ impl super::Renderer {
                 world,
                 world,
                 &texels,
-                surface.tables.clone(),
+                tables.clone(),
                 &view(&solid),
             ));
         }

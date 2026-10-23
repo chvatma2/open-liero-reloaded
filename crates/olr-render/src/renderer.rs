@@ -15,6 +15,7 @@ mod look;
 mod pass;
 mod probe;
 mod regions;
+mod soak;
 mod timing;
 mod uploads;
 
@@ -75,16 +76,20 @@ struct Distant {
     heat: Option<heat::HeatTextures>,
 }
 
-/// A level's surface materials as the heat reads them (issue #39): kept
-/// from [`Renderer::set_surface`] so each whole terrain upload makes the
-/// heat afresh.
+/// A level's surface materials as the heat and the soak read them (issues
+/// #39, #57): kept from [`Renderer::set_surface`] so each whole terrain
+/// upload makes the heat and the material soak afresh.
 struct Surface {
     /// The maps' size (world pixels) and texels (front and back, one
     /// `Rg8Uint` texel a world pixel); `None` without maps naming a
     /// material (issue #41: the distant layers may still heat).
     maps: Option<((u32, u32), Vec<u8>)>,
-    /// The materials' table, colour ramps and bounds.
-    tables: (Vec<f32>, Vec<u8>, heat::Bounds),
+    /// The materials' heat table, colour ramps and bounds; `None` when
+    /// none heats.
+    tables: Option<(Vec<f32>, Vec<u8>, heat::Bounds)>,
+    /// The materials' soak table (issue #57); `None` when none sets its
+    /// own soak.
+    soak: Option<soak::SoakTable>,
 }
 
 /// One view's world-pass target and the upscale pass's view of it (issue
@@ -156,7 +161,8 @@ pub struct Renderer {
     /// The glow light's history steps so far (tests: one a lit frame,
     /// however many views it draws).
     glow_light_steps: u64,
-    /// The level's surface materials, when any heats (issue #39).
+    /// The level's surface materials, when any heats (issue #39) or sets
+    /// its own soak (issue #57).
     surface: Option<Surface>,
     /// Each distant layer's surface material value (issue #41,
     /// [`Renderer::set_distant_surface`]), 0 none.

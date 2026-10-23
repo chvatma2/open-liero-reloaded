@@ -69,6 +69,9 @@ pub(super) struct LookTextures {
     pub(super) gi: super::gi::GiState,
     /// The level's heat (issue #39), only when its materials heat.
     pub(super) heat: Option<super::heat::HeatTextures>,
+    /// The level's material soak (issue #57), only when a material sets
+    /// its own soak.
+    pub(super) soak: Option<super::soak::SoakTextures>,
 }
 
 impl LookTextures {
@@ -77,15 +80,16 @@ impl LookTextures {
         self.heat.as_ref().map_or(none, |h| &h.look_bind)
     }
 
-    /// Makes the level's heat from `surface` (its maps and materials,
-    /// [`super::Surface`]) when they are the level's size, else drops it.
-    pub(super) fn set_heat(
+    /// Makes the level's heat and material soak from `surface` (its maps
+    /// and materials, issues #39 and #57), or none.
+    pub(super) fn set_surface(
         &mut self,
         device: &wgpu::Device,
         queue: &super::uploads::Queue,
-        pipes: &super::heat::HeatPipelines,
+        (pipes, soak_layout): (&super::heat::HeatPipelines, &wgpu::BindGroupLayout),
         surface: Option<&super::Surface>,
     ) {
+        self.soak = None;
         self.heat = surface.and_then(|s| {
             let (world, texels) = s.maps.as_ref().filter(|(w, _)| *w == self.level)?;
             let size = (self.solid.width(), self.solid.height());
@@ -96,10 +100,43 @@ impl LookTextures {
                 *world,
                 size,
                 texels,
-                s.tables.clone(),
+                s.tables.clone()?,
                 &self.solid_view,
             ))
         });
+        self.set_soak(device, queue, soak_layout, surface);
+    }
+
+    /// Makes the level's material soak (issue #57) from `surface`, or
+    /// none: it reads the heat's surface texture when there is one (so
+    /// after the heat), else a front map of its own.
+    pub(super) fn set_soak(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &super::uploads::Queue,
+        layout: &wgpu::BindGroupLayout,
+        surface: Option<&super::Surface>,
+    ) {
+        let made = surface.and_then(|s| Some((s.soak.as_ref()?, s.maps.as_ref()?)));
+        let Some((table, (world, texels))) = made.filter(|(_, (w, _))| *w == self.level) else {
+            self.soak = None;
+            return;
+        };
+        if let Some(soak) = &self.soak {
+            soak.set_table(queue, table);
+            return;
+        }
+        let size = (self.solid.width(), self.solid.height());
+        let heat_surface = self.heat.as_ref().map(|h| &h.surface_view);
+        self.soak = Some(super::soak::SoakTextures::new(
+            device,
+            queue,
+            layout,
+            table,
+            (*world, size),
+            heat_surface,
+            texels,
+        ));
     }
 }
 
@@ -183,6 +220,11 @@ pub(super) struct LookState {
     pub(super) soak_h_pipeline: wgpu::RenderPipeline,
     pub(super) soak_v_pipeline: wgpu::RenderPipeline,
     pub(super) soak_layout: wgpu::BindGroupLayout,
+    /// The soak by material (issue #57): across and down, with group 1
+    /// (`soak_material_layout`) the table and the front map.
+    pub(super) soak_material_h_pipeline: wgpu::RenderPipeline,
+    pub(super) soak_material_v_pipeline: wgpu::RenderPipeline,
+    pub(super) soak_material_layout: wgpu::BindGroupLayout,
     /// Draws the occluder map (plan 15b): group 0 the view's globals, group 1 the atlas.
     pub(super) occluder_pipeline: wgpu::RenderPipeline,
     occluder_globals_layout: wgpu::BindGroupLayout,
@@ -470,21 +512,30 @@ impl LookState {
                 entry(3, frag, FLOAT_TEXTURE),
             ],
         });
-        let soak_source = format!("{}\n{}", common(), include_str!("../look/soak.wgsl"));
-        let soak = |fs: &str, targets: &[(wgpu::TextureFormat, Option<wgpu::BlendState>)]| {
+        // Issue #57: the plain soak (the level's, today's) and the soak by
+        // material, which also reads group 1.
+        let soak_material_layout = super::soak::layout(device);
+        let soak_source =
+            |prelude: &str| format!("{}\n{}\n{prelude}", common(), include_str!("../look/soak.wgsl"));
+        let (plain, by_material) =
+            (soak_source(super::soak::PLAIN_PRELUDE), soak_source(super::soak::MATERIAL_PRELUDE));
+        let soak = |source: &str, fs: &str, layouts: &[Option<&wgpu::BindGroupLayout>]| {
             pipeline(
                 device,
                 "olr-render soak",
-                &soak_source,
+                source,
                 ("vs_full", fs),
-                &[Some(&soak_layout)],
+                layouts,
                 &[],
-                targets,
+                &[(LIGHT_FORMAT, None)],
                 wgpu::PrimitiveTopology::TriangleList,
             )
         };
-        let soak_h_pipeline = soak("fs_soak_h", &[(LIGHT_FORMAT, None)]);
-        let soak_v_pipeline = soak("fs_soak_v", &[(LIGHT_FORMAT, None)]);
+        let soak_h_pipeline = soak(&plain, "fs_soak_h", &[Some(&soak_layout)]);
+        let soak_v_pipeline = soak(&plain, "fs_soak_v", &[Some(&soak_layout)]);
+        let both = [Some(&soak_layout), Some(&soak_material_layout)];
+        let soak_material_h_pipeline = soak(&by_material, "fs_soak_h", &both);
+        let soak_material_v_pipeline = soak(&by_material, "fs_soak_v", &both);
         let gi = super::gi::GiPipelines::new(device, &heat.look_layout);
         let emitter_floats = olr_look::MAX_EMITTERS * super::gi::EMITTER_FLOATS;
         let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -561,6 +612,9 @@ impl LookState {
             soak_h_pipeline,
             soak_v_pipeline,
             soak_layout,
+            soak_material_h_pipeline,
+            soak_material_v_pipeline,
+            soak_material_layout,
             occluder_pipeline,
             occluder_globals_layout,
             light_layout,
@@ -793,9 +847,10 @@ impl LookState {
             region_map,
             gi,
             heat: None,
+            soak: None,
         };
         let mut t = t;
-        t.set_heat(device, queue, &self.heat, surface);
+        t.set_surface(device, queue, (&self.heat, &self.soak_material_layout), surface);
         let whole = Rect { x: 0, y: 0, w: map.width(), h: map.height() };
         if map.glow().is_none() {
             let zeros = vec![0u8; map.width() as usize * map.height() as usize];
@@ -1060,6 +1115,13 @@ impl Renderer {
     /// The solid map, the colour map's material cells (tests).
     pub fn solid_texture(&self) -> Option<&wgpu::Texture> {
         self.look.as_ref()?.textures.as_ref().map(|t| &t.solid)
+    }
+
+    /// Whether the level soaks by material (issue #57): lighting on, the
+    /// terrain up, surface maps of its size and a material setting its own
+    /// `light_soak` ([`Renderer::set_surface`]).
+    pub fn has_material_soak(&self) -> bool {
+        self.look.as_ref().and_then(|l| l.textures.as_ref()).is_some_and(|t| t.soak.is_some())
     }
 }
 

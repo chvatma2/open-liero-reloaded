@@ -231,7 +231,34 @@ on screen or offscreen.
     the across pass, which would give back the sum texel for texel, does
     not run: the down pass reads the sum as its source (issue #35,
     `LitTarget::soak_binds[0]`, the across pass's;
-    `no_soak_or_softness_runs_no_across_pass`).
+    `no_soak_or_softness_runs_no_across_pass`, a level soaking 0 with no
+    material soak). **By material** (issue #57, `renderer/soak.rs`): an
+    opaque texel soaks by its world pixel's front surface material's
+    `light_soak` (`SurfaceMaterial::light_soak()`), else by the level's;
+    `soak.wgsl`'s `soak_radius` is appended from Rust: `PLAIN_PRELUDE`
+    (the level's, today's shader and bytes) or `MATERIAL_PRELUDE` (group
+    1: `soak_table`, 256 `i32`s by material value, −1 the level's, and
+    `front_tex`, the front map), each its own pipelines
+    (`soak_material_h_pipeline`, `soak_material_v_pipeline`). Each pass
+    takes the receiving texel's radius and fades with `fade(i, r + 1)`;
+    `MAX_SOAK` stays the bound. At a border between materials the down
+    pass reads its column's across results, made with those texels' radii
+    (an accepted approximation). `LookTextures::soak` (`SoakTextures`) is
+    made by `set_surface` (with lighting, maps of the level's size and a
+    material with its own soak; `Renderer::has_material_soak`), heat or
+    none: it binds the heat's own surface texture (`Rg8Uint`, front in
+    red) when there is one, else an `R8Uint` front map of its own at the
+    solid map's size: one copy of the map. The map is static (the level's
+    `look/surface.png`); the solid map it is read beside follows every
+    dirty rectangle, so digging and new dirt change the soak at once.
+    `set_surface_materials` rewrites the table (the material editor's
+    preview). A material soak runs the across pass whatever the level's
+    soak. Without one nothing changes: no table, no map, the plain
+    pipelines (`no_material_soak_draws_todays_bytes`). Tests (GPU,
+    `tests/gpu/soak.rs`): `a_materials_soak_overrides_the_levels`,
+    `no_material_soak_draws_todays_bytes`,
+    `a_soak_material_without_heat_still_works`,
+    `material_soak_follows_digging`; `soak.rs`' unit test.
   - **Blur** (`fs_blur_h`, `fs_blur_v`): a box of the level's softness (0
     to 4 world pixels) each way, an air texel gathering only the air before
     the first solid each way (no light blurs through a wall); `fs_blur_v`

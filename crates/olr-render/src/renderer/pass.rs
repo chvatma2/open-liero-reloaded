@@ -368,12 +368,30 @@ impl Renderer {
             // At a soak or softness of 0 the across pass gives back its
             // source texel for texel: the down pass reads that instead
             // (issue #35).
-            let (soak, soft) = look.map_or((false, false), |l| (l.light_soak > 0, l.softness > 0));
+            // Issue #57: a material's own soak runs the material pipelines
+            // (group 1), and the across pass whatever the level's soak.
+            let by_material = state.textures.as_ref().and_then(|t| t.soak.as_ref());
+            let (soak, soft) =
+                look.map_or((false, false), |l| (l.light_soak > 0 || by_material.is_some(), l.softness > 0));
+            let soak_pass = |encoder: &mut wgpu::CommandEncoder, view, (plain, material), bind| {
+                let mut pass = begin(encoder, "olr-render look", view, group(PassGroup::Soak));
+                match by_material {
+                    Some(m) => {
+                        pass.set_pipeline(material);
+                        pass.set_bind_group(1, &m.bind, &[]);
+                    }
+                    None => pass.set_pipeline(plain),
+                }
+                pass.set_bind_group(0, bind, &[]);
+                pass.draw(0..3, 0..1);
+            };
             if soak {
-                full(&mut encoder, PassGroup::Soak, &lt.views[1], &state.soak_h_pipeline, &lt.soak_binds[0]);
+                let pipes = (&state.soak_h_pipeline, &state.soak_material_h_pipeline);
+                soak_pass(&mut encoder, &lt.views[1], pipes, &lt.soak_binds[0]);
             }
             let soak_v = if soak { &lt.soak_binds[1] } else { &lt.soak_binds[0] };
-            full(&mut encoder, PassGroup::Soak, &lt.views[2], &state.soak_v_pipeline, soak_v);
+            let pipes = (&state.soak_v_pipeline, &state.soak_material_v_pipeline);
+            soak_pass(&mut encoder, &lt.views[2], pipes, soak_v);
             if soft {
                 full(&mut encoder, PassGroup::Blur, &lt.views[0], &state.blur_h_pipeline, &lt.binds[1]);
             }

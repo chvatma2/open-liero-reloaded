@@ -11,6 +11,8 @@ use olr_terrain::{ColorEdit, ColorMap, Stamp, Terrain, ThemeArt};
 mod halo;
 #[path = "gpu/heat.rs"]
 mod heat;
+#[path = "gpu/soak.rs"]
+mod soak;
 
 fn offscreen() -> Option<Offscreen> {
     if std::env::var_os("OLR_GPU_TESTS").is_none() {
