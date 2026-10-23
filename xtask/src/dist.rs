@@ -68,6 +68,14 @@ pub const ASSETS_LEFT_OUT: [&str; 1] = ["README.md"];
 pub const MATERIALS: &str = "content/materials";
 /// Files of the built-in materials the programs never read.
 pub const MATERIALS_LEFT_OUT: [&str; 1] = ["README.md"];
+/// The longest path, in UTF-16 units as Windows counts them, a file may
+/// have below the zip's top folder (issue #64: `content/…`, `olr.exe`).
+/// Explorer's Extract All stops at `MAX_PATH` (259) and puts the zip's
+/// name before its top folder, so the version is in the path twice
+/// (about 123 characters before `content\` for a short user name); 80
+/// leaves room for a longer user name, OneDrive and the updater's
+/// `.olr-update\new\`.
+pub const MAX_SHIPPED_PATH: usize = 80;
 /// The levels in [`RELOADED`] a release must hold: the verification
 /// finds each in the folder, and its server's rotation names them.
 pub const RELOADED_LEVELS: [&str; 2] =
@@ -282,16 +290,44 @@ fn list_files(dir: &Path) -> Result<Vec<String>, String> {
     Ok(out)
 }
 
+/// Each path of `paths` (below the zip's top folder) longer than
+/// [`MAX_SHIPPED_PATH`], as `<length> <path>`.
+pub fn too_long(paths: &[String]) -> Vec<String> {
+    paths
+        .iter()
+        .map(|p| (p.encode_utf16().count(), p))
+        .filter(|(n, _)| *n > MAX_SHIPPED_PATH)
+        .map(|(n, p)| format!("{n} {p}"))
+        .collect()
+}
+
+/// An error naming every path of `paths` over [`MAX_SHIPPED_PATH`].
+fn check_lengths(paths: &[String]) -> Result<(), String> {
+    let long = too_long(paths);
+    if long.is_empty() {
+        return Ok(());
+    }
+    Err(format!(
+        "{} paths are over {MAX_SHIPPED_PATH} characters below the release's top folder \
+         (Explorer cannot extract them on Windows; shorten their names):\n  {}",
+        long.len(),
+        long.join("\n  ")
+    ))
+}
+
 /// Writes the zip `out` of the directory `folder` (its name the zip's top
 /// folder): every file below it in byte order of its path, deflated, dated
 /// 1980-01-01 00:00, mode 0755 for `executables` (paths in the folder) and
-/// 0644 for the rest.
+/// 0644 for the rest. A path over [`MAX_SHIPPED_PATH`] below the folder is
+/// an error naming each, before anything is written.
 pub fn write_zip(folder: &Path, executables: &[String], out: &Path) -> Result<(), String> {
     use zip::write::SimpleFileOptions;
     let top = folder
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| format!("{}: no folder name", folder.display()))?;
+    let files = list_files(folder)?;
+    check_lengths(&files)?;
     if let Some(parent) = out.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }
@@ -299,7 +335,7 @@ pub fn write_zip(folder: &Path, executables: &[String], out: &Path) -> Result<()
     let file = std::fs::File::create(&part).map_err(|e| format!("{}: {e}", part.display()))?;
     let mut zip = zip::ZipWriter::new(std::io::BufWriter::new(file));
     let fail = |e: &dyn std::fmt::Display| format!("writing {}: {e}", part.display());
-    for rel in list_files(folder)? {
+    for rel in files {
         let mode = if executables.contains(&rel) { 0o755 } else { 0o644 };
         let options = SimpleFileOptions::DEFAULT
             .compression_method(zip::CompressionMethod::Deflated)
@@ -894,6 +930,68 @@ mod tests {
         check_reloaded(&folder).unwrap();
         assert!(from.join("README.md").is_file() && !folder.join(MATERIALS).join("README.md").exists());
         assert!(folder.join(MATERIALS).join("glass.ron").is_file());
+    }
+
+    /// The content directories a release ships, at the same paths in the folder.
+    const SHIPPED_CONTENT: [&str; 4] = [CONTENT, RELOADED, ASSETS, MATERIALS];
+
+    /// Every file of [`SHIPPED_CONTENT`] under `repo` as its path in the
+    /// release folder (`content/…`).
+    fn shipped_content(repo: &Path) -> Result<Vec<String>, String> {
+        let mut out = Vec::new();
+        for dir in SHIPPED_CONTENT {
+            let at = dir.split('/').fold(repo.to_path_buf(), |d, c| d.join(c));
+            out.extend(list_files(&at)?.into_iter().map(|f| format!("{dir}/{f}")));
+        }
+        Ok(out)
+    }
+
+    /// Issue #64: every file the release ships from `content/` stays within
+    /// `MAX_SHIPPED_PATH` of the folder, so Explorer extracts it on Windows.
+    #[test]
+    fn the_shipped_content_keeps_its_paths_short() {
+        let files = shipped_content(&root()).unwrap();
+        for dir in SHIPPED_CONTENT {
+            assert!(files.iter().any(|f| f.starts_with(&format!("{dir}/"))), "{dir}");
+        }
+        let long = too_long(&files);
+        assert!(long.is_empty(), "over {MAX_SHIPPED_PATH} characters:\n{}", long.join("\n"));
+    }
+
+    #[test]
+    fn a_long_path_is_named_with_its_length() {
+        let at = |n: usize| format!("content/{}", "x".repeat(n - "content/".len()));
+        assert!(too_long(&[at(80), "olr.exe".into()]).is_empty());
+        assert_eq!(too_long(&[at(80), at(81)]), [format!("81 {}", at(81))]);
+        // Windows counts UTF-16 units: one per character here, two beyond U+FFFF.
+        let wide = format!("{}é", at(79));
+        assert!(too_long(std::slice::from_ref(&wide)).is_empty());
+        let emoji = format!("{}\u{1F600}", at(79));
+        assert_eq!(too_long(std::slice::from_ref(&emoji)), [format!("81 {emoji}")]);
+    }
+
+    /// Issue #64: `dist` refuses a zip with a path over the limit below its
+    /// top folder (a new top-level file too), naming it, and writes nothing.
+    #[test]
+    fn a_zip_with_a_long_path_is_refused() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("open-liero-reloaded-9.9.9");
+        let long = format!("docs/{}.md", "n".repeat(MAX_SHIPPED_PATH - 7));
+        for path in ["olr", "content/packs/a/pack.ron", long.as_str()] {
+            let p = dir.join(path);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(&p, "x").unwrap();
+        }
+        let out = t.path().join("zips/a.zip");
+        let err = write_zip(&dir, &[], &out).unwrap_err();
+        assert!(err.contains(&format!("{} {long}", MAX_SHIPPED_PATH + 1)), "{err}");
+        assert!(!err.contains("pack.ron"), "{err}");
+        assert!(!out.exists() && !out.with_extension("zip.part").exists());
+        // At the limit it is written.
+        let at_limit = format!("docs/{}.md", "n".repeat(MAX_SHIPPED_PATH - 8));
+        assert_eq!(at_limit.len(), MAX_SHIPPED_PATH);
+        std::fs::rename(dir.join(&long), dir.join(&at_limit)).unwrap();
+        write_zip(&dir, &[], &out).unwrap();
     }
 
     #[test]

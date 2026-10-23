@@ -351,7 +351,14 @@ Workspace automation (`cargo xtask <cmd>`): `check`, `full`, `layers`, `api`,
   `write_zip` (the `zip`
   crate, deflate only): files in byte order of their path, dated
   1980-01-01, mode 0755 for `executables` and 0644 for the rest, so the
-  same inputs give the same bytes (tested). The zips are kept apart
+  same inputs give the same bytes (tested). Issue #64: it first refuses
+  any path below the top folder over `MAX_SHIPPED_PATH` (80 UTF-16
+  units, as Windows counts; `too_long` lists each with its length),
+  naming them and writing nothing (`a_zip_with_a_long_path_is_refused`):
+  Explorer's Extract All stops at `MAX_PATH` and puts the zip's name
+  before its top folder. `check` holds the committed content to it
+  (`the_shipped_content_keeps_its_paths_short`: every file of
+  `content/`'s `packs`, `reloaded`, `assets` and `materials`). The zips are kept apart
   from cargo's `dist` profile output (`target/dist/`, swept by `tidy` as
   any profile). Verification (unless
   `--no-verify`): the Flatpak's staged folder (`flatpak::staged_app`,
