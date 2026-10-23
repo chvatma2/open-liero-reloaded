@@ -113,11 +113,12 @@ Remade OLX content is named "<Old name> Reloaded".
   #7). OLX's Liero Factory (`origin`: `Liero Factory.lxl` at `d1ad953f`)
   at night, its lights on; its gameplay and art unchanged: the imported
   level split into layers (`olr-cli level element split`), its
-  `material.png`, `front.png` and `back.png` byte for byte the imported
-  level's (tested). Above them, one drawn layer per glow group and
+  `material.png` byte for byte the imported level's, and its `front.png`
+  and `back.png` too but where the sky is see-through (tested; issue
+  #63, below). Above them, one drawn layer per glow group and
   material holds only that group's pixels, found by colour in the
   imported `front.png`: `sky` (the blue gradient, a pale moonlight tint
-  of unlimited reach), `lamps` (the white ceiling strips of every floor,
+  of unlimited reach; a distant layer since issue #63), `lamps` (the white ceiling strips of every floor,
   warm white, reach 90), `glass` (the office and main hall windows, a
   faint cool glow), `screens` (the office computer, the control room's
   monitor and console, the teal device's screen: their own colour, short
@@ -132,6 +133,53 @@ Remade OLX content is named "<Old name> Reloaded".
   unlimited reach) so daylight comes in through the hall, the loft and
   the towers, and the cavern torches and the hall's candles flickering
   (group `flames`).
+- **Parallax skies** (issue #63): both levels' skies lie on a glowing
+  distant layer, scrolling slower than the level, the light as before.
+  `tools/levels/reloaded_skies.py` made them through `olr-cli level
+  element`, from the levels as they were:
+  - **The sky cut out.** The sky region is Castle Strike's sky glow
+    mask (`editor/glow/background-2.png`, its non-zero pixels, rows
+    0-304) and Liero Factory's `sky` layer (its covered pixels). It is
+    written as a PNG (white the sky, black the rest) and erased from
+    every back element covering it with `level element erase <id>
+    --mask <png>`: Castle Strike's `background` and `background-2` (the
+    hills, walls and towers stay), Liero Factory's `background`; the
+    factory's `sky` layer (unlocked first) is removed.
+  - **The layer.** A level-sized image at (0, 0) (`add-image --at 0,0`,
+    no colour reduction, `editor/images/sky.png`), Background, named
+    Sky, set distant with the old sky's glow: Castle Strike's at depth
+    85, glow 100 in group `sky` (the old mask was 255 over the whole
+    region, so no mask), Liero Factory's at depth 90, glow 35 in `sky`,
+    locked as the old layer was. With the camera at the level's centre
+    (the layer's reference placement) it shows the old sky's art at the
+    old sky's pixels, byte for byte, so the baked glow, the look maps
+    and the light grid are as before. The rest (behind the hills and
+    buildings) continues the sky's radial gradient: the centre fitted
+    to the sky (the point whose half-pixel rings vary least: Castle
+    Strike (724, 291), Liero Factory (592, 226)), then each pixel takes
+    the commonest colour of the old sky at its distance (Castle
+    Strike's crisp bands) or one drawn from those within 4 of the
+    median brightness there (the factory's dithered gradient); never
+    stretched. Only the layer's middle is ever seen in play (`view +
+    (1 − depth)(size − view)`: Castle Strike's (392, 152) to (958,
+    398), Liero Factory's (347, 129) to (853, 351)).
+  - **Stars** (Liero Factory): single art pixels, 1 in 20 of the two
+    brightest 2 × 2, never touching another; four colours from pale
+    blue to white (`#93acdf` 45 %, `#bccff5` 30 %, `#e4ecff` 18 %,
+    `#ffffff` 7 %); a chance per pixel of 1/140 at the top of the part
+    ever seen to 1/420 at its bottom (487 stars there, 1 per 230
+    pixels). SplitMix64, seed 63. They are the layer's art, so they glow
+    with it and show only where the sky shows; at the reference
+    placement 1293 sky pixels became stars (the light grid's hashes did
+    not change).
+
+  ```sh
+  cargo build -p olr-cli
+  python3 -I tools/levels/reloaded_skies.py target/debug/olr-cli
+  ```
+
+  A level already holding a distant layer is left alone; the
+  generated images are in `target/reloaded-skies/`.
 - **Surface materials** (issue #46; `docs/formats/material.md`, the
   spec `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`):
   both levels hold copies of the built-in materials they use, so
@@ -142,7 +190,7 @@ Remade OLX content is named "<Old name> Reloaded".
   `castle`), one exact-colour `olr-cli level element surface --rule`
   per colour unlike the default:
   - Liero Factory Reloaded (stone, concrete, metal, wood, dirt, glass):
-    `rock` stone, `dirt` dirt, `background` concrete, `sky` none, the
+    `rock` stone, `dirt` dirt, `background` concrete, the
     `lamps`, `glass`, `screens` and `displays` layers (and their
     `-in-rock` ones) glass, the `beacons` metal. The rule: in rock, pure
     grey (r = g = b) is the cave's stone, a grey tinted warm the
@@ -153,8 +201,8 @@ Remade OLX content is named "<Old name> Reloaded".
     saturated orange-brown earth is dirt, the pure browns of the rack
     and the crates, the plants and the sofa wood, greys and gold metal;
     in the background, the cave's dark pure grey stone, the red pipe
-    and truck metal, the sky none (the `sky` layer covers it), the rest
-    concrete.
+    and truck metal, the sky none (erased since issue #63), the rest
+    concrete. The distant sky (issue #63) has no material.
   - Castle Strike Reloaded (stone, brick, wood, metal): `rock` stone,
     `dirt` wood (barrels, logs, sacks, food), `background` stone (it
     shows only at the torches), `background-2` none (it holds the sky

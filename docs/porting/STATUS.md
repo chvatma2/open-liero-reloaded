@@ -4031,6 +4031,33 @@ its own remade "Reloaded" levels beside them:
 - Both are in the example server config's rotation
   (`fixtures/server/example.ron`), and `dist`'s verification server
   loads them.
+- **Parallax skies (issue #63, part 2 of #62).** Both skies lie on a
+  glowing distant layer, made by `tools/levels/reloaded_skies.py`
+  through `olr-cli level element` (`content/reloaded/README.md`): the
+  sky region (Castle Strike's sky glow mask, Liero Factory's `sky`
+  layer) erased from every back element (`erase --mask`, a PNG added to
+  every shape option for it), and a level-sized image at (0, 0) taking
+  the old sky element's glow: Castle Strike's at depth 85 (glow 100,
+  group `sky`), Liero Factory's at depth 90 (glow 35, `sky`, locked as
+  the old `sky` layer was, which is gone). At the reference placement
+  each image shows the old sky's art at the old sky's pixels, so the
+  baked glow maps (`look/glow-back.png`, `groups-back.png`, the surface
+  maps) are byte for byte as before and the light grid's hashes too
+  (`lit-hashes.ron`'s for Castle Strike, `olr-cli frame-hashes` with the
+  same flags for Liero Factory); only the drawn sky changed. Behind the
+  hills and the buildings, seen once the camera moves, each radial
+  gradient goes on from its own colours (fitted centres: Castle Strike
+  (724, 291), Liero Factory (592, 226)); the factory's gets about 1
+  star per 230 pixels of the part ever shown, a fixed seed. Only the
+  middle of a level-sized layer is ever shown in play (`view + (1 −
+  depth)(size − view)`); the rest lights the level from the reference
+  placement. Liero Factory Reloaded's front and back are now the
+  imported level's but where the sky is see-through (the distant sky's
+  colours there, OLX's but for the stars; tested); the material is
+  still byte for byte. Deviation for the eye: a depth-90 layer takes a
+  tenth of the light beyond the ambient, so the factory's sky draws
+  darker than the old sky element, lit by its glow at 35 % (listed for
+  the playtest in `docs/deferred-verification.md`).
 
 ## Liero v1.0 Reloaded (issue #21)
 
@@ -5665,7 +5692,8 @@ Elements tree and canvas. As built in part 1, the builder's calls:
 
 ## Glowing distant layers (issue #62)
 
-Part 1 of 2 (part 2, #63, puts the Reloaded skies on parallax layers). A
+Part 1 of 2 (part 2, #63, puts the Reloaded skies on parallax layers:
+"Reloaded levels (issue #7)"). A
 distant (parallax) layer may glow, as an ordinary image or drawn element
 does (`Element::glow`: strength, group, painted mask); before, the format
 refused it. No OLX counterpart (OLX has neither parallax nor light). As

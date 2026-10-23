@@ -142,6 +142,11 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   level editor's Glow controls and brush and `olr-cli level element set
   --glow`/`glow` work on a distant layer; `list` shows each element's
   glow.
+- **Parallax skies in the Reloaded levels**: Castle Strike Reloaded's
+  sky and Liero Factory Reloaded's night sky, now with stars, lie on
+  glowing distant layers and scroll slower than the level; both levels
+  are lit as before. `olr-cli level element erase` (and every shape
+  option) takes `--mask FILE`, a PNG's pixels.
 
 ### Changed
 
