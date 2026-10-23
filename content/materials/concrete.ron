@@ -2,6 +2,7 @@
     id: "concrete",
     name: "Concrete",
     notes: "Heavy and dense: slow to warm, slow to cool.",
+    light_soak: 2,
     heat: (
         capacity: 140,
         conductivity: 80,

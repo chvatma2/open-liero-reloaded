@@ -2,6 +2,7 @@
     id: "brick",
     name: "Brick",
     notes: "Fired clay: holds its heat a long time, like a kiln.",
+    light_soak: 2,
     heat: (
         capacity: 120,
         conductivity: 70,
