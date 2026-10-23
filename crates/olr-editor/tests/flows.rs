@@ -20,8 +20,13 @@ struct App {
 }
 
 fn harness(state: EditorState) -> Harness<'static, App> {
+    harness_at(state, 0.25)
+}
+
+/// `harness` whose frames are `step_dt` seconds apart.
+fn harness_at(state: EditorState, step_dt: f32) -> Harness<'static, App> {
     let app = App { state, data: EditorData::default(), commands: Vec::new() };
-    Harness::builder().with_size(egui::vec2(1280.0, 720.0)).build_ui_state(
+    Harness::builder().with_size(egui::vec2(1280.0, 720.0)).with_step_dt(step_dt).build_ui_state(
         |ui, app: &mut App| {
             for a in ui::show(ui, &app.state, &mut app.data) {
                 let c = run(&mut app.state, a);
@@ -1313,4 +1318,232 @@ fn materials_through_the_panels() {
     let e = &again.items()[again.index_of("wall").unwrap()].element;
     assert!(e.surface_map && e.back_surface_map);
     assert!(dir.join("look/surface.png").is_file() && dir.join("editor/surface/wall.back.png").is_file());
+}
+
+// Issue #61: layer folders in the Elements list, on the canvas and by key.
+
+/// Groups `members` through the editor into a folder named `name`.
+fn make_folder(h: &mut Harness<'static, App>, members: &[&str], name: &str) -> String {
+    act(h, A::Select(Selection::Many(members.iter().map(|m| m.to_string()).collect())));
+    act(h, A::GroupSelection);
+    let Selection::Folder(f) = h.state().state.selection().clone() else { panic!("the folder selected") };
+    act(h, A::SetFolder(f.clone(), olr_editor::folder_ops::FolderField::Name(name.into())));
+    f
+}
+
+/// The fixture with "Outer" holding tiny and "Inner" (gradient, badge),
+/// nothing selected.
+fn nested() -> Option<(tempfile::TempDir, Harness<'static, App>, String, String)> {
+    nested_at(0.25)
+}
+
+/// `nested` in `harness_at(step_dt)`.
+fn nested_at(step_dt: f32) -> Option<(tempfile::TempDir, Harness<'static, App>, String, String)> {
+    let (tmp, state) = editor(&content()?);
+    let mut h = harness_at(state, step_dt);
+    h.run();
+    let outer = make_folder(&mut h, &["tiny", "gradient", "badge"], "Outer");
+    let inner = make_folder(&mut h, &["gradient", "badge"], "Inner");
+    act(&mut h, A::Select(Selection::None));
+    Some((tmp, h, outer, inner))
+}
+
+fn folder_of(h: &Harness<'static, App>, id: &str) -> Option<String> {
+    let d = h.state().state.document().unwrap();
+    d.items()[d.index_of(id).unwrap()].element.folder.clone()
+}
+
+#[test]
+fn the_list_shows_the_folder_tree() {
+    let Some((_tmp, mut h, outer, inner)) = nested() else { return };
+    // Top first, members under their folder, one step in per level.
+    let rows: Vec<egui::Rect> = ["Wall", "Tunnels", "Outer", "Inner", "Badge", "Gradient", "Tiny", "Base"]
+        .map(|n| h.get_by_label(n).rect())
+        .into();
+    assert!(rows.windows(2).all(|w| w[0].top() < w[1].top()), "{rows:?}");
+    // Rows of a kind line up by depth (a folder's row has its fold arrow
+    // and mark besides).
+    let x = |k: usize| rows[k].left();
+    assert!(x(2) < x(3) && x(6) < x(4) && x(4) == x(5) && x(0) == x(7) && x(0) < x(6), "{rows:?}");
+    // Folding hides the members, unfolding shows them.
+    h.get_by_label(&labels::fold("Outer")).click();
+    h.run();
+    assert!(h.query_by_label("Tiny").is_none() && h.query_by_label("Inner").is_none());
+    h.get_by_label(&labels::fold("Outer")).click();
+    h.run();
+    assert!(h.query_by_label("Gradient").is_some());
+    // A folder's eye and lock act on its members.
+    h.get_by_label(&labels::folder_visible("Inner")).click();
+    h.run();
+    let d = h.state().state.document().unwrap();
+    let i = d.index_of("gradient").unwrap();
+    assert!(!d.shown_at(i) && d.items()[i].element.visible, "hidden by Inner");
+    assert!(d.shown_at(d.index_of("tiny").unwrap()));
+    h.get_by_label(&labels::folder_locked("Outer")).click();
+    h.run();
+    let d = h.state().state.document().unwrap();
+    assert!(d.locked_at(d.index_of("tiny").unwrap()) && d.locked_at(d.index_of("badge").unwrap()));
+    // A click on a folder's row selects it, Ctrl adds.
+    h.get_by_label("Inner").click();
+    h.run();
+    assert_eq!(h.state().state.selection(), &Selection::Folder(inner.clone()));
+    assert!(h.query_by_label("Folder").is_some(), "the folder's panel");
+    h.get_by_label("Tunnels").click_modifiers(egui::Modifiers::COMMAND);
+    h.run();
+    assert_eq!(h.state().state.selection(), &Selection::Many(vec![inner, "tunnels".into()]));
+    let _ = outer;
+}
+
+#[test]
+fn rows_drag_into_out_of_and_between_folders() {
+    let Some((_tmp, mut h, outer, inner)) = nested() else { return };
+    // Onto a folder's row: into it, on top.
+    drag_row(&mut h, "Tunnels", "Inner");
+    assert_eq!(folder_of(&h, "tunnels").as_deref(), Some(inner.as_str()));
+    let d = h.state().state.document().unwrap();
+    assert_eq!(d.children(Some(&inner)).last().map(String::as_str), Some("tunnels"), "at its top");
+    // Between two members: reordered among them.
+    drag_row(&mut h, "Tunnels", "Gradient");
+    assert_eq!(folder_of(&h, "tunnels").as_deref(), Some(inner.as_str()));
+    assert_eq!(h.state().state.document().unwrap().children(Some(&inner)), ["tunnels", "gradient", "badge"]);
+    // Onto a row of the top level: out to it, in that row's place.
+    drag_row(&mut h, "Tunnels", "Wall");
+    assert_eq!(folder_of(&h, "tunnels"), None);
+    assert_eq!(ids(&h), ["base", "tiny", "gradient", "badge", "wall", "tunnels"]);
+    // Out of Inner onto Tiny, Outer's.
+    drag_row(&mut h, "Badge", "Tiny");
+    assert_eq!(folder_of(&h, "badge").as_deref(), Some(outer.as_str()));
+    // A folder into its own member: refused, said.
+    let before = ids(&h);
+    drag_row(&mut h, "Outer", "Gradient");
+    assert_eq!(ids(&h), before);
+    assert!(h.state().state.status().message.as_deref().is_some_and(|m| m.contains("itself")));
+}
+
+#[test]
+fn shift_selects_the_rows_shown() {
+    let Some((_tmp, mut h, outer, inner)) = nested() else { return };
+    // Unfolded: the member rows between.
+    h.get_by_label("Badge").click();
+    h.run();
+    h.get_by_label("Tiny").click_modifiers(egui::Modifiers::SHIFT);
+    h.run();
+    let many = |v: &[&str]| Selection::Many(v.iter().map(|s| s.to_string()).collect());
+    assert_eq!(h.state().state.selection(), &many(&["tiny", "gradient", "badge"]));
+    // Inner folded: its row stands for it.
+    h.get_by_label(&labels::fold("Inner")).click();
+    h.run();
+    h.get_by_label("Inner").click();
+    h.run();
+    h.get_by_label("Base").click_modifiers(egui::Modifiers::SHIFT);
+    h.run();
+    assert_eq!(h.state().state.selection(), &many(&["base", "tiny", &inner]));
+    // A range over a folder's row and its rows: the folder.
+    h.get_by_label("Tunnels").click();
+    h.run();
+    h.get_by_label("Tiny").click_modifiers(egui::Modifiers::SHIFT);
+    h.run();
+    assert_eq!(h.state().state.selection(), &many(&[&outer, "tunnels"]));
+}
+
+/// The canvas point showing world pixel `w`.
+fn screen_of(h: &Harness<'static, App>, w: (i32, i32)) -> egui::Pos2 {
+    let s = &h.state().state;
+    let p = s.view().to_screen(w, s.document().unwrap().level().art_scale);
+    h.state().data.canvas_rect().unwrap().min + egui::vec2(p[0] + 1.0, p[1] + 1.0)
+}
+
+fn canvas_click(h: &mut Harness<'static, App>, at: egui::Pos2, modifiers: egui::Modifiers) {
+    hover(h, at);
+    for pressed in [true, false] {
+        h.event_modifiers(
+            egui::Event::PointerButton { pos: at, button: egui::PointerButton::Primary, pressed, modifiers },
+            modifiers,
+        );
+    }
+    h.run();
+}
+
+#[test]
+fn canvas_double_click_alt_click_and_escape() {
+    // Frames a 60th of a second apart: a double click's two clicks are
+    // within its delay.
+    let Some((_tmp, mut h, outer, inner)) = nested_at(1.0 / 60.0) else { return };
+    for id in ["tunnels", "wall"] {
+        act(&mut h, A::Set(id.into(), olr_edit::element::Property::Visible(false)));
+    }
+    let p = screen_of(&h, (330, 220));
+    canvas_click(&mut h, p, egui::Modifiers::NONE);
+    assert_eq!(h.state().state.selection(), &Selection::Folder(outer.clone()), "the outermost folder");
+    for pressed in [true, false, true, false] {
+        h.event(egui::Event::PointerButton {
+            pos: p,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::NONE,
+        });
+    }
+    h.run();
+    assert_eq!(h.state().state.selection(), &Selection::Folder(inner.clone()), "a double click goes in");
+    canvas_click(&mut h, p, egui::Modifiers::ALT);
+    assert_eq!(h.state().state.selection(), &Selection::Element("gradient".into()), "Alt+click");
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(h.state().state.selection(), &Selection::Folder(inner));
+    h.key_press(egui::Key::Escape);
+    h.run();
+    h.key_press(egui::Key::Escape);
+    h.run();
+    assert_eq!(h.state().state.selection(), &Selection::None, "up to the top, then nothing");
+}
+
+#[test]
+fn ctrl_g_groups_and_ctrl_shift_g_ungroups() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    act(&mut h, A::Select(Selection::Many(vec!["tiny".into(), "badge".into()])));
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::G);
+    h.run();
+    assert_eq!(h.state().state.tool(), Tool::Select, "not Fill");
+    let Selection::Folder(f) = h.state().state.selection().clone() else { panic!("the folder selected") };
+    assert!(h.query_by_label(&labels::fold(&f)).is_none() && h.query_by_label("Folder 1").is_some());
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run();
+    assert!(h.state().state.document().unwrap().folders().is_empty(), "undone");
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Y);
+    h.run();
+    act(&mut h, A::Select(Selection::Folder(f.clone())));
+    h.key_press_modifiers(egui::Modifiers::COMMAND | egui::Modifiers::SHIFT, egui::Key::G);
+    h.run();
+    assert!(h.state().state.document().unwrap().folders().is_empty(), "ungrouped");
+    assert_eq!(h.state().state.tool(), Tool::Select);
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::Z);
+    h.run();
+    assert_eq!(h.state().state.document().unwrap().folders().len(), 1, "regrouped by undo");
+    // The list's button and the panel's Ungroup.
+    act(&mut h, A::Select(Selection::Folder(f)));
+    h.get_by_label(labels::UNGROUP).click();
+    h.run();
+    assert!(h.state().state.document().unwrap().folders().is_empty());
+    act(&mut h, A::Select(Selection::Element("wall".into())));
+    h.get_by_label(labels::NEW_FOLDER).click();
+    h.run();
+    assert!(matches!(h.state().state.selection(), Selection::Folder(_)));
+}
+
+#[test]
+fn a_folders_panel_renames_it() {
+    let Some((_tmp, mut h, outer, _)) = nested() else { return };
+    act(&mut h, A::Select(Selection::Folder(outer.clone())));
+    h.get_by_role_and_label(Role::TextInput, labels::NAME).focus();
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, labels::NAME).type_text(" desk");
+    h.run();
+    let name = |h: &Harness<'static, App>| {
+        h.state().state.document().unwrap().folders().into_iter().find(|f| f.id == outer).unwrap().name
+    };
+    assert_eq!(name(&h), "Outer", "not while typing");
+    h.key_press(egui::Key::Enter);
+    h.run();
+    assert_eq!(name(&h), "Outer desk");
+    assert!(h.query_by_label("3 elements").is_some(), "its elements' count");
 }
