@@ -75,7 +75,7 @@
                                                 speed_var: 15.0,
                                                 spread: 90.0,
                                                 relative_to_parent: true,
-                                                shared: "fireball.spawn.spawn",
+                                                shared: "fireball.s2",
                                             ),
                                         },
                                     ),

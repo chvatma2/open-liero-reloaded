@@ -84,7 +84,7 @@
                                             spawn: (
                                                 speed: 1000,
                                                 spread: 360.0,
-                                                shared: "petrol-bomb.spawn.spawn.trail",
+                                                shared: "petrol-bomb.s2t",
                                             ),
                                         ),
                                         hit_worm: [

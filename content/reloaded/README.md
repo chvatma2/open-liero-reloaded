@@ -106,7 +106,7 @@ Remade OLX content is named "<Old name> Reloaded".
     200 % over 22 (its bomblets the engine's). Big Nuke's 50 bomblets
     80 % over 24 (a wide orange-white field rather than 50 white discs;
     its detonation has no damage and so no heat), their sparks
-    (`projectiles/big-nuke.spawn.spawn.ron`, also the Mini Nuke's) 300 %
+    (`projectiles/big-nuke.s2.ron`, also the Mini Nuke's) 300 %
     of their faint 97.
 
 - `olr-level-liero-factory-reloaded/`: **Liero Factory Reloaded** (issue

@@ -89,7 +89,7 @@
                                                 speed: 125,
                                                 speed_var: 50.0,
                                                 spread: 360.0,
-                                                shared: "nuclear-mines.spawn.spawn.trail",
+                                                shared: "nuclear-mines.s2t",
                                             ),
                                         ),
                                     ),

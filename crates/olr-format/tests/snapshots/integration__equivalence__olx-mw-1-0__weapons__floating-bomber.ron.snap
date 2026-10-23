@@ -113,7 +113,7 @@ expression: "String::from_utf8_lossy(bytes)"
                                                 speed: 5,
                                                 speed_var: 5.0,
                                                 spread: 360.0,
-                                                shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                shared: "apache.sts4t",
                                             ),
                                         ),
                                         hit_terrain: [
@@ -151,7 +151,7 @@ expression: "String::from_utf8_lossy(bytes)"
                                                             speed: 5,
                                                             speed_var: 5.0,
                                                             spread: 360.0,
-                                                            shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                            shared: "apache.sts4t",
                                                         ),
                                                     ),
                                                     spawns: {
@@ -173,7 +173,7 @@ expression: "String::from_utf8_lossy(bytes)"
                                                                     spawn: (
                                                                         speed: 1,
                                                                         spread: 360.0,
-                                                                        shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                                        shared: "apache.sts4t",
                                                                     ),
                                                                 ),
                                                                 hit_terrain: [

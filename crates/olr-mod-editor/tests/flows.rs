@@ -149,9 +149,9 @@ fn edit_a_copy_of_classic_and_save_it() {
 
     // The shrapnel is shared, with its users.
     let shrapnel = "weapons/bazooka.fire.shot.projectile.spawns.spawn";
-    click(&mut h, &labels::node("Pixel (shared: bazooka.spawn)"));
+    click(&mut h, &labels::node("Pixel (shared: bazooka.s)"));
     assert_eq!(h.state().state.node(), format!("{shrapnel}.projectile"));
-    let users = h.state().state.used_by()["bazooka.spawn"].clone();
+    let users = h.state().state.used_by()["bazooka.s"].clone();
     assert!(!users.is_empty());
     for u in &users {
         h.get_by_label(&labels::used_by(u));
@@ -206,8 +206,8 @@ fn an_error_is_listed_goes_to_its_field_and_refuses_the_save() {
     let tmp = tempfile::tempdir().unwrap();
     let mut h = harness(state, tmp.path().join("my-classic"));
     // The shared shrapnel spawns itself when it hits a worm: a cycle.
-    click(&mut h, "bazooka.spawn");
-    assert_eq!(h.state().state.item(), &Item::Shared("bazooka.spawn".into()));
+    click(&mut h, "bazooka.s");
+    assert_eq!(h.state().state.item(), &Item::Shared("bazooka.s".into()));
     click(&mut h, &labels::event("Hit worm", "Spawns"));
     click(&mut h, &labels::event("Hit worm", "Edit the spawn"));
     assert!(matches!(
@@ -215,7 +215,7 @@ fn an_error_is_listed_goes_to_its_field_and_refuses_the_save() {
         Some(NodeKind::Spawn(_))
     ));
     click(&mut h, labels::SPAWNED);
-    click(&mut h, "Shared: bazooka.spawn");
+    click(&mut h, "Shared: bazooka.s");
     let s = &h.state().state;
     assert!(s.errors() > 0, "{:?}", s.issues());
     assert!(s.show_problems());
@@ -227,7 +227,7 @@ fn an_error_is_listed_goes_to_its_field_and_refuses_the_save() {
     // The error is listed; clicking it goes there.
     click(&mut h, labels::WORLD);
     click(&mut h, &labels::issue(&issue));
-    assert_eq!(h.state().state.item(), &Item::Shared("bazooka.spawn".into()));
+    assert_eq!(h.state().state.item(), &Item::Shared("bazooka.s".into()));
     assert_eq!(h.state().state.focus(), issue.path.as_deref());
     // Undone, it saves.
     click(&mut h, labels::UNDO);
@@ -351,10 +351,8 @@ fn play_the_unsaved_mod_and_come_back() {
 
     // An error: Play lists it and does not start.
     let n = h.state().commands.len();
-    let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
-    h.state_mut()
-        .state
-        .update(A::Set { path: "projectiles/bazooka.spawn.spawns".into(), value: cycle.into() });
+    let cycle = r#"{"s": (shared: "bazooka.s")}"#;
+    h.state_mut().state.update(A::Set { path: "projectiles/bazooka.s.spawns".into(), value: cycle.into() });
     h.state_mut().state.update(A::ShowProblems(false));
     h.run();
     click(&mut h, labels::PLAY);

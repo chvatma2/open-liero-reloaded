@@ -80,10 +80,10 @@ fn the_tree_shows_the_shared_shrapnel_and_a_copy_makes_it_the_weapons() {
     assert_eq!(kinds[0], (BAZOOKA, &NodeKind::Weapon));
     let shrapnel = format!("{SHRAPNEL}.projectile");
     let node = nodes.iter().find(|n| n.path == shrapnel).expect("the shrapnel's node");
-    assert_eq!(node.kind, NodeKind::Projectile { shared: Some("bazooka.spawn".into()) });
-    assert!(node.label.contains("shared: bazooka.spawn"), "{}", node.label);
+    assert_eq!(node.kind, NodeKind::Projectile { shared: Some("bazooka.s".into()) });
+    assert!(node.label.contains("shared: bazooka.s"), "{}", node.label);
     let users = s.used_by();
-    assert!(users["bazooka.spawn"].iter().any(|u| u.starts_with(BAZOOKA)), "{users:?}");
+    assert!(users["bazooka.s"].iter().any(|u| u.starts_with(BAZOOKA)), "{users:?}");
 
     s.update(A::Node(shrapnel.clone()));
     assert_eq!(s.node(), shrapnel);
@@ -93,11 +93,11 @@ fn the_tree_shows_the_shared_shrapnel_and_a_copy_makes_it_the_weapons() {
     assert_eq!(s.node(), shrapnel, "the node shown stays");
     // Its own copy: a change to it leaves the shared one alone.
     s.update(set(&format!("{shrapnel}.gravity"), "10"));
-    assert_eq!(s.value("projectiles/bazooka.spawn.gravity").as_deref(), Some("70"));
+    assert_eq!(s.value("projectiles/bazooka.s.gravity").as_deref(), Some("70"));
     s.update(A::Undo);
     s.update(A::Undo);
     let node = s.nodes().into_iter().find(|n| n.path == shrapnel).unwrap();
-    assert_eq!(node.kind, NodeKind::Projectile { shared: Some("bazooka.spawn".into()) });
+    assert_eq!(node.kind, NodeKind::Projectile { shared: Some("bazooka.s".into()) });
 }
 
 #[test]
@@ -226,7 +226,7 @@ fn presets_and_loadouts_are_edited() {
 #[test]
 fn an_error_is_listed_goes_to_its_field_and_refuses_the_save() {
     let Some(mut s) = editor() else { return };
-    s.update(set("projectiles/bazooka.spawn.spawns", "{\"s\": (shared: \"bazooka.spawn\")}"));
+    s.update(set("projectiles/bazooka.s.spawns", "{\"s\": (shared: \"bazooka.s\")}"));
     assert!(s.errors() > 0);
     assert!(s.show_problems());
     assert!(s.update(A::Save).is_empty(), "not saved");
@@ -234,7 +234,7 @@ fn an_error_is_listed_goes_to_its_field_and_refuses_the_save() {
     let issue = s.issues().iter().find(|i| i.is_error()).unwrap().clone();
     let path = issue.path.clone().expect("a located error");
     s.update(A::GoTo(path.clone()));
-    assert_eq!(s.item(), &Item::Shared("bazooka.spawn".into()));
+    assert_eq!(s.item(), &Item::Shared("bazooka.s".into()));
     assert_eq!(s.focus(), Some(path.as_str()));
 
     s.update(A::Undo);
@@ -372,8 +372,8 @@ fn practice_is_with_the_weapon_shown() {
     s.update(A::PlayEnded);
 
     // An error: not played.
-    let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
-    s.update(A::Set { path: "projectiles/bazooka.spawn.spawns".into(), value: cycle.into() });
+    let cycle = r#"{"s": (shared: "bazooka.s")}"#;
+    s.update(A::Set { path: "projectiles/bazooka.s.spawns".into(), value: cycle.into() });
     assert!(s.update(A::Practice).is_empty());
     assert!(s.status().starts_with("Not played"), "{}", s.status());
     assert!(!s.playing());

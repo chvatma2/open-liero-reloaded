@@ -114,7 +114,7 @@
                                             "spawn": (
                                                 speed: 10,
                                                 spread: 360.0,
-                                                shared: "disease-bomb.spawn.spawn.spawn",
+                                                shared: "disease-bomb.s3",
                                             ),
                                         },
                                     ),

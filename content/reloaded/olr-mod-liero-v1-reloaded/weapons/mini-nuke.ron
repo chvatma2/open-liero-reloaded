@@ -66,7 +66,7 @@
                                     amount: 6,
                                     speed: 50,
                                     spread: 360.0,
-                                    shared: "big-nuke.spawn.spawn",
+                                    shared: "big-nuke.s2",
                                 ),
                             },
                             look: (

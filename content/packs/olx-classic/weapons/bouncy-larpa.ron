@@ -29,7 +29,7 @@
                         speed: 1,
                         speed_var: 5.0,
                         parent_velocity_as_direction: true,
-                        shared: "bazooka.spawn",
+                        shared: "bazooka.s",
                     ),
                 ),
                 hit_terrain: [
@@ -49,7 +49,7 @@
                         speed: 105,
                         speed_var: 14.0,
                         spread: 360.0,
-                        shared: "bazooka.spawn",
+                        shared: "bazooka.s",
                     ),
                 },
             ),

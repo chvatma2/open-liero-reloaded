@@ -137,7 +137,7 @@
                                                                     spawn: (
                                                                         speed: 10000,
                                                                         spread: 360.0,
-                                                                        shared: "nuclear-bomb.spawn.trail.spawn.trail.trail",
+                                                                        shared: "nuclear-bomb.stst2",
                                                                     ),
                                                                 ),
                                                                 hit_worm: [
@@ -148,7 +148,7 @@
                                                                 spawns: {
                                                                     "spawn": (
                                                                         spread: 360.0,
-                                                                        shared: "nuclear-bomb.spawn.trail.spawn.trail.spawn",
+                                                                        shared: "nuclear-bomb.ststs",
                                                                     ),
                                                                 },
                                                             ),
@@ -199,7 +199,7 @@
                                                                     spawn: (
                                                                         speed: 10000,
                                                                         spread: 360.0,
-                                                                        shared: "nuclear-bomb.spawn.trail.spawn.trail.trail",
+                                                                        shared: "nuclear-bomb.stst2",
                                                                     ),
                                                                 ),
                                                                 hit_worm: [
@@ -211,7 +211,7 @@
                                                                 spawns: {
                                                                     "spawn": (
                                                                         spread: 360.0,
-                                                                        shared: "nuclear-bomb.spawn.trail.spawn.trail.spawn",
+                                                                        shared: "nuclear-bomb.ststs",
                                                                     ),
                                                                 },
                                                             ),

@@ -131,7 +131,7 @@
                                                                                 spawn: (
                                                                                     speed: 1000,
                                                                                     spread: 360.0,
-                                                                                    shared: "sunray-grenade.spawn.trail.trail.trail.trail.spawn.trail.trail.trail.trail.trail",
+                                                                                    shared: "sunray-grenade.st4st5",
                                                                                 ),
                                                                             ),
                                                                             hit_terrain: [
@@ -237,7 +237,7 @@
                                                                                                                                             spawn: (
                                                                                                                                                 speed: 1000,
                                                                                                                                                 spread: 360.0,
-                                                                                                                                                shared: "sunray-grenade.spawn.trail.trail.trail.trail.spawn.trail.trail.trail.trail.trail",
+                                                                                                                                                shared: "sunray-grenade.st4st5",
                                                                                                                                             ),
                                                                                                                                         ),
                                                                                                                                         hit_terrain: [
@@ -272,7 +272,7 @@
                                                                                                                                 "spawn": (
                                                                                                                                     speed: 1,
                                                                                                                                     angle: -45,
-                                                                                                                                    shared: "sunray-beamer.spawn",
+                                                                                                                                    shared: "sunray-beamer.s",
                                                                                                                                 ),
                                                                                                                             },
                                                                                                                         ),
@@ -282,7 +282,7 @@
                                                                                                                     "spawn": (
                                                                                                                         speed: 1,
                                                                                                                         angle: 45,
-                                                                                                                        shared: "sunray-beamer.spawn",
+                                                                                                                        shared: "sunray-beamer.s",
                                                                                                                     ),
                                                                                                                 },
                                                                                                             ),
@@ -292,7 +292,7 @@
                                                                                                         "spawn": (
                                                                                                             speed: 1,
                                                                                                             angle: 135,
-                                                                                                            shared: "sunray-beamer.spawn",
+                                                                                                            shared: "sunray-beamer.s",
                                                                                                         ),
                                                                                                     },
                                                                                                 ),
@@ -302,7 +302,7 @@
                                                                                             "spawn": (
                                                                                                 speed: 1,
                                                                                                 angle: -135,
-                                                                                                shared: "sunray-beamer.spawn",
+                                                                                                shared: "sunray-beamer.s",
                                                                                             ),
                                                                                         },
                                                                                     ),
@@ -314,7 +314,7 @@
                                                                 spawns: {
                                                                     "spawn": (
                                                                         speed: 1,
-                                                                        shared: "sunray-beamer.spawn",
+                                                                        shared: "sunray-beamer.s",
                                                                     ),
                                                                 },
                                                             ),
@@ -324,7 +324,7 @@
                                                         "spawn": (
                                                             speed: 1,
                                                             angle: 90,
-                                                            shared: "sunray-beamer.spawn",
+                                                            shared: "sunray-beamer.s",
                                                         ),
                                                     },
                                                 ),
@@ -334,7 +334,7 @@
                                             "spawn": (
                                                 speed: 1,
                                                 angle: -180,
-                                                shared: "sunray-beamer.spawn",
+                                                shared: "sunray-beamer.s",
                                             ),
                                         },
                                     ),
@@ -344,7 +344,7 @@
                                 "spawn": (
                                     speed: 1,
                                     angle: -90,
-                                    shared: "sunray-beamer.spawn",
+                                    shared: "sunray-beamer.s",
                                 ),
                             },
                         ),

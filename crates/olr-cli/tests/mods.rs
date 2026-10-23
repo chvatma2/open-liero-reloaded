@@ -62,7 +62,7 @@ fn mod_get_and_set_edit_by_path() {
         "{fields}"
     );
     assert!(fields.contains("weapons/bazooka.fire.recoil = 15"), "{fields}");
-    assert!(ok(&["mod", "fields", &d]).contains("projectiles/bazooka.spawn\n"));
+    assert!(ok(&["mod", "fields", &d]).contains("projectiles/bazooka.s\n"));
     assert!(ok(&["mod", "--help"]).contains("pack new mod"), "the help names how to make a mod");
 
     // Refused: what LX56 cannot express, with its path; a bad value; a bad path.
@@ -82,7 +82,7 @@ fn mod_weapon_and_projectile_commands() {
     let (_tmp, d) = classic_copy();
     let out = ok(&["mod", "weapon", "add", &d, "fireball", "--from", "olx-mw-1-0:fireball", "--at", "1"]);
     assert_eq!(out, "added weapon fireball (\"Fireball\") at 1\n");
-    assert!(Path::new(&d).join("projectiles/fireball.spawn.spawn.ron").is_file());
+    assert!(Path::new(&d).join("projectiles/fireball.s2.ron").is_file());
     assert!(Path::new(&d).join("gfx/flame-2.png").is_file());
     ok(&["mod", "weapon", "add", &d, "plasma", "--name", "Plasma"]);
     ok(&["mod", "weapon", "move", &d, "plasma", "0"]);

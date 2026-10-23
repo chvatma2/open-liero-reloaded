@@ -112,7 +112,7 @@
                                                                         speed: 25,
                                                                         speed_var: 20.0,
                                                                         spread: 360.0,
-                                                                        shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                                        shared: "apache.sts4t",
                                                                     ),
                                                                 ),
                                                                 hit_terrain: [
@@ -179,7 +179,7 @@
                                                                                             spawn: (
                                                                                                 speed: 1,
                                                                                                 spread: 360.0,
-                                                                                                shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                                                                shared: "apache.sts4t",
                                                                                             ),
                                                                                         ),
                                                                                         hit_terrain: [

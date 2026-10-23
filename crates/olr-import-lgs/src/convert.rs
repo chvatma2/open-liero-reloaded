@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 
 use olr_data::manifest::{Origin, PACK_FORMAT_VERSION, PackKind, PackManifest};
-use olr_data::mod_def::{ModDef, ProjectileDef, ProjectileGfx, WeaponDef, WeaponKind};
+use olr_data::mod_def::{ChildLink, ModDef, ProjectileDef, ProjectileGfx, WeaponDef, WeaponKind, child_key};
 use olr_data::slug::slug;
 use olr_pack::ModPack;
 use olr_vfs::{ContentSource, VPath, find_ci, find_ci_any, non_portable};
@@ -112,10 +112,10 @@ impl Converter<'_> {
     ) -> Result<String, LgsError> {
         let mut def = node.def.clone();
         if let (Some(child), Some(spawn)) = (&node.event_child, def.event_spawn.as_mut()) {
-            spawn.projectile = self.intern(child, &format!("{base}.spawn"), out, interned)?;
+            spawn.projectile = self.intern(child, &child_key(base, ChildLink::Spawn), out, interned)?;
         }
         if let (Some(child), Some(spawn)) = (&node.trail_child, def.trail.spawn.as_mut()) {
-            spawn.projectile = self.intern(child, &format!("{base}.trail"), out, interned)?;
+            spawn.projectile = self.intern(child, &child_key(base, ChildLink::Trail), out, interned)?;
         }
         let ctx = format!("projectile {base}");
         if let ProjectileGfx::Image { file, .. } = &mut def.gfx {
@@ -264,9 +264,9 @@ mod tests {
         let d = &m.pack.def;
         assert_eq!(m.pack.manifest.id, "olx-tiny");
         assert_eq!(d.weapons.iter().map(|w| w.id.as_str()).collect::<Vec<_>>(), vec!["rocket", "rocket-2"]);
-        assert_eq!(d.projectiles.keys().collect::<Vec<_>>(), vec!["rocket", "rocket.spawn"]);
+        assert_eq!(d.projectiles.keys().collect::<Vec<_>>(), vec!["rocket", "rocket.s"]);
         assert_eq!(d.weapons[1].projectile(), Some("rocket"));
-        assert_eq!(d.projectiles["rocket"].event_spawn.as_ref().unwrap().projectile, "rocket.spawn");
+        assert_eq!(d.projectiles["rocket"].event_spawn.as_ref().unwrap().projectile, "rocket.s");
     }
 
     #[test]

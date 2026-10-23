@@ -955,8 +955,8 @@ mod tests {
         let installed = EditedPlay { game_mod: PlayMod::Installed("olx-classic".into()), ..play(&pack, 0) };
         assert_eq!(speed(&load_edited(&[root], &installed, DEFAULT_SKIN, &prefs).unwrap()), 140);
         // A cycle: refused as a save is.
-        let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
-        olr_edit::mods::set_lenient(&mut pack, "projectiles/bazooka.spawn.spawns", cycle).unwrap();
+        let cycle = r#"{"s": (shared: "bazooka.s")}"#;
+        olr_edit::mods::set_lenient(&mut pack, "projectiles/bazooka.s.spawns", cycle).unwrap();
         let e = load_edited(&[root], &play(&pack, 0), DEFAULT_SKIN, &prefs).err().unwrap();
         assert!(format!("{e:#}").contains("the edited mod"), "{e:#}");
     }

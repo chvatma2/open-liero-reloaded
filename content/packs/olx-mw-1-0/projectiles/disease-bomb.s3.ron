@@ -108,7 +108,7 @@
                     spawn: (
                         speed: 5,
                         spread: 360.0,
-                        shared: "disease-bomb.spawn.spawn.spawn.spawn.spawn.trail",
+                        shared: "disease-bomb.s5t",
                     ),
                 ),
                 hit_terrain: [
@@ -148,7 +148,7 @@
                                 spawn: (
                                     speed: 5,
                                     spread: 360.0,
-                                    shared: "disease-bomb.spawn.spawn.spawn.spawn.spawn.trail",
+                                    shared: "disease-bomb.s5t",
                                 ),
                             ),
                             hit_terrain: [

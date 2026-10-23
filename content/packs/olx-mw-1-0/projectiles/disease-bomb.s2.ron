@@ -30,7 +30,7 @@
             spread: 360.0,
             relative_to_parent: true,
             angle: 180,
-            shared: "disease-bomb.spawn.spawn.spawn",
+            shared: "disease-bomb.s3",
         ),
     },
 )

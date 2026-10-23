@@ -47,7 +47,7 @@
                         speed: 105,
                         speed_var: 14.0,
                         spread: 360.0,
-                        shared: "crackler.trail",
+                        shared: "crackler.t",
                     ),
                 },
             ),

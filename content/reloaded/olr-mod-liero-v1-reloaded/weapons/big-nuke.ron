@@ -60,7 +60,7 @@
                                     speed: 154,
                                     speed_var: 28.0,
                                     spread: 360.0,
-                                    shared: "big-nuke.spawn.spawn",
+                                    shared: "big-nuke.s2",
                                 ),
                             },
                             look: (

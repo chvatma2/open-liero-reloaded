@@ -27,7 +27,7 @@
                     "spawn": (
                         speed: 1,
                         relative_to_parent: true,
-                        shared: "sunray-beamer.spawn",
+                        shared: "sunray-beamer.s",
                     ),
                 },
             ),

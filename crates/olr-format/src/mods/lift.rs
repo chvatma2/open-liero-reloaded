@@ -4,6 +4,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use olr_data::mod_def as rt;
+use olr_data::mod_def::{ChildLink, child_key};
 
 use super::compile::{MAX_INLINE_DEPTH, valid_id};
 use super::spawn::{Spawn, SpawnContext};
@@ -222,12 +223,13 @@ impl<'a> Lifter<'a> {
         };
         let mut spawns = BTreeMap::new();
         if let Some(s) = &p.event_spawn {
-            spawns.insert(LIFTED_SPAWN.to_string(), self.spawn(s, &format!("{key}.spawn"))?);
+            spawns.insert(LIFTED_SPAWN.to_string(), self.spawn(s, &child_key(key, ChildLink::Spawn))?);
         }
         let trail = match (p.trail.kind, &p.trail.spawn) {
-            (rt::TrailKind::Projectile, Some(s)) => {
-                Trail::Projectile { every_s: p.trail.delay, spawn: self.spawn(s, &format!("{key}.trail"))? }
-            }
+            (rt::TrailKind::Projectile, Some(s)) => Trail::Projectile {
+                every_s: p.trail.delay,
+                spawn: self.spawn(s, &child_key(key, ChildLink::Trail))?,
+            },
             (rt::TrailKind::Projectile, None) => {
                 return Err(err(item(), "a projectile trail without a spawn"));
             }
@@ -604,7 +606,7 @@ mod tests {
         assert_eq!(
             spawn.projectile.as_ref().unwrap().id.as_deref(),
             Some("puff"),
-            "the derived key is trailer.trail"
+            "the derived key is trailer.t"
         );
     }
 

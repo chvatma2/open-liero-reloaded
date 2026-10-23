@@ -119,7 +119,7 @@
                                                         spawn: (
                                                             speed: 1000,
                                                             spread: 360.0,
-                                                            shared: "cluster-grenade.spawn.spawn.spawn.spawn.trail",
+                                                            shared: "cluster-grenade.s4t",
                                                         ),
                                                     ),
                                                     hit_terrain: [
@@ -146,7 +146,7 @@
                                                                     spawn: (
                                                                         speed: 1000,
                                                                         spread: 360.0,
-                                                                        shared: "cluster-grenade.spawn.spawn.spawn.spawn.trail",
+                                                                        shared: "cluster-grenade.s4t",
                                                                     ),
                                                                 ),
                                                                 hit_terrain: [

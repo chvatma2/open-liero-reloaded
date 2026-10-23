@@ -46,7 +46,7 @@
                         speed_var: 50.0,
                         spread: 360.0,
                         angle: 180,
-                        shared: "bazooka.spawn",
+                        shared: "bazooka.s",
                     ),
                 },
             ),

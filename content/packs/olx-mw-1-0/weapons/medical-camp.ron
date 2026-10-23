@@ -123,7 +123,7 @@
                                                                                 spawn: (
                                                                                     speed: 300,
                                                                                     spread: 360.0,
-                                                                                    shared: "medical-camp.spawn.spawn.spawn.trail.spawn.spawn.spawn.spawn.spawn.spawn.spawn.spawn.spawn.trail",
+                                                                                    shared: "medical-camp.s3ts9t",
                                                                                 ),
                                                                             ),
                                                                             hit_worm: [
@@ -175,7 +175,7 @@
                                                                                                         spawn: (
                                                                                                             speed: 300,
                                                                                                             spread: 360.0,
-                                                                                                            shared: "medical-camp.spawn.spawn.spawn.trail.spawn.spawn.spawn.spawn.spawn.spawn.spawn.spawn.spawn.trail",
+                                                                                                            shared: "medical-camp.s3ts9t",
                                                                                                         ),
                                                                                                     ),
                                                                                                     hit_worm: [
@@ -227,7 +227,7 @@
                                                                                                                                 spawn: (
                                                                                                                                     speed: 300,
                                                                                                                                     spread: 360.0,
-                                                                                                                                    shared: "medical-camp.spawn.spawn.spawn.trail.spawn.spawn.spawn.spawn.spawn.spawn.spawn.spawn.spawn.trail",
+                                                                                                                                    shared: "medical-camp.s3ts9t",
                                                                                                                                 ),
                                                                                                                             ),
                                                                                                                             hit_worm: [
@@ -279,7 +279,7 @@
                                                                                                                                                         spawn: (
                                                                                                                                                             speed: 300,
                                                                                                                                                             spread: 360.0,
-                                                                                                                                                            shared: "medical-camp.spawn.spawn.spawn.trail.spawn.spawn.spawn.spawn.spawn.spawn.spawn.spawn.spawn.trail",
+                                                                                                                                                            shared: "medical-camp.s3ts9t",
                                                                                                                                                         ),
                                                                                                                                                     ),
                                                                                                                                                     hit_worm: [
@@ -330,7 +330,7 @@
                                                                                                                                                                                 spawn: (
                                                                                                                                                                                     speed: 300,
                                                                                                                                                                                     spread: 360.0,
-                                                                                                                                                                                    shared: "medical-camp.spawn.spawn.spawn.trail.spawn.spawn.spawn.spawn.spawn.spawn.spawn.spawn.spawn.trail",
+                                                                                                                                                                                    shared: "medical-camp.s3ts9t",
                                                                                                                                                                                 ),
                                                                                                                                                                             ),
                                                                                                                                                                             hit_worm: [

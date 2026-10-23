@@ -51,7 +51,7 @@
                             trail: Projectile(
                                 every_s: 0.35,
                                 spawn: (
-                                    shared: "disease-bomb.spawn.spawn",
+                                    shared: "disease-bomb.s2",
                                 ),
                             ),
                             hit_terrain: [
@@ -63,7 +63,7 @@
                                 "spawn": (
                                     relative_to_parent: true,
                                     angle: 180,
-                                    shared: "disease-bomb.spawn.spawn",
+                                    shared: "disease-bomb.s2",
                                 ),
                             },
                         ),

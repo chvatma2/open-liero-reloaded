@@ -46,7 +46,7 @@
                                     speed: 10,
                                     speed_var: 10.0,
                                     spread: 360.0,
-                                    shared: "acid-gun.spawn.spawn.spawn",
+                                    shared: "acid-gun.s3",
                                 ),
                             ),
                             hit_terrain: [
@@ -86,7 +86,7 @@
                                                 speed: 40,
                                                 speed_var: 15.0,
                                                 spread: 360.0,
-                                                shared: "acid-gun.spawn.spawn.spawn",
+                                                shared: "acid-gun.s3",
                                             ),
                                         },
                                     ),

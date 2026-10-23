@@ -44,7 +44,7 @@
             speed: 150,
             relative_to_parent: true,
             angle: 180,
-            shared: "doomrockets.spawn.spawn",
+            shared: "doomrockets.s2",
         ),
     },
 )

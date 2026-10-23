@@ -18,7 +18,7 @@
     ],
     spawns: {
         "spawn": (
-            shared: "electro-gun.spawn",
+            shared: "electro-gun.s",
         ),
     },
 )

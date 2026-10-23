@@ -360,7 +360,7 @@ fn the_spec_mod_example_round_trips() {
     assert_eq!(look.weapons.len(), 1);
     let muzzle = look.weapons[0].as_ref().unwrap().muzzle_light.as_ref().unwrap();
     assert_eq!(muzzle.intensity, 120);
-    assert!(!look.projectiles.contains_key("w.spawn"));
+    assert!(!look.projectiles.contains_key("w.s"));
     let canonical = canonical_text("weapons/w.ron", &w).unwrap();
     assert_eq!(canonical_text("weapons/w.ron", &canonical).unwrap(), canonical);
     assert!(!canonical.contains("looped"), "{canonical}");
@@ -379,8 +379,8 @@ fn a_mod_without_looks_compiles_to_none() {
 fn an_inline_projectile_look_compiles_under_its_key() {
     let w = weapon("", "", ", look: (glow: 40)");
     let look = compile_mod_look(&read_mod_files(&mod_fs(&w)).unwrap()).unwrap();
-    assert_eq!(look.projectiles.keys().collect::<Vec<_>>(), ["w.spawn"]);
-    assert_eq!(look.projectiles["w.spawn"].glow, Some(40));
+    assert_eq!(look.projectiles.keys().collect::<Vec<_>>(), ["w.s"]);
+    assert_eq!(look.projectiles["w.s"].glow, Some(40));
 }
 
 #[test]
@@ -425,7 +425,7 @@ fn explosion_lights_round_trip_and_compile() {
     assert_eq!((own.radius, own.fitted), (10, true));
     assert_eq!(own.light, olr_look::engine::explosion_flash([128, 176, 255], 400, 120));
     // The child has a look but no explosion light: the mod's applies.
-    assert!(look.projectiles["w.spawn"].explosion.is_none());
+    assert!(look.projectiles["w.s"].explosion.is_none());
     let wide = look.explosion.as_ref().unwrap();
     assert_eq!(
         (wide.light.colour, wide.light.intensity, wide.radius, wide.fitted),
@@ -514,7 +514,7 @@ fn heat_round_trips_compiles_and_falls_back_to_the_mods() {
     assert!(own.explosion.is_none(), "heat is not light");
     // The child has a look but no heat: the mod's explosion heat applies,
     // the engine's radius kept.
-    let child = &look.projectiles["w.spawn"];
+    let child = &look.projectiles["w.s"];
     assert!(child.explosion_heat.is_none() && child.heat.is_none());
     assert_eq!(look.explosion_heat, Some(olr_look::ExplosionHeatLook { amount: 40, radius: None }));
     // Canonical text keeps them and leaves the default amount out.

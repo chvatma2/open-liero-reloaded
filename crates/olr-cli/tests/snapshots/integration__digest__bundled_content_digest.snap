@@ -2,8 +2,8 @@
 source: crates/olr-cli/tests/digest.rs
 expression: out
 ---
-mod olx-classic f160a8a71359dafa0159c44619c4e3c488ab961ba543ce2f464eb25d44adb4a2
-mod olx-mw-1-0 2ba94b1fc058e4e9e9c7c2cb3239e0632f8cb19f7e79edb4e7840fca5420f179
+mod olx-classic 48c701e5f97b901131b053a2a5b4057fec13ab779a0b7ab24485cf47f7c7ed69
+mod olx-mw-1-0 78e88f9953d42d4249b1970980b1db6601efae1bad9e475d30e0ec0869ff4222
 level olx-level-castlestrike c406e6a0183ba7bd5238af317a6315848b0e49b67d16bb23b3c2d803673e9074
 level olx-level-dirt-level d5ce960167056beb4bf5ff79841bae95c400ec1a70ecc820b340f8ffe7311287
 level olx-level-fossilfacility a089f117b5d8afc8fe01c027b08c87fb7ad578517305dec63bbcd096b44e8c25

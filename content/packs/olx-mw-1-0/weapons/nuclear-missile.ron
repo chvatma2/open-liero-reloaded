@@ -54,7 +54,7 @@
                             trail: Projectile(
                                 every_s: 0.05,
                                 spawn: (
-                                    shared: "nuclear-missile.spawn.spawn.trail",
+                                    shared: "nuclear-missile.s2t",
                                 ),
                             ),
                             hit_terrain: [
@@ -84,7 +84,7 @@
                                         trail: Projectile(
                                             every_s: 0.05,
                                             spawn: (
-                                                shared: "nuclear-missile.spawn.spawn.trail",
+                                                shared: "nuclear-missile.s2t",
                                             ),
                                         ),
                                         hit_terrain: [
@@ -157,7 +157,7 @@
                                                                         speed: 125,
                                                                         speed_var: 50.0,
                                                                         spread: 360.0,
-                                                                        shared: "nuclear-mines.spawn.spawn.trail",
+                                                                        shared: "nuclear-mines.s2t",
                                                                     ),
                                                                 ),
                                                             ),

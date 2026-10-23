@@ -64,7 +64,7 @@
                                     amount: 2,
                                     speed: 50,
                                     spread: 360.0,
-                                    shared: "fireball.spawn.spawn",
+                                    shared: "fireball.s2",
                                 ),
                             ),
                             hit_terrain: [
@@ -78,7 +78,7 @@
                                     speed: 50,
                                     speed_var: 20.0,
                                     spread: 360.0,
-                                    shared: "fireball.spawn.spawn",
+                                    shared: "fireball.s2",
                                 ),
                             },
                         ),

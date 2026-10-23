@@ -218,8 +218,8 @@ fn play_runs_the_unsaved_mod_and_escape_comes_back() {
     assert_eq!(olr_edit::mods::get(olr_edit::mods::source(&saved).unwrap(), speed).unwrap(), "140");
 
     // A mod with errors does not start; the problems show.
-    let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
-    sh.mod_frame(vec![set("projectiles/bazooka.spawn.spawns", cycle), A::ShowProblems(false), A::Play], t);
+    let cycle = r#"{"s": (shared: "bazooka.s")}"#;
+    sh.mod_frame(vec![set("projectiles/bazooka.s.spawns", cycle), A::ShowProblems(false), A::Play], t);
     sh.poll();
     assert!(!sh.editing_play() && sh.play.is_none());
     let s = sh.mod_editor().unwrap().state();

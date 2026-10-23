@@ -5,6 +5,7 @@
 
 use std::collections::BTreeSet;
 
+use olr_data::mod_def::{ChildLink, child_key};
 use olr_format::mods::{
     Effect, Fire, Gfx, MAX_INLINE_DEPTH, ModSource, Projectile, Spawn, SpawnContext, Trail,
 };
@@ -65,10 +66,15 @@ impl<'a> Walk<'a> {
         }
         for (n, s) in &p.spawns {
             let at = path.join(name("spawns")).join(name(n));
-            self.spawn(s, at, format!("{key}.spawn"), depth);
+            self.spawn(s, at, child_key(&key, ChildLink::Spawn), depth);
         }
         if let Trail::Projectile { spawn, .. } = &p.trail {
-            self.spawn(spawn, path.join(name("trail")).join(name("spawn")), format!("{key}.trail"), depth);
+            self.spawn(
+                spawn,
+                path.join(name("trail")).join(name("spawn")),
+                child_key(&key, ChildLink::Trail),
+                depth,
+            );
         }
         self.projectiles.push(ProjectileAt { path, key, projectile: p });
     }
@@ -136,13 +142,13 @@ fn fresh_keys_at(
     taken.insert(key.clone());
     for s in p.spawns.values_mut() {
         if let Some(c) = s.projectile.as_deref_mut() {
-            fresh_keys_at(c, &format!("{key}.spawn"), taken, false, depth + 1)?;
+            fresh_keys_at(c, &child_key(&key, ChildLink::Spawn), taken, false, depth + 1)?;
         }
     }
     if let Trail::Projectile { spawn, .. } = &mut p.trail
         && let Some(c) = spawn.projectile.as_deref_mut()
     {
-        fresh_keys_at(c, &format!("{key}.trail"), taken, false, depth + 1)?;
+        fresh_keys_at(c, &child_key(&key, ChildLink::Trail), taken, false, depth + 1)?;
     }
     Ok(())
 }

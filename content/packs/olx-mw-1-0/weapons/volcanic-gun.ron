@@ -54,7 +54,7 @@
                                 "spawn": (
                                     speed: 20,
                                     angle: 90,
-                                    shared: "assassin-s-shot.trail.spawn",
+                                    shared: "assassin-s-shot.ts",
                                 ),
                             },
                         ),

@@ -120,8 +120,7 @@ fn canonical_files_of_the_bundled_mods() {
     let picks = [
         (
             "olx-classic",
-            &["mod.ron", "weapons/bazooka.ron", "weapons/bouncy-larpa.ron", "projectiles/bazooka.spawn.ron"]
-                [..],
+            &["mod.ron", "weapons/bazooka.ron", "weapons/bouncy-larpa.ron", "projectiles/bazooka.s.ron"][..],
         ),
         ("olx-mw-1-0", &["mod.ron", "weapons/rocket-launcher.ron", "weapons/floating-bomber.ron"][..]),
     ];

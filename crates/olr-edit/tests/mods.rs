@@ -90,9 +90,9 @@ fn paths_reach_fields_through_shared_projectiles_and_defaults() {
     let Some(root) = content() else { return };
     let p = load(&root, CLASSIC);
     let m = src(&p);
-    // `bazooka`'s spawn names the shared `bazooka.spawn`: the path goes there.
+    // `bazooka`'s spawn names the shared `bazooka.s`: the path goes there.
     let through = "weapons/bazooka.fire.shot.projectile.spawns.spawn.projectile.gravity";
-    assert_eq!(mods::get(m, through).unwrap(), mods::get(m, "projectiles/bazooka.spawn.gravity").unwrap());
+    assert_eq!(mods::get(m, through).unwrap(), mods::get(m, "projectiles/bazooka.s.gravity").unwrap());
     assert_eq!(mods::get(m, "weapons/bazooka.fire.shot.projectile.spawns.spawn.amount").unwrap(), "12");
     assert_eq!(mods::get(m, r#"weapons/bazooka.fire.shot.projectile.spawns["spawn"].amount"#).unwrap(), "12");
     // A default the file leaves out, a list item, a map entry with spaces.
@@ -103,7 +103,7 @@ fn paths_reach_fields_through_shared_projectiles_and_defaults() {
     assert!(mods::get(m, "weapons/bazooka").unwrap().starts_with("(\n    name: \"Bazooka\""));
     assert!(mods::get(m, "mod.weapons").unwrap().contains("\"zimm\""));
     // Shared ids hold dots: the longest id wins.
-    assert_eq!(mods::get(m, "projectiles/big-nuke.spawn.spawn.gravity").unwrap(), "None");
+    assert_eq!(mods::get(m, "projectiles/big-nuke.s2.gravity").unwrap(), "None");
     assert_eq!(mods::choices(m, "weapons/bazooka.fire").unwrap(), ["Projectile", "Beam", "Special"]);
     assert_eq!(mods::variant(m, "weapons/bazooka.fire").unwrap().as_deref(), Some("Projectile"));
     assert_eq!(
@@ -162,12 +162,10 @@ fn a_cycle_and_two_effects_in_an_event_are_refused_with_a_path() {
     assert_eq!(e[0].path.as_deref(), Some("weapons/bazooka.fire.shot.projectile.hit_worm[1]"));
     assert!(e[0].message.contains("more than one effect per event"), "{}", e[0]);
     let e = errors(
-        mods::set(&mut p, "projectiles/bazooka.spawn.spawns", r#"{"s": (shared: "bazooka.spawn")}"#)
-            .unwrap_err(),
+        mods::set(&mut p, "projectiles/bazooka.s.spawns", r#"{"s": (shared: "bazooka.s")}"#).unwrap_err(),
     );
     assert!(
-        e.iter()
-            .any(|i| i.path.as_deref() == Some("projectiles/bazooka.spawn") && i.message.contains("cycle")),
+        e.iter().any(|i| i.path.as_deref() == Some("projectiles/bazooka.s") && i.message.contains("cycle")),
         "{e:?}"
     );
     assert!(files(&p) == before);
@@ -180,10 +178,10 @@ fn a_cycle_and_two_effects_in_an_event_are_refused_with_a_path() {
 fn a_lenient_set_keeps_the_error_and_the_save_refuses_it() {
     let Some(root) = content() else { return };
     let mut p = load(&root, CLASSIC);
-    let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
-    let new = mods::set_lenient(&mut p, "projectiles/bazooka.spawn.spawns", cycle).unwrap();
+    let cycle = r#"{"s": (shared: "bazooka.s")}"#;
+    let new = mods::set_lenient(&mut p, "projectiles/bazooka.s.spawns", cycle).unwrap();
     assert!(new.iter().any(|i| i.is_error() && i.message.contains("cycle")), "{new:?}");
-    assert!(mods::get(src(&p), "projectiles/bazooka.spawn.spawns").unwrap().contains("bazooka.spawn"));
+    assert!(mods::get(src(&p), "projectiles/bazooka.s.spawns").unwrap().contains("bazooka.s"));
     assert!(mods::check(&p).iter().any(|i| i.is_error() && i.message.contains("cycle")));
     let tmp = tempfile::tempdir().unwrap();
     assert!(matches!(pack::save(&tmp.path().join("x"), &p), Err(pack::SaveError::Invalid(_))));
@@ -207,8 +205,8 @@ fn an_unsaved_mod_reads_as_a_saved_one() {
     let bazooka = m.def.weapons.iter().find(|w| w.id == "bazooka").unwrap();
     let WeaponKind::Projectile { spawn, .. } = &bazooka.kind else { panic!("the bazooka shoots") };
     assert_eq!(spawn.speed, 150);
-    let cycle = r#"{"s": (shared: "bazooka.spawn")}"#;
-    mods::set_lenient(&mut p, "projectiles/bazooka.spawn.spawns", cycle).unwrap();
+    let cycle = r#"{"s": (shared: "bazooka.s")}"#;
+    mods::set_lenient(&mut p, "projectiles/bazooka.s.spawns", cycle).unwrap();
     assert!(matches!(pack::mod_pack(&p), Err(pack::SaveError::Invalid(_))));
 }
 
@@ -284,7 +282,7 @@ fn the_last_weapon_stays() {
 }
 
 /// A weapon of another mod comes with its shared projectiles and files:
-/// MW's fireball names `fireball.spawn.spawn`, whose `gfx/flame.png`
+/// MW's fireball names `fireball.s2`, whose `gfx/flame.png`
 /// differs from Classic's (copied as `gfx/flame-2.png`), and
 /// `gfx/none.png`, the same in both (kept).
 #[test]
@@ -298,8 +296,8 @@ fn a_weapon_of_another_mod_brings_its_projectiles_and_files() {
         m.weapons.last().unwrap().1.name,
         src(&mw).weapons.iter().find(|(id, _)| id == "fireball").unwrap().1.name
     );
-    assert!(m.shared.contains_key("fireball.spawn.spawn"));
-    assert_eq!(mods::get(m, "projectiles/fireball.spawn.spawn.gfx.file").unwrap(), "\"gfx/flame-2.png\"");
+    assert!(m.shared.contains_key("fireball.s2"));
+    assert_eq!(mods::get(m, "projectiles/fireball.s2.gfx.file").unwrap(), "\"gfx/flame-2.png\"");
     let flame2 = olr_vfs::VPath::new("gfx/flame-2.png").unwrap();
     assert_eq!(p.other[&flame2], mw.other[&olr_vfs::VPath::new("gfx/flame.png").unwrap()]);
     assert!(!p.other.contains_key(&olr_vfs::VPath::new("gfx/none-2.png").unwrap()));
@@ -313,7 +311,7 @@ fn a_weapon_of_another_mod_brings_its_projectiles_and_files() {
         None,
     )
     .unwrap();
-    assert!(!src(&p).shared.contains_key("fireball.spawn.spawn-2"));
+    assert!(!src(&p).shared.contains_key("fireball.s2-2"));
 }
 
 #[test]

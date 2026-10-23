@@ -69,7 +69,7 @@
                                         trail: Projectile(
                                             every_s: 5.0,
                                             spawn: (
-                                                shared: "shockstrike.spawn.trail.trail",
+                                                shared: "shockstrike.st2",
                                             ),
                                         ),
                                         hit_terrain: [
@@ -90,7 +90,7 @@
                                                 speed: 250,
                                                 spread: 360.0,
                                                 angle: 90,
-                                                shared: "shockstrike.spawn.spawn.spawn.spawn.trail",
+                                                shared: "shockstrike.s4t",
                                             ),
                                         },
                                     ),
@@ -119,7 +119,7 @@
                                                 speed: 25,
                                                 speed_var: 20.0,
                                                 spread: 360.0,
-                                                shared: "apache.spawn.trail.spawn.spawn.spawn.spawn.trail",
+                                                shared: "apache.sts4t",
                                             ),
                                         ),
                                         hit_terrain: [
@@ -190,7 +190,7 @@
                                                                         amount: 3,
                                                                         speed: 100,
                                                                         spread: 360.0,
-                                                                        shared: "shockstrike.spawn.spawn.spawn.spawn.trail",
+                                                                        shared: "shockstrike.s4t",
                                                                     ),
                                                                 ),
                                                                 hit_terrain: [

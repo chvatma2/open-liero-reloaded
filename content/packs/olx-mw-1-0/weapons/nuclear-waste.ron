@@ -114,7 +114,7 @@
                                                 speed: 400,
                                                 speed_var: 100.0,
                                                 spread: 360.0,
-                                                shared: "nuclear-waste.spawn.spawn.spawn.spawn.trail",
+                                                shared: "nuclear-waste.s4t",
                                             ),
                                         ),
                                         hit_terrain: [
@@ -155,7 +155,7 @@
                                                             speed: 400,
                                                             speed_var: 100.0,
                                                             spread: 360.0,
-                                                            shared: "nuclear-waste.spawn.spawn.spawn.spawn.trail",
+                                                            shared: "nuclear-waste.s4t",
                                                         ),
                                                     ),
                                                     hit_terrain: [
@@ -195,7 +195,7 @@
                                                                         speed: 400,
                                                                         speed_var: 100.0,
                                                                         spread: 360.0,
-                                                                        shared: "nuclear-waste.spawn.spawn.spawn.spawn.trail",
+                                                                        shared: "nuclear-waste.s4t",
                                                                     ),
                                                                 ),
                                                                 hit_terrain: [

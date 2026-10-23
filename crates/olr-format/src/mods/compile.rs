@@ -5,6 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use olr_data::mod_def as rt;
+use olr_data::mod_def::{ChildLink, child_key};
 
 #[cfg(test)]
 use super::spawn::{EventSpawn, ShotSpawn, TrailSpawn};
@@ -398,13 +399,18 @@ impl Compiler<'_> {
             self.fail(path, format!("no spawn named {name:?} (spawns: {})", have.join(", ")));
         }
         let event_spawn = p.spawns.iter().next().map(|(name, s)| {
-            self.spawn(s, &format!("{key}.spawn"), &at(path, &format!("spawns[{name:?}]")), depth)
+            self.spawn(s, &child_key(key, ChildLink::Spawn), &at(path, &format!("spawns[{name:?}]")), depth)
         });
         let trail = match &p.trail {
             Trail::Projectile { every_s, spawn } => rt::TrailDef {
                 kind: rt::TrailKind::Projectile,
                 delay: *every_s,
-                spawn: Some(self.spawn(spawn, &format!("{key}.trail"), &at(path, "trail.spawn"), depth)),
+                spawn: Some(self.spawn(
+                    spawn,
+                    &child_key(key, ChildLink::Trail),
+                    &at(path, "trail.spawn"),
+                    depth,
+                )),
             },
             other => rt::TrailDef {
                 kind: match other {
@@ -725,13 +731,13 @@ mod tests {
         }))
         .unwrap();
         let keys: Vec<&str> = def.projectiles.keys().map(String::as_str).collect();
-        assert_eq!(keys, ["gun", "gun.spawn", "gun.trail"]);
+        assert_eq!(keys, ["gun", "gun.s", "gun.t"]);
         let gun = &def.projectiles["gun"];
         assert_eq!(gun.hit.kind, rt::ActionKind::Explode);
         assert_eq!((gun.hit.damage, gun.hit.shake, gun.hit.spawns_projectiles), (4, 2, true));
         assert_eq!(gun.hit.sound.as_deref(), Some("sfx/x.ogg"));
         assert_eq!(gun.player_hit, rt::ActionDef::olx_default(rt::ActionKind::Nothing));
-        assert_eq!(gun.event_spawn.as_ref().unwrap().projectile, "gun.spawn");
+        assert_eq!(gun.event_spawn.as_ref().unwrap().projectile, "gun.s");
         assert_eq!(gun.event_spawn.as_ref().unwrap().amount, 5);
         assert_eq!(gun.trail.kind, rt::TrailKind::Projectile);
         assert_eq!(gun.trail.delay, 0.04);
