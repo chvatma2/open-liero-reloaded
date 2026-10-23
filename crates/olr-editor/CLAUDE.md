@@ -63,9 +63,7 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   `open` gives a plain level its three drawn layers (`olr_edit::compose::
   split_from`: `background`, `dirt`, `rock`, which bake back to its files
   byte for byte, the playtest's request: a loaded map can be erased and
-  painted) and rebakes; a level holding layer folders (issue #59) does not
-  open (`FOLDERS_REFUSED`, `a_level_with_folders_does_not_open_yet`)
-  until the document edits them (issue #60); `split(id)` turns a raster element into the same
+  painted) and rebakes; `split(id)` turns a raster element into the same
   three layers in its place (`EditorAction::Split`, the properties' "Split
   into layers": one step); `to_pack`
   (or a `snapshot()`'s, which a thread may make: `PackSnapshot`) encodes
@@ -353,6 +351,43 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     options: the brush, its Material (`BRUSH_MATERIAL`, "Element's" or
     the level's) in a fixed slot, then Front and Back when the selected
     element has back art. Save as asset and Play needed no change.
+- **Layer folders** (issue #60; STATUS.md "Layer folders"; the format
+  and every tree computation are issue #59's `olr_edit::folders`, never
+  duplicated here):
+  - **Document**: `folders` beside `items`; one emptied by a removal or a
+    flat move may stay listed (its undo finds it): `composition()`
+    (saved, checked: `check_extra`, `diagnostics`) and `folders()` are
+    tidied (`document::tidied`). `shown_at(i)`, `locked_at(i)`: the
+    effective flags (`folder_view()`, the folders as a composition
+    without elements). `rebake` bakes the folded `visible` when a folder
+    is hidden (`baked_elements`) and compares the distant items so;
+    `grid_key`, `image_grid` follow the element's own. Every lock check
+    (`unlocked`, `none_locked`, `with_property`'s `locked`, `look_change`,
+    the pointer) is effective; `hit` and `overlays()` skip or mark by the
+    effective flags.
+  - **Edits**: `Edit::Folders { before, after }` (the whole list; apply
+    rebakes the members whose visibility changed); `Move { from, to,
+    before, after }` carries the moved element's folder; an `Element`
+    edit of its folder rebakes only when its visibility changes.
+  - **Operations** (`folder_ops.rs`, each one step): `group(ids, name)`,
+    `ungroup`, `move_into(id, into, position)` (through `restructure`:
+    the folder list, the moves, each changed element), `set_folder(id,
+    FolderField)` (a locked folder takes only `Locked`, `Collapsed`),
+    `remove_folder` (its elements, refused while one is locked),
+    `duplicate(id)` (directly above, same folder); `move_to` (the flat
+    list) joins the innermost folder holding both new neighbours, or
+    keeps one of its own at a folder's edge (`landing_folder`); `split`
+    parts take the folder, `merge_down` keeps the lower's, `set_distant`
+    leaves folders. `is_folder`, `folder_members`.
+  - **Clipboard and assets**: `Clipboard::Elements { folders }`
+    (`copy_tree`: a folder all of whose elements are copied comes with
+    its subtree; `paste_tree`: new ids, names `copy_name`d when taken,
+    the block on top outside the level's folders; `copy` is flat);
+    `place_asset` groups two pieces or more into a folder named after
+    the asset (`Placed::folder`); the pieces cut by `asset_of_*` carry
+    the effective `visible`. `EditorState::group` takes a folder id as
+    its elements. Test: `tests/folders.rs`, and the history proptest's
+    folder operations.
 - **Tests** (`tests/`, one binary): `asset.rs` (issue #9: save, the name
   clash, the rectangle unclipped and hidden layers left out, placing as one
   step with lighting added, join and add, Remove, Import, and the

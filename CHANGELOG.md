@@ -127,8 +127,10 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   object's pieces are moved, hidden and locked together.
   `olr-cli level element group`, `ungroup` and `set --folder` make and
   change them, `list` shows the tree, and placing an asset of several
-  pieces puts them in a folder named after it. The level editor edits
-  them in a later build; until then it does not open a level holding them.
+  pieces puts them in a folder named after it. The level editor opens and
+  saves them, undoes every folder change, copies and pastes a folder with
+  its subfolders, and places an asset of several pieces in a folder; its
+  Elements list shows them as a tree in a later build.
 
 ### Changed
 

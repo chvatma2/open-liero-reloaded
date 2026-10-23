@@ -5552,8 +5552,53 @@ Elements tree and canvas. As built in part 1, the builder's calls:
   leaves its folders. Assets carry no folders (`asset::plain` and `land`
   clear them; `check_asset` refuses one); placing an asset of two pieces
   or more puts them in a new folder named after it.
-- **The editor** does not edit folders before part 2: a level holding
-  them does not open (`FOLDERS_REFUSED`), so no save drops them.
+- **The editor** (part 2, issue #60; no new UI before part 3):
+  - **The document** holds `folders` beside `items` and saves them with
+    the composition (save, `to_pack`, `PackSnapshot`, every check). A
+    folder a removal or a flat move emptied stays in the list, so its
+    undo finds it; `composition()` (what is saved and checked) leaves
+    such folders out and lists the rest canonically (`folders::tidy`), so
+    removal and the flat move stay one edit each (`Change`, as before).
+  - **Effective flags:** the rebake bakes the folded `visible` (only when
+    a folder is hidden) and compares the distant items so folded, so
+    hiding a folder of distant layers makes them again; decoding and the
+    image grids follow the element's own `visible`, so a folder toggle
+    only rebakes. Every lock check of the document and the canvas reads
+    the effective lock (`locked_at`; `with_property` takes it), `hit`
+    and the overlays the effective visibility (`shown_at`).
+  - **Edits:** `Edit::Folders { before, after }` swaps the whole folder
+    list, rebaking the members whose visibility changed; an element's
+    `folder` travels in its `Element` edit or in `Move { from, to,
+    before, after }`. Group, ungroup and moves into or out of a folder
+    are `olr_edit::folders`' on the composition, carried out by
+    `restructure` (the folder list, then the moves, then each changed
+    element): one step each.
+  - **The flat move** (the Elements list's drag, `move_to`) lands the
+    element in the innermost folder holding both its new neighbours;
+    at a folder's edge it stays in a folder it was already in (a reorder
+    at the edge of its folder keeps it in), else it is outside. Every
+    folder stays one block.
+  - **Folder fields** (`FolderField`: name, visible, locked, collapsed):
+    a locked folder, or one in a locked folder, takes only its lock and
+    its folding. Removing a folder removes its elements (refused while
+    any is locked) and drops it in the same step.
+  - **Split** parts take the element's folder, **merge down** keeps the
+    lower layer's, **duplicate** (`Document::duplicate`, no UI yet)
+    places the copy directly above in the same folder, and an element
+    made distant or no longer leaves its folders, as part 1's pack
+    operations; split and merge see a hidden folder's members as hidden.
+  - **Clipboard:** `copy_tree` copies a folder all of whose elements
+    are copied (a folder id stands for its elements), with its subtree;
+    the copies name only copied folders. A paste (`paste_tree`) makes
+    them anew (new ids, a name taken gets `copy_name`d) and lands the
+    block on top, outside every folder of the level's. `copy` stays
+    flat.
+  - **Assets:** placing one of two pieces or more groups them into a
+    folder named after it in the same step; the editor selects its
+    elements (part 3 selects the folder). Save as asset saves the pieces
+    flat (`plain`), a hidden folder's members cut as hidden.
+  - **Selection** is unchanged (`Element`, `Many`); `EditorState::group`
+    takes a folder id as its elements rather than dropping it.
 - **`olr-cli level element list`** prints a folder as `folder <id>[
   "<name>"][ hidden][ locked][ collapsed]` before its first member,
   members indented two spaces per folder; a level without folders prints
