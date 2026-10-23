@@ -7,12 +7,13 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use clap::{Subcommand, ValueEnum};
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_data::manifest::PackManifest;
-use olr_edit::level::{self, Layer, Paint, Shape, Solid};
+use olr_edit::level::{self, Layer, Paint, Shape, Solid, StampMask};
 use olr_edit::pack::{Pack, Source, load};
 use olr_format::image_io::{IMAGES, LEVEL_ART, check_size, decode_rgba_within, encode_rgba};
 use olr_format::levels::{LevelObject, LevelSource, MATERIAL_PALETTE};
@@ -163,15 +164,25 @@ pub(crate) struct ShapeArgs {
     /// A circle X,Y,R.
     #[arg(long, value_parser = parse_ints::<3>, allow_hyphen_values = true)]
     circle: Option<[i32; 3]>,
+    /// A PNG laid on the level from its top-left, one pixel per world
+    /// pixel: its pixels neither black nor transparent (issue #63).
+    #[arg(long, value_parser = parse_mask)]
+    mask: Option<Arc<StampMask>>,
 }
 
 impl ShapeArgs {
     pub(crate) fn shape(&self) -> Shape {
-        match (self.rect, self.circle) {
-            (Some([x, y, w, h]), _) => Shape::Rect { x, y, w, h },
-            (None, Some([cx, cy, r])) => Shape::Circle { cx, cy, r },
+        match (self.rect, self.circle, &self.mask) {
+            (Some([x, y, w, h]), ..) => Shape::Rect { x, y, w, h },
+            (None, Some([cx, cy, r]), _) => Shape::Circle { cx, cy, r },
+            // A stamp lies centred: half its size from the origin puts its
+            // top-left there.
+            (None, None, Some(mask)) => {
+                let half = |v: u32| i32::try_from(v / 2).unwrap_or(i32::MAX);
+                Shape::Stamp { x: half(mask.size.0), y: half(mask.size.1), scale: 1, mask: mask.clone() }
+            }
             // clap's group requires one.
-            (None, None) => Shape::Rect { x: 0, y: 0, w: 0, h: 0 },
+            (None, None, None) => Shape::Rect { x: 0, y: 0, w: 0, h: 0 },
         }
     }
 }
@@ -280,6 +291,12 @@ fn parse_image(s: &str) -> Result<RgbaImage, String> {
         return Err(format!("{s}: an empty image"));
     }
     Ok(img)
+}
+
+/// A mask PNG (`--mask`), read and decoded as `parse_image` does: covered
+/// where neither black nor transparent, as a theme hole.
+fn parse_mask(s: &str) -> Result<Arc<StampMask>, String> {
+    Ok(Arc::new(StampMask::from_hole(&parse_image(s)?)))
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {

@@ -704,3 +704,47 @@ fn cli_groups_elements_into_folders() {
     assert!(String::from_utf8_lossy(&o.stderr).contains("not a folder"), "{o:?}");
     assert_eq!(tree(&pack), before);
 }
+
+/// Issue #63: `erase --mask` clears a drawn layer's pixels where a PNG laid
+/// from the level's top-left is neither black nor transparent.
+#[test]
+fn erase_by_a_mask_image() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    let mut img = RgbaImage::new(101, 120);
+    for y in 0..120 {
+        for x in 0..101 {
+            img.set(x, y, Rgba::rgb(0, 0, 0));
+        }
+    }
+    // Two white pixels inside the cave's circle, and a transparent one.
+    img.set(100, 100, Rgba::rgb(255, 255, 255));
+    img.set(95, 104, Rgba::rgb(255, 255, 255));
+    img.set(97, 97, Rgba::TRANSPARENT);
+    let mask = tmp.path().join("mask.png");
+    std::fs::write(&mask, olr_format::image_io::encode_rgba(&img)).unwrap();
+    let out = cli(
+        &[
+            "level",
+            "element",
+            "erase",
+            "{pack}",
+            "cave",
+            "--mask",
+            mask.to_str().unwrap(),
+            "--content",
+            "{content}",
+        ],
+        &pack,
+        &content,
+    );
+    ok(&out);
+    let art = olr_format::image_io::decode_rgba(&std::fs::read(pack.join("editor/layers/cave.png")).unwrap())
+        .unwrap();
+    for (x, y, covered) in
+        [(100, 100, false), (95, 104, false), (97, 97, true), (99, 100, true), (101, 100, true)]
+    {
+        assert_eq!(art.get(x, y).a != 0, covered, "({x}, {y})");
+    }
+    ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+}

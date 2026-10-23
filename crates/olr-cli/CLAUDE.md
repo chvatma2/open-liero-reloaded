@@ -31,8 +31,11 @@ The headless command-line tool. Its commands:
   operation, refreshes `thumb.png` and saves through
   `olr_edit::pack::save`; a refused operation writes nothing. Arguments
   are strict clap values naming their flag on error: `--rect X,Y,W,H`,
-  `--circle X,Y,R`, `--at X,Y`, `--offset DX,DY` (negative values
-  allowed), colours `RRGGBB` or `#RRGGBB`, `--tile`/`--image` PNGs read
+  `--circle X,Y,R`, `--mask FILE` (issue #63: a PNG laid from the
+  level's top-left covering its pixels neither black nor transparent, a
+  `Shape::Stamp`; every shape takes it, `level element draw|erase`
+  too), `--at X,Y`, `--offset DX,DY` (negative values
+  allowed), colours `RRGGBB` or `#RRGGBB`, `--tile`/`--image`/`--mask` PNGs read
   and decoded within `IMAGES` while parsing (regular files only, read at
   most `MAX_FILE_BYTES`). Messages print only once the save succeeded:
   `resize` prints `dropped: Spawn at (x, y)` per object it drops,
@@ -100,7 +103,7 @@ The headless command-line tool. Its commands:
   `tests/element.rs` (plan 15a:
   `cli_sets_and_paints_glow`, `cli_glows_pixels_by_colour`,
   `cli_sets_clear`; issue #11: `cli_sets_and_clears_distant`; issue #62:
-  `cli_glows_a_distant_layer`; issue #59:
+  `cli_glows_a_distant_layer`; issue #63: `erase_by_a_mask_image`; issue #59:
   `cli_groups_elements_into_folders`).
 - `olr-cli level look <pack> [--ambient RRGGBB:PCT] [--occlusion
   S[,R] | --no-occlusion] [--max-light P]
