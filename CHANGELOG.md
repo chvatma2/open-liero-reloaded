@@ -123,6 +123,12 @@ and Liero Factory Reloaded and Liero v1.0 Reloaded
   get the new keys; digits typed in the in-game chat select nothing.
   Online play, replays and desync bundles from earlier builds are not
   compatible.
+- **Layer folders** in a level's composition, nested to any depth: an
+  object's pieces are moved, hidden and locked together.
+  `olr-cli level element group`, `ungroup` and `set --folder` make and
+  change them, `list` shows the tree, and placing an asset of several
+  pieces puts them in a folder named after it. The level editor edits
+  them in a later build; until then it does not open a level holding them.
 
 ### Changed
 

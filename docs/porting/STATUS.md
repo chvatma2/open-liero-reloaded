@@ -5487,6 +5487,78 @@ the builder's calls:
   0 there), so a material's own soak shows as the hot rim's light seeping
   in.
 
+## Layer folders (issues #59, #60, #61)
+
+No OLX counterpart. A level's composition gains nested layer folders, so
+an object's pieces (a desk with its PC and chair, a lamp and its glow
+layer) are selected, moved, hidden and locked together. Named folders
+throughout: "group" is the look's glow groups. Part 1 (issue #59) is the
+format, `olr_edit::folders`, the bake and `olr-cli`; part 2 (#60) the
+editor's document, history, clipboard and assets; part 3 (#61) its
+Elements tree and canvas. As built in part 1, the builder's calls:
+
+- **The format:** `Composition::folders` (`Folder { id, name, visible,
+  locked, collapsed, parent }`) beside `elements`, which stays the
+  bottom-to-top list every bake walks; `Element::folder` its innermost
+  folder. Both are left out when empty, so a composition without folders
+  reads and writes byte for byte as before (every committed one, a
+  test).
+- **The rules are the format's** (`check_folders`, run by
+  `check_elements`, so by every load and every pack edit): one id
+  namespace with the elements; every reference known; no cycle, at most
+  `MAX_FOLDER_DEPTH` 16 deep and `MAX_FOLDERS` 256; every folder one
+  contiguous run of `elements` and never empty; distant elements never
+  in a folder with ordinary ones; `folders` in the canonical order (by
+  run start, a parent before its children). The order is a rule, not a
+  normalisation on read: a hand-written file listing them otherwise is
+  refused with a message naming the folder, so equal trees always save
+  alike. `olr_edit::folders` re-exports the check and the bounded walk
+  (`folder_chain`) rather than holding a copy: the format, a lower layer,
+  needs them for the load.
+- **The tree operations** (`olr_edit::folders`) build the tree from the
+  runs, edit it and write it flat again, which drops every folder left
+  empty and lists the rest canonically; a result breaking a rule (or the
+  distant layers' order) is refused and the composition left as it was.
+  Every pack operation runs `tidy` after its edit, so one emptying a
+  folder removes it in the same step.
+- **Group** puts the new folder inside the innermost folder all members
+  share; a member lying in another selected folder goes with it; members
+  not one block move to the topmost member's place, or, when that member
+  lies in a subfolder of the shared folder, just above that subfolder.
+  The name defaults to the first free "Folder n".
+- **Raise and lower** swap an element or a folder (its whole run) with
+  its neighbouring sibling, so an element below a folder jumps past the
+  folder's run; at a folder's edge an element or subfolder leaves it,
+  landing just outside (the stack unchanged); the top and bottom stay.
+  Distant layers stay below the rest (`DISTANT_ORDER`).
+- **Move** (`set --folder`): into a folder on top of it, at a position
+  when given; out to a folder holding it (`none`: the top level) just
+  above the folder it leaves.
+- **Locks** (plan 14d R4): an element is locked when it or any folder
+  holding it is, which refuses its content changes (`set` but `Locked`,
+  draw, erase, fill, masks, glow, surfaces, merge, split, remove); group,
+  ungroup, move and reorder are allowed. A locked folder takes only
+  `Locked` itself (as an element), and removing a folder is refused while
+  any member is locked.
+- **The bake** reads effective flags (`folders::fold`: shown when it and
+  every folder holding it are visible, locked when any is): `Baker`
+  bakes folded clones, and `DecodedLevel::of_pack` cuts assets from
+  them. Decoding follows the element's own `visible`, so hiding or
+  showing a folder rebakes and never decodes again (a hidden folder's
+  pictures are still processed; a test).
+- **Other operations:** `split`'s parts take the element's folder,
+  `merge_down` the lower element's, `duplicate` places the copy directly
+  above in the same folder; an element made (or made no longer) distant
+  leaves its folders. Assets carry no folders (`asset::plain` and `land`
+  clear them; `check_asset` refuses one); placing an asset of two pieces
+  or more puts them in a new folder named after it.
+- **The editor** does not edit folders before part 2: a level holding
+  them does not open (`FOLDERS_REFUSED`), so no save drops them.
+- **`olr-cli level element list`** prints a folder as `folder <id>[
+  "<name>"][ hidden][ locked][ collapsed]` before its first member,
+  members indented two spaces per folder; a level without folders prints
+  exactly as before.
+
 ## Every screen fits (issue #49)
 
 No OLX counterpart (OLX's menus are a fixed 640 × 480). Every menu
