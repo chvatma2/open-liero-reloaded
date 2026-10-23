@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use olr_edit::compose::Rect;
 use olr_edit::element::{copy_name, new_element_id};
-use olr_edit::folders::{self, FolderError, folder_chain};
+use olr_edit::folders::{self, FolderError, Node, folder_chain};
 use olr_format::levels::{
     Composition, Element, ElementKind, Folder, check_elements, surface_back_file, surface_file,
 };
@@ -30,6 +30,46 @@ pub enum FolderField {
     Locked(bool),
     /// Folded shut in the Elements list (the editor's only).
     Collapsed(bool),
+}
+
+/// One row of the Elements list (issue #61), top first: an element or a
+/// folder, `depth` folders deep (0 at the top level). A folded folder's
+/// members have no row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Row {
+    pub id: String,
+    pub folder: bool,
+    pub depth: usize,
+}
+
+/// Where a row dragged in the Elements list lands (issue #61): above or
+/// below another row (in the list, top first), in that row's folder, or
+/// into a folder, at its top.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RowDrop {
+    Above(String),
+    Below(String),
+    Into(String),
+}
+
+/// The id of a tree node (none for `group`'s slot).
+fn node_id(n: &Node) -> Option<&str> {
+    match n {
+        Node::Element(e) => Some(&e.id),
+        Node::Folder(f, _) => Some(&f.id),
+        Node::Slot => None,
+    }
+}
+
+/// The children of folder `parent` in `nodes` (the top level for none),
+/// bottom to top; none for a folder not in the tree.
+fn children_of<'a>(nodes: &'a [Node], parent: Option<&str>) -> Option<&'a [Node]> {
+    let Some(p) = parent else { return Some(nodes) };
+    nodes.iter().find_map(|n| match n {
+        Node::Folder(f, kids) if f.id == p => Some(&kids[..]),
+        Node::Folder(_, kids) => children_of(kids, Some(p)),
+        _ => None,
+    })
 }
 
 /// A refusal of `olr_edit::folders` as the document's.
@@ -51,6 +91,109 @@ impl Document {
     pub fn folder_members(&self, id: &str) -> Vec<String> {
         let c = self.composition();
         folders::members(&c, id).into_iter().map(|i| c.elements[i].id.clone()).collect()
+    }
+
+    /// The folder holding element or folder `id` directly; none at the top
+    /// level or for an unknown id.
+    pub fn parent_of(&self, id: &str) -> Option<String> {
+        match self.index_of(id) {
+            Some(i) => self.items[i].element.folder.clone(),
+            None => self.folders.iter().find(|f| f.id == id)?.parent.clone(),
+        }
+    }
+
+    /// The folders holding element or folder `id`, outermost first (none
+    /// at the top level).
+    pub fn folders_holding(&self, id: &str) -> Vec<String> {
+        let view = self.folder_view();
+        let mut chain: Vec<String> =
+            folder_chain(&view, self.parent_of(id).as_deref()).into_iter().map(|f| f.id.clone()).collect();
+        chain.reverse();
+        chain
+    }
+
+    /// The elements and folders folder `id` holds directly (the top level's
+    /// for none), bottom to top.
+    pub fn children(&self, id: Option<&str>) -> Vec<String> {
+        let Ok(nodes) = folders::tree(&self.composition()) else { return Vec::new() };
+        children_of(&nodes, id)
+            .map_or_else(Vec::new, |kids| kids.iter().filter_map(node_id).map(String::from).collect())
+    }
+
+    /// The Elements list's rows, top first (issue #61): the tree, each
+    /// folder's children under its row, a folded folder's left out.
+    pub fn rows(&self) -> Vec<Row> {
+        fn walk(nodes: &[Node], depth: usize, out: &mut Vec<Row>) {
+            for n in nodes.iter().rev() {
+                match n {
+                    Node::Element(e) => out.push(Row { id: e.id.clone(), folder: false, depth }),
+                    Node::Folder(f, kids) => {
+                        out.push(Row { id: f.id.clone(), folder: true, depth });
+                        if !f.collapsed {
+                            walk(kids, depth + 1, out);
+                        }
+                    }
+                    Node::Slot => {}
+                }
+            }
+        }
+        let mut out = Vec::new();
+        match folders::tree(&self.composition()) {
+            Ok(nodes) => walk(&nodes, 0, &mut out),
+            // Never for a checked document: the elements flat.
+            Err(_) => out.extend(self.items.iter().rev().map(|i| Row {
+                id: i.element.id.clone(),
+                folder: false,
+                depth: 0,
+            })),
+        }
+        out
+    }
+
+    /// Moves element or folder `id` where a row dropped in the Elements
+    /// list lands (`RowDrop`, through `move_into`): one step, refused when
+    /// the result would break a folder rule or the distant layers' order.
+    pub fn drop_row(&mut self, id: &str, at: &RowDrop) -> Result<(Vec<Edit>, Rect), DocError> {
+        let (row, above) = match at {
+            // On top of the folder: past its last child.
+            RowDrop::Into(f) => return self.move_into(id, Some(f), Some(usize::MAX)),
+            RowDrop::Above(r) => (r, true),
+            RowDrop::Below(r) => (r, false),
+        };
+        if row == id {
+            return Ok((Vec::new(), NOTHING));
+        }
+        let parent = self.parent_of(row);
+        // The row's place among its siblings once `id` has left them.
+        let siblings: Vec<String> =
+            self.children(parent.as_deref()).into_iter().filter(|s| s != id).collect();
+        let Some(k) = siblings.iter().position(|s| s == row) else {
+            return Err(DocError::NoElement(row.clone()));
+        };
+        self.move_into(id, parent.as_deref(), Some(if above { k + 1 } else { k }))
+    }
+
+    /// Removes elements and folders `ids` (a folder with everything it
+    /// holds): one step's edits (applied) and the rectangle rebaked; refused
+    /// while any of them is locked, naming it. The folders left empty go in
+    /// the same step.
+    pub fn remove_items(&mut self, ids: &[String]) -> Result<(Vec<Edit>, Rect), DocError> {
+        let mut members: Vec<String> = Vec::new();
+        for id in ids {
+            match self.index_of(id) {
+                Some(_) => members.push(id.clone()),
+                None if self.is_folder(id) => members.extend(self.folder_members(id)),
+                None => return Err(DocError::NoElement(id.clone())),
+            }
+        }
+        members.sort();
+        members.dedup();
+        let (mut edits, dirty) = self.remove_many(&members)?;
+        let after = self.composition().folders;
+        if after != self.folders {
+            edits.push(self.change(Edit::Folders { before: self.folders.clone(), after }).edit);
+        }
+        Ok((edits, dirty))
     }
 
     /// The folder an element moved from index `from` to `to` (the flat
@@ -197,14 +340,7 @@ impl Document {
         if !self.is_folder(id) {
             return Err(DocError::NoElement(id.into()));
         }
-        let members = self.folder_members(id);
-        let (mut edits, dirty) = self.remove_many(&members)?;
-        // The folders left empty go in the same step.
-        let after = self.composition().folders;
-        if after != self.folders {
-            edits.push(self.change(Edit::Folders { before: self.folders.clone(), after }).edit);
-        }
-        Ok((edits, dirty))
+        self.remove_items(&[id.to_string()])
     }
 
     /// A copy of element `id` directly above it, in its folder (as
