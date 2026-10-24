@@ -97,10 +97,12 @@ GPU, and 120 FPS at 4K on any dedicated GPU of the last ten years.
    next run prints the change against the saved one, so an optimization shows
    its gain or loss per stage.
 6. **A check against the game.** The tool saves the staged fight as a replay
-   the game can play. The maintainer plays it once in the game (`olr --replay
-   f.olrp`, fullscreen 3440×1440; the session does not take over their screen
-   itself), and the first report sets the frame times the game logs when it
-   quits (read from its Windows log folder) beside the tool's. If the game is much slower than the tool says, the
+   the game can play. The session plays it in the Windows build of the game
+   (`olr.exe --replay f.olrp`, fullscreen 3440×1440, the maintainer's settings,
+   quitting by itself at the replay's end, for example through the game's
+   `--autoplay` scripting), and the first report sets the frame times the game
+   logs when it quits beside the tool's. The maintainer agreed to stay off the
+   PC for that run; the session says when it starts and when it is done. If the game is much slower than the tool says, the
    gap (the HUD's egui drawing, presenting, the game loop) is itself a finding,
    and timing it inside the game is a follow-up, not part of this work.
 7. **One first report.** Once the tool exists, it is run on the RTX 5070 Ti,
