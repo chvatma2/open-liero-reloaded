@@ -3831,6 +3831,12 @@ counterpart (OLX draws no light). As built:
 
 ## Glowing light (plan 15c)
 
+- **Render profile (2026-10-24):** `cargo xtask profile` ranks a heavy
+  lit frame's costs by phase (`docs/perf/2026-10-24-render-profile.md`):
+  the glow light's cascades are 78 to 90 % of every frame on the RTX 5070
+  Ti and on the integrated GPU, whatever the output size; the heat's own
+  passes are nearly free.
+
 Spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`, plan
 `docs/superpowers/plans/2026-10-19-plan-15c-glowing-light.md`, as built
 (the spec's "My calls" are binding; the user approved the day renders,
