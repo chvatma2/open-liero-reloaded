@@ -102,6 +102,7 @@ impl LookTextures {
                 texels,
                 s.tables.clone()?,
                 &self.solid_view,
+                olr_look::engine::BACK_DEPTH_PX,
             ))
         });
         self.set_soak(device, queue, soak_layout, surface);

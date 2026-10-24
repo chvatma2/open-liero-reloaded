@@ -1,8 +1,9 @@
 // Heat (issue #39): the materials table and what the heat passes and their
 // readers share. HEAT_SCALE (texel units a degree), HEAT_MAX, RAMP_BINS,
-// HEAT_CAST, HEAT_REACH, MAX_COUPLING, COOL_RATE, COOL_MIN, BULK, BACK_HEAT,
-// HEAT_SKIN, HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS, HEAT_WALK_STEPS and
-// MAX_HEAT_DEPOSITS are prepended from the Rust constants (`heat.rs`).
+// HEAT_CAST, HEAT_REACH, MAX_COUPLING, COOL_RATE, COOL_MIN, BULK,
+// HEAT_SKIN, HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS, DIRT_SKIN, DIRT_HEAT_GAIN,
+// DIRT_SKIN_WEIGHTS, HEAT_WALK_STEPS and MAX_HEAT_DEPOSITS are prepended
+// from the Rust constants (`heat.rs`).
 
 // One material value's: `a` its gain (degrees a deposit's degree gives it),
 // conduction, 1 / capacity (0: it holds no heat), cooling; `b.x` the share
@@ -14,7 +15,8 @@ struct HeatMaterial {
 
 struct HeatParams {
     // heat texture width, height, 1 while anything may be hot (else no
-    // reader looks), 0
+    // reader looks), how far a back pixel lies behind the deposits' plane,
+    // world pixels (issue #65: the level's 14, a distant layer's 0)
     head: vec4<f32>,
     // a surface map value's (0 none)
     mats: array<HeatMaterial, 256>,

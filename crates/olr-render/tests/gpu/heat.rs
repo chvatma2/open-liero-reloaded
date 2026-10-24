@@ -1,9 +1,10 @@
 //! Heat (issue #39): the heat texture, its step, its look and its light.
 
+use olr_look::engine::BACK_DEPTH_PX;
 use olr_look::{Heat, LookFrame, RampKey, SurfaceMaps, SurfaceMaterial, ViewMode};
 use olr_render::{
-    BACK_HEAT, HEAT_SCALE, HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS, HEAT_STEP_MS, HeatDeposit, HeatView,
-    MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer,
+    DIRT_HEAT_GAIN, DIRT_SKIN, DIRT_SKIN_WEIGHTS, HEAT_SCALE, HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS,
+    HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer,
 };
 
 use super::*;
@@ -72,12 +73,24 @@ fn heated(gpu: &Offscreen) -> Renderer {
     r
 }
 
-/// Issue #56: a 120 × 90 level like [`map`], dirt but for open air where
+/// [`map`] lit in rock (issue #65: the tests of rock's rim), with
+/// [`materials`] on [`maps`].
+fn heated_rock(gpu: &Offscreen) -> Renderer {
+    heated_level(gpu, &map_of(Material::Rock))
+}
+
+/// Issue #56: a 120 × 90 level like [`map`], `fill` (issue #65: rock for
+/// the tests of rock's rim, dirt for dirt's) but for open air where
 /// `open(x, y)` (world pixels) and in the last ten rows.
-fn level(open: impl Fn(u32, u32) -> bool) -> ColorMap {
+fn level(fill: Material, open: impl Fn(u32, u32) -> bool) -> ColorMap {
     let cells = (0..120 * 90)
-        .map(|i| if i / 120 >= 80 || open(i % 120, i / 120) { Material::Background } else { Material::Dirt })
+        .map(|i| if i / 120 >= 80 || open(i % 120, i / 120) { Material::Background } else { fill })
         .collect();
+    level_of_cells(cells)
+}
+
+/// A 120 × 90 level like [`map`] of `cells` (row by row).
+fn level_of_cells(cells: Vec<Material>) -> ColorMap {
     let t = Terrain::from_grid(&MaterialGrid::from_cells(120, 90, cells).unwrap());
     let mut front = RgbaImage::new(240, 180);
     for y in 0..180 {
@@ -90,9 +103,9 @@ fn level(open: impl Fn(u32, u32) -> bool) -> ColorMap {
     ColorMap::new(&t, &front, &solid(240, 180, Rgba::rgb(0, 0, 40)), 2, theme)
 }
 
-/// Issue #56: a [`level`] open above row 40, its face.
+/// Issue #56: a rock [`level`] open above row 40, its face.
 fn surface() -> ColorMap {
-    level(|_, y| y < 40)
+    level(Material::Rock, |_, y| y < 40)
 }
 
 /// `map` lit, with [`materials`] on [`maps`].
@@ -110,6 +123,15 @@ fn falloff(d: HeatDeposit, x: usize, y: usize) -> f32 {
     let (dx, dy) = (x as f32 + 0.5 - d.pos[0], y as f32 + 0.5 - d.pos[1]);
     let q = (dx * dx + dy * dy) / (d.radius * d.radius);
     if q < 1.0 { d.amount * (1.0 - q) } else { 0.0 }
+}
+
+/// Issue #65: what deposit `d` gives a back pixel at world pixel `(x, y)`
+/// (stone, in sight), degrees: the ball's slice [`BACK_DEPTH_PX`] behind
+/// its plane.
+fn slice(d: HeatDeposit, x: usize, y: usize) -> f32 {
+    let (dx, dy) = (x as f32 + 0.5 - d.pos[0], y as f32 + 0.5 - d.pos[1]);
+    let z = BACK_DEPTH_PX;
+    d.amount * (1.0 - (dx * dx + dy * dy + z * z) / (d.radius * d.radius)).max(0.0)
 }
 
 /// Issue #56: whether `got` is `want` to the texel units' rounding.
@@ -261,11 +283,11 @@ fn sensitivity_zero_never_heats() {
 
 /// Heat cools to nothing (the rim beside the air first), the boxes go
 /// and the passes stop. (Issue #56: the blast lies in the air below the
-/// dirt's face, where it lay inside the dirt and heated it deep.)
+/// rock's face, where it lay inside the dirt and heated it deep.)
 #[test]
 fn heat_cools_to_nothing() {
     let Some(gpu) = offscreen() else { return };
-    let mut r = heated(&gpu);
+    let mut r = heated_rock(&gpu);
     r.deposit_heat(blast(20.0, 82.0, 8.0));
     frame(&gpu, &mut r, &dark());
     let start = temps(&gpu, &r);
@@ -409,17 +431,134 @@ fn running_heat_between_frames_equals_a_frame_a_tick() {
 }
 
 /// Issue #40: a back pixel (no rock or dirt: [`map`] below row 80, its
-/// back stone left of 40) takes [`BACK_HEAT`] of a deposit, a front pixel
-/// all of it.
+/// back stone left of 40) takes a share of a deposit, a front pixel all
+/// of it. Issue #65: the share is the ball's slice 14 pixels back.
 #[test]
 fn the_back_takes_a_share_of_a_deposit() {
     let Some(gpu) = offscreen() else { return };
-    let mut r = heated(&gpu);
-    r.deposit_heat(HeatDeposit { pos: [20.5, 40.5], radius: 4.0, amount: 800.0 });
-    r.deposit_heat(HeatDeposit { pos: [20.5, 85.5], radius: 4.0, amount: 800.0 });
+    let mut r = heated_rock(&gpu);
+    r.deposit_heat(HeatDeposit { pos: [20.5, 40.5], radius: 20.0, amount: 800.0 });
+    r.deposit_heat(HeatDeposit { pos: [20.5, 85.5], radius: 20.0, amount: 800.0 });
     frame(&gpu, &mut r, &dark());
     let t = temps(&gpu, &r);
-    assert_eq!((at(&t, 20, 40), at(&t, 20, 85)), (800.0, 800.0 * BACK_HEAT));
+    assert_eq!(at(&t, 20, 40), 800.0);
+    assert!(near(at(&t, 20, 85), 800.0 * (1.0 - 196.0 / 400.0)), "the back: {}", at(&t, 20, 85));
+}
+
+/// Issue #65: the back wall lies [`BACK_DEPTH_PX`] behind the blast's
+/// plane and takes the ball's slice there: a circle of radius `sqrt(R² −
+/// 14²)` whose pixels take `amount × (1 − (d² + 14²) / R²)`; a blast no
+/// wider than 14 leaves it cold.
+#[test]
+fn the_back_takes_the_balls_slice_14_px_back() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = heated_rock(&gpu);
+    // [`map`]'s open rows 80 to 90; its back is stone left of 40.
+    let d = HeatDeposit { pos: [20.5, 85.5], radius: 17.0, amount: 300.0 };
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    let edge = (17.0f32 * 17.0 - 14.0 * 14.0).sqrt();
+    let mut seen = 0;
+    for y in 80..90 {
+        for x in 0..40 {
+            let (dx, dy) = (x as f32 + 0.5 - 20.5, y as f32 + 0.5 - 85.5);
+            assert!(
+                near(at(&t, x, y), slice(d, x, y)),
+                "({x}, {y}): {} for {}",
+                at(&t, x, y),
+                slice(d, x, y)
+            );
+            if (dx * dx + dy * dy).sqrt() >= edge {
+                assert_eq!(at(&t, x, y), 0.0, "({x}, {y}) past the circle");
+            }
+            seen += usize::from(at(&t, x, y) > 0.0);
+        }
+    }
+    assert!(near(at(&t, 20, 85), 300.0 * (1.0 - 196.0 / 289.0)), "its centre: {}", at(&t, 20, 85));
+    assert!((150..=19 * 10).contains(&seen), "{seen} warm");
+    // A minigun's hit (12.5) leaves the back cold (the rock's face above
+    // it takes its rim).
+    let mut r = heated_rock(&gpu);
+    r.deposit_heat(HeatDeposit { radius: 12.5, ..d });
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    assert!((80..90).all(|y| (0..120).all(|x| at(&t, x, y) == 0.0)), "no back heat");
+    assert!(at(&t, 20, 79) > 0.0, "the rim");
+}
+
+/// Issue #65: a blast beside a thick dirt block (the centre in the air,
+/// the face 5 pixels away) heats the k-th dirt pixel along a straight
+/// walk by `amount × DIRT_HEAT_GAIN × DIRT_SKIN_WEIGHTS[k − 1]`, no
+/// falloff, 6 pixels deep; past them nothing. The same scene in rock
+/// gives rock's rim.
+#[test]
+fn dirt_takes_the_blast_whole_six_pixels_deep() {
+    let Some(gpu) = offscreen() else { return };
+    // Stone's columns: solid above row 50, the face row 49, the centre
+    // 5 pixels below it (row 54's centre).
+    let d = HeatDeposit { pos: [20.5, 54.5], radius: 17.0, amount: 300.0 };
+    let mut r = heated_level(&gpu, &level(Material::Dirt, |_, y| y >= 50));
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    for k in 1..=DIRT_SKIN {
+        let y = 50 - k;
+        let want = 300.0 * DIRT_HEAT_GAIN * DIRT_SKIN_WEIGHTS[k - 1];
+        assert!(near(at(&t, 20, y), want), "dirt's {k}th pixel: {} for {want}", at(&t, 20, y));
+    }
+    assert_eq!(at(&t, 20, 49), at(&t, 20, 48), "the face and the next whole, no falloff");
+    for y in 0..50 - DIRT_SKIN {
+        assert_eq!(at(&t, 20, y), 0.0, "({y}) past the skin");
+    }
+    assert!((0..50 - DIRT_SKIN).all(|y| (0..120).all(|x| at(&t, x, y) == 0.0)), "nothing deeper");
+    // In rock: rock's rim, by the falloff, 2 pixels deep.
+    let mut r = heated_level(&gpu, &level(Material::Rock, |_, y| y >= 50));
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    for k in 1..=2 {
+        let want = falloff(d, 20, 50 - k) * HEAT_SKIN_GAIN * HEAT_SKIN_WEIGHTS[k - 1];
+        assert!(near(at(&t, 20, 50 - k), want), "rock's {k}th pixel: {} for {want}", at(&t, 20, 50 - k));
+    }
+    assert!((0..48).all(|y| (0..120).all(|x| at(&t, x, y) == 0.0)), "rock: nothing deeper");
+}
+
+/// Issue #65: a rock crust 3 pixels thick before thick dirt shields the
+/// dirt: rock's limit (2) holds once the walk has met rock.
+#[test]
+fn rock_shields_the_dirt_behind_it() {
+    let Some(gpu) = offscreen() else { return };
+    // Stone's columns: rock in rows 47 to 49, dirt above, open below 50.
+    let cells = (0..120 * 90)
+        .map(|i| match i / 120 {
+            50.. => Material::Background,
+            47..50 => Material::Rock,
+            _ => Material::Dirt,
+        })
+        .collect();
+    let mut r = heated_level(&gpu, &level_of_cells(cells));
+    let d = HeatDeposit { pos: [20.5, 54.5], radius: 17.0, amount: 300.0 };
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    assert!(at(&t, 20, 49) > 0.0 && at(&t, 20, 48) > 0.0, "the crust's skin");
+    assert!((0..48).all(|y| (0..120).all(|x| at(&t, x, y) == 0.0)), "the dirt behind takes none");
+    // Dirt behind a rock face 1 pixel thin takes dirt's second weight, whole.
+    let cells = (0..120 * 90)
+        .map(|i| match i / 120 {
+            50.. => Material::Background,
+            49 => Material::Rock,
+            _ => Material::Dirt,
+        })
+        .collect();
+    let mut r = heated_level(&gpu, &level_of_cells(cells));
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    let want = 300.0 * DIRT_HEAT_GAIN * DIRT_SKIN_WEIGHTS[1];
+    assert!(near(at(&t, 20, 48), want), "dirt behind the face: {} for {want}", at(&t, 20, 48));
+    assert!((0..48).all(|y| (0..120).all(|x| at(&t, x, y) == 0.0)), "nothing past rock's limit");
 }
 
 /// Issue #56: a blast in the air beside a thick rock block heats its face
@@ -428,7 +567,7 @@ fn the_back_takes_a_share_of_a_deposit() {
 fn a_deposit_heats_only_the_rock_face() {
     let Some(gpu) = offscreen() else { return };
     // Stone's columns: rock above row 50, the face row 49.
-    let mut r = heated_level(&gpu, &level(|_, y| y >= 50));
+    let mut r = heated_level(&gpu, &level(Material::Rock, |_, y| y >= 50));
     let d = HeatDeposit { pos: [20.5, 55.5], radius: 20.0, amount: 1000.0 };
     r.deposit_heat(d);
     frame(&gpu, &mut r, &dark());
@@ -450,7 +589,7 @@ fn a_deposit_heats_only_the_rock_face() {
 #[test]
 fn heat_soaks_inward_from_the_face() {
     let Some(gpu) = offscreen() else { return };
-    let mut r = heated_level(&gpu, &level(|_, y| y >= 50));
+    let mut r = heated_level(&gpu, &level(Material::Rock, |_, y| y >= 50));
     r.deposit_heat(HeatDeposit { pos: [20.5, 55.5], radius: 20.0, amount: 1000.0 });
     frame(&gpu, &mut r, &dark());
     let before = temps(&gpu, &r);
@@ -469,13 +608,13 @@ fn heat_soaks_inward_from_the_face() {
 fn a_wall_shields_what_is_behind_it() {
     let Some(gpu) = offscreen() else { return };
     // A cave in stone's columns, rows 30 to 60, cut by a wall at 20 to 22.
-    let cave = level(|x, y| (30..60).contains(&y) && x < 40 && !(20..23).contains(&x));
+    let cave = level(Material::Rock, |x, y| (30..60).contains(&y) && x < 40 && !(20..23).contains(&x));
     let mut r = heated_level(&gpu, &cave);
     let d = HeatDeposit { pos: [14.5, 45.5], radius: 20.0, amount: 1000.0 };
     r.deposit_heat(d);
     frame(&gpu, &mut r, &dark());
     let t = temps(&gpu, &r);
-    assert!(near(at(&t, 17, 45), falloff(d, 17, 45) * BACK_HEAT), "the back in sight");
+    assert!(near(at(&t, 17, 45), slice(d, 17, 45)), "the back in sight");
     assert!(near(at(&t, 20, 45), falloff(d, 20, 45) * HEAT_SKIN_GAIN), "the wall's face");
     assert!(at(&t, 21, 45) > 0.0, "the skin's second pixel");
     assert!((0..90).all(|y| (22..120).all(|x| at(&t, x, y) == 0.0)), "the far face and the tunnel take none");
@@ -488,14 +627,14 @@ fn a_wall_shields_what_is_behind_it() {
 fn a_diagonal_wall_shields_too() {
     let Some(gpu) = offscreen() else { return };
     // Open in stone's columns, rows 10 to 80, but for the wall x + y = 60.
-    let cave = level(|x, y| (10..80).contains(&y) && x < 40 && x + y != 60);
+    let cave = level(Material::Rock, |x, y| (10..80).contains(&y) && x < 40 && x + y != 60);
     let mut r = heated_level(&gpu, &cave);
     let d = HeatDeposit { pos: [18.5, 30.5], radius: 24.0, amount: 1000.0 };
     r.deposit_heat(d);
     frame(&gpu, &mut r, &dark());
     let t = temps(&gpu, &r);
     assert!(near(at(&t, 30, 30), falloff(d, 30, 30) * HEAT_SKIN_GAIN), "the wall's face");
-    assert!(near(at(&t, 25, 30), falloff(d, 25, 30) * BACK_HEAT), "the back in sight");
+    assert!(near(at(&t, 25, 30), slice(d, 25, 30)), "the back in sight");
     let behind = (10..80).flat_map(|y| (0..40).map(move |x| (x, y))).filter(|&(x, y)| x + y > 60);
     for (x, y) in behind {
         assert_eq!(at(&t, x, y), 0.0, "({x}, {y}) behind the wall");
@@ -507,7 +646,7 @@ fn a_diagonal_wall_shields_too() {
 #[test]
 fn a_deposit_inside_rock_heats_round_its_centre() {
     let Some(gpu) = offscreen() else { return };
-    let mut r = heated(&gpu);
+    let mut r = heated_rock(&gpu);
     let d = HeatDeposit { pos: [20.5, 40.5], radius: 10.0, amount: 1000.0 };
     r.deposit_heat(d);
     frame(&gpu, &mut r, &dark());
@@ -526,20 +665,21 @@ fn a_deposit_inside_rock_heats_round_its_centre() {
 }
 
 /// Issue #56: every back pixel in sight of a blast, no rock or dirt on
-/// the way, takes [`BACK_HEAT`] of it as before.
+/// the way, takes its share of it (issue #65: the ball's slice 14
+/// pixels back).
 #[test]
 fn the_back_in_sight_takes_its_share() {
     let Some(gpu) = offscreen() else { return };
-    let mut r = heated(&gpu);
+    let mut r = heated_rock(&gpu);
     // [`map`]'s open rows 80 to 90; its back is stone left of 40.
-    let d = HeatDeposit { pos: [20.5, 85.5], radius: 9.0, amount: 1000.0 };
+    let d = HeatDeposit { pos: [20.5, 85.5], radius: 20.0, amount: 1000.0 };
     r.deposit_heat(d);
     frame(&gpu, &mut r, &dark());
     let t = temps(&gpu, &r);
     let mut seen = 0;
     for y in 80..90 {
         for x in 0..40 {
-            assert!(near(at(&t, x, y), falloff(d, x, y) * BACK_HEAT), "({x}, {y}): {}", at(&t, x, y));
+            assert!(near(at(&t, x, y), slice(d, x, y)), "({x}, {y}): {}", at(&t, x, y));
             seen += usize::from(at(&t, x, y) > 0.0);
         }
     }
@@ -774,12 +914,14 @@ fn hottest(t: &[f32]) -> (usize, f32) {
 
 /// Issue #41: a deposit is a ball on the level's plane; a near distant
 /// layer takes its slice, a smaller and cooler circle than the plane's,
-/// a farther one smaller still, and the layers cool to nothing.
+/// a farther one smaller still, and the layers cool to nothing. Issue
+/// #65: on one depth line, the level's back wall 14 back, a layer of
+/// depth `d` at `14 + 1.1 d`.
 #[test]
 fn a_near_layer_takes_a_smaller_circle_than_the_plane() {
     let Some(gpu) = offscreen() else { return };
     let stone = [material("stone", Some(heat(100, 100, 100)))];
-    let mut r = layered(&gpu, &stone, 1, &[10, 15], &[1, 1]);
+    let mut r = layered(&gpu, &stone, 1, &[1, 4], &[1, 1]);
     let (l, _) = one_to_one();
     r.deposit_heat_seen(HeatDeposit { pos: [60.5, 45.5], radius: 20.0, amount: 1000.0 }, &[HeatView::of(&l)]);
     frame(&gpu, &mut r, &dark());
@@ -787,18 +929,19 @@ fn a_near_layer_takes_a_smaller_circle_than_the_plane() {
     let (w, near) = layer_temps(&gpu, r.distant_heat_texture(0).unwrap());
     let (_, far) = layer_temps(&gpu, r.distant_heat_texture(1).unwrap());
     assert_eq!(w, 120, "the layer's world size");
-    // The back's share of the plane's 1000 at its centre; z = 11 and 16.5.
+    // The ball's share at each one's centre: z = 14, 15.1 and 18.4.
     let ((_, p), (ni, n), (_, f)) = (hottest(&plane), hottest(&near), hottest(&far));
-    assert!((p - 1000.0 * BACK_HEAT).abs() < 2.0, "the plane: {p}");
-    assert!((n - 1000.0 * BACK_HEAT * (1.0 - 121.0 / 400.0)).abs() < 2.0, "the near layer: {n}");
-    assert!((f - 1000.0 * BACK_HEAT * (1.0 - 272.25 / 400.0)).abs() < 2.0, "the far layer: {f}");
-    // Placed behind the deposit: the camera (60, 60) moved the layer 1.5 down.
-    assert_eq!((ni % w, ni / w), (60, 43), "the near spot's centre");
+    assert!((p - 1000.0 * (1.0 - 196.0 / 400.0)).abs() < 2.0, "the back wall: {p}");
+    assert!((n - 1000.0 * (1.0 - 228.01 / 400.0)).abs() < 2.0, "the near layer: {n}");
+    assert!((f - 1000.0 * (1.0 - 338.56 / 400.0)).abs() < 2.0, "the far layer: {f}");
+    assert!(p > n && n > f, "fainter the further back");
+    // Placed behind the deposit: the camera (60, 60) moved the layer 0.15 down.
+    assert_eq!((ni % w, ni / w), (60, 45), "the near spot's centre");
     let across = |t: &[f32], y| warm_in_row(120, t, y);
-    let (cp, cn, cf) = (across(&plane, 45), across(&near, 43), across(&far, 43));
-    assert!((38..=40).contains(&cp), "the plane's circle: {cp}");
-    assert!((32..=34).contains(&cn), "radius sqrt(279) at depth 10: {cn}");
-    assert!((21..=23).contains(&cf), "radius sqrt(127.75) at depth 15: {cf}");
+    let (cp, cn, cf) = (across(&plane, 45), across(&near, 45), across(&far, 45));
+    assert!((28..=30).contains(&cp), "the back wall's circle, radius sqrt(204): {cp}");
+    assert!((26..=28).contains(&cn), "radius sqrt(171.99) at depth 1: {cn}");
+    assert!((14..=16).contains(&cf), "radius sqrt(61.44) at depth 4: {cf}");
     // The layers cool to nothing, by their material.
     steps(&gpu, &mut r, 50);
     let (_, cooler) = layer_temps(&gpu, r.distant_heat_texture(0).unwrap());
@@ -824,15 +967,15 @@ fn a_near_layer_takes_a_smaller_circle_than_the_plane() {
 fn a_layer_beyond_the_largest_radius_has_no_texture() {
     let Some(gpu) = offscreen() else { return };
     let m = [material("stone", Some(heat(100, 100, 100))), material("cold", None)];
-    // z = 63.8 is within MAX_HEAT_RADIUS (64), 64.9 not; then a cold
-    // material, none and a value past the list.
-    let r = layered(&gpu, &m, 0, &[58, 59, 10, 10, 10], &[1, 1, 2, 0, 9]);
-    assert!(r.distant_heat_texture(0).is_some(), "depth 58 is within reach");
+    // Issue #65: z = 14 + 1.1 d; 63.5 is within MAX_HEAT_RADIUS (64),
+    // 64.6 not; then a cold material, none and a value past the list.
+    let r = layered(&gpu, &m, 0, &[45, 46, 10, 10, 10], &[1, 1, 2, 0, 9]);
+    assert!(r.distant_heat_texture(0).is_some(), "depth 45 is within reach");
     assert!((1..5).all(|i| r.distant_heat_texture(i).is_none()));
     assert!(r.has_heat() && r.heat_texture().is_none(), "the layer's heat alone");
-    let mut far = layered(&gpu, &m, 0, &[59, 10], &[1, 2]);
+    let mut far = layered(&gpu, &m, 0, &[46, 10], &[1, 2]);
     assert!(!far.has_heat());
-    let mut plain = layered(&gpu, &[], 0, &[59, 10], &[]);
+    let mut plain = layered(&gpu, &[], 0, &[46, 10], &[]);
     let (l, size) = one_to_one();
     let want = gpu.render_lit_to_image(&mut plain, &l, Some(&dark()), size);
     far.deposit_heat_seen(blast(60.0, 45.0, 64.0), &[HeatView::of(&l)]);
@@ -840,7 +983,7 @@ fn a_layer_beyond_the_largest_radius_has_no_texture() {
     assert_eq!(gpu.render_lit_to_image(&mut far, &l, Some(&dark()), size), want, "far layers unchanged");
     assert_eq!(far.heat_passes(), 0);
     // A heated layer with nothing hot: the same bytes.
-    let mut idle = layered(&gpu, &m, 0, &[59, 10], &[1, 1]);
+    let mut idle = layered(&gpu, &m, 0, &[46, 10], &[1, 1]);
     assert!(idle.distant_heat_texture(1).is_some());
     idle.advance_heat(100);
     assert_eq!(gpu.render_lit_to_image(&mut idle, &l, Some(&dark()), size), want, "idle");
@@ -880,7 +1023,8 @@ fn the_spot_moves_with_the_layer_as_the_camera_pans() {
     let (a, size) = one_to_one();
     let b = list(View { x: 30.0, y: 30.0, w: 80.0, h: 60.0 });
     let cold = (frame(&gpu, &mut r, &dark()), gpu.render_lit_to_image(&mut r, &b, Some(&dark()), size));
-    r.deposit_heat_seen(blast(70.5, 50.5, 14.0), &[HeatView::of(&a)]);
+    // Issue #65: depth 10 lies 25 back; a blast of 30 reaches it.
+    r.deposit_heat_seen(HeatDeposit { amount: 300.0, ..blast(70.5, 50.5, 30.0) }, &[HeatView::of(&a)]);
     let hot_a = gpu.render_lit_to_image(&mut r, &a, Some(&dark()), size);
     let hot_b = gpu.render_lit_to_image(&mut r, &b, Some(&dark()), size);
     let (sa, sb) = (changed(&cold.0, &hot_a), changed(&cold.1, &hot_b));
@@ -906,7 +1050,8 @@ fn with_two_views_the_nearest_views_camera_places_it() {
     let near = HeatView { view: rect(60.0), camera: (80.0, 45.0) };
     let spot = |views: &[HeatView]| {
         let mut r = layered(&gpu, &[hot_stone()], 0, &[10], &[1]);
-        r.deposit_heat_seen(blast(70.5, 50.5, 14.0), views);
+        // Issue #65: depth 10 lies 25 back; a blast of 30 reaches it.
+        r.deposit_heat_seen(HeatDeposit { amount: 200.0, ..blast(70.5, 50.5, 30.0) }, views);
         frame(&gpu, &mut r, &dark());
         let (w, t) = layer_temps(&gpu, r.distant_heat_texture(0).unwrap());
         let (i, _) = hottest(&t);
@@ -919,7 +1064,7 @@ fn with_two_views_the_nearest_views_camera_places_it() {
     let both = HeatView { view: View { x: 0.0, y: 0.0, w: 120.0, h: 90.0 }, ..far };
     assert_eq!(spot(&[both, near]), (74, 50));
     let mut none = layered(&gpu, &[hot_stone()], 0, &[10], &[1]);
-    none.deposit_heat_seen(blast(70.5, 50.5, 14.0), &[]);
+    none.deposit_heat_seen(blast(70.5, 50.5, 30.0), &[]);
     assert!(!none.heat_active(), "no view, no slice");
 }
 
@@ -937,7 +1082,8 @@ fn a_hot_layer_adds_no_glow_light() {
     let (l, _) = one_to_one();
     let cold = frame(&gpu, &mut r, &dark());
     let (_, before) = gpu.read_light(&r).unwrap();
-    r.deposit_heat_seen(blast(60.5, 50.5, 20.0), &[HeatView::of(&l)]);
+    // Issue #65: depth 5 lies 19.5 back.
+    r.deposit_heat_seen(HeatDeposit { amount: 300.0, ..blast(60.5, 50.5, 30.0) }, &[HeatView::of(&l)]);
     let hot = frame(&gpu, &mut r, &dark());
     let (_, after) = gpu.read_light(&r).unwrap();
     let c = hot.get(2 * (60 - 20), 2 * (50 - 30));

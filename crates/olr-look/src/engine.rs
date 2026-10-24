@@ -165,26 +165,42 @@ pub fn explosion_heat(damage: f32) -> Option<ExplosionHeat> {
         .then_some(ExplosionHeat { radius: (2.0 * hole + s / 2.0).min(MAX_EXPLOSION_HEAT_RADIUS), amount })
 }
 
-/// How far behind the level's plane a distant layer lies per percent of
-/// its depth, world pixels (issue #41, `K` of the spec's "Distant layers:
-/// the ball"): a layer of depth `d` lies at `z = d × K`. Calibrated on the
-/// engine's heat: a Big Nuke's fragments (radius 22.5) reach a layer of
-/// depth 20 (`z` 22), a Bazooka's (17) only layers nearer than 16.
+/// How far the level's back wall lies behind its plane, world pixels
+/// (issue #65): a deposit is a ball centred on the worms' plane, so the
+/// back wall takes only the ball's slice 14 pixels back (a minigun's hit,
+/// radius 12.5, none; a Bazooka's, 17, a circle of radius 9.6 whose centre
+/// takes 32 %). The distant layers lie on the same depth line, behind it.
+pub const BACK_DEPTH_PX: f32 = 14.0;
+
+/// How far behind the level's back wall a distant layer lies per percent
+/// of its depth, world pixels (issue #41, `K` of the spec's "Distant
+/// layers: the ball"; issue #65: from the back wall, not the plane): a
+/// layer of depth `d` lies at `z =` [`BACK_DEPTH_PX`] `+ d × K`. On the
+/// engine's heat a Big Nuke's fragments (radius 22.5) reach a layer of
+/// depth 7 (`z` 21.7), a Bazooka's (17) depth 2, a mod's widest (48)
+/// depth 30.
 pub const HEAT_DEPTH_PX: f32 = 1.1;
 
+/// How far behind the level's plane a distant layer of `depth` percent
+/// lies, world pixels (issue #65): [`BACK_DEPTH_PX`] `+ depth ×`
+/// [`HEAT_DEPTH_PX`].
+pub fn layer_z(depth: u8) -> f32 {
+    BACK_DEPTH_PX + f32::from(depth) * HEAT_DEPTH_PX
+}
+
 /// The slice of `heat`, a ball of its radius centred on the level's plane,
-/// that a distant layer of `depth` percent takes (issue #41): at `z =
-/// depth ×` [`HEAT_DEPTH_PX`] a circle of radius `sqrt(R² − z²)` whose
-/// amount falls off the same way, `amount × (1 − z² / R²)` (the ball's
-/// `1 − (r / R)²` falloff, `r² = d² + z²`, is the slice's own `1 − (d /
-/// R')²` times that). `None` when `z ≥ R`, or for a radius or amount that
-/// is not a positive number.
+/// that a distant layer of `depth` percent takes (issue #41): at `z =`
+/// [`layer_z`] (issue #65: behind the back wall) a circle of radius
+/// `sqrt(R² − z²)` whose amount falls off the same way, `amount × (1 −
+/// z² / R²)` (the ball's `1 − (r / R)²` falloff, `r² = d² + z²`, is the
+/// slice's own `1 − (d / R')²` times that). `None` when `z ≥ R`, or for a
+/// radius or amount that is not a positive number.
 pub fn heat_slice(heat: ExplosionHeat, depth: u8) -> Option<ExplosionHeat> {
     let ExplosionHeat { radius: r, amount } = heat;
     if !(r > 0.0 && r.is_finite() && amount > 0.0 && amount.is_finite()) {
         return None;
     }
-    let z = f32::from(depth) * HEAT_DEPTH_PX;
+    let z = layer_z(depth);
     let share = 1.0 - (z * z) / (r * r);
     (z < r && share > 0.0).then(|| ExplosionHeat { radius: r * libm::sqrtf(share), amount: amount * share })
 }

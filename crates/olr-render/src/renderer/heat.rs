@@ -74,11 +74,6 @@ const COOL_MIN: f32 = 0.05;
 /// (every pixel cools in the end, even inside an insulator).
 const BULK: f32 = 0.25;
 
-/// The share of a deposit a back pixel (where no rock or dirt stands)
-/// takes (issue #40): the back wall lies behind the explosion, so one in
-/// the open warms it only faintly; a crater's rim takes it whole.
-pub const BACK_HEAT: f32 = 0.2;
-
 /// The rock or dirt pixels a deposit heats along its line of sight
 /// (issue #56): the first `HEAT_SKIN` solid ones a walk from its centre
 /// meets; what lies past them takes nothing (conduction carries it in).
@@ -91,6 +86,30 @@ pub const HEAT_SKIN_GAIN: f32 = 1.0;
 /// The skin's k-th solid pixel's weight along the walk (issue #56): the
 /// face whole, the next pixel in half.
 pub const HEAT_SKIN_WEIGHTS: [f32; HEAT_SKIN] = [1.0, 0.5];
+
+/// The dirt pixels a deposit heats along its line of sight (issue #65):
+/// the first `DIRT_SKIN` solid ones while all met so far are dirt; once
+/// the walk meets rock, [`HEAT_SKIN`] holds for all after it (rock
+/// shields the dirt behind it).
+pub const DIRT_SKIN: usize = 6;
+
+/// The share of a deposit dirt takes, × [`DIRT_SKIN_WEIGHTS`], with no
+/// falloff within its radius (issue #65): the hole is where the blast
+/// was, so its wall takes the whole of it. The maintainer tunes it in
+/// play.
+pub const DIRT_HEAT_GAIN: f32 = 2.5;
+
+/// The dirt skin's k-th solid pixel's weight along the walk (issue #65).
+pub const DIRT_SKIN_WEIGHTS: [f32; DIRT_SKIN] = [1.0, 1.0, 0.8, 0.6, 0.4, 0.2];
+
+/// The most of a deposit's amount any pixel takes, × its material's gain:
+/// the dirt skin's face, [`HEAT_SKIN_GAIN`]'s, or a back pixel's whole
+/// slice ([`Bounds`]: a box is kept while its dirt may still glow).
+const MOST_REACH: f32 = {
+    let (dirt, rock) = (DIRT_HEAT_GAIN * DIRT_SKIN_WEIGHTS[0], HEAT_SKIN_GAIN * HEAT_SKIN_WEIGHTS[0]);
+    let most = if dirt > rock { dirt } else { rock };
+    if most > 1.0 { most } else { 1.0 }
+};
 
 /// The most pixels a deposit's walk visits: a segment no longer than
 /// [`MAX_HEAT_RADIUS`] crosses at most its two extents' cells and one.
@@ -158,7 +177,8 @@ impl HeatDeposit {
 /// What the level's materials allow (the bounds the boxes keep).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(super) struct Bounds {
-    /// The most any material's pixel warms from a deposit of 1.
+    /// The most any material's pixel warms from a deposit of 1 (issue
+    /// #65: dirt's gain included).
     gain: f32,
     /// The slowest cooling's share a step and least loss (degrees), as a
     /// pixel inside rock loses them.
@@ -196,7 +216,7 @@ pub(super) fn tables(materials: &[SurfaceMaterial]) -> Option<(Vec<f32>, Vec<u8>
             0.0,
             0.0,
         ]);
-        b.gain = b.gain.max(gain);
+        b.gain = b.gain.max(gain * MOST_REACH);
         b.alpha = b.alpha.min(q * COOL_RATE * BULK);
         b.beta = b.beta.min(q * COOL_MIN * BULK);
         b.visible = b.visible.min(f32::from(h.ramp().first().map_or(MAX_TEMPERATURE, |k| k.temperature)));
@@ -272,11 +292,12 @@ fn nearest(views: &[HeatView], pos: [f32; 2]) -> Option<&HeatView> {
 
 /// Whether a distant layer of material value `v` at `depth` percent gets
 /// heat (issue #41): its material heats ([`tables`]' `params`: 1 /
-/// capacity above 0) and the largest heat radius reaches its depth.
+/// capacity above 0) and the largest heat radius reaches its depth
+/// ([`olr_look::engine::layer_z`], issue #65: depth 45 at most).
 pub(super) fn layer_heats(params: &[f32], v: u8, depth: u8) -> bool {
     let heats = v > 0 && params.get(4 + 8 * usize::from(v) + 2).is_some_and(|&c| c > 0.0);
     let depth = depth.clamp(olr_data::level::MIN_DEPTH, olr_data::level::MAX_DEPTH);
-    heats && f32::from(depth) * olr_look::engine::HEAT_DEPTH_PX < MAX_HEAT_RADIUS
+    heats && olr_look::engine::layer_z(depth) < MAX_HEAT_RADIUS
 }
 
 /// A distant layer's surface texels (issue #41): `v` front and back on
@@ -307,8 +328,9 @@ pub(super) fn layer_texels(
 }
 
 /// A distant layer's solid map (issue #41): all background, so every
-/// pixel faces the air (cooling whole) and takes [`BACK_HEAT`] of a
-/// deposit, as a back wall: the layer lies behind the explosion.
+/// pixel faces the air (cooling whole) and takes the deposit whole, by
+/// its falloff: its back depth is 0, as the deposit is already the
+/// ball's slice at the layer (issue #65).
 fn layer_solid(device: &wgpu::Device, queue: &super::uploads::Queue, world: (u32, u32)) -> wgpu::Texture {
     use wgpu::TextureUsages as U;
     let t = plain_texture(
@@ -693,8 +715,9 @@ const FLOAT: wgpu::BindingType = wgpu::BindingType::Texture {
 /// The WGSL the heat passes and readers share, after the Rust constants.
 pub(super) fn heat_common() -> String {
     format!(
-        "const HEAT_SCALE: f32 = {HEAT_SCALE:?};\nconst HEAT_MAX: f32 = {HEAT_MAX:?};\nconst RAMP_BINS: i32 = {RAMP_BINS};\nconst HEAT_CAST: f32 = {HEAT_CAST:?};\nconst HEAT_REACH: f32 = {HEAT_REACH:?};\nconst MAX_COUPLING: f32 = {MAX_COUPLING:?};\nconst COOL_RATE: f32 = {COOL_RATE:?};\nconst COOL_MIN: f32 = {COOL_MIN:?};\nconst BULK: f32 = {BULK:?};\nconst BACK_HEAT: f32 = {BACK_HEAT:?};\nconst HEAT_SKIN: u32 = {HEAT_SKIN}u;\nconst HEAT_SKIN_GAIN: f32 = {HEAT_SKIN_GAIN:?};\nconst HEAT_SKIN_WEIGHTS = array<f32, {HEAT_SKIN}>({});\nconst HEAT_WALK_STEPS: i32 = {HEAT_WALK_STEPS};\nconst MAX_HEAT_DEPOSITS: u32 = {MAX_HEAT_DEPOSITS}u;\n{}",
+        "const HEAT_SCALE: f32 = {HEAT_SCALE:?};\nconst HEAT_MAX: f32 = {HEAT_MAX:?};\nconst RAMP_BINS: i32 = {RAMP_BINS};\nconst HEAT_CAST: f32 = {HEAT_CAST:?};\nconst HEAT_REACH: f32 = {HEAT_REACH:?};\nconst MAX_COUPLING: f32 = {MAX_COUPLING:?};\nconst COOL_RATE: f32 = {COOL_RATE:?};\nconst COOL_MIN: f32 = {COOL_MIN:?};\nconst BULK: f32 = {BULK:?};\nconst HEAT_SKIN: u32 = {HEAT_SKIN}u;\nconst HEAT_SKIN_GAIN: f32 = {HEAT_SKIN_GAIN:?};\nconst HEAT_SKIN_WEIGHTS = array<f32, {HEAT_SKIN}>({});\nconst DIRT_SKIN: u32 = {DIRT_SKIN}u;\nconst DIRT_HEAT_GAIN: f32 = {DIRT_HEAT_GAIN:?};\nconst DIRT_SKIN_WEIGHTS = array<f32, {DIRT_SKIN}>({});\nconst HEAT_WALK_STEPS: i32 = {HEAT_WALK_STEPS};\nconst MAX_HEAT_DEPOSITS: u32 = {MAX_HEAT_DEPOSITS}u;\n{}",
         HEAT_SKIN_WEIGHTS.map(|w| format!("{w:?}")).join(", "),
+        DIRT_SKIN_WEIGHTS.map(|w| format!("{w:?}")).join(", "),
         include_str!("../look/heat_common.wgsl")
     )
 }
@@ -871,7 +894,11 @@ pub(super) struct HeatTextures {
 impl HeatTextures {
     /// The heat of a level of `world` pixels (the textures `size`, the
     /// device's crop) with `surface` texels ([`surface_texels`]) and
-    /// [`tables`]' output; `solid` is the look's solid map.
+    /// [`tables`]' output; `solid` is the look's solid map. A back pixel
+    /// lies `back_depth` world pixels behind the deposits' plane (issue
+    /// #65: the level's [`olr_look::engine::BACK_DEPTH_PX`]; a distant
+    /// layer's 0, its deposits already sliced) and takes the ball's slice
+    /// there.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn new(
         device: &wgpu::Device,
@@ -882,6 +909,7 @@ impl HeatTextures {
         surface: &[u8],
         (table, ramp_texels, bounds): (Vec<f32>, Vec<u8>, Bounds),
         solid: &wgpu::TextureView,
+        back_depth: f32,
     ) -> HeatTextures {
         use wgpu::TextureUsages as U;
         let heat = heat_texture(
@@ -931,7 +959,7 @@ impl HeatTextures {
         );
         let params = uniform(device, "olr-render heat table", (PARAM_FLOATS * 4) as u64);
         let mut table = table;
-        table[..4].copy_from_slice(&[size.0 as f32, size.1 as f32, 0.0, 0.0]);
+        table[..4].copy_from_slice(&[size.0 as f32, size.1 as f32, 0.0, back_depth]);
         queue.write_buffer(&params, 0, bytemuck::cast_slice(&table));
         let deposits = uniform(device, "olr-render heat deposits", (MAX_HEAT_DEPOSITS * 16) as u64);
         let ranges = device.create_buffer(&wgpu::BufferDescriptor {
@@ -1218,6 +1246,7 @@ impl super::Renderer {
                 &texels,
                 tables.clone(),
                 &view(&solid),
+                0.0,
             ));
         }
     }
@@ -1247,8 +1276,9 @@ impl super::Renderer {
 
     /// [`Renderer::deposit_heat`], and its slices on the distant layers
     /// that have heat (issue #41): the deposit is a ball of its radius
-    /// centred on the level's plane; a layer of depth `d` lying `d ×`
-    /// [`olr_look::engine::HEAT_DEPTH_PX`] behind it takes the ball's
+    /// centred on the level's plane; a layer of depth `d` lying
+    /// [`olr_look::engine::layer_z`] behind it (issue #65: behind the back
+    /// wall, on one depth line with it) takes the ball's
     /// circle there ([`olr_look::engine::heat_slice`]), centred on the
     /// layer pixel drawn behind the deposit by the view of `views` nearest
     /// it (the first of those as near; [`crate::frame::distant_origin`] of
@@ -1528,7 +1558,8 @@ mod tests {
         assert!(nearest(&[], [0.0, 0.0]).is_none());
         let cold = SurfaceMaterial { id: "cold".into(), heat: None, light_soak: None };
         let (params, ..) = tables(&[stone(), cold]).unwrap();
-        assert!(layer_heats(&params, 1, 58) && !layer_heats(&params, 1, 59), "z < 64");
+        // Issue #65: z = 14 + 1.1 × depth.
+        assert!(layer_heats(&params, 1, 45) && !layer_heats(&params, 1, 46), "z < 64");
         assert!(layer_heats(&params, 1, 0), "depth 0 counts as 1");
         assert!(
             !layer_heats(&params, 2, 10) && !layer_heats(&params, 0, 10) && !layer_heats(&params, 255, 10)
@@ -1537,6 +1568,30 @@ mod tests {
         image.set(5, 0, olr_data::image::Rgba::rgb(1, 2, 3));
         image.set(0, 3, olr_data::image::Rgba::rgb(1, 2, 3));
         assert_eq!(layer_texels(&image, 2, (3, 2), 7), [0, 0, 0, 0, 7, 7, 7, 7, 0, 0, 0, 0]);
+    }
+
+    /// Issue #65: dirt takes up to [`DIRT_HEAT_GAIN`] × a deposit, so the
+    /// bound covers it: a box is kept while its dirt face, cooling as
+    /// slowly as any pixel may, still shows.
+    #[test]
+    fn a_hot_dirt_box_outlives_its_glow() {
+        let (.., bounds) = tables(&[stone()]).unwrap();
+        assert_eq!(bounds.gain, DIRT_HEAT_GAIN * DIRT_SKIN_WEIGHTS[0]);
+        for amount in [50.0, 100.0, 300.0, 1000.0] {
+            let mut s = sim();
+            s.deposit(HeatDeposit { amount, ..blast(100.0, 50.0) });
+            let mut face = (amount * DIRT_HEAT_GAIN * DIRT_SKIN_WEIGHTS[0]).min(MAX_TEMPERATURE as f32);
+            for step in 0..20_000 {
+                s.advance(HEAT_STEP_MS);
+                s.plan();
+                face -= BULK * (COOL_RATE * face + COOL_MIN);
+                if face >= bounds.visible {
+                    assert!(s.active(), "{amount}: dropped at step {step} with the face at {face}");
+                } else if !s.active() {
+                    break;
+                }
+            }
+        }
     }
 
     #[test]

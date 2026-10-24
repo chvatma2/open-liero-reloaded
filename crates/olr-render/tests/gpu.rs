@@ -59,8 +59,13 @@ fn palette(x: u32, y: u32) -> Rgba {
 /// A 120 × 90 level at art scale 2: dirt but for open air in the last ten
 /// rows, every dirt pixel coloured by [`palette`].
 fn map() -> ColorMap {
-    let cells =
-        (0..120 * 90).map(|i| if i / 120 < 80 { Material::Dirt } else { Material::Background }).collect();
+    map_of(Material::Dirt)
+}
+
+/// [`map`] with its solid rows of `fill` (issue #65: rock for the tests
+/// of rock's rim).
+fn map_of(fill: Material) -> ColorMap {
+    let cells = (0..120 * 90).map(|i| if i / 120 < 80 { fill } else { Material::Background }).collect();
     let t = Terrain::from_grid(&MaterialGrid::from_cells(120, 90, cells).unwrap());
     let mut front = RgbaImage::new(240, 180);
     for y in 0..180 {
