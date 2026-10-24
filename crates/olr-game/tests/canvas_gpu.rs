@@ -67,7 +67,7 @@ fn the_canvas_draws_the_bake() {
     let l = doc.level();
     let view = View::fit([size.0 as f32, size.1 as f32], (l.size.0 * l.art_scale, l.size.1 * l.art_scale));
     let picture = |canvas: &mut Canvas, r: &mut olr_render::Renderer| {
-        let (list, _) = canvas.draw(&view, rect, 1.0, olr_render::MAX_VIEW).expect("the level shows");
+        let (list, _) = canvas.draw(&view, rect, 1.0, olr_render::MAX_VIEW, None).expect("the level shows");
         gpu.render_to_image(r, &list, size)
     };
 
@@ -141,7 +141,7 @@ fn the_canvas_draws_lit() {
     let mut r = gpu.renderer(RenderSettings { filter: UpscaleFilter::SharpBilinear });
     r.set_lighting(true);
     r.upload_terrain(canvas.map_mut().unwrap());
-    let (list, _) = canvas.draw(&view, rect, 1.0, olr_render::MAX_VIEW).unwrap();
+    let (list, _) = canvas.draw(&view, rect, 1.0, olr_render::MAX_VIEW, None).unwrap();
     let mean = |img: &olr_data::image::RgbaImage| {
         img.as_raw().chunks(4).map(|p| u64::from(p[0]) + u64::from(p[1]) + u64::from(p[2])).sum::<u64>()
     };

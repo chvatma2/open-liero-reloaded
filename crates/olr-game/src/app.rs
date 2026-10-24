@@ -1228,11 +1228,11 @@ impl App {
             .editor
             .as_ref()
             .filter(|_| editing)
-            .map(|h| (h.state().view(), h.data_ref().canvas_rect()));
+            .map(|h| (h.state().view(), h.data_ref().canvas_rect(), h.state().parallax_camera()));
         let mut filter = None;
         let canvas_draw;
         let world = match editor_view {
-            Some((view, Some(rect))) => {
+            Some((view, Some(rect), parallax)) => {
                 // A level with a look draws lit (plan 15a Task 19): the
                 // renderer's look textures come with a whole upload.
                 let state = self.shell.editor.as_ref().map(|h| h.state());
@@ -1259,7 +1259,7 @@ impl App {
                 let max_view = Canvas::max_view_for(max, w.gpu.renderer.scale());
                 // egui's own scale this pass (the frame's `ppp` may be the
                 // last one's: a Play's end changes the UI's height).
-                self.canvas_list = self.canvas.draw(&view, rect, out.pixels_per_point, max_view);
+                self.canvas_list = self.canvas.draw(&view, rect, out.pixels_per_point, max_view, parallax);
                 filter = Some(std::mem::replace(
                     &mut w.gpu.renderer.settings.filter,
                     UpscaleFilter::SharpBilinear,
@@ -1273,7 +1273,7 @@ impl App {
                 canvas_draw = self.canvas_list.as_ref().map(|(list, area)| [ViewDraw { list, area: *area }]);
                 canvas_draw.as_ref().map(|d| (&d[..], look))
             }
-            Some((_, None)) => None,
+            Some((_, None, _)) => None,
             None => world,
         };
         for warning in w.gpu.renderer.warnings().drain(..) {

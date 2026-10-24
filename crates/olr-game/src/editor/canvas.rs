@@ -302,12 +302,15 @@ impl Canvas {
     /// `max_view` world pixels per side (at most `MAX_VIEW`; less when the
     /// device's textures are smaller: `max_view_for`; then over the visible
     /// level), and the screen rectangle it fills. `None` when no level is open.
+    /// Distant layers scroll by `parallax`, the editor's camera for them
+    /// (`EditorState::parallax_camera`, issue #66).
     pub fn draw(
         &self,
         view: &EditorView,
         canvas: egui::Rect,
         pixels_per_point: f32,
         max_view: f32,
+        parallax: Option<(f32, f32)>,
     ) -> Option<(DrawList, [u32; 4])> {
         self.map.as_ref()?;
         let unit = view.scale() * self.art_scale as f32; // points per world pixel
@@ -337,9 +340,10 @@ impl Canvas {
         let mut list = DrawList::default();
         list.view = View { x, y, w, h };
         list.map = self.level;
-        // Distant layers scroll by the canvas's centre (issue #11), not
-        // the cut view's: as the editor hit-tests them.
-        list.parallax = Some(view.centre([canvas.width(), canvas.height()], self.art_scale));
+        // Distant layers scroll by the editor's camera (issue #66: the
+        // level's centre, or the canvas's with Preview parallax), never the
+        // cut view's: as the editor hit-tests them.
+        list.parallax = parallax;
         Some((list, [sx0, sy0, sx1 - sx0, sy1 - sy0]))
     }
 
@@ -425,7 +429,7 @@ mod tests {
         let view = EditorView { zoom: 3, offset: [10.0, 20.0] };
         assert_eq!(view.scale(), 2.0);
         let rect = egui::Rect::from_min_max(egui::pos2(100.0, 50.0), egui::pos2(500.0, 350.0));
-        let (list, area) = c.draw(&view, rect, 1.5, olr_render::MAX_VIEW).unwrap();
+        let (list, area) = c.draw(&view, rect, 1.5, olr_render::MAX_VIEW, None).unwrap();
         // 4 points per world pixel: the whole canvas, from world (-2.5, -5)
         // (black where there is no level).
         assert_eq!((list.view.x, list.view.y), (-2.5, -5.0));
@@ -435,32 +439,37 @@ mod tests {
         // Panning, a level edge in view or not, keeps the view's size: the
         // renderer's world target is not made again (deferred minor of batch C).
         for offset in [[-300.0, -100.0], [0.0, 0.0], [-5000.0, 0.0], [123.4, 56.7]] {
-            let (l, a) = c.draw(&EditorView { zoom: 3, offset }, rect, 1.5, olr_render::MAX_VIEW).unwrap();
+            let (l, a) =
+                c.draw(&EditorView { zoom: 3, offset }, rect, 1.5, olr_render::MAX_VIEW, None).unwrap();
             assert_eq!((l.view.w, l.view.h, a), (100.0, 75.0, area), "{offset:?}");
         }
         // A view wider than the device's world target allows is cut there.
         let wide = canvas((4096, 100), 1);
         let far = EditorView { zoom: 0, offset: [0.0, 0.0] };
         let huge = egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(4000.0, 100.0));
-        let (list, area) = wide.draw(&far, huge, 1.0, olr_render::MAX_VIEW).unwrap();
+        let (list, area) = wide.draw(&far, huge, 1.0, olr_render::MAX_VIEW, None).unwrap();
         assert_eq!(list.view.w, olr_render::MAX_VIEW);
         assert_eq!(area[2], 1024, "4096 world pixels at a quarter point each");
         // Panned right on that canvas, the cut view follows the level, not
         // the canvas's left edge (review of the minors round).
         let right = EditorView { zoom: 0, offset: [2000.0, 0.0] };
-        let (list, area) = wide.draw(&right, huge, 1.0, olr_render::MAX_VIEW).unwrap();
+        let (list, area) = wide.draw(&right, huge, 1.0, olr_render::MAX_VIEW, None).unwrap();
         assert_eq!((list.view.x, list.view.w), (0.0, olr_render::MAX_VIEW), "the level's left edge on");
         assert_eq!((area[0], area[2]), (2000, 1024), "drawn where the level is");
         for offset in [[2100.0, 0.0], [-500.0, 0.0], [3990.0, 0.0]] {
-            let (l, a) = wide.draw(&EditorView { zoom: 0, offset }, huge, 1.0, olr_render::MAX_VIEW).unwrap();
+            let (l, a) =
+                wide.draw(&EditorView { zoom: 0, offset }, huge, 1.0, olr_render::MAX_VIEW, None).unwrap();
             assert_eq!(l.view.w, olr_render::MAX_VIEW, "{offset:?}: its size stays");
             assert!(a[0] + a[2] <= 4000, "{offset:?}: inside the canvas");
         }
         let max = Canvas::max_view_for(4096, 2);
-        let (list, _) = wide.draw(&far, huge, 1.0, max).unwrap();
+        let (list, _) = wide.draw(&far, huge, 1.0, max, None).unwrap();
         assert_eq!(list.view.w, max);
         assert!((list.view.w.ceil() + 1.0 + 2.0 * olr_render::MARGIN as f32) * 2.0 <= 4096.0);
-        assert!(Canvas::new().draw(&far, huge, 1.0, olr_render::MAX_VIEW).is_none(), "no level, nothing");
+        assert!(
+            Canvas::new().draw(&far, huge, 1.0, olr_render::MAX_VIEW, None).is_none(),
+            "no level, nothing"
+        );
     }
 
     #[test]
@@ -533,7 +542,7 @@ mod tests {
     /// Issue #11: a distant layer makes the map see-through (built again),
     /// its layers reach the renderer when they change and with every whole
     /// upload (none in the material view), and the draw list's camera is
-    /// the canvas's centre.
+    /// the editor's (issue #66).
     #[test]
     fn distant_layers_reach_the_canvas() {
         let Some((_tmp, mut d)) = doc() else { return };
@@ -549,13 +558,27 @@ mod tests {
         assert_eq!(c.take_distant(false).map(<[_]>::len), Some(1));
         assert!(c.take_distant(false).is_none(), "sent once");
         assert_eq!(c.take_distant(true).map(<[_]>::len), Some(1), "again with a whole upload");
-        let view = EditorView { zoom: 3, offset: [10.0, 20.0] };
+        // The editor's camera (issue #66): the level's centre, or with
+        // Preview parallax the canvas's centre.
+        let (size, art_scale) = (d.level().size, d.level().art_scale);
+        let mut state = olr_editor::EditorState::new(Default::default(), Default::default());
+        state.update(olr_editor::EditorAction::Opened(Box::new(d)));
+        state.update(olr_editor::EditorAction::Canvas([400.0, 300.0]));
+        state.update(olr_editor::EditorAction::Pan([10.0, 20.0]));
         let rect = egui::Rect::from_min_max(egui::pos2(100.0, 50.0), egui::pos2(500.0, 350.0));
-        let (list, _) = c.draw(&view, rect, 1.5, olr_render::MAX_VIEW).unwrap();
-        assert_eq!(list.parallax, Some(view.centre([400.0, 300.0], d.level().art_scale)));
-        assert_eq!(list.camera(), (list.view.x + list.view.w / 2.0, list.view.y + list.view.h / 2.0));
-        c.rebuild(&d, CanvasView::Material);
-        assert!(c.fits(&d), "the material view is never see-through");
+        let draw = |state: &olr_editor::EditorState| {
+            c.draw(&state.view(), rect, 1.5, olr_render::MAX_VIEW, state.parallax_camera()).unwrap().0
+        };
+        let list = draw(&state);
+        assert_eq!(list.parallax, Some((size.0 as f32 / 2.0, size.1 as f32 / 2.0)));
+        assert_eq!(list.camera(), (size.0 as f32 / 2.0, size.1 as f32 / 2.0), "the renderer scrolls by it");
+        state.update(olr_editor::EditorAction::PreviewParallax(true));
+        let list = draw(&state);
+        assert_eq!(list.parallax, Some(state.view().centre([400.0, 300.0], art_scale)));
+        assert_ne!(list.parallax, Some((size.0 as f32 / 2.0, size.1 as f32 / 2.0)), "the pan moved it");
+        let d = state.document().unwrap();
+        c.rebuild(d, CanvasView::Material);
+        assert!(c.fits(d), "the material view is never see-through");
         assert_eq!(c.take_distant(true).map(<[_]>::len), Some(0), "the material view leaves them out");
     }
 

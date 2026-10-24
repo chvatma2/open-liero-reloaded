@@ -56,7 +56,8 @@ is `docs/porting/olx-notes/presentation.md` §1, §3-§6 and §11.
   olr-fx's play pool), so frames do not allocate
   (`tests/no_alloc.rs`).
 - **Parallax camera** (issue #11): `DrawList::parallax`, `None` but in
-  the level editor (its canvas's centre: the view there is cut to the
+  the level editor (its camera, issue #66: the level's centre, or with
+  Preview parallax the canvas's centre; the view there is cut to the
   device's target), and `camera()`, it or the view's centre: where the
   renderer places a level's distant layers.
 - **Shades** (`draw_list.rs`, `lib.rs`, plan 15a Task 15, R5 and R13):

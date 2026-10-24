@@ -981,8 +981,11 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   canvas (`Canvas::set_distant`) and the app gives them to
   `Renderer::set_distant` when they changed and with every whole upload
   (`take_distant`; none in the material view); the draw list's
-  `parallax` is the canvas's centre (`View::centre`), not the cut view's,
-  as the editor hit-tests them (`distant_layers_reach_the_canvas`).
+  `parallax` is the editor's camera, `Canvas::draw`'s argument from
+  `EditorState::parallax_camera()` (issue #66: the level's centre, so a
+  layer shows where placed; with View ▾ Preview parallax the canvas's
+  centre), never the cut view's, so the canvas draws them where the
+  editor hit-tests them (`distant_layers_reach_the_canvas`).
   `Canvas::look_frame(doc, clock_ms, view_mode)` compiles the document's
   look (`olr_format::levels::compile_look`, again only when it changed; a
   look that does not check draws as none) and begins the frame at the
