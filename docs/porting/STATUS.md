@@ -5115,7 +5115,8 @@ builder's calls:
   `Explode` damage, which also sizes the hole): `1.2 × damage⁴` degrees
   at the centre (at most 1000), over twice the hole's radius (OLX's dirt
   theme holes, 2.5-7.5 px) plus half the damage (at most 48 px). A minigun
-  hit (3: 97° over 12.5 px) stays under the lava ramp's first key (100);
+  hit (3: 97° over 12.5 px) stays under the lava ramp's first key (100; on
+  rock: diggable terrain takes 2.5× since issue #65);
   a Bazooka (4: 307° over 17 px) leaves its rim glowing a few pixels deep;
   a Big Nuke's fragments (15: 1000° over 22.5 px) pile up white-hot. A
   theme with other holes keeps the curve.
@@ -5124,6 +5125,7 @@ builder's calls:
   open only warms the wall behind it, while a crater's rim takes the
   whole deposit. Taken whole, mid-air rockets left glowing discs on the
   back wall (the spec says only that the exposed back takes heat).
+  Issue #65 replaced it with the ball's slice 14 px back.
 - **Frame-rate independence.** `Presentation::upload` hands the renderer,
   after the terrain, each deposit after the match time up to its tick,
   then the time up to the frame (ticks never drawn included), and runs
@@ -5161,7 +5163,8 @@ calls:
   percent of depth: a Big Nuke's fragments (heat radius 22.5) reach a
   layer of depth 20, a Bazooka's (17) depth 15. A layer gets a heat
   texture only when its material heats and the renderer's largest
-  radius (64) reaches it: depth 58 at most.
+  radius (64) reaches it: depth 58 at most. Issue #65 moved the layers
+  behind the back wall: `z = 14 + d × K`, depth 45 at most.
 - **The back's share holds:** a layer's pixels count as back (as a wall
   behind the explosion): `BACK_HEAT` (0.2) of the slice, every pixel
   facing the air as it cools, so a layer never glows more than the back
@@ -5844,6 +5847,63 @@ built:
 - **Unchanged** (the issue's non-goals): play (its camera,
   `DrawList::camera()`, the renderer's parallax), the zoom about the
   pointer and panning, and the level format.
+
+## Heat on one depth line (issue #65)
+
+No OLX counterpart. Background heat gave no depth (an explosion warmed
+the back wall in a circle as big as its rim, `BACK_HEAT` 0.2 of it), and
+dirt, which the blast carves away, barely glowed at its crater's edge.
+The maintainer chose from rendered frames (variant E of five).
+Presentation only: the simulation, the oracle and every match golden are
+unchanged. As built:
+
+- **One depth line.** A deposit is a ball centred on the worms' plane.
+  The level's back wall lies `olr_look::engine::BACK_DEPTH_PX` (14) world
+  pixels behind it, in pixels rather than a share of the radius so that
+  huge explosions reach further: a back pixel at distance `d` takes
+  `amount × (1 − (d² + 14²)/R²)` (a minigun's hit, 12.5, nothing; a
+  Bazooka's, 17, a circle of radius 9.6 whose centre takes 32 %; a Big
+  Nuke's fragment, 22.5, one of 17.6, 61 %). Smaller than before but
+  brighter at the centre than `BACK_HEAT`'s fifth, so a mid-air blast
+  leaves a disc on the wall; the maintainer kept it, as the ball has it.
+  `BACK_HEAT` is gone. The deposit
+  pass reads the back depth from the table's head (`w`: 14 for the level,
+  0 for a distant layer).
+- **Distant layers** lie behind the wall, `z = layer_z(d) = 14 + 1.1 d`,
+  and take the CPU's slice whole (no fifth on top): a Big Nuke's
+  fragments reach depth 7, a Bazooka's depth 2; `layer_heats` stops at
+  depth 45 (the largest radius, 64). The back wall stays its own thing
+  (one texture, conduction, the solid map); only the heat's geometry is
+  shared.
+- **Dirt takes the blast whole.** A dirt pixel in the walk takes
+  `amount × DIRT_HEAT_GAIN (2.5) × DIRT_SKIN_WEIGHTS[k − 1]` (1, 1, 0.8,
+  0.6, 0.4, 0.2) with no falloff, `DIRT_SKIN` (6) deep while every solid
+  pixel met is dirt; once the walk meets rock, rock's two pixels hold
+  (rock shields the dirt behind it). Rock is unchanged. `HeatSim`'s bound
+  counts dirt's gain, so a hot dirt box is never dropped while it glows.
+- **Small heat no longer reaches the back.** A projectile's heat is
+  capped at 16 px, so at most a 7.7 px circle at 23 % warms the wall
+  behind it; Liero v1.0 Reloaded's Flamer (5 px) and Napalm (6 px)
+  flames heat only what they touch. Kept so, as the maintainer chose;
+  a wider radius would need the cap raised.
+- **Frame rate.** Heat a ball smaller than 14 px leaves lands only on
+  solids, and on dirt that is mostly dirt a bullet then digs: drawn every
+  tick, its walk sees the dirt before the hole; drawn once at the end, the
+  crater edge behind it. `olr-cli`'s
+  `a_projectiles_heat_warms_its_path_drawn_every_tick_or_once` therefore
+  gives its bullets the cap's 16 px, whose paths through the air warm the
+  back as before (2749 of 11843 hot texels differ, all near a dug pixel;
+  with 6 px, 1321 of 1435). `R` (24) and the quarter are kept. In play a
+  frame spans a few ticks, not a match, so the difference is a pixel or
+  two at a bullet hole's rim.
+- **Fixture:** `look-test-heat-distant`'s palisade moved from depth 8 to
+  4 (`z` 18.4, within a Big Nuke fragment's 22.5).
+- **Tests:** issue #56's rim tests run on rock levels;
+  `the_back_takes_the_balls_slice_14_px_back`,
+  `dirt_takes_the_blast_whole_six_pixels_deep`,
+  `rock_shields_the_dirt_behind_it`, `a_hot_dirt_box_outlives_its_glow`;
+  the distant tests at the new `z`. The heat goldens and the lit hashes
+  were re-blessed ("heat on one depth line, dirt at full force").
 
 ## Kept OLX quirks
 

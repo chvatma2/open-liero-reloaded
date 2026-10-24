@@ -972,7 +972,8 @@ tick and drawn once leave the same heat texture, except within 24 px of a
 pixel dug or filled after heat reached it, at most a quarter of the hot
 texels; issue #42's
 `a_projectiles_heat_warms_its_path_drawn_every_tick_or_once`: the same
-match with every Minigun bullet's look heating a tick and the mod's
+match with every Minigun bullet's look heating a tick (16 px, the cap,
+past the back wall 14 px back, issue #65) and the mod's
 `explosion_heat` at 0 %, hot only along the bullets' paths, the same drawn
 every tick or once, and nothing hot without the bullets' heat; both play
 through `HeatMatch`) runs in `cargo xtask full` and `check

@@ -80,9 +80,10 @@ pub(crate) struct DistantEntry {
     /// The whole layer's surface material (issue #37): the id of one of
     /// the look's `materials`. Default none. When it heats, explosions
     /// heat the layer as slices of a ball (issue #41): the layer lies
-    /// `z = depth × 1.1` world pixels behind the level, and an explosion of
-    /// heat radius `R` warms it in a circle of radius `sqrt(R² − z²)`
-    /// behind it, less the further back (no heat at depth 59 and beyond,
+    /// `z = 14 + depth × 1.1` world pixels behind the worms' plane (the
+    /// level's own back wall at 14, issue #65), and an explosion of heat
+    /// radius `R` warms it in a circle of radius `sqrt(R² − z²)` behind
+    /// it, less the further back (no heat at depth 46 and beyond,
     /// past the largest radius, 64). A hot layer glows but casts no light.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     surface: Option<String>,

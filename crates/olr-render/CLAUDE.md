@@ -399,12 +399,19 @@ on screen or offscreen.
   centre over the solid map, the centre's pixel and the pixel included,
   a corner closed when both pixels beside it are rock or dirt (the glow
   light's rule), outside the map open; before the first rock or dirt
-  pixel a back pixel takes `BACK_HEAT` 0.2 (issue #40: the wall lies
-  behind the explosion); the first `HEAT_SKIN` 2 solid pixels in a row
-  are the skin, the k-th taking `HEAT_SKIN_GAIN` 1.0 ×
-  `HEAT_SKIN_WEIGHTS[k − 1]` (1, 0.5); past them, deeper rock or the air
-  behind it, nothing, so conduction carries the heat in; a centre in rock
-  is its own skin's first pixel; a walk visits at most `HEAT_WALK_STEPS`
+  pixel a back pixel takes the ball's slice at the back's depth, `1 −
+  (d² + z²)/R²` (issue #65: the level's wall lies
+  `olr_look::engine::BACK_DEPTH_PX` 14 behind the plane, read from the
+  table's head `w`; 0 for a distant layer, whose deposits come sliced);
+  the solid pixels met in a row are the skin: while every one is dirt,
+  the k-th of the first `DIRT_SKIN` 6 takes `DIRT_HEAT_GAIN` 2.5 ×
+  `DIRT_SKIN_WEIGHTS[k − 1]` (1, 1, 0.8, 0.6, 0.4, 0.2) with no falloff
+  (issue #65: dirt takes the blast whole); once the walk has met rock
+  only the first `HEAT_SKIN` 2 take any, a rock pixel `HEAT_SKIN_GAIN`
+  1.0 × `HEAT_SKIN_WEIGHTS[k − 1]` (1, 0.5) by the falloff (rock shields
+  the dirt behind it); past the skin, deeper or the air behind it,
+  nothing, so conduction carries the heat in; a centre in rock is its
+  own skin's first pixel; a walk visits at most `HEAT_WALK_STEPS`
   pixels; each deposit added in whole texel units, so deposits landing
   in one pass or several give the same bytes), steps (into the scratch over
   the active boxes, scissored, copied back) and zeroes. A step: each
@@ -421,7 +428,8 @@ on screen or offscreen.
   (`HeatSim`) keeps at most 8 boxes: a deposit's square, grown a pixel a
   step to `HEAT_SPREAD` (48) past it, overlapping ones joined; a box is
   zeroed and dropped once an upper bound of its temperature
-  (`hot × (1 − α) − β`, the slowest cooling) is under the level's visible
+  (`hot × (1 − α) − β`, the slowest cooling; `hot` counts dirt's 2.5,
+  issue #65) is under the level's visible
   threshold (its ramps' first key) and 100 steps passed since its last
   deposit, or after 5 min of match time (a material that never cools);
   when every box will cool before the next deposit it is zeroed at once.
@@ -438,7 +446,11 @@ on screen or offscreen.
   issue #56's `a_deposit_heats_only_the_rock_face`,
   `heat_soaks_inward_from_the_face`, `a_wall_shields_what_is_behind_it`,
   `a_diagonal_wall_shields_too`, `a_deposit_inside_rock_heats_round_its_centre`,
-  `the_back_in_sight_takes_its_share`,
+  `the_back_in_sight_takes_its_share`, issue #65's
+  `the_back_takes_the_balls_slice_14_px_back`,
+  `dirt_takes_the_blast_whole_six_pixels_deep` and
+  `rock_shields_the_dirt_behind_it` (issue #56's tests run on rock
+  levels),
   `sensitivity_zero_never_heats`, `heat_cools_to_nothing`,
   `new_material_values_keep_the_heat`,
   `stepping_n_ticks_at_once_equals_n_single_steps`,
@@ -449,12 +461,12 @@ on screen or offscreen.
   `set_surface`'s materials, 0 none) before `set_distant`, which, lit with
   the terrain up, gives a layer whose material heats and that
   `MAX_HEAT_RADIUS` reaches at its `z` (`layer_heats`: `depth ×
-  olr_look::engine::HEAT_DEPTH_PX` < 64; depth 58 at most) a
+  olr_look::engine::layer_z` < 64; depth 45 at most) a
   `HeatTextures` of its own at its world size (art ÷ the level's art
   scale): the level's table, surface texels its material front and back
   where its image covers (`layer_texels`), a solid map all background, so
-  it takes `BACK_HEAT` (it lies behind the explosion; a walk there never
-  meets rock, issue #56) and cools as faced
+  it takes the CPU's slice whole (issue #65; a walk there never meets
+  rock, issue #56) and cools as faced
   by the air; no conduction to the level or between layers (`set_lighting`
   remakes them, `upload_terrain` resets them; `set_surface` with maps
   naming nothing keeps the table for them). `deposit_heat_seen(deposit,

@@ -222,6 +222,9 @@ Weapons only deposit heat; the level's materials decide what it does.
   Bazooka only the nearest). It takes heat in the circle of radius
   `sqrt(R² - z²)` (none when `z ≥ R`), with the amount falling off the
   same way.
+  *(Issue #65 put the level's own back wall on the same line, 14 px
+  behind the plane, and the layers behind it: `z = 14 + d × K`; dirt
+  takes the blast whole, 6 px deep.)*
 - The circle is centred on the layer pixel drawn behind the explosion at
   that moment, for the camera of the view nearest the explosion (one view
   outside split screen). Afterwards the heat stays on the layer and moves

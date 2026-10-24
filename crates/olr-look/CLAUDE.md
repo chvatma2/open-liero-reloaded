@@ -115,11 +115,15 @@ own look. The simulation never sees it.
   (1000 %), `MAX_EXPLOSION_HEAT_RADIUS` (48, the engine's own widest),
   `MAX_PROJECTILE_HEAT` (100 degrees a tick) and
   `MAX_PROJECTILE_HEAT_RADIUS` (16). Issue #41 (spec's "Distant layers: the ball"):
-  `HEAT_DEPTH_PX` (`K`, 1.1: a distant layer of depth `d` lies `d × K`
-  world pixels behind the plane, so a Big Nuke's fragments reach depth
-  20, a Bazooka's depth 15) and `heat_slice(heat, depth)`: the ball's
-  circle at that `z`, radius `sqrt(R² − z²)`, amount `× (1 − z² / R²)`;
-  `None` when `z ≥ R` or a value is not a positive number.
+  `HEAT_DEPTH_PX` (`K`, 1.1) and `heat_slice(heat, depth)`: the ball's
+  circle at `z = layer_z(depth)`, radius `sqrt(R² − z²)`, amount `× (1 − z² / R²)`;
+  `None` when `z ≥ R` or a value is not a positive number. Issue #65,
+  heat on one depth line: `BACK_DEPTH_PX` (14: the level's back wall lies
+  that far behind the plane, so a minigun's hit (12.5) leaves it cold and
+  a Bazooka's (17) warms a circle of radius 9.6, a projectile's heat at
+  its cap (16) one of 7.7) and `layer_z(depth)` (`14 + depth × K`: a Big
+  Nuke's fragments reach depth 7, a Bazooka's depth 2, a mod's widest
+  (48) depth 30, the renderer's largest radius (64) depth 45).
   Issue #54, the worm halo (the renderer's composite darkens the
   background round a living worm): `WORM_HALO_RADIUS` (2 world pixels
   past the silhouette on the level's back), `WORM_HALO_RADIUS_MAX` (5, at
