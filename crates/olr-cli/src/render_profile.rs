@@ -506,6 +506,159 @@ pub fn run(
     Ok(report)
 }
 
+/// A cost of a phase's frames: a pass group, the gaps, or (without
+/// timestamps) the CPU.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Cost {
+    pub what: String,
+    pub mean_ms: f64,
+    /// Of the frame's GPU time (1 for the CPU alone).
+    pub share: f64,
+    pub p99_ms: f64,
+    /// The group's largest single pass, mean ms (0 for the gaps).
+    pub largest_ms: f64,
+}
+
+/// `phase`'s costs, largest first: its groups and its copies and gaps
+/// against its GPU frame; the CPU alone without timestamps.
+pub fn ranked(phase: &PhaseReport) -> Vec<Cost> {
+    let Some(gpu) = phase.gpu_ms else {
+        let c = phase.cpu_ms;
+        return vec![Cost {
+            what: "cpu".into(),
+            mean_ms: c.mean,
+            share: 1.0,
+            p99_ms: c.p99,
+            largest_ms: 0.0,
+        }];
+    };
+    let share = |m: f64| if gpu.mean > 0.0 { m / gpu.mean } else { 0.0 };
+    let mut costs: Vec<Cost> = phase
+        .groups
+        .iter()
+        .map(|g| Cost {
+            what: g.pass.clone(),
+            mean_ms: g.ms.mean,
+            share: share(g.ms.mean),
+            p99_ms: g.ms.p99,
+            largest_ms: g.largest_ms.mean,
+        })
+        .collect();
+    if let Some(b) = phase.between_ms {
+        let what = "copies and gaps".to_string();
+        costs.push(Cost { what, mean_ms: b.mean, share: share(b.mean), p99_ms: b.p99, largest_ms: 0.0 });
+    }
+    costs.sort_by(|a, b| b.mean_ms.total_cmp(&a.mean_ms).then_with(|| a.what.cmp(&b.what)));
+    costs
+}
+
+/// `x` against `base`: `-2.00 ms (-50 %)`.
+fn delta(x: f64, base: f64) -> String {
+    let pct = if base > 0.0 { format!(" ({:+.0} %)", (x - base) / base * 100.0) } else { String::new() };
+    format!("{:+.2} ms{pct}", x - base)
+}
+
+fn spread(s: Stat) -> String {
+    format!("{:.2}/{:.2}/{:.2}", s.mean, s.p99, s.max)
+}
+
+/// The size of `sizes` nearest 3440 × 1440 in pixels (the maintainer's display).
+fn nearest_ultrawide(sizes: &[SizeProfile]) -> Option<&SizeProfile> {
+    let px = |s: &SizeProfile| (u64::from(s.size.0) * u64::from(s.size.1)).abs_diff(3440 * 1440);
+    sizes.iter().min_by_key(|s| px(s))
+}
+
+/// The report as the ranked table `render-profile` prints, each cost
+/// against `against`'s (the same size, phase and cost) when given.
+pub fn table(report: &ProfileReport, against: Option<&ProfileReport>) -> String {
+    use std::fmt::Write as _;
+    let mut t = String::new();
+    let gpu = if report.timestamps { "timestamps" } else { "not measured (no timestamps)" };
+    let _ = writeln!(
+        t,
+        "render profile: {} ({}, {}); GPU times: {gpu}",
+        report.adapter, report.backend, report.device_type
+    );
+    if report.device_type == "Cpu" {
+        let _ = writeln!(t, "software adapter: times are relative only");
+    }
+    let _ = writeln!(t, "scene: {}; {} frames a tick", report.scene, report.frames_per_tick);
+    if report.timestamps && !report.copies_timed {
+        let _ = writeln!(t, "heat copy: not timed (no timestamps inside encoders)");
+    }
+    let base_of = |size: (u32, u32), phase: Phase| {
+        against?.sizes.iter().find(|s| s.size == size)?.phases.iter().find(|p| p.phase == phase)
+    };
+    for s in &report.sizes {
+        let [x, y, w, h] = s.playfield;
+        let targets: Vec<String> = s.world_targets.iter().map(|(w, h)| format!("{w}x{h}")).collect();
+        let grid = s.glow_grid.map_or("none".to_string(), |(w, h)| format!("{w}x{h}"));
+        let _ = writeln!(
+            t,
+            "\n{}x{}: playfield {w}x{h} at {x},{y}; world targets {}; glow grid {grid}, {} cascades",
+            s.size.0,
+            s.size.1,
+            targets.join(", "),
+            s.cascades
+        );
+        for p in &s.phases {
+            let gpu = p.gpu_ms.map_or("-".to_string(), spread);
+            let _ = writeln!(
+                t,
+                "  {}: {} frames; gpu {gpu} ms (mean/p99/max), cpu {}, tick {:.3} mean; heat area {:.0} mean {:.0} max; discs {:.0} max; uploads {:.0} B mean",
+                p.phase,
+                p.frames,
+                spread(p.cpu_ms),
+                p.tick_ms.mean,
+                p.heat_area.mean,
+                p.heat_area.max,
+                p.discs.max,
+                p.upload_bytes.mean
+            );
+            let base = base_of(s.size, p.phase).map(ranked);
+            if let (Some(bg), Some(now)) = (base_of(s.size, p.phase).and_then(|b| b.gpu_ms), p.gpu_ms) {
+                let _ = writeln!(t, "    frame {:>8.2} ms  {}", now.mean, delta(now.mean, bg.mean));
+            }
+            for c in ranked(p) {
+                let d = base.as_ref().map(|b| match b.iter().find(|x| x.what == c.what) {
+                    Some(x) => delta(c.mean_ms, x.mean_ms),
+                    None => "new".to_string(),
+                });
+                let _ = writeln!(
+                    t,
+                    "    {:<16} {:>8.2} ms {:>4.0} %  p99 {:.2}  largest {:.2}{}",
+                    c.what,
+                    c.mean_ms,
+                    c.share * 100.0,
+                    c.p99_ms,
+                    c.largest_ms,
+                    d.map_or(String::new(), |d| format!("  {d}"))
+                );
+            }
+            if p.untimed > 0 {
+                let _ = writeln!(t, "    {} passes untimed", p.untimed);
+            }
+        }
+    }
+    if let Some(s) = nearest_ultrawide(&report.sizes) {
+        let mut top: Vec<(Phase, Cost)> =
+            s.phases.iter().flat_map(|p| ranked(p).into_iter().map(move |c| (p.phase, c))).collect();
+        top.sort_by(|a, b| b.1.mean_ms.total_cmp(&a.1.mean_ms));
+        let _ = writeln!(t, "\nTop costs ({}x{}):", s.size.0, s.size.1);
+        for (i, (phase, c)) in top.iter().take(5).enumerate() {
+            let _ = writeln!(
+                t,
+                "  {}. {phase}: {} {:.2} ms ({:.0} %)",
+                i + 1,
+                c.what,
+                c.mean_ms,
+                c.share * 100.0
+            );
+        }
+    }
+    t
+}
+
 #[cfg(test)]
 mod tests {
     use egui::{Pos2, Rect, vec2};
@@ -538,5 +691,99 @@ mod tests {
         let s = Stat::of(&[1.0, 2.0, 6.0]);
         assert_eq!((s.mean, s.p50, s.p99, s.max), (3.0, 2.0, 6.0, 6.0));
         assert_eq!(Stat::of(&[]), Stat::default());
+    }
+
+    /// A phase whose groups take `groups` ms (mean), on a `gpu` ms frame,
+    /// its gaps the rest.
+    fn phase_for_test(groups: &[(&str, f64)], gpu: f64) -> PhaseReport {
+        let stat = |m: f64| Stat { mean: m, p50: m, p99: m, max: m };
+        let sum: f64 = groups.iter().map(|g| g.1).sum();
+        PhaseReport {
+            phase: Phase::Blast,
+            frames: 10,
+            tick_ms: stat(0.01),
+            cpu_ms: stat(0.2),
+            gpu_ms: Some(stat(gpu)),
+            between_ms: Some(stat(gpu - sum)),
+            groups: groups
+                .iter()
+                .map(|&(pass, m)| GroupCost {
+                    pass: pass.into(),
+                    ms: stat(m),
+                    passes: stat(1.0),
+                    largest_ms: stat(m),
+                })
+                .collect(),
+            untimed: 0,
+            heat_area: stat(100.0),
+            discs: stat(3.0),
+            upload_bytes: stat(1000.0),
+        }
+    }
+
+    fn report_for_test(groups: &[(&str, f64)]) -> ProfileReport {
+        let gpu = groups.iter().map(|g| g.1).sum::<f64>() + 0.5;
+        ProfileReport {
+            adapter: "RTX".into(),
+            backend: "Vulkan".into(),
+            device_type: "DiscreteGpu".into(),
+            timestamps: true,
+            copies_timed: true,
+            scene: "fight".into(),
+            frames_per_tick: 2,
+            sizes: vec![SizeProfile {
+                size: (3440, 1440),
+                playfield: [440, 0, 2560, 1152],
+                world_targets: vec![(856, 386)],
+                glow_grid: Some((300, 120)),
+                cascades: 6,
+                phases: vec![phase_for_test(groups, gpu)],
+            }],
+        }
+    }
+
+    #[test]
+    fn costs_are_ranked_largest_first_with_their_share() {
+        let p = phase_for_test(&[("cascades", 2.0), ("heat step", 0.5), ("bloom", 1.0)], 3.9);
+        let r = ranked(&p);
+        let names: Vec<&str> = r.iter().map(|c| c.what.as_str()).collect();
+        assert_eq!(names, ["cascades", "bloom", "heat step", "copies and gaps"]);
+        assert!((r[0].share - 2.0 / 3.9).abs() < 1e-9);
+        let mut cpu_only = p.clone();
+        (cpu_only.gpu_ms, cpu_only.between_ms, cpu_only.groups) = (None, None, Vec::new());
+        assert_eq!(ranked(&cpu_only).iter().map(|c| c.what.as_str()).collect::<Vec<_>>(), ["cpu"]);
+    }
+
+    #[test]
+    fn the_table_compares_with_a_base_and_names_new_rows() {
+        let now = report_for_test(&[("cascades", 2.0), ("heat copy", 0.3)]);
+        let base = report_for_test(&[("cascades", 4.0)]);
+        let t = table(&now, Some(&base));
+        assert!(t.contains("-2.00 ms (-50 %)"), "{t}");
+        assert!(t.contains("new"), "{t}");
+        assert!(t.contains("Top costs"), "{t}");
+        let alone = table(&now, None);
+        let deltas = [" ms (-", " ms (+", "  new"];
+        assert!(deltas.iter().all(|d| !alone.contains(d)), "no deltas without a base: {alone}");
+    }
+
+    #[test]
+    fn a_software_run_says_its_times_are_relative() {
+        let mut r = report_for_test(&[("cascades", 2.0)]);
+        r.device_type = "Cpu".into();
+        assert!(table(&r, None).contains("software adapter: times are relative only"));
+        assert!(!report_for_test(&[]).sizes.is_empty());
+        assert!(!table(&report_for_test(&[("cascades", 2.0)]), None).contains("relative only"));
+    }
+
+    #[test]
+    fn the_table_says_what_was_not_timed() {
+        let mut r = report_for_test(&[("cascades", 2.0)]);
+        (r.copies_timed, r.sizes[0].phases[0].untimed) = (false, 7);
+        let t = table(&r, None);
+        assert!(t.contains("heat copy: not timed (no timestamps inside encoders)"), "{t}");
+        assert!(t.contains("7 passes untimed"), "{t}");
+        r.timestamps = false;
+        assert!(table(&r, None).contains("GPU times: not measured (no timestamps)"));
     }
 }

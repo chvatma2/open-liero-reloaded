@@ -21,6 +21,7 @@ mod pack_cmd;
 mod quick_bench_cmd;
 mod render;
 mod render_match;
+mod render_profile_cmd;
 mod replay_cmd;
 mod rollback_cost_cmd;
 mod scenario;
@@ -100,6 +101,9 @@ enum Command {
     /// Draw a recorded match offscreen at several sizes on the GPU, timing the CPU
     /// and (with timestamps) the GPU, plus the shader-headroom probe (plan 8).
     GpuBench(gpu_bench_cmd::Args),
+    /// Profile a staged nuke fight drawn the way the game draws it: each frame's costs
+    /// ranked by phase (calm, blast, hot), against an earlier run with `--against`.
+    RenderProfile(render_profile_cmd::Args),
     /// Measures Nostr relays for the default list (by hand only: it publishes probe events
     /// from a fresh random key); exits with status 1 unless every relay passes.
     NostrProbe(olr_cli::nostr_probe::RelayArgs),
@@ -139,6 +143,7 @@ fn main() -> ExitCode {
         Command::QuickBench(args) => quick_bench_cmd::run(&args),
         Command::RollbackCost(args) => rollback_cost_cmd::run(&args),
         Command::GpuBench(args) => gpu_bench_cmd::run(&args),
+        Command::RenderProfile(args) => render_profile_cmd::run(&args),
         Command::NostrProbe(args) => olr_cli::nostr_probe::run_relays(&args),
         Command::StunProbe(args) => olr_cli::nostr_probe::run_stun(&args),
         #[cfg(feature = "nat-tools")]

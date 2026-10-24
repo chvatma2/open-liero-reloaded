@@ -751,6 +751,50 @@ The headless command-line tool. Its commands:
   `gpu-bench` of the heavy replay at four sizes with the probe about
   11 s (WSL GL), 10 s (DX12) or 8 s (Vulkan), a level's replay about
   1 s (art 8: 3 to 8 s).
+- `olr-cli render-profile [--sizes 1920x1080,3440x1440,3840x2160]
+  [--frames-per-tick 2] [--ticks FROM..TO] [--adapter hardware|integrated|software]
+  [--backend auto|gl|vulkan|dx12] [--content DIR] [--out F.ron] [--against F.ron]
+  [--save-replay F.olrp]` (`render_profile.rs`, the command in
+  `render_profile_cmd.rs`; spec
+  `docs/superpowers/specs/2026-10-24-render-profile-design.md`): where a
+  heavy lit frame's time goes. `stage_fight` plays a nuke fight headless
+  and records it: Liero v1.0 Reloaded on Castle Strike Reloaded, one
+  scripted local player (`local_keys`) and three Medium bots carrying only
+  `NUKES` (Big and Mini Nuke, `fight_options`' loadout, loading 20 %),
+  seed 7, 2000 ticks (27 nukes, the first going off at tick 200; Medium
+  bots alone fire 3, chaos bots rotate the whole mod's weapons); no nuke
+  going off is an error (`the staged fight set off no nukes`); `Fight`
+  holds the replay, each nuke's tick (`blasts`: explosions of the
+  projectiles `NUKES` fire, `nuke_projectiles`/`has_blast`; their
+  shrapnel's thousands are not blasts) and the shots by weapon. `run`
+  draws it the way the game draws it (`Presentation` with the level's own
+  look and heat, no `bench_look`; the HUD's `Auto` playfield of each size,
+  `playfield_area`; the sharp filter, linear interpolation, blood 100 %,
+  one view; no HUD) at `--frames-per-tick` frames a tick (alpha k/n), the
+  ticks outside `--ticks` played undrawn with their uploads and
+  `run_heat`. Each frame goes in a `Phase` (`phase_of`: `Blast` within
+  `BLAST_TICKS` 50 of a nuke, else `Hot` while any heat box is active,
+  else `Calm`) and is measured: the CPU's build, upload, encoding and
+  submit, the GPU frame, each pass group's total, pass count and largest
+  pass (`Renderer::last_passes`), the frame less its passes (copies and
+  gaps), untimed passes, the heat area, the discs, the bytes uploaded.
+  `ProfileReport` (RON with `--out`): adapter, backend, device type,
+  `timestamps`, `copies_timed`, scene, and per size the playfield, the
+  world targets, the glow grid and cascades (`Workload`: the same at every
+  size) and each phase's `PhaseReport` (`Stat`: mean, p50, p99, max;
+  groups only with timestamps). `table` prints it: per phase the costs
+  `ranked` largest first with their share of the GPU frame, `--against`'s
+  change beside each (`±ms (±%)`, `new` for a cost the base lacks; an
+  unreadable base says `no base to compare against: …` and is ignored),
+  `N passes untimed`, `heat copy: not timed …` without timestamps inside
+  encoders, `software adapter: times are relative only` on a `Cpu`
+  device, and the five `Top costs` at the size nearest 3440 × 1440.
+  `cargo xtask profile` runs it on the Windows GPU. Tests: the unit tests
+  (phases, the playfield, ranking, the table), `tests/render_profile.rs`
+  (the fight: nukes early, a quiet hot stretch, the same every time, only
+  nukes fired; a fight without nukes refused) and the GPU tier's
+  `tests/gpu_bench.rs` `a_profile_reports_every_phase_and_the_heat`
+  (ticks round the first nukes on the software adapter, about 33 s).
 - `olr-cli nostr-probe [urls…] [--wait-min 3]` and `olr-cli stun-probe
   [servers…]` (plan 12a Task 8, `nostr_probe.rs`, library and commands):
   measure public relays and STUN servers to choose `olr_discovery::defaults`
@@ -928,6 +972,8 @@ the game receives from every bundled pack (each skin's drawn frames, the
 images the runtime uses, level and theme data; plan 13c): a pack format or
 importer change that alters a drawn pixel changes the snapshot. To accept a reviewed snapshot change, run
 `INSTA_UPDATE=always cargo test -p olr-cli --test integration corpus::`.
+`Match::with_match_options` plays a spec with options of its own (the
+render profile's loadout); `with_assets` is it with the spec's.
 `MatchSpec`'s `--loading-time` and `--pool-capacity` (serialized only when
 given, so goldens and failure records keep their form) are the stress
 test's; without them a match is OLX's (`LoadingTime` 100, pool 3000).

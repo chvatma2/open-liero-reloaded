@@ -11,7 +11,7 @@ use olr_cli::gpu_bench::{self, BenchConfig, parse_sizes};
 use olr_render::{AdapterPreference, OffscreenOptions};
 
 #[derive(Clone, Copy, clap::ValueEnum)]
-enum Adapter {
+pub(crate) enum Adapter {
     Hardware,
     /// An integrated GPU first: a laptop's GPU on a desktop (plan 15a Task 20).
     Integrated,
@@ -19,11 +19,32 @@ enum Adapter {
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
-enum Backend {
+pub(crate) enum Backend {
     Auto,
     Gl,
     Vulkan,
     Dx12,
+}
+
+impl Adapter {
+    pub(crate) fn preference(self) -> AdapterPreference {
+        match self {
+            Adapter::Hardware => AdapterPreference::Hardware,
+            Adapter::Integrated => AdapterPreference::Integrated,
+            Adapter::Software => AdapterPreference::Software,
+        }
+    }
+}
+
+impl Backend {
+    pub(crate) fn backends(self) -> Option<wgpu::Backends> {
+        match self {
+            Backend::Auto => None,
+            Backend::Gl => Some(wgpu::Backends::GL),
+            Backend::Vulkan => Some(wgpu::Backends::VULKAN),
+            Backend::Dx12 => Some(wgpu::Backends::DX12),
+        }
+    }
 }
 
 /// Draws a recorded match offscreen and times every frame.
@@ -90,12 +111,7 @@ fn parse_occlusion(s: &str) -> Result<olr_look::Occlusion, String> {
 }
 
 pub fn run(args: &Args) -> anyhow::Result<bool> {
-    let backends = match args.backend {
-        Backend::Auto => None,
-        Backend::Gl => Some(wgpu::Backends::GL),
-        Backend::Vulkan => Some(wgpu::Backends::VULKAN),
-        Backend::Dx12 => Some(wgpu::Backends::DX12),
-    };
+    let backends = args.backend.backends();
     if args.list_adapters {
         for a in olr_render::list_adapters(backends) {
             println!("{} ({:?}, {:?})", a.name, a.backend, a.device_type);
@@ -118,11 +134,7 @@ pub fn run(args: &Args) -> anyhow::Result<bool> {
         probe_taps: args.probe_taps,
         probe_frames: args.probe_frames,
         options: OffscreenOptions {
-            prefer: match args.adapter {
-                Adapter::Hardware => AdapterPreference::Hardware,
-                Adapter::Integrated => AdapterPreference::Integrated,
-                Adapter::Software => AdapterPreference::Software,
-            },
+            prefer: args.adapter.preference(),
             backends,
             timestamps: true,
             max_texture_side: None,
