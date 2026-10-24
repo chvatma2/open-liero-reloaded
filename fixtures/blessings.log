@@ -241,3 +241,8 @@
   fixtures/render/frame-dig.png
 2026-10-23 bless-render: #63: the Reloaded skies on parallax layers (Castle Strike's light-grid hashes unchanged, only its lit targets)
   fixtures/render/lit-hashes.ron
+2026-10-24 bless-render: #65: heat on one depth line, dirt at full force
+  fixtures/render/heat-cooled.png
+  fixtures/render/heat-distant.png
+  fixtures/render/heat-fresh.png
+  fixtures/render/lit-hashes.ron
