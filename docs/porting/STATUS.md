@@ -5973,6 +5973,71 @@ simulation, the oracle and every match golden are unchanged. As built:
   re-blessed ("#67: heat stays in its layer": no fringe on the
   background round the dirt); `heat-distant.png` came out the same.
 
+## A cooling pixel fades back to its cold look (issue #68)
+
+No OLX counterpart. The maintainer played development build 700: heated
+background, as it cooled, first turned dark and only then snapped back
+to its own colour. The lit terrain mixed the ramp's colour over the art
+by its glow (the lava ramp's cool end is dark red), took the glow as
+self-light (capped at 1, no bloom), and dropped both at a glow of 0.
+Presentation only: the simulation, the heat (deposit, step), the ramps,
+the glow light's emission, the oracle and every match golden are
+unchanged. As built:
+
+- **A hot pixel is its cold look plus its heat as emitted light.** The
+  cold part is everything the texel shows without heat (its art lit as
+  before: the light, the cap, the bloom, the soak, the worm halo, its
+  own glow from the glow maps); heat is no longer self-light, so it
+  changes none of them. The heat part, `E = to_linear(ramp colour) ×
+  g²` (`g` the ramp's glow, 0-1), is added to the composite's linear
+  light after the cap, before the grade. The art takes no part in `E`:
+  it shows through the cold part, lit by the light that reaches it, the
+  heat's own cast light (`HEAT_CAST`) included. Before the grade a hot
+  pixel is never darker than cold, and with a ramp whose colour and glow
+  do not fall as it heats (every channel of `LAVA_RAMP` rises) it moves
+  steadily, channel by channel, to exactly its cold bytes as it cools.
+- **How `E` reaches the composite:** a third target of the lit world
+  pass, the heat light (`HEAT_LIGHT_FORMAT`, `Rgba8UnormSrgb`: linear
+  light kept as sRGB bytes, as fine as the picture in the dark, blended
+  in linear light), cleared to 0; `hot` in `world_lit.wgsl` writes it for
+  the terrain (rock, dirt, the back, its opaque backing) and hot distant
+  layers (`fs_distant_lit`, issue #41); a sprite writes 0 with its alpha,
+  so it blends the heat under it down as it does the shade. The
+  composite reads it at binding 8. A level without heat writes 0 there
+  and draws the same bytes (`no_materials_draws_todays_bytes`, the
+  unheated render goldens, `look_none_draws_todays_bytes`).
+- **In the dark** a hot pixel looks about as before, not to the byte:
+  the art at a rim is lit by the heat's cast light, so where that light
+  is strong (a white-hot rim) the art adds to the ramp's colour and the
+  rim reads whiter than the ramp alone. A dull red glow on a brightly
+  lit wall barely shows, as embers in daylight.
+- **View modes.** Full bright and light only keep issue #39's look of a
+  hot pixel (the ramp colour over the art by the glow, the glow as
+  self-light, no heat light): the material editor's full bright and
+  `a_hot_pixel_shows_its_colour_in_every_view`'s full-bright case are
+  unchanged.
+- **`to_linear`** moved to `common.wgsl` (the composite and the glow
+  light shared copies; the world pass now needs it too).
+- **Tests:** `tests/gpu/heat.rs`'s `a_cooling_pixel_fades_back_to_its_cold_look`
+  (a hot back pixel of a lava material casting no light, under ambient
+  1.6 with bloom, the grade neutral, ten heat steps a frame until the
+  hottest pixel is under 97°: no texel below its cold value less 1, the
+  centre's distance from cold never growing by more than 1, then exactly
+  the cold frame), `a_cooling_distant_layer_fades_back_too` (the same on
+  a distant layer at depth 5), `a_hot_rim_still_glows_in_the_dark` (a
+  blast of the Bazooka's radius, 17, at the hottest amount on dirt:
+  yellow-white over its centre, redder at the first pixel along the face
+  at half the heat or less). `a_hot_pixel_shows_its_colour_in_every_view`
+  checks its "redder at half the heat" pixel at (30, 74), the dirt
+  skin's last pixel, which does take half since issue #65: (30, 78) is
+  at the full heat, and lit it now shows its white art lit by the heat
+  plus the ramp, white. Both cooling tests fail on the old shaders.
+- **Goldens:** `heat-fresh.png` and `lit-hashes.ron` were re-blessed
+  ("#68: a cooling pixel fades back to its cold look": the hot back
+  keeps its light and bloom under its heat, white-hot rims read whiter). `heat-cooled.png` and `heat-distant.png` change too (the
+  cooled rims redder, none darker than the rock or the back round them),
+  but within the goldens' perceptual tolerance, so the bless kept them.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`
