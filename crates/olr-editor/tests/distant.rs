@@ -1,8 +1,8 @@
 //! Issue #11: distant (parallax) layers in the editor. An imported image
 //! made distant and given a depth through the properties, the order kept on
 //! a reorder, a paste, a merge and a split, the hint while nothing in front
-//! is see-through, and the canvas showing and hit-testing them shifted by
-//! the view.
+//! is see-through, and the canvas showing and hit-testing them at their
+//! place, or with View ▾ Preview parallax shifted by the view (issue #66).
 
 use egui::accesskit::Role;
 use egui_kittest::Harness;
@@ -148,10 +148,10 @@ fn distant_layers_keep_below_the_rest() {
     assert_eq!(ids(&state)[..2], [pasted, sky]);
 }
 
-#[test]
-fn the_canvas_shows_and_hits_distant_layers_where_they_draw() {
-    let Some(root) = content() else { return };
-    let (_tmp, mut state) = editor(&root);
+/// A depth-50 background image made distant, alone visible, on an
+/// 800 × 600 canvas: the state, its id, its place and box size.
+fn distant_sky(root: &std::path::Path) -> (tempfile::TempDir, EditorState, String, (i32, i32), (u32, u32)) {
+    let (tmp, mut state) = editor(root);
     let sky = import(&mut state);
     run(&mut state, A::Set(sky.clone(), Property::Material(olr_format::levels::ElementMaterial::Background)));
     run(&mut state, A::Set(sky.clone(), Property::Distant(Some(50))));
@@ -160,54 +160,112 @@ fn the_canvas_shows_and_hits_distant_layers_where_they_draw() {
         run(&mut state, A::Set(id, Property::Visible(false)));
     }
     run(&mut state, A::Canvas([800.0, 600.0]));
-    let doc = state.document().unwrap();
-    let size = doc.level().size;
-    let ElementKind::Image { at, size: b, .. } = doc.items()[0].element.kind.clone() else {
+    let ElementKind::Image { at, size: b, .. } = state.document().unwrap().items()[0].element.kind.clone()
+    else {
         panic!("an image")
     };
-    let place = |state: &EditorState| {
-        let camera = state.parallax_camera().expect("a canvas");
-        let d = |c: f32, side: u32| (0.5 * (c - side as f32 / 2.0)).round() as i32;
-        (at.0 + d(camera.0, size.0), at.1 + d(camera.1, size.1))
-    };
+    (tmp, state, sky, at, b)
+}
+
+/// Where a depth-50 layer placed at `at` shows by the editor's camera.
+fn shown_at(state: &EditorState, at: (i32, i32)) -> (i32, i32) {
+    let size = state.document().unwrap().level().size;
+    let camera = state.parallax_camera().expect("a document");
+    let d = |c: f32, side: u32| (0.5 * (c - side as f32 / 2.0)).round() as i32;
+    (at.0 + d(camera.0, size.0), at.1 + d(camera.1, size.1))
+}
+
+/// The selected layer's overlay box is drawn at `shown`, and a click on
+/// its middle there selects `sky`.
+fn shows_and_hits(state: &mut EditorState, sky: &str, shown: (i32, i32), b: (u32, u32), why: &str) {
+    let boxes: Vec<_> = state
+        .overlays()
+        .into_iter()
+        .filter_map(|o| match o {
+            olr_editor::tools::Overlay::Box { rect, .. } => Some(rect),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        boxes.iter().any(|r| (r.x as i32, r.y as i32) == (shown.0.max(0), shown.1.max(0))),
+        "{why}: the box drawn at {shown:?}, not {boxes:?}"
+    );
+    run(state, A::Select(Selection::None));
+    run(state, A::Tool(Tool::Select));
+    click(state, (shown.0 + b.0 as i32 / 2, shown.1 + b.1 as i32 / 2));
+    assert_eq!(state.selection(), &Selection::Element(sky.into()), "{why}");
+}
+
+fn click(state: &mut EditorState, world: (i32, i32)) {
+    for kind in [PointerKind::Down, PointerKind::Up] {
+        run(state, A::Pointer { kind, world, shift: false, toggle: false });
+    }
+}
+
+/// Issue #66: by default a distant layer shows and hits at its place,
+/// however the view pans; with Preview parallax it shifts by the canvas's
+/// centre, as in play (issue #11).
+#[test]
+fn the_canvas_shows_and_hits_distant_layers_where_they_draw() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut state, sky, at, b) = distant_sky(&root);
+    assert!(!state.preview_parallax(), "off by default");
+    for pan in [[0.0, 0.0], [-120.0, 80.0], [-2000.0, 0.0]] {
+        run(&mut state, A::Pan(pan));
+        assert_eq!(shown_at(&state, at), at, "{pan:?}: the parallax is (0, 0)");
+        shows_and_hits(&mut state, &sky, at, b, &format!("{pan:?}"));
+    }
+    // Preview parallax: the canvas's centre is the camera.
+    run(&mut state, A::PreviewParallax(true));
+    let (size, s) = (state.document().unwrap().level().size, state.document().unwrap().level().art_scale);
+    let centre = state.view().centre([800.0, 600.0], s);
+    let level = (size.0 as f32 / 2.0, size.1 as f32 / 2.0);
+    assert_eq!(state.parallax_camera(), Some(centre));
+    assert_ne!(centre, level, "the pans moved the canvas's centre");
+    run(&mut state, A::Pan([2000.0, 0.0]));
     for pan in [[0.0, 0.0], [-120.0, 80.0]] {
         run(&mut state, A::Pan(pan));
-        let shown = place(&state);
-        let boxes: Vec<_> = state
-            .overlays()
-            .into_iter()
-            .filter_map(|o| match o {
-                olr_editor::tools::Overlay::Box { rect, .. } => Some(rect),
-                _ => None,
-            })
-            .collect();
-        assert!(
-            boxes.iter().any(|r| (r.x as i32, r.y as i32) == (shown.0.max(0), shown.1.max(0))),
-            "{pan:?}: the box drawn at {shown:?}, not {boxes:?}"
-        );
-        // A click where it shows selects it; where it would be unshifted,
-        // when that is elsewhere, nothing.
-        run(&mut state, A::Select(Selection::None));
-        run(&mut state, A::Tool(Tool::Select));
-        let centre = (shown.0 + b.0 as i32 / 2, shown.1 + b.1 as i32 / 2);
-        let click = |state: &mut EditorState, p: (i32, i32)| {
-            for kind in [PointerKind::Down, PointerKind::Up] {
-                run(state, A::Pointer { kind, world: p, shift: false, toggle: false });
-            }
-        };
-        click(&mut state, centre);
-        assert_eq!(state.selection(), &Selection::Element(sky.clone()), "{pan:?}");
+        let shown = shown_at(&state, at);
+        shows_and_hits(&mut state, &sky, shown, b, &format!("previewed, {pan:?}"));
     }
     // Moved far off its place, a click on the place hits nothing.
     run(&mut state, A::Pan([-2000.0, 0.0]));
-    let shown = place(&state);
+    let shown = shown_at(&state, at);
     assert!((shown.0 - at.0).abs() > b.0 as i32, "the pan moves it a box away");
     run(&mut state, A::Select(Selection::None));
-    for kind in [PointerKind::Down, PointerKind::Up] {
-        let world = (at.0 + 2, at.1 + 2);
-        run(&mut state, A::Pointer { kind, world, shift: false, toggle: false });
-    }
+    click(&mut state, (at.0 + 2, at.1 + 2));
     assert_eq!(state.selection(), &Selection::None);
+    // Off again, it is back at its place.
+    run(&mut state, A::PreviewParallax(false));
+    shows_and_hits(&mut state, &sky, at, b, "off again");
+}
+
+/// Issue #66: the wheel zooms about the pointer, moving the canvas's
+/// centre; a distant layer stays where it is placed, its box and its hit
+/// with it, through the zooms and a pan. With Preview parallax the same
+/// zooms move it.
+#[test]
+fn zooming_leaves_a_distant_layer_in_place() {
+    let Some(root) = content() else { return };
+    let (_tmp, mut state, sky, at, b) = distant_sky(&root);
+    let zooms = [(1, [700.0, 500.0]), (2, [100.0, 80.0]), (-1, [650.0, 120.0]), (1, [750.0, 560.0])];
+    for (steps, about) in zooms {
+        run(&mut state, A::Zoom { steps, about });
+        assert_eq!(shown_at(&state, at), at);
+        shows_and_hits(&mut state, &sky, at, b, &format!("zoom {steps} about {about:?}"));
+    }
+    run(&mut state, A::Pan([-150.0, 90.0]));
+    shows_and_hits(&mut state, &sky, at, b, "panned");
+    // Previewed, the same zooms move it.
+    run(&mut state, A::PreviewParallax(true));
+    let mut last = shown_at(&state, at);
+    for (steps, about) in zooms {
+        run(&mut state, A::Zoom { steps, about });
+        let shown = shown_at(&state, at);
+        assert_ne!(shown, last, "zoom {steps} about {about:?} moves it");
+        shows_and_hits(&mut state, &sky, shown, b, &format!("previewed, zoom {steps} about {about:?}"));
+        last = shown;
+    }
 }
 
 /// Issue #62: a distant layer glows through its properties' Glow switch

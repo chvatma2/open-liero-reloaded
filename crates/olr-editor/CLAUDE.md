@@ -95,8 +95,8 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   (issue #8)"): on top the session bar (File ▾: Open…, Save, Close; Undo,
   Redo, the unsaved mark's kept space; at the right View ▾: Collision
   view (rock, dirt, background; "Material view" before issue #43), Grid,
-  the light views, the Materials view and the lights' clock; Play and its ▾, the
-  mod and bots) and the tool options bar (`toolbar.rs`: the chosen tool's
+  Preview parallax (issue #66), the light views, the Materials view and
+  the lights' clock; Play and its ▾, the mod and bots) and the tool options bar (`toolbar.rs`: the chosen tool's
   options only: the brush for `Tool::uses_brush`, the paint for
   `Tool::lays_paint`, then its own; empty but as tall without any); on
   the left the tool rail (`rail.rs`, icons drawn in `icons.rs`): Import,
@@ -290,12 +290,16 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   distant items changed (`distant_generation()`), and counts the
   see-through back pixels (`has_holes()`). `EditorState::update` sends
   `EditorCommand::Distant(layers)` whenever the generation moved (and with
-  every new document). The canvas's camera is the view's centre
-  (`View::centre`, `parallax_camera()`); `parallax(e)` is where a distant
-  element shows relative to its place, so `hit`, the Select handles and
-  resize, the tools on a selected distant layer (`to_layer`) and
-  `overlays()` work where it draws. The panels: a Distant switch and a
-  Depth slider (`ui::slider`, "near" to "far", committed when the drag
+  every new document). The canvas's camera (`parallax_camera()`, which
+  the host draws with too) is the level's centre; View ▾ Preview parallax
+  the view's centre (`View::centre`; issue #66: `PreviewParallax`,
+  `preview_parallax()`, a view option like Grid, never a step nor a
+  setting, acting while a dialog is open). By default a distant layer
+  so shows at its place whatever the pan and zoom; `parallax(e)` is
+  where a distant element shows relative to its place, so `hit`, the
+  Select handles and resize, the tools on a selected distant layer
+  (`to_layer`) and `overlays()` work where it draws. The panels: a
+  Distant switch and a Depth slider (`ui::slider`, "near" to "far", committed when the drag
   stops; `ops::DEFAULT_DEPTH` 50) right under "What is it?" for a
   Background element, the hint `labels::DISTANT_HINT` while nothing is
   see-through, and the list's 🌄 mark. Issue #62: a distant element
@@ -305,7 +309,10 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   placement); `rebake` makes the distant layers again when a distant
   element's glow mask changes too (`distant_masks`), so the lit canvas
   shows the sky's baked light and its glowing picture. Tests:
-  `tests/distant.rs` (issue #62: `a_distant_layer_glows_and_lights_the_level`).
+  `tests/distant.rs` (issue #62:
+  `a_distant_layer_glows_and_lights_the_level`; issue #66:
+  `zooming_leaves_a_distant_layer_in_place`; `flows.rs`'s
+  `preview_parallax_in_the_view_menu`).
 - **Surface materials** (issue #37; the bake is `olr_edit::compose`'s):
   the document keeps the painted surface maps as opened
   (its `surface_maps`, `PaintedSurfaces`) and bakes with them. A resize

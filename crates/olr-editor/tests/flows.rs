@@ -1098,6 +1098,25 @@ fn toggle_views_and_scrub_the_clock() {
     assert!(!h.state().state.dirty());
 }
 
+/// Issue #66: View ▾ Preview parallax, off at first, turns on and off by
+/// its label; a view option, neither a step nor a setting.
+#[test]
+fn preview_parallax_in_the_view_menu() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    assert!(!h.state().state.preview_parallax());
+    assert!(h.query_by_label(labels::PREVIEW_PARALLAX).is_none(), "under View");
+    h.get_by_label(labels::VIEW).click();
+    h.run();
+    for on in [true, false, true] {
+        h.get_by_label(labels::PREVIEW_PARALLAX).click();
+        h.run();
+        assert_eq!(h.state().state.preview_parallax(), on);
+    }
+    let s = h.state();
+    assert!(!s.state.dirty());
+    assert!(!s.commands.iter().any(|c| matches!(c, C::SaveSettings(_))), "not a setting");
+}
+
 /// Issue #8: "More" and the lighting's "Fine tuning" are folded at first,
 /// open by a click, and remembered in the settings.
 #[test]

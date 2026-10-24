@@ -364,11 +364,17 @@ impl EditorState {
         rect
     }
 
-    /// The canvas's camera for distant layers (issue #11): the world point
-    /// at its centre; `None` before the canvas or a document.
+    /// The canvas's camera for distant layers (issue #11), in world
+    /// pixels: the level's centre, where each shows at its place (issue
+    /// #66), or with View ▾ Preview parallax the world point at the
+    /// canvas's centre, as in play. The host draws with it too, so the
+    /// picture and the hit-testing agree. `None` without a document.
     pub fn parallax_camera(&self) -> Option<(f32, f32)> {
-        let doc = self.doc.as_ref()?;
-        Some(self.view.centre(self.canvas?, doc.level().art_scale))
+        let level = self.doc.as_ref()?.level();
+        match self.canvas {
+            Some(canvas) if self.preview_parallax => Some(self.view.centre(canvas, level.art_scale)),
+            _ => Some((level.size.0 as f32 / 2.0, level.size.1 as f32 / 2.0)),
+        }
     }
 
     /// Where distant element `e` shows on the canvas, relative to its

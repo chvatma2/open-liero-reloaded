@@ -158,8 +158,8 @@ fn play_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut 
     r.on_hover_text(format!("the test match: {current}, {bots} bot{}", if bots == 1 { "" } else { "s" }));
 }
 
-/// View ▾: the collision view, the grid, the light views, the Materials
-/// view (issue #43) and the lights' clock.
+/// View ▾: the collision view, the grid, Preview parallax (issue #66),
+/// the light views, the Materials view (issue #43) and the lights' clock.
 fn view_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Vec<EditorAction>) {
     menu(ui, "View", labels::VIEW, Some(stays_open()), |ui| {
         let mut material = state.material_view();
@@ -169,6 +169,10 @@ fn view_menu(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut 
         let mut grid = state.grid();
         if ui.checkbox(&mut grid, labels::GRID).changed() {
             out.push(EditorAction::Grid(grid));
+        }
+        let mut parallax = state.preview_parallax();
+        if ui.checkbox(&mut parallax, labels::PREVIEW_PARALLAX).changed() {
+            out.push(EditorAction::PreviewParallax(parallax));
         }
         ui.separator();
         for (mode, label) in [

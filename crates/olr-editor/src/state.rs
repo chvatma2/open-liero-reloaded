@@ -351,6 +351,9 @@ pub enum EditorAction {
     },
     MaterialView(bool),
     Grid(bool),
+    /// View ▾ Preview parallax (issue #66): distant layers move with the
+    /// view as in play; off, they show where they are placed.
+    PreviewParallax(bool),
     // Surface materials (issue #43).
     /// The Materials view: the canvas tints each pixel by its surface
     /// material (front, or back where the front is carved), with a legend.
@@ -537,6 +540,8 @@ pub struct EditorState {
     pub(crate) surface_paint: Option<String>,
     pub(crate) surface_back: bool,
     pub(crate) grid: bool,
+    /// View ▾ Preview parallax (issue #66).
+    pub(crate) preview_parallax: bool,
     /// The pointer drag in progress.
     pub(crate) drag: Option<Drag>,
     /// Changes committed so far (and undone or redone).
@@ -617,6 +622,7 @@ impl EditorState {
             surface_paint: None,
             surface_back: false,
             grid: false,
+            preview_parallax: false,
             drag: None,
             changes: 0,
             browser: None,
@@ -835,6 +841,7 @@ impl EditorState {
                 | EditorAction::MaterialView(_)
                 | EditorAction::SurfaceView(_)
                 | EditorAction::Grid(_)
+                | EditorAction::PreviewParallax(_)
                 | EditorAction::SetViewMode(_)
                 | EditorAction::Clock(_)
         );
@@ -857,6 +864,7 @@ impl EditorState {
                 | EditorAction::SurfacePaint(_)
                 | EditorAction::SurfaceBack(_)
                 | EditorAction::Grid(_)
+                | EditorAction::PreviewParallax(_)
                 | EditorAction::Brush(_)
                 | EditorAction::Paint(_)
                 | EditorAction::PaintMaterial(_)
@@ -1358,6 +1366,10 @@ impl EditorState {
                 self.grid = on;
                 Vec::new()
             }
+            EditorAction::PreviewParallax(on) => {
+                self.preview_parallax = on;
+                Vec::new()
+            }
         }
     }
 
@@ -1557,6 +1569,11 @@ impl EditorState {
 
     pub fn grid(&self) -> bool {
         self.grid
+    }
+
+    /// Whether View ▾ Preview parallax is on (issue #66).
+    pub fn preview_parallax(&self) -> bool {
+        self.preview_parallax
     }
 
     fn refresh_problems(&mut self) {

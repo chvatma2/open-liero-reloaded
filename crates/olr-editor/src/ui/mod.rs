@@ -37,6 +37,8 @@ pub mod labels {
     pub const SURFACE_VIEW: &str = "Materials view";
     pub const LEGEND: &str = "Legend";
     pub const GRID: &str = "Grid";
+    /// Issue #66: distant layers move with the view, as in play.
+    pub const PREVIEW_PARALLAX: &str = "Preview parallax";
     // The rail's group buttons (`ToolGroup::name`); its other buttons are
     // named by their tool (`Tool::name`), Import by `IMPORT_IMAGE`.
     pub const DRAW: &str = "Draw";
