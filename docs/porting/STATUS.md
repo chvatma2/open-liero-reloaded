@@ -4296,7 +4296,8 @@ As built:
   / 2)` on both axes: at the level's centre it lies at `at`, and it moves
   on screen by `(1 − depth)` of the camera's movement. The camera is the
   view's centre in play; in the editor the canvas's centre (the drawn view
-  is cut to the device's target there). The offset is rounded to whole
+  is cut to the device's target there; since issue #66 the level's
+  centre, unless View ▾ Preview parallax is on). The offset is rounded to whole
   target texels against the snapped world-target origin: no shimmer.
 - **See-through.** In a level with distant layers, back pixels no other
   background covers bake to the back tile's colour at alpha 0
@@ -5814,6 +5815,35 @@ it. As built, the builder's calls:
 - `olr-game`'s `finding` test now waits for the relay's stored games to
   end before checking the Internet tab's status: under the whole
   workspace's load the server's game came among them, a poll earlier.
+
+## Distant layers stay where placed in the editor (issue #66)
+
+No OLX counterpart (distant layers are OLR's, issue #11). The level
+editor drew and hit-tested distant layers as if the game's camera were at
+the canvas's centre; the wheel zooms about the pointer
+(`View::zoom_about`), so every step moved that centre and, by `depth ×
+(camera − level centre)`, every distant layer, with nothing panned. As
+built:
+
+- **Reference placement by default.** The editor's camera for distant
+  layers (`EditorState::parallax_camera`) is the level's centre, so a
+  distant layer shows and hits at its `at` (its box in
+  `docs/formats/level.md`) whatever the pan and zoom: `parallax(e)` is
+  (0, 0). Its picture and the light baked at that placement (issue #62)
+  coincide.
+- **View ▾ Preview parallax** (`labels::PREVIEW_PARALLAX`, beside Grid;
+  `EditorAction::PreviewParallax`, `preview_parallax()`): off at first;
+  on, the camera is the canvas's centre (`View::centre`) as before, so
+  panning and zooming move the layers as in play, and their light parts
+  from the picture as in play. A view option like Grid: state only, not
+  in `EditorSettings`, never a step, acting while a dialog is open.
+- **One camera.** `olr-game`'s `Canvas::draw` takes the editor's camera
+  (`parallax_camera()`) for the draw list's `parallax`, instead of
+  computing the canvas's centre itself, so the drawing and the
+  hit-testing never disagree.
+- **Unchanged** (the issue's non-goals): play (its camera,
+  `DrawList::camera()`, the renderer's parallax), the zoom about the
+  pointer and panning, and the level format.
 
 ## Kept OLX quirks
 
