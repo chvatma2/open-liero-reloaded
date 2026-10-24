@@ -5465,7 +5465,9 @@ the builder's calls:
   `a_dug_pixel_is_ruled_by_its_back` deposited inside the test level's
   dirt and read heat deep in it; their blasts now lie in the air beside a
   face (the first over each material, the last with a blast of its own
-  past the hole). The material editor's preview (`olr-game`'s
+  past the hole). (Issue #67 replaced `a_dug_pixel_is_ruled_by_its_back`
+  with `a_dug_pixel_loses_its_heat`: a dug pixel starts cold.) The
+  material editor's preview (`olr-game`'s
   `a_blast_heats_the_patch_and_it_glows`) asks its rim 12 more red, not
   30: only the rim's outer 2 px glow now (43 to 60 on lavapipe).
 - **Goldens:** `heat-fresh.png`, `heat-cooled.png`, `heat-distant.png`
@@ -5904,6 +5906,72 @@ unchanged. As built:
   `rock_shields_the_dirt_behind_it`, `a_hot_dirt_box_outlives_its_glow`;
   the distant tests at the new `z`. The heat goldens and the lit hashes
   were re-blessed ("heat on one depth line, dirt at full force").
+
+## Heat stays in its layer (issue #67)
+
+No OLX counterpart. The maintainer played development build 700: the
+glow on the edges of dirt and of objects made of dirt looked wrong; it
+belongs on the dirt pixels only and goes with them when they are
+destroyed. Issue #65's dirt heat (2.5×, 6 px deep) made two old rules
+plain: hot dirt warmed the background wall beside it (a glowing fringe
+round every dirt patch), and a dug pixel kept its heat under its back
+(the dirt's glow lingered where the dirt was). Presentation only: the
+simulation, the oracle and every match golden are unchanged. As built:
+
+- **Conduction stays within its layer.** In `fs_heat_step` two
+  4-neighbours exchange heat only when both are solid (rock or dirt, the
+  solid map's `heat_is_solid`) or both are background: a neighbour of
+  the other layer's coupling is 0, nothing else changes, so the step is
+  still a convex combination. Rock and dirt still warm each other (the
+  maintainer's choice); the back wall's heat still spreads along it; a
+  clear solid, background in the solid map, conducts as background.
+  Whether a pixel faces the air (its cooling) is unchanged.
+- **A pixel that changes layer starts cold.** `HeatTextures` keeps
+  `seen`, an `R8Uint` copy of the solid map as the heat last saw it.
+  Each `update_terrain` rectangle that rewrites the solid map
+  (`LookTextures::write`) is, while anything may be hot
+  (`HeatSim::active`), a layer reset queued in `HeatSim`'s waiting list
+  with the deposits, in call order (`HeatSim::relayer`): after every
+  deposit and step already queued, before any queued later. The frame
+  runs it as `HeatOp::Layer`: `fs_heat_layer` zeroes, over the boxes
+  within the rectangle (scissored, into the scratch, copied back), each
+  pixel whose class (solid or background) differs from `seen`'s, then
+  copies the rectangle of the solid map into `seen`. Rock ↔ dirt is no
+  change. With nothing hot nothing is reset and no pass runs: the same
+  bytes are written into `seen` as into the solid map (an upload of the
+  dirty rectangle's bytes, the solid map's again). A new `HeatTextures`
+  copies the solid map into `seen` in a submit of its own, and a
+  `HeatOp::Clear` (a reset) copies it whole. A rectangle queued right
+  after another joins it; past `MAX_HEAT_LAYERS` (64) waiting, one joins
+  the last (a larger rectangle compares more pixels and resets the same
+  ones; only a hostile host would reach it).
+- **The order is call order**, so a fresh crater's back still takes its
+  slice of the blast that dug it: `Presentation::upload` runs
+  `update_terrain`, then `upload_heat`'s deposits. The reset reads the
+  solid map as the frame draws it (as the step and the deposits' walk
+  do): a pixel dug and filled again between two frames is no change.
+- **The material editor's preview** deposited in `blast()` before its
+  `frame()` uploaded the crater, so under call order its crater's back
+  lost the blast's heat: `blast()` now calls `update_terrain` right
+  after carving, before depositing, as play does
+  (`a_second_blast_on_a_hot_patch_heats_its_crater`).
+- **Distant layers** are unchanged: their solid map is all background,
+  and they take no `update_terrain`. `HeatSim`'s boxes and bounds hold
+  as they are: both rules only take heat away.
+- **Frame rate.** `olr-cli`'s `heat_is_the_same_drawn_every_tick_or_once`
+  (27837 hot texels, 3961 differ, all near a dug pixel) and
+  `a_projectiles_heat_warms_its_path_drawn_every_tick_or_once` (11150
+  hot, 2022 differ, all near a dug pixel) pass with their `R` and
+  quarter unchanged.
+- **Tests:** `tests/gpu/heat.rs`'s `heat_stays_in_its_layer`,
+  `a_dug_pixel_loses_its_heat` (in place of
+  `a_dug_pixel_is_ruled_by_its_back`), `a_fresh_craters_back_takes_its_slice`
+  (with and without heat before the carve), `new_dirt_starts_cold`;
+  `heat.rs`'s `layer_resets_land_in_call_order`; `olr-game`'s
+  `a_second_blast_on_a_hot_patch_heats_its_crater`. The heat goldens
+  (`heat-fresh.png`, `heat-cooled.png`) and `lit-hashes.ron` were
+  re-blessed ("#67: heat stays in its layer": no fringe on the
+  background round the dirt); `heat-distant.png` came out the same.
 
 ## Kept OLX quirks
 

@@ -188,10 +188,13 @@ Weapons only deposit heat; the level's materials decide what it does.
   back wall inside it take it.
 - **One heat value per world pixel.** The visible surface's material rules
   it: the front's where rock or dirt stands, else the back's. A pixel dug
-  out later keeps its heat, now ruled by its back material. A pixel with no
-  material holds no heat.
+  out later keeps its heat, now ruled by its back material (issue #67:
+  no longer; a pixel that changes layer, dug out or covered by new dirt,
+  starts cold, `docs/porting/STATUS.md` "Heat stays in its layer"). A
+  pixel with no material holds no heat.
 - **Step**: heat spreads between neighbouring pixels by their
-  conductivity, scaled by capacity; pixels beside air lose heat by their
+  conductivity, scaled by capacity (issue #67: only within a layer, both
+  solid or both background); pixels beside air lose heat by their
   `cooling`. The step runs on the match clock (never the wall clock),
   stable for every allowed value (substeps or a clamped coefficient, the
   builder's call). Paused or replay-paused, nothing changes. **It advances

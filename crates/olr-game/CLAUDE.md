@@ -1172,8 +1172,9 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   `PICTURE` texture (`PICTURE_SCALE` 4 texels a world pixel).
   `command(PreviewCommand)`: `Blast { at, size }` carves the theme's hole
   `clamp(damage, 0, 4)` at that pixel of both patches
-  (`ColorEdit::Carve`) and deposits `olr_look::engine::explosion_heat`
-  there; `SetCompare(m)`, `Restart` (the scene again: `upload_terrain`
+  (`ColorEdit::Carve`), uploads it (`update_terrain`, issue #67: before
+  the deposit, as play does, so the crater's back keeps its slice) and
+  deposits `olr_look::engine::explosion_heat` there; `SetCompare(m)`, `Restart` (the scene again: `upload_terrain`
   clears the heat), `TimeScale(f)` (clamped to `MAX_TIME_SCALE` 16).
   `set_open(m)` each frame: a changed material changes the table
   (`Renderer::set_surface_materials`, the heat kept; `set_surface` when
@@ -1199,7 +1200,8 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   --render`, `OLR_GPU_TESTS`: `a_blast_heats_the_patch_and_it_glows`,
   `the_heat_cools_and_an_idle_preview_draws_nothing` (4× steps four
   times as fast), `side_by_side_draws_two_materials_differently`,
-  `a_field_edit_changes_the_next_frame_and_keeps_the_heat`),
+  `a_field_edit_changes_the_next_frame_and_keeps_the_heat`, issue #67's
+  `a_second_blast_on_a_hot_patch_heats_its_crater`),
   `tests/material_editor.rs`' `the_previews_commands_wait_for_the_app`
   and the dirt theme's holes, `heat_preview`'s unit tests (the scene's
   patches identical, the wall without a material; the discs).

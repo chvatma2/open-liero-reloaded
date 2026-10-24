@@ -414,17 +414,39 @@ on screen or offscreen.
   own skin's first pixel; a walk visits at most `HEAT_WALK_STEPS`
   pixels; each deposit added in whole texel units, so deposits landing
   in one pass or several give the same bytes), steps (into the scratch over
-  the active boxes, scissored, copied back) and zeroes. A step: each
-  4-neighbour gives `min(MAX_COUPLING 0.24, CONDUCT 0.05 ×
-  min(k_p, k_q) / c_p)` of its difference (conductivity, capacity as
-  shares of stone's; a convex combination, stable for every value), then
+  the active boxes, scissored, copied back), layer resets (issue #67,
+  below) and zeroes. A step: each
+  4-neighbour of the same layer (issue #67: both solid, rock or dirt by
+  `heat_is_solid`, or both background; one of the other layer gives
+  nothing, so no heat crosses between the dirt and the wall behind it,
+  while rock and dirt warm each other) gives `min(MAX_COUPLING 0.24,
+  CONDUCT 0.05 × min(k_p, k_q) / c_p)` of its difference (conductivity,
+  capacity as shares of stone's; a convex combination, stable for every
+  value), then
   a pixel loses `q × (COOL_RATE 0.006 × T + COOL_MIN 0.05)` (q its
   cooling share), a quarter of it (`BULK`) when neither it nor a
   4-neighbour is open (the solid map); outside the level is rock that
   conducts nothing; a pixel without a heating material holds none. The
   visible surface's material rules (`surface_texels`: the front's where
-  the solid map is rock or dirt, else the back's; a dug pixel keeps its
-  heat under its back, `a_dug_pixel_is_ruled_by_its_back`). The CPU
+  the solid map is rock or dirt, else the back's). **A pixel that
+  changes layer starts cold** (issue #67): `HeatTextures::seen` (`R8Uint`)
+  is the solid map as the heat last saw it; each `update_terrain`
+  rectangle that rewrites the solid map (`LookTextures::write` →
+  `HeatTextures::relayer`) is, while `HeatSim::active`, a layer reset
+  queued among the deposits in call order (`HeatSim::relayer`: after the
+  deposits and steps queued before it, before those after, so play's
+  `update_terrain` then deposits leaves a fresh crater's back its slice;
+  one right after another joined, at most `MAX_HEAT_LAYERS` 64 waiting,
+  then joined to the last), run as `HeatOp::Layer`: `fs_heat_layer`
+  zeroes, over the boxes within the rectangle, each pixel whose class
+  (solid or background) differs from `seen`'s, then the rectangle of the
+  solid map is copied into `seen`; rock ↔ dirt is no change. With
+  nothing hot no pass runs: `seen` takes the same bytes as the solid map
+  (an upload). A new `HeatTextures` copies the solid map into `seen` in
+  a submit of its own; a `HeatOp::Clear` copies it whole
+  (`a_dug_pixel_loses_its_heat`, `new_dirt_starts_cold`,
+  `a_fresh_craters_back_takes_its_slice`, `heat_stays_in_its_layer`,
+  `layer_resets_land_in_call_order`). The CPU
   (`HeatSim`) keeps at most 8 boxes: a deposit's square, grown a pixel a
   step to `HEAT_SPREAD` (48) past it, overlapping ones joined; a box is
   zeroed and dropped once an upper bound of its temperature
@@ -450,7 +472,7 @@ on screen or offscreen.
   `the_back_takes_the_balls_slice_14_px_back`,
   `dirt_takes_the_blast_whole_six_pixels_deep` and
   `rock_shields_the_dirt_behind_it` (issue #56's tests run on rock
-  levels),
+  levels), issue #67's named above,
   `sensitivity_zero_never_heats`, `heat_cools_to_nothing`,
   `new_material_values_keep_the_heat`,
   `stepping_n_ticks_at_once_equals_n_single_steps`,
