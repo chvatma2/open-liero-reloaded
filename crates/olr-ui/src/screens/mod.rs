@@ -612,6 +612,14 @@ fn columns<R>(ui: &mut Ui, n: usize, add: impl FnOnce(&mut [Ui]) -> R) -> R {
     r
 }
 
+/// A start's primary button: `Loading…` while the match loads. The button
+/// says it, not a line under it: a page's footer finds its height a frame
+/// late, and the frame the app shows while it loads is the first (the
+/// playtest of build 714: the line fell partly out of the window).
+fn start_label(starting: bool) -> &'static str {
+    if starting { "Loading…" } else { "Start" }
+}
+
 /// A page's primary action: a large button.
 fn primary(ui: &mut Ui, text: &str, enabled: bool) -> egui::Response {
     let text = RichText::new(text).size(20.0).color(Color32::WHITE);

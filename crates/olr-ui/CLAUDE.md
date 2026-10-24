@@ -162,7 +162,10 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   wide and `PAGE_HEIGHT` (900) high centred in the window (the window less `PAGE_MARGIN` each side
   when narrower), the title centred on top, Back at its left edge;
   `footer` puts the primary action (`primary`: a large button; Start) and its status centred at the column's bottom and returns the
-  rest; `columns` splits that rest (egui's own `columns` would reach
+  rest (a bottom panel: it finds its height a frame late, so what a
+  start's first frame adds must not grow it: the Start button reads
+  "Loading…" itself, `start_label`; the playtest of build 714,
+  `fits.rs`' `the_frame_that_starts_loading_is_settled`); `columns` splits that rest (egui's own `columns` would reach
   under the footer); `tab_row(ui, size, n)` sizes and centres a screen's
   tab row (Options, Multiplayer), each tab an equal share of a column too
   narrow for `size` (ruling UI-1: 427 points wide at UI scale 3 in a
@@ -198,7 +201,7 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   ("Loadout": `Default` first, then the mod's, then the player's own,
   and "Edit loadouts…"; then lives, kill limit, time limit), the
   Players panel (the player's profile, Bots, Difficulty, "Advanced…"),
-  Start with "Loading…" and the failure message (issue #5 made it
+  Start (reading "Loading…" while it loads) and the failure message (issue #5 made it
   simpler: no loading time, preset, bonuses or reset); a saved
   mod or level no longer imported becomes the first listed; the
   loadout is looked up again by name every frame, `screens::loadouts::

@@ -635,3 +635,41 @@ fn internet() -> InternetView {
         .collect();
     InternetView { status: InternetStatus::Listed, games }
 }
+
+/// The playtest of build 714: the first frame after Start, the one the
+/// app shows while the match loads (`olr-game`'s `Shell::poll` loads after
+/// it), is the page as it settles: saying it is loading grows nothing, so
+/// the footer, which finds its height a frame late, never pushes it out of
+/// the window.
+#[test]
+fn the_frame_that_starts_loading_is_settled() {
+    let mut failed = Vec::new();
+    for (w, hh, scale) in SIZES {
+        for players in [false, true] {
+            let mut h = harness(w, hh, scale, false, UiState::new(Settings::default(), profiles(), 1));
+            let ui = &mut h.state_mut().ui;
+            ui.update(UiAction::Open(Screen::LocalPlay));
+            if players {
+                ui.update(UiAction::OpenJoin(Seat::Keyboard1));
+            }
+            settle(&mut h);
+            h.state_mut().ui.update(UiAction::StartMatch);
+            assert!(h.state().ui.is_starting());
+            h.step();
+            let at = |h: &Harness<'static, App>| {
+                widgets(h)
+                    .into_iter()
+                    .filter(|x| x.name.contains("Loading"))
+                    .map(|x| x.rect)
+                    .collect::<Vec<_>>()
+            };
+            let first = at(&h);
+            settle(&mut h);
+            if first.len() != 1 || first != at(&h) {
+                failed
+                    .push(format!("{w} × {hh} at {scale}, players {players}: {first:?}, then {:?}", at(&h)));
+            }
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}

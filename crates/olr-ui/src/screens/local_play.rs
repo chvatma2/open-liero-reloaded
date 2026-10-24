@@ -14,7 +14,7 @@ use olr_input::Seat;
 
 use super::{
     MenuData, columns, fit, footer, form_check_row, form_row, loadouts, message, page, primary, section,
-    tall_section,
+    start_label, tall_section,
 };
 use crate::loadouts::OwnLoadouts;
 use crate::match_prefs::{
@@ -75,11 +75,8 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     // Start, and why the last start failed, always in view.
     let mut ui = footer(ui, "local play", |ui| {
         let starting = state.is_starting();
-        if primary(ui, "Start", !starting).clicked() {
+        if primary(ui, start_label(starting), !starting).clicked() {
             start = true;
-        }
-        if starting {
-            ui.label("Loading…");
         }
         message(ui, state);
     });

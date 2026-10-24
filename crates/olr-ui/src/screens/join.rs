@@ -35,11 +35,8 @@ pub(super) fn show(ui: &mut Ui, state: &UiState, data: &mut MenuData, out: &mut 
     let ui = &mut ui;
     let mut ui = footer(ui, "join", |ui| {
         let starting = state.is_starting();
-        if primary(ui, "Start", !lineup.is_empty() && !starting).clicked() {
+        if primary(ui, super::start_label(starting), !lineup.is_empty() && !starting).clicked() {
             out.push(UiAction::StartMatch);
-        }
-        if starting {
-            ui.label("Loading…");
         }
         message(ui, state);
     });
