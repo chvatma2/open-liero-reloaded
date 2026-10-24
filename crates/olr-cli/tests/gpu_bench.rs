@@ -108,3 +108,55 @@ fn a_recorded_match_is_drawn_timed_and_probed() {
     let e = gpu_bench::run(&content, &tampered, &cfg, &mut |_| {}).expect_err("a different match is refused");
     assert!(format!("{e:#}").contains("diverged"), "{e:#}");
 }
+
+/// The render profile (its spec
+/// `docs/superpowers/specs/2026-10-24-render-profile-design.md`): the
+/// staged nuke fight drawn round its first explosion on the software
+/// adapter reports a calm, a blast and a hot phase, the heat's groups and
+/// the glow light's, and what the frames worked on.
+#[test]
+fn a_profile_reports_every_phase_and_the_heat() {
+    use olr_cli::render_profile::{self, Phase, ProfileConfig, stage_fight};
+    use olr_render::AdapterPreference;
+    if std::env::var_os("OLR_GPU_TESTS").is_none() {
+        eprintln!("OLR_GPU_TESTS not set; skipping");
+        return;
+    }
+    if olr_render::Offscreen::new().is_err() {
+        eprintln!("no adapter; skipping");
+        return;
+    }
+    let packs = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content/packs");
+    let content = olr_content::Content::open_bundled(&packs).unwrap();
+    let fight = stage_fight(&content).unwrap();
+    let cfg = ProfileConfig {
+        sizes: vec![(320, 180)],
+        frames_per_tick: 1,
+        options: OffscreenOptions {
+            prefer: AdapterPreference::Software,
+            timestamps: true,
+            ..OffscreenOptions::default()
+        },
+        // llvmpipe draws a lit frame in about 0.2 s: 160 frames round the
+        // first nukes, the last ones a quiet hot stretch after them.
+        window: fight.first_explosion.map(|t| (t.saturating_sub(20), t + 140)),
+    };
+    let r = render_profile::run(&content, &fight, &cfg, &mut |_| {}).unwrap();
+    let s = &r.sizes[0];
+    let phases: Vec<Phase> = s.phases.iter().map(|p| p.phase).collect();
+    assert_eq!(phases, [Phase::Calm, Phase::Blast, Phase::Hot]);
+    let frames: u32 = s.phases.iter().map(|p| p.frames).sum();
+    let (from, to) = cfg.window.unwrap();
+    assert_eq!(frames, to - from);
+    assert!(s.glow_grid.is_some() && s.cascades > 0 && !s.world_targets.is_empty(), "{s:?}");
+    let blast = &s.phases[1];
+    assert!(blast.heat_area.max > 0.0 && blast.discs.max > 0.0, "{blast:?}");
+    if r.timestamps {
+        let names: Vec<&str> = blast.groups.iter().map(|g| g.pass.as_str()).collect();
+        assert!(names.contains(&"heat deposit") && names.contains(&"heat step"), "{names:?}");
+        assert!(names.contains(&"cascades"), "{names:?}");
+        assert!(blast.gpu_ms.is_some_and(|g| g.mean > 0.0));
+    } else {
+        assert!(blast.gpu_ms.is_none() && blast.groups.is_empty(), "no 0 ms rows without timestamps");
+    }
+}

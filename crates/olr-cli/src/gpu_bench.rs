@@ -254,7 +254,7 @@ fn real(ms: f64) -> Option<f64> {
 }
 
 /// The frame's GPU ms, if the frame was timed and its span is real.
-fn frame_sample(times: Option<GpuTimes>) -> Option<f64> {
+pub(crate) fn frame_sample(times: Option<GpuTimes>) -> Option<f64> {
     times.and_then(|g| real(g.frame_ms))
 }
 
@@ -287,7 +287,7 @@ fn ms(t: Instant) -> f64 {
 /// Draws the frame's `list` into the first of `areas` of `target` and, when
 /// there are more, the other views: `others` (reused), the same frame seen
 /// elsewhere ([`spread_view`]).
-fn draw(
+pub(crate) fn draw(
     renderer: &mut olr_render::Renderer,
     (list, others): (&DrawList, &mut [DrawList]),
     areas: &[[u32; 4]],

@@ -21,6 +21,8 @@ fn the_nuke_fight_sets_off_nukes_and_is_the_same_every_time() {
     // Only nukes are fired: the worms keep the nuke loadout all fight.
     assert!(a.shots.iter().all(|(w, _)| NUKES.contains(&w.as_str())), "{:?}", a.shots);
     assert!(a.shots.iter().map(|(_, n)| n).sum::<u32>() >= 10, "{:?}", a.shots);
+    assert_eq!(a.blasts.len() as u32, a.explosions);
+    assert!(a.blasts.windows(2).any(|w| w[1] - w[0] > 100), "a hot stretch between blasts: {:?}", a.blasts);
     let first = a.first_explosion.unwrap();
     assert!(first < FIGHT_TICKS / 4, "nukes early enough for a calm phase and a hot one: {first}");
     let b = stage_fight(&content).unwrap();
