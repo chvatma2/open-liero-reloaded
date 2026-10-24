@@ -15,6 +15,7 @@
 
 use olr_look::{MAX_TEMPERATURE, SurfaceMaps, SurfaceMaterial};
 use olr_scene::{DrawList, View};
+use olr_terrain::Rect;
 
 use super::{entry, pipeline};
 
@@ -43,6 +44,11 @@ const HEAT_MAX: f32 = MAX_TEMPERATURE as f32 * HEAT_SCALE;
 /// How far heat may spread past a deposit's circle, world pixels: a box
 /// stops growing there (heat that far out is long cold).
 pub(super) const HEAT_SPREAD: i32 = 48;
+
+/// The most layer resets waiting for a frame (issue #67); past them a
+/// rectangle joins the last one's (a larger rectangle compares more
+/// pixels and resets the same ones).
+const MAX_HEAT_LAYERS: usize = 64;
 
 /// The most boxes kept; past them the two closest are joined.
 const MAX_BOXES: usize = 8;
@@ -338,7 +344,7 @@ fn layer_solid(device: &wgpu::Device, queue: &super::uploads::Queue, world: (u32
         "olr-render distant solid",
         world,
         wgpu::TextureFormat::R8Uint,
-        U::TEXTURE_BINDING | U::COPY_DST,
+        U::TEXTURE_BINDING | U::COPY_DST | U::COPY_SRC,
     );
     let ones = vec![1u8; world.0 as usize * world.1 as usize];
     queue.write_texture(
@@ -399,6 +405,18 @@ pub(super) enum HeatOp {
     Step,
     /// A dropped box's pixels to zero.
     Zero([u32; 4]),
+    /// Issue #67: the pixels of world rectangle `[x, y, w, h]` that
+    /// changed layer since the heat last saw them to zero (over the boxes
+    /// within it), then the rectangle seen.
+    Layer([u32; 4]),
+}
+
+/// What waits for a frame, in call order (issue #67).
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum Waiting {
+    Deposit(HeatDeposit),
+    /// [`HeatSim::relayer`]'s world rectangle.
+    Layer([i32; 4]),
 }
 
 /// The CPU side of a level's heat: the clock, the frame's deposits and the
@@ -415,8 +433,9 @@ pub(super) struct HeatSim {
     /// Steps the match time has asked for, and those taken.
     due: u64,
     done: u64,
-    /// Deposits waiting, each with the step it lands before.
-    pending: Vec<(u64, HeatDeposit)>,
+    /// Deposits and layer resets waiting, in call order, each with the
+    /// step it lands before.
+    pending: Vec<(u64, Waiting)>,
     clear: bool,
     /// The frame's ops, its deposits (in the order [`HeatOp::Deposit`]
     /// ranges index) and its boxes' rectangles after each op (clipped,
@@ -435,7 +454,7 @@ impl HeatSim {
             ms: 0,
             due: 0,
             done: 0,
-            pending: Vec::with_capacity(MAX_HEAT_DEPOSITS),
+            pending: Vec::with_capacity(MAX_HEAT_DEPOSITS + MAX_HEAT_LAYERS),
             clear: false,
             ops: Vec::new(),
             deposits: Vec::with_capacity(MAX_HEAT_DEPOSITS),
@@ -450,7 +469,7 @@ impl HeatSim {
 
     /// The deposits waiting for a frame.
     pub(super) fn waiting(&self) -> usize {
-        self.pending.len()
+        self.pending.iter().filter(|(_, w)| matches!(w, Waiting::Deposit(_))).count()
     }
 
     /// The steps the match time asked for that have not run.
@@ -462,10 +481,35 @@ impl HeatSim {
     /// or when it gives nothing or misses the level).
     pub(super) fn deposit(&mut self, d: HeatDeposit) {
         let Some(d) = d.clamped() else { return };
-        if self.pending.len() >= MAX_HEAT_DEPOSITS || empty(intersect(d.rect(), self.level())) {
+        if self.waiting() >= MAX_HEAT_DEPOSITS || empty(intersect(d.rect(), self.level())) {
             return;
         }
-        self.pending.push((self.due, d));
+        self.pending.push((self.due, Waiting::Deposit(d)));
+    }
+
+    /// Queues issue #67's layer reset of world rectangle `r` (`[x0, y0,
+    /// x1, y1)`), whose solid map was just rewritten: after every deposit
+    /// and step already queued, before any queued later. One right after
+    /// another joins it; past [`MAX_HEAT_LAYERS`] it joins the last.
+    pub(super) fn relayer(&mut self, r: [i32; 4]) {
+        let r = intersect(r, self.level());
+        if empty(r) {
+            return;
+        }
+        let layers = self.pending.iter().filter(|(_, w)| matches!(w, Waiting::Layer(_))).count();
+        let due = self.due;
+        let next = matches!(self.pending.last(), Some(&(at, Waiting::Layer(_))) if at == due);
+        let last = self.pending.iter_mut().rev().find_map(|(_, w)| match w {
+            Waiting::Layer(l) => Some(l),
+            Waiting::Deposit(_) => None,
+        });
+        if let Some(l) = last
+            && (next || layers >= MAX_HEAT_LAYERS)
+        {
+            *l = union(*l, r);
+            return;
+        }
+        self.pending.push((due, Waiting::Layer(r)));
     }
 
     /// Advances the match clock by `ms`.
@@ -506,18 +550,26 @@ impl HeatSim {
         // The segment (up to `until`) whose boxes were found not to cool in it.
         let mut checked = u64::MAX;
         loop {
-            // The deposits landing before the next step, together.
-            let start = self.deposits.len();
-            while let Some(&(at, d)) = self.pending.get(next)
+            // The deposits landing before the next step, together, and the
+            // layer resets between them in call order (issue #67).
+            let mut start = self.deposits.len();
+            while let Some(&(at, w)) = self.pending.get(next)
                 && at <= self.done
             {
-                self.deposits.push(d);
-                self.add(d);
+                match w {
+                    Waiting::Deposit(d) => {
+                        self.deposits.push(d);
+                        self.add(d);
+                    }
+                    Waiting::Layer(r) => {
+                        self.deposit_op(start);
+                        self.layer(r);
+                        start = self.deposits.len();
+                    }
+                }
                 next += 1;
             }
-            if self.deposits.len() > start {
-                self.push(HeatOp::Deposit(start as u32, self.deposits.len() as u32), true);
-            }
+            self.deposit_op(start);
             let until = self.pending.get(next).map_or(self.due, |&(at, _)| at);
             if self.done >= until || steps >= MAX_HEAT_STEPS {
                 if self.done >= self.due || steps >= MAX_HEAT_STEPS {
@@ -556,6 +608,30 @@ impl HeatSim {
         for p in &mut self.pending {
             p.0 = p.0.max(self.done);
         }
+    }
+
+    /// Records the deposits from `start` as one op, when there are any.
+    fn deposit_op(&mut self, start: usize) {
+        if self.deposits.len() > start {
+            self.push(HeatOp::Deposit(start as u32, self.deposits.len() as u32), true);
+        }
+    }
+
+    /// Records a layer reset of `r` (issue #67) over the boxes within it.
+    fn layer(&mut self, r: [i32; 4]) {
+        let r = intersect(r, self.level());
+        if empty(r) {
+            return;
+        }
+        let start = self.rects.len();
+        for b in &self.boxes {
+            let o = intersect(b.rect, r);
+            if !empty(o) {
+                self.rects.push([o[0] as u32, o[1] as u32, (o[2] - o[0]) as u32, (o[3] - o[1]) as u32]);
+            }
+        }
+        let rect = [r[0] as u32, r[1] as u32, (r[2] - r[0]) as u32, (r[3] - r[1]) as u32];
+        self.ops.push((HeatOp::Layer(rect), start..self.rects.len()));
     }
 
     /// Records `op` with the boxes' rectangles when `boxes`.
@@ -696,6 +772,8 @@ pub(super) struct HeatPipelines {
     step: wgpu::RenderPipeline,
     deposit: wgpu::RenderPipeline,
     zero: wgpu::RenderPipeline,
+    /// Issue #67's layer reset.
+    layer: wgpu::RenderPipeline,
     /// A level without heat's look bind group (the table's head off).
     pub(super) none: wgpu::BindGroup,
 }
@@ -814,6 +892,7 @@ impl HeatPipelines {
                 entry(2, frag, UINT),
                 entry(3, frag, UINT),
                 entry(4, frag, super::UNIFORM),
+                entry(5, frag, UINT),
             ],
         });
         let source = format!("{}\n{}", heat_common(), include_str!("../look/heat.wgsl"));
@@ -839,6 +918,7 @@ impl HeatPipelines {
         let deposit =
             make("olr-render heat deposit", "vs_deposit", "fs_heat_deposit", &[Some(&step_layout)], true);
         let zero = make("olr-render heat zero", "vs_full", "fs_heat_zero", &[], false);
+        let layer = make("olr-render heat layer", "vs_full", "fs_heat_layer", &[Some(&step_layout)], false);
         let tex = |label, format| {
             plain_texture(device, label, (1, 1), format, wgpu::TextureUsages::TEXTURE_BINDING)
         };
@@ -854,7 +934,7 @@ impl HeatPipelines {
                 &view(&tex("olr-render no solid", wgpu::TextureFormat::R8Uint)),
             ],
         );
-        HeatPipelines { look_layout, step_layout, step, deposit, zero, none }
+        HeatPipelines { look_layout, step_layout, step, deposit, zero, layer, none }
     }
 }
 
@@ -871,6 +951,11 @@ pub(super) struct HeatTextures {
     /// A step's target, copied back over the boxes.
     scratch: wgpu::Texture,
     scratch_view: wgpu::TextureView,
+    /// The look's solid map, and the solid map as the heat last saw it
+    /// (issue #67: `R8Uint`, the solid map's size): a pixel whose class
+    /// differs changed layer and starts cold ([`HeatOp::Layer`]).
+    solid: wgpu::Texture,
+    seen: wgpu::Texture,
     params: wgpu::Buffer,
     /// The materials' colour ramps (`HeatLook`), rewritten by
     /// [`HeatTextures::set_tables`].
@@ -894,7 +979,8 @@ pub(super) struct HeatTextures {
 impl HeatTextures {
     /// The heat of a level of `world` pixels (the textures `size`, the
     /// device's crop) with `surface` texels ([`surface_texels`]) and
-    /// [`tables`]' output; `solid` is the look's solid map. A back pixel
+    /// [`tables`]' output; `solid` is the look's solid map (issue #67:
+    /// copied as the solid map seen, in a submit of its own). A back pixel
     /// lies `back_depth` world pixels behind the deposits' plane (issue
     /// #65: the level's [`olr_look::engine::BACK_DEPTH_PX`]; a distant
     /// layer's 0, its deposits already sliced) and takes the ball's slice
@@ -908,7 +994,7 @@ impl HeatTextures {
         size: (u32, u32),
         surface: &[u8],
         (table, ramp_texels, bounds): (Vec<f32>, Vec<u8>, Bounds),
-        solid: &wgpu::TextureView,
+        solid: &wgpu::Texture,
         back_depth: f32,
     ) -> HeatTextures {
         use wgpu::TextureUsages as U;
@@ -920,6 +1006,18 @@ impl HeatTextures {
         );
         let scratch =
             heat_texture(device, "olr-render heat scratch", size, U::RENDER_ATTACHMENT | U::COPY_SRC);
+        let seen = plain_texture(
+            device,
+            "olr-render heat seen",
+            (solid.width(), solid.height()),
+            wgpu::TextureFormat::R8Uint,
+            U::TEXTURE_BINDING | U::COPY_DST,
+        );
+        let mut e = device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("olr-render heat seen") });
+        e.copy_texture_to_texture(solid.as_image_copy(), seen.as_image_copy(), solid.size());
+        queue.submit([e.finish()]);
+        let solid_view = view(solid);
         let surface_tex = plain_texture(
             device,
             "olr-render surface",
@@ -977,18 +1075,25 @@ impl HeatTextures {
                 wgpu::BindGroupEntry { binding: 0, resource: params.as_entire_binding() },
                 wgpu::BindGroupEntry { binding: 1, resource: tv(&heat_view) },
                 wgpu::BindGroupEntry { binding: 2, resource: tv(&surface_view) },
-                wgpu::BindGroupEntry { binding: 3, resource: tv(solid) },
+                wgpu::BindGroupEntry { binding: 3, resource: tv(&solid_view) },
                 wgpu::BindGroupEntry { binding: 4, resource: deposits.as_entire_binding() },
+                wgpu::BindGroupEntry { binding: 5, resource: tv(&view(&seen)) },
             ],
         });
-        let look_bind =
-            look_bind(device, &pipes.look_layout, &params, [&heat_view, &surface_view, &view(&ramp), solid]);
+        let look_bind = look_bind(
+            device,
+            &pipes.look_layout,
+            &params,
+            [&heat_view, &surface_view, &view(&ramp), &solid_view],
+        );
         HeatTextures {
             heat,
             heat_view,
             surface_view,
             scratch,
             scratch_view,
+            solid: solid.clone(),
+            seen,
             params,
             ramp,
             table,
@@ -1081,7 +1186,9 @@ impl HeatTextures {
             let (target, load) = match op {
                 HeatOp::Clear => (&self.heat_view, wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT)),
                 HeatOp::Zero(_) => (&self.heat_view, wgpu::LoadOp::Load),
-                HeatOp::Deposit(..) | HeatOp::Step => (&self.scratch_view, wgpu::LoadOp::Load),
+                HeatOp::Deposit(..) | HeatOp::Step | HeatOp::Layer(_) => {
+                    (&self.scratch_view, wgpu::LoadOp::Load)
+                }
             };
             {
                 let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -1104,12 +1211,14 @@ impl HeatTextures {
                         pass.set_scissor_rect(x, y, w, h);
                         pass.draw(0..3, 0..1);
                     }
-                    HeatOp::Deposit(..) | HeatOp::Step => {
-                        if let HeatOp::Deposit(..) = op {
-                            pass.set_pipeline(&pipes.deposit);
-                            pass.set_vertex_buffer(0, self.ranges.slice(..));
-                        } else {
-                            pass.set_pipeline(&pipes.step);
+                    HeatOp::Deposit(..) | HeatOp::Step | HeatOp::Layer(_) => {
+                        match op {
+                            HeatOp::Deposit(..) => {
+                                pass.set_pipeline(&pipes.deposit);
+                                pass.set_vertex_buffer(0, self.ranges.slice(..));
+                            }
+                            HeatOp::Step => pass.set_pipeline(&pipes.step),
+                            _ => pass.set_pipeline(&pipes.layer),
                         }
                         pass.set_bind_group(0, &self.step_bind, &[]);
                         let instance = deposit..deposit + 1;
@@ -1120,11 +1229,11 @@ impl HeatTextures {
                     }
                 }
             }
-            if let HeatOp::Deposit(..) | HeatOp::Step = op {
-                if let HeatOp::Deposit(..) = op {
-                    deposit += 1;
-                } else {
-                    self.steps += 1;
+            if let HeatOp::Deposit(..) | HeatOp::Step | HeatOp::Layer(_) = op {
+                match op {
+                    HeatOp::Deposit(..) => deposit += 1,
+                    HeatOp::Step => self.steps += 1,
+                    _ => {}
                 }
                 for &[x, y, w, h] in rects {
                     let at = |texture| wgpu::TexelCopyTextureInfo {
@@ -1140,6 +1249,46 @@ impl HeatTextures {
                     );
                 }
             }
+            // Issue #67: the solid map as now is what the heat has seen,
+            // over a layer reset's rectangle, or whole once cleared.
+            let seen = match op {
+                HeatOp::Layer(r) => Some(r),
+                HeatOp::Clear => Some([0, 0, self.seen.width(), self.seen.height()]),
+                _ => None,
+            };
+            if let Some([x, y, w, h]) = seen {
+                let (w, h) =
+                    (w.min(self.seen.width().saturating_sub(x)), h.min(self.seen.height().saturating_sub(y)));
+                if w > 0 && h > 0 {
+                    let at = |texture| wgpu::TexelCopyTextureInfo {
+                        texture,
+                        mip_level: 0,
+                        origin: wgpu::Origin3d { x, y, z: 0 },
+                        aspect: wgpu::TextureAspect::All,
+                    };
+                    encoder.copy_texture_to_texture(
+                        at(&self.solid),
+                        at(&self.seen),
+                        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                    );
+                }
+            }
+        }
+    }
+
+    /// The solid map of world rectangle `r` was just rewritten with
+    /// `bytes` (`width` a row, as the solid map's upload; issue #67):
+    /// while anything may be hot, a layer reset queued in call order
+    /// ([`HeatSim::relayer`]); else nothing is hot, nothing to reset, and
+    /// the bytes are what the heat has seen, written as the solid map is
+    /// (no pass).
+    pub(super) fn relayer(&mut self, queue: &super::uploads::Queue, (bytes, width): (&[u8], u32), r: Rect) {
+        if self.sim.active() {
+            let (x, y) = (r.x.min(i32::MAX as u32) as i32, r.y.min(i32::MAX as u32) as i32);
+            let (w, h) = (r.w.min(i32::MAX as u32) as i32, r.h.min(i32::MAX as u32) as i32);
+            self.sim.relayer([x, y, x.saturating_add(w), y.saturating_add(h)]);
+        } else {
+            super::look::write_bytes(queue, &self.seen, (bytes, width), r);
         }
     }
 }
@@ -1245,7 +1394,7 @@ impl super::Renderer {
                 world,
                 &texels,
                 tables.clone(),
-                &view(&solid),
+                &solid,
                 0.0,
             ));
         }
@@ -1524,6 +1673,57 @@ mod tests {
         assert_eq!(s.ops.iter().filter(|o| o.0 == HeatOp::Step).count(), MAX_HEAT_STEPS as usize);
         s.plan();
         assert_eq!(s.ops.iter().filter(|o| o.0 == HeatOp::Step).count(), 10, "the rest next frame");
+    }
+
+    /// Issue #67: a layer reset lands in call order, after the deposits
+    /// and steps queued before it and before those queued after; over the
+    /// boxes within its rectangle (none: the rectangle seen alone); one
+    /// right after another joins it, and a capped count joins the last.
+    #[test]
+    fn layer_resets_land_in_call_order() {
+        let mut s = sim();
+        s.deposit(blast(50.0, 50.0));
+        s.advance(HEAT_STEP_MS);
+        s.relayer([40, 40, 60, 60]);
+        s.relayer([55, 45, 70, 50]);
+        s.deposit(blast(52.0, 50.0));
+        s.relayer([150, 10, 160, 20]);
+        s.advance(HEAT_STEP_MS);
+        s.plan();
+        let kinds: Vec<_> = s.ops.iter().map(|o| o.0).collect();
+        assert_eq!(
+            kinds,
+            [
+                HeatOp::Deposit(0, 1),
+                HeatOp::Step,
+                HeatOp::Layer([40, 40, 30, 20]),
+                HeatOp::Deposit(1, 2),
+                HeatOp::Layer([150, 10, 10, 10]),
+                HeatOp::Step,
+            ]
+        );
+        assert_eq!(s.waiting(), 0);
+        let rects = |i: usize| s.rects[s.ops[i].1.clone()].to_vec();
+        assert_eq!(rects(2), [[41, 41, 19, 19]], "over the box within it");
+        assert!(rects(4).is_empty(), "no box there: seen only");
+        // Past the cap, a reset joins the last; layers count no deposit.
+        let mut s = sim();
+        s.deposit(blast(50.0, 50.0));
+        for i in 0..MAX_HEAT_LAYERS as i32 + 5 {
+            s.relayer([i, 0, i + 1, 1]);
+            s.deposit(blast(50.0, 50.0));
+        }
+        assert_eq!(s.waiting(), MAX_HEAT_DEPOSITS);
+        s.plan();
+        let layers = s.ops.iter().filter(|o| matches!(o.0, HeatOp::Layer(_))).count();
+        assert_eq!(layers, MAX_HEAT_LAYERS);
+        assert!(s.ops.iter().any(|o| o.0 == HeatOp::Layer([MAX_HEAT_LAYERS as u32 - 1, 0, 6, 1])));
+        // Off the level, nothing.
+        let mut s = sim();
+        s.deposit(blast(50.0, 50.0));
+        s.relayer([-10, -10, 0, 5]);
+        s.plan();
+        assert!(!s.ops.iter().any(|o| matches!(o.0, HeatOp::Layer(_))));
     }
 
     #[test]

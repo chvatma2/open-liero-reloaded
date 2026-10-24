@@ -1,7 +1,7 @@
-// Heat's passes (issue #39): a deposit, a step, a zero, each over the
-// active boxes (scissored) of the heat texture into a scratch texture that
-// is copied back (`renderer/heat.rs`). Temperatures are texel units,
-// HEAT_SCALE a degree.
+// Heat's passes (issue #39): a deposit, a step, a zero, and issue #67's
+// layer reset, each over the active boxes (scissored) of the heat texture
+// into a scratch texture that is copied back (`renderer/heat.rs`).
+// Temperatures are texel units, HEAT_SCALE a degree.
 
 @group(0) @binding(0) var<uniform> params: HeatParams;
 @group(0) @binding(1) var heat_tex: texture_2d<u32>;
@@ -13,6 +13,9 @@ struct Deposits {
     d: array<vec4<f32>, MAX_HEAT_DEPOSITS>,
 };
 @group(0) @binding(4) var<uniform> deposits: Deposits;
+// The solid map as the heat last saw it (issue #67): a pixel whose class
+// (solid or background) differs from the solid map's changed layer.
+@group(0) @binding(5) var seen_tex: texture_2d<u32>;
 
 // A triangle covering the target (the scissor picks the box).
 fn covering(vi: u32) -> vec4<f32> {
@@ -191,7 +194,9 @@ fn fs_heat_deposit(in: DepositOut) -> @location(0) vec4<u32> {
 // lesser conduction of the two over its capacity (at most MAX_COUPLING, so
 // it is a convex combination: stable, never above the hottest), then loses
 // heat by its cooling, fully beside the air (or as the back wall, which
-// faces it), BULK of it inside. Outside the level is rock: no heat.
+// faces it), BULK of it inside. Outside the level is rock: no heat. Issue
+// #67: heat stays in its layer: a neighbour of the other layer (solid
+// beside background) gives nothing; rock and dirt, both solid, do.
 @fragment
 fn fs_heat_step(@builtin(position) p: vec4<f32>) -> @location(0) vec4<u32> {
     let w = vec2<i32>(floor(p.xy));
@@ -201,7 +206,8 @@ fn fs_heat_step(@builtin(position) p: vec4<f32>) -> @location(0) vec4<u32> {
     }
     let t = temp(w);
     let size = vec2<i32>(textureDimensions(heat_tex));
-    var exposed = !heat_is_solid(solid_tex, w);
+    let solid = heat_is_solid(solid_tex, w);
+    var exposed = !solid;
     var flow = 0.0;
     let around = array<vec2<i32>, 4>(vec2<i32>(1, 0), vec2<i32>(-1, 0), vec2<i32>(0, 1), vec2<i32>(0, -1));
     for (var i = 0; i < 4; i++) {
@@ -209,8 +215,12 @@ fn fs_heat_step(@builtin(position) p: vec4<f32>) -> @location(0) vec4<u32> {
         if any(q < vec2<i32>(0)) || any(q >= size) {
             continue;
         }
-        if !heat_is_solid(solid_tex, q) {
+        let other = heat_is_solid(solid_tex, q);
+        if !other {
             exposed = true;
+        }
+        if other != solid {
+            continue;
         }
         let k = min(mat.y, params.mats[material_at(q)].a.y);
         flow += min(k * mat.z, MAX_COUPLING) * (temp(q) - t);
@@ -219,6 +229,17 @@ fn fs_heat_step(@builtin(position) p: vec4<f32>) -> @location(0) vec4<u32> {
     let e = select(BULK, 1.0, exposed);
     next -= mat.w * e * (COOL_RATE * next + COOL_MIN * HEAT_SCALE);
     return written(next);
+}
+
+// Issue #67: a pixel that changed layer since the heat last saw it (dug
+// out, carved, or dirt added) starts cold; any other keeps its heat.
+@fragment
+fn fs_heat_layer(@builtin(position) p: vec4<f32>) -> @location(0) vec4<u32> {
+    let w = vec2<i32>(floor(p.xy));
+    if heat_is_solid(solid_tex, w) != heat_is_solid(seen_tex, w) {
+        return vec4<u32>(0u);
+    }
+    return textureLoad(heat_tex, w, 0);
 }
 
 @fragment

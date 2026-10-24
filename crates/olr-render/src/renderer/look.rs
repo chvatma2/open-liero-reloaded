@@ -101,7 +101,7 @@ impl LookTextures {
                 size,
                 texels,
                 s.tables.clone()?,
-                &self.solid_view,
+                &self.solid,
                 olr_look::engine::BACK_DEPTH_PX,
             ))
         });
@@ -870,7 +870,8 @@ impl LookState {
 
     /// Writes art rectangle `r` of `map`'s glow, and the world rectangle
     /// holding it of its groups and material (a clear solid as background,
-    /// so light passes it).
+    /// so light passes it); issue #67: the heat resets the pixels there
+    /// that changed layer.
     pub(super) fn write(&mut self, queue: &super::uploads::Queue, map: &ColorMap, r: Rect) {
         let Some(t) = &mut self.textures else { return };
         let wr = world_rect(r, t.art_scale);
@@ -884,6 +885,9 @@ impl LookState {
         let cells = map.material().cells();
         let Some(clear) = map.clear().filter(|c| c.len() == cells.len()) else {
             write_bytes(queue, &t.solid, (cells, t.level.0), wr);
+            if let Some(h) = &mut t.heat {
+                h.relayer(queue, (cells, t.level.0), wr);
+            }
             return;
         };
         if t.light_cells.len() != cells.len() {
@@ -903,6 +907,9 @@ impl LookState {
             }
         }
         write_bytes(queue, &t.solid, (&t.light_cells, t.level.0), wr);
+        if let Some(h) = &mut t.heat {
+            h.relayer(queue, (&t.light_cells, t.level.0), wr);
+        }
     }
 
     /// Packs the first [`olr_look::MAX_EMITTERS`] of `look`'s emitters as

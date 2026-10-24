@@ -829,30 +829,191 @@ fn a_hot_pixel_shows_its_colour_in_every_view() {
     }
 }
 
-/// A pixel dug out keeps its heat when its back material heats, and loses
-/// it where the back holds none. (Issue #56: a blast inside the dirt
-/// heats only round its centre, so the insulator's pixel kept is a blast
-/// of its own past the hole, where one blast heated it deep.)
+/// Issue #67: a dug pixel loses its heat, whatever its back: the dirt's
+/// glow goes with the dirt. The dirt left round the hole keeps its own.
 #[test]
-fn a_dug_pixel_is_ruled_by_its_back() {
+fn a_dug_pixel_loses_its_heat() {
     let Some(gpu) = offscreen() else { return };
     let mut map = map();
     let mut r = lit(&gpu);
     r.set_surface(&materials(), Some(&maps()));
     r.upload_terrain(&map);
     map.take_dirty().for_each(drop);
-    r.deposit_heat(blast(20.0, 40.0, 6.0));
-    r.deposit_heat(blast(50.0, 40.0, 10.0));
-    r.deposit_heat(blast(50.0, 31.0, 4.0));
+    // Inside [`map`]'s dirt, over its stone back: the dirt round it hot.
+    r.deposit_heat(blast(20.5, 40.5, 8.0));
     frame(&gpu, &mut r, &dark());
+    let before = temps(&gpu, &r);
+    assert!(at(&before, 20, 40) > 500.0, "the dirt is hot: {}", at(&before, 20, 40));
+    // Hole 2 carves the 9 × 9 square round (20, 40).
     map.apply(ColorEdit::Carve { hole: 2, x: 20, y: 40 });
-    map.apply(ColorEdit::Carve { hole: 2, x: 50, y: 40 });
     r.update_terrain(&mut map);
     steps(&gpu, &mut r, 1);
     let t = temps(&gpu, &r);
-    assert!(at(&t, 20, 40) > 500.0, "its back is stone: {}", at(&t, 20, 40));
-    assert_eq!(at(&t, 50, 40), 0.0, "no back material: no heat");
-    assert!(at(&t, 50, 31) > 0.0, "the insulator past the hole keeps its heat");
+    for y in 36..=44 {
+        for x in 16..=24 {
+            assert_eq!(at(&t, x, y), 0.0, "({x}, {y}) dug: cold");
+        }
+    }
+    for (x, y) in [(20, 45), (25, 40), (20, 35), (15, 40)] {
+        assert!(at(&t, x, y) > 100.0, "({x}, {y}) the dirt round the hole keeps its heat: {}", at(&t, x, y));
+    }
+    // And stays in the dirt: the hole's back stays cold.
+    steps(&gpu, &mut r, 20);
+    let t = temps(&gpu, &r);
+    assert!((36..=44).all(|y| (16..=24).all(|x| at(&t, x, y) == 0.0)), "the hole's back stays cold");
+    assert!(at(&t, 20, 45) > 0.0);
+}
+
+/// Issue #67: [`map`]'s columns left of 40 (a stone front and back)
+/// open but for a dirt block (14..30 × 10..40) and a rock column right
+/// of it (30..34), touching it.
+fn block() -> ColorMap {
+    let cells = (0..120 * 90)
+        .map(|i| match (i % 120, i / 120) {
+            (14..30, 10..40) => Material::Dirt,
+            (30..34, 10..40) => Material::Rock,
+            _ => Material::Background,
+        })
+        .collect();
+    level_of_cells(cells)
+}
+
+/// Issue #67: heat stays in its layer. A deposit inside a dirt block
+/// whose walk reaches only the dirt heats it; however long it steps, the
+/// background beside the block's faces stays at 0, while the rock
+/// touching the dirt warms (both solid). A hot spot on the background
+/// alone still spreads to its background neighbours.
+#[test]
+fn heat_stays_in_its_layer() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = heated_level(&gpu, &block());
+    // 6.5 from the left face, 9.5 from the rock: the walk's dirt skin
+    // (6 pixels) reaches neither the face nor the rock.
+    r.deposit_heat(blast(20.5, 25.5, 8.0));
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    assert!(at(&t, 20, 25) > 500.0, "the dirt is hot: {}", at(&t, 20, 25));
+    assert!((10..40).all(|y| at(&t, 30, y) == 0.0), "the rock takes none of the deposit");
+    let back = |t: &[f32]| {
+        let beside = (10..40).flat_map(|y| [(13, y), (34, y)]);
+        let over = (13..35).flat_map(|x| [(x, 9), (x, 40)]);
+        beside.chain(over).map(|(x, y)| at(t, x, y)).fold(0.0, f32::max)
+    };
+    assert_eq!(back(&t), 0.0);
+    for n in [1, 50, 200] {
+        r.advance_heat(n * HEAT_STEP_MS);
+        frame(&gpu, &mut r, &dark());
+        let t = temps(&gpu, &r);
+        assert_eq!(back(&t), 0.0, "after {n} more steps the background beside the block is cold");
+        assert!(
+            (0..120).all(|x| (0..90).all(|y| {
+                let solid = (14..34).contains(&x) && (10..40).contains(&y);
+                solid || at(&t, x, y) == 0.0
+            })),
+            "no background pixel warms"
+        );
+    }
+    let t = temps(&gpu, &r);
+    assert!(at(&t, 14, 25) > 0.0, "the dirt's face warms within the dirt: {}", at(&t, 14, 25));
+    assert!(at(&t, 30, 25) > 0.0, "the rock touching the dirt warms: {}", at(&t, 30, 25));
+
+    // A hot spot on the background alone, far from the block: its slice
+    // (radius 9.6) spreads past it along the back wall.
+    let mut r = heated_level(&gpu, &block());
+    let d = HeatDeposit { pos: [20.5, 70.5], radius: 17.0, amount: 1000.0 };
+    r.deposit_heat(d);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    assert!(near(at(&t, 20, 70), slice(d, 20, 70)));
+    assert_eq!(at(&t, 20, 80), 0.0, "past the slice");
+    steps(&gpu, &mut r, 5);
+    let t = temps(&gpu, &r);
+    assert!(at(&t, 20, 80) > 0.0, "the back's heat spreads along the back: {}", at(&t, 20, 80));
+    assert!(at(&t, 20, 60) > 0.0);
+}
+
+/// Issue #67: a crater carved and its blast deposited in the same frame
+/// (play's order: `update_terrain`, then the deposits): its back takes
+/// the ball's slice whole, as [`the_back_takes_the_balls_slice_14_px_back`]
+/// computes it; the dirt's heat from before goes with the dirt. With
+/// nothing hot before (no pass to order) and with the dirt hot.
+#[test]
+fn a_fresh_craters_back_takes_its_slice() {
+    let Some(gpu) = offscreen() else { return };
+    for hot_before in [false, true] {
+        let mut map = map();
+        let mut r = lit(&gpu);
+        r.set_surface(&materials(), Some(&maps()));
+        r.upload_terrain(&map);
+        map.take_dirty().for_each(drop);
+        if hot_before {
+            r.deposit_heat(blast(20.5, 40.5, 8.0));
+            frame(&gpu, &mut r, &dark());
+            assert!(at(&temps(&gpu, &r), 20, 40) > 500.0);
+        }
+        // Hole 4 carves the 15 × 15 square round (20, 40).
+        map.apply(ColorEdit::Carve { hole: 4, x: 20, y: 40 });
+        r.update_terrain(&mut map);
+        let d = HeatDeposit { pos: [20.5, 40.5], radius: 17.0, amount: 300.0 };
+        r.deposit_heat(d);
+        frame(&gpu, &mut r, &dark());
+        let t = temps(&gpu, &r);
+        let mut warm = 0;
+        for y in 33..=47 {
+            for x in 13..=27 {
+                assert!(
+                    near(at(&t, x, y), slice(d, x, y)),
+                    "hot before {hot_before}: ({x}, {y}): {} for {}",
+                    at(&t, x, y),
+                    slice(d, x, y)
+                );
+                warm += usize::from(at(&t, x, y) > 0.0);
+            }
+        }
+        assert!(warm > 150, "{warm} warm");
+        assert!(near(at(&t, 20, 40), 300.0 * (1.0 - 196.0 / 289.0)));
+        // The dirt round the crater takes its face's heat.
+        assert!(at(&t, 20, 48) > 300.0, "the crater's wall: {}", at(&t, 20, 48));
+    }
+}
+
+/// Issue #67: dirt added over a hot back starts cold; the back beside it
+/// keeps its heat, and the new dirt takes none from it.
+#[test]
+fn new_dirt_starts_cold() {
+    let Some(gpu) = offscreen() else { return };
+    let mut map = map();
+    let mut r = lit(&gpu);
+    r.set_surface(&materials(), Some(&maps()));
+    r.upload_terrain(&map);
+    map.take_dirty().for_each(drop);
+    // [`map`]'s open rows 80 to 90 over its stone back.
+    r.deposit_heat(HeatDeposit { pos: [20.5, 85.5], radius: 30.0, amount: 600.0 });
+    frame(&gpu, &mut r, &dark());
+    let before = temps(&gpu, &r);
+    assert!(at(&before, 20, 85) > 100.0, "the back is hot: {}", at(&before, 20, 85));
+    // Hole 0 (5 × 5) of dirt round (20, 85): 18..=22 × 83..=87.
+    map.apply(ColorEdit::Dirt { hole: 0, x: 20, y: 85 });
+    r.update_terrain(&mut map);
+    frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    let new = |x: usize, y: usize| (18..=22).contains(&x) && (83..=87).contains(&y);
+    for y in 80..90 {
+        for x in 0..40 {
+            if new(x, y) {
+                assert_eq!(at(&t, x, y), 0.0, "({x}, {y}) new dirt: cold");
+            } else {
+                assert_eq!(at(&t, x, y), at(&before, x, y), "({x}, {y}) the back unchanged");
+            }
+        }
+    }
+    steps(&gpu, &mut r, 10);
+    let t = temps(&gpu, &r);
+    assert!(
+        (83..=87).all(|y| (18..=22).all(|x| at(&t, x, y) == 0.0)),
+        "the new dirt takes none from the back"
+    );
+    assert!(at(&t, 17, 85) > 0.0, "the back beside it stays hot");
 }
 
 /// A reset, a new level or a restart clears the heat.
