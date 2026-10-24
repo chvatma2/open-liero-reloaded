@@ -126,7 +126,10 @@ impl Offscreen {
         };
         let info = adapter.get_info();
         let required_features = if o.timestamps {
-            adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+            // Inside encoders too where the adapter has it: the heat's
+            // copies are timed between two (the render profile).
+            adapter.features()
+                & (wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
         } else {
             wgpu::Features::empty()
         };

@@ -18,6 +18,7 @@ mod regions;
 mod soak;
 mod timing;
 mod uploads;
+mod workload;
 
 pub use gi::{GI_CELL_BUDGET, gi_cell};
 pub use heat::{
@@ -26,8 +27,9 @@ pub use heat::{
 };
 pub use pass::ViewDraw;
 pub use probe::{MAX_PROBE_PASSES, MAX_PROBE_TAPS, Probe};
-pub use timing::{GpuTimes, PASS_GROUPS, PassGroup, PassSpan, gpu_times};
+pub use timing::{GpuTimes, PASS_GROUPS, PassGroup, PassSpan, gpu_times, pass_ms};
 pub use uploads::Uploads;
+pub use workload::Workload;
 
 /// The world pass's and atlas's texel format (gamma-space RGBA, like OLX's
 /// surfaces: blending happens on the stored bytes).
@@ -509,6 +511,12 @@ impl Renderer {
     pub fn gpu_times(&mut self) -> Option<GpuTimes> {
         let device = self.device.clone();
         self.timer.as_mut()?.read(&device)
+    }
+
+    /// The last frame [`Renderer::gpu_times`] read: each timed pass's own
+    /// span in ms, in the GPU's order (empty without timing).
+    pub fn last_passes(&self) -> &[(PassGroup, f64)] {
+        self.timer.as_ref().map_or(&[], |t| t.last_passes())
     }
 
     /// Bench only (the shader-headroom probe, plan 8): `Some` runs the

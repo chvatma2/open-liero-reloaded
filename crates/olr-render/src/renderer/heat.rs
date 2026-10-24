@@ -17,6 +17,7 @@ use olr_look::{MAX_TEMPERATURE, SurfaceMaps, SurfaceMaterial};
 use olr_scene::{DrawList, View};
 use olr_terrain::Rect;
 
+use super::timing::{PassGroup, Timer};
 use super::{entry, pipeline};
 
 /// The match time a heat step covers, ms: heat advances by whole steps of
@@ -411,6 +412,19 @@ pub(super) enum HeatOp {
     Layer([u32; 4]),
 }
 
+impl HeatOp {
+    /// The group its pass is timed in.
+    fn group(self) -> PassGroup {
+        match self {
+            HeatOp::Clear => PassGroup::HeatClear,
+            HeatOp::Deposit(..) => PassGroup::HeatDeposit,
+            HeatOp::Step => PassGroup::HeatStep,
+            HeatOp::Zero(_) => PassGroup::HeatZero,
+            HeatOp::Layer(_) => PassGroup::HeatLayer,
+        }
+    }
+}
+
 /// What waits for a frame, in call order (issue #67).
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum Waiting {
@@ -463,6 +477,12 @@ impl HeatSim {
     }
 
     /// Whether any pixel may be hot (a box, or a deposit waiting).
+    /// The active boxes' pixels, and how many boxes.
+    pub(super) fn area(&self) -> (u64, u32) {
+        let px = |b: &HeatBox| u64::from(b.rect[2].max(0) as u32) * u64::from(b.rect[3].max(0) as u32);
+        (self.boxes.iter().map(px).sum(), self.boxes.len() as u32)
+    }
+
     pub(super) fn active(&self) -> bool {
         !self.boxes.is_empty() || !self.pending.is_empty()
     }
@@ -1172,11 +1192,16 @@ impl HeatTextures {
     }
 
     /// Encodes the frame's planned ops ([`HeatTextures::prepare`]).
-    pub(super) fn encode<'t>(
+    /// The frame's operations into `encoder`, each pass timed in its
+    /// [`PassGroup`] and the copies back in [`PassGroup::HeatCopy`] when
+    /// `timer` is on; the first pass starts the frame's slot 0 when
+    /// `begins_frame`.
+    pub(super) fn encode(
         &mut self,
         encoder: &mut wgpu::CommandEncoder,
         pipes: &HeatPipelines,
-        mut stamp: impl FnMut(bool) -> Option<wgpu::RenderPassTimestampWrites<'t>>,
+        timer: Option<&Timer>,
+        begins_frame: bool,
     ) {
         let mut deposit = 0u32;
         for i in 0..self.sim.ops.len() {
@@ -1200,7 +1225,8 @@ impl HeatTextures {
                         ops: wgpu::Operations { load, store: wgpu::StoreOp::Store },
                     })],
                     depth_stencil_attachment: None,
-                    timestamp_writes: stamp(i == 0),
+                    timestamp_writes: timer
+                        .and_then(|t| t.pass(op.group(), (i == 0 && begins_frame).then_some(0), None)),
                     occlusion_query_set: None,
                     multiview_mask: None,
                 });
@@ -1235,6 +1261,10 @@ impl HeatTextures {
                     HeatOp::Step => self.steps += 1,
                     _ => {}
                 }
+                let copies = timer.and_then(|t| Some((t, t.commands(PassGroup::HeatCopy)?)));
+                if let Some((t, (begin, _))) = copies {
+                    encoder.write_timestamp(&t.set, begin);
+                }
                 for &[x, y, w, h] in rects {
                     let at = |texture| wgpu::TexelCopyTextureInfo {
                         texture,
@@ -1247,6 +1277,9 @@ impl HeatTextures {
                         at(&self.heat),
                         wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
                     );
+                }
+                if let Some((t, (_, end))) = copies {
+                    encoder.write_timestamp(&t.set, end);
                 }
             }
             // Issue #67: the solid map as now is what the heat has seen,
@@ -1488,7 +1521,7 @@ impl super::Renderer {
                     label: Some("olr-render heat"),
                 })
             });
-            h.encode(e, &state.heat, |_| None);
+            h.encode(e, &state.heat, None, false);
         }
         if let Some(e) = encoder {
             self.queue.submit([e.finish()]);
@@ -1535,6 +1568,12 @@ impl super::Renderer {
     /// The heat texture (`R16Uint`, [`HEAT_SCALE`] a degree; tests).
     pub fn heat_texture(&self) -> Option<&wgpu::Texture> {
         self.heat_textures().map(|h| &h.heat)
+    }
+
+    /// The active heat boxes' pixels and their count, the level's and the
+    /// distant layers' summed (the render profile's workload).
+    pub(super) fn heat_area(&self) -> (u64, u32) {
+        self.all_heat().map(|h| h.sim.area()).fold((0, 0), |(a, n), (b, m)| (a + b, n + m))
     }
 
     /// Heat steps run so far (tests).

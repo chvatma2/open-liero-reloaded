@@ -489,7 +489,7 @@ on screen or offscreen.
   `HEAT_CAST` (reach `HEAT_REACH` 200; `a_hot_pixel_adds_glow_light`)
   for hot rock and dirt; hot open background gives it as haze, the
   brightest a ray meets, stopping no ray.
-  Timed as `PassGroup::Heat`. Tests (GPU, `tests/gpu/heat.rs`): those
+  Timed in the heat's `PassGroup`s (one per operation, the copies back in `HeatCopy`). Tests (GPU, `tests/gpu/heat.rs`): those
   named and `a_deposit_heats_only_material_pixels_and_spreads_only_into_conducting_ones`,
   issue #56's `a_deposit_heats_only_the_rock_face`,
   `heat_soaks_inward_from_the_face`, `a_wall_shields_what_is_behind_it`,
@@ -599,13 +599,25 @@ on screen or offscreen.
   pair of its own (`PASS_BASE` 32, a resolve's 256-byte alignment, to
   `PASS_SLOTS` 256 more; the first world pass's start is slot 0, the last
   upscale's end slot 1; a pass past them goes untimed), counted in its
-  `PassGroup` (heat, issue #39; world and occluders; emission: the glow
+  `PassGroup` (the heat's six, issue #39, split for the render profile:
+  heat clear, deposit, step, zero, layer, and its copies back, `heat copy`,
+  timed between two encoder timestamps only where the device has
+  `TIMESTAMP_QUERY_INSIDE_ENCODERS`, which `Offscreen` asks for with
+  `timestamps`, else in the gaps, `GpuTimes::copies_timed`; world and occluders; emission: the glow
   light's discs and emission; jump flood; cascades; fluence and its
   clear; occlusion; light sum; soak; blur; bloom; composite; upscale; the
   timer's `pass` hands each pass its writes, `start_frame` clears them, the
   glow light's `encode` takes the timer): `GpuTimes::passes`, indexed as
   `PassGroup::ALL`, 0 for a group not run; the frame less their sum is the
   copies and gaps between passes (`passes_add_up_in_their_groups`).
+  A pass that finds no slot left runs untimed and is counted in
+  `GpuTimes::untimed` (`Slots`, `passes_past_the_slots_are_counted_untimed`);
+  `last_passes()` is the last read frame's passes, each its own span
+  (`pass_ms`), in the GPU's order. `workload()` (`workload.rs`,
+  `Workload`): the active heat boxes' area and count (level and distant
+  layers), the heat's steps and passes so far, each view target's size,
+  the glow light's grid and cascades
+  (`heat_ops_are_timed_in_their_groups_and_counted_in_the_workload`).
   `olr-cli gpu-bench` prints them as a table. `set_probe(Some(Probe { passes, taps }))` (`probe.rs`,
   `probe.wgsl`, clamped to `MAX_PROBE_PASSES`/`MAX_PROBE_TAPS`): after
   each frame, an untimed seed pass (`fs_seed`) stretches the drawn frame

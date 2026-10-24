@@ -231,9 +231,7 @@ impl Renderer {
                 h.prepare(&self.queue);
                 let started = heat_first;
                 heat_first |= !h.sim.ops.is_empty();
-                h.encode(&mut encoder, &state.heat, |first| {
-                    stamp(PassGroup::Heat, (first && !started && !views.is_empty()).then_some(0), None)
-                });
+                h.encode(&mut encoder, &state.heat, timer, !started && !views.is_empty());
             }
         }
         let heat_on = lit

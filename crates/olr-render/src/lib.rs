@@ -40,6 +40,6 @@ pub use renderer::{
     HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS, HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_AMOUNT,
     MAX_HEAT_DEPOSITS, MAX_HEAT_RADIUS, MAX_HEAT_STEPS, MAX_PROBE_PASSES, MAX_PROBE_TAPS, MAX_SPRITE_SCALE,
     MIN_SCALE, PASS_GROUPS, PassGroup, PassSpan, Probe, RenderSettings, Renderer, Uploads, ViewDraw,
-    WORLD_FORMAT, gi_cell, gpu_times,
+    WORLD_FORMAT, Workload, gi_cell, gpu_times, pass_ms,
 };
 pub use upscale::{UpscaleFilter, dest_rect, dest_rect_in, dest_rect_in_units};

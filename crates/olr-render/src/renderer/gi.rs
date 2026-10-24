@@ -279,6 +279,8 @@ fn texture(
 pub(super) struct GiState {
     /// World pixels per cell.
     pub(super) cell: u32,
+    /// The grid's cells across and down.
+    pub(super) grid: (u32, u32),
     /// The emission grid (rgb cast, solid share), its reach, its albedo
     /// and its haze (hot open background: light along a ray, no stop).
     emission: (wgpu::TextureView, wgpu::TextureView, wgpu::TextureView, wgpu::TextureView),
@@ -296,7 +298,7 @@ pub(super) struct GiState {
     drawn: std::cell::Cell<(usize, u32)>,
     /// The jump flood's two textures: the seeds go into the first.
     seeds: [wgpu::TextureView; 2],
-    cascades: Vec<wgpu::TextureView>,
+    pub(super) cascades: Vec<wgpu::TextureView>,
     /// The glow light per cell, which the light sum samples. It is also
     /// the history bounce reads (plan 15c): the cascades run before
     /// `fs_fluence` writes it, so they read the last frame's (issue #35:
@@ -507,6 +509,7 @@ impl GiState {
         let fluence_bind = bind(device, &pipes.fluence_layout, [tv(&cascades[0])]);
         GiState {
             cell,
+            grid,
             emission,
             dynamic,
             dynamic_bind,

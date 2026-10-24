@@ -4,7 +4,7 @@ use olr_look::engine::BACK_DEPTH_PX;
 use olr_look::{Heat, LookFrame, RampKey, SurfaceMaps, SurfaceMaterial, ViewMode};
 use olr_render::{
     DIRT_HEAT_GAIN, DIRT_SKIN, DIRT_SKIN_WEIGHTS, HEAT_SCALE, HEAT_SKIN_GAIN, HEAT_SKIN_WEIGHTS,
-    HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, Renderer,
+    HEAT_STEP_MS, HeatDeposit, HeatView, MAX_HEAT_DEPOSITS, MAX_HEAT_STEPS, PassGroup, Renderer,
 };
 
 use super::*;
@@ -1434,4 +1434,39 @@ fn a_hot_layer_adds_no_glow_light() {
     assert!(c.r > 200 && c.r > c.b + 60, "the layer glows: {c:?}");
     assert_ne!(cold, hot);
     assert!(before == after, "but lights nothing");
+}
+
+/// The render profile: each heat operation is timed in its own group (the
+/// copies back too where the device has timestamps inside encoders), each
+/// pass keeps its own span, and the workload counts the hot area.
+#[test]
+fn heat_ops_are_timed_in_their_groups_and_counted_in_the_workload() {
+    if std::env::var_os("OLR_GPU_TESTS").is_none() {
+        return;
+    }
+    let Ok(gpu) =
+        olr_render::Offscreen::open(&OffscreenOptions { timestamps: true, ..OffscreenOptions::default() })
+    else {
+        return;
+    };
+    let mut r = heated(&gpu);
+    if !r.enable_gpu_timing() {
+        eprintln!("no timestamps; skipping");
+        return;
+    }
+    frame(&gpu, &mut r, &dark());
+    let _ = r.gpu_times();
+    r.deposit_heat(blast(20.0, 45.0, 10.0));
+    r.advance_heat(HEAT_STEP_MS * 3);
+    frame(&gpu, &mut r, &dark());
+    let t = r.gpu_times().expect("timed");
+    assert!(t.passes[PassGroup::HeatDeposit as usize] > 0.0, "{t:?}");
+    assert!(t.passes[PassGroup::HeatStep as usize] > 0.0, "{t:?}");
+    assert_eq!(t.passes[PassGroup::HeatCopy as usize] > 0.0, t.copies_timed, "{t:?}");
+    assert_eq!(t.untimed, 0);
+    let steps = r.last_passes().iter().filter(|(g, _)| *g == PassGroup::HeatStep).count();
+    assert_eq!(steps, 3, "{:?}", r.last_passes());
+    let w = r.workload();
+    assert!(w.heat_area > 0 && w.heat_boxes >= 1 && w.heat_steps >= 3, "{w:?}");
+    assert!(!w.world_targets.is_empty() && w.glow_grid.is_some() && w.cascades > 0, "{w:?}");
 }
