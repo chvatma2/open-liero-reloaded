@@ -24,7 +24,10 @@ modernized for current displays.
    snapshots, renderer GPU tests and the material editor's preview's to `check` (what a rendering change
    needs, without the rest of `full`); `cargo xtask bench-quick` is a
    one-minute instruction-count benchmark of one change (`bench` stays the
-   real one).
+   real one). `cargo xtask profile` is the render profile: a staged nuke
+   fight on the Windows GPU, each frame's costs ranked by phase against
+   the last `--set-base` (`--game` checks it against the game); it may be
+   run without asking.
 2. **One crate per concern, under `crates/`.** Each crate has a `CLAUDE.md`:
    read it before editing the crate. Register every new crate in `xtask/layers.ron`.
    A crate may depend only on lower layers (`cargo xtask layers`).

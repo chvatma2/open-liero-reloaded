@@ -19,6 +19,7 @@ mod net;
 mod olx_timing;
 mod oracle;
 mod oracle_gen;
+mod profile;
 mod publish;
 mod tidy;
 mod version;
@@ -216,6 +217,26 @@ enum Command {
         #[arg(long)]
         from: Option<PathBuf>,
     },
+    /// The render profile (`olr-cli render-profile`): a staged nuke fight drawn on the
+    /// Windows GPU through WSL interop (or with --native here), each frame's costs ranked
+    /// by phase against the backend's base in target/render-profile/. Run it freely.
+    Profile {
+        /// The Windows backend: vulkan (what the game picks) or dx12.
+        #[arg(long, default_value = "vulkan", value_parser = ["vulkan", "dx12"])]
+        backend: String,
+        /// Run the Linux build here instead of the Windows one.
+        #[arg(long)]
+        native: bool,
+        /// Make this run the backend's base for later runs.
+        #[arg(long)]
+        set_base: bool,
+        /// Then play the fight in the game fullscreen and set its frame log beside the profile.
+        #[arg(long)]
+        game: bool,
+        /// More `olr-cli render-profile` arguments (after `--`).
+        #[arg(last = true)]
+        extra: Vec<String>,
+    },
     /// Build olr-cli and olr-game for Windows (x86_64-pc-windows-gnu), stage them with the
     /// content in Windows' temp directory and list the adapters each backend sees (plan 8).
     Windows,
@@ -323,6 +344,9 @@ fn main() -> ExitCode {
         Command::OracleGenWeapons => oracle_gen::run(),
         Command::BlessRender { reason } => bless::run(&reason),
         Command::BlessRegression { reason, from } => bless_regression::run(&reason, from.as_deref()),
+        Command::Profile { backend, native, set_base, game, extra } => {
+            profile::command(&backend, native, set_base, game, &extra)
+        }
         Command::Windows => winbuild::command(),
         Command::Dist { no_verify, final_release } => dist::command(!no_verify, final_release),
         Command::Flatpak => flatpak::command(),

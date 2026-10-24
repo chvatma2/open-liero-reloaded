@@ -178,7 +178,7 @@ pub(crate) fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
 
 /// The content's file count, bytes and newest modification time: copied
 /// again only when it changes (a same-size edit moves the newest time).
-fn content_stamp(dir: &Path) -> Result<String, String> {
+pub(crate) fn content_stamp(dir: &Path) -> Result<String, String> {
     #[derive(Default)]
     struct Sum {
         files: u64,
