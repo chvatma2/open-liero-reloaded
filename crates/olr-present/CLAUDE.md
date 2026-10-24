@@ -108,6 +108,13 @@ wired in the frame loop's order **once**, so each mode that draws a world
     depends on the frame rate. Explosions and heating projectiles are
     queued merged in tick order, the explosions of a tick first, under the
     same `HEAT_QUEUE`.
+  - **Beams' heat** (issue #69): each of the scene's `beam_hits()` (a
+    beam's part stopped on rock or dirt in a sub-step) queues the weapon's
+    beam heat (`ModLook::beam_heat`: its own, else `engine::BEAM_HEAT`)
+    split over the sub-step's `parts` (`BeamHeat::part`) there, once (a
+    `BeamKey`: tick ms, index, through its own `Once`), after the tick's
+    explosions and heating projectiles. A beam on a worm or ending in the
+    open heats nothing.
   - `step_fx(&FxTick)`: `on_tick`'s entities and colour part for a tick
     described by hand (online play).
   - `restart(&world, &level, &theme)` for the same worms on a new world;
@@ -166,7 +173,8 @@ wired in the frame loop's order **once**, so each mode that draws a world
   before the projectile lights, slot order): its disc `radius()`, its reach
   capped (`reach()`), its clock fitted as the engine's when `fitted`, else
   the explosion's age in ms; it ends with the explosion. The rest (no
-  projectile: bonuses, beams, explosive trails) keep the engine's.
+  projectile: bonuses, explosive trails) keep the engine's; a beam's
+  cast none (issue #69).
   `flashes_started()` lists the end flashes the last frame started (tests
   and tools). Issue #12: last, the skins' lights, one steady disc per
   drawn worm whose skin has a light and whose frame glows
@@ -174,6 +182,16 @@ wired in the frame loop's order **once**, so each mode that draws a world
   at the worm as drawn, in drawn-worm order; only in a level with a look
   (a mod's look alone casts none) and while `engine::SKIN_LIGHT` is on
   (`Presentation::set_skin_light` overrides it for tests and tools).
+  Issue #69, after the skins' (past the cap they drop, never another
+  light): each of the scene's `drawn_beams()` lights discs every
+  `engine::BEAM_DISC_SPACING` from its start to its end (both included,
+  at most `MAX_BEAM_DISCS`, spaced wider to fit; `beam_discs`), radius
+  `BEAM_DISC_RADIUS`, the weapon's own `beam.light` (by reference: no
+  allocation) else `engine::beam_light` of its colour, and one at its end
+  when it `stopped`, radius `BEAM_TIP_RADIUS`, its `tip_light` else
+  `engine::beam_tip_light`; identity the worm, clock the match's. A
+  beam's carve explosions (`olr_sim::BEAM_EXPLOSION`) cast no light (the
+  tip light replaces them); a beam weapon's shot starts its muzzle light.
 - **Online play** (`net.rs`, spec §3.4, decision N20): the newest
   predicted tick is drawn and corrections re-simulate shown ticks. Per
   advance: inside it, for each simulated tick (olr-online's `on_tick`

@@ -82,7 +82,8 @@ packs' format (version 5); `olr-pack` reads and writes through them.
     `olr_pack::validate` warns about it; a `.ron` in a subfolder of
     `projectiles/` is an error.
   - **Looks** (plan 15a Task 3): `Weapon::look` (`WeaponLookSource`, its
-    `muzzle_light`) and `Projectile::look` (`ProjectileLookSource`: `glow`
+    `muzzle_light`; issue #69, a Beam weapon's `beam`, refused on any
+    other: "only a `Beam` weapon has a beam look") and `Projectile::look` (`ProjectileLookSource`: `glow`
     0-100, a `light`, an `end_flash`, issue #15's `explosion`, issue #42's
     `explosion_heat` and `heat`), and
     `ModSource::look` (`mod.ron`'s `look`, `ModWideLookSource`: issue #15's
@@ -242,8 +243,13 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `compile_look_source` (a level's look),
   `compile_projectile_look`, `compile_weapon_look`,
   `compile_explosion_light`, `compile_explosion_heat`,
-  `compile_projectile_heat` (issue #42): each value checked, an error
-  naming its field path.
+  `compile_projectile_heat` (issue #42), `compile_beam_look` (issue #69:
+  `BeamLookSource { light, tip_light, heat: BeamHeatSource { amount
+  0-100, radius 1-16 } }`, the lights' reach `Pixels` 1-
+  `olr_look::engine::MAX_BEAM_REACH` 256, never `Unlimited`; each left out
+  the engine's, 0 off; `tests/look.rs`'
+  `a_beam_look_round_trips_and_compiles`, `beam_look_limits`): each value
+  checked, an error naming its field path.
 - **Surface materials** (`materials.rs`, `levels/`, issue #37; spec
   `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`; the
   page `docs/formats/material.md`; STATUS.md "Surface materials (issue

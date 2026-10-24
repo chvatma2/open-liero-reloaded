@@ -100,7 +100,13 @@ Editor screen's Mod tab (`olr-ui`).
   1-`MAX_EXPLOSION_HEAT_RADIUS`, off the engine's) and `heat`
   (`labels::HEAT`: switched on, a flame's 5 a tick over 4 px; `amount a
   tick` 1-`MAX_PROJECTILE_HEAT`, the radius 1-`MAX_PROJECTILE_HEAT_RADIUS`),
-  the bounds `olr_look::engine`'s; and the World panel's Look
+  the bounds `olr_look::engine`'s; issue #69, a Beam weapon's
+  `beam` beside its muzzle light (`labels::BEAM_LIGHT`, `BEAM_TIP_LIGHT`,
+  `BEAM_HEAT`; switched on, the engine's values in the beam's colour:
+  `engine::beam_light`, `beam_tip_light`, `BEAM_HEAT`; the lights' reach
+  1-`MAX_BEAM_REACH`, never unlimited, the heat's `amount a sub-step`
+  0-`MAX_PROJECTILE_HEAT` and radius 1-`MAX_PROJECTILE_HEAT_RADIUS`;
+  `the_look_group_edits_beam`); and the World panel's Look
   (`mod_wide`): `mod.ron`'s `look`, the explosion light and heat of every
   projectile without its own, set whole as `mod.look`.
 - **Play** (issue #18; STATUS.md "Mod editor Play (issue #18)"): the

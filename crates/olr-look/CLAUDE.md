@@ -16,12 +16,17 @@ own look. The simulation never sees it.
   `Occlusion` (issue #10: `strength` percent, `reach` world pixels),
   `ProjectileLook` (`glow`, `light`, `end_flash`, `explosion`, issue #42's
   `explosion_heat` and `heat`), `WeaponLook`
-  (`muzzle_light`), `ModLook` (indexed like `SimMod::projectiles` and
+  (`muzzle_light`; issue #69, `beam`: `BeamLook { light, tip_light,
+  heat: Option<BeamHeat { amount, radius }> }`, `BeamHeat::part(parts)`
+  one of a wide beam's parts' deposit, clamped to the projectile heat's
+  caps, `None` under a degree), `ModLook` (indexed like `SimMod::projectiles` and
   `SimMod::weapons`, plus the mod-wide `explosion` and, issue #42,
   `explosion_heat`; `is_empty`;
   `explosion(proj)`: projectile `proj`'s own, else the mod's, `None` for
   -1 or neither, issue #15; `explosion_heat(proj)` the same for heat and
-  `heat(proj)` a projectile's own, issue #42), `ExplosionHeatLook` (issue
+  `heat(proj)` a projectile's own, issue #42; `beam(weapon)` a weapon's
+  own beam look and `beam_heat(weapon)` its heat, else `engine::BEAM_HEAT`,
+  issue #69), `ExplosionHeatLook` (issue
   #42: `amount` percent of the engine's, `radius` world pixels or `None`
   for the engine's; `heat(damage)`: `engine::explosion_heat(damage)`
   scaled, amount clamped to `MAX_EXPLOSION_HEAT_AMOUNT` and the result to
@@ -89,7 +94,13 @@ own look. The simulation never sees it.
   to 0-500, intensity `60 + 8 × size` up to 250, reach `24 + 8 × size`;
   keys over `EXPLOSION_MS`, 200 ms, which the presentation fits to the
   explosion's life), `muzzle_light()` (80 %, reach 40, 50 ms). Both are
-  once-only `Keys` from 100 to 0 with phase 0. Plan 15c:
+  once-only `Keys` from 100 to 0 with phase 0. Issue #69 (picked from
+  rendered frames): `beam_light(colour)` (each disc along a beam: its
+  colour at 21 %, reach 40, steady), `beam_tip_light(colour)` (linear ×
+  2.8 + 0.2 a channel, normalised into colour and intensity, reach 90),
+  `BEAM_HEAT` (60 over 5 px a sub-step), `BEAM_DISC_SPACING` 8,
+  `MAX_BEAM_DISCS` 64, `BEAM_DISC_RADIUS` 1.5, `BEAM_TIP_RADIUS` 3,
+  `MAX_BEAM_REACH` 256 (`tests/beam.rs`). Plan 15c:
   `disc_radius(reach)` (an eighth of the reach, 1-6; 1 not finite),
   `explosion_radius(size)` (`2 + size / 2`, 2-12), `disc_radiance(colour,
   radius, reach)` (the calibration: a disc's light at `d0 = max(reach / 3,

@@ -174,10 +174,17 @@ tests, and they must match bit for bit (`tests/oracle.rs`).
   `CosmeticKind::Explosion { size, proj }` (issue #15: the exploded
   projectile's `SimMod` index from its effects, timer or `Bounce`
   explosion, which `effects::explosion` takes only for it; -1 for a bonus
-  blown up, a beam and an explosive trail; in no checksum; issue #42:
+  blown up and an explosive trail, `BEAM_EXPLOSION` for a beam's (issue
+  #69); in no checksum; issue #42:
   `Explosion.proj`, the same, for the projectile look's explosion heat),
   `Dirt { probe }` (the pixel the colour comes from), `Damage.dealt`,
-  `LaserSight { worm, len }` (OLX's trace length), `Beam { worm, colour }`,
+  `LaserSight { worm, len }` (OLX's trace length), `Beam { worm, colour,
+  weapon, stopped }` (issue #69: `stopped` when a part stopped on rock,
+  dirt or a worm inside the level; the level's edge, which the trace reads
+  as rock, stops nothing), `BeamHit { worm, weapon, parts }` (issue #69:
+  one where each part stopped on rock or dirt, `parts` the sub-step's count,
+  at most `MAX_BEAM_HITS`), a beam's carve explosions `proj:
+  BEAM_EXPLOSION` (-2),
   `World::physics_time()`. `Message` comes from a mode's command,
   `GameOver` once when the match ends.
 - **Checksum** (`checksum.rs`): FNV-1a 64 over all mutable state, through an

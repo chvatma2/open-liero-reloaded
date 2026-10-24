@@ -66,7 +66,7 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 | HUD and minimap (§21 G5, Modern only): an opaque bar along the bottom fifth of the window's 16:9 frame (OLX 0.58's status bar; deviation below) with health, five weapon slots with OLX's bar states, the minimap in the centre (OLX's proportions, colours and dots; no view rectangle, the user's ruling: the player's bigger dot is enough) and the event log; clock and kill limit over the playfield, Tab's scoreboard; the game drawn above the bar | `src/client/CClient_Draw.cpp` (HUD, `:137-138` the local game's minimap, `:483-515` the bar (commented out at `d1ad953f`), `drawOnMiniMap`), `docs/porting/olx-notes/presentation.md` §2.4, §9 | `olr-ui::{hud, theme}`, `olr-game::{hud, app, gpu}`, `olr_scene::Viewport::GAME`, `olr_render::Renderer::render_in` | done (plan 7 task 5; the bar, the 16:9 frame and the side layout after the v0.1 playtest) | `hud_layout_holds_at_all_scales` (both layouts), `the_scale_follows_the_height`, `the_game_view_is_fixed`, `the_playfield_is_the_frame_above_the_bar`, `hud_paints_at_every_scale`, `log_keeps_the_last_lines_oldest_first`, `hud_hides_the_weapons_during_the_selection`, `names_stay_inside_the_view`, `hud_snapshot_1080p`, `hud_snapshot_1440p_with_scores`, `hud_snapshot_3440x1440_side_panels` (GPU tier) |
 | Pause and results: Esc's pause menu (no tick while paused), the results after `GAMEOVER_WAIT` with OLX's columns plus score, deaths and suicides; Rematch, Save replay, Back to menu | `src/client/CClient_Draw.cpp:1840-1897` | `olr-ui::screens::{ingame, results}`, `olr-game::shell` | done (plan 7 task 5) | `pause_stops_ticks_and_replays_stay_valid`, `pause_menu_holds_the_game_and_opens_the_options`, `results_match_world_scores`, `results_show_the_columns_and_their_buttons`, `save_replay_once_per_match` |
 | Level thumbnails (§21 G6, narrowed): `thumb.png` per level pack (160 × 96, box-filtered, letterboxed), pack format 4 (5 since plan 13c), left out of the content hash; decoded lazily and bounded in the menus | `src/game/Level.cpp:33-44` (`minimapForLevel`) | `olr-import-gfx`, `olr-pack`, `olr-ui::screens::local_play` | done (plan 7 task 6) | `thumbnails_are_imported_for_every_level`, `thumbnails_are_letterboxed_to_a_fixed_size`, `thumbnails_average_the_art`, `thumbnails_decode_lazily_and_bounded` |
-| About (§21 G9): credits (Liero, Liero Xtreme, the OpenLieroX team), licenses, each pack's recorded origin | `src/client/DeprecatedGUI/Menu_Main.cpp:276-283` | `olr-ui::screens::about` | done (plan 7 task 6) | `about_credits_the_authors_and_the_licenses` |
+| About (§21 G9): credits (Liero, Liero Xtreme, the OpenLieroX team) and licenses; the list of each pack's recorded origin (mods, levels, themes, the core, skins) was removed on 2026-10-24, the maintainer's call | `src/client/DeprecatedGUI/Menu_Main.cpp:276-283` | `olr-ui::screens::about` | done (plan 7 task 6) | `about_credits_the_authors_and_the_licenses` |
 | Import (the Import screen was removed in plan 13c; `olr-cli import`, and later the editors, import OLX content into `packs/`, layered over the bundled packs): bounded reads and image decodes | `Menu_Local_FillModList`, `checkLXBinMod`, OLX's level list, `src/main.cpp:1003-1021` | `olr-import`, `olr-pack::image_io`, `olr-game::shell` (`packs_dir`) | done (plan 7 task 7; the screen removed in plan 13c) | `import_reports_every_item_and_writes_whole_packs`, `imported_packs_override_bundled`, `user_packs_layer_over_the_bundled_content`, `a_decompression_bomb_is_refused_on_import_and_load`, `huge_images_are_refused_before_decoding` |
 | Fast-forward (the user's request; no OLX equivalent): replays and `--spectate` at 1×–16× or max, a played game always 1×, sound thinned | — | `olr-game::speed` | done (plan 7 task 8) | `fast_forward_never_changes_the_simulation`, `a_played_game_never_runs_fast`, `speeds_step_parse_and_thin_sound`, `the_fake_clock_needs_an_autoplay` |
 | Autoplay and end to end (§21 G7): `--autoplay` clicks widgets by label, holds the game's keys, takes checked screenshots and logs JSON lines; `--fake-clock` makes a run deterministic | — | `olr-game::autoplay`, `xtask e2e` | done (plan 7 task 8) | `scripts_parse_and_name_what_exists`, `steps_click_wait_and_fail_in_time`, `widgets_are_found_by_their_label`, `blank_pictures_fail_the_sanity_check`; `cargo xtask e2e` (in `full`, Xvfb) |
@@ -6094,6 +6094,90 @@ golden are unchanged. As built:
   blasts takes their warm light where it was shadowed. `heat-cooled.png`
   changes too (a faint red fill), within the goldens' perceptual
   tolerance, so the bless kept it.
+
+## Beams light and heat (issue #69)
+
+No OLX counterpart. The maintainer asked for beam weapons (Liero v1.0
+Reloaded's, Classic's and MW 1.0's Lasers) to light what is round them
+and heat what they hit, a laser's tunnel through dirt glowing at its
+edges. The look was picked on 2026-10-24 from a throwaway spike's
+frames (a laser boring into Liero Factory Reloaded's dirt): of four
+lights (none, along the beam, at the tip, both) and three heats (dull,
+medium, hot), **both lights with medium heat**, as the engine's default
+for every beam weapon, a mod's own values set in the mod editor.
+Presentation only: the simulation's state, the oracle, the checksums
+and every match golden are unchanged. As built:
+
+- **The record** (`olr-sim`'s `beam.rs`, cosmetics only, in no
+  checksum): `CosmeticKind::Beam` gains the weapon and `stopped` (a part
+  stopped on rock, dirt or a worm), and each part that stopped on rock or
+  dirt inside the level gives a `CosmeticKind::BeamHit { worm, weapon,
+  parts }` at that pixel, `parts` the sub-step's count of them (at most
+  `MAX_BEAM_HITS` 8 recorded). The end pixel could not tell: the carve
+  has just emptied it. **The level's edge stops nothing:** `solid` reads
+  past the edge as rock (OLX's rule, kept for the trace), but a beam fired
+  into an open sky ends there with no tip light and no heat
+  (`a_drawn_beam_says_what_stopped_it`). A beam's carve explosions carry
+  `proj: BEAM_EXPLOSION` (-2) instead of -1, so they keep their sprite
+  but cast no light: the tip light replaces them (the maintainer's
+  choice); a bonus blown up's and an explosive trail's stay -1 and keep
+  the engine's light (`trail_explosions_keep_the_engines_light`).
+- **The scene** (`olr-scene`): `drawn_beams()`, the beams the last build
+  drew in a lit match (from the worm as drawn to the end), and
+  `beam_hits()`, the ticks' `TickBeamHit`s with a per-tick index (a key a
+  re-simulated tick gives again). `Scene::shots` records beam weapons'
+  shots too, so a beam weapon's muzzle light (its look's, else the
+  engine's) shows: the Reloaded Laser's red one was never drawn before.
+- **The lights** (`olr-present`'s `look.rs`, last of the frame's
+  emitters, after the skins': past `MAX_EMITTERS` the beams' discs drop,
+  never another light): discs every `BEAM_DISC_SPACING` 8 world pixels
+  along each drawn beam, both ends included, at most `MAX_BEAM_DISCS` 64
+  (spaced wider to fit: 8 beams take at most 520 of the 1024), radius
+  `BEAM_DISC_RADIUS` 1.5, the engine's `beam_light`: the beam's colour at
+  21 % reaching 40 px; and, when it stopped, one at its end, radius
+  `BEAM_TIP_RADIUS` 3, `beam_tip_light`: the beam's colour (linear) × 2.8
+  + 0.2 a channel, normalised into a colour and an intensity (the red
+  Laser's linear (3.0, 0.2, 0.2), a little whiter than the beam),
+  reaching 90 px. A weapon's own lights are read by reference: no
+  allocation per frame.
+- **The heat:** each `BeamHit` queues the weapon's beam heat, else the
+  engine's (`BEAM_HEAT`: 60 degrees of stone at the centre over 5 px),
+  divided by `parts` (a wide beam heats its face no hotter than a 1-wide
+  beam's tip), as a heating projectile's tick does (issue #42's deposit),
+  once through re-simulation (`BeamKey`, its tick and index, through its
+  own `Once`), merged in tick order with the explosions and heating
+  projectiles (a tick's explosions, then its projectiles, then its
+  beams). Per sub-step, not per frame, so it never depends on the frame
+  rate; the carve lands first in the frame (`update_terrain`, then the
+  deposits: issue #67's call order), so the tunnel's remaining edges take
+  it. A beam on a worm or in the open heats nothing.
+- **Format** (`olr-format`'s `look.rs`): a Beam weapon's
+  `WeaponLookSource::beam` (`BeamLookSource`: `light`, `tip_light`, each
+  a `LightSource` with a reach `Pixels` 1-`MAX_BEAM_REACH` 256, never
+  `Unlimited`; `heat`, `BeamHeatSource { amount 0-100, radius 1-16 }`);
+  each left out keeps the engine's, an intensity or amount of 0 turns it
+  off; `beam` on a weapon that is not a Beam is refused ("only a `Beam`
+  weapon has a beam look"). The shipped mods do not set it.
+- **Mod editor:** a Beam weapon's Look group has Beam light, Beam tip
+  light and Beam heat switches beside its muzzle light: off, the
+  engine's; switched on, the engine's values in the beam's colour.
+- **Tests:** `olr-sim`'s `a_drawn_beam_says_what_stopped_it` (dirt, a
+  worm, the level's edge, 1 and 3 wide); `olr-look`'s
+  `the_engines_beam_lights_are_the_picked_frames`,
+  `beam_heat_is_the_weapons_else_the_engines`; `olr-present`'s
+  `a_beam_heats_where_it_stops_each_sub_step_once` (with and without each
+  tick told twice), `a_drawn_beam_lights_along_it_and_at_its_tip`,
+  `a_weapons_own_beam_look_replaces_the_engines` (the muzzle light
+  included), `trail_explosions_keep_the_engines_light`,
+  `beam_discs_space_out_to_fit_the_bound`; `olr-format`'s
+  `a_beam_look_round_trips_and_compiles`, `beam_look_limits`;
+  `olr-mod-editor`'s `the_look_group_edits_beam`.
+- **Goldens:** new `beam-fresh.png` and `beam-cooled.png`
+  (`render-match` of two chaos bots with `fixtures/look/mods/look-test-laser-mod`,
+  Classic's Laser emptying in five bursts and reloading 12.5 s, on the
+  heat test level at ticks 200 and 300: beams lighting the cave and the
+  dug edges hot, then cooling). `lit-hashes.ron` and the other goldens
+  are unchanged (their matches fire no beam).
 
 ## Kept OLX quirks
 

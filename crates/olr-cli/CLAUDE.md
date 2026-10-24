@@ -318,7 +318,11 @@ The headless command-line tool. Its commands:
   on `look-test-heat-distant` (the cave open onto a wooden palisade at
   depth 8 before a stone sky at depth 80,
   `fixtures/look/make-look-test-heat-distant.sh`): the palisade glowing
-  in the explosions' slices, the sky beyond their reach.
+  in the explosions' slices, the sky beyond their reach. Issue #69's
+  `beam-fresh.png` (tick 200) and `beam-cooled.png` (tick 300): two chaos
+  bots, seed 1, with `look-test-laser-mod` (Classic's Laser emptying in
+  five bursts, then a 12.5 s reload) on `look-test-heat`: the beams
+  lighting the cave and the dug tunnels' edges hot, then cooling.
 - `olr-cli frame-hashes <match flags> [--frames 30] [--content DIR] [--out f.ron]`
   (issue #34, `frame_hash.rs`, the command in `frame_hashes_cmd.rs`):
   byte identity. Plays a headless bot match as `render-match` does (the
