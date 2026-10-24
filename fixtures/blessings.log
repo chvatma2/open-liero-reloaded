@@ -253,3 +253,6 @@
 2026-10-24 bless-render: #68: a cooling pixel fades back to its cold look
   fixtures/render/heat-fresh.png
   fixtures/render/lit-hashes.ron
+2026-10-24 bless-render: a hot back wall lets the light through: hot open background is haze to the glow light
+  fixtures/render/heat-fresh.png
+  fixtures/render/lit-hashes.ron
