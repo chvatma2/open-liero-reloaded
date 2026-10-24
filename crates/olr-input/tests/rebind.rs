@@ -26,9 +26,9 @@ fn bindings_list_and_find_inputs_by_action() {
             Binding::Pad(PadInput::AxisMinus(Axis::LeftStickX))
         ]
     );
-    assert_eq!(b.actions_of(K, Binding::Key(KeyCode::KeyX)), [Action::Rope]);
+    assert_eq!(b.actions_of(K, Binding::Key(KeyCode::KeyZ)), [Action::Rope]);
     assert!(b.actions_of(K, Binding::Key(KeyCode::KeyQ)).is_empty());
-    assert_eq!(b.actions_of(K, Binding::Key(KeyCode::KeyZ)), [Action::Strafe]);
+    assert_eq!(b.actions_of(K, Binding::Key(KeyCode::KeyX)), [Action::Strafe]);
     assert!(b.unreachable().is_empty());
     assert_eq!(Binding::Key(KeyCode::KeyQ).device(), KB);
     assert_eq!(Binding::Pad(PadInput::Button(Button::South)).device(), PAD);
@@ -66,7 +66,7 @@ fn binding_a_used_key_is_resolved_explicitly() {
 #[test]
 fn the_last_input_of_a_device_cannot_be_unbound() {
     let mut b = Bindings::olx();
-    let x = Binding::Key(KeyCode::KeyX);
+    let x = Binding::Key(KeyCode::KeyZ);
     assert_eq!(
         b.unbind(K, Action::Rope, x),
         Err(RebindError::Unreachable { action: Action::Rope, need: Need::Key })
@@ -102,7 +102,7 @@ fn repair_restores_olx_defaults_for_unreachable_actions() {
     b.keys.push((Action::Jump, KeyCode::ControlLeft));
     b.pad.clear();
     // A pair listed twice is listed once.
-    b.keys.push((Action::Rope, KeyCode::KeyX));
+    b.keys.push((Action::Rope, KeyCode::KeyZ));
     let w = b.repair();
     assert!(w.iter().any(|w| w.contains("Shoot") && w.contains("Left Ctrl")), "{w:?}");
     assert!(w.iter().any(|w| w.contains("gamepad")), "{w:?}");
@@ -142,7 +142,7 @@ fn the_new_actions_rebind_and_an_older_file_gets_their_defaults() {
     b.pad.retain(|(a, _)| !new.contains(a));
     let w = b.repair();
     assert_eq!(w.len(), 8, "{w:?}");
-    assert!(w.iter().any(|w| w.contains("Strafe") && w.contains("Z")), "{w:?}");
+    assert!(w.iter().any(|w| w.contains("Strafe") && w.contains("X")), "{w:?}");
     assert!(w.iter().any(|w| w.contains("Dig") && w.contains("Pad B")), "{w:?}");
     assert!(b.unreachable().is_empty());
     for a in new {
@@ -247,7 +247,7 @@ fn inputs_have_names_a_player_reads() {
     let name = |b: Binding| b.to_string();
     assert_eq!(name(Binding::Key(KeyCode::ControlLeft)), "Left Ctrl");
     assert_eq!(name(Binding::Key(KeyCode::ArrowUp)), "Arrow Up");
-    assert_eq!(name(Binding::Key(KeyCode::KeyX)), "X");
+    assert_eq!(name(Binding::Key(KeyCode::KeyZ)), "Z");
     assert_eq!(name(Binding::Key(KeyCode::Digit4)), "4");
     assert_eq!(name(Binding::Pad(PadInput::Button(Button::South))), "Pad A");
     assert_eq!(name(Binding::Pad(PadInput::Button(Button::RightTrigger2))), "Pad RT");
@@ -399,7 +399,7 @@ fn the_unreachable_rule_holds_in_both_modes() {
     b.mouse.clear();
     b.mouse_keys.clear();
     assert_eq!(
-        b.unbind(K, Action::Rope, Binding::Key(KeyCode::KeyX)).map_err(|e| e.to_string()),
+        b.unbind(K, Action::Rope, Binding::Key(KeyCode::KeyZ)).map_err(|e| e.to_string()),
         Err("Rope would have no key".to_string())
     );
     // Both modes' gaps are listed: every action but the controller's lacks
@@ -415,7 +415,7 @@ fn the_unreachable_rule_holds_in_both_modes() {
     let inputs: Vec<Binding> = MouseInput::ALL
         .into_iter()
         .map(Binding::Mouse)
-        .chain([KeyCode::KeyA, KeyCode::KeyD, KeyCode::Space, KeyCode::KeyS, KeyCode::KeyX].map(Binding::Key))
+        .chain([KeyCode::KeyA, KeyCode::KeyD, KeyCode::Space, KeyCode::KeyS, KeyCode::KeyZ].map(Binding::Key))
         // Keyboard 2's (issue #28).
         .chain([KeyCode::Numpad8, KeyCode::NumpadEnter, KeyCode::Numpad3].map(Binding::Key))
         .chain([Binding::Pad(PadInput::Button(Button::South))])

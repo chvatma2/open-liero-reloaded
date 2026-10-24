@@ -13,8 +13,8 @@ const R: u16 = Keys::RIGHT;
 fn tap_between_ticks_is_latched() {
     let mut s = InputState::default();
     // A tap of Rope (X) between two ticks: down for the next tick only.
-    s.on_key(KeyCode::KeyX, true);
-    s.on_key(KeyCode::KeyX, false);
+    s.on_key(KeyCode::KeyZ, true);
+    s.on_key(KeyCode::KeyZ, false);
     assert_eq!(s.held(), Keys(0));
     assert_eq!(s.latch_tick(), Keys(Keys::ROPE));
     assert_eq!(s.latch_tick(), Keys(0));
@@ -111,9 +111,9 @@ fn default_bindings_match_olx() {
     assert_eq!(key(Action::Right), [KeyCode::ArrowRight]);
     assert_eq!(key(Action::Shoot), [KeyCode::ControlLeft]);
     assert_eq!(key(Action::Jump), [KeyCode::AltLeft]);
-    assert_eq!(key(Action::Rope), [KeyCode::KeyX]);
+    assert_eq!(key(Action::Rope), [KeyCode::KeyZ]);
     assert_eq!(key(Action::SelectWeapon), [KeyCode::ShiftLeft]);
-    assert_eq!(key(Action::Strafe), [KeyCode::KeyZ]);
+    assert_eq!(key(Action::Strafe), [KeyCode::KeyX]);
     assert_eq!(key(Action::PreviousWeapon), [KeyCode::KeyA]);
     assert_eq!(key(Action::NextWeapon), [KeyCode::KeyS]);
     assert_eq!(key(Action::Dig), [KeyCode::KeyC]);
@@ -164,7 +164,7 @@ fn default_bindings_match_olx() {
     // keeps (such as Ctrl+W); such a binding is reported.
     assert_eq!(b.browser_conflicts(), Vec::<Vec<KeyCode>>::new());
     assert!(is_browser_reserved(&[KeyCode::ControlLeft, KeyCode::KeyW]));
-    assert!(!is_browser_reserved(&[KeyCode::ControlLeft, KeyCode::KeyX]));
+    assert!(!is_browser_reserved(&[KeyCode::ControlLeft, KeyCode::KeyZ]));
     let mut bad = b.clone();
     bad.keys.push((Action::Rope, KeyCode::KeyW));
     assert_eq!(bad.browser_conflicts(), [vec![KeyCode::ControlLeft, KeyCode::KeyW]]);
@@ -239,7 +239,7 @@ fn gamepad_maps_to_keys() {
 #[test]
 fn the_new_keys_reach_the_simulation() {
     let mut s = InputState::default();
-    s.on_key(KeyCode::KeyZ, true);
+    s.on_key(KeyCode::KeyX, true);
     s.on_key(KeyCode::ArrowLeft, true);
     assert_eq!(s.latch_tick(), Keys(Keys::STRAFE | L));
     s.on_key(KeyCode::KeyA, true);

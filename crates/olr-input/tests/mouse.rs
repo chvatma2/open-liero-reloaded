@@ -33,11 +33,11 @@ fn mouse_mode_fixes_its_keys_and_buttons() {
     assert_eq!(s.latch_tick(), Keys(R | Keys::STRAFE));
     s.on_key(KeyCode::KeyD, false);
     // Up, Down, SelectWeapon and Strafe keys are unused.
-    for k in [KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ShiftLeft, KeyCode::KeyZ] {
+    for k in [KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ShiftLeft, KeyCode::KeyX] {
         s.on_key(k, true);
     }
     assert_eq!(s.latch_tick(), Keys(0));
-    for k in [KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ShiftLeft, KeyCode::KeyZ] {
+    for k in [KeyCode::ArrowUp, KeyCode::ArrowDown, KeyCode::ShiftLeft, KeyCode::KeyX] {
         s.on_key(k, false);
     }
     // The buttons: left shoots, right throws the rope; a click is latched.

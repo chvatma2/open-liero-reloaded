@@ -131,16 +131,17 @@ Useful flags (`olr --help` lists them all):
 
 ### Controls
 
-The game's keys are OLX's player 1 defaults, changed in Options → Keys:
+The game's keys are OLX's player 1 defaults (rope and strafe swapped),
+changed in Options → Keys:
 
 | Key | Action |
 |---|---|
 | Arrows | move, aim |
 | Left Ctrl | shoot |
 | Left Alt | jump |
-| X | ninja rope |
+| Z | ninja rope |
 | Left Shift + Left/Right | change weapon |
-| Z (held) | strafe: move without turning |
+| X (held) | strafe: move without turning |
 | A / S | previous / next weapon |
 | 1 to 5 | select weapon 1 to 5 (held: again at every step) |
 | C | dig (held: again every 0.2 s) |

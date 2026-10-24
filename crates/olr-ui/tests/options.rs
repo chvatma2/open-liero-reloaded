@@ -215,7 +215,7 @@ fn options_rebind_a_key() {
     h.get_by_label_contains("Shoot would have no key");
     tap(&mut h, "Use it for both");
     assert_eq!(keys(&h, Action::Shoot), [z]);
-    assert_eq!(keys(&h, Action::Rope), [Binding::Key(KeyCode::KeyX), z]);
+    assert_eq!(keys(&h, Action::Rope), [Binding::Key(KeyCode::KeyZ), z]);
 
     // Cancel leaves everything as it was.
     let before = h.state().ui.bindings().clone();

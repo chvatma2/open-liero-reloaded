@@ -17,8 +17,8 @@ note §10).
   16, beyond the sim's 16 bits; never reaches the sim). `key_bits`,
   `pad_bits`, `mouse_bits`, `TickLatch` and `actions_held()` are masks.
   `Bindings::olx()` (the default) is OLX's player 1: arrows, Shoot
-  `ControlLeft`, Jump `AltLeft`, Rope `KeyX`, SelectWeapon `ShiftLeft`,
-  Strafe `KeyZ`, Previous/NextWeapon `KeyA`/`KeyS`, Dig
+  `ControlLeft`, Jump `AltLeft`, Rope `KeyZ`, SelectWeapon `ShiftLeft`,
+  Strafe `KeyX` (OLX's swapped), Previous/NextWeapon `KeyA`/`KeyS`, Dig
   `KeyC` (free in OLX's defaults), and Weapon1-5 `Digit1`-`Digit5` (listed
   after Dig, so a repaired older file equals the defaults); pad d-pad,
   right trigger, A, Y, left

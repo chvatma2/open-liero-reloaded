@@ -261,14 +261,14 @@ impl Default for Bindings {
 impl Bindings {
     /// OLX's player 1 defaults (non-Apple), and mouse controls' (issue #24,
     /// [`MOUSE_KEYS`], [`MOUSE_BUTTONS`]): arrows, Shoot `LCtrl`, Jump
-    /// `LAlt`, Rope `X`, SelectWeapon `LShift`, Strafe `Z`, Previous/Next
+    /// `LAlt`, Rope `Z`, SelectWeapon `LShift`, Strafe `X`, Previous/Next
     /// weapon `A`/`S`, Weapon 1-5 the digits `1`-`5`; on the pad, the
     /// d-pad, Shoot right trigger, Jump A (south), Rope Y (north),
     /// SelectWeapon left trigger, no Weapon 1-5 ([`PAD_OPTIONAL`]).
     /// OLX: src/client/Options.cpp:45-51 (`ply_def1`), :64-73 (`ply_gamepad_def`).
     ///
-    /// Not OLX's: Dig is `C`, beside the rope and strafe keys (OLX has no
-    /// dig key), and the pad's Strafe X (west), Dig B (east) and
+    /// Not OLX's: Rope `Z` and Strafe `X` (OLX's are the other way round),
+    /// Dig is `C`, beside the rope and strafe keys (OLX has no dig key), and the pad's Strafe X (west), Dig B (east) and
     /// Previous/Next weapon the left and right shoulders (OLX's pad
     /// defaults bind none of the four).
     ///
@@ -286,9 +286,9 @@ impl Bindings {
             (Right, ArrowRight),
             (Shoot, ControlLeft),
             (Jump, AltLeft),
-            (Rope, KeyX),
+            (Rope, KeyZ),
             (SelectWeapon, ShiftLeft),
-            (Strafe, KeyZ),
+            (Strafe, KeyX),
             (PreviousWeapon, KeyA),
             (NextWeapon, KeyS),
             (Dig, KeyC),

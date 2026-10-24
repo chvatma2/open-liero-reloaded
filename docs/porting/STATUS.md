@@ -86,6 +86,10 @@ What has been ported from OpenLieroX (commit `d1ad953f`) and how it is verified.
 
 ## Deliberate deviations
 
+- **Rope is `Z` and Strafe `X` by default.** OLX's player 1 has them the
+  other way round (`src/client/Options.cpp:45-51`); the maintainer's
+  choice. A saved options file keeps whatever keys it holds.
+
 - **Not a deviation: the skin importer hides a key-colour pixel under a
   tint mask.** OLX's `SetColorKey_Alpha` gives key-coloured pixels alpha 0
   before `Colorize_Execute`, which keeps alpha, so OLX hides them as the
