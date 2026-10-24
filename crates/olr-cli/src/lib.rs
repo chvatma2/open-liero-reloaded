@@ -16,6 +16,7 @@ pub mod netsim;
 pub mod nostr_probe;
 pub mod perfcount;
 pub mod quick_bench;
+pub mod render_profile;
 pub mod rollback_cost;
 pub mod runner;
 pub mod soak;

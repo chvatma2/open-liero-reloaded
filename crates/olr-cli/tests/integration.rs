@@ -33,6 +33,7 @@ mod nostr_probe;
 mod perfcount;
 mod playtest;
 mod reloaded;
+mod render_profile;
 mod scenario;
 mod skin;
 mod stains;

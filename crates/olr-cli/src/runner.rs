@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use anyhow::{Context as _, ensure};
 use olr_bots::Bot;
-use olr_content::{BuiltMatch, Content};
+use olr_content::{BuiltMatch, Content, MatchOptions};
 use olr_replay::{MAX_TICKS, ModeSpec, Recorder, Replay};
 use olr_sim::{EndReason, EventKind, Keys, MAX_WORMS, MatchResult, MatchSetup, TickEvents, World};
 
@@ -212,11 +212,23 @@ impl Match {
     /// [`Match::new`] on assets already loaded (a stress run keeps them for
     /// its presentation; a generated level is made once).
     pub fn with_assets(assets: &LevelAssets, spec: &MatchSpec, opts: &Options) -> anyhow::Result<Match> {
+        Match::with_match_options(assets, spec, spec.match_options(), opts)
+    }
+
+    /// [`Match::with_assets`] with `options` in place of the spec's own
+    /// (`MatchSpec::match_options`): the render profile's fight gives its
+    /// worms a loadout.
+    pub fn with_match_options(
+        assets: &LevelAssets,
+        spec: &MatchSpec,
+        options: MatchOptions,
+        opts: &Options,
+    ) -> anyhow::Result<Match> {
         ensure!(spec.ticks <= MAX_TICKS, "at most {MAX_TICKS} ticks");
         ensure!(spec.locals <= MAX_LOCALS, "at most {MAX_LOCALS} local players");
         let worms = spec.locals + spec.bots;
         ensure!((2..=MAX_WORMS).contains(&worms), "a Deathmatch of 2 to {MAX_WORMS} worms, not {worms}");
-        let built = olr_content::build_match(assets.match_assets(), &spec.match_options())?;
+        let built = olr_content::build_match(assets.match_assets(), &options)?;
         let BuiltMatch { setup, mode, world, bots, recorder: rec } = built;
         let stats = Stats {
             tick_ns: Vec::with_capacity(spec.ticks as usize),
