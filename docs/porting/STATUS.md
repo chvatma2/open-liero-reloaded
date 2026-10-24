@@ -6038,6 +6038,63 @@ unchanged. As built:
   cooled rims redder, none darker than the rock or the back round them),
   but within the goldens' perceptual tolerance, so the bless kept them.
 
+## A hot back wall lets the light through
+
+No OLX counterpart. The maintainer played development build 707: on
+Castle Strike Reloaded's brick hall, a mortar's glow on the back wall
+still faded into what looked like a shadow, after issue #68. The cause
+was the glow light, not the look: a hot pixel's cast light made its
+cell a glowing cell, and a glowing cell stops a ray (`stops` in
+`gi.wgsl`), as a lamp or the sky does. The hot patch blocked the light
+from the windows and the chandelier, and gave back only its own heat
+light, which fell to nothing as it cooled while the cell kept blocking
+until its glow was 0: a dark ring round the glow, then a dark patch and
+a shadow beside it for seconds after the red was gone. Issue #68's
+cooling test cast no light (`light: 0`), so it never saw it. Worked out
+in a session with the maintainer from rendered frames of the hall and
+the heat test cave (their choice: keep the back wall's light on the
+room, at the strength a glowing cell has, "1× for now"). Presentation
+only: the simulation, the heat, the ramps, the oracle and every match
+golden are unchanged. As built:
+
+- **Hot open background is haze to the glow light.** `fs_emission`
+  puts the cast of a hot pixel that is open in the solid map (the back
+  wall, a clear solid) into a fourth target, the haze (`Rgba16Float`,
+  averaged over the cell), instead of the emission; hot rock and dirt
+  still cast into the emission and stop rays as before.
+- **A ray takes the brightest haze it meets and goes on.** A hazy cell
+  is a jump-flood seed (`gi_seed.wgsl`), so the march walks it cell by
+  cell and never jumps it; the ray keeps the brightest haze it met (by
+  luminance, × `fade(distance, HEAT_REACH)`, the reach in the cascade's
+  params, `e.z`), added to what stops it or, open, to the next
+  cascade's light. A cascade's alpha (read by no other pass) carries the
+  luminance of the haze in its light: merging, a ray keeps the brighter
+  of its own haze and the next cascade's, never both (the next's taken
+  off in the ray's own haze's colour). So a hot patch lights as the
+  glowing cells did, a wide one no more than one hot cell: a first
+  version that summed the haze along the path (× 0.25 a world pixel,
+  the maintainer's first pick) flooded the heat test cave yellow after
+  its nuke and was dropped before commit. A ray out of steps stays
+  blocked (0), haze or not.
+- **Strength 1×:** haze gives a ray what the glowing cell gave
+  (`HEAT_CAST`); 2× tinted Castle Strike's hall more, as the first pick
+  did, but washed the heat cave's heavy blasts out. The patch's own red
+  is softer than build 707's, whose dark ring set it off.
+- **Cost:** the emission pass writes a fourth target (8 bytes a cell)
+  and the seed pass reads it, every lit frame that casts; a ray reads
+  the haze only on its walked steps, and walks more only near hot
+  background. Unmeasured: `docs/deferred-verification.md`.
+- **Tests:** `tests/gpu/heat.rs`'s `a_hot_back_wall_lets_the_light_through`
+  (a lamp left of a hot patch of casting stone back wall, in the dark:
+  the light beyond the patch is at least 99 % of cold while it glows,
+  then `fades_back`, which now takes its look). It fails on the old
+  shaders (the light beyond fell from 1.0 to 0.03).
+- **Goldens:** `heat-fresh.png` and `lit-hashes.ron` re-blessed ("a hot
+  back wall lets the light through"): the cave's back wall between the
+  blasts takes their warm light where it was shadowed. `heat-cooled.png`
+  changes too (a faint red fill), within the goldens' perceptual
+  tolerance, so the bless kept it.
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

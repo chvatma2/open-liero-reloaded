@@ -186,7 +186,13 @@ on screen or offscreen.
     than a cell lights its own by area; reach max-blended as unsplit f16,
     60000 unlimited, `R16Float`), the emission (glow × group × each pixel's flicker
     region, the discs added, solid share, albedo of rock and dirt; no
-    worm, #53), a
+    worm, #53) and its haze (hot open background's cast: a hazy cell is
+    a flood seed, so rays walk it, keeping the brightest haze they meet,
+    and it stops none: a hot back wall shadows nothing behind it,
+    `a_hot_back_wall_lets_the_light_through`; a cascade's alpha carries
+    its haze's luminance, and a merge keeps the brighter of a ray's own
+    haze and the next cascade's, so a wide hot patch lights as one hot
+    cell), a
     jump-flood seed and its passes, the cascades from the top down, then the
     fluence the sum samples bilinearly, which is also the history the next
     frame's bounce reads (the cascades run before `fs_fluence` rewrites it;
@@ -480,7 +486,9 @@ on screen or offscreen.
   glow, the glow taken as self-light, no heat light (the material
   editor's full bright); the glow light's
   emission adds its linear colour × glow × the material's `light` ×
-  `HEAT_CAST` (reach `HEAT_REACH` 200; `a_hot_pixel_adds_glow_light`).
+  `HEAT_CAST` (reach `HEAT_REACH` 200; `a_hot_pixel_adds_glow_light`)
+  for hot rock and dirt; hot open background gives it as haze, the
+  brightest a ray meets, stopping no ray.
   Timed as `PassGroup::Heat`. Tests (GPU, `tests/gpu/heat.rs`): those
   named and `a_deposit_heats_only_material_pixels_and_spreads_only_into_conducting_ones`,
   issue #56's `a_deposit_heats_only_the_rock_face`,
