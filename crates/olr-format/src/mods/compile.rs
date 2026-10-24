@@ -165,6 +165,9 @@ fn walk(src: &ModSource) -> (rt::ModDef, ModLookSource, Vec<FormatError>) {
             continue;
         }
         weapons.push(c.weapon(id, w));
+        if w.look.as_ref().is_some_and(|l| l.beam.is_some()) && !matches!(w.fire, Fire::Beam { .. }) {
+            c.errors.push(FormatError::invalid(&c.file, "look.beam", "only a `Beam` weapon has a beam look"));
+        }
         let look = w.look.as_ref().map(|l| crate::look::compile_weapon_look(l, &c.file, "look"));
         weapon_looks.push(look.and_then(|l| c.note(l)));
     }

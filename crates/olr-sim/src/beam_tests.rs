@@ -161,13 +161,102 @@ fn beam_carves_first_solid_pixel() {
         .events
         .iter()
         .filter_map(|e| match e.kind {
-            crate::EventKind::SpawnCosmetic { kind: CosmeticKind::Beam { worm, colour }, .. } => {
+            crate::EventKind::SpawnCosmetic { kind: CosmeticKind::Beam { worm, colour, .. }, .. } => {
                 Some((worm, colour))
             }
             _ => None,
         })
         .collect();
     assert_eq!(beams, vec![(0, Rgba::rgb(255, 0, 0)); 3]);
+}
+
+/// Issue #69: a drawn beam says whether it stopped on something, and each
+/// part that stopped on rock or dirt gives a hit with the sub-step's count
+/// of them; the level's edge, a worm and the open give none, and its carve
+/// explosions are marked as a beam's.
+#[test]
+fn a_drawn_beam_says_what_stopped_it() {
+    let seen = |d: &Draws| {
+        let (mut beams, mut hits, mut blasts) = (Vec::new(), Vec::new(), Vec::new());
+        for e in d.events.iter() {
+            match e.kind {
+                crate::EventKind::SpawnCosmetic {
+                    kind: CosmeticKind::Beam { worm, weapon, stopped, .. },
+                    ..
+                } => beams.push((worm, weapon, stopped)),
+                crate::EventKind::SpawnCosmetic {
+                    kind: CosmeticKind::BeamHit { worm, weapon, parts },
+                    pos,
+                    ..
+                } => hits.push((worm, weapon, parts, pos)),
+                crate::EventKind::SpawnCosmetic { kind: CosmeticKind::Explosion { proj, .. }, .. } => {
+                    blasts.push(proj)
+                }
+                _ => {}
+            }
+        }
+        (beams, hits, blasts)
+    };
+    for width in [1, 3] {
+        let m = sim_mod(WeaponDef {
+            kind: WeaponKind::Beam {
+                recoil: 0,
+                beam: BeamDef {
+                    init_width: width,
+                    ..match laser().kind {
+                        WeaponKind::Beam { beam, .. } => beam,
+                        _ => unreachable!(),
+                    }
+                },
+            },
+            ..laser()
+        });
+        let (holes, mut t, mut parts) = (holes(), terrain(60), Vec::with_capacity(50));
+        let mut ws = vec![worm(0, 20.5, 25.5), worm(1, 40.0, 45.0)];
+        ws[0].slots = vec![slot(1)];
+        // Into the dirt at x = 60: a hit a part, each with the count.
+        let mut d = draws();
+        draw_beam(
+            &mut ws,
+            0,
+            &m,
+            &mut BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts },
+        );
+        let (beams, hits, blasts) = seen(&d);
+        assert_eq!(beams, [(0, 1, true)]);
+        assert_eq!(hits.len(), width as usize);
+        for &(worm, weapon, n, pos) in &hits {
+            assert_eq!((worm, weapon, n), (0, 1, width as u8));
+            assert!(pos.x >= 60.0, "at the dirt or in the hole the middle part carved: {pos:?}");
+        }
+        // Only a beam 2 or less wide carves with an explosion.
+        assert_eq!(blasts.is_empty(), width > 2, "{blasts:?}");
+        assert!(blasts.iter().all(|&p| p == crate::BEAM_EXPLOSION), "{blasts:?}");
+        ws[1].pos = Vec2::new(40.5, 27.0);
+        let mut d = draws();
+        draw_beam(
+            &mut ws,
+            0,
+            &m,
+            &mut BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts },
+        );
+        // A worm in the way stops the parts it is on (all of a 1-wide
+        // beam: no hit); the rest go on to the dirt.
+        let (beams, hits, _) = seen(&d);
+        let past = if width == 1 { 0 } else { width as usize - 1 };
+        assert_eq!((beams, hits.len()), (vec![(0, 1, true)], past));
+        // Facing left it ends at the level's edge, which stops nothing.
+        (ws[0].face, ws[1].alive) = (Dir::Left, false);
+        let mut d = draws();
+        draw_beam(
+            &mut ws,
+            0,
+            &m,
+            &mut BeamCtx { terrain: &mut t, holes: &holes, draws: &mut d, parts: &mut parts },
+        );
+        let (beams, hits, _) = seen(&d);
+        assert_eq!((beams, hits.len()), (vec![(0, 1, false)], 0));
+    }
 }
 
 #[test]

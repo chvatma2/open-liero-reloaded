@@ -53,8 +53,8 @@ pub use bonus::{Bonus, BonusItem, BonusKind, MAX_BONUSES, PlaceBonusError};
 pub use checksum::Fnv;
 pub use damage::{olx_kill_credit, olx_score};
 pub use events::{
-    CosmeticKind, Event, EventKind, GAME_SOUND_PREFIX, GAME_SOUNDS, LostArea, SoundId, StampId, TerrainOp,
-    TickEvents,
+    BEAM_EXPLOSION, CosmeticKind, Event, EventKind, GAME_SOUND_PREFIX, GAME_SOUNDS, LostArea, MAX_BEAM_HITS,
+    SoundId, StampId, TerrainOp, TickEvents,
 };
 pub use input::{KeyLatch, Keys, Latches};
 pub use mod_rt::{

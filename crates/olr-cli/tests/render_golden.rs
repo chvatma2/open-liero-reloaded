@@ -466,6 +466,53 @@ fn heat_cooled_rims() {
     heat_match("heat-cooled.png", "900");
 }
 
+/// Issue #69's beam match: two chaos bots firing Classic's Laser
+/// (`fixtures/look/mods/look-test-laser-mod`: each slot empty after five
+/// bursts, then a 12.5 s reload) on the heat test level, seed 1, `ticks`
+/// ticks.
+fn laser_match(name: &str, ticks: &str) {
+    let Some(content) = content_dir() else { return };
+    let (mods, levels) = (root().join("fixtures/look/mods"), root().join("fixtures/look/levels"));
+    let args = [
+        "render-match",
+        "--mod",
+        "look-test-laser-mod",
+        "--level",
+        "look-test-heat",
+        "--bots",
+        "2",
+        "--personality",
+        "chaos",
+        "--seed",
+        "1",
+        "--ticks",
+        ticks,
+        "--packs",
+        mods.to_str().unwrap(),
+        "--packs",
+        levels.to_str().unwrap(),
+        "--content",
+        &content,
+    ];
+    compare(name, &args, &[]);
+}
+
+/// Issue #69: both bots' lasers light the cave along their beams and at
+/// their tips, and the edges of the tunnels they dug in the dirt walls and
+/// the mound glow with heat.
+#[test]
+fn beam_fresh_lights_and_heats() {
+    laser_match("beam-fresh.png", "200");
+}
+
+/// Issue #69: [`beam_fresh_lights_and_heats`]'s match 1 s later, nothing
+/// fired for 0.5 s (every slot reloads): no beam light, the tunnels' edges
+/// cooler, dull orange and red.
+#[test]
+fn beam_cooled_edges() {
+    laser_match("beam-cooled.png", "300");
+}
+
 /// Issue #41: [`heat_match`] on its distant copy
 /// (`fixtures/look/levels/look-test-heat-distant`: the cave open onto a
 /// wooden palisade at depth 8 before a stone sky at depth 80): behind each

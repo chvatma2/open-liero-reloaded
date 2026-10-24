@@ -293,6 +293,7 @@ A mod weapon's look.
 | Field | Type | Default | Meaning |
 |---|---|---|---|
 | `muzzle_light` | [LightSource](#lightsource) (optional) | none | Replaces the engine's muzzle-flash light. Default none. |
+| `beam` | [BeamLookSource](#beamlooksource) (optional) | none | A `Beam` weapon's beam: its light along the beam and where it stops, and its heat where it stops on rock or dirt (refused on any other weapon). Default none: the engine's (the beam's colour, a little whiter at the tip; 60 degrees over 5 pixels a sub-step). |
 
 <a id="gfx"></a>
 
@@ -565,6 +566,18 @@ A mod's light: a projectile's light or flash, a weapon's muzzle light. Play draw
 | `animation` | [AnimationSource](#animationsource) | `Steady` | Default `Steady`. |
 | `phase_ms` | integer (optional) | none | Shifts the animation's clock, milliseconds; by default a looping animation's phase comes from the light's identity, so equal lights never pulse together. Default none. |
 
+<a id="beamlooksource"></a>
+
+## BeamLookSource
+
+A beam weapon's look: while its beam shows it lights the level with glowing discs along it (every 8 world pixels, at most 64) and one where it stopped on rock, dirt or a worm, and each physics sub-step (11 ms) it heats where it stops on rock or dirt. Each part left out keeps the engine's. Presentation only.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `light` | [LightSource](#lightsource) (optional) | none | Each disc's light along the beam; reach `Pixels` 1 to 256; an intensity of 0 turns it off. Default none: the engine's, the beam's colour at 21 % reaching 40 pixels. |
+| `tip_light` | [LightSource](#lightsource) (optional) | none | The light where it stopped; reach `Pixels` 1 to 256; an intensity of 0 turns it off. Default none: the engine's, the beam's colour a little whiter at about 300 % reaching 90 pixels. |
+| `heat` | [BeamHeatSource](#beamheatsource) (optional) | none | The heat where it stops on rock or dirt, each sub-step. Default none: the engine's, 60 over 5 pixels. |
+
 <a id="animation"></a>
 
 ## Animation
@@ -633,6 +646,17 @@ How a light's intensity changes over time. Levels are percent of its intensity (
 |---|---|---|---|
 | `keys` | list of [keysource](#keysource) | required | 1 to 64 keys, their times not decreasing. |
 | `looped` | boolean | `false` | Repeats after the last key; otherwise the light ends there (a flash). Default false. |
+
+<a id="beamheatsource"></a>
+
+## BeamHeatSource
+
+The heat a beam leaves where it stops on rock or dirt, each physics sub-step; it falls off from its centre to `radius`, a wide beam's split over its parts. Presentation only.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `amount` | integer | required | The heat a sub-step gives stone at its centre, 0 (none) to 100. |
+| `radius` | integer | required | How far it reaches, world pixels, 1 to 16. |
 
 <a id="animmode"></a>
 

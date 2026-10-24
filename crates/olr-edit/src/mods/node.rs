@@ -11,8 +11,9 @@ use olr_data::loadouts::ShippedLoadout;
 use olr_data::restrictions::WeaponState;
 use olr_format::Colour;
 use olr_format::look::{
-    AnimationSource, ExplosionHeatSource, ExplosionLightSource, KeySource, LightSource, ModWideLookSource,
-    ProjectileHeatSource, ProjectileLookSource, PulseShape, ReachSource, WeaponLookSource,
+    AnimationSource, BeamHeatSource, BeamLookSource, ExplosionHeatSource, ExplosionLightSource, KeySource,
+    LightSource, ModWideLookSource, ProjectileHeatSource, ProjectileLookSource, PulseShape, ReachSource,
+    WeaponLookSource,
 };
 use olr_format::mods::{
     AnimMode, Animation, Effect, Fire, Gfx, LIFTED_SPAWN, ModSource, Projectile, Rope, Spawn, SpawnContext,
@@ -558,8 +559,14 @@ composite!(enum Effect);
 
 // Looks.
 
-fields!(WeaponLookSource { WeaponLookSource { muzzle_light } => [muzzle_light] });
+fields!(WeaponLookSource { WeaponLookSource { muzzle_light, beam } => [muzzle_light, beam] });
 composite!(WeaponLookSource);
+
+fields!(BeamLookSource { BeamLookSource { light, tip_light, heat } => [light, tip_light, heat] });
+composite!(BeamLookSource);
+
+fields!(BeamHeatSource { BeamHeatSource { amount, radius } => [amount, radius] });
+composite!(BeamHeatSource);
 
 fields!(ModWideLookSource {
     ModWideLookSource { explosion, explosion_heat } => [explosion, explosion_heat],

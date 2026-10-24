@@ -402,7 +402,7 @@ fn a_muzzle_light_runs_its_curve() {
         animation: Animation::Keys { keys: vec![key(0, 100), key(60, 0)], looped: false },
         phase_ms: None,
     };
-    let weapon = olr_look::WeaponLook { muzzle_light: Some(muzzle) };
+    let weapon = olr_look::WeaponLook { muzzle_light: Some(muzzle), beam: None };
     let look = ModLook { weapons: vec![Some(weapon); weapons], ..Default::default() };
     let (mut run, mut longest) = (Vec::new(), Vec::new());
     play_with(&content, BAZOOKA, None, Some(look), |p, _, _, _| {
@@ -437,7 +437,7 @@ fn muzzle_lights_do_not_stack() {
         animation: Animation::Keys { keys: vec![key(0, 100), key(200, 0)], looped: false },
         phase_ms: None,
     };
-    let weapon = olr_look::WeaponLook { muzzle_light: Some(muzzle) };
+    let weapon = olr_look::WeaponLook { muzzle_light: Some(muzzle), beam: None };
     let look = ModLook { weapons: vec![Some(weapon); weapons], ..Default::default() };
     let mut most = 0;
     play_with(&content, "fire-minigun", None, Some(look), |p, _, _, _| {
@@ -941,6 +941,22 @@ fn play_looked(
     prepare: impl FnOnce(&mut LoadedLevel),
     look: impl FnOnce(&LoadedMod, &mut ModLook),
     stride: i64,
+    each: impl FnMut(&mut Presentation, &World, &[olr_sim::Event]),
+) {
+    play_resimulated(content, name, level_look, prepare, look, stride, false, each);
+}
+
+/// [`play_looked`]; with `resim`, the scene is told of each tick twice, the
+/// second time as re-simulated (a rollback's, issue #69).
+#[allow(clippy::too_many_arguments)]
+fn play_resimulated(
+    content: &Content,
+    name: &str,
+    level_look: Option<LevelLook>,
+    prepare: impl FnOnce(&mut LoadedLevel),
+    look: impl FnOnce(&LoadedMod, &mut ModLook),
+    stride: i64,
+    resim: bool,
     mut each: impl FnMut(&mut Presentation, &World, &[olr_sim::Event]),
 ) {
     let (sc, trace) = olr_scenario::load_fixture(&fixtures(), name).unwrap();
@@ -973,6 +989,9 @@ fn play_looked(
         });
         if f >= 0 {
             p.on_tick(world, tick);
+            if resim {
+                p.scene.after_tick_resimulated(world, tick);
+            }
             events.extend(tick.iter().copied());
         }
         if f.rem_euclid(stride) == 0 {
@@ -1245,4 +1264,181 @@ fn explosion_heat_is_the_projectiles_else_the_mods() {
         Some(if proj < 0 { e } else { engine::ExplosionHeat { amount: (e.amount * 3.0).min(1000.0), ..e } })
     });
     check(&|_, _| {}, &|_, _, d| engine::explosion_heat(d));
+}
+
+/// Classic's Laser (issue #69): fired level at a dummy worm, straight up
+/// into the sky, then 60 degrees down into dirt.
+const LASER: &str = "weapons/classic/laser";
+
+/// [`play_hot`] with the scene told of each tick twice when `resim`.
+fn play_hot_resim(
+    content: &Content,
+    name: &str,
+    resim: bool,
+    look: impl FnOnce(&LoadedMod, &mut ModLook),
+    each: impl FnMut(&mut Presentation, &World, &[olr_sim::Event]),
+) {
+    let maps = |level: &mut LoadedLevel| {
+        let mut m = olr_look::SurfaceMaps::empty((level.material.width(), level.material.height()));
+        m.front.fill(1);
+        m.back.fill(1);
+        level.surface = Some(m);
+    };
+    play_resimulated(content, name, Some(heated_look()), maps, look, 1, resim, each);
+}
+
+/// The frame's beam hits (issue #69): where each part stopped on terrain.
+fn beam_hits(events: &[olr_sim::Event]) -> Vec<([f32; 2], u8)> {
+    events
+        .iter()
+        .filter_map(|e| match e.kind {
+            olr_sim::EventKind::SpawnCosmetic {
+                kind: olr_sim::CosmeticKind::BeamHit { parts, .. },
+                pos,
+                ..
+            } => Some(([pos.x, pos.y], parts)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Issue #69: each sub-step a beam stops on dirt or rock queues the
+/// engine's beam heat there, once, whether or not the tick is simulated
+/// again; a beam ending in the sky or on a worm queues none.
+#[test]
+fn a_beam_heats_where_it_stops_each_sub_step_once() {
+    let Some(content) = content() else { return };
+    for resim in [false, true] {
+        let (mut hits, mut frames_hit, mut open_or_worm) = (0, 0, 0);
+        play_hot_resim(
+            &content,
+            LASER,
+            resim,
+            |_, _| {},
+            |p, world, events| {
+                let here = beam_hits(events);
+                let queued = p.heat_waiting().to_vec();
+                assert_eq!(queued.len(), here.len(), "one deposit a hit, once (resim {resim})");
+                let h = engine::BEAM_HEAT.part(1).unwrap();
+                for ((_, d), (pos, parts)) in queued.iter().zip(&here) {
+                    assert_eq!((d.pos, d.radius, d.amount, *parts), (*pos, h.radius, h.amount, 1));
+                }
+                hits += here.len();
+                frames_hit += usize::from(!here.is_empty());
+                let beams = p.scene.drawn_beams();
+                if here.is_empty() && !beams.is_empty() {
+                    open_or_worm += 1;
+                }
+                p.reset_heat(world);
+            },
+        );
+        assert!(frames_hit > 10 && hits >= frames_hit, "{hits} hits over {frames_hit} frames");
+        assert!(open_or_worm > 10, "{open_or_worm} frames of a beam heating nothing");
+    }
+}
+
+/// Issue #69's engine look: each drawn beam lights discs along it (every
+/// 8 px, both ends, at most 64) and one at its tip only when it stopped,
+/// last among the frame's emitters; its carve explosions cast no light.
+#[test]
+fn a_drawn_beam_lights_along_it_and_at_its_tip() {
+    let Some(content) = content() else { return };
+    let along = |e: &&olr_look::FrameLight| e.radius == engine::BEAM_DISC_RADIUS && e.reach == 40.0;
+    let tip = |e: &&olr_look::FrameLight| e.radius == engine::BEAM_TIP_RADIUS && e.reach == 90.0;
+    let (mut stopped, mut open, mut carving) = (0, 0, 0);
+    play_with(&content, LASER, Some(look()), None, |p, _, _, _| {
+        let e = &p.look().unwrap().emitters;
+        let beams = p.scene.drawn_beams();
+        let discs: usize = beams
+            .iter()
+            .map(|b| {
+                let len = (b.to - b.from).length();
+                ((len / engine::BEAM_DISC_SPACING).ceil() as usize + 1).clamp(1, engine::MAX_BEAM_DISCS)
+            })
+            .sum();
+        let tips = beams.iter().filter(|b| b.stopped).count();
+        assert_eq!(e.iter().filter(along).count(), discs);
+        assert_eq!(e.iter().filter(tip).count(), tips);
+        // Last: past the cap they drop, never another light.
+        let first = e.iter().position(|l| along(&l) || tip(&l)).unwrap_or(e.len());
+        assert_eq!(e.len() - first, discs + tips, "the beams' discs last");
+        stopped += tips;
+        open += beams.iter().filter(|b| !b.stopped).count();
+        // The engine's explosion flash (255, 200, 140) never shows for a
+        // beam's carve explosions.
+        let beam_blasts =
+            p.fx.entities()
+                .filter(|(_, x)| matches!(x.kind, olr_fx::Kind::Explosion { proj: olr_sim::BEAM_EXPLOSION }))
+                .count();
+        carving += beam_blasts;
+        assert!(!e.iter().any(|l| (l.colour[2] / l.colour[0].max(1e-6) - 0.262).abs() < 0.01));
+    });
+    // FossilFacility is closed: every Laser beam stops (`olr-sim`'s
+    // `a_drawn_beam_says_what_stopped_it` has one end at the level's edge).
+    assert!(
+        stopped > 10 && open == 0 && carving > 10,
+        "{stopped} tips, {open} open, {carving} carve flashes"
+    );
+}
+
+/// Issue #69: a bonus blown up's and an explosive trail's explosions
+/// (`proj` -1) keep the engine's light; only a beam's lose it.
+#[test]
+fn trail_explosions_keep_the_engines_light() {
+    let Some(content) = content() else { return };
+    let mut lit = 0;
+    play_with(&content, "weapons/classic/napalm", Some(look()), None, |p, _, _, _| {
+        let trails = p.fx.entities().any(|(_, x)| matches!(x.kind, olr_fx::Kind::Explosion { proj: -1 }));
+        let flash = p
+            .look()
+            .unwrap()
+            .emitters
+            .iter()
+            .any(|l| (l.colour[2] / l.colour[0].max(1e-6) - 0.262).abs() < 0.01);
+        lit += usize::from(trails && flash);
+    });
+    assert!(lit > 10, "{lit}");
+}
+
+/// Issue #69: a weapon's own beam light, tip light and heat replace the
+/// engine's (an intensity of 0 darkens), and a beam weapon's shot starts
+/// its muzzle light.
+#[test]
+fn a_weapons_own_beam_look_replaces_the_engines() {
+    let Some(content) = content() else { return };
+    for dark_tip in [false, true] {
+        let look = |m: &LoadedMod, l: &mut ModLook| {
+            let laser = m.sim.weapons().iter().position(|w| w.name == "Laser").unwrap();
+            l.weapons.resize(m.sim.weapons().len(), None);
+            let tip = steady([200, 30, 250], if dark_tip { 0 } else { 150 }, 77);
+            l.weapons[laser] = Some(olr_look::WeaponLook {
+                muzzle_light: Some(steady([30, 250, 200], 100, 55)),
+                beam: Some(olr_look::BeamLook {
+                    light: Some(steady([10, 200, 30], 50, 33)),
+                    tip_light: Some(tip),
+                    heat: Some(olr_look::BeamHeat { amount: 20, radius: 3 }),
+                }),
+            });
+        };
+        let (mut along, mut tips, mut muzzle, mut heat) = (0, 0, 0, 0);
+        play_hot_resim(&content, LASER, false, look, |p, world, events| {
+            let e = &p.look().unwrap().emitters;
+            assert!(
+                !e.iter().any(|l| l.reach == 40.0 && l.radius == engine::BEAM_DISC_RADIUS),
+                "no engine disc"
+            );
+            assert!(!e.iter().any(|l| l.reach == 90.0), "no engine tip");
+            along += e.iter().filter(|l| l.reach == 33.0 && l.radius == engine::BEAM_DISC_RADIUS).count();
+            tips += e.iter().filter(|l| l.reach == 77.0 && l.radius == engine::BEAM_TIP_RADIUS).count();
+            muzzle += e.iter().filter(|l| l.reach == 55.0).count();
+            assert_eq!(p.heat_waiting().len(), beam_hits(events).len());
+            for (_, d) in p.heat_waiting() {
+                assert_eq!((d.radius, d.amount), (3.0, 20.0));
+                heat += 1;
+            }
+            p.reset_heat(world);
+        });
+        assert!(along > 100 && muzzle > 10 && heat > 10, "{along} discs, {muzzle} muzzle, {heat} heat");
+        assert_eq!(tips == 0, dark_tip, "{tips} tips");
+    }
 }

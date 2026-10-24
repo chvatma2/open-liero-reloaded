@@ -96,9 +96,11 @@ pub enum CosmeticKind {
     Dirt { probe: (i32, i32) },
     /// `ENT_EXPLOSION` of this size. `proj` is the `SimMod` index of the
     /// projectile that exploded (`effects::explosion` from its effects or
-    /// a `Bounce` explosion), -1 for any other: a bonus blown up, a beam,
-    /// a projectile's explosive trail. Presentation only (issue #15: the
-    /// projectile look's explosion light); OLX's entity has no such field.
+    /// a `Bounce` explosion), [`BEAM_EXPLOSION`] for a beam's (issue #69:
+    /// the beam's tip light replaces its light), -1 for any other: a bonus
+    /// blown up, a projectile's explosive trail. Presentation only (issue
+    /// #15: the projectile look's explosion light); OLX's entity has no
+    /// such field.
     Explosion { size: i32, proj: i32 },
     /// `ENT_SPARKLE`: an air jump.
     Sparkle,
@@ -120,8 +122,26 @@ pub enum CosmeticKind {
     /// The beam `DrawBeam` draws for this worm in this sub-step: from `pos`
     /// (the worm) to `pos + vel` (where the trace stopped), in the beam
     /// weapon's `Colour` (`SetWormBeamEntity`, `CClient_Game.cpp:699-710`).
-    Beam { worm: i32, colour: Rgba },
+    /// Issue #69 (presentation only, OLX's entity has neither): `weapon`,
+    /// the beam weapon's index, and `stopped`, whether a part of it
+    /// stopped on rock, dirt or a worm (false: it ran its length or left
+    /// the map).
+    Beam { worm: i32, colour: Rgba, weapon: i32, stopped: bool },
+    /// Issue #69 (presentation only): where a part of this worm's beam
+    /// stopped on rock or dirt in this sub-step (`pos`; `vel` is zero),
+    /// for the beam's heat. `parts` is how many such events the sub-step's
+    /// beam gave, the first [`MAX_BEAM_HITS`] of its parts that stopped
+    /// on terrain (centre outward), so a wide beam splits its heat.
+    BeamHit { worm: i32, weapon: i32, parts: u8 },
 }
+
+/// [`CosmeticKind::Explosion`]'s `proj` for a beam's explosions (issue
+/// #69): its carve on rock or dirt, its hit on a worm.
+pub const BEAM_EXPLOSION: i32 = -2;
+
+/// The most [`CosmeticKind::BeamHit`]s one beam gives a sub-step (issue
+/// #69): a beam of a hostile width never crowds the cosmetics out.
+pub const MAX_BEAM_HITS: usize = 8;
 
 /// One thing that happened during a tick, and when.
 #[derive(Clone, Copy, Debug, PartialEq)]

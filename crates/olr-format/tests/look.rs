@@ -775,3 +775,81 @@ fn the_thumbnail_leaves_occlusion_out() {
     }
     assert!(olr_format::levels::level_thumbnail(&plain) == olr_format::levels::level_thumbnail(&occluded));
 }
+
+/// Issue #69: a Beam weapon with `look`'s `beam` made of `beam`.
+fn beam_weapon(beam: &str) -> String {
+    format!(
+        r##"(
+    name: "W",
+    recharge: 0.18,
+    drain: 1.25,
+    between_shots_s: 0.009,
+    fire: Beam(colour: "#ff0000", worm_damage: 1, length: 999999),
+    look: (beam: ({beam})),
+)
+"##
+    )
+}
+
+const BEAM_LOOK: &str = r##"light: (colour: "#ff4020", intensity: 30, reach: Pixels(50)),
+        tip_light: (colour: "#ffffff", intensity: 250, reach: Pixels(256)),
+        heat: (amount: 0, radius: 16)"##;
+
+/// Issue #69: a Beam weapon's own beam look round-trips through the files
+/// and canonical text and compiles, the simulation's mod unchanged; each
+/// part left out is the engine's.
+#[test]
+fn a_beam_look_round_trips_and_compiles() {
+    let w = beam_weapon(BEAM_LOOK);
+    let src = read_mod_files(&mod_fs(&w)).unwrap();
+    let plain = read_mod_files(&mod_fs(&beam_weapon("").replace("    look: (beam: ()),\n", ""))).unwrap();
+    assert_eq!(compile_mod(&src).unwrap(), compile_mod(&plain).unwrap(), "presentation only");
+    let look = compile_mod_look(&src).unwrap();
+    let beam = look.weapons[0].as_ref().unwrap().beam.as_ref().unwrap();
+    let light = beam.light.as_ref().unwrap();
+    assert_eq!((light.colour, light.intensity, light.reach), ([255, 64, 32], 30, Reach::Pixels(50)));
+    assert_eq!(beam.tip_light.as_ref().unwrap().reach, Reach::Pixels(256));
+    assert_eq!(beam.heat, Some(olr_look::BeamHeat { amount: 0, radius: 16 }));
+    assert!(beam.heat.unwrap().part(1).is_none(), "0 heats nothing");
+    let canonical = canonical_text("weapons/w.ron", &w).unwrap();
+    assert_eq!(canonical_text("weapons/w.ron", &canonical).unwrap(), canonical);
+    assert!(canonical.contains("tip_light") && canonical.contains("amount: 0"), "{canonical}");
+    let mut out = MemFs::new();
+    olr_format::mods::write_mod_files(&mut out, &src).unwrap();
+    assert_eq!(read_mod_files(&out).unwrap(), src);
+    // Left out, each is none: the engine's.
+    let src = read_mod_files(&mod_fs(&beam_weapon("heat: (amount: 20, radius: 3)"))).unwrap();
+    let look = compile_mod_look(&src).unwrap();
+    let beam = look.weapons[0].as_ref().unwrap().beam.as_ref().unwrap();
+    assert!(beam.light.is_none() && beam.tip_light.is_none());
+}
+
+/// Issue #69: a beam look's bounds, `Unlimited` refused, its heat's
+/// fields required, and `beam` on a weapon that is not a Beam refused.
+#[test]
+fn beam_look_limits() {
+    let path = "look.beam";
+    for (from, to, want) in [
+        ("Pixels(50)", "Pixels(0)", format!("{path}.light.reach")),
+        ("Pixels(50)", "Pixels(257)", format!("{path}.light.reach")),
+        ("Pixels(256)", "Unlimited", format!("{path}.tip_light.reach")),
+        ("intensity: 250", "intensity: 1001", format!("{path}.tip_light.intensity")),
+        ("amount: 0", "amount: 101", format!("{path}.heat.amount")),
+        ("radius: 16", "radius: 0", format!("{path}.heat.radius")),
+        ("radius: 16", "radius: 17", format!("{path}.heat.radius")),
+    ] {
+        let w = beam_weapon(BEAM_LOOK).replacen(from, to, 1);
+        let src = read_mod_files(&mod_fs(&w)).unwrap();
+        let e = compile_mod(&src).unwrap_err().to_string();
+        assert!(e.contains("weapons/w.ron") && e.contains(&want), "{to}: {e}");
+        assert!(compile_mod_look(&src).is_err());
+        assert_eq!(olr_format::mods::mod_errors(&src).len(), 1, "{to}");
+    }
+    for bad in ["heat: (amount: 4)", "heat: (amount: 4, radius: 6, every: 2)", "glow: 3"] {
+        assert!(read_mod_files(&mod_fs(&beam_weapon(bad))).is_err(), "{bad}");
+    }
+    let w = weapon("", "look: (beam: (heat: (amount: 20, radius: 3))),", "");
+    let src = read_mod_files(&mod_fs(&w)).unwrap();
+    let e = compile_mod(&src).unwrap_err().to_string();
+    assert!(e.contains("weapons/w.ron") && e.contains("look.beam") && e.contains("Beam"), "{e}");
+}

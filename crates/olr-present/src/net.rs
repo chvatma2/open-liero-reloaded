@@ -107,6 +107,7 @@ fn class(kind: &EventKind, next: Option<&EventKind>) -> Option<u64> {
                 CosmeticKind::JetpackSpray => (10, 0),
                 CosmeticKind::LaserSight { worm, .. } => (11, worm),
                 CosmeticKind::Beam { worm, .. } => (12, worm),
+                CosmeticKind::BeamHit { worm, .. } => (13, worm),
             };
             h.words(&[2, tag, n.into()]);
         }

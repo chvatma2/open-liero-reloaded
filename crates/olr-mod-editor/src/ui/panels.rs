@@ -230,8 +230,13 @@ fn weapon(ui: &mut Ui, cx: &mut Cx, path: &str) {
         link(ui, cx, labels::GO_SHOT, format!("{fire}.shot"));
     }
     heading(ui, labels::LOOK);
-    let now = cx.state.src().weapons.iter().find(|(w, _)| *w == id).and_then(|(_, w)| w.look.clone());
-    look::weapon(ui, cx, path, now.as_ref());
+    let w = cx.state.src().weapons.iter().find(|(w, _)| *w == id).map(|(_, w)| w);
+    let now = w.and_then(|w| w.look.clone());
+    let beam = w.and_then(|w| match w.fire {
+        olr_format::mods::Fire::Beam { colour, .. } => Some(colour),
+        _ => None,
+    });
+    look::weapon(ui, cx, path, now.as_ref(), beam);
     if (has_more("Weapon") || has_more(&owner)) && more(ui, cx, path) {
         section(ui, cx, "Weapon", path, "", Place::More);
         section(ui, cx, &owner, &fire, "", Place::More);

@@ -19,13 +19,24 @@ struct Laser {
     len: i16,
 }
 
+/// A beam the tick left (its line; issue #69: its weapon, whether it
+/// stopped on something, its ends as the sub-step left them).
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Beam {
+    line: Line,
+    weapon: i32,
+    stopped: bool,
+    start: Vec2,
+    end: Vec2,
+}
+
 /// The tick's marks and the laser sights' own generator.
 #[derive(Clone, Debug)]
 pub struct Marks {
     muzzle: [bool; MAX_WORMS],
     target: [bool; MAX_WORMS],
     lasers: Vec<Laser>,
-    beams: [Option<Line>; MAX_WORMS],
+    beams: [Option<Beam>; MAX_WORMS],
     rng: GlibcRand,
     /// `LaserSightPutPixel`'s `static int laseralt`.
     laser_alt: i32,
@@ -107,7 +118,11 @@ impl Marks {
                         self.lasers.push(Laser { worm, start: pos, dir: vel, len });
                     }
                 }
-                EventKind::SpawnCosmetic { kind: CosmeticKind::Beam { worm, colour }, pos, vel } => {
+                EventKind::SpawnCosmetic {
+                    kind: CosmeticKind::Beam { worm, colour, weapon, stopped },
+                    pos,
+                    vel,
+                } => {
                     let slot = usize::try_from(worm).ok().filter(|&i| i < MAX_WORMS);
                     if let Some(i) = slot
                         && substeps > 0
@@ -115,12 +130,9 @@ impl Marks {
                     {
                         let end = pos + vel;
                         let a = (pos.x as i32, pos.y as i32);
-                        self.beams[i] = Some(Line {
-                            a,
-                            b: (end.x as i32, end.y as i32),
-                            colour,
-                            shade: Default::default(),
-                        });
+                        let line =
+                            Line { a, b: (end.x as i32, end.y as i32), colour, shade: Default::default() };
+                        self.beams[i] = Some(Beam { line, weapon, stopped, start: pos, end });
                     }
                 }
                 _ => {}
@@ -182,13 +194,35 @@ impl Marks {
                 }
             });
         }
-        for (id, line) in beams.iter().enumerate() {
-            let Some(mut line) = *line else { continue };
+        for (id, b) in beams.iter().enumerate() {
+            let Some(Beam { mut line, .. }) = *b else { continue };
             if let Some(p) = i32::try_from(id).ok().and_then(&drawn) {
                 line.a = (p.x as i32, p.y as i32);
             }
             line.shade = beam;
             out.push(Layer::Beams, Item::Line(line));
+        }
+    }
+}
+
+impl Marks {
+    /// Issue #69: the beams the tick left, each from its worm as drawn
+    /// (`drawn`, as [`Marks::draw`] starts it; `None`: where the sub-step
+    /// left it) to where it stopped, in worm id order.
+    pub(crate) fn drawn_beams(&self, drawn: impl Fn(i32) -> Option<Vec2>, out: &mut Vec<crate::DrawnBeam>) {
+        for (id, beam) in self.beams.iter().enumerate() {
+            let Some(b) = beam else { continue };
+            let worm = id as i32;
+            let from = drawn(worm).unwrap_or(b.start);
+            let weapon = usize::try_from(b.weapon).unwrap_or(usize::MAX);
+            out.push(crate::DrawnBeam {
+                worm,
+                from,
+                to: b.end,
+                colour: b.line.colour,
+                weapon,
+                stopped: b.stopped,
+            });
         }
     }
 }

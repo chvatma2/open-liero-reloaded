@@ -36,7 +36,7 @@ pub use worm::{
 };
 
 use olr_math::{AbsTime, Vec2};
-use olr_sim::{TickEvents, World};
+use olr_sim::{MAX_WORMS, TickEvents, World};
 
 /// How a scene draws.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -117,7 +117,41 @@ pub struct DrawnWorm {
     pub frame: u32,
 }
 
-/// A projectile weapon's shot in a tick: a lit match's muzzle light.
+/// A beam the last [`Scene::build`] drew (issue #69: a lit match's beam
+/// lights), from its worm as drawn to where it stopped.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawnBeam {
+    pub worm: i32,
+    pub from: Vec2,
+    pub to: Vec2,
+    /// The beam weapon's colour.
+    pub colour: olr_data::image::Rgba,
+    /// The beam weapon (its `SimMod` index; `usize::MAX` for none).
+    pub weapon: usize,
+    /// A part of it stopped on rock, dirt or a worm (its tip lights).
+    pub stopped: bool,
+}
+
+/// Where a part of a beam stopped on rock or dirt in a tick
+/// (`CosmeticKind::BeamHit`, issue #69): a lit match's beam heat, one a
+/// sub-step. Recorded per tick, so it never depends on the frame rate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TickBeamHit {
+    pub pos: Vec2,
+    pub worm: i32,
+    /// The beam weapon (its `SimMod` index; `usize::MAX` for none).
+    pub weapon: usize,
+    /// How many hits the beam gave that sub-step: each takes that share
+    /// of the heat.
+    pub parts: u8,
+    /// The tick it happened in.
+    pub at: AbsTime,
+    /// Its place among the tick's beam hits, from 0: with `at`, a key a
+    /// re-simulated tick gives again.
+    pub index: u16,
+}
+
+/// A projectile or beam weapon's shot in a tick: a lit match's muzzle light.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Shot {
     pub worm: i32,
@@ -163,8 +197,8 @@ pub struct HotProjectile {
 /// mod heating every projectile heats with the first this many.
 pub const MAX_HOT_PER_TICK: usize = 64;
 
-/// The most [`EndedProjectile`]s, [`Shot`]s, [`TickExplosion`]s and
-/// [`HotProjectile`]s (each) kept
+/// The most [`EndedProjectile`]s, [`Shot`]s, [`TickExplosion`]s,
+/// [`HotProjectile`]s and [`TickBeamHit`]s (each) kept
 /// between two [`Scene::clear_look_events`] (a host drawing no frame drops
 /// the rest).
 pub const LOOK_EVENTS: usize = 8192;
@@ -208,12 +242,15 @@ pub struct Scene {
     /// With rules, what the last build placed (reused, grown once).
     drawn: Vec<DrawnProjectile>,
     worms: Vec<DrawnWorm>,
-    /// With rules, the ticks' ended projectiles, shots and explosions
-    /// since the last [`Scene::clear_look_events`].
+    beams: Vec<DrawnBeam>,
+    /// With rules, the ticks' ended projectiles, shots, explosions,
+    /// heating projectiles and beam hits since the last
+    /// [`Scene::clear_look_events`].
     ended: Vec<EndedProjectile>,
     shots: Vec<Shot>,
     explosions: Vec<TickExplosion>,
     hot: Vec<HotProjectile>,
+    beam_hits: Vec<TickBeamHit>,
 }
 
 impl Scene {
@@ -231,10 +268,12 @@ impl Scene {
             shades: None,
             drawn: Vec::new(),
             worms: Vec::new(),
+            beams: Vec::with_capacity(MAX_WORMS),
             ended: Vec::new(),
             shots: Vec::new(),
             explosions: Vec::new(),
             hot: Vec::new(),
+            beam_hits: Vec::new(),
         }
     }
 
@@ -304,6 +343,7 @@ impl Scene {
         self.shades = shades;
         self.drawn.clear();
         self.worms.clear();
+        self.beams.clear();
         self.clear_look_events();
     }
 
@@ -330,7 +370,14 @@ impl Scene {
         &self.ended
     }
 
-    /// The projectile weapons' shots in those ticks, in tick then event order.
+    /// The beams the last build drew (issue #69), in worm id order (only
+    /// with shade rules).
+    pub fn drawn_beams(&self) -> &[DrawnBeam] {
+        &self.beams
+    }
+
+    /// The projectile and beam weapons' shots in those ticks, in tick then
+    /// event order.
     pub fn shots(&self) -> &[Shot] {
         &self.shots
     }
@@ -348,13 +395,21 @@ impl Scene {
         &self.hot
     }
 
-    /// Forgets the ended projectiles, shots, explosions and heating
-    /// projectiles (the presentation took them).
+    /// Where beams stopped on rock or dirt in those ticks (issue #69), in
+    /// tick then event order (only with shade rules). A re-simulated tick
+    /// reports them again.
+    pub fn beam_hits(&self) -> &[TickBeamHit] {
+        &self.beam_hits
+    }
+
+    /// Forgets the ended projectiles, shots, explosions, heating
+    /// projectiles and beam hits (the presentation took them).
     pub fn clear_look_events(&mut self) {
         self.ended.clear();
         self.shots.clear();
         self.explosions.clear();
         self.hot.clear();
+        self.beam_hits.clear();
     }
 
     /// With shade rules, records a tick's ended projectiles (in the
@@ -393,12 +448,12 @@ impl Scene {
             }
         }
         let m = world.sim_mod();
-        let mut index = 0u16;
+        let (mut index, mut hit) = (0u16, 0u16);
+        let fires = |k| matches!(k, olr_sim::WeaponType::Projectile | olr_sim::WeaponType::Beam);
         for e in events {
             match e.kind {
                 olr_sim::EventKind::WeaponFired { worm, weapon }
-                    if m.weapon(weapon).is_some_and(|w| w.kind == olr_sim::WeaponType::Projectile)
-                        && self.shots.len() < LOOK_EVENTS =>
+                    if m.weapon(weapon).is_some_and(|w| fires(w.kind)) && self.shots.len() < LOOK_EVENTS =>
                 {
                     self.shots.push(Shot { worm, weapon: usize::try_from(weapon).unwrap_or(0), at });
                 }
@@ -407,6 +462,17 @@ impl Scene {
                         self.explosions.push(TickExplosion { pos, damage, proj, at, index });
                     }
                     index = index.saturating_add(1);
+                }
+                olr_sim::EventKind::SpawnCosmetic {
+                    kind: olr_sim::CosmeticKind::BeamHit { worm, weapon, parts },
+                    pos,
+                    ..
+                } => {
+                    if self.beam_hits.len() < LOOK_EVENTS {
+                        let weapon = usize::try_from(weapon).unwrap_or(usize::MAX);
+                        self.beam_hits.push(TickBeamHit { pos, worm, weapon, parts, at, index: hit });
+                    }
+                    hit = hit.saturating_add(1);
                 }
                 _ => {}
             }
@@ -452,6 +518,7 @@ impl Scene {
         self.marks.clear();
         self.drawn.clear();
         self.worms.clear();
+        self.beams.clear();
         self.clear_look_events();
     }
 
@@ -497,7 +564,7 @@ impl Scene {
     /// OLX: src/client/CClient_Draw.cpp:561-609 (each viewport drawn in turn),
     /// src/gusanos/viewport.cpp:105-253, src/client/CClient_Draw.cpp:1001-1015
     pub fn build_views(&mut self, world: &World, alpha: f32, assets: &SceneAssets, outs: &mut [DrawList]) {
-        let Scene { cameras, options, prev, marks, shades, drawn, worms: drawn_worms, .. } = self;
+        let Scene { cameras, options, prev, marks, shades, drawn, worms: drawn_worms, beams, .. } = self;
         let blend = Blend::new(prev, alpha, options.interpolation);
         let worms = world.worms();
         let map = (world.terrain().width(), world.terrain().height());
@@ -505,6 +572,7 @@ impl Scene {
         let dots = (cameras.len() > 1).then(|| marks.dots());
         drawn.clear();
         drawn_worms.clear();
+        beams.clear();
         for (v, (camera, out)) in cameras.iter_mut().zip(outs.iter_mut()).enumerate() {
             let record = lit && v == 0;
             let target = worms.iter().position(|w| w.id == camera.target());
@@ -523,6 +591,9 @@ impl Scene {
                 marks.rewind_dots(dots);
             }
             marks.draw(assets, view, at_drawn, lit, out);
+            if record {
+                marks.drawn_beams(at_drawn, beams);
+            }
             let m = world.sim_mod();
             let mut projectiles = blend.projectiles();
             for (slot, p) in world.projectiles() {

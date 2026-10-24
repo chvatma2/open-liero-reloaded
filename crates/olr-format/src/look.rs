@@ -489,6 +489,48 @@ pub struct WeaponLookSource {
     /// Replaces the engine's muzzle-flash light. Default none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub muzzle_light: Option<LightSource>,
+    /// A `Beam` weapon's beam: its light along the beam and where it
+    /// stops, and its heat where it stops on rock or dirt (refused on any
+    /// other weapon). Default none: the engine's (the beam's colour, a
+    /// little whiter at the tip; 60 degrees over 5 pixels a sub-step).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beam: Option<BeamLookSource>,
+}
+
+/// A beam weapon's look: while its beam shows it lights the level with
+/// glowing discs along it (every 8 world pixels, at most 64) and one where
+/// it stopped on rock, dirt or a worm, and each physics sub-step (11 ms) it
+/// heats where it stops on rock or dirt. Each part left out keeps the
+/// engine's. Presentation only.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeamLookSource {
+    /// Each disc's light along the beam; reach `Pixels` 1 to 256; an
+    /// intensity of 0 turns it off. Default none: the engine's, the beam's
+    /// colour at 21 % reaching 40 pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub light: Option<LightSource>,
+    /// The light where it stopped; reach `Pixels` 1 to 256; an intensity
+    /// of 0 turns it off. Default none: the engine's, the beam's colour a
+    /// little whiter at about 300 % reaching 90 pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip_light: Option<LightSource>,
+    /// The heat where it stops on rock or dirt, each sub-step. Default
+    /// none: the engine's, 60 over 5 pixels.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat: Option<BeamHeatSource>,
+}
+
+/// The heat a beam leaves where it stops on rock or dirt, each physics
+/// sub-step; it falls off from its centre to `radius`, a wide beam's split
+/// over its parts. Presentation only.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BeamHeatSource {
+    /// The heat a sub-step gives stone at its centre, 0 (none) to 100.
+    pub amount: u16,
+    /// How far it reaches, world pixels, 1 to 16.
+    pub radius: u16,
 }
 
 fn invalid(file: &str, path: &str, message: impl Into<String>) -> FormatError {
@@ -790,5 +832,48 @@ pub fn compile_weapon_look(
             .as_ref()
             .map(|x| compile_light(x, file, &format!("{path}.muzzle_light")))
             .transpose()?,
+        beam: l.beam.as_ref().map(|b| compile_beam_look(b, file, &format!("{path}.beam"))).transpose()?,
+    })
+}
+
+/// A beam weapon's look (issue #69), checked: its lights' reach `Pixels`
+/// 1 to [`olr_look::engine::MAX_BEAM_REACH`], its heat's amount 0 to
+/// [`olr_look::engine::MAX_PROJECTILE_HEAT`] and radius 1 to
+/// [`olr_look::engine::MAX_PROJECTILE_HEAT_RADIUS`].
+pub fn compile_beam_look(
+    l: &BeamLookSource,
+    file: &str,
+    path: &str,
+) -> Result<olr_look::BeamLook, FormatError> {
+    use olr_look::engine::{MAX_BEAM_REACH, MAX_PROJECTILE_HEAT, MAX_PROJECTILE_HEAT_RADIUS};
+    let light = |l: &LightSource, path: &str| {
+        match l.reach {
+            ReachSource::Pixels(n) => {
+                within(n.into(), 1, MAX_BEAM_REACH.into(), file, &format!("{path}.reach"))?
+            }
+            ReachSource::Unlimited => {
+                return Err(invalid(file, &format!("{path}.reach"), "a beam light's reach must be `Pixels`"));
+            }
+        }
+        compile_light(l, file, path)
+    };
+    let heat = match &l.heat {
+        Some(h) => {
+            within(h.amount.into(), 0, MAX_PROJECTILE_HEAT.into(), file, &format!("{path}.heat.amount"))?;
+            within(
+                h.radius.into(),
+                1,
+                MAX_PROJECTILE_HEAT_RADIUS.into(),
+                file,
+                &format!("{path}.heat.radius"),
+            )?;
+            Some(olr_look::BeamHeat { amount: h.amount, radius: h.radius as u8 })
+        }
+        None => None,
+    };
+    Ok(olr_look::BeamLook {
+        light: l.light.as_ref().map(|x| light(x, &format!("{path}.light"))).transpose()?,
+        tip_light: l.tip_light.as_ref().map(|x| light(x, &format!("{path}.tip_light"))).transpose()?,
+        heat,
     })
 }

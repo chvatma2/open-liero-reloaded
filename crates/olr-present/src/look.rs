@@ -7,7 +7,9 @@
 //! look's `explosion` or the mod's, effect slot order), the projectiles'
 //! lights (slot order) and their end flashes (start order); then the skins'
 //! lights (issue #12, worm order), after the mods' so the cap never starves
-//! those either.
+//! those either; last the beams' (issue #69: discs along each drawn beam
+//! and one at its tip, worm order), so past the cap they drop, never
+//! another light.
 //!
 //! End flashes and muzzle lights start from the scene's per-tick records
 //! (`Scene::ended_projectiles`, `Scene::shots`), so they never depend on
@@ -20,7 +22,9 @@
 //! time for the renderer (`Presentation::upload`). Issue #42: or its
 //! projectile look's `explosion_heat` (else the mod's), and each tick a
 //! projectile whose look has `heat` lives (`Scene::hot_projectiles`) leaves
-//! that tick's where it is, once.
+//! that tick's where it is, once. Issue #69: and each sub-step a beam
+//! stops on rock or dirt (`Scene::beam_hits`) leaves its weapon's beam heat
+//! (else the engine's) there, once.
 
 use std::collections::{HashSet, VecDeque};
 use std::hash::Hash;
@@ -39,6 +43,11 @@ pub type FlashKey = (usize, u32, usize, u64);
 /// gives again. A correction moving it leaves the heat where it first
 /// landed.
 pub type BlastKey = (u64, u16);
+
+/// A beam hit's identity for its heat (issue #69): its tick's time (ms) and
+/// its place among the tick's beam hits, which a re-simulated tick gives
+/// again.
+type BeamKey = (u64, u16);
 
 /// A heating projectile's identity for a tick's heat (issue #42): the
 /// tick's time (ms), its slot and serial, which a re-simulated tick gives
@@ -135,6 +144,8 @@ pub(crate) struct Dynamic {
     heated: Once<BlastKey>,
     /// Issue #42: the heating projectiles' ticks whose heat was queued.
     warmed: Once<WarmKey>,
+    /// Issue #69: the beam hits whose heat was queued.
+    beamed: Once<BeamKey>,
     heat: Vec<(u64, HeatDeposit)>,
     blasts: Vec<BlastKey>,
     /// The engine's lights, made once: the muzzle's, and explosions' by size.
@@ -154,6 +165,7 @@ impl Dynamic {
         self.started.clear();
         self.heated.clear();
         self.warmed.clear();
+        self.beamed.clear();
         self.heat.clear();
         self.blasts.clear();
     }
@@ -189,7 +201,8 @@ impl Dynamic {
     /// level with a look (issue #12: a level without one has no darkness):
     /// each drawn worm's skin light, last. With `heats` (the level's
     /// materials heat, issue #40) each explosion's heat is queued once, and
-    /// (issue #42) each heating projectile's tick, in tick order.
+    /// (issue #42) each heating projectile's tick and (issue #69) each beam
+    /// hit, in tick order.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn push(
         &mut self,
@@ -236,19 +249,30 @@ impl Dynamic {
         // Issue #40: each explosion's heat, once, at its tick's time: from
         // the per-tick records, never the entities a frame may miss. Issue
         // #42: its projectile's (or the mod's) explosion heat, else the
-        // engine's; merged in tick order with the heating projectiles'.
+        // engine's; merged in tick order with the heating projectiles' and
+        // (issue #69) the beam hits' (a tick's explosions first, then its
+        // heating projectiles, then its beams).
         self.blasts.clear();
-        let (blasts, hot) =
-            if heats { (scene.explosions(), scene.hot_projectiles()) } else { (&[][..], &[][..]) };
-        let (mut i, mut j) = (0, 0);
-        while i < blasts.len() || j < hot.len() {
+        let (blasts, hot, beams) = if heats {
+            (scene.explosions(), scene.hot_projectiles(), scene.beam_hits())
+        } else {
+            (&[][..], &[][..], &[][..])
+        };
+        let (mut i, mut j, mut k) = (0, 0, 0);
+        while i < blasts.len() || j < hot.len() || k < beams.len() {
             if self.heat.len() == HEAT_QUEUE {
                 break;
             }
             if self.heat.capacity() == 0 {
                 self.heat.reserve_exact(HEAT_QUEUE);
             }
-            let explosion = j == hot.len() || blasts.get(i).is_some_and(|x| x.at <= hot[j].at);
+            let (x_at, h_at) = (blasts.get(i).map(|x| x.at), hot.get(j).map(|p| p.at));
+            let b_at = beams.get(k).map(|b| b.at);
+            // Whether stream `a` goes before `b`: it has one left, at a
+            // tick no later than `b`'s next.
+            let first = |a: Option<_>, b: Option<_>| a.is_some() && (b.is_none() || a <= b);
+            let explosion = first(x_at, h_at) && first(x_at, b_at);
+            let warm = !explosion && first(h_at, b_at);
             if explosion {
                 let x = &blasts[i];
                 i += 1;
@@ -264,7 +288,7 @@ impl Dynamic {
                     self.heat.push((x.at.0, deposit));
                     self.blasts.push(key);
                 }
-            } else {
+            } else if warm {
                 let p = &hot[j];
                 j += 1;
                 if let Some(h) = m.heat(p.proj)
@@ -273,6 +297,15 @@ impl Dynamic {
                     let h = h.tick();
                     let deposit = HeatDeposit { pos: [p.pos.x, p.pos.y], radius: h.radius, amount: h.amount };
                     self.heat.push((p.at.0, deposit));
+                }
+            } else {
+                let b = &beams[k];
+                k += 1;
+                if let Some(h) = m.beam_heat(b.weapon).part(b.parts)
+                    && self.beamed.start((b.at.0, b.index), b.at.0 as f64, t_ms)
+                {
+                    let deposit = HeatDeposit { pos: [b.pos.x, b.pos.y], radius: h.radius, amount: h.amount };
+                    self.heat.push((b.at.0, deposit));
                 }
             }
         }
@@ -300,8 +333,10 @@ impl Dynamic {
             true
         });
         // The engine's explosion lights: those whose projectile's look (or
-        // the mod's) has none (issue #15).
-        for (slot, e, _) in explosions(fx).filter(|&(_, _, proj)| m.explosion(proj).is_none()) {
+        // the mod's) has none (issue #15). A beam's carve explosions cast
+        // none: its tip light is its light there (issue #69).
+        let engine_lit = |proj: i32| proj != olr_sim::BEAM_EXPLOSION && m.explosion(proj).is_none();
+        for (slot, e, _) in explosions(fx).filter(|&(_, _, proj)| engine_lit(proj)) {
             let (age_ms, life_ms) = explosion_age(e);
             let i = match self.explosions.iter().position(|(s, _)| *s == e.type2) {
                 Some(i) => i,
@@ -350,17 +385,73 @@ impl Dynamic {
         // Issue #12: each drawn worm's skin light, its frame's colour and
         // strength, following the worm (a disc inside its own worm ignores
         // its body); behind the engine's one switch.
-        let Some(assets) = skins.filter(|_| self.skin_light.unwrap_or(engine::SKIN_LIGHT)) else { return };
-        for w in scene.drawn_worms() {
-            if let Some((f, reach)) = assets.worm_light(w.index, w.frame) {
-                let l = engine::skin_light(f.colour, f.intensity, reach);
-                let radius = engine::disc_radius(l.reach.pixels());
-                if let Some(f) = light_at(&l, t_ms, w.id as u64, [w.pos.x, w.pos.y], radius) {
+        if let Some(assets) = skins.filter(|_| self.skin_light.unwrap_or(engine::SKIN_LIGHT)) {
+            for w in scene.drawn_worms() {
+                if let Some((f, reach)) = assets.worm_light(w.index, w.frame) {
+                    let l = engine::skin_light(f.colour, f.intensity, reach);
+                    let radius = engine::disc_radius(l.reach.pixels());
+                    if let Some(f) = light_at(&l, t_ms, w.id as u64, [w.pos.x, w.pos.y], radius) {
+                        look.push_emitter(f);
+                    }
+                }
+            }
+        }
+        // Issue #69, last: each drawn beam's discs along it, every
+        // `BEAM_DISC_SPACING` from its start to its end (both included, at
+        // most `MAX_BEAM_DISCS`, spaced wider to fit), and one at its tip
+        // when it stopped on something; its weapon's own lights, else the
+        // engine's in its colour.
+        for b in scene.drawn_beams() {
+            let own = m.beam(b.weapon);
+            let rgb = [b.colour.r, b.colour.g, b.colour.b];
+            let (from, to) = ([b.from.x, b.from.y], [b.to.x, b.to.y]);
+            let id = b.worm as u64;
+            let engine_light;
+            let l = match own.and_then(|o| o.light.as_ref()) {
+                Some(l) => l,
+                None => {
+                    engine_light = engine::beam_light(rgb);
+                    &engine_light
+                }
+            };
+            for p in beam_discs(from, to) {
+                if let Some(f) = light_at(l, t_ms, id, p, engine::BEAM_DISC_RADIUS) {
+                    look.push_emitter(f);
+                }
+            }
+            if b.stopped {
+                let engine_tip;
+                let l = match own.and_then(|o| o.tip_light.as_ref()) {
+                    Some(l) => l,
+                    None => {
+                        engine_tip = engine::beam_tip_light(rgb);
+                        &engine_tip
+                    }
+                };
+                if let Some(f) = light_at(l, t_ms, id, to, engine::BEAM_TIP_RADIUS) {
                     look.push_emitter(f);
                 }
             }
         }
     }
+}
+
+/// Where a beam from `from` to `to` has its discs (issue #69): every
+/// `BEAM_DISC_SPACING` world pixels, both ends included, at most
+/// `MAX_BEAM_DISCS` (spaced wider to fit); one for a beam with no length.
+fn beam_discs(from: [f32; 2], to: [f32; 2]) -> impl Iterator<Item = [f32; 2]> {
+    let d = [to[0] - from[0], to[1] - from[1]];
+    let len = (d[0] * d[0] + d[1] * d[1]).sqrt();
+    let n = if len.is_finite() {
+        ((len / engine::BEAM_DISC_SPACING).ceil() as usize + 1).clamp(1, engine::MAX_BEAM_DISCS)
+    } else {
+        0
+    };
+    let last = (n.max(2) - 1) as f32;
+    (0..n).map(move |i| {
+        let t = i as f32 / last;
+        [from[0] + d[0] * t, from[1] + d[1] * t]
+    })
 }
 
 /// The explosion entities in slot order, each with its slot and
@@ -392,6 +483,19 @@ mod tests {
         assert!(o.start((1, 3), 100.0, 100.0));
         assert!(!o.start((1, 2), 20.0, 120.0), "a re-simulated tick, earlier");
         assert!(o.start((1, 2), 2100.0, 2100.0), "forgotten past the memory");
+    }
+
+    #[test]
+    fn beam_discs_space_out_to_fit_the_bound() {
+        let discs = |len: f32| beam_discs([10.0, 20.0], [10.0 + len, 20.0]).collect::<Vec<_>>();
+        assert_eq!(discs(0.0), [[10.0, 20.0]], "a beam with no length: one");
+        let short = discs(16.0);
+        assert_eq!(short, [[10.0, 20.0], [18.0, 20.0], [26.0, 20.0]], "every 8 px, both ends");
+        let long = discs(5000.0);
+        assert_eq!(long.len(), engine::MAX_BEAM_DISCS);
+        assert_eq!(long[0], [10.0, 20.0]);
+        assert_eq!(*long.last().unwrap(), [5010.0, 20.0], "the end included");
+        assert_eq!(beam_discs([0.0, 0.0], [f32::NAN, 0.0]).count(), 0, "never a NaN disc");
     }
 
     #[test]

@@ -53,7 +53,7 @@ fn look_frame_does_not_allocate_when_warm() {
         explosion: i.is_multiple_of(2).then(|| explosion(false)),
         ..Default::default()
     };
-    let weapon = olr_look::WeaponLook { muzzle_light: Some(light(60)) };
+    let weapon = olr_look::WeaponLook { muzzle_light: Some(light(60)), beam: None };
     m.look = olr_look::ModLook {
         projectiles: (0..m.sim.projectiles().len()).map(|i| Some(projectile(i))).collect(),
         weapons: vec![Some(weapon); m.sim.weapons().len()],

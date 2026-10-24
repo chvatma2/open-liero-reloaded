@@ -19,7 +19,7 @@ use crate::SimSettings;
 use crate::bonus::{Bonus, MAX_BONUSES};
 use crate::damage::{Harm, injure_worm};
 use crate::effects::{Blast, carve_at, explosion, increment_dirt_count};
-use crate::events::{CosmeticKind, TerrainOp};
+use crate::events::{BEAM_EXPLOSION, CosmeticKind, MAX_BEAM_HITS, TerrainOp};
 use crate::mod_rt::{SimMod, SimWeapon};
 use crate::projectile::c_int;
 use crate::referee::Referee;
@@ -111,6 +111,13 @@ fn trace(
 fn solid(t: &Terrain, p: Vec2) -> bool {
     let px = if p.x <= 0.0 || p.y <= 0.0 { PX_ROCK } else { t.flags(c_int(p.x) as i64, c_int(p.y) as i64) };
     px & (PX_DIRT | PX_ROCK) != 0
+}
+
+/// Whether `p` lies on a pixel of the level, not past its edge, which
+/// [`solid`] reads as rock (issue #69).
+fn within(t: &Terrain, p: Vec2) -> bool {
+    let (x, y) = (c_int(p.x) as i64, c_int(p.y) as i64);
+    p.x > 0.0 && p.y > 0.0 && x < i64::from(t.width()) && y < i64::from(t.height())
 }
 
 /// `DistributeDamageOverWidth`: `damage / width`, at least `SIGN(damage)`.
@@ -234,15 +241,26 @@ pub(crate) fn draw_beam(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut Beam
     if w.face == Dir::Left {
         angle = 180.0 - angle;
     }
-    let (id, pos, dir) = (w.id, w.pos, vec_from_angle(angle));
+    let (id, pos, dir, weapon) = (w.id, w.pos, vec_from_angle(angle), slot.weapon);
     let map_min = ctx.terrain.width().min(ctx.terrain.height());
     let mut set = others(worms, id);
     let BeamCtx { terrain, holes, draws, parts } = ctx;
+    // Issue #69: whether a part stopped on something, and where the first
+    // parts stopped on terrain (the beam's heat); the level's edge, which
+    // stops a beam as rock, is neither (a beam into the sky ends there).
+    let (mut stopped, mut hits, mut n) = (false, [Vec2::ZERO; MAX_BEAM_HITS], 0);
     let end = trace(beam, pos, dir, map_min, parts, |p, width| {
         if solid(terrain, p) {
+            if within(terrain, p) {
+                stopped = true;
+                if n < MAX_BEAM_HITS {
+                    hits[n] = p;
+                    n += 1;
+                }
+            }
             if beam.damage != -1 {
                 if width <= 2 {
-                    draws.entity(CosmeticKind::Explosion { size: 5, proj: -1 }, p, Vec2::ZERO);
+                    draws.entity(CosmeticKind::Explosion { size: 5, proj: BEAM_EXPLOSION }, p, Vec2::ZERO);
                 }
                 let size = spread(beam.damage, beam, width);
                 let d = carve_at(terrain, holes, &mut draws.events, TerrainOp::Beam, size, p);
@@ -251,9 +269,10 @@ pub(crate) fn draw_beam(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut Beam
             return Part::Stopped;
         }
         if let Some(i) = hit(worms, set, p) {
+            stopped = true;
             if beam.damage != -1 {
                 draws.entity(
-                    CosmeticKind::Explosion { size: 3, proj: -1 },
+                    CosmeticKind::Explosion { size: 3, proj: BEAM_EXPLOSION },
                     p + Vec2::new(1.0, 1.0),
                     Vec2::ZERO,
                 );
@@ -265,7 +284,14 @@ pub(crate) fn draw_beam(worms: &mut [Worm], i: usize, m: &SimMod, ctx: &mut Beam
     });
     // `SetWormBeamEntity` (`:699-710`), unless the beam is pink.
     if beam.colour != Rgba::MAGENTA {
-        draws.events.cosmetic(CosmeticKind::Beam { worm: id, colour: beam.colour }, pos, end - pos);
+        draws.events.cosmetic(
+            CosmeticKind::Beam { worm: id, colour: beam.colour, weapon, stopped },
+            pos,
+            end - pos,
+        );
+        for &p in &hits[..n] {
+            draws.events.cosmetic(CosmeticKind::BeamHit { worm: id, weapon, parts: n as u8 }, p, Vec2::ZERO);
+        }
     }
 }
 

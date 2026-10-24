@@ -223,6 +223,61 @@ pub fn explosion_flash(colour: [u8; 3], intensity: u16, reach: u16) -> Light {
     flash(colour, intensity.min(1000), reach.clamp(1, MAX_EXPLOSION_REACH), EXPLOSION_MS)
 }
 
+/// Issue #69: a beam's glowing discs lie every this many world pixels
+/// from its worm to where it stopped, both ends included.
+pub const BEAM_DISC_SPACING: f32 = 8.0;
+
+/// The most discs along one beam (issue #69): a longer beam spaces them
+/// wider, so up to eight beams never fill play's
+/// [`crate::MAX_EMITTERS`].
+pub const MAX_BEAM_DISCS: usize = 64;
+
+/// A disc along a beam's radius, world pixels (issue #69).
+pub const BEAM_DISC_RADIUS: f32 = 1.5;
+
+/// A beam's tip disc's radius, world pixels (issue #69).
+pub const BEAM_TIP_RADIUS: f32 = 3.0;
+
+/// The farthest a beam's light may reach, world pixels (issue #69):
+/// `olr-format` refuses more and `Unlimited`.
+pub const MAX_BEAM_REACH: u16 = 256;
+
+/// The engine's light of each disc along a beam of `colour` (issue #69,
+/// the maintainer's pick from rendered frames, 2026-10-24): the beam's
+/// colour at 21 %, reaching 40 world pixels, steady.
+pub fn beam_light(colour: [u8; 3]) -> Light {
+    Light { colour, intensity: 21, reach: Reach::Pixels(40), animation: Animation::Steady, phase_ms: Some(0) }
+}
+
+/// The engine's light where a beam of `colour` stopped (issue #69): the
+/// beam's colour (linear) × 2.8 + 0.2 on each channel, so the hit reads a
+/// little whiter than the beam (the red Laser's is linear (3.0, 0.2,
+/// 0.2)), reaching 90 world pixels, steady.
+pub fn beam_tip_light(colour: [u8; 3]) -> Light {
+    let lit = colour.map(|c| crate::srgb_to_linear(c) * 2.8 + 0.2);
+    let most = lit[0].max(lit[1]).max(lit[2]);
+    Light {
+        colour: lit.map(|c| linear_to_srgb(c / most)),
+        intensity: (most * 100.0 + 0.5) as u16,
+        reach: Reach::Pixels(90),
+        animation: Animation::Steady,
+        phase_ms: Some(0),
+    }
+}
+
+/// The engine's heat where a beam stops on rock or dirt, a sub-step
+/// (issue #69): 60 degrees of stone at its centre over 5 world pixels, so
+/// a laser's tunnel through dirt glows orange while it digs and fades to
+/// red over about 2 s.
+pub const BEAM_HEAT: crate::BeamHeat = crate::BeamHeat { amount: 60, radius: 5 };
+
+/// Linear light (0-1) as an sRGB byte, rounded.
+fn linear_to_srgb(c: f32) -> u8 {
+    let c = c.clamp(0.0, 1.0);
+    let s = if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * libm::powf(c, 1.0 / 2.4) - 0.055 };
+    (s * 255.0 + 0.5) as u8
+}
+
 /// A muzzle flash's light.
 pub fn muzzle_light() -> Light {
     flash([255, 220, 160], 80, 40, 50)

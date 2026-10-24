@@ -3,7 +3,8 @@
 //! `end_flash` and `explosion`, a weapon's `muzzle_light`, each a switch
 //! and its colour, intensity, reach and animation; issue #42: beside the
 //! explosion light, a projectile's `explosion_heat` and `heat`, and the
-//! mod's own (`mod.ron`'s `look`: its `explosion` and `explosion_heat`). Presentation only: the
+//! mod's own (`mod.ron`'s `look`: its `explosion` and `explosion_heat`);
+//! issue #69: a Beam weapon's `beam` light, tip light and heat. Presentation only: the
 //! simulation never reads a look. Each field commits once (a number when
 //! its drag stops or its typing ends, a colour's `#rrggbb` when its field
 //! loses the keyboard); the whole look is set back as one change.
@@ -12,11 +13,13 @@ use egui::Ui;
 use olr_data::image::Rgba;
 use olr_format::Colour;
 use olr_format::look::{
-    AnimationSource, ExplosionHeatSource, ExplosionLightSource, KeySource, LightSource, ModWideLookSource,
-    ProjectileHeatSource, ProjectileLookSource, PulseShape, ReachSource, WeaponLookSource,
+    AnimationSource, BeamHeatSource, BeamLookSource, ExplosionHeatSource, ExplosionLightSource, KeySource,
+    LightSource, ModWideLookSource, ProjectileHeatSource, ProjectileLookSource, PulseShape, ReachSource,
+    WeaponLookSource,
 };
 use olr_look::engine::{
-    MAX_EXPLOSION_HEAT_AMOUNT, MAX_EXPLOSION_HEAT_RADIUS, MAX_PROJECTILE_HEAT, MAX_PROJECTILE_HEAT_RADIUS,
+    self, MAX_EXPLOSION_HEAT_AMOUNT, MAX_EXPLOSION_HEAT_RADIUS, MAX_PROJECTILE_HEAT,
+    MAX_PROJECTILE_HEAT_RADIUS,
 };
 
 use super::{Cx, caption, labels, relabel};
@@ -90,19 +93,21 @@ fn colour(ui: &mut Ui, cx: &mut Cx, key: &str, label: &str, now: Colour) -> Opti
     None
 }
 
-/// A reach: world pixels, or unlimited when `unlimited` is offered.
+/// A reach: world pixels up to `max`, or unlimited when `unlimited` is
+/// offered.
 fn reach(
     ui: &mut Ui,
     cx: &mut Cx,
     key: &str,
     part: &str,
     now: ReachSource,
+    max: u16,
     unlimited: bool,
 ) -> Option<ReachSource> {
     let mut out = None;
+    let label = labels::look(part, "reach (px)");
     if let ReachSource::Pixels(px) = now
-        && let Some(v) =
-            number(ui, cx, &format!("{key}/reach"), &labels::look(part, "reach (px)"), px.into(), 1..=4096)
+        && let Some(v) = number(ui, cx, &format!("{key}/reach"), &label, px.into(), 1..=max.into())
     {
         out = Some(ReachSource::Pixels(v as u16));
     }
@@ -291,10 +296,24 @@ fn light(
     part: &str,
     now: Option<&LightSource>,
 ) -> Option<Option<LightSource>> {
+    light_from(ui, cx, key, part, now, || NEW_LIGHT, None)
+}
+
+/// [`light`] switched on as `new`, its reach within `beam_reach` world
+/// pixels and never unlimited when that is given (a beam's, issue #69).
+fn light_from(
+    ui: &mut Ui,
+    cx: &mut Cx,
+    key: &str,
+    part: &str,
+    now: Option<&LightSource>,
+    new: impl FnOnce() -> LightSource,
+    beam_reach: Option<u16>,
+) -> Option<Option<LightSource>> {
     let mut on = now.is_some();
     let r = ui.checkbox(&mut on, part);
     if r.changed() {
-        return Some(on.then_some(NEW_LIGHT));
+        return Some(on.then(new));
     }
     let l = now?;
     let mut out = None;
@@ -317,7 +336,8 @@ fn light(
             }
         });
         ui.horizontal(|ui| {
-            if let Some(r) = reach(ui, cx, key, part, l.reach, true) {
+            let (max, unlimited) = beam_reach.map_or((4096, true), |m| (m, false));
+            if let Some(r) = reach(ui, cx, key, part, l.reach, max, unlimited) {
                 out = Some(LightSource { reach: r, ..l.clone() });
             }
         });
@@ -375,7 +395,7 @@ fn explosion(
             ) {
                 out = Some(ExplosionLightSource { radius: v as u16, ..e.clone() });
             }
-            if let Some(r) = reach(ui, cx, key, part, e.reach, false) {
+            if let Some(r) = reach(ui, cx, key, part, e.reach, 4096, false) {
                 out = Some(ExplosionLightSource { reach: r, ..e.clone() });
             }
         });
@@ -543,14 +563,102 @@ pub(super) fn mod_wide(ui: &mut Ui, cx: &mut Cx, now: Option<&ModWideLookSource>
     }
 }
 
-/// The weapon at `path`'s Look group: its muzzle light.
-pub(super) fn weapon(ui: &mut Ui, cx: &mut Cx, path: &str, now: Option<&WeaponLookSource>) {
+/// A beam's heat when it is switched on: the engine's.
+const NEW_BEAM_HEAT: BeamHeatSource =
+    BeamHeatSource { amount: engine::BEAM_HEAT.amount, radius: engine::BEAM_HEAT.radius as u16 };
+
+/// An engine light as the format writes it (a beam's, issue #69).
+fn light_source(l: olr_look::Light) -> LightSource {
+    LightSource {
+        colour: Colour(Rgba::rgb(l.colour[0], l.colour[1], l.colour[2])),
+        intensity: l.intensity,
+        reach: match l.reach {
+            olr_look::Reach::Pixels(px) => ReachSource::Pixels(px),
+            olr_look::Reach::Unlimited => ReachSource::Unlimited,
+        },
+        animation: AnimationSource::Steady,
+        phase_ms: None,
+    }
+}
+
+/// A beam's heat a sub-step: its switch, amount and radius (issue #69).
+fn beam_heat(
+    ui: &mut Ui,
+    cx: &mut Cx,
+    key: &str,
+    now: Option<&BeamHeatSource>,
+) -> Option<Option<BeamHeatSource>> {
+    let part = labels::BEAM_HEAT;
+    let mut on = now.is_some();
+    let r = ui.checkbox(&mut on, part).on_hover_text(
+        "Heat it leaves where it stops on rock or dirt, in a level whose materials heat; off: the engine's",
+    );
+    if r.changed() {
+        return Some(on.then_some(NEW_BEAM_HEAT));
+    }
+    let h = now?;
+    let mut out = None;
+    ui.indent(("olr-mod-editor-look", key), |ui| {
+        ui.horizontal(|ui| {
+            let max = i64::from(MAX_PROJECTILE_HEAT);
+            let label = labels::look(part, "amount a sub-step");
+            if let Some(v) = number(ui, cx, &format!("{key}/amount"), &label, h.amount.into(), 0..=max) {
+                out = Some(BeamHeatSource { amount: v as u16, ..h.clone() });
+            }
+            let max = i64::from(MAX_PROJECTILE_HEAT_RADIUS);
+            let label = labels::look(part, "radius (px)");
+            if let Some(v) = number(ui, cx, &format!("{key}/radius"), &label, h.radius.into(), 1..=max) {
+                out = Some(BeamHeatSource { radius: v as u16, ..h.clone() });
+            }
+        });
+    });
+    out.map(Some)
+}
+
+/// The weapon at `path`'s Look group: its muzzle light; a Beam weapon's
+/// (`beam` its colour) also its beam light, tip light and heat (issue
+/// #69), each off the engine's.
+pub(super) fn weapon(
+    ui: &mut Ui,
+    cx: &mut Cx,
+    path: &str,
+    now: Option<&WeaponLookSource>,
+    beam: Option<Colour>,
+) {
     let look = now.cloned().unwrap_or_default();
     ui.weak("Its light while it fires, in a lit level: presentation only.");
+    let mut new = None;
     if let Some(l) =
         light(ui, cx, &format!("{path}/muzzle"), labels::MUZZLE_LIGHT, look.muzzle_light.as_ref())
     {
-        let value = l.map(|m| WeaponLookSource { muzzle_light: Some(m) });
+        new = Some(WeaponLookSource { muzzle_light: l, ..look.clone() });
+    }
+    if let Some(colour) = beam {
+        let b = look.beam.clone().unwrap_or_default();
+        let mut set = None;
+        let rgb = [colour.0.r, colour.0.g, colour.0.b];
+        let max = Some(engine::MAX_BEAM_REACH);
+        let now = b.light.as_ref();
+        let on = || light_source(engine::beam_light(rgb));
+        if let Some(l) = light_from(ui, cx, &format!("{path}/beam_light"), labels::BEAM_LIGHT, now, on, max) {
+            set = Some(BeamLookSource { light: l, ..b.clone() });
+        }
+        let now = b.tip_light.as_ref();
+        let on = || light_source(engine::beam_tip_light(rgb));
+        if let Some(l) = light_from(ui, cx, &format!("{path}/beam_tip"), labels::BEAM_TIP_LIGHT, now, on, max)
+        {
+            set = Some(BeamLookSource { tip_light: l, ..b.clone() });
+        }
+        if let Some(h) = beam_heat(ui, cx, &format!("{path}/beam_heat"), b.heat.as_ref()) {
+            set = Some(BeamLookSource { heat: h, ..b.clone() });
+        }
+        if let Some(s) = set {
+            let beam = if s == BeamLookSource::default() { None } else { Some(s) };
+            new = Some(WeaponLookSource { beam, ..look.clone() });
+        }
+    }
+    if let Some(n) = new {
+        let value = if n == WeaponLookSource::default() { None } else { Some(n) };
         cx.commits.push(ModAction::Set { path: format!("{path}.look"), value: ron(&value) });
     }
 }

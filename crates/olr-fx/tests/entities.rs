@@ -103,7 +103,7 @@ fn animations_live_as_long_as_olx() {
     assert_eq!(lifetime(CosmeticKind::JetpackSpray), 76);
     assert_eq!(lifetime(CosmeticKind::LaserSight { worm: 0, len: 30 }), 2);
     assert_eq!(
-        lifetime(CosmeticKind::Beam { worm: 0, colour: Rgba::rgb(255, 0, 0) }),
+        lifetime(CosmeticKind::Beam { worm: 0, colour: Rgba::rgb(255, 0, 0), weapon: 0, stopped: true }),
         0,
         "beams are olr-scene's"
     );

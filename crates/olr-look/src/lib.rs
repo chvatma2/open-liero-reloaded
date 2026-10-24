@@ -304,6 +304,45 @@ impl ExplosionLight {
 pub struct WeaponLook {
     /// Replaces the engine's muzzle light.
     pub muzzle_light: Option<Light>,
+    /// A beam weapon's own beam look (issue #69); `None` keeps the
+    /// engine's.
+    pub beam: Option<BeamLook>,
+}
+
+/// A beam weapon's look (issue #69): each part `None` keeps the engine's
+/// ([`engine::beam_light`], [`engine::beam_tip_light`],
+/// [`engine::BEAM_HEAT`]). Presentation only.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BeamLook {
+    /// Each glowing disc along the beam (an intensity of 0: none).
+    pub light: Option<Light>,
+    /// The disc where it stopped on rock, dirt or a worm (an intensity of
+    /// 0: none).
+    pub tip_light: Option<Light>,
+    pub heat: Option<BeamHeat>,
+}
+
+/// The heat a beam leaves where it stops on rock or dirt, each physics
+/// sub-step (issue #69): falling off as a heating projectile's. Presentation
+/// only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BeamHeat {
+    /// The temperature a sub-step gives stone at its centre, 0 (none) to
+    /// [`engine::MAX_PROJECTILE_HEAT`].
+    pub amount: u16,
+    /// World pixels, 1 to [`engine::MAX_PROJECTILE_HEAT_RADIUS`].
+    pub radius: u8,
+}
+
+impl BeamHeat {
+    /// One of `parts` hits' deposit (a wide beam splits the sub-step's
+    /// heat over the parts that stopped on terrain), clamped to the caps;
+    /// `None` when it gives less than a degree.
+    pub fn part(&self, parts: u8) -> Option<engine::ExplosionHeat> {
+        let amount = f32::from(self.amount.min(engine::MAX_PROJECTILE_HEAT)) / f32::from(parts.max(1));
+        let radius = f32::from(self.radius.clamp(1, engine::MAX_PROJECTILE_HEAT_RADIUS));
+        (amount >= 1.0).then_some(engine::ExplosionHeat { radius, amount })
+    }
 }
 
 /// A mod's look, indexed like `SimMod::projectiles` and `SimMod::weapons`.
@@ -347,6 +386,17 @@ impl ModLook {
     /// lives (issue #42); `None` for most.
     pub fn heat(&self, proj: usize) -> Option<&ProjectileHeat> {
         self.projectiles.get(proj).and_then(Option::as_ref).and_then(|p| p.heat.as_ref())
+    }
+
+    /// Weapon `weapon`'s (a `SimMod` index) own beam look (issue #69);
+    /// `None` for the engine's.
+    pub fn beam(&self, weapon: usize) -> Option<&BeamLook> {
+        self.weapons.get(weapon).and_then(Option::as_ref).and_then(|w| w.beam.as_ref())
+    }
+
+    /// Weapon `weapon`'s beam heat (issue #69): its own, else the engine's.
+    pub fn beam_heat(&self, weapon: usize) -> BeamHeat {
+        self.beam(weapon).and_then(|b| b.heat).unwrap_or(engine::BEAM_HEAT)
     }
 }
 

@@ -86,7 +86,7 @@ impl Entity {
             // `CClient_Game.cpp:571`: `blue`, which drawing ignores.
             CosmeticKind::JetpackSpray => (Kind::JetpackSpray, 0, Rgba::rgb(80, 150, 200)),
             CosmeticKind::LaserSight { len, .. } => (Kind::LaserSight, len as i32, Rgba::BLACK),
-            CosmeticKind::Beam { .. } => return None,
+            CosmeticKind::Beam { .. } | CosmeticKind::BeamHit { .. } => return None,
         };
         let frame =
             if matches!(kind, Kind::Explosion { .. }) { 15i32.wrapping_sub(type2) as f32 } else { 0.0 };

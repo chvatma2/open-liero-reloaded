@@ -140,6 +140,10 @@ pub mod labels {
     /// An explosion heat's own radius, else the engine's (issue #42).
     pub const OWN_RADIUS: &str = "own radius";
     pub const MUZZLE_LIGHT: &str = "Muzzle light";
+    /// A Beam weapon's own beam look (issue #69).
+    pub const BEAM_LIGHT: &str = "Beam light";
+    pub const BEAM_TIP_LIGHT: &str = "Beam tip light";
+    pub const BEAM_HEAT: &str = "Beam heat";
     pub const UNLIMITED: &str = "unlimited reach";
 
     /// A frame of the frames' grid.

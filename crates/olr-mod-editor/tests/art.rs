@@ -423,6 +423,60 @@ fn the_look_group_edits_heat() {
     assert!(h.state().state.src().look.is_none(), "all default is none");
 }
 
+/// Issue #69: a Beam weapon's Look group has Beam light, Beam tip light
+/// and Beam heat, each switched on from the engine's values in the beam's
+/// colour, edited within the format's bounds and set whole as the
+/// weapon's look; a projectile weapon has none of them.
+#[test]
+fn the_look_group_edits_beam() {
+    use olr_format::look::{BeamHeatSource, WeaponLookSource};
+    let Some(state) = editor() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let mut h = harness(state, tmp.path().to_path_buf());
+    click(&mut h, "Bazooka");
+    assert!(h.query_by_label(labels::MUZZLE_LIGHT).is_some());
+    assert!(h.query_by_label(labels::BEAM_LIGHT).is_none(), "not on a projectile weapon");
+    click(&mut h, "Laser");
+    let look = |h: &Harness<'static, App>| -> WeaponLookSource {
+        olr_mod_editor::state::get_as(h.state().state.src(), "weapons/laser.look")
+            .flatten()
+            .unwrap_or_default()
+    };
+    click(&mut h, labels::BEAM_LIGHT);
+    let light = look(&h).beam.and_then(|b| b.light).expect("a beam light");
+    assert_eq!((light.colour.to_hex().as_str(), light.intensity), ("#ff0000", 21), "the engine's, in red");
+    assert_eq!(light.reach, ReachSource::Pixels(40));
+    type_into(&mut h, &labels::look(labels::BEAM_LIGHT, "reach (px)"), "999");
+    let reach = look(&h).beam.and_then(|b| b.light).unwrap().reach;
+    assert_eq!(reach, ReachSource::Pixels(olr_look::engine::MAX_BEAM_REACH), "at most the cap");
+    assert!(h.query_by_label(&labels::look(labels::BEAM_LIGHT, labels::UNLIMITED)).is_none());
+    click(&mut h, labels::BEAM_TIP_LIGHT);
+    let tip = look(&h).beam.and_then(|b| b.tip_light).expect("a tip light");
+    assert_eq!(tip.reach, ReachSource::Pixels(90));
+    assert!(tip.intensity > 250, "{tip:?}");
+    click(&mut h, labels::BEAM_HEAT);
+    assert_eq!(look(&h).beam.unwrap().heat, Some(BeamHeatSource { amount: 60, radius: 5 }), "the engine's");
+    type_into(&mut h, &labels::look(labels::BEAM_HEAT, "amount a sub-step"), "0");
+    type_into(&mut h, &labels::look(labels::BEAM_HEAT, "radius (px)"), "40");
+    assert_eq!(
+        look(&h).beam.unwrap().heat,
+        Some(BeamHeatSource { amount: 0, radius: 16 }),
+        "0 is none; 16 the cap"
+    );
+    assert_eq!(h.state().state.errors(), 0, "{:?}", h.state().state.issues());
+    let compiled = olr_format::mods::compile_mod_look(h.state().state.src()).unwrap();
+    let laser = h.state().state.src().weapons.iter().position(|(w, _)| w == "laser").unwrap();
+    let beam = compiled.weapons[laser].as_ref().and_then(|w| w.beam.as_ref()).expect("compiled");
+    assert_eq!(beam.heat, Some(olr_look::BeamHeat { amount: 0, radius: 16 }));
+    // The muzzle light keeps the beam's; all switched off, the look is none.
+    click(&mut h, labels::MUZZLE_LIGHT);
+    assert!(look(&h).muzzle_light.is_some() && look(&h).beam.is_some());
+    for part in [labels::MUZZLE_LIGHT, labels::BEAM_LIGHT, labels::BEAM_TIP_LIGHT, labels::BEAM_HEAT] {
+        click(&mut h, part);
+    }
+    assert_eq!(h.state().state.value("weapons/laser.look").as_deref(), Some("None"));
+}
+
 /// A broken image and a mask of the wrong size open, list and draw
 /// without a crash: the image says why it does not paint, the mask is
 /// noted and painting glow replaces it with one that fits.
