@@ -242,3 +242,42 @@ fn a_field_edit_changes_the_next_frame_and_keeps_the_heat() {
     p.frame(20);
     assert!(hottest(&temps(&gpu, &p), 0) > 0.0);
 }
+
+/// Issue #67: a second, larger blast on the spot a first one left hot
+/// carves a wider crater; the pixels it digs lose the dirt's heat but
+/// their back takes this blast's slice (the preview uploads the crater
+/// before depositing, as play does).
+#[test]
+fn a_second_blast_on_a_hot_patch_heats_its_crater() {
+    let Some(gpu) = offscreen() else { return };
+    let mut p = preview(&gpu, Some(&stone()), None);
+    blast(&mut p, BlastSize::Small);
+    assert!(p.frame(20));
+    assert!(hottest(&temps(&gpu, &p), 0) > 100.0, "the first crater's rim is hot");
+    blast(&mut p, BlastSize::Bazooka);
+    assert!(p.frame(20));
+    let t = temps(&gpu, &p);
+    let h = olr_look::engine::explosion_heat(BlastSize::Bazooka.damage() as f32).unwrap();
+    let w = olr_material_editor::preview::SCENE.0;
+    // The ring the Bazooka's hole (15 across) digs past the Small's (11),
+    // below the ground's line (above row 34 near the blast).
+    let mut ring = 0;
+    for y in 34..AT[1] + 8 {
+        for x in AT[0] - 7..=AT[0] + 7 {
+            let (dx, dy) = (x as f32 - AT[0] as f32, y as f32 - AT[1] as f32);
+            let d2 = dx * dx + dy * dy;
+            if !(4.5f32 * 4.5..6.5 * 6.5).contains(&d2) {
+                continue;
+            }
+            let z = olr_look::engine::BACK_DEPTH_PX;
+            let slice = h.amount * (1.0 - (d2 + z * z) / (h.radius * h.radius));
+            let got = t[(y * w + patch_x(0) + x) as usize];
+            assert!(
+                got > 0.8 * slice && got < 1.2 * slice,
+                "({x}, {y}): the second crater's back {got} for its slice {slice}"
+            );
+            ring += 1;
+        }
+    }
+    assert!(ring >= 8, "{ring} pixels of the ring");
+}

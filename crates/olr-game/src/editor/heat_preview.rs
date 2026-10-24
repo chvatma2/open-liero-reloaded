@@ -301,8 +301,11 @@ impl HeatPreview {
     }
 
     /// An engine explosion of `size` at patch pixel `at` in both patches:
-    /// the crater carved, then the engine's heat deposited there (the
-    /// renderer's next frame lands it after the carve, as play's does).
+    /// the crater carved and uploaded, then the engine's heat deposited
+    /// there (the renderer's next frame lands it after the carve, as
+    /// play's does: issue #67, the heat of the pixels the carve dug goes
+    /// in call order, so the upload comes first and the crater's back
+    /// keeps its slice of this blast).
     fn blast(&mut self, at: [u32; 2], size: BlastSize) {
         let [x, y] = at;
         if x >= PATCH.0 || y >= PATCH.1 {
@@ -315,6 +318,7 @@ impl HeatPreview {
         for i in 0..2 {
             let px = patch_x(i) + x;
             self.map.apply(ColorEdit::Carve { hole, x: px as i32, y: y as i32 });
+            self.renderer.update_terrain(&mut self.map);
             if let Some(h) = heat {
                 // At the pixel's centre: the explosion's position, which
                 // the carve truncates.
