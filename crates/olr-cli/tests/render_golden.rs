@@ -494,7 +494,11 @@ fn heat_is_the_same_drawn_every_tick_or_once() {
 /// path, the same drawn every tick or once: [`heat_match`]'s match with
 /// every Minigun bullet heating each tick and no explosion heating
 /// (`explosion_heat` 0 %) is hot only by the bullets' paths; with neither,
-/// nothing is.
+/// nothing is. The bullets' heat reaches as far as a projectile's may
+/// (16 px), past the back wall 14 px behind the plane (issue #65), so
+/// their paths through the air warm it; a smaller ball would heat only the
+/// dirt beside their holes, which the bullets dig, and drawn once that heat
+/// lands on the dug terrain.
 #[test]
 fn a_projectiles_heat_warms_its_path_drawn_every_tick_or_once() {
     let Some(h) = HeatMatch::open() else { return };
@@ -506,7 +510,10 @@ fn a_projectiles_heat_warms_its_path_drawn_every_tick_or_once() {
         let bullets = h.assets.m.sim.projectiles().iter().map(|p| p.key.starts_with("minigun"));
         for (look, bullet) in m.projectiles.iter_mut().zip(bullets) {
             if bullet {
-                let heat = olr_look::ProjectileHeat { amount: 40, radius: 6 };
+                let heat = olr_look::ProjectileHeat {
+                    amount: 40,
+                    radius: olr_look::engine::MAX_PROJECTILE_HEAT_RADIUS,
+                };
                 look.get_or_insert_with(Default::default).heat = Some(heat);
             }
         }
