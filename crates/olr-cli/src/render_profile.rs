@@ -209,6 +209,15 @@ impl Stat {
     }
 }
 
+/// The ticks `window` draws of a replay of `ticks` (all without one), cut
+/// to the replay; an error when nothing of it is in the replay.
+pub fn window_within(window: Option<(u32, u32)>, ticks: u32) -> anyhow::Result<(u32, u32)> {
+    let (from, to) = window.unwrap_or((0, ticks));
+    let to = to.min(ticks);
+    anyhow::ensure!(from < to, "ticks {from}..{to}: the fight has ticks 0 to {ticks}");
+    Ok((from, to))
+}
+
 /// What to measure.
 #[derive(Clone, Debug)]
 pub struct ProfileConfig {
@@ -244,6 +253,10 @@ pub struct PhaseReport {
     pub cpu_ms: Stat,
     /// The frame on the GPU (timestamps only).
     pub gpu_ms: Option<Stat>,
+    /// Frames whose GPU span was not real (unwritten, backwards: a
+    /// driver's fault), left out of `gpu_ms` and the groups, said.
+    #[serde(default)]
+    pub gpu_dropped: u32,
     /// The frame less its timed passes: copies and gaps.
     pub between_ms: Option<Stat>,
     /// Every group some frame ran, in the GPU's order (timestamps only).
@@ -332,6 +345,7 @@ impl Gathered {
             cpu_ms: of(&|s| s.cpu),
             between_ms: gpu.map(|_| timed_of(&|s| s.between)),
             gpu_ms: gpu,
+            gpu_dropped: if timestamps { (self.samples.len() - timed.len()) as u32 } else { 0 },
             groups,
             untimed: self.samples.iter().map(|s| s.untimed).sum(),
             heat_area: of(&|s| s.heat_area as f64),
@@ -357,6 +371,7 @@ pub fn run(
 ) -> anyhow::Result<ProfileReport> {
     let replay = &fight.replay;
     let packs = &replay.setup.packs;
+    window_within(cfg.window, replay.ticks())?;
     let assets = LevelAssets::load(content, &packs.mod_pack.id, &packs.level.id)?;
     let gpu = Offscreen::open(&cfg.options)?;
     let info = gpu.adapter_info().clone();
@@ -366,7 +381,7 @@ pub fn run(
         bail!("{w}x{h}: {} draws at most {max_side} pixels a side", info.name);
     }
     let fpt = cfg.frames_per_tick.max(1);
-    let (from, to) = cfg.window.unwrap_or((0, replay.ticks()));
+    let (from, to) = window_within(cfg.window, replay.ticks())?;
     let nukes: Vec<String> = fight.shots.iter().map(|(w, n)| format!("{w} {n}")).collect();
     let mut report = ProfileReport {
         adapter: info.name.clone(),
@@ -568,11 +583,33 @@ fn nearest_ultrawide(sizes: &[SizeProfile]) -> Option<&SizeProfile> {
     sizes.iter().min_by_key(|s| px(s))
 }
 
+/// Why `base` cannot be compared with `report` (another adapter, backend,
+/// scene or frame rate), if it cannot.
+pub fn unlike(report: &ProfileReport, base: &ProfileReport) -> Option<String> {
+    let what = |r: &ProfileReport| {
+        format!("{} ({}), {}, {} frames a tick", r.adapter, r.backend, r.scene, r.frames_per_tick)
+    };
+    let same = report.adapter == base.adapter
+        && report.backend == base.backend
+        && report.scene == base.scene
+        && report.frames_per_tick == base.frames_per_tick;
+    (!same).then(|| format!("base is from {}: not compared", what(base)))
+}
+
 /// The report as the ranked table `render-profile` prints, each cost
-/// against `against`'s (the same size, phase and cost) when given.
+/// against `against`'s (the same size, phase and cost) when given and
+/// alike ([`unlike`]).
 pub fn table(report: &ProfileReport, against: Option<&ProfileReport>) -> String {
     use std::fmt::Write as _;
     let mut t = String::new();
+    let against = match against.map(|b| (b, unlike(report, b))) {
+        Some((_, Some(why))) => {
+            let _ = writeln!(t, "{why}");
+            None
+        }
+        Some((b, None)) => Some(b),
+        None => None,
+    };
     let gpu = if report.timestamps { "timestamps" } else { "not measured (no timestamps)" };
     let _ = writeln!(
         t,
@@ -637,6 +674,9 @@ pub fn table(report: &ProfileReport, against: Option<&ProfileReport>) -> String 
             }
             if p.untimed > 0 {
                 let _ = writeln!(t, "    {} passes untimed", p.untimed);
+            }
+            if p.gpu_dropped > 0 {
+                let _ = writeln!(t, "    {} frames without a GPU time (left out)", p.gpu_dropped);
             }
         }
     }
@@ -704,6 +744,7 @@ mod tests {
             tick_ms: stat(0.01),
             cpu_ms: stat(0.2),
             gpu_ms: Some(stat(gpu)),
+            gpu_dropped: 0,
             between_ms: Some(stat(gpu - sum)),
             groups: groups
                 .iter()
@@ -785,5 +826,78 @@ mod tests {
         assert!(t.contains("7 passes untimed"), "{t}");
         r.timestamps = false;
         assert!(table(&r, None).contains("GPU times: not measured (no timestamps)"));
+    }
+
+    /// Review: a base from another adapter, backend, scene or frame rate
+    /// is not compared (its deltas would mean nothing).
+    #[test]
+    fn an_unlike_base_is_not_compared() {
+        let now = report_for_test(&[("cascades", 2.0)]);
+        for change in [0, 1, 2, 3] {
+            let mut base = report_for_test(&[("cascades", 4.0)]);
+            match change {
+                0 => base.adapter = "AMD Radeon(TM) Graphics".into(),
+                1 => base.backend = "Dx12".into(),
+                2 => base.scene = "another window".into(),
+                _ => base.frames_per_tick = 1,
+            }
+            let t = table(&now, Some(&base));
+            assert!(t.contains("not compared"), "{change}: {t}");
+            assert!(!t.contains(" ms (-") && !t.contains("  new"), "{change}: {t}");
+        }
+    }
+
+    /// Review: without timestamps a phase has no GPU rows, only the CPU's.
+    #[test]
+    fn a_phase_without_timestamps_reports_the_cpu_alone() {
+        let sample = |gpu| Sample {
+            cpu: 0.5,
+            gpu,
+            between: 0.0,
+            groups: [(0.0, 0, 0.0); PASS_GROUPS],
+            untimed: 0,
+            heat_area: 0,
+            discs: 0,
+            upload_bytes: 0,
+        };
+        let g = Gathered { samples: vec![sample(None), sample(None)], ticks: vec![0.01] };
+        let p = g.report(Phase::Calm, false);
+        assert!(p.gpu_ms.is_none() && p.between_ms.is_none() && p.groups.is_empty(), "{p:?}");
+        assert_eq!(ranked(&p).iter().map(|c| c.what.as_str()).collect::<Vec<_>>(), ["cpu"]);
+        assert_eq!((p.frames, p.gpu_dropped), (2, 0));
+    }
+
+    /// Review: with timestamps, a frame whose GPU span was not real is
+    /// counted and said, never silently left out.
+    #[test]
+    fn frames_without_a_gpu_time_are_counted() {
+        let sample = |gpu| Sample {
+            cpu: 0.5,
+            gpu,
+            between: 0.0,
+            groups: [(0.0, 0, 0.0); PASS_GROUPS],
+            untimed: 0,
+            heat_area: 0,
+            discs: 0,
+            upload_bytes: 0,
+        };
+        let g = Gathered { samples: vec![sample(Some(2.0)), sample(None), sample(None)], ticks: vec![] };
+        let p = g.report(Phase::Hot, true);
+        assert_eq!((p.frames, p.gpu_dropped), (3, 2));
+        assert_eq!(p.gpu_ms.unwrap().mean, 2.0);
+        let mut r = report_for_test(&[("cascades", 2.0)]);
+        r.sizes[0].phases[0].gpu_dropped = 2;
+        assert!(table(&r, None).contains("2 frames without a GPU time"));
+    }
+
+    /// Review: a tick window outside the fight is refused, never an empty
+    /// report (which could become a base).
+    #[test]
+    fn a_window_outside_the_fight_is_refused() {
+        assert_eq!(window_within(None, 2000).unwrap(), (0, 2000));
+        assert_eq!(window_within(Some((150, 450)), 2000).unwrap(), (150, 450));
+        assert_eq!(window_within(Some((1900, 2500)), 2000).unwrap(), (1900, 2000));
+        assert!(window_within(Some((5000, 6000)), 2000).is_err());
+        assert!(window_within(Some((300, 300)), 2000).is_err());
     }
 }

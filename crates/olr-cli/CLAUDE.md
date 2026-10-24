@@ -785,7 +785,11 @@ The headless command-line tool. Its commands:
   groups only with timestamps). `table` prints it: per phase the costs
   `ranked` largest first with their share of the GPU frame, `--against`'s
   change beside each (`±ms (±%)`, `new` for a cost the base lacks; an
-  unreadable base says `no base to compare against: …` and is ignored),
+  unreadable base says `no base to compare against: …` and is ignored; a
+  base of another adapter, backend, scene (its tick window) or frame rate
+  says `base is from …: not compared`, `unlike`), `N frames without a GPU
+  time` (`PhaseReport::gpu_dropped`, timestamps on but the span not real),
+  a `--ticks` window outside the fight an error (`window_within`),
   `N passes untimed`, `heat copy: not timed …` without timestamps inside
   encoders, `software adapter: times are relative only` on a `Cpu`
   device, and the five `Top costs` at the size nearest 3440 × 1440.

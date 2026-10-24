@@ -1470,3 +1470,32 @@ fn heat_ops_are_timed_in_their_groups_and_counted_in_the_workload() {
     assert!(w.heat_area > 0 && w.heat_boxes >= 1 && w.heat_steps >= 3, "{w:?}");
     assert!(!w.world_targets.is_empty() && w.glow_grid.is_some() && w.cascades > 0, "{w:?}");
 }
+
+/// Review Focus 3: a catch-up frame of `MAX_HEAT_STEPS` steps outruns the
+/// timestamp slots: its extra passes run untimed and are counted, the
+/// frame is still timed, nothing panics.
+#[test]
+fn a_catch_up_frame_counts_the_passes_past_the_slots() {
+    if std::env::var_os("OLR_GPU_TESTS").is_none() {
+        return;
+    }
+    let Ok(gpu) =
+        olr_render::Offscreen::open(&OffscreenOptions { timestamps: true, ..OffscreenOptions::default() })
+    else {
+        return;
+    };
+    let mut r = heated(&gpu);
+    if !r.enable_gpu_timing() {
+        eprintln!("no timestamps; skipping");
+        return;
+    }
+    frame(&gpu, &mut r, &dark());
+    let _ = r.gpu_times();
+    r.deposit_heat(blast(20.0, 45.0, 10.0));
+    r.advance_heat(HEAT_STEP_MS * MAX_HEAT_STEPS);
+    frame(&gpu, &mut r, &dark());
+    let t = r.gpu_times().expect("timed");
+    assert!(t.untimed > 0 && t.frame_ms > 0.0, "{t:?}");
+    assert!(r.heat_steps() >= u64::from(MAX_HEAT_STEPS), "{}", r.heat_steps());
+    assert!(t.passes[PassGroup::HeatStep as usize] > 0.0, "{t:?}");
+}

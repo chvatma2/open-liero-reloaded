@@ -24,9 +24,12 @@ pub const DIR: &str = "target/render-profile";
 /// The game plays the 20 s fight and a little more.
 const GAME_SECONDS: u32 = 22;
 
-/// The base a `backend`'s runs compare with.
-pub fn base_name(backend: &str) -> String {
-    format!("base-{backend}.ron")
+/// The base a `backend`'s runs compare with: the Windows build's, or
+/// the native build's (`--native`, another machine's GPU or the software
+/// adapter) apart. `olr-cli` also refuses an unlike base (another adapter,
+/// window or frame rate) rather than compare it.
+pub fn base_name(backend: &str, native: bool) -> String {
+    if native { format!("base-native-{backend}.ron") } else { format!("base-{backend}.ron") }
 }
 
 /// `olr-cli`'s arguments: on `backend`, against `base` when there is one,
@@ -44,21 +47,16 @@ pub fn profile_args(backend: &str, base: Option<&str>, save_replay: bool, extra:
     a
 }
 
-/// Keeps a run's report in `dir`: `last.ron`, and the backend's base too
+/// Keeps a run's report in `dir`: `last.ron`, and the base `base` too
 /// with `set_base`; nothing when the run failed.
-pub fn finish(
-    dir: &Path,
-    backend: &str,
-    result: Result<String, String>,
-    set_base: bool,
-) -> Result<(), String> {
+pub fn finish(dir: &Path, base: &str, result: Result<String, String>, set_base: bool) -> Result<(), String> {
     let text = result?;
     std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let write = |name: &str| std::fs::write(dir.join(name), &text).map_err(|e| format!("{name}: {e}"));
     write(LAST)?;
     if set_base {
-        write(&base_name(backend))?;
-        println!("  the base for {backend} is now this run ({DIR}/{})", base_name(backend));
+        write(base)?;
+        println!("  the base is now this run ({DIR}/{base})");
     }
     Ok(())
 }
@@ -160,7 +158,8 @@ pub fn command(
     extra: &[String],
 ) -> anyhow::Result<bool> {
     let keep = root().join(DIR);
-    let base = keep.join(base_name(backend));
+    let name = base_name(backend, native);
+    let base = keep.join(&name);
     let has_base = base.is_file();
     if native {
         anyhow::ensure!(!game, "--game plays the Windows build: leave out --native");
@@ -173,7 +172,7 @@ pub fn command(
         std::fs::create_dir_all(&keep)?;
         let mut more = vec!["--content".to_string(), root().join("content/packs").display().to_string()];
         more.extend(extra.iter().cloned());
-        let args = profile_args(backend, has_base.then(|| base_name(backend)).as_deref(), false, &more);
+        let args = profile_args(backend, has_base.then_some(name.as_str()), false, &more);
         let _ = std::fs::remove_file(keep.join(LAST));
         let status =
             Command::new(root().join("target/release/olr-cli")).current_dir(&keep).args(&args).status()?;
@@ -182,7 +181,7 @@ pub fn command(
         } else {
             Err(format!("olr-cli render-profile failed ({status})"))
         };
-        return match finish(&keep, backend, result, set_base) {
+        return match finish(&keep, &name, result, set_base) {
             Ok(()) => Ok(true),
             Err(why) => {
                 println!("FAIL profile: {why}");
@@ -200,7 +199,7 @@ pub fn command(
     let stage =
         winbuild::stage(&release, &root().join("content/packs"), &files).map_err(anyhow::Error::msg)?;
     stage_reloaded(&stage).map_err(anyhow::Error::msg)?;
-    let staged_base = format!("replays/{}", base_name(backend));
+    let staged_base = format!("replays/{name}");
     let mut more = vec!["--content".to_string(), "content".to_string()];
     more.extend(extra.iter().cloned());
     let args = profile_args(backend, has_base.then_some(staged_base.as_str()), game, &more);
@@ -212,7 +211,7 @@ pub fn command(
         std::fs::read_to_string(stage.dir.join(LAST)).map_err(|e| format!("{LAST}: {e}"))
     });
     let profile = result.clone().unwrap_or_default();
-    if let Err(why) = finish(&keep, backend, result, set_base) {
+    if let Err(why) = finish(&keep, &name, result, set_base) {
         println!("FAIL profile: {why}");
         return Ok(false);
     }
@@ -268,7 +267,8 @@ mod tests {
 
     #[test]
     fn the_profile_compares_with_its_backends_base() {
-        assert_eq!(base_name("vulkan"), "base-vulkan.ron");
+        assert_eq!(base_name("vulkan", false), "base-vulkan.ron");
+        assert_eq!(base_name("vulkan", true), "base-native-vulkan.ron", "a native run's base is its own");
         let a = profile_args("vulkan", Some("base-vulkan.ron"), false, &[]);
         assert_eq!(a[0], "render-profile");
         assert!(a.windows(2).any(|w| w == ["--backend", "vulkan"]));
@@ -285,13 +285,13 @@ mod tests {
     fn a_failed_run_leaves_the_base_alone() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(dir.path().join("base-vulkan.ron"), "old").unwrap();
-        assert!(finish(dir.path(), "vulkan", Err("timed out".into()), true).is_err());
+        assert!(finish(dir.path(), "base-vulkan.ron", Err("timed out".into()), true).is_err());
         assert_eq!(std::fs::read_to_string(dir.path().join("base-vulkan.ron")).unwrap(), "old");
         assert!(!dir.path().join("last.ron").exists());
-        finish(dir.path(), "vulkan", Ok("new".into()), false).unwrap();
+        finish(dir.path(), "base-vulkan.ron", Ok("new".into()), false).unwrap();
         assert_eq!(std::fs::read_to_string(dir.path().join("last.ron")).unwrap(), "new");
         assert_eq!(std::fs::read_to_string(dir.path().join("base-vulkan.ron")).unwrap(), "old");
-        finish(dir.path(), "vulkan", Ok("newer".into()), true).unwrap();
+        finish(dir.path(), "base-vulkan.ron", Ok("newer".into()), true).unwrap();
         assert_eq!(std::fs::read_to_string(dir.path().join("base-vulkan.ron")).unwrap(), "newer");
     }
 }

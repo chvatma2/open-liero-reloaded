@@ -13,7 +13,9 @@ These numbers find the bottlenecks; they are not targets.
   16 Big Nukes and 11 Mini Nukes went off, the first at tick 200.
 - **How it is drawn:** the way the game draws it. The level's own look
   and heat, the game's playfield at each size (the HUD's `Auto` layout),
-  the sharp filter, linear interpolation, blood 100 %. There are 2 frames
+  the sharp filter, linear interpolation and blood at 100 %. These are the
+  game's defaults, which the maintainer uses; their saved UI scale and HUD
+  layout are not read. There are 2 frames
   a tick (about 200 FPS), and the HUD is not drawn.
 - **Machine:** the maintainer's PC (Ryzen 5 7600X, RTX 5070 Ti), the
   native Windows build run from WSL. The RTX was measured on Vulkan and
@@ -67,11 +69,13 @@ That is about 12 frames a second; every other group is under 1 ms.
     to 2.5 to 2.6 ms in the fight (up to 101 and 140 discs), +60 %.
   - On the integrated GPU's early window (up to 19 discs) they grow only
     +6 %.
-  - So the extra cost follows the number of discs: the nukes' and their
-    shrapnel's lights. The heat's glow (the heat area covers about the
-    whole level, 0.75 to 0.78 million pixels on average, the distant
-    layer included) may add some; one profile with the heat off would
-    tell them apart.
+  - So the extra cost seems to follow the number of discs: the nukes' and
+    their shrapnel's lights. The heat's glow may add some; one profile
+    with the heat off would tell them apart.
+  - The "heat area" is the active heat boxes' area (at most 8 boxes,
+    merged, each grown past its deposits), the level's and the distant
+    layer's: 0.75 to 0.78 million pixels on average, about the level's
+    size. It is the area the heat steps cover, not the hot pixels.
 - **The heat's own passes are nearly free:** 0.01 ms in all on the RTX
   and 0.07 ms on the integrated GPU, whatever the area. The heat costs
   frames only through the light it adds to the cascades.
@@ -105,13 +109,17 @@ Ranked by gain against effort and look risk. The letters are
 `2026-10-graphics-candidates.md`'s ideas, which these numbers now size.
 
 1. **The glow light once per tick, not every frame (D).**
-   - *Points at it:* the light is fixed to the world and its inputs
-     change once a tick. At the game's 286 FPS (2.9 frames a tick) about
-     two thirds of the cascades are recomputing an unchanged light.
-   - *Gain:* about 1.7 ms of the game's 3.6 ms on the RTX at that frame
-     rate. Nothing at 60 Hz, so no help for the laptop.
-   - *Look:* the discs' light steps at 100 Hz (the sprites still
-     interpolate); the bounce should then step per tick too.
+   - *Points at it:* the light is fixed to the world. At the game's
+     286 FPS (2.9 frames a tick) the cascades run about three times for
+     each tick of the world. Its inputs do change between those frames,
+     though: the frame's look is built at the interpolated match clock
+     (`Presentation::build_look`: pulses and flicker) and its discs at
+     interpolated positions.
+   - *Gain:* up to about 1.7 ms of the game's 3.6 ms on the RTX at that
+     frame rate. Nothing at 60 Hz, so no help for the laptop.
+   - *Look:* pulses, flicker and moving lights would step at 100 Hz while
+     the sprites keep interpolating. That needs a look at real frames in
+     motion, and the bounce should then step per tick too.
    - *Effort and risk:* small and low.
 2. **Coarser glow cells (F).** A `GI_CELL_BUDGET` of 2^19 or less makes
    Castle Strike's cells 2 world pixels: a quarter of the probes.
