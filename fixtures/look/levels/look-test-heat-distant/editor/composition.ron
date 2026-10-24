@@ -15,7 +15,7 @@
             kind: Drawn(
                 material: Background,
             ),
-            distant: 8,
+            distant: 4,
             surface: "wood",
         ),
         (

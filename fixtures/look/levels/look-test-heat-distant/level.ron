@@ -17,6 +17,7 @@
                 id: "stone",
                 name: "Stone",
                 notes: "Grey rock: the reference every heat value is a percent of. A blast leaves the rim glowing like lava, cooling slowly.",
+                light_soak: 2,
                 heat: (
                     capacity: 100,
                     conductivity: 100,
@@ -66,7 +67,7 @@
             surface: "stone",
         ),
         (
-            depth: 8,
+            depth: 4,
             at: (0, 0),
             surface: "wood",
         ),
