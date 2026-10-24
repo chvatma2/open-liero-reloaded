@@ -468,8 +468,8 @@ fn thumbnails_decode_lazily_and_bounded() {
 }
 
 /// Plan 7 G9: the main menu's About shows the credits (Jason Boettcher's
-/// Liero Xtreme, the OpenLieroX team, Joosa Riekkinen's Liero), the
-/// licenses and the imported content's origin; Back returns.
+/// Liero Xtreme, the OpenLieroX team, Joosa Riekkinen's Liero) and the
+/// licenses, and no longer lists the packs' origins; Back returns.
 #[test]
 fn about_credits_the_authors_and_the_licenses() {
     let mut h = harness(UiState::new(Settings::default(), Profiles::default(), 7));
@@ -486,16 +486,10 @@ fn about_credits_the_authors_and_the_licenses() {
     ] {
         h.get_by_label_contains(text);
     }
-    // The content's origin as its pack records it.
-    h.get_by_label("Mod Liero v1.0");
-    h.get_by_label("OpenLieroX share/gamedir/Classic (d1ad953f)");
-    h.get_by_label("Level Dirt Level");
-    h.get_by_label("Theme Dirt");
-    h.get_by_label("OpenLieroX share/gamedir/data/themes/Dirt (d1ad953f)");
-    h.get_by_label("Core OpenLieroX core");
-    h.get_by_label("2 skins");
-    h.get_by_label("OpenLieroX share/gamedir/skins (d1ad953f)");
-    h.get_by_label_contains("imported from OpenLieroX");
+    // The packs' origins are not listed (the maintainer's call, 2026-10-24).
+    for text in ["Mod Liero v1.0", "Level Dirt Level", "Core OpenLieroX core", "imported from OpenLieroX"] {
+        assert!(h.query_by_label_contains(text).is_none(), "{text}");
+    }
     h.get_by_label("Back").click();
     h.run();
     assert_eq!(h.state().ui.screen(), Screen::Main);

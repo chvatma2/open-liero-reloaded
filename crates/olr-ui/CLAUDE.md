@@ -279,9 +279,8 @@ these widgets and carries out their commands (`olr-game/src/shell.rs`).
   "Saved"); Back to menu; `MenuData::results`; "Loading…" while a rematch
   starts; the table and the weapon slots scroll so the buttons stay on a
   small screen);
-  About (`about.rs`, §21 G9: `CREDITS`, `LICENSES`, every imported
-  pack's recorded origin, `sources`: skins grouped by directory,
-  `origin_text`). Esc is `Back` and
+  About (`about.rs`, §21 G9: `CREDITS`, `LICENSES`; no list of the
+  packs' origins since 2026-10-24, the maintainer's call). Esc is `Back` and
   F5 `Restart` on every screen, a held key's repeats ignored
   (`pressed_once`); in the options Esc first closes an open dialog.
   `MenuData::version` (the app's build version) shows in the main menu's
