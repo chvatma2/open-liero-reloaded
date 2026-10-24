@@ -12,6 +12,8 @@
 @group(0) @binding(5) var albedo_tex: texture_2d<f32>;
 @group(0) @binding(6) var history: texture_2d<f32>;
 @group(0) @binding(7) var<uniform> look: LookGlobals;
+// Each cell's haze (see gi.wgsl), its reach `cp.e.z` world pixels.
+@group(0) @binding(8) var level_haze: texture_2d<f32>;
 
 // The most steps of one ray's march (a ray grazing a wall steps one cell
 // at a time); past it the ray counts as open.
@@ -40,7 +42,7 @@ fn stops_at(q: vec2<i32>) -> bool {
 }
 
 // How far a ray at `at` may jump: the jump flood's distance to the nearest
-// stopper, less a cell and a half; 0 near one.
+// stopper or hazy cell, less a cell and a half; 0 near one.
 fn free_at(at: vec2<f32>) -> f32 {
     let t = textureLoad(seeds, vec2<i32>(floor(at)), 0).xy;
     if t.x == NO_SEED {
@@ -58,7 +60,8 @@ fn free_at(at: vec2<f32>) -> f32 {
 // at a corner, so light never passes a wall one pixel thin (the user's
 // request, 2026-10-19). `skip` is a cell never stopping it (the probe's own).
 // `prev` is the open cell the ray left to enter the stopper (`has_prev`
-// false when it started in it).
+// false when it started in it). `glow` is the brightest haze's light the
+// ray met on its way (a hazy cell is always walked: it is a seed).
 struct Hit {
     hit: bool,
     // The march ran out of steps before its end: counted as blocked (final
@@ -69,6 +72,7 @@ struct Hit {
     t: f32,
     prev: vec2<i32>,
     has_prev: bool,
+    glow: vec3<f32>,
 };
 
 fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit {
@@ -76,6 +80,7 @@ fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit
     h.hit = false;
     h.blocked = false;
     h.has_prev = false;
+    h.glow = vec3<f32>(0.0);
     var t = t0;
     let sx = select(-1, 1, dir.x > 0.0);
     let sy = select(-1, 1, dir.y > 0.0);
@@ -107,6 +112,14 @@ fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit
         let by = select(f32(q.y), f32(q.y + 1), dir.y > 0.0);
         let tx = select(1e9, (bx - at.x) / dir.x, abs(dir.x) > 1e-6);
         let ty = select(1e9, (by - at.y) / dir.y, abs(dir.y) > 1e-6);
+        // The brightest haze along the way.
+        let haze = textureLoad(level_haze, q, 0).rgb;
+        if hazy(vec4<f32>(haze, 0.0)) {
+            let seen = haze * fade(t * cp.c.w, cp.e.z);
+            if luma(seen) > luma(h.glow) {
+                h.glow = seen;
+            }
+        }
         if abs(tx - ty) < 1e-3 {
             // Through a corner: both cells beside it stopping close it.
             let a = q + vec2<i32>(sx, 0);
@@ -185,6 +198,17 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
             ray = vec4<f32>(0.0);
         }
     }
+    // The haze's light (see gi.wgsl): the brightest the ray met before
+    // what stopped it, or the interval's end; `haze` its luminance, which
+    // the ray's alpha carries out (no pass reads a cascade's alpha but
+    // this one's merge). The ray keeps the brighter of its own haze and
+    // the next cascade's, never both: a wide hot patch lights as one hot
+    // cell does, however many intervals it spans.
+    var haze = 0.0;
+    if !h.blocked {
+        haze = luma(h.glow);
+    }
+    var through = 0.0;
     if cp.e.y > 0.5 && ray.a > 0.0 {
         // The next cascade's two directions around this one, bilinear
         // between its four probes around this probe's centre, each only
@@ -195,12 +219,12 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         let f = g - g0;
         let q0 = vec2<i32>(g0);
         let tip = centre + dir * end;
-        var acc = vec3<f32>(0.0);
+        var acc = vec4<f32>(0.0);
         for (var k = 0; k < 2; k++) {
             let dk = d * 2 + k;
             let ak = (f32(dk) + 0.5) / cp.d.x * TAU;
             let dir_k = vec2<f32>(cos(ak), sin(ak));
-            var sum = vec3<f32>(0.0);
+            var sum = vec4<f32>(0.0);
             var weight = 0.0;
             for (var j = 0; j < 4; j++) {
                 let o = vec2<i32>(j % 2, j / 2);
@@ -211,7 +235,7 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
                 let qj = q0 + o;
                 let cj = (vec2<f32>(clamp(qj, vec2<i32>(0), vec2<i32>(i32(cp.d.w), i32(cp.e.x)) - vec2<i32>(1))) + vec2<f32>(0.5)) * spacing * 2.0;
                 if clear_between(tip, cj + dir_k * end) {
-                    sum += upper_at(qj, dk).rgb * wj;
+                    sum += upper_at(qj, dk) * wj;
                     weight += wj;
                 }
             }
@@ -219,7 +243,25 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
                 acc += sum / weight;
             }
         }
-        ray = vec4<f32>(ray.rgb + ray.a * acc * 0.5, ray.a);
+        let upper = acc * 0.5;
+        if upper.a > haze {
+            // The haze beyond is the brighter: the ray's own gives way.
+            ray = vec4<f32>(ray.rgb + upper.rgb, ray.a);
+            through = upper.a;
+            haze = 0.0;
+        } else if haze > 0.0 {
+            // Its own is: the haze beyond comes off, taken in its colour.
+            let off = h.glow * (upper.a / max(haze, 1e-9));
+            ray = vec4<f32>(ray.rgb + max(upper.rgb - off, vec3<f32>(0.0)), ray.a);
+        } else {
+            ray = vec4<f32>(ray.rgb + upper.rgb, ray.a);
+            through = upper.a;
+        }
     }
-    return vec4<f32>(select(vec3<f32>(0.0), min(ray.rgb, vec3<f32>(LIGHT_MAX)), ray.rgb == ray.rgb), ray.a);
+    if !h.blocked {
+        ray = vec4<f32>(ray.rgb + h.glow * select(0.0, 1.0, haze > 0.0), ray.a);
+    }
+    let light = select(vec3<f32>(0.0), min(ray.rgb, vec3<f32>(LIGHT_MAX)), ray.rgb == ray.rgb);
+    let carried = max(haze, through);
+    return vec4<f32>(light, select(0.0, min(carried, LIGHT_MAX), carried == carried));
 }

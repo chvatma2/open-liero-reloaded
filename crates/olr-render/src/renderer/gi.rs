@@ -121,7 +121,7 @@ impl GiPipelines {
             "olr-render gi dynamic",
             &[entry(0, both, super::UNIFORM), entry(1, frag, UINT), entry(2, frag, super::UNIFORM)],
         );
-        let seed_layout = layout("olr-render gi seed", &[entry(0, frag, FLOAT)]);
+        let seed_layout = layout("olr-render gi seed", &[entry(0, frag, FLOAT), entry(1, frag, FLOAT)]);
         let jfa_layout = layout("olr-render gi jfa", &[entry(0, frag, super::UNIFORM), entry(1, frag, UINT)]);
         let cascade_layout = layout(
             "olr-render gi cascade",
@@ -134,6 +134,7 @@ impl GiPipelines {
                 entry(5, frag, FLOAT),
                 entry(6, frag, FLOAT),
                 entry(7, frag, super::UNIFORM),
+                entry(8, frag, FLOAT),
             ],
         );
         let fluence_layout = layout("olr-render gi fluence", &[entry(0, frag, FLOAT)]);
@@ -153,7 +154,7 @@ impl GiPipelines {
         let make = |label, body: &str, fs, layout: &wgpu::BindGroupLayout, targets: &[_]| {
             make_with(label, body, fs, &[Some(layout)], targets)
         };
-        let three = [(FORMAT, None), (REACH_FORMAT, None), (ALBEDO_FORMAT, None)];
+        let emitted = [(FORMAT, None), (REACH_FORMAT, None), (ALBEDO_FORMAT, None), (FORMAT, None)];
         let add = wgpu::BlendComponent {
             src_factor: wgpu::BlendFactor::One,
             dst_factor: wgpu::BlendFactor::One,
@@ -191,7 +192,7 @@ impl GiPipelines {
                 &format!("{}\n{}", super::heat::heat_reader(1), include_str!("../look/gi_emission.wgsl")),
                 "fs_emission",
                 &[Some(&emission_layout), Some(heat)],
-                &three,
+                &emitted,
             ),
             seed: make(
                 "olr-render gi seed",
@@ -278,8 +279,9 @@ fn texture(
 pub(super) struct GiState {
     /// World pixels per cell.
     pub(super) cell: u32,
-    /// The emission grid (rgb cast, solid share), its reach and its albedo.
-    emission: (wgpu::TextureView, wgpu::TextureView, wgpu::TextureView),
+    /// The emission grid (rgb cast, solid share), its reach, its albedo
+    /// and its haze (hot open background: light along a ray, no stop).
+    emission: (wgpu::TextureView, wgpu::TextureView, wgpu::TextureView, wgpu::TextureView),
     /// Play's discs this frame (plan 15c): radiance and reach per cell.
     /// Zero but under the quads of the discs last drawn, which the next
     /// frame zeroes again before drawing its own (issue #35).
@@ -369,6 +371,7 @@ impl GiState {
             texture(device, "olr-render gi emission", grid, FORMAT),
             texture(device, "olr-render gi reach", grid, REACH_FORMAT),
             texture(device, "olr-render gi albedo", grid, ALBEDO_FORMAT),
+            texture(device, "olr-render gi haze", grid, FORMAT),
         );
         let dynamic = (
             texture(device, "olr-render gi dynamic", grid, FORMAT),
@@ -433,7 +436,7 @@ impl GiState {
             &pipes.dynamic_layout,
             [emission_params.as_entire_binding(), tv(inputs.solid), inputs.globals.as_entire_binding()],
         );
-        let seed_bind = bind(device, &pipes.seed_layout, [tv(&emission.0)]);
+        let seed_bind = bind(device, &pipes.seed_layout, [tv(&emission.0), tv(&emission.3)]);
         // Steps of half the grid's power of two down to 1, ping-ponging.
         let mut jfa = Vec::new();
         let mut step = grid.0.max(grid.1).next_power_of_two() / 2;
@@ -477,7 +480,7 @@ impl GiState {
                         u[3],
                         u[4],
                         f32::from(u8::from(up.is_some())),
-                        0.0,
+                        super::heat::HEAT_REACH,
                         0.0,
                     ],
                 );
@@ -496,6 +499,7 @@ impl GiState {
                         tv(&emission.2),
                         tv(&fluence),
                         inputs.globals.as_entire_binding(),
+                        tv(&emission.3),
                     ],
                 )
             })
@@ -544,9 +548,9 @@ impl GiState {
                     targets: &[&wgpu::TextureView],
                     work: Option<(&wgpu::RenderPipeline, &wgpu::BindGroup)>,
                     more: &[&wgpu::BindGroup]| {
-            // At most three targets, kept on the stack (issue #35: no
+            // At most four targets, kept on the stack (issue #35: no
             // allocation a pass).
-            let attachments: [Option<wgpu::RenderPassColorAttachment>; 3] = std::array::from_fn(|i| {
+            let attachments: [Option<wgpu::RenderPassColorAttachment>; 4] = std::array::from_fn(|i| {
                 targets.get(i).map(|view| wgpu::RenderPassColorAttachment {
                     view,
                     depth_slice: None,
@@ -559,7 +563,7 @@ impl GiState {
             });
             let mut p = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("olr-render gi"),
-                color_attachments: &attachments[..targets.len().min(3)],
+                color_attachments: &attachments[..targets.len().min(4)],
                 depth_stencil_attachment: None,
                 timestamp_writes: stamp(group),
                 occlusion_query_set: None,
@@ -617,7 +621,7 @@ impl GiState {
             self.drawn.set((1 - last, count));
         }
         let emission = Some((&pipes.emission, &self.emission_bind));
-        let emitted = [&self.emission.0, &self.emission.1, &self.emission.2];
+        let emitted = [&self.emission.0, &self.emission.1, &self.emission.2, &self.emission.3];
         pass(encoder, PassGroup::Emission, &emitted, emission, &[heat]);
         let seed = Some((&pipes.seed, &self.seed_bind));
         pass(encoder, PassGroup::JumpFlood, &[&self.seeds[0]], seed, &[]);

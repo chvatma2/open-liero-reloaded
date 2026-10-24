@@ -31,6 +31,7 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     var reach = 0.0;
     var n = 0.0;
     var albedo = vec3<f32>(0.0);
+    var haze = vec3<f32>(0.0);
     for (var dy = 0; dy < s; dy++) {
         for (var dx = 0; dx < s; dx++) {
             let w = cell * s + vec2<i32>(dx, dy);
@@ -39,7 +40,8 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
             }
             n += 1.0;
             let art = clamped(w * a + vec2<i32>(a / 2), textureDimensions(glow_tex));
-            if textureLoad(solid_tex, clamped(w, textureDimensions(solid_tex)), 0).r != 1u {
+            let open = textureLoad(solid_tex, clamped(w, textureDimensions(solid_tex)), 0).r == 1u;
+            if !open {
                 // Rock and dirt reflect by their colour.
                 solid += 1.0;
                 albedo += to_linear(textureLoad(terrain_tex, clamped(art, textureDimensions(terrain_tex)), 0).rgb);
@@ -58,11 +60,17 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
                 reach = max(reach, info.x);
             }
             // A hot pixel casts its ramp's colour by its glow and its
-            // material's light (issue #39).
+            // material's light (issue #39): hot rock or dirt as a glowing
+            // cell, hot open background as haze, which stops no ray.
             let heat = heat_at(w);
             if heat.colour.a > 0.0 && heat.light > 0.0 {
-                em += to_linear(heat.colour.rgb) * heat.colour.a * heat.light * HEAT_CAST;
-                reach = max(reach, HEAT_REACH);
+                let gives = to_linear(heat.colour.rgb) * heat.colour.a * heat.light * HEAT_CAST;
+                if open {
+                    haze += gives;
+                } else {
+                    em += gives;
+                    reach = max(reach, HEAT_REACH);
+                }
             }
         }
     }
@@ -76,6 +84,7 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
     out.emission = vec4<f32>(em * k + disc, solid * k);
     out.reach = split(reach);
     out.albedo = vec4<f32>(albedo / max(solid, 1.0), 1.0);
+    out.haze = vec4<f32>(haze * k, 0.0);
     return out;
 }
 

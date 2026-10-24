@@ -876,23 +876,23 @@ fn bright() -> LookFrame {
 
 /// Issue #68: steps `r`'s heat (ten steps a frame) until `hottest` (the
 /// hottest pixel's temperature) is under the lava ramp's first key (100,
-/// less a ramp bin), checking each frame against `cold`: no channel of
-/// any texel below its cold value (less 1 for rounding), texel `(x, y)`'s
-/// distance from its cold value never growing (1 of tolerance), and once
-/// nothing glows, exactly the cold frame.
+/// less a ramp bin), checking each frame drawn with `look` against
+/// `cold`: no channel of any texel below its cold value (less 1 for
+/// rounding), texel `(x, y)`'s distance from its cold value never growing
+/// (1 of tolerance), and once nothing glows, exactly the cold frame.
 fn fades_back(
     gpu: &Offscreen,
     r: &mut Renderer,
+    look: &LookFrame,
     cold: &RgbaImage,
     (x, y): (u32, u32),
     hottest: impl Fn(&Offscreen, &Renderer) -> f32,
 ) {
-    let look = bright();
     let distance = |c: Rgba| {
         let k = cold.get(x, y);
         [c.r.abs_diff(k.r), c.g.abs_diff(k.g), c.b.abs_diff(k.b)]
     };
-    let mut img = frame(gpu, r, &look);
+    let mut img = frame(gpu, r, look);
     let start = distance(img.get(x, y));
     assert!(start.iter().any(|&d| d > 40), "it starts hot: {:?} cold {:?}", img.get(x, y), cold.get(x, y));
     let mut last = start;
@@ -920,7 +920,7 @@ fn fades_back(
         }
         assert!(n < 1000, "still hot after {n} frames");
         r.advance_heat(10 * HEAT_STEP_MS);
-        img = frame(gpu, r, &look);
+        img = frame(gpu, r, look);
     }
 }
 
@@ -955,7 +955,9 @@ fn a_cooling_pixel_fades_back_to_its_cold_look() {
     // The back 14 behind the ball's plane: 1000 (1 - 196 / 1600), 877.
     r.deposit_heat(blast(60.5, 45.5, 40.0));
     // World pixel (60, 45), the centre.
-    fades_back(&gpu, &mut r, &cold, (80, 30), |gpu, r| temps(gpu, r).into_iter().fold(0.0, f32::max));
+    fades_back(&gpu, &mut r, &bright(), &cold, (80, 30), |gpu, r| {
+        temps(gpu, r).into_iter().fold(0.0, f32::max)
+    });
 }
 
 /// Issue #68: [`a_cooling_pixel_fades_back_to_its_cold_look`] on a hot
@@ -976,7 +978,38 @@ fn a_cooling_distant_layer_fades_back_too() {
     r.deposit_heat_seen(blast(60.5, 50.5, 40.0), &[HeatView::of(&l)]);
     let layer_hottest =
         |gpu: &Offscreen, r: &Renderer| hottest(&layer_temps(gpu, r.distant_heat_texture(0).unwrap()).1).1;
-    fades_back(&gpu, &mut r, &cold, (2 * (60 - 20), 2 * (50 - 30)), layer_hottest);
+    fades_back(&gpu, &mut r, &bright(), &cold, (2 * (60 - 20), 2 * (50 - 30)), layer_hottest);
+}
+
+/// A hot back wall lets the light through: a lamp left of a hot patch of
+/// back wall that casts light lights the wall beyond the patch, and the
+/// patch, never less than cold, as the patch glows and as it cools
+/// ([`fades_back`]). The glow light used to take a glowing cell for a
+/// stopper: the patch cast a shadow, darkest as it cooled.
+#[test]
+fn a_hot_back_wall_lets_the_light_through() {
+    let Some(gpu) = offscreen() else { return };
+    let map = open_back(Rgba::rgb(110, 90, 70));
+    let mut r = lit(&gpu);
+    let mut m = SurfaceMaps::empty((120, 90));
+    m.back.iter_mut().for_each(|v| *v = 1);
+    r.set_surface(&[material("stone", Some(heat(100, 100, 100)))], Some(&m));
+    r.upload_terrain(&map);
+    let mut look = dark();
+    look.emitters.push(olr_look::FrameLight { colour: [4.0; 3], ..lamp([25.5, 45.5], 1000.0) });
+    let cold = frame(&gpu, &mut r, &look);
+    let beyond = light_at(&gpu, &r, 90, 45);
+    assert!(beyond[0] > 0.1, "the lamp lights the wall beyond: {beyond:?}");
+    // The back 14 behind the ball's plane: 1000 (1 - 196 / 400), 510 at
+    // the centre, a circle of radius sqrt(204) from x 46 to 75.
+    r.deposit_heat(blast(60.5, 45.5, 20.0));
+    frame(&gpu, &mut r, &look);
+    let hot = light_at(&gpu, &r, 90, 45);
+    assert!(
+        (0..3).all(|c| hot[c] >= beyond[c] * 0.99),
+        "no shadow beyond the patch: {hot:?}, cold {beyond:?}"
+    );
+    fades_back(&gpu, &mut r, &look, &cold, (80, 30), |gpu, r| temps(gpu, r).into_iter().fold(0.0, f32::max));
 }
 
 /// Issue #67: a dug pixel loses its heat, whatever its back: the dirt's
