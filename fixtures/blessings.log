@@ -256,3 +256,6 @@
 2026-10-24 bless-render: a hot back wall lets the light through: hot open background is haze to the glow light
   fixtures/render/heat-fresh.png
   fixtures/render/lit-hashes.ron
+2026-10-24 bless-render: #69: beams light the level and heat where they stop; new goldens beam-fresh and beam-cooled
+  fixtures/render/beam-cooled.png
+  fixtures/render/beam-fresh.png

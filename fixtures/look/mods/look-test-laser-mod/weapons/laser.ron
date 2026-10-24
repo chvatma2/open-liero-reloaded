@@ -1,0 +1,11 @@
+(
+    name: "Laser",
+    recharge: 0.08,
+    drain: 20.0,
+    between_shots_s: 0.009,
+    fire: Beam(
+        colour: "#ff0000",
+        worm_damage: 1,
+        length: 999999,
+    ),
+)

@@ -1,0 +1,6 @@
+(
+    name: "Look Test Laser Mod",
+    weapons: [
+        "laser",
+    ],
+)
