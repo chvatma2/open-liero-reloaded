@@ -144,9 +144,12 @@ on screen or offscreen.
   (spec `docs/superpowers/specs/2026-10-19-glowing-light-design.md`): the
   glow light is the only light model (no placed lights, no shadow maps).
   A lit frame's passes, in order (`pass.rs`'s `draw`):
-  - **World lit** (`world_lit.wgsl`): the world pass into two targets, the
-    albedo and the shade target (`SHADE_FORMAT`, `Rgba8Unorm`: self-light,
-    marker, floor kind halved (0 none, 0.5 solid, 1 worm), alpha), each
+  - **World lit** (`world_lit.wgsl`): the world pass into three targets,
+    the albedo, the shade target (`SHADE_FORMAT`, `Rgba8Unorm`: self-light,
+    marker, floor kind halved (0 none, 0.5 solid, 1 worm), alpha) and the
+    heat light (issue #68, `HEAT_LIGHT_FORMAT`, `Rgba8UnormSrgb`: a hot
+    pixel's emitted light, linear, kept as sRGB bytes and blended in
+    linear light; 0 where nothing is hot, a sprite blending it down), each
     item's from its `olr_scene::Shade` (three floats of the instance,
     `INSTANCE_FLOATS` 15; the floor kind 0, 1 or 2 there); the lit terrain's
     self-light is its glow × its group's self-light scale (1 for no group:
@@ -302,7 +305,8 @@ on screen or offscreen.
     droppers and gibs; the user's playtest, 2026-10-19,
     `a_floored_item_never_falls_below_the_solid_floor`), the worm floor for
     `Shade::WORM` (plan 15b, `a_worm_item_never_falls_below_the_worm_floor`).
-    A glowing texel (self-light above 0) shows its own art: other light
+    A glowing texel (self-light above 0: the level's glow maps, a glowing
+    distant layer; never heat, issue #68) shows its own art: other light
     lifts it to 1 at most and no bloom lands on it
     (`a_glowing_pixel_shows_its_art_under_bright_light`); so does any
     texel over an opaque solid's world pixel (the solid map, binding 6;
@@ -456,11 +460,25 @@ on screen or offscreen.
   deposit, or after 5 min of match time (a material that never cools);
   when every box will cool before the next deposit it is zeroed at once.
   No box, no pass (`nothing_hot_runs_no_pass`), and the materials
-  uniform's `on` is 0, so the look reads none. Look: the lit terrain mixes
-  its material's ramp colour (`HeatLook`, a 256-bin `Rgba8Unorm` row per
-  material from `olr_look`'s ramp, alpha the glow) over its art by the
-  glow and takes the glow as self-light (it shows in the dark and in full
-  bright, `a_hot_pixel_shows_its_colour_in_every_view`); the glow light's
+  uniform's `on` is 0, so the look reads none. Look (issue #68): a hot
+  pixel is drawn as it looks cold plus its heat as emitted light. The
+  cold part is all a texel shows without heat (its art lit as before:
+  the light, the cap, the bloom, the soak, the worm halo, its own glow);
+  heat changes none of it and is no self-light. The heat part, `E =
+  to_linear(ramp colour) × g²` (`hot` in `world_lit.wgsl`; `HeatLook`, a
+  256-bin `Rgba8Unorm` row per material from `olr_look`'s ramp, alpha
+  `g` the glow), goes to the world pass's heat light target, which the
+  composite (binding 8) adds to the linear light after the cap, before
+  the grade: before the grade a hot pixel is never darker than cold, and
+  with a ramp whose colour and glow do not fall as it heats (the lava
+  ramp) it moves steadily, channel by channel, back to exactly its cold
+  bytes as it cools (`a_cooling_pixel_fades_back_to_its_cold_look`,
+  `a_cooling_distant_layer_fades_back_too`); in the dark it shows about
+  as before (`a_hot_rim_still_glows_in_the_dark`,
+  `a_hot_pixel_shows_its_colour_in_every_view`). Full bright and light
+  only keep issue #39's look: the ramp colour mixed over the art by the
+  glow, the glow taken as self-light, no heat light (the material
+  editor's full bright); the glow light's
   emission adds its linear colour × glow × the material's `light` ×
   `HEAT_CAST` (reach `HEAT_REACH` 200; `a_hot_pixel_adds_glow_light`).
   Timed as `PassGroup::Heat`. Tests (GPU, `tests/gpu/heat.rs`): those
@@ -506,9 +524,11 @@ on screen or offscreen.
   `heat_behind` the most of any; `has_heat` and `heat_active` any;
   `distant_heat_texture(i)`, `i` in `set_distant`'s list). Look: the lit
   distant pipeline binds the look (group 2) and the layer's heat look
-  (group 3, or `none`); `fs_distant_lit` mixes the ramp colour over its
-  art by the glow and takes the glow as self-light, the larger of it and
-  the layer's own glow (issue #62; cold: the same bytes).
+  (group 3, or `none`); `fs_distant_lit` looks hot as the lit terrain
+  does (`hot`, issue #68: its heat light added over its cold look; full
+  bright and light only, the ramp colour over its art and the larger of
+  the glow and the layer's own glow, issue #62, as self-light; cold: the
+  same bytes).
   It casts no light: the emission reads only the level's heat (a layer's
   placement differs per view, the glow light is one a frame). Tests
   (GPU): `a_near_layer_takes_a_smaller_circle_than_the_plane`,

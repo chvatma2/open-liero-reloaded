@@ -109,9 +109,10 @@ struct Target {
     globals_bind: wgpu::BindGroup,
     /// The upscale pass's uniform, which `bind` and the lit target's read.
     upscale_uniform: wgpu::Buffer,
-    /// With lighting: the second target, each texel's shade (self-light,
-    /// marker), drawn with the albedo.
-    shade: Option<wgpu::TextureView>,
+    /// With lighting: the second and third targets, each texel's shade
+    /// (self-light, marker) and its heat light (issue #68), drawn with the
+    /// albedo.
+    shade: Option<(wgpu::TextureView, wgpu::TextureView)>,
     /// With lighting: the light grid and the lit target.
     lit: Option<look::LitTarget>,
     /// The world pixel of the target's texel (0, 0), as last drawn.

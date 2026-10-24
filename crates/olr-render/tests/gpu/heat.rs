@@ -822,11 +822,161 @@ fn a_hot_pixel_shows_its_colour_in_every_view() {
         let c = hot.get(x, y);
         assert!(c.r >= 240 && c.g >= 200 && c.b >= 160, "{mode:?}: yellow-white at the centre: {c:?}");
         assert_ne!(cold.get(x, y), c);
-        // (30, 78), the skin's second pixel, takes half.
-        let edge = hot.get(x, y - 2);
+        // (30, 74), the dirt skin's last pixel, takes half (issue #68: lit,
+        // the skin's hottest pixels show their art lit by the heat's own
+        // light plus the ramp's, white, no longer the ramp's colour alone).
+        let edge = hot.get(x, y - 10);
         assert!(edge.r > edge.b, "{mode:?}: redder at half the heat: {edge:?}");
         assert_eq!(hot.get(0, 0), cold.get(0, 0), "{mode:?}: far pixels unchanged");
     }
+}
+
+/// Issue #68: in the dark, a Bazooka-sized blast (its radius, at the
+/// hottest amount) leaves its rim yellow-white at its centre and redder at
+/// its edge, as before heat added light over the cold look.
+#[test]
+fn a_hot_rim_still_glows_in_the_dark() {
+    let Some(gpu) = offscreen() else { return };
+    let radius = olr_look::engine::explosion_heat(4.0).unwrap().radius;
+    let mut r = heated(&gpu);
+    let cold = frame(&gpu, &mut r, &dark());
+    r.deposit_heat(HeatDeposit { pos: [40.0, 81.0], radius, amount: 1000.0 });
+    let hot = frame(&gpu, &mut r, &dark());
+    let t = temps(&gpu, &r);
+    let texel = |x: usize| ((x as u32 - 20) * 2, (79 - 30) * 2);
+    // World pixel (40, 79), the face above the centre.
+    assert!(at(&t, 40, 79) > 900.0, "{}", at(&t, 40, 79));
+    let (x, y) = texel(40);
+    let c = hot.get(x, y);
+    assert!(c.r >= 240 && c.g >= 200 && c.b >= 160, "yellow-white at the centre: {c:?}");
+    // Along the face, the first pixel at half the heat or less.
+    let edge = (41..60).find(|&x| at(&t, x, 79) <= 500.0).unwrap();
+    assert!(at(&t, edge, 79) > 300.0, "({edge}, 79) glows: {}", at(&t, edge, 79));
+    let (x, y) = texel(edge);
+    let (c, k) = (hot.get(x, y), cold.get(x, y));
+    assert!(c.r > c.g && c.r > c.b + 100, "({edge}, 79) redder at the edge: {c:?}");
+    assert!(c.r > k.r + 100, "and glowing: {c:?} cold {k:?}");
+}
+
+/// Issue #68: a lava material that casts no light (so no pixel's heat
+/// lights another), on the back.
+fn ember() -> SurfaceMaterial {
+    material("ember", Some(heat(100, 100, 0)))
+}
+
+/// Issue #68: a light that lifts the light above 1 and blooms, the grade
+/// neutral.
+fn bright() -> LookFrame {
+    let mut look = LookFrame::default();
+    look.begin(None, 0.0);
+    look.ambient = [1.6; 3];
+    look.max_light = 2.0;
+    look
+}
+
+/// Issue #68: steps `r`'s heat (ten steps a frame) until `hottest` (the
+/// hottest pixel's temperature) is under the lava ramp's first key (100,
+/// less a ramp bin), checking each frame against `cold`: no channel of
+/// any texel below its cold value (less 1 for rounding), texel `(x, y)`'s
+/// distance from its cold value never growing (1 of tolerance), and once
+/// nothing glows, exactly the cold frame.
+fn fades_back(
+    gpu: &Offscreen,
+    r: &mut Renderer,
+    cold: &RgbaImage,
+    (x, y): (u32, u32),
+    hottest: impl Fn(&Offscreen, &Renderer) -> f32,
+) {
+    let look = bright();
+    let distance = |c: Rgba| {
+        let k = cold.get(x, y);
+        [c.r.abs_diff(k.r), c.g.abs_diff(k.g), c.b.abs_diff(k.b)]
+    };
+    let mut img = frame(gpu, r, &look);
+    let start = distance(img.get(x, y));
+    assert!(start.iter().any(|&d| d > 40), "it starts hot: {:?} cold {:?}", img.get(x, y), cold.get(x, y));
+    let mut last = start;
+    for n in 0.. {
+        for ty in 0..img.height() {
+            for tx in 0..img.width() {
+                let (c, k) = (img.get(tx, ty), cold.get(tx, ty));
+                assert!(
+                    c.r.saturating_add(1) >= k.r
+                        && c.g.saturating_add(1) >= k.g
+                        && c.b.saturating_add(1) >= k.b,
+                    "frame {n}: texel ({tx}, {ty}) {c:?} darker than cold {k:?}"
+                );
+            }
+        }
+        let now = distance(img.get(x, y));
+        for ch in 0..3 {
+            assert!(now[ch] <= last[ch] + 1, "frame {n}: channel {ch} went back: {last:?} then {now:?}");
+        }
+        last = now;
+        if hottest(gpu, r) < 97.0 {
+            assert!(img == *cold, "frame {n}: nothing glows, the cold bytes");
+            assert!(n > 20, "it took {n} frames: a fade, not a snap");
+            return;
+        }
+        assert!(n < 1000, "still hot after {n} frames");
+        r.advance_heat(10 * HEAT_STEP_MS);
+        img = frame(gpu, r, &look);
+    }
+}
+
+/// Issue #68: a 120 × 90 open level whose back is `back` (art scale 2).
+fn open_back(back: Rgba) -> ColorMap {
+    let t = Terrain::from_grid(&MaterialGrid::new(120, 90, Material::Background));
+    let theme =
+        ThemeArt { holes: Vec::new(), green_mask: None, front_tile: solid(4, 4, Rgba::rgb(120, 80, 40)) };
+    ColorMap::new(&t, &solid(240, 180, back), &solid(240, 180, back), 2, theme)
+}
+
+/// Issue #68: a hot pixel is drawn as it looks cold plus its heat as
+/// emitted light. A hot back pixel under a light above 1, with bloom,
+/// never draws darker than cold, moves steadily back to its cold look as
+/// it cools, and once its glow is 0 draws exactly its cold bytes (it
+/// used to turn dark first: capped at 1, no bloom, pulled toward the
+/// ramp's dark red, then snap back).
+#[test]
+fn a_cooling_pixel_fades_back_to_its_cold_look() {
+    let Some(gpu) = offscreen() else { return };
+    let map = open_back(Rgba::rgb(110, 90, 70));
+    let mut r = lit(&gpu);
+    r.set_bloom(true);
+    let mut m = SurfaceMaps::empty((120, 90));
+    m.back.iter_mut().for_each(|v| *v = 1);
+    r.set_surface(&[ember()], Some(&m));
+    r.upload_terrain(&map);
+    let cold = frame(&gpu, &mut r, &bright());
+    r.set_bloom(false);
+    assert_ne!(frame(&gpu, &mut r, &bright()), cold, "the light blooms");
+    r.set_bloom(true);
+    // The back 14 behind the ball's plane: 1000 (1 - 196 / 1600), 877.
+    r.deposit_heat(blast(60.5, 45.5, 40.0));
+    // World pixel (60, 45), the centre.
+    fades_back(&gpu, &mut r, &cold, (80, 30), |gpu, r| temps(gpu, r).into_iter().fold(0.0, f32::max));
+}
+
+/// Issue #68: [`a_cooling_pixel_fades_back_to_its_cold_look`] on a hot
+/// distant layer (issue #41).
+#[test]
+fn a_cooling_distant_layer_fades_back_too() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = lit(&gpu);
+    r.set_bloom(true);
+    r.set_surface(&[ember()], None);
+    r.set_distant_surface(&[1]);
+    r.upload_terrain(&see_through(120, 90, 2, |_, _| false));
+    r.set_distant(&[layer(240, 180, Rgba::rgb(110, 90, 70), (0, 0), 5)]);
+    assert!(r.distant_heat_texture(0).is_some() && r.heat_texture().is_none());
+    let (l, _) = one_to_one();
+    let cold = frame(&gpu, &mut r, &bright());
+    // Depth 5 lies 19.5 back: 1000 (1 - 380.25 / 1600), 762.
+    r.deposit_heat_seen(blast(60.5, 50.5, 40.0), &[HeatView::of(&l)]);
+    let layer_hottest =
+        |gpu: &Offscreen, r: &Renderer| hottest(&layer_temps(gpu, r.distant_heat_texture(0).unwrap()).1).1;
+    fades_back(&gpu, &mut r, &cold, (2 * (60 - 20), 2 * (50 - 30)), layer_hottest);
 }
 
 /// Issue #67: a dug pixel loses its heat, whatever its back: the dirt's

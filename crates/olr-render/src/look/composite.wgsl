@@ -6,8 +6,9 @@
 // (#53: no lit side); a marker shows its albedo. Opaque rock and dirt show
 // at most their art (#1). A distant layer's pixel takes less of the light
 // the farther it is (issue #11). The background round a living worm takes
-// less light, the worm halo (issue #54), by how far back it lies. Linear
-// light, sRGB bytes in and out.
+// less light, the worm halo (issue #54), by how far back it lies. A hot
+// pixel's heat light (issue #68) is added after the cap, before the grade.
+// Linear light, sRGB bytes in and out.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
 @group(0) @binding(1) var albedo_tex: texture_2d<f32>;
@@ -31,18 +32,16 @@ struct WormBoxes {
     boxes: array<vec4<i32>, WORM_BOXES>,
 };
 @group(0) @binding(7) var<uniform> worm_boxes: WormBoxes;
+// The heat's light (issue #68): each texel's emitted light (linear, the
+// world pass's third target; 0 where nothing is hot, and in full bright
+// and light only, which draw issue #39's look of a hot pixel).
+@group(0) @binding(8) var heat_tex: texture_2d<f32>;
 
 @vertex
 fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     let x = f32(i32(vi & 1u) * 4 - 1);
     let y = f32(i32(vi >> 1u) * 4 - 1);
     return vec4<f32>(x, y, 0.0, 1.0);
-}
-
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
 }
 
 fn to_srgb(v: vec3<f32>) -> vec3<f32> {
@@ -216,7 +215,10 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         }
     }
     let l = max(max(lit, vec3<f32>(shade.x)), least);
-    var c = (a * l + bloom_at(g) * glare) * look.grade.x;
+    // A hot pixel (issue #68) is its cold look plus its heat's light: never
+    // darker than cold, back to exactly its cold look once its glow is 0.
+    let heat = textureLoad(heat_tex, t, 0).rgb;
+    var c = (a * l + bloom_at(g) * glare + heat) * look.grade.x;
     c = (c - vec3<f32>(0.5)) * look.grade.y + vec3<f32>(0.5);
     let luma = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
     c = vec3<f32>(luma) + (c - vec3<f32>(luma)) * look.grade.z;

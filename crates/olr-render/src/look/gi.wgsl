@@ -34,12 +34,6 @@ fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     return vec4<f32>(x, y, 0.0, 1.0);
 }
 
-fn to_linear(c: vec3<f32>) -> vec3<f32> {
-    let lo = c / 12.92;
-    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
-    return select(hi, lo, c <= vec3<f32>(0.04045));
-}
-
 fn clamped(t: vec2<i32>, size: vec2<u32>) -> vec2<i32> {
     return clamp(t, vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));
 }

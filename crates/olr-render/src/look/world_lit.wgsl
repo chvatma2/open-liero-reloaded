@@ -1,7 +1,8 @@
 // The world pass with a look (plan 15a Task 9): the same quads as
-// world.wgsl into two targets, the albedo and its shade (self-light,
-// marker), blended alike. The terrain's self-light is its glow, or its
-// heat's (issue #39: group 3, `heat_reader.wgsl`). The terrain (its opaque
+// world.wgsl into three targets, the albedo, its shade (self-light,
+// marker) and its heat's light (issue #68), blended alike. The terrain's
+// self-light is its glow; a hot pixel (issue #39: group 3,
+// `heat_reader.wgsl`) adds its heat's light. The terrain (its opaque
 // backing too) and a distant layer write the background tag in the marker
 // channel (issue #54: `look.distant.z`, 0.25; a marker writes 1, a sprite
 // 0), which the composite's worm halo falls on.
@@ -39,7 +40,36 @@ struct LitOut {
     // self-light, marker (the background tag on the background, #54),
     // floor kind, alpha
     @location(1) shade: vec4<f32>,
+    // the heat's light (issue #68: linear, added after the composite's
+    // cap), alpha
+    @location(2) heat: vec4<f32>,
 };
+
+// How a hot pixel (issue #39) is drawn: its colour, self-light and heat
+// light.
+struct Hot {
+    colour: vec4<f32>,
+    self_light: f32,
+    light: vec3<f32>,
+};
+
+// Pixel colour `c` with self-light `self_light` hot by `ramp` (its
+// material's ramp colour, sRGB, and glow `g`). Lit (issue #68), it is
+// drawn as it looks cold plus its heat as emitted light, `to_linear(ramp
+// colour) g²`, which the composite adds after the cap: the art shows
+// through lit as cold, and a cooling pixel moves steadily back to its
+// cold look. Full bright and light only keep issue #39's look: the ramp's
+// colour over the art by its glow, and that much self-light whatever the
+// darkness.
+fn hot(c: vec4<f32>, self_light: f32, ramp: vec4<f32>) -> Hot {
+    if ramp.a <= 0.0 {
+        return Hot(c, self_light, vec3<f32>(0.0));
+    }
+    if look.mode.x < 0.5 {
+        return Hot(c, self_light, to_linear(ramp.rgb) * ramp.a * ramp.a);
+    }
+    return Hot(vec4<f32>(mix(c.rgb, ramp.rgb, ramp.a), c.a), max(self_light, ramp.a), vec3<f32>(0.0));
+}
 
 @vertex
 fn vs_world(@builtin(vertex_index) vi: u32, q: Quad) -> QuadOut {
@@ -69,6 +99,7 @@ fn fs_sprite_lit(in: QuadOut) -> LitOut {
     out.colour = c;
     // The floor kind (0 none, 1 solid, 2 worm) is stored halved: 0, 0.5, 1.
     out.shade = vec4<f32>(in.shade.x, in.shade.y, in.shade.z * 0.5, c.a);
+    out.heat = vec4<f32>(0.0, 0.0, 0.0, c.a);
     return out;
 }
 
@@ -95,17 +126,11 @@ fn terrain_lit(in: QuadOut, backing: bool) -> LitOut {
         let region = textureLoad(regions_tex, clamp(w, vec2<i32>(0), vec2<i32>(textureDimensions(regions_tex)) - vec2<i32>(1)), 0).r;
         scale = look.groups[v - 1u].light.w * region_flicker(look.groups[v - 1u].flicker, region);
     }
-    var self_light = clamp(glow * scale, 0.0, 1.0);
-    // A hot pixel (issue #39) shows its material's ramp colour over its
-    // art by its glow, and glows that much whatever the darkness.
-    let heat = heat_at(t / s);
-    if heat.colour.a > 0.0 {
-        c = vec4<f32>(mix(c.rgb, heat.colour.rgb, heat.colour.a), c.a);
-        self_light = max(self_light, heat.colour.a);
-    }
+    let h = hot(c, clamp(glow * scale, 0.0, 1.0), heat_at(t / s).colour);
     var out: LitOut;
-    out.colour = c;
-    out.shade = vec4<f32>(self_light, look.distant.z, 0.0, 1.0);
+    out.colour = h.colour;
+    out.shade = vec4<f32>(h.self_light, look.distant.z, 0.0, 1.0);
+    out.heat = vec4<f32>(h.light, h.colour.a);
     return out;
 }
 
@@ -128,14 +153,14 @@ fn fs_terrain_backing_lit(in: QuadOut) -> LitOut {
 // y its group, z its strength), its self-light is strength × mask × the
 // group's self-light scale, with the group's flicker (the layer one
 // region), where it is drawn. Issue #41: hot (group 3 is the layer's own
-// heat, at its world pixel), it shows its ramp colour and glows as the lit
-// terrain does, the larger self-light kept; cold and not glowing, it holds
-// none. The glow light never reads it: a layer casts nothing (its light is
-// the level's, baked at its reference placement).
+// heat, at its world pixel), it looks as the lit terrain does (`hot`);
+// cold and not glowing, it holds none. The glow light never reads it: a
+// layer casts nothing (its light is the level's, baked at its reference
+// placement).
 @fragment
 fn fs_distant_lit(in: QuadOut) -> LitOut {
     let t = texel(in);
-    var c = textureLoad(tex, t, 0);
+    let c = textureLoad(tex, t, 0);
     if c.a <= 0.0 {
         discard;
     }
@@ -147,13 +172,10 @@ fn fs_distant_lit(in: QuadOut) -> LitOut {
         let g = look.groups[v - 1u];
         self_light = clamp(in.shade.z * m * g.light.w * region_flicker(g.flicker, 0u), 0.0, 1.0);
     }
-    let heat = heat_at(t / max(i32(look.level.z), 1));
-    if heat.colour.a > 0.0 {
-        c = vec4<f32>(mix(c.rgb, heat.colour.rgb, heat.colour.a), c.a);
-        self_light = max(self_light, heat.colour.a);
-    }
+    let h = hot(c, self_light, heat_at(t / max(i32(look.level.z), 1)).colour);
     var out: LitOut;
-    out.colour = vec4<f32>(c.rgb, 1.0);
-    out.shade = vec4<f32>(self_light, look.distant.z, 0.0, 1.0 - clamp(in.shade.x, 0.0, 0.99));
+    out.colour = vec4<f32>(h.colour.rgb, 1.0);
+    out.shade = vec4<f32>(h.self_light, look.distant.z, 0.0, 1.0 - clamp(in.shade.x, 0.0, 0.99));
+    out.heat = vec4<f32>(h.light, 1.0);
     return out;
 }

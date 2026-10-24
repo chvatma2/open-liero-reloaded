@@ -51,6 +51,13 @@ struct LookGlobals {
 
 const TAU: f32 = 6.2831853;
 
+// An sRGB colour (0-1) as linear light.
+fn to_linear(c: vec3<f32>) -> vec3<f32> {
+    let lo = c / 12.92;
+    let hi = pow((c + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(hi, lo, c <= vec3<f32>(0.04045));
+}
+
 // A value kept in a 16-bit float target, split in two halves each exact in
 // f16: (floor(v / 64), v - 64 floor(v / 64)). GL draws into no R32Float
 // target (plan 15a Task 19's e2e); Rg16Float it does. A value of 1e8 or

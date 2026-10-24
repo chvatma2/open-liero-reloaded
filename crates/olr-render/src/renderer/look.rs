@@ -47,6 +47,11 @@ const OCCLUDER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Uint;
 /// The format of the world pass's second target: self-light, marker, solid floor, alpha.
 pub(super) const SHADE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
+/// The format of the world pass's third target (issue #68): each texel's
+/// heat light, linear, kept as sRGB bytes (as fine as the picture's in the
+/// dark), blended in linear light.
+pub(super) const HEAT_LIGHT_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8UnormSrgb;
+
 /// The look's textures for one colour map.
 pub(super) struct LookTextures {
     pub(super) glow: wgpu::Texture,
@@ -438,7 +443,7 @@ impl LookState {
             attributes: &attributes,
         };
         let blend = Some(wgpu::BlendState::ALPHA_BLENDING);
-        let targets = [(WORLD_FORMAT, blend), (SHADE_FORMAT, blend)];
+        let targets = [(WORLD_FORMAT, blend), (SHADE_FORMAT, blend), (HEAT_LIGHT_FORMAT, blend)];
         let terrain_pipeline = pipeline(
             device,
             "olr-render terrain lit",
@@ -477,7 +482,7 @@ impl LookState {
             ("vs_world", "fs_distant_lit"),
             &[Some(globals_layout), Some(distant_layout), Some(&layout), Some(&heat.look_layout)],
             &[Some(quads())],
-            &[(WORLD_FORMAT, None), (SHADE_FORMAT, None)],
+            &[(WORLD_FORMAT, None), (SHADE_FORMAT, None), (HEAT_LIGHT_FORMAT, None)],
             wgpu::PrimitiveTopology::TriangleStrip,
         );
         let light_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -551,6 +556,7 @@ impl LookState {
                 entry(5, frag, FLOAT_TEXTURE),
                 entry(6, frag, UINT_TEXTURE),
                 entry(7, frag, super::UNIFORM),
+                entry(8, frag, FLOAT_TEXTURE),
             ],
         });
         let light_source = format!("{}\n{}", common(), include_str!("../look/light.wgsl"));
@@ -640,9 +646,9 @@ impl LookState {
     }
 
     /// The look passes' textures for a world target of `texels` (`grid`
-    /// world pixels): its light grid and lit target, bound to `albedo` and
-    /// `shade` (the world pass's targets) and to the upscale, and its own
-    /// globals.
+    /// world pixels): its light grid and lit target, bound to `albedo`,
+    /// `shade` and `heat` (the world pass's targets) and to the upscale, and
+    /// its own globals.
     #[allow(clippy::too_many_arguments)]
     pub(super) fn target(
         &self,
@@ -650,7 +656,7 @@ impl LookState {
         grid: (u32, u32),
         texels: (u32, u32),
         albedo: &wgpu::TextureView,
-        shade: &wgpu::TextureView,
+        (shade, heat): (&wgpu::TextureView, &wgpu::TextureView),
         (upscale_layout, upscale_uniform, sampler): (&wgpu::BindGroupLayout, &wgpu::Buffer, &wgpu::Sampler),
     ) -> LitTarget {
         let make = |label: &str, size: (u32, u32), format| {
@@ -754,6 +760,7 @@ impl LookState {
                 tex(5, &bloom_views[0]),
                 tex(6, solid),
                 wgpu::BindGroupEntry { binding: 7, resource: worm_boxes.as_entire_binding() },
+                tex(8, heat),
             ],
         });
         let lit = make("olr-render lit", texels, WORLD_FORMAT);

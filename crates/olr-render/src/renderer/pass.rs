@@ -243,11 +243,10 @@ impl Renderer {
             let lit = look.and(self.look.as_ref()).zip(world.shade.as_ref());
             let (terrain, first_sprite) = (plan.terrain, plan.sprites.start);
             let mut pass = match lit {
-                Some((_, shade)) => begin_two(
+                Some((_, (shade, heat))) => begin_lit(
                     &mut encoder,
                     "olr-render world lit",
-                    &world.view,
-                    shade,
+                    [&world.view, shade, heat],
                     stamp(PassGroup::World, (i == 0 && !heat_first).then_some(0), None),
                 ),
                 None => begin(
@@ -505,9 +504,9 @@ impl Renderer {
                 wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.sampler) },
             ],
         });
-        let shade = lit.then(|| {
+        let make = |label, format| {
             let t = self.device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("olr-render shade"),
+                label: Some(label),
                 size: wgpu::Extent3d {
                     width: clamped.0.max(1),
                     height: clamped.1.max(1),
@@ -516,19 +515,25 @@ impl Renderer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: super::look::SHADE_FORMAT,
+                format,
                 usage,
                 view_formats: &[],
             });
             t.create_view(&wgpu::TextureViewDescriptor::default())
+        };
+        let shade = lit.then(|| {
+            (
+                make("olr-render shade", super::look::SHADE_FORMAT),
+                make("olr-render heat light", super::look::HEAT_LIGHT_FORMAT),
+            )
         });
         let lit = match (&self.look, &shade) {
-            (Some(state), Some(shade)) => Some(state.target(
+            (Some(state), Some((shade, heat))) => Some(state.target(
                 &self.device,
                 grid,
                 clamped,
                 &view,
-                shade,
+                (shade, heat),
                 (&self.upscale_layout, &upscale_uniform, &self.sampler),
             )),
             _ => None,
@@ -602,20 +607,44 @@ fn begin_two<'e>(
     shade: &wgpu::TextureView,
     timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
 ) -> wgpu::RenderPass<'e> {
-    let attachment = |view, clear| {
-        Some(wgpu::RenderPassColorAttachment {
+    begin_cleared(
+        encoder,
+        label,
+        &[(view, wgpu::Color::BLACK), (shade, wgpu::Color::TRANSPARENT)],
+        timestamps,
+    )
+}
+
+/// The lit world pass: [`begin_two`] with a third target, the heat light
+/// (issue #68), cleared to zero (nothing hot).
+fn begin_lit<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    label: &str,
+    [view, shade, heat]: [&wgpu::TextureView; 3],
+    timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+) -> wgpu::RenderPass<'e> {
+    let clear = wgpu::Color::TRANSPARENT;
+    begin_cleared(encoder, label, &[(view, wgpu::Color::BLACK), (shade, clear), (heat, clear)], timestamps)
+}
+
+/// A render pass that clears each target to its colour.
+fn begin_cleared<'e>(
+    encoder: &'e mut wgpu::CommandEncoder,
+    label: &str,
+    targets: &[(&wgpu::TextureView, wgpu::Color)],
+    timestamps: Option<wgpu::RenderPassTimestampWrites<'_>>,
+) -> wgpu::RenderPass<'e> {
+    let attachments: [_; 3] = std::array::from_fn(|i| {
+        targets.get(i).map(|&(view, clear)| wgpu::RenderPassColorAttachment {
             view,
             depth_slice: None,
             resolve_target: None,
             ops: wgpu::Operations { load: wgpu::LoadOp::Clear(clear), store: wgpu::StoreOp::Store },
         })
-    };
+    });
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
-        color_attachments: &[
-            attachment(view, wgpu::Color::BLACK),
-            attachment(shade, wgpu::Color::TRANSPARENT),
-        ],
+        color_attachments: &attachments[..targets.len().min(3)],
         depth_stencil_attachment: None,
         timestamp_writes: timestamps,
         occlusion_query_set: None,
