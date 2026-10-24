@@ -246,3 +246,7 @@
   fixtures/render/heat-distant.png
   fixtures/render/heat-fresh.png
   fixtures/render/lit-hashes.ron
+2026-10-24 bless-render: #67: heat stays in its layer
+  fixtures/render/heat-cooled.png
+  fixtures/render/heat-fresh.png
+  fixtures/render/lit-hashes.ron
