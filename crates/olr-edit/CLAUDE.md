@@ -212,7 +212,16 @@ operations.
     box × art scale; a missing or misfit one is `ComposeError::File`),
     `bake_elements_with` (`bake_elements` passes no masks: a masked glow
     bakes uniform; `Baker` decodes and passes them). `stale` covers the
-    four `look/` glow images and `look/clear.png`.
+    four `look/` glow images, the two glow beam maps and `look/clear.png`.
+  - **Glow beams** (`LayerGlow::beam`): a world pixel's beam texel
+    (direction / 2 + 1, spread) comes from the same layer and the same
+    pick (`cell_pick`) as its group, so the maps agree; a Background
+    cell takes the back's, a Rock cell the front's, a Dirt cell
+    `(0, 0)`; the back map follows `groups_back`'s pick. `glow_beams` is
+    `None` when no texel is set. The haze map has no element source: it
+    lives only in `look/haze.png`, set by `look::set_haze_map` (refuses a
+    misfit), re-laid by `level::resize` (new area none) and left alone
+    by the bake.
   - **`glow`**: `paint_mask(mask, at, size, s, shape, value)` (a box mask at
     art resolution, clipped to the box) and `colour_region(art, seed,
     tolerance)` (glow by colour, the user's playtest, 2026-10-19: the

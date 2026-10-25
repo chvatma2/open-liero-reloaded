@@ -51,9 +51,9 @@ use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
     Composition, CompositionSource, Element, ElementGlass, ElementGlow, ElementKind, ElementMaterial,
-    GlassMap, GlowLayers, LevelSource, MAX_GLASS_FROST, SurfaceMaps, check_composition, decode_surface_map,
-    drawn_box, drawn_files, element_box, encode_material, glow_file, image_file, mask_file, raster_files,
-    surface_back_file, surface_file, surface_map_size, write_level_files,
+    GlassMap, GlowBeamMap, GlowLayers, LevelSource, MAX_GLASS_FROST, SurfaceMaps, check_composition,
+    decode_surface_map, drawn_box, drawn_files, element_box, encode_material, glow_file, image_file,
+    mask_file, raster_files, surface_back_file, surface_file, surface_map_size, write_level_files,
 };
 use olr_format::themes::read_theme_files;
 use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
@@ -649,6 +649,8 @@ struct LayerGlow<'a> {
     group: u8,
     /// The mask and the element's box: origin and size in art pixels.
     mask: Option<BoxMask<'a>>,
+    /// Its beam texel (direction / 2 + 1, spread), `(0, 0)` when it has none.
+    beam: [u8; 2],
 }
 
 impl LayerGlow<'_> {
@@ -688,21 +690,29 @@ fn layer_glow<'a>(
         }
         None => None,
     };
-    Some(LayerGlow { strength, group, mask })
+    let beam = g.beam.as_ref().map_or([0, 0], |b| [(b.direction % 360 / 2 + 1) as u8, b.spread.clamp(1, 90)]);
+    Some(LayerGlow { strength, group, mask, beam })
 }
 
 /// A world pixel's glow group: `glowing(ax, ay)`'s group (0 none) at the
 /// centre art pixel `centre`, else at the first art pixel of its block
 /// (`(x0, y0, s)`, row-major) that has one.
 fn cell_group((x0, y0, s): (u32, u32, u32), (cx, cy): (u32, u32), glowing: &dyn Fn(u32, u32) -> u8) -> u8 {
-    match glowing(cx, cy) {
-        0 => (y0..y0 + s)
-            .flat_map(|ay| (x0..x0 + s).map(move |ax| (ax, ay)))
-            .map(|(ax, ay)| glowing(ax, ay))
-            .find(|g| *g > 0)
-            .unwrap_or(0),
-        g => g,
-    }
+    cell_pick((x0, y0, s), (cx, cy), &|ax, ay| Some(glowing(ax, ay)).filter(|g| *g > 0)).unwrap_or(0)
+}
+
+/// What `pick` finds at the centre art pixel of a world pixel, else at the
+/// first art pixel of its block (`(x0, y0, s)`, row-major) where it finds
+/// something: the same order as [`cell_group`], so the beam and the group of
+/// a world pixel come from one element.
+fn cell_pick<T>(
+    (x0, y0, s): (u32, u32, u32),
+    (cx, cy): (u32, u32),
+    pick: &dyn Fn(u32, u32) -> Option<T>,
+) -> Option<T> {
+    pick(cx, cy).or_else(|| {
+        (y0..y0 + s).flat_map(|ay| (x0..x0 + s).map(move |ax| (ax, ay))).find_map(|(ax, ay)| pick(ax, ay))
+    })
 }
 
 /// The painted surface maps of a composition's elements (issue #37), by
@@ -883,6 +893,13 @@ pub fn bake_elements_with(
     } else {
         None
     };
+    // The beam maps: only when some glowing element has a beam; the old maps
+    // are kept outside a region bake.
+    let any_beam = glows.iter().chain(distant.iter().map(|(_, g)| g)).flatten().any(|g| g.beam[0] != 0);
+    let mut beams = any_beam.then(|| match level.glow_beams.take() {
+        Some(b) if b.fits((w, h)) => b,
+        _ => GlowBeamMap::none((w, h)),
+    });
     // The glow and group of the topmost element giving art pixel (ax, ay)'s
     // front, and of the one giving its back (only its own art glows).
     let front_glow = |ax: u32, ay: u32| {
@@ -986,12 +1003,32 @@ pub fn bake_elements_with(
                 } else {
                     group(&|ax, ay| lit(front_glow(ax, ay), ax, ay))
                 };
+                // The beam of the same pick: a beam goes on rock and
+                // background only.
+                if let Some(m) = beams.as_mut() {
+                    let pick = |glow: &dyn Fn(u32, u32) -> Option<[u8; 2]>| {
+                        cell_pick(block, (cx, cy), glow).unwrap_or([0, 0])
+                    };
+                    let lit_beam = |l: Option<&LayerGlow>, ax: u32, ay: u32| {
+                        l.filter(|l| l.at(ax, ay) > 0).map(|l| l.beam)
+                    };
+                    let back = pick(&|ax, ay| lit_beam(back_glow(ax, ay), ax, ay));
+                    let front = match material {
+                        Material::Background => back,
+                        Material::Rock => pick(&|ax, ay| lit_beam(front_glow(ax, ay), ax, ay)),
+                        Material::Dirt => [0, 0],
+                    };
+                    m.back[cell * 2..cell * 2 + 2].copy_from_slice(&back);
+                    m.front[cell * 2..cell * 2 + 2].copy_from_slice(&front);
+                }
             }
         }
     }
     // A glow left with nothing glowing is no glow; so are clear flags.
     level.glow = glow.filter(|g| g.front.iter().chain(&g.back).any(|v| *v > 0));
     level.clear = clear.filter(|c| c.iter().any(|v| *v > 0));
+    level.glow_beams =
+        beams.filter(|b| level.glow.is_some() && b.front.iter().chain(&b.back).any(|v| *v > 0));
     level.glass = glass.filter(|m| m.texels.as_chunks::<4>().0.iter().any(|t| *t != [255, 255, 255, 0]));
     level.surface = surface.filter(|m| !m.is_empty());
 }
@@ -1624,7 +1661,7 @@ pub fn theme_back_tile(content: &Path, theme: &str) -> Result<RgbaImage, Compose
 
 /// The files a bake writes that it can leave stale (and `level.ron`'s
 /// distant layers and their images, `distant/<i>.png`).
-const BAKED: [&str; 12] = [
+const BAKED: [&str; 14] = [
     "material.png",
     "front.png",
     "back.png",
@@ -1633,6 +1670,8 @@ const BAKED: [&str; 12] = [
     "look/glow-back.png",
     "look/groups.png",
     "look/groups-back.png",
+    "look/glow-beam.png",
+    "look/glow-beam-back.png",
     "look/clear.png",
     "look/surface.png",
     "look/surface-back.png",
@@ -1641,7 +1680,8 @@ const BAKED: [&str; 12] = [
 
 /// The baked files of `pack` (a composed level) that differ from what its
 /// composition bakes to, in `BAKED`'s order: `material.png`, `front.png`,
-/// `back.png`, `thumb.png`, then the four `look/` glow images,
+/// `back.png`, `thumb.png`, then the four `look/` glow images, the two
+/// glow beam maps,
 /// `look/clear.png`, the two surface maps and `look/glass.png` (the
 /// background glass design), then `level.ron` when its
 /// distant layers (or their surfaces or glows, issue #62) differ and the

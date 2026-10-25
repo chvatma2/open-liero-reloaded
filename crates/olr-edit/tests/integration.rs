@@ -11,6 +11,7 @@ mod fmt;
 mod folders;
 mod glass;
 mod glow;
+mod glow_beams;
 mod guide;
 mod level;
 mod look;

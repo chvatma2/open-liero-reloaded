@@ -21,7 +21,8 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_format::image_io::{LEVEL_ART, check_size};
 use olr_format::levels::{
-    GlassMap, GlowLayers, LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, SurfaceMaps, level_thumbnail,
+    GlassMap, GlowBeamMap, GlowLayers, LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, SurfaceMaps,
+    level_thumbnail,
 };
 use std::sync::Arc;
 
@@ -547,6 +548,11 @@ pub fn resize(
     // Surface maps too (issue #37); the new area has none.
     level.surface = level.surface.take().filter(|m| m.fits(level.size));
     let mut surface = level.surface.as_ref().map(|_| SurfaceMaps::empty((w, h)));
+    // Glow beams and haze too (per world pixel); the new area has none.
+    level.glow_beams = level.glow_beams.take().filter(|b| b.fits(level.size));
+    let mut beams = level.glow_beams.as_ref().map(|_| GlowBeamMap::none((w, h)));
+    level.haze = level.haze.take().filter(|v| v.len() == level.material.len());
+    let mut haze = level.haze.as_ref().map(|_| vec![0u8; w as usize * h as usize]);
     let (dx, dy) = (i64::from(offset.0), i64::from(offset.1));
     let (old_w, old_h) = level.size;
     // The old pixels that land inside: x in max(0, -dx)..min(old_w, w - dx).
@@ -562,6 +568,14 @@ pub fn resize(
                 let (o, n) = (cell(level, ox, oy), ny as usize * w as usize + nx as usize);
                 m.front[n] = old.front[o];
                 m.back[n] = old.back[o];
+            }
+            if let (Some(b), Some(old)) = (beams.as_mut(), level.glow_beams.as_ref()) {
+                let (o, n) = (cell(level, ox, oy) * 2, (ny as usize * w as usize + nx as usize) * 2);
+                b.front[n..n + 2].copy_from_slice(&old.front[o..o + 2]);
+                b.back[n..n + 2].copy_from_slice(&old.back[o..o + 2]);
+            }
+            if let (Some(hz), Some(old)) = (haze.as_mut(), level.haze.as_ref()) {
+                hz[ny as usize * w as usize + nx as usize] = old[cell(level, ox, oy)];
             }
             if let (Some(g), Some(old)) = (glow.as_mut(), level.glow.as_ref()) {
                 let (o, n) = (cell(level, ox, oy), ny as usize * w as usize + nx as usize);
@@ -598,6 +612,8 @@ pub fn resize(
         o.set_at((shift(at.0, dx), shift(at.1, dy)));
     }
     level.glow = glow;
+    level.glow_beams = beams;
+    level.haze = haze;
     level.clear = clear;
     level.glass = glass;
     level.surface = surface.filter(|m| !m.is_empty());

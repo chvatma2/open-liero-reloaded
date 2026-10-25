@@ -39,6 +39,21 @@ pub fn set_look(level: &mut LevelSource, look: Option<LookSource>) -> Result<(),
     })
 }
 
+/// Sets the level's haze map (`look/haze.png`: one grey value per world
+/// pixel, 0 none to 255 the look's `haze`; `None` removes it). The bake keeps
+/// it: it has no element source. A map that is not of the level's world size
+/// is refused and nothing changes.
+pub fn set_haze_map(level: &mut LevelSource, haze: Option<Vec<u8>>) -> Result<(), EditError> {
+    if let Some(h) = &haze {
+        let want = u64::from(level.size.0) * u64::from(level.size.1);
+        if h.len() as u64 != want {
+            return Err(EditError::Look(format!("a haze map of {} values, not {want}", h.len())));
+        }
+    }
+    level.haze = haze;
+    Ok(())
+}
+
 /// Adds a glow group at the end; returns its index. Its id must be new.
 pub fn add_group(level: &mut LevelSource, group: GlowGroupSource) -> Result<usize, EditError> {
     checked(level, |l| {
