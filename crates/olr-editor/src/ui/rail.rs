@@ -39,6 +39,7 @@ pub(super) fn show(ui: &mut Ui, state: &EditorState, out: &mut Vec<EditorAction>
     // Its label is the brush's, never the element's Glow checkbox's.
     single(ui, state, Tool::Glow, "Glow", out);
     single(ui, state, Tool::Surface, "Surface", out);
+    single(ui, state, Tool::Haze, "Haze", out);
     single(ui, state, Tool::Spawn, "Spawn", out);
 }
 

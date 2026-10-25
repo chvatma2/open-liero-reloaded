@@ -56,6 +56,9 @@ pub(crate) enum Drag {
     /// Surface brush dabs of map value `value` on element `id`'s map
     /// (issue #43); `before` is the map and the element as it began.
     Surface { id: String, before: Box<crate::surface_ops::SurfaceStrokeStart>, last: (i32, i32), value: u8 },
+    /// Haze brush dabs on the level's haze map; `before` is the map as the
+    /// stroke began and `rect` what it touched.
+    Haze { before: Box<crate::look_ops::HazeStrokeStart>, last: (i32, i32), rect: Rect },
 }
 
 fn add(a: i32, b: i64) -> i32 {
@@ -697,6 +700,16 @@ impl EditorState {
                 self.drag = Some(Drag::Surface { id, before: Box::new(before), last: world, value });
                 vec![EditorCommand::Upload(rect)]
             }
+            Tool::Haze => {
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let before = Box::new(doc.haze_stroke_before());
+                let shape = self.dab(world);
+                let strength = self.haze_strength;
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let rect = doc.paint_haze(&shape, strength);
+                self.drag = Some(Drag::Haze { before, last: world, rect });
+                vec![EditorCommand::Upload(rect)]
+            }
             Tool::Spawn => {
                 let cmds = self.edit(|d| d.add_spawn(world));
                 if !cmds.is_empty()
@@ -939,6 +952,24 @@ impl EditorState {
                 self.drag = Some(Drag::Surface { id, before, last: world, value });
                 rect.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
             }
+            Drag::Haze { before, last, rect } => {
+                if world == last {
+                    return Vec::new();
+                }
+                let shapes = self.joins(last, world);
+                let strength = self.haze_strength;
+                let Some(doc) = self.doc.as_mut() else { return Vec::new() };
+                let mut painted = None;
+                for shape in &shapes {
+                    let r = doc.paint_haze(shape, strength);
+                    if r.w > 0 && r.h > 0 {
+                        painted = Some(Rect::union(painted, r));
+                    }
+                }
+                let rect = painted.map_or(rect, |p| Rect::union(Some(rect), p));
+                self.drag = Some(Drag::Haze { before, last: world, rect });
+                painted.map(|r| vec![EditorCommand::Upload(r)]).unwrap_or_default()
+            }
             Drag::Stroke { id, before, last, rect, stroke, begun, paint } => {
                 if world == last {
                     return Vec::new();
@@ -1052,6 +1083,15 @@ impl EditorState {
                 let edits = doc.glow_stroke_edits(&id, before);
                 if edits.is_empty() {
                     return Vec::new();
+                }
+                self.history.push(edits);
+                self.committed(NOTHING)
+            }
+            Drag::Haze { before, rect, .. } => {
+                let edits = doc.haze_stroke_edits(*before, rect);
+                if edits.is_empty() {
+                    // A map the stroke made is gone: the canvas follows.
+                    return vec![EditorCommand::Upload(rect)];
                 }
                 self.history.push(edits);
                 self.committed(NOTHING)
@@ -1217,7 +1257,7 @@ impl EditorState {
                 }
             }
         }
-        if matches!(self.tool, Tool::Brush | Tool::Eraser | Tool::Glow | Tool::Surface)
+        if matches!(self.tool, Tool::Brush | Tool::Eraser | Tool::Glow | Tool::Surface | Tool::Haze)
             && let Some(centre) = self.status.cursor
         {
             // A crater's outline spans its extent (plan 14e R4).

@@ -98,6 +98,15 @@ pub enum Edit {
         before: Option<Arc<Vec<u8>>>,
         after: Option<Arc<Vec<u8>>>,
     },
+    /// The level's haze map over `rect` (world pixels, row-major), before
+    /// and after a Haze brush stroke. `created`: the stroke made the map
+    /// (all 255 before), so undo takes it away again.
+    Haze {
+        rect: olr_edit::compose::Rect,
+        before: Vec<u8>,
+        after: Vec<u8>,
+        created: bool,
+    },
     /// Element `id`'s painted surface map `file` (issue #37; world pixels
     /// of its box), before and after; `None` is no map.
     SurfaceMap {
@@ -224,6 +233,7 @@ impl Edit {
                     && before.surfaces == after.surfaces
             }
             Edit::Look { before, after } => before == after,
+            Edit::Haze { before, after, .. } => before == after,
             Edit::GlowMask { before, after, .. } | Edit::SurfaceMap { before, after, .. } => before == after,
         }
     }
@@ -252,6 +262,7 @@ impl Edit {
             }
             Edit::Whole { before, after } => before.bytes() + after.bytes(),
             Edit::Look { .. } => 2 * std::mem::size_of::<LookSource>(),
+            Edit::Haze { before, after, .. } => before.len() + after.len(),
             // Masks count once each, by address, as grids do (`grids`).
             Edit::GlowMask { .. } | Edit::SurfaceMap { .. } => 0,
         }

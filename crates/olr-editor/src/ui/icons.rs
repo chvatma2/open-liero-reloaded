@@ -21,6 +21,7 @@ pub(super) enum Icon {
     Eyedropper,
     Glow,
     Surface,
+    Haze,
     Spawn,
     Round,
     Square,
@@ -42,6 +43,7 @@ impl Icon {
             Tool::SelectPixels => Icon::SelectPixels,
             Tool::Glow => Icon::Glow,
             Tool::Surface => Icon::Surface,
+            Tool::Haze => Icon::Haze,
         }
     }
 }
@@ -138,6 +140,12 @@ pub(super) fn paint(painter: &Painter, rect: Rect, icon: Icon, stroke: Stroke) {
             line(&[(0.15, 0.5), (0.5, 0.15)]);
             line(&[(0.15, 0.85), (0.85, 0.15)]);
             line(&[(0.5, 0.85), (0.85, 0.5)]);
+        }
+        // Wavy lines of mist.
+        Icon::Haze => {
+            for y in [0.3, 0.5, 0.7] {
+                line(&[(0.1, y), (0.3, y - 0.1), (0.5, y), (0.7, y + 0.1), (0.9, y)]);
+            }
         }
         Icon::Spawn => {
             line(&[(0.3, 0.9), (0.3, 0.1)]);

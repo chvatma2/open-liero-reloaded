@@ -1714,6 +1714,26 @@ impl Document {
                     None => NOTHING,
                 }
             }
+            Edit::Haze { rect, before, after, created } => {
+                let rows = if forward { after } else { before };
+                let (w, h) = self.level.size;
+                if forward && *created && self.level.haze.is_none() {
+                    self.level.haze = Some(vec![255; w as usize * h as usize]);
+                }
+                if let Some(map) = self.level.haze.as_mut() {
+                    let width = rect.w as usize;
+                    for (row, values) in rows.chunks(width.max(1)).enumerate() {
+                        let start = (rect.y as usize + row) * w as usize + rect.x as usize;
+                        if let Some(dst) = map.get_mut(start..start + width) {
+                            dst.copy_from_slice(values);
+                        }
+                    }
+                }
+                if !forward && *created {
+                    self.level.haze = None;
+                }
+                *rect
+            }
             Edit::SurfaceMap { id, file, before, after } => {
                 match if forward { after } else { before } {
                     Some(m) => self.surface_maps.insert(file.clone(), m.clone()),

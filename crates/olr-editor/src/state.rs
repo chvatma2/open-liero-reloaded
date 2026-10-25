@@ -391,6 +391,8 @@ pub enum EditorAction {
     RemoveGroup(String),
     /// The glow brush's strength, percent (0 erases).
     GlowStrength(u8),
+    /// The Haze brush's strength, percent (0 clears the haze).
+    HazeStrength(u8),
     /// The Glow brush lights the connected pixels alike in colour.
     GlowByColour(bool),
     /// Select pixels picks the connected pixels alike in colour (Ctrl adds).
@@ -562,6 +564,8 @@ pub struct EditorState {
     pub(crate) select_by_colour: bool,
     /// The glow brush's strength, percent.
     pub(crate) glow_strength: u8,
+    /// The Haze brush's strength, percent.
+    pub(crate) haze_strength: u8,
     /// What the canvas shows (plan 15a).
     pub(crate) view_mode: olr_look::ViewMode,
     /// The look preview's clock, ms, and whether it runs.
@@ -632,6 +636,7 @@ impl EditorState {
             glow_by_colour: false,
             select_by_colour: false,
             glow_strength: 100,
+            haze_strength: 100,
             view_mode: olr_look::ViewMode::Lit,
             clock_ms: 0.0,
             clock_running: false,
@@ -703,6 +708,11 @@ impl EditorState {
     /// The glow brush's strength, percent.
     pub fn glow_strength(&self) -> u8 {
         self.glow_strength
+    }
+
+    /// The Haze brush's strength, percent.
+    pub fn haze_strength(&self) -> u8 {
+        self.haze_strength
     }
 
     /// Whether the Glow brush, and Select pixels, pick by colour.
@@ -894,6 +904,7 @@ impl EditorState {
                 | EditorAction::SetViewMode(_)
                 | EditorAction::Clock(_)
                 | EditorAction::GlowStrength(_)
+                | EditorAction::HazeStrength(_)
                 | EditorAction::GlowByColour(_)
                 | EditorAction::SelectByColour(_)
                 | EditorAction::Tab(_)
@@ -1174,6 +1185,10 @@ impl EditorState {
             }
             EditorAction::GlowStrength(v) => {
                 self.glow_strength = v.min(100);
+                Vec::new()
+            }
+            EditorAction::HazeStrength(v) => {
+                self.haze_strength = v.min(100);
                 Vec::new()
             }
             EditorAction::GlowByColour(on) => {

@@ -434,7 +434,7 @@ fn theme(h: &mut Harness<'static, App>) {
 }
 
 /// The session bar's and the rail's controls: always shown.
-const BARS: [&str; 13] = [
+const BARS: [&str; 14] = [
     labels::FILE,
     labels::UNDO,
     labels::REDO,
@@ -447,6 +447,7 @@ const BARS: [&str; 13] = [
     labels::PIXELS,
     labels::TOOL_GLOW,
     labels::TOOL_SURFACE,
+    labels::TOOL_HAZE,
     "Spawn",
 ];
 
@@ -468,6 +469,7 @@ fn options_of(tool: Tool) -> Vec<&'static str> {
         Tool::SelectPixels => &[labels::BY_COLOUR, labels::GLOW_SELECTION, labels::GLOW_STRENGTH_BRUSH][..],
         Tool::Glow => &[labels::BY_COLOUR, labels::GLOW_STRENGTH_BRUSH][..],
         Tool::Surface => &[labels::BRUSH_MATERIAL][..],
+        Tool::Haze => &[labels::HAZE_STRENGTH_BRUSH][..],
         Tool::Select | Tool::Spawn | Tool::Eyedropper => &[][..],
     });
     v
@@ -1659,4 +1661,117 @@ fn a_group_casts_filtered() {
     h.run();
     let want = olr_format::Colour(olr_data::image::Rgba::rgb(0xc8, 0xd4, 0xf0));
     assert_eq!(colour(&h), GlowColourSource::Filtered(want));
+}
+
+/// The directional-glow design: "Directional" on a glowing rock or
+/// background layer gives it a beam (0 degrees, spread 35) in one step;
+/// Direction and Spread change it, a step each, and the bake carries it. A
+/// dirt layer has no such switch, only a hint.
+#[test]
+fn make_a_glow_directional() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.set_size(egui::vec2(1280.0, 1800.0));
+    let beam = |h: &Harness<'static, App>, id: &str| {
+        let d = h.state().state.document().unwrap();
+        d.items()[d.index_of(id).unwrap()].element.glow.as_ref().and_then(|g| g.beam)
+    };
+    h.get_by_label("Tunnels").click();
+    h.run();
+    h.get_by_label(labels::GLOW).click();
+    h.run();
+    assert!(h.query_by_label(labels::DIRECTION).is_none(), "not before Directional");
+    h.get_by_label(labels::DIRECTIONAL).click();
+    h.run();
+    let at = |direction, spread| Some(olr_format::levels::GlowBeam { direction, spread });
+    assert_eq!(beam(&h, "tunnels"), at(0, 35));
+    type_number(&mut h, labels::DIRECTION, "166");
+    assert_eq!(beam(&h, "tunnels"), at(166, 35));
+    type_number(&mut h, labels::SPREAD, "15");
+    assert_eq!(beam(&h, "tunnels"), at(166, 15));
+    let d = h.state().state.document().unwrap();
+    let maps = d.level().glow_beams.as_ref().expect("the bake has beams");
+    let spreads = |l: &[u8]| l.chunks(2).filter(|t| t[1] == 15).count();
+    assert!(spreads(&maps.front) + spreads(&maps.back) > 0, "beam texels");
+    // A step each: undo takes the spread, then the direction, then the beam.
+    for want in [at(166, 35), at(0, 35), None] {
+        h.get_by_label(labels::UNDO).click();
+        h.run();
+        assert_eq!(beam(&h, "tunnels"), want);
+    }
+    assert!(
+        h.state()
+            .state
+            .document()
+            .unwrap()
+            .items()
+            .iter()
+            .any(|i| i.element.id == "tunnels" && i.element.glow.is_some()),
+        "the glow stays"
+    );
+    // Dirt: no switch, the hint.
+    h.get_by_label("Gradient").click();
+    h.run();
+    h.get_by_label(labels::GLOW).click();
+    h.run();
+    assert!(h.query_by_label(labels::DIRECTIONAL).is_none());
+    assert!(h.query_by_label(labels::DIRECTIONAL_DIRT_HINT).is_some());
+}
+
+/// The level's Haze % sets `look.haze`.
+#[test]
+fn set_the_haze() {
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.set_size(egui::vec2(1280.0, 1800.0));
+    act(&mut h, A::Select(Selection::None));
+    h.get_by_label(labels::ADD_LOOK).click();
+    h.run();
+    type_number(&mut h, labels::HAZE, "40");
+    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    assert_eq!(look.haze, 40);
+    h.get_by_label(labels::UNDO).click();
+    h.run();
+    let look = h.state().state.document().unwrap().level().look.clone().unwrap();
+    assert_eq!(look.haze, 0);
+}
+
+/// The Haze brush: the first stroke makes a map of 255, then writes
+/// `round(strength * 255 / 100)` under it; one step a stroke, none when
+/// nothing changed.
+#[test]
+fn paint_haze() {
+    use olr_editor::tools::PointerKind::{Down, Move, Up};
+    let Some(root) = content() else { return };
+    let (_tmp, mut s) = editor(&root);
+    let at = |world, kind| A::Pointer { kind, world, shift: false, toggle: false };
+    let stroke = |s: &mut EditorState| {
+        run(s, at((100, 100), Down));
+        run(s, at((101, 100), Move));
+        run(s, at((101, 100), Up));
+    };
+    let haze = |s: &EditorState| s.document().unwrap().level().haze.clone();
+    run(&mut s, A::Tool(Tool::Haze));
+    // 100 % over a new map changes nothing: no map, no step.
+    stroke(&mut s);
+    assert_eq!(haze(&s), None);
+    assert!(!s.can_undo());
+    run(&mut s, A::HazeStrength(50));
+    stroke(&mut s);
+    let map = haze(&s).expect("the stroke made a map");
+    let (w, h) = s.document().unwrap().level().size;
+    assert_eq!(map.len(), (w * h) as usize);
+    let i = (100 * w + 100) as usize;
+    assert_eq!((map[i], map[0], map[map.len() - 1]), (128, 255, 255));
+    // The same stroke again changes nothing: still one step.
+    stroke(&mut s);
+    run(&mut s, A::Undo);
+    assert_eq!(haze(&s), None, "undo restores the map: there was none");
+    assert!(!s.can_undo());
+    run(&mut s, A::Redo);
+    assert_eq!(haze(&s).unwrap()[i], 128);
+    // On a map, a stroke is a step that undo takes back to the 128.
+    run(&mut s, A::HazeStrength(0));
+    stroke(&mut s);
+    assert_eq!(haze(&s).unwrap()[i], 0);
+    run(&mut s, A::Undo);
+    assert_eq!(haze(&s).unwrap()[i], 128);
 }

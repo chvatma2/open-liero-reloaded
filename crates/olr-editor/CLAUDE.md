@@ -197,10 +197,22 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
     with any group and glow the stroke made, or none when the mask did not
     change; an element without a glow gets one in a new group, dark but
     for what is painted; a glow without a mask starts whole) at the
-    brush's strength (`GlowStrength`, 0 erases). `Tool::ALL` (13 with
-    issue #43's Surface brush, U) is every shortcut; the rail groups them (issue #8). Plan 15c removed
+    brush's strength (`GlowStrength`, 0 erases). `Tool::ALL` (14 with
+    issue #43's Surface brush, U, and the Haze brush, F) is every shortcut; the rail groups them (issue #8). Plan 15c removed
     the Light tool (K) and light objects: glowing pixels are a level's
     light (`the_editor_has_no_light_tool`).
+  - **Directional glow and haze** (directional-glow design): an element
+    glow's "Directional" (rock or background, not distant; a dirt layer
+    shows `DIRECTIONAL_DIRT_HINT`; off while its group's reach is
+    unlimited) sets `ElementGlow::beam` (0 degrees, spread 35), then
+    "Direction °" (0-359) and "Spread °" (1-90), a step each. The level's
+    "Haze %" (`LookSource::haze`: 50 the factory's look, 100 twice) sits
+    under the occlusion. The Haze brush (F; `haze_stroke_before`,
+    `paint_haze`, `haze_stroke_edits`; strength `HazeStrength`, 0-100 maps
+    to `round(s * 255 / 100)`) paints `LevelSource::haze`; the first stroke
+    makes a map of 255 (ruling T6a). `Edit::Haze` holds the touched
+    rectangle's bytes (and `created`, so undo drops the map): one step a
+    stroke, none when nothing changed.
   - **Glow on selected pixels** (the user's playtest, 2026-10-19): Select
     pixels' "By colour" (`SelectByColour`) picks the connected pixels of
     the selected element alike in colour (`colour_pixels`, the tool's

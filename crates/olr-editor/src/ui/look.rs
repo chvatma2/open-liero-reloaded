@@ -9,7 +9,7 @@ use egui::Ui;
 use olr_data::image::Rgba;
 use olr_edit::element::Property;
 use olr_format::Colour;
-use olr_format::levels::{Element, ElementGlow, ElementKind};
+use olr_format::levels::{Element, ElementGlow, ElementKind, ElementMaterial, GlowBeam};
 use olr_format::look::{
     AnimationSource, DEFAULT_OCCLUSION_REACH, GlowColourSource, GlowGroupSource, KeySource, LookSource,
     OcclusionSource, PulseShape, ReachSource, SolidFloorSource,
@@ -201,6 +201,9 @@ pub(super) fn level_look(
         set(out, &|l| l.ambient.colour = Some(c));
     }
     occlusion(ui, data, look.occlusion, &mut |o| set(out, &|l| l.occlusion = o));
+    if let Some(v) = number(ui, data, "look/haze", labels::HAZE, look.haze.into(), 0..=100) {
+        set(out, &|l| l.haze = v as u8);
+    }
     ui.separator();
     ui.label(egui::RichText::new("Glow groups").strong());
     for group in &look.glow_groups {
@@ -414,6 +417,7 @@ pub(super) fn element_glow(
         if g.mask {
             ui.weak("painted with the Glow brush (H)");
         }
+        directional(ui, data, doc, e, g, out);
     }
     if ui
         .add_enabled(!e.locked, egui::Button::new(labels::MAKE_PARTS_GLOW))
@@ -421,6 +425,60 @@ pub(super) fn element_glow(
         .clicked()
     {
         out.extend([EditorAction::Tool(Tool::Glow), EditorAction::GlowByColour(true)]);
+    }
+}
+
+/// An element glow's Directional switch, and its Direction and Spread
+/// when on (the directional-glow design). Rock and background layers
+/// only, not distant ones; a dirt layer gets a hint instead. A group of
+/// unlimited reach cannot take a beam, so the switch is off then.
+fn directional(
+    ui: &mut Ui,
+    data: &mut EditorData,
+    doc: &crate::document::Document,
+    e: &Element,
+    g: &ElementGlow,
+    out: &mut Vec<EditorAction>,
+) {
+    let material = match &e.kind {
+        ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => *material,
+        ElementKind::Raster => return,
+    };
+    if e.is_distant() {
+        return;
+    }
+    if material == ElementMaterial::Dirt {
+        ui.weak(labels::DIRECTIONAL_DIRT_HINT);
+        return;
+    }
+    let unlimited = doc
+        .level()
+        .look
+        .iter()
+        .flat_map(|l| &l.glow_groups)
+        .any(|x| x.id == g.group && x.reach == ReachSource::Unlimited);
+    let set_glow =
+        |out: &mut Vec<EditorAction>, glow| out.push(EditorAction::SetGlow { id: e.id.clone(), glow });
+    let mut on = g.beam.is_some();
+    let r = ui.add_enabled(on || !unlimited, egui::Checkbox::new(&mut on, labels::DIRECTIONAL));
+    let r = if unlimited {
+        r.on_disabled_hover_text("the glow group's reach is unlimited: give it a reach in pixels first")
+    } else {
+        r.on_hover_text("its pixels cast a cone of light instead of a halo")
+    };
+    if r.changed() {
+        let beam = on.then_some(GlowBeam { direction: 0, spread: 35 });
+        set_glow(out, Some(ElementGlow { beam, ..g.clone() }));
+    }
+    let Some(b) = g.beam else { return };
+    let key = format!("{}/glow-beam", e.id);
+    if let Some(v) =
+        number(ui, data, &format!("{key}/direction"), labels::DIRECTION, b.direction.into(), 0..=359)
+    {
+        set_glow(out, Some(ElementGlow { beam: Some(GlowBeam { direction: v as u16, ..b }), ..g.clone() }));
+    }
+    if let Some(v) = number(ui, data, &format!("{key}/spread"), labels::SPREAD, b.spread.into(), 1..=90) {
+        set_glow(out, Some(ElementGlow { beam: Some(GlowBeam { spread: v as u8, ..b }), ..g.clone() }));
     }
 }
 

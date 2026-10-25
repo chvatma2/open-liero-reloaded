@@ -504,3 +504,68 @@ impl Document {
         edits
     }
 }
+
+/// What a Haze brush stroke starts from: the level's haze map as it was.
+#[derive(Clone, Debug)]
+pub struct HazeStrokeStart {
+    pub map: Option<Vec<u8>>,
+}
+
+impl Document {
+    /// What a Haze brush stroke starts from.
+    pub fn haze_stroke_before(&self) -> HazeStrokeStart {
+        HazeStrokeStart { map: self.level.haze.clone() }
+    }
+
+    /// Paints the level's haze map under world `shape` at `strength`
+    /// percent (`round(strength * 255 / 100)`; 0 clears), within a stroke
+    /// (no step: `haze_stroke_edits` records it). A level without a haze
+    /// map gets one of 255 first (ruling T6a). Returns the rectangle
+    /// painted.
+    pub fn paint_haze(&mut self, shape: &Shape, strength: u8) -> Rect {
+        let size = self.level.size;
+        let value = ((u32::from(strength.min(100)) * 255 + 50) / 100) as u8;
+        let n = size.0 as usize * size.1 as usize;
+        let map = self.level.haze.get_or_insert_with(|| vec![255; n]);
+        if map.len() != n {
+            *map = vec![255; n];
+        }
+        olr_edit::glow::paint_mask(map, (0, 0), size, 1, shape, value);
+        shape_bounds(shape, size).unwrap_or(NOTHING)
+    }
+
+    /// The step a Haze brush stroke made, from what it started from and
+    /// the rectangle it touched: the touched bytes before and after. Empty
+    /// when nothing changed (a map the stroke made is taken back).
+    pub fn haze_stroke_edits(&mut self, before: HazeStrokeStart, touched: Rect) -> Vec<Edit> {
+        let (w, h) = self.level.size;
+        let n = w as usize * h as usize;
+        let fit = |m: &Option<Vec<u8>>| m.as_ref().filter(|m| m.len() == n).cloned();
+        let was = fit(&before.map);
+        let Some(now) = fit(&self.level.haze) else { return Vec::new() };
+        let rect = Rect {
+            x: touched.x.min(w),
+            y: touched.y.min(h),
+            w: touched.w.min(w.saturating_sub(touched.x)),
+            h: touched.h.min(h.saturating_sub(touched.y)),
+        };
+        let rows = |m: Option<&Vec<u8>>| -> Vec<u8> {
+            let mut out = Vec::with_capacity(rect.w as usize * rect.h as usize);
+            for y in rect.y..rect.y + rect.h {
+                let start = y as usize * w as usize + rect.x as usize;
+                match m {
+                    Some(m) => out.extend_from_slice(&m[start..start + rect.w as usize]),
+                    None => out.resize(out.len() + rect.w as usize, 255),
+                }
+            }
+            out
+        };
+        let (b, a) = (rows(was.as_ref()), rows(Some(&now)));
+        if b == a || rect.w == 0 || rect.h == 0 {
+            // Nothing changed: the map stays as it began.
+            self.level.haze = before.map;
+            return Vec::new();
+        }
+        vec![Edit::Haze { rect, before: b, after: a, created: was.is_none() }]
+    }
+}

@@ -603,6 +603,18 @@ fn options(ui: &mut Ui, state: &EditorState, data: &mut EditorData, out: &mut Ve
             }
         }
         Tool::Surface => surface_options(ui, state, out),
+        Tool::Haze => {
+            if let Some(v) = number(
+                ui,
+                data,
+                "haze-strength",
+                labels::HAZE_STRENGTH_BRUSH,
+                state.haze_strength().into(),
+                0..=100,
+            ) {
+                out.push(EditorAction::HazeStrength(v as u8));
+            }
+        }
         Tool::Select | Tool::Spawn | Tool::Eyedropper => {}
     }
 }

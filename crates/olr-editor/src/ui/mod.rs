@@ -176,6 +176,18 @@ pub mod labels {
     /// A surface picker's "no material".
     pub const NO_SURFACE: &str = "None";
     pub const TOOL_SURFACE: &str = "Surface brush";
+    // Directional glow and haze (the directional-glow design).
+    pub const DIRECTIONAL: &str = "Directional";
+    pub const DIRECTION: &str = "Direction °";
+    pub const SPREAD: &str = "Spread °";
+    /// The lighting's haze: 50 is the factory's look, 100 twice as hazy.
+    pub const HAZE: &str = "Haze %";
+    pub const TOOL_HAZE: &str = "Haze brush";
+    /// The Haze brush's strength: the haze map's value, percent.
+    pub const HAZE_STRENGTH_BRUSH: &str = "Haze strength %";
+    /// Shown instead of Directional on a dirt layer.
+    pub const DIRECTIONAL_DIRT_HINT: &str =
+        "A dirt layer cannot glow in a direction: dirt digs away. Use a rock or background layer.";
     /// The Surface brush's material picker, its "the element's default",
     /// and its front and back switch.
     pub const BRUSH_MATERIAL: &str = "Material";
