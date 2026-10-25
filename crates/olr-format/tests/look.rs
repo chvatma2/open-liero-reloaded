@@ -1227,3 +1227,35 @@ fn too_many_glow_beams() {
     assert_eq!(back.glow_beams, None);
     assert!(warnings.iter().any(|w| w.contains("plays without its glow beams")), "{warnings:?}");
 }
+
+/// Ruling T5a: a backdrop patch's beam is baked into the back map only (the
+/// composite map holds rock's), so 40 background patches, as the bake leaves
+/// them (both groups and glows set), are 40 beams, not 80, and pass `check`.
+#[test]
+fn background_glow_beams_count_once() {
+    let patches = 40;
+    let w = (patches * 2) as u32;
+    let mut src = level(None);
+    src.size = (w, 1);
+    src.art_scale = 1;
+    src.material = vec![Material::Background; w as usize];
+    src.front = RgbaImage::new(w, 1);
+    src.back = RgbaImage::new(w, 1);
+    let mut g = GlowLayers::empty((w, 1), (w, 1));
+    let mut m = GlowBeamMap::none((w, 1));
+    for p in 0..patches {
+        g.front[p * 2] = 255;
+        g.back[p * 2] = 255;
+        g.groups[p * 2] = 1;
+        g.groups_back[p * 2] = 1;
+        m.back[p * 4] = 1;
+        m.back[p * 4 + 1] = 15;
+    }
+    src.look = Some(beam_look("Pixels(40)"));
+    src.glow = Some(g);
+    src.glow_beams = Some(m);
+    assert_eq!(err(&src), "");
+    let mut fs = MemFs::new();
+    write_level_files(&mut fs, &src).unwrap();
+    assert_eq!(read_level_files(&fs).unwrap().glow_beams, src.glow_beams);
+}

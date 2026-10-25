@@ -154,7 +154,9 @@ fn the_backdrop_beam_follows_the_back_glow() {
     let b = l.glow_beams.as_ref().unwrap();
     for x in 0..4 {
         assert_eq!(texel(b, true, x), [21, 15]);
-        assert_eq!(texel(b, false, x), [21, 15], "a background cell takes the back's");
+        // Ruling T5a: the composite's map holds beams on rock only, so a
+        // backdrop's beam is baked (and counted) once.
+        assert_eq!(texel(b, false, x), [0, 0], "a background cell has no composite beam");
     }
 }
 

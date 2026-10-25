@@ -1003,8 +1003,9 @@ pub fn bake_elements_with(
                 } else {
                     group(&|ax, ay| lit(front_glow(ax, ay), ax, ay))
                 };
-                // The beam of the same pick: a beam goes on rock and
-                // background only.
+                // The beam of the same pick. The composite (front) map holds
+                // beams on rock only: a backdrop's beam lives in the back map
+                // alone, so it is drawn and counted once (ruling T5a).
                 if let Some(m) = beams.as_mut() {
                     let pick = |glow: &dyn Fn(u32, u32) -> Option<[u8; 2]>| {
                         cell_pick(block, (cx, cy), glow).unwrap_or([0, 0])
@@ -1014,9 +1015,8 @@ pub fn bake_elements_with(
                     };
                     let back = pick(&|ax, ay| lit_beam(back_glow(ax, ay), ax, ay));
                     let front = match material {
-                        Material::Background => back,
                         Material::Rock => pick(&|ax, ay| lit_beam(front_glow(ax, ay), ax, ay)),
-                        Material::Dirt => [0, 0],
+                        Material::Background | Material::Dirt => [0, 0],
                     };
                     m.back[cell * 2..cell * 2 + 2].copy_from_slice(&back);
                     m.front[cell * 2..cell * 2 + 2].copy_from_slice(&front);

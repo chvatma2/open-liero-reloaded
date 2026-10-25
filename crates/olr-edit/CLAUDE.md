@@ -215,9 +215,10 @@ operations.
     four `look/` glow images, the two glow beam maps and `look/clear.png`.
   - **Glow beams** (`LayerGlow::beam`): a world pixel's beam texel
     (direction / 2 + 1, spread) comes from the same layer and the same
-    pick (`cell_pick`) as its group, so the maps agree; a Background
-    cell takes the back's, a Rock cell the front's, a Dirt cell
-    `(0, 0)`; the back map follows `groups_back`'s pick. `glow_beams` is
+    pick (`cell_pick`) as its group, so the maps agree; the front
+    (composite) map holds beams on Rock cells only, Background and Dirt
+    cells get `(0, 0)` there, so a backdrop's beam is baked and counted
+    once; the back map follows `groups_back`'s pick. `glow_beams` is
     `None` when no texel is set. The haze map has no element source: it
     lives only in `look/haze.png`, set by `look::set_haze_map` (refuses a
     misfit), re-laid by `level::resize` (new area none) and left alone
