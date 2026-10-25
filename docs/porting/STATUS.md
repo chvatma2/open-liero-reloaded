@@ -6254,9 +6254,10 @@ picked frames:
   already at 1000, its top intensity.
 - **Haze is rescaled: 50 is a beam's own light in the air, 100 twice
   it.** The renderer's air term is `beam × haze / 50 × haze map`. The
-  factory's haze is 50, and its frames are byte for byte the ones judged
-  at the old 100. Before the rescale, the old 100 (the top) still gave
-  only 95 % of the picked truck beam.
+  factory's haze is 50, and its frames are as rendered at the old 100
+  before the rescale (compared byte for byte then; the judged frames
+  were later lost to a reboot). Before the rescale, the old 100 (the
+  top) still gave only 95 % of the picked truck beam.
 - **Office beams need the haze.** The surface term alone (beam light ×
   art) is faint on the offices' dark teal walls: 7 to 14 levels below
   the picked look. With the haze, the beams match within about 1 level.

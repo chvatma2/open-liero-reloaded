@@ -227,7 +227,8 @@ pub(crate) fn look_cmd(a: &LookArgs) -> anyhow::Result<bool> {
 /// `level haze paint|clear`: the per-pixel scale of the look's `haze`.
 #[derive(Subcommand)]
 pub(crate) enum HazeCommand {
-    /// Paint the haze map over a shape: 0 none to 100 the look's haze. A new map starts at 100 everywhere
+    /// Paint the haze map over a shape: 0 none to 100 the look's haze. A
+    /// new map starts at 100 everywhere.
     Paint {
         pack: PathBuf,
         #[command(flatten)]

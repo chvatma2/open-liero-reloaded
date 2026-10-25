@@ -221,7 +221,9 @@ operations.
     once; the back map follows `groups_back`'s pick. `glow_beams` is
     `None` when no texel is set. The haze map has no element source: it
     lives only in `look/haze.png`, set by `look::set_haze_map` (refuses a
-    misfit), re-laid by `level::resize` (new area none) and left alone
+    misfit), re-laid by `level::resize` (the new area 255, the level's whole
+    haze: ruling T6c, as a new map's in `olr-cli level haze paint`, T6a;
+    `a_grown_levels_haze_map_is_full`) and left alone
     by the bake.
   - **`glow`**: `paint_mask(mask, at, size, s, shape, value)` (a box mask at
     art resolution, clipped to the box) and `colour_region(art, seed,

@@ -212,7 +212,20 @@ fn resize_relays_beams_and_haze() {
     let h = l.haze.as_ref().unwrap();
     assert_eq!(h.len(), 24);
     assert_eq!(h[2 * 6 + 2], 200);
-    assert_eq!(h.iter().filter(|v| **v != 0).count(), 1);
+    // The old 7 zeros relaid; the 16 new pixels full (ruling T6c).
+    assert_eq!(h.iter().filter(|v| **v == 0).count(), 7);
+    assert_eq!(h.iter().filter(|v| **v == 255).count(), 16);
+}
+
+/// Ruling T6c: a grown level's new area of a haze map takes the level's
+/// whole haze (255), as a new map does (T6a); the old pixels are relaid.
+#[test]
+fn a_grown_levels_haze_map_is_full() {
+    let mut p = pack(2, 1, 1);
+    let Source::Level(l) = &mut p.source else { panic!() };
+    l.haze = Some(vec![0, 40]);
+    olr_edit::level::resize(l, (3, 2), (1, 0), Material::Background, &Paint::Colour(RED)).unwrap();
+    assert_eq!(l.haze.as_deref(), Some(&[255, 0, 40, 255, 255, 255][..]));
 }
 
 #[test]

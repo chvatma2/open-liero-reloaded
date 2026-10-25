@@ -209,7 +209,8 @@ Remade OLX content is named "<Old name> Reloaded".
     - `pcs-left`: the PC at x 498, glow 15, `--glow-beam 180,35`.
 
     The glow of 15 makes their beams 0.12 of their colour, the strength
-    the maintainer picked. Their screens are duller than at 100, which
+    the maintainer picked: `BEAM_SCALE` 0.08 × the group's cast (10 at
+    intensity 1000) × glow 0.15 = 0.12. Their screens are duller than at 100, which
     the maintainer accepted. The truck's headlights (`rock` 42-44 × 410-414,
     yellow) are `headlights`, group `headlights` (`Tint("#fff0c8")`,
     1000, reach 120), glow 100, `--glow-beam 166,15`. The look's haze is

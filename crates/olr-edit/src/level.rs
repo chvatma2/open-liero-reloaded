@@ -548,11 +548,12 @@ pub fn resize(
     // Surface maps too (issue #37); the new area has none.
     level.surface = level.surface.take().filter(|m| m.fits(level.size));
     let mut surface = level.surface.as_ref().map(|_| SurfaceMaps::empty((w, h)));
-    // Glow beams and haze too (per world pixel); the new area has none.
+    // Glow beams and haze too (per world pixel); the new area has no beam
+    // and the level's whole haze (255, ruling T6c, as a new map: T6a).
     level.glow_beams = level.glow_beams.take().filter(|b| b.fits(level.size));
     let mut beams = level.glow_beams.as_ref().map(|_| GlowBeamMap::none((w, h)));
     level.haze = level.haze.take().filter(|v| v.len() == level.material.len());
-    let mut haze = level.haze.as_ref().map(|_| vec![0u8; w as usize * h as usize]);
+    let mut haze = level.haze.as_ref().map(|_| vec![255u8; w as usize * h as usize]);
     let (dx, dy) = (i64::from(offset.0), i64::from(offset.1));
     let (old_w, old_h) = level.size;
     // The old pixels that land inside: x in max(0, -dx)..min(old_w, w - dx).
