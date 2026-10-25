@@ -72,6 +72,7 @@ impl Document {
             look: look.cloned(),
             glow: None,
             clear: None,
+            glass: None,
             distant: Vec::new(),
             surface: None,
             distant_surfaces: Vec::new(),

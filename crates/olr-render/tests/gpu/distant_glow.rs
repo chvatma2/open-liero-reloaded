@@ -69,6 +69,7 @@ fn dark_look(cast: f32) -> olr_look::LookFrame {
     look.groups[0] = olr_look::FrameGroup {
         cast: [cast; 3],
         own_colour: true,
+        filtered: false,
         self_scale: 1.0,
         reach: 1e9,
         ..Default::default()

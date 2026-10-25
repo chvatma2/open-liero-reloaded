@@ -809,6 +809,7 @@ pub fn thumbnail(asset: &Asset) -> RgbaImage {
         look: Some(preview_look(&asset.groups)),
         glow: None,
         clear: None,
+        glass: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),

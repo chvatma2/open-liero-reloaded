@@ -57,6 +57,7 @@ fn pack(w: u32, h: u32, s: u32, look: Option<LookSource>) -> Pack {
         look,
         glow: None,
         clear: None,
+        glass: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),

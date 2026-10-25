@@ -11,7 +11,7 @@ own look. The simulation never sees it.
   `Light` (colour, intensity percent 0-1000, `Reach`, `Animation`,
   `phase_ms`), `Reach` (`Pixels(u16)` or `Unlimited`; `pixels()` is
   `f32::INFINITY` for unlimited), `PulseShape`, `Key`, `GlowGroup` (id,
-  `GlowColour::Own | Tint`, intensity, reach, animation, phase),
+  `GlowColour::Own | Tint | Filtered` (the background glass design: the colour × each pixel's art scaled to a full brightest channel; `FrameGroup::filtered` with `own_colour`, `a_filtered_group_casts_its_tint_by_the_art`), intensity, reach, animation, phase),
   `LevelLook`,
   `Occlusion` (issue #10: `strength` percent, `reach` world pixels),
   `ProjectileLook` (`glow`, `light`, `end_flash`, `explosion`, issue #42's

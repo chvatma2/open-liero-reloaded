@@ -148,6 +148,9 @@ pub enum GlowColour {
     /// Each pixel's art colour.
     Own,
     Tint(Rgb),
+    /// The colour × each pixel's art colour scaled so its brightest
+    /// channel is full (the background glass design).
+    Filtered(Rgb),
 }
 
 /// A level's group of glowing pixels (spec §Glow): how they light the world

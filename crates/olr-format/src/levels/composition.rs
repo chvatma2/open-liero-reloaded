@@ -146,6 +146,13 @@ pub struct Element {
     /// only. Default false.
     #[serde(default, skip_serializing_if = "d::is_false")]
     pub clear: bool,
+    /// Its covered background pixels are glass (the background glass
+    /// design): see-through at its opacity where the level has distant
+    /// layers, lit as the layer behind them. A background image or drawn
+    /// element only, not distant (on a mixed layer, its background pixels).
+    /// Default none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glass: Option<ElementGlass>,
     /// A distant (parallax) layer (issue #11): its depth, percent, 1 (near:
     /// it scrolls and is lit almost like the level) to 99 (far: almost
     /// still, ambient light only). It shows through the see-through back
@@ -221,6 +228,28 @@ pub fn surface_back_file(id: &str) -> String {
 /// `level`'s size: its box's, a raster's the level's.
 pub fn surface_map_size(kind: &ElementKind, level: (u32, u32)) -> (u32, u32) {
     element_box(kind, level).map_or(level, |(_, b)| b)
+}
+
+/// Glass's most frost, tenths of a world pixel.
+pub const MAX_GLASS_FROST: u8 = 40;
+
+/// How an element's covered background pixels are glass: what of the
+/// distant layers behind them shows, and how.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ElementGlass {
+    /// Percent, 1 to 99: how much of the glass's own colour lies over what
+    /// is behind it.
+    pub opacity: u8,
+    /// Percent, 0 to 100: how strongly what shows through is multiplied by
+    /// the glass's colour (0 clear). Lit levels only. Default 0.
+    #[serde(default, skip_serializing_if = "d::is_default")]
+    pub tint: u8,
+    /// Tenths of a world pixel, 0 to `MAX_GLASS_FROST` (40): how far a
+    /// glass pixel may shift what shows through it, fixed to the glass (0
+    /// clear). Lit levels only. Default 0.
+    #[serde(default, skip_serializing_if = "d::is_default")]
+    pub frost: u8,
 }
 
 /// How an element's covered pixels glow: they show at `strength` whatever
@@ -860,6 +889,28 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                 }
             }
         }
+        if let Some(g) = &e.glass {
+            let background = matches!(
+                e.kind,
+                ElementKind::Image { material: ElementMaterial::Background, .. }
+                    | ElementKind::Drawn { material: ElementMaterial::Background, .. }
+            );
+            if !background {
+                return Err(bad("glass", "only a background image or drawn layer can be glass".into()));
+            }
+            if e.distant.is_some() {
+                return Err(bad("glass", "a distant layer cannot be glass".into()));
+            }
+            if !(1..=99).contains(&g.opacity) {
+                return Err(bad("glass.opacity", format!("{}: 1 to 99", g.opacity)));
+            }
+            if g.tint > 100 {
+                return Err(bad("glass.tint", format!("{}: 0 to 100", g.tint)));
+            }
+            if g.frost > MAX_GLASS_FROST {
+                return Err(bad("glass.frost", format!("{}: 0 to {MAX_GLASS_FROST}", g.frost)));
+            }
+        }
         if let Some(g) = &e.glow {
             if matches!(e.kind, ElementKind::Raster) {
                 return Err(bad("glow", "a raster element cannot glow: split it into layers".into()));
@@ -1179,6 +1230,7 @@ mod tests {
             kind,
             glow: None,
             clear: false,
+            glass: None,
             distant: None,
             surface: None,
             back_surface: None,
@@ -1398,6 +1450,58 @@ mod tests {
     /// layer, below every element that is not distant, of depth 1 to 99,
     /// never clear; it may glow (issue #62).
     #[test]
+    fn glass_elements_follow_their_rules() {
+        // The background glass design: a plain or mixed background image or
+        // drawn layer, not distant, opacity 1-99, tint 0-100, frost 0-40.
+        let mut s = sample();
+        let glass = |opacity, tint, frost| Some(ElementGlass { opacity, tint, frost });
+        s.composition.elements[1].glass = glass(35, 0, 15);
+        check_composition(&s, (4, 3), 2).unwrap();
+        let mut fs = MemFs::new();
+        write_composition_files(&mut fs, &s).unwrap();
+        let text = String::from_utf8(fs.read(&VPath::new(COMPOSITION_FILE).unwrap()).unwrap()).unwrap();
+        assert!(
+            text.contains("glass: (\n                opacity: 35,\n                frost: 15,"),
+            "{text}"
+        );
+        assert_eq!(read_composition_files(&fs).unwrap().unwrap().composition, s.composition);
+        for (g, field, why) in [
+            (glass(0, 0, 0), "glass.opacity", "1 to 99"),
+            (glass(100, 0, 0), "glass.opacity", "1 to 99"),
+            (glass(35, 101, 0), "glass.tint", "0 to 100"),
+            (glass(35, 0, 41), "glass.frost", "0 to 40"),
+        ] {
+            s.composition.elements[1].glass = g;
+            let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+            assert!(e.contains(&format!("elements[1].{field}")) && e.contains(why), "{e}");
+        }
+        s.composition.elements[1].glass = None;
+        // Dirt, rock (even a mixed rock layer) and a raster may not be glass.
+        for i in [0, 2] {
+            s.composition.elements[i].glass = glass(35, 0, 0);
+            let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+            assert!(e.contains(&format!("elements[{i}].glass")) && e.contains("background"), "{e}");
+            s.composition.elements[i].glass = None;
+        }
+        // A mixed layer of background may: its background pixels are glass.
+        s.composition.elements[3].kind = ElementKind::Drawn {
+            material: ElementMaterial::Background,
+            at: (1, -1),
+            size: Some((3, 2)),
+            mixed: true,
+            back: true,
+        };
+        s.composition.elements[3].glass = glass(35, 0, 0);
+        check_composition(&s, (4, 3), 2).unwrap();
+        // A distant layer may not.
+        s.composition.elements.remove(0);
+        s.composition.elements[0].distant = Some(50);
+        s.composition.elements[0].glass = glass(35, 0, 0);
+        let e = check_composition(&s, (4, 3), 2).unwrap_err().to_string();
+        assert!(e.contains("elements[0].glass") && e.contains("distant"), "{e}");
+    }
+
+    #[test]
     fn distant_elements_follow_their_rules() {
         let mut s = sample();
         // The sky (an image of background) below everything else but the
@@ -1502,6 +1606,7 @@ mod tests {
             },
             glow: None,
             clear: false,
+            glass: None,
             distant: None,
             surface: None,
             back_surface: None,

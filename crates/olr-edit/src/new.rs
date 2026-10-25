@@ -233,6 +233,7 @@ fn level_template(name: &str, (w, h): (u32, u32), theme: &str) -> Result<LevelSo
         look: None,
         glow: None,
         clear: None,
+        glass: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),

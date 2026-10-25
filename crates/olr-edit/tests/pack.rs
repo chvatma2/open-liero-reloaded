@@ -168,6 +168,7 @@ fn composed(dir: &std::path::Path) -> olr_edit::pack::Pack {
         kind: olr_format::levels::ElementKind::drawn(olr_format::levels::ElementMaterial::Dirt),
         glow: None,
         clear: false,
+        glass: None,
         distant: None,
         surface: None,
         back_surface: None,

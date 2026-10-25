@@ -11,6 +11,7 @@ extern crate alloc;
 mod color;
 mod dirt;
 mod dirty;
+mod glass;
 mod journal;
 mod stamp;
 
@@ -19,6 +20,7 @@ use alloc::vec::Vec;
 
 pub use color::{Area, ColorEdit, ColorMap, GREEN_SHADES, GlowLayers, Rect, ThemeArt};
 pub use dirty::Dirty;
+pub use glass::GlassMap;
 pub use journal::{JournalError, JournalMark};
 use olr_data::level::{Material, MaterialGrid};
 pub use stamp::{GreenMask, GreenPixel, Stamp, StampPixel};

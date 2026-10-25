@@ -149,6 +149,7 @@ fn element(id: &str, kind: ElementKind) -> Element {
         kind,
         glow: None,
         clear: false,
+        glass: None,
         distant: None,
         surface: None,
         back_surface: None,

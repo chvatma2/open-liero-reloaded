@@ -6,16 +6,16 @@ use olr_vfs::{ContentSink, ContentSource, VPath};
 use serde::{Deserialize, Serialize};
 
 use super::{
-    BACK_FILE, CLEAR_FILE, FRONT_FILE, GLOW_BACK_FILE, GLOW_FILE, GROUPS_BACK_FILE, GROUPS_FILE, LEVEL_FILE,
-    LOOK_FILES, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_DISTANT, MAX_THUMB_BYTES,
-    SURFACE_BACK_FILE, SURFACE_FILE, SURFACE_FILES, SurfaceMaps, THUMB_FILE, check, check_distant_layers,
-    check_header, check_thumb, distant_file, distant_glow_file,
+    BACK_FILE, CLEAR_FILE, FRONT_FILE, GLASS_FILE, GLOW_BACK_FILE, GLOW_FILE, GROUPS_BACK_FILE, GROUPS_FILE,
+    LEVEL_FILE, LOOK_FILES, LevelHeader, LevelObject, LevelSource, MATERIAL_FILE, MAX_DISTANT,
+    MAX_THUMB_BYTES, SURFACE_BACK_FILE, SURFACE_FILE, SURFACE_FILES, SurfaceMaps, THUMB_FILE, check,
+    check_distant_layers, check_header, check_thumb, distant_file, distant_glow_file,
 };
 use crate::FormatError;
 use crate::image_io::{self, IMAGES, LEVEL_ART};
 use crate::look::LookSource;
 use crate::ron_io::{MAX_FILE_BYTES, from_canonical, read_text, to_canonical, write_text};
-use olr_terrain::GlowLayers;
+use olr_terrain::{GlassMap, GlowLayers};
 
 fn default_scale() -> u32 {
     1
@@ -133,6 +133,9 @@ pub fn file_paths(src: &LevelSource) -> Vec<String> {
     if src.clear.is_some() {
         out.push(CLEAR_FILE.into());
     }
+    if src.glass.is_some() {
+        out.push(GLASS_FILE.into());
+    }
     if src.surface.is_some() {
         out.extend(SURFACE_FILES.map(String::from));
     }
@@ -194,6 +197,11 @@ pub fn write_level_files(sink: &mut dyn ContentSink, src: &LevelSource) -> Resul
     }
     if let Some(c) = &src.clear {
         write_bytes(sink, CLEAR_FILE, &image_io::encode_grey(src.size.0, src.size.1, c))?;
+    }
+    if let Some(g) = &src.glass {
+        let image = olr_data::image::RgbaImage::from_raw(g.art.0, g.art.1, g.texels.clone())
+            .ok_or_else(|| FormatError::invalid(GLASS_FILE, "", "its texels do not fit its size"))?;
+        write_bytes(sink, GLASS_FILE, &image_io::encode_rgba(&image))?;
     }
     if let Some(m) = &src.surface {
         let (w, h) = m.world;
@@ -321,12 +329,26 @@ fn read_glow(
     }))
 }
 
+/// The level's art size (its size × art scale, saturating).
+fn art_size(level: &LevelSource) -> (u32, u32) {
+    (level.size.0.saturating_mul(level.art_scale), level.size.1.saturating_mul(level.art_scale))
+}
+
 /// `look/clear.png`, when present.
 fn read_clear(src: &dyn ContentSource, world: (u32, u32)) -> Result<Option<Vec<u8>>, FormatError> {
     if !VPath::new(CLEAR_FILE).is_ok_and(|p| src.exists(&p)) {
         return Ok(None);
     }
     read_grey(src, CLEAR_FILE, world).map(Some)
+}
+
+/// `look/glass.png`, when present, at art size `art`.
+fn read_glass(src: &dyn ContentSource, art: (u32, u32)) -> Result<Option<GlassMap>, FormatError> {
+    if !VPath::new(GLASS_FILE).is_ok_and(|p| src.exists(&p)) {
+        return Ok(None);
+    }
+    let image = read_art(src, GLASS_FILE, art)?;
+    Ok(Some(GlassMap { art, texels: image.as_raw().to_vec() }))
 }
 
 /// The two surface maps (issue #37): both or none.
@@ -412,6 +434,7 @@ pub fn read_level_files_without_thumb(src: &dyn ContentSource) -> Result<LevelSo
     let (mut level, glow, distant) = read_base(src)?;
     level.glow = glow?;
     level.clear = read_clear(src, level.size)?;
+    level.glass = read_glass(src, art_size(&level))?;
     level.surface = read_surface(src, level.size)?;
     level.distant = distant?;
     check(&level)?;
@@ -439,6 +462,10 @@ pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource,
     });
     level.clear = read_clear(src, level.size).unwrap_or_else(|e| {
         warnings.push(format!("{e}: the level plays without clear solids"));
+        None
+    });
+    level.glass = read_glass(src, art_size(&level)).unwrap_or_else(|e| {
+        warnings.push(format!("{e}: the level plays without its glass"));
         None
     });
     level.surface = read_surface(src, level.size).unwrap_or_else(|e| {
@@ -537,6 +564,7 @@ fn read_base(
         look: file.look,
         glow: None,
         clear: None,
+        glass: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces,

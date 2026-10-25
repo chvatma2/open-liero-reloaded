@@ -3,7 +3,9 @@
 //! composition under `editor/` that bakes into them (plan 14a). A level may
 //! have distant (parallax) layers (issue #11), `distant/<i>.png`: they show
 //! where `back.png` is see-through (alpha 0), scrolling slower than the
-//! level; without them every back pixel is opaque, as always. A level
+//! level, and through its glass (alpha 1 to 254: the background glass
+//! design), whose tint and frost are `look/glass.png`; without them every
+//! back pixel is opaque, as always. A level
 //! whose look has surface materials (issue #37, `material.md`) may have
 //! `look/surface.png` and `look/surface-back.png`: what its front and back
 //! pixels are made of, for the look only.
@@ -28,7 +30,7 @@ use crate::image_io::{LEVEL_ART, check_size};
 use crate::look::{LookSource, compile_look_source};
 use crate::{FormatError, LiftError};
 pub use olr_look::SurfaceMaps;
-pub use olr_terrain::GlowLayers;
+pub use olr_terrain::{GlassMap, GlowLayers};
 
 /// The largest `art_scale` (a level's art pixels per world pixel).
 pub const MAX_ART_SCALE: u32 = 8;
@@ -67,6 +69,10 @@ pub const GROUPS_BACK_FILE: &str = "look/groups-back.png";
 /// other value lets light through a solid cell (spec §Clear solids).
 /// Optional, on its own.
 pub const CLEAR_FILE: &str = "look/clear.png";
+/// The level's glass (the background glass design), RGBA at the art size:
+/// the RGB the filter of the distant layers behind each pixel (white none),
+/// the alpha the frost in tenths of a world pixel. Optional, on its own.
+pub const GLASS_FILE: &str = "look/glass.png";
 /// A level's glow images: all four or none.
 pub const LOOK_FILES: [&str; 4] = [GLOW_FILE, GLOW_BACK_FILE, GROUPS_FILE, GROUPS_BACK_FILE];
 /// The front's surface material per world pixel (the rock and dirt), 8-bit
@@ -209,6 +215,9 @@ pub struct LevelSource {
     /// `look/clear.png`'s flags, `size.0 * size.1`, row-major, when some
     /// solid is clear.
     pub clear: Option<Vec<u8>>,
+    /// `look/glass.png` (the background glass design), the art size, when
+    /// some glass tints or frosts.
+    pub glass: Option<GlassMap>,
     /// The distant (parallax) layers, far to near (`level.ron`'s `distant`
     /// and `distant/<i>.png`; issue #11). With any, `back.png` is
     /// see-through (alpha 0) where no element gives a back.
@@ -475,6 +484,15 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
             format!("{} flags, the level needs {cells} ({w}x{h})", c.len()),
         ));
     }
+    if let Some(g) = &src.glass
+        && !g.fits((aw, ah))
+    {
+        return Err(FormatError::invalid(
+            GLASS_FILE,
+            "",
+            format!("{}x{}, the level's art is {aw}x{ah}", g.art.0, g.art.1),
+        ));
+    }
     compile_look(src)?;
     if let Some(g) = &src.glow {
         check_glow(src, g)?;
@@ -539,6 +557,7 @@ pub fn lift_level(level: &Level, thumb: Option<Vec<u8>>) -> Result<LevelSource, 
         look: None,
         glow: None,
         clear: None,
+        glass: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -583,6 +602,7 @@ pub(crate) mod tests {
             look: None,
             glow: None,
             clear: None,
+            glass: None,
             distant: Vec::new(),
             surface: None,
             distant_surfaces: Vec::new(),

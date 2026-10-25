@@ -515,6 +515,7 @@ mod tests {
             kind: olr_format::levels::ElementKind::Raster,
             glow: None,
             clear: false,
+            glass: None,
             distant: None,
             surface: None,
             back_surface: None,

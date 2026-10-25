@@ -279,6 +279,10 @@ pub enum GlowColourSource {
     Own,
     /// One colour; opaque.
     Tint(Colour),
+    /// One colour (opaque) filtered by each pixel's art colour, scaled so
+    /// its brightest channel is full: a stained window casts its light in
+    /// each pane's colour (the background glass design).
+    Filtered(Colour),
 }
 
 /// A group of glowing pixels: how they light the world and animate. The
@@ -747,6 +751,9 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
         let colour = match gr.colour {
             GlowColourSource::Own => olr_look::GlowColour::Own,
             GlowColourSource::Tint(c) => olr_look::GlowColour::Tint(rgb(c, file, &format!("{p}.colour"))?),
+            GlowColourSource::Filtered(c) => {
+                olr_look::GlowColour::Filtered(rgb(c, file, &format!("{p}.colour"))?)
+            }
         };
         groups.push(olr_look::GlowGroup {
             id: gr.id.clone(),

@@ -56,6 +56,7 @@ fn lit_level_with(dir: &Path, edit: impl FnOnce(&mut LevelSource)) {
         look: Some(LookSource { glow_groups: vec![group], ..Default::default() }),
         glow: Some(glow),
         clear: None,
+        glass: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),

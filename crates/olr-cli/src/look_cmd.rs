@@ -71,7 +71,8 @@ pub(crate) struct LookArgs {
 /// A glow group's flags (`set` keeps what is not given).
 #[derive(clap::Args)]
 pub(crate) struct GroupFields {
-    /// `own` (each pixel's art colour) or RRGGBB.
+    /// `own` (each pixel's art colour), RRGGBB, or `filtered:RRGGBB` (the
+    /// colour by each pixel's art, its brightest channel full).
     #[arg(long, value_parser = parse_glow_colour)]
     colour: Option<GlowColourSource>,
     /// Percent, 0-1000.
@@ -145,7 +146,11 @@ fn parse_occlusion(s: &str) -> Result<OcclusionSource, String> {
 }
 
 fn parse_glow_colour(s: &str) -> Result<GlowColourSource, String> {
-    if s == "own" { Ok(GlowColourSource::Own) } else { parse_colour(s).map(GlowColourSource::Tint) }
+    match s.strip_prefix("filtered:") {
+        Some(c) => parse_colour(c).map(GlowColourSource::Filtered),
+        None if s == "own" => Ok(GlowColourSource::Own),
+        None => parse_colour(s).map(GlowColourSource::Tint),
+    }
 }
 
 fn parse_reach(s: &str) -> Result<ReachSource, String> {

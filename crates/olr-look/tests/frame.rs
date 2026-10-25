@@ -58,6 +58,23 @@ fn level() -> LevelLook {
 }
 
 #[test]
+fn a_filtered_group_casts_its_tint_by_the_art() {
+    // The background glass design: the group's colour × intensity, the
+    // pixel's art (normalised by the renderer) as an own colour.
+    let mut look = level();
+    look.groups[1].colour = GlowColour::Filtered([200, 212, 240]);
+    look.groups[1].intensity = 220;
+    let mut f = LookFrame::default();
+    f.begin(Some(&look), 0.0);
+    let g = f.groups[1];
+    assert!(g.own_colour && g.filtered);
+    for (c, srgb) in g.cast.iter().zip([200u8, 212, 240]) {
+        assert!(near(*c, olr_look::srgb_to_linear(srgb) * 2.2), "{:?}", g.cast);
+    }
+    assert!(!f.groups[0].filtered);
+}
+
+#[test]
 fn begin_fills_level_part() {
     let mut f = LookFrame::default();
     f.begin(Some(&level()), 0.0);

@@ -408,6 +408,7 @@ fn dim(a: f32) -> olr_look::LookFrame {
     look.groups.push(olr_look::FrameGroup {
         cast: [0.0; 3],
         own_colour: true,
+        filtered: false,
         self_scale: 0.5,
         reach: 0.0,
         ..Default::default()
@@ -1107,6 +1108,7 @@ fn a_lit_frame_draws_on_gl() {
         l.groups[0] = olr_look::FrameGroup {
             cast: [1.0; 3],
             own_colour: true,
+            filtered: false,
             self_scale: 1.0,
             reach: 200.0,
             ..Default::default()
@@ -1707,6 +1709,7 @@ fn flame_look(flicker: Option<(f32, f32)>, self_scale: f32, t_ms: f32) -> olr_lo
     look.groups[0] = olr_look::FrameGroup {
         cast: [0.3; 3],
         own_colour: false,
+        filtered: false,
         self_scale,
         reach: 40.0,
         flicker,
@@ -2005,6 +2008,7 @@ fn stacked_bright_discs_never_poison_the_light() {
     look.groups[0] = olr_look::FrameGroup {
         cast: [0.0; 3],
         own_colour: false,
+        filtered: false,
         self_scale: 0.0,
         reach: 0.0,
         ..Default::default()

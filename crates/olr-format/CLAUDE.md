@@ -345,6 +345,18 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `folder_chains_stop_on_a_cycle_and_at_the_depth_limit`,
   `compositions_without_folders_write_as_before` (every committed
   composition).
+  Background glass (spec `docs/superpowers/specs/2026-10-25-background-glass-design.md`):
+  `Element::glass` (`ElementGlass { opacity 1-99, tint 0-100 default 0,
+  frost 0-MAX_GLASS_FROST 40 tenths default 0 }`), only on a Background
+  image or drawn layer (mixed: its background pixels), never distant;
+  `check_asset` refuses it (`glass_elements_follow_their_rules`).
+  `LevelSource::glass` (`GlassMap`, `olr-terrain`'s: `GLASS_FILE`
+  `look/glass.png`, RGBA at the art size, RGB the filter of the distant
+  layers behind (white none), alpha the frost in tenths; optional on its
+  own; `check` refuses another size; the lenient reader plays without it,
+  "…: the level plays without its glass"; `tests/look.rs`'
+  `glass_map_round_trips`, `a_misfit_glass_map_is_dropped_when_playing`).
+  `GlowColourSource::Filtered(colour)` (`filtered_glow_colour_compiles`).
 - **Assets** (`assets.rs`, issue #9; the level editor's library, not a
   pack kind): `AssetFile` is `asset.ron` (`ASSET_FILE`: name 1 to
   `MAX_ASSET_NAME` (64) characters, `art_scale`, `size`, composition

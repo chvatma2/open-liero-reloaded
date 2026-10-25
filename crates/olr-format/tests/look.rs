@@ -7,7 +7,7 @@ use olr_format::image_io;
 use olr_format::levels::{LevelObject, LevelSource, compile_look, read_level_files, write_level_files};
 use olr_format::{FormatError, canonical_text};
 use olr_look::{Animation, GlowColour, Reach};
-use olr_terrain::GlowLayers;
+use olr_terrain::{GlassMap, GlowLayers};
 use olr_vfs::MemFs;
 
 const SPEC_LEVEL: &str = r##"(
@@ -50,6 +50,7 @@ fn level(look: Option<&str>) -> LevelSource {
         look: None,
         glow: None,
         clear: None,
+        glass: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -144,6 +145,57 @@ fn clear_image_round_trips_on_its_own() {
     let mut bad = src.clone();
     bad.clear = Some(vec![0; 11]);
     assert!(err(&bad).contains("look/clear.png"), "{}", err(&bad));
+}
+
+#[test]
+fn glass_map_round_trips() {
+    // The background glass design: `look/glass.png`, RGBA at art size.
+    let mut src = level(None);
+    let mut g = GlassMap::none((8, 6));
+    g.texels[4..8].copy_from_slice(&[235, 165, 50, 15]);
+    src.glass = Some(g);
+    let fs = files(&src);
+    let names: Vec<String> =
+        fs.files().map(|(p, _)| p.to_string()).filter(|p| p.starts_with("look/")).collect();
+    assert_eq!(names, ["look/glass.png"]);
+    assert!(olr_format::levels::file_paths(&src).iter().any(|p| p == "look/glass.png"));
+    assert_eq!(read_level_files(&fs).unwrap(), src);
+    // None writes no file.
+    assert!(!files(&level(None)).files().any(|(p, _)| p.to_string() == "look/glass.png"));
+    // A map of another size is refused on write.
+    let mut bad = src.clone();
+    bad.glass = Some(GlassMap::none((8, 5)));
+    assert!(err(&bad).contains("look/glass.png"), "{}", err(&bad));
+}
+
+#[test]
+fn a_misfit_glass_map_is_dropped_when_playing() {
+    let src = level(None);
+    let fs = files(&src).with("look/glass.png", image_io::encode_rgba(&RgbaImage::new(8, 5)));
+    let e = read_level_files(&fs).unwrap_err().to_string();
+    assert!(e.contains("look/glass.png"), "{e}");
+    let (back, warnings) = olr_format::levels::read_level_files_lenient(&fs).unwrap();
+    assert_eq!(back.glass, None);
+    assert!(
+        warnings.iter().any(|w| w.contains("look/glass.png") && w.contains("plays without its glass")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn filtered_glow_colour_compiles() {
+    let text = |colour: &str| {
+        format!(
+            "(name: \"Lit\", size: (4, 3), art_scale: 2, theme: \"olx-theme-dirt\", objects: [Spawn(at: (1, 1))], \
+             look: (glow_groups: [(id: \"g\", colour: {colour}, reach: Pixels(10))]))"
+        )
+    };
+    let src = level(Some(&text("Filtered(\"#c8d4f0\")")));
+    let look = compile_look(&src).unwrap().expect("a look");
+    assert_eq!(look.groups[0].colour, GlowColour::Filtered([200, 212, 240]));
+    let fs = files(&level(None)).with("level.ron", text("Filtered(\"#c8d4f080\")").into_bytes());
+    let e = read_level_files(&fs).unwrap_err().to_string();
+    assert!(e.contains("colour"), "{e}");
 }
 
 #[test]
@@ -632,6 +684,7 @@ fn white_level(look: &str) -> LevelSource {
         look: None,
         glow: None,
         clear: None,
+        glass: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),

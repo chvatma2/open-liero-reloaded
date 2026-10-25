@@ -446,6 +446,7 @@ fn the_new_edits_count_their_bytes() {
             kind: ElementKind::drawn(ElementMaterial::Dirt),
             glow: None,
             clear: false,
+            glass: None,
             distant: None,
             surface: None,
             back_surface: None,

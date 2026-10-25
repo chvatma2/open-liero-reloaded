@@ -203,6 +203,9 @@ pub fn check_asset(src: &AssetSource) -> Result<(), FormatError> {
     if let Some(i) = f.elements.iter().position(|e| e.distant.is_some()) {
         return Err(invalid(&format!("elements[{i}].distant"), "an asset carries no distant layer"));
     }
+    if let Some(i) = f.elements.iter().position(|e| e.glass.is_some()) {
+        return Err(invalid(&format!("elements[{i}].glass"), "an asset carries no glass"));
+    }
     if let Some(i) = f.elements.iter().position(|e| e.folder.is_some()) {
         return Err(invalid(&format!("elements[{i}].folder"), "an asset carries no layer folder"));
     }
@@ -375,6 +378,7 @@ mod tests {
             },
             glow: Some(ElementGlow { strength: 100, group: "flames".into(), mask: true }),
             clear: false,
+            glass: None,
             distant: None,
             surface: None,
             back_surface: None,
@@ -434,6 +438,10 @@ mod tests {
         s.file.glow_groups.clear();
         s.file.elements[0].distant = Some(50);
         assert!(check_asset(&s).unwrap_err().to_string().contains("no distant layer"));
+        s.file.elements[0].distant = None;
+        // Nor glass (the background glass design).
+        s.file.elements[0].glass = Some(crate::levels::ElementGlass { opacity: 35, tint: 0, frost: 0 });
+        assert!(check_asset(&s).unwrap_err().to_string().contains("no glass"));
         // Issue #59: nor any folder.
         let mut s = sample();
         s.file.elements[0].folder = Some("lamp".into());

@@ -38,6 +38,10 @@ pub struct FrameGroup {
     /// already the tint): intensity × animation.
     pub cast: [f32; 3],
     pub own_colour: bool,
+    /// With `own_colour`: the pixel's art colour is scaled so its
+    /// brightest channel is full, and `cast` holds the group's colour (a
+    /// `Filtered` group, the background glass design).
+    pub filtered: bool,
     /// The animation's scale of the pixels' self-light.
     pub self_scale: f32,
     /// World pixels; `f32::INFINITY` unlimited.
@@ -165,13 +169,15 @@ impl LookFrame {
             let wrap = 16_777_216.0;
             let clock =
                 if clock.is_finite() { (clock - libm::floor(clock / wrap) * wrap) as f32 } else { 0.0 };
-            let (own, base) = match (s.colour, g.colour) {
-                (Some(c), _) | (None, crate::GlowColour::Tint(c)) => (false, c.map(srgb_to_linear)),
-                (None, crate::GlowColour::Own) => (true, [1.0; 3]),
+            let (own, filtered, base) = match (s.colour, g.colour) {
+                (Some(c), _) | (None, crate::GlowColour::Tint(c)) => (false, false, c.map(srgb_to_linear)),
+                (None, crate::GlowColour::Own) => (true, false, [1.0; 3]),
+                (None, crate::GlowColour::Filtered(c)) => (true, true, c.map(srgb_to_linear)),
             };
             self.groups.push(FrameGroup {
                 cast: base.map(|c| c * k),
                 own_colour: own,
+                filtered,
                 self_scale: s.scale,
                 reach: g.reach.pixels(),
                 flicker,

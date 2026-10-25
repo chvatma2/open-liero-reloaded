@@ -70,6 +70,7 @@ One element of a composition.
 | `kind` | [ElementKind](#elementkind) | required | What the element is. |
 | `glow` | [ElementGlow](#elementglow) (optional) | none | Its pixels glow (look system): an image or drawn element only. Default none. |
 | `clear` | boolean | `false` | Its rock and dirt let light through (look system §Clear solids): worms and projectiles still collide. An image or drawn element only. Default false. |
+| `glass` | [ElementGlass](#elementglass) (optional) | none | Its covered background pixels are glass (the background glass design): see-through at its opacity where the level has distant layers, lit as the layer behind them. A background image or drawn element only, not distant (on a mixed layer, its background pixels). Default none. |
 | `distant` | integer (optional) | none | A distant (parallax) layer (issue #11): its depth, percent, 1 (near: it scrolls and is lit almost like the level) to 99 (far: almost still, ambient light only). It shows through the see-through back pixels the elements in front leave uncovered, moving by `1 - depth` of the camera's movement; its box lies where it is drawn with the camera (the view's centre) at the level's centre. Decoration only: no collision material, never clear; one `surface` for the whole layer. It may glow (issue #62): its light falls on the level from its box (the camera at the level's centre), its picture glows where it is drawn. A Background image or plain drawn layer only, and every distant element lies below every other one; an asset carries none. Default none. |
 | `surface` | string (optional) | none | Its pixels' surface material (issue #37; presentation only): the id of one of `level.ron`'s `look.materials`. It lands where its pixels land: a Rock or Dirt element's in `look/surface.png`, a Background element's in `look/surface-back.png`; on a mixed layer each pixel by its own collision material, and on a raster its solid pixels in front (its background pixels show its back art: `back_surface`). A distant layer takes it for the whole layer. In an asset, one of the asset's `materials` (issue #38). Default none. |
 | `back_surface` | string (optional) | none | Its back art's surface material: the id of one of the look's materials, landing in `look/surface-back.png`. Only with back art (a drawn layer with `back`, a raster). Default none. |
@@ -153,6 +154,18 @@ How an element's covered pixels glow: they show at `strength` whatever the darkn
 | `group` | string | required | The id of a glow group in `level.ron`'s `look`. |
 | `mask` | boolean | `false` | A painted mask (`editor/glow/<id>.png`, grey, the element's box at art resolution: 0 no glow to 255 full) scales the strength per pixel. Default false. |
 
+<a id="elementglass"></a>
+
+## ElementGlass
+
+How an element's covered background pixels are glass: what of the distant layers behind them shows, and how.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `opacity` | integer | required | Percent, 1 to 99: how much of the glass's own colour lies over what is behind it. |
+| `tint` | integer | `0` | Percent, 0 to 100: how strongly what shows through is multiplied by the glass's colour (0 clear). Lit levels only. Default 0. |
+| `frost` | integer | `0` | Tenths of a world pixel, 0 to `MAX_GLASS_FROST` (40): how far a glass pixel may shift what shows through it, fixed to the glass (0 clear). Lit levels only. Default 0. |
+
 <a id="glowcoloursource"></a>
 
 ## GlowColourSource (enum)
@@ -163,6 +176,7 @@ What colour a glow group's pixels cast (their own glow always shows their art).
 |---|---|---|
 | `Own` | — | Each pixel's art colour. |
 | `Tint` | [colour](#colour) | One colour; opaque. |
+| `Filtered` | [colour](#colour) | One colour (opaque) filtered by each pixel's art colour, scaled so its brightest channel is full: a stained window casts its light in each pane's colour (the background glass design). |
 
 <a id="reachsource"></a>
 
