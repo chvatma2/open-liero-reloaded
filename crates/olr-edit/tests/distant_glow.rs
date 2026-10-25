@@ -41,6 +41,8 @@ fn level(w: u32, h: u32, s: u32) -> LevelSource {
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -90,7 +92,12 @@ fn with_layer(
             mixed: false,
             back: false,
         },
-        glow: glow.map(|(strength, group)| ElementGlow { strength, group: group.into(), mask: false }),
+        glow: glow.map(|(strength, group)| ElementGlow {
+            strength,
+            group: group.into(),
+            mask: false,
+            beam: None,
+        }),
         clear: false,
         glass: None,
         distant,
@@ -206,7 +213,8 @@ fn a_level_without_glowing_distant_layers_bakes_as_before() {
     assert_eq!(glowing.distant[0].glow, None);
     assert_eq!(glowing.back.get(10, 3), Rgba { a: 0, ..tile().get(0, 0) });
     // A glow group the look lacks lights nothing.
-    src.composition.elements[0].glow = Some(ElementGlow { strength: 50, group: "moon".into(), mask: false });
+    src.composition.elements[0].glow =
+        Some(ElementGlow { strength: 50, group: "moon".into(), mask: false, beam: None });
     let mut l = level(8, 4, 2);
     bake(&mut l, &src, &tile()).unwrap();
     assert_eq!((l.glow, &l.distant[0].glow), (None, &None));

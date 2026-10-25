@@ -386,6 +386,37 @@ pub fn encode_grey(width: u32, height: u32, values: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Encodes an 8-bit grey-alpha PNG from `values`, two bytes per pixel
+/// (grey, alpha), row-major.
+pub fn encode_grey_alpha(width: u32, height: u32, values: &[u8]) -> Vec<u8> {
+    let mut out = Vec::new();
+    {
+        let mut enc = png::Encoder::new(&mut out, width, height);
+        enc.set_color(png::ColorType::GrayscaleAlpha);
+        enc.set_depth(png::BitDepth::Eight);
+        let mut w = enc.write_header().expect("in-memory PNG header");
+        w.write_image_data(values).expect("in-memory PNG data");
+    }
+    out
+}
+
+/// Decodes a grey-alpha PNG (8 or 16 bit) to `(width, height, values)`:
+/// two 8-bit bytes per pixel (grey, alpha), within `bound`. Any other
+/// colour type is an error.
+pub fn decode_grey_alpha_within(bytes: &[u8], bound: ImageBound) -> Result<(u32, u32, Vec<u8>), String> {
+    let mut reader = reader(bytes, bound, png::Transformations::normalize_to_color8())?;
+    let size = reader.output_buffer_size().ok_or("image too large")?;
+    let mut buf = vec![0; size];
+    let info = reader.next_frame(&mut buf).map_err(|e| e.to_string())?;
+    buf.truncate(info.buffer_size());
+    let px = info.width as usize * info.height as usize;
+    match info.color_type {
+        png::ColorType::GrayscaleAlpha if buf.len() == px * 2 => Ok((info.width, info.height, buf)),
+        png::ColorType::GrayscaleAlpha => Err("decoded size mismatch".into()),
+        _ => Err("not a grey-alpha PNG".into()),
+    }
+}
+
 /// Decodes a greyscale PNG (1-16 bit; with alpha, its grey) to
 /// `(width, height, values)` of 8-bit values, within `bound`. Any other
 /// colour type is an error.

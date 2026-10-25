@@ -73,6 +73,8 @@ impl Document {
             glow: None,
             clear: None,
             glass: None,
+            glow_beams: None,
+            haze: None,
             distant: Vec::new(),
             surface: None,
             distant_surfaces: Vec::new(),
@@ -321,7 +323,8 @@ impl Document {
         if self.items[index].element.glow.is_none() {
             let group = self.new_group_id(id);
             self.level.look = Some(with_group(self.level.look.clone(), &group));
-            self.items[index].element.glow = Some(ElementGlow { strength: 100, group, mask: true });
+            self.items[index].element.glow =
+                Some(ElementGlow { strength: 100, group, mask: true, beam: None });
             self.glow_masks.insert(id.to_string(), Arc::new(vec![0; n]));
             reset = true;
         }

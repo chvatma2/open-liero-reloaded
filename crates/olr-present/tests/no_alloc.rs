@@ -26,6 +26,7 @@ fn look_frame_does_not_allocate_when_warm() {
         grade: Default::default(),
         groups: Vec::new(),
         materials: Vec::new(),
+        haze: 0,
     });
     let theme = content.load_theme(&level.theme).unwrap();
     let mut m = content.load_mod(&olx_mod_id(&sc.mod_dir)).unwrap();

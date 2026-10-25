@@ -36,6 +36,8 @@ fn level(w: u32, h: u32, s: u32) -> LevelSource {
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),

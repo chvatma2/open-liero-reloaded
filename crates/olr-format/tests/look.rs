@@ -4,10 +4,15 @@
 use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_format::image_io;
-use olr_format::levels::{LevelObject, LevelSource, compile_look, read_level_files, write_level_files};
+use olr_format::levels::{
+    Composition, Element, ElementGlow, ElementKind, ElementMaterial, GlowBeam, LevelObject, LevelSource,
+    check_elements, check_glow_groups, compile_look, read_level_files, write_level_files,
+};
+use olr_format::look::LookSource;
+use olr_format::ron_io::{from_canonical, to_canonical};
 use olr_format::{FormatError, canonical_text};
 use olr_look::{Animation, GlowColour, Reach};
-use olr_terrain::{GlassMap, GlowLayers};
+use olr_terrain::{GlassMap, GlowBeamMap, GlowLayers};
 use olr_vfs::MemFs;
 
 const SPEC_LEVEL: &str = r##"(
@@ -51,6 +56,8 @@ fn level(look: Option<&str>) -> LevelSource {
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -685,6 +692,8 @@ fn white_level(look: &str) -> LevelSource {
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -929,4 +938,195 @@ fn beam_look_limits() {
     let src = read_mod_files(&mod_fs(&w)).unwrap();
     let e = compile_mod(&src).unwrap_err().to_string();
     assert!(e.contains("weapons/w.ron") && e.contains("look.beam") && e.contains("Beam"), "{e}");
+}
+
+// Directional glow (the directional-glow design): `GlowBeam` on an element's
+// glow, the two baked beam maps and the haze.
+
+fn beam_element(id: &str, kind: ElementKind, beam: Option<GlowBeam>) -> Element {
+    Element {
+        id: id.into(),
+        name: String::new(),
+        visible: true,
+        locked: false,
+        folder: None,
+        kind,
+        glow: Some(ElementGlow { strength: 80, group: "g".into(), mask: false, beam }),
+        clear: false,
+        glass: None,
+        distant: None,
+        surface: None,
+        back_surface: None,
+        surface_map: false,
+        back_surface_map: false,
+    }
+}
+
+fn beam_look(reach: &str) -> LookSource {
+    let text = format!("(glow_groups: [(id: \"g\", reach: {reach})])");
+    from_canonical("level.ron", &text).unwrap()
+}
+
+fn beam_map(world: (u32, u32)) -> GlowBeamMap {
+    let mut m = GlowBeamMap::none(world);
+    m.front[0] = 84;
+    m.front[1] = 15;
+    m.back[2] = 1;
+    m.back[3] = 90;
+    m
+}
+
+#[test]
+fn glow_beams_round_trip() {
+    // An element's beam is written as `beam: (direction: 166, spread: 15)`.
+    let beam = GlowBeam { direction: 166, spread: 15 };
+    let mut c = Composition {
+        elements: vec![beam_element("lamp", ElementKind::drawn(ElementMaterial::Rock), Some(beam))],
+        folders: Vec::new(),
+    };
+    let text = to_canonical("composition.ron", &c).unwrap();
+    assert!(text.contains("beam: (\n") && text.contains("direction: 166,"), "{text}");
+    assert_eq!(from_canonical::<Composition>("composition.ron", &text).unwrap(), c);
+    c.elements[0].glow.as_mut().unwrap().beam = None;
+    let text = to_canonical("composition.ron", &c).unwrap();
+    assert!(!text.contains("beam"), "{text}");
+
+    // A level's beam maps write both files and read back equal.
+    let mut src = level(None);
+    src.glow_beams = Some(beam_map(src.size));
+    let fs = files(&src);
+    let names: Vec<String> =
+        fs.files().map(|(p, _)| p.to_string()).filter(|p| p.starts_with("look/")).collect();
+    assert_eq!(names, ["look/glow-beam-back.png", "look/glow-beam.png"]);
+    let paths = olr_format::levels::file_paths(&src);
+    assert!(
+        paths.iter().any(|p| p == "look/glow-beam.png")
+            && paths.iter().any(|p| p == "look/glow-beam-back.png")
+    );
+    assert_eq!(read_level_files(&fs).unwrap(), src);
+    let m = src.glow_beams.as_ref().unwrap();
+    assert_eq!(m.get(false, 0, 0), Some((166, 15)));
+    assert_eq!(m.get(false, 1, 0), None);
+    assert_eq!(m.get(true, 1, 0), Some((0, 90)));
+    assert_eq!(m.get(true, 9, 9), None);
+    // None writes neither file.
+    assert!(!files(&level(None)).files().any(|(p, _)| p.to_string().contains("glow-beam")));
+    // A map of another size is refused on write.
+    let mut bad = src.clone();
+    bad.glow_beams = Some(beam_map((4, 4)));
+    assert!(err(&bad).contains("look/glow-beam"), "{}", err(&bad));
+
+    // The haze percent and the haze map.
+    let mut src = level(None);
+    src.look = Some(LookSource { haze: 40, ..LookSource::default() });
+    let fs = files(&src);
+    let text = String::from_utf8(
+        olr_vfs::ContentSource::read(&fs, &olr_vfs::VPath::new("level.ron").unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert!(text.contains("haze: 40"), "{text}");
+    assert_eq!(read_level_files(&fs).unwrap(), src);
+    assert_eq!(compile_look(&src).unwrap().unwrap().haze, 40);
+    src.look = Some(LookSource::default());
+    let text = String::from_utf8(
+        olr_vfs::ContentSource::read(&files(&src), &olr_vfs::VPath::new("level.ron").unwrap()).unwrap(),
+    )
+    .unwrap();
+    assert!(!text.contains("haze"), "{text}");
+    src.haze = Some((0..12).map(|i| i * 20).collect());
+    let fs = files(&src);
+    assert!(fs.files().any(|(p, _)| p.to_string() == "look/haze.png"));
+    assert!(olr_format::levels::file_paths(&src).iter().any(|p| p == "look/haze.png"));
+    assert_eq!(read_level_files(&fs).unwrap(), src);
+    src.haze = Some(vec![0; 11]);
+    assert!(err(&src).contains("look/haze.png"), "{}", err(&src));
+}
+
+#[test]
+fn glow_beam_limits() {
+    let size = (4, 3);
+    let check = |c: &Composition, look: &LookSource| {
+        check_elements(c, size, 2).and_then(|_| check_glow_groups(c, Some(look))).err().map(|e| e.to_string())
+    };
+    let lamp = |material, beam| Composition {
+        elements: vec![beam_element("lamp", ElementKind::drawn(material), Some(beam))],
+        folders: Vec::new(),
+    };
+    let ok = GlowBeam { direction: 359, spread: 90 };
+    let look = beam_look("Pixels(40)");
+    for material in [ElementMaterial::Rock, ElementMaterial::Background] {
+        assert_eq!(check(&lamp(material, ok), &look), None, "{material:?}");
+    }
+    for (beam, field) in [
+        (GlowBeam { direction: 360, spread: 15 }, "glow.beam.direction"),
+        (GlowBeam { direction: 0, spread: 0 }, "glow.beam.spread"),
+        (GlowBeam { direction: 0, spread: 91 }, "glow.beam.spread"),
+    ] {
+        let e = check(&lamp(ElementMaterial::Rock, beam), &look).expect("refused");
+        assert!(e.contains(&format!("elements[0].{field}")), "{e}");
+    }
+    // Dirt may not carry a beam.
+    let e = check(&lamp(ElementMaterial::Dirt, ok), &look).expect("refused");
+    assert!(e.contains("elements[0].glow.beam") && e.contains("dirt"), "{e}");
+    // A distant element's glow stays undirected.
+    let mut c = lamp(ElementMaterial::Background, ok);
+    c.elements[0].distant = Some(50);
+    let e = check(&c, &look).expect("refused");
+    assert!(e.contains("elements[0].glow.beam") && e.contains("distant"), "{e}");
+    // The group's reach must be Pixels.
+    let e = check(&lamp(ElementMaterial::Rock, ok), &beam_look("Unlimited")).expect("refused");
+    assert!(e.contains("elements[0]") && e.contains("lamp") && e.contains("Pixels"), "{e}");
+    // At most 64 beams.
+    let many = Composition {
+        elements: (0..65)
+            .map(|i| beam_element(&format!("l{i}"), ElementKind::drawn(ElementMaterial::Rock), Some(ok)))
+            .collect(),
+        folders: Vec::new(),
+    };
+    let e = check(&many, &look).expect("refused");
+    assert!(e.contains("64"), "{e}");
+    // Haze is a percent.
+    let mut src = level(None);
+    src.look = Some(LookSource { haze: 101, ..LookSource::default() });
+    assert!(err(&src).contains("look.haze"), "{}", err(&src));
+}
+
+#[test]
+fn hostile_glow_beam_maps() {
+    let src = level(None);
+    let grey_alpha = |w: u32, h: u32, f: &dyn Fn(usize) -> [u8; 2]| {
+        let data: Vec<u8> = (0..(w * h) as usize).flat_map(f).collect();
+        image_io::encode_grey_alpha(w, h, &data)
+    };
+    let zero = |_| [0u8, 0u8];
+    let both = |front: Vec<u8>, back: Vec<u8>| {
+        files(&src).with("look/glow-beam.png", front).with("look/glow-beam-back.png", back)
+    };
+    // The good pair reads.
+    let good = both(grey_alpha(4, 3, &zero), grey_alpha(4, 3, &zero));
+    assert!(read_level_files(&good).unwrap().glow_beams.is_some());
+    // The wrong size, a byte 0 above 180, a spread above 90.
+    let cases = [
+        both(grey_alpha(5, 3, &zero), grey_alpha(4, 3, &zero)),
+        both(grey_alpha(4, 3, &|i| if i == 2 { [181, 10] } else { [0, 0] }), grey_alpha(4, 3, &zero)),
+        both(grey_alpha(4, 3, &zero), grey_alpha(4, 3, &|i| if i == 7 { [10, 91] } else { [0, 0] })),
+    ];
+    for fs in &cases {
+        let e = read_level_files(fs).unwrap_err().to_string();
+        assert!(e.contains("look/glow-beam"), "{e}");
+        let (back, warnings) = olr_format::levels::read_level_files_lenient(fs).unwrap();
+        assert_eq!(back.glow_beams, None);
+        assert!(warnings.iter().any(|w| w.contains("plays without its glow beams")), "{warnings:?}");
+    }
+    // One file alone is refused, and plays without.
+    let one = files(&src).with("look/glow-beam.png", grey_alpha(4, 3, &zero));
+    let e = read_level_files(&one).unwrap_err().to_string();
+    assert!(e.contains("look/glow-beam-back.png"), "{e}");
+    // A misfit haze map.
+    let fs = files(&src).with("look/haze.png", image_io::encode_grey(5, 3, &[0; 15]));
+    let e = read_level_files(&fs).unwrap_err().to_string();
+    assert!(e.contains("look/haze.png"), "{e}");
+    let (back, warnings) = olr_format::levels::read_level_files_lenient(&fs).unwrap();
+    assert_eq!(back.haze, None);
+    assert!(warnings.iter().any(|w| w.contains("plays without its haze map")), "{warnings:?}");
 }

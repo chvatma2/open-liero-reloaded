@@ -40,6 +40,8 @@ fn level() -> LevelSource {
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -115,8 +117,12 @@ fn removing_a_group_renumbers_and_unglows() {
     l.distant = vec![layer(1), layer(2)];
     let mut p = pack(l);
     add_layer(&mut p, ElementMaterial::Dirt, "Lava").unwrap();
-    set(&mut p, "lava", Property::Glow(Some(ElementGlow { strength: 50, group: "a".into(), mask: false })))
-        .unwrap();
+    set(
+        &mut p,
+        "lava",
+        Property::Glow(Some(ElementGlow { strength: 50, group: "a".into(), mask: false, beam: None })),
+    )
+    .unwrap();
     let unglowed = remove_group(&mut p, "a").unwrap();
     // Composing the level made its distant layers elements, glow and all.
     assert_eq!(unglowed, ["distant-1", "lava"]);
@@ -140,8 +146,12 @@ fn renaming_a_group_follows_its_elements() {
     add_group(&mut l, group("a")).unwrap();
     let mut p = pack(l);
     add_layer(&mut p, ElementMaterial::Dirt, "Lava").unwrap();
-    set(&mut p, "lava", Property::Glow(Some(ElementGlow { strength: 50, group: "a".into(), mask: false })))
-        .unwrap();
+    set(
+        &mut p,
+        "lava",
+        Property::Glow(Some(ElementGlow { strength: 50, group: "a".into(), mask: false, beam: None })),
+    )
+    .unwrap();
     rename_group(&mut p, "a", "magma").unwrap();
     assert_eq!(level_of(&p).look.as_ref().unwrap().glow_groups[0].id, "magma");
     let e = &p.composition.as_ref().unwrap().composition.elements;

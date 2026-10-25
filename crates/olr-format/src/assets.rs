@@ -376,7 +376,7 @@ mod tests {
                 mixed: false,
                 back: false,
             },
-            glow: Some(ElementGlow { strength: 100, group: "flames".into(), mask: true }),
+            glow: Some(ElementGlow { strength: 100, group: "flames".into(), mask: true, beam: None }),
             clear: false,
             glass: None,
             distant: None,

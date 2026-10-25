@@ -1269,6 +1269,8 @@ fn as_level(
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -1404,7 +1406,12 @@ pub fn distant_elements(level: &LevelSource) -> Vec<(Element, Decoded, Option<El
             let glow = d.glow.as_ref().and_then(|g| {
                 let group = groups.get(usize::from(g.group).checked_sub(1)?)?;
                 Some((
-                    ElementGlow { strength: g.strength, group: group.to_string(), mask: g.mask.is_some() },
+                    ElementGlow {
+                        strength: g.strength,
+                        group: group.to_string(),
+                        mask: g.mask.is_some(),
+                        beam: None,
+                    },
                     g,
                 ))
             });

@@ -638,7 +638,8 @@ mod tests {
         let Some((_tmp, mut d)) = doc() else { return };
         let mut c = Canvas::new();
         c.rebuild(&d, CanvasView::Bake);
-        let glow = olr_format::levels::ElementGlow { strength: 100, group: String::new(), mask: false };
+        let glow =
+            olr_format::levels::ElementGlow { strength: 100, group: String::new(), mask: false, beam: None };
         d.set_glow("tunnels", Some(glow)).unwrap();
         assert!(!c.fits(&d), "the map has no glow yet: built again");
         c.rebuild(&d, CanvasView::Bake);

@@ -30,7 +30,7 @@ use crate::image_io::{LEVEL_ART, check_size};
 use crate::look::{LookSource, compile_look_source};
 use crate::{FormatError, LiftError};
 pub use olr_look::SurfaceMaps;
-pub use olr_terrain::{GlassMap, GlowLayers};
+pub use olr_terrain::{GlassMap, GlowBeamMap, GlowLayers};
 
 /// The largest `art_scale` (a level's art pixels per world pixel).
 pub const MAX_ART_SCALE: u32 = 8;
@@ -73,6 +73,17 @@ pub const CLEAR_FILE: &str = "look/clear.png";
 /// the RGB the filter of the distant layers behind each pixel (white none),
 /// the alpha the frost in tenths of a world pixel. Optional, on its own.
 pub const GLASS_FILE: &str = "look/glass.png";
+/// The glow beams of the composite per world pixel, 8-bit grey-alpha: the
+/// grey the direction (see [`GlowBeamMap`]), the alpha the spread. Both beam
+/// files or none.
+pub const GLOW_BEAM_FILE: &str = "look/glow-beam.png";
+/// The backdrop's glow beams, as [`GLOW_BEAM_FILE`].
+pub const GLOW_BEAM_BACK_FILE: &str = "look/glow-beam-back.png";
+/// A level's glow beam maps: both or none.
+pub const GLOW_BEAM_FILES: [&str; 2] = [GLOW_BEAM_FILE, GLOW_BEAM_BACK_FILE];
+/// The haze per world pixel, 8-bit grey: 0 none to 255 the look's `haze`.
+/// Optional, on its own.
+pub const HAZE_FILE: &str = "look/haze.png";
 /// A level's glow images: all four or none.
 pub const LOOK_FILES: [&str; 4] = [GLOW_FILE, GLOW_BACK_FILE, GROUPS_FILE, GROUPS_BACK_FILE];
 /// The front's surface material per world pixel (the rock and dirt), 8-bit
@@ -218,6 +229,12 @@ pub struct LevelSource {
     /// `look/glass.png` (the background glass design), the art size, when
     /// some glass tints or frosts.
     pub glass: Option<GlassMap>,
+    /// `look/glow-beam.png` and `look/glow-beam-back.png` (the
+    /// directional-glow design), when some glow is directional.
+    pub glow_beams: Option<GlowBeamMap>,
+    /// `look/haze.png`'s values, `size.0 * size.1`, row-major, when the haze
+    /// varies.
+    pub haze: Option<Vec<u8>>,
     /// The distant (parallax) layers, far to near (`level.ron`'s `distant`
     /// and `distant/<i>.png`; issue #11). With any, `back.png` is
     /// see-through (alpha 0) where no element gives a back.
@@ -484,6 +501,27 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
             format!("{} flags, the level needs {cells} ({w}x{h})", c.len()),
         ));
     }
+    if let Some(b) = &src.glow_beams
+        && !b.fits(src.size)
+    {
+        return Err(FormatError::invalid(
+            GLOW_BEAM_FILE,
+            "",
+            format!(
+                "the beam maps do not fit the level's {}x{} world pixels (sizes, byte 0 up to 180, byte 1 up to 90)",
+                src.size.0, src.size.1
+            ),
+        ));
+    }
+    if let Some(values) = &src.haze
+        && values.len() != cells
+    {
+        return Err(FormatError::invalid(
+            HAZE_FILE,
+            "",
+            format!("{} values, the level needs {cells} ({w}x{h})", values.len()),
+        ));
+    }
     if let Some(g) = &src.glass
         && !g.fits((aw, ah))
     {
@@ -558,6 +596,8 @@ pub fn lift_level(level: &Level, thumb: Option<Vec<u8>>) -> Result<LevelSource, 
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -603,6 +643,8 @@ pub(crate) mod tests {
             glow: None,
             clear: None,
             glass: None,
+            glow_beams: None,
+            haze: None,
             distant: Vec::new(),
             surface: None,
             distant_surfaces: Vec::new(),

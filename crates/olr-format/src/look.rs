@@ -351,6 +351,11 @@ pub struct LookSource {
     /// Default none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub materials: Vec<MaterialSource>,
+    /// Percent, 0 to 100: how much the level's air scatters its glow beams
+    /// (the directional-glow design); `look/haze.png` scales it per pixel.
+    /// Default 0.
+    #[serde(default, skip_serializing_if = "d::is_default")]
+    pub haze: u8,
 }
 
 impl Default for LookSource {
@@ -367,6 +372,7 @@ impl Default for LookSource {
             grade: GradeSource::default(),
             glow_groups: Vec::new(),
             materials: Vec::new(),
+            haze: 0,
         }
     }
 }
@@ -727,6 +733,7 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
     }
     within(g.contrast.into(), 0, 200, file, "look.grade.contrast")?;
     within(g.saturation.into(), 0, 200, file, "look.grade.saturation")?;
+    within(l.haze.into(), 0, 100, file, "look.haze")?;
     if l.glow_groups.len() > MAX_GROUPS {
         return Err(invalid(
             file,
@@ -788,6 +795,7 @@ pub fn compile_look_source(l: &LookSource, file: &str) -> Result<olr_look::Level
         },
         groups,
         materials: compile_materials(&l.materials, file, "look.materials")?,
+        haze: l.haze,
     })
 }
 

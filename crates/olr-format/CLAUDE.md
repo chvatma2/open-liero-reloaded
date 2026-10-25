@@ -357,6 +357,19 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   "…: the level plays without its glass"; `tests/look.rs`'
   `glass_map_round_trips`, `a_misfit_glass_map_is_dropped_when_playing`).
   `GlowColourSource::Filtered(colour)` (`filtered_glow_colour_compiles`).
+  Directional glow (spec `docs/superpowers/specs/2026-10-25-directional-glow-design.md`):
+  `ElementGlow::beam: Option<GlowBeam { direction 0-359, spread 1-90 }>`
+  (`check_elements`: none on Dirt or a distant element, at most
+  `MAX_GLOW_BEAMS` 64; `check_glow_groups`: its group's reach `Pixels`,
+  the error names the element). `LevelSource::glow_beams` (`GlowBeamMap`,
+  `olr-terrain`'s: `look/glow-beam.png` and `look/glow-beam-back.png`,
+  grey-alpha at the world size, both or none; `image_io::encode_grey_alpha`
+  and `decode_grey_alpha_within`; a bad size or byte is an error, the
+  lenient reader plays "…without its glow beams"). `LookSource::haze`
+  (percent 0-100, default 0, left out) compiles to `LevelLook::haze`;
+  `LevelSource::haze` is `look/haze.png`, grey at the world size ("…without
+  its haze map"). Tests: `tests/look.rs`' `glow_beams_round_trip`,
+  `glow_beam_limits`, `hostile_glow_beam_maps`.
 - **Assets** (`assets.rs`, issue #9; the level editor's library, not a
   pack kind): `AssetFile` is `asset.ron` (`ASSET_FILE`: name 1 to
   `MAX_ASSET_NAME` (64) characters, `art_scale`, `size`, composition

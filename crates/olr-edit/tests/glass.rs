@@ -55,6 +55,8 @@ fn window(glass: ElementGlass) -> Pack {
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -143,8 +145,12 @@ fn clear_glass_writes_no_map() {
 #[test]
 fn glass_does_not_carry_distant_glow() {
     let mut p = window(clear(35));
-    set(&mut p, "sky", Property::Glow(Some(ElementGlow { strength: 80, group: "sky".into(), mask: false })))
-        .unwrap();
+    set(
+        &mut p,
+        "sky",
+        Property::Glow(Some(ElementGlow { strength: 80, group: "sky".into(), mask: false, beam: None })),
+    )
+    .unwrap();
     let l = baked(&p);
     let g = l.glow.as_ref().expect("the sky glows");
     let strength = ((80u32 * 255 + 50) / 100) as u8;

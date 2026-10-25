@@ -49,6 +49,8 @@ fn pack(w: u32, h: u32, s: u32) -> Pack {
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -62,7 +64,7 @@ fn level(p: &Pack) -> &LevelSource {
 }
 
 fn glow(strength: u8, group: &str) -> Property {
-    Property::Glow(Some(ElementGlow { strength, group: group.into(), mask: false }))
+    Property::Glow(Some(ElementGlow { strength, group: group.into(), mask: false, beam: None }))
 }
 
 /// 6 × 1: a glowing sky (background) everywhere, a plain dirt ground at

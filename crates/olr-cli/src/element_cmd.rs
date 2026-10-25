@@ -741,10 +741,12 @@ fn glow_property(
         .as_ref()
         .and_then(|c| c.composition.elements.iter().find(|e| e.id == id))
         .and_then(|e| e.glow.clone());
-    let (strength, group, mask) = match (strength, group, now) {
-        (Some(s), Some(g), now) => (s, g.to_string(), now.is_some_and(|n| n.mask)),
-        (Some(s), None, Some(n)) => (s, n.group, n.mask),
-        (None, Some(g), Some(n)) => (n.strength, g.to_string(), n.mask),
+    let (strength, group, mask, beam) = match (strength, group, now) {
+        (Some(s), Some(g), now) => {
+            (s, g.to_string(), now.as_ref().is_some_and(|n| n.mask), now.and_then(|n| n.beam))
+        }
+        (Some(s), None, Some(n)) => (s, n.group, n.mask, n.beam),
+        (None, Some(g), Some(n)) => (n.strength, g.to_string(), n.mask, n.beam),
         (None, None, _) => return Ok(None),
         (_, _, None) => {
             return Err(element::ElementError::BadValue(
@@ -752,7 +754,7 @@ fn glow_property(
             ));
         }
     };
-    Ok(Some(Property::Glow(Some(olr_format::levels::ElementGlow { strength, group, mask }))))
+    Ok(Some(Property::Glow(Some(olr_format::levels::ElementGlow { strength, group, mask, beam }))))
 }
 
 /// `level bake <pack>`: rebakes a composed level.

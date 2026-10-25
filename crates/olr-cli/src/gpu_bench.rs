@@ -178,6 +178,7 @@ pub fn bench_look(world: (u32, u32), art: u32) -> (olr_look::LevelLook, olr_terr
         grade: Default::default(),
         groups: vec![group],
         materials: Vec::new(),
+        haze: 0,
     };
     let art_size = (world.0.saturating_mul(art), world.1.saturating_mul(art));
     let mut glow = olr_terrain::GlowLayers::empty(art_size, world);

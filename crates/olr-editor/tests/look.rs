@@ -17,7 +17,7 @@ fn upload(cmds: &[C]) -> bool {
 
 /// A glow on the fixture's `tunnels` layer, its group left to the editor.
 fn glow_tunnels(s: &mut olr_editor::EditorState) -> Vec<C> {
-    let glow = ElementGlow { strength: 100, group: String::new(), mask: false };
+    let glow = ElementGlow { strength: 100, group: String::new(), mask: false, beam: None };
     run(s, A::SetGlow { id: "tunnels".into(), glow: Some(glow) })
 }
 
@@ -212,7 +212,7 @@ fn a_plain_level_keeps_its_glow_and_clear() {
 
 /// Element `id` given a glow and a dab of the brush at `at`, then selected.
 fn paint_glow_on(s: &mut olr_editor::EditorState, id: &str, at: (i32, i32)) {
-    let glow = ElementGlow { strength: 100, group: String::new(), mask: false };
+    let glow = ElementGlow { strength: 100, group: String::new(), mask: false, beam: None };
     run(s, A::SetGlow { id: id.into(), glow: Some(glow) });
     run(s, A::Select(Selection::Element(id.into())));
     run(s, A::Tool(Tool::Glow));

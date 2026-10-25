@@ -190,6 +190,9 @@ pub struct LevelLook {
     /// Its surface materials (materials design): a surface map value `v`
     /// (1-255) is `materials[v - 1]`; 0 is none.
     pub materials: Vec<SurfaceMaterial>,
+    /// Percent, 0-100: how much of the level's air the lights' beams
+    /// scatter in (the directional-glow design). 0 is none.
+    pub haze: u8,
 }
 
 impl LevelLook {

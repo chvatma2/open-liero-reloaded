@@ -57,6 +57,8 @@ fn lit_level_with(dir: &Path, edit: impl FnOnce(&mut LevelSource)) {
         glow: Some(glow),
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),

@@ -705,6 +705,7 @@ fn explosions_heat_once_through_rollbacks() {
         grade: Default::default(),
         groups: Vec::new(),
         materials: Vec::new(),
+        haze: 0,
     };
     look.materials.push(olr_look::SurfaceMaterial { id: "stone".into(), heat: Some(heat), light_soak: None });
     p.level.look = Some(look);

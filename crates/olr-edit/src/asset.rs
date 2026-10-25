@@ -811,6 +811,8 @@ pub fn thumbnail(asset: &Asset) -> RgbaImage {
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),

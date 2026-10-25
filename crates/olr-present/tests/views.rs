@@ -32,6 +32,7 @@ fn look() -> LevelLook {
         grade: Grade::default(),
         groups: Vec::new(),
         materials: Vec::new(),
+        haze: 0,
     }
 }
 

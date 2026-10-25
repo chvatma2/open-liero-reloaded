@@ -153,6 +153,7 @@ How an element's covered pixels glow: they show at `strength` whatever the darkn
 | `strength` | integer | required | Percent, 1 to 100. |
 | `group` | string | required | The id of a glow group in `level.ron`'s `look`. |
 | `mask` | boolean | `false` | A painted mask (`editor/glow/<id>.png`, grey, the element's box at art resolution: 0 no glow to 255 full) scales the strength per pixel. Default false. |
+| `beam` | [GlowBeam](#glowbeam) (optional) | none | Makes the glow directional (the directional-glow design): its pixels cast a cone of light instead of a halo. Rock and background only, not on a distant layer, and its group's reach must be `Pixels`. Default none. |
 
 <a id="elementglass"></a>
 
@@ -262,6 +263,17 @@ Dithering of an image element's colour reduction.
 | `None` | — | Nearest colour. |
 | `Ordered` | — | Bayer 8 × 8. |
 | `Diffusion` | — | Floyd-Steinberg error diffusion. |
+
+<a id="glowbeam"></a>
+
+## GlowBeam
+
+Where a directional glow points and how wide it spreads. The baked map keeps directions in 2-degree steps: an odd direction bakes as the even one below it.
+
+| Field | Type | Default | Meaning |
+|---|---|---|---|
+| `direction` | integer | required | Whole degrees, 0 to 359: 0 points right, clockwise on screen (y down), so 90 points down. |
+| `spread` | integer | required | The half-angle of the cone, whole degrees, 1 to 90. |
 
 <a id="colour"></a>
 

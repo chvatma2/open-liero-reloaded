@@ -266,6 +266,28 @@ pub struct ElementGlow {
     /// Default false.
     #[serde(default, skip_serializing_if = "d::is_false")]
     pub mask: bool,
+    /// Makes the glow directional (the directional-glow design): its pixels
+    /// cast a cone of light instead of a halo. Rock and background only, not
+    /// on a distant layer, and its group's reach must be `Pixels`. Default
+    /// none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub beam: Option<GlowBeam>,
+}
+
+/// The most elements with a [`GlowBeam`] in a level.
+pub const MAX_GLOW_BEAMS: usize = 64;
+
+/// Where a directional glow points and how wide it spreads. The baked map
+/// keeps directions in 2-degree steps: an odd direction bakes as the even
+/// one below it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GlowBeam {
+    /// Whole degrees, 0 to 359: 0 points right, clockwise on screen (y
+    /// down), so 90 points down.
+    pub direction: u16,
+    /// The half-angle of the cone, whole degrees, 1 to 90.
+    pub spread: u8,
 }
 
 /// An element's glow mask: `editor/glow/<id>.png`.
@@ -675,6 +697,17 @@ pub fn check_glow_groups(c: &Composition, look: Option<&crate::look::LookSource>
                 format!("no glow group {:?} in level.ron's look", g.group),
             ));
         }
+        if g.beam.is_some()
+            && look
+                .and_then(|l| l.glow_groups.iter().find(|x| x.id == g.group))
+                .is_some_and(|x| matches!(x.reach, crate::look::ReachSource::Unlimited))
+        {
+            return Err(FormatError::invalid(
+                COMPOSITION_FILE,
+                &format!("elements[{i}].glow.beam"),
+                format!("{:?}: glow group {:?} has an unlimited reach, a beam needs Pixels", e.id, g.group),
+            ));
+        }
     }
     Ok(())
 }
@@ -779,6 +812,7 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
     let art_pixels = u64::from(art.0) * u64::from(art.1);
     // The distant elements so far and their art's pixels (issue #11).
     let (mut distant, mut distant_pixels) = (0usize, 0u64);
+    let mut beams = 0usize;
     for (i, e) in elements.iter().enumerate() {
         let at = |field: &str| format!("elements[{i}].{field}");
         let bad = |field: &str, message: String| FormatError::invalid(COMPOSITION_FILE, &at(field), message);
@@ -920,6 +954,28 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
             }
             if !crate::look::valid_group_id(&g.group) {
                 return Err(bad("glow.group", format!("{:?} is not a glow group id", g.group)));
+            }
+            if let Some(b) = &g.beam {
+                if b.direction > 359 {
+                    return Err(bad("glow.beam.direction", format!("{}: 0 to 359", b.direction)));
+                }
+                if !(1..=90).contains(&b.spread) {
+                    return Err(bad("glow.beam.spread", format!("{}: 1 to 90", b.spread)));
+                }
+                if matches!(
+                    e.kind,
+                    ElementKind::Image { material: ElementMaterial::Dirt, .. }
+                        | ElementKind::Drawn { material: ElementMaterial::Dirt, .. }
+                ) {
+                    return Err(bad("glow.beam", "a dirt layer cannot cast a beam: dirt digs away".into()));
+                }
+                if e.distant.is_some() {
+                    return Err(bad("glow.beam", "a distant layer's glow stays undirected".into()));
+                }
+                beams += 1;
+                if beams > MAX_GLOW_BEAMS {
+                    return Err(bad("glow.beam", format!("more than {MAX_GLOW_BEAMS} elements with a beam")));
+                }
             }
             let file = glow_file(&e.id);
             let name = file.rsplit('/').next().unwrap_or(&file);
@@ -1521,7 +1577,8 @@ mod tests {
         assert!(check_composition(&s, (4, 3), 2).unwrap_err().to_string().contains("cannot be clear"));
         s.composition.elements[0].clear = false;
         // Issue #62: a distant layer may glow, and its glow round-trips.
-        s.composition.elements[0].glow = Some(ElementGlow { strength: 10, group: "g".into(), mask: false });
+        s.composition.elements[0].glow =
+            Some(ElementGlow { strength: 10, group: "g".into(), mask: false, beam: None });
         check_composition(&s, (4, 3), 2).unwrap();
         let mut fs = MemFs::new();
         write_composition_files(&mut fs, &s).unwrap();

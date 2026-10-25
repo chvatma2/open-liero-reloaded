@@ -58,6 +58,8 @@ fn pack(w: u32, h: u32, s: u32, look: Option<LookSource>) -> Pack {
         glow: None,
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surfaces: Vec::new(),
@@ -88,7 +90,7 @@ fn scene(s: u32) -> Pack {
     set(
         &mut p,
         "wall",
-        Property::Glow(Some(ElementGlow { strength: 80, group: "lamps".into(), mask: false })),
+        Property::Glow(Some(ElementGlow { strength: 80, group: "lamps".into(), mask: false, beam: None })),
     )
     .unwrap();
     paint_glow(&mut p, "wall", &rect(2, 2, 2, 2), 100).unwrap();

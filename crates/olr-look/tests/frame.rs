@@ -54,6 +54,7 @@ fn level() -> LevelLook {
             },
         ],
         materials: Vec::new(),
+        haze: 0,
     }
 }
 

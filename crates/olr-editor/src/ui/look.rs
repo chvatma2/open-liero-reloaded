@@ -389,7 +389,7 @@ pub(super) fn element_glow(
     // the camera at the level's centre.
     let hint = if e.is_distant() { labels::DISTANT_GLOW_HINT } else { "the whole element glows" };
     if ui.add_enabled(!e.locked, egui::Checkbox::new(&mut on, labels::GLOW)).on_hover_text(hint).changed() {
-        let glow = on.then(|| ElementGlow { strength: 100, group: String::new(), mask: false });
+        let glow = on.then(|| ElementGlow { strength: 100, group: String::new(), mask: false, beam: None });
         set_glow(out, glow);
     }
     if let Some(g) = e.glow.as_ref().filter(|_| !e.locked) {

@@ -59,6 +59,10 @@ and the colour image that follows it (`ColorMap`).
   only anew; `each_glass_map_set_is_a_new_generation`;
   `glass_keeps_its_alpha`, `digging_in_front_of_glass_shows_the_glass`,
   `stains_skip_glass`, `replace_rect_keeps_glass`).
+- **`GlowBeamMap`** (`glow_beam.rs`, the directional-glow design): per world
+  pixel and layer (front, back) two bytes, direction / 2 + 1 (0 not
+  directional) and the spread 1-90; `fits(world)` also checks the byte
+  ranges; `get(layer_back, x, y)` gives `(direction degrees, spread)`.
 - **Glow** (plan 15a, look system §Glow): `set_glow(Some(GlowLayers))` gives the map
   a glow channel (strength per art pixel, group per world pixel, of the front
   as loaded and of the backdrop); layers of another size are refused
