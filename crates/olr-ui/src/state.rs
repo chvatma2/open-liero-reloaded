@@ -300,6 +300,9 @@ pub enum UiAction {
     /// The Editor screen's Recover and Discard of a recovery copy.
     Recover(String),
     DiscardRecovery(String),
+    /// The Editor screen's confirmed Delete of a level of the data
+    /// directory's.
+    DeleteLevel(String),
     /// The Editor screen's Skin tab (issue #14): Edit one of the user's
     /// skin packs.
     EditSkin(String),
@@ -413,6 +416,9 @@ pub enum AppCommand {
     /// Reopen recovery `id` (its unsaved changes), or remove it.
     Recover(String),
     DiscardRecovery(String),
+    /// Remove level pack `id` (one of `MenuData::editable`) from the data
+    /// directory's packs; never bundled content.
+    DeleteLevel(String),
     /// Open the skin editor on skin pack `id` (one of
     /// `MenuData::editable_skins`, issue #14).
     EditSkin(String),
@@ -690,6 +696,7 @@ impl UiState {
             | UiAction::NewLevel { .. }
             | UiAction::Recover(_)
             | UiAction::DiscardRecovery(_)
+            | UiAction::DeleteLevel(_)
             | UiAction::EditSkin(_)
             | UiAction::NewSkin(_)
             | UiAction::EditMod(_)
@@ -1114,6 +1121,7 @@ impl UiState {
             UiAction::NewLevel { name, size, theme } => AppCommand::NewLevel { name, size, theme },
             UiAction::Recover(id) => AppCommand::Recover(id),
             UiAction::DiscardRecovery(id) => AppCommand::DiscardRecovery(id),
+            UiAction::DeleteLevel(id) => AppCommand::DeleteLevel(id),
             UiAction::EditSkin(id) => AppCommand::EditSkin(id),
             UiAction::NewSkin(from) => AppCommand::NewSkin(from),
             UiAction::EditMod(id) => AppCommand::EditMod(id),

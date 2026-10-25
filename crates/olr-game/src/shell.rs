@@ -568,7 +568,8 @@ impl Shell {
             | AppCommand::CopyLevel { .. }
             | AppCommand::NewLevel { .. }
             | AppCommand::Recover(_)
-            | AppCommand::DiscardRecovery(_) => self.editor_command(c),
+            | AppCommand::DiscardRecovery(_)
+            | AppCommand::DeleteLevel(_) => self.editor_command(c),
             AppCommand::EditSkin(_) | AppCommand::NewSkin(_) => self.skin_command(c),
             AppCommand::EditMod(_)
             | AppCommand::NewMod { .. }

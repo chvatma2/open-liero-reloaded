@@ -186,10 +186,15 @@ fn recoveries_are_offered_first() {
 fn editor_commands_only_from_the_editor_screen() {
     let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
     assert!(ui.update(UiAction::EditLevel("my-level".into())).is_empty(), "not from Main");
+    assert!(ui.update(UiAction::DeleteLevel("my-level".into())).is_empty(), "not from Main");
     ui.update(UiAction::Open(Screen::Editor));
     assert_eq!(
         ui.update(UiAction::EditLevel("my-level".into())),
         vec![AppCommand::EditLevel("my-level".into())]
+    );
+    assert_eq!(
+        ui.update(UiAction::DeleteLevel("my-level".into())),
+        vec![AppCommand::DeleteLevel("my-level".into())]
     );
 }
 
@@ -311,4 +316,27 @@ fn the_material_tab_opens_the_material_editor() {
     // Only from the Editor screen.
     let mut ui = UiState::new(Settings::default(), Profiles::default(), 1);
     assert!(ui.update(UiAction::OpenMaterialEditor).is_empty());
+}
+
+/// The user's request (2026-10-25): a level of the data directory's has
+/// Delete beside Edit, which asks first; the others have none.
+#[test]
+fn a_level_of_yours_is_deleted_after_asking() {
+    let mut h = harness(vec![]);
+    open_editor(&mut h);
+    assert_eq!(h.query_all_by_label("Delete").count(), 1, "only My Level is yours");
+    h.get_by_label("Delete").click();
+    h.run();
+    assert!(h.query_by_label("Delete?").is_some());
+    assert!(h.state().commands.is_empty(), "nothing deleted before the answer");
+    h.get_by_label("No").click();
+    h.run();
+    assert!(h.query_by_label("Delete?").is_none());
+    assert!(h.state().commands.is_empty());
+    h.get_by_label("Delete").click();
+    h.run();
+    h.get_by_label("Yes, delete").click();
+    h.run();
+    assert_eq!(h.state().commands, vec![AppCommand::DeleteLevel("my-level".into())]);
+    assert!(h.query_by_label("Yes, delete").is_none(), "asked once, sent once");
 }

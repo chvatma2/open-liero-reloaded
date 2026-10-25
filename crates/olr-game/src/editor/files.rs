@@ -1,5 +1,6 @@
 //! The editor host's disk work (plan 14c Task 5): the level packs of the
-//! data directory's `packs/` (and its skin packs, issue #14), a directory
+//! data directory's `packs/` (and its skin packs, issue #14; a level's
+//! Delete), a directory
 //! listed for the file browser, and an image read for an import, bounded
 //! before it is read whole.
 
@@ -27,6 +28,16 @@ const HEADER_BYTES: u64 = 16;
 /// hidden (`.`) entries are skipped.
 pub fn level_dirs(packs_dir: &Path) -> BTreeMap<String, PathBuf> {
     pack_dirs(packs_dir, PackKind::Level)
+}
+
+/// Removes level pack `id` of `packs_dir` (one of [`level_dirs`]: the
+/// Editor screen's Delete), its folder and all in it; a pack anywhere else
+/// is never touched. A symbolic link to a pack loses only the link.
+pub fn delete_level(packs_dir: &Path, id: &str) -> anyhow::Result<()> {
+    let dir = level_dirs(packs_dir)
+        .remove(id)
+        .ok_or_else(|| anyhow::anyhow!("level pack {id} is not one of yours: it is not deleted"))?;
+    std::fs::remove_dir_all(&dir).map_err(|e| anyhow::anyhow!("{}: {e}", dir.display()))
 }
 
 /// The skin packs in `packs_dir` by manifest id, as [`level_dirs`] (issue

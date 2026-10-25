@@ -288,6 +288,15 @@ fn every_menu_screen_fits() {
             );
             open(h, Screen::Editor);
         }),
+        ("Editor: a level's Delete", false, |h| {
+            h.state_mut().data.set_editor_packs(
+                ["lvl-1".to_string()].into(),
+                vec![("lvl-2".into(), "A recovered level with a long name".into(), false)],
+            );
+            open(h, Screen::Editor);
+            press(h, "Delete");
+            h.get_by_label("Yes, delete");
+        }),
         ("Editor: New level", false, |h| {
             open(h, Screen::Editor);
             press_button(h, "New level");
@@ -364,12 +373,6 @@ fn every_dialog_fits() {
             press(h, "Edit loadouts…");
             press(h, "New");
             press(h, "Rename");
-        }),
-        ("The loadout editor's Delete", false, |h| {
-            open(h, Screen::LocalPlay);
-            press(h, "Edit loadouts…");
-            press(h, "New");
-            press(h, "Delete");
         }),
         ("The bots' Advanced…", false, |h| {
             open(h, Screen::LocalPlay);

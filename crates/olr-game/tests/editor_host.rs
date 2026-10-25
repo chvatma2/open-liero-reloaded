@@ -834,3 +834,39 @@ fn assets_are_listed_saved_placed_and_removed() {
     assert!(!names(&again).contains(&(false, "Hall dirt".into())));
     assert_eq!(digest(&built_in), before, "the built-in assets are never written");
 }
+
+/// The Editor screen's Delete (the user's request, 2026-10-25): a level
+/// of the data directory's goes with its folder and leaves the lists; a
+/// bundled level's id is refused, its folder untouched.
+#[test]
+fn delete_removes_only_a_level_of_yours() {
+    use olr_game::shell::{Shell, ShellConfig};
+    let Some(root) = content() else { return };
+    let tmp = tempfile::tempdir().unwrap();
+    let cfg = ShellConfig {
+        content: root.clone(),
+        interpolation: olr_scene::Interpolation::Linear,
+        viewport: olr_scene::Viewport::from_aspect(16.0 / 9.0, 16.0 / 9.0),
+    };
+    let ui = olr_ui::UiState::new(olr_ui::Settings::default(), olr_ui::Profiles::default(), 1);
+    let mut sh = Shell::new(cfg, ui, Store::open(tmp.path()), olr_audio::Audio::silent());
+    sh.act(olr_ui::UiAction::Open(olr_ui::Screen::Editor));
+    sh.act(olr_ui::UiAction::NewLevel { name: "Odd".into(), size: (40, 30), theme: "olx-theme-dirt".into() });
+    assert!(sh.editor_open());
+    sh.close_editor();
+    let dir = tmp.path().join("packs/odd");
+    assert!(dir.join("pack.ron").is_file());
+    assert!(sh.data.catalog.level("odd").is_some());
+    sh.act(olr_ui::UiAction::DeleteLevel("odd".into()));
+    assert_eq!(sh.data.editor_message, None);
+    assert!(!dir.exists(), "its folder is gone");
+    assert!(!sh.data.editable.contains("odd"));
+    assert!(sh.data.catalog.level("odd").is_none(), "the list is read again");
+
+    let dirt = root.join("olx-level-dirt-level");
+    let before = digest(&dirt);
+    sh.act(olr_ui::UiAction::DeleteLevel("olx-level-dirt-level".into()));
+    assert!(sh.data.editor_message.is_some(), "a bundled level is refused");
+    assert_eq!(digest(&dirt), before);
+    assert!(sh.data.catalog.level("olx-level-dirt-level").is_some());
+}

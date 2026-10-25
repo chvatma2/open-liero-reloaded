@@ -890,7 +890,11 @@ cargo run --release -p olr-game -- --net-sim typical                   # feel a 
   the Editor screen's `AppCommand`s (`open_from_menu`: Edit a pack of the
   data directory's `packs/` (`level_dirs`, by manifest id), Copy a level
   (`new_pack` `Template::From`), New level, Recover; ids `pack_id`
-  slugs unique against the catalog and `packs/`), `open_dir` (`olr --edit`),
+  slugs unique against the catalog and `packs/`; `DeleteLevel` is the
+  shell's, `files::delete_level`: only a pack `level_dirs` lists, its
+  folder removed (a link only the link), then the content listed again;
+  a bundled id is refused in `editor_message`, `tests/editor_host.rs`'
+  `delete_removes_only_a_level_of_yours`), `open_dir` (`olr --edit`),
   `act` (a frame's actions, the answers fed back in order: `Open`,
   `Create`, `Save` (a missing directory made first), `List`
   (`files::list`, `list_dir`: every name read, sorted as the browser shows

@@ -1,7 +1,7 @@
 //! The Editor screen (plan 14c, spec §6): the editors' way in, a Level
 //! and a Skin tab (issue #14). Level: the recoveries first (Recover,
-//! Discard), then every level pack, with Edit for the data directory's
-//! packs and Edit a copy for the others (bundled content is never edited
+//! Discard), then every level pack, with Edit and Delete (asked first)
+//! for the data directory's packs and Edit a copy for the others (bundled content is never edited
 //! in place, R5), and New level. Skin: New blank skin, then every skin
 //! (searchable), Edit for the data directory's skin packs and Edit a copy
 //! for the others (a built-in or OLX skin is never changed). Mod (issue
@@ -73,6 +73,8 @@ pub(super) struct View {
     new: Option<NewLevel>,
     /// The Mod tab's copy form: the mod copied and the new mod's name.
     mod_copy: Option<(String, String)>,
+    /// The level whose Delete asks "Delete <name>?" in its row.
+    delete: Option<String>,
 }
 
 struct NewLevel {
@@ -245,14 +247,41 @@ fn tab(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
         ui.add_space(10.0);
     }
     section(ui, "Levels", |ui, _| {
-        ui.label(RichText::new("Levels you made are edited in place; the others as a copy.").weak());
+        ui.label(
+            RichText::new("Levels you made are edited in place or deleted; the others edited as a copy.")
+                .weak(),
+        );
         super::list_area(ui, ScrollArea::vertical().auto_shrink([false, true]), |ui| {
-            let mut level = |ui: &mut Ui, l: &olr_content::LevelInfo| {
+            // A table's cell holds the row's buttons in one line; a narrow
+            // list's wrapping row takes them as they are.
+            let mut level = |ui: &mut Ui, l: &olr_content::LevelInfo, in_cell: bool| {
                 ui.label(&l.name);
                 ui.label(RichText::new(format!("{} × {}", l.width, l.height)).weak());
                 if data.editable.contains(&l.id) {
-                    if ui.button("Edit").clicked() {
-                        out.push(UiAction::EditLevel(l.id.clone()));
+                    let mut buttons = |ui: &mut Ui| {
+                        if data.editor.delete.as_ref() == Some(&l.id) {
+                            // Short: the row names the level.
+                            ui.label(RichText::new("Delete?").color(Color32::from_rgb(255, 110, 90)));
+                            if ui.button("Yes, delete").clicked() {
+                                out.push(UiAction::DeleteLevel(l.id.clone()));
+                                data.editor.delete = None;
+                            }
+                            if ui.button("No").clicked() {
+                                data.editor.delete = None;
+                            }
+                        } else {
+                            if ui.button("Edit").clicked() {
+                                out.push(UiAction::EditLevel(l.id.clone()));
+                            }
+                            if ui.button("Delete").clicked() {
+                                data.editor.delete = Some(l.id.clone());
+                            }
+                        }
+                    };
+                    if in_cell {
+                        ui.horizontal(buttons);
+                    } else {
+                        buttons(ui);
                     }
                 } else if ui.button("Edit a copy").clicked() {
                     data.editor.copy = Some((l.id.clone(), format!("{} copy", l.name)));
@@ -261,14 +290,14 @@ fn tab(ui: &mut Ui, data: &mut MenuData, out: &mut Vec<UiAction>) {
             };
             if narrow(ui) {
                 for l in &data.catalog.levels {
-                    ui.horizontal_wrapped(|ui| level(ui, l));
+                    ui.horizontal_wrapped(|ui| level(ui, l, false));
                 }
             } else {
                 egui::Grid::new("editor levels").num_columns(3).striped(true).spacing([24.0, 4.0]).show(
                     ui,
                     |ui| {
                         for l in &data.catalog.levels {
-                            level(ui, l);
+                            level(ui, l, true);
                             ui.end_row();
                         }
                     },

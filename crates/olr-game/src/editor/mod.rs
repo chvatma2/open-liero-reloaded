@@ -15,8 +15,9 @@ mod recovery;
 pub mod skin;
 
 pub use files::{
-    MAX_ENTRIES, MAX_IMPORT_BYTES, PREVIEW_SIDE, add_texture, editable_levels, editable_mods, editable_skins,
-    level_dirs, list as list_dir, list_assets, list_textures, mod_dirs, remove_texture, skin_dirs,
+    MAX_ENTRIES, MAX_IMPORT_BYTES, PREVIEW_SIDE, add_texture, delete_level, editable_levels, editable_mods,
+    editable_skins, level_dirs, list as list_dir, list_assets, list_textures, mod_dirs, remove_texture,
+    skin_dirs,
 };
 pub use recovery::{INFO_FILE, RecoveryInfo, discard_recovery, list_recoveries};
 

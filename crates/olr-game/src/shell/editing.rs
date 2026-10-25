@@ -45,8 +45,21 @@ impl Shell {
     }
 
     /// The Editor screen's commands (`AppCommand::{EditLevel, CopyLevel,
-    /// NewLevel, Recover, DiscardRecovery}`).
+    /// NewLevel, Recover, DiscardRecovery, DeleteLevel}`).
     pub(super) fn editor_command(&mut self, c: AppCommand) {
+        if let AppCommand::DeleteLevel(id) = &c {
+            let deleted = match self.packs_dir.as_deref() {
+                Some(packs) => editor::delete_level(packs, id),
+                None => Err(anyhow::anyhow!("there is no data directory: nothing is deleted")),
+            };
+            match deleted {
+                Ok(()) => log::info!("deleted the level pack {id}"),
+                Err(e) => self.data.editor_message = Some(format!("{e:#}")),
+            }
+            self.list_content();
+            self.refresh_editor_packs();
+            return;
+        }
         if let AppCommand::DiscardRecovery(id) = &c {
             if let Some(dir) = self.store.recovery_dir()
                 && let Err(e) = editor::discard_recovery(&dir, id)
