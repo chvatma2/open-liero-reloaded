@@ -699,6 +699,9 @@ fn the_rail_highlights_the_chosen_tool() {
 fn merge_down_from_the_properties() {
     let Some((_tmp, mut h)) = opened() else { return };
     let before = ids(&h).len();
+    // Tall enough that More's buttons are in view under a background
+    // element's Glass switch.
+    h.set_size(egui::vec2(1280.0, 1000.0));
     act(&mut h, A::Select(Selection::Element("wall".into())));
     open_more(&mut h);
     h.get_by_label(labels::MERGE_DOWN).click();
@@ -1565,4 +1568,95 @@ fn a_folders_panel_renames_it() {
     h.run();
     assert_eq!(name(&h), "Outer desk");
     assert!(h.query_by_label("3 elements").is_some(), "its elements' count");
+}
+
+/// The background glass design: a Background element's Glass switch (one
+/// step, at `DEFAULT_GLASS_OPACITY`), its hints, and its Opacity, Tint
+/// and Frost sliders (one step each); with a distant layer behind and the
+/// base hidden, the bake shows the glass at its opacity.
+#[test]
+fn make_an_element_glass() {
+    use olr_format::levels::ElementGlass;
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.set_size(egui::vec2(1280.0, 1800.0));
+    let glass = |h: &Harness<'static, App>| {
+        let d = h.state().state.document().unwrap();
+        d.items()[d.index_of("tunnels").unwrap()].element.glass
+    };
+    act(&mut h, A::Select(Selection::Element("badge".into())));
+    assert!(h.query_by_label(labels::GLASS).is_none(), "dirt is never glass");
+    act(&mut h, A::Select(Selection::Element("tunnels".into())));
+    h.get_by_label(labels::GLASS).click();
+    h.run();
+    let opacity = olr_editor::ops::DEFAULT_GLASS_OPACITY;
+    assert_eq!(opacity, 35);
+    assert_eq!(glass(&h), Some(ElementGlass { opacity, tint: 0, frost: 0 }));
+    h.get_by_label(labels::GLASS_HINT);
+    assert!(h.query_all_by_label(labels::GLASS_LOOK_HINT).count() >= 1, "tint and frost need lighting");
+    act(&mut h, A::Undo);
+    assert_eq!(glass(&h), None, "one step");
+    act(&mut h, A::Redo);
+    // A distant layer behind, the base hidden: the hint goes, and the
+    // tunnels' pixels bake at 35 % (alpha 89).
+    act(
+        &mut h,
+        A::Set(
+            "badge".into(),
+            olr_edit::element::Property::Material(olr_format::levels::ElementMaterial::Background),
+        ),
+    );
+    act(&mut h, A::Set("badge".into(), olr_edit::element::Property::Distant(Some(90))));
+    act(&mut h, A::Set("base".into(), olr_edit::element::Property::Visible(false)));
+    act(&mut h, A::Select(Selection::Element("tunnels".into())));
+    assert!(h.query_by_label(labels::GLASS_HINT).is_none());
+    let back = &h.state().state.document().unwrap().level().back;
+    let glassy = (0..back.height())
+        .flat_map(|y| (0..back.width()).map(move |x| (x, y)))
+        .filter(|&(x, y)| back.get(x, y).a == 89)
+        .count();
+    assert!(glassy > 0, "the glass bakes at its opacity");
+    // Each slider: a key press is one step.
+    for (label, want) in [
+        (labels::OPACITY, ElementGlass { opacity: 36, tint: 0, frost: 0 }),
+        (labels::TINT, ElementGlass { opacity: 36, tint: 1, frost: 0 }),
+        (labels::FROST, ElementGlass { opacity: 36, tint: 1, frost: 1 }),
+    ] {
+        h.get_by_role_and_label(Role::Slider, label).focus();
+        h.run();
+        h.key_press(egui::Key::ArrowRight);
+        h.run();
+        assert_eq!(glass(&h), Some(want), "{label}");
+    }
+    act(&mut h, A::Undo);
+    assert_eq!(glass(&h), Some(ElementGlass { opacity: 36, tint: 1, frost: 0 }), "one step each");
+}
+
+/// The background glass design: a glow group's colour switch offers
+/// Filtered, which keeps a colour field of its own.
+#[test]
+fn a_group_casts_filtered() {
+    use olr_format::look::GlowColourSource;
+    let Some((_tmp, mut h)) = opened() else { return };
+    h.set_size(egui::vec2(1280.0, 1800.0));
+    act(&mut h, A::Select(Selection::None));
+    h.get_by_label(labels::ADD_LOOK).click();
+    h.run();
+    h.get_by_label(labels::ADD_GROUP).click();
+    h.run();
+    let colour = |h: &Harness<'static, App>| {
+        h.state().state.document().unwrap().level().look.clone().unwrap().glow_groups[0].colour
+    };
+    h.get_by_label(labels::FILTERED).click();
+    h.run();
+    assert!(matches!(colour(&h), GlowColourSource::Filtered(_)), "{:?}", colour(&h));
+    h.get_by_role_and_label(Role::TextInput, labels::GROUP_COLOUR).focus();
+    h.run();
+    h.key_press_modifiers(egui::Modifiers::COMMAND, egui::Key::A);
+    h.run();
+    h.get_by_role_and_label(Role::TextInput, labels::GROUP_COLOUR).type_text("#c8d4f0");
+    h.run();
+    h.key_press(egui::Key::Enter);
+    h.run();
+    let want = olr_format::Colour(olr_data::image::Rgba::rgb(0xc8, 0xd4, 0xf0));
+    assert_eq!(colour(&h), GlowColourSource::Filtered(want));
 }

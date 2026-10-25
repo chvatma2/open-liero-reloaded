@@ -141,6 +141,12 @@ pub(crate) fn with_property(
             return Err(wrong("an image or drawn element"));
         }
         Property::Distant(d) => e.distant = d,
+        // The background glass design: an image or drawn element
+        // (`check_elements` refuses one not of background).
+        Property::Glass(_) if matches!(e.kind, ElementKind::Raster) => {
+            return Err(wrong("an image or drawn element"));
+        }
+        Property::Glass(g) => e.glass = g,
         Property::Material(m) => match &mut e.kind {
             ElementKind::Image { material, .. } | ElementKind::Drawn { material, .. } => *material = m,
             ElementKind::Raster => return Err(wrong("an image or drawn element")),
@@ -177,6 +183,10 @@ pub(crate) fn with_property(
 /// A distant layer's depth at first, percent (issue #11): the Distant
 /// switch's.
 pub const DEFAULT_DEPTH: u8 = 50;
+
+/// A new glass's opacity, percent (the background glass design): the Glass
+/// switch's.
+pub const DEFAULT_GLASS_OPACITY: u8 = 35;
 
 impl Document {
     /// The element `id`, by index.

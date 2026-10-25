@@ -313,6 +313,21 @@ drives. `olr-game` hosts it (plan 14c: `olr-game/src/editor/`).
   `a_distant_layer_glows_and_lights_the_level`; issue #66:
   `zooming_leaves_a_distant_layer_in_place`; `flows.rs`'s
   `preview_parallax_in_the_view_menu`).
+- **Background glass** (spec `docs/superpowers/specs/2026-10-25-background-glass-design.md`;
+  the format is `Element::glass`, the bake `olr_edit::compose`'s): a
+  Background image or drawn layer (plain or mixed) that is not distant
+  shows a Glass switch under "What is it?" (`Property::Glass`, one step,
+  `ops::DEFAULT_GLASS_OPACITY` 35; a raster refused) and, when on, the
+  Opacity (1-99 %), Tint (0-100 %) and Frost (0-40 tenths, shown "0.0" to
+  "4.0 px", `ui::slider_shown`) sliders, each committed when the drag stops
+  (a locked element's hidden, as Glow's); `labels::GLASS_HINT` while the
+  level has no distant layer, `GLASS_LOOK_HINT` under Tint and Frost
+  while it has no lighting (they show only lit). A glow group's colour is
+  one switch, Own, Tint or `labels::FILTERED` (`GlowColourSource::
+  Filtered`: the art's hue at full strength times the group's colour, the
+  light through tinted glass), a tint's colour carried between the last
+  two. Tests: `flows.rs`'s `make_an_element_glass`,
+  `a_group_casts_filtered`.
 - **Surface materials** (issue #37; the bake is `olr_edit::compose`'s):
   the document keeps the painted surface maps as opened
   (its `surface_maps`, `PaintedSurfaces`) and bakes with them. A resize

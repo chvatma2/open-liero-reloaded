@@ -10,11 +10,11 @@ use egui::Ui;
 use olr_edit::element::Property;
 use olr_format::levels::{Dither, ElementKind, ElementMaterial, LevelObject, MAX_PIXEL_SIZE, MAX_SIDE};
 
-use super::{EditorData, labels, number, slider, text};
+use super::{EditorData, labels, number, slider, slider_shown, text};
 use crate::folder_ops::FolderField;
 use crate::state::{EditorAction, EditorState, Selection};
 use olr_data::level::{MAX_DEPTH, MIN_DEPTH};
-use olr_format::levels::Element;
+use olr_format::levels::{Element, ElementGlass, MAX_GLASS_FROST};
 
 const MATERIALS: [(ElementMaterial, &str); 3] = [
     (ElementMaterial::Rock, "Rock"),
@@ -75,6 +75,9 @@ fn element(ui: &mut Ui, state: &EditorState, data: &mut EditorData, id: &str, ou
         }
         if material == ElementMaterial::Background && !mixed {
             distant(ui, state, data, e, out);
+        }
+        if material == ElementMaterial::Background && e.distant.is_none() {
+            glass(ui, state, data, e, out);
         }
     }
     super::look::element_glow(ui, state, data, e, out);
@@ -163,6 +166,58 @@ fn distant(
     }
     if state.document().is_some_and(|d| !d.has_holes()) {
         ui.colored_label(ui.visuals().warn_fg_color, labels::DISTANT_HINT);
+    }
+}
+
+/// The background glass design: the Glass switch and, when on, its
+/// Opacity, Tint and Frost sliders (a locked element's hidden, as Glow's);
+/// the hints while no distant layer shows through it or the level is not
+/// lit (tint and frost show only lit).
+fn glass(ui: &mut Ui, state: &EditorState, data: &mut EditorData, e: &Element, out: &mut Vec<EditorAction>) {
+    let set = |out: &mut Vec<EditorAction>, g: Option<ElementGlass>| {
+        out.push(EditorAction::Set(e.id.clone(), Property::Glass(g)))
+    };
+    let Some(doc) = state.document() else { return };
+    let mut on = e.glass.is_some();
+    let r = ui.add_enabled(!e.locked, egui::Checkbox::new(&mut on, labels::GLASS)).on_hover_text(
+        "its pixels are see-through glass over the distant layers: lit as the layer behind, \
+         its glow casts light but shows none",
+    );
+    if r.changed() {
+        let opacity = crate::ops::DEFAULT_GLASS_OPACITY;
+        set(out, on.then_some(ElementGlass { opacity, tint: 0, frost: 0 }));
+    }
+    let Some(g) = e.glass else { return };
+    if !doc.see_through() {
+        ui.colored_label(ui.visuals().warn_fg_color, labels::GLASS_HINT);
+    }
+    if e.locked {
+        return;
+    }
+    let key = |k: &str| format!("{}/glass-{k}", e.id);
+    if let Some(v) =
+        slider(ui, data, &key("opacity"), labels::OPACITY, ("clear", "solid"), g.opacity.into(), 1..=99)
+    {
+        set(out, Some(ElementGlass { opacity: v as u8, ..g }));
+    }
+    let lit = doc.level().look.is_some();
+    if let Some(v) =
+        slider(ui, data, &key("tint"), labels::TINT, ("clear", "coloured"), g.tint.into(), 0..=100)
+    {
+        set(out, Some(ElementGlass { tint: v as u8, ..g }));
+    }
+    if !lit {
+        ui.colored_label(ui.visuals().warn_fg_color, labels::GLASS_LOOK_HINT);
+    }
+    let frost = (labels::FROST, ("clear", "frosted"));
+    let px = |v: f64| format!("{:.1} px", v / 10.0);
+    if let Some(v) =
+        slider_shown(ui, data, &key("frost"), frost, g.frost.into(), 0..=MAX_GLASS_FROST.into(), Some(px))
+    {
+        set(out, Some(ElementGlass { frost: v as u8, ..g }));
+    }
+    if !lit {
+        ui.colored_label(ui.visuals().warn_fg_color, labels::GLASS_LOOK_HINT);
     }
 }
 

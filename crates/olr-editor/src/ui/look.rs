@@ -317,15 +317,39 @@ fn occlusion(
 fn group_fields(ui: &mut Ui, data: &mut EditorData, g: &GlowGroupSource) -> Option<GlowGroupSource> {
     let key = format!("group/{}", g.id);
     let mut out = None;
-    let mut own = g.colour == GlowColourSource::Own;
-    if ui.checkbox(&mut own, "Own colour").on_hover_text("each pixel lights in its art's colour").changed() {
-        let colour = if own { GlowColourSource::Own } else { GlowColourSource::Tint(WHITE) };
-        out = Some(GlowGroupSource { colour, ..g.clone() });
-    }
-    if let GlowColourSource::Tint(c) = g.colour
+    // Own, Tint or Filtered (the background glass design), one segmented
+    // switch; a tint's colour carries over to Filtered and back.
+    let tint = match g.colour {
+        GlowColourSource::Tint(c) | GlowColourSource::Filtered(c) => c,
+        GlowColourSource::Own => WHITE,
+    };
+    let kinds = [
+        (GlowColourSource::Own, "Own", "each pixel lights in its art's colour"),
+        (GlowColourSource::Tint(tint), "Tint", "every pixel lights in the group's colour"),
+        (
+            GlowColourSource::Filtered(tint),
+            labels::FILTERED,
+            "each pixel lights in its art's hue at full strength, times the group's colour: \
+             light through tinted glass",
+        ),
+    ];
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        for (kind, name, hint) in kinds {
+            let on = std::mem::discriminant(&kind) == std::mem::discriminant(&g.colour);
+            if ui.add(egui::Button::selectable(on, name)).on_hover_text(hint).clicked() && !on {
+                out = Some(GlowGroupSource { colour: kind, ..g.clone() });
+            }
+        }
+    });
+    if let GlowColourSource::Tint(c) | GlowColourSource::Filtered(c) = g.colour
         && let Some(c) = colour(ui, data, &format!("{key}/colour"), labels::GROUP_COLOUR, c)
     {
-        out = Some(GlowGroupSource { colour: GlowColourSource::Tint(c), ..g.clone() });
+        let colour = match g.colour {
+            GlowColourSource::Filtered(_) => GlowColourSource::Filtered(c),
+            _ => GlowColourSource::Tint(c),
+        };
+        out = Some(GlowGroupSource { colour, ..g.clone() });
     }
     if let Some(v) =
         number(ui, data, &format!("{key}/intensity"), labels::GROUP_INTENSITY, g.intensity.into(), 0..=1000)

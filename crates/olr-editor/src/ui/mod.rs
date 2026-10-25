@@ -137,6 +137,19 @@ pub mod labels {
     /// The Glow switch's hint on a distant layer (issue #62): its light
     /// is cast from its reference placement.
     pub const DISTANT_GLOW_HINT: &str = "the whole layer glows and shows its art in the dark; its light falls on the level from where the layer lies with the camera at the level's centre, so a small bright spot (a far window) lights the level off its drawn place when the camera is far from the centre; a broad sky or sunset shows no difference";
+    // Background glass (the background glass design).
+    pub const GLASS: &str = "Glass";
+    pub const OPACITY: &str = "Opacity %";
+    pub const TINT: &str = "Tint %";
+    pub const FROST: &str = "Frost";
+    /// Shown under Glass while the level has no distant layer.
+    pub const GLASS_HINT: &str =
+        "Glass shows the distant layers behind it: make a background element Distant to see through it";
+    /// Shown under Tint and Frost while the level has no lighting.
+    pub const GLASS_LOOK_HINT: &str = "shows only in a lit level: add lighting to the level";
+    /// A glow group's colour: each pixel's art at full strength, times
+    /// the group's colour (the glass's light).
+    pub const FILTERED: &str = "Filtered";
     pub const TOOL_GLOW: &str = "Glow brush";
     /// The Glow brush's and Glow selection's glow % (one value).
     pub const GLOW_STRENGTH_BRUSH: &str = "Glow %";
@@ -450,22 +463,35 @@ pub(crate) fn slider(
     data: &mut EditorData,
     key: &str,
     label: &str,
-    (low, high): (&str, &str),
+    ends: (&str, &str),
     current: i64,
     range: std::ops::RangeInclusive<i64>,
+) -> Option<i64> {
+    slider_shown(ui, data, key, (label, ends), current, range, None)
+}
+
+/// [`slider`] showing its value as `shown` gives it (the background glass
+/// design: frost in tenths shown in world pixels).
+pub(crate) fn slider_shown(
+    ui: &mut Ui,
+    data: &mut EditorData,
+    key: &str,
+    (label, (low, high)): (&str, (&str, &str)),
+    current: i64,
+    range: std::ops::RangeInclusive<i64>,
+    shown: Option<fn(f64) -> String>,
 ) -> Option<i64> {
     data.drawn.insert(key.into());
     ui.horizontal(|ui| {
         let l = ui.label(label);
         ui.weak(low);
         let mut v = data.drafts.get(key).copied().unwrap_or(current as f64);
-        let r = ui
-            .add(
-                egui::Slider::new(&mut v, *range.start() as f64..=*range.end() as f64)
-                    .integer()
-                    .show_value(true),
-            )
-            .labelled_by(l.id);
+        let mut s =
+            egui::Slider::new(&mut v, *range.start() as f64..=*range.end() as f64).integer().show_value(true);
+        if let Some(shown) = shown {
+            s = s.custom_formatter(move |v, _| shown(v));
+        }
+        let r = ui.add(s).labelled_by(l.id);
         ui.weak(high);
         if r.dragged() {
             data.drafts.insert(key.into(), v);
