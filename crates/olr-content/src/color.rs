@@ -27,6 +27,8 @@ impl LoadedLevel {
         map.set_glow(self.glow.clone());
         map.set_clear(self.clear.clone());
         map.set_glass(self.glass.clone());
+        map.set_glow_beams(self.glow_beams.clone());
+        map.set_haze(self.haze.clone());
         map
     }
 }

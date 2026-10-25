@@ -140,6 +140,57 @@ on screen or offscreen.
   `a_filtered_group_lights_by_each_pixels_colour`,
   `no_glass_map_changes_no_byte`, `frost_is_the_same_at_a_views_edge`,
   `a_glass_map_set_later_is_uploaded_and_none_costs_nothing`.
+- **Glow beams** (the directional-glow design, spec
+  `docs/superpowers/specs/2026-10-25-directional-glow-design.md`;
+  `renderer/glow_beams.rs`; STATUS.md "Directional glow"): a level's
+  directional glow patches (`ColorMap::glow_beams`, `olr_look::glow_beams::derive`
+  of both layers, none past `MAX_GLOW_BEAMS` 64, which `check` refuses)
+  are derived by `LookState::sync_glow_beams` at `upload_terrain` and
+  whenever `ColorMap::beams_generation` changes (`update_terrain`: the
+  editor sets maps anew; the glow light is then made again).
+  `LookTextures::glow_beams` (`GlowBeams`) holds the beam map (`Rg8Uint`,
+  direction / 2 + 1 and the spread, at the look's world size with a map,
+  else 1 × 1 none; each world pixel the backdrop's texel where it is
+  background, the composite's elsewhere, rewritten with every
+  `update_terrain` rectangle, so digging reveals the backdrop's) and the
+  haze map (`R8Unorm`, `ColorMap::haze`, else 1 × 1 at 1). Each frame
+  `pack_glow_beams` packs the beams into one uniform shared by every
+  view (`GlowBeam` in `composite.wgsl`, 12 floats: at, dir, half,
+  tan(spread), reach, group, light, region; a uniform rather than a
+  storage buffer, so no device without fragment storage buffers is
+  refused): only those whose group the frame has, with a reach in world
+  pixels and some light, `light` being `BEAM_SCALE` (0.08) × the group's
+  cast × the patch's colour (its normalised art for an own-colour or
+  filtered group, white for a tint) × its mean glow; a `Flicker` group's
+  beam takes its patch's first pixel's flicker region (`Regions`).
+  `LookGlobals.beams` (a vec4 after `distant`): the count, the haze
+  (percent / 100, `LookFrame::haze`), 1 when the level has a beam map.
+  **The cone:** with a beam map, a cascade ray meeting a glowing cell
+  weights its light by `beam_cone` (`gi_cascade.wgsl`, group 1: the beam
+  map at the cell's middle world pixel): smoothstep from `cos(spread +
+  0.26)` to `cos(spread)` of the light's way against the direction; 1
+  for a cell not directional. **The beam** (`glow_beams_at`, the
+  composite's group 1: the uniform and the haze map): rejects `along`
+  outside (0, reach] and then the wedge (`|side| ≥ width + pen`) first;
+  width `half + along tan(spread)`, edge `1 − smoothstep(width − pen/2,
+  width + pen, |side|)`, `pen = 0.5 + 0.03 along`, falloff `(1 −
+  along/reach)³`, × `region_flicker`, then the share of 8 points across
+  the source (half a pixel behind its face) each pixel sees past `solid_px`
+  (the spike's march), at each texel's centre in world coordinates
+  (camera-independent, still scenes steady). **Where it shows** (the
+  proposal Task 6 tunes): the surface term adds it to the light before
+  the cap and `light × art` on every in-level pixel that does not glow and
+  is not a distant layer's (sky or glass); the air term adds `beam × haze
+  × haze_map(w)` after `light × art`, before the grade, on open pixels
+  that do not glow and over the sky. Light only draws it too; full bright
+  and markers do not. Without beams (count 0, no beam map) every pass
+  draws its old bytes (`no_glow_beams_no_haze_changes_no_byte`, the
+  goldens, `lit-hashes.ron`). Tests (GPU, `tests/gpu/glow_beams.rs`):
+  `a_beam_lights_ahead_and_not_behind`, `a_beam_starts_as_wide_as_its_source`,
+  `a_wall_stops_a_beam`, `shadow_edges_are_smooth`, `digging_opens_a_shadow`,
+  `still_glow_draws_steady_bytes`, `beams_are_camera_independent`,
+  `haze_shows_a_beam_over_the_sky`, `no_glow_beams_no_haze_changes_no_byte`;
+  unit: `past_the_cap_a_level_has_no_beams`, `beams_pack_their_groups_cast`.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel
   (`MIN_SCALE` 2, OLX's sprite art, or the level's art scale if larger:
@@ -730,6 +781,7 @@ the disc cap, ambient occlusion, GL, several views (issue #26); issue #12:
 `a_double_skin_draws_at_four_texels_per_world_pixel`,
 `a_glowing_skin_pixel_is_bright_in_the_dark`,
 `a_skin_light_lights_the_air_and_a_wall_stops_it`; issue #39: heat, `tests/gpu/heat.rs`; issue #54: the
-worm halo, `tests/gpu/halo.rs`) and goldens need
+worm halo, `tests/gpu/halo.rs`; the directional-glow design: glow beams,
+`tests/gpu/glow_beams.rs`) and goldens need
 `OLR_GPU_TESTS=1`; `cargo xtask full` sets it and runs them, skipping with a
 notice when no adapter opens (`cargo run -p olr-render --example adapter`).

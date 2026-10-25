@@ -473,3 +473,19 @@ fn filtered_scales_the_art_to_a_full_brightest_channel() {
     assert_eq!(f([0.0; 3]), [0.0; 3], "black casts nothing");
     assert_eq!(f([f32::NAN, 0.5, 0.5]), [0.0, 1.0, 1.0], "never a NaN");
 }
+
+/// The directional-glow design: the level's haze (percent, at most 100)
+/// reaches the frame; none without a look.
+#[test]
+fn begin_takes_the_levels_haze() {
+    let mut look = level();
+    look.haze = 60;
+    let mut f = LookFrame::default();
+    f.begin(Some(&look), 0.0);
+    assert_eq!(f.haze, 60);
+    look.haze = 250;
+    f.begin(Some(&look), 0.0);
+    assert_eq!(f.haze, 100, "clamped");
+    f.begin(None, 0.0);
+    assert_eq!(f.haze, 0);
+}

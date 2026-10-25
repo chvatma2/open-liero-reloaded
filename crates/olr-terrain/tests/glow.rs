@@ -257,3 +257,35 @@ fn clear_flags_are_the_level_size() {
     assert!(c.set_clear(None));
     assert_eq!(c.clear(), None);
 }
+
+/// The directional-glow design: the glow beam and haze maps are the level's
+/// as loaded; a misfit is refused and changes nothing; each map set is a
+/// new generation; edits never change them.
+#[test]
+fn glow_beams_and_haze_are_set_as_loaded() {
+    let t = map(&["R..D", "R..."]);
+    let (front, back) =
+        (image(4 * S, 2 * S, |_, _| Rgba::rgb(1, 2, 3)), image(4 * S, 2 * S, |_, _| Rgba::BLACK));
+    let mut m = ColorMap::new(&t, &front, &back, S, theme());
+    let g0 = m.beams_generation();
+    assert!(!m.set_glow_beams(Some(olr_terrain::GlowBeamMap::none((3, 2)))));
+    assert!(!m.set_haze(Some(vec![0; 7])));
+    assert_eq!((m.glow_beams(), m.haze(), m.beams_generation()), (None, None, g0), "refused");
+    let mut beams = olr_terrain::GlowBeamMap::none((4, 2));
+    beams.front[0] = 46;
+    beams.front[1] = 30;
+    assert!(m.set_glow_beams(Some(beams.clone())));
+    let g1 = m.beams_generation();
+    assert_ne!(g1, g0);
+    assert!(m.set_haze(Some(vec![255, 0, 7, 9, 1, 2, 3, 4])));
+    assert_ne!(m.beams_generation(), g1);
+    m.apply(ColorEdit::Carve { hole: 1, x: 2, y: 1 });
+    assert_eq!(m.glow_beams(), Some(&beams), "play never changes them");
+    assert_eq!(m.haze(), Some(&[255, 0, 7, 9, 1, 2, 3, 4][..]));
+    assert_eq!(m.art_layers(), (front.as_raw(), back.as_raw()));
+    assert!(m.glow_layers().is_none());
+    let g = m.beams_generation();
+    assert!(m.set_glow_beams(None) && m.set_haze(None));
+    assert_ne!(m.beams_generation(), g);
+    assert_eq!((m.glow_beams(), m.haze()), (None, None));
+}

@@ -70,7 +70,8 @@ own look. The simulation never sees it.
   `olr-present`'s presentation: frames of one step share the renderer's
   glow light, the glow light once a tick); it keeps `mode`
   (`ViewMode`: `Lit`, `FullBright`, `LightOnly`, the editor's toggle) and
-  the vectors' capacity. It clamps `max_light` to 1.0-2.0, `softness` to 4
+  the vectors' capacity. It clamps `max_light` to 1.0-2.0, `softness` to 4,
+  the `haze` (the directional-glow design: percent, 0 without a look) to 100
   and `light_soak` to `MAX_SOAK` (12), and keeps the `occlusion` with a
   strength (at most 100), its reach clamped to `MIN_OCCLUSION_REACH` (2)
   to `MAX_OCCLUSION_REACH` (32; the renderer reads the solid map that far

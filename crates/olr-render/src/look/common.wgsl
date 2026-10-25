@@ -40,6 +40,10 @@ struct LookGlobals {
     // layers write in the shade's marker channel (issue #54: 0.25), 1 when
     // the level's glass is drawn (the background glass design: see-through)
     distant: vec4<f32>,
+    // the glow beams (the directional-glow design): the frame's beam count,
+    // the haze (0-1), 1 when the level has a beam map (the cascades weight
+    // a directional cell's light by its cone), 0
+    beams: vec4<f32>,
     groups: array<Group, 255>,
 };
 

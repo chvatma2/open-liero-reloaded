@@ -6236,6 +6236,43 @@ bless). As built:
 - **Cost:** a see-through level binds one more texture; the distant pass
   reads it per fragment. Unmeasured.
 
+## Directional glow
+
+No OLX counterpart. Spec
+`docs/superpowers/specs/2026-10-25-directional-glow-design.md`, the look
+picked by the maintainer from spike renders ("PCs 0.12, soft shadows,
+softest edge"). Presentation only; levels without directional glow and
+haze draw byte for byte as before (the render goldens and
+`lit-hashes.ron` held without a bless). The renderer, as built
+(`olr-render`'s `renderer/glow_beams.rs`):
+
+- **Two parts:** the glow light of a directional patch is weighted by
+  its cone in the cascades (smoothstep from `cos(spread + 0.26)` to
+  `cos(spread)`: no light behind it), and each patch draws a crisp,
+  soft-shadowed beam in the composite (the spike's `beams_at`: 8 shadow
+  points, penumbra `0.5 + 0.03 along`, falloff cubed).
+- **Strength:** `BEAM_SCALE` 0.08 × the group's cast × the patch's colour
+  × its mean glow; no setting of its own. A `Flicker` group's beam
+  flickers with its patch's first pixel's region, as its glow light does.
+- **Surface and air (a proposal for Task 6's renders):** the beam is
+  added to a pixel's light before the cap and `light × art` wherever it
+  falls on a pixel that does not glow and is not a distant layer's (rock
+  faces, the back wall, sprites); `beam × haze × haze map` is added after
+  `light × art` in the open air and over the sky.
+- **Planning calls:** the beams go in a uniform (64 × 48 bytes), not a
+  storage buffer, so no device without fragment storage buffers is
+  refused; the beam map the cascades read is composed from the live
+  material (the backdrop's texel where a pixel is background), so digging
+  dirt reveals a backdrop patch's cone; a beam whose group's reach is
+  unlimited (which `check` refuses) is not drawn; the beams are derived
+  again, and the maps uploaded, when the editor sets new maps
+  (`ColorMap::beams_generation`).
+- **Cost:** per pixel and beam whose wedge holds the pixel, 8 shadow
+  marches of up to the distance to the source; a few arithmetic rejects
+  outside the wedges; no pass of its own, and a level without beams reads
+  only the count. Unmeasured (the maintainer deferred measurement,
+  2026-10-25).
+
 ## Kept OLX quirks
 
 - **Healing passes 100 health:** `CGameObject::injure`

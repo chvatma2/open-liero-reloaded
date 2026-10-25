@@ -38,6 +38,12 @@ pub struct LevelPack {
     pub clear: Option<Vec<u8>>,
     /// The level's glass map (`look/glass.png`, the background glass design).
     pub glass: Option<olr_format::levels::GlassMap>,
+    /// The level's glow beams (`look/glow-beam.png` and
+    /// `look/glow-beam-back.png`, the directional-glow design).
+    pub glow_beams: Option<olr_format::levels::GlowBeamMap>,
+    /// The level's haze map (`look/haze.png`, the directional-glow
+    /// design): grey per world pixel.
+    pub haze: Option<Vec<u8>>,
     /// The level's distant (parallax) layers (`distant/<i>.png`, issue
     /// #11), far to near; empty for most levels.
     pub distant: Vec<olr_data::level::DistantLayer>,
@@ -150,6 +156,8 @@ pub fn read_level(src: &dyn ContentSource) -> Result<LevelPack, PackError> {
         glow: src.glow,
         clear: src.clear,
         glass: src.glass,
+        glow_beams: src.glow_beams,
+        haze: src.haze,
         distant: src.distant,
         surface: src.surface,
         distant_surface,
@@ -193,6 +201,8 @@ pub(crate) mod tests {
             glow: None,
             clear: None,
             glass: None,
+            glow_beams: None,
+            haze: None,
             distant: Vec::new(),
             surface: None,
             distant_surface: Vec::new(),

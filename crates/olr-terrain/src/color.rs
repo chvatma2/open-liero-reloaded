@@ -15,9 +15,9 @@ use alloc::vec::Vec;
 use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 
-use crate::GlassMap;
 use crate::dirt::{Clip, flags_of};
 use crate::dirty::{Dirty, DirtyTiles};
+use crate::{GlassMap, GlowBeamMap};
 use crate::{GreenMask, GreenPixel, PX_EMPTY, PX_ROCK, Stamp, StampPixel, Terrain, clip};
 
 /// `PlaceGreenDirt`'s shades (`CMap.cpp:1245-1248`), picked with
@@ -103,6 +103,14 @@ pub struct ColorMap {
     glass: Option<Box<GlassMap>>,
     /// Counts the glass maps set, so a renderer uploads one only anew.
     glass_generation: u32,
+    /// The level's glow beams (the directional-glow design), as loaded.
+    glow_beams: Option<Box<GlowBeamMap>>,
+    /// The level's haze map (the directional-glow design): grey per world
+    /// pixel, as loaded.
+    haze: Option<Box<[u8]>>,
+    /// Counts the glow beam and haze maps set, so a renderer derives and
+    /// uploads them only anew.
+    beams_generation: u32,
 }
 
 /// A level's glow (the look system's `look/` images): strength per art pixel
@@ -222,6 +230,9 @@ impl ColorMap {
             clear: None,
             glass: None,
             glass_generation: 0,
+            glow_beams: None,
+            haze: None,
+            beams_generation: 0,
             see_through: false,
         }
     }
@@ -327,6 +338,66 @@ impl ColorMap {
     /// Changes with each glass map [`set_glass`](Self::set_glass) takes.
     pub fn glass_generation(&self) -> u32 {
         self.glass_generation
+    }
+
+    /// Sets the level's glow beams (the directional-glow design): where its
+    /// glow is directional, per world pixel of the composite and of the
+    /// backdrop; a map that does not fit the world size is refused
+    /// (`false`) and the map keeps what it had. Play never changes it.
+    pub fn set_glow_beams(&mut self, beams: Option<GlowBeamMap>) -> bool {
+        match beams {
+            Some(b) if !b.fits((self.material.width(), self.material.height())) => false,
+            b => {
+                self.glow_beams = b.map(Box::new);
+                self.beams_generation = self.beams_generation.wrapping_add(1);
+                true
+            }
+        }
+    }
+
+    /// The level's glow beams; `None` when no glow is directional.
+    pub fn glow_beams(&self) -> Option<&GlowBeamMap> {
+        self.glow_beams.as_deref()
+    }
+
+    /// Sets the level's haze map (the directional-glow design): grey per
+    /// world pixel, row-major, 0 none to 255 the level's haze; a map of
+    /// another size is refused (`false`) and the map keeps what it had.
+    /// Play never changes it.
+    pub fn set_haze(&mut self, haze: Option<Vec<u8>>) -> bool {
+        let cells = u64::from(self.material.width()) * u64::from(self.material.height());
+        match haze {
+            Some(h) if h.len() as u64 != cells => false,
+            h => {
+                self.haze = h.map(Vec::into_boxed_slice);
+                self.beams_generation = self.beams_generation.wrapping_add(1);
+                true
+            }
+        }
+    }
+
+    /// The level's haze map; `None` when the haze is the same everywhere.
+    pub fn haze(&self) -> Option<&[u8]> {
+        self.haze.as_deref()
+    }
+
+    /// Changes with each glow beam or haze map
+    /// [`set_glow_beams`](Self::set_glow_beams) and
+    /// [`set_haze`](Self::set_haze) take.
+    pub fn beams_generation(&self) -> u32 {
+        self.beams_generation
+    }
+
+    /// The glow layers as loaded (and as `replace_glow_rect` changed
+    /// them); `None` without glow.
+    pub fn glow_layers(&self) -> Option<&GlowLayers> {
+        self.glow.as_ref().map(|g| &g.layers)
+    }
+
+    /// The level's front art (the composite as loaded) and back art, RGBA8
+    /// at art size, row-major (opaque but where see-through).
+    pub fn art_layers(&self) -> (&[u8], &[u8]) {
+        (&self.front, &self.back)
     }
 
     /// The level's clear flags per world pixel; `None` when nothing is clear.

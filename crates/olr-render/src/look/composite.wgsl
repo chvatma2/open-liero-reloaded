@@ -8,6 +8,8 @@
 // the farther it is (issue #11). The background round a living worm takes
 // less light, the worm halo (issue #54), by how far back it lies. A hot
 // pixel's heat light (issue #68) is added after the cap, before the grade.
+// The glow beams (the directional-glow design) light the surfaces they
+// fall on before the cap and, by the haze, the air and the sky after it.
 // Linear light, sRGB bytes in and out.
 
 @group(0) @binding(0) var<uniform> look: LookGlobals;
@@ -37,6 +39,37 @@ struct WormBoxes {
 // and light only, which draw issue #39's look of a hot pixel).
 @group(0) @binding(8) var heat_tex: texture_2d<f32>;
 
+// One glow beam (the directional-glow design; `renderer/glow_beams.rs`
+// packs them): its source is a segment across it, `half` world pixels each
+// side of `at`, facing `dir`; it widens by `tan_spread` and reaches `reach`
+// world pixels. `light` is its strength (linear), `group` its glow group's
+// value, `region` its patch's flicker region.
+struct GlowBeam {
+    at: vec2<f32>,
+    dir: vec2<f32>,
+    half: f32,
+    tan_spread: f32,
+    reach: f32,
+    group: f32,
+    light: vec3<f32>,
+    region: f32,
+};
+// The frame's beams, `look.beams.x` of them (MAX_GLOW_BEAMS is prepended
+// from Rust).
+struct GlowBeams {
+    beams: array<GlowBeam, MAX_GLOW_BEAMS>,
+};
+@group(1) @binding(0) var<uniform> glow_beams: GlowBeams;
+// The haze map (the directional-glow design): per world pixel, 0 none to
+// 1 the level's haze; 1 x 1 at 1 without a map.
+@group(1) @binding(1) var haze_tex: texture_2d<f32>;
+
+// A beam's edge widens by this much of its distance, world pixels (the
+// picked look's "softest edge").
+const BEAM_PENUMBRA: f32 = 0.03;
+// The points across a beam's source a pixel looks for (soft shadows).
+const BEAM_SHADOW_POINTS: i32 = 8;
+
 @vertex
 fn vs_full(@builtin(vertex_index) vi: u32) -> @builtin(position) vec4<f32> {
     let x = f32(i32(vi & 1u) * 4 - 1);
@@ -59,6 +92,67 @@ fn solid_px(w: vec2<i32>) -> bool {
         return false;
     }
     return textureLoad(solid_tex, w, 0).r != 1u;
+}
+
+// The glow beams' light at world point `p` (the directional-glow design;
+// the spike's `beams_at`): each a crisp wedge as wide as its source where
+// it starts, `half + along tan(spread)`, its edge a smoothstep over a
+// penumbra of `0.5 + along BEAM_PENUMBRA`, fading as `(1 - along/reach)^3`,
+// flickering with its patch's region, shadowed by the share of
+// BEAM_SHADOW_POINTS points across its source (half a pixel behind its
+// face) that `p` sees past opaque rock and dirt (the live solid map).
+// Cheapest rejects first: `along` outside (0, reach], then the wedge; the
+// shadow march last.
+fn glow_beams_at(p: vec2<f32>) -> vec3<f32> {
+    var acc = vec3<f32>(0.0);
+    let n = min(i32(look.beams.x), MAX_GLOW_BEAMS);
+    for (var i = 0; i < n; i++) {
+        let b = glow_beams.beams[i];
+        let v = p - b.at;
+        let along = dot(v, b.dir);
+        if along <= 0.0 || along > b.reach {
+            continue;
+        }
+        let perp = vec2<f32>(-b.dir.y, b.dir.x);
+        let side = abs(dot(v, perp));
+        let width = b.half + along * b.tan_spread;
+        let pen = 0.5 + along * BEAM_PENUMBRA;
+        if side >= width + pen {
+            continue;
+        }
+        let edge = 1.0 - smoothstep(width - pen * 0.5, width + pen, side);
+        let f = 1.0 - along / b.reach;
+        var light = b.light * (edge * f * f * f);
+        let g = u32(b.group);
+        if g >= 1u && g <= u32(look.mode.y) {
+            light = light * region_flicker(look.groups[g - 1u].flicker, u32(b.region));
+        }
+        var seen = 0.0;
+        for (var k = 0; k < BEAM_SHADOW_POINTS; k++) {
+            let u = (f32(k) + 0.5) / f32(BEAM_SHADOW_POINTS) * 2.0 - 1.0;
+            let src = b.at + perp * (u * b.half) - b.dir * 0.5;
+            let back = src - p;
+            let d = length(back);
+            var open = 1.0;
+            let steps = i32(d);
+            for (var s = 1; s < steps - 1; s++) {
+                if solid_px(vec2<i32>(floor(p + back / d * f32(s)))) {
+                    open = 0.0;
+                    break;
+                }
+            }
+            seen += open;
+        }
+        acc += light * (seen / f32(BEAM_SHADOW_POINTS));
+    }
+    return acc;
+}
+
+// The haze map at world pixel `w` (clamped: a 1 x 1 map is the same
+// everywhere).
+fn haze_at(w: vec2<i32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(haze_tex));
+    return textureLoad(haze_tex, clamp(w, vec2<i32>(0), size - vec2<i32>(1)), 0).r;
 }
 
 // The light at light-grid coordinate `g` (texel centres at whole numbers),
@@ -190,7 +284,16 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     }
     // A distant layer's pixel (issue #11) takes the ambient and 1 - depth
     // of the light beyond it, the bloom too; only in a level that has one.
-    if look.distant.x > 0.5 && shade.w > 0.0 && shade.w < 0.998 {
+    let sky = look.distant.x > 0.5 && shade.w > 0.0 && shade.w < 0.998;
+    // The glow beams here (the directional-glow design): on a pixel that
+    // does not glow, or over the sky, in the level.
+    var beam = vec3<f32>(0.0);
+    let in_level = all(w >= vec2<i32>(0)) && all(w < vec2<i32>(look.level.xy));
+    let beams_on = look.beams.x > 0.5;
+    if beams_on && in_level && (shade.x <= 0.0 || sky) {
+        beam = glow_beams_at(look.frame.xy + (vec2<f32>(t) + vec2<f32>(0.5)) / look.frame.z);
+    }
+    if sky {
         let d = 1.0 - shade.w;
         let base = min(here, look.ambient.rgb);
         here = base + (here - base) * (1.0 - d);
@@ -203,6 +306,11 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     // worm. It darkens the light the texel takes and the bloom on it, not
     // its self-light, floor or grade.
     var lit = min(here, cap);
+    // The surface term: a beam lights what it falls on as other light does
+    // (never the sky, whose share is the air term below).
+    if beams_on && !sky {
+        lit = min(here + beam, cap);
+    }
     if shade.y > 0.125 && shade.y < 0.375 && shade.x <= 0.0 && !solid {
         var depth = 0.0;
         if look.distant.x > 0.5 {
@@ -218,7 +326,13 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     // A hot pixel (issue #68) is its cold look plus its heat's light: never
     // darker than cold, back to exactly its cold look once its glow is 0.
     let heat = textureLoad(heat_tex, t, 0).rgb;
-    var c = (a * l + bloom_at(g) * glare + heat) * look.grade.x;
+    var c = a * l + bloom_at(g) * glare + heat;
+    // The air term: the haze shows a beam in the open air and over the sky,
+    // as light of its own.
+    if beams_on && look.beams.y > 0.0 && ((!solid && shade.x <= 0.0) || sky) {
+        c = c + beam * (look.beams.y * haze_at(w));
+    }
+    c = c * look.grade.x;
     c = (c - vec3<f32>(0.5)) * look.grade.y + vec3<f32>(0.5);
     let luma = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
     c = vec3<f32>(luma) + (c - vec3<f32>(luma)) * look.grade.z;

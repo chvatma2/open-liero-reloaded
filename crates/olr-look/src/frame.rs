@@ -95,6 +95,9 @@ pub struct LookFrame {
     /// [`crate::engine::BOUNCE`] in a lit level, 0 without a look.
     pub bounce: f32,
     pub grade: Grade,
+    /// Percent, 0-100: how much of the air the glow beams scatter in (the
+    /// level's `haze`, the directional-glow design); 0 without a look.
+    pub haze: u8,
     /// The level's groups in order: a group map value `v` (1-255) is
     /// `groups[v - 1]`; 0 is no group.
     pub groups: Vec<FrameGroup>,
@@ -130,6 +133,7 @@ impl LookFrame {
             self.worm_floor = crate::worm_floor_of([255; 3]);
             self.bounce = 0.0;
             self.grade = Grade::default();
+            self.haze = 0;
             return;
         };
         let linear = |a: crate::Ambient| {
@@ -149,6 +153,7 @@ impl LookFrame {
         self.light_steps = level.light_steps;
         self.softness = level.softness.min(4);
         self.grade = level.grade;
+        self.haze = level.haze.min(100);
         for g in &level.groups {
             let identity = identity_of(&g.id);
             let phase = g.phase_ms.unwrap_or_else(|| phase_for(&g.animation, identity));

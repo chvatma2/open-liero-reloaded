@@ -39,6 +39,12 @@ pub struct LoadedLevel {
     pub clear: Option<Vec<u8>>,
     /// The level's glass map (`look/glass.png`, the background glass design).
     pub glass: Option<olr_terrain::GlassMap>,
+    /// The level's glow beams (`look/glow-beam.png`, the directional-glow
+    /// design).
+    pub glow_beams: Option<olr_terrain::GlowBeamMap>,
+    /// The level's haze map (`look/haze.png`, the directional-glow design):
+    /// grey per world pixel.
+    pub haze: Option<Vec<u8>>,
     /// The level's distant (parallax) layers, far to near (issue #11):
     /// its back art's alpha-0 pixels are see-through when it has any.
     pub distant: Vec<olr_data::level::DistantLayer>,
@@ -65,6 +71,8 @@ impl LoadedLevel {
             glow: src.glow.clone(),
             clear: src.clear.clone(),
             glass: src.glass.clone(),
+            glow_beams: src.glow_beams.clone(),
+            haze: src.haze.clone(),
             distant: src.distant.clone(),
             surface: src.surface.clone(),
             distant_surface: olr_format::levels::distant_surface_values(src),
@@ -73,7 +81,7 @@ impl LoadedLevel {
     }
 
     fn from_level(l: Level, extras: Extras, warnings: Vec<String>) -> anyhow::Result<LoadedLevel> {
-        let Extras { look, glow, clear, glass, distant, surface, distant_surface } = extras;
+        let Extras { look, glow, clear, glass, glow_beams, haze, distant, surface, distant_surface } = extras;
         check_art_size(l.material.width(), l.material.height(), l.def.art_scale)?;
         Ok(LoadedLevel {
             name: l.def.name,
@@ -87,6 +95,8 @@ impl LoadedLevel {
             glow,
             clear,
             glass,
+            glow_beams,
+            haze,
             distant,
             surface,
             distant_surface,
@@ -124,6 +134,8 @@ struct Extras {
     glow: Option<olr_terrain::GlowLayers>,
     clear: Option<Vec<u8>>,
     glass: Option<olr_terrain::GlassMap>,
+    glow_beams: Option<olr_terrain::GlowBeamMap>,
+    haze: Option<Vec<u8>>,
     distant: Vec<olr_data::level::DistantLayer>,
     surface: Option<olr_look::SurfaceMaps>,
     distant_surface: Vec<u8>,
@@ -213,6 +225,8 @@ impl Content {
             glow: pack.glow,
             clear: pack.clear,
             glass: pack.glass,
+            glow_beams: pack.glow_beams,
+            haze: pack.haze,
             distant: pack.distant,
             surface: pack.surface,
             distant_surface: pack.distant_surface,

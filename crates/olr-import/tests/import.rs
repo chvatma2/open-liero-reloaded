@@ -56,6 +56,8 @@ fn level(dir: &Path, sub: &str, id: &str, name: &str) {
         warnings: Vec::new(),
         clear: None,
         glass: None,
+        glow_beams: None,
+        haze: None,
         distant: Vec::new(),
         surface: None,
         distant_surface: Vec::new(),

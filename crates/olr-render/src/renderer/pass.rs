@@ -186,6 +186,9 @@ impl Renderer {
         if let (Some(look), Some(state)) = (look, self.look.as_mut()) {
             state.sync_regions(&self.queue, look);
             state.pack_emitters(look);
+            // The glow beams (the directional-glow design), before the
+            // globals that count them.
+            state.pack_glow_beams(&self.queue, look);
             if let Some(t) = &state.textures {
                 t.gi.write_discs(&self.queue, &state.packed_emitters);
             }
@@ -349,7 +352,8 @@ impl Renderer {
             let casting = !look.groups.is_empty() || state.emitter_count > 0 || heat_on;
             let discs = state.emitter_count;
             let heat = tex.heat_bind(&state.heat.none);
-            if tex.gi.encode(&mut encoder, &state.gi, casting, heat, discs, timer) {
+            let binds = (heat, &tex.glow_beams.cascade_bind);
+            if tex.gi.encode(&mut encoder, &state.gi, casting, binds, discs, timer) {
                 self.glow_light_steps += 1;
             }
             tex.gi.made(key);
@@ -426,13 +430,16 @@ impl Renderer {
                 &state.bloom_v_pipeline,
                 &lt.bloom_binds[1],
             );
-            full(
-                &mut encoder,
-                PassGroup::Composite,
-                &lt.lit_view,
-                &state.composite_pipeline,
-                &lt.composite_bind,
-            );
+            {
+                // Group 1: the glow beams and the haze map (the
+                // directional-glow design).
+                let mut pass =
+                    begin(&mut encoder, "olr-render look", &lt.lit_view, group(PassGroup::Composite));
+                pass.set_pipeline(&state.composite_pipeline);
+                pass.set_bind_group(0, &lt.composite_bind, &[]);
+                pass.set_bind_group(1, state.beam_bind(), &[]);
+                pass.draw(0..3, 0..1);
+            }
         }
         // Each view's upscale into its area only; the first clears the
         // whole target when asked.

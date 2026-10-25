@@ -63,6 +63,15 @@ and the colour image that follows it (`ColorMap`).
   pixel and layer (front, back) two bytes, direction / 2 + 1 (0 not
   directional) and the spread 1-90; `fits(world)` also checks the byte
   ranges; `get(layer_back, x, y)` gives `(direction degrees, spread)`.
+  `ColorMap::set_glow_beams(Some(map))` (another world size or a byte out
+  of range refused, `false`) and `glow_beams()`, `set_haze(Some(grey))`
+  (one byte per world pixel, 0 none to 255 the level's haze; another
+  size refused) and `haze()` hold the level's maps as loaded for the
+  renderer (static: play never changes them); `beams_generation()`
+  changes with each map either takes, so the renderer derives the beams
+  and uploads the maps only anew (`glow_beams_and_haze_are_set_as_loaded`).
+  `glow_layers()` (the glow as loaded) and `art_layers()` (front and back
+  art) are the derivation's inputs.
 - **Glow** (plan 15a, look system §Glow): `set_glow(Some(GlowLayers))` gives the map
   a glow channel (strength per art pixel, group per world pixel, of the front
   as loaded and of the backdrop); layers of another size are refused

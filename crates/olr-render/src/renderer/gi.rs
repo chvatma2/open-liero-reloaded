@@ -100,6 +100,9 @@ pub(super) struct GiPipelines {
     jfa_layout: wgpu::BindGroupLayout,
     cascade_layout: wgpu::BindGroupLayout,
     fluence_layout: wgpu::BindGroupLayout,
+    /// The cascades' group 1 (the directional-glow design): the level's
+    /// beam map (`renderer/glow_beams.rs`).
+    pub(super) beam_layout: wgpu::BindGroupLayout,
 }
 
 impl GiPipelines {
@@ -145,6 +148,7 @@ impl GiPipelines {
             ],
         );
         let fluence_layout = layout("olr-render gi fluence", &[entry(0, frag, FLOAT)]);
+        let beam_layout = layout("olr-render gi glow beams", &[entry(0, frag, UINT)]);
         let head = format!(
             "{}\n{}\nconst JFA_FREE: f32 = {:?};\n",
             super::look::common(),
@@ -220,11 +224,11 @@ impl GiPipelines {
                 &jfa_layout,
                 &[(SEED_FORMAT, None)],
             ),
-            cascade: make(
+            cascade: make_with(
                 "olr-render gi cascade",
                 include_str!("../look/gi_cascade.wgsl"),
                 "fs_cascade",
-                &cascade_layout,
+                &[Some(&cascade_layout), Some(&beam_layout)],
                 &[(FORMAT, None)],
             ),
             fluence: make(
@@ -240,6 +244,7 @@ impl GiPipelines {
             jfa_layout,
             cascade_layout,
             fluence_layout,
+            beam_layout,
         }
     }
 }
@@ -549,7 +554,8 @@ impl GiState {
     /// cascades from the top down, fluence. With `casting` false (no group
     /// casts light and no disc glows) the fluence is only cleared.
     /// `heat` is the heat look's bind group (issue #39): hot pixels cast; no
-    /// worm takes part (#53). `count` discs were last given to
+    /// worm takes part (#53). `beams` is the cascades' group 1, the level's
+    /// beam map (the directional-glow design). `count` discs were last given to
     /// [`GiState::write_discs`] (plan 15c). Returns whether the history
     /// took a step (the renderer encodes it once a frame, however many
     /// views: issue #26).
@@ -558,7 +564,7 @@ impl GiState {
         encoder: &mut wgpu::CommandEncoder,
         pipes: &GiPipelines,
         casting: bool,
-        heat: &wgpu::BindGroup,
+        (heat, beams): (&wgpu::BindGroup, &wgpu::BindGroup),
         count: u32,
         timer: Option<&Timer>,
     ) -> bool {
@@ -651,7 +657,7 @@ impl GiState {
         }
         for i in (0..self.cascades.len()).rev() {
             let cascade = Some((&pipes.cascade, &self.cascade_binds[i]));
-            pass(encoder, PassGroup::Cascades, &[&self.cascades[i]], cascade, &[]);
+            pass(encoder, PassGroup::Cascades, &[&self.cascades[i]], cascade, &[beams]);
         }
         // The next frame's bounce reads this frame's light, kept here.
         let fluence = Some((&pipes.fluence, &self.fluence_bind));

@@ -10,6 +10,7 @@ use crate::frame::Instance;
 use crate::upscale::UpscaleFilter;
 
 mod gi;
+mod glow_beams;
 mod heat;
 mod look;
 mod pass;
@@ -704,6 +705,8 @@ impl Renderer {
         // none.
         if let Some(look) = &mut self.look {
             look.sync_glass(&self.device, &self.queue, map);
+            // The directional-glow design: new glow beam or haze maps.
+            look.sync_glow_beams(&self.device, &self.queue, map);
         }
         self.dirty.clear();
         self.dirty.extend(map.take_dirty_kinds());

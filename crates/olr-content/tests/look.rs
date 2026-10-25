@@ -269,3 +269,36 @@ fn shared_and_named_projectiles_keep_their_looks() {
     assert_eq!(glow_of("a.spawn"), Some(20));
     assert_eq!(glow_of("c"), Some(30));
 }
+
+/// The directional-glow design: a level's glow beams and haze map load
+/// from its pack and from its source, and its colour map carries them.
+#[test]
+fn glow_beams_and_haze_reach_the_color_map() {
+    let tmp = tempfile::tempdir().unwrap();
+    let mut beams = olr_format::levels::GlowBeamMap::none((6, 4));
+    beams.front[0] = 46;
+    beams.front[1] = 30;
+    let haze: Vec<u8> = (0..24).map(|i| i * 10).collect();
+    let (b, h) = (beams.clone(), haze.clone());
+    lit_level_with(tmp.path(), move |src| {
+        src.material[0] = Material::Rock;
+        src.glow_beams = Some(b);
+        src.haze = Some(h);
+    });
+    let level = Content::open(tmp.path()).unwrap().load_level("lit").unwrap();
+    assert!(level.warnings.is_empty(), "{:?}", level.warnings);
+    assert_eq!((level.glow_beams.as_ref(), level.haze.as_ref()), (Some(&beams), Some(&haze)));
+    let src = olr_format::levels::read_level_files(&DirFs::new(tmp.path().join("lit"))).unwrap();
+    let from_source = olr_content::LoadedLevel::from_source(&src).unwrap();
+    assert_eq!((from_source.glow_beams, from_source.haze), (level.glow_beams.clone(), level.haze.clone()));
+    let theme = olr_content::LoadedTheme {
+        name: "none".into(),
+        holes: Vec::new(),
+        green_ball: None,
+        front_tile: RgbaImage::new(1, 1),
+        back_tile: RgbaImage::new(1, 1),
+        warnings: Vec::new(),
+    };
+    let map = level.color_map(&theme);
+    assert_eq!((map.glow_beams(), map.haze()), (Some(&beams), Some(&haze[..])));
+}

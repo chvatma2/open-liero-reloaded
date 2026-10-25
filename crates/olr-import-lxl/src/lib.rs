@@ -73,6 +73,8 @@ pub fn import_lxl(olx: &dyn ContentSource, path: &VPath, origin: Origin) -> Resu
             warnings: Vec::new(),
             clear: None,
             glass: None,
+            glow_beams: None,
+            haze: None,
             distant: Vec::new(),
             surface: None,
             distant_surface: Vec::new(),

@@ -51,7 +51,10 @@ tiles; `stamps()`, `green_mask()`), `load_skin`/`skin_or_default`, `skin_matchin
   clear solids: the renderer's look passes draw it. `from_source` compiles
   the editor's look as well (`olr_format::levels::compile_look`), and
   `color_map` hands the glow and clear flags to the `ColorMap`
-  (`set_glow`, `set_clear`). Issue #39: `LoadedLevel::surface` holds the
+  (`set_glow`, `set_clear`; the glass map, `set_glass`; the
+  directional-glow design's `glow_beams` and `haze`, from
+  `olr_pack::LevelPack` or the source, `set_glow_beams` and `set_haze`:
+  `glow_beams_and_haze_reach_the_color_map`). Issue #39: `LoadedLevel::surface` holds the
   level's surface maps (`olr_pack::LevelPack::surface`, or the `LevelSource`'s
   maps) for the renderer's heat
   (`surface_maps_load_with_the_level`); issue #41: `distant_surface`

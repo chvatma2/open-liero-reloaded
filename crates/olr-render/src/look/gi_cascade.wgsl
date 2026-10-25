@@ -14,6 +14,35 @@
 @group(0) @binding(7) var<uniform> look: LookGlobals;
 // Each cell's haze (see gi.wgsl), its reach `cp.e.z` world pixels.
 @group(0) @binding(8) var level_haze: texture_2d<f32>;
+// The glow beams (the directional-glow design): each world pixel's beam
+// texel, direction / 2 + 1 (0 not directional) and the spread (degrees);
+// 1 x 1 none (`look.beams.z` 0).
+@group(1) @binding(0) var beam_tex: texture_2d<u32>;
+
+// How much wider than its spread a directional cell's light fades out,
+// radians (the spike's soft edge).
+const BEAM_SOFT: f32 = 0.26;
+
+// How much of a directional cell's light the ray from it along `-ray`
+// carries: all within its spread, none past the spread and BEAM_SOFT, a
+// smoothstep between; 1 for a cell that is not directional. Cell `q`'s
+// middle world pixel's texel (the light comes from the patch it is in).
+fn beam_cone(q: vec2<i32>, ray: vec2<f32>) -> f32 {
+    let c = i32(cp.c.w);
+    let w = q * c + vec2<i32>(c / 2);
+    let size = vec2<i32>(textureDimensions(beam_tex));
+    if any(w < vec2<i32>(0)) || any(w >= size) {
+        return 1.0;
+    }
+    let b = textureLoad(beam_tex, w, 0).rg;
+    if b.x == 0u {
+        return 1.0;
+    }
+    let theta = radians(f32(b.x - 1u) * 2.0);
+    let spread = radians(f32(max(b.y, 1u)));
+    let d = vec2<f32>(cos(theta), sin(theta));
+    return smoothstep(cos(min(spread + BEAM_SOFT, 3.14159265)), cos(spread), dot(-ray, d));
+}
 
 // The most steps of one ray's march (a ray grazing a wall steps one cell
 // at a time); past it the ray counts as open.
@@ -194,7 +223,13 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
         let e = textureLoad(level_em, h.q, 0);
         if max(e.r, max(e.g, e.b)) > 1e-6 {
             let reach = joined(textureLoad(level_reach, h.q, 0).xy);
-            ray = vec4<f32>(e.rgb * fade(h.t * cp.c.w, reach), 0.0);
+            var emitted = e.rgb * fade(h.t * cp.c.w, reach);
+            // A directional cell casts along its cone only (the
+            // directional-glow design): no light falls behind it.
+            if look.beams.z > 0.5 {
+                emitted = emitted * beam_cone(h.q, dir);
+            }
+            ray = vec4<f32>(emitted, 0.0);
         } else if h.has_prev {
             // Bounce (plan 15c): the light that reached the face the ray
             // meets, taken in front of it (never through the wall), times

@@ -176,6 +176,8 @@ impl Canvas {
             map.set_glow(l.glow.clone());
             map.set_clear(l.clear.clone());
             map.set_glass(l.glass.clone());
+            map.set_glow_beams(l.glow_beams.clone());
+            map.set_haze(l.haze.clone());
             map
         });
     }
@@ -295,6 +297,13 @@ impl Canvas {
                 // So does the glass map (the background glass design).
                 if map.glass() != l.glass.as_ref() {
                     map.set_glass(l.glass.clone());
+                }
+                // And the glow beams and haze (the directional-glow design).
+                if map.glow_beams() != l.glow_beams.as_ref() {
+                    map.set_glow_beams(l.glow_beams.clone());
+                }
+                if map.haze() != l.haze.as_deref() {
+                    map.set_haze(l.haze.clone());
                 }
             }
         }

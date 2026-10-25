@@ -38,7 +38,7 @@ pub(super) const GROUPS: usize = 255;
 pub(super) const GLOBAL_FLOATS: usize = GLOBAL_HEAD + 12 * GROUPS;
 
 /// The globals' floats before the groups.
-const GLOBAL_HEAD: usize = 4 * 10;
+const GLOBAL_HEAD: usize = 4 * 11;
 
 /// The occluder map's format (plan 15b): each texel a worm's index + 1, 0
 /// none (GL renders into `R8Uint`).
@@ -88,6 +88,8 @@ pub(super) struct LookTextures {
     /// The level's material soak (issue #57), only when a material sets
     /// its own soak.
     pub(super) soak: Option<super::soak::SoakTextures>,
+    /// The level's glow beams and haze (the directional-glow design).
+    pub(super) glow_beams: super::glow_beams::GlowBeams,
 }
 
 impl LookTextures {
@@ -280,6 +282,17 @@ pub(super) struct LookState {
     pub(super) distant_pipeline: wgpu::RenderPipeline,
     /// Heat's passes and its look's layout (issue #39).
     pub(super) heat: super::heat::HeatPipelines,
+    /// The composite's group 1 (the directional-glow design): the frame's
+    /// glow beams and the level's haze map.
+    beam_layout: wgpu::BindGroupLayout,
+    /// The frame's glow beams (`GlowBeams` in `composite.wgsl`), shared by
+    /// every view.
+    beams: wgpu::Buffer,
+    /// The packed beams, reused every frame, and how many.
+    packed_beams: Vec<f32>,
+    beam_count: u32,
+    /// The composite's group 1 before a level's exists: no beam, no haze map.
+    no_beams: super::glow_beams::GlowBeams,
 }
 
 const UINT_TEXTURE: wgpu::BindingType = wgpu::BindingType::Texture {
@@ -477,6 +490,7 @@ fn occluder_rect(frame: &WorldFrame) -> [f32; 4] {
 impl LookState {
     pub(super) fn new(
         device: &wgpu::Device,
+        queue: &super::uploads::Queue,
         globals_layout: &wgpu::BindGroupLayout,
         texture_layout: &wgpu::BindGroupLayout,
         distant_layout: &wgpu::BindGroupLayout,
@@ -623,6 +637,22 @@ impl LookState {
                 entry(8, frag, FLOAT_TEXTURE),
             ],
         });
+        let beam_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("olr-render glow beams"),
+            entries: &[entry(0, frag, super::UNIFORM), entry(1, frag, FLOAT_TEXTURE)],
+        });
+        let beams = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("olr-render glow beams"),
+            size: super::glow_beams::BEAMS_BYTES,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let binding = super::glow_beams::BeamBinding {
+            cascade_layout: &gi.beam_layout,
+            composite_layout: &beam_layout,
+            uniform: &beams,
+        };
+        let no_beams = super::glow_beams::GlowBeams::new(device, queue, &binding);
         let light_source = format!("{}\n{}", common(), include_str!("../look/light.wgsl"));
         let light_to = |fs: &str, targets: &[(wgpu::TextureFormat, Option<wgpu::BlendState>)]| {
             pipeline(
@@ -644,9 +674,14 @@ impl LookState {
         let composite_pipeline = pipeline(
             device,
             "olr-render composite",
-            &format!("{}\n{}", common(), include_str!("../look/composite.wgsl")),
+            &format!(
+                "{}\n{}\n{}",
+                common(),
+                super::glow_beams::wgsl(),
+                include_str!("../look/composite.wgsl")
+            ),
             ("vs_full", "fs_composite"),
-            &[Some(&composite_layout)],
+            &[Some(&composite_layout), Some(&beam_layout)],
             &[],
             &[(WORLD_FORMAT, None)],
             wgpu::PrimitiveTopology::TriangleList,
@@ -706,7 +741,28 @@ impl LookState {
             backing_pipeline,
             distant_pipeline,
             heat,
+            beam_layout,
+            beams,
+            packed_beams: Vec::with_capacity(
+                olr_look::glow_beams::MAX_GLOW_BEAMS * super::glow_beams::BEAM_FLOATS,
+            ),
+            beam_count: 0,
+            no_beams,
         }
+    }
+
+    /// The layouts and uniform of the level's glow beam binds.
+    fn beam_binding(&self) -> super::glow_beams::BeamBinding<'_> {
+        super::glow_beams::BeamBinding {
+            cascade_layout: &self.gi.beam_layout,
+            composite_layout: &self.beam_layout,
+            uniform: &self.beams,
+        }
+    }
+
+    /// The composite's group 1: the level's glow beams and haze, or none.
+    pub(super) fn beam_bind(&self) -> &wgpu::BindGroup {
+        &self.textures.as_ref().map_or(&self.no_beams, |t| &t.glow_beams).composite_bind
     }
 
     /// The look passes' textures for a world target of `texels` (`grid`
@@ -911,6 +967,7 @@ impl LookState {
             gi,
             heat: None,
             soak: None,
+            glow_beams: super::glow_beams::GlowBeams::new(device, queue, &self.beam_binding()),
         };
         let mut t = t;
         t.set_surface(device, queue, (&self.heat, &self.soak_material_layout), surface);
@@ -928,6 +985,43 @@ impl LookState {
         self.textures = Some(t);
         self.sync_glass(device, queue, map);
         self.write(queue, map, whole);
+        // After the whole write, which finds no beam map yet: the sync
+        // writes it whole.
+        self.sync_glow_beams(device, queue, map);
+    }
+
+    /// Derives `map`'s glow beams and uploads its beam and haze maps when
+    /// they are not the ones held (the directional-glow design:
+    /// `ColorMap::beams_generation`; the editor sets maps anew); the glow
+    /// light is then made again.
+    pub(super) fn sync_glow_beams(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &super::uploads::Queue,
+        map: &ColorMap,
+    ) {
+        let binding = super::glow_beams::BeamBinding {
+            cascade_layout: &self.gi.beam_layout,
+            composite_layout: &self.beam_layout,
+            uniform: &self.beams,
+        };
+        let Some(t) = &mut self.textures else { return };
+        let world = (t.solid.width(), t.solid.height());
+        if t.glow_beams.sync(device, queue, &binding, map, world) {
+            t.gi.stale();
+        }
+    }
+
+    /// Packs the frame's glow beams and writes them (the directional-glow
+    /// design): none without a level.
+    pub(super) fn pack_glow_beams(&mut self, queue: &super::uploads::Queue, look: &LookFrame) {
+        self.beam_count = match &self.textures {
+            Some(t) => t.glow_beams.pack(look, &t.regions.ids, &mut self.packed_beams),
+            None => 0,
+        };
+        if self.beam_count > 0 {
+            queue.write_buffer(&self.beams, 0, bytemuck::cast_slice(&self.packed_beams));
+        }
     }
 
     /// Uploads `map`'s glass map when it is not the one uploaded (the
@@ -971,6 +1065,8 @@ impl LookState {
                 write_u16(queue, &t.region_map, (&t.regions.ids, t.level.0), Rect { x, y, w, h });
             }
         }
+        // The beam map shows the backdrop's beams where a pixel is dug.
+        t.glow_beams.write(queue, map, wr);
         let cells = map.material().cells();
         let Some(clear) = map.clear().filter(|c| c.len() == cells.len()) else {
             write_bytes(queue, &t.solid, (cells, t.level.0), wr);
@@ -1092,6 +1188,15 @@ impl LookState {
             tag,
             f32::from(u8::from(glass)),
         ]);
+        // The glow beams (the directional-glow design): the frame's count,
+        // the haze (0-1), whether the level has a beam map.
+        let beam_map = self.textures.as_ref().is_some_and(|t| t.glow_beams.has_map());
+        p.extend([
+            self.beam_count as f32,
+            f32::from(look.haze.min(100)) / 100.0,
+            f32::from(u8::from(beam_map)),
+            0.0,
+        ]);
         debug_assert_eq!(p.len(), GLOBAL_HEAD);
         // Only the frame's groups (issue #35: the shaders read no group
         // past `mode.y`): cast and self-light scale, reach and own colour,
@@ -1129,6 +1234,7 @@ impl Renderer {
             (true, false) => {
                 self.look = Some(LookState::new(
                     &self.device,
+                    &self.queue,
                     &self.globals_layout,
                     &self.texture_layout,
                     &self.distant_layout,

@@ -73,6 +73,8 @@ header's size); content hashing; validation.
   Issue #41: `LevelPack::distant_surface` is each distant layer's material
   as a value in the look's (`olr_format::levels::distant_surface_values`),
   for the renderer's heat on distant layers; not written either.
+  The directional-glow design: `LevelPack::glow_beams` and `haze` keep the
+  lenient read's beam and haze maps for the renderer; not written either.
 - **Presentation-only files** (`PRESENTATION_FILES`: `thumb.png`) are left out of
   `content_hash` like `pack.ron` (plan 7 ruling Q4): adding or changing a thumbnail
   keeps every replay of the pack valid (`hash::thumbnails_are_not_content`).
