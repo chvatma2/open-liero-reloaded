@@ -31,7 +31,6 @@ mod net_repro;
 mod net_soak;
 mod nostr_probe;
 mod perfcount;
-mod playtest;
 mod reloaded;
 mod render_profile;
 mod scenario;

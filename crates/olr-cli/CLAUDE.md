@@ -956,10 +956,7 @@ configuration (a standby unless `--no-standby`) and the printed lines. The tests
 `net_soak_memory` (it reads the process's memory): one module's
 tests are `cargo nextest run -p olr-cli --test integration corpus::`.
 `tests/corpus.rs` checks every imported
-pack when `OLR_CONTENT_DIR` is set. `tests/playtest.rs` checks the hand-made playtest packs
-(`content/playtest/`: the night Castle Strike) with `pack check
---content`, and on the GPU tier plays a bot match on it (`render-match
---packs content/playtest`). `tests/reloaded.rs` (issue #7, offline too: the
+pack when `OLR_CONTENT_DIR` is set. `tests/reloaded.rs` (issue #7, offline too: the
 committed `content/packs`) checks OLR's own shipped packs
 (`content/reloaded/`: Liero Factory Reloaded, Castle Strike Reloaded,
 issue #21's Liero v1.0 Reloaded, issue #13's Firefly skin) with

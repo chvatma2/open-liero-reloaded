@@ -4037,7 +4037,9 @@ its own remade "Reloaded" levels beside them:
   played.
 - **Castle Strike Reloaded** (`olr-level-castlestrike-reloaded`): the
   day Castle Strike of plan 15c, moved from `content/playtest/`
-  unchanged but for its id and name. The night one stays a playtest pack.
+  unchanged but for its id and name. The night one stayed a playtest pack
+(`content/playtest/`) until the maintainer had it removed, with its
+test, on 2026-10-25.
 - Both are in the example server config's rotation
   (`fixtures/server/example.ron`), and `dist`'s verification server
   loads them.

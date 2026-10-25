@@ -1840,7 +1840,7 @@ mod tests {
     fn compositions_without_folders_write_as_before() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
         let mut n = 0;
-        for dir in ["content/reloaded", "content/playtest", "fixtures/look/levels", "fixtures/edit"] {
+        for dir in ["content/reloaded", "fixtures/look/levels", "fixtures/edit"] {
             let Ok(packs) = std::fs::read_dir(root.join(dir)) else { continue };
             for pack in packs.flatten() {
                 let file = pack.path().join(COMPOSITION_FILE);
