@@ -1353,6 +1353,7 @@ impl super::Renderer {
             let layouts = (&look.heat, &look.soak_material_layout);
             t.set_surface(&self.device, &self.queue, layouts, self.surface.as_ref());
         }
+        self.glow_stale();
     }
 
     /// Gives the level new values of its surface materials (issue #45: the
@@ -1387,6 +1388,7 @@ impl super::Renderer {
         {
             t.set_soak(&self.device, &self.queue, &look.soak_material_layout, self.surface.as_ref());
         }
+        self.glow_stale();
         true
     }
 
@@ -1582,7 +1584,9 @@ impl super::Renderer {
         self.heat_textures().map_or(0, |h| h.steps)
     }
 
-    /// Heat passes run so far (tests: none while nothing is hot).
+    /// Heat passes run so far (tests: none while nothing is hot; a frame
+    /// of a step keeps the glow light only while none ran since it was
+    /// made).
     #[doc(hidden)]
     pub fn heat_passes(&self) -> u64 {
         self.heat_textures().map_or(0, |h| h.passes)

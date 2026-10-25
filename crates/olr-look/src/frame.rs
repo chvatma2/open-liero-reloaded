@@ -99,15 +99,22 @@ pub struct LookFrame {
     /// flashes and muzzle lights. `radius` is the disc's.
     pub emitters: Vec<FrameLight>,
     pub mode: ViewMode,
+    /// The world state this frame shows (the render profile: the glow
+    /// light once a tick): frames with the same `Some` step show the same
+    /// world, so the renderer keeps the glow light the first of them made,
+    /// discs and flicker as they were then. `None` (`begin`'s: the
+    /// editors, previews, tests) makes it every frame.
+    pub step: Option<u64>,
 }
 
 impl LookFrame {
     /// Clears the frame and fills the level's part at clock `t_ms`: ambient,
     /// grade, settings and groups. A level without a look is full ambient.
-    /// Keeps `mode` and the vectors' capacity.
+    /// Keeps `mode` and the vectors' capacity; `step` is `None`.
     pub fn begin(&mut self, level: Option<&LevelLook>, t_ms: f64) {
         self.groups.clear();
         self.emitters.clear();
+        self.step = None;
         let Some(level) = level else {
             self.ambient = [1.0; 3];
             self.occlusion = None;

@@ -44,7 +44,16 @@ on screen or offscreen.
   (`LookState::globals`: the first view's look; the lit terrain's group 2
   reads them too, none of a view's fields) and no occluder map (#53:
   worms take no part in the light, so no view's worms reach another's
-  light); one history step a frame (`glow_light_steps()`, tests). The
+  light); one history step a frame (`glow_light_steps()`, tests), or one
+  a world step: a frame whose `LookFrame::step` is the one the light was
+  made at keeps it (the glow light once a tick, the render profile: its
+  discs and flicker as at the step's first frame), unless a heat pass ran
+  since (`heat_passes()`), the terrain was uploaded (`update_terrain` with
+  a rectangle, `upload_terrain`), the surface materials changed or the
+  history was reset (`GiState::holds`, `made`, `stale`); `None` makes it
+  every frame (`frames_of_one_step_keep_the_glow_light`,
+  `a_terrain_change_makes_the_kept_glow_light_again`,
+  `heat_makes_the_kept_glow_light_again`). The
   instance buffer holds every view's quads (`ViewPlan`: its terrain,
   distant, sprite and occluder ranges). `view_light_grid(i)` is view
   `i`'s light grid (`light_grid()` the first's). Tests (GPU):

@@ -109,6 +109,10 @@ pub struct Presentation {
     /// The renderer's heat clears with the next upload (a loaded state or
     /// a seek).
     heat_reset: bool,
+    /// The world states shown so far: one more for each tick presented
+    /// ([`Presentation::step_fx`]), loaded state and restart; the look's
+    /// [`LookFrame::step`] (the glow light once a tick).
+    step: u64,
 }
 
 /// Whether `level`'s surface materials heat (issue #40): a material that
@@ -174,6 +178,7 @@ impl Presentation {
             heat_now: world.time().0,
             heat_clock: world.time().0,
             heat_reset: false,
+            step: 0,
         }
     }
 
@@ -228,13 +233,16 @@ impl Presentation {
     /// flashes', muzzles' and explosions' lights (plan 15a R9), then in a
     /// level with a look the skins' lights (issue #12), as glowing
     /// discs, wherever they are (plan 15c: never culled to the view, so the
-    /// light stays camera-independent). Allocates nothing once warm.
+    /// light stays camera-independent). Its step is the world state's,
+    /// the same for every frame of a tick, so the renderer makes the glow
+    /// light once a tick ([`LookFrame::step`]). Allocates nothing once warm.
     pub fn build_look(&mut self, world: &World, alpha: f32) {
         if !self.lit {
             return;
         }
         let t_ms = world.time().0 as f64 + f64::from(alpha.clamp(0.0, 1.0)) * 10.0;
         self.look.begin(self.level_look.as_ref(), t_ms);
+        self.look.step = Some(self.step);
         let skins = self.level_look.is_some().then_some(&self.assets);
         let (m, heats) = (&self.mod_look, self.heats);
         self.dynamic.push(&mut self.look, m, &mut self.scene, &self.fx, skins, t_ms, heats);
@@ -292,6 +300,7 @@ impl Presentation {
     /// play's [`net::NetPresenter`] replays recorded ticks after the
     /// advance, filtered when they are re-simulated.
     pub fn step_fx(&mut self, tick: &FxTick) {
+        self.step = self.step.wrapping_add(1);
         self.fx.step_tick(tick, &mut self.color, &self.fx_assets);
     }
 
@@ -333,6 +342,7 @@ impl Presentation {
             self.scene.set_shades(Some(rules));
         }
         self.terrain_new = true;
+        self.step = self.step.wrapping_add(1);
         // The heat starts afresh with the terrain upload.
         (self.heat_now, self.heat_clock, self.heat_reset) = (world.time().0, world.time().0, false);
     }
@@ -347,6 +357,7 @@ impl Presentation {
         self.fx.clear();
         self.dynamic.clear();
         self.reset_heat(world);
+        self.step = self.step.wrapping_add(1);
     }
 
     /// The first view's camera follows worm `worm` (by id) from the next

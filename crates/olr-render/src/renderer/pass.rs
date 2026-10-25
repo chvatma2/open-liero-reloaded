@@ -333,10 +333,14 @@ impl Renderer {
             }
         }
         // The glow light, once a frame whatever the views (issue #26); no
-        // worm takes part in it (#53).
+        // worm takes part in it (#53). A frame of the step the light was
+        // made at keeps it, unless a heat pass ran since (the glow light
+        // once a tick: the render profile).
+        let key = look.and_then(|l| l.step).map(|s| (s, self.heat_passes()));
         if let (Some(look), Some(state)) = (look, self.look.as_ref())
             && let Some(tex) = &state.textures
             && !views.is_empty()
+            && !tex.gi.holds(key)
         {
             // A hot pixel casts too (issue #39).
             let casting = !look.groups.is_empty() || state.emitter_count > 0 || heat_on;
@@ -345,6 +349,7 @@ impl Renderer {
             if tex.gi.encode(&mut encoder, &state.gi, casting, heat, discs, timer) {
                 self.glow_light_steps += 1;
             }
+            tex.gi.made(key);
         }
         for (_, world) in views_drawn.clone() {
             let lit_target = look.and(self.look.as_ref()).and(world.shade.as_ref()).and(world.lit.as_ref());

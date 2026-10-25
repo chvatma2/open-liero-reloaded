@@ -170,6 +170,51 @@ That is a guess: no laptop has been measured. The per-tick cap does
 nothing there. Coarser cells (2) together with the jump flood (4) look
 like the shortest path, and the split (5) the thorough one.
 
+## After the first fixes (2026-10-25)
+
+Throwaway spikes measured each candidate on this fight and compared
+frames side by side. Two findings changed the list above:
+- **Not the discs.** Capping them at 32, or dropping them, saved
+  nothing.
+- **The haze was the fight's extra cost.** Every hazy cell (hot open
+  background) was a jump-flood seed, so rays walked the haze cell by
+  cell.
+
+The maintainer chose these four; the third commit changes no picture:
+1. *Haze is no seed.* A ray takes the haze at each step. A cascade's
+   jumps are at most a quarter of its probe spacing (`HAZE_STRIDE`),
+   which keeps about nine tenths of a hot patch's light in open air.
+   - Jumping freely, as the spike did, kept a third of that light.
+   - Seeding only the haze's edge saved 13 % instead of 32 %: rays
+     still slow down near every patch.
+2. *One bilinear-fix check per upper probe*, along the ray's own
+   direction: half the marches. Small differences on wall faces and
+   near bright lights.
+3. *A 32-cell jump flood* (`JFA_REACH`).
+   - The spike's 64-step march cap was dropped: it saved 3 % on the RTX
+     and 0.3 % on the integrated GPU, and risks dark rays on large open
+     levels.
+4. *The glow light once a tick.* `LookFrame::step` is the world state a
+   frame shows (`olr-present`'s count of ticks presented). The renderer
+   keeps the light for frames of the same step while no heat pass ran
+   and the terrain did not change. Nothing changes at 60 Hz.
+
+GPU ms a frame (mean; p99 in brackets), 2 frames a tick:
+
+| | calm | blast | hot |
+|---|---|---|---|
+| RTX 5070 Ti, Vulkan, 3440 × 1440, before | 2.02 | 2.96 | 3.07 |
+| after 1-3 | 1.41 | 1.44 | 1.44 |
+| after 1-4 | 0.78 (1.68) | 0.80 (1.66) | 0.80 (1.67) |
+| Integrated GPU, DX12, 1080p, 1 frame a tick, before | – | 105.8 | 110.2 |
+| after 1-4 | – | 60.6 | 60.6 |
+
+- Frames that make the light cost about 1.4 ms on the RTX; frames that
+  keep it cost about 0.16 ms. The p99 is a frame that makes it.
+- The integrated GPU is still about 17 frames a second. 2-pixel glow
+  cells would take it to about 20 ms, at a large loss of look (the
+  spikes' frames; 9 light tests fail), and remain the maintainer's call.
+
 ## Rerunning
 
 `cargo xtask profile` (Vulkan) or `--backend dx12` compares with the base

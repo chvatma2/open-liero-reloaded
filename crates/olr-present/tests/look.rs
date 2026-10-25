@@ -340,6 +340,21 @@ fn emitters_are_deterministic() {
     assert_eq!(runs[0], runs[1]);
 }
 
+/// The glow light once a tick: the look's step is one per tick shown,
+/// the same for every frame drawn of that tick, whatever its alpha.
+#[test]
+fn every_frame_of_a_tick_has_its_step() {
+    let Some(content) = content() else { return };
+    let mut steps = Vec::new();
+    play_with(&content, BAZOOKA, Some(look()), None, |p, world, _, _| {
+        let step = p.look().unwrap().step;
+        p.build(world, 0.5, &mut DrawList::new());
+        assert_eq!(p.look().unwrap().step, step, "another frame of the tick");
+        steps.push(step.unwrap());
+    });
+    assert!(steps.len() > 10 && steps.windows(2).all(|w| w[1] == w[0] + 1), "{steps:?}");
+}
+
 #[test]
 fn floors_apply_only_in_lit_matches() {
     let Some(content) = content() else { return };

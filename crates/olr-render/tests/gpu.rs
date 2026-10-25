@@ -2506,6 +2506,66 @@ fn the_glow_light_steps_once_a_frame_with_four_views() {
     }
 }
 
+/// The glow light once a tick: frames of the same step
+/// ([`olr_look::LookFrame::step`]) keep the glow light the first of them
+/// made, its disc where it was then; a new step makes it again, and
+/// frames without a step make it every frame.
+#[test]
+fn frames_of_one_step_keep_the_glow_light() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.set_lighting(true);
+    r.upload_terrain(&map());
+    let l = list(View { x: 0.0, y: 0.0, w: 120.0, h: 90.0 });
+    let draw = |r: &mut Renderer, x: f32, step: Option<u64>| {
+        let mut look = dim(0.1);
+        look.emitters.push(lamp([x, 85.5], 100.0));
+        look.step = step;
+        gpu.render_lit_to_image(r, &l, Some(&look), (120, 90));
+        (r.glow_light_steps(), gpu.read_light(r).unwrap().1)
+    };
+    let (n, first) = draw(&mut r, 20.5, Some(1));
+    let (kept, light) = draw(&mut r, 60.5, Some(1));
+    assert_eq!(kept, n, "the same step makes no glow light");
+    assert!(light == first, "the lamp lights where it was at the step's first frame");
+    let (next, light) = draw(&mut r, 60.5, Some(2));
+    assert_eq!(next, n + 1, "a new step makes it");
+    assert!(light != first, "where the lamp is now");
+    let steps: Vec<u64> = (0..2).map(|_| draw(&mut r, 60.5, None).0).collect();
+    assert_eq!(steps, [n + 2, n + 3], "without a step, every frame");
+}
+
+/// The glow light once a tick: a kept glow light is made again, the
+/// step the same, after the terrain changed or the light's history was
+/// reset.
+#[test]
+fn a_terrain_change_makes_the_kept_glow_light_again() {
+    let Some(gpu) = offscreen() else { return };
+    let mut map = map();
+    let mut r = gpu.renderer(RenderSettings::default());
+    r.set_lighting(true);
+    r.upload_terrain(&map);
+    map.take_dirty().for_each(drop);
+    let l = list(View { x: 0.0, y: 0.0, w: 120.0, h: 90.0 });
+    let mut look = dim(0.1);
+    look.emitters.push(lamp([20.5, 85.5], 100.0));
+    look.step = Some(7);
+    let draw = |r: &mut Renderer| {
+        gpu.render_lit_to_image(r, &l, Some(&look), (120, 90));
+        r.glow_light_steps()
+    };
+    let n = draw(&mut r);
+    assert_eq!(draw(&mut r), n, "kept");
+    map.apply(ColorEdit::Carve { hole: 4, x: 20, y: 78 });
+    r.update_terrain(&mut map);
+    assert_eq!(draw(&mut r), n + 1, "the terrain changed");
+    assert_eq!(draw(&mut r), n + 1, "kept again");
+    r.update_terrain(&mut map);
+    assert_eq!(draw(&mut r), n + 1, "nothing to upload: kept");
+    r.reset_light_history();
+    assert_eq!(draw(&mut r), n + 2, "the history was reset");
+}
+
 /// Issue #26: a view drawn over a target (`render_views_over`) writes only
 /// its area, its black bars too; `render_views` clears the rest to black.
 #[test]

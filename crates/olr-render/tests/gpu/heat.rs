@@ -1036,6 +1036,35 @@ fn hot_open_air_lights_the_air_round_it() {
     }
 }
 
+/// The glow light once a tick: a heat pass run, or the heat reset, makes
+/// the kept glow light again, the step the same (a hot pixel casts);
+/// frames that run none keep it.
+#[test]
+fn heat_makes_the_kept_glow_light_again() {
+    let Some(gpu) = offscreen() else { return };
+    let mut r = heated(&gpu);
+    let mut look = dark();
+    look.step = Some(3);
+    r.deposit_heat(blast(20.5, 40.5, 8.0));
+    frame(&gpu, &mut r, &look);
+    let n = r.glow_light_steps();
+    frame(&gpu, &mut r, &look);
+    assert_eq!(r.glow_light_steps(), n, "no heat pass: kept");
+    r.advance_heat(HEAT_STEP_MS);
+    frame(&gpu, &mut r, &look);
+    assert_eq!(r.glow_light_steps(), n + 1, "a heat step");
+    r.deposit_heat(blast(30.5, 40.5, 8.0));
+    r.run_heat();
+    frame(&gpu, &mut r, &look);
+    assert_eq!(r.glow_light_steps(), n + 2, "a deposit run between frames");
+    // The reset's clearing pass counts; nothing casts after it: the light
+    // is cleared, no step.
+    let hot = gpu.read_light(&r).unwrap().1;
+    r.reset_heat();
+    frame(&gpu, &mut r, &look);
+    assert!(gpu.read_light(&r).unwrap().1 != hot, "the heat reset");
+}
+
 /// Issue #67: a dug pixel loses its heat, whatever its back: the dirt's
 /// glow goes with the dirt. The dirt left round the hole keeps its own.
 #[test]

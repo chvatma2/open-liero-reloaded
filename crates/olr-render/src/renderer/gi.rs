@@ -319,6 +319,10 @@ pub(super) struct GiState {
     /// The fluence holds no last light: cleared before the next frame's
     /// cascades read it.
     fresh: std::cell::Cell<bool>,
+    /// What the fluence's light is of (the glow light once a tick): the
+    /// frame's step ([`olr_look::LookFrame::step`]) and the heat's passes
+    /// run by then; `None` when its inputs changed since, or it has none.
+    kept: std::cell::Cell<Option<(u64, u64)>>,
     emission_bind: wgpu::BindGroup,
     seed_bind: wgpu::BindGroup,
     /// Each flood pass: the texture it writes and its bind (step, the other).
@@ -532,6 +536,7 @@ impl GiState {
             cascades,
             fluence,
             fresh: std::cell::Cell::new(true),
+            kept: std::cell::Cell::new(None),
             emission_bind,
             seed_bind,
             jfa,
@@ -666,6 +671,24 @@ impl GiState {
     /// Forgets the light's history: the next frame bounces nothing old.
     pub(super) fn reset(&self) {
         self.fresh.set(true);
+        self.stale();
+    }
+
+    /// Whether the fluence holds the light of `key` (a step and the heat
+    /// passes run), so a frame of it may keep it: never for `None`.
+    pub(super) fn holds(&self, key: Option<(u64, u64)>) -> bool {
+        key.is_some() && self.kept.get() == key
+    }
+
+    /// The light just encoded is of `key`.
+    pub(super) fn made(&self, key: Option<(u64, u64)>) {
+        self.kept.set(key);
+    }
+
+    /// What the light reads changed (the terrain, the heat's materials):
+    /// the next frame makes it again, whatever its step.
+    pub(super) fn stale(&self) {
+        self.kept.set(None);
     }
 }
 

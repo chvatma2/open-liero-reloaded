@@ -702,6 +702,9 @@ impl Renderer {
         // Where only stains changed it, its colour alone (issue #35).
         self.dirty.clear();
         self.dirty.extend(map.take_dirty_kinds());
+        if !self.dirty.is_empty() {
+            self.glow_stale();
+        }
         for d in &self.dirty {
             Self::write_rect(&self.queue, self.terrain.as_ref(), (map.pixels(), map.width()), d.rect);
             if let Some(look) = &mut self.look

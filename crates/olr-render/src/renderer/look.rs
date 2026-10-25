@@ -1060,6 +1060,14 @@ impl Renderer {
         }
     }
 
+    /// What the glow light reads changed (the terrain, the heat's
+    /// materials): the next frame makes it again, whatever its step.
+    pub(super) fn glow_stale(&self) {
+        if let Some(t) = self.look.as_ref().and_then(|l| l.textures.as_ref()) {
+            t.gi.stale();
+        }
+    }
+
     /// Turns the bloom off or on (tests: a picture with and without it).
     #[doc(hidden)]
     pub fn set_bloom(&mut self, on: bool) {

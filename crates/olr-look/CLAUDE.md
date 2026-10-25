@@ -65,7 +65,10 @@ own look. The simulation never sees it.
   reach; plan 15c: a `Flicker` group's `flicker` (speed, depth), `t_ms`
   (its clock with its phase, wrapped at 2^24 ms) and `seed` (its identity
   folded), its cast and self-light then unscaled: the renderer flickers
-  each region on its own) and clears the emitters; it keeps `mode`
+  each region on its own) and clears the emitters and `step` (`None`;
+  `step` is the world state the frame shows, `Some` from
+  `olr-present`'s presentation: frames of one step share the renderer's
+  glow light, the glow light once a tick); it keeps `mode`
   (`ViewMode`: `Lit`, `FullBright`, `LightOnly`, the editor's toggle) and
   the vectors' capacity. It clamps `max_light` to 1.0-2.0, `softness` to 4
   and `light_soak` to `MAX_SOAK` (12), and keeps the `occlusion` with a

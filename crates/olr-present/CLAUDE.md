@@ -42,7 +42,11 @@ wired in the frame loop's order **once**, so each mode that draws a world
     (`Fx::draw` with the match's lit flag), then `build_look(&world,
     alpha)`: the frame's `olr_look::LookFrame`, which `look()` returns
     (`None` unlit) for the renderer. It begins with the level's look at the
-    match clock (the world's time plus `alpha` of a 10 ms tick) and adds the
+    match clock (the world's time plus `alpha` of a 10 ms tick), its
+    `step` the presentation's count of world states shown (one more each
+    `step_fx`, so each tick presented, `restart` and `state_loaded`): every
+    frame of a tick has the same, so the renderer makes the glow light
+    once a tick (`every_frame_of_a_tick_has_its_step`), and adds the
     dynamic lights (`look.rs`) as glowing discs, never culled to the view
     (plan 15c: bounced light may reach it from past a disc's reach). It allocates
     nothing once warm (`tests/no_alloc.rs`).
