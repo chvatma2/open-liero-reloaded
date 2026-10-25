@@ -101,6 +101,8 @@ pub struct ColorMap {
     clear: Option<Box<[u8]>>,
     /// The level's glass map (the background glass design), as loaded.
     glass: Option<Box<GlassMap>>,
+    /// Counts the glass maps set, so a renderer uploads one only anew.
+    glass_generation: u32,
 }
 
 /// A level's glow (the look system's `look/` images): strength per art pixel
@@ -219,6 +221,7 @@ impl ColorMap {
             glow: None,
             clear: None,
             glass: None,
+            glass_generation: 0,
             see_through: false,
         }
     }
@@ -310,6 +313,7 @@ impl ColorMap {
             Some(g) if !g.fits((self.width, self.height)) => false,
             g => {
                 self.glass = g.map(Box::new);
+                self.glass_generation = self.glass_generation.wrapping_add(1);
                 true
             }
         }
@@ -318,6 +322,11 @@ impl ColorMap {
     /// The level's glass map; `None` when no glass tints or frosts.
     pub fn glass(&self) -> Option<&GlassMap> {
         self.glass.as_deref()
+    }
+
+    /// Changes with each glass map [`set_glass`](Self::set_glass) takes.
+    pub fn glass_generation(&self) -> u32 {
+        self.glass_generation
     }
 
     /// The level's clear flags per world pixel; `None` when nothing is clear.

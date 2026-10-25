@@ -55,6 +55,12 @@ fn fs_emission(@builtin(position) p: vec4<f32>) -> GiOut {
                 if info.y > 0.5 {
                     colour = to_linear(textureLoad(terrain_tex, clamped(art, textureDimensions(terrain_tex)), 0).rgb);
                 }
+                // Filtered (the background glass design): the art's colour
+                // at full strength, its brightest channel 1 (black none).
+                if info.y > 1.5 {
+                    let top = max(colour.r, max(colour.g, colour.b));
+                    colour = select(vec3<f32>(0.0), colour / top, top > 0.0);
+                }
                 let region = textureLoad(regions_tex, clamped(w, textureDimensions(regions_tex)), 0).r;
                 em += colour * group.light.rgb * g * region_flicker(group.flicker, region);
                 reach = max(reach, info.x);

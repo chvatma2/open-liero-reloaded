@@ -9,6 +9,8 @@ use olr_terrain::{ColorEdit, ColorMap, Stamp, Terrain, ThemeArt};
 
 #[path = "gpu/distant_glow.rs"]
 mod distant_glow;
+#[path = "gpu/glass.rs"]
+mod glass;
 #[path = "gpu/halo.rs"]
 mod halo;
 #[path = "gpu/heat.rs"]

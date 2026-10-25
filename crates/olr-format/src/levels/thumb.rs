@@ -222,7 +222,11 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
                                 n += 1.0;
                                 let g = strength(x, y);
                                 let Some(grp) = group(x / s, y / s).filter(|_| g > 0.0) else { continue };
-                                let a = if grp.own_colour { albedo(x, y) } else { [1.0; 3] };
+                                let a = match (grp.own_colour, grp.filtered) {
+                                    (true, true) => olr_look::engine::filtered(albedo(x, y)),
+                                    (true, false) => albedo(x, y),
+                                    _ => [1.0; 3],
+                                };
                                 for ((s, k), a) in sum.iter_mut().zip(grp.cast).zip(a) {
                                     *s += k * a * g;
                                 }

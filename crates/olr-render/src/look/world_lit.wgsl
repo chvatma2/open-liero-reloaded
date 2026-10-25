@@ -5,11 +5,15 @@
 // `heat_reader.wgsl`) adds its heat's light. The terrain (its opaque
 // backing too) and a distant layer write the background tag in the marker
 // channel (issue #54: `look.distant.z`, 0.25; a marker writes 1, a sprite
-// 0), which the composite's worm halo falls on.
+// 0), which the composite's worm halo falls on. Glass (the background
+// glass design: a see-through level's terrain of alpha 1 to 254) is lit
+// as the distant layer behind it, which its glass map filters and frosts.
 
 struct Globals {
     target_size: vec2<f32>,
     _pad: vec2<f32>,
+    // the view's world frame: origin x, y (world px), texels per world px, 0
+    frame: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -19,6 +23,9 @@ struct Globals {
 @group(2) @binding(2) var groups_tex: texture_2d<u32>;
 // Each world pixel's flicker region (plan 15c).
 @group(2) @binding(3) var regions_tex: texture_2d<u32>;
+// The level's glass map (the background glass design): the filter, and
+// the frost in tenths of a world pixel; 1 × 1 white unless see-through.
+@group(2) @binding(4) var glass_tex: texture_2d<f32>;
 
 struct Quad {
     @location(0) dst: vec4<f32>,
@@ -130,6 +137,11 @@ fn terrain_lit(in: QuadOut, backing: bool) -> LitOut {
     var out: LitOut;
     out.colour = h.colour;
     out.shade = vec4<f32>(h.self_light, look.distant.z, 0.0, 1.0);
+    // Glass leaves the shade to the layer behind it: it is lit as that
+    // layer, and its glow shows none (it still casts); hot, it glows.
+    if !backing && look.distant.w > 0.5 && c.a < 1.0 {
+        out.shade.a = 0.0;
+    }
     out.heat = vec4<f32>(h.light, h.colour.a);
     return out;
 }
@@ -147,6 +159,46 @@ fn fs_terrain_backing_lit(in: QuadOut) -> LitOut {
 // A distant layer's glow mask (issue #62): its image's size, or 1 × 1 full.
 @group(1) @binding(1) var distant_mask: texture_2d<f32>;
 
+// A hash of a world pixel, 0-1 (the frost's scatter).
+fn glass_hash(p: vec2<f32>) -> f32 {
+    let q = fract(p * vec2<f32>(0.1031, 0.1030));
+    let r = q + dot(q, q.yx + 33.33);
+    return fract((r.x + r.y) * r.x);
+}
+
+// What the glass in front of a distant layer's fragment does to it: its
+// filter (`tint`), and the layer texel shown instead (frost: the world
+// pixel's own scatter, up to the frost's reach either way, rounded to
+// whole layer texels, fixed to the glass).
+struct Glass {
+    tint: vec3<f32>,
+    t: vec2<i32>,
+};
+
+fn glass_at(in: QuadOut) -> Glass {
+    var g = Glass(vec3<f32>(1.0), texel(in));
+    if look.distant.w < 0.5 {
+        return g;
+    }
+    let wp = globals.frame.xy + in.pos.xy / max(globals.frame.z, 1.0);
+    let s = max(look.level.z, 1.0);
+    let a = vec2<i32>(floor(wp * s));
+    let size = vec2<i32>(textureDimensions(glass_tex));
+    if any(a < vec2<i32>(0)) || any(a >= size) {
+        return g;
+    }
+    let m = textureLoad(glass_tex, a, 0);
+    g.tint = m.rgb;
+    let frost = m.a * 25.5;
+    if frost > 0.0 {
+        let cell = floor(wp);
+        let o = frost * (vec2<f32>(glass_hash(cell), glass_hash(cell + vec2<f32>(17.0, 3.0))) * 2.0 - 1.0);
+        let uv = vec2<f32>(g.t) + floor(o * s + 0.5);
+        g.t = vec2<i32>(clamp(uv, in.rect.xy, in.rect.xy + in.rect.zw - vec2<f32>(1.0)));
+    }
+    return g;
+}
+
 // A distant layer's pixel (issue #11): opaque where it covers; its shade
 // holds its depth as 1 - alpha (the composite lights it by 1 - depth of
 // the light beyond the ambient). Issue #62: glowing (the instance's shade
@@ -156,10 +208,12 @@ fn fs_terrain_backing_lit(in: QuadOut) -> LitOut {
 // heat, at its world pixel), it looks as the lit terrain does (`hot`);
 // cold and not glowing, it holds none. The glow light never reads it: a
 // layer casts nothing (its light is the level's, baked at its reference
-// placement).
+// placement). The background glass design: behind glass, the layer is
+// frosted and filtered by the level's glass map (`glass_at`).
 @fragment
 fn fs_distant_lit(in: QuadOut) -> LitOut {
-    let t = texel(in);
+    let glass = glass_at(in);
+    let t = glass.t;
     let c = textureLoad(tex, t, 0);
     if c.a <= 0.0 {
         discard;
@@ -174,8 +228,8 @@ fn fs_distant_lit(in: QuadOut) -> LitOut {
     }
     let h = hot(c, self_light, heat_at(t / max(i32(look.level.z), 1)).colour);
     var out: LitOut;
-    out.colour = vec4<f32>(h.colour.rgb, 1.0);
+    out.colour = vec4<f32>(h.colour.rgb * glass.tint, 1.0);
     out.shade = vec4<f32>(h.self_light, look.distant.z, 0.0, 1.0 - clamp(in.shade.x, 0.0, 0.99));
-    out.heat = vec4<f32>(h.light, 1.0);
+    out.heat = vec4<f32>(h.light * glass.tint, 1.0);
     return out;
 }

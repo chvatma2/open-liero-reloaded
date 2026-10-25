@@ -105,6 +105,33 @@ on screen or offscreen.
   `a_distant_layers_light_stays_put_as_the_camera_pans`,
   `a_glowing_layers_drawn_pixels_feed_no_bloom`,
   `a_see_through_glow_lights_as_an_opaque_one`.
+- **Background glass** (spec `docs/superpowers/specs/2026-10-25-background-glass-design.md`):
+  glass is a see-through terrain's pixel of alpha 1 to 254, blended over
+  the distant layers by the terrain pass as before. Lit, `terrain_lit`
+  writes it shade alpha 0 (`LookGlobals.distant.w`, 1 for a see-through
+  level): the shade stays the layer's behind it, so glass is lit as that
+  layer (`1 − depth` of the light beyond the ambient), shows no glow of
+  its own (its glow still casts) and, hot, still glows (its heat light
+  blended at its alpha). `LookTextures::glass` (group 2 binding 4,
+  `Rgba8Unorm` at art size when see-through, else 1 × 1 white) holds the
+  level's glass map (`ColorMap::glass`, white where none), written whole
+  only when `ColorMap::glass_generation` changes. `fs_distant_lit` reads
+  it at the art pixel under the fragment (the view's world frame, which
+  the world pass's per-view globals carry since this design: 32 bytes,
+  read by the fragment stage too) and multiplies the layer's colour and
+  heat light by its filter; its frost (alpha, tenths of a world pixel)
+  shows the layer texel offset by the world pixel's hash (`glass_hash`)
+  times the frost, rounded to whole layer texels: fixed to the glass.
+  A `Filtered` group (`FrameGroup::filtered`, `info.y` 2) casts its
+  colour × the art's linear colour scaled to a full brightest channel
+  (`olr_look::engine::filtered`'s twin). Without glass or a glass map
+  nothing changes. Tests (GPU, `tests/gpu/glass.rs`):
+  `glass_shows_the_layer_through_it`,
+  `glass_takes_the_layers_light_not_the_rooms`,
+  `glass_shows_no_glow_but_casts`, `hot_glass_still_glows`,
+  `tint_multiplies_what_shows_through`, `frost_is_fixed_to_the_world`,
+  `a_filtered_group_lights_by_each_pixels_colour`,
+  `no_glass_map_changes_no_byte`.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel
   (`MIN_SCALE` 2, OLX's sprite art, or the level's art scale if larger:

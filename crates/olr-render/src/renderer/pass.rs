@@ -174,7 +174,10 @@ impl Renderer {
         // Each view's uniforms are its own: the one submit draws them all.
         for (v, (plan, t)) in views.iter().zip(self.plans.iter().zip(&self.targets)) {
             let (tw, th) = t.size;
-            self.queue.write_buffer(&t.globals, 0, bytemuck::cast_slice(&[tw as f32, th as f32, 0.0, 0.0]));
+            let (ox, oy, scale) =
+                (plan.frame.origin.0 as f32, plan.frame.origin.1 as f32, plan.frame.scale as f32);
+            let globals = [tw as f32, th as f32, 0.0, 0.0, ox, oy, scale, 0.0];
+            self.queue.write_buffer(&t.globals, 0, bytemuck::cast_slice(&globals));
             let src = plan.frame.source_rect(v.list.view);
             let dst = self.dest_rect_in((src[2], src[3]), v.area);
             let uniform = upscale_uniform(src, dst, (tw, th), self.settings.filter, self.srgb);
@@ -491,7 +494,7 @@ impl Renderer {
         let tex = texture(&self.device, "olr-render world", clamped, usage);
         debug_assert_eq!(tex.format(), WORLD_FORMAT);
         let view = tex.create_view(&wgpu::TextureViewDescriptor::default());
-        let globals = self.uniform("olr-render globals", 16);
+        let globals = self.uniform("olr-render globals", 32);
         let globals_bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render globals"),
             layout: &self.globals_layout,

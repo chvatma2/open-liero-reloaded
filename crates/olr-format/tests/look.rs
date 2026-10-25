@@ -732,6 +732,30 @@ fn glow_shows_and_lights_around_it_in_the_thumbnail() {
     assert!(beside.r > far.r + 20, "its light spills around: {beside:?} {far:?}");
 }
 
+/// The background glass design: a `Filtered` group casts its colour by
+/// the art's hue at full strength, so dim art lights as bright art.
+#[test]
+fn a_filtered_glow_lights_by_the_arts_hue_in_the_thumbnail() {
+    let spill = |colour: &str| {
+        let mut l = white_level(&format!(
+            "look: (ambient: (intensity: 5), glow_groups: [(id: \"glass\", colour: {colour}, reach: Pixels(16))])"
+        ));
+        let mut g = GlowLayers::empty((64, 32), (64, 32));
+        for y in 12..20 {
+            for x in 40..48 {
+                let i = (y * 64 + x) as usize;
+                (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
+                l.front.set(x, y, olr_data::image::Rgba::rgb(40, 40, 40));
+                l.back.set(x, y, olr_data::image::Rgba::rgb(40, 40, 40));
+            }
+        }
+        l.glow = Some(g);
+        olr_format::levels::level_thumbnail(&l).get(95, 48)
+    };
+    let (own, filtered) = (spill("Own"), spill("Filtered(\"#ffffff\")"));
+    assert!(filtered.r > own.r + 20, "dim grey lights as white: {filtered:?} vs {own:?}");
+}
+
 #[test]
 fn solids_never_fall_below_the_solid_floor_in_the_thumbnail() {
     let mut l = white_level("look: (ambient: (intensity: 0), solid_floor: (intensity: 40))");

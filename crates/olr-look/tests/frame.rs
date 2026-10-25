@@ -463,3 +463,12 @@ fn a_flicker_group_flickers_per_region() {
         assert_eq!(f.groups[1].flicker, None);
     }
 }
+
+#[test]
+fn filtered_scales_the_art_to_a_full_brightest_channel() {
+    // The background glass design: a `Filtered` group's own colour.
+    let f = olr_look::engine::filtered;
+    assert_eq!(f([0.5, 0.25, 0.0]), [1.0, 0.5, 0.0]);
+    assert_eq!(f([0.0; 3]), [0.0; 3], "black casts nothing");
+    assert_eq!(f([f32::NAN, 0.5, 0.5]), [0.0, 1.0, 1.0], "never a NaN");
+}

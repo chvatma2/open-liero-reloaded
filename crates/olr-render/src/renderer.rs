@@ -334,7 +334,7 @@ impl Renderer {
         let no_mask = mask_texture(&device, &queue, (1, 1), &[255]);
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render globals"),
-            entries: &[entry(0, wgpu::ShaderStages::VERTEX, UNIFORM)],
+            entries: &[entry(0, wgpu::ShaderStages::VERTEX | frag, UNIFORM)],
         });
         let upscale_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("olr-render upscale"),

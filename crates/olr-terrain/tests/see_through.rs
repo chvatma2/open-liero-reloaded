@@ -177,3 +177,17 @@ fn a_misfit_glass_map_is_refused() {
     assert!(m.set_glass(Some(olr_terrain::GlassMap::none((4 * S, S)))));
     assert!(m.glass().is_some());
 }
+
+#[test]
+fn each_glass_map_set_is_a_new_generation() {
+    let (t, front, back) = glass_level();
+    let mut m = ColorMap::new_see_through(&t, &front, &back, S, theme());
+    let g0 = m.glass_generation();
+    assert!(!m.set_glass(Some(olr_terrain::GlassMap::none((4 * S, S + 1)))));
+    assert_eq!(m.glass_generation(), g0, "a refused map changes nothing");
+    assert!(m.set_glass(Some(olr_terrain::GlassMap::none((4 * S, S)))));
+    let g1 = m.glass_generation();
+    assert_ne!(g1, g0);
+    assert!(m.set_glass(None));
+    assert_ne!(m.glass_generation(), g1);
+}

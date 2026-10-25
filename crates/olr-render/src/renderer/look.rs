@@ -5,7 +5,7 @@
 
 use olr_data::level::Material;
 use olr_look::{LookFrame, ViewMode};
-use olr_terrain::{ColorMap, Rect};
+use olr_terrain::{ColorMap, GlassMap, Rect};
 
 use super::{Renderer, WORLD_FORMAT, entry, pipeline};
 use crate::frame::{WorldFrame, look_texture_sizes};
@@ -65,8 +65,17 @@ pub(super) struct LookTextures {
     pub(super) art_scale: u32,
     /// The level's size in world pixels (uncropped).
     pub(super) level: (u32, u32),
-    /// The lit terrain's group 2: globals, glow, groups, flicker regions.
+    /// The lit terrain's group 2: globals, glow, groups, flicker regions,
+    /// glass.
     pub(super) terrain_bind: wgpu::BindGroup,
+    /// The level's glass map (the background glass design), `Rgba8Unorm`
+    /// at art size (white, no frost, where it has none) when the level is
+    /// see-through, else 1 × 1 white.
+    glass: wgpu::Texture,
+    /// Whether the level is see-through, so its glass is drawn.
+    pub(super) glass_on: bool,
+    /// The [`ColorMap::glass_generation`] the glass texture holds.
+    glass_generation: Option<u32>,
     /// Each world pixel's flicker region (plan 15c), `R16Uint`.
     pub(super) region_map: wgpu::Texture,
     regions: super::regions::Regions,
@@ -331,6 +340,39 @@ pub(super) fn write_bytes(
 }
 
 /// [`write_bytes`] for two bytes a texel (`R16Uint`).
+/// Writes glass map `glass` (white, no frost, without one) over all of
+/// `texture`, cropped to it.
+fn write_glass(
+    queue: &super::uploads::Queue,
+    texture: &wgpu::Texture,
+    glass: Option<&GlassMap>,
+    (w, h): (u32, u32),
+) {
+    let none;
+    let texels = match glass.filter(|g| g.fits((w, h))) {
+        Some(g) => &g.texels,
+        None => {
+            none = GlassMap::none((w, h)).texels;
+            &none
+        }
+    };
+    let (tw, th) = (texture.width().min(w), texture.height().min(h));
+    if tw == 0 || th == 0 {
+        return;
+    }
+    queue.write_texture(
+        wgpu::TexelCopyTextureInfo {
+            texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d::ZERO,
+            aspect: wgpu::TextureAspect::All,
+        },
+        texels,
+        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: Some(th) },
+        wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
+    );
+}
+
 fn write_u16(queue: &super::uploads::Queue, texture: &wgpu::Texture, (data, width): (&[u16], u32), r: Rect) {
     let (tw, th) = (texture.width(), texture.height());
     let (w, h) = (r.w.min(tw.saturating_sub(r.x)), r.h.min(th.saturating_sub(r.y)));
@@ -426,6 +468,7 @@ impl LookState {
                 entry(1, frag, FLOAT_TEXTURE),
                 entry(2, frag, UINT_TEXTURE),
                 entry(3, frag, UINT_TEXTURE),
+                entry(4, frag, FLOAT_TEXTURE),
             ],
         });
         let heat = super::heat::HeatPipelines::new(device);
@@ -812,6 +855,9 @@ impl LookState {
         let groups = r8(device, "olr-render glow groups", sizes.world, wgpu::TextureFormat::R8Uint);
         let solid = r8(device, "olr-render solid", sizes.world, wgpu::TextureFormat::R8Uint);
         let region_map = r8(device, "olr-render flicker regions", sizes.world, wgpu::TextureFormat::R16Uint);
+        let glass_on = map.see_through();
+        let glass_size = if glass_on { sizes.art } else { (1, 1) };
+        let glass = r8(device, "olr-render glass", glass_size, wgpu::TextureFormat::Rgba8Unorm);
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
         let terrain_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("olr-render look terrain"),
@@ -830,8 +876,15 @@ impl LookState {
                     binding: 3,
                     resource: wgpu::BindingResource::TextureView(&view(&region_map)),
                 },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(&view(&glass)),
+                },
             ],
         });
+        if !glass_on {
+            write_glass(queue, &glass, None, (1, 1));
+        }
         let inputs = super::gi::GiInputs {
             globals: &self.globals,
             glow: &view(&glow),
@@ -852,6 +905,9 @@ impl LookState {
             art_scale: map.art_scale(),
             level,
             terrain_bind,
+            glass,
+            glass_on,
+            glass_generation: None,
             regions: super::regions::Regions::new(level, map.glow_groups()),
             region_map,
             gi,
@@ -882,6 +938,11 @@ impl LookState {
     pub(super) fn write(&mut self, queue: &super::uploads::Queue, map: &ColorMap, r: Rect) {
         let Some(t) = &mut self.textures else { return };
         let wr = world_rect(r, t.art_scale);
+        // The glass map is static: written whole when a new one is set.
+        if t.glass_on && t.glass_generation != Some(map.glass_generation()) {
+            write_glass(queue, &t.glass, map.glass(), (map.width(), map.height()));
+            t.glass_generation = Some(map.glass_generation());
+        }
         if let (Some(glow), Some(groups)) = (map.glow(), map.glow_groups()) {
             write_bytes(queue, &t.glow, (glow, map.width()), r);
             write_bytes(queue, &t.groups, (groups, t.level.0), wr);
@@ -1002,7 +1063,14 @@ impl LookState {
         // Whether the level draws distant layers (issue #11); the worm
         // halo's strength scale and the background tag (issue #54).
         let tag = if self.tag { BACKGROUND_TAG } else { 0.0 };
-        p.extend([f32::from(u8::from(distant)), f32::from(u8::from(self.halo)), tag, 0.0]);
+        // The background glass design: whether the level's glass is drawn.
+        let glass = self.textures.as_ref().is_some_and(|t| t.glass_on);
+        p.extend([
+            f32::from(u8::from(distant)),
+            f32::from(u8::from(self.halo)),
+            tag,
+            f32::from(u8::from(glass)),
+        ]);
         debug_assert_eq!(p.len(), GLOBAL_HEAD);
         // Only the frame's groups (issue #35: the shaders read no group
         // past `mode.y`): cast and self-light scale, reach and own colour,
@@ -1010,7 +1078,10 @@ impl LookState {
         // whole in f32); a speed of 0 is no flicker.
         for g in look.groups.iter().take(GROUPS) {
             p.extend([g.cast[0], g.cast[1], g.cast[2], g.self_scale]);
-            p.extend([g.reach.min(1e9), f32::from(u8::from(g.own_colour)), 0.0, 0.0]);
+            // Own colour: 1 the pixel's art, 2 its art filtered (the
+            // background glass design: normalised to its brightest channel).
+            let own = if g.filtered { 2.0 } else { f32::from(u8::from(g.own_colour)) };
+            p.extend([g.reach.min(1e9), own, 0.0, 0.0]);
             match g.flicker {
                 Some((speed, depth)) => {
                     p.extend([speed.max(1.0), depth, g.t_ms, (g.seed & 0xff_ffff) as f32])

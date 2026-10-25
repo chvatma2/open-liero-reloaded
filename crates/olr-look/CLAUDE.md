@@ -146,6 +146,10 @@ own look. The simulation never sees it.
   or deeper); `worm_halo_shape(depth)` (radius and strength, linear in
   the depth; `None` from the fade depth less half a byte's step) and
   `worm_halo(d, depth)` (`s × (1 − (d − 1)/r)²`, 0 past `r`).
+  The background glass design: `filtered(c)` (a `Filtered` group's own
+  colour: linear art scaled to a full brightest channel, black or no
+  number none; the renderer's emission and the thumbnail use it,
+  `filtered_scales_the_art_to_a_full_brightest_channel`).
 - **Surface materials** (`material.rs`, issue #37; spec
   `docs/superpowers/specs/2026-10-22-materials-and-heat-design.md`):
   `SurfaceMaterial { id, heat: Option<Heat>, light_soak: Option<u8> }`

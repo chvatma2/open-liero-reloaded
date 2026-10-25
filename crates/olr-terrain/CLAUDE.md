@@ -55,7 +55,9 @@ and the colour image that follows it (`ColorMap`).
   on alpha 255); `set_glass(Some(GlassMap))` (`glass.rs`: RGBA per art
   pixel, the filter and the frost, static; another art size refused) and
   `glass()` hold the level's `look/glass.png` for the renderer
-  (`glass_keeps_its_alpha`, `digging_in_front_of_glass_shows_the_glass`,
+  (`glass_generation()` changes with each map set, so it uploads one
+  only anew; `each_glass_map_set_is_a_new_generation`;
+  `glass_keeps_its_alpha`, `digging_in_front_of_glass_shows_the_glass`,
   `stains_skip_glass`, `replace_rect_keeps_glass`).
 - **Glow** (plan 15a, look system §Glow): `set_glow(Some(GlowLayers))` gives the map
   a glow channel (strength per art pixel, group per world pixel, of the front

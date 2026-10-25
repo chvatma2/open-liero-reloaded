@@ -357,3 +357,12 @@ fn fade_px(d: f32, reach: f32) -> f32 {
     let v = 1.0 - x * x;
     v * v
 }
+
+/// A `Filtered` glow group's own colour (the background glass design):
+/// linear art colour `c` scaled so its brightest channel is 1; black (or
+/// no number) casts nothing. The renderer's emission does the same.
+pub fn filtered(c: [f32; 3]) -> [f32; 3] {
+    let c = c.map(|v| if v.is_finite() { v.max(0.0) } else { 0.0 });
+    let top = c[0].max(c[1]).max(c[2]);
+    if top > 0.0 { c.map(|v| v / top) } else { [0.0; 3] }
+}

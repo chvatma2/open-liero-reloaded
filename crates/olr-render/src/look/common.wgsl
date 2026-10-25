@@ -37,7 +37,8 @@ struct LookGlobals {
     // 1 when the level draws distant layers (issue #11: the shade's alpha
     // is then 1 - their depth), the worm halo's strength scale (issue #54:
     // 1, 0 off for tests), the background tag the lit terrain and distant
-    // layers write in the shade's marker channel (issue #54: 0.25), 0
+    // layers write in the shade's marker channel (issue #54: 0.25), 1 when
+    // the level's glass is drawn (the background glass design: see-through)
     distant: vec4<f32>,
     groups: array<Group, 255>,
 };
