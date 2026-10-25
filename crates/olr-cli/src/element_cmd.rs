@@ -11,7 +11,7 @@ use clap::{Subcommand, ValueEnum};
 use olr_edit::compose::{bake, theme_back_tile};
 use olr_edit::element::{self, Property, SurfaceRule};
 use olr_edit::pack::{Pack, Source, load, save};
-use olr_format::levels::{Dither, ElementKind, ElementMaterial};
+use olr_format::levels::{Dither, ElementKind, ElementMaterial, GlowBeam};
 
 use crate::level_cmd::{MaterialArg, PaintArgs, ShapeArgs, parse_ints, parse_point, read_bounded};
 use crate::pack_cmd::parse_size;
@@ -200,6 +200,14 @@ pub(crate) enum ElementCommand {
         /// The glow group (an id in level.ron's look) the glow lights with.
         #[arg(long)]
         glow_group: Option<String>,
+        /// Aim the glow (the directional-glow design) as a beam: DIRECTION,SPREAD
+        /// in whole degrees, the direction 0-359 (0 right, 90 down) and the
+        /// half-angle 1-90. Only a glowing element on rock or a background.
+        #[arg(long, value_parser = parse_glow_beam, conflicts_with = "no_glow_beam")]
+        glow_beam: Option<GlowBeam>,
+        /// Make the glow light all around again.
+        #[arg(long)]
+        no_glow_beam: bool,
         /// Its rock and dirt let light through (look system), still solid.
         #[arg(long)]
         clear: Option<bool>,
@@ -473,6 +481,9 @@ fn list(dir: &Path) -> anyhow::Result<bool> {
                 g.group,
                 if g.mask { " masked" } else { "" }
             ));
+            if let Some(b) = &g.beam {
+                line.push_str(&format!(" beam {}° {}°", b.direction, b.spread));
+            }
         }
         for (label, id) in [("surface", &e.surface), ("back-surface", &e.back_surface)] {
             if let Some(id) = id {
@@ -558,13 +569,21 @@ pub(crate) fn run(command: &ElementCommand) -> anyhow::Result<bool> {
             threshold,
             glow,
             glow_group,
+            glow_beam,
+            no_glow_beam,
             clear,
             distant,
             surface,
             back_surface,
             content,
         } => edit(pack, content, |p| {
-            let glow = glow_property(p, id, *glow, glow_group.as_deref())?;
+            let glow = glow_property(
+                p,
+                id,
+                *glow,
+                glow_group.as_deref(),
+                glow_beam.map(Some).or(no_glow_beam.then_some(None)),
+            )?;
             // Unlocking first and locking last, so one command can unlock,
             // change and lock again; all in one step, checked together.
             let properties = [
@@ -724,14 +743,29 @@ fn parse_rule(s: &str) -> Result<SurfaceRule, String> {
     Ok(SurfaceRule { kind, colour, tolerance, material })
 }
 
-/// `set`'s `--glow` and `--glow-group` as one property: a strength of 0
-/// removes the glow; either flag alone keeps the other's current value
-/// (and the painted mask).
+/// `--glow-beam DIRECTION,SPREAD`: whole degrees, the direction 0-359 and
+/// the half-angle 1-90.
+fn parse_glow_beam(s: &str) -> Result<GlowBeam, String> {
+    let bad = || format!("{s:?} is not DIRECTION,SPREAD (whole degrees, 0-359 and 1-90)");
+    let (d, w) = s.split_once(',').ok_or_else(bad)?;
+    let direction: u16 = d.trim().parse().map_err(|_| bad())?;
+    let spread: u8 = w.trim().parse().map_err(|_| bad())?;
+    if direction > 359 || !(1..=90).contains(&spread) {
+        return Err(bad());
+    }
+    Ok(GlowBeam { direction, spread })
+}
+
+/// `set`'s `--glow`, `--glow-group` and `--glow-beam`/`--no-glow-beam` as
+/// one property: a strength of 0 removes the glow; either flag alone keeps
+/// the other's current value (and the painted mask); the beam stays unless
+/// `beam` (`Some(Some)` sets it, `Some(None)` removes it) says otherwise.
 fn glow_property(
     p: &olr_edit::pack::Pack,
     id: &str,
     strength: Option<u8>,
     group: Option<&str>,
+    beam: Option<Option<GlowBeam>>,
 ) -> Result<Option<Property>, element::ElementError> {
     if strength == Some(0) {
         return Ok(Some(Property::Glow(None)));
@@ -741,12 +775,16 @@ fn glow_property(
         .as_ref()
         .and_then(|c| c.composition.elements.iter().find(|e| e.id == id))
         .and_then(|e| e.glow.clone());
-    let (strength, group, mask, beam) = match (strength, group, now) {
+    let (strength, group, mask, beam_now) = match (strength, group, now) {
         (Some(s), Some(g), now) => {
             (s, g.to_string(), now.as_ref().is_some_and(|n| n.mask), now.and_then(|n| n.beam))
         }
         (Some(s), None, Some(n)) => (s, n.group, n.mask, n.beam),
         (None, Some(g), Some(n)) => (n.strength, g.to_string(), n.mask, n.beam),
+        (None, None, Some(n)) if beam.is_some() => (n.strength, n.group, n.mask, n.beam),
+        (None, None, None) if beam.is_some() => {
+            return Err(element::ElementError::BadValue("the element does not glow".into()));
+        }
         (None, None, _) => return Ok(None),
         (_, _, None) => {
             return Err(element::ElementError::BadValue(
@@ -754,6 +792,7 @@ fn glow_property(
             ));
         }
     };
+    let beam = beam.unwrap_or(beam_now);
     Ok(Some(Property::Glow(Some(olr_format::levels::ElementGlow { strength, group, mask, beam }))))
 }
 

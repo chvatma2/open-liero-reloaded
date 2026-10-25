@@ -306,7 +306,7 @@ fn inside(shape: &Shape, px: i64, py: i64) -> bool {
 
 /// Whether `shape` covers world pixel `(px, py)`, anywhere (its extent,
 /// then the shape's own rule).
-pub(crate) fn covers(shape: &Shape, px: i64, py: i64) -> bool {
+pub fn covers(shape: &Shape, px: i64, py: i64) -> bool {
     let (x0, y0, x1, y1) = extent(shape);
     (x0..x1).contains(&px) && (y0..y1).contains(&py) && inside(shape, px, py)
 }

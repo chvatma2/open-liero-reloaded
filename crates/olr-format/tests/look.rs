@@ -765,6 +765,41 @@ fn a_filtered_glow_lights_by_the_arts_hue_in_the_thumbnail() {
     assert!(filtered.r > own.r + 20, "dim grey lights as white: {filtered:?} vs {own:?}");
 }
 
+/// A lamp patch in a dark white level, glowing at 32.5 world pixels; with
+/// `beam` (byte 0 direction / 2 + 1, byte 1 spread) it is directional.
+/// Returns the thumbnail's pixel 20 world pixels left and right of it.
+fn lamp_sides(beam: Option<[u8; 2]>) -> (olr_data::image::Rgba, olr_data::image::Rgba) {
+    let mut l = white_level(
+        "look: (ambient: (intensity: 5), glow_groups: [(id: \"lamp\", colour: Own, reach: Pixels(40))])",
+    );
+    let mut g = GlowLayers::empty((64, 32), (64, 32));
+    let mut b = GlowBeamMap::none((64, 32));
+    for y in 12..20 {
+        for x in 30..35 {
+            let i = (y * 64 + x) as usize;
+            (g.front[i], g.back[i], g.groups[i], g.groups_back[i]) = (255, 255, 1, 1);
+            if let Some(v) = beam {
+                b.front[i * 2..i * 2 + 2].copy_from_slice(&v);
+                b.back[i * 2..i * 2 + 2].copy_from_slice(&v);
+            }
+        }
+    }
+    l.glow = Some(g);
+    l.glow_beams = beam.map(|_| b);
+    let t = olr_format::levels::level_thumbnail(&l);
+    (t.get(31, 48), t.get(131, 48))
+}
+
+/// The directional-glow design: a directional pixel's cell casts only
+/// inside its cone; an undirected one lights both sides alike.
+#[test]
+fn the_thumbnail_keeps_directional_light_in_its_cone() {
+    let (left, right) = lamp_sides(Some([1, 30]));
+    assert!(right.r > left.r + 20, "facing right: {left:?} {right:?}");
+    let (left, right) = lamp_sides(None);
+    assert!(left.r.abs_diff(right.r) <= 3 && left.r > 20, "undirected: {left:?} {right:?}");
+}
+
 #[test]
 fn solids_never_fall_below_the_solid_floor_in_the_thumbnail() {
     let mut l = white_level("look: (ambient: (intensity: 0), solid_floor: (intensity: 40))");

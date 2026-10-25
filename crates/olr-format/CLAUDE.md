@@ -406,7 +406,11 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   each casting its glow by the angle it fills, `side / (2π d)` at most 1,
   faded by its reach), each art sample never below its glow nor, solid,
   the solid floor, capped at max light, the mean graded; no soak, softness
-  or steps. Without a look, or with one that does not compile, it is
+  or steps. A directional pixel (`glow_beams`) casts from its cell only
+  inside its cone, weighted `smoothstep(cos(spread + 0.26), cos(spread),
+  cos(angle between the cast and the beam))`; undirected pixels and levels
+  without beams are unchanged byte for byte, and haze is left out
+  (`the_thumbnail_keeps_directional_light_in_its_cone`). Without a look, or with one that does not compile, it is
   `thumbnail(front)` (`tests/look.rs`: the plain one kept, a dark level,
   glow spilling, the solid floor; the occlusion left out, issue #10).
 - **`canonical_text(path, text)`** (plan 13d): one authoring file (by its

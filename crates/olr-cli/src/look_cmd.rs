@@ -57,12 +57,16 @@ pub(crate) struct LookArgs {
     /// Percent, 0-200.
     #[arg(long)]
     saturation: Option<u16>,
+    /// The haze of directional glow, percent 0-100 (`level haze paint`
+    /// scales it per pixel).
+    #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+    haze: Option<u8>,
     /// The grade's tint, RRGGBB.
     #[arg(long, value_parser = parse_colour)]
     tint: Option<Colour>,
     /// Remove the look: its settings and every glow group (their elements
     /// stop glowing).
-    #[arg(long, conflicts_with_all = ["ambient", "occlusion", "no_occlusion", "max_light", "steps", "softness", "soak", "solid_floor", "exposure", "contrast", "saturation", "tint"])]
+    #[arg(long, conflicts_with_all = ["ambient", "occlusion", "no_occlusion", "max_light", "steps", "softness", "soak", "solid_floor", "exposure", "contrast", "saturation", "tint", "haze"])]
     clear: bool,
     #[command(flatten)]
     content: ContentArg,
@@ -215,7 +219,56 @@ pub(crate) fn look_cmd(a: &LookArgs) -> anyhow::Result<bool> {
     k.grade.contrast = a.contrast.unwrap_or(k.grade.contrast);
     k.grade.saturation = a.saturation.unwrap_or(k.grade.saturation);
     k.grade.tint = a.tint.or(k.grade.tint);
+    k.haze = a.haze.unwrap_or(k.haze);
     look::set_look(l, Some(k)).map_err(|e| bail(dir, e))?;
+    save(dir, &mut pack, &[])
+}
+
+/// `level haze paint|clear`: the per-pixel scale of the look's `haze`.
+#[derive(Subcommand)]
+pub(crate) enum HazeCommand {
+    /// Paint the haze map over a shape: 0 none to 100 the look's haze.
+    Paint {
+        pack: PathBuf,
+        #[command(flatten)]
+        shape: crate::level_cmd::ShapeArgs,
+        /// Percent of the look's haze, 0-100.
+        #[arg(long, value_parser = clap::value_parser!(u8).range(0..=100))]
+        strength: u8,
+    },
+    /// Remove the haze map.
+    Clear { pack: PathBuf },
+}
+
+/// `level haze …`.
+pub(crate) fn haze_cmd(c: &HazeCommand) -> anyhow::Result<bool> {
+    let dir = match c {
+        HazeCommand::Paint { pack, .. } | HazeCommand::Clear { pack } => pack,
+    };
+    let mut pack = element_cmd::load_level(dir)?;
+    let Source::Level(l) = &mut pack.source else { anyhow::bail!("{}: not a level pack", dir.display()) };
+    let map = match c {
+        HazeCommand::Clear { .. } => None,
+        HazeCommand::Paint { shape, strength, .. } => {
+            let (w, h) = l.size;
+            let mut map = l.haze.clone().filter(|m| m.len() as u64 == u64::from(w) * u64::from(h));
+            let value = (u32::from(*strength) * 255 + 50) / 100;
+            let value = value as u8;
+            let map = map.get_or_insert_with(|| vec![0u8; w as usize * h as usize]);
+            let shape = shape.shape();
+            if let Some(r) = olr_edit::level::shape_bounds(&shape, (w, h)) {
+                for y in r.y..r.y + r.h {
+                    for x in r.x..r.x + r.w {
+                        if olr_edit::level::covers(&shape, i64::from(x), i64::from(y)) {
+                            map[y as usize * w as usize + x as usize] = value;
+                        }
+                    }
+                }
+            }
+            Some(std::mem::take(map))
+        }
+    };
+    look::set_haze_map(l, map).map_err(|e| bail(dir, e))?;
     save(dir, &mut pack, &[])
 }
 

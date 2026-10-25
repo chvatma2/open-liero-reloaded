@@ -748,3 +748,71 @@ fn erase_by_a_mask_image() {
     }
     ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
 }
+
+/// The pack's level, read back.
+fn read_level(pack: &Path) -> olr_format::levels::LevelSource {
+    olr_format::levels::read_level_files(&olr_vfs::DirFs::new(pack)).unwrap()
+}
+
+/// The directional-glow design: `set --glow-beam DIR,SPREAD` aims a
+/// glowing element's light, `list` shows it, `--no-glow-beam` removes it
+/// and the baked map follows; a non-glowing element refuses.
+#[test]
+fn cli_sets_a_glow_beam() {
+    let Some((tmp, pack, content)) = dirt_level() else { return };
+    compose(tmp.path(), &pack, &content);
+    add_look(&pack);
+    let run = |args: &[&str]| {
+        let mut all = vec!["level", "element"];
+        all.extend_from_slice(args);
+        all.extend_from_slice(&["--content", "{content}"]);
+        cli(&all, &pack, &content)
+    };
+    let list = || ok(&cli(&["level", "element", "list", "{pack}"], &pack, &content));
+    ok(&run(&["add-layer", "{pack}", "--material", "rock", "--name", "rock-pcs"]));
+    ok(&run(&["draw", "{pack}", "rock-pcs", "--rect", "4,4,10,10", "--colour", "ffcc00"]));
+    let e = run(&["set", "{pack}", "rock-pcs", "--glow-beam", "0,35"]);
+    assert!(
+        !e.status.success() && String::from_utf8_lossy(&e.stderr).contains("the element does not glow"),
+        "{}",
+        String::from_utf8_lossy(&e.stderr)
+    );
+    ok(&run(&["set", "{pack}", "rock-pcs", "--glow", "100", "--glow-group", "lava"]));
+    ok(&run(&["set", "{pack}", "rock-pcs", "--glow-beam", "0,35"]));
+    let l = list();
+    assert!(l.contains("glow 100% lava beam 0° 35°"), "{l}");
+    let beams = read_level(&pack).glow_beams.expect("a baked beam map");
+    assert_eq!(beams.get(false, 6, 6), Some((0, 35)));
+    // A strength change keeps the beam.
+    ok(&run(&["set", "{pack}", "rock-pcs", "--glow", "80"]));
+    assert!(list().contains("glow 80% lava beam 0° 35°"));
+    ok(&run(&["set", "{pack}", "rock-pcs", "--no-glow-beam"]));
+    let l = list();
+    assert!(l.contains("glow 80% lava") && !l.contains("beam"), "{l}");
+    assert!(read_level(&pack).glow_beams.is_none());
+    ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
+}
+
+/// `look --haze N` and `level haze paint|clear` write `look/haze.png`.
+#[test]
+fn cli_paints_haze() {
+    let Some((_tmp, pack, content)) = dirt_level() else { return };
+    ok(&cli(&["level", "look", "{pack}", "--haze", "40"], &pack, &content));
+    ok(&cli(
+        &["level", "haze", "paint", "{pack}", "--rect", "0,0,10,10", "--strength", "50"],
+        &pack,
+        &content,
+    ));
+    let l = read_level(&pack);
+    assert_eq!(l.look.as_ref().unwrap().haze, 40);
+    let haze = l.haze.expect("look/haze.png");
+    let w = l.size.0 as usize;
+    for (i, v) in haze.iter().enumerate() {
+        let inside = i % w < 10 && i / w < 10;
+        assert_eq!(*v, if inside { 128 } else { 0 }, "pixel {i}");
+    }
+    assert!(pack.join("look/haze.png").is_file());
+    ok(&cli(&["level", "haze", "clear", "{pack}"], &pack, &content));
+    assert!(read_level(&pack).haze.is_none());
+    assert!(!pack.join("look/haze.png").exists());
+}

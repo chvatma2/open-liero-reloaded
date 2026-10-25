@@ -140,6 +140,15 @@ fn fade(d: f32, r: f32) -> f32 {
     v * v
 }
 
+/// GLSL's `smoothstep`; 0 for an empty range.
+fn smoothstep(lo: f32, hi: f32, v: f32) -> f32 {
+    if hi <= lo {
+        return if v >= hi { 1.0 } else { 0.0 };
+    }
+    let t = ((v - lo) / (hi - lo)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 fn linear_to_srgb(v: f32) -> u8 {
     let c = v.clamp(0.0, 1.0);
     let s = if c <= 0.003_130_8 { c * 12.92 } else { 1.055 * c.powf(1.0 / 2.4) - 0.055 };
@@ -209,11 +218,17 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
     };
     // The glow light's cells: two thumbnail pixels a side.
     let (cw, ch) = (w.div_ceil(2), h.div_ceil(2));
-    let mut cells: Vec<([f32; 3], f32, [f32; 2])> = Vec::new();
+    // Directional pixels (the directional-glow design) cast within their
+    // cone only: `Some((direction as a unit vector, spread in radians))`.
+    type Cone = Option<([f32; 2], f32)>;
+    let mut cells: Vec<([f32; 3], f32, [f32; 2], Cone)> = Vec::new();
+    let beams = level.glow_beams.as_ref().filter(|b| b.fits(level.size));
     if glow.is_some() {
         for cy in 0..u64::from(ch) {
             for cx in 0..u64::from(cw) {
                 let (mut sum, mut reach, mut n) = ([0.0f32; 3], 0.0f32, 0.0f32);
+                // The cell's directional light by (direction, spread).
+                let mut cones: Vec<((u16, u8), [f32; 3], f32)> = Vec::new();
                 for ty in (cy * 2)..(cy * 2 + 2).min(h64) {
                     for tx in (cx * 2)..(cx * 2 + 2).min(w64) {
                         for j in 0..sy {
@@ -227,21 +242,43 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
                                     (true, false) => albedo(x, y),
                                     _ => [1.0; 3],
                                 };
+                                let beam = beams.and_then(|b| b.get(!solid(x / s, y / s), x / s, y / s));
+                                let (sum, reach) = match beam {
+                                    None => (&mut sum, &mut reach),
+                                    Some(key) => {
+                                        let at = match cones.iter().position(|c| c.0 == key) {
+                                            Some(at) => at,
+                                            None => {
+                                                cones.push((key, [0.0; 3], 0.0));
+                                                cones.len() - 1
+                                            }
+                                        };
+                                        let c = &mut cones[at];
+                                        (&mut c.1, &mut c.2)
+                                    }
+                                };
                                 for ((s, k), a) in sum.iter_mut().zip(grp.cast).zip(a) {
                                     *s += k * a * g;
                                 }
-                                reach = reach.max(grp.reach);
+                                *reach = reach.max(grp.reach);
                             }
                         }
                     }
                 }
+                // The cell's centre in world pixels.
+                let at = [
+                    ((cx * 2 + 1) as f32) * ww as f32 / w as f32,
+                    ((cy * 2 + 1) as f32) * wh as f32 / h as f32,
+                ];
                 if n > 0.0 && sum.iter().any(|v| *v > 0.0) {
-                    // The cell's centre in world pixels.
-                    let at = [
-                        ((cx * 2 + 1) as f32) * ww as f32 / w as f32,
-                        ((cy * 2 + 1) as f32) * wh as f32 / h as f32,
-                    ];
-                    cells.push((sum.map(|v| v / n), reach, at));
+                    cells.push((sum.map(|v| v / n), reach, at, None));
+                }
+                for ((direction, spread), sum, reach) in cones {
+                    if n > 0.0 && sum.iter().any(|v| *v > 0.0) {
+                        let a = f32::from(direction).to_radians();
+                        let cone = Some(([a.cos(), a.sin()], f32::from(spread).to_radians()));
+                        cells.push((sum.map(|v| v / n), reach, at, cone));
+                    }
                 }
             }
         }
@@ -257,9 +294,16 @@ fn lit_thumbnail(level: &super::LevelSource, look: &olr_look::LevelLook) -> Rgba
         for tx in 0..w64 {
             let at = [(tx as f32 + 0.5) * ww as f32 / w as f32, (ty as f32 + 0.5) * wh as f32 / h as f32];
             let mut light = frame.ambient;
-            for (e, reach, p) in &cells {
+            for (e, reach, p, cone) in &cells {
                 let d = ((p[0] - at[0]).powi(2) + (p[1] - at[1]).powi(2)).sqrt();
-                let k = (side / (std::f32::consts::TAU * d.max(1e-3))).min(1.0) * fade(d, *reach);
+                let mut k = (side / (std::f32::consts::TAU * d.max(1e-3))).min(1.0) * fade(d, *reach);
+                if let Some((dir, spread)) = cone {
+                    // The cascade cone: the cast direction runs from the
+                    // cell to the pixel.
+                    let dot =
+                        if d > 1e-3 { ((at[0] - p[0]) * dir[0] + (at[1] - p[1]) * dir[1]) / d } else { 1.0 };
+                    k *= smoothstep((spread + 0.26).cos(), spread.cos(), dot);
+                }
                 for (v, c) in light.iter_mut().zip(e) {
                     *v += c * k;
                 }

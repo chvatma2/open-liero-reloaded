@@ -48,6 +48,15 @@ The headless command-line tool. Its commands:
   cross outlined in black on each spawn, bounded by `LEVEL_ART`, and
   refuses an `--out` inside the pack. Tests: `tests/level.rs`, and `tests/cli.rs`'s `pack_check_*`,
   `pack_fmt_*` and `pack_new_*`.
+- Directional glow (its design, 2026-10-25): `level element set <id> --glow-beam
+  DIRECTION,SPREAD` (whole degrees, 0-359 and 1-90) aims a glowing element
+  (`--no-glow-beam` undoes it; "the element does not glow" otherwise; a
+  strength or group change keeps the beam: `glow_property`); `level look
+  --haze N` (0-100) sets the look's haze; `level haze paint <shape>
+  --strength 0..=100` (the map value `round(S * 255 / 100)`, 50 is 128) and
+  `level haze clear` edit `look/haze.png` through
+  `olr_edit::look::set_haze_map` (`look_cmd.rs`). Tests: `tests/element.rs`'s
+  `cli_sets_a_glow_beam`, `cli_paints_haze`.
 - `olr-cli level element list|add-image|add-layer|set|remove|raise|lower|draw|erase|merge-down|split|mask
   <pack> …` and `level bake <pack>` (`element_cmd.rs`, plan 14a; plan
   14d: `draw --material`, `merge-down <id>`, `split <id>` printing `added
@@ -66,7 +75,7 @@ The headless command-line tool. Its commands:
   `set --glow`/`--glow-group` and `glow` work on a distant layer as on
   any (its light baked at its box where the back is see-through, its glow
   in `level.ron`'s `distant` and its mask in `distant/<i>-glow.png`), and
-  `list` adds ` glow S% <group>[ masked]` for every glowing element; and
+  `list` adds ` glow S% <group>[ masked][ beam D° S°]` for every glowing element; and
   `glow <id> (--rect|--circle|--colour-at X,Y [--tolerance N]) --strength
   S` painting a glowing element's glow mask (`element::paint_glow`, a
   first mask whole; 0 erases) or lighting the connected pixels alike in
