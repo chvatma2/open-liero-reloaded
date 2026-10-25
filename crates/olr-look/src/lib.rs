@@ -14,6 +14,7 @@ use alloc::vec::Vec;
 mod anim;
 pub mod engine;
 mod frame;
+pub mod glow_beams;
 mod material;
 
 pub use anim::{default_phase, splitmix64};

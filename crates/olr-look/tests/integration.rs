@@ -3,4 +3,5 @@
 mod anim;
 mod beam;
 mod frame;
+mod glow_beams;
 mod material;

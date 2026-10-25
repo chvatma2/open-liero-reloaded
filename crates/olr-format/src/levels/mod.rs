@@ -514,6 +514,7 @@ pub(crate) fn check(src: &LevelSource) -> Result<(), FormatError> {
             ),
         ));
     }
+    check_glow_beam_count(src)?;
     if let Some(values) = &src.haze
         && values.len() != cells
     {
@@ -611,6 +612,34 @@ pub fn lift_level(level: &Level, thumb: Option<Vec<u8>>) -> Result<LevelSource, 
     }
     check(&src).map_err(|e| LiftError { item: format!("level {:?}", d.name), message: e.to_string() })?;
     Ok(src)
+}
+
+/// Refuses a level whose directional glow makes more than
+/// [`olr_look::glow_beams::MAX_GLOW_BEAMS`] beams (counted on the derived
+/// patches). A level without glow, or whose beam maps do not fit, has none
+/// to count.
+pub(crate) fn check_glow_beam_count(src: &LevelSource) -> Result<(), FormatError> {
+    use olr_look::glow_beams::{BeamLayer, MAX_GLOW_BEAMS, derive};
+    let (Some(b), Some(g)) = (&src.glow_beams, &src.glow) else {
+        return Ok(());
+    };
+    let layer = |back: bool| BeamLayer {
+        world: src.size,
+        art_scale: src.art_scale,
+        groups: if back { &g.groups_back } else { &g.groups },
+        glow: if back { &g.back } else { &g.front },
+        art: if back { src.back.as_raw() } else { src.front.as_raw() },
+        beams: if back { &b.back } else { &b.front },
+    };
+    let n = derive(&layer(false), &layer(true)).len();
+    if n > MAX_GLOW_BEAMS {
+        return Err(FormatError::invalid(
+            GLOW_BEAM_FILE,
+            "",
+            format!("{n} glow beams, above {MAX_GLOW_BEAMS}"),
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -1140,3 +1140,55 @@ fn hostile_glow_beam_maps() {
     assert_eq!(back.haze, None);
     assert!(warnings.iter().any(|w| w.contains("plays without its haze map")), "{warnings:?}");
 }
+
+#[test]
+fn too_many_glow_beams() {
+    // Separate one-pixel patches: every second pixel of a row.
+    let build = |patches: usize| {
+        let w = (patches * 2) as u32;
+        let mut src = level(None);
+        src.size = (w, 1);
+        src.art_scale = 1;
+        src.material = vec![Material::Dirt; w as usize];
+        src.front = RgbaImage::new(w, 1);
+        src.back = RgbaImage::new(w, 1);
+        let mut g = GlowLayers::empty((w, 1), (w, 1));
+        let mut m = GlowBeamMap::none((w, 1));
+        for p in 0..patches {
+            g.front[p * 2] = 255;
+            g.groups[p * 2] = 1;
+            m.front[p * 4] = 1;
+            m.front[p * 4 + 1] = 15;
+        }
+        src.look = Some(beam_look("Pixels(40)"));
+        src.glow = Some(g);
+        src.glow_beams = Some(m);
+        src
+    };
+    let ok = build(64);
+    assert_eq!(err(&ok), "");
+    let src = build(65);
+    let e = err(&src);
+    assert!(e.contains("65") && e.contains("64") && e.contains("look/glow-beam"), "{e}");
+    // Played leniently: no beams and the warning. The files are written by
+    // hand, because the writer refuses them.
+    let big = build(65);
+    let bm = big.glow_beams.as_ref().unwrap();
+    let w = big.size.0;
+    let layer = |l: &[u8]| image_io::encode_grey_alpha(w, 1, l);
+    let mut fs = MemFs::new();
+    let mut tmp = build(64);
+    tmp.size = big.size;
+    tmp.material = big.material.clone();
+    tmp.front = big.front.clone();
+    tmp.back = big.back.clone();
+    tmp.glow = big.glow.clone();
+    tmp.look = big.look.clone();
+    tmp.glow_beams = Some(GlowBeamMap::none(big.size));
+    write_level_files(&mut fs, &tmp).unwrap();
+    let fs = fs.with("look/glow-beam.png", layer(&bm.front)).with("look/glow-beam-back.png", layer(&bm.back));
+    assert!(read_level_files(&fs).is_err());
+    let (back, warnings) = olr_format::levels::read_level_files_lenient(&fs).unwrap();
+    assert_eq!(back.glow_beams, None);
+    assert!(warnings.iter().any(|w| w.contains("plays without its glow beams")), "{warnings:?}");
+}

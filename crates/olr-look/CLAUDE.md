@@ -188,3 +188,13 @@ own look. The simulation never sees it.
   values clamped, maps).
 
 Test: `cargo nextest run -p olr-look`.
+- **Glow beams** (`glow_beams.rs`, directional-glow plan Task 2):
+  `derive(front, back)` turns the baked beam maps (passed as slices in a
+  `BeamLayer`; this crate does not depend on `olr-terrain`) into
+  `GlowBeamSource`s: 8-connected patches of one group, direction and spread,
+  front layer first, each in row-major order of its first pixel. A patch's
+  `at` is the middle of its face (the corners' furthest projection on `dir`),
+  `half` half its width, `glow` and `colour` (linear, brightest channel 1)
+  the means over its art blocks. A misfit layer makes none. The cap
+  `MAX_GLOW_BEAMS` (64) is applied by the callers: `olr-format`'s `check`
+  counts derived patches and the lenient read drops a level's beams.

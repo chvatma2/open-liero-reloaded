@@ -575,6 +575,10 @@ pub fn read_level_files_lenient(src: &dyn ContentSource) -> Result<(LevelSource,
         warnings.push(format!("{e}: the level's distant layers play without surface materials"));
         level.distant_surfaces.clear();
     }
+    if let Err(e) = super::check_glow_beam_count(&level) {
+        warnings.push(format!("{e}: the level plays without its glow beams"));
+        level.glow_beams = None;
+    }
     check(&level)?;
     Ok((level, warnings))
 }
