@@ -10,9 +10,9 @@ use olr_data::image::RgbaImage;
 use olr_data::level::Material;
 use olr_format::image_io::{self, IMAGES};
 use olr_format::levels::{
-    CompositionSource, Dither, Element, ElementGlow, ElementKind, ElementMaterial, Folder, LevelSource,
-    MAX_ELEMENTS, check_composition, check_elements, element_box, element_files, glow_file, image_file,
-    layer_file, raster_files, surface_back_file, surface_file, surface_map_size,
+    CompositionSource, Dither, Element, ElementGlass, ElementGlow, ElementKind, ElementMaterial, Folder,
+    LevelSource, MAX_ELEMENTS, check_composition, check_elements, element_box, element_files, glow_file,
+    image_file, layer_file, raster_files, surface_back_file, surface_file, surface_map_size,
 };
 
 use crate::compose::{Decoded, ImageCache, compose_from, decode_element, encode_decoded, resize_decoded};
@@ -65,6 +65,9 @@ pub enum Property {
     Glow(Option<ElementGlow>),
     /// Its rock and dirt let light through (look system §Clear solids).
     Clear(bool),
+    /// Its covered background pixels are glass (the background glass
+    /// design); `None` opaque.
+    Glass(Option<ElementGlass>),
     /// A distant (parallax) layer of this depth, percent, or none (issue
     /// #11). Made distant, it moves to the top of the distant layers; made
     /// near again, to just above them.
@@ -421,6 +424,7 @@ fn field(p: &Property) -> &'static str {
         Property::Threshold(_) => "alpha_threshold",
         Property::Glow(_) => "glow",
         Property::Clear(_) => "clear",
+        Property::Glass(_) => "glass",
         Property::Distant(_) => "distant",
         Property::Surface(_) => "surface",
         Property::BackSurface(_) => "back_surface",
@@ -546,6 +550,10 @@ fn apply(
                 return Err(wrong("an image or drawn element (clear)"));
             }
             Property::Clear(c) => e.clear = c,
+            Property::Glass(_) if matches!(e.kind, ElementKind::Raster) => {
+                return Err(wrong("a background image or drawn element (glass)"));
+            }
+            Property::Glass(g) => e.glass = g,
             Property::Surface(m) => e.surface = m,
             Property::BackSurface(_) if !e.has_back_art() => {
                 return Err(wrong("an element with back art (a drawn layer with back art, a raster)"));

@@ -124,7 +124,8 @@ pub struct LevelPieces<'a> {
 /// An element as an asset holds it: shown, unlocked and in no folder
 /// (asset files carry none, issue #59).
 pub fn plain(e: &Element) -> Element {
-    Element { visible: true, locked: false, folder: None, ..e.clone() }
+    // An asset carries no glass (the background glass design).
+    Element { visible: true, locked: false, folder: None, glass: None, ..e.clone() }
 }
 
 /// An element's painted surface maps, its pixels' and its back art's.

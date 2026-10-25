@@ -50,10 +50,10 @@ use olr_data::level::{DistantGlow, DistantLayer, MAX_DEPTH, MIN_DEPTH, Material}
 use olr_data::manifest::PackKind;
 use olr_format::image_io::{self, IMAGES, LEVEL_ART};
 use olr_format::levels::{
-    Composition, CompositionSource, Element, ElementGlow, ElementKind, ElementMaterial, GlowLayers,
-    LevelSource, SurfaceMaps, check_composition, decode_surface_map, drawn_box, drawn_files, element_box,
-    encode_material, glow_file, image_file, mask_file, raster_files, surface_back_file, surface_file,
-    surface_map_size, write_level_files,
+    Composition, CompositionSource, Element, ElementGlass, ElementGlow, ElementKind, ElementMaterial,
+    GlassMap, GlowLayers, LevelSource, MAX_GLASS_FROST, SurfaceMaps, check_composition, decode_surface_map,
+    drawn_box, drawn_files, element_box, encode_material, glow_file, image_file, mask_file, raster_files,
+    surface_back_file, surface_file, surface_map_size, write_level_files,
 };
 use olr_format::themes::read_theme_files;
 use olr_vfs::{ContentSource, DirFs, MemFs, VPath};
@@ -416,13 +416,9 @@ impl<'a> Layer<'a> {
     }
 
     /// The element's backdrop at art pixel `(ax, ay)` (R4): a background
-    /// image or drawn element's art, a raster element's back.
-    fn back(&self, ax: u32, ay: u32) -> Option<Rgba> {
-        self.backdrop(ax, ay).map(|(c, _)| c)
-    }
-
-    /// [`Layer::back`], and whether it is the element's own art (which
-    /// glows with the element) rather than back art (which never does).
+    /// image or drawn element's art, a raster's back; and whether it is the
+    /// element's own art (which glows with the element) rather than back
+    /// art (which never does).
     fn backdrop(&self, ax: u32, ay: u32) -> Option<(Rgba, bool)> {
         match self {
             Layer::Image { material: Material::Background, .. } => self.front(ax, ay).map(|c| (c, true)),
@@ -461,17 +457,88 @@ impl<'a> Layer<'a> {
 /// The back of art pixel `(ax, ay)` (R4): see-through (the tile's colour
 /// with alpha 0) where no element covers it in a level `see_through`
 /// (with distant layers).
-fn back_at(layers: &[Layer], back_tile: &RgbaImage, see_through: bool, ax: u32, ay: u32) -> Rgba {
-    if let Some(c) = layers.iter().rev().find_map(|l| l.back(ax, ay)) {
-        return c;
+fn back_at(
+    layers: &[Layer],
+    glass: &[Option<ElementGlass>],
+    back_tile: &RgbaImage,
+    see_through: bool,
+    ax: u32,
+    ay: u32,
+) -> Rgba {
+    // The background glass design: the topmost back that is not glass
+    // (or the tile), then each glass above it laid over it, bottom up.
+    let alpha = |i: usize, own: bool| glass_alpha(glass.get(i).copied().flatten(), see_through && own);
+    let mut base = None;
+    let mut first = layers.len();
+    for (i, l) in layers.iter().enumerate().rev() {
+        if let Some((c, own)) = l.backdrop(ax, ay) {
+            first = i;
+            if alpha(i, own).is_none() {
+                base = Some(c);
+                break;
+            }
+        }
     }
-    let t = back_tile;
-    let tile = if t.width() == 0 || t.height() == 0 {
-        Rgba::BLACK
-    } else {
-        opaque(t.get(ax % t.width(), ay % t.height()))
+    let mut out = base.unwrap_or_else(|| {
+        let t = back_tile;
+        let tile = if t.width() == 0 || t.height() == 0 {
+            Rgba::BLACK
+        } else {
+            opaque(t.get(ax % t.width(), ay % t.height()))
+        };
+        if see_through { Rgba { a: 0, ..tile } } else { tile }
+    });
+    let from = if base.is_some() { first + 1 } else { first };
+    for (i, l) in layers.iter().enumerate().skip(from) {
+        if let Some((c, own)) = l.backdrop(ax, ay)
+            && let Some(a) = alpha(i, own)
+        {
+            out = glass_over(c, a, out);
+        }
+    }
+    out
+}
+
+/// A glass element's alpha (its opacity, 0-255, rounded) where `glassy`
+/// (a see-through level's own background art); `None` opaque.
+fn glass_alpha(glass: Option<ElementGlass>, glassy: bool) -> Option<u8> {
+    let g = glass.filter(|_| glassy)?;
+    Some(((u32::from(g.opacity.min(100)) * 255 + 50) / 100) as u8)
+}
+
+/// Glass colour `src` at alpha `a` over `dst` (straight alpha, rounded):
+/// a see-through destination gives no colour of its own.
+fn glass_over(src: Rgba, a: u8, dst: Rgba) -> Rgba {
+    let (a32, da) = (u32::from(a), u32::from(dst.a));
+    if da == 0 {
+        return Rgba { a, ..src };
+    }
+    let out = a32 * 255 + da * (255 - a32);
+    let mix = |s: u8, d: u8| {
+        let n = u32::from(s) * a32 * 255 + u32::from(d) * da * (255 - a32);
+        ((n + out / 2) / out) as u8
     };
-    if see_through { Rgba { a: 0, ..tile } } else { tile }
+    Rgba { r: mix(src.r, dst.r), g: mix(src.g, dst.g), b: mix(src.b, dst.b), a: ((out + 127) / 255) as u8 }
+}
+
+/// The glass map's texel at art pixel `(ax, ay)`: the topmost element
+/// giving the back there, when it is glass (its filter, `mix(255, its
+/// colour, tint)`, and its frost); white and 0 otherwise.
+fn glass_texel(
+    layers: &[Layer],
+    glass: &[Option<ElementGlass>],
+    see_through: bool,
+    ax: u32,
+    ay: u32,
+) -> [u8; 4] {
+    let top = layers.iter().enumerate().rev().find_map(|(i, l)| l.backdrop(ax, ay).map(|b| (i, b)));
+    let Some((i, (c, own))) = top else { return [255, 255, 255, 0] };
+    let Some(g) = glass.get(i).copied().flatten().filter(|_| see_through && own) else {
+        return [255, 255, 255, 0];
+    };
+    let t = u32::from(g.tint.min(100));
+    let filter = |v: u8| ((255 * (100 - t) + u32::from(v) * t + 50) / 100) as u8;
+    [filter(c.r), filter(c.g), filter(c.b), g.frost.min(MAX_GLASS_FROST)]
 }
 
 /// `e`'s art as a distant layer in a level of `size` at art scale `s`:
@@ -762,6 +829,7 @@ pub fn bake_elements_with(
         level.look.as_ref().map_or(Vec::new(), |l| l.materials.iter().map(|m| m.id.as_str()).collect());
     let n = materials.len();
     let (mut layers, mut glows, mut clears, mut surfaces) = (Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut glasses = Vec::new();
     // The distant layers at their reference placement (issue #62: the
     // camera at the level's centre, their box), far to near, with their
     // glow: only where the back is see-through.
@@ -777,6 +845,7 @@ pub fn bake_elements_with(
         layers.push(layer);
         glows.push(layer_glow(e, masks, &groups, (w, h), s));
         clears.push(e.clear);
+        glasses.push(e.glass);
         surfaces.push(layer_surface(e, painted, &materials, (w, h)));
     }
     let mut surface = surfaces.iter().any(LayerSurface::any).then(|| match level.surface.take() {
@@ -797,6 +866,14 @@ pub fn bake_elements_with(
     let mut clear = clears.iter().any(|c| *c).then(|| match level.clear.take() {
         Some(c) if c.len() == cells => c,
         _ => vec![0; cells],
+    });
+    // The glass map (the background glass design): only when some glass
+    // tints or frosts.
+    let mut glass = (see_through && glasses.iter().flatten().any(|g| g.tint > 0 || g.frost > 0)).then(|| {
+        match level.glass.take() {
+            Some(m) if m.fits((aw, ah)) => m,
+            _ => GlassMap::none((aw, ah)),
+        }
     });
     let mut glow = if glows.iter().any(Option::is_some) || distant.iter().any(|(_, g)| g.is_some()) {
         match level.glow.take() {
@@ -857,7 +934,17 @@ pub fn bake_elements_with(
             }
             for ay in y * s..(y + 1) * s {
                 for ax in x * s..(x + 1) * s {
-                    let mut back = back_at(&layers, back_tile, see_through, ax, ay);
+                    let mut back = back_at(&layers, &glasses, back_tile, see_through, ax, ay);
+                    if let Some(m) = glass.as_mut() {
+                        let i = (ay as usize * aw as usize + ax as usize) * 4;
+                        m.texels[i..i + 4].copy_from_slice(&glass_texel(
+                            &layers,
+                            &glasses,
+                            see_through,
+                            ax,
+                            ay,
+                        ));
+                    }
                     if back.a == 0
                         && let Some((c, _)) = distant_glow(ax, ay)
                     {
@@ -905,6 +992,7 @@ pub fn bake_elements_with(
     // A glow left with nothing glowing is no glow; so are clear flags.
     level.glow = glow.filter(|g| g.front.iter().chain(&g.back).any(|v| *v > 0));
     level.clear = clear.filter(|c| c.iter().any(|v| *v > 0));
+    level.glass = glass.filter(|m| m.texels.as_chunks::<4>().0.iter().any(|t| *t != [255, 255, 255, 0]));
     level.surface = surface.filter(|m| !m.is_empty());
 }
 

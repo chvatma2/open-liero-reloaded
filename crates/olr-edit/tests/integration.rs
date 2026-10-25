@@ -9,6 +9,7 @@ mod drawn;
 mod element;
 mod fmt;
 mod folders;
+mod glass;
 mod glow;
 mod guide;
 mod level;

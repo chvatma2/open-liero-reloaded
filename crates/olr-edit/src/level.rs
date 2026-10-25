@@ -21,7 +21,7 @@ use olr_data::image::{Rgba, RgbaImage};
 use olr_data::level::Material;
 use olr_format::image_io::{LEVEL_ART, check_size};
 use olr_format::levels::{
-    GlowLayers, LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, SurfaceMaps, level_thumbnail,
+    GlassMap, GlowLayers, LevelObject, LevelSource, MAX_OBJECTS, MAX_SIDE, SurfaceMaps, level_thumbnail,
 };
 use std::sync::Arc;
 
@@ -541,6 +541,9 @@ pub fn resize(
     // Clear flags too; the new area is opaque.
     level.clear = level.clear.take().filter(|c| c.len() == level.material.len());
     let mut clear = level.clear.as_ref().map(|_| vec![0u8; w as usize * h as usize]);
+    // The glass map too (the background glass design); the new area none.
+    level.glass = level.glass.take().filter(|g| g.fits(old_art));
+    let mut glass = level.glass.as_ref().map(|_| GlassMap::none((aw, ah)));
     // Surface maps too (issue #37); the new area has none.
     level.surface = level.surface.take().filter(|m| m.fits(level.size));
     let mut surface = level.surface.as_ref().map(|_| SurfaceMaps::empty((w, h)));
@@ -575,6 +578,10 @@ pub fn resize(
                     g.front[n] = old.front[o];
                     g.back[n] = old.back[o];
                 }
+                if let (Some(g), Some(old)) = (glass.as_mut(), level.glass.as_ref()) {
+                    let (o, n) = ((ay * old.art.0 + ax) as usize * 4, (by * aw + bx) as usize * 4);
+                    g.texels[n..n + 4].copy_from_slice(&old.texels[o..o + 4]);
+                }
             }
         }
     }
@@ -592,6 +599,7 @@ pub fn resize(
     }
     level.glow = glow;
     level.clear = clear;
+    level.glass = glass;
     level.surface = surface.filter(|m| !m.is_empty());
     level.size = size;
     level.material = cells;

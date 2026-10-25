@@ -277,6 +277,24 @@ operations.
   `distant_layers_make_uncovered_back_pixels_see_through`,
   `distant_layers_split_and_bake_back`; `element.rs`'s
   `distant_layers_keep_below_the_rest`, `an_asset_carries_no_distant_layer`.
+- **Background glass** (spec
+  `docs/superpowers/specs/2026-10-25-background-glass-design.md`; the
+  format is `olr-format`'s `Element::glass`): in a see-through level
+  (`has_distant`) a glass element's own background art (its backdrop
+  when it is its own art: a mixed layer's background pixels) bakes at
+  its opacity (`glass_alpha`: `round(opacity × 255 / 100)`), laid over the
+  topmost back below it that is not glass with a correct straight-alpha
+  `glass_over` (a see-through destination gives no colour; `level.rs`'s
+  `over`, painting's, is unchanged); several panes stack bottom up. Without
+  distant layers glass is opaque, its own colour. `level.glass`
+  (`GlassMap`) is baked only when some glass tints or frosts: per art
+  pixel, from the topmost element giving the back when it is glass, the
+  filter `mix(255, colour, tint)` (rounded) and the frost; white and 0
+  elsewhere; `None` when nothing filters or frosts. A distant layer's glow
+  never passes through glass (only alpha 0 takes it). `level::resize`
+  re-lays the map (the new area none); `asset::plain` drops glass (assets
+  carry none). `element::Property::Glass` (a raster `WrongKind`; the
+  composition check refuses the rest). Tests: `tests/glass.rs`.
 - **Issue #9, the asset library** (`asset`; the format is
   `olr_format::assets`; STATUS.md "Level editor asset library (issue
   #9)"): `Piece` (an element, its `Decoded`, an image's original, its glow
