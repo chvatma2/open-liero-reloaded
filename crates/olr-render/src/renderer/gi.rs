@@ -64,6 +64,13 @@ const L0: f32 = 2.0;
 /// The most cascades (intervals past 2^15 cells reach any level).
 const MAX_CASCADES: u32 = 14;
 
+/// The jump flood's first step, cells: it finds the nearest stopper only
+/// within about this far, and a cell with none that near lets a ray jump
+/// this far less a cell and a half (`JFA_FREE` in the shaders). Half the
+/// passes of a flood over the whole grid; far from walls a ray only
+/// takes more jumps (`a_light_crosses_a_wide_open_level`).
+const JFA_REACH: u32 = 32;
+
 const FLOAT: wgpu::BindingType = wgpu::BindingType::Texture {
     sample_type: wgpu::TextureSampleType::Float { filterable: false },
     view_dimension: wgpu::TextureViewDimension::D2,
@@ -121,7 +128,7 @@ impl GiPipelines {
             "olr-render gi dynamic",
             &[entry(0, both, super::UNIFORM), entry(1, frag, UINT), entry(2, frag, super::UNIFORM)],
         );
-        let seed_layout = layout("olr-render gi seed", &[entry(0, frag, FLOAT), entry(1, frag, FLOAT)]);
+        let seed_layout = layout("olr-render gi seed", &[entry(0, frag, FLOAT)]);
         let jfa_layout = layout("olr-render gi jfa", &[entry(0, frag, super::UNIFORM), entry(1, frag, UINT)]);
         let cascade_layout = layout(
             "olr-render gi cascade",
@@ -138,7 +145,12 @@ impl GiPipelines {
             ],
         );
         let fluence_layout = layout("olr-render gi fluence", &[entry(0, frag, FLOAT)]);
-        let head = format!("{}\n{}", super::look::common(), include_str!("../look/gi.wgsl"));
+        let head = format!(
+            "{}\n{}\nconst JFA_FREE: f32 = {:?};\n",
+            super::look::common(),
+            include_str!("../look/gi.wgsl"),
+            JFA_REACH as f32 - 1.5
+        );
         let make_with = |label, body: &str, fs, layouts: &[Option<&wgpu::BindGroupLayout>], targets: &[_]| {
             pipeline(
                 device,
@@ -438,10 +450,11 @@ impl GiState {
             &pipes.dynamic_layout,
             [emission_params.as_entire_binding(), tv(inputs.solid), inputs.globals.as_entire_binding()],
         );
-        let seed_bind = bind(device, &pipes.seed_layout, [tv(&emission.0), tv(&emission.3)]);
-        // Steps of half the grid's power of two down to 1, ping-ponging.
+        let seed_bind = bind(device, &pipes.seed_layout, [tv(&emission.0)]);
+        // Steps of half the grid's power of two, at most `JFA_REACH`, down
+        // to 1, ping-ponging.
         let mut jfa = Vec::new();
-        let mut step = grid.0.max(grid.1).next_power_of_two() / 2;
+        let mut step = (grid.0.max(grid.1).next_power_of_two() / 2).min(JFA_REACH);
         let mut current = 0;
         while step >= 1 {
             let p = params(device, &[step as f32, 0.0, 0.0, 0.0]);

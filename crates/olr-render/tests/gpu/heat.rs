@@ -1012,6 +1012,30 @@ fn a_hot_back_wall_lets_the_light_through() {
     fades_back(&gpu, &mut r, &look, &cold, (80, 30), |gpu, r| temps(gpu, r).into_iter().fold(0.0, f32::max));
 }
 
+/// A hot patch of back wall in open air, far from any rock, lights the
+/// air round it: no ray jumps over the haze (a ray far from every
+/// stopper jumps; only the haze's edge stops a jump, so it walks into
+/// the patch).
+#[test]
+fn hot_open_air_lights_the_air_round_it() {
+    let Some(gpu) = offscreen() else { return };
+    let map = open_back(Rgba::rgb(110, 90, 70));
+    let mut r = lit(&gpu);
+    let mut m = SurfaceMaps::empty((120, 90));
+    m.back.iter_mut().for_each(|v| *v = 1);
+    r.set_surface(&[material("stone", Some(heat(100, 100, 100)))], Some(&m));
+    r.upload_terrain(&map);
+    frame(&gpu, &mut r, &dark());
+    let cold = [light_at(&gpu, &r, 20, 45), light_at(&gpu, &r, 60, 15)];
+    // A circle of radius sqrt(204) from x 46 to 75, y 31 to 60.
+    r.deposit_heat(blast(60.5, 45.5, 20.0));
+    frame(&gpu, &mut r, &dark());
+    let hot = [light_at(&gpu, &r, 20, 45), light_at(&gpu, &r, 60, 15)];
+    for (h, c) in hot.iter().zip(&cold) {
+        assert!(h[0] > c[0] + 0.025, "the haze lights the air 16 to 26 pixels off: {hot:?}, cold {cold:?}");
+    }
+}
+
 /// Issue #67: a dug pixel loses its heat, whatever its back: the dirt's
 /// glow goes with the dirt. The dirt left round the hole keeps its own.
 #[test]

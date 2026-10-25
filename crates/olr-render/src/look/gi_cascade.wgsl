@@ -19,6 +19,13 @@
 // at a time); past it the ray counts as open.
 const MAX_STEPS: i32 = 128;
 
+// A cascade's longest jump, of its probes' spacing (haze is no stopper,
+// so only this keeps a ray from jumping over it): finer haze its cascade
+// cannot tell apart anyway. A quarter keeps about nine tenths of a hot
+// patch's light in open air for 2 % more cost than a whole spacing, which
+// keeps half (`hot_open_air_lights_the_air_round_it`).
+const HAZE_STRIDE: f32 = 0.25;
+
 // The most radiance a ray carries, well inside f16 (final review,
 // Important 1: overlapping discs overflowed into infinity, then NaN, which
 // bounce kept alive).
@@ -42,11 +49,12 @@ fn stops_at(q: vec2<i32>) -> bool {
 }
 
 // How far a ray at `at` may jump: the jump flood's distance to the nearest
-// stopper or hazy cell, less a cell and a half; 0 near one.
+// stopper, less a cell and a half; 0 near one, `JFA_FREE` with none within
+// the flood's reach.
 fn free_at(at: vec2<f32>) -> f32 {
     let t = textureLoad(seeds, vec2<i32>(floor(at)), 0).xy;
     if t.x == NO_SEED {
-        return 1e9;
+        return JFA_FREE;
     }
     let s = vec2<f32>(t);
     return max(distance(s + vec2<f32>(0.5), at) - 1.5, 0.0);
@@ -61,7 +69,9 @@ fn free_at(at: vec2<f32>) -> f32 {
 // request, 2026-10-19). `skip` is a cell never stopping it (the probe's own).
 // `prev` is the open cell the ray left to enter the stopper (`has_prev`
 // false when it started in it). `glow` is the brightest haze's light the
-// ray met on its way (a hazy cell is always walked: it is a seed).
+// ray met on its way, taken at each step, jump or walk: haze is no seed,
+// so no jump is longer than `stride` cells (`HAZE_STRIDE` of its
+// cascade's probe spacing).
 struct Hit {
     hit: bool,
     // The march ran out of steps before its end: counted as blocked (final
@@ -75,7 +85,7 @@ struct Hit {
     glow: vec3<f32>,
 };
 
-fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit {
+fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>, stride: f32) -> Hit {
     var h: Hit;
     h.hit = false;
     h.blocked = false;
@@ -102,16 +112,6 @@ fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit
         }
         h.prev = q;
         h.has_prev = true;
-        let free = free_at(at);
-        if free >= 1.0 {
-            t += free;
-            continue;
-        }
-        // The next cell boundary along each axis.
-        let bx = select(f32(q.x), f32(q.x + 1), dir.x > 0.0);
-        let by = select(f32(q.y), f32(q.y + 1), dir.y > 0.0);
-        let tx = select(1e9, (bx - at.x) / dir.x, abs(dir.x) > 1e-6);
-        let ty = select(1e9, (by - at.y) / dir.y, abs(dir.y) > 1e-6);
         // The brightest haze along the way.
         let haze = textureLoad(level_haze, q, 0).rgb;
         if hazy(vec4<f32>(haze, 0.0)) {
@@ -120,6 +120,16 @@ fn march(o: vec2<f32>, dir: vec2<f32>, t0: f32, t1: f32, skip: vec2<i32>) -> Hit
                 h.glow = seen;
             }
         }
+        let free = free_at(at);
+        if free >= 1.0 {
+            t += min(free, stride);
+            continue;
+        }
+        // The next cell boundary along each axis.
+        let bx = select(f32(q.x), f32(q.x + 1), dir.x > 0.0);
+        let by = select(f32(q.y), f32(q.y + 1), dir.y > 0.0);
+        let tx = select(1e9, (bx - at.x) / dir.x, abs(dir.x) > 1e-6);
+        let ty = select(1e9, (by - at.y) / dir.y, abs(dir.y) > 1e-6);
         if abs(tx - ty) < 1e-3 {
             // Through a corner: both cells beside it stopping close it.
             let a = q + vec2<i32>(sx, 0);
@@ -152,7 +162,7 @@ fn clear_between(a: vec2<f32>, b: vec2<f32>) -> bool {
     }
     let skip = vec2<i32>(floor(a));
     // Its end's cell counts: the upper ray starts there.
-    let m = march(a, d / len, 0.0, len + 1e-3, skip);
+    let m = march(a, d / len, 0.0, len + 1e-3, skip, 1e9);
     return !m.hit && !m.blocked && (all(vec2<i32>(floor(b)) == skip) || !stops_at(vec2<i32>(floor(b))));
 }
 
@@ -177,7 +187,7 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     // cell, so a wall's face gathers the light in front of it.
     let own = vec2<i32>(floor(centre));
     let end = cp.b.z + cp.b.w;
-    let h = march(centre, dir, cp.b.z, end, select(vec2<i32>(-1), own, cp.a.x < 0.5));
+    let h = march(centre, dir, cp.b.z, end, select(vec2<i32>(-1), own, cp.a.x < 0.5), max(spacing * HAZE_STRIDE, 1.0));
     if h.blocked {
         ray = vec4<f32>(0.0);
     } else if h.hit {
@@ -211,32 +221,36 @@ fn fs_cascade(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     var through = 0.0;
     if cp.e.y > 0.5 && ray.a > 0.0 {
         // The next cascade's two directions around this one, bilinear
-        // between its four probes around this probe's centre, each only
-        // when nothing stops the way from this ray's end to where its ray
-        // starts (the bilinear fix: no light from a probe across a wall).
+        // between its four probes around this probe's centre, each probe
+        // only when nothing stops the way from this ray's end to where a
+        // ray of its starts (the bilinear fix: no light from a probe
+        // across a wall). The way is checked once a probe, along this
+        // ray's own direction, which lies between its two: half the
+        // marches of a check for each, which cost a third of the frame
+        // (the render profile), for small differences near bright light.
         let g = centre / (spacing * 2.0) - vec2<f32>(0.5);
         let g0 = floor(g);
         let f = g - g0;
         let q0 = vec2<i32>(g0);
         let tip = centre + dir * end;
+        var w = vec4<f32>(0.0);
+        for (var j = 0; j < 4; j++) {
+            let o = vec2<i32>(j % 2, j / 2);
+            let wj = mix(1.0 - f.x, f.x, f32(o.x)) * mix(1.0 - f.y, f.y, f32(o.y));
+            let cj = (vec2<f32>(clamp(q0 + o, vec2<i32>(0), vec2<i32>(i32(cp.d.w), i32(cp.e.x)) - vec2<i32>(1))) + vec2<f32>(0.5)) * spacing * 2.0;
+            if wj > 0.0 && clear_between(tip, cj + dir * end) {
+                w[j] = wj;
+            }
+        }
         var acc = vec4<f32>(0.0);
         for (var k = 0; k < 2; k++) {
             let dk = d * 2 + k;
-            let ak = (f32(dk) + 0.5) / cp.d.x * TAU;
-            let dir_k = vec2<f32>(cos(ak), sin(ak));
             var sum = vec4<f32>(0.0);
             var weight = 0.0;
             for (var j = 0; j < 4; j++) {
-                let o = vec2<i32>(j % 2, j / 2);
-                let wj = mix(1.0 - f.x, f.x, f32(o.x)) * mix(1.0 - f.y, f.y, f32(o.y));
-                if wj <= 0.0 {
-                    continue;
-                }
-                let qj = q0 + o;
-                let cj = (vec2<f32>(clamp(qj, vec2<i32>(0), vec2<i32>(i32(cp.d.w), i32(cp.e.x)) - vec2<i32>(1))) + vec2<f32>(0.5)) * spacing * 2.0;
-                if clear_between(tip, cj + dir_k * end) {
-                    sum += upper_at(qj, dk) * wj;
-                    weight += wj;
+                if w[j] > 0.0 {
+                    sum += upper_at(q0 + vec2<i32>(j % 2, j / 2), dk) * w[j];
+                    weight += w[j];
                 }
             }
             if weight > 0.0 {

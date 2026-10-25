@@ -186,9 +186,13 @@ on screen or offscreen.
     than a cell lights its own by area; reach max-blended as unsplit f16,
     60000 unlimited, `R16Float`), the emission (glow × group × each pixel's flicker
     region, the discs added, solid share, albedo of rock and dirt; no
-    worm, #53) and its haze (hot open background's cast: a hazy cell is
-    a flood seed, so rays walk it, keeping the brightest haze they meet,
-    and it stops none: a hot back wall shadows nothing behind it,
+    worm, #53) and its haze (hot open background's cast: no flood seed
+    (walking it cell by cell was most of a nuke fight's cost); a ray takes
+    it at every step, keeping the brightest it meets, and a cascade's
+    jumps are at most `HAZE_STRIDE` (a quarter) of its probe spacing, so
+    no ray jumps over haze its cascade could tell apart: nine tenths of a
+    hot patch's light in open air, `hot_open_air_lights_the_air_round_it`;
+    it stops none: a hot back wall shadows nothing behind it,
     `a_hot_back_wall_lets_the_light_through`; a cascade's alpha carries
     its haze's luminance, and a merge keeps the brighter of a ray's own
     haze and the next cascade's, so a wide hot patch lights as one hot
@@ -197,13 +201,17 @@ on screen or offscreen.
     fluence the sum samples bilinearly, which is also the history the next
     frame's bounce reads (the cascades run before `fs_fluence` rewrites it;
     issue #35: no copy; a fresh start clears it). Rays march at full grid resolution, at most 128 steps, jumping
-    by the flood's distance far from stoppers and walking cell by cell near
+    by the flood's distance far from stoppers (the flood's first step is
+    `JFA_REACH`, 32 cells: with no stopper that near a ray jumps 30.5,
+    `JFA_FREE`; `a_light_crosses_a_wide_open_level`) and walking cell by cell near
     them (a corner whose two side cells stop closes the ray: no light
     through a 1-px or diagonal wall,
     `a_one_pixel_wall_stops_light_right_behind_it`,
     `a_diagonal_wall_one_pixel_thin_stops_light`); a cascade merges only
     the upper probes whose ray start its ray's end can see (the bilinear
-    fix). It runs once a frame however many views (issue #26). A march
+    fix; checked once a probe along the ray's own direction, which lies
+    between the probe's two: half the marches, small differences near
+    bright light). It runs once a frame however many views (issue #26). A march
     that runs out of steps counts as blocked; a disc sum, a
     ray and the history are clamped (16384) and never NaN
     (`stacked_bright_discs_never_poison_the_light`,

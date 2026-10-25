@@ -592,6 +592,21 @@ fn a_wall_blocks_a_light() {
     assert!((light_at(&gpu, &r, 60, 20)[0] - 0.1).abs() < 1e-3, "behind it: the ambient");
 }
 
+/// The jump flood reaches only so far (32 cells): past it a ray jumps
+/// by that reach, so a light still crosses a level 2000 pixels wide and
+/// open, many jumps a ray, within the march's steps.
+#[test]
+fn a_light_crosses_a_wide_open_level() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(2000, 200, |_, _| false);
+    let sun =
+        olr_look::FrameLight { pos: [20.5, 100.5], radius: 16.0, colour: [50.0; 3], reach: f32::INFINITY };
+    let far = View { x: 1860.0, y: 40.0, w: 120.0, h: 120.0 };
+    let r = lit_frame(&gpu, &map, far, &[sun], 0);
+    let lit = light_at(&gpu, &r, 1950, 100);
+    assert!(lit[0] > 0.1 + 0.02, "lit 1930 pixels off: {lit:?}");
+}
+
 /// Issue #35: the disc layer is cleared only under the discs last drawn,
 /// so a frame's light is exactly a fresh renderer's, whatever discs the
 /// frames before it drew (no bounce: no history either).

@@ -18,7 +18,8 @@
 // `bw` x `bh` texels per probe, rays over [2 (2^i - 1), 2 (2^(i+1) - 1))
 // cells, sphere-traced at full resolution with a jump-flood distance to the
 // nearest cell that stops a ray (`fs_seed`, `fs_jfa`): no wall or opening
-// is ever stepped over.
+// is ever stepped over. Haze is no stopper: a ray takes it at each step,
+// its steps no longer than a quarter of its cascade's probe spacing.
 
 struct GiParams {
     // cascade (or level) index, directions, block width, block height

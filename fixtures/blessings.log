@@ -259,3 +259,13 @@
 2026-10-24 bless-render: #69: beams light the level and heat where they stop; new goldens beam-fresh and beam-cooled
   fixtures/render/beam-cooled.png
   fixtures/render/beam-fresh.png
+2026-10-25 bless-render: Cheaper glow light: haze is no flood seed (a cascade's jumps capped at a quarter of its probe spacing), one bilinear-fix check per upper probe, a 32-cell jump flood; small differences on wall faces and near bright lights
+  fixtures/render/beam-fresh.png
+  fixtures/render/heat-fresh.png
+  fixtures/render/lit-hashes.ron
+  fixtures/render/look-blast.png
+  fixtures/render/look-glow-tip.png
+  fixtures/render/look-light.png
+  fixtures/render/look-occlusion-light.png
+  fixtures/render/look-rocket.png
+  fixtures/render/look-skin.png
