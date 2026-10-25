@@ -700,6 +700,11 @@ impl Renderer {
         }
         // Each rectangle is written straight from the map's pixels: no copy.
         // Where only stains changed it, its colour alone (issue #35).
+        // The background glass design: a new glass map, dirty rectangles or
+        // none.
+        if let Some(look) = &mut self.look {
+            look.sync_glass(&self.device, &self.queue, map);
+        }
         self.dirty.clear();
         self.dirty.extend(map.take_dirty_kinds());
         if !self.dirty.is_empty() {

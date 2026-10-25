@@ -69,9 +69,11 @@ pub(super) struct LookTextures {
     /// glass.
     pub(super) terrain_bind: wgpu::BindGroup,
     /// The level's glass map (the background glass design), `Rgba8Unorm`
-    /// at art size (white, no frost, where it has none) when the level is
-    /// see-through, else 1 × 1 white.
+    /// at art size (cropped as the glow) while the level has one, else
+    /// 1 × 1 white (no filter, no frost).
     glass: wgpu::Texture,
+    /// The art size the glass texture takes with a map.
+    glass_art: (u32, u32),
     /// Whether the level is see-through, so its glass is drawn.
     pub(super) glass_on: bool,
     /// The [`ColorMap::glass_generation`] the glass texture holds.
@@ -340,21 +342,18 @@ pub(super) fn write_bytes(
 }
 
 /// [`write_bytes`] for two bytes a texel (`R16Uint`).
-/// Writes glass map `glass` (white, no frost, without one) over all of
-/// `texture`, cropped to it.
+/// Writes glass map `glass` of art size `(w, h)` over all of `texture`,
+/// cropped to it; without one (or a misfit), one white texel of no frost.
 fn write_glass(
     queue: &super::uploads::Queue,
     texture: &wgpu::Texture,
     glass: Option<&GlassMap>,
     (w, h): (u32, u32),
 ) {
-    let none;
-    let texels = match glass.filter(|g| g.fits((w, h))) {
-        Some(g) => &g.texels,
-        None => {
-            none = GlassMap::none((w, h)).texels;
-            &none
-        }
+    const NONE: [u8; 4] = [255, 255, 255, 0];
+    let (texels, w, h): (&[u8], u32, u32) = match glass.filter(|g| g.fits((w, h))) {
+        Some(g) => (&g.texels, w, h),
+        None => (&NONE, 1, 1),
     };
     let (tw, th) = (texture.width().min(w), texture.height().min(h));
     if tw == 0 || th == 0 {
@@ -371,6 +370,28 @@ fn write_glass(
         wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4 * w), rows_per_image: Some(th) },
         wgpu::Extent3d { width: tw, height: th, depth_or_array_layers: 1 },
     );
+}
+
+/// The lit terrain's group 2: the look's globals, then its glow, glow
+/// groups, flicker regions and glass textures.
+fn terrain_bind(
+    device: &wgpu::Device,
+    (layout, globals): (&wgpu::BindGroupLayout, &wgpu::Buffer),
+    textures: [&wgpu::Texture; 4],
+) -> wgpu::BindGroup {
+    let views = textures.map(|t| t.create_view(&wgpu::TextureViewDescriptor::default()));
+    let mut entries = vec![wgpu::BindGroupEntry { binding: 0, resource: globals.as_entire_binding() }];
+    for (i, v) in views.iter().enumerate() {
+        entries.push(wgpu::BindGroupEntry {
+            binding: 1 + i as u32,
+            resource: wgpu::BindingResource::TextureView(v),
+        });
+    }
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("olr-render look terrain"),
+        layout,
+        entries: &entries,
+    })
 }
 
 fn write_u16(queue: &super::uploads::Queue, texture: &wgpu::Texture, (data, width): (&[u16], u32), r: Rect) {
@@ -855,36 +876,12 @@ impl LookState {
         let groups = r8(device, "olr-render glow groups", sizes.world, wgpu::TextureFormat::R8Uint);
         let solid = r8(device, "olr-render solid", sizes.world, wgpu::TextureFormat::R8Uint);
         let region_map = r8(device, "olr-render flicker regions", sizes.world, wgpu::TextureFormat::R16Uint);
-        let glass_on = map.see_through();
-        let glass_size = if glass_on { sizes.art } else { (1, 1) };
-        let glass = r8(device, "olr-render glass", glass_size, wgpu::TextureFormat::Rgba8Unorm);
+        // 1 × 1 until `sync_glass` finds a glass map.
+        let glass = r8(device, "olr-render glass", (1, 1), wgpu::TextureFormat::Rgba8Unorm);
+        write_glass(queue, &glass, None, (1, 1));
         let view = |t: &wgpu::Texture| t.create_view(&wgpu::TextureViewDescriptor::default());
-        let terrain_bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("olr-render look terrain"),
-            layout: &self.layout,
-            entries: &[
-                wgpu::BindGroupEntry { binding: 0, resource: self.globals.as_entire_binding() },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&view(&glow)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&view(&groups)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: wgpu::BindingResource::TextureView(&view(&region_map)),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 4,
-                    resource: wgpu::BindingResource::TextureView(&view(&glass)),
-                },
-            ],
-        });
-        if !glass_on {
-            write_glass(queue, &glass, None, (1, 1));
-        }
+        let terrain_bind =
+            terrain_bind(device, (&self.layout, &self.globals), [&glow, &groups, &region_map, &glass]);
         let inputs = super::gi::GiInputs {
             globals: &self.globals,
             glow: &view(&glow),
@@ -906,7 +903,8 @@ impl LookState {
             level,
             terrain_bind,
             glass,
-            glass_on,
+            glass_art: sizes.art,
+            glass_on: map.see_through(),
             glass_generation: None,
             regions: super::regions::Regions::new(level, map.glow_groups()),
             region_map,
@@ -928,7 +926,35 @@ impl LookState {
             );
         }
         self.textures = Some(t);
+        self.sync_glass(device, queue, map);
         self.write(queue, map, whole);
+    }
+
+    /// Uploads `map`'s glass map when it is not the one uploaded (the
+    /// background glass design: `ColorMap::glass_generation`), only for a
+    /// see-through level: at art size with a map, else 1 × 1 white, the
+    /// texture and the terrain's bind group made anew when the size
+    /// changes (the editor sets and clears maps).
+    pub(super) fn sync_glass(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &super::uploads::Queue,
+        map: &ColorMap,
+    ) {
+        let Some(t) = &mut self.textures else { return };
+        if !t.glass_on || t.glass_generation == Some(map.glass_generation()) {
+            return;
+        }
+        let art = (map.width(), map.height());
+        let glass = map.glass().filter(|g| g.fits(art));
+        let size = if glass.is_some() { t.glass_art } else { (1, 1) };
+        if (t.glass.width(), t.glass.height()) != size {
+            t.glass = r8(device, "olr-render glass", size, wgpu::TextureFormat::Rgba8Unorm);
+            let textures = [&t.glow, &t.groups, &t.region_map, &t.glass];
+            t.terrain_bind = terrain_bind(device, (&self.layout, &self.globals), textures);
+        }
+        write_glass(queue, &t.glass, glass, art);
+        t.glass_generation = Some(map.glass_generation());
     }
 
     /// Writes art rectangle `r` of `map`'s glow, and the world rectangle
@@ -938,11 +964,6 @@ impl LookState {
     pub(super) fn write(&mut self, queue: &super::uploads::Queue, map: &ColorMap, r: Rect) {
         let Some(t) = &mut self.textures else { return };
         let wr = world_rect(r, t.art_scale);
-        // The glass map is static: written whole when a new one is set.
-        if t.glass_on && t.glass_generation != Some(map.glass_generation()) {
-            write_glass(queue, &t.glass, map.glass(), (map.width(), map.height()));
-            t.glass_generation = Some(map.glass_generation());
-        }
         if let (Some(glow), Some(groups)) = (map.glow(), map.glow_groups()) {
             write_bytes(queue, &t.glow, (glow, map.width()), r);
             write_bytes(queue, &t.groups, (groups, t.level.0), wr);
@@ -1205,6 +1226,13 @@ impl Renderer {
     /// The glow texture (tests); `None` without lighting or a terrain.
     pub fn glow_texture(&self) -> Option<&wgpu::Texture> {
         self.look.as_ref()?.textures.as_ref().map(|t| &t.glow)
+    }
+
+    /// The glass texture's size (tests, the background glass design): the
+    /// level's art when it has a glass map, else 1 × 1; `None` without
+    /// lighting or a terrain.
+    pub fn glass_texture_size(&self) -> Option<(u32, u32)> {
+        self.look.as_ref()?.textures.as_ref().map(|t| (t.glass.width(), t.glass.height()))
     }
 
     /// The glow groups texture (tests).

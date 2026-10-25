@@ -292,8 +292,9 @@ operations.
   filter `mix(255, colour, tint)` (rounded) and the frost; white and 0
   elsewhere; `None` when nothing filters or frosts. A distant layer's glow
   never passes through glass (only alpha 0 takes it). `level::resize`
-  re-lays the map (the new area none); `asset::plain` drops glass (assets
-  carry none). `element::Property::Glass` (a raster `WrongKind`; the
+  re-lays the map (the new area none); `stale` lists `look/glass.png`
+  after a tint or frost change (`stale_lists_the_glass_map_after_a_tint_change`);
+  `asset::plain` drops glass (assets carry none). `element::Property::Glass` (a raster `WrongKind`; the
   composition check refuses the rest). Tests: `tests/glass.rs`.
 - **Issue #9, the asset library** (`asset`; the format is
   `olr_format::assets`; STATUS.md "Level editor asset library (issue

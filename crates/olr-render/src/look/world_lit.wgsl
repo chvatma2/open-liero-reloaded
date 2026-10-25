@@ -193,8 +193,10 @@ fn glass_at(in: QuadOut) -> Glass {
     if frost > 0.0 {
         let cell = floor(wp);
         let o = frost * (vec2<f32>(glass_hash(cell), glass_hash(cell + vec2<f32>(17.0, 3.0))) * 2.0 - 1.0);
+        // Clamped to the layer, not to the part of it this view draws, so
+        // a view's edge frosts as another view's inside.
         let uv = vec2<f32>(g.t) + floor(o * s + 0.5);
-        g.t = vec2<i32>(clamp(uv, in.rect.xy, in.rect.xy + in.rect.zw - vec2<f32>(1.0)));
+        g.t = vec2<i32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(textureDimensions(tex)) - vec2<f32>(1.0)));
     }
     return g;
 }

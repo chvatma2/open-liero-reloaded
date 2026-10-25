@@ -113,15 +113,22 @@ on screen or offscreen.
   layer (`1 − depth` of the light beyond the ambient), shows no glow of
   its own (its glow still casts) and, hot, still glows (its heat light
   blended at its alpha). `LookTextures::glass` (group 2 binding 4,
-  `Rgba8Unorm` at art size when see-through, else 1 × 1 white) holds the
-  level's glass map (`ColorMap::glass`, white where none), written whole
-  only when `ColorMap::glass_generation` changes. `fs_distant_lit` reads
+  `Rgba8Unorm`) holds the level's glass map (`ColorMap::glass`): at art
+  size, cropped as the glow, while a see-through level has one, else 1 ×
+  1 white (no filter, no frost: no art-size texture for nothing).
+  `LookState::sync_glass` (each `upload_terrain` and `update_terrain`,
+  dirty rectangles or none) uploads it whole only when
+  `ColorMap::glass_generation` changes, making the texture and the
+  terrain's bind group anew when its size changes (the editor sets and
+  clears maps; `glass_texture_size()`, tests). `fs_distant_lit` reads
   it at the art pixel under the fragment (the view's world frame, which
   the world pass's per-view globals carry since this design: 32 bytes,
   read by the fragment stage too) and multiplies the layer's colour and
   heat light by its filter; its frost (alpha, tenths of a world pixel)
   shows the layer texel offset by the world pixel's hash (`glass_hash`)
-  times the frost, rounded to whole layer texels: fixed to the glass.
+  times the frost, rounded to whole layer texels and clamped to the layer
+  image (not to the part a view draws): fixed to the glass, alike at a
+  view's edge and inside another view.
   A `Filtered` group (`FrameGroup::filtered`, `info.y` 2) casts its
   colour × the art's linear colour scaled to a full brightest channel
   (`olr_look::engine::filtered`'s twin). Without glass or a glass map
@@ -131,7 +138,8 @@ on screen or offscreen.
   `glass_shows_no_glow_but_casts`, `hot_glass_still_glows`,
   `tint_multiplies_what_shows_through`, `frost_is_fixed_to_the_world`,
   `a_filtered_group_lights_by_each_pixels_colour`,
-  `no_glass_map_changes_no_byte`.
+  `no_glass_map_changes_no_byte`, `frost_is_the_same_at_a_views_edge`,
+  `a_glass_map_set_later_is_uploaded_and_none_costs_nothing`.
 - **World pass** (`frame.rs`, `world.wgsl`): a target covering the view
   plus `MARGIN` world pixels, at `scale()` texels per world pixel
   (`MIN_SCALE` 2, OLX's sprite art, or the level's art scale if larger:

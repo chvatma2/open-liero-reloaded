@@ -196,3 +196,17 @@ fn an_asset_of_glass_carries_no_glass() {
     assert!(asset.pieces.iter().all(|piece| piece.element.glass.is_none()));
     olr_edit::asset::encode(&asset).unwrap();
 }
+
+/// A tint or frost changed in the composition leaves `look/glass.png`
+/// stale until baked (tint and frost touch no other baked file).
+#[test]
+fn stale_lists_the_glass_map_after_a_tint_change() {
+    let mut p = window(ElementGlass { opacity: 35, tint: 100, frost: 15 });
+    let l = baked(&p);
+    p.source = Source::Level(l);
+    let tile = RgbaImage::new(1, 1);
+    let stale = |p: &Pack| olr_edit::compose::stale(p, &tile).unwrap();
+    assert!(!stale(&p).contains(&"look/glass.png".to_string()), "{:?}", stale(&p));
+    set(&mut p, "pane", Property::Glass(Some(ElementGlass { opacity: 35, tint: 50, frost: 15 }))).unwrap();
+    assert_eq!(stale(&p), ["look/glass.png"]);
+}

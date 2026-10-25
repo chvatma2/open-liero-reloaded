@@ -341,3 +341,80 @@ fn no_glass_map_changes_no_byte() {
     let mut r = renderer(&gpu, &map, sky(Rgba::rgb(40, 90, 230)));
     assert_eq!(frame(&gpu, &mut r, &dark(0.0), (50.0, 20.0)), a);
 }
+
+/// Review: a glass pixel at a view's edge frosts as it does inside
+/// another view (the frosted fetch is clamped to the layer, not to the
+/// part of it the view draws): split screen and panning show one pattern.
+#[test]
+fn frost_is_the_same_at_a_views_edge() {
+    let Some(gpu) = offscreen() else { return };
+    let mut ramp = solid(W, 36, Rgba::rgb(0, 0, 0));
+    for y in 0..36 {
+        for x in 0..W {
+            ramp.set(x, y, Rgba::rgb((2 * x) as u8, 0, 0));
+        }
+    }
+    let layer = DistantLayer { image: ramp, at: (0, 0), depth: 90, glow: None };
+    let frosted = |frost: u8| {
+        let mut map = window();
+        let mut glass = GlassMap::none((W, H));
+        for y in 10..20 {
+            for x in 40..60 {
+                glass.texels[((y * W + x) * 4 + 3) as usize] = frost;
+            }
+        }
+        assert!(map.set_glass(Some(glass)));
+        map
+    };
+    // The same camera (the layer placed alike), two views: the whole
+    // level, and its left half, whose edge cuts the glass at x 50.
+    let draw = |frost: u8, w: f32| {
+        let mut r = renderer(&gpu, &frosted(frost), layer.clone());
+        let mut l = list(View { x: 0.0, y: 0.0, w, h: H as f32 });
+        l.map = (W, H);
+        l.parallax = Some((50.0, 20.0));
+        gpu.render_lit_to_image(&mut r, &l, Some(&full_bright()), (2 * w as u32, 2 * H))
+    };
+    let (whole, half) = ((draw(40, W as f32), draw(0, W as f32)), (draw(40, 50.0), draw(0, 50.0)));
+    let red = |img: &RgbaImage, x, y| i32::from(at(img, x, y).r);
+    let mut edge = 0;
+    for (x, y) in (10..20).flat_map(|y| (44..50).map(move |x| (x, y))) {
+        let (dw, dh) = (red(&whole.0, x, y) - red(&whole.1, x, y), red(&half.0, x, y) - red(&half.1, x, y));
+        assert!((dw - dh).abs() <= 1, "({x}, {y}): {dw} in the whole view, {dh} at the half's edge");
+        edge += usize::from(dw > 4);
+    }
+    assert!(edge > 5, "frost reaches past the edge somewhere: {edge}");
+}
+
+/// Review: a see-through level without a glass map binds a 1 × 1 glass
+/// texture (no art-size texture for nothing); a map set later (the
+/// editor's canvas) is uploaded at art size by the next `update_terrain`,
+/// dirty rectangles or none, and shows; taken away, the texture shrinks
+/// and the picture is the plain one again.
+#[test]
+fn a_glass_map_set_later_is_uploaded_and_none_costs_nothing() {
+    let Some(gpu) = offscreen() else { return };
+    let blue = Rgba::rgb(30, 60, 140);
+    let mut map = window();
+    let mut r = renderer(&gpu, &map, sky(blue));
+    assert_eq!(r.glass_texture_size(), Some((1, 1)));
+    let plain = frame(&gpu, &mut r, &full_bright(), (50.0, 20.0));
+    let mut glass = GlassMap::none((W, H));
+    for y in 10..20 {
+        for x in 40..60 {
+            let i = ((y * W + x) * 4) as usize;
+            glass.texels[i..i + 4].copy_from_slice(&[235, 165, 50, 0]);
+        }
+    }
+    assert!(map.set_glass(Some(glass)));
+    r.update_terrain(&mut map);
+    assert_eq!(r.glass_texture_size(), Some((W, H)));
+    let tinted = frame(&gpu, &mut r, &full_bright(), (50.0, 20.0));
+    let a = 89.0 / 255.0;
+    let want = over(rgb(PANE), a, [30.0 * 235.0 / 255.0, 60.0 * 165.0 / 255.0, 140.0 * 50.0 / 255.0]);
+    assert!(near(at(&tinted, 50, 15), want, 1.5), "{:?} vs {want:?}", at(&tinted, 50, 15));
+    assert!(map.set_glass(None));
+    r.update_terrain(&mut map);
+    assert_eq!(r.glass_texture_size(), Some((1, 1)));
+    assert_eq!(frame(&gpu, &mut r, &full_bright(), (50.0, 20.0)), plain);
+}

@@ -1617,7 +1617,7 @@ pub fn theme_back_tile(content: &Path, theme: &str) -> Result<RgbaImage, Compose
 
 /// The files a bake writes that it can leave stale (and `level.ron`'s
 /// distant layers and their images, `distant/<i>.png`).
-const BAKED: [&str; 11] = [
+const BAKED: [&str; 12] = [
     "material.png",
     "front.png",
     "back.png",
@@ -1629,12 +1629,14 @@ const BAKED: [&str; 11] = [
     "look/clear.png",
     "look/surface.png",
     "look/surface-back.png",
+    "look/glass.png",
 ];
 
 /// The baked files of `pack` (a composed level) that differ from what its
 /// composition bakes to, in `BAKED`'s order: `material.png`, `front.png`,
 /// `back.png`, `thumb.png`, then the four `look/` glow images,
-/// `look/clear.png` and the two surface maps, then `level.ron` when its
+/// `look/clear.png`, the two surface maps and `look/glass.png` (the
+/// background glass design), then `level.ron` when its
 /// distant layers (or their surfaces or glows, issue #62) differ and the
 /// `distant/<i>.png` images and `distant/<i>-glow.png` masks that do,
 /// either side's. Empty for any other pack.
