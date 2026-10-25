@@ -359,12 +359,12 @@ packs' format (version 5); `olr-pack` reads and writes through them.
   `GlowColourSource::Filtered(colour)` (`filtered_glow_colour_compiles`).
   Directional glow (spec `docs/superpowers/specs/2026-10-25-directional-glow-design.md`):
   `ElementGlow::beam: Option<GlowBeam { direction 0-359, spread 1-90 }>`
-  (`check_elements`: none on Dirt or a distant element, at most
-  `MAX_GLOW_BEAMS` 64; `check_glow_groups`: its group's reach `Pixels`,
+  (`check_elements`: none on Dirt or a distant element, the cap on
+  beams is Task 2's, counted on patches; `check_glow_groups`: its group's reach `Pixels`,
   the error names the element). `LevelSource::glow_beams` (`GlowBeamMap`,
   `olr-terrain`'s: `look/glow-beam.png` and `look/glow-beam-back.png`,
   grey-alpha at the world size, both or none; `image_io::encode_grey_alpha`
-  and `decode_grey_alpha_within`; a bad size or byte is an error, the
+  and `decode_grey_alpha_within`; a bad size or byte is an error (a direction byte needs a spread of at least 1), the
   lenient reader plays "…without its glow beams"). `LookSource::haze`
   (percent 0-100, default 0, left out) compiles to `LevelLook::haze`;
   `LevelSource::haze` is `look/haze.png`, grey at the world size ("…without

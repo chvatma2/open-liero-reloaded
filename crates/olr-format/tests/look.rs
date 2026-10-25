@@ -1068,6 +1068,21 @@ fn glow_beam_limits() {
     // Dirt may not carry a beam.
     let e = check(&lamp(ElementMaterial::Dirt, ok), &look).expect("refused");
     assert!(e.contains("elements[0].glow.beam") && e.contains("dirt"), "{e}");
+    // An image of dirt may not either.
+    let mut c = lamp(ElementMaterial::Rock, ok);
+    c.elements[0].kind = ElementKind::Image {
+        material: ElementMaterial::Dirt,
+        source: "a.png".into(),
+        at: (0, 0),
+        size: (2, 2),
+        pixel_size: 1,
+        colours: None,
+        dither: olr_format::levels::Dither::None,
+        alpha_threshold: 128,
+        mask: false,
+    };
+    let e = check(&c, &look).expect("refused");
+    assert!(e.contains("elements[0].glow.beam") && e.contains("dirt"), "{e}");
     // A distant element's glow stays undirected.
     let mut c = lamp(ElementMaterial::Background, ok);
     c.elements[0].distant = Some(50);
@@ -1076,15 +1091,6 @@ fn glow_beam_limits() {
     // The group's reach must be Pixels.
     let e = check(&lamp(ElementMaterial::Rock, ok), &beam_look("Unlimited")).expect("refused");
     assert!(e.contains("elements[0]") && e.contains("lamp") && e.contains("Pixels"), "{e}");
-    // At most 64 beams.
-    let many = Composition {
-        elements: (0..65)
-            .map(|i| beam_element(&format!("l{i}"), ElementKind::drawn(ElementMaterial::Rock), Some(ok)))
-            .collect(),
-        folders: Vec::new(),
-    };
-    let e = check(&many, &look).expect("refused");
-    assert!(e.contains("64"), "{e}");
     // Haze is a percent.
     let mut src = level(None);
     src.look = Some(LookSource { haze: 101, ..LookSource::default() });
@@ -1110,6 +1116,7 @@ fn hostile_glow_beam_maps() {
         both(grey_alpha(5, 3, &zero), grey_alpha(4, 3, &zero)),
         both(grey_alpha(4, 3, &|i| if i == 2 { [181, 10] } else { [0, 0] }), grey_alpha(4, 3, &zero)),
         both(grey_alpha(4, 3, &zero), grey_alpha(4, 3, &|i| if i == 7 { [10, 91] } else { [0, 0] })),
+        both(grey_alpha(4, 3, &|i| if i == 4 { [10, 0] } else { [0, 0] }), grey_alpha(4, 3, &zero)),
     ];
     for fs in &cases {
         let e = read_level_files(fs).unwrap_err().to_string();
@@ -1122,6 +1129,9 @@ fn hostile_glow_beam_maps() {
     let one = files(&src).with("look/glow-beam.png", grey_alpha(4, 3, &zero));
     let e = read_level_files(&one).unwrap_err().to_string();
     assert!(e.contains("look/glow-beam-back.png"), "{e}");
+    let (back, warnings) = olr_format::levels::read_level_files_lenient(&one).unwrap();
+    assert_eq!(back.glow_beams, None);
+    assert!(warnings.iter().any(|w| w.contains("plays without its glow beams")), "{warnings:?}");
     // A misfit haze map.
     let fs = files(&src).with("look/haze.png", image_io::encode_grey(5, 3, &[0; 15]));
     let e = read_level_files(&fs).unwrap_err().to_string();

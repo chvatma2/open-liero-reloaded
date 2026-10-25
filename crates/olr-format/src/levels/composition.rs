@@ -274,9 +274,6 @@ pub struct ElementGlow {
     pub beam: Option<GlowBeam>,
 }
 
-/// The most elements with a [`GlowBeam`] in a level.
-pub const MAX_GLOW_BEAMS: usize = 64;
-
 /// Where a directional glow points and how wide it spreads. The baked map
 /// keeps directions in 2-degree steps: an odd direction bakes as the even
 /// one below it.
@@ -812,7 +809,6 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
     let art_pixels = u64::from(art.0) * u64::from(art.1);
     // The distant elements so far and their art's pixels (issue #11).
     let (mut distant, mut distant_pixels) = (0usize, 0u64);
-    let mut beams = 0usize;
     for (i, e) in elements.iter().enumerate() {
         let at = |field: &str| format!("elements[{i}].{field}");
         let bad = |field: &str, message: String| FormatError::invalid(COMPOSITION_FILE, &at(field), message);
@@ -971,10 +967,6 @@ pub fn check_elements(c: &Composition, size: (u32, u32), art_scale: u32) -> Resu
                 }
                 if e.distant.is_some() {
                     return Err(bad("glow.beam", "a distant layer's glow stays undirected".into()));
-                }
-                beams += 1;
-                if beams > MAX_GLOW_BEAMS {
-                    return Err(bad("glow.beam", format!("more than {MAX_GLOW_BEAMS} elements with a beam")));
                 }
             }
             let file = glow_file(&e.id);

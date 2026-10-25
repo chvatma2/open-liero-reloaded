@@ -74,7 +74,8 @@ pub const CLEAR_FILE: &str = "look/clear.png";
 /// the alpha the frost in tenths of a world pixel. Optional, on its own.
 pub const GLASS_FILE: &str = "look/glass.png";
 /// The glow beams of the composite per world pixel, 8-bit grey-alpha: the
-/// grey the direction (see [`GlowBeamMap`]), the alpha the spread. Both beam
+/// grey the direction (see [`GlowBeamMap`]), the alpha the spread (a texel
+/// with a direction needs a spread of at least 1). Both beam
 /// files or none.
 pub const GLOW_BEAM_FILE: &str = "look/glow-beam.png";
 /// The backdrop's glow beams, as [`GLOW_BEAM_FILE`].

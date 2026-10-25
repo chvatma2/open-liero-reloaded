@@ -10,7 +10,8 @@ const STEP: u16 = 2;
 
 /// Per world pixel and layer, two bytes row-major: byte 0 is the direction
 /// in 2-degree steps (0 to 179) plus 1, 0 meaning the pixel is not
-/// directional; byte 1 is the spread, the half-angle in degrees (1 to 90).
+/// directional; byte 1 is the spread, the half-angle in degrees (1 to 90; a
+/// texel with a direction needs a spread of at least 1).
 /// Directions count from pointing right, clockwise on screen (y down). An
 /// odd direction bakes rounded down to the even one below. Static: play
 /// never changes it.
