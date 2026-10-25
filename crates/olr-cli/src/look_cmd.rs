@@ -227,7 +227,7 @@ pub(crate) fn look_cmd(a: &LookArgs) -> anyhow::Result<bool> {
 /// `level haze paint|clear`: the per-pixel scale of the look's `haze`.
 #[derive(Subcommand)]
 pub(crate) enum HazeCommand {
-    /// Paint the haze map over a shape: 0 none to 100 the look's haze.
+    /// Paint the haze map over a shape: 0 none to 100 the look's haze. A new map starts at 100 everywhere
     Paint {
         pack: PathBuf,
         #[command(flatten)]
@@ -254,7 +254,10 @@ pub(crate) fn haze_cmd(c: &HazeCommand) -> anyhow::Result<bool> {
             let mut map = l.haze.clone().filter(|m| m.len() as u64 == u64::from(w) * u64::from(h));
             let value = (u32::from(*strength) * 255 + 50) / 100;
             let value = value as u8;
-            let map = map.get_or_insert_with(|| vec![0u8; w as usize * h as usize]);
+            // A new map starts full, the look's haze everywhere (ruling
+            // T6a, 2026-10-25), so painting one area never takes the haze
+            // from the rest.
+            let map = map.get_or_insert_with(|| vec![255u8; w as usize * h as usize]);
             let shape = shape.shape();
             if let Some(r) = olr_edit::level::shape_bounds(&shape, (w, h)) {
                 for y in r.y..r.y + r.h {

@@ -809,10 +809,29 @@ fn cli_paints_haze() {
     let w = l.size.0 as usize;
     for (i, v) in haze.iter().enumerate() {
         let inside = i % w < 10 && i / w < 10;
-        assert_eq!(*v, if inside { 128 } else { 0 }, "pixel {i}");
+        assert_eq!(*v, if inside { 128 } else { 255 }, "pixel {i}");
     }
     assert!(pack.join("look/haze.png").is_file());
     ok(&cli(&["level", "haze", "clear", "{pack}"], &pack, &content));
     assert!(read_level(&pack).haze.is_none());
     assert!(!pack.join("look/haze.png").exists());
+}
+
+/// Ruling T6a: a new haze map starts full, so painting 0 into one
+/// rectangle leaves the look's whole haze (255) outside it.
+#[test]
+fn a_new_haze_map_starts_full() {
+    let Some((_tmp, pack, content)) = dirt_level() else { return };
+    ok(&cli(&["level", "look", "{pack}", "--haze", "50"], &pack, &content));
+    ok(&cli(&["level", "haze", "paint", "{pack}", "--rect", "4,2,6,3", "--strength", "0"], &pack, &content));
+    let l = read_level(&pack);
+    let haze = l.haze.expect("look/haze.png");
+    let w = l.size.0 as usize;
+    assert_eq!(haze.len(), w * l.size.1 as usize);
+    for (i, v) in haze.iter().enumerate() {
+        let (x, y) = (i % w, i / w);
+        let inside = (4..10).contains(&x) && (2..5).contains(&y);
+        assert_eq!(*v, if inside { 0 } else { 255 }, "pixel ({x}, {y})");
+    }
+    ok(&cli(&["pack", "check", "{pack}", "--content", "{content}"], &pack, &content));
 }

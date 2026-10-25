@@ -352,8 +352,9 @@ pub struct LookSource {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub materials: Vec<MaterialSource>,
     /// Percent, 0 to 100: how much the level's air scatters its glow beams
-    /// (the directional-glow design); `look/haze.png` scales it per pixel.
-    /// Default 0.
+    /// (the directional-glow design): at 50 the air and the sky in a beam
+    /// glow with the beam's own light, at 100 twice it. `look/haze.png`
+    /// scales it per pixel. Default 0.
     #[serde(default, skip_serializing_if = "d::is_default")]
     pub haze: u8,
 }

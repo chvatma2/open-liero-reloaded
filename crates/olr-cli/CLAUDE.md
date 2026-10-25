@@ -53,10 +53,12 @@ The headless command-line tool. Its commands:
   (`--no-glow-beam` undoes it; "the element does not glow" otherwise; a
   strength or group change keeps the beam: `glow_property`); `level look
   --haze N` (0-100) sets the look's haze; `level haze paint <shape>
-  --strength 0..=100` (the map value `round(S * 255 / 100)`, 50 is 128) and
+  --strength 0..=100` (the map value `round(S * 255 / 100)`, 50 is 128; a
+  new map starts at 255 everywhere, ruling T6a, so painting one area
+  never takes the haze from the rest) and
   `level haze clear` edit `look/haze.png` through
   `olr_edit::look::set_haze_map` (`look_cmd.rs`). Tests: `tests/element.rs`'s
-  `cli_sets_a_glow_beam`, `cli_paints_haze`.
+  `cli_sets_a_glow_beam`, `cli_paints_haze`, `a_new_haze_map_starts_full`.
 - `olr-cli level element list|add-image|add-layer|set|remove|raise|lower|draw|erase|merge-down|split|mask
   <pack> …` and `level bake <pack>` (`element_cmd.rs`, plan 14a; plan
   14d: `draw --material`, `merge-down <id>`, `split <id>` printing `added

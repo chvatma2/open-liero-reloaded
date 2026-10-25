@@ -168,8 +168,11 @@ on screen or offscreen.
   cast × the patch's colour (its normalised art for an own-colour or
   filtered group, white for a tint) × its mean glow; a `Flicker` group's
   beam takes its patch's first pixel's flicker region (`Regions`).
-  `LookGlobals.beams` (a vec4 after `distant`): the count, the haze
-  (percent / 100, `LookFrame::haze`), 1 when the level has a beam map.
+  `LookGlobals.beams` (a vec4 after `distant`): the count, the haze's
+  air-term scale (percent / `HAZE_FULL` 50, `LookFrame::haze`: haze 50
+  adds the beam itself, 100 twice it; the maintainer's ruling,
+  2026-10-25, Liero Factory Reloaded's beams at 50), 1 when the level
+  has a beam map.
   **The cone:** with a beam map, a cascade ray meeting a glowing cell
   weights its light by `beam_cone` (`gi_cascade.wgsl`, group 1: the beam
   map at the cell's middle world pixel): smoothstep from `cos(spread +
@@ -192,10 +195,10 @@ on screen or offscreen.
   open texel's centre in world coordinates (camera-independent, still
   scenes steady); a solid pixel takes its beam once for the world pixel,
   at its centre, walking from its open 4-neighbour that faces the source
-  most (none: no beam), so a slanted face shows no sub-pixel stripes. **Where it shows** (the
-  proposal Task 6 tunes): the surface term adds it to the light before
+  most (none: no beam), so a slanted face shows no sub-pixel stripes. **Where it shows** (judged
+  on Liero Factory Reloaded, 2026-10-25): the surface term adds it to the light before
   the cap and `light × art` on every in-level pixel that does not glow and
-  is not a distant layer's (sky or glass); the air term adds `beam × haze
+  is not a distant layer's (sky or glass); the air term adds `beam × haze / 50
   × haze_map(w)` after `light × art`, before the grade, on open pixels
   that do not glow and over the sky. Light only draws it too; full bright
   and markers do not. Without beams (count 0, no beam map) every pass

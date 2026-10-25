@@ -121,7 +121,7 @@ A level's look: darkness, light settings, grade and glow groups. A level without
 | `grade` | [GradeSource](#gradesource) | each field's default | Default none. |
 | `glow_groups` | list of [GlowGroupSource](#glowgroupsource) | `[]` | At most 255. Default none. |
 | `materials` | list of [MaterialSource](#materialsource) | `[]` | The surface materials its pixels are made of (presentation only, apart from the collision material): copies of the library's, by id, at most 255, ids unique. `look/surface.png` and `look/surface-back.png` name them by 1 + their index (0 is none). Default none. |
-| `haze` | integer | `0` | Percent, 0 to 100: how much the level's air scatters its glow beams (the directional-glow design); `look/haze.png` scales it per pixel. Default 0. |
+| `haze` | integer | `0` | Percent, 0 to 100: how much the level's air scatters its glow beams (the directional-glow design): at 50 the air and the sky in a beam glow with the beam's own light, at 100 twice it. `look/haze.png` scales it per pixel. Default 0. |
 
 <a id="distantentry"></a>
 

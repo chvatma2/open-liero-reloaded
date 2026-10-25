@@ -6243,8 +6243,29 @@ No OLX counterpart. Spec
 picked by the maintainer from spike renders ("PCs 0.12, soft shadows,
 softest edge"). Presentation only; levels without directional glow and
 haze draw byte for byte as before (the render goldens and
-`lit-hashes.ron` held without a bless). The renderer, as built
-(`olr-render`'s `renderer/glow_beams.rs`):
+`lit-hashes.ron` held without a bless). The maintainer's rulings on
+Liero Factory Reloaded's renders (2026-10-25), shown beside the spike's
+picked frames:
+
+- **The side PCs glow at 15.** Their beams are then 0.12 of their
+  colour, as in the picked look. Their own screens are duller than at
+  glow 100: the teal one is half as bright, and its faint light on the
+  walls is weaker. The maintainer accepted that. The `pcs` group is
+  already at 1000, its top intensity.
+- **Haze is rescaled: 50 is a beam's own light in the air, 100 twice
+  it.** The renderer's air term is `beam × haze / 50 × haze map`. The
+  factory's haze is 50, and its frames are byte for byte the ones judged
+  at the old 100. Before the rescale, the old 100 (the top) still gave
+  only 95 % of the picked truck beam.
+- **Office beams need the haze.** The surface term alone (beam light ×
+  art) is faint on the offices' dark teal walls: 7 to 14 levels below
+  the picked look. With the haze, the beams match within about 1 level.
+- **A new haze map starts full (ruling T6a).** `level haze paint` creates
+  the map at 255 (the look's haze) everywhere, so painting one area
+  never takes the haze from the rest. Before, it started at 0, and
+  painting the offices alone removed the truck's beam over the sky.
+
+The renderer, as built (`olr-render`'s `renderer/glow_beams.rs`):
 
 - **Two parts:** the glow light of a directional patch is weighted by
   its cone in the cascades (smoothstep from `cos(spread + 0.26)` to
@@ -6268,10 +6289,10 @@ haze draw byte for byte as before (the render goldens and
 - **Strength:** `BEAM_SCALE` 0.08 × the group's cast × the patch's colour
   × its mean glow; no setting of its own. A `Flicker` group's beam
   flickers with its patch's first pixel's region, as its glow light does.
-- **Surface and air (a proposal for Task 6's renders):** the beam is
+- **Surface and air (judged on the factory's renders, kept):** the beam is
   added to a pixel's light before the cap and `light × art` wherever it
   falls on a pixel that does not glow and is not a distant layer's (rock
-  faces, the back wall, sprites); `beam × haze × haze map` is added after
+  faces, the back wall, sprites); `beam × haze / 50 × haze map` is added after
   `light × art` in the open air and over the sky.
 - **Planning calls:** the beams go in a uniform (64 × 48 bytes), not a
   storage buffer, so no device without fragment storage buffers is

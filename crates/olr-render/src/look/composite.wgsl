@@ -435,7 +435,7 @@ fn fs_composite(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
     let heat = textureLoad(heat_tex, t, 0).rgb;
     var c = a * l + bloom_at(g) * glare + heat;
     // The air term: the haze shows a beam in the open air and over the sky,
-    // as light of its own.
+    // as light of its own (haze 50 the beam itself, 100 twice it).
     if beams_on && look.beams.y > 0.0 && ((!solid && shade.x <= 0.0) || sky) {
         c = c + beam * (look.beams.y * haze_at(w));
     }

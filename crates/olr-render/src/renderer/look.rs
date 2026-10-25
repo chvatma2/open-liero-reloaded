@@ -29,6 +29,11 @@ pub(super) fn common() -> String {
 /// otherwise the terrain's. A marker writes 1, anything else 0.
 const BACKGROUND_TAG: f32 = 0.25;
 
+/// The haze percent whose air term adds a glow beam's light itself (the
+/// directional-glow design; the maintainer's ruling, 2026-10-25): 100 adds
+/// twice it.
+const HAZE_FULL: f32 = 50.0;
+
 /// Groups in the globals (a group map value is one byte, 0 none).
 pub(super) const GROUPS: usize = 255;
 
@@ -1193,11 +1198,13 @@ impl LookState {
             f32::from(u8::from(glass)),
         ]);
         // The glow beams (the directional-glow design): the frame's count,
-        // the haze (0-1), whether the level has a beam map.
+        // the haze's air-term scale (0-2: haze 50 adds the beam itself, 100
+        // twice it; the maintainer's ruling, 2026-10-25), whether the level
+        // has a beam map.
         let beam_map = self.textures.as_ref().is_some_and(|t| t.glow_beams.has_map());
         p.extend([
             self.beam_count as f32,
-            f32::from(look.haze.min(100)) / 100.0,
+            f32::from(look.haze.min(100)) / HAZE_FULL,
             f32::from(u8::from(beam_map)),
             0.0,
         ]);
