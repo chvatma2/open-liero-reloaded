@@ -592,6 +592,28 @@ fn a_wall_blocks_a_light() {
     assert!((light_at(&gpu, &r, 60, 20)[0] - 0.1).abs() < 1e-3, "behind it: the ambient");
 }
 
+/// A long 1-px wall leaks no light to rays grazing along it: a lamp
+/// under a ceiling one pixel thin across the whole room lights nothing
+/// above it (the bilinear fix checks one way per upper probe).
+#[test]
+fn a_long_thin_ceiling_leaks_no_light() {
+    let Some(gpu) = offscreen() else { return };
+    let map = room(160, 60, |x, y| y == 30 || !(2..158).contains(&x) || !(2..58).contains(&y));
+    let view = View { x: 0.0, y: 0.0, w: 160.0, h: 60.0 };
+    for x in [20.5, 57.5, 80.5, 111.5] {
+        for y in [33.5, 35.5, 44.5] {
+            let r = lit_frame(&gpu, &map, view, &[lamp([x, y], 200.0)], 0);
+            for (ax, ay) in [(x as i32, 28), (x as i32 + 9, 29), (x as i32 - 23, 28), (x as i32 + 40, 25)] {
+                if !(0..160).contains(&ax) {
+                    continue;
+                }
+                let above = light_at(&gpu, &r, ax, ay);
+                assert!((above[0] - 0.1).abs() < 1e-3, "lamp ({x}, {y}): ({ax}, {ay}) above lit {above:?}");
+            }
+        }
+    }
+}
+
 /// The jump flood reaches only so far (32 cells): past it a ray jumps
 /// by that reach, so a light still crosses a level 2000 pixels wide and
 /// open, many jumps a ray, within the march's steps.
